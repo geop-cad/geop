@@ -4,23 +4,67 @@
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    scalars::Scalar,
+    scalars::{Field, Scalar},
+    vector::{Vector, Vector3},
 };
 use geop_core_topology::{
-    SolidId,
+    Body, SolidId,
     distance::{Feature, PlacedFace, closest_points},
 };
-use geop_ops::{BodyNames, Namer, Part};
+use geop_ops::{
+    Design, NamedModel, Namer,
+    operation::BuildView,
+    output::Bounded,
+    solids::{PlacedSolid, placed_solids},
+};
 use geop_ops_booleans::{
     boolean::{BooleanOp, boolean},
     remesh::remesh::RemeshParams,
 };
 use serde::Serialize;
 
-use crate::{
-    Bounded,
-    bodies::{PlacedSolid, apart, hull, placed_solids},
-};
+/// An axis-aligned box: each coordinate the interval it spans.
+pub type Box3 = Vector3<Design>;
+
+/// The box of `points`: each coordinate the union of theirs.
+fn hull(points: &[Vector3<Design>]) -> Box3 {
+    points
+        .iter()
+        .copied()
+        .reduce(|a, b| a.union(&b))
+        .unwrap_or_else(Vector3::everything)
+}
+
+/// Whether two boxes are definitely apart along some axis.
+fn apart(a: &Box3, b: &Box3) -> bool {
+    (0..3).any(|k| {
+        a[k].upper().definitely_less(b[k].lower()) || b[k].upper().definitely_less(a[k].lower())
+    })
+}
+
+/// The control point `cp` of a surface of `solid`, as a point, where the
+/// solid is placed.
+fn place_control_point(solid: &PlacedSolid, cp: &Vector<Design, 4>) -> GeopResult<Box3> {
+    let w = cp[3];
+    let p = Vector3::from_array([cp[0].div(w)?, cp[1].div(w)?, cp[2].div(w)?]);
+    Ok(match &solid.pose {
+        Some(pose) => pose.apply(&p),
+        None => p,
+    })
+}
+
+/// The box around the faces `faces` of `solid`: around their surfaces'
+/// control points — each surface lies in their hull.
+pub fn bounding_box(solid: &PlacedSolid, faces: &[geop_core_topology::FaceId]) -> GeopResult<Box3> {
+    let model = solid.model.topology();
+    let mut points = Vec::new();
+    for &face in faces {
+        for cp in &model.get_face(face)?.surface.control_points {
+            points.push(place_control_point(solid, cp)?);
+        }
+    }
+    Ok(hull(&points))
+}
 
 /// How two solids meet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -60,19 +104,19 @@ pub struct InterferenceReport {
     pub unchecked: Vec<Unchecked>,
 }
 
-/// Which solids of `part` — its own, and those of the parts placed in it,
-/// where they are — overlap, and by how much, and which only touch.
+/// Which solids of the part `view` shows — its own, and those of the parts
+/// placed in it, where they are — overlap, and by how much, and which only
+/// touch.
 ///
 /// A pair whose boxes are definitely apart is apart. Any other pair is
 /// intersected, as copies in a part of their own: a solid left is their
 /// overlap, measured by its volume. Nothing left, the two touch if the
 /// least distance between their faces could be zero (see
 /// [`closest_points`]), and are apart otherwise.
-pub fn interference_report<S: Scalar>(part: &Part<S>) -> GeopResult<InterferenceReport> {
-    let solids = placed_solids(part)?;
-    let boxes = solids
-        .iter()
-        .map(|s| s.bounding_box())
+pub fn interference_report(view: BuildView) -> GeopResult<InterferenceReport> {
+    let solids = placed_solids(view)?;
+    let boxes = (solids.iter())
+        .map(|s| bounding_box(s, &s.model.topology().solid_faces(s.solid)?))
         .collect::<GeopResult<Vec<_>>>()?;
     let mut found = Vec::new();
     let mut unchecked = Vec::new();
@@ -107,12 +151,9 @@ pub fn interference_report<S: Scalar>(part: &Part<S>) -> GeopResult<Interference
 
 /// How `a` and `b` meet, if they do, and the volume they share.
 #[allow(clippy::type_complexity)]
-fn check_pair<S: Scalar>(
-    a: &PlacedSolid<S>,
-    b: &PlacedSolid<S>,
-) -> GeopResult<Option<(Contact, Option<Bounded>)>> {
+fn check_pair(a: &PlacedSolid, b: &PlacedSolid) -> GeopResult<Option<(Contact, Option<Bounded>)>> {
     let ctx = |e: GeopError| e.with_context(format!("checking {} against {}", a.name, b.name));
-    let mut scratch = Part::<S>::new();
+    let mut scratch = NamedModel::<Design>::new();
     let copy_a = copy_solid(&mut scratch, a, "a").with_context(&ctx)?;
     let copy_b = copy_solid(&mut scratch, b, "b").with_context(&ctx)?;
     let namer = Namer::new("interference", "overlap").with_context(&ctx)?;
@@ -140,21 +181,10 @@ fn check_pair<S: Scalar>(
 
 /// Whether some face of `a` could be at distance zero from some face of
 /// `b` — of those pairs whose boxes are not definitely apart.
-fn touch<S: Scalar>(a: &PlacedSolid<S>, b: &PlacedSolid<S>) -> GeopResult<bool> {
-    let faces = |s: &PlacedSolid<'_, S>| -> GeopResult<Vec<_>> {
-        let model = s.part.topology();
-        model
-            .solid_faces(s.solid)?
-            .into_iter()
-            .map(|face| {
-                let surface = &model.get_face(face)?.surface;
-                let points = surface
-                    .control_points
-                    .iter()
-                    .map(|cp| s.place_control_point(cp))
-                    .collect::<GeopResult<Vec<_>>>()?;
-                Ok((face, hull(&points)))
-            })
+fn touch(a: &PlacedSolid, b: &PlacedSolid) -> GeopResult<bool> {
+    let faces = |s: &PlacedSolid| -> GeopResult<Vec<_>> {
+        (s.model.topology().solid_faces(s.solid)?.into_iter())
+            .map(|face| Ok((face, bounding_box(s, &[face])?)))
             .collect()
     };
     let (fa, fb) = (faces(a)?, faces(b)?);
@@ -164,10 +194,10 @@ fn touch<S: Scalar>(a: &PlacedSolid<S>, b: &PlacedSolid<S>) -> GeopResult<bool> 
                 continue;
             }
             let closest = closest_points(
-                &Feature::Face(PlacedFace::new(a.part.topology(), *face_a, a.pose)?),
-                &Feature::Face(PlacedFace::new(b.part.topology(), *face_b, b.pose)?),
+                &Feature::Face(PlacedFace::new(a.model.topology(), *face_a, a.pose)?),
+                &Feature::Face(PlacedFace::new(b.model.topology(), *face_b, b.pose)?),
             )?;
-            if closest.distance.could_be_equal(S::ZERO) {
+            if closest.distance.could_be_equal(Design::ZERO) {
                 return Ok(true);
             }
         }
@@ -177,14 +207,13 @@ fn touch<S: Scalar>(a: &PlacedSolid<S>, b: &PlacedSolid<S>) -> GeopResult<bool> 
 
 /// A copy of `solid` in `scratch`, where it is placed, each of its entities
 /// named as it is behind `prefix`. Refuses a solid of more than one shell —
-/// one with a void — which a copy does not yet carry over.
-fn copy_solid<S: Scalar>(
-    scratch: &mut Part<S>,
-    solid: &PlacedSolid<S>,
+/// one with a void — which the boolean is not asked to intersect.
+fn copy_solid(
+    scratch: &mut NamedModel<Design>,
+    solid: &PlacedSolid,
     prefix: &str,
 ) -> GeopResult<SolidId> {
-    let model = solid.part.topology();
-    let shells = &model.get_solid(solid.solid)?.shells;
+    let shells = &solid.model.topology().get_solid(solid.solid)?.shells;
     if shells.len() != 1 {
         return Err(GeopError::new(format!(
             "the solid {} has {} shells — a void inside it — and interference is checked for \
@@ -193,36 +222,14 @@ fn copy_solid<S: Scalar>(
             shells.len()
         )));
     }
-    let faces = model.solid_faces(solid.solid)?;
-    let (spec, sources) = model.body_spec(&faces, true)?;
+    let (spec, names) = solid.model.body_record(Body::Solid(solid.solid))?;
     let spec = match &solid.pose {
         Some(pose) => spec.placed(pose),
         None => spec,
     };
-    let named = |id: geop_ops::RefId| -> GeopResult<String> {
-        let name = solid
-            .part
-            .name_of(id)
-            .ok_or_else(|| GeopError::new(format!("{id} of {} has no name", solid.name)))?;
-        Ok(format!("{prefix}.{name}"))
-    };
-    let names = BodyNames {
-        vertices: sources
-            .vertices
-            .iter()
-            .map(|&v| named(v.into()))
-            .collect::<GeopResult<_>>()?,
-        edges: sources
-            .edges
-            .iter()
-            .map(|&e| named(e.into()))
-            .collect::<GeopResult<_>>()?,
-        faces: sources
-            .faces
-            .iter()
-            .map(|&f| named(f.into()))
-            .collect::<GeopResult<_>>()?,
+    let names = geop_ops::BodyNames {
         solid: Some(prefix.to_string()),
+        ..names.renamed(|name| format!("{prefix}.{name}"))
     };
     let built = scratch.build_body(spec, names)?;
     built

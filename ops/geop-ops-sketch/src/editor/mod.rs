@@ -22,6 +22,9 @@
 //! make geometry from what is selected, tied to it by constraints (see
 //! [`modify`]).
 
+/// Sketches are edited in the scalar their programs hold.
+type S = geop_ops::Design;
+
 mod dialog;
 mod drawing;
 mod gestures;
@@ -33,6 +36,7 @@ mod trim;
 mod visuals;
 
 use dialog::draw_dialog;
+use geop_ops::operation::ResolveEntity;
 use snap::Snap;
 use visuals::visuals;
 
@@ -43,10 +47,11 @@ use geop_core_math::{
 };
 use geop_core_sketch::{ConstraintId, CurveId, PointId, offset::Corners};
 use geop_ops::{
-    Design, Part,
+    Design,
     operation::Role,
+    operation::{Lookup, Seen},
     ui::{
-        Action, CanvasEvent, Edit, Form, InHand, ListItem, Pointer, Shape, Style, Tone, Value,
+        Action, CanvasEvent, Edit, EditForm, InHand, ListItem, Pointer, Shape, Style, Tone, Value,
         Visual, hit::hit_visuals,
     },
 };
@@ -54,7 +59,7 @@ use geop_ops::{
 use crate::{
     AddSketchArgs, Constraint, CurveKind, Sketch,
     constraints::{self, ConstraintTool, Pick},
-    geometry::{P2, add, dist, loop_polyline, polyline, sub, xy},
+    geometry::{P2, add, dist, loop_polyline, of, polyline, sub, xy},
 };
 
 type SolveReport = geop_core_sketch::SolveReport<Design>;
@@ -144,13 +149,6 @@ impl DrawTool {
             t(Chamfer, "chamfer", "Chamfer a corner", None),
         ]
     };
-
-    pub fn info(self) -> &'static DrawInfo {
-        Self::ALL
-            .iter()
-            .find(|i| i.tool == self)
-            .expect("every tool is listed")
-    }
 
     fn by_name(name: &str) -> Option<DrawTool> {
         Self::ALL.iter().find(|i| i.name == name).map(|i| i.tool)
@@ -405,16 +403,16 @@ fn key_id(key: &str, prefix: char) -> Option<u64> {
 }
 
 fn point_key(key: &str) -> Option<PointId> {
-    key_id(key, 'p').map(PointId)
+    key.parse().ok()
 }
 
 fn curve_key(key: &str) -> Option<CurveId> {
-    key_id(key, 'c').map(CurveId)
+    key.parse().ok()
 }
 
 /// The key of a constraint's glyph.
 fn glyph_key(key: &str) -> Option<ConstraintId> {
-    key_id(key, 'k').map(ConstraintId)
+    key.parse().ok()
 }
 
 /// What the selection `keys` hold that `sketch` has: its points and curves,
@@ -450,13 +448,16 @@ fn selected_curves(sketch: &Sketch, keys: &[String]) -> Vec<CurveId> {
 /// The key of the visual among `visuals` the pointer is over, trying the
 /// kinds `stages` accept in order: a point drawn on a curve is that point,
 /// not the curve.
-fn hit_key<S: Scalar>(
+fn hit_key(
     visuals: &[Visual<S>],
     pointer: &Pointer<S>,
     stages: &[&dyn Fn(&str) -> bool],
 ) -> Option<String> {
     stages.iter().find_map(|accept| {
-        hit_visuals(visuals, pointer, None, |v| accept(&v.key)).map(|h| h.visual.key.clone())
+        hit_visuals(visuals, pointer, geop_ops::ui::hit::no_instances, |v| {
+            accept(&v.key)
+        })
+        .map(|h| h.visual.key.clone())
     })
 }
 
@@ -472,15 +473,10 @@ fn is_glyph(key: &str) -> bool {
     glyph_key(key).is_some()
 }
 
-/// The point `id` of `sketch`, as drawn.
-fn pt(sketch: &Sketch, id: PointId) -> P2 {
-    xy(sketch, id)
-}
-
 /// The edit in progress: what it works on, what is selected, and where the
 /// plane is.
-struct Editing<'a, S: Scalar> {
-    before: &'a Part<S>,
+struct Editing<'a> {
+    before: &'a Seen<'a>,
     args: &'a mut AddSketchArgs,
     s: &'a mut SketchSession,
     selection: &'a mut Vec<String>,
@@ -488,7 +484,7 @@ struct Editing<'a, S: Scalar> {
 }
 
 /// `p` of the sketch, in `frame`'s plane.
-fn to_world<S: Scalar>(frame: &CoordinateSystem<S>, p: P2) -> Vector3<S> {
+fn to_world(frame: &CoordinateSystem<S>, p: P2) -> Vector3<S> {
     frame.uv_to_xyz(&Vector2::from_array(p.map(S::from_f64)))
 }
 
@@ -512,25 +508,22 @@ fn solve(sketch: &mut Sketch, s: &mut SketchSession, drags: &[(PointId, P2)]) {
 /// evaluated — and solved again if that changed it, or if it was not
 /// solved yet, recording how that went in `s`. What cannot be brought up
 /// to date stays as it was: the step says why when it is built.
-fn refresh<S: Scalar>(
+fn refresh(
     args: &mut AddSketchArgs,
     s: &mut SketchSession,
-    before: &Part<S>,
+    before: &Seen<'_>,
     frame: &CoordinateSystem<S>,
 ) {
     let drawn = args.sketch.clone();
     args.ensure_frame();
-    let _ = args.update_references(before, frame);
-    let inputs = before.state();
-    let _ = args.apply_formulas(|formula| {
-        geop_ops::parameters::evaluate(formula, |name| geop_ops::parameters::number(inputs, name))
-    });
+    let _ = args.update_references(&mut &*before, frame);
+    let _ = args.apply_formulas(|formula| (&mut &*before).evaluate(formula));
     if s.solved.is_none() || args.sketch != drawn {
         solve(&mut args.sketch, s, &[]);
     }
 }
 
-impl<S: Scalar> Editing<'_, S> {
+impl Editing<'_> {
     fn sketch(&self) -> &Sketch {
         &self.args.sketch
     }
@@ -539,7 +532,7 @@ impl<S: Scalar> Editing<'_, S> {
     /// and how far along the ray.
     fn in_plane(&self, pointer: &Pointer<S>) -> Option<(P2, S)> {
         let (t, p) = pointer.ray.intersect_uv_plane(&self.frame)?;
-        Some(([p[0].to_f64(), p[1].to_f64()], t))
+        Some((of(&p), t))
     }
 
     /// Makes `next` the sketch, solved.
@@ -550,20 +543,19 @@ impl<S: Scalar> Editing<'_, S> {
 
     /// `p`, a point of the plane, in the sketch's coordinates.
     fn to_sketch(&self, p: &Vector3<S>) -> P2 {
-        let uvw = self.frame.to_uvw(p);
-        [uvw[0].to_f64(), uvw[1].to_f64()]
+        of(&self.frame.to_uvw(p).head())
     }
 }
 
 /// What a sketch step shows: the plane to pick and, once it is one, the
 /// sketch drawn in it with the tools, constraints and state of the drawing.
-pub(crate) fn form<'a, S: Scalar>(
-    before: &'a Part<S>,
+pub(crate) fn form<'a>(
+    before: &'a Seen<'a>,
     args: &AddSketchArgs,
     s: &SketchSession,
     selection: &[String],
-) -> Form<'a, S, AddSketchArgs, SketchSession> {
-    let mut f = Form::<S, AddSketchArgs, SketchSession>::new();
+) -> EditForm<'a, S, AddSketchArgs, SketchSession> {
+    let mut f = EditForm::<S, AddSketchArgs, SketchSession>::default();
     // Only a plane is taken; another one moves the drawing onto it.
     f.reference(
         "plane",
@@ -574,7 +566,7 @@ pub(crate) fn form<'a, S: Scalar>(
         false,
         move |edit, picked| {
             if let [plane] = picked.as_slice()
-                && plane.resolve_plane(before).is_ok()
+                && plane.resolve_plane(&mut &*before).is_ok()
             {
                 edit.args.plane = Some(plane.clone());
                 edit.session.draft = Draft::default();
@@ -584,10 +576,12 @@ pub(crate) fn form<'a, S: Scalar>(
     let Some(plane) = &args.plane else {
         return f;
     };
-    let frame = match plane.resolve_plane(before) {
+    let frame = match plane.resolve_plane(&mut &*before) {
         Ok(frame) => frame,
         Err(e) => {
-            f.text("plane_error", e.root_message(), Tone::Error);
+            f.form
+                .dialog
+                .text("plane_error", e.root_message(), Tone::Error);
             return f;
         }
     };
@@ -595,9 +589,10 @@ pub(crate) fn form<'a, S: Scalar>(
     let mut s = s.clone();
     refresh(&mut args, &mut s, before, &frame);
     draw_dialog(&mut f, before, &args, &s, selection, &frame);
-    f.visuals = visuals(&args, &s, selection, &frame);
-    f.focus = Some(frame);
-    f.tool = match s.tool {
+    f.form.visuals = visuals(&args, &s, selection, &frame);
+    f.form.selection = selection.to_vec();
+    f.form.focus = Some(frame);
+    f.form.tool = match s.tool {
         Tool::Select => InHand::Nothing,
         Tool::Trim => InHand::Strokes,
         Tool::Draw(_) | Tool::Constrain(_) | Tool::Modify(_) => InHand::Clicks,
@@ -606,8 +601,8 @@ pub(crate) fn form<'a, S: Scalar>(
 }
 
 /// A pointer or key event in the drawing.
-pub(crate) fn event<S: Scalar>(
-    before: &Part<S>,
+pub(crate) fn event(
+    before: &Seen<'_>,
     edit: Edit<'_, AddSketchArgs, SketchSession>,
     event: &CanvasEvent<S>,
 ) {
@@ -616,10 +611,10 @@ pub(crate) fn event<S: Scalar>(
 
 /// `f` applied to the drawing, brought up to date with the part — and so
 /// solved — first. Nothing, while the plane is none.
-fn editing<S: Scalar>(
-    before: &Part<S>,
+fn editing(
+    before: &Seen<'_>,
     edit: Edit<'_, AddSketchArgs, SketchSession>,
-    f: impl FnOnce(&mut Editing<S>),
+    f: impl FnOnce(&mut Editing),
 ) {
     let Edit {
         args,
@@ -627,7 +622,7 @@ fn editing<S: Scalar>(
         selection,
         ..
     } = edit;
-    let Some(Ok(frame)) = args.plane.as_ref().map(|p| p.resolve_plane(before)) else {
+    let Some(Ok(frame)) = args.plane.as_ref().map(|p| p.resolve_plane(&mut &*before)) else {
         return;
     };
     refresh(args, s, before, &frame);

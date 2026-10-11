@@ -8,8 +8,6 @@ geop-core-math.workspace = true
 geop-ops.workspace = true
 # The cables it orders as wires.
 geop-ops-harness.workspace = true
-# Each part's mass, of its own material.
-geop-ops-inspect.workspace = true
 # A sheet-metal body's thickness, recorded on it.
 geop-ops-sheetmetal.workspace = true
 serde.workspace = true

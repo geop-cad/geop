@@ -42,9 +42,10 @@
 //!
 //! # Directions
 //!
-//! A coordinate system says which way the cable leaves it: along its `z`
-//! axis — out of a connector at the start, into one (against its `z` axis)
-//! at the end, along it in between. A circular edge — a clip, a grommet —
+//! A coordinate system — a frame on an entity, or a datum frame — says
+//! which way the cable leaves it: along its `z` axis — out of a connector
+//! at the start, into one (against its `z` axis) at the end, along it in
+//! between. A circular edge — a clip, a grommet —
 //! says the axis the route passes along, and the route passes the way it
 //! is going. Anything else — a vertex, a datum point — leaves the direction
 //! free, and the route chooses it (see [`RoutePath::through`]).
@@ -57,10 +58,7 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_ops::{
-    Part,
-    operation::{Aspects, Chain, EntityRef},
-};
+use geop_ops::operation::{Aspects, Chain, EntityRef, Lookup, ResolveEntity};
 use geop_ops_extrude_revolve::common::{arc3, line3};
 
 /// Which way the route is told to run through a [`Waypoint`].
@@ -85,10 +83,14 @@ pub struct Waypoint<S: Scalar> {
 }
 
 impl<S: Scalar> Waypoint<S> {
-    /// The `index`-th point the route runs through, `entity` of `part`: a
-    /// coordinate system, its origin and `z` axis; a circular edge, its
-    /// centre and axis; any other point, just where it is.
-    pub fn of(part: &Part<S>, entity: &EntityRef, index: usize) -> GeopResult<Self> {
+    /// The `index`-th point the route runs through, `entity` as `lookup`
+    /// has it: a coordinate system, its origin and `z` axis; a circular
+    /// edge, its centre and axis; any other point, just where it is.
+    pub fn of(
+        lookup: &mut (impl Lookup<S> + ?Sized),
+        entity: &EntityRef,
+        index: usize,
+    ) -> GeopResult<Self> {
         let label = format!("point {} ({})", index + 1, entity.label());
         let ctx = with_context!("resolving the route's {label}");
         let unsupported = || {
@@ -97,7 +99,7 @@ impl<S: Scalar> Waypoint<S> {
             ))
         };
         let (point, heading) = if let EntityRef::Datum { .. } = entity {
-            let datum = entity.resolve_datum(part).with_context(ctx)?;
+            let datum = entity.resolve_datum(lookup).with_context(ctx)?;
             let heading = match datum.kind {
                 DatumKind::Point => Heading::Free,
                 DatumKind::Frame => Heading::Exit(*datum.frame.w()),
@@ -105,11 +107,12 @@ impl<S: Scalar> Waypoint<S> {
             };
             (*datum.frame.origin(), heading)
         } else {
-            let aspects = Aspects::of(entity, part).with_context(ctx)?;
-            match (aspects.point, aspects.arc) {
-                (Some(point), _) => (point, Heading::Free),
-                (None, Some(arc)) => (arc.circle.center, Heading::Axis(arc.circle.normal)),
-                (None, None) => return Err(unsupported()),
+            let aspects = Aspects::of(entity, lookup).with_context(ctx)?;
+            match (aspects.frame, aspects.point, aspects.arc) {
+                (Some(frame), ..) => (*frame.origin(), Heading::Exit(*frame.w())),
+                (None, Some(point), _) => (point, Heading::Free),
+                (None, None, Some(arc)) => (arc.circle.center, Heading::Axis(arc.circle.normal)),
+                (None, None, None) => return Err(unsupported()),
             }
         };
         Ok(Waypoint {

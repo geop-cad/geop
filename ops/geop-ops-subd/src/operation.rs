@@ -16,16 +16,21 @@ use std::collections::BTreeSet;
 
 use geop_core_math::{
     geop_error::{GeopResult, WithContext},
-    scalars::Scalar,
+    scalars::{Ring, Scalar},
     vector::Vector3,
     with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+    step_editor::DRAG_SNAP,
+};
 use geop_ops::{
-    Context, Library, Namer, Part,
-    operation::Operation,
+    Design, NamedModel, Namer, ParamValue,
+    operation::{Build, BuildReader, Input, ModelStep, build_model},
     ui::{
-        Action, CanvasEvent, Choice, Control, DRAG_SNAP, Edit, Form, Gizmo, Number, Shape, Style,
-        Tone, Unit, Visual,
+        Action, CanvasEvent, Choice, Control, Edit, EditForm, FormState, Gizmo, Number, Shape,
+        Style, Tone, Unit, Value, Visual,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -50,6 +55,9 @@ pub struct SubdArgs {
     pub mirror: Mirror,
 }
 
+/// What a subd step keeps while it is edited.
+pub type SubdEditing = FormState<SubdSession>;
+
 /// What a scale or turn of the selection is applied to: the cage as it was
 /// when the selection started being scaled or turned, so that a new value
 /// replaces the old one rather than adding to it.
@@ -62,8 +70,9 @@ struct Relative {
     angles: [f64; 3],
 }
 
-/// What editing a subd step keeps besides its arguments.
-#[derive(Debug, Default)]
+/// What editing a subd step keeps besides its arguments and the keys of
+/// the cage elements selected.
+#[derive(Clone, Debug, Default)]
 pub struct SubdSession {
     /// The cage as it was when the drag under way started.
     drag: Option<Cage>,
@@ -236,389 +245,428 @@ impl Relative {
     }
 }
 
-impl Operation for Subd {
-    type Args = SubdArgs;
-    type Session = SubdSession;
-
-    /// A box cage, two units a side, around the origin.
-    fn new_args<S: Scalar>(&self, _: &Part<S>) -> SubdArgs {
-        SubdArgs {
-            cage: primitive("box").expect("a primitive"),
-            mirror: Mirror::None,
-        }
-    }
-
-    fn form<'a, S: Scalar>(
-        &self,
-        _: Context<'a, S>,
-        args: &SubdArgs,
-        session: &SubdSession,
-        selection: &[String],
-    ) -> Form<'a, S, SubdArgs, SubdSession> {
-        let mut f = Form::<S, SubdArgs, SubdSession>::new();
-        let start = ["box", "cylinder", "sphere", "plane"]
-            .into_iter()
-            .map(|p| {
-                let label = format!("{}{}", p[..1].to_uppercase(), &p[1..]);
-                Action::new(p, label)
-                    .group("Start from")
-                    .title("Replace the cage with this one")
-            })
-            .collect();
-        f.actions("start", start, |edit, value| {
-            let Some(mut cage) = primitive(value) else {
-                return;
-            };
-            edit.session.problem = None;
-            if let Some(axis) = edit.args.mirror.axis()
-                && let Err(e) = cage.halve(axis)
-            {
-                edit.session.problem = Some(e.root_message().to_string());
-                return;
-            }
-            edit.args.cage = cage;
-            edit.session.relative = None;
-            edit.selection.clear();
-        });
-        let mirror = match args.mirror {
-            Mirror::None => "none",
-            Mirror::X => "x",
-            Mirror::Y => "y",
-            Mirror::Z => "z",
-        };
-        f.dialog.push(
-            "mirror",
-            Control::Select {
-                label: "mirror".into(),
-                value: mirror.into(),
-                options: vec![
-                    Choice::new("none", "none"),
-                    Choice::new("x", "in x = 0"),
-                    Choice::new("y", "in y = 0"),
-                    Choice::new("z", "in z = 0"),
-                ],
-                searchable: false,
-            },
-        );
-        f.on("mirror", |edit, value| {
-            let geop_ops::ui::Value::Choice(choice) = value else {
-                return;
-            };
-            let mirror = match choice.as_str() {
-                "x" => Mirror::X,
-                "y" => Mirror::Y,
-                "z" => Mirror::Z,
-                _ => Mirror::None,
-            };
-            if mirror == edit.args.mirror {
-                return;
-            }
-            let changed = edit
-                .args
-                .cage
-                .unmirrored(edit.args.mirror)
-                .and_then(|mut cage| {
-                    if let Some(axis) = mirror.axis() {
-                        cage.halve(axis)?;
-                    }
-                    Ok(cage)
-                });
-            match changed {
-                Ok(cage) => {
-                    edit.args.cage = cage;
-                    edit.args.mirror = mirror;
-                    edit.session.problem = None;
-                    edit.session.relative = None;
-                    prune(edit.selection, &edit.args.cage);
-                }
-                Err(e) => edit.session.problem = Some(e.root_message().to_string()),
-            }
-        });
-
-        let vertices = args.cage.vertices_of(selection);
-        let (edges, faces) = selected(selection);
-        let count = |n: usize, what: &str| match n {
-            0 => None,
-            1 => Some(format!("1 {what}")),
-            n => Some(format!("{n} {what}s")),
-        };
-        let vertex_count = selection
-            .iter()
-            .filter(|k| matches!(Element::parse(k), Some(Element::Vertex(_))))
-            .count();
-        let parts: Vec<String> = [
-            count(vertex_count, "vertex"),
-            count(edges.len(), "edge"),
-            count(faces.len(), "face"),
-        ]
+/// The dialog of a subd step: the cage to start from, the mirror, what is
+/// selected and how to move, turn and scale it, and the edits; the cage
+/// drawn.
+fn form<'a>(
+    args: &SubdArgs,
+    session: &SubdSession,
+    selection: &[String],
+) -> EditForm<'a, Design, SubdArgs, SubdSession> {
+    let mut f = EditForm::<Design, SubdArgs, SubdSession>::default();
+    let start = ["box", "cylinder", "sphere", "plane"]
         .into_iter()
-        .flatten()
+        .map(|p| {
+            let label = format!("{}{}", p[..1].to_uppercase(), &p[1..]);
+            Action::new(p, label)
+                .group("Start from")
+                .title("Replace the cage with this one")
+        })
         .collect();
-        if parts.is_empty() {
-            f.text(
+    f.actions("start", start, |edit, value| {
+        let Some(mut cage) = primitive(value) else {
+            return;
+        };
+        edit.session.problem = None;
+        if let Some(axis) = edit.args.mirror.axis()
+            && let Err(e) = cage.halve(axis)
+        {
+            edit.session.problem = Some(e.root_message().to_string());
+            return;
+        }
+        edit.args.cage = cage;
+        edit.session.relative = None;
+        edit.selection.clear();
+    });
+    let mirror = match args.mirror {
+        Mirror::None => "none",
+        Mirror::X => "x",
+        Mirror::Y => "y",
+        Mirror::Z => "z",
+    };
+    f.form.dialog.push(
+        "mirror",
+        Control::Select {
+            label: "mirror".into(),
+            value: mirror.into(),
+            options: vec![
+                Choice::new("none", "none"),
+                Choice::new("x", "in x = 0"),
+                Choice::new("y", "in y = 0"),
+                Choice::new("z", "in z = 0"),
+            ],
+            searchable: false,
+        },
+    );
+    f.on("mirror", |edit, value| {
+        let Value::Choice(choice) = value else {
+            return;
+        };
+        let mirror = match choice.as_str() {
+            "x" => Mirror::X,
+            "y" => Mirror::Y,
+            "z" => Mirror::Z,
+            _ => Mirror::None,
+        };
+        if mirror == edit.args.mirror {
+            return;
+        }
+        let changed = edit
+            .args
+            .cage
+            .unmirrored(edit.args.mirror)
+            .and_then(|mut cage| {
+                if let Some(axis) = mirror.axis() {
+                    cage.halve(axis)?;
+                }
+                Ok(cage)
+            });
+        match changed {
+            Ok(cage) => {
+                edit.args.cage = cage;
+                edit.args.mirror = mirror;
+                edit.session.problem = None;
+                edit.session.relative = None;
+                prune(edit.selection, &edit.args.cage);
+            }
+            Err(e) => edit.session.problem = Some(e.root_message().to_string()),
+        }
+    });
+
+    let vertices = args.cage.vertices_of(selection);
+    let (edges, faces) = selected(selection);
+    let count = |n: usize, what: &str| match n {
+        0 => None,
+        1 => Some(format!("1 {what}")),
+        n => Some(format!("{n} {what}s")),
+    };
+    let vertex_count = selection
+        .iter()
+        .filter(|k| matches!(Element::parse(k), Some(Element::Vertex(_))))
+        .count();
+    let parts: Vec<String> = [
+        count(vertex_count, "vertex"),
+        count(edges.len(), "edge"),
+        count(faces.len(), "face"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if parts.is_empty() {
+        f.form.dialog.text(
                 "selection",
                 "Click vertices, edges and faces of the cage to select them, then move, turn or scale them with the gizmo; drag one to move it alone.",
                 Tone::Hint,
             );
-        } else {
-            f.text(
-                "selection",
-                format!("{} selected", parts.join(", ")),
-                Tone::Normal,
-            );
-        }
-        if let Some(problem) = &session.problem {
-            f.text("problem", problem.clone(), Tone::Error);
-        }
+    } else {
+        f.form.dialog.text(
+            "selection",
+            format!("{} selected", parts.join(", ")),
+            Tone::Normal,
+        );
+    }
+    if let Some(problem) = &session.problem {
+        f.form.dialog.text("problem", problem.clone(), Tone::Error);
+    }
 
-        if let Some(centre) = args.cage.centre(&vertices) {
-            let mut gizmo = Gizmo::new(vector(centre)).translate().rotate().scale();
-            if let Some(axes) = args.cage.frame(&faces) {
-                gizmo = gizmo.local(axes.map(vector));
-            }
-            f.gizmo = Some(gizmo);
-            for (axis, key) in ["x", "y", "z"].into_iter().enumerate() {
-                let number = Number::new(key, centre[axis], Unit::Length);
-                f.dialog.push(key, Control::Number(number));
-                f.on(key, move |edit, value| {
-                    let geop_ops::ui::Value::Number(to) = value else {
-                        return;
-                    };
-                    let cage = &mut edit.args.cage;
-                    let vertices = cage.vertices_of(edit.selection);
-                    let Some(centre) = cage.centre(&vertices) else {
-                        return;
-                    };
-                    let by = to - centre[axis];
-                    cage.transform(&vertices, edit.args.mirror, |mut p| {
-                        p[axis] += by;
-                        p
-                    });
-                    edit.session.relative = None;
+    if let Some(centre) = args.cage.centre(&vertices) {
+        let mut gizmo = Gizmo::new(vector(centre)).translate().rotate().scale();
+        if let Some(axes) = args.cage.frame(&faces) {
+            gizmo = gizmo.local(axes.map(vector));
+        }
+        f.form.gizmo = Some(gizmo);
+        for (axis, key) in ["x", "y", "z"].into_iter().enumerate() {
+            let number = Number::new(key, centre[axis], Unit::Length);
+            f.form.dialog.push(key, Control::Number(number));
+            f.on(key, move |edit, value| {
+                let Value::Number(to) = value else {
+                    return;
+                };
+                let cage = &mut edit.args.cage;
+                let vertices = cage.vertices_of(edit.selection);
+                let Some(centre) = cage.centre(&vertices) else {
+                    return;
+                };
+                let by = to - centre[axis];
+                cage.transform(&vertices, edit.args.mirror, |mut p| {
+                    p[axis] += by;
+                    p
                 });
-            }
-            let relative = session
-                .relative
-                .as_ref()
-                .filter(|r| r.selection == selection);
-            let scale = relative.map_or(1.0, |r| r.scale);
-            let scale_number = Number::new("scale", scale, Unit::Fraction);
-            f.dialog.push("scale", Control::Number(scale_number));
-            f.on("scale", |edit, value| {
-                let geop_ops::ui::Value::Number(scale) = value else {
+                edit.session.relative = None;
+            });
+        }
+        let relative = session
+            .relative
+            .as_ref()
+            .filter(|r| r.selection == selection);
+        let scale = relative.map_or(1.0, |r| r.scale);
+        let scale_number = Number::new("scale", scale, Unit::Fraction);
+        f.form.dialog.push("scale", Control::Number(scale_number));
+        f.on("scale", |edit, value| {
+            let Value::Number(scale) = value else {
+                return;
+            };
+            let mut relative = Relative::of(edit.session, edit.selection, &edit.args.cage);
+            relative.scale = scale;
+            edit.args.cage = relative.apply(edit.args.mirror);
+            edit.session.relative = Some(relative);
+        });
+        for (axis, key) in ["turn_x", "turn_y", "turn_z"].into_iter().enumerate() {
+            let angle = relative.map_or(0.0, |r| r.angles[axis]);
+            let label = format!("turn about {}", ["x", "y", "z"][axis]);
+            f.form
+                .dialog
+                .push(key, Control::Number(Number::new(label, angle, Unit::Angle)));
+            f.on(key, move |edit, value| {
+                let Value::Number(angle) = value else {
                     return;
                 };
                 let mut relative = Relative::of(edit.session, edit.selection, &edit.args.cage);
-                relative.scale = scale;
+                relative.angles[axis] = angle;
                 edit.args.cage = relative.apply(edit.args.mirror);
                 edit.session.relative = Some(relative);
             });
-            for (axis, key) in ["turn_x", "turn_y", "turn_z"].into_iter().enumerate() {
-                let angle = relative.map_or(0.0, |r| r.angles[axis]);
-                let label = format!("turn about {}", ["x", "y", "z"][axis]);
-                f.dialog
-                    .push(key, Control::Number(Number::new(label, angle, Unit::Angle)));
-                f.on(key, move |edit, value| {
-                    let geop_ops::ui::Value::Number(angle) = value else {
-                        return;
-                    };
-                    let mut relative = Relative::of(edit.session, edit.selection, &edit.args.cage);
-                    relative.angles[axis] = angle;
-                    edit.args.cage = relative.apply(edit.args.mirror);
-                    edit.session.relative = Some(relative);
-                });
-            }
         }
-
-        if !faces.is_empty() {
-            let distance = session.distance.unwrap_or(DEFAULT_DISTANCE);
-            f.dialog.push(
-                "distance",
-                Control::Number(Number::new("extrude distance", distance, Unit::Length)),
-            );
-            f.on("distance", |edit, value| {
-                if let geop_ops::ui::Value::Number(d) = value {
-                    edit.session.distance = Some(d);
-                }
-            });
-        }
-        let action = |value: &str, label: &str, enabled: bool, why: &str, title: &str| {
-            let action = Action::new(value, label).group("Edit");
-            if enabled {
-                action.title(title)
-            } else {
-                action.disabled(why)
-            }
-        };
-        let creased = edges
-            .iter()
-            .filter(|&&[a, b]| args.cage.is_crease(a, b))
-            .count();
-        let edits = vec![
-            action(
-                "extrude",
-                "Extrude",
-                !faces.is_empty(),
-                "Select faces to extrude",
-                "Extrude the selected faces along their normals",
-            ),
-            action(
-                "insert_loop",
-                "Insert loop",
-                !edges.is_empty(),
-                "Select an edge to insert a loop across",
-                "Insert an edge loop across each selected edge",
-            ),
-            action(
-                "crease",
-                "Crease",
-                creased < edges.len(),
-                "Select smooth edges to crease",
-                "Keep the selected edges sharp",
-            ),
-            action(
-                "smooth",
-                "Smooth",
-                creased > 0,
-                "Select creased edges to smooth",
-                "Make the selected edges smooth again",
-            ),
-            action(
-                "delete",
-                "Delete",
-                !faces.is_empty(),
-                "Select faces to delete",
-                "Delete the selected faces, opening the cage",
-            ),
-        ];
-        f.actions("edit", edits, |edit, value| {
-            let Edit {
-                args,
-                session,
-                selection,
-                ..
-            } = edit;
-            let (edges, faces) = selected(selection);
-            let mut cage = args.cage.clone();
-            let done: GeopResult<()> = match value {
-                "extrude" => cage.extrude(
-                    &faces,
-                    session.distance.unwrap_or(DEFAULT_DISTANCE),
-                    args.mirror,
-                ),
-                "insert_loop" => edges.iter().try_for_each(|&[a, b]| cage.insert_loop(a, b)),
-                "crease" => {
-                    cage.set_crease(&edges, true);
-                    Ok(())
-                }
-                "smooth" => {
-                    cage.set_crease(&edges, false);
-                    Ok(())
-                }
-                "delete" => {
-                    cage.delete_faces(&faces);
-                    Ok(())
-                }
-                _ => return,
-            };
-            match done {
-                Ok(()) => {
-                    args.cage = cage;
-                    session.problem = None;
-                    session.relative = None;
-                    prune(selection, &args.cage);
-                }
-                Err(e) => session.problem = Some(e.root_message().to_string()),
-            }
-        });
-        f.visuals = cage_visuals(args);
-        f
     }
 
-    /// A cage element dragged: what is selected, if it is, else it alone,
-    /// moved as far as the pointer, snapped to [`DRAG_SNAP`] unless shift
-    /// is held. The gizmo dragged: what is selected moved, turned or
-    /// scaled as the drag did. Escape clears the selection; Delete deletes
-    /// the faces selected.
-    fn event<S: Scalar>(
-        &self,
-        _: Context<'_, S>,
-        edit: Edit<'_, SubdArgs, SubdSession>,
-        event: &CanvasEvent<S>,
-    ) {
+    if !faces.is_empty() {
+        let distance = session.distance.unwrap_or(DEFAULT_DISTANCE);
+        f.form.dialog.push(
+            "distance",
+            Control::Number(Number::new("extrude distance", distance, Unit::Length)),
+        );
+        f.on("distance", |edit, value| {
+            if let Value::Number(d) = value {
+                edit.session.distance = Some(d);
+            }
+        });
+    }
+    let action = |value: &str, label: &str, enabled: bool, why: &str, title: &str| {
+        let action = Action::new(value, label).group("Edit");
+        if enabled {
+            action.title(title)
+        } else {
+            action.disabled(why)
+        }
+    };
+    let creased = edges
+        .iter()
+        .filter(|&&[a, b]| args.cage.is_crease(a, b))
+        .count();
+    let edits = vec![
+        action(
+            "extrude",
+            "Extrude",
+            !faces.is_empty(),
+            "Select faces to extrude",
+            "Extrude the selected faces along their normals",
+        ),
+        action(
+            "insert_loop",
+            "Insert loop",
+            !edges.is_empty(),
+            "Select an edge to insert a loop across",
+            "Insert an edge loop across each selected edge",
+        ),
+        action(
+            "crease",
+            "Crease",
+            creased < edges.len(),
+            "Select smooth edges to crease",
+            "Keep the selected edges sharp",
+        ),
+        action(
+            "smooth",
+            "Smooth",
+            creased > 0,
+            "Select creased edges to smooth",
+            "Make the selected edges smooth again",
+        ),
+        action(
+            "delete",
+            "Delete",
+            !faces.is_empty(),
+            "Select faces to delete",
+            "Delete the selected faces, opening the cage",
+        ),
+    ];
+    f.actions("edit", edits, |edit, value| {
         let Edit {
             args,
             session,
             selection,
             ..
         } = edit;
-        match event {
-            CanvasEvent::Move {
-                key,
-                from,
-                to,
-                done,
-                shift,
-                ..
-            } => {
-                let base = session
-                    .drag
-                    .get_or_insert_with(|| args.cage.clone())
-                    .clone();
-                let keys = if selection.contains(key) {
-                    selection.clone()
-                } else {
-                    vec![key.clone()]
-                };
-                let by = [0, 1, 2].map(|c| {
-                    // Where the pointer is: a free choice, made by whoever
-                    // moved it.
-                    let d = to[c].sub(from[c]).to_f64();
-                    if *shift {
-                        d
-                    } else {
-                        (d / DRAG_SNAP).round() * DRAG_SNAP
-                    }
-                });
-                let mut cage = base;
-                let vertices = cage.vertices_of(&keys);
-                cage.transform(&vertices, args.mirror, |p| [0, 1, 2].map(|c| p[c] + by[c]));
+        let (edges, faces) = selected(selection);
+        let mut cage = args.cage.clone();
+        let done: GeopResult<()> = match value {
+            "extrude" => cage.extrude(
+                &faces,
+                session.distance.unwrap_or(DEFAULT_DISTANCE),
+                args.mirror,
+            ),
+            "insert_loop" => edges.iter().try_for_each(|&[a, b]| cage.insert_loop(a, b)),
+            "crease" => {
+                cage.set_crease(&edges, true);
+                Ok(())
+            }
+            "smooth" => {
+                cage.set_crease(&edges, false);
+                Ok(())
+            }
+            "delete" => {
+                cage.delete_faces(&faces);
+                Ok(())
+            }
+            _ => return,
+        };
+        match done {
+            Ok(()) => {
                 args.cage = cage;
+                session.problem = None;
                 session.relative = None;
-                if *done {
-                    session.drag = None;
-                }
+                prune(selection, &args.cage);
             }
-            CanvasEvent::Gizmo { drag, .. } => {
-                let vertices = args.cage.vertices_of(selection);
-                args.cage
-                    .transform(&vertices, args.mirror, |p| drag.apply_f64(p));
+            Err(e) => session.problem = Some(e.root_message().to_string()),
+        }
+    });
+    f.form.visuals = cage_visuals(args);
+    f.form.selection = selection.to_vec();
+    f
+}
+
+/// A cage element dragged: what is selected, if it is, else it alone,
+/// moved as far as the pointer, snapped to [`DRAG_SNAP`] unless shift is
+/// held. The gizmo dragged: what is selected moved, turned or scaled as the
+/// drag did. Escape clears the selection; Delete deletes the faces
+/// selected.
+fn on_canvas(edit: Edit<'_, SubdArgs, SubdSession>, event: &CanvasEvent<Design>) {
+    let Edit {
+        args,
+        session,
+        selection,
+        ..
+    } = edit;
+    match event {
+        CanvasEvent::Move {
+            key,
+            from,
+            to,
+            done,
+            shift,
+            ..
+        } => {
+            let base = session
+                .drag
+                .get_or_insert_with(|| args.cage.clone())
+                .clone();
+            let keys = if selection.contains(key) {
+                selection.clone()
+            } else {
+                vec![key.clone()]
+            };
+            let by = [0, 1, 2].map(|c| {
+                // Where the pointer is: a free choice, made by whoever
+                // moved it.
+                let d = to[c].sub(from[c]).to_f64();
+                if *shift {
+                    d
+                } else {
+                    (d / DRAG_SNAP).round() * DRAG_SNAP
+                }
+            });
+            let mut cage = base;
+            let vertices = cage.vertices_of(&keys);
+            cage.transform(&vertices, args.mirror, |p| [0, 1, 2].map(|c| p[c] + by[c]));
+            args.cage = cage;
+            session.relative = None;
+            if *done {
+                session.drag = None;
+            }
+        }
+        CanvasEvent::Gizmo { drag, .. } => {
+            let vertices = args.cage.vertices_of(selection);
+            args.cage
+                .transform(&vertices, args.mirror, |p| drag.apply_f64(p));
+            session.relative = None;
+        }
+        CanvasEvent::Delete => {
+            let (_, faces) = selected(selection);
+            if !faces.is_empty() {
+                args.cage.delete_faces(&faces);
                 session.relative = None;
+                prune(selection, &args.cage);
             }
-            CanvasEvent::Delete => {
-                let (_, faces) = selected(selection);
-                if !faces.is_empty() {
-                    args.cage.delete_faces(&faces);
-                    session.relative = None;
-                    prune(selection, &args.cage);
-                }
-            }
-            _ => {}
+        }
+        _ => {}
+    }
+}
+
+/// Builds the limit surface of `args`' cage into `model` as the step
+/// `step` (see [`Subd`]): in any scalar, as a test builds it.
+pub fn build_subd<S: Scalar>(
+    model: &mut NamedModel<S>,
+    step: &str,
+    args: &SubdArgs,
+) -> GeopResult<()> {
+    let ctx = with_context!("subd({step})");
+    let namer = Namer::new("subd", step)?;
+    let mesh = Mesh::new(&args.cage, args.mirror).with_context(ctx)?;
+    let (spec, names) = limit_body::<S>(&mesh, &namer).with_context(ctx)?;
+    model.build_body(spec, names).with_context(ctx)?;
+    Ok(())
+}
+
+impl ModelStep for Subd {
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &SubdArgs,
+    ) -> GeopResult<()> {
+        build_subd(model, step, args)
+    }
+}
+
+impl Operation for Subd {
+    const INFO: OperationInfo = OperationInfo::new(
+        "subd",
+        "SubD",
+        "Shape a freeform body by dragging the vertices, edges and faces of a control cage, built as its smooth subdivision surface.",
+        OperationGroup::Surface,
+        OperationTier::Big,
+    );
+    type Args = SubdArgs;
+    type EditingState = SubdEditing;
+    type Input = Input;
+    type State = ParamValue;
+
+    /// A box cage, two units a side, around the origin.
+    fn new_args(_: &Context<Input, ParamValue>) -> SubdArgs {
+        SubdArgs {
+            cage: Cage::cuboid([2.0, 2.0, 2.0]),
+            mirror: Mirror::None,
         }
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    fn run(step: &str, part: &mut Build, args: &SubdArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
+    }
+
+    fn presentation(
+        _: &Context<Input, ParamValue>,
         args: &SubdArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("subd({operation_id})");
-        let namer = Namer::new("subd", operation_id)?;
-        let mesh = Mesh::new(&args.cage, args.mirror).with_context(ctx)?;
-        let (spec, names) = limit_body::<S>(&mesh, &namer).with_context(ctx)?;
-        part.build_body(spec, names).with_context(ctx)?;
-        Ok(part)
+        editing: &SubdEditing,
+    ) -> Form<Design> {
+        form(args, &editing.session, &editing.selection).into_form()
+    }
+
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
+        args: &SubdArgs,
+        editing: &SubdEditing,
+        event: Event<Design>,
+    ) -> (SubdArgs, SubdEditing) {
+        editing.handle(args, event, form, on_canvas)
     }
 }

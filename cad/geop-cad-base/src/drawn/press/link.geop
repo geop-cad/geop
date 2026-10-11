@@ -209,9 +209,10 @@
           "symmetric": true,
           "reversed": false
         },
-        "face": false,
-        "combine": {
-          "mode": "new_body"
+        "output": {
+          "solid": {
+            "mode": "new_body"
+          }
         }
       }
     },
@@ -547,10 +548,12 @@
           "symmetric": true,
           "reversed": false
         },
-        "face": false,
-        "combine": {
-          "mode": "intersection",
-          "target": "extrude(extrude1)"
+        "output": {
+          "solid": {
+            "mode": "with",
+            "op": "intersection",
+            "target": "extrude(extrude1)"
+          }
         }
       }
     }

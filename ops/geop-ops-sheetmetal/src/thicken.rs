@@ -26,7 +26,7 @@ use geop_core_topology::{
     Curve3, Sense,
     build::{BodySpec, BuiltBody, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
-use geop_ops::{BodyNames, Namer, Part};
+use geop_ops::{BodyNames, NamedModel, Namer};
 use geop_ops_extrude_revolve::common::{line2, line3};
 
 /// A vertex of the A side, and where it is on the B side.
@@ -172,7 +172,7 @@ fn wall<S: Scalar>(edge: &SheetEdge<S>) -> GeopResult<NurbSurface3D<S>> {
 /// one leaving, so that the walls close up around it: the sheet is a
 /// surface with a boundary, not two touching at a point.
 pub fn thicken<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     sheet: &SheetSurface<S>,
     solid: &str,
     rename: &dyn Fn(String) -> String,
@@ -319,7 +319,7 @@ pub fn thicken<S: Scalar>(
         names.faces.push(rename(edge.name.root()));
     }
     spec.shells = vec![(0..spec.faces.len()).collect()];
-    part.build_body(spec, names).with_context(ctx)
+    model.build_body(spec, names).with_context(ctx)
 }
 
 /// `curve` moved by `shift` in its plane: every homogeneous control point

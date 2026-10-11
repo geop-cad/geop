@@ -6,7 +6,7 @@ use crate::geop_error::{GeopError, GeopResult};
 // ── IEEE 754 outward-rounding helpers ─────────────────────────────────────────
 
 #[inline]
-fn next_up(x: f64) -> f64 {
+pub(super) fn next_up(x: f64) -> f64 {
     if x.is_nan() {
         return x;
     }
@@ -22,7 +22,7 @@ fn next_up(x: f64) -> f64 {
 }
 
 #[inline]
-fn next_down(x: f64) -> f64 {
+pub(super) fn next_down(x: f64) -> f64 {
     if x.is_nan() {
         return x;
     }
@@ -54,7 +54,13 @@ fn contains_periodic(lo: f64, hi: f64, target: f64, period: f64) -> bool {
 /// (`could_be_periodic`) rather than hunted for numerically, and the sampled
 /// endpoint values are widened outward by a further ULP against roundoff in
 /// the libm call itself.
-fn interval_trig(lo: f64, hi: f64, f: impl Fn(f64) -> f64, max_at: f64, min_at: f64) -> (f64, f64) {
+pub(super) fn interval_trig(
+    lo: f64,
+    hi: f64,
+    f: impl Fn(f64) -> f64,
+    max_at: f64,
+    min_at: f64,
+) -> (f64, f64) {
     use std::f64::consts::TAU;
     if !lo.is_finite() || !hi.is_finite() || hi - lo >= TAU {
         return (-1.0, 1.0);
@@ -158,10 +164,6 @@ impl Scalar for ScalInF64 {
     const PI: Self = ScalInF64 {
         lo: std::f64::consts::PI,   // rounded value is a lower bound for π
         hi: 3.1415926535897936_f64, // next_up(π)
-    };
-    const E: Self = ScalInF64 {
-        lo: std::f64::consts::E, // rounded value is a lower bound for e
-        hi: 2.7182818284590455_f64,
     };
     const INFINITY: Self = ScalInF64 {
         lo: f64::INFINITY,
@@ -339,49 +341,6 @@ impl Scalar for ScalInF64 {
     #[inline]
     fn is_subset_of(self, other: Self) -> bool {
         other.lo <= self.lo && self.hi <= other.hi
-    }
-}
-
-impl core::ops::Add for ScalInF64 {
-    type Output = Self;
-    #[inline]
-    fn add(self, rhs: Self) -> Self {
-        Ring::add(self, rhs)
-    }
-}
-impl core::ops::Sub for ScalInF64 {
-    type Output = Self;
-    #[inline]
-    fn sub(self, rhs: Self) -> Self {
-        Ring::sub(self, rhs)
-    }
-}
-impl core::ops::Mul for ScalInF64 {
-    type Output = Self;
-    #[inline]
-    fn mul(self, rhs: Self) -> Self {
-        Ring::mul(self, rhs)
-    }
-}
-impl core::ops::Neg for ScalInF64 {
-    type Output = Self;
-    #[inline]
-    fn neg(self) -> Self {
-        Ring::neg(self)
-    }
-}
-
-impl From<i64> for ScalInF64 {
-    #[inline]
-    fn from(v: i64) -> Self {
-        ScalInF64::from_i64(v)
-    }
-}
-
-impl From<f64> for ScalInF64 {
-    #[inline]
-    fn from(v: f64) -> Self {
-        ScalInF64::degenerate(v)
     }
 }
 

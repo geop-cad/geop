@@ -6,3 +6,5 @@ edition.workspace = true
 [dependencies]
 geop-core-math.workspace = true
 geop-core-geometry.workspace = true
+# The arenas of `Model`: a copy shares every entity the copy does not edit.
+imbl.workspace = true

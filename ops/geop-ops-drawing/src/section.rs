@@ -8,7 +8,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::{FaceId, Model, SolidId};
-use geop_ops::{Namer, Part, operation::frame_along};
+use geop_ops::{NamedModel, Namer, operation::frame_along};
 use geop_ops_booleans::{
     boolean::{BooleanOp, boolean},
     remesh::remesh::RemeshParams,
@@ -34,20 +34,20 @@ fn bounds<S: Scalar>(model: &Model<S>) -> GeopResult<[[f64; 2]; 3]> {
     Ok(b)
 }
 
-/// `part` with every solid cut by the plane through `origin` normal to the
+/// `model` with every solid cut by the plane through `origin` normal to the
 /// unit vector `normal`, the side `normal` points to taken away. A solid
 /// wholly on that side is gone; faces standing on their own are left whole.
 pub fn section_part<S: Scalar>(
-    part: &Part<S>,
+    model: &NamedModel<S>,
     origin: &Vector3<S>,
     normal: &Vector3<S>,
-) -> GeopResult<Part<S>> {
+) -> GeopResult<NamedModel<S>> {
     let ctx = |e: GeopError| {
         e.with_context(format!(
             "section_part(origin={origin:?}, normal={normal:?})"
         ))
     };
-    let mut cut = part.clone();
+    let mut cut = model.clone();
     let mut solids: Vec<SolidId> = cut.topology().solids.keys().copied().collect();
     solids.sort_by_key(|s| s.0);
     if solids.is_empty() {

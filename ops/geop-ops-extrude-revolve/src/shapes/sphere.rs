@@ -25,7 +25,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3, Vector4},
 };
 use geop_core_topology::{CoedgeId, SolidId};
-use geop_ops::{Namer, Part};
+use geop_ops::{NamedModel, Namer};
 
 /// Bridges a quadrant face's own `(u, v)` boundary-loop gap at a pole it
 /// touches on its `v = 0` side: the face's two meridian edges meet at the
@@ -35,27 +35,29 @@ use geop_ops::{Namer, Part};
 /// `contains::face::face_contains`, which relies on the pcurves alone
 /// tracing a closed polygon. `at` is the coedge right after the gap; the
 /// bridge, a degenerate coedge sitting at the pole, goes right before it.
-fn close_top_pole_gap<S: Scalar>(part: &mut Part<S>, at: CoedgeId) -> GeopResult<()> {
-    let before = part.topology().get_coedge(at)?.prev;
-    let pole = part.topology().coedge_end_vertex_id(before)?;
+fn close_top_pole_gap<S: Scalar>(model: &mut NamedModel<S>, at: CoedgeId) -> GeopResult<()> {
+    let before = model.topology().get_coedge(at)?.prev;
+    let pole = model.topology().coedge_end_vertex_id(before)?;
     let pcurve = line2(
         Vector2::from_array([S::ZERO, S::ZERO]),
         Vector2::from_array([S::ONE, S::ZERO]),
     )?;
-    part.add_vertex_coedge(before, pole, pcurve)
+    model
+        .add_vertex_coedge(before, pole, pcurve)
         .with_context("sphere: closing top-pole pcurve gap failed")?;
     Ok(())
 }
 
 /// Like [`close_top_pole_gap`], for a pole on a quadrant's `v = 1` side:
 /// the gap sits right *after* `at`, so the bridge grows from `at` itself.
-fn close_bottom_pole_gap<S: Scalar>(part: &mut Part<S>, at: CoedgeId) -> GeopResult<()> {
-    let pole = part.topology().coedge_end_vertex_id(at)?;
+fn close_bottom_pole_gap<S: Scalar>(model: &mut NamedModel<S>, at: CoedgeId) -> GeopResult<()> {
+    let pole = model.topology().coedge_end_vertex_id(at)?;
     let pcurve = line2(
         Vector2::from_array([S::ONE, S::ONE]),
         Vector2::from_array([S::ZERO, S::ONE]),
     )?;
-    part.add_vertex_coedge(at, pole, pcurve)
+    model
+        .add_vertex_coedge(at, pole, pcurve)
         .with_context("sphere: closing bottom-pole pcurve gap failed")?;
     Ok(())
 }
@@ -197,7 +199,7 @@ fn sphere_quadrant_surface<S: Scalar>(
 /// equator to each pole, and the eight quadrant faces
 /// `N(north,q0..)`/`N(south,q0..)`.
 pub fn sphere_solid<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     name: &str,
     center: Vector3<S>,
     radius: S,
@@ -237,7 +239,7 @@ pub fn sphere_solid<S: Scalar>(
 
     // The placeholder face ends up as the last south quadrant.
     let (v_north, face0, solid_id) =
-        part.mvfs(north, n(&["north"]), n(&["south", "q3"]), namer.root())?;
+        model.mvfs(north, n(&["north"]), n(&["south", "q3"]), namer.root())?;
 
     // The profile: north -> equator(0) -> south, meridian 0's own two
     // halves (each an exact 90-degree arc) — `north_anchor`/`south_anchor`
@@ -245,7 +247,7 @@ pub fn sphere_solid<S: Scalar>(
     // `mirror_north0`/`mirror_south0` (meridian 0's *other* two coedges)
     // stay unused until the very last quadrant, which closes back onto
     // them instead of minting a new meridian 4 (= meridian 0).
-    let (_, north_anchor0, mirror_north0, _) = part.mve_from_vertex(
+    let (_, north_anchor0, mirror_north0, _) = model.mve_from_vertex(
         face0,
         v_north,
         arc(north, equator(0))?,
@@ -255,7 +257,7 @@ pub fn sphere_solid<S: Scalar>(
         n(&["equator", "a0"]),
         n(&["north", "a0"]),
     )?;
-    let (_, south_anchor0, mirror_south0, _) = part.mve(
+    let (_, south_anchor0, mirror_south0, _) = model.mve(
         north_anchor0,
         arc(equator(0), south)?,
         meridian_pcurve()?,
@@ -270,7 +272,7 @@ pub fn sphere_solid<S: Scalar>(
     for k in 0..3 {
         let k1 = k + 1;
         let (q, a1) = (format!("q{k}"), format!("a{k1}"));
-        let (_, beam_fwd, beam_rev, _) = part.mve(
+        let (_, beam_fwd, beam_rev, _) = model.mve(
             north_anchor,
             arc_beam(k, k1)?,
             beam_pcurve_north()?,
@@ -280,7 +282,7 @@ pub fn sphere_solid<S: Scalar>(
             n(&["equator", &q]),
         )?;
 
-        let (_, _, _, next_north_anchor) = part.mef(
+        let (_, _, _, next_north_anchor) = model.mef(
             beam_fwd,
             north_anchor,
             arc(equator(k1), north)?,
@@ -290,8 +292,8 @@ pub fn sphere_solid<S: Scalar>(
             n(&["north", &a1]),
             n(&["north", &q]),
         )?;
-        close_top_pole_gap(part, north_anchor)?;
-        let (_, _, _, next_south_anchor) = part.mef(
+        close_top_pole_gap(model, north_anchor)?;
+        let (_, _, _, next_south_anchor) = model.mef(
             south_anchor,
             beam_rev,
             arc(south, equator(k1))?,
@@ -301,7 +303,7 @@ pub fn sphere_solid<S: Scalar>(
             n(&["south", &a1]),
             n(&["south", &q]),
         )?;
-        close_bottom_pole_gap(part, south_anchor)?;
+        close_bottom_pole_gap(model, south_anchor)?;
 
         north_anchor = next_north_anchor;
         south_anchor = next_south_anchor;
@@ -313,7 +315,7 @@ pub fn sphere_solid<S: Scalar>(
     // `equator(0)` on its own. Only the north quadrant needs this `mef` —
     // the south one (`south_anchor`, `mirror_south0`, and this same beam,
     // reversed) is already exactly what's left on the placeholder face.
-    part.mef(
+    model.mef(
         north_anchor,
         mirror_north0,
         arc_beam(3, 0)?,
@@ -323,13 +325,13 @@ pub fn sphere_solid<S: Scalar>(
         n(&["equator", "q3"]),
         n(&["north", "q3"]),
     )?;
-    close_top_pole_gap(part, north_anchor)?;
+    close_top_pole_gap(model, north_anchor)?;
     let _ = mirror_south0;
 
     // The placeholder's own remaining ring is now exactly the south
     // quadrant's boundary — give it the real surface to match.
-    close_bottom_pole_gap(part, south_anchor)?;
-    part.replace_face(face0, south_quadrant(3, 0)?)?;
+    close_bottom_pole_gap(model, south_anchor)?;
+    model.replace_face(face0, south_quadrant(3, 0)?)?;
 
     Ok(solid_id)
 }
@@ -337,22 +339,17 @@ pub fn sphere_solid<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::testing::{assert_valid, render};
     use geop_core_math::for_all_scalars;
-    use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
 
     fn check_offset_sphere_is_valid<S: Scalar>() {
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         let center = Vector3::from_array([S::from_f64(1.0), S::from_f64(-0.5), S::from_f64(0.5)]);
-        sphere_solid(&mut part, "t1", center, S::from_f64(2.0)).unwrap();
-        let model = part.topology();
+        sphere_solid(&mut model, "t1", center, S::from_f64(2.0)).unwrap();
+        let topology = model.topology();
 
-        let params = ValidationParameters::default();
-        if let Err(e) = validate(&params, model) {
-            panic!("{e:?}");
-        }
-        if let Err(e) = validate_manifold(&params, model) {
-            panic!("{e:?}");
-        }
+        assert_valid(topology);
+        render(topology, 32, "offset_sphere_topology.html");
     }
     #[test]
     fn offset_sphere_is_valid() {
@@ -360,12 +357,12 @@ mod tests {
     }
 
     fn check_sphere_solid_normals_point_outward<S: Scalar>() {
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         let center = Vector3::from_array([S::ZERO; 3]);
-        sphere_solid(&mut part, "t2", center, S::ONE).unwrap();
-        let model = part.topology();
+        sphere_solid(&mut model, "t2", center, S::ONE).unwrap();
+        let topology = model.topology();
 
-        for face in model.faces.values() {
+        for face in topology.faces.values() {
             let (u0, u1) = face.surface.domain_u();
             let (v0, v1) = face.surface.domain_v();
             let mid_u = u0.add(u1.sub(u0).mul(S::from_f64(0.5)));
@@ -383,18 +380,13 @@ mod tests {
     }
 
     fn check_sphere_solid_is_valid<S: Scalar>() {
-        let mut part = Part::<S>::new();
-        sphere_solid(&mut part, "t3", Vector3::from_array([S::ZERO; 3]), S::ONE).unwrap();
-        let model = part.topology();
-        assert_eq!(model.faces.len(), 8);
+        let mut model = NamedModel::<S>::new();
+        sphere_solid(&mut model, "t3", Vector3::from_array([S::ZERO; 3]), S::ONE).unwrap();
+        let topology = model.topology();
+        assert_eq!(topology.faces.len(), 8);
 
-        let params = ValidationParameters::default();
-        if let Err(e) = validate(&params, model) {
-            panic!("{e:?}");
-        }
-        if let Err(e) = validate_manifold(&params, model) {
-            panic!("{e:?}");
-        }
+        assert_valid(topology);
+        render(topology, 32, "sphere_topology.html");
     }
     #[test]
     fn sphere_solid_is_valid() {
@@ -413,25 +405,25 @@ mod tests {
     /// is what makes it bite: the corners of a degenerate patch still sit on
     /// the sphere.
     fn check_sphere_solid_face_midpoints_are_on_the_sphere<S: Scalar>() {
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         let center = Vector3::from_array([S::from_f64(1.0), S::from_f64(-0.5), S::from_f64(0.5)]);
         let radius = S::from_f64(2.0);
-        let solid = sphere_solid(&mut part, "t4", center, radius).unwrap();
-        let model = part.topology();
+        let solid = sphere_solid(&mut model, "t4", center, radius).unwrap();
+        let topology = model.topology();
 
-        let faces = model.solid_faces(solid).unwrap();
+        let faces = topology.solid_faces(solid).unwrap();
         assert_eq!(faces.len(), 8, "a sphere is exactly 8 octants");
 
         let radius_sq = radius.mul(radius);
         for face_id in faces {
-            let face = model.get_face(face_id).unwrap();
+            let face = topology.get_face(face_id).unwrap();
             assert!(
                 !face.surface.is_everything(),
                 "face {face_id} still carries the `everything` placeholder surface"
             );
 
             let (u, v) = geop_core_topology::contains::face::face_interior_point(
-                model,
+                topology,
                 face_id,
                 20000,
                 S::from_f64(1e-4),
@@ -508,11 +500,11 @@ mod tests {
     /// — so, sampled anywhere (not just at control points), both must land
     /// exactly `radius` away from `center`.
     fn check_sphere_solid_points_on_sphere<S: Scalar>() {
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         let center = Vector3::from_array([S::from_f64(1.0), S::from_f64(-0.5), S::from_f64(0.5)]);
         let radius = S::from_f64(2.0);
-        sphere_solid(&mut part, "t5", center, radius).unwrap();
-        let model = part.topology();
+        sphere_solid(&mut model, "t5", center, radius).unwrap();
+        let topology = model.topology();
 
         let radius_sq = radius.mul(radius);
         let assert_on_sphere = |p: Vector3<S>, ctx: &str| {
@@ -524,7 +516,7 @@ mod tests {
             );
         };
 
-        for edge in model.edges.values() {
+        for edge in topology.edges.values() {
             let (t0, t1) = edge.curve.domain();
             for i in 0..=8 {
                 let t = t0.add(t1.sub(t0).mul(S::from_ratio(i as i64, 8).unwrap()));
@@ -533,7 +525,7 @@ mod tests {
             }
         }
 
-        for face in model.faces.values() {
+        for face in topology.faces.values() {
             let (u0, u1) = face.surface.domain_u();
             let (v0, v1) = face.surface.domain_v();
             for i in 0..=8 {
@@ -549,46 +541,5 @@ mod tests {
     #[test]
     fn sphere_solid_points_on_sphere() {
         for_all_scalars!(check_sphere_solid_points_on_sphere);
-    }
-
-    fn check_rasterize_topology_sphere<S: Scalar>() {
-        let mut part = Part::<S>::new();
-        sphere_solid(&mut part, "t6", Vector3::from_array([S::ZERO; 3]), S::ONE).unwrap();
-        let model = part.topology();
-
-        let scene = geop_ops_rasterize::debug::rasterize_topology(model, 32).unwrap();
-        assert!(!scene.points.is_empty());
-        assert!(!scene.lines.is_empty());
-        assert!(!scene.triangles_transparent.is_empty());
-        assert!(!scene.labels.is_empty());
-
-        std::fs::create_dir_all("outputs").unwrap();
-        scene.save_to_file("outputs/sphere_topology.html").unwrap();
-    }
-    #[test]
-    fn rasterize_topology_sphere() {
-        for_all_scalars!(check_rasterize_topology_sphere);
-    }
-
-    fn check_rasterize_topology_offset_sphere<S: Scalar>() {
-        let mut part = Part::<S>::new();
-        let center = Vector3::from_array([S::from_f64(1.0), S::from_f64(-0.5), S::from_f64(0.5)]);
-        sphere_solid(&mut part, "t7", center, S::from_f64(2.0)).unwrap();
-        let model = part.topology();
-
-        let scene = geop_ops_rasterize::debug::rasterize_topology(model, 32).unwrap();
-        assert!(!scene.points.is_empty());
-        assert!(!scene.lines.is_empty());
-        assert!(!scene.triangles_transparent.is_empty());
-        assert!(!scene.labels.is_empty());
-
-        std::fs::create_dir_all("outputs").unwrap();
-        scene
-            .save_to_file("outputs/offset_sphere_topology.html")
-            .unwrap();
-    }
-    #[test]
-    fn rasterize_topology_offset_sphere() {
-        for_all_scalars!(check_rasterize_topology_offset_sphere);
     }
 }

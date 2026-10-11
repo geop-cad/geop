@@ -2,7 +2,7 @@
 //! how much they hold, what they are named, and what is refused.
 
 use geop_core_math::{
-    primitives::{DatumComponent, FrameAxis},
+    primitives::FrameAxis,
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
@@ -10,21 +10,22 @@ use geop_core_topology::{
     Body,
     validation::{ValidationParameters, validate},
 };
-use geop_ops::{EntityRef, NoFiles, ORIGIN, Operation, Part};
+use geop_ops::BooleanOp;
+use geop_ops::{EntityRef, NamedModel, operation::apply_to_model, origin_axis, origin_plane};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::shapes::cube_solid;
 use geop_ops_rasterize::{rasterize, stl::stl_triangles};
 
 use crate::{
     CircularPattern, CircularPatternArgs, Direction, LinearPattern, LinearPatternArgs, Mirror,
-    MirrorArgs, MoveBody, MoveBodyArgs, Spacing,
+    MirrorArgs, MoveBody, MoveBodyArgs, Seeds, Spacing,
 };
 
 fn v3(x: f64, y: f64, z: f64) -> Vector3<S> {
     Vector3::from_array([x, y, z].map(S::from_f64))
 }
 
-pub(crate) fn assert_valid(part: &Part<S>) {
+pub(crate) fn assert_valid(part: &NamedModel<S>) {
     if let Err(errors) = validate(&ValidationParameters::default(), part.topology()) {
         let messages: Vec<String> = errors.iter().map(|e| format!("{e:?}")).collect();
         panic!("{} errors:\n{}", messages.len(), messages.join("\n"));
@@ -34,7 +35,7 @@ pub(crate) fn assert_valid(part: &Part<S>) {
 
 /// The volume the solid named `solid` encloses, from its mesh as drawn:
 /// negative if its faces point in.
-pub(crate) fn volume(part: &Part<S>, solid: &str) -> f64 {
+pub(crate) fn volume(part: &NamedModel<S>, solid: &str) -> f64 {
     let id = part.solid_id(solid).unwrap();
     let faces = part.topology().body_faces(Body::Solid(id)).unwrap();
     let raster = rasterize(part.topology(), 16).unwrap();
@@ -50,7 +51,7 @@ pub(crate) fn volume(part: &Part<S>, solid: &str) -> f64 {
 }
 
 /// The lowest corner of the solid named `solid`, by midpoints.
-fn min_corner(part: &Part<S>, solid: &str) -> [f64; 3] {
+fn min_corner(part: &NamedModel<S>, solid: &str) -> [f64; 3] {
     let id = part.solid_id(solid).unwrap();
     let model = part.topology();
     let mut min = [f64::INFINITY; 3];
@@ -68,8 +69,8 @@ fn close(a: [f64; 3], b: [f64; 3]) -> bool {
 }
 
 /// A unit cube at `min`, named `cube(c)`.
-fn cube_at(min: [f64; 3]) -> Part<S> {
-    let mut part = Part::new();
+fn cube_at(min: [f64; 3]) -> NamedModel<S> {
+    let mut part = NamedModel::new();
     cube_solid(
         &mut part,
         "c",
@@ -87,10 +88,7 @@ fn cube() -> Vec<EntityRef> {
 }
 
 fn axis(axis: FrameAxis) -> Option<EntityRef> {
-    Some(EntityRef::datum_component(
-        ORIGIN,
-        DatumComponent::Axis(axis),
-    ))
+    Some(origin_axis(axis))
 }
 
 fn along(a: FrameAxis, count: usize, spacing: Spacing) -> Direction {
@@ -107,15 +105,11 @@ fn along(a: FrameAxis, count: usize, spacing: Spacing) -> Direction {
 #[test]
 fn row_of_new_bodies() {
     let args = LinearPatternArgs {
-        features: Vec::new(),
-        bodies: cube(),
+        seeds: Seeds::bodies(cube(), Combine::NewBody),
         first: along(FrameAxis::X, 3, Spacing::step(2.0)),
         second: None,
-        combine: Combine::NewBody,
     };
-    let part = LinearPattern
-        .apply(cube_at([0.0; 3]), "p", &args, &NoFiles)
-        .unwrap();
+    let part = apply_to_model::<LinearPattern>(cube_at([0.0; 3]), "p", &args).unwrap();
     assert_valid(&part);
     assert_eq!(
         part.solid_names(),
@@ -139,15 +133,11 @@ fn row_over_a_total_reversed() {
     let mut first = along(FrameAxis::Y, 4, Spacing::extent(6.0));
     first.reversed = true;
     let args = LinearPatternArgs {
-        features: Vec::new(),
-        bodies: cube(),
+        seeds: Seeds::bodies(cube(), Combine::NewBody),
         first,
         second: None,
-        combine: Combine::NewBody,
     };
-    let part = LinearPattern
-        .apply(cube_at([0.0; 3]), "p", &args, &NoFiles)
-        .unwrap();
+    let part = apply_to_model::<LinearPattern>(cube_at([0.0; 3]), "p", &args).unwrap();
     assert_valid(&part);
     assert!(close(
         min_corner(&part, "linear_pattern(p,3,cube(c))"),
@@ -160,17 +150,17 @@ fn row_over_a_total_reversed() {
 #[test]
 fn overlapping_copies_joined_to_the_seed() {
     let args = LinearPatternArgs {
-        features: Vec::new(),
-        bodies: cube(),
+        seeds: Seeds::bodies(
+            cube(),
+            Combine::With {
+                op: BooleanOp::Union,
+                target: "cube(c)".into(),
+            },
+        ),
         first: along(FrameAxis::X, 3, Spacing::step(0.5)),
         second: None,
-        combine: Combine::Union {
-            target: "cube(c)".into(),
-        },
     };
-    let part = LinearPattern
-        .apply(cube_at([0.0; 3]), "p", &args, &NoFiles)
-        .unwrap();
+    let part = apply_to_model::<LinearPattern>(cube_at([0.0; 3]), "p", &args).unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["linear_pattern(p)"]);
     assert!((volume(&part, "linear_pattern(p)") - 2.0).abs() < 1e-6);
@@ -180,15 +170,11 @@ fn overlapping_copies_joined_to_the_seed() {
 #[test]
 fn grid_of_new_bodies() {
     let args = LinearPatternArgs {
-        features: Vec::new(),
-        bodies: cube(),
+        seeds: Seeds::bodies(cube(), Combine::NewBody),
         first: along(FrameAxis::X, 2, Spacing::step(2.0)),
         second: Some(along(FrameAxis::Y, 3, Spacing::step(1.5))),
-        combine: Combine::NewBody,
     };
-    let part = LinearPattern
-        .apply(cube_at([0.0; 3]), "p", &args, &NoFiles)
-        .unwrap();
+    let part = apply_to_model::<LinearPattern>(cube_at([0.0; 3]), "p", &args).unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names().len(), 6);
     assert!(close(
@@ -205,16 +191,12 @@ fn grid_of_new_bodies() {
 #[test]
 fn parallel_grid_is_refused() {
     let args = LinearPatternArgs {
-        features: Vec::new(),
-        bodies: cube(),
+        seeds: Seeds::bodies(cube(), Combine::NewBody),
         first: along(FrameAxis::X, 2, Spacing::step(2.0)),
         second: Some(along(FrameAxis::X, 2, Spacing::step(3.0))),
-        combine: Combine::NewBody,
     };
-    let error = LinearPattern
-        .apply(cube_at([0.0; 3]), "p", &args, &NoFiles)
-        .err()
-        .expect("refused");
+    let error =
+        apply_to_model::<LinearPattern>(cube_at([0.0; 3]), "p", &args).expect_err("refused");
     assert!(error.root_message().contains("parallel"), "{error:?}");
 }
 
@@ -223,17 +205,13 @@ fn parallel_grid_is_refused() {
 #[test]
 fn full_turn_around_an_axis() {
     let args = CircularPatternArgs {
-        features: Vec::new(),
-        bodies: cube(),
+        seeds: Seeds::bodies(cube(), Combine::NewBody),
         axis: axis(FrameAxis::Z),
         reversed: false,
         count: 6.0.into(),
         angle: Spacing::extent(360.0),
-        combine: Combine::NewBody,
     };
-    let part = CircularPattern
-        .apply(cube_at([2.0, -0.5, 0.0]), "r", &args, &NoFiles)
-        .unwrap();
+    let part = apply_to_model::<CircularPattern>(cube_at([2.0, -0.5, 0.0]), "r", &args).unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names().len(), 6);
     assert!(close(
@@ -248,18 +226,14 @@ fn full_turn_around_an_axis() {
 #[test]
 fn coming_round_again_is_refused() {
     let args = CircularPatternArgs {
-        features: Vec::new(),
-        bodies: cube(),
+        seeds: Seeds::bodies(cube(), Combine::NewBody),
         axis: axis(FrameAxis::Z),
         reversed: false,
         count: 7.0.into(),
         angle: Spacing::step(60.0),
-        combine: Combine::NewBody,
     };
-    let error = CircularPattern
-        .apply(cube_at([2.0, 0.0, 0.0]), "r", &args, &NoFiles)
-        .err()
-        .expect("refused");
+    let error = apply_to_model::<CircularPattern>(cube_at([2.0, 0.0, 0.0]), "r", &args)
+        .expect_err("refused");
     assert!(error.root_message().contains("come round"), "{error:?}");
 }
 
@@ -268,17 +242,10 @@ fn coming_round_again_is_refused() {
 #[test]
 fn mirrored_cube_faces_out() {
     let args = MirrorArgs {
-        features: Vec::new(),
-        bodies: cube(),
-        plane: Some(EntityRef::datum_component(
-            ORIGIN,
-            DatumComponent::Plane(FrameAxis::X),
-        )),
-        combine: Combine::NewBody,
+        seeds: Seeds::bodies(cube(), Combine::NewBody),
+        plane: Some(origin_plane(FrameAxis::X)),
     };
-    let part = Mirror
-        .apply(cube_at([1.0, 0.0, 0.0]), "m", &args, &NoFiles)
-        .unwrap();
+    let part = apply_to_model::<Mirror>(cube_at([1.0, 0.0, 0.0]), "m", &args).unwrap();
     assert_valid(&part);
     assert!(close(
         min_corner(&part, "mirror(m,cube(c))"),
@@ -303,7 +270,7 @@ fn moved_body_keeps_its_names() {
         copy: false,
         combine: Combine::NewBody,
     };
-    let part = MoveBody.apply(before, "mv", &args, &NoFiles).unwrap();
+    let part = apply_to_model::<MoveBody>(before, "mv", &args).unwrap();
     assert_valid(&part);
     let mut after: Vec<String> = part.names().iter().map(|(_, n)| n.into()).collect();
     after.sort();
@@ -323,9 +290,7 @@ fn moved_copy() {
         copy: true,
         combine: Combine::NewBody,
     };
-    let part = MoveBody
-        .apply(cube_at([0.0; 3]), "mv", &args, &NoFiles)
-        .unwrap();
+    let part = apply_to_model::<MoveBody>(cube_at([0.0; 3]), "mv", &args).unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["cube(c)", "move(mv,cube(c))"]);
     assert!(close(
@@ -333,11 +298,7 @@ fn moved_copy() {
         [3.0, 0.0, 0.0]
     ));
     args.translation = [0.0; 3];
-    assert!(
-        MoveBody
-            .apply(cube_at([0.0; 3]), "mv", &args, &NoFiles)
-            .is_err()
-    );
+    assert!(apply_to_model::<MoveBody>(cube_at([0.0; 3]), "mv", &args).is_err());
 }
 
 /// A face standing on its own can be copied, but not joined or cut.
@@ -351,23 +312,17 @@ fn sheets_are_copied_not_combined() {
         name: "x(cube(c,end))".into(),
     }];
     let mut args = LinearPatternArgs {
-        features: Vec::new(),
-        bodies: sheet,
+        seeds: Seeds::bodies(sheet, Combine::NewBody),
         first: along(FrameAxis::Z, 2, Spacing::step(2.0)),
         second: None,
-        combine: Combine::NewBody,
     };
-    let copied = LinearPattern
-        .apply(part.clone(), "p", &args, &NoFiles)
-        .unwrap();
+    let copied = apply_to_model::<LinearPattern>(part.clone(), "p", &args).unwrap();
     assert_valid(&copied);
     assert!(copied.id_of("linear_pattern(p,1,x(cube(c,end)))").is_some());
-    args.combine = Combine::Union {
+    args.seeds.combine = Combine::With {
+        op: BooleanOp::Union,
         target: "cube(c)".into(),
     };
-    let error = LinearPattern
-        .apply(part, "p", &args, &NoFiles)
-        .err()
-        .expect("refused");
+    let error = apply_to_model::<LinearPattern>(part, "p", &args).expect_err("refused");
     assert!(error.root_message().contains("no solid"), "{error:?}");
 }

@@ -17,16 +17,19 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
+use geop_core_program::{
+    editing::{Choice, Event, Form, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_core_topology::{Body, FaceId, contains::face::face_interior_point};
 use geop_ops::{
-    Context, Library, Namer, Part,
-    operation::{EntityRef, Operation, Role},
-    ui::{Choice, Form},
+    Design, NamedModel, Namer, ParamValue,
+    operation::{Build, BuildReader, EntityRef, Input, ModelStep, Role, build_model},
 };
 use geop_ops_booleans::remesh::remesh::{RemeshParams, remesh};
 use serde::{Deserialize, Serialize};
 
-use crate::{MAX_NODES, min_subdivision_size, name_of, sheet_of};
+use crate::{MAX_NODES, min_subdivision_size, sheet_of};
 
 /// Which side of the cutting face a [`TrimSurface`] keeps, as its normal
 /// points.
@@ -59,86 +62,97 @@ pub struct TrimSurfaceArgs {
     pub keep: TrimKeep,
 }
 
+impl ModelStep for TrimSurface {
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &TrimSurfaceArgs,
+    ) -> GeopResult<()> {
+        let ctx = with_context!("trim_surface({step}, {args:?})");
+        let namer = Namer::new("trim", step)?;
+        let tool = model.face_id(&args.tool).with_context(ctx)?;
+        trim(model, &namer, &args.face, tool, args.keep).with_context(ctx)
+    }
+}
+
+impl TrimKeep {
+    fn key(self) -> &'static str {
+        match self {
+            TrimKeep::Front => "front",
+            TrimKeep::Back => "back",
+        }
+    }
+}
+
 impl Operation for TrimSurface {
+    const INFO: OperationInfo = OperationInfo::new(
+        "trim_surface",
+        "Trim surface",
+        "Cut a face standing on its own back to one side of another face.",
+        OperationGroup::Surface,
+        OperationTier::Menu,
+    )
+    .experimental();
     type Args = TrimSurfaceArgs;
-    type Session = ();
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
 
     /// Nothing picked yet, keeping the front.
-    fn new_args<S: Scalar>(&self, _before: &Part<S>) -> TrimSurfaceArgs {
+    fn new_args(_: &Context<Input, ParamValue>) -> TrimSurfaceArgs {
         TrimSurfaceArgs::default()
     }
 
-    /// The sheet and the tool, picked, and the side to keep.
-    fn form<'a, S: Scalar>(
-        &self,
-        _: Context<'a, S>,
-        args: &TrimSurfaceArgs,
-        _: &(),
-        _: &[String],
-    ) -> Form<'a, S, TrimSurfaceArgs> {
-        let mut f = Form::<S, TrimSurfaceArgs>::new();
-        f.reference(
-            "face",
-            "sheet",
-            EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face)),
-            &[Role::Sheet],
-            None,
-            false,
-            |e, picked| {
-                e.args.face = EntityRef::names_of(EntityRef::face, &picked)
-                    .pop()
-                    .unwrap_or_default()
-            },
-        );
-        f.reference(
-            "tool",
-            "cut with",
-            EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.tool)),
-            &[Role::Face],
-            None,
-            false,
-            |e, picked| {
-                e.args.tool = EntityRef::names_of(EntityRef::face, &picked)
-                    .pop()
-                    .unwrap_or_default()
-            },
-        );
-        let key = |k: TrimKeep| match k {
-            TrimKeep::Front => "front",
-            TrimKeep::Back => "back",
-        };
-        f.select(
-            "keep",
-            "keep",
-            key(args.keep),
-            vec![
-                Choice::new("front", "in front of the face"),
-                Choice::new("back", "behind the face"),
-            ],
-            false,
-            |args, choice| {
-                args.keep = if choice == "back" {
-                    TrimKeep::Back
-                } else {
-                    TrimKeep::Front
-                }
-            },
-        );
-        f
+    fn run(step: &str, part: &mut Build, args: &TrimSurfaceArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    /// The sheet and the tool, picked, and the side to keep.
+    fn presentation(
+        _: &Context<Input, ParamValue>,
         args: &TrimSurfaceArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("trim_surface({operation_id}, {args:?})");
-        let namer = Namer::new("trim", operation_id)?;
-        let tool = part.face_id(&args.tool).with_context(ctx)?;
-        trim(&mut part, &namer, &args.face, tool, args.keep).with_context(ctx)?;
-        Ok(part)
+        _: &(),
+    ) -> Form<Design> {
+        let mut form = Form::default();
+        let dialog = &mut form.dialog;
+        let face = EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face));
+        dialog.reference("face", "sheet", face, &[Role::Sheet], None, false);
+        let tool = EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.tool));
+        dialog.reference("tool", "cut with", tool, &[Role::Face], None, false);
+        let sides = vec![
+            Choice::new("front", "in front of the face"),
+            Choice::new("back", "behind the face"),
+        ];
+        dialog.select("keep", "keep", args.keep.key(), sides, false);
+        form
+    }
+
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
+        args: &TrimSurfaceArgs,
+        _: &(),
+        event: Event<Design>,
+    ) -> (TrimSurfaceArgs, ()) {
+        let mut args = args.clone();
+        let one = |picked: &[EntityRef]| {
+            (EntityRef::names_of(EntityRef::face, picked).pop()).unwrap_or_default()
+        };
+        if let Event::Field { key, value } = event {
+            match (key.as_str(), value) {
+                ("face", Value::Entities(picked)) => args.face = one(&picked),
+                ("tool", Value::Entities(picked)) => args.tool = one(&picked),
+                ("keep", Value::Choice(choice)) => {
+                    args.keep = if choice == "back" {
+                        TrimKeep::Back
+                    } else {
+                        TrimKeep::Front
+                    }
+                }
+                _ => {}
+            }
+        }
+        (args, ())
     }
 }
 
@@ -180,14 +194,14 @@ fn in_front<S: Scalar>(surface: &NurbSurface3D<S>, p: &Vector3<S>) -> GeopResult
 /// Cuts the sheet of the face named `face` back to the side `keep` of the
 /// face `tool` (see the module docs).
 pub fn trim<S: Scalar>(
-    part: &mut Part<S>,
+    part: &mut NamedModel<S>,
     namer: &Namer,
     face: &str,
     tool: FaceId,
     keep: TrimKeep,
 ) -> GeopResult<()> {
     let (_, sheet) = sheet_of(part, face)?;
-    let tool_name = name_of(part, tool)?;
+    let tool_name = part.name(tool).map(str::to_string)?;
     if part
         .topology()
         .body_faces(Body::Sheet(sheet))?
@@ -218,7 +232,7 @@ pub fn trim<S: Scalar>(
         let Some(side) = in_front(&surface, &at)? else {
             return Err(GeopError::new(format!(
                 "face {} of the sheet lies along face {tool_name}: which side of it it is on is undecided",
-                name_of(part, f)?
+                part.name(f).map(str::to_string)?
             )));
         };
         for c in model.iterate_face_coedges(f) {
@@ -226,7 +240,7 @@ pub fn trim<S: Scalar>(
             if in_front(&surface, &vertex.point)? == Some(!side) {
                 return Err(GeopError::new(format!(
                     "face {} of the sheet reaches both sides of face {tool_name}: the face does not cut the sheet clean through there",
-                    name_of(part, f)?
+                    part.name(f).map(str::to_string)?
                 )));
             }
         }

@@ -30,8 +30,15 @@ impl<S: Scalar> Model<S> {
         let vertex_into = self.get_vertex_mut(vertex_into_id)?;
         vertex_into.point = vertex_into.point.union(&deleted_point);
 
-        // Find all occurences of vertex_deleted_id and replace with vertex_into_id
-        for edge in self.edges.values_mut() {
+        // Find all occurences of vertex_deleted_id and replace with
+        // vertex_into_id. Only what refers to it is touched, so that a model
+        // sharing its arenas with a copy copies only those entities.
+        let edges: Vec<_> = (self.edges.iter())
+            .filter(|(_, e)| [e.start_vertex, e.end_vertex].contains(&vertex_deleted_id))
+            .map(|(&id, _)| id)
+            .collect();
+        for id in edges {
+            let edge = self.get_edge_mut(id)?;
             if edge.start_vertex == vertex_deleted_id {
                 edge.start_vertex = vertex_into_id;
             }
@@ -40,14 +47,23 @@ impl<S: Scalar> Model<S> {
             }
         }
 
-        for coedge in self.coedges.values_mut() {
-            if coedge.geometry == CoedgeGeometry::Vertex(vertex_deleted_id) {
-                coedge.geometry = CoedgeGeometry::Vertex(vertex_into_id);
-            }
+        let coedges: Vec<_> = (self.coedges.iter())
+            .filter(|(_, c)| c.geometry == CoedgeGeometry::Vertex(vertex_deleted_id))
+            .map(|(&id, _)| id)
+            .collect();
+        for id in coedges {
+            self.get_coedge_mut(id)?.geometry = CoedgeGeometry::Vertex(vertex_into_id);
         }
 
-        for face in self.faces.values_mut() {
-            for boundary in face.boundaries_mut() {
+        let faces: Vec<_> = (self.faces.iter())
+            .filter(|(_, f)| {
+                f.boundaries()
+                    .any(|b| b == BoundaryType::Vertex(vertex_deleted_id))
+            })
+            .map(|(&id, _)| id)
+            .collect();
+        for id in faces {
+            for boundary in self.get_face_mut(id)?.boundaries_mut() {
                 if *boundary == BoundaryType::Vertex(vertex_deleted_id) {
                     *boundary = BoundaryType::Vertex(vertex_into_id);
                 }

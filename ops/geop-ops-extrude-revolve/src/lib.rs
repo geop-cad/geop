@@ -5,7 +5,7 @@
 //! them.
 //!
 //! With the `test-shapes` feature — which only other crates' tests turn on
-//! — [`shapes`] also builds basic solids directly: cubes, cylinders,
+//! — `shapes` also builds basic solids directly: cubes, cylinders,
 //! spheres, the fixtures those tests are written against.
 
 pub mod common;
@@ -20,7 +20,8 @@ pub mod revolve;
 pub mod shapes;
 pub mod sweep;
 
+pub use geop_ops_booleans::Extent;
 pub use operation::{
-    Extent, Extents, Extrude, ExtrudeArgs, Loft, LoftArgs, Revolve, RevolveArgs, Sweep, SweepArgs,
+    Extents, Extrude, ExtrudeArgs, Loft, LoftArgs, Output, Revolve, RevolveArgs, Sweep, SweepArgs,
 };
 pub use path_sweep::Orientation;

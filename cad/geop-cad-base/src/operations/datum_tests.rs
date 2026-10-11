@@ -1,16 +1,24 @@
 //! Datums built on a solid, and sketched on.
 
+use std::collections::BTreeMap;
+
 use geop_core_geometry::shape::Plane;
 use geop_core_math::{
-    primitives::{CoordinateSystem, Datum, DatumComponent, DatumKind, FrameAxis},
+    geop_error::GeopResult,
+    primitives::{CoordinateSystem, Datum, DatumKind, FrameAxis},
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops::operation::{Aspects, Role};
-use geop_ops::{EntityRef, NoFiles, ORIGIN, Operation, Part};
-use geop_ops_datums::{AddDatum, AddDatumArgs, Construction, fitting_constructions};
+use geop_ops::{
+    EntityRef, ORIGIN,
+    model::datum,
+    operation::{Aspects, Lookup, Role, Seen},
+    origin_axis as axis, origin_plane as base,
+};
+use geop_ops_datums::{AddDatumArgs, Construction, fitting_constructions};
 
-use crate::examples;
+use super::{Runner, run, testing::Built, workspace};
+use crate::{Program, Push, examples};
 
 fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
     Vector3::from_array([x, y, z].map(S::from_f64))
@@ -25,27 +33,92 @@ fn edge(name: &str) -> EntityRef {
 fn vertex(name: &str) -> EntityRef {
     EntityRef::Vertex { name: name.into() }
 }
-fn axis(axis: FrameAxis) -> EntityRef {
-    EntityRef::datum_component(ORIGIN, DatumComponent::Axis(axis))
+
+/// A program and the runner that built it: a datum step added to it is
+/// built on what the runner kept.
+struct Part {
+    program: Program,
+    runner: Runner,
 }
-fn base(normal: FrameAxis) -> EntityRef {
-    EntityRef::datum_component(ORIGIN, DatumComponent::Plane(normal))
+
+impl Part {
+    /// `program`, built.
+    fn of(program: Program) -> Self {
+        let runner = program.built().unwrap();
+        Part { program, runner }
+    }
+
+    /// The program with the datum step `id` from `selection` by
+    /// `construction` added, built — or why it fails.
+    fn try_with(
+        &mut self,
+        id: &str,
+        selection: Vec<EntityRef>,
+        construction: Construction,
+    ) -> GeopResult<Program> {
+        let mut program = self.program.clone();
+        program.push(
+            id,
+            AddDatumArgs {
+                selection,
+                construction,
+            },
+        );
+        let library = workspace(BTreeMap::new()).scope("");
+        run(&mut self.runner, &program, &library)?;
+        Ok(program)
+    }
+
+    /// The datum `id`, as the program last run built it.
+    fn datum_named(&self, id: &str) -> Datum<S> {
+        (self.runner.part.current().retrieve_target(&datum(id)))
+            .unwrap()
+            .clone()
+    }
+
+    /// The datum built from `selection` by `construction`, or why it fails.
+    fn try_datum(
+        &mut self,
+        selection: Vec<EntityRef>,
+        construction: Construction,
+    ) -> GeopResult<Datum<S>> {
+        self.try_with("d", selection, construction)?;
+        Ok(self.datum_named("d"))
+    }
+
+    /// The datum built from `selection` by `construction`.
+    fn datum(&mut self, selection: Vec<EntityRef>, construction: Construction) -> Datum<S> {
+        self.try_datum(selection, construction).unwrap()
+    }
+
+    /// It with the datum step `id` added for good.
+    fn with(mut self, id: &str, selection: Vec<EntityRef>, construction: Construction) -> Self {
+        self.program = self.try_with(id, selection, construction).unwrap();
+        self
+    }
+
+    /// The part as the program — without a datum step tried since — has it.
+    fn seen(&mut self) -> Seen<'_> {
+        let library = workspace(BTreeMap::new()).scope("");
+        run(&mut self.runner, &self.program, &library).unwrap();
+        Seen::new(self.runner.part.current())
+    }
+
+    /// The constructions that fit `selection`.
+    fn fits(&mut self, selection: &[EntityRef]) -> Vec<&'static str> {
+        fitting_constructions(&mut self.seen(), selection)
+    }
+
+    /// What `entity` can be used as.
+    fn aspects(&mut self, entity: &EntityRef) -> GeopResult<Aspects<S>> {
+        Aspects::of(entity, &mut self.seen())
+    }
 }
 
 /// The 2 x 2 x 1 box with a hole of radius 0.4 drilled 0.5 deep into
 /// the middle of its top.
-fn drilled_box() -> Part<S> {
-    examples::box_with_drill_hole().build(&NoFiles).unwrap()
-}
-
-/// The datum built from `selection` by `construction` in `part`.
-fn datum(part: &Part<S>, selection: Vec<EntityRef>, construction: Construction) -> Datum<S> {
-    let args = AddDatumArgs {
-        selection,
-        construction,
-    };
-    let part = AddDatum.apply(part.clone(), "d", &args, &NoFiles).unwrap();
-    part.datum(part.datum_id("d").unwrap()).unwrap().clone()
+fn drilled_box() -> Part {
+    Part::of(examples::box_with_drill_hole())
 }
 
 /// Sketch data is solved, not exact: agreeing to 1e-9 is agreeing.
@@ -77,8 +150,8 @@ fn on_plane(frame: &CoordinateSystem<S>, p: [f64; 3]) -> bool {
 /// not only its kind.
 #[test]
 fn selections_fit_by_shape() {
-    let part = drilled_box();
-    let fits = |selection: Vec<EntityRef>| fitting_constructions(&part, &selection);
+    let mut part = drilled_box();
+    let mut fits = |selection: Vec<EntityRef>| part.fits(&selection);
 
     let top = fits(vec![face("extrude(box,end)")]);
     assert!(top.contains(&"offset"), "{top:?}");
@@ -116,8 +189,8 @@ fn selections_fit_by_shape() {
     );
     assert!(fits(Vec::new()).is_empty());
     // Nothing fits what the part does not have.
-    assert!(fitting_constructions(&part, &[face("nowhere")]).is_empty());
-    assert!(Aspects::of(&face("nowhere"), &part).is_err());
+    assert!(fits(vec![face("nowhere")]).is_empty());
+    assert!(part.aspects(&face("nowhere")).is_err());
 }
 
 /// A sketch's points and lines are points and lines to build on: the
@@ -125,8 +198,8 @@ fn selections_fit_by_shape() {
 /// through two of its corners.
 #[test]
 fn sketch_points_and_lines() {
-    let part = drilled_box();
-    let placed = part.sketch(part.sketch_id("outline").unwrap()).unwrap();
+    let mut part = drilled_box();
+    let placed = part.seen().sketch("outline").unwrap().clone();
     let corner = |x: f64, y: f64| {
         let (&point, _) = placed
             .sketch
@@ -139,20 +212,16 @@ fn sketch_points_and_lines() {
             point,
         }
     };
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![corner(0.0, 0.0), corner(2.0, 2.0)],
         Construction::TwoPoints {},
     );
     assert_at(&d.frame, [0.0, 0.0, 0.0], [1.0, 1.0, 0.0]);
     let (&line, _) = placed.sketch.curves.iter().next().unwrap();
-    let roles = Aspects::of(
-        &EntityRef::SketchCurve {
-            sketch: "outline".into(),
-            curve: line,
-        },
-        &part,
-    )
+    let roles = (part.aspects(&EntityRef::SketchCurve {
+        sketch: "outline".into(),
+        curve: line,
+    }))
     .unwrap()
     .roles();
     assert_eq!(roles, [Role::Line, Role::Curve, Role::Frame]);
@@ -160,10 +229,9 @@ fn sketch_points_and_lines() {
 
 #[test]
 fn points() {
-    let part = drilled_box();
+    let mut part = drilled_box();
     let corner = vertex("extrude(box,outline,p2,end)");
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![corner.clone()],
         Construction::Point {
             x: 0.5.into(),
@@ -175,22 +243,17 @@ fn points() {
     assert_at(&d.frame, [2.5, 2.0, 2.0], [0., 0., 1.]);
     // The top's front edge runs from (2, 0, 1) back to (0, 0, 1); a
     // point on it has its z axis along it.
-    let on_edge = AddDatumArgs {
-        selection: vec![edge("extrude(box,outline,c4,end)")],
-        construction: Construction::EdgePoint {
+    let mut with_point = drilled_box().with(
+        "on_edge",
+        vec![edge("extrude(box,outline,c4,end)")],
+        Construction::EdgePoint {
             position: 0.25.into(),
         },
-    };
-    let with_point = AddDatum
-        .apply(part.clone(), "on_edge", &on_edge, &NoFiles)
-        .unwrap();
-    let d = with_point
-        .datum(with_point.datum_id("on_edge").unwrap())
-        .unwrap();
+    );
+    let d = with_point.datum_named("on_edge");
     assert_at(&d.frame, [1.5, 0.0, 1.0], [-1., 0., 0.]);
     // Offset from a datum point: along its own axes.
-    let d = datum(
-        &with_point,
+    let d = with_point.datum(
         vec![EntityRef::datum("on_edge")],
         Construction::Point {
             x: 0.0.into(),
@@ -200,44 +263,37 @@ fn points() {
     );
     assert_at(&d.frame, [1.0, 0.0, 1.0], [-1., 0., 0.]);
 
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![EntityRef::datum(ORIGIN), corner.clone()],
         Construction::Midpoint {},
     );
     assert_at(&d.frame, [1.0, 1.0, 0.5], [0., 0., 1.]);
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![edge("extrude(hole,hole_sketch,c1,start)")],
         Construction::Center {},
     );
     assert_at(&d.frame, [1.0, 1.0, 1.0], [0., 0., 1.]);
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![corner.clone(), base(FrameAxis::Z)],
         Construction::ProjectOnPlane {},
     );
     assert_at(&d.frame, [2.0, 2.0, 0.0], [0., 0., 1.]);
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![axis(FrameAxis::X), corner.clone()],
         Construction::ProjectOnLine {},
     );
     assert_at(&d.frame, [2.0, 0.0, 0.0], [1., 0., 0.]);
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![edge("extrude(box,outline,p2)"), base(FrameAxis::Z)],
         Construction::LinePlane {},
     );
     assert_at(&d.frame, [2.0, 2.0, 0.0], [0., 0., 1.]);
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![axis(FrameAxis::Z), edge("extrude(box,outline,c4,start)")],
         Construction::LineLine {},
     );
     assert_at(&d.frame, [0.0, 0.0, 0.0], [0., -1., 0.]);
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![
             face("extrude(box,end)"),
             face("extrude(box,outline,c5)"),
@@ -250,68 +306,58 @@ fn points() {
 
 #[test]
 fn axes() {
-    let part = drilled_box();
+    let mut part = drilled_box();
     let corner = vertex("extrude(box,outline,p2,end)");
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![EntityRef::datum(ORIGIN), corner.clone()],
         Construction::TwoPoints {},
     );
     assert_eq!(d.kind, DatumKind::Axis);
     assert_at(&d.frame, [0., 0., 0.], [2., 2., 1.]);
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![edge("extrude(box,outline,p1)")],
         Construction::AlongLine {},
     );
     assert_at(&d.frame, [2., 0., 0.], [0., 0., 1.]);
     // The hole's wall turns around the vertical through its center.
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![face("extrude(hole,hole_sketch,c1#2)")],
         Construction::AxisOf {},
     );
     assert!(datum_line(&d).could_contain(&v(1., 1., 7.)));
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![base(FrameAxis::X), base(FrameAxis::Y)],
         Construction::PlanePlane {},
     );
     assert_at(&d.frame, [0., 0., 0.], [0., 0., 1.]);
     // The perpendicular dropped from the corner onto the xy plane.
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![corner.clone(), base(FrameAxis::Z)],
         Construction::Perpendicular {},
     );
     assert_at(&d.frame, [2., 2., 1.], [0., 0., 1.]);
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![corner.clone(), axis(FrameAxis::X)],
         Construction::Parallel {},
     );
     assert_at(&d.frame, [2., 2., 1.], [1., 0., 0.]);
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![corner.clone(), axis(FrameAxis::X)],
         Construction::PerpendicularToLine {},
     );
     assert_at(&d.frame, [2., 2., 1.], [0., -2., -1.]);
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![axis(FrameAxis::X), axis(FrameAxis::Y)],
         Construction::Bisector { other: false },
     );
     assert_at(&d.frame, [0., 0., 0.], [1., 1., 0.]);
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![axis(FrameAxis::X), axis(FrameAxis::Y)],
         Construction::Bisector { other: true },
     );
     assert_at(&d.frame, [0., 0., 0.], [1., -1., 0.]);
     // Between two parallel edges: halfway.
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![
             edge("extrude(box,outline,p0)"),
             edge("extrude(box,outline,p2)"),
@@ -320,8 +366,7 @@ fn axes() {
     );
     let off = datum_line(&d).project(&v(1., 1., 0.)).sub(&v(1., 1., 0.));
     assert!(off.norm().to_f64() < 1e-9, "{off:?}");
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![edge("extrude(hole,hole_sketch,c1,start)")],
         Construction::Tangent {
             position: 0.0.into(),
@@ -336,10 +381,9 @@ fn datum_line(d: &Datum<S>) -> geop_core_geometry::shape::Axis<S> {
 
 #[test]
 fn planes() {
-    let part = drilled_box();
+    let mut part = drilled_box();
     let top = face("extrude(box,end)");
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![top.clone()],
         Construction::Offset {
             distance: 0.5.into(),
@@ -348,36 +392,27 @@ fn planes() {
     assert_eq!(d.kind, DatumKind::Plane);
     assert_at(&d.frame, [0., 0., 1.5], [0., 0., 1.]);
     // Between the box's top and bottom, which face apart.
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![top.clone(), face("extrude(box,start)")],
         Construction::Midplane { other: false },
     );
     assert!(on_plane(&d.frame, [1., 1., 0.5]));
     assert_at(&d.frame, [0., 0., 0.5], [0., 0., 1.]);
     // Between two planes facing the same way.
-    let lifted = AddDatum
-        .apply(
-            part.clone(),
-            "lifted",
-            &AddDatumArgs {
-                selection: vec![top.clone()],
-                construction: Construction::Offset {
-                    distance: 1.0.into(),
-                },
-            },
-            &NoFiles,
-        )
-        .unwrap();
-    let d = datum(
-        &lifted,
+    let mut lifted = drilled_box().with(
+        "lifted",
+        vec![top.clone()],
+        Construction::Offset {
+            distance: 1.0.into(),
+        },
+    );
+    let d = lifted.datum(
         vec![top.clone(), EntityRef::datum("lifted")],
         Construction::Midplane { other: false },
     );
     assert!(on_plane(&d.frame, [5., 5., 1.5]));
     // Halving the angle between two sides that meet at an edge.
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![
             face("extrude(box,outline,c4)"),
             face("extrude(box,outline,c5)"),
@@ -385,8 +420,7 @@ fn planes() {
         Construction::Midplane { other: false },
     );
     assert!(on_plane(&d.frame, [2., 0., 0.]) && on_plane(&d.frame, [1., 1., 0.]));
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![
             EntityRef::datum(ORIGIN),
             vertex("extrude(box,outline,p1,start)"),
@@ -401,20 +435,17 @@ fn planes() {
     );
     // Hinged on the top's front edge, turned up by 90 degrees: the
     // front face's plane.
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![top.clone(), edge("extrude(box,outline,c4,end)")],
         Construction::Angle { angle: 90.0.into() },
     );
     assert!(on_plane(&d.frame, [0.5, 0., 0.]) && on_plane(&d.frame, [0.5, 0., 7.]));
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![axis(FrameAxis::Z), vertex("extrude(box,outline,p1,start)")],
         Construction::LinePoint {},
     );
     assert!(on_plane(&d.frame, [5., 0., 3.]));
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![
             edge("extrude(box,outline,p0)"),
             edge("extrude(box,outline,p2)"),
@@ -422,20 +453,17 @@ fn planes() {
         Construction::TwoLines {},
     );
     assert!(on_plane(&d.frame, [1., 1., 3.]));
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![top.clone(), EntityRef::datum(ORIGIN)],
         Construction::ParallelPlane {},
     );
     assert_at(&d.frame, [0., 0., 0.], [0., 0., 1.]);
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![axis(FrameAxis::Y), vertex("extrude(box,outline,p2,end)")],
         Construction::NormalToLine {},
     );
     assert_at(&d.frame, [2., 2., 1.], [0., 1., 0.]);
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![edge("extrude(hole,hole_sketch,c1,start)")],
         Construction::NormalToEdge {
             position: 0.0.into(),
@@ -448,11 +476,10 @@ fn planes() {
 /// plane: its frame, exactly.
 #[test]
 fn sketches_go_on_datum_planes() {
-    let program = examples::boss_on_reference_plane();
-    let part = program.build::<S>(&NoFiles).unwrap();
-    part.check_names().unwrap();
-    let placed = part.sketch(part.sketch_id("boss_sketch").unwrap()).unwrap();
-    let lifted = part.datum(part.datum_id("lifted").unwrap()).unwrap();
+    let mut part = Part::of(examples::boss_on_reference_plane());
+    part.program.build_model().unwrap().check_names().unwrap();
+    let lifted = part.datum_named("lifted");
+    let placed = part.seen().sketch("boss_sketch").unwrap().clone();
     assert!(placed.plane.origin().could_be_equal(lifted.frame.origin()));
     assert!(placed.plane.u().could_be_equal(lifted.frame.u()));
     assert_at(&placed.plane, [0., 0., 1.5], [0., 0., 1.]);
@@ -464,27 +491,26 @@ fn sketches_go_on_datum_planes() {
 #[test]
 fn frames() {
     let part = drilled_box();
-    let args = AddDatumArgs {
-        selection: vec![
+    let mut part = part.with(
+        "cs",
+        vec![
             vertex("extrude(box,outline,p1,end)"),
             vertex("extrude(box,outline,p2,end)"),
             vertex("extrude(box,outline,p0,start)"),
         ],
-        construction: Construction::FrameThreePoints {},
-    };
-    let part = AddDatum.apply(part, "cs", &args, &NoFiles).unwrap();
-    let d = part.datum(part.datum_id("cs").unwrap()).unwrap();
+        Construction::FrameThreePoints {},
+    );
+    let d = part.datum_named("cs");
     assert_eq!(d.kind, DatumKind::Frame);
     // x from (2, 0, 1) to (2, 2, 1); the third point (0, 0, 0) tilts the
     // xy plane down towards -x.
     assert_at(&d.frame, [2., 0., 1.], [-1., 0., 2.]);
     assert!(d.frame.u().sub(&v(0., 1., 0.)).norm().to_f64() < 1e-9);
 
-    let roles = Aspects::of(&EntityRef::datum("cs"), &part).unwrap().roles();
+    let roles = part.aspects(&EntityRef::datum("cs")).unwrap().roles();
     assert_eq!(roles, [Role::Point, Role::Frame]);
     // Its axes carry an offset point, as a datum point's do.
-    let d = datum(
-        &part,
+    let d = part.datum(
         vec![EntityRef::datum("cs")],
         Construction::Point {
             x: 1.0.into(),
@@ -495,15 +521,12 @@ fn frames() {
     assert_at(&d.frame, [2., 1., 1.], [-1., 0., 2.]);
 
     // The first two points coincide: there is no x to go by.
-    let args = AddDatumArgs {
-        selection: vec![
-            EntityRef::datum(ORIGIN),
-            EntityRef::datum(ORIGIN),
-            vertex("extrude(box,outline,p2,end)"),
-        ],
-        ..args
-    };
-    let Err(e) = AddDatum.apply(part, "degenerate", &args, &NoFiles) else {
+    let selection = vec![
+        EntityRef::datum(ORIGIN),
+        EntityRef::datum(ORIGIN),
+        vertex("extrude(box,outline,p2,end)"),
+    ];
+    let Err(e) = part.try_datum(selection, Construction::FrameThreePoints {}) else {
         panic!("a frame with no x axis");
     };
     assert!(e.to_string().contains("one line"), "{e}");

@@ -229,10 +229,10 @@ impl Mesh {
         let plane = ["x", "y", "z"][axis];
         let n = self.positions.len();
         let mut image = vec![0; n];
-        for i in 0..n {
+        for (i, mirrored) in image.iter_mut().enumerate() {
             let mut at = self.positions[i];
             if at[axis] == 0.0 {
-                image[i] = i;
+                *mirrored = i;
                 continue;
             }
             if at[axis] < 0.0 {
@@ -242,7 +242,7 @@ impl Mesh {
                 )));
             }
             at[axis] = -at[axis];
-            image[i] = self.positions.len();
+            *mirrored = self.positions.len();
             self.vertex_names.push(format!("{}m", self.vertex_names[i]));
             self.positions.push(at);
         }

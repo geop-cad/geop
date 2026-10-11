@@ -24,8 +24,9 @@ curves lie along it.
 
 `common` holds the helpers the constructors share: `line2`/`line3`,
 `polygon` and `polyline` profiles, `bilinear` patches, exact rational
-quarter arcs (`sqrt2_over_2`), and `embed_curve`, which places a 2-D curve
-on a plane in 3-D exactly, as an affine map of its control points.
+quarter arcs (`sqrt2_over_2`), and `embed_point`, which places a 2-D
+control point on a plane in 3-D exactly, as an affine map (a whole curve is
+placed by `NurbCurve::embed` in geop-core-geometry).
 
 ## Sweep
 
@@ -84,7 +85,7 @@ built: an open chain from pole to pole, or a ring clear of the axis.
 ## Sweep along a path
 
 `path_sweep::sweep_along` carries a profile, from where it is drawn, along a
-`PathChain` of 3-D curves by the rigid motion that keeps it square to the
+`Chain` (`geop_ops::operation::Chain`) of 3-D curves by the rigid motion that keeps it square to the
 path — a rotation-minimizing frame, which for a planar path keeps the
 path's plane normal fixed. Every joint of the path is a station, every curve
 a span: a line moves the profile straight on and an arc turns it about the

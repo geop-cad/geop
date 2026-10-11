@@ -17,9 +17,13 @@ use geop_core_math::{
 };
 use geop_core_sketch::dimension::Measure;
 use geop_core_topology::{FaceId, Model};
-use geop_ops::{EntityRef, Part};
-use geop_ops_hole::PartThreads;
-use geop_ops_inspect::bodies::resolve;
+use geop_ops::{
+    Design, EntityRef,
+    model::model,
+    operation::{BuildView, ResolveEntity},
+    output::sheet::{Anchor, Layer, P, Shape, Sheet, lift, strokes_of},
+    placed::owner,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -29,7 +33,6 @@ use crate::{
     min_subdivision_size,
     scene::{Body, Scene},
     section::{cut_faces, section_part},
-    sheet::{Anchor, Layer, P, Shape, Sheet, lift, strokes_of},
     view::{DrawnView, ViewFrame, ViewKind},
 };
 
@@ -288,26 +291,22 @@ pub fn drawn_faces<S: Scalar>(model: &Model<S>) -> Vec<FaceId> {
 /// its bill of materials if `args` asks for one: its layout (see
 /// [`layout`]), with its annotations drawn on it. One that does not resolve
 /// — its view gone, an entity it names gone — is refused, naming it.
-pub fn compose<S: Scalar>(
-    part: &Part<S>,
+pub fn compose(
+    view: BuildView,
     args: &DrawingArgs,
     date: &str,
     parts: &[PartsListLine],
 ) -> GeopResult<Sheet> {
-    annotated(part, args, &layout(part, args, date, parts)?)
+    annotated(view, args, &layout(view, args, date, parts)?)
 }
 
 /// `layout`'s sheet, of `part`, with `args`' annotations drawn on it (see
 /// [`compose`]).
-pub fn annotated<S: Scalar>(
-    part: &Part<S>,
-    args: &DrawingArgs,
-    layout: &Layout,
-) -> GeopResult<Sheet> {
+pub fn annotated(view: BuildView, args: &DrawingArgs, layout: &Layout) -> GeopResult<Sheet> {
     let mut sheet = layout.sheet.clone();
     for (index, annotation) in args.annotations.iter().enumerate() {
         annotation
-            .drawn(part, layout)
+            .drawn(view, layout)
             .map_err(|e| {
                 e.with_context(format!(
                     "annotation {}: {}",
@@ -378,13 +377,13 @@ impl Layout {
 /// [`compose`]): its views projected (see [`project`]) and laid out (see
 /// [`arrange`]), dated `date`, with `parts` its bill of materials if `args`
 /// asks for one.
-pub fn layout<S: Scalar>(
-    part: &Part<S>,
+pub fn layout(
+    view: BuildView,
     args: &DrawingArgs,
     date: &str,
     parts: &[PartsListLine],
 ) -> GeopResult<Layout> {
-    arrange(part, args, date, parts, &project(part, args)?)
+    arrange(view, args, date, parts, &project(view, args)?)
 }
 
 /// A drawing's views projected, each with its lines visible and hidden —
@@ -414,9 +413,9 @@ impl<S: Scalar> Projected<S> {
 /// The views of `part` that `args` ask for, projected (see [`Projected`]):
 /// its own solids and sheets, and every part placed in it, however deep,
 /// where it is placed (see [`Scene`]).
-pub fn project<S: Scalar>(part: &Part<S>, args: &DrawingArgs) -> GeopResult<Projected<S>> {
+pub fn project(view: BuildView, args: &DrawingArgs) -> GeopResult<Projected<Design>> {
     let ctx = |e: GeopError| e.with_context("project(drawing)");
-    let scene = Scene::of(part).with_context(&ctx)?;
+    let scene = Scene::of(view).with_context(&ctx)?;
     let options = ViewOptions {
         tangent_edges: args.tangent_edges,
         hidden_lines: args.hidden_lines,
@@ -436,9 +435,9 @@ pub fn project<S: Scalar>(part: &Part<S>, args: &DrawingArgs) -> GeopResult<Proj
         views.push((DrawnView::View(kind), view, Vec::new()));
     }
     if let Some(plane) = &args.section {
-        let (view, hatched) = section_view(part, &scene, plane, &options)
+        let (section, hatched) = section_view(view, &scene, plane, &options)
             .map_err(|e| ctx(e.with_context(format!("the section view on {}", plane.label()))))?;
-        views.push((DrawnView::Section, view, hatched));
+        views.push((DrawnView::Section, section, hatched));
     }
     Ok(Projected { views })
 }
@@ -450,12 +449,12 @@ pub fn project<S: Scalar>(part: &Part<S>, args: &DrawingArgs) -> GeopResult<Proj
 /// With a bill of materials, each line of it placed in the drawing gets a
 /// balloon with its item number, its leader pointing at its part in one
 /// view (see [`balloon_view`]). A bill too long for the sheet is refused.
-pub fn arrange<S: Scalar>(
-    part: &Part<S>,
+pub fn arrange(
+    view: BuildView,
     args: &DrawingArgs,
     date: &str,
     parts: &[PartsListLine],
-    projected: &Projected<S>,
+    projected: &Projected<Design>,
 ) -> GeopResult<Layout> {
     let ctx = |e: GeopError| e.with_context("arrange(drawing)");
     let (width, height) = args.sheet.size();
@@ -470,7 +469,7 @@ pub fn arrange<S: Scalar>(
             args.sheet.name().to_uppercase()
         )));
     }
-    let scene = Scene::of(part).with_context(&ctx)?;
+    let scene = Scene::of(view).with_context(&ctx)?;
     if scene.bodies.is_empty() && !args.bom {
         return Err(GeopError::new(
             "the part has nothing to draw: it has no faces",
@@ -480,7 +479,7 @@ pub fn arrange<S: Scalar>(
         tangent_edges: args.tangent_edges,
         hidden_lines: args.hidden_lines,
     };
-    let mut placed: Vec<Placed<S>> = projected
+    let mut placed: Vec<Placed<Design>> = projected
         .views
         .iter()
         .filter_map(|(kind, view, hatched)| {
@@ -892,7 +891,7 @@ fn draw_threads<S: Scalar>(
     options: &ViewOptions,
 ) -> GeopResult<()> {
     for body in &scene.bodies {
-        let mut threads: Vec<_> = body.part.threads().collect();
+        let mut threads: Vec<_> = body.threads.iter().flat_map(|t| t.iter()).collect();
         threads.sort_by_key(|(name, _)| *name);
         for (name, thread) in threads {
             let ctx = |e: GeopError| match body.path.as_str() {
@@ -1217,10 +1216,11 @@ fn unit(a: P) -> P {
     }
 }
 
-/// Where the vertex `name` of `part` — or of a part placed in it, named as
-/// `part` names it — is.
-pub(crate) fn placed_vertex<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<Vector3<S>> {
-    let (owner, local, pose) = resolve(part, &EntityRef::Vertex { name: name.into() })?;
+/// Where the vertex `name` of the part `view` shows — or of a part placed
+/// in it, named as that part names it — is.
+pub(crate) fn placed_vertex(view: BuildView, name: &str) -> GeopResult<Vector3<Design>> {
+    let (owner, pose, local) = owner(view, &EntityRef::Vertex { name: name.into() })?;
+    let owner = owner.retrieve_target(&model())?;
     let point = owner
         .topology()
         .get_vertex(owner.vertex_id(&local.label())?)?
@@ -1231,10 +1231,11 @@ pub(crate) fn placed_vertex<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult
     })
 }
 
-/// The curve of the edge `name` of `part` — or of a part placed in it,
-/// named as `part` names it — where it is.
-pub(crate) fn placed_edge<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<NurbCurve3D<S>> {
-    let (owner, local, pose) = resolve(part, &EntityRef::Edge { name: name.into() })?;
+/// The curve of the edge `name` of the part `view` shows — or of a part
+/// placed in it, named as that part names it — where it is.
+pub(crate) fn placed_edge(view: BuildView, name: &str) -> GeopResult<NurbCurve3D<Design>> {
+    let (owner, pose, local) = owner(view, &EntityRef::Edge { name: name.into() })?;
+    let owner = owner.retrieve_target(&model())?;
     let curve = &owner
         .topology()
         .get_edge(owner.edge_id(&local.label())?)?
@@ -1315,7 +1316,7 @@ type Hatched<S> = (Vec<NurbCurve2D<S>>, bool);
 
 /// A body's part cut, with the cutting plane's origin and normal in its
 /// own frame.
-type Cut<S> = (Part<S>, Vector3<S>, Vector3<S>);
+type Cut<S> = (geop_ops::NamedModel<S>, Vector3<S>, Vector3<S>);
 
 /// The drawing's bodies (`scene`, of `part`) cut at `plane`, seen from the
 /// side its normal points to, and their cut faces' boundaries for hatching.
@@ -1324,13 +1325,14 @@ type Cut<S> = (Part<S>, Vector3<S>, Vector3<S>);
 /// wholly on the side the normal points to is gone, one wholly on the
 /// other side, or with no solid to cut, is drawn whole. Refused if no body
 /// has a solid to cut.
-fn section_view<S: Scalar>(
-    part: &Part<S>,
-    scene: &Scene<'_, S>,
+fn section_view(
+    view: BuildView,
+    scene: &Scene<'_, Design>,
     plane: &EntityRef,
     options: &ViewOptions,
-) -> GeopResult<(ProjectedView<S>, Vec<Hatched<S>>)> {
-    let frame_of = plane.resolve_plane(part)?;
+) -> GeopResult<(ProjectedView<Design>, Vec<Hatched<Design>>)> {
+    type S = Design;
+    let frame_of = plane.resolve_plane(&mut geop_ops::operation::Seen::new(view))?;
     let normal = frame_of.w().normalize()?;
     let origin = *frame_of.origin();
     if scene.bodies.iter().all(|b| b.model().solids.is_empty()) {
@@ -1375,7 +1377,7 @@ fn section_view<S: Scalar>(
                     }
                     None => (origin, normal),
                 };
-                let cut = section_part(body.part, &o, &n).map_err(|e| {
+                let cut = section_part(body.named, &o, &n).map_err(|e| {
                     e.with_context(format!("cutting the part placed as {:?}", body.path))
                 })?;
                 cuts.push((k, Some((cut, o, n))));
@@ -1389,13 +1391,15 @@ fn section_view<S: Scalar>(
             match cut {
                 None => Body {
                     path: body.path.clone(),
-                    part: body.part,
+                    named: body.named,
+                    threads: body.threads,
                     faces: body.faces.clone(),
                     pose: body.pose,
                 },
                 Some((cut, _, _)) => Body {
                     path: body.path.clone(),
-                    part: cut,
+                    named: cut,
+                    threads: body.threads,
                     faces: drawn_faces(cut.topology()),
                     pose: body.pose,
                 },

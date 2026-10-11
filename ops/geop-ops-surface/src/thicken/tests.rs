@@ -3,7 +3,8 @@
 
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_topology::Body;
-use geop_ops::{NoFiles, Part};
+use geop_ops::NamedModel;
+use geop_ops::operation::apply_to_model;
 use geop_ops_extrude_revolve::shapes::{cube_solid, cylinder::revolved_cylinder};
 
 use super::*;
@@ -13,8 +14,8 @@ use crate::{BoundarySurface, BoundarySurfaceArgs};
 /// A unit cube's top loop filled with a boundary surface, the cube then
 /// deleted: a flat square sheet at `z = 1`, named `boundary(b)`, and
 /// which way its normal points along `z`.
-pub(crate) fn square_sheet() -> (Part<S>, f64) {
-    let mut part = Part::<S>::new();
+pub(crate) fn square_sheet() -> (NamedModel<S>, f64) {
+    let mut part = NamedModel::<S>::new();
     let cube = cube_solid(&mut part, "c", v3(0., 0., 0.), v3(1., 1., 1.)).unwrap();
     let corners = [[0., 0., 1.], [1., 0., 1.], [1., 1., 1.], [0., 1., 1.]];
     let edges = (0..4)
@@ -26,7 +27,7 @@ pub(crate) fn square_sheet() -> (Part<S>, f64) {
         edges,
         tangent: Vec::new(),
     };
-    let mut part = BoundarySurface.apply(part, "b", &args, &NoFiles).unwrap();
+    let mut part = apply_to_model::<BoundarySurface>(part, "b", &args).unwrap();
     part.assemble_solid(&[Body::Solid(cube)], &[], "").unwrap();
     let face = part.face_id("boundary(b)").unwrap();
     let surface = &part.topology().get_face(face).unwrap().surface;
@@ -34,17 +35,17 @@ pub(crate) fn square_sheet() -> (Part<S>, f64) {
     (part, up.signum())
 }
 
-fn thickened(part: Part<S>, face: &str, side: ThickenSide) -> GeopResult<Part<S>> {
+fn thickened(part: NamedModel<S>, face: &str, side: ThickenSide) -> GeopResult<NamedModel<S>> {
     let args = ThickenArgs {
         face: face.into(),
         thickness: 0.1,
         side,
     };
-    Thicken.apply(part, "t", &args, &NoFiles)
+    apply_to_model::<Thicken>(part, "t", &args)
 }
 
 /// The heights of the vertices of `part`, sorted, each once.
-fn heights(part: &Part<S>) -> Vec<f64> {
+fn heights(part: &NamedModel<S>) -> Vec<f64> {
     let mut z: Vec<f64> = part
         .topology()
         .vertices
@@ -81,7 +82,7 @@ fn thicken_a_boundary_surface() {
 /// their normals, which point out: a tube, its walls rings.
 #[test]
 fn thicken_a_cylinders_sides_into_a_tube() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     let cylinder = revolved_cylinder(
         &mut part,
         "cyl",
@@ -120,7 +121,7 @@ fn thicken_a_cylinders_sides_into_a_tube() {
 /// A solid's face is not a sheet to thicken.
 #[test]
 fn a_solids_face_is_refused() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     let cube = cube_solid(&mut part, "c", v3(0., 0., 0.), v3(1., 1., 1.)).unwrap();
     let face = part.topology().solid_faces(cube).unwrap()[0];
     let face = part.name_of(face).unwrap().to_string();

@@ -32,12 +32,13 @@ impl<S: Scalar> Model<S> {
             )));
         }
 
-        for coedge in self.coedges.values_mut() {
-            if coedge.geometry == CoedgeGeometry::Edge(edge_deleted_id) {
-                coedge.geometry = CoedgeGeometry::Edge(edge_into_id);
-                if reversed {
-                    coedge.sense = coedge.sense.opposite();
-                }
+        // Only the coedges of the deleted edge are touched, so that a model
+        // sharing its arenas with a copy copies only those.
+        for id in self.coedges_of_edge(edge_deleted_id) {
+            let coedge = self.get_coedge_mut(id)?;
+            coedge.geometry = CoedgeGeometry::Edge(edge_into_id);
+            if reversed {
+                coedge.sense = coedge.sense.opposite();
             }
         }
 

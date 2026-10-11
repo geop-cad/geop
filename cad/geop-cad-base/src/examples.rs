@@ -4,6 +4,9 @@
 //! the recipe it is: `extrude(box,end)` is the end cap of the step `box`,
 //! whatever internal id it happens to get.
 
+use geop_ops::BooleanOp;
+use geop_ops::operation::{ResolveEntity, Seen};
+use geop_ops_extrude_revolve::Output;
 use std::collections::BTreeMap;
 
 use geop_core_math::{
@@ -13,30 +16,37 @@ use geop_core_math::{
 };
 use geop_core_sketch::{CurveId, PointId};
 use geop_ops::{
-    Design, EntityRef, ORIGIN,
+    Design, EntityRef, ORIGIN, ParamValue,
+    model::pose_parameter,
+    origin_plane,
+    parameters::Values,
     parameters::{Material, Parameter, ParameterKind, Parameters, Row},
-    part::{ParamValue, State, pose_parameter},
 };
 use geop_ops_assembly::{AddPartArgs, JointKind, Kind, Mate, Motion, joint_parameter};
 use geop_ops_booleans::{Combine, SplitArgs};
-// use geop_ops_datums::{AddDatumArgs, Construction};
-use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, Orientation, RevolveArgs, SweepArgs};
+use geop_ops_datums::{AddDatumArgs, Construction};
+use geop_ops_extrude_revolve::{
+    Extent, Extents, ExtrudeArgs, LoftArgs, Orientation, RevolveArgs, SweepArgs,
+};
 use geop_ops_fillet::FilletArgs;
 use geop_ops_hole::{HoleArgs, HoleKind, Standard, iso::Fit};
-use geop_ops_pattern::{Direction, LinearPatternArgs, Spacing};
-// use geop_ops_sheetmetal::{
-//     BaseFlangeArgs, Corner, EdgeFlangeArgs, FlangePosition, LengthReference, SheetCutArgs,
-//     SheetMetalRules,
-// };
+use geop_ops_pattern::{Direction, LinearPatternArgs, Seeds, Spacing};
+use geop_ops_sheetmetal::{
+    BaseFlangeArgs, Corner, EdgeFlangeArgs, FlangePosition, LengthReference, SheetCutArgs,
+    SheetMetalRules,
+};
 use geop_ops_sketch::{
     AddSketchArgs, Constraint, Sketch,
     references::{Reference, Source},
 };
-// use geop_ops_sketch3d::{AddSketch3dArgs, Constraint3d, Sketch3d};
-// use geop_ops_subd::{Cage, Mirror, SubdArgs};
-// use geop_ops_surface::NetworkSurfaceArgs;
+use geop_ops_sketch3d::{AddSketch3dArgs, Constraint3d, Sketch3d};
+use geop_ops_subd::{Cage, Mirror, SubdArgs};
+use geop_ops_surface::NetworkSurfaceArgs;
 
-use crate::Program;
+use crate::{
+    Program, Push,
+    operations::{build, workspace},
+};
 
 /// `[x, y]`, as an example is written down.
 type P2 = [f64; 2];
@@ -55,7 +65,7 @@ pub(crate) fn pose(position: [f64; 3], degrees: [f64; 3]) -> Pose<Design> {
 
 /// A closed polygon through `corners`, one line per side: its points and
 /// lines.
-fn polygon(sketch: &mut Sketch, corners: &[P2]) -> (Vec<PointId>, Vec<CurveId>) {
+pub(crate) fn polygon(sketch: &mut Sketch, corners: &[P2]) -> (Vec<PointId>, Vec<CurveId>) {
     let points: Vec<PointId> = corners
         .iter()
         .map(|c| sketch.add_point(n(c[0]), n(c[1])))
@@ -137,22 +147,14 @@ pub fn box_with_drill_hole() -> Program {
     rectangle(&mut outline, [0.0, 0.0], 2.0, 2.0);
     program.push(
         "outline",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: solved(outline),
-            ..Default::default()
-        },
+        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(outline)),
     );
     program.push(
         "box",
         ExtrudeArgs {
             sketch: "outline".into(),
             extent: Extents::blind(1.0),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
 
@@ -160,23 +162,22 @@ pub fn box_with_drill_hole() -> Program {
     circle(&mut hole, [1.0, 1.0], 0.4);
     program.push(
         "hole_sketch",
-        AddSketchArgs {
-            plane: Some(EntityRef::Face {
+        AddSketchArgs::on(
+            EntityRef::Face {
                 name: "extrude(box,end)".into(),
-            }),
-            sketch: solved(hole),
-            ..Default::default()
-        },
+            },
+            solved(hole),
+        ),
     );
     program.push(
         "hole",
         ExtrudeArgs {
             sketch: "hole_sketch".into(),
             extent: Extents::blind(-0.5),
-            face: false,
-            combine: Combine::Difference {
+            output: Output::Solid(Combine::With {
+                op: BooleanOp::Difference,
                 target: "extrude(box)".into(),
-            },
+            }),
         },
     );
     program
@@ -196,22 +197,14 @@ pub fn bracket() -> Program {
     rectangle(&mut outline, [0.0, 0.0], 40.0, 40.0);
     program.push(
         "outline",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: solved(outline),
-            ..Default::default()
-        },
+        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(outline)),
     );
     program.push(
         "block",
         ExtrudeArgs {
             sketch: "outline".into(),
             extent: Extents::blind(10.0),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
 
@@ -219,23 +212,22 @@ pub fn bracket() -> Program {
     circle(&mut hole, [20.0, 20.0], 3.0);
     program.push(
         "hole_sketch",
-        AddSketchArgs {
-            plane: Some(EntityRef::Face {
+        AddSketchArgs::on(
+            EntityRef::Face {
                 name: "extrude(block,end)".into(),
-            }),
-            sketch: solved(hole),
-            ..Default::default()
-        },
+            },
+            solved(hole),
+        ),
     );
     program.push(
         "hole",
         ExtrudeArgs {
             sketch: "hole_sketch".into(),
             extent: Extents::blind(-10.0),
-            face: false,
-            combine: Combine::Difference {
+            output: Output::Solid(Combine::With {
+                op: BooleanOp::Difference,
                 target: "extrude(block)".into(),
-            },
+            }),
         },
     );
     program
@@ -300,14 +292,7 @@ pub fn cross_drilled_shaft() -> Program {
     });
     program.push(
         "section",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::X),
-            )),
-            sketch: solved(section),
-            ..Default::default()
-        },
+        AddSketchArgs::on(origin_plane(FrameAxis::X), solved(section)),
     );
     program.push(
         "shaft",
@@ -318,8 +303,7 @@ pub fn cross_drilled_shaft() -> Program {
                 curve: axis,
             }),
             extent: Extents::blind(360.0),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
 
@@ -329,14 +313,7 @@ pub fn cross_drilled_shaft() -> Program {
     circle(&mut bore, [0.0, -2.2], 0.25);
     program.push(
         "bore_sketch",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Y),
-            )),
-            sketch: solved(bore),
-            ..Default::default()
-        },
+        AddSketchArgs::on(origin_plane(FrameAxis::Y), solved(bore)),
     );
     program.push(
         "bore",
@@ -348,10 +325,10 @@ pub fn cross_drilled_shaft() -> Program {
                 side2: None,
                 reversed: false,
             },
-            face: false,
-            combine: Combine::Difference {
+            output: Output::Solid(Combine::With {
+                op: BooleanOp::Difference,
                 target: "revolve(shaft)".into(),
-            },
+            }),
         },
     );
     program
@@ -369,14 +346,7 @@ pub fn split_plate() -> Program {
     circle(&mut plate, [0.75, 0.5], 0.3);
     program.push(
         "plate_sketch",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: solved(plate),
-            ..Default::default()
-        },
+        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(plate)),
     );
     program.push(
         "plate",
@@ -388,8 +358,7 @@ pub fn split_plate() -> Program {
                 side2: None,
                 reversed: false,
             },
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
 
@@ -410,14 +379,7 @@ pub fn split_plate() -> Program {
     }
     program.push(
         "cut_sketch",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Y),
-            )),
-            sketch: solved(cut),
-            ..Default::default()
-        },
+        AddSketchArgs::on(origin_plane(FrameAxis::Y), solved(cut)),
     );
     program.push(
         "cut",
@@ -429,8 +391,7 @@ pub fn split_plate() -> Program {
                 side2: None,
                 reversed: false,
             },
-            face: true,
-            combine: Combine::NewBody,
+            output: Output::Faces { up_to: None },
         },
     );
     program.push(
@@ -443,69 +404,68 @@ pub fn split_plate() -> Program {
     program
 }
 
-// /// A box with a round boss standing on it, sketched on a reference plane:
-// /// the plane half a unit above the box's top (`lifted`, offset from
-// /// `extrude(box,end)`), a circle sketched on it, and extruded back down
-// /// through the gap and into the box, joined to it (`boss`) — the part is
-// /// `extrude(boss)`.
-// pub fn boss_on_reference_plane() -> Program {
-//     let mut program = Program::new();
-//     let mut outline = Sketch::new();
-//     rectangle(&mut outline, [0.0, 0.0], 2.0, 2.0);
-//     program.push(
-//         "outline",
-//         AddSketchArgs {
-//             plane: Some(EntityRef::datum_component(
-//                 ORIGIN,
-//                 DatumComponent::Plane(FrameAxis::Z),
-//             )),
-//             sketch: solved(outline),
-//             ..Default::default()
-//         },
-//     );
-//     program.push(
-//         "box",
-//         ExtrudeArgs {
-//             sketch: "outline".into(),
-//             extent: Extents::blind(1.0),
-//             face: false,
-//             combine: Combine::NewBody,
-//         },
-//     );
-//     program.push(
-//         "lifted",
-//         AddDatumArgs {
-//             selection: vec![EntityRef::Face {
-//                 name: "extrude(box,end)".into(),
-//             }],
-//             construction: Construction::Offset {
-//                 distance: 0.5.into(),
-//             },
-//         },
-//     );
-//     let mut boss = Sketch::new();
-//     circle(&mut boss, [1.0, 1.0], 0.5);
-//     program.push(
-//         "boss_sketch",
-//         AddSketchArgs {
-//             plane: Some(EntityRef::datum("lifted")),
-//             sketch: solved(boss),
-//             ..Default::default()
-//         },
-//     );
-//     program.push(
-//         "boss",
-//         ExtrudeArgs {
-//             sketch: "boss_sketch".into(),
-//             extent: Extents::blind(-0.75),
-//             face: false,
-//             combine: Combine::Union {
-//                 target: "extrude(box)".into(),
-//             },
-//         },
-//     );
-//     program
-// }
+/// A box with a round boss standing on it, sketched on a reference plane:
+/// the plane half a unit above the box's top (`lifted`, offset from
+/// `extrude(box,end)`), a circle sketched on it, and extruded back down
+/// through the gap and into the box, joined to it (`boss`) — the part is
+/// `extrude(boss)`.
+pub fn boss_on_reference_plane() -> Program {
+    let mut program = Program::new();
+    let mut outline = Sketch::new();
+    rectangle(&mut outline, [0.0, 0.0], 2.0, 2.0);
+    program.push(
+        "outline",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: solved(outline),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "box",
+        ExtrudeArgs {
+            sketch: "outline".into(),
+            extent: Extents::blind(1.0),
+            output: Output::Solid(Combine::NewBody),
+        },
+    );
+    program.push(
+        "lifted",
+        AddDatumArgs {
+            selection: vec![EntityRef::Face {
+                name: "extrude(box,end)".into(),
+            }],
+            construction: Construction::Offset {
+                distance: 0.5.into(),
+            },
+        },
+    );
+    let mut boss = Sketch::new();
+    circle(&mut boss, [1.0, 1.0], 0.5);
+    program.push(
+        "boss_sketch",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum("lifted")),
+            sketch: solved(boss),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "boss",
+        ExtrudeArgs {
+            sketch: "boss_sketch".into(),
+            extent: Extents::blind(-0.75),
+            output: Output::Solid(Combine::With {
+                op: BooleanOp::Union,
+                target: "extrude(box)".into(),
+            }),
+        },
+    );
+    program
+}
 
 /// A hand-drawn handle-shaped outline (an irregular blob, splined, with a
 /// smaller splined region inside it — as a free-hand sketch in the web
@@ -558,22 +518,14 @@ pub fn handle_with_hole() -> Program {
 
     program.push(
         "outline",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: solved(outline),
-            ..Default::default()
-        },
+        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(outline)),
     );
     program.push(
         "handle",
         ExtrudeArgs {
             sketch: "outline".into(),
             extent: Extents::blind(1.0),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
 
@@ -582,14 +534,7 @@ pub fn handle_with_hole() -> Program {
     hole.add_circle(center, n(0.31727744879927977));
     program.push(
         "hole_sketch",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Y),
-            )),
-            sketch: solved(hole),
-            ..Default::default()
-        },
+        AddSketchArgs::on(origin_plane(FrameAxis::Y), solved(hole)),
     );
     program.push(
         "hole",
@@ -601,10 +546,10 @@ pub fn handle_with_hole() -> Program {
                 side2: None,
                 reversed: false,
             },
-            face: false,
-            combine: Combine::Difference {
+            output: Output::Solid(Combine::With {
+                op: BooleanOp::Difference,
                 target: "extrude(handle)".into(),
-            },
+            }),
         },
     );
     program
@@ -666,14 +611,7 @@ pub fn luggage_tag() -> Program {
 
     program.push(
         "outline",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: solved(outline),
-            ..Default::default()
-        },
+        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(outline)),
     );
     program.push(
         "tag",
@@ -685,8 +623,7 @@ pub fn luggage_tag() -> Program {
                 side2: None,
                 reversed: false,
             },
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
     program
@@ -722,22 +659,14 @@ pub fn revolved_cone_on_box() -> Program {
     outline.add_circle(center, n(0.771466957205246));
     program.push(
         "sketch1",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: outline,
-            ..Default::default()
-        },
+        AddSketchArgs::on(origin_plane(FrameAxis::Z), outline),
     );
     program.push(
         "extrude1",
         ExtrudeArgs {
             sketch: "sketch1".into(),
             extent: Extents::blind(1.8900000000000001),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
 
@@ -751,13 +680,12 @@ pub fn revolved_cone_on_box() -> Program {
     triangle.add_line(q3, q0);
     program.push(
         "sketch2",
-        AddSketchArgs {
-            plane: Some(EntityRef::Face {
+        AddSketchArgs::on(
+            EntityRef::Face {
                 name: format!("extrude(extrude1,sketch1,{right})"),
-            }),
-            sketch: triangle,
-            ..Default::default()
-        },
+            },
+            triangle,
+        ),
     );
     program.push(
         "revolve1",
@@ -768,10 +696,10 @@ pub fn revolved_cone_on_box() -> Program {
                 curve: axis,
             }),
             extent: Extents::blind(360.0),
-            face: false,
-            combine: Combine::Union {
+            output: Output::Solid(Combine::With {
+                op: BooleanOp::Union,
                 target: "extrude(extrude1)".into(),
-            },
+            }),
         },
     );
     program
@@ -785,22 +713,14 @@ pub fn pin() -> Program {
     circle(&mut sketch, [0.0, 0.0], 0.4);
     program.push(
         "pin_sketch",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: solved(sketch),
-            ..Default::default()
-        },
+        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(sketch)),
     );
     program.push(
         "pin",
         ExtrudeArgs {
             sketch: "pin_sketch".into(),
             extent: Extents::blind(2.0),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
     program
@@ -848,7 +768,7 @@ pub fn pin_in_plate_assembly() -> Program {
         },
     );
     let pose = |position| ParamValue::Pose(pose(position, [0.0; 3]));
-    program.state = State::from([
+    program.state = Values::from([
         (pose_parameter("plate"), pose([0.0; 3])),
         (pose_parameter("pin"), pose([1.0, 1.0, 0.5])),
     ]);
@@ -875,22 +795,14 @@ pub fn bar(length: f64) -> Program {
     let mut program = Program::new();
     program.push(
         "link_sketch",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: link_sketch(length).0,
-            ..Default::default()
-        },
+        AddSketchArgs::on(origin_plane(FrameAxis::Z), link_sketch(length).0),
     );
     program.push(
         "link",
         ExtrudeArgs {
             sketch: "link_sketch".into(),
             extent: Extents::blind(0.2),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
     program
@@ -965,7 +877,7 @@ pub fn chain_assembly() -> Program {
         );
     }
     let pose = |x, z| ParamValue::Pose(pose([x, 0.0, z], [0.0; 3]));
-    program.state = State::from([
+    program.state = Values::from([
         (pose_parameter("link1"), pose(0.0, 0.0)),
         (pose_parameter("link2"), pose(3.0, 0.2)),
         (pose_parameter("link3"), pose(6.0, 0.4)),
@@ -1045,7 +957,7 @@ pub fn arm_assembly() -> Program {
     let [dx, dy] = turned(elbow);
     let hand = [fore[0] + dx, fore[1] + dy];
     let at = |[x, y]: [f64; 2], z, turn| ParamValue::Pose(pose([x, y, z], [0.0, 0.0, turn]));
-    program.state = State::from([
+    program.state = Values::from([
         (pose_parameter("upper"), at([0.0, 0.0], 0.0, 0.0)),
         (pose_parameter("fore"), at(fore, 0.2, elbow)),
         (pose_parameter("hand"), at(hand, 0.4, elbow + wrist)),
@@ -1100,7 +1012,7 @@ pub fn four_bar_assembly() -> Program {
     // The crank at 60°, and where that puts the others (worked out from the
     // bars' lengths; the mates hold them there exactly).
     let pose = |position, turn| ParamValue::Pose(pose(position, [0.0, 0.0, turn]));
-    program.state = State::from([
+    program.state = Values::from([
         (pose_parameter("ground"), pose([0.0, 0.0, 0.0], 0.0)),
         (pose_parameter("crank"), pose([0.0, 0.0, 0.2], 60.0)),
         (
@@ -1113,19 +1025,6 @@ pub fn four_bar_assembly() -> Program {
         ),
     ]);
     program
-}
-
-/// A number parameter of an example: `expression`, offered on a slider
-/// from `min` to `max`.
-fn number_parameter(name: &str, expression: &str, min: f64, max: f64) -> Parameter {
-    Parameter {
-        name: name.into(),
-        kind: ParameterKind::Number {
-            expression: expression.into(),
-            min: Some(min),
-            max: Some(max),
-        },
-    }
 }
 
 /// A plate designed by its parameters: `width` and `depth` — half the
@@ -1141,13 +1040,10 @@ pub fn parametric_plate() -> Program {
         title: None,
         designation: None,
         color: Some("#d0893e".into()),
-        material: Some(Material {
-            name: "Aluminium 6061".into(),
-            density: 2700.0,
-        }),
+        material: Material::named("Aluminium 6061"),
         values: vec![
-            number_parameter("width", "4", 1.0, 10.0),
-            number_parameter("depth", "width / 2", 0.5, 10.0),
+            Parameter::number("width", "4", 1.0, 10.0),
+            Parameter::number("depth", "width / 2", 0.5, 10.0),
             Parameter {
                 name: "screw".into(),
                 kind: ParameterKind::Table {
@@ -1166,7 +1062,7 @@ pub fn parametric_plate() -> Program {
                     selected: "M4".into(),
                 },
             },
-            number_parameter("thickness", "0.5", 0.1, 2.0),
+            Parameter::number("thickness", "0.5", 0.1, 2.0),
         ],
     };
 
@@ -1187,13 +1083,8 @@ pub fn parametric_plate() -> Program {
     program.push(
         "outline",
         AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: solved(outline),
             formulas,
-            ..Default::default()
+            ..AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(outline))
         },
     );
     program.push(
@@ -1201,8 +1092,7 @@ pub fn parametric_plate() -> Program {
         ExtrudeArgs {
             sketch: "outline".into(),
             extent: Extents::blind("thickness"),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
 
@@ -1215,12 +1105,11 @@ pub fn parametric_plate() -> Program {
     let mut projection = Reference::new(Source::Projection {
         entity: top.clone(),
     });
-    let built = program
-        .build::<Design>(&geop_ops::NoFiles)
-        .expect("the plate builds");
-    let plane = top.resolve_plane(&built).expect("the top is planar");
+    let built = build(&program, &workspace(BTreeMap::new()).scope("")).expect("the plate builds");
+    let mut seen = Seen::new(built.part.current());
+    let plane = top.resolve_plane(&mut seen).expect("the top is planar");
     projection
-        .update(&mut hole, &built, &plane)
+        .update(&mut hole, &mut seen, &plane)
         .expect("the top projects");
     let corner = |p: &str| projection.points[&format!("extrude(plate,outline,{p},end)")];
     let diagonal = hole.add_line(corner("p0"), corner("p2"));
@@ -1238,11 +1127,9 @@ pub fn parametric_plate() -> Program {
     program.push(
         "hole_sketch",
         AddSketchArgs {
-            plane: Some(top),
-            sketch: solved(hole),
             references: vec![projection],
             formulas: BTreeMap::from([(diameter, "screw.clearance".to_string())]),
-            ..Default::default()
+            ..AddSketchArgs::on(top, solved(hole))
         },
     );
     program.push(
@@ -1250,10 +1137,10 @@ pub fn parametric_plate() -> Program {
         ExtrudeArgs {
             sketch: "hole_sketch".into(),
             extent: Extents::blind(-0.3),
-            face: false,
-            combine: Combine::Difference {
+            output: Output::Solid(Combine::With {
+                op: BooleanOp::Difference,
                 target: "extrude(plate)".into(),
-            },
+            }),
         },
     );
     program
@@ -1275,7 +1162,7 @@ pub fn plates_assembly() -> Program {
         "large",
         AddPartArgs {
             file: "plate.geop".into(),
-            parameters: State::from([
+            parameters: Values::from([
                 ("width".to_string(), ParamValue::Number(n(5.0))),
                 ("screw".to_string(), ParamValue::Text("M6".into())),
                 ("color".to_string(), ParamValue::Text("#3e7bd0".into())),
@@ -1284,7 +1171,7 @@ pub fn plates_assembly() -> Program {
         }
         .fixed(),
     );
-    program.state = State::from([
+    program.state = Values::from([
         (
             pose_parameter("small"),
             ParamValue::Pose(pose([0.0; 3], [0.0; 3])),
@@ -1318,17 +1205,16 @@ pub fn metric_plate() -> Program {
     hole.circle(centre, "4.5")
         .expect("the diameter is a number");
     let mut program = Program::new();
-    program.push("outline", outline.on(outline_plane()).expect("it solves"));
+    program.push("outline", outline.on(outline_plane()));
     program.push(
         "plate",
         ExtrudeArgs {
             sketch: "outline".into(),
             extent: Extents::blind(5.0),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
-    program.push("hole_sketch", hole.on(outline_plane()).expect("it solves"));
+    program.push("hole_sketch", hole.on(outline_plane()));
     program.push(
         "hole",
         ExtrudeArgs {
@@ -1337,10 +1223,10 @@ pub fn metric_plate() -> Program {
                 side1: Extent::ThroughAll,
                 ..Extents::blind(0.0)
             },
-            face: false,
-            combine: Combine::Difference {
+            output: Output::Solid(Combine::With {
+                op: BooleanOp::Difference,
                 target: "extrude(plate)".into(),
-            },
+            }),
         },
     );
     program
@@ -1348,10 +1234,12 @@ pub fn metric_plate() -> Program {
 
 /// The name of the face of [`metric_plate`]'s hole.
 pub fn metric_plate_hole() -> String {
-    let part = metric_plate()
-        .build::<Design>(&geop_ops::NoFiles)
-        .expect("the plate builds");
-    geop_ops::PartDescription::of(&part)
+    let built =
+        build(&metric_plate(), &workspace(BTreeMap::new()).scope("")).expect("the plate builds");
+    let part = (built.part.current())
+        .retrieve_target(&geop_ops::model())
+        .expect("the plate has a model");
+    geop_ops::PartDescription::of(part)
         .expect("the plate describes itself")
         .faces
         .into_keys()
@@ -1374,7 +1262,7 @@ pub fn bolted_plate() -> Program {
     );
     let mate = |kind, a: EntityRef, b: EntityRef| Mate::constraint(kind, vec![a, b]);
     let face = |name: String| EntityRef::Face { name };
-    let size = |row: &str| State::from([("size".to_string(), ParamValue::Text(row.into()))]);
+    let size = |row: &str| Values::from([("size".to_string(), ParamValue::Text(row.into()))]);
     program.push(
         "screw",
         AddPartArgs {
@@ -1398,7 +1286,6 @@ pub fn bolted_plate() -> Program {
                     ),
                 ),
             ]),
-            ..Default::default()
         },
     );
     program.push(
@@ -1424,10 +1311,9 @@ pub fn bolted_plate() -> Program {
                     ),
                 ),
             ]),
-            ..Default::default()
         },
     );
-    program.state = State::from([
+    program.state = Values::from([
         (
             pose_parameter("plate"),
             ParamValue::Pose(pose([0.0; 3], [0.0; 3])),
@@ -1507,126 +1393,125 @@ pub fn workspaces() -> Vec<Example<ExampleFiles>> {
         ("arm", || {
             vec![("arm.geop", arm_assembly()), ("link.geop", link())]
         }),
-        // ("bolted_plate", || {
-        //     vec![
-        //         ("bolted_plate.geop", bolted_plate()),
-        //         ("plate.geop", metric_plate()),
-        //     ]
-        // }),
+        ("bolted_plate", || {
+            vec![
+                ("bolted_plate.geop", bolted_plate()),
+                ("plate.geop", metric_plate()),
+            ]
+        }),
     ]
 }
 
-// /// The NACA 2412 section, chord 1 from its leading edge at the origin to
-// /// its trailing edge at `(1, 0)`: the upper side from the trailing edge to
-// /// the leading edge, then the lower side back — points of the four-digit
-// /// formula, cosine spaced, used as the control points of a spline each.
-// const NACA_2412_UPPER: [P2; 15] = [
-//     [1.0, 0.0],
-//     [0.9876, 0.0026],
-//     [0.9509, 0.0101],
-//     [0.8917, 0.0214],
-//     [0.8129, 0.0349],
-//     [0.7182, 0.049],
-//     [0.6123, 0.062],
-//     [0.5006, 0.0723],
-//     [0.3886, 0.0784],
-//     [0.2813, 0.0782],
-//     [0.1853, 0.071],
-//     [0.1056, 0.0576],
-//     [0.0464, 0.0399],
-//     [0.0107, 0.0201],
-//     [0.0, 0.0],
-// ];
-// const NACA_2412_LOWER: [P2; 15] = [
-//     [0.0, 0.0],
-//     [0.0144, -0.0176],
-//     [0.0526, -0.0306],
-//     [0.1126, -0.0387],
-//     [0.1912, -0.0422],
-//     [0.2848, -0.0416],
-//     [0.3889, -0.0384],
-//     [0.4994, -0.0334],
-//     [0.6102, -0.027],
-//     [0.7157, -0.0202],
-//     [0.8106, -0.0138],
-//     [0.8901, -0.0082],
-//     [0.9501, -0.0038],
-//     [0.9873, -0.001],
-//     [1.0, 0.0],
-// ];
+/// The NACA 2412 section, chord 1 from its leading edge at the origin to
+/// its trailing edge at `(1, 0)`: the upper side from the trailing edge to
+/// the leading edge, then the lower side back — points of the four-digit
+/// formula, cosine spaced, used as the control points of a spline each.
+const NACA_2412_UPPER: [P2; 15] = [
+    [1.0, 0.0],
+    [0.9876, 0.0026],
+    [0.9509, 0.0101],
+    [0.8917, 0.0214],
+    [0.8129, 0.0349],
+    [0.7182, 0.049],
+    [0.6123, 0.062],
+    [0.5006, 0.0723],
+    [0.3886, 0.0784],
+    [0.2813, 0.0782],
+    [0.1853, 0.071],
+    [0.1056, 0.0576],
+    [0.0464, 0.0399],
+    [0.0107, 0.0201],
+    [0.0, 0.0],
+];
+const NACA_2412_LOWER: [P2; 15] = [
+    [0.0, 0.0],
+    [0.0144, -0.0176],
+    [0.0526, -0.0306],
+    [0.1126, -0.0387],
+    [0.1912, -0.0422],
+    [0.2848, -0.0416],
+    [0.3889, -0.0384],
+    [0.4994, -0.0334],
+    [0.6102, -0.027],
+    [0.7157, -0.0202],
+    [0.8106, -0.0138],
+    [0.8901, -0.0082],
+    [0.9501, -0.0038],
+    [0.9873, -0.001],
+    [1.0, 0.0],
+];
 
-// /// The NACA 2412 section of chord `chord`, its leading edge at `(x, 0)`,
-// /// drawn in a plane of the origin's `y` axis — which draws in `(x, -z)`,
-// /// so the section is drawn upside down to stand the right way up.
-// fn naca_2412(chord: f64, x: f64) -> Sketch {
-//     let mut s = Sketch::new();
-//     let point = |s: &mut Sketch, p: P2| s.add_point(n(x + chord * p[0]), n(-chord * p[1]));
-//     let trailing = point(&mut s, NACA_2412_UPPER[0]);
-//     let leading = point(&mut s, NACA_2412_LOWER[0]);
-//     let side = |s: &mut Sketch, points: &[P2], first: PointId, last: PointId| {
-//         let mut control = vec![first];
-//         for &p in &points[1..points.len() - 1] {
-//             control.push(point(s, p));
-//         }
-//         control.push(last);
-//         s.add_spline(control);
-//     };
-//     side(&mut s, &NACA_2412_UPPER, trailing, leading);
-//     side(&mut s, &NACA_2412_LOWER, leading, trailing);
-//     s
-// }
+/// The NACA 2412 section of chord `chord`, its leading edge at `(x, 0)`,
+/// drawn in a plane of the origin's `y` axis — which draws in `(x, -z)`,
+/// so the section is drawn upside down to stand the right way up.
+fn naca_2412(chord: f64, x: f64) -> Sketch {
+    let mut s = Sketch::new();
+    let point = |s: &mut Sketch, p: P2| s.add_point(n(x + chord * p[0]), n(-chord * p[1]));
+    let trailing = point(&mut s, NACA_2412_UPPER[0]);
+    let leading = point(&mut s, NACA_2412_LOWER[0]);
+    let side = |s: &mut Sketch, points: &[P2], first: PointId, last: PointId| {
+        let mut control = vec![first];
+        for &p in &points[1..points.len() - 1] {
+            control.push(point(s, p));
+        }
+        control.push(last);
+        s.add_spline(control);
+    };
+    side(&mut s, &NACA_2412_UPPER, trailing, leading);
+    side(&mut s, &NACA_2412_LOWER, leading, trailing);
+    s
+}
 
-// /// A wing: the NACA 2412 section, chord 1 at the root, lofted into the
-// /// same section of chord 0.6 at the tip, 3 out along `y` and swept back
-// /// 0.3.
-// pub fn airfoil_wing() -> Program {
-//     let mut program = Program::new();
-//     program.push(
-//         "root",
-//         AddSketchArgs {
-//             plane: Some(EntityRef::datum_component(
-//                 ORIGIN,
-//                 DatumComponent::Plane(FrameAxis::Y),
-//             )),
-//             sketch: naca_2412(1.0, 0.0),
-//             ..Default::default()
-//         },
-//     );
-//     program.push(
-//         "span",
-//         AddDatumArgs {
-//             selection: vec![EntityRef::datum_component(
-//                 ORIGIN,
-//                 DatumComponent::Plane(FrameAxis::Y),
-//             )],
-//             construction: Construction::Offset {
-//                 distance: 3.0.into(),
-//             },
-//         },
-//     );
-//     program.push(
-//         "tip",
-//         AddSketchArgs {
-//             plane: Some(EntityRef::Datum {
-//                 name: "span".into(),
-//                 component: None,
-//             }),
-//             sketch: naca_2412(0.6, 0.3),
-//             ..Default::default()
-//         },
-//     );
-//     program.push(
-//         "wing",
-//         LoftArgs {
-//             profiles: vec!["root".into(), "tip".into()],
-//             matches: Vec::new(),
-//             guides: Vec::new(),
-//             face: false,
-//             combine: Combine::NewBody,
-//         },
-//     );
-//     program
-// }
+/// A wing: the NACA 2412 section, chord 1 at the root, lofted into the
+/// same section of chord 0.6 at the tip, 3 out along `y` and swept back
+/// 0.3.
+pub fn airfoil_wing() -> Program {
+    let mut program = Program::new();
+    program.push(
+        "root",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Y),
+            )),
+            sketch: naca_2412(1.0, 0.0),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "span",
+        AddDatumArgs {
+            selection: vec![EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Y),
+            )],
+            construction: Construction::Offset {
+                distance: 3.0.into(),
+            },
+        },
+    );
+    program.push(
+        "tip",
+        AddSketchArgs {
+            plane: Some(EntityRef::Datum {
+                name: "span".into(),
+                component: None,
+            }),
+            sketch: naca_2412(0.6, 0.3),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "wing",
+        LoftArgs {
+            profiles: vec!["root".into(), "tip".into()],
+            matches: Vec::new(),
+            guides: Vec::new(),
+            output: Output::Solid(Combine::NewBody),
+        },
+    );
+    program
+}
 
 /// A horn: a circle swept along a straight path, its size set by a rail —
 /// a spline flaring out beside the path, which the circle's point on it
@@ -1685,8 +1570,7 @@ pub fn horn() -> Program {
             twist: 0.0,
             end_scale: 1.0,
             rails: vec![EntityRef::sketch("flare")],
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
     program
@@ -1698,36 +1582,21 @@ pub fn horn() -> Program {
 /// `linear_pattern(holes)`, and the holes follow the hole when it changes.
 pub fn patterned_plate() -> Program {
     let mut program = Program::new();
-    let z_plane = || EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z));
+    let z_plane = || origin_plane(FrameAxis::Z);
     let mut outline = Sketch::new();
     rectangle(&mut outline, [0.0, 0.0], 8.0, 3.0);
-    program.push(
-        "outline",
-        AddSketchArgs {
-            plane: Some(z_plane()),
-            sketch: solved(outline),
-            ..Default::default()
-        },
-    );
+    program.push("outline", AddSketchArgs::on(z_plane(), solved(outline)));
     program.push(
         "plate",
         ExtrudeArgs {
             sketch: "outline".into(),
             extent: Extents::blind(0.5),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
     let mut hole = Sketch::new();
     circle(&mut hole, [1.0, 1.5], 0.3);
-    program.push(
-        "hole_sketch",
-        AddSketchArgs {
-            plane: Some(z_plane()),
-            sketch: solved(hole),
-            ..Default::default()
-        },
-    );
+    program.push("hole_sketch", AddSketchArgs::on(z_plane(), solved(hole)));
     let mut through = Extents::blind(2.0);
     through.symmetric = true;
     program.push(
@@ -1735,19 +1604,18 @@ pub fn patterned_plate() -> Program {
         ExtrudeArgs {
             sketch: "hole_sketch".into(),
             extent: through,
-            face: false,
-            combine: Combine::Difference {
+            output: Output::Solid(Combine::With {
+                op: BooleanOp::Difference,
                 target: "extrude(plate)".into(),
-            },
+            }),
         },
     );
     program.push(
         "holes",
         LinearPatternArgs {
-            bodies: Vec::new(),
-            features: vec![EntityRef::Feature {
+            seeds: Seeds::features(vec![EntityRef::Feature {
                 name: "hole".into(),
-            }],
+            }]),
             first: Direction {
                 along: Some(EntityRef::datum_component(
                     ORIGIN,
@@ -1758,7 +1626,6 @@ pub fn patterned_plate() -> Program {
                 spacing: Spacing::step(2.0),
             },
             second: None,
-            combine: Combine::NewBody,
         },
     );
     program
@@ -1774,22 +1641,14 @@ pub fn hole_plate() -> Program {
     rectangle(&mut outline, [0.0, 0.0], 60.0, 40.0);
     program.push(
         "outline",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: solved(outline),
-            ..Default::default()
-        },
+        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(outline)),
     );
     program.push(
         "plate",
         ExtrudeArgs {
             sketch: "outline".into(),
             extent: Extents::blind(10.0),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
     let points = |at: &[P2]| {
@@ -1812,11 +1671,10 @@ pub fn hole_plate() -> Program {
     };
     program.push(
         "corners",
-        AddSketchArgs {
-            plane: Some(top()),
-            sketch: points(&[[8.0, 8.0], [52.0, 8.0], [52.0, 32.0], [8.0, 32.0]]),
-            ..Default::default()
-        },
+        AddSketchArgs::on(
+            top(),
+            points(&[[8.0, 8.0], [52.0, 8.0], [52.0, 32.0], [8.0, 32.0]]),
+        ),
     );
     program.push(
         "bolts",
@@ -1835,14 +1693,7 @@ pub fn hole_plate() -> Program {
             thread_length: None,
         },
     );
-    program.push(
-        "middle",
-        AddSketchArgs {
-            plane: Some(top()),
-            sketch: points(&[[30.0, 20.0]]),
-            ..Default::default()
-        },
-    );
+    program.push("middle", AddSketchArgs::on(top(), points(&[[30.0, 20.0]])));
     program.push(
         "tapped",
         HoleArgs {
@@ -1863,208 +1714,99 @@ pub fn hole_plate() -> Program {
     program
 }
 
-// /// The route of [`pipe`], its bends of radius `bend`: from the origin
-// /// along `x`, a bend turning to `y` at `(4, 0, 0)`, a bend turning up to
-// /// `z` at `(4, 4, 0)`, and up to `(4, 4, 4)` — every bend tangent to the
-// /// lines it joins.
-// pub fn pipe_route(bend: f64) -> Sketch3d {
-//     let mut s = Sketch3d::new();
-//     let (r, h) = (bend, std::f64::consts::FRAC_1_SQRT_2);
-//     let v = |x: f64, y: f64, z: f64| Vector3::from_array([x, y, z].map(n));
-//     let p = [
-//         s.add_point(v(0.0, 0.0, 0.0)),
-//         s.add_point(v(4.0 - r, 0.0, 0.0)),
-//         s.add_point(v(4.0 - r + r * h, r - r * h, 0.0)),
-//         s.add_point(v(4.0, r, 0.0)),
-//         s.add_point(v(4.0, 4.0 - r, 0.0)),
-//         s.add_point(v(4.0, 4.0 - r + r * h, r - r * h)),
-//         s.add_point(v(4.0, 4.0, r)),
-//         s.add_point(v(4.0, 4.0, 4.0)),
-//     ];
-//     let curves = [
-//         s.add_line(p[0], p[1]),
-//         s.add_arc(p[1], p[2], p[3]),
-//         s.add_line(p[3], p[4]),
-//         s.add_arc(p[4], p[5], p[6]),
-//         s.add_line(p[6], p[7]),
-//     ];
-//     for axis in geop_core_sketch::space::Coordinate::ALL {
-//         s.constrain(Constraint3d::Coordinate {
-//             point: p[0],
-//             axis,
-//             value: n(0.0),
-//         });
-//     }
-//     s.constrain(Constraint3d::ParallelTo {
-//         line: curves[0],
-//         direction: v(1.0, 0.0, 0.0),
-//     });
-//     s.constrain(Constraint3d::Length {
-//         line: curves[0],
-//         value: n(4.0 - r),
-//     });
-//     for w in curves.windows(2) {
-//         s.constrain(Constraint3d::Tangent { a: w[0], b: w[1] });
-//     }
-//     for arc in [curves[1], curves[3]] {
-//         s.constrain(Constraint3d::Radius { arc, value: n(r) });
-//     }
-//     let report = s.solve().expect("the route is valid");
-//     assert!(report.converged, "the route does not solve: {report:?}");
-//     s
-// }
+/// The route of [`pipe`], its bends of radius `bend`: from the origin
+/// along `x`, a bend turning to `y` at `(4, 0, 0)`, a bend turning up to
+/// `z` at `(4, 4, 0)`, and up to `(4, 4, 4)` — every bend tangent to the
+/// lines it joins.
+pub fn pipe_route(bend: f64) -> Sketch3d {
+    let mut s = Sketch3d::new();
+    let (r, h) = (bend, std::f64::consts::FRAC_1_SQRT_2);
+    let v = |x: f64, y: f64, z: f64| Vector3::from_array([x, y, z].map(n));
+    let p = [
+        s.add_point(v(0.0, 0.0, 0.0)),
+        s.add_point(v(4.0 - r, 0.0, 0.0)),
+        s.add_point(v(4.0 - r + r * h, r - r * h, 0.0)),
+        s.add_point(v(4.0, r, 0.0)),
+        s.add_point(v(4.0, 4.0 - r, 0.0)),
+        s.add_point(v(4.0, 4.0 - r + r * h, r - r * h)),
+        s.add_point(v(4.0, 4.0, r)),
+        s.add_point(v(4.0, 4.0, 4.0)),
+    ];
+    let curves = [
+        s.add_line(p[0], p[1]),
+        s.add_arc(p[1], p[2], p[3]),
+        s.add_line(p[3], p[4]),
+        s.add_arc(p[4], p[5], p[6]),
+        s.add_line(p[6], p[7]),
+    ];
+    for axis in geop_core_sketch::space::Coordinate::ALL {
+        s.constrain(Constraint3d::Coordinate {
+            point: p[0],
+            axis,
+            value: n(0.0),
+        });
+    }
+    s.constrain(Constraint3d::ParallelTo {
+        line: curves[0],
+        direction: v(1.0, 0.0, 0.0),
+    });
+    s.constrain(Constraint3d::Length {
+        line: curves[0],
+        value: n(4.0 - r),
+    });
+    for w in curves.windows(2) {
+        s.constrain(Constraint3d::Tangent { a: w[0], b: w[1] });
+    }
+    for arc in [curves[1], curves[3]] {
+        s.constrain(Constraint3d::Radius { arc, value: n(r) });
+    }
+    let report = s.solve().expect("the route is valid");
+    assert!(report.converged, "the route does not solve: {report:?}");
+    s
+}
 
-// /// A pipe bent through space — a cable conduit, say: a circle of radius
-// /// 0.3 on the `x` plane (`section`), swept along a 3-D sketch of lines and
-// /// bends (`route`, see [`pipe_route`]) into the solid `sweep(pipe)`.
-// pub fn pipe() -> Program {
-//     let mut program = Program::new();
-//     let mut section = Sketch::new();
-//     circle(&mut section, [0.0, 0.0], 0.3);
-//     program.push(
-//         "section",
-//         AddSketchArgs {
-//             plane: Some(EntityRef::datum_component(
-//                 ORIGIN,
-//                 DatumComponent::Plane(FrameAxis::X),
-//             )),
-//             sketch: solved(section),
-//             ..Default::default()
-//         },
-//     );
-//     program.push(
-//         "route",
-//         AddSketch3dArgs {
-//             sketch: pipe_route(1.0),
-//             references: Vec::new(),
-//         },
-//     );
-//     program.push(
-//         "pipe",
-//         SweepArgs {
-//             profile: "section".into(),
-//             path: Some(EntityRef::sketch3d("route")),
-//             orientation: Orientation::FollowPath,
-//             twist: 0.0,
-//             end_scale: 1.0,
-//             rails: Vec::new(),
-//             face: false,
-//             combine: Combine::NewBody,
-//         },
-//     );
-//     program
-// }
+/// A pipe bent through space — a cable conduit, say: a circle of radius
+/// 0.3 on the `x` plane (`section`), swept along a 3-D sketch of lines and
+/// bends (`route`, see [`pipe_route`]) into the solid `sweep(pipe)`.
+pub fn pipe() -> Program {
+    let mut program = Program::new();
+    let mut section = Sketch::new();
+    circle(&mut section, [0.0, 0.0], 0.3);
+    program.push(
+        "section",
+        AddSketchArgs::on(origin_plane(FrameAxis::X), solved(section)),
+    );
+    program.push(
+        "route",
+        AddSketch3dArgs {
+            sketch: pipe_route(1.0),
+            references: Vec::new(),
+        },
+    );
+    program.push(
+        "pipe",
+        SweepArgs {
+            profile: "section".into(),
+            path: Some(EntityRef::sketch3d("route")),
+            orientation: Orientation::FollowPath,
+            twist: 0.0,
+            end_scale: 1.0,
+            rails: Vec::new(),
+            output: Output::Solid(Combine::NewBody),
+        },
+    );
+    program
+}
 
-// /// A sheet-metal mounting bracket: a 2 x 1.2 plate 0.08 thick (`plate`),
-// /// a flange bent up along part of its front edge with reliefs beside it
-// /// (`front`), one along all of its back edge (`back`), and two mounting
-// /// holes cut through the plate after flanging (`mount`, drawn in `holes`)
-// /// — the body is `sheet_cut(mount)`.
-// pub fn sheet_metal_bracket() -> Program {
-//     let mut program = Program::new();
-//     let mut outline = Sketch::new();
-//     let lines = rectangle(&mut outline, [0.0, 0.0], 2.0, 1.2);
-//     program.push(
-//         "outline",
-//         AddSketchArgs {
-//             plane: Some(EntityRef::datum_component(
-//                 ORIGIN,
-//                 DatumComponent::Plane(FrameAxis::Z),
-//             )),
-//             sketch: solved(outline),
-//             ..Default::default()
-//         },
-//     );
-//     program.push(
-//         "plate",
-//         BaseFlangeArgs {
-//             sketch: "outline".into(),
-//             rules: SheetMetalRules {
-//                 thickness: 0.08,
-//                 bend_radius: 0.08,
-//                 ..SheetMetalRules::default()
-//             },
-//             depth: 1.0.into(),
-//             flip: false,
-//         },
-//     );
-//     let edge = |line: CurveId| format!("base_flange(plate,outline,{line},b)");
-//     let flange = |line: CurveId, length: f64, offset: f64| EdgeFlangeArgs {
-//         edge: edge(line),
-//         angle: 90.0.into(),
-//         length: length.into(),
-//         reference: LengthReference::OuterSharp,
-//         position: FlangePosition::MaterialInside,
-//         radius: None,
-//         offset_start: offset,
-//         offset_end: offset,
-//         corner: Corner::Open,
-//     };
-//     program.push("front", flange(lines[0], 0.6, 0.3));
-//     program.push("back", flange(lines[2], 0.4, 0.0));
-//     let mut holes = Sketch::new();
-//     circle(&mut holes, [0.5, 0.6], 0.15);
-//     circle(&mut holes, [1.5, 0.6], 0.15);
-//     program.push(
-//         "holes",
-//         AddSketchArgs {
-//             plane: Some(EntityRef::datum_component(
-//                 ORIGIN,
-//                 DatumComponent::Plane(FrameAxis::Z),
-//             )),
-//             sketch: solved(holes),
-//             ..Default::default()
-//         },
-//     );
-//     program.push(
-//         "mount",
-//         SheetCutArgs {
-//             sketch: "holes".into(),
-//             face: String::new(),
-//         },
-//     );
-//     program
-// }
-
-// /// A computer mouse, shaped as a subdivision surface: half a 1.2 x 2 x 0.8
-// /// box cage, mirrored in `x = 0`, its back raised into a hump and the rim
-// /// of its bottom creased, so that it stands on a flat sole with a sharp
-// /// edge while everything above rounds off. The body is `subd(mouse)`.
-// pub fn subd_mouse() -> Program {
-//     let mut cage = Cage::cuboid([1.2, 2.0, 0.8]);
-//     cage.halve(0).expect("the box reaches across x = 0");
-//     let bottom = cage.face(8).expect("the box's bottom").vertices.clone();
-//     let on_plane = |v: u32| cage.vertex(v).is_ok_and(|x| x.at[0] == 0.0);
-//     let rim: Vec<[u32; 2]> = (0..bottom.len())
-//         .map(|k| [bottom[k], bottom[(k + 1) % bottom.len()]])
-//         .filter(|&[a, b]| !(on_plane(a) && on_plane(b)))
-//         .collect();
-//     cage.set_crease(&rim, true);
-//     let back = cage
-//         .vertices
-//         .iter()
-//         .filter(|v| v.at[1] > 0.0 && v.at[2] > 0.0)
-//         .map(|v| v.id)
-//         .collect();
-//     cage.transform(&back, Mirror::X, |p| [p[0], p[1], p[2] + 0.3]);
-//     let mut program = Program::new();
-//     program.push(
-//         "mouse",
-//         SubdArgs {
-//             cage,
-//             mirror: Mirror::X,
-//         },
-//     );
-//     program
-// }
-
-/// A 2 x 1.5 x 1 box with every edge rounded by 0.2, at once: where three
-/// fillets meet, at each corner, the ball touching its three faces rounds
-/// it — the solid `fillet(round)`.
-pub fn rounded_box() -> Program {
+/// A sheet-metal mounting bracket: a 2 x 1.2 plate 0.08 thick (`plate`),
+/// a flange bent up along part of its front edge with reliefs beside it
+/// (`front`), one along all of its back edge (`back`), and two mounting
+/// holes cut through the plate after flanging (`mount`, drawn in `holes`)
+/// — the body is `sheet_cut(mount)`.
+pub fn sheet_metal_bracket() -> Program {
     let mut program = Program::new();
     let mut outline = Sketch::new();
-    let lines = rectangle(&mut outline, [0.0, 0.0], 2.0, 1.5);
+    let lines = rectangle(&mut outline, [0.0, 0.0], 2.0, 1.2);
     program.push(
         "outline",
         AddSketchArgs {
@@ -2077,12 +1819,105 @@ pub fn rounded_box() -> Program {
         },
     );
     program.push(
+        "plate",
+        BaseFlangeArgs {
+            sketch: "outline".into(),
+            rules: SheetMetalRules {
+                thickness: 0.08,
+                bend_radius: 0.08,
+                ..SheetMetalRules::default()
+            },
+            depth: 1.0.into(),
+            flip: false,
+        },
+    );
+    let edge = |line: CurveId| format!("base_flange(plate,outline,{line},b)");
+    let flange = |line: CurveId, length: f64, offset: f64| EdgeFlangeArgs {
+        edge: edge(line),
+        angle: 90.0.into(),
+        length: length.into(),
+        reference: LengthReference::OuterSharp,
+        position: FlangePosition::MaterialInside,
+        radius: None,
+        offset_start: offset,
+        offset_end: offset,
+        corner: Corner::Open,
+    };
+    program.push("front", flange(lines[0], 0.6, 0.3));
+    program.push("back", flange(lines[2], 0.4, 0.0));
+    let mut holes = Sketch::new();
+    circle(&mut holes, [0.5, 0.6], 0.15);
+    circle(&mut holes, [1.5, 0.6], 0.15);
+    program.push(
+        "holes",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            )),
+            sketch: solved(holes),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "mount",
+        SheetCutArgs {
+            sketch: "holes".into(),
+            face: String::new(),
+        },
+    );
+    program
+}
+
+/// A computer mouse, shaped as a subdivision surface: half a 1.2 x 2 x 0.8
+/// box cage, mirrored in `x = 0`, its back raised into a hump and the rim
+/// of its bottom creased, so that it stands on a flat sole with a sharp
+/// edge while everything above rounds off. The body is `subd(mouse)`.
+pub fn subd_mouse() -> Program {
+    let mut cage = Cage::cuboid([1.2, 2.0, 0.8]);
+    cage.halve(0).expect("the box reaches across x = 0");
+    let bottom = cage.face(8).expect("the box's bottom").vertices.clone();
+    let on_plane = |v: u32| cage.vertex(v).is_ok_and(|x| x.at[0] == 0.0);
+    let rim: Vec<[u32; 2]> = (0..bottom.len())
+        .map(|k| [bottom[k], bottom[(k + 1) % bottom.len()]])
+        .filter(|&[a, b]| !(on_plane(a) && on_plane(b)))
+        .collect();
+    cage.set_crease(&rim, true);
+    let back = cage
+        .vertices
+        .iter()
+        .filter(|v| v.at[1] > 0.0 && v.at[2] > 0.0)
+        .map(|v| v.id)
+        .collect();
+    cage.transform(&back, Mirror::X, |p| [p[0], p[1], p[2] + 0.3]);
+    let mut program = Program::new();
+    program.push(
+        "mouse",
+        SubdArgs {
+            cage,
+            mirror: Mirror::X,
+        },
+    );
+    program
+}
+
+/// A 2 x 1.5 x 1 box with every edge rounded by 0.2, at once: where three
+/// fillets meet, at each corner, the ball touching its three faces rounds
+/// it — the solid `fillet(round)`.
+pub fn rounded_box() -> Program {
+    let mut program = Program::new();
+    let mut outline = Sketch::new();
+    let lines = rectangle(&mut outline, [0.0, 0.0], 2.0, 1.5);
+    program.push(
+        "outline",
+        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(outline)),
+    );
+    program.push(
         "box",
         ExtrudeArgs {
             sketch: "outline".into(),
             extent: Extents::blind(1.0),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
     let mut edges = Vec::new();
@@ -2132,163 +1967,151 @@ pub fn motor_flange() -> Program {
         .expect("a hole off the middle turns round it");
     program.push(
         "outline",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: solved(outline),
-            ..Default::default()
-        },
+        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(outline)),
     );
     program.push(
         "flange",
         ExtrudeArgs {
             sketch: "outline".into(),
             extent: Extents::blind(2.5),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
     program
 }
 
-// /// A doubly curved panel, a saddle: a UV surface (`panel`) through three
-// /// ribs along `x` and three spines along `z`, each a spline of a 3-D
-// /// sketch through points of the saddle — the ribs' and the spines' meeting
-// /// where they cross; and a block under it (`block`, up along `y`) split
-// /// along it (`shaped`) into a piece with the saddle for its top and one
-// /// with it for its bottom. Drawn in tens of millimetres: the panel is 40 by
-// /// 30.
-// pub fn curved_panel() -> Program {
-//     let height = |x: f64, z: f64| 0.6 + 0.08 * (x - 2.0).powi(2) - 0.12 * (z - 1.5).powi(2);
-//     let mut program = Program::new();
-//     let mut splines = |name: &str, lines: Vec<Vec<[f64; 2]>>| -> Vec<EntityRef> {
-//         let mut sketch = Sketch3d::new();
-//         let mut curves = Vec::new();
-//         for line in lines {
-//             let points = line
-//                 .iter()
-//                 .map(|&[x, z]| {
-//                     let at = [x, height(x, z), z].map(|c| n(10.0 * c));
-//                     sketch.add_point(Vector3::from_array(at))
-//                 })
-//                 .collect();
-//             let curve = sketch.add_spline(points);
-//             curves.push(EntityRef::Edge {
-//                 name: format!("sketch3d({name},{curve})"),
-//             });
-//         }
-//         program.push(
-//             name,
-//             AddSketch3dArgs {
-//                 sketch,
-//                 references: Vec::new(),
-//             },
-//         );
-//         curves
-//     };
-//     let ribs = splines(
-//         "ribs",
-//         [0.0, 1.5, 3.0]
-//             .iter()
-//             .map(|&y| [0.0, 1.0, 2.0, 3.0, 4.0].map(|x| [x, y]).to_vec())
-//             .collect(),
-//     );
-//     let spines = splines(
-//         "spines",
-//         [0.0, 2.0, 4.0]
-//             .iter()
-//             .map(|&x| [0.0, 0.75, 1.5, 2.25, 3.0].map(|y| [x, y]).to_vec())
-//             .collect(),
-//     );
-//     program.push(
-//         "panel",
-//         NetworkSurfaceArgs {
-//             u_curves: ribs,
-//             v_curves: spines,
-//         },
-//     );
-//     let mut outline = Sketch::new();
-//     // Sketch `y` runs along world `-z`.
-//     rectangle(&mut outline, [5.0, -25.0], 30.0, 20.0);
-//     program.push(
-//         "block_sketch",
-//         AddSketchArgs {
-//             plane: Some(EntityRef::datum_component(
-//                 ORIGIN,
-//                 DatumComponent::Plane(FrameAxis::Y),
-//             )),
-//             sketch: solved(outline),
-//             ..Default::default()
-//         },
-//     );
-//     program.push(
-//         "block",
-//         ExtrudeArgs {
-//             sketch: "block_sketch".into(),
-//             extent: Extents::blind(15.0),
-//             face: false,
-//             combine: Combine::NewBody,
-//         },
-//     );
-//     program.push(
-//         "shaped",
-//         SplitArgs {
-//             solid: "extrude(block)".into(),
-//             face: "network(panel)".into(),
-//         },
-//     );
-//     program
-// }
+/// A doubly curved panel, a saddle: a UV surface (`panel`) through three
+/// ribs along `x` and three spines along `z`, each a spline of a 3-D
+/// sketch through points of the saddle — the ribs' and the spines' meeting
+/// where they cross; and a block under it (`block`, up along `y`) split
+/// along it (`shaped`) into a piece with the saddle for its top and one
+/// with it for its bottom. Drawn in tens of millimetres: the panel is 40 by
+/// 30.
+pub fn curved_panel() -> Program {
+    let height = |x: f64, z: f64| 0.6 + 0.08 * (x - 2.0).powi(2) - 0.12 * (z - 1.5).powi(2);
+    let mut program = Program::new();
+    let mut splines = |name: &str, lines: Vec<Vec<[f64; 2]>>| -> Vec<EntityRef> {
+        let mut sketch = Sketch3d::new();
+        let mut curves = Vec::new();
+        for line in lines {
+            let points = line
+                .iter()
+                .map(|&[x, z]| {
+                    let at = [x, height(x, z), z].map(|c| n(10.0 * c));
+                    sketch.add_point(Vector3::from_array(at))
+                })
+                .collect();
+            let curve = sketch.add_spline(points);
+            curves.push(EntityRef::Edge {
+                name: format!("sketch3d({name},{curve})"),
+            });
+        }
+        program.push(
+            name,
+            AddSketch3dArgs {
+                sketch,
+                references: Vec::new(),
+            },
+        );
+        curves
+    };
+    let ribs = splines(
+        "ribs",
+        [0.0, 1.5, 3.0]
+            .iter()
+            .map(|&y| [0.0, 1.0, 2.0, 3.0, 4.0].map(|x| [x, y]).to_vec())
+            .collect(),
+    );
+    let spines = splines(
+        "spines",
+        [0.0, 2.0, 4.0]
+            .iter()
+            .map(|&x| [0.0, 0.75, 1.5, 2.25, 3.0].map(|y| [x, y]).to_vec())
+            .collect(),
+    );
+    program.push(
+        "panel",
+        NetworkSurfaceArgs {
+            u_curves: ribs,
+            v_curves: spines,
+        },
+    );
+    let mut outline = Sketch::new();
+    // Sketch `y` runs along world `-z`.
+    rectangle(&mut outline, [5.0, -25.0], 30.0, 20.0);
+    program.push(
+        "block_sketch",
+        AddSketchArgs {
+            plane: Some(EntityRef::datum_component(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Y),
+            )),
+            sketch: solved(outline),
+            ..Default::default()
+        },
+    );
+    program.push(
+        "block",
+        ExtrudeArgs {
+            sketch: "block_sketch".into(),
+            extent: Extents::blind(15.0),
+            output: Output::Solid(Combine::NewBody),
+        },
+    );
+    program.push(
+        "shaped",
+        SplitArgs {
+            solid: "extrude(block)".into(),
+            face: "network(panel)".into(),
+        },
+    );
+    program
+}
 
 /// Every example, by name, each with what makes its program: listing them
 /// builds nothing — an editor lists them when it starts, and making one
 /// may solve sketches, or build a part to name its faces.
 pub fn all() -> Vec<Example<Program>> {
     vec![
-        // ("turbine_blade", || {
-        //     drawn(include_str!("drawn/turbine_blade.geop"))
-        // }),
+        ("turbine_blade", || {
+            drawn(include_str!("drawn/turbine_blade.geop"))
+        }),
         ("cool_flange", || {
             drawn(include_str!("drawn/cool_flange.geop"))
         }),
         ("edge_part", || drawn(include_str!("drawn/edge_part.geop"))),
-        // ("conebox", || drawn(include_str!("drawn/conebox.geop"))),
+        ("conebox", || drawn(include_str!("drawn/conebox.geop"))),
         ("box_with_drill_hole", box_with_drill_hole),
         ("bracket", bracket),
         ("cross_drilled_shaft", cross_drilled_shaft),
         ("split_plate", split_plate),
-        // ("boss_on_reference_plane", boss_on_reference_plane),
+        ("boss_on_reference_plane", boss_on_reference_plane),
         ("handle_with_hole", handle_with_hole),
         ("luggage_tag", luggage_tag),
         ("revolved_cone_on_box", revolved_cone_on_box),
         ("pin", pin),
         ("link", link),
         ("parametric_plate", parametric_plate),
-        // ("airfoil_wing", airfoil_wing),
-        // ("subd_mouse", subd_mouse),
-        // ("sheet_metal_bracket", sheet_metal_bracket),
-        // ("pipe", pipe),
+        ("airfoil_wing", airfoil_wing),
+        ("subd_mouse", subd_mouse),
+        ("sheet_metal_bracket", sheet_metal_bracket),
+        ("pipe", pipe),
         ("patterned_plate", patterned_plate),
         ("horn", horn),
         ("hole_plate", hole_plate),
         ("rounded_box", rounded_box),
         ("motor_flange", motor_flange),
-        // ("curved_panel", curved_panel),
+        ("curved_panel", curved_panel),
     ]
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar, vector::Vector3};
-    use geop_core_topology::{
-        contains::shell::{PointClassification, shell_contains},
-        validation::{ValidationParameters, validate},
-    };
-    use geop_ops::{NoFiles, Part, PartDescription, RefId};
+    use geop_core_topology::contains::shell::{PointClassification, shell_contains};
+    use geop_ops::{NamedModel, PartDescription, RefId};
+
+    use crate::operations::testing::{Built, args, check_valid, edit_args, error};
 
     use super::*;
 
@@ -2298,88 +2121,77 @@ mod tests {
         dir
     }
 
-    // /// Every named entity's exact geometry, by name: vertex points, edge
-    // /// curves and face surfaces as their full `Debug` enclosures — equal only
-    // /// if the two parts agree to the last bit of every interval.
-    // fn geometry_by_name(part: &Part<S>) -> BTreeMap<String, String> {
-    // let model = part.topology();
-    // part.names()
-    // .iter()
-    // .filter_map(|(id, name)| {
-    // let geometry = match id {
-    // RefId::Vertex(v) => format!("{:?}", model.get_vertex(v).ok()?.point),
-    // RefId::Edge(e) => format!("{:?}", model.get_edge(e).ok()?.curve),
-    // RefId::Face(f) => format!("{:?}", model.get_face(f).ok()?.surface),
-    // RefId::Solid(_)
-    // | RefId::Sketch(_)
-    // | RefId::Sketch3d(_)
-    // | RefId::Datum(_)
-    // | RefId::Instance(_) => {
-    // return None;
-    // }
-    // };
-    // Some((name.to_string(), geometry))
-    // })
-    // .collect()
-    // }
+    /// Every named entity's exact geometry, by name: vertex points, edge
+    /// curves and face surfaces as their full `Debug` enclosures — equal only
+    /// if the two parts agree to the last bit of every interval.
+    fn geometry_by_name(part: &NamedModel<S>) -> BTreeMap<String, String> {
+        let model = part.topology();
+        part.names()
+            .iter()
+            .filter_map(|(id, name)| {
+                let geometry = match id {
+                    RefId::Vertex(v) => format!("{:?}", model.get_vertex(v).ok()?.point),
+                    RefId::Edge(e) => format!("{:?}", model.get_edge(e).ok()?.curve),
+                    RefId::Face(f) => format!("{:?}", model.get_face(f).ok()?.surface),
+                    RefId::Solid(_) => return None,
+                };
+                Some((name.to_string(), geometry))
+            })
+            .collect()
+    }
 
-    // /// Builds `program`, writes it and a description of the part it builds
-    // /// to `outputs/parts/`, reads the program back from its JSON, and
-    // /// requires the read-back program to be the same program and to build
-    // /// the very same part: every name, every piece of topology between
-    // /// names, and every bit of geometry.
-    // fn build_and_round_trip(name: &str, program: &Program) -> Part<S> {
-    // let part = program.build::<S>(&NoFiles).unwrap();
-    // let validation = ValidationParameters::default();
-    // if let Err(errors) = validate(&validation, part.topology()) {
-    // panic!(
-    // "{name}: {} validation error(s): {}",
-    // errors.len(),
-    // errors[0]
-    // );
-    // }
+    /// Builds `program`, writes it and a description of the part it builds
+    /// to `outputs/parts/`, reads the program back from its JSON, and
+    /// requires the read-back program to be the same program and to build
+    /// the very same part: every name, every piece of topology between
+    /// names, and every bit of geometry.
+    fn build_and_round_trip(name: &str, program: &Program) -> NamedModel<S> {
+        let part = program.build_model().unwrap();
+        if let Err(report) = check_valid(&part) {
+            panic!("{name}: {report}");
+        }
 
-    // let json = program.to_json().unwrap();
-    // let dir = outputs_dir();
-    // std::fs::write(dir.join(format!("{name}.geop")), &json).unwrap();
-    // let description = PartDescription::of(&part).unwrap();
-    // std::fs::write(
-    // dir.join(format!("{name}.part.json")),
-    // serde_json::to_string_pretty(&description).unwrap(),
-    // )
-    // .unwrap();
-    // geop_ops_rasterize::rasterize(part.topology(), 16)
-    // .unwrap()
-    // .scene(|_| geop_ops_rasterize::debug::Color10::Blue)
-    // .save_to_file(dir.join(format!("{name}.html")).to_str().unwrap())
-    // .unwrap();
+        let json = program.to_json().unwrap();
+        let dir = outputs_dir();
+        std::fs::write(dir.join(format!("{name}.geop")), &json).unwrap();
+        let description = PartDescription::of(&part).unwrap();
+        std::fs::write(
+            dir.join(format!("{name}.part.json")),
+            serde_json::to_string_pretty(&description).unwrap(),
+        )
+        .unwrap();
+        geop_ops_rasterize::rasterize(part.topology(), 16)
+            .unwrap()
+            .scene(|_| geop_ops_rasterize::debug::Color10::Blue)
+            .save_to_file(dir.join(format!("{name}.html")).to_str().unwrap())
+            .unwrap();
 
-    // let read_back = Program::from_json(&json).unwrap();
-    // assert_eq!(
-    // &read_back, program,
-    // "{name}: JSON round trip changed the program"
-    // );
-    // assert_eq!(
-    // read_back.to_json().unwrap(),
-    // json,
-    // "{name}: JSON is not stable"
-    // );
+        let read_back = Program::from_json(&json).unwrap();
+        assert_eq!(
+            &read_back, program,
+            "{name}: JSON round trip changed the program"
+        );
+        assert_eq!(
+            read_back.to_json().unwrap(),
+            json,
+            "{name}: JSON is not stable"
+        );
 
-    // let rebuilt = read_back.build::<S>(&NoFiles).unwrap();
-    // assert_eq!(
-    // PartDescription::of(&rebuilt).unwrap(),
-    // description,
-    // "{name}: the read-back program built a different part"
-    // );
-    // assert_eq!(
-    // geometry_by_name(&rebuilt),
-    // geometry_by_name(&part),
-    // "{name}: the read-back program built different geometry"
-    // );
-    // part
-    // }
+        let rebuilt = read_back.build_model().unwrap();
+        assert_eq!(
+            PartDescription::of(&rebuilt).unwrap(),
+            description,
+            "{name}: the read-back program built a different part"
+        );
+        assert_eq!(
+            geometry_by_name(&rebuilt),
+            geometry_by_name(&part),
+            "{name}: the read-back program built different geometry"
+        );
+        part
+    }
 
-    fn inside(part: &Part<S>, solid: &str, p: [f64; 3]) -> PointClassification {
+    fn inside(part: &NamedModel<S>, solid: &str, p: [f64; 3]) -> PointClassification {
         let model = part.topology();
         let solid = part.solid_id(solid).unwrap();
         let point = Vector3::from_array(p.map(S::from_f64));
@@ -2393,202 +2205,204 @@ mod tests {
         result
     }
 
-    // /// The pipe through space is one valid closed solid: four quarters of
-    // /// wall along each of its five curves and two caps — the far one square
-    // /// to its last line, at `z = 4` — hollow nowhere and solid all along.
-    // #[test]
-    // fn pipe_round_trips() {
-    // let part = build_and_round_trip("pipe", &pipe());
-    // let validation = ValidationParameters::default();
-    // if let Err(errors) =
-    // geop_core_topology::validation::validate_manifold(&validation, part.topology())
-    // {
-    // panic!("{errors:?}");
-    // }
-    // let description = PartDescription::of(&part).unwrap();
-    // assert_eq!(
-    // description.solids.keys().collect::<Vec<_>>(),
-    // ["sweep(pipe)"]
-    // );
-    // assert_eq!(description.faces.len(), 5 * 4 + 2);
-    // let model = part.topology();
-    // let end = part.face_id("sweep(pipe,end)").unwrap();
-    // assert!(model.iterate_face_coedges(end).all(|c| {
-    // model.coedge_start_vertex(c).unwrap().point[2].could_be_equal(S::from_f64(4.0))
-    // }));
-    // let half = std::f64::consts::FRAC_1_SQRT_2;
-    // for (p, expected) in [
-    // ([1.5, 0.0, 0.0], PointClassification::Inside),
-    // ([1.5, 0.4, 0.0], PointClassification::Outside),
-    // ([3.0 + half, 1.0 - half, 0.0], PointClassification::Inside),
-    // ([4.0, 2.0, 0.2], PointClassification::Inside),
-    // ([4.0, 3.0 + half, 1.0 - half], PointClassification::Inside),
-    // ([4.0, 4.0, 3.0], PointClassification::Inside),
-    // ([4.0, 4.0, 4.2], PointClassification::Outside),
-    // ] {
-    // assert_eq!(inside(&part, "sweep(pipe)", p), expected, "at {p:?}");
-    // }
-    // }
+    /// The pipe through space is one valid closed solid: four quarters of
+    /// wall along each of its five curves and two caps — the far one square
+    /// to its last line, at `z = 4` — hollow nowhere and solid all along.
+    #[test]
+    fn pipe_round_trips() {
+        let part = build_and_round_trip("pipe", &pipe());
+        let validation = geop_core_topology::validation::ValidationParameters::default();
+        if let Err(errors) =
+            geop_core_topology::validation::validate_manifold(&validation, part.topology())
+        {
+            panic!("{errors:?}");
+        }
+        let description = PartDescription::of(&part).unwrap();
+        assert_eq!(
+            description.solids.keys().collect::<Vec<_>>(),
+            ["sweep(pipe)"]
+        );
+        assert_eq!(description.faces.len(), 5 * 4 + 2);
+        let model = part.topology();
+        let end = part.face_id("sweep(pipe,end)").unwrap();
+        assert!(model.iterate_face_coedges(end).all(|c| {
+            model.coedge_start_vertex(c).unwrap().point[2].could_be_equal(S::from_f64(4.0))
+        }));
+        let half = std::f64::consts::FRAC_1_SQRT_2;
+        for (p, expected) in [
+            ([1.5, 0.0, 0.0], PointClassification::Inside),
+            ([1.5, 0.4, 0.0], PointClassification::Outside),
+            ([3.0 + half, 1.0 - half, 0.0], PointClassification::Inside),
+            ([4.0, 2.0, 0.2], PointClassification::Inside),
+            ([4.0, 3.0 + half, 1.0 - half], PointClassification::Inside),
+            ([4.0, 4.0, 3.0], PointClassification::Inside),
+            ([4.0, 4.0, 4.2], PointClassification::Outside),
+        ] {
+            assert_eq!(inside(&part, "sweep(pipe)", p), expected, "at {p:?}");
+        }
+    }
 
-    // /// The examples drawn in the editor build valid parts and round-trip,
-    // /// as the ones written here do.
-    // #[test]
-    // fn drawn_examples_round_trip() {
-    // let drawn = ["turbine_blade", "cool_flange", "edge_part", "conebox"];
-    // for (name, program) in all().into_iter().filter(|(n, _)| drawn.contains(n)) {
-    // build_and_round_trip(name, &program());
-    // }
-    // }
+    /// The examples drawn in the editor build valid parts and round-trip,
+    /// as the ones written here do.
+    #[test]
+    fn drawn_examples_round_trip() {
+        let drawn = ["turbine_blade", "cool_flange", "edge_part", "conebox"];
+        for (name, program) in all().into_iter().filter(|(n, _)| drawn.contains(n)) {
+            build_and_round_trip(name, &program());
+        }
+    }
 
-    // #[test]
-    // fn box_with_drill_hole_round_trips() {
-    // let part = build_and_round_trip("box_with_drill_hole", &box_with_drill_hole());
-    // let description = PartDescription::of(&part).unwrap();
+    #[test]
+    fn box_with_drill_hole_round_trips() {
+        let part = build_and_round_trip("box_with_drill_hole", &box_with_drill_hole());
+        let description = PartDescription::of(&part).unwrap();
 
-    // // One solid, named after the step that cut the hole.
-    // assert_eq!(
-    // description.solids.keys().collect::<Vec<_>>(),
-    // ["extrude(hole)"]
-    // );
-    // // The box's top keeps its name, and now has the hole in it.
-    // let top = &description.faces["extrude(box,end)"];
-    // assert_eq!(top.holes.len(), 1, "{top:?}");
-    // // The hole's bottom is the hole tool's end cap; its wall is the
-    // // four quarters swept by the circle.
-    // assert!(description.faces.contains_key("extrude(hole,end)"));
-    // let circle = box_with_drill_hole().steps[2].clone();
-    // let crate::PartOperation::AddSketch(args) = circle.operation else {
-    // unreachable!()
-    // };
-    // let circle_id = *args.sketch.curves.keys().next().unwrap();
-    // for piece in ["", "#1", "#2", "#3"] {
-    // let wall = format!("extrude(hole,hole_sketch,{circle_id}{piece})");
-    // assert!(description.faces.contains_key(&wall), "no face {wall}");
-    // }
+        // One solid, named after the step that cut the hole.
+        assert_eq!(
+            description.solids.keys().collect::<Vec<_>>(),
+            ["extrude(hole)"]
+        );
+        // The box's top keeps its name, and now has the hole in it.
+        let top = &description.faces["extrude(box,end)"];
+        assert_eq!(top.holes.len(), 1, "{top:?}");
+        // The hole's bottom is the hole tool's end cap; its wall is the
+        // four quarters swept by the circle.
+        assert!(description.faces.contains_key("extrude(hole,end)"));
+        let args: AddSketchArgs = args(&box_with_drill_hole().program.steps[2]);
+        let circle_id = *args.sketch.curves.keys().next().unwrap();
+        for piece in ["", "#1", "#2", "#3"] {
+            let wall = format!("extrude(hole,hole_sketch,{circle_id}{piece})");
+            assert!(description.faces.contains_key(&wall), "no face {wall}");
+        }
 
-    // assert_eq!(
-    // inside(&part, "extrude(hole)", [0.3, 0.3, 0.5]),
-    // PointClassification::Inside
-    // );
-    // assert_eq!(
-    // inside(&part, "extrude(hole)", [1.0, 1.0, 0.8]),
-    // PointClassification::Outside
-    // );
-    // assert_eq!(
-    // inside(&part, "extrude(hole)", [1.0, 1.0, 0.3]),
-    // PointClassification::Inside
-    // );
-    // }
+        assert_eq!(
+            inside(&part, "extrude(hole)", [0.3, 0.3, 0.5]),
+            PointClassification::Inside
+        );
+        assert_eq!(
+            inside(&part, "extrude(hole)", [1.0, 1.0, 0.8]),
+            PointClassification::Outside
+        );
+        assert_eq!(
+            inside(&part, "extrude(hole)", [1.0, 1.0, 0.3]),
+            PointClassification::Inside
+        );
+    }
 
-    // #[test]
-    // fn cross_drilled_shaft_round_trips() {
-    // let part = build_and_round_trip("cross_drilled_shaft", &cross_drilled_shaft());
-    // let description = PartDescription::of(&part).unwrap();
-    // assert_eq!(
-    // description.solids.keys().collect::<Vec<_>>(),
-    // ["extrude(bore)"]
-    // );
-    // assert_eq!(
-    // inside(&part, "extrude(bore)", [0.0, 0.8, 0.5]),
-    // PointClassification::Inside
-    // );
-    // assert_eq!(
-    // inside(&part, "extrude(bore)", [0.0, 0.0, 2.2]),
-    // PointClassification::Outside
-    // );
-    // assert_eq!(
-    // inside(&part, "extrude(bore)", [0.0, 0.0, 2.7]),
-    // PointClassification::Inside
-    // );
-    // }
+    #[test]
+    fn cross_drilled_shaft_round_trips() {
+        let part = build_and_round_trip("cross_drilled_shaft", &cross_drilled_shaft());
+        let description = PartDescription::of(&part).unwrap();
+        assert_eq!(
+            description.solids.keys().collect::<Vec<_>>(),
+            ["extrude(bore)"]
+        );
+        assert_eq!(
+            inside(&part, "extrude(bore)", [0.0, 0.8, 0.5]),
+            PointClassification::Inside
+        );
+        assert_eq!(
+            inside(&part, "extrude(bore)", [0.0, 0.0, 2.2]),
+            PointClassification::Outside
+        );
+        assert_eq!(
+            inside(&part, "extrude(bore)", [0.0, 0.0, 2.7]),
+            PointClassification::Inside
+        );
+    }
 
-    // #[test]
-    // fn split_plate_round_trips() {
-    // let part = build_and_round_trip("split_plate", &split_plate());
-    // let description = PartDescription::of(&part).unwrap();
-    // assert_eq!(
-    // description.solids.keys().collect::<Vec<_>>(),
-    // ["split(halves,0)", "split(halves,1)"]
-    // );
-    // // The face it was cut with stays, standing on its own.
-    // assert_eq!(part.sheet_face_names(), ["extrude(cut,cut_sketch,c2)"]);
-    // // One half each side of the cut at x = 2, neither in the hole.
-    // let at = |p: [f64; 3]| {
-    // ["split(halves,0)", "split(halves,1)"]
-    // .map(|half| inside(&part, half, p) == PointClassification::Inside)
-    // };
-    // let (left, right) = (at([0.2, 0.2, 0.0]), at([2.5, 0.5, 0.1]));
-    // assert!(
-    // left[0] != left[1] && right == [left[1], left[0]],
-    // "{left:?} {right:?}"
-    // );
-    // assert_eq!(at([0.75, 0.5, 0.0]), [false, false]);
-    // }
+    #[test]
+    fn split_plate_round_trips() {
+        let part = build_and_round_trip("split_plate", &split_plate());
+        let description = PartDescription::of(&part).unwrap();
+        assert_eq!(
+            description.solids.keys().collect::<Vec<_>>(),
+            ["split(halves,0)", "split(halves,1)"]
+        );
+        // The face it was cut with stays, standing on its own.
+        assert_eq!(part.sheet_face_names(), ["extrude(cut,cut_sketch,c2)"]);
+        // One half each side of the cut at x = 2, neither in the hole.
+        let at = |p: [f64; 3]| {
+            ["split(halves,0)", "split(halves,1)"]
+                .map(|half| inside(&part, half, p) == PointClassification::Inside)
+        };
+        let (left, right) = (at([0.2, 0.2, 0.0]), at([2.5, 0.5, 0.1]));
+        assert!(
+            left[0] != left[1] && right == [left[1], left[0]],
+            "{left:?} {right:?}"
+        );
+        assert_eq!(at([0.75, 0.5, 0.0]), [false, false]);
+    }
 
-    // #[test]
-    // fn boss_on_reference_plane_round_trips() {
-    // let part = build_and_round_trip("boss_on_reference_plane", &boss_on_reference_plane());
-    // let description = PartDescription::of(&part).unwrap();
-    // assert_eq!(
-    // description.solids.keys().collect::<Vec<_>>(),
-    // ["extrude(boss)"]
-    // );
-    // assert_eq!(description.datums, ["lifted", "origin"]);
-    // // The boss stands on the box: from the box's top up to the plane.
-    // assert_eq!(
-    // inside(&part, "extrude(boss)", [1.0, 1.0, 1.3]),
-    // PointClassification::Inside
-    // );
-    // assert_eq!(
-    // inside(&part, "extrude(boss)", [1.0, 1.0, 1.6]),
-    // PointClassification::Outside
-    // );
-    // assert_eq!(
-    // inside(&part, "extrude(boss)", [0.2, 0.2, 1.3]),
-    // PointClassification::Outside
-    // );
-    // assert_eq!(
-    // inside(&part, "extrude(boss)", [0.2, 0.2, 0.5]),
-    // PointClassification::Inside
-    // );
-    // }
+    #[test]
+    fn boss_on_reference_plane_round_trips() {
+        let part = build_and_round_trip("boss_on_reference_plane", &boss_on_reference_plane());
+        let description = PartDescription::of(&part).unwrap();
+        assert_eq!(
+            description.solids.keys().collect::<Vec<_>>(),
+            ["extrude(boss)"]
+        );
+        // The datum the boss is sketched on is one of the part's.
+        let runner = boss_on_reference_plane().built().unwrap();
+        let datums: Vec<&str> = (Seen::new(runner.part.current()).datums().into_iter())
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(datums, ["lifted"]);
+        // The boss stands on the box: from the box's top up to the plane.
+        assert_eq!(
+            inside(&part, "extrude(boss)", [1.0, 1.0, 1.3]),
+            PointClassification::Inside
+        );
+        assert_eq!(
+            inside(&part, "extrude(boss)", [1.0, 1.0, 1.6]),
+            PointClassification::Outside
+        );
+        assert_eq!(
+            inside(&part, "extrude(boss)", [0.2, 0.2, 1.3]),
+            PointClassification::Outside
+        );
+        assert_eq!(
+            inside(&part, "extrude(boss)", [0.2, 0.2, 0.5]),
+            PointClassification::Inside
+        );
+    }
 
-    // /// The names of a program's entities don't depend on its numbers: a
-    // /// taller box with a wider hole has the very same names.
-    // /// The hole goes all the way through: both the top and the bottom face
-    // /// carry it as a hole, it has no bottom of its own, and its axis is
-    // /// outside the solid at every height.
-    // #[test]
-    // fn bracket_round_trips() {
-    // let part = build_and_round_trip("bracket", &bracket());
-    // let description = PartDescription::of(&part).unwrap();
+    /// The hole goes all the way through: both the top and the bottom face
+    /// carry it as a hole, it has no bottom of its own, and its axis is
+    /// outside the solid at every height.
+    #[test]
+    fn bracket_round_trips() {
+        let part = build_and_round_trip("bracket", &bracket());
+        let description = PartDescription::of(&part).unwrap();
 
-    // assert_eq!(
-    // description.solids.keys().collect::<Vec<_>>(),
-    // ["extrude(hole)"]
-    // );
-    // for cap in ["extrude(block,start)", "extrude(block,end)"] {
-    // let face = &description.faces[cap];
-    // assert_eq!(face.holes.len(), 1, "{cap}: {face:?}");
-    // }
-    // assert!(!description.faces.contains_key("extrude(hole,end)"));
-    // for z in [1.0, 5.0, 9.0] {
-    // assert_eq!(
-    // inside(&part, "extrude(hole)", [20.0, 20.0, z]),
-    // PointClassification::Outside,
-    // "z = {z}"
-    // );
-    // }
-    // assert_eq!(
-    // inside(&part, "extrude(hole)", [5.0, 5.0, 5.0]),
-    // PointClassification::Inside
-    // );
-    // }
+        assert_eq!(
+            description.solids.keys().collect::<Vec<_>>(),
+            ["extrude(hole)"]
+        );
+        for cap in ["extrude(block,start)", "extrude(block,end)"] {
+            let face = &description.faces[cap];
+            assert_eq!(face.holes.len(), 1, "{cap}: {face:?}");
+        }
+        assert!(!description.faces.contains_key("extrude(hole,end)"));
+        for z in [1.0, 5.0, 9.0] {
+            assert_eq!(
+                inside(&part, "extrude(hole)", [20.0, 20.0, z]),
+                PointClassification::Outside,
+                "z = {z}"
+            );
+        }
+        assert_eq!(
+            inside(&part, "extrude(hole)", [5.0, 5.0, 5.0]),
+            PointClassification::Inside
+        );
+    }
 
+    /// The names of a program's entities don't depend on its numbers: a
+    /// taller box with a wider hole has the very same names.
     #[test]
     fn names_survive_a_change_of_dimensions() {
         let names = |program: &Program| {
-            let part = program.build::<S>(&NoFiles).unwrap();
+            let part = program.build_model().unwrap();
             let description = PartDescription::of(&part).unwrap();
             (
                 description.faces.keys().cloned().collect::<Vec<_>>(),
@@ -2598,19 +2412,17 @@ mod tests {
         };
         let original = box_with_drill_hole();
         let mut edited = original.clone();
-        for step in &mut edited.steps {
-            match &mut step.operation {
-                crate::PartOperation::Extrude(args) if step.id == "box" => {
-                    args.extent = Extents::blind(1.5)
-                }
-                crate::PartOperation::AddSketch(args) if step.id == "hole_sketch" => {
+        for step in &mut edited.program.steps {
+            match step.id.as_str() {
+                "box" => edit_args::<ExtrudeArgs>(step, |args| args.extent = Extents::blind(1.5)),
+                "hole_sketch" => edit_args::<AddSketchArgs>(step, |args| {
                     for c in args.sketch.constraints.values_mut() {
                         if let Constraint::Radius { value, .. } = c {
                             *value = n(0.6);
                         }
                     }
                     args.sketch.solve().unwrap();
-                }
+                }),
                 _ => {}
             }
         }
@@ -2622,15 +2434,12 @@ mod tests {
     #[test]
     fn referring_to_a_missing_entity_fails() {
         let mut program = box_with_drill_hole();
-        let crate::PartOperation::AddSketch(args) = &mut program.steps[2].operation else {
-            unreachable!()
-        };
-        args.plane = Some(EntityRef::Face {
-            name: "extrude(box,side)".into(),
+        edit_args::<AddSketchArgs>(&mut program.program.steps[2], |args| {
+            args.plane = Some(EntityRef::Face {
+                name: "extrude(box,side)".into(),
+            })
         });
-        let Err(err) = program.build::<S>(&NoFiles) else {
-            panic!("a sketch on a face that doesn't exist was placed somewhere");
-        };
+        let err = error(program.build_model());
         assert!(format!("{err:?}").contains("extrude(box,side)"), "{err:?}");
     }
 
@@ -2639,156 +2448,157 @@ mod tests {
     #[test]
     fn duplicate_step_ids_are_rejected() {
         let mut program = box_with_drill_hole();
-        program.steps[3].id = "box".into();
-        assert!(program.build::<S>(&NoFiles).is_err());
+        program.program.steps[3].id = "box".into();
+        assert!(program.validate().is_err());
+        assert!(program.build_model().is_err());
     }
 
-    // /// Reproduces the real bug report described on `handle_with_hole`.
-    // ///
-    // /// Used to fail in the "hole" step's `Difference`, with
-    // /// `face_interior_point` finding no interior point on a side wall of the
-    // /// inner spline. The wall's loop carried a spur whose pcurve ran across
-    // /// the whole face: `fit_pcurve` seeded its first Newton projection from
-    // /// the patch's parametric middle, and on this strongly curved wall that
-    // /// converged to a foot point clamped against the far domain bound. The
-    // /// walk is now seeded where the curve actually starts on the surface.
-    // #[test]
-    // fn handle_with_hole_round_trips() {
-    // build_and_round_trip("handle_with_hole", &handle_with_hole());
-    // }
+    /// Reproduces the real bug report described on `handle_with_hole`.
+    ///
+    /// Used to fail in the "hole" step's `Difference`, with
+    /// `face_interior_point` finding no interior point on a side wall of the
+    /// inner spline. The wall's loop carried a spur whose pcurve ran across
+    /// the whole face: `fit_pcurve` seeded its first Newton projection from
+    /// the patch's parametric middle, and on this strongly curved wall that
+    /// converged to a foot point clamped against the far domain bound. The
+    /// walk is now seeded where the curve actually starts on the surface.
+    #[test]
+    fn handle_with_hole_round_trips() {
+        build_and_round_trip("handle_with_hole", &handle_with_hole());
+    }
 
-    // #[test]
-    // fn luggage_tag_round_trips() {
-    // build_and_round_trip("luggage_tag", &luggage_tag());
-    // }
+    #[test]
+    fn luggage_tag_round_trips() {
+        build_and_round_trip("luggage_tag", &luggage_tag());
+    }
 
-    // /// Every edge rounded, and a ball's piece at each of the eight corners.
-    // #[test]
-    // fn rounded_box_round_trips() {
-    // let part = build_and_round_trip("rounded_box", &rounded_box());
-    // assert_eq!(part.solid_names(), ["fillet(round)"]);
-    // let corners = part
-    // .topology()
-    // .faces
-    // .keys()
-    // .filter_map(|&f| part.name_of(f))
-    // .filter(|name| name.ends_with(",corner)"))
-    // .count();
-    // assert_eq!(corners, 8);
-    // }
+    /// Every edge rounded, and a ball's piece at each of the eight corners.
+    #[test]
+    fn rounded_box_round_trips() {
+        let part = build_and_round_trip("rounded_box", &rounded_box());
+        assert_eq!(part.solid_names(), ["fillet(round)"]);
+        let corners = part
+            .topology()
+            .faces
+            .keys()
+            .filter_map(|&f| part.name_of(f))
+            .filter(|name| name.ends_with(",corner)"))
+            .count();
+        assert_eq!(corners, 8);
+    }
 
-    // /// The motor flange is a ring with six bolt holes through it: solid in
-    // /// its wall, open in its bore and in every hole, the copies round the
-    // /// bolt circle as much as the first.
-    // /// The curved panel is a valid face, through the middle of its middle
-    // /// rib and spine, where they cross; it splits the block under it in
-    // /// two, a point above the saddle in one and one below it in the other.
-    // #[test]
-    // fn curved_panel_round_trips() {
-    // let part = build_and_round_trip("curved_panel", &curved_panel());
-    // let description = PartDescription::of(&part).unwrap();
-    // assert_eq!(
-    // description.solids.len(),
-    // 2,
-    // "{:?}",
-    // description.solids.keys()
-    // );
-    // for (p, expected) in [
-    // ([20.0, 10.0, 15.0], [true, false]),
-    // ([20.0, 2.0, 15.0], [false, true]),
-    // ] {
-    // let inside = ["split(shaped,0)", "split(shaped,1)"]
-    // .map(|solid| inside(&part, solid, p) == PointClassification::Inside);
-    // assert!(
-    // inside == expected || inside == [expected[1], expected[0]],
-    // "at {p:?}: {inside:?}"
-    // );
-    // }
-    // let face = part.face_id("network(panel)").unwrap();
-    // let surface = &part.topology().get_face(face).unwrap().surface;
-    // let middle = Vector3::from_array([20.0, 6.0, 15.0].map(S::from_f64));
-    // assert!(
-    // geop_core_geometry::contains::surface::surface_could_contain(
-    // surface,
-    // &middle,
-    // 10_000,
-    // S::from_f64(1e-7)
-    // )
-    // .unwrap()
-    // .is_some()
-    // );
-    // }
+    /// The curved panel is a valid face, through the middle of its middle
+    /// rib and spine, where they cross; it splits the block under it in
+    /// two, a point above the saddle in one and one below it in the other.
+    #[test]
+    fn curved_panel_round_trips() {
+        let part = build_and_round_trip("curved_panel", &curved_panel());
+        let description = PartDescription::of(&part).unwrap();
+        assert_eq!(
+            description.solids.len(),
+            2,
+            "{:?}",
+            description.solids.keys()
+        );
+        for (p, expected) in [
+            ([20.0, 10.0, 15.0], [true, false]),
+            ([20.0, 2.0, 15.0], [false, true]),
+        ] {
+            let inside = ["split(shaped,0)", "split(shaped,1)"]
+                .map(|solid| inside(&part, solid, p) == PointClassification::Inside);
+            assert!(
+                inside == expected || inside == [expected[1], expected[0]],
+                "at {p:?}: {inside:?}"
+            );
+        }
+        let face = part.face_id("network(panel)").unwrap();
+        let surface = &part.topology().get_face(face).unwrap().surface;
+        let middle = Vector3::from_array([20.0, 6.0, 15.0].map(S::from_f64));
+        assert!(
+            geop_core_geometry::contains::surface::surface_could_contain(
+                surface,
+                &middle,
+                10_000,
+                S::from_f64(1e-7)
+            )
+            .unwrap()
+            .is_some()
+        );
+    }
 
-    // #[test]
-    // fn motor_flange_round_trips() {
-    // let part = build_and_round_trip("motor_flange", &motor_flange());
-    // let solid = "extrude(flange)";
-    // let at = |angle: f64, r: f64| {
-    // let a = angle.to_radians();
-    // [r * a.cos(), r * a.sin(), 1.25]
-    // };
-    // for (p, expected) in [
-    // (at(30.0, 11.0), PointClassification::Inside),
-    // (at(0.0, 7.0), PointClassification::Inside),
-    // (at(0.0, 0.0), PointClassification::Outside),
-    // (at(0.0, 11.0), PointClassification::Outside),
-    // (at(120.0, 11.0), PointClassification::Outside),
-    // (at(300.0, 11.0), PointClassification::Outside),
-    // (at(0.0, 16.0), PointClassification::Outside),
-    // ] {
-    // assert_eq!(inside(&part, solid, p), expected, "at {p:?}");
-    // }
-    // }
+    /// The motor flange is a ring with six bolt holes through it: solid in
+    /// its wall, open in its bore and in every hole, the copies round the
+    /// bolt circle as much as the first.
+    #[test]
+    fn motor_flange_round_trips() {
+        let part = build_and_round_trip("motor_flange", &motor_flange());
+        let solid = "extrude(flange)";
+        let at = |angle: f64, r: f64| {
+            let a = angle.to_radians();
+            [r * a.cos(), r * a.sin(), 1.25]
+        };
+        for (p, expected) in [
+            (at(30.0, 11.0), PointClassification::Inside),
+            (at(0.0, 7.0), PointClassification::Inside),
+            (at(0.0, 0.0), PointClassification::Outside),
+            (at(0.0, 11.0), PointClassification::Outside),
+            (at(120.0, 11.0), PointClassification::Outside),
+            (at(300.0, 11.0), PointClassification::Outside),
+            (at(0.0, 16.0), PointClassification::Outside),
+        ] {
+            assert_eq!(inside(&part, solid, p), expected, "at {p:?}");
+        }
+    }
 
-    // /// Reproduces the real bug report described on `revolved_cone_on_box`.
-    // #[test]
-    // fn airfoil_wing_round_trips() {
-    // let part = build_and_round_trip("airfoil_wing", &airfoil_wing());
-    // assert_eq!(part.solid_names(), ["loft(wing)"]);
-    // }
+    /// Reproduces the real bug report described on `revolved_cone_on_box`.
+    #[test]
+    fn airfoil_wing_round_trips() {
+        let part = build_and_round_trip("airfoil_wing", &airfoil_wing());
+        assert_eq!(part.solid_names(), ["loft(wing)"]);
+    }
 
-    // #[test]
-    // fn patterned_plate_round_trips() {
-    // let part = build_and_round_trip("patterned_plate", &patterned_plate());
-    // assert_eq!(part.solid_names(), ["linear_pattern(holes)"]);
-    // for (p, expected) in [
-    // ([5.0, 1.5, 0.25], PointClassification::Outside),
-    // ([5.0, 1.9, 0.25], PointClassification::Inside),
-    // ([7.0, 1.5, 0.25], PointClassification::Outside),
-    // ([6.0, 1.5, 0.25], PointClassification::Inside),
-    // ] {
-    // assert_eq!(inside(&part, "linear_pattern(holes)", p), expected, "{p:?}");
-    // }
-    // }
+    #[test]
+    fn patterned_plate_round_trips() {
+        let part = build_and_round_trip("patterned_plate", &patterned_plate());
+        assert_eq!(part.solid_names(), ["linear_pattern(holes)"]);
+        for (p, expected) in [
+            ([5.0, 1.5, 0.25], PointClassification::Outside),
+            ([5.0, 1.9, 0.25], PointClassification::Inside),
+            ([7.0, 1.5, 0.25], PointClassification::Outside),
+            ([6.0, 1.5, 0.25], PointClassification::Inside),
+        ] {
+            assert_eq!(inside(&part, "linear_pattern(holes)", p), expected, "{p:?}");
+        }
+    }
 
-    // #[test]
-    // fn revolved_cone_on_box_round_trips() {
-    // let part = build_and_round_trip("revolved_cone_on_box", &revolved_cone_on_box());
-    // // The side face is the plane x = 2.2456, with sketch x along world y
-    // // and sketch y along world z. The triangle's centroid, turned a
-    // // quarter around the axis, lies 0.654 off that plane on either side.
-    // for (p, expected) in [
-    // ([2.9, -0.198, 1.471], PointClassification::Inside),
-    // ([1.59, -0.198, 1.471], PointClassification::Inside),
-    // ([2.9, 1.0, 0.3], PointClassification::Outside),
-    // ([-0.669, 0.049, 1.0], PointClassification::Outside),
-    // ([1.5, -1.0, 1.0], PointClassification::Inside),
-    // ] {
-    // assert_eq!(inside(&part, "revolve(revolve1)", p), expected, "{p:?}");
-    // }
-    // }
+    #[test]
+    fn revolved_cone_on_box_round_trips() {
+        let part = build_and_round_trip("revolved_cone_on_box", &revolved_cone_on_box());
+        // The side face is the plane x = 2.2456, with sketch x along world y
+        // and sketch y along world z. The triangle's centroid, turned a
+        // quarter around the axis, lies 0.654 off that plane on either side.
+        for (p, expected) in [
+            ([2.9, -0.198, 1.471], PointClassification::Inside),
+            ([1.59, -0.198, 1.471], PointClassification::Inside),
+            ([2.9, 1.0, 0.3], PointClassification::Outside),
+            ([-0.669, 0.049, 1.0], PointClassification::Outside),
+            ([1.5, -1.0, 1.0], PointClassification::Inside),
+        ] {
+            assert_eq!(inside(&part, "revolve(revolve1)", p), expected, "{p:?}");
+        }
+    }
 
-    // /// A mouse's sole is flat: the crease around its bottom keeps the
-    // /// bottom face in the cage's bottom plane.
-    // #[test]
-    // fn subd_mouse_round_trips() {
-    // let part = build_and_round_trip("subd_mouse", &subd_mouse());
-    // assert_eq!(part.solid_names(), ["subd(mouse)"]);
-    // let sole = part.face_id("subd(mouse,f8)").unwrap();
-    // let surface = &part.topology().get_face(sole).unwrap().surface;
-    // let p = surface
-    // .evaluate(S::from_f64(0.7), S::from_f64(1.2))
-    // .unwrap();
-    // assert!(p[2].could_be_equal(S::from_f64(-0.4)), "{p:?}");
-    // }
+    /// A mouse's sole is flat: the crease around its bottom keeps the
+    /// bottom face in the cage's bottom plane.
+    #[test]
+    fn subd_mouse_round_trips() {
+        let part = build_and_round_trip("subd_mouse", &subd_mouse());
+        assert_eq!(part.solid_names(), ["subd(mouse)"]);
+        let sole = part.face_id("subd(mouse,f8)").unwrap();
+        let surface = &part.topology().get_face(sole).unwrap().surface;
+        let p = surface
+            .evaluate(S::from_f64(0.7), S::from_f64(1.2))
+            .unwrap();
+        assert!(p[2].could_be_equal(S::from_f64(-0.4)), "{p:?}");
+    }
 }

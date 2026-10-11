@@ -1,7 +1,8 @@
 //! Extending a flat square and a Coons patch past their edges.
 
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_ops::{NoFiles, Part};
+use geop_ops::NamedModel;
+use geop_ops::operation::apply_to_model;
 use geop_ops_extrude_revolve::shapes::cube_solid;
 
 use super::*;
@@ -10,12 +11,12 @@ use crate::boundary::tests::{
 };
 use crate::thicken::tests::square_sheet;
 
-fn extended(part: Part<S>, edge: &str, distance: f64) -> GeopResult<Part<S>> {
+fn extended(part: NamedModel<S>, edge: &str, distance: f64) -> GeopResult<NamedModel<S>> {
     let args = ExtendSurfaceArgs {
         edge: edge.into(),
         distance,
     };
-    ExtendSurface.apply(part, "x", &args, &NoFiles)
+    apply_to_model::<ExtendSurface>(part, "x", &args)
 }
 
 /// A flat square at `z = 1`, the Coons patch of its sides, carried on half
@@ -23,7 +24,7 @@ fn extended(part: Part<S>, edge: &str, distance: f64) -> GeopResult<Part<S>> {
 /// every name kept.
 #[test]
 fn extend_a_flat_square() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     let c = [[0., 0., 1.], [1., 0., 1.], [1., 1., 1.], [0., 1., 1.]];
     coons_sheet(
         &mut part,
@@ -55,7 +56,7 @@ fn a_trimmed_face_is_refused() {
 /// carried on past one of its circles: it goes on as it curved.
 #[test]
 fn extend_a_coons_patch() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     coons_sheet(
         &mut part,
         "guide",
@@ -79,7 +80,7 @@ fn extend_a_coons_patch() {
 /// A cube's edge bounds two faces: no face standing on its own to extend.
 #[test]
 fn a_solids_edge_is_refused() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     cube_solid(&mut part, "c", v3(0., 0., 0.), v3(1., 1., 1.)).unwrap();
     let edge = edge_between(&part, [0., 0., 1.], [1., 0., 1.]);
     let err = refused(extended(part, &edge, 0.2));

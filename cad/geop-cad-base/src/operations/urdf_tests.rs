@@ -10,14 +10,19 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_ops::{
-    Part,
-    part::{ParamValue, pose_parameter},
+    ParamValue,
+    model::pose_parameter,
+    output::Output,
+    parameters::Values,
+    solids::{Shapes, placed_solids},
+    solving,
 };
-use geop_ops_assembly::{AddPartArgs, CouplingKind, JointKind, Mate, PartMates};
-use geop_ops_urdf::{JointType, Origin, Robot, URDF_FILE, UrdfExport, export};
+use geop_ops_assembly::{AddPartArgs, CouplingKind, JointKind, Mate, Transmission};
+use geop_ops_urdf::{JointType, Mechanism, Origin, Robot, URDF_FILE, UrdfExport, export};
 
 use crate::examples::{self, n, pose};
-use crate::{Program, Workspace, stdlib::WithStandardParts};
+use crate::operations::{Runner, run, runner, workspace};
+use crate::{Program, Push};
 
 /// The files of the workspace example `name`, by path, and its first
 /// program.
@@ -35,17 +40,40 @@ fn workspace_example(name: &str) -> (BTreeMap<String, String>, Program) {
     (files, program)
 }
 
-/// `program`, saved as `path` among `files`, built.
-fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Part<S> {
-    let workspace = Workspace::<S>::new(WithStandardParts(files));
-    program.build(&workspace.scope(path)).unwrap()
+/// What a program built, and the state it ran with.
+struct Built(Runner, Values);
+
+impl Built {
+    /// It exported as the robot `name`, meshed coarsely.
+    fn export(&mut self, name: &str) -> geop_core_math::geop_error::GeopResult<UrdfExport> {
+        export(
+            &mut Output::new(&mut self.0.part, &self.1, None, ""),
+            name,
+            8,
+        )
+    }
+}
+
+/// `program`, saved as `path` among `files`, built — its state settled
+/// first, as the editor settles a program it loads: what the state does not
+/// give started where the parts are, and solved for.
+fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Built {
+    let library = workspace(files).scope(path);
+    let mut program = program.clone();
+    let mut built = runner();
+    run(&mut built, &program, &library).unwrap();
+    let (moved, report) = solving::solve(&mut built.part, &program.state, &[], None).unwrap();
+    assert!(report.converged, "{report:?}");
+    program.state.extend(moved);
+    run(&mut built, &program, &library).unwrap();
+    Built(built, program.state)
 }
 
 /// The arm, exported.
-fn arm() -> (Part<S>, UrdfExport) {
+fn arm() -> (Built, UrdfExport) {
     let (files, program) = workspace_example("arm");
-    let part = build(files, "arm.geop", &program);
-    let robot = export(&part, "arm", 8).unwrap();
+    let mut part = build(files, "arm.geop", &program);
+    let robot = part.export("arm").unwrap();
     (part, robot)
 }
 
@@ -194,15 +222,15 @@ fn assert_same_pose(a: &Pose<S>, b: &Pose<S>, what: &str) {
 
 /// Placed by its joints at the coordinates the assembly is at, every part
 /// of `robot` is where `part` has it.
-fn assert_links_where_drawn(part: &Part<S>, robot: &Robot) {
-    let mechanism = part.mechanism().unwrap();
+fn assert_links_where_drawn(part: &Built, robot: &Robot) {
+    let mechanism = Mechanism::of(part.0.part.current()).unwrap();
     let mut coordinates = HashMap::new();
-    for (j, joint) in mechanism.assembly.joints.iter().enumerate() {
+    for joint in &mechanism.joints {
         let q = match joint.kind {
-            JointKind::Slider { .. } => joint.distance.value.to_f64() / 1000.0,
-            _ => joint.angle.value.to_f64().to_radians(),
+            JointKind::Slider { .. } => joint.distance.to_f64() / 1000.0,
+            _ => joint.angle.to_f64().to_radians(),
         };
-        coordinates.insert(mechanism.joint_name(j).to_string(), q);
+        coordinates.insert(joint.name.clone(), q);
     }
     let frames = link_frames(robot, &coordinates);
     for link in &robot.links {
@@ -217,9 +245,9 @@ fn assert_links_where_drawn(part: &Part<S>, robot: &Robot) {
 }
 
 /// The arm exports as a robot of three links hanging from the fixed upper
-/// arm: its two revolute joints with their limits, each link the mass the
-/// inspector weighs its part at, and — at the angles the arm is at, 30°
-/// and -45° — every link where it is drawn.
+/// arm: its two revolute joints with their limits, each link the mass its
+/// part weighs, and — at the angles the arm is at, 30° and -45° — every
+/// link where it is drawn.
 #[test]
 fn the_arm_exports_its_joints_limits_and_masses() {
     let (part, exported) = arm();
@@ -247,14 +275,18 @@ fn the_arm_exports_its_joints_limits_and_masses() {
         assert!(joint.mimic.is_none());
     }
 
-    let report = geop_ops_inspect::mass_report(&part).unwrap();
+    let view = part.0.part.current();
+    let solids = placed_solids(view).unwrap();
+    let mut shapes = Shapes::default();
+    let weighed = |prefix: &str, shapes: &mut Shapes| {
+        (solids.iter())
+            .filter(|s| s.name.starts_with(prefix))
+            .map(|s| s.mass_properties(shapes).unwrap())
+            .collect::<Vec<_>>()
+    };
     for link in &robot.links {
-        let prefix = format!("{}/", link.name);
-        let weighed: f64 = report
-            .bodies
-            .iter()
-            .filter(|b| b.name.starts_with(&prefix))
-            .map(|b| b.properties.as_ref().unwrap().mass.value)
+        let weighed: f64 = (weighed(&format!("{}/", link.name), &mut shapes).iter())
+            .map(|m| m.mass.to_f64())
             .sum();
         let inertial = link.inertial.unwrap();
         assert!(weighed > 0.0);
@@ -270,13 +302,14 @@ fn the_arm_exports_its_joints_limits_and_masses() {
         assert!(i[2][2] > i[0][0] && i[2][2] > i[1][1], "{i:?}");
     }
     // The root's frame is the assembly's: its centre of mass is where the
-    // inspector puts the upper arm's, in metres.
-    let upper = report.bodies.iter().find(|b| b.name.starts_with("upper/"));
-    let center = upper.unwrap().properties.as_ref().unwrap().center;
+    // upper arm's is, in metres.
+    let upper = weighed("upper/", &mut shapes);
+    assert_eq!(upper.len(), 1);
+    let center = upper[0].center;
     let root = robot.links[0].inertial.unwrap().center;
     for k in 0..3 {
         assert!(
-            (root[k] - center[k].value / 1000.0).abs() < 1e-12,
+            (root[k] - center[k].to_f64() / 1000.0).abs() < 1e-12,
             "{root:?}"
         );
     }
@@ -425,9 +458,8 @@ fn a_four_bar_is_refused_naming_its_loop() {
         .into_iter()
         .filter(|(k, _)| k.ends_with(".pose"))
         .collect();
-    let part = build(files.clone(), "four_bar.geop", &program);
-    assert!(part.check_mates(|_| true).unwrap().converged);
-    let err = export(&part, "four_bar", 8).unwrap_err().to_string();
+    let mut part = build(files.clone(), "four_bar.geop", &program);
+    let err = part.export("four_bar").unwrap_err().to_string();
     for joint in [
         "add_part(crank,m1)",
         "add_part(rocker,m1)",
@@ -441,8 +473,8 @@ fn a_four_bar_is_refused_naming_its_loop() {
 
     // As the example has it, pinned by mates, it is no robot either: the
     // mates leave the bars free to move, which only a joint can say.
-    let part = build(files, "four_bar.geop", &example);
-    let err = export(&part, "four_bar", 8).unwrap_err().to_string();
+    let mut part = build(files, "four_bar.geop", &example);
+    let err = part.export("four_bar").unwrap_err().to_string();
     assert!(err.contains("free to move"), "{err}");
     assert!(
         err.contains("crank") && err.contains("add_part(crank,m1)"),
@@ -463,8 +495,9 @@ fn a_gear_coupling_exports_as_a_mimic_joint() {
         placed("link.geop", false, vec![pin_joint("base", 0, "driver", 0)]),
     );
     let gear = Mate::coupling(
-        CouplingKind::Gear {
-            ratio: n(2.0),
+        CouplingKind {
+            transmission: Transmission::Gear,
+            value: n(2.0),
             reverse: true,
         },
         vec!["add_part(driver,m1)".into(), "add_part(driven,m1)".into()],
@@ -494,8 +527,8 @@ fn a_gear_coupling_exports_as_a_mimic_joint() {
             ParamValue::Number(n(-45.0)),
         ),
     ]);
-    let part = build(files, "gears.geop", &program);
-    let robot = export(&part, "gears", 8).unwrap().robot;
+    let mut part = build(files, "gears.geop", &program);
+    let robot = part.export("gears").unwrap().robot;
     let driven = robot.joint("add_part(driven,m1)").unwrap();
     assert_eq!(driven.kind, JointType::Continuous);
     let mimic = driven.mimic.as_ref().unwrap();
@@ -614,9 +647,8 @@ fn sliders_fastened_parts_and_reversed_joints() {
         (pose_parameter("tool"), at([3.0, 0.0, 0.9], 0.0)),
         (pose_parameter("swing"), at([3.0, 0.0, 0.2], 40.0)),
     ]);
-    let part = build(files, "machine.geop", &program);
-    assert!(part.check_mates(|_| true).unwrap().converged);
-    let robot = export(&part, "machine", 8).unwrap().robot;
+    let mut part = build(files, "machine.geop", &program);
+    let robot = part.export("machine").unwrap().robot;
 
     let links: Vec<(&str, Vec<&str>)> = robot
         .links
@@ -665,7 +697,7 @@ fn sliders_fastened_parts_and_reversed_joints() {
 #[test]
 fn what_urdf_cannot_express_is_refused_by_name() {
     let (files, _) = workspace_example("arm");
-    let refusal = |kind: Option<JointKind<geop_ops::Design>>, fixed: bool| {
+    let refusal = |kind: Option<JointKind>, fixed: bool| {
         let mut program = Program::new();
         program.push("base", placed("link.geop", fixed, Vec::new()));
         let mates = kind
@@ -686,8 +718,8 @@ fn what_urdf_cannot_express_is_refused_by_name() {
             (pose_parameter("base"), at(0.0, 0.0)),
             (pose_parameter("arm"), at(3.0, 0.2)),
         ]);
-        let part = build(files.clone(), "bad.geop", &program);
-        export(&part, "bad", 8).unwrap_err().to_string()
+        let mut part = build(files.clone(), "bad.geop", &program);
+        part.export("bad").unwrap_err().to_string()
     };
     let joint = "\"add_part(arm,m1)\"";
     let err = refusal(Some(JointKind::Cylindrical), true);

@@ -1,7 +1,8 @@
 //! Trimming a flat square with a face of a box standing across it.
 
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_ops::{NoFiles, Part};
+use geop_ops::NamedModel;
+use geop_ops::operation::apply_to_model;
 use geop_ops_extrude_revolve::shapes::cube_solid;
 
 use super::*;
@@ -11,7 +12,7 @@ use crate::thicken::tests::square_sheet;
 /// The flat square at `z = 1` and a box beside it from `x = 0.5`, whose
 /// face there stands across the square, its normal along `-x`; returns
 /// that face's name.
-fn square_and_wall() -> (Part<S>, String) {
+fn square_and_wall() -> (NamedModel<S>, String) {
     let (mut part, _) = square_sheet();
     let wall = cube_solid(&mut part, "w", v3(0.5, -1., 0.), v3(2., 2., 2.)).unwrap();
     let face = part
@@ -31,13 +32,13 @@ fn square_and_wall() -> (Part<S>, String) {
     (part, name)
 }
 
-fn trimmed(part: Part<S>, tool: &str, keep: TrimKeep) -> GeopResult<Part<S>> {
+fn trimmed(part: NamedModel<S>, tool: &str, keep: TrimKeep) -> GeopResult<NamedModel<S>> {
     let args = TrimSurfaceArgs {
         face: "boundary(b)".into(),
         tool: tool.into(),
         keep,
     };
-    TrimSurface.apply(part, "t", &args, &NoFiles)
+    apply_to_model::<TrimSurface>(part, "t", &args)
 }
 
 /// The square cut back to either side of the box's face: the half behind

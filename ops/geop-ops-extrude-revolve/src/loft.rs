@@ -54,10 +54,10 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::build::BuiltBody;
-use geop_ops::{Namer, Part, operation::Chain};
+use geop_ops::{NamedModel, Namer, operation::Chain};
 
 use crate::{
-    common::{Profile, bilinear, end_point, start_point},
+    common::{Profile, bilinear},
     plain::{Plain, V, add, scale, sub},
     sweep::{Frame, Path, Span, SweepLoop, skin},
 };
@@ -88,14 +88,7 @@ impl<S: Scalar> Placed<S> {
         let n = self.profile.joint_names.len();
         (0..n)
             .map(|i| {
-                let curve = if i < self.profile.curves.len() {
-                    self.profile.curves[i].clone()
-                } else {
-                    self.profile.curves[i - 1].reverse()
-                };
-                let cp = curve.control_points[0];
-                let p = Vector2::from_array([cp[0].div(cp[2])?, cp[1].div(cp[2])?]);
-                let q = self.frame.point(&p);
+                let q = self.frame.point(&self.profile.joint(i)?);
                 Ok([q[0].to_f64(), q[1].to_f64(), q[2].to_f64()])
             })
             .collect()
@@ -646,11 +639,7 @@ fn guided<S: Scalar>(sections: &[Section<S>], guides: &[Chain<S>]) -> GeopResult
                 .iter()
                 .position(|j| j == name)
                 .expect("a guide's joint is on its profile");
-            if i < profile.curves.len() {
-                start_point(&profile.curves[i])
-            } else {
-                end_point(&profile.curves[i - 1])
-            }
+            profile.joint(i)
         };
         let q = out[0]
             .matched
@@ -741,11 +730,7 @@ fn guided_span<S: Scalar>(
             .iter()
             .position(|j| j == name)
             .ok_or_else(|| GeopError::new(format!("loft: no joint {name} for a guide")))?;
-        let p = if i < profile.curves.len() {
-            start_point(&profile.curves[i])?
-        } else {
-            end_point(&profile.curves[i - 1])?
-        };
+        let p = profile.joint(i)?;
         Ok([p[0].to_f64(), p[1].to_f64()])
     };
     let ends: Vec<([f64; 2], [f64; 2])> = joints
@@ -828,15 +813,6 @@ fn affine_through(q: &[[f64; 2]], d: &[V]) -> (V, [V; 2]) {
     (t, m)
 }
 
-/// Lofts through `sections` (see the module docs): closed loops into a solid
-/// named `solid` — capped by the first and last sections — or, without one,
-/// into sheets; open chains into sheets only.
-///
-/// Named after the first section's curves `X` and joints `P` and the
-/// sections' names `K` (see [`skin`]): the walls `N(X)` — `N(X,K>L)` between
-/// the sections `K` and `L` when there are more than two — the curves at the
-/// sections `N(X,K)`, the edges between them `N(P)` or `N(P,K>L)`, the
-/// vertices `N(P,K)`, the caps `N(start)` and `N(end)`.
 /// The spans of a loft running smoothly through the sections `placed`, one
 /// cubic between each two: its inner control rows each a section and a
 /// third of its tangent there, so that the walls on either side of a
@@ -896,8 +872,17 @@ fn through<S: Scalar>(placed: &[Placed<S>]) -> GeopResult<Vec<Span<S>>> {
         .collect())
 }
 
+/// Lofts through `sections` (see the module docs): closed loops into a solid
+/// named `solid` — capped by the first and last sections — or, without one,
+/// into sheets; open chains into sheets only.
+///
+/// Named after the first section's curves `X` and joints `P` and the
+/// sections' names `K` (see [`skin`]): the walls `N(X)` — `N(X,K>L)` between
+/// the sections `K` and `L` when there are more than two — the curves at the
+/// sections `N(X,K)`, the edges between them `N(P)` or `N(P,K>L)`, the
+/// vertices `N(P,K)`, the caps `N(start)` and `N(end)`.
 pub fn loft<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     solid: Option<&str>,
     sections: &[Section<S>],
@@ -975,53 +960,21 @@ pub fn loft<S: Scalar>(
         .into_iter()
         .map(|p| vec![SweepLoop::plain(p.profile)])
         .collect();
-    skin(part, namer, &path, &loops, solid).with_context(ctx)
+    skin(model, namer, &path, &loops, solid).with_context(ctx)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::testing::{
+        assert_valid, assert_valid_sheets, circle, plane, square, v2, v3,
+    };
     use crate::common::{arc2, line2, polygon, sqrt2_over_2};
     use geop_core_math::for_all_scalars;
-    use geop_core_topology::{
-        Model,
-        validation::{ValidationParameters, validate, validate_manifold},
-    };
-
-    fn v2<S: Scalar>(x: f64, y: f64) -> Vector2<S> {
-        Vector2::from_array([S::from_f64(x), S::from_f64(y)])
-    }
-
-    fn v3<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
-        Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
-    }
-
-    /// The plane through `origin` spanned by `u` and `v`.
-    fn plane<S: Scalar>(origin: Vector3<S>, u: Vector3<S>, v: Vector3<S>) -> CoordinateSystem<S> {
-        CoordinateSystem::try_new(origin, u, v, u.prod_cross(&v)).unwrap()
-    }
 
     /// The plane `z = height`, along `x` and `y`.
     fn level<S: Scalar>(height: f64) -> CoordinateSystem<S> {
         plane(v3(0., 0., height), v3(1., 0., 0.), v3(0., 1., 0.))
-    }
-
-    /// A circle of radius `r` around the origin, as four quarter arcs,
-    /// counter-clockwise.
-    fn circle<S: Scalar>(r: f64) -> Vec<NurbCurve2D<S>> {
-        let q = [(r, 0.0), (0.0, r), (-r, 0.0), (0.0, -r)];
-        (0..4)
-            .map(|i| {
-                let (a, b) = (q[i], q[(i + 1) % 4]);
-                arc2(
-                    v2(a.0, a.1),
-                    v2(a.0 + b.0, a.1 + b.1),
-                    v2(b.0, b.1),
-                    sqrt2_over_2(),
-                )
-                .unwrap()
-            })
-            .collect()
     }
 
     /// The regular polygon of `n` corners on the circle of radius `r`,
@@ -1049,37 +1002,27 @@ mod tests {
         }
     }
 
-    fn assert_valid<S: Scalar>(model: &Model<S>) {
-        let params = ValidationParameters::default();
-        if let Err(e) = validate(&params, model) {
-            panic!("{e:?}");
-        }
-        if let Err(e) = validate_manifold(&params, model) {
-            panic!("{e:?}");
-        }
-    }
-
     /// Lofts `sections` into a solid in a fresh part, and checks it is valid.
-    fn lofted<S: Scalar>(sections: &[Section<S>]) -> Part<S> {
-        let mut part = Part::<S>::new();
+    fn lofted<S: Scalar>(sections: &[Section<S>]) -> NamedModel<S> {
+        let mut model = NamedModel::<S>::new();
         let namer = Namer::new("loft", "l").unwrap();
-        loft(&mut part, &namer, Some(&namer.root()), sections, &[]).unwrap();
-        part.check_names().unwrap();
-        assert_valid(part.topology());
-        part
+        loft(&mut model, &namer, Some(&namer.root()), sections, &[]).unwrap();
+        model.check_names().unwrap();
+        assert_valid(model.topology());
+        model
     }
 
     /// A square below, a circle above: four ruled walls and two caps.
     fn check_loft_square_to_circle<S: Scalar>() {
-        let part = lofted::<S>(&[
+        let model = lofted::<S>(&[
             section("a", level(0.0), regular(4, 1.0, 0.125)),
             section("b", level(2.0), circle(0.5)),
         ]);
-        let model = part.topology();
-        assert_eq!(model.faces.len(), 4 + 2);
-        assert_eq!(model.vertices.len(), 8);
+        let topology = model.topology();
+        assert_eq!(topology.faces.len(), 4 + 2);
+        assert_eq!(topology.vertices.len(), 8);
         // Every vertex of the top section lies on its circle.
-        for v in model.vertices.values() {
+        for v in topology.vertices.values() {
             if v.point[2].could_be_equal(S::from_f64(2.0)) {
                 let (x, y) = (v.point[0], v.point[1]);
                 assert!(x.mul(x).add(y.mul(y)).could_be_equal(S::from_f64(0.25)));
@@ -1107,15 +1050,15 @@ mod tests {
     /// Through three sections: two layers of walls, named after the spans
     /// between the sections.
     fn check_loft_through_three_sections<S: Scalar>() {
-        let part = lofted::<S>(&[
+        let model = lofted::<S>(&[
             section("a", level(0.0), regular(4, 1.0, 0.125)),
             section("b", level(1.0), circle(0.5)),
             section("c", level(2.5), regular(4, 0.8, 0.0)),
         ]);
-        assert_eq!(part.topology().faces.len(), 2 * 4 + 2);
-        assert!(part.face_id("loft(l,a,c0,a>b)").is_ok());
-        assert!(part.face_id("loft(l,a,c0,b>c)").is_ok());
-        assert!(part.edge_id("loft(l,a,c0,c)").is_ok());
+        assert_eq!(model.topology().faces.len(), 2 * 4 + 2);
+        assert!(model.face_id("loft(l,a,c0,a>b)").is_ok());
+        assert!(model.face_id("loft(l,a,c0,b>c)").is_ok());
+        assert!(model.edge_id("loft(l,a,c0,c)").is_ok());
     }
     #[test]
     fn loft_through_three_sections() {
@@ -1126,13 +1069,13 @@ mod tests {
     /// the middle one meet it with one tangent plane: the loft has no crease
     /// there, as ruled walls would.
     fn check_loft_through_three_sections_is_smooth<S: Scalar>() {
-        let part = lofted::<S>(&[
+        let model = lofted::<S>(&[
             section("a", level(0.0), circle(1.0)),
             section("b", level(1.0), circle(1.5)),
             section("c", level(3.0), circle(0.8)),
         ]);
-        let model = part.topology();
-        let surface = |name: &str| &model.faces[&part.face_id(name).unwrap()].surface;
+        let topology = model.topology();
+        let surface = |name: &str| &topology.faces[&model.face_id(name).unwrap()].surface;
         let (below, above) = (surface("loft(l,a,c0,a>b)"), surface("loft(l,a,c0,b>c)"));
         for v in [0.1, 0.5, 0.9] {
             let normal = |surface: &geop_core_geometry::nurb_surface::NurbSurface3D<S>, u: S| {
@@ -1158,13 +1101,13 @@ mod tests {
     /// A triangle and a circle: the triangle's longest side is halved to
     /// match the circle's four quarters.
     fn check_loft_triangle_to_circle<S: Scalar>() {
-        let part = lofted::<S>(&[
+        let model = lofted::<S>(&[
             section("a", level(0.0), regular(3, 1.0, 0.0)),
             section("b", level(1.5), circle(0.6)),
         ]);
-        assert_eq!(part.topology().faces.len(), 4 + 2);
+        assert_eq!(model.topology().faces.len(), 4 + 2);
         // All three sides are as long: whichever was halved.
-        assert!((0..3).any(|k| part.vertex_id(&format!("loft(l,a,c{k}@half,b)")).is_ok()));
+        assert!((0..3).any(|k| model.vertex_id(&format!("loft(l,a,c{k}@half,b)")).is_ok()));
     }
     #[test]
     fn loft_triangle_to_circle() {
@@ -1174,11 +1117,11 @@ mod tests {
     /// A hexagon and a circle: the circle's quarters are halved — rational
     /// arcs, brought back to end weights of one.
     fn check_loft_hexagon_to_circle<S: Scalar>() {
-        let part = lofted::<S>(&[
+        let model = lofted::<S>(&[
             section("a", level(0.0), regular(6, 1.0, 0.0)),
             section("b", level(1.5), circle(0.6)),
         ]);
-        assert_eq!(part.topology().faces.len(), 6 + 2);
+        assert_eq!(model.topology().faces.len(), 6 + 2);
     }
     #[test]
     fn loft_hexagon_to_circle() {
@@ -1195,10 +1138,10 @@ mod tests {
             name: name.to_string(),
             matched: Vec::new(),
         };
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         let namer = Namer::new("loft", "l").unwrap();
         let built = loft(
-            &mut part,
+            &mut model,
             &namer,
             None,
             &[open("a", level(0.0), line), open("b", level(1.0), arc)],
@@ -1206,11 +1149,9 @@ mod tests {
         )
         .unwrap();
         assert!(built.solid.is_none());
-        part.check_names().unwrap();
-        if let Err(e) = validate(&ValidationParameters::default(), part.topology()) {
-            panic!("{e:?}");
-        }
-        assert_eq!(part.topology().faces.len(), 1);
+        model.check_names().unwrap();
+        assert_valid_sheets(model.topology());
+        assert_eq!(model.topology().faces.len(), 1);
     }
     #[test]
     fn loft_between_two_curves_is_a_ruled_sheet() {
@@ -1221,23 +1162,13 @@ mod tests {
     #[test]
     fn loft_of_one_profile_is_refused() {
         use geop_core_math::scalars::ScalInF64 as S;
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         let namer = Namer::new("loft", "l").unwrap();
         let only = section("a", level(0.0), regular(4, 1.0, 0.0));
-        assert!(loft(&mut part, &namer, Some("loft(l)"), &[only], &[]).is_err());
+        assert!(loft(&mut model, &namer, Some("loft(l)"), &[only], &[]).is_err());
     }
 
     // ── guide curves ────────────────────────────────────────────────────────
-
-    fn square<S: Scalar>(half: f64) -> Vec<NurbCurve2D<S>> {
-        polygon(&[
-            v2(-half, -half),
-            v2(half, -half),
-            v2(half, half),
-            v2(-half, half),
-        ])
-        .unwrap()
-    }
 
     /// The quadratic Bézier guide `name` through the control points `points`.
     fn guide<S: Scalar>(name: &str, points: [[f64; 3]; 3]) -> Chain<S> {
@@ -1263,20 +1194,20 @@ mod tests {
 
     /// Lofts `sections` along `guides` into a solid in a fresh part, and
     /// checks it is valid.
-    fn guided_loft<S: Scalar>(sections: &[Section<S>], guides: &[Chain<S>]) -> Part<S> {
-        let mut part = Part::<S>::new();
+    fn guided_loft<S: Scalar>(sections: &[Section<S>], guides: &[Chain<S>]) -> NamedModel<S> {
+        let mut model = NamedModel::<S>::new();
         let namer = Namer::new("loft", "l").unwrap();
-        loft(&mut part, &namer, Some(&namer.root()), sections, guides).unwrap();
-        part.check_names().unwrap();
-        assert_valid(part.topology());
-        part
+        loft(&mut model, &namer, Some(&namer.root()), sections, guides).unwrap();
+        model.check_names().unwrap();
+        assert_valid(model.topology());
+        model
     }
 
-    /// The edge `name` of `part` runs along `guide`: one point for one at
+    /// The edge `name` of `model` runs along `guide`: one point for one at
     /// every parameter — the walls' edge there is the guide itself.
-    fn assert_follows<S: Scalar>(part: &Part<S>, name: &str, guide: &Chain<S>) {
-        let edge = part.edge_id(name).unwrap();
-        let curve = &part.topology().edges[&edge].curve;
+    fn assert_follows<S: Scalar>(model: &NamedModel<S>, name: &str, guide: &Chain<S>) {
+        let edge = model.edge_id(name).unwrap();
+        let curve = &model.topology().edges[&edge].curve;
         for i in 0..=8 {
             let t = S::from_f64(i as f64 / 8.0);
             let (a, b) = (
@@ -1299,19 +1230,19 @@ mod tests {
     /// corner the guide.
     fn check_loft_with_one_guide<S: Scalar>() {
         let g = guide::<S>("g", [[1., 1., 0.], [2., 2., 1.], [1., 1., 2.]]);
-        let part = guided_loft(
+        let model = guided_loft(
             &[
                 section("a", level(0.0), square(1.0)),
                 section("b", level(2.0), square(1.0)),
             ],
             std::slice::from_ref(&g),
         );
-        assert_eq!(part.topology().faces.len(), 4 + 2);
-        assert_follows(&part, "loft(l,a,p2)", &g);
+        assert_eq!(model.topology().faces.len(), 4 + 2);
+        assert_follows(&model, "loft(l,a,p2)", &g);
         // The other corners move along with it: half way up, the whole
         // section shifted by half the guide's bulge.
-        let edge = part.edge_id("loft(l,a,p0)").unwrap();
-        let middle = part.topology().edges[&edge]
+        let edge = model.edge_id("loft(l,a,p0)").unwrap();
+        let middle = model.topology().edges[&edge]
             .curve
             .evaluate(S::from_f64(0.5))
             .unwrap();
@@ -1329,15 +1260,15 @@ mod tests {
     fn check_loft_with_two_guides<S: Scalar>() {
         let g = guide::<S>("g", [[1., 1., 0.], [2., 2., 1.], [1., 1., 2.]]);
         let h = guide::<S>("h", [[-1., -1., 0.], [-2., -2., 1.], [-1., -1., 2.]]);
-        let part = guided_loft(
+        let model = guided_loft(
             &[
                 section("a", level(0.0), square(1.0)),
                 section("b", level(2.0), square(1.0)),
             ],
             &[h.clone(), g.clone()],
         );
-        assert_follows(&part, "loft(l,a,p2)", &g);
-        assert_follows(&part, "loft(l,a,p0)", &h);
+        assert_follows(&model, "loft(l,a,p2)", &g);
+        assert_follows(&model, "loft(l,a,p0)", &h);
     }
     #[test]
     fn loft_with_two_guides() {
@@ -1348,14 +1279,14 @@ mod tests {
     /// each side split where the guide meets it.
     fn check_guide_splits_the_sides_it_meets<S: Scalar>() {
         let g = guide::<S>("g", [[1., 0., 0.], [1.5, 0., 1.], [1., 0., 2.]]);
-        let part = guided_loft(
+        let model = guided_loft(
             &[
                 section("a", level(0.0), square(1.0)),
                 section("b", level(2.0), circle(1.0)),
             ],
             std::slice::from_ref(&g),
         );
-        assert_follows(&part, "loft(l,a,g)", &g);
+        assert_follows(&model, "loft(l,a,g)", &g);
     }
     #[test]
     fn guide_splits_the_sides_it_meets() {
@@ -1366,7 +1297,7 @@ mod tests {
     /// corner, and is followed on either side of it.
     fn check_loft_with_a_guide_through_three_profiles<S: Scalar>() {
         let g = guide::<S>("g", [[1., 1., 0.], [1.4, 1.4, 1.], [1., 1., 2.]]);
-        let part = guided_loft(
+        let model = guided_loft(
             &[
                 section("a", level(0.0), square(1.0)),
                 section("b", level(1.0), square(1.2)),
@@ -1374,9 +1305,9 @@ mod tests {
             ],
             std::slice::from_ref(&g),
         );
-        assert_eq!(part.topology().faces.len(), 2 * 4 + 2);
-        let corner = part.vertex_id("loft(l,a,p2,b)").unwrap();
-        let p = part.topology().get_vertex(corner).unwrap().point;
+        assert_eq!(model.topology().faces.len(), 2 * 4 + 2);
+        let corner = model.vertex_id("loft(l,a,p2,b)").unwrap();
+        let p = model.topology().get_vertex(corner).unwrap().point;
         assert!(p.could_be_equal(&v3(1.2, 1.2, 1.0)), "{p:?}");
     }
     #[test]
@@ -1391,9 +1322,9 @@ mod tests {
             section("b", level(2.0), square(1.0)),
         ];
         let refused = |sections: &[Section<S>], guides: &[Chain<S>], says: &str| {
-            let mut part = Part::<S>::new();
+            let mut model = NamedModel::<S>::new();
             let namer = Namer::new("loft", "l").unwrap();
-            let error = loft(&mut part, &namer, Some("loft(l)"), sections, guides).unwrap_err();
+            let error = loft(&mut model, &namer, Some("loft(l)"), sections, guides).unwrap_err();
             assert!(error.root_message().contains(says), "{error:?}");
         };
         // Starting off the first profile's plane.

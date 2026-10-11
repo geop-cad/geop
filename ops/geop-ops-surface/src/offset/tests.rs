@@ -1,22 +1,23 @@
 //! Offsetting the round sides of a cylinder and a cube's faces.
 
 use geop_core_math::scalars::{Field, Ring, ScalInF64 as S, Scalar};
-use geop_ops::{NoFiles, Part};
+use geop_ops::NamedModel;
+use geop_ops::operation::apply_to_model;
 use geop_ops_extrude_revolve::shapes::{cube_solid, cylinder::revolved_cylinder};
 
 use super::*;
 use crate::boundary::tests::{assert_valid, refused, v3};
 
-fn offset(part: Part<S>, faces: Vec<String>, distance: f64) -> GeopResult<Part<S>> {
+fn offset(part: NamedModel<S>, faces: Vec<String>, distance: f64) -> GeopResult<NamedModel<S>> {
     let args = OffsetSurfaceArgs { faces, distance };
-    OffsetSurface.apply(part, "o", &args, &NoFiles)
+    apply_to_model::<OffsetSurface>(part, "o", &args)
 }
 
 /// The round sides of a cylinder of radius one, offset by 0.2: a sheet of
 /// radius 1.2 beside the cylinder, which stays as it was.
 #[test]
 fn offset_a_cylinder_face() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     let cylinder = revolved_cylinder(
         &mut part,
         "cyl",
@@ -60,7 +61,7 @@ fn offset_a_cylinder_face() {
 /// their copies meet where the offset planes do.
 #[test]
 fn offset_three_faces_of_a_cube_inward() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     let cube = cube_solid(&mut part, "c", v3(0., 0., 0.), v3(1., 1., 1.)).unwrap();
     let faces: Vec<String> = part
         .topology()
@@ -91,7 +92,7 @@ fn offset_three_faces_of_a_cube_inward() {
 /// Offsetting by nothing is refused.
 #[test]
 fn zero_distance_is_refused() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     let cube = cube_solid(&mut part, "c", v3(0., 0., 0.), v3(1., 1., 1.)).unwrap();
     let face = part.topology().solid_faces(cube).unwrap()[0];
     let face = part.name_of(face).unwrap().to_string();

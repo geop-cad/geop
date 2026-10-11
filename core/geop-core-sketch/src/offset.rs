@@ -235,12 +235,6 @@ impl<S: Scalar> Sketch<S> {
             .zip(&pieces_of)
             .map(|(&p, &(c, _))| offset_plain(p, d).ok_or_else(|| too_far(c)))
             .collect::<GeopResult<_>>()?;
-        let tangent = |a: CurveId, b: CurveId| {
-            self.constraints.values().any(|k| {
-                matches!(*k, Constraint::Tangent { a: x, b: y } if (x, y) == (a, b) || (x, y) == (b, a))
-            })
-        };
-
         // Each joint: where the offsets of the pieces before and after it
         // end and start, and what joins them.
         enum Joint {
@@ -267,7 +261,7 @@ impl<S: Scalar> Sketch<S> {
             let p = pieces[i].at(1.0);
             let (ti, tj) = (pieces[i].tangent(1.0), pieces[j].tangent(0.0));
             let normal = perp(ti);
-            let smooth = tangent(ci, cj);
+            let smooth = self.tangent(ci, cj);
             if smooth && dot(ti, tj) < 0.0 {
                 return Err(GeopError::new(format!(
                     "{ci} and {cj} turn back on each other where they meet: their offsets would cross"
@@ -415,9 +409,7 @@ impl<S: Scalar> Sketch<S> {
         let mut shared: Vec<Option<PointId>> = Vec::new();
         for joint in &joint_of {
             shared.push(match joint {
-                Joint::Shared { at, .. } => {
-                    Some(self.add_point(S::from_f64(at[0]), S::from_f64(at[1])))
-                }
+                Joint::Shared { at, .. } => Some(self.new_point_at(*at)),
                 Joint::Round { .. } => None,
             });
         }
@@ -430,11 +422,8 @@ impl<S: Scalar> Sketch<S> {
                 (true, false) => None,
                 _ => shared[i],
             };
-            let at = |q: P2| (S::from_f64(q[0]), S::from_f64(q[1]));
-            let (sx, sy) = at(trimmed[i].at(0.0));
-            let (ex, ey) = at(trimmed[i].at(1.0));
-            starts.push(s.unwrap_or_else(|| self.add_point(sx, sy)));
-            ends.push(e.unwrap_or_else(|| self.add_point(ex, ey)));
+            starts.push(s.unwrap_or_else(|| self.new_point_at(trimmed[i].at(0.0))));
+            ends.push(e.unwrap_or_else(|| self.new_point_at(trimmed[i].at(1.0))));
         }
         let mut made = Vec::new();
         let mut offset_curves = Vec::new();
@@ -547,7 +536,7 @@ impl<S: Scalar> Sketch<S> {
                 let Some(Plain::Round { center, .. }) = Plain::of(self, source, false) else {
                     return;
                 };
-                let m = self.add_point(S::from_f64(center[0]), S::from_f64(center[1]));
+                let m = self.new_point_at(center);
                 self.constrain(Constraint::Center {
                     point: m,
                     curve: source,

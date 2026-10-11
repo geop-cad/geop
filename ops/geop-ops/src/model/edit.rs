@@ -12,31 +12,31 @@ use geop_core_math::{
 };
 use geop_core_topology::{
     Body, Edge, EdgeId, FaceId, ShellId, SolidId, Vertex, VertexId,
-    build::{BodySpec, BuiltBody},
+    build::{BodySpec, BuiltBody, SpecSources},
 };
 
-use super::Part;
+use super::NamedModel;
 
-impl<S: Scalar> Part<S> {
+impl<S: Scalar> NamedModel<S> {
     /// Forwards to [`geop_core_topology::Model::insert_vertex`]: a vertex on
     /// nothing yet, about to be split into an edge (see
-    /// [`Part::split_edge_at_vertex`]).
+    /// [`NamedModel::split_edge_at_vertex`]).
     pub fn insert_vertex(
         &mut self,
         point: Vector3<S>,
         name: impl Into<String>,
     ) -> GeopResult<VertexId> {
-        let vertex = self.store.topology_mut().insert_vertex(Vertex { point });
-        self.store.insert_name(vertex, name)?;
+        let vertex = self.topology.insert_vertex(Vertex { point });
+        self.names.insert(vertex, name)?;
         Ok(vertex)
     }
 
     /// Forwards to [`geop_core_topology::Model::insert_edge`]: an edge on no
     /// face yet, about to be spliced into its faces (see
-    /// [`Part::splice_edge_into_face`]).
+    /// [`NamedModel::splice_edge_into_face`]).
     pub fn insert_edge(&mut self, edge: Edge<S>, name: impl Into<String>) -> GeopResult<EdgeId> {
-        let edge = self.store.topology_mut().insert_edge(edge);
-        self.store.insert_name(edge, name)?;
+        let edge = self.topology.insert_edge(edge);
+        self.names.insert(edge, name)?;
         Ok(edge)
     }
 
@@ -47,10 +47,9 @@ impl<S: Scalar> Part<S> {
         vertex_into_id: VertexId,
         vertex_deleted_id: VertexId,
     ) -> GeopResult<()> {
-        self.store
-            .topology_mut()
+        self.topology
             .merge_vertex(vertex_into_id, vertex_deleted_id)?;
-        self.store.remove_name(vertex_deleted_id);
+        self.names.remove(vertex_deleted_id);
         Ok(())
     }
 
@@ -62,17 +61,16 @@ impl<S: Scalar> Part<S> {
         edge_deleted_id: EdgeId,
         reversed: bool,
     ) -> GeopResult<()> {
-        self.store
-            .topology_mut()
+        self.topology
             .merge_edge(edge_into_id, edge_deleted_id, reversed)?;
-        self.store.remove_name(edge_deleted_id);
+        self.names.remove(edge_deleted_id);
         Ok(())
     }
 
     /// Forwards to [`geop_core_topology::Model::reverse_face`]. Creates and
     /// deletes nothing.
     pub fn reverse_face(&mut self, face_id: FaceId) -> GeopResult<()> {
-        self.store.topology_mut().reverse_face(face_id)
+        self.topology.reverse_face(face_id)
     }
 
     /// Forwards to [`geop_core_topology::Model::splice_edge_into_face`].
@@ -89,14 +87,14 @@ impl<S: Scalar> Part<S> {
         min_subdivision_size: S,
         new_face_name: impl Into<String>,
     ) -> GeopResult<Option<FaceId>> {
-        let new_face = self.store.topology_mut().splice_edge_into_face(
+        let new_face = self.topology.splice_edge_into_face(
             edge_id,
             face_id,
             max_nodes,
             min_subdivision_size,
         )?;
         if let Some(face) = new_face {
-            self.store.insert_name(face, new_face_name)?;
+            self.names.insert(face, new_face_name)?;
         }
         Ok(new_face)
     }
@@ -113,14 +111,14 @@ impl<S: Scalar> Part<S> {
         min_subdivision_size: S,
         new_edge_name: impl Into<String>,
     ) -> GeopResult<EdgeId> {
-        let new_edge = self.store.topology_mut().split_edge_at_vertex(
+        let new_edge = self.topology.split_edge_at_vertex(
             edge_id,
             edge_t,
             vertex_id,
             max_nodes,
             min_subdivision_size,
         )?;
-        self.store.insert_name(new_edge, new_edge_name)?;
+        self.names.insert(new_edge, new_edge_name)?;
         Ok(new_edge)
     }
 
@@ -135,12 +133,12 @@ impl<S: Scalar> Part<S> {
         ];
         if let Some((n, m, what)) = counts.iter().find(|(n, m, _)| n != m) {
             return Err(GeopError::new(format!(
-                "Part::build_body: {n} names for {m} {what}"
+                "NamedModel::build_body: {n} names for {m} {what}"
             )));
         }
         if names.solid.is_some() != spec.solid {
             return Err(GeopError::new(format!(
-                "Part::build_body: a solid name {:?} for a body that {} a solid",
+                "NamedModel::build_body: a solid name {:?} for a body that {} a solid",
                 names.solid,
                 if spec.solid { "is" } else { "is not" }
             )));
@@ -153,24 +151,24 @@ impl<S: Scalar> Part<S> {
             .chain(&names.solid);
         let mut seen = HashSet::new();
         for name in all {
-            if !seen.insert(name) || self.store.id_of(name).is_some() {
+            if !seen.insert(name) || self.names.id_of(name).is_some() {
                 return Err(GeopError::new(format!(
-                    "Part::build_body: the name {name:?} is taken"
+                    "NamedModel::build_body: the name {name:?} is taken"
                 )));
             }
         }
-        let built = self.store.topology_mut().build_body(spec)?;
+        let built = self.topology.build_body(spec)?;
         for (&id, name) in built.vertices.iter().zip(names.vertices) {
-            self.store.insert_name(id, name)?;
+            self.names.insert(id, name)?;
         }
         for (&id, name) in built.edges.iter().zip(names.edges) {
-            self.store.insert_name(id, name)?;
+            self.names.insert(id, name)?;
         }
         for (&id, name) in built.faces.iter().zip(names.faces) {
-            self.store.insert_name(id, name)?;
+            self.names.insert(id, name)?;
         }
         if let (Some(id), Some(name)) = (built.solid, names.solid) {
-            self.store.insert_name(id, name)?;
+            self.names.insert(id, name)?;
         }
         Ok(built)
     }
@@ -187,21 +185,9 @@ impl<S: Scalar> Part<S> {
         rename: impl Fn(&str) -> String,
     ) -> GeopResult<BuiltBody> {
         let (spec, sources) = self.topology().body_spec(faces, solid.is_some())?;
-        let copied = |ids: Vec<super::RefId>| -> GeopResult<Vec<String>> {
-            ids.into_iter()
-                .map(|id| {
-                    let name = self.name_of(id).ok_or_else(|| {
-                        GeopError::new(format!("Part::copy_faces: {id} has no name"))
-                    })?;
-                    Ok(rename(name))
-                })
-                .collect()
-        };
         let names = BodyNames {
-            vertices: copied(sources.vertices.iter().map(|&v| v.into()).collect())?,
-            edges: copied(sources.edges.iter().map(|&e| e.into()).collect())?,
-            faces: copied(sources.faces.iter().map(|&f| f.into()).collect())?,
             solid,
+            ..self.source_names(&sources)?.renamed(rename)
         };
         self.build_body(spec, names)
     }
@@ -219,18 +205,13 @@ impl<S: Scalar> Part<S> {
     }
 
     /// The whole of `body` — a solid, its shells kept apart, or a sheet —
-    /// as a body to build again (see [`Part::build_body`]), with the names
-    /// of its entities: what [`Part::copy_body`] builds, kept to build
+    /// as a body to build again (see [`NamedModel::build_body`]), with the names
+    /// of its entities: what [`NamedModel::copy_body`] builds, kept to build
     /// later.
     pub fn body_record(&self, body: Body) -> GeopResult<(BodySpec<S>, BodyNames)> {
         let faces = self.topology().body_faces(body)?;
-        let name = |id: super::RefId| -> GeopResult<String> {
-            self.name_of(id)
-                .map(str::to_string)
-                .ok_or_else(|| GeopError::new(format!("Part::body_record: {id} has no name")))
-        };
         let solid = match body {
-            Body::Solid(solid) => Some(name(solid.into())?),
+            Body::Solid(solid) => Some(self.name(solid)?.to_string()),
             Body::Sheet(_) => None,
         };
         let (mut spec, sources) = self.topology().body_spec(&faces, solid.is_some())?;
@@ -246,30 +227,36 @@ impl<S: Scalar> Part<S> {
         }
         spec.shells = shells.into_iter().map(|(_, members)| members).collect();
         let names = BodyNames {
-            vertices: sources
-                .vertices
-                .iter()
-                .map(|&v| name(v.into()))
-                .collect::<GeopResult<_>>()?,
-            edges: sources
-                .edges
-                .iter()
-                .map(|&e| name(e.into()))
-                .collect::<GeopResult<_>>()?,
-            faces: sources
-                .faces
-                .iter()
-                .map(|&f| name(f.into()))
-                .collect::<GeopResult<_>>()?,
             solid,
+            ..self.source_names(&sources)?
         };
         Ok((spec, names))
+    }
+
+    /// The names of the entities `sources` says a body to build was made
+    /// from (see [`geop_core_topology::Model::body_spec`]), index for index,
+    /// with no solid.
+    pub fn source_names(&self, sources: &SpecSources) -> GeopResult<BodyNames> {
+        fn names<S: Scalar, Id: Into<super::RefId> + Copy>(
+            model: &NamedModel<S>,
+            ids: &[Id],
+        ) -> GeopResult<Vec<String>> {
+            (ids.iter())
+                .map(|&id| Ok(model.name(id)?.to_string()))
+                .collect()
+        }
+        Ok(BodyNames {
+            vertices: names(self, &sources.vertices)?,
+            edges: names(self, &sources.edges)?,
+            faces: names(self, &sources.faces)?,
+            solid: None,
+        })
     }
 
     /// Forwards to [`geop_core_topology::Model::transform_body`]. Creates
     /// and deletes nothing, so every entity keeps its name.
     pub fn transform_body(&mut self, body: Body, motion: &Motion<S>) -> GeopResult<()> {
-        self.store.topology_mut().transform_body(body, motion)
+        self.topology.transform_body(body, motion)
     }
 
     /// Forwards to [`geop_core_topology::Model::assemble_solid`], naming the
@@ -281,10 +268,10 @@ impl<S: Scalar> Part<S> {
         keep: &[FaceId],
         solid_name: impl Into<String>,
     ) -> GeopResult<Option<SolidId>> {
-        let solid = self.store.topology_mut().assemble_solid(consumed, keep)?;
+        let solid = self.topology.assemble_solid(consumed, keep)?;
         self.forget_dead_names();
         if let Some(solid) = solid {
-            self.store.insert_name(solid, solid_name)?;
+            self.names.insert(solid, solid_name)?;
         }
         Ok(solid)
     }
@@ -296,7 +283,7 @@ impl<S: Scalar> Part<S> {
         consumed: &[Body],
         keep: &[FaceId],
     ) -> GeopResult<Option<ShellId>> {
-        let sheet = self.store.topology_mut().assemble_sheet(consumed, keep)?;
+        let sheet = self.topology.assemble_sheet(consumed, keep)?;
         self.forget_dead_names();
         Ok(sheet)
     }
@@ -304,13 +291,13 @@ impl<S: Scalar> Part<S> {
     /// Forwards to [`geop_core_topology::Model::merge_solids`], forgetting
     /// the name of the solid it deletes.
     pub fn merge_solids(&mut self, into: SolidId, from: SolidId) -> GeopResult<()> {
-        self.store.topology_mut().merge_solids(into, from)?;
-        self.store.remove_name(from);
+        self.topology.merge_solids(into, from)?;
+        self.names.remove(from);
         Ok(())
     }
 }
 
-/// The names [`Part::build_body`] gives what it builds: one per vertex, edge
+/// The names [`NamedModel::build_body`] gives what it builds: one per vertex, edge
 /// and face of the [`BodySpec`], index for index, and the solid's, if it
 /// builds one.
 #[derive(Clone, Debug, Default)]

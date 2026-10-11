@@ -203,9 +203,10 @@
           "symmetric": false,
           "reversed": false
         },
-        "face": false,
-        "combine": {
-          "mode": "new_body"
+        "output": {
+          "solid": {
+            "mode": "new_body"
+          }
         }
       }
     },
@@ -300,10 +301,12 @@
           "symmetric": false,
           "reversed": false
         },
-        "face": false,
-        "combine": {
-          "mode": "difference",
-          "target": "revolve(revolve1)"
+        "output": {
+          "solid": {
+            "mode": "with",
+            "op": "difference",
+            "target": "revolve(revolve1)"
+          }
         }
       }
     },

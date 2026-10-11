@@ -9,15 +9,14 @@ name = "geop"
 path = "src/main.rs"
 
 [dependencies]
+geop-core-program.workspace = true
 geop-core-math.workspace = true
 geop-ops.workspace = true
-geop-ops-assembly.workspace = true
 geop-cad-base.workspace = true
-geop-ops-rasterize.workspace = true
-# geop-ops-step.workspace = true
 # geop-ops-drawing.workspace = true
-# geop-ops-urdf.workspace = true
 # geop-ops-bom.workspace = true
-# geop-ops-sheetmetal.workspace = true
 clap = { version = "4", features = ["derive"] }
 serde_json.workspace = true
+
+[dev-dependencies]
+geop-ops-step.workspace = true

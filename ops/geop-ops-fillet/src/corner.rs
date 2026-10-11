@@ -39,13 +39,14 @@
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    matrix::{Matrix, solve_linear_system},
+    matrix::Matrix,
     scalars::Scalar,
+    solvers::linear::solve_linear_system,
     vector::Vector3,
     with_context,
 };
 use geop_core_topology::{EdgeId, FaceId, Model, VertexId};
-use geop_ops::{Namer, Part};
+use geop_ops::{NamedModel, Namer};
 
 use crate::{
     blend::{Bend, BlendShape, End, Plan, Sweep, ToolProfile, check_touch},
@@ -78,7 +79,7 @@ enum Reaching {
 /// `namer` (see the module docs): every corner every edge of which is
 /// filleted. The plans' ends there are set to it.
 pub(crate) fn plan_corners<S: Scalar>(
-    part: &Part<S>,
+    model: &NamedModel<S>,
     namer: &Namer,
     plans: &mut [(Plan<S>, ToolProfile<S>)],
     chains: &[(String, Chain)],
@@ -92,10 +93,10 @@ pub(crate) fn plan_corners<S: Scalar>(
     let BlendShape::Fillet { radii } = shape else {
         return Ok(planned);
     };
-    let model = part.topology();
+    let topology = model.topology();
     let mut vertices: Vec<VertexId> = Vec::new();
     for &edge in covered {
-        let e = model.get_edge(edge)?;
+        let e = topology.get_edge(edge)?;
         for v in [e.start_vertex, e.end_vertex] {
             if !vertices.contains(&v) {
                 vertices.push(v);
@@ -103,8 +104,8 @@ pub(crate) fn plan_corners<S: Scalar>(
         }
     }
     for vertex in vertices {
-        // In the order they were made — the model's own order is none.
-        let mut incident: Vec<EdgeId> = model
+        // In the order they were made — the topology's own order is none.
+        let mut incident: Vec<EdgeId> = topology
             .edges
             .iter()
             .filter(|(_, e)| e.start_vertex == vertex || e.end_vertex == vertex)
@@ -116,14 +117,14 @@ pub(crate) fn plan_corners<S: Scalar>(
         if incident.len() < 3 || !incident.iter().all(|e| covered.contains(e)) {
             continue;
         }
-        let name = part.name_of(vertex).unwrap_or("?").to_string();
+        let name = model.name_of(vertex).unwrap_or("?").to_string();
         let ctx = with_context!("rounding the corner at vertex {name:?}");
         let mut reaching = Vec::new();
         let mut bends = Vec::new();
         for &edge in &incident {
-            let edge_name = part.name_of(edge).unwrap_or("?");
+            let edge_name = model.name_of(edge).unwrap_or("?");
             let swept = plans.iter().position(|(plan, _)| {
-                part.edge_id(&plan.edge).ok() == Some(edge)
+                model.edge_id(&plan.edge).ok() == Some(edge)
                     && matches!(plan.section.sweep, Sweep::Straight { .. })
             });
             if let Some(i) = swept {
@@ -138,7 +139,7 @@ pub(crate) fn plan_corners<S: Scalar>(
                 .with_context(ctx);
             };
             let chain = &chains[k].1;
-            let ends = chain.vertices(model)?;
+            let ends = chain.vertices(topology)?;
             let at_end = if chain.closed {
                 None
             } else if ends[0] == vertex && chain.links[0].edge == edge {
@@ -156,7 +157,7 @@ pub(crate) fn plan_corners<S: Scalar>(
                 )))
                 .with_context(ctx);
             };
-            bends.push(chain_bend(model, chain).with_context(ctx)?);
+            bends.push(chain_bend(topology, chain).with_context(ctx)?);
             reaching.push(Reaching::Chain(k, at_end));
         }
         if bends.iter().any(|b| *b != bends[0]) {
@@ -177,7 +178,7 @@ pub(crate) fn plan_corners<S: Scalar>(
         for &reach in &reaching {
             at_corner.push(match reach {
                 Reaching::Swept(_) => radii.radius,
-                Reaching::Chain(k, at_end) => RadiusLaw::new(part, &chains[k].1, radii)
+                Reaching::Chain(k, at_end) => RadiusLaw::new(model, &chains[k].1, radii)
                     .with_context(ctx)?
                     .at_end(usize::from(at_end)),
             });
@@ -189,7 +190,7 @@ pub(crate) fn plan_corners<S: Scalar>(
             .with_context(ctx);
         }
         let corner = plan_corner(
-            part,
+            model,
             namer,
             vertex,
             &name,
@@ -228,7 +229,7 @@ fn faces_of<S: Scalar>(
 /// in `chain_corners` for the chains.
 #[allow(clippy::too_many_arguments)]
 fn plan_corner<S: Scalar>(
-    part: &Part<S>,
+    model: &NamedModel<S>,
     namer: &Namer,
     vertex: VertexId,
     name: &str,
@@ -239,8 +240,8 @@ fn plan_corner<S: Scalar>(
     radius: f64,
     chain_corners: &mut [[Option<ChainCorner<S>>; 2]],
 ) -> GeopResult<Corner<S>> {
-    let model = part.topology();
-    let at = model.get_vertex(vertex)?.point;
+    let topology = model.topology();
+    let at = topology.get_vertex(vertex)?.point;
     let mut faces: Vec<FaceId> = Vec::new();
     for &r in reaching {
         for face in faces_of(plans, chains, r) {
@@ -256,10 +257,10 @@ fn plan_corner<S: Scalar>(
         ))
     })?;
     let r = S::from_f64(radius);
-    let (center, contacts) = ball(model, faces, &at, bend.side::<S>().mul(r))?;
+    let (center, contacts) = ball(topology, faces, &at, bend.side::<S>().mul(r))?;
     for (face, p) in faces.iter().zip(&contacts) {
         let ctx = with_context!("where the corner's ball touches face {face}, at {p:?}");
-        check_touch(model, *face, p).with_context(ctx)?;
+        check_touch(topology, *face, p).with_context(ctx)?;
     }
     let contact_on = |face: FaceId| {
         contacts[faces

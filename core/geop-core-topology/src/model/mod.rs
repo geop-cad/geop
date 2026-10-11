@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use imbl::OrdMap;
 
 use geop_core_geometry::nurb_curve::NurbCurve;
 use geop_core_math::scalars::Scalar;
@@ -58,16 +58,16 @@ pub type Curve3<S> = NurbCurve<S, 4>;
 /// A `HashMap` iterates in an order seeded afresh in each process, and a
 /// validation failure that depended on which face pair was checked first
 /// appeared and disappeared between runs.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Model<S: Scalar> {
-    pub vertices: BTreeMap<VertexId, Vertex<S>>, // V
-    pub edges: BTreeMap<EdgeId, Edge<S>>,        // E
-    pub coedges: BTreeMap<CoedgeId, Coedge<S>>,  // C
-    pub faces: BTreeMap<FaceId, Face<S>>,        // F
-    pub shells: BTreeMap<ShellId, Shell>,        // S
-    pub solids: BTreeMap<SolidId, Solid>,
+    pub vertices: OrdMap<VertexId, Vertex<S>>, // V
+    pub edges: OrdMap<EdgeId, Edge<S>>,        // E
+    pub coedges: OrdMap<CoedgeId, Coedge<S>>,  // C
+    pub faces: OrdMap<FaceId, Face<S>>,        // F
+    pub shells: OrdMap<ShellId, Shell>,        // S
+    pub solids: OrdMap<SolidId, Solid>,
     /// Edges and vertices bounding no face (see [`Wire`]).
-    pub wires: BTreeMap<WireId, Wire>,
+    pub wires: OrdMap<WireId, Wire>,
 
     next_id: u64,
 }
@@ -81,13 +81,13 @@ impl<S: Scalar> Default for Model<S> {
 impl<S: Scalar> Model<S> {
     pub fn new() -> Self {
         Self {
-            vertices: BTreeMap::new(),
-            edges: BTreeMap::new(),
-            coedges: BTreeMap::new(),
-            faces: BTreeMap::new(),
-            shells: BTreeMap::new(),
-            solids: BTreeMap::new(),
-            wires: BTreeMap::new(),
+            vertices: OrdMap::new(),
+            edges: OrdMap::new(),
+            coedges: OrdMap::new(),
+            faces: OrdMap::new(),
+            shells: OrdMap::new(),
+            solids: OrdMap::new(),
+            wires: OrdMap::new(),
             next_id: 1,
         }
     }

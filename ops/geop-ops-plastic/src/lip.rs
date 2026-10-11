@@ -29,13 +29,16 @@ use geop_core_topology::{
     Body, EdgeId, FaceId,
     build::{BodySpec, CoedgeOn, CoedgeSpec},
 };
-use geop_ops::{Namer, Part, operation::frame_along};
-use geop_ops_booleans::{Combine, Tool};
+use geop_ops::{NamedModel, Namer, operation::frame_along};
+use geop_ops_booleans::{
+    Combine, Tool,
+    boolean::{BooleanOp, Reach},
+};
 use geop_ops_extrude_revolve::{extrude::extrude, sweep::SweepLoop};
 
 use crate::{
     band::{Chain, Piece},
-    common::{halfway, loops_of, normal_at, oriented},
+    common::{halfway, normal_at},
 };
 
 /// The chain of `face`'s edges `edges` — or, if none, its one hole — in
@@ -45,7 +48,7 @@ use crate::{
 /// are neither straight nor circular, and edges the solid is not convex
 /// along.
 pub fn rim_chain<S: Scalar>(
-    part: &Part<S>,
+    part: &NamedModel<S>,
     face: FaceId,
     edges: &[EdgeId],
 ) -> GeopResult<(CoordinateSystem<S>, Chain<S>)> {
@@ -71,7 +74,7 @@ pub fn rim_chain<S: Scalar>(
         ))
     })?;
     let frame = frame_along(plane.point, &plane.normal)?;
-    let loops = loops_of(&spec.faces[f]);
+    let loops = spec.faces[f].loops();
     let edge_index = |e: EdgeId| sources.edges.iter().position(|&x| x == e);
 
     // The loop, and which of its coedges the chain runs along.
@@ -151,7 +154,7 @@ pub fn rim_chain<S: Scalar>(
             )));
         };
         let edge_name = name(sources.edges[e].into());
-        let curve = oriented(&spec.edges[e].curve, sense);
+        let curve = sense.orient(&spec.edges[e].curve);
         let center = if curve.as_line()?.is_some() {
             None
         } else if let Some(arc) = curve.as_arc()? {
@@ -179,7 +182,7 @@ pub fn rim_chain<S: Scalar>(
             flat,
             curve.knot_vector.clone(),
         )?;
-        let (start, _) = crate::common::ends(&spec, lp[k].on);
+        let (start, _) = spec.ends(lp[k].on)?;
         joints.push(name(sources.vertices[start].into()));
         pieces.push(Piece {
             curve: curve2,
@@ -188,7 +191,7 @@ pub fn rim_chain<S: Scalar>(
         });
     }
     if !closed {
-        let (_, end) = crate::common::ends(&spec, lp[*run.last().unwrap()].on);
+        let (_, end) = spec.ends(lp[*run.last().unwrap()].on)?;
         joints.push(name(sources.vertices[end].into()));
         // An open chain ends square to its last edge. At a corner of the
         // loop that end lies in the plane of the next edge's wall, along
@@ -198,7 +201,7 @@ pub fn rim_chain<S: Scalar>(
             let CoedgeOn::Edge(e, sense) = lp[k].on else {
                 unreachable!("checked above")
             };
-            let curve = oriented(&spec.edges[e].curve, sense);
+            let curve = sense.orient(&spec.edges[e].curve);
             let (t0, t1) = curve.domain();
             curve.tangent(if at_end { t1 } else { t0 })
         };
@@ -279,7 +282,7 @@ fn convex_along<S: Scalar>(
         .enumerate()
         .filter(|&(g, _)| g != f)
         .find(|(_, face)| {
-            loops_of(face).iter().any(|lp| {
+            face.loops().iter().any(|lp| {
                 lp.iter()
                     .any(|c| matches!(c.on, CoedgeOn::Edge(x, _) if x == e))
             })
@@ -320,7 +323,7 @@ fn check_size<S: Scalar>(what: &str, value: S) -> GeopResult<()> {
 /// lip's faces along an edge `E` `N(E)` (on the wall) and `N(E,far)`
 /// (inside the rim), its top `N(end)`.
 pub fn lip<S: Scalar>(
-    part: &mut Part<S>,
+    part: &mut NamedModel<S>,
     namer: &Namer,
     operation_id: &str,
     face: FaceId,
@@ -356,8 +359,12 @@ pub fn lip<S: Scalar>(
         up_to_next: None,
         scope: None,
     };
-    Combine::Union { target }
-        .apply(part, namer, operation_id, &[tool])
+    let combine = Combine::With {
+        op: BooleanOp::Union,
+        target,
+    };
+    (combine.apply(part, namer, operation_id, &[tool]))
+        .and_then(Reach::stopped)
         .with_context(ctx)
 }
 
@@ -365,7 +372,7 @@ pub fn lip<S: Scalar>(
 /// the rim face `face` (see the module docs), `clearance` wider and deeper,
 /// from its solid; named like a [`lip`].
 pub fn groove<S: Scalar>(
-    part: &mut Part<S>,
+    part: &mut NamedModel<S>,
     namer: &Namer,
     operation_id: &str,
     face: FaceId,
@@ -412,19 +419,21 @@ pub fn groove<S: Scalar>(
         up_to_next: None,
         scope: None,
     };
-    Combine::Difference { target }
-        .apply(part, namer, operation_id, &[tool])
+    let combine = Combine::With {
+        op: BooleanOp::Difference,
+        target,
+    };
+    (combine.apply(part, namer, operation_id, &[tool]))
+        .and_then(Reach::stopped)
         .with_context(ctx)
 }
 
 /// The name of the solid `face` is a face of.
-fn target_name<S: Scalar>(part: &Part<S>, face: FaceId) -> GeopResult<String> {
+fn target_name<S: Scalar>(part: &NamedModel<S>, face: FaceId) -> GeopResult<String> {
     let Body::Solid(solid) = part.topology().body_of_face(face)? else {
         return Err(GeopError::new(
             "the rim stands on its own: it is no face of a solid",
         ));
     };
-    part.name_of(solid)
-        .map(str::to_string)
-        .ok_or_else(|| GeopError::new("the rim's solid has no name"))
+    Ok(part.name(solid)?.to_string())
 }

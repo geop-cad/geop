@@ -1,4 +1,4 @@
-//! [`MoveBody`]: move bodies, or a copy of them, by a turn and a shift.
+//! [`MoveBody`]: move bodies, or a copy of them.
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -7,16 +7,23 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
+use geop_core_program::{
+    editing::{CanvasEvent, Change, Event, Form, Gizmo, Number, Unit, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
+use geop_ops::operation::Input;
 use geop_ops::{
-    Context, Library, Namer, Part,
-    operation::{EntityRef, Operation, Role},
-    ui::{CanvasEvent, Change, Edit, Form, Gizmo, Number, Unit},
+    Design, NamedModel, Namer, ParamValue,
+    operation::{
+        Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Scope, Seen, build_model,
+        resolve_bodies,
+    },
 };
 use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
 use crate::common::{
-    axis, bodies_field, center, combine_instances, copy_seeds, newest_solid, seed_instances, seeds,
+    bodies_field, center, combine_instances, copy_seeds, newest_solid, seed_instances,
 };
 
 /// Moves the bodies `bodies` — solids, and sheets by one of their faces —
@@ -56,8 +63,12 @@ pub struct MoveBodyArgs {
 }
 
 impl MoveBodyArgs {
-    /// The motion it moves by in `part`: none, if it moves nothing.
-    fn motion<S: Scalar>(&self, part: &Part<S>) -> GeopResult<Option<Motion<S>>> {
+    /// The motion it moves by, as `lookup` has the part: none, if it moves
+    /// nothing.
+    fn motion<S: Scalar>(
+        &self,
+        lookup: &mut (impl Lookup<S> + ?Sized),
+    ) -> GeopResult<Option<Motion<S>>> {
         let values = self.translation.iter().chain([&self.angle]);
         if let Some(bad) = values.clone().find(|v| !v.is_finite()) {
             return Err(GeopError::new(format!("{bad} is not a number")));
@@ -66,8 +77,8 @@ impl MoveBodyArgs {
         let shifts = self.translation.iter().any(|&t| t != 0.0);
         let turn = match &self.axis {
             Some(entity) if self.angle != 0.0 => {
-                let axis = axis(part, entity)?;
-                let radians = S::from_f64(self.angle).mul(S::PI).div(S::from_i64(180))?;
+                let axis = Aspects::axis_of(entity, lookup)?;
+                let radians = S::from_f64(self.angle).degrees_to_radians()?;
                 Some(Pose::rotation_about(&axis.point, &axis.direction, radians)?)
             }
             _ => None,
@@ -84,14 +95,58 @@ impl MoveBodyArgs {
 /// The keys and labels of the shift's three fields.
 const AXES: [(&str, &str); 3] = [("x", "shift x"), ("y", "shift y"), ("z", "shift z")];
 
+impl ModelStep for MoveBody {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &MoveBodyArgs,
+    ) -> GeopResult<()> {
+        let ctx = with_context!("move_body({step}, {args:?})");
+        let namer = Namer::new("move", step)?;
+        let seeds = resolve_bodies(&args.bodies, &mut &*model).with_context(ctx)?;
+        let motion = (args.motion(&mut Scope { model, reader })).with_context(ctx)?;
+        let instances = match (args.copy, motion) {
+            (true, None) => {
+                return Err(GeopError::new(
+                    "a copy that is not moved lies on top of the bodies: shift or turn it",
+                ))
+                .with_context(ctx);
+            }
+            (true, Some(motion)) => {
+                copy_seeds(model, &seeds, &motion, "copy", |name| namer.name(&[name]))
+                    .with_context(ctx)?
+            }
+            (false, motion) => {
+                if let Some(motion) = motion {
+                    for &seed in &seeds {
+                        model.transform_body(seed, &motion).with_context(ctx)?;
+                    }
+                }
+                seed_instances(&seeds, "moved")
+            }
+        };
+        combine_instances(model, &namer, step, &args.combine, &instances).with_context(ctx)
+    }
+}
+
 impl Operation for MoveBody {
+    const INFO: OperationInfo = OperationInfo::new(
+        "move_body",
+        "Move body",
+        "Move bodies, or a copy of them, turned and shifted.",
+        OperationGroup::Bodies,
+        OperationTier::Menu,
+    );
     type Args = MoveBodyArgs;
-    type Session = ();
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
 
     /// The newest solid, not moved yet.
-    fn new_args<S: Scalar>(&self, before: &Part<S>) -> MoveBodyArgs {
+    fn new_args(context: &Context<Input, ParamValue>) -> MoveBodyArgs {
         MoveBodyArgs {
-            bodies: newest_solid(before),
+            bodies: newest_solid(Seen::new(context.before).model()),
             translation: [0.0; 3],
             axis: None,
             angle: 0.0,
@@ -100,101 +155,82 @@ impl Operation for MoveBody {
         }
     }
 
+    fn run(step: &str, part: &mut Build, args: &MoveBodyArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
+    }
+
     /// The bodies, picked; the shift along each axis, dragged by a gizmo
     /// where the bodies' middle is moved to; the axis to turn about and the
     /// angle; whether to copy; and how to combine.
-    fn form<'a, S: Scalar>(
-        &self,
-        context: Context<'a, S>,
+    fn presentation(
+        context: &Context<Input, ParamValue>,
         args: &MoveBodyArgs,
         _: &(),
-        _: &[String],
-    ) -> Form<'a, S, MoveBodyArgs> {
-        let before = context.before;
-        let mut f = Form::<S, MoveBodyArgs>::new();
-        bodies_field(&mut f, &args.bodies, |args| &mut args.bodies);
-        f.gizmo = center(before, &args.bodies).map(|c| {
-            Gizmo::new(c.add(&Vector3::from_array(args.translation.map(S::from_f64)))).translate()
-        });
+    ) -> Form<Design> {
+        let seen = Seen::new(context.before);
+        let mut form = Form::default();
+        let shift = Vector3::from_array(args.translation.map(Design::from_f64));
+        form.gizmo =
+            center(seen.model(), &args.bodies).map(|c| Gizmo::new(c.add(&shift)).translate());
+        let dialog = &mut form.dialog;
+        bodies_field(dialog, &args.bodies);
         for (k, (key, label)) in AXES.into_iter().enumerate() {
-            f.number(
-                key,
-                Number::new(label, args.translation[k], Unit::Length),
-                move |args, value| args.translation[k] = value,
-            );
+            dialog.number(key, Number::new(label, args.translation[k], Unit::Length));
         }
-        f.reference(
+        let axis = args.axis.iter().cloned().collect();
+        (dialog.reference(
             "axis",
             "turn about",
-            args.axis.iter().cloned().collect(),
+            axis,
             &[Role::Line, Role::Round],
             None,
             false,
-            |edit, picked| edit.args.axis = picked.into_iter().next(),
-        );
-        f.optional("axis");
+        ))
+        .optional("axis");
         if args.axis.is_some() {
-            f.number(
-                "angle",
-                Number::new("angle", args.angle, Unit::Angle).range(-360.0, 360.0),
-                |args, value| args.angle = value,
-            );
+            let angle = Number::new("angle", args.angle, Unit::Angle).range(-360.0, 360.0);
+            dialog.number("angle", angle);
         }
-        f.checkbox("copy", "copy", args.copy, |args, b| args.copy = b);
-        args.combine.show(&mut f, before, |args| &mut args.combine);
-        f
+        dialog.checkbox("copy", "copy", args.copy);
+        args.combine.show(dialog);
+        form
     }
 
     /// The gizmo dragged: the shift, as it was when the drag started, moved
     /// by as much.
-    fn event<S: Scalar>(
-        &self,
-        _: Context<'_, S>,
-        edit: Edit<'_, MoveBodyArgs, ()>,
-        event: &CanvasEvent<S>,
-    ) {
-        if let CanvasEvent::Gizmo { drag, .. } = event
-            && let Change::Translate(by) = &drag.change
-        {
-            for k in 0..3 {
-                edit.args.translation[k] += by[k].to_f64();
-            }
-        }
-    }
-
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    fn process_user_event(
+        context: &Context<Input, ParamValue>,
         args: &MoveBodyArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("move_body({operation_id}, {args:?})");
-        let namer = Namer::new("move", operation_id)?;
-        let seeds = seeds(&part, &args.bodies).with_context(ctx)?;
-        let motion = args.motion(&part).with_context(ctx)?;
-        let instances = match (args.copy, motion) {
-            (true, None) => {
-                return Err(GeopError::new(
-                    "a copy that is not moved lies on top of the bodies: shift or turn it",
-                ))
-                .with_context(ctx);
-            }
-            (true, Some(motion)) => copy_seeds(&mut part, &seeds, &motion, "copy", |name| {
-                namer.name(&[name])
-            })
-            .with_context(ctx)?,
-            (false, motion) => {
-                if let Some(motion) = motion {
-                    for &seed in &seeds {
-                        part.transform_body(seed, &motion).with_context(ctx)?;
+        _: &(),
+        event: Event<Design>,
+    ) -> (MoveBodyArgs, ()) {
+        let mut args = args.clone();
+        match event {
+            Event::Canvas(CanvasEvent::Gizmo { drag, .. }) => {
+                if let Change::Translate(by) = &drag.change {
+                    for (k, shift) in args.translation.iter_mut().enumerate() {
+                        *shift += by[k].to_f64();
                     }
                 }
-                seed_instances(&seeds, "moved")
             }
-        };
-        combine_instances(&mut part, &namer, operation_id, &args.combine, &instances)
-            .with_context(ctx)?;
-        Ok(part)
+            Event::Field { key, value } => match (key.as_str(), &value) {
+                ("bodies", Value::Entities(picked)) => args.bodies = picked.clone(),
+                ("axis", Value::Entities(picked)) => args.axis = picked.first().cloned(),
+                ("angle", Value::Number(v)) => args.angle = *v,
+                ("copy", Value::Bool(b)) => args.copy = *b,
+                (key, value) => {
+                    if let (Some(k), Value::Number(v)) =
+                        (AXES.iter().position(|(axis, _)| *axis == key), value)
+                    {
+                        args.translation[k] = *v;
+                    } else {
+                        args.combine
+                            .set(key, value, Seen::new(context.before).model());
+                    }
+                }
+            },
+            Event::Select(_) | Event::Canvas(_) => {}
+        }
+        (args, ())
     }
 }

@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import type { Program } from "./geop";
+import type { ExporterInfo, Program } from "./geop";
 import { BugReport } from "./BugReport";
 import { Icon } from "./icons";
 import { Menu, type MenuEntry } from "./Menu";
@@ -13,14 +13,10 @@ interface Props {
   /** Start a new, empty part in a file of its own. */
   onNewPart: () => void;
   onSave: () => void;
-  /** Export the assembly as a URDF robot, for simulators. */
-  onExportUrdf: () => void;
-  /** Write the part shown as a STEP file and save it. */
-  onExportStep: () => void;
-  /** Write the flat pattern of the newest sheet-metal body as a DXF file for laser cutting. */
-  onExportFlatPattern: () => void;
-  /** Write every solid of the part shown as an STL mesh and save it. */
-  onExportStl: () => void;
+  /** What the kernel can write of the part: a "Download" each. */
+  exporters: ExporterInfo[];
+  /** Write the part shown with the exporter `kind`, and save it. */
+  onExport: (kind: string) => void;
   onLoadFile: (file: File) => void;
   exampleNames: string[];
   onLoadExample: (name: string) => void;
@@ -68,10 +64,8 @@ export function Toolbar({
   hasSteps,
   onNewPart,
   onSave,
-  onExportUrdf,
-  onExportStep,
-  onExportFlatPattern,
-  onExportStl,
+  exporters,
+  onExport,
   onLoadFile,
   exampleNames,
   onLoadExample,
@@ -105,28 +99,16 @@ export function Toolbar({
           { kind: "item", label: "Open file…", icon: "open", onSelect: () => fileInput.current?.click() },
           { kind: "item", label: "Save", icon: "save", hint: "download", disabled: !hasSteps, onSelect: onSave },
         ] as MenuEntry[])),
-    { kind: "item", label: "Download STEP", icon: "save", hint: "for other CAD", disabled: !hasSteps, onSelect: onExportStep },
-    { kind: "item", label: "Download STL", icon: "save", hint: "mesh, for 3-D printing", disabled: !hasSteps, onSelect: onExportStl },
-    { kind: "separator" },
-    { kind: "heading", label: "Sheet metal" },
-    {
-      kind: "item",
-      label: "Export flat pattern as DXF",
-      icon: "flat_pattern",
-      hint: "for laser cutting",
-      disabled: !hasSteps,
-      onSelect: onExportFlatPattern,
-    },
-    { kind: "separator" },
-    { kind: "heading", label: "Robot" },
-    {
-      kind: "item",
-      label: "Export URDF",
-      icon: "robot",
-      hint: "joints, inertia, meshes",
-      disabled: !hasSteps,
-      onSelect: onExportUrdf,
-    },
+    ...exporters.map(
+      (exporter): MenuEntry => ({
+        kind: "item",
+        label: `Download ${exporter.label}`,
+        icon: "save",
+        hint: exporter.doc,
+        disabled: !hasSteps,
+        onSelect: () => onExport(exporter.kind),
+      }),
+    ),
     { kind: "separator" },
     { kind: "heading", label: "Example parts" },
     ...exampleNames.map(

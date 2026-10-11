@@ -1,5 +1,5 @@
 use crate::{
-    Coedge, CoedgeGeometry, CoedgeId, Edge, EdgeId, Model, Sense,
+    CoedgeId, EdgeId, Model,
     argument_validation::{
         validate_curve_start_and_end, validate_different_loop, validate_pcurve_start_and_end,
     },
@@ -47,10 +47,8 @@ impl<S: Scalar> Model<S> {
         validate_different_loop(self, coedge1, coedge2).with_context(&ctx)?;
         let face = self.get_face(ce1.face)?.clone();
 
-        let start_id = self.coedge_end_vertex_id(coedge1)?;
-        let end_id = self.coedge_start_vertex_id(coedge2)?;
-        let start = self.get_vertex(start_id)?.clone();
-        let end = self.get_vertex(end_id)?.clone();
+        let start = self.coedge_end_vertex(coedge1)?.clone();
+        let end = self.coedge_start_vertex(coedge2)?.clone();
 
         validate_pcurve_start_and_end(&face.surface, &pcurve, &start.point, &end.point)
             .with_context(&ctx)?;
@@ -62,40 +60,9 @@ impl<S: Scalar> Model<S> {
             .find_boundary_containing(ce1.face, coedge2)
             .with_context(&ctx)?;
 
-        let edge_id = self.insert_edge(Edge {
-            curve,
-            start_vertex: start_id,
-            end_vertex: end_id,
-        });
-
         let reversed_pcurve = pcurve.reverse();
-        let next1 = ce1.next;
-        let prev2 = ce2.prev;
-
-        // coedge_a: end1 -> start2, spliced in right after coedge1.
-        let coedge_a = self.insert_coedge(Coedge {
-            geometry: CoedgeGeometry::Edge(edge_id),
-            sense: Sense::Forward,
-            pcurve,
-            next: coedge2,
-            prev: coedge1,
-            face: ce1.face,
-        });
-
-        // coedge_b: start2 -> end1, spliced in right after prev2.
-        let coedge_b = self.insert_coedge(Coedge {
-            geometry: CoedgeGeometry::Edge(edge_id),
-            sense: Sense::Reversed,
-            pcurve: reversed_pcurve,
-            next: next1,
-            prev: prev2,
-            face: ce1.face,
-        });
-
-        self.coedges.get_mut(&coedge1).unwrap().next = coedge_a;
-        self.coedges.get_mut(&coedge2).unwrap().prev = coedge_a;
-        self.coedges.get_mut(&prev2).unwrap().next = coedge_b;
-        self.coedges.get_mut(&next1).unwrap().prev = coedge_b;
+        let (edge_id, coedge_a, coedge_b) =
+            self.insert_edge_between(coedge1, coedge2, curve, pcurve, reversed_pcurve)?;
 
         // The absorbed ring must be a hole: joining an inner ring to the loop
         // around it is what `mekr` does, and the outer boundary is what

@@ -1,27 +1,34 @@
 //! 3-D sketches drawn as an editor draws them — every gesture through a
 //! [`StepEditor`], as rays and keys — and built on a part.
 
+use std::collections::BTreeMap;
+
 use geop_core_math::{
-    primitives::{CoordinateSystem, Datum, DatumKind, Ray},
+    geop_error::GeopResult,
+    primitives::{DatumComponent, FrameAxis, Ray},
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
+use geop_core_program::{
+    editing::{Event, Form},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+    operation_registry::OperationRegistry,
+    program::{Program, ProgramStep},
+    program_runner::ProgramRunner,
+    step_editor::{Editing, StepEditor},
+};
 use geop_core_sketch::space::{Constraint3d, CurveKind3d};
 use geop_ops::{
-    Context, EntityRef, NoFiles, Operation, Operations, Part,
-    ui::{Button, PartView, Pointer, Presentation, Reach, StepEditEvent, StepEditor, Value},
+    Design, NamedModel, ORIGIN, ParamValue,
+    model::{model, sketch3d},
+    operation::{Build, EntityRef, Input, Seen, apply},
+    ui::{Button, PartScene, PartView, Pointer, Presentation, Reach, StepEditEvent, Value},
 };
-use serde::{Deserialize, Serialize};
+use geop_ops_extrude_revolve::shapes::cube_solid;
 
-use crate::{AddSketch3d, AddSketch3dArgs, Reference3d, Sketch3d, Sketch3dSession, Target};
-
-/// The one operation, as a set an editor edits.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Operations)]
-#[serde(tag = "operation", content = "args", rename_all = "snake_case")]
-enum Ops {
-    #[operation(group = Sketch, tier = Big)]
-    AddSketch3d(AddSketch3dArgs),
-}
+use crate::{
+    AddSketch3d, AddSketch3dArgs, Reference3d, Sketch3d, Sketch3dEditing, Sketch3dSession, Target,
+};
 
 fn v(p: [f64; 3]) -> Vector3<S> {
     Vector3::from_array(p.map(S::from_f64))
@@ -46,55 +53,134 @@ fn down(x: f64, y: f64) -> Pointer<S> {
     pointer([x, y, 10.0], [0.0, 0.0, -1.0])
 }
 
-/// The part with the box `[1, 2] x [1, 2] x [0, 1]`, `cube(b)`.
-fn boxed() -> Part<S> {
-    let mut part = Part::new();
-    geop_ops_extrude_revolve::shapes::cube::cube_solid(
-        &mut part,
-        "b",
-        v([1.0, 1.0, 0.0]),
-        v([2.0, 2.0, 1.0]),
-    )
-    .unwrap();
-    part
+/// The box `[min, max]`, `cube(b)`.
+fn cube(min: [f64; 3], max: [f64; 3]) -> NamedModel<Design> {
+    let mut model = NamedModel::new();
+    cube_solid(&mut model, "b", v(min), v(max)).unwrap();
+    model
 }
 
-/// A 3-D sketch step being edited on a part, as an editor drives it.
+/// A step that starts the part with the box `[1, 2] x [1, 2] x [0, 1]`,
+/// `cube(b)`: what a 3-D sketch is drawn on.
+struct Boxed;
+
+fn boxed(_: &mut geop_ops::operation::BuildReader, _: &()) -> GeopResult<NamedModel<Design>> {
+    Ok(cube([1.0, 1.0, 0.0], [2.0, 2.0, 1.0]))
+}
+
+impl Operation for Boxed {
+    const INFO: OperationInfo = OperationInfo::new(
+        "boxed",
+        "Box",
+        "A box to draw on.",
+        OperationGroup::Solid,
+        OperationTier::Menu,
+    );
+    type Args = ();
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
+
+    fn new_args(_: &Context<Input, ParamValue>) {}
+
+    fn run(_: &str, part: &mut Build, args: &()) -> GeopResult<()> {
+        part.define_target(&model(), args, boxed)
+    }
+
+    fn presentation(_: &Context<Input, ParamValue>, _: &(), _: &()) -> Form<Design> {
+        Form::default()
+    }
+
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
+        _: &(),
+        _: &(),
+        _: Event<Design>,
+    ) -> ((), ()) {
+        ((), ())
+    }
+}
+
+/// What `editor` shows of the step `route`, picking in the part before it.
+fn shown(
+    runner: &ProgramRunner<Input, ParamValue>,
+    program: &Program,
+    editor: &StepEditor<S>,
+) -> Presentation<S> {
+    let before = runner.part.view_before("route").unwrap();
+    let view = PartView::of(&Seen::new(before)).unwrap();
+    let scene = PartScene {
+        view: &view,
+        seen: Seen::new(before),
+    };
+    editor.presentation(runner, program, &scene).unwrap()
+}
+
+/// A 3-D sketch step `route` being edited in a program, as an editor
+/// drives it: every event handled, then the program run again.
 struct Editor {
-    part: Part<S>,
-    view: PartView<S>,
-    editor: StepEditor<Ops, S>,
+    runner: ProgramRunner<Input, ParamValue>,
+    program: Program,
+    editor: StepEditor<S>,
     presentation: Presentation<S>,
 }
 
 impl Editor {
-    fn on(part: Part<S>) -> Self {
-        let view = PartView::of(&part).unwrap();
-        let step = Ops::new_step("add_sketch3d", &part).unwrap();
-        let context = Context::new(&part, "route", &NoFiles);
-        let editor = StepEditor::new(step, context, true);
-        let presentation = editor.presentation(context, &part, &view);
+    /// A new 3-D sketch, after the box if `on_box`.
+    fn on(on_box: bool) -> Self {
+        let registry = (OperationRegistry::default().with(AddSketch3d))
+            .and_then(|r| r.with(Boxed))
+            .unwrap();
+        let mut runner = ProgramRunner::new(registry);
+        let mut steps = Vec::new();
+        if on_box {
+            steps.push(ProgramStep::new::<Boxed>("box", &()).unwrap());
+        }
+        steps.push(runner.new_step("add_sketch3d", "route", None).unwrap());
+        let program = Program::new(steps);
+        runner.run(&program, &BTreeMap::new(), &BTreeMap::new());
+        let editor = StepEditor::new(&runner, &program, "route", true).unwrap();
+        let presentation = shown(&runner, &program, &editor);
         Editor {
-            part,
-            view,
+            runner,
+            program,
             editor,
             presentation,
         }
     }
 
+    fn send(&mut self, event: StepEditEvent<S>) {
+        let before = self.runner.part.view_before("route").unwrap();
+        let view = PartView::of(&Seen::new(before)).unwrap();
+        let scene = PartScene {
+            view: &view,
+            seen: Seen::new(before),
+        };
+        let editing = Editing {
+            runner: &self.runner,
+            program: &mut self.program,
+            scene: &scene,
+        };
+        self.editor.handle(editing, &event).unwrap();
+        (self.runner).run(&self.program, &BTreeMap::new(), &BTreeMap::new());
+        self.presentation = shown(&self.runner, &self.program, &self.editor);
+    }
+
     fn args(&self) -> AddSketch3dArgs {
-        let Ops::AddSketch3d(args) = self.editor.step().clone();
-        args
+        let step = self.program.steps.last().unwrap();
+        serde_json::from_value(step.args.clone()).unwrap()
     }
 
     fn sketch(&self) -> Sketch3d {
         self.args().sketch
     }
 
-    fn send(&mut self, event: StepEditEvent<S>) {
-        let context = Context::new(&self.part, "route", &NoFiles);
-        self.editor.handle(context, &self.view, &event);
-        self.presentation = self.editor.presentation(context, &self.part, &self.view);
+    fn editing(&self) -> &Sketch3dEditing {
+        self.editor.editing().downcast_ref().unwrap()
+    }
+
+    fn session(&self) -> &Sketch3dSession {
+        &self.editing().session
     }
 
     fn click(&mut self, pointer: Pointer<S>) {
@@ -121,13 +207,9 @@ impl Editor {
         self.dialog(key, Value::Choice(value.into()));
     }
 
-    fn session(&self) -> &Sketch3dSession {
-        self.editor.session().downcast_ref().unwrap()
-    }
-
     /// Where the point `id` of the sketch is.
     fn at(&self, id: geop_core_sketch::PointId) -> Vector3<S> {
-        self.sketch().points[&id].at.map(|c| c.cast())
+        self.sketch().points[&id].at
     }
 
     /// The sketch's points, oldest first.
@@ -135,11 +217,15 @@ impl Editor {
         self.sketch().points.keys().copied().collect()
     }
 
-    /// The step built on the part.
-    fn built(&self) -> Part<S> {
-        AddSketch3d
-            .apply(self.part.clone(), "route", &self.args(), &NoFiles)
+    /// The 3-D sketch the step built, and the model with its wire.
+    fn built(&self) -> (Sketch3d, NamedModel<Design>) {
+        let part = self.runner.part.current();
+        let sketch = part
+            .retrieve_target(&sketch3d("route"))
             .unwrap()
+            .sketch
+            .clone();
+        (sketch, part.retrieve_target(&model()).unwrap().clone())
     }
 }
 
@@ -147,10 +233,11 @@ impl Editor {
 /// point fixed there; on an edge, a point constrained onto it; on a face,
 /// where the face is hit; off the part, in the plane through the last
 /// point facing the eye. A new sketch starts with the line tool, which
-/// chains the points with lines.
+/// chains the points with lines. Built, the sketch is one chain, and a
+/// wire of the part whose edges and vertices are named after it.
 #[test]
 fn clicks_place_points_on_the_part() {
-    let mut e = Editor::on(boxed());
+    let mut e = Editor::on(true);
     assert_eq!(e.session().tool(&e.args()), crate::Tool::Line);
     e.click(down(2.0, 2.0));
     e.click(pointer([1.4, 10.0, 1.0], [0.0, -1.0, 0.0]));
@@ -190,17 +277,28 @@ fn clicks_place_points_on_the_part() {
     e.key("Escape");
     assert_eq!(e.session().tool(&e.args()), crate::Tool::Select);
 
-    let built = e.built();
-    let id = built.sketch3d_id("route").unwrap();
-    assert_eq!(built.sketch3d(id).unwrap().chains().unwrap().len(), 1);
-    built.check_names().unwrap();
+    let (built, model) = e.built();
+    assert_eq!(built.chains().unwrap().len(), 1);
+    model.check_names().unwrap();
+    let line = sketch
+        .curves
+        .iter()
+        .find(|(_, c)| c.is_drawn())
+        .map(|(id, _)| *id)
+        .unwrap();
+    assert!(model.edge_id(&format!("sketch3d(route,{line})")).is_ok());
+    assert!(
+        model
+            .vertex_id(&format!("sketch3d(route,{})", p[3]))
+            .is_ok()
+    );
 }
 
 /// A spline started at the end of a line goes on smoothly from it, and
 /// typed coordinates place points as clicks do.
 #[test]
 fn spline_goes_on_smoothly_from_a_line() {
-    let mut e = Editor::on(Part::new());
+    let mut e = Editor::on(false);
     e.click(pointer([1.0, -10.0, 0.0], [0.0, 1.0, 0.0]));
     e.click(pointer([2.0, -10.0, 0.0], [0.0, 1.0, 0.0]));
     e.key("s");
@@ -249,7 +347,7 @@ fn spline_goes_on_smoothly_from_a_line() {
 /// follows as far as the constraints let it.
 #[test]
 fn selections_are_constrained_and_points_dragged() {
-    let mut e = Editor::on(Part::new());
+    let mut e = Editor::on(false);
     e.click(pointer([1.0, -10.0, 0.0], [0.0, 1.0, 0.0]));
     e.click(pointer([1.5, -10.0, 2.0], [0.0, 1.0, 0.0]));
     e.key("Escape");
@@ -257,7 +355,7 @@ fn selections_are_constrained_and_points_dragged() {
     // Click the line between its ends: selected.
     e.click(pointer([1.25, -10.0, 1.0], [0.0, 1.0, 0.0]));
     let line = *e.sketch().curves.keys().next().unwrap();
-    assert_eq!(e.editor.selection(), [line.to_string()]);
+    assert_eq!(e.editing().selection, [line.to_string()]);
     e.act("constrain", "along_z");
     let p = e.points();
     let (a, b) = (e.at(p[0]), e.at(p[1]));
@@ -285,67 +383,61 @@ fn selections_are_constrained_and_points_dragged() {
     assert!((a[0].to_f64() - b[0].to_f64()).abs() < 1e-9, "{a:?} {b:?}");
 }
 
-/// A point fixed at a datum point follows it when the datum moves, and a
-/// line along a datum axis turns with it.
+/// The name of the vertex of `model` at `at`.
+fn vertex_at(model: &NamedModel<Design>, at: [f64; 3]) -> String {
+    let topology = model.topology();
+    let (&id, _) = (topology.vertices.iter())
+        .find(|(_, vertex)| close(&vertex.point, at))
+        .expect("a vertex there");
+    model.name_of(id).unwrap().to_string()
+}
+
+/// A point fixed at a vertex of the part follows it when the part changes,
+/// and a line along an axis of the origin turns onto it.
 #[test]
 fn references_follow_the_part() {
-    let with_datums = |at: [f64; 3], axis: [f64; 3]| {
-        let mut part = Part::<S>::new();
-        let point = Datum {
-            kind: DatumKind::Point,
-            frame: CoordinateSystem::world_at(v(at)),
-        };
-        part.add_datum(point, "d").unwrap();
-        let w = v(axis).normalize().unwrap();
-        let frame = geop_ops::operation::frame_along(Vector3::zero(), &w).unwrap();
-        part.add_datum(
-            Datum {
-                kind: DatumKind::Axis,
-                frame,
-            },
-            "a",
-        )
-        .unwrap();
-        part
-    };
     let mut sketch = Sketch3d::new();
-    let n = |x: f64| geop_ops::Design::from_f64(x);
-    let p = sketch.add_fixed_point(Vector3::from_array([1.0, 0.0, 0.0].map(n)));
-    let q = sketch.add_point(Vector3::from_array([1.0, 1.0, 0.1].map(n)));
+    let p = sketch.add_fixed_point(v([1.0, 1.0, 1.0]));
+    let q = sketch.add_point(v([1.2, 1.1, 3.0]));
     let line = sketch.add_line(p, q);
     let along = sketch.constrain(Constraint3d::ParallelTo {
         line,
-        direction: Vector3::from_array([0.0, 1.0, 0.0].map(n)),
+        direction: v([0.0, 1.0, 0.0]),
     });
+    let corner = vertex_at(&cube([0.0; 3], [1.0; 3]), [1.0, 1.0, 1.0]);
     let args = AddSketch3dArgs {
         sketch,
         references: vec![
             Reference3d {
-                entity: EntityRef::datum("d"),
+                entity: EntityRef::vertex(corner),
                 target: Target::Point { point: p },
             },
             Reference3d {
-                entity: EntityRef::datum("a"),
+                entity: EntityRef::datum_component(ORIGIN, DatumComponent::Axis(FrameAxis::Z)),
                 target: Target::Direction { constraint: along },
             },
         ],
     };
-    let at = |part: Part<S>| {
-        let built = AddSketch3d.apply(part, "route", &args, &NoFiles).unwrap();
-        let s = built.sketch3d(built.sketch3d_id("route").unwrap()).unwrap();
-        (
-            s.points[&p].at.map(|c| c.cast::<S>()),
-            s.points[&q].at.map(|c| c.cast::<S>()),
-        )
+    let at = |size: f64| {
+        let built = apply::<AddSketch3d>(cube([0.0; 3], [size; 3]), "route", &args).unwrap();
+        let s = &built
+            .current()
+            .retrieve_target(&sketch3d("route"))
+            .unwrap()
+            .sketch;
+        (s.points[&p].at, s.points[&q].at)
     };
-    let (a, b) = at(with_datums([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]));
-    assert!(close(&a, [1.0, 0.0, 0.0]));
+    let (a, b) = at(1.0);
+    assert!(close(&a, [1.0, 1.0, 1.0]));
     // Not along the axis as drawn: solved onto it.
-    assert!(close(&b, [1.0, 1.0, 0.0]), "{b:?}");
-    let (a, b) = at(with_datums([2.0, 0.0, 0.0], [0.0, 0.0, 1.0]));
-    assert!(close(&a, [2.0, 0.0, 0.0]));
     assert!(
-        (b[0].to_f64() - 2.0).abs() < 1e-9 && b[1].abs().to_f64() < 1e-9,
+        (b[0].to_f64() - 1.0).abs() < 1e-9 && (b[1].to_f64() - 1.0).abs() < 1e-9,
+        "{b:?}"
+    );
+    let (a, b) = at(2.0);
+    assert!(close(&a, [2.0, 2.0, 2.0]), "{a:?}");
+    assert!(
+        (b[0].to_f64() - 2.0).abs() < 1e-9 && (b[1].to_f64() - 2.0).abs() < 1e-9,
         "{b:?}"
     );
 }
@@ -353,7 +445,7 @@ fn references_follow_the_part() {
 /// The arc tool chains arcs, each through three clicks.
 #[test]
 fn arcs_take_three_clicks() {
-    let mut e = Editor::on(Part::new());
+    let mut e = Editor::on(false);
     e.key("a");
     let along_y = |x: f64, z: f64| pointer([x, -10.0, z], [0.0, 1.0, 0.0]);
     e.click(along_y(0.0, 0.0));
@@ -392,7 +484,7 @@ fn arcs_take_three_clicks() {
 #[test]
 fn lines_snap_along_axes_and_onto_points() {
     use geop_ops::ui::{Shape, Style};
-    let mut e = Editor::on(Part::new());
+    let mut e = Editor::on(false);
     let side = |x: f64, z: f64| pointer([x, -10.0, z], [0.0, 1.0, 0.0]);
     e.click(side(1.0, 1.0));
     // Half a reach above the line along `x` through (1, 0, 1).
@@ -448,4 +540,48 @@ fn lines_snap_along_axes_and_onto_points() {
     assert_eq!(sketch.points.len(), 3);
     let chains = sketch.chains().unwrap();
     assert!(chains.len() == 1 && chains[0].closed, "{chains:?}");
+}
+
+/// A sketch's arguments — curves of every kind, a fixed point given by a
+/// datum, a point on an edge, a direction given by an axis — read back
+/// from their JSON as they were written.
+#[test]
+fn arguments_round_trip_through_json() {
+    let mut sketch = Sketch3d::new();
+    let p = sketch.add_fixed_point(v([0.0, 0.0, 0.0]));
+    let q = sketch.add_point(v([1.0, 0.0, 0.0]));
+    let r = sketch.add_point(v([2.0, 1.0, 0.0]));
+    let line = sketch.add_line(p, q);
+    sketch.add_arc(p, q, r);
+    sketch.add_spline(vec![p, q, r]);
+    let edge = sketch.add_curve(CurveKind3d::Reference);
+    sketch.constrain(Constraint3d::OnCurve {
+        point: r,
+        curve: edge,
+    });
+    let along = sketch.constrain(Constraint3d::ParallelTo {
+        line,
+        direction: v([1.0, 0.0, 0.0]),
+    });
+    let args = AddSketch3dArgs {
+        sketch,
+        references: vec![
+            Reference3d {
+                entity: EntityRef::datum(ORIGIN),
+                target: Target::Point { point: p },
+            },
+            Reference3d {
+                entity: EntityRef::edge("e"),
+                target: Target::Curve { curve: edge },
+            },
+            Reference3d {
+                entity: EntityRef::datum_component(ORIGIN, DatumComponent::Axis(FrameAxis::X)),
+                target: Target::Direction { constraint: along },
+            },
+        ],
+    };
+    let json = serde_json::to_value(&args).unwrap();
+    let back: AddSketch3dArgs =
+        serde_json::from_value(json.clone()).unwrap_or_else(|e| panic!("{e}: {json}"));
+    assert_eq!(back, args);
 }

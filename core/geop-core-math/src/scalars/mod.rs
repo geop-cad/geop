@@ -30,7 +30,6 @@ pub trait Scalar: Field + Copy + Display + Default + 'static {
     const ZERO: Self;
     const ONE: Self;
     const TWO: Self;
-    const E: Self;
     const PI: Self;
     /// Saturation sentinel — set on overflow.
     const INFINITY: Self;
@@ -63,6 +62,11 @@ pub trait Scalar: Field + Copy + Display + Default + 'static {
     /// the angle whose cosine it is. The part of the interval beyond
     /// `[-1, 1]` is left out; an interval with nothing in `[-1, 1]` fails.
     fn acos(self) -> GeopResult<Self>;
+
+    /// The angle `self`, given in degrees, in radians.
+    fn degrees_to_radians(self) -> GeopResult<Self> {
+        self.mul(Self::PI).div(Self::from_i64(180))
+    }
 
     /// An enclosure of the angle of the point `(x, self)` from the `x` axis,
     /// in radians, in `(-pi, pi]`: of `atan2(y, x)` for every `y` in `self`
@@ -136,6 +140,13 @@ pub trait Scalar: Field + Copy + Display + Default + 'static {
     fn definitely_greater(self, other: Self) -> bool;
     fn could_be_less(self, other: Self) -> bool;
     fn definitely_less(self, other: Self) -> bool;
+
+    /// Whether it is definitely zero — no value it could be is less or more
+    /// than zero: an exact zero, such as the entry of a column a row has
+    /// nothing in.
+    fn is_zero(self) -> bool {
+        !self.could_be_less(Self::ZERO) && !self.could_be_greater(Self::ZERO)
+    }
 
     // Finiteness
     fn is_infinite(self) -> bool;
@@ -257,6 +268,18 @@ pub trait Scalar: Field + Copy + Display + Default + 'static {
     /// The smaller of the two (see [`Scalar::max`]).
     fn min(self, other: Self) -> Self {
         self.neg().max(other.neg()).neg()
+    }
+
+    /// Clamped into `[lo, hi]`: moved to a bound only where it is
+    /// definitely beyond it, else left as it is.
+    fn clamped(self, lo: Self, hi: Self) -> Self {
+        if self.definitely_less(lo) {
+            lo
+        } else if self.definitely_greater(hi) {
+            hi
+        } else {
+            self
+        }
     }
 
     /// The same value in the scalar type `T`: the smallest enclosure there

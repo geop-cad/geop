@@ -31,13 +31,13 @@ pub(super) fn drawn(args: &AddSketchArgs, curve: CurveId) -> Vec<P2> {
             .iter()
             .filter(|(id, _)| !ends.contains(id))
             .map(|(&id, _)| {
-                let [x, y] = pt(sketch, id);
+                let [x, y] = xy(sketch, id);
                 x.abs().max(y.abs())
             })
             .fold(1.0, f64::max);
         let (o, d) = (
-            pt(sketch, *start),
-            sub(pt(sketch, *end), pt(sketch, *start)),
+            xy(sketch, *start),
+            sub(xy(sketch, *end), xy(sketch, *start)),
         );
         let reach = 10.0 * extent;
         return vec![
@@ -55,7 +55,7 @@ pub(super) fn drawn(args: &AddSketchArgs, curve: CurveId) -> Vec<P2> {
 /// dimension being placed with `selection`, and what the trim tool would
 /// remove, along the way it was dragged. What is selected or hovered the
 /// editor draws so.
-pub(super) fn visuals<S: Scalar>(
+pub(super) fn visuals(
     args: &AddSketchArgs,
     s: &SketchSession,
     selection: &[String],
@@ -96,7 +96,7 @@ pub(super) fn visuals<S: Scalar>(
                 .collect();
             out.push(Visual::new(
                 format!("region{i}"),
-                Shape::region(frame, &outer, &holes),
+                geop_ops::ui::region(frame, &outer, &holes),
                 Style::Region,
             ));
         }
@@ -136,7 +136,7 @@ pub(super) fn visuals<S: Scalar>(
                 Shape::Polyline {
                     points: control_points
                         .iter()
-                        .map(|&p| world(pt(sketch, p)))
+                        .map(|&p| world(xy(sketch, p)))
                         .collect(),
                 },
                 Style::Guide,
@@ -218,7 +218,7 @@ pub(super) fn visuals<S: Scalar>(
     }
     if let Some(snap) = s.snap {
         let at = match snap {
-            Snap::Point(p) => Some(pt(sketch, p)),
+            Snap::Point(p) => Some(xy(sketch, p)),
             Snap::Midpoint(c) => curve_mid(sketch, c),
             Snap::Intersection(..) | Snap::OnCurve(_) => s.cursor,
         };
@@ -232,7 +232,9 @@ pub(super) fn visuals<S: Scalar>(
     }
     // Glyphs of one spot stack sideways, so each can be read and clicked;
     // a dimension placed by the designer is where it was put, with its
-    // dimension lines.
+    // dimension lines. A spot is what a glyph is anchored to — a point, a
+    // curve's middle, the middle of two points — computed alike for every
+    // glyph on it, so the same spot is the same number.
     let style_of = |id: &ConstraintId| {
         if report.is_some_and(|r| r.failed_constraints.contains(id)) {
             Style::Failed
@@ -266,7 +268,7 @@ pub(super) fn visuals<S: Scalar>(
                 }
             }
             _ => {
-                let stack = anchors.iter().filter(|&&a| dist(a, at) < 1e-9).count();
+                let stack = anchors.iter().filter(|&&a| a == at).count();
                 anchors.push(at);
                 Shape::Label {
                     at: world(at),
@@ -313,7 +315,7 @@ pub(super) fn visuals<S: Scalar>(
 
 /// The lines of the dimension `c` with its value at `label`, as visuals
 /// keyed after `key`, drawn in `style`.
-fn dimension_visuals<S: Scalar>(
+fn dimension_visuals(
     out: &mut Vec<Visual<S>>,
     frame: &CoordinateSystem<S>,
     key: &str,

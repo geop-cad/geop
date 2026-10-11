@@ -1,0 +1,238 @@
+//! Hit tests: which [`Visual`] a [`Pointer`] is over, shared by every
+//! operation so a click means the same thing whatever is being edited.
+//!
+//! What counts as over something is measured in the pointer's reach (see
+//! [`super::Reach`]), so "near" means near on screen however far away or
+//! zoomed in the view is. The geometry itself — how near a ray passes to a
+//! point, a segment, a triangle — is [`geop_core_math::primitives::Ray`]'s.
+
+use std::cmp::Ordering;
+
+use geop_core_math::{scalars::Scalar, vector::Vector3};
+
+use super::{EntityRef, Pointer, Shape, Style, Visual};
+
+/// A handle's radius, in reaches; its arrows reach three times as far along
+/// its direction.
+pub const HANDLE: f64 = 0.8;
+/// How near a label's center a click has to land, in reaches.
+pub const LABEL: f64 = 1.2;
+
+/// Orders two distances for picking the nearest. Which of two overlapping
+/// enclosures is "nearer" is no geometric claim, only which of two things
+/// under the pointer to prefer, so their midpoints decide.
+pub fn nearer<S: Scalar>(a: S, b: S) -> Ordering {
+    a.to_f64().total_cmp(&b.to_f64())
+}
+
+/// An entity of the part a pointer is over, as drawn: where, and how far
+/// along its ray (see [`crate::step_editor::Scene::pick`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct EntityHit<S: Scalar> {
+    pub entity: EntityRef,
+    pub point: Vector3<S>,
+    pub t: S,
+}
+
+/// A visual the pointer is over.
+#[derive(Clone, Copy, Debug)]
+pub struct VisualHit<'a, S: Scalar> {
+    pub visual: &'a Visual<S>,
+    /// How far along the ray.
+    pub t: S,
+}
+
+/// How near the pointer is to `visual`, in reaches, and where along the
+/// ray — `None` if not near enough to count. `rank` orders kinds of shapes:
+/// what is drawn small and on top wins over what is drawn large, and a
+/// curve that is part of the result over construction or reference geometry
+/// it lies on — a line drawn along a sketch's axis is that line. A placed part is
+/// hit where `instance` says, by its name: how far along the ray, if at all.
+fn distance<S: Scalar>(
+    pointer: &Pointer<S>,
+    visual: &Visual<S>,
+    instance: &impl Fn(&str, &Pointer<S>) -> Option<S>,
+) -> Option<(u8, S, S)> {
+    let ray = &pointer.ray;
+    let within = |dist: S, t: S, reaches: f64| {
+        pointer
+            .within(dist, t, reaches)
+            .then(|| (dist.div(pointer.reach.at(t)).unwrap_or(S::ZERO), t))
+    };
+    match &visual.shape {
+        Shape::Handle { at, direction } => {
+            let radius = pointer.reach_at(HANDLE, ray.closest_to_point(at));
+            let (dist, t) = match direction.normalize() {
+                Ok(d) => {
+                    let reach = d.prod_scalar(radius.mul(S::from_f64(3.0)));
+                    ray.distance_to_segment(&at.sub(&reach), &at.add(&reach))
+                }
+                Err(_) => ray.distance_to_point(at),
+            };
+            within(dist, t, HANDLE).map(|(p, t)| (0, p, t))
+        }
+        Shape::Label { at, offset, .. } => {
+            let center = at.add(&offset.prod_scalar(pointer.reach.at(ray.closest_to_point(at))));
+            let (dist, t) = ray.distance_to_point(&center);
+            within(dist, t, LABEL).map(|(p, t)| (0, p, t))
+        }
+        Shape::Point { at } => {
+            let (dist, t) = ray.distance_to_point(at);
+            within(dist, t, 1.0).map(|(p, t)| (1, p, t))
+        }
+        Shape::Polyline { points } => points
+            .windows(2)
+            .filter_map(|w| match w {
+                [a, b] => {
+                    let (dist, t) = ray.distance_to_segment(a, b);
+                    within(dist, t, 1.0)
+                }
+                _ => None,
+            })
+            .min_by(|a, b| nearer(a.0, b.0))
+            .map(|(p, t)| {
+                let rank = if matches!(visual.style, Style::Construction | Style::Reference) {
+                    3
+                } else {
+                    2
+                };
+                (rank, p, t)
+            }),
+        Shape::Triangles { triangles } => triangles
+            .iter()
+            .filter_map(|[a, b, c]| ray.intersect_triangle(a, b, c))
+            .min_by(|&a, &b| nearer(a, b))
+            .map(|t| (4, S::ZERO, t)),
+        Shape::Instance { name } => instance(name, pointer).map(|t| (4, S::ZERO, t)),
+        Shape::Triad { .. } => None,
+    }
+}
+
+/// The visual among those `accept` takes that the pointer is over: handles
+/// and labels first, then points, curves and areas — within each, the one
+/// nearest the pointer on screen, and of those as near, the one nearest the
+/// eye: of two areas the pointer is over, the one in front. Placed parts
+/// are hit where `instance` says (see [`no_instances`]).
+pub fn hit_visuals<'a, S: Scalar>(
+    visuals: &'a [Visual<S>],
+    pointer: &Pointer<S>,
+    instance: impl Fn(&str, &Pointer<S>) -> Option<S>,
+    accept: impl Fn(&Visual<S>) -> bool,
+) -> Option<VisualHit<'a, S>> {
+    visuals
+        .iter()
+        .filter(|v| accept(v))
+        .filter_map(|v| {
+            distance(pointer, v, &instance).map(|(rank, reaches, t)| (rank, reaches, t, v))
+        })
+        .min_by(|a, b| a.0.cmp(&b.0).then(nearer(a.1, b.1)).then(nearer(a.2, b.2)))
+        .map(|(_, _, t, visual)| VisualHit { visual, t })
+}
+
+/// For [`hit_visuals`] where no placed part is drawn: none is hit.
+pub fn no_instances<S: Scalar>(_: &str, _: &Pointer<S>) -> Option<S> {
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use geop_core_math::{primitives::Ray, scalars::ScalInF64, vector::Vector3};
+
+    use super::*;
+    use crate::editing::Reach;
+
+    type S = ScalInF64;
+
+    fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
+        Vector3::from_array([x, y, z].map(S::from_f64))
+    }
+
+    /// Looking straight down `-z` from `(x, y, 10)`, reaching a tenth of a
+    /// unit wherever it looks.
+    fn down(x: f64, y: f64) -> Pointer<S> {
+        Pointer {
+            ray: Ray::try_new(v(x, y, 10.0), v(0.0, 0.0, -1.0)).unwrap(),
+            reach: Reach::Tube {
+                radius: S::from_f64(0.1),
+            },
+        }
+    }
+
+    fn point(key: &str, at: Vector3<S>) -> Visual<S> {
+        Visual::new(key, Shape::Point { at }, Style::Free)
+    }
+
+    /// A point wins over the curve it lies on, within reach of it; further
+    /// along, the curve is hit.
+    #[test]
+    fn points_win_over_curves() {
+        let visuals = [
+            Visual::new(
+                "line",
+                Shape::Polyline {
+                    points: vec![v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0)],
+                },
+                Style::Free,
+            ),
+            point("end", v(1.0, 0.0, 0.0)),
+        ];
+        let key = |x: f64, y: f64| {
+            hit_visuals(&visuals, &down(x, y), no_instances, |_| true).map(|h| h.visual.key.clone())
+        };
+        assert_eq!(key(0.95, 0.0).as_deref(), Some("end"));
+        assert_eq!(key(0.5, 0.05).as_deref(), Some("line"));
+        assert_eq!(key(0.5, 0.2), None);
+    }
+
+    /// Of two areas one behind the other, the one in front is hit, whichever
+    /// is listed first.
+    #[test]
+    fn the_area_in_front_is_hit() {
+        let square = |key: &str, z: f64| {
+            Visual::new(
+                key,
+                Shape::Triangles {
+                    triangles: vec![
+                        [v(-1.0, -1.0, z), v(1.0, -1.0, z), v(1.0, 1.0, z)],
+                        [v(-1.0, -1.0, z), v(1.0, 1.0, z), v(-1.0, 1.0, z)],
+                    ],
+                },
+                Style::Region,
+            )
+        };
+        let visuals = [square("below", -1.0), square("above", 1.0)];
+        let hit = hit_visuals(&visuals, &down(0.2, 0.3), no_instances, |_| true);
+        assert_eq!(hit.map(|h| h.visual.key.as_str()), Some("above"));
+    }
+
+    /// A label is hit where it is drawn: moved from its point by its
+    /// offset, in reaches.
+    #[test]
+    fn labels_are_hit_where_they_are_drawn() {
+        let visuals = [Visual::new(
+            "k1",
+            Shape::Label {
+                at: v(0.0, 0.0, 0.0),
+                text: "H".into(),
+                offset: v(2.0, 1.0, 0.0),
+            },
+            Style::Free,
+        )];
+        assert!(hit_visuals(&visuals, &down(0.2, 0.1), no_instances, |_| true).is_some());
+        assert!(hit_visuals(&visuals, &down(0.0, 0.0), no_instances, |_| true).is_none());
+    }
+
+    /// In perspective, what is further away is hit from further off.
+    #[test]
+    fn cones_widen_with_distance() {
+        let visuals = [point("p", v(0.3, 0.0, 0.0))];
+        let from = |z: f64| Pointer {
+            ray: Ray::try_new(v(0.0, 0.0, z), v(0.0, 0.0, -1.0)).unwrap(),
+            reach: Reach::Cone {
+                slope: S::from_f64(0.01),
+            },
+        };
+        assert!(hit_visuals(&visuals, &from(10.0), no_instances, |_| true).is_none());
+        assert!(hit_visuals(&visuals, &from(40.0), no_instances, |_| true).is_some());
+    }
+}

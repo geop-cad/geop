@@ -22,12 +22,13 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     union_find::UnionFind,
+    with_context,
 };
 use geop_core_topology::{
     Body, CoedgeGeometry, EdgeId, FaceId, ShellId, SolidId,
     build::{BodySpec, BuiltBody},
 };
-use geop_ops::{BodyNames, Namer, Part, RefId};
+use geop_ops::{BodyNames, NamedModel, Namer, RefId};
 
 use crate::{
     boolean::{Classified, FaceClassification, classify_face},
@@ -51,43 +52,33 @@ use crate::{
 /// solid clean through: a sheet ending inside the solid, or one along which
 /// the solid stays connected, splits nothing.
 pub fn split<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     solid: SolidId,
     sheet: ShellId,
     params: RemeshParams<S>,
 ) -> GeopResult<Vec<SolidId>> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "split(name={}, solid={solid}, sheet={sheet})",
-            namer.root()
-        ))
-    };
-    let name = |part: &Part<S>, id: RefId| -> GeopResult<String> {
-        part.name_of(id)
-            .map(str::to_string)
-            .ok_or_else(|| GeopError::new(format!("split: {id} has no name")))
-    };
+    let ctx = with_context!("split(name={}, solid={solid}, sheet={sheet})", namer.root());
 
     // The cutting copy of the sheet.
-    let sheet_faces = part
+    let sheet_faces = model
         .topology()
         .body_faces(Body::Sheet(sheet))
         .with_context(&ctx)?;
-    let cutter = part
+    let cutter = model
         .copy_faces(&sheet_faces, None, |name| namer.name(&[name]))
         .with_context(&ctx)?;
     let cutter = Body::Sheet(cutter.shells[0]);
 
-    remesh(part, namer, solid, cutter, params).with_context(&ctx)?;
-    let model = part.topology();
-    let solid_faces = model.solid_faces(solid).with_context(&ctx)?;
+    remesh(model, namer, solid, cutter, params).with_context(&ctx)?;
+    let topology = model.topology();
+    let solid_faces = topology.solid_faces(solid).with_context(&ctx)?;
     let mut cuts = Vec::new();
     let mut classified = Classified::default();
-    for face in model.body_faces(cutter).with_context(&ctx)? {
-        let class = classify_face(model, face, solid, params, &mut classified)
+    for face in topology.body_faces(cutter).with_context(&ctx)? {
+        let class = classify_face(topology, face, solid, params, &mut classified)
             .with_context(&ctx)
-            .with_context(&|e: GeopError| e.with_context(format!("classifying face {face}")))?;
+            .with_context(with_context!("classifying face {face}"))?;
         if class == FaceClassification::Inside {
             cuts.push(face);
         }
@@ -114,8 +105,8 @@ pub fn split<S: Scalar>(
     // In the order of the sides, not of the map: it decides the order of
     // each edge's users below.
     for (i, &face) in solid_faces.iter().chain(&cuts).enumerate() {
-        for coedge in model.iterate_face_coedges(face) {
-            let coedge = model.get_coedge(coedge)?;
+        for coedge in topology.iterate_face_coedges(face) {
+            let coedge = topology.get_coedge(coedge)?;
             if let CoedgeGeometry::Edge(edge) = coedge.geometry {
                 users.entry(edge).or_default().push((i, coedge.sense));
             }
@@ -184,7 +175,7 @@ pub fn split<S: Scalar>(
     let mut described: Vec<(String, BodySpec<S>, Vec<RefId>)> = Vec::new();
     for members in &groups {
         let faces: Vec<FaceId> = members.iter().map(|&m| sides[m]).collect();
-        let (mut spec, sources) = model.body_spec(&faces, true).with_context(&ctx)?;
+        let (mut spec, sources) = topology.body_spec(&faces, true).with_context(&ctx)?;
         for (face, &m) in spec.faces.iter_mut().zip(members) {
             if m >= n + k {
                 *face = face.reversed();
@@ -193,7 +184,7 @@ pub fn split<S: Scalar>(
         let first = members
             .iter()
             .filter(|&&m| m < n)
-            .map(|&m| name(part, solid_faces[m].into()))
+            .map(|&m| model.name(solid_faces[m]).map(str::to_string))
             .collect::<GeopResult<Vec<_>>>()?
             .into_iter()
             .min()
@@ -215,7 +206,7 @@ pub fn split<S: Scalar>(
     for (index, (_, spec, entities)) in described.into_iter().enumerate() {
         let mut all = Vec::with_capacity(entities.len());
         for id in &entities {
-            let original = name(part, *id)?;
+            let original = model.name(*id).map(str::to_string)?;
             all.push(if taken.insert(*id) {
                 original
             } else {
@@ -232,12 +223,13 @@ pub fn split<S: Scalar>(
         named.push((spec, names));
     }
 
-    part.assemble_solid(&[solid.into(), cutter], &[], namer.root())
+    model
+        .assemble_solid(&[solid.into(), cutter], &[], namer.root())
         .with_context(&ctx)?;
     named
         .into_iter()
         .map(|(spec, names)| {
-            let BuiltBody { solid, .. } = part.build_body(spec, names).with_context(&ctx)?;
+            let BuiltBody { solid, .. } = model.build_body(spec, names).with_context(&ctx)?;
             Ok(solid.expect("built as a solid"))
         })
         .collect()
@@ -247,6 +239,7 @@ pub fn split<S: Scalar>(
 mod tests {
     use super::split;
     use crate::remesh::remesh::RemeshParams;
+    use crate::scenes::{assert_valid, v3};
     use geop_core_math::{
         primitives::CoordinateSystem,
         scalars::{ScalInF64 as S, Scalar},
@@ -255,9 +248,8 @@ mod tests {
     use geop_core_topology::{
         Body,
         contains::shell::{PointClassification, solid_contains},
-        validation::{ValidationParameters, validate, validate_manifold},
     };
-    use geop_ops::{Namer, Part};
+    use geop_ops::{NamedModel, Namer};
     use geop_ops_extrude_revolve::{
         common::{Profile, polyline},
         extrude::extrude,
@@ -265,15 +257,11 @@ mod tests {
         sweep::SweepLoop,
     };
 
-    fn v3(x: f64, y: f64, z: f64) -> Vector3<S> {
-        Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
-    }
-
     /// A unit cube around the origin, and a sheet: the chain through
     /// `points` in the `z = -1` plane, swept up to `z = 1`.
-    fn cube_and_sheet(points: &[[f64; 2]]) -> (Part<S>, geop_core_topology::SolidId, Body) {
-        let mut part = Part::<S>::new();
-        let cube = cube_solid(&mut part, "c", v3(-0.5, -0.5, -0.5), v3(0.5, 0.5, 0.5)).unwrap();
+    fn cube_and_sheet(points: &[[f64; 2]]) -> (NamedModel<S>, geop_core_topology::SolidId, Body) {
+        let mut model = NamedModel::<S>::new();
+        let cube = cube_solid(&mut model, "c", v3(-0.5, -0.5, -0.5), v3(0.5, 0.5, 0.5)).unwrap();
         let chain = polyline(
             &points
                 .iter()
@@ -284,7 +272,7 @@ mod tests {
         let plane = CoordinateSystem::world_at(v3(0.0, 0.0, -1.0));
         let namer = Namer::new("extrude", "cut").unwrap();
         let built = extrude(
-            &mut part,
+            &mut model,
             &namer,
             None,
             &plane,
@@ -293,31 +281,18 @@ mod tests {
             &[SweepLoop::plain(Profile::open(chain))],
         )
         .unwrap();
-        (part, cube, Body::Sheet(built.shells[0]))
-    }
-
-    fn assert_valid(part: &Part<S>) {
-        let params = ValidationParameters::default();
-        for result in [
-            validate(&params, part.topology()),
-            validate_manifold(&params, part.topology()),
-        ] {
-            if let Err(e) = result {
-                panic!("{e:?}");
-            }
-        }
-        part.check_names().unwrap();
+        (model, cube, Body::Sheet(built.shells[0]))
     }
 
     /// Which of `pieces` holds `p`.
     fn holding(
-        part: &Part<S>,
+        model: &NamedModel<S>,
         pieces: &[geop_core_topology::SolidId],
         p: Vector3<S>,
     ) -> Vec<usize> {
         (0..pieces.len())
             .filter(|&k| {
-                solid_contains(part.topology(), pieces[k], p, 2000, S::from_f64(1e-7), 7).unwrap()
+                solid_contains(model.topology(), pieces[k], p, 2000, S::from_f64(1e-7), 7).unwrap()
                     == PointClassification::Inside
             })
             .collect()
@@ -327,27 +302,27 @@ mod tests {
     /// was.
     #[test]
     fn a_flat_sheet_cuts_a_cube_in_two() {
-        let (mut part, cube, sheet) = cube_and_sheet(&[[0.1, -1.0], [0.1, 1.0]]);
+        let (mut model, cube, sheet) = cube_and_sheet(&[[0.1, -1.0], [0.1, 1.0]]);
         let Body::Sheet(shell) = sheet else {
             unreachable!()
         };
         let namer = Namer::new("split", "s").unwrap();
-        let pieces = split(&mut part, &namer, cube, shell, RemeshParams::default()).unwrap();
-        assert_valid(&part);
+        let pieces = split(&mut model, &namer, cube, shell, RemeshParams::default()).unwrap();
+        assert_valid(&model);
         assert_eq!(pieces.len(), 2);
-        assert_eq!(part.solid_names(), ["split(s,0)", "split(s,1)"]);
+        assert_eq!(model.solid_names(), ["split(s,0)", "split(s,1)"]);
         let (left, right) = (
-            holding(&part, &pieces, v3(-0.2, 0.0, 0.0)),
-            holding(&part, &pieces, v3(0.3, 0.0, 0.0)),
+            holding(&model, &pieces, v3(-0.2, 0.0, 0.0)),
+            holding(&model, &pieces, v3(0.3, 0.0, 0.0)),
         );
         assert_eq!(left.len(), 1);
         assert_eq!(right.len(), 1);
         assert_ne!(left, right);
         // Each half has the cube's six faces, cut down, the right one five
         // of them and its own side of the cut.
-        let faces = |k: usize| part.topology().solid_faces(pieces[k]).unwrap().len();
+        let faces = |k: usize| model.topology().solid_faces(pieces[k]).unwrap().len();
         assert_eq!(faces(0) + faces(1), 6 + 4 + 2);
-        assert_eq!(part.topology().body_faces(sheet).unwrap().len(), 1);
+        assert_eq!(model.topology().body_faces(sheet).unwrap().len(), 1);
     }
 
     /// A sheet bent into a "U" whose bottom lies in the cube cuts the slot
@@ -355,19 +330,19 @@ mod tests {
     /// bottom.
     #[test]
     fn a_bent_sheet_cuts_a_slot_out_of_a_cube() {
-        let (mut part, cube, sheet) =
+        let (mut model, cube, sheet) =
             cube_and_sheet(&[[-0.2, 1.0], [-0.2, -0.2], [0.2, -0.2], [0.2, 1.0]]);
         let Body::Sheet(shell) = sheet else {
             unreachable!()
         };
         let namer = Namer::new("split", "s").unwrap();
-        let pieces = split(&mut part, &namer, cube, shell, RemeshParams::default()).unwrap();
-        assert_valid(&part);
+        let pieces = split(&mut model, &namer, cube, shell, RemeshParams::default()).unwrap();
+        assert_valid(&model);
         assert_eq!(pieces.len(), 2);
-        let slot = holding(&part, &pieces, v3(0.0, 0.2, 0.0));
+        let slot = holding(&model, &pieces, v3(0.0, 0.2, 0.0));
         assert_eq!(slot.len(), 1);
         for p in [v3(-0.4, 0.0, 0.0), v3(0.4, 0.0, 0.0), v3(0.0, -0.4, 0.0)] {
-            let rest = holding(&part, &pieces, p);
+            let rest = holding(&model, &pieces, p);
             assert!(rest.len() == 1 && rest != slot, "{p:?}");
         }
     }
@@ -375,12 +350,12 @@ mod tests {
     /// A sheet missing the cube cuts nothing.
     #[test]
     fn a_sheet_beside_the_solid_cuts_nothing() {
-        let (mut part, cube, sheet) = cube_and_sheet(&[[2.0, -1.0], [2.0, 1.0]]);
+        let (mut model, cube, sheet) = cube_and_sheet(&[[2.0, -1.0], [2.0, 1.0]]);
         let Body::Sheet(shell) = sheet else {
             unreachable!()
         };
         let namer = Namer::new("split", "s").unwrap();
-        let error = split(&mut part, &namer, cube, shell, RemeshParams::default()).unwrap_err();
+        let error = split(&mut model, &namer, cube, shell, RemeshParams::default()).unwrap_err();
         assert!(error.root_message().contains("does not cut"), "{error:?}");
     }
 }

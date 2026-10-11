@@ -135,7 +135,14 @@ impl Layout {
         // piece; otherwise its runs are read starting after a piece removed,
         // so none of them is split where it runs round through its start.
         let first = match (closed, (0..n).find(|&i| !kept(i))) {
-            (true, Some(_)) if n < 2 => return Self::gone(closed, bounds, n),
+            (true, Some(_)) if n < 2 => {
+                return Layout {
+                    closed,
+                    bounds,
+                    run_of,
+                    runs,
+                };
+            }
             (true, Some(r)) => r + 1,
             _ => 0,
         };
@@ -159,15 +166,6 @@ impl Layout {
             bounds,
             run_of,
             runs,
-        }
-    }
-
-    fn gone(closed: bool, bounds: Vec<(f64, Mark)>, n: usize) -> Self {
-        Layout {
-            closed,
-            bounds,
-            run_of: vec![None; n],
-            runs: Vec::new(),
         }
     }
 
@@ -270,18 +268,13 @@ impl<'a> Plan<'a> {
         // Where curves cross. Where two meet at a point of the sketch
         // already, that point is one of their crossings — the one nearest
         // it, of those found — and it cuts them as a point.
-        let tangent = |a: CurveId, b: CurveId| {
-            sketch.constraints.values().any(|c| {
-                matches!(*c, Constraint::Tangent { a: x, b: y } if (x, y) == (a, b) || (x, y) == (b, a))
-            })
-        };
         let mut crossings = Vec::new();
         for (i, &a) in curves.iter().enumerate() {
             for &b in &curves[i + 1..] {
                 let (Some(pa), Some(pb)) = (&cuts[&a].plain, &cuts[&b].plain) else {
                     continue;
                 };
-                let mut found = pa.crossings(pb, tangent(a, b));
+                let mut found = pa.crossings(pb, sketch.tangent(a, b));
                 for (rep, &p) in &on[&a] {
                     if !on[&b].contains_key(rep) {
                         continue;
@@ -328,10 +321,12 @@ impl<'a> Plan<'a> {
     /// The polyline the piece `piece` of `curve` is drawn as.
     pub(super) fn polyline(&self, curve: CurveId, piece: usize) -> Vec<P2> {
         match self.cuts.get(&curve) {
-            Some(Cuts {
-                plain: Some(plain), ..
-            }) => {
-                let (t0, t1) = self.cuts[&curve].range(piece);
+            Some(
+                cuts @ Cuts {
+                    plain: Some(plain), ..
+                },
+            ) => {
+                let (t0, t1) = cuts.range(piece);
                 plain.polyline(t0, t1)
             }
             _ => polyline(self.sketch, curve),
@@ -369,11 +364,7 @@ impl<'a> Plan<'a> {
                 })
             });
             if ends_here {
-                let at = crossing.at;
-                crossing_points.insert(
-                    i,
-                    next.add_point(Design::from_f64(at[0]), Design::from_f64(at[1])),
-                );
+                crossing_points.insert(i, next.new_point_at(crossing.at));
             }
         }
         let point_of = |mark: Mark| match mark {
@@ -437,7 +428,7 @@ impl<'a> Plan<'a> {
             let kept = match *c {
                 Constraint::Length { curve, .. } if trimmed(curve) => None,
                 Constraint::Equal { a, b } if (trimmed(a) || trimmed(b)) && is_line(a) => None,
-                // Cut, an arc turns less, and a curve copies are moved by
+                // Cut, an arc turns less, and a curve that moves copies
                 // moves them differently. (An offset holds for any piece:
                 // it is about the line or circle.)
                 Constraint::EqualSweep { a, b } if trimmed(a) || trimmed(b) => None,

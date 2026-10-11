@@ -31,9 +31,10 @@ use std::collections::{BTreeMap, HashMap};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
+    with_context,
 };
 use geop_core_topology::{Body, EdgeId, FaceId, VertexId};
-use geop_ops::{Namer, Part, RefId};
+use geop_ops::{NamedModel, Namer, RefId};
 
 /// What a created entity was made from — everything its final name derives
 /// from (see the module docs).
@@ -77,20 +78,16 @@ pub struct BooleanNaming<S: Scalar> {
 impl<S: Scalar> BooleanNaming<S> {
     /// Starts naming a boolean of `bodies`, remembering the names their
     /// edges and faces have now as those entities' origins.
-    pub fn new(part: &Part<S>, namer: &Namer, bodies: &[Body]) -> GeopResult<Self> {
-        let model = part.topology();
-        let name = |id: RefId| {
-            part.name_of(id)
-                .map(str::to_string)
-                .ok_or_else(|| GeopError::new(format!("boolean: operand entity {id} has no name")))
-        };
+    pub fn new(model: &NamedModel<S>, namer: &Namer, bodies: &[Body]) -> GeopResult<Self> {
+        let topology = model.topology();
+        let name = |id: RefId| model.name(id).map(str::to_string);
         let mut edge_origin = HashMap::new();
         let mut face_origin = HashMap::new();
         for &body in bodies {
-            for edge in model.iter_body_edges(body)? {
+            for edge in topology.iter_body_edges(body)? {
                 edge_origin.insert(edge, name(edge.into())?);
             }
-            for face in model.body_faces(body)? {
+            for face in topology.body_faces(body)? {
                 face_origin.insert(face, name(face.into())?);
             }
         }
@@ -236,12 +233,12 @@ impl<S: Scalar> BooleanNaming<S> {
     /// Gives every entity created so far its final name, see the module
     /// docs. Entities that were created and have since been deleted again
     /// (an edge piece merged into a coincident edge, say) are skipped.
-    pub fn finish(self, part: &mut Part<S>) -> GeopResult<()> {
+    pub fn finish(self, model: &mut NamedModel<S>) -> GeopResult<()> {
         let n = &self.namer;
-        let ctx = |e: GeopError| e.with_context(format!("naming the entities of {}", n.root()));
-        let alive = |part: &Part<S>, id: RefId| part.name_of(id).is_some();
-        let name_of = |part: &Part<S>, id: RefId| -> GeopResult<String> {
-            part.name_of(id).map(str::to_string).ok_or_else(|| {
+        let ctx = with_context!("naming the entities of {}", n.root());
+        let alive = |model: &NamedModel<S>, id: RefId| model.name_of(id).is_some();
+        let name_of = |model: &NamedModel<S>, id: RefId| -> GeopResult<String> {
+            model.name_of(id).map(str::to_string).ok_or_else(|| {
                 ctx(GeopError::new(format!(
                     "{id} is referred to by a name being built, but no longer exists"
                 )))
@@ -257,7 +254,7 @@ impl<S: Scalar> BooleanNaming<S> {
                 other,
                 t,
             } = recipe
-                && alive(part, (*vertex).into())
+                && alive(model, (*vertex).into())
             {
                 crossings
                     .entry((along.as_str(), other.as_str()))
@@ -271,7 +268,8 @@ impl<S: Scalar> BooleanNaming<S> {
             vertices.sort_by(|a, b| a.1.to_f64().total_cmp(&b.1.to_f64()));
             let count = vertices.len().to_string();
             for (i, (vertex, _)) in vertices.iter().enumerate() {
-                part.rename(*vertex, n.name(&[along, other, &i.to_string(), &count]))
+                model
+                    .rename(*vertex, n.name(&[along, other, &i.to_string(), &count]))
                     .map_err(ctx)?;
             }
         }
@@ -283,16 +281,18 @@ impl<S: Scalar> BooleanNaming<S> {
                     edge,
                     origin,
                     start,
-                } if alive(part, (*edge).into()) => {
-                    let start = name_of(part, (*start).into())?;
-                    part.rename(*edge, n.name(&[origin, &start])).map_err(ctx)?;
+                } if alive(model, (*edge).into()) => {
+                    let start = name_of(model, (*start).into())?;
+                    model
+                        .rename(*edge, n.name(&[origin, &start]))
+                        .map_err(ctx)?;
                 }
-                Recipe::Trace { edge, faces, ends } if alive(part, (*edge).into()) => {
+                Recipe::Trace { edge, faces, ends } if alive(model, (*edge).into()) => {
                     let mut faces = faces.clone();
                     faces.sort();
                     let mut ends = [
-                        name_of(part, ends[0].into())?,
-                        name_of(part, ends[1].into())?,
+                        name_of(model, ends[0].into())?,
+                        name_of(model, ends[1].into())?,
                     ];
                     ends.sort();
                     traces
@@ -305,13 +305,13 @@ impl<S: Scalar> BooleanNaming<S> {
         }
         for (name, edges) in traces {
             if let [edge] = edges[..] {
-                part.rename(edge, name).map_err(ctx)?;
+                model.rename(edge, name).map_err(ctx)?;
             } else {
                 for (k, edge) in edges.into_iter().enumerate() {
                     // `name` ends in `)`: append the index as one more
                     // argument.
                     let indexed = format!("{},{k})", &name[..name.len() - 1]);
-                    part.rename(edge, indexed).map_err(ctx)?;
+                    model.rename(edge, indexed).map_err(ctx)?;
                 }
             }
         }
@@ -319,10 +319,10 @@ impl<S: Scalar> BooleanNaming<S> {
         // Faces last: they are named after edges.
         for recipe in &self.recipes {
             if let Recipe::FacePiece { face, origin, edge } = recipe
-                && alive(part, (*face).into())
+                && alive(model, (*face).into())
             {
-                let edge = name_of(part, (*edge).into())?;
-                part.rename(*face, n.name(&[origin, &edge])).map_err(ctx)?;
+                let edge = name_of(model, (*edge).into())?;
+                model.rename(*face, n.name(&[origin, &edge])).map_err(ctx)?;
             }
         }
         Ok(())

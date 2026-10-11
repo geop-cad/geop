@@ -47,14 +47,14 @@ use geop_core_math::{
 };
 use geop_core_topology::build::BuiltBody;
 use geop_ops::{
-    Namer, Part,
+    NamedModel, Namer,
     operation::{Chain, end_of, start_of},
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     plain::{Plain, V, add, cross, dot, plain, scale, sub, unit},
-    sweep::{Frame, Path, Span, SweepLoop, sweep},
+    sweep::{Frame, Path, Span, SweepLoop, sweep_drawn},
 };
 
 /// Which way the profile faces as it travels along the path.
@@ -1377,7 +1377,7 @@ fn clear_of_bends<S: Scalar>(
 /// edges at the joints `N(X,J)`, the edges between `N(P,C)`, the vertices
 /// `N(P,J)`; for an open chain, the caps `N(start)` and `N(end)`.
 pub fn sweep_along<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     solid: Option<&str>,
     chain: &Chain<S>,
@@ -1394,66 +1394,19 @@ pub fn sweep_along<S: Scalar>(
         false => Some(along_chain(chain, plane, &Control::default())?),
     };
     clear_of_bends(chain, rigid.as_ref().unwrap_or(&path), loops)?;
-    let loops: Vec<SweepLoop<S>> = if path.along_normal {
-        loops.iter().map(SweepLoop::reversed).collect()
-    } else {
-        loops.to_vec()
-    };
-    sweep(part, namer, &path, &loops, solid)
+    sweep_drawn(model, namer, &path, loops, solid)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{Profile, arc2, arc3, line3, polygon, polyline, sqrt2_over_2};
+    use crate::common::testing::{
+        assert_valid, assert_valid_sheets, circle, plane, square, v2, v3,
+    };
+    use crate::common::{Profile, arc3, line3, polyline, sqrt2_over_2};
     use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve2D};
     use geop_core_math::for_all_scalars;
-    use geop_core_math::vector::{Vector2, Vector4};
-    use geop_core_topology::{
-        Model,
-        validation::{ValidationParameters, validate, validate_manifold},
-    };
-
-    fn v2<S: Scalar>(x: f64, y: f64) -> Vector2<S> {
-        Vector2::from_array([S::from_f64(x), S::from_f64(y)])
-    }
-
-    fn v3<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
-        Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
-    }
-
-    /// A circle of radius `r` around the origin, as four quarter arcs,
-    /// counter-clockwise.
-    fn circle<S: Scalar>(r: f64) -> Vec<NurbCurve2D<S>> {
-        let q = [(r, 0.0), (0.0, r), (-r, 0.0), (0.0, -r)];
-        (0..4)
-            .map(|i| {
-                let (a, b) = (q[i], q[(i + 1) % 4]);
-                arc2(
-                    v2(a.0, a.1),
-                    v2(a.0 + b.0, a.1 + b.1),
-                    v2(b.0, b.1),
-                    sqrt2_over_2(),
-                )
-                .unwrap()
-            })
-            .collect()
-    }
-
-    fn square<S: Scalar>(half: f64) -> Vec<NurbCurve2D<S>> {
-        polygon(&[
-            v2(-half, -half),
-            v2(half, -half),
-            v2(half, half),
-            v2(-half, half),
-        ])
-        .unwrap()
-    }
-
-    /// The plane through `origin` spanned by `u` and `v`.
-    fn plane<S: Scalar>(origin: Vector3<S>, u: Vector3<S>, v: Vector3<S>) -> CoordinateSystem<S> {
-        CoordinateSystem::try_new(origin, u, v, u.prod_cross(&v)).unwrap()
-    }
+    use geop_core_math::vector::Vector4;
 
     /// The `yz` plane through `origin`: square to a path along `x`.
     fn yz<S: Scalar>(origin: Vector3<S>) -> CoordinateSystem<S> {
@@ -1472,27 +1425,17 @@ mod tests {
         }
     }
 
-    fn assert_valid<S: Scalar>(model: &Model<S>) {
-        let params = ValidationParameters::default();
-        if let Err(e) = validate(&params, model) {
-            panic!("{e:?}");
-        }
-        if let Err(e) = validate_manifold(&params, model) {
-            panic!("{e:?}");
-        }
-    }
-
     /// Sweeps the closed `outer` loop in `plane` along `path` into a solid
     /// in a fresh part, and checks it is valid.
     fn swept<S: Scalar>(
         outer: Vec<NurbCurve2D<S>>,
         plane: &CoordinateSystem<S>,
         path: &Chain<S>,
-    ) -> Part<S> {
-        let mut part = Part::<S>::new();
+    ) -> NamedModel<S> {
+        let mut model = NamedModel::<S>::new();
         let namer = Namer::new("sweep", "s").unwrap();
         sweep_along(
-            &mut part,
+            &mut model,
             &namer,
             Some(&namer.root()),
             path,
@@ -1501,9 +1444,9 @@ mod tests {
             &Control::default(),
         )
         .unwrap();
-        part.check_names().unwrap();
-        assert_valid(part.topology());
-        part
+        model.check_names().unwrap();
+        assert_valid(model.topology());
+        model
     }
 
     /// Along a single line, a sweep is an extrude.
@@ -1512,12 +1455,12 @@ mod tests {
             vec![line3(v3::<S>(0., 0., 0.), v3(2., 0., 0.)).unwrap()],
             false,
         );
-        let part = swept(square(0.5), &yz(Vector3::zero()), &path);
-        let model = part.topology();
-        assert_eq!(model.faces.len(), 6);
-        let far = part.vertex_id("sweep(s,p2,j1)").unwrap();
+        let model = swept(square(0.5), &yz(Vector3::zero()), &path);
+        let topology = model.topology();
+        assert_eq!(topology.faces.len(), 6);
+        let far = model.vertex_id("sweep(s,p2,j1)").unwrap();
         assert!(
-            model
+            topology
                 .get_vertex(far)
                 .unwrap()
                 .point
@@ -1539,13 +1482,13 @@ mod tests {
             ],
             false,
         );
-        let part = swept(square(0.5), &yz(Vector3::zero()), &path);
-        let model = part.topology();
-        assert_eq!(model.faces.len(), 4 * 2 + 2);
+        let model = swept(square(0.5), &yz(Vector3::zero()), &path);
+        let topology = model.topology();
+        assert_eq!(topology.faces.len(), 4 * 2 + 2);
         // The bisecting plane of the corner at (2, 0, 0): x - 2 = -y.
         for p in 0..4 {
-            let v = part.vertex_id(&format!("sweep(s,p{p},j1)")).unwrap();
-            let point = model.get_vertex(v).unwrap().point;
+            let v = model.vertex_id(&format!("sweep(s,p{p},j1)")).unwrap();
+            let point = topology.get_vertex(v).unwrap().point;
             assert!(
                 point[0]
                     .sub(S::from_f64(2.0))
@@ -1575,13 +1518,13 @@ mod tests {
             ],
             false,
         );
-        let part = swept(circle(0.3), &yz(Vector3::zero()), &path);
-        let model = part.topology();
-        assert_eq!(model.faces.len(), 4 * 3 + 2);
+        let model = swept(circle(0.3), &yz(Vector3::zero()), &path);
+        let topology = model.topology();
+        assert_eq!(topology.faces.len(), 4 * 3 + 2);
         // The far end of the pipe lies square to the last line, at y = 3.
-        let end = part.face_id("sweep(s,end)").unwrap();
-        assert!(model.iterate_face_coedges(end).all(|c| {
-            model.coedge_start_vertex(c).unwrap().point[1].could_be_equal(S::from_f64(3.0))
+        let end = model.face_id("sweep(s,end)").unwrap();
+        assert!(topology.iterate_face_coedges(end).all(|c| {
+            topology.coedge_start_vertex(c).unwrap().point[1].could_be_equal(S::from_f64(3.0))
         }));
     }
     #[test]
@@ -1607,10 +1550,10 @@ mod tests {
             .collect();
         let path = chain(arcs, true);
         let profile_plane = plane(v3(2., 0., 0.), v3(1., 0., 0.), v3(0., 0., 1.));
-        let part = swept(circle(0.5), &profile_plane, &path);
-        let model = part.topology();
-        assert_eq!(model.faces.len(), 16);
-        for v in model.vertices.values() {
+        let model = swept(circle(0.5), &profile_plane, &path);
+        let topology = model.topology();
+        assert_eq!(topology.faces.len(), 16);
+        for v in topology.vertices.values() {
             // On the torus: (sqrt(x^2 + y^2) - 2)^2 + z^2 = 0.25.
             let (x, y, z) = (v.point[0], v.point[1], v.point[2]);
             let rho = x.mul(x).add(y.mul(y)).sqrt().unwrap();
@@ -1635,10 +1578,10 @@ mod tests {
             })
             .collect();
         let path = chain(lines, true);
-        let part = swept(square(0.5), &yz(Vector3::zero()), &path);
-        let model = part.topology();
-        assert_eq!(model.faces.len(), 16);
-        assert_eq!(model.vertices.len(), 16);
+        let model = swept(square(0.5), &yz(Vector3::zero()), &path);
+        let topology = model.topology();
+        assert_eq!(topology.faces.len(), 16);
+        assert_eq!(topology.vertices.len(), 16);
     }
     #[test]
     fn sweep_round_a_square_is_a_frame() {
@@ -1656,15 +1599,15 @@ mod tests {
         )
         .unwrap();
         let path = chain(vec![spline], false);
-        let part = swept(circle(0.2), &yz(Vector3::zero()), &path);
-        let model = part.topology();
-        assert_eq!(model.faces.len(), 4 + 2);
+        let model = swept(circle(0.2), &yz(Vector3::zero()), &path);
+        let topology = model.topology();
+        assert_eq!(topology.faces.len(), 4 + 2);
         // The spline ends heading along x again: the end cap lies at x = 3 —
         // as near as the frames along a spline, a sharp free choice worked
         // out in plain numbers, put it, which is not an enclosure of x = 3.
-        let end = part.face_id("sweep(s,end)").unwrap();
-        assert!(model.iterate_face_coedges(end).all(|c| {
-            let x = model.coedge_start_vertex(c).unwrap().point[0].to_f64();
+        let end = model.face_id("sweep(s,end)").unwrap();
+        assert!(topology.iterate_face_coedges(end).all(|c| {
+            let x = topology.coedge_start_vertex(c).unwrap().point[0].to_f64();
             (x - 3.0).abs() < 1e-9
         }));
     }
@@ -1688,11 +1631,11 @@ mod tests {
             ],
             false,
         );
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         let namer = Namer::new("sweep", "s").unwrap();
         let profile = Profile::open(polyline(&[v2(-0.5, 0.), v2(0., 0.5), v2(0.5, 0.)]).unwrap());
         let built = sweep_along(
-            &mut part,
+            &mut model,
             &namer,
             None,
             &path,
@@ -1702,11 +1645,9 @@ mod tests {
         )
         .unwrap();
         assert!(built.solid.is_none());
-        part.check_names().unwrap();
-        if let Err(e) = validate(&ValidationParameters::default(), part.topology()) {
-            panic!("{e:?}");
-        }
-        assert_eq!(part.topology().faces.len(), 4);
+        model.check_names().unwrap();
+        assert_valid_sheets(model.topology());
+        assert_eq!(model.topology().faces.len(), 4);
     }
     #[test]
     fn open_profile_sweeps_into_a_sheet() {
@@ -1752,10 +1693,10 @@ mod tests {
             ],
             false,
         );
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         let namer = Namer::new("sweep", "s").unwrap();
         let error = sweep_along(
-            &mut part,
+            &mut model,
             &namer,
             Some(&namer.root()),
             &path,
@@ -1794,11 +1735,11 @@ mod tests {
         plane: &CoordinateSystem<S>,
         path: &Chain<S>,
         control: &Control<S>,
-    ) -> Part<S> {
-        let mut part = Part::<S>::new();
+    ) -> NamedModel<S> {
+        let mut model = NamedModel::<S>::new();
         let namer = Namer::new("sweep", "s").unwrap();
         sweep_along(
-            &mut part,
+            &mut model,
             &namer,
             Some(&namer.root()),
             path,
@@ -1807,9 +1748,9 @@ mod tests {
             control,
         )
         .unwrap();
-        part.check_names().unwrap();
-        assert_valid(part.topology());
-        part
+        model.check_names().unwrap();
+        assert_valid(model.topology());
+        model
     }
 
     fn rail<S: Scalar>(name: &str, curves: Vec<NurbCurve3D<S>>) -> Chain<S> {
@@ -1834,16 +1775,16 @@ mod tests {
         )
     }
 
-    /// Whether the wall `name` of `part` runs straight along the path.
-    fn straight<S: Scalar>(part: &Part<S>, name: &str) -> bool {
-        let face = part.face_id(name).unwrap();
-        part.topology().faces[&face].surface.degree_u == 1
+    /// Whether the wall `name` of `model` runs straight along the path.
+    fn straight<S: Scalar>(model: &NamedModel<S>, name: &str) -> bool {
+        let face = model.face_id(name).unwrap();
+        model.topology().faces[&face].surface.degree_u == 1
     }
 
-    /// Points of the wall `name` of `part` on a grid of its parameters.
-    fn wall_points<S: Scalar>(part: &Part<S>, name: &str) -> Vec<Vector3<S>> {
-        let face = part.face_id(name).unwrap();
-        let surface = &part.topology().faces[&face].surface;
+    /// Points of the wall `name` of `model` on a grid of its parameters.
+    fn wall_points<S: Scalar>(model: &NamedModel<S>, name: &str) -> Vec<Vector3<S>> {
+        let face = model.face_id(name).unwrap();
+        let surface = &model.topology().faces[&face].surface;
         let mut points = Vec::new();
         for i in 0..=8 {
             for j in 0..=8 {
@@ -1859,10 +1800,10 @@ mod tests {
         p[1].mul(p[1]).add(p[2].mul(p[2])).sqrt().unwrap()
     }
 
-    /// The vertex `name` of `part`.
-    fn vertex<S: Scalar>(part: &Part<S>, name: &str) -> Vector3<S> {
-        let v = part.vertex_id(name).unwrap();
-        part.topology().get_vertex(v).unwrap().point
+    /// The vertex `name` of `model`.
+    fn vertex<S: Scalar>(model: &NamedModel<S>, name: &str) -> Vector3<S> {
+        let v = model.vertex_id(name).unwrap();
+        model.topology().get_vertex(v).unwrap().point
     }
 
     /// Whether `value` could be `target`, but for the rounding of a
@@ -1885,23 +1826,23 @@ mod tests {
             "r",
             vec![line3(v3::<S>(0., 0.5, 0.), v3(2., 1., 0.)).unwrap()],
         )];
-        let part = swept_with(
+        let model = swept_with(
             circle(0.5),
             &yz(Vector3::zero()),
             &along_x(2.0),
             &with_rails(rails),
         );
-        assert_eq!(part.topology().faces.len(), 4 + 2);
+        assert_eq!(model.topology().faces.len(), 4 + 2);
         for i in 0..4 {
-            assert!(straight(&part, &format!("sweep(s,c{i},k0)")));
-            for p in wall_points(&part, &format!("sweep(s,c{i},k0)")) {
+            assert!(straight(&model, &format!("sweep(s,c{i},k0)")));
+            for p in wall_points(&model, &format!("sweep(s,c{i},k0)")) {
                 // The radius the rail says at this `x`, `0.5 + x / 4`.
                 let wanted = p[0].mul(S::from_f64(0.25)).add(S::from_f64(0.5));
                 assert!(near(radius(&p).sub(wanted), 0.0), "{p:?}");
             }
         }
         // The rail's end is where the profile's point on it went.
-        let end = vertex(&part, "sweep(s,p0,j1)");
+        let end = vertex(&model, "sweep(s,p0,j1)");
         assert!(near_point(&end, [2.0, 1.0, 0.0]), "{end:?}");
     }
     #[test]
@@ -1923,15 +1864,15 @@ mod tests {
                 vec![line3(v3::<S>(0., 0., 1.), v3(2., 0., 0.5)).unwrap()],
             ),
         ];
-        let part = swept_with(
+        let model = swept_with(
             circle(1.0),
             &yz(Vector3::zero()),
             &along_x(2.0),
             &with_rails(rails),
         );
         for i in 0..4 {
-            assert!(straight(&part, &format!("sweep(s,c{i},k0)")));
-            for p in wall_points(&part, &format!("sweep(s,c{i},k0)")) {
+            assert!(straight(&model, &format!("sweep(s,c{i},k0)")));
+            for p in wall_points(&model, &format!("sweep(s,c{i},k0)")) {
                 let f = S::from_f64;
                 let a = f(1.0).add(p[0].mul(f(0.5)));
                 let b = f(1.0).sub(p[0].mul(f(0.25)));
@@ -1939,7 +1880,7 @@ mod tests {
                 assert!(near(y.mul(y).add(z.mul(z)), 1.0), "{p:?}");
             }
         }
-        let top = vertex(&part, "sweep(s,p1,j1)");
+        let top = vertex(&model, "sweep(s,p1,j1)");
         assert!(near_point(&top, [2.0, 0.0, 0.5]), "{top:?}");
     }
     #[test]
@@ -1959,14 +1900,14 @@ mod tests {
             vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
         )
         .unwrap();
-        let part = swept_with(
+        let model = swept_with(
             circle(0.5),
             &yz(Vector3::zero()),
             &along_x(2.0),
             &with_rails(vec![rail("bow", vec![bow.clone()])]),
         );
-        let face = part.face_id("sweep(s,c0,k0)").unwrap();
-        let surface = &part.topology().faces[&face].surface;
+        let face = model.face_id("sweep(s,c0,k0)").unwrap();
+        let surface = &model.topology().faces[&face].surface;
         let (degree, knots) = (surface.degree_u, &surface.knot_vector_u);
         let sections = (degree + 1..knots.len() - degree - 1).step_by(degree);
         for k in sections {
@@ -1991,14 +1932,14 @@ mod tests {
             twist: std::f64::consts::FRAC_PI_2,
             ..Control::default()
         };
-        let part = swept_with(square(0.5), &yz(Vector3::zero()), &along_x(4.0), &control);
-        assert_eq!(part.topology().faces.len(), 4 + 2);
+        let model = swept_with(square(0.5), &yz(Vector3::zero()), &along_x(4.0), &control);
+        assert_eq!(model.topology().faces.len(), 4 + 2);
         // The corner (0.5, 0.5) at the end, turned to (-0.5, 0.5).
-        let end = vertex(&part, "sweep(s,p2,j1)");
+        let end = vertex(&model, "sweep(s,p2,j1)");
         assert!(near_point(&end, [4.0, -0.5, 0.5]), "{end:?}");
         // Half way, turned an eighth: straight up, `sqrt(1/2)` out.
-        let edge = part.edge_id("sweep(s,p2,k0)").unwrap();
-        let curve = &part.topology().edges[&edge].curve;
+        let edge = model.edge_id("sweep(s,p2,k0)").unwrap();
+        let curve = &model.topology().edges[&edge].curve;
         let middle = curve.evaluate(S::from_f64(0.5)).unwrap();
         assert!(near_point(&middle, [2.0, 0.0, 0.5f64.sqrt()]), "{middle:?}");
     }
@@ -2013,10 +1954,10 @@ mod tests {
             end_scale: 2.0,
             ..Control::default()
         };
-        let part = swept_with(circle(0.5), &yz(Vector3::zero()), &along_x(2.0), &control);
+        let model = swept_with(circle(0.5), &yz(Vector3::zero()), &along_x(2.0), &control);
         for i in 0..4 {
-            assert!(straight(&part, &format!("sweep(s,c{i},k0)")));
-            for p in wall_points(&part, &format!("sweep(s,c{i},k0)")) {
+            assert!(straight(&model, &format!("sweep(s,c{i},k0)")));
+            for p in wall_points(&model, &format!("sweep(s,c{i},k0)")) {
                 // The radius the rail says at this `x`, `0.5 + x / 4`.
                 let wanted = p[0].mul(S::from_f64(0.25)).add(S::from_f64(0.5));
                 assert!(near(radius(&p).sub(wanted), 0.0), "{p:?}");
@@ -2048,12 +1989,12 @@ mod tests {
             end_scale: 0.5,
             ..Control::default()
         };
-        let part = swept_with(square(0.3), &yz(Vector3::zero()), &path, &control);
+        let model = swept_with(square(0.3), &yz(Vector3::zero()), &path, &control);
         // The end lies square to the arc's end, at `y = 1`, half the size.
-        let model = part.topology();
-        let end = part.face_id("sweep(s,end)").unwrap();
-        for c in model.iterate_face_coedges(end) {
-            let p = model.coedge_start_vertex(c).unwrap().point;
+        let topology = model.topology();
+        let end = model.face_id("sweep(s,end)").unwrap();
+        for c in topology.iterate_face_coedges(end) {
+            let p = topology.coedge_start_vertex(c).unwrap().point;
             assert!(near(p[1], 1.0), "{p:?}");
             let dx = p[0].sub(S::from_f64(3.0));
             let off = dx.mul(dx).add(p[2].mul(p[2])).sqrt().unwrap();
@@ -2085,11 +2026,11 @@ mod tests {
             orientation: Orientation::FixedNormal,
             ..Control::default()
         };
-        let part = swept_with(square(0.25), &yz(Vector3::zero()), &path, &control);
-        let model = part.topology();
-        let v = part.vertex_id("sweep(s,p2,j2)").unwrap();
+        let model = swept_with(square(0.25), &yz(Vector3::zero()), &path, &control);
+        let topology = model.topology();
+        let v = model.vertex_id("sweep(s,p2,j2)").unwrap();
         assert!(
-            model
+            topology
                 .get_vertex(v)
                 .unwrap()
                 .point
@@ -2230,10 +2171,10 @@ mod tests {
                     if two {
                         guides.push(partner());
                     }
-                    let mut part = Part::<S>::new();
+                    let mut model = NamedModel::<S>::new();
                     let namer = Namer::new("sweep", "s").unwrap();
                     sweep_along(
-                        &mut part,
+                        &mut model,
                         &namer,
                         Some(&namer.root()),
                         &along_x(3.0),
@@ -2242,7 +2183,7 @@ mod tests {
                         &with_rails(guides),
                     )
                     .unwrap_or_else(|e| panic!("{name}, two rails: {two}: {e:?}"));
-                    assert_valid(part.topology());
+                    assert_valid(model.topology());
                 }
             }
         }

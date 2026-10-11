@@ -1,0 +1,412 @@
+//! Solving the state a program's [`Constraint`]s are on: the program's side
+//! of the constraint systems of [`geop_core_math::solvers::system`], which
+//! solve, check, enclose and measure them — the same algorithms a sketch's
+//! numbers are solved by.
+//!
+//! The values of the state a solve may move are the caller's to say
+//! ([`Problem::free`]), each a block of the system, stepped along its own
+//! steps ([`geop_core_math::solvers::system::Variable::retract`]: a pose by
+//! the exponential map of a twist). The constraints are those the last run
+//! of the part reported, brought up to date with every state tried
+//! ([`Part::update`]), not the whole program run again. What a solve
+//! should prefer among the states the constraints allow is the caller's
+//! too: [`Preference`]s pull — a drag — and every value nothing pulls stays
+//! as near where it was as the constraints let it.
+//!
+//! What steps let a solve move is said in the program itself: a step
+//! declares a value of the state ([`Unknown`], a target of the part), how
+//! a solve may move it, and where one starts from — so a solve of any
+//! program is set up from the part alone ([`unknowns`]).
+//!
+//! Every solve comes with an enclosure of a true solution near where it
+//! ended ([`Solved::enclosure`]), each value in its own step coordinates
+//! around the state found — or with why none is proven: a configuration
+//! singular there, or constraints that conflict, by name.
+
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+};
+
+use geop_core_math::{
+    geop_error::GeopResult,
+    solvers::system::{self, Bound, Equations, Linearized, Phase, System, Term},
+};
+
+pub use geop_core_math::solvers::system::Mobility;
+
+use crate::{
+    constraint::Constraint,
+    part::{Input, Part, State, View},
+    target::TargetReference,
+};
+
+/// What a solve should prefer among the states where the constraints
+/// hold: residuals it wants small — not zero at any price — where the part
+/// is as `view` shows it, each a length, and their derivatives by the
+/// state. A drag, pulling a point of a placed part towards the pointer.
+pub trait Preference<I, S: State> {
+    fn evaluate(&self, view: View<'_, I, S>) -> GeopResult<Constraint<S>>;
+}
+
+/// What a [`solve`] may move, and towards what.
+pub struct Problem<'p, I, S: State> {
+    /// The values the solve may move, by name, and how; it leaves every
+    /// other value — and every one [`Mobility::Fixed`] — as it is.
+    pub free: BTreeMap<String, Mobility>,
+    pub preferences: Vec<&'p dyn Preference<I, S>>,
+    /// The part's size: what a constraint holds to a part in
+    /// [`geop_core_math::solvers::system::RELATIVE_TOLERANCE`] of, how
+    /// far one step may go, and what a turn is measured against when a
+    /// value stays where it was.
+    pub scale: S::Scalar,
+}
+
+/// How a solve went.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Report<T: geop_core_math::scalars::Scalar> {
+    /// Every constraint holds.
+    pub converged: bool,
+    /// The constraints that do not, by name.
+    pub failed: Vec<String>,
+    /// The limits the solve stopped at, by name.
+    pub at_limit: Vec<String>,
+    /// The values it moved, by name.
+    pub moved: Vec<String>,
+    /// The most steps any group took, and per phase the worst of the
+    /// groups: why it stopped, after how many steps, the largest residual
+    /// left.
+    pub iterations: usize,
+    pub phases: Vec<Phase<T>>,
+    /// How many times the constraints were made: by the solve, and to
+    /// enclose its solution — the work, which a test can bound.
+    pub evaluations: [usize; 2],
+}
+
+/// An enclosure of a true solution of the constraints: every value it
+/// could have, by name — or, for the values whose groups none is proven
+/// for, why not.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Enclosure<S: State> {
+    /// Per value enclosed, the box its true value is in.
+    pub state: BTreeMap<String, S>,
+    /// Per group of values not proven, its values and why: the constraints
+    /// that conflict there, by name, or what is singular.
+    pub unproven: Vec<(Vec<String>, String)>,
+}
+
+/// Where a solve put the state, how it went, and the enclosure of a true
+/// solution near there of every group it solved.
+pub struct Solved<S: State> {
+    pub state: BTreeMap<String, S>,
+    pub report: Report<S::Scalar>,
+    pub enclosure: Enclosure<S>,
+}
+
+/// How free the values of the state are, where they are now (see
+/// [`freedom`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Freedom {
+    /// Per value a solve may move, how many independent ways it can still
+    /// move, the others moving with it as the constraints need.
+    pub states: BTreeMap<String, usize>,
+    /// How many independent ways they can move together.
+    pub total: usize,
+}
+
+/// A value of the state as a step declares it for solving (see the module
+/// docs): the state it is, and how a solve may move it — or that it holds
+/// it fixed. A solve starts it from `seed` where the state has none of it,
+/// and — given a constraint `unless` — where that constraint does not hold
+/// either: a joint's coordinate, measured from where its parts are unless
+/// the joint holds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Unknown<S: State> {
+    pub state: String,
+    pub mobility: Mobility,
+    pub seed: Option<S>,
+    pub unless: Option<String>,
+}
+
+/// What a target declaring an unknown is named, before what declares it.
+const UNKNOWN: &str = "unknown:";
+
+/// The target declaring an unknown, named after what declares it: a mate,
+/// or the state itself.
+pub fn unknown<S: State>(by: &str) -> TargetReference<Unknown<S>> {
+    TargetReference::new(format!("{UNKNOWN}{by}"))
+}
+
+/// Every unknown the part `view` shows declares, by the state it is: of
+/// several declarations of one state, one that holds it fixed wins, and
+/// otherwise the first made.
+pub fn unknowns<I: Input, S: State>(view: View<'_, I, S>) -> BTreeMap<String, Unknown<S>> {
+    let mut out: BTreeMap<String, Unknown<S>> = BTreeMap::new();
+    for (_, declared) in view.targets_of::<Unknown<S>>() {
+        match out.get_mut(&declared.state) {
+            None => {
+                out.insert(declared.state.clone(), declared.clone());
+            }
+            Some(kept) if declared.mobility == Mobility::Fixed => kept.mobility = Mobility::Fixed,
+            Some(_) => {}
+        }
+    }
+    out
+}
+
+/// A part's constraints and preferences, on the values a problem frees: the
+/// [`Equations`] of its system. Each value a solve may move is a block, in
+/// order of their names; each constraint is one by its name, in order.
+struct Program<'m, 'p, I, S: State> {
+    part: RefCell<&'m mut Part<I, S>>,
+    /// The whole state, as the part was last updated with: the blocks'
+    /// values written into it.
+    working: RefCell<BTreeMap<String, S>>,
+    /// Per block, the value it is.
+    blocks: Vec<String>,
+    index: BTreeMap<String, usize>,
+    /// Per constraint, its name and what it asks.
+    constraints: Vec<(String, Bound)>,
+    preferences: &'p [&'p dyn Preference<I, S>],
+}
+
+impl<'m, 'p, I: Input, S: State> Program<'m, 'p, I, S> {
+    /// The system of `part`, its state at `state`, the values `problem`
+    /// frees as its blocks: and their values where `state` has them.
+    fn new(
+        part: &'m mut Part<I, S>,
+        state: &BTreeMap<String, S>,
+        problem: &'p Problem<'p, I, S>,
+    ) -> (Self, Vec<S>) {
+        let names: Vec<String> = part.constraints().into_keys().map(str::to_string).collect();
+        let all: Vec<&str> = names.iter().map(String::as_str).collect();
+        part.update(state, &all);
+        let made = part.constraints();
+        let constraints = (names.iter())
+            .map(|name| {
+                let bound = made.get(name.as_str()).map_or(Bound::Zero, |c| c.bound);
+                (name.clone(), bound)
+            })
+            .collect();
+        let blocks: Vec<String> = (problem.free.iter())
+            .filter(|(_, mobility)| mobility.free())
+            .map(|(name, _)| name.clone())
+            .collect();
+        let values = (blocks.iter())
+            .map(|name| state.get(name).cloned().unwrap_or_default())
+            .collect();
+        let index = (blocks.iter().enumerate())
+            .map(|(k, name)| (name.clone(), k))
+            .collect();
+        let program = Program {
+            part: RefCell::new(part),
+            working: RefCell::new(state.clone()),
+            blocks,
+            index,
+            constraints,
+            preferences: &problem.preferences,
+        };
+        (program, values)
+    }
+
+    /// The system: how each block may move, and its size.
+    fn system<'s>(&'s self, problem: &Problem<I, S>) -> System<'s, Self> {
+        System {
+            equations: self,
+            mobility: (self.blocks.iter())
+                .map(|name| problem.free.get(name).copied().unwrap_or(Mobility::Fixed))
+                .collect(),
+            scale: problem.scale,
+        }
+    }
+
+    /// The names of the constraints `which`.
+    fn names(&self, which: &[usize]) -> Vec<String> {
+        (which.iter())
+            .filter_map(|&c| self.constraints.get(c).map(|(name, _)| name.clone()))
+            .collect()
+    }
+
+    /// The part, left as the state `state` has it.
+    fn finish(self, state: &BTreeMap<String, S>) {
+        let names: Vec<&str> = self.constraints.iter().map(|(n, _)| n.as_str()).collect();
+        self.part.into_inner().update(state, &names);
+    }
+
+    /// `constraint` as a term of the system: its derivatives by the
+    /// blocks it reads.
+    fn linearized(&self, constraint: &Constraint<S>) -> Linearized<S::Scalar> {
+        Linearized {
+            values: constraint.residuals.clone(),
+            jacobian: (constraint.jacobian.iter())
+                .filter_map(|(state, rows)| Some((*self.index.get(state)?, rows.clone())))
+                .collect(),
+        }
+    }
+}
+
+impl<I: Input, S: State> Equations for Program<'_, '_, I, S> {
+    type Value = S;
+
+    fn count(&self) -> (usize, usize) {
+        (self.constraints.len(), self.preferences.len())
+    }
+
+    fn bound(&self, constraint: usize) -> Bound {
+        self.constraints
+            .get(constraint)
+            .map_or(Bound::Zero, |c| c.1)
+    }
+
+    fn evaluate(&self, values: &[S], which: &[Term]) -> Vec<Option<Linearized<S::Scalar>>> {
+        {
+            let mut working = self.working.borrow_mut();
+            for (name, value) in self.blocks.iter().zip(values) {
+                if working.get(name) != Some(value) {
+                    working.insert(name.clone(), value.clone());
+                }
+            }
+        }
+        let constraints: Vec<usize> = (which.iter())
+            .filter_map(|term| match term {
+                Term::Constraint(c) => Some(*c),
+                Term::Preference(_) => None,
+            })
+            .collect();
+        let names = self.names(&constraints);
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut part = self.part.borrow_mut();
+        part.update(&self.working.borrow(), &refs);
+        let made = part.constraints();
+        (which.iter())
+            .map(|term| match term {
+                Term::Constraint(c) => {
+                    let (name, _) = self.constraints.get(*c)?;
+                    Some(self.linearized(made.get(name.as_str())?))
+                }
+                Term::Preference(p) => {
+                    let preference = self.preferences.get(*p)?.evaluate(part.current()).ok()?;
+                    Some(self.linearized(&preference))
+                }
+            })
+            .collect()
+    }
+}
+
+/// The enclosure `enclosure` of `program`'s system, by name.
+fn named<I: Input, S: State>(
+    program: &Program<I, S>,
+    enclosure: system::Enclosure<S>,
+) -> Enclosure<S> {
+    let state = (program.blocks.iter().zip(enclosure.boxes))
+        .filter_map(|(name, boxed)| Some((name.clone(), boxed?)))
+        .collect();
+    let unproven = (enclosure.failures.into_iter())
+        .map(|(blocks, error)| {
+            let values = (blocks.iter())
+                .filter_map(|&b| program.blocks.get(b).cloned())
+                .collect();
+            let name =
+                |c: usize| (program.constraints.get(c)).map_or(format!("#{c}"), |c| c.0.clone());
+            (values, error.named(name).root_message().to_string())
+        })
+        .collect();
+    Enclosure { state, unproven }
+}
+
+/// Where the values `problem` frees have to be — from where `state` has
+/// them — for every constraint of `part` to hold, as near where they are as
+/// the constraints allow, pulled as its preferences ask (see
+/// [`System::solve`]), and an enclosure of a true solution near there. The
+/// constraints are those the last run of `part` reported; the part is
+/// brought up to date with each state tried, and is left at the one found —
+/// whose other targets the caller runs again to see.
+///
+/// The state is moved even where the constraints cannot all hold, to where
+/// they come closest; the report says which do not.
+pub fn solve<I: Input, S: State>(
+    part: &mut Part<I, S>,
+    state: &BTreeMap<String, S>,
+    problem: &Problem<I, S>,
+) -> GeopResult<Solved<S>> {
+    let (program, start) = Program::new(part, state, problem);
+    let system = program.system(problem);
+    let solution = system.solve(&start)?;
+    let held = system.held(&solution.values)?;
+    let mut solved = state.clone();
+    let mut moved = Vec::new();
+    for ((name, value), was) in program.blocks.iter().zip(&solution.values).zip(&start) {
+        if value != was {
+            moved.push(name.clone());
+            solved.insert(name.clone(), value.clone());
+        }
+    }
+    let report = Report {
+        converged: held.converged,
+        failed: program.names(&held.failed),
+        at_limit: program.names(&solution.at_limit),
+        moved,
+        iterations: solution.iterations,
+        phases: solution.phases,
+        evaluations: [solution.evaluations, solution.enclosure.evaluations],
+    };
+    let enclosure = named(&program, solution.enclosure);
+    program.finish(&solved);
+    Ok(Solved {
+        state: solved,
+        report,
+        enclosure,
+    })
+}
+
+/// An enclosure of a true solution of `part`'s constraints near where
+/// `state` has the values `problem` frees — a solution to the solver's
+/// tolerance (see [`System::enclose`]).
+pub fn enclose<I: Input, S: State>(
+    part: &mut Part<I, S>,
+    state: &BTreeMap<String, S>,
+    problem: &Problem<I, S>,
+) -> GeopResult<Enclosure<S>> {
+    let (program, start) = Program::new(part, state, problem);
+    let enclosure = program.system(problem).enclose(&start)?;
+    let enclosure = named(&program, enclosure);
+    program.finish(state);
+    Ok(enclosure)
+}
+
+/// How free the values `problem` frees are where `state` has them: the
+/// directions in which every constraint that must vanish stays put to
+/// first order, and of those, how many move each value — decided over the
+/// box an enclosure of the solution proves (see
+/// [`System::freedom`]). A limit leaves free the motion away from it.
+pub fn freedom<I: Input, S: State>(
+    part: &mut Part<I, S>,
+    state: &BTreeMap<String, S>,
+    problem: &Problem<I, S>,
+) -> GeopResult<Freedom> {
+    let (program, start) = Program::new(part, state, problem);
+    let freedom = program.system(problem).freedom(&start)?;
+    let states = (program.blocks.iter().cloned())
+        .zip(freedom.blocks)
+        .collect();
+    program.finish(state);
+    Ok(Freedom {
+        states,
+        total: freedom.total,
+    })
+}
+
+/// A smallest set of `part`'s constraints that cannot all hold together —
+/// none, where they all hold after a solve from `state` (see
+/// [`System::conflicting`]), by name.
+pub fn conflicting<I: Input, S: State>(
+    part: &mut Part<I, S>,
+    state: &BTreeMap<String, S>,
+    problem: &Problem<I, S>,
+) -> GeopResult<Vec<String>> {
+    let (program, start) = Program::new(part, state, problem);
+    let conflicting = program.system(problem).conflicting(&start)?;
+    let names: BTreeSet<String> = program.names(&conflicting).into_iter().collect();
+    program.finish(state);
+    Ok(names.into_iter().collect())
+}

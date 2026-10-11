@@ -1,8 +1,8 @@
 //! Solving a sketch: every constraint contributes residuals that are zero
-//! exactly when it holds — a [`Residual`] of the sketch's variables — and
-//! the solver every system of the kernel shares ([`geop_core_math::solvers::system`])
-//! drives the sum of their squares to zero, pulls a dragged point, and
-//! encloses the exact solution.
+//! exactly when it holds — a term of the sketch's variables — and
+//! [`geop_core_math::solvers::system`], on the driver every solve of the
+//! kernel shares ([`geop_core_math::solvers::constrained`]), holds them,
+//! pulls a dragged point, and encloses the exact solution.
 //!
 //! **Variables.** Each class of coincident points (see
 //! [`Sketch::point_classes`]) is one `(x, y)` pair — coincidence is not a
@@ -23,8 +23,9 @@
 use crate::{
     geometry::{Arc, line_distance},
     sketch::{Constraint, ConstraintId, CurveId, CurveKind, Enclosure, PointId, Sketch},
+    variables::{Residuals, Standing, Variables},
 };
-use geop_core_math::solvers::system::{self, Mobility, Param, Phase, Pull, Residual, Value};
+use geop_core_math::solvers::system::{self, Phase};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::{Ring, Scalar, as_f64},
@@ -619,86 +620,57 @@ impl<'a, S: Scalar> Problem<'a, S> {
         }
         Ok(())
     }
+}
 
-    /// Every constraint, as a residual of the sketch's variables.
-    fn residuals_of(&self) -> Vec<SketchResidual<'_, 'a, S>> {
-        self.constraints
-            .iter()
-            .map(|prepared| SketchResidual {
-                problem: self,
-                prepared,
-            })
-            .collect()
+impl<'a, S: Scalar> Residuals<S, MAX_LOCAL_VARS> for Problem<'a, S> {
+    fn offsets(&self) -> Vec<Option<usize>> {
+        self.layout.offsets()
     }
 
-    /// What a solve may do with each variable: change it as far as the
-    /// constraints need if it is free, else not at all.
-    fn mobility(&self) -> Vec<Mobility> {
-        self.layout
-            .free
-            .iter()
-            .map(|&f| if f { Mobility::Held } else { Mobility::Fixed })
-            .collect()
-    }
-}
-
-/// The variables `x` as the solver's parameters.
-pub(crate) fn parameters<S: Scalar>(x: &[S]) -> Vec<Param<S>> {
-    x.iter().map(|&v| Param::Scalar(v)).collect()
-}
-
-/// The residuals as the solver is given them.
-pub(crate) fn solver_residuals<'r, S: Scalar, const N: usize, R: Residual<S, N>>(
-    residuals: &'r [R],
-) -> Vec<&'r dyn Residual<S, N>> {
-    residuals.iter().map(|r| r as &dyn Residual<S, N>).collect()
-}
-
-/// The variables of a sketch, as the parameters are now.
-pub(crate) fn values<S: Scalar>(params: &[Param<S>]) -> Vec<S> {
-    params
-        .iter()
-        .map(|p| match p {
-            Param::Scalar(v) => *v,
-            Param::Pose { .. } => unreachable!("a sketch's variables are numbers"),
-        })
-        .collect()
-}
-
-/// One constraint as a residual of the variables it depends on.
-struct SketchResidual<'p, 'a, S: Scalar> {
-    problem: &'p Problem<'a, S>,
-    prepared: &'p Prepared<'a, S>,
-}
-
-impl<S: Scalar> Residual<S, MAX_LOCAL_VARS> for SketchResidual<'_, '_, S> {
-    fn params(&self) -> &[usize] {
-        &self.prepared.vars
+    fn constraints(&self) -> usize {
+        self.constraints.len()
     }
 
-    fn eval(&self, values: &[Value<Dual<S>>], out: &mut Vec<Dual<S>>) -> GeopResult<()> {
-        let seeded = self
-            .prepared
+    fn reads(&self, c: usize) -> &[usize] {
+        &self.constraints[c].vars
+    }
+
+    fn residuals(&self, c: usize, values: &[Dual<S>], out: &mut Vec<Dual<S>>) -> GeopResult<()> {
+        let prepared = &self.constraints[c];
+        let seeded: Vec<(usize, Dual<S>)> = prepared
             .vars
             .iter()
-            .zip(values)
-            .map(|(&i, v)| Ok((i, v.scalar()?)))
-            .collect::<GeopResult<Vec<_>>>()?;
+            .copied()
+            .zip(values.iter().copied())
+            .collect();
         let geo = Geo {
-            sketch: self.problem.sketch,
-            layout: &self.problem.layout,
+            sketch: self.sketch,
+            layout: &self.layout,
             seeded: &seeded,
         };
-        self.problem.residuals(self.prepared, &geo, out)
+        Problem::residuals(self, prepared, &geo, out)
+    }
+
+    fn name(&self, c: usize) -> String {
+        let c = &self.constraints[c];
+        format!("{} {:?}", c.id, c.constraint)
+    }
+
+    fn scale(&self) -> S {
+        self.scale
     }
 }
+
+/// The planar sketch's system (see [`Variables`]).
+type Planar<'p, 'a, S> = Variables<'p, S, Problem<'a, S>, MAX_LOCAL_VARS>;
 
 /// The outcome of a solve.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(bound = "S: Scalar")]
 pub struct SolveReport<S: Scalar> {
-    /// Every constraint holds (to [`geop_core_math::solvers::system::RELATIVE_TOLERANCE`] of
-    /// the sketch size).
+    /// Every constraint holds (to
+    /// [`geop_core_math::solvers::system::RELATIVE_TOLERANCE`] of the
+    /// sketch size).
     pub converged: bool,
     /// Largest remaining constraint residual, in sketch units: an upper
     /// bound.
@@ -707,7 +679,10 @@ pub struct SolveReport<S: Scalar> {
     pub iterations: usize,
     /// Each minimization of the solve.
     pub phases: Vec<Phase<S>>,
-    /// Remaining degrees of freedom: variables minus independent constraints.
+    /// Remaining degrees of freedom: variables minus independent
+    /// constraints — which are independent decided over the box an
+    /// enclosure of the solution chose them over (see
+    /// [`geop_core_math::solvers::system::System::freedom`]).
     pub dof: usize,
     /// Per point: whether it can still move without violating a constraint.
     pub free_points: BTreeMap<PointId, bool>,
@@ -717,13 +692,18 @@ pub struct SolveReport<S: Scalar> {
     /// The constraints left unsatisfied (conflicting or unreachable), empty
     /// when `converged`.
     pub failed_constraints: Vec<ConstraintId>,
+    /// Why no true solution near where the solve ended is proven, if none
+    /// is: the constraints that conflict there, by id, or what is singular
+    /// (see [`Sketch::enclose`], which encloses it).
+    #[serde(default)]
+    pub unproven: Vec<String>,
 }
 
 impl<S: Scalar> Sketch<S> {
     /// The sketch's geometry as the kernel builds on it (see [`Enclosure`]):
     /// an enclosure of the exact solution of its constraints near the
     /// solved positions, each variable the constraints leave free exactly
-    /// as drawn (see [`system::enclose`]).
+    /// as drawn (see [`System::enclose`]).
     ///
     /// A sketch whose constraints are not met is no solution of them, and is
     /// built exactly as drawn: that is all there is to build. Fails if the
@@ -732,27 +712,15 @@ impl<S: Scalar> Sketch<S> {
     pub fn enclose<T: Scalar>(&self) -> GeopResult<Enclosure<T>> {
         let ctx = |e: GeopError| e.with_context("enclosing the sketch's solution");
         let problem = Problem::new(self).map_err(ctx)?;
-        let residuals = problem.residuals_of();
-        let params = parameters(&problem.layout.read(self)?);
-        let solver = solver_residuals(&residuals);
-        if !problem.report(&params, &solver, 0, Vec::new())?.converged {
+        let params = problem.layout.read(self)?;
+        let variables = Planar::new(&problem, params, Vec::new());
+        let start = variables.start();
+        if !variables.system().held(&start)?.converged {
             return Ok(Enclosure::as_drawn(self));
         }
-        let enclosed = system::enclose(&params, &problem.mobility(), &solver, problem.scale)
-            .map_err(|e| {
-                e.named(|i| {
-                    let c = &problem.constraints[i];
-                    format!("{} {:?}", c.id, c.constraint)
-                })
-            })
-            .map_err(ctx)?;
-        let layout = &problem.layout;
         // What is fixed is as given; the rest as enclosed.
-        let x: Vec<S> = values(&params)
-            .into_iter()
-            .zip(layout.offsets())
-            .map(|(given, offset)| offset.map_or(given, |o| enclosed[o]))
-            .collect();
+        let x = variables.enclosed(&start).map_err(ctx)?;
+        let layout = &problem.layout;
         let to_t = |v: S| -> T { v.cast() };
         Ok(Enclosure {
             points: layout
@@ -791,33 +759,23 @@ impl<S: Scalar> Sketch<S> {
         drags: &[(PointId, Vector2<S>)],
     ) -> GeopResult<SolveReport<S>> {
         let problem = Problem::new(self)?;
-        let residuals = problem.residuals_of();
-        let start = parameters(&problem.layout.read(self)?);
-        let solver = solver_residuals(&residuals);
+        let start = problem.layout.read(self)?;
         // A dragged point is pulled towards the cursor among the
         // configurations that meet the constraints: it follows the cursor
         // exactly where it is free to.
-        let pulls: Vec<Pull<S>> = drags
+        let pulls: Vec<(usize, S)> = drags
             .iter()
             .flat_map(|&(point, target)| {
                 let i = problem.layout.point_var[&point];
-                (0..2).map(move |k| Pull::Scalar {
-                    param: i + k,
-                    target: target[k],
-                })
+                (0..2).map(move |k| (i + k, target[k]))
             })
             .collect();
-        let solved = system::solve(&start, &problem.mobility(), &solver, problem.scale, &pulls)?;
-        let report = problem.report(
-            &solved.params,
-            &solver,
-            solved.report.iterations,
-            solved.report.phases,
-        )?;
+        let variables = Planar::new(&problem, start, pulls);
+        let solved = variables.system().solve(&variables.start())?;
+        let report = variables.report(&solved.values, solved.phases, solved.enclosure)?;
         // Where the solve put the points is the sketch's state, and a free
         // choice: sharp.
-        let x: Vec<S> = values(&solved.params)
-            .into_iter()
+        let x: Vec<S> = (variables.all(&solved.values).into_iter())
             .map(Scalar::sharpen)
             .collect();
         problem.layout.write(self, &x);
@@ -825,55 +783,51 @@ impl<S: Scalar> Sketch<S> {
     }
 }
 
-impl<S: Scalar> Problem<'_, S> {
-    /// How the sketch stands at the variables `params` are: which
+impl<S: Scalar> Planar<'_, '_, S> {
+    /// How the sketch stands with the free variables at `blocks`: which
     /// constraints hold, and what can still move.
     fn report(
         &self,
-        params: &[Param<S>],
-        residuals: &[&dyn Residual<S, MAX_LOCAL_VARS>],
-        iterations: usize,
+        blocks: &[S],
         phases: Vec<Phase<S>>,
+        solved: system::Enclosure<S>,
     ) -> GeopResult<SolveReport<S>> {
-        let solved = system::report(params, &self.mobility(), residuals, self.scale)?;
-        let failed_constraints = solved
-            .failed
-            .iter()
-            .map(|&i| self.constraints[i].id)
+        let Standing {
+            held,
+            dof,
+            free: free_vars,
+            unproven,
+        } = self.standing(blocks, Some(solved))?;
+        let problem = self.problem;
+        let failed_constraints = (held.failed.iter())
+            .map(|&i| problem.constraints[i].id)
             .collect::<Vec<_>>();
-        let (free_offsets, dof) =
-            system::free_variables(params, &self.mobility(), residuals, self.scale);
-        let free_vars: Vec<bool> = self
-            .layout
-            .offsets()
-            .iter()
-            .map(|o| o.is_some_and(|o| free_offsets[o]))
-            .collect();
-        let free_points = self
+        let free_points = problem
             .layout
             .point_var
             .iter()
             .map(|(&p, &i)| (p, free_vars[i] || free_vars[i + 1]))
             .collect();
-        let free_curves = self
+        let free_curves = problem
             .sketch
             .curves
             .keys()
             .map(|&c| {
                 let mut vars = Vec::new();
-                self.layout.curve_vars(self.sketch, c, &mut vars);
+                problem.layout.curve_vars(problem.sketch, c, &mut vars);
                 (c, vars.iter().any(|&i| free_vars[i]))
             })
             .collect();
         Ok(SolveReport {
             converged: failed_constraints.is_empty(),
-            max_residual: solved.max_residual,
-            iterations,
+            max_residual: held.max_residual,
+            iterations: phases.iter().map(|p| p.iterations).sum(),
             phases,
             dof,
             free_points,
             free_curves,
             failed_constraints,
+            unproven,
         })
     }
 }
@@ -882,7 +836,10 @@ impl<S: Scalar> Problem<'_, S> {
 mod tests {
     use std::f64::consts::PI;
 
-    use geop_core_math::scalars::ScalInF64;
+    use geop_core_math::{
+        scalars::ScalInF64,
+        solvers::system::{Equations, Term},
+    };
 
     use super::*;
 
@@ -920,22 +877,19 @@ mod tests {
             value: n(PI / 3.0),
         });
         let problem = Problem::new(&s).unwrap();
-        let residuals = problem.residuals_of();
-        let params = parameters(&problem.layout.read(&s).unwrap());
-        let solver = solver_residuals(&residuals);
-        let n = params.len();
-        let e = system::evaluate(
-            &params,
-            &problem.mobility(),
-            &solver,
-            problem.scale,
-            &vec![S::ZERO; n],
-            &[],
-            false,
-        )
-        .unwrap();
-        for (k, (v, row)) in e.sum.values.iter().zip(&e.sum.jacobian).enumerate() {
-            for x in std::iter::once(v).chain(row) {
+        let params = problem.layout.read(&s).unwrap();
+        let variables = Planar::new(&problem, params, Vec::new());
+        let terms: Vec<Term> = (0..problem.constraints.len())
+            .map(Term::Constraint)
+            .collect();
+        for (k, made) in variables
+            .evaluate(&variables.start(), &terms)
+            .iter()
+            .enumerate()
+        {
+            let made = made.as_ref().unwrap();
+            let (v, row) = (&made.values, &made.jacobian);
+            for x in (v.iter()).chain(row.iter().flat_map(|(_, rows)| rows.iter().flatten())) {
                 let width = x.width().to_f64();
                 assert!(
                     width <= 1e-12 * (1.0 + x.to_f64().abs()),
@@ -999,6 +953,7 @@ mod tests {
         let sides = rectangle_said_twice(&mut s, true);
         let report = s.solve().unwrap();
         assert!(report.converged && report.dof == 0, "{report:?}");
+        assert!(report.unproven.is_empty(), "{report:?}");
         let e = s.enclose::<S>().unwrap();
         let corner = far_corner(&s, &sides, &e);
         assert!(
@@ -1030,6 +985,11 @@ mod tests {
         });
         let report = s.solve().unwrap();
         assert!(report.converged, "{report:?}");
+        // The solve says so too: no true solution is proven.
+        let [why] = &report.unproven[..] else {
+            panic!("{report:?}");
+        };
+        assert!(why.contains("conflict"), "{why}");
         let e = s.enclose::<S>().unwrap_err();
         let message = e.root_message();
         let bottom = s

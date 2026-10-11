@@ -1,35 +1,84 @@
 //! Reusable named test scenes for the booleans test suite: pairs of solids,
-//! each built in their own fresh [`Part`] purely from
-//! `geop_ops_extrude_revolve::shapes` — no dependency on any boolean/remesh
-//! machinery (all still disabled pending
-//! step-by-step revival, see `mod`'s own doc comment). Later
-//! revival steps grow what they *do* with a [`TestScene`]; for now,
-//! `topology_render_test` just renders each one's raw topology, as a first
-//! check that every scene builds cleanly against the current `Model` API.
+//! each built in their own fresh [`NamedModel`] purely from
+//! `geop_ops_extrude_revolve::shapes`.
 //!
-//! Two families, mirroring what the old (pre-API-change) booleans suite
-//! covered: a systematic offset *grid* (every relative position of two
+//! Two families: a systematic offset *grid* (every relative position of two
 //! identical solids, on axis-aligned steps) and a set of hand-picked
 //! box/figure8-vs-cylinder arrangements (holes drilled through, blind
 //! holes, nested/disjoint, corner overlaps, coincident faces, etc.).
 
-use geop_core_math::{scalars::Scalar, vector::Vector3};
-use geop_core_topology::SolidId;
-use geop_ops::Part;
+use geop_core_math::{
+    scalars::{ScalInF64, Scalar},
+    vector::Vector3,
+};
+use geop_core_topology::{
+    SolidId,
+    validation::{ValidationParameters, validate_manifold},
+};
+use geop_ops::{NamedModel, Namer};
 use geop_ops_extrude_revolve::shapes::{
     cube::cube_solid, cylinder::revolved_cylinder, figure8_profile::figure8_profile,
     sphere::sphere_solid,
 };
 use rayon::prelude::*;
 
-/// A named pair of solids, built together in one [`Part`] as the
+use crate::remesh::remesh::{RemeshParams, remesh};
+
+/// A named pair of solids, built together in one [`NamedModel`] as the
 /// operations `a` and `b`, ready for whatever a boolean-revival step wants
 /// to do with them.
 pub struct TestScene<S: Scalar> {
     pub name: String,
-    pub part: Part<S>,
+    pub model: NamedModel<S>,
     pub solid_a: SolidId,
     pub solid_b: SolidId,
+}
+
+/// The scene `name` of [`all_scenes`].
+pub fn scene(name: &str) -> TestScene<ScalInF64> {
+    all_scenes()
+        .into_iter()
+        .find(|s| s.name == name)
+        .unwrap_or_else(|| panic!("scene {name} must exist"))
+}
+
+/// The scene `name`, remeshed with the default [`RemeshParams`].
+pub fn remeshed(name: &str) -> TestScene<ScalInF64> {
+    let mut scene = scene(name);
+    let namer = Namer::new("boolean", "ab").unwrap();
+    remesh(
+        &mut scene.model,
+        &namer,
+        scene.solid_a,
+        scene.solid_b,
+        RemeshParams::default(),
+    )
+    .unwrap_or_else(|e| panic!("{name}: remesh failed: {e}"));
+    scene
+}
+
+/// Validation as tolerant as the default [`RemeshParams`]' pairwise
+/// searches.
+pub fn validation<S: Scalar>() -> ValidationParameters<S> {
+    let params = RemeshParams::<S>::default();
+    ValidationParameters {
+        max_nodes: params.max_nodes,
+        min_subdivision_size: params.curve_curve_min_subdivision_size,
+        ..ValidationParameters::default()
+    }
+}
+
+/// The point `(x, y, z)`.
+pub fn v3<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
+    Vector3::from_array([x, y, z].map(S::from_f64))
+}
+
+/// Checks `model` is a valid manifold model with consistent names.
+pub fn assert_valid<S: Scalar>(model: &NamedModel<S>) {
+    if let Err(e) = validate_manifold(&ValidationParameters::default(), model.topology()) {
+        panic!("{e:?}");
+    }
+    model.check_names().unwrap();
 }
 
 /// Turn an offset value into a filesystem-safe label, e.g. `-0.5` -> `n0p5`.
@@ -38,17 +87,23 @@ fn offset_label(v: f64) -> String {
 }
 
 /// A unit cube (side length 1) centered at `(cx, cy, cz)`.
-fn unit_cube_at<S: Scalar>(part: &mut Part<S>, name: &str, cx: f64, cy: f64, cz: f64) -> SolidId {
+pub fn unit_cube_at<S: Scalar>(
+    model: &mut NamedModel<S>,
+    name: &str,
+    cx: f64,
+    cy: f64,
+    cz: f64,
+) -> SolidId {
     let f = S::from_f64;
     let min = Vector3::from_array([f(cx - 0.5), f(cy - 0.5), f(cz - 0.5)]);
     let max = Vector3::from_array([f(cx + 0.5), f(cy + 0.5), f(cz + 0.5)]);
-    cube_solid(part, name, min, max).unwrap()
+    cube_solid(model, name, min, max).unwrap()
 }
 
 /// A capped cylinder of `radius`/`height`, axis parallel to z, bottom cap
 /// centered at `(cx, cy, cz)`.
 fn cyl<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     name: &str,
     cx: f64,
     cy: f64,
@@ -58,7 +113,7 @@ fn cyl<S: Scalar>(
 ) -> SolidId {
     let f = S::from_f64;
     revolved_cylinder(
-        part,
+        model,
         name,
         Vector3::from_array([f(cx), f(cy), f(cz)]),
         f(radius),
@@ -79,9 +134,9 @@ pub fn box_grid_scenes<S: Scalar>() -> Vec<TestScene<S>> {
     for &ox in &offsets {
         for &oy in &offsets {
             for &oz in &offsets {
-                let mut part = Part::<S>::new();
-                let solid_a = unit_cube_at(&mut part, "a", 0.0, 0.0, 0.0);
-                let solid_b = unit_cube_at(&mut part, "b", ox, oy, oz);
+                let mut model = NamedModel::<S>::new();
+                let solid_a = unit_cube_at(&mut model, "a", 0.0, 0.0, 0.0);
+                let solid_b = unit_cube_at(&mut model, "b", ox, oy, oz);
                 let name = format!(
                     "box_grid_{}_{}_{}",
                     offset_label(ox),
@@ -90,7 +145,7 @@ pub fn box_grid_scenes<S: Scalar>() -> Vec<TestScene<S>> {
                 );
                 scenes.push(TestScene {
                     name,
-                    part,
+                    model,
                     solid_a,
                     solid_b,
                 });
@@ -114,11 +169,11 @@ pub fn sphere_grid_scenes<S: Scalar>() -> Vec<TestScene<S>> {
                 if ox == 0.0 && oy == 0.0 && oz == 0.0 {
                     continue;
                 }
-                let mut part = Part::<S>::new();
-                let solid_a = sphere_solid(&mut part, "a", Vector3::zero(), S::ONE).unwrap();
+                let mut model = NamedModel::<S>::new();
+                let solid_a = sphere_solid(&mut model, "a", Vector3::zero(), S::ONE).unwrap();
                 let center_b =
                     Vector3::from_array([S::from_f64(ox), S::from_f64(oy), S::from_f64(oz)]);
-                let solid_b = sphere_solid(&mut part, "b", center_b, S::ONE).unwrap();
+                let solid_b = sphere_solid(&mut model, "b", center_b, S::ONE).unwrap();
                 let name = format!(
                     "sphere_grid_{}_{}_{}",
                     offset_label(ox),
@@ -127,7 +182,7 @@ pub fn sphere_grid_scenes<S: Scalar>() -> Vec<TestScene<S>> {
                 );
                 scenes.push(TestScene {
                     name,
-                    part,
+                    model,
                     solid_a,
                     solid_b,
                 });
@@ -364,12 +419,12 @@ pub fn box_cylinder_scenes<S: Scalar>() -> Vec<TestScene<S>> {
     BOX_CYLINDER_CASES
         .iter()
         .map(|c| {
-            let mut part = Part::<S>::new();
-            let solid_a = unit_cube_at(&mut part, "a", 0.0, 0.0, 0.0);
-            let solid_b = cyl(&mut part, "b", c.cx, c.cy, c.cz, c.radius, c.height);
+            let mut model = NamedModel::<S>::new();
+            let solid_a = unit_cube_at(&mut model, "a", 0.0, 0.0, 0.0);
+            let solid_b = cyl(&mut model, "b", c.cx, c.cy, c.cz, c.radius, c.height);
             TestScene {
                 name: format!("box_cylinder_{}", c.name),
-                part,
+                model,
                 solid_a,
                 solid_b,
             }
@@ -380,16 +435,16 @@ pub fn box_cylinder_scenes<S: Scalar>() -> Vec<TestScene<S>> {
 /// The `FIGURE8_CYLINDER_CASES` arrangements, each as its own `TestScene`
 /// (`solid_a` the figure-8 extrusion, `solid_b` the cylinder), named
 /// `figure8_cylinder_<case>`.
-pub fn figure8_cylinder_scenes<S: Scalar>() -> Vec<TestScene<S>> {
+fn figure8_cylinder_scenes<S: Scalar>() -> Vec<TestScene<S>> {
     FIGURE8_CYLINDER_CASES
         .iter()
         .map(|c| {
-            let mut part = Part::<S>::new();
-            let solid_a = figure8_profile(&mut part, "a").unwrap();
-            let solid_b = cyl(&mut part, "b", c.cx, c.cy, c.cz, c.radius, c.height);
+            let mut model = NamedModel::<S>::new();
+            let solid_a = figure8_profile(&mut model, "a").unwrap();
+            let solid_b = cyl(&mut model, "b", c.cx, c.cy, c.cz, c.radius, c.height);
             TestScene {
                 name: format!("figure8_cylinder_{}", c.name),
-                part,
+                model,
                 solid_a,
                 solid_b,
             }
@@ -410,7 +465,7 @@ pub fn all_scenes<S: Scalar>() -> Vec<TestScene<S>> {
 /// Run `f` over every scene, spread across threads, and return the results in
 /// scene order.
 ///
-/// Each scene owns its own `Part` and shares nothing with the others, so the
+/// Each scene owns its own `NamedModel` and shares nothing with the others, so the
 /// sweeps over them are embarrassingly parallel — and slow enough
 /// (a full remesh or boolean per scene, 175 of them) that running them serially
 /// dominates the test suite's wall time. `rayon`'s global pool (fixed at
@@ -467,7 +522,7 @@ mod topology_render_test {
         std::fs::create_dir_all(dir).unwrap();
 
         for scene in all_scenes::<ScalInF64>() {
-            let model = scene.part.topology();
+            let model = scene.model.topology();
             let faces_a = model.solid_faces(scene.solid_a).unwrap();
             let scene_render = rasterize(model, 12).unwrap().scene(|face_id| {
                 if faces_a.contains(&face_id) {

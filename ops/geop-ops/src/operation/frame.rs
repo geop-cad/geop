@@ -2,7 +2,6 @@
 //! anywhere else something is placed by one: where it sits, and which way
 //! its `z` axis runs (see [`Aspects::frame_on`]).
 
-use crate::mates::across;
 use geop_core_geometry::shape::Axis;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -13,8 +12,26 @@ use geop_core_math::{
 };
 use geop_core_topology::{CoedgeGeometry, FaceId};
 
-use super::{Aspects, EntityRef};
-use crate::Part;
+use super::{Aspects, EntityRef, Lookup};
+use crate::model::NamedModel;
+
+/// Two unit directions square to the unit vector `axis` and to each other:
+/// the first from whichever of `x`, `y`, `z` runs least along it — the
+/// first no other definitely runs less along, so that an axis a hair off
+/// one of them does not pick between two by noise. A free choice, made the
+/// same way wherever a direction across an axis is measured from: a joint's
+/// turns, a frame's `x`.
+pub fn across<S: Scalar>(axis: &Vector3<S>) -> GeopResult<[Vector3<S>; 2]> {
+    let size = |k: usize| axis[k].abs();
+    let least = (0..3)
+        .find(|&k| !(0..3).any(|j| size(j).definitely_less(size(k))))
+        .unwrap_or(0);
+    let reference = Vector3::axis(least);
+    let first = (reference.sub(&axis.prod_scalar(axis.prod_dot(&reference))))
+        .normalize()
+        .map_err(|e| e.with_context(format!("a direction square to {axis:?}")))?;
+    Ok([first, axis.prod_cross(&first)])
+}
 
 /// How many points of each of a face's edges its middle is measured from.
 const SAMPLES: i64 = 8;
@@ -41,10 +58,23 @@ impl<S: Scalar> Aspects<S> {
     pub fn frame_on(
         on: &EntityRef,
         at: Option<&EntityRef>,
-        part: &Part<S>,
+        lookup: &mut (impl Lookup<S> + ?Sized),
     ) -> GeopResult<CoordinateSystem<S>> {
         let ctx = with_context!("the frame on {on}");
-        let aspects = Aspects::of(on, part).with_context(ctx)?;
+        // On a placed part: where that part puts the frame on it there.
+        let whole = EntityRef::Frame {
+            on: Box::new(on.clone()),
+            at: at.map(|at| Box::new(at.clone())),
+        };
+        if let Some(placed) = lookup.in_placed(&whole) {
+            let (mut inside, pose, local) = placed.with_context(ctx)?;
+            let EntityRef::Frame { on, at } = &local else {
+                return Err(GeopError::new(format!("{local} is no frame"))).with_context(ctx);
+            };
+            let frame = Self::frame_on(on, at.as_deref(), &mut *inside).with_context(ctx)?;
+            return pose.motion().apply_frame(&frame).with_context(ctx);
+        }
+        let aspects = Aspects::of(on, lookup).with_context(ctx)?;
         if let Some(frame) = aspects.frame {
             return Ok(frame);
         }
@@ -52,24 +82,24 @@ impl<S: Scalar> Aspects<S> {
             return axis_frame(arc.circle.center.sharpen(), &arc.circle.normal).with_context(ctx);
         }
         let anchor = at
-            .map(|at| middle_of(at, part))
+            .map(|at| middle_of(at, lookup))
             .transpose()
             .with_context(ctx)?;
-        let middle = || middle_of(on, part).with_context(ctx);
-        let along = |axis: &Axis<S>| -> GeopResult<CoordinateSystem<S>> {
-            let near = match anchor {
-                Some(anchor) => anchor,
-                None => middle()?,
-            };
+        // Where on `on` the frame sits, unless `at` says: only worked out
+        // where needed, since not every entity has a middle.
+        let near = |lookup: &mut _| match anchor {
+            Some(anchor) => Ok(anchor),
+            None => middle_of(on, lookup).with_context(ctx),
+        };
+        let along = |axis: &Axis<S>, lookup: &mut _| -> GeopResult<CoordinateSystem<S>> {
+            let near = near(lookup)?;
             axis_frame(axis.project(&near).sharpen(), &axis.direction).with_context(ctx)
         };
         if let Some(plane) = &aspects.plane {
-            let near = match anchor {
-                Some(anchor) => anchor,
-                None => match aspects.face {
-                    true => middle()?,
-                    false => *plane.origin(),
-                },
+            let near = match (anchor, aspects.face) {
+                (Some(anchor), _) => anchor,
+                (None, true) => middle_of(on, lookup).with_context(ctx)?,
+                (None, false) => *plane.origin(),
             };
             let off = near.sub(plane.origin()).prod_dot(plane.w());
             let origin = near.sub(&plane.w().prod_scalar(off)).sharpen();
@@ -77,10 +107,10 @@ impl<S: Scalar> Aspects<S> {
                 .with_context(ctx);
         }
         if let Some(axis) = &aspects.round {
-            return along(axis);
+            return along(axis, lookup);
         }
         if let Some(axis) = &aspects.line {
-            return along(axis);
+            return along(axis, lookup);
         }
         if let Some(point) = aspects.point {
             return Ok(CoordinateSystem::world_at(point));
@@ -107,19 +137,21 @@ fn axis_frame<S: Scalar>(origin: Vector3<S>, axis: &Vector3<S>) -> GeopResult<Co
 /// parameter, not its length — and of a face the middle of the box round
 /// its edges, in its own surface. Where a frame sits when it sits nowhere
 /// else: a free choice, so sharp.
-fn middle_of<S: Scalar>(entity: &EntityRef, part: &Part<S>) -> GeopResult<Vector3<S>> {
+fn middle_of<S: Scalar>(
+    entity: &EntityRef,
+    lookup: &mut (impl Lookup<S> + ?Sized),
+) -> GeopResult<Vector3<S>> {
     let ctx = with_context!("the middle of {entity}");
-    if let Some((name, inner)) = entity.split_instance() {
-        let instance = part
-            .instance(part.instance_id(&name).with_context(ctx)?)
-            .with_context(ctx)?;
-        let local = middle_of(&inner, &instance.part).with_context(ctx)?;
-        return Ok(instance.pose.motion().apply(&local));
+    if entity.split_instance().is_some() {
+        return Err(GeopError::new(format!(
+            "{entity} is of no part placed here"
+        )));
     }
     if let EntityRef::Face { name } = entity {
-        return face_middle(part, part.face_id(name).with_context(ctx)?).with_context(ctx);
+        let model = lookup.model();
+        return face_middle(model, model.face_id(name).with_context(ctx)?).with_context(ctx);
     }
-    let aspects = Aspects::of(entity, part).with_context(ctx)?;
+    let aspects = Aspects::of(entity, lookup).with_context(ctx)?;
     if let Some(arc) = &aspects.arc {
         return Ok(arc.circle.center.sharpen());
     }
@@ -139,8 +171,8 @@ fn middle_of<S: Scalar>(entity: &EntityRef, part: &Part<S>) -> GeopResult<Vector
 
 /// The middle of the box round the edges of `face`, sampled: the point of a
 /// bare vertex face. In the part's own frame.
-fn face_middle<S: Scalar>(part: &Part<S>, face: FaceId) -> GeopResult<Vector3<S>> {
-    let model = part.topology();
+fn face_middle<S: Scalar>(named: &NamedModel<S>, face: FaceId) -> GeopResult<Vector3<S>> {
+    let model = named.topology();
     let mut points = Vec::new();
     for coedge in model.iterate_face_coedges(face) {
         match model.get_coedge(coedge)?.geometry {

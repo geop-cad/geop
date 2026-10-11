@@ -28,16 +28,18 @@ use geop_core_math::{
     scalars::{Field, Scalar},
     vector::Vector3,
 };
+use geop_core_program::step_editor::Scene;
 use geop_core_sketch::{
     ConstraintId, CurveId, PointId,
-    space::{Constraint3d, Coordinate, CurveKind3d, End, Solve3dReport},
+    space::{Arc3, Constraint3d, Coordinate, CurveKind3d, End, Solve3dReport},
 };
 use geop_ops::{
-    Context, Design, Part,
-    operation::{Aspects, EntityRef, Role},
+    Design,
+    operation::{Aspects, EntityRef, Role, Seen},
     ui::{
-        Action, CanvasEvent, Edit, Form, Gizmo, InHand, ListItem, Number, Pointer, Shape, Style,
-        Tone, Unit, Value, Visual, hit::hit_visuals,
+        Action, CanvasEvent, Control, Edit, EditForm, Gizmo, InHand, ListItem, Number, Pointer,
+        Shape, Style, Tone, Unit, Value, Visual, constraint_status,
+        hit::{hit_visuals, no_instances},
     },
 };
 
@@ -48,7 +50,10 @@ const AXIS_SNAP: f64 = 2.0;
 
 use crate::{AddSketch3dArgs, Reference3d, Target};
 
-type V3 = Vector3<Design>;
+/// 3-D sketches are edited in the scalar their programs hold.
+type S = Design;
+
+type V3 = Vector3<S>;
 
 /// What a click in the viewport does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,7 +82,7 @@ impl Tool {
 }
 
 /// The state of editing a 3-D sketch beyond its arguments.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Sketch3dSession {
     /// The tool in hand, once one is chosen: until then, a line for an
     /// empty sketch, selecting for one with curves.
@@ -131,9 +136,9 @@ fn picked(args: &AddSketch3dArgs, selection: &[String]) -> Picks {
     let sketch = &args.sketch;
     let mut picks = Picks::default();
     for key in selection {
-        if let Some(&p) = sketch.points.keys().find(|p| p.to_string() == *key) {
+        if let Some(p) = key.parse().ok().filter(|p| sketch.points.contains_key(p)) {
             picks.points.push(p);
-        } else if let Some(&c) = sketch.curves.keys().find(|c| c.to_string() == *key) {
+        } else if let Some(c) = key.parse().ok().filter(|c| sketch.curves.contains_key(c)) {
             picks.curves.push(c);
         }
     }
@@ -142,12 +147,12 @@ fn picked(args: &AddSketch3dArgs, selection: &[String]) -> Picks {
 
 /// `args` with what the part `before` gives it brought up to date, and how
 /// its constraints stand — or why that cannot be said.
-fn checked<S: Scalar>(
-    before: &Part<S>,
+fn checked(
+    before: &Seen<'_>,
     args: &AddSketch3dArgs,
 ) -> Result<(AddSketch3dArgs, Solve3dReport<Design>), String> {
     let mut args = args.clone();
-    args.resolve(before)
+    args.resolve(&mut &*before)
         .map_err(|e| e.root_message().to_string())?;
     let report = args
         .sketch
@@ -159,9 +164,9 @@ fn checked<S: Scalar>(
 /// Solves `args` on `before`, pulling `drags` — what the part gives
 /// brought up to date first. What cannot be solved is left as it is, and
 /// the form says why.
-fn solve<S: Scalar>(before: &Part<S>, args: &mut AddSketch3dArgs, drags: &[(PointId, V3)]) {
+fn solve(before: &Seen<'_>, args: &mut AddSketch3dArgs, drags: &[(PointId, V3)]) {
     args.tidy();
-    if args.resolve(before).is_ok() {
+    if args.resolve(&mut &*before).is_ok() {
         let _ = args.sketch.solve_with_drag(drags);
     }
 }
@@ -197,7 +202,7 @@ impl Located {
 }
 
 /// The unit vector along `axis`.
-fn unit<S: Scalar>(axis: Coordinate) -> Vector3<S> {
+fn unit(axis: Coordinate) -> V3 {
     let mut d = Vector3::zero();
     d[axis.index()] = S::ONE;
     d
@@ -206,70 +211,53 @@ fn unit<S: Scalar>(axis: Coordinate) -> Vector3<S> {
 /// Where `pointer` snaps onto a line along `x`, `y` or `z` through `from`,
 /// if it passes within [`AXIS_SNAP`] reaches of one: the axis it passes
 /// nearest on screen, and the point of it nearest the pointer's ray.
-fn along_axis<S: Scalar>(from: &V3, pointer: &Pointer<S>) -> Option<Located> {
-    let from = from.map(|c| c.cast::<S>());
+fn along_axis(from: &V3, pointer: &Pointer<S>) -> Option<Located> {
     Coordinate::ALL
         .into_iter()
         .filter_map(|axis| {
-            let d = unit::<S>(axis);
-            let at = from.add(&d.prod_scalar(pointer.ray.line_parameter(&from, &d)?));
+            let d = unit(axis);
+            let at = from.add(&d.prod_scalar(pointer.ray.line_parameter(from, &d)?));
             let (dist, t) = pointer.ray.distance_to_point(&at);
             // Which axis is nearer on screen is a free choice between
             // those within reach: plain numbers decide it.
             let on_screen = dist.to_f64() / pointer.reach_at(1.0, t).to_f64();
             pointer
                 .within(dist, t, AXIS_SNAP)
-                .then(|| (on_screen, axis, at.map(|c| c.cast::<Design>())))
+                .then_some((on_screen, axis, at))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .map(|(_, axis, at)| Located::Along(axis, at))
 }
 
 /// Where a click with `pointer` places a point (see the module docs) with
-/// the tool `tool` in hand — snapped, unless `shift` is held.
-fn locate<S: Scalar>(
-    context: &Context<'_, S>,
+/// the tool `tool` in hand — snapped, unless `shift` is held — on the part
+/// `before` as drawn, `scene`.
+fn locate(
+    before: &Seen<'_>,
+    scene: Option<&dyn Scene<S>>,
     args: &AddSketch3dArgs,
     s: &Sketch3dSession,
     tool: Tool,
     pointer: &Pointer<S>,
     shift: bool,
 ) -> Option<Located> {
-    let design = |v: &Vector3<S>| v.map(|c| c.cast::<Design>());
     if !shift {
         let points: Vec<Visual<S>> = args
             .sketch
             .points
             .iter()
-            .map(|(id, p)| {
-                Visual::new(
-                    id.to_string(),
-                    Shape::Point {
-                        at: p.at.map(|c| c.cast()),
-                    },
-                    Style::Free,
-                )
-            })
+            .map(|(id, p)| Visual::new(id.to_string(), Shape::Point { at: p.at }, Style::Free))
             .collect();
-        if let Some(hit) = hit_visuals(&points, pointer, None, |_| true) {
-            let id = args
-                .sketch
-                .points
-                .keys()
-                .find(|p| p.to_string() == hit.visual.key)?;
-            return Some(Located::Point(*id));
+        if let Some(hit) = hit_visuals(&points, pointer, no_instances, |_| true) {
+            return Some(Located::Point(hit.visual.key.parse().ok()?));
         }
-        let pick = |roles: &[Role]| {
-            context
-                .view
-                .and_then(|view| view.pick(pointer, roles, None))
-        };
+        let pick = |roles: &[Role]| scene.and_then(|scene| scene.pick(pointer, roles, None));
         if let Some(hit) = pick(&[Role::Point]) {
-            let at = Aspects::of(&hit.entity, context.before).ok()?.point?;
-            return Some(Located::Fixed(hit.entity, design(&at)));
+            let at = Aspects::of(&hit.entity, &mut &*before).ok()?.point?;
+            return Some(Located::Fixed(hit.entity, at));
         }
         if let Some(hit) = pick(&[Role::Curve]) {
-            return Some(Located::OnEdge(hit.entity, design(&hit.point)));
+            return Some(Located::OnEdge(hit.entity, hit.point));
         }
         let from = s.placed.last().map(|p| args.sketch.points[p].at);
         if tool == Tool::Line
@@ -278,20 +266,18 @@ fn locate<S: Scalar>(
             return Some(along);
         }
     }
-    if let Some(view) = context.view
-        && let Some(hit) = view.pick(pointer, &[Role::Face, Role::Plane], None)
+    if let Some(scene) = scene
+        && let Some(hit) = scene.pick(pointer, &[Role::Face, Role::Plane], None)
     {
-        return Some(Located::Free(design(&hit.point)));
+        return Some(Located::Free(hit.point));
     }
     // In the plane through the last point placed — or the origin — facing
     // the eye.
-    let anchor = s
-        .placed
-        .last()
-        .map(|p| args.sketch.points[p].at.map(|c| c.cast::<S>()))
+    let anchor = (s.placed.last())
+        .map(|p| args.sketch.points[p].at)
         .unwrap_or_else(Vector3::zero);
     let (_, at) = pointer.ray.intersect_plane(&anchor, pointer.ray.dir())?;
-    Some(Located::Free(design(&at)))
+    Some(Located::Free(at))
 }
 
 /// The point a click at `located` places: the sketch's own, or a new one —
@@ -391,8 +377,8 @@ fn smooth_joints(args: &mut AddSketch3dArgs, curve: CurveId) {
 }
 
 /// A click of the tool `tool` at `located`.
-fn click<S: Scalar>(
-    before: &Part<S>,
+fn click(
+    before: &Seen<'_>,
     args: &mut AddSketch3dArgs,
     s: &mut Sketch3dSession,
     tool: Tool,
@@ -448,7 +434,7 @@ fn click<S: Scalar>(
 
 /// Ends what is being drawn: a spline is added through the points placed,
 /// and points placed for nothing go again.
-fn finish<S: Scalar>(before: &Part<S>, args: &mut AddSketch3dArgs, s: &mut Sketch3dSession) {
+fn finish(before: &Seen<'_>, args: &mut AddSketch3dArgs, s: &mut Sketch3dSession) {
     if s.tool(args) == Tool::Spline && s.placed.len() >= 2 {
         let spline = args.sketch.add_spline(std::mem::take(&mut s.placed));
         smooth_joints(args, spline);
@@ -472,32 +458,26 @@ fn finish<S: Scalar>(before: &Part<S>, args: &mut AddSketch3dArgs, s: &mut Sketc
 }
 
 /// Takes up `tool`, ending what was being drawn.
-fn take_up<S: Scalar>(
-    before: &Part<S>,
-    args: &mut AddSketch3dArgs,
-    s: &mut Sketch3dSession,
-    tool: Tool,
-) {
+fn take_up(before: &Seen<'_>, args: &mut AddSketch3dArgs, s: &mut Sketch3dSession, tool: Tool) {
     finish(before, args, s);
     s.tool = Some(tool);
     s.hover = None;
 }
 
 /// Removes what is selected, and everything on it.
-fn remove_selected<S: Scalar>(
-    before: &Part<S>,
-    args: &mut AddSketch3dArgs,
-    selection: &mut Vec<String>,
-) {
+fn remove_selected(before: &Seen<'_>, args: &mut AddSketch3dArgs, selection: &mut Vec<String>) {
     let picks = picked(args, selection);
     args.sketch.remove(&picks.points, &picks.curves, &[]);
     selection.clear();
     solve(before, args, &[]);
 }
 
-/// A pointer or key event passed on (see the module docs).
-pub(crate) fn event<S: Scalar>(
-    context: Context<'_, S>,
+/// A pointer or key event passed on (see the module docs), what the
+/// pointer is over found in the part `before` as the editor draws it,
+/// `scene`.
+pub(crate) fn event(
+    before: &Seen<'_>,
+    scene: Option<&dyn Scene<S>>,
     edit: Edit<'_, AddSketch3dArgs, Sketch3dSession>,
     event: &CanvasEvent<S>,
 ) {
@@ -507,20 +487,19 @@ pub(crate) fn event<S: Scalar>(
         selection,
         ..
     } = edit;
-    let before = context.before;
     let tool = s.tool(args);
     s.tool = Some(tool);
     match event {
         CanvasEvent::Hover { pointer, shift } => {
             s.hover = tool
                 .draws()
-                .then(|| locate(&context, args, s, tool, pointer, *shift))
+                .then(|| locate(before, scene, args, s, tool, pointer, *shift))
                 .flatten();
         }
         CanvasEvent::Leave => s.hover = None,
         CanvasEvent::Click { double: true, .. } if tool.draws() => finish(before, args, s),
         CanvasEvent::Click { pointer, shift, .. } if tool.draws() => {
-            if let Some(located) = locate(&context, args, s, tool, pointer, *shift) {
+            if let Some(located) = locate(before, scene, args, s, tool, pointer, *shift) {
                 click(before, args, s, tool, located);
             }
             s.hover = None;
@@ -530,14 +509,10 @@ pub(crate) fn event<S: Scalar>(
         CanvasEvent::Cancel => take_up(before, args, s, Tool::Select),
         CanvasEvent::Delete => remove_selected(before, args, selection),
         CanvasEvent::Move { key, to, .. } => {
-            let point = args
-                .sketch
-                .points
-                .iter()
-                .find(|(id, p)| id.to_string() == *key && !p.fixed)
-                .map(|(&id, _)| id);
-            if let Some(p) = point {
-                solve(before, args, &[(p, to.map(|c| c.cast()))]);
+            let point = key.parse().ok();
+            let free = |p: &PointId| args.sketch.points.get(p).is_some_and(|p| !p.fixed);
+            if let Some(p) = point.filter(free) {
+                solve(before, args, &[(p, *to)]);
             }
         }
         // The selection moved by the gizmo, from where it was when the drag
@@ -546,10 +521,7 @@ pub(crate) fn event<S: Scalar>(
             let points = moved(args, &picked(args, selection));
             let drags: Vec<(PointId, V3)> = points
                 .into_iter()
-                .map(|p| {
-                    let at = args.sketch.points[&p].at.map(|c| c.cast::<S>());
-                    (p, drag.apply(&at).map(|c| c.cast()))
-                })
+                .map(|p| (p, drag.apply(&args.sketch.points[&p].at)))
                 .collect();
             solve(before, args, &drags);
         }
@@ -693,7 +665,7 @@ fn constraints_for(
                 through,
                 end,
             } => {
-                let arc = geop_core_sketch::space::Arc3 {
+                let arc = Arc3 {
                     s: at(start),
                     m: at(through),
                     e: at(end),
@@ -802,36 +774,18 @@ fn status(checked: &Result<(AddSketch3dArgs, Solve3dReport<Design>), String>) ->
         ),
         Err(e) => e.root_message().to_string(),
     };
-    let plural = |n: usize| if n == 1 { "" } else { "s" };
-    if !report.converged {
-        let n = report.failed_constraints.len();
-        (
-            format!("{n} constraint{} conflict · {chains}", plural(n)),
-            Tone::Error,
-        )
-    } else if report.dof == 0 {
-        (format!("Fully constrained · {chains}"), Tone::Success)
-    } else {
-        (
-            format!(
-                "{} degree{} of freedom · {chains}",
-                report.dof,
-                plural(report.dof)
-            ),
-            Tone::Hint,
-        )
-    }
+    let conflicts = report.failed_constraints.len();
+    constraint_status(report.converged, conflicts, report.dof, &chains)
 }
 
 /// What the sketch draws: its curves and points, styled by how free they
 /// are, and what the tool in hand would draw next.
-fn visuals<S: Scalar>(
+fn visuals(
     args: &AddSketch3dArgs,
     s: &Sketch3dSession,
     report: Option<&Solve3dReport<Design>>,
 ) -> Vec<Visual<S>> {
     let sketch = &args.sketch;
-    let cast = |v: &V3| v.map(|c| c.cast::<S>());
     let failed: Vec<&Constraint3d<Design>> = report
         .map(|r| {
             r.failed_constraints
@@ -859,7 +813,7 @@ fn visuals<S: Scalar>(
             Visual::new(
                 id.to_string(),
                 Shape::Polyline {
-                    points: polyline.iter().map(cast).collect(),
+                    points: polyline.to_vec(),
                 },
                 style,
             )
@@ -876,8 +830,7 @@ fn visuals<S: Scalar>(
         } else {
             Style::Fixed
         };
-        let visual =
-            Visual::new(id.to_string(), Shape::Point { at: cast(&p.at) }, style).selectable();
+        let visual = Visual::new(id.to_string(), Shape::Point { at: p.at }, style).selectable();
         out.push(if p.fixed { visual } else { visual.draggable() });
     }
     let last = s.placed.last().map(|p| sketch.points[p].at);
@@ -892,7 +845,7 @@ fn visuals<S: Scalar>(
             out.push(Visual::new(
                 "draft",
                 Shape::Polyline {
-                    points: draft.iter().map(cast).collect(),
+                    points: draft.to_vec(),
                 },
                 Style::Draft,
             ));
@@ -903,14 +856,14 @@ fn visuals<S: Scalar>(
             out.push(Visual::new(
                 "snap_axis",
                 Shape::Polyline {
-                    points: vec![cast(&from), cast(&hover)],
+                    points: vec![from, hover],
                 },
                 Style::Snap,
             ));
             out.push(Visual::new(
                 "snap_label",
                 Shape::Label {
-                    at: cast(&hover),
+                    at: hover,
                     text: axis.name().to_string(),
                     offset: Vector3::from_array([S::ONE, S::ONE, S::ZERO]),
                 },
@@ -921,11 +874,7 @@ fn visuals<S: Scalar>(
             Located::Free(_) => Style::Draft,
             _ => Style::Snap,
         };
-        out.push(Visual::new(
-            "snap",
-            Shape::Point { at: cast(&hover) },
-            style,
-        ));
+        out.push(Visual::new("snap", Shape::Point { at: hover }, style));
     }
     // The directions a line snaps to, from where it starts — or, before
     // that, from where the next point goes.
@@ -934,7 +883,7 @@ fn visuals<S: Scalar>(
         out.push(Visual::new(
             "triad",
             Shape::Triad {
-                at: cast(&at),
+                at,
                 axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
                     .map(|axis| Vector3::from_array(axis.map(S::from_f64))),
             },
@@ -945,15 +894,15 @@ fn visuals<S: Scalar>(
 }
 
 /// The form of a 3-D sketch step on `before` (see the module docs).
-pub(crate) fn form<'a, S: Scalar>(
-    before: &'a Part<S>,
+pub(crate) fn form<'a>(
+    before: &'a Seen<'a>,
     args: &AddSketch3dArgs,
     s: &Sketch3dSession,
     selection: &[String],
-) -> Form<'a, S, AddSketch3dArgs, Sketch3dSession> {
-    let mut f = Form::new();
+) -> EditForm<'a, S, AddSketch3dArgs, Sketch3dSession> {
+    let mut f = EditForm::default();
     let tool = s.tool(args);
-    f.tool = if tool.draws() {
+    f.form.tool = if tool.draws() {
         InHand::Clicks
     } else {
         InHand::Nothing
@@ -992,7 +941,7 @@ pub(crate) fn form<'a, S: Scalar>(
             }
         }
     });
-    f.text("hint", hint(tool, s.placed.len()), Tone::Hint);
+    (f.form.dialog).text("hint", hint(tool, s.placed.len()), Tone::Hint);
 
     // The coordinates of the one point selected, to move it; else, with a
     // tool in hand, of the next point, to place it.
@@ -1016,8 +965,7 @@ pub(crate) fn form<'a, S: Scalar>(
         _ if tool.draws() => {
             for axis in Coordinate::ALL {
                 let number = Number::new(axis.name(), s.typed[axis.index()], Unit::Length);
-                f.dialog
-                    .push(axis.name(), geop_ops::ui::Control::Number(number));
+                f.form.dialog.push(axis.name(), Control::Number(number));
                 f.on(axis.name(), move |edit, value| {
                     if let Value::Number(v) = value {
                         edit.session.typed[axis.index()] = v;
@@ -1080,11 +1028,12 @@ pub(crate) fn form<'a, S: Scalar>(
                 let [entity] = &entities[..] else {
                     return;
                 };
-                let Some(line) = Aspects::of(entity, before).ok().and_then(|a| a.line) else {
+                let Some(line) = Aspects::of(entity, &mut &*before).ok().and_then(|a| a.line)
+                else {
                     return;
                 };
                 let picks = picked(args, selection);
-                let direction = line.direction.map(|c| c.cast());
+                let direction = line.direction;
                 if let Some(c) = along(args, &picks, direction) {
                     let constraint = args.sketch.constrain(c);
                     args.references.push(Reference3d {
@@ -1096,12 +1045,12 @@ pub(crate) fn form<'a, S: Scalar>(
                 }
             },
         );
-        f.optional("along");
+        f.form.dialog.optional("along");
     }
 
     let checked = checked(before, args);
     let (text, tone) = status(&checked);
-    f.text("status", text, tone);
+    f.form.dialog.text("status", text, tone);
 
     let items = args
         .sketch
@@ -1119,7 +1068,7 @@ pub(crate) fn form<'a, S: Scalar>(
             item
         })
         .collect();
-    f.list("constraints", items, "No constraints yet");
+    (f.form.dialog).list("constraints", items, "No constraints yet");
     for &id in args.sketch.constraints.keys() {
         f.on(id.to_string(), move |edit, value| {
             let args = edit.args;
@@ -1138,7 +1087,8 @@ pub(crate) fn form<'a, S: Scalar>(
             }
         });
     }
-    f.visuals = visuals(args, s, checked.as_ref().ok().map(|(_, r)| r));
+    f.form.visuals = visuals(args, s, checked.as_ref().ok().map(|(_, r)| r));
+    f.form.selection = selection.to_vec();
     // What is selected is moved by a gizmo at its middle: along an axis,
     // in a plane, or freely.
     let moving = moved(args, &picks);
@@ -1149,7 +1099,7 @@ pub(crate) fn form<'a, S: Scalar>(
         let n = Design::from_f64(moving.len() as f64);
         if let Ok(inverse) = Design::ONE.div(n) {
             let middle = sum.prod_scalar(inverse);
-            f.gizmo = Some(Gizmo::new(middle.map(|c| c.cast())).translate());
+            f.form.gizmo = Some(Gizmo::new(middle).translate());
         }
     }
     f

@@ -1,16 +1,13 @@
-//! A [`Part`]'s sketches: named like any other entity, and stored with the
-//! plane they were placed on.
+//! [`PlacedSketch`]: a sketch and the plane it was placed on — the value of
+//! a sketch's target ([`sketch`]) — and a 3-D sketch, the value of its
+//! target ([`sketch3d`]).
 
 use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve3D};
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    primitives::CoordinateSystem,
-    scalars::Scalar,
-};
-use geop_core_sketch::{CurveId, Enclosure, Sketch, profile::curve_nurbs};
+use geop_core_math::{geop_error::GeopResult, primitives::CoordinateSystem, scalars::Scalar};
+use geop_core_sketch::{CurveId, Enclosure, Sketch, profile::curve_nurbs, space::Sketch3d};
 
-use super::Part;
-use super::ids::SketchId;
+use geop_core_program::target::TargetReference;
+
 use crate::Design;
 
 /// A sketch together with the plane it lies on: `plane.u`/`plane.v` are the
@@ -19,7 +16,7 @@ use crate::Design;
 /// The plane is resolved once, when the sketch is added — a sketch drawn on a
 /// face stays where that face *was*, even after a later operation reshapes or
 /// consumes the face.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PlacedSketch<S: Scalar> {
     pub plane: CoordinateSystem<S>,
     pub sketch: Sketch<Design>,
@@ -40,38 +37,38 @@ impl<S: Scalar> PlacedSketch<S> {
     }
 }
 
-impl<S: Scalar> Part<S> {
-    /// Adds `placed` to the part under `name`. Fails, leaving the part
-    /// unchanged, if `name` is already taken.
-    pub fn add_sketch(
-        &mut self,
-        placed: PlacedSketch<S>,
-        name: impl Into<String>,
-    ) -> GeopResult<SketchId> {
-        let name = name.into();
-        let id = SketchId::named(&name);
-        self.store.insert_name(id, name)?;
-        self.store.sketches_mut().insert(id, placed);
-        Ok(id)
-    }
+/// What the target of a sketch is named, before the sketch's name.
+const PREFIX: &str = "sketch:";
 
-    pub fn remove_sketch(&mut self, id: SketchId) -> GeopResult<()> {
-        if self.store.sketches_mut().shift_remove(&id).is_none() {
-            return Err(GeopError::new(format!("Part has no sketch {id}")));
-        }
-        self.store.remove_name(id);
-        Ok(())
-    }
+/// The sketch `name`: what the step of that id draws.
+pub fn sketch(name: &str) -> TargetReference<PlacedSketch<Design>> {
+    TargetReference::new(format!("{PREFIX}{name}"))
+}
 
-    pub fn sketch(&self, id: SketchId) -> GeopResult<&PlacedSketch<S>> {
-        self.store
-            .sketches()
-            .get(&id)
-            .ok_or_else(|| GeopError::new(format!("Part has no sketch {id}")))
-    }
+/// The name of the sketch whose target is named `target`, if it is one.
+pub fn sketch_name(target: &str) -> Option<&str> {
+    target.strip_prefix(PREFIX)
+}
 
-    /// Every sketch, in the order they were added.
-    pub fn sketches(&self) -> impl Iterator<Item = (SketchId, &PlacedSketch<S>)> {
-        self.store.sketches().iter().map(|(&id, s)| (id, s))
-    }
+/// A 3-D sketch as a part holds it: the sketch, what it is given of the
+/// part brought up to date and solved, and the names of the edges of the
+/// wire it is built as — what a pick of one of them takes the whole sketch
+/// for, where a path is asked for.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlacedSketch3d {
+    pub sketch: Sketch3d<Design>,
+    pub edges: Vec<String>,
+}
+
+/// What the target of a 3-D sketch is named, before the sketch's name.
+const PREFIX_3D: &str = "sketch3d:";
+
+/// The 3-D sketch `name`: what the step of that id draws.
+pub fn sketch3d(name: &str) -> TargetReference<PlacedSketch3d> {
+    TargetReference::new(format!("{PREFIX_3D}{name}"))
+}
+
+/// The name of the 3-D sketch whose target is named `target`, if it is one.
+pub fn sketch3d_name(target: &str) -> Option<&str> {
+    target.strip_prefix(PREFIX_3D)
 }

@@ -863,7 +863,7 @@ pub fn parameter_of<S: Scalar>(curve: &NurbCurve3D<S>, p: P3) -> GeopResult<S> {
     let target = Vector3::from_array(p.map(S::from_f64));
     let step = (hi_f - lo_f) / samples as f64;
     let seed = S::from_f64((best.1 - step).max(lo_f)).union(S::from_f64((best.1 + step).min(hi_f)));
-    Ok(curve.refine_parameter_at_point(seed, &target)?.sharpen())
+    Ok(curve.refine_parameter_at_point(seed, &target).sharpen())
 }
 
 impl SurfaceDef {

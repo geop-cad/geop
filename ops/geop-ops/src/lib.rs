@@ -1,61 +1,45 @@
-//! The elementary structures the kernel's operations work with: parts,
-//! operations, and programs made of operations. It defines what an
-//! operation is, but no operation itself: every operation lives in a
-//! `geop-ops-*` crate of its own, built on this one as a plugin — placing
-//! sketches in `geop-ops-sketch`, reference geometry in `geop-ops-datums`,
-//! extrude and revolve in `geop-ops-extrude-revolve`, booleans in
-//! `geop-ops-booleans`.
+//! The model layer the kernel's operations build on: what a part is made
+//! of between the steps of its program, and how a step refers to it. It
+//! defines no operation itself: every operation lives in a `geop-ops-*`
+//! crate of its own, implementing [`geop_core_program::operation::Operation`] —
+//! sketches in `geop-ops-sketch`, extrude and revolve in
+//! `geop-ops-extrude-revolve`, booleans in `geop-ops-booleans`.
 //!
-//! - [`part`]: a complete CAD [`Part`] — a [`geop_core_topology::Model`],
-//!   the sketches and datums used to build it, starting with the frame
-//!   [`ORIGIN`], the parts placed in it — each a part of its own, at a pose
-//!   — and a stable name for every entity in it (see
-//!   [Topological naming](#topological-naming)).
+//! A part is built as [`geop_core_program`] builds any program, target by target.
+//! Its targets are of a few kinds:
+//!
+//! - [`model()`]: the [`NamedModel`] — topology, a stable name for every
+//!   entity in it (see [Topological naming](#topological-naming)), and the
+//!   features that made its faces — defined by the first step that builds
+//!   a body and revised by every later one.
+//! - [`sketch`]: each sketch, with the plane it was placed on, defined by
+//!   its step.
+//! - [`sketch3d`]: each 3-D sketch, solved, defined by its step — which
+//!   also builds it into the model, as a wire.
+//!
+//! The program's parameters are its inputs, [`ParamValue`]s resolved from
+//! its [`parameters::Parameters`]; where its placed parts are is its state.
+//!
+//! - [`operation`]: how a step refers to what it builds on — entities by
+//!   name ([`EntityRef`]) — and what they are, resolved against a
+//!   [`operation::Lookup`]: a step's generator's, which records what it
+//!   read, or an editor's.
 //! - [`parameters`]: the named values a program's design is given by —
 //!   numbers, tables of variants, the part's colour — and the formulas that
 //!   read them.
-//! - [`assembly`]: the mates holding the parts placed in a part together,
-//!   and solving them.
-//! - [`operation`]: what an operation is. Built, a step maps a part and
-//!   its arguments to a new part; edited, it shows a
-//!   [`Form`](ui::Form) — fields and visuals — and has its fields set:
-//!
-//!   ```text
-//!   (part, args)                 -> form
-//!   (part, args, field, value)   -> args
-//!   ```
-//!
-//!   The arguments are plain, serializable design data: numbers, choices,
-//!   sketches, and references to entities of the part by name
-//!   ([`EntityRef`]).
-//! - [`ui`]: what an editor exchanges with the operations — the
-//!   [`StepEditEvent`](ui::StepEditEvent)s it sends (a dialog field used, a click or a drag
-//!   as a ray from the eye, a key) and the
-//!   [`Presentation`](ui::Presentation) it gets back — and the
-//!   [`StepEditor`](ui::StepEditor), which makes every operation answer
-//!   them alike: picking entities for a field, dragging a handle, hit tests
-//!   against visuals and against the part as drawn
-//!   ([`PartView`](ui::PartView)). An editor only renders primitives and
-//!   forwards raw input; every decision is made here.
-//! - [`Operations`]: a set of operations a program can use, as one
-//!   serializable enum; `#[derive(Operations)]` writes it. Which operations
-//!   an application offers is its own choice, so the set is defined there,
-//!   not here.
-//! - [`program`]: a [`Program`], an ordered list of steps, each an
-//!   operation with its arguments and an id of its own, that builds a part
-//!   from scratch. A program is design data: it serializes to JSON and
-//!   back without losing anything, and rebuilding the read-back program
-//!   gives the same part, name for name. [`ProgramRunner`] builds it
-//!   incrementally, stopping wherever an editor asks. The parts a program
-//!   places come from other programs, found in a [`Library`] — a
-//!   [`Workspace`] of files, which must not place each other in a cycle.
-//!
-//! # Parts
-//!
-//! [`Part`] only ever changes through its own methods, each of which forwards
-//! to the identically named `Model` operation and takes the name of every
-//! entity it creates. Its fields are private, so a part can't gain an entity
-//! without a name, or keep the name of one that no longer exists.
+//! - [`placed`]: the parts placed in a part, and the library they are
+//!   built with.
+//! - [`solids`]: the solids a part shows, wherever they are placed, each
+//!   of its own part's material, and their mass properties.
+//! - [`solving`]: the part's state solved as an editor does — settled,
+//!   dragged, set — and asked how free its parts are and what conflicts.
+//! - [`ui`]: the vocabulary an editor and the operations exchange
+//!   ([`geop_core_program::editing`]), building blocks for forms, and what
+//!   a step shows of the part besides its model: annotations drawn on it,
+//!   entries of its structure ([`ui::annotations`], [`ui::listing`]).
+//! - [`output`]: what is made of a part rather than in it — files written
+//!   from it, questions answered about it — by the exporters and
+//!   inspectors an editor offers.
 //!
 //! # Topological naming
 //!
@@ -89,43 +73,25 @@
 //! part placed keeps every name it has in its own file, so a reference into
 //! it is as stable as one into the part itself.
 
-// The derives in `geop_ops_derive` name this crate by its path, which has
-// to resolve inside it too.
-extern crate self as geop_ops;
-
 /// The scalar a program holds its design data in — a sketch's points, the
 /// poses of the parts it places, the values of its mates: what a file
 /// holds, read as sharp values and written as their midpoints. A part is
-/// built in any scalar; the design data is cast to it.
+/// built in it; algorithms take any scalar.
 pub type Design = geop_core_math::scalars::ScalInF64;
 
-pub mod mates;
+pub mod model;
 pub mod operation;
+pub mod output;
 pub mod parameters;
-pub mod part;
+pub mod placed;
 pub mod program;
+pub mod solids;
+pub mod solving;
 pub mod ui;
 
-pub use part::{
-    Annotation, BodyNames, BooleanOp, DatumId, EdgeDescription, Extension, FaceDescription,
-    Feature, FeatureTool, Instance, InstanceId, NameRegistry, Namer, ORIGIN, Part, PartDescription,
-    PlacedSketch, RefId, Sketch3dId, SketchId, validate_operation_id,
+pub use model::{
+    BodyNames, BooleanOp, EdgeDescription, FaceDescription, Feature, FeatureTool, NameRegistry,
+    NamedModel, Namer, ParamValue, PartDescription, PlacedSketch, RefId, model, sketch,
+    validate_operation_id,
 };
-
-pub use operation::{
-    Context, EntityRef, Operation, OperationGroup, OperationInfo, OperationTier, Operations,
-};
-pub use program::{
-    Cache, Files, FilesMut, Library, MemoryCache, NoFiles, Program, ProgramRunner, Step,
-    StepResult, Workspace, is_program,
-};
-
-#[doc(hidden)]
-/// What `#[derive(Operations)]` writes refers to, so a crate using it needs
-/// no dependencies of its own for it.
-pub mod __private {
-    pub use geop_core_math::{
-        geop_error::{GeopError, GeopResult},
-        scalars::Scalar,
-    };
-}
+pub use operation::{EntityRef, ORIGIN, origin_axis, origin_plane};

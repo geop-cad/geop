@@ -19,7 +19,7 @@ pub(crate) use translate::transform_control_point;
 
 use std::fmt::Display;
 
-use crate::aabb::compute_aabb;
+use crate::{aabb::compute_aabb, knot_insertion::pinned_clamped_end};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
@@ -57,7 +57,7 @@ pub(crate) fn dehomogenize<S: Scalar, const D: usize, const C: usize>(
 ///
 /// - `D = 4`: 3-D curve  — control points are `(wx, wy, wz, w)`.
 /// - `D = 3`: 2-D curve (pcurve) — control points are `(wu, wv, w)`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NurbCurve<S: Scalar, const D: usize> {
     pub degree: usize,
     pub control_points: Vec<Vector<S, D>>,
@@ -141,6 +141,17 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         crate::spline::breakpoints(&self.knot_vector, self.degree, self.control_points.len())
     }
 
+    /// If `hat` pins the parameter sharply onto an end of the domain that
+    /// is clamped (see [`crate::knot_insertion::pinned_clamped_end`]), the
+    /// curve's point there: its end control point, in `C = D - 1`
+    /// Cartesian coordinates.
+    pub(crate) fn pinned_end<const C: usize>(&self, hat: S) -> Option<Vector<S, C>> {
+        let n = self.control_points.len();
+        let first = pinned_clamped_end(hat, &self.knot_vector, n, self.degree)?;
+        let end = self.control_points[if first { 0 } else { n - 1 }];
+        Some(dehomogenize::<S, D, C>(&[end])[0])
+    }
+
     pub fn domain_as_scalar(&self) -> S {
         let (s, e) = self.domain();
         s.union(e)
@@ -165,31 +176,20 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     }
 }
 
-impl<S: Scalar> Display for NurbCurve2D<S> {
+impl<S: Scalar, const D: usize> Display for NurbCurve<S, D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let start = self
-            .evaluate(self.domain().0)
-            .map(|p| p.to_string())
-            .unwrap_or_else(|_| "N/A".to_string());
-        let end = self
-            .evaluate(self.domain().1)
-            .map(|p| p.to_string())
-            .unwrap_or_else(|_| "N/A".to_string());
-        write!(f, "NurbCurve({} -> {})", start, end)
-    }
-}
-
-impl<S: Scalar> Display for NurbCurve3D<S> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let start = self
-            .evaluate(self.domain().0)
-            .map(|p| p.to_string())
-            .unwrap_or_else(|_| "N/A".to_string());
-        let end = self
-            .evaluate(self.domain().1)
-            .map(|p| p.to_string())
-            .unwrap_or_else(|_| "N/A".to_string());
-        write!(f, "NurbCurve({} -> {})", start, end)
+        let at = |t: S| {
+            let mut p = [S::ZERO; D];
+            match self.evaluate_into(t, &mut p[..D - 1]) {
+                Ok(()) => {
+                    let coordinates: Vec<String> = p[..D - 1].iter().map(S::to_string).collect();
+                    format!("Vector{}({})", D - 1, coordinates.join(", "))
+                }
+                Err(_) => "N/A".to_string(),
+            }
+        };
+        let (start, end) = self.domain();
+        write!(f, "NurbCurve({} -> {})", at(start), at(end))
     }
 }
 

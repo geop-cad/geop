@@ -16,12 +16,13 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     union_find::UnionFind,
+    with_context,
 };
 use geop_core_topology::{Body, CoedgeGeometry, EdgeId, FaceId, ShellId, SolidId};
-use geop_ops::{Namer, Part};
+use geop_ops::{NamedModel, Namer};
 
 use crate::{
-    boolean::{Classified, classify_face},
+    boolean::{Classified, classify_face, copy_of},
     remesh::remesh::{RemeshParams, remesh},
 };
 
@@ -33,35 +34,24 @@ use crate::{
 /// creates (see [`crate::naming`]). Fails if the piece also reaches an edge
 /// named in `end`: nothing stopped the sheet.
 pub fn trim_up_to_next<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     sheet: ShellId,
     targets: &[SolidId],
     (start, end): (&HashSet<String>, &HashSet<String>),
     params: RemeshParams<S>,
 ) -> GeopResult<ShellId> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "trim_up_to_next(name={}, sheet={sheet}, targets={targets:?})",
-            namer.root()
-        ))
-    };
+    let ctx = with_context!(
+        "trim_up_to_next(name={}, sheet={sheet}, targets={targets:?})",
+        namer.root()
+    );
     // A copy of the target to imprint, so the target stays as it is.
-    let mut target_faces = Vec::new();
-    for &target in targets {
-        target_faces.extend(part.topology().solid_faces(target).with_context(&ctx)?);
-    }
-    let copy = part
-        .copy_faces(&target_faces, Some(namer.name(&["copy"])), |name| {
-            namer.name(&["copy", name])
-        })
-        .with_context(&ctx)?;
-    let copy = copy.solid.expect("built as a solid");
+    let copy = copy_of(model, namer, targets).with_context(&ctx)?;
 
-    let origins = remesh(part, namer, Body::Sheet(sheet), copy, params).with_context(&ctx)?;
-    let model = part.topology();
-    let faces = model.body_faces(Body::Sheet(sheet)).with_context(&ctx)?;
-    let copy_faces: HashSet<FaceId> = model
+    let origins = remesh(model, namer, Body::Sheet(sheet), copy, params).with_context(&ctx)?;
+    let topology = model.topology();
+    let faces = topology.body_faces(Body::Sheet(sheet)).with_context(&ctx)?;
+    let copy_faces: HashSet<FaceId> = topology
         .solid_faces(copy)
         .with_context(&ctx)?
         .into_iter()
@@ -70,9 +60,9 @@ pub fn trim_up_to_next<S: Scalar>(
     let mut classified = Classified::default();
     for &face in &faces {
         classes.push(
-            classify_face(model, face, copy, params, &mut classified)
+            classify_face(topology, face, copy, params, &mut classified)
                 .with_context(&ctx)
-                .with_context(&|e: GeopError| e.with_context(format!("classifying face {face}")))?,
+                .with_context(with_context!("classifying face {face}"))?,
         );
     }
 
@@ -81,15 +71,15 @@ pub fn trim_up_to_next<S: Scalar>(
     let mut users: HashMap<EdgeId, Vec<usize>> = HashMap::new();
     let mut crossed: HashSet<EdgeId> = HashSet::new();
     for (k, &face) in faces.iter().enumerate() {
-        for coedge in model.iterate_face_coedges(face) {
-            if let CoedgeGeometry::Edge(edge) = model.get_coedge(coedge)?.geometry {
+        for coedge in topology.iterate_face_coedges(face) {
+            if let CoedgeGeometry::Edge(edge) = topology.get_coedge(coedge)?.geometry {
                 users.entry(edge).or_default().push(k);
             }
         }
     }
     for &face in &copy_faces {
-        for coedge in model.iterate_face_coedges(face) {
-            if let CoedgeGeometry::Edge(edge) = model.get_coedge(coedge)?.geometry {
+        for coedge in topology.iterate_face_coedges(face) {
+            if let CoedgeGeometry::Edge(edge) = topology.get_coedge(coedge)?.geometry {
                 crossed.insert(edge);
             }
         }
@@ -131,7 +121,7 @@ pub fn trim_up_to_next<S: Scalar>(
         .filter(|&k| reached.contains(&pieces.find(k)))
         .map(|k| faces[k])
         .collect();
-    let kept = part
+    let kept = model
         .assemble_sheet(&[Body::Sheet(sheet), copy.into()], &keep)
         .with_context(&ctx)?;
     Ok(kept.expect("the start's piece is kept"))

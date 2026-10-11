@@ -104,15 +104,11 @@ impl<S: Scalar> NurbSurface<S, 4> {
         if len < 2 || !is_clamped_at(knots, degree, first) {
             return None;
         }
-        let row = |k: usize| -> Vec<Vector<S, 4>> {
-            if u_fixed {
-                self.control_points[k * nv..(k + 1) * nv].to_vec()
-            } else {
-                (0..nu).map(|i| self.control_points[i * nv + k]).collect()
-            }
-        };
         let (edge, next) = if first { (0, 1) } else { (len - 1, len - 2) };
-        Some([row(edge), row(next)])
+        Some([
+            self.control_row(u_fixed, edge),
+            self.control_row(u_fixed, next),
+        ])
     }
 
     /// The normal at a pole: the boundary row at the start (`first`) or end

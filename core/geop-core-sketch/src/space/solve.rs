@@ -1,8 +1,10 @@
-//! Solving a 3-D sketch with the solver every system of the kernel shares
-//! ([`geop_core_math::solvers::system`]), the way a planar sketch is solved (see
+//! Solving a 3-D sketch the way a planar sketch is solved (see
 //! [`crate::solve`]): every constraint a [`Residual`] of the sketch's
 //! variables, each a length, computed as a [`geop_core_math::dual::Dual`] of
-//! the sketch's scalar so its gradient is exact and its value an enclosure.
+//! the sketch's scalar so its gradient is exact and its value an enclosure;
+//! [`geop_core_math::solvers::system`] holds them, pulls a dragged point,
+//! and encloses the exact solution. Everything this module asks of the
+//! solver is in [`Problem`]'s methods and [`Sketch3d`]'s below them.
 //!
 //! **Variables.** Each class of coincident points (see
 //! [`Sketch3d::point_classes`]) is one `(x, y, z)`. A point on a line or on
@@ -24,7 +26,7 @@
 use std::collections::BTreeMap;
 
 use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve3D};
-use geop_core_math::solvers::system::{self, Mobility, Param, Phase, Pull, Residual, Value};
+use geop_core_math::solvers::system::{self, Phase};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::{Ring, Scalar, as_f64},
@@ -38,7 +40,7 @@ use super::{
 };
 use crate::{
     ConstraintId, CurveId, PointId,
-    solve::{parameters, solver_residuals, values},
+    variables::{Residuals, Standing, Variables},
 };
 
 /// The most variables one constraint depends on: a tangency between two
@@ -445,48 +447,24 @@ impl<'a, S: Scalar> Problem<'a, S> {
         Ok(())
     }
 
-    fn residuals_of(&self) -> Vec<SketchResidual<'_, 'a, S>> {
-        self.constraints
-            .iter()
-            .map(|prepared| SketchResidual {
-                problem: self,
-                prepared,
-            })
-            .collect()
-    }
-
-    /// What a solve may do with each variable: change it as far as the
-    /// constraints need if it is free, else not at all.
-    fn mobility(&self) -> Vec<Mobility> {
-        self.layout
-            .free
-            .iter()
-            .map(|&f| if f { Mobility::Held } else { Mobility::Fixed })
-            .collect()
-    }
-
-    /// How the sketch stands at the variables `params` are.
+    /// How the sketch stands at the variables `params` — from the
+    /// enclosure of the groups a solve that ended there solved, if given.
     fn report(
         &self,
-        params: &[Param<S>],
-        residuals: &[&dyn Residual<S, MAX_LOCAL_VARS>],
-        iterations: usize,
+        params: Vec<S>,
         phases: Vec<Phase<S>>,
+        solved: Option<system::Enclosure<S>>,
     ) -> GeopResult<Solve3dReport<S>> {
-        let solved = system::report(params, &self.mobility(), residuals, self.scale)?;
-        let failed_constraints = solved
-            .failed
-            .iter()
+        let variables = Spatial::new(self, params, Vec::new());
+        let Standing {
+            held,
+            dof,
+            free: free_vars,
+            unproven,
+        } = variables.standing(&variables.start(), solved)?;
+        let failed_constraints = (held.failed.iter())
             .map(|&i| self.constraints[i].id)
             .collect::<Vec<_>>();
-        let (free_offsets, dof) =
-            system::free_variables(params, &self.mobility(), residuals, self.scale);
-        let free_vars: Vec<bool> = self
-            .layout
-            .offsets()
-            .iter()
-            .map(|o| o.is_some_and(|o| free_offsets[o]))
-            .collect();
         let free_points = self
             .layout
             .point_var
@@ -495,15 +473,52 @@ impl<'a, S: Scalar> Problem<'a, S> {
             .collect();
         Ok(Solve3dReport {
             converged: failed_constraints.is_empty(),
-            max_residual: solved.max_residual,
-            iterations,
+            max_residual: held.max_residual,
+            iterations: phases.iter().map(|p| p.iterations).sum(),
             phases,
             dof,
             free_points,
             failed_constraints,
+            unproven,
         })
     }
 }
+
+impl<S: Scalar> Residuals<S, MAX_LOCAL_VARS> for Problem<'_, S> {
+    fn offsets(&self) -> Vec<Option<usize>> {
+        self.layout.offsets()
+    }
+
+    fn constraints(&self) -> usize {
+        self.constraints.len()
+    }
+
+    fn reads(&self, c: usize) -> &[usize] {
+        &self.constraints[c].vars
+    }
+
+    fn residuals(&self, c: usize, values: &[Dual<S>], out: &mut Vec<Dual<S>>) -> GeopResult<()> {
+        let prepared = &self.constraints[c];
+        // Only the variables it depends on are read: the rest are zero.
+        let mut x = vec![Dual::cst(S::ZERO); self.layout.free.len()];
+        for (&i, &v) in prepared.vars.iter().zip(values) {
+            x[i] = v;
+        }
+        Problem::residuals(self, prepared, &x, out)
+    }
+
+    fn name(&self, c: usize) -> String {
+        let c = &self.constraints[c];
+        format!("{} {:?}", c.id, c.constraint)
+    }
+
+    fn scale(&self) -> S {
+        self.scale
+    }
+}
+
+/// The 3-D sketch's system (see [`Variables`]).
+type Spatial<'p, 'a, S> = Variables<'p, S, Problem<'a, S>, MAX_LOCAL_VARS>;
 
 /// The parameter of `curve` whose point is nearest `p`: the nearest of
 /// evenly spaced samples, polished by Newton's method on `(C(t) - p) .
@@ -541,33 +556,13 @@ fn nearest_parameter<S: Scalar>(curve: &NurbCurve3D<S>, p: &Vector3<S>) -> GeopR
     Ok(S::from_f64(t))
 }
 
-/// One constraint as a residual of the variables it depends on.
-struct SketchResidual<'p, 'a, S: Scalar> {
-    problem: &'p Problem<'a, S>,
-    prepared: &'p Prepared<'a, S>,
-}
-
-impl<S: Scalar> Residual<S, MAX_LOCAL_VARS> for SketchResidual<'_, '_, S> {
-    fn params(&self) -> &[usize] {
-        &self.prepared.vars
-    }
-
-    fn eval(&self, values: &[Value<Dual<S>>], out: &mut Vec<Dual<S>>) -> GeopResult<()> {
-        // Only the variables it depends on are read: the rest are zero.
-        let mut x = vec![Dual::cst(S::ZERO); self.problem.layout.free.len()];
-        for (&i, v) in self.prepared.vars.iter().zip(values) {
-            x[i] = v.scalar()?;
-        }
-        self.problem.residuals(self.prepared, &x, out)
-    }
-}
-
 /// The outcome of solving a 3-D sketch.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(bound = "S: Scalar")]
 pub struct Solve3dReport<S: Scalar> {
-    /// Every constraint holds, to [`geop_core_math::solvers::system::RELATIVE_TOLERANCE`] of
-    /// the sketch's size.
+    /// Every constraint holds, to
+    /// [`geop_core_math::solvers::system::RELATIVE_TOLERANCE`] of the
+    /// sketch's size.
     pub converged: bool,
     /// The largest remaining residual, a length: an upper bound.
     #[serde(with = "as_f64")]
@@ -580,6 +575,11 @@ pub struct Solve3dReport<S: Scalar> {
     pub free_points: BTreeMap<PointId, bool>,
     /// The constraints that do not hold.
     pub failed_constraints: Vec<ConstraintId>,
+    /// Why no true solution near where the points are is proven, if none
+    /// is: the constraints that conflict there, or what is singular (see
+    /// [`Sketch3d::enclose`]).
+    #[serde(default)]
+    pub unproven: Vec<String>,
 }
 
 impl<S: Scalar> Sketch3d<S> {
@@ -597,32 +597,20 @@ impl<S: Scalar> Sketch3d<S> {
         drags: &[(PointId, Vector3<S>)],
     ) -> GeopResult<Solve3dReport<S>> {
         let problem = Problem::new(self)?;
-        let residuals = problem.residuals_of();
-        let start = parameters(&problem.start);
-        let solver = solver_residuals(&residuals);
-        let pulls: Vec<Pull<S>> = drags
+        let pulls: Vec<(usize, S)> = drags
             .iter()
             .flat_map(|&(point, target)| {
                 let i = problem.layout.point_var[&point];
-                (0..3).map(move |k| Pull::Scalar {
-                    param: i + k,
-                    target: target[k],
-                })
+                (0..3).map(move |k| (i + k, target[k]))
             })
             .collect();
-        let solved = system::solve(&start, &problem.mobility(), &solver, problem.scale, &pulls)?;
-        let report = problem.report(
-            &solved.params,
-            &solver,
-            solved.report.iterations,
-            solved.report.phases,
-        )?;
+        let variables = Spatial::new(&problem, problem.start.clone(), pulls);
+        let solved = variables.system().solve(&variables.start())?;
+        let x = variables.all(&solved.values);
+        let report = problem.report(x.clone(), solved.phases, Some(solved.enclosure))?;
         // Where the solve put the points is the sketch's state, and a free
         // choice: sharp.
-        let x: Vec<S> = values(&solved.params)
-            .into_iter()
-            .map(Scalar::sharpen)
-            .collect();
+        let x: Vec<S> = x.into_iter().map(Scalar::sharpen).collect();
         problem.layout.write(self, &x);
         Ok(report)
     }
@@ -631,41 +619,25 @@ impl<S: Scalar> Sketch3d<S> {
     /// move — without moving anything.
     pub fn check(&self) -> GeopResult<Solve3dReport<S>> {
         let problem = Problem::new(self)?;
-        let residuals = problem.residuals_of();
-        let params = parameters(&problem.start);
-        let solver = solver_residuals(&residuals);
-        problem.report(&params, &solver, 0, Vec::new())
+        problem.report(problem.start.clone(), Vec::new(), None)
     }
 
     /// The sketch's geometry as the kernel builds on it: an enclosure of
     /// the exact solution of its constraints near the solved points, every
     /// coordinate they leave free exactly as drawn (see
-    /// [`system::enclose`]). A sketch whose constraints do not hold is built
+    /// [`geop_core_math::solvers::system::System::enclose`]). A sketch whose constraints do not hold is built
     /// as drawn. Fails where the solution cannot be proven.
     pub fn enclose<T: Scalar>(&self) -> GeopResult<Enclosure3d<T>> {
         let ctx = |e: GeopError| e.with_context("enclosing the 3-D sketch's solution");
         let problem = Problem::new(self).map_err(ctx)?;
-        let residuals = problem.residuals_of();
-        let params = parameters(&problem.start);
-        let solver = solver_residuals(&residuals);
-        if !problem.report(&params, &solver, 0, Vec::new())?.converged {
+        let variables = Spatial::new(&problem, problem.start.clone(), Vec::new());
+        let start = variables.start();
+        if !variables.system().held(&start)?.converged {
             return Ok(Enclosure3d::as_drawn(self));
         }
-        let enclosed = system::enclose(&params, &problem.mobility(), &solver, problem.scale)
-            .map_err(|e| {
-                e.named(|i| {
-                    let c = &problem.constraints[i];
-                    format!("{} {:?}", c.id, c.constraint)
-                })
-            })
-            .map_err(ctx)?;
+        // What is fixed is as given; the rest as enclosed.
+        let x = variables.enclosed(&start).map_err(ctx)?;
         let layout = &problem.layout;
-        let x: Vec<S> = problem
-            .start
-            .iter()
-            .zip(layout.offsets())
-            .map(|(&given, offset)| offset.map_or(given, |o| enclosed[o]))
-            .collect();
         Ok(Enclosure3d {
             points: layout
                 .point_var

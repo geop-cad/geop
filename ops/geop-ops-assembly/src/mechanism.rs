@@ -1,632 +1,589 @@
-//! The mechanism of a part: its mates as constraints, joints and couplings
-//! between the rigid bodies placed in it (see [`Mechanism`]), and solving,
-//! checking and measuring them — the methods of [`PartMates`] — where
-//! [`geop_ops::mates`] does the solving.
+//! The mechanism of a part: its mates as constraints on the program's state
+//! — where its placed parts are, how its joints are turned — and what they
+//! declare for solving it: the parts a fixed mate holds, each joint's
+//! coordinates as values a solve moves and a user sets. Solving, checking
+//! and measuring is generic ([`geop_ops::solving`]).
+//!
+//! A mate is worked out in two steps, each a target of the run. Its
+//! entities are resolved once, in the frames of the parts they are of
+//! ([`resolve`], the target [`crate::mate`]), which reads no state. Its
+//! constraint on the state ([`constrain`]) places those where the state
+//! has the parts, and is all that is made again when a part moves. A
+//! joint's limits are constraints of their own ([`limit`]), which hold
+//! anywhere short of them.
+//!
+//! A constraint's derivatives are by the state's own steps (see
+//! [`geop_core_program::part::State`]): a pose's by a twist in its own frame, a
+//! coordinate's by what is added to it. They are exact, through every pose
+//! a placement reads — a part placed in a placed part moves with both —
+//! computed in dual numbers, one state at a time.
+//!
+//! The editor solves ([`geop_ops::solving::solve`]): the solve moves the
+//! state until the constraints the run reported hold, bringing only them up
+//! to date for every state it tries, and the editor runs the program again
+//! with the state found.
+
+use std::collections::BTreeMap;
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::Pose,
-    scalars::Scalar,
+    scalars::{Ring, Scalar},
+    solvers::system::tolerance,
     vector::Vector3,
     with_context,
 };
-use geop_ops::mates::{
-    Assembly, Body, Connector, Constraint, Coordinate, Coupling, Feature, Joint, JointEnd, Motion,
-    Pull as BodyPull,
+use geop_core_program::{
+    constraint::{Bound, Constraint},
+    part::Retrieve,
+    solve::Mobility,
+    target::TargetReference,
 };
 use geop_ops::{
-    Instance, Part,
-    operation::{Aspects, EntityRef, INSTANCE_SEPARATOR},
-    part::{ParamValue, State},
-    ui::Drag,
+    Design, ParamValue,
+    model::model_or_empty,
+    operation::{Aspects, Build, BuildReader, BuildView, EntityRef, Input, Lookup, Scope, Seen},
+    placed::{locate, locate_in, moved_by, within},
+    solving::{Setting, Settings, Unknown, largest, scale_of, settings_of, unknown},
 };
 
-use crate::mates::{
-    JointInfo, JointValue, Mate, MateFreedom, MateKind, MateReport, Mates, joint_parameter,
+use crate::{
+    joints::{Connector, JointKind, Motion, joint_residuals, measure},
+    mates::{Mate, MateKind, On, Resolved, joint_parameter, mate, mate_name},
+    residuals::{D, Geometry, Kind, residuals},
 };
-
-/// A rigid body of a solve: a part placed in the part — or a part placed
-/// in one of those, however deep.
-pub struct PlacedBody<'p, S: Scalar> {
-    /// Its name in the part: `hinge/pin`.
-    pub name: String,
-    /// The parameter of the part its pose is — relative to `parent`'s
-    /// frame: `hinge/pin.pose` — if it is one: a copy of a pattern goes
-    /// where the pattern puts it.
-    pub parameter: Option<String>,
-    pub instance: &'p Instance<S>,
-    /// The body it is placed in, if it is placed in a part placed.
-    pub parent: Option<usize>,
-    /// Where it is in the part.
-    pub world: Pose<S>,
-}
-
-/// An entity of a mate, resolved: the body it moves with, what it is there,
-/// itself as that body's part names it, and the part.
-type Resolved<'p, S> = (Option<usize>, Aspects<S>, EntityRef, &'p Part<S>);
-
-/// The rigid bodies of a part and the mates between them: the assembly,
-/// the bodies as placed — in the order of [`Assembly::bodies`] — and the
-/// names of its mates: constraints, then joints, then couplings, as
-/// [`Assembly::solve`] reports them.
-pub struct Mechanism<'p, S: Scalar> {
-    pub assembly: Assembly<S>,
-    pub bodies: Vec<PlacedBody<'p, S>>,
-    pub names: Vec<String>,
-}
-
-impl<S: Scalar> Mechanism<'_, S> {
-    /// The name of the constraint `constraint`.
-    pub fn constraint_name(&self, constraint: usize) -> &str {
-        &self.names[constraint]
-    }
-
-    /// The name of joint `joint`.
-    pub fn joint_name(&self, joint: usize) -> &str {
-        &self.names[self.assembly.constraints.len() + joint]
-    }
-
-    /// The name of coupling `coupling`.
-    pub fn coupling_name(&self, coupling: usize) -> &str {
-        &self.names[self.assembly.constraints.len() + self.assembly.joints.len() + coupling]
-    }
-}
 
 thread_local! {
     static MATES_RESOLVED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// How many mates this thread has resolved — their entities found and
-/// measured on the parts placed — to solve or check them, ever. What any
-/// question about the mates costs grows with this, so a test can bound the
-/// work an edit does by the mates it touches, rather than time it: asking
-/// the whole assembly something once per step is quadratic, and shows here
-/// at any size.
+/// measured on the parts placed — ever. What any question about the mates
+/// costs grows with this, so a test can bound the work an edit does by the
+/// mates it touches, rather than time it.
 pub fn mates_resolved() -> usize {
     MATES_RESOLVED.get()
 }
 
-/// The bodies of a solve in `part`: its instances, and inside every one, the
-/// instances of the part it places — named, and their parameters named,
-/// behind `prefix`, and placed in the body `parent` at `frame`. Those
-/// placed in a copy of a pattern, which goes where the pattern puts it, go
-/// with it: they have no parameter either — unless `parametrized`.
-fn placed<'p, S: Scalar>(
-    part: &'p Part<S>,
-    prefix: &str,
-    parent: Option<usize>,
-    frame: &Pose<S>,
-    parametrized: bool,
-    out: &mut Vec<PlacedBody<'p, S>>,
-) {
-    for (id, instance) in part.instances() {
-        let name = format!("{prefix}{}", part.name_of(id).unwrap_or_default());
-        let world = frame.compose(&instance.pose);
-        out.push(PlacedBody {
-            name: name.clone(),
-            parameter: instance
-                .parameter
-                .as_ref()
-                .filter(|_| parametrized)
-                .map(|p| format!("{prefix}{}", p.name)),
-            instance,
-            parent,
-            world,
-        });
-        let body = Some(out.len() - 1);
-        placed(
-            &instance.part,
-            &format!("{name}{INSTANCE_SEPARATOR}"),
-            body,
-            &world,
-            parametrized && instance.parameter.is_some(),
-            out,
-        );
+/// The size of the placed parts `bodies` — at least one: what a mate
+/// between them turns a turn into a length by.
+fn size(reader: &mut BuildReader, bodies: &[&Option<String>]) -> GeopResult<Design> {
+    largest((bodies.iter().copied().flatten()).map(|body| Ok(locate(reader, body)?.instance)))
+}
+
+/// The geometry the entity `entity` of `mate`, a constraint of `kind`, is
+/// to it, in `lookup`.
+fn geometry_in(
+    kind: &Kind,
+    mate: &Mate,
+    entity: &EntityRef,
+    lookup: &mut (impl Lookup<Design> + ?Sized),
+) -> GeopResult<Geometry> {
+    let aspects = Aspects::of(entity, lookup)?;
+    kind.geometry(&aspects)
+        .ok_or_else(|| GeopError::new(format!("{entity} is not {}", mate.needs())))
+}
+
+/// The connector the entity `entity` is to a joint, in `lookup`: what it
+/// makes one of itself, or the frame it gives.
+fn connector_in(
+    entity: &EntityRef,
+    lookup: &mut (impl Lookup<Design> + ?Sized),
+) -> GeopResult<Connector<Design>> {
+    let aspects = Aspects::of(entity, lookup)?;
+    match Connector::of(&aspects) {
+        Some(connector) => connector,
+        None => {
+            let frame = Aspects::frame_on(entity, None, lookup)?;
+            Connector::new(*frame.origin(), *frame.w(), Some(*frame.u()))
+        }
     }
 }
 
-/// The mates of the part, and of every part placed in it, as the part
-/// names them: those of a part placed hold its parts as they held them
-/// in it, named — and the joints a coupling of it ties named — behind
-/// its name. Not those that fix a part: what is fixed in a part placed
-/// is where it is placed, which the part it is placed in decides.
-fn all_mates<S: Scalar>(part: &Part<S>, bodies: &[PlacedBody<'_, S>]) -> Vec<(String, Mate)> {
-    let mut mates: Vec<(String, Mate)> = part
-        .mates()
-        .map(|(name, mate)| (name.to_string(), mate.clone()))
-        .collect();
-    for body in bodies {
-        let behind = |name: &str| format!("{}{INSTANCE_SEPARATOR}{name}", body.name);
-        for (name, mate) in body.instance.part.mates().filter(|(_, m)| !m.is_fixed()) {
-            mates.push((
-                behind(name),
-                Mate {
-                    kind: mate.kind,
-                    entities: mate
-                        .entities
-                        .iter()
-                        .map(|e| e.in_instance(&body.name))
-                        .collect(),
-                    joints: mate.joints.iter().map(|j| behind(j)).collect(),
-                },
-            ));
-        }
-    }
-    mates
-}
-
-/// The mates as constraints, joints and couplings between rigid bodies
-/// — its instances, and the instances of every part placed in it,
-/// however deep (see [`placed`]) — each free unless a fixed mate holds
-/// it, a copy of a pattern, or, with `only`, other than the one whose
-/// pose is that parameter. A joint's coordinates are the state's, held if `held`
-/// names them, or measured where the state has none. Mates still
-/// missing an entity hold nothing, and are left out, and so are those
-/// `named` does not pick — with a coupling of a joint it does not.
-fn assembly<'p, S: Scalar>(
-    part: &'p Part<S>,
-    only: Option<&str>,
-    held: &[String],
-    named: &dyn Fn(&str) -> bool,
-) -> GeopResult<Mechanism<'p, S>> {
-    let mut bodies_of = Vec::new();
-    placed(part, "", None, &Pose::identity(), true, &mut bodies_of);
-    let body_named: std::collections::HashMap<&str, usize> = bodies_of
-        .iter()
-        .enumerate()
-        .map(|(i, b)| (b.name.as_str(), i))
-        .collect();
-    // The body an entity moves with — the innermost one it is of — and
-    // the entity as that body's part names it.
-    let body_of = |entity: &EntityRef| -> (Option<usize>, EntityRef) {
-        let mut body: Option<usize> = None;
-        let mut rest = entity.clone();
-        while let Some((instance, inner)) = rest.split_instance() {
-            let name = match body {
-                Some(b) => format!("{}{INSTANCE_SEPARATOR}{instance}", bodies_of[b].name),
-                None => instance,
-            };
-            let Some(&found) = body_named.get(name.as_str()) else {
-                break;
-            };
-            body = Some(found);
-            rest = inner;
-        }
-        (body, rest)
+/// What `what` makes of the entity `entity` of the part read, on the body
+/// it moves with: in the frame of the placed part it is of, or of the part
+/// itself.
+fn on<T>(
+    reader: &mut BuildReader,
+    entity: &EntityRef,
+    what: impl Fn(&EntityRef, &mut dyn Lookup<Design>) -> GeopResult<T>,
+) -> GeopResult<On<T>> {
+    let (body, local) = match within(reader, entity) {
+        Some((path, placed, local)) => (Some((path, placed.component.view())), local),
+        None => (None, entity.clone()),
     };
-    let mates = all_mates(part, &bodies_of);
-    let mut held_fast = vec![false; bodies_of.len()];
-    for (name, mate) in mates
-        .iter()
-        .filter(|(_, m)| m.is_fixed() && m.is_complete())
-    {
-        let entity = &mate.entities[0];
-        let Some(body) = body_of(entity).0 else {
-            return Err(GeopError::new(format!(
-                    "{entity} is of this part itself, which never moves: a fixed mate holds a part placed in it"
-                ))
-                .with_context(format!("mate {name:?}")));
-        };
-        held_fast[body] = true;
-    }
-    let mut scale = S::ONE;
-    let mut bodies = Vec::new();
-    for (b, body) in bodies_of.iter().enumerate() {
-        let center = match body.instance.part.bounds() {
-            Some([lo, hi]) => {
-                let diagonal = hi.sub(&lo).norm().sharpen();
-                if diagonal.definitely_greater(scale) {
-                    scale = diagonal;
-                }
-                lo.add(&hi).prod_scalar(S::ONE.div(S::TWO)?).sharpen()
-            }
-            None => Vector3::zero(),
-        };
-        bodies.push(Body {
-            pose: body.world,
-            free: !held_fast[b]
-                && body
-                    .parameter
-                    .as_deref()
-                    .is_some_and(|p| only.is_none_or(|o| o == p)),
-            center,
-        });
-    }
-    let mut assembly = Assembly::new(bodies, Vec::new(), scale);
-    let (mut constraint_names, mut joint_names, mut coupling_names) =
-        (Vec::new(), Vec::new(), Vec::new());
-    let mut couplings = Vec::new();
-    for (name, mate) in &mates {
-        if !mate.is_complete() || !named(name) {
-            continue;
+    let what = match &body {
+        Some((_, view)) => what(&local, &mut Seen::new(*view))?,
+        None => {
+            // Before the first step that builds any topology, an entity of
+            // the part itself can only be one that needs none: its origin.
+            let built = model_or_empty(reader);
+            what(
+                &local,
+                &mut Scope {
+                    model: &built,
+                    reader,
+                },
+            )?
         }
-        MATES_RESOLVED.set(MATES_RESOLVED.get() + 1);
-        let ctx = with_context!("mate {name:?}");
-        // The body an entity moves with, and what it is there.
-        let resolve = |entity: &EntityRef| -> GeopResult<Resolved<'_, S>> {
-            let (body, rest) = body_of(entity);
-            let (part, local) = match body {
-                Some(b) => (&*bodies_of[b].instance.part, rest),
-                None => (part, entity.clone()),
-            };
-            // What an entity of a placed part is, is the same for every
-            // instance of it.
-            let aspects = part.memo(&format!("{local:?}"), || Aspects::of(&local, part))?;
-            Ok((body, aspects, local, part))
-        };
-        match mate.kind {
-            MateKind::Constraint(kind) => {
-                let feature = |entity: &EntityRef| -> GeopResult<Feature<S>> {
-                    let (body, aspects, ..) = resolve(entity)?;
-                    let geometry = Mate::geometry(&kind, &aspects).ok_or_else(|| {
-                        GeopError::new(format!("{entity} is not {}", mate.needs()))
-                    })?;
-                    Ok(Feature { body, geometry })
-                };
-                let [a, b] = mate.pair().expect("complete");
-                let constraint = Constraint {
-                    kind: kind.cast(),
-                    a: feature(a).with_context(ctx)?,
-                    b: feature(b).with_context(ctx)?,
-                };
-                constraint.validate().with_context(ctx)?;
-                assembly.constraints.push(constraint);
-                constraint_names.push(name.clone());
-            }
-            MateKind::Joint(kind) => {
-                let end = |entity: &EntityRef| -> GeopResult<JointEnd<S>> {
-                    let (body, aspects, local, part) = resolve(entity)?;
-                    let connector = match Mate::connector(&aspects) {
-                        Some(connector) => connector?,
-                        // Anything else is used by the frame it gives.
-                        None => {
-                            let frame = Aspects::frame_on(&local, None, part)?;
-                            Connector::new(*frame.origin(), *frame.w(), Some(*frame.u()))?
-                        }
-                    };
-                    Ok(JointEnd { body, connector })
-                };
-                let [a, b] = mate.pair().expect("complete");
-                let mut joint = Joint {
-                    kind: kind.cast(),
-                    a: end(a).with_context(ctx)?,
-                    b: end(b).with_context(ctx)?,
-                    angle: Coordinate::free(S::ZERO),
-                    distance: Coordinate::free(S::ZERO),
-                };
-                joint.validate().with_context(ctx)?;
-                let measured =
-                    joint.measure(|b| b.map_or(Pose::identity(), |b| assembly.bodies[b].pose));
-                for (k, motion) in Motion::ALL.into_iter().enumerate() {
-                    if !kind.moves(motion) {
-                        continue;
-                    }
-                    let parameter = joint_parameter(name, motion);
-                    let value = match part.input(&parameter) {
-                        Some(ParamValue::Number(v)) => v.cast(),
-                        Some(other) => {
-                            return Err(GeopError::new(format!(
-                                "the joint coordinate {parameter:?} is a number, but the program gives it {other:?}"
-                            )));
-                        }
-                        // Where its parts are: a seed, a free choice.
-                        None => S::from_f64(measured[k]),
-                    };
-                    *joint.coordinate_mut(motion) = Coordinate {
-                        value,
-                        held: held.contains(&parameter),
-                    };
-                }
-                assembly.joints.push(joint);
-                joint_names.push(name.clone());
-            }
-            MateKind::Coupling(kind) => {
-                couplings.push((name.clone(), kind, mate.joints.clone()));
-            }
-            // Held already, above.
-            MateKind::Anchor(_) => {}
-        }
-    }
-    for (name, kind, joints) in couplings {
-        if !joints.iter().all(|j| named(j)) {
-            continue;
-        }
-        let ctx = with_context!("mate {name:?}");
-        let index = |joint: &String| {
-            joint_names
-                .iter()
-                .position(|n| n == joint)
-                .ok_or_else(|| GeopError::new(format!("there is no joint {joint:?}")))
-                .with_context(ctx)
-        };
-        let coupling = Coupling {
-            kind: kind.cast(),
-            a: index(&joints[0])?,
-            b: index(&joints[1])?,
-        };
-        coupling
-            .validate(&assembly.joints)
-            .map_err(|e| e.with_context(format!("joints {:?} and {:?}", joints[0], joints[1])))
-            .with_context(ctx)?;
-        assembly.couplings.push(coupling);
-        coupling_names.push(name);
-    }
-    let mut names = constraint_names;
-    names.extend(joint_names);
-    names.extend(coupling_names);
-    Ok(Mechanism {
-        assembly,
-        bodies: bodies_of,
-        names,
+    };
+    Ok(On {
+        body: body.map(|(name, _)| name),
+        what,
+        entity: entity.clone(),
     })
 }
-/// The mates of a part, and solving them (see the module docs of [`crate::mates`]).
-pub trait PartMates<S: Scalar> {
-    /// Adds `mate` under `name`: a mate is no entity — nothing is built on
-    /// it — but its name keeps it apart from the other mates. Fails if the
-    /// name is taken.
-    fn add_mate(&mut self, mate: Mate, name: impl Into<String>) -> GeopResult<()>;
 
-    /// Every mate of the part itself, by name.
-    fn mates(&self) -> impl Iterator<Item = (&str, &Mate)>;
-
-    /// The part's mechanism where its parts are now: every mate, each
-    /// joint's coordinates where the state has them — or measured where
-    /// their parts are — and every free body free (see
-    /// [`Part::solve_mates`]).
-    fn mechanism(&self) -> GeopResult<Mechanism<'_, S>>;
-
-    /// Where the instances — and the parts placed in those placed flexibly
-    /// — would have to be for every mate to hold, as little away from where
-    /// they are as the mates allow, after `drags` pulled them — only the one
-    /// whose pose is the parameter `only`, if given, and never a fixed one —
-    /// and where their joints are, every coordinate within its limits and
-    /// those `held` names kept where the state has them: the new values of
-    /// the parameters the poses of those it moved are, each relative to the part it is
-    /// placed in, and of the joints' coordinates, and which mates hold
-    /// there. Fails for a mate that cannot hold between its entities at
-    /// all.
-    fn solve_mates(
-        &self,
-        only: Option<&str>,
-        held: &[String],
-        drags: &[Drag<S>],
-    ) -> GeopResult<(State, MateReport)>;
-
-    /// Solves the mates with the joint coordinates `set` held where the
-    /// state has them: the parts move to them as a mechanism's joints would
-    /// move them — every other joint keeping its coordinates, if the mates
-    /// let it, as they do along a serial chain; where they do not, round a
-    /// closed loop, the other joints give way.
-    fn solve_joints(&self, set: &[String]) -> GeopResult<(State, MateReport)>;
-
-    /// Which of the mates `named` picks — by name — hold where the
-    /// instances are now: `|_| true` for all of them. Checking only some
-    /// costs only theirs.
-    fn check_mates(&self, named: impl Fn(&str) -> bool) -> GeopResult<MateReport>;
-
-    /// Every joint of the part and of the parts placed flexibly in it, with
-    /// where its coordinates are and their limits.
-    fn joints(&self) -> GeopResult<Vec<JointInfo>>;
-
-    /// How free every placed part is where it is now, and — if the mates do
-    /// not all hold — a smallest set of them that conflict (see
-    /// `geop_ops::mates::Assembly::conflicting`): as many solves as
-    /// there are mates, so for a dialog to show, not for every drag.
-    fn mate_freedom(&self) -> GeopResult<MateFreedom>;
-
-    /// The parameters solving the mates sets: the poses of the placed parts
-    /// — and of those in the parts placed flexibly — and the coordinates of
-    /// the joints. What a program's file keeps of its state.
-    fn solved_parameters(&self) -> Vec<String>;
+/// The mate `name`, `mate`, resolved in the part read: the generator of its
+/// target [`crate::mate`]. A fixed mate fixes the part its entity is of.
+pub(crate) fn resolve(
+    reader: &mut BuildReader,
+    (name, mate): &(String, Mate),
+) -> GeopResult<Resolved> {
+    MATES_RESOLVED.set(MATES_RESOLVED.get() + 1);
+    let ctx = with_context!("mate {name:?}");
+    let resolved = match mate.kind {
+        MateKind::Constraint(kind) => {
+            let [a, b] = mate
+                .pair()
+                .ok_or_else(|| GeopError::new("it needs two entities"))
+                .with_context(ctx)?;
+            let geometry =
+                |e: &EntityRef, l: &mut dyn Lookup<Design>| geometry_in(&kind, mate, e, l);
+            let (a, b) = (on(reader, a, geometry)?, on(reader, b, geometry)?);
+            // Whether the kind can hold between the two is a question of
+            // their geometry alone, whatever bodies they are of.
+            kind.fits(&a.what, &b.what).with_context(ctx)?;
+            Resolved::Constraint { kind, a, b }
+        }
+        MateKind::Joint(kind) => {
+            let [a, b] = mate
+                .pair()
+                .ok_or_else(|| GeopError::new("it needs two frames"))
+                .with_context(ctx)?;
+            kind.validate().with_context(ctx)?;
+            Resolved::Joint {
+                kind,
+                a: on(reader, a, |e, l| connector_in(e, l))?,
+                b: on(reader, b, |e, l| connector_in(e, l))?,
+            }
+        }
+        MateKind::Coupling(kind) => match mate.joints.as_slice() {
+            [a, b] => Resolved::Coupling {
+                kind,
+                joints: [a.clone(), b.clone()],
+            },
+            _ => return Err(GeopError::new("it needs two joints")).with_context(ctx),
+        },
+        MateKind::Anchor(_) => {
+            let [entity] = mate.entities.as_slice() else {
+                return Err(GeopError::new("it needs one entity")).with_context(ctx);
+            };
+            match within(reader, entity) {
+                Some((body, _, _)) => Resolved::Fixed { body },
+                None => {
+                    return Err(GeopError::new(format!(
+                        "{entity} is of this part itself, which never moves: a fixed mate holds a part placed in it"
+                    )))
+                    .with_context(ctx);
+                }
+            }
+        }
+    };
+    Ok(resolved)
 }
 
-impl<S: Scalar> PartMates<S> for Part<S> {
-    fn add_mate(&mut self, mate: Mate, name: impl Into<String>) -> GeopResult<()> {
-        let name = name.into();
-        if self.entry::<Mates>(&name).is_some() {
-            return Err(GeopError::new(format!("Part already has a mate {name:?}")));
-        }
-        self.insert_entry::<Mates>(name, mate);
-        Ok(())
-    }
+/// The step of a pose by its six variables: a turn, then a move, in its
+/// own frame (see [`State::retract`]).
+fn twist() -> GeopResult<Pose<D>> {
+    let var = |k: usize| D::var(Design::ZERO, k);
+    Pose::exp(
+        &Vector3::from_array([var(0), var(1), var(2)]),
+        &Vector3::from_array([var(3), var(4), var(5)]),
+    )
+}
 
-    fn mates(&self) -> impl Iterator<Item = (&str, &Mate)> {
-        self.entries::<Mates>()
-    }
+/// What a state is to a mate that reads it.
+#[derive(Clone, Copy, PartialEq)]
+enum Read {
+    /// A pose a placement reads.
+    Pose,
+    /// A joint's coordinate.
+    Coordinate,
+}
 
-    fn mechanism(&self) -> GeopResult<Mechanism<'_, S>> {
-        assembly(self, None, &[], &|_| true)
-    }
+/// The states a mate reads, as it is evaluated: each with what it is, and
+/// the one it is differentiated by, if any.
+struct Reading<'a> {
+    read: BTreeMap<String, Read>,
+    by: Option<&'a str>,
+    twist: Pose<D>,
+}
 
-    fn solve_mates(
-        &self,
-        only: Option<&str>,
-        held: &[String],
-        drags: &[Drag<S>],
-    ) -> GeopResult<(State, MateReport)> {
-        let mut mechanism = assembly(self, only, held, &|_| true)?;
-        let pulls = drags
-            .iter()
-            .map(|drag| {
-                let body = mechanism
-                    .bodies
-                    .iter()
-                    .position(|b| b.parameter.as_ref() == Some(&drag.parameter))
-                    .ok_or_else(|| {
-                        GeopError::new(format!("no placed part's pose is {:?}", drag.parameter))
-                    })?;
-                Ok(BodyPull::Point {
-                    body,
-                    local: drag.local,
-                    target: drag.target,
-                })
-            })
-            .collect::<GeopResult<Vec<_>>>()?;
-        let report = mechanism.assembly.solve(&pulls)?;
-        let assembly = &mechanism.assembly;
-        // Only those the solve may have moved: the others are where the
-        // state has them already, and written back they would only pick
-        // up the rounding of composing their poses.
-        let mut moved = State::new();
-        for (b, (placed, body)) in mechanism.bodies.iter().zip(&assembly.bodies).enumerate() {
-            if let (true, Some(parameter)) = (
-                body.free && report.moved.binary_search(&b).is_ok(),
-                &placed.parameter,
-            ) {
-                let pose = match placed.parent {
-                    Some(parent) => assembly.bodies[parent].pose.inverse().compose(&body.pose),
-                    None => body.pose,
-                };
-                moved.insert(parameter.clone(), ParamValue::Pose(pose.cast()));
+impl Reading<'_> {
+    /// Where the placed part `body` is, as the state has it — none for the
+    /// part itself, which never moves.
+    fn pose(
+        &mut self,
+        reader: &mut BuildReader,
+        body: &Option<String>,
+    ) -> GeopResult<Option<Pose<D>>> {
+        let Some(body) = body else {
+            return Ok(None);
+        };
+        let Reading { read, by, twist } = self;
+        let located = locate_in(reader, body, &mut |state, pose| {
+            read.insert(state.to_string(), Read::Pose);
+            let pose = pose.map(D::cst);
+            match *by == Some(state) {
+                true => pose.compose(twist),
+                false => pose,
             }
-        }
-        for (i, joint) in assembly.joints.iter().enumerate() {
-            for motion in joint.kind.motions() {
-                moved.insert(
-                    joint_parameter(mechanism.joint_name(i), motion),
-                    ParamValue::Number(joint.coordinate(motion).value.cast()),
-                );
-            }
-        }
-        Ok((
-            moved,
-            MateReport {
-                converged: report.converged,
-                failed: report
-                    .failed
-                    .iter()
-                    .map(|&i| mechanism.names[i].clone())
-                    .collect(),
-                at_limit: report
-                    .at_limit
-                    .iter()
-                    .map(|&(j, m)| joint_parameter(mechanism.joint_name(j), m))
-                    .collect(),
-                iterations: report.iterations,
-                phases: report
-                    .phases
-                    .iter()
-                    .map(|p| (p.stop, p.iterations, p.max_residual.to_f64()))
-                    .collect(),
-            },
-        ))
+        })?;
+        Ok(Some(located.world))
     }
 
-    fn solve_joints(&self, set: &[String]) -> GeopResult<(State, MateReport)> {
-        let mut bodies = Vec::new();
-        placed(self, "", None, &Pose::identity(), true, &mut bodies);
-        let mut every: Vec<String> = Vec::new();
-        for (name, mate) in all_mates(self, &bodies) {
-            if let MateKind::Joint(kind) = mate.kind {
-                every.extend(
-                    kind.motions()
-                        .into_iter()
-                        .map(|m| joint_parameter(&name, m)),
-                );
-            }
-        }
-        let (moved, report) = self.solve_mates(None, &every, &[])?;
-        if report.converged {
-            return Ok((moved, report));
-        }
-        self.solve_mates(None, set, &[])
-    }
-
-    fn check_mates(&self, named: impl Fn(&str) -> bool) -> GeopResult<MateReport> {
-        let mechanism = assembly(self, None, &[], &named)?;
-        let report = mechanism.assembly.report()?;
-        Ok(MateReport {
-            converged: report.converged,
-            failed: report
-                .failed
-                .iter()
-                .map(|&i| mechanism.names[i].clone())
-                .collect(),
-            at_limit: Vec::new(),
-            iterations: 0,
-            phases: Vec::new(),
+    /// The coordinate `parameter`, as the state has it.
+    fn coordinate(&mut self, reader: &mut BuildReader, parameter: &str) -> GeopResult<D> {
+        self.read.insert(parameter.to_string(), Read::Coordinate);
+        let ParamValue::Number(value) = reader.retrieve_state(parameter) else {
+            return Err(GeopError::new(format!(
+                "the joint coordinate {parameter:?} holds no number"
+            )));
+        };
+        Ok(match self.by == Some(parameter) {
+            true => D::var(value, 0),
+            false => D::cst(value),
         })
     }
 
-    fn joints(&self) -> GeopResult<Vec<JointInfo>> {
-        let mechanism = assembly(self, None, &[], &|_| true)?;
-        let mates = all_mates(self, &mechanism.bodies);
-        Ok(mechanism
-            .assembly
-            .joints
-            .iter()
-            .enumerate()
-            .map(|(i, joint)| {
-                let name = mechanism.joint_name(i).to_string();
-                let values = joint
-                    .kind
-                    .motions()
-                    .into_iter()
-                    .map(|motion| {
-                        let [min, max] = joint.kind.limits(motion).map(|l| l.map(|v| v.to_f64()));
-                        JointValue {
-                            parameter: joint_parameter(&name, motion),
-                            motion: motion.name(),
-                            value: joint.coordinate(motion).value.to_f64(),
-                            min,
-                            max,
-                        }
-                    })
-                    .collect();
-                let between = mates
-                    .iter()
-                    .find(|(mate, _)| *mate == name)
-                    .map(|(_, mate)| mate.entities.iter().map(EntityRef::label).collect())
-                    .unwrap_or_default();
-                JointInfo {
-                    name,
-                    kind: joint.kind.label(),
-                    between,
-                    values,
+    /// The coordinates `[angle, distance]` of the joint `name` of `kind`:
+    /// zero for a motion it does not free.
+    fn coordinates(
+        &mut self,
+        reader: &mut BuildReader,
+        name: &str,
+        kind: &JointKind,
+    ) -> GeopResult<[D; 2]> {
+        let mut out = [D::cst(Design::ZERO); 2];
+        for (k, motion) in Motion::ALL.into_iter().enumerate() {
+            if kind.moves(motion) {
+                out[k] = self.coordinate(reader, &joint_parameter(name, motion))?;
+            }
+        }
+        Ok(out)
+    }
+
+    /// The size of the bodies of `a` and `b` — what a mate between them
+    /// turns a turn into a length by (see [`size`]) — and where the state
+    /// has them.
+    fn ends<T>(
+        &mut self,
+        reader: &mut BuildReader,
+        a: &On<T>,
+        b: &On<T>,
+    ) -> GeopResult<(D, [Option<Pose<D>>; 2])> {
+        let scale = D::cst(size(reader, &[&a.body, &b.body])?);
+        let poses = [self.pose(reader, &a.body)?, self.pose(reader, &b.body)?];
+        Ok((scale, poses))
+    }
+}
+
+/// A joint resolved: its kind, and its two ends.
+type Joint<'a> = (
+    &'a JointKind,
+    &'a On<Connector<Design>>,
+    &'a On<Connector<Design>>,
+);
+
+/// The joint `name` of the part read, resolved.
+fn joint<'a>(reader: &mut BuildReader<'a>, name: &str) -> GeopResult<Joint<'a>> {
+    match reader.retrieve_target(&mate(name))? {
+        Resolved::Joint { kind, a, b } => Ok((kind, a, b)),
+        _ => Err(GeopError::new(format!("the mate {name:?} is no joint"))),
+    }
+}
+
+/// The residuals of the mate `name`, `resolved`, where the state has its
+/// parts and joints (see [`constrain`]).
+fn residuals_of(
+    reader: &mut BuildReader,
+    name: &str,
+    resolved: &Resolved,
+    reading: &mut Reading,
+) -> GeopResult<Vec<D>> {
+    match resolved {
+        Resolved::Constraint { kind, a, b } => {
+            let (scale, [pa, pb]) = reading.ends(reader, a, b)?;
+            let (wa, wb) = (a.what.placed(pa.as_ref())?, b.what.placed(pb.as_ref())?);
+            residuals(kind, &wa, &wb, scale)
+        }
+        Resolved::Joint { kind, a, b } => {
+            let (scale, [pa, pb]) = reading.ends(reader, a, b)?;
+            let [angle, distance] = reading.coordinates(reader, name, kind)?;
+            let (ca, cb) = (a.what.placed(pa.as_ref()), b.what.placed(pb.as_ref()));
+            joint_residuals(&ca, &cb, angle, distance, scale)
+        }
+        Resolved::Coupling { kind, joints } => {
+            let [ja, jb] = [&joints[0], &joints[1]].map(|j| joint(reader, j));
+            let ((ka, a1, a2), (kb, b1, b2)) = (ja?, jb?);
+            let [ma, mb] = kind.transmission.motions();
+            kind.validate(joints[0] == joints[1], [ka.moves(ma), kb.moves(mb)])
+                .map_err(|e| {
+                    e.with_context(format!("joints {:?} and {:?}", joints[0], joints[1]))
+                })?;
+            let scale = D::cst(size(reader, &[&a1.body, &a2.body, &b1.body, &b2.body])?);
+            let a = reading.coordinate(reader, &joint_parameter(&joints[0], ma))?;
+            let b = reading.coordinate(reader, &joint_parameter(&joints[1], mb))?;
+            Ok(vec![kind.residual(a, b, scale)?])
+        }
+        Resolved::Fixed { .. } => Ok(Vec::new()),
+    }
+}
+
+/// A constraint of the residuals `evaluate` gives, where the state is, and
+/// their derivatives by every state they read that holds what it is read
+/// as — a pose not solved for yet puts its part at the origin, and is not
+/// one to move.
+fn differentiated(
+    reader: &mut BuildReader,
+    bound: Bound,
+    evaluate: impl Fn(&mut BuildReader, &mut Reading) -> GeopResult<Vec<D>>,
+) -> GeopResult<Constraint<ParamValue>> {
+    let twist = twist()?;
+    let mut plain = Reading {
+        read: BTreeMap::new(),
+        by: None,
+        twist,
+    };
+    let values = evaluate(reader, &mut plain)?;
+    let mut jacobian = BTreeMap::new();
+    for (state, read) in plain.read {
+        let dimension = match (reader.retrieve_state(&state), read) {
+            (ParamValue::Pose(_), Read::Pose) => 6,
+            (ParamValue::Number(_), Read::Coordinate) => 1,
+            _ => continue,
+        };
+        let mut by = Reading {
+            read: BTreeMap::new(),
+            by: Some(&state),
+            twist,
+        };
+        let rows = (evaluate(reader, &mut by)?.into_iter())
+            .map(|r| r.d.into_iter().take(dimension).collect())
+            .collect();
+        jacobian.insert(state, rows);
+    }
+    Ok(Constraint {
+        residuals: values.into_iter().map(|r| r.v).collect(),
+        jacobian,
+        bound,
+    })
+}
+
+/// The constraint the mate `name` puts on the state: the generator of its
+/// constraint, named as the mate is. Its residuals are lengths — a turn's
+/// the distance it moves a point as far from its axis as its parts are
+/// large — that vanish where it holds.
+#[expect(
+    clippy::ptr_arg,
+    reason = "a generator is handed its arguments as they are kept"
+)]
+pub(crate) fn constrain(
+    reader: &mut BuildReader,
+    name: &String,
+) -> GeopResult<Constraint<ParamValue>> {
+    let resolved = reader.retrieve_target(&mate(name))?;
+    differentiated(reader, Bound::Zero, |reader, reading| {
+        residuals_of(reader, name, resolved, reading)
+    })
+}
+
+/// The name of the constraint that keeps the coordinate `parameter` of a
+/// joint within its upper limit, or its lower: `….angle.max`.
+fn limit_name(parameter: &str, upper: bool) -> String {
+    format!("{parameter}.{}", if upper { "max" } else { "min" })
+}
+
+/// The constraint that keeps the coordinate of `motion` of the joint
+/// `name` within its upper limit, or its lower: a limit (see
+/// [`Bound::AtMost`]), as a length as [`constrain`]'s are.
+pub(crate) fn limit(
+    reader: &mut BuildReader,
+    (name, motion, upper): &(String, Motion, bool),
+) -> GeopResult<Constraint<ParamValue>> {
+    let (kind, a, b) = joint(reader, name)?;
+    let [min, max] = kind.limits(*motion);
+    let bound = (if *upper { max } else { min })
+        .ok_or_else(|| GeopError::new(format!("the joint {name:?} has no such limit")))?;
+    // An angle is turned into a length by the parts' size; a distance is
+    // one, and is not multiplied by an exact one.
+    let scale = match motion {
+        Motion::Turn => Some(size(reader, &[&a.body, &b.body])?),
+        Motion::Slide => None,
+    };
+    let parameter = joint_parameter(name, *motion);
+    differentiated(reader, Bound::AtMost, |reader, reading| {
+        let value = reading.coordinate(reader, &parameter)?;
+        let past = match upper {
+            true => value.sub(D::cst(bound)),
+            false => D::cst(bound).sub(value),
+        };
+        let past = motion.natural(past)?;
+        Ok(vec![match scale {
+            Some(scale) => past.mul(D::cst(scale)),
+            None => past,
+        }])
+    })
+}
+
+/// Defines what the mate `name`, resolved already in the part, puts on the
+/// state: its constraint, and its limits'. A fixed mate puts none: it
+/// declares the part it holds fixed. A joint declares its coordinates as
+/// values a solve moves, and a user sets.
+pub(crate) fn define(part: &mut Build, name: &str) -> GeopResult<()> {
+    let resolved = part.current().retrieve_target(&mate(name))?.clone();
+    if let Resolved::Fixed { .. } = resolved {
+        return part.define_target(&unknown(name), &name.to_string(), fixed);
+    }
+    part.define_constraint(name, &name.to_string(), constrain)?;
+    if let Resolved::Joint { kind, .. } = resolved {
+        part.define_target(&settings_of(name), &name.to_string(), settings)?;
+        for motion in kind.motions() {
+            let parameter = joint_parameter(name, motion);
+            part.define_target(
+                &unknown(&parameter),
+                &(name.to_string(), motion),
+                coordinate,
+            )?;
+            for (upper, given) in [false, true].into_iter().zip(kind.limits(motion)) {
+                if given.is_some() {
+                    let args = (name.to_string(), motion, upper);
+                    part.define_constraint(&limit_name(&parameter, upper), &args, limit)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The mates of the part `view` shows, resolved, by name, in the order the
+/// steps made them.
+pub(crate) fn mates_of<'a>(view: BuildView<'a>) -> Vec<(&'a str, &'a Resolved)> {
+    (view.targets_of::<Resolved>().into_iter())
+        .filter_map(|(target, resolved)| Some((mate_name(target)?, resolved)))
+        .collect()
+}
+
+/// Where the connectors of the joint `a`–`b` are, as the part read has
+/// them: in the world.
+fn connectors_at<'a>(
+    r: &mut impl Retrieve<'a, Input, ParamValue>,
+    a: &On<Connector<Design>>,
+    b: &On<Connector<Design>>,
+) -> GeopResult<[Connector<D>; 2]> {
+    let mut world = |on: &On<Connector<Design>>| -> GeopResult<Option<Pose<D>>> {
+        on.body
+            .as_ref()
+            .map(|body| Ok(locate(&mut *r, body)?.world.map(D::cst)))
+            .transpose()
+    };
+    let (wa, wb) = (world(a)?, world(b)?);
+    Ok([a.what.placed(wa.as_ref()), b.what.placed(wb.as_ref())])
+}
+
+/// The coordinates `[angle, distance]` of a joint, measured where its parts
+/// are — an angle at the turn nearest `near`.
+fn measured<'a>(
+    r: &mut impl Retrieve<'a, Input, ParamValue>,
+    a: &On<Connector<Design>>,
+    b: &On<Connector<Design>>,
+    near: f64,
+) -> GeopResult<[f64; 2]> {
+    let [ca, cb] = connectors_at(r, a, b)?;
+    let [angle, distance] = measure(&ca, &cb);
+    Ok([angle + 360.0 * ((near - angle) / 360.0).round(), distance])
+}
+
+/// What the fixed mate `name` declares: the state of the part it holds,
+/// fixed — the generator of its unknown. A part no state moves is fixed
+/// already, and so is a state none has.
+fn fixed(reader: &mut BuildReader, name: &String) -> GeopResult<Unknown<ParamValue>> {
+    let Resolved::Fixed { body } = reader.retrieve_target(&mate(name))? else {
+        return Err(GeopError::new(format!("the mate {name:?} fixes nothing")));
+    };
+    Ok(Unknown {
+        state: moved_by(reader, body)?.unwrap_or_else(|| body.clone()),
+        mobility: Mobility::Fixed,
+        seed: None,
+        unless: None,
+    })
+}
+
+/// The coordinate of `motion` of the joint `name`, as a value a solve
+/// moves: following its parts, and — where the joint does not hold —
+/// started where they are, measured from them at the turn nearest where it
+/// is: a seed, so a free choice, which the solve makes exact. The
+/// generator of its unknown.
+fn coordinate(
+    reader: &mut BuildReader,
+    (name, motion): &(String, Motion),
+) -> GeopResult<Unknown<ParamValue>> {
+    let parameter = joint_parameter(name, *motion);
+    let near = match reader.retrieve_state(&parameter) {
+        ParamValue::Number(v) => v.to_f64(),
+        _ => 0.0,
+    };
+    let (_, a, b) = joint(reader, name)?;
+    // Where the parts cannot be measured, there is nothing to start from.
+    let seed = measured(reader, a, b, near).ok().map(|[angle, distance]| {
+        ParamValue::Number(Design::from_f64(match motion {
+            Motion::Turn => angle,
+            Motion::Slide => distance,
+        }))
+    });
+    Ok(Unknown {
+        state: parameter,
+        mobility: Mobility::Follows,
+        seed,
+        unless: Some(name.clone()),
+    })
+}
+
+/// The coordinates of the joint `name` as values a user sets, with their
+/// limits: the generator of its settings.
+#[expect(
+    clippy::ptr_arg,
+    reason = "a generator is handed its arguments as they are kept"
+)]
+fn settings(reader: &mut BuildReader, name: &String) -> GeopResult<Settings> {
+    let (kind, a, b) = joint(reader, name)?;
+    Ok(Settings {
+        name: name.clone(),
+        kind: kind.label(),
+        between: vec![a.entity.label(), b.entity.label()],
+        values: (kind.motions().into_iter())
+            .map(|motion| {
+                let [min, max] = kind.limits(motion);
+                Setting {
+                    parameter: joint_parameter(name, motion),
+                    measure: motion.measure(),
+                    min,
+                    max,
                 }
             })
-            .collect())
-    }
+            .collect(),
+    })
+}
 
-    fn mate_freedom(&self) -> GeopResult<MateFreedom> {
-        let mechanism = assembly(self, None, &[], &|_| true)?;
-        let freedom = mechanism.assembly.freedom()?;
-        let conflicting = if mechanism.assembly.report()?.converged {
-            Vec::new()
-        } else {
-            mechanism
-                .assembly
-                .conflicting()?
-                .into_iter()
-                .map(|i| mechanism.names[i].clone())
-                .collect()
-        };
-        Ok(MateFreedom {
-            parts: mechanism
-                .bodies
-                .iter()
-                .zip(freedom.bodies)
-                .map(|(b, dof)| (b.name.clone(), dof))
-                .collect(),
-            total: freedom.total,
-            conflicting,
-        })
-    }
-
-    fn solved_parameters(&self) -> Vec<String> {
-        let mut bodies = Vec::new();
-        placed(self, "", None, &Pose::identity(), true, &mut bodies);
-        let mut names: Vec<String> = bodies.iter().filter_map(|b| b.parameter.clone()).collect();
-        for (name, mate) in all_mates(self, &bodies) {
-            if let MateKind::Joint(kind) = mate.kind {
-                names.extend(
-                    kind.motions()
-                        .into_iter()
-                        .map(|m| joint_parameter(&name, m)),
-                );
-            }
-        }
-        names
+/// Whether the constraint of the mate `name`, as `view` has it, holds.
+pub fn mate_holds(view: BuildView, name: &str) -> bool {
+    let reference = TargetReference::<Constraint<ParamValue>>::new(name);
+    match (
+        view.retrieve_target(&reference),
+        scale_of(view).and_then(tolerance),
+    ) {
+        (Ok(constraint), Ok(tolerance)) => constraint.holds(tolerance),
+        _ => false,
     }
 }

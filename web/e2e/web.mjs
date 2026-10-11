@@ -82,6 +82,11 @@ async function builtCleanly() {
  * operation buttons, and of the entries of every menu of the operations
  * (each opened in turn); and what is out of the window or would scroll.
  */
+/** The inspect tool labelled `label`: one the kernel offers. */
+function inspector(page, label) {
+  return page.locator(".inspect-tools button", { has: page.locator(`span:text-is("${label}")`) });
+}
+
 async function toolbarReach() {
   const inView = () =>
     page.evaluate(() => {
@@ -461,7 +466,7 @@ await check("a rectangle is sketched and extruded by clicks, and weighed", async
   const [r, g, b] = await pixelAt(page, box.x + box.width / 2, box.y + box.height / 2);
   expect(b > r + 30 && b > g, `the middle of the view is rgb(${r}, ${g}, ${b}), not the blue solid: it was not framed`);
 
-  await page.getByTitle("Mass properties of every solid, of its part's material").click();
+  await inspector(page, "Mass").click();
   await settle(page);
   const [volume] = await massRow("Volume");
   expect(volume > 0, `volume ${volume}`);
@@ -482,7 +487,7 @@ await check("a 3-D sketch's point is clicked and measured, as a vertex", async (
   await settle(page);
   await popup.locator(".button-row button.primary").click();
   await builtCleanly();
-  await page.getByTitle("Measure: click up to two vertices, edges, faces or datums").click();
+  await inspector(page, "Measure").click();
   await settle(page);
   await clickView(-220, -90);
   const picked = await page.locator(".inspect-entity").allInnerTexts();
@@ -738,7 +743,7 @@ async function downloaded(action) {
 const exports = [
   ["Box with drill hole", "Download STEP", /\.step$/, (b) => b.toString().startsWith("ISO-10303-21;")],
   ["Box with drill hole", "Download STL", /\.stl$/, (b) => b.length > 84 && b.readUInt32LE(80) * 50 + 84 === b.length],
-  ["Arm", "Export URDF", /\.zip$/, (b) => b.subarray(0, 2).toString() === "PK"],
+  ["Arm", "Download URDF", /\.zip$/, (b) => b.subarray(0, 2).toString() === "PK"],
 ];
 let loaded = null;
 for (const [example, entry, name, valid] of exports) {
@@ -860,7 +865,7 @@ await check("the bill of materials is saved as CSV", async () => {
   await fresh();
   await fileMenu(page, "Bolted plate");
   await builtCleanly();
-  await page.getByTitle("Bill of materials: every part with its quantity, designation and mass").click();
+  await inspector(page, "Bill of materials").click();
   await settle(page);
   const lines = await page.locator(".bom-table tbody tr").count();
   expect(lines > 1, `the bill of materials lists ${lines} lines`);

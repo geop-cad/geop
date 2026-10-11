@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::{
     Body, CoedgeGeometry, CoedgeId, EdgeId, FaceId, SolidId, VertexId,
     boundary::{BoundaryIndex, BoundaryType},
@@ -8,155 +10,6 @@ use geop_core_math::{
 };
 
 use super::Model;
-
-/// Walks a single `Loop` boundary, in traversal order, by following `next`
-/// from `anchor` back around to itself. Does not itself bound how many
-/// coedges it will yield — a corrupted `next` chain that never returns to
-/// `anchor` makes this iterate forever, which is exactly what callers
-/// checking that invariant (see `validation::two_way_references`) want to be
-/// able to detect via a `.take(n)` of their own; well-formed loops always
-/// terminate on their own.
-struct LoopCoedges<'a, S: Scalar> {
-    model: &'a Model<S>,
-    anchor: CoedgeId,
-    cursor: Option<CoedgeId>,
-}
-
-impl<'a, S: Scalar> Iterator for LoopCoedges<'a, S> {
-    type Item = CoedgeId;
-
-    fn next(&mut self) -> Option<CoedgeId> {
-        let current = self.cursor?;
-        let next = self.model.coedges[&current].next;
-        self.cursor = if next == self.anchor {
-            None
-        } else {
-            Some(next)
-        };
-        Some(current)
-    }
-}
-
-/// Walks every coedge of every `Loop` boundary of a face, across all of them
-/// in order — a bare `Vertex` boundary contributes nothing (there are no
-/// coedges yet).
-struct FaceCoedges<'a, S: Scalar> {
-    model: &'a Model<S>,
-    boundaries: std::vec::IntoIter<BoundaryType>,
-    current: Option<LoopCoedges<'a, S>>,
-}
-
-impl<'a, S: Scalar> Iterator for FaceCoedges<'a, S> {
-    type Item = CoedgeId;
-
-    fn next(&mut self) -> Option<CoedgeId> {
-        loop {
-            if let Some(loop_iter) = &mut self.current {
-                if let Some(id) = loop_iter.next() {
-                    return Some(id);
-                }
-                self.current = None;
-            }
-            let boundary = self.boundaries.next()?;
-            if let BoundaryType::Loop(anchor) = boundary {
-                self.current = Some(LoopCoedges {
-                    model: self.model,
-                    anchor,
-                    cursor: Some(anchor),
-                });
-            }
-        }
-    }
-}
-
-/// Walks the distinct vertices referenced by a body's faces, borrowing
-/// `model` for its whole lifetime — so a caller holding one of these live
-/// cannot also call a `&mut self` method like `merge_vertex` on the same
-/// model; the borrow checker enforces it rather than relying on a caller to
-/// remember that a `Vec` snapshot goes stale the moment the model mutates.
-struct BodyVertices<'a, S: Scalar> {
-    model: &'a Model<S>,
-    faces: std::vec::IntoIter<FaceId>,
-    coedges: std::vec::IntoIter<CoedgeId>,
-    seen: std::collections::HashSet<VertexId>,
-    pending: std::collections::VecDeque<VertexId>,
-}
-
-impl<'a, S: Scalar> Iterator for BodyVertices<'a, S> {
-    type Item = VertexId;
-
-    fn next(&mut self) -> Option<VertexId> {
-        loop {
-            if let Some(vertex_id) = self.pending.pop_front() {
-                if self.seen.insert(vertex_id) {
-                    return Some(vertex_id);
-                }
-                continue;
-            }
-
-            let coedge_id = match self.coedges.next() {
-                Some(coedge_id) => coedge_id,
-                None => {
-                    let face_id = self.faces.next()?;
-                    self.coedges = self
-                        .model
-                        .iterate_face_coedges(face_id)
-                        .collect::<Vec<_>>()
-                        .into_iter();
-                    continue;
-                }
-            };
-
-            match self.model.coedges[&coedge_id].geometry {
-                CoedgeGeometry::Edge(edge_id) => {
-                    let edge = &self.model.edges[&edge_id];
-                    self.pending.push_back(edge.start_vertex);
-                    self.pending.push_back(edge.end_vertex);
-                }
-                CoedgeGeometry::Vertex(vertex_id) => {
-                    self.pending.push_back(vertex_id);
-                }
-            }
-        }
-    }
-}
-
-/// Walks the distinct edges referenced by a body's faces — see
-/// [`BodyVertices`]'s own doc comment for why this borrows `model` instead
-/// of returning an owned snapshot.
-struct BodyEdges<'a, S: Scalar> {
-    model: &'a Model<S>,
-    faces: std::vec::IntoIter<FaceId>,
-    coedges: std::vec::IntoIter<CoedgeId>,
-    seen: std::collections::HashSet<EdgeId>,
-}
-
-impl<'a, S: Scalar> Iterator for BodyEdges<'a, S> {
-    type Item = EdgeId;
-
-    fn next(&mut self) -> Option<EdgeId> {
-        loop {
-            let coedge_id = match self.coedges.next() {
-                Some(coedge_id) => coedge_id,
-                None => {
-                    let face_id = self.faces.next()?;
-                    self.coedges = self
-                        .model
-                        .iterate_face_coedges(face_id)
-                        .collect::<Vec<_>>()
-                        .into_iter();
-                    continue;
-                }
-            };
-
-            if let CoedgeGeometry::Edge(edge_id) = self.model.coedges[&coedge_id].geometry
-                && self.seen.insert(edge_id)
-            {
-                return Some(edge_id);
-            }
-        }
-    }
-}
 
 impl<S: Scalar> Model<S> {
     /// The (unordered) coedges referencing a given edge. An edge shared by a
@@ -169,13 +22,17 @@ impl<S: Scalar> Model<S> {
             .collect()
     }
 
-    /// Every coedge of the loop anchored at `anchor`, in traversal order.
+    /// Every coedge of the loop anchored at `anchor`, in traversal order,
+    /// following `next` back around to `anchor`. Does not itself bound how
+    /// many coedges it yields: a corrupted `next` chain that never returns
+    /// to `anchor` makes this iterate forever, which callers checking that
+    /// invariant (see `validation::two_way_references`) detect with a
+    /// `.take(n)` of their own.
     pub fn iterate_loop_coedges(&self, anchor: CoedgeId) -> impl Iterator<Item = CoedgeId> + '_ {
-        LoopCoedges {
-            model: self,
-            anchor,
-            cursor: Some(anchor),
-        }
+        std::iter::successors(Some(anchor), move |c| {
+            let next = self.coedges[c].next;
+            (next != anchor).then_some(next)
+        })
     }
 
     /// The corners of `face_id`'s boundaries, outer loop first — what an
@@ -198,47 +55,64 @@ impl<S: Scalar> Model<S> {
     }
 
     /// Every coedge of every boundary loop of `face_id` (its outer loop and
-    /// any holes).
+    /// any holes) — a bare `Vertex` boundary contributes none.
     pub fn iterate_face_coedges(&self, face_id: FaceId) -> impl Iterator<Item = CoedgeId> + '_ {
-        FaceCoedges {
-            model: self,
-            boundaries: self.faces[&face_id]
-                .boundaries()
-                .collect::<Vec<_>>()
-                .into_iter(),
-            current: None,
-        }
+        self.faces[&face_id]
+            .boundaries()
+            .filter_map(|boundary| match boundary {
+                BoundaryType::Loop(anchor) => Some(anchor),
+                BoundaryType::Vertex(_) => None,
+            })
+            .flat_map(|anchor| self.iterate_loop_coedges(anchor))
     }
 
-    /// The distinct vertices referenced by `body`'s faces, as an iterator
-    /// borrowing `self` — see [`BodyVertices`]'s own doc comment.
+    /// The geometry of every coedge of `body`'s faces, in order.
+    fn body_coedge_geometry(
+        &self,
+        body: impl Into<Body>,
+    ) -> GeopResult<impl Iterator<Item = CoedgeGeometry> + '_> {
+        Ok(self
+            .body_faces(body)?
+            .into_iter()
+            .flat_map(|face| self.iterate_face_coedges(face))
+            .map(|c| self.coedges[&c].geometry))
+    }
+
+    /// The distinct vertices referenced by `body`'s faces. Borrows `self`
+    /// for as long as it lives, so a caller holding one cannot also call a
+    /// `&mut self` method like `merge_vertex` on the same model: the borrow
+    /// checker, not the caller, keeps it from going stale.
     pub fn iter_body_vertices(
         &self,
         body: impl Into<Body>,
     ) -> GeopResult<impl Iterator<Item = VertexId> + '_> {
-        let faces = self.body_faces(body)?;
-        Ok(BodyVertices {
-            model: self,
-            faces: faces.into_iter(),
-            coedges: Vec::new().into_iter(),
-            seen: std::collections::HashSet::new(),
-            pending: std::collections::VecDeque::new(),
-        })
+        let mut seen = HashSet::new();
+        Ok(self
+            .body_coedge_geometry(body)?
+            .flat_map(|geometry| match geometry {
+                CoedgeGeometry::Edge(edge_id) => {
+                    let edge = &self.edges[&edge_id];
+                    vec![edge.start_vertex, edge.end_vertex]
+                }
+                CoedgeGeometry::Vertex(vertex_id) => vec![vertex_id],
+            })
+            .filter(move |&v| seen.insert(v)))
     }
 
-    /// The distinct edges referenced by `body`'s faces, as an iterator
-    /// borrowing `self` — see [`BodyVertices`]'s own doc comment.
+    /// The distinct edges referenced by `body`'s faces, borrowing `self`
+    /// like [`Self::iter_body_vertices`].
     pub fn iter_body_edges(
         &self,
         body: impl Into<Body>,
     ) -> GeopResult<impl Iterator<Item = EdgeId> + '_> {
-        let faces = self.body_faces(body)?;
-        Ok(BodyEdges {
-            model: self,
-            faces: faces.into_iter(),
-            coedges: Vec::new().into_iter(),
-            seen: std::collections::HashSet::new(),
-        })
+        let mut seen = HashSet::new();
+        Ok(self
+            .body_coedge_geometry(body)?
+            .filter_map(|geometry| match geometry {
+                CoedgeGeometry::Edge(edge_id) => Some(edge_id),
+                CoedgeGeometry::Vertex(_) => None,
+            })
+            .filter(move |&e| seen.insert(e)))
     }
 
     /// Which of `face_id`'s boundaries contains `coedge` — its outer loop or

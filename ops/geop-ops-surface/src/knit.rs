@@ -29,19 +29,22 @@ use geop_core_math::{
     union_find::UnionFind,
     with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_core_topology::{
     Body, ShellId,
     build::{BodySpec, CoedgeOn, EdgeSpec, FaceSpec},
     validation::{Outward, ValidationParameters, normal_points_outward},
 };
 use geop_ops::{
-    BodyNames, Context, Library, Namer, Part,
-    operation::{EntityRef, Operation, Role},
-    ui::Form,
+    BodyNames, Design, NamedModel, Namer, ParamValue,
+    operation::{Build, BuildReader, EntityRef, Input, ModelStep, Role, build_model},
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{MAX_NODES, min_subdivision_size, name_of, sheet_of};
+use crate::{MAX_NODES, min_subdivision_size, sheet_of};
 
 /// Joins the sheets the faces named `faces` stand in into one, along the
 /// edges where they meet, for the operation `K` — see the module docs.
@@ -60,60 +63,83 @@ pub struct KnitArgs {
     pub solid: bool,
 }
 
+impl ModelStep for Knit {
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &KnitArgs,
+    ) -> GeopResult<()> {
+        let ctx = with_context!("knit({step}, {args:?})");
+        let namer = Namer::new("knit", step)?;
+        let mut sheets: Vec<ShellId> = Vec::new();
+        for name in &args.faces {
+            let (_, sheet) = sheet_of(model, name).with_context(ctx)?;
+            if !sheets.contains(&sheet) {
+                sheets.push(sheet);
+            }
+        }
+        knit(model, &namer, &sheets, args.solid).with_context(ctx)?;
+        Ok(())
+    }
+}
+
 impl Operation for Knit {
+    const INFO: OperationInfo = OperationInfo::new(
+        "knit",
+        "Knit",
+        "Join faces standing on their own along the edges where they meet, into a solid once they close up.",
+        OperationGroup::Surface,
+        OperationTier::Menu,
+    )
+    .experimental();
     type Args = KnitArgs;
-    type Session = ();
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
 
     /// Nothing picked yet; a solid wanted.
-    fn new_args<S: Scalar>(&self, _before: &Part<S>) -> KnitArgs {
+    fn new_args(_: &Context<Input, ParamValue>) -> KnitArgs {
         KnitArgs {
             faces: Vec::new(),
             solid: true,
         }
     }
 
-    /// The sheets, picked by a face of each, and whether they must close.
-    fn form<'a, S: Scalar>(
-        &self,
-        _: Context<'a, S>,
-        args: &KnitArgs,
-        _: &(),
-        _: &[String],
-    ) -> Form<'a, S, KnitArgs> {
-        let mut f = Form::<S, KnitArgs>::new();
-        f.reference(
-            "faces",
-            "sheets",
-            EntityRef::of_names(EntityRef::face, &args.faces),
-            &[Role::Sheet],
-            None,
-            true,
-            |e, picked| e.args.faces = EntityRef::names_of(EntityRef::face, &picked),
-        );
-        f.checkbox("solid", "close into a solid", args.solid, |args, solid| {
-            args.solid = solid
-        });
-        f
+    fn run(step: &str, part: &mut Build, args: &KnitArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    /// The sheets, picked by a face of each, and whether they must close.
+    fn presentation(_: &Context<Input, ParamValue>, args: &KnitArgs, _: &()) -> Form<Design> {
+        let mut form = Form::default();
+        let dialog = &mut form.dialog;
+        let faces = EntityRef::of_names(EntityRef::face, &args.faces);
+        (dialog.reference("faces", "sheets", faces, &[Role::Sheet], None, true)).checkbox(
+            "solid",
+            "close into a solid",
+            args.solid,
+        );
+        form
+    }
+
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
         args: &KnitArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("knit({operation_id}, {args:?})");
-        let namer = Namer::new("knit", operation_id)?;
-        let mut sheets: Vec<ShellId> = Vec::new();
-        for name in &args.faces {
-            let (_, sheet) = sheet_of(&part, name).with_context(ctx)?;
-            if !sheets.contains(&sheet) {
-                sheets.push(sheet);
+        _: &(),
+        event: Event<Design>,
+    ) -> (KnitArgs, ()) {
+        let mut args = args.clone();
+        if let Event::Field { key, value } = event {
+            match (key.as_str(), value) {
+                ("faces", Value::Entities(picked)) => {
+                    args.faces = EntityRef::names_of(EntityRef::face, &picked)
+                }
+                ("solid", Value::Bool(solid)) => args.solid = solid,
+                _ => {}
             }
         }
-        knit(&mut part, &namer, &sheets, args.solid).with_context(ctx)?;
-        Ok(part)
+        (args, ())
     }
 }
 
@@ -121,7 +147,7 @@ impl Operation for Knit {
 /// solid named `namer`'s root once they close up, a sheet otherwise — an
 /// error naming the open edges, if `solid` asks for one.
 pub fn knit<S: Scalar>(
-    part: &mut Part<S>,
+    part: &mut NamedModel<S>,
     namer: &Namer,
     sheets: &[ShellId],
     solid: bool,
@@ -144,12 +170,12 @@ pub fn knit<S: Scalar>(
         }
     }
     let (spec, sources) = model.body_spec(&faces, false)?;
-    let names = |ids: Vec<geop_ops::RefId>| -> GeopResult<Vec<String>> {
-        ids.into_iter().map(|id| name_of(part, id)).collect()
-    };
-    let vertex_names = names(sources.vertices.iter().map(|&v| v.into()).collect())?;
-    let edge_names = names(sources.edges.iter().map(|&e| e.into()).collect())?;
-    let face_names = names(sources.faces.iter().map(|&f| f.into()).collect())?;
+    let BodyNames {
+        vertices: vertex_names,
+        edges: edge_names,
+        faces: face_names,
+        ..
+    } = part.source_names(&sources)?;
 
     let joined = Joined::new(&spec, &sheet_of_face, &vertex_names, &edge_names)?;
     let (mut out, uses) = joined.spec(&spec)?;

@@ -23,7 +23,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{Body, CoedgeGeometry, FaceId, SolidId};
-use geop_ops::{Namer, Part, operation::frame_along};
+use geop_ops::{NamedModel, Namer, operation::frame_along};
 use geop_ops_extrude_revolve::{
     common::{Profile, polygon},
     revolve::screw,
@@ -62,16 +62,16 @@ fn same_cylinder<S: Scalar>(a: &Cylinder<S>, b: &Cylinder<S>) -> bool {
 }
 
 /// The faces across an edge from `face`.
-fn neighbours<S: Scalar>(part: &Part<S>, face: FaceId) -> Vec<FaceId> {
-    let model = part.topology();
+fn neighbours<S: Scalar>(model: &NamedModel<S>, face: FaceId) -> Vec<FaceId> {
+    let topology = model.topology();
     let mut found = Vec::new();
-    for coedge in model.iterate_face_coedges(face) {
-        let Ok(c) = model.get_coedge(coedge) else {
+    for coedge in topology.iterate_face_coedges(face) {
+        let Ok(c) = topology.get_coedge(coedge) else {
             continue;
         };
         if let CoedgeGeometry::Edge(edge) = c.geometry {
-            for other in model.coedges_of_edge(edge) {
-                if let Ok(o) = model.get_coedge(other)
+            for other in topology.coedges_of_edge(edge) {
+                if let Ok(o) = topology.get_coedge(other)
                     && o.face != face
                 {
                     found.push(o.face);
@@ -85,11 +85,11 @@ fn neighbours<S: Scalar>(part: &Part<S>, face: FaceId) -> Vec<FaceId> {
 impl<S: Scalar> Wall<S> {
     /// The wall `face` is part of. Fails, naming it, for a face that is not
     /// cylindrical.
-    pub fn of(part: &Part<S>, face: FaceId) -> GeopResult<Self> {
-        let name = part.name_of(face).unwrap_or_default().to_string();
+    pub fn of(model: &NamedModel<S>, face: FaceId) -> GeopResult<Self> {
+        let name = model.name_of(face).unwrap_or_default().to_string();
         let ctx = with_context!("the cylindrical wall of face {name:?}");
-        let model = part.topology();
-        let surface = &model.get_face(face).with_context(ctx)?.surface;
+        let topology = model.topology();
+        let surface = &topology.get_face(face).with_context(ctx)?.surface;
         let Some(cylinder) = surface.as_cylinder().with_context(ctx)? else {
             return Err(GeopError::new(format!(
                 "face {name:?} is not cylindrical: a thread runs on a cylindrical face"
@@ -98,11 +98,11 @@ impl<S: Scalar> Wall<S> {
         let mut faces = vec![face];
         let mut todo = vec![face];
         while let Some(f) = todo.pop() {
-            for n in neighbours(part, f) {
+            for n in neighbours(model, f) {
                 if faces.contains(&n) {
                     continue;
                 }
-                let on = model.get_face(n)?.surface.as_cylinder()?;
+                let on = topology.get_face(n)?.surface.as_cylinder()?;
                 if on.is_some_and(|c| same_cylinder(&cylinder, &c)) {
                     faces.push(n);
                     todo.push(n);
@@ -112,14 +112,14 @@ impl<S: Scalar> Wall<S> {
         faces.sort_by_key(|f| f.0);
         let mut extent: Option<(S, S)> = None;
         for &f in &faces {
-            for coedge in model.iterate_face_coedges(f) {
-                let c = model.get_coedge(coedge)?;
+            for coedge in topology.iterate_face_coedges(f) {
+                let c = topology.get_coedge(coedge)?;
                 let CoedgeGeometry::Edge(edge) = c.geometry else {
                     continue;
                 };
-                let edge = model.get_edge(edge)?;
+                let edge = topology.get_edge(edge)?;
                 for v in [edge.start_vertex, edge.end_vertex] {
-                    let p = model.get_vertex(v)?.point;
+                    let p = topology.get_vertex(v)?.point;
                     let along = p
                         .sub(&cylinder.axis.point)
                         .prod_dot(&cylinder.axis.direction);
@@ -170,7 +170,7 @@ impl<S: Scalar> Wall<S> {
             internal,
             open: [false; 2],
         };
-        wall.open = [wall.is_open(part, from)?, wall.is_open(part, to)?];
+        wall.open = [wall.is_open(model, from)?, wall.is_open(model, to)?];
         Ok(wall)
     }
 
@@ -179,37 +179,37 @@ impl<S: Scalar> Wall<S> {
     /// shaft — its end face, or a chamfer — and not where one steps out to
     /// a shoulder; a hole's where one reaches out beyond the hole — the
     /// face it was drilled into — and not at its bottom.
-    fn is_open(&self, part: &Part<S>, end: S) -> GeopResult<bool> {
-        let model = part.topology();
+    fn is_open(&self, model: &NamedModel<S>, end: S) -> GeopResult<bool> {
+        let topology = model.topology();
         let axis = &self.cylinder.axis;
         let along = |p: &Vector3<S>| p.sub(&axis.point).prod_dot(&axis.direction);
         let mut beyond = false;
         for &f in &self.faces {
-            for coedge in model.iterate_face_coedges(f) {
-                let CoedgeGeometry::Edge(edge) = model.get_coedge(coedge)?.geometry else {
+            for coedge in topology.iterate_face_coedges(f) {
+                let CoedgeGeometry::Edge(edge) = topology.get_coedge(coedge)?.geometry else {
                     continue;
                 };
-                let e = model.get_edge(edge)?;
+                let e = topology.get_edge(edge)?;
                 let at_end = [e.start_vertex, e.end_vertex].into_iter().all(|v| {
-                    model
+                    topology
                         .get_vertex(v)
                         .is_ok_and(|v| along(&v.point).could_be_equal(end))
                 });
                 if !at_end {
                     continue;
                 }
-                for other in model.coedges_of_edge(edge) {
-                    let face = model.get_coedge(other)?.face;
+                for other in topology.coedges_of_edge(edge) {
+                    let face = topology.get_coedge(other)?.face;
                     if self.faces.contains(&face) {
                         continue;
                     }
-                    for c in model.iterate_face_coedges(face) {
-                        let CoedgeGeometry::Edge(e) = model.get_coedge(c)?.geometry else {
+                    for c in topology.iterate_face_coedges(face) {
+                        let CoedgeGeometry::Edge(e) = topology.get_coedge(c)?.geometry else {
                             continue;
                         };
-                        let e = model.get_edge(e)?;
+                        let e = topology.get_edge(e)?;
                         for v in [e.start_vertex, e.end_vertex] {
-                            let p = model.get_vertex(v)?.point;
+                            let p = topology.get_vertex(v)?.point;
                             let r = p.sub(&axis.project(&p)).norm();
                             beyond |= r.definitely_greater(self.cylinder.radius);
                         }
@@ -236,18 +236,18 @@ impl<S: Scalar> Wall<S> {
     /// The wall of the solid `solid` on `cylinder` that reaches `at` along
     /// its axis — a hole's wall at the face it was drilled into — if any.
     pub fn at(
-        part: &Part<S>,
+        model: &NamedModel<S>,
         solid: SolidId,
         cylinder: &Cylinder<S>,
         at: &Vector3<S>,
     ) -> GeopResult<Option<Self>> {
-        let model = part.topology();
-        for face in model.body_faces(Body::Solid(solid))? {
-            let on = model.get_face(face)?.surface.as_cylinder()?;
+        let topology = model.topology();
+        for face in topology.body_faces(Body::Solid(solid))? {
+            let on = topology.get_face(face)?.surface.as_cylinder()?;
             if !on.is_some_and(|c| same_cylinder(cylinder, &c)) {
                 continue;
             }
-            let wall = Wall::of(part, face)?;
+            let wall = Wall::of(model, face)?;
             let along = at
                 .sub(&wall.cylinder.axis.point)
                 .prod_dot(&wall.cylinder.axis.direction);
@@ -266,15 +266,42 @@ impl<S: Scalar> Wall<S> {
             .add(&self.cylinder.axis.direction.prod_scalar(along))
     }
 
-    /// How long it is along its axis.
-    pub fn length(&self) -> S {
-        self.to.sub(self.from)
+    /// Where a thread of `radius` on it runs: from the point `along` its
+    /// axis, the way `direction` goes — along the axis or against it —
+    /// `length` far or, if none, as far as the wall does. Refused if it would
+    /// run past the wall's end.
+    pub fn placement(
+        &self,
+        (along, direction): (S, Vector3<S>),
+        radius: S,
+        length: Option<f64>,
+    ) -> GeopResult<ThreadPlacement<S>> {
+        let ahead = direction.prod_dot(&self.cylinder.axis.direction);
+        let runs = if ahead.definitely_greater(S::ZERO) {
+            self.to.sub(along)
+        } else {
+            along.sub(self.from)
+        };
+        let length = length.unwrap_or_else(|| runs.to_f64());
+        if S::from_f64(length).definitely_greater(runs) {
+            return Err(GeopError::new(format!(
+                "the thread runs {length} far, but its wall only {}",
+                runs.to_f64()
+            )));
+        }
+        Ok(ThreadPlacement {
+            start: self.axis_point(along),
+            direction,
+            radius,
+            length,
+            internal: self.internal,
+        })
     }
 
     /// The name of its first face: what a thread on it records it was put
     /// on.
-    pub fn face_name(&self, part: &Part<S>) -> String {
-        part.name_of(self.faces[0]).unwrap_or_default().to_string()
+    pub fn face_name(&self, model: &NamedModel<S>) -> String {
+        model.name_of(self.faces[0]).unwrap_or_default().to_string()
     }
 }
 
@@ -399,21 +426,21 @@ impl<S: Scalar> ThreadPlacement<S> {
 /// tooth into a tapped hole whose seams lay in the stations' half-planes).
 /// So of every half degree, take the one farthest from all of them.
 fn clear_start<S: Scalar>(
-    part: &Part<S>,
+    model: &NamedModel<S>,
     wall: &Wall<S>,
     frame: &CoordinateSystem<S>,
     turns: f64,
 ) -> GeopResult<f64> {
-    let model = part.topology();
+    let topology = model.topology();
     let mut corners = Vec::new();
     for &f in &wall.faces {
-        for coedge in model.iterate_face_coedges(f) {
-            let CoedgeGeometry::Edge(edge) = model.get_coedge(coedge)?.geometry else {
+        for coedge in topology.iterate_face_coedges(f) {
+            let CoedgeGeometry::Edge(edge) = topology.get_coedge(coedge)?.geometry else {
                 continue;
             };
-            let e = model.get_edge(edge)?;
+            let e = topology.get_edge(edge)?;
             for v in [e.start_vertex, e.end_vertex] {
-                let q = frame.to_uvw(&model.get_vertex(v)?.point);
+                let q = frame.to_uvw(&topology.get_vertex(v)?.point);
                 corners.push(q[1].to_f64().atan2(q[0].to_f64()).to_degrees());
             }
         }
@@ -446,7 +473,7 @@ fn clear_start<S: Scalar>(
 /// `solid`, its faces `N(c0,q)` .. `N(c3,q)` for each quarter turn `q` and
 /// its ends `N(start)` and `N(end)` by `namer`.
 pub fn thread_tool<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     solid: &str,
     size: &MetricSize,
@@ -483,7 +510,7 @@ pub fn thread_tool<S: Scalar>(
     let (start, length) = placement.swept(wall, pitch)?;
     let turns = length / pitch;
     let frame = frame_along(start, &placement.direction)?;
-    let (c, s) = cos_sin(clear_start(part, wall, &frame, turns)?);
+    let (c, s) = cos_sin(clear_start(model, wall, &frame, turns)?);
     let u = frame
         .u()
         .prod_scalar(S::from_f64(c))
@@ -491,7 +518,7 @@ pub fn thread_tool<S: Scalar>(
     let w = *frame.w();
     let axes = CoordinateSystem::try_new(start, u, w.prod_cross(&u), w)?;
     screw(
-        part,
+        model,
         namer,
         solid,
         &axes,

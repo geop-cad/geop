@@ -9,16 +9,26 @@ use geop_core_math::{
     vector::Vector2,
     with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_core_sketch::Sketch;
 use geop_core_topology::Body;
 use geop_ops::{
-    Context, Design, Library, Namer, Part, PlacedSketch,
-    operation::{EntityRef, Operation, Role},
-    ui::Form,
+    Design, NamedModel, Namer, ParamValue, PlacedSketch,
+    model::model_or_empty,
+    operation::{Build, BuildReader, EntityRef, Input, Lookup, ModelStep, Role, Seen},
+    output::sheet::Sheet as Paper,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{cutting::cutting_sheet, sheet::Sheet, thicken::thicken};
+use crate::{
+    body::{self, Made, Making, SheetStep, Unfolded, sheets, sheets_of},
+    cutting::cutting_sheet,
+    sheet::Sheet,
+    thicken::thicken,
+};
 
 /// Unfolds the sheet-metal body named `solid` into its flat pattern, for
 /// the operation `P`: every bend laid flat as a strip as wide as its
@@ -34,7 +44,8 @@ use crate::{cutting::cutting_sheet, sheet::Sheet, thicken::thicken};
 /// The bend lines — down the middle of each bend's strip — are also the
 /// sketch `flat_pattern(P,bend_lines)`, on the flat pattern's A side, one
 /// line per bend in the order the bends were made; and what each bend is
-/// recorded on the flat body as [`FlatPatternData`].
+/// is recorded for the flat body as [`FlatPatternData`] (see
+/// [`crate::body::sheets`]).
 ///
 /// Only a body whose bends were recorded as it was built — by a base
 /// flange and its flanges — unfolds, and only while it is still made of
@@ -68,78 +79,25 @@ pub struct BendLine {
     pub toward_b: bool,
 }
 
-/// What a flat pattern records on its body, for drawings and cutting:
+/// What a flat pattern records of its body, for drawings and cutting:
 /// the sheet's thickness, the bends, and the pattern laid out for cutting
 /// (see [`cutting_sheet`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct FlatPatternData {
     pub thickness: f64,
     pub bends: Vec<BendLine>,
-    pub pattern: geop_ops_drawing::sheet::Sheet,
+    pub pattern: Paper,
 }
 
-impl Operation for FlatPattern {
-    type Args = FlatPatternArgs;
-    type Session = ();
-
-    /// The newest sheet-metal body.
-    fn new_args<S: Scalar>(&self, before: &Part<S>) -> FlatPatternArgs {
-        FlatPatternArgs {
-            solid: before
-                .solid_names()
-                .into_iter()
-                .rev()
-                .find(|s| before.body_data::<Sheet<S>>(s).is_some())
-                .unwrap_or_default(),
-            keep: false,
-        }
-    }
-
-    /// The body, picked, and whether to keep it.
-    fn form<'a, S: Scalar>(
-        &self,
-        _: Context<'a, S>,
-        args: &FlatPatternArgs,
-        _: &(),
-        _: &[String],
-    ) -> Form<'a, S, FlatPatternArgs> {
-        let mut f = Form::<S, FlatPatternArgs>::new();
-        let solid = (!args.solid.is_empty())
-            .then(|| EntityRef::Solid {
-                name: args.solid.clone(),
-            })
-            .into_iter()
-            .collect();
-        f.reference(
-            "solid",
-            "body",
-            solid,
-            &[Role::Solid],
-            None,
-            false,
-            |e, picked| {
-                e.args.solid = match picked.as_slice() {
-                    [EntityRef::Solid { name }] => name.clone(),
-                    _ => String::new(),
-                }
-            },
-        );
-        f.checkbox("keep", "keep bent body", args.keep, |args, b| args.keep = b);
-        f
-    }
-
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
-        args: &FlatPatternArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("flat_pattern({operation_id}, {args:?})");
-        let namer = Namer::new("flat_pattern", operation_id)?;
-        let id = part.solid_id(&args.solid).with_context(ctx)?;
-        let sheet = part
-            .body_data::<Sheet<S>>(&args.solid)
+impl SheetStep for FlatPattern {
+    fn plan(reader: &mut BuildReader, step: &str, args: &FlatPatternArgs) -> GeopResult<Made> {
+        let ctx = with_context!("flat_pattern({step}, {args:?})");
+        let namer = Namer::new("flat_pattern", step)?;
+        let sheets = sheets_of(reader);
+        let model = model_or_empty(reader);
+        model.solid_id(&args.solid).with_context(ctx)?;
+        let sheet = sheets
+            .bent(&args.solid)
             .ok_or_else(|| {
                 GeopError::new(format!(
                     "{} is not a sheet-metal body: a flat pattern unfolds a body built by a base flange and its flanges, which record its bends",
@@ -148,29 +106,137 @@ impl Operation for FlatPattern {
             })
             .with_context(ctx)?
             .clone();
-        check_unchanged(&part, &args.solid, &sheet).with_context(ctx)?;
-        let unfolded = sheet.unfolded().with_context(ctx)?;
-        if !args.keep {
-            part.assemble_sheet(&[Body::Solid(id)], &[])
-                .with_context(ctx)?;
+        check_unchanged(&model, &args.solid, &sheet).with_context(ctx)?;
+        let (bend_lines, data) = bend_lines(&sheet).with_context(ctx)?;
+        Ok(Made {
+            consumes: (!args.keep).then(|| args.solid.clone()),
+            solid: namer.root(),
+            making: Making::Flat(Box::new(Unfolded {
+                sheet,
+                bend_lines,
+                data,
+            })),
+        })
+    }
+}
+
+impl ModelStep for FlatPattern {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        _: &FlatPatternArgs,
+    ) -> GeopResult<()> {
+        body::build(model, reader, step)
+    }
+}
+
+/// Builds the flat pattern of `sheet` into `model`, named by `namer`, in
+/// place of the solid `consumes`, if any.
+pub(crate) fn build(
+    model: &mut NamedModel<Design>,
+    sheet: &Sheet<Design>,
+    consumes: Option<&str>,
+    namer: &Namer,
+) -> GeopResult<()> {
+    let unfolded = sheet.unfolded()?;
+    if let Some(consumed) = consumes {
+        let id = model.solid_id(consumed)?;
+        model.assemble_sheet(&[Body::Solid(id)], &[])?;
+    }
+    thicken(model, &unfolded, &namer.root(), &|n| namer.name(&[&n]))?;
+    Ok(())
+}
+
+impl Operation for FlatPattern {
+    const INFO: OperationInfo = OperationInfo::new(
+        "flat_pattern",
+        "Flat pattern",
+        "Unfold a sheet-metal body into the flat blank it is cut from, with its bend lines.",
+        OperationGroup::SheetMetal,
+        OperationTier::Small,
+    );
+    type Args = FlatPatternArgs;
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
+
+    /// The newest sheet-metal body.
+    fn new_args(context: &Context<Input, ParamValue>) -> FlatPatternArgs {
+        let seen = Seen::new(context.before);
+        let sheets = context.before.retrieve_target(&sheets()).ok();
+        FlatPatternArgs {
+            solid: (seen.model().solid_names().into_iter().rev())
+                .find(|s| sheets.is_some_and(|sheets| sheets.bent(s).is_some()))
+                .unwrap_or_default(),
+            keep: false,
         }
-        let name = namer.root();
-        thicken(&mut part, &unfolded, &name, &|n| namer.name(&[&n])).with_context(ctx)?;
-        let data = bend_lines(&mut part, &namer, &sheet).with_context(ctx)?;
-        part.set_body_data(&name, data).with_context(ctx)?;
-        Ok(part)
+    }
+
+    /// Unfolds the body, and draws its bend lines as a sketch.
+    fn run(step: &str, part: &mut Build, args: &FlatPatternArgs) -> GeopResult<()> {
+        body::run::<Self>(step, part, args)?;
+        let namer = Namer::new("flat_pattern", step)?;
+        body::add_bend_lines(part, step, &namer.name(&["bend_lines"]))
+    }
+
+    /// The body, picked, and whether to keep it.
+    fn presentation(
+        _: &Context<Input, ParamValue>,
+        args: &FlatPatternArgs,
+        _: &(),
+    ) -> Form<Design> {
+        let mut form = Form::default();
+        let solid = (!args.solid.is_empty())
+            .then(|| EntityRef::Solid {
+                name: args.solid.clone(),
+            })
+            .into_iter()
+            .collect();
+        (form
+            .dialog
+            .reference("solid", "body", solid, &[Role::Solid], None, false))
+        .checkbox("keep", "keep bent body", args.keep);
+        form
+    }
+
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
+        args: &FlatPatternArgs,
+        _: &(),
+        event: Event<Design>,
+    ) -> (FlatPatternArgs, ()) {
+        let mut args = args.clone();
+        let Event::Field { key, value } = event else {
+            return (args, ());
+        };
+        match (key.as_str(), value) {
+            ("solid", Value::Entities(picked)) => {
+                args.solid = match picked.as_slice() {
+                    [EntityRef::Solid { name }] => name.clone(),
+                    _ => String::new(),
+                }
+            }
+            ("keep", Value::Bool(b)) => args.keep = b,
+            _ => {}
+        }
+        (args, ())
     }
 }
 
 /// Checks that the solid `solid` is still made of exactly the faces
 /// `sheet` built: refuses, naming them, faces it does not know — another
 /// step's — and faces it built that are gone.
-fn check_unchanged<S: Scalar>(part: &Part<S>, solid: &str, sheet: &Sheet<S>) -> GeopResult<()> {
+fn check_unchanged<S: Scalar>(
+    model: &NamedModel<S>,
+    solid: &str,
+    sheet: &Sheet<S>,
+) -> GeopResult<()> {
     let built: BTreeSet<String> = sheet.folded()?.face_names()?.into_iter().collect();
-    let faces = part.topology().solid_faces(part.solid_id(solid)?)?;
+    let faces = model.topology().solid_faces(model.solid_id(solid)?)?;
     let present: BTreeSet<String> = faces
         .iter()
-        .map(|&f| part.name_of(f).unwrap_or("?").to_string())
+        .map(|&f| model.name_of(f).unwrap_or("?").to_string())
         .collect();
     let foreign: Vec<&String> = present.difference(&built).collect();
     let missing: Vec<&String> = built.difference(&present).collect();
@@ -182,13 +248,10 @@ fn check_unchanged<S: Scalar>(part: &Part<S>, solid: &str, sheet: &Sheet<S>) -> 
     )))
 }
 
-/// The bend lines of the flat pattern of `sheet`: added to `part` as the
-/// sketch `P(bend_lines)`, and returned with what each bend is.
-fn bend_lines<S: Scalar>(
-    part: &mut Part<S>,
-    namer: &Namer,
-    sheet: &Sheet<S>,
-) -> GeopResult<FlatPatternData> {
+/// The bend lines of the flat pattern of `sheet`: the sketch of them, on
+/// its A side, and what each bend is, with the pattern laid out for
+/// cutting.
+fn bend_lines<S: Scalar>(sheet: &Sheet<S>) -> GeopResult<(PlacedSketch<S>, FlatPatternData)> {
     let place = &sheet.flats[0].place;
     let mut sketch = Sketch::<Design>::new();
     let mut bends = Vec::new();
@@ -207,16 +270,14 @@ fn bend_lines<S: Scalar>(
             toward_b: bend.toward_b,
         });
     }
-    part.add_sketch(
-        PlacedSketch {
-            plane: place.coordinate_system()?,
-            sketch,
-        },
-        namer.name(&["bend_lines"]),
-    )?;
-    Ok(FlatPatternData {
+    let sketch = PlacedSketch {
+        plane: place.coordinate_system()?,
+        sketch,
+    };
+    let data = FlatPatternData {
         thickness: sheet.rules.thickness,
         bends,
         pattern: cutting_sheet(sheet)?,
-    })
+    };
+    Ok((sketch, data))
 }

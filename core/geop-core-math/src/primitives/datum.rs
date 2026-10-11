@@ -88,7 +88,7 @@ impl std::fmt::Display for DatumComponent {
 /// datum stands for. Every datum has a whole frame, whatever its kind, so
 /// anything built on it — a sketch on a plane, a datum offset from a point
 /// — has axes to be built along.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Datum<S: Scalar> {
     pub kind: DatumKind,
     pub frame: CoordinateSystem<S>,

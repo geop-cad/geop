@@ -1,64 +1,36 @@
 //! The operations run as programs: sketches extruded and revolved into
 //! solids, and what they refuse.
 
+use geop_ops_extrude_revolve::Output;
 use std::f64::consts::PI;
 
-use geop_core_math::primitives::{DatumComponent, FrameAxis};
+use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_core_sketch::PointId;
-use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
-use geop_ops::Part;
-use geop_ops::{EntityRef, NoFiles, ORIGIN};
+use geop_core_program::program::ProgramStep;
+use geop_core_topology::validation::{ValidationParameters, validate};
+use geop_ops::{EntityRef, NamedModel};
 use geop_ops_booleans::{BooleanArgs, Combine, boolean::BooleanOp};
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, RevolveArgs};
-use geop_ops_sketch::AddSketchArgs;
 use geop_ops_sketch::{Constraint, Sketch};
 
-use crate::Program;
-use crate::examples::n;
-
-fn assert_valid(part: &Part<S>) {
-    let params = ValidationParameters::default();
-    if let Err(e) = validate(&params, part.topology()) {
-        panic!("{e:?}");
-    }
-    if let Err(e) = validate_manifold(&params, part.topology()) {
-        panic!("{e:?}");
-    }
-}
-
-/// A closed polygon through `corners`, returning its point ids.
-fn polygon(s: &mut Sketch, corners: &[[f64; 2]]) -> Vec<PointId> {
-    let p: Vec<PointId> = corners
-        .iter()
-        .map(|c| s.add_point(n(c[0]), n(c[1])))
-        .collect();
-    for i in 0..p.len() {
-        s.add_line(p[i], p[(i + 1) % p.len()]);
-    }
-    p
-}
-
-fn sketch(plane: EntityRef, sketch: Sketch) -> AddSketchArgs {
-    AddSketchArgs {
-        plane: Some(plane),
-        sketch,
-        ..Default::default()
-    }
-}
+use crate::examples::{n, polygon};
+use crate::operations::testing::{
+    Built, assert_valid, both_ways, cut, extrusion, join, one_way, origin_axis, origin_plane,
+    sketch, two_ways,
+};
+use crate::{Program, Push, StepArgs};
 
 fn extrude(sketch: &str, distance: f64, symmetric: bool) -> ExtrudeArgs {
-    ExtrudeArgs {
-        sketch: sketch.into(),
-        extent: Extents {
+    extrusion(
+        sketch,
+        Extents {
             side1: Extent::blind(distance),
             symmetric,
             side2: None,
             reversed: false,
         },
-        face: false,
-        combine: Combine::NewBody,
-    }
+        Combine::NewBody,
+    )
 }
 
 /// A symmetric extrude of a unit square on the Z plane by total thickness
@@ -69,15 +41,9 @@ fn symmetric_extrude_is_centered_on_the_sketch_plane() {
     let mut s = Sketch::new();
     polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
     let mut program = Program::new();
-    program.push(
-        "square",
-        sketch(
-            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
-            s,
-        ),
-    );
+    program.push("square", sketch(origin_plane(FrameAxis::Z), s));
     program.push("slab", extrude("square", 1.0, true));
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     for v in part.topology().vertices.values() {
         assert!(
@@ -107,115 +73,58 @@ fn extrude_slot_plate_with_hole() {
     let c = s.add_point(n(1.0), n(0.5));
     s.add_circle(c, n(0.25));
     let mut program = Program::new();
-    program.push(
-        "slot",
-        sketch(
-            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
-            s,
-        ),
-    );
+    program.push("slot", sketch(origin_plane(FrameAxis::Z), s));
     program.push("plate", extrude("slot", 0.5, false));
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     // 2 caps + 6 outer walls (the half circles are split in quarters) + 4
     // hole walls.
     assert_eq!(part.topology().faces.len(), 12);
 }
 
-// /// Sketch a circle on a block's top face, extrude it upwards, and unite:
-// /// a boss on a block.
-// #[test]
-// fn boss_on_block_top_face() {
-// let mut block = Sketch::new();
-// polygon(
-// &mut block,
-// &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
-// );
-// let mut boss = Sketch::new();
-// let c = boss.add_point(n(0.5), n(0.5));
-// boss.add_circle(c, n(0.3));
-// let mut program = Program::new();
-// program.push(
-// "base",
-// sketch(
-// EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
-// block,
-// ),
-// );
-// program.push("block", extrude("base", 1.0, false));
-// program.push(
-// "boss_sketch",
-// sketch(
-// EntityRef::Face {
-// name: "extrude(block,end)".into(),
-// },
-// boss,
-// ),
-// );
-// program.push("boss", extrude("boss_sketch", 0.4, false));
-// program.push(
-// "join",
-// BooleanArgs {
-// a: "extrude(block)".into(),
-// b: "extrude(boss)".into(),
-// op: BooleanOp::Union,
-// },
-// );
-// let part = program.build::<S>(&NoFiles).unwrap();
-// assert_valid(&part);
-// assert_eq!(part.topology().solids.len(), 1, "the boss joined the block");
-// // The boss sits on top of the block, not below the sketch plane.
-// assert!(
-// part.topology()
-// .vertices
-// .values()
-// .any(|v| v.point[2].could_be_equal(S::from_f64(1.4)))
-// );
-// }
-
-/// A rectangle beside a construction axis, with its inner edge constrained
-/// onto the axis: revolving gives a cylinder.
+/// Sketch a circle on a block's top face, extrude it upwards, and unite:
+/// a boss on a block.
 #[test]
-fn revolve_rectangle_about_construction_axis() {
-    let mut s = Sketch::new();
-    let a0 = s.add_point(n(0.0), n(-1.0));
-    let a1 = s.add_point(n(0.0), n(2.0));
-    let axis = s.add_line(a0, a1);
-    s.set_construction(axis, true);
-    let p = polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
-    s.constrain(Constraint::PointOnCurve {
-        point: p[0],
-        curve: axis,
-    });
-    s.constrain(Constraint::PointOnCurve {
-        point: p[3],
-        curve: axis,
-    });
+fn boss_on_block_top_face() {
+    let mut block = Sketch::new();
+    polygon(
+        &mut block,
+        &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+    );
+    let mut boss = Sketch::new();
+    let c = boss.add_point(n(0.5), n(0.5));
+    boss.add_circle(c, n(0.3));
     let mut program = Program::new();
+    program.push("base", sketch(origin_plane(FrameAxis::Z), block));
+    program.push("block", extrude("base", 1.0, false));
     program.push(
-        "profile",
+        "boss_sketch",
         sketch(
-            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y)),
-            s,
+            EntityRef::Face {
+                name: "extrude(block,end)".into(),
+            },
+            boss,
         ),
     );
+    program.push("boss", extrude("boss_sketch", 0.4, false));
     program.push(
-        "tube",
-        RevolveArgs {
-            sketch: "profile".into(),
-            axis: Some(EntityRef::SketchCurve {
-                sketch: "profile".into(),
-                curve: axis,
-            }),
-            extent: Extents::blind(360.0),
-            face: false,
-            combine: Combine::NewBody,
+        "join",
+        BooleanArgs {
+            a: "extrude(block)".into(),
+            b: "extrude(boss)".into(),
+            op: BooleanOp::Union,
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
-    // Three profile edges off the axis, a quadrant face each per 90°.
-    assert_eq!(part.topology().faces.len(), 12);
+    assert_eq!(part.topology().solids.len(), 1, "the boss joined the block");
+    // The boss sits on top of the block, not below the sketch plane.
+    assert!(
+        part.topology()
+            .vertices
+            .values()
+            .any(|v| v.point[2].could_be_equal(S::from_f64(1.4)))
+    );
 }
 
 /// A half disc whose diameter is the axis itself: revolving gives a sphere,
@@ -228,13 +137,7 @@ fn revolve_half_disc_is_sphere() {
     let axis = s.add_line(bottom, top);
     s.add_arc(top, bottom, n(PI));
     let mut program = Program::new();
-    program.push(
-        "half_disc",
-        sketch(
-            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::X)),
-            s,
-        ),
-    );
+    program.push("half_disc", sketch(origin_plane(FrameAxis::X), s));
     program.push(
         "ball",
         RevolveArgs {
@@ -244,11 +147,10 @@ fn revolve_half_disc_is_sphere() {
                 curve: axis,
             }),
             extent: Extents::blind(360.0),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     // The half circle is split into two quarters.
     assert_eq!(part.topology().faces.len(), 8);
@@ -265,13 +167,7 @@ fn revolve_across_axis_fails() {
     s.set_construction(axis, true);
     polygon(&mut s, &[[-0.5, 0.0], [1.0, 0.0], [1.0, 1.0], [-0.5, 1.0]]);
     let mut program = Program::new();
-    program.push(
-        "profile",
-        sketch(
-            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
-            s,
-        ),
-    );
+    program.push("profile", sketch(origin_plane(FrameAxis::Z), s));
     program.push(
         "bad",
         RevolveArgs {
@@ -281,34 +177,29 @@ fn revolve_across_axis_fails() {
                 curve: axis,
             }),
             extent: Extents::blind(360.0),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
-    assert!(program.build::<S>(&NoFiles).is_err());
+    assert!(program.build_model().is_err());
 }
 
 /// Revolves `s`, sketched on the origin's zx plane, around `axis`.
-fn revolved_on_zx(s: Sketch, axis: EntityRef) -> geop_core_math::geop_error::GeopResult<Part<S>> {
+fn revolved_on_zx(
+    s: Sketch,
+    axis: EntityRef,
+) -> geop_core_math::geop_error::GeopResult<NamedModel<S>> {
     let mut program = Program::new();
-    program.push(
-        "profile",
-        sketch(
-            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y)),
-            s,
-        ),
-    );
+    program.push("profile", sketch(origin_plane(FrameAxis::Y), s));
     program.push(
         "ring",
         RevolveArgs {
             sketch: "profile".into(),
             axis: Some(axis),
             extent: Extents::blind(360.0),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
-    program.build::<S>(&NoFiles)
+    program.build_model()
 }
 
 /// A square clear of an axis from outside the sketch — the origin's z axis,
@@ -318,7 +209,7 @@ fn revolved_on_zx(s: Sketch, axis: EntityRef) -> geop_core_math::geop_error::Geo
 fn revolve_square_around_an_outside_axis_is_a_ring() {
     let mut s = Sketch::new();
     polygon(&mut s, &[[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0]]);
-    let z = EntityRef::datum_component(ORIGIN, DatumComponent::Axis(FrameAxis::Z));
+    let z = origin_axis(FrameAxis::Z);
     let part = revolved_on_zx(s, z).unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().faces.len(), 16);
@@ -353,7 +244,7 @@ fn revolve_circle_clear_of_its_axis_is_a_torus() {
 fn revolve_touching_an_outside_axis_fails() {
     let mut s = Sketch::new();
     polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
-    let z = EntityRef::datum_component(ORIGIN, DatumComponent::Axis(FrameAxis::Z));
+    let z = origin_axis(FrameAxis::Z);
     let Err(error) = revolved_on_zx(s, z) else {
         panic!("revolved");
     };
@@ -365,7 +256,7 @@ fn revolve_touching_an_outside_axis_fails() {
 fn revolve_around_an_axis_off_the_plane_fails() {
     let mut s = Sketch::new();
     polygon(&mut s, &[[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0]]);
-    let y = EntityRef::datum_component(ORIGIN, DatumComponent::Axis(FrameAxis::Y));
+    let y = origin_axis(FrameAxis::Y);
     let Err(error) = revolved_on_zx(s, y) else {
         panic!("revolved");
     };
@@ -378,16 +269,10 @@ fn extrude_of_non_sketch_fails() {
     let mut s = Sketch::new();
     polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
     let mut program = Program::new();
-    program.push(
-        "square",
-        sketch(
-            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
-            s,
-        ),
-    );
+    program.push("square", sketch(origin_plane(FrameAxis::Z), s));
     program.push("slab", extrude("square", 1.0, false));
     program.push("again", extrude("extrude(slab)", 1.0, false));
-    assert!(program.build::<S>(&NoFiles).is_err());
+    assert!(program.build_model().is_err());
 }
 
 /// The boss again, joined to the block by its own extrude: the result is
@@ -403,13 +288,7 @@ fn extrude_combines_with_its_target() {
     let c = boss.add_point(n(0.5), n(0.5));
     boss.add_circle(c, n(0.3));
     let mut program = Program::new();
-    program.push(
-        "base",
-        sketch(
-            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
-            block,
-        ),
-    );
+    program.push("base", sketch(origin_plane(FrameAxis::Z), block));
     program.push("block", extrude("base", 1.0, false));
     program.push(
         "boss_sketch",
@@ -423,13 +302,11 @@ fn extrude_combines_with_its_target() {
     program.push(
         "boss",
         ExtrudeArgs {
-            combine: Combine::Union {
-                target: "extrude(block)".into(),
-            },
+            output: Output::Solid(join("extrude(block)")),
             ..extrude("boss_sketch", 0.4, false)
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 1);
     assert!(part.solid_id("extrude(boss)").is_ok());
@@ -440,30 +317,24 @@ fn extrude_combines_with_its_target() {
     assert!(part.face_id("extrude(block,start)").is_ok());
 }
 
-/// The rectangle of [`revolve_rectangle_about_construction_axis`], its
-/// inner edge on the axis, revolved as far as `extent` says — or, as a
-/// `face`, its curves swept into faces standing on their own.
+/// A rectangle beside a construction axis, its inner edge constrained onto
+/// the axis, revolved as far as `extent` says — or, as a `face`, its curves
+/// swept into faces standing on their own.
 fn revolved_rectangle(
     extent: Extents,
     face: bool,
-) -> geop_core_math::geop_error::GeopResult<Part<S>> {
+) -> geop_core_math::geop_error::GeopResult<NamedModel<S>> {
     let mut s = Sketch::new();
     let a0 = s.add_point(n(0.0), n(-1.0));
     let a1 = s.add_point(n(0.0), n(2.0));
     let axis = s.add_line(a0, a1);
     s.set_construction(axis, true);
-    let p = polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+    let (p, _) = polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
     for point in [p[0], p[3]] {
         s.constrain(Constraint::PointOnCurve { point, curve: axis });
     }
     let mut program = Program::new();
-    program.push(
-        "profile",
-        sketch(
-            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y)),
-            s,
-        ),
-    );
+    program.push("profile", sketch(origin_plane(FrameAxis::Y), s));
     program.push(
         "turn",
         RevolveArgs {
@@ -473,11 +344,14 @@ fn revolved_rectangle(
                 curve: axis,
             }),
             extent,
-            face,
-            combine: Combine::NewBody,
+            output: if face {
+                Output::Faces { up_to: None }
+            } else {
+                Output::default()
+            },
         },
     );
-    program.build::<S>(&NoFiles)
+    program.build_model()
 }
 
 /// Any angle up to a full turn, either way, symmetric or each side its
@@ -486,32 +360,23 @@ fn revolved_rectangle(
 /// turn; sides adding up to a full turn close on themselves.
 #[test]
 fn revolve_turns_any_angle() {
-    let two = |a: f64, b: f64| Extents {
-        side1: Extent::blind(a),
-        symmetric: false,
-        side2: Some(Extent::blind(b)),
-        reversed: false,
-    };
-    let symmetric = |a: f64| Extents {
-        side1: Extent::blind(a),
-        symmetric: true,
-        side2: None,
-        reversed: false,
-    };
     for (extent, faces) in [
+        // A full turn: a cylinder, three profile edges off the axis, a
+        // quadrant face each per 90°.
+        (Extents::blind(360.0), 12),
         (Extents::blind(90.0), 3 + 2),
         (Extents::blind(-270.0), 9 + 2),
         (Extents::blind(45.0), 3 + 2),
-        (symmetric(180.0), 6 + 2),
-        (two(30.0, 100.0), 6 + 2),
-        (two(200.0, 160.0), 12),
+        (both_ways(180.0), 6 + 2),
+        (two_ways(30.0, 100.0), 6 + 2),
+        (two_ways(200.0, 160.0), 12),
     ] {
         let part = revolved_rectangle(extent.clone(), false).unwrap();
         assert_valid(&part);
         assert_eq!(part.topology().faces.len(), faces, "{extent:?}");
         assert_eq!(part.face_id("revolve(turn,start)").is_ok(), faces != 12);
     }
-    assert!(revolved_rectangle(two(200.0, 200.0), false).is_err());
+    assert!(revolved_rectangle(two_ways(200.0, 200.0), false).is_err());
 }
 
 /// A square with a square hole, clear of the axis: a full turn sweeps the
@@ -521,31 +386,24 @@ fn revolve_with_a_hole() {
     let mut s = Sketch::new();
     polygon(&mut s, &[[1.0, 1.0], [4.0, 1.0], [4.0, 4.0], [1.0, 4.0]]);
     polygon(&mut s, &[[2.0, 2.0], [3.0, 2.0], [3.0, 3.0], [2.0, 3.0]]);
-    let z = EntityRef::datum_component(ORIGIN, DatumComponent::Axis(FrameAxis::Z));
+    let z = origin_axis(FrameAxis::Z);
     let full = revolved_on_zx(s.clone(), z.clone()).unwrap();
     assert_valid(&full);
     let ring = full.solid_id("revolve(ring)").unwrap();
     assert_eq!(full.topology().get_solid(ring).unwrap().shells.len(), 2);
 
     let mut program = Program::new();
-    program.push(
-        "profile",
-        sketch(
-            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y)),
-            s,
-        ),
-    );
+    program.push("profile", sketch(origin_plane(FrameAxis::Y), s));
     program.push(
         "ring",
         RevolveArgs {
             sketch: "profile".into(),
             axis: Some(z),
             extent: Extents::blind(90.0),
-            face: false,
-            combine: Combine::NewBody,
+            output: Output::Solid(Combine::NewBody),
         },
     );
-    let quarter = program.build::<S>(&NoFiles).unwrap();
+    let quarter = program.build_model().unwrap();
     assert_valid(&quarter);
     assert_eq!(quarter.topology().faces.len(), 4 + 4 + 2);
 }
@@ -557,46 +415,29 @@ fn a_sketch_of_two_areas_is_refused() {
     polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
     polygon(&mut s, &[[2.0, 0.0], [3.0, 0.0], [3.0, 1.0], [2.0, 1.0]]);
     let mut program = Program::new();
-    program.push(
-        "squares",
-        sketch(
-            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
-            s,
-        ),
-    );
+    program.push("squares", sketch(origin_plane(FrameAxis::Z), s));
     program.push("slabs", extrude("squares", 1.0, false));
-    let Err(error) = program.build::<S>(&NoFiles) else {
+    let Err(error) = program.build_model() else {
         panic!("extruded");
     };
     assert!(error.root_message().contains("separate areas"), "{error:?}");
 }
 
 /// A unit square on the Z plane, and `step` built on it.
-fn on_unit_square(step: ExtrudeArgs) -> geop_core_math::geop_error::GeopResult<Part<S>> {
+fn on_unit_square(step: ExtrudeArgs) -> geop_core_math::geop_error::GeopResult<NamedModel<S>> {
     let mut s = Sketch::new();
     polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
     let mut program = Program::new();
-    program.push(
-        "square",
-        sketch(
-            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
-            s,
-        ),
-    );
+    program.push("square", sketch(origin_plane(FrameAxis::Z), s));
     program.push("e", step);
-    program.build::<S>(&NoFiles)
+    program.build_model()
 }
 
 /// Each side its own length: from one below the plane to the other above.
 #[test]
 fn extrude_each_side_its_own_length() {
     let part = on_unit_square(ExtrudeArgs {
-        extent: Extents {
-            side1: Extent::blind(1.0),
-            symmetric: false,
-            side2: Some(Extent::blind(0.5)),
-            reversed: false,
-        },
+        extent: two_ways(1.0, 0.5),
         ..extrude("square", 1.0, false)
     })
     .unwrap();
@@ -614,7 +455,7 @@ fn extrude_each_side_its_own_length() {
 #[test]
 fn extrude_an_area_as_faces() {
     let part = on_unit_square(ExtrudeArgs {
-        face: true,
+        output: Output::Faces { up_to: None },
         ..extrude("square", 1.0, false)
     })
     .unwrap();
@@ -636,17 +477,11 @@ fn sweep_a_line_as_a_face() {
     let b = s.add_point(n(2.0), n(1.0));
     let line = s.add_line(a, b);
     let mut program = Program::new();
-    program.push(
-        "slant",
-        sketch(
-            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y)),
-            s,
-        ),
-    );
+    program.push("slant", sketch(origin_plane(FrameAxis::Y), s));
     program.push(
         "wall",
         ExtrudeArgs {
-            face: true,
+            output: Output::Faces { up_to: None },
             ..extrude("slant", 1.0, true)
         },
     );
@@ -654,16 +489,12 @@ fn sweep_a_line_as_a_face() {
         "cone",
         RevolveArgs {
             sketch: "slant".into(),
-            axis: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Axis(FrameAxis::Z),
-            )),
+            axis: Some(origin_axis(FrameAxis::Z)),
             extent: Extents::blind(360.0),
-            face: true,
-            combine: Combine::NewBody,
+            output: Output::Faces { up_to: None },
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert!(part.topology().solids.is_empty());
     assert!(part.face_id(&format!("extrude(wall,slant,{line})")).is_ok());
     assert_eq!(part.sheet_face_names().len(), 1 + 4);
@@ -672,147 +503,114 @@ fn sweep_a_line_as_a_face() {
     }
 }
 
+/// The step `id`, `args` for the operation they are for.
+fn as_step<A: StepArgs>(id: &str, args: A) -> ProgramStep {
+    let mut program = Program::new();
+    program.push(id, args);
+    program.program.steps.remove(0)
+}
+
 /// A block, from `z0` to `z1` over `[0, 2]^2`, sketched on the Z plane
 /// and extruded both ways from it, and `steps` after it.
 fn on_block(
     z0: f64,
     z1: f64,
-    steps: Vec<(&str, crate::PartOperation)>,
-) -> geop_core_math::geop_error::GeopResult<Part<S>> {
+    steps: Vec<ProgramStep>,
+) -> geop_core_math::geop_error::GeopResult<NamedModel<S>> {
     let mut base = Sketch::new();
     polygon(&mut base, &[[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0]]);
     let mut post = Sketch::new();
     polygon(&mut post, &[[0.5, 0.5], [1.5, 0.5], [1.5, 1.5], [0.5, 1.5]]);
-    let z_plane = || EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z));
     let mut program = Program::new();
-    program.push("base", sketch(z_plane(), base));
+    program.push("base", sketch(origin_plane(FrameAxis::Z), base));
     program.push(
         "block",
         ExtrudeArgs {
-            extent: Extents {
-                side1: Extent::blind(z1),
-                symmetric: false,
-                side2: Some(Extent::blind(-z0)),
-                reversed: false,
-            },
+            extent: two_ways(z1, -z0),
             ..extrude("base", 1.0, false)
         },
     );
-    program.push("post_sketch", sketch(z_plane(), post));
-    for (id, step) in steps {
-        program.push(id, step);
-    }
-    program.build::<S>(&NoFiles)
+    program.push("post_sketch", sketch(origin_plane(FrameAxis::Z), post));
+    program.program.steps.extend(steps);
+    program.build_model()
 }
 
-// /// An extrude going up to the next face of a target: the post sketched
-// /// under the block grows up to the block's bottom and joins it there;
-// /// cut into the block, it cuts up to where it comes out of it.
-// #[test]
-// fn extrude_up_to_next() {
-// let up_to_next = |combine: Combine| -> crate::PartOperation {
-// ExtrudeArgs {
-// extent: Extents {
-// side1: Extent::UpToNext,
-// symmetric: false,
-// side2: None,
-// reversed: false,
-// },
-// combine,
-// ..extrude("post_sketch", 1.0, false)
-// }
-// .into()
-// };
-// let target = || "extrude(block)".to_string();
-// let heights = |part: &Part<S>| {
-// let mut z: Vec<i64> = part
-// .topology()
-// .vertices
-// .values()
-// .map(|v| (v.point[2].to_f64() * 1000.0).round() as i64)
-// .collect();
-// z.sort();
-// z.dedup();
-// z
-// };
+/// An extrude going up to the next face of a target: the post sketched
+/// under the block grows up to the block's bottom and joins it there;
+/// cut into the block, it cuts up to where it comes out of it.
+#[test]
+fn extrude_up_to_next() {
+    let up_to_next = |combine: Combine| {
+        as_step(
+            "post",
+            ExtrudeArgs {
+                extent: one_way(Extent::UpToNext),
+                output: Output::Solid(combine),
+                ..extrude("post_sketch", 1.0, false)
+            },
+        )
+    };
+    let target = || "extrude(block)".to_string();
 
-// let joined = on_block(
-// 2.0,
-// 3.0,
-// vec![("post", up_to_next(Combine::Union { target: target() }))],
-// )
-// .unwrap();
-// assert_valid(&joined);
-// assert_eq!(joined.solid_names(), ["extrude(post)"]);
-// // The post's foot on the sketch, its head on the block's bottom: none of
-// // the tool past that is left.
-// assert_eq!(heights(&joined), [0, 2000, 3000]);
-// // The block's six faces, the post's four walls and its foot — and the
-// // block's top face in two: the tool, built long enough to reach past
-// // the block, was imprinted on it where it came out again, and the
-// // pieces it leaves are not merged back.
-// assert_eq!(joined.topology().faces.len(), 6 + 4 + 1 + 1);
+    let joined = on_block(2.0, 3.0, vec![up_to_next(join(target()))]).unwrap();
+    assert_valid(&joined);
+    assert_eq!(joined.solid_names(), ["extrude(post)"]);
+    // The post's foot on the sketch, its head on the block's bottom: none of
+    // the tool past that is left.
+    assert_eq!(heights(&joined), [0, 2000, 3000]);
+    // The block's six faces, the post's four walls and its foot — and the
+    // block's top face in two: the tool, built long enough to reach past
+    // the block, was imprinted on it where it came out again, and the
+    // pieces it leaves are not merged back.
+    assert_eq!(joined.topology().faces.len(), 6 + 4 + 1 + 1);
 
-// let cut = on_block(
-// 0.0,
-// 1.0,
-// vec![("post", up_to_next(Combine::Difference { target: target() }))],
-// )
-// .unwrap();
-// assert_valid(&cut);
-// assert_eq!(heights(&cut), [0, 1000]);
-// assert_eq!(cut.topology().faces.len(), 6 + 4);
+    let cut = on_block(0.0, 1.0, vec![up_to_next(cut(target()))]).unwrap();
+    assert_valid(&cut);
+    assert_eq!(heights(&cut), [0, 1000]);
+    assert_eq!(cut.topology().faces.len(), 6 + 4);
 
-// // Nothing ahead to stop at.
-// let Err(error) = on_block(
-// -2.0,
-// -1.0,
-// vec![("post", up_to_next(Combine::Union { target: target() }))],
-// ) else {
-// panic!("extruded");
-// };
-// assert!(error.root_message().contains("nothing"), "{error:?}");
+    // Nothing ahead to stop at.
+    let Err(error) = on_block(-2.0, -1.0, vec![up_to_next(join(target()))]) else {
+        panic!("extruded");
+    };
+    assert!(error.root_message().contains("nothing"), "{error:?}");
 
-// // A new body stops at the next face of any solid, as a body of its
-// // own, the block left as it was.
-// let apart = on_block(2.0, 3.0, vec![("post", up_to_next(Combine::NewBody))]).unwrap();
-// assert_valid(&apart);
-// assert_eq!(apart.solid_names(), ["extrude(block)", "extrude(post)"]);
-// let block = apart.solid_id("extrude(block)").unwrap();
-// assert_eq!(apart.topology().solid_faces(block).unwrap().len(), 6);
-// let post = apart.solid_id("extrude(post)").unwrap();
-// let mut post_heights: Vec<i64> = apart
-// .topology()
-// .iter_body_vertices(post)
-// .unwrap()
-// .map(|v| (apart.topology().vertices[&v].point[2].to_f64() * 1000.0).round() as i64)
-// .collect();
-// post_heights.sort();
-// post_heights.dedup();
-// assert_eq!(post_heights, [0, 2000]);
-// }
+    // A new body stops at the next face of any solid, as a body of its
+    // own, the block left as it was.
+    let apart = on_block(2.0, 3.0, vec![up_to_next(Combine::NewBody)]).unwrap();
+    assert_valid(&apart);
+    assert_eq!(apart.solid_names(), ["extrude(block)", "extrude(post)"]);
+    let block = apart.solid_id("extrude(block)").unwrap();
+    assert_eq!(apart.topology().solid_faces(block).unwrap().len(), 6);
+    let post = apart.solid_id("extrude(post)").unwrap();
+    let mut post_heights: Vec<i64> = apart
+        .topology()
+        .iter_body_vertices(post)
+        .unwrap()
+        .map(|v| (apart.topology().vertices[&v].point[2].to_f64() * 1000.0).round() as i64)
+        .collect();
+    post_heights.sort();
+    post_heights.dedup();
+    assert_eq!(post_heights, [0, 2000]);
+}
 
 /// A square beside the z-axis turned up to the next face of the walls
 /// standing at `walls` — each a rectangle on the Z plane from `z = -1` to
 /// `2` — united into one solid.
-fn turned_up_to_walls(walls: &[[[f64; 2]; 4]]) -> geop_core_math::geop_error::GeopResult<Part<S>> {
-    let z_plane = || EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z));
+fn turned_up_to_walls(
+    walls: &[[[f64; 2]; 4]],
+) -> geop_core_math::geop_error::GeopResult<NamedModel<S>> {
     let mut program = Program::new();
     let mut solids = Vec::new();
     for (k, corners) in walls.iter().enumerate() {
         let mut wall = Sketch::new();
         polygon(&mut wall, corners);
         let (sketch_id, id) = (format!("wall_sketch{k}"), format!("wall{k}"));
-        program.push(&sketch_id, sketch(z_plane(), wall));
+        program.push(&sketch_id, sketch(origin_plane(FrameAxis::Z), wall));
         program.push(
             &id,
             ExtrudeArgs {
-                extent: Extents {
-                    side1: Extent::blind(2.0),
-                    symmetric: false,
-                    side2: Some(Extent::blind(1.0)),
-                    reversed: false,
-                },
+                extent: two_ways(2.0, 1.0),
                 ..extrude(&sketch_id, 1.0, false)
             },
         );
@@ -837,32 +635,17 @@ fn turned_up_to_walls(walls: &[[[f64; 2]; 4]]) -> geop_core_math::geop_error::Ge
         &mut profile,
         &[[2.0, -1.0], [3.0, -1.0], [3.0, 0.0], [2.0, 0.0]],
     );
-    program.push(
-        "profile",
-        sketch(
-            EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y)),
-            profile,
-        ),
-    );
+    program.push("profile", sketch(origin_plane(FrameAxis::Y), profile));
     program.push(
         "arm",
         RevolveArgs {
             sketch: "profile".into(),
-            axis: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Axis(FrameAxis::Z),
-            )),
-            extent: Extents {
-                side1: Extent::UpToNext,
-                symmetric: false,
-                side2: None,
-                reversed: false,
-            },
-            face: false,
-            combine: Combine::Union { target },
+            axis: Some(origin_axis(FrameAxis::Z)),
+            extent: one_way(Extent::UpToNext),
+            output: Output::Solid(join(target)),
         },
     );
-    program.build::<S>(&NoFiles)
+    program.build_model()
 }
 
 /// A revolve going up to the next face: the square turns until it runs
@@ -903,35 +686,21 @@ fn split_by_a_face_ending_inside_fails() {
     let b = cut.add_point(n(1.0), n(1.0));
     let line = cut.add_line(a, b);
     let program_steps = vec![
-        (
-            "cut_sketch",
-            sketch(
-                EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y)),
-                cut,
-            )
-            .into(),
-        ),
-        (
+        as_step("cut_sketch", sketch(origin_plane(FrameAxis::Y), cut)),
+        as_step(
             "cut",
             ExtrudeArgs {
-                face: true,
-                extent: Extents {
-                    side1: Extent::blind(-5.0),
-                    symmetric: true,
-                    side2: None,
-                    reversed: false,
-                },
+                output: Output::Faces { up_to: None },
+                extent: both_ways(-5.0),
                 ..extrude("cut_sketch", 1.0, false)
-            }
-            .into(),
+            },
         ),
-        (
+        as_step(
             "halves",
             geop_ops_booleans::SplitArgs {
                 solid: "extrude(block)".into(),
                 face: format!("extrude(cut,cut_sketch,{line})"),
-            }
-            .into(),
+            },
         ),
     ];
     let Err(error) = on_block(0.0, 1.0, program_steps) else {
@@ -948,18 +717,11 @@ fn split_by_a_face_ending_inside_fails() {
 /// the upper block's bottom — its foot lying on the face it was drawn on.
 #[test]
 fn extrude_up_to_next_from_a_face_of_the_target() {
-    let z_plane = || EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z));
-    let between = |sketch: &str, z0: f64, z1: f64| -> crate::PartOperation {
+    let between = |sketch: &str, z0: f64, z1: f64| -> ExtrudeArgs {
         ExtrudeArgs {
-            extent: Extents {
-                side1: Extent::blind(z1),
-                symmetric: false,
-                side2: Some(Extent::blind(-z0)),
-                reversed: false,
-            },
+            extent: two_ways(z1, -z0),
             ..extrude(sketch, 1.0, false)
         }
-        .into()
     };
     let mut program = Program::new();
     for (id, corners) in [
@@ -974,7 +736,7 @@ fn extrude_up_to_next_from_a_face_of_the_target() {
     ] {
         let mut s = Sketch::new();
         polygon(&mut s, &corners);
-        program.push(id, sketch(z_plane(), s));
+        program.push(id, sketch(origin_plane(FrameAxis::Z), s));
     }
     program.push("lower", between("slab_sketch", 0.0, 1.0));
     program.push("upper", between("slab_sketch", 2.0, 3.0));
@@ -1007,19 +769,12 @@ fn extrude_up_to_next_from_a_face_of_the_target() {
     program.push(
         "post",
         ExtrudeArgs {
-            extent: Extents {
-                side1: Extent::UpToNext,
-                symmetric: false,
-                side2: None,
-                reversed: false,
-            },
-            combine: Combine::Union {
-                target: "boolean(c2)".into(),
-            },
+            extent: one_way(Extent::UpToNext),
+            output: Output::Solid(join("boolean(c2)")),
             ..extrude("post_sketch", 1.0, false)
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["extrude(post)"]);
     // The post spans the gap, from the lower block's top to the upper one's
@@ -1049,8 +804,8 @@ fn post_to_block(
     z1: f64,
     side1: Extent,
     reversed: bool,
-    combine: fn(String) -> Combine,
-) -> geop_core_math::geop_error::GeopResult<Part<S>> {
+    op: BooleanOp,
+) -> geop_core_math::geop_error::GeopResult<NamedModel<S>> {
     let post = ExtrudeArgs {
         extent: Extents {
             side1,
@@ -1058,14 +813,17 @@ fn post_to_block(
             side2: None,
             reversed,
         },
-        combine: combine("extrude(block)".into()),
+        output: Output::Solid(Combine::With {
+            op,
+            target: "extrude(block)".into(),
+        }),
         ..extrude("post_sketch", 1.0, false)
     };
-    on_block(z0, z1, vec![("post", post.into())])
+    on_block(z0, z1, vec![as_step("post", post)])
 }
 
 /// The heights of `part`'s vertices, in thousandths.
-fn heights(part: &Part<S>) -> Vec<i64> {
+fn heights(part: &NamedModel<S>) -> Vec<i64> {
     let mut z: Vec<i64> = part
         .topology()
         .vertices
@@ -1082,19 +840,13 @@ fn heights(part: &Part<S>) -> Vec<i64> {
 /// the block it meets.
 #[test]
 fn cut_and_intersect_up_to_next_from_outside() {
-    let cut = post_to_block(2.0, 3.0, Extent::UpToNext, false, |target| {
-        Combine::Difference { target }
-    })
-    .unwrap();
+    let cut = post_to_block(2.0, 3.0, Extent::UpToNext, false, BooleanOp::Difference).unwrap();
     assert_valid(&cut);
     assert_eq!(cut.solid_names(), ["extrude(post)"]);
     assert_eq!(heights(&cut), [2000, 3000]);
     assert_eq!(cut.topology().faces.len(), 6 + 4);
 
-    let kept = post_to_block(2.0, 3.0, Extent::UpToNext, false, |target| {
-        Combine::Intersection { target }
-    })
-    .unwrap();
+    let kept = post_to_block(2.0, 3.0, Extent::UpToNext, false, BooleanOp::Intersection).unwrap();
     assert_valid(&kept);
     assert_eq!(heights(&kept), [2000, 3000]);
     assert_eq!(kept.topology().faces.len(), 6);
@@ -1103,40 +855,25 @@ fn cut_and_intersect_up_to_next_from_outside() {
 /// Through all goes through the whole target, whichever way it is combined.
 #[test]
 fn through_all() {
-    let cut = post_to_block(2.0, 3.0, Extent::ThroughAll, false, |target| {
-        Combine::Difference { target }
-    })
-    .unwrap();
+    let cut = post_to_block(2.0, 3.0, Extent::ThroughAll, false, BooleanOp::Difference).unwrap();
     assert_valid(&cut);
     assert_eq!(heights(&cut), [2000, 3000]);
-    let kept = post_to_block(2.0, 3.0, Extent::ThroughAll, false, |target| {
-        Combine::Intersection { target }
-    })
-    .unwrap();
+    let kept = post_to_block(2.0, 3.0, Extent::ThroughAll, false, BooleanOp::Intersection).unwrap();
     assert_valid(&kept);
     assert_eq!(kept.topology().faces.len(), 6);
     // Nothing of the block ahead the other way.
-    assert!(
-        post_to_block(2.0, 3.0, Extent::ThroughAll, true, |target| {
-            Combine::Difference { target }
-        })
-        .is_err()
-    );
+    assert!(post_to_block(2.0, 3.0, Extent::ThroughAll, true, BooleanOp::Difference).is_err());
 }
 
 /// Turned the other way, a cut from a sketch above the block goes down into
 /// it; going away from it, it meets nothing, and says so.
 #[test]
 fn reversed_cut_up_to_next() {
-    let cut = post_to_block(-1.0, 0.0, Extent::UpToNext, true, |target| {
-        Combine::Difference { target }
-    })
-    .unwrap();
+    let cut = post_to_block(-1.0, 0.0, Extent::UpToNext, true, BooleanOp::Difference).unwrap();
     assert_valid(&cut);
     assert_eq!(heights(&cut), [-1000, 0]);
-    let Err(error) = post_to_block(-1.0, 0.0, Extent::UpToNext, false, |target| {
-        Combine::Difference { target }
-    }) else {
+    let Err(error) = post_to_block(-1.0, 0.0, Extent::UpToNext, false, BooleanOp::Difference)
+    else {
         panic!("cut");
     };
     assert!(error.root_message().contains("nothing"), "{error:?}");
@@ -1154,13 +891,12 @@ fn faces_up_to_next_and_through_all() {
                 side2: None,
                 reversed: false,
             },
-            face: true,
-            combine: Combine::Union {
-                target: "extrude(block)".into(),
+            output: Output::Faces {
+                up_to: Some("extrude(block)".into()),
             },
             ..extrude("post_sketch", 1.0, false)
         };
-        on_block(2.0, 3.0, vec![("post", post.into())]).unwrap()
+        on_block(2.0, 3.0, vec![as_step("post", post)]).unwrap()
     };
     let up_to = face(Extent::UpToNext);
     let model = up_to.topology();
@@ -1175,4 +911,46 @@ fn faces_up_to_next_and_through_all() {
 
     let through = face(Extent::ThroughAll);
     assert!(heights(&through).last().unwrap() > &3000);
+}
+
+/// A post joined up to the next face of a wedge hanging over half of it,
+/// its edge pointing down: the half under the wedge meets it, the other
+/// half never does, so nothing stops the post all round. It goes through
+/// all — not flat up to the wedge's lowest edge, where its end would touch
+/// the wedge along that existing edge alone.
+#[test]
+fn join_up_to_next_partly_under_a_wedge_goes_through_all() {
+    let mut wedge = Sketch::new();
+    // Sketch x along world x, sketch y along world -z: the edge at `z = 2`,
+    // the top at `z = 4`.
+    polygon(&mut wedge, &[[1.0, -2.0], [3.0, -4.0], [-1.0, -4.0]]);
+    let y_plane = origin_plane(FrameAxis::Y);
+    let wedge_steps = vec![
+        as_step("wedge_sketch", sketch(y_plane, wedge)),
+        // From `y = 0` to `y = 1`: over half the post, `y` in `[0.5, 1.5]`.
+        as_step("wedge", extrude("wedge_sketch", 1.0, false)),
+        as_step(
+            "post",
+            ExtrudeArgs {
+                extent: one_way(Extent::UpToNext),
+                output: Output::Solid(join("extrude(wedge)")),
+                ..extrude("post_sketch", 1.0, false)
+            },
+        ),
+    ];
+    let mut program = Program::new();
+    let mut post = Sketch::new();
+    polygon(&mut post, &[[0.5, 0.5], [1.5, 0.5], [1.5, 1.5], [0.5, 1.5]]);
+    let z_plane = origin_plane(FrameAxis::Z);
+    program.push("post_sketch", sketch(z_plane, post));
+    program.program.steps.extend(wedge_steps);
+    let part = program.build_model().unwrap();
+    assert_valid(&part);
+    assert_eq!(part.solid_names(), ["extrude(post)"]);
+    // Past the wedge's top.
+    assert!(
+        heights(&part).last().unwrap() > &4000,
+        "{:?}",
+        heights(&part)
+    );
 }

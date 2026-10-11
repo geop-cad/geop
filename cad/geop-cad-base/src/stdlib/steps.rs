@@ -9,21 +9,20 @@
 //! corners are where its hexagon, extruded through all of it, leaves a
 //! double cone.
 
-use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::{DatumComponent, FrameAxis},
-};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
 use geop_core_sketch::CurveId;
+use geop_ops::BooleanOp;
 use geop_ops::{
-    EntityRef, ORIGIN,
-    parameters::{Parameter, ParameterKind, Row},
+    EntityRef, origin_axis, origin_plane,
+    parameters::{Material, Parameter, ParameterKind, Parameters, Row},
 };
 use geop_ops_booleans::Combine;
-// use geop_ops_datums::{AddDatumArgs, Construction};  // out of the workspace for the core refactor
+use geop_ops_datums::{AddDatumArgs, Construction};
+use geop_ops_extrude_revolve::Output;
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, RevolveArgs};
 
 use super::{drawing::Drawing, tables::Table};
-use crate::Program;
+use crate::{Program, Push};
 
 /// The name of the table parameter every family's size is chosen by.
 pub const SIZE: &str = "size";
@@ -44,6 +43,19 @@ pub fn size(table: Table) -> Parameter {
     }
 }
 
+/// A family's program, of `material`, in `color` — none for the viewer's
+/// own — and designed by the parameters `values`, the size among them.
+pub fn family(material: &str, color: Option<&str>, values: Vec<Parameter>) -> Program {
+    let mut program = Program::new();
+    program.parameters = Parameters {
+        material: Material::named(material),
+        color: color.map(Into::into),
+        values,
+        ..Parameters::default()
+    };
+    program
+}
+
 /// The value of `column` of the size chosen, as a formula reads it.
 pub fn col(column: &str) -> String {
     format!("{SIZE}.{column}")
@@ -52,7 +64,7 @@ pub fn col(column: &str) -> String {
 /// The plane profiles are drawn in: the origin's `yz` plane, its `x` the
 /// radius out from the `z` axis — along `y` — and its `y` along `z`.
 pub fn profile_plane() -> EntityRef {
-    EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::X))
+    origin_plane(FrameAxis::X)
 }
 
 /// Where an outline extruded up through a solid is drawn: below it.
@@ -61,12 +73,12 @@ pub const BELOW: &str = "below";
 /// The plane outlines are drawn in, around the `z` axis: the origin's `xy`
 /// plane.
 pub fn outline_plane() -> EntityRef {
-    EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z))
+    origin_plane(FrameAxis::Z)
 }
 
 /// The axis parts turn around: the origin's `z` axis.
 pub fn z_axis() -> EntityRef {
-    EntityRef::datum_component(ORIGIN, DatumComponent::Axis(FrameAxis::Z))
+    origin_axis(FrameAxis::Z)
 }
 
 /// The face a full turn of the profile line `curve` of the sketch
@@ -94,8 +106,8 @@ pub fn revolve(
     drawing: Drawing,
     around: Around,
     combine: Combine,
-) -> GeopResult<()> {
-    program.push(sketch, drawing.on(profile_plane())?);
+) {
+    program.push(sketch, drawing.on(profile_plane()));
     let axis = match around {
         Around::Line(curve) => EntityRef::SketchCurve {
             sketch: sketch.into(),
@@ -109,11 +121,9 @@ pub fn revolve(
             sketch: sketch.into(),
             axis: Some(axis),
             extent: Extents::blind(360.0),
-            face: false,
-            combine,
+            output: Output::Solid(combine),
         },
     );
-    Ok(())
 }
 
 /// Which way through a solid an outline is extruded from the `xy` plane:
@@ -134,18 +144,16 @@ pub fn extrude(
     (drawing, plane): (Drawing, EntityRef),
     extent: Extents,
     combine: Combine,
-) -> GeopResult<()> {
-    program.push(sketch, drawing.on(plane)?);
+) {
+    program.push(sketch, drawing.on(plane));
     program.push(
         id,
         ExtrudeArgs {
             sketch: sketch.into(),
             extent,
-            face: false,
-            combine,
+            output: Output::Solid(combine),
         },
     );
-    Ok(())
 }
 
 /// Draws `drawing` in the outline plane as the sketch `sketch`, and
@@ -158,11 +166,21 @@ pub fn cut_to(
     drawing: Drawing,
     target: &str,
     through: Through,
-) -> GeopResult<()> {
+) {
     let plane = match through {
         Through::Both => outline_plane(),
         Through::Up => {
-            // The datum BELOW is not added while `geop_ops_datums` is out of the workspace.
+            if program.index_of(BELOW).is_err() {
+                program.push(
+                    BELOW,
+                    AddDatumArgs {
+                        selection: vec![outline_plane()],
+                        construction: Construction::Offset {
+                            distance: (-1.0).into(),
+                        },
+                    },
+                );
+            }
             EntityRef::datum(BELOW)
         }
     };
@@ -172,7 +190,8 @@ pub fn cut_to(
         side2: None,
         reversed: false,
     };
-    let combine = Combine::Intersection {
+    let combine = Combine::With {
+        op: BooleanOp::Intersection,
         target: target.into(),
     };
     extrude(program, id, sketch, (drawing, plane), extent, combine)
@@ -197,8 +216,14 @@ pub fn hexagon(drawing: &mut Drawing, across: &str) -> GeopResult<Vec<CurveId>> 
 
 /// The datum `axis`: the `z` axis every standard part turns around or
 /// runs along — what a concentric mate picks.
-pub fn axis_datum(_program: &mut Program) {
-    // Not added while `geop_ops_datums` is out of the workspace.
+pub fn axis_datum(program: &mut Program) {
+    program.push(
+        "axis",
+        AddDatumArgs {
+            selection: vec![z_axis()],
+            construction: Construction::AlongLine {},
+        },
+    );
 }
 
 /// The datum plane `id` normal to `z`, `height` — a formula of the size —
@@ -211,6 +236,14 @@ pub fn plane_datum(program: &mut Program, id: &str, height: &str) {
 /// The datum plane `id` parallel to the plane `plane`, `distance` — a
 /// formula of the size — along its normal: for a part that runs along `z`,
 /// a face it sits on beside the axis.
-pub fn offset_datum(_program: &mut Program, _id: &str, _plane: EntityRef, _distance: &str) {
-    // Not added while `geop_ops_datums` is out of the workspace.
+pub fn offset_datum(program: &mut Program, id: &str, plane: EntityRef, distance: &str) {
+    program.push(
+        id,
+        AddDatumArgs {
+            selection: vec![plane],
+            construction: Construction::Offset {
+                distance: distance.into(),
+            },
+        },
+    );
 }

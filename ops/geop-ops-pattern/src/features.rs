@@ -30,7 +30,6 @@
 
 use std::collections::BTreeSet;
 
-use geop_core_geometry::shape::Axis;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::Motion,
@@ -39,14 +38,18 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::Body;
-use geop_ops::{BooleanOp, Namer, Part, operation::EntityRef};
-use geop_ops_booleans::{Combine, Tool};
-use geop_ops_hole::PartThreads;
+use geop_ops::{NamedModel, operation::EntityRef};
+use geop_ops_booleans::{Combine, Tool, boolean::Reach};
+
+use crate::common::{Names, middle};
 
 /// The steps of the features `refs` refer to, each once, in the order the
 /// steps ran — the order a copy of each must be combined in, for a hole cut
 /// through a boss to cut its copy too. Anything but a feature is refused.
-fn feature_steps<S: Scalar>(part: &Part<S>, refs: &[EntityRef]) -> GeopResult<Vec<String>> {
+pub(crate) fn feature_steps<S: Scalar>(
+    part: &NamedModel<S>,
+    refs: &[EntityRef],
+) -> GeopResult<Vec<String>> {
     let mut picked = BTreeSet::new();
     for entity in refs {
         match entity {
@@ -72,7 +75,7 @@ fn feature_steps<S: Scalar>(part: &Part<S>, refs: &[EntityRef]) -> GeopResult<Ve
 /// The name of the solid the features of `steps` lie on: the one bounded
 /// by faces they made. Refused if they made none that is still there, or
 /// lie on several.
-fn feature_solid<S: Scalar>(part: &Part<S>, steps: &[String]) -> GeopResult<String> {
+fn feature_solid<S: Scalar>(part: &NamedModel<S>, steps: &[String]) -> GeopResult<String> {
     let made = part.feature_faces();
     let model = part.topology();
     let mut solids = BTreeSet::new();
@@ -104,42 +107,39 @@ fn feature_solid<S: Scalar>(part: &Part<S>, steps: &[String]) -> GeopResult<Stri
 /// The middle of the corners of the tools of the features `refs` refers
 /// to, where they were built: where a pattern of them shows its handles.
 /// None, if it refers to none.
-pub(crate) fn features_center<S: Scalar>(part: &Part<S>, refs: &[EntityRef]) -> Option<Vector3<S>> {
-    let mut sum = [0.0; 3];
-    let mut n = 0usize;
+pub(crate) fn features_center<S: Scalar>(
+    part: &NamedModel<S>,
+    refs: &[EntityRef],
+) -> Option<Vector3<S>> {
+    let mut corners = Vec::new();
     for step in feature_steps(part, refs).ok()? {
         for tool in &part.feature(&step).ok()?.tools {
-            for p in &tool.spec.vertices {
-                for (k, s) in sum.iter_mut().enumerate() {
-                    *s += p[k].to_f64();
-                }
-                n += 1;
-            }
+            corners.extend(tool.spec.vertices.iter().copied());
         }
     }
-    (n > 0).then(|| Vector3::from_array(sum.map(|s| S::from_f64(s / n as f64))))
+    middle(corners)
 }
 
 /// Does the features `refs` refers to again at every placement — a label
 /// and the motion from where the features are — as the step
-/// `operation_id`, whose names `namer` builds: every tool of each copied,
-/// the copy of each entity named `X` named `rename(label, X)`, moved, and
-/// combined with the solid the features lie on as its feature combined it.
-/// The result is named `namer`'s root, and what each copy's combination
+/// `operation_id`, whose names `names` gives: every tool of each copied,
+/// the copy of each entity named `X` named `names.copy(label, X)`, moved,
+/// and combined with the solid the features lie on as its feature combined
+/// it. The result is named `names.namer`'s root, and what each copy's combination
 /// creates `combine(P,label,F,...)` for the feature `F` (and the scope its
-/// tool had in `F`). Each cosmetic thread a feature recorded is copied
-/// with it, named alike.
+/// tool had in `F`). The cosmetic threads a feature recorded are the
+/// threads' to copy (see [`crate::common::run_pattern`]).
 ///
 /// The features are done again in the order their steps ran, the copies
 /// of each feature's tools combined one after the other.
 pub(crate) fn repeat_features<S: Scalar>(
-    part: &mut Part<S>,
-    namer: &Namer,
+    part: &mut NamedModel<S>,
+    names: &Names,
     operation_id: &str,
     refs: &[EntityRef],
     placements: &[(String, Motion<S>)],
-    rename: impl Fn(&str, &str) -> String,
 ) -> GeopResult<()> {
+    let namer = &names.namer;
     let steps = feature_steps(part, refs)?;
     let mut target = feature_solid(part, &steps)?;
     for step in &steps {
@@ -149,9 +149,9 @@ pub(crate) fn repeat_features<S: Scalar>(
             let mut tools = Vec::with_capacity(group.len() * placements.len());
             for (label, motion) in placements {
                 for tool in group {
-                    let names = tool.names.renamed(|name| rename(label, name));
+                    let copied = tool.names.renamed(|name| names.copy(label, name));
                     let built = part
-                        .build_body(tool.spec.clone(), names)
+                        .build_body(tool.spec.clone(), copied)
                         .with_context(ctx)?;
                     let solid = built.solid.ok_or_else(|| {
                         GeopError::new(format!("a tool of feature {step:?} is no solid"))
@@ -167,33 +167,20 @@ pub(crate) fn repeat_features<S: Scalar>(
                         up_to_next: tool
                             .up_to_next
                             .as_ref()
-                            .map(|(start, end)| (rename(label, start), rename(label, end))),
+                            .map(|(start, end)| (names.copy(label, start), names.copy(label, end))),
                         scope: Some(scope),
                     });
                 }
             }
-            let combine = match group[0].op {
-                BooleanOp::Union => Combine::Union { target },
-                BooleanOp::Intersection => Combine::Intersection { target },
-                BooleanOp::Difference => Combine::Difference { target },
+            let combine = Combine::With {
+                op: group[0].op,
+                target,
             };
             combine
                 .apply(part, namer, operation_id, &tools)
+                .and_then(Reach::stopped)
                 .with_context(ctx)?;
             target = namer.root();
-        }
-        for name in part.threads_of(step) {
-            let thread = part.thread(&name)?.clone();
-            for (label, motion) in placements {
-                let mut copy = thread.clone();
-                copy.axis = Axis {
-                    point: motion.apply(&thread.axis.point),
-                    direction: motion.rotate(&thread.axis.direction),
-                };
-                copy.face = rename(label, &thread.face);
-                part.add_thread(rename(label, &name), copy)
-                    .with_context(ctx)?;
-            }
         }
     }
     Ok(())

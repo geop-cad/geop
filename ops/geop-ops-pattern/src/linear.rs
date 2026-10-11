@@ -1,22 +1,30 @@
 //! [`LinearPattern`]: copies of bodies in a row, or in a grid of two rows.
 
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
-    primitives::{DatumComponent, FrameAxis, Motion},
+    geop_error::{GeopError, GeopResult},
+    primitives::{FrameAxis, Motion},
     scalars::Scalar,
     vector::Vector3,
-    with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form, Unit, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
+use geop_ops::operation::Input;
+use geop_ops::parameters::expressions;
 use geop_ops::{
-    Context, Library, Namer, ORIGIN, Part,
-    operation::{EntityRef, Operation, Role},
-    parameters::{Formula, expressions},
-    ui::{Form, Number, Unit},
+    Design, NamedModel, ParamValue,
+    operation::{Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Seen},
+    origin_axis,
+    parameters::Formula,
+    ui::formula_number,
 };
-use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
-use crate::common::{Seeds, Spacing, count_field, direction, seed_fields, track, whole_count};
+use crate::common::{
+    Naming, Pattern, Seeds, Spacing, build_pattern, count_field, count_of, direction, run_pattern,
+    track, whole_count,
+};
 
 /// Copies the bodies `bodies` — solids, and sheets by one of their faces —
 /// or the features `features` in a row along a direction, or in a grid
@@ -61,29 +69,74 @@ pub struct Direction {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LinearPatternArgs {
-    /// The bodies to copy: solids, or a face of each sheet.
-    pub bodies: Vec<EntityRef>,
-    /// Or the features to do again (see [`EntityRef::Feature`]).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub features: Vec<EntityRef>,
+    /// The bodies, or the features, to copy, and how to combine copies of
+    /// bodies.
+    #[serde(flatten)]
+    pub seeds: Seeds,
     pub first: Direction,
     /// A second direction, making a grid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub second: Option<Direction>,
-    /// Keep the copies of bodies as new bodies, or combine them with a
-    /// solid.
-    #[serde(default)]
-    pub combine: Combine,
 }
 
-impl LinearPatternArgs {
-    /// What it repeats.
-    fn seeds(&self) -> Seeds<'_> {
-        Seeds {
-            bodies: &self.bodies,
-            features: &self.features,
-            combine: &self.combine,
+impl Pattern for LinearPatternArgs {
+    const NAMING: Naming = Naming {
+        kind: "linear_pattern",
+        labelled: true,
+    };
+
+    fn seeds(&self) -> &Seeds {
+        &self.seeds
+    }
+
+    /// `0`, or in a grid `0.0`.
+    fn seed_label(&self) -> &'static str {
+        if self.second.is_some() { "0.0" } else { "0" }
+    }
+
+    fn placements<S: Scalar>(
+        &self,
+        lookup: &mut (impl Lookup<S> + ?Sized),
+    ) -> GeopResult<Vec<(String, Motion<S>)>> {
+        let first = self.first.unit(lookup)?;
+        let (first_count, first_step) = self.first.measure(|f| f.evaluate(lookup))?;
+        let second = match &self.second {
+            None => None,
+            Some(direction) => {
+                let unit = direction.unit(lookup)?;
+                let cross = first.prod_cross(&unit);
+                if (0..3).all(|k| cross[k].could_be_equal(S::ZERO)) {
+                    return Err(GeopError::new(
+                        "the two directions are parallel: the grid's rows would lie on top of each other",
+                    ));
+                }
+                let (count, step) = direction.measure(|f| f.evaluate(lookup))?;
+                Some((count, unit, step))
+            }
+        };
+        let rows = second.as_ref().map_or(1, |(count, ..)| *count);
+        let mut placements = Vec::new();
+        for i in 0..first_count {
+            for j in 0..rows {
+                let along = Direction::offset(&first, first_step, i)?;
+                let across = match &second {
+                    Some((_, unit, step)) => Direction::offset(unit, *step, j)?,
+                    None => None,
+                };
+                let offset = match (along, across) {
+                    (None, None) => continue,
+                    (Some(a), None) => a,
+                    (None, Some(b)) => b,
+                    (Some(a), Some(b)) => a.add(&b),
+                };
+                let label = match second {
+                    Some(_) => format!("{i}.{j}"),
+                    None => i.to_string(),
+                };
+                placements.push((label, Motion::translation(offset)));
+            }
         }
+        Ok(placements)
     }
 }
 
@@ -91,23 +144,18 @@ impl Direction {
     /// Along the origin's axis `axis`, three instances a unit apart.
     fn along(axis: FrameAxis) -> Self {
         Direction {
-            along: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Axis(axis),
-            )),
+            along: Some(origin_axis(axis)),
             reversed: false,
             count: Formula::Plain(3.0),
             spacing: Spacing::step(1.0),
         }
     }
 
-    /// The unit vector it goes along in `part`.
-    fn unit<S: Scalar>(&self, part: &Part<S>) -> GeopResult<Vector3<S>> {
-        let along = self
-            .along
-            .as_ref()
+    /// The unit vector it goes along, as `lookup` has the part.
+    fn unit<S: Scalar>(&self, lookup: &mut (impl Lookup<S> + ?Sized)) -> GeopResult<Vector3<S>> {
+        let along = (self.along.as_ref())
             .ok_or_else(|| GeopError::new("pick a direction to pattern along"))?;
-        let d = direction(part, along)?;
+        let d = direction(lookup, along)?;
         Ok(if self.reversed { d.neg() } else { d })
     }
 
@@ -150,34 +198,33 @@ impl Direction {
 
     /// Its fields in `form`, keyed with `suffix`: what it goes along, its
     /// sense, the count and the spacing, with handles from `at`.
-    fn show<'a, S: Scalar>(
+    fn show(
         &self,
-        form: &mut Form<'a, S, LinearPatternArgs>,
-        before: &Part<S>,
-        at: Option<Vector3<S>>,
+        form: &mut Form<Design>,
+        seen: &mut Seen,
+        at: Option<Vector3<Design>>,
         suffix: &str,
-        get: fn(&mut LinearPatternArgs) -> &mut Direction,
     ) {
-        form.reference(
+        let dialog = &mut form.dialog;
+        let along = self.along.iter().cloned().collect();
+        let roles = [Role::Line, Role::Plane];
+        (dialog.reference(
             &format!("direction{suffix}"),
             "direction",
-            self.along.iter().cloned().collect(),
-            &[Role::Line, Role::Plane],
+            along,
+            &roles,
             None,
             false,
-            move |edit, picked| get(edit.args).along = picked.into_iter().next(),
-        );
-        form.checkbox(
+        ))
+        .checkbox(
             &format!("reversed{suffix}"),
             "reverse direction",
             self.reversed,
-            move |args, b| get(args).reversed = b,
         );
         // Moving the spacing's handle by the unit direction adds one to it;
         // the count's, by one step, adds an instance.
-        let inputs = before.state();
-        let unit = self.unit(before).ok();
-        let measured = self.measure(|f| f.peek(inputs)).ok();
+        let unit = self.unit(seen).ok();
+        let measured = self.measure(|f| f.evaluate(seen)).ok();
         let handles = at.zip(unit);
         let count_handle = handles
             .zip(measured)
@@ -186,39 +233,83 @@ impl Direction {
                 let step = value / divisor as f64;
                 let end = (count - 1) as f64 * step;
                 track(
-                    at.add(&unit.prod_scalar(S::from_f64(end))),
-                    unit.prod_scalar(S::from_f64(step)),
+                    at.add(&unit.prod_scalar(Design::from_f64(end))),
+                    unit.prod_scalar(Design::from_f64(step)),
                 )
             });
         count_field(
-            form,
+            dialog,
             &format!("count{suffix}"),
             &self.count,
-            inputs,
+            seen,
             count_handle,
-            move |args, count| get(args).count = count,
         );
+        let spacing_key = format!("spacing{suffix}");
         self.spacing.show(
-            form,
-            &format!("spacing{suffix}"),
+            dialog,
+            &spacing_key,
             ["spacing", "total"],
-            move |label, value| {
-                let number = Number::formula(label, value, inputs, Unit::Length);
+            |label, value| {
+                let number = formula_number(label, value, seen, Unit::Length);
                 let at = handles.and_then(|(at, unit)| {
-                    track(at.add(&unit.prod_scalar(S::from_f64(number.value))), unit)
+                    track(
+                        at.add(&unit.prod_scalar(Design::from_f64(number.value))),
+                        unit,
+                    )
                 });
                 number.handle(at)
             },
-            move |args| &mut get(args).spacing,
         );
+    }
+
+    /// Its field `field` of those [`Direction::show`] shows, keyed with
+    /// `suffix`, set to `value`, and whether it was one.
+    fn set(&mut self, suffix: &str, field: &str, value: &Value) -> bool {
+        let key = |name: &str| format!("{name}{suffix}");
+        if field == key("direction") {
+            if let Value::Entities(picked) = value {
+                self.along = picked.first().cloned();
+            }
+        } else if field == key("reversed") {
+            if let Value::Bool(b) = value {
+                self.reversed = *b;
+            }
+        } else if field == key("count") {
+            if let Some(count) = count_of(value) {
+                self.count = count;
+            }
+        } else {
+            return self.spacing.set(&key("spacing"), field, value);
+        }
+        true
+    }
+}
+
+impl ModelStep for LinearPattern {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &LinearPatternArgs,
+    ) -> GeopResult<()> {
+        build_pattern(model, reader, step, args)
     }
 }
 
 impl Operation for LinearPattern {
+    const INFO: OperationInfo = OperationInfo::new(
+        "linear_pattern",
+        "Linear pattern",
+        "Copy bodies in a row along a direction, or in a grid along two.",
+        OperationGroup::Bodies,
+        OperationTier::Big,
+    );
     type Args = LinearPatternArgs;
-    type Session = ();
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
 
-    fn formulas<'a>(&self, args: &'a mut LinearPatternArgs) -> Vec<&'a mut String> {
+    fn formulas(args: &mut LinearPatternArgs) -> Vec<&mut String> {
         expressions(
             std::iter::once(&mut args.first)
                 .chain(args.second.as_mut())
@@ -226,122 +317,64 @@ impl Operation for LinearPattern {
         )
     }
 
-    /// The newest solid, three times a unit apart along the origin's `x`
-    /// axis, kept as new bodies.
-    fn new_args<S: Scalar>(&self, _: &Part<S>) -> LinearPatternArgs {
+    /// Three times a unit apart along the origin's `x` axis, kept as new
+    /// bodies.
+    fn new_args(_: &Context<Input, ParamValue>) -> LinearPatternArgs {
         LinearPatternArgs {
             // Nothing picked: what is patterned is the user's choice, a body
             // or a feature, never guessed.
-            bodies: Vec::new(),
-            features: Vec::new(),
+            seeds: Seeds::default(),
             first: Direction::along(FrameAxis::X),
             second: None,
-            combine: Combine::NewBody,
         }
+    }
+
+    fn run(step: &str, part: &mut Build, args: &LinearPatternArgs) -> GeopResult<()> {
+        run_pattern::<Self>(part, step, args)
     }
 
     /// The bodies or the features, picked; each direction — the second
     /// turned on or off — with its count and spacing, both dragged by
     /// handles; and how to combine copies of bodies.
-    fn form<'a, S: Scalar>(
-        &self,
-        context: Context<'a, S>,
+    fn presentation(
+        context: &Context<Input, ParamValue>,
         args: &LinearPatternArgs,
         _: &(),
-        _: &[String],
-    ) -> Form<'a, S, LinearPatternArgs> {
-        let before = context.before;
-        let mut f = Form::<S, LinearPatternArgs>::new();
-        seed_fields(&mut f, &args.bodies, &args.features, |args| {
-            (&mut args.bodies, &mut args.features)
+    ) -> Form<Design> {
+        let mut seen = Seen::new(context.before);
+        let mut form = Form::default();
+        let at = args.seeds.center(seen.model());
+        args.seeds.show(&mut form, |form| {
+            args.first.show(form, &mut seen, at, "");
+            (form.dialog).checkbox("grid", "second direction", args.second.is_some());
+            if let Some(second) = &args.second {
+                second.show(form, &mut seen, at, "2");
+            }
         });
-        let at = args.seeds().center(before);
-        args.first
-            .show(&mut f, before, at, "", |args| &mut args.first);
-        f.checkbox(
-            "grid",
-            "second direction",
-            args.second.is_some(),
-            |args, on| {
-                args.second = on.then(|| Direction::along(FrameAxis::Y));
-            },
-        );
-        if let Some(second) = &args.second {
-            second.show(&mut f, before, at, "2", |args| {
-                args.second
-                    .get_or_insert_with(|| Direction::along(FrameAxis::Y))
-            });
-        }
-        if args.features.is_empty() {
-            args.combine.show(&mut f, before, |args| &mut args.combine);
-        }
-        f
+        form
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    fn process_user_event(
+        context: &Context<Input, ParamValue>,
         args: &LinearPatternArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("linear_pattern({operation_id}, {args:?})");
-        let namer = Namer::new("linear_pattern", operation_id)?;
-        let first = args.first.unit(&part).with_context(ctx)?;
-        let (first_count, first_step) = args
-            .first
-            .measure(|f| f.evaluate(&mut part))
-            .with_context(ctx)?;
-        let second = match &args.second {
-            None => None,
-            Some(direction) => {
-                let unit = direction.unit(&part).with_context(ctx)?;
-                let cross = first.prod_cross(&unit);
-                if (0..3).all(|k| cross[k].could_be_equal(S::ZERO)) {
-                    return Err(GeopError::new(
-                        "the two directions are parallel: the grid's rows would lie on top of each other",
-                    ))
-                    .with_context(ctx);
-                }
-                let (count, step) = direction
-                    .measure(|f| f.evaluate(&mut part))
-                    .with_context(ctx)?;
-                Some((count, unit, step))
-            }
+        _: &(),
+        event: Event<Design>,
+    ) -> (LinearPatternArgs, ()) {
+        let mut args = args.clone();
+        let Event::Field { key, value } = event else {
+            return (args, ());
         };
-        let rows = second.as_ref().map_or(1, |(count, ..)| *count);
-        let mut placements = Vec::new();
-        for i in 0..first_count {
-            for j in 0..rows {
-                let along = Direction::offset(&first, first_step, i).with_context(ctx)?;
-                let across = match &second {
-                    Some((_, unit, step)) => Direction::offset(unit, *step, j).with_context(ctx)?,
-                    None => None,
-                };
-                let offset = match (along, across) {
-                    (None, None) => continue,
-                    (Some(a), None) => a,
-                    (None, Some(b)) => b,
-                    (Some(a), Some(b)) => a.add(&b),
-                };
-                let label = match second {
-                    Some(_) => format!("{i}.{j}"),
-                    None => i.to_string(),
-                };
-                placements.push((label, Motion::translation(offset)));
+        let seen = Seen::new(context.before);
+        match (key.as_str(), &value) {
+            ("grid", Value::Bool(on)) => {
+                args.second = on.then(|| Direction::along(FrameAxis::Y));
+            }
+            (key, value) => {
+                let _ = args.seeds.set(key, value, seen.model())
+                    || args.first.set("", key, value)
+                    || (args.second.as_mut()).is_some_and(|second| second.set("2", key, value));
             }
         }
-        let seed_label = if second.is_some() { "0.0" } else { "0" };
-        args.seeds()
-            .repeat(
-                &mut part,
-                &namer,
-                operation_id,
-                seed_label,
-                &placements,
-                |label, name| namer.name(&[label, name]),
-            )
-            .with_context(ctx)?;
-        Ok(part)
+        (args, ())
     }
 }

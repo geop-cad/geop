@@ -44,7 +44,7 @@ pub use curves::{Chain3d, Piece3d};
 pub use geometry::Arc3;
 pub use solve::Solve3dReport;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{
@@ -54,11 +54,10 @@ use geop_core_math::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{ConstraintId, CurveId, PointId};
-
-fn is_false(b: &bool) -> bool {
-    !*b
-}
+use crate::{
+    ConstraintId, CurveId, PointId,
+    sketch::{Uses, is_false, point_classes, remove},
+};
 
 /// A point of a 3-D sketch.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -100,6 +99,12 @@ pub struct Curve3d {
     /// Takes part in constraints, but in no chain.
     #[serde(default, skip_serializing_if = "is_false")]
     pub construction: bool,
+}
+
+impl Uses for Curve3d {
+    fn points(&self) -> Vec<PointId> {
+        Curve3d::points(self)
+    }
 }
 
 impl Curve3d {
@@ -223,6 +228,23 @@ pub enum Constraint3d<S: Scalar> {
     OnCurve { point: PointId, curve: CurveId },
     /// Two curves meeting at an end of each go on smoothly there.
     Tangent { a: CurveId, b: CurveId },
+}
+
+impl<S: Scalar> Uses for Constraint3d<S> {
+    fn points(&self) -> Vec<PointId> {
+        Constraint3d::points(self)
+    }
+
+    fn curves(&self) -> Vec<CurveId> {
+        Constraint3d::curves(self)
+    }
+
+    fn coincident(&self) -> Option<(PointId, PointId)> {
+        match *self {
+            Constraint3d::Coincident { a, b } => Some((a, b)),
+            _ => None,
+        }
+    }
 }
 
 impl<S: Scalar> Constraint3d<S> {
@@ -413,81 +435,26 @@ impl<S: Scalar> Sketch3d<S> {
     }
 
     /// Removes `points`, `curves` and `constraints`, and everything that
-    /// depends on them: a curve on a removed point, a constraint on any
-    /// removed entity, and a point nothing uses any more because of it.
+    /// depends on them (see [`crate::sketch::remove`]) — and the geometry
+    /// of the reference curves removed.
     pub fn remove(&mut self, points: &[PointId], curves: &[CurveId], constraints: &[ConstraintId]) {
-        let dead_curves: BTreeSet<CurveId> = self
-            .curves
-            .iter()
-            .filter(|(id, c)| curves.contains(id) || c.points().iter().any(|p| points.contains(p)))
-            .map(|(&id, _)| id)
-            .collect();
-        let dead_constraints: BTreeSet<ConstraintId> = self
-            .constraints
-            .iter()
-            .filter(|(id, c)| {
-                constraints.contains(id)
-                    || c.points().iter().any(|p| points.contains(p))
-                    || c.curves().iter().any(|k| dead_curves.contains(k))
-            })
-            .map(|(&id, _)| id)
-            .collect();
-        let mut used_before = BTreeSet::new();
-        let mut used_after = BTreeSet::new();
-        for (id, c) in &self.curves {
-            for p in c.points() {
-                used_before.insert(p);
-                if !dead_curves.contains(id) {
-                    used_after.insert(p);
-                }
-            }
-        }
-        for (id, c) in &self.constraints {
-            for p in c.points() {
-                used_before.insert(p);
-                if !dead_constraints.contains(id) {
-                    used_after.insert(p);
-                }
-            }
-        }
-        self.points.retain(|p, _| {
-            !points.contains(p) && !(used_before.contains(p) && !used_after.contains(p))
-        });
-        self.curves.retain(|id, _| !dead_curves.contains(id));
+        let (all_points, all_curves) = (&mut self.points, &mut self.curves);
+        let dead_curves = remove(
+            all_points,
+            all_curves,
+            &mut self.constraints,
+            points,
+            curves,
+            constraints,
+        );
         self.references.retain(|id, _| !dead_curves.contains(id));
-        self.constraints
-            .retain(|id, _| !dead_constraints.contains(id));
     }
 
     /// Union-find representative of every point under
     /// [`Constraint3d::Coincident`] — the lowest id of its class: points
     /// with the same representative are one point.
     pub fn point_classes(&self) -> BTreeMap<PointId, PointId> {
-        fn find(parent: &mut BTreeMap<PointId, PointId>, i: PointId) -> PointId {
-            let mut r = i;
-            while parent[&r] != r {
-                r = parent[&r];
-            }
-            let mut i = i;
-            while parent[&i] != r {
-                let next = parent[&i];
-                parent.insert(i, r);
-                i = next;
-            }
-            r
-        }
-        let mut parent: BTreeMap<PointId, PointId> =
-            self.points.keys().map(|&id| (id, id)).collect();
-        for c in self.constraints.values() {
-            if let Constraint3d::Coincident { a, b } = *c {
-                let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
-                parent.insert(ra.max(rb), ra.min(rb));
-            }
-        }
-        self.points
-            .keys()
-            .map(|&id| (id, find(&mut parent, id)))
-            .collect()
+        point_classes(&self.points, &self.constraints)
     }
 
     /// Which ends of `a` and `b` are one point, if any.

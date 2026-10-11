@@ -49,7 +49,7 @@ pub(super) fn offset_to(
     Ok(made)
 }
 
-impl<S: Scalar> Editing<'_, S> {
+impl Editing<'_> {
     /// `change` made to the sketch, and the sketch solved — or, refused,
     /// nothing changed, and the hint saying why.
     fn change<T>(&mut self, change: impl FnOnce(&mut Sketch) -> GeopResult<T>) -> Option<T> {
@@ -165,7 +165,7 @@ impl<S: Scalar> Editing<'_, S> {
         let CurveKind::Line { start, end } = self.sketch().curves[&line].kind else {
             return;
         };
-        let (a, b) = (pt(self.sketch(), start), pt(self.sketch(), end));
+        let (a, b) = (xy(self.sketch(), start), xy(self.sketch(), end));
         let backwards = dot(sub(at, scale(add(a, b), 0.5)), sub(b, a)) < 0.0;
         let step = Step::Along {
             along: line,
@@ -225,7 +225,7 @@ impl<S: Scalar> Editing<'_, S> {
             // Spread over the full circle anew first, so the copies added
             // are placed where they go.
             if let Some(c) = full.and_then(|k| s.constraints.get_mut(&k)) {
-                constraints::set_value(c, (360.0 / count as f64).to_radians());
+                constraints::set_value(c, 360.0 / count as f64);
                 s.solve()?;
             }
             s.set_pattern_count(by, count)

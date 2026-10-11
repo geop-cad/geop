@@ -1,31 +1,39 @@
 import type {
   Bom,
   BomLine,
-  BomStructure,
   Bounded,
   EntityRef,
+  ExporterInfo,
+  Inspection,
+  InspectorInfo,
   InterferenceReport,
   MassReport,
   MassSummary,
   Measurement,
-  Query,
 } from "./geop";
 import { Icon } from "./icons";
 import type { Section } from "./section";
 
 interface Props {
   enabled: boolean;
-  measuring: boolean;
-  onMeasure: (on: boolean) => void;
-  measurement: Measurement | null;
-  mass: MassReport | null;
-  interference: InterferenceReport | null;
-  bom: Bom | null;
+  /** The inspectors the kernel offers: a button each. */
+  inspectors: InspectorInfo[];
+  /** The exporters it offers: a bill of materials is saved by `bom`'s, if there is one. */
+  exporters: ExporterInfo[];
+  /** The inspector whose pick tool is in hand, if one is. */
+  pickTool: string | null;
+  /** Take the pick tool of `inspector` in hand, or put it down. */
+  onPickTool: (inspector: string | null) => void;
+  /** The pick tool's answer about its picks, while it is in hand. */
+  picked: Inspection | null;
+  /** The last answers of the inspectors asked of the whole part, by kind — until the part changes. */
+  answers: Record<string, unknown>;
   /** Whether a question is being answered. */
   busy: boolean;
-  onQuery: (query: Query) => void;
-  /** Save the bill of materials as a CSV file. */
-  onExportBom: (structure: BomStructure) => void;
+  /** Ask `inspector` about the part as drawn, told `options`. */
+  onInspect: (inspector: string, options?: unknown) => void;
+  /** Save what `exporter` writes, told `options`. */
+  onExport: (exporter: string, options?: unknown) => void;
   section: Section | null;
   onSection: (section: Section | null) => void;
   /** How big the part is: how far a section can move. */
@@ -154,68 +162,134 @@ function Summary({ summary }: { summary: MassSummary }) {
   );
 }
 
+/** What the measure tool's picks measure. */
+function MeasurementView({ measurement }: { measurement: Measurement }) {
+  return (
+    <>
+      {measurement.entities.length === 0 && <p className="hint">Click a vertex, edge, face or datum; a second one to measure between them.</p>}
+      {measurement.entities.map((e, i) => (
+        <div key={i} className="inspect-entity" title={"name" in e ? e.name : ""}>
+          {e.type} {"name" in e ? e.name : ""}
+        </div>
+      ))}
+      {measurement.error && <p className="error">{measurement.error}</p>}
+      <table className="inspect-table">
+        <tbody>
+          {measurement.values.map((v, i) => (
+            <tr key={i}>
+              <th>{v.label}</th>
+              <td>
+                {show(v)} {v.unit}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
+/** The mass properties of every solid, and of all of them. */
+function MassView({ mass, onLight }: { mass: MassReport; onLight: (entities: EntityRef[]) => void }) {
+  return (
+    <>
+      {mass.bodies.length === 0 && <p className="hint">No solids.</p>}
+      {mass.total && mass.bodies.length > 1 && (
+        <details open>
+          <summary>All {mass.bodies.length} solids</summary>
+          <Summary summary={mass.total} />
+        </details>
+      )}
+      {mass.bodies.map((body) => (
+        <details key={body.name} open={mass.bodies.length === 1}>
+          <summary title={body.name} onMouseEnter={() => onLight([solid(body.name)])} onMouseLeave={() => onLight([])}>
+            {body.name} <span className="hint">{body.material}</span>
+          </summary>
+          {body.assumed && <p className="hint">No material given: weighed as water. Set one under Parameters.</p>}
+          {body.error && <p className="error">{body.error}</p>}
+          {body.properties && <Summary summary={body.properties} />}
+        </details>
+      ))}
+    </>
+  );
+}
+
+/** Which solids overlap, and which touch. */
+function InterferenceView({ report, onLight }: { report: InterferenceReport; onLight: (entities: EntityRef[]) => void }) {
+  return (
+    <>
+      {report.found.length === 0 && report.unchecked.length === 0 && (
+        <p className="hint">
+          No interference among {report.solids} solid{report.solids === 1 ? "" : "s"}.
+        </p>
+      )}
+      <ul className="inspect-list">
+        {report.found.map((f, i) => (
+          <li key={i} className={f.contact} onMouseEnter={() => onLight([solid(f.a), solid(f.b)])} onMouseLeave={() => onLight([])}>
+            {f.a} × {f.b}: {f.contact === "overlap" ? `overlap ${f.volume ? show(f.volume) : "?"} mm³` : "touch"}
+          </li>
+        ))}
+        {report.unchecked.map((u, i) => (
+          <li key={`u${i}`} className="unchecked" title={u.error}>
+            {u.a} × {u.b}: could not be checked
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+/** The solid `name`, to light. */
+function solid(name: string): EntityRef {
+  return { type: "Solid", name };
+}
+
 /**
- * The inspect tools: measure what is picked, the mass properties and the
- * interference of the part as drawn, and a section view. None of them is a
- * step: measuring and asking change nothing, and a section only changes the
- * view.
+ * The inspect tools: the inspectors the kernel offers — those that pick
+ * as tools to take in hand, the others as questions about the part as
+ * drawn — and a section view. None of them is a step: inspecting changes
+ * nothing, and a section only changes the view. The answers the app knows
+ * are shown as such ([[Inspection]]); any other as it comes.
  */
 export function InspectPanel({
   enabled,
-  measuring,
-  onMeasure,
-  measurement,
-  mass,
-  interference,
-  bom,
+  inspectors,
+  exporters,
+  pickTool,
+  onPickTool,
+  picked,
+  answers,
   busy,
-  onQuery,
-  onExportBom,
+  onInspect,
+  onExport,
   section,
   onSection,
   size,
   onLight,
 }: Props) {
-  const solid = (name: string): EntityRef => ({ type: "Solid", name });
+  const measurement = picked?.kind === "measure" ? (picked.report as Measurement) : null;
+  const bom = answers.bom as Bom | undefined;
   return (
     <div className="inspect">
       <div className="inspect-tools">
-        <button
-          className={["op-button", measuring ? "active" : ""].join(" ")}
-          disabled={!enabled}
-          title="Measure: click up to two vertices, edges, faces or datums"
-          onClick={() => onMeasure(!measuring)}
-        >
-          <Icon name="measure" />
-          <span>Measure</span>
-        </button>
-        <button
-          className="op-button"
-          disabled={!enabled || busy}
-          title="Mass properties of every solid, of its part's material"
-          onClick={() => onQuery("mass_properties")}
-        >
-          <Icon name="mass" />
-          <span>Mass</span>
-        </button>
-        <button
-          className="op-button"
-          disabled={!enabled || busy}
-          title="Which solids overlap, and which touch"
-          onClick={() => onQuery("interference")}
-        >
-          <Icon name="interference" />
-          <span>Interference</span>
-        </button>
-        <button
-          className="op-button"
-          disabled={!enabled || busy}
-          title="Bill of materials: every part with its quantity, designation and mass"
-          onClick={() => onQuery({ bom: { structure: bom?.structure ?? "flat" } })}
-        >
-          <Icon name="bom" />
-          <span>BOM</span>
-        </button>
+        {inspectors.map((inspector) => {
+          const picks = inspector.picks != null;
+          const active = picks && pickTool === inspector.kind;
+          return (
+            <button
+              key={inspector.kind}
+              className={["op-button", active ? "active" : ""].join(" ")}
+              disabled={!enabled || (!picks && busy)}
+              title={inspector.doc}
+              onClick={() =>
+                (picks ? onPickTool(active ? null : inspector.kind) : onInspect(inspector.kind))
+              }
+            >
+              <Icon name={inspector.kind} />
+              <span>{inspector.label}</span>
+            </button>
+          );
+        })}
         <button
           className={["op-button", section ? "active" : ""].join(" ")}
           disabled={!enabled}
@@ -227,27 +301,9 @@ export function InspectPanel({
         </button>
       </div>
 
-      {measuring && measurement && (
+      {picked && (
         <div className="inspect-result">
-          {measurement.entities.length === 0 && <p className="hint">Click a vertex, edge, face or datum; a second one to measure between them.</p>}
-          {measurement.entities.map((e, i) => (
-            <div key={i} className="inspect-entity" title={"name" in e ? e.name : ""}>
-              {e.type} {"name" in e ? e.name : ""}
-            </div>
-          ))}
-          {measurement.error && <p className="error">{measurement.error}</p>}
-          <table className="inspect-table">
-            <tbody>
-              {measurement.values.map((v, i) => (
-                <tr key={i}>
-                  <th>{v.label}</th>
-                  <td>
-                    {show(v)} {v.unit}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {measurement ? <MeasurementView measurement={measurement} /> : <pre className="inspect-report">{JSON.stringify(picked.report, null, 2)}</pre>}
         </div>
       )}
 
@@ -284,76 +340,44 @@ export function InspectPanel({
         </div>
       )}
 
-      {mass && (
-        <div className="inspect-result">
-          {mass.bodies.length === 0 && <p className="hint">No solids.</p>}
-          {mass.total && mass.bodies.length > 1 && (
-            <details open>
-              <summary>All {mass.bodies.length} solids</summary>
-              <Summary summary={mass.total} />
-            </details>
+      {Object.entries(answers).map(([kind, report]) => (
+        <div key={kind} className="inspect-result">
+          {kind === "mass_properties" ? (
+            <MassView mass={report as MassReport} onLight={onLight} />
+          ) : kind === "interference" ? (
+            <InterferenceView report={report as InterferenceReport} onLight={onLight} />
+          ) : kind === "bom" ? (
+            <>
+              <div className="inspect-row">
+                {(["flat", "indented"] as const).map((structure) => (
+                  <button
+                    key={structure}
+                    className={["small", bom?.structure === structure ? "active" : ""].join(" ")}
+                    disabled={!enabled || busy}
+                    title={structure === "flat" ? "Every part once, counted in the whole assembly" : "By sub-assembly, counted per assembly"}
+                    onClick={() => onInspect("bom", { structure })}
+                  >
+                    {structure === "flat" ? "Flat" : "Indented"}
+                  </button>
+                ))}
+                {exporters.some((e) => e.kind === "bom") && (
+                  <button
+                    className="small"
+                    disabled={!enabled}
+                    title="Save the bill of materials as a CSV file"
+                    onClick={() => onExport("bom", { structure: bom?.structure ?? "flat" })}
+                  >
+                    Save CSV
+                  </button>
+                )}
+              </div>
+              {(report as Bom).lines.length === 0 ? <p className="hint">Nothing to list.</p> : <BomTable bom={report as Bom} />}
+            </>
+          ) : (
+            <pre className="inspect-report">{JSON.stringify(report, null, 2)}</pre>
           )}
-          {mass.bodies.map((body) => (
-            <details key={body.name} open={mass.bodies.length === 1}>
-              <summary title={body.name} onMouseEnter={() => onLight([solid(body.name)])} onMouseLeave={() => onLight([])}>
-                {body.name} <span className="hint">{body.material}</span>
-              </summary>
-              {body.assumed && <p className="hint">No material given: weighed as water. Set one under Parameters.</p>}
-              {body.error && <p className="error">{body.error}</p>}
-              {body.properties && <Summary summary={body.properties} />}
-            </details>
-          ))}
         </div>
-      )}
-
-      {bom && (
-        <div className="inspect-result">
-          <div className="inspect-row">
-            {(["flat", "indented"] as const).map((structure) => (
-              <button
-                key={structure}
-                className={["small", bom.structure === structure ? "active" : ""].join(" ")}
-                disabled={!enabled || busy}
-                title={structure === "flat" ? "Every part once, counted in the whole assembly" : "By sub-assembly, counted per assembly"}
-                onClick={() => onQuery({ bom: { structure } })}
-              >
-                {structure === "flat" ? "Flat" : "Indented"}
-              </button>
-            ))}
-            <button className="small" disabled={!enabled} title="Save the bill of materials as a CSV file" onClick={() => onExportBom(bom.structure)}>
-              Save CSV
-            </button>
-          </div>
-          {bom.lines.length === 0 ? <p className="hint">Nothing to list.</p> : <BomTable bom={bom} />}
-        </div>
-      )}
-
-      {interference && (
-        <div className="inspect-result">
-          {interference.found.length === 0 && interference.unchecked.length === 0 && (
-            <p className="hint">
-              No interference among {interference.solids} solid{interference.solids === 1 ? "" : "s"}.
-            </p>
-          )}
-          <ul className="inspect-list">
-            {interference.found.map((f, i) => (
-              <li
-                key={i}
-                className={f.contact}
-                onMouseEnter={() => onLight([solid(f.a), solid(f.b)])}
-                onMouseLeave={() => onLight([])}
-              >
-                {f.a} × {f.b}: {f.contact === "overlap" ? `overlap ${f.volume ? show(f.volume) : "?"} mm³` : "touch"}
-              </li>
-            ))}
-            {interference.unchecked.map((u, i) => (
-              <li key={`u${i}`} className="unchecked" title={u.error}>
-                {u.a} × {u.b}: could not be checked
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      ))}
     </div>
   );
 }

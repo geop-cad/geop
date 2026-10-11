@@ -1,5 +1,5 @@
 //! A capped circular cylinder, built two different ways: [`revolved_cylinder`]
-//! (via [`revolve_at`], an exact circular cross-section) and
+//! (via [`revolve_at_oriented`], an exact circular cross-section) and
 //! [`extruded_cylinder`] (via [`extrude`], an `n`-gon approximating one).
 
 use crate::{
@@ -15,7 +15,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::SolidId;
-use geop_ops::{Namer, Part};
+use geop_ops::{NamedModel, Namer};
 
 /// Which axis a cylinder's own axis runs parallel to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,18 +28,18 @@ pub enum Axis {
 /// A capped cylinder of `radius` and `height`, with its axis parallel to the
 /// z-axis through `base_center` (the center of its *bottom* cap — the solid
 /// spans `z in [base_center.z, base_center.z + height]`), as an exact
-/// circular cross-section swept via `revolve_at`.
+/// circular cross-section swept via [`revolve_at_oriented`].
 ///
 /// A thin wrapper around [`revolved_cylinder_along_axis`] with `axis =
 /// Axis::Z`, its own historical/default orientation.
 pub fn revolved_cylinder<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     name: &str,
     base_center: Vector3<S>,
     radius: S,
     height: S,
 ) -> GeopResult<SolidId> {
-    revolved_cylinder_along_axis(part, name, base_center, radius, height, Axis::Z)
+    revolved_cylinder_along_axis(model, name, base_center, radius, height, Axis::Z)
 }
 
 /// Like [`revolved_cylinder`], but with its axis parallel to `axis` instead
@@ -48,12 +48,10 @@ pub fn revolved_cylinder<S: Scalar>(
 /// the solid spans `[0, height]` along `axis` from there.
 ///
 /// Built as the same 3-segment revolve profile `revolved_cylinder` always
-/// used, just swept via [`revolve_at_oriented`] around a `CoordinateSystem`
-/// oriented to `axis` instead of the always-z-axis `revolve_at`. Each
-/// orientation's `u`/`v`/`w` basis is chosen as a cyclic permutation of the
+/// used, swept via [`revolve_at_oriented`] around a `CoordinateSystem`
+/// oriented to `axis`. Each orientation's `u`/`v`/`w` basis is chosen as a cyclic permutation of the
 /// standard one (`(x, y, z) -> (y, z, x) -> (z, x, y)`), so `u x v = w`
-/// always holds — the same right-handed relationship `revolve_at`'s own
-/// `Axis::Z` case has — and every axis produces a solid with outward-facing
+/// always holds, as for the world's axes, and every axis produces a solid with outward-facing
 /// normals, never one revolved "inside out".
 ///
 /// Named as the operation `cylinder(name)`, after that profile (see
@@ -61,17 +59,14 @@ pub fn revolved_cylinder<S: Scalar>(
 /// caps, `c0` the top cap's radius, `c1` the side and `c2` the bottom cap's
 /// radius.
 pub fn revolved_cylinder_along_axis<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     name: &str,
     base_center: Vector3<S>,
     radius: S,
     height: S,
     axis: Axis,
 ) -> GeopResult<SolidId> {
-    let (zero, one) = (S::ZERO, S::ONE);
-    let x = Vector3::from_array([one, zero, zero]);
-    let y = Vector3::from_array([zero, one, zero]);
-    let z = Vector3::from_array([zero, zero, one]);
+    let [x, y, z] = [0, 1, 2].map(Vector3::axis);
     let (u, v, w) = match axis {
         Axis::X => (y, z, x),
         Axis::Y => (z, x, y),
@@ -79,8 +74,8 @@ pub fn revolved_cylinder_along_axis<S: Scalar>(
     };
     let coordinate_system = CoordinateSystem::try_new(base_center, u, v, w)?;
 
-    // Top-down, matching `revolve_at`'s own convention (its sphere profile
-    // runs north pole to south). Running it bottom-up instead revolves the
+    // Top-down, as a full turn takes its profile (see
+    // [`revolve_at_oriented`]). Running it bottom-up instead revolves the
     // solid inside-out: structurally perfect, with every face's normal
     // pointing into the material.
     let profile = polyline(&[
@@ -91,7 +86,7 @@ pub fn revolved_cylinder_along_axis<S: Scalar>(
     ])?;
     let namer = Namer::new("cylinder", name)?;
     revolve_at_oriented(
-        part,
+        model,
         &namer,
         &namer.root(),
         &Profile::open(profile),
@@ -110,7 +105,7 @@ pub fn revolved_cylinder_along_axis<S: Scalar>(
 /// Named as the operation `cylinder(name)`, after the polygon's corners
 /// `p0..` and sides `c0..` (see [`extrude`]).
 pub fn extruded_cylinder<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     name: &str,
     base_center: Vector3<S>,
     radius: S,
@@ -136,7 +131,7 @@ pub fn extruded_cylinder<S: Scalar>(
 
     let namer = Namer::new("cylinder", name)?;
     let built = extrude(
-        part,
+        model,
         &namer,
         Some(&namer.root()),
         &coordinate_system,
@@ -150,29 +145,25 @@ pub fn extruded_cylinder<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::testing::{assert_valid, render};
     use geop_core_math::for_all_scalars;
     use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
 
     fn check_revolved_cylinder_is_valid<S: Scalar>() {
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         revolved_cylinder(
-            &mut part,
+            &mut model,
             "t2",
             Vector3::from_array([S::ZERO, S::ZERO, S::ZERO]),
             S::ONE,
             S::TWO,
         )
         .unwrap();
-        let model = part.topology();
-        assert_eq!(model.faces.len(), 12);
+        let topology = model.topology();
+        assert_eq!(topology.faces.len(), 12);
 
-        let params = ValidationParameters::default();
-        if let Err(e) = validate(&params, model) {
-            panic!("{e:?}");
-        }
-        if let Err(e) = validate_manifold(&params, model) {
-            panic!("{e:?}");
-        }
+        assert_valid(topology);
+        render(topology, 32, "revolved_cylinder_topology.html");
     }
     #[test]
     fn revolved_cylinder_is_valid() {
@@ -180,9 +171,9 @@ mod tests {
     }
 
     fn check_extruded_cylinder_is_valid<S: Scalar>() {
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         extruded_cylinder(
-            &mut part,
+            &mut model,
             "t4",
             Vector3::from_array([S::ZERO, S::ZERO, S::ZERO]),
             S::ONE,
@@ -190,77 +181,15 @@ mod tests {
             12,
         )
         .unwrap();
-        let model = part.topology();
+        let topology = model.topology();
 
-        let params = ValidationParameters::default();
-        if let Err(e) = validate(&params, model) {
-            panic!("{e:?}");
-        }
-        if let Err(e) = validate_manifold(&params, model) {
-            panic!("{e:?}");
-        }
-        assert_eq!(model.faces.len(), 12 + 2);
+        assert_valid(topology);
+        render(topology, 8, "extruded_cylinder_topology.html");
+        assert_eq!(topology.faces.len(), 12 + 2);
     }
     #[test]
     fn extruded_cylinder_is_valid() {
         for_all_scalars!(check_extruded_cylinder_is_valid);
-    }
-
-    fn check_rasterize_topology_revolved_cylinder<S: Scalar>() {
-        let mut part = Part::<S>::new();
-        revolved_cylinder(
-            &mut part,
-            "t3",
-            Vector3::from_array([S::ZERO, S::ZERO, S::ZERO]),
-            S::ONE,
-            S::TWO,
-        )
-        .unwrap();
-        let model = part.topology();
-
-        let scene = geop_ops_rasterize::debug::rasterize_topology(model, 32).unwrap();
-        assert!(!scene.points.is_empty());
-        assert!(!scene.lines.is_empty());
-        assert!(!scene.triangles_transparent.is_empty());
-        assert!(!scene.labels.is_empty());
-
-        std::fs::create_dir_all("outputs").unwrap();
-        scene
-            .save_to_file("outputs/revolved_cylinder_topology.html")
-            .unwrap();
-    }
-    #[test]
-    fn rasterize_topology_revolved_cylinder() {
-        for_all_scalars!(check_rasterize_topology_revolved_cylinder);
-    }
-
-    fn check_rasterize_topology_extruded_cylinder<S: Scalar>() {
-        let mut part = Part::<S>::new();
-        extruded_cylinder(
-            &mut part,
-            "t5",
-            Vector3::from_array([S::ZERO, S::ZERO, S::ZERO]),
-            S::ONE,
-            S::TWO,
-            12,
-        )
-        .unwrap();
-        let model = part.topology();
-
-        let scene = geop_ops_rasterize::debug::rasterize_topology(model, 8).unwrap();
-        assert!(!scene.points.is_empty());
-        assert!(!scene.lines.is_empty());
-        assert!(!scene.triangles_transparent.is_empty());
-        assert!(!scene.labels.is_empty());
-
-        std::fs::create_dir_all("outputs").unwrap();
-        scene
-            .save_to_file("outputs/extruded_cylinder_topology.html")
-            .unwrap();
-    }
-    #[test]
-    fn rasterize_topology_extruded_cylinder() {
-        for_all_scalars!(check_rasterize_topology_extruded_cylinder);
     }
 
     /// An `X`/`Y`-axis cylinder must be structurally identical to the
@@ -271,9 +200,9 @@ mod tests {
     fn check_revolved_cylinder_along_axis_is_valid<S: Scalar>() {
         let params = ValidationParameters::default();
         for (axis, extent_axis) in [(Axis::X, 0), (Axis::Y, 1), (Axis::Z, 2)] {
-            let mut part = Part::<S>::new();
+            let mut model = NamedModel::<S>::new();
             revolved_cylinder_along_axis(
-                &mut part,
+                &mut model,
                 "t1",
                 Vector3::from_array([S::ZERO, S::ZERO, S::ZERO]),
                 S::ONE,
@@ -281,16 +210,16 @@ mod tests {
                 axis,
             )
             .unwrap_or_else(|e| panic!("{axis:?}: {e}"));
-            let model = part.topology();
-            assert_eq!(model.faces.len(), 12, "{axis:?}");
+            let topology = model.topology();
+            assert_eq!(topology.faces.len(), 12, "{axis:?}");
 
-            validate(&params, model).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
-            validate_manifold(&params, model).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
+            validate(&params, topology).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
+            validate_manifold(&params, topology).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
 
             // Every vertex's coordinate along the *other* two axes stays
             // within the radius; `extent_axis` alone reaches all the way
             // to `height`.
-            let max_extent = model
+            let max_extent = topology
                 .vertices
                 .values()
                 .map(|v| v.point[extent_axis].to_f64())
@@ -303,7 +232,7 @@ mod tests {
                 if other == extent_axis {
                     continue;
                 }
-                let max_other = model
+                let max_other = topology
                     .vertices
                     .values()
                     .map(|v| v.point[other].to_f64().abs())
@@ -332,9 +261,9 @@ mod tests {
         for (axis, k) in [(Axis::X, 0), (Axis::Y, 1), (Axis::Z, 2)] {
             let mut base = [f(0.0); 3];
             base[k] = f(50.0);
-            let mut part = Part::<S>::new();
+            let mut model = NamedModel::<S>::new();
             revolved_cylinder_along_axis(
-                &mut part,
+                &mut model,
                 "clip",
                 Vector3::from_array(base),
                 f(3.0),
@@ -342,7 +271,7 @@ mod tests {
                 axis,
             )
             .unwrap();
-            validate(&params, part.topology()).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
+            validate(&params, model.topology()).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
         }
     }
     #[test]
@@ -366,9 +295,9 @@ mod tests {
         let params = ValidationParameters::default();
         let f = S::from_f64;
         for axis in [Axis::X, Axis::Y, Axis::Z] {
-            let mut part = Part::<S>::new();
+            let mut model = NamedModel::<S>::new();
             revolved_cylinder_along_axis(
-                &mut part,
+                &mut model,
                 "clip",
                 Vector3::from_array([f(1000.0), f(-500.0), f(50.0)]),
                 f(3.0),
@@ -376,7 +305,7 @@ mod tests {
                 axis,
             )
             .unwrap();
-            validate(&params, part.topology()).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
+            validate(&params, model.topology()).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
         }
     }
     #[test]

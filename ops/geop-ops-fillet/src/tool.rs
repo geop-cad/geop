@@ -14,14 +14,18 @@ use geop_core_geometry::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
+    union_find::UnionFind,
     vector::{Vector, Vector2, Vector3, Vector4},
 };
 use geop_core_topology::{
     FaceId, Sense, SolidId,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
-use geop_ops::{BodyNames, Namer, Part};
-use geop_ops_extrude_revolve::common::{bilinear, embed_point, line2};
+use geop_ops::{BodyNames, NamedModel, Namer};
+use geop_ops_extrude_revolve::{
+    common::{bilinear, embed_point, line2, line3},
+    sweep::wall_pcurves,
+};
 
 /// One span of a tool: its control rows along it — each the four section
 /// control points (see [`ToolStation::points`]) — of `degree` on `knots`, and
@@ -69,6 +73,18 @@ pub(crate) struct Tool<S: Scalar> {
     /// What the blend's own wall, between the contacts, is called:
     /// `fillet` or `chamfer`.
     pub(crate) blend: &'static str,
+}
+
+impl<S: Scalar> Tool<S> {
+    /// What its joints are called: its contacts `ta` and `tb`, after their
+    /// walls, and its apex `q`.
+    fn joint_names(&self) -> [String; 3] {
+        [
+            format!("t{}", self.sides[0]),
+            format!("t{}", self.sides[1]),
+            "q".to_string(),
+        ]
+    }
 }
 
 /// The homogeneous point `h`'s coordinates in the plane `(origin, e1, e2)`,
@@ -136,20 +152,6 @@ fn section_curve<S: Scalar, const D: usize>(
         vec![S::ZERO, S::ZERO, S::ONE, S::ONE]
     };
     NurbCurve::try_new(if c == 0 { 2 } else { 1 }, control_points, knots)
-}
-
-/// A wall's sides in its own parameters: the curve at the span's first
-/// station, run backwards along `u = 0`; the path of its start along
-/// `v = 0`; the curve at the last station along `u = 1`; the path of its
-/// end, backwards along `v = 1`.
-fn wall_pcurves<S: Scalar>() -> GeopResult<[NurbCurve2D<S>; 4]> {
-    let p = |u: f64, v: f64| Vector2::from_array([S::from_f64(u), S::from_f64(v)]);
-    Ok([
-        line2(p(0.0, 1.0), p(0.0, 0.0))?,
-        line2(p(0.0, 0.0), p(1.0, 0.0))?,
-        line2(p(1.0, 0.0), p(1.0, 1.0))?,
-        line2(p(1.0, 1.0), p(0.0, 1.0))?,
-    ])
 }
 
 /// The flat cap on `cap`'s plane holding its section: the box around the
@@ -248,33 +250,27 @@ impl CornerEnd {
     }
 }
 
-/// The line from `a` to `b`.
-fn line3<S: Scalar>(a: &Vector3<S>, b: &Vector3<S>) -> GeopResult<NurbCurve<S, 4>> {
-    let h = |p: &Vector3<S>| Vector4::from_array([p[0], p[1], p[2], S::ONE]);
-    NurbCurve::try_new(1, vec![h(a), h(b)], vec![S::ZERO, S::ZERO, S::ONE, S::ONE])
-}
-
-/// The point `(u, v)` of a face's parameters.
-fn uv<S: Scalar>(u: f64, v: f64) -> Vector2<S> {
-    Vector2::from_array([S::from_f64(u), S::from_f64(v)])
-}
-
-/// A face's loop through the vertices `corners`, each side along the edge
-/// — or at the vertex — given with its pcurve, the way the loop runs: the
-/// coedges, each in the sense its edge runs from one corner to the next.
+/// A face's loop around the unit square of its parameters, from `(0, 0)`
+/// through `(1, 0)`, `(1, 1)` and `(0, 1)`, at the vertices `corners`: each
+/// side along the edge — or at the vertex — `sides` gives, the way the loop
+/// runs. The coedges, each in the sense its edge runs from one corner to
+/// the next.
 fn face_loop<S: Scalar>(
     spec: &BodySpec<S>,
-    corners: &[usize],
-    sides: Vec<(CoedgeOn, NurbCurve2D<S>)>,
+    corners: [usize; 4],
+    sides: [CoedgeOn; 4],
 ) -> GeopResult<Vec<CoedgeSpec<S>>> {
+    let uv = |[u, v]: [f64; 2]| Vector2::from_array([S::from_f64(u), S::from_f64(v)]);
+    let square = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
     sides
         .into_iter()
         .enumerate()
-        .map(|(i, (on, pcurve))| {
+        .map(|(i, on)| {
+            let pcurve = line2(uv(square[i]), uv(square[(i + 1) % 4]))?;
             let on = match on {
                 CoedgeOn::Edge(e, _) => {
                     let edge = &spec.edges[e];
-                    let (from, to) = (corners[i], corners[(i + 1) % corners.len()]);
+                    let (from, to) = (corners[i], corners[(i + 1) % 4]);
                     let sense = if edge.start == from && edge.end == to {
                         Sense::Forward
                     } else if edge.start == to && edge.end == from {
@@ -318,7 +314,7 @@ fn face_loop<S: Scalar>(
 /// Where two tools are joined at a mitre (see [`Joint`]), the second's
 /// section there is the first's: its vertices and curves.
 pub(crate) fn build_tools<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     tools: &[(&Namer, &Tool<S>)],
     corners: &[Corner<S>],
     joints: &[Joint],
@@ -355,25 +351,14 @@ pub(crate) fn build_tools<S: Scalar>(
         })
         .collect();
     let slot = |t: usize, s: usize, k: usize| tool_slot[t] + 3 * s + k;
-    let mut parent: Vec<usize> = (0..slots).collect();
-    fn root(parent: &mut [usize], mut x: usize) -> usize {
-        while parent[x] != x {
-            parent[x] = parent[parent[x]];
-            x = parent[x];
-        }
-        x
-    }
-    let mut join = |a: usize, b: usize| {
-        let (a, b) = (root(&mut parent, a), root(&mut parent, b));
-        parent[a.max(b)] = a.min(b);
-    };
+    let mut joined = UnionFind::new(slots);
     let mut glued: Vec<(usize, usize)> = Vec::new();
     for (c, corner) in corners.iter().enumerate() {
         for end in &corner.ends {
             let station = end.station(tools[end.tool].1);
             glued.push((end.tool, station));
             for k in 0..2 {
-                join(slot(end.tool, station, k), first_slot[c] + end.contacts[k]);
+                joined.union(slot(end.tool, station, k), first_slot[c] + end.contacts[k]);
             }
         }
     }
@@ -404,12 +389,12 @@ pub(crate) fn build_tools<S: Scalar>(
             (lead.tool, lead_station, which),
         );
         for k in 0..2 {
-            join(
+            joined.union(
                 slot(follow.tool, follow_station, k),
                 slot(lead.tool, lead_station, which[k]),
             );
         }
-        join(
+        joined.union(
             slot(follow.tool, follow_station, 2),
             slot(lead.tool, lead_station, 2),
         );
@@ -421,7 +406,7 @@ pub(crate) fn build_tools<S: Scalar>(
     for (c, corner) in corners.iter().enumerate() {
         for (k, p) in corner.contacts.iter().enumerate() {
             let at = first_slot[c] + k;
-            let r = root(&mut parent, at);
+            let r = joined.find(at);
             slot_vertex[at] = *made.entry(r).or_insert_with(|| {
                 spec.vertices.push(*p);
                 names.vertices.push(corner.namer.name(&[&format!("t{k}")]));
@@ -430,15 +415,11 @@ pub(crate) fn build_tools<S: Scalar>(
         }
     }
     for (t, (namer, tool)) in tools.iter().enumerate() {
-        let joint_names = [
-            format!("t{}", tool.sides[0]),
-            format!("t{}", tool.sides[1]),
-            "q".to_string(),
-        ];
+        let joint_names = tool.joint_names();
         for (s, station) in tool.stations.iter().enumerate() {
             for k in 0..3 {
                 let at = slot(t, s, k);
-                let r = root(&mut parent, at);
+                let r = joined.find(at);
                 slot_vertex[at] = *made.entry(r).or_insert_with(|| {
                     spec.vertices.push(station.vertices[k]);
                     names
@@ -455,11 +436,7 @@ pub(crate) fn build_tools<S: Scalar>(
     let mut vertex: Vec<Vec<[usize; 3]>> = Vec::new();
     let mut station_edge: Vec<Vec<[(usize, bool); 3]>> = Vec::new();
     for (t, (namer, tool)) in tools.iter().enumerate() {
-        let joint_names = [
-            format!("t{}", tool.sides[0]),
-            format!("t{}", tool.sides[1]),
-            "q".to_string(),
-        ];
+        let joint_names = tool.joint_names();
         let curve_names = [tool.blend, tool.sides[1], tool.sides[0]];
         let count = tool.stations.len();
         let next = |j: usize| (j + 1) % count;
@@ -644,7 +621,8 @@ pub(crate) fn build_tools<S: Scalar>(
         corner_faces(&mut spec, &mut names, corner, &built)?;
     }
     spec.shells = vec![(0..spec.faces.len()).collect()];
-    part.build_body(spec, names)?
+    model
+        .build_body(spec, names)?
         .solid
         .ok_or_else(|| GeopError::new("the blend's tool came out as no solid"))
 }
@@ -697,7 +675,7 @@ fn corner_faces<S: Scalar>(
     for (i, end) in corner.ends.iter().enumerate() {
         let (q, at) = built.apex(end);
         spec.edges.push(EdgeSpec {
-            curve: line3(&at, &corner.apex)?,
+            curve: line3(at, corner.apex)?,
             start: q,
             end: apex,
         });
@@ -742,24 +720,12 @@ fn corner_faces<S: Scalar>(
     let [p, q, r] = order;
     let outer = face_loop(
         spec,
-        &[contacts[p], contacts[q], contacts[r], contacts[r]],
-        vec![
-            (
-                CoedgeOn::Edge(arc(p, q)?, Sense::Forward),
-                line2(uv(0.0, 0.0), uv(1.0, 0.0))?,
-            ),
-            (
-                CoedgeOn::Edge(arc(q, r)?, Sense::Forward),
-                line2(uv(1.0, 0.0), uv(1.0, 1.0))?,
-            ),
-            (
-                CoedgeOn::Vertex(contacts[r]),
-                line2(uv(1.0, 1.0), uv(0.0, 1.0))?,
-            ),
-            (
-                CoedgeOn::Edge(arc(r, p)?, Sense::Forward),
-                line2(uv(0.0, 1.0), uv(0.0, 0.0))?,
-            ),
+        [contacts[p], contacts[q], contacts[r], contacts[r]],
+        [
+            CoedgeOn::Edge(arc(p, q)?, Sense::Forward),
+            CoedgeOn::Edge(arc(q, r)?, Sense::Forward),
+            CoedgeOn::Vertex(contacts[r]),
+            CoedgeOn::Edge(arc(r, p)?, Sense::Forward),
         ],
     )?;
     spec.faces.push(FaceSpec {
@@ -813,24 +779,12 @@ fn corner_faces<S: Scalar>(
         let (qj, _) = built.apex(&corner.ends[j]);
         let outer = face_loop(
             spec,
-            &[contacts[k], qi, apex, qj],
-            vec![
-                (
-                    CoedgeOn::Edge(line(i), Sense::Forward),
-                    line2(uv(0.0, 0.0), uv(1.0, 0.0))?,
-                ),
-                (
-                    CoedgeOn::Edge(to_apex[i], Sense::Forward),
-                    line2(uv(1.0, 0.0), uv(1.0, 1.0))?,
-                ),
-                (
-                    CoedgeOn::Edge(to_apex[j], Sense::Forward),
-                    line2(uv(1.0, 1.0), uv(0.0, 1.0))?,
-                ),
-                (
-                    CoedgeOn::Edge(line(j), Sense::Forward),
-                    line2(uv(0.0, 1.0), uv(0.0, 0.0))?,
-                ),
+            [contacts[k], qi, apex, qj],
+            [
+                CoedgeOn::Edge(line(i), Sense::Forward),
+                CoedgeOn::Edge(to_apex[i], Sense::Forward),
+                CoedgeOn::Edge(to_apex[j], Sense::Forward),
+                CoedgeOn::Edge(line(j), Sense::Forward),
             ],
         )?;
         spec.faces.push(FaceSpec {

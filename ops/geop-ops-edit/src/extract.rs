@@ -3,13 +3,15 @@
 
 use geop_core_math::{
     geop_error::{GeopResult, WithContext},
-    scalars::Scalar,
     with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_ops::{
-    Context, EntityRef, Library, Namer, Part,
-    operation::{Operation, Role},
-    ui::Form,
+    Design, EntityRef, NamedModel, Namer, ParamValue,
+    operation::{Build, BuildReader, Input, ModelStep, Role, build_model},
 };
 use serde::{Deserialize, Serialize};
 
@@ -29,53 +31,72 @@ pub struct ExtractFaceArgs {
     pub face: String,
 }
 
+impl ModelStep for ExtractFace {
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &ExtractFaceArgs,
+    ) -> GeopResult<()> {
+        let ctx = with_context!("extract_face({step}, {args:?})");
+        let namer = Namer::new("extract", step)?;
+        let face = model.face_id(&args.face).with_context(ctx)?;
+        (model.copy_faces(&[face], None, |name| namer.name(&[name]))).with_context(ctx)?;
+        Ok(())
+    }
+}
+
 impl Operation for ExtractFace {
+    const INFO: OperationInfo = OperationInfo::new(
+        "extract_face",
+        "Extract face",
+        "Copy a face out of its body into a face standing on its own, which a solid can be split with.",
+        OperationGroup::Surface,
+        OperationTier::Menu,
+    )
+    .experimental();
     type Args = ExtractFaceArgs;
-    type Session = ();
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
 
     /// Nothing picked yet.
-    fn new_args<S: Scalar>(&self, _before: &Part<S>) -> ExtractFaceArgs {
+    fn new_args(_: &Context<Input, ParamValue>) -> ExtractFaceArgs {
         ExtractFaceArgs::default()
     }
 
-    /// The face, picked.
-    fn form<'a, S: Scalar>(
-        &self,
-        _: Context<'a, S>,
-        args: &ExtractFaceArgs,
-        _: &(),
-        _: &[String],
-    ) -> Form<'a, S, ExtractFaceArgs> {
-        let mut f = Form::<S, ExtractFaceArgs>::new();
-        f.reference(
-            "face",
-            "face",
-            EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face)),
-            &[Role::Face],
-            None,
-            false,
-            |e, p| {
-                e.args.face = EntityRef::names_of(EntityRef::face, &p)
-                    .pop()
-                    .unwrap_or_default()
-            },
-        );
-        f
+    fn run(step: &str, part: &mut Build, args: &ExtractFaceArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    /// The face, picked.
+    fn presentation(
+        _: &Context<Input, ParamValue>,
         args: &ExtractFaceArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("extract_face({operation_id}, {args:?})");
-        let namer = Namer::new("extract", operation_id)?;
-        let face = part.face_id(&args.face).with_context(ctx)?;
-        part.copy_faces(&[face], None, |name| namer.name(&[name]))
-            .with_context(ctx)?;
-        Ok(part)
+        _: &(),
+    ) -> Form<Design> {
+        let mut form = Form::default();
+        let face = EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face));
+        (form.dialog).reference("face", "face", face, &[Role::Face], None, false);
+        form
+    }
+
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
+        args: &ExtractFaceArgs,
+        _: &(),
+        event: Event<Design>,
+    ) -> (ExtractFaceArgs, ()) {
+        let mut args = args.clone();
+        if let Event::Field {
+            key,
+            value: Value::Entities(picked),
+        } = event
+            && key == "face"
+        {
+            args.face = (EntityRef::names_of(EntityRef::face, &picked).pop()).unwrap_or_default();
+        }
+        (args, ())
     }
 }
 
@@ -87,7 +108,7 @@ mod tests {
         vector::Vector3,
     };
     use geop_core_topology::validation::{ValidationParameters, validate};
-    use geop_ops::NoFiles;
+    use geop_ops::operation::apply_to_model;
     use geop_ops_extrude_revolve::shapes::cube_solid;
 
     fn v3(x: f64, y: f64, z: f64) -> Vector3<S> {
@@ -98,12 +119,12 @@ mod tests {
     /// which is left as it was.
     #[test]
     fn extracts_a_face_of_a_cube() {
-        let mut part = Part::<S>::new();
+        let mut part = NamedModel::<S>::new();
         let cube = cube_solid(&mut part, "c", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap();
         let face = part.topology().solid_faces(cube).unwrap()[0];
         let face = part.name_of(face).unwrap().to_string();
         let args = ExtractFaceArgs { face: face.clone() };
-        let part = ExtractFace.apply(part, "x", &args, &NoFiles).unwrap();
+        let part = apply_to_model::<ExtractFace>(part, "x", &args).unwrap();
         validate(&ValidationParameters::default(), part.topology()).unwrap();
         part.check_names().unwrap();
         assert_eq!(part.sheet_face_names(), [format!("extract(x,{face})")]);

@@ -19,7 +19,7 @@ use geop_ops::Design;
 
 use crate::{
     Constraint, CurveKind, Sketch,
-    geometry::{P2, add, cross, dot, polyline, polyline_mid, scale, sub, unit, xy},
+    geometry::{P2, add, cross, dot, of, polyline, polyline_mid, scale, sub, unit, xy},
 };
 
 /// A point or a curve of the sketch, as selected.
@@ -397,22 +397,19 @@ impl ConstraintTool {
             {
                 vec![PointOnCurve { point, curve }]
             }
-            (T::Horizontal, [], _) if all(&is_line) => {
-                curves.iter().map(|&line| Horizontal { line }).collect()
+            (T::Horizontal | T::Vertical, [], _) if all(&is_line) => (curves.iter())
+                .map(|&line| match self {
+                    T::Horizontal => Horizontal { line },
+                    _ => Vertical { line },
+                })
+                .collect(),
+            (T::Horizontal | T::Vertical, &[a, b], []) => {
+                let value = Design::ZERO;
+                vec![match self {
+                    T::Horizontal => DistanceY { a, b, value },
+                    _ => DistanceX { a, b, value },
+                }]
             }
-            (T::Vertical, [], _) if all(&is_line) => {
-                curves.iter().map(|&line| Vertical { line }).collect()
-            }
-            (T::Horizontal, &[a, b], []) => vec![DistanceY {
-                a,
-                b,
-                value: Design::ZERO,
-            }],
-            (T::Vertical, &[a, b], []) => vec![DistanceX {
-                a,
-                b,
-                value: Design::ZERO,
-            }],
             (T::Parallel, [], _) if curves.len() >= 2 && all(&is_line) => {
                 pair(&|a, b| Parallel { a, b })
             }
@@ -423,15 +420,9 @@ impl ConstraintTool {
                 vec![Perpendicular { a, b }]
             }
             (T::Tangent, [], &[a, b]) => {
-                let (la, lb) = (is_line(a), is_line(b));
-                let shared = sketch.shared_endpoint(a, b).ok().flatten().is_some();
-                let circle = |c| matches!(kind(c), CurveKind::Circle { .. });
-                let ok = shared && !(la && lb) && !circle(a) && !circle(b)
-                    || !shared && (is_round(a) && (is_round(b) || lb) || la && is_round(b));
-                if !ok {
-                    return None;
-                }
-                vec![Tangent { a, b }]
+                let tangent = Tangent { a, b };
+                sketch.validate_constraint(&tangent).ok()?;
+                vec![tangent]
             }
             (T::Equal, [], _) if curves.len() >= 2 && (all(&is_line) || all(&is_round)) => {
                 pair(&|a, b| Equal { a, b })
@@ -514,21 +505,15 @@ impl ConstraintTool {
                     DistanceY { a, b, value }
                 }]
             }
-            (T::Radius, [], _) if all(&is_round) => curves
-                .iter()
+            (T::Radius | T::Diameter, [], _) if all(&is_round) => (curves.iter())
                 .map(|&curve| {
-                    Some(Radius {
-                        curve,
-                        value: radius(sketch, kind(curve))?,
-                    })
-                })
-                .collect::<Option<_>>()?,
-            (T::Diameter, [], _) if all(&is_round) => curves
-                .iter()
-                .map(|&curve| {
-                    Some(Diameter {
-                        curve,
-                        value: radius(sketch, kind(curve))?.mul(Design::TWO),
+                    let value = radius(sketch, kind(curve))?;
+                    Some(match self {
+                        T::Radius => Radius { curve, value },
+                        _ => Diameter {
+                            curve,
+                            value: value.mul(Design::TWO),
+                        },
                     })
                 })
                 .collect::<Option<_>>()?,
@@ -537,8 +522,7 @@ impl ConstraintTool {
                 let (b0, b1) = line_points(sketch, kind(b))?;
                 // The angle as drawn, measured on screen: a proposal the
                 // designer accepts or edits, so any nearby value would do.
-                let plain = |v: Vector2<Design>| [v[0].to_f64(), v[1].to_f64()];
-                let (da, db) = (plain(a1.sub(&a0)), plain(b1.sub(&b0)));
+                let (da, db) = (of(&a1.sub(&a0)), of(&b1.sub(&b0)));
                 vec![Angle {
                     a,
                     b,
@@ -628,10 +612,14 @@ pub fn value(c: &Constraint) -> Option<f64> {
     }
 }
 
-/// `c` with its value set to `v` — in the constraint's own units, an angle
-/// in radians — if it has one.
+/// `c` with its value set to `v`, as it is given — an angle in degrees —
+/// if it has one.
 pub fn set_value(c: &mut Constraint, v: f64) {
     use geop_core_sketch::Constraint::*;
+    let v = match c {
+        Angle { .. } => v.to_radians(),
+        _ => v,
+    };
     if let Distance { value, .. }
     | DistanceX { value, .. }
     | DistanceY { value, .. }
@@ -683,22 +671,17 @@ pub fn glyph(sketch: &Sketch, c: &Constraint, formula: bool) -> Option<(String, 
         Symmetric { a, b, .. } => ("⇆".into(), between(a, b)),
         Fix { point, .. } => ("⚓".into(), p(point)),
         Distance { a, b, value } => (shown("", value), between(a, b)),
-        DistanceX { a, b, value } => (
-            if !formula && value.is_sharp() && value.could_be_equal(Design::ZERO) {
-                "|".into()
-            } else {
-                shown("↔ ", value)
-            },
-            between(a, b),
-        ),
-        DistanceY { a, b, value } => (
-            if !formula && value.is_sharp() && value.could_be_equal(Design::ZERO) {
-                "—".into()
-            } else {
-                shown("↕ ", value)
-            },
-            between(a, b),
-        ),
+        DistanceX { a, b, value } | DistanceY { a, b, value } => {
+            let (aligned, prefix) = match c {
+                DistanceX { .. } => ("|", "↔ "),
+                _ => ("—", "↕ "),
+            };
+            let text = match !formula && value.is_sharp() && value.could_be_equal(Design::ZERO) {
+                true => aligned.into(),
+                false => shown(prefix, value),
+            };
+            (text, between(a, b))
+        }
         PointLineDistance { point, value, .. } => (shown("", value), p(point)),
         Length { curve, value } => (shown("", value), mid(curve)),
         Radius { curve, value } => (shown("R", value), mid(curve)),
@@ -734,7 +717,7 @@ pub fn dimension_lines(sketch: &Sketch, c: &Constraint, label: P2) -> Vec<Vec<P2
             CurveKind::Arc { start, end, sweep } => {
                 let a = arc(sketch, start, end, sweep)?;
                 let c = a.center().ok()?;
-                Some(([c[0].to_f64(), c[1].to_f64()], a.radius().ok()?.to_f64()))
+                Some((of(&c), a.radius().ok()?.to_f64()))
             }
             _ => None,
         }

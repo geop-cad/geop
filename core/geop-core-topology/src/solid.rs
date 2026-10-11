@@ -4,7 +4,7 @@ use super::ids::ShellId;
 ///
 /// The first shell in `shells` is conventionally the outer bounding shell;
 /// subsequent shells are void (cavity) shells.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Solid {
     pub shells: Vec<ShellId>,
 }

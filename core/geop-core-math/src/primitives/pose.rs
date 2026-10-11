@@ -1,21 +1,23 @@
-//! [`Pose`]: where a rigid body sits, as a unit dual quaternion — built on
-//! [`DualQuaternion`] and [`Quaternion`], in any scalar type.
+//! [`Pose`]: where a rigid body sits, as a rotation — a unit
+//! [`Quaternion`] — and a position, in any scalar type.
 //!
-//! A unit dual quaternion `q = r + ε d` holds a rotation `r` (a unit
-//! quaternion) and a translation `t` as `d = ½ t r`. It moves a point `p` by
-//! `q (1 + ε p) q̄*`, composes by multiplication, and is undone by its
-//! conjugate. Unlike angles, it has no singular configurations, and every
-//! component is a polynomial of the rotation and translation — which is
-//! what makes gradients through it well behaved, and its enclosures tight.
+//! Unlike angles, a unit quaternion has no singular configurations, and
+//! moving a point by it is a polynomial of its components — which is what
+//! makes gradients through it well behaved, and its enclosures tight.
 
 use serde::{Deserialize, Serialize};
 
 use super::CoordinateSystem;
 use crate::{
     geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
+    scalars::{Ring, Scalar},
+    solvers::{least_squares::Rows, system::Variable},
     vector::Vector3,
 };
+
+/// How many terms of each series [`Pose::exp`] sums near zero before it
+/// bounds the rest: how tight the map is there, never whether it encloses.
+const SERIES_TERMS: usize = 12;
 
 /// A quaternion `w + x i + y j + z k`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -253,65 +255,11 @@ impl<T: Scalar> Quaternion<T> {
     }
 }
 
-/// A dual quaternion `real + ε dual` — a rigid motion when unit (see the
-/// module docs).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct DualQuaternion<T> {
-    pub real: Quaternion<T>,
-    pub dual: Quaternion<T>,
-}
-
-impl<T: Scalar> DualQuaternion<T> {
-    /// Turning by the unit quaternion `rotation`, then moving by
-    /// `translation`.
-    pub fn from_parts(rotation: Quaternion<T>, translation: &Vector3<T>) -> Self {
-        let half = T::ONE.div(T::TWO).expect("2 is not zero");
-        Self {
-            real: rotation,
-            dual: Quaternion::pure(translation).mul(&rotation).scale(half),
-        }
-    }
-
-    pub fn translation_by(t: &Vector3<T>) -> Self {
-        Self::from_parts(Quaternion::identity(), t)
-    }
-
-    /// Every component mapped by `f`.
-    pub fn map<U: Scalar>(&self, f: impl Fn(T) -> U) -> DualQuaternion<U> {
-        DualQuaternion {
-            real: self.real.map(&f),
-            dual: self.dual.map(&f),
-        }
-    }
-
-    /// This motion after `inner`: a point is moved by `inner` first.
-    pub fn mul(&self, inner: &Self) -> Self {
-        Self {
-            real: self.real.mul(&inner.real),
-            dual: self.real.mul(&inner.dual).add(&self.dual.mul(&inner.real)),
-        }
-    }
-
-    /// The motion undoing this one.
-    pub fn conj(&self) -> Self {
-        Self {
-            real: self.real.conj(),
-            dual: self.dual.conj(),
-        }
-    }
-
-    /// Its translation: `2 d r*`.
-    pub fn translation(&self) -> Vector3<T> {
-        self.dual.mul(&self.real.conj()).scale(T::TWO).vector()
-    }
-}
-
 /// A rigid motion — where a body sits: a point `p` of it is at
 /// `R p + position`, with `R` the rotation of a unit quaternion — in the
-/// scalar type `S`. Computed with as the unit dual quaternion of the two
-/// ([`Pose::dual_quaternion`]); kept as the two themselves, so that what is
-/// stored is exactly what was set, and a pose read and written again is
-/// written exactly as it was read.
+/// scalar type `S`. Kept as the two themselves, so that what is stored is
+/// exactly what was set, and a pose read and written again is written
+/// exactly as it was read.
 ///
 /// Serialized as `{"position": [x, y, z], "rotation": [w, x, y, z]}`, each
 /// number its value's midpoint; a rotation read is normalized. Angles are
@@ -376,14 +324,6 @@ impl<S: Scalar> Pose<S> {
         })
     }
 
-    /// The pose a unit dual quaternion stands for.
-    pub fn from_dual_quaternion(motion: &DualQuaternion<S>) -> Self {
-        Pose {
-            rotation: motion.real,
-            position: motion.translation(),
-        }
-    }
-
     /// Moving to `position`, turned by `degrees` about `x`, then `y`, then
     /// `z` — the world's axes — as a dialog shows a pose.
     pub fn from_euler(position: Vector3<S>, degrees: [S; 3]) -> GeopResult<Self> {
@@ -398,11 +338,6 @@ impl<S: Scalar> Pose<S> {
     /// Its rotation, as a unit quaternion.
     pub fn rotation(&self) -> Quaternion<S> {
         self.rotation
-    }
-
-    /// The pose as a unit dual quaternion.
-    pub fn dual_quaternion(&self) -> DualQuaternion<S> {
-        DualQuaternion::from_parts(self.rotation, &self.position)
     }
 
     /// Every component mapped by `f` — into another scalar type, say.
@@ -476,48 +411,111 @@ impl<S: Scalar> Pose<S> {
         }
     }
 
-    /// This pose after the step `(dt, w)` taken about `center` — a point of
-    /// the world, the body's middle, ideally: turned by `R(w)` about
-    /// `center`, then moved by `dt`. Its rotation is `R(w) r` and its
-    /// position `center + dt + R(w) (position - center)`, for the pose's
-    /// rotation `r`.
+    /// The rigid motion of the twist `(ω, v)` — turning at `ω` while moving
+    /// at `v`, for unit time: the exponential map of `ξ̂ = ω + ε v` as a
+    /// unit dual quaternion, `exp(ξ̂ / 2)`. Its rotation turns by `|ω|`
+    /// radians about `ω`; it is a screw motion along that axis. Zero is the
+    /// identity, and to first order it is `(1, ω / 2) + ε (0, v / 2)`.
     ///
-    /// `R(w)` is the unit quaternion of the modified Rodrigues parameters
-    /// `σ = w / 4`: `((1 − |σ|²), 2σ) / (1 + |σ|²)`, turning by `4 atan(|w| /
-    /// 4)` about `w` — `|w|` radians to first order. It is rational, so smooth
-    /// everywhere and a unit quaternion by construction — no square root of
-    /// `|w|`, as the exponential needs — and every rotation short of a full
-    /// turn is one, a half turn at `|w| = 4` with the turn still changing
-    /// half as fast as `w`. The quaternion `(1, w / 2)` normalized reaches a
-    /// half turn only as `|w|` goes to infinity: a body that had to turn
-    /// nearly half way round in one drag ran its variables off to hundreds,
-    /// every step of the minimizer turning it by less, and the solve ran out
-    /// of steps. Turning about the body's own center rather than the world's
-    /// origin keeps a turn of a body far from the origin from also moving it.
+    /// With `φ = |ω| / 2`, it is `(cos φ, s ω) + ε (−s (ω·v) / 2, s v + c
+    /// (ω·v) ω)`, where `s = sin φ / (2φ)` and `c = (cos φ − sin φ / φ) /
+    /// (8φ²)`. Near `φ = 0` both are summed as their series in `φ²`, which
+    /// are polynomials: smooth through zero, where the closed forms are
+    /// `0 / 0` — so the map can be differentiated there with dual numbers,
+    /// as a solver does to linearize a pose. The series are enclosed with
+    /// what they leave out, so the map is an enclosure for a twist that is
+    /// a box around zero too, and so are its derivatives.
     ///
-    /// This is how a solver moves a body: `w = 0` and `dt = 0` give the pose
-    /// itself, and the pose has no singular configurations to cross.
-    pub fn moved(&self, center: &Vector3<S>, dt: Vector3<S>, w: Vector3<S>) -> GeopResult<Pose<S>> {
-        let sigma = w.prod_scalar(S::ONE.div(S::from_i64(4))?);
-        let s2 = sigma.prod_dot(&sigma);
-        let inv = S::ONE.div(S::ONE.add(s2))?;
-        let twice = S::TWO.mul(inv);
-        let turn = Quaternion::new(
-            S::ONE.sub(s2).mul(inv),
-            sigma[0].mul(twice),
-            sigma[1].mul(twice),
-            sigma[2].mul(twice),
-        );
-        let [x, y, z] = turn.rotation_columns()?;
-        let by_turn = |v: &Vector3<S>| {
-            x.prod_scalar(v[0])
-                .add(&y.prod_scalar(v[1]))
-                .add(&z.prod_scalar(v[2]))
+    /// Its rotation is the real part; its position, the translation `2 d r*`
+    /// of the dual part `d` and the rotation `r`, multiplied out:
+    /// `2 s cos φ v + (s² + 2 c cos φ) (ω·v) ω + 2 s² ω × v`.
+    pub fn exp(omega: &Vector3<S>, v: &Vector3<S>) -> GeopResult<Self> {
+        let phi2 = omega.prod_dot(omega).div(S::from_i64(4))?;
+        let (cos, s, c) = if phi2.definitely_less(S::ONE) {
+            // Series in φ²: Σ (−φ²)^k / (2k)!, ½ Σ (−φ²)^k / (2k+1)! and
+            // −Σ (−φ²)^k 2(k+1) / (8 (2k+3)!), each term made from the one
+            // before — no factorial is formed, so they hold in any scalar.
+            let minus = phi2.neg();
+            let (mut cos, mut s, mut c) = (S::ZERO, S::ZERO, S::ZERO);
+            // The k-th terms, as k counts up (`d` the one subtracted from c).
+            let mut cos_term = S::ONE;
+            let mut s_term = S::ONE.div(S::TWO)?;
+            let mut d = S::from_i64(2).div(S::from_i64(48))?;
+            for k in 0..SERIES_TERMS {
+                cos = cos.add(cos_term);
+                s = s.add(s_term);
+                c = c.sub(d);
+                let k = k as i64;
+                cos_term = cos_term
+                    .mul(minus)
+                    .div(S::from_i64((2 * k + 1) * (2 * k + 2)))?;
+                s_term = s_term
+                    .mul(minus)
+                    .div(S::from_i64((2 * k + 2) * (2 * k + 3)))?;
+                d = d
+                    .mul(minus)
+                    .mul(S::from_i64(k + 2))
+                    .div(S::from_i64((k + 1) * (2 * k + 4) * (2 * k + 5)))?;
+            }
+            // Each series alternates, and for φ² < 1 its terms shrink from
+            // the first one left out on — as do those of its derivative by
+            // φ²: each sum is within that term of where it stops, and so,
+            // for a dual number, is each derivative. A term times
+            // `[-1, 1]` is that bound, part by part.
+            let within = S::ONE.neg().union(S::ONE);
+            (
+                cos.add(cos_term.mul(within)),
+                s.add(s_term.mul(within)),
+                c.sub(d.mul(within)),
+            )
+        } else {
+            let phi = phi2.sqrt()?;
+            let (cos, sin) = (phi.cos(), phi.sin());
+            let s = sin.div(S::TWO.mul(phi))?;
+            let c = cos.sub(sin.div(phi)?).div(S::from_i64(8).mul(phi2))?;
+            (cos, s, c)
         };
-        Ok(Pose {
-            rotation: turn.mul(&self.rotation),
-            position: center.add(&dt).add(&by_turn(&self.position.sub(center))),
-        })
+        let rotation = Quaternion::new(cos, s.mul(omega[0]), s.mul(omega[1]), s.mul(omega[2]));
+        let (two_s_cos, s2) = (S::TWO.mul(s).mul(cos), s.mul(s));
+        let along = s2.add(S::TWO.mul(c).mul(cos)).mul(omega.prod_dot(v));
+        let position = (v.prod_scalar(two_s_cos))
+            .add(&omega.prod_scalar(along))
+            .add(&omega.prod_cross(v).prod_scalar(S::TWO.mul(s2)));
+        Ok(Pose { rotation, position })
+    }
+
+    /// The differential of [`Pose::exp`] in the frame it leads to — the
+    /// right Jacobian of the exponential map: the matrix `J` with
+    /// `exp(ξ + dξ) = exp(ξ) ∘ exp(J dξ)` to first order, for the twist
+    /// `ξ = (ω, v)`, rows and columns a turn's three numbers, then a move's.
+    /// An enclosure for every twist in the boxes `omega` and `v`, made by
+    /// differentiating the map — enclosed with what its series leave out —
+    /// with dual numbers: column `k` is the twist `exp(ξ)⁻¹ ∂ₖ exp(ξ)`, its
+    /// turn `2 r̄ ∂ₖr` and its move `Rᵀ ∂ₖt` for the rotation `r` and the
+    /// position `t`.
+    #[allow(clippy::needless_range_loop, reason = "a column of each of two blocks")]
+    pub fn exp_differential(omega: &Vector3<S>, v: &Vector3<S>) -> GeopResult<[[S; 6]; 6]> {
+        type D<S> = crate::dual::Dual<S, 6>;
+        let var = |k: usize, x: S| D::var(x, k);
+        let moved = Pose::<D<S>>::exp(
+            &Vector3::from_array([var(0, omega[0]), var(1, omega[1]), var(2, omega[2])]),
+            &Vector3::from_array([var(3, v[0]), var(4, v[1]), var(5, v[2])]),
+        )?;
+        let r = moved.rotation();
+        let at = r.map(|c| c.v);
+        let [x, y, z] = at.rotation_columns()?;
+        let mut jacobian = [[S::ZERO; 6]; 6];
+        for k in 0..6 {
+            let dr = r.map(|c| c.d[k]);
+            let turn = at.conj().mul(&dr).vector();
+            let dt = Vector3::from_array([0, 1, 2].map(|i| moved.position()[i].d[k]));
+            let along = [x.prod_dot(&dt), y.prod_dot(&dt), z.prod_dot(&dt)];
+            for i in 0..3 {
+                jacobian[i][k] = S::TWO.mul(turn[i]);
+                jacobian[3 + i][k] = along[i];
+            }
+        }
+        Ok(jacobian)
     }
 
     /// The point `p` moved by the pose.
@@ -570,6 +568,95 @@ impl<S: Scalar> Pose<S> {
     }
 }
 
+/// A pose steps by a twist `(ω, v)` in its own frame — turning about its
+/// own origin, and moving along its own axes — by the exponential map:
+/// `pose ∘ exp(ω, v)`.
+impl<S: Scalar + PartialEq> Variable for Pose<S> {
+    type Scalar = S;
+
+    fn dimension(&self) -> usize {
+        6
+    }
+
+    fn retract(&self, step: &[S]) -> GeopResult<Self> {
+        let (omega, v) = twist(step)?;
+        Ok(self.compose(&Pose::exp(&omega, &v)?).map(Scalar::sharpen))
+    }
+
+    /// Of a rigid motion: its rotation a unit quaternion. One that a step
+    /// sharpened is a hair off unit, and turning a point by it scales it by
+    /// its norm squared — a hair off every rigid motion, so off the true
+    /// solution too. So it is made unit first, honestly: an enclosure of
+    /// the rotation it stands for.
+    fn retract_over(&self, step: &[S]) -> GeopResult<Self> {
+        let unit = Pose {
+            rotation: self.rotation.normalized()?,
+            position: self.position,
+        };
+        if step.iter().all(|d| d.is_zero() && d.is_sharp()) {
+            return Ok(unit);
+        }
+        let (omega, v) = twist(step)?;
+        Ok(unit.compose(&Pose::exp(&omega, &v)?))
+    }
+
+    /// The right Jacobian of the exponential map ([`Pose::exp_differential`]);
+    /// the identity, exactly, for a step of exact zeros.
+    fn differential(&self, step: &[S]) -> GeopResult<Option<Vec<Vec<S>>>> {
+        if step.iter().all(|d| d.is_zero() && d.is_sharp()) {
+            return Ok(None);
+        }
+        let (omega, v) = twist(step)?;
+        let jacobian = Pose::exp_differential(&omega, &v)?;
+        Ok(Some(jacobian.iter().map(|row| row.to_vec()).collect()))
+    }
+
+    /// Its position's difference from `at`'s, and its rotation's as the
+    /// unit quaternions' difference — of the two quaternions of `at`'s
+    /// rotation, the nearer — times `scale`, so that a turn counts as the
+    /// distance it moves a point `scale` from its axis.
+    fn stay(&self, at: &Self, scale: S) -> GeopResult<Rows<S>> {
+        type D<S> = crate::dual::Dual<S, 6>;
+        let var = |k: usize| D::var(S::ZERO, k);
+        let step = Pose::<D<S>>::exp(
+            &Vector3::from_array([var(0), var(1), var(2)]),
+            &Vector3::from_array([var(3), var(4), var(5)]),
+        )?;
+        let moved = self.map(D::cst).compose(&step);
+        let offset = moved.position().sub(&at.position().map(D::cst));
+        let r = moved.rotation();
+        let mut target = at.rotation();
+        if r.map(|c| c.v).dot(&target).definitely_less(S::ZERO) {
+            target = target.scale(S::ONE.neg());
+        }
+        let turned = (r.components().into_iter().zip(target.components()))
+            .map(|(c, t)| c.sub(D::cst(t)).mul(D::cst(scale)));
+        let mut rows = Rows::default();
+        for residual in offset.to_array().into_iter().chain(turned) {
+            rows.push(residual.v, residual.d.to_vec());
+        }
+        Ok(rows)
+    }
+
+    fn same(&self, other: &Self) -> bool {
+        self == other
+    }
+}
+
+/// The twist `(ω, v)` a step of six numbers is.
+fn twist<S: Scalar>(step: &[S]) -> GeopResult<(Vector3<S>, Vector3<S>)> {
+    match step {
+        [w0, w1, w2, v0, v1, v2] => Ok((
+            Vector3::from_array([*w0, *w1, *w2]),
+            Vector3::from_array([*v0, *v1, *v2]),
+        )),
+        _ => Err(GeopError::new(format!(
+            "a step of a pose is six numbers, not {}",
+            step.len()
+        ))),
+    }
+}
+
 /// An isometry as it moves geometry: a [`Pose`]'s rigid motion (see
 /// [`Pose::motion`]), a plain translation, or a mirror in a plane — what a
 /// body is moved, patterned or mirrored by.
@@ -578,7 +665,7 @@ impl<S: Scalar> Pose<S> {
 /// are `axes`: a rotation's, or a mirror's reflection. Without axes `A` is
 /// the identity and nothing is multiplied: a translation moves every point
 /// by one addition per coordinate, as exactly as an interval addition can.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Motion<S: Scalar> {
     axes: Option<[Vector3<S>; 3]>,
     position: Vector3<S>,
@@ -834,5 +921,86 @@ mod tests {
             .prod_dot(&mirror.rotate(&z));
         assert!(handedness.could_be_equal(S::ONE.neg()), "{handedness:?}");
         assert!(mirror.apply_frame(&CoordinateSystem::world_at(q)).is_err());
+    }
+
+    /// The exponential of a twist: nothing for zero; a turn alone about the
+    /// origin; a move alone; and a turn about a line through `q`, whose
+    /// twist has `v = −ω × q`, the turn `rotation_about` gives.
+    #[test]
+    fn exp_is_the_motion_of_a_twist() {
+        let zero = Pose::<S>::exp(&v([0.0; 3]), &v([0.0; 3])).unwrap();
+        assert!(encloses(&zero.apply(&v([1.0, 2.0, 3.0])), [1.0, 2.0, 3.0]));
+
+        let quarter = std::f64::consts::FRAC_PI_2;
+        let turn = Pose::<S>::exp(&v([0.0, 0.0, quarter]), &v([0.0; 3])).unwrap();
+        let p = turn.apply(&v([1.0, 0.0, 0.0]));
+        assert!(
+            (p[0].to_f64()).abs() < 1e-15 && (p[1].to_f64() - 1.0).abs() < 1e-15,
+            "{p:?}"
+        );
+
+        let shift = Pose::<S>::exp(&v([0.0; 3]), &v([1.0, 2.0, 3.0])).unwrap();
+        assert!(encloses(&shift.position(), [1.0, 2.0, 3.0]));
+
+        for angle in [0.3, 1.9, 3.0, 5.5] {
+            let (axis, q) = (v([0.0, 0.0, 1.0]), v([2.0, 1.0, 0.5]));
+            let omega = axis.prod_scalar(S::from_f64(angle));
+            let screw = Pose::<S>::exp(&omega, &omega.prod_cross(&q).neg()).unwrap();
+            let about = Pose::rotation_about(&q, &axis, S::from_f64(angle)).unwrap();
+            for point in [[0.0; 3], [1.0, -2.0, 4.0]] {
+                let (a, b) = (screw.apply(&v(point)), about.apply(&v(point)));
+                for k in 0..3 {
+                    let gap = (a[k].to_f64() - b[k].to_f64()).abs();
+                    assert!(gap < 1e-12, "{angle}: {a:?} vs {b:?}");
+                }
+            }
+        }
+    }
+
+    /// The two ways the map is summed agree where they meet, at a turn of
+    /// two radians: the series just below, the closed form just above.
+    #[test]
+    fn exp_is_continuous_where_its_series_ends() {
+        let at = |angle: f64| {
+            let omega = v([0.6, 0.0, 0.8]).prod_scalar(S::from_f64(angle));
+            Pose::<S>::exp(&omega, &v([0.3, -1.0, 2.0])).unwrap()
+        };
+        let (below, above) = (at(2.0 - 1e-12), at(2.0 + 1e-12));
+        for point in [[0.0; 3], [1.0, 1.0, 1.0]] {
+            let (a, b) = (below.apply(&v(point)), above.apply(&v(point)));
+            for k in 0..3 {
+                assert!(
+                    (a[k].to_f64() - b[k].to_f64()).abs() < 1e-10,
+                    "{a:?} vs {b:?}"
+                );
+            }
+        }
+    }
+
+    /// Differentiated at zero with dual numbers, the map is its first order:
+    /// a point `p` moves at `ω × p + v`.
+    #[test]
+    fn exp_differentiates_at_zero() {
+        use crate::dual::Dual;
+        type D = Dual<S, 6>;
+        let var = |k: usize| D::var(S::ZERO, k);
+        let omega = Vector3::from_array([var(0), var(1), var(2)]);
+        let velocity = Vector3::from_array([var(3), var(4), var(5)]);
+        let moved = Pose::<D>::exp(&omega, &velocity).unwrap();
+        let p = [1.0, 2.0, 3.0];
+        let at = moved.apply(&Vector3::from_array(p.map(|c| D::cst(S::from_f64(c)))));
+        // d/dω (ω × p) = −[p]×, d/dv v = I.
+        let expected = [
+            [0.0, p[2], -p[1], 1.0, 0.0, 0.0],
+            [-p[2], 0.0, p[0], 0.0, 1.0, 0.0],
+            [p[1], -p[0], 0.0, 0.0, 0.0, 1.0],
+        ];
+        for (k, row) in expected.iter().enumerate() {
+            assert!(at[k].v.could_be_equal(S::from_f64(p[k])));
+            for (j, &exact) in row.iter().enumerate() {
+                let d = at[k].d[j];
+                assert!(d.could_be_equal(S::from_f64(exact)), "∂{k}/∂{j} = {d:?}");
+            }
+        }
     }
 }

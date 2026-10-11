@@ -557,10 +557,11 @@ the quaternion `(1, w / 2)` normalized, which reaches a half turn only as
 `|w|` goes to infinity. A link of a dragged arm that had to turn nearly
 half way round ran its variables off to hundreds, each step turning it
 less, until the solver ran out of steps. Nothing was wrong with the mates.
-The turn is now given by modified Rodrigues parameters
-(`geop-core-math/src/solvers/system/placed.rs`): rational, a half turn at `|w| = 4`,
-singular only at a full turn. When a solve stalls, check that its
-variables can reach the answer at a finite, well-conditioned value.
+A pose is now stepped by a twist in its own frame, through the
+exponential map (`Pose::exp`, `State::retract`), and every step of the
+solve is taken from where the body is: no turn is ever far from the
+variables' origin. When a solve stalls, check that its variables can reach
+the answer at a finite, well-conditioned value.
 
 ## A free choice still has to be a good one
 
@@ -592,11 +593,48 @@ by hand.
 
 The rows are now chosen over a box around the point, widened from the
 point itself through the solver's tolerance: a pivot that could be zero
-anywhere in the box is no pivot. The rows left out are then checked over
-the proven box, and one that does not enclose zero there is a conflict,
-reported by name. Interval arithmetic can prove a conflict, never its
-absence, so say "consistent to what the box resolves", not "implied".
-The old code proved an "exact solution" for two lengths 1e-11 apart.
+anywhere in the box is no pivot. Interval arithmetic can prove a conflict,
+never its absence, so say "consistent to what the box resolves", not
+"implied". The old code proved an "exact solution" for two lengths 1e-11
+apart.
+
+The box the rows were chosen over is not the box proven, and the rank has
+to be checked over the proven one too. A point on the unit circle and on
+its tangent `y = 1`, the solve ending at `x = 1.9e-8`: over a box that
+wide the tangent's pivot could be zero, so it was left out, `x` counted as
+free and held where the solve left it, and the box proved `y` with the
+circle alone. The tangent then enclosed zero over it (its value there,
+`x²`, below the box's width) and the "true solution" `(1.9e-8, 1)` was
+returned, where there is none. Its *derivative* over the proven box is
+`-1.9e-8`, definitely not zero: the row is independent at the solution
+proven, so the configuration is singular, not redundant. A constraint the
+others imply leaves the rank as it is wherever they all hold. Likewise a
+left-out row that does not vanish there proves no conflict, since the free
+variables were held: a conflict is a combination of the rows definitely
+not zero over a box in *every* variable.
+
+## A norm squares away half the digits
+
+`|v|` as `sqrt(Σ v²)` in fixed point: residuals of `1e-6` square below the
+format's `2^-32`, and the norm came out `[0, 4.6e-5]`. The minimizer judges
+a step by whether the violation's norm definitely drops, so a body pinned
+half a turn away stopped `1e-6` off, ten times the tolerance, "flat". In
+`f64` the same loss hides below `1e-150`. Scale by the largest entry, a
+free choice, before squaring, wherever a norm is compared.
+
+### Enclose what a value stands for, not its numbers
+
+A pose is a quaternion and a position, and a solver's step sharpens both:
+the quaternion comes out a hair off unit. Enclosing a solved revolute chain
+as `x̃ ∘ exp(δ)` for a box of twists `δ` kept that norm in every pose of the
+box, and turning a point by a quaternion off unit scales it by its norm
+squared. No pose in the box was a rigid motion, the true solution was in
+none of them, and a joint's redundant row came out `1e-15` off zero over the
+proven box: a "conflict" between constraints that agree. `retract_over` now
+makes the rotation unit honestly, by an interval normalization, before it
+steps. Wherever a representation has more numbers than the thing it stands
+for (a quaternion for a rotation, homogeneous coordinates for a point), ask
+whether an enclosure covers the thing, not just the numbers.
 
 ## Refuse what you do not support: early, by name, and say why
 
@@ -669,10 +707,11 @@ that is cubic in the parts. What fixed it, and what to keep doing:
   state. Questions about what was built, over the whole assembly, are for
   the one dialog open, once per edit.
 - A system that splits into independent groups is solved group by group,
-  and so is any question about it (`Assembly::freedom`, like the solve).
+  and so is any question about it (`geop_core_program::solve::freedom`, like the
+  solve).
 - Listing must not build: example programs and standard parts are listed
   by name, and made when opened or read.
-- Guard scaling with a count (`geop_ops::assembly::mates_resolved`), not
+- Guard scaling with a count (`geop_ops_assembly::mates_resolved`), not
   a time: a quadratic shows at 80 parts as clearly as at 2000.
 
 Timings mislead. Two builds of the same code differ by up to 30% (how
@@ -719,9 +758,9 @@ not in slow arithmetic:
 
 Features developed side by side in separate worktrees (one agent each)
 conflicted only in the shared lists every feature appends to:
-`PartOperation` and its imports, the workspace and `geop-cad-base`
-`Cargo.toml`, `set_tests.rs`'s list of operations, `web/src/icons.tsx` and
-`DEVELOPERS.md`. Keep both sides, then read the merged result: a doc comment
+the `operations!` list in `geop-cad-base`'s `operations/mod.rs` and its
+imports, the workspace and `geop-cad-base` `Cargo.toml`,
+`web/src/icons.tsx` and `DEVELOPERS.md`. Keep both sides, then read the merged result: a doc comment
 listing crates, or a JSX entry cut mid-element, needs a hand edit. The merge
 is not done until the full workspace suite and the web build pass on the
 merged branch. Each branch passing its own tests says nothing about the

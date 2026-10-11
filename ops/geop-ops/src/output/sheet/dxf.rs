@@ -5,7 +5,7 @@
 
 use std::fmt::Write;
 
-use crate::sheet::{Anchor, Layer, Shape, Sheet};
+use super::{Anchor, Layer, Shape, Sheet};
 
 /// The line type of a layer: its name, description and dash pattern
 /// (lengths in millimetres, negative for gaps).

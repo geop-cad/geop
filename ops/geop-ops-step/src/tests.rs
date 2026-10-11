@@ -10,14 +10,71 @@ use geop_core_topology::{
     Model,
     validation::{ValidationParameters, validate},
 };
-use geop_ops::{Namer, Part};
+use std::{collections::BTreeMap, rc::Rc};
+
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    primitives::Pose,
+};
+use geop_core_program::{
+    operation_registry::OperationRegistry,
+    program::{Program, ProgramStep},
+    program_runner::ProgramRunner,
+};
+use geop_ops::{
+    Design, NamedModel, Namer, ParamValue,
+    model::{model, pose_parameter},
+    operation::{Build, BuildReader, Input},
+    parameters::{Parameters, Values},
+    placed::{Component, Instance, LIBRARY, Library, Placement, instance},
+};
 use geop_ops_extrude_revolve::shapes::{
     cube::cube_solid, cylinder::revolved_cylinder, sphere::sphere_solid,
 };
 
-use crate::{add_bodies, read_step, write_step};
+use crate::{ImportStep, ImportStepArgs, add_bodies, read_step, write_step};
 
 type S = ScalInF64;
+type Part<S> = NamedModel<S>;
+
+/// The model `model`, as the generator of a part's first target.
+fn given(_: &mut BuildReader, model: &NamedModel<Design>) -> GeopResult<NamedModel<Design>> {
+    Ok(model.clone())
+}
+
+/// The instance placed, as the generator of its target.
+fn placing(_: &mut BuildReader, placed: &Instance) -> GeopResult<Instance> {
+    Ok(placed.clone())
+}
+
+/// The part of the model `bodies` with `placed` placed in it, each instance
+/// at its pose: as a program of a step for each would build it.
+fn built(bodies: &NamedModel<Design>, placed: &[(&str, &Rc<Component>, Pose<Design>)]) -> Build {
+    let state = (placed.iter())
+        .map(|(name, _, pose)| (pose_parameter(name), ParamValue::Pose(*pose)))
+        .collect();
+    let mut part = Build::default();
+    part.begin_run(&BTreeMap::new(), &state);
+    part.begin_step("given").unwrap();
+    part.define_target(&model(), bodies, given).unwrap();
+    for (name, component, _) in placed {
+        part.begin_step(name).unwrap();
+        let placed = Instance {
+            component: Rc::clone(component),
+            placement: Placement::Parameter(pose_parameter(name)),
+            fixed: true,
+        };
+        part.define_target(&instance(name), &placed, placing)
+            .unwrap();
+    }
+    part.end_run(Default::default());
+    part
+}
+
+/// `model` as the text of a STEP file whose product is `name`.
+fn written(model: &NamedModel<Design>, name: &str) -> String {
+    write_step(built(model, &[]).current(), name).unwrap()
+}
 
 fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
     Vector3::from_array([x, y, z].map(S::from_f64))
@@ -27,7 +84,7 @@ fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
 fn import(text: &str) -> Part<S> {
     let bodies = read_step::<S>(text).unwrap_or_else(|e| panic!("reading failed: {e}"));
     let mut part = Part::new();
-    add_bodies(&mut part, &Namer::new("import", "i").unwrap(), bodies)
+    add_bodies(&mut part, &Namer::new("import", "i").unwrap(), &bodies)
         .unwrap_or_else(|e| panic!("adding failed: {e}"));
     assert_valid(part.topology());
     part
@@ -77,7 +134,7 @@ fn assert_bounds(model: &Model<S>, lo: [f64; 3], hi: [f64; 3]) {
 
 /// `part` written as STEP and read back: the same counts and bounds.
 fn round_trip(part: &Part<S>) -> Part<S> {
-    let text = write_step(part, "part").unwrap();
+    let text = written(part, "part");
     let back = import(&text);
     assert_eq!(
         counts(back.topology()),
@@ -671,8 +728,7 @@ fn faces_that_do_not_meet_at_a_vertex_are_refused_by_name() {
         &text[second + level.len()..]
     );
     let error = read_step::<S>(&file(".MILLI.,.METRE.", &text))
-        .err()
-        .expect("refused")
+        .expect_err("refused")
         .to_string();
     // The triangles have three edges: neither can be rebuilt instead.
     assert!(
@@ -776,7 +832,7 @@ fn an_unsupported_entity_is_refused_by_name() {
             "#110=OFFSET_SURFACE('',#111,1.,.F.);",
         ),
     );
-    let error = read_step::<S>(&text).err().expect("refused").to_string();
+    let error = read_step::<S>(&text).expect_err("refused").to_string();
     assert!(
         error.contains("#110 OFFSET_SURFACE is not supported"),
         "{error}"
@@ -836,21 +892,10 @@ fn an_assembly_is_flattened_with_its_placements() {
 #[test]
 fn a_sheet_round_trips() {
     let part = import(&file(".MILLI.,.METRE.", QUARTER));
-    let text = write_step(&part, "sheet").unwrap();
+    let text = written(&part, "sheet");
     assert!(text.contains("SHELL_BASED_SURFACE_MODEL"));
     let back = round_trip(&part);
     assert!(back.topology().solids.is_empty());
-}
-
-/// `instance` placed at `pose`.
-fn placed(
-    instance: &geop_ops::Instance<S>,
-    pose: geop_core_math::primitives::Pose<S>,
-) -> geop_ops::Instance<S> {
-    geop_ops::Instance {
-        pose,
-        ..instance.clone()
-    }
 }
 
 /// An assembly — a base plate placing a peg twice, once turned to lie along
@@ -861,8 +906,15 @@ fn placed(
 fn an_assembly_is_written_as_products_and_occurrences() {
     use geop_core_math::primitives::{Pose, Quaternion};
     use std::collections::BTreeSet;
-    let component = |file: &str, part: Part<S>| {
-        geop_ops::Instance::of(file.into(), part, BTreeSet::from([file.to_string()]))
+    let component = |file: &str, part: Build| {
+        let files = BTreeSet::from([file.to_string()]);
+        Rc::new(Component::new(
+            file.into(),
+            files,
+            file.into(),
+            Parameters::default(),
+            part,
+        ))
     };
     let mut peg = Part::new();
     revolved_cylinder(
@@ -873,17 +925,13 @@ fn an_assembly_is_written_as_products_and_occurrences() {
         S::from_f64(2.0),
     )
     .unwrap();
-    let peg = component("parts/peg.geop", peg);
+    let peg = component("parts/peg.geop", built(&peg, &[]));
     let at = |x: f64, y: f64, z: f64| Pose::new(v(x, y, z), Quaternion::identity()).unwrap();
-    let mut sub = Part::new();
-    sub.add_instance(placed(&peg, at(0.0, 0.0, 1.0)), "p")
-        .unwrap();
+    let sub = built(&Part::new(), &[("p", &peg, at(0.0, 0.0, 1.0))]);
     let sub = component("sub.geop", sub);
 
-    let mut part = Part::new();
-    cube_solid(&mut part, "base", v(0.0, 0.0, -1.0), v(10.0, 10.0, 0.0)).unwrap();
-    part.add_instance(placed(&peg, at(2.0, 2.0, 0.0)), "a")
-        .unwrap();
+    let mut base = Part::new();
+    cube_solid(&mut base, "base", v(0.0, 0.0, -1.0), v(10.0, 10.0, 0.0)).unwrap();
     // About `y` by a quarter turn: the peg's `z` onto `x`.
     let half = std::f64::consts::FRAC_PI_4;
     let turned = Pose::new(
@@ -896,11 +944,16 @@ fn an_assembly_is_written_as_products_and_occurrences() {
         ),
     )
     .unwrap();
-    part.add_instance(placed(&peg, turned), "b").unwrap();
-    part.add_instance(placed(&sub, at(8.0, 2.0, 0.0)), "s")
-        .unwrap();
+    let part = built(
+        &base,
+        &[
+            ("a", &peg, at(2.0, 2.0, 0.0)),
+            ("b", &peg, turned),
+            ("s", &sub, at(8.0, 2.0, 0.0)),
+        ],
+    );
 
-    let text = write_step(&part, "robot").unwrap();
+    let text = write_step(part.current(), "robot").unwrap();
     // To check it in another CAD system: written where STEP_EXPORT_DIR says.
     if let Some(dir) = std::env::var_os("STEP_EXPORT_DIR") {
         std::fs::write(std::path::Path::new(&dir).join("robot.step"), &text).unwrap();
@@ -927,12 +980,33 @@ fn an_assembly_is_written_as_products_and_occurrences() {
     assert_bounds(model, [0.0, 0.0, -1.0], [11.0, 10.0, 3.0]);
 }
 
-/// The bodies an import keeps read back as they were kept: a cylinder
-/// (rational arcs, a seam cut into sectors) and a sphere, kept and read
-/// back, build the same model, every scalar the same enclosure; and the
-/// key changes with the file's text.
+/// The files of a program's folder, by name.
+struct Files(BTreeMap<String, String>);
+
+impl Library for Files {
+    fn file(&self) -> String {
+        "part.geop".into()
+    }
+
+    fn component(&self, file: &str, _: &Values) -> GeopResult<Rc<Component>> {
+        Err(GeopError::new(format!("{file:?} places no part here")))
+    }
+
+    fn files(&self) -> Vec<String> {
+        self.0.keys().cloned().collect()
+    }
+
+    fn read(&self, file: &str) -> GeopResult<(String, String)> {
+        let text = (self.0.get(file)).ok_or_else(|| GeopError::new(format!("no file {file:?}")))?;
+        Ok((file.to_string(), text.clone()))
+    }
+}
+
+/// An import step reads its file once: run again with the same files, the
+/// program builds nothing anew; given the files anew, the file is read
+/// again — the same bodies, which nothing after them is rebuilt for.
 #[test]
-fn kept_bodies_read_back_as_they_were() {
+fn an_import_reads_its_file_once() {
     let mut cylinder = Part::new();
     revolved_cylinder(
         &mut cylinder,
@@ -942,37 +1016,33 @@ fn kept_bodies_read_back_as_they_were() {
         S::from_f64(2.0),
     )
     .unwrap();
-    let mut sphere = Part::new();
-    sphere_solid(&mut sphere, "s", v(0.0, 0.0, 1.0), S::from_f64(1.5)).unwrap();
-    for (name, text) in [
-        ("cylinder", write_step(&cylinder, "cylinder").unwrap()),
-        ("sphere", write_step(&sphere, "sphere").unwrap()),
-    ] {
-        let bodies = read_step::<S>(&text).unwrap();
-        let kept = crate::cache::encode(&bodies).unwrap();
-        let back = crate::cache::decode::<S>(&kept).unwrap();
-        assert_eq!(back.len(), bodies.len(), "{name}");
-        for (a, b) in bodies.iter().zip(&back) {
-            assert_eq!(a.label, b.label);
-            assert_eq!(a.face_names, b.face_names);
-            assert_eq!(a.spec.vertices, b.spec.vertices, "{name}");
-            for (fa, fb) in a.spec.faces.iter().zip(&b.spec.faces) {
-                assert_eq!(
-                    fa.surface.control_points, fb.surface.control_points,
-                    "{name}"
-                );
-                assert_eq!(fa.surface.knot_vector_u, fb.surface.knot_vector_u, "{name}");
-            }
-            for (ea, eb) in a.spec.edges.iter().zip(&b.spec.edges) {
-                assert_eq!(ea.curve.control_points, eb.curve.control_points, "{name}");
-            }
-        }
-        let mut part = Part::<S>::new();
-        add_bodies(&mut part, &Namer::new("import", "i").unwrap(), back).unwrap();
-        assert_valid(part.topology());
-        assert_ne!(
-            crate::cache::key::<S>(&text),
-            crate::cache::key::<S>(&text.replace("cylinder", "kreis").replace("sphere", "kugel"))
-        );
-    }
+    let text = written(&cylinder, "cylinder");
+    let files = |text: &str| {
+        let library: Rc<dyn Library> = Rc::new(Files(BTreeMap::from([(
+            "cylinder.step".to_string(),
+            text.to_string(),
+        )])));
+        BTreeMap::from([(LIBRARY.to_string(), Input::Library(library))])
+    };
+    let registry = OperationRegistry::default().with(ImportStep).unwrap();
+    let mut runner = ProgramRunner::new(registry);
+    let args = ImportStepArgs {
+        file: "cylinder.step".into(),
+    };
+    let program = Program::new(vec![ProgramStep::new::<ImportStep>("i", &args).unwrap()]);
+    let inputs = files(&text);
+    let run = |runner: &mut ProgramRunner<Input, ParamValue>, inputs| {
+        let output = runner.run(&program, inputs, &BTreeMap::new());
+        assert!(output.step_errors.is_empty(), "{:?}", output.step_errors);
+        runner.part.built()
+    };
+    let first = run(&mut runner, &inputs);
+    assert_eq!(first, 2, "the bodies read, and the model built of them");
+    assert_eq!(run(&mut runner, &inputs), first, "nothing built anew");
+    // The same file, given anew: read again, to the same bodies — and the
+    // model, which only reads them, is not built again.
+    assert_eq!(run(&mut runner, &files(&text)), first + 1);
+    let model = runner.part.current().retrieve_target(&model()).unwrap();
+    assert_eq!(model.solid_names(), vec!["import(i,s0)".to_string()]);
+    assert_valid(model.topology());
 }

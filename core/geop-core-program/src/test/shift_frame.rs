@@ -1,13 +1,14 @@
-use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_math::geop_error::GeopResult;
 use geop_core_math::vector::Vector3;
 use serde::{Deserialize, Serialize};
 
-use crate::operation::{EditingPresentation, Operation, UserEvent};
-use crate::part::{Part, View};
+use crate::editing::{Event, Form};
+use crate::operation::{Context, Operation, OperationInfo};
+use crate::part::Part;
 use crate::target::TargetReference;
-use crate::test::{Frame, Pose, Sc, label, no_presentation, record_built};
+use crate::test::{Frame, Pose, Sc, info, label, record_built};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ShiftFrameArgs {
     pub targets: Vec<String>,
     pub by: Vector3<Sc>,
@@ -18,7 +19,7 @@ pub struct ShiftFrameArgs {
 pub struct ShiftFrameOperation;
 
 impl Operation for ShiftFrameOperation {
-    const NAME: &'static str = "shift_frame";
+    const INFO: OperationInfo = info("shift_frame");
     type Args = ShiftFrameArgs;
     type EditingState = ();
     type Input = Sc;
@@ -38,25 +39,33 @@ impl Operation for ShiftFrameOperation {
         Ok(())
     }
 
-    fn presentation(_: &View<Sc, Pose>, _: &Self::Args, _: &()) -> GeopResult<EditingPresentation> {
-        Ok(no_presentation())
+    fn new_args(_: &Context<Sc, Pose>) -> Self::Args {
+        Self::Args::default()
     }
 
+    fn presentation(_: &Context<Sc, Pose>, _: &Self::Args, _: &()) -> Form<Sc> {
+        Form::default()
+    }
+
+    /// Pressing the field `origin` moves the first target to the origin.
     fn process_user_event(
-        part: &View<Sc, Pose>,
+        context: &Context<Sc, Pose>,
         args: &Self::Args,
         _: &(),
-        _: UserEvent,
-    ) -> GeopResult<(Self::Args, ())> {
-        let first = args
-            .targets
-            .first()
-            .ok_or_else(|| GeopError::new("there is no target to move"))?;
-        let frame = part.retrieve_target(&TargetReference::<Frame>::new(first))?;
+        event: Event<Sc>,
+    ) -> (Self::Args, ()) {
+        let to_origin = match event {
+            Event::Field { key, .. } if key == "origin" => args.targets.first().and_then(|first| {
+                let reference = TargetReference::<Frame>::new(first);
+                context.before.retrieve_target(&reference).ok()
+            }),
+            _ => None,
+        };
+        let by = to_origin.map_or(args.by, |frame| frame.data.neg());
         let args = ShiftFrameArgs {
             targets: args.targets.clone(),
-            by: frame.data.neg(),
+            by,
         };
-        Ok((args, ()))
+        (args, ())
     }
 }

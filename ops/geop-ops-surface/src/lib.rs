@@ -41,7 +41,10 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_core_topology::{Body, FaceId, ShellId};
-use geop_ops::{Part, RefId};
+use geop_ops::NamedModel;
+
+/// A sheet to build, and the names of what it is made of.
+pub type SheetSpec<S> = (geop_core_topology::build::BodySpec<S>, geop_ops::BodyNames);
 
 /// Bounds how hard a containment search or a pcurve fit tries: effort, not
 /// what an answer means.
@@ -52,16 +55,9 @@ fn min_subdivision_size<S: Scalar>() -> S {
     S::from_f64(1e-7)
 }
 
-/// The name of `id` in `part`.
-fn name_of<S: Scalar>(part: &Part<S>, id: impl Into<RefId>) -> GeopResult<String> {
-    let id = id.into();
-    part.name_of(id)
-        .map(str::to_string)
-        .ok_or_else(|| GeopError::new(format!("{id} has no name")))
-}
 /// The sheet the face named `name` stands in — an error, naming it, if it
 /// is a solid's face.
-fn sheet_of<S: Scalar>(part: &Part<S>, name: &str) -> GeopResult<(FaceId, ShellId)> {
+fn sheet_of<S: Scalar>(part: &NamedModel<S>, name: &str) -> GeopResult<(FaceId, ShellId)> {
     let face = part.face_id(name)?;
     match part.topology().body_of_face(face)? {
         Body::Sheet(sheet) => Ok((face, sheet)),

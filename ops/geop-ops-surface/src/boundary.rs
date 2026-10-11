@@ -42,19 +42,25 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
     with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_core_topology::{
     Curve3, Sense,
-    build::{BodySpec, BuiltBody, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
+    build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
 use geop_ops::{
-    BodyNames, Context, Library, Namer, Part,
-    operation::{EntityRef, Operation, Role},
-    ui::Form,
+    BodyNames, Design, NamedModel, Namer, ParamValue,
+    operation::{
+        Build, BuildReader, EntityRef, Input, Lookup, ModelStep, ResolveEntity, Role, Scope,
+        build_model,
+    },
 };
 use geop_ops_extrude_revolve::common::{bilinear, line2, line3};
 use serde::{Deserialize, Serialize};
 
-use crate::name_of;
+use crate::SheetSpec;
 
 /// Spans a face standing on its own between the curves `edges` — two of
 /// them ruled, a closed loop of them filled, see the module docs — for the
@@ -84,57 +90,92 @@ pub struct BoundarySurfaceArgs {
     pub tangent: Vec<EntityRef>,
 }
 
+impl ModelStep for BoundarySurface {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &BoundarySurfaceArgs,
+    ) -> GeopResult<()> {
+        let ctx = with_context!("boundary_surface({step}, {args:?})");
+        let namer = Namer::new("boundary", step)?;
+        let (spec, names) = boundary_surface(
+            &mut Scope { model, reader },
+            &namer,
+            &args.edges,
+            &args.tangent,
+        )
+        .with_context(ctx)?;
+        model.build_body(spec, names).with_context(ctx)?;
+        Ok(())
+    }
+}
+
 impl Operation for BoundarySurface {
+    const INFO: OperationInfo = OperationInfo::new(
+        "boundary_surface",
+        "Boundary surface",
+        "Span a face standing on its own between two edges, or fill a closed loop of edges — optionally tangent to the flat faces along them.",
+        OperationGroup::Surface,
+        OperationTier::Small,
+    )
+    .experimental();
     type Args = BoundarySurfaceArgs;
-    type Session = ();
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
 
     /// Nothing picked yet.
-    fn new_args<S: Scalar>(&self, _before: &Part<S>) -> BoundarySurfaceArgs {
+    fn new_args(_: &Context<Input, ParamValue>) -> BoundarySurfaceArgs {
         BoundarySurfaceArgs::default()
     }
 
+    fn run(step: &str, part: &mut Build, args: &BoundarySurfaceArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
+    }
+
     /// The edges, picked, and those to be tangent along.
-    fn form<'a, S: Scalar>(
-        &self,
-        _: Context<'a, S>,
+    fn presentation(
+        _: &Context<Input, ParamValue>,
         args: &BoundarySurfaceArgs,
         _: &(),
-        _: &[String],
-    ) -> Form<'a, S, BoundarySurfaceArgs> {
-        let mut f = Form::<S, BoundarySurfaceArgs>::new();
-        f.reference(
-            "edges",
-            "edges",
-            args.edges.clone(),
-            &[Role::Curve],
-            None,
-            true,
-            |e, picked| e.args.edges = picked,
-        );
-        f.reference(
+    ) -> Form<Design> {
+        let mut form = Form::default();
+        let dialog = &mut form.dialog;
+        let edges = args.edges.clone();
+        dialog.reference("edges", "edges", edges, &[Role::Curve], None, true);
+        let tangent = args.tangent.clone();
+        (dialog.reference(
             "tangent",
             "tangent along",
-            args.tangent.clone(),
+            tangent,
             &[Role::Edge],
             None,
             true,
-            |e, picked| e.args.tangent = picked,
-        );
-        f.optional("tangent");
-        f
+        ))
+        .optional("tangent");
+        form
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
         args: &BoundarySurfaceArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("boundary_surface({operation_id}, {args:?})");
-        let namer = Namer::new("boundary", operation_id)?;
-        boundary_surface(&mut part, &namer, &args.edges, &args.tangent).with_context(ctx)?;
-        Ok(part)
+        _: &(),
+        event: Event<Design>,
+    ) -> (BoundarySurfaceArgs, ()) {
+        let mut args = args.clone();
+        if let Event::Field {
+            key,
+            value: Value::Entities(picked),
+        } = event
+        {
+            match key.as_str() {
+                "edges" => args.edges = picked,
+                "tangent" => args.tangent = picked,
+                _ => {}
+            }
+        }
+        (args, ())
     }
 }
 
@@ -155,8 +196,8 @@ struct Side<S: Scalar> {
 }
 
 impl<S: Scalar> Side<S> {
-    fn of(part: &Part<S>, entity: &EntityRef) -> GeopResult<Self> {
-        let curve = entity.resolve_curve(part)?;
+    fn of(lookup: &mut (impl Lookup<S> + ?Sized), entity: &EntityRef) -> GeopResult<Self> {
+        let curve = entity.resolve_curve(lookup)?;
         Ok(Self {
             entity: entity.clone(),
             name: curve.name,
@@ -235,15 +276,15 @@ fn distance<S: Scalar>(a: &Vector3<S>, b: &Vector3<S>) -> f64 {
     a.sub(b).norm().to_f64()
 }
 
-/// Spans a sheet between `edges`, tangent along `tangent` (see the module
-/// docs), and returns it. What it builds is named after `namer`, as
-/// [`BoundarySurface`] says.
+/// The sheet spanned between `edges`, tangent along `tangent` (see the
+/// module docs), as `lookup` has them: what to build, named after `namer`,
+/// as [`BoundarySurface`] says.
 pub fn boundary_surface<S: Scalar>(
-    part: &mut Part<S>,
+    lookup: &mut (impl Lookup<S> + ?Sized),
     namer: &Namer,
     edges: &[EntityRef],
     tangent: &[EntityRef],
-) -> GeopResult<BuiltBody> {
+) -> GeopResult<SheetSpec<S>> {
     if let Some(t) = tangent.iter().find(|t| !edges.contains(t)) {
         return Err(GeopError::new(format!(
             "{t} is to be tangent along, but is not one of the curves spanned"
@@ -251,7 +292,7 @@ pub fn boundary_surface<S: Scalar>(
     }
     let sides = edges
         .iter()
-        .map(|e| Side::of(part, e))
+        .map(|e| Side::of(lookup, e))
         .collect::<GeopResult<Vec<_>>>()?;
     let (spec, names) = match sides.as_slice() {
         [] => return Err(GeopError::new("no edges to span a surface between")),
@@ -267,12 +308,12 @@ pub fn boundary_surface<S: Scalar>(
             let sides = chain(&sides)?;
             let planes = tangent
                 .iter()
-                .map(|t| Ok((t.clone(), tangent_plane(part, t)?)))
+                .map(|t| Ok((t.clone(), tangent_plane(lookup.model(), t)?)))
                 .collect::<GeopResult<Vec<_>>>()?;
             fill(namer, &sides, &planes)?
         }
     };
-    part.build_body(spec, names)
+    Ok((spec, names))
 }
 
 /// Whether the two edges close a loop between them: each end of one at an
@@ -412,7 +453,7 @@ type Tangency<S> = (Plane<S>, Vector3<S>);
 /// The plane of the flat face the edge `entity` bounds, and the direction
 /// in it away from that face at the middle of the edge — what a fill
 /// tangent along the edge continues.
-fn tangent_plane<S: Scalar>(part: &Part<S>, entity: &EntityRef) -> GeopResult<Tangency<S>> {
+fn tangent_plane<S: Scalar>(part: &NamedModel<S>, entity: &EntityRef) -> GeopResult<Tangency<S>> {
     let model = part.topology();
     let EntityRef::Edge { name } = entity else {
         return Err(GeopError::new(format!(
@@ -432,7 +473,7 @@ fn tangent_plane<S: Scalar>(part: &Part<S>, entity: &EntityRef) -> GeopResult<Ta
     let Some(plane) = face.surface.as_plane()? else {
         return Err(GeopError::new(format!(
             "face {} along edge {name} is not flat: tangency is supported to flat faces",
-            name_of(part, coedge.face)?
+            part.name(coedge.face).map(str::to_string)?
         )));
     };
     // The face lies to the left of its boundary, seen from where its normal

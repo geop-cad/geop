@@ -134,7 +134,7 @@ pub fn write_stl(
 #[cfg(test)]
 mod tests {
     use geop_core_math::{scalars::scal_in_f64::ScalInF64, vector::Vector3};
-    use geop_ops::Part;
+    use geop_ops::NamedModel;
     use geop_ops_extrude_revolve::shapes::{cube_solid, sphere::sphere_solid};
 
     use super::*;
@@ -142,23 +142,23 @@ mod tests {
 
     type S = ScalInF64;
 
-    fn triangles_of(part: &Part<S>) -> Vec<StlTriangle> {
-        let raster = rasterize(part.topology(), 8).unwrap();
+    fn triangles_of(model: &NamedModel<S>) -> Vec<StlTriangle> {
+        let raster = rasterize(model.topology(), 8).unwrap();
         let mut faces: Vec<FaceId> = raster.faces.keys().copied().collect();
         faces.sort_by_key(|f| f.0);
         stl_triangles(&raster, &faces)
     }
 
     fn unit_cube() -> Vec<StlTriangle> {
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         cube_solid(
-            &mut part,
+            &mut model,
             "c",
             Vector3::from_array([S::ZERO; 3]),
             Vector3::from_array([S::ONE; 3]),
         )
         .unwrap();
-        triangles_of(&part)
+        triangles_of(&model)
     }
 
     /// Every facet of a closed convex solid around `centre` faces away from
@@ -189,9 +189,9 @@ mod tests {
     /// Curved faces: the winding has to come from the surface normals.
     #[test]
     fn sphere_facets_face_outward() {
-        let mut part = Part::<S>::new();
-        sphere_solid(&mut part, "s", Vector3::from_array([S::ZERO; 3]), S::ONE).unwrap();
-        assert_outward(&triangles_of(&part), [0.0; 3]);
+        let mut model = NamedModel::<S>::new();
+        sphere_solid(&mut model, "s", Vector3::from_array([S::ZERO; 3]), S::ONE).unwrap();
+        assert_outward(&triangles_of(&model), [0.0; 3]);
     }
 
     #[test]

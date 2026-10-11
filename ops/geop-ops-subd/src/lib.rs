@@ -25,4 +25,4 @@ pub mod subdivide;
 mod tests;
 
 pub use cage::{Cage, CageFace, CageVertex, Mirror};
-pub use operation::{Subd, SubdArgs};
+pub use operation::{Subd, SubdArgs, SubdEditing, SubdSession, build_subd};

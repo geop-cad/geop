@@ -91,7 +91,7 @@ use geop_core_topology::{
     Body, CoedgeId, EdgeId, FaceId, Model, Sense, SolidId, VertexId,
     contains::face::{PointClassification, face_contains},
 };
-use geop_ops::{Namer, Part};
+use geop_ops::{NamedModel, Namer};
 use geop_ops_booleans::{
     boolean::{BooleanOp, boolean},
     remesh::remesh::RemeshParams,
@@ -124,15 +124,6 @@ impl BlendShape {
     pub fn round(radius: f64) -> Self {
         BlendShape::Fillet {
             radii: Radii::constant(radius),
-        }
-    }
-
-    /// The radius, where it is the same all along: what the swept blends
-    /// of straight and circular edges need.
-    fn constant_radius(&self) -> Option<f64> {
-        match self {
-            BlendShape::Fillet { radii } if radii.is_constant() => Some(radii.radius),
-            _ => None,
         }
     }
 }
@@ -260,7 +251,7 @@ fn in_plane<S: Scalar>(v: &Vector3<S>, e1: &Vector3<S>, e2: &Vector3<S>) -> Vect
 }
 
 /// The point the homogeneous control point `p` stands for.
-fn point<S: Scalar>(p: &Vector4<S>) -> GeopResult<Vector3<S>> {
+pub(crate) fn point<S: Scalar>(p: &Vector4<S>) -> GeopResult<Vector3<S>> {
     Ok(Vector3::from_array([
         p[0].div(p[3])?,
         p[1].div(p[3])?,
@@ -668,7 +659,6 @@ fn tool_profile<S: Scalar>(section: &Section<S>, shape: &BlendShape) -> GeopResu
     let e = section.corner;
     let (curves, control, touches, weight) = match shape {
         BlendShape::Fillet { radii } => {
-            radii.check()?;
             let r = S::from_f64(radii.radius);
             let [t_a, t_b] = &section.into;
             let [n_a, n_b] = &section.out;
@@ -787,6 +777,19 @@ pub(crate) fn check_touch<S: Scalar>(
             "the blend is too large for face {face}: it would meet the face's surface beyond its end"
         )));
     };
+    check_touch_at(model, face, u, v)
+}
+
+/// Checks a blend touching `face` at `(u, v)` on its surface touches it
+/// inside it (see [`check_touch`]).
+pub(crate) fn check_touch_at<S: Scalar>(
+    model: &Model<S>,
+    face: FaceId,
+    u: S,
+    v: S,
+) -> GeopResult<()> {
+    let params = RemeshParams::<S>::default();
+    let (max_nodes, size) = (params.max_nodes, params.min_subdivision_size);
     match face_contains(model, face, u, v, max_nodes, size, SEED)? {
         PointClassification::Inside => Ok(()),
         PointClassification::Outside => Err(GeopError::new(format!(
@@ -813,7 +816,7 @@ fn reach<S: Scalar>(control: &[Vector2<S>], from: &Vector2<S>) -> f64 {
 /// Sweeps `tool` as `section` says into a solid named `N(tool)`, its faces
 /// and edges named by `namer`.
 fn sweep_tool<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     section: &Section<S>,
     tool: &ToolProfile<S>,
@@ -848,7 +851,7 @@ fn sweep_tool<S: Scalar>(
             };
             let from = run_out(&ends[0])?.map_or(S::ZERO, |r| r.neg());
             let to = run_out(&ends[1])?.map_or(length, |r| length.add(r));
-            extrude(part, namer, Some(&root), &plane, from, to, &loops)?
+            extrude(model, namer, Some(&root), &plane, from, to, &loops)?
         }
         Sweep::Round {
             center,
@@ -865,7 +868,7 @@ fn sweep_tool<S: Scalar>(
                 ));
             }
             let axes = CoordinateSystem::try_new(*center, *radial, axis.prod_cross(radial), *axis)?;
-            revolve(part, namer, Some(&root), &axes, 0.0, 360.0, &loops)?
+            revolve(model, namer, Some(&root), &axes, 0.0, 360.0, &loops)?
         }
     };
     built
@@ -1106,21 +1109,27 @@ fn round_plan<S: Scalar>(
 /// its axis and cylinders and cones around it, are swept exactly — when the
 /// radius is the same all along. Every other blend is rolled along the
 /// edge's tangent chain.
-fn plan_edge<S: Scalar>(part: &Part<S>, name: &str, shape: &BlendShape) -> GeopResult<Planned<S>> {
-    let model = part.topology();
-    let edge = part.edge_id(name)?;
-    let curve = &model.get_edge(edge)?.curve;
-    let chain = tangent_chain(model, edge)?;
+fn plan_edge<S: Scalar>(
+    model: &NamedModel<S>,
+    name: &str,
+    shape: &BlendShape,
+) -> GeopResult<Planned<S>> {
+    let topology = model.topology();
+    let edge = model.edge_id(name)?;
+    let curve = &topology.get_edge(edge)?.curve;
+    let chain = tangent_chain(topology, edge)?;
+    // The swept blends of straight and circular edges need a radius that
+    // is the same all along.
     let swept = match shape {
-        BlendShape::Fillet { .. } => shape.constant_radius().is_some(),
+        BlendShape::Fillet { radii } => radii.is_constant(),
         BlendShape::Chamfer { .. } => true,
     };
     if swept {
         if let Some(line) = curve.as_line()?
             && chain.links.len() == 1
-            && between_planes(model, edge)?
+            && between_planes(topology, edge)?
         {
-            let section = straight_section(model, edge, &line)?;
+            let section = straight_section(topology, edge, &line)?;
             return Ok(Planned::Swept(
                 Plan {
                     edge: name.to_string(),
@@ -1130,7 +1139,7 @@ fn plan_edge<S: Scalar>(part: &Part<S>, name: &str, shape: &BlendShape) -> GeopR
             ));
         }
         if let Some(circle) = circle_of(curve)?
-            && let Some(planned) = round_plan(model, name, edge, &circle)?
+            && let Some(planned) = round_plan(topology, name, edge, &circle)?
         {
             return Ok(planned);
         }
@@ -1146,14 +1155,14 @@ fn plan_edge<S: Scalar>(part: &Part<S>, name: &str, shape: &BlendShape) -> GeopR
 /// tool, the blend face, which is better known by its own name. A face of
 /// which several pieces are left keeps the boolean's names.
 fn name_blend_faces<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     solid: SolidId,
     tool_faces: &[String],
 ) -> GeopResult<()> {
-    let faces = part.topology().solid_faces(solid)?;
+    let faces = model.topology().solid_faces(solid)?;
     for name in tool_faces {
-        if part.id_of(name).is_some() {
+        if model.id_of(name).is_some() {
             continue;
         }
         // `N(F,` — the name of a piece of `F` without its edge and `)`.
@@ -1162,10 +1171,10 @@ fn name_blend_faces<S: Scalar>(
         let pieces: Vec<FaceId> = faces
             .iter()
             .copied()
-            .filter(|&f| part.name_of(f).is_some_and(|n| n.starts_with(&prefix)))
+            .filter(|&f| model.name_of(f).is_some_and(|n| n.starts_with(&prefix)))
             .collect();
         if let [piece] = pieces.as_slice() {
-            part.rename(*piece, name.clone())?;
+            model.rename(*piece, name.clone())?;
         }
     }
     Ok(())
@@ -1266,19 +1275,21 @@ fn mirrored<S: Scalar>(plans: &[(Plan<S>, ToolProfile<S>)], joint: &Joint) -> Ge
 
 /// Which faces meet at each end of `edge`, by name: what a blend that
 /// cannot be built at one of them (see [`tool_end`]) says about it.
-fn corners_of<S: Scalar>(part: &Part<S>, edge: EdgeId) -> String {
-    let model = part.topology();
-    let name = |face: FaceId| part.name_of(face).map_or(format!("{face}"), String::from);
-    let Ok(e) = model.get_edge(edge) else {
+fn corners_of<S: Scalar>(model: &NamedModel<S>, edge: EdgeId) -> String {
+    let topology = model.topology();
+    let name = |face: FaceId| model.name_of(face).map_or(format!("{face}"), String::from);
+    let Ok(e) = topology.get_edge(edge) else {
         return format!("edge {edge}");
     };
     [e.start_vertex, e.end_vertex]
         .into_iter()
         .map(|vertex| {
             let mut faces: Vec<FaceId> = Vec::new();
-            for (&id, coedge) in &model.coedges {
+            for (&id, coedge) in &topology.coedges {
                 if coedge.edge().is_ok()
-                    && model.coedge_start_vertex_id(id).is_ok_and(|v| v == vertex)
+                    && topology
+                        .coedge_start_vertex_id(id)
+                        .is_ok_and(|v| v == vertex)
                     && !faces.contains(&coedge.face)
                 {
                     faces.push(coedge.face);
@@ -1287,7 +1298,8 @@ fn corners_of<S: Scalar>(part: &Part<S>, edge: EdgeId) -> String {
             faces.sort_by_key(|f| f.0);
             format!(
                 "vertex {} meets faces {}",
-                part.name_of(vertex)
+                model
+                    .name_of(vertex)
                     .map_or(format!("{vertex}"), String::from),
                 faces.into_iter().map(name).collect::<Vec<_>>().join(", ")
             )
@@ -1307,7 +1319,7 @@ fn corners_of<S: Scalar>(part: &Part<S>, edge: EdgeId) -> String {
 /// as a boolean names it, scoped by the edge: `N(E,...)`. Tools joined at
 /// corners and mitres are one, named after the first.
 pub fn blend<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     edges: &[String],
     shape: &BlendShape,
@@ -1319,7 +1331,7 @@ pub fn blend<S: Scalar>(
         radii.check()?;
         for (vertex, _) in &radii.at_vertices {
             let ctx = with_context!("the radius at vertex {vertex:?}");
-            part.vertex_id(vertex).with_context(ctx)?;
+            model.vertex_id(vertex).with_context(ctx)?;
         }
     }
     let mut solid: Option<SolidId> = None;
@@ -1328,10 +1340,10 @@ pub fn blend<S: Scalar>(
     let mut chains: Vec<(String, Chain)> = Vec::new();
     for name in edges {
         let ctx = with_context!("edge {name:?}");
-        let edge = part.edge_id(name).with_context(ctx)?;
-        let [face, _] = faces(part.topology(), edge).with_context(ctx)?;
-        let Body::Solid(of) = part.topology().body_of_face(face)? else {
-            return Err(GeopError::new("the edge is not part of a solid")).with_context(ctx);
+        let edge = model.edge_id(name).with_context(ctx)?;
+        let [face, _] = faces(model.topology(), edge).with_context(ctx)?;
+        let Body::Solid(of) = model.topology().body_of_face(face)? else {
+            return Err(GeopError::new("the edge is not model of a solid")).with_context(ctx);
         };
         match solid {
             None => solid = Some(of),
@@ -1346,13 +1358,13 @@ pub fn blend<S: Scalar>(
         if covered.contains(&edge) {
             continue;
         }
-        let planned = plan_edge(part, name, shape)
-            .map_err(|e| e.with_context(corners_of(part, edge)))
+        let planned = plan_edge(model, name, shape)
+            .map_err(|e| e.with_context(corners_of(model, edge)))
             .with_context(ctx)?;
         match planned {
             Planned::Swept(plan, blended) => {
                 let profile = tool_profile(&plan.section, shape).with_context(ctx)?;
-                check_touches(part.topology(), &plan.section, &profile).with_context(ctx)?;
+                check_touches(model.topology(), &plan.section, &profile).with_context(ctx)?;
                 covered.extend(blended);
                 plans.push((plan, profile));
             }
@@ -1362,8 +1374,8 @@ pub fn blend<S: Scalar>(
             }
         }
     }
-    let model = part.topology();
-    let corners = corner::plan_corners(part, namer, &mut plans, &chains, &covered, shape)?;
+    let topology = model.topology();
+    let corners = corner::plan_corners(model, namer, &mut plans, &chains, &covered, shape)?;
 
     // Inward corners: the ends running into a wall where another does.
     let mut walls = Vec::new();
@@ -1392,7 +1404,7 @@ pub fn blend<S: Scalar>(
     }
     for (c, (name, chain)) in chains.iter().enumerate() {
         let ctx = with_context!("edge {name:?}");
-        for (k, wall) in rolling::chain_walls(model, chain)
+        for (k, wall) in rolling::chain_walls(topology, chain)
             .with_context(ctx)?
             .into_iter()
             .enumerate()
@@ -1409,7 +1421,7 @@ pub fn blend<S: Scalar>(
         }
     }
     let mut joints = Vec::new();
-    for (joint, cut) in mitres(model, &walls)? {
+    for (joint, cut) in mitres(topology, &walls)? {
         let edge = |i: usize| match plans.get(i) {
             Some((plan, _)) => plan.edge.clone(),
             None => chains[i - plans.len()].0.clone(),
@@ -1445,11 +1457,11 @@ pub fn blend<S: Scalar>(
     for ((name, chain), ends) in chains.into_iter().zip(corners.chains) {
         let ctx = with_context!("edge {name:?}");
         let r = match shape {
-            BlendShape::Fillet { radii } => rolling::plan_rolled(part, chain, radii, ends),
-            BlendShape::Chamfer { distances } => rolling::plan_chamfer(part, chain, *distances),
+            BlendShape::Fillet { radii } => rolling::plan_rolled(model, chain, radii, ends),
+            BlendShape::Chamfer { distances } => rolling::plan_chamfer(model, chain, *distances),
         }
         .with_context(ctx)?;
-        rolling::check_touches(part.topology(), &r).with_context(ctx)?;
+        rolling::check_touches(model.topology(), &r).with_context(ctx)?;
         rolled.push((name, r));
     }
     let tools = Tools {
@@ -1470,12 +1482,12 @@ pub fn blend<S: Scalar>(
         let ctx = with_context!("blending edge {edge:?}");
         let scope = namer.scoped(edge);
         let tool = tools
-            .build(part, namer, &component)
+            .build(model, namer, &component)
             .with_context(with_context!("the tool of edge {edge:?}"))?;
         let bend = tools.bend(component[0]);
-        target = apply_tool(part, &scope, target, tool, bend).with_context(ctx)?;
+        target = apply_tool(model, &scope, target, tool, bend).with_context(ctx)?;
     }
-    part.rename(target, namer.root())
+    model.rename(target, namer.root())
 }
 
 /// Every tool of a blend: the swept ones' plans, the rolled ones — by index
@@ -1538,7 +1550,12 @@ impl<S: Scalar> Tools<'_, S> {
     /// own — built into one solid: swept, or built whole with the corners
     /// and mitres (see [`tool::build_tools`]), named after the first one's
     /// tool.
-    fn build(&self, part: &mut Part<S>, namer: &Namer, component: &[usize]) -> GeopResult<SolidId> {
+    fn build(
+        &self,
+        model: &mut NamedModel<S>,
+        namer: &Namer,
+        component: &[usize],
+    ) -> GeopResult<SolidId> {
         let corners: Vec<&Corner<S>> = self
             .corners
             .iter()
@@ -1552,7 +1569,7 @@ impl<S: Scalar> Tools<'_, S> {
         if let ([i], true, true) = (component, corners.is_empty(), joints.is_empty())
             && let Some((plan, profile)) = self.plans.get(*i)
         {
-            return sweep_tool(part, &namer.scoped(&plan.edge), &plan.section, profile);
+            return sweep_tool(model, &namer.scoped(&plan.edge), &plan.section, profile);
         }
         let namers: Vec<Namer> = component
             .iter()
@@ -1647,7 +1664,7 @@ impl<S: Scalar> Tools<'_, S> {
         }
         let refs: Vec<(&Namer, &Tool<S>)> = namers.iter().zip(&tools).collect();
         tool::build_tools(
-            part,
+            model,
             &refs,
             &joined_corners,
             &joined,
@@ -1670,20 +1687,20 @@ fn corner_contact(faces: &[FaceId], face: FaceId) -> GeopResult<usize> {
 /// by `scope` — and gives the blend faces left their names back (see
 /// [`name_blend_faces`]): the solid that is left.
 fn apply_tool<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     scope: &Namer,
     target: SolidId,
     tool: SolidId,
     bend: Bend,
 ) -> GeopResult<SolidId> {
-    let tool_faces = part
+    let tool_faces = model
         .topology()
         .solid_faces(tool)?
         .into_iter()
-        .filter_map(|f| part.name_of(f).map(str::to_string))
+        .filter_map(|f| model.name_of(f).map(str::to_string))
         .collect::<Vec<_>>();
     let target = boolean(
-        part,
+        model,
         scope,
         target,
         tool,
@@ -1691,6 +1708,6 @@ fn apply_tool<S: Scalar>(
         RemeshParams::default(),
     )?
     .ok_or_else(|| GeopError::new("the blend cut the whole solid away"))?;
-    name_blend_faces(part, scope, target, &tool_faces)?;
+    name_blend_faces(model, scope, target, &tool_faces)?;
     Ok(target)
 }

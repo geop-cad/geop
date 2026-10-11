@@ -335,26 +335,19 @@ impl<S: Scalar> Sketch<S> {
                 continue;
             }
             match curve.endpoints() {
-                None => loops.push(ProfileLoop {
+                Some((s, e)) if class[&s] != class[&e] => edges.push((id, class[&s], class[&e])),
+                Some(_) if !matches!(curve.kind, CurveKind::Spline { .. }) => {
+                    return Err(GeopError::new(format!(
+                        "curve {id} starts and ends at the same point"
+                    )));
+                }
+                // A closed curve is a loop by itself.
+                _ => loops.push(ProfileLoop {
                     edges: vec![ProfileEdge {
                         curve: id,
                         reversed: false,
                     }],
                 }),
-                Some((s, e)) if class[&s] == class[&e] => {
-                    if !matches!(curve.kind, CurveKind::Spline { .. }) {
-                        return Err(GeopError::new(format!(
-                            "curve {id} starts and ends at the same point"
-                        )));
-                    }
-                    loops.push(ProfileLoop {
-                        edges: vec![ProfileEdge {
-                            curve: id,
-                            reversed: false,
-                        }],
-                    });
-                }
-                Some((s, e)) => edges.push((id, class[&s], class[&e])),
             }
         }
 
@@ -441,20 +434,24 @@ impl std::fmt::Display for ProfileJoint {
     }
 }
 
-/// One NURBS piece of a profile loop, and where it comes from in the sketch:
+/// One NURBS piece `curve` of a chain of a sketch's curves — a profile
+/// loop, or a 3-D sketch's path — and where it comes from in the sketch:
 /// piece `index` of sketch curve `source` (counted in the curve's own
-/// direction), running from joint `start` to joint `end` in the loop's
+/// direction), running from joint `start` to joint `end` in the chain's
 /// direction.
 #[derive(Clone, Debug)]
-pub struct ProfilePiece<S: Scalar> {
-    pub curve: NurbCurve2D<S>,
+pub struct Piece<C> {
+    pub curve: C,
     pub source: CurveId,
     pub index: usize,
     pub start: ProfileJoint,
     pub end: ProfileJoint,
 }
 
-impl<S: Scalar> ProfilePiece<S> {
+/// A piece of a planar sketch's profile loop.
+pub type ProfilePiece<S> = Piece<NurbCurve2D<S>>;
+
+impl<C> Piece<C> {
     /// The piece's stable name within its sketch: `c5` for a curve's first
     /// (often only) piece, `c5#1` for the next.
     pub fn name(&self) -> String {
@@ -676,18 +673,10 @@ fn line<S: Scalar>(p0: Vector2<S>, p1: Vector2<S>) -> GeopResult<NurbCurve2D<S>>
     NurbCurve::try_new(1, vec![hom(p0, S::ONE), hom(p1, S::ONE)], bezier_knots(2))
 }
 
-/// `v` turned a quarter counter-clockwise.
+/// `v` turned a quarter counter-clockwise — by `neg`, which is exact, where
+/// [`Vector2::perp`] subtracts from zero.
 fn perpendicular<S: Scalar>(v: Vector2<S>) -> Vector2<S> {
     Vector2::from_array([v[1].neg(), v[0]])
-}
-
-/// `v` turned counter-clockwise by the angle whose cosine and sine are
-/// `cos` and `sin`.
-fn rotated<S: Scalar>(v: Vector2<S>, cos: S, sin: S) -> Vector2<S> {
-    Vector2::from_array([
-        v[0].mul(cos).sub(v[1].mul(sin)),
-        v[0].mul(sin).add(v[1].mul(cos)),
-    ])
 }
 
 /// One sketch curve as NURBS pieces from its start to its end, built from
@@ -738,7 +727,7 @@ pub fn curve_nurbs<D: Scalar, S: Scalar>(
                 let center = mid.add(&left.prod_scalar(offset));
                 ends.extend((1..pieces).map(|j| {
                     let angle = delta.mul(S::from_i64(j as i64));
-                    center.add(&rotated(s.sub(&center), angle.cos(), angle.sin()))
+                    center.add(&s.sub(&center).rotate(angle.cos(), angle.sin()))
                 }));
             }
             ends.push(e);

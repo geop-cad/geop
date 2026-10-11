@@ -1,149 +1,303 @@
 use std::any::Any;
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::part::{self, Part, View};
+use crate::{
+    editing::{Event, Form},
+    part::{self, Part, View},
+    step_editor::Scene,
+};
 
-pub enum UserEvent {
-    PointAndClick,
-    Drag,
+/// The numbers the state of `O`'s parts is made of: what its forms and
+/// events measure in.
+pub type ScalarOf<O> =
+    <<O as Operation>::State as geop_core_math::solvers::system::Variable>::Scalar;
+
+/// What an operation is to an editor: how a step spells it, its short name
+/// and what it does — what an editor offers it by — and where and how
+/// prominently the editor offers it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct OperationInfo {
+    /// The name programs store its steps under.
+    pub kind: &'static str,
+    pub label: &'static str,
+    pub doc: &'static str,
+    pub group: OperationGroup,
+    pub tier: OperationTier,
+    /// Not yet robust enough to offer by default: an editor's reduced mode
+    /// leaves it out.
+    pub experimental: bool,
+    /// Whether its reference fields pick in the part as the step builds it,
+    /// rather than as it was before: a placed part's mates pick entities of
+    /// the part it places.
+    pub picks_built: bool,
 }
 
-pub struct EditingPresentation {
-    pub camera_control: (),
-    pub reference_inputs: (),
-    pub drag_handles: (),
+impl OperationInfo {
+    /// An operation offered by default, whose reference fields pick in the
+    /// part as it was before the step.
+    pub const fn new(
+        kind: &'static str,
+        label: &'static str,
+        doc: &'static str,
+        group: OperationGroup,
+        tier: OperationTier,
+    ) -> Self {
+        Self {
+            kind,
+            label,
+            doc,
+            group,
+            tier,
+            experimental: false,
+            picks_built: false,
+        }
+    }
+
+    /// The same, but left out of an editor's reduced mode.
+    pub const fn experimental(self) -> Self {
+        Self {
+            experimental: true,
+            ..self
+        }
+    }
+
+    /// The same, but picking in the part as the step builds it.
+    pub const fn picks_built(self) -> Self {
+        Self {
+            picks_built: true,
+            ..self
+        }
+    }
 }
 
+/// What an operation works on, as an editor groups its operations: the
+/// toolbar's sections, in this order — the order of a part's workflow.
+/// Serialized as the group's name, as it is shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+pub enum OperationGroup {
+    /// Sketches, and the reference geometry they are drawn on.
+    Sketch,
+    /// What makes a solid of a sketch: extrusions, revolutions, sweeps and
+    /// lofts.
+    Solid,
+    /// Features that change a solid: holes, rounds, walls, threads.
+    Features,
+    /// Whole bodies: patterned, mirrored, combined, cut, moved.
+    #[serde(rename = "Pattern & bodies")]
+    Bodies,
+    /// Faces standing on their own, and freeform shapes.
+    Surface,
+    /// Bodies of bent sheet, and their flat patterns.
+    #[serde(rename = "Sheet metal")]
+    SheetMetal,
+    /// Placed parts, and what runs between them.
+    Assembly,
+    /// What is made of a part rather than in it: drawings, exports.
+    Output,
+}
+
+/// How prominently an editor offers an operation within its group, from
+/// the few used most to the rarely used: the order the group lists them in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+pub enum OperationTier {
+    /// One of the few used most: a big button.
+    Big,
+    /// Used often: a small button.
+    Small,
+    /// Used rarely: only in its group's menu.
+    Menu,
+}
+
+/// What a step is edited against: its id — what everything it builds is
+/// named after — the part as it was before it, the part as the step
+/// built it when it last ran, if it did, and, for an event, the part as the
+/// editor draws it — what a pointer is over, without drawing it again.
+pub struct Context<'a, I, S: part::State> {
+    pub step: &'a str,
+    pub before: View<'a, I, S>,
+    pub built: Option<View<'a, I, S>>,
+    /// The part as drawn for picks (see [`crate::step_editor::Scene`]):
+    /// given with every event an editor passes on, and nothing else.
+    pub scene: Option<&'a dyn Scene<S::Scalar>>,
+}
+
+/// One kind of step. An operation is a unit struct: everything a step of
+/// it needs is in its arguments, and everything it keeps while a step is
+/// edited in its editing state.
 pub trait Operation: 'static {
-    /// The name programs store the operation's steps under.
-    const NAME: &'static str;
+    const INFO: OperationInfo;
     /// What a step of the operation is given. It is saved with the program,
     /// so it names targets and entities, never holds their internal ids.
     type Args: Serialize + DeserializeOwned + 'static;
-    /// What the editor remembers about a step while it is edited, starting
-    /// from the default.
+    /// What the editor keeps about a step while it is edited, beyond its
+    /// arguments, starting from the default whenever a step is opened.
     type EditingState: Default + 'static;
     /// The inputs and state of the parts the operation builds.
     type Input: part::Input;
     type State: part::State;
+
+    /// The arguments of a new step: sensible defaults, taking the part it
+    /// is inserted into into account.
+    fn new_args(context: &Context<Self::Input, Self::State>) -> Self::Args;
 
     fn run(
         step: &str,
         part: &mut Part<Self::Input, Self::State>,
         args: &Self::Args,
     ) -> GeopResult<()>;
-    /// What the editor shows while the step is edited, given the part as it
-    /// was before the step.
+
+    /// What the editor shows while the step is edited. Never fails: an
+    /// editor needs the form most exactly when the arguments do not build,
+    /// so whatever is wrong is said in it.
     fn presentation(
-        part: &View<Self::Input, Self::State>,
+        context: &Context<Self::Input, Self::State>,
         args: &Self::Args,
-        state: &Self::EditingState,
-    ) -> GeopResult<EditingPresentation>;
-    /// The step's arguments and state after `event`, given the part as it was
-    /// before the step.
+        editing: &Self::EditingState,
+    ) -> Form<ScalarOf<Self>>;
+
+    /// The step's arguments and editing state after `event`.
     fn process_user_event(
-        part: &View<Self::Input, Self::State>,
+        context: &Context<Self::Input, Self::State>,
         args: &Self::Args,
-        state: &Self::EditingState,
-        event: UserEvent,
-    ) -> GeopResult<(Self::Args, Self::EditingState)>;
+        editing: &Self::EditingState,
+        event: Event<ScalarOf<Self>>,
+    ) -> (Self::Args, Self::EditingState);
+
+    /// The text of every formula in `args` that reads inputs by name — what
+    /// tells which inputs a step reads, and what renaming one renames. An
+    /// operation whose arguments take formulas lists every one, used or
+    /// not; none, by default.
+    fn formulas(args: &mut Self::Args) -> Vec<&mut String> {
+        let _ = args;
+        Vec::new()
+    }
 }
 
-/// A step's arguments and editing state after a user event, type erased.
+/// A step's arguments, as saved, and its editing state after an event.
 pub struct Edited {
-    pub args: Box<dyn Any>,
-    pub state: Box<dyn Any>,
+    pub args: serde_json::Value,
+    pub editing: Box<dyn Any>,
 }
 
 /// An [`Operation`] with its types erased, so that operations of all kinds
-/// can be kept in one [`crate::operation_registry::OperationRegistry`]. Every operation is
-/// one, through its value.
-pub trait ErasedOperation<I, S> {
-    fn run(&self, step: &str, part: &mut Part<I, S>, args: &dyn Any) -> GeopResult<()>;
-    fn initial_state(&self) -> Box<dyn Any>;
+/// can be kept in one [`crate::operation_registry::OperationRegistry`].
+/// Every operation is one, through its value. Arguments come as saved.
+pub trait ErasedOperation<I, S: part::State> {
+    fn info(&self) -> &'static OperationInfo;
+    fn new_args(&self, context: &Context<I, S>) -> GeopResult<serde_json::Value>;
+    fn run(&self, step: &str, part: &mut Part<I, S>, args: &serde_json::Value) -> GeopResult<()>;
+    fn initial_editing(&self) -> Box<dyn Any>;
     fn presentation(
         &self,
-        part: &View<I, S>,
-        args: &dyn Any,
-        state: &dyn Any,
-    ) -> GeopResult<EditingPresentation>;
+        context: &Context<I, S>,
+        args: &serde_json::Value,
+        editing: &dyn Any,
+    ) -> GeopResult<Form<S::Scalar>>;
     fn process_user_event(
         &self,
-        part: &View<I, S>,
-        args: &dyn Any,
-        state: &dyn Any,
-        event: UserEvent,
+        context: &Context<I, S>,
+        args: &serde_json::Value,
+        editing: &dyn Any,
+        event: Event<S::Scalar>,
     ) -> GeopResult<Edited>;
-    fn args_from_json(&self, json: serde_json::Value) -> GeopResult<Box<dyn Any>>;
-    fn args_to_json(&self, args: &dyn Any) -> GeopResult<serde_json::Value>;
+
+    /// The arguments `args` with `edit` applied to every formula in them
+    /// (see [`Operation::formulas`]): to read them, an `edit` that changes
+    /// nothing.
+    fn edit_formulas(
+        &self,
+        args: &serde_json::Value,
+        edit: &mut dyn FnMut(&mut String),
+    ) -> GeopResult<serde_json::Value>;
 }
 
-fn downcast<'a, O: Operation, T: 'static>(value: &'a dyn Any, what: &str) -> GeopResult<&'a T> {
-    value.downcast_ref::<T>().ok_or_else(|| {
+/// The arguments of `O` from their saved form.
+fn args<O: Operation>(json: &serde_json::Value) -> GeopResult<O::Args> {
+    O::Args::deserialize(json)
+        .map_err(|e| GeopError::new(format!("arguments of operation `{}`: {e}", O::INFO.kind)))
+}
+
+/// The saved form of `args`.
+pub(crate) fn saved<O: Operation>(args: &O::Args) -> GeopResult<serde_json::Value> {
+    serde_json::to_value(args)
+        .map_err(|e| GeopError::new(format!("arguments of operation `{}`: {e}", O::INFO.kind)))
+}
+
+fn editing<O: Operation>(editing: &dyn Any) -> GeopResult<&O::EditingState> {
+    editing.downcast_ref().ok_or_else(|| {
         GeopError::new(format!(
-            "operation `{}` was given {what} that are not `{}`",
-            O::NAME,
-            std::any::type_name::<T>()
+            "operation `{}` was given an editing state that is not `{}`",
+            O::INFO.kind,
+            std::any::type_name::<O::EditingState>()
         ))
     })
 }
 
 impl<O: Operation> ErasedOperation<O::Input, O::State> for O {
+    fn info(&self) -> &'static OperationInfo {
+        &O::INFO
+    }
+
+    fn new_args(&self, context: &Context<O::Input, O::State>) -> GeopResult<serde_json::Value> {
+        saved::<O>(&<O as Operation>::new_args(context))
+    }
+
     fn run(
         &self,
         step: &str,
         part: &mut Part<O::Input, O::State>,
-        args: &dyn Any,
+        args: &serde_json::Value,
     ) -> GeopResult<()> {
-        <O as Operation>::run(step, part, downcast::<O, O::Args>(args, "arguments")?)
+        <O as Operation>::run(step, part, &self::args::<O>(args)?)
     }
 
-    fn initial_state(&self) -> Box<dyn Any> {
+    fn initial_editing(&self) -> Box<dyn Any> {
         Box::new(O::EditingState::default())
     }
 
     fn presentation(
         &self,
-        part: &View<O::Input, O::State>,
-        args: &dyn Any,
-        state: &dyn Any,
-    ) -> GeopResult<EditingPresentation> {
-        <O as Operation>::presentation(
-            part,
-            downcast::<O, O::Args>(args, "arguments")?,
-            downcast::<O, O::EditingState>(state, "an editing state")?,
-        )
+        context: &Context<O::Input, O::State>,
+        args: &serde_json::Value,
+        editing: &dyn Any,
+    ) -> GeopResult<Form<ScalarOf<O>>> {
+        Ok(<O as Operation>::presentation(
+            context,
+            &self::args::<O>(args)?,
+            self::editing::<O>(editing)?,
+        ))
     }
 
     fn process_user_event(
         &self,
-        part: &View<O::Input, O::State>,
-        args: &dyn Any,
-        state: &dyn Any,
-        event: UserEvent,
+        context: &Context<O::Input, O::State>,
+        args: &serde_json::Value,
+        editing: &dyn Any,
+        event: Event<ScalarOf<O>>,
     ) -> GeopResult<Edited> {
-        let (args, state) = <O as Operation>::process_user_event(
-            part,
-            downcast::<O, O::Args>(args, "arguments")?,
-            downcast::<O, O::EditingState>(state, "an editing state")?,
+        let (args, editing) = <O as Operation>::process_user_event(
+            context,
+            &self::args::<O>(args)?,
+            self::editing::<O>(editing)?,
             event,
-        )?;
+        );
         Ok(Edited {
-            args: Box::new(args),
-            state: Box::new(state),
+            args: saved::<O>(&args)?,
+            editing: Box::new(editing),
         })
     }
 
-    fn args_from_json(&self, json: serde_json::Value) -> GeopResult<Box<dyn Any>> {
-        let args: O::Args = serde_json::from_value(json)
-            .map_err(|e| GeopError::new(format!("arguments of operation `{}`: {e}", O::NAME)))?;
-        Ok(Box::new(args))
-    }
-
-    fn args_to_json(&self, args: &dyn Any) -> GeopResult<serde_json::Value> {
-        serde_json::to_value(downcast::<O, O::Args>(args, "arguments")?)
-            .map_err(|e| GeopError::new(format!("arguments of operation `{}`: {e}", O::NAME)))
+    fn edit_formulas(
+        &self,
+        args: &serde_json::Value,
+        edit: &mut dyn FnMut(&mut String),
+    ) -> GeopResult<serde_json::Value> {
+        let mut args = self::args::<O>(args)?;
+        for formula in O::formulas(&mut args) {
+            edit(formula);
+        }
+        saved::<O>(&args)
     }
 }

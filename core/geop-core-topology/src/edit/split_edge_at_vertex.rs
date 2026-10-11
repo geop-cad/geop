@@ -69,10 +69,7 @@ impl<S: Scalar> Model<S> {
         // midpoint instead of the located point. Validation below therefore
         // tests exactly the value the split will use.
         let (curve_lo, curve_hi) = edge.curve.domain();
-        let edge_t = edge
-            .curve
-            .refine_parameter_at_point(edge_t, &vertex_point)
-            .with_context(&ctx)?;
+        let edge_t = edge.curve.refine_parameter_at_point(edge_t, &vertex_point);
         if !edge_t.definitely_greater(curve_lo) || !edge_t.definitely_less(curve_hi) {
             return Err(ctx(GeopError::new(format!(
                 "edge_t={edge_t:?} is not strictly inside the curve domain ({curve_lo:?}, {curve_hi:?}), so vertex {vertex_id} is an endpoint of edge {edge_id} rather than interior to it — there is nothing to split"
@@ -139,11 +136,7 @@ impl<S: Scalar> Model<S> {
                         )))))
                     })?;
             let (pcurve_lo, pcurve_hi) = coedge.pcurve.domain();
-            let pcurve_t = coedge
-                .pcurve
-                .refine_parameter_at_point(pcurve_t, &uv)
-                .with_context(&ctx)
-                .with_context(&coedge_ctx)?;
+            let pcurve_t = coedge.pcurve.refine_parameter_at_point(pcurve_t, &uv);
             if !pcurve_t.definitely_greater(pcurve_lo) || !pcurve_t.definitely_less(pcurve_hi) {
                 return Err(ctx(coedge_ctx(GeopError::new(format!(
                     "pcurve_t={pcurve_t:?} is not strictly inside coedge {coedge_id}'s pcurve domain ({pcurve_lo:?}, {pcurve_hi:?}), so vertex {vertex_id} is an endpoint of that pcurve rather than interior to it — there is nothing to split"

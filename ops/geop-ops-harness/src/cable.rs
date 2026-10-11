@@ -1,7 +1,7 @@
-//! A part's cables, kept in it as the extension [`Cables`] and read and
-//! written through [`PartCables`]: what a routed harness is cut from — its wires, each
-//! with the length to cut it to — recorded by the step that routed it, for
-//! its editor to show and a bill of materials to read.
+//! A part's cables, kept as its target [`cables`]: what a routed harness is
+//! cut from — its wires, each with the length to cut it to — recorded by
+//! the step that routed it, for its editor to show and a bill of materials
+//! to read.
 
 use std::collections::BTreeMap;
 
@@ -9,7 +9,8 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_ops::{Extension, Part};
+use geop_core_program::target::{Revisable, TargetReference};
+use geop_ops::Design;
 
 /// One wire of a [`Cable`], and the length to cut it to.
 #[derive(Clone, Debug, PartialEq)]
@@ -40,9 +41,15 @@ pub struct Cable<S: Scalar> {
     pub wires: Vec<CutWire<S>>,
 }
 
-/// A part's cables, by the name of the solid each is swept into.
-#[derive(Clone, Debug)]
+/// A part's cables, by the name of the solid each is swept into: the value
+/// of its target [`cables`], which every step that routes one revises.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Cables<S: Scalar>(BTreeMap<String, Cable<S>>);
+
+/// The part's cables.
+pub fn cables() -> TargetReference<Cables<Design>> {
+    TargetReference::new("cables")
+}
 
 impl<S: Scalar> Default for Cables<S> {
     fn default() -> Self {
@@ -50,48 +57,36 @@ impl<S: Scalar> Default for Cables<S> {
     }
 }
 
-impl<S: Scalar> Extension<S> for Cables<S> {
-    const NAME: &'static str = "cables";
+/// A part has few cables: a revision copies them.
+impl<S: Scalar + PartialEq> Revisable for Cables<S> {
+    fn to_revise(&self) -> Self {
+        self.clone()
+    }
 }
 
-/// A part's cables (see the module).
-pub trait PartCables<S: Scalar> {
+impl<S: Scalar> Cables<S> {
     /// Records `cable` under `name` — the name of the solid it is swept
-    /// into.
-    fn add_cable(&mut self, name: impl Into<String>, cable: Cable<S>) -> GeopResult<()>;
-
-    /// The cable `name`.
-    fn cable(&self, name: &str) -> GeopResult<&Cable<S>>;
-
-    /// Every cable of the part itself — not of the parts placed in it — by
-    /// name.
-    fn cables(&self) -> impl Iterator<Item = (&str, &Cable<S>)>;
-}
-
-impl<S: Scalar> PartCables<S> for Part<S> {
-    fn add_cable(&mut self, name: impl Into<String>, cable: Cable<S>) -> GeopResult<()> {
+    /// into. Fails, leaving the cables as they are, if there is a cable of
+    /// that name already.
+    pub fn add(&mut self, name: impl Into<String>, cable: Cable<S>) -> GeopResult<()> {
         let name = name.into();
-        if self
-            .ext::<Cables<S>>()
-            .is_some_and(|c| c.0.contains_key(&name))
-        {
+        if self.0.contains_key(&name) {
             return Err(GeopError::new(format!(
-                "Part::add_cable: there is a cable {name:?} already"
+                "the part has a cable named {name:?} already"
             )));
         }
-        self.ext_mut::<Cables<S>>().0.insert(name, cable);
+        self.0.insert(name, cable);
         Ok(())
     }
 
-    fn cable(&self, name: &str) -> GeopResult<&Cable<S>> {
-        self.ext::<Cables<S>>()
-            .and_then(|cables| cables.0.get(name))
-            .ok_or_else(|| GeopError::new(format!("there is no cable {name:?}")))
+    /// The cable `name`.
+    pub fn get(&self, name: &str) -> GeopResult<&Cable<S>> {
+        (self.0.get(name))
+            .ok_or_else(|| GeopError::new(format!("the part has no cable named {name:?}")))
     }
 
-    fn cables(&self) -> impl Iterator<Item = (&str, &Cable<S>)> {
-        self.ext::<Cables<S>>()
-            .into_iter()
-            .flat_map(|cables| cables.0.iter().map(|(name, c)| (name.as_str(), c)))
+    /// Every cable, by name.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &Cable<S>)> {
+        self.0.iter().map(|(name, cable)| (name.as_str(), cable))
     }
 }

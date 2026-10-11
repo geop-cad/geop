@@ -19,7 +19,6 @@ use super::{
     Intersections,
     coincidence::{self, Hit, Overlap},
 };
-use crate::nurb_surface::clamp;
 use crate::{
     aabb::{aabb_could_overlap, curve_could_meet_aabb},
     contains::surface::{
@@ -30,15 +29,15 @@ use crate::{
         spanning, stalled,
     },
     intersection::curve_curve,
-    knot_insertion::pinned_clamped_end,
     nurb_curve::{NurbCurve, dehomogenize},
     nurb_surface::NurbSurface,
 };
 use geop_core_math::{
     disjoint_set::DisjointSet,
     geop_error::{GeopError, GeopResult, WithContext},
-    matrix::{Matrix, solve_linear_system},
+    matrix::Matrix,
     scalars::Scalar,
+    solvers::{linear::solve_linear_system, newton},
     vector::{Vector, Vector2},
 };
 
@@ -120,15 +119,7 @@ fn solve_pinned<S: Scalar>(
             .then(|| std::array::from_fn(|i| hats[i].intersect(found[i])))
     };
 
-    if let Some(first) =
-        pinned_clamped_end(hats[0], &c.knot_vector, c.control_points.len(), c.degree)
-    {
-        let cp = if first {
-            c.control_points[0]
-        } else {
-            c.control_points[c.control_points.len() - 1]
-        };
-        let end = dehomogenize::<S, 4, 3>(&[cp])[0];
+    if let Some(end) = c.pinned_end::<3>(hats[0]) {
         let found = surface_could_contain(s, &end, budget, min_subdivision_size)?;
         return Ok(Some(
             found
@@ -257,6 +248,21 @@ pub fn curve_surface_crossings<S: Scalar>(
     Ok(solutions.into_vec())
 }
 
+/// Where `curve(t)` lies on `surface`, if it does: its `(u, v)` there.
+fn point_on<S: Scalar>(
+    curve: &NurbCurve<S, 4>,
+    surface: &NurbSurface<S, 4>,
+    t: S,
+    max_nodes: usize,
+    min_subdivision_size: S,
+) -> GeopResult<Option<Vector2<S>>> {
+    let point = curve.evaluate(t)?;
+    Ok(
+        surface_could_contain(surface, &point, max_nodes, min_subdivision_size)?
+            .map(|(u, v)| Vector2::from_array([u, v])),
+    )
+}
+
 /// Every stretch of `curve` lying on `surface` (see [`coincidence`]), with
 /// the surface parameters as the partner. Candidates are the curve's ends
 /// found on the surface, and where the curve meets the patch's four
@@ -270,13 +276,7 @@ pub fn curve_surface_overlaps<S: Scalar>(
     max_nodes: usize,
     min_subdivision_size: S,
 ) -> GeopResult<Vec<Overlap<S, Vector2<S>>>> {
-    let on_surface = |t: S| -> GeopResult<Option<Vector2<S>>> {
-        let point = curve.evaluate(t)?;
-        Ok(
-            surface_could_contain(surface, &point, max_nodes, min_subdivision_size)?
-                .map(|(u, v)| Vector2::from_array([u, v])),
-        )
-    };
+    let on_surface = |t: S| point_on(curve, surface, t, max_nodes, min_subdivision_size);
 
     let mut candidates = Vec::new();
     let (t0, t1) = curve.domain();
@@ -348,29 +348,12 @@ pub fn curve_surface_intersect<S: Scalar>(
     };
     let overlaps = curve_surface_overlaps(curve, surface, max_nodes, min_subdivision_size)
         .with_context(&ctx)?;
-    let crossings = if overlaps.is_empty() {
-        curve_surface_crossings(curve, surface, max_nodes, min_subdivision_size).with_context(
-            &|e: GeopError| ctx(e.with_context("no overlap found; crossing search")),
-        )?
-    } else {
-        let mut crossings = Vec::new();
-        for (lo, hi) in coincidence::gaps(curve.domain(), &overlaps) {
-            let piece = curve.sub_curve(lo, hi)?;
-            crossings.extend(curve_surface_crossings(
-                &piece,
-                surface,
-                max_nodes,
-                min_subdivision_size,
-            )?);
-        }
-        crossings
-    };
+    let crossings = coincidence::crossings_between(curve, &overlaps, |piece| {
+        curve_surface_crossings(piece, surface, max_nodes, min_subdivision_size)
+    })
+    .with_context(&|e: GeopError| ctx(e.with_context("crossing search")))?;
     let samples = coincidence::samples(&overlaps, max_solutions, |t| {
-        let point = curve.evaluate(t)?;
-        Ok(
-            surface_could_contain(surface, &point, max_nodes, min_subdivision_size)?
-                .map(|(u, v)| Vector2::from_array([u, v])),
-        )
+        point_on(curve, surface, t, max_nodes, min_subdivision_size)
     })?;
     Ok(coincidence::assemble(
         &overlaps,
@@ -380,88 +363,49 @@ pub fn curve_surface_intersect<S: Scalar>(
     ))
 }
 
-/// Newton iterations for [`refine`]. Quadratic convergence makes a handful
-/// plenty; this cannot change which solutions are found, only how tightly an
-/// already-isolated one is pinned down.
-const REFINE_ITERATIONS: usize = 12;
-
 /// Polish one isolated `(t, uv)` — as returned by [`curve_surface_intersect`]
 /// — by Newton on `C(t) - S(u, v) = 0`, three equations in the three unknowns
-/// `t`, `u`, `v`.
+/// `t`, `u`, `v` ([`newton::refine`]).
 ///
-/// Subdivision and Newton divide the work: subdivision is the global method,
-/// reliably finding and separating every solution and recognizing coincidence
-/// even for a partial overlap, but converging only one bit per split; Newton
-/// cannot find anything but polishes an isolated solution quadratically.
-/// `curve_surface_intersect` deliberately does *not* apply this to everything
-/// it returns — most callers only need to know where and how many crossings
-/// there are, and refining changes results they already agree with. Call it
-/// when the parameter is about to be *used* as a split point, where the width
-/// genuinely matters: `NurbCurve::split` cannot absorb a
-/// `min_subdivision_size`-wide parameter (Boehm insertion amplifies it without
-/// bound), and a point evaluated at one is just as wide — which is how a wide
-/// crossing becomes a fat vertex and a fat sub-curve.
+/// `curve_surface_intersect` deliberately does *not* apply this to
+/// everything it returns — most callers only need to know where and how
+/// many crossings there are, and refining changes results they already
+/// agree with. Call it when the parameter is about to be *used* as a split
+/// point, where the width genuinely matters: a point evaluated at a wide
+/// crossing is just as wide, which is how it becomes a fat vertex and a fat
+/// sub-curve.
 ///
-/// Every iterate but the last is sharpened, which is legitimate: it is only a
-/// seed for the next step. The final step is left unsharpened, so the returned
-/// widths honestly state how well the crossing is determined (see "Sharpen
-/// only where the value is a free choice" in `AGENTS.md`).
-///
-/// Infallible by construction: the incoming box is already a valid enclosure,
-/// so anything that stops Newton — a singular Jacobian at a tangential
-/// crossing or a pole, an iterate leaving the domain, a refined box disjoint
-/// from the one subdivision proved the solution lies in — just returns that
-/// box unchanged. Refinement can only tighten, never fail.
+/// The refined box must still be able to hold a crossing: the curve and
+/// the surface evaluated over it have to overlap. Newton only assumes an
+/// isolated, regular root; where that fails — a curve lying on the
+/// surface's extension beyond the patch, so the iterate slides along it and
+/// gets clamped at the patch's edge — it can return a narrow box that
+/// provably misses, and the honest incoming box is what is kept.
 pub fn refine_crossing<S: Scalar>(
     curve: &NurbCurve<S, 4>,
     surface: &NurbSurface<S, 4>,
     t: S,
     uv: Vector2<S>,
 ) -> (S, Vector2<S>) {
-    let (t_lo, t_hi) = curve.domain();
-    let (u_lo, u_hi) = surface.domain_u();
-    let (v_lo, v_hi) = surface.domain_v();
-
-    let (mut tt, mut uu, mut vv) = (t.sharpen(), uv[0].sharpen(), uv[1].sharpen());
-    for iteration in 0..REFINE_ITERATIONS {
-        let (Ok(c), Ok(s)) = (curve.evaluate(tt), surface.evaluate(uu, vv)) else {
-            return (t, uv);
-        };
-        let (Ok(ct), Ok((su, sv))) = (curve.tangent(tt), surface.derivatives(uu, vv)) else {
-            return (t, uv);
-        };
-
-        let mut a = [[S::ZERO; 3]; 3];
-        let mut b = [S::ZERO; 3];
-        for row in 0..3 {
-            a[row] = [ct[row], su[row].neg(), sv[row].neg()];
-            b[row] = s[row].sub(c[row]);
-        }
-        let Ok(delta) = solve_linear_system(&Matrix::from_rows(a), &Vector::from_array(b)) else {
-            return (t, uv);
-        };
-
-        let next = [tt.add(delta[0]), uu.add(delta[1]), vv.add(delta[2])];
-        let next = if iteration + 1 == REFINE_ITERATIONS {
-            next
-        } else {
-            [next[0].sharpen(), next[1].sharpen(), next[2].sharpen()]
-        };
-        tt = clamp(next[0], t_lo, t_hi);
-        uu = clamp(next[1], u_lo, u_hi);
-        vv = clamp(next[2], v_lo, v_hi);
-    }
-
-    if !tt.could_be_equal(t) || !uu.could_be_equal(uv[0]) || !vv.could_be_equal(uv[1]) {
-        return (t, uv);
-    }
-    let (t_ref, u_ref, v_ref) = (t.intersect(tt), uv[0].intersect(uu), uv[1].intersect(vv));
-    // The refined box must still be able to hold a crossing: the curve and
-    // the surface evaluated over it have to overlap. Newton only assumes an
-    // isolated, regular root; where that fails — a curve lying on the
-    // surface's extension beyond the patch, so the iterate slides along it
-    // and gets clamped at the patch's edge — it can return a narrow box that
-    // provably misses, and the honest incoming box is what must be kept.
+    let refined = newton::refine(
+        [t, uv[0], uv[1]],
+        [curve.domain(), surface.domain_u(), surface.domain_v()],
+        |[tt, uu, vv]| {
+            let c = curve.evaluate(tt).ok()?;
+            let s = surface.evaluate(uu, vv).ok()?;
+            let ct = curve.tangent(tt).ok()?;
+            let (su, sv) = surface.derivatives(uu, vv).ok()?;
+            let mut a = [[S::ZERO; 3]; 3];
+            let mut b = [S::ZERO; 3];
+            for row in 0..3 {
+                a[row] = [ct[row], su[row].neg(), sv[row].neg()];
+                b[row] = s[row].sub(c[row]);
+            }
+            let delta = solve_linear_system(&Matrix::from_rows(a), &Vector::from_array(b)).ok()?;
+            Some([tt.add(delta[0]), uu.add(delta[1]), vv.add(delta[2])])
+        },
+    );
+    let [t_ref, u_ref, v_ref] = refined;
     let holds_a_crossing = match (curve.evaluate(t_ref), surface.evaluate(u_ref, v_ref)) {
         (Ok(c), Ok(s)) => c.could_be_equal(&s),
         _ => false,

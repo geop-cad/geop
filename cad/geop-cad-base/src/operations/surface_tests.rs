@@ -1,33 +1,21 @@
 //! Surfaces built by programs: the walls an extrude or a loft sweeps as
 //! faces, capped with boundary surfaces, knit into solids, thickened.
 
-use geop_core_math::primitives::{DatumComponent, FrameAxis};
+use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_sketch::PointId;
-use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
-use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
-use geop_ops_booleans::Combine;
+use geop_ops::{Design, EntityRef, NamedModel};
 use geop_ops_datums::{AddDatumArgs, Construction};
-use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, LoftArgs};
-use geop_ops_sketch::{AddSketchArgs, Sketch};
+use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, LoftArgs, Output};
+use geop_ops_sketch::Sketch;
 use geop_ops_surface::{BoundarySurfaceArgs, KnitArgs, ThickenArgs, ThickenSide};
 
-use crate::Program;
 use crate::examples::n;
-
-fn assert_valid(part: &Part<S>) {
-    let params = ValidationParameters::default();
-    if let Err(e) = validate(&params, part.topology()) {
-        panic!("{e:?}");
-    }
-    if let Err(e) = validate_manifold(&params, part.topology()) {
-        panic!("{e:?}");
-    }
-    part.check_names().unwrap();
-}
+use crate::operations::testing::{Built, assert_valid, origin_plane, sketch};
+use crate::{Program, Push};
 
 fn z_plane() -> EntityRef {
-    EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z))
+    origin_plane(FrameAxis::Z)
 }
 
 fn polygon(corners: &[[f64; 2]]) -> Sketch {
@@ -44,7 +32,7 @@ fn polygon(corners: &[[f64; 2]]) -> Sketch {
 
 /// The names of the edges of `part`'s sheets whose ends are both at
 /// height `z`.
-fn sheet_edges_at(part: &Part<S>, z: f64) -> Vec<String> {
+fn sheet_edges_at(part: &NamedModel<Design>, z: f64) -> Vec<String> {
     let model = part.topology();
     let at = |v| model.get_vertex(v).unwrap().point[2].could_be_equal(S::from_f64(z));
     let mut names: Vec<String> = part
@@ -82,19 +70,17 @@ fn walls() -> Program {
     let mut program = Program::new();
     program.push(
         "outline",
-        AddSketchArgs {
-            plane: Some(z_plane()),
-            sketch: polygon(&[[0., 0.], [2., 0.], [2., 1.], [0., 1.]]),
-            ..Default::default()
-        },
+        sketch(
+            z_plane(),
+            polygon(&[[0., 0.], [2., 0.], [2., 1.], [0., 1.]]),
+        ),
     );
     program.push(
         "walls",
         ExtrudeArgs {
             sketch: "outline".into(),
             extent: Extents::blind(1.0),
-            face: true,
-            combine: Combine::NewBody,
+            output: Output::Faces { up_to: None },
         },
     );
     program
@@ -105,7 +91,7 @@ fn walls() -> Program {
 #[test]
 fn extruded_faces_knit_into_a_box() {
     let mut program = walls();
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     let wall = part.sheet_face_names()[0].clone();
     fill(&mut program, "bottom", sheet_edges_at(&part, 0.0));
     fill(&mut program, "top", sheet_edges_at(&part, 1.0));
@@ -116,7 +102,7 @@ fn extruded_faces_knit_into_a_box() {
             solid: true,
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     let solid = part.solid_id("knit(box)").unwrap();
     assert_eq!(part.topology().solid_faces(solid).unwrap().len(), 6);
@@ -128,7 +114,7 @@ fn extruded_faces_knit_into_a_box() {
 #[test]
 fn open_box_thickened_into_a_cover() {
     let mut program = walls();
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     let wall = part.sheet_face_names()[0].clone();
     fill(&mut program, "top", sheet_edges_at(&part, 1.0));
     program.push(
@@ -146,7 +132,7 @@ fn open_box_thickened_into_a_cover() {
             side: ThickenSide::Against,
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     let solid = part.solid_id("thicken(thick)").unwrap();
     // Five faces, their inner copies, and a wall along each of the four
@@ -161,11 +147,10 @@ fn lofted_faces_knit_into_a_solid() {
     let mut program = Program::new();
     program.push(
         "bottom",
-        AddSketchArgs {
-            plane: Some(z_plane()),
-            sketch: polygon(&[[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]]),
-            ..Default::default()
-        },
+        sketch(
+            z_plane(),
+            polygon(&[[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]]),
+        ),
     );
     program.push(
         "top_plane",
@@ -179,25 +164,17 @@ fn lofted_faces_knit_into_a_solid() {
     let mut circle = Sketch::new();
     let c = circle.add_point(n(0.0), n(0.0));
     circle.add_circle(c, n(0.6));
-    program.push(
-        "top",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum("top_plane")),
-            sketch: circle,
-            ..Default::default()
-        },
-    );
+    program.push("top", sketch(EntityRef::datum("top_plane"), circle));
     program.push(
         "transition",
         LoftArgs {
             profiles: vec!["bottom".into(), "top".into()],
             matches: Vec::new(),
             guides: Vec::new(),
-            face: true,
-            combine: Combine::NewBody,
+            output: Output::Faces { up_to: None },
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     let wall = part.sheet_face_names()[0].clone();
     fill(&mut program, "base", sheet_edges_at(&part, 0.0));
     fill(&mut program, "lid", sheet_edges_at(&part, 2.0));
@@ -208,7 +185,7 @@ fn lofted_faces_knit_into_a_solid() {
             solid: true,
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     let solid = part.solid_id("knit(solid)").unwrap();
     assert_eq!(part.topology().solid_faces(solid).unwrap().len(), 4 + 2);

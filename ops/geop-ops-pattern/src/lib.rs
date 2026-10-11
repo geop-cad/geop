@@ -38,7 +38,7 @@ mod move_body;
 mod tests;
 
 pub use circular::{CircularPattern, CircularPatternArgs};
-pub use common::Spacing;
+pub use common::{Seeds, Spacing};
 pub use linear::{Direction, LinearPattern, LinearPatternArgs};
 pub use mirror::{Mirror, MirrorArgs};
 pub use move_body::{MoveBody, MoveBodyArgs};

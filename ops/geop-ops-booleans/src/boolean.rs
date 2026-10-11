@@ -11,7 +11,7 @@
 //! 2. Classify each face with [`classify_face`], by taking a point strictly
 //!    inside its trimmed region and asking where it sits relative to the
 //!    other solid.
-//! 3. Keep the faces the operator wants (see [`BooleanOp::keeps`]), reversing
+//! 3. Keep the faces the operator wants (see `keeps`), reversing
 //!    them where the operator needs the material on the other side.
 //! 4. Assemble the survivors into a new solid and discard everything else.
 //!
@@ -26,6 +26,7 @@ use geop_core_math::{
     scalars::Scalar,
     union_find::UnionFind,
     vector::Vector3,
+    with_context,
 };
 use geop_core_topology::{
     CoedgeGeometry, EdgeId, FaceId, Model, ShellId, SolidId,
@@ -34,7 +35,7 @@ use geop_core_topology::{
         shell::{PointClassification as ShellPoint, shell_contains, shell_contains_from},
     },
 };
-use geop_ops::{Namer, Part};
+use geop_ops::{NamedModel, Namer};
 
 use crate::remesh::remesh::{RemeshParams, remesh};
 
@@ -88,44 +89,21 @@ fn keeps(op: BooleanOp, class: FaceClassification, from_a: bool) -> Keep {
     match (op, class) {
         // Union: the result is bounded by whatever is outside the other.
         (BooleanOp::Union, Outside) => Keep::AsIs,
-        (BooleanOp::Union, Inside) => Keep::Drop,
-        (BooleanOp::Union, OnSameNormal) => {
-            if from_a {
-                Keep::AsIs
-            } else {
-                Keep::Drop
-            }
-        }
-        (BooleanOp::Union, OnOppositeNormal) => Keep::Drop,
+        (BooleanOp::Union, OnSameNormal) if from_a => Keep::AsIs,
+        (BooleanOp::Union, Inside | OnSameNormal | OnOppositeNormal) => Keep::Drop,
 
         // Intersection: bounded by whatever is inside the other.
         (BooleanOp::Intersection, Inside) => Keep::AsIs,
-        (BooleanOp::Intersection, Outside) => Keep::Drop,
-        (BooleanOp::Intersection, OnSameNormal) => {
-            if from_a {
-                Keep::AsIs
-            } else {
-                Keep::Drop
-            }
-        }
-        (BooleanOp::Intersection, OnOppositeNormal) => Keep::Drop,
+        (BooleanOp::Intersection, OnSameNormal) if from_a => Keep::AsIs,
+        (BooleanOp::Intersection, Outside | OnSameNormal | OnOppositeNormal) => Keep::Drop,
 
         // Difference (a - b) = a intersected with the complement of b, so
         // `a`'s faces behave as for intersection-with-the-outside, and
         // `b`'s surviving faces are the ones inside `a`, turned around to
         // face into the cavity they now bound.
-        (BooleanOp::Difference, Outside) if from_a => Keep::AsIs,
-        (BooleanOp::Difference, Inside) if from_a => Keep::Drop,
-        (BooleanOp::Difference, Inside) => Keep::Reversed,
-        (BooleanOp::Difference, Outside) => Keep::Drop,
-        (BooleanOp::Difference, OnSameNormal) => Keep::Drop,
-        (BooleanOp::Difference, OnOppositeNormal) => {
-            if from_a {
-                Keep::AsIs
-            } else {
-                Keep::Drop
-            }
-        }
+        (BooleanOp::Difference, Outside | OnOppositeNormal) if from_a => Keep::AsIs,
+        (BooleanOp::Difference, Inside) if !from_a => Keep::Reversed,
+        (BooleanOp::Difference, Inside | Outside | OnSameNormal | OnOppositeNormal) => Keep::Drop,
     }
 }
 
@@ -150,14 +128,14 @@ const SEED: u64 = 0xB001_EA47_0000_0001;
 /// creates on the way is named as [`crate::naming`] describes; every face,
 /// edge and vertex it keeps keeps its name.
 pub fn boolean<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     solid_a: SolidId,
     solid_b: SolidId,
     op: BooleanOp,
     params: RemeshParams<S>,
 ) -> GeopResult<Option<SolidId>> {
-    combine(part, namer, solid_a, solid_b, op, None, params)
+    combine(model, namer, solid_a, solid_b, op, None, params)?.stopped()
 }
 
 /// A tool going up to the next face — the second operand of a boolean — by
@@ -165,10 +143,31 @@ pub fn boolean<S: Scalar>(
 /// and whether only the piece of it taken is kept, `alone`, as a solid of
 /// its own, rather than combined with the first operand.
 #[derive(Clone, Copy, Debug)]
-struct UpToNext<'a> {
+struct ToolEnds<'a> {
     start: &'a str,
     end: &'a str,
     alone: bool,
+}
+
+/// What combining a tool up to the next face came to: stopped all round,
+/// and what that left — or not, the target meeting part of the profile, or
+/// none, and the rest going on past it to the tool's end. A caller may then
+/// go another way (see `combine_sides` of the extrude and revolve); the
+/// error says where the tool ran on, for one that does not.
+#[derive(Debug)]
+pub enum Reach<T> {
+    Stopped(T),
+    RunsOn(GeopError),
+}
+
+impl<T> Reach<T> {
+    /// What it left, if stopped all round, else why not as an error.
+    pub fn stopped(self) -> GeopResult<T> {
+        match self {
+            Reach::Stopped(t) => Ok(t),
+            Reach::RunsOn(e) => Err(e),
+        }
+    }
 }
 
 /// Like [`boolean`] — `target` combined with `tool` — but "up to next":
@@ -180,79 +179,55 @@ struct UpToNext<'a> {
 /// piece inside it — cutting, or keeping, from where the tool enters the
 /// target until it comes out of it again. The tool has to be long enough to
 /// reach past whatever stops it: if the piece also reaches its face `end`,
-/// nothing stopped it, and that is an error. `start` and `end` are the
+/// nothing stopped it, and it [`Reach::RunsOn`]. `start` and `end` are the
 /// names those faces had before the boolean (see [`crate::naming`]).
 pub fn boolean_up_to_next<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     target: SolidId,
     tool: SolidId,
     op: BooleanOp,
     (start, end): (&str, &str),
     params: RemeshParams<S>,
-) -> GeopResult<Option<SolidId>> {
-    let up_to_next = UpToNext {
+) -> GeopResult<Reach<Option<SolidId>>> {
+    let up_to_next = ToolEnds {
         start,
         end,
         alone: false,
     };
-    combine(part, namer, target, tool, op, Some(up_to_next), params)
+    combine(model, namer, target, tool, op, Some(up_to_next), params)
 }
 
 /// The first piece of `tool` its face `start` reaches outside `stops` — up
 /// to the next face of any of them — as a solid of its own, named
 /// `namer`'s root, `stops` left as they are: what a new body going up to the
-/// next face is. Fails, as [`boolean_up_to_next`] does, if nothing stops
-/// the tool before its face `end`.
+/// next face is. [`Reach::RunsOn`], as [`boolean_up_to_next`] does, if
+/// nothing stops the tool before its face `end`.
 ///
 /// The tool is cut by a copy of the solids it stops at, so that only the
 /// copy is imprinted and consumed.
 pub fn piece_up_to_next<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     tool: SolidId,
     stops: &[SolidId],
     (start, end): (&str, &str),
     params: RemeshParams<S>,
-) -> GeopResult<SolidId> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "piece_up_to_next(name={}, tool={tool}, stops={stops:?})",
-            namer.root()
-        ))
-    };
-    let mut faces = Vec::new();
-    for &solid in stops {
-        faces.extend(part.topology().solid_faces(solid).with_context(&ctx)?);
-    }
-    let (spec, sources) = part.topology().body_spec(&faces, true).with_context(&ctx)?;
-    let copied = |ids: Vec<geop_ops::RefId>| -> GeopResult<Vec<String>> {
-        ids.into_iter()
-            .map(|id| {
-                let name = part
-                    .name_of(id)
-                    .ok_or_else(|| GeopError::new(format!("{id} has no name")))?;
-                Ok(namer.name(&["copy", name]))
-            })
-            .collect()
-    };
-    let names = geop_ops::BodyNames {
-        vertices: copied(sources.vertices.iter().map(|&v| v.into()).collect())?,
-        edges: copied(sources.edges.iter().map(|&e| e.into()).collect())?,
-        faces: copied(sources.faces.iter().map(|&f| f.into()).collect())?,
-        solid: Some(namer.name(&["copy"])),
-    };
-    let copy = part.build_body(spec, names).with_context(&ctx)?;
-    let copy = copy.solid.expect("built as a solid");
+) -> GeopResult<Reach<SolidId>> {
+    let ctx = with_context!(
+        "piece_up_to_next(name={}, tool={tool}, stops={stops:?})",
+        namer.root()
+    );
+    let copy = copy_of(model, namer, stops).with_context(&ctx)?;
     // As a join of the tool to the copy, picking only the piece — the copy
     // first, as in every other combination with a tool.
-    let up_to_next = UpToNext {
+    let up_to_next = ToolEnds {
         start,
         end,
         alone: true,
     };
-    combine(
-        part,
+    let reach = combine(
+        model,
         namer,
         copy,
         tool,
@@ -260,33 +235,54 @@ pub fn piece_up_to_next<S: Scalar>(
         Some(up_to_next),
         params,
     )
-    .with_context(&ctx)?
-    .ok_or_else(|| ctx(GeopError::new("up to next: nothing of the tool is left")))
+    .with_context(&ctx)?;
+    Ok(match reach {
+        Reach::Stopped(piece) => Reach::Stopped(
+            piece.ok_or_else(|| ctx(GeopError::new("up to next: nothing of the tool is left")))?,
+        ),
+        Reach::RunsOn(e) => Reach::RunsOn(ctx(e)),
+    })
+}
+
+/// A copy of the solids `solids` as one solid that shares nothing with
+/// them, named by `namer` as a copy: what an operation that leaves them as
+/// they are imprints and consumes instead.
+pub(crate) fn copy_of<S: Scalar>(
+    model: &mut NamedModel<S>,
+    namer: &Namer,
+    solids: &[SolidId],
+) -> GeopResult<SolidId> {
+    let mut faces = Vec::new();
+    for &solid in solids {
+        faces.extend(model.topology().solid_faces(solid)?);
+    }
+    let copy = model.copy_faces(&faces, Some(namer.name(&["copy"])), |name| {
+        namer.name(&["copy", name])
+    })?;
+    Ok(copy.solid.expect("built as a solid"))
 }
 
 /// [`boolean`], or with `up_to_next` [`boolean_up_to_next`] — or, with the
 /// tool kept alone, [`piece_up_to_next`].
 fn combine<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     solid_a: SolidId,
     solid_b: SolidId,
     op: BooleanOp,
-    up_to_next: Option<UpToNext>,
+    up_to_next: Option<ToolEnds>,
     params: RemeshParams<S>,
-) -> GeopResult<Option<SolidId>> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "boolean(name={}, solid_a={solid_a}, solid_b={solid_b}, op={op:?}, up_to_next={up_to_next:?})",
-            namer.root()
-        ))
-    };
+) -> GeopResult<Reach<Option<SolidId>>> {
+    let ctx = with_context!(
+        "boolean(name={}, solid_a={solid_a}, solid_b={solid_b}, op={op:?}, up_to_next={up_to_next:?})",
+        namer.root()
+    );
 
-    let origins = remesh(part, namer, solid_a, solid_b, params).with_context(&ctx)?;
-    let model = part.topology();
+    let origins = remesh(model, namer, solid_a, solid_b, params).with_context(&ctx)?;
+    let topology = model.topology();
 
-    let faces_a = model.solid_faces(solid_a).with_context(&ctx)?;
-    let faces_b = model.solid_faces(solid_b).with_context(&ctx)?;
+    let faces_a = topology.solid_faces(solid_a).with_context(&ctx)?;
+    let faces_b = topology.solid_faces(solid_b).with_context(&ctx)?;
 
     let mut decisions: HashMap<FaceId, (FaceClassification, Keep)> = HashMap::new();
     let mut keep: Vec<FaceId> = Vec::new();
@@ -294,15 +290,13 @@ fn combine<S: Scalar>(
     let mut classified = Classified::default();
     for (faces, from_a, other) in [(&faces_a, true, solid_b), (&faces_b, false, solid_a)] {
         for &face_id in faces {
-            let class = classify_face(model, face_id, other, params, &mut classified)
+            let class = classify_face(topology, face_id, other, params, &mut classified)
                 .with_context(&ctx)
-                .with_context(&|e: GeopError| {
-                    e.with_context(format!("classifying face {face_id}"))
-                })?;
+                .with_context(with_context!("classifying face {face_id}"))?;
             decisions.insert(face_id, (class, keeps(op, class, from_a)));
         }
     }
-    if let Some(UpToNext { start, end, alone }) = up_to_next {
+    if let Some(ToolEnds { start, end, alone }) = up_to_next {
         let tool: HashSet<FaceId> = faces_b.iter().copied().collect();
         // The piece of the kind the operator takes from the target, and
         // what of the target the tool leaves untouched — but for an
@@ -313,15 +307,19 @@ fn combine<S: Scalar>(
             BooleanOp::Difference => (true, true),
             BooleanOp::Intersection => (true, false),
         };
-        let reached = reach_up_to_next(
-            model,
+        let reached = match reach_up_to_next(
+            topology,
             &tool,
             (wanted_inside, keep_untouched),
             &origins.faces,
             (start, end),
             &mut decisions,
         )
-        .with_context(&ctx)?;
+        .with_context(&ctx)?
+        {
+            Reach::Stopped(reached) => reached,
+            Reach::RunsOn(e) => return Ok(Reach::RunsOn(ctx(e))),
+        };
         if alone {
             keep_alone(&reached, &mut decisions);
         }
@@ -338,14 +336,16 @@ fn combine<S: Scalar>(
             Keep::Drop => {}
         }
     }
-    check_closed(part, &decisions).with_context(&ctx)?;
+    check_closed(model, &decisions).with_context(&ctx)?;
 
     for &face_id in &reverse {
-        part.reverse_face(face_id).with_context(&ctx)?;
+        model.reverse_face(face_id).with_context(&ctx)?;
     }
 
-    part.assemble_solid(&[solid_a.into(), solid_b.into()], &keep, namer.root())
+    model
+        .assemble_solid(&[solid_a.into(), solid_b.into()], &keep, namer.root())
         .with_context(&ctx)
+        .map(Reach::Stopped)
 }
 
 /// Narrows `decisions` down to the piece of the tool (the faces `tool`) that
@@ -375,7 +375,7 @@ fn reach_up_to_next<S: Scalar>(
     origins: &HashMap<FaceId, String>,
     (start, end): (&str, &str),
     decisions: &mut HashMap<FaceId, (FaceClassification, Keep)>,
-) -> GeopResult<Reached> {
+) -> GeopResult<Reach<Reached>> {
     use FaceClassification::*;
     // Which side of the target the material behind a tool face lies on.
     let inside = |class: FaceClassification| matches!(class, Inside | OnSameNormal);
@@ -506,9 +506,9 @@ fn reach_up_to_next<S: Scalar>(
     for (i, face) in tool_faces.iter().enumerate() {
         let in_reach = reached.contains(&pieces.find(i));
         if in_reach && origin_is(face, end) {
-            return Err(GeopError::new(format!(
-                "{NOTHING_STOPS}: it reaches the end {end:?} without meeting a face of the target all around"
-            )));
+            return Ok(Reach::RunsOn(GeopError::new(format!(
+                "up to next: nothing stops the profile: it reaches the end {end:?} without meeting a face of the target all around"
+            ))));
         }
         if !in_reach {
             decisions.get_mut(face).expect("classified").1 = Keep::Drop;
@@ -537,7 +537,7 @@ fn reach_up_to_next<S: Scalar>(
             };
         }
     }
-    Ok(bounding)
+    Ok(Reach::Stopped(bounding))
 }
 
 /// What [`reach_up_to_next`] found the tool's taken piece bounded by: the
@@ -565,13 +565,6 @@ fn keep_alone(reached: &Reached, decisions: &mut HashMap<FaceId, (FaceClassifica
     }
 }
 
-/// Marks the error [`boolean_up_to_next`] and [`piece_up_to_next`] raise
-/// when the tool is not stopped all round — when the target meets part of
-/// the profile, or none, and the rest goes on past it. A caller can then go
-/// only as far as the profile first meets the target instead. Matched on the
-/// message, as `GeopError` carries no code.
-pub const NOTHING_STOPS: &str = "up to next: nothing stops the profile";
-
 /// Fails unless the kept faces close up: every edge they use must be used an
 /// even number of times by them — twice where two faces meet, four times
 /// where the result touches itself along the edge. An odd count is a hole in
@@ -579,17 +572,17 @@ pub const NOTHING_STOPS: &str = "up to next: nothing stops the profile";
 /// straddling the other solid; the error lists every face along that edge
 /// with its name and classification, which tells the two apart.
 fn check_closed<S: Scalar>(
-    part: &Part<S>,
+    model: &NamedModel<S>,
     decisions: &HashMap<FaceId, (FaceClassification, Keep)>,
 ) -> GeopResult<()> {
-    let model = part.topology();
+    let topology = model.topology();
     let mut uses: HashMap<EdgeId, usize> = HashMap::new();
     for (&face_id, &(_, decision)) in decisions {
         if decision == Keep::Drop {
             continue;
         }
-        for coedge in model.iterate_face_coedges(face_id) {
-            if let CoedgeGeometry::Edge(edge) = model.get_coedge(coedge)?.geometry {
+        for coedge in topology.iterate_face_coedges(face_id) {
+            if let CoedgeGeometry::Edge(edge) = topology.get_coedge(coedge)?.geometry {
                 *uses.entry(edge).or_default() += 1;
             }
         }
@@ -601,27 +594,27 @@ fn check_closed<S: Scalar>(
     else {
         return Ok(());
     };
-    let e = model.get_edge(edge)?;
-    let faces: Vec<String> = model
+    let e = topology.get_edge(edge)?;
+    let faces: Vec<String> = topology
         .coedges_of_edge(edge)
         .into_iter()
         .map(|coedge| {
-            let face = model.get_coedge(coedge)?.face;
-            let name = part.name_of(face).unwrap_or("?");
+            let face = topology.get_coedge(coedge)?.face;
+            let name = model.name_of(face).unwrap_or("?");
             let decision = match decisions.get(&face) {
                 Some((class, decision)) => format!("{class:?} -> {decision:?}"),
                 None => "not in either solid".to_string(),
             };
             Ok(format!(
                 "{face} {name:?}: {decision}, bounded by {:?}",
-                model.face_corners(face)?
+                topology.face_corners(face)?
             ))
         })
         .collect::<GeopResult<_>>()?;
     Err(GeopError::new(format!(
         "boolean: the kept faces use edge {edge} (from {:?} to {:?}) {count} time(s), leaving the result open there; faces along it: [{}]",
-        model.get_vertex(e.start_vertex)?.point,
-        model.get_vertex(e.end_vertex)?.point,
+        topology.get_vertex(e.start_vertex)?.point,
+        topology.get_vertex(e.end_vertex)?.point,
         faces.join(", ")
     )))
 }
@@ -839,20 +832,14 @@ fn shell_normal_at<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::{BooleanOp, FaceClassification, boolean, classify_face};
-    use crate::{remesh::remesh::RemeshParams, scenes::all_scenes};
-    use geop_core_math::{scalars::ScalInF64, scalars::Scalar, vector::Vector3};
-    use geop_core_topology::{
-        contains::rng::Rng,
-        validation::{ValidationParameters, validate_fast},
+    use crate::{
+        remesh::remesh::RemeshParams,
+        scenes::{scene, validation},
     };
+    use geop_core_math::{scalars::ScalInF64, scalars::Scalar, vector::Vector3};
+    use geop_core_topology::{contains::rng::Rng, validation::validate_fast};
     use geop_ops::Namer;
-
-    fn scene(name: &str) -> crate::scenes::TestScene<ScalInF64> {
-        all_scenes::<ScalInF64>()
-            .into_iter()
-            .find(|s| s.name == name)
-            .unwrap_or_else(|| panic!("scene {name} must exist"))
-    }
+    use geop_ops_extrude_revolve::shapes::cylinder::Axis;
 
     /// A fresh operation id, so that every solid and boolean a test builds
     /// gets names of its own.
@@ -868,29 +855,21 @@ mod tests {
         Namer::new("boolean", &fresh_id()).unwrap()
     }
 
-    fn validation() -> ValidationParameters<ScalInF64> {
-        let params = RemeshParams::<ScalInF64>::default();
-        ValidationParameters {
-            max_nodes: params.max_nodes,
-            min_subdivision_size: params.curve_curve_min_subdivision_size,
-            ..ValidationParameters::default()
-        }
-    }
-
     /// Every face of an un-remeshed cube is outside a cylinder that only
     /// overlaps part of it — the classification itself, before any operator.
     #[test]
     fn classify_face_separates_inside_from_outside() {
         let mut s = scene("box_cylinder_drilled_hole_through");
         let params = RemeshParams::<ScalInF64>::default();
-        crate::remesh::remesh::remesh(&mut s.part, &namer(), s.solid_a, s.solid_b, params).unwrap();
+        crate::remesh::remesh::remesh(&mut s.model, &namer(), s.solid_a, s.solid_b, params)
+            .unwrap();
 
         let mut inside = 0;
         let mut outside = 0;
-        for face_id in s.part.topology().solid_faces(s.solid_a).unwrap() {
+        for face_id in s.model.topology().solid_faces(s.solid_a).unwrap() {
             let mut classified = super::Classified::default();
             match classify_face(
-                s.part.topology(),
+                s.model.topology(),
                 face_id,
                 s.solid_b,
                 params,
@@ -915,12 +894,13 @@ mod tests {
     fn every_remeshed_face_has_an_interior_point() {
         let mut s = scene("box_cylinder_drilled_hole_through");
         let params = RemeshParams::<ScalInF64>::default();
-        crate::remesh::remesh::remesh(&mut s.part, &namer(), s.solid_a, s.solid_b, params).unwrap();
+        crate::remesh::remesh::remesh(&mut s.model, &namer(), s.solid_a, s.solid_b, params)
+            .unwrap();
 
         for solid in [s.solid_a, s.solid_b] {
-            for face_id in s.part.topology().solid_faces(solid).unwrap() {
+            for face_id in s.model.topology().solid_faces(solid).unwrap() {
                 let (u, v) = geop_core_topology::contains::face::face_interior_point(
-                    s.part.topology(),
+                    s.model.topology(),
                     face_id,
                     params.max_nodes,
                     params.curve_curve_min_subdivision_size,
@@ -928,7 +908,7 @@ mod tests {
                 )
                 .unwrap_or_else(|e| panic!("face {face_id}: {e}"));
                 let _ = s
-                    .part
+                    .model
                     .topology()
                     .get_face(face_id)
                     .unwrap()
@@ -942,15 +922,15 @@ mod tests {
     fn check_op(name: &str, op: BooleanOp) {
         let mut s = scene(name);
         let params = RemeshParams::<ScalInF64>::default();
-        let result = boolean(&mut s.part, &namer(), s.solid_a, s.solid_b, op, params)
+        let result = boolean(&mut s.model, &namer(), s.solid_a, s.solid_b, op, params)
             .unwrap_or_else(|e| panic!("{name} {op:?}: {e}"))
             .unwrap_or_else(|| panic!("{name} {op:?}: result is empty"));
 
         assert!(
-            !s.part.topology().solid_faces(result).unwrap().is_empty(),
+            !s.model.topology().solid_faces(result).unwrap().is_empty(),
             "{name} {op:?}: result has no faces"
         );
-        if let Err(errors) = validate_fast(&validation(), s.part.topology()) {
+        if let Err(errors) = validate_fast(&validation(), s.model.topology()) {
             panic!(
                 "{name} {op:?}: {} validate_fast error(s): {}",
                 errors.len(),
@@ -1003,10 +983,10 @@ mod tests {
     ) {
         let mut s = scene("box_cylinder_drilled_hole_through");
         let params = RemeshParams::<ScalInF64>::default();
-        let result = boolean(&mut s.part, &namer(), s.solid_a, s.solid_b, op, params)
+        let result = boolean(&mut s.model, &namer(), s.solid_a, s.solid_b, op, params)
             .unwrap()
             .expect("this scene's operands overlap, so no operator is empty");
-        (s.part.topology().clone(), result)
+        (s.model.topology().clone(), result)
     }
 
     /// Regression: two cubes meeting along a shared edge, where the traced
@@ -1021,7 +1001,7 @@ mod tests {
         let mut s = scene("box_grid_n1p00_n0p50_n1p00");
         let params = RemeshParams::<ScalInF64>::default();
         boolean(
-            &mut s.part,
+            &mut s.model,
             &namer(),
             s.solid_a,
             s.solid_b,
@@ -1060,15 +1040,15 @@ mod tests {
                 ScalInF64::from_f64(rng.next_f64() * 4.0 - 2.0),
             ]);
             let (Some(in_a), Some(in_b)) = (
-                strictly_inside(s.part.topology(), solid_a, p),
-                strictly_inside(s.part.topology(), solid_b, p),
+                strictly_inside(s.model.topology(), solid_a, p),
+                strictly_inside(s.model.topology(), solid_b, p),
             ) else {
                 continue;
             };
             samples.push((p, in_a, in_b));
         }
 
-        let result = boolean(&mut s.part, &namer(), solid_a, solid_b, op, params)
+        let result = boolean(&mut s.model, &namer(), solid_a, solid_b, op, params)
             .unwrap_or_else(|e| panic!("{name} {op:?}: {e}"));
 
         for (p, in_a, in_b) in samples {
@@ -1078,7 +1058,7 @@ mod tests {
                 BooleanOp::Difference => in_a && !in_b,
             };
             let actual = match result {
-                Some(solid) => match strictly_inside(s.part.topology(), solid, p) {
+                Some(solid) => match strictly_inside(s.model.topology(), solid, p) {
                     Some(inside) => inside,
                     // On the result's own boundary — ambiguous, no claim.
                     None => continue,
@@ -1216,15 +1196,6 @@ mod tests {
         check_op("box_cylinder_drilled_hole_through", BooleanOp::Difference);
     }
 
-    /// A chain of 3 differences (two axis-aligned slots cut from a block,
-    /// then a sphere drilled out of the result) — captured from a browser
-    /// session's timeline, exactly like `scenes`' hand-picked
-    /// cases, built here directly from `geop_ops_extrude_revolve::shapes`
-    /// and `boolean` rather than through `cad::Op`/wasm. Rendered to `outputs/` so the new
-    /// curvature-adaptive rasterizer's output on a real chained-boolean
-    /// result (flat cut faces plus the sphere's curved ones) can be
-    /// inspected visually, the same way `scenes`' figure8/box
-    /// cases are.
     // ── Chained booleans on the basic shapes, as the CAD front end builds them ──
     //
     // Each solid is created just before the boolean that uses it: every step
@@ -1232,7 +1203,7 @@ mod tests {
     // legitimately overlaps the others in space — which the validation would
     // report as edges crossing faces.
 
-    type M = geop_ops::Part<ScalInF64>;
+    type M = geop_ops::NamedModel<ScalInF64>;
 
     fn v(x: f64, y: f64, z: f64) -> Vector3<ScalInF64> {
         Vector3::from_array([x, y, z].map(ScalInF64::from_f64))
@@ -1240,32 +1211,32 @@ mod tests {
 
     /// `CreateCube(offset, dims)`: the axis-aligned box from `offset` to
     /// `offset + dims`.
-    fn cube(part: &mut M, offset: [f64; 3], dims: [f64; 3]) -> geop_core_topology::SolidId {
+    fn cube(model: &mut M, offset: [f64; 3], dims: [f64; 3]) -> geop_core_topology::SolidId {
         let [x, y, z] = offset;
         let [dx, dy, dz] = dims;
         let (min, max) = (v(x, y, z), v(x + dx, y + dy, z + dz));
-        geop_ops_extrude_revolve::shapes::cube_solid(part, &fresh_id(), min, max).unwrap()
+        geop_ops_extrude_revolve::shapes::cube_solid(model, &fresh_id(), min, max).unwrap()
     }
 
     /// `CreateSphere(offset, r)`.
-    fn sphere(part: &mut M, center: [f64; 3], r: f64) -> geop_core_topology::SolidId {
+    fn sphere(model: &mut M, center: [f64; 3], r: f64) -> geop_core_topology::SolidId {
         let [x, y, z] = center;
         let r = ScalInF64::from_f64(r);
-        geop_ops_extrude_revolve::shapes::sphere::sphere_solid(part, &fresh_id(), v(x, y, z), r)
+        geop_ops_extrude_revolve::shapes::sphere::sphere_solid(model, &fresh_id(), v(x, y, z), r)
             .unwrap()
     }
 
     /// `CreateCylinder(offset, r, h, axis)`: `offset` is the bottom cap's centre.
     fn cylinder(
-        part: &mut M,
+        model: &mut M,
         base: [f64; 3],
         r: f64,
         h: f64,
-        axis: geop_ops_extrude_revolve::shapes::cylinder::Axis,
+        axis: Axis,
     ) -> geop_core_topology::SolidId {
         let [x, y, z] = base;
         geop_ops_extrude_revolve::shapes::cylinder::revolved_cylinder_along_axis(
-            part,
+            model,
             &fresh_id(),
             v(x, y, z),
             ScalInF64::from_f64(r),
@@ -1278,17 +1249,17 @@ mod tests {
     /// Run one boolean, requiring it to succeed with a non-empty solid that
     /// passes `validate_fast` and the full `validate`.
     fn op(
-        part: &mut M,
+        model: &mut M,
         a: geop_core_topology::SolidId,
         b: geop_core_topology::SolidId,
         op: BooleanOp,
     ) -> geop_core_topology::SolidId {
-        let result = boolean(part, &namer(), a, b, op, RemeshParams::default())
+        let result = boolean(model, &namer(), a, b, op, RemeshParams::default())
             .unwrap_or_else(|e| panic!("{op:?} failed: {e:?}"))
             .unwrap_or_else(|| panic!("{op:?} produced an empty solid"));
-        part.check_names().unwrap();
-        let model = part.topology();
-        if let Err(errors) = validate_fast(&validation(), model) {
+        model.check_names().unwrap();
+        let topology = model.topology();
+        if let Err(errors) = validate_fast(&validation(), topology) {
             panic!(
                 "{op:?}: {} validate_fast error(s): {}",
                 errors.len(),
@@ -1300,23 +1271,23 @@ mod tests {
         // or two edges crossing away from any vertex. Not `validate_manifold`:
         // many of these results are genuinely non-manifold — solids touching
         // along a line leave edges shared by four faces.
-        if let Err(errors) = geop_core_topology::validation::validate(&validation(), model) {
+        if let Err(errors) = geop_core_topology::validation::validate(&validation(), topology) {
             panic!("{op:?}: {} validate error(s): {}", errors.len(), errors[0]);
         }
         // Closed, which neither check covers: every edge of the result is used
         // by an even number of coedges — two where two faces meet, four where
         // the solid touches itself along the edge. An odd count is a hole.
-        for face in model.solid_faces(result).unwrap() {
-            for coedge in model.iterate_face_coedges(face) {
+        for face in topology.solid_faces(result).unwrap() {
+            for coedge in topology.iterate_face_coedges(face) {
                 // A bare-vertex boundary has no edge to share.
-                let Ok(edge) = model.get_coedge(coedge).unwrap().edge() else {
+                let Ok(edge) = topology.get_coedge(coedge).unwrap().edge() else {
                     continue;
                 };
-                let uses = model.coedges_of_edge(edge).len();
+                let uses = topology.coedges_of_edge(edge).len();
                 if !uses.is_multiple_of(2) {
-                    let e = model.get_edge(edge).unwrap();
+                    let e = topology.get_edge(edge).unwrap();
                     let at = |v| {
-                        let p = model.get_vertex(v).unwrap().point;
+                        let p = topology.get_vertex(v).unwrap().point;
                         [p[0].to_f64(), p[1].to_f64(), p[2].to_f64()]
                     };
                     panic!(
@@ -1339,15 +1310,14 @@ mod tests {
     #[test]
     #[ignore = "slow: 6 s — run with `cargo test -- --ignored`"]
     fn bored_cube_plus_inscribed_sphere_minus_half() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let block = cube(&mut part, [-0.5, -0.5, -0.5], [1.0, 1.0, 1.0]);
-        let bore = cylinder(&mut part, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
-        let bored = op(&mut part, block, bore, BooleanOp::Difference);
-        let ball = sphere(&mut part, [0.0, 0.0, 0.0], 0.5);
-        let filled = op(&mut part, bored, ball, BooleanOp::Union);
-        let half = cube(&mut part, [-0.5, 0.0, -0.5], [1.0, 1.0, 1.0]);
-        op(&mut part, filled, half, BooleanOp::Difference);
+        let mut model = M::new();
+        let block = cube(&mut model, [-0.5, -0.5, -0.5], [1.0, 1.0, 1.0]);
+        let bore = cylinder(&mut model, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
+        let bored = op(&mut model, block, bore, BooleanOp::Difference);
+        let ball = sphere(&mut model, [0.0, 0.0, 0.0], 0.5);
+        let filled = op(&mut model, bored, ball, BooleanOp::Union);
+        let half = cube(&mut model, [-0.5, 0.0, -0.5], [1.0, 1.0, 1.0]);
+        op(&mut model, filled, half, BooleanOp::Difference);
     }
 
     /// Reported from the web front end: a cube with a flush inscribed bore
@@ -1360,25 +1330,24 @@ mod tests {
     #[test]
     #[ignore = "slow: 5 s — run with `cargo test -- --ignored`"]
     fn flush_bored_cube_plus_inscribed_sphere_section() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
-        let bore = cylinder(&mut part, [0.0, 0.0, -0.5], 0.5, 1.0, Axis::Z);
-        let bored = op(&mut part, block, bore, BooleanOp::Difference);
-        let ball = sphere(&mut part, [0.0, 0.0, 0.0], 0.5);
-        let filled = op(&mut part, bored, ball, BooleanOp::Union);
-        let cutter = cube(&mut part, [-1.45, -1.05, -0.82], [1.5, 2.1, 1.65]);
-        op(&mut part, filled, cutter, BooleanOp::Difference);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
+        let bore = cylinder(&mut model, [0.0, 0.0, -0.5], 0.5, 1.0, Axis::Z);
+        let bored = op(&mut model, block, bore, BooleanOp::Difference);
+        let ball = sphere(&mut model, [0.0, 0.0, 0.0], 0.5);
+        let filled = op(&mut model, bored, ball, BooleanOp::Union);
+        let cutter = cube(&mut model, [-1.45, -1.05, -0.82], [1.5, 2.1, 1.65]);
+        op(&mut model, filled, cutter, BooleanOp::Difference);
     }
 
     /// Like [`op`], for a boolean whose correct result is empty.
     fn op_empty(
-        part: &mut M,
+        model: &mut M,
         a: geop_core_topology::SolidId,
         b: geop_core_topology::SolidId,
         op: BooleanOp,
     ) {
-        let result = boolean(part, &namer(), a, b, op, RemeshParams::default())
+        let result = boolean(model, &namer(), a, b, op, RemeshParams::default())
             .unwrap_or_else(|e| panic!("{op:?} failed: {e:?}"));
         assert!(result.is_none(), "{op:?} should be empty");
     }
@@ -1395,11 +1364,10 @@ mod tests {
     /// The cylinder touches all four side faces along vertical lines.
     #[test]
     fn cube_minus_inscribed_cylinder() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
-        let bore = cylinder(&mut part, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
-        op(&mut part, block, bore, BooleanOp::Difference);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
+        let bore = cylinder(&mut model, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
+        op(&mut model, block, bore, BooleanOp::Difference);
     }
 
     /// The cylinder is tangent to the four sides *and* its caps are flush
@@ -1408,70 +1376,66 @@ mod tests {
     /// `flush_bored_cube_plus_inscribed_sphere_section`.
     #[test]
     fn cube_minus_flush_inscribed_cylinder() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
-        let bore = cylinder(&mut part, [0.0, 0.0, -0.5], 0.5, 1.0, Axis::Z);
-        op(&mut part, block, bore, BooleanOp::Difference);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
+        let bore = cylinder(&mut model, [0.0, 0.0, -0.5], 0.5, 1.0, Axis::Z);
+        op(&mut model, block, bore, BooleanOp::Difference);
     }
 
     /// The sphere touches each face of the cube at its centre.
     #[test]
     fn cube_minus_inscribed_sphere() {
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
-        let ball = sphere(&mut part, [0.0, 0.0, 0.0], 0.5);
-        op(&mut part, block, ball, BooleanOp::Difference);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
+        let ball = sphere(&mut model, [0.0, 0.0, 0.0], 0.5);
+        op(&mut model, block, ball, BooleanOp::Difference);
     }
 
     /// The sphere passes through all eight corners of the cube.
     #[test]
     fn cube_intersect_circumscribed_sphere() {
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
-        let ball = sphere(&mut part, [0.0, 0.0, 0.0], 3f64.sqrt() / 2.0);
-        op(&mut part, block, ball, BooleanOp::Intersection);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
+        let ball = sphere(&mut model, [0.0, 0.0, 0.0], 3f64.sqrt() / 2.0);
+        op(&mut model, block, ball, BooleanOp::Intersection);
     }
 
     /// The cylinder's surface contains the cube's four vertical edges.
     #[test]
     fn cube_intersect_cylinder_through_its_edges() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
-        let tube = cylinder(&mut part, [0.0, 0.0, -1.0], 0.5f64.sqrt(), 2.0, Axis::Z);
-        op(&mut part, block, tube, BooleanOp::Intersection);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
+        let tube = cylinder(&mut model, [0.0, 0.0, -1.0], 0.5f64.sqrt(), 2.0, Axis::Z);
+        op(&mut model, block, tube, BooleanOp::Intersection);
     }
 
     /// A coaxial cylinder of the sphere's radius touches it along the
     /// equator, a whole circle of tangency.
     #[test]
     fn sphere_union_tangent_cylinder() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let ball = sphere(&mut part, [0.0, 0.0, 0.0], 0.5);
-        let tube = cylinder(&mut part, [0.0, 0.0, -1.0], 0.5, 2.0, Axis::Z);
-        op(&mut part, ball, tube, BooleanOp::Union);
+        let mut model = M::new();
+        let ball = sphere(&mut model, [0.0, 0.0, 0.0], 0.5);
+        let tube = cylinder(&mut model, [0.0, 0.0, -1.0], 0.5, 2.0, Axis::Z);
+        op(&mut model, ball, tube, BooleanOp::Union);
     }
 
     /// A cube resting on the sphere's pole, where the sphere's patches all
     /// collapse to one point: tangent contact at a singular point.
     #[test]
     fn sphere_union_cube_touching_its_pole() {
-        let mut part = M::new();
-        let ball = sphere(&mut part, [0.0, 0.0, 0.0], 0.5);
-        let block = cube(&mut part, [-0.5, -0.5, 0.5], UNIT);
-        op(&mut part, ball, block, BooleanOp::Union);
+        let mut model = M::new();
+        let ball = sphere(&mut model, [0.0, 0.0, 0.0], 0.5);
+        let block = cube(&mut model, [-0.5, -0.5, 0.5], UNIT);
+        op(&mut model, ball, block, BooleanOp::Union);
     }
 
     /// A cylinder along x lying on the cube's top face: tangent along a line.
     #[test]
     fn cube_union_cylinder_lying_on_top() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
-        let log = cylinder(&mut part, [-1.0, 0.0, 0.75], 0.25, 2.0, Axis::X);
-        op(&mut part, block, log, BooleanOp::Union);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
+        let log = cylinder(&mut model, [-1.0, 0.0, 0.75], 0.25, 2.0, Axis::X);
+        op(&mut model, block, log, BooleanOp::Union);
     }
 
     // Coincident features: shared faces, edges and corners, coplanar caps, and
@@ -1479,79 +1443,77 @@ mod tests {
 
     #[test]
     fn cubes_sharing_a_face_union() {
-        let mut part = M::new();
-        let a = cube(&mut part, CORNER, UNIT);
-        let b = cube(&mut part, [0.5, -0.5, -0.5], UNIT);
-        op(&mut part, a, b, BooleanOp::Union);
+        let mut model = M::new();
+        let a = cube(&mut model, CORNER, UNIT);
+        let b = cube(&mut model, [0.5, -0.5, -0.5], UNIT);
+        op(&mut model, a, b, BooleanOp::Union);
     }
 
     #[test]
     fn cubes_sharing_an_edge_union() {
-        let mut part = M::new();
-        let a = cube(&mut part, CORNER, UNIT);
-        let b = cube(&mut part, [0.5, 0.5, -0.5], UNIT);
-        op(&mut part, a, b, BooleanOp::Union);
+        let mut model = M::new();
+        let a = cube(&mut model, CORNER, UNIT);
+        let b = cube(&mut model, [0.5, 0.5, -0.5], UNIT);
+        op(&mut model, a, b, BooleanOp::Union);
     }
 
     #[test]
     fn cubes_sharing_a_corner_union() {
-        let mut part = M::new();
-        let a = cube(&mut part, CORNER, UNIT);
-        let b = cube(&mut part, [0.5, 0.5, 0.5], UNIT);
-        op(&mut part, a, b, BooleanOp::Union);
+        let mut model = M::new();
+        let a = cube(&mut model, CORNER, UNIT);
+        let b = cube(&mut model, [0.5, 0.5, 0.5], UNIT);
+        op(&mut model, a, b, BooleanOp::Union);
     }
 
     /// A half-overlapping cube: two of its faces are coplanar with the first
     /// cube's, over part of their area.
     #[test]
     fn cube_minus_offset_cube_with_coplanar_faces() {
-        let mut part = M::new();
-        let a = cube(&mut part, CORNER, UNIT);
-        let b = cube(&mut part, [0.0, -0.5, -0.5], UNIT);
-        op(&mut part, a, b, BooleanOp::Difference);
+        let mut model = M::new();
+        let a = cube(&mut model, CORNER, UNIT);
+        let b = cube(&mut model, [0.0, -0.5, -0.5], UNIT);
+        op(&mut model, a, b, BooleanOp::Difference);
     }
 
     /// A hole whose caps are flush with the cube's top and bottom.
     #[test]
     fn cube_minus_flush_cylinder() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
-        let bore = cylinder(&mut part, [0.0, 0.0, -0.5], 0.3, 1.0, Axis::Z);
-        op(&mut part, block, bore, BooleanOp::Difference);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
+        let bore = cylinder(&mut model, [0.0, 0.0, -0.5], 0.3, 1.0, Axis::Z);
+        op(&mut model, block, bore, BooleanOp::Difference);
     }
 
     /// A plate 6 by 3 and a blind hole to drill into it from its top: a
     /// cylinder of radius 0.33 around `(3, 1.5)`, its start cap flush with
     /// the top.
     fn plate_and_blind_hole(
-        part: &mut M,
+        model: &mut M,
     ) -> (geop_core_topology::SolidId, geop_core_topology::SolidId) {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let plate = cube(part, [0.0, 0.0, 0.0], [6.0, 3.0, 0.5]);
-        let hole = cylinder(part, [3.0, 1.5, 0.2], 0.33, 0.3, Axis::Z);
+        let plate = cube(model, [0.0, 0.0, 0.0], [6.0, 3.0, 0.5]);
+        let hole = cylinder(model, [3.0, 1.5, 0.2], 0.33, 0.3, Axis::Z);
         (plate, hole)
     }
 
     /// The plate and hole of [`plate_and_blind_hole`] remeshed, and the disc
     /// the remesh cuts from the plate's top, inside the hole's rim.
     fn plate_and_blind_hole_remeshed(
-        part: &mut M,
+        model: &mut M,
     ) -> (geop_core_topology::SolidId, geop_core_topology::FaceId) {
-        let (plate, hole) = plate_and_blind_hole(part);
-        crate::remesh::remesh::remesh(part, &namer(), plate, hole, RemeshParams::default())
+        let (plate, hole) = plate_and_blind_hole(model);
+        crate::remesh::remesh::remesh(model, &namer(), plate, hole, RemeshParams::default())
             .unwrap();
-        let model = part.topology();
-        if let Err(errors) = validate_fast(&validation(), model) {
+        let topology = model.topology();
+        if let Err(errors) = validate_fast(&validation(), topology) {
             panic!("{} validate_fast error(s): {}", errors.len(), errors[0]);
         }
         let in_rim = |p: &[f64; 3]| (p[0] - 3.0).hypot(p[1] - 1.5) < 0.34 && p[2] > 0.49;
-        let disc = model
+        let disc = topology
             .solid_faces(plate)
             .unwrap()
             .into_iter()
             .find(|&face| {
-                let corners = model.face_corners(face).unwrap();
+                let corners = topology.face_corners(face).unwrap();
                 corners.len() == 1 && corners[0].iter().all(in_rim)
             })
             .expect("a face of the plate inside the hole's rim");
@@ -1563,9 +1525,9 @@ mod tests {
     /// top was classified outside the hole rather than on its cap.
     #[test]
     fn plate_minus_blind_hole_from_its_top() {
-        let mut part = M::new();
-        let (plate, hole) = plate_and_blind_hole(&mut part);
-        op(&mut part, plate, hole, BooleanOp::Difference);
+        let mut model = M::new();
+        let (plate, hole) = plate_and_blind_hole(&mut model);
+        op(&mut model, plate, hole, BooleanOp::Difference);
     }
 
     /// The disc cut from the plate's top lies on the hole's start cap, so
@@ -1576,22 +1538,22 @@ mod tests {
             face::face_interior_point_where,
             shell::{PointClassification, shell_contains},
         };
-        let mut part = M::new();
-        let (hole, disc) = plate_and_blind_hole_remeshed(&mut part);
-        let model = part.topology();
+        let mut model = M::new();
+        let (hole, disc) = plate_and_blind_hole_remeshed(&mut model);
+        let topology = model.topology();
         let params = RemeshParams::default();
-        let shell = model.get_solid(hole).unwrap().shells[0];
+        let shell = topology.get_solid(hole).unwrap().shells[0];
         let mut checked = 0;
         face_interior_point_where(
-            model,
+            topology,
             disc,
             params.max_nodes,
             params.curve_curve_min_subdivision_size,
             super::SEED,
             |u, v| {
-                let point = model.get_face(disc)?.surface.evaluate(u, v)?;
+                let point = topology.get_face(disc)?.surface.evaluate(u, v)?;
                 let class = shell_contains(
-                    model,
+                    topology,
                     shell,
                     point,
                     params.max_nodes,
@@ -1622,14 +1584,14 @@ mod tests {
     fn point_beside_the_disc_cut_from_the_top_is_outside_it() {
         use geop_core_math::scalars::Ring;
         use geop_core_topology::contains::face::{PointClassification, face_contains};
-        let mut part = M::new();
-        let (_, disc) = plate_and_blind_hole_remeshed(&mut part);
-        let model = part.topology();
+        let mut model = M::new();
+        let (_, disc) = plate_and_blind_hole_remeshed(&mut model);
+        let topology = model.topology();
         let (u, v) = (
             ScalInF64::from_f64(0.42698015887332674),
             ScalInF64::from_f64(0.5220523370528238),
         );
-        let point = model
+        let point = topology
             .get_face(disc)
             .unwrap()
             .surface
@@ -1646,7 +1608,7 @@ mod tests {
         for (u, v) in [(u, v), (neighbourhood(u), neighbourhood(v))] {
             for seed in (0..64).chain([super::SEED]) {
                 let class =
-                    face_contains(model, disc, u, v, params.max_nodes, epsilon, seed).unwrap();
+                    face_contains(topology, disc, u, v, params.max_nodes, epsilon, seed).unwrap();
                 if class != PointClassification::Outside {
                     wrong.push(format!("{class:?} at ({u:?}, {v:?}) with seed {seed}"));
                 }
@@ -1657,18 +1619,18 @@ mod tests {
 
     #[test]
     fn identical_spheres_union() {
-        let mut part = M::new();
-        let a = sphere(&mut part, [0.0, 0.0, 0.0], 0.5);
-        let b = sphere(&mut part, [0.0, 0.0, 0.0], 0.5);
-        op(&mut part, a, b, BooleanOp::Union);
+        let mut model = M::new();
+        let a = sphere(&mut model, [0.0, 0.0, 0.0], 0.5);
+        let b = sphere(&mut model, [0.0, 0.0, 0.0], 0.5);
+        op(&mut model, a, b, BooleanOp::Union);
     }
 
     #[test]
     fn identical_cubes_difference_is_empty() {
-        let mut part = M::new();
-        let a = cube(&mut part, CORNER, UNIT);
-        let b = cube(&mut part, CORNER, UNIT);
-        op_empty(&mut part, a, b, BooleanOp::Difference);
+        let mut model = M::new();
+        let a = cube(&mut model, CORNER, UNIT);
+        let b = cube(&mut model, CORNER, UNIT);
+        op_empty(&mut model, a, b, BooleanOp::Difference);
     }
 
     /// Every operator on two copies of one shape — same geometry, separate
@@ -1679,55 +1641,54 @@ mod tests {
     fn check_duplicated_shape(make: impl Fn(&mut M) -> geop_core_topology::SolidId) {
         let probes = [(0.0, 0.0, 0.0), (0.2, -0.1, 0.15), (0.9, 0.0, 0.0)];
         let inside_original = {
-            let mut part = M::new();
-            let shape = make(&mut part);
-            probes.map(|p| contains(part.topology(), shape, p))
+            let mut model = M::new();
+            let shape = make(&mut model);
+            probes.map(|p| contains(model.topology(), shape, p))
         };
         for operator in [BooleanOp::Union, BooleanOp::Intersection] {
-            let mut part = M::new();
-            let a = make(&mut part);
-            let b = make(&mut part);
-            let result = op(&mut part, a, b, operator);
+            let mut model = M::new();
+            let a = make(&mut model);
+            let b = make(&mut model);
+            let result = op(&mut model, a, b, operator);
             for (p, inside) in probes.iter().zip(inside_original) {
                 assert_eq!(
-                    contains(part.topology(), result, *p),
+                    contains(model.topology(), result, *p),
                     inside,
                     "{operator:?} of two copies must contain {p:?} exactly when one copy does"
                 );
             }
         }
-        let mut part = M::new();
-        let a = make(&mut part);
-        let b = make(&mut part);
-        op_empty(&mut part, a, b, BooleanOp::Difference);
+        let mut model = M::new();
+        let a = make(&mut model);
+        let b = make(&mut model);
+        op_empty(&mut model, a, b, BooleanOp::Difference);
     }
 
     #[test]
     fn duplicated_cube_all_operators() {
-        check_duplicated_shape(|part| cube(part, CORNER, UNIT));
+        check_duplicated_shape(|model| cube(model, CORNER, UNIT));
     }
 
     #[test]
     #[ignore = "slow: 6 s — run with `cargo test -- --ignored`"]
     fn duplicated_sphere_all_operators() {
-        check_duplicated_shape(|part| sphere(part, [0.0, 0.0, 0.0], 0.5));
+        check_duplicated_shape(|model| sphere(model, [0.0, 0.0, 0.0], 0.5));
     }
 
     #[test]
     #[ignore = "slow: 8 s — run with `cargo test -- --ignored`"]
     fn duplicated_cylinder_all_operators() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        check_duplicated_shape(|part| cylinder(part, [0.0, 0.0, -0.5], 0.5, 1.0, Axis::Z));
+        check_duplicated_shape(|model| cylinder(model, [0.0, 0.0, -0.5], 0.5, 1.0, Axis::Z));
     }
 
     /// A sphere centred on the cube's corner: its three coordinate-plane
     /// seams lie exactly in three faces of the cube.
     #[test]
     fn cube_minus_sphere_on_its_corner() {
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
-        let ball = sphere(&mut part, [0.5, 0.5, 0.5], 0.5);
-        op(&mut part, block, ball, BooleanOp::Difference);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
+        let ball = sphere(&mut model, [0.5, 0.5, 0.5], 0.5);
+        op(&mut model, block, ball, BooleanOp::Difference);
     }
 
     // Curved against curved.
@@ -1736,41 +1697,37 @@ mod tests {
     /// curves (two ellipses) cross each other at two singular points.
     #[test]
     fn steinmetz_cylinders_union() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let a = cylinder(&mut part, [0.0, 0.0, -1.0], 0.5, 2.0, Axis::Z);
-        let b = cylinder(&mut part, [-1.0, 0.0, 0.0], 0.5, 2.0, Axis::X);
-        op(&mut part, a, b, BooleanOp::Union);
+        let mut model = M::new();
+        let a = cylinder(&mut model, [0.0, 0.0, -1.0], 0.5, 2.0, Axis::Z);
+        let b = cylinder(&mut model, [-1.0, 0.0, 0.0], 0.5, 2.0, Axis::X);
+        op(&mut model, a, b, BooleanOp::Union);
     }
 
     #[test]
     fn steinmetz_cylinders_intersection() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let a = cylinder(&mut part, [0.0, 0.0, -1.0], 0.5, 2.0, Axis::Z);
-        let b = cylinder(&mut part, [-1.0, 0.0, 0.0], 0.5, 2.0, Axis::X);
-        op(&mut part, a, b, BooleanOp::Intersection);
+        let mut model = M::new();
+        let a = cylinder(&mut model, [0.0, 0.0, -1.0], 0.5, 2.0, Axis::Z);
+        let b = cylinder(&mut model, [-1.0, 0.0, 0.0], 0.5, 2.0, Axis::X);
+        op(&mut model, a, b, BooleanOp::Intersection);
     }
 
     /// A bore along the sphere's axis, through both poles.
     #[test]
     fn sphere_minus_cylinder_through_its_poles() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let ball = sphere(&mut part, [0.0, 0.0, 0.0], 0.5);
-        let bore = cylinder(&mut part, [0.0, 0.0, -1.0], 0.2, 2.0, Axis::Z);
-        op(&mut part, ball, bore, BooleanOp::Difference);
+        let mut model = M::new();
+        let ball = sphere(&mut model, [0.0, 0.0, 0.0], 0.5);
+        let bore = cylinder(&mut model, [0.0, 0.0, -1.0], 0.2, 2.0, Axis::Z);
+        op(&mut model, ball, bore, BooleanOp::Difference);
     }
 
     /// A sphere centred on a cylinder's cap: the cap cuts it along its
     /// equator, which is also where its patches meet.
     #[test]
     fn cylinder_union_sphere_on_its_cap() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let tube = cylinder(&mut part, [0.0, 0.0, -1.0], 0.5, 1.0, Axis::Z);
-        let ball = sphere(&mut part, [0.0, 0.0, 0.0], 0.3);
-        op(&mut part, tube, ball, BooleanOp::Union);
+        let mut model = M::new();
+        let tube = cylinder(&mut model, [0.0, 0.0, -1.0], 0.5, 1.0, Axis::Z);
+        let ball = sphere(&mut model, [0.0, 0.0, 0.0], 0.3);
+        op(&mut model, tube, ball, BooleanOp::Union);
     }
 
     /// The same with the sphere's radius equal to the cylinder's: the
@@ -1778,29 +1735,28 @@ mod tests {
     /// tangent to the cylinder's side along that same circle.
     #[test]
     fn cylinder_union_equal_sphere_on_its_cap() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let tube = cylinder(&mut part, [0.0, 0.0, -1.0], 0.5, 1.0, Axis::Z);
-        let ball = sphere(&mut part, [0.0, 0.0, 0.0], 0.5);
-        op(&mut part, tube, ball, BooleanOp::Union);
+        let mut model = M::new();
+        let tube = cylinder(&mut model, [0.0, 0.0, -1.0], 0.5, 1.0, Axis::Z);
+        let ball = sphere(&mut model, [0.0, 0.0, 0.0], 0.5);
+        op(&mut model, tube, ball, BooleanOp::Union);
     }
 
     /// External tangency at a point of the sphere's equator (not a pole).
     #[test]
     fn cube_union_sphere_touching_a_face() {
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
-        let ball = sphere(&mut part, [1.0, 0.0, 0.0], 0.5);
-        op(&mut part, block, ball, BooleanOp::Union);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
+        let ball = sphere(&mut model, [1.0, 0.0, 0.0], 0.5);
+        op(&mut model, block, ball, BooleanOp::Union);
     }
 
     /// A sphere half sunk into the cube through the centre of a face.
     #[test]
     fn cube_union_sphere_on_a_face() {
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
-        let ball = sphere(&mut part, [0.5, 0.0, 0.0], 0.3);
-        op(&mut part, block, ball, BooleanOp::Union);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
+        let ball = sphere(&mut model, [0.5, 0.0, 0.0], 0.3);
+        op(&mut model, block, ball, BooleanOp::Union);
     }
 
     /// Two inscribed bores at right angles: the first two steps of
@@ -1810,13 +1766,12 @@ mod tests {
     #[test]
     #[ignore = "slow: 4 s — run with `cargo test -- --ignored`"]
     fn cube_minus_two_inscribed_bores() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
-        let z = cylinder(&mut part, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
-        let a = op(&mut part, block, z, BooleanOp::Difference);
-        let x = cylinder(&mut part, [-0.875, 0.0, 0.0], 0.5, 1.75, Axis::X);
-        op(&mut part, a, x, BooleanOp::Difference);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
+        let z = cylinder(&mut model, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
+        let a = op(&mut model, block, z, BooleanOp::Difference);
+        let x = cylinder(&mut model, [-0.875, 0.0, 0.0], 0.5, 1.75, Axis::X);
+        op(&mut model, a, x, BooleanOp::Difference);
     }
 
     /// Remesh `a` against `b`, then require an edge shared by faces of both
@@ -1830,28 +1785,28 @@ mod tests {
     /// scene must have are named, and on failure the edges it does have are
     /// listed.
     fn check_remesh_imprints(
-        part: &mut M,
+        model: &mut M,
         a: geop_core_topology::SolidId,
         b: geop_core_topology::SolidId,
         arcs: &[[[f64; 3]; 2]],
     ) {
-        crate::remesh::remesh::remesh(part, &namer(), a, b, RemeshParams::default())
+        crate::remesh::remesh::remesh(model, &namer(), a, b, RemeshParams::default())
             .unwrap_or_else(|e| panic!("remesh failed: {e}"));
-        let model = part.topology();
-        let faces_a = model.solid_faces(a).unwrap();
-        let faces_b = model.solid_faces(b).unwrap();
+        let topology = model.topology();
+        let faces_a = topology.solid_faces(a).unwrap();
+        let faces_b = topology.solid_faces(b).unwrap();
         let mut shared = Vec::new();
-        for (&edge_id, edge) in &model.edges {
-            let faces: Vec<_> = model
+        for (&edge_id, edge) in &topology.edges {
+            let faces: Vec<_> = topology
                 .coedges_of_edge(edge_id)
                 .iter()
-                .map(|&c| model.get_coedge(c).unwrap().face)
+                .map(|&c| topology.get_coedge(c).unwrap().face)
                 .collect();
             if faces.iter().any(|f| faces_a.contains(f))
                 && faces.iter().any(|f| faces_b.contains(f))
             {
                 shared.push([edge.start_vertex, edge.end_vertex].map(|v| {
-                    let p = model.get_vertex(v).unwrap().point;
+                    let p = topology.get_vertex(v).unwrap().point;
                     [p[0].to_f64(), p[1].to_f64(), p[2].to_f64()]
                 }));
             }
@@ -1873,7 +1828,7 @@ mod tests {
             "no edge shared by both solids between {missing:?}; the shared edges are {shared:?}"
         );
 
-        if let Err(errors) = geop_core_topology::validation::validate(&validation(), model) {
+        if let Err(errors) = geop_core_topology::validation::validate(&validation(), topology) {
             let all: Vec<String> = errors.iter().map(|e| format!("{e}")).collect();
             panic!(
                 "{} validate error(s):\n{}",
@@ -1891,19 +1846,18 @@ mod tests {
     #[test]
     #[ignore = "slow: 5 s — run with `cargo test -- --ignored`"]
     fn two_inscribed_bores_remesh_imprints_every_arc() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
-        let z = cylinder(&mut part, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
-        let a = op(&mut part, block, z, BooleanOp::Difference);
-        let x = cylinder(&mut part, [-0.875, 0.0, 0.0], 0.5, 1.75, Axis::X);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
+        let z = cylinder(&mut model, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
+        let a = op(&mut model, block, z, BooleanOp::Difference);
+        let x = cylinder(&mut model, [-0.875, 0.0, 0.0], 0.5, 1.75, Axis::X);
         let mut arcs = Vec::new();
         for (mx, mz) in [(0.5, 0.5), (0.5, -0.5), (-0.5, 0.5), (-0.5, -0.5)] {
             for cy in [0.5, -0.5] {
                 arcs.push([[mx, 0.0, mz], [0.0, cy, 0.0]]);
             }
         }
-        check_remesh_imprints(&mut part, a, x, &arcs);
+        check_remesh_imprints(&mut model, a, x, &arcs);
     }
 
     /// The remesh behind `cube_minus_three_inscribed_bores`' third step. In
@@ -1915,14 +1869,13 @@ mod tests {
     #[test]
     #[ignore = "slow: 9 s — run with `cargo test -- --ignored`"]
     fn three_inscribed_bores_remesh_imprints_every_arc() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
-        let z = cylinder(&mut part, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
-        let a = op(&mut part, block, z, BooleanOp::Difference);
-        let x = cylinder(&mut part, [-0.875, 0.0, 0.0], 0.5, 1.75, Axis::X);
-        let b = op(&mut part, a, x, BooleanOp::Difference);
-        let y = cylinder(&mut part, [0.0, -0.875, 0.0], 0.5, 1.75, Axis::Y);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
+        let z = cylinder(&mut model, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
+        let a = op(&mut model, block, z, BooleanOp::Difference);
+        let x = cylinder(&mut model, [-0.875, 0.0, 0.0], 0.5, 1.75, Axis::X);
+        let b = op(&mut model, a, x, BooleanOp::Difference);
+        let y = cylinder(&mut model, [0.0, -0.875, 0.0], 0.5, 1.75, Axis::Y);
         let t = 0.125f64.sqrt();
         let mut arcs = Vec::new();
         for sx in [1.0, -1.0] {
@@ -1934,7 +1887,7 @@ mod tests {
                 }
             }
         }
-        check_remesh_imprints(&mut part, b, y, &arcs);
+        check_remesh_imprints(&mut model, b, y, &arcs);
     }
 
     /// Inscribed bores along all three axes, one after another (a "jack").
@@ -1943,27 +1896,25 @@ mod tests {
     #[test]
     #[ignore = "slow: 8 s — run with `cargo test -- --ignored`"]
     fn cube_minus_three_inscribed_bores() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
-        let z = cylinder(&mut part, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
-        let a = op(&mut part, block, z, BooleanOp::Difference);
-        let x = cylinder(&mut part, [-0.875, 0.0, 0.0], 0.5, 1.75, Axis::X);
-        let b = op(&mut part, a, x, BooleanOp::Difference);
-        let y = cylinder(&mut part, [0.0, -0.875, 0.0], 0.5, 1.75, Axis::Y);
-        op(&mut part, b, y, BooleanOp::Difference);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
+        let z = cylinder(&mut model, [0.0, 0.0, -0.875], 0.5, 1.75, Axis::Z);
+        let a = op(&mut model, block, z, BooleanOp::Difference);
+        let x = cylinder(&mut model, [-0.875, 0.0, 0.0], 0.5, 1.75, Axis::X);
+        let b = op(&mut model, a, x, BooleanOp::Difference);
+        let y = cylinder(&mut model, [0.0, -0.875, 0.0], 0.5, 1.75, Axis::Y);
+        op(&mut model, b, y, BooleanOp::Difference);
     }
 
     /// Thinner bores, so the cube keeps its faces: two crossing bores.
     #[test]
     fn cube_minus_two_crossing_bores() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
-        let z = cylinder(&mut part, [0.0, 0.0, -0.875], 0.3, 1.75, Axis::Z);
-        let a = op(&mut part, block, z, BooleanOp::Difference);
-        let x = cylinder(&mut part, [-0.875, 0.0, 0.0], 0.3, 1.75, Axis::X);
-        op(&mut part, a, x, BooleanOp::Difference);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
+        let z = cylinder(&mut model, [0.0, 0.0, -0.875], 0.3, 1.75, Axis::Z);
+        let a = op(&mut model, block, z, BooleanOp::Difference);
+        let x = cylinder(&mut model, [-0.875, 0.0, 0.0], 0.3, 1.75, Axis::X);
+        op(&mut model, a, x, BooleanOp::Difference);
     }
 
     // More tangencies, and a longer chain.
@@ -1971,56 +1922,53 @@ mod tests {
     /// Two spheres touching externally at a single point.
     #[test]
     fn touching_spheres_union() {
-        let mut part = M::new();
-        let a = sphere(&mut part, [0.0, 0.0, 0.0], 0.5);
-        let b = sphere(&mut part, [1.0, 0.0, 0.0], 0.5);
-        op(&mut part, a, b, BooleanOp::Union);
+        let mut model = M::new();
+        let a = sphere(&mut model, [0.0, 0.0, 0.0], 0.5);
+        let b = sphere(&mut model, [1.0, 0.0, 0.0], 0.5);
+        op(&mut model, a, b, BooleanOp::Union);
     }
 
     /// A sphere inside a cylinder of the same radius, touching it along the
     /// equator from inside.
     #[test]
     fn cylinder_minus_inscribed_sphere() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let tube = cylinder(&mut part, [0.0, 0.0, -1.0], 0.5, 2.0, Axis::Z);
-        let ball = sphere(&mut part, [0.0, 0.0, 0.0], 0.5);
-        op(&mut part, tube, ball, BooleanOp::Difference);
+        let mut model = M::new();
+        let tube = cylinder(&mut model, [0.0, 0.0, -1.0], 0.5, 2.0, Axis::Z);
+        let ball = sphere(&mut model, [0.0, 0.0, 0.0], 0.5);
+        op(&mut model, tube, ball, BooleanOp::Difference);
     }
 
     /// Two parallel cylinders touching along a line.
     #[test]
     fn touching_parallel_cylinders_union() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let a = cylinder(&mut part, [0.0, 0.0, -0.5], 0.5, 1.0, Axis::Z);
-        let b = cylinder(&mut part, [1.0, 0.0, -0.5], 0.5, 1.0, Axis::Z);
-        op(&mut part, a, b, BooleanOp::Union);
+        let mut model = M::new();
+        let a = cylinder(&mut model, [0.0, 0.0, -0.5], 0.5, 1.0, Axis::Z);
+        let b = cylinder(&mut model, [1.0, 0.0, -0.5], 0.5, 1.0, Axis::Z);
+        op(&mut model, a, b, BooleanOp::Union);
     }
 
     /// A sphere touching one of the cube's edges from outside.
     #[test]
     fn cube_union_sphere_touching_an_edge() {
-        let mut part = M::new();
-        let block = cube(&mut part, CORNER, UNIT);
+        let mut model = M::new();
+        let block = cube(&mut model, CORNER, UNIT);
         let d = 0.5 + 0.5 / 2f64.sqrt();
-        let ball = sphere(&mut part, [d, d, 0.0], 0.5);
-        op(&mut part, block, ball, BooleanOp::Union);
+        let ball = sphere(&mut model, [d, d, 0.0], 0.5);
+        op(&mut model, block, ball, BooleanOp::Union);
     }
 
     /// A small part as a user might build it: a plate with a boss and a
     /// through hole, then a rounded cap on the boss.
     #[test]
     fn plate_with_boss_hole_and_cap() {
-        use geop_ops_extrude_revolve::shapes::cylinder::Axis;
-        let mut part = M::new();
-        let plate = cube(&mut part, [-1.0, -1.0, -0.25], [2.0, 2.0, 0.5]);
-        let boss = cylinder(&mut part, [0.0, 0.0, 0.25], 0.5, 0.5, Axis::Z);
-        let a = op(&mut part, plate, boss, BooleanOp::Union);
-        let cap = sphere(&mut part, [0.0, 0.0, 0.75], 0.5);
-        let b = op(&mut part, a, cap, BooleanOp::Union);
-        let hole = cylinder(&mut part, [0.0, 0.0, -0.5], 0.25, 1.5, Axis::Z);
-        op(&mut part, b, hole, BooleanOp::Difference);
+        let mut model = M::new();
+        let plate = cube(&mut model, [-1.0, -1.0, -0.25], [2.0, 2.0, 0.5]);
+        let boss = cylinder(&mut model, [0.0, 0.0, 0.25], 0.5, 0.5, Axis::Z);
+        let a = op(&mut model, plate, boss, BooleanOp::Union);
+        let cap = sphere(&mut model, [0.0, 0.0, 0.75], 0.5);
+        let b = op(&mut model, a, cap, BooleanOp::Union);
+        let hole = cylinder(&mut model, [0.0, 0.0, -0.5], 0.25, 1.5, Axis::Z);
+        op(&mut model, b, hole, BooleanOp::Difference);
     }
 
     /// The second step of `chained_differences_block_with_two_slots_and_a_sphere`,
@@ -2030,27 +1978,17 @@ mod tests {
     /// once `classify_face` checked every interior point it sampled.
     #[test]
     fn chained_slots_point_above_the_block_is_outside() {
-        let f = ScalInF64::from_f64;
-        let corner = |x: f64, y: f64, z: f64, dx: f64, dy: f64, dz: f64| {
-            (
-                Vector3::from_array([f(x), f(y), f(z)]),
-                Vector3::from_array([f(x + dx), f(y + dy), f(z + dz)]),
-            )
-        };
-        let mut part = M::new();
-        let (min_a, max_a) = corner(-0.50, -0.50, -0.50, 1.00, 1.00, 1.00);
-        let a = geop_ops_extrude_revolve::shapes::cube_solid(&mut part, "a", min_a, max_a).unwrap();
-        let (min_b, max_b) = corner(-1.13, -0.30, -0.33, 2.25, 0.60, 0.65);
-        let b = geop_ops_extrude_revolve::shapes::cube_solid(&mut part, "b", min_b, max_b).unwrap();
-        let c = op(&mut part, a, b, BooleanOp::Difference);
-        let (min_d, max_d) = corner(-0.33, -0.28, -1.15, 0.65, 0.55, 2.30);
-        let d = geop_ops_extrude_revolve::shapes::cube_solid(&mut part, "d", min_d, max_d).unwrap();
-        crate::remesh::remesh::remesh(&mut part, &namer(), c, d, RemeshParams::default()).unwrap();
+        let mut model = M::new();
+        let a = cube(&mut model, [-0.50, -0.50, -0.50], [1.00, 1.00, 1.00]);
+        let b = cube(&mut model, [-1.13, -0.30, -0.33], [2.25, 0.60, 0.65]);
+        let c = op(&mut model, a, b, BooleanOp::Difference);
+        let d = cube(&mut model, [-0.33, -0.28, -1.15], [0.65, 0.55, 2.30]);
+        crate::remesh::remesh::remesh(&mut model, &namer(), c, d, RemeshParams::default()).unwrap();
 
         let params = RemeshParams::<ScalInF64>::default();
-        let shell = part.topology().get_solid(c).unwrap().shells[0];
+        let shell = model.topology().get_solid(c).unwrap().shells[0];
         let classification = geop_core_topology::contains::shell::shell_contains(
-            part.topology(),
+            model.topology(),
             shell,
             v(-0.005, -0.28, 0.825),
             params.max_nodes,
@@ -2067,38 +2005,28 @@ mod tests {
     #[test]
     fn chained_differences_block_with_two_slots_and_a_sphere() {
         let f = ScalInF64::from_f64;
-        let corner = |x: f64, y: f64, z: f64, dx: f64, dy: f64, dz: f64| {
-            (
-                Vector3::from_array([f(x), f(y), f(z)]),
-                Vector3::from_array([f(x + dx), f(y + dy), f(z + dz)]),
-            )
-        };
-
-        let mut part = M::new();
-        let (min_a, max_a) = corner(-0.50, -0.50, -0.50, 1.00, 1.00, 1.00);
-        let a = geop_ops_extrude_revolve::shapes::cube_solid(&mut part, "a", min_a, max_a).unwrap();
-        let (min_b, max_b) = corner(-1.13, -0.30, -0.33, 2.25, 0.60, 0.65);
-        let b = geop_ops_extrude_revolve::shapes::cube_solid(&mut part, "b", min_b, max_b).unwrap();
+        let mut model = M::new();
+        let a = cube(&mut model, [-0.50, -0.50, -0.50], [1.00, 1.00, 1.00]);
+        let b = cube(&mut model, [-1.13, -0.30, -0.33], [2.25, 0.60, 0.65]);
         let params = RemeshParams::<ScalInF64>::default();
-        let c = boolean(&mut part, &namer(), a, b, BooleanOp::Difference, params)
+        let c = boolean(&mut model, &namer(), a, b, BooleanOp::Difference, params)
             .unwrap()
             .expect("block minus the first slot must be non-empty");
 
-        let (min_d, max_d) = corner(-0.33, -0.28, -1.15, 0.65, 0.55, 2.30);
-        let d = geop_ops_extrude_revolve::shapes::cube_solid(&mut part, "d", min_d, max_d).unwrap();
-        let e = boolean(&mut part, &namer(), c, d, BooleanOp::Difference, params)
+        let d = cube(&mut model, [-0.33, -0.28, -1.15], [0.65, 0.55, 2.30]);
+        let e = boolean(&mut model, &namer(), c, d, BooleanOp::Difference, params)
             .unwrap()
             .expect("minus the second slot must be non-empty");
 
         let sphere = geop_ops_extrude_revolve::shapes::sphere::sphere_solid(
-            &mut part,
+            &mut model,
             "s",
             Vector3::zero(),
             f(0.45),
         )
         .unwrap();
         let result = boolean(
-            &mut part,
+            &mut model,
             &namer(),
             e,
             sphere,
@@ -2107,15 +2035,15 @@ mod tests {
         )
         .unwrap()
         .expect("minus the sphere must be non-empty");
-        part.check_names().unwrap();
+        model.check_names().unwrap();
 
-        let model = part.topology();
-        assert!(!model.solid_faces(result).unwrap().is_empty());
-        if let Err(errors) = validate_fast(&validation(), model) {
+        let topology = model.topology();
+        assert!(!topology.solid_faces(result).unwrap().is_empty());
+        if let Err(errors) = validate_fast(&validation(), topology) {
             panic!("{} validate_fast error(s): {}", errors.len(), errors[0]);
         }
 
-        let scene = geop_ops_rasterize::rasterize(model, 8)
+        let scene = geop_ops_rasterize::rasterize(topology, 8)
             .unwrap()
             .scene(|_| geop_ops_rasterize::debug::Color10::Blue);
         std::fs::create_dir_all("outputs").unwrap();
@@ -2141,18 +2069,18 @@ mod tests {
     /// not membership (see `AGENTS.md`).
     #[test]
     fn chained_differences_with_anchored_shapes_and_thin_slab_cutter_succeeds() {
-        let mut part = M::new();
-        let block = cube(&mut part, [-0.5, -0.5, -0.5], [1.0, 1.0, 1.0]);
+        let mut model = M::new();
+        let block = cube(&mut model, [-0.5, -0.5, -0.5], [1.0, 1.0, 1.0]);
         let [x, y, z] = [-0.5000000000000001, 0.5000000000000002, 0.5000000000000001];
-        let second = cube(&mut part, [x - 0.5, y - 0.5, z - 0.5], [1.0, 1.0, 1.0]);
+        let second = cube(&mut model, [x - 0.5, y - 0.5, z - 0.5], [1.0, 1.0, 1.0]);
         let center = [0.5000000000000003, 0.5000000000000002, 0.5000000000000001];
-        let ball = sphere(&mut part, center, 0.5);
+        let ball = sphere(&mut model, center, 0.5);
         // Only success is asserted, as when this was captured: the full
         // `validate` that `op` runs finds an edge of the second result
         // crossing a face unsplit, which this regression never covered.
-        let difference = |part: &mut M, a, b| {
+        let difference = |model: &mut M, a, b| {
             boolean(
-                part,
+                model,
                 &namer(),
                 a,
                 b,
@@ -2162,11 +2090,11 @@ mod tests {
             .unwrap()
             .expect("the result is not empty")
         };
-        let cut = difference(&mut part, block, second);
-        let cut = difference(&mut part, cut, ball);
-        let slab = cube(&mut part, [-1.13, -0.10, -0.15], [2.25, 0.20, 0.30]);
-        difference(&mut part, cut, slab);
-        part.check_names().unwrap();
+        let cut = difference(&mut model, block, second);
+        let cut = difference(&mut model, cut, ball);
+        let slab = cube(&mut model, [-1.13, -0.10, -0.15], [2.25, 0.20, 0.30]);
+        difference(&mut model, cut, slab);
+        model.check_names().unwrap();
     }
 
     /// Regression test: a cylinder drilled through a cube, its height
@@ -2197,32 +2125,17 @@ mod tests {
     /// arcs.
     #[test]
     fn cube_minus_z_cylinder_with_coplanar_cap_is_fast_and_correct() {
-        let f = ScalInF64::from_f64;
-        let mut part = M::new();
-        let a = geop_ops_extrude_revolve::shapes::cube_solid(
-            &mut part,
-            "a",
-            Vector3::from_array([f(-0.5), f(-0.5), f(-0.5)]),
-            Vector3::from_array([f(0.5), f(0.5), f(0.5)]),
-        )
-        .unwrap();
-        let b = geop_ops_extrude_revolve::shapes::cylinder::revolved_cylinder_along_axis(
-            &mut part,
-            "b",
-            Vector3::from_array([f(0.0), f(0.0), f(-0.5)]),
-            f(0.3),
-            f(1.0),
-            geop_ops_extrude_revolve::shapes::cylinder::Axis::Z,
-        )
-        .unwrap();
+        let mut model = M::new();
+        let a = cube(&mut model, [-0.5, -0.5, -0.5], [1.0, 1.0, 1.0]);
+        let b = cylinder(&mut model, [0.0, 0.0, -0.5], 0.3, 1.0, Axis::Z);
         let params = RemeshParams::<ScalInF64>::default();
 
         let t0 = std::time::Instant::now();
-        let result = boolean(&mut part, &namer(), a, b, BooleanOp::Difference, params)
+        let result = boolean(&mut model, &namer(), a, b, BooleanOp::Difference, params)
             .unwrap()
             .unwrap();
         let elapsed = t0.elapsed();
-        let model = part.topology();
+        let topology = model.topology();
         // Ballpark-matches `difference_of_box_and_cylinder_is_valid`'s own
         // (non-coincident-cap) ~2s in isolation; running inside the full
         // suite under CPU contention from other parallel tests has been
@@ -2239,12 +2152,12 @@ mod tests {
         // the result (the cylinder's full bore is open at both ends) —
         // catches "hole only cut on one end" directly, unlike
         // `validate_fast`.
-        let shell = model.get_solid(result).unwrap().shells[0];
-        for z in [f(-0.45), f(0.45)] {
-            let p = Vector3::from_array([f(0.0), f(0.0), z]);
+        let shell = topology.get_solid(result).unwrap().shells[0];
+        for z in [-0.45, 0.45] {
+            let p = v(0.0, 0.0, z);
             let outside = matches!(
                 geop_core_topology::contains::shell::shell_contains(
-                    model,
+                    topology,
                     shell,
                     p,
                     params.max_nodes,
@@ -2260,7 +2173,7 @@ mod tests {
             );
         }
 
-        let scene = geop_ops_rasterize::rasterize(model, 8)
+        let scene = geop_ops_rasterize::rasterize(topology, 8)
             .unwrap()
             .scene(|_| geop_ops_rasterize::debug::Color10::Blue);
         std::fs::create_dir_all("outputs").unwrap();
@@ -2277,21 +2190,15 @@ mod tests {
     /// across an opening (isolated in that module's own tests).
     #[test]
     fn bore_renders_as_a_hole() {
-        let mut part = M::new();
-        let block = cube(&mut part, [-1.0, -1.0, 0.0], [2.0, 2.0, 0.5]);
+        let mut model = M::new();
+        let block = cube(&mut model, [-1.0, -1.0, 0.0], [2.0, 2.0, 0.5]);
         // Radius 0.5 of the 2x2 footprint puts the bore's outline exactly
         // through grid cell corners at this resolution, which is what it
         // takes to produce the duplicated vertex.
-        let bore = cylinder(
-            &mut part,
-            [0.0, 0.0, -0.5],
-            0.5,
-            1.5,
-            geop_ops_extrude_revolve::shapes::cylinder::Axis::Z,
-        );
-        op(&mut part, block, bore, BooleanOp::Difference);
+        let bore = cylinder(&mut model, [0.0, 0.0, -0.5], 0.5, 1.5, Axis::Z);
+        op(&mut model, block, bore, BooleanOp::Difference);
 
-        let rasterized = geop_ops_rasterize::rasterize(part.topology(), 24).unwrap();
+        let rasterized = geop_ops_rasterize::rasterize(model.topology(), 24).unwrap();
         for triangle in rasterized.faces.values().flatten() {
             for p in [triangle.a, triangle.b, triangle.c] {
                 let (x, y, z) = (p[0].to_f64(), p[1].to_f64(), p[2].to_f64());
@@ -2322,15 +2229,15 @@ mod tests {
     fn cube_minus_box_with_wide_corners() {
         let wide = |x: f64| ScalInF64::new(x - 1e-12, x + 1e-12);
         let corner = |p: [f64; 3]| Vector3::from_array(p.map(wide));
-        let mut part = M::new();
-        let block = cube(&mut part, [0.0, 0.0, 0.0], [2.0, 2.0, 1.0]);
+        let mut model = M::new();
+        let block = cube(&mut model, [0.0, 0.0, 0.0], [2.0, 2.0, 1.0]);
         let tool = geop_ops_extrude_revolve::shapes::cube_solid(
-            &mut part,
+            &mut model,
             &fresh_id(),
             corner([1.72, 0.1, 0.88]),
             corner([1.9, 1.9, 1.08]),
         )
         .unwrap();
-        op(&mut part, block, tool, BooleanOp::Difference);
+        op(&mut model, block, tool, BooleanOp::Difference);
     }
 }

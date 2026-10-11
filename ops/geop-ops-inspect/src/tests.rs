@@ -1,35 +1,73 @@
 //! Mass properties, measurements and interference of basic solids, against
 //! their closed forms — each within the bounds returned.
 
-use std::f64::consts::PI;
+use std::{collections::BTreeMap, f64::consts::PI, rc::Rc};
 
 use geop_core_math::{
+    geop_error::GeopResult,
     primitives::Pose,
     scalars::{Ring, ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops::{EntityRef, Part, parameters::Material, parameters::Parameters};
+use geop_core_program::operation::Operation;
+use geop_ops::{
+    EntityRef, NamedModel,
+    model::model,
+    operation::{Build, BuildReader, Input},
+    output::Bounded,
+    parameters::{Material, Parameters},
+    placed::{ABOUT, About},
+};
 use geop_ops_extrude_revolve::shapes::{
     cube::cube_solid, cylinder::revolved_cylinder, sphere::sphere_solid,
 };
 
-use crate::{
-    Bounded, interference::Contact, interference_report, mass::MassSummary, mass_report, measure,
-};
+use crate::{interference::Contact, interference_report, mass::MassSummary, mass_report, measure};
 
 fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
     Vector3::from_array([x, y, z].map(S::from_f64))
 }
 
-/// A part of steel, 7850 kg/m³.
-fn steel() -> Part<S> {
-    Part::new().with_parameters(Parameters {
-        material: Some(Material {
-            name: "Steel".into(),
-            density: 7850.0,
-        }),
-        ..Parameters::default()
+/// Steel, 7850 kg/m³.
+fn steel() -> Option<Material> {
+    Some(Material {
+        name: "Steel".into(),
+        density: 7850.0,
     })
+}
+
+/// The model `model`, as the generator of a program's one target.
+fn given(_: &mut BuildReader, model: &NamedModel<S>) -> GeopResult<NamedModel<S>> {
+    Ok(model.clone())
+}
+
+/// The part a program of one step building `model` builds, its material
+/// `material` — and, after it, what `then` adds.
+fn built_with(
+    given_model: &NamedModel<S>,
+    material: Option<Material>,
+    then: impl FnOnce(&mut Build),
+) -> Build {
+    let about = About {
+        file: "part.geop".into(),
+        parameters: Parameters {
+            material,
+            ..Parameters::default()
+        },
+    };
+    let mut part = Build::default();
+    let inputs = BTreeMap::from([(ABOUT.to_string(), Input::About(Rc::new(about)))]);
+    part.begin_run(&inputs, &BTreeMap::new());
+    part.begin_step("given").unwrap();
+    part.define_target(&model(), given_model, given).unwrap();
+    then(&mut part);
+    part.end_run(Default::default());
+    part
+}
+
+/// The part of `model`, made of `material`.
+fn built(model: &NamedModel<S>, material: Option<Material>) -> Build {
+    built_with(model, material, |_| {})
 }
 
 /// `bounded` contains `exact`, and is no wider than `relative` of it.
@@ -45,9 +83,10 @@ fn assert_near(what: &str, bounded: Bounded, exact: f64, relative: f64) {
     );
 }
 
-/// The one solid's summary of a report.
-fn only(part: &Part<S>) -> MassSummary {
-    let report = mass_report(part).unwrap();
+/// The one solid's summary of a report, of `model` made of steel.
+fn only(model: &NamedModel<S>) -> MassSummary {
+    let part = built(model, steel());
+    let report = mass_report(part.current()).unwrap();
     assert_eq!(report.bodies.len(), 1, "{report:?}");
     let body = &report.bodies[0];
     assert!(body.error.is_none(), "{body:?}");
@@ -75,7 +114,7 @@ fn assert_diagonal(summary: &MassSummary, diagonal: [f64; 3], relative: f64) {
 /// A 2 x 4 x 1 box of steel: volume, area, mass, centre and inertia.
 #[test]
 fn box_mass_properties() {
-    let mut part = steel();
+    let mut part = NamedModel::<S>::new();
     cube_solid(&mut part, "b", v(1.0, 2.0, 3.0), v(3.0, 6.0, 4.0)).unwrap();
     let summary = only(&part);
     assert!(summary.converged);
@@ -101,7 +140,7 @@ fn box_mass_properties() {
 /// within bounds of the closed forms.
 #[test]
 fn cylinder_mass_properties() {
-    let mut part = steel();
+    let mut part = NamedModel::<S>::new();
     let (r, h) = (1.5, 4.0);
     revolved_cylinder(
         &mut part,
@@ -126,7 +165,7 @@ fn cylinder_mass_properties() {
 /// A sphere of radius 2: poles where its parametrization collapses.
 #[test]
 fn sphere_mass_properties() {
-    let mut part = steel();
+    let mut part = NamedModel::<S>::new();
     let r = 2.0;
     sphere_solid(&mut part, "s", v(0.5, 0.0, -1.0), S::from_f64(r)).unwrap();
     let summary = only(&part);
@@ -145,10 +184,11 @@ fn sphere_mass_properties() {
 /// masses and moves their inertia to the common centre.
 #[test]
 fn two_boxes_combine() {
-    let mut part = steel();
+    let mut part = NamedModel::<S>::new();
     cube_solid(&mut part, "a", v(0.0, 0.0, 0.0), v(1.0, 1.0, 1.0)).unwrap();
     cube_solid(&mut part, "b", v(3.0, 0.0, 0.0), v(4.0, 1.0, 1.0)).unwrap();
-    let report = mass_report(&part).unwrap();
+    let part = built(&part, steel());
+    let report = mass_report(part.current()).unwrap();
     assert_eq!(report.bodies.len(), 2);
     let total = report.total.unwrap();
     let m = 7850.0e-9;
@@ -170,7 +210,7 @@ fn two_boxes_combine() {
 /// the vertex meets it.
 #[test]
 fn distance_from_a_vertex_to_a_cylinder() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     revolved_cylinder(
         &mut part,
         "c",
@@ -187,7 +227,8 @@ fn distance_from_a_vertex_to_a_cylinder() {
     let side = EntityRef::Face {
         name: "cylinder(c,c1,q0)".into(),
     };
-    let measured = measure(&part, &[vertex, side]);
+    let part = built(&part, None);
+    let measured = measure(part.current(), &[vertex, side]);
     assert!(measured.error.is_none(), "{measured:?}");
     let distance = &measured
         .values
@@ -207,7 +248,7 @@ fn distance_from_a_vertex_to_a_cylinder() {
 /// built.
 #[test]
 fn single_entities() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     revolved_cylinder(
         &mut part,
         "c",
@@ -216,8 +257,9 @@ fn single_entities() {
         S::from_f64(2.0),
     )
     .unwrap();
+    let part = built(&part, None);
     let value = |entity: EntityRef, label: &str| {
-        let measured = measure(&part, &[entity]);
+        let measured = measure(part.current(), &[entity]);
         assert!(measured.error.is_none(), "{measured:?}");
         measured
             .values
@@ -244,19 +286,19 @@ fn single_entities() {
     let top = EntityRef::Face {
         name: "cylinder(c,c0,q2)".into(),
     };
-    assert!(measure(&part, &[top]).plane.is_some());
+    assert!(measure(part.current(), &[top]).plane.is_some());
 }
 
 /// Two boxes sharing a corner region overlap by its volume; two sharing a
 /// face only touch; two apart are not listed.
 #[test]
 fn overlapping_and_touching_boxes() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     cube_solid(&mut part, "a", v(0.0, 0.0, 0.0), v(2.0, 2.0, 2.0)).unwrap();
     cube_solid(&mut part, "b", v(1.0, 1.0, 1.0), v(3.0, 3.5, 3.0)).unwrap();
     cube_solid(&mut part, "c", v(-1.0, 0.0, 0.0), v(0.0, 1.0, 1.0)).unwrap();
     cube_solid(&mut part, "d", v(10.0, 0.0, 0.0), v(11.0, 1.0, 1.0)).unwrap();
-    let report = interference_report(&part).unwrap();
+    let report = interference_report(built(&part, None).current()).unwrap();
     assert!(report.unchecked.is_empty(), "{report:?}");
     assert_eq!(report.solids, 4);
     assert_eq!(report.found.len(), 2, "{report:?}");
@@ -276,7 +318,7 @@ fn overlapping_and_touching_boxes() {
 /// turned.
 #[test]
 fn mass_properties_are_placed() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     let solid = cube_solid(&mut part, "b", v(0.0, 0.0, 0.0), v(2.0, 1.0, 1.0)).unwrap();
     let mass = part.topology().mass_properties(solid).unwrap();
     // A quarter turn about z, then up by 5.
@@ -301,10 +343,10 @@ fn mass_properties_are_placed() {
 /// stride now scales with the faces.
 #[test]
 fn long_bars_overlap() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     cube_solid(&mut part, "a", v(0.0, 0.0, 0.0), v(50.0, 10.0, 10.0)).unwrap();
     cube_solid(&mut part, "b", v(10.0, 5.0, 5.0), v(60.0, 15.0, 15.0)).unwrap();
-    let report = interference_report(&part).unwrap();
+    let report = interference_report(built(&part, None).current()).unwrap();
     assert!(report.unchecked.is_empty(), "{report:?}");
     assert_eq!(report.found.len(), 1, "{report:?}");
     assert_near(
@@ -323,21 +365,16 @@ fn sketch_curves_are_measured() {
     use geop_core_math::primitives::CoordinateSystem;
     use geop_core_sketch::{Sketch, space::Sketch3d};
     let d = geop_ops::Design::from_f64;
-    let mut part = Part::<S>::new();
     let mut arc = Sketch::new();
     let (a, b) = (
         arc.add_point(d(1.0), d(0.0)),
         arc.add_point(d(-1.0), d(0.0)),
     );
     let half = arc.add_arc(a, b, d(PI));
-    part.add_sketch(
-        geop_ops::PlacedSketch {
-            plane: CoordinateSystem::world_at(Vector3::zero()),
-            sketch: arc,
-        },
-        "arc",
-    )
-    .unwrap();
+    let arc = geop_ops::PlacedSketch {
+        plane: CoordinateSystem::world_at(Vector3::zero()),
+        sketch: arc,
+    };
     let mut line = Sketch3d::new();
     let at = |p: [f64; 3]| Vector3::from_array(p.map(d));
     let (a, b) = (
@@ -345,7 +382,22 @@ fn sketch_curves_are_measured() {
         line.add_point(at([2.0, 2.0, 0.0])),
     );
     line.add_line(a, b);
-    part.add_sketch3d(line, "route").unwrap();
+    fn placed(
+        _: &mut BuildReader,
+        sketch: &geop_ops::PlacedSketch<S>,
+    ) -> GeopResult<geop_ops::PlacedSketch<S>> {
+        Ok(sketch.clone())
+    }
+    let part = built_with(&NamedModel::new(), None, |part| {
+        part.define_target(&geop_ops::sketch("arc"), &arc, placed)
+            .unwrap();
+        part.begin_step("route").unwrap();
+        let args = geop_ops_sketch3d::AddSketch3dArgs {
+            sketch: line,
+            references: Vec::new(),
+        };
+        geop_ops_sketch3d::AddSketch3d::run("route", part, &args).unwrap();
+    });
 
     let curve = EntityRef::SketchCurve {
         sketch: "arc".into(),
@@ -355,7 +407,7 @@ fn sketch_curves_are_measured() {
         name: "sketch3d(route,c2)".into(),
     };
     let value = |entities: &[EntityRef], label: &str| {
-        let measured = measure(&part, entities);
+        let measured = measure(part.current(), entities);
         assert!(measured.error.is_none(), "{measured:?}");
         measured
             .values

@@ -18,8 +18,8 @@ interface Props {
   error: string | null;
   onCommit: () => void;
   onCancel: () => void;
-  /** A file the step can be saved as was asked for, in `format`. */
-  onDownload: (format: string) => void;
+  /** A file the step can be saved as was asked for: what the exporter `exporter` writes in `format`. */
+  onDownload: (exporter: string, format: string) => void;
 }
 
 /** The class a text of `tone` reads in. */
@@ -270,7 +270,7 @@ export function DialogView({ step, onDialog, onChooseFile, setPreview, error, on
         return (
           <div className="button-grid download">
             {c.formats.map((f) => (
-              <button key={f.value} title={`Download as ${f.label}`} onClick={() => onDownload(f.value)}>
+              <button key={f.value} title={`Download as ${f.label}`} onClick={() => onDownload(c.exporter, f.value)}>
                 <Icon name="save" /> Download {f.label}
               </button>
             ))}

@@ -30,7 +30,7 @@ fn mid_key(curve: CurveId) -> String {
 pub(super) fn curve_mid(sketch: &Sketch, curve: CurveId) -> Option<P2> {
     match sketch.curves.get(&curve)?.kind {
         CurveKind::Line { start, end } => Some(crate::geometry::scale(
-            add(pt(sketch, start), pt(sketch, end)),
+            add(xy(sketch, start), xy(sketch, end)),
             0.5,
         )),
         CurveKind::Arc { start, end, sweep } => {
@@ -41,7 +41,7 @@ pub(super) fn curve_mid(sketch: &Sketch, curve: CurveId) -> Option<P2> {
                 half: Design::from_f64(sweep.to_f64() / 2.0),
             };
             let m = arc.arc_mid().ok()?;
-            Some([m[0].to_f64(), m[1].to_f64()])
+            Some(of(&m))
         }
         _ => None,
     }
@@ -77,7 +77,7 @@ impl Snap {
     }
 }
 
-impl<S: Scalar> Editing<'_, S> {
+impl Editing<'_> {
     /// Where `pointer` — at `p` in the plane — snaps to, and what to: a
     /// point, where two curves cross, a line's or arc's middle, or,
     /// `onto_curves`, any curve. The
@@ -105,7 +105,7 @@ impl<S: Scalar> Editing<'_, S> {
                 candidates.push(Visual::new(
                     id.to_string(),
                     Shape::Point {
-                        at: world(pt(sketch, id)),
+                        at: world(xy(sketch, id)),
                     },
                     Style::Free,
                 ));
@@ -170,7 +170,7 @@ impl<S: Scalar> Editing<'_, S> {
         match hit.as_deref() {
             Some(key) if is_point(key) => {
                 let id = point_key(key).expect("a point's key");
-                (pt(sketch, id), Some(Snap::Point(id)))
+                (xy(sketch, id), Some(Snap::Point(id)))
             }
             Some(key) if is_crossing(key) => {
                 let (snap, at) = crossings[key_id(key, 'x').expect("a crossing's key") as usize];

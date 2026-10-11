@@ -1,4 +1,4 @@
-//! A [`Part`]'s features: what each step that combined a tool with a solid
+//! A [`super::NamedModel`]'s features: what each step that combined a tool with a solid
 //! did — a cut, a boss, a hole — kept so that a later step can do it again
 //! elsewhere (a pattern of features), and so that a face can be traced back
 //! to the step that made it.
@@ -19,7 +19,7 @@ use geop_core_math::{
 use geop_core_topology::build::BodySpec;
 use serde::{Deserialize, Serialize};
 
-use super::{BodyNames, Part, names::digest};
+use super::{BodyNames, NamedModel, names::digest};
 
 /// Which boolean to perform.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,10 +56,10 @@ pub struct FeatureTool<S: Scalar> {
     pub scope: Option<String>,
 }
 
-impl<S: Scalar> Part<S> {
+impl<S: Scalar> NamedModel<S> {
     /// Records `tool` as one more tool of the feature of the step `step`.
     pub fn record_feature_tool(&mut self, step: &str, tool: FeatureTool<S>) {
-        let features = self.store.features_mut();
+        let features = &mut self.features;
         match features.iter_mut().find(|(s, _)| s == step) {
             Some((_, feature)) => Arc::make_mut(feature).tools.push(tool),
             None => features.push((step.to_string(), Arc::new(Feature { tools: vec![tool] }))),
@@ -69,13 +69,12 @@ impl<S: Scalar> Part<S> {
     /// The feature of the step `step`. Fails, saying which steps are
     /// features, for a step that combined nothing.
     pub fn feature(&self, step: &str) -> GeopResult<&Feature<S>> {
-        self.store
-            .features()
+        self.features
             .iter()
             .find(|(s, _)| s == step)
             .map(|(_, f)| f.as_ref())
             .ok_or_else(|| {
-                let steps: Vec<&str> = self.store.features().iter().map(|(s, _)| s.as_str()).collect();
+                let steps: Vec<&str> = self.features.iter().map(|(s, _)| s.as_str()).collect();
                 GeopError::new(format!(
                     "step {step:?} is no feature: only a step that joins, cuts or intersects a tool with a solid is (the features: {steps:?})"
                 ))
@@ -84,16 +83,13 @@ impl<S: Scalar> Part<S> {
 
     /// Every feature, by its step, in the order the steps ran.
     pub fn features(&self) -> impl Iterator<Item = (&str, &Feature<S>)> {
-        self.store
-            .features()
-            .iter()
-            .map(|(s, f)| (s.as_str(), f.as_ref()))
+        self.features.iter().map(|(s, f)| (s.as_str(), f.as_ref()))
     }
 
     /// Which feature made each face, as [`FeatureFaces::of`] tells.
     pub fn feature_faces(&self) -> FeatureFaces<'_> {
         let mut steps = HashMap::new();
-        for (step, feature) in self.store.features() {
+        for (step, feature) in &self.features {
             for tool in &feature.tools {
                 for face in &tool.names.faces {
                     steps.insert(face.clone(), step.as_str());
@@ -105,7 +101,7 @@ impl<S: Scalar> Part<S> {
     }
 }
 
-/// Which feature made a face (see [`Part::feature_faces`]).
+/// Which feature made a face (see [`NamedModel::feature_faces`]).
 pub struct FeatureFaces<'a> {
     /// The step of each face of a tool, by the face's name and its digest.
     steps: HashMap<String, &'a str>,

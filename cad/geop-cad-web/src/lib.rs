@@ -10,14 +10,10 @@
 use std::cell::RefCell;
 
 use geop_cad_base::Editor;
-use geop_core_math::scalars::scal_in_f64::ScalInF64;
 use wasm_bindgen::prelude::*;
 
-/// The scalar type used for every wasm-exposed part.
-type S = ScalInF64;
-
 thread_local! {
-    static EDITOR: RefCell<Editor<S>> = RefCell::new(Editor::new());
+    static EDITOR: RefCell<Editor> = RefCell::new(Editor::new());
 }
 
 #[wasm_bindgen]
@@ -71,20 +67,19 @@ mod tests {
     }
 
     /// The editor's loop through JSON: an example loaded and drawn with its
-    /// datums, then a new sketch started, its plane picked as a ray, a line
+    /// origin, then a new sketch started, its plane picked as a ray, a line
     /// drawn in it, and the sketch committed.
     #[test]
-    #[ignore = "needs a crate that is out of the workspace during the core refactor"]
     fn a_sketch_is_drawn_through_json() {
         let loaded = send(serde_json::json!({
-            "command": "load_example", "name": "boss_on_reference_plane",
+            "command": "load_example", "name": "box_with_drill_hole",
         }));
         assert!(loaded["error"].is_null(), "{loaded}");
         let part = &loaded["scene"]["part"];
         assert!(!part["faces"].as_array().unwrap().is_empty());
         assert_eq!(part["datums"][0]["name"], "origin");
         assert_eq!(
-            part["datums"][1]["frame"]["w"],
+            part["datums"][0]["frame"]["w"],
             serde_json::json!([0.0, 0.0, 1.0])
         );
 

@@ -581,8 +581,11 @@ pub fn project_view<S: Scalar>(
         for pair in ends.windows(2) {
             let (a, b) = (pair[0], pair[1]);
             let ctx = |e: GeopError| {
+                let face = source.silhouette.as_ref().map(|s| s.face);
+                let (p, q) = (source.curve3.evaluate(a), source.curve3.evaluate(b));
                 e.with_context(format!(
-                    "project_view: the piece [{a:?}, {b:?}] of a line of kind {:?} (edge {:?})",
+                    "project_view: the piece [{a:?}, {b:?}] of a line of kind {:?} (edge {:?}, \
+                     face {face:?}), from {p:?} to {q:?} in space",
                     source.kind, source.edge
                 ))
             };

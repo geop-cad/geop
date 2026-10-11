@@ -1,43 +1,26 @@
-//! What an editor exchanges with the operations while a step is edited.
-//!
-//! An editor never edits a step's arguments itself. It sends what the user
-//! did — a [`StepEditEvent`]: a dialog field used, a click or a drag in the 3-D
-//! viewport as a ray from the eye, a key — to a [`StepEditor`], which
-//! turns it into what the operation understands: a field set to a value, by
-//! the dialog, by a pick in the viewport or by dragging a handle; the
-//! selection changed; a visual dragged in the plane worked in — or, for an
-//! operation with a tool in hand, the click itself ([`CanvasEvent`]). What
-//! comes back is a [`Presentation`]: the operation's [`Form`] — the
-//! [`Dialog`] to show and the [`Visual`]s to draw — with what is picked,
-//! selected and hovered lit. The editor reruns the program with the new
-//! arguments, draws both, and the cycle repeats.
-//!
-//! Operations say what their fields and visuals *mean* — entities that can
-//! fill a [`crate::operation::Role`], a length with a handle, a visual that
-//! can be selected or dragged — and the editor decides how they are
-//! edited, so a pick, a selection or a drag works the same in every
-//! operation.
-//!
-//! So an editor only ever renders generic primitives and forwards raw input,
-//! and every decision — what a click means, what it snaps to, what a drag
-//! changes — is made here, in Rust, where it can be tested: [`hit`] tests a
-//! pointer against visuals, [`PartView`] against the part.
+//! What an editor exchanges with operations: the vocabulary of
+//! [`geop_core_program::editing`], and building blocks for forms of this crate's
+//! types ([`formula_number`], [`region`]), and what a step shows of the part
+//! besides its model ([`annotations`], [`listing`]).
 
-mod dialog;
-mod event;
-mod form;
-pub mod gizmo;
-pub mod hit;
-mod step;
-pub mod view;
-mod visual;
+mod edit_form;
+mod fields;
+mod shown;
+mod view;
 
-pub use dialog::{
-    Action, Choice, Control, Dialog, Field, ListItem, Number, Picked, Reference, Tone, Track, Unit,
+pub use edit_form::{Edit, EditForm, FormState};
+pub use fields::{constraint_status, formula_number, region};
+pub use geop_core_program::editing::{
+    Action, Axis, Button, CanvasEvent, Change, Choice, Control, Dialog, Event, Extent, Field, Form,
+    Gizmo, GizmoDrag, GizmoPart, GizmoView, InHand, ListItem, Number, Orientation, Picked, Pointer,
+    Presentation, Prompt, Pull, Reach, Reference, Shape, StepEditEvent, Style, TRIAD, Tone, Track,
+    Unit, Value, Visual, gizmo, hit,
 };
-pub use event::{Button, CanvasEvent, Pointer, Reach, StepEditEvent, Value};
-pub use form::{Drag, Edit, Form, InHand};
-pub use gizmo::{Change, Gizmo, GizmoDrag, GizmoPart, GizmoView, Orientation};
-pub use step::{DRAG_SNAP, GIZMO_ORIENTATION, StepEditor};
-pub use view::{EMPTY_EXTENT, Extent, PartHit, PartView, ViewAnnotation, ViewInstance};
-pub use visual::{Presentation, Prompt, Shape, Style, TRIAD, Visual};
+pub use shown::{
+    Annotations, Listed, Listing, StructureItem, annotations, annotations_of, listed, listing,
+    structure,
+};
+pub use view::{
+    EMPTY_EXTENT, FRAME, PartScene, PartView, ViewAnnotation, ViewCurve, ViewDatum, ViewEdge,
+    ViewFace, ViewInstance, ViewSketch, ViewSketchPoint, ViewVertex, parts_drawn,
+};

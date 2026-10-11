@@ -13,7 +13,7 @@ use geop_core_math::scalars::Scalar;
 /// re-establish it. It also removes a whole class of bug where a hole is
 /// accidentally treated as the outer loop (or vice versa) after a
 /// split/merge reorders the list.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Face<S: Scalar> {
     pub surface: NurbSurface3D<S>,
     pub outer: BoundaryType,

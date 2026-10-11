@@ -35,18 +35,24 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_core_topology::{
     Sense,
-    build::{BodySpec, BuiltBody, EdgeSpec},
+    build::{BodySpec, EdgeSpec},
 };
 use geop_ops::{
-    BodyNames, Context, Library, Namer, Part,
-    operation::{EntityRef, Operation, Role},
-    ui::Form,
+    BodyNames, Design, NamedModel, Namer, ParamValue,
+    operation::{
+        Build, BuildReader, EntityRef, Input, Lookup, ModelStep, ResolveEntity, Role, Scope,
+        build_model,
+    },
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{MAX_NODES, boundary::patch_face, min_subdivision_size};
+use crate::{MAX_NODES, SheetSpec, boundary::patch_face, min_subdivision_size};
 
 /// Spans a face standing on its own through a network of curves, `u_curves`
 /// crossing `v_curves`, for the operation `N` — see the module docs. The
@@ -67,56 +73,89 @@ pub struct NetworkSurfaceArgs {
     pub v_curves: Vec<EntityRef>,
 }
 
+impl ModelStep for NetworkSurface {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &NetworkSurfaceArgs,
+    ) -> GeopResult<()> {
+        let ctx = with_context!("network_surface({step}, {args:?})");
+        let namer = Namer::new("network", step)?;
+        let (spec, names) = network_surface(
+            &mut Scope { model, reader },
+            &namer,
+            &args.u_curves,
+            &args.v_curves,
+        )
+        .with_context(ctx)?;
+        model.build_body(spec, names).with_context(ctx)?;
+        Ok(())
+    }
+}
+
 impl Operation for NetworkSurface {
+    const INFO: OperationInfo = OperationInfo::new(
+        "network_surface",
+        "UV surface",
+        "Span a face standing on its own through a network of curves — u curves crossing v curves — running along every one of them.",
+        OperationGroup::Surface,
+        OperationTier::Small,
+    )
+    .experimental();
     type Args = NetworkSurfaceArgs;
-    type Session = ();
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
 
     /// Nothing picked yet.
-    fn new_args<S: Scalar>(&self, _before: &Part<S>) -> NetworkSurfaceArgs {
+    fn new_args(_: &Context<Input, ParamValue>) -> NetworkSurfaceArgs {
         NetworkSurfaceArgs::default()
     }
 
+    fn run(step: &str, part: &mut Build, args: &NetworkSurfaceArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
+    }
+
     /// The curves of each direction, picked.
-    fn form<'a, S: Scalar>(
-        &self,
-        _: Context<'a, S>,
+    fn presentation(
+        _: &Context<Input, ParamValue>,
         args: &NetworkSurfaceArgs,
         _: &(),
-        _: &[String],
-    ) -> Form<'a, S, NetworkSurfaceArgs> {
-        let mut f = Form::<S, NetworkSurfaceArgs>::new();
-        f.reference(
-            "u_curves",
-            "u curves",
-            args.u_curves.clone(),
-            &[Role::Curve],
-            None,
-            true,
-            |e, picked| e.args.u_curves = picked,
-        );
-        f.reference(
+    ) -> Form<Design> {
+        let mut form = Form::default();
+        let dialog = &mut form.dialog;
+        let u = args.u_curves.clone();
+        (dialog.reference("u_curves", "u curves", u, &[Role::Curve], None, true)).reference(
             "v_curves",
             "v curves",
             args.v_curves.clone(),
             &[Role::Curve],
             None,
             true,
-            |e, picked| e.args.v_curves = picked,
         );
-        f
+        form
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
         args: &NetworkSurfaceArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("network_surface({operation_id}, {args:?})");
-        let namer = Namer::new("network", operation_id)?;
-        network_surface(&mut part, &namer, &args.u_curves, &args.v_curves).with_context(ctx)?;
-        Ok(part)
+        _: &(),
+        event: Event<Design>,
+    ) -> (NetworkSurfaceArgs, ()) {
+        let mut args = args.clone();
+        if let Event::Field {
+            key,
+            value: Value::Entities(picked),
+        } = event
+        {
+            match key.as_str() {
+                "u_curves" => args.u_curves = picked,
+                "v_curves" => args.v_curves = picked,
+                _ => {}
+            }
+        }
+        (args, ())
     }
 }
 
@@ -133,8 +172,12 @@ struct Strand<S: Scalar> {
 }
 
 impl<S: Scalar> Strand<S> {
-    fn of(part: &Part<S>, entity: &EntityRef, direction: &str) -> GeopResult<Self> {
-        let named = entity.resolve_curve(part)?;
+    fn of(
+        lookup: &mut (impl Lookup<S> + ?Sized),
+        entity: &EntityRef,
+        direction: &str,
+    ) -> GeopResult<Self> {
+        let named = entity.resolve_curve(lookup)?;
         let label = format!("{direction} curve {}", named.name);
         if named.start.0 == named.end.0 {
             return Err(GeopError::new(format!(
@@ -246,6 +289,9 @@ fn order<S: Scalar>(params: &[S]) -> Vec<usize> {
     order
 }
 
+/// Strands, and where each crosses the curves of the other direction.
+type Aligned<S> = (Vec<Strand<S>>, Vec<Vec<S>>);
+
 /// `strands`, each crossing the curves of the other direction at
 /// `params[k]` in the order `across`, turned where those run backwards, and
 /// the crossings in that order — or an error naming a strand along which
@@ -255,7 +301,7 @@ fn aligned<S: Scalar>(
     params: Vec<Vec<S>>,
     across: &[usize],
     first: &str,
-) -> GeopResult<(Vec<Strand<S>>, Vec<Vec<S>>)> {
+) -> GeopResult<Aligned<S>> {
     let mut out = (Vec::new(), Vec::new());
     for (strand, params) in strands.into_iter().zip(params) {
         let along: Vec<S> = across.iter().map(|&i| params[i]).collect();
@@ -278,15 +324,15 @@ fn aligned<S: Scalar>(
     Ok(out)
 }
 
-/// Spans a sheet through the network of `u_curves` and `v_curves` (see the
-/// module docs), and returns it. What it builds is named after `namer`, as
-/// [`NetworkSurface`] says.
+/// The sheet spanned through the network of `u_curves` and `v_curves`
+/// (see the module docs), as `lookup` has them: what to build, named after
+/// `namer`, as [`NetworkSurface`] says.
 pub fn network_surface<S: Scalar>(
-    part: &mut Part<S>,
+    lookup: &mut (impl Lookup<S> + ?Sized),
     namer: &Namer,
     u_curves: &[EntityRef],
     v_curves: &[EntityRef],
-) -> GeopResult<BuiltBody> {
+) -> GeopResult<SheetSpec<S>> {
     if u_curves.len() < 2 || v_curves.len() < 2 {
         return Err(GeopError::new(format!(
             "a network surface needs two curves at least in each direction, not {} u curves and {} v curves",
@@ -306,11 +352,11 @@ pub fn network_surface<S: Scalar>(
     }
     let u = u_curves
         .iter()
-        .map(|e| Strand::of(part, e, "u"))
+        .map(|e| Strand::of(lookup, e, "u"))
         .collect::<GeopResult<Vec<_>>>()?;
     let v = v_curves
         .iter()
-        .map(|e| Strand::of(part, e, "v"))
+        .map(|e| Strand::of(lookup, e, "v"))
         .collect::<GeopResult<Vec<_>>>()?;
     let (m, n) = (u.len(), v.len());
     // `on_u[j][i]` and `on_v[i][j]`: where `u[j]` and `v[i]` cross, on each.
@@ -432,7 +478,7 @@ pub fn network_surface<S: Scalar>(
         shells: vec![vec![0]],
         solid: false,
     };
-    part.build_body(spec, names)
+    Ok((spec, names))
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ mod editor;
 #[cfg(test)]
 mod tests;
 
-pub use add_sketch3d::{AddSketch3d, AddSketch3dArgs, Reference3d, Target};
+pub use add_sketch3d::{AddSketch3d, AddSketch3dArgs, Reference3d, Sketch3dEditing, Target};
 pub use editor::{Sketch3dSession, Tool};
 
 use geop_ops::Design;

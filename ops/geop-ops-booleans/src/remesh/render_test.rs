@@ -17,10 +17,10 @@
 mod tests {
     use crate::{
         remesh::remesh::{RemeshParams, remesh},
-        scenes::map_scenes_parallel,
+        scenes::{map_scenes_parallel, validation},
     };
     use geop_core_math::scalars::ScalInF64;
-    use geop_core_topology::validation::{ValidationParameters, validate, validate_fast};
+    use geop_core_topology::validation::{validate, validate_fast};
     use geop_ops::Namer;
     use geop_ops_rasterize::debug::rasterize_topology;
 
@@ -40,11 +40,7 @@ mod tests {
         // itself uses — so it needs at least as much budget/tolerance as
         // `remesh` was given above, or it can spuriously fail to reach a
         // conclusion `remesh` already reached with more room to work with.
-        let validation_params = ValidationParameters {
-            max_nodes: params.max_nodes,
-            min_subdivision_size: params.curve_curve_min_subdivision_size,
-            ..ValidationParameters::default()
-        };
+        let validation_params = validation::<ScalInF64>();
 
         // One independent remesh per scene, so they run in parallel; see
         // `scenes::map_scenes_parallel`. Each thread writes its own
@@ -56,17 +52,17 @@ mod tests {
 
             let namer = Namer::new("boolean", "ab").unwrap();
             if let Err(e) = remesh(
-                &mut scene.part,
+                &mut scene.model,
                 &namer,
                 scene.solid_a,
                 scene.solid_b,
                 params,
             ) {
                 failure = Some(format!("{e}"));
-            } else if let Err(e) = scene.part.check_names() {
+            } else if let Err(e) = scene.model.check_names() {
                 failure = Some(format!("{e}"));
             }
-            let model = scene.part.topology();
+            let model = scene.model.topology();
 
             // Structural well-formedness (pointers, two-way references,
             // vertex/curve/surface consistency, pcurve loop continuity) is

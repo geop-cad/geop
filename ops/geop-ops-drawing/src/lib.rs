@@ -2,19 +2,19 @@
 //! and silhouettes ([`hidden_lines`]) — of an assembly, of every part
 //! placed, where it is placed ([`scene`]) — laid out on a sheet with
 //! dimensions, centre marks, a title block and a ballooned bill of
-//! materials ([`sheet`]), written as SVG or DXF, and the [`Drawing`]
-//! operation of a program, which describes one.
+//! materials (see [`geop_ops::output::sheet`]); the [`Drawing`] operation
+//! of a program, which describes one; and the [`DrawingExporter`], which
+//! writes it as SVG or DXF.
 
 pub mod annotation;
 pub mod drawing;
-pub mod dxf;
+mod export;
 pub mod hidden_lines;
 pub mod operation;
+mod parts;
 pub mod scene;
 pub mod section;
-pub mod sheet;
 pub mod silhouette;
-pub mod svg;
 pub mod view;
 
 pub use annotation::{Along, Annotation, Candidate, EdgeShape, Leader, Pickable, Target};
@@ -22,10 +22,10 @@ pub use drawing::{
     DrawingArgs, Layout, PartsListLine, Projected, Projection, SheetSize, annotated, arrange,
     compose, layout, project,
 };
-pub use dxf::to_dxf;
+pub use export::{DrawingExporter, DrawingOptions, drawing, drawing_steps};
 pub use hidden_lines::{LineKind, ProjectedView, ViewLine, ViewOptions, project_view};
-pub use operation::Drawing;
-pub use svg::to_svg;
+pub use operation::{Drawing, DrawingSession};
+pub use parts::parts_list;
 pub use view::{DrawnView, ViewFrame, ViewKind};
 
 use geop_core_math::scalars::Scalar;
@@ -39,55 +39,10 @@ pub(crate) fn min_subdivision_size<S: Scalar>() -> S {
     S::from_f64(1e-7)
 }
 
-/// A file format a drawing is written in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Format {
-    Svg,
-    Dxf,
-}
-
-impl Format {
-    /// The format a file name's extension names, if it names one.
-    pub fn of_path(path: &str) -> Option<Format> {
-        let ext = path.rsplit('.').next()?.to_ascii_lowercase();
-        match ext.as_str() {
-            "svg" => Some(Format::Svg),
-            "dxf" => Some(Format::Dxf),
-            _ => None,
-        }
-    }
-
-    pub fn extension(self) -> &'static str {
-        match self {
-            Format::Svg => "svg",
-            Format::Dxf => "dxf",
-        }
-    }
-
-    /// `sheet` written in it.
-    pub fn write(self, sheet: &sheet::Sheet) -> String {
-        match self {
-            Format::Svg => to_svg(sheet),
-            Format::Dxf => to_dxf(sheet),
-        }
-    }
-}
-
-/// `part`'s drawing as `args` describe it, dated `date`, with `parts` its
-/// bill of materials if `args` asks for one, written as `format`.
-pub fn render<S: Scalar>(
-    part: &geop_ops::Part<S>,
-    args: &DrawingArgs,
-    date: &str,
-    parts: &[PartsListLine],
-    format: Format,
-) -> geop_core_math::geop_error::GeopResult<String> {
-    Ok(format.write(&compose(part, args, date, parts)?))
-}
-
 #[cfg(test)]
 mod annotation_tests;
+#[cfg(test)]
+mod testing;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

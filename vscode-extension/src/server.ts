@@ -124,9 +124,6 @@ export class GeopServer {
     private readonly executable: string,
     private readonly onStderr: (text: string) => void,
     private readonly restore: () => Promise<string[]>,
-    /** Where the kernel keeps what is costly to build — imports read — for
-     *  every editor of the workspace and the next session: its `.geop-cache`. */
-    private readonly cacheDir: string | null = null,
   ) {
     this.kernel = this.spawn();
   }
@@ -148,8 +145,7 @@ export class GeopServer {
   }
 
   private spawn(): Kernel {
-    const args = this.cacheDir ? ["serve", "--cache-dir", this.cacheDir] : ["serve"];
-    const child = spawn(this.executable, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(this.executable, ["serve"], { stdio: ["pipe", "pipe", "pipe"] });
     const kernel: Kernel = new Kernel(child, this.onStderr, (reason) => this.crashed(kernel, reason));
     return kernel;
   }

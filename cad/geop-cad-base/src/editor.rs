@@ -8,47 +8,57 @@
 //! what the user did.
 //!
 //! The program is the one of a file, among others it may place parts from
-//! (see [`geop_ops::program::library`]): the editor is told the file's path
+//! (see [`geop_ops::program`]): the editor is told the file's path
 //! with the program ([`Command::Load`]), and is sent the other files'
 //! programs whenever they change ([`Command::Files`]) — by the front end,
 //! which owns the files, be they a VS Code workspace's or the browser's.
 //! Only the file it edits is its own: switching to another, it keeps the
 //! program it leaves as that file's. What each step shows and does is the operation's; see
-//! [`geop_ops::ui::StepEditor`].
+//! [`geop_core_program::step_editor::StepEditor`].
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    rc::Rc,
+};
 
-use geop_core_math::vector::Vector3;
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
-use geop_ops::ui::Drag;
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    scalars::Scalar,
+    vector::Vector3,
+};
+use geop_core_program::{
+    operation::OperationInfo,
+    program::{Program as Steps, ProgramStep},
+    step_editor::{Editing, StepEditor},
+};
 use geop_ops::{
-    Context, Design, EntityRef, Library, OperationInfo, Operations, Part, Step, StepResult,
-    operation::Role,
-    parameters::{Parameters, Resolved},
-    part::{ParamValue, State},
-    program::library::resolve,
+    Design, EntityRef,
+    model::pose_parameter,
+    operation::{BuildView, INSTANCE_SEPARATOR, Input, Role, Seen},
+    output::{Content, Export, ExporterInfo, Inspection, InspectorInfo, Output, Outputs},
+    parameters::{Parameters, Resolved, Values},
+    placed::{Library, placed_parts},
+    solving::{self, Freedom, Report, SettingsState},
     ui::{
-        Dialog, PartView, Presentation, Shape, StepEditEvent, StepEditor, Style, ViewInstance,
-        Visual,
+        Dialog, EMPTY_EXTENT, Extent, PartScene, PartView, Presentation, Pull, Shape,
+        StepEditEvent, StructureItem, Style, ViewInstance, Visual, structure,
     },
 };
-use geop_ops_assembly::{JointInfo, MateFreedom, PartMates};
-use geop_ops_rasterize::stl;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    PartOperation, Program, ProgramRunner, Workspace, examples,
-    inspect::{self, Inspection, MeasureTool, Query},
-    stdlib::WithStandardParts,
+    Program, Workspace, examples,
+    inspect::PickTool,
+    operations::{Runner, infos, outputs, runner, workspace},
 };
 
-/// How many files' runners an editor keeps (see `Editor::runners`): each
+/// How many files' builds an editor keeps (see `Editor::builds`): each
 /// holds every step's part, so a few large files are as many as fit.
-const KEPT_RUNNERS: usize = 6;
+const KEPT_BUILDS: usize = 6;
 /// Something the user did.
 #[derive(Clone, Debug, Deserialize)]
-#[serde(tag = "command", rename_all = "snake_case", bound = "S: Scalar")]
-pub enum Command<S: Scalar> {
+#[serde(tag = "command", rename_all = "snake_case")]
+pub enum Command {
     /// Nothing: only what to show, all of it — how an editor starts.
     Show,
     /// Start a new step of the operation `kind`, where the program runs to.
@@ -61,7 +71,7 @@ pub enum Command<S: Scalar> {
     },
     /// Something the user did to the step being edited.
     Event {
-        event: StepEditEvent<S>,
+        event: StepEditEvent<Design>,
     },
     /// Put the step being edited into the program — refused, unless it
     /// builds.
@@ -133,7 +143,7 @@ pub enum Command<S: Scalar> {
         parameters: Parameters,
     },
     /// Name the parameter `from` `to`, and every formula reading it read
-    /// `to` (see [`geop_ops::Program::rename_parameter`]): the other
+    /// `to` (see [`geop_ops::program::ProgramFile::rename_parameter`]): the other
     /// parameters', the steps'. Refused while a step is edited.
     RenameParameter {
         from: String,
@@ -152,122 +162,48 @@ pub enum Command<S: Scalar> {
     DragTool {
         on: bool,
     },
-    /// Set the joint coordinate `parameter` — an angle in degrees, or a
-    /// distance — to `value`: the parts move to it, everything else that
-    /// is free giving way (see [`ProgramState::joints`]).
+    /// Set the value `parameter` a step offers a user to set — a joint's
+    /// coordinate: an angle in degrees, or a distance — to `value`: the
+    /// parts move to it, everything else that is free giving way (see
+    /// [`ProgramState::joints`]).
     Joint {
         parameter: String,
         value: f64,
     },
-    /// Take the measure tool in hand, or put it down: with no step being
-    /// edited, a click picks a vertex, an edge, a face or a datum to
-    /// measure — up to two (see [`MeasureTool::handle`]) — and every update
-    /// says what they measure ([`Update::inspection`]). Measuring is no
-    /// edit: it changes nothing, and adds no step.
-    MeasureTool {
-        on: bool,
+    /// Take the tool of the inspector `inspector` — one that picks (see
+    /// [`InspectorInfo::picks`]) — in hand, or, `None`, put it down: with no
+    /// step being edited, a click picks what the inspector takes, and every
+    /// update carries its answer about the picks ([`Update::inspection`]).
+    /// Inspecting is no edit: it changes nothing, and adds no step.
+    PickTool {
+        inspector: Option<String>,
     },
-    /// Ask a question of the part as drawn — its mass properties, which of
-    /// its solids interfere — answered once, in [`Update::inspection`].
-    /// Changes nothing.
+    /// Ask the inspector `inspector` about the part as drawn, told
+    /// `options` (its own, see [`geop_ops::output::Inspector::Options`]):
+    /// answered once, in [`Update::inspection`]. Changes nothing.
     Inspect {
-        query: Query,
-    },
-    /// Write a drawing of the part (see [`geop_ops_drawing`]) as an SVG or
-    /// DXF file, dated `date`: the drawing step `id` — if not given, the
-    /// one being edited, else the program's last; the default drawing of
-    /// the whole part if it has none. The file comes back as
-    /// [`Update::export`].
-    ExportDrawing {
+        inspector: String,
         #[serde(default)]
-        id: Option<String>,
-        format: String,
+        options: serde_json::Value,
+    },
+    /// Write what the program builds — as far as it runs, the parts it
+    /// places included — with the exporter `exporter`, in `format` (its
+    /// first, if not given), told `options` (its own, see
+    /// [`geop_ops::output::Exporter::Options`]) and dated `date`
+    /// (`YYYY-MM-DD`): the update's [`Update::export`]. Changes nothing.
+    Export {
+        exporter: String,
+        #[serde(default)]
+        format: Option<String>,
+        #[serde(default)]
+        options: serde_json::Value,
         #[serde(default)]
         date: String,
-    },
-    /// Write the assembly — as far as the program runs, where its parts
-    /// are — as a URDF robot (see [`geop_ops_urdf`]): a ZIP archive of
-    /// `robot.urdf` and its meshes, named after the program's file, as
-    /// [`Update::export`].
-    ExportUrdf,
-    /// Write the part shown — up to where the program runs, the parts it
-    /// places included — as a STEP file: the update's [`Update::export`].
-    ExportStep,
-    /// Write every solid of the part shown — up to where the program runs,
-    /// the parts it places included — as a binary STL mesh, as finely as
-    /// the editor draws it: the update's [`Update::export`].
-    ExportStl,
-    /// Write the bill of materials of the part shown (see
-    /// [`geop_ops_bom`]), laid out as `structure` says, as a CSV file named
-    /// after the program's file: the update's [`Update::export`].
-    ExportBom {
-        #[serde(default)]
-        structure: inspect::Structure,
-    },
-    /// Write the flat pattern of a sheet-metal body of the part shown — the
-    /// body `solid`, else the newest — as a DXF file for laser cutting (see
-    /// [`geop_ops_sheetmetal::flat_pattern_dxf`]): its outline and holes on
-    /// the `CUT` layer, its bend lines on the `BEND` layer. Named after the
-    /// program's file, it is the update's [`Update::export`].
-    ExportFlatPattern {
-        #[serde(default)]
-        solid: Option<String>,
     },
     /// Panic, on purpose: how the front ends' recovery from a kernel that
     /// crashed is checked (`web/e2e/`). A panic anywhere else is a bug;
     /// this one stands in for it.
     Crash,
-}
-
-/// How finely the curved faces of an exported mesh — an STL file, a robot's
-/// links — are meshed: as finely as the editor draws them.
-const MESH_QUALITY: usize = 24;
-
-/// A file the editor wrote for the front end to save.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct Export {
-    /// What to call it: after the program file, or `drawing`.
-    pub name: String,
-    #[serde(flatten)]
-    pub content: Content,
-}
-
-impl Export {
-    /// Its text, if it is a text file.
-    pub fn text(&self) -> Option<&str> {
-        match &self.content {
-            Content::Text(text) => Some(text),
-            Content::Bytes(_) => None,
-        }
-    }
-}
-
-/// What an exported file holds: text — sent as `text` — or bytes, sent as
-/// `bytes`, in base64.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Content {
-    Text(String),
-    #[serde(serialize_with = "base64")]
-    Bytes(Vec<u8>),
-}
-
-/// `bytes` as base64 text (RFC 4648, padded).
-fn base64<Ser: serde::Serializer>(bytes: &[u8], serializer: Ser) -> Result<Ser::Ok, Ser::Error> {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut text = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b = [0, 1, 2].map(|k| chunk.get(k).copied().unwrap_or(0) as u32);
-        let n = (b[0] << 16) | (b[1] << 8) | b[2];
-        for k in 0..4 {
-            text.push(if k <= chunk.len() {
-                ALPHABET[(n >> (18 - 6 * k) & 63) as usize] as char
-            } else {
-                '='
-            });
-        }
-    }
-    serializer.serialize_str(&text)
 }
 
 /// A step of the program, as a list of steps shows it.
@@ -300,8 +236,8 @@ pub struct ProgramState {
     pub can_redo: bool,
     /// Whether the drag tool is in hand.
     pub drag_tool: bool,
-    /// Whether the measure tool is in hand.
-    pub measure_tool: bool,
+    /// The inspector whose pick tool is in hand, if one is.
+    pub pick_tool: Option<&'static str>,
     /// The materials a part's can be picked from (see
     /// [`geop_ops::parameters::Material`]).
     pub materials: Vec<geop_ops::parameters::Material>,
@@ -310,24 +246,34 @@ pub struct ProgramState {
     pub parameters: Resolved,
     /// What reads each parameter, by name: the steps and the other
     /// parameters whose formulas do, which fail if it goes (see
-    /// [`geop_ops::Program::parameter_uses`]).
+    /// [`geop_ops::program::ProgramFile::parameter_uses`]).
     pub parameter_uses: BTreeMap<String, Vec<String>>,
     /// Every operation a step can be, as the toolbar offers them: group by
-    /// group, in [`geop_ops::OperationGroup`]'s order, and within a group
-    /// by [`geop_ops::OperationTier`], the most used first, then in
-    /// [`PartOperation`]'s order.
-    pub operations: Vec<OperationInfo>,
+    /// group, in [`geop_core_program::operation::OperationGroup`]'s order, and
+    /// within a group by [`geop_core_program::operation::OperationTier`], the most
+    /// used first, then in the order [`crate::operations::infos`] lists
+    /// them.
+    pub operations: Vec<&'static OperationInfo>,
+    /// What can be written of the part ([`Command::Export`]).
+    pub exporters: Vec<&'static ExporterInfo>,
+    /// What can be asked about it ([`Command::Inspect`]), or picked in it
+    /// to ask about ([`Command::PickTool`]).
+    pub inspectors: Vec<&'static InspectorInfo>,
     /// The names of the example programs [`Command::LoadExample`] loads.
     pub examples: Vec<&'static str>,
     /// The names of the examples of several files
     /// [`Command::LoadWorkspaceExample`] loads.
     pub workspace_examples: Vec<&'static str>,
-    /// The joints of the part shown, with where their coordinates are:
-    /// what [`Command::Joint`] sets.
-    pub joints: Vec<JointInfo>,
-    /// How free each of its placed parts is, and which of its mates
-    /// conflict — if it has placed parts.
-    pub freedom: Option<MateFreedom>,
+    /// The values of the part shown a user sets, grouped as its steps
+    /// declare them — a joint's coordinates — with where they are: what
+    /// [`Command::Joint`] sets (see [`solving::settings`]).
+    pub joints: Vec<SettingsState>,
+    /// How free each of its placed parts is — if it has placed parts — as
+    /// the last edit left them (see [`solving::freedom`]).
+    pub freedom: Option<Freedom>,
+    /// A smallest set of its constraints that cannot all hold together, by
+    /// name: none where they all hold.
+    pub conflicting: Vec<String>,
 }
 
 /// What is drawn: a part, and which of its sketches and datums not to.
@@ -338,17 +284,16 @@ pub struct ProgramState {
 /// part sends where that one is, and placing a screw a hundred times sends
 /// what a screw looks like once.
 #[derive(Clone, Debug, Serialize)]
-#[serde(bound = "S: Scalar")]
-pub struct SceneState<S: Scalar> {
+pub struct SceneState {
     /// The part, without the parts placed in it: those are `instances`.
-    pub part: PartView<S>,
+    pub part: PartView,
     /// The sketches and datums the steps shown have used: what was made
     /// from them shows them now. None of a kind while it is being picked.
     pub hidden: Vec<String>,
     /// The parts placed in the part drawn, however deep, that are new or
     /// moved or drawn from another component since the last scene — every
     /// one, if `all`.
-    pub instances: Vec<ViewInstance<S>>,
+    pub instances: Vec<ViewInstance>,
     /// Whether `instances` are all there are: a viewer forgets any others.
     pub all: bool,
     /// The names of the placed parts drawn last time and gone now.
@@ -358,45 +303,21 @@ pub struct SceneState<S: Scalar> {
     /// use. A viewer keeps those the placed parts drawn use, and forgets
     /// the others: a component no placed part uses any more is sent again
     /// once one does.
-    pub components: BTreeMap<String, PartView<S>>,
-    /// What the part has beyond its faces, to list and show or hide.
+    pub components: BTreeMap<String, PartView>,
+    /// What the part has beyond its faces, to list and show or hide (see
+    /// [`geop_ops::ui::structure`]).
     pub structure: Vec<StructureItem>,
-}
-
-/// What kind of thing a [`StructureItem`] is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StructureKind {
-    Datum,
-    Sketch,
-    Solid,
-    /// A face standing on its own, of no solid.
-    Face,
-    Part,
-    Mate,
-}
-
-/// A datum, sketch, solid, face standing on its own, placed part or mate of
-/// the part drawn, by name:
-/// whether it is shown, if it is something drawn at all — what
-/// [`Command::Visibility`] switches.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct StructureItem {
-    pub kind: StructureKind,
-    pub name: String,
-    pub visible: Option<bool>,
 }
 
 /// The step being edited, as shown.
 #[derive(Clone, Debug, Serialize)]
-#[serde(bound = "S: Scalar")]
-pub struct StepState<S: Scalar> {
+pub struct StepState {
     pub kind: &'static str,
     pub label: &'static str,
     pub doc: &'static str,
     /// Its id — none yet, for a new step.
     pub id: Option<String>,
-    pub presentation: Presentation<S>,
+    pub presentation: Presentation<Design>,
     /// What it still needs picked, by its fields' labels: until it has it,
     /// it is not built, and there is no error to show.
     pub missing: Vec<String>,
@@ -419,55 +340,56 @@ pub struct File {
 /// What an editor shows after a command. What did not change since the
 /// last update is left out.
 #[derive(Clone, Debug, Serialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Update<S: Scalar> {
+pub struct Update {
     /// Why the command was refused, if it was: then it changed nothing.
     pub error: Option<String>,
     pub program: Option<ProgramState>,
-    pub scene: Option<SceneState<S>>,
+    pub scene: Option<SceneState>,
     /// The step being edited; `None` if there is none.
-    pub step: Option<StepState<S>>,
+    pub step: Option<StepState>,
     /// The program files the command added, the one now edited first.
     pub files: Option<Vec<File>>,
-    /// The file [`Command::ExportDrawing`], [`Command::ExportUrdf`],
-    /// [`Command::ExportStep`], [`Command::ExportStl`] or
-    /// [`Command::ExportBom`] wrote.
+    /// The file [`Command::Export`] wrote, or [`Command::Copy`] copied.
     pub export: Option<Export>,
-    /// What the drag tool or the measure tool shows, while it is in hand
-    /// and no step is edited: the part it would drag lit, and whether a
-    /// press grabs it; what is picked to measure, and the least distance.
-    pub tool: Option<Presentation<S>>,
-    /// What the measure tool's picks measure, while it is in hand — or the
-    /// answer to [`Command::Inspect`].
-    pub inspection: Option<Inspection<S>>,
+    /// What the drag tool or the pick tool shows, while it is in hand and
+    /// no step is edited: the part it would drag lit, and whether a press
+    /// grabs it; what is picked, and what the answer about it draws.
+    pub tool: Option<Presentation<Design>>,
+    /// The answer of the pick tool's inspector about its picks, while it is
+    /// in hand — or the answer to [`Command::Inspect`].
+    pub inspection: Option<Inspection>,
 }
 
 /// The drag tool, in hand: the placed part the pointer is over, and the one
 /// being dragged.
 #[derive(Default)]
-struct DragTool<S: Scalar> {
+struct DragTool {
     hover: Option<String>,
-    grab: Option<Grabbed<S>>,
+    grab: Option<Grabbed>,
 }
 
 /// A placed part being dragged by the drag tool.
-struct Grabbed<S: Scalar> {
+struct Grabbed {
     /// Its name, as drawn.
     name: String,
-    /// The parameter its pose is.
+    /// The state its pose is.
     parameter: String,
     /// The point grabbed, in its own frame: where the pointer was, a free
     /// choice, so sharp.
-    local: Vector3<S>,
+    local: Vector3<Design>,
     /// The plane it is dragged in: through the point grabbed, facing the
     /// eye — `(point, normal)`.
-    plane: (Vector3<S>, Vector3<S>),
+    plane: (Vector3<Design>, Vector3<Design>),
     /// The program when it was grabbed: what undoing the drag goes back to.
     before: Program,
 }
 
+/// A step being edited, as one edit left it: its arguments, and the
+/// program's state.
+type Edited = (serde_json::Value, Values);
+
 /// The step being edited.
-struct Open<S: Scalar> {
+struct Open {
     /// Where it is, or goes.
     index: usize,
     /// Its id — for a new one, the id it gets once committed.
@@ -475,10 +397,16 @@ struct Open<S: Scalar> {
     /// Whether it is a new step, inserted at `index`, rather than the one
     /// already there.
     new: bool,
-    editor: StepEditor<PartOperation, S>,
+    /// The program's steps with the step in them, as its edits leave it:
+    /// what the step editor writes the step's arguments to.
+    steps: Steps,
+    /// The program's state, as the step's edits and the solves after them
+    /// leave it.
+    state: Values,
+    editor: StepEditor<Design>,
     /// What picks test against, as drawn: the part before it, or what it
-    /// builds (see [`geop_ops::Operation::PICKS_BUILT`]).
-    view: PartView<S>,
+    /// builds (see [`OperationInfo::picks_built`]).
+    view: PartView,
     /// The step as it was before each edit made to it since it was opened,
     /// with the program's state: what undo goes back to while it is edited.
     undo: Vec<Edited>,
@@ -488,8 +416,18 @@ struct Open<S: Scalar> {
     dragging: Option<Edited>,
 }
 
-/// A step being edited, as one edit left it, with the program's state.
-type Edited = (PartOperation, geop_ops::part::State);
+impl Open {
+    /// The step, as its edits leave it.
+    fn step(&self) -> &ProgramStep {
+        &self.steps.steps[self.index]
+    }
+
+    /// The step, and the program's state, as they are now: what an undo
+    /// comes back to.
+    fn edited(&self) -> Edited {
+        (self.step().args.clone(), self.state.clone())
+    }
+}
 
 /// Which part is drawn, and without what — or, for a step edited on a
 /// sheet of its own, no part, the viewer framing the sheet: when it is the
@@ -504,30 +442,34 @@ struct Shown {
 }
 
 /// Editing a program: see the module docs.
-pub struct Editor<S: Scalar> {
-    program: Program,
+pub struct Editor {
+    file: Program,
     /// The file the program is in, once told: until then, the files it
     /// places are named relative to the workspace's top folder.
     path: Option<String>,
     /// The other program files, which it places parts from.
-    workspace: Workspace<S>,
+    workspace: Rc<Workspace>,
+    /// The library the program is built with: the workspace from its file.
+    /// Kept, so that a run reads the same library as the last one — a new
+    /// one builds every placed part's step again — until a file changes.
+    library: Rc<dyn Library>,
     undo: Vec<Program>,
     redo: Vec<Program>,
     marker: Option<usize>,
-    open: Option<Open<S>>,
+    open: Option<Open>,
     preview: bool,
-    pub(crate) runner: ProgramRunner<S>,
-    /// The runners of the files edited before, by path, the latest last:
+    pub(crate) build: Build,
+    /// The builds of the files edited before, by path, the latest last:
     /// opened again, a file takes up its steps as they were built, rather
-    /// than building them all again. At most [`KEPT_RUNNERS`].
-    runners: Vec<(String, ProgramRunner<S>)>,
+    /// than building them all again. At most [`KEPT_BUILDS`].
+    builds: Vec<(String, Build)>,
     /// Counts runs, so a scene is resent only after one.
     run: u64,
-    /// What each step that ran builds on (see [`geop_ops::ui::Dialog::picked`]),
-    /// with the step it was read from: what a step picked is in its
-    /// arguments, so it is read anew only when the step changed — not when
-    /// a drag only moved the program's state.
-    references: Vec<(Step<PartOperation>, Vec<EntityRef>)>,
+    /// What each step that ran builds on (see [`Dialog::picked`]), with the
+    /// step it was read from: what a step picked is in its arguments, so it
+    /// is read anew only when the step changed — not when a drag only moved
+    /// the program's state.
+    references: Vec<(ProgramStep, Vec<EntityRef>)>,
     shown: Option<Shown>,
     /// The names of the example programs, and of the examples made of
     /// several files — named once: building them is no work for every
@@ -535,7 +477,14 @@ pub struct Editor<S: Scalar> {
     examples: Vec<&'static str>,
     workspace_examples: Vec<&'static str>,
     /// How the solve of the drag tool's last drag went.
-    dragged: Option<geop_ops_assembly::MateReport>,
+    dragged: Option<Report>,
+    /// A smallest set of the constraints that cannot all hold together, as
+    /// the last settle found them (see [`solving::conflicting`]).
+    conflicting: Vec<String>,
+    /// How free the placed parts are, as the last edit left them (see
+    /// [`solving::freedom`]): asked over the whole part, so once an edit,
+    /// never for every move of the pointer.
+    freedom: Option<Freedom>,
     /// The files the last command added, for the update to say.
     added: Option<Vec<File>>,
     /// The file the last command wrote, for the update to carry.
@@ -545,69 +494,77 @@ pub struct Editor<S: Scalar> {
     /// when the viewer may have none (see [`SceneState`]).
     placed: Option<HashMap<String, (String, [f64; 12])>>,
     /// The drag tool, while in hand.
-    drag_tool: Option<DragTool<S>>,
-    /// The measure tool, while in hand.
-    measure_tool: Option<MeasureTool<S>>,
-    /// The question the last command asked, to answer once it has run.
-    query: Option<Query>,
+    drag_tool: Option<DragTool>,
+    /// The pick tool, while in hand.
+    pick_tool: Option<PickTool>,
+    /// The inspector the last command asked, and what it told it: to answer
+    /// once it has run.
+    asked: Option<(String, serde_json::Value)>,
+    /// The exporters and inspectors offered.
+    pub(crate) outputs: Outputs,
     /// The part as last drawn: what the drag tool picks from.
-    drawn: Option<PartView<S>>,
+    drawn: Option<PartView>,
     /// What the user chose to show or hide, by name, over what the editor
     /// would by itself (see [`Editor::hidden`]).
     visibility: BTreeMap<String, bool>,
 }
 
-impl<S: Scalar> Default for Editor<S> {
+impl Default for Editor {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<S: Scalar> Editor<S> {
+impl Editor {
     pub fn new() -> Self {
+        let workspace = workspace(BTreeMap::new());
         Self {
-            program: Program::new(),
+            file: Program::default(),
             path: None,
-            workspace: Workspace::new(WithStandardParts(BTreeMap::new())),
+            library: workspace.scope(""),
+            workspace,
             undo: Vec::new(),
             redo: Vec::new(),
             marker: None,
             open: None,
             preview: true,
-            runner: ProgramRunner::new(),
-            runners: Vec::new(),
+            build: Build::new(),
+            builds: Vec::new(),
             run: 0,
             references: Vec::new(),
             shown: None,
             examples: examples::all().into_iter().map(|(name, _)| name).collect(),
-            workspace_examples: examples::workspaces()
-                .into_iter()
+            workspace_examples: (examples::workspaces().into_iter())
                 .map(|(name, _)| name)
                 .collect(),
             dragged: None,
+            conflicting: Vec::new(),
+            freedom: None,
             added: None,
             exported: None,
             placed: None,
             drag_tool: None,
-            measure_tool: None,
-            query: None,
+            pick_tool: None,
+            asked: None,
+            outputs: outputs()
+                .expect("the editor's exporters and inspectors each have a kind of their own"),
             drawn: None,
             visibility: BTreeMap::new(),
         }
     }
 
     pub fn program(&self) -> &Program {
-        &self.program
+        &self.file
     }
 
     /// The part the program builds, as far as it runs now.
-    pub fn part(&self) -> &Part<S> {
-        self.runner.part()
+    pub fn part(&self) -> BuildView<'_> {
+        self.build.runner.part.current()
     }
 
     /// The step being edited, with its arguments as they now are.
-    pub fn editing(&self) -> Option<&PartOperation> {
-        self.open.as_ref().map(|open| open.editor.step())
+    pub fn editing(&self) -> Option<&ProgramStep> {
+        self.open.as_ref().map(Open::step)
     }
 
     /// [`Editor::handle`] on the wire: `command` is a [`Command`] as JSON,
@@ -617,36 +574,53 @@ impl<S: Scalar> Editor<S> {
     /// itself an update: the command could not be read, or the update not
     /// written.
     pub fn handle_json(&mut self, command: &str) -> Result<String, String> {
-        let command: Command<S> =
+        let command: Command =
             serde_json::from_str(command).map_err(|e| format!("reading command: {e}"))?;
         serde_json::to_string(&self.handle(command)).map_err(|e| format!("writing update: {e}"))
     }
 
-    /// Keeps what steps work out — the bodies imports read — in `cache`
-    /// from now on: on disk, say, where the next process finds them (see
-    /// [`geop_ops::Cache`]).
-    pub fn set_cache(&mut self, cache: Box<dyn geop_ops::Cache>) {
-        self.workspace.set_cache(cache);
-    }
-
-    /// How the solve of the drag tool's last drag went: whether the mates
-    /// hold, and how hard it was to get there.
-    pub fn dragged(&self) -> Option<&geop_ops_assembly::MateReport> {
+    /// How the solve of the drag tool's last drag went: whether the
+    /// constraints hold, and how hard it was to get there.
+    pub fn dragged(&self) -> Option<&Report> {
         self.dragged.as_ref()
     }
 
+    /// The values of the program's parameters, and the library, as a run
+    /// is given them.
+    fn inputs(&self) -> BTreeMap<String, Input> {
+        self.file.inputs(&Values::new(), self.library.clone())
+    }
+
+    /// Runs the first `end` of the steps run now — all of them, if `None` —
+    /// with their state (see [`Self::current`]), keeping how far it ran and
+    /// why steps failed.
+    fn run_to(&mut self, end: Option<usize>) {
+        let (steps, state) = self.current();
+        let inputs = self.inputs();
+        self.build.run(&steps, end, &inputs, &state);
+    }
+
+    /// The steps run now, and the state they run with: the step being
+    /// edited's, or the program's.
+    fn current(&self) -> (Steps, Values) {
+        match &self.open {
+            Some(open) => (open.steps.clone(), open.state.clone()),
+            None => (self.file.program.clone(), self.file.state.clone()),
+        }
+    }
+
     /// Applies `command`, and says what to show now.
-    pub fn handle(&mut self, command: Command<S>) -> Update<S> {
+    pub fn handle(&mut self, command: Command) -> Update {
         // What undo goes back to — not taken for what is sent as often as
         // the pointer moves, and cannot change the program. Another file's
         // program is not something to undo back to.
         let before = (!matches!(command, Command::Event { .. } | Command::Preview { .. }))
-            .then(|| (self.program.clone(), self.path.clone()));
+            .then(|| (self.file.clone(), self.path.clone()));
         let result = self.apply(command);
         if matches!(result, Ok(Changed::Program))
             && let Some((before, path)) = before
             && path == self.path
-            && self.program != before
+            && self.file != before
         {
             self.undo.push(before);
             self.redo.clear();
@@ -656,6 +630,9 @@ impl<S: Scalar> Editor<S> {
             self.settle();
             self.rerun();
         }
+        if matches!(result, Ok(Changed::Program | Changed::Step)) {
+            self.measure_freedom();
+        }
         let step = self.step_state();
         let steps = self.shown_steps(step.as_ref());
         let hidden = self.hidden(step.as_ref().map(|s| &s.presentation.pickable[..]), steps);
@@ -663,80 +640,23 @@ impl<S: Scalar> Editor<S> {
             run: self.run,
             steps,
             hidden,
-            sheet: step
-                .as_ref()
+            sheet: (step.as_ref())
                 .and_then(|s| s.presentation.sheet)
                 .map(|e| (e.center.to_array().map(|c| c.to_f64()), e.size.to_f64())),
         };
-        let scene = (self.shown.as_ref() != Some(&shown)).then(|| {
-            self.shown = Some(shown.clone());
-            let part = match shown.sheet {
-                Some((center, size)) => PartView::blank(geop_ops::ui::Extent {
-                    center: Vector3::from_array(center.map(S::from_f64)),
-                    size: S::from_f64(size),
-                }),
-                None => self.view_of(shown.steps),
-            };
-            let before = self.placed.take();
-            let all = before.is_none();
-            let before = before.unwrap_or_default();
-            let mut placed = HashMap::new();
-            let mut instances = Vec::new();
-            let mut components = BTreeMap::new();
-            let used: HashSet<&String> = before.values().map(|(key, _)| key).collect();
-            for instance in &part.instances {
-                let f = &instance.frame;
-                let frame =
-                    [f.origin(), f.u(), f.v(), f.w()].map(|p| p.to_array().map(|c| c.to_f64()));
-                let drawn = (
-                    instance.component.clone(),
-                    frame.concat().try_into().expect("12 numbers"),
-                );
-                if before.get(&instance.name) != Some(&drawn) {
-                    instances.push(instance.clone());
-                }
-                if !used.contains(&instance.component)
-                    && !components.contains_key(&instance.component)
-                    && let Ok(view) = instance.part().view()
-                {
-                    components.insert(instance.component.clone(), view.clone());
-                }
-                placed.insert(instance.name.clone(), drawn);
-            }
-            let mut removed: Vec<String> = before
-                .keys()
-                .filter(|name| !placed.contains_key(*name))
-                .cloned()
-                .collect();
-            removed.sort();
-            self.placed = Some(placed);
-            self.drawn = Some(part.clone());
-            SceneState {
-                part,
-                structure: self.structure(shown.steps, &shown.hidden),
-                hidden: shown.hidden,
-                instances,
-                all,
-                removed,
-                components,
-            }
-        });
+        let scene = (self.shown.as_ref() != Some(&shown)).then(|| self.scene(shown));
         let mut error = result.as_ref().err().map(|e| e.to_string());
-        let shown_part = self.runner.part_at(steps);
-        let inspection = match self.query.take() {
-            Some(query) => inspect::answer(query, shown_part, &self.file())
-                .map_err(|e| error = Some(e.to_string()))
-                .ok(),
-            None => self
-                .measure_tool
-                .as_mut()
-                .filter(|_| step.is_none())
-                .map(|tool| {
-                    if !matches!(result, Ok(Changed::Nothing)) {
-                        tool.remeasure(shown_part);
-                    }
-                    Inspection::Measure(tool.measurement().clone())
-                }),
+        if !matches!(result, Ok(Changed::Nothing))
+            && let Some(tool) = &mut self.pick_tool
+        {
+            tool.answer = None;
+        }
+        let inspection = match self.answer(step.is_none()) {
+            Ok(inspection) => inspection,
+            Err(e) => {
+                error = Some(e.to_string());
+                None
+            }
         };
         Update {
             error,
@@ -751,23 +671,117 @@ impl<S: Scalar> Editor<S> {
         }
     }
 
-    /// What the drag tool or the measure tool shows, if one is in hand and
+    /// What to draw, `shown`: the part, and of the parts placed in it what
+    /// the viewer was not sent yet.
+    fn scene(&mut self, shown: Shown) -> SceneState {
+        self.shown = Some(shown.clone());
+        let part = match shown.sheet {
+            Some((center, size)) => PartView::blank(Extent {
+                center: Vector3::from_array(center.map(Design::from_f64)),
+                size: Design::from_f64(size),
+            }),
+            None => self.view_of(shown.steps),
+        };
+        let before = self.placed.take();
+        let all = before.is_none();
+        let before = before.unwrap_or_default();
+        let mut placed = HashMap::new();
+        let mut instances = Vec::new();
+        let mut components = BTreeMap::new();
+        let used: HashSet<&String> = before.values().map(|(key, _)| key).collect();
+        for instance in &part.instances {
+            let f = &instance.frame;
+            let frame = [f.origin(), f.u(), f.v(), f.w()].map(|p| p.to_array().map(|c| c.to_f64()));
+            let mut numbers = [0.0; 12];
+            for (k, x) in frame.iter().flatten().enumerate() {
+                numbers[k] = *x;
+            }
+            let drawn = (instance.component.clone(), numbers);
+            if before.get(&instance.name) != Some(&drawn) {
+                instances.push(instance.clone());
+            }
+            if !used.contains(&instance.component) && !components.contains_key(&instance.component)
+            {
+                components.insert(instance.component.clone(), (**instance.view()).clone());
+            }
+            placed.insert(instance.name.clone(), drawn);
+        }
+        let mut removed: Vec<String> = (before.keys())
+            .filter(|name| !placed.contains_key(*name))
+            .cloned()
+            .collect();
+        removed.sort();
+        self.placed = Some(placed);
+        self.drawn = Some(part.clone());
+        SceneState {
+            part,
+            structure: structure(self.shown_part(shown.steps), &shown.hidden),
+            hidden: shown.hidden,
+            instances,
+            all,
+            removed,
+            components,
+        }
+    }
+
+    /// `ask` answered of the outputs offered and what was built, as an
+    /// exporter or inspector is given it, dated `date`.
+    fn ask<T>(
+        &mut self,
+        date: &str,
+        ask: impl FnOnce(&Outputs, &mut Output) -> GeopResult<T>,
+    ) -> GeopResult<T> {
+        let (_, state) = self.current();
+        let editing = self.open.as_ref().map(|open| open.id.clone());
+        let part = &mut self.build.runner.part;
+        ask(
+            &self.outputs,
+            &mut Output::new(part, &state, editing.as_deref(), date),
+        )
+    }
+
+    /// The answer to the inspector the last command asked, if it asked one
+    /// — else, `idle` (no step edited), the pick tool's inspector's about
+    /// its picks, asked again only if they or the part changed since.
+    fn answer(&mut self, idle: bool) -> GeopResult<Option<Inspection>> {
+        if let Some((kind, options)) = self.asked.take() {
+            return self.ask("", |outputs, output| {
+                let inspector = outputs.get_inspector(&kind)?;
+                inspector.inspect(output, &[], &options).map(Some)
+            });
+        }
+        let Some(tool) = self.pick_tool.as_ref().filter(|_| idle) else {
+            return Ok(None);
+        };
+        if tool.answer.is_none() {
+            let (kind, picked) = (tool.kind(), tool.picked().to_vec());
+            let null = serde_json::Value::Null;
+            let answer = self.ask("", |outputs, output| {
+                outputs.get_inspector(kind)?.inspect(output, &picked, &null)
+            })?;
+            if let Some(tool) = &mut self.pick_tool {
+                tool.answer = Some(answer);
+            }
+        }
+        Ok(self.pick_tool.as_ref().and_then(|tool| tool.answer.clone()))
+    }
+
+    /// What the drag tool or the pick tool shows, if one is in hand and
     /// no step is edited.
-    fn tool_presentation(&self, idle: bool) -> Option<Presentation<S>> {
-        if let Some(measure) = self.measure_tool.as_ref().filter(|_| idle) {
-            return Some(measure.presentation());
+    fn tool_presentation(&self, idle: bool) -> Option<Presentation<Design>> {
+        if let Some(tool) = self.pick_tool.as_ref().filter(|_| idle) {
+            return Some(tool.presentation());
         }
         let tool = self.drag_tool.as_ref().filter(|_| idle)?;
-        let lit = tool.grab.as_ref().map(|g| &g.name).or(tool.hover.as_ref());
+        let lit = (tool.grab.as_ref().map(|g| &g.name)).or(tool.hover.as_ref());
         Some(Presentation {
             dialog: Dialog::new(),
-            visuals: lit
-                .map(|name| {
-                    let shape = Shape::Instance { name: name.clone() };
-                    Visual::new("drag", shape, Style::Hover)
-                })
-                .into_iter()
-                .collect(),
+            visuals: (lit.map(|name| {
+                let shape = Shape::Instance { name: name.clone() };
+                Visual::new("drag", shape, Style::Hover)
+            }))
+            .into_iter()
+            .collect(),
             highlights: Vec::new(),
             pickable: Vec::new(),
             focus: None,
@@ -783,16 +797,12 @@ impl<S: Scalar> Editor<S> {
     /// the plane through it facing the eye — and solves the program's mates
     /// with that pull, every part that is not fixed free to give way. A
     /// drag, once released, is one edit to undo.
-    fn drag(&mut self, mut tool: DragTool<S>, event: &StepEditEvent<S>) -> Changed {
+    fn drag(&mut self, mut tool: DragTool, event: &StepEditEvent<Design>) -> Changed {
         let part_at = |editor: &Self, pointer| {
             let view = editor.drawn.as_ref()?;
             let (instance, t) = view.part_to_drag(pointer)?;
-            Some((
-                instance.name.clone(),
-                instance.parameter()?.to_string(),
-                *instance.pose(),
-                t,
-            ))
+            let parameter = instance.parameter()?.to_string();
+            Some((instance.name.clone(), parameter, *instance.pose(), t))
         };
         let changed = match event {
             StepEditEvent::Hover { pointer, .. } => {
@@ -813,7 +823,7 @@ impl<S: Scalar> Editor<S> {
                         parameter,
                         local: pose.inverse().apply(&at).sharpen(),
                         plane: (at, *from.ray.dir()),
-                        before: self.program.clone(),
+                        before: self.file.clone(),
                     });
                 }
                 let Some(grab) = &tool.grab else {
@@ -822,22 +832,23 @@ impl<S: Scalar> Editor<S> {
                 };
                 let (point, normal) = &grab.plane;
                 if let Some((_, target)) = to.ray.intersect_plane(point, normal) {
-                    let library = library(&self.workspace, self.path.as_deref());
-                    self.runner.run(&self.program, None, &library);
-                    let drag = Drag {
+                    self.run_to(None);
+                    let pull = Pull::Point {
                         parameter: grab.parameter.clone(),
                         local: grab.local,
                         target: target.sharpen(),
                     };
-                    if let Ok((moved, report)) = self.runner.part().solve_mates(None, &[], &[drag])
+                    let state = &self.file.state;
+                    if let Ok((moved, report)) =
+                        solving::solve(&mut self.build.runner.part, state, &[pull], None)
                     {
-                        self.program.state.extend(moved);
+                        self.file.state.extend(moved);
                         self.dragged = Some(report);
                     }
                 }
                 if *done
                     && let Some(grab) = tool.grab.take()
-                    && grab.before != self.program
+                    && grab.before != self.file
                 {
                     self.undo.push(grab.before);
                     self.redo.clear();
@@ -850,15 +861,36 @@ impl<S: Scalar> Editor<S> {
         changed
     }
 
+    /// Opens the step `id` of `steps`, at `index` — `new`, inserted there,
+    /// or one already there — to edit.
+    fn open(&mut self, steps: Steps, index: usize, id: String, new: bool) -> GeopResult<()> {
+        let state = self.file.state.clone();
+        // It runs once before it is edited: an editor edits a step against
+        // the part before it, as the last run left it.
+        let inputs = self.inputs();
+        self.build.run(&steps, Some(index + 1), &inputs, &state);
+        let editor = StepEditor::new(&self.build.runner, &steps, &id, new)?;
+        let view = PartView::of(&Seen::new(self.build.view_at(&steps, index)))?;
+        self.open = Some(Open {
+            index,
+            id,
+            new,
+            steps,
+            state,
+            editor,
+            view,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            dragging: None,
+        });
+        Ok(())
+    }
+
     /// Applies `command`, saying what it changed.
-    fn apply(&mut self, command: Command<S>) -> GeopResult<Changed> {
-        use geop_core_math::geop_error::GeopError;
-        let idle = |editor: &Self| {
-            if editor.open.is_some() {
-                Err(GeopError::new("finish editing the step first"))
-            } else {
-                Ok(())
-            }
+    fn apply(&mut self, command: Command) -> GeopResult<Changed> {
+        let idle = |editor: &Self| match editor.open {
+            Some(_) => Err(GeopError::new("finish editing the step first")),
+            None => Ok(()),
         };
         Ok(match command {
             Command::Show => {
@@ -870,48 +902,24 @@ impl<S: Scalar> Editor<S> {
             Command::New { kind } => {
                 idle(self)?;
                 self.drag_tool = None;
-                self.measure_tool = None;
-                let index = self.marker.unwrap_or(self.program.steps.len());
-                let library = library(&self.workspace, self.path.as_deref());
-                self.runner.run(&self.program, Some(index), &library);
-                let before = self.runner.part_at(index);
-                let step = PartOperation::new_step(&kind, before)?;
-                let id = self.program.fresh_id(&step);
-                let context = Context::new(before, &id, &library).state(&self.program.state);
-                let editor = StepEditor::new(step, context, true);
-                self.open = Some(Open {
-                    index,
-                    view: PartView::of(before)?,
-                    id,
-                    new: true,
-                    editor,
-                    undo: Vec::new(),
-                    redo: Vec::new(),
-                    dragging: None,
-                });
+                self.pick_tool = None;
+                let index = self.marker.unwrap_or(self.file.program.steps.len());
+                self.run_to(Some(index));
+                let label = self.build.runner.registry.get(&kind)?.info().label;
+                let id = self.file.fresh_id(label);
+                // The part as just run: the part before where the step goes.
+                let step = self.build.runner.new_step(&kind, &id, None)?;
+                let mut steps = self.file.program.clone();
+                steps.steps.insert(index, step);
+                self.open(steps, index, id, true)?;
                 Changed::Run
             }
             Command::Open { id } => {
                 idle(self)?;
                 self.drag_tool = None;
-                self.measure_tool = None;
-                let index = self.program.index_of(&id)?;
-                let library = library(&self.workspace, self.path.as_deref());
-                self.runner.run(&self.program, Some(index), &library);
-                let before = self.runner.part_at(index);
-                let step = self.program.steps[index].operation.clone();
-                let context = Context::new(before, &id, &library).state(&self.program.state);
-                let editor = StepEditor::new(step, context, false);
-                self.open = Some(Open {
-                    index,
-                    view: PartView::of(before)?,
-                    id,
-                    new: false,
-                    editor,
-                    undo: Vec::new(),
-                    redo: Vec::new(),
-                    dragging: None,
-                });
+                self.pick_tool = None;
+                let index = self.file.index_of(&id)?;
+                self.open(self.file.program.clone(), index, id, false)?;
                 Changed::Run
             }
             Command::Event { event } => {
@@ -919,39 +927,48 @@ impl<S: Scalar> Editor<S> {
                     if let Some(tool) = self.drag_tool.take() {
                         return Ok(self.drag(tool, &event));
                     }
-                    if let (Some(tool), Some(view)) = (&mut self.measure_tool, &self.drawn) {
-                        tool.handle(view, self.runner.part(), &event);
+                    if let (Some(tool), Some(view)) = (&mut self.pick_tool, &self.drawn) {
+                        tool.handle(view, &event);
                     }
                     return Ok(Changed::Nothing);
                 };
-                let library = library(&self.workspace, self.path.as_deref());
-                let context = Context::new(self.runner.part_at(open.index), &open.id, &library)
-                    .built(self.runner.built(open.index));
-                let before = (open.editor.step().clone(), open.editor.state().clone());
-                open.editor.handle(context, &open.view, &event);
-                let after = (open.editor.step(), open.editor.state());
+                let before = open.edited();
+                let scene = PartScene {
+                    view: &open.view,
+                    seen: Seen::new(self.build.picks_in(open)),
+                };
+                let editing = Editing {
+                    runner: &self.build.runner,
+                    program: &mut open.steps,
+                    scene: &scene,
+                };
+                open.editor.handle(editing, &event)?;
+                let after = open.edited();
                 // What undo goes back to: the step before this edit — before
                 // the whole drag, for one.
                 let start = open.dragging.take().unwrap_or_else(|| before.clone());
                 if matches!(event, StepEditEvent::Drag { done: false, .. }) {
                     open.dragging = Some(start);
-                } else if (&start.0, &start.1) != after {
+                } else if start != after {
                     open.undo.push(start);
                     open.redo.clear();
                 }
                 // A drag changes neither, but what it pulls moves the parts.
-                let dragging = !open.editor.drags(context).is_empty();
-                if (&before.0, &before.1) == after && !dragging {
-                    Changed::Nothing
-                } else {
-                    Changed::Step
+                let pulls = !(open
+                    .editor
+                    .form(&self.build.runner, &open.steps)?
+                    .pulls
+                    .is_empty());
+                match before == after && !pulls {
+                    true => Changed::Nothing,
+                    false => Changed::Step,
                 }
             }
             Command::Commit => {
                 let Some(open) = &self.open else {
                     return Err(GeopError::new("no step is being edited"));
                 };
-                let dialog = self.presentation(open).dialog;
+                let dialog = self.presentation(open)?.dialog;
                 let missing = dialog.missing();
                 if !missing.is_empty() {
                     return Err(GeopError::new(format!(
@@ -959,10 +976,11 @@ impl<S: Scalar> Editor<S> {
                         missing.join(" and ")
                     )));
                 }
-                if let Some(error) = self.step_error(open) {
+                if let Some(error) = self.build.step_error(open) {
                     return Err(GeopError::new(format!("the step does not build: {error}")));
                 }
-                self.program = self.with_open(open);
+                self.file.program = open.steps.clone();
+                self.file.state = open.state.clone();
                 if open.new
                     && let Some(marker) = &mut self.marker
                 {
@@ -981,42 +999,35 @@ impl<S: Scalar> Editor<S> {
             }
             Command::Joint { parameter, value } => {
                 idle(self)?;
-                let library = library(&self.workspace, self.path.as_deref());
-                let mut state = self.program.state.clone();
-                state.insert(
-                    parameter.clone(),
-                    ParamValue::Number(Design::from_f64(value)),
-                );
-                let program = Program {
-                    state,
-                    ..self.program.clone()
-                };
-                self.runner.run(&program, None, &library);
-                let part = self.runner.part();
-                if !part.solved_parameters().contains(&parameter) {
+                self.run_to(None);
+                let settable = (solving::settings(self.part()).into_iter())
+                    .any(|s| s.values.iter().any(|v| v.parameter == parameter));
+                if !settable {
                     return Err(GeopError::new(format!(
-                        "{parameter:?} is no joint coordinate of this program"
+                        "{parameter:?} is no value of this program a user sets"
                     )));
                 }
-                let (moved, _) = part.solve_joints(std::slice::from_ref(&parameter))?;
-                self.program.state = program.state;
-                self.program.state.extend(moved);
+                let set = BTreeMap::from([(parameter, Design::from_f64(value))]);
+                let state = &self.file.state;
+                let (moved, _) = solving::set(&mut self.build.runner.part, state, &set)?;
+                self.file.state.extend(moved);
                 Changed::Program
             }
             Command::Parameters { parameters } => {
                 parameters.validate()?;
-                self.program.parameters = parameters;
+                self.file.parameters = parameters;
                 Changed::Program
             }
             Command::RenameParameter { from, to } => {
                 idle(self)?;
-                self.program.rename_parameter(&from, &to)?;
+                let registry = &self.build.runner.registry;
+                self.file.rename_parameter(registry, &from, &to)?;
                 Changed::Program
             }
             Command::Remove { id } => {
                 idle(self)?;
-                let index = self.program.index_of(&id)?;
-                self.program.steps.remove(index);
+                let index = self.file.index_of(&id)?;
+                self.file.program.steps.remove(index);
                 if let Some(marker) = &mut self.marker
                     && index < *marker
                 {
@@ -1026,21 +1037,23 @@ impl<S: Scalar> Editor<S> {
             }
             Command::Move { id, index } => {
                 idle(self)?;
-                let from = self.program.index_of(&id)?;
-                if index >= self.program.steps.len() {
+                let from = self.file.index_of(&id)?;
+                let steps = &mut self.file.program.steps;
+                if index >= steps.len() {
                     return Err(GeopError::new(format!(
                         "cannot move step {id:?} to {index}: the program has {} steps",
-                        self.program.steps.len()
+                        steps.len()
                     )));
                 }
-                let step = self.program.steps.remove(from);
-                self.program.steps.insert(index, step);
+                let step = steps.remove(from);
+                steps.insert(index, step);
                 Changed::Program
             }
             Command::Copy { id } => {
                 self.exported = Some(Export {
                     name: format!("{id}.geop"),
-                    content: Content::Text(self.program.excerpt(&id)?.to_json()?),
+                    media_type: "application/json".into(),
+                    content: Content::Text(self.file.excerpt(&id)?.to_json()?),
                 });
                 Changed::Nothing
             }
@@ -1049,8 +1062,13 @@ impl<S: Scalar> Editor<S> {
                 let pasted = Program::from_json(&text).map_err(|e| {
                     e.with_context("pasting: what is pasted is not steps copied from geop")
                 })?;
-                let index = self.marker.unwrap_or(self.program.steps.len());
-                let ids = self.program.paste(pasted, index)?;
+                let index = self.marker.unwrap_or(self.file.program.steps.len());
+                let registry = &self.build.runner.registry;
+                let label = |step: &ProgramStep| match registry.get(&step.operation) {
+                    Ok(operation) => operation.info().label.to_string(),
+                    Err(_) => step.operation.clone(),
+                };
+                let ids = self.file.paste(pasted, index, label)?;
                 if let Some(marker) = &mut self.marker {
                     *marker += ids.len();
                 }
@@ -1058,7 +1076,7 @@ impl<S: Scalar> Editor<S> {
             }
             Command::Seek { marker } => {
                 idle(self)?;
-                self.marker = marker.filter(|&m| m < self.program.steps.len());
+                self.marker = marker.filter(|&m| m < self.file.program.steps.len());
                 Changed::Run
             }
             Command::Load { program, path } => {
@@ -1071,88 +1089,69 @@ impl<S: Scalar> Editor<S> {
                     // the new one may place; its history is not the new
                     // one's, and what the new one places resolves from
                     // elsewhere.
-                    let runner = match self.runners.iter().position(|(kept, _)| *kept == path) {
-                        Some(k) => self.runners.remove(k).1,
-                        None => ProgramRunner::new(),
+                    let build = match self.builds.iter().position(|(kept, _)| *kept == path) {
+                        Some(k) => self.builds.remove(k).1,
+                        None => Build::new(),
                     };
-                    let left_runner = std::mem::replace(&mut self.runner, runner);
+                    let left_build = std::mem::replace(&mut self.build, build);
                     if let Some(left) = self.path.replace(path) {
-                        let text = self.program.to_json()?;
-                        if self.workspace.write(&left, Some(text)) {
-                            // Edited: what the other files built on it is
-                            // built again.
-                            let changed = BTreeSet::from([resolve("", &left)]);
-                            self.runner.forget(&changed);
-                            for (_, runner) in &mut self.runners {
-                                runner.forget(&changed);
-                            }
-                        }
-                        // Built whole, the file left is placed elsewhere as it
-                        // was built here; and opened again, it starts from
-                        // its steps as they were built.
-                        if let Some((part, read)) = left_runner.built_whole(&self.program) {
-                            self.workspace.keep(&left, part.clone(), read);
-                        }
-                        self.runners.push((left, left_runner));
-                        if self.runners.len() > KEPT_RUNNERS {
-                            self.runners.remove(0);
+                        self.workspace.write(&left, Some(self.file.to_json()?));
+                        self.builds.push((left, left_build));
+                        if self.builds.len() > KEPT_BUILDS {
+                            self.builds.remove(0);
                         }
                     }
+                    self.library = self
+                        .workspace
+                        .scope(self.path.as_deref().unwrap_or_default());
                     self.undo.clear();
                     self.redo.clear();
                     self.visibility.clear();
                 }
-                self.program = program;
+                self.file = program;
                 self.marker = None;
                 Changed::Program
             }
             Command::Files { files } => {
                 // Only what was built from a file that changed is built
                 // again; a file saved as it was changes nothing.
-                let changed: BTreeSet<String> = files
-                    .into_iter()
-                    .filter_map(|(path, text)| {
-                        self.workspace
-                            .write(&path, text)
-                            .then(|| resolve("", &path))
-                    })
-                    .collect();
-                if changed.is_empty() {
+                let mut changed = false;
+                for (path, text) in files {
+                    changed |= self.workspace.write(&path, text);
+                }
+                if !changed {
                     return Ok(Changed::Nothing);
                 }
-                self.runner.forget(&changed);
-                for (_, runner) in &mut self.runners {
-                    runner.forget(&changed);
-                }
+                // A new library: every step that places a part asks it
+                // again, and takes what it kept where nothing changed.
+                self.library = self
+                    .workspace
+                    .scope(self.path.as_deref().unwrap_or_default());
                 // What the step being edited is built on may have changed.
-                if let Some(open) = &self.open {
-                    let library = library(&self.workspace, self.path.as_deref());
-                    self.runner.run(&self.program, Some(open.index), &library);
-                    let view = PartView::of(self.runner.part_at(open.index))?;
+                if let Some(index) = self.open.as_ref().map(|open| open.index) {
+                    self.run_to(Some(index));
                     if let Some(open) = &mut self.open {
-                        open.view = view;
+                        open.view =
+                            PartView::of(&Seen::new(self.build.view_at(&open.steps, index)))?;
                     }
                 }
                 Changed::Run
             }
             Command::LoadExample { name } => {
                 idle(self)?;
-                let (_, program) = examples::all()
-                    .into_iter()
+                let (_, program) = (examples::all().into_iter())
                     .find(|(n, _)| *n == name)
                     .ok_or_else(|| GeopError::new(format!("there is no example {name:?}")))?;
-                self.program = program();
+                self.file = program();
                 self.marker = None;
                 Changed::Program
             }
             Command::LoadWorkspaceExample { name, folder } => {
                 idle(self)?;
-                let (_, files) = examples::workspaces()
-                    .into_iter()
+                let (_, files) = (examples::workspaces().into_iter())
                     .find(|(n, _)| *n == name)
                     .ok_or_else(|| GeopError::new(format!("there is no example {name:?}")))?;
-                let files: Vec<File> = files()
-                    .into_iter()
+                let files: Vec<File> = (files().into_iter())
                     .map(|(path, program)| File {
                         path: match &folder {
                             Some(folder) => format!("{folder}/{path}"),
@@ -1161,20 +1160,20 @@ impl<S: Scalar> Editor<S> {
                         program,
                     })
                     .collect();
-                let texts = files
-                    .iter()
-                    .map(|f| Ok((f.path.clone(), f.program.to_json()?)))
-                    .collect::<GeopResult<Vec<_>>>()?;
-                for (path, text) in texts {
-                    self.workspace.write(&path, Some(text));
+                for file in &files {
+                    self.workspace
+                        .write(&file.path, Some(file.program.to_json()?));
                 }
-                let first = files.first().expect("an example has files");
-                self.program = first.program.clone();
+                let first = files
+                    .first()
+                    .ok_or_else(|| GeopError::new(format!("the example {name:?} has no files")))?;
+                self.file = first.program.clone();
                 self.path = Some(first.path.clone());
+                self.library = self.workspace.scope(&first.path);
                 self.marker = None;
                 self.undo.clear();
                 self.redo.clear();
-                self.runner.reset();
+                self.build = Build::new();
                 self.added = Some(files);
                 Changed::Program
             }
@@ -1182,66 +1181,61 @@ impl<S: Scalar> Editor<S> {
                 self.visibility.insert(name, visible);
                 Changed::Nothing
             }
-            Command::ExportStep
-            | Command::ExportFlatPattern { .. }
-            | Command::ExportBom { .. }
-            | Command::ExportDrawing { .. }
-            | Command::ExportUrdf => {
-                return Err(GeopError::new(
-                    "this export is not available while its crate is out of the workspace",
-                ));
-            }
             Command::Crash => panic!("the kernel was asked to crash"),
-            Command::ExportStl => {
-                let stem = self.file_stem().unwrap_or_else(|| "part".to_string());
-                let triangles: Vec<_> = self
-                    .runner
-                    .part()
-                    .solid_meshes(MESH_QUALITY)?
-                    .iter()
-                    .flat_map(|(_, triangles)| triangles.iter().map(stl::outward))
-                    .collect();
-                let mut bytes = Vec::new();
-                stl::write_stl(&triangles, &stem, stl::StlFormat::Binary, &mut bytes)
-                    .map_err(|e| GeopError::new(format!("writing {stem}.stl: {e}")))?;
-                self.exported = Some(Export {
-                    name: format!("{stem}.stl"),
-                    content: Content::Bytes(bytes),
-                });
+            Command::Export {
+                exporter,
+                format,
+                options,
+                date,
+            } => {
+                let export = self.ask(&date, |outputs, output| {
+                    let exporter = outputs.get_exporter(&exporter)?;
+                    exporter.export(output, format.as_deref(), &options)
+                })?;
+                self.exported = Some(export);
                 Changed::Nothing
             }
             Command::DragTool { on } => {
                 idle(self)?;
                 self.drag_tool = on.then(DragTool::default);
                 if on {
-                    self.measure_tool = None;
+                    self.pick_tool = None;
                 }
                 Changed::Run
             }
-            Command::MeasureTool { on } => {
+            Command::PickTool { inspector } => {
                 idle(self)?;
-                self.measure_tool = on.then(|| MeasureTool::new(self.runner.part()));
-                if on {
-                    self.drag_tool = None;
-                }
+                self.pick_tool = match inspector {
+                    Some(kind) => {
+                        let info = self.outputs.get_inspector(&kind)?.info();
+                        self.drag_tool = None;
+                        Some(PickTool::new(info)?)
+                    }
+                    None => None,
+                };
                 Changed::Run
             }
-            Command::Inspect { query } => {
-                self.query = Some(query);
+            Command::Inspect { inspector, options } => {
+                self.asked = Some((inspector, options));
                 Changed::Nothing
             }
             Command::Undo | Command::Redo if self.open.is_some() => {
                 // While a step is edited, its own edits.
-                let open = self.open.as_mut().expect("checked");
+                let Some(open) = self.open.as_mut() else {
+                    return Ok(Changed::Nothing);
+                };
+                let now = open.edited();
                 let (from, to) = match command {
                     Command::Undo => (&mut open.undo, &mut open.redo),
                     _ => (&mut open.redo, &mut open.undo),
                 };
-                let Some((step, state)) = from.pop() else {
+                let Some((args, state)) = from.pop() else {
                     return Ok(Changed::Nothing);
                 };
-                to.push((open.editor.step().clone(), open.editor.state().clone()));
-                open.editor.restore(step, state);
+                to.push(now);
+                open.steps.steps[open.index].args = args;
+                open.state = state;
+                open.editor.restart(&self.build.runner, &open.steps)?;
                 Changed::Step
             }
             Command::Undo | Command::Redo => {
@@ -1252,7 +1246,7 @@ impl<S: Scalar> Editor<S> {
                 let Some(program) = from.pop() else {
                     return Ok(Changed::Nothing);
                 };
-                to.push(std::mem::replace(&mut self.program, program));
+                to.push(std::mem::replace(&mut self.file, program));
                 self.marker = None;
                 // Undoing is not itself an edit to undo.
                 Changed::Run
@@ -1260,225 +1254,143 @@ impl<S: Scalar> Editor<S> {
         })
     }
 
-    /// The program with the step being edited in it, and the state as
-    /// its edits leave them.
-    fn with_open(&self, open: &Open<S>) -> Program {
-        let mut program = self.program.clone();
-        program.state = open.editor.state().clone();
-        let step = Step {
-            id: open.id.clone(),
-            operation: open.editor.step().clone(),
-        };
-        if open.new {
-            program.steps.insert(open.index, step);
-        } else {
-            program.steps[open.index] = step;
-        }
-        program
-    }
-
     /// Solves the program's mates from where its state puts its parts, and
     /// keeps where they put them: the program's state, which every step
-    /// then sees (see [`geop_ops::part::State`]). While a step that moves
-    /// no placed part is edited, only the program up to it runs: the steps
-    /// after it are built again once the edit is done, not on every move of
-    /// the pointer — editing a sketch early in a long program would
-    /// otherwise rebuild everything after it each time.
+    /// then sees. While a step that pulls no placed part is edited, only
+    /// the program up to it runs: the steps after it are built again once
+    /// the edit is done, not on every move of the pointer — editing a
+    /// sketch early in a long program would otherwise rebuild everything
+    /// after it each time.
     ///
-    /// A drag the step being edited asks for pulls first, every part that is
-    /// not fixed free to give way — a linkage follows the link dragged.
-    /// Otherwise the parts move only if a mate does not hold: the step's own
-    /// part first, the others held — mating a new part moves it, not the
-    /// part it is mated to — and every part that is not fixed only where
-    /// that is not enough. State no step declares any more go, and
-    /// those declared but not given are kept at what the steps took for
-    /// them.
+    /// What the step being edited pulls ([`Pull`]) pulls first, every part
+    /// that is not fixed free to give way — a linkage follows the link
+    /// dragged. Otherwise the parts move only if a mate does not hold: the
+    /// step's own part first, the others held — mating a new part moves
+    /// it, not the part it is mated to — and every part that is not fixed
+    /// only where that is not enough. State nothing solves for any more
+    /// goes.
     ///
     /// It may leave the runner having run the whole program, not what is
     /// shown: [`Self::rerun`] runs that.
     fn settle(&mut self) {
-        let library = library(&self.workspace, self.path.as_deref());
-        let program = match &self.open {
-            Some(open) => self.with_open(open),
-            None => self.program.clone(),
-        };
-        // Up to the step edited first: what it drags or holds is known
-        // from the part it is applied to.
-        self.runner.run(
-            &program,
-            self.open.as_ref().map(|open| open.index + 1),
-            &library,
-        );
-        let (drags, holds, own) = match &self.open {
-            Some(open) => {
-                let context = Context::new(self.runner.part_at(open.index), &open.id, &library)
-                    .built(self.runner.built(open.index));
-                let declared = self.runner.part_at(open.index).declared();
-                let own: Vec<String> = self
-                    .runner
-                    .part_at(open.index + 1)
-                    .declared()
-                    .keys()
-                    .filter(|name| !declared.contains_key(*name))
-                    .cloned()
-                    .collect();
-                (open.editor.drags(context), open.editor.holds(context), own)
-            }
-            None => (Vec::new(), Vec::new(), Vec::new()),
+        let (steps, state) = self.current();
+        // Up to the step edited first: what it pulls is known from the part
+        // it is applied to.
+        self.run_to(self.open.as_ref().map(|open| open.index + 1));
+        let pulls = match &self.open {
+            Some(open) => (open.editor.form(&self.build.runner, &open.steps))
+                .map(|form| form.pulls)
+                .unwrap_or_default(),
+            None => Vec::new(),
         };
         // The whole program, when the parts it places may move: with no
-        // step edited, or while the step edited drags placed parts or holds
-        // joints, which carry the parts placed after it along. Otherwise —
-        // a sketch, a feature — the steps after it are built again once the
-        // edit is done.
-        let whole = self.open.is_none() || !drags.is_empty() || !holds.is_empty();
+        // step edited, or while the step edited pulls them, which carries
+        // the parts placed after it along. Otherwise — a sketch, a feature
+        // — the steps after it are built again once the edit is done.
+        let whole = self.open.is_none() || !pulls.is_empty();
         if whole && self.open.is_some() {
-            self.runner.run(&program, None, &library);
+            self.run_to(None);
         }
-        // Which state the program declares is only known once all of it
+        // Which state the program solves for is only known once all of it
         // has run: until then, none is dropped.
-        let complete = whole
-            && self.runner.results().len() == program.steps.len()
-            && self.runner.results().iter().all(|r| r.error.is_none());
-        let part = self.runner.part();
-        let hold = || {
-            part.check_mates(|_| true)
-                .is_ok_and(|report| report.converged)
-        };
-        let solved = if !drags.is_empty() {
-            part.solve_mates(None, &holds, &drags)
-                .ok()
-                .map(|(moved, _)| moved)
-        } else if hold() {
+        let complete = whole && self.build.ran == steps.steps.len() && self.build.errors.is_empty();
+        let holds = solving::check(self.part()).is_ok_and(|report| report.converged);
+        let own = (self.open.as_ref()).map(|open| pose_parameter(&open.id));
+        let part = &mut self.build.runner.part;
+        let solved = if !pulls.is_empty() {
+            solving::solve(part, &state, &pulls, None).ok()
+        } else if holds {
             None
-        } else if !holds.is_empty() {
-            part.solve_joints(&holds).ok().map(|(moved, _)| moved)
         } else {
-            let own_first = own
-                .first()
-                .and_then(|name| part.solve_mates(Some(name), &holds, &[]).ok())
+            let own_first = (own.as_deref())
+                .and_then(|own| solving::solve(part, &state, &[], Some(own)).ok())
                 .filter(|(_, report)| report.converged);
-            own_first
-                .or_else(|| part.solve_mates(None, &holds, &[]).ok())
-                .map(|(moved, _)| moved)
+            own_first.or_else(|| solving::solve(part, &state, &[], None).ok())
         };
-        let mut state = program.state.clone();
-        state.extend(solved.into_iter().flatten());
-        if complete {
-            // Every pose a step declares, and every joint's coordinates, and
-            // no other: the file says where every placed part is. The
-            // numbers its steps read are its parameters', defined apart
-            // from its state.
-            let declared: State = part
-                .declared()
-                .iter()
-                .filter(|(_, value)| matches!(value, ParamValue::Pose(_)))
-                .map(|(name, value)| (name.clone(), value.clone()))
-                .collect();
-            let solved = part.solved_parameters();
-            state.retain(|name, _| declared.contains_key(name) || solved.contains(name));
-            for (name, value) in declared {
-                state.entry(name).or_insert(value);
+        // Which constraints conflict is asked only where they do not all
+        // hold: a solve, and an enclosure of each group that fails.
+        self.conflicting = match &solved {
+            Some((_, report)) if !report.converged => {
+                solving::conflicting(part, &state).unwrap_or_default()
             }
+            _ => Vec::new(),
+        };
+        let mut next = state.clone();
+        next.extend(solved.into_iter().flat_map(|(moved, _)| moved));
+        if complete && let Ok(solvable) = solving::solved_parameters(self.part()) {
+            next.retain(|name, _| solvable.contains(name));
         }
-        if state == program.state {
+        if next == state {
             return;
         }
         match &mut self.open {
-            Some(open) => open.editor.set_state(state),
-            None => self.program.state = state,
+            Some(open) => open.state = next,
+            None => self.file.state = next,
         }
+    }
+
+    /// How free the placed parts of what is shown are, kept for the program
+    /// state to show (see [`solving::freedom`]): asked once an edit, never
+    /// for every move of the pointer.
+    fn measure_freedom(&mut self) {
+        let (_, state) = self.current();
+        let placed = placed_parts(self.part()).is_ok_and(|placed| !placed.is_empty());
+        self.freedom = placed
+            .then(|| solving::freedom(&mut self.build.runner.part, &state, &BTreeSet::new()).ok())
+            .flatten();
     }
 
     /// Runs what is shown: the program up to and including the step being
     /// edited, or as far as it runs.
     fn rerun(&mut self) {
-        let library = library(&self.workspace, self.path.as_deref());
-        match &self.open {
-            Some(open) => {
-                let program = self.with_open(open);
-                self.runner.run(&program, Some(open.index + 1), &library);
-            }
-            None => self.runner.run(&self.program, self.marker, &library),
-        }
+        self.run_to(match &self.open {
+            Some(open) => Some(open.index + 1),
+            None => self.marker,
+        });
         self.run += 1;
-        let ran = self.runner.results().len();
-        let steps = match &self.open {
-            Some(open) => self.with_open(open).steps,
-            None => self.program.steps.clone(),
-        };
+        let (steps, _) = self.current();
         let before = std::mem::take(&mut self.references);
-        self.references = steps[..ran]
-            .iter()
-            .enumerate()
+        self.references = (steps.steps[..self.build.ran].iter().enumerate())
             .map(|(i, step)| {
                 if let Some((_, picked)) = before.get(i).filter(|(read, _)| read == step) {
                     return (step.clone(), picked.clone());
                 }
                 // What a step picks is its arguments': not what it built,
                 // which is why it is kept for as long as the step is the
-                // same. Without it, a form does none of the work it would
-                // to show what was built — a placed part's mates checked
-                // over the whole assembly, for every step.
-                let session = step.operation.new_session();
-                let context = Context::new(self.runner.part_at(i), &step.id, &library);
-                let form = step.operation.form(context, &*session, &[]);
-                (step.clone(), form.dialog.picked().cloned().collect())
+                // same, and read from the form a list shows.
+                let picked = (self.build.runner.listed(&steps, &step.id))
+                    .map(|form| form.dialog.picked().cloned().collect())
+                    .unwrap_or_default();
+                (step.clone(), picked)
             })
             .collect();
         if let Some(open) = &self.open
-            && open.editor.step().picks_built()
+            && self.build.picks_built(open)
+            && let Ok(view) = PartView::of(&Seen::new(self.build.picks_in(open)))
+            && let Some(open) = &mut self.open
         {
-            let view = PartView::of(self.picks_in(open)).ok();
-            if let (Some(open), Some(view)) = (&mut self.open, view) {
-                open.view = view;
-            }
+            open.view = view;
         }
-    }
-
-    /// The part the step being edited picks from: the part before it — or,
-    /// for one that picks from what it builds, that, once it builds.
-    fn picks_in(&self, open: &Open<S>) -> &Part<S> {
-        let builds = open.editor.step().picks_built() && self.step_error(open).is_none();
-        self.runner.part_at(open.index + usize::from(builds))
     }
 
     /// What the step being edited shows.
-    fn presentation(&self, open: &Open<S>) -> Presentation<S> {
-        let library = library(&self.workspace, self.path.as_deref());
-        let context = Context::new(self.runner.part_at(open.index), &open.id, &library)
-            .built(self.runner.built(open.index));
+    fn presentation(&self, open: &Open) -> GeopResult<Presentation<Design>> {
+        let scene = PartScene {
+            view: &open.view,
+            seen: Seen::new(self.build.picks_in(open)),
+        };
         open.editor
-            .presentation(context, self.picks_in(open), &open.view)
+            .presentation(&self.build.runner, &open.steps, &scene)
     }
 
-    /// Why the step being edited does not build, if it does not.
-    fn step_error(&self, open: &Open<S>) -> Option<String> {
-        match self.runner.results().get(open.index) {
-            Some(StepResult { error, .. }) => error.clone(),
-            None => Some(
-                self.runner
-                    .results()
-                    .iter()
-                    .find_map(|r| r.error.as_ref())
-                    .map_or("it did not run".into(), |e| {
-                        format!("an earlier step failed: {e}")
-                    }),
-            ),
-        }
-    }
-
-    fn step_state(&self) -> Option<StepState<S>> {
+    fn step_state(&self) -> Option<StepState> {
         let open = self.open.as_ref()?;
-        let step = open.editor.step();
-        let info = PartOperation::infos()
-            .into_iter()
-            .find(|i| i.kind == step.kind())?;
-        let presentation = self.presentation(open);
-        let missing: Vec<String> = presentation
-            .dialog
-            .missing()
-            .into_iter()
+        let info = (self.build.runner.registry)
+            .get(&open.step().operation)
+            .ok()?
+            .info();
+        let presentation = self.presentation(open).ok()?;
+        let missing: Vec<String> = (presentation.dialog.missing().into_iter())
             .map(str::to_string)
             .collect();
         Some(StepState {
@@ -1486,7 +1398,10 @@ impl<S: Scalar> Editor<S> {
             label: info.label,
             doc: info.doc,
             id: (!open.new).then(|| open.id.clone()),
-            error: missing.is_empty().then(|| self.step_error(open)).flatten(),
+            error: missing
+                .is_empty()
+                .then(|| self.build.step_error(open))
+                .flatten(),
             missing,
             presentation,
             preview: self.preview,
@@ -1498,7 +1413,7 @@ impl<S: Scalar> Editor<S> {
     /// How many steps the drawn part is built by: with the step being
     /// edited, if it is previewed, builds, and no plane is worked in —
     /// then what is drawn is drawn a second time, in the plane.
-    fn shown_steps(&self, step: Option<&StepState<S>>) -> usize {
+    fn shown_steps(&self, step: Option<&StepState>) -> usize {
         match (&self.open, step) {
             (Some(open), Some(step)) => {
                 let preview = self.preview
@@ -1507,22 +1422,23 @@ impl<S: Scalar> Editor<S> {
                     && step.presentation.focus.is_none();
                 open.index + usize::from(preview)
             }
-            _ => self.runner.results().len(),
+            _ => self.build.ran,
         }
+    }
+
+    /// The part `steps` steps build, as it is shown to be.
+    fn shown_part(&self, steps: usize) -> BuildView<'_> {
+        let (program, _) = self.current();
+        self.build.view_at(&program, steps)
     }
 
     /// What the shown steps built on — sketches, and datums as a whole —
     /// but none that something of could fill a role `picking` looks for.
     fn hidden(&self, picking: Option<&[Role]>, steps: usize) -> Vec<String> {
         let picking = picking.unwrap_or_default();
-        let pickable = |r: &EntityRef| {
-            self.open
-                .as_ref()
-                .is_some_and(|open| open.view.can_fill(r, picking))
-        };
-        let mut hidden: Vec<String> = self
-            .references
-            .iter()
+        let pickable =
+            |r: &EntityRef| (self.open.as_ref()).is_some_and(|open| open.view.can_fill(r, picking));
+        let mut hidden: Vec<String> = (self.references.iter())
             .flat_map(|(_, picked)| picked)
             .filter(|r| !pickable(r))
             .filter_map(|r| match r {
@@ -1537,29 +1453,16 @@ impl<S: Scalar> Editor<S> {
             .collect();
         // The datums of the parts placed are theirs, not the part's: shown
         // only while a part is being placed, for its mates to pick.
-        let placing = self
-            .open
-            .as_ref()
-            .is_some_and(|open| matches!(open.editor.step(), PartOperation::AddPart(_)));
-        if !placing {
-            fn placed<S: Scalar>(part: &Part<S>, prefix: &str, out: &mut Vec<String>) {
-                for (id, instance) in part.instances() {
-                    let name = format!(
-                        "{prefix}{}{}",
-                        part.name_of(id).unwrap_or_default(),
-                        geop_ops::operation::INSTANCE_SEPARATOR
+        let placing = (self.open.as_ref()).is_some_and(|open| self.build.picks_built(open));
+        if !placing && let Ok(placed) = placed_parts(self.shown_part(steps)) {
+            for part in placed {
+                if let Ok(drawn) = part.located.instance.component.drawn() {
+                    hidden.extend(
+                        (drawn.datums.iter())
+                            .map(|d| format!("{}{INSTANCE_SEPARATOR}{}", part.name, d.name)),
                     );
-                    let inner = &instance.part;
-                    out.extend(
-                        inner
-                            .datums()
-                            .filter_map(|(datum, _)| inner.name_of(datum))
-                            .map(|datum| format!("{name}{datum}")),
-                    );
-                    placed(inner, &name, out);
                 }
             }
-            placed(self.runner.part_at(steps), "", &mut hidden);
         }
         // Then what the user chose — but what a click could pick now is
         // shown, to be picked.
@@ -1580,100 +1483,57 @@ impl<S: Scalar> Editor<S> {
         hidden
     }
 
-    /// What the part `steps` steps build has beyond the faces of its solids:
-    /// its datums, sketches, solids, faces standing on their own, the parts
-    /// placed in it and their mates — each shown or not as `hidden` says,
-    /// but a mate, which is never drawn.
-    fn structure(&self, steps: usize, hidden: &[String]) -> Vec<StructureItem> {
-        let part = self.runner.part_at(steps);
-        let item = |kind, name: &str| StructureItem {
-            kind,
-            name: name.to_string(),
-            visible: Some(!hidden.iter().any(|h| h == name)),
-        };
-        let named = |id: geop_ops::RefId| part.name_of(id).unwrap_or_default();
-        let mut items: Vec<StructureItem> = part
-            .datums()
-            .map(|(id, _)| item(StructureKind::Datum, named(id.into())))
-            .collect();
-        items.extend(
-            part.sketch_names()
-                .iter()
-                .chain(&part.sketch3d_names())
-                .map(|n| item(StructureKind::Sketch, n)),
-        );
-        items.extend(
-            part.solid_names()
-                .iter()
-                .map(|n| item(StructureKind::Solid, n)),
-        );
-        items.extend(
-            part.sheet_face_names()
-                .iter()
-                .map(|n| item(StructureKind::Face, n)),
-        );
-        items.extend(
-            part.instances()
-                .map(|(id, _)| item(StructureKind::Part, named(id.into()))),
-        );
-        items.extend(part.mates().map(|(name, _)| StructureItem {
-            kind: StructureKind::Mate,
-            name: name.to_string(),
-            visible: None,
-        }));
-        items
-    }
-
     /// The part `steps` steps build, as drawn.
-    fn view_of(&self, steps: usize) -> PartView<S> {
-        let part = self.runner.part_at(steps);
-        PartView::of(part)
-            .unwrap_or_else(|_| PartView::of(&Part::new()).expect("an empty part can be drawn"))
+    fn view_of(&self, steps: usize) -> PartView {
+        PartView::of(&Seen::new(self.shown_part(steps))).unwrap_or_else(|_| {
+            PartView::blank(Extent {
+                center: Vector3::zero(),
+                size: Design::from_f64(EMPTY_EXTENT),
+            })
+        })
     }
 
     fn program_state(&self) -> ProgramState {
-        let ran = self.runner.results();
-        let library = library(&self.workspace, self.path.as_deref());
-        let editing = self.open.as_ref().filter(|o| !o.new).map(|o| o.id.as_str());
+        let editing = (self.open.as_ref())
+            .filter(|o| !o.new)
+            .map(|o| o.id.as_str());
         let runs_to = match &self.open {
             Some(open) => open.index,
-            None => self.marker.unwrap_or(self.program.steps.len()),
+            None => self.marker.unwrap_or(self.file.program.steps.len()),
         };
-        let steps = self
-            .program
-            .steps
-            .iter()
-            .enumerate()
+        let steps = (self.file.program.steps.iter().enumerate())
             .map(|(i, step)| {
-                // A summary is of the step's arguments and the program's
-                // state, not of what it built: every step's form is asked
-                // for on every change, and one shown with what it built
-                // checks a placed part's mates over the whole assembly.
-                let session = step.operation.new_session();
-                let context = Context::new(self.runner.part_at(i), &step.id, &library)
-                    .state(&self.program.state);
-                let form = step.operation.form(context, &*session, &[]);
+                let info = (self.build.runner.registry)
+                    .get(&step.operation)
+                    .ok()
+                    .map(|o| o.info());
+                // A summary is of the step's arguments, not of what it
+                // built (see [`ProgramRunner::listed`]).
+                let summary = (self.build.runner.listed(&self.file.program, &step.id))
+                    .map(|form| form.dialog.summary())
+                    .unwrap_or_default();
                 StepInfo {
                     id: step.id.clone(),
-                    kind: step.operation.kind(),
-                    label: step.operation.label(),
-                    summary: form.dialog.summary(),
-                    error: ran
-                        .get(i)
-                        .filter(|_| i < runs_to)
-                        .and_then(|r| r.error.clone()),
+                    kind: info.map_or("", |i| i.kind),
+                    label: info.map_or("", |i| i.label),
+                    summary,
+                    error: (i < runs_to)
+                        .then(|| self.build.errors.get(&step.id).cloned())
+                        .flatten(),
                     runs: i < runs_to,
                     editing: editing == Some(step.id.as_str()),
                 }
             })
             .collect();
-        let mut operations = PartOperation::infos();
+        let mut operations = infos();
         operations.sort_by_key(|info| (info.group, info.tier));
+        let part = self.part();
+        let placed = placed_parts(part).is_ok_and(|placed| !placed.is_empty());
         ProgramState {
-            program: self.program.clone(),
+            program: self.file.clone(),
             path: self.path.clone(),
             steps,
-            marker: self.marker.unwrap_or(self.program.steps.len()),
+            marker: self.marker.unwrap_or(self.file.program.steps.len()),
             can_undo: match &self.open {
                 Some(open) => !open.undo.is_empty(),
                 None => !self.undo.is_empty(),
@@ -1683,48 +1543,95 @@ impl<S: Scalar> Editor<S> {
                 None => !self.redo.is_empty(),
             },
             drag_tool: self.drag_tool.is_some(),
-            measure_tool: self.measure_tool.is_some(),
-            materials: geop_ops::parameters::MATERIALS
-                .iter()
-                .map(|&(name, density)| geop_ops::parameters::Material {
-                    name: name.into(),
-                    density,
-                })
-                .collect(),
-            parameters: self.program.parameters.resolve(&self.program.state),
-            parameter_uses: self.program.parameter_uses(),
+            pick_tool: self.pick_tool.as_ref().map(PickTool::kind),
+            materials: geop_ops::parameters::Material::listed().collect(),
+            parameters: self.file.parameters.resolve(&Values::new()),
+            parameter_uses: self.file.parameter_uses(&self.build.runner.registry),
             operations,
+            exporters: self.outputs.exporters(),
+            inspectors: self.outputs.inspectors(),
             examples: self.examples.clone(),
             workspace_examples: self.workspace_examples.clone(),
-            joints: self.runner.part().joints().unwrap_or_default(),
-            freedom: (self.runner.part().instances().next().is_some())
-                .then(|| self.runner.part().mate_freedom().ok())
-                .flatten(),
+            joints: solving::settings(part),
+            freedom: self.freedom.clone().filter(|_| placed),
+            conflicting: self.conflicting.clone(),
         }
     }
 }
 
-/// The library the program in the file `path` is built with — with no file
-/// yet, one in the workspace's top folder.
-fn library<'w, S: Scalar>(workspace: &'w Workspace<S>, path: Option<&str>) -> impl Library<S> + 'w {
-    workspace.scope(path.unwrap_or_default())
+/// What the editor built: the runner, holding every step's part, and how
+/// its last run went.
+pub(crate) struct Build {
+    pub(crate) runner: Runner,
+    /// How many steps the last run ran.
+    ran: usize,
+    /// Why each step of the last run that failed did, by its id.
+    errors: BTreeMap<String, String>,
 }
 
-impl<S: Scalar> Editor<S> {
-    /// The name of the program's file, without folders or `.geop` — what
-    /// an exported file is named after — once the editor has been told it.
-    /// The program's file, as the workspace names it — `part.geop` until
-    /// the editor is told.
-    fn file(&self) -> String {
-        self.path.clone().unwrap_or_else(|| "part.geop".to_string())
+impl Build {
+    fn new() -> Self {
+        Self {
+            runner: runner(),
+            ran: 0,
+            errors: BTreeMap::new(),
+        }
     }
 
-    fn file_stem(&self) -> Option<String> {
-        self.path
-            .as_deref()
-            .and_then(|p| p.rsplit('/').next())
-            .map(|f| f.trim_end_matches(".geop").to_string())
-            .filter(|s| !s.is_empty())
+    /// Runs the first `end` of `steps` — all of them, if `None` — with
+    /// `inputs` and the state `state`, keeping how far it ran and why steps
+    /// failed.
+    fn run(
+        &mut self,
+        steps: &Steps,
+        end: Option<usize>,
+        inputs: &BTreeMap<String, Input>,
+        state: &Values,
+    ) {
+        let end = end.unwrap_or(steps.steps.len()).min(steps.steps.len());
+        let output = self.runner.run_until(steps, end, inputs, state);
+        self.ran = end;
+        self.errors = (output.step_errors.into_iter())
+            .map(|(step, error)| (step, error.to_string()))
+            .collect();
+    }
+
+    /// The part before the step at `index` of `steps`, as the last run left
+    /// it — or, at or past how far it ran, the part it built.
+    fn view_at(&self, steps: &Steps, index: usize) -> BuildView<'_> {
+        let part = &self.runner.part;
+        match steps.steps.get(index).filter(|_| index < self.ran) {
+            Some(step) => (part.view_before(&step.id)).unwrap_or_else(|_| part.current()),
+            None => part.current(),
+        }
+    }
+
+    /// Why the step `open` does not build, if it does not.
+    fn step_error(&self, open: &Open) -> Option<String> {
+        if let Some(error) = self.errors.get(&open.id) {
+            return Some(error.clone());
+        }
+        if open.index < self.ran {
+            return None;
+        }
+        Some(match self.errors.values().next() {
+            Some(error) => format!("an earlier step failed: {error}"),
+            None => "it did not run".into(),
+        })
+    }
+
+    /// Whether the step `open` picks from what it builds (see
+    /// [`OperationInfo::picks_built`]), now that it does.
+    fn picks_built(&self, open: &Open) -> bool {
+        let info = self.runner.registry.get(&open.step().operation);
+        info.is_ok_and(|operation| operation.info().picks_built) && self.step_error(open).is_none()
+    }
+
+    /// The part the step `open` picks from: the part before it — or, for
+    /// one that picks from what it builds, that, once it builds.
+    fn picks_in(&self, open: &Open) -> BuildView<'_> {
+        let index = open.index + usize::from(self.picks_built(open));
+        self.view_at(&open.steps, index)
     }
 }
 

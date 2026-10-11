@@ -37,8 +37,8 @@ pub mod involute;
 pub mod steps;
 pub mod tables;
 
-// #[cfg(test)]
-// mod tests;
+#[cfg(test)]
+mod tests;
 
 use std::{
     ops::{Deref, DerefMut},
@@ -46,7 +46,7 @@ use std::{
 };
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_ops::{Files, FilesMut};
+use geop_ops::program::{Files, FilesMut};
 
 use crate::Program;
 

@@ -94,9 +94,10 @@
           "symmetric": true,
           "reversed": false
         },
-        "face": false,
-        "combine": {
-          "mode": "new_body"
+        "output": {
+          "solid": {
+            "mode": "new_body"
+          }
         }
       }
     },
@@ -243,10 +244,12 @@
           "symmetric": false,
           "reversed": false
         },
-        "face": false,
-        "combine": {
-          "mode": "union",
-          "target": "extrude(extrude1)"
+        "output": {
+          "solid": {
+            "mode": "with",
+            "op": "union",
+            "target": "extrude(extrude1)"
+          }
         }
       }
     },
@@ -353,10 +356,12 @@
           "symmetric": true,
           "reversed": false
         },
-        "face": false,
-        "combine": {
-          "mode": "union",
-          "target": "revolve(revolve1)"
+        "output": {
+          "solid": {
+            "mode": "with",
+            "op": "union",
+            "target": "revolve(revolve1)"
+          }
         }
       }
     },

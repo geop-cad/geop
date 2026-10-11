@@ -21,6 +21,11 @@ the ways CAD systems commonly offer (`Construction`):
 A coordinate system is used as a point, its origin, and by its axes, like
 the origin itself: a point offset from it goes along them.
 
+The step `D` defines the target `datum(D)` (`geop_ops::model::datum`), as
+an `AddSketch` step defines its sketch: built from the part before it when
+the step runs, and staying where it was whatever later steps do to what it
+was built from.
+
 What a selected entity can be used as — its `Aspects` (see
 [geop-ops](./geop-ops.md#operations)): a point, a line, a plane, an arc,
 something round — is decided by its shape, not its kind, using

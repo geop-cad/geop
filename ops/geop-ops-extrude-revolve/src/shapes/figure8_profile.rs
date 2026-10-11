@@ -19,7 +19,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::SolidId;
-use geop_ops::{Namer, Part};
+use geop_ops::{NamedModel, Namer};
 
 /// The outer boundary of the figure-8 profile, as a CCW polygon in `(u, v) ∈
 /// [0, 1]^2` parameter space.
@@ -68,7 +68,7 @@ pub fn hole_polygons<S: Scalar>() -> [Vec<Vector2<S>>; 2] {
 /// Named as the operation `figure8(name)`, after the outline's corners
 /// `p0..` and sides `c0..` and the holes' `h0p0..`, `h1c0..` (see
 /// [`extrude`]).
-pub fn figure8_profile<S: Scalar>(part: &mut Part<S>, name: &str) -> GeopResult<SolidId> {
+pub fn figure8_profile<S: Scalar>(model: &mut NamedModel<S>, name: &str) -> GeopResult<SolidId> {
     // Left-handed (`u x v = -w`): `extrude` extrudes a CCW `outer` polygon
     // backwards along `w`, so a CCW boundary with outward-facing normals
     // needs `w` pointing the opposite way `u x v` (i.e. a right-handed
@@ -91,7 +91,7 @@ pub fn figure8_profile<S: Scalar>(part: &mut Part<S>, name: &str) -> GeopResult<
         .collect();
     let namer = Namer::new("figure8", name)?;
     let built = extrude(
-        part,
+        model,
         &namer,
         Some(&namer.root()),
         &coordinate_system,
@@ -105,16 +105,16 @@ pub fn figure8_profile<S: Scalar>(part: &mut Part<S>, name: &str) -> GeopResult<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::testing::{assert_valid, render};
     use geop_core_math::for_all_scalars;
-    use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
 
     /// How many faces the figure-8 has, so the orientation counts below can
     /// be read as a fraction rather than a bare number.
     fn check_figure8_face_count<S: Scalar>() {
-        let mut part = Part::<S>::new();
-        figure8_profile(&mut part, "t").unwrap();
-        let model = part.topology();
-        assert_eq!(model.faces.len(), 22);
+        let mut model = NamedModel::<S>::new();
+        figure8_profile(&mut model, "t").unwrap();
+        let topology = model.topology();
+        assert_eq!(topology.faces.len(), 22);
     }
     #[test]
     fn figure8_face_count() {
@@ -122,10 +122,10 @@ mod tests {
     }
 
     fn check_figure8_cap_normals_point_outward<S: Scalar>() {
-        let mut part = Part::<S>::new();
-        figure8_profile(&mut part, "t").unwrap();
-        let model = part.topology();
-        for face in model.faces.values() {
+        let mut model = NamedModel::<S>::new();
+        figure8_profile(&mut model, "t").unwrap();
+        let topology = model.topology();
+        for face in topology.faces.values() {
             let (u0, u1) = face.surface.domain_u();
             let (v0, v1) = face.surface.domain_v();
             let mid_u = u0.add(u1).div(S::from_f64(2.0)).unwrap();
@@ -156,39 +156,15 @@ mod tests {
     }
 
     fn check_figure8_profile_is_valid<S: Scalar>() {
-        let mut part = Part::<S>::new();
-        figure8_profile(&mut part, "t").unwrap();
-        let model = part.topology();
+        let mut model = NamedModel::<S>::new();
+        figure8_profile(&mut model, "t").unwrap();
+        let topology = model.topology();
 
-        let params = ValidationParameters::default();
-        if let Err(e) = validate(&params, model) {
-            panic!("{e:?}");
-        }
-        if let Err(e) = validate_manifold(&params, model) {
-            panic!("{e:?}");
-        }
+        assert_valid(topology);
+        render(topology, 8, "figure8_topology.html");
     }
     #[test]
     fn figure8_profile_is_valid() {
         for_all_scalars!(check_figure8_profile_is_valid);
-    }
-
-    fn check_rasterize_topology_figure8<S: Scalar>() {
-        let mut part = Part::<S>::new();
-        figure8_profile(&mut part, "t").unwrap();
-        let model = part.topology();
-
-        let scene = geop_ops_rasterize::debug::rasterize_topology(model, 8).unwrap();
-        assert!(!scene.points.is_empty());
-        assert!(!scene.lines.is_empty());
-        assert!(!scene.triangles_transparent.is_empty());
-        assert!(!scene.labels.is_empty());
-
-        std::fs::create_dir_all("outputs").unwrap();
-        scene.save_to_file("outputs/figure8_topology.html").unwrap();
-    }
-    #[test]
-    fn rasterize_topology_figure8() {
-        for_all_scalars!(check_rasterize_topology_figure8);
     }
 }

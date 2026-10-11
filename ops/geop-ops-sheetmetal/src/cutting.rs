@@ -1,7 +1,7 @@
 //! A sheet-metal body's flat pattern laid out for cutting: its outline
 //! and holes on the `CUT` layer, its bend lines on the `BEND` layer with
 //! how each is bent beside it ([`cutting_sheet`]), written as DXF by the
-//! drawings' own writer ([`flat_pattern_dxf`]).
+//! [`FlatPatternDxf`] exporter.
 
 use std::collections::BTreeMap;
 
@@ -11,13 +11,19 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
-use geop_ops::Part;
-use geop_ops_drawing::{
-    sheet::{Anchor, Label, Layer, Shape, Sheet as Paper, strokes_of},
-    to_dxf,
+use geop_ops::{
+    model::model,
+    output::{
+        Content, Export, Exporter, ExporterInfo, Output,
+        sheet::{Anchor, Format, Label, Layer, Shape, Sheet as Paper, strokes_of},
+    },
 };
+use serde::Deserialize;
 
-use crate::{flat_pattern::FlatPatternData, sheet::Sheet};
+use crate::{
+    body::{SheetBody, sheets},
+    sheet::Sheet,
+};
 
 /// How high a bend's note is, as a share of the pattern's larger side.
 const NOTE_HEIGHT: f64 = 0.025;
@@ -102,30 +108,59 @@ pub fn cutting_sheet<S: Scalar>(sheet: &Sheet<S>) -> GeopResult<Paper> {
     Ok(paper)
 }
 
-/// The flat pattern of the body `solid` of `part` — a sheet-metal body, or
-/// one a flat pattern unfolded — as a DXF file for cutting (see
-/// [`cutting_sheet`]); without a name, of the newest such body. Returns the
-/// body's name with the file.
-pub fn flat_pattern_dxf<S: Scalar>(
-    part: &Part<S>,
-    solid: Option<&str>,
-) -> GeopResult<(String, String)> {
-    let candidates: Vec<String> = match solid {
-        Some(name) => vec![name.to_string()],
-        None => part.solid_names().into_iter().rev().collect(),
+/// Writes the flat pattern of a sheet-metal body as a DXF file for laser
+/// cutting (see [`cutting_sheet`]): of a body as it is bent, or of one a
+/// flat pattern unfolded.
+pub struct FlatPatternDxf;
+
+/// Which body's flat pattern is written.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct FlatPatternOptions {
+    /// The body, by its solid's name: the newest sheet-metal body, if none.
+    pub solid: Option<String>,
+}
+
+impl Exporter for FlatPatternDxf {
+    const INFO: ExporterInfo = ExporterInfo {
+        kind: "flat_pattern",
+        label: "Flat pattern",
+        doc: "a sheet-metal body laid flat, for laser cutting",
+        formats: &["dxf"],
     };
-    for name in candidates {
-        if let Some(sheet) = part.body_data::<Sheet<S>>(&name) {
-            return Ok((name.clone(), to_dxf(&cutting_sheet(sheet)?)));
-        }
-        if let Some(flat) = part.body_data::<FlatPatternData>(&name) {
-            return Ok((name.clone(), to_dxf(&flat.pattern)));
-        }
+    type Options = FlatPatternOptions;
+
+    fn export(output: &mut Output, _: &str, options: FlatPatternOptions) -> GeopResult<Export> {
+        let part = output.part();
+        let all = part.retrieve_target(&sheets()).ok();
+        let candidates: Vec<String> = match &options.solid {
+            Some(name) => vec![name.clone()],
+            None => match part.retrieve_target(&model()) {
+                Ok(model) => model.solid_names().into_iter().rev().collect(),
+                Err(_) => Vec::new(),
+            },
+        };
+        let found = candidates.into_iter().find_map(|name| {
+            let body = all?.get(&name)?;
+            Some((name, body))
+        });
+        let Some((_, body)) = found else {
+            return Err(GeopError::new(match &options.solid {
+                Some(name) => format!(
+                    "{name} is no sheet-metal body: only a body built by a base flange and its flanges, or its flat pattern, is laid out for cutting"
+                ),
+                None => "the part has no sheet-metal body to lay out for cutting".to_string(),
+            }));
+        };
+        let paper = match body {
+            SheetBody::Bent(sheet) => cutting_sheet(sheet)?,
+            SheetBody::Flat(flat) => flat.pattern.clone(),
+        };
+        let format = Format::Dxf;
+        Ok(Export {
+            name: format!("{}_flat.{}", output.stem(), format.extension()),
+            media_type: format.media_type().into(),
+            content: Content::Text(paper.write(format)),
+        })
     }
-    Err(GeopError::new(match solid {
-        Some(name) => format!(
-            "{name} is no sheet-metal body: only a body built by a base flange and its flanges, or its flat pattern, is laid out for cutting"
-        ),
-        None => "the part has no sheet-metal body to lay out for cutting".to_string(),
-    }))
 }

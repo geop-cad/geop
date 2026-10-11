@@ -1,23 +1,34 @@
 //! Reference frames: what a face, an edge or a point gives where a mate puts
 //! one, and what a pick for one finds where the pointer is.
 
+use crate::operations::testing::from_above;
 use geop_core_math::{
-    primitives::{CoordinateSystem, Ray},
+    primitives::CoordinateSystem,
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
 use geop_ops::{
-    EntityRef, NoFiles, Part,
-    operation::{Aspects, Role},
-    ui::{PartView, Pointer, Reach},
+    Design, EntityRef, NamedModel,
+    model::model,
+    operation::{Aspects, Role, Seen},
+    ui::PartView,
 };
 
-use crate::examples;
+use crate::{
+    examples,
+    operations::{Runner, testing::Built},
+};
 
 /// The plate of [`examples::box_with_drill_hole`]: `[0, 2] x [0, 2] x [0, 1]`,
-/// with a hole of radius 0.4 round `(1, 1)` from its top down to `z = 0.5`.
-fn plate() -> Part<S> {
-    examples::box_with_drill_hole().build(&NoFiles).unwrap()
+/// with a hole of radius 0.4 round `(1, 1)` from its top down to `z = 0.5`,
+/// as built.
+fn plate() -> Runner {
+    examples::box_with_drill_hole().built().unwrap()
+}
+
+/// The model `runner` built.
+fn model_of(runner: &Runner) -> &NamedModel<Design> {
+    runner.part.current().retrieve_target(&model()).unwrap()
 }
 
 fn v(p: [f64; 3]) -> Vector3<S> {
@@ -42,13 +53,13 @@ fn assert_close(a: [f64; 3], b: [f64; 3]) {
 /// point either way along an axis.
 #[track_caller]
 fn assert_frame(
-    part: &Part<S>,
+    part: &NamedModel<Design>,
     on: &EntityRef,
     at: Option<&EntityRef>,
     origin: [f64; 3],
     z: [f64; 3],
 ) {
-    let frame = Aspects::frame_on(on, at, part).unwrap();
+    let frame = Aspects::frame_on(on, at, &mut &*part).unwrap();
     let (found, axis) = placed(&frame);
     assert_close(found, origin);
     let along = (0..3).map(|k| axis[k] * z[k]).sum::<f64>();
@@ -59,7 +70,7 @@ fn assert_frame(
 }
 
 /// The vertex of `part` at `p`.
-fn vertex_at(part: &Part<S>, p: [f64; 3]) -> EntityRef {
+fn vertex_at(part: &NamedModel<Design>, p: [f64; 3]) -> EntityRef {
     let model = part.topology();
     let (&id, _) = model
         .vertices
@@ -72,7 +83,7 @@ fn vertex_at(part: &Part<S>, p: [f64; 3]) -> EntityRef {
 }
 
 /// The edge of `part` whose middle is at `p`.
-fn edge_at(part: &Part<S>, p: [f64; 3]) -> EntityRef {
+fn edge_at(part: &NamedModel<Design>, p: [f64; 3]) -> EntityRef {
     let model = part.topology();
     let (&id, _) = model
         .edges
@@ -100,20 +111,21 @@ fn top() -> EntityRef {
 /// sits at a corner or a side, that point, with the same `z`.
 #[test]
 fn a_planar_face_gives_its_middle_or_the_corner_or_side_it_is_near() {
-    let part = plate();
-    assert_frame(&part, &top(), None, [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
-    let corner = vertex_at(&part, [0.0, 0.0, 1.0]);
+    let runner = plate();
+    let part = model_of(&runner);
+    assert_frame(part, &top(), None, [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
+    let corner = vertex_at(part, [0.0, 0.0, 1.0]);
     assert_frame(
-        &part,
+        part,
         &top(),
         Some(&corner),
         [0.0, 0.0, 1.0],
         [0.0, 0.0, 1.0],
     );
-    let side = edge_at(&part, [1.0, 0.0, 1.0]);
-    assert_frame(&part, &top(), Some(&side), [1.0, 0.0, 1.0], [0.0, 0.0, 1.0]);
+    let side = edge_at(part, [1.0, 0.0, 1.0]);
+    assert_frame(part, &top(), Some(&side), [1.0, 0.0, 1.0], [0.0, 0.0, 1.0]);
     // Out of the solid: up, on the top.
-    let frame = Aspects::frame_on(&top(), None, &part).unwrap();
+    let frame = Aspects::frame_on(&top(), None, &mut &*part).unwrap();
     assert!(placed(&frame).1[2] > 0.99);
 }
 
@@ -122,7 +134,8 @@ fn a_planar_face_gives_its_middle_or_the_corner_or_side_it_is_near() {
 /// edge at its center, `z` along its axis.
 #[test]
 fn round_things_give_their_axis() {
-    let part = plate();
+    let runner = plate();
+    let part = model_of(&runner);
     let wall = part
         .topology()
         .faces
@@ -132,9 +145,9 @@ fn round_things_give_their_axis() {
         .unwrap()
         .to_string();
     let wall = EntityRef::Face { name: wall };
-    assert_frame(&part, &wall, None, [1.0, 1.0, 0.75], [0.0, 0.0, 1.0]);
-    let rim = vertex_at(&part, [1.4, 1.0, 1.0]);
-    assert_frame(&part, &wall, Some(&rim), [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
+    assert_frame(part, &wall, None, [1.0, 1.0, 0.75], [0.0, 0.0, 1.0]);
+    let rim = vertex_at(part, [1.4, 1.0, 1.0]);
+    assert_frame(part, &wall, Some(&rim), [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
     let model = part.topology();
     let rim_edge = model
         .edges
@@ -149,20 +162,21 @@ fn round_things_give_their_axis() {
             name: part.name_of(id).unwrap().to_string(),
         })
         .expect("the hole's rim");
-    assert_frame(&part, &rim_edge, None, [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
+    assert_frame(part, &rim_edge, None, [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
 }
 
 /// A straight edge has its frame at its middle, `z` along it — or at the
 /// end it is near; a point's has the world's axes.
 #[test]
 fn a_straight_edge_gives_its_middle_or_its_end_and_a_point_the_world() {
-    let part = plate();
-    let edge = edge_at(&part, [1.0, 0.0, 1.0]);
-    assert_frame(&part, &edge, None, [1.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
-    let end = vertex_at(&part, [0.0, 0.0, 1.0]);
-    assert_frame(&part, &edge, Some(&end), [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
-    let corner = vertex_at(&part, [2.0, 2.0, 0.0]);
-    let frame = Aspects::frame_on(&corner, None, &part).unwrap();
+    let runner = plate();
+    let part = model_of(&runner);
+    let edge = edge_at(part, [1.0, 0.0, 1.0]);
+    assert_frame(part, &edge, None, [1.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+    let end = vertex_at(part, [0.0, 0.0, 1.0]);
+    assert_frame(part, &edge, Some(&end), [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+    let corner = vertex_at(part, [2.0, 2.0, 0.0]);
+    let frame = Aspects::frame_on(&corner, None, &mut &*part).unwrap();
     let (at, z) = placed(&frame);
     assert_close(at, [2.0, 2.0, 0.0]);
     assert_close(z, [0.0, 0.0, 1.0]);
@@ -173,21 +187,11 @@ fn placed_x(frame: &CoordinateSystem<S>) -> [f64; 3] {
     [0, 1, 2].map(|k| frame.u()[k].to_f64())
 }
 
-/// Looking straight down at `(x, y)`, as the viewport's reach is 0.009 there.
-fn down(x: f64, y: f64) -> Pointer<S> {
-    Pointer {
-        ray: Ray::try_new(v([x, y, 10.0]), v([0.0, 0.0, -1.0])).unwrap(),
-        reach: Reach::Tube {
-            radius: S::from_f64(0.009),
-        },
-    }
-}
-
 /// What a pick for a frame finds, as the frame's entity and where it sits.
-fn picked(part: &Part<S>, x: f64, y: f64) -> (EntityRef, Option<EntityRef>) {
-    let view = PartView::of(part).unwrap();
+fn picked(runner: &Runner, x: f64, y: f64) -> (EntityRef, Option<EntityRef>) {
+    let view = PartView::of(&Seen::new(runner.part.current())).unwrap();
     let hit = view
-        .pick(&down(x, y), &[Role::Frame], None)
+        .pick(&from_above(x, y), &[Role::Frame], None)
         .unwrap_or_else(|| panic!("nothing to put a frame on at ({x}, {y})"));
     match hit.entity {
         EntityRef::Frame { on, at } => (*on, at.map(|at| *at)),
@@ -200,26 +204,28 @@ fn picked(part: &Part<S>, x: f64, y: f64) -> (EntityRef, Option<EntityRef>) {
 /// of it, there: the corner before the side.
 #[test]
 fn a_pick_over_a_face_puts_the_frame_at_the_corner_or_side_it_is_near() {
-    let part = plate();
-    let (on, at) = picked(&part, 1.0, 1.7);
+    let runner = plate();
+    let part = model_of(&runner);
+    let (on, at) = picked(&runner, 1.0, 1.7);
     assert_eq!(on, top());
     assert_eq!(at, None);
-    let (on, at) = picked(&part, 0.5, 0.012);
+    let (on, at) = picked(&runner, 0.5, 0.012);
     assert_eq!(on, top());
-    assert_eq!(at, Some(edge_at(&part, [1.0, 0.0, 1.0])));
-    let (on, at) = picked(&part, 0.02, 0.02);
+    assert_eq!(at, Some(edge_at(part, [1.0, 0.0, 1.0])));
+    let (on, at) = picked(&runner, 0.02, 0.02);
     assert_eq!(on, top());
-    assert_eq!(at, Some(vertex_at(&part, [0.0, 0.0, 1.0])));
+    assert_eq!(at, Some(vertex_at(part, [0.0, 0.0, 1.0])));
 }
 
 /// A pick for a frame right on a straight edge finds it, at its middle —
 /// near an end of it, there; right on a corner, the face there, at it.
 #[test]
 fn a_pick_over_an_edge_puts_the_frame_at_its_middle_or_the_end_it_is_near() {
-    let part = plate();
-    let edge = edge_at(&part, [1.0, 0.0, 1.0]);
-    let (on, at) = picked(&part, 1.0, 0.0);
+    let runner = plate();
+    let part = model_of(&runner);
+    let edge = edge_at(part, [1.0, 0.0, 1.0]);
+    let (on, at) = picked(&runner, 1.0, 0.0);
     assert_eq!((on, at), (edge.clone(), None));
-    let (on, at) = picked(&part, 0.2, 0.0);
-    assert_eq!((on, at), (edge, Some(vertex_at(&part, [0.0, 0.0, 1.0]))));
+    let (on, at) = picked(&runner, 0.2, 0.0);
+    assert_eq!((on, at), (edge, Some(vertex_at(part, [0.0, 0.0, 1.0]))));
 }

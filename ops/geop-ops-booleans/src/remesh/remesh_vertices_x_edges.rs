@@ -2,11 +2,13 @@ use geop_core_geometry::contains::curve::curve_could_contain;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
+    with_context,
 };
 use geop_core_topology::{Body, EdgeId, Model, VertexId};
-use geop_ops::Part;
+use geop_ops::NamedModel;
 
 use crate::naming::BooleanNaming;
+use crate::remesh::remesh::RemeshParams;
 
 /// The first `(edge_a, t, vertex_b)` split — `edge_a` from `solid_a`,
 /// `vertex_b` a `solid_b` vertex lying on it at parameter `t` — if any.
@@ -19,25 +21,21 @@ fn find_edge_vertex_split<S: Scalar>(
     model: &Model<S>,
     solid_a: Body,
     solid_b: Body,
-    max_nodes: usize,
-    min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<Option<(EdgeId, S, VertexId)>> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "find_edge_vertex_split(solid_a={solid_a}, solid_b={solid_b}, max_nodes={max_nodes}, min_subdivision_size={min_subdivision_size})"
-        ))
-    };
+    let ctx = with_context!(
+        "find_edge_vertex_split(solid_a={solid_a}, solid_b={solid_b}, params={params:?})"
+    );
 
     for edge_a in model.iter_body_edges(solid_a).with_context(&ctx)? {
         for vertex_b in model.iter_body_vertices(solid_b).with_context(&ctx)? {
-            let edge_vertex_ctx =
-                |e: GeopError| e.with_context(format!("edge_a={edge_a}, vertex_b={vertex_b}"));
+            let edge_vertex_ctx = with_context!("edge_a={edge_a}, vertex_b={vertex_b}");
 
             let Some(t) = curve_could_contain(
                 &model.get_edge(edge_a).with_context(&ctx)?.curve,
                 &model.get_vertex(vertex_b).with_context(&ctx)?.point,
-                max_nodes,
-                min_subdivision_size,
+                params.max_nodes,
+                params.min_subdivision_size,
             )
             .with_context(&ctx)
             .with_context(&edge_vertex_ctx)?
@@ -80,42 +78,31 @@ fn find_edge_vertex_split<S: Scalar>(
 }
 
 pub fn remesh_vertices_x_edges<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     naming: &mut BooleanNaming<S>,
     solid_a: Body,
     solid_b: Body,
-    max_nodes: usize,
-    min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<()> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "remesh_vertices_x_edges(solid_a={solid_a}, solid_b={solid_b}, max_nodes={max_nodes}, min_subdivision_size={min_subdivision_size})"
-        ))
-    };
+    let ctx = with_context!(
+        "remesh_vertices_x_edges(solid_a={solid_a}, solid_b={solid_b}, params={params:?})"
+    );
 
-    while let Some((edge_a, t, vertex_b)) = find_edge_vertex_split(
-        part.topology(),
-        solid_a,
-        solid_b,
-        max_nodes,
-        min_subdivision_size,
-    )
-    .with_context(&ctx)?
+    while let Some((edge_a, t, vertex_b)) =
+        find_edge_vertex_split(model.topology(), solid_a, solid_b, params).with_context(&ctx)?
     {
-        let new_edge = part
+        let new_edge = model
             .split_edge_at_vertex(
                 edge_a,
                 t,
                 vertex_b,
-                max_nodes,
-                min_subdivision_size,
+                params.max_nodes,
+                params.min_subdivision_size,
                 naming.provisional(),
             )
-            .with_context(&|e: GeopError| {
-                e.with_context(format!(
-                    "split_edge_at_vertex(edge_a={edge_a}, t={t}, vertex_b={vertex_b})"
-                ))
-            })
+            .with_context(with_context!(
+                "split_edge_at_vertex(edge_a={edge_a}, t={t}, vertex_b={vertex_b})"
+            ))
             .with_context(&ctx)?;
         naming.edge_split(edge_a, new_edge, vertex_b)?;
     }

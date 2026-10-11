@@ -32,11 +32,13 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     vector::Vector3,
+    with_context,
 };
 use geop_core_topology::{Body, EdgeId, FaceId, Model, Sense, VertexId};
-use geop_ops::Part;
+use geop_ops::NamedModel;
 
 use crate::naming::BooleanNaming;
+use crate::remesh::remesh::RemeshParams;
 
 /// How finely the edge's parameter is subdivided before each remaining
 /// stretch is handed to bisection: `2^-ISOLATION_LEVELS` of its domain.
@@ -129,14 +131,23 @@ fn tangent_branch_points<S: Scalar>(
     curve: &NurbCurve<S, 4>,
     surf_g: &NurbSurface3D<S>,
     surf_f: &NurbSurface3D<S>,
-    max_nodes: usize,
-    min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<Vec<S>> {
     let (t0, t1) = curve.domain();
     let mid = curve.evaluate(t0.add(t1).div(S::TWO)?.sharpen())?;
     let (Some(seed_g), Some(seed_f)) = (
-        surface_could_contain(surf_g, &mid, max_nodes, min_subdivision_size)?,
-        surface_could_contain(surf_f, &mid, max_nodes, min_subdivision_size)?,
+        surface_could_contain(
+            surf_g,
+            &mid,
+            params.max_nodes,
+            params.curve_curve_min_subdivision_size,
+        )?,
+        surface_could_contain(
+            surf_f,
+            &mid,
+            params.max_nodes,
+            params.curve_curve_min_subdivision_size,
+        )?,
     ) else {
         return Ok(vec![]);
     };
@@ -232,8 +243,7 @@ fn branch_can_leave<S: Scalar>(
     edge_id: EdgeId,
     g: FaceId,
     f: FaceId,
-    max_nodes: usize,
-    min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<bool> {
     let (face_g, face_f) = (model.get_face(g)?, model.get_face(f)?);
     if face_g.surface.could_be_equal(&face_f.surface) {
@@ -270,8 +280,13 @@ fn branch_can_leave<S: Scalar>(
             || [other_edge.end_vertex, other_edge.start_vertex]
                 == [edge.start_vertex, edge.end_vertex];
         if same_ends
-            && curve_could_contain(&other_edge.curve, &mid, max_nodes, min_subdivision_size)?
-                .is_some()
+            && curve_could_contain(
+                &other_edge.curve,
+                &mid,
+                params.max_nodes,
+                params.curve_curve_min_subdivision_size,
+            )?
+            .is_some()
         {
             along_f = Some((coedge_id, other_edge.start_vertex == edge.start_vertex));
             break;
@@ -316,9 +331,7 @@ fn find_tangent_branch<S: Scalar>(
     model: &Model<S>,
     edge_solid: Body,
     face_solid: Body,
-    max_solutions: usize,
-    max_nodes: usize,
-    min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<Option<(EdgeId, S, Option<VertexId>, Vector3<S>, FaceId)>> {
     for edge_id in model.iter_body_edges(edge_solid)? {
         let edge = model.get_edge(edge_id)?;
@@ -328,36 +341,27 @@ fn find_tangent_branch<S: Scalar>(
             .map(|coedge| model.get_coedge(coedge).map(|c| c.face))
             .collect::<GeopResult<_>>()?;
         for face_id in model.body_faces(face_solid)? {
-            let pair_ctx = |e: GeopError| e.with_context(format!("edge={edge_id}, face={face_id}"));
+            let pair_ctx = with_context!("edge={edge_id}, face={face_id}");
             let surf_f = &model.get_face(face_id)?.surface;
             let on_face = curve_surface_intersect(
                 &edge.curve,
                 surf_f,
-                max_solutions,
-                max_nodes,
-                min_subdivision_size,
+                params.max_edge_intersections,
+                params.max_nodes,
+                params.curve_curve_min_subdivision_size,
             )
             .with_context(&pair_ctx)?;
             if !matches!(on_face, Intersections::Coincident(_)) {
                 continue;
             }
             for &g in &bounded {
-                if !branch_can_leave(model, edge_id, g, face_id, max_nodes, min_subdivision_size)
-                    .with_context(&pair_ctx)?
-                {
+                if !branch_can_leave(model, edge_id, g, face_id, params).with_context(&pair_ctx)? {
                     continue;
                 }
                 let surf_g = &model.get_face(g)?.surface;
-                for t in tangent_branch_points(
-                    &edge.curve,
-                    surf_g,
-                    surf_f,
-                    max_nodes,
-                    min_subdivision_size,
-                )
-                .with_context(&|e: GeopError| {
-                    pair_ctx(e.with_context(format!("bounding face={g}")))
-                })? {
+                for t in tangent_branch_points(&edge.curve, surf_g, surf_f, params).with_context(
+                    &|e: GeopError| pair_ctx(e.with_context(format!("bounding face={g}"))),
+                )? {
                     let (lo, hi) = edge.curve.domain();
                     if !t.definitely_greater(lo) || !t.definitely_less(hi) {
                         continue;
@@ -390,49 +394,36 @@ fn find_tangent_branch<S: Scalar>(
 /// so an edge of `face_solid` running through the new vertex — the other
 /// solid's copy of a shared profile — is split there too.
 pub fn remesh_tangent_branches<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     naming: &mut BooleanNaming<S>,
     edge_solid: Body,
     face_solid: Body,
-    max_solutions: usize,
-    max_nodes: usize,
-    min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<()> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "remesh_tangent_branches(edge_solid={edge_solid}, face_solid={face_solid}, max_solutions={max_solutions}, max_nodes={max_nodes}, min_subdivision_size={min_subdivision_size:?})"
-        ))
-    };
-    while let Some((edge_id, t, vertex, point, face_id)) = find_tangent_branch(
-        part.topology(),
-        edge_solid,
-        face_solid,
-        max_solutions,
-        max_nodes,
-        min_subdivision_size,
-    )
-    .with_context(&ctx)?
+    let ctx = with_context!(
+        "remesh_tangent_branches(edge_solid={edge_solid}, face_solid={face_solid}, params={params:?})"
+    );
+    while let Some((edge_id, t, vertex, point, face_id)) =
+        find_tangent_branch(model.topology(), edge_solid, face_solid, params).with_context(&ctx)?
     {
         let vertex_id = match vertex {
             Some(vertex) => vertex,
             None => {
-                let vertex = part.insert_vertex(point, naming.provisional())?;
+                let vertex = model.insert_vertex(point, naming.provisional())?;
                 naming.piercing(vertex, edge_id, t, face_id)?;
                 vertex
             }
         };
-        let new_edge = part
+        let new_edge = model
             .split_edge_at_vertex(
                 edge_id,
                 t,
                 vertex_id,
-                max_nodes,
-                min_subdivision_size,
+                params.max_nodes,
+                params.curve_curve_min_subdivision_size,
                 naming.provisional(),
             )
-            .with_context(&|e: GeopError| {
-                e.with_context(format!("edge={edge_id}, t={t:?}, vertex={vertex_id}"))
-            })
+            .with_context(with_context!("edge={edge_id}, t={t:?}, vertex={vertex_id}"))
             .with_context(&ctx)?;
         naming.edge_split(edge_id, new_edge, vertex_id)?;
     }

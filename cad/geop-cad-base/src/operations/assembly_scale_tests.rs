@@ -4,32 +4,40 @@
 //! is drawn once however often it is placed, and the timings of the whole
 //! (an ignored test) are printed.
 
+use crate::operations::testing::{extrusion, handled, origin_plane};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
+    rc::Rc,
     time::Instant,
 };
 
 use geop_core_math::{
     geop_error::GeopResult,
-    primitives::{DatumComponent, FrameAxis, Ray},
+    primitives::{FrameAxis, Pose, Ray},
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
+use geop_ops::solving::check as check_mates;
 use geop_ops::{
-    EntityRef, ORIGIN, Part, PartDescription,
-    part::{ParamValue, State, pose_parameter},
-    program::library::{Files, FilesMut},
+    Design, EntityRef, ParamValue,
+    model::{model, pose_parameter},
+    parameters::Values,
+    placed::{locate, placed_parts},
+    program::{Files, FilesMut},
     ui::{Pointer, Reach, StepEditEvent},
 };
-use geop_ops_assembly::{AddPartArgs, Kind, Mate, PartMates};
+use geop_ops_assembly::{AddPartArgs, Kind, Mate, Resolved};
 use geop_ops_booleans::Combine;
-use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
-use geop_ops_sketch::{AddSketchArgs, Sketch};
+use geop_ops_extrude_revolve::Extents;
+use geop_ops_sketch::Sketch;
 
 use crate::examples::{circle, pose, rectangle, solved};
 use crate::stdlib::WithStandardParts;
-use crate::{Command, Editor, Program, ProgramRunner, Update, Workspace};
+use crate::{
+    Command, Editor, Program, Push, Update, Workspace,
+    operations::{Runner, registry},
+};
 
 /// A part of one extrusion `height` tall, of a sketch on the origin's Z
 /// plane: its faces are `extrude(<id>,start)` below and `extrude(<id>,end)`
@@ -39,23 +47,11 @@ fn extruded(id: &str, sketch: Sketch, height: f64) -> Program {
     let sketch_id = format!("{id}_sketch");
     program.push(
         sketch_id.clone(),
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: solved(sketch),
-            ..Default::default()
-        },
+        crate::operations::testing::sketch(origin_plane(FrameAxis::Z), solved(sketch)),
     );
     program.push(
         id,
-        ExtrudeArgs {
-            sketch: sketch_id,
-            extent: Extents::blind(height),
-            face: false,
-            combine: Combine::NewBody,
-        },
+        extrusion(&sketch_id, Extents::blind(height), Combine::NewBody),
     );
     program
 }
@@ -106,7 +102,7 @@ fn assembly(parts: Vec<(String, &str, EntityRef, EntityRef, [f64; 3])>) -> Progr
         }
         .fixed(),
     );
-    let mut state = State::from([(
+    let mut state = Values::from([(
         pose_parameter("plate"),
         ParamValue::Pose(pose([0.0; 3], [0.0; 3])),
     )]);
@@ -211,6 +207,31 @@ impl FilesMut for Counted {
     }
 }
 
+/// What each file the robot places, however deep, was built as: the keys
+/// of the builds of it, which a build again tells apart.
+fn builds(runner: &Runner) -> BTreeMap<String, BTreeSet<String>> {
+    let mut builds: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for placed in placed_parts(runner.part.current()).unwrap() {
+        let component = &placed.located.instance.component;
+        builds
+            .entry(component.file.clone())
+            .or_default()
+            .insert(component.key.clone());
+    }
+    builds
+}
+
+/// The files of `before` whose builds `after` does not share.
+fn rebuilt(
+    before: &BTreeMap<String, BTreeSet<String>>,
+    after: &BTreeMap<String, BTreeSet<String>>,
+) -> BTreeSet<String> {
+    (after.iter())
+        .filter(|(file, keys)| before.get(*file) != Some(keys))
+        .map(|(file, _)| file.clone())
+        .collect()
+}
+
 /// Editing one file builds again only it and the files placing it,
 /// however deep; the others' parts are placed as they were. Saving a file
 /// unchanged builds nothing again.
@@ -218,61 +239,50 @@ impl FilesMut for Counted {
 fn editing_a_file_rebuilds_only_what_places_it() {
     let mut files = robot(2, 3);
     files.remove("robot.geop");
-    let mut workspace = Workspace::<S, Counted>::new(WithStandardParts(Counted {
-        files,
-        ..Default::default()
-    }));
+    let workspace = Workspace::<Counted>::new(
+        WithStandardParts(Counted {
+            files,
+            ..Default::default()
+        }),
+        registry,
+    );
     let robot = robot(2, 3).remove("robot.geop").unwrap();
     // The robot itself is the program being built, not a file read.
-    let built = |workspace: &Workspace<S, Counted>| {
+    let built = |workspace: &Rc<Workspace<Counted>>| {
         let program = Program::from_json(&robot).unwrap();
-        let part = program.build(&workspace.scope("robot.geop")).unwrap();
-        assert!(part.check_mates(|_| true).unwrap().converged);
-        part
+        build_in(workspace, &program)
     };
-    built(&workspace);
-    let once: BTreeMap<String, usize> = [
-        "board.geop",
-        "module.geop",
-        "plate.geop",
-        "screw.geop",
-        "standoff.geop",
-    ]
-    .map(|f| (f.to_string(), 1))
-    .into();
-    assert_eq!(workspace.files().take(), once, "every file is built once");
+    let first = builds(&built(&workspace));
+    assert!(
+        first.values().all(|keys| keys.len() == 1),
+        "every file is built once, however often it is placed: {first:?}"
+    );
+    assert_eq!(first.len(), 5);
 
-    built(&workspace);
-    assert_eq!(workspace.files().take(), BTreeMap::new(), "nothing changed");
+    let again = builds(&built(&workspace));
+    assert_eq!(rebuilt(&first, &again), BTreeSet::new(), "nothing changed");
 
     // The same text again: nothing changed.
     let screw = workspace.files().files["screw.geop"].clone();
     assert!(!workspace.write("screw.geop", Some(screw)));
-    // Writing reads what was there, to compare.
-    workspace.files().take();
-    built(&workspace);
-    assert_eq!(workspace.files().take(), BTreeMap::new(), "saved unchanged");
+    let saved = builds(&built(&workspace));
+    assert_eq!(rebuilt(&first, &saved), BTreeSet::new(), "saved unchanged");
 
     // A longer screw: the module places it, and the board the module.
     let longer = round("screw", 0.15, 1.5).to_json().unwrap();
     assert!(workspace.write("screw.geop", Some(longer)));
-    workspace.files().take();
-    let part = built(&workspace);
-    let rebuilt: BTreeMap<String, usize> = ["board.geop", "module.geop", "screw.geop"]
-        .map(|f| (f.to_string(), 1))
-        .into();
-    assert_eq!(workspace.files().take(), rebuilt);
+    let runner = built(&workspace);
+    let longer = builds(&runner);
+    assert_eq!(
+        rebuilt(&first, &longer),
+        BTreeSet::from(["board.geop", "module.geop", "screw.geop"].map(String::from))
+    );
     // And it is the longer screw that is placed, however deep.
-    let model = |name: &str| {
-        let mut part = &part;
-        for instance in name.split('/') {
-            let id = part.instance_id(instance).unwrap();
-            part = &part.instance(id).unwrap().part;
-        }
-        part.clone()
-    };
     for screw in ["screw0", "board1/module3/screw9"] {
-        let heights: BTreeSet<_> = model(screw)
+        let located = locate(&mut runner.part.current(), screw).unwrap();
+        let heights: BTreeSet<_> = (located.instance.component.view())
+            .retrieve_target(&model())
+            .unwrap()
             .topology()
             .vertices
             .values()
@@ -284,12 +294,11 @@ fn editing_a_file_rebuilds_only_what_places_it() {
     // A standoff: only the board places it.
     let wider = round("standoff", 0.3, 2.0).to_json().unwrap();
     assert!(workspace.write("standoff.geop", Some(wider)));
-    workspace.files().take();
-    built(&workspace);
-    let rebuilt: BTreeMap<String, usize> = ["board.geop", "standoff.geop"]
-        .map(|f| (f.to_string(), 1))
-        .into();
-    assert_eq!(workspace.files().take(), rebuilt);
+    let wider = builds(&built(&workspace));
+    assert_eq!(
+        rebuilt(&longer, &wider),
+        BTreeSet::from(["board.geop", "standoff.geop"].map(String::from))
+    );
 }
 
 /// Moving one screw of an assembly builds again the step that places it and
@@ -299,52 +308,63 @@ fn editing_a_file_rebuilds_only_what_places_it() {
 fn moving_a_part_builds_again_only_what_reads_where_it_is() {
     let mut files = robot(0, 30);
     let robot = Program::from_json(&files.remove("robot.geop").unwrap()).unwrap();
-    let workspace = Workspace::<S, Counted>::new(WithStandardParts(Counted {
-        files,
-        ..Default::default()
-    }));
-    let library = workspace.scope("robot.geop");
-    let mut runner = ProgramRunner::<S>::new();
-    runner.run(&robot, None, &library);
-    assert!(
-        runner.results().iter().all(|r| r.error.is_none()),
-        "{:?}",
-        runner.results()
+    let workspace = Workspace::<Counted>::new(
+        WithStandardParts(Counted {
+            files,
+            ..Default::default()
+        }),
+        registry,
     );
-    assert_eq!(runner.built_anew(), 31, "the plate and its 30 screws");
+    let library = workspace.scope("robot.geop");
+    let inputs = robot.inputs(&Values::new(), library);
+    let mut runner = super::runner();
+    let resolved = geop_ops_assembly::mates_resolved();
+    let output = runner.run(&robot.program, &inputs, &robot.state);
+    assert!(output.step_errors.is_empty(), "{:?}", output.step_errors);
+    assert_eq!(
+        geop_ops_assembly::mates_resolved() - resolved,
+        31,
+        "the plate's fixed mate, and each of the 30 screws' mates"
+    );
+    workspace.files().take();
 
     let mut moved = robot.clone();
     moved.state.insert(
         pose_parameter("screw7"),
         ParamValue::Pose(pose([4.0, 3.0, 0.2], [0.0; 3])),
     );
-    runner.run(&moved, None, &library);
-    assert!(
-        runner.results().iter().all(|r| r.error.is_none()),
-        "{:?}",
-        runner.results()
+    let resolved = geop_ops_assembly::mates_resolved();
+    let output = runner.run(&moved.program, &inputs, &moved.state);
+    assert!(output.step_errors.is_empty(), "{:?}", output.step_errors);
+    assert_eq!(
+        geop_ops_assembly::mates_resolved() - resolved,
+        0,
+        "a part moved resolves no mate again: only screw7's constraint reads where it is"
     );
     assert_eq!(
-        runner.built_anew(),
-        1,
-        "only the step placing screw7 reads where it is"
+        workspace.files().take(),
+        BTreeMap::new(),
+        "and builds no file"
     );
 
-    let scratch = moved.build(&library).unwrap();
-    assert_eq!(
-        PartDescription::of(runner.part()).unwrap(),
-        PartDescription::of(&scratch).unwrap()
-    );
-    let at = |part: &Part<S>| {
-        let id = part.instance_id("screw7").unwrap();
-        part.instance(id).unwrap().pose
+    let scratch = build_in(&workspace, &moved);
+    let at = |runner: &Runner| -> Pose<Design> {
+        locate(&mut runner.part.current(), "screw7").unwrap().world
     };
-    assert_eq!(at(runner.part()), at(&scratch));
+    assert_eq!(at(&runner), at(&scratch));
+}
+
+/// `program`, the file `robot.geop` of `workspace`, built from scratch, its
+/// mates holding as its state has its parts.
+fn build_in(workspace: &Rc<Workspace<Counted>>, program: &Program) -> Runner {
+    let runner = super::build(program, &workspace.scope("robot.geop")).unwrap();
+    assert!(check_mates(runner.part.current()).unwrap().converged);
+    runner
 }
 
 /// What the editor sends, as the front end gets it: its size in bytes,
 /// and of what in it.
-fn size(update: &Update<S>) -> String {
+fn size(update: &Update) -> String {
     assert!(update.error.is_none(), "{:?}", update.error);
     let json = serde_json::to_value(update).unwrap();
     let len = |v: &serde_json::Value| v.to_string().len();
@@ -383,14 +403,16 @@ pub(super) fn down_onto(x: f64, y: f64) -> Pointer<S> {
 
 /// The editor editing the robot of `boards` boards and `screws` screws,
 /// with every file sent.
-pub(super) fn robot_editor(boards: usize, screws: usize) -> (Editor<S>, Update<S>) {
+pub(super) fn robot_editor(boards: usize, screws: usize) -> (Editor, Update) {
     let mut files = robot(boards, screws);
     let robot = Program::from_json(&files.remove("robot.geop").unwrap()).unwrap();
     let mut editor = Editor::new();
-    let update = editor.handle(Command::Files {
-        files: files.into_iter().map(|(p, t)| (p, Some(t))).collect(),
-    });
-    assert!(update.error.is_none(), "{:?}", update.error);
+    handled(
+        &mut editor,
+        Command::Files {
+            files: files.into_iter().map(|(p, t)| (p, Some(t))).collect(),
+        },
+    );
     let update = editor.handle(Command::Load {
         program: robot,
         path: Some("robot.geop".into()),
@@ -473,7 +495,7 @@ fn robot_timings() {
         });
         println!("  unchanged save {same:.3} s, {}", size(&update));
 
-        let last = editor.program().steps.last().unwrap().id.clone();
+        let last = editor.program().program.steps.last().unwrap().id.clone();
         let (top, update) = timed(|| editor.handle(Command::Remove { id: last }));
         println!("  top-level edit {top:.3} s, {}", size(&update));
 
@@ -521,23 +543,24 @@ fn an_edit_resolves_each_mate_a_few_times() {
         let mut editor = None;
         let load = resolved(&mut || editor = Some(robot_editor(1, screws).0));
         let mut editor = editor.unwrap();
-        let mates = editor.part().mechanism().unwrap().names.len();
+        let mates = editor.part().targets_of::<Resolved>().len();
         let drag = resolved(&mut || {
             editor.handle(Command::DragTool { on: true });
-            let update = editor.handle(Command::Event {
-                event: StepEditEvent::Drag {
-                    from: down_onto(0.25, 0.25),
-                    to: down_onto(0.35, 0.3),
-                    done: true,
-                    shift: false,
+            handled(
+                &mut editor,
+                Command::Event {
+                    event: StepEditEvent::Drag {
+                        from: down_onto(0.25, 0.25),
+                        to: down_onto(0.35, 0.3),
+                        done: true,
+                        shift: false,
+                    },
                 },
-            });
-            assert!(update.error.is_none(), "{:?}", update.error);
+            );
         });
-        let last = editor.program().steps.last().unwrap().id.clone();
+        let last = editor.program().program.steps.last().unwrap().id.clone();
         let remove = resolved(&mut || {
-            let update = editor.handle(Command::Remove { id: last.clone() });
-            assert!(update.error.is_none(), "{:?}", update.error);
+            handled(&mut editor, Command::Remove { id: last.clone() });
         });
         // Now 3, 7 and 3 per mate; once per step, it was 7, 14 and 7 per
         // mate with 21 mates, and 86, 173 and 84 with 81.

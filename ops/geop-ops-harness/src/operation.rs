@@ -3,23 +3,35 @@
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
-    vector::{Vector2, Vector3},
+    vector::Vector3,
     with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+    part::Retrieve,
+};
 use geop_ops::{
-    Context, Library, Namer, Part,
-    operation::{EntityRef, Operation, Role, frame_along},
-    ui::{Action, Choice, Form, ListItem, Number, Shape, Style, Tone, Unit, Value, Visual},
+    Design, NamedModel, Namer, ParamValue,
+    model::model,
+    operation::{
+        Build, BuildReader, EntityRef, Input, Lookup, ModelStep, Role, Scope, Seen, build_model,
+        frame_along,
+    },
+    ui::{
+        Action, Choice, EditForm, FormState, ListItem, Number, Shape, Style, Tone, Unit, Value,
+        Visual,
+    },
 };
 use geop_ops_extrude_revolve::{
-    common::{Profile, arc2, sqrt2_over_2},
+    common::{Profile, circle_at},
     path_sweep::{Control, sweep_along},
     sweep::SweepLoop,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    cable::{Cable, CutWire, PartCables},
+    cable::{Cable, Cables, CutWire, cables},
     route::{Measure, RoutePath, Waypoint},
     wire::{GAUGES, Wire, WireSize, bundle_diameter},
 };
@@ -32,9 +44,9 @@ use crate::{
 /// refused, naming the waypoints each bend lies between, its radius and
 /// the radius allowed.
 ///
-/// What the bundle is cut from is recorded on the part as the cable
-/// `route(R)` (see [`Cable`]): every wire with its cut
-/// length, the route's length and a service loop at each end.
+/// What the bundle is cut from is recorded as the cable `route(R)` of the
+/// part's [`cables`] (see [`Cable`]): every wire with its cut length, the
+/// route's length and a service loop at each end.
 ///
 /// The points may be of parts placed in the part: the route follows them
 /// wherever their mates put them, rerouted whenever the program runs.
@@ -74,8 +86,11 @@ pub struct RouteSession {
     pub selected: Option<usize>,
 }
 
+/// What a route step keeps while it is edited.
+pub type RouteEditing = FormState<RouteSession>;
+
 /// What a step of `args` routes: the bundle's diameter, the smallest
-/// radius it may bend with, and the path through the points of `part`.
+/// radius it may bend with, and the path through the points it picked.
 struct Plan<S: Scalar> {
     diameter: f64,
     min_bend_radius: f64,
@@ -84,7 +99,7 @@ struct Plan<S: Scalar> {
 }
 
 impl RouteArgs {
-    fn plan<S: Scalar>(&self, part: &Part<S>) -> GeopResult<Plan<S>> {
+    fn plan<S: Scalar>(&self, lookup: &mut (impl Lookup<S> + ?Sized)) -> GeopResult<Plan<S>> {
         let diameter = bundle_diameter(&self.wires, self.fill)?;
         // Any tighter, and the bundle would fold into itself.
         if !(self.bend_factor > 0.5 && self.bend_factor.is_finite()) {
@@ -103,7 +118,7 @@ impl RouteArgs {
             .through
             .iter()
             .enumerate()
-            .map(|(i, entity)| Waypoint::of(part, entity, i))
+            .map(|(i, entity)| Waypoint::of(lookup, entity, i))
             .collect::<GeopResult<Vec<_>>>()?;
         let path = RoutePath::through(&waypoints)?;
         let measure = path.measure()?;
@@ -140,24 +155,6 @@ impl<S: Scalar> Plan<S> {
             bends.join(", and ")
         )))
     }
-}
-
-/// A circle of radius `r` around the origin of a plane: four quarter arcs,
-/// counter-clockwise.
-fn circle<S: Scalar>(r: f64) -> GeopResult<Vec<geop_core_geometry::nurb_curve::NurbCurve2D<S>>> {
-    let at = |x: f64, y: f64| Vector2::from_array([S::from_f64(x), S::from_f64(y)]);
-    let q = [(r, 0.0), (0.0, r), (-r, 0.0), (0.0, -r)];
-    (0..4)
-        .map(|i| {
-            let (a, b) = (q[i], q[(i + 1) % 4]);
-            arc2(
-                at(a.0, a.1),
-                at(a.0 + b.0, a.1 + b.1),
-                at(b.0, b.1),
-                sqrt2_over_2(),
-            )
-        })
-        .collect()
 }
 
 /// The gauges a wire's size is chosen from, by `awg:<gauge>`, and a
@@ -201,13 +198,309 @@ fn wire_detail(wire: &Wire, cut: Option<f64>) -> String {
 /// Samples along each curve of the route, to draw it by.
 const SAMPLES_PER_CURVE: usize = 16;
 
+/// The step `R`'s bundle swept along its route through the points it
+/// picked, as `lookup` has them, into the solid `route(R)` (see [`Route`]).
+fn sweep<S: Scalar>(
+    model: &mut NamedModel<S>,
+    lookup: &mut (impl Lookup<S> + ?Sized),
+    step: &str,
+    args: &RouteArgs,
+) -> GeopResult<()> {
+    let ctx = with_context!("route({step}, {args:?})");
+    let namer = Namer::new("route", step)?;
+    let plan = args.plan(lookup).with_context(ctx)?;
+    plan.check_bends(args.bend_factor).with_context(ctx)?;
+    // The bundle's section, square to the route where it starts.
+    let chain = &plan.path.chain;
+    let start = chain.joints()?[0];
+    let plane = frame_along(start, &chain.curves[0].tangent(S::ZERO)?).with_context(ctx)?;
+    let section = SweepLoop::plain(Profile::closed(circle_at(0.0, 0.0, plan.diameter / 2.0)?));
+    let name = namer.root();
+    sweep_along(
+        model,
+        &namer,
+        Some(&name),
+        chain,
+        &plane,
+        &[section],
+        &Control::default(),
+    )
+    .with_context(ctx)?;
+    Ok(())
+}
+
+/// The cable the step `R` lays, `route(R)` (see [`Route`]), through the
+/// points it picked as `lookup` has them.
+fn cable<S: Scalar>(
+    lookup: &mut (impl Lookup<S> + ?Sized),
+    args: &RouteArgs,
+) -> GeopResult<Cable<S>> {
+    let plan = args.plan(lookup)?;
+    let length = plan.measure.length;
+    let extra = S::from_f64(2.0 * args.service_loop);
+    let wires = (args.wires.iter())
+        .map(|wire| {
+            Ok(CutWire {
+                name: wire.name.clone(),
+                colour: wire.colour.clone(),
+                diameter: wire.size.diameter()?,
+                gauge: wire.size.gauge(),
+                cut_length: length.add(extra),
+            })
+        })
+        .collect::<GeopResult<Vec<_>>>()?;
+    Ok(Cable {
+        length,
+        diameter: plan.diameter,
+        min_bend_radius: plan.min_bend_radius,
+        tightest_bend: plan.measure.tightest().map(|b| b.radius),
+        wires,
+    })
+}
+
+/// Builds the route of `args` as the step `step` into `model`, resolving
+/// its points against it as well, and the cable it lays: a route in a model
+/// on its own, in any scalar, as a test lays one.
+pub fn lay<S: Scalar>(
+    model: &mut NamedModel<S>,
+    step: &str,
+    args: &RouteArgs,
+) -> GeopResult<Cable<S>> {
+    let before = model.clone();
+    sweep(model, &mut &before, step, args)?;
+    cable(&mut &before, args)
+}
+
+impl ModelStep for Route {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &RouteArgs,
+    ) -> GeopResult<()> {
+        let before = model.clone();
+        let mut scope = Scope {
+            model: &before,
+            reader,
+        };
+        sweep(model, &mut scope, step, args)
+    }
+}
+
+/// Records the cable `route(R)` of the step `R`, through its points in the
+/// model it swept the bundle into.
+fn record(
+    mut cables: Cables<Design>,
+    reader: &mut BuildReader,
+    (step, args): &(String, RouteArgs),
+) -> GeopResult<Cables<Design>> {
+    let ctx = with_context!("the cable of route({step})");
+    let namer = Namer::new("route", step)?;
+    let model = reader.retrieve_target(&model()).with_context(ctx)?;
+    let mut scope = Scope { model, reader };
+    let cable = cable(&mut scope, args).with_context(ctx)?;
+    cables.add(namer.root(), cable).with_context(ctx)?;
+    Ok(cables)
+}
+
+/// The points to run through, picked in order; the wires, each selected
+/// to set its size and colour; the bundle's fill, bend factor and service
+/// loop; what was built — and the route drawn, its points numbered and its
+/// bends too tight marked.
+fn form<'a>(
+    context: &Context<'a, Input, ParamValue>,
+    seen: &mut Seen<'_>,
+    args: &RouteArgs,
+    session: &RouteSession,
+) -> EditForm<'a, Design, RouteArgs, RouteSession> {
+    let mut f = EditForm::<Design, RouteArgs, RouteSession>::default();
+    f.reference(
+        "through",
+        "through",
+        args.through.clone(),
+        &[Role::Point, Role::Circle],
+        None,
+        true,
+        |edit, picked| edit.args.through = picked,
+    );
+    f.form.dialog.text(
+            "through_hint",
+            "Pick the connector the route starts at, the clips it runs through and the connector it ends at, in order. A coordinate system's z axis is the way the cable leaves it; a circular edge is passed through along its axis.",
+            Tone::Hint,
+        );
+
+    let cable = (context.built)
+        .and_then(|built| built.retrieve_target(&cables()).ok())
+        .and_then(|cables| cables.get(&format!("route({})", context.step)).ok());
+    f.form.dialog.heading("wires_heading", "Wires");
+    let items = args
+        .wires
+        .iter()
+        .enumerate()
+        .map(|(i, wire)| {
+            let key = format!("wire:{i}");
+            f.on(key.clone(), move |edit, value| match value {
+                Value::Press => {
+                    edit.session.selected = (edit.session.selected != Some(i)).then_some(i);
+                }
+                Value::Remove if i < edit.args.wires.len() => {
+                    edit.args.wires.remove(i);
+                    edit.session.selected = None;
+                }
+                Value::Text(name) => {
+                    if let Some(wire) = edit.args.wires.get_mut(i) {
+                        wire.name = name;
+                    }
+                }
+                _ => {}
+            });
+            let cut = cable
+                .and_then(|c| c.wires.get(i))
+                .map(|w| w.cut_length.to_f64());
+            let mut item = ListItem::new(key, wire.name.clone());
+            item.detail = Some(wire_detail(wire, cut));
+            item.tone = match wire.size.diameter() {
+                Ok(_) => Tone::Normal,
+                Err(_) => Tone::Error,
+            };
+            item.selected = session.selected == Some(i);
+            item.removable = true;
+            item.text = Some(wire.name.clone());
+            item
+        })
+        .collect();
+    f.form.dialog.list("wires", items, "None yet: add one.");
+    f.actions(
+        "add_wire",
+        vec![Action::new("add", "Add wire").title("Add a wire to the bundle, and select it.")],
+        |edit, _| {
+            let n = edit.args.wires.len();
+            edit.args.wires.push(Wire::new(format!("w{}", n + 1)));
+            edit.session.selected = Some(n);
+        },
+    );
+    if let Some((i, wire)) = session
+        .selected
+        .and_then(|i| args.wires.get(i).map(|w| (i, w)))
+    {
+        f.select(
+            "wire_size",
+            format!("{} size", wire.name),
+            size_value(&wire.size),
+            size_choices(&wire.size),
+            false,
+            move |args, choice| {
+                let Some(wire) = args.wires.get_mut(i) else {
+                    return;
+                };
+                let insulation = match wire.size {
+                    WireSize::Awg { insulation, .. } => insulation,
+                    WireSize::Diameter(_) => 0.3,
+                };
+                if let Some(gauge) = choice
+                    .strip_prefix("awg:")
+                    .and_then(|g| g.parse().ok())
+                    .filter(|g| GAUGES.contains(g))
+                {
+                    wire.size = WireSize::Awg { gauge, insulation };
+                } else if choice == "diameter"
+                    && let Ok(d) = wire.size.diameter()
+                {
+                    wire.size = WireSize::Diameter(d);
+                }
+            },
+        );
+        match wire.size {
+            WireSize::Awg { insulation, .. } => {
+                f.number(
+                    "wire_insulation",
+                    Number::new("insulation", insulation, Unit::Length).range(0.0, 1.0),
+                    move |args, v| {
+                        if let Some(WireSize::Awg { insulation, .. }) =
+                            args.wires.get_mut(i).map(|w| &mut w.size)
+                        {
+                            *insulation = v;
+                        }
+                    },
+                );
+            }
+            WireSize::Diameter(d) => {
+                f.number(
+                    "wire_diameter",
+                    Number::new("diameter", d, Unit::Length).range(0.1, 20.0),
+                    move |args, v| {
+                        if let Some(wire) = args.wires.get_mut(i) {
+                            wire.size = WireSize::Diameter(v);
+                        }
+                    },
+                );
+            }
+        }
+        f.color(
+            "wire_colour",
+            "colour",
+            wire.colour.clone(),
+            move |args, c| {
+                if let Some(wire) = args.wires.get_mut(i) {
+                    wire.colour = c.to_string();
+                }
+            },
+        );
+    }
+
+    f.form.dialog.heading("bundle_heading", "Bundle");
+    f.number(
+        "fill",
+        Number::new("fill factor", args.fill, Unit::Fraction).range(0.3, 1.0),
+        |args, v| args.fill = v,
+    );
+    f.number(
+        "bend_factor",
+        Number::new("min bend radius / diameter", args.bend_factor, Unit::Count).range(1.0, 20.0),
+        |args, v| args.bend_factor = v,
+    );
+    f.number(
+        "service_loop",
+        Number::new("service loop per end", args.service_loop, Unit::Length).range(0.0, 200.0),
+        |args, v| args.service_loop = v,
+    );
+    if let Some(cable) = cable {
+        let tightest = match cable.tightest_bend {
+            Some(r) => format!("tightest bend radius {:.2}", r.to_f64()),
+            None => "straight".into(),
+        };
+        f.form.dialog.text(
+            "report",
+            format!(
+                "Route {:.1} long · bundle {:.2} across · {tightest}, at least {:.2} allowed",
+                cable.length.to_f64(),
+                cable.diameter,
+                cable.min_bend_radius
+            ),
+            Tone::Success,
+        );
+    }
+    draw(&mut f, seen, args);
+    f
+}
+
 impl Operation for Route {
+    const INFO: OperationInfo = OperationInfo::new(
+        "route",
+        "Route",
+        "Route a bundle of wires from a connector through clips to another connector, its bends checked and every wire's cut length reported.",
+        OperationGroup::Assembly,
+        OperationTier::Small,
+    )
+    .experimental();
     type Args = RouteArgs;
-    type Session = RouteSession;
+    type EditingState = RouteEditing;
+    type Input = Input;
+    type State = ParamValue;
 
     /// Nothing picked yet; one hookup wire, filling three quarters of the
     /// bundle, bent no tighter than five diameters.
-    fn new_args<S: Scalar>(&self, _: &Part<S>) -> RouteArgs {
+    fn new_args(_: &Context<Input, ParamValue>) -> RouteArgs {
         RouteArgs {
             through: Vec::new(),
             wires: vec![Wire::new("w1")],
@@ -217,256 +510,49 @@ impl Operation for Route {
         }
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
-        args: &RouteArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("route({operation_id}, {args:?})");
-        let namer = Namer::new("route", operation_id)?;
-        let plan = args.plan(&part).with_context(ctx)?;
-        plan.check_bends(args.bend_factor).with_context(ctx)?;
-
-        // The bundle's section, square to the route where it starts.
-        let chain = &plan.path.chain;
-        let start = chain.joints()?[0];
-        let plane = frame_along(start, &chain.curves[0].tangent(S::ZERO)?).with_context(ctx)?;
-        let section = SweepLoop::plain(Profile::closed(circle(plan.diameter / 2.0)?));
-        let name = namer.root();
-        sweep_along(
-            &mut part,
-            &namer,
-            Some(&name),
-            chain,
-            &plane,
-            &[section],
-            &Control::default(),
-        )
-        .with_context(ctx)?;
-
-        let length = plan.measure.length;
-        let extra = S::from_f64(2.0 * args.service_loop);
-        let wires = args
-            .wires
-            .iter()
-            .map(|wire| {
-                Ok(CutWire {
-                    name: wire.name.clone(),
-                    colour: wire.colour.clone(),
-                    diameter: wire.size.diameter()?,
-                    gauge: wire.size.gauge(),
-                    cut_length: length.add(extra),
-                })
-            })
-            .collect::<GeopResult<Vec<_>>>()?;
-        let cable = Cable {
-            length,
-            diameter: plan.diameter,
-            min_bend_radius: plan.min_bend_radius,
-            tightest_bend: plan.measure.tightest().map(|b| b.radius),
-            wires,
-        };
-        part.add_cable(name, cable).with_context(ctx)?;
-        Ok(part)
+    /// Sweeps the bundle, then records its cable.
+    fn run(step: &str, part: &mut Build, args: &RouteArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)?;
+        part.revise_or_start(&cables(), &(step.to_string(), args.clone()), record)
     }
 
-    /// The points to run through, picked in order; the wires, each
-    /// selected to set its size and colour; the bundle's fill, bend factor
-    /// and service loop; what was built — and the route drawn, its points
-    /// numbered and its bends too tight marked.
-    fn form<'a, S: Scalar>(
-        &self,
-        context: Context<'a, S>,
+    fn presentation(
+        context: &Context<Input, ParamValue>,
         args: &RouteArgs,
-        session: &RouteSession,
-        _: &[String],
-    ) -> Form<'a, S, RouteArgs, RouteSession> {
-        let mut f = Form::<S, RouteArgs, RouteSession>::new();
-        f.reference(
-            "through",
-            "through",
-            args.through.clone(),
-            &[Role::Point, Role::Circle],
-            None,
-            true,
-            |edit, picked| edit.args.through = picked,
-        );
-        f.text(
-            "through_hint",
-            "Pick the connector the route starts at, the clips it runs through and the connector it ends at, in order. A coordinate system's z axis is the way the cable leaves it; a circular edge is passed through along its axis.",
-            Tone::Hint,
-        );
+        editing: &RouteEditing,
+    ) -> Form<Design> {
+        let mut seen = Seen::new(context.before);
+        form(context, &mut seen, args, &editing.session).into_form()
+    }
 
-        let cable = context
-            .built
-            .and_then(|part| part.cable(&format!("route({})", context.id)).ok());
-        f.heading("wires_heading", "Wires");
-        let items = args
-            .wires
-            .iter()
-            .enumerate()
-            .map(|(i, wire)| {
-                let key = format!("wire:{i}");
-                f.on(key.clone(), move |edit, value| match value {
-                    Value::Press => {
-                        edit.session.selected = (edit.session.selected != Some(i)).then_some(i);
-                    }
-                    Value::Remove if i < edit.args.wires.len() => {
-                        edit.args.wires.remove(i);
-                        edit.session.selected = None;
-                    }
-                    Value::Text(name) => {
-                        if let Some(wire) = edit.args.wires.get_mut(i) {
-                            wire.name = name;
-                        }
-                    }
-                    _ => {}
-                });
-                let cut = cable
-                    .and_then(|c| c.wires.get(i))
-                    .map(|w| w.cut_length.to_f64());
-                let mut item = ListItem::new(key, wire.name.clone());
-                item.detail = Some(wire_detail(wire, cut));
-                item.tone = match wire.size.diameter() {
-                    Ok(_) => Tone::Normal,
-                    Err(_) => Tone::Error,
-                };
-                item.selected = session.selected == Some(i);
-                item.removable = true;
-                item.text = Some(wire.name.clone());
-                item
-            })
-            .collect();
-        f.list("wires", items, "None yet: add one.");
-        f.actions(
-            "add_wire",
-            vec![Action::new("add", "Add wire").title("Add a wire to the bundle, and select it.")],
-            |edit, _| {
-                let n = edit.args.wires.len();
-                edit.args.wires.push(Wire::new(format!("w{}", n + 1)));
-                edit.session.selected = Some(n);
-            },
-        );
-        if let Some((i, wire)) = session
-            .selected
-            .and_then(|i| args.wires.get(i).map(|w| (i, w)))
-        {
-            f.select(
-                "wire_size",
-                format!("{} size", wire.name),
-                size_value(&wire.size),
-                size_choices(&wire.size),
-                false,
-                move |args, choice| {
-                    let Some(wire) = args.wires.get_mut(i) else {
-                        return;
-                    };
-                    let insulation = match wire.size {
-                        WireSize::Awg { insulation, .. } => insulation,
-                        WireSize::Diameter(_) => 0.3,
-                    };
-                    if let Some(gauge) = choice
-                        .strip_prefix("awg:")
-                        .and_then(|g| g.parse().ok())
-                        .filter(|g| GAUGES.contains(g))
-                    {
-                        wire.size = WireSize::Awg { gauge, insulation };
-                    } else if choice == "diameter"
-                        && let Ok(d) = wire.size.diameter()
-                    {
-                        wire.size = WireSize::Diameter(d);
-                    }
-                },
-            );
-            match wire.size {
-                WireSize::Awg { insulation, .. } => {
-                    f.number(
-                        "wire_insulation",
-                        Number::new("insulation", insulation, Unit::Length).range(0.0, 1.0),
-                        move |args, v| {
-                            if let Some(WireSize::Awg { insulation, .. }) =
-                                args.wires.get_mut(i).map(|w| &mut w.size)
-                            {
-                                *insulation = v;
-                            }
-                        },
-                    );
-                }
-                WireSize::Diameter(d) => {
-                    f.number(
-                        "wire_diameter",
-                        Number::new("diameter", d, Unit::Length).range(0.1, 20.0),
-                        move |args, v| {
-                            if let Some(wire) = args.wires.get_mut(i) {
-                                wire.size = WireSize::Diameter(v);
-                            }
-                        },
-                    );
-                }
-            }
-            f.color(
-                "wire_colour",
-                "colour",
-                wire.colour.clone(),
-                move |args, c| {
-                    if let Some(wire) = args.wires.get_mut(i) {
-                        wire.colour = c.to_string();
-                    }
-                },
-            );
-        }
-
-        f.heading("bundle_heading", "Bundle");
-        f.number(
-            "fill",
-            Number::new("fill factor", args.fill, Unit::Fraction).range(0.3, 1.0),
-            |args, v| args.fill = v,
-        );
-        f.number(
-            "bend_factor",
-            Number::new("min bend radius / diameter", args.bend_factor, Unit::Count)
-                .range(1.0, 20.0),
-            |args, v| args.bend_factor = v,
-        );
-        f.number(
-            "service_loop",
-            Number::new("service loop per end", args.service_loop, Unit::Length).range(0.0, 200.0),
-            |args, v| args.service_loop = v,
-        );
-        if let Some(cable) = cable {
-            let tightest = match cable.tightest_bend {
-                Some(r) => format!("tightest bend radius {:.2}", r.to_f64()),
-                None => "straight".into(),
-            };
-            f.text(
-                "report",
-                format!(
-                    "Route {:.1} long · bundle {:.2} across · {tightest}, at least {:.2} allowed",
-                    cable.length.to_f64(),
-                    cable.diameter,
-                    cable.min_bend_radius
-                ),
-                Tone::Success,
-            );
-        }
-        draw(&mut f, context.before, args);
-        f
+    fn process_user_event(
+        context: &Context<Input, ParamValue>,
+        args: &RouteArgs,
+        editing: &RouteEditing,
+        event: Event<Design>,
+    ) -> (RouteArgs, RouteEditing) {
+        let mut seen = Seen::new(context.before);
+        editing.handle(
+            args,
+            event,
+            |args, session, _| form(context, &mut seen, args, session),
+            |_, _| {},
+        )
     }
 }
 
 /// The route drawn: its points numbered, as what it says about them counts
 /// them, and its centre line, the bends too tight marked as failed.
-fn draw<S: Scalar>(f: &mut Form<'_, S, RouteArgs, RouteSession>, part: &Part<S>, args: &RouteArgs) {
+fn draw(f: &mut EditForm<'_, Design, RouteArgs, RouteSession>, seen: &mut Seen, args: &RouteArgs) {
+    type S = Design;
     let waypoints: Vec<Waypoint<S>> = args
         .through
         .iter()
         .enumerate()
-        .filter_map(|(i, entity)| Waypoint::of(part, entity, i).ok())
+        .filter_map(|(i, entity)| Waypoint::of(seen, entity, i).ok())
         .collect();
     for (i, waypoint) in waypoints.iter().enumerate() {
-        f.visuals.push(Visual::new(
+        f.form.visuals.push(Visual::new(
             format!("point:{i}"),
             Shape::Label {
                 at: waypoint.point,
@@ -476,7 +562,7 @@ fn draw<S: Scalar>(f: &mut Form<'_, S, RouteArgs, RouteSession>, part: &Part<S>,
             Style::Reference,
         ));
     }
-    let Ok(plan) = args.plan(part) else {
+    let Ok(plan) = args.plan(seen) else {
         return;
     };
     let tight: Vec<usize> = plan
@@ -495,7 +581,7 @@ fn draw<S: Scalar>(f: &mut Form<'_, S, RouteArgs, RouteSession>, part: &Part<S>,
         } else {
             Style::Guide
         };
-        f.visuals.push(Visual::new(
+        f.form.visuals.push(Visual::new(
             format!("route:{k}"),
             Shape::Polyline { points },
             style,

@@ -4,46 +4,50 @@ use std::collections::BTreeMap;
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    primitives::Pose,
-    scalars::Scalar,
     with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_ops::{
-    Context, EntityRef, Library, Namer, ORIGIN, Part,
-    operation::INSTANCE_SEPARATOR,
-    operation::Operation,
-    parameters::Parameter,
-    part::{ParamValue, State, pose_parameter},
-    ui::{CanvasEvent, Edit, Form},
+    EntityRef, Namer, ORIGIN, ParamValue,
+    model::pose_parameter,
+    operation::{Build, BuildReader, INSTANCE_SEPARATOR, Input},
+    parameters::Values,
+    placed::{Instance, Placement, instance, library},
+    ui::{self, Listed, Listing, listing},
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{Mate, PartMates};
-
-use crate::editor::{self, PartSession};
+use crate::{
+    Mate, Resolved,
+    editor::{self, PartEditing},
+    mate,
+    mechanism::{define, mates_of, resolve},
+};
 
 /// Places the part the program in another file builds, named by the
 /// step's id: its entities are then the part's, behind that name —
 /// `bolt/extrude(head,end)` (see [`geop_ops::operation::INSTANCE_SEPARATOR`]).
 ///
-/// The part goes where the program's parameter `<id>.pose` puts it (see
-/// [`geop_ops::part::State`]), and the step adds its mates. It solves
-/// nothing: where every placed part is, so that every mate of the program
-/// holds, is the program's state, which solving the program changes (see
-/// [`crate::mates`]). So every step sees each placed part where it
-/// ends up, however late the mates that put it there are.
+/// The part goes where the program's state `<id>.pose` puts it, and the
+/// step adds its mates. It solves nothing: where every placed part is, so
+/// that every mate of the program holds, is the program's state, which the
+/// editor solves for (see [`crate::mechanism`]). So every step sees each
+/// placed part where it ends up, however late the mates that put it there
+/// are.
 ///
 /// Mates that cannot hold do not fail the step — the parts are left as near
 /// to holding them as they get, as a sketch whose constraints conflict is —
 /// and the step's editor says which.
 ///
-/// Every pose parameter of the program placed becomes one of this
-/// program's, named behind the step's id and starting where that program
-/// has it, and the part is built with them (see
-/// [`geop_ops::Library::instance`]): the parts placed in it are this
-/// program's to move.
+/// The parts placed in the part placed are this program's to move too:
+/// their poses are its state, behind the step's id, starting where the
+/// placed part's program has them (see [`geop_ops::placed`]); and their
+/// mates hold them here as they held them there.
 ///
-/// A [`Mate::fixed`] among its mates, given no entity, holds the part this
+/// A [`Mate::fixed_here`] among its mates, given no entity, holds the part this
 /// step places.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AddPart;
@@ -63,7 +67,7 @@ pub struct AddPartArgs {
     /// own, by name: a number, a table's row, the colour — the part as this
     /// program places it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub parameters: State,
+    pub parameters: Values,
 }
 
 impl AddPartArgs {
@@ -89,89 +93,134 @@ impl AddPartArgs {
     }
 }
 
-impl Operation for AddPart {
-    type Args = AddPartArgs;
-    type Session = PartSession;
+/// The part the step `step` places from `file`, its parameters as
+/// `parameters` give them, where its pose state puts it — held there if
+/// `fixed`: the generator of its instance.
+fn place(
+    reader: &mut BuildReader,
+    (step, file, parameters, fixed): &(String, String, Values, bool),
+) -> GeopResult<Instance> {
+    let component = library(reader)?.component(file, parameters)?;
+    Ok(Instance {
+        component,
+        placement: Placement::Parameter(pose_parameter(step)),
+        fixed: *fixed,
+    })
+}
 
-    const PICKS_BUILT: bool = true;
+/// What a mate is listed as in the part's structure (see [`Listed::kind`]).
+const MATE: &str = "mate";
+
+/// A mate of the part placed, as this part has it already: the generator of
+/// its target.
+fn carry(_: &mut BuildReader, resolved: &Resolved) -> GeopResult<Resolved> {
+    Ok(resolved.clone())
+}
+
+impl Operation for AddPart {
+    const INFO: OperationInfo = OperationInfo::new(
+        "add_part",
+        "Part",
+        "Place the part another program file builds, and mate it to what is already there.",
+        OperationGroup::Assembly,
+        OperationTier::Big,
+    )
+    .picks_built();
+    type Args = AddPartArgs;
+    type EditingState = PartEditing;
+    type Input = Input;
+    type State = ParamValue;
 
     /// No file yet; the first part placed is fixed, the ones after it are
     /// not — something has to stay put for the others to mate to.
-    fn new_args<S: Scalar>(&self, before: &Part<S>) -> AddPartArgs {
+    fn new_args(context: &Context<Input, ParamValue>) -> AddPartArgs {
         let args = AddPartArgs::default();
-        if before.instances().next().is_none() {
-            args.fixed()
-        } else {
-            args
+        match context.before.targets_of::<Instance>().is_empty() {
+            true => args.fixed(),
+            false => args,
         }
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
-        args: &AddPartArgs,
-        library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("add_part({operation_id}, file={:?})", args.file);
+    /// Places the part, then defines each mate: resolved, and as a
+    /// constraint on the state. A mate that cannot be resolved fails the
+    /// step, after the others are defined.
+    fn run(step: &str, part: &mut Build, args: &AddPartArgs) -> GeopResult<()> {
+        let ctx = with_context!("add_part({step}, file={:?})", args.file);
         if args.file.is_empty() {
             return Err(GeopError::new("choose a file to place")).with_context(ctx);
         }
-        // Its parameters as this step gives them, and where its parts are
-        // is this program's too.
-        let mut overrides = args.parameters.clone();
-        let own = library
-            .instance(&args.file, &State::new())
+        let placing = (
+            step.to_string(),
+            args.file.clone(),
+            args.parameters.clone(),
+            args.is_fixed(),
+        );
+        part.define_target(&instance(step), &placing, place)
             .with_context(ctx)?;
-        for (name, value) in own.part.declared() {
-            if let ParamValue::Pose(pose) = *value {
-                let outer = format!("{operation_id}{INSTANCE_SEPARATOR}{name}");
-                let pose = part.pose_parameter(&outer, pose).with_context(ctx)?;
-                overrides.insert(name.clone(), ParamValue::Pose(pose));
-            }
-        }
-        let mut instance = library.instance(&args.file, &overrides).with_context(ctx)?;
-        let parameter = pose_parameter(operation_id);
-        let pose = part
-            .pose_parameter(&parameter, Pose::identity())
-            .with_context(ctx)?;
-        instance.pose = pose.cast();
-        instance.parameter = Some(Parameter::pose(parameter));
-        part.add_instance(instance, operation_id)
-            .with_context(ctx)?;
-        let namer = Namer::new("add_part", operation_id)?;
-        let own_frame = EntityRef::datum(format!("{operation_id}{INSTANCE_SEPARATOR}{ORIGIN}"));
-        for (mate_id, mate) in &args.mates {
+        let namer = Namer::new("add_part", step)?;
+        let own_frame = EntityRef::datum(format!("{step}{INSTANCE_SEPARATOR}{ORIGIN}"));
+        let mut failed = Ok(());
+        // What the structure lists: every mate the step defines.
+        let mut mates = Vec::new();
+        for (id, mate) in &args.mates {
             let mut mate = mate.clone();
             if mate.is_fixed() && mate.entities.is_empty() {
                 mate.entities.push(own_frame.clone());
             }
-            if mate.is_complete() {
-                part.add_mate(mate, namer.name(&[mate_id]))
-                    .with_context(ctx)?;
+            if !mate.is_complete() {
+                continue;
             }
+            let name = namer.name(&[id]);
+            mates.push(Listed {
+                kind: MATE.into(),
+                name: name.clone(),
+                entities: mate.entities.clone(),
+            });
+            let defined = (part.define_target(&crate::mate(&name), &(name.clone(), mate), resolve))
+                .and_then(|()| define(part, &name));
+            failed = failed.and(defined);
         }
-        Ok(part)
+        // The placed part's own mates, behind its name.
+        let carried: Vec<(String, Resolved)> = match part.current().retrieve_target(&instance(step))
+        {
+            Ok(placed) => (mates_of(placed.component.view()).into_iter())
+                .filter_map(|(name, resolved)| {
+                    let name = format!("{step}{INSTANCE_SEPARATOR}{name}");
+                    Some((name, resolved.behind(step)?))
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        for (name, resolved) in carried {
+            mates.push(Listed {
+                kind: MATE.into(),
+                name: name.clone(),
+                entities: resolved.entities(),
+            });
+            let defined = (part.define_target(&mate(&name), &resolved, carry))
+                .and_then(|()| define(part, &name));
+            failed = failed.and(defined);
+        }
+        let listed = part.define_target(&listing(step), &Listing(mates), ui::listed);
+        failed.and(listed).with_context(ctx)
     }
 
     /// The file, where it goes, and its mates: see [`crate::editor`].
-    fn form<'a, S: Scalar>(
-        &self,
-        context: Context<'a, S>,
+    fn presentation(
+        context: &Context<Input, ParamValue>,
         args: &AddPartArgs,
-        session: &PartSession,
-        _: &[String],
-    ) -> Form<'a, S, AddPartArgs, PartSession> {
-        editor::form(context, args, session)
+        editing: &PartEditing,
+    ) -> Form<geop_ops::Design> {
+        editor::form(context, args, editing).into_form()
     }
 
-    fn event<S: Scalar>(
-        &self,
-        context: Context<'_, S>,
-        edit: Edit<'_, AddPartArgs, PartSession>,
-        event: &CanvasEvent<S>,
-    ) {
-        editor::event(context, edit, event);
+    fn process_user_event(
+        context: &Context<Input, ParamValue>,
+        args: &AddPartArgs,
+        editing: &PartEditing,
+        event: Event<geop_ops::Design>,
+    ) -> (AddPartArgs, PartEditing) {
+        editor::process(context, args, editing, event)
     }
 }
 

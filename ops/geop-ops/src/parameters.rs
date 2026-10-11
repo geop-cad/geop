@@ -10,7 +10,7 @@
 //!
 //! What a parameter is defined as is the program's own; what it is *built
 //! with* may be overridden by a program placing the part, by the same name
-//! (see [`crate::part::State`] and [`crate::Library::component`]). So a
+//! (see [`Values`]). So a
 //! placed screw is made M5 by the program placing it, without touching the
 //! screw's own file. [`Parameters::resolve`] turns the definitions and the
 //! overrides into the values a build reads.
@@ -23,7 +23,10 @@ use geop_core_math::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{Design, part::ParamValue, part::State};
+use crate::{Design, model::ParamValue, operation::Lookup, ui::Value};
+
+/// Parameter values, by name.
+pub type Values = BTreeMap<String, ParamValue>;
 
 /// The name the part's colour is read by.
 pub const COLOR: &str = "color";
@@ -40,7 +43,7 @@ pub struct Material {
 /// Materials an engineer reaches for, by name, with their densities in
 /// kg/m³ — what a material is picked from; any other is given by its
 /// density.
-pub const MATERIALS: [(&str, f64); 10] = [
+const MATERIALS: [(&str, f64); 10] = [
     ("Aluminium 6061", 2700.0),
     ("Steel", 7850.0),
     ("Stainless steel 304", 8000.0),
@@ -52,6 +55,21 @@ pub const MATERIALS: [(&str, f64); 10] = [
     ("Nylon PA12", 1010.0),
     ("Acetal (POM)", 1410.0),
 ];
+
+impl Material {
+    /// The materials of [`MATERIALS`].
+    pub fn listed() -> impl Iterator<Item = Self> {
+        (MATERIALS.iter()).map(|&(name, density)| Self {
+            name: name.into(),
+            density,
+        })
+    }
+
+    /// The material of [`MATERIALS`] called `name`, if there is one.
+    pub fn named(name: &str) -> Option<Self> {
+        Self::listed().find(|material| material.name == name)
+    }
+}
 
 /// One row of a [`ParameterKind::Table`]: a variant, by name, with a value
 /// per column.
@@ -83,10 +101,6 @@ pub enum ParameterKind {
         rows: Vec<Row>,
         selected: String,
     },
-    /// Where a placed part is: a pose, in the frame of the part it is
-    /// placed in. Not defined by a formula but given — by a program, or by
-    /// the solve of the mates .
-    Pose,
 }
 
 /// A named parameter.
@@ -128,7 +142,7 @@ pub struct Parameters {
 /// not resolve fail, by name.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Resolved {
-    pub values: State,
+    pub values: Values,
     pub errors: BTreeMap<String, String>,
 }
 
@@ -146,7 +160,7 @@ pub fn validate_name(name: &str) -> GeopResult<()> {
             "{name:?} is no parameter name: use letters, digits and _, starting with a letter"
         )));
     }
-    if FUNCTIONS.iter().any(|(f, _)| *f == name) || name == "pi" || name == COLOR {
+    if FUNCTIONS.iter().any(|(f, ..)| *f == name) || name == "pi" || name == COLOR {
         return Err(GeopError::new(format!("{name:?} is a reserved name")));
     }
     Ok(())
@@ -164,11 +178,16 @@ pub fn validate_color(color: &str) -> GeopResult<()> {
 }
 
 impl Parameter {
-    /// The parameter `name` that is where a placed part is.
-    pub fn pose(name: impl Into<String>) -> Self {
+    /// The number parameter `name`, `expression` by default — a formula of
+    /// those before it, or a value — offered from `min` to `max`.
+    pub fn number(name: &str, expression: &str, min: f64, max: f64) -> Self {
         Self {
             name: name.into(),
-            kind: ParameterKind::Pose,
+            kind: ParameterKind::Number {
+                expression: expression.into(),
+                min: Some(min),
+                max: Some(max),
+            },
         }
     }
 }
@@ -187,7 +206,7 @@ impl Parameters {
     /// a table's row by its name, a number after its own — `ISO 4762
     /// M4x12`, `T-slot 2020 length 500`. None for a part with no
     /// designation.
-    pub fn designate(&self, values: &State) -> Option<String> {
+    pub fn designate(&self, values: &Values) -> Option<String> {
         let mut words = vec![self.designation.clone()?];
         for parameter in &self.values {
             match (&parameter.kind, values.get(&parameter.name)) {
@@ -283,7 +302,7 @@ impl Parameters {
     /// formulas can be evaluated, again and again while that resolves
     /// more. What is left — reading a parameter there is none of, or one
     /// that reads it back — fails, saying why.
-    pub fn resolve(&self, overrides: &State) -> Resolved {
+    pub fn resolve(&self, overrides: &Values) -> Resolved {
         let mut out = Resolved::default();
         let color = match overrides.get(COLOR) {
             Some(ParamValue::Text(c)) if validate_color(c).is_ok() => Some(c.clone()),
@@ -301,8 +320,6 @@ impl Parameters {
                     }
                     _ => numbers.push((&p.name, expression)),
                 },
-                // Given, not defined: nothing to resolve.
-                ParameterKind::Pose => {}
                 ParameterKind::Table {
                     columns,
                     rows,
@@ -364,66 +381,45 @@ impl Parameters {
 }
 
 /// The number `name` in `values`, if it is one.
-pub fn number(values: &State, name: &str) -> Option<f64> {
+pub fn number(values: &Values, name: &str) -> Option<f64> {
     match values.get(name) {
         Some(ParamValue::Number(v)) => Some(v.to_f64()),
         _ => None,
     }
 }
 
-/// The functions a formula can call, by name, with how many arguments.
-/// Angles are in degrees, as everywhere a designer types one.
-const FUNCTIONS: [(&str, usize); 13] = [
-    ("sqrt", 1),
-    ("abs", 1),
-    ("sin", 1),
-    ("cos", 1),
-    ("tan", 1),
-    ("asin", 1),
-    ("acos", 1),
-    ("atan", 1),
-    ("round", 1),
-    ("floor", 1),
-    ("ceil", 1),
-    ("min", 2),
-    ("max", 2),
+/// The functions a formula can call, by name, with how many arguments and
+/// what they come to. Angles are in degrees, as everywhere a designer
+/// types one.
+type Function = (&'static str, usize, fn(&[f64]) -> f64);
+const FUNCTIONS: [Function; 13] = [
+    ("sqrt", 1, |x| x[0].sqrt()),
+    ("abs", 1, |x| x[0].abs()),
+    ("sin", 1, |x| x[0].to_radians().sin()),
+    ("cos", 1, |x| x[0].to_radians().cos()),
+    ("tan", 1, |x| x[0].to_radians().tan()),
+    ("asin", 1, |x| x[0].asin().to_degrees()),
+    ("acos", 1, |x| x[0].acos().to_degrees()),
+    ("atan", 1, |x| x[0].atan().to_degrees()),
+    ("round", 1, |x| x[0].round()),
+    ("floor", 1, |x| x[0].floor()),
+    ("ceil", 1, |x| x[0].ceil()),
+    ("min", 2, |x| x[0].min(x[1])),
+    ("max", 2, |x| x[0].max(x[1])),
 ];
-
-fn call(f: &str, args: &[f64]) -> f64 {
-    let rad = |x: f64| x.to_radians();
-    match (f, args) {
-        ("sqrt", [x]) => x.sqrt(),
-        ("abs", [x]) => x.abs(),
-        ("sin", [x]) => rad(*x).sin(),
-        ("cos", [x]) => rad(*x).cos(),
-        ("tan", [x]) => rad(*x).tan(),
-        ("asin", [x]) => x.asin().to_degrees(),
-        ("acos", [x]) => x.acos().to_degrees(),
-        ("atan", [x]) => x.atan().to_degrees(),
-        ("round", [x]) => x.round(),
-        ("floor", [x]) => x.floor(),
-        ("ceil", [x]) => x.ceil(),
-        ("min", [a, b]) => a.min(*b),
-        ("max", [a, b]) => a.max(*b),
-        _ => unreachable!("arity checked against FUNCTIONS"),
-    }
-}
 
 /// Whether `text` is a formula rather than a plain number: a plain number
 /// is a value typed, a formula a value that follows what it reads.
-pub fn is_formula(text: &str) -> bool {
-    text.trim().parse::<f64>().is_err()
-}
+pub use geop_core_program::editing::is_formula;
 
 /// A number an operation is given — a length, an angle, a count: a plain
 /// value, or a formula of the part's parameters that it follows, as a
 /// sketch's dimensions can be (see [`evaluate`]). Serialized as a number
-/// when plain and as the formula's text otherwise — `12.5`, `"width / 2"` —
-/// so a file written before an argument took formulas reads the same.
+/// when plain and as the formula's text otherwise — `12.5`, `"width / 2"`.
 ///
 /// A step reads it with [`Formula::evaluate`], which declares every
 /// parameter the formula reads: a change to one of them rebuilds the step,
-/// a change to any other does not (see [`crate::ProgramRunner`]).
+/// a change to any other does not.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Formula {
@@ -472,44 +468,40 @@ impl Formula {
         }
     }
 
-    /// The formula it follows, if it is one.
-    pub fn expression(&self) -> Option<&str> {
-        match self {
-            Formula::Plain(_) => None,
-            Formula::Expression(text) => Some(text),
-        }
-    }
-
     /// The formula it follows, to change, if it is one.
-    pub fn expression_mut(&mut self) -> Option<&mut String> {
+    fn expression_mut(&mut self) -> Option<&mut String> {
         match self {
             Formula::Plain(_) => None,
             Formula::Expression(text) => Some(text),
         }
     }
 
-    /// Its value as the step building `part` reads it: every parameter
-    /// the formula reads declared read (see [`crate::Part::evaluate`]).
-    pub fn evaluate<S: Scalar>(&self, part: &mut crate::Part<S>) -> GeopResult<f64> {
+    /// Its value as `lookup` reads the parameters: in a step's generator,
+    /// every parameter the formula reads is recorded read (see
+    /// [`Lookup::evaluate`]).
+    pub fn evaluate<S: Scalar>(&self, lookup: &mut (impl Lookup<S> + ?Sized)) -> GeopResult<f64> {
         match self {
             Formula::Plain(value) => Ok(*value),
-            Formula::Expression(text) => part.evaluate(text),
+            Formula::Expression(text) => lookup.evaluate(text),
         }
     }
 
-    /// Its value with the parameter values `inputs`, declaring nothing:
-    /// what a dialog shows, and what a handle is drawn at.
-    pub fn peek(&self, inputs: &State) -> GeopResult<f64> {
-        match self {
-            Formula::Plain(value) => Ok(*value),
-            Formula::Expression(text) => evaluate(text, |name| number(inputs, name)),
+    /// What a number field of it set to `value` makes it: a number slid or
+    /// dragged plain, text typed plain if it is a number and a formula
+    /// otherwise. `None` for anything else, and for empty text. A formula
+    /// that does not evaluate is kept, as typed: the step then fails naming
+    /// it, and the field shows the text to correct.
+    pub fn from_value(value: &Value) -> Option<Formula> {
+        match value {
+            Value::Number(v) => Some(Formula::Plain(*v)),
+            Value::Text(text) if !text.trim().is_empty() => Some(Formula::from(text.as_str())),
+            _ => None,
         }
     }
 }
 
 /// The texts of those of `formulas` that are formulas, not plain numbers:
-/// what an operation lists as its formulas (see
-/// [`crate::operation::Operation::formulas`]).
+/// what an operation lists as its formulas .
 pub fn expressions<'a>(formulas: impl IntoIterator<Item = &'a mut Formula>) -> Vec<&'a mut String> {
     formulas
         .into_iter()
@@ -707,7 +699,8 @@ impl<F: FnMut(&str) -> Option<f64>> Parser<'_, F> {
                 self.at += name_len(&self.text[start..]);
                 let name = &self.text[start..self.at];
                 if self.eat('(') {
-                    let Some(&(_, arity)) = FUNCTIONS.iter().find(|(f, _)| *f == name) else {
+                    let Some(&(_, arity, call)) = FUNCTIONS.iter().find(|(f, ..)| *f == name)
+                    else {
                         return Err(GeopError::new(format!("there is no function {name:?}")));
                     };
                     let mut args = vec![self.sum()?];
@@ -723,7 +716,7 @@ impl<F: FnMut(&str) -> Option<f64>> Parser<'_, F> {
                             args.len()
                         )));
                     }
-                    return Ok(call(name, &args));
+                    return Ok(call(&args));
                 }
                 if name == "pi" {
                     return Ok(std::f64::consts::PI);
@@ -777,8 +770,7 @@ mod tests {
     }
 
     /// A formula typed is plain if it is a number, and saves as one; any
-    /// other saves as its text. Both read back as they were, and evaluate
-    /// against the parameters.
+    /// other saves as its text. Both read back as they were.
     #[test]
     fn formulas_save_as_numbers_or_text() {
         let plain = Formula::from(" 12.5 ");
@@ -791,13 +783,6 @@ mod tests {
             let back: Formula = serde_json::from_str(&serde_json::to_string(f).unwrap()).unwrap();
             assert_eq!(&back, f);
         }
-        let inputs = State::from([(
-            "width".to_string(),
-            ParamValue::Number(Design::from_f64(10.0)),
-        )]);
-        assert_eq!(plain.peek(&inputs).unwrap(), 12.5);
-        assert_eq!(formula.peek(&inputs).unwrap(), 5.0);
-        assert!(Formula::from("depth").peek(&inputs).is_err());
     }
 
     /// Numbers read what is defined before or after them, a table gives
@@ -847,12 +832,12 @@ mod tests {
             ],
         };
         parameters.validate().unwrap();
-        let own = parameters.resolve(&State::new());
+        let own = parameters.resolve(&Values::new());
         assert!((number(&own.values, "hole").unwrap() - 3.2).abs() < 1e-12);
         assert_eq!(own.values[COLOR], ParamValue::Text("#ff8800".into()));
         assert!(own.errors.contains_key("broken"));
 
-        let overrides = State::from([
+        let overrides = Values::from([
             ("screw".to_string(), ParamValue::Text("M5".into())),
             (COLOR.to_string(), ParamValue::Text("#000000".into())),
         ]);
@@ -864,7 +849,7 @@ mod tests {
         // Read before it is defined: the same.
         let mut reordered = parameters.clone();
         reordered.values.rotate_left(1);
-        let later = reordered.resolve(&State::new());
+        let later = reordered.resolve(&Values::new());
         assert_eq!(number(&later.values, "hole"), number(&own.values, "hole"));
         // Reading one that never resolves: it fails too, saying so.
         let mut cycle = parameters.clone();
@@ -873,7 +858,7 @@ mod tests {
             min: None,
             max: None,
         };
-        let cyclic = cycle.resolve(&State::new());
+        let cyclic = cycle.resolve(&Values::new());
         assert!(cyclic.errors.contains_key("hole") && cyclic.errors.contains_key("broken"));
 
         let mut bad = parameters.clone();

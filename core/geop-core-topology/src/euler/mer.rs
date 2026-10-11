@@ -1,15 +1,8 @@
-use crate::{
-    Coedge, CoedgeGeometry, CoedgeId, Edge, EdgeId, FaceId, Model, Sense,
-    argument_validation::{
-        validate_curve_start_and_end, validate_pcurve_start_and_end, validate_same_loop,
-    },
-    boundary::BoundaryType,
-};
+use crate::{CoedgeId, EdgeId, FaceId, Model, boundary::BoundaryType};
 use geop_core_geometry::nurb_curve::{NurbCurve2D, NurbCurve3D};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
-    with_context,
 };
 
 impl<S: Scalar> Model<S> {
@@ -49,89 +42,21 @@ impl<S: Scalar> Model<S> {
             ))
         };
 
-        let ce1 = self.get_coedge(coedge1)?.clone();
-        let ce2 = self.get_coedge(coedge2)?.clone();
-        validate_same_loop(self, coedge1, coedge2)?;
-        let old_face_id = ce1.face;
-        let old_face = self.get_face(old_face_id)?.clone();
-        let existing_face = self.get_face(existing_face_id)?.clone();
-
-        let start = self
-            .get_vertex(self.coedge_end_vertex_id(coedge1)?)?
-            .clone()
-            .point;
-        let end = self
-            .get_vertex(self.coedge_start_vertex_id(coedge2)?)?
-            .clone()
-            .point;
-
-        validate_pcurve_start_and_end(&existing_face.surface, &pcurve, &start, &end)
-            .with_context("initial arg validation")
+        let existing_surface = self.get_face(existing_face_id)?.surface.clone();
+        let (old_boundary_idx, ring_members) = self
+            .check_ring_split(
+                coedge1,
+                coedge2,
+                &curve,
+                &pcurve,
+                &pcurve_reversed,
+                &existing_surface,
+            )
             .with_context(&ctx)?;
-        validate_pcurve_start_and_end(&old_face.surface, &pcurve_reversed, &end, &start)
-            .with_context("initial arg validation")
-            .with_context(&ctx)?;
-        validate_curve_start_and_end(&curve, &start, &end)
-            .with_context("initial arg validation")
-            .with_context(&ctx)?;
-
-        // Find which of `old_face`'s boundaries is the one being split, by
-        // index, before any pointers are mutated — see `mef` for why this
-        // has to happen now rather than by walking post-mutation pointers.
-        let old_boundary_idx = self
-            .find_boundary_containing(old_face_id, coedge1)
-            .with_context(&ctx)?;
-
-        // All coedges between coedge1 and coedge2 (inclusive) will end up on
-        // existing_face_id, so validate their pcurves against its surface.
-        let mut ring_members = vec![coedge2];
-        while *ring_members.last().unwrap() != coedge1 {
-            ring_members.push(self.get_coedge(*ring_members.last().unwrap())?.next);
-        }
-        for &member in &ring_members {
-            let c = self.get_coedge(member)?.clone();
-            let sp = self.coedge_start_vertex(member)?.point;
-            let ep = self.coedge_end_vertex(member)?.point;
-            validate_pcurve_start_and_end(&existing_face.surface, &c.pcurve, &sp, &ep)
-                .with_context(with_context!(
-                    "reassigning coedge {member} to existing_face_id"
-                ))
-                .with_context(&ctx)?;
-        }
-
-        // Create the new edge and coedges
-        let edge_id = self.insert_edge(Edge {
-            curve,
-            start_vertex: self.coedge_end_vertex_id(coedge1)?,
-            end_vertex: self.coedge_start_vertex_id(coedge2)?,
-        });
-        let next1 = ce1.next;
-        let prev2 = ce2.prev;
-
-        // coedge_forward: coedge1.end -> coedge2.start
-        let coedge_forward = self.insert_coedge(Coedge {
-            geometry: CoedgeGeometry::Edge(edge_id),
-            sense: Sense::Forward,
-            pcurve,
-            next: coedge2,
-            prev: coedge1,
-            face: ce1.face, // fixed up below, once moved onto existing_face_id
-        });
-
-        // coedge_backward: coedge2.start -> coedge1.end
-        let coedge_backward = self.insert_coedge(Coedge {
-            geometry: CoedgeGeometry::Edge(edge_id),
-            sense: Sense::Reversed,
-            pcurve: pcurve_reversed,
-            next: next1,
-            prev: prev2,
-            face: ce1.face,
-        });
-
-        self.coedges.get_mut(&coedge1).unwrap().next = coedge_forward;
-        self.coedges.get_mut(&coedge2).unwrap().prev = coedge_forward;
-        self.coedges.get_mut(&prev2).unwrap().next = coedge_backward;
-        self.coedges.get_mut(&next1).unwrap().prev = coedge_backward;
+        let old_face_id = self.get_coedge(coedge1)?.face;
+        let next1 = self.get_coedge(coedge1)?.next;
+        let (edge_id, coedge_forward, coedge_backward) =
+            self.insert_edge_between(coedge1, coedge2, curve, pcurve, pcurve_reversed)?;
 
         // Add the split-off ring as a new boundary of existing_face_id.
         // Where the ring lands depends on what already bounds the face it

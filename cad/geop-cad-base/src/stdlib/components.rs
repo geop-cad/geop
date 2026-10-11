@@ -4,41 +4,36 @@
 //! it — its datums `axis` and, for the face it is mounted by, `side`,
 //! `end`, `face`, `base`, `top` or `mount`.
 
-use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::{DatumComponent, FrameAxis},
-};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
+use geop_ops::BooleanOp;
 use geop_ops::parameters::Material;
-use geop_ops::parameters::{Parameter, ParameterKind, Parameters};
-use geop_ops::{EntityRef, ORIGIN};
+use geop_ops::parameters::{Parameter, Parameters};
+use geop_ops::{EntityRef, origin_plane};
 use geop_ops_booleans::Combine;
+use geop_ops_extrude_revolve::Output;
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
 
 use super::{
     StandardPart,
     drawing::Drawing,
     steps::{
-        Around, axis_datum, col, extrude, offset_datum, outline_plane, plane_datum, revolve, size,
+        Around, axis_datum, col, extrude, family, offset_datum, outline_plane, plane_datum,
+        revolve, size,
     },
     tables, titled,
 };
-use crate::Program;
+use crate::{Program, Push};
 
 /// A deep-groove ball bearing as one solid: rings `d` bore and `D`
 /// outside, `B` wide, their edges chamfered by `r`, with the gap between
 /// the rings — where the balls and shields are — a shallow groove in
 /// either side.
 pub fn ball_bearing(file: &'static str) -> GeopResult<StandardPart> {
-    let mut program = Program::new();
-    program.parameters = Parameters {
-        material: Some(Material {
-            name: "Steel".into(),
-            density: 7850.0,
-        }),
-        color: Some("#b8bcc4".into()),
-        values: vec![size(tables::ball_bearings())],
-        ..Parameters::default()
-    };
+    let mut program = family(
+        "Steel",
+        Some("#b8bcc4"),
+        vec![size(tables::ball_bearings())],
+    );
     let (d, big, b, r) = (col("d"), col("D"), col("B"), col("r"));
     let bore = format!("{d} / 2");
     let outside = format!("{big} / 2");
@@ -73,7 +68,7 @@ pub fn ball_bearing(file: &'static str) -> GeopResult<StandardPart> {
         drawing,
         Around::ZAxis,
         Combine::NewBody,
-    )?;
+    );
     axis_datum(&mut program);
     plane_datum(&mut program, "side", "0");
     Ok(StandardPart {
@@ -111,23 +106,11 @@ fn tslot(
     title: &'static str,
     designation: &'static str,
 ) -> GeopResult<StandardPart> {
-    let mut program = Program::new();
-    program.parameters = Parameters {
-        material: Some(Material {
-            name: "Aluminium 6061".into(),
-            density: 2700.0,
-        }),
-        color: Some("#c8ccd2".into()),
-        values: vec![Parameter {
-            name: "length".into(),
-            kind: ParameterKind::Number {
-                expression: "100".into(),
-                min: Some(20.0),
-                max: Some(1000.0),
-            },
-        }],
-        ..Parameters::default()
-    };
+    let mut program = family(
+        "Aluminium 6061",
+        Some("#c8ccd2"),
+        vec![Parameter::number("length", "100", 20.0, 1000.0)],
+    );
     let (half_w, half_h) = (100, 100 * cells);
     // Round the outline clockwise, from its top left corner; each side
     // `(start, direction, slot centres along it)`, in from it to its right.
@@ -172,7 +155,7 @@ fn tslot(
         (outline, outline_plane()),
         Extents::blind("length"),
         Combine::NewBody,
-    )?;
+    );
     axis_datum(&mut program);
     plane_datum(&mut program, "end", "0");
     Ok(StandardPart {
@@ -207,16 +190,7 @@ pub fn tslot_2040(file: &'static str) -> GeopResult<StandardPart> {
 /// four M3 holes 4.5 deep on a 31 square. The body is its outline extruded
 /// `L` down, the boss and the shaft one profile turned on its face.
 pub fn nema17(file: &'static str) -> GeopResult<StandardPart> {
-    let mut program = Program::new();
-    program.parameters = Parameters {
-        material: Some(Material {
-            name: "Steel".into(),
-            density: 7850.0,
-        }),
-        color: Some("#3a3d42".into()),
-        values: vec![size(tables::nema17())],
-        ..Parameters::default()
-    };
+    let mut program = family("Steel", Some("#3a3d42"), vec![size(tables::nema17())]);
     let mut outline = Drawing::new(&program.parameters)?;
     let (side, cut) = ("21.15", "17.15");
     let neg = |s: &str| format!("-{s}");
@@ -240,7 +214,7 @@ pub fn nema17(file: &'static str) -> GeopResult<StandardPart> {
             ..Extents::blind(col("L"))
         },
         Combine::NewBody,
-    )?;
+    );
     let mut drawing = Drawing::new(&program.parameters)?;
     let lines = drawing.polygon(&[
         ["0".into(), "0".into()],
@@ -256,10 +230,11 @@ pub fn nema17(file: &'static str) -> GeopResult<StandardPart> {
         "profile",
         drawing,
         Around::Line(lines[5]),
-        Combine::Union {
+        Combine::With {
+            op: BooleanOp::Union,
             target: "extrude(body)".into(),
         },
-    )?;
+    );
     let mut target = "revolve(top)".to_string();
     for (i, [x, y]) in [
         ["15.5", "15.5"],
@@ -274,7 +249,7 @@ pub fn nema17(file: &'static str) -> GeopResult<StandardPart> {
         let centre = hole.point(x, y)?;
         hole.circle(centre, "3")?;
         let (sketch, id) = (format!("hole{}_sketch", i + 1), format!("hole{}", i + 1));
-        program.push(&sketch, hole.on(outline_plane())?);
+        program.push(&sketch, hole.on(outline_plane()));
         program.push(
             &id,
             ExtrudeArgs {
@@ -283,8 +258,10 @@ pub fn nema17(file: &'static str) -> GeopResult<StandardPart> {
                     reversed: true,
                     ..Extents::blind(4.5)
                 },
-                face: false,
-                combine: Combine::Difference { target },
+                output: Output::Solid(Combine::With {
+                    op: BooleanOp::Difference,
+                    target,
+                }),
             },
         );
         target = format!("extrude({id})");
@@ -301,14 +278,7 @@ pub fn nema17(file: &'static str) -> GeopResult<StandardPart> {
 
 /// The `xz` plane: what a part running along `z` sits on, beside its axis.
 fn xz_plane() -> EntityRef {
-    EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y))
-}
-
-fn steel() -> Option<Material> {
-    Some(Material {
-        name: "Steel".into(),
-        density: 7850.0,
-    })
+    origin_plane(FrameAxis::Y)
 }
 
 /// A miniature linear guide rail, MGN9 or MGN12 by its size, `length`
@@ -319,23 +289,14 @@ fn steel() -> Option<Material> {
 /// slides on it by a slider joint between the two `axis` datums. The
 /// mounting holes are not modelled.
 pub fn linear_rail(file: &'static str) -> GeopResult<StandardPart> {
-    let mut program = Program::new();
-    program.parameters = Parameters {
-        material: steel(),
-        color: Some("#a9aeb6".into()),
-        values: vec![
+    let mut program = family(
+        "Steel",
+        Some("#a9aeb6"),
+        vec![
             size(tables::linear_rails()),
-            Parameter {
-                name: "length".into(),
-                kind: ParameterKind::Number {
-                    expression: "200".into(),
-                    min: Some(20.0),
-                    max: Some(1000.0),
-                },
-            },
+            Parameter::number("length", "200", 20.0, 1000.0),
         ],
-        ..Parameters::default()
-    };
+    );
     let (w, h) = (col("W"), col("H"));
     let side = format!("{w} / 2");
     let groove = format!("{w} / 2 - 0.8");
@@ -364,7 +325,7 @@ pub fn linear_rail(file: &'static str) -> GeopResult<StandardPart> {
         (outline, outline_plane()),
         Extents::blind("length"),
         Combine::NewBody,
-    )?;
+    );
     axis_datum(&mut program);
     offset_datum(&mut program, "base", xz_plane(), "0");
     offset_datum(&mut program, "top", xz_plane(), &h);
@@ -389,13 +350,11 @@ pub fn linear_rail(file: &'static str) -> GeopResult<StandardPart> {
 /// `z = 0`: its datum `axis`, the `z` axis, is the rail's, and a slider
 /// joint between the two moves it along.
 pub fn linear_carriage(file: &'static str) -> GeopResult<StandardPart> {
-    let mut program = Program::new();
-    program.parameters = Parameters {
-        material: steel(),
-        color: Some("#8e949c".into()),
-        values: vec![size(tables::linear_carriages())],
-        ..Parameters::default()
-    };
+    let mut program = family(
+        "Steel",
+        Some("#8e949c"),
+        vec![size(tables::linear_carriages())],
+    );
     let (w, h, h1, wr, hr) = (col("W"), col("H"), col("H1"), col("WR"), col("HR"));
     let side = format!("{w} / 2");
     let channel = format!("{wr} / 2 + 0.5");
@@ -422,7 +381,7 @@ pub fn linear_carriage(file: &'static str) -> GeopResult<StandardPart> {
             ..Extents::blind(col("L"))
         },
         Combine::NewBody,
-    )?;
+    );
     // The holes, drawn on the top — whose sketch runs along `x` and `-z` —
     // and drilled down into it.
     offset_datum(&mut program, "top", xz_plane(), &h);
@@ -450,8 +409,11 @@ pub fn linear_carriage(file: &'static str) -> GeopResult<StandardPart> {
                 reversed: true,
                 ..Extents::blind(format!("{} + 1", col("M")))
             },
-            Combine::Difference { target },
-        )?;
+            Combine::With {
+                op: BooleanOp::Difference,
+                target,
+            },
+        );
         target = format!("extrude({id})");
     }
     axis_datum(&mut program);
@@ -566,7 +528,7 @@ fn servo(
             ..Extents::blind(width)
         },
         Combine::NewBody,
-    )?;
+    );
     // The boss starts 1 inside the body, so that none of its faces lies on
     // the body's top.
     let top = above + boss[1] + spline[1];
@@ -585,10 +547,11 @@ fn servo(
         "profile",
         shaft,
         Around::Line(lines[5]),
-        Combine::Union {
+        Combine::With {
+            op: BooleanOp::Union,
             target: "extrude(body)".into(),
         },
-    )?;
+    );
     let mut target = "revolve(shaft)".to_string();
     let ys: &[f64] = if pair == 0.0 {
         &[0.0]
@@ -603,7 +566,7 @@ fn servo(
             let centre = circle.point(n(x), n(y))?;
             circle.circle(centre, &n(hole))?;
             let id = format!("hole{k}");
-            program.push(format!("{id}_sketch"), circle.on(outline_plane())?);
+            program.push(format!("{id}_sketch"), circle.on(outline_plane()));
             program.push(
                 &id,
                 ExtrudeArgs {
@@ -612,8 +575,10 @@ fn servo(
                         symmetric: true,
                         ..Extents::blind(4.0 * tab)
                     },
-                    face: false,
-                    combine: Combine::Difference { target },
+                    output: Output::Solid(Combine::With {
+                        op: BooleanOp::Difference,
+                        target,
+                    }),
                 },
             );
             target = format!("extrude({id})");

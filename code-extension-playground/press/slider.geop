@@ -156,9 +156,10 @@
           "symmetric": true,
           "reversed": false
         },
-        "face": false,
-        "combine": {
-          "mode": "new_body"
+        "output": {
+          "solid": {
+            "mode": "new_body"
+          }
         }
       }
     },
@@ -262,10 +263,12 @@
           "symmetric": false,
           "reversed": false
         },
-        "face": false,
-        "combine": {
-          "mode": "union",
-          "target": "extrude(extrude1)"
+        "output": {
+          "solid": {
+            "mode": "with",
+            "op": "union",
+            "target": "extrude(extrude1)"
+          }
         }
       }
     },
@@ -541,10 +544,12 @@
           "symmetric": false,
           "reversed": false
         },
-        "face": false,
-        "combine": {
-          "mode": "difference",
-          "target": "mirror(mirror2)"
+        "output": {
+          "solid": {
+            "mode": "with",
+            "op": "difference",
+            "target": "mirror(mirror2)"
+          }
         }
       }
     },
@@ -646,10 +651,12 @@
           "symmetric": false,
           "reversed": false
         },
-        "face": false,
-        "combine": {
-          "mode": "union",
-          "target": "extrude(extrude3)"
+        "output": {
+          "solid": {
+            "mode": "with",
+            "op": "union",
+            "target": "extrude(extrude3)"
+          }
         }
       }
     }

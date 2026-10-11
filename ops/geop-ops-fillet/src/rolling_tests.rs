@@ -6,12 +6,8 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
-use geop_ops::{Namer, Part};
-use geop_ops_booleans::{
-    boolean::{BooleanOp, boolean},
-    remesh::remesh::RemeshParams,
-};
+use geop_ops::{NamedModel, Namer};
+use geop_ops_booleans::boolean::BooleanOp;
 use geop_ops_extrude_revolve::shapes::{
     cube::cube_solid,
     cylinder::{Axis, revolved_cylinder, revolved_cylinder_along_axis},
@@ -20,100 +16,55 @@ use geop_ops_extrude_revolve::shapes::{
 
 use crate::blend::{BlendShape, blend};
 use crate::rolling::{DEVIATION, Radii};
+use crate::tests::{assert_valid, combined, edges_where, has_vertex, refusal, unit_cube, v};
 
-fn v<T: Scalar>(x: f64, y: f64, z: f64) -> Vector3<T> {
-    Vector3::from_array([T::from_f64(x), T::from_f64(y), T::from_f64(z)])
-}
-
-/// Checks `part` is a valid manifold model.
-fn assert_valid(part: &Part<S>) {
-    let params = ValidationParameters::default();
-    if let Err(e) = validate(&params, part.topology()) {
-        panic!("{e:?}");
-    }
-    if let Err(e) = validate_manifold(&params, part.topology()) {
-        panic!("{e:?}");
-    }
-}
-
-/// Blends `edges` of `part` into `shape` as the step `F`, and checks the
+/// Blends `edges` of `model` into `shape` as the step `F`, and checks the
 /// result is valid — failing, with every entity the error mentions by name.
-fn blended(part: &mut Part<S>, edges: &[String], shape: &BlendShape) {
+fn blended(model: &mut NamedModel<S>, edges: &[String], shape: &BlendShape) {
     let namer = Namer::new("fillet", "F").unwrap();
-    if let Err(e) = blend(part, &namer, edges, shape) {
+    if let Err(e) = blend(model, &namer, edges, shape) {
         let text = format!("{e:?}");
-        let model = part.topology();
+        let topology = model.topology();
         let mut names = Vec::new();
-        for &id in model.vertices.keys() {
+        for &id in topology.vertices.keys() {
             if text.contains(&format!("{id:?}")) {
-                names.push(format!("{id:?} = {:?}", part.name_of(id)));
+                names.push(format!("{id:?} = {:?}", model.name_of(id)));
             }
         }
-        for &id in model.edges.keys() {
+        for &id in topology.edges.keys() {
             if text.contains(&format!("{id:?}")) {
-                names.push(format!("{id:?} = {:?}", part.name_of(id)));
+                names.push(format!("{id:?} = {:?}", model.name_of(id)));
             }
         }
-        for &id in model.faces.keys() {
+        for &id in topology.faces.keys() {
             if text.contains(&format!("{id:?}")) {
-                names.push(format!("{id:?} = {:?}", part.name_of(id)));
+                names.push(format!("{id:?} = {:?}", model.name_of(id)));
             }
         }
         panic!("{text}\nwhere {names:#?}");
     }
-    assert_valid(part);
-}
-
-/// The names of the edges of `part` whose middle `keep` accepts, as plain
-/// numbers.
-fn edges_where(part: &Part<S>, keep: impl Fn([f64; 3]) -> bool) -> Vec<String> {
-    let model = part.topology();
-    let mut names: Vec<String> = model
-        .edges
-        .iter()
-        .filter(|(_, e)| {
-            let (t0, t1) = e.curve.domain();
-            let p = e
-                .curve
-                .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
-                .unwrap();
-            keep([p[0].to_f64(), p[1].to_f64(), p[2].to_f64()])
-        })
-        .map(|(&id, _)| part.name_of(id).unwrap().to_string())
-        .collect();
-    names.sort();
-    names
+    assert_valid(model);
 }
 
 /// A sphere of radius 1 around the origin with a cylinder of radius 0.4
 /// standing on its axis, from `z = 0.5` to `1.5`, joined: they meet in a
 /// circle at `z = sqrt(0.84)`, a concave edge between the cylinder and the
 /// sphere. The part, and the names of the edges of that circle.
-fn boss_on_sphere() -> (Part<S>, Vec<String>) {
-    let mut part = Part::new();
-    let ball = sphere_solid(&mut part, "s", v(0.0, 0.0, 0.0), S::ONE).unwrap();
+fn boss_on_sphere() -> (NamedModel<S>, Vec<String>) {
+    let mut model = NamedModel::new();
+    let ball = sphere_solid(&mut model, "s", v(0.0, 0.0, 0.0), S::ONE).unwrap();
     let boss =
-        revolved_cylinder(&mut part, "c", v(0.0, 0.0, 0.5), S::from_f64(0.4), S::ONE).unwrap();
-    let namer = Namer::new("union", "u").unwrap();
-    boolean(
-        &mut part,
-        &namer,
-        ball,
-        boss,
-        BooleanOp::Union,
-        RemeshParams::default(),
-    )
-    .unwrap()
-    .unwrap();
+        revolved_cylinder(&mut model, "c", v(0.0, 0.0, 0.5), S::from_f64(0.4), S::ONE).unwrap();
+    combined(&mut model, ("union", "u"), ball, boss, BooleanOp::Union);
     let z = 0.84f64.sqrt();
-    let rim = edges_where(&part, |p| {
+    let rim = edges_where(&model, |p| {
         ((p[0] * p[0] + p[1] * p[1]).sqrt() - 0.4).abs() < 1e-6 && (p[2] - z).abs() < 1e-6
     });
     assert!(
         !rim.is_empty(),
         "no edge where the cylinder meets the sphere"
     );
-    (part, rim)
+    (model, rim)
 }
 
 /// The boss's rim filleted with radius 0.1: the ball, 0.1 from the
@@ -124,14 +75,14 @@ fn boss_on_sphere() -> (Part<S>, Vec<String>) {
 #[test]
 #[ignore = "slow: 4 s — run with `cargo test -- --ignored`"]
 fn boss_on_sphere_fillet_is_a_torus() {
-    let (mut part, rim) = boss_on_sphere();
+    let (mut model, rim) = boss_on_sphere();
     let r = 0.1;
-    blended(&mut part, &rim[..1], &BlendShape::round(r));
+    blended(&mut model, &rim[..1], &BlendShape::round(r));
     let zc = (1.1f64 * 1.1 - 0.5 * 0.5).sqrt();
-    let model = part.topology();
+    let topology = model.topology();
     let mut blend_faces = 0;
-    for (&id, face) in &model.faces {
-        let name = part.name_of(id).unwrap();
+    for (&id, face) in &topology.faces {
+        let name = model.name_of(id).unwrap();
         if !name.starts_with(&format!("fillet(F,{},fillet", rim[0])) {
             continue;
         }
@@ -154,15 +105,16 @@ fn boss_on_sphere_fillet_is_a_torus() {
     assert!(blend_faces > 0, "no blend face");
 }
 
-/// The faces of `part` that are pieces of the blend of edge `edge` of step
+/// The faces of `model` that are pieces of the blend of edge `edge` of step
 /// `F` (see [`blend`]).
-fn blend_faces<'a>(part: &'a Part<S>, edge: &str) -> Vec<(&'a str, &'a NurbSurface3D<S>)> {
+fn blend_faces<'a>(model: &'a NamedModel<S>, edge: &str) -> Vec<(&'a str, &'a NurbSurface3D<S>)> {
     let prefix = format!("fillet(F,{edge},fillet");
-    part.topology()
+    model
+        .topology()
         .faces
         .iter()
         .filter_map(|(&id, face)| {
-            let name = part.name_of(id)?;
+            let name = model.name_of(id)?;
             name.starts_with(&prefix).then_some((name, &face.surface))
         })
         .collect()
@@ -187,10 +139,10 @@ fn samples(surface: &NurbSurface3D<S>, n: usize) -> Vec<[f64; 3]> {
 /// standing on it along `z`, from `z = 0` up, joined: they meet in a saddle
 /// curve, no circle — a free-form concave edge. The part, and the names of
 /// the edges of that curve.
-fn tee() -> (Part<S>, Vec<String>) {
-    let mut part = Part::new();
+fn tee() -> (NamedModel<S>, Vec<String>) {
+    let mut model = NamedModel::new();
     let pipe = revolved_cylinder_along_axis(
-        &mut part,
+        &mut model,
         "p",
         v(-1.0, 0.0, 0.0),
         S::from_f64(0.5),
@@ -199,24 +151,14 @@ fn tee() -> (Part<S>, Vec<String>) {
     )
     .unwrap();
     let branch =
-        revolved_cylinder(&mut part, "b", v(0.0, 0.0, 0.0), S::from_f64(0.3), S::ONE).unwrap();
-    let namer = Namer::new("union", "u").unwrap();
-    boolean(
-        &mut part,
-        &namer,
-        pipe,
-        branch,
-        BooleanOp::Union,
-        RemeshParams::default(),
-    )
-    .unwrap()
-    .unwrap();
-    let saddle = edges_where(&part, |p| {
+        revolved_cylinder(&mut model, "b", v(0.0, 0.0, 0.0), S::from_f64(0.3), S::ONE).unwrap();
+    combined(&mut model, ("union", "u"), pipe, branch, BooleanOp::Union);
+    let saddle = edges_where(&model, |p| {
         ((p[0] * p[0] + p[1] * p[1]).sqrt() - 0.3).abs() < 1e-6
             && ((p[1] * p[1] + p[2] * p[2]).sqrt() - 0.5).abs() < 1e-6
     });
     assert!(!saddle.is_empty(), "no edge where the cylinders meet");
-    (part, saddle)
+    (model, saddle)
 }
 
 /// The branch of the tee filleted with radius 0.1: the ball's center runs
@@ -226,9 +168,9 @@ fn tee() -> (Part<S>, Vec<String>) {
 /// deviation the blend is held to.
 #[test]
 fn tee_fillet_rolls_around_the_saddle() {
-    let (mut part, saddle) = tee();
+    let (mut model, saddle) = tee();
     let r = 0.1;
-    blended(&mut part, &saddle[..1], &BlendShape::round(r));
+    blended(&mut model, &saddle[..1], &BlendShape::round(r));
     let spine = |t: f64| {
         let (x, y) = (0.4 * t.cos(), 0.4 * t.sin());
         [x, y, (0.36 - y * y).sqrt()]
@@ -237,7 +179,7 @@ fn tee_fillet_rolls_around_the_saddle() {
         let c = spine(t);
         ((p[0] - c[0]).powi(2) + (p[1] - c[1]).powi(2) + (p[2] - c[2]).powi(2)).sqrt()
     };
-    let faces = blend_faces(&part, &saddle[0]);
+    let faces = blend_faces(&model, &saddle[0]);
     assert!(!faces.is_empty(), "no blend face");
     for (name, surface) in faces {
         for p in samples(surface, 8) {
@@ -265,24 +207,17 @@ fn tee_fillet_rolls_around_the_saddle() {
     }
 }
 
-/// The unit cube `[0, 1]^3`, named `cube(b)`.
-fn unit_cube() -> Part<S> {
-    let mut part = Part::new();
-    cube_solid(&mut part, "b", v(0.0, 0.0, 0.0), v(1.0, 1.0, 1.0)).unwrap();
-    part
-}
-
 /// The cube's upright edge at the origin rounded from radius 0.1 where it
 /// starts to 0.3 where it ends: the round meets the two sides 0.1 from the
 /// edge at one end of it and 0.3 at the other, and the blend is a cone
 /// between.
 #[test]
 fn variable_radius_on_a_straight_edge() {
-    let mut part = unit_cube();
+    let mut model = unit_cube();
     let edge = "cube(b,p0)";
-    let id = part.edge_id(edge).unwrap();
-    let e = part.topology().get_edge(id).unwrap();
-    let z = |v| part.topology().get_vertex(v).unwrap().point[2].to_f64();
+    let id = model.edge_id(edge).unwrap();
+    let e = model.topology().get_edge(id).unwrap();
+    let z = |v| model.topology().get_vertex(v).unwrap().point[2].to_f64();
     let (z_start, z_end) = (z(e.start_vertex), z(e.end_vertex));
     let shape = BlendShape::Fillet {
         radii: Radii {
@@ -291,22 +226,15 @@ fn variable_radius_on_a_straight_edge() {
             at_vertices: Vec::new(),
         },
     };
-    blended(&mut part, &[edge.to_string()], &shape);
+    blended(&mut model, &[edge.to_string()], &shape);
     for (r, z) in [(0.1, z_start), (0.3, z_end)] {
         for p in [[r, 0.0, z], [0.0, r, z]] {
-            let p = v::<S>(p[0], p[1], p[2]);
-            assert!(
-                part.topology()
-                    .vertices
-                    .values()
-                    .any(|vertex| vertex.point.could_be_equal(&p)),
-                "no vertex at {p:?}"
-            );
+            assert!(has_vertex(&model, p), "no vertex at {p:?}");
         }
     }
     // Every point of the blend is as far from the edge's diagonal plane's
     // ball centers as the radius there: `(x - r, y - r)` of length `r`.
-    for (name, surface) in blend_faces(&part, edge) {
+    for (name, surface) in blend_faces(&model, edge) {
         for p in samples(surface, 6) {
             let f = (p[2] - z_start) / (z_end - z_start);
             let r = 0.1 + 0.2 * f;
@@ -318,23 +246,29 @@ fn variable_radius_on_a_straight_edge() {
 
 /// A cylinder of radius 0.5 and height 1 standing on the origin, with a
 /// flat cut along it at `x = 0.3`: a D-shaped shaft.
-fn d_shaft() -> Part<S> {
-    let mut part = Part::new();
-    let shaft =
-        revolved_cylinder(&mut part, "c", v(0.0, 0.0, 0.0), S::from_f64(0.5), S::ONE).unwrap();
-    let flat = cube_solid(&mut part, "f", v(0.3, -1.0, -1.0), v(1.0, 1.0, 2.0)).unwrap();
-    let namer = Namer::new("flat", "f").unwrap();
-    boolean(
-        &mut part,
-        &namer,
+fn d_shaft() -> NamedModel<S> {
+    shaft_with_flat(0.5, 1.0, 0.3)
+}
+
+/// A cylinder of `radius` and `height` standing on the origin, with a flat
+/// cut along it at `x = flat`.
+fn shaft_with_flat(radius: f64, height: f64, flat: f64) -> NamedModel<S> {
+    let mut model = NamedModel::new();
+    let (r, h) = (S::from_f64(radius), S::from_f64(height));
+    let shaft = revolved_cylinder(&mut model, "c", v(0.0, 0.0, 0.0), r, h).unwrap();
+    let (min, max) = (
+        v(flat, -2.0 * radius, -1.0),
+        v(2.0 * radius, 2.0 * radius, 2.0),
+    );
+    let flat = cube_solid(&mut model, "f", min, max).unwrap();
+    combined(
+        &mut model,
+        ("flat", "f"),
         shaft,
         flat,
         BooleanOp::Difference,
-        RemeshParams::default(),
-    )
-    .unwrap()
-    .unwrap();
-    part
+    );
+    model
 }
 
 /// The edges at the D-shaft's two top corners rounded: the flat's top
@@ -344,10 +278,10 @@ fn d_shaft() -> Part<S> {
 /// the corners.
 #[test]
 fn d_shaft_fillet_top_corners() {
-    let mut part = d_shaft();
+    let mut model = d_shaft();
     let y = 0.16f64.sqrt();
-    let model = part.topology();
-    let corners: Vec<_> = model
+    let topology = model.topology();
+    let corners: Vec<_> = topology
         .vertices
         .iter()
         .filter(|(_, vertex)| {
@@ -358,24 +292,24 @@ fn d_shaft_fillet_top_corners() {
         .map(|(&id, _)| id)
         .collect();
     assert_eq!(corners.len(), 2);
-    let mut edges: Vec<String> = model
+    let mut edges: Vec<String> = topology
         .edges
         .iter()
         .filter(|(_, e)| corners.contains(&e.start_vertex) || corners.contains(&e.end_vertex))
-        .map(|(&id, _)| part.name_of(id).unwrap().to_string())
+        .map(|(&id, _)| model.name_of(id).unwrap().to_string())
         .collect();
     edges.sort();
     edges.dedup();
     let r = 0.1;
-    blended(&mut part, &edges, &BlendShape::round(r));
+    blended(&mut model, &edges, &BlendShape::round(r));
     // `r` below the top, from the flat and inside the cylinder.
     let y = (0.16f64 - 0.04).sqrt();
     let centers = [y, -y].map(|y| v::<S>(0.3 - r, y, 1.0 - r));
-    let balls: Vec<_> = part
+    let balls: Vec<_> = model
         .topology()
         .faces
         .iter()
-        .filter(|&(&id, _)| part.name_of(id).unwrap().ends_with(",corner)"))
+        .filter(|&(&id, _)| model.name_of(id).unwrap().ends_with(",corner)"))
         .collect();
     assert_eq!(balls.len(), 2);
     for (_, face) in balls {
@@ -399,19 +333,23 @@ fn d_shaft_fillet_top_corners() {
 /// the top and bottom where the chords' ends are.
 #[test]
 fn d_shaft_chamfer_flat_side() {
-    let mut part = d_shaft();
+    let mut model = d_shaft();
     let y = 0.16f64.sqrt();
-    let side = edges_where(&part, |p| {
+    let side = edges_where(&model, |p| {
         (p[0] - 0.3).abs() < 1e-6 && (p[1] - y).abs() < 1e-6
     });
     assert_eq!(side.len(), 1, "{side:?}");
     let d = 0.1;
-    blended(&mut part, &side, &BlendShape::Chamfer { distances: [d, d] });
-    let faces: Vec<&str> = part
+    blended(
+        &mut model,
+        &side,
+        &BlendShape::Chamfer { distances: [d, d] },
+    );
+    let faces: Vec<&str> = model
         .topology()
         .faces
         .keys()
-        .filter_map(|&f| part.name_of(f))
+        .filter_map(|&f| model.name_of(f))
         .filter(|n| n.ends_with(",chamfer)"))
         .collect();
     assert_eq!(faces.len(), 1, "{faces:?}");
@@ -423,7 +361,7 @@ fn d_shaft_chamfer_flat_side() {
     let on_cylinder = [0.5 * angle.cos(), 0.5 * angle.sin(), 1.0];
     for p in [on_flat, on_cylinder] {
         let p = v::<S>(p[0], p[1], p[2]);
-        let near = part
+        let near = model
             .topology()
             .vertices
             .values()
@@ -440,47 +378,40 @@ fn d_shaft_chamfer_flat_side() {
 /// chamfer fills in, its chords `0.1` into the branch and the pipe.
 #[test]
 fn tee_chamfer_around_the_saddle() {
-    let (mut part, saddle) = tee();
+    let (mut model, saddle) = tee();
     blended(
-        &mut part,
+        &mut model,
         &saddle[..1],
         &BlendShape::Chamfer {
             distances: [0.1, 0.1],
         },
     );
-    let chamfered = part
+    let chamfered = model
         .topology()
         .faces
         .keys()
-        .filter_map(|&f| part.name_of(f))
+        .filter_map(|&f| model.name_of(f))
         .any(|n| n.starts_with(&format!("fillet(F,{},chamfer", saddle[0])));
     assert!(chamfered);
 }
 
 /// A block of 2 x 2 x 1 with a D-shaped pocket 0.4 deep in its top: a
 /// circle of radius 0.5 around `(1, 1)` cut off at `x = 1.3`.
-fn d_pocket() -> Part<S> {
-    let mut part = Part::new();
-    let block = cube_solid(&mut part, "b", v(0.0, 0.0, 0.0), v(2.0, 2.0, 1.0)).unwrap();
+fn d_pocket() -> NamedModel<S> {
+    let mut model = NamedModel::new();
+    let block = cube_solid(&mut model, "b", v(0.0, 0.0, 0.0), v(2.0, 2.0, 1.0)).unwrap();
     let round =
-        revolved_cylinder(&mut part, "c", v(1.0, 1.0, 0.6), S::from_f64(0.5), S::ONE).unwrap();
-    let off = cube_solid(&mut part, "o", v(1.3, 0.0, 0.0), v(2.0, 2.0, 2.0)).unwrap();
-    let difference = |part: &mut Part<S>, name: &str, a, b| {
-        let namer = Namer::new("cut", name).unwrap();
-        boolean(
-            part,
-            &namer,
-            a,
-            b,
-            BooleanOp::Difference,
-            RemeshParams::default(),
-        )
-        .unwrap()
-        .unwrap()
-    };
-    let pocket = difference(&mut part, "d", round, off);
-    difference(&mut part, "p", block, pocket);
-    part
+        revolved_cylinder(&mut model, "c", v(1.0, 1.0, 0.6), S::from_f64(0.5), S::ONE).unwrap();
+    let off = cube_solid(&mut model, "o", v(1.3, 0.0, 0.0), v(2.0, 2.0, 2.0)).unwrap();
+    let pocket = combined(&mut model, ("cut", "d"), round, off, BooleanOp::Difference);
+    combined(
+        &mut model,
+        ("cut", "p"),
+        block,
+        pocket,
+        BooleanOp::Difference,
+    );
+    model
 }
 
 /// The D-shaped pocket's rim rounded: the arc rolled, the flat side swept,
@@ -493,35 +424,27 @@ fn d_pocket() -> Part<S> {
 /// the run-on has a side of no length.
 #[test]
 fn d_pocket_rim_fillet_is_refused() {
-    let part = d_pocket();
-    let rim = edges_where(&part, |p| {
+    let model = d_pocket();
+    let rim = edges_where(&model, |p| {
         (p[2] - 1.0).abs() < 1e-6 && (p[0] - 1.0).hypot(p[1] - 1.0) < 0.51
     });
-    let namer = Namer::new("fillet", "F").unwrap();
-    let why = match blend(&mut part.clone(), &namer, &rim, &BlendShape::round(0.1)) {
-        Ok(()) => panic!("the D-shaped pocket's rim is not refused"),
-        Err(e) => format!("{e:?}"),
-    };
+    let why = refusal(model, &rim, BlendShape::round(0.1));
     assert!(why.contains("only mitred between straight edges"), "{why}");
 }
 
 /// A sphere of radius 1 around the origin, its half below `z = 0` cut off.
-fn hemisphere() -> Part<S> {
-    let mut part = Part::new();
-    let ball = sphere_solid(&mut part, "s", v(0.0, 0.0, 0.0), S::ONE).unwrap();
-    let below = cube_solid(&mut part, "c", v(-2.0, -2.0, -2.0), v(2.0, 2.0, 0.0)).unwrap();
-    let namer = Namer::new("half", "h").unwrap();
-    boolean(
-        &mut part,
-        &namer,
+fn hemisphere() -> NamedModel<S> {
+    let mut model = NamedModel::new();
+    let ball = sphere_solid(&mut model, "s", v(0.0, 0.0, 0.0), S::ONE).unwrap();
+    let below = cube_solid(&mut model, "c", v(-2.0, -2.0, -2.0), v(2.0, 2.0, 0.0)).unwrap();
+    combined(
+        &mut model,
+        ("half", "h"),
         ball,
         below,
         BooleanOp::Difference,
-        RemeshParams::default(),
-    )
-    .unwrap()
-    .unwrap();
-    part
+    );
+    model
 }
 
 /// The hemisphere's rim bevelled: a closed chain of quarter circles
@@ -529,11 +452,11 @@ fn hemisphere() -> Part<S> {
 /// sphere moving from quarter to quarter across their seams.
 #[test]
 fn hemisphere_rim_chamfer() {
-    let mut part = hemisphere();
-    let rim = edges_where(&part, |p| p[2].abs() < 1e-6);
+    let mut model = hemisphere();
+    let rim = edges_where(&model, |p| p[2].abs() < 1e-6);
     assert!(!rim.is_empty());
     blended(
-        &mut part,
+        &mut model,
         &rim[..1],
         &BlendShape::Chamfer {
             distances: [0.1, 0.1],
@@ -545,27 +468,13 @@ fn hemisphere_rim_chamfer() {
 /// flat's side bevelled.
 #[test]
 fn wide_d_shaft_chamfer_flat_side() {
-    let mut part = Part::new();
-    let shaft =
-        revolved_cylinder(&mut part, "c", v(0.0, 0.0, 0.0), S::ONE, S::from_f64(1.5)).unwrap();
-    let flat = cube_solid(&mut part, "f", v(0.6, -2.0, -1.0), v(2.0, 2.0, 2.0)).unwrap();
-    let namer = Namer::new("flat", "f").unwrap();
-    boolean(
-        &mut part,
-        &namer,
-        shaft,
-        flat,
-        BooleanOp::Difference,
-        RemeshParams::default(),
-    )
-    .unwrap()
-    .unwrap();
-    let side = edges_where(&part, |p| {
+    let mut model = shaft_with_flat(1.0, 1.5, 0.6);
+    let side = edges_where(&model, |p| {
         (p[0] - 0.6).abs() < 1e-6 && (p[1] - 0.8).abs() < 1e-6
     });
     assert_eq!(side.len(), 1, "{side:?}");
     blended(
-        &mut part,
+        &mut model,
         &side,
         &BlendShape::Chamfer {
             distances: [0.1, 0.1],
@@ -573,16 +482,16 @@ fn wide_d_shaft_chamfer_flat_side() {
     );
 }
 
-/// The vertex at `p` of `part`, by name.
-fn vertex_at(part: &Part<S>, p: [f64; 3]) -> String {
+/// The vertex at `p` of `model`, by name.
+fn vertex_at(model: &NamedModel<S>, p: [f64; 3]) -> String {
     let p = v::<S>(p[0], p[1], p[2]);
-    let (&id, _) = part
+    let (&id, _) = model
         .topology()
         .vertices
         .iter()
         .find(|(_, vertex)| vertex.point.could_be_equal(&p))
         .expect("a vertex there");
-    part.name_of(id).unwrap().to_string()
+    model.name_of(id).unwrap().to_string()
 }
 
 /// The three edges at the cube's corner `(0, 0, 1)` rounded with a radius
@@ -591,8 +500,8 @@ fn vertex_at(part: &Part<S>, p: [f64; 3]) -> String {
 /// whose piece rounds the corner.
 #[test]
 fn cube_corner_rounded_with_a_varying_radius() {
-    let mut part = unit_cube();
-    let corner = vertex_at(&part, [0.0, 0.0, 1.0]);
+    let mut model = unit_cube();
+    let corner = vertex_at(&model, [0.0, 0.0, 1.0]);
     let edges: Vec<String> = ["cube(b,c0,start)", "cube(b,c3,start)", "cube(b,p0)"]
         .map(String::from)
         .to_vec();
@@ -603,12 +512,12 @@ fn cube_corner_rounded_with_a_varying_radius() {
             at_vertices: vec![(corner, 0.2)],
         },
     };
-    blended(&mut part, &edges, &shape);
-    let balls: Vec<_> = part
+    blended(&mut model, &edges, &shape);
+    let balls: Vec<_> = model
         .topology()
         .faces
         .iter()
-        .filter(|&(&id, _)| part.name_of(id).unwrap().ends_with(",corner)"))
+        .filter(|&(&id, _)| model.name_of(id).unwrap().ends_with(",corner)"))
         .collect();
     assert_eq!(balls.len(), 1);
     let center = v::<S>(0.2, 0.2, 0.8);
@@ -623,7 +532,7 @@ fn cube_corner_rounded_with_a_varying_radius() {
 /// being no one ball to round it with.
 #[test]
 fn cube_corner_with_mixed_radii_is_refused() {
-    let part = unit_cube();
+    let model = unit_cube();
     let edges: Vec<String> = ["cube(b,c0,start)", "cube(b,c3,start)", "cube(b,p0)"]
         .map(String::from)
         .to_vec();
@@ -634,10 +543,6 @@ fn cube_corner_with_mixed_radii_is_refused() {
             at_vertices: Vec::new(),
         },
     };
-    let namer = Namer::new("fillet", "F").unwrap();
-    let why = match blend(&mut part.clone(), &namer, &edges, &shape) {
-        Ok(()) => panic!("mixed radii at the corner are not refused"),
-        Err(e) => format!("{e:?}"),
-    };
+    let why = refusal(model, &edges, shape);
     assert!(why.contains("with the radii"), "{why}");
 }

@@ -16,11 +16,6 @@ impl<S: Scalar> Model<S> {
 
         let ca = self.get_coedge(ca_id)?.clone();
         let cb = self.get_coedge(cb_id)?.clone();
-        if ca.edge().with_context(&ctx)? != cb.edge().with_context(&ctx)? {
-            return Err(ctx(GeopError::new(
-                "ca_id and cb_id must belong to the same edge",
-            )));
-        }
         if ca.face != cb.face {
             return Err(ctx(GeopError::new(
                 "ca_id and cb_id must belong to the same face",
@@ -36,16 +31,7 @@ impl<S: Scalar> Model<S> {
         let ring1 = cb.next;
         let ring2 = ca.next;
 
-        // ca and cb each sit between one root coedge and the other loop's prev, so
-        // removing them reconnects across: ca's prev links up with cb's next, and
-        // cb's prev links up with ca's next.
-        self.coedges.get_mut(&ca.prev).unwrap().next = cb.next;
-        self.coedges.get_mut(&cb.next).unwrap().prev = ca.prev;
-        self.coedges.get_mut(&cb.prev).unwrap().next = ca.next;
-        self.coedges.get_mut(&ca.next).unwrap().prev = cb.prev;
-        self.coedges.remove(&ca_id);
-        self.coedges.remove(&cb_id);
-        self.edges.remove(&ca.edge().with_context(&ctx)?);
+        self.remove_edge_between(ca_id, cb_id).with_context(&ctx)?;
 
         // The loop that was cut in two keeps its own role — outer stays
         // outer, a hole stays that hole — and the second ring it split off

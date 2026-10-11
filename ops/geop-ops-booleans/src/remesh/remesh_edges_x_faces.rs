@@ -5,16 +5,6 @@
 //! that begins at that point until it reaches an already-known vertex,
 //! then splice the traced curve in as a new shared edge.
 //!
-//! Written from scratch against the current `Model` API — not a revival of
-//! an earlier `remesh`/`traced_curve`/`tracing_start_point` attempt that
-//! predated a `Model` API overhaul and was removed rather than carried
-//! forward, though the general shape of the problem (and a few algorithmic
-//! ideas — predictor-corrector marching, re-deriving direction from the two
-//! surfaces' normals each step) is the same one that code already solved
-//! once. See `splice_dangling_edge`'s own doc comment for the one place
-//! this module's topology-splicing choice deliberately differs from what
-//! the old code did.
-//!
 //! Pipeline, in order (each phase runs to a fixed point, in *both*
 //! `(solid_a, solid_b)` and `(solid_b, solid_a)` directions before the next
 //! phase starts, since either solid's edges might pierce or lie within the
@@ -41,21 +31,24 @@ use geop_core_geometry::{
     contains::{curve::curve_could_contain, surface::surface_could_contain},
     intersection::{Intersections, curve_surface_intersect, refine_crossing},
     nurb_curve::{NurbCurve, true_point_fractions},
-    nurb_surface::{NurbSurface3D, clamp},
+    nurb_surface::NurbSurface3D,
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    matrix::{Matrix, solve_linear_system},
+    matrix::Matrix,
     scalars::Scalar,
+    solvers::linear::solve_linear_system,
     vector::{Vector, Vector3},
+    with_context,
 };
 use geop_core_topology::{
     Body, CoedgeGeometry, Edge, EdgeId, FaceId, Model, VertexId,
     contains::face::{PointClassification, face_contains, face_interior_point},
 };
-use geop_ops::Part;
+use geop_ops::NamedModel;
 
 use crate::naming::BooleanNaming;
+use crate::remesh::{remesh::RemeshParams, remesh_edges_x_edges::find_vertex_at_point};
 
 /// A vertex where an edge of one solid meets a face of the other without
 /// running along it — where the edge pierces the face, or ends on it —
@@ -188,73 +181,31 @@ fn adaptive_step_size<S: Scalar>(
 /// Remesh every edge x face pair between `solid_a` and `solid_b` — see this
 /// module's own top doc comment for the full pipeline.
 ///
-/// `max_solutions`/`max_nodes`/`min_subdivision_size` bound the
-/// `curve_surface_intersect` searches used to classify each pair (and the
-/// `curve_could_contain`/`surface_could_contain` single-shape searches used
-/// while tracing). `max_trace_steps` bounds how many marching steps a
-/// single trace may take before it's considered to have failed to find a
-/// terminating vertex (see [`adaptive_step_size`] for how long each is).
+/// Every search here, pairwise or single-shape, runs to `params`'
+/// `curve_curve_min_subdivision_size`; `max_trace_steps` bounds how many
+/// marching steps a single trace may take before it's considered to have
+/// failed to find a terminating vertex (see [`adaptive_step_size`] for how
+/// long each is).
 pub fn remesh_edges_x_faces<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     naming: &mut BooleanNaming<S>,
     solid_a: Body,
     solid_b: Body,
-    max_solutions: usize,
-    max_nodes: usize,
-    min_subdivision_size: S,
-    max_trace_steps: usize,
+    params: &RemeshParams<S>,
 ) -> GeopResult<()> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "remesh_edges_x_faces(solid_a={solid_a}, solid_b={solid_b}, max_solutions={max_solutions}, max_nodes={max_nodes}, min_subdivision_size={min_subdivision_size}, max_trace_steps={max_trace_steps})"
-        ))
-    };
+    let ctx = with_context!(
+        "remesh_edges_x_faces(solid_a={solid_a}, solid_b={solid_b}, params={params:?})"
+    );
 
-    split_piercing_crossings(
-        part,
-        naming,
-        solid_a,
-        solid_b,
-        max_solutions,
-        max_nodes,
-        min_subdivision_size,
-    )
-    .with_context(&ctx)?;
-    split_piercing_crossings(
-        part,
-        naming,
-        solid_b,
-        solid_a,
-        max_solutions,
-        max_nodes,
-        min_subdivision_size,
-    )
-    .with_context(&ctx)?;
+    split_piercing_crossings(model, naming, solid_a, solid_b, params).with_context(&ctx)?;
+    split_piercing_crossings(model, naming, solid_b, solid_a, params).with_context(&ctx)?;
 
-    imprint_coincident_pairs(
-        part,
-        naming,
-        solid_a,
-        solid_b,
-        max_solutions,
-        max_nodes,
-        min_subdivision_size,
-    )
-    .with_context(&ctx)?;
-    imprint_coincident_pairs(
-        part,
-        naming,
-        solid_b,
-        solid_a,
-        max_solutions,
-        max_nodes,
-        min_subdivision_size,
-    )
-    .with_context(&ctx)?;
+    imprint_coincident_pairs(model, naming, solid_a, solid_b, params).with_context(&ctx)?;
+    imprint_coincident_pairs(model, naming, solid_b, solid_a, params).with_context(&ctx)?;
 
     // One scan, one pass. Every piercing point either solid's edges make on the
     // other's faces exists by now — that is exactly what the two phases above
-    // were run to a fixed point for — so the settled model already names every
+    // were run to a fixed point for — so the settled topology already names every
     // place an intersection curve can begin. Tracing does not create new ones:
     // a traced curve runs between two vertices that are already here, and
     // splitting a face along it moves the trim boundaries around without moving
@@ -265,15 +216,14 @@ pub fn remesh_edges_x_faces<S: Scalar>(
     // rediscovered them. Curing that is what makes the single pass sufficient,
     // and keeping the pass single is what keeps the omission visible instead of
     // papered over.
-    let model = part.topology();
+    let topology = model.topology();
     let mut starts =
-        find_tracing_start_points(model, solid_a, solid_b, max_nodes, min_subdivision_size)
-            .with_context(&ctx)?;
+        find_tracing_start_points(topology, solid_a, solid_b, params).with_context(&ctx)?;
     // A vertex found from both sides is one start point: tracing from it
     // already tries every face pair through it.
     let found: std::collections::HashSet<VertexId> = starts.iter().map(|s| s.vertex).collect();
     starts.extend(
-        find_tracing_start_points(model, solid_b, solid_a, max_nodes, min_subdivision_size)
+        find_tracing_start_points(topology, solid_b, solid_a, params)
             .with_context(&ctx)?
             .into_iter()
             .filter(|s| !found.contains(&s.vertex)),
@@ -292,24 +242,15 @@ pub fn remesh_edges_x_faces<S: Scalar>(
     // vertex of one of them, never at one of a third body — another solid,
     // a wire — that lies near. Sorted: the order candidates are tried in
     // must not depend on hash order, or neither would the traced curves.
-    let mut candidates: Vec<VertexId> = model
+    let mut candidates: Vec<VertexId> = topology
         .iter_body_vertices(solid_a)
         .with_context(&ctx)?
-        .chain(model.iter_body_vertices(solid_b).with_context(&ctx)?)
+        .chain(topology.iter_body_vertices(solid_b).with_context(&ctx)?)
         .collect();
     candidates.sort_by_key(|v| v.0);
     candidates.dedup();
     for start in &starts {
-        trace_from_start_point(
-            part,
-            naming,
-            start,
-            &candidates,
-            max_nodes,
-            min_subdivision_size,
-            max_trace_steps,
-        )
-        .with_context(&ctx)?;
+        trace_from_start_point(model, naming, start, &candidates, params).with_context(&ctx)?;
     }
 
     Ok(())
@@ -322,24 +263,6 @@ fn edge_is_boundary_of_face<S: Scalar>(model: &Model<S>, edge_id: EdgeId, face_i
     model.iterate_face_coedges(face_id).any(|coedge_id| {
         model.coedges.get(&coedge_id).map(|c| c.geometry) == Some(CoedgeGeometry::Edge(edge_id))
     })
-}
-
-/// A vertex of `bodies` whose point could be `point`, if any. Only the two
-/// bodies' own: a vertex of another body, or of a wire, that happens to lie
-/// there is near, not theirs.
-fn find_vertex_at_point<S: Scalar>(
-    model: &Model<S>,
-    bodies: [Body; 2],
-    point: &Vector3<S>,
-) -> GeopResult<Option<VertexId>> {
-    for body in bodies {
-        for v in model.iter_body_vertices(body)? {
-            if model.get_vertex(v)?.point.could_be_equal(point) {
-                return Ok(Some(v));
-            }
-        }
-    }
-    Ok(None)
 }
 
 // ── Phase 1: split every genuine (transversal) piercing crossing ───────────
@@ -365,15 +288,11 @@ fn find_piercing_crossing<S: Scalar>(
     settled: &mut std::collections::HashSet<(EdgeId, FaceId)>,
     edge_solid: Body,
     face_solid: Body,
-    max_solutions: usize,
-    max_nodes: usize,
-    min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<Option<(EdgeId, S, Option<VertexId>, Vector3<S>, FaceId)>> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "find_piercing_crossing(edge_solid={edge_solid}, face_solid={face_solid}, max_solutions={max_solutions}, max_nodes={max_nodes}, min_subdivision_size={min_subdivision_size})"
-        ))
-    };
+    let ctx = with_context!(
+        "find_piercing_crossing(edge_solid={edge_solid}, face_solid={face_solid}, params={params:?})"
+    );
 
     for edge_id in model.iter_body_edges(edge_solid).with_context(&ctx)? {
         for face_id in model.body_faces(face_solid).with_context(&ctx)? {
@@ -383,16 +302,16 @@ fn find_piercing_crossing<S: Scalar>(
                 continue;
             }
 
-            let pair_ctx = |e: GeopError| e.with_context(format!("edge={edge_id}, face={face_id}"));
+            let pair_ctx = with_context!("edge={edge_id}, face={face_id}");
 
             let edge = model.get_edge(edge_id).with_context(&ctx)?;
             let face = model.get_face(face_id).with_context(&ctx)?;
             let crossings = curve_surface_intersect(
                 &edge.curve,
                 &face.surface,
-                max_solutions,
-                max_nodes,
-                min_subdivision_size,
+                params.max_edge_intersections,
+                params.max_nodes,
+                params.curve_curve_min_subdivision_size,
             )
             .with_context(&ctx)
             .with_context(&pair_ctx)?;
@@ -483,54 +402,46 @@ fn find_piercing_crossing<S: Scalar>(
 }
 
 fn split_piercing_crossings<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     naming: &mut BooleanNaming<S>,
     edge_solid: Body,
     face_solid: Body,
-    max_solutions: usize,
-    max_nodes: usize,
-    min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<()> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "split_piercing_crossings(edge_solid={edge_solid}, face_solid={face_solid}, max_solutions={max_solutions}, max_nodes={max_nodes}, min_subdivision_size={min_subdivision_size})"
-        ))
-    };
+    let ctx = with_context!(
+        "split_piercing_crossings(edge_solid={edge_solid}, face_solid={face_solid}, params={params:?})"
+    );
 
     let mut settled = std::collections::HashSet::new();
     while let Some((edge_id, t, vertex, point, face_id)) = find_piercing_crossing(
-        part.topology(),
+        model.topology(),
         &mut settled,
         edge_solid,
         face_solid,
-        max_solutions,
-        max_nodes,
-        min_subdivision_size,
+        params,
     )
     .with_context(&ctx)?
     {
         let vertex_id = match vertex {
             Some(vertex) => vertex,
             None => {
-                let vertex = part.insert_vertex(point, naming.provisional())?;
+                let vertex = model.insert_vertex(point, naming.provisional())?;
                 naming.piercing(vertex, edge_id, t, face_id)?;
                 vertex
             }
         };
-        let new_edge = part
+        let new_edge = model
             .split_edge_at_vertex(
                 edge_id,
                 t,
                 vertex_id,
-                max_nodes,
-                min_subdivision_size,
+                params.max_nodes,
+                params.curve_curve_min_subdivision_size,
                 naming.provisional(),
             )
-            .with_context(&|e: GeopError| {
-                e.with_context(format!(
-                    "edge={edge_id}, t={t:?}, vertex={vertex_id}, piercing face={face_id}"
-                ))
-            })
+            .with_context(with_context!(
+                "edge={edge_id}, t={t:?}, vertex={vertex_id}, piercing face={face_id}"
+            ))
             .with_context(&ctx)?;
         naming.edge_split(edge_id, new_edge, vertex_id)?;
     }
@@ -551,14 +462,13 @@ fn faces_are_coplanar<S: Scalar>(
     model: &Model<S>,
     face_a: FaceId,
     face_b: FaceId,
-    max_nodes: usize,
-    min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<bool> {
     let Ok((ua, va)) = face_interior_point(
         model,
         face_a,
-        max_nodes,
-        min_subdivision_size,
+        params.max_nodes,
+        params.curve_curve_min_subdivision_size,
         FACE_CONTAINS_SEED,
     ) else {
         return Ok(false);
@@ -566,8 +476,8 @@ fn faces_are_coplanar<S: Scalar>(
     let Ok((ub, vb)) = face_interior_point(
         model,
         face_b,
-        max_nodes,
-        min_subdivision_size,
+        params.max_nodes,
+        params.curve_curve_min_subdivision_size,
         FACE_CONTAINS_SEED,
     ) else {
         return Ok(false);
@@ -622,8 +532,7 @@ fn faces_are_coplanar<S: Scalar>(
 fn seam_plane<S: Scalar>(
     model: &Model<S>,
     edge_id: EdgeId,
-    max_nodes: usize,
-    min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<Option<FaceId>> {
     let coedges = model.coedges_of_edge(edge_id);
     let [c1, c2] = coedges[..] else {
@@ -634,30 +543,25 @@ fn seam_plane<S: Scalar>(
     if f1 == f2 {
         return Ok(None);
     }
-    Ok(faces_are_coplanar(model, f1, f2, max_nodes, min_subdivision_size)?.then_some(f1))
+    Ok(faces_are_coplanar(model, f1, f2, params)?.then_some(f1))
 }
 
 /// The first `(edge, face)` pair found where `edge`'s whole curve is
 /// coincident with `face`'s surface (`curve_surface_intersect` hitting its
-/// `max_solutions` cap), and `edge` isn't already a boundary coedge of
+/// `max_edge_intersections` cap), and `edge` isn't already a boundary coedge of
 /// `face`.
 fn find_coincident_pair<S: Scalar>(
     model: &Model<S>,
     edge_solid: Body,
     face_solid: Body,
-    max_solutions: usize,
-    max_nodes: usize,
-    min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<Option<(EdgeId, FaceId)>> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "find_coincident_pair(edge_solid={edge_solid}, face_solid={face_solid}, max_solutions={max_solutions}, max_nodes={max_nodes}, min_subdivision_size={min_subdivision_size})"
-        ))
-    };
+    let ctx = with_context!(
+        "find_coincident_pair(edge_solid={edge_solid}, face_solid={face_solid}, params={params:?})"
+    );
 
     for edge_id in model.iter_body_edges(edge_solid).with_context(&ctx)? {
-        let seam =
-            seam_plane(model, edge_id, max_nodes, min_subdivision_size).with_context(&ctx)?;
+        let seam = seam_plane(model, edge_id, params).with_context(&ctx)?;
         for face_id in model.body_faces(face_solid).with_context(&ctx)? {
             if edge_is_boundary_of_face(model, edge_id, face_id) {
                 continue;
@@ -665,8 +569,7 @@ fn find_coincident_pair<S: Scalar>(
             // A seam within a plane is that plane's own business only for a
             // face flush with it (see `seam_plane`).
             if let Some(plane) = seam
-                && faces_are_coplanar(model, plane, face_id, max_nodes, min_subdivision_size)
-                    .with_context(&ctx)?
+                && faces_are_coplanar(model, plane, face_id, params).with_context(&ctx)?
             {
                 continue;
             }
@@ -675,14 +578,12 @@ fn find_coincident_pair<S: Scalar>(
             let crossings = curve_surface_intersect(
                 &edge.curve,
                 &face.surface,
-                max_solutions,
-                max_nodes,
-                min_subdivision_size,
+                params.max_edge_intersections,
+                params.max_nodes,
+                params.curve_curve_min_subdivision_size,
             )
             .with_context(&ctx)
-            .with_context(&|e: GeopError| {
-                e.with_context(format!("edge={edge_id}, face={face_id}"))
-            })?;
+            .with_context(with_context!("edge={edge_id}, face={face_id}"))?;
             if let Intersections::Coincident(crossings) = crossings {
                 // On the face's *untrimmed* surface. That was enough when a
                 // face could carry any number of loops, because imprinting
@@ -720,8 +621,8 @@ fn find_coincident_pair<S: Scalar>(
                             face_id,
                             uv[0],
                             uv[1],
-                            max_nodes,
-                            min_subdivision_size,
+                            params.max_nodes,
+                            params.curve_curve_min_subdivision_size,
                             FACE_CONTAINS_SEED,
                         )
                         .with_context(&ctx)?,
@@ -742,63 +643,41 @@ fn find_coincident_pair<S: Scalar>(
 }
 
 fn imprint_coincident_edge<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     naming: &mut BooleanNaming<S>,
     edge_id: EdgeId,
     face_id: FaceId,
-    max_nodes: usize,
-    min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<()> {
-    let new_face = part
+    let new_face = model
         .splice_edge_into_face(
             edge_id,
             face_id,
-            max_nodes,
-            min_subdivision_size,
+            params.max_nodes,
+            params.curve_curve_min_subdivision_size,
             naming.provisional(),
         )
-        .with_context(&|e: GeopError| {
-            e.with_context(format!(
-                "imprint_coincident_edge(edge={edge_id}, face={face_id})"
-            ))
-        })?;
+        .with_context(with_context!(
+            "imprint_coincident_edge(edge={edge_id}, face={face_id})"
+        ))?;
     naming.face_split(face_id, edge_id, new_face)
 }
 
 fn imprint_coincident_pairs<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     naming: &mut BooleanNaming<S>,
     edge_solid: Body,
     face_solid: Body,
-    max_solutions: usize,
-    max_nodes: usize,
-    min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<()> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "imprint_coincident_pairs(edge_solid={edge_solid}, face_solid={face_solid}, max_solutions={max_solutions}, max_nodes={max_nodes}, min_subdivision_size={min_subdivision_size})"
-        ))
-    };
+    let ctx = with_context!(
+        "imprint_coincident_pairs(edge_solid={edge_solid}, face_solid={face_solid}, params={params:?})"
+    );
 
-    while let Some((edge_id, face_id)) = find_coincident_pair(
-        part.topology(),
-        edge_solid,
-        face_solid,
-        max_solutions,
-        max_nodes,
-        min_subdivision_size,
-    )
-    .with_context(&ctx)?
+    while let Some((edge_id, face_id)) =
+        find_coincident_pair(model.topology(), edge_solid, face_solid, params).with_context(&ctx)?
     {
-        imprint_coincident_edge(
-            part,
-            naming,
-            edge_id,
-            face_id,
-            max_nodes,
-            min_subdivision_size,
-        )
-        .with_context(&ctx)?;
+        imprint_coincident_edge(model, naming, edge_id, face_id, params).with_context(&ctx)?;
     }
     Ok(())
 }
@@ -825,14 +704,11 @@ fn find_tracing_start_points<S: Scalar>(
     model: &Model<S>,
     edge_solid: Body,
     face_solid: Body,
-    max_nodes: usize,
-    min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<Vec<TracingStartPoint>> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "find_tracing_start_points(edge_solid={edge_solid}, face_solid={face_solid}, max_nodes={max_nodes}, min_subdivision_size={min_subdivision_size})"
-        ))
-    };
+    let ctx = with_context!(
+        "find_tracing_start_points(edge_solid={edge_solid}, face_solid={face_solid}, params={params:?})"
+    );
 
     let mut seen: std::collections::HashSet<VertexId> = std::collections::HashSet::new();
     let mut starts = Vec::new();
@@ -861,9 +737,14 @@ fn find_tracing_start_points<S: Scalar>(
                     continue;
                 }
                 let surface = &model.get_face(face_id).with_context(&ctx)?.surface;
-                if surface_could_contain(surface, &point, max_nodes, min_subdivision_size)
-                    .with_context(&ctx)?
-                    .is_some()
+                if surface_could_contain(
+                    surface,
+                    &point,
+                    params.max_nodes,
+                    params.curve_curve_min_subdivision_size,
+                )
+                .with_context(&ctx)?
+                .is_some()
                 {
                     seen.insert(vertex_id);
                     starts.push(TracingStartPoint {
@@ -921,8 +802,7 @@ fn candidate_within<S: Scalar>(
     stride: Option<(&Vector3<S>, S)>,
     surf_a: &NurbSurface3D<S>,
     surf_b: &NurbSurface3D<S>,
-    max_nodes: usize,
-    min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<Option<VertexId>> {
     let radius_sq = radius.mul(radius);
     let mut best: Option<(VertexId, S)> = None;
@@ -945,16 +825,20 @@ fn candidate_within<S: Scalar>(
         if best.is_some() && !d.could_be_less(best.expect("checked").1) {
             continue;
         }
-        let on_both =
-            surface_could_contain(surf_a, &candidate_point, max_nodes, min_subdivision_size)?
-                .is_some()
-                && surface_could_contain(
-                    surf_b,
-                    &candidate_point,
-                    max_nodes,
-                    min_subdivision_size,
-                )?
-                .is_some();
+        let on_both = surface_could_contain(
+            surf_a,
+            &candidate_point,
+            params.max_nodes,
+            params.curve_curve_min_subdivision_size,
+        )?
+        .is_some()
+            && surface_could_contain(
+                surf_b,
+                &candidate_point,
+                params.max_nodes,
+                params.curve_curve_min_subdivision_size,
+            )?
+            .is_some();
         if !on_both {
             continue;
         }
@@ -1025,11 +909,9 @@ fn predictor_corrector_step<S: Scalar>(
     v_b: S,
     step_size: S,
 ) -> GeopResult<(Vector3<S>, S, S, S, S)> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "predictor_corrector_step(point={point:?}, dir={dir:?}, u_a={u_a:?}, v_a={v_a:?}, u_b={u_b:?}, v_b={v_b:?}, step_size={step_size:?})"
-        ))
-    };
+    let ctx = with_context!(
+        "predictor_corrector_step(point={point:?}, dir={dir:?}, u_a={u_a:?}, v_a={v_a:?}, u_b={u_b:?}, v_b={v_b:?}, step_size={step_size:?})"
+    );
     // Sharpened exactly once, here. The prediction is a seed and a bias for
     // the damped Newton below, free to be any point along the step, so
     // collapsing it costs no accuracy — and it fixes the plane the corrector
@@ -1075,7 +957,7 @@ fn predictor_corrector_step<S: Scalar>(
     // it step after step. On a tool whose corners are only known to 1e-12 —
     // computed from a solid's own vertices — that reached a whole patch's
     // width within a dozen steps (`cube_minus_box_with_wide_corners`).
-    let seed = |x: S, (lo, hi): (S, S)| clamp(x.sharpen(), lo, hi);
+    let seed = |x: S, (lo, hi): (S, S)| x.sharpen().clamped(lo, hi);
     let (mut u_a1, mut v_a1) = (seed(u_a, (u_a_lo, u_a_hi)), seed(v_a, (v_a_lo, v_a_hi)));
     let (mut u_b1, mut v_b1) = (seed(u_b, (u_b_lo, u_b_hi)), seed(v_b, (v_b_lo, v_b_hi)));
     let (mut u_a_honest, mut v_a_honest) = (u_a, v_a);
@@ -1170,19 +1052,19 @@ fn predictor_corrector_step<S: Scalar>(
 
         // Each update is kept twice: honestly, and sharpened as the next
         // seed — see the declarations above for why the two differ.
-        u_a_honest = clamp(u_a1.add(step[0]), u_a_lo, u_a_hi);
-        v_a_honest = clamp(v_a1.add(step[1]), v_a_lo, v_a_hi);
-        u_b_honest = clamp(u_b1.add(step[2]), u_b_lo, u_b_hi);
-        v_b_honest = clamp(v_b1.add(step[3]), v_b_lo, v_b_hi);
-        // Sharpen *before* clamping, as `NurbSurface::project` does: `clamp`
+        u_a_honest = u_a1.add(step[0]).clamped(u_a_lo, u_a_hi);
+        v_a_honest = v_a1.add(step[1]).clamped(v_a_lo, v_a_hi);
+        u_b_honest = u_b1.add(step[2]).clamped(u_b_lo, u_b_hi);
+        v_b_honest = v_b1.add(step[3]).clamped(v_b_lo, v_b_hi);
+        // Sharpen *before* clamping, as `NurbSurface::project` does: `clamped`
         // cannot pull back an interval that merely straddles a domain bound,
         // and collapsing such an interval to its midpoint can land just past
         // the bound, where the next `evaluate` rejects it. On a sharp value
-        // `clamp`'s comparisons are exact, so the seed is always in domain.
-        u_a1 = clamp(u_a_honest.sharpen(), u_a_lo, u_a_hi);
-        v_a1 = clamp(v_a_honest.sharpen(), v_a_lo, v_a_hi);
-        u_b1 = clamp(u_b_honest.sharpen(), u_b_lo, u_b_hi);
-        v_b1 = clamp(v_b_honest.sharpen(), v_b_lo, v_b_hi);
+        // `clamped`'s comparisons are exact, so the seed is always in domain.
+        u_a1 = u_a_honest.sharpen().clamped(u_a_lo, u_a_hi);
+        v_a1 = v_a_honest.sharpen().clamped(v_a_lo, v_a_hi);
+        u_b1 = u_b_honest.sharpen().clamped(u_b_lo, u_b_hi);
+        v_b1 = v_b_honest.sharpen().clamped(v_b_lo, v_b_hi);
     }
 
     Err(ctx(GeopError::new(format!(
@@ -1213,40 +1095,30 @@ fn predictor_corrector_step<S: Scalar>(
 /// Steinmetz arc leaving into the inner half was tried against the outer one,
 /// rejected, and never traced.
 fn trace_from_start_point<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     naming: &mut BooleanNaming<S>,
     start: &TracingStartPoint,
     candidates: &[VertexId],
-    max_nodes: usize,
-    min_subdivision_size: S,
-    max_trace_steps: usize,
+    params: &RemeshParams<S>,
 ) -> GeopResult<()> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "trace_from_start_point(vertex={}, edge_solid={}, face={})",
-            start.vertex, start.edge_solid, start.face
-        ))
-    };
+    let ctx = with_context!(
+        "trace_from_start_point(vertex={}, edge_solid={}, face={})",
+        start.vertex,
+        start.edge_solid,
+        start.face
+    );
 
     let mut tried: std::collections::HashSet<(FaceId, FaceId)> = std::collections::HashSet::new();
     loop {
-        let model = part.topology();
-        let faces_a = faces_at_vertex(
-            model,
-            start.edge_solid,
-            start.vertex,
-            None,
-            max_nodes,
-            min_subdivision_size,
-        )
-        .with_context(&ctx)?;
+        let topology = model.topology();
+        let faces_a = faces_at_vertex(topology, start.edge_solid, start.vertex, None, params)
+            .with_context(&ctx)?;
         let faces_b = faces_at_vertex(
-            model,
+            topology,
             start.face_solid,
             start.vertex,
             Some(start.face),
-            max_nodes,
-            min_subdivision_size,
+            params,
         )
         .with_context(&ctx)?;
         let untried = faces_a
@@ -1258,17 +1130,15 @@ fn trace_from_start_point<S: Scalar>(
         };
         tried.insert((face_a, face_b));
         trace_one_side(
-            part,
+            model,
             naming,
             start.vertex,
             face_a,
             face_b,
             candidates,
-            max_nodes,
-            min_subdivision_size,
-            max_trace_steps,
+            params,
         )
-        .with_context(&|e: GeopError| e.with_context(format!("face_a={face_a}, face_b={face_b}")))
+        .with_context(with_context!("face_a={face_a}, face_b={face_b}"))
         .with_context(&ctx)?;
     }
 }
@@ -1288,8 +1158,7 @@ fn faces_at_vertex<S: Scalar>(
     solid: Body,
     vertex: VertexId,
     recorded: Option<FaceId>,
-    max_nodes: usize,
-    min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<Vec<FaceId>> {
     let faces = model.body_faces(solid)?;
     let on_boundary: Vec<FaceId> = faces
@@ -1316,15 +1185,20 @@ fn faces_at_vertex<S: Scalar>(
     let holds = |face_id: FaceId| -> GeopResult<bool> {
         let surface = &model.get_face(face_id)?.surface;
         Ok(
-            match surface_could_contain(surface, &point, max_nodes, min_subdivision_size)? {
+            match surface_could_contain(
+                surface,
+                &point,
+                params.max_nodes,
+                params.curve_curve_min_subdivision_size,
+            )? {
                 Some((u, v)) => matches!(
                     face_contains(
                         model,
                         face_id,
                         u,
                         v,
-                        max_nodes,
-                        min_subdivision_size,
+                        params.max_nodes,
+                        params.curve_curve_min_subdivision_size,
                         FACE_CONTAINS_SEED
                     )?,
                     PointClassification::Inside
@@ -1354,39 +1228,47 @@ fn faces_at_vertex<S: Scalar>(
 /// legitimate outcome (e.g. a glancing touch), not an error.
 #[allow(clippy::too_many_arguments)]
 fn trace_one_side<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     naming: &mut BooleanNaming<S>,
     v: VertexId,
     face_a: FaceId,
     face_b: FaceId,
     candidates: &[VertexId],
-    max_nodes: usize,
-    min_subdivision_size: S,
-    max_trace_steps: usize,
+    params: &RemeshParams<S>,
 ) -> GeopResult<()> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "trace_one_side(v={v}, face_a={face_a}, face_b={face_b})"
-        ))
-    };
+    let ctx = with_context!("trace_one_side(v={v}, face_a={face_a}, face_b={face_b})");
 
-    let model = part.topology();
-    let point = model.get_vertex(v).with_context(&ctx)?.point;
-    let surf_a = model.get_face(face_a).with_context(&ctx)?.surface.clone();
-    let surf_b = model.get_face(face_b).with_context(&ctx)?.surface.clone();
+    let topology = model.topology();
+    let point = topology.get_vertex(v).with_context(&ctx)?.point;
+    let surf_a = topology
+        .get_face(face_a)
+        .with_context(&ctx)?
+        .surface
+        .clone();
+    let surf_b = topology
+        .get_face(face_b)
+        .with_context(&ctx)?
+        .surface
+        .clone();
 
-    let (u_a0, v_a0) = surface_could_contain(&surf_a, &point, max_nodes, min_subdivision_size)
-        .with_context(&ctx)?
-        .ok_or_else(|| {
-            GeopError::new("trace_one_side: start vertex does not lie on face_a's surface")
-        })
-        .with_context(&ctx)?;
-    let (u_b0, v_b0) = surface_could_contain(&surf_b, &point, max_nodes, min_subdivision_size)
-        .with_context(&ctx)?
-        .ok_or_else(|| {
-            GeopError::new("trace_one_side: start vertex does not lie on face_b's surface")
-        })
-        .with_context(&ctx)?;
+    let (u_a0, v_a0) = surface_could_contain(
+        &surf_a,
+        &point,
+        params.max_nodes,
+        params.curve_curve_min_subdivision_size,
+    )
+    .with_context(&ctx)?
+    .ok_or_else(|| GeopError::new("trace_one_side: start vertex does not lie on face_a's surface"))
+    .with_context(&ctx)?;
+    let (u_b0, v_b0) = surface_could_contain(
+        &surf_b,
+        &point,
+        params.max_nodes,
+        params.curve_curve_min_subdivision_size,
+    )
+    .with_context(&ctx)?
+    .ok_or_else(|| GeopError::new("trace_one_side: start vertex does not lie on face_b's surface"))
+    .with_context(&ctx)?;
     // The normals are taken over the honest boxes, not sharpened ones: at a
     // pole only the box still touches the collapsed row, which is what
     // `normal` needs to recognise it (see `NurbSurface::normal`).
@@ -1442,16 +1324,7 @@ fn trace_one_side<S: Scalar>(
     // that vertex within reach at once. One extra attempt, and only then;
     // halving the step blindly cost every start point no curve leaves a dozen.
     let near = candidate_within(
-        model,
-        candidates,
-        v,
-        &point,
-        first_step,
-        None,
-        &surf_a,
-        &surf_b,
-        max_nodes,
-        min_subdivision_size,
+        topology, candidates, v, &point, first_step, None, &surf_a, &surf_b, params,
     )
     .with_context(&ctx)?;
     // That vertex lies on both surfaces, so on the curve, on one side of `v`:
@@ -1463,7 +1336,7 @@ fn trace_one_side<S: Scalar>(
     let mut trials = Vec::with_capacity(2);
     let mut toward_near = None;
     if let Some(w) = near {
-        let offset = model.get_vertex(w).with_context(&ctx)?.point.sub(&point);
+        let offset = topology.get_vertex(w).with_context(&ctx)?.point.sub(&point);
         trials.push((offset.norm().div(S::TWO).with_context(&ctx)?, None));
         let along = offset.prod_dot(&axis);
         toward_near = if along.definitely_greater(S::ZERO) {
@@ -1495,22 +1368,22 @@ fn trace_one_side<S: Scalar>(
                 Err(_) => continue,
             };
             let inside_a = face_contains(
-                model,
+                topology,
                 face_a,
                 na,
                 va,
-                max_nodes,
-                min_subdivision_size,
+                params.max_nodes,
+                params.curve_curve_min_subdivision_size,
                 FACE_CONTAINS_SEED,
             )
             .with_context(&ctx)?;
             let inside_b = face_contains(
-                model,
+                topology,
                 face_b,
                 nb,
                 vb,
-                max_nodes,
-                min_subdivision_size,
+                params.max_nodes,
+                params.curve_curve_min_subdivision_size,
                 FACE_CONTAINS_SEED,
             )
             .with_context(&ctx)?;
@@ -1561,18 +1434,18 @@ fn trace_one_side<S: Scalar>(
     // Each point's `(u, v)` on both surfaces, kept alongside so the true
     // intersection between two points can be located again after the march
     // (for `interpolate_enclosing` below).
-    let mut params = vec![(u_a0, v_a0, u_b0, v_b0), (u_a, v_a, u_b, v_b)];
+    let mut uvs = vec![(u_a0, v_a0, u_b0, v_b0), (u_a, v_a, u_b, v_b)];
 
     // March until we reach another vertex: one on the stretch of curve the
     // next stride runs along, from `cur_point` up to the plane at `step`
     // along `dir` that the corrector lands it on (see `candidate_within`).
     let mut hit_vertex = None;
-    for _ in 0..max_trace_steps {
+    for _ in 0..params.max_trace_steps {
         let step =
             adaptive_step_size(&surf_a, &surf_b, u_a, v_a, u_b, v_b, &dir).with_context(&ctx)?;
         let reached = |radius: S| {
             candidate_within(
-                model,
+                topology,
                 candidates,
                 v,
                 &cur_point,
@@ -1580,8 +1453,7 @@ fn trace_one_side<S: Scalar>(
                 Some((&dir, step)),
                 &surf_a,
                 &surf_b,
-                max_nodes,
-                min_subdivision_size,
+                params,
             )
         };
         // Every point of the plane the stride lands on is at least `step`
@@ -1612,7 +1484,7 @@ fn trace_one_side<S: Scalar>(
         cur_point = next_point;
         (u_a, v_a, u_b, v_b) = (na, va, nb, vb);
         points.push(cur_point);
-        params.push((na, va, nb, vb));
+        uvs.push((na, va, nb, vb));
 
         // Re-derive direction from the new normals for the next step,
         // keeping continuity with the previous direction.
@@ -1639,7 +1511,7 @@ fn trace_one_side<S: Scalar>(
     };
     // Land the traced polyline exactly on the vertex it ends at, so the
     // fitted curve's endpoint and the edge's `end_vertex` agree.
-    let hit_point = model.get_vertex(hit_vertex).with_context(&ctx)?.point;
+    let hit_point = topology.get_vertex(hit_vertex).with_context(&ctx)?.point;
     *points.last_mut().expect("points is never empty") = hit_point;
     // Which marched point is the widest, and how wide: a trace that ends
     // wide went wrong somewhere along it, and this says where.
@@ -1659,7 +1531,7 @@ fn trace_one_side<S: Scalar>(
         ))
     };
 
-    // Is this curve already in the model? Every intersection branch has two
+    // Is this curve already in the topology? Every intersection branch has two
     // ends and both are piercing points, so both land in `starts` and each
     // branch is traced twice — the second time it must find the first rather
     // than lay a second edge along the same path, which would splice to a
@@ -1678,7 +1550,7 @@ fn trace_one_side<S: Scalar>(
     // geometric question geometrically. It costs a march, and only in the
     // duplicate case.
     let mid = points[points.len() / 2];
-    let duplicate = model
+    let duplicate = topology
         .edges
         .iter()
         .map(|(&id, edge)| {
@@ -1687,8 +1559,13 @@ fn trace_one_side<S: Scalar>(
             if !same_ends {
                 return Ok(None);
             }
-            curve_could_contain(&edge.curve, &mid, max_nodes, min_subdivision_size)
-                .map(|hit| hit.map(|_| id))
+            curve_could_contain(
+                &edge.curve,
+                &mid,
+                params.max_nodes,
+                params.curve_curve_min_subdivision_size,
+            )
+            .map(|hit| hit.map(|_| id))
         })
         .collect::<GeopResult<Vec<_>>>()
         .with_context(&ctx)?
@@ -1721,11 +1598,7 @@ fn trace_one_side<S: Scalar>(
                              to: Vector3<S>,
                              frac: S|
              -> GeopResult<(Vector3<S>, (S, S, S, S))> {
-                let leg_ctx = |e: GeopError| {
-                    e.with_context(format!(
-                        "on_branch(from={from:?}, to={to:?}, frac={frac:?})"
-                    ))
-                };
+                let leg_ctx = with_context!("on_branch(from={from:?}, to={to:?}, frac={frac:?})");
                 let chord = to.sub(&from);
                 let step = chord.norm().mul(frac);
                 let (p, na, va, nb, vb) = predictor_corrector_step(
@@ -1764,24 +1637,24 @@ fn trace_one_side<S: Scalar>(
             // drift enclosed is more than `TRACE_DRIFT`.
             let strides = points.len() - 1;
             let mut pieces = MIN_TRACED_LEGS.div_ceil(strides).max(2);
-            let marched = (&points, &params);
+            let marched = (&points, &uvs);
             let mut best: Option<(NurbCurve<S, 4>, S)> = None;
             let curve = loop {
-                let (points, params) = marched;
+                let (points, uvs) = marched;
                 let mut dense = vec![points[0]];
-                let mut dense_params = vec![params[0]];
+                let mut dense_params = vec![uvs[0]];
                 for i in 0..strides {
                     for k in 1..pieces {
                         let frac = S::from_ratio(k as i64, pieces as i64).with_context(&ctx)?;
-                        let (p, p_params) = on_branch(points[i], params[i], points[i + 1], frac)
-                            .with_context(&ctx)?;
+                        let (p, p_params) =
+                            on_branch(points[i], uvs[i], points[i + 1], frac).with_context(&ctx)?;
                         dense.push(p);
                         dense_params.push(p_params);
                     }
                     dense.push(points[i + 1]);
-                    dense_params.push(params[i + 1]);
+                    dense_params.push(uvs[i + 1]);
                 }
-                let (points, params) = (dense, dense_params);
+                let (points, uvs) = (dense, dense_params);
                 // Then the branch inside each of the new legs, which
                 // `interpolate_enclosing` widens the curve to hold.
                 let legs = points.len() - 1;
@@ -1791,8 +1664,8 @@ fn trace_one_side<S: Scalar>(
                     let mut inside = Vec::with_capacity(fractions.len());
                     for (k, &(a, b)) in fractions.iter().enumerate() {
                         let frac = S::from_ratio(a, b).with_context(&ctx)?;
-                        let (p, _) = on_branch(points[i], params[i], points[i + 1], frac)
-                            .with_context(&ctx)?;
+                        let (p, _) =
+                            on_branch(points[i], uvs[i], points[i + 1], frac).with_context(&ctx)?;
                         let width = (0..3).map(|c| p[c].width().to_f64()).fold(0.0, f64::max);
                         if widest_between.as_ref().is_none_or(|w| width > w.3) {
                             widest_between = Some((i, k, p, width));
@@ -1838,7 +1711,7 @@ fn trace_one_side<S: Scalar>(
                 widest.0,
                 widest.1
             );
-            let edge = part
+            let edge = model
                 .insert_edge(
                     Edge {
                         curve,
@@ -1867,15 +1740,15 @@ fn trace_one_side<S: Scalar>(
     // imprinted, and a curve traced from the other end carries only its own
     // two faces.
     for face in [face_a, face_b] {
-        if edge_is_boundary_of_face(part.topology(), edge_id, face) {
+        if edge_is_boundary_of_face(model.topology(), edge_id, face) {
             continue;
         }
-        let new_face = part
+        let new_face = model
             .splice_edge_into_face(
                 edge_id,
                 face,
-                max_nodes,
-                min_subdivision_size,
+                params.max_nodes,
+                params.curve_curve_min_subdivision_size,
                 naming.provisional(),
             )
             .with_context(&ctx)?;
@@ -1892,32 +1765,9 @@ mod tests {
         remesh_edges_x_edges::remesh_edges_x_edges, remesh_vertices::remesh_vertices,
         remesh_vertices_x_edges::remesh_vertices_x_edges,
     };
-    use geop_core_math::{scalars::ScalInF64, vector::Vector3};
+    use crate::scenes::unit_cube_at;
+    use geop_core_math::scalars::ScalInF64;
     use geop_ops::Namer;
-    use geop_ops_extrude_revolve::shapes::cube_solid;
-
-    const MAX_NODES: usize = 20000;
-    const MAX_EDGE_INTERSECTIONS: usize = 17;
-
-    fn min_subdivision_size() -> ScalInF64 {
-        ScalInF64::from_f64(1e-7)
-    }
-    fn curve_curve_min_subdivision_size() -> ScalInF64 {
-        ScalInF64::from_f64(1e-4)
-    }
-
-    fn unit_cube_at(
-        part: &mut Part<ScalInF64>,
-        name: &str,
-        cx: f64,
-        cy: f64,
-        cz: f64,
-    ) -> geop_core_topology::SolidId {
-        let f = ScalInF64::from_f64;
-        let min = Vector3::from_array([f(cx - 0.5), f(cy - 0.5), f(cz - 0.5)]);
-        let max = Vector3::from_array([f(cx + 0.5), f(cy + 0.5), f(cz + 0.5)]);
-        cube_solid(part, name, min, max).unwrap()
-    }
 
     /// Two unit cubes offset by half a cube-width along x: a simple, fully
     /// planar scene (no curved surfaces at all) exercising every phase —
@@ -1925,70 +1775,40 @@ mod tests {
     /// (where one cube's edge pierces the other's face) get traced.
     #[test]
     fn box_grid_offset_x_half_edges_x_faces() {
-        let mut part = Part::<ScalInF64>::new();
-        let solid_a = unit_cube_at(&mut part, "a", 0.0, 0.0, 0.0).into();
-        let solid_b = unit_cube_at(&mut part, "b", 0.5, 0.0, 0.0).into();
+        let mut model = NamedModel::<ScalInF64>::new();
+        let solid_a = unit_cube_at(&mut model, "a", 0.0, 0.0, 0.0).into();
+        let solid_b = unit_cube_at(&mut model, "b", 0.5, 0.0, 0.0).into();
         let namer = Namer::new("boolean", "ab").unwrap();
-        let mut naming = BooleanNaming::new(&part, &namer, &[solid_a, solid_b]).unwrap();
+        let mut naming = BooleanNaming::new(&model, &namer, &[solid_a, solid_b]).unwrap();
+        let params = RemeshParams {
+            max_edge_intersections: 17,
+            max_trace_steps: 200,
+            ..RemeshParams::default()
+        };
 
-        remesh_vertices(&mut part, solid_a, solid_b).unwrap();
-        remesh_vertices_x_edges(
-            &mut part,
-            &mut naming,
-            solid_a,
-            solid_b,
-            MAX_NODES,
-            min_subdivision_size(),
-        )
-        .unwrap();
-        remesh_vertices_x_edges(
-            &mut part,
-            &mut naming,
-            solid_b,
-            solid_a,
-            MAX_NODES,
-            min_subdivision_size(),
-        )
-        .unwrap();
-        remesh_edges_x_edges(
-            &mut part,
-            &mut naming,
-            solid_a,
-            solid_b,
-            MAX_EDGE_INTERSECTIONS,
-            MAX_NODES,
-            curve_curve_min_subdivision_size(),
-        )
-        .unwrap();
+        remesh_vertices(&mut model, solid_a, solid_b).unwrap();
+        remesh_vertices_x_edges(&mut model, &mut naming, solid_a, solid_b, &params).unwrap();
+        remesh_vertices_x_edges(&mut model, &mut naming, solid_b, solid_a, &params).unwrap();
+        remesh_edges_x_edges(&mut model, &mut naming, solid_a, solid_b, &params).unwrap();
 
-        let edges_before = part.topology().edges.len();
-        let coedges_before = part.topology().coedges.len();
+        let edges_before = model.topology().edges.len();
+        let coedges_before = model.topology().coedges.len();
 
-        remesh_edges_x_faces(
-            &mut part,
-            &mut naming,
-            solid_a,
-            solid_b,
-            MAX_EDGE_INTERSECTIONS,
-            MAX_NODES,
-            curve_curve_min_subdivision_size(),
-            200,
-        )
-        .unwrap();
-        naming.finish(&mut part).unwrap();
-        part.check_names().unwrap();
-        let model = part.topology();
+        remesh_edges_x_faces(&mut model, &mut naming, solid_a, solid_b, &params).unwrap();
+        naming.finish(&mut model).unwrap();
+        model.check_names().unwrap();
+        let topology = model.topology();
 
         eprintln!(
             "edges: {} -> {}, coedges: {} -> {}",
             edges_before,
-            model.edges.len(),
+            topology.edges.len(),
             coedges_before,
-            model.coedges.len()
+            topology.coedges.len()
         );
 
         std::fs::create_dir_all("outputs").unwrap();
-        match geop_ops_rasterize::debug::rasterize_topology(model, 12) {
+        match geop_ops_rasterize::debug::rasterize_topology(topology, 12) {
             Ok(render) => render
                 .save_to_file("outputs/remesh_edges_x_faces_box_grid_offset_x_half.html")
                 .unwrap(),
@@ -1999,25 +1819,9 @@ mod tests {
 
 #[cfg(test)]
 mod splice_regression_tests {
-    use crate::{
-        remesh::remesh::{RemeshParams, remesh},
-        scenes::all_scenes,
-    };
-    use geop_core_math::scalars::ScalInF64;
-    use geop_core_topology::validation::{ValidationParameters, validate, validate_fast};
-    use geop_ops::Namer;
+    use crate::scenes::{remeshed, scene, validation};
+    use geop_core_topology::validation::{validate, validate_fast};
 
-    fn namer() -> Namer {
-        Namer::new("boolean", "ab").unwrap()
-    }
-
-    /// One isolated scene out of `all_scenes`' 175, so a `validate_fast`
-    /// failure after `remesh` can be debugged on its own instead of being
-    /// one line of a sweep's log. `box_grid_n1p00_n0p50_n0p50` is two unit
-    /// cubes offset by `(-1, -0.5, -0.5)` — they meet face-to-face along
-    /// `x`, so the pair is entirely planar and coincident, exercising the
-    /// imprint path (and `splice_edge_into_face`'s loop restructuring) with
-    /// no curved geometry involved at all.
     /// Isolated from the 175-scene sweep: a cylinder drilled part-way into
     /// a box, so the cylinder's curved wall genuinely intersects the box's
     /// flat faces — the case where marching has to follow a *curved*
@@ -2025,19 +1829,7 @@ mod splice_regression_tests {
     /// step size lets the trace wander off the surfaces entirely.
     #[test]
     fn box_cylinder_blind_hole_remesh_succeeds() {
-        let mut scene = all_scenes::<ScalInF64>()
-            .into_iter()
-            .find(|s| s.name == "box_cylinder_blind_hole")
-            .expect("scene must exist");
-
-        remesh(
-            &mut scene.part,
-            &namer(),
-            scene.solid_a,
-            scene.solid_b,
-            RemeshParams::<ScalInF64>::default(),
-        )
-        .unwrap();
+        let scene = remeshed("box_cylinder_blind_hole");
 
         // The cylinder wall genuinely cuts the box's faces here, so tracing
         // *must* have produced intersection edges. The decisive signature of
@@ -2047,20 +1839,20 @@ mod splice_regression_tests {
         // wouldn't distinguish the two, and so would still pass if every
         // trace gave up, which is indistinguishable from success in
         // `remesh`'s return value alone.
-        let faces_a = scene.part.topology().solid_faces(scene.solid_a).unwrap();
-        let faces_b = scene.part.topology().solid_faces(scene.solid_b).unwrap();
+        let faces_a = scene.model.topology().solid_faces(scene.solid_a).unwrap();
+        let faces_b = scene.model.topology().solid_faces(scene.solid_b).unwrap();
         let shared = scene
-            .part
+            .model
             .topology()
             .edges
             .keys()
             .filter(|&&edge_id| {
                 let faces: Vec<_> = scene
-                    .part
+                    .model
                     .topology()
                     .coedges_of_edge(edge_id)
                     .into_iter()
-                    .filter_map(|c| scene.part.topology().get_coedge(c).ok().map(|c| c.face))
+                    .filter_map(|c| scene.model.topology().get_coedge(c).ok().map(|c| c.face))
                     .collect();
                 faces.iter().any(|f| faces_a.contains(f))
                     && faces.iter().any(|f| faces_b.contains(f))
@@ -2072,11 +1864,6 @@ mod splice_regression_tests {
         );
     }
 
-    /// Isolated from the sweep: two unit spheres offset so they overlap in
-    /// two axes. Spheres are the scenes where `validate_fast` still reports
-    /// a pcurve whose surface point doesn't match its edge's 3D endpoint,
-    /// and a sphere's parametrization has poles, so this is the case that
-    /// stresses the projection behind `fit_pcurve`.
     /// Remesh must *split* a face that an intersection curve cuts across,
     /// not merely hang another loop on it. With proper face topology a loop
     /// joining two points of a face's outer boundary divides the material in
@@ -2090,28 +1877,16 @@ mod splice_regression_tests {
     /// `validate_fast` plus the face-count growth below assert.
     #[test]
     fn remesh_splits_faces_rather_than_accumulating_loops() {
-        let mut scene = all_scenes::<ScalInF64>()
-            .into_iter()
-            .find(|s| s.name == "box_cylinder_drilled_hole_through")
-            .expect("scene must exist");
-
-        let before = scene.part.topology().faces.len();
-        let params = RemeshParams::<ScalInF64>::default();
-        remesh(
-            &mut scene.part,
-            &namer(),
-            scene.solid_a,
-            scene.solid_b,
-            params,
-        )
-        .unwrap();
-        let after = scene.part.topology().faces.len();
+        let name = "box_cylinder_drilled_hole_through";
+        let before = scene(name).model.topology().faces.len();
+        let scene = remeshed(name);
+        let after = scene.model.topology().faces.len();
 
         assert!(
             after > before,
             "remesh must split faces the intersection curve cuts across: {before} faces before, {after} after"
         );
-        for (&face_id, face) in &scene.part.topology().faces {
+        for (&face_id, face) in &scene.model.topology().faces {
             assert!(
                 matches!(
                     face.outer,
@@ -2129,27 +1904,8 @@ mod splice_regression_tests {
     /// well outside the region the two solids actually share.
     #[test]
     fn figure8_cylinder_through_neck_oversized_is_valid_after_remesh() {
-        let mut scene = all_scenes::<ScalInF64>()
-            .into_iter()
-            .find(|s| s.name == "figure8_cylinder_through_neck_oversized")
-            .expect("scene must exist");
-
-        let params = RemeshParams::<ScalInF64>::default();
-        remesh(
-            &mut scene.part,
-            &namer(),
-            scene.solid_a,
-            scene.solid_b,
-            params,
-        )
-        .unwrap();
-
-        let validation_params = ValidationParameters {
-            max_nodes: params.max_nodes,
-            min_subdivision_size: params.curve_curve_min_subdivision_size,
-            ..ValidationParameters::default()
-        };
-        if let Err(errors) = validate_fast(&validation_params, scene.part.topology()) {
+        let scene = remeshed("figure8_cylinder_through_neck_oversized");
+        if let Err(errors) = validate_fast(&validation(), scene.model.topology()) {
             let all: Vec<String> = errors.iter().map(|e| format!("{e}")).collect();
             panic!(
                 "{} validate_fast error(s):\n{}",
@@ -2177,27 +1933,8 @@ mod splice_regression_tests {
     /// the intersection curves close on themselves rather than running
     /// between piercing points, which is the case tracing is weakest at.
     fn check_engulfing_scene_fully_valid(name: &str) {
-        let mut scene = all_scenes::<ScalInF64>()
-            .into_iter()
-            .find(|s| s.name == name)
-            .unwrap_or_else(|| panic!("scene {name} must exist"));
-
-        let params = RemeshParams::<ScalInF64>::default();
-        remesh(
-            &mut scene.part,
-            &namer(),
-            scene.solid_a,
-            scene.solid_b,
-            params,
-        )
-        .unwrap_or_else(|e| panic!("{name}: remesh failed: {e}"));
-
-        let validation_params = ValidationParameters {
-            max_nodes: params.max_nodes,
-            min_subdivision_size: params.curve_curve_min_subdivision_size,
-            ..ValidationParameters::default()
-        };
-        if let Err(errors) = validate(&validation_params, scene.part.topology()) {
+        let scene = remeshed(name);
+        if let Err(errors) = validate(&validation(), scene.model.topology()) {
             let all: Vec<String> = errors.iter().map(|e| format!("{e}")).collect();
             panic!(
                 "{name}: {} validate error(s):\n{}",
@@ -2229,54 +1966,20 @@ mod splice_regression_tests {
     /// resolved both halves at once.
     #[test]
     fn box_cylinder_corner_quarter_overlap_is_valid_after_remesh() {
-        let mut scene = all_scenes::<ScalInF64>()
-            .into_iter()
-            .find(|s| s.name == "box_cylinder_corner_quarter_overlap")
-            .expect("scene must exist");
-
-        let params = RemeshParams::<ScalInF64>::default();
-        remesh(
-            &mut scene.part,
-            &namer(),
-            scene.solid_a,
-            scene.solid_b,
-            params,
-        )
-        .unwrap();
-
-        let validation_params = ValidationParameters {
-            max_nodes: params.max_nodes,
-            min_subdivision_size: params.curve_curve_min_subdivision_size,
-            ..ValidationParameters::default()
-        };
-        if let Err(errors) = validate_fast(&validation_params, scene.part.topology()) {
+        let scene = remeshed("box_cylinder_corner_quarter_overlap");
+        if let Err(errors) = validate_fast(&validation(), scene.model.topology()) {
             panic!("{} validate_fast error(s): {}", errors.len(), errors[0]);
         }
     }
 
+    /// Two unit cubes offset by `(-1, -0.5, -0.5)`: they meet face-to-face
+    /// along `x`, so the pair is entirely planar and coincident, exercising
+    /// the imprint path (and `splice_edge_into_face`'s loop restructuring)
+    /// with no curved geometry involved at all.
     #[test]
     fn box_grid_n1p00_n0p50_n0p50_is_valid_after_remesh() {
-        let mut scene = all_scenes::<ScalInF64>()
-            .into_iter()
-            .find(|s| s.name == "box_grid_n1p00_n0p50_n0p50")
-            .expect("scene must exist");
-
-        let params = RemeshParams::<ScalInF64>::default();
-        remesh(
-            &mut scene.part,
-            &namer(),
-            scene.solid_a,
-            scene.solid_b,
-            params,
-        )
-        .unwrap();
-
-        let validation_params = ValidationParameters {
-            max_nodes: params.max_nodes,
-            min_subdivision_size: params.curve_curve_min_subdivision_size,
-            ..ValidationParameters::default()
-        };
-        if let Err(errors) = validate_fast(&validation_params, scene.part.topology()) {
+        let scene = remeshed("box_grid_n1p00_n0p50_n0p50");
+        if let Err(errors) = validate_fast(&validation(), scene.model.topology()) {
             panic!("{} validate_fast error(s): {errors:?}", errors.len());
         }
     }

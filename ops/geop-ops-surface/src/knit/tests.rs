@@ -3,7 +3,8 @@
 
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_topology::Body;
-use geop_ops::{NoFiles, Part};
+use geop_ops::NamedModel;
+use geop_ops::operation::apply_to_model;
 use geop_ops_extrude_revolve::shapes::cube_solid;
 
 use super::*;
@@ -12,8 +13,8 @@ use crate::boundary::tests::{assert_valid, refused, v3};
 /// The six faces of a unit cube, each copied into a sheet of its own, the
 /// cube itself deleted: what is left is six faces standing on their own,
 /// the `k`-th face's sheet named `f{k}(...)`, its faces' names returned.
-fn six_sheets() -> (Part<S>, Vec<String>) {
-    let mut part = Part::<S>::new();
+fn six_sheets() -> (NamedModel<S>, Vec<String>) {
+    let mut part = NamedModel::<S>::new();
     let cube = cube_solid(&mut part, "c", v3(0., 0., 0.), v3(1., 1., 1.)).unwrap();
     let faces = part.topology().solid_faces(cube).unwrap();
     let mut names = Vec::new();
@@ -32,12 +33,12 @@ fn six_sheets() -> (Part<S>, Vec<String>) {
     (part, names)
 }
 
-fn knit_faces(part: Part<S>, faces: &[String], solid: bool) -> GeopResult<Part<S>> {
+fn knit_faces(part: NamedModel<S>, faces: &[String], solid: bool) -> GeopResult<NamedModel<S>> {
     let args = KnitArgs {
         faces: faces.to_vec(),
         solid,
     };
-    Knit.apply(part, "k", &args, &NoFiles)
+    apply_to_model::<Knit>(part, "k", &args)
 }
 
 /// Six faces standing on their own, meeting edge to edge: knit into a box.

@@ -17,9 +17,9 @@ the web app (bug reports).
 
 ```
 core/geop-core-math          scalars, interval arithmetic, linear algebra,
-                              convex hulls, error type, frames, rays, datums,
-                              poses (dual quaternions), constrained least
-                              squares and dual numbers for the solvers
+                              error type, frames, rays, datums, poses (a
+                              unit quaternion and a position), constrained
+                              least squares and dual numbers for the solvers
 core/geop-core-geometry       NURBS curves/surfaces, helices, compatible
                                curves for lofts, Coons and Gordon patches,
                                containment, intersection
@@ -29,8 +29,8 @@ core/geop-core-sketch         2-D constraint sketches: entities, constraints
                                as residuals, profile extraction, geometry
                                made from geometry (mirror, patterns, offset),
                                how a dimension is drawn in a plane
-ops/geop-ops                  parts (topology, sketches, datums, placed parts
-                               and their mates, the features their steps
+ops/geop-ops                  parts (topology, sketches, datums, placed
+                               parts, the features their steps
                                combined, every entity with a stable
                                name), what an operation is and how it is
                                edited (events, dialogs, visuals, hit tests,
@@ -41,7 +41,14 @@ ops/geop-ops                  parts (topology, sketches, datums, placed parts
                                files they place parts from, and
                                running them — a workspace rebuilds only what
                                a changed file reaches, and a scene sends
-                               placed parts as changes (+ `geop-ops-derive`)
+                               placed parts as changes; what an editor
+                               collects from steps (annotations, structure
+                               entries) and the exporter and inspector
+                               interfaces (`output`), with the STL export
+                               and the sheet drawings and flat patterns are
+                               written on (SVG, DXF); the solids a part
+                               shows wherever they are placed, each of its
+                               own material, and their mass properties
 ops/geop-ops-sketch           the sketch operation: drawing and constraint
                                tools, snapping, reference geometry and
                                projections of the part
@@ -99,8 +106,9 @@ ops/geop-ops-subd             subdivision surfaces: a control cage shaped in
 ops/geop-ops-sheetmetal       sheet metal: base and edge flanges with bends,
                                reliefs and open or closed corners, hems, cuts
                                across bends unrolled, the flat pattern and its
-                               DXF for cutting; the sheet model recorded on
-                               the body, laid out flat and folded into it
+                               DXF for cutting (an exporter); the sheet model
+                               recorded as a target of the part, laid out
+                               flat and folded into it
 ops/geop-ops-harness          wire harnesses: wires routed through connectors
                                and clips as lines and arcs, bend radius
                                checked, the bundle swept, cut lengths; the
@@ -110,11 +118,12 @@ ops/geop-ops-assembly         the part operation: place another file's part,
                                placed parts
 ops/geop-ops-inspect          inspecting a part without changing it: mass
                                properties of its solids and placed parts,
-                               measurements of picked entities, interference
+                               measurements of picked entities, interference;
+                               inspectors
 ops/geop-ops-urdf             URDF export of an assembly: the tree of links
                                and joints, mimics, inertia, STL meshes, a
-                               stored ZIP writer; `geop urdf`, the editor's
-                               export_urdf
+                               stored ZIP writer; an exporter (`geop compile
+                               robot.geop -o robot.zip`)
 cad/geop-cad-base             the operations the editor offers, the editor engine,
                                example programs, the standard parts (below)
 cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)
@@ -131,8 +140,18 @@ ops/geop-ops-bom              bills of materials: placed parts grouped by
                                with designations (a part's own, see
                                `Parameters::designation`), materials, masses, sheet
                                thickness and harness wires cut to length;
-                               CSV; `geop bom`, the editor's BOM query
+                               an inspector, and a CSV exporter
 ```
+
+An operation crate plugs into the editor without the editor knowing it
+(see the book's geop-ops page, "What an editor shows and makes of a
+part"): what a step draws on the part is its `ui::annotations` target,
+what it lists in the structure tree its `ui::listing` target; a file
+written from the part is an `output::Exporter`, a question about it an
+`output::Inspector`, registered in `geop_cad_base::outputs` beside the
+operations in `registry`. `geop compile` picks the exporter by the
+output's extension. The web app builds its export menu and inspect
+buttons from the lists the program state sends.
 
 STEP files are tested against a downloaded corpus of public files (NIST
 MBE PMI models, the FreeCAD parts library, OCCT/CadQuery/build123d

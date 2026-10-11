@@ -43,7 +43,7 @@ impl<S: Scalar, const N: usize> Default for Dual<S, N> {
 
 impl<S: Scalar, const N: usize> Dual<S, N> {
     /// A constant, with no dependence on any variable.
-    pub fn cst(v: S) -> Self {
+    pub const fn cst(v: S) -> Self {
         Dual { v, d: [S::ZERO; N] }
     }
 
@@ -133,34 +133,12 @@ impl<S: Scalar, const N: usize> Field for Dual<S, N> {
 // them: the sketch solver only ever adds, multiplies, divides, and takes
 // `sqrt`/`sin`/`cos`/`abs` of a residual.
 impl<S: Scalar, const N: usize> Scalar for Dual<S, N> {
-    const ZERO: Self = Dual {
-        v: S::ZERO,
-        d: [S::ZERO; N],
-    };
-    const ONE: Self = Dual {
-        v: S::ONE,
-        d: [S::ZERO; N],
-    };
-    const TWO: Self = Dual {
-        v: S::TWO,
-        d: [S::ZERO; N],
-    };
-    const E: Self = Dual {
-        v: S::E,
-        d: [S::ZERO; N],
-    };
-    const PI: Self = Dual {
-        v: S::PI,
-        d: [S::ZERO; N],
-    };
-    const INFINITY: Self = Dual {
-        v: S::INFINITY,
-        d: [S::ZERO; N],
-    };
-    const ENTIRE: Self = Dual {
-        v: S::ENTIRE,
-        d: [S::ZERO; N],
-    };
+    const ZERO: Self = Self::cst(S::ZERO);
+    const ONE: Self = Self::cst(S::ONE);
+    const TWO: Self = Self::cst(S::TWO);
+    const PI: Self = Self::cst(S::PI);
+    const INFINITY: Self = Self::cst(S::INFINITY);
+    const ENTIRE: Self = Self::cst(S::ENTIRE);
 
     fn from_i64(v: i64) -> Self {
         Dual::cst(S::from_i64(v))
@@ -262,11 +240,7 @@ impl<S: Scalar, const N: usize> Scalar for Dual<S, N> {
     /// with any variable. A value that is sharp but moves with a variable is
     /// no point — taking it for one drops the gradient.
     fn is_sharp(self) -> bool {
-        self.v.is_sharp()
-            && self
-                .d
-                .iter()
-                .all(|g| !g.could_be_less(S::ZERO) && !g.could_be_greater(S::ZERO))
+        self.v.is_sharp() && self.d.iter().all(|g| g.is_zero())
     }
 
     fn width(self) -> Self {

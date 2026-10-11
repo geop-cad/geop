@@ -1,30 +1,28 @@
 //! Fillets and chamfers in programs: edges of extruded and cut solids,
 //! picked by name, rounded and bevelled.
 
-use geop_core_math::primitives::{DatumComponent, FrameAxis};
+use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{Ring, ScalInF64 as S, Scalar};
 use geop_ops::operation::Role;
-use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
+use geop_ops::{EntityRef, NamedModel};
 use geop_ops_booleans::Combine;
-// use geop_ops_datums::{AddDatumArgs, Construction};
-use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, LoftArgs};
+use geop_ops_datums::{AddDatumArgs, Construction};
+use geop_ops_extrude_revolve::{Extents, LoftArgs, Output};
 use geop_ops_fillet::{ChamferArgs, FilletArgs, VertexRadius};
-use geop_ops_sketch::{AddSketchArgs, Sketch};
+use geop_ops_sketch::Sketch;
 
-use super::regression_tests::check_valid;
 use crate::examples::{self, n};
-use crate::{Command, Editor, Program};
-
-/// Checks `part` is a valid manifold model, naming in the failure every
-/// entity the errors mention.
-fn assert_valid(part: &Part<S>) {
-    if let Err(e) = check_valid(part) {
-        panic!("{e}");
-    }
-}
+use crate::operations::testing::{
+    Built, assert_valid, check_valid, cut, disc, example_editor, extrusion, has_vertex, join,
+    origin_plane, outline, rectangle, sketch,
+};
+use crate::{Command, Program, Push};
 
 /// The names of the edges of `part` whose curve `keep` accepts, sorted.
-fn edges_where(part: &Part<S>, keep: impl Fn(&geop_core_topology::Edge<S>) -> bool) -> Vec<String> {
+fn edges_where(
+    part: &NamedModel<S>,
+    keep: impl Fn(&geop_core_topology::Edge<S>) -> bool,
+) -> Vec<String> {
     let model = part.topology();
     let mut names: Vec<String> = model
         .edges
@@ -37,7 +35,7 @@ fn edges_where(part: &Part<S>, keep: impl Fn(&geop_core_topology::Edge<S>) -> bo
 }
 
 /// The straight edges of `part` standing upright at `(x, y)`.
-fn upright_edges_at(part: &Part<S>, x: f64, y: f64) -> Vec<String> {
+fn upright_edges_at(part: &NamedModel<S>, x: f64, y: f64) -> Vec<String> {
     let model = part.topology();
     edges_where(part, |e| {
         [e.start_vertex, e.end_vertex].iter().all(|&v| {
@@ -48,7 +46,7 @@ fn upright_edges_at(part: &Part<S>, x: f64, y: f64) -> Vec<String> {
 }
 
 /// The arcs of `part` around `(cx, cy)` of `radius`, at height `z`.
-fn arcs_at(part: &Part<S>, [cx, cy, z]: [f64; 3], radius: f64) -> Vec<String> {
+fn arcs_at(part: &NamedModel<S>, [cx, cy, z]: [f64; 3], radius: f64) -> Vec<String> {
     edges_where(part, |e| {
         e.curve.as_arc().unwrap().is_some_and(|arc| {
             let c = arc.circle;
@@ -62,7 +60,7 @@ fn arcs_at(part: &Part<S>, [cx, cy, z]: [f64; 3], radius: f64) -> Vec<String> {
 
 /// Whether some vertex of `part` lies on the circle around `(cx, cy)` of
 /// `radius`, at height `z`.
-fn vertex_on_circle(part: &Part<S>, [cx, cy, z]: [f64; 3], radius: f64) -> bool {
+fn vertex_on_circle(part: &NamedModel<S>, [cx, cy, z]: [f64; 3], radius: f64) -> bool {
     part.topology().vertices.values().any(|v| {
         let (dx, dy) = (
             v.point[0].sub(S::from_f64(cx)),
@@ -82,11 +80,11 @@ fn vertex_on_circle(part: &Part<S>, [cx, cy, z]: [f64; 3], radius: f64) -> bool 
 #[test]
 fn fillet_drill_hole_rim() {
     let mut program = examples::box_with_drill_hole();
-    let before = program.build::<S>(&NoFiles).unwrap();
+    let before = program.build_model().unwrap();
     let rim = arcs_at(&before, [1.0, 1.0, 1.0], 0.4);
     assert_eq!(rim.len(), 4, "{rim:?}");
     program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["fillet(round)"]);
     assert!(vertex_on_circle(&part, [1.0, 1.0, 1.0], 0.5));
@@ -98,7 +96,7 @@ fn fillet_drill_hole_rim() {
 #[test]
 fn chamfer_box_edges_and_rim() {
     let mut program = examples::box_with_drill_hole();
-    let before = program.build::<S>(&NoFiles).unwrap();
+    let before = program.build_model().unwrap();
     let mut edges = Vec::new();
     for (x, y) in [(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)] {
         edges.extend(upright_edges_at(&before, x, y));
@@ -121,7 +119,7 @@ fn chamfer_box_edges_and_rim() {
             distance2: Some(0.05.into()),
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["chamfer(countersink)"]);
     assert!(upright_edges_at(&part, 0.0, 0.0).is_empty());
@@ -162,42 +160,19 @@ fn fillet_and_chamfer_round_trip_through_json() {
 
 /// An L-shaped block, 1 high, its inner corner at `(1, 1)`.
 fn l_block() -> Program {
-    let mut s = Sketch::new();
-    let corners = [
+    let s = outline(&[
         [0.0, 0.0],
         [2.0, 0.0],
         [2.0, 1.0],
         [1.0, 1.0],
         [1.0, 2.0],
         [0.0, 2.0],
-    ];
-    let p: Vec<_> = corners
-        .iter()
-        .map(|c| s.add_point(n(c[0]), n(c[1])))
-        .collect();
-    for i in 0..p.len() {
-        s.add_line(p[i], p[(i + 1) % p.len()]);
-    }
+    ]);
     let mut program = Program::new();
-    program.push(
-        "outline",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: s,
-            ..Default::default()
-        },
-    );
+    program.push("outline", sketch(origin_plane(FrameAxis::Z), s));
     program.push(
         "block",
-        ExtrudeArgs {
-            sketch: "outline".into(),
-            extent: Extents::blind(1.0),
-            face: false,
-            combine: Combine::NewBody,
-        },
+        extrusion("outline", Extents::blind(1.0), Combine::NewBody),
     );
     program
 }
@@ -208,30 +183,22 @@ fn l_block() -> Program {
 #[test]
 fn fillet_l_block_inner_edge() {
     let mut program = l_block();
-    let before = program.build::<S>(&NoFiles).unwrap();
+    let before = program.build_model().unwrap();
     let inner = upright_edges_at(&before, 1.0, 1.0);
     let outer = upright_edges_at(&before, 2.0, 0.0);
     assert_eq!((inner.len(), outer.len()), (1, 1));
     program.push("round", FilletArgs::constant(outer, 0.2));
     program.push("inner", FilletArgs::constant(inner, 0.2));
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["fillet(inner)"]);
-    let model = part.topology();
     for p in [
         [1.2, 1.0, 0.0],
         [1.0, 1.2, 0.0],
         [1.2, 1.0, 1.0],
         [1.0, 1.2, 1.0],
     ] {
-        let p = p.map(S::from_f64);
-        assert!(
-            model
-                .vertices
-                .values()
-                .any(|v| (0..3).all(|k| v.point[k].could_be_equal(p[k]))),
-            "no vertex at {p:?}"
-        );
+        assert!(has_vertex(&part, p), "no vertex at {p:?}");
     }
     assert!(upright_edges_at(&part, 1.0, 1.0).is_empty());
 }
@@ -240,7 +207,7 @@ fn fillet_l_block_inner_edge() {
 #[test]
 fn chamfer_l_block_inner_edge() {
     let mut program = l_block();
-    let before = program.build::<S>(&NoFiles).unwrap();
+    let before = program.build_model().unwrap();
     program.push(
         "bevel",
         ChamferArgs {
@@ -249,7 +216,7 @@ fn chamfer_l_block_inner_edge() {
             distance2: None,
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert!(upright_edges_at(&part, 1.0, 1.0).is_empty());
 }
@@ -260,60 +227,28 @@ fn chamfer_l_block_inner_edge() {
 /// rounded at once.
 #[test]
 fn fillet_boss_on_block() {
-    let mut block = Sketch::new();
-    let p: Vec<_> = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
-        .iter()
-        .map(|c| block.add_point(n(c[0]), n(c[1])))
-        .collect();
-    for i in 0..4 {
-        block.add_line(p[i], p[(i + 1) % 4]);
-    }
-    let mut boss = Sketch::new();
-    let c = boss.add_point(n(0.5), n(0.5));
-    boss.add_circle(c, n(0.3));
+    let block = rectangle(0.0, 0.0, 1.0, 1.0);
+    let boss = disc([0.5, 0.5], 0.3);
     let mut program = Program::new();
-    program.push(
-        "base",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: block,
-            ..Default::default()
-        },
-    );
+    program.push("base", sketch(origin_plane(FrameAxis::Z), block));
     program.push(
         "block",
-        ExtrudeArgs {
-            sketch: "base".into(),
-            extent: Extents::blind(1.0),
-            face: false,
-            combine: Combine::NewBody,
-        },
+        extrusion("base", Extents::blind(1.0), Combine::NewBody),
     );
     program.push(
         "boss_sketch",
-        AddSketchArgs {
-            plane: Some(EntityRef::Face {
+        sketch(
+            EntityRef::Face {
                 name: "extrude(block,end)".into(),
-            }),
-            sketch: boss,
-            ..Default::default()
-        },
+            },
+            boss,
+        ),
     );
     program.push(
         "boss",
-        ExtrudeArgs {
-            sketch: "boss_sketch".into(),
-            extent: Extents::blind(0.5),
-            face: false,
-            combine: Combine::Union {
-                target: "extrude(block)".into(),
-            },
-        },
+        extrusion("boss_sketch", Extents::blind(0.5), join("extrude(block)")),
     );
-    let before = program.build::<S>(&NoFiles).unwrap();
+    let before = program.build_model().unwrap();
     let foot = arcs_at(&before, [0.5, 0.5, 1.0], 0.3);
     let rim = arcs_at(&before, [0.5, 0.5, 1.5], 0.3);
     assert!(!foot.is_empty() && !rim.is_empty(), "{foot:?} {rim:?}");
@@ -321,7 +256,7 @@ fn fillet_boss_on_block() {
         "round",
         FilletArgs::constant(vec![foot[0].clone(), rim[0].clone()], 0.1),
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert!(vertex_on_circle(&part, [0.5, 0.5, 1.0], 0.4));
     assert!(vertex_on_circle(&part, [0.5, 0.5, 1.1], 0.3));
@@ -332,10 +267,7 @@ fn fillet_boss_on_block() {
 /// A new fillet waits for its edges to be picked, as edges.
 #[test]
 fn new_fillet_picks_edges() {
-    let mut editor = Editor::<S>::new();
-    editor.handle(Command::LoadExample {
-        name: "box_with_drill_hole".into(),
-    });
+    let mut editor = example_editor("box_with_drill_hole");
     for kind in ["fillet", "chamfer"] {
         let update = editor.handle(Command::New { kind: kind.into() });
         let step = update.step.expect("a step is edited");
@@ -346,7 +278,7 @@ fn new_fillet_picks_edges() {
 }
 
 /// The straight edges of `part` from `a` to `b`, either way round.
-fn edges_from_to(part: &Part<S>, a: [f64; 3], b: [f64; 3]) -> Vec<String> {
+fn edges_from_to(part: &NamedModel<S>, a: [f64; 3], b: [f64; 3]) -> Vec<String> {
     let model = part.topology();
     let at = |v: &geop_core_topology::VertexId, p: [f64; 3]| {
         let q = model.vertices[v].point;
@@ -362,59 +294,23 @@ fn edges_from_to(part: &Part<S>, a: [f64; 3], b: [f64; 3]) -> Vec<String> {
 /// `y = 2`: the step's ceiling at `z = 0.5`, its back wall at `y = 1.5`,
 /// its side wall at `x = 1`, open at the bottom, the front and the side.
 fn stepped_block() -> Program {
-    let rectangle = |x0: f64, y0: f64, x1: f64, y1: f64| {
-        let mut s = Sketch::new();
-        let p: Vec<_> = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
-            .iter()
-            .map(|c| s.add_point(n(c[0]), n(c[1])))
-            .collect();
-        for i in 0..4 {
-            s.add_line(p[i], p[(i + 1) % 4]);
-        }
-        s
-    };
-    let ground = || {
-        Some(EntityRef::datum_component(
-            ORIGIN,
-            DatumComponent::Plane(FrameAxis::Z),
-        ))
-    };
     let mut program = Program::new();
+    let ground = origin_plane(FrameAxis::Z);
     program.push(
         "outline",
-        AddSketchArgs {
-            plane: ground(),
-            sketch: rectangle(0.0, 0.0, 2.0, 2.0),
-            ..Default::default()
-        },
+        sketch(ground.clone(), rectangle(0.0, 0.0, 2.0, 2.0)),
     );
     program.push(
         "block",
-        ExtrudeArgs {
-            sketch: "outline".into(),
-            extent: Extents::blind(1.0),
-            face: false,
-            combine: Combine::NewBody,
-        },
+        extrusion("outline", Extents::blind(1.0), Combine::NewBody),
     );
     program.push(
         "step_outline",
-        AddSketchArgs {
-            plane: ground(),
-            sketch: rectangle(-0.5, 1.5, 1.0, 2.5),
-            ..Default::default()
-        },
+        sketch(ground, rectangle(-0.5, 1.5, 1.0, 2.5)),
     );
     program.push(
         "step",
-        ExtrudeArgs {
-            sketch: "step_outline".into(),
-            extent: Extents::blind(0.5),
-            face: false,
-            combine: Combine::Difference {
-                target: "extrude(block)".into(),
-            },
-        },
+        extrusion("step_outline", Extents::blind(0.5), cut("extrude(block)")),
     );
     program
 }
@@ -426,7 +322,7 @@ fn stepped_block() -> Program {
 /// the side wall's front edge (convex) runs up into the ceiling.
 #[test]
 fn fillet_edges_ending_at_a_wall() {
-    let before = stepped_block().build::<S>(&NoFiles).unwrap();
+    let before = stepped_block().build_model().unwrap();
     let cases = [
         ([0.0, 2.0, 0.5], [1.0, 2.0, 0.5]),
         ([0.0, 1.5, 0.5], [1.0, 1.5, 0.5]),
@@ -439,7 +335,7 @@ fn fillet_edges_ending_at_a_wall() {
         let mut program = stepped_block();
         program.push("round", FilletArgs::constant(edges, 0.1));
         let checked = std::panic::catch_unwind(|| {
-            let part = program.build::<S>(&NoFiles).unwrap();
+            let part = program.build_model().unwrap();
             assert_valid(&part);
             assert!(
                 edges_from_to(&part, a, b).is_empty(),
@@ -461,58 +357,24 @@ fn fillet_edges_ending_at_a_wall() {
 /// A block of 2 x 2 x 1 with a pocket 0.4 deep, `[0.5, 1.5]` square, cut
 /// into its top.
 fn pocketed_block() -> Program {
-    let rectangle = |x0: f64, y0: f64, x1: f64, y1: f64| {
-        let mut s = Sketch::new();
-        let p: Vec<_> = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
-            .iter()
-            .map(|c| s.add_point(n(c[0]), n(c[1])))
-            .collect();
-        for i in 0..4 {
-            s.add_line(p[i], p[(i + 1) % 4]);
-        }
-        s
-    };
     let mut program = Program::new();
-    program.push(
-        "outline",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: rectangle(0.0, 0.0, 2.0, 2.0),
-            ..Default::default()
-        },
-    );
+    let outline = rectangle(0.0, 0.0, 2.0, 2.0);
+    program.push("outline", sketch(origin_plane(FrameAxis::Z), outline));
     program.push(
         "block",
-        ExtrudeArgs {
-            sketch: "outline".into(),
-            extent: Extents::blind(1.0),
-            face: false,
-            combine: Combine::NewBody,
-        },
+        extrusion("outline", Extents::blind(1.0), Combine::NewBody),
     );
-    program.push(
-        "pocket_outline",
-        AddSketchArgs {
-            plane: Some(EntityRef::Face {
-                name: "extrude(block,end)".into(),
-            }),
-            sketch: rectangle(0.5, 0.5, 1.5, 1.5),
-            ..Default::default()
-        },
-    );
+    let top = EntityRef::Face {
+        name: "extrude(block,end)".into(),
+    };
+    program.push("pocket_outline", sketch(top, rectangle(0.5, 0.5, 1.5, 1.5)));
     program.push(
         "pocket",
-        ExtrudeArgs {
-            sketch: "pocket_outline".into(),
-            extent: Extents::blind(-0.4),
-            face: false,
-            combine: Combine::Difference {
-                target: "extrude(block)".into(),
-            },
-        },
+        extrusion(
+            "pocket_outline",
+            Extents::blind(-0.4),
+            cut("extrude(block)"),
+        ),
     );
     program
 }
@@ -523,7 +385,7 @@ fn pocketed_block() -> Program {
 /// corner, on the walls 0.1 down the corner edge.
 #[test]
 fn fillet_pocket_rim_corner() {
-    let before = pocketed_block().build::<S>(&NoFiles).unwrap();
+    let before = pocketed_block().build_model().unwrap();
     let edges = [
         edges_from_to(&before, [0.5, 0.5, 1.0], [1.5, 0.5, 1.0]),
         edges_from_to(&before, [1.5, 0.5, 1.0], [1.5, 1.5, 1.0]),
@@ -532,18 +394,12 @@ fn fillet_pocket_rim_corner() {
     assert_eq!(edges.len(), 2, "{edges:?}");
     let mut program = pocketed_block();
     program.push("round", FilletArgs::constant(edges, 0.1));
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
-    let has_vertex = |p: [f64; 3]| {
-        part.topology()
-            .vertices
-            .values()
-            .any(|v| (0..3).all(|k| v.point[k].could_be_equal(S::from_f64(p[k]))))
-    };
-    assert!(has_vertex([1.6, 0.4, 1.0]), "no mitre on the top");
-    assert!(has_vertex([1.5, 0.5, 0.9]), "no mitre on the walls");
+    assert!(has_vertex(&part, [1.6, 0.4, 1.0]), "no mitre on the top");
+    assert!(has_vertex(&part, [1.5, 0.5, 0.9]), "no mitre on the walls");
     assert!(
-        !has_vertex([1.5, 0.5, 1.0]),
+        !has_vertex(&part, [1.5, 0.5, 1.0]),
         "the rim's corner is still sharp"
     );
 }
@@ -555,7 +411,7 @@ fn fillet_pocket_rim_corner() {
 #[test]
 #[ignore = "slow: the full set of pocket blends — run with `cargo test -- --ignored`"]
 fn fillet_pocket_edges_together() {
-    let before = pocketed_block().build::<S>(&NoFiles).unwrap();
+    let before = pocketed_block().build_model().unwrap();
     let rim =
         |a: [f64; 2], b: [f64; 2]| edges_from_to(&before, [a[0], a[1], 1.0], [b[0], b[1], 1.0]);
     let floor =
@@ -597,7 +453,7 @@ fn fillet_pocket_edges_together() {
         assert!(edges.len() >= 2, "{case}: {edges:?}");
         let mut program = pocketed_block();
         program.push("round", FilletArgs::constant(edges, 0.1));
-        match program.build::<S>(&NoFiles) {
+        match program.build_model() {
             Err(e) => failures.push(format!("{case}: {}", e.root_message())),
             Ok(part) => {
                 if let Err(e) = check_valid(&part) {
@@ -613,22 +469,19 @@ fn fillet_pocket_edges_together() {
     // pocket's corners and on the walls 0.1 down its corner edges.
     let mut program = pocketed_block();
     program.push("round", FilletArgs::constant(all(&rim), 0.1));
-    let part = program.build::<S>(&NoFiles).unwrap();
-    let has_vertex = |p: [f64; 3]| {
-        part.topology()
-            .vertices
-            .values()
-            .any(|v| (0..3).all(|k| v.point[k].could_be_equal(S::from_f64(p[k]))))
-    };
+    let part = program.build_model().unwrap();
     for [x, y] in [[0.5, 0.5], [1.5, 0.5], [1.5, 1.5], [0.5, 1.5]] {
         let out = |c: f64| if c < 1.0 { c - 0.1 } else { c + 0.1 };
         assert!(
-            has_vertex([out(x), out(y), 1.0]),
+            has_vertex(&part, [out(x), out(y), 1.0]),
             "no mitre on the top at {x}, {y}"
         );
-        assert!(has_vertex([x, y, 0.9]), "no mitre on the walls at {x}, {y}");
         assert!(
-            !has_vertex([x, y, 1.0]),
+            has_vertex(&part, [x, y, 0.9]),
+            "no mitre on the walls at {x}, {y}"
+        );
+        assert!(
+            !has_vertex(&part, [x, y, 1.0]),
             "the rim's corner at {x}, {y} is still sharp"
         );
     }
@@ -642,117 +495,102 @@ fn circle_sketch(x: f64, y: f64, r: f64) -> Sketch {
     circle
 }
 
-// /// A square of side 2 around the origin lofted up into a circle of radius
-// /// 0.6 at `z = 2`: its walls are ruled, neither planes nor surfaces of
-// /// revolution, so its edges are free-form.
-// fn square_to_circle() -> Program {
-//     let mut square = Sketch::new();
-//     let p: Vec<_> = [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]
-//         .iter()
-//         .map(|c| square.add_point(n(c[0]), n(c[1])))
-//         .collect();
-//     for i in 0..4 {
-//         square.add_line(p[i], p[(i + 1) % 4]);
-//     }
-//     lofted(square, circle_sketch(0.0, 0.0, 0.6))
-// }
+/// A square of side 2 around the origin lofted up into a circle of radius
+/// 0.6 at `z = 2`: its walls are ruled, neither planes nor surfaces of
+/// revolution, so its edges are free-form.
+fn square_to_circle() -> Program {
+    let mut square = Sketch::new();
+    let p: Vec<_> = [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]
+        .iter()
+        .map(|c| square.add_point(n(c[0]), n(c[1])))
+        .collect();
+    for i in 0..4 {
+        square.add_line(p[i], p[(i + 1) % 4]);
+    }
+    lofted(square, circle_sketch(0.0, 0.0, 0.6))
+}
 
-// /// `bottom`, drawn on the `xy` plane, lofted up into `top`, drawn 2 above
-// /// it.
-// fn lofted(bottom: Sketch, top: Sketch) -> Program {
-//     let mut program = Program::new();
-//     let xy = EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z));
-//     program.push(
-//         "bottom",
-//         AddSketchArgs {
-//             plane: Some(xy.clone()),
-//             sketch: bottom,
-//             ..Default::default()
-//         },
-//     );
-//     program.push(
-//         "top_plane",
-//         AddDatumArgs {
-//             selection: vec![xy],
-//             construction: Construction::Offset {
-//                 distance: 2.0.into(),
-//             },
-//         },
-//     );
-//     program.push(
-//         "top",
-//         AddSketchArgs {
-//             plane: Some(EntityRef::datum("top_plane")),
-//             sketch: top,
-//             ..Default::default()
-//         },
-//     );
-//     program.push(
-//         "transition",
-//         LoftArgs {
-//             profiles: vec!["bottom".into(), "top".into()],
-//             matches: Vec::new(),
-//             guides: Vec::new(),
-//             face: false,
-//             combine: Combine::NewBody,
-//         },
-//     );
-//     program
-// }
+/// `bottom`, drawn on the `xy` plane, lofted up into `top`, drawn 2 above
+/// it.
+fn lofted(bottom: Sketch, top: Sketch) -> Program {
+    let mut program = Program::new();
+    let xy = origin_plane(FrameAxis::Z);
+    program.push("bottom", sketch(xy.clone(), bottom));
+    program.push(
+        "top_plane",
+        AddDatumArgs {
+            selection: vec![xy],
+            construction: Construction::Offset {
+                distance: 2.0.into(),
+            },
+        },
+    );
+    program.push("top", sketch(EntityRef::datum("top_plane"), top));
+    program.push(
+        "transition",
+        LoftArgs {
+            profiles: vec!["bottom".into(), "top".into()],
+            matches: Vec::new(),
+            guides: Vec::new(),
+            output: Output::Solid(Combine::NewBody),
+        },
+    );
+    program
+}
 
-// /// A circle of radius 1 lofted up into one of radius 0.6 off to the side,
-// /// around `(0.3, 0)`: an oblique cone, ruled, no surface of revolution. Its
-// /// top rim rounded: picking one of its arcs rounds the whole circle, the
-// /// ball rolled round between the flat top and the slanting wall. The rim
-// /// is gone, and the round meets the top inside it.
-// #[test]
-// fn fillet_lofted_rim() {
-//     let mut program = lofted(circle_sketch(0.0, 0.0, 1.0), circle_sketch(0.3, 0.0, 0.6));
-//     let before = program.build::<S>(&NoFiles).unwrap();
-//     let rim = edges_where(&before, |e| {
-//         let (t0, t1) = e.curve.domain();
-//         let p = e
-//             .curve
-//             .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
-//             .unwrap();
-//         p[2].could_be_equal(S::from_f64(2.0))
-//     });
-//     assert_eq!(rim.len(), 4, "{rim:?}");
-//     program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
-//     let part = program.build::<S>(&NoFiles).unwrap();
-//     assert_valid(&part);
-//     assert_eq!(part.solid_names(), ["fillet(round)"]);
-//     assert!(!vertex_on_circle(&part, [0.3, 0.0, 2.0], 0.6));
-//     // Every vertex left on the top lies inside the rim.
-//     for v in part.topology().vertices.values() {
-//         if v.point[2].could_be_equal(S::from_f64(2.0)) {
-//             let (x, y) = (v.point[0].to_f64() - 0.3, v.point[1].to_f64());
-//             assert!(x.hypot(y) < 0.6 - 0.05, "a vertex on the top at {x}, {y}");
-//         }
-//     }
-// }
+/// A circle of radius 1 lofted up into one of radius 0.6 off to the side,
+/// around `(0.3, 0)`: an oblique cone, ruled, no surface of revolution. Its
+/// top rim rounded: picking one of its arcs rounds the whole circle, the
+/// ball rolled round between the flat top and the slanting wall. The rim
+/// is gone, and the round meets the top inside it.
+#[test]
+fn fillet_lofted_rim() {
+    let mut program = lofted(circle_sketch(0.0, 0.0, 1.0), circle_sketch(0.3, 0.0, 0.6));
+    let before = program.build_model().unwrap();
+    let rim = edges_where(&before, |e| {
+        let (t0, t1) = e.curve.domain();
+        let p = e
+            .curve
+            .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
+            .unwrap();
+        p[2].could_be_equal(S::from_f64(2.0))
+    });
+    assert_eq!(rim.len(), 4, "{rim:?}");
+    program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
+    let part = program.build_model().unwrap();
+    assert_valid(&part);
+    assert_eq!(part.solid_names(), ["fillet(round)"]);
+    assert!(!vertex_on_circle(&part, [0.3, 0.0, 2.0], 0.6));
+    // Every vertex left on the top lies inside the rim.
+    for v in part.topology().vertices.values() {
+        if v.point[2].could_be_equal(S::from_f64(2.0)) {
+            let (x, y) = (v.point[0].to_f64() - 0.3, v.point[1].to_f64());
+            assert!(x.hypot(y) < 0.6 - 0.05, "a vertex on the top at {x}, {y}");
+        }
+    }
+}
 
-// /// The lofted body's bottom edges end at corners where the third face, a
-// /// ruled wall, is no plane: refused, naming the vertex.
-// #[test]
-// fn fillet_lofted_bottom_edge_is_refused() {
-//     let mut program = square_to_circle();
-//     let before = program.build::<S>(&NoFiles).unwrap();
-//     let bottom = edges_where(&before, |e| {
-//         let (t0, t1) = e.curve.domain();
-//         let p = e
-//             .curve
-//             .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
-//             .unwrap();
-//         p[2].could_be_equal(S::ZERO)
-//     });
-//     program.push("round", FilletArgs::constant(vec![bottom[0].clone()], 0.1));
-//     let Err(error) = program.build::<S>(&NoFiles) else {
-//         panic!("rounding a bottom edge of the loft is not refused");
-//     };
-//     let error = format!("{error:?}");
-//     assert!(error.contains("the third face is not planar"), "{error}");
-// }
+/// The lofted body's bottom edges end at corners where the third face, a
+/// ruled wall, is no plane: refused, naming the vertex.
+#[test]
+fn fillet_lofted_bottom_edge_is_refused() {
+    let mut program = square_to_circle();
+    let before = program.build_model().unwrap();
+    let bottom = edges_where(&before, |e| {
+        let (t0, t1) = e.curve.domain();
+        let p = e
+            .curve
+            .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
+            .unwrap();
+        p[2].could_be_equal(S::ZERO)
+    });
+    program.push("round", FilletArgs::constant(vec![bottom[0].clone()], 0.1));
+    let Err(error) = program.build_model() else {
+        panic!("rounding a bottom edge of the loft is not refused");
+    };
+    let error = format!("{error:?}");
+    assert!(error.contains("the third face is not planar"), "{error}");
+}
 
 /// A slot 1 high: two half circles of radius 0.5 around `(±1, 0)` joined
 /// by straight sides — a rim of lines and arcs running on into each other
@@ -770,25 +608,10 @@ fn slot() -> Program {
     s.add_line(p[2], p[3]);
     s.add_arc(p[3], p[0], n(std::f64::consts::PI));
     let mut program = Program::new();
-    program.push(
-        "outline",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: s,
-            ..Default::default()
-        },
-    );
+    program.push("outline", sketch(origin_plane(FrameAxis::Z), s));
     program.push(
         "slot",
-        ExtrudeArgs {
-            sketch: "outline".into(),
-            extent: Extents::blind(1.0),
-            face: false,
-            combine: Combine::NewBody,
-        },
+        extrusion("outline", Extents::blind(1.0), Combine::NewBody),
     );
     program
 }
@@ -800,11 +623,11 @@ fn slot() -> Program {
 #[test]
 fn fillet_slot_rim_as_one_chain() {
     let mut program = slot();
-    let before = program.build::<S>(&NoFiles).unwrap();
+    let before = program.build_model().unwrap();
     let side = edges_from_to(&before, [-1.0, -0.5, 1.0], [1.0, -0.5, 1.0]);
     assert_eq!(side.len(), 1, "{side:?}");
     program.push("round", FilletArgs::constant(side, 0.1));
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["fillet(round)"]);
     let near = |p: [f64; 3]| {
@@ -825,28 +648,28 @@ fn fillet_slot_rim_as_one_chain() {
     assert!(!near([1.0, -0.5, 1.0]));
 }
 
-// /// The top rim of a square lofted into a circle: the ruled walls meet at
-// /// creases, tangent only at the rim itself, so the ball rolling round would
-// /// have to roll over them — refused, naming the faces and the edge.
-// #[test]
-// fn fillet_rim_over_creases_is_refused() {
-//     let mut program = square_to_circle();
-//     let before = program.build::<S>(&NoFiles).unwrap();
-//     let rim = edges_where(&before, |e| {
-//         let (t0, t1) = e.curve.domain();
-//         let p = e
-//             .curve
-//             .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
-//             .unwrap();
-//         p[2].could_be_equal(S::from_f64(2.0))
-//     });
-//     program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
-//     let Err(error) = program.build::<S>(&NoFiles) else {
-//         panic!("rounding the rim over the creases is not refused");
-//     };
-//     let error = format!("{error:?}");
-//     assert!(error.contains("meet at a crease"), "{error}");
-// }
+/// The top rim of a square lofted into a circle: the ruled walls meet at
+/// creases, tangent only at the rim itself, so the ball rolling round would
+/// have to roll over them — refused, naming the faces and the edge.
+#[test]
+fn fillet_rim_over_creases_is_refused() {
+    let mut program = square_to_circle();
+    let before = program.build_model().unwrap();
+    let rim = edges_where(&before, |e| {
+        let (t0, t1) = e.curve.domain();
+        let p = e
+            .curve
+            .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
+            .unwrap();
+        p[2].could_be_equal(S::from_f64(2.0))
+    });
+    program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
+    let Err(error) = program.build_model() else {
+        panic!("rounding the rim over the creases is not refused");
+    };
+    let error = format!("{error:?}");
+    assert!(error.contains("meet at a crease"), "{error}");
+}
 
 /// The slot's rim rounded with radii set at two of its vertices, where its
 /// sides meet its half circles — 0.15 at `(1, -0.5)`, 0.05 at `(-1, 0.5)`
@@ -856,7 +679,7 @@ fn fillet_slot_rim_as_one_chain() {
 #[test]
 fn fillet_slot_rim_with_radii_at_vertices() {
     let mut program = slot();
-    let before = program.build::<S>(&NoFiles).unwrap();
+    let before = program.build_model().unwrap();
     let side = edges_from_to(&before, [-1.0, -0.5, 1.0], [1.0, -0.5, 1.0]);
     let vertex_at = |p: [f64; 3]| {
         let (&id, _) = before
@@ -881,7 +704,7 @@ fn fillet_slot_rim_with_radii_at_vertices() {
             ..FilletArgs::constant(side, 0.1)
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     let near = |p: [f64; 3]| {
         part.topology()

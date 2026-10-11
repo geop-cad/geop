@@ -11,7 +11,7 @@ use geop_core_topology::{
     Body, SolidId,
     validation::{ValidationParameters, validate, validate_manifold},
 };
-use geop_ops::{Namer, Part};
+use geop_ops::{NamedModel, Namer};
 use geop_ops_extrude_revolve::shapes::{
     cube_solid,
     cylinder::{extruded_cylinder, revolved_cylinder},
@@ -24,7 +24,7 @@ fn v<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
     Vector3::from_array([x, y, z].map(S::from_f64))
 }
 
-fn assert_valid<S: Scalar>(part: &Part<S>) {
+fn assert_valid<S: Scalar>(part: &NamedModel<S>) {
     let params = ValidationParameters::default();
     if let Err(errors) = validate(&params, part.topology()) {
         panic!("{errors:#?}");
@@ -35,8 +35,8 @@ fn assert_valid<S: Scalar>(part: &Part<S>) {
 }
 
 /// The 2 x 2 x 1 box from the origin, `cube(b)`.
-fn unit_box<S: Scalar>() -> (Part<S>, SolidId) {
-    let mut part = Part::new();
+fn unit_box<S: Scalar>() -> (NamedModel<S>, SolidId) {
+    let mut part = NamedModel::new();
     let solid = cube_solid(&mut part, "b", v(0., 0., 0.), v(2., 2., 1.)).unwrap();
     (part, solid)
 }
@@ -44,11 +44,11 @@ fn unit_box<S: Scalar>() -> (Part<S>, SolidId) {
 /// `part` with `solid` shelled `thickness` thick, open at the faces named
 /// `open`, as the operation `s`.
 fn shelled<S: Scalar>(
-    mut part: Part<S>,
+    mut part: NamedModel<S>,
     solid: SolidId,
     open: &[&str],
     thickness: f64,
-) -> (Part<S>, SolidId) {
+) -> (NamedModel<S>, SolidId) {
     let open: Vec<_> = open
         .iter()
         .map(|name| part.face_id(name).unwrap())
@@ -58,7 +58,7 @@ fn shelled<S: Scalar>(
     (part, solid)
 }
 
-fn faces<S: Scalar>(part: &Part<S>, solid: SolidId) -> usize {
+fn faces<S: Scalar>(part: &NamedModel<S>, solid: SolidId) -> usize {
     part.topology()
         .body_faces(Body::Solid(solid))
         .unwrap()
@@ -66,7 +66,7 @@ fn faces<S: Scalar>(part: &Part<S>, solid: SolidId) -> usize {
 }
 
 /// Every vertex of `part`, sorted, rounded to what tells them apart here.
-fn corners<S: Scalar>(part: &Part<S>) -> Vec<[i64; 3]> {
+fn corners<S: Scalar>(part: &NamedModel<S>) -> Vec<[i64; 3]> {
     let mut out: Vec<[i64; 3]> = part
         .topology()
         .vertices
@@ -166,7 +166,7 @@ fn a_box_opened_at_both_ends_is_a_tube() {
 }
 
 fn check_prism<S: Scalar>() {
-    let mut part = Part::new();
+    let mut part = NamedModel::new();
     let solid = extruded_cylinder(
         &mut part,
         "p",
@@ -186,7 +186,7 @@ fn a_hexagonal_prism_opened_at_its_bottom() {
 }
 
 fn check_revolved_cylinder<S: Scalar>() {
-    let mut part = Part::new();
+    let mut part = NamedModel::new();
     let solid = revolved_cylinder(
         &mut part,
         "c",
@@ -219,7 +219,7 @@ fn a_revolved_cylinder_opened_at_its_top() {
 
 #[test]
 fn a_closed_revolved_cylinder() {
-    let mut part = Part::<ScalInF64>::new();
+    let mut part = NamedModel::<ScalInF64>::new();
     let solid = revolved_cylinder(
         &mut part,
         "c",
@@ -248,7 +248,7 @@ fn walls_too_thick_are_refused() {
 #[test]
 fn a_sphere_closed_all_round() {
     type S = ScalInF64;
-    let mut part = Part::new();
+    let mut part = NamedModel::new();
     let solid = sphere_solid(&mut part, "s", v(1., 0., 0.), S::from_f64(2.)).unwrap();
     let (part, solid) = shelled(part, solid, &[], 0.5);
     assert_valid(&part);
@@ -273,7 +273,7 @@ fn a_sphere_closed_all_round() {
 /// on a smooth surface.
 #[test]
 fn a_sphere_does_not_open_along_a_smooth_seam() {
-    let mut part = Part::<ScalInF64>::new();
+    let mut part = NamedModel::<ScalInF64>::new();
     let solid = sphere_solid(&mut part, "s", v(0., 0., 0.), ScalInF64::from_f64(1.)).unwrap();
     let north: Vec<_> = (0..4)
         .map(|k| part.face_id(&format!("sphere(s,north,q{k})")).unwrap())

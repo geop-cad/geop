@@ -1,6 +1,6 @@
 use crate::{EdgeId, FaceId, Model, boundary::BoundaryType};
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
+    geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
 };
 
@@ -23,9 +23,8 @@ impl<S: Scalar> Model<S> {
             return Err(ctx(GeopError::new("edge must have exactly two coedges")));
         }
         let (c0_id, c1_id) = (refs[0], refs[1]);
-        let c0 = self.get_coedge(c0_id)?.clone();
-        let c1 = self.get_coedge(c1_id)?.clone();
-        if c0.face == c1.face {
+        let c0_face = self.get_coedge(c0_id)?.face;
+        if c0_face == self.get_coedge(c1_id)?.face {
             return Err(ctx(GeopError::new(
                 "edge's coedges must belong to different faces (use ker to merge two rings of the same face)",
             )));
@@ -34,11 +33,12 @@ impl<S: Scalar> Model<S> {
         let absorbed_face_id = killed_face;
         let absorbed_face = self.get_face(absorbed_face_id)?.clone();
 
-        let ((ca_id, ca), (cb_id, cb)) = if c0.face == killed_face {
-            ((c1_id, c1), (c0_id, c0))
+        let (ca_id, cb_id) = if c0_face == killed_face {
+            (c1_id, c0_id)
         } else {
-            ((c0_id, c0), (c1_id, c1))
+            (c0_id, c1_id)
         };
+        let ca = self.get_coedge(ca_id)?.clone();
 
         let surviving_face_id = ca.face;
         let keep_index = self
@@ -51,17 +51,7 @@ impl<S: Scalar> Model<S> {
 
         let survivor = ca.prev;
 
-        // ca and cb each sit between one ring's root and the other ring's
-        // prev, so removing them reconnects across: ca's prev links up with
-        // cb's next, and cb's prev links up with ca's next — merging both
-        // rings into one.
-        self.coedges.get_mut(&ca.prev).unwrap().next = cb.next;
-        self.coedges.get_mut(&cb.next).unwrap().prev = ca.prev;
-        self.coedges.get_mut(&cb.prev).unwrap().next = ca.next;
-        self.coedges.get_mut(&ca.next).unwrap().prev = cb.prev;
-        self.coedges.remove(&ca_id);
-        self.coedges.remove(&cb_id);
-        self.edges.remove(&edge);
+        self.remove_edge_between(ca_id, cb_id).with_context(&ctx)?;
 
         // Every coedge that was on the absorbed face now belongs to the
         // merged ring on the surviving face.

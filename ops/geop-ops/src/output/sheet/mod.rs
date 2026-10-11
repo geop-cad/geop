@@ -1,9 +1,16 @@
-//! A drawing sheet: plain 2-D strokes and labels on paper, in millimetres
-//! with `y` up, each on a layer — what the SVG and DXF writers write.
+//! A [`Sheet`]: plain 2-D strokes and labels on paper, in millimetres with
+//! `y` up, each on a layer — what a drawing and a flat pattern are laid out
+//! as, and written in a [`Format`]: SVG ([`to_svg`]) or DXF ([`to_dxf`]).
 //!
 //! The kernel's curves become lines, arcs and circles where they are those
 //! exactly (see [`NurbCurve3D::as_line`], [`NurbCurve3D::as_arc`]), and
 //! polylines through points of them otherwise.
+
+mod dxf;
+mod svg;
+
+pub use dxf::to_dxf;
+pub use svg::to_svg;
 
 use geop_core_geometry::nurb_curve::{NurbCurve2D, NurbCurve3D};
 use geop_core_math::{
@@ -109,6 +116,41 @@ pub struct Label {
     pub text: String,
 }
 
+/// A file format a sheet is written in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Format {
+    Svg,
+    Dxf,
+}
+
+impl Format {
+    /// The format named by its files' extension, `svg` or `dxf`, if it is
+    /// one.
+    pub fn of_extension(extension: &str) -> Option<Format> {
+        match extension.to_ascii_lowercase().as_str() {
+            "svg" => Some(Format::Svg),
+            "dxf" => Some(Format::Dxf),
+            _ => None,
+        }
+    }
+
+    pub fn extension(self) -> &'static str {
+        match self {
+            Format::Svg => "svg",
+            Format::Dxf => "dxf",
+        }
+    }
+
+    /// Its media type, to save it as.
+    pub fn media_type(self) -> &'static str {
+        match self {
+            Format::Svg => "image/svg+xml",
+            Format::Dxf => "image/vnd.dxf",
+        }
+    }
+}
+
 /// A sheet of paper, `width` x `height` millimetres, and what is on it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Sheet {
@@ -119,6 +161,14 @@ pub struct Sheet {
 }
 
 impl Sheet {
+    /// It written as `format`.
+    pub fn write(&self, format: Format) -> String {
+        match format {
+            Format::Svg => to_svg(self),
+            Format::Dxf => to_dxf(self),
+        }
+    }
+
     pub fn stroke(&mut self, layer: Layer, shape: Shape) {
         self.strokes.push(Stroke { layer, shape });
     }
@@ -162,7 +212,7 @@ enum Piece<S: Scalar> {
 }
 
 /// A 2-D curve as a 3-D one in the plane `z = 0`.
-pub(crate) fn lift<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<NurbCurve3D<S>> {
+pub fn lift<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<NurbCurve3D<S>> {
     NurbCurve3D::try_new(
         curve.degree,
         curve

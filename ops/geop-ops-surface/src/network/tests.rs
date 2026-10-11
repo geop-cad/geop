@@ -10,7 +10,8 @@ use geop_core_math::{
     vector::{Vector3, Vector4},
 };
 use geop_core_topology::build::{BodySpec, EdgeSpec};
-use geop_ops::{BodyNames, NoFiles, Part};
+use geop_ops::operation::apply_to_model;
+use geop_ops::{BodyNames, NamedModel};
 
 use super::*;
 use crate::boundary::tests::{assert_valid, refused};
@@ -40,7 +41,7 @@ fn polynomial(coords: [&[f64]; 3], degree: usize) -> NurbCurve3D<S> {
 }
 
 /// `curve` added to `part` as a wire of its own, its edge named `name`.
-fn wire(part: &mut Part<S>, name: &str, curve: NurbCurve3D<S>) -> EntityRef {
+fn wire(part: &mut NamedModel<S>, name: &str, curve: NurbCurve3D<S>) -> EntityRef {
     let (t0, t1) = curve.domain();
     let spec = BodySpec {
         vertices: vec![curve.evaluate(t0).unwrap(), curve.evaluate(t1).unwrap()],
@@ -103,8 +104,8 @@ fn grid(
     turned: &[&str],
     u_order: [usize; 3],
     v_order: [usize; 3],
-) -> (Part<S>, Vec<EntityRef>, Vec<EntityRef>) {
-    let mut part = Part::new();
+) -> (NamedModel<S>, Vec<EntityRef>, Vec<EntityRef>) {
+    let mut part = NamedModel::new();
     let (u, v) = grid_curves(lift);
     let mut add = |prefix: &str, curves: Vec<NurbCurve3D<S>>| -> Vec<EntityRef> {
         curves
@@ -130,15 +131,15 @@ fn grid(
     )
 }
 
-fn span(part: Part<S>, u: Vec<EntityRef>, v: Vec<EntityRef>) -> GeopResult<Part<S>> {
+fn span(part: NamedModel<S>, u: Vec<EntityRef>, v: Vec<EntityRef>) -> GeopResult<NamedModel<S>> {
     let args = NetworkSurfaceArgs {
         u_curves: u,
         v_curves: v,
     };
-    NetworkSurface.apply(part, "n", &args, &NoFiles)
+    apply_to_model::<NetworkSurface>(part, "n", &args)
 }
 
-fn surface_of(part: &Part<S>, face: &str) -> NurbSurface3D<S> {
+fn surface_of(part: &NamedModel<S>, face: &str) -> NurbSurface3D<S> {
     let face = part.face_id(face).unwrap();
     part.topology().get_face(face).unwrap().surface.clone()
 }
@@ -226,7 +227,7 @@ fn network_picks_in_any_order_and_direction() {
 /// of the loop they make.
 #[test]
 fn network_of_two_by_two_is_the_coons_patch() {
-    let mut part = Part::new();
+    let mut part = NamedModel::new();
     let bottom = NurbCurve::try_new(
         3,
         [
@@ -267,7 +268,7 @@ fn network_of_two_by_two_is_the_coons_patch() {
         edges,
         tangent: Vec::new(),
     };
-    let part = BoundarySurface.apply(part, "b", &args, &NoFiles).unwrap();
+    let part = apply_to_model::<BoundarySurface>(part, "b", &args).unwrap();
     let network = surface_of(&part, "network(n)");
     let coons = surface_of(&part, "boundary(b)");
     for i in 0..=6 {
@@ -283,7 +284,7 @@ fn network_of_two_by_two_is_the_coons_patch() {
 /// a pair and how far apart they pass.
 #[test]
 fn network_refuses_curves_that_miss() {
-    let mut part = Part::new();
+    let mut part = NamedModel::new();
     let (u, mut v) = grid_curves(1.0);
     v[1] = v[1].translate(Vector3::from_array([0.0, 0.0, 0.01].map(S::from_f64)));
     let u: Vec<_> = u
@@ -328,7 +329,7 @@ fn flat_network_sheet_thickens() {
         thickness: 0.05,
         side: ThickenSide::Both,
     };
-    let part = Thicken.apply(part, "t", &args, &NoFiles).unwrap();
+    let part = apply_to_model::<Thicken>(part, "t", &args).unwrap();
     assert_valid(&part);
     part.solid_id("thicken(t)").unwrap();
 }
@@ -367,7 +368,7 @@ fn random_networks_are_valid() {
             .map(|_| (0..n).map(|_| random.next() - 0.5).collect())
             .collect();
         let point = |x: f64, y: f64, h: f64| Vector3::from_array([x, y, h].map(S::from_f64));
-        let mut part = Part::new();
+        let mut part = NamedModel::new();
         let u: Vec<EntityRef> = (0..m)
             .map(|j| {
                 let mut points = Vec::new();
@@ -419,7 +420,7 @@ fn random_networks_are_valid() {
 /// different orders: no grid, refused naming them.
 #[test]
 fn network_refuses_curves_of_one_direction_that_meet() {
-    let mut part = Part::new();
+    let mut part = NamedModel::new();
     let line = |a: [f64; 2], b: [f64; 2]| {
         polynomial([&[a[0], b[0] - a[0]], &[a[1], b[1] - a[1]], &[0.]], 1)
     };

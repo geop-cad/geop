@@ -3,62 +3,125 @@ mod given_frame;
 mod middle_frame;
 mod pin_frame;
 mod shift_frame;
+mod solve;
+mod step_editor;
 
 use std::{cell::RefCell, collections::BTreeMap};
 
 use geop_core_math::{
-    scalars::{ScalInF64, Scalar},
+    geop_error::{GeopError, GeopResult},
+    scalars::{Ring, ScalInF64, Scalar},
+    solvers::{least_squares::Rows, system::Variable},
     vector::{Vector, Vector3},
 };
 
 use crate::{
-    constraint::Constraint,
-    operation::{EditingPresentation, UserEvent},
+    constraint::{Bound, Constraint},
+    editing::{Event, Form, Value},
+    operation::{OperationGroup, OperationInfo, OperationTier},
     operation_registry::OperationRegistry,
-    part::{Part, State},
+    part::{Part, Retrieve, State},
     program::{Program, ProgramStep},
     program_runner::{ProgramRunner, RunOutput},
     target::{Revisable, TargetReference},
 };
-use add_two_frame::{AddTwoFrameArgs, AddTwoFrameOperation};
-use given_frame::{InputFrameArgs, InputFrameOperation, StateFrameArgs, StateFrameOperation};
-use middle_frame::{MiddleFrameArgs, MiddleFrameOperation};
-use pin_frame::{PinFrameArgs, PinFrameOperation};
-use shift_frame::{ShiftFrameArgs, ShiftFrameOperation};
+pub(crate) use add_two_frame::{AddTwoFrameArgs, AddTwoFrameOperation};
+pub(crate) use given_frame::{
+    InputFrameArgs, InputFrameOperation, StateFrameArgs, StateFrameOperation,
+};
+pub(crate) use middle_frame::{MiddleFrameArgs, MiddleFrameOperation};
+pub(crate) use pin_frame::{PinFrameArgs, PinFrameOperation};
+pub(crate) use shift_frame::{ShiftFrameArgs, ShiftFrameOperation};
 
 /// The tests' numbers.
 pub type Sc = ScalInF64;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Frame {
     pub data: Vector3<Sc>,
 }
 
-/// A placement of a body: what the tests' state holds.
+/// Where a body is: what the tests' state holds — its position alone.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Pose {
-    dual_quaternion: Vector<Sc, 8>,
+    pub position: Vector3<Sc>,
 }
 
 impl Pose {
-    pub fn new(dual_quaternion: Vector<Sc, 8>) -> Self {
-        Self { dual_quaternion }
-    }
-
-    pub fn dual_quaternion(&self) -> &Vector<Sc, 8> {
-        &self.dual_quaternion
+    pub fn at(position: [f64; 3]) -> Self {
+        Self {
+            position: vector(position),
+        }
     }
 }
 
-/// A pose moves by a twist: three components of rotation, three of
-/// translation.
-impl State for Pose {
+/// The rows of the identity of size `n`: a derivative by a step that is
+/// the change itself.
+pub(crate) fn identity(n: usize) -> Vec<Vec<Sc>> {
+    (0..n)
+        .map(|i| {
+            (0..n)
+                .map(|j| if i == j { Sc::ONE } else { Sc::ZERO })
+                .collect()
+        })
+        .collect()
+}
+
+/// A position moves by a step added to it.
+impl Variable for Pose {
     type Scalar = Sc;
-    type Tangent = Vector<Sc, 6>;
+
+    fn dimension(&self) -> usize {
+        3
+    }
+
+    fn retract(&self, step: &[Sc]) -> GeopResult<Self> {
+        let by = three(step)?;
+        Ok(Self {
+            position: self.position.add(&by).map(Scalar::sharpen),
+        })
+    }
+
+    fn retract_over(&self, step: &[Sc]) -> GeopResult<Self> {
+        let by = three(step)?;
+        Ok(Self {
+            position: self.position.add(&by),
+        })
+    }
+
+    fn differential(&self, step: &[Sc]) -> GeopResult<Option<Vec<Vec<Sc>>>> {
+        three(step)?;
+        Ok(None)
+    }
+
+    fn stay(&self, at: &Self, _: Sc) -> GeopResult<Rows<Sc>> {
+        let mut rows = Rows::default();
+        for (k, row) in identity(3).into_iter().enumerate() {
+            rows.push(self.position[k].sub(at.position[k]), row);
+        }
+        Ok(rows)
+    }
+
+    fn same(&self, other: &Self) -> bool {
+        self == other
+    }
+}
+
+impl State for Pose {}
+
+/// A step of a position: three numbers.
+fn three(step: &[Sc]) -> GeopResult<Vector3<Sc>> {
+    let [x, y, z] = step else {
+        return Err(GeopError::new(format!(
+            "a step of a position is three numbers, not {}",
+            step.len()
+        )));
+    };
+    Ok(Vector3::from_array([*x, *y, *z]))
 }
 
 /// A vector of sharp scalars, from plain numbers.
-fn vector<const N: usize>(xs: [f64; N]) -> Vector<Sc, N> {
+pub(crate) fn vector<const N: usize>(xs: [f64; N]) -> Vector<Sc, N> {
     Vector::from_array(xs.map(Sc::from_f64))
 }
 
@@ -98,12 +161,9 @@ fn take_built() -> Vec<String> {
     BUILT.with(|built| built.take())
 }
 
-fn no_presentation() -> EditingPresentation {
-    EditingPresentation {
-        camera_control: (),
-        reference_inputs: (),
-        drag_handles: (),
-    }
+/// What a test operation is to an editor: only its name matters.
+pub(crate) const fn info(kind: &'static str) -> OperationInfo {
+    OperationInfo::new(kind, kind, "", OperationGroup::Solid, OperationTier::Menu)
 }
 
 fn registry() -> OperationRegistry<Sc, Pose> {
@@ -126,7 +186,7 @@ fn add_two_frame(id: &str, data1: [f64; 3], data2: [f64; 3]) -> ProgramStep {
         data1: vector(data1),
         data2: vector(data2),
     };
-    ProgramStep::new::<AddTwoFrameOperation>(id, args)
+    ProgramStep::new::<AddTwoFrameOperation>(id, &args).unwrap()
 }
 
 fn middle_frame(id: &str, frame1: &str, frame2: &str) -> ProgramStep {
@@ -134,15 +194,15 @@ fn middle_frame(id: &str, frame1: &str, frame2: &str) -> ProgramStep {
         frame1ref: frame1.to_string(),
         frame2ref: frame2.to_string(),
     };
-    ProgramStep::new::<MiddleFrameOperation>(id, args)
+    ProgramStep::new::<MiddleFrameOperation>(id, &args).unwrap()
 }
 
-fn input_frame(id: &str, target: &str, input: &str) -> ProgramStep {
+pub(crate) fn input_frame(id: &str, target: &str, input: &str) -> ProgramStep {
     let args = InputFrameArgs {
         target: target.to_string(),
         input: input.to_string(),
     };
-    ProgramStep::new::<InputFrameOperation>(id, args)
+    ProgramStep::new::<InputFrameOperation>(id, &args).unwrap()
 }
 
 fn shift_frame(id: &str, target: &str, x: f64) -> ProgramStep {
@@ -150,10 +210,10 @@ fn shift_frame(id: &str, target: &str, x: f64) -> ProgramStep {
         targets: vec![target.to_string()],
         by: vector([x, 0.0, 0.0]),
     };
-    ProgramStep::new::<ShiftFrameOperation>(id, args)
+    ProgramStep::new::<ShiftFrameOperation>(id, &args).unwrap()
 }
 
-fn inputs(values: &[(&str, f64)]) -> BTreeMap<String, Sc> {
+pub(crate) fn inputs(values: &[(&str, f64)]) -> BTreeMap<String, Sc> {
     values
         .iter()
         .map(|(name, value)| (name.to_string(), Sc::from_f64(*value)))
@@ -182,7 +242,7 @@ fn frame_before(runner: &ProgramRunner<Sc, Pose>, step: &str, name: &str) -> Vec
 }
 
 /// The failed steps and what went wrong at the root.
-fn errors(output: &RunOutput<Pose>) -> Vec<(String, String)> {
+fn errors(output: &RunOutput) -> Vec<(String, String)> {
     output
         .step_errors
         .iter()
@@ -190,7 +250,7 @@ fn errors(output: &RunOutput<Pose>) -> Vec<(String, String)> {
         .collect()
 }
 
-fn ok(output: RunOutput<Pose>) {
+fn ok(output: RunOutput) {
     assert_eq!(errors(&output), vec![]);
 }
 
@@ -209,14 +269,17 @@ fn rebuilds_only_what_changed() {
         take_built(),
         ["step1_1@step1", "step1_2@step1", "step2@step2"]
     );
+    assert_eq!(runner.part.built(), 3, "the part counts what it built");
     assert_encloses(frame(&runner, "step2"), [0.0, 0.0, 0.5]);
 
     ok(runner.run(&program([0.0; 3]), &inputs(&[]), &no_state()));
     assert_eq!(take_built(), Vec::<String>::new());
+    assert_eq!(runner.part.built(), 3);
     assert_encloses(frame(&runner, "step2"), [0.0, 0.0, 0.5]);
 
     ok(runner.run(&program([1.0, 0.0, 0.0]), &inputs(&[]), &no_state()));
     assert_eq!(take_built(), ["step1_1@step1", "step2@step2"]);
+    assert_eq!(runner.part.built(), 5);
     assert_encloses(frame(&runner, "step2"), [0.5, 0.0, 0.5]);
 }
 
@@ -328,13 +391,10 @@ fn changed_state_rebuilds_what_read_it() {
     let args = StateFrameArgs {
         state: "body".to_string(),
     };
-    let program = Program::new(vec![ProgramStep::new::<StateFrameOperation>("s", args)]);
-    let state = |x| {
-        BTreeMap::from([(
-            "body".to_string(),
-            Pose::new(vector([x, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])),
-        )])
-    };
+    let program = Program::new(vec![
+        ProgramStep::new::<StateFrameOperation>("s", &args).unwrap(),
+    ]);
+    let state = |x| BTreeMap::from([("body".to_string(), Pose::at([x, 0.0, 0.0]))]);
 
     ok(runner.run(&program, &inputs(&[]), &no_state()));
     assert_encloses(frame(&runner, "s"), [0.0; 3]);
@@ -355,7 +415,7 @@ fn unknown_operation_fails_its_step_only() {
         state: "body".to_string(),
     };
     let program = Program::new(vec![
-        ProgramStep::new::<StateFrameOperation>("bad", args),
+        ProgramStep::new::<StateFrameOperation>("bad", &args).unwrap(),
         input_frame("a", "a", "x"),
     ]);
 
@@ -432,7 +492,7 @@ fn step_makes_one_version_of_a_target() {
     };
     let program = Program::new(vec![
         input_frame("a", "a", "x"),
-        ProgramStep::new::<ShiftFrameOperation>("s", twice),
+        ProgramStep::new::<ShiftFrameOperation>("s", &twice).unwrap(),
     ]);
     let output = runner.run(&program, &inputs(&[("x", 1.0)]), &no_state());
     assert_eq!(
@@ -451,7 +511,7 @@ fn revision_needs_an_earlier_definition() {
         errors(&output),
         [(
             "s".into(),
-            "target `a` is not defined in step `s` or before".into()
+            "target `a` is not defined before step `s`".into()
         )]
     );
 }
@@ -491,38 +551,81 @@ fn user_event_sees_the_part_before_its_step() {
     ok(runner.run(&program, &inputs(&[("x", 1.0)]), &no_state()));
 
     for (step, by) in [("s2", -2.0), ("s1", -1.0), ("s2", -2.0)] {
-        let state = runner.initial_state(&program, step).unwrap();
+        let state = runner.initial_editing(&program, step).unwrap();
         let edited = runner
-            .process_user_event(&program, step, &*state, UserEvent::PointAndClick)
+            .process_user_event(
+                &program,
+                step,
+                &*state,
+                Event::Field {
+                    key: "origin".into(),
+                    value: Value::Press,
+                },
+                None,
+            )
             .unwrap();
-        let args = edited.args.downcast_ref::<ShiftFrameArgs>().unwrap();
+        let args: ShiftFrameArgs = serde_json::from_value(edited.args).unwrap();
         assert_encloses(args.by, [by, 0.0, 0.0]);
     }
 }
 
+/// A program is plain data: it saves as it is, and a saved program runs.
 #[test]
 fn program_round_trips_through_json() {
-    let registry = registry();
     let program = Program::new(vec![input_frame("a", "a", "x"), shift_frame("s", "a", 1.0)]);
 
-    let json = registry.save(&program).unwrap();
+    let json = serde_json::to_value(&program).unwrap();
     assert_eq!(
         json,
-        serde_json::json!([
+        serde_json::json!({"steps": [
             {"id": "a", "operation": "input_frame", "args": {"target": "a", "input": "x"}},
             {"id": "s", "operation": "shift_frame", "args": {"targets": ["a"], "by": [1.0, 0.0, 0.0]}},
-        ])
+        ]})
     );
-    let loaded = registry.load(json.clone()).unwrap();
-    assert_eq!(registry.save(&loaded).unwrap(), json);
+    let loaded: Program = serde_json::from_value(json).unwrap();
+    assert_eq!(loaded, program);
 
-    let mut runner = ProgramRunner::new(registry);
+    let mut runner = runner();
     ok(runner.run(&loaded, &inputs(&[("x", 1.0)]), &no_state()));
     assert_encloses(frame(&runner, "a"), [2.0, 0.0, 0.0]);
+}
 
-    let unknown = serde_json::json!([{"id": "q", "operation": "nope", "args": {}}]);
-    let e = runner.registry.load(unknown).err().unwrap();
-    assert_eq!(e.root_message(), "unknown operation `nope`");
+/// Arguments that do not fit the operation fail the step, naming it.
+#[test]
+fn malformed_arguments_fail_their_step() {
+    let mut runner = runner();
+    let mut step = input_frame("a", "a", "x");
+    step.args = serde_json::json!({"target": 3});
+    let output = runner.run(&Program::new(vec![step]), &inputs(&[]), &no_state());
+    let errors = errors(&output);
+    assert_eq!(errors.len(), 1);
+    assert!(
+        errors[0]
+            .1
+            .starts_with("arguments of operation `input_frame`: "),
+        "{errors:?}"
+    );
+}
+
+/// Running up to a marker keeps what the steps after it made, so moving the
+/// marker back to the end reuses them.
+#[test]
+fn running_to_a_marker_keeps_later_steps() {
+    let mut runner = runner();
+    let program = Program::new(vec![
+        input_frame("a", "a", "x"),
+        shift_frame("s1", "a", 1.0),
+        shift_frame("s2", "a", 10.0),
+    ]);
+    let x = inputs(&[("x", 1.0)]);
+
+    ok(runner.run(&program, &x, &no_state()));
+    take_built();
+    ok(runner.run_until(&program, 1, &x, &no_state()));
+    assert_encloses(frame(&runner, "a"), [1.0, 0.0, 0.0]);
+    ok(runner.run(&program, &x, &no_state()));
+    assert_eq!(take_built(), Vec::<String>::new());
+    assert_encloses(frame(&runner, "a"), [12.0, 0.0, 0.0]);
 }
 
 #[test]
@@ -540,10 +643,7 @@ fn target_is_made_by_a_step() {
 }
 
 fn pose_at(x: f64) -> BTreeMap<String, Pose> {
-    BTreeMap::from([(
-        "body".to_string(),
-        Pose::new(vector([x, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])),
-    )])
+    BTreeMap::from([("body".to_string(), Pose::at([x, 0.0, 0.0]))])
 }
 
 /// An operation constrains the state, and the run reports the constraint
@@ -558,36 +658,35 @@ fn constraints_on_the_state_are_reported() {
     };
     let program = Program::new(vec![
         input_frame("a", "a", "x"),
-        ProgramStep::new::<PinFrameOperation>("pin", pin),
+        ProgramStep::new::<PinFrameOperation>("pin", &pin).unwrap(),
     ]);
     let x = inputs(&[("x", 1.0)]);
-    let identity = vec![
-        vector([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-        vector([0.0, 1.0, 0.0, 0.0, 0.0, 0.0]),
-        vector([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
-    ];
-    let residuals = |output: &RunOutput<Pose>| {
-        let residuals = &output.constraints["pin"].residuals;
+    let identity = identity(3);
+    let residuals = |runner: &ProgramRunner<_, Pose>| {
+        let residuals = &runner.part.constraints()["pin"].residuals;
         Vector3::from_array([residuals[0], residuals[1], residuals[2]])
     };
 
     let output = runner.run(&program, &x, &pose_at(3.0));
     assert_eq!(errors(&output), vec![]);
-    assert_eq!(output.constraints.keys().collect::<Vec<_>>(), ["pin"]);
     assert_eq!(
-        output.constraints["pin"].jacobian,
+        runner.part.constraints().into_keys().collect::<Vec<_>>(),
+        ["pin"]
+    );
+    assert_eq!(
+        runner.part.constraints()["pin"].jacobian,
         BTreeMap::from([("body".to_string(), identity)])
     );
-    assert_encloses(residuals(&output), [2.0, 0.0, 0.0]);
+    assert_encloses(residuals(&runner), [2.0, 0.0, 0.0]);
     take_built();
 
-    let output = runner.run(&program, &x, &pose_at(3.0));
+    runner.run(&program, &x, &pose_at(3.0));
     assert_eq!(take_built(), Vec::<String>::new());
-    assert_encloses(residuals(&output), [2.0, 0.0, 0.0]);
+    assert_encloses(residuals(&runner), [2.0, 0.0, 0.0]);
 
-    let output = runner.run(&program, &x, &pose_at(1.0));
+    runner.run(&program, &x, &pose_at(1.0));
     assert_eq!(take_built(), ["pin@pin"]);
-    assert_encloses(residuals(&output), [0.0, 0.0, 0.0]);
+    assert_encloses(residuals(&runner), [0.0, 0.0, 0.0]);
 }
 
 /// A constraint's derivatives must fit it: by states it read, a row per
@@ -600,7 +699,8 @@ fn inconsistent_constraint_is_an_error() {
     let unread = part.define_constraint("unread", &(), |_, _| {
         Ok(Constraint::<Pose> {
             residuals: vec![Sc::ZERO],
-            jacobian: BTreeMap::from([("body".to_string(), vec![Vector::zero()])]),
+            jacobian: BTreeMap::from([("body".to_string(), vec![vec![Sc::ZERO; 3]])]),
+            bound: Bound::Zero,
         })
     });
     assert_eq!(
@@ -612,7 +712,8 @@ fn inconsistent_constraint_is_an_error() {
         part.retrieve_state("body");
         Ok(Constraint::<Pose> {
             residuals: vec![Sc::ZERO; 2],
-            jacobian: BTreeMap::from([("body".to_string(), vec![Vector::zero()])]),
+            jacobian: BTreeMap::from([("body".to_string(), vec![vec![Sc::ZERO; 3]])]),
+            bound: Bound::Zero,
         })
     });
     assert_eq!(
@@ -674,11 +775,20 @@ fn edited_program_finds_each_step_by_id() {
         shift_frame("s2", "a", 5.0),
     ]);
     let click = |step| {
-        let state = runner.initial_state(&edited, step)?;
-        runner.process_user_event(&edited, step, &*state, UserEvent::PointAndClick)
+        let state = runner.initial_editing(&edited, step)?;
+        runner.process_user_event(
+            &edited,
+            step,
+            &*state,
+            Event::Field {
+                key: "origin".into(),
+                value: Value::Press,
+            },
+            None,
+        )
     };
     let edited_s2 = click("s2").unwrap();
-    let args = edited_s2.args.downcast_ref::<ShiftFrameArgs>().unwrap();
+    let args: ShiftFrameArgs = serde_json::from_value(edited_s2.args).unwrap();
     assert_encloses(args.by, [-2.0, 0.0, 0.0]);
     assert_eq!(
         click("new").err().unwrap().root_message(),
@@ -698,6 +808,7 @@ fn only_defined_constraints_are_reported() {
         Ok(Constraint {
             residuals: vec![Sc::ZERO],
             jacobian: BTreeMap::from([("body".to_string(), vec![])]),
+            bound: Bound::Zero,
         })
     })
     .unwrap();
@@ -705,8 +816,139 @@ fn only_defined_constraints_are_reported() {
         Ok(Constraint {
             residuals: vec![Sc::ZERO],
             jacobian: BTreeMap::new(),
+            bound: Bound::Zero,
         })
     })
     .unwrap();
     assert_eq!(part.constraints().keys().collect::<Vec<_>>(), [&"checked"]);
+}
+
+/// A new step starts from its operation's defaults, inserted before a step
+/// of the last run or after its last; its form is the operation's.
+#[test]
+fn new_step_starts_from_its_operation() {
+    let mut runner = runner();
+    let program = Program::new(vec![input_frame("a", "a", "x")]);
+    ok(runner.run(&program, &inputs(&[("x", 1.0)]), &no_state()));
+
+    let step = runner.new_step("shift_frame", "s", None).unwrap();
+    assert_eq!(step.operation, "shift_frame");
+    let args: ShiftFrameArgs = serde_json::from_value(step.args.clone()).unwrap();
+    assert_eq!(args, ShiftFrameArgs::default());
+    assert!(runner.new_step("shift_frame", "s", Some("a")).is_ok());
+    assert_eq!(
+        runner
+            .new_step("nope", "s", None)
+            .err()
+            .unwrap()
+            .root_message(),
+        "unknown operation `nope`"
+    );
+
+    let editing = runner.initial_editing(&program, "a").unwrap();
+    let form = runner.presentation(&program, "a", &*editing).unwrap();
+    assert_eq!(form, Form::default());
+}
+
+/// A value built up from nothing starts from its default at the first step
+/// that builds it, is revised by the later ones, and a failed version is no
+/// fresh start for the step after it.
+#[test]
+fn revise_or_start_begins_from_the_default() {
+    fn grow(
+        frame: Frame,
+        _: &mut crate::part::Reader<Sc, Pose>,
+        by: &Vector3<Sc>,
+    ) -> geop_core_math::geop_error::GeopResult<Frame> {
+        Ok(Frame {
+            data: frame.data.add(by),
+        })
+    }
+    let mut part = Part::<Sc, Pose>::default();
+    let reference = TargetReference::<Frame>::new("grown");
+    part.begin_run(&BTreeMap::new(), &BTreeMap::new());
+    part.begin_step("first").unwrap();
+    part.revise_or_start(&reference, &vector([1.0, 0.0, 0.0]), grow)
+        .unwrap();
+    part.begin_step("second").unwrap();
+    part.revise_or_start(&reference, &vector([2.0, 0.0, 0.0]), grow)
+        .unwrap();
+    assert_encloses(
+        part.current().retrieve_target(&reference).unwrap().data,
+        [3.0, 0.0, 0.0],
+    );
+
+    fn fail(
+        _: Frame,
+        _: &mut crate::part::Reader<Sc, Pose>,
+        _: &(),
+    ) -> geop_core_math::geop_error::GeopResult<Frame> {
+        Err("broken".into())
+    }
+    part.begin_step("broken").unwrap();
+    assert!(part.revise_or_start(&reference, &(), fail).is_err());
+    part.begin_step("after").unwrap();
+    let after = part.revise_or_start(&reference, &vector([1.0, 0.0, 0.0]), grow);
+    assert_eq!(
+        after.unwrap_err().root_message(),
+        "target `grown` failed in step `broken`: broken"
+    );
+}
+
+/// A view lists the targets of a kind it sees, in the order their steps
+/// made them: those made before it, not after.
+#[test]
+fn view_lists_targets_of_a_kind() {
+    let mut runner = runner();
+    let program = Program::new(vec![
+        input_frame("b", "b", "x"),
+        input_frame("a", "a", "x"),
+        input_frame("c", "c", "x"),
+    ]);
+    ok(runner.run(&program, &inputs(&[("x", 1.0)]), &no_state()));
+    fn names<'a>(view: crate::part::View<'a, Sc, Pose>) -> Vec<&'a str> {
+        let frames = view.targets_of::<Frame>();
+        frames.into_iter().map(|(name, _)| name).collect()
+    }
+    assert_eq!(names(runner.part.current()), ["b", "a", "c"]);
+    assert_eq!(names(runner.part.view_before("c").unwrap()), ["b", "a"]);
+    assert!(runner.part.current().targets_of::<Pose>().is_empty());
+}
+
+/// Between runs, a solver brings constraints up to date with a state of its
+/// own: what read the state is made again — what the constraint reads
+/// first — and nothing else, and the next run finds it all current.
+#[test]
+fn update_remakes_only_what_read_the_state() {
+    let mut runner = runner();
+    let follow = StateFrameArgs {
+        state: "body".to_string(),
+    };
+    let pin = PinFrameArgs {
+        frame: "a".to_string(),
+        state: "body".to_string(),
+    };
+    let program = Program::new(vec![
+        ProgramStep::new::<StateFrameOperation>("s", &follow).unwrap(),
+        add_two_frame("pair", [0.0; 3], [2.0, 0.0, 0.0]),
+        middle_frame("m", "s", "pair_2"),
+        input_frame("a", "a", "x"),
+        ProgramStep::new::<PinFrameOperation>("pin", &pin).unwrap(),
+    ]);
+    let x = inputs(&[("x", 1.0)]);
+    ok(runner.run(&program, &x, &pose_at(3.0)));
+    take_built();
+
+    runner.part.update(&pose_at(1.0), &["pin", "m"]);
+    assert_eq!(take_built(), ["pin@pin", "s@s", "m@m"]);
+    let pin = &runner.part.constraints()["pin"];
+    assert_encloses(
+        Vector3::from_array([pin.residuals[0], pin.residuals[1], pin.residuals[2]]),
+        [0.0; 3],
+    );
+    assert_encloses(frame(&runner, "m"), [1.5, 0.0, 0.0]);
+
+    // The run with that state: everything is current already.
+    ok(runner.run(&program, &x, &pose_at(1.0)));
+    assert_eq!(take_built(), Vec::<String>::new());
 }

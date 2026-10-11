@@ -1,16 +1,12 @@
 //! 2-D ear-clipping triangulation of a simple polygon with holes.
 //!
-//! Used to rasterize trimmed faces (faces with more than one edge_loop): such faces are
-//! planar/affine in this codebase, so triangulating the `(u, v)`
-//! outer-loop-minus-holes polygon and mapping each triangle through
-//! `surface.eval_at` gives an exact 3-D triangulation.
+//! In interval scalars, for a region drawn in a plane (a sketch's filled
+//! profile). Faces are triangulated in plain `f64` by [`crate::grid`].
 
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector2};
 
 /// A triangle of a `(u, v)` triangulation, as its three corners.
 pub type Triangle2<S> = (Vector2<S>, Vector2<S>, Vector2<S>);
-
-pub use geop_core_math::polygon::polygon_signed_area;
 
 /// Twice the signed area of `poly` (shoelace formula): positive for CCW,
 /// negative for CW.
@@ -320,7 +316,7 @@ fn merge_hole_into<S: Scalar>(
 /// in `adaptive`, a constrained-Delaunay triangulator) that respects it as
 /// a closed ring automatically excludes the holes without further
 /// bookkeeping.
-pub(crate) fn merge_outer_and_holes<S: Scalar>(
+fn merge_outer_and_holes<S: Scalar>(
     outer: &[Vector2<S>],
     holes: &[Vec<Vector2<S>>],
 ) -> Vec<Vector2<S>> {
@@ -371,7 +367,7 @@ pub fn triangulate_with_holes<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geop_core_math::for_all_scalars;
+    use geop_core_math::{for_all_scalars, polygon::polygon_signed_area};
 
     fn check_square_with_hole<S: Scalar>() {
         let f = S::from_f64;

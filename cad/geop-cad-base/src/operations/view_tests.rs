@@ -1,15 +1,20 @@
 //! Picking with a [`PartView`]: what a pointer is over, as drawn.
 
 use crate::examples::n;
+use crate::operations::testing::{origin_axis, origin_plane, pointer};
 use geop_core_math::{
-    primitives::{CoordinateSystem, Datum, DatumComponent, DatumKind, FrameAxis, Ray},
+    primitives::{CoordinateSystem, DatumKind, FrameAxis, Ray},
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
+use std::collections::BTreeMap;
+
+use geop_core_math::geop_error::GeopResult;
 use geop_ops::{
-    EntityRef, ORIGIN, Part, PlacedSketch,
-    operation::Role,
-    ui::{PartView, Pointer, Reach},
+    Design, EntityRef, NamedModel, ORIGIN, PlacedSketch,
+    model::{model, sketch},
+    operation::{Build, BuildReader, Role, Seen},
+    ui::{PartView, Pointer, Reach, ViewDatum},
 };
 use geop_ops_extrude_revolve::shapes::cube_solid;
 use geop_ops_sketch::Sketch;
@@ -18,33 +23,42 @@ fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
     Vector3::from_array([x, y, z].map(S::from_f64))
 }
 
-/// A pointer from `origin` along `dir`, reaching 0.009 units.
-fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer<S> {
-    Pointer {
-        ray: Ray::try_new(
-            v(origin[0], origin[1], origin[2]),
-            v(dir[0], dir[1], dir[2]),
-        )
-        .unwrap(),
-        reach: Reach::Tube {
-            radius: S::from_f64(0.009),
-        },
-    }
-}
-
 fn down(x: f64, y: f64) -> Pointer<S> {
     pointer([x, y, 5.0], [0.0, 0.0, -1.0])
 }
 
 /// The unit cube, named `cube(c)`.
-fn cube() -> Part<S> {
-    let mut part = Part::new();
+fn cube() -> NamedModel<S> {
+    let mut part = NamedModel::new();
     cube_solid(&mut part, "c", v(0.0, 0.0, 0.0), v(1.0, 1.0, 1.0)).unwrap();
     part
 }
 
+fn given_model(_: &mut BuildReader, m: &NamedModel<Design>) -> GeopResult<NamedModel<Design>> {
+    Ok(m.clone())
+}
+
+fn given_sketch(_: &mut BuildReader, s: &PlacedSketch<Design>) -> GeopResult<PlacedSketch<Design>> {
+    Ok(s.clone())
+}
+
+/// `model`, with `sketches` by name, as drawn: a part a program of one step
+/// would have built.
+fn drawn(model_: &NamedModel<S>, sketches: &[(&str, PlacedSketch<S>)]) -> PartView {
+    let mut part = Build::default();
+    part.begin_run(&BTreeMap::new(), &BTreeMap::new());
+    part.begin_step("given").unwrap();
+    part.define_target(&model(), model_, given_model).unwrap();
+    for (name, placed) in sketches {
+        part.define_target(&sketch(name), placed, given_sketch)
+            .unwrap();
+    }
+    part.end_run(Default::default());
+    PartView::of(&Seen::new(part.current())).unwrap()
+}
+
 /// What `pointer` picks that can fill one of `roles`.
-fn picked(view: &PartView<S>, pointer: &Pointer<S>, roles: &[Role]) -> Option<EntityRef> {
+fn picked(view: &PartView, pointer: &Pointer<S>, roles: &[Role]) -> Option<EntityRef> {
     view.pick(pointer, roles, None).map(|h| h.entity)
 }
 
@@ -55,7 +69,7 @@ const ANY: &[Role] = &[Role::Point, Role::Edge, Role::Plane];
 /// faces; and nothing where the ray misses.
 #[test]
 fn faces_and_solids() {
-    let view = PartView::of(&cube()).unwrap();
+    let view = drawn(&cube(), &[]);
     let hit = view.pick(&down(0.5, 0.5), &[Role::Plane], None).unwrap();
     assert!(matches!(hit.entity, EntityRef::Face { .. }));
     assert!(hit.point[2].could_be_equal(S::ONE), "{hit:?}");
@@ -70,7 +84,7 @@ fn faces_and_solids() {
 /// else the face — but never one hidden behind the face in front.
 #[test]
 fn the_smallest_visible_entity_wins() {
-    let view = PartView::of(&cube()).unwrap();
+    let view = drawn(&cube(), &[]);
     let kind = |pointer: Pointer<S>| match picked(&view, &pointer, ANY) {
         Some(EntityRef::Vertex { .. }) => "vertex",
         Some(EntityRef::Edge { .. }) => "edge",
@@ -108,10 +122,10 @@ fn sketches() {
         .unwrap(),
         sketch: square.clone(),
     };
-    let mut part = Part::<S>::new();
-    part.add_sketch(placed(0.0), "low").unwrap();
-    part.add_sketch(placed(1.0), "high").unwrap();
-    let view = PartView::of(&part).unwrap();
+    let view = drawn(
+        &NamedModel::new(),
+        &[("low", placed(0.0)), ("high", placed(1.0))],
+    );
     let sketch = |pointer: Pointer<S>| picked(&view, &pointer, &[Role::Sketch]);
     let named = |name: &str| Some(EntityRef::Sketch { name: name.into() });
     assert_eq!(sketch(down(0.5, 0.5)), named("high"));
@@ -124,10 +138,11 @@ fn sketches() {
 }
 
 /// Datums are hit as drawn — a plane as a square around the drawing's
-/// center — and only for the roles they can fill.
+/// center — and only for the roles they can fill. (No operation adds a
+/// datum plane while their crate is out of the workspace: it is drawn
+/// directly.)
 #[test]
 fn datums() {
-    let mut part = cube();
     let frame = |z: f64| {
         CoordinateSystem::try_new(
             v(0.0, 0.0, z),
@@ -137,15 +152,12 @@ fn datums() {
         )
         .unwrap()
     };
-    part.add_datum(
-        Datum {
-            kind: DatumKind::Plane,
-            frame: frame(3.0),
-        },
-        "above",
-    )
-    .unwrap();
-    let view = PartView::of(&part).unwrap();
+    let mut view = drawn(&cube(), &[]);
+    view.datums.push(ViewDatum {
+        name: "above".into(),
+        kind: DatumKind::Plane,
+        frame: frame(3.0),
+    });
     let datum = Some(EntityRef::datum("above"));
     // Beside the cube, but within the square drawn around its center: √3
     // across, the cube's diagonal.
@@ -161,7 +173,7 @@ fn datums() {
 /// plane's square.
 #[test]
 fn frames() {
-    let view = PartView::of(&cube()).unwrap();
+    let view = drawn(&cube(), &[]);
     let frame = [Role::Point, Role::Line, Role::Plane];
     // Ten reaches of 0.009 each: the axes reach 0.09 out.
     assert_eq!(
@@ -170,17 +182,11 @@ fn frames() {
     );
     assert_eq!(
         picked(&view, &down(0.06, 0.0), &frame),
-        Some(EntityRef::datum_component(
-            ORIGIN,
-            DatumComponent::Axis(FrameAxis::X)
-        ))
+        Some(origin_axis(FrameAxis::X))
     );
     assert_eq!(
         picked(&view, &down(0.04, 0.04), &frame),
-        Some(EntityRef::datum_component(
-            ORIGIN,
-            DatumComponent::Plane(FrameAxis::Z)
-        ))
+        Some(origin_plane(FrameAxis::Z))
     );
     // Looking for what no part of a frame can be, the cube under it.
     assert!(matches!(
@@ -212,10 +218,10 @@ fn sketch_lines() {
         .unwrap(),
         sketch: square.clone(),
     };
-    let mut part = Part::<S>::new();
-    part.add_sketch(placed(0.0), "low").unwrap();
-    part.add_sketch(placed(1.0), "high").unwrap();
-    let view = PartView::of(&part).unwrap();
+    let view = drawn(
+        &NamedModel::new(),
+        &[("low", placed(0.0)), ("high", placed(1.0))],
+    );
     let line = |sketch: &str| {
         Some(EntityRef::SketchCurve {
             sketch: sketch.into(),
@@ -253,7 +259,7 @@ fn sketch_lines() {
 #[test]
 fn edge_of_the_face_hit_at_a_glancing_angle() {
     let part = cube();
-    let view = PartView::of(&part).unwrap();
+    let view = drawn(&part, &[]);
     let (origin, aim) = ([0.5, -10.0, 1.1], [0.5, 0.9, 1.0]);
     let glancing = Pointer {
         ray: Ray::try_new(

@@ -5,12 +5,16 @@
 
 use std::collections::BTreeMap;
 
-use geop_core_math::{primitives::DatumKind, scalars::Scalar, vector::Vector3};
+use geop_core_math::{
+    primitives::{CoordinateSystem, DatumKind},
+    scalars::Scalar,
+    vector::Vector3,
+};
 use geop_ops::{
-    Part,
-    operation::Role,
+    Design,
+    operation::{Role, Seen},
     parameters::Formula,
-    ui::{Action, CanvasEvent, Change, Edit, Form, Gizmo, Number, Tone, Track},
+    ui::{Action, CanvasEvent, Change, EditForm, Gizmo, Tone, Track, formula_number},
 };
 
 use crate::{
@@ -41,25 +45,25 @@ fn group(result: DatumKind) -> &'static str {
 
 /// What `construction` needs selected, in words: `a point and a plane`.
 fn needs(construction: &ConstructionSchema) -> String {
-    let roles: Vec<&str> = construction.inputs.iter().map(|&r| r.describe()).collect();
+    let roles: Vec<String> = construction.inputs.iter().map(|&r| r.describe()).collect();
     roles.join(" and ")
 }
 
-/// What `args` builds in `part`, its numbers as the form shows them.
-fn built<S: Scalar>(
-    part: &Part<S>,
-    args: &AddDatumArgs,
-) -> Option<geop_core_math::primitives::CoordinateSystem<S>> {
-    args.inputs(part)
-        .and_then(|inputs| args.construction.build(&inputs, |f| f.peek(part.state())))
+/// What `args` builds as `seen` has the part, its numbers as the form
+/// shows them.
+fn built(seen: &Seen, args: &AddDatumArgs) -> Option<CoordinateSystem<Design>> {
+    let mut seen = seen;
+    let inputs = args.inputs(&mut seen).ok()?;
+    (args.construction)
+        .build(&inputs, |f| f.evaluate(&mut seen))
         .ok()
 }
 
-/// Where the offsets of what `args` builds in `part` are dragged, by the
-/// name of their value: an offset plane's distance on the plane, along its
-/// normal. None for a step that does not build.
-fn handles<S: Scalar>(part: &Part<S>, args: &AddDatumArgs) -> BTreeMap<&'static str, Track<S>> {
-    match (&args.construction, built(part, args)) {
+/// Where the offsets of what `args` builds are dragged, by the name of
+/// their value: an offset plane's distance on the plane, along its normal.
+/// None for a step that does not build.
+fn handles(seen: &Seen, args: &AddDatumArgs) -> BTreeMap<&'static str, Track<Design>> {
+    match (&args.construction, built(seen, args)) {
         (Construction::Offset { .. }, Some(built)) => BTreeMap::from([(
             "distance",
             Track {
@@ -72,9 +76,7 @@ fn handles<S: Scalar>(part: &Part<S>, args: &AddDatumArgs) -> BTreeMap<&'static 
 }
 
 /// The unit axes of `frame`.
-fn unit_axes<S: Scalar>(
-    frame: &geop_core_math::primitives::CoordinateSystem<S>,
-) -> Option<[Vector3<S>; 3]> {
+fn unit_axes(frame: &CoordinateSystem<Design>) -> Option<[Vector3<Design>; 3]> {
     Some([
         frame.u().normalize().ok()?,
         frame.v().normalize().ok()?,
@@ -85,7 +87,7 @@ fn unit_axes<S: Scalar>(
 /// The gizmo an offset point is moved by: at the point, along the axes its
 /// offsets are measured along — while they are plain numbers, not
 /// formulas, which a drag would overwrite.
-fn gizmo<S: Scalar>(part: &Part<S>, args: &AddDatumArgs) -> Option<Gizmo<S>> {
+fn gizmo(seen: &Seen, args: &AddDatumArgs) -> Option<Gizmo<Design>> {
     let Construction::Point { x, y, z } = &args.construction else {
         return None;
     };
@@ -93,7 +95,7 @@ fn gizmo<S: Scalar>(part: &Part<S>, args: &AddDatumArgs) -> Option<Gizmo<S>> {
         .iter()
         .all(|f| f.plain().is_some())
         .then_some(())?;
-    let built = built(part, args)?;
+    let built = built(seen, args)?;
     Some(
         Gizmo::new(*built.origin())
             .translate()
@@ -101,23 +103,18 @@ fn gizmo<S: Scalar>(part: &Part<S>, args: &AddDatumArgs) -> Option<Gizmo<S>> {
     )
 }
 
-/// The gizmo dragged: an offset point's offsets, as they were when the drag
-/// started, moved by as much along their axes.
-pub(crate) fn event<S: Scalar>(
-    part: &Part<S>,
-    edit: Edit<'_, AddDatumArgs, ()>,
-    event: &CanvasEvent<S>,
-) {
+/// The gizmo dragged: an offset point's offsets moved by as much along
+/// their axes.
+pub(crate) fn event(seen: &Seen, args: &mut AddDatumArgs, event: &CanvasEvent<Design>) {
     let CanvasEvent::Gizmo { drag, .. } = event else {
         return;
     };
-    let (Change::Translate(by), Some(axes)) = (
-        &drag.change,
-        built(part, edit.args).as_ref().and_then(unit_axes),
-    ) else {
+    let (Change::Translate(by), Some(axes)) =
+        (&drag.change, built(seen, args).as_ref().and_then(unit_axes))
+    else {
         return;
     };
-    if let Construction::Point { x, y, z } = &mut edit.args.construction {
+    if let Construction::Point { x, y, z } = &mut args.construction {
         for (offset, axis) in [x, y, z].into_iter().zip(&axes) {
             if let Some(v) = offset.plain() {
                 *offset = Formula::Plain(v + by.prod_dot(axis).to_f64());
@@ -128,8 +125,8 @@ pub(crate) fn event<S: Scalar>(
 
 /// Keeps the construction fitting the selection: one that no longer fits
 /// gives way to the first that does, if any does.
-fn follow_selection<S: Scalar>(part: &Part<S>, args: &mut AddDatumArgs) {
-    let fits = fitting_constructions(part, &args.selection);
+fn follow_selection(seen: &Seen, args: &mut AddDatumArgs) {
+    let fits = fitting_constructions(&mut { seen }, &args.selection);
     if !fits.contains(&args.construction.schema().method)
         && let Some(first) = CONSTRUCTIONS.iter().find(|c| fits.contains(&c.method))
     {
@@ -141,12 +138,12 @@ fn follow_selection<S: Scalar>(part: &Part<S>, args: &mut AddDatumArgs) {
 /// [`follow_selection`]) — the constructions, those that do not fit it
 /// saying what they need, and the construction's values, offsets with
 /// handles.
-pub(crate) fn form<'a, S: Scalar>(
-    part: &'a Part<S>,
+pub(crate) fn form<'a>(
+    seen: &'a Seen<'a>,
     args: &AddDatumArgs,
-) -> Form<'a, S, AddDatumArgs> {
-    let mut f = Form::<S, AddDatumArgs>::new();
-    let fits = fitting_constructions(part, &args.selection);
+) -> EditForm<'a, Design, AddDatumArgs> {
+    let mut f = EditForm::<Design, AddDatumArgs>::default();
+    let fits = fitting_constructions(&mut { seen }, &args.selection);
     f.reference(
         "selection",
         "selection",
@@ -156,42 +153,37 @@ pub(crate) fn form<'a, S: Scalar>(
         true,
         move |edit, selection| {
             edit.args.selection = selection;
-            follow_selection(part, edit.args);
+            follow_selection(seen, edit.args);
         },
     );
 
     let chosen = args.construction.schema();
-    f.actions(
-        "construction",
-        CONSTRUCTIONS
-            .iter()
-            .map(|c| {
-                let action = Action::new(c.method, c.label)
-                    .group(group(c.result))
-                    .active(c.method == chosen.method);
-                if fits.contains(&c.method) {
-                    action.title(c.doc)
-                } else {
-                    action.disabled(format!("{}\n\nNeeds {} selected.", c.doc, needs(c)))
-                }
-            })
-            .collect(),
-        |edit, method| {
-            if let Some(schema) = CONSTRUCTIONS.iter().find(|c| c.method == method) {
-                edit.args.construction = Construction::default_of(schema);
+    let actions = (CONSTRUCTIONS.iter())
+        .map(|c| {
+            let action = Action::new(c.method, c.label)
+                .group(group(c.result))
+                .active(c.method == chosen.method);
+            if fits.contains(&c.method) {
+                action.title(c.doc)
+            } else {
+                action.disabled(format!("{}\n\nNeeds {} selected.", c.doc, needs(c)))
             }
-        },
-    );
-    f.text("construction_doc", chosen.doc, Tone::Hint);
+        })
+        .collect();
+    f.actions("construction", actions, |edit, method| {
+        if let Some(schema) = CONSTRUCTIONS.iter().find(|c| c.method == method) {
+            edit.args.construction = Construction::default_of(schema);
+        }
+    });
+    f.form
+        .dialog
+        .text("construction_doc", chosen.doc, Tone::Hint);
     if !fits.contains(&chosen.method) {
-        f.text(
-            "construction_needs",
-            format!("Needs {} selected.", needs(chosen)),
-            Tone::Error,
-        );
+        let text = format!("Needs {} selected.", needs(chosen));
+        f.form.dialog.text("construction_needs", text, Tone::Error);
     }
-    let mut handles = handles(part, args);
-    f.gizmo = gizmo(part, args);
+    let mut handles = handles(seen, args);
+    f.form.gizmo = gizmo(seen, args);
     for param in chosen.params {
         let name = param.name;
         let set = move |args: &mut AddDatumArgs, value: serde_json::Value| {
@@ -205,17 +197,14 @@ pub(crate) fn form<'a, S: Scalar>(
                 let formula = value
                     .and_then(|v| serde_json::from_value::<Formula>(v).ok())
                     .unwrap_or(Formula::Plain(0.0));
-                f.formula(
-                    name,
-                    Number::formula(name, &formula, part.state(), unit)
-                        .range(min, max)
-                        .handle(handles.remove(name)),
-                    move |args, v| {
-                        if let Ok(v) = serde_json::to_value(v) {
-                            set(args, v)
-                        }
-                    },
-                );
+                let number = formula_number(name, &formula, &mut { seen }, unit)
+                    .range(min, max)
+                    .handle(handles.remove(name));
+                f.formula(name, number, move |args, v| {
+                    if let Ok(v) = serde_json::to_value(v) {
+                        set(args, v)
+                    }
+                });
             }
             ParamKind::Bool { .. } => {
                 let v = value.and_then(|v| v.as_bool()).unwrap_or_default();

@@ -6,14 +6,29 @@
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
-    scalars::Scalar,
+    scalars::{Field, Ring, Scalar},
     vector::Vector3,
 };
 use geop_core_topology::distance::{Feature, PlacedFace, closest_points};
-use geop_ops::{EntityRef, Part, operation::Aspects};
+use geop_ops::{
+    Design, EntityRef,
+    model::model_or_empty,
+    operation::{Aspects, BuildView, Role, Seen},
+    output::Bounded,
+    placed::{about, owner},
+    ui::{Shape, Style, Visual},
+};
 use serde::Serialize;
 
-use crate::{Bounded, bodies::resolve, mass::UNGIVEN_DENSITY};
+/// What is picked to be measured: points, edges, faces — and datums, by
+/// their points, lines and planes.
+pub const PICKS: &[Role] = &[
+    Role::Point,
+    Role::Curve,
+    Role::Face,
+    Role::Line,
+    Role::Plane,
+];
 
 /// One number a measurement shows.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -27,19 +42,48 @@ pub struct Measured {
 
 /// What picked entities measure.
 #[derive(Clone, Debug, Serialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Measurement<S: Scalar> {
+pub struct Measurement {
     /// The entities measured, as picked.
     pub entities: Vec<EntityRef>,
     pub values: Vec<Measured>,
     /// Where the least distance between two entities is attained: a point
     /// on each.
-    pub witness: Option<[Vector3<S>; 2]>,
+    pub witness: Option<[Vector3<Design>; 2]>,
     /// The plane of one planar entity picked alone — a planar face, a datum
     /// plane — to cut a section view with.
-    pub plane: Option<CoordinateSystem<S>>,
+    pub plane: Option<CoordinateSystem<Design>>,
     /// Why something could not be measured.
     pub error: Option<String>,
+}
+
+impl Measurement {
+    /// What it draws in the viewport: the least distance between two
+    /// picks, as a line between the points attaining it, labelled with it.
+    pub fn visuals(&self) -> Vec<Visual<Design>> {
+        let Some([a, b]) = self.witness else {
+            return Vec::new();
+        };
+        let mut visuals = vec![Visual::new(
+            "distance",
+            Shape::Polyline { points: vec![a, b] },
+            Style::Selected,
+        )];
+        for (key, at) in [("from", a), ("to", b)] {
+            visuals.push(Visual::new(key, Shape::Point { at }, Style::Selected));
+        }
+        if let Some(distance) = self.values.iter().find(|m| m.label == "Distance") {
+            visuals.push(Visual::new(
+                "distance-label",
+                Shape::Label {
+                    at: a.add(&b).prod_scalar(Design::from_f64(0.5)),
+                    text: format!("{:.3} mm", distance.value.value),
+                    offset: Vector3::zero(),
+                },
+                Style::Selected,
+            ));
+        }
+        visuals
+    }
 }
 
 fn measured<S: Scalar>(label: &str, value: S, unit: &'static str) -> Measured {
@@ -50,9 +94,10 @@ fn measured<S: Scalar>(label: &str, value: S, unit: &'static str) -> Measured {
     }
 }
 
-/// What `entities`, named as `part` names them, measure: nothing for none,
-/// one alone, or two together. More than two are refused.
-pub fn measure<S: Scalar>(part: &Part<S>, entities: &[EntityRef]) -> Measurement<S> {
+/// What `entities`, named as the part `view` shows names them, measure:
+/// nothing for none, one alone, or two together. More than two are
+/// refused.
+pub fn measure(view: BuildView, entities: &[EntityRef]) -> Measurement {
     let mut out = Measurement {
         entities: entities.to_vec(),
         values: Vec::new(),
@@ -62,8 +107,8 @@ pub fn measure<S: Scalar>(part: &Part<S>, entities: &[EntityRef]) -> Measurement
     };
     let result = match entities {
         [] => Ok(()),
-        [one] => alone(part, one, &mut out),
-        [a, b] => together(part, a, b, &mut out),
+        [one] => alone(view, one, &mut out),
+        [a, b] => together(view, a, b, &mut out),
         _ => Err(GeopError::new(format!(
             "{} entities are picked: a measurement takes one or two",
             entities.len()
@@ -78,14 +123,11 @@ pub fn measure<S: Scalar>(part: &Part<S>, entities: &[EntityRef]) -> Measurement
 /// One entity alone: a point's coordinates, a curve's length — an edge's
 /// or a sketch's, and its radius, if it is circular — a face's area — and
 /// radius, if it is a cylinder — a solid's volume, area and mass.
-fn alone<S: Scalar>(
-    part: &Part<S>,
-    entity: &EntityRef,
-    out: &mut Measurement<S>,
-) -> GeopResult<()> {
+fn alone(view: BuildView, entity: &EntityRef, out: &mut Measurement) -> GeopResult<()> {
     let ctx = |e: GeopError| e.with_context(format!("measuring {entity}"));
-    let aspects = Aspects::of(entity, part).with_context(&ctx)?;
-    let (owner, local, _) = resolve(part, entity).with_context(&ctx)?;
+    let aspects = Aspects::of(entity, &mut Seen::new(view)).with_context(&ctx)?;
+    let (part, _, local) = owner(view, entity).with_context(&ctx)?;
+    let owner = model_or_empty(&mut part.clone());
     out.plane = aspects.plane.clone();
     if let Some(curve) = &aspects.curve {
         out.values.push(measured(
@@ -103,12 +145,12 @@ fn alone<S: Scalar>(
             if let Some(radius) = surface.as_cylinder().with_context(&ctx)?.map(|c| c.radius) {
                 out.values.push(measured("Radius", radius, "mm"));
                 out.values
-                    .push(measured("Diameter", radius.mul(S::TWO), "mm"));
+                    .push(measured("Diameter", radius.mul(Design::TWO), "mm"));
             }
         }
         EntityRef::Solid { name } => {
-            let density = owner.material().map_or(UNGIVEN_DENSITY, |m| m.density);
-            let per_mm3 = S::from_f64(density).div(S::from_f64(1e9))?;
+            let density = about(part).material().density;
+            let per_mm3 = Design::from_f64(density).div(Design::from_f64(1e9))?;
             let solid = owner.solid_id(name)?;
             let mass = owner
                 .topology()
@@ -124,8 +166,11 @@ fn alone<S: Scalar>(
     }
     if let Some(arc) = &aspects.arc {
         out.values.push(measured("Radius", arc.circle.radius, "mm"));
-        out.values
-            .push(measured("Diameter", arc.circle.radius.mul(S::TWO), "mm"));
+        out.values.push(measured(
+            "Diameter",
+            arc.circle.radius.mul(Design::TWO),
+            "mm",
+        ));
     }
     if let Some(p) = aspects.point {
         for (k, axis) in ["X", "Y", "Z"].into_iter().enumerate() {
@@ -138,17 +183,19 @@ fn alone<S: Scalar>(
 /// Two entities together: the least distance between them, if both are
 /// points, edges or faces; the angle between them, if both have a
 /// direction; the distance between their centres, if both are circular.
-fn together<S: Scalar>(
-    part: &Part<S>,
+fn together(
+    view: BuildView,
     a: &EntityRef,
     b: &EntityRef,
-    out: &mut Measurement<S>,
+    out: &mut Measurement,
 ) -> GeopResult<()> {
     let ctx = |e: GeopError| e.with_context(format!("measuring {a} and {b}"));
-    let (fa, fb) = (feature(part, a), feature(part, b));
+    let (ma, mb) = (owned(view, a), owned(view, b));
+    let (fa, fb) = (feature(view, a, ma.as_ref()), feature(view, b, mb.as_ref()));
+    let mut seen = Seen::new(view);
     let (aa, ab) = (
-        Aspects::of(a, part).with_context(&ctx)?,
-        Aspects::of(b, part).with_context(&ctx)?,
+        Aspects::of(a, &mut seen).with_context(&ctx)?,
+        Aspects::of(b, &mut seen).with_context(&ctx)?,
     );
     match (fa, fb) {
         (Ok(fa), Ok(fb)) => {
@@ -176,17 +223,36 @@ fn together<S: Scalar>(
     Ok(())
 }
 
+/// The model of the part `entity` is of, where that part is, and the
+/// entity as it names it (see [`owner`]).
+type Owned<'a> = (
+    std::borrow::Cow<'a, geop_ops::NamedModel<Design>>,
+    Option<geop_core_math::primitives::Pose<Design>>,
+    EntityRef,
+);
+
+/// [`owner`] of `entity`, with that part's model.
+fn owned<'a>(view: BuildView<'a>, entity: &EntityRef) -> GeopResult<Owned<'a>> {
+    let (part, pose, local) = owner(view, entity)?;
+    Ok((model_or_empty(&mut part.clone()), pose, local))
+}
+
 /// What a distance can be measured to: a vertex or another point, an edge
-/// or a sketch's curve, a face — each where it is placed.
-fn feature<'p, S: Scalar>(part: &'p Part<S>, entity: &EntityRef) -> GeopResult<Feature<'p, S>> {
+/// or a sketch's curve, a face — each where it is placed; `owned` is
+/// [`owned`] of it.
+fn feature<'m>(
+    view: BuildView,
+    entity: &EntityRef,
+    owned: Result<&'m Owned, &GeopError>,
+) -> GeopResult<Feature<'m, Design>> {
     let ctx = |e: GeopError| e.with_context(format!("measuring a distance to {entity}"));
-    let (owner, local, pose) = resolve(part, entity).with_context(&ctx)?;
-    if let EntityRef::Face { name } = &local {
+    let (model, pose, local) = owned.map_err(|e| ctx(GeopError::new(e.to_string())))?;
+    if let EntityRef::Face { name } = local {
         return Ok(Feature::Face(
-            PlacedFace::new(owner.topology(), owner.face_id(name)?, pose).with_context(&ctx)?,
+            PlacedFace::new(model.topology(), model.face_id(name)?, *pose).with_context(&ctx)?,
         ));
     }
-    let aspects = Aspects::of(entity, part).with_context(&ctx)?;
+    let aspects = Aspects::of(entity, &mut Seen::new(view)).with_context(&ctx)?;
     match (aspects.curve, aspects.point) {
         (Some(curve), _) => Ok(Feature::Curve(curve)),
         (None, Some(point)) => Ok(Feature::Point(point)),

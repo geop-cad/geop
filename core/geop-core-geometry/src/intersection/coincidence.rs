@@ -28,6 +28,7 @@ use geop_core_math::{
 };
 
 use super::Intersections;
+use crate::nurb_curve::NurbCurve;
 
 /// A point of the primary curve at parameter `t` that lies on the other
 /// object at `partner` (its parameter(s) there).
@@ -85,20 +86,31 @@ pub(crate) fn find_overlaps<S: Scalar, P: Mergeable>(
     Ok(overlaps)
 }
 
-/// The primary curve's domain `domain` minus every overlap: the stretches
-/// where only isolated crossings can occur, as sharp `(lo, hi)` bounds cut
-/// at the overlaps' *outer* bounds. Stretches that aren't definitely longer
-/// than a point are dropped.
-pub(crate) fn gaps<S: Scalar, P>(domain: (S, S), overlaps: &[Overlap<S, P>]) -> Vec<(S, S)> {
-    let mut out = Vec::new();
-    let mut lo = domain.0;
-    for o in overlaps {
-        out.push((lo, o.start.t.lower()));
-        lo = o.end.t.upper();
+/// The isolated crossings of the primary `curve` away from `overlaps`:
+/// `search` run on the whole curve if there are none, else on each stretch
+/// between them — cut at the overlaps' sharp *outer* bounds, and only where
+/// definitely longer than a point.
+pub(crate) fn crossings_between<S: Scalar, const D: usize, P, R>(
+    curve: &NurbCurve<S, D>,
+    overlaps: &[Overlap<S, P>],
+    mut search: impl FnMut(&NurbCurve<S, D>) -> GeopResult<Vec<R>>,
+) -> GeopResult<Vec<R>> {
+    if overlaps.is_empty() {
+        return search(curve);
     }
-    out.push((lo, domain.1));
-    out.retain(|&(a, b)| a.definitely_less(b));
-    out
+    let (start, end) = curve.domain();
+    let mut bounds = vec![start];
+    for o in overlaps {
+        bounds.extend([o.start.t.lower(), o.end.t.upper()]);
+    }
+    bounds.push(end);
+    let mut crossings = Vec::new();
+    for gap in bounds.chunks(2) {
+        if gap[0].definitely_less(gap[1]) {
+            crossings.extend(search(&curve.sub_curve(gap[0], gap[1])?)?);
+        }
+    }
+    Ok(crossings)
 }
 
 /// `count` points spread evenly over the overlaps, by length. `probe` as in

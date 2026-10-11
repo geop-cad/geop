@@ -101,10 +101,10 @@ export interface ViewInstance {
 export interface PartView {
   /**
    * Each with the solid it belongs to, if any — else the faces standing on their own it bounds, hidden with all of
-   * them — and the 3-D sketch it is a point or a curve of, if any: drawn as the sketch's, shown and hidden with it.
+   * them.
    */
-  vertices: { name: string; solid: string | null; faces: string[]; sketch: string | null; at: Vec3 }[];
-  edges: { name: string; solid: string | null; faces: string[]; sketch: string | null; polyline: Vec3[] }[];
+  vertices: { name: string; solid: string | null; faces: string[]; at: Vec3 }[];
+  edges: { name: string; solid: string | null; faces: string[]; polyline: Vec3[] }[];
   /** Triangulated, with the kernel's surface normal at each corner. */
   faces: {
     name: string;
@@ -133,18 +133,40 @@ export interface PartView {
 
 // ── programs ─────────────────────────────────────────────────────────────────
 
-/** An operation the editor offers — see `geop_ops::OperationInfo`. */
+/** An operation the editor offers — see `geop_core_program::operation::OperationInfo`. */
 export interface OperationInfo {
   /** How a step spells it: `extrude`. */
   kind: string;
   label: string;
   doc: string;
-  /** The section of the toolbar it is in: `Features` (see `geop_ops::OperationGroup`). */
+  /** The section of the toolbar it is in: `Features` (see `geop_core_program::operation::OperationGroup`). */
   group: string;
-  /** How prominently its section offers it (see `geop_ops::OperationTier`). */
+  /** How prominently its section offers it (see `geop_core_program::operation::OperationTier`). */
   tier: OperationTier;
   /** Not yet robust enough to offer by default: reduced mode leaves it out. */
   experimental: boolean;
+}
+
+/** A kind of file the editor writes of the part — see `geop_ops::output::ExporterInfo`. */
+export interface ExporterInfo {
+  /** What [[Command]] `export` asks for it by: `stl`. */
+  kind: string;
+  /** What it is offered as: `STL`. */
+  label: string;
+  /** What the file is for, in a few words. */
+  doc: string;
+  /** The formats it writes, by their files' extension, the default first. */
+  formats: string[];
+}
+
+/** A question the editor answers about the part — see `geop_ops::output::InspectorInfo`. */
+export interface InspectorInfo {
+  /** What [[Command]] `inspect` and `pick_tool` ask it by, and what its answers are: `mass_properties`. */
+  kind: string;
+  label: string;
+  doc: string;
+  /** For one asked about entities picked: what it picks, and how many at most. */
+  picks: { roles: string[]; most: number } | null;
 }
 
 /**
@@ -322,8 +344,8 @@ export type Control =
   /** Pressing one sends its value as a choice. */
   | { type: "actions"; actions: Action[] }
   | { type: "checkbox"; label: string; value: boolean }
-  /** Files the step can be saved as: pressing one downloads it in that format (see `export_drawing`). */
-  | { type: "download"; formats: Choice[] }
+  /** Files the step can be saved as: pressing one has the exporter `exporter` write it in that format (see [[Command]] `export`). */
+  | { type: "download"; exporter: string; formats: Choice[] }
   /**
    * A slider over `range`, if given. A field that takes formulas has
    * `text`: the value as given — a number, or a formula of the parameters —
@@ -486,36 +508,29 @@ export type Command =
   | { command: "drag_tool"; on: boolean }
   /** Set a joint's coordinate — an angle in degrees, or a distance: the parts move to it. */
   | { command: "joint"; parameter: string; value: number }
-  /** Take the measure tool in hand, or put it down: with no step edited, clicks pick up to two entities to measure. */
-  | { command: "measure_tool"; on: boolean }
-  /** Ask a question of the part as drawn, answered in [[Update]] `inspection`; changes nothing. */
-  | { command: "inspect"; query: Query }
-  /** Write a drawing of the part — the drawing step `id`, else the one edited or the last — as SVG or DXF. */
-  | { command: "export_drawing"; id?: string; format: "svg" | "dxf"; date: string }
-  /** Write the assembly as a URDF robot: a ZIP archive of `robot.urdf` and its meshes. */
-  | { command: "export_urdf" }
-  /** Write the part shown as a STEP file: the update's `export`. */
-  | { command: "export_step" }
-  /** Write every solid of the part shown as a binary STL mesh: the update's `export`. */
-  | { command: "export_stl" }
-  /** Write the bill of materials of the part shown as a CSV file: the update's `export`. */
-  | { command: "export_bom"; structure: BomStructure }
-  /** Write the flat pattern of a sheet-metal body — `solid`, else the newest — as DXF for cutting: the update's `export`. */
-  | { command: "export_flat_pattern"; solid?: string }
+  /** Take the tool of the inspector `inspector` (one that picks) in hand, or — `null` — put it down: with no step edited, clicks pick what it asks about. */
+  | { command: "pick_tool"; inspector: string | null }
+  /** Ask the inspector `inspector` about the part as drawn, told its own `options`: answered in [[Update]] `inspection`; changes nothing. */
+  | { command: "inspect"; inspector: string; options?: unknown }
+  /**
+   * Write the part shown with the exporter `exporter` — in `format`, else
+   * its first — told its own `options` and dated `date` (`YYYY-MM-DD`): the
+   * update's `export`.
+   */
+  | { command: "export"; exporter: string; format?: string; options?: unknown; date?: string }
   /** Panic, on purpose: how recovering from a kernel that crashed is checked (`e2e/`). */
   | { command: "crash" };
-
-/** A question asked of the part as drawn — see `geop_cad_base::inspect::Query`. */
-export type Query = "mass_properties" | "interference" | { bom: { structure: BomStructure } };
 
 /** A file the kernel wrote, to save: text, or bytes in base64. */
 export interface ExportedFile {
   name: string;
+  /** What to save it as: `model/stl`. */
+  media_type: string;
   text?: string;
   bytes?: string;
 }
 
-/** A joint's coordinate — see `geop_ops::assembly::JointValue`. */
+/** A value of the state a user sets, a joint's coordinate — see `geop_ops::solving::SettingState`. */
 export interface JointValue {
   /** The parameter of the program's state it is: `add_part(fore,m1).angle`. */
   parameter: string;
@@ -525,7 +540,7 @@ export interface JointValue {
   max: number | null;
 }
 
-/** A joint of the part shown — see `geop_ops::assembly::JointInfo`. */
+/** Values a step offers to set, a joint's coordinates — see `geop_ops::solving::SettingsState`. */
 export interface JointInfo {
   name: string;
   kind: string;
@@ -534,11 +549,10 @@ export interface JointInfo {
   values: JointValue[];
 }
 
-/** How free each placed part is, and which mates conflict. */
+/** How free each placed part is — see `geop_ops::solving::Freedom`. */
 export interface MateFreedom {
   parts: Record<string, number>;
   total: number;
-  conflicting: string[];
 }
 
 /** A step of the program, as a list of steps shows it. */
@@ -565,8 +579,8 @@ export interface ProgramState {
   can_redo: boolean;
   /** Whether the drag tool is in hand. */
   drag_tool: boolean;
-  /** Whether the measure tool is in hand. */
-  measure_tool: boolean;
+  /** The inspector whose pick tool is in hand, if one is. */
+  pick_tool: string | null;
   /** The materials a part's can be picked from. */
   materials: Material[];
   /** What the parameters resolve to, by name — numbers, a table's row and columns, the colour — and why those that do not resolve fail. */
@@ -574,6 +588,10 @@ export interface ProgramState {
   /** What reads each parameter, by name: the steps and other parameters whose formulas do — what fails if it goes. */
   parameter_uses: Record<string, string[]>;
   operations: OperationInfo[];
+  /** What can be written of the part, for [[Command]] `export`. */
+  exporters: ExporterInfo[];
+  /** What can be asked about it, for [[Command]] `inspect` and `pick_tool`. */
+  inspectors: InspectorInfo[];
   examples: string[];
   /** Examples of several files, for [[Command]] `load_workspace_example`. */
   workspace_examples: string[];
@@ -581,16 +599,24 @@ export interface ProgramState {
   joints: JointInfo[];
   /** How free its placed parts are, if it has any. */
   freedom: MateFreedom | null;
+  /** A smallest set of its constraints that cannot all hold together: none where they all hold. */
+  conflicting: string[];
 }
 
-/** What kind of thing a [[StructureItem]] is. */
-export type StructureKind = "datum" | "sketch" | "solid" | "face" | "part" | "mate";
+/**
+ * What kind of thing a [[StructureItem]] is: `datum`, `sketch`, `solid`,
+ * `face`, `part` — or what a step lists it as, `mate` (see
+ * `geop_ops::ui::Listed`).
+ */
+export type StructureKind = string;
 
-/** A datum, sketch, solid, face standing on its own, placed part or mate of the part drawn: whether it is shown, if it is drawn at all. */
+/** An entry of the part drawn's structure: whether it is shown, if it is drawn at all, and what it refers to. */
 export interface StructureItem {
   kind: StructureKind;
   name: string;
   visible: boolean | null;
+  /** The entities it is between: lit while it is pointed at. */
+  entities: EntityRef[];
 }
 
 /**
@@ -666,15 +692,15 @@ export interface Update {
   step: StepState | null;
   /** The program files the command added, the one now edited first. */
   files: { path: string; program: Program }[] | null;
-  /** What the drag or measure tool shows, while it is in hand and no step is edited. */
+  /** What the drag or pick tool shows, while it is in hand and no step is edited. */
   tool: Presentation | null;
-  /** The file `export_drawing`, `export_urdf`, `export_step`, `export_stl`, `export_bom` or `export_flat_pattern` wrote, to save. */
+  /** The file `export` wrote, or `copy` copied. */
   export: ExportedFile | null;
-  /** What the measure tool's picks measure, while it is in hand — or the answer to an `inspect` command. */
+  /** The pick tool's inspector's answer about its picks, while it is in hand — or the answer to an `inspect` command. */
   inspection: Inspection | null;
 }
 
-// ── inspecting — see `geop_ops_inspect` ──────────────────────────────────────
+// ── inspecting — the reports of `geop_ops_inspect`'s inspectors ──────────────
 
 /** A number and how far the truth may be from it. */
 export interface Bounded {
@@ -728,7 +754,7 @@ export interface InterferenceReport {
   unchecked: { a: string; b: string; error: string }[];
 }
 
-// ── bills of materials — see `geop_ops_bom` ──────────────────────────────────
+// ── bills of materials — the report of `geop_ops_bom`'s inspector ────────────
 
 /** Every part once with its count in the whole, or the tree of sub-assemblies. */
 export type BomStructure = "flat" | "indented";
@@ -778,11 +804,17 @@ export interface Bom {
   total_mass: Bounded | null;
 }
 
-export type Inspection =
-  | ({ kind: "measure" } & Measurement)
-  | ({ kind: "mass_properties" } & MassReport)
-  | ({ kind: "interference" } & InterferenceReport)
-  | ({ kind: "bom" } & Bom);
+/**
+ * An inspector's answer — see `geop_ops::output::Inspection`: `report` is
+ * what its `kind` says. The app shows those of `measure`
+ * ([[Measurement]]), `mass_properties` ([[MassReport]]), `interference`
+ * ([[InterferenceReport]]) and `bom` ([[Bom]]) as such; any other as it
+ * comes.
+ */
+export interface Inspection {
+  kind: string;
+  report: unknown;
+}
 
 /** Apply `command` in the kernel, and get back what to show now. */
 export async function send(command: Command): Promise<Update> {

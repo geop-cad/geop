@@ -19,7 +19,6 @@ use super::{
     Intersections,
     coincidence::{self, Hit, Overlap},
 };
-use crate::nurb_surface::clamp;
 use crate::{
     aabb::{aabb_could_overlap, curve_could_meet_aabb},
     contains::curve::curve_could_contain,
@@ -27,14 +26,14 @@ use crate::{
         Stalled, carried_width, chord, clip_tensor, extent, greville_abscissae, restriction,
         spanning, stalled,
     },
-    knot_insertion::pinned_clamped_end,
-    nurb_curve::{NurbCurve, ParameterRefinable, dehomogenize},
+    nurb_curve::{NurbCurve, ParameterRefinable},
 };
 use geop_core_math::{
     disjoint_set::DisjointSet,
     geop_error::{GeopError, GeopResult, WithContext},
-    matrix::{Matrix, solve_linear_system},
+    matrix::Matrix,
     scalars::Scalar,
+    solvers::{linear::solve_linear_system, newton},
     vector::Vector,
 };
 
@@ -95,40 +94,6 @@ fn clip<S: Scalar, const D: usize, const C: usize>(
     Ok(Some(hats))
 }
 
-/// If the clip pinned `s` (`t`) exactly onto a clamped end of its curve,
-/// every solution has that curve's *endpoint* as its spatial point, so the
-/// rest is point containment in the other curve (the "boundary evaluation"
-/// of `contains/surface.md` §3). Returns the endpoint and whether it is `A`'s.
-fn pinned_endpoint<S: Scalar, const D: usize, const C: usize>(
-    a: &NurbCurve<S, D>,
-    b: &NurbCurve<S, D>,
-    hats: [S; 2],
-) -> Option<(Vector<S, C>, bool)> {
-    let endpoint = |curve: &NurbCurve<S, D>, first: bool| {
-        let cp = if first {
-            curve.control_points[0]
-        } else {
-            curve.control_points[curve.control_points.len() - 1]
-        };
-        dehomogenize::<S, D, C>(&[cp])[0]
-    };
-    let pinned = |curve: &NurbCurve<S, D>, hat: S| {
-        pinned_clamped_end(
-            hat,
-            &curve.knot_vector,
-            curve.control_points.len(),
-            curve.degree,
-        )
-    };
-    if let Some(first) = pinned(a, hats[0]) {
-        return Some((endpoint(a, first), true));
-    }
-    if let Some(first) = pinned(b, hats[1]) {
-        return Some((endpoint(b, first), false));
-    }
-    None
-}
-
 /// All `(s, t)` with `curve_a(s) = curve_b(t)`, as paired parameter boxes
 /// (`curve_curve.md`), for curves that do **not** overlap along an arc — see
 /// [`curve_curve_intersect`] for the wrapper that handles overlaps.
@@ -183,7 +148,13 @@ where
             continue;
         };
 
-        if let Some((point, on_a)) = pinned_endpoint::<S, D, C>(&a, &b, hats) {
+        // If the clip pinned `s` (`t`) exactly onto a clamped end of its
+        // curve, every solution has that curve's endpoint as its spatial
+        // point, so the rest is point containment in the other curve (the
+        // "boundary evaluation" of `contains/surface.md` §3).
+        let pinned = (a.pinned_end::<C>(hats[0]).map(|p| (p, true)))
+            .or_else(|| b.pinned_end::<C>(hats[1]).map(|p| (p, false)));
+        if let Some((point, on_a)) = pinned {
             let (other, free) = if on_a { (&b, hats[1]) } else { (&a, hats[0]) };
             let budget = max_nodes - explored;
             if let Some(t) = curve_could_contain(other, &point, budget, min_subdivision_size)?
@@ -247,6 +218,21 @@ where
     Ok(solutions.into_vec())
 }
 
+/// Where `other(t)` lies on `curve`, if it does: its parameter there.
+fn point_on<S: Scalar, const D: usize, const C: usize>(
+    curve: &NurbCurve<S, D>,
+    other: &NurbCurve<S, D>,
+    t: S,
+    max_nodes: usize,
+    min_subdivision_size: S,
+) -> GeopResult<Option<S>>
+where
+    NurbCurve<S, D>: ParameterRefinable<S, C>,
+{
+    let point = other.evaluate_cartesian(t)?;
+    curve_could_contain(curve, &point, max_nodes, min_subdivision_size)
+}
+
 /// Every stretch of `a` lying on `b` (see [`coincidence`]), with
 /// `b`'s parameter as the partner: candidates are `a`'s ends found on `b`
 /// and `b`'s ends found on `a`.
@@ -259,9 +245,8 @@ pub(crate) fn curve_curve_overlaps<S: Scalar, const D: usize, const C: usize>(
 where
     NurbCurve<S, D>: ParameterRefinable<S, C>,
 {
-    let on = |curve: &NurbCurve<S, D>, other: &NurbCurve<S, D>, t: S| -> GeopResult<Option<S>> {
-        let point = other.evaluate_cartesian(t)?;
-        curve_could_contain(curve, &point, max_nodes, min_subdivision_size)
+    let on = |curve: &NurbCurve<S, D>, other: &NurbCurve<S, D>, t: S| {
+        point_on(curve, other, t, max_nodes, min_subdivision_size)
     };
     let (a0, a1) = a.domain();
     let (b0, b1) = b.domain();
@@ -295,20 +280,9 @@ where
     NurbCurve<S, D>: ParameterRefinable<S, C>,
 {
     let overlaps = curve_curve_overlaps(a, b, max_nodes, min_subdivision_size)?;
-    if overlaps.is_empty() {
-        let crossings = curve_curve_crossings(a, b, max_nodes, min_subdivision_size)?;
-        return Ok((overlaps, crossings));
-    }
-    let mut crossings = Vec::new();
-    for (lo, hi) in coincidence::gaps(a.domain(), &overlaps) {
-        let piece = a.sub_curve(lo, hi)?;
-        crossings.extend(curve_curve_crossings(
-            &piece,
-            b,
-            max_nodes,
-            min_subdivision_size,
-        )?);
-    }
+    let crossings = coincidence::crossings_between(a, &overlaps, |piece| {
+        curve_curve_crossings(piece, b, max_nodes, min_subdivision_size)
+    })?;
     Ok((overlaps, crossings))
 }
 
@@ -356,8 +330,7 @@ where
         curve_curve_overlaps_and_crossings(curve_a, curve_b, max_nodes, min_subdivision_size)
             .with_context(&ctx)?;
     let samples = coincidence::samples(&overlaps, max_solutions, |s| {
-        let point = curve_a.evaluate_cartesian(s)?;
-        curve_could_contain(curve_b, &point, max_nodes, min_subdivision_size)
+        point_on(curve_b, curve_a, s, max_nodes, min_subdivision_size)
     })?;
     Ok(coincidence::assemble(
         &overlaps,
@@ -367,219 +340,14 @@ where
     ))
 }
 
-// The Krawczyk-verified refinement below (`TangentialDeflation`,
-// `plain_krawczyk_step`, and a Krawczyk-based `refine_crossing`) is
-// disabled for now — wiring it into `refine_crossing` regressed the
-// `geop-ops-booleans` remesh test suite's runtime (more iterations and
-// extra `evaluate`/`tangent`/`second_derivative` calls per refinement, in a
-// hot path called for every candidate edge/edge and edge/face crossing).
-// The math itself (`geop_core_math::solvers::interval_newton`, `geop_core_math::matrix`)
-// and the `Intersections` enum are unaffected and stay in active use; only
-// this file's *use* of Krawczyk for polishing a crossing is reverted to the
-// original plain (unverified) Gauss-Newton below. Kept here, commented out,
-// rather than deleted, in case it's worth revisiting with a cheaper
-// convergence check.
-//
-// use geop_core_math::solvers::interval_newton::{KrawczykStep, gauss_newton_krawczyk_step};
-//
-// /// Cross-product tangential deflation for [`refine_crossing`] — see
-// /// `geop_core_math::solvers::interval_newton`'s own doc comment for the Krawczyk math
-// /// this feeds into, and the module-level rationale for why a tangential
-// /// contact (parallel tangents, Cauchy-Schwarz equality) leaves the plain
-// /// system's Jacobian `J = [A'(s), -B'(t)]` rank-deficient: deflating to
-// /// `G = [A(s)-B(t); A'(s)×B'(t)]` recovers full rank generically, without
-// /// adding a search dimension.
-// ///
-// /// Only 3-D curves (`C = 3`) have a cross product to build `G` from; 2-D
-// /// pcurves (`C = 2`) get a no-op impl below — [`refine_crossing`]'s
-// /// unconditional "never returns a worse enclosure than it was given"
-// /// guarantee still holds there, it just can't rescue a tangential contact
-// /// the same way a 3-D one can (same as any other refinement stall).
-// pub trait TangentialDeflation<S: Scalar>: Sized {
-//     /// One Gauss-Newton-Krawczyk step on the deflated system, evaluated at
-//     /// `x_hat` (sharp point) and enclosed over `x_box`, or `None` if
-//     /// deflation isn't available here (2-D) or is itself singular (contact
-//     /// of higher order than this deflates for).
-//     fn deflated_krawczyk_step(
-//         &self,
-//         other: &Self,
-//         x_hat: Vector<S, 2>,
-//         x_box: Vector<S, 2>,
-//     ) -> Option<KrawczykStep<S>>;
-// }
-//
-// impl<S: Scalar> TangentialDeflation<S> for NurbCurve<S, 4> {
-//     fn deflated_krawczyk_step(
-//         &self,
-//         other: &Self,
-//         x_hat: Vector<S, 2>,
-//         x_box: Vector<S, 2>,
-//     ) -> Option<KrawczykStep<S>> {
-//         let pa = self.evaluate(x_hat[0]).ok()?;
-//         let pb = other.evaluate(x_hat[1]).ok()?;
-//         let ta = self.tangent(x_hat[0]).ok()?;
-//         let tb = other.tangent(x_hat[1]).ok()?;
-//         let saa = self.second_derivative(x_hat[0]).ok()?;
-//         let sbb = other.second_derivative(x_hat[1]).ok()?;
-//
-//         let ta_box = self.tangent(x_box[0]).ok()?;
-//         let tb_box = other.tangent(x_box[1]).ok()?;
-//         let saa_box = self.second_derivative(x_box[0]).ok()?;
-//         let sbb_box = other.second_derivative(x_box[1]).ok()?;
-//
-//         let f = pa.sub(&pb);
-//         let cross_hat = ta.prod_cross(&tb);
-//         let f_hat = Vector::from_array([f[0], f[1], f[2], cross_hat[0], cross_hat[1], cross_hat[2]]);
-//
-//         // ∂G/∂s = [A'(s); A''(s)×B'(t)], ∂G/∂t = [-B'(t); A'(s)×B''(t)].
-//         let tb_neg = tb.neg();
-//         let d_cross_ds_hat = saa.prod_cross(&tb);
-//         let d_cross_dt_hat = ta.prod_cross(&sbb);
-//         let jac_hat = Matrix::from_rows([
-//             [ta[0], tb_neg[0]],
-//             [ta[1], tb_neg[1]],
-//             [ta[2], tb_neg[2]],
-//             [d_cross_ds_hat[0], d_cross_dt_hat[0]],
-//             [d_cross_ds_hat[1], d_cross_dt_hat[1]],
-//             [d_cross_ds_hat[2], d_cross_dt_hat[2]],
-//         ]);
-//
-//         let tb_box_neg = tb_box.neg();
-//         let d_cross_ds_box = saa_box.prod_cross(&tb_box);
-//         let d_cross_dt_box = ta_box.prod_cross(&sbb_box);
-//         let jac_box = Matrix::from_rows([
-//             [ta_box[0], tb_box_neg[0]],
-//             [ta_box[1], tb_box_neg[1]],
-//             [ta_box[2], tb_box_neg[2]],
-//             [d_cross_ds_box[0], d_cross_dt_box[0]],
-//             [d_cross_ds_box[1], d_cross_dt_box[1]],
-//             [d_cross_ds_box[2], d_cross_dt_box[2]],
-//         ]);
-//
-//         gauss_newton_krawczyk_step(x_hat, f_hat, jac_hat, x_box, jac_box).ok()
-//     }
-// }
-//
-// impl<S: Scalar> TangentialDeflation<S> for NurbCurve<S, 3> {
-//     fn deflated_krawczyk_step(
-//         &self,
-//         _other: &Self,
-//         _x_hat: Vector<S, 2>,
-//         _x_box: Vector<S, 2>,
-//     ) -> Option<KrawczykStep<S>> {
-//         None
-//     }
-// }
-//
-// /// One [`gauss_newton_krawczyk_step`] on the plain system
-// /// `F(s, t) = A(s) - B(t) ∈ Rᶜ`, generic over `C` via [`ParameterRefinable`].
-// fn plain_krawczyk_step<S: Scalar, const D: usize, const C: usize>(
-//     curve_a: &NurbCurve<S, D>,
-//     curve_b: &NurbCurve<S, D>,
-//     x_hat: Vector<S, 2>,
-//     x_box: Vector<S, 2>,
-// ) -> Option<KrawczykStep<S>>
-// where
-//     NurbCurve<S, D>: ParameterRefinable<S, C>,
-// {
-//     let pa = curve_a.evaluate_cartesian(x_hat[0]).ok()?;
-//     let pb = curve_b.evaluate_cartesian(x_hat[1]).ok()?;
-//     let da = curve_a.tangent_cartesian(x_hat[0]).ok()?;
-//     let db = curve_b.tangent_cartesian(x_hat[1]).ok()?;
-//     let da_box = curve_a.tangent_cartesian(x_box[0]).ok()?;
-//     let db_box = curve_b.tangent_cartesian(x_box[1]).ok()?;
-//
-//     let f_hat = pa.sub(&pb);
-//     let db_neg = db.neg();
-//     let mut jac_hat = Matrix::<S, C, 2>::zero();
-//     let db_box_neg = db_box.neg();
-//     let mut jac_box = Matrix::<S, C, 2>::zero();
-//     for c in 0..C {
-//         jac_hat[(c, 0)] = da[c];
-//         jac_hat[(c, 1)] = db_neg[c];
-//         jac_box[(c, 0)] = da_box[c];
-//         jac_box[(c, 1)] = db_box_neg[c];
-//     }
-//
-//     gauss_newton_krawczyk_step(x_hat, f_hat, jac_hat, x_box, jac_box).ok()
-// }
-//
-// /// Krawczyk-verified version of `refine_crossing` -- see the module comment
-// /// above for why this is currently disabled.
-// pub fn refine_crossing_krawczyk<S: Scalar, const D: usize, const C: usize>(
-//     curve_a: &NurbCurve<S, D>,
-//     curve_b: &NurbCurve<S, D>,
-//     t_a: S,
-//     t_b: S,
-// ) -> (S, S)
-// where
-//     NurbCurve<S, D>: ParameterRefinable<S, C> + TangentialDeflation<S>,
-// {
-//     let (a_lo, a_hi) = curve_a.domain();
-//     let (b_lo, b_hi) = curve_b.domain();
-//
-//     let mut x_box = Vector::from_array([t_a, t_b]);
-//     let mut deflated = false;
-//
-//     for _ in 0..20 {
-//         let x_hat_raw = Vector::from_array([x_box[0].midpoint(), x_box[1].midpoint()]);
-//         let x_hat = Vector::from_array([
-//             clamp(x_hat_raw[0], a_lo, a_hi),
-//             clamp(x_hat_raw[1], b_lo, b_hi),
-//         ]);
-//
-//         let step = match plain_krawczyk_step::<S, D, C>(curve_a, curve_b, x_hat, x_box) {
-//             Some(step) if !deflated => step,
-//             _ => {
-//                 deflated = true;
-//                 match curve_a.deflated_krawczyk_step(curve_b, x_hat, x_box) {
-//                     Some(step) => step,
-//                     None => break,
-//                 }
-//             }
-//         };
-//
-//         if step.empty {
-//             break;
-//         }
-//
-//         let stalled = !step.contracted[0].width().definitely_less(x_box[0].width())
-//             && !step.contracted[1].width().definitely_less(x_box[1].width());
-//         x_box = step.contracted;
-//         if stalled {
-//             break;
-//         }
-//     }
-//
-//     if !x_box[0].could_be_equal(t_a) || !x_box[1].could_be_equal(t_b) {
-//         return (t_a, t_b);
-//     }
-//     (t_a.intersect(x_box[0]), t_b.intersect(x_box[1]))
-// }
-
-/// Newton iterations for [`refine_crossing`]. See `curve_surface`'s own
-/// constant — this only affects how tightly an isolated answer is pinned down.
-const REFINE_ITERATIONS: usize = 12;
-
 /// Polish one isolated `(t_a, t_b)` — as returned by [`curve_curve_intersect`]
-/// — by Gauss-Newton on `A(t_a) - B(t_b) = 0`.
+/// — by Gauss-Newton on `A(t_a) - B(t_b) = 0` ([`newton::refine`]).
 ///
-/// Two unknowns against `C` equations, so this solves the normal equations
-/// `(JᵀJ)δ = -JᵀF` with `J = [A'(t_a), -B'(t_b)]`. See
-/// `curve_surface::refine_crossing` for why subdivision and Newton are split
-/// this way, and why this is opt-in rather than applied to everything the
-/// search returns.
-///
-/// Infallible by construction: anything that stops Newton — parallel tangents
-/// making `JᵀJ` singular, an iterate leaving a domain, a refined box disjoint
-/// from the one subdivision proved the solution lies in — returns the incoming
-/// box unchanged. Refinement can only tighten, never fail.
-///
-/// (The Krawczyk-verified version above this is currently disabled — see the
-/// module comment near the top of the file — so this is plain, unverified
-/// Newton, same as before that work: it tightens an already-isolated crossing
-/// but doesn't itself certify existence/uniqueness or handle a tangential
-/// contact any better than stalling on it.)
+/// Two unknowns against `C` equations, so each step solves the normal
+/// equations `(JᵀJ)δ = -JᵀF` with `J = [A'(t_a), -B'(t_b)]`; parallel
+/// tangents make `JᵀJ` singular, and leave the box as it is. So does a
+/// refined box that provably holds no crossing — see
+/// `curve_surface::refine_crossing`.
 pub fn refine_crossing<S: Scalar, const D: usize, const C: usize>(
     curve_a: &NurbCurve<S, D>,
     curve_b: &NurbCurve<S, D>,
@@ -589,49 +357,25 @@ pub fn refine_crossing<S: Scalar, const D: usize, const C: usize>(
 where
     NurbCurve<S, D>: ParameterRefinable<S, C>,
 {
-    let (a_lo, a_hi) = curve_a.domain();
-    let (b_lo, b_hi) = curve_b.domain();
-    let (mut ta, mut tb) = (t_a.sharpen(), t_b.sharpen());
-
-    for iteration in 0..REFINE_ITERATIONS {
-        let (Ok(pa), Ok(pb)) = (
-            curve_a.evaluate_cartesian(ta),
-            curve_b.evaluate_cartesian(tb),
-        ) else {
-            return (t_a, t_b);
-        };
-        let (Ok(da), Ok(db)) = (curve_a.tangent_cartesian(ta), curve_b.tangent_cartesian(tb))
-        else {
-            return (t_a, t_b);
-        };
-
-        let f = pa.sub(&pb);
-        let m = Matrix::from_rows([
-            [da.prod_dot(&da), da.prod_dot(&db).neg()],
-            [da.prod_dot(&db).neg(), db.prod_dot(&db)],
-        ]);
-        let rhs = Vector::from_array([da.prod_dot(&f).neg(), db.prod_dot(&f)]);
-        let Ok(delta) = solve_linear_system(&m, &rhs) else {
-            return (t_a, t_b);
-        };
-
-        let next = [ta.add(delta[0]), tb.add(delta[1])];
-        let next = if iteration + 1 == REFINE_ITERATIONS {
-            next
-        } else {
-            [next[0].sharpen(), next[1].sharpen()]
-        };
-        ta = clamp(next[0], a_lo, a_hi);
-        tb = clamp(next[1], b_lo, b_hi);
-    }
-
-    if !ta.could_be_equal(t_a) || !tb.could_be_equal(t_b) {
-        return (t_a, t_b);
-    }
-    let (a_ref, b_ref) = (t_a.intersect(ta), t_b.intersect(tb));
-    // The refined box must still be able to hold a crossing — see
-    // `curve_surface::refine_crossing`: plain Newton can return a narrow box
-    // that provably misses where its root is not isolated and regular.
+    let refined = newton::refine(
+        [t_a, t_b],
+        [curve_a.domain(), curve_b.domain()],
+        |[ta, tb]| {
+            let pa = curve_a.evaluate_cartesian(ta).ok()?;
+            let pb = curve_b.evaluate_cartesian(tb).ok()?;
+            let da = curve_a.tangent_cartesian(ta).ok()?;
+            let db = curve_b.tangent_cartesian(tb).ok()?;
+            let f = pa.sub(&pb);
+            let m = Matrix::from_rows([
+                [da.prod_dot(&da), da.prod_dot(&db).neg()],
+                [da.prod_dot(&db).neg(), db.prod_dot(&db)],
+            ]);
+            let rhs = Vector::from_array([da.prod_dot(&f).neg(), db.prod_dot(&f)]);
+            let delta = solve_linear_system(&m, &rhs).ok()?;
+            Some([ta.add(delta[0]), tb.add(delta[1])])
+        },
+    );
+    let [a_ref, b_ref] = refined;
     let holds_a_crossing = match (
         curve_a.evaluate_cartesian(a_ref),
         curve_b.evaluate_cartesian(b_ref),
@@ -1255,13 +999,10 @@ mod tests {
             .unwrap()
         }
 
-        /// An order-2 tangency: with Krawczyk-verified deflation currently
-        /// disabled (see the module comment near the top of the file),
-        /// `refine_crossing` is plain Newton, whose Jacobian is *also* singular
-        /// right at a tangential contact — so this is a soundness check, same
-        /// shape as the order-4 case below, not a tightness one. (Once deflation
-        /// is re-enabled, this is exactly the case it's meant to resolve to
-        /// machine/fixed-point precision instead.)
+        /// An order-2 tangency: `refine_crossing` is plain Newton, whose
+        /// Jacobian is singular right at a tangential contact — so this is a
+        /// soundness check, same shape as the order-4 case below, not a
+        /// tightness one.
         fn check_refine_crossing_stays_sound_for_order_2_tangency<S: Scalar>() {
             let a = quadratic_tangent_to_x_axis::<S>();
             let b = x_axis_line::<S>();

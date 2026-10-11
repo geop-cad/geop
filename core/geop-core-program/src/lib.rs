@@ -14,11 +14,14 @@
 )]
 
 pub mod constraint;
+pub mod editing;
 pub mod operation;
 pub mod operation_registry;
 pub mod part;
 pub mod program;
 pub mod program_runner;
+pub mod solve;
+pub mod step_editor;
 pub mod target;
 #[cfg(test)]
 mod test;

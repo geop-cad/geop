@@ -27,6 +27,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_topology::{EdgeId, Face, FaceId, Model, VertexId};
+use grid::{dist_point_to_segment, dist3};
 
 /// Triangulate `face`'s trimmed region in `(u, v)` space — see
 /// [`grid::triangulate_face`] for the actual (curvature-sized grid, clipped
@@ -117,24 +118,6 @@ fn sample_curve<S: Scalar>(
     Ok(points)
 }
 
-fn dist3(a: [f64; 3], b: [f64; 3]) -> f64 {
-    let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-    (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
-}
-
-/// Perpendicular distance from `p` to the segment `a..b`.
-fn dist_point_to_segment(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> f64 {
-    let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-    let len2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
-    let t = if len2 > 1e-18 {
-        (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1] + (p[2] - a[2]) * ab[2]) / len2)
-            .clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    dist3(p, [a[0] + ab[0] * t, a[1] + ab[1] * t, a[2] + ab[2] * t])
-}
-
 /// Sample every vertex/edge/face of `model` into a [`RasterizedModel`].
 /// `n` is a quality: how finely a curve or surface that actually curves is
 /// approximated (see [`sample_curve`] and [`grid::triangulate_face`]), not
@@ -191,7 +174,7 @@ mod tests {
     use crate::debug::Color10;
     use geop_core_math::for_all_scalars;
     use geop_core_math::primitives::TriangleFace;
-    use geop_ops::Part;
+    use geop_ops::NamedModel;
     use geop_ops_extrude_revolve::shapes::{cube_solid, sphere::sphere_solid};
 
     /// Rasterize `model`, sanity-check it's a non-empty mesh, and save it to
@@ -206,16 +189,16 @@ mod tests {
     }
 
     fn check_rasterize_cube<S: Scalar>() {
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         cube_solid(
-            &mut part,
+            &mut model,
             "t1",
             Vector3::from_array([S::ZERO; 3]),
             Vector3::from_array([S::ONE; 3]),
         )
         .unwrap();
-        let model = part.topology();
-        rasterize_and_save(model, "cube");
+        let topology = model.topology();
+        rasterize_and_save(topology, "cube");
     }
     #[test]
     fn rasterize_cube() {
@@ -226,10 +209,10 @@ mod tests {
     /// mesh carrying the kernel's normals can be checked exactly — and a
     /// renderer shading with them gets the sphere, not its facets.
     fn check_sphere_triangles_carry_surface_normals<S: Scalar>() {
-        let mut part = Part::<S>::new();
-        sphere_solid(&mut part, "t3", Vector3::zero(), S::ONE).unwrap();
-        let model = part.topology();
-        let scene = rasterize(model, 24).unwrap().scene(|_| Color10::Blue);
+        let mut model = NamedModel::<S>::new();
+        sphere_solid(&mut model, "t3", Vector3::zero(), S::ONE).unwrap();
+        let topology = model.topology();
+        let scene = rasterize(topology, 24).unwrap().scene(|_| Color10::Blue);
         assert!(!scene.triangles.is_empty());
         let mut with_normals = 0;
         for (t, _) in &scene.triangles {
@@ -263,17 +246,17 @@ mod tests {
     /// that, a long cylinder spends as many rows up its side as it does
     /// segments around it, for nothing.
     fn check_cylinder_wall_is_refined_only_around<S: Scalar>() {
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         geop_ops_extrude_revolve::shapes::cylinder::revolved_cylinder(
-            &mut part,
+            &mut model,
             "t5",
             Vector3::zero(),
             S::ONE,
             S::from_f64(4.0),
         )
         .unwrap();
-        let model = part.topology();
-        let rasterized = rasterize(model, 24).unwrap();
+        let topology = model.topology();
+        let rasterized = rasterize(topology, 24).unwrap();
         // The wall quadrants are the faces whose triangles are all off-axis.
         let walls: Vec<&Vec<TriangleFace<S>>> = rasterized
             .faces
@@ -307,23 +290,23 @@ mod tests {
     /// A straight edge needs two points; a circular one needs enough to look
     /// round. Neither is a fixed count any more.
     fn check_edge_sampling_follows_curvature<S: Scalar>() {
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         cube_solid(
-            &mut part,
+            &mut model,
             "t2",
             Vector3::zero(),
             Vector3::from_array([S::ONE; 3]),
         )
         .unwrap();
-        let cube_edges = rasterize(part.topology(), 24).unwrap().edges;
+        let cube_edges = rasterize(model.topology(), 24).unwrap().edges;
         for polyline in cube_edges.values() {
             assert_eq!(polyline.len(), 2, "a straight edge is a single segment");
         }
 
-        let mut part = Part::<S>::new();
-        sphere_solid(&mut part, "t4", Vector3::zero(), S::ONE).unwrap();
-        let model = part.topology();
-        let sphere_edges = rasterize(model, 24).unwrap().edges;
+        let mut model = NamedModel::<S>::new();
+        sphere_solid(&mut model, "t4", Vector3::zero(), S::ONE).unwrap();
+        let topology = model.topology();
+        let sphere_edges = rasterize(topology, 24).unwrap().edges;
         for polyline in sphere_edges.values() {
             // A quarter circle of radius 1 within `1 / (4 * 24²)` of the arc
             // needs 16 segments (its sagitta falls off with the square).

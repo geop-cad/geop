@@ -4,21 +4,16 @@ import {
   applyScene,
   loadGeop,
   send,
-  type Bom,
-  type BomStructure,
   type Command,
   type EditEvent,
   type Placed,
   type EntityRef,
-  type InterferenceReport,
-  type MassReport,
-  type Measurement,
+  type Inspection,
   type OperationInfo,
   type PartView,
   type Presentation,
   type Program,
   type ProgramState,
-  type Query,
   type SceneState,
   type StepState,
   type Update,
@@ -104,12 +99,10 @@ function App() {
   const [tool, setTool] = useState<Presentation | null>(null);
   /** Why the last command was refused, if it was. */
   const [error, setError] = useState<string | null>(null);
-  /** What the measure tool's picks measure, while it is in hand. */
-  const [measurement, setMeasurement] = useState<Measurement | null>(null);
-  /** The last answers to the inspect questions — until the part changes. */
-  const [mass, setMass] = useState<MassReport | null>(null);
-  const [interference, setInterference] = useState<InterferenceReport | null>(null);
-  const [bom, setBom] = useState<Bom | null>(null);
+  /** The pick tool's answer about its picks, while it is in hand. */
+  const [picked, setPicked] = useState<Inspection | null>(null);
+  /** The last answers of the inspectors asked of the whole part, by kind — until the part changes. */
+  const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [inspecting, setInspecting] = useState(false);
   /** The section view, if one is on: the view only, never the model. */
   const [section, setSection] = useState<Section | null>(null);
@@ -185,9 +178,7 @@ function App() {
       if (update.scene) {
         setScene(update.scene);
         // The answers were about the part as it was.
-        setMass(null);
-        setInterference(null);
-        setBom(null);
+        setAnswers({});
         placedRef.current = applyScene(placedRef.current, update.scene);
         setPlaced(placedRef.current);
         const drawn = {
@@ -199,11 +190,11 @@ function App() {
       }
       setStep(update.step);
       setTool(update.tool);
+      // An answer asked for is kept; the pick tool's comes with every update.
       const inspection = update.inspection;
-      setMeasurement(inspection?.kind === "measure" ? inspection : null);
-      if (inspection?.kind === "mass_properties") setMass(inspection);
-      if (inspection?.kind === "interference") setInterference(inspection);
-      if (inspection?.kind === "bom") setBom(inspection);
+      if (command.command === "inspect") {
+        if (inspection) setAnswers((answers) => ({ ...answers, [inspection.kind]: inspection.report }));
+      } else setPicked(inspection);
       setError(update.error);
       if (!update.error && EDITS.includes(command.command)) {
         trackEdit(command, command.command === "commit" ? (step?.kind ?? undefined) : undefined);
@@ -511,23 +502,19 @@ function App() {
     }
   }
 
-  /** Write the part shown as a STEP file, and save it. */
-  async function exportStep() {
-    const update = await dispatch({ command: "export_step" });
+  /**
+   * Write the part shown with the exporter `exporter` — in `format`, else
+   * its first; told `options` and dated today — and save it: downloaded,
+   * or through VS Code.
+   */
+  async function exportWith(exporter: string, format?: string, options?: unknown) {
+    const date = new Date().toISOString().slice(0, 10);
+    const update = await dispatch({ command: "export", exporter, format, options, date });
     const file = update?.export;
-    if (file?.text == null) return;
+    if (!file) return;
     if (host) host.saveFile(file);
-    else download(file.name, file.text, "application/step");
-    trackFile("saved");
-  }
-
-  /** Write every solid of the part shown as an STL mesh, and save it. */
-  async function exportStl() {
-    const update = await dispatch({ command: "export_stl" });
-    const file = update?.export;
-    if (!file?.bytes) return;
-    if (host) host.saveFile(file);
-    else download(file.name, Uint8Array.from(atob(file.bytes), (c) => c.charCodeAt(0)), "model/stl");
+    else if (file.bytes != null) download(file.name, Uint8Array.from(atob(file.bytes), (c) => c.charCodeAt(0)), file.media_type);
+    else download(file.name, file.text ?? "", file.media_type);
     trackFile("saved");
   }
 
@@ -536,46 +523,6 @@ function App() {
     if (text == null) return;
     download(baseName(path), text, isStepFile(path) ? "application/step" : undefined);
     trackFile("saved");
-  }
-
-  /** The drawing being edited, written as `format` — dated today — and saved: downloaded, or through VS Code. */
-  async function exportDrawing(format: string) {
-    const date = new Date().toISOString().slice(0, 10);
-    const update = await dispatch({ command: "export_drawing", format: format === "dxf" ? "dxf" : "svg", date });
-    const file = update?.export;
-    if (!file) return;
-    if (host) host.saveFile(file);
-    else download(file.name, file.text ?? "", format === "dxf" ? "application/dxf" : "image/svg+xml");
-    trackFile("saved");
-  }
-
-  /** Write the bill of materials of the part shown as a CSV file, and save it. */
-  async function exportBom(structure: BomStructure) {
-    const update = await dispatch({ command: "export_bom", structure });
-    const file = update?.export;
-    if (file?.text == null) return;
-    if (host) host.saveFile(file);
-    else download(file.name, file.text, "text/csv");
-    trackFile("saved");
-  }
-
-  /** Write the flat pattern of the newest sheet-metal body as a DXF file for laser cutting, and save it. */
-  async function exportFlatPattern() {
-    const update = await dispatch({ command: "export_flat_pattern" });
-    const file = update?.export;
-    if (file?.text == null) return;
-    if (host) host.saveFile(file);
-    else download(file.name, file.text, "application/dxf");
-    trackFile("saved");
-  }
-
-  /** Export the assembly as a URDF robot, a ZIP archive, and save it. */
-  async function exportUrdf() {
-    const update = await dispatch({ command: "export_urdf" });
-    const file = update?.export;
-    if (!file?.bytes) return;
-    if (host) host.saveFile(file);
-    else download(file.name, Uint8Array.from(atob(file.bytes), (c) => c.charCodeAt(0)), "application/zip");
   }
 
   async function loadExample(name: string) {
@@ -703,12 +650,14 @@ function App() {
         onChange={(parameters) => dispatch({ command: "parameters", parameters })}
         onRename={(from, to) => dispatch({ command: "rename_parameter", from, to })}
       />
-      {(program?.joints.length ?? 0) > 0 && (
+      {((program?.joints.length ?? 0) > 0 ||
+        Object.keys(program?.freedom?.parts ?? {}).length > 0) && (
         <>
-          <h2>Joints</h2>
+          <h2>{(program?.joints.length ?? 0) > 0 ? "Joints" : "Freedom"}</h2>
           <JointsPanel
             joints={program?.joints ?? []}
             freedom={program?.freedom ?? null}
+            conflicting={program?.conflicting ?? []}
             enabled={wasmReady && step == null}
             onSet={(parameter, value) => dispatch({ command: "joint", parameter, value })}
           />
@@ -728,10 +677,10 @@ function App() {
     </section>
   );
 
-  /** Ask a question of the part as drawn; the answer replaces the last. */
-  async function inspect(query: Query) {
+  /** Ask `inspector` about the part as drawn, told `options`; the answer replaces its last. */
+  async function inspect(inspector: string, options?: unknown) {
     setInspecting(true);
-    await dispatch({ command: "inspect", query });
+    await dispatch({ command: "inspect", inspector, options });
     setInspecting(false);
   }
 
@@ -743,21 +692,22 @@ function App() {
           items={scene?.structure ?? []}
           enabled={wasmReady}
           onVisibility={(name, visible) => dispatch({ command: "visibility", name, visible })}
+          onLight={setLights}
         />
       </section>
       <section className="panel inspect-panel">
         <h2>Inspect</h2>
         <InspectPanel
           enabled={wasmReady && step == null}
-          measuring={program?.measure_tool ?? false}
-          onMeasure={(on) => dispatch({ command: "measure_tool", on })}
-          measurement={measurement}
-          mass={mass}
-          interference={interference}
-          bom={bom}
+          inspectors={program?.inspectors ?? []}
+          exporters={program?.exporters ?? []}
+          pickTool={program?.pick_tool ?? null}
+          onPickTool={(inspector) => dispatch({ command: "pick_tool", inspector })}
+          picked={picked}
+          answers={answers}
           busy={inspecting}
-          onQuery={(query) => void inspect(query)}
-          onExportBom={(structure) => void exportBom(structure)}
+          onInspect={(inspector, options) => void inspect(inspector, options)}
+          onExport={(exporter, options) => void exportWith(exporter, undefined, options)}
           section={section}
           onSection={setSection}
           size={scene?.part.extent.size ?? 1}
@@ -789,7 +739,7 @@ function App() {
       error={error}
       onCommit={() => void close({ command: "commit" })}
       onCancel={() => void close({ command: "cancel" })}
-      onDownload={(format) => void exportDrawing(format)}
+      onDownload={(exporter, format) => void exportWith(exporter, format)}
     />
   );
 
@@ -801,10 +751,8 @@ function App() {
         hasSteps={stepCount > 0}
         onNewPart={() => void createFile(freePath(workspaceRef.current.files, "part.geop"))}
         onSave={() => downloadFile(workspace.active)}
-        onExportUrdf={() => void exportUrdf()}
-        onExportStep={() => void exportStep()}
-        onExportFlatPattern={() => void exportFlatPattern()}
-        onExportStl={() => void exportStl()}
+        exporters={program?.exporters ?? []}
+        onExport={(exporter) => void exportWith(exporter)}
         onLoadFile={(file) => void uploadFiles([file])}
         exampleNames={program?.examples ?? []}
         onLoadExample={(name) => void loadExample(name)}

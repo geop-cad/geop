@@ -215,20 +215,20 @@ mod tests {
     #[test]
     fn test_vector() {
         let mut v = Vector::<ScalInF64, 3>::new();
-        v[0] = 1.into();
-        v[1] = 2.into();
-        v[2] = 3.into();
+        v[0] = ScalInF64::from_i64(1);
+        v[1] = ScalInF64::from_i64(2);
+        v[2] = ScalInF64::from_i64(3);
 
-        assert!(v[0].could_be_equal(1.into()));
-        assert!(v[1].could_be_equal(2.into()));
-        assert!(v[2].could_be_equal(3.into()));
+        assert!(v[0].could_be_equal(ScalInF64::from_i64(1)));
+        assert!(v[1].could_be_equal(ScalInF64::from_i64(2)));
+        assert!(v[2].could_be_equal(ScalInF64::from_i64(3)));
     }
 
     #[test]
     fn test_vector_everything() {
         let v = Vector::<ScalInF64, 3>::everything();
-        assert!(v[0].could_be_equal(42.0.into()));
-        assert!(v[1].could_be_equal((-1e300).into()));
-        assert!(v[2].could_be_equal(0.into()));
+        assert!(v[0].could_be_equal(ScalInF64::from_f64(42.0)));
+        assert!(v[1].could_be_equal(ScalInF64::from_f64(-1e300)));
+        assert!(v[2].could_be_equal(ScalInF64::from_i64(0)));
     }
 }

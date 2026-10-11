@@ -9,59 +9,31 @@
 
 use std::f64::consts::PI;
 
-use geop_core_math::primitives::{DatumComponent, FrameAxis};
+use geop_core_math::geop_error::GeopResult;
+use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_core_topology::Body;
-use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
+use geop_ops::{Design, EntityRef, NamedModel, model::model};
 use geop_ops_booleans::Combine;
-use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs};
+use geop_ops_extrude_revolve::{Extent, Extents};
 use geop_ops_hole::{
-    HoleArgs, HoleKind, PartThreads, Standard, ThreadArgs,
+    HoleArgs, HoleKind, Standard, ThreadArgs, Threads,
     iso::{Fit, SIZES, metric},
+    threads,
 };
-use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch};
+use geop_ops_sketch::{Constraint, Sketch};
 
-use super::regression_tests::check_valid;
 use crate::examples::n;
-use crate::{PartOperation, Program};
+use crate::operations::testing::{
+    Built, assert_valid, assert_volume, check_valid, extrusion, join, origin_plane, outline,
+    sketch, volume,
+};
+use crate::{Program, Push};
 
 /// The plate's size: 60 x 40, 10 thick, its top at `z = 10`.
 const PLATE: [f64; 3] = [60.0, 40.0, 10.0];
 
-fn assert_valid(part: &Part<S>) {
-    if let Err(report) = check_valid(part) {
-        panic!("{report}");
-    }
-}
-
-/// The volume of the solid `solid`, measured on its triangulation.
-fn volume(part: &Part<S>, solid: &str) -> f64 {
-    let id = part.solid_id(solid).unwrap();
-    let faces = part.topology().body_faces(Body::Solid(id)).unwrap();
-    let raster = geop_ops_rasterize::rasterize(part.topology(), 48).unwrap();
-    geop_ops_rasterize::stl::stl_triangles(&raster, &faces)
-        .iter()
-        .map(|t| {
-            let [a, b, c] = t.corners.map(|p| p.map(f64::from));
-            (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
-                + a[2] * (b[0] * c[1] - b[1] * c[0]))
-                / 6.0
-        })
-        .sum()
-}
-
-/// Whether `measured` is `expected` to within the mesh's accuracy: half a
-/// percent of `scale`, the volume the curved faces enclose.
-fn assert_volume(measured: f64, expected: f64, scale: f64) {
-    assert!(
-        (measured - expected).abs() <= 5e-3 * scale,
-        "volume {measured}, expected {expected} (± {})",
-        5e-3 * scale
-    );
-}
-
 /// A sketch of fixed points at `points`: `p0`, `p1`, ...
-fn points_sketch(points: &[[f64; 2]]) -> Sketch {
+pub(super) fn points_sketch(points: &[[f64; 2]]) -> Sketch {
     let mut s = Sketch::new();
     let ids: Vec<_> = points
         .iter()
@@ -78,69 +50,37 @@ fn points_sketch(points: &[[f64; 2]]) -> Sketch {
     s
 }
 
-/// A closed polygon through `corners`.
-fn polygon(corners: &[[f64; 2]]) -> Sketch {
-    let mut s = Sketch::new();
-    let p: Vec<_> = corners
-        .iter()
-        .map(|c| s.add_point(n(c[0]), n(c[1])))
-        .collect();
-    for i in 0..p.len() {
-        s.add_line(p[i], p[(i + 1) % p.len()]);
-    }
-    s
-}
-
-/// A sketch named `name` on `plane`.
-fn sketch_on(program: &mut Program, name: &str, plane: EntityRef, sketch: Sketch) {
-    program.push(
-        name,
-        AddSketchArgs {
-            plane: Some(plane),
-            sketch,
-            ..Default::default()
-        },
-    );
-}
-
-fn z_plane() -> EntityRef {
-    EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z))
-}
-
 /// The plate `extrude(plate)`, and the sketch `centres` on its top with
 /// points at `points` (in world `x`, `y`).
 pub(super) fn plate(points: &[[f64; 2]]) -> Program {
     let mut program = Program::new();
     let [w, d, t] = PLATE;
-    sketch_on(
-        &mut program,
+    program.push(
         "outline",
-        z_plane(),
-        polygon(&[[0.0, 0.0], [w, 0.0], [w, d], [0.0, d]]),
+        sketch(
+            origin_plane(FrameAxis::Z),
+            outline(&[[0.0, 0.0], [w, 0.0], [w, d], [0.0, d]]),
+        ),
     );
     program.push(
         "plate",
-        ExtrudeArgs {
-            sketch: "outline".into(),
-            extent: Extents::blind(t),
-            face: false,
-            combine: Combine::NewBody,
-        },
+        extrusion("outline", Extents::blind(t), Combine::NewBody),
     );
-    sketch_on(
-        &mut program,
+    program.push(
         "centres",
-        EntityRef::Face {
-            name: "extrude(plate,end)".into(),
-        },
-        points_sketch(points),
+        sketch(
+            EntityRef::Face {
+                name: "extrude(plate,end)".into(),
+            },
+            points_sketch(points),
+        ),
     );
     program
 }
 
 /// A hole of `kind` and `standard` drilled into the plate's top at every
 /// point of the sketch `centres`, as far as `end`.
-fn hole(kind: HoleKind, standard: Standard, end: Extent) -> HoleArgs {
+pub(super) fn hole(kind: HoleKind, standard: Standard, end: Extent) -> HoleArgs {
     HoleArgs {
         face: "extrude(plate,end)".into(),
         points: vec![EntityRef::Sketch {
@@ -154,17 +94,52 @@ fn hole(kind: HoleKind, standard: Standard, end: Extent) -> HoleArgs {
     }
 }
 
-fn iso(size: &str, fit: Fit) -> Standard {
+pub(super) fn iso(size: &str, fit: Fit) -> Standard {
     Standard::Iso {
         size: size.into(),
         fit,
     }
 }
 
+/// A program as built: its model, and the cosmetic threads its steps
+/// recorded.
+pub(super) struct Made {
+    pub(super) model: NamedModel<S>,
+    pub(super) threads: Threads<Design>,
+}
+
+impl std::ops::Deref for Made {
+    type Target = NamedModel<S>;
+
+    fn deref(&self) -> &NamedModel<S> {
+        &self.model
+    }
+}
+
+impl Made {
+    /// The cosmetic thread `name`.
+    pub(super) fn thread(&self, name: &str) -> GeopResult<&geop_ops_hole::CosmeticThread<Design>> {
+        self.threads.get(name)
+    }
+}
+
+/// `program`, built: its model and threads.
+pub(super) fn made(program: &Program) -> GeopResult<Made> {
+    let runner = program.built()?;
+    let view = runner.part.current();
+    Ok(Made {
+        model: view.retrieve_target(&model()).cloned().unwrap_or_default(),
+        threads: view
+            .retrieve_target(&threads())
+            .cloned()
+            .unwrap_or_default(),
+    })
+}
+
 /// `program` with `args` as the step `h`, built and checked valid.
-fn drilled(mut program: Program, args: HoleArgs) -> Part<S> {
-    program.push("h", PartOperation::Hole(args));
-    let part = program.build::<S>(&NoFiles).unwrap();
+fn drilled(mut program: Program, args: HoleArgs) -> Made {
+    program.push("h", args);
+    let part = made(&program).unwrap();
     assert_valid(&part);
     part
 }
@@ -193,7 +168,7 @@ fn blind_clearance_hole() {
             .unwrap();
     }
     let removed = cylinder(6.6, 6.0);
-    assert_volume(volume(&part, "hole(h)"), plate_volume() - removed, removed);
+    assert_volume(&part, "hole(h)", plate_volume() - removed, 5e-3 * removed);
 }
 
 /// A blind hole ending in a drill's point: a 118° cone below the depth.
@@ -206,7 +181,7 @@ fn blind_hole_with_drill_point() {
     let r = 8.4 / 2.0;
     let tip = r / 59f64.to_radians().tan();
     let removed = cylinder(8.4, 5.0) + PI * r * r * tip / 3.0;
-    assert_volume(volume(&part, "hole(h)"), plate_volume() - removed, removed);
+    assert_volume(&part, "hole(h)", plate_volume() - removed, 5e-3 * removed);
 }
 
 /// A counterbored M5 hole through all: the counterbore Ø10, as deep as the
@@ -223,7 +198,7 @@ fn counterbored_hole_through_all() {
     );
     part.face_id("hole(h,centres,p0,shoulder,q0)").unwrap();
     let removed = cylinder(10.0, 5.0) + cylinder(5.5, 5.0);
-    assert_volume(volume(&part, "hole(h)"), plate_volume() - removed, removed);
+    assert_volume(&part, "hole(h)", plate_volume() - removed, 5e-3 * removed);
 }
 
 /// A countersunk M6 hole through all: a 90° cone Ø12.6 on the face.
@@ -241,7 +216,7 @@ fn countersunk_hole_through_all() {
     let (rs, r) = (12.6 / 2.0, 6.6 / 2.0);
     let cone = rs - r;
     let removed = PI * cone / 3.0 * (rs * rs + rs * r + r * r) + cylinder(6.6, PLATE[2] - cone);
-    assert_volume(volume(&part, "hole(h)"), plate_volume() - removed, removed);
+    assert_volume(&part, "hole(h)", plate_volume() - removed, 5e-3 * removed);
 }
 
 /// A custom hole: the diameter given by hand.
@@ -260,7 +235,7 @@ fn custom_hole() {
         ),
     );
     let removed = cylinder(9.0, 3.0) + cylinder(4.0, 4.0);
-    assert_volume(volume(&part, "hole(h)"), plate_volume() - removed, removed);
+    assert_volume(&part, "hole(h)", plate_volume() - removed, 5e-3 * removed);
 }
 
 /// A tapped M6 hole, 8 deep: drilled to the tap drill, Ø5, and its wall
@@ -272,7 +247,7 @@ fn tapped_hole_carries_a_cosmetic_thread() {
         hole(HoleKind::Tapped, iso("M6", Fit::Normal), Extent::blind(8.0)),
     );
     let removed = cylinder(5.0, 8.0);
-    assert_volume(volume(&part, "hole(h)"), plate_volume() - removed, removed);
+    assert_volume(&part, "hole(h)", plate_volume() - removed, 5e-3 * removed);
     let thread = part.thread("hole(h,centres,p0,thread)").unwrap();
     assert_eq!(thread.designation, "M6x1");
     assert!(thread.internal);
@@ -290,12 +265,10 @@ fn tapped_hole_carries_a_cosmetic_thread() {
         thread.axis.point
     );
     assert!(thread.axis.direction.could_be_equal(&v([0.0, 0.0, -1.0])));
-    // Drawn, and described.
-    let view = geop_ops::ui::PartView::of(&part).unwrap();
-    assert_eq!(view.annotations.len(), 1);
-    assert!(view.annotations[0].polyline.len() > 8 * 4);
-    let description = geop_ops::PartDescription::of(&part).unwrap();
-    assert_eq!(description.extensions["threads"].len(), 1);
+    // Drawn.
+    let annotations = part.threads.drawn("h").unwrap();
+    assert_eq!(annotations.len(), 1);
+    assert!(annotations[0].polyline.len() > 8 * 4);
 
     // Through all, the thread runs through the whole plate.
     let part = drilled(
@@ -310,8 +283,8 @@ fn tapped_hole_carries_a_cosmetic_thread() {
     let mut args = hole(HoleKind::Tapped, iso("M6", Fit::Normal), Extent::blind(8.0));
     args.thread_length = Some(9.0);
     let mut program = plate(&[[20.0, 20.0]]);
-    program.push("h", PartOperation::Hole(args));
-    let error = program.build::<S>(&NoFiles).err().expect("refused");
+    program.push("h", args);
+    let error = program.build_model().expect_err("refused");
     assert!(error.root_message().contains("only 8"), "{error}");
 }
 
@@ -328,41 +301,41 @@ fn a_pattern_of_points_in_one_sketch() {
             .unwrap();
     }
     let removed = 4.0 * cylinder(4.5, PLATE[2]);
-    assert_volume(volume(&part, "hole(h)"), plate_volume() - removed, removed);
+    assert_volume(&part, "hole(h)", plate_volume() - removed, 5e-3 * removed);
 }
 
-// /// Points picked one by one, a sketch point and a datum point 10 in from
-// /// the plate's corner: two holes.
-// #[test]
-// fn points_picked_one_by_one() {
-//     let mut program = plate(&[[20.0, 20.0], [40.0, 20.0]]);
-//     program.push(
-//         "corner",
-//         geop_ops_datums::AddDatumArgs {
-//             selection: vec![EntityRef::Vertex {
-//                 name: "extrude(plate,outline,p2,end)".into(),
-//             }],
-//             construction: geop_ops_datums::Construction::Point {
-//                 x: (-10.0).into(),
-//                 y: (-10.0).into(),
-//                 z: 0.0.into(),
-//             },
-//         },
-//     );
-//     let mut args = hole(HoleKind::Simple, iso("M3", Fit::Close), Extent::blind(3.0));
-//     args.points = vec![
-//         EntityRef::SketchPoint {
-//             sketch: "centres".into(),
-//             point: geop_core_sketch::PointId(1),
-//         },
-//         EntityRef::datum("corner"),
-//     ];
-//     let part = drilled(program, args);
-//     part.face_id("hole(h,centres,p1,wall,q0)").unwrap();
-//     part.face_id("hole(h,corner,wall,q0)").unwrap();
-//     let removed = 2.0 * cylinder(3.2, 3.0);
-//     assert_volume(volume(&part, "hole(h)"), plate_volume() - removed, removed);
-// }
+/// Points picked one by one, a sketch point and a datum point 10 in from
+/// the plate's corner: two holes.
+#[test]
+fn points_picked_one_by_one() {
+    let mut program = plate(&[[20.0, 20.0], [40.0, 20.0]]);
+    program.push(
+        "corner",
+        geop_ops_datums::AddDatumArgs {
+            selection: vec![EntityRef::Vertex {
+                name: "extrude(plate,outline,p2,end)".into(),
+            }],
+            construction: geop_ops_datums::Construction::Point {
+                x: (-10.0).into(),
+                y: (-10.0).into(),
+                z: 0.0.into(),
+            },
+        },
+    );
+    let mut args = hole(HoleKind::Simple, iso("M3", Fit::Close), Extent::blind(3.0));
+    args.points = vec![
+        EntityRef::SketchPoint {
+            sketch: "centres".into(),
+            point: geop_core_sketch::PointId(1),
+        },
+        EntityRef::datum("corner"),
+    ];
+    let part = drilled(program, args);
+    part.face_id("hole(h,centres,p1,wall,q0)").unwrap();
+    part.face_id("hole(h,corner,wall,q0)").unwrap();
+    let removed = 2.0 * cylinder(3.2, 3.0);
+    assert_volume(&part, "hole(h)", plate_volume() - removed, 5e-3 * removed);
+}
 
 /// A "C" lying on its back, two arms 10 thick with a gap of 10 between:
 /// up to next goes through the top arm and stops in the gap, through all
@@ -371,39 +344,36 @@ fn a_pattern_of_points_in_one_sketch() {
 fn up_to_next_stops_in_the_gap() {
     let program = || {
         let mut program = Program::new();
-        sketch_on(
-            &mut program,
+        program.push(
             "c",
-            z_plane(),
-            polygon(&[
-                [0.0, 0.0],
-                [40.0, 0.0],
-                [40.0, 10.0],
-                [10.0, 10.0],
-                [10.0, 20.0],
-                [40.0, 20.0],
-                [40.0, 30.0],
-                [0.0, 30.0],
-            ]),
+            sketch(
+                origin_plane(FrameAxis::Z),
+                outline(&[
+                    [0.0, 0.0],
+                    [40.0, 0.0],
+                    [40.0, 10.0],
+                    [10.0, 10.0],
+                    [10.0, 20.0],
+                    [40.0, 20.0],
+                    [40.0, 30.0],
+                    [0.0, 30.0],
+                ]),
+            ),
         );
         program.push(
             "block",
-            ExtrudeArgs {
-                sketch: "c".into(),
-                extent: Extents::blind(10.0),
-                face: false,
-                combine: Combine::NewBody,
-            },
+            extrusion("c", Extents::blind(10.0), Combine::NewBody),
         );
         // On the top arm's top, `y = 30`: sketch `x` is world `x`, sketch
         // `y` world `-z`.
-        sketch_on(
-            &mut program,
+        program.push(
             "centres",
-            EntityRef::Face {
-                name: "extrude(block,c,c14)".into(),
-            },
-            points_sketch(&[[25.0, -5.0]]),
+            sketch(
+                EntityRef::Face {
+                    name: "extrude(block,c,c14)".into(),
+                },
+                points_sketch(&[[25.0, -5.0]]),
+            ),
         );
         program
     };
@@ -414,9 +384,9 @@ fn up_to_next_stops_in_the_gap() {
     let block = 40.0 * 30.0 * 10.0 - 30.0 * 10.0 * 10.0;
     let wall = cylinder(6.6, 10.0);
     let part = drilled(program(), args(Extent::UpToNext));
-    assert_volume(volume(&part, "hole(h)"), block - wall, wall);
+    assert_volume(&part, "hole(h)", block - wall, 5e-3 * wall);
     let part = drilled(program(), args(Extent::ThroughAll));
-    assert_volume(volume(&part, "hole(h)"), block - 2.0 * wall, wall);
+    assert_volume(&part, "hole(h)", block - 2.0 * wall, 5e-3 * wall);
 }
 
 /// A hole drilled down from the flat top of a "D" lying along `x` comes out
@@ -432,30 +402,21 @@ fn hole_coming_out_through_a_curved_face() {
     let b = d.add_point(n(-10.0), n(10.0));
     d.add_line(a, b);
     d.add_arc(b, a, n(PI));
-    sketch_on(
-        &mut program,
-        "d",
-        EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::X)),
-        d,
-    );
+    program.push("d", sketch(origin_plane(FrameAxis::X), d));
     program.push(
         "bar",
-        ExtrudeArgs {
-            sketch: "d".into(),
-            extent: Extents::blind(30.0),
-            face: false,
-            combine: Combine::NewBody,
-        },
+        extrusion("d", Extents::blind(30.0), Combine::NewBody),
     );
     let top = "extrude(bar,d,c2)";
     // Measured on the same mesh, so its error on the round bottom cancels.
-    let bar = volume(&program.build::<S>(&NoFiles).unwrap(), "extrude(bar)");
+    let bar = volume(&program.build_model().unwrap(), "extrude(bar)");
     // On the top, normal `+z`: sketch `x`, `y` are world `x`, `y`.
-    sketch_on(
-        &mut program,
+    program.push(
         "centres",
-        EntityRef::Face { name: top.into() },
-        points_sketch(&[[15.0, 3.0]]),
+        sketch(
+            EntityRef::Face { name: top.into() },
+            points_sketch(&[[15.0, 3.0]]),
+        ),
     );
     let part = drilled(
         program,
@@ -479,7 +440,7 @@ fn hole_coming_out_through_a_curved_face() {
             }
         }
     }
-    assert_volume(volume(&part, "hole(h)"), bar - removed, removed);
+    assert_volume(&part, "hole(h)", bar - removed, 5e-3 * removed);
 }
 
 /// What is not supported is refused, saying why: a point off the face, a
@@ -489,12 +450,15 @@ fn hole_coming_out_through_a_curved_face() {
 fn unsupported_holes_are_refused() {
     let refused = |program: Program, args: HoleArgs, says: &str| {
         let mut program = program;
-        program.push("h", PartOperation::Hole(args));
-        let error = program.build::<S>(&NoFiles).err().expect("refused");
+        program.push("h", args);
+        let error = program.build_model().expect_err("refused");
         assert!(error.root_message().contains(says), "{error}");
     };
     let mut off = plate(&[[20.0, 20.0]]);
-    sketch_on(&mut off, "below", z_plane(), points_sketch(&[[5.0, 5.0]]));
+    off.push(
+        "below",
+        sketch(origin_plane(FrameAxis::Z), points_sketch(&[[5.0, 5.0]])),
+    );
     refused(
         off,
         HoleArgs {
@@ -548,40 +512,32 @@ fn shaft() -> Program {
         s.add_circle(c, n(r));
         s
     };
-    sketch_on(&mut program, "head_circle", z_plane(), circle(5.0));
+    program.push(
+        "head_circle",
+        sketch(origin_plane(FrameAxis::Z), circle(5.0)),
+    );
     program.push(
         "head",
-        ExtrudeArgs {
-            sketch: "head_circle".into(),
-            extent: Extents::blind(5.0),
-            face: false,
-            combine: Combine::NewBody,
-        },
+        extrusion("head_circle", Extents::blind(5.0), Combine::NewBody),
     );
-    sketch_on(
-        &mut program,
+    program.push(
         "shank_circle",
-        EntityRef::Face {
-            name: "extrude(head,end)".into(),
-        },
-        circle(3.0),
+        sketch(
+            EntityRef::Face {
+                name: "extrude(head,end)".into(),
+            },
+            circle(3.0),
+        ),
     );
     program.push(
         "shank",
-        ExtrudeArgs {
-            sketch: "shank_circle".into(),
-            extent: Extents::blind(20.0),
-            face: false,
-            combine: Combine::Union {
-                target: "extrude(head)".into(),
-            },
-        },
+        extrusion("shank_circle", Extents::blind(20.0), join("extrude(head)")),
     );
     program
 }
 
 /// The name of a face of the shank's round side.
-fn shaft_side(part: &Part<S>) -> String {
+fn shaft_side(part: &NamedModel<S>) -> String {
     part.names()
         .iter()
         .map(|(_, name)| name.to_string())
@@ -600,19 +556,19 @@ fn shaft_side(part: &Part<S>) -> String {
 #[test]
 fn cosmetic_thread_on_a_shaft() {
     let program = shaft();
-    let side = shaft_side(&program.build::<S>(&NoFiles).unwrap());
+    let side = shaft_side(&program.build_model().unwrap());
     let mut threaded = program.clone();
     threaded.push(
         "t",
-        PartOperation::Thread(ThreadArgs {
+        ThreadArgs {
             face: side.clone(),
             size: "M6".into(),
             length: None,
             reversed: false,
             modelled: false,
-        }),
+        },
     );
-    let part = threaded.build::<S>(&NoFiles).unwrap();
+    let part = made(&threaded).unwrap();
     let thread = part.thread("thread(t)").unwrap();
     assert!(!thread.internal);
     // Measured on the model: the shaft's length, to rounding.
@@ -622,15 +578,15 @@ fn cosmetic_thread_on_a_shaft() {
     let mut reversed = program.clone();
     reversed.push(
         "t",
-        PartOperation::Thread(ThreadArgs {
+        ThreadArgs {
             face: side.clone(),
             size: "M6".into(),
             length: Some(12.0),
             reversed: true,
             modelled: false,
-        }),
+        },
     );
-    let part = reversed.build::<S>(&NoFiles).unwrap();
+    let part = made(&reversed).unwrap();
     let thread = part.thread("thread(t)").unwrap();
     assert_eq!(thread.length, 12.0);
     assert!(thread.axis.point[2].could_be_equal(S::from_f64(5.0)));
@@ -639,15 +595,15 @@ fn cosmetic_thread_on_a_shaft() {
     let mut wrong = program.clone();
     wrong.push(
         "t",
-        PartOperation::Thread(ThreadArgs {
+        ThreadArgs {
             face: side,
             size: "M8".into(),
             length: None,
             reversed: false,
             modelled: false,
-        }),
+        },
     );
-    let error = wrong.build::<S>(&NoFiles).err().expect("refused");
+    let error = wrong.build_model().expect_err("refused");
     assert!(error.root_message().contains("needs a shaft of"), "{error}");
 }
 
@@ -670,20 +626,20 @@ fn groove_per_turn(radius: f64, minor: f64, pitch: f64) -> f64 {
 #[ignore = "slow: a modelled thread's booleans take half a minute — run with `cargo test -- --ignored`"]
 fn modelled_thread_on_a_shaft() {
     let program = shaft();
-    let blank = program.build::<S>(&NoFiles).unwrap();
+    let blank = program.build_model().unwrap();
     let side = shaft_side(&blank);
     let mut threaded = program;
     threaded.push(
         "t",
-        PartOperation::Thread(ThreadArgs {
+        ThreadArgs {
             face: side,
             size: "M6".into(),
             length: Some(5.0),
             reversed: false,
             modelled: true,
-        }),
+        },
     );
-    let part = threaded.build::<S>(&NoFiles).unwrap();
+    let part = made(&threaded).unwrap();
     assert_valid(&part);
     assert!(
         part.names()
@@ -708,23 +664,19 @@ fn modelled_thread_in_a_tapped_hole() {
     let mut program = plate(&[[20.0, 20.0]]);
     program.push(
         "h",
-        PartOperation::Hole(hole(
-            HoleKind::Tapped,
-            iso("M6", Fit::Normal),
-            Extent::ThroughAll,
-        )),
+        hole(HoleKind::Tapped, iso("M6", Fit::Normal), Extent::ThroughAll),
     );
     program.push(
         "t",
-        PartOperation::Thread(ThreadArgs {
+        ThreadArgs {
             face: "hole(h,centres,p0,wall,q0)".into(),
             size: "M6".into(),
             length: Some(6.0),
             reversed: false,
             modelled: true,
-        }),
+        },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     let before = plate_volume() - cylinder(5.0, PLATE[2]);
     let removed = before - volume(&part, "thread(t)");
@@ -756,35 +708,29 @@ fn every_iso_size_and_kind() {
             for end in [Extent::blind(30.0), Extent::ThroughAll] {
                 let mut program = Program::new();
                 let (w, t) = (100.0, 40.0);
-                sketch_on(
-                    &mut program,
+                program.push(
                     "outline",
-                    z_plane(),
-                    polygon(&[[0.0, 0.0], [w, 0.0], [w, w], [0.0, w]]),
+                    sketch(
+                        origin_plane(FrameAxis::Z),
+                        outline(&[[0.0, 0.0], [w, 0.0], [w, w], [0.0, w]]),
+                    ),
                 );
                 program.push(
                     "plate",
-                    ExtrudeArgs {
-                        sketch: "outline".into(),
-                        extent: Extents::blind(t),
-                        face: false,
-                        combine: Combine::NewBody,
-                    },
-                );
-                sketch_on(
-                    &mut program,
-                    "centres",
-                    EntityRef::Face {
-                        name: "extrude(plate,end)".into(),
-                    },
-                    points_sketch(&[[50.0, 50.0]]),
+                    extrusion("outline", Extents::blind(t), Combine::NewBody),
                 );
                 program.push(
-                    "h",
-                    PartOperation::Hole(hole(kind, iso(size.name, Fit::Normal), end.clone())),
+                    "centres",
+                    sketch(
+                        EntityRef::Face {
+                            name: "extrude(plate,end)".into(),
+                        },
+                        points_sketch(&[[50.0, 50.0]]),
+                    ),
                 );
+                program.push("h", hole(kind, iso(size.name, Fit::Normal), end.clone()));
                 let label = format!("{} {kind:?} {end:?}", size.name);
-                match program.build::<S>(&NoFiles) {
+                match program.build_model() {
                     Err(e) => failures.push(format!("{label}: {e}")),
                     Ok(part) => {
                         if let Err(report) = check_valid(&part) {

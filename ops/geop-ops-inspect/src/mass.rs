@@ -1,15 +1,18 @@
 //! [`mass_report`]: the mass properties of every solid a part shows, and of
 //! all of them together.
 
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
+use geop_core_math::{
+    geop_error::GeopResult,
+    scalars::{Ring, Scalar},
+};
 use geop_core_topology::mass::MassProperties;
-use geop_ops::{Part, parameters::Material};
+use geop_ops::{
+    Design,
+    operation::BuildView,
+    output::Bounded,
+    solids::{Shapes, placed_solids},
+};
 use serde::Serialize;
-
-use crate::{Bounded, bodies::placed_solids};
-
-/// What a part whose material is not given is weighed as: water.
-pub const UNGIVEN_DENSITY: f64 = 1000.0;
 
 /// Mass properties as shown, in millimetres and kilograms: the volume
 /// (mm³), the area of the boundary (mm²), the mass (kg), the centre of mass
@@ -75,28 +78,20 @@ pub struct MassReport {
     pub total: Option<MassSummary>,
 }
 
-/// The material `part` is made of, its density in kg/m³, and whether it
-/// was assumed.
-pub fn material_of<S: Scalar>(part: &Part<S>) -> (String, f64, bool) {
-    match part.material() {
-        Some(Material { name, density }) => (name.clone(), *density, false),
-        None => ("Water (no material given)".into(), UNGIVEN_DENSITY, true),
-    }
-}
-
-/// The mass properties of every solid of `part` — its own, and those of the
-/// parts placed in it, where they are and of their own parts' materials —
-/// and of all of them together. Lengths are millimetres: a density in
-/// kg/m³ is `1e-9` kg/mm³.
-pub fn mass_report<S: Scalar>(part: &Part<S>) -> GeopResult<MassReport> {
+/// The mass properties of every solid of the part `view` shows — its own,
+/// and those of the parts placed in it, where they are and of their own
+/// parts' materials — and of all of them together. A part placed many
+/// times is integrated once.
+pub fn mass_report(view: BuildView) -> GeopResult<MassReport> {
     let mut bodies = Vec::new();
     let mut all = Vec::new();
-    let mut area = (S::ZERO, true);
+    let mut area = (Design::ZERO, true);
     let mut complete = true;
-    for placed in placed_solids(part)? {
-        let (material, density, assumed) = material_of(placed.part);
-        let computed = placed.mass_properties().and_then(|p| {
-            let a = placed.part.topology().solid_area(placed.solid)?;
+    let mut shapes = Shapes::default();
+    for placed in placed_solids(view)? {
+        let material = placed.material();
+        let computed = placed.mass_properties(&mut shapes).and_then(|p| {
+            let a = placed.model.topology().solid_area(placed.solid)?;
             Ok((MassSummary::of(&p, a)?, p, a))
         });
         let (properties, error) = match computed {
@@ -112,9 +107,9 @@ pub fn mass_report<S: Scalar>(part: &Part<S>) -> GeopResult<MassReport> {
         };
         bodies.push(BodyMass {
             name: placed.name,
-            material,
-            density,
-            assumed,
+            material: material.name,
+            density: material.density,
+            assumed: material.assumed,
             properties,
             error,
         });

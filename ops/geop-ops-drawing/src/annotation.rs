@@ -11,7 +11,7 @@
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
+    scalars::{Ring, Scalar},
     vector::Vector3,
 };
 use geop_core_sketch::{
@@ -19,7 +19,11 @@ use geop_core_sketch::{
     plain::{add, cross, dist, dot, perp, scale, sub, unit},
 };
 use geop_core_topology::EdgeId;
-use geop_ops::{Part, RefId, operation::INSTANCE_SEPARATOR};
+use geop_ops::{
+    Design, RefId,
+    operation::{BuildView, INSTANCE_SEPARATOR},
+    output::sheet::{Anchor, Label, Layer, P, Shape, Sheet},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -28,7 +32,6 @@ use crate::{
         placed_edge, placed_vertex,
     },
     scene::Scene,
-    sheet::{Anchor, Label, Layer, P, Shape, Sheet},
     view::{DrawnView, ViewFrame},
 };
 
@@ -282,10 +285,11 @@ impl Annotation {
         }
     }
 
-    /// How it is drawn on `layout`'s sheet, measured anew in `part` — or
+    /// How it is drawn on `layout`'s sheet, measured anew in the part
+    /// `part` shows — or
     /// why it cannot be: its view is gone, an entity it names is, or the
     /// view does not show what it measures.
-    pub fn drawn<S: Scalar>(&self, part: &Part<S>, layout: &Layout) -> GeopResult<Drawn> {
+    pub fn drawn(&self, part: BuildView, layout: &Layout) -> GeopResult<Drawn> {
         let paper_scale = layout.scale;
         match self {
             Annotation::Distance {
@@ -295,7 +299,7 @@ impl Annotation {
                 along,
                 label,
             } => {
-                let (p, frame) = measuring::<S>(layout, *view)?;
+                let (p, frame) = measuring::<Design>(layout, *view)?;
                 let (a, b) = (paper(part, &frame, from)?, paper(part, &frame, to)?);
                 let (direction, value) = match along {
                     Along::Aligned => (sub(b, a), dist(a, b)),
@@ -327,7 +331,7 @@ impl Annotation {
                 diameter,
                 label,
             } => {
-                let (p, frame) = measuring::<S>(layout, *view)?;
+                let (p, frame) = measuring::<Design>(layout, *view)?;
                 let (center, radius) = round(part, p, &frame, edge, paper_scale)?;
                 let text = match diameter {
                     true => format!("⌀{}", length_label(2.0 * radius)),
@@ -343,7 +347,7 @@ impl Annotation {
                 Ok(drawn)
             }
             Annotation::Angle { view, a, b, label } => {
-                let (p, frame) = measuring::<S>(layout, *view)?;
+                let (p, frame) = measuring::<Design>(layout, *view)?;
                 let side = |edge: &str| -> GeopResult<(P, P)> {
                     let curve = placed_edge(part, edge)?;
                     if curve.as_line()?.is_none() {
@@ -415,7 +419,7 @@ impl Annotation {
                 Ok(drawn)
             }
             Annotation::CenterMark { view, edge } => {
-                let (p, frame) = measuring::<S>(layout, *view)?;
+                let (p, frame) = measuring::<Design>(layout, *view)?;
                 let (c, radius) = round(part, p, &frame, edge, paper_scale)?;
                 let reach = radius * paper_scale + CENTER_OVERSHOOT;
                 Ok(Drawn {
@@ -472,7 +476,7 @@ fn measuring<S: Scalar>(
 
 /// Where `target` is on the paper of the view looking along `frame`, in
 /// model units.
-fn paper<S: Scalar>(part: &Part<S>, frame: &ViewFrame<S>, target: &Target) -> GeopResult<P> {
+fn paper(part: BuildView, frame: &ViewFrame<Design>, target: &Target) -> GeopResult<P> {
     let point = match target {
         Target::Vertex { name } => placed_vertex(part, name)?,
         Target::Center { edge } => {
@@ -486,7 +490,7 @@ fn paper<S: Scalar>(part: &Part<S>, frame: &ViewFrame<S>, target: &Target) -> Ge
             let curve = placed_edge(part, name)?;
             let (t0, t1) = curve.domain();
             // Any point of it would do: its middle, sharp.
-            curve.evaluate(t0.add(t1).mul(S::from_f64(0.5)).sharpen())?
+            curve.evaluate(t0.add(t1).mul(Design::from_f64(0.5)).sharpen())?
         }
     };
     let q = frame.project_point(&point);
@@ -496,10 +500,10 @@ fn paper<S: Scalar>(part: &Part<S>, frame: &ViewFrame<S>, target: &Target) -> Ge
 /// The centre of the circular edge `edge` on the sheet drawn at `scale`,
 /// and its radius — refused unless the view placed at `p`, looking along
 /// `frame`, sees it round.
-fn round<S: Scalar>(
-    part: &Part<S>,
+fn round(
+    part: BuildView,
     p: &Placement,
-    frame: &ViewFrame<S>,
+    frame: &ViewFrame<Design>,
     edge: &str,
     scale: f64,
 ) -> GeopResult<(P, f64)> {
@@ -661,7 +665,7 @@ pub(crate) fn candidates<S: Scalar>(
             let b = &scene.bodies[body];
             let model = b.model();
             let named = |id: RefId| {
-                b.part.name_of(id).map(|n| match b.path.as_str() {
+                b.named.name_of(id).map(|n| match b.path.as_str() {
                     "" => n.to_string(),
                     path => format!("{path}{INSTANCE_SEPARATOR}{n}"),
                 })

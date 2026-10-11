@@ -20,7 +20,7 @@ use geop_core_math::{
     vector::Vector2,
 };
 use geop_core_topology::SolidId;
-use geop_ops::{Namer, Part};
+use geop_ops::{NamedModel, Namer};
 use geop_ops_extrude_revolve::{common::Profile, common::line2, revolve::revolve_at_oriented};
 
 use crate::iso::MetricSize;
@@ -155,7 +155,7 @@ impl HoleShape {
 /// revolved a full turn around `w`, into a solid named `solid`, its faces
 /// named by `namer` (see the module docs).
 pub fn hole_tool<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     solid: &str,
     axes: &CoordinateSystem<S>,
@@ -163,5 +163,5 @@ pub fn hole_tool<S: Scalar>(
     depth: HoleDepth,
 ) -> GeopResult<SolidId> {
     let section = shape.section(depth)?;
-    revolve_at_oriented(part, namer, solid, &section, axes)
+    revolve_at_oriented(model, namer, solid, &section, axes)
 }

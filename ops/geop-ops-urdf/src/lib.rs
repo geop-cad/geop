@@ -1,5 +1,6 @@
 //! URDF export: an assembly as a robot description, for simulators — ROS,
-//! Gazebo, MuJoCo, PyBullet, Isaac — to load ([`export`]).
+//! Gazebo, MuJoCo, PyBullet, Isaac — to load ([`export`]), written by the
+//! exporter [`Urdf`] as one ZIP archive of the robot and its meshes.
 //!
 //! A robot is a tree of **links** joined by **joints**. Its links are the
 //! placed parts, those that mates hold rigidly together merged into one,
@@ -22,7 +23,7 @@
 //!
 //! **Inertia.** Each link's mass, centre of mass and inertia tensor come
 //! from the exact B-rep of its solids, each of its own part's material
-//! (see [`geop_ops_inspect::mass`]), the tensor about the centre of mass
+//! (see [`geop_ops::solids`]), the tensor about the centre of mass
 //! along the link frame's axes.
 //!
 //! **Meshes.** Each placed component is meshed once, in its own frame, as
@@ -40,25 +41,34 @@ mod xml;
 pub mod zip;
 
 use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
+    collections::{BTreeMap, BTreeSet, HashMap},
+    rc::Rc,
 };
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    primitives::{Pose, Quaternion, TriangleFace},
-    scalars::Scalar,
+    primitives::{Pose, Quaternion},
+    scalars::{Field, Ring, Scalar},
     vector::Vector3,
 };
-use geop_core_solve::mates::{JointEnd, JointKind, Motion};
 use geop_core_topology::mass::MassProperties;
-use geop_ops::{Instance, Part};
-use geop_ops_assembly::{Mechanism, PartMates, PlacedBody};
-use geop_ops_inspect::bodies::placed_solids;
-use geop_ops_rasterize::{
-    rasterize,
-    stl::{StlFormat, outward, write_stl},
+use geop_ops::{
+    Design, ParamValue,
+    model::model,
+    operation::BuildView,
+    output::{Content, Export, Exporter, ExporterInfo, Output, STL_QUALITY},
+    placed::{Component, Instance, about, placed_parts},
+    solids::{Shapes, own_solids},
+    solving::check,
 };
+use geop_ops_assembly::{
+    CouplingKind, JointKind, Motion, Resolved, joint_parameter,
+    joints::{Connector, measure},
+    mate_name,
+    residuals::D,
+};
+use geop_ops_rasterize::stl::{StlFormat, outward, write_stl};
+use serde::Deserialize;
 
 /// The URDF file's path in an export.
 pub const URDF_FILE: &str = "robot.urdf";
@@ -194,6 +204,46 @@ impl UrdfExport {
     }
 }
 
+/// Writes an assembly as a URDF robot: one ZIP archive of `robot.urdf` and
+/// its meshes (see [`export`]).
+pub struct Urdf;
+
+/// How a URDF robot is written.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct UrdfOptions {
+    /// How finely curved faces are meshed: higher is smoother, and bigger.
+    pub quality: usize,
+}
+
+impl Default for UrdfOptions {
+    fn default() -> Self {
+        Self {
+            quality: STL_QUALITY,
+        }
+    }
+}
+
+impl Exporter for Urdf {
+    const INFO: ExporterInfo = ExporterInfo {
+        kind: "urdf",
+        label: "URDF",
+        doc: "robot, for simulators",
+        formats: &["zip"],
+    };
+    type Options = UrdfOptions;
+
+    fn export(output: &mut Output, _: &str, options: UrdfOptions) -> GeopResult<Export> {
+        let name = output.stem();
+        let robot = export(output, &name, options.quality)?;
+        Ok(Export {
+            name: format!("{name}.zip"),
+            media_type: "application/zip".into(),
+            content: Content::Bytes(robot.zip()?),
+        })
+    }
+}
+
 /// `name` as a file name: letters, digits, `-` and `_`, every other
 /// character `_`.
 fn file_name(name: &str) -> String {
@@ -207,9 +257,186 @@ fn file_name(name: &str) -> String {
     if name.is_empty() { "part".into() } else { name }
 }
 
+/// A rigid body of the mechanism: a part placed in the assembly, however
+/// deep.
+pub struct Body<'a> {
+    /// Its name in the assembly: `hinge/pin`.
+    pub name: String,
+    /// Whether the mates may move it: it has a pose of its own to solve
+    /// for, and no fixed mate holds it. A copy of a pattern goes where the
+    /// pattern puts it, and is held to the ground like a fixed part.
+    pub free: bool,
+    /// Where it is in the assembly.
+    pub world: Pose<Design>,
+    pub instance: &'a Instance,
+}
+
+/// An end of a joint: the body it is on — none for the assembly itself —
+/// and its connector, in that body's frame.
+pub struct End {
+    pub body: Option<usize>,
+    pub connector: Connector<Design>,
+}
+
+/// A joint of the mechanism, at the coordinates the state has: the angle in
+/// degrees, and the distance.
+pub struct MechanismJoint {
+    pub name: String,
+    pub kind: JointKind,
+    pub a: End,
+    pub b: End,
+    pub angle: Design,
+    pub distance: Design,
+}
+
+/// A coupling of the mechanism: its second joint's coordinate following
+/// its first's, by index in [`Mechanism::joints`].
+pub struct Coupling {
+    pub name: String,
+    pub kind: CouplingKind,
+    pub a: usize,
+    pub b: usize,
+}
+
+/// The rigid bodies of an assembly and its mates between them, as the
+/// part a view shows has them: the bodies in the order they were placed,
+/// the constraints — by name, and the bodies of their two entities — the
+/// joints and the couplings each in the order the steps made them.
+pub struct Mechanism<'a> {
+    pub bodies: Vec<Body<'a>>,
+    pub constraints: Vec<(String, [Option<usize>; 2])>,
+    pub joints: Vec<MechanismJoint>,
+    pub couplings: Vec<Coupling>,
+}
+
+impl<'a> Mechanism<'a> {
+    /// The mechanism of the part `view` shows, its joints at the
+    /// coordinates the state has them — or, where it has none, where their
+    /// parts are.
+    pub fn of(view: BuildView<'a>) -> GeopResult<Self> {
+        let placed = placed_parts(view)?;
+        let resolved: Vec<(&str, &Resolved)> = (view.targets_of::<Resolved>().into_iter())
+            .filter_map(|(target, resolved)| Some((mate_name(target)?, resolved)))
+            .collect();
+        let fixed: BTreeSet<&str> = (resolved.iter())
+            .filter_map(|(_, r)| match r {
+                Resolved::Fixed { body } => Some(body.as_str()),
+                _ => None,
+            })
+            .collect();
+        let bodies: Vec<Body> = (placed.into_iter())
+            .map(|p| Body {
+                free: p.located.parameter.is_some() && !fixed.contains(p.name.as_str()),
+                world: p.located.world,
+                instance: p.located.instance,
+                name: p.name,
+            })
+            .collect();
+        let index: HashMap<&str, usize> = (bodies.iter().enumerate())
+            .map(|(i, b)| (b.name.as_str(), i))
+            .collect();
+        let body = |name: &Option<String>| -> GeopResult<Option<usize>> {
+            name.as_ref()
+                .map(|n| {
+                    (index.get(n.as_str()).copied())
+                        .ok_or_else(|| GeopError::new(format!("no part is placed as {n:?}")))
+                })
+                .transpose()
+        };
+        let mut constraints = Vec::new();
+        let mut joints = Vec::new();
+        let mut coupled = Vec::new();
+        for (name, mate) in &resolved {
+            let ctx = |e: GeopError| e.with_context(format!("the mate {name:?}"));
+            match mate {
+                Resolved::Constraint { a, b, .. } => constraints.push((
+                    name.to_string(),
+                    [
+                        body(&a.body).with_context(&ctx)?,
+                        body(&b.body).with_context(&ctx)?,
+                    ],
+                )),
+                Resolved::Joint { kind, a, b } => {
+                    let (a, b) = (
+                        End {
+                            body: body(&a.body).with_context(&ctx)?,
+                            connector: a.what,
+                        },
+                        End {
+                            body: body(&b.body).with_context(&ctx)?,
+                            connector: b.what,
+                        },
+                    );
+                    let world = |end: &End| end.body.map(|b| bodies[b].world);
+                    let measured = measure(
+                        &end_world(&a.connector, world(&a).as_ref()),
+                        &end_world(&b.connector, world(&b).as_ref()),
+                    );
+                    let mut coordinates = [Design::ZERO; 2];
+                    for (k, motion) in Motion::ALL.into_iter().enumerate() {
+                        if kind.moves(motion) {
+                            coordinates[k] =
+                                match view.retrieve_state(&joint_parameter(name, motion)) {
+                                    ParamValue::Number(value) => value,
+                                    // Where its parts are: what a solve
+                                    // would start it from.
+                                    _ => Design::from_f64(measured[k]),
+                                };
+                        }
+                    }
+                    joints.push(MechanismJoint {
+                        name: name.to_string(),
+                        kind: *kind,
+                        a,
+                        b,
+                        angle: coordinates[0],
+                        distance: coordinates[1],
+                    });
+                }
+                Resolved::Coupling { kind, joints } => {
+                    coupled.push((name.to_string(), *kind, joints.clone()));
+                }
+                Resolved::Fixed { .. } => {}
+            }
+        }
+        let couplings = (coupled.into_iter())
+            .map(|(name, kind, [a, b])| {
+                let find = |joint: &str| {
+                    (joints.iter().position(|j: &MechanismJoint| j.name == joint)).ok_or_else(
+                        || {
+                            GeopError::new(format!(
+                                "the coupling {name:?} ties the joint {joint:?}, which there is none of"
+                            ))
+                        },
+                    )
+                };
+                Ok(Coupling {
+                    a: find(&a)?,
+                    b: find(&b)?,
+                    name,
+                    kind,
+                })
+            })
+            .collect::<GeopResult<_>>()?;
+        Ok(Mechanism {
+            bodies,
+            constraints,
+            joints,
+            couplings,
+        })
+    }
+}
+
+/// `connector` where `pose` puts it — or, with none, where it is — in
+/// dual numbers, as [`measure`] takes it.
+fn end_world(connector: &Connector<Design>, pose: Option<&Pose<Design>>) -> Connector<D> {
+    let pose = pose.map(|p| p.map(D::cst));
+    connector.placed(pose.as_ref())
+}
+
 /// The frame of a joint's end `end`, where its body is: origin on the
 /// axis, `z` along it, `x` the reference turns are measured from.
-fn frame<S: Scalar>(end: &JointEnd<S>, world: &[Pose<S>]) -> GeopResult<Pose<S>> {
+fn frame(end: &End, bodies: &[Body]) -> GeopResult<Pose<Design>> {
     let c = &end.connector;
     let y = c.axis.prod_cross(&c.reference);
     let local = Pose::new(
@@ -217,75 +444,52 @@ fn frame<S: Scalar>(end: &JointEnd<S>, world: &[Pose<S>]) -> GeopResult<Pose<S>>
         Quaternion::from_rotation_columns([c.reference, y, c.axis])?,
     )?;
     Ok(match end.body {
-        Some(b) => world[b].compose(&local),
+        Some(b) => bodies[b].world.compose(&local),
         None => local,
     })
 }
 
 /// A turn by `degrees` about `z`.
-fn turn<S: Scalar>(degrees: S) -> GeopResult<Pose<S>> {
-    let radians = degrees.mul(S::PI).div(S::from_i64(180))?;
+fn turn(degrees: Design) -> GeopResult<Pose<Design>> {
+    let radians = degrees.mul(Design::PI).div(Design::from_i64(180))?;
     Pose::rotation_about(&Vector3::zero(), &Vector3::axis(2), radians)
 }
 
 /// A slide by `distance` along `z`.
-fn slide<S: Scalar>(distance: S) -> Pose<S> {
-    Pose::identity().with_position(Vector3::from_array([S::ZERO, S::ZERO, distance]))
+fn slide(distance: Design) -> Pose<Design> {
+    Pose::identity().with_position(Vector3::from_array([Design::ZERO, Design::ZERO, distance]))
 }
 
-/// The triangles of every solid of `part` — not of the parts placed in it,
-/// which are bodies of their own — in its own frame, moved by `pose`.
-fn triangles<S: Scalar>(
-    part: &Part<S>,
-    pose: &Pose<S>,
-    quality: usize,
-    out: &mut Vec<TriangleFace<S>>,
-) -> GeopResult<()> {
-    let model = part.topology();
-    let raster = rasterize(model, quality)?;
-    let motion = pose.motion();
-    let mut solids: Vec<_> = model.solids.keys().copied().collect();
-    solids.sort_by_key(|s| s.0);
-    for solid in solids {
-        let mut faces = model.solid_faces(solid)?;
-        faces.sort_by_key(|f| f.0);
-        for t in faces.iter().filter_map(|f| raster.faces.get(f)).flatten() {
-            out.push(TriangleFace {
-                a: motion.apply(&t.a),
-                b: motion.apply(&t.b),
-                c: motion.apply(&t.c),
-                normal: motion.rotate(&t.normal),
-                vertex_normals: t.vertex_normals.map(|ns| ns.map(|n| motion.rotate(&n))),
-            });
-        }
-    }
-    Ok(())
-}
-
-/// The meshes of an export, each written once: per component — and
-/// whether its placed parts are in it — the mesh's path, if it has any
-/// triangles.
+/// The meshes of an export, each written once: per component — none for
+/// the assembly's own solids — the mesh's path, if it has any triangles.
 struct Meshes {
-    paths: HashMap<usize, Option<String>>,
+    paths: HashMap<Option<*const Component>, Option<String>>,
     files: Vec<(String, Vec<u8>)>,
     quality: usize,
 }
 
 impl Meshes {
-    /// The path of the mesh of `part`, called `stem`, written now if it was
-    /// not yet; `None` if it has no solids. `key` names the part.
-    fn of<S: Scalar>(
+    /// The path of the mesh of the solids of the part `view` shows itself —
+    /// not of the parts placed in it, which are bodies of their own — in its
+    /// own frame, called `stem`, written now if it was not yet; `None` if it
+    /// has no solids. `key` names the part.
+    fn of(
         &mut self,
-        key: usize,
+        key: Option<*const Component>,
         stem: &str,
-        part: &Part<S>,
+        view: BuildView,
     ) -> GeopResult<Option<String>> {
         if let Some(path) = self.paths.get(&key) {
             return Ok(path.clone());
         }
-        let mut faces = Vec::new();
-        triangles(part, &Pose::identity(), self.quality, &mut faces)?;
-        let path = if faces.is_empty() {
+        let triangles: Vec<_> = match view.retrieve_target(&model()) {
+            Ok(model) => (model.solid_meshes(self.quality)?.into_iter())
+                .flat_map(|(_, triangles)| triangles)
+                .collect(),
+            // A part with no model has no solids.
+            Err(_) => Vec::new(),
+        };
+        let path = if triangles.is_empty() {
             None
         } else {
             let stem = file_name(stem);
@@ -295,7 +499,7 @@ impl Meshes {
                 n += 1;
                 path = format!("meshes/{stem}_{n}.stl");
             }
-            let stl: Vec<_> = faces.iter().map(outward).collect();
+            let stl: Vec<_> = triangles.iter().map(outward).collect();
             let mut bytes = Vec::new();
             write_stl(&stl, stem.as_str(), StlFormat::Binary, &mut bytes)
                 .map_err(|e| GeopError::new(format!("writing {path}: {e}")))?;
@@ -307,52 +511,67 @@ impl Meshes {
     }
 }
 
-/// The name of an instance's file without folders or `.geop`: `link`.
-fn stem_of<S: Scalar>(instance: &Instance<S>) -> String {
-    let file = instance.file.rsplit(['/', ':']).next().unwrap_or_default();
-    file.trim_end_matches(".geop").to_string()
+/// The mass properties of the solids of the part `view` shows itself,
+/// where `pose` puts them, each of its part's material; `name` the part's.
+fn masses(
+    view: BuildView,
+    name: &str,
+    pose: Option<&Pose<Design>>,
+    shapes: &mut Shapes,
+    out: &mut Vec<MassProperties<Design>>,
+) -> GeopResult<()> {
+    for solid in own_solids(view)? {
+        let ctx = |e: GeopError| e.with_context(format!("the mass of {name}/{}", solid.name));
+        let own = solid.mass_properties(shapes).with_context(&ctx)?;
+        out.push(match pose {
+            Some(pose) => own.placed(pose).with_context(&ctx)?,
+            None => own,
+        });
+    }
+    Ok(())
 }
 
-/// `part` — an assembly, where its parts are now — as a URDF robot called
-/// `name`, meshed `quality` fine (see [`geop_ops_rasterize::rasterize`]).
-/// Refuses an assembly whose mates do not hold where its parts are — it
-/// would describe a robot that is not the one drawn — and one URDF cannot
-/// express (see [`tree`]).
-pub fn export<S: Scalar>(part: &Part<S>, name: &str, quality: usize) -> GeopResult<UrdfExport> {
+/// The assembly `output` built — where its parts are now — as a URDF robot
+/// called `name`, meshed `quality` fine (see
+/// [`geop_ops_rasterize::rasterize`]). Refuses an assembly whose mates do
+/// not hold where its parts are — it would describe a robot that is not the
+/// one drawn — and one URDF cannot express (see [`tree`]).
+pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<UrdfExport> {
     let ctx = |e: GeopError| e.with_context(format!("exporting {name:?} as URDF"));
-    let report = part.check_mates(|_| true).with_context(&ctx)?;
+    let report = check(output.part()).with_context(&ctx)?;
     if !report.converged {
         return Err(ctx(GeopError::new(format!(
             "the mates {} do not hold where the parts are: solve the assembly before exporting it",
             report.failed.join(", ")
         ))));
     }
-    let mechanism = part.mechanism().with_context(&ctx)?;
-    let tree = tree::tree(&mechanism).with_context(&ctx)?;
-    let assembly = &mechanism.assembly;
-    let world: Vec<Pose<S>> = assembly.bodies.iter().map(|b| b.pose).collect();
+    // The tree, and every joint's coordinates: what is held to ask what
+    // mates alone leave free to move.
+    let (tree, held) = {
+        let mechanism = Mechanism::of(output.part()).with_context(&ctx)?;
+        let held: BTreeSet<String> = (mechanism.joints.iter())
+            .flat_map(|j| (j.kind.motions().into_iter()).map(|m| joint_parameter(&j.name, m)))
+            .collect();
+        (tree::tree(&mechanism).with_context(&ctx)?, held)
+    };
+    let freedom = output.freedom(&held).with_context(&ctx)?;
+    let view = output.part();
+    let mechanism = Mechanism::of(view).with_context(&ctx)?;
+    tree::check_rigid(&mechanism, &tree, &freedom.parts).with_context(&ctx)?;
+    let bodies = &mechanism.bodies;
 
     // Each link's frame in the assembly, and each joint, in tree order.
     let mut frames = vec![Pose::identity(); tree.links.len()];
     let mut joints = Vec::new();
     for tj in &tree.joints {
-        let joint = &assembly.joints[tj.joint];
-        let joint_name = mechanism.joint_name(tj.joint);
-        let jctx = |e: GeopError| e.with_context(format!("the joint {joint_name:?}"));
-        let start = frame(&joint.a, &world).with_context(&jctx)?;
+        let joint = &mechanism.joints[tj.joint];
+        let jctx = |e: GeopError| e.with_context(format!("the joint {:?}", joint.name));
+        let start = frame(&joint.a, bodies).with_context(&jctx)?;
         // What of the joint's motion stays — a revolute joint's offset
         // along its axis, a slider's turn about it — and what moves.
         let (fixed, moving, motion) = match joint.kind {
-            JointKind::Revolute { .. } => (
-                slide(joint.distance.value),
-                turn(joint.angle.value)?,
-                Motion::Turn,
-            ),
-            JointKind::Slider { .. } => (
-                turn(joint.angle.value)?,
-                slide(joint.distance.value),
-                Motion::Slide,
-            ),
+            JointKind::Revolute { .. } => (slide(joint.distance), turn(joint.angle)?, Motion::Turn),
+            JointKind::Slider { .. } => (turn(joint.angle)?, slide(joint.distance), Motion::Slide),
             _ => unreachable!("tree refuses every other moving joint"),
         };
         let at_zero = start.compose(&fixed);
@@ -379,7 +598,7 @@ pub fn export<S: Scalar>(part: &Part<S>, name: &str, quality: usize) -> GeopResu
             (Motion::Slide, _, _) => unreachable!("tree refuses a slider without limits"),
         };
         joints.push(Joint {
-            name: joint_name.to_string(),
+            name: joint.name.clone(),
             kind,
             parent: tree.links[tj.parent].name.clone(),
             child: tree.links[tj.child].name.clone(),
@@ -395,19 +614,16 @@ pub fn export<S: Scalar>(part: &Part<S>, name: &str, quality: usize) -> GeopResu
         files: Vec::new(),
         quality,
     };
+    let mut shapes = Shapes::default();
     let mut links = Vec::new();
     for (index, link) in tree.links.iter().enumerate() {
         let back = frames[index].inverse();
-        let mut masses = Vec::new();
+        let mut masses_of = Vec::new();
         let mut visuals = Vec::new();
         // The assembly's own solids are the ground's: the root's.
         if index == 0 {
-            for solid in placed_solids(part)?.iter().filter(|s| s.pose.is_none()) {
-                masses.push(solid.mass_properties().with_context(&|e: GeopError| {
-                    e.with_context(format!("the mass of {}", solid.name))
-                })?);
-            }
-            if let Some(mesh) = meshes.of(0, "base", part)? {
+            masses(view, "base", None, &mut shapes, &mut masses_of).with_context(&ctx)?;
+            if let Some(mesh) = meshes.of(None, "base", view)? {
                 visuals.push(Visual {
                     name: "base".into(),
                     origin: Origin::of(&back),
@@ -416,29 +632,28 @@ pub fn export<S: Scalar>(part: &Part<S>, name: &str, quality: usize) -> GeopResu
             }
         }
         for &b in &link.bodies {
-            let body: &PlacedBody<S> = &mechanism.bodies[b];
-            let instance = body.instance;
+            let body = &bodies[b];
+            let component = &body.instance.component;
             // A part placed is a body of its own solids: the parts placed
             // in it are bodies of their own.
-            for solid in placed_solids(&instance.part)?
-                .iter()
-                .filter(|s| s.pose.is_none())
-            {
-                let own = solid.mass_properties().with_context(&|e: GeopError| {
-                    e.with_context(format!("the mass of {}/{}", body.name, solid.name))
-                })?;
-                masses.push(own.placed(&world[b])?);
-            }
-            let key = Arc::as_ptr(&instance.part) as usize;
-            if let Some(mesh) = meshes.of(key, &stem_of(instance), &instance.part)? {
+            masses(
+                component.view(),
+                &body.name,
+                Some(&body.world),
+                &mut shapes,
+                &mut masses_of,
+            )
+            .with_context(&ctx)?;
+            let key = Some(Rc::as_ptr(component));
+            if let Some(mesh) = meshes.of(key, about(component.view()).stem(), component.view())? {
                 visuals.push(Visual {
                     name: body.name.clone(),
-                    origin: Origin::of(&back.compose(&world[b])),
+                    origin: Origin::of(&back.compose(&body.world)),
                     mesh,
                 });
             }
         }
-        let inertial = match MassProperties::combine(&masses)? {
+        let inertial = match MassProperties::combine(&masses_of)? {
             Some(total) => {
                 let local = total.placed(&back)?;
                 Some(Inertial {
@@ -451,10 +666,8 @@ pub fn export<S: Scalar>(part: &Part<S>, name: &str, quality: usize) -> GeopResu
         };
         links.push(Link {
             name: link.name.clone(),
-            parts: link
-                .bodies
-                .iter()
-                .map(|&b| mechanism.bodies[b].name.clone())
+            parts: (link.bodies.iter())
+                .map(|&b| bodies[b].name.clone())
                 .collect(),
             inertial,
             visuals,
@@ -475,18 +688,14 @@ pub fn export<S: Scalar>(part: &Part<S>, name: &str, quality: usize) -> GeopResu
 /// chain of couplings mimics the first driver, the factors multiplied, as
 /// URDF readers expect. Refuses a joint two couplings drive, and couplings
 /// driving each other round in a circle.
-fn mimics<S: Scalar>(
-    mechanism: &Mechanism<'_, S>,
-    tree: &tree::Tree,
-    joints: &mut [Joint],
-) -> GeopResult<()> {
-    let couplings = &mechanism.assembly.couplings;
+fn mimics(mechanism: &Mechanism, tree: &tree::Tree, joints: &mut [Joint]) -> GeopResult<()> {
+    let couplings = &mechanism.couplings;
     // Per driven joint (by index in the mechanism), its driver, the
     // factor, and the coupling — by index, so that a circle of couplings is
     // reported from the same joint on every run.
     let mut drives: BTreeMap<usize, (usize, f64, usize)> = BTreeMap::new();
     for (i, coupling) in couplings.iter().enumerate() {
-        let [ma, mb] = coupling.kind.motions();
+        let [ma, mb] = coupling.kind.transmission.motions();
         let unit = |m: Motion| match m {
             Motion::Turn => 1.0,
             Motion::Slide => 1e-3,
@@ -495,9 +704,7 @@ fn mimics<S: Scalar>(
         if let Some((_, _, other)) = drives.insert(coupling.b, (coupling.a, multiplier, i)) {
             return Err(GeopError::new(format!(
                 "the joint {:?} is driven by two couplings, {} and {}, and a URDF joint mimics one other only",
-                mechanism.joint_name(coupling.b),
-                mechanism.coupling_name(other),
-                mechanism.coupling_name(i)
+                mechanism.joints[coupling.b].name, couplings[other].name, coupling.name
             )));
         }
     }
@@ -512,7 +719,9 @@ fn mimics<S: Scalar>(
         let mut through = vec![driven];
         while let Some(&(next, factor, _)) = drives.get(&driver) {
             if through.contains(&driver) {
-                let names: Vec<&str> = through.iter().map(|&j| mechanism.joint_name(j)).collect();
+                let names: Vec<&str> = (through.iter())
+                    .map(|&j| mechanism.joints[j].name.as_str())
+                    .collect();
                 return Err(GeopError::new(format!(
                     "the couplings of the joints {} drive each other round in a circle, which URDF's mimic joints cannot express",
                     names.join(", ")
@@ -523,7 +732,7 @@ fn mimics<S: Scalar>(
             driver = next;
         }
         joints[index[&driven]].mimic = Some(Mimic {
-            joint: mechanism.joint_name(driver).to_string(),
+            joint: mechanism.joints[driver].name.clone(),
             multiplier,
         });
     }

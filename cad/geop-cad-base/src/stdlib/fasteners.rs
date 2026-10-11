@@ -9,9 +9,8 @@
 
 use geop_core_math::geop_error::GeopResult;
 use geop_core_sketch::{CurveId, PointId};
+use geop_ops::BooleanOp;
 use geop_ops::EntityRef;
-use geop_ops::parameters::Material;
-use geop_ops::parameters::Parameters;
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::Extents;
 
@@ -19,28 +18,13 @@ use super::{
     StandardPart,
     drawing::Drawing,
     steps::{
-        Around, Through, axis_datum, col, cut_to, extrude, hexagon, outline_plane, plane_datum,
-        revolve, size, swept,
+        Around, Through, axis_datum, col, cut_to, extrude, family, hexagon, outline_plane,
+        plane_datum, revolve, size, swept,
     },
     tables::{self, Table},
     titled,
 };
 use crate::Program;
-
-/// A program whose size is a row of `table`.
-fn sized(table: Table) -> Program {
-    let mut program = Program::new();
-    program.parameters = Parameters {
-        material: Some(Material {
-            name: "Steel".into(),
-            density: 7850.0,
-        }),
-        color: None,
-        values: vec![size(table)],
-        ..Parameters::default()
-    };
-    program
-}
 
 /// How a screw's head is shaped.
 enum Head {
@@ -81,7 +65,7 @@ impl Head {
 /// The shank is the thread's nominal diameter, chamfered at its tip by a
 /// pitch; it is where a thread goes (see [`StandardPart::threaded`]).
 fn screw(head: Head, table: Table) -> GeopResult<(Program, Vec<String>)> {
-    let mut program = sized(table);
+    let mut program = family("Steel", None, vec![size(table)]);
     let (d, p, k, l) = (col("d"), col("p"), col("k"), col("l"));
     let r = format!("{d} / 2");
     let mut drawing = Drawing::new(&program.parameters)?;
@@ -124,7 +108,7 @@ fn screw(head: Head, table: Table) -> GeopResult<(Program, Vec<String>)> {
         drawing,
         Around::Line(axis),
         Combine::NewBody,
-    )?;
+    );
     let threaded = swept("body", "profile", shank);
 
     if let Head::Hex = head {
@@ -137,7 +121,7 @@ fn screw(head: Head, table: Table) -> GeopResult<(Program, Vec<String>)> {
             outline,
             "revolve(body)",
             Through::Both,
-        )?;
+        );
     } else {
         socket(&mut program, &head.top(), "revolve(body)")?;
     }
@@ -185,10 +169,12 @@ fn socket(program: &mut Program, top: &str, target: &str) -> GeopResult<()> {
         "socket_hex",
         (outline, EntityRef::datum("socket_floor")),
         Extents::blind(format!("{t} + {s}")),
-        Combine::Difference {
+        Combine::With {
+            op: BooleanOp::Difference,
             target: target.into(),
         },
-    )
+    );
+    Ok(())
 }
 
 pub fn iso4762(file: &'static str) -> GeopResult<StandardPart> {
@@ -236,7 +222,7 @@ pub fn iso4017(file: &'static str) -> GeopResult<StandardPart> {
 /// across; above it, `h` high overall, the collar of a nylon insert, `dw`
 /// across, if `insert`.
 fn nut(table: Table, insert: bool) -> GeopResult<(Program, Vec<String>)> {
-    let mut program = sized(table);
+    let mut program = family("Steel", None, vec![size(table)]);
     let (s, m) = (col("s"), col("m"));
     let bore = format!("{} / 2", col("d"));
     let face = format!("{} / 2", col("dw"));
@@ -266,7 +252,7 @@ fn nut(table: Table, insert: bool) -> GeopResult<(Program, Vec<String>)> {
         drawing,
         Around::ZAxis,
         Combine::NewBody,
-    )?;
+    );
     let mut outline = Drawing::new(&program.parameters)?;
     hexagon(&mut outline, &s)?;
     cut_to(
@@ -276,7 +262,7 @@ fn nut(table: Table, insert: bool) -> GeopResult<(Program, Vec<String>)> {
         outline,
         "revolve(body)",
         Through::Up,
-    )?;
+    );
     axis_datum(&mut program);
     plane_datum(&mut program, "base", "0");
     Ok((program, swept("body", "profile", bore_line)))
@@ -305,7 +291,7 @@ pub fn iso10511(file: &'static str) -> GeopResult<StandardPart> {
 /// A washer `d1` across its hole, `d2` outside, `h` thick — its outer top
 /// edge chamfered at 30°, a quarter of `h` deep, if `chamfered`.
 fn washer(table: Table, chamfered: bool) -> GeopResult<Program> {
-    let mut program = sized(table);
+    let mut program = family("Steel", None, vec![size(table)]);
     let (hole, outside, h) = (
         format!("{} / 2", col("d1")),
         format!("{} / 2", col("d2")),
@@ -328,7 +314,7 @@ fn washer(table: Table, chamfered: bool) -> GeopResult<Program> {
         drawing,
         Around::ZAxis,
         Combine::NewBody,
-    )?;
+    );
     axis_datum(&mut program);
     plane_datum(&mut program, "base", "0");
     Ok(program)
@@ -362,7 +348,7 @@ pub fn iso7090(file: &'static str) -> GeopResult<StandardPart> {
 
 /// ISO 8734: a pin `d` across and `l` long, both ends chamfered by `c`.
 pub fn iso8734(file: &'static str) -> GeopResult<StandardPart> {
-    let mut program = sized(tables::iso8734());
+    let mut program = family("Steel", None, vec![size(tables::iso8734())]);
     let (r, c, l) = (format!("{} / 2", col("d")), col("c"), col("l"));
     let mut drawing = Drawing::new(&program.parameters)?;
     let lines = drawing.polygon(&[
@@ -380,7 +366,7 @@ pub fn iso8734(file: &'static str) -> GeopResult<StandardPart> {
         drawing,
         Around::Line(lines[5]),
         Combine::NewBody,
-    )?;
+    );
     axis_datum(&mut program);
     plane_datum(&mut program, "base", "0");
     Ok(StandardPart {
@@ -394,7 +380,7 @@ pub fn iso8734(file: &'static str) -> GeopResult<StandardPart> {
 /// A hex standoff `s` across its flats and `l` long, bored `d` through —
 /// threaded from both ends: a hexagon around the bore, extruded `l`.
 pub fn hex_standoff(file: &'static str) -> GeopResult<StandardPart> {
-    let mut program = sized(tables::hex_standoffs());
+    let mut program = family("Steel", None, vec![size(tables::hex_standoffs())]);
     let mut outline = Drawing::new(&program.parameters)?;
     hexagon(&mut outline, &col("s"))?;
     let bore = outline.circle(outline.origin(), &col("d"))?;
@@ -405,7 +391,7 @@ pub fn hex_standoff(file: &'static str) -> GeopResult<StandardPart> {
         (outline, outline_plane()),
         Extents::blind(col("l")),
         Combine::NewBody,
-    )?;
+    );
     axis_datum(&mut program);
     plane_datum(&mut program, "base", "0");
     // A circle is swept in four quarters.

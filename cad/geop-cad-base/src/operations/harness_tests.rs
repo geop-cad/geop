@@ -8,15 +8,17 @@ use geop_core_math::{
     scalars::{Ring, ScalInF64 as S, Scalar},
 };
 use geop_ops::{
-    EntityRef,
-    part::{ParamValue, State, pose_parameter},
+    Design, EntityRef, ParamValue,
+    model::{model, pose_parameter},
+    parameters::Values,
     ui::{StepEditEvent, Value},
 };
 use geop_ops_assembly::{AddPartArgs, Kind, Mate};
-use geop_ops_harness::{PartCables, RouteArgs, Wire, WireSize};
+use geop_ops_harness::{RouteArgs, Wire, WireSize, cables};
 
 use crate::examples::pose;
-use crate::{Command, Editor, Program, examples};
+use crate::operations::testing::{Built, origin_plane};
+use crate::{Command, Editor, Program, Push, examples};
 
 /// An assembly of two plates: `a` fixed at the origin, `b` 4 along `x`,
 /// its `xy` plane mated onto `a`'s, so it slides in that plane — and a
@@ -63,7 +65,7 @@ fn assembly() -> Program {
         },
     );
     let at = |x: f64| ParamValue::Pose(pose([x, 0.0, 0.0], [0.0; 3]));
-    program.state = State::from([
+    program.state = Values::from([
         (pose_parameter("a"), at(0.0)),
         (pose_parameter("b"), at(4.0)),
     ]);
@@ -71,8 +73,10 @@ fn assembly() -> Program {
 }
 
 /// The cable's length in what `editor` built.
-fn cable_length(editor: &Editor<S>) -> S {
-    editor.part().cable("route(cable)").unwrap().length
+fn cable_length(editor: &Editor) -> Design {
+    let part = editor.part();
+    let cables = part.retrieve_target(&cables()).unwrap();
+    cables.get("route(cable)").unwrap().length
 }
 
 /// Moving the mated plate in the editor — its placement's `x` typed in —
@@ -80,7 +84,7 @@ fn cable_length(editor: &Editor<S>) -> S {
 /// `pi 4 / 2` to `pi 6 / 2`.
 #[test]
 fn moving_a_mated_part_reroutes_the_cable() {
-    let mut editor = Editor::<S>::new();
+    let mut editor = Editor::new();
     let files = BTreeMap::from([(
         "plate.geop".to_string(),
         Some(examples::box_with_drill_hole().to_json().unwrap()),
@@ -112,7 +116,7 @@ fn moving_a_mated_part_reroutes_the_cable() {
     let after = cable_length(&editor);
     assert!(after.could_be_equal(half_circle(6.0)), "{after:?}");
     // The bundle's end cap went with the plate: centred on its frame.
-    let part = editor.part();
+    let part = editor.part().retrieve_target(&model()).unwrap();
     let end = part.face_id("route(cable,end)").unwrap();
     let model = part.topology();
     let centre: f64 = model
@@ -147,14 +151,7 @@ fn a_route_runs_through_sketch_points() {
     let p = floor.add_point(examples::n(4.0), examples::n(4.0));
     program.push(
         "floor",
-        geop_ops_sketch::AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                geop_ops::ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
-            sketch: floor,
-            ..Default::default()
-        },
+        crate::operations::testing::sketch(origin_plane(FrameAxis::Z), floor),
     );
     program.push(
         "route",
@@ -180,8 +177,9 @@ fn a_route_runs_through_sketch_points() {
             service_loop: 0.0,
         },
     );
-    let part = program.build::<S>(&geop_ops::NoFiles).unwrap();
-    let cable = part.cable("route(route)").unwrap();
+    let runner = program.built().unwrap();
+    let cables = runner.part.current().retrieve_target(&cables()).unwrap();
+    let cable = cables.get("route(route)").unwrap();
     let length = cable.length.to_f64();
     // Two runs of 4 with a quarter-turn bend between them, rounded.
     assert!(length > 7.5 && length < 10.0, "{:?}", cable.length);

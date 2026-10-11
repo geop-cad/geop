@@ -9,7 +9,7 @@ use geop_core_math::scalars::Scalar;
 /// separate `[start_t, end_t]` window into a possibly-larger curve.
 /// `start_vertex` lies at `curve.domain().0` and `end_vertex` at
 /// `curve.domain().1`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Edge<S: Scalar> {
     pub curve: Curve3<S>,
     pub start_vertex: VertexId,

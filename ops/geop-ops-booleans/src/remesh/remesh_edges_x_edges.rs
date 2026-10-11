@@ -1,13 +1,15 @@
 use geop_core_geometry::intersection::{curve_curve_intersect, refine_curve_curve_crossing};
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
+    geop_error::{GeopResult, WithContext},
     scalars::Scalar,
     vector::Vector3,
+    with_context,
 };
 use geop_core_topology::{Body, EdgeId, Model, VertexId};
-use geop_ops::Part;
+use geop_ops::NamedModel;
 
 use crate::naming::BooleanNaming;
+use crate::remesh::remesh::RemeshParams;
 
 /// What to do next for a `solid_a` edge x `solid_b` edge pair — see
 /// `find_edge_edge_action`'s own doc comment.
@@ -43,7 +45,7 @@ enum EdgeEdgeAction<S: Scalar> {
 /// reuses the single vertex the first pair created there instead of each
 /// pair minting its own. Only the two bodies' own: a vertex of another
 /// body, or of a wire, that happens to lie there is near, not theirs.
-fn find_vertex_at_point<S: Scalar>(
+pub(super) fn find_vertex_at_point<S: Scalar>(
     model: &Model<S>,
     bodies: [Body; 2],
     point: &Vector3<S>,
@@ -67,34 +69,26 @@ fn find_vertex_at_point<S: Scalar>(
 /// Coincidence is detected by vertex identity — the two edges already share
 /// the same two endpoints (in either order) — checked *before* ever running
 /// an intersection search, rather than by that search hitting its own
-/// `max_solutions` cap. Vertex identity is cheap, exact, and (post
+/// `max_edge_intersections` cap. Vertex identity is cheap, exact, and (post
 /// vertex/edge-vertex remesh) authoritative; the intersection-count
 /// heuristic has a real false-positive mode for two edges that already
-/// share *one* endpoint — see `Model::edge_edge_intersections`'s own doc
-/// comment for why (and how the search below avoids it). Every found
+/// share *one* endpoint, which the search below avoids. Every found
 /// crossing then just flows through the same per-solution split logic
 /// below, whose own endpoint check no-ops correctly on a solution that
 /// turns out to be a vertex the pair already shares.
 ///
-/// `curve_curve_min_subdivision_size` is deliberately its own (looser)
-/// tolerance, not the same `min_subdivision_size` used for the vertex-onto-
-/// edge/pcurve searches elsewhere in `remesh` — see `ValidationParameters`'s
-/// own doc comment: the pairwise `curve_curve_intersect` search needs a much
-/// looser tolerance than a single-curve query to reliably converge within
-/// `max_nodes` at all.
+/// The search runs to `params`' `curve_curve_min_subdivision_size`, not the
+/// `min_subdivision_size` of the vertex-onto-edge searches (see
+/// [`RemeshParams`]).
 fn find_edge_edge_action<S: Scalar>(
     model: &Model<S>,
     solid_a: Body,
     solid_b: Body,
-    max_solutions: usize,
-    max_nodes: usize,
-    curve_curve_min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<Option<EdgeEdgeAction<S>>> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "find_edge_edge_action(solid_a={solid_a}, solid_b={solid_b}, max_solutions={max_solutions}, max_nodes={max_nodes}, curve_curve_min_subdivision_size={curve_curve_min_subdivision_size})"
-        ))
-    };
+    let ctx = with_context!(
+        "find_edge_edge_action(solid_a={solid_a}, solid_b={solid_b}, params={params:?})"
+    );
 
     for edge_a in model.iter_body_edges(solid_a).with_context(&ctx)? {
         for edge_b in model.iter_body_edges(solid_b).with_context(&ctx)? {
@@ -104,8 +98,7 @@ fn find_edge_edge_action<S: Scalar>(
                 continue;
             }
 
-            let edge_ctx =
-                |e: GeopError| e.with_context(format!("edge_a={edge_a}, edge_b={edge_b}"));
+            let edge_ctx = with_context!("edge_a={edge_a}, edge_b={edge_b}");
 
             let ea = model.get_edge(edge_a).with_context(&ctx)?;
             let eb = model.get_edge(edge_b).with_context(&ctx)?;
@@ -130,9 +123,9 @@ fn find_edge_edge_action<S: Scalar>(
             let intersections = curve_curve_intersect(
                 &model.get_edge(edge_a)?.curve,
                 &model.get_edge(edge_b)?.curve,
-                max_solutions,
-                max_nodes,
-                curve_curve_min_subdivision_size,
+                params.max_edge_intersections,
+                params.max_nodes,
+                params.curve_curve_min_subdivision_size,
             )
             .with_context(&ctx)
             .with_context(&edge_ctx)?;
@@ -193,29 +186,18 @@ fn find_edge_edge_action<S: Scalar>(
 }
 
 pub fn remesh_edges_x_edges<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     naming: &mut BooleanNaming<S>,
     solid_a: Body,
     solid_b: Body,
-    max_solutions: usize,
-    max_nodes: usize,
-    curve_curve_min_subdivision_size: S,
+    params: &RemeshParams<S>,
 ) -> GeopResult<()> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "remesh_edges_x_edges(solid_a={solid_a}, solid_b={solid_b}, max_solutions={max_solutions}, max_nodes={max_nodes}, curve_curve_min_subdivision_size={curve_curve_min_subdivision_size})"
-        ))
-    };
+    let ctx = with_context!(
+        "remesh_edges_x_edges(solid_a={solid_a}, solid_b={solid_b}, params={params:?})"
+    );
 
-    while let Some(action) = find_edge_edge_action(
-        part.topology(),
-        solid_a,
-        solid_b,
-        max_solutions,
-        max_nodes,
-        curve_curve_min_subdivision_size,
-    )
-    .with_context(&ctx)?
+    while let Some(action) =
+        find_edge_edge_action(model.topology(), solid_a, solid_b, params).with_context(&ctx)?
     {
         match action {
             EdgeEdgeAction::Merge {
@@ -223,12 +205,8 @@ pub fn remesh_edges_x_edges<S: Scalar>(
                 edge_deleted,
                 reversed,
             } => {
-                part.merge_edge(edge_into, edge_deleted, reversed)
-                    .with_context(&|e: GeopError| {
-                        e.with_context(format!(
-                            "merge_edge(edge_into={edge_into}, edge_deleted={edge_deleted}, reversed={reversed})"
-                        ))
-                    })
+                model.merge_edge(edge_into, edge_deleted, reversed)
+                    .with_context(with_context!("merge_edge(edge_into={edge_into}, edge_deleted={edge_deleted}, reversed={reversed})"))
                     .with_context(&ctx)?;
             }
             EdgeEdgeAction::Split {
@@ -241,11 +219,9 @@ pub fn remesh_edges_x_edges<S: Scalar>(
                 vertex,
                 point,
             } => {
-                let split_ctx = |e: GeopError| {
-                    e.with_context(format!(
-                        "edge_a={edge_a}, t_a={t_a}, edge_b={edge_b}, t_b={t_b}, point={point}"
-                    ))
-                };
+                let split_ctx = with_context!(
+                    "edge_a={edge_a}, t_a={t_a}, edge_b={edge_b}, t_b={t_b}, point={point}"
+                );
 
                 let vertex_id = match vertex {
                     Some(v) => v,
@@ -265,14 +241,17 @@ pub fn remesh_edges_x_edges<S: Scalar>(
                         // away.
                         #[cfg(debug_assertions)]
                         {
-                            let threshold = curve_curve_min_subdivision_size.mul(S::from_f64(10.0));
-                            let model = part.topology();
-                            let existing = model
+                            let threshold = params
+                                .curve_curve_min_subdivision_size
+                                .mul(S::from_f64(10.0));
+                            let topology = model.topology();
+                            let existing = topology
                                 .iter_body_vertices(solid_a)
                                 .with_context(&ctx)?
-                                .chain(model.iter_body_vertices(solid_b).with_context(&ctx)?);
+                                .chain(topology.iter_body_vertices(solid_b).with_context(&ctx)?);
                             for existing_id in existing {
-                                let existing = model.get_vertex(existing_id).with_context(&ctx)?;
+                                let existing =
+                                    topology.get_vertex(existing_id).with_context(&ctx)?;
                                 let dist = point.sub(&existing.point).norm();
                                 debug_assert!(
                                     !dist.definitely_less(threshold),
@@ -281,7 +260,7 @@ pub fn remesh_edges_x_edges<S: Scalar>(
                                 );
                             }
                         }
-                        let vertex = part
+                        let vertex = model
                             .insert_vertex(point, naming.provisional())
                             .with_context(&ctx)?;
                         naming.edge_crossing(vertex, (edge_a, t_a), (edge_b, t_b))?;
@@ -301,13 +280,13 @@ pub fn remesh_edges_x_edges<S: Scalar>(
                     if !split {
                         continue;
                     }
-                    let new_edge = part
+                    let new_edge = model
                         .split_edge_at_vertex(
                             edge,
                             t,
                             vertex_id,
-                            max_nodes,
-                            curve_curve_min_subdivision_size,
+                            params.max_nodes,
+                            params.curve_curve_min_subdivision_size,
                             naming.provisional(),
                         )
                         .with_context(&split_ctx)
@@ -323,9 +302,7 @@ pub fn remesh_edges_x_edges<S: Scalar>(
 
 #[cfg(test)]
 mod tests {
-    use crate::{remesh::remesh::RemeshParams, scenes::figure8_cylinder_scenes};
-    use geop_core_math::scalars::ScalInF64;
-    use geop_ops::Namer;
+    use crate::scenes::remeshed;
 
     /// Regression test for a `curve_curve_intersect` bug where two edges
     /// meeting at exactly one shared vertex (here: a genuine, single,
@@ -349,18 +326,6 @@ mod tests {
     /// than let compound).
     #[test]
     fn figure8_quarter_overlap_hole_corner_remesh_succeeds() {
-        let mut scene = figure8_cylinder_scenes::<ScalInF64>()
-            .into_iter()
-            .find(|s| s.name == "figure8_cylinder_quarter_overlap_hole_corner")
-            .expect("scene must exist");
-
-        crate::remesh::remesh::remesh(
-            &mut scene.part,
-            &Namer::new("boolean", "ab").unwrap(),
-            scene.solid_a,
-            scene.solid_b,
-            RemeshParams::<ScalInF64>::default(),
-        )
-        .unwrap();
+        remeshed("figure8_cylinder_quarter_overlap_hole_corner");
     }
 }

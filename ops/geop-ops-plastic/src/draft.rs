@@ -45,14 +45,13 @@ use geop_core_topology::{
     Body, Curve3, FaceId, SolidId,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
-use geop_ops::{BodyNames, Namer, Part};
+use geop_ops::{BodyNames, NamedModel, Namer};
 use geop_ops_extrude_revolve::common::line3;
-use geop_ops_shell::shell::{extended, offset_vertex, pcurve};
-
-use crate::common::{
-    MAX_NODES, PROJECT_ITERATIONS, ends, halfway, loops_of, min_subdivision_size, normal_at,
-    oriented, pcurve_ends,
+use geop_ops_shell::shell::{
+    MAX_NODES, PROJECT_ITERATIONS, extended, min_subdivision_size, offset_vertex, pcurve,
 };
+
+use crate::common::{halfway, normal_at};
 
 /// The surface a face lies on, as far as a draft cares.
 #[derive(Clone, Debug)]
@@ -80,7 +79,7 @@ impl<S: Scalar> Kind<S> {
 /// and returns the drafted solid, which replaces it and is named
 /// `namer`'s root. Every face, edge and vertex keeps its name.
 pub fn draft<S: Scalar>(
-    part: &mut Part<S>,
+    part: &mut NamedModel<S>,
     namer: &Namer,
     faces: &[FaceId],
     neutral: &Plane<S>,
@@ -102,15 +101,10 @@ pub fn draft<S: Scalar>(
     let Some(&first) = faces.first() else {
         return Err(GeopError::new("pick the faces to draft")).with_context(ctx);
     };
-    let name = |id: geop_ops::RefId| -> GeopResult<String> {
-        part.name_of(id)
-            .map(str::to_string)
-            .ok_or_else(|| GeopError::new(format!("{id:?} has no name")))
-    };
     let Body::Solid(solid) = model.body_of_face(first).with_context(ctx)? else {
         return Err(GeopError::new(format!(
             "face {} stands on its own; only faces of a solid can be drafted",
-            name(first.into())?
+            part.name(first)?
         )))
         .with_context(ctx);
     };
@@ -118,29 +112,15 @@ pub fn draft<S: Scalar>(
     if let Some(&f) = faces.iter().find(|f| !all.contains(f)) {
         return Err(GeopError::new(format!(
             "face {} is not of the same solid as face {}: draft the faces of one solid at a time",
-            name(f.into())?,
-            name(first.into())?
+            part.name(f)?,
+            part.name(first)?
         )))
         .with_context(ctx);
     }
     let (spec, sources) = model.body_spec(&all, true).with_context(ctx)?;
     let names = BodyNames {
-        vertices: sources
-            .vertices
-            .iter()
-            .map(|&v| name(v.into()))
-            .collect::<GeopResult<_>>()?,
-        edges: sources
-            .edges
-            .iter()
-            .map(|&e| name(e.into()))
-            .collect::<GeopResult<_>>()?,
-        faces: sources
-            .faces
-            .iter()
-            .map(|&f| name(f.into()))
-            .collect::<GeopResult<_>>()?,
         solid: Some(namer.root()),
+        ..part.source_names(&sources)?
     };
     let drafted: Vec<bool> = sources.faces.iter().map(|f| faces.contains(f)).collect();
     let tilt = Tilt {
@@ -224,11 +204,11 @@ impl<'a, S: Scalar> Drafted<'a, S> {
         let mut around: Vec<Vec<(usize, Vector2<S>)>> = vec![Vec::new(); spec.vertices.len()];
         let mut along: Vec<Vec<usize>> = vec![Vec::new(); spec.edges.len()];
         for (f, face) in spec.faces.iter().enumerate() {
-            for lp in loops_of(face) {
+            for lp in face.loops() {
                 for c in lp {
-                    let (_, end) = ends(spec, c.on);
+                    let (_, end) = spec.ends(c.on)?;
                     if !around[end].iter().any(|&(g, _)| g == f) {
-                        around[end].push((f, pcurve_ends(&c.pcurve)?.1));
+                        around[end].push((f, c.pcurve.ends()?.1));
                     }
                     match c.on {
                         CoedgeOn::Edge(e, _) => along[e].push(f),
@@ -472,7 +452,7 @@ impl<'a, S: Scalar> Drafted<'a, S> {
                 // Drafted so far that a wall's two sides cross, the face
                 // between them — a shelled rim — runs into its own hole.
                 let outline = |lp: &[CoedgeSpec<S>]| -> GeopResult<Vec<Vector2<S>>> {
-                    lp.iter().map(|c| Ok(pcurve_ends(&c.pcurve)?.0)).collect()
+                    lp.iter().map(|c| Ok(c.pcurve.ends()?.0)).collect()
                 };
                 let outer = outline(&drafted_face.outer)?;
                 for hole in &drafted_face.holes {
@@ -504,8 +484,8 @@ impl<'a, S: Scalar> Drafted<'a, S> {
         // Where each coedge ends.
         let mut junctions = Vec::with_capacity(coedges.len());
         for c in coedges {
-            let (_, end) = ends(self.spec, c.on);
-            let old = pcurve_ends(&c.pcurve)?.1;
+            let (_, end) = self.spec.ends(c.on)?;
+            let old = c.pcurve.ends()?.1;
             junctions.push(if self.moved[end] || self.drafted[f] {
                 let (u, v) = surface.project(
                     self.points[end],
@@ -531,10 +511,9 @@ impl<'a, S: Scalar> Drafted<'a, S> {
             } else {
                 let (start, end) = (junctions[(k + n - 1) % n], junctions[k]);
                 let curve = match c.on {
-                    CoedgeOn::Edge(e, sense) => Some(oriented(
-                        self.curves[e].as_ref().unwrap_or(&self.spec.edges[e].curve),
-                        sense,
-                    )),
+                    CoedgeOn::Edge(e, sense) => Some(
+                        sense.orient(self.curves[e].as_ref().unwrap_or(&self.spec.edges[e].curve)),
+                    ),
                     CoedgeOn::Vertex(_) => None,
                 };
                 pcurve(surface, &c.pcurve, curve.as_ref(), start, end).map_err(|e| {

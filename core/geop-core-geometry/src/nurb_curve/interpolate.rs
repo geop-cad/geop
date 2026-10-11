@@ -9,6 +9,7 @@
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
+    solvers::linear::{solve_banded, solve_pivoted},
     vector::{Vector, Vector2, Vector3, Vector4},
 };
 
@@ -137,21 +138,12 @@ fn basis_funs<S: Scalar>(span: usize, t: S, degree: usize, knots: &[S]) -> Vec<S
 }
 
 /// Solve the `m x m` interpolation system (one row per data point, one
-/// column per control point) for the control points, via Gaussian
-/// elimination without pivoting. Safe without pivoting because the
-/// collocation matrix of a B-spline basis evaluated at parameters chosen by
-/// `averaging_knots` is totally positive and nonsingular (Piegl & Tiller
-/// §9.2.1) — the same reason the reference algorithm doesn't pivot either.
-///
-/// The matrix is banded: row `k` is nonzero only in the `degree + 1`
-/// columns of its parameter's knot span, and the spans never decrease down
-/// the rows. Elimination without pivoting keeps the band, so it runs within
-/// it: below a pivot only the rows whose band reaches its column, and in
-/// them only the columns the pivot row's band reaches. Outside the band
-/// every factor and every entry is an exact zero, and subtracting zero
-/// times zero changes nothing but the enclosure — outward rounding widened
-/// each entry by an ulp per pivot above it, and the dense elimination took
-/// `m³ / 3` steps for what the band holds in `m (degree + 1)²`.
+/// column per control point) for the control points, by
+/// [`solve_banded`]: the collocation matrix of a B-spline basis evaluated
+/// at parameters chosen by `averaging_knots` is totally positive and
+/// nonsingular (Piegl & Tiller §9.2.1), so it needs no pivoting, and it is
+/// banded: row `k` is nonzero only in the `degree + 1` columns of its
+/// parameter's knot span, and the spans never decrease down the rows.
 ///
 /// Generic over the dimension `C` of `points`, which are solved for as they
 /// are: Cartesian points (see [`with_unit_weights`]) or homogeneous ones.
@@ -182,37 +174,7 @@ fn solve_interpolation_system<S: Scalar, const C: usize>(
         )));
     }
 
-    let mut rhs: Vec<Vector<S, C>> = points.to_vec();
-    for col in 0..m {
-        let pivot = a[col][col];
-        for row in (col + 1)..m {
-            if first[row] > col {
-                break;
-            }
-            let factor = a[row][col].div(pivot)?;
-            for c in col..=last[col] {
-                a[row][c] = a[row][c].sub(factor.mul(a[col][c]));
-            }
-            for c in 0..C {
-                rhs[row][c] = rhs[row][c].sub(factor.mul(rhs[col][c]));
-            }
-        }
-    }
-
-    let mut ctrl = vec![Vector::<S, C>::zero(); m];
-    for row in (0..m).rev() {
-        let mut sum = rhs[row];
-        for col in (row + 1)..=last[row] {
-            let coef = a[row][col];
-            for c in 0..C {
-                sum[c] = sum[c].sub(coef.mul(ctrl[col][c]));
-            }
-        }
-        for c in 0..C {
-            ctrl[row][c] = sum[c].div(a[row][row])?;
-        }
-    }
-    Ok(ctrl)
+    solve_banded(a, &first, &last, points.to_vec())
 }
 
 /// The Cartesian points `points` as homogeneous control points of weight
@@ -425,52 +387,6 @@ fn check_params<S: Scalar>(params: &[S], m: usize) -> GeopResult<()> {
         )));
     }
     Ok(())
-}
-
-/// Solves `a x = rhs` for the `n x n` matrix `a` and `C` right-hand sides
-/// by Gaussian elimination, pivoting on the entry of largest magnitude in
-/// each column. Which row to pivot on is a free choice — every pivot that
-/// cannot be zero gives the same enclosed solution — and the largest is the
-/// well-conditioned one. Fails if no entry of a column definitely differs
-/// from zero.
-fn solve_pivoted<S: Scalar, const C: usize>(
-    mut a: Vec<Vec<S>>,
-    mut rhs: Vec<Vector<S, C>>,
-) -> GeopResult<Vec<Vector<S, C>>> {
-    let n = a.len();
-    for col in 0..n {
-        let pivot = (col..n)
-            .max_by(|&i, &j| {
-                a[i][col]
-                    .abs()
-                    .to_f64()
-                    .total_cmp(&a[j][col].abs().to_f64())
-            })
-            .expect("a column has rows");
-        if a[pivot][col].could_be_equal(S::ZERO) {
-            return Err(GeopError::new(format!(
-                "solve_pivoted: column {col} has no entry that is definitely not zero"
-            )));
-        }
-        a.swap(col, pivot);
-        rhs.swap(col, pivot);
-        for row in (col + 1)..n {
-            let factor = a[row][col].div(a[col][col])?;
-            for c in col..n {
-                a[row][c] = a[row][c].sub(factor.mul(a[col][c]));
-            }
-            rhs[row] = rhs[row].sub(&rhs[col].prod_scalar(factor));
-        }
-    }
-    let mut x = vec![Vector::<S, C>::zero(); n];
-    for row in (0..n).rev() {
-        let mut sum = rhs[row];
-        for col in (row + 1)..n {
-            sum = sum.sub(&x[col].prod_scalar(a[row][col]));
-        }
-        x[row] = sum.prod_scalar(S::ONE.div(a[row][row])?);
-    }
-    Ok(x)
 }
 
 impl<S: Scalar> NurbCurve<S, 4> {

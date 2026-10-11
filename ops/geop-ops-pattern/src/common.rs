@@ -1,7 +1,6 @@
 //! What the operations of this crate share: the bodies they act on, copies
 //! of them moved by a [`Motion`] and named after what they copy, combining
-//! the result as an extrude would, and the directions and axes they move
-//! along.
+//! the result as an extrude would, and the directions they move along.
 
 use geop_core_geometry::shape::Axis;
 use geop_core_math::{
@@ -12,14 +11,18 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::Body;
+use geop_ops::ui::{Choice, Dialog, Form, Number, Track, Unit, Value};
 use geop_ops::{
-    Namer, Part,
-    operation::{Aspects, EntityRef, Role},
+    Design, NamedModel, Namer,
+    operation::{
+        Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Scope, Seen, build_model,
+        resolve_bodies,
+    },
     parameters::Formula,
-    part::State,
-    ui::{Choice, Form, Number, Track, Unit},
+    ui::formula_number,
 };
-use geop_ops_booleans::{Combine, Tool};
+use geop_ops_booleans::{Combine, Tool, boolean::Reach};
+use geop_ops_hole::{Threads, threads};
 use serde::{Deserialize, Serialize};
 
 /// How far apart the instances of a pattern are: each `Step` from the
@@ -67,74 +70,77 @@ impl Spacing {
         }
     }
 
-    /// Its fields in `form`: which kind — keyed `{key}_mode` — and the
+    /// Its fields in `dialog`: which kind — keyed `{key}_mode` — and the
     /// number, keyed `key`, made by `number(label, value)` (see
-    /// [`Number::formula`]). Switching the kind keeps the number.
-    pub(crate) fn show<'a, S: Scalar, A: 'a>(
+    /// [`formula_number`]).
+    pub(crate) fn show<S: Scalar>(
         &self,
-        form: &mut Form<'a, S, A>,
+        dialog: &mut Dialog<S>,
         key: &str,
         labels: [&str; 2],
-        number: impl Fn(&str, &Formula) -> Number<S>,
-        spacing: impl Fn(&mut A) -> &mut Spacing + Copy + 'a,
+        number: impl FnOnce(&str, &Formula) -> Number<S>,
     ) {
-        let mode = match self {
-            Spacing::Step(_) => "step",
-            Spacing::Extent(_) => "extent",
+        let (mode, label) = match self {
+            Spacing::Step(_) => ("step", labels[0]),
+            Spacing::Extent(_) => ("extent", labels[1]),
         };
-        form.select(
-            &format!("{key}_mode"),
-            "spacing",
-            mode,
-            vec![
-                Choice::new("step", labels[0]),
-                Choice::new("extent", labels[1]),
-            ],
-            false,
-            move |args, mode| {
-                let this = spacing(args);
-                let value = this.value().clone();
-                *this = match mode {
-                    "extent" => Spacing::Extent(value),
-                    _ => Spacing::Step(value),
+        let modes = vec![
+            Choice::new("step", labels[0]),
+            Choice::new("extent", labels[1]),
+        ];
+        (dialog.select(&format!("{key}_mode"), "spacing", mode, modes, false))
+            .number(key, number(label, self.value()));
+    }
+
+    /// Its field `field` of those [`Spacing::show`] shows, keyed `key`, set
+    /// to `value` — switching the kind keeps the number — and whether it was
+    /// one.
+    pub(crate) fn set(&mut self, key: &str, field: &str, value: &Value) -> bool {
+        if field == format!("{key}_mode") {
+            if let Value::Choice(mode) = value {
+                let number = self.value().clone();
+                *self = match mode.as_str() {
+                    "extent" => Spacing::Extent(number),
+                    _ => Spacing::Step(number),
                 };
-            },
-        );
-        let label = match self {
-            Spacing::Step(_) => labels[0],
-            Spacing::Extent(_) => labels[1],
-        };
-        form.formula(key, number(label, self.value()), move |args, value| {
-            let this = spacing(args);
-            *this = this.with_value(value);
-        });
+            }
+            return true;
+        }
+        if field == key {
+            if let Some(number) = Formula::from_value(value) {
+                *self = self.with_value(number);
+            }
+            return true;
+        }
+        false
     }
 }
 
-/// The count field of a pattern, keyed `key`, of `count` — dragged by
-/// `handle` unless it follows a formula — `set` given what it is set to:
-/// a formula as typed, a number rounded to a whole one of at least one,
-/// the seed alone.
-pub(crate) fn count_field<'a, S: Scalar, A: 'a>(
-    form: &mut Form<'a, S, A>,
+/// The count field of a pattern, keyed `key`, of `count` as `lookup` reads
+/// the parameters — dragged by `handle` unless it follows a formula; set by
+/// [`count_of`].
+pub(crate) fn count_field<S: Scalar>(
+    dialog: &mut Dialog<S>,
     key: &str,
     count: &Formula,
-    inputs: &State,
+    lookup: &mut (impl Lookup<S> + ?Sized),
     handle: Option<Track<S>>,
-    set: impl Fn(&mut A, Formula) + 'a,
 ) {
-    let mut number = Number::formula("count", count, inputs, Unit::Count)
+    let mut number = formula_number("count", count, lookup, Unit::Count)
         .range(1.0, 24.0)
         .handle(handle);
     number.step = 1.0;
-    form.formula(key, number, move |args, count| {
-        let count = match count {
-            Formula::Plain(value) if value.is_finite() && value >= 1.0 => value.round(),
-            Formula::Plain(_) => 1.0,
-            formula => return set(args, formula),
-        };
-        set(args, Formula::Plain(count))
-    });
+    dialog.number(key, number);
+}
+
+/// What a count field set to `value` makes the count: a formula as typed,
+/// a number rounded to a whole one of at least one, the seed alone.
+pub(crate) fn count_of(value: &Value) -> Option<Formula> {
+    Some(match Formula::from_value(value)? {
+        Formula::Plain(value) if value.is_finite() && value >= 1.0 => Formula::Plain(value.round()),
+        Formula::Plain(_) => Formula::Plain(1.0),
+        formula => formula,
+    })
 }
 
 /// The count `formula` comes to, `value`: a whole number of instances, at
@@ -150,98 +156,113 @@ pub(crate) fn whole_count(formula: &Formula, value: f64) -> GeopResult<usize> {
 
 /// The field picking the bodies a step acts on, keyed `bodies`: solids,
 /// and sheets by one of their faces.
-pub(crate) fn bodies_field<'a, S: Scalar, A: 'a>(
-    form: &mut Form<'a, S, A>,
-    bodies: &[EntityRef],
-    set: fn(&mut A) -> &mut Vec<EntityRef>,
-) {
-    form.reference(
-        "bodies",
-        "bodies",
-        bodies.to_vec(),
-        &[Role::Solid, Role::Sheet],
-        None,
-        true,
-        move |edit, picked| *set(edit.args) = picked,
-    );
+pub(crate) fn bodies_field<S: Scalar>(dialog: &mut Dialog<S>, bodies: &[EntityRef]) {
+    let roles = [Role::Solid, Role::Sheet];
+    dialog.reference("bodies", "bodies", bodies.to_vec(), &roles, None, true);
 }
 
-/// The fields picking what a pattern repeats, `seeds` giving its bodies
-/// and its features: the bodies (see [`bodies_field`]), or the features,
-/// keyed `features`, each by a face it made — a hole by its wall. A step
-/// repeats one or the other, so picking either empties the other, and only
-/// the one in use waits for picks.
-pub(crate) fn seed_fields<'a, S: Scalar, A: 'a>(
-    form: &mut Form<'a, S, A>,
-    bodies: &[EntityRef],
-    features: &[EntityRef],
-    seeds: fn(&mut A) -> (&mut Vec<EntityRef>, &mut Vec<EntityRef>),
-) {
-    form.reference(
-        "bodies",
-        "bodies",
-        bodies.to_vec(),
-        &[Role::Solid, Role::Sheet],
-        None,
-        true,
-        move |edit, picked| {
-            let (bodies, features) = seeds(edit.args);
-            if !picked.is_empty() {
-                features.clear();
-            }
-            *bodies = picked;
-        },
-    );
-    form.reference(
-        "features",
-        "features",
-        features.to_vec(),
-        &[Role::Feature],
-        None,
-        true,
-        move |edit, picked| {
-            let (bodies, features) = seeds(edit.args);
-            if !picked.is_empty() {
-                bodies.clear();
-            }
-            *features = picked;
-        },
-    );
-    // Only the one in use is needed; the other is picked for when asked.
-    form.optional(if features.is_empty() {
-        "features"
-    } else {
-        "bodies"
-    });
+/// What a pattern repeats: `bodies` — kept as new bodies, or combined as
+/// `combine` says — or `features`, each copy combined as its feature was
+/// (see [`crate::features`]). Its fields are among those of the step's
+/// arguments.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Seeds {
+    /// The bodies to copy: solids, or a face of each sheet.
+    pub bodies: Vec<EntityRef>,
+    /// Or the features to do again (see [`EntityRef::Feature`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<EntityRef>,
+    /// Keep the copies of bodies as new bodies, or combine them with a
+    /// solid.
+    #[serde(default)]
+    pub combine: Combine,
 }
 
-/// What a pattern repeats, as its arguments pick it: `bodies` — kept as
-/// new bodies, or combined as `combine` says — or `features`, each copy
-/// combined as its feature was (see [`crate::features`]).
-pub(crate) struct Seeds<'a> {
-    pub bodies: &'a [EntityRef],
-    pub features: &'a [EntityRef],
-    pub combine: &'a Combine,
-}
+impl Seeds {
+    /// The bodies `bodies`, the copies combined as `combine` says.
+    pub fn bodies(bodies: Vec<EntityRef>, combine: Combine) -> Self {
+        Seeds {
+            bodies,
+            features: Vec::new(),
+            combine,
+        }
+    }
 
-impl Seeds<'_> {
+    /// The features `features`.
+    pub fn features(features: Vec<EntityRef>) -> Self {
+        Seeds {
+            features,
+            ..Seeds::default()
+        }
+    }
+
+    /// Its fields in `form`, around those `own` adds: first the bodies (see
+    /// [`bodies_field`]) or the features, keyed `features`, each by a face
+    /// it made — a hole by its wall — and last, of bodies, how to combine
+    /// them. A step repeats one or the other, so only the one in use waits
+    /// for picks (see [`Seeds::set`]).
+    pub(crate) fn show<S: Scalar>(&self, form: &mut Form<S>, own: impl FnOnce(&mut Form<S>)) {
+        let dialog = &mut form.dialog;
+        bodies_field(dialog, &self.bodies);
+        let features = self.features.clone();
+        dialog.reference(
+            "features",
+            "features",
+            features,
+            &[Role::Feature],
+            None,
+            true,
+        );
+        // Only the one in use is needed; the other is picked for when asked.
+        dialog.optional(if self.features.is_empty() {
+            "features"
+        } else {
+            "bodies"
+        });
+        own(form);
+        if self.features.is_empty() {
+            self.combine.show(&mut form.dialog);
+        }
+    }
+
+    /// Its field `field` of those [`Seeds::show`] shows set to `value`, and
+    /// whether it was one: picking bodies empties the features, and the
+    /// other way round; a combination defaults to the newest solid of
+    /// `before`.
+    pub(crate) fn set<S: Scalar>(
+        &mut self,
+        field: &str,
+        value: &Value,
+        before: &NamedModel<S>,
+    ) -> bool {
+        let (this, other, picked) = match (field, value) {
+            ("bodies", Value::Entities(p)) => (&mut self.bodies, &mut self.features, p),
+            ("features", Value::Entities(p)) => (&mut self.features, &mut self.bodies, p),
+            _ => return self.combine.set(field, value, before),
+        };
+        if !picked.is_empty() {
+            other.clear();
+        }
+        *this = picked.clone();
+        true
+    }
+
     /// Copies what it picks to every placement — a label and the motion
     /// from where the seeds are — as the step `operation_id`, whose names
-    /// `namer` builds: the copy of each entity named `X` named
-    /// `rename(label, X)`. Bodies are then kept, or combined as
-    /// [`combine_instances`] does, the bodies themselves labelled
-    /// `seed_label`; features are done again (see
+    /// `names` gives (see [`Names::copy`]). Bodies are then kept, or
+    /// combined as [`combine_instances`] does, the bodies themselves
+    /// labelled `seed_label`; features are done again (see
     /// [`crate::features::repeat_features`]).
     ///
-    /// Bodies and features both, or neither, are refused.
+    /// Bodies and features both, or neither, are refused. The features'
+    /// cosmetic threads are copied by [`copy_threads`].
     pub(crate) fn repeat<S: Scalar>(
         &self,
-        part: &mut Part<S>,
-        namer: &Namer,
+        part: &mut NamedModel<S>,
+        names: &Names,
         operation_id: &str,
         seed_label: &str,
         placements: &[(String, Motion<S>)],
-        rename: impl Fn(&str, &str) -> String,
     ) -> GeopResult<()> {
         match (self.bodies.is_empty(), self.features.is_empty()) {
             (false, false) => Err(GeopError::new(
@@ -250,21 +271,20 @@ impl Seeds<'_> {
             (true, true) => Err(GeopError::new("pick the bodies or the features first")),
             (true, false) => crate::features::repeat_features(
                 part,
-                namer,
+                names,
                 operation_id,
-                self.features,
+                &self.features,
                 placements,
-                rename,
             ),
             (false, true) => {
-                let seeds = seeds(part, self.bodies)?;
+                let seeds = resolve_bodies(&self.bodies, &mut &*part)?;
                 let mut instances = seed_instances(&seeds, seed_label);
                 for (label, motion) in placements {
                     instances.extend(copy_seeds(part, &seeds, motion, label, |name| {
-                        rename(label, name)
+                        names.copy(label, name)
                     })?);
                 }
-                combine_instances(part, namer, operation_id, self.combine, &instances)
+                combine_instances(part, &names.namer, operation_id, &self.combine, &instances)
             }
         }
     }
@@ -272,39 +292,97 @@ impl Seeds<'_> {
     /// Where the handles of a step repeating it sit: the middle of the
     /// corners of the bodies, or of the tools of the features. None, if
     /// it picks none.
-    pub(crate) fn center<S: Scalar>(&self, part: &Part<S>) -> Option<Vector3<S>> {
+    pub(crate) fn center<S: Scalar>(&self, part: &NamedModel<S>) -> Option<Vector3<S>> {
         if self.features.is_empty() {
-            center(part, self.bodies)
+            center(part, &self.bodies)
         } else {
-            crate::features::features_center(part, self.features)
+            crate::features::features_center(part, &self.features)
         }
     }
+}
+
+/// How a pattern names what it makes, after the kind of its operation:
+/// the copy of each entity named `X` in the instance labelled `i` is named
+/// `kind(P,i,X)` for the step `P` — or, not `labelled`, `kind(P,X)`: of a
+/// step of one instance.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Naming {
+    pub kind: &'static str,
+    pub labelled: bool,
+}
+
+impl Naming {
+    /// The names it gives as the step `step`.
+    pub(crate) fn of(self, step: &str) -> GeopResult<Names> {
+        Ok(Names {
+            namer: Namer::new(self.kind, step)?,
+            labelled: self.labelled,
+        })
+    }
+}
+
+/// The names a pattern's step gives (see [`Naming`]).
+pub(crate) struct Names {
+    pub namer: Namer,
+    labelled: bool,
+}
+
+impl Names {
+    /// The name of the copy of the entity named `name` in the instance
+    /// labelled `label`.
+    pub(crate) fn copy(&self, label: &str, name: &str) -> String {
+        match self.labelled {
+            true => self.namer.name(&[label, name]),
+            false => self.namer.name(&[name]),
+        }
+    }
+}
+
+/// The arguments of a step that repeats bodies or features: a pattern, or
+/// a mirror.
+pub(crate) trait Pattern: std::fmt::Debug {
+    /// How it names what it makes.
+    const NAMING: Naming;
+
+    /// What it repeats.
+    fn seeds(&self) -> &Seeds;
+
+    /// The label of the seeds themselves among the instances.
+    fn seed_label(&self) -> &'static str;
+
+    /// Where its instances go, as `lookup` has the part: each a label and
+    /// the motion from the seeds, the seeds themselves left out.
+    fn placements<S: Scalar>(
+        &self,
+        lookup: &mut (impl Lookup<S> + ?Sized),
+    ) -> GeopResult<Vec<(String, Motion<S>)>>;
+}
+
+/// Builds the pattern `args` as the step `step` into `model`: its
+/// [`ModelStep::build`].
+pub(crate) fn build_pattern<A: Pattern>(
+    model: &mut NamedModel<Design>,
+    reader: &mut BuildReader,
+    step: &str,
+    args: &A,
+) -> GeopResult<()> {
+    let ctx = with_context!("{}({step}, {args:?})", A::NAMING.kind);
+    let names = A::NAMING.of(step).with_context(ctx)?;
+    let placements = (args.placements(&mut Scope { model, reader })).with_context(ctx)?;
+    (args.seeds())
+        .repeat(model, &names, step, args.seed_label(), &placements)
+        .with_context(ctx)
 }
 
 /// The newest solid of `before`, as a body field starts out holding it:
 /// none, if there is none.
-pub(crate) fn newest_solid<S: Scalar>(before: &Part<S>) -> Vec<EntityRef> {
+pub(crate) fn newest_solid<S: Scalar>(before: &NamedModel<S>) -> Vec<EntityRef> {
     before
         .solid_names()
         .pop()
-        .map(|name| vec![EntityRef::Solid { name }])
-        .unwrap_or_default()
-}
-
-/// The bodies `refs` refer to, each once, in the order picked. None picked
-/// is refused.
-pub(crate) fn seeds<S: Scalar>(part: &Part<S>, refs: &[EntityRef]) -> GeopResult<Vec<Body>> {
-    if refs.is_empty() {
-        return Err(GeopError::new("pick the bodies first"));
-    }
-    let mut bodies = Vec::new();
-    for entity in refs {
-        let body = entity.resolve_body(part)?;
-        if !bodies.contains(&body) {
-            bodies.push(body);
-        }
-    }
-    Ok(bodies)
+        .map(EntityRef::solid)
+        .into_iter()
+        .collect()
 }
 
 /// One body a step leaves behind as one of its instances — a seed, or a
@@ -341,7 +419,7 @@ pub(crate) fn seed_instances(seeds: &[Body], label: &str) -> Vec<Instance> {
 /// labelled `label`: the copy of each entity named `X` — the solid
 /// included — named `rename(X)`.
 pub(crate) fn copy_seeds<S: Scalar>(
-    part: &mut Part<S>,
+    part: &mut NamedModel<S>,
     seeds: &[Body],
     motion: &Motion<S>,
     label: &str,
@@ -365,7 +443,7 @@ pub(crate) fn copy_seeds<S: Scalar>(
 
 /// A body as an error names it: a solid by its name, a sheet by one of its
 /// faces'.
-fn describe<S: Scalar>(part: &Part<S>, body: Body) -> String {
+fn describe<S: Scalar>(part: &NamedModel<S>, body: Body) -> String {
     let name = match body {
         Body::Solid(solid) => part.name_of(solid),
         Body::Sheet(_) => part
@@ -390,7 +468,7 @@ fn describe<S: Scalar>(part: &Part<S>, body: Body) -> String {
 ///
 /// Only solids are combined: a sheet among the instances is refused.
 pub(crate) fn combine_instances<S: Scalar>(
-    part: &mut Part<S>,
+    part: &mut NamedModel<S>,
     namer: &Namer,
     operation_id: &str,
     combine: &Combine,
@@ -425,13 +503,17 @@ pub(crate) fn combine_instances<S: Scalar>(
     }
     combine
         .apply(part, namer, operation_id, &tools)
+        .and_then(Reach::stopped)
         .with_context(ctx)
 }
 
 /// The unit direction `entity` gives: a line's — a straight edge, an axis,
 /// a sketch line — or a plane's normal.
-pub(crate) fn direction<S: Scalar>(part: &Part<S>, entity: &EntityRef) -> GeopResult<Vector3<S>> {
-    let aspects = Aspects::of(entity, part)?;
+pub(crate) fn direction<S: Scalar>(
+    lookup: &mut (impl Lookup<S> + ?Sized),
+    entity: &EntityRef,
+) -> GeopResult<Vector3<S>> {
+    let aspects = Aspects::of(entity, lookup)?;
     if let Some(line) = aspects.line {
         return Ok(line.direction);
     }
@@ -443,32 +525,31 @@ pub(crate) fn direction<S: Scalar>(part: &Part<S>, entity: &EntityRef) -> GeopRe
     )))
 }
 
-/// The axis `entity` gives: a line's — a straight edge, an axis, a sketch
-/// line — or what a round entity turns around: a circular edge, a
-/// cylindrical or conical face, a sketch circle.
-pub(crate) fn axis<S: Scalar>(part: &Part<S>, entity: &EntityRef) -> GeopResult<Axis<S>> {
-    let aspects = Aspects::of(entity, part)?;
-    aspects.line.or(aspects.round).ok_or_else(|| {
-        GeopError::new(format!(
-            "{entity} gives no axis: pick a straight edge, an axis, or a circular edge or round face to turn around its axis"
-        ))
-    })
-}
-
 /// Where the handles of a step acting on `refs` sit: the middle of the
 /// corners of the bodies they refer to. None, if they refer to none.
-pub(crate) fn center<S: Scalar>(part: &Part<S>, refs: &[EntityRef]) -> Option<Vector3<S>> {
+pub(crate) fn center<S: Scalar>(part: &NamedModel<S>, refs: &[EntityRef]) -> Option<Vector3<S>> {
     let model = part.topology();
+    let mut corners = Vec::new();
+    for body in resolve_bodies(refs, &mut &*part).ok()? {
+        for vertex in model.iter_body_vertices(body).ok()? {
+            corners.push(model.get_vertex(vertex).ok()?.point);
+        }
+    }
+    middle(corners)
+}
+
+/// The middle of `points`, where a handle sits: their average, read off
+/// midpoints — a free choice. None, of none.
+pub(crate) fn middle<S: Scalar>(
+    points: impl IntoIterator<Item = Vector3<S>>,
+) -> Option<Vector3<S>> {
     let mut sum = [0.0; 3];
     let mut n = 0usize;
-    for body in seeds(part, refs).ok()? {
-        for vertex in model.iter_body_vertices(body).ok()? {
-            let p = model.get_vertex(vertex).ok()?.point;
-            for (k, s) in sum.iter_mut().enumerate() {
-                *s += p[k].to_f64();
-            }
-            n += 1;
+    for p in points {
+        for (k, s) in sum.iter_mut().enumerate() {
+            *s += p[k].to_f64();
         }
+        n += 1;
     }
     (n > 0).then(|| Vector3::from_array(sum.map(|s| S::from_f64(s / n as f64))))
 }
@@ -480,4 +561,70 @@ pub(crate) fn track<S: Scalar>(at: Vector3<S>, direction: Vector3<S>) -> Option<
     length
         .definitely_greater(S::ZERO)
         .then_some(Track { at, direction })
+}
+
+/// What a pattern of features copies of their cosmetic threads: the copies'
+/// step and how it names them, the features' steps, and the placements.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ThreadCopies {
+    pub step: String,
+    pub naming: Naming,
+    pub features: Vec<String>,
+    pub placements: Vec<(String, Motion<Design>)>,
+}
+
+/// The part's cosmetic threads with those each feature of `copies`
+/// recorded copied to every placement, named alike.
+fn copy_threads(
+    mut threads: Threads<Design>,
+    _: &mut BuildReader,
+    copies: &ThreadCopies,
+) -> GeopResult<Threads<Design>> {
+    let names = copies.naming.of(&copies.step)?;
+    for step in &copies.features {
+        let ctx = with_context!("copying the threads of feature {step:?}");
+        for name in threads.of_step(step) {
+            let thread = threads.get(&name)?.clone();
+            for (label, motion) in &copies.placements {
+                let mut copy = thread.clone();
+                copy.axis = Axis {
+                    point: motion.apply(&thread.axis.point),
+                    direction: motion.rotate(&thread.axis.direction),
+                };
+                copy.face = names.copy(label, &thread.face);
+                threads
+                    .add(names.copy(label, &name), copy)
+                    .with_context(ctx)?;
+            }
+        }
+    }
+    Ok(threads)
+}
+
+/// Runs the pattern `O` of features or bodies as the step `step`: copies
+/// of its seeds in the model, at its placements — of the part as it is
+/// before the step — and, of features, copies of their cosmetic threads.
+pub(crate) fn run_pattern<O: ModelStep>(
+    part: &mut Build,
+    step: &str,
+    args: &O::Args,
+) -> GeopResult<()>
+where
+    O::Args: Pattern,
+{
+    let features = &args.seeds().features;
+    let copies = (!features.is_empty()).then(|| {
+        let mut seen = Seen::new(part.current());
+        Ok::<_, GeopError>(ThreadCopies {
+            step: step.to_string(),
+            naming: O::Args::NAMING,
+            features: crate::features::feature_steps(seen.model(), features)?,
+            placements: args.placements(&mut seen)?,
+        })
+    });
+    build_model::<O>(part, step, args)?;
+    match copies {
+        Some(copies) => part.revise_or_start(&threads(), &copies?, copy_threads),
+        None => Ok(()),
+    }
 }

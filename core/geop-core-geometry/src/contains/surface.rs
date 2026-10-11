@@ -82,20 +82,18 @@ pub fn boundary_curve<S: Scalar>(
     u_fixed: bool,
     first: bool,
 ) -> Option<NurbCurve<S, 4>> {
-    let (nu, nv) = (patch.num_u, patch.num_v);
+    let end = |n: usize| if first { 0 } else { n - 1 };
     if u_fixed {
         if !is_clamped_at(&patch.knot_vector_u, patch.degree_u, first) {
             return None;
         }
-        let i = if first { 0 } else { nu - 1 };
-        let row = patch.control_points[i * nv..(i + 1) * nv].to_vec();
+        let row = patch.control_row(true, end(patch.num_u));
         NurbCurve::try_new(patch.degree_v, row, patch.knot_vector_v.clone()).ok()
     } else {
         if !is_clamped_at(&patch.knot_vector_v, patch.degree_v, first) {
             return None;
         }
-        let j = if first { 0 } else { nv - 1 };
-        let column = (0..nu).map(|i| patch.control_points[i * nv + j]).collect();
+        let column = patch.control_row(false, end(patch.num_v));
         NurbCurve::try_new(patch.degree_u, column, patch.knot_vector_u.clone()).ok()
     }
 }

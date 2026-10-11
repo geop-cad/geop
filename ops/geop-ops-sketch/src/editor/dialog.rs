@@ -2,7 +2,7 @@
 //! what the sketch projects; one line on what to do next and one on how
 //! the sketch stands; and its constraints.
 
-use geop_ops::ui::{Choice, Control, Number, Prompt, Unit};
+use geop_ops::ui::{Choice, Control, Number, Prompt, Unit, constraint_status};
 
 use super::*;
 use crate::references::Source;
@@ -96,11 +96,8 @@ fn tool_hint(s: &SketchSession) -> String {
 
 /// The options of the tool in hand: a polygon's sides, how many copies a
 /// pattern makes and how far apart, which sides an offset goes to.
-fn tool_options<'a, S: Scalar>(
-    d: &mut Form<'a, S, AddSketchArgs, SketchSession>,
-    s: &SketchSession,
-) {
-    let number = |d: &mut Form<'a, S, AddSketchArgs, SketchSession>,
+fn tool_options<'a>(d: &mut EditForm<'a, S, AddSketchArgs, SketchSession>, s: &SketchSession) {
+    let number = |d: &mut EditForm<'a, S, AddSketchArgs, SketchSession>,
                   key: &str,
                   number: Number<S>,
                   set: fn(&mut SketchSession, f64)| {
@@ -109,9 +106,9 @@ fn tool_options<'a, S: Scalar>(
                 set(edit.session, v);
             }
         });
-        d.dialog.push(key, Control::Number(number));
+        d.form.dialog.push(key, Control::Number(number));
     };
-    let checkbox = |d: &mut Form<'a, S, AddSketchArgs, SketchSession>,
+    let checkbox = |d: &mut EditForm<'a, S, AddSketchArgs, SketchSession>,
                     key: &str,
                     label: &str,
                     value: bool,
@@ -125,9 +122,9 @@ fn tool_options<'a, S: Scalar>(
             label: label.into(),
             value,
         };
-        d.dialog.push(key, control);
+        d.form.dialog.push(key, control);
     };
-    let count = |d: &mut Form<'a, S, AddSketchArgs, SketchSession>| {
+    let count = |d: &mut EditForm<'a, S, AddSketchArgs, SketchSession>| {
         let field = Number::new("copies", s.modify.count as f64, Unit::Count).range(2.0, 24.0);
         number(d, "count", field, |s, n| {
             s.modify.count = (n.round() as usize).clamp(2, 1000);
@@ -178,7 +175,7 @@ fn tool_options<'a, S: Scalar>(
                 Corners::Round => "round",
                 Corners::Extend => "extend",
             };
-            d.dialog.push(
+            d.form.dialog.push(
                 "corners",
                 Control::Select {
                     label: "corners".into(),
@@ -211,28 +208,11 @@ fn status(sketch: &Sketch, s: &SketchSession) -> (String, Tone) {
     };
     match &s.solved {
         Some(Solved::Failed { error }) => (error.clone(), Tone::Error),
-        Some(Solved::Solved { report }) if !report.converged => (
-            format!(
-                "{} constraint{} conflict · {regions}",
-                report.failed_constraints.len(),
-                if report.failed_constraints.len() == 1 {
-                    ""
-                } else {
-                    "s"
-                }
-            ),
-            Tone::Error,
-        ),
-        Some(Solved::Solved { report }) if report.dof == 0 => {
-            (format!("Fully constrained · {regions}"), Tone::Success)
-        }
-        Some(Solved::Solved { report }) => (
-            format!(
-                "{} degree{} of freedom · {regions}",
-                report.dof,
-                if report.dof == 1 { "" } else { "s" }
-            ),
-            Tone::Hint,
+        Some(Solved::Solved { report }) => constraint_status(
+            report.converged,
+            report.failed_constraints.len(),
+            report.dof,
+            &regions,
         ),
         None => (regions, Tone::Hint),
     }
@@ -240,9 +220,9 @@ fn status(sketch: &Sketch, s: &SketchSession) -> (String, Tone) {
 
 /// The fields for drawing in the sketch of `args` on `before`, lying in
 /// `frame`, with `keys` the keys of the visuals selected.
-pub(super) fn draw_dialog<'a, S: Scalar>(
-    d: &mut Form<'a, S, AddSketchArgs, SketchSession>,
-    before: &'a Part<S>,
+pub(super) fn draw_dialog<'a>(
+    d: &mut EditForm<'a, S, AddSketchArgs, SketchSession>,
+    before: &'a Seen<'_>,
     args: &AddSketchArgs,
     s: &SketchSession,
     keys: &[String],
@@ -320,7 +300,7 @@ pub(super) fn draw_dialog<'a, S: Scalar>(
             }
         });
         let field = Number::new("pattern count", count as f64, Unit::Count).range(2.0, 24.0);
-        d.dialog.push("pattern_count", Control::Number(field));
+        d.form.dialog.push("pattern_count", Control::Number(field));
     }
 
     let constraints: Vec<Action> = ConstraintTool::ALL
@@ -365,14 +345,14 @@ pub(super) fn draw_dialog<'a, S: Scalar>(
         true,
         move |edit, entities| editing(before, edit, |e| e.project(entities)),
     );
-    d.optional("project");
+    d.form.dialog.optional("project");
 
     match &s.error {
-        Some(error) => d.text("hint", error.clone(), Tone::Error),
-        None => d.text("hint", tool_hint(s), Tone::Hint),
+        Some(error) => d.form.dialog.text("hint", error.clone(), Tone::Error),
+        None => d.form.dialog.text("hint", tool_hint(s), Tone::Hint),
     };
     let (status, tone) = status(sketch, s);
-    d.text("status", status, tone);
+    d.form.dialog.text("status", status, tone);
 
     let failed = match &s.solved {
         Some(Solved::Solved { report }) => report.failed_constraints.clone(),
@@ -401,11 +381,11 @@ pub(super) fn draw_dialog<'a, S: Scalar>(
             item
         })
         .collect();
-    d.heading(
+    d.form.dialog.heading(
         "constraints_heading",
         format!("Constraints ({})", sketch.constraints.len()),
     );
-    d.list("constraints", items, "None yet.");
+    d.form.dialog.list("constraints", items, "None yet.");
 
     if let Some(id) = s.prompt
         && let Some(c) = sketch.constraints.get(&id)
@@ -417,7 +397,7 @@ pub(super) fn draw_dialog<'a, S: Scalar>(
                 editing(before, edit, |e| e.set_value(id, &text));
             }
         });
-        d.prompt = Some(Prompt {
+        d.form.prompt = Some(Prompt {
             key: "prompt".into(),
             label: constraints::name(c),
             value: args

@@ -6,7 +6,7 @@
 
 use std::f64::consts::{PI, TAU};
 
-use geop_core_math::scalars::Scalar;
+use geop_core_math::{scalars::Scalar, vector::Vector2};
 
 use crate::sketch::{CurveId, CurveKind, PointId, Sketch};
 
@@ -66,6 +66,18 @@ pub fn angle_between(a: P2, b: P2) -> f64 {
     cross(a, b).atan2(dot(a, b))
 }
 
+/// The angle from `from` round to `to`, followed on from `previous`, the
+/// sweep it was before (none if zero): within half a turn of it, so that a
+/// sweep dragged round goes on past half a turn.
+pub fn swept(previous: f64, from: P2, to: P2) -> f64 {
+    let raw = angle_between(from, to);
+    if previous == 0.0 {
+        raw
+    } else {
+        previous + wrap(raw - previous)
+    }
+}
+
 /// `p` mirrored across the line through `a` and `b`.
 pub fn reflect(p: P2, a: P2, b: P2) -> P2 {
     let Some(u) = unit(sub(b, a)) else {
@@ -76,10 +88,14 @@ pub fn reflect(p: P2, a: P2, b: P2) -> P2 {
     add(a, sub(scale(along, 2.0), q))
 }
 
+/// `v` in plain numbers.
+pub fn of<S: Scalar>(v: &Vector2<S>) -> P2 {
+    [v[0].to_f64(), v[1].to_f64()]
+}
+
 /// Where the sketch point `p` is drawn.
 pub fn xy<S: Scalar>(sketch: &Sketch<S>, p: PointId) -> P2 {
-    let q = sketch.points[&p].xy();
-    [q[0].to_f64(), q[1].to_f64()]
+    of(&sketch.points[&p].xy())
 }
 
 /// Where the segments from `a` to `b` and from `c` to `d` cross, if they

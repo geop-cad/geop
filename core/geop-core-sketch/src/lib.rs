@@ -25,6 +25,7 @@ pub mod profile;
 pub mod sketch;
 pub mod solve;
 pub mod space;
+mod variables;
 
 pub use profile::{ProfileEdge, ProfileJoint, ProfileLoop, ProfilePiece, Region, Shape};
 pub use sketch::{

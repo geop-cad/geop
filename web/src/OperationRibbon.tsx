@@ -10,9 +10,9 @@ export interface Tool {
   label: string;
   /** What it does, at length: its tooltip. */
   doc: string;
-  /** The section of the toolbar it is in (see `geop_ops::OperationGroup`). */
+  /** The section of the toolbar it is in (see `geop_core_program::operation::OperationGroup`). */
   group: string;
-  /** How prominently its section shows it (see `geop_ops::OperationTier`). */
+  /** How prominently its section shows it (see `geop_core_program::operation::OperationTier`). */
   tier: OperationTier;
   active: boolean;
   disabled: boolean;

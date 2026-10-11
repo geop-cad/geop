@@ -138,11 +138,11 @@ pub fn control_net<S: Scalar>(mesh: &Subdivided<S>) -> GeopResult<ControlNet<S>>
         .collect();
 
     let mut weight = vec![[0usize; 4]; faces.len()];
-    for v in 0..p.len() {
+    for (v, kind) in kinds.iter().enumerate() {
         let fan = &topology.fans[v].0;
         let sizes = sector_sizes(mesh, v);
         for (i, &(f, k)) in fan.iter().enumerate() {
-            weight[f][k] = match kinds[v] {
+            weight[f][k] = match kind {
                 VertexKind::Smooth => fan.len(),
                 VertexKind::Crease(..) => 2 * sizes[i],
                 VertexKind::Corner => 4 * sizes[i],

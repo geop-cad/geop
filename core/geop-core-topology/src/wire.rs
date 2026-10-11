@@ -12,7 +12,7 @@ use super::ids::{EdgeId, VertexId};
 /// A wire is no [`crate::Body`]: nothing is cut or combined with it. Its
 /// edges must not cross each other except at a shared vertex, as the edges
 /// of a body must not (see [`crate::validation`]).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Wire {
     pub vertices: Vec<VertexId>,
     pub edges: Vec<EdgeId>,

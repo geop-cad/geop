@@ -18,11 +18,18 @@ use geop_core_math::{
 };
 use serde::{Deserialize, Serialize};
 
+use geop_core_program::{
+    editing::{Event, Form},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_ops::{
-    Context, Library, Part,
-    operation::{Aspects, EntityRef, Operation, Role, frame_along},
+    Design, ORIGIN, ParamValue,
+    model::{datum, model_or_empty},
+    operation::{
+        Aspects, Build, BuildReader, EntityRef, Input, Lookup, Role, Scope, Seen, frame_along,
+    },
     parameters::{Formula, expressions},
-    ui::{Form, Unit},
+    ui::Unit,
 };
 
 use crate::editor;
@@ -265,7 +272,7 @@ fn assign<S: Scalar>(inputs: &[Role], selection: &[Aspects<S>]) -> Option<Vec<us
             return true;
         };
         for (i, geometry) in selection.iter().enumerate() {
-            if !chosen.contains(&i) && role.fits(geometry) {
+            if !chosen.contains(&i) && geometry.fits(*role) {
                 chosen.push(i);
                 if extend(inputs, selection, chosen) {
                     return true;
@@ -279,16 +286,16 @@ fn assign<S: Scalar>(inputs: &[Role], selection: &[Aspects<S>]) -> Option<Vec<us
     (inputs.len() == selection.len() && extend(inputs, selection, &mut chosen)).then_some(chosen)
 }
 
-/// The method of every construction that fits `selection` in `part` — by
-/// the same matching a step applies. None, if the part lacks an entity of
-/// it.
+/// The method of every construction that fits `selection` as `lookup` has
+/// the part — by the same matching a step applies. None, if the part lacks
+/// an entity of it.
 pub fn fitting_constructions<S: Scalar>(
-    part: &Part<S>,
+    lookup: &mut (impl Lookup<S> + ?Sized),
     selection: &[EntityRef],
 ) -> Vec<&'static str> {
     let Ok(resolved) = selection
         .iter()
-        .map(|e| Aspects::of(e, part))
+        .map(|e| Aspects::of(e, lookup))
         .collect::<GeopResult<Vec<_>>>()
     else {
         return Vec::new();
@@ -301,17 +308,20 @@ pub fn fitting_constructions<S: Scalar>(
 }
 
 impl AddDatumArgs {
-    /// The selection resolved in `part` and ordered as the construction
-    /// takes it.
-    pub(crate) fn inputs<S: Scalar>(&self, part: &Part<S>) -> GeopResult<Vec<Aspects<S>>> {
+    /// The selection resolved as `lookup` has the part, and ordered as the
+    /// construction takes it.
+    pub(crate) fn inputs<S: Scalar>(
+        &self,
+        lookup: &mut (impl Lookup<S> + ?Sized),
+    ) -> GeopResult<Vec<Aspects<S>>> {
         let schema = self.construction.schema();
         let resolved = self
             .selection
             .iter()
-            .map(|e| Aspects::of(e, part))
+            .map(|e| Aspects::of(e, lookup))
             .collect::<GeopResult<Vec<_>>>()?;
         let Some(order) = assign(schema.inputs, &resolved) else {
-            let needs: Vec<&str> = schema.inputs.iter().map(|&r| r.describe()).collect();
+            let needs: Vec<String> = schema.inputs.iter().map(|&r| r.describe()).collect();
             return Err(GeopError::new(format!(
                 "{} needs {} selected, one each, and nothing else",
                 schema.label,
@@ -621,79 +631,112 @@ impl Construction {
     }
 }
 
-impl Operation for AddDatum {
-    type Args = AddDatumArgs;
-    type Session = ();
+/// The datum the step `step` adds with `args`, built from its selection as
+/// the part before it has it.
+fn add(
+    reader: &mut BuildReader,
+    (step, args): &(String, AddDatumArgs),
+) -> GeopResult<Datum<Design>> {
+    let ctx = with_context!("add_datum({step}, {args:?})");
+    if step == ORIGIN {
+        return Err(GeopError::new(format!(
+            "a datum cannot be named {ORIGIN:?}: every part has that one"
+        )));
+    }
+    let model = model_or_empty(reader);
+    let mut scope = Scope {
+        model: &model,
+        reader,
+    };
+    let inputs = args.inputs(&mut scope).with_context(ctx)?;
+    let frame = (args.construction)
+        .build(&inputs, |f| f.evaluate(&mut scope))
+        .with_context(ctx)?;
+    Ok(Datum {
+        kind: args.construction.schema().result,
+        frame,
+    })
+}
 
-    fn formulas<'a>(&self, args: &'a mut AddDatumArgs) -> Vec<&'a mut String> {
+impl Operation for AddDatum {
+    const INFO: OperationInfo = OperationInfo::new(
+        "add_datum",
+        "Reference",
+        "Add a point, an axis, a plane or a coordinate system to build with, made from what is picked.",
+        OperationGroup::Sketch,
+        OperationTier::Small,
+    );
+    type Args = AddDatumArgs;
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
+
+    fn formulas(args: &mut AddDatumArgs) -> Vec<&mut String> {
         args.construction.formulas()
     }
 
     /// Nothing selected yet, and the first construction.
-    fn new_args<S: Scalar>(&self, _before: &Part<S>) -> AddDatumArgs {
+    fn new_args(_: &Context<Input, ParamValue>) -> AddDatumArgs {
         AddDatumArgs {
             selection: Vec::new(),
             construction: Construction::default_of(&CONSTRUCTIONS[0]),
         }
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
-        args: &AddDatumArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("add_datum({operation_id}, {args:?})");
-        let inputs = args.inputs(&part).with_context(ctx)?;
-        let frame = args
-            .construction
-            .build(&inputs, |f| f.evaluate(&mut part))
-            .with_context(ctx)?;
-        let datum = Datum {
-            kind: args.construction.schema().result,
-            frame,
-        };
-        part.add_datum(datum, operation_id).with_context(ctx)?;
-        Ok(part)
-    }
-
-    /// An offset point moved by its gizmo: see [`crate::editor`].
-    fn event<S: Scalar>(
-        &self,
-        context: Context<'_, S>,
-        edit: geop_ops::ui::Edit<'_, AddDatumArgs, ()>,
-        event: &geop_ops::ui::CanvasEvent<S>,
-    ) {
-        editor::event(context.before, edit, event);
+    /// Defines the datum named after the step.
+    fn run(step: &str, part: &mut Build, args: &AddDatumArgs) -> GeopResult<()> {
+        part.define_target(&datum(step), &(step.to_string(), args.clone()), add)
     }
 
     /// Picking the selection, choosing among the constructions that fit
     /// it, and offsets as handles and a gizmo: see [`crate::editor`].
-    fn form<'a, S: Scalar>(
-        &self,
-        context: Context<'a, S>,
+    fn presentation(
+        context: &Context<Input, ParamValue>,
         args: &AddDatumArgs,
         _: &(),
-        _: &[String],
-    ) -> Form<'a, S, AddDatumArgs> {
-        let before = context.before;
-        editor::form(before, args)
+    ) -> Form<Design> {
+        let seen = Seen::new(context.before);
+        editor::form(&seen, args).into_form()
+    }
+
+    fn process_user_event(
+        context: &Context<Input, ParamValue>,
+        args: &AddDatumArgs,
+        _: &(),
+        event: Event<Design>,
+    ) -> (AddDatumArgs, ()) {
+        let seen = Seen::new(context.before);
+        match event {
+            Event::Canvas(event) => {
+                let mut args = args.clone();
+                editor::event(&seen, &mut args, &event);
+                (args, ())
+            }
+            event => (editor::form(&seen, args).apply(args, event), ()),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use geop_core_math::{
-        primitives::{DatumComponent, FrameAxis, Ray},
+        primitives::{FrameAxis, Ray},
         scalars::ScalInF64 as S,
     };
-
+    use geop_core_program::{
+        operation_registry::OperationRegistry,
+        program::{Program, ProgramStep},
+        program_runner::ProgramRunner,
+        step_editor::{Editing, StepEditor},
+    };
     use geop_ops::{
-        NoFiles, ORIGIN, Operations,
+        NamedModel,
+        operation::apply,
         ui::{
-            Button, Control, PartView, Pointer, Presentation, Reach, StepEditEvent, StepEditor,
-            Tone, Value,
+            Axis, Button, Control, GizmoPart, PartScene, PartView, Pointer, Presentation, Reach,
+            StepEditEvent, Tone, Value,
         },
     };
 
@@ -705,12 +748,7 @@ mod tests {
     fn origin() -> EntityRef {
         EntityRef::datum(ORIGIN)
     }
-    fn axis(axis: FrameAxis) -> EntityRef {
-        EntityRef::datum_component(ORIGIN, DatumComponent::Axis(axis))
-    }
-    fn base(normal: FrameAxis) -> EntityRef {
-        EntityRef::datum_component(ORIGIN, DatumComponent::Plane(normal))
-    }
+    use geop_ops::{origin_axis as axis, origin_plane as base};
     fn v(p: [f64; 3]) -> Vector3<S> {
         Vector3::from_array(p.map(S::from_f64))
     }
@@ -722,6 +760,13 @@ mod tests {
                 radius: S::from_f64(0.01),
             },
         }
+    }
+
+    /// The datum step `d` with `args` adds to an empty part, or why it
+    /// fails.
+    fn added(args: &AddDatumArgs) -> GeopResult<Datum<S>> {
+        let part = apply::<AddDatum>(NamedModel::new(), "d", args)?;
+        part.current().retrieve_target(&datum("d")).cloned()
     }
 
     /// Every construction serializes under its own method, with exactly the
@@ -744,6 +789,21 @@ mod tests {
         }
     }
 
+    /// A datum is the step's target: built where its selection puts it.
+    #[test]
+    fn an_offset_plane_is_added() {
+        let args = AddDatumArgs {
+            selection: vec![base(FrameAxis::Z)],
+            construction: Construction::Offset {
+                distance: 2.0.into(),
+            },
+        };
+        let datum = added(&args).unwrap();
+        assert_eq!(datum.kind, DatumKind::Plane);
+        assert!(datum.frame.origin().could_be_equal(&v([0.0, 0.0, 2.0])));
+        assert!(datum.frame.w().could_be_equal(&v([0.0, 0.0, 1.0])));
+    }
+
     #[test]
     fn a_selection_that_does_not_fit_says_what_it_needs() {
         let args = AddDatumArgs {
@@ -752,7 +812,7 @@ mod tests {
                 distance: 1.0.into(),
             },
         };
-        let Err(e) = AddDatum.apply(Part::<S>::new(), "d", &args, &NoFiles) else {
+        let Err(e) = added(&args) else {
             panic!("an offset plane from a point");
         };
         assert!(e.to_string().contains("needs a plane selected"), "{e}");
@@ -761,14 +821,13 @@ mod tests {
     /// Degenerate selections are refused, saying why.
     #[test]
     fn degenerate_selections_fail() {
-        let part = Part::<S>::new();
         let origin = origin();
         let err = |selection: Vec<EntityRef>, construction: Construction| {
             let args = AddDatumArgs {
                 selection,
                 construction,
             };
-            match AddDatum.apply(part.clone(), "d", &args, &NoFiles) {
+            match added(&args) {
                 Ok(_) => panic!("{args:?} built a datum"),
                 Err(e) => format!("{e:?}"),
             }
@@ -804,30 +863,73 @@ mod tests {
         assert!(err(vec![edge("nowhere")], Construction::AlongLine {}).contains("nowhere"));
     }
 
-    /// The one operation, as a set an editor edits.
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Operations)]
-    #[serde(tag = "operation", content = "args", rename_all = "snake_case")]
-    enum Ops {
-        #[operation(group = Sketch, tier = Big)]
-        AddDatum(AddDatumArgs),
+    /// A datum step `d`, the only step of its program, being edited as an
+    /// editor drives it: every event handled, then the program run again.
+    struct Editor {
+        runner: ProgramRunner<Input, ParamValue>,
+        program: Program,
+        editor: StepEditor<S>,
     }
 
-    /// A datum step edited as an editor drives it — `new`, starting with a
-    /// pick — and what it shows after `events`.
+    impl Editor {
+        /// Editing `args` — `new`, starting with a pick.
+        fn on(args: AddDatumArgs, new: bool) -> Self {
+            let registry = OperationRegistry::default().with(AddDatum).unwrap();
+            let mut runner = ProgramRunner::new(registry);
+            let program = Program::new(vec![ProgramStep::new::<AddDatum>("d", &args).unwrap()]);
+            runner.run(&program, &BTreeMap::new(), &BTreeMap::new());
+            let editor = StepEditor::new(&runner, &program, "d", new).unwrap();
+            Editor {
+                runner,
+                program,
+                editor,
+            }
+        }
+
+        fn send(&mut self, event: StepEditEvent<S>) {
+            let before = self.runner.part.view_before("d").unwrap();
+            let view = PartView::of(&Seen::new(before)).unwrap();
+            let scene = PartScene {
+                view: &view,
+                seen: Seen::new(before),
+            };
+            let editing = Editing {
+                runner: &self.runner,
+                program: &mut self.program,
+                scene: &scene,
+            };
+            self.editor.handle(editing, &event).unwrap();
+            (self.runner).run(&self.program, &BTreeMap::new(), &BTreeMap::new());
+        }
+
+        fn args(&self) -> AddDatumArgs {
+            serde_json::from_value(self.program.steps[0].args.clone()).unwrap()
+        }
+
+        fn shown(&self) -> Presentation<S> {
+            let before = self.runner.part.view_before("d").unwrap();
+            let view = PartView::of(&Seen::new(before)).unwrap();
+            let scene = PartScene {
+                view: &view,
+                seen: Seen::new(before),
+            };
+            (self.editor)
+                .presentation(&self.runner, &self.program, &scene)
+                .unwrap()
+        }
+    }
+
+    /// `args` edited by `events`, and what is shown after them.
     fn edited(
-        part: &Part<S>,
         args: AddDatumArgs,
         new: bool,
         events: &[StepEditEvent<S>],
     ) -> (AddDatumArgs, Presentation<S>) {
-        let view = PartView::of(part).unwrap();
-        let context = Context::new(part, "d", &NoFiles);
-        let mut editor = StepEditor::new(Ops::AddDatum(args), context, new);
+        let mut editor = Editor::on(args, new);
         for event in events {
-            editor.handle(context, &view, event);
+            editor.send(event.clone());
         }
-        let Ops::AddDatum(args) = editor.step().clone();
-        (args, editor.presentation(context, part, &view))
+        (editor.args(), editor.shown())
     }
 
     /// An offset point is moved by a gizmo at it, along the axes its
@@ -842,8 +944,7 @@ mod tests {
                 z: 3.0.into(),
             },
         };
-        let part = Part::<S>::new();
-        let shown = edited(&part, args.clone(), false, &[]).1;
+        let shown = edited(args.clone(), false, &[]).1;
         assert!(shown.visuals.is_empty(), "no handles: {:?}", shown.visuals);
         let gizmo = shown.gizmo.expect("a gizmo");
         assert!(
@@ -859,10 +960,10 @@ mod tests {
             pointer: side(3.05),
             shift: false,
         };
-        let hovered = edited(&part, args.clone(), false, std::slice::from_ref(&hover)).1;
+        let hovered = edited(args.clone(), false, std::slice::from_ref(&hover)).1;
         assert_eq!(
             hovered.gizmo.and_then(|g| g.hover),
-            Some(geop_ops::ui::GizmoPart::Move(2))
+            Some(GizmoPart::Move(Axis::Z))
         );
         assert!(hovered.grab);
         let drag = StepEditEvent::Drag {
@@ -871,7 +972,7 @@ mod tests {
             done: true,
             shift: false,
         };
-        let (dragged, _) = edited(&part, args, false, &[drag]);
+        let (dragged, _) = edited(args, false, &[drag]);
         assert_eq!(
             dragged.construction,
             Construction::Point {
@@ -893,9 +994,8 @@ mod tests {
                 distance: 1.0.into(),
             },
         };
-        let part = Part::<S>::new();
-        assert!(AddDatum.apply(part.clone(), "d", &args, &NoFiles).is_err());
-        let dialog = edited(&part, args.clone(), false, &[]).1.dialog;
+        assert!(added(&args).is_err());
+        let dialog = edited(args.clone(), false, &[]).1.dialog;
         let Some(Control::Reference(selection)) = dialog.get("selection") else {
             panic!("the selection is a reference field");
         };
@@ -907,7 +1007,7 @@ mod tests {
             selection: vec![base(FrameAxis::Z)],
             ..args
         };
-        let dialog = edited(&part, args, false, &[]).1.dialog;
+        let dialog = edited(args, false, &[]).1.dialog;
         let Some(Control::Actions { actions }) = dialog.get("construction") else {
             panic!("the constructions are actions");
         };
@@ -920,8 +1020,10 @@ mod tests {
     /// the construction follows what fits.
     #[test]
     fn picks_build_the_selection() {
-        let part = Part::<S>::new();
-        let args = AddDatum.new_args(&part);
+        let args = AddDatumArgs {
+            selection: Vec::new(),
+            construction: Construction::default_of(&CONSTRUCTIONS[0]),
+        };
         // The origin's ball, from above.
         let click = StepEditEvent::Click {
             pointer: pointer([0.0, 0.0, 10.0], [0.0, 0.0, -1.0]),
@@ -929,10 +1031,10 @@ mod tests {
             double: false,
             shift: false,
         };
-        let (once, shown) = edited(&part, args.clone(), true, std::slice::from_ref(&click));
+        let (once, shown) = edited(args.clone(), true, std::slice::from_ref(&click));
         assert_eq!(once.selection, [origin()]);
         assert!(shown.pickable.contains(&Role::Point));
-        let (twice, _) = edited(&part, args, true, &[click.clone(), click]);
+        let (twice, _) = edited(args, true, &[click.clone(), click]);
         assert!(twice.selection.is_empty());
     }
 
@@ -940,7 +1042,6 @@ mod tests {
     /// by the editor, as for any reference field; the construction follows.
     #[test]
     fn selections_are_edited_in_their_field() {
-        let part = Part::<S>::new();
         let args = AddDatumArgs {
             selection: vec![origin(), axis(FrameAxis::X)],
             construction: Construction::Perpendicular {},
@@ -949,10 +1050,10 @@ mod tests {
             key: "selection".into(),
             value,
         };
-        let (removed, _) = edited(&part, args.clone(), false, &[field(Value::RemoveAt(0))]);
+        let (removed, _) = edited(args.clone(), false, &[field(Value::RemoveAt(0))]);
         assert_eq!(removed.selection, [axis(FrameAxis::X)]);
         assert_eq!(removed.construction.schema().method, "along_line");
-        let (cleared, _) = edited(&part, args, false, &[field(Value::Clear)]);
+        let (cleared, _) = edited(args, false, &[field(Value::Clear)]);
         assert!(cleared.selection.is_empty());
     }
 }

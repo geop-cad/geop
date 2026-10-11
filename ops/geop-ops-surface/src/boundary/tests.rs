@@ -10,7 +10,8 @@ use geop_core_topology::{
     Body, Curve3,
     validation::{ValidationParameters, validate},
 };
-use geop_ops::{NoFiles, Part};
+use geop_ops::NamedModel;
+use geop_ops::operation::apply_to_model;
 use geop_ops_extrude_revolve::shapes::cube_solid;
 
 use super::*;
@@ -19,7 +20,7 @@ pub(crate) fn v3(x: f64, y: f64, z: f64) -> Vector3<S> {
     Vector3::from_array([x, y, z].map(S::from_f64))
 }
 
-pub(crate) fn assert_valid(part: &Part<S>) {
+pub(crate) fn assert_valid(part: &NamedModel<S>) {
     if let Err(errors) = validate(&ValidationParameters::default(), part.topology()) {
         let messages: Vec<String> = errors.iter().map(|e| format!("{e}")).collect();
         panic!("{} errors:\n{}", messages.len(), messages.join("\n"));
@@ -28,7 +29,7 @@ pub(crate) fn assert_valid(part: &Part<S>) {
 }
 
 /// The name of the edge of `part` from `a` to `b`, either way.
-pub(crate) fn edge_between(part: &Part<S>, a: [f64; 3], b: [f64; 3]) -> String {
+pub(crate) fn edge_between(part: &NamedModel<S>, a: [f64; 3], b: [f64; 3]) -> String {
     let model = part.topology();
     let (a, b) = (v3(a[0], a[1], a[2]), v3(b[0], b[1], b[2]));
     let at = |id, p: &Vector3<S>| model.get_vertex(id).unwrap().point.could_be_equal(p);
@@ -45,30 +46,30 @@ pub(crate) fn edge_between(part: &Part<S>, a: [f64; 3], b: [f64; 3]) -> String {
     found.into_iter().next().unwrap()
 }
 
-fn unit_cube() -> Part<S> {
-    let mut part = Part::<S>::new();
+fn unit_cube() -> NamedModel<S> {
+    let mut part = NamedModel::<S>::new();
     cube_solid(&mut part, "c", v3(0., 0., 0.), v3(1., 1., 1.)).unwrap();
     part
 }
 
-fn span(part: Part<S>, edges: &[String], tangent: &[String]) -> GeopResult<Part<S>> {
+fn span(part: NamedModel<S>, edges: &[String], tangent: &[String]) -> GeopResult<NamedModel<S>> {
     let edge = |name: &String| EntityRef::Edge { name: name.clone() };
     let args = BoundarySurfaceArgs {
         edges: edges.iter().map(edge).collect(),
         tangent: tangent.iter().map(edge).collect(),
     };
-    BoundarySurface.apply(part, "b", &args, &NoFiles)
+    apply_to_model::<BoundarySurface>(part, "b", &args)
 }
 
 /// Why `result` failed — it must have.
-pub(crate) fn refused(result: GeopResult<Part<S>>) -> String {
+pub(crate) fn refused(result: GeopResult<NamedModel<S>>) -> String {
     match result {
         Ok(_) => panic!("built, but should have been refused"),
         Err(e) => format!("{e}"),
     }
 }
 
-fn sheet_faces(part: &Part<S>) -> usize {
+fn sheet_faces(part: &NamedModel<S>) -> usize {
     part.sheet_face_names().len()
 }
 
@@ -78,7 +79,7 @@ pub(crate) fn pt(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
 
 /// A sheet of one face, the Coons patch of `sides`, its entities named
 /// `name(...)`.
-pub(crate) fn coons_sheet(part: &mut Part<S>, name: &str, sides: [Curve3<S>; 4]) {
+pub(crate) fn coons_sheet(part: &mut NamedModel<S>, name: &str, sides: [Curve3<S>; 4]) {
     let corners: Vec<Vector3<S>> = sides
         .iter()
         .map(|c| c.evaluate(c.domain().0).unwrap())
@@ -220,7 +221,7 @@ fn hexagon_round_a_cube_is_six_quadrilaterals() {
 /// along each of them.
 #[test]
 fn coons_patch_of_a_twisted_loop() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     coons_sheet(
         &mut part,
         "twist",
@@ -259,7 +260,7 @@ fn coons_patch_of_a_twisted_loop() {
 /// tangent to the flange along its edge — its normal there the flange's.
 #[test]
 fn cover_tangent_to_a_flange() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     coons_sheet(
         &mut part,
         "flange",
@@ -327,7 +328,7 @@ fn open_chain_is_refused() {
 /// The circle round a cylinder's end: one flat disc.
 #[test]
 fn circle_is_filled_flat() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     geop_ops_extrude_revolve::shapes::cylinder::revolved_cylinder(
         &mut part,
         "cyl",
@@ -360,13 +361,13 @@ fn circle_is_filled_flat() {
 /// from the corner `P_k` of an `n`-gon of radius one to `P_{k+1}`, its
 /// corners rising alternately by `lift`, and out to half as far again. The
 /// strips' inner edges, `strip{k}(e0)`, ring the hole.
-fn ring_of_strips(n: usize, lift: f64) -> Part<S> {
+fn ring_of_strips(n: usize, lift: f64) -> NamedModel<S> {
     let corner = |k: usize, r: f64| {
         let a = std::f64::consts::TAU * (k % n) as f64 / n as f64;
         let z = if k % n % 2 == 1 { lift } else { 0.0 };
         [r * a.cos(), r * a.sin(), z]
     };
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     for k in 0..n {
         let (p, q) = (corner(k, 1.0), corner(k + 1, 1.0));
         let (pp, qq) = (corner(k, 1.5), corner(k + 1, 1.5));
@@ -393,7 +394,7 @@ fn fill_and_knit(n: usize, lift: f64) {
         faces,
         solid: false,
     };
-    let part = crate::Knit.apply(part, "k", &args, &NoFiles).unwrap();
+    let part = apply_to_model::<crate::Knit>(part, "k", &args).unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().shells.len(), 1, "{n} sides, lifted {lift}");
 }

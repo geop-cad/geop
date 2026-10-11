@@ -3,7 +3,7 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_math::scalars::Scalar;
 
 use super::ids::{EdgeId, FaceId};
-use super::model::Curve2;
+use super::model::{Curve2, Curve3};
 
 /// Whether a coedge traverses its underlying edge in the same direction
 /// (forward: start→end) or the opposite direction (reversed: end→start).
@@ -18,6 +18,14 @@ impl Sense {
         match self {
             Sense::Forward => Sense::Reversed,
             Sense::Reversed => Sense::Forward,
+        }
+    }
+
+    /// `curve`, run the way a coedge of this sense runs it.
+    pub fn orient<S: Scalar>(self, curve: &Curve3<S>) -> Curve3<S> {
+        match self {
+            Sense::Forward => curve.clone(),
+            Sense::Reversed => curve.reverse(),
         }
     }
 }
@@ -42,7 +50,7 @@ pub enum CoedgeGeometry {
     Vertex(VertexId),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Coedge<S: Scalar> {
     pub geometry: CoedgeGeometry,
     pub sense: Sense,

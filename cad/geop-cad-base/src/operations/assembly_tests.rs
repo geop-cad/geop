@@ -1,27 +1,154 @@
 //! Assemblies: programs placing the parts other program files build — built
 //! from a workspace of files, and edited as a front end drives the editor.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, rc::Rc};
 
 use geop_core_math::{
+    geop_error::GeopResult,
     primitives::{Pose, Ray},
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
+use geop_core_program::program::ProgramStep;
+use geop_ops::solving::{self, Freedom, Report, SettingsState};
 use geop_ops::{
-    Design, EntityRef, PartDescription,
-    operation::Aspects,
-    ui::{Control, Pointer, Reach, StepEditEvent, Value},
+    Design, EntityRef, ParamValue,
+    model::{model, pose_parameter},
+    operation::{Aspects, BuildView, Seen},
+    parameters::Values,
+    placed::{Library, instance, instance_name, locate},
+    ui::{Control, Pointer, Pull, Reach, StepEditEvent, Value},
 };
-use geop_ops_assembly::{AddPartArgs, PartMates};
-
-use geop_ops::part::{ParamValue, pose_parameter};
-// use geop_ops_datums::{AddDatumArgs, Construction};
+use geop_ops_assembly::{AddPartArgs, PartPatternArgs, Resolved, mate_name};
+use geop_ops_datums::{AddDatum, AddDatumArgs, Construction};
+use geop_ops_extrude_revolve::ExtrudeArgs;
 
 use crate::examples::{n, pose};
 use crate::{
-    Command, Editor, PartOperation, Program, Step, Workspace, examples, stdlib::WithStandardParts,
+    Command, Editor, Program, Push, examples,
+    operations::{
+        self, Runner,
+        testing::{dialog, edit_args, example_editor, from_above, handled},
+        workspace,
+    },
 };
+
+/// What a program built, as a run left it, and the state it ran with: what
+/// the tests ask of it.
+struct Built(Runner, Values);
+
+/// `program` built with `library`, or why its first step that fails does.
+fn build(program: &Program, library: &Rc<dyn Library>) -> GeopResult<Built> {
+    let runner = operations::build(program, library)?;
+    Ok(Built(runner, program.state.clone()))
+}
+
+impl Built {
+    fn view(&self) -> BuildView<'_> {
+        self.0.part.current()
+    }
+
+    fn check_names(&self) {
+        if let Ok(model) = self.view().retrieve_target(&model()) {
+            model.check_names().unwrap();
+        }
+    }
+
+    fn check_mates(&self) -> GeopResult<Report> {
+        solving::check(self.view())
+    }
+
+    /// The mates solved with `pull`: where they hold, a true solution near
+    /// there is enclosed — every value moved — at no more than the solve's
+    /// cost.
+    fn solve_mates(&mut self, pull: Pull<Design>) -> GeopResult<(Values, Report)> {
+        let (moved, report) = solving::solve(&mut self.0.part, &self.1, &[pull], None)?;
+        if report.converged {
+            assert!(report.unproven.is_empty(), "{:?}", report.unproven);
+            for name in moved.keys() {
+                assert!(
+                    report.enclosed.contains_key(name),
+                    "{name} moved, not enclosed"
+                );
+            }
+        }
+        // Enclosing what a drag solved costs no more than solving it: the
+        // rows it ended at, a Newton step, a box and its check.
+        let [solve, enclose] = report.evaluations;
+        assert!(
+            enclose <= solve.max(4),
+            "{enclose} evaluations to enclose a solve of {solve}"
+        );
+        Ok((moved, report))
+    }
+
+    fn solve_joints(&mut self, set: &[(&str, f64)]) -> GeopResult<(Values, Report)> {
+        let set: BTreeMap<String, Design> =
+            (set.iter()).map(|(p, v)| (p.to_string(), n(*v))).collect();
+        solving::set(&mut self.0.part, &self.1, &set)
+    }
+
+    fn joints(&self) -> GeopResult<Vec<SettingsState>> {
+        Ok(solving::settings(self.view()))
+    }
+
+    fn mate_freedom(&mut self) -> GeopResult<Freedom> {
+        solving::freedom(&mut self.0.part, &self.1, &Default::default())
+    }
+
+    /// Whether the part placed as `name` is held where it is.
+    fn holds(&self, name: &str) -> bool {
+        let fixed = (self.view().targets_of::<Resolved>().into_iter())
+            .any(|(_, r)| matches!(r, Resolved::Fixed { body } if body == name));
+        let placed = self.view().retrieve_target(&instance(name));
+        fixed || placed.is_ok_and(|i| i.fixed)
+    }
+
+    /// The parts placed in it — not in those — by name, with their files.
+    fn instances(&self) -> BTreeMap<String, String> {
+        (self
+            .view()
+            .targets_of::<geop_ops::placed::Instance>()
+            .into_iter())
+        .filter_map(|(target, i)| {
+            Some((instance_name(target)?.to_string(), i.component.file.clone()))
+        })
+        .collect()
+    }
+
+    /// Its mates, by name.
+    fn mates(&self) -> Vec<String> {
+        let mut names: Vec<String> = (self.view().targets_of::<Resolved>().into_iter())
+            .filter_map(|(target, _)| mate_name(target).map(str::to_string))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// What `entity` is, where the part has it — of a placed part, where it
+    /// is placed.
+    fn aspects(&self, entity: &EntityRef) -> Aspects<Design> {
+        let Some((first, _)) = entity.split_instance() else {
+            return Aspects::of(entity, &mut Seen::new(self.view())).unwrap();
+        };
+        // The innermost placed part it is of.
+        let mut path = first;
+        let mut rest = entity.split_instance().unwrap().1;
+        let mut located = locate(&mut self.view(), &path).unwrap();
+        while let Some((next, inner)) = rest.split_instance() {
+            let deeper = format!("{path}/{next}");
+            let Ok(found) = locate(&mut self.view(), &deeper) else {
+                break;
+            };
+            (path, rest, located) = (deeper, inner, found);
+        }
+        let mut seen = Seen::new(located.instance.component.view());
+        Aspects::of(&rest, &mut seen)
+            .unwrap()
+            .placed(&located.world)
+            .unwrap()
+    }
+}
 
 /// The files of the `pin_in_plate` example but its assembly, by path.
 fn parts() -> BTreeMap<String, String> {
@@ -34,8 +161,8 @@ fn parts() -> BTreeMap<String, String> {
     ])
 }
 
-fn point(part: &geop_ops::Part<S>, entity: &EntityRef) -> [f64; 3] {
-    let p = Aspects::of(entity, part).unwrap().point.unwrap();
+fn point(part: &Built, entity: &EntityRef) -> [f64; 3] {
+    let p = part.aspects(entity).point.unwrap();
     [0, 1, 2].map(|k| p[k].to_f64())
 }
 
@@ -52,23 +179,20 @@ fn assert_close(a: [f64; 3], b: [f64; 3], tol: f64) {
 /// around `(1, 1)` — where the program's state puts it.
 #[test]
 fn the_pin_is_mated_into_the_plate() {
-    let workspace = Workspace::<S>::new(WithStandardParts(parts()));
+    let workspace = workspace(parts());
     let program = examples::pin_in_plate_assembly();
-    let part = program.build(&workspace.scope("assembly.geop")).unwrap();
-    part.check_names().unwrap();
-    assert!(part.check_mates(|_| true).unwrap().converged);
+    let part = build(&program, &workspace.scope("assembly.geop")).unwrap();
+    part.check_names();
+    assert!(part.check_mates().unwrap().converged);
     let origin = |instance: &str| EntityRef::datum(format!("{instance}/origin"));
     assert_close(point(&part, &origin("plate")), [0.0; 3], 1e-12);
     assert_close(point(&part, &origin("pin")), [1.0, 1.0, 0.5], 1e-7);
 
-    let description = PartDescription::of(&part).unwrap();
+    let instances = part.instances();
+    assert_eq!(instances.keys().collect::<Vec<_>>(), ["pin", "plate"]);
+    assert_eq!(instances["pin"], "pin.geop");
     assert_eq!(
-        description.instances.keys().collect::<Vec<_>>(),
-        ["pin", "plate"]
-    );
-    assert_eq!(description.instances["pin"].file, "pin.geop");
-    assert_eq!(
-        description.extensions["mates"].keys().collect::<Vec<_>>(),
+        part.mates(),
         [
             "add_part(pin,m1)",
             "add_part(pin,m2)",
@@ -94,12 +218,12 @@ fn files_must_not_place_each_other_in_a_cycle() {
         );
         program
     };
-    let workspace = Workspace::<S>::new(WithStandardParts(BTreeMap::from([
+    let workspace = workspace(BTreeMap::from([
         ("a.geop".into(), placing("b.geop").to_json().unwrap()),
         ("b.geop".into(), placing("sub/../a.geop").to_json().unwrap()),
         ("c.geop".into(), placing("c.geop").to_json().unwrap()),
-    ])));
-    let error = |program: Program, file: &str| match program.build::<S>(&workspace.scope(file)) {
+    ]));
+    let error = |program: Program, file: &str| match build(&program, &workspace.scope(file)) {
         Ok(_) => panic!("{file} built"),
         Err(e) => e.to_string(),
     };
@@ -113,26 +237,18 @@ fn files_must_not_place_each_other_in_a_cycle() {
     assert!(err.contains("c.geop -> c.geop"), "{err}");
 }
 
-fn editor_on(program: Program) -> Editor<S> {
+fn editor_on(program: Program) -> Editor {
     let mut editor = Editor::new();
     let files = parts().into_iter().map(|(p, t)| (p, Some(t))).collect();
-    let update = editor.handle(Command::Files { files });
-    assert!(update.error.is_none(), "{:?}", update.error);
-    let update = editor.handle(Command::Load {
-        program,
-        path: Some("assembly.geop".into()),
-    });
-    assert!(update.error.is_none(), "{:?}", update.error);
-    editor
-}
-
-fn dialog(key: &str, value: Value) -> Command<S> {
-    Command::Event {
-        event: StepEditEvent::Dialog {
-            key: key.into(),
-            value,
+    handled(&mut editor, Command::Files { files });
+    handled(
+        &mut editor,
+        Command::Load {
+            program,
+            path: Some("assembly.geop".into()),
         },
-    }
+    );
+    editor
 }
 
 /// A new part step offers the other files to place; placing one draws its
@@ -155,7 +271,7 @@ fn the_editor_places_parts_from_its_files() {
 
     // What a viewer keeps: every component it was sent.
     let mut known = BTreeMap::new();
-    let mut keep = |update: &crate::Update<S>| {
+    let mut keep = |update: &crate::Update| {
         if let Some(scene) = &update.scene {
             known.extend(scene.components.clone());
         }
@@ -187,7 +303,7 @@ fn the_editor_places_parts_from_its_files() {
 
 /// The highest point the scene draws of the instance `instance`: its
 /// component's view, where the instance is.
-fn top(editor: &mut Editor<S>, instance: &str) -> f64 {
+fn top(editor: &mut Editor, instance: &str) -> f64 {
     let scene = editor.handle(Command::Show).scene.unwrap();
     let placed = scene
         .part
@@ -209,26 +325,16 @@ fn a_changed_file_is_placed_anew() {
     let mut editor = editor_on(examples::pin_in_plate_assembly());
     assert!((top(&mut editor, "pin") - 2.5).abs() < 1e-6);
     let mut longer = examples::pin();
-    let PartOperation::Extrude(extrude) = &mut longer.steps[1].operation else {
-        panic!("the pin is extruded");
-    };
-    extrude.extent = geop_ops_extrude_revolve::Extents::blind(3.0);
-    let update = editor.handle(Command::Files {
-        files: BTreeMap::from([("pin.geop".into(), Some(longer.to_json().unwrap()))]),
+    edit_args(&mut longer.program.steps[1], |extrude: &mut ExtrudeArgs| {
+        extrude.extent = geop_ops_extrude_revolve::Extents::blind(3.0)
     });
-    assert!(update.error.is_none(), "{:?}", update.error);
-    assert!((top(&mut editor, "pin") - 3.5).abs() < 1e-6);
-}
-
-/// Looking straight down at `(x, y)`.
-fn down(x: f64, y: f64) -> Pointer<S> {
-    let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
-    Pointer {
-        ray: Ray::try_new(v([x, y, 10.0]), v([0.0, 0.0, -1.0])).unwrap(),
-        reach: Reach::Tube {
-            radius: S::from_f64(0.009),
+    handled(
+        &mut editor,
+        Command::Files {
+            files: BTreeMap::from([("pin.geop".into(), Some(longer.to_json().unwrap()))]),
         },
-    }
+    );
+    assert!((top(&mut editor, "pin") - 3.5).abs() < 1e-6);
 }
 
 /// A placed part is dragged by the editor: grabbed where the pointer hits
@@ -237,25 +343,25 @@ fn down(x: f64, y: f64) -> Pointer<S> {
 #[test]
 fn a_placed_part_is_dragged() {
     let mut program = examples::pin_in_plate_assembly();
-    let PartOperation::AddPart(pin) = &mut program.steps[1].operation else {
-        panic!("the pin is placed");
-    };
-    pin.mates.clear();
+    edit_args(&mut program.program.steps[1], |pin: &mut AddPartArgs| {
+        pin.mates.clear()
+    });
     program
         .state
         .insert(pose_parameter("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
-    let update = editor.handle(Command::Open { id: "pin".into() });
-    assert!(update.error.is_none(), "{:?}", update.error);
-    let update = editor.handle(Command::Event {
-        event: StepEditEvent::Drag {
-            from: down(3.5, 1.0),
-            to: down(4.5, 1.5),
-            done: true,
-            shift: false,
+    handled(&mut editor, Command::Open { id: "pin".into() });
+    handled(
+        &mut editor,
+        Command::Event {
+            event: StepEditEvent::Drag {
+                from: from_above(3.5, 1.0),
+                to: from_above(4.5, 1.5),
+                done: true,
+                shift: false,
+            },
         },
-    });
-    assert!(update.error.is_none(), "{:?}", update.error);
+    );
     editor.handle(Command::Commit);
     // As closely as a drag follows the pointer: the turn resistance lets the
     // pin lag by at most a ten-thousandth of the way.
@@ -268,27 +374,27 @@ fn a_placed_part_is_dragged() {
 #[test]
 fn a_fixed_part_follows_a_drag_of_several_events() {
     let mut program = examples::pin_in_plate_assembly();
-    let PartOperation::AddPart(pin) = &mut program.steps[1].operation else {
-        panic!("the pin is placed");
-    };
-    pin.mates.clear();
-    pin.set_fixed(true);
+    edit_args(&mut program.program.steps[1], |pin: &mut AddPartArgs| {
+        pin.mates.clear();
+        pin.set_fixed(true);
+    });
     program
         .state
         .insert(pose_parameter("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
-    let update = editor.handle(Command::Open { id: "pin".into() });
-    assert!(update.error.is_none(), "{:?}", update.error);
+    handled(&mut editor, Command::Open { id: "pin".into() });
     for (to, done) in [((4.0, 1.0), false), ((4.5, 1.0), false), ((5.0, 1.0), true)] {
-        let update = editor.handle(Command::Event {
-            event: StepEditEvent::Drag {
-                from: down(3.5, 1.0),
-                to: down(to.0, to.1),
-                done,
-                shift: false,
+        handled(
+            &mut editor,
+            Command::Event {
+                event: StepEditEvent::Drag {
+                    from: from_above(3.5, 1.0),
+                    to: from_above(to.0, to.1),
+                    done,
+                    shift: false,
+                },
             },
-        });
-        assert!(update.error.is_none(), "{:?}", update.error);
+        );
     }
     editor.handle(Command::Commit);
     let pin = pose_of(editor.program(), "pin");
@@ -301,27 +407,29 @@ fn a_fixed_part_follows_a_drag_of_several_events() {
 #[test]
 fn a_fixed_mate_added_in_the_dialog_holds_the_part() {
     let mut program = examples::pin_in_plate_assembly();
-    let PartOperation::AddPart(pin) = &mut program.steps[1].operation else {
-        panic!("the pin is placed");
-    };
-    pin.mates.clear();
+    edit_args(&mut program.program.steps[1], |pin: &mut AddPartArgs| {
+        pin.mates.clear()
+    });
     program
         .state
         .insert(pose_parameter("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
-    let update = editor.handle(Command::Open { id: "pin".into() });
-    assert!(update.error.is_none(), "{:?}", update.error);
-    let update = editor.handle(dialog("add_mate", Value::Choice("fixed".into())));
-    assert!(update.error.is_none(), "{:?}", update.error);
-    let update = editor.handle(Command::Event {
-        event: StepEditEvent::Drag {
-            from: down(3.5, 1.0),
-            to: down(5.0, 1.0),
-            done: true,
-            shift: false,
+    handled(&mut editor, Command::Open { id: "pin".into() });
+    handled(
+        &mut editor,
+        dialog("add_mate", Value::Choice("fixed".into())),
+    );
+    handled(
+        &mut editor,
+        Command::Event {
+            event: StepEditEvent::Drag {
+                from: from_above(3.5, 1.0),
+                to: from_above(5.0, 1.0),
+                done: true,
+                shift: false,
+            },
         },
-    });
-    assert!(update.error.is_none(), "{:?}", update.error);
+    );
     editor.handle(Command::Commit);
     assert_close(
         position(&pose_of(editor.program(), "pin")),
@@ -332,12 +440,10 @@ fn a_fixed_mate_added_in_the_dialog_holds_the_part() {
     assert_eq!(
         Program::from_json(&program.to_json().unwrap())
             .unwrap()
-            .steps,
-        program.steps
+            .program,
+        program.program
     );
-    let part = program
-        .build(&Workspace::<S>::new(WithStandardParts(parts())).scope("assembly.geop"))
-        .unwrap();
+    let part = build(&program, &workspace(parts()).scope("assembly.geop")).unwrap();
     assert!(part.holds("pin") && part.holds("plate"));
 }
 
@@ -347,10 +453,12 @@ fn position(pose: &Pose<Design>) -> [f64; 3] {
     [0, 1, 2].map(|k| p[k].to_f64())
 }
 
-/// Where `program`'s state puts the part placed as `instance`.
+/// Where `program`'s state puts the part placed as `instance`: with no
+/// pose there — nothing ever moved it — at the origin.
 fn pose_of(program: &Program, instance: &str) -> Pose<Design> {
     match program.state.get(&pose_parameter(instance)) {
         Some(ParamValue::Pose(pose)) => *pose,
+        None => Pose::identity(),
         other => panic!("{instance} has no pose: {other:?}"),
     }
 }
@@ -382,76 +490,63 @@ fn a_program_is_solved_where_its_mates_do_not_hold() {
     );
 }
 
-// /// A later step's mates move a part placed earlier — here the earlier part
-// /// is free and the later one fixed — and every step sees the earlier part
-// /// where they put it: a reference point built on it in a step between the
-// /// two is where the part ends up, not where it was first put. (The plate
-// /// may turn about the pin's axis; where it turns to is the solve's
-// /// choice.)
-// #[test]
-// fn a_later_mate_moves_an_earlier_part_for_every_step() {
-//     let mut program = examples::pin_in_plate_assembly();
-//     let PartOperation::AddPart(plate) = &mut program.steps[0].operation else {
-//         panic!("the plate is placed");
-//     };
-//     plate.set_fixed(false);
-//     let PartOperation::AddPart(pin) = &mut program.steps[1].operation else {
-//         panic!("the pin is placed");
-//     };
-//     pin.set_fixed(true);
-//     program.steps.insert(
-//         1,
-//         Step {
-//             id: "mark".into(),
-//             operation: AddDatumArgs {
-//                 selection: vec![EntityRef::datum("plate/origin")],
-//                 construction: Construction::Point {
-//                     x: 0.0.into(),
-//                     y: 0.0.into(),
-//                     z: 0.0.into(),
-//                 },
-//             }
-//             .into(),
-//         },
-//     );
-//     program
-//         .state
-//         .insert(pose_parameter("plate"), at([2.0, -1.0, 0.0]));
-//     let editor = editor_on(program);
-//     // The pin stays; the plate comes to it.
-//     assert_close(
-//         position(&pose_of(editor.program(), "pin")),
-//         [1.0, 1.0, 0.5],
-//         1e-12,
-//     );
-//     let plate = pose_of(editor.program(), "plate");
-//     assert!(position(&plate) != [2.0, -1.0, 0.0], "the plate moved");
-//     let workspace = Workspace::<S>::new(WithStandardParts(parts()));
-//     let part = editor
-//         .program()
-//         .build(&workspace.scope("assembly.geop"))
-//         .unwrap();
-//     assert!(part.check_mates(|_| true).unwrap().converged);
-//     assert_close(
-//         point(&part, &EntityRef::datum("mark")),
-//         position(&plate),
-//         1e-12,
-//     );
-// }
+/// A later step's mates move a part placed earlier — here the earlier part
+/// is free and the later one fixed — and every step sees the earlier part
+/// where they put it: a reference point built on it in a step between the
+/// two is where the part ends up, not where it was first put. (The plate
+/// may turn about the pin's axis; where it turns to is the solve's
+/// choice.)
+#[test]
+fn a_later_mate_moves_an_earlier_part_for_every_step() {
+    let mut program = examples::pin_in_plate_assembly();
+    edit_args(&mut program.program.steps[0], |plate: &mut AddPartArgs| {
+        plate.set_fixed(false)
+    });
+    edit_args(&mut program.program.steps[1], |pin: &mut AddPartArgs| {
+        pin.set_fixed(true)
+    });
+    let mark = AddDatumArgs {
+        selection: vec![EntityRef::datum("plate/origin")],
+        construction: Construction::Point {
+            x: 0.0.into(),
+            y: 0.0.into(),
+            z: 0.0.into(),
+        },
+    };
+    (program.program.steps).insert(1, ProgramStep::new::<AddDatum>("mark", &mark).unwrap());
+    program
+        .state
+        .insert(pose_parameter("plate"), at([2.0, -1.0, 0.0]));
+    let editor = editor_on(program);
+    // The pin stays; the plate comes to it.
+    assert_close(
+        position(&pose_of(editor.program(), "pin")),
+        [1.0, 1.0, 0.5],
+        1e-12,
+    );
+    let plate = pose_of(editor.program(), "plate");
+    assert!(position(&plate) != [2.0, -1.0, 0.0], "the plate moved");
+    let part = build(editor.program(), &workspace(parts()).scope("assembly.geop")).unwrap();
+    assert!(part.check_mates().unwrap().converged);
+    assert_close(
+        point(&part, &EntityRef::datum("mark")),
+        position(&plate),
+        1e-12,
+    );
+}
 
 /// Editing a step, a mate added moves the part the step places — not the
 /// part it is mated to, though that one is not fixed either.
 #[test]
 fn a_mate_added_moves_the_part_of_its_step() {
     let mut program = examples::pin_in_plate_assembly();
-    let PartOperation::AddPart(plate) = &mut program.steps[0].operation else {
-        panic!("the plate is placed");
-    };
-    plate.set_fixed(false);
-    let PartOperation::AddPart(pin) = &mut program.steps[1].operation else {
-        panic!("the pin is placed");
-    };
-    let mates = std::mem::take(&mut pin.mates);
+    edit_args(&mut program.program.steps[0], |plate: &mut AddPartArgs| {
+        plate.set_fixed(false)
+    });
+    let mut mates = BTreeMap::new();
+    edit_args(&mut program.program.steps[1], |pin: &mut AddPartArgs| {
+        mates = std::mem::take(&mut pin.mates)
+    });
     program
         .state
         .insert(pose_parameter("pin"), at([3.5, 1.0, 0.0]));
@@ -462,14 +557,15 @@ fn a_mate_added_moves_the_part_of_its_step() {
             "add_mate",
             Value::Choice(mate.kind.label().to_lowercase()),
         ));
-        let update = editor.handle(dialog(
-            &format!("mate:{id}:entities"),
-            Value::Entities(mate.entities.clone()),
-        ));
-        assert!(update.error.is_none(), "{:?}", update.error);
+        handled(
+            &mut editor,
+            dialog(
+                &format!("mate:{id}:entities"),
+                Value::Entities(mate.entities.clone()),
+            ),
+        );
     }
-    let update = editor.handle(Command::Commit);
-    assert!(update.error.is_none(), "{:?}", update.error);
+    handled(&mut editor, Command::Commit);
     assert_close(
         position(&pose_of(editor.program(), "plate")),
         [0.0; 3],
@@ -486,17 +582,15 @@ fn a_mate_added_moves_the_part_of_its_step() {
 /// first one edited — and the history of the file edited before is not this
 /// one's to undo.
 #[test]
-#[ignore = "needs a crate that is out of the workspace during the core refactor"]
 fn an_example_of_several_files_adds_its_files() {
-    let mut editor = Editor::<S>::new();
-    editor.handle(Command::LoadExample {
-        name: "box_with_drill_hole".into(),
-    });
-    let update = editor.handle(Command::LoadWorkspaceExample {
-        name: "pin_in_plate".into(),
-        folder: Some("examples/pin_in_plate".into()),
-    });
-    assert!(update.error.is_none(), "{:?}", update.error);
+    let mut editor = example_editor("box_with_drill_hole");
+    let update = handled(
+        &mut editor,
+        Command::LoadWorkspaceExample {
+            name: "pin_in_plate".into(),
+            folder: Some("examples/pin_in_plate".into()),
+        },
+    );
     let files = update.files.unwrap();
     let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
     assert_eq!(
@@ -535,7 +629,7 @@ fn an_example_of_several_files_adds_its_files() {
 /// that file's: the file switched to places it as it was edited.
 #[test]
 fn a_file_left_is_placed_as_it_was_edited() {
-    let mut editor = Editor::<S>::new();
+    let mut editor = Editor::new();
     editor.handle(Command::Load {
         program: examples::pin(),
         path: Some("pin.geop".into()),
@@ -550,11 +644,13 @@ fn a_file_left_is_placed_as_it_was_edited() {
         }
         .fixed(),
     );
-    let update = editor.handle(Command::Load {
-        program: assembly,
-        path: Some("assembly.geop".into()),
-    });
-    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = handled(
+        &mut editor,
+        Command::Load {
+            program: assembly,
+            path: Some("assembly.geop".into()),
+        },
+    );
     let program = update.program.unwrap();
     assert!(
         program.steps[0].error.is_none(),
@@ -603,10 +699,9 @@ fn a_drag_is_answered_quickly() {
 /// places the hinge, fixed, and holds the pin's top 3 above its own base.
 fn hinge() -> (BTreeMap<String, Option<String>>, Program) {
     let mut hinge = examples::pin_in_plate_assembly();
-    let PartOperation::AddPart(pin) = &mut hinge.steps[1].operation else {
-        panic!("the pin is placed");
-    };
-    pin.mates.remove("m2");
+    edit_args(&mut hinge.program.steps[1], |pin: &mut AddPartArgs| {
+        pin.mates.remove("m2");
+    });
     let mut files: BTreeMap<String, Option<String>> =
         parts().into_iter().map(|(p, t)| (p, Some(t))).collect();
     files.insert("hinge.geop".into(), Some(hinge.to_json().unwrap()));
@@ -639,14 +734,16 @@ fn hinge() -> (BTreeMap<String, Option<String>>, Program) {
     (files, top)
 }
 
-fn editor_with(files: BTreeMap<String, Option<String>>, program: Program, path: &str) -> Editor<S> {
+fn editor_with(files: BTreeMap<String, Option<String>>, program: Program, path: &str) -> Editor {
     let mut editor = Editor::new();
     editor.handle(Command::Files { files });
-    let update = editor.handle(Command::Load {
-        program,
-        path: Some(path.into()),
-    });
-    assert!(update.error.is_none(), "{:?}", update.error);
+    handled(
+        &mut editor,
+        Command::Load {
+            program,
+            path: Some(path.into()),
+        },
+    );
     editor
 }
 
@@ -684,10 +781,9 @@ fn a_flexible_sub_assembly_moves_its_parts() {
 #[test]
 fn the_drag_tool_drags_any_placed_part() {
     let mut program = examples::pin_in_plate_assembly();
-    let PartOperation::AddPart(pin) = &mut program.steps[1].operation else {
-        panic!("the pin is placed");
-    };
-    pin.mates.clear();
+    edit_args(&mut program.program.steps[1], |pin: &mut AddPartArgs| {
+        pin.mates.clear()
+    });
     program
         .state
         .insert(pose_parameter("pin"), at([3.5, 1.0, 0.0]));
@@ -697,7 +793,7 @@ fn the_drag_tool_drags_any_placed_part() {
 
     let update = editor.handle(Command::Event {
         event: StepEditEvent::Hover {
-            pointer: down(3.5, 1.0),
+            pointer: from_above(3.5, 1.0),
             shift: false,
         },
     });
@@ -710,8 +806,8 @@ fn the_drag_tool_drags_any_placed_part() {
     for (i, done) in [(1, false), (2, true)] {
         editor.handle(Command::Event {
             event: StepEditEvent::Drag {
-                from: down(3.5, 1.0),
-                to: down(3.5 + 0.5 * f64::from(i), 1.0),
+                from: from_above(3.5, 1.0),
+                to: from_above(3.5 + 0.5 * f64::from(i), 1.0),
                 done,
                 shift: false,
             },
@@ -733,7 +829,7 @@ fn the_drag_tool_drags_any_placed_part() {
     // nothing.
     let update = editor.handle(Command::Event {
         event: StepEditEvent::Hover {
-            pointer: down(0.2, 0.2),
+            pointer: from_above(0.2, 0.2),
             shift: false,
         },
     });
@@ -741,8 +837,8 @@ fn the_drag_tool_drags_any_placed_part() {
     let before = editor.program().clone();
     editor.handle(Command::Event {
         event: StepEditEvent::Drag {
-            from: down(0.2, 0.2),
-            to: down(1.2, 0.2),
+            from: from_above(0.2, 0.2),
+            to: from_above(1.2, 0.2),
             done: true,
             shift: false,
         },
@@ -774,25 +870,18 @@ const MAX_EVENT_MILLIS: u64 = if cfg!(debug_assertions) { u64::MAX } else { 50 }
 fn drive_chain(
     start: [f64; 2],
     path: &[[f64; 2]],
-) -> (
-    Program,
-    Vec<(
-        std::time::Duration,
-        usize,
-        Option<geop_ops_assembly::MateReport>,
-    )>,
-) {
+) -> (Program, Vec<(std::time::Duration, usize, Option<Report>)>) {
     let files = BTreeMap::from([(
         "link.geop".to_string(),
         Some(examples::link().to_json().unwrap()),
     )]);
     let mut editor = editor_with(files.clone(), examples::chain_assembly(), "chain.geop");
-    let workspace = Workspace::<S>::new(WithStandardParts(
+    let workspace = workspace(
         files
             .into_iter()
             .map(|(path, text)| (path, text.unwrap()))
             .collect::<BTreeMap<_, _>>(),
-    ));
+    );
     let library = workspace.scope("chain.geop");
     editor.handle(Command::DragTool { on: true });
     // Seen from in front and above — so the plane a drag moves in, facing
@@ -822,11 +911,9 @@ fn drive_chain(
         assert!(update.error.is_none(), "{:?}", update.error);
         // Every drag leaves the mates holding — or the editor would solve
         // them all over again before it answers.
-        let check = editor
-            .program()
-            .build(&library)
+        let check = build(editor.program(), &library)
             .unwrap()
-            .check_mates(|_| true)
+            .check_mates()
             .unwrap();
         assert!(check.converged, "event {i} (to {to:?}): {check:?}");
         let now = poses(editor.program());
@@ -912,27 +999,23 @@ fn folded_path() -> Vec<[f64; 2]> {
 /// `drive_chain`) — and the mates checked where it put the links, as the
 /// editor does after a drag (they must hold there, or it solves them all
 /// over again).
-fn solves_along(path: &[[f64; 2]]) -> Vec<geop_ops_assembly::MateReport> {
+fn solves_along(path: &[[f64; 2]]) -> Vec<Report> {
     let files = BTreeMap::from([("link.geop".to_string(), examples::link().to_json().unwrap())]);
-    let workspace = Workspace::<S>::new(WithStandardParts(files));
+    let workspace = workspace(files);
     let library = workspace.scope("chain.geop");
     let mut program = examples::chain_assembly();
     let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
     path.iter()
         .map(|to| {
-            let part = program.build(&library).unwrap();
-            let drag = geop_ops::ui::Drag {
+            let mut part = build(&program, &library).unwrap();
+            let drag = Pull::Point {
                 parameter: "link3.pose".into(),
                 local: v([2.5, 0.0, 0.2]),
                 target: v([to[0], to[1] / 2.0, 0.2 + to[1] / 2.0]),
             };
-            let (moved, report) = part.solve_mates(None, &[], &[drag]).unwrap();
+            let (moved, report) = part.solve_mates(drag).unwrap();
             program.state.extend(moved);
-            let check = program
-                .build(&library)
-                .unwrap()
-                .check_mates(|_| true)
-                .unwrap();
+            let check = build(&program, &library).unwrap().check_mates().unwrap();
             assert!(
                 check.converged,
                 "after {to:?}: {check:?}, solved: {report:?}"
@@ -969,7 +1052,7 @@ fn drags_around_the_fold_take_few_steps() {
 #[test]
 fn placed_datums_show_only_while_placing() {
     let mut editor = editor_on(examples::pin_in_plate_assembly());
-    let hidden = |update: crate::Update<S>| update.scene.unwrap().hidden;
+    let hidden = |update: crate::Update| update.scene.unwrap().hidden;
     let shown = hidden(editor.handle(Command::Show));
     assert!(shown.contains(&"pin/origin".to_string()), "{shown:?}");
     assert!(shown.contains(&"plate/origin".to_string()), "{shown:?}");
@@ -984,7 +1067,7 @@ fn placed_datums_show_only_while_placing() {
 /// — every placed part comes with the mesh to draw it by.
 #[test]
 fn an_assembly_opened_first_sends_its_parts() {
-    let mut editor = Editor::<S>::new();
+    let mut editor = Editor::new();
     let files: BTreeMap<String, Option<String>> = examples::workspaces()
         .into_iter()
         .find(|(name, _)| *name == "pin_in_plate")
@@ -994,7 +1077,7 @@ fn an_assembly_opened_first_sends_its_parts() {
     .map(|(path, program)| (path.to_string(), Some(program.to_json().unwrap())))
     .collect();
     let mut known = BTreeMap::new();
-    let mut keep = |update: crate::Update<S>| {
+    let mut keep = |update: crate::Update| {
         assert!(update.error.is_none(), "{:?}", update.error);
         if let Some(scene) = update.scene {
             known.extend(scene.components);
@@ -1055,10 +1138,8 @@ fn linkage_examples_are_stacked_and_hold() {
         ),
     ] {
         let (files, program) = workspace_example(name);
-        let part = program
-            .build(&Workspace::<S>::new(WithStandardParts(files)).scope(&format!("{name}.geop")))
-            .unwrap();
-        let report = part.check_mates(|_| true).unwrap();
+        let part = build(&program, &workspace(files).scope(&format!("{name}.geop"))).unwrap();
+        let report = part.check_mates().unwrap();
         assert!(report.converged, "{name}: {report:?}");
         for (instance, z) in layers {
             let at = position(&pose_of(&program, instance));
@@ -1072,28 +1153,24 @@ fn linkage_examples_are_stacked_and_hold() {
 #[test]
 fn the_four_bar_crank_turns_all_the_way_round() {
     let (files, mut program) = workspace_example("four_bar");
-    let workspace = Workspace::<S>::new(WithStandardParts(files));
+    let workspace = workspace(files);
     let library = workspace.scope("four_bar.geop");
     let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
     for step in 1..=36 {
         let angle = (60.0 + 10.0 * f64::from(step)).to_radians();
-        let part = program.build(&library).unwrap();
-        let drag = geop_ops::ui::Drag {
+        let mut part = build(&program, &library).unwrap();
+        let drag = Pull::Point {
             parameter: "crank.pose".into(),
             local: v([1.5, 0.0, 0.1]),
             target: v([1.5 * angle.cos(), 1.5 * angle.sin(), 0.3]),
         };
-        let (moved, report) = part.solve_mates(None, &[], &[drag]).unwrap();
+        let (moved, report) = part.solve_mates(drag).unwrap();
         assert!(report.converged, "step {step}: {report:?}");
         program.state.extend(moved);
         let tip = pose_of(&program, "crank").apply(&v([1.5, 0.0, 0.0]));
         let tip = [0, 1, 2].map(|k| tip[k].to_f64());
         assert_close(tip, [1.5 * angle.cos(), 1.5 * angle.sin(), 0.2], 1e-3);
-        let check = program
-            .build(&library)
-            .unwrap()
-            .check_mates(|_| true)
-            .unwrap();
+        let check = build(&program, &library).unwrap().check_mates().unwrap();
         assert!(check.converged, "step {step}: {check:?}");
     }
 }
@@ -1104,9 +1181,7 @@ fn the_four_bar_crank_turns_all_the_way_round() {
 #[test]
 fn the_arm_lists_its_joints_and_how_free_its_links_are() {
     let (files, program) = workspace_example("arm");
-    let part = program
-        .build(&Workspace::<S>::new(WithStandardParts(files)).scope("arm.geop"))
-        .unwrap();
+    let mut part = build(&program, &workspace(files).scope("arm.geop")).unwrap();
     let joints = part.joints().unwrap();
     let values: Vec<_> = joints
         .iter()
@@ -1129,7 +1204,7 @@ fn the_arm_lists_its_joints_and_how_free_its_links_are() {
         ]
     );
     assert_eq!(freedom.total, 2);
-    assert!(freedom.conflicting.is_empty());
+    assert!(part.check_mates().unwrap().converged);
 }
 
 /// Dragged round past its limit, the forearm turns about its joint and
@@ -1138,17 +1213,17 @@ fn the_arm_lists_its_joints_and_how_free_its_links_are() {
 #[test]
 fn the_arm_is_dragged_up_to_its_limit() {
     let (files, mut program) = workspace_example("arm");
-    let workspace = Workspace::<S>::new(WithStandardParts(files));
+    let workspace = workspace(files);
     let library = workspace.scope("arm.geop");
-    let part = program.build(&library).unwrap();
+    let mut part = build(&program, &library).unwrap();
     let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
     let a = 170.0_f64.to_radians();
-    let drag = geop_ops::ui::Drag {
+    let drag = Pull::Point {
         parameter: "fore.pose".into(),
         local: v([1.5, 0.0, 0.2]),
         target: v([3.0 + 1.5 * a.cos(), 1.5 * a.sin(), 0.4]),
     };
-    let (moved, report) = part.solve_mates(None, &[], &[drag]).unwrap();
+    let (moved, report) = part.solve_mates(drag).unwrap();
     assert!(report.converged, "{report:?}");
     // The hand keeps as much of its turn in the world as its own joint
     // allows: turned the other way by as much as the forearm turned, it
@@ -1170,11 +1245,7 @@ fn the_arm_is_dragged_up_to_its_limit() {
     let fore = pose_of(&program, "fore");
     assert!((fore.euler_degrees()[2] - 150.0).abs() < 1e-9, "{fore:?}");
     assert_close(position(&fore), [3.0, 0.0, 0.2], 1e-9);
-    let check = program
-        .build(&library)
-        .unwrap()
-        .check_mates(|_| true)
-        .unwrap();
+    let check = build(&program, &library).unwrap().check_mates().unwrap();
     assert!(check.converged, "{check:?}");
 }
 
@@ -1184,7 +1255,7 @@ fn the_arm_is_dragged_up_to_its_limit() {
 /// the pin takes its copies with it.
 #[test]
 fn six_pins_are_patterned_round_a_hole() {
-    let workspace = Workspace::<S>::new(WithStandardParts(parts()));
+    let workspace = workspace(parts());
     let library = workspace.scope("assembly.geop");
     let mut program = Program::new();
     program.push(
@@ -1219,13 +1290,13 @@ fn six_pins_are_patterned_round_a_hole() {
         (pose_parameter("pin"), at([2.0, 1.0, 0.0])),
     ]);
     let check = |program: &Program, radius: f64| {
-        let part = program.build(&library).unwrap();
-        part.check_names().unwrap();
-        let description = PartDescription::of(&part).unwrap();
-        assert_eq!(description.instances.len(), 7);
+        let part = build(program, &library).unwrap();
+        part.check_names();
+        let instances = part.instances();
+        assert_eq!(instances.len(), 7);
         for k in 1..6 {
             let copy = format!("part_pattern(pins,{k})");
-            assert_eq!(description.instances[&copy].file, "pin.geop");
+            assert_eq!(instances[&copy], "pin.geop");
             let origin = EntityRef::datum(format!("{copy}/origin"));
             let a = (60.0 * k as f64).to_radians();
             assert_close(
@@ -1238,7 +1309,7 @@ fn six_pins_are_patterned_round_a_hole() {
         let top = EntityRef::Face {
             name: "part_pattern(pins,3)/extrude(pin,end)".into(),
         };
-        let plane = Aspects::of(&top, &part).unwrap().plane.unwrap();
+        let plane = part.aspects(&top).plane.unwrap();
         assert!((plane.origin()[2].to_f64() - 2.0).abs() < 1e-9);
     };
     check(&program, 1.0);
@@ -1248,18 +1319,20 @@ fn six_pins_are_patterned_round_a_hole() {
     check(&program, 2.0);
 
     // Refused, saying why: a part no step placed, a pattern of one.
-    let PartOperation::PartPattern(pattern) = &mut program.steps[2].operation else {
-        panic!("the pattern");
-    };
-    pattern.part = "nut".into();
-    let err = program.build(&library).err().unwrap().to_string();
+    edit_args(
+        &mut program.program.steps[2],
+        |pattern: &mut PartPatternArgs| pattern.part = "nut".into(),
+    );
+    let err = build(&program, &library).err().unwrap().to_string();
     assert!(err.contains("no part placed so far"), "{err}");
-    let PartOperation::PartPattern(pattern) = &mut program.steps[2].operation else {
-        panic!("the pattern");
-    };
-    pattern.part = "pin".into();
-    pattern.count = 1;
-    let err = program.build(&library).err().unwrap().to_string();
+    edit_args(
+        &mut program.program.steps[2],
+        |pattern: &mut PartPatternArgs| {
+            pattern.part = "pin".into();
+            pattern.count = 1;
+        },
+    );
+    let err = build(&program, &library).err().unwrap().to_string();
     assert!(err.contains("needs 2 or more"), "{err}");
 }
 
@@ -1268,9 +1341,9 @@ fn six_pins_are_patterned_round_a_hole() {
 /// the second to -45°.
 #[test]
 fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
-    use geop_ops_assembly::{CouplingKind, JointKind, Mate};
+    use geop_ops_assembly::{CouplingKind, JointKind, Mate, Transmission};
     let (files, _) = workspace_example("arm");
-    let workspace = Workspace::<S>::new(WithStandardParts(files));
+    let workspace = workspace(files);
     let library = workspace.scope("gears.geop");
     let joint = |on_hole: usize, link: &str| {
         Mate::joint(
@@ -1299,8 +1372,9 @@ fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
     program.push("base", placed(true, Vec::new()));
     program.push("driver", placed(false, vec![("m1", joint(0, "driver"))]));
     let gear = Mate::coupling(
-        CouplingKind::Gear {
-            ratio: n(2.0),
+        CouplingKind {
+            transmission: Transmission::Gear,
+            value: n(2.0),
             reverse: true,
         },
         vec!["add_part(driver,m1)".into(), "add_part(driven,m1)".into()],
@@ -1316,19 +1390,17 @@ fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
     ]);
     // The mate is written flat, by the coupling's own type.
     let json = program.to_json().unwrap();
-    let compact: String = json.split_whitespace().collect();
-    assert!(
-        compact.contains(r#""type":"gear","ratio":2.0,"reverse":true"#),
+    let gear = &program.program.steps[2].args["mates"]["m2"];
+    assert_eq!(
+        (&gear["type"], &gear["value"], &gear["reverse"]),
+        (&"gear".into(), &2.0.into(), &true.into()),
         "{json}"
     );
-    assert_eq!(Program::from_json(&json).unwrap().steps, program.steps);
+    assert_eq!(Program::from_json(&json).unwrap().program, program.program);
 
     let driver = "add_part(driver,m1).angle";
-    program
-        .state
-        .insert(driver.into(), ParamValue::Number(n(90.0)));
-    let part = program.build(&library).unwrap();
-    let (moved, report) = part.solve_joints(&[driver.to_string()]).unwrap();
+    let mut part = build(&program, &library).unwrap();
+    let (moved, report) = part.solve_joints(&[(driver, 90.0)]).unwrap();
     assert!(report.converged, "{report:?}");
     assert_eq!(moved[driver], ParamValue::Number(n(90.0)));
     let ParamValue::Number(driven) = moved["add_part(driven,m1).angle"] else {
@@ -1339,38 +1411,36 @@ fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
     let turned = pose_of(&program, "driven").euler_degrees()[2];
     assert!((turned + 45.0).abs() < 1e-9, "{turned}");
     assert!(
-        program
-            .build(&library)
+        build(&program, &library)
             .unwrap()
-            .check_mates(|_| true)
+            .check_mates()
             .unwrap()
             .converged
     );
 }
 
-/// A file an editor built whole and kept is placed as it was built: its
-/// own text is not read, let alone built again — here it is not even a
-/// program, which building it would find. Writing the file forgets it.
+/// A file built once is placed as it was built for as long as it is the
+/// same: its build is kept, by the values its parameters were built with,
+/// and placed again rather than built again. Writing it as it was changes
+/// nothing; writing it otherwise forgets the build.
 #[test]
 fn a_kept_build_is_placed_without_building_its_file() {
-    use geop_ops::{Library, NoFiles, part::State};
-    let built = examples::box_with_drill_hole()
-        .build::<S>(&NoFiles)
-        .unwrap();
-    let revision = built.revision();
-    let files = BTreeMap::from([("part.geop".to_string(), "not a program".to_string())]);
-    let mut workspace = Workspace::<S>::new(WithStandardParts(files));
-    workspace.keep("part.geop", built, Default::default());
-    let placed = workspace
-        .scope("assembly.geop")
-        .instance("part.geop", &State::new())
-        .expect("the kept build is placed");
-    assert_eq!(placed.part.revision(), revision);
-    assert!(workspace.write("part.geop", Some("still not a program".into())));
+    let text = examples::box_with_drill_hole().to_json().unwrap();
+    let files = BTreeMap::from([("part.geop".to_string(), text.clone())]);
+    let workspace = workspace(files);
+    let placed = || {
+        (workspace.scope("assembly.geop"))
+            .component("part.geop", &Values::new())
+            .expect("the part is placed")
+    };
+    let first = placed();
+    assert!(Rc::ptr_eq(&first, &placed()), "kept, not built again");
+    assert!(!workspace.write("part.geop", Some(text)));
+    assert!(Rc::ptr_eq(&first, &placed()), "written as it was");
+    assert!(workspace.write("part.geop", Some("not a program".into())));
     assert!(
-        workspace
-            .scope("assembly.geop")
-            .instance("part.geop", &State::new())
+        (workspace.scope("assembly.geop"))
+            .component("part.geop", &Values::new())
             .is_err(),
         "written, the file is built again"
     );
@@ -1384,10 +1454,10 @@ fn a_kept_build_is_placed_without_building_its_file() {
 #[test]
 fn a_joint_between_frames_on_two_walls_puts_the_pin_in_the_hole() {
     let mut program = examples::pin_in_plate_assembly();
-    let PartOperation::AddPart(pin) = &mut program.steps[1].operation else {
-        panic!("the pin is placed");
-    };
-    let mates = std::mem::take(&mut pin.mates);
+    let mut mates = BTreeMap::new();
+    edit_args(&mut program.program.steps[1], |pin: &mut AddPartArgs| {
+        mates = std::mem::take(&mut pin.mates)
+    });
     program
         .state
         .insert(pose_parameter("pin"), at([3.5, 1.0, 0.0]));
@@ -1402,8 +1472,10 @@ fn a_joint_between_frames_on_two_walls_puts_the_pin_in_the_hole() {
             at: None,
         })
         .collect();
-    let update = editor.handle(dialog("mate:m1:entities", Value::Entities(frames)));
-    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = handled(
+        &mut editor,
+        dialog("mate:m1:entities", Value::Entities(frames)),
+    );
     assert!(update.error.is_none(), "{:?}", update.error);
     let step = editor.handle(dialog("mate:m1", Value::Press)).step.unwrap();
     assert!(
@@ -1413,8 +1485,7 @@ fn a_joint_between_frames_on_two_walls_puts_the_pin_in_the_hole() {
         ),
         "a revolute joint has its angle to set"
     );
-    let update = editor.handle(Command::Commit);
-    assert!(update.error.is_none(), "{:?}", update.error);
+    handled(&mut editor, Command::Commit);
     // On the hole's axis: the pin's frame is 1 up its 2, the hole's 0.75
     // up the plate, so the pin's origin is 0.25 below the plate's.
     assert_close(
@@ -1433,13 +1504,15 @@ fn a_coupling_offers_the_joints_that_move_as_it_needs() {
         "link.geop".to_string(),
         Some(examples::link().to_json().unwrap()),
     )]);
-    let mut editor = Editor::<S>::new();
+    let mut editor = Editor::new();
     editor.handle(Command::Files { files });
-    let update = editor.handle(Command::Load {
-        program: examples::arm_assembly(),
-        path: Some("arm.geop".into()),
-    });
-    assert!(update.error.is_none(), "{:?}", update.error);
+    handled(
+        &mut editor,
+        Command::Load {
+            program: examples::arm_assembly(),
+            path: Some("arm.geop".into()),
+        },
+    );
     editor.handle(Command::Open { id: "hand".into() });
     let step = editor
         .handle(dialog("add_mate", Value::Choice("gear".into())))
@@ -1476,10 +1549,9 @@ fn a_coupling_offers_the_joints_that_move_as_it_needs() {
 #[test]
 fn a_joint_is_made_by_clicking_where_its_frames_go() {
     let mut program = examples::pin_in_plate_assembly();
-    let PartOperation::AddPart(pin) = &mut program.steps[1].operation else {
-        panic!("the pin is placed");
-    };
-    pin.mates.clear();
+    edit_args(&mut program.program.steps[1], |pin: &mut AddPartArgs| {
+        pin.mates.clear()
+    });
     program
         .state
         .insert(pose_parameter("pin"), at([3.5, 1.0, 0.0]));
@@ -1498,7 +1570,7 @@ fn a_joint_is_made_by_clicking_where_its_frames_go() {
 
     // Not through the pin's origin, a frame datum that is picked first.
     let update = editor.handle(event(StepEditEvent::Hover {
-        pointer: down(3.6, 1.0),
+        pointer: from_above(3.6, 1.0),
         shift: false,
     }));
     let presentation = update.step.unwrap().presentation;
@@ -1527,16 +1599,14 @@ fn a_joint_is_made_by_clicking_where_its_frames_go() {
 
     for (x, y) in [(3.6, 1.0), (0.3, 0.3)] {
         let click = StepEditEvent::Click {
-            pointer: down(x, y),
+            pointer: from_above(x, y),
             button: geop_ops::ui::Button::Primary,
             double: false,
             shift: false,
         };
-        let update = editor.handle(event(click));
-        assert!(update.error.is_none(), "{:?}", update.error);
+        handled(&mut editor, event(click));
     }
-    let update = editor.handle(Command::Commit);
-    assert!(update.error.is_none(), "{:?}", update.error);
+    handled(&mut editor, Command::Commit);
     assert_close(
         position(&pose_of(editor.program(), "pin")),
         [1.0, 1.0, -1.0],

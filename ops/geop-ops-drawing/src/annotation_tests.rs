@@ -2,12 +2,18 @@
 //! written out, and refused where a view cannot show what they measure.
 
 use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar, vector::Vector3};
-use geop_ops::{Part, RefId};
+use geop_ops::{
+    RefId,
+    operation::BuildView,
+    output::sheet::{Layer, to_dxf},
+};
 use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder};
 
 use crate::{
     Along, Annotation, DrawingArgs, DrawnView, EdgeShape, Layout, Leader, Pickable, Target,
-    ViewKind, compose, layout, sheet::Layer, to_dxf, writer_tests::read_dxf,
+    ViewKind, compose, layout,
+    testing::{Part, built},
+    writer_tests::read_dxf,
 };
 
 fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
@@ -73,7 +79,7 @@ fn edges(layout: &Layout, view: DrawnView, shape: fn(&EdgeShape) -> bool) -> Vec
 
 /// The text the dimension `annotation` shows on `part`'s drawing, laid out
 /// as `laid`: an annotation does not move the views.
-fn value(part: &Part<S>, laid: &Layout, annotation: Annotation) -> String {
+fn value(part: BuildView, laid: &Layout, annotation: Annotation) -> String {
     annotation
         .drawn(part, laid)
         .unwrap()
@@ -89,12 +95,14 @@ fn value(part: &Part<S>, laid: &Layout, annotation: Annotation) -> String {
 /// written into the DXF file.
 #[test]
 fn every_annotation_measures_its_view() {
-    let part = part();
-    let laid = layout(&part, &args(Vec::new()), "", &[]).unwrap();
+    let named = part();
+    let build = built(&named);
+    let part = build.current();
+    let laid = layout(part, &args(Vec::new()), "", &[]).unwrap();
     // The box's corner at `(x, y, z)`, by name.
     let at = |x: f64, y: f64, z: f64| {
-        let model = part.topology();
-        let mut names: Vec<&str> = part
+        let model = named.topology();
+        let mut names: Vec<&str> = named
             .names()
             .iter()
             .filter(|(id, _)| match id {
@@ -125,9 +133,9 @@ fn every_annotation_measures_its_view() {
         along,
         label: [0.0, 12.0],
     };
-    assert_eq!(value(&part, &laid, distance(Along::Aligned)), "36.06");
-    assert_eq!(value(&part, &laid, distance(Along::Horizontal)), "20");
-    assert_eq!(value(&part, &laid, distance(Along::Vertical)), "30");
+    assert_eq!(value(part, &laid, distance(Along::Aligned)), "36.06");
+    assert_eq!(value(part, &laid, distance(Along::Horizontal)), "20");
+    assert_eq!(value(part, &laid, distance(Along::Vertical)), "30");
 
     let circle = edges(&laid, TOP, |s| matches!(s, EdgeShape::Circle { .. }));
     assert!(!circle.is_empty(), "the pin's rim is seen round from above");
@@ -137,8 +145,8 @@ fn every_annotation_measures_its_view() {
         diameter,
         label: [8.0, 8.0],
     };
-    assert_eq!(value(&part, &laid, radius(false)), "R5");
-    assert_eq!(value(&part, &laid, radius(true)), "⌀10");
+    assert_eq!(value(part, &laid, radius(false)), "R5");
+    assert_eq!(value(part, &laid, radius(true)), "⌀10");
 
     let lines = edges(&laid, FRONT, |s| matches!(s, EdgeShape::Line { .. }));
     let square = lines
@@ -151,7 +159,7 @@ fn every_annotation_measures_its_view() {
                 b: b.clone(),
                 label: [3.0, 3.0],
             };
-            angle.drawn(&part, &laid).ok().map(|d| d.text.unwrap().text)
+            angle.drawn(part, &laid).ok().map(|d| d.text.unwrap().text)
         })
         .expect("two of the box's edges meet");
     assert_eq!(square, "90°");
@@ -172,7 +180,7 @@ fn every_annotation_measures_its_view() {
             label: [15.0, 15.0],
         },
     ];
-    let sheet = compose(&part, &args(all), "", &[]).unwrap();
+    let sheet = compose(part, &args(all), "", &[]).unwrap();
     let entities = read_dxf(&to_dxf(&sheet));
     let texts: Vec<&str> = entities
         .iter()
@@ -196,8 +204,10 @@ fn every_annotation_measures_its_view() {
 /// not see round; in a view the drawing no longer has.
 #[test]
 fn annotations_a_view_cannot_show_are_refused() {
-    let part = part();
-    let laid = layout(&part, &args(Vec::new()), "", &[]).unwrap();
+    let named = part();
+    let build = built(&named);
+    let part = build.current();
+    let laid = layout(part, &args(Vec::new()), "", &[]).unwrap();
     let circle = edges(&laid, TOP, |s| matches!(s, EdgeShape::Circle { .. }))[0].clone();
     let radius = |view| Annotation::Radius {
         view,
@@ -206,7 +216,7 @@ fn annotations_a_view_cannot_show_are_refused() {
         label: [5.0, 5.0],
     };
     let refused = |annotation: Annotation| {
-        compose(&part, &args(vec![annotation]), "", &[])
+        compose(part, &args(vec![annotation]), "", &[])
             .unwrap_err()
             .to_string()
     };

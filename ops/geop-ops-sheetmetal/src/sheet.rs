@@ -1,6 +1,6 @@
 //! The sheet-metal model a body is built from and unfolded with: its
 //! [`SheetMetalRules`], and its [`Sheet`] — flat faces joined by bends —
-//! recorded on the solid it builds (see [`geop_ops::Part::body_data`]).
+//! recorded for the solid it builds (see [`crate::body::sheets`]).
 //!
 //! **Sheet coordinates.** Every flat is drawn in one plane of coordinates
 //! `(x, y)`, the *sheet coordinates*, and placed in space by a
@@ -29,7 +29,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3, Vector4},
 };
 use geop_core_topology::Body;
-use geop_ops::{Namer, Part};
+use geop_ops::{NamedModel, Namer};
 use geop_ops_extrude_revolve::common::{end_point, line2, start_point};
 use serde::{Deserialize, Serialize};
 
@@ -126,7 +126,7 @@ pub enum Relief {
 /// Where a flat lies: sheet point `(x, y)` at `origin + x e1 + y e2`, its
 /// unit normal `n = e1 × e2` pointing from its A side to its B side.
 /// `e1`, `e2` and `n` are orthonormal.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Placement<S: Scalar> {
     pub origin: Vector3<S>,
     pub e1: Vector3<S>,
@@ -214,7 +214,7 @@ impl<S: Scalar> Placement<S> {
 
 /// One edge of a flat's loop, in sheet coordinates, running the way the
 /// loop does. The vertex where it starts is named after it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FlatEdge<S: Scalar> {
     pub curve: NurbCurve2D<S>,
     /// The edge's names: `N(a)`, `N(b)`, its wall `N`, the vertices it
@@ -238,7 +238,7 @@ impl<S: Scalar> FlatEdge<S> {
 /// A flat face of the sheet: its loops in sheet coordinates — the outer
 /// one counter-clockwise about its normal, holes clockwise — and where it
 /// lies.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Flat<S: Scalar> {
     pub place: Placement<S>,
     pub outer: Vec<FlatEdge<S>>,
@@ -250,7 +250,7 @@ pub struct Flat<S: Scalar> {
 /// A bend: a cylindrical strip from the straight edge `parent_edge` of
 /// flat `parent` to the edge `child_edge` of flat `child` — the same
 /// segment in sheet coordinates, run the other way.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Bend<S: Scalar> {
     pub parent: usize,
     pub parent_edge: String,
@@ -271,7 +271,7 @@ pub struct Bend<S: Scalar> {
 /// A sheet-metal body as it is built: flat faces, the first the one the
 /// rest hang off, and the bends joining them into a tree, each child built
 /// after its parent.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Sheet<S: Scalar> {
     pub rules: SheetMetalRules,
     pub flats: Vec<Flat<S>>,
@@ -285,7 +285,7 @@ pub struct Sheet<S: Scalar> {
 /// counter-clockwise around what it takes away, drawn in flat `flat`'s
 /// sheet coordinates — and so, where they reach past the flat, across its
 /// bends unrolled.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Cut<S: Scalar> {
     pub flat: usize,
     pub loops: Vec<Vec<FlatEdge<S>>>,
@@ -510,37 +510,21 @@ impl<S: Scalar> Sheet<S> {
 }
 
 impl<S: Scalar> Sheet<S> {
-    /// Builds the solid of this sheet, as it is bent, in `part` in place of
-    /// the solid `old` — named `name`, and recorded on it.
-    pub(crate) fn replace(self, part: &mut Part<S>, old: &str, name: &str) -> GeopResult<()> {
+    /// Builds the solid of this sheet, as it is bent, in `model` in place
+    /// of the solid `old`, if any — named `name`.
+    pub(crate) fn build(
+        &self,
+        model: &mut NamedModel<S>,
+        old: Option<&str>,
+        name: &str,
+    ) -> GeopResult<()> {
         let folded = self.folded()?;
-        let id = part.solid_id(old)?;
-        part.assemble_sheet(&[Body::Solid(id)], &[])?;
-        thicken(part, &folded, name, &|n| n)?;
-        part.set_body_data(name, self)
-    }
-
-    /// The sheet-metal body of `part` with the edge `edge` on a flat's
-    /// outline: the solid, its sheet, and the edge as
-    /// [`Sheet::edge_named`] finds it. `what` is for the error: what is
-    /// bent from such an edge.
-    pub(crate) fn with_edge(
-        part: &Part<S>,
-        edge: &str,
-        what: &str,
-    ) -> GeopResult<(String, Self, (usize, usize, bool))> {
-        part.solid_names()
-            .into_iter()
-            .find_map(|solid| {
-                let sheet = part.body_data::<Sheet<S>>(&solid)?;
-                let at = sheet.edge_named(edge)?;
-                Some((solid, sheet.clone(), at))
-            })
-            .ok_or_else(|| {
-                GeopError::new(format!(
-                    "{edge:?} is no edge of a sheet-metal body's flat face on its outline: {what} is bent from one of those"
-                ))
-            })
+        if let Some(old) = old {
+            let id = model.solid_id(old)?;
+            model.assemble_sheet(&[Body::Solid(id)], &[])?;
+        }
+        thicken(model, &folded, name, &|n| n)?;
+        Ok(())
     }
 }
 

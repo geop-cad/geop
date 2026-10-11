@@ -11,7 +11,7 @@
 //! divide by `sin θ` where avoidable, so a nearly straight arc stays
 //! well-conditioned.
 //!
-//! Every division and square root here is fallible — [`Scalar::div`] and
+//! Every division and square root here is fallible — [`Field::div`](geop_core_math::scalars::Field::div) and
 //! [`Scalar::sqrt`] refuse a divisor or radicand that could be zero/negative
 //! — so a degenerate configuration (a zero-length chord, a collapsed arc)
 //! surfaces as a [`GeopResult`] error instead of silently producing an

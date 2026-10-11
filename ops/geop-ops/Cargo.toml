@@ -4,18 +4,13 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+geop-core-program.workspace = true
 geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-core-sketch.workspace = true
-geop-ops-derive.workspace = true
 geop-ops-rasterize.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-# Entities of one kind in the order they were added, found by their id.
-indexmap.workspace = true
-
-# Native builds draw the components of a part's placed parts side by side;
-# the browser's wasm build has no threads, and draws them one by one.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-rayon.workspace = true
+# The name registry shares its structure with its copies, as the topology does.
+imbl.workspace = true

@@ -17,29 +17,9 @@ use crate::{CurveId, PointId, ProfileEdge, ProfileJoint};
 /// Samples per piece of a curve drawn as a polyline.
 const SAMPLES: usize = 16;
 
-/// One NURBS piece of a chain, on `[0, 1]`, and where it comes from: piece
-/// `index` of the sketch curve `source` (counted in the curve's own
-/// direction), from joint `start` to joint `end` in the chain's direction —
-/// named as a planar sketch's pieces are (see [`crate::ProfilePiece`]).
-#[derive(Clone, Debug)]
-pub struct Piece3d<S: Scalar> {
-    pub curve: NurbCurve3D<S>,
-    pub source: CurveId,
-    pub index: usize,
-    pub start: ProfileJoint,
-    pub end: ProfileJoint,
-}
-
-impl<S: Scalar> Piece3d<S> {
-    /// `c5` for a curve's first piece, `c5#1` for the next.
-    pub fn name(&self) -> String {
-        if self.index == 0 {
-            format!("{}", self.source)
-        } else {
-            format!("{}#{}", self.source, self.index)
-        }
-    }
-}
+/// One NURBS piece of a chain, on `[0, 1]`, named as a planar sketch's
+/// pieces are (see [`crate::profile::Piece`]).
+pub type Piece3d<S> = crate::profile::Piece<NurbCurve3D<S>>;
 
 /// Curves of a 3-D sketch joined end to end: an open chain, or a closed one
 /// whose last curve ends where the first starts. Each curve runs forwards

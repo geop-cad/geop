@@ -11,14 +11,12 @@
 //! then form a tree hanging from the root: a joint closing a loop, or a
 //! link no joint reaches, is refused too, by name.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
-};
-use geop_core_solve::mates::{Assembly, JointKind};
-use geop_ops_assembly::Mechanism;
+use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_ops_assembly::JointKind;
+
+use crate::Mechanism;
 
 /// The links of a mechanism and the joints between them.
 #[derive(Clone, Debug, PartialEq)]
@@ -54,6 +52,27 @@ pub struct TreeJoint {
 /// body (`b + 1`).
 struct Groups(Vec<usize>);
 
+/// The groups of `mechanism`'s bodies that move as one: those held to the
+/// ground, and those its constraints and fastened joints hold together.
+fn groups(mechanism: &Mechanism) -> Groups {
+    let count = mechanism.bodies.len();
+    let mut groups = Groups((0..=count).collect());
+    for (b, body) in mechanism.bodies.iter().enumerate() {
+        if !body.free {
+            groups.union(0, b + 1);
+        }
+    }
+    for (_, [a, b]) in &mechanism.constraints {
+        groups.union(node(*a), node(*b));
+    }
+    for joint in &mechanism.joints {
+        if matches!(joint.kind, JointKind::Fastened) {
+            groups.union(node(joint.a.body), node(joint.b.body));
+        }
+    }
+    groups
+}
+
 impl Groups {
     fn find(&self, mut node: usize) -> usize {
         while self.0[node] != node {
@@ -74,27 +93,13 @@ fn node(body: Option<usize>) -> usize {
     body.map_or(0, |b| b + 1)
 }
 
-/// The tree of links `mechanism` makes (see the module docs).
-pub fn tree<S: Scalar>(mechanism: &Mechanism<'_, S>) -> GeopResult<Tree> {
-    let assembly = &mechanism.assembly;
-    let count = assembly.bodies.len();
-    let mut groups = Groups((0..=count).collect());
-    for (b, body) in assembly.bodies.iter().enumerate() {
-        if !body.free {
-            groups.union(0, b + 1);
-        }
-    }
-    for constraint in &assembly.constraints {
-        groups.union(node(constraint.a.body), node(constraint.b.body));
-    }
-    for joint in &assembly.joints {
-        if matches!(joint.kind, JointKind::Fastened) {
-            groups.union(node(joint.a.body), node(joint.b.body));
-        }
-    }
-    check_rigid(mechanism, &groups)?;
-    for (j, joint) in assembly.joints.iter().enumerate() {
-        check_joint(mechanism, j, &joint.kind)?;
+/// The tree of links `mechanism` makes (see the module docs) — not yet
+/// checked for links mates hold loosely (see [`check_rigid`]).
+pub fn tree(mechanism: &Mechanism) -> GeopResult<Tree> {
+    let count = mechanism.bodies.len();
+    let groups = groups(mechanism);
+    for joint in &mechanism.joints {
+        check_joint(&joint.name, &joint.kind)?;
     }
 
     let part = |b: usize| mechanism.bodies[b].name.as_str();
@@ -105,7 +110,7 @@ pub fn tree<S: Scalar>(mechanism: &Mechanism<'_, S>) -> GeopResult<Tree> {
     };
     let link_named = |group: usize| -> LinkBodies {
         let bodies = members(group);
-        let fixed = bodies.iter().find(|&&b| !assembly.bodies[b].free);
+        let fixed = bodies.iter().find(|&&b| !mechanism.bodies[b].free);
         let name = match fixed.or(bodies.first()) {
             Some(&b) => part(b).to_string(),
             None => "base".to_string(),
@@ -113,11 +118,11 @@ pub fn tree<S: Scalar>(mechanism: &Mechanism<'_, S>) -> GeopResult<Tree> {
         LinkBodies { name, bodies }
     };
 
-    let moving: Vec<usize> = (0..assembly.joints.len())
-        .filter(|&j| !matches!(assembly.joints[j].kind, JointKind::Fastened))
+    let moving: Vec<usize> = (0..mechanism.joints.len())
+        .filter(|&j| !matches!(mechanism.joints[j].kind, JointKind::Fastened))
         .collect();
     let ends = |j: usize| {
-        let joint = &assembly.joints[j];
+        let joint = &mechanism.joints[j];
         (
             groups.find(node(joint.a.body)),
             groups.find(node(joint.b.body)),
@@ -144,8 +149,7 @@ pub fn tree<S: Scalar>(mechanism: &Mechanism<'_, S>) -> GeopResult<Tree> {
             if a == b {
                 return Err(GeopError::new(format!(
                     "the joint {:?} joins {}, which mates already hold rigidly together: a closed loop, which URDF — a tree of links — cannot express; remove the joint or the mates",
-                    mechanism.joint_name(j),
-                    tree.links[link].name
+                    mechanism.joints[j].name, tree.links[link].name
                 )));
             }
             let (other, forward) = if a == group { (b, true) } else { (a, false) };
@@ -196,12 +200,7 @@ pub fn tree<S: Scalar>(mechanism: &Mechanism<'_, S>) -> GeopResult<Tree> {
 /// Refuses a joint no URDF joint is: a cylindrical one, or limits URDF
 /// cannot write — a revolute joint limited one way only, a slider not
 /// limited both ways.
-fn check_joint<S: Scalar>(
-    mechanism: &Mechanism<'_, S>,
-    j: usize,
-    kind: &JointKind<S>,
-) -> GeopResult<()> {
-    let name = mechanism.joint_name(j);
+fn check_joint(name: &str, kind: &JointKind) -> GeopResult<()> {
     let problem = match kind {
         JointKind::Cylindrical => Some(
             "is cylindrical, and URDF has no joint that both turns and slides: use a revolute or a slider joint"
@@ -223,45 +222,44 @@ fn check_joint<S: Scalar>(
     }
 }
 
-/// Refuses parts that mates alone hold together but not rigidly: solved
-/// with those mates only — every link's first body held where it is, the
-/// ground's group held by the ground — any body that can still move.
-fn check_rigid<S: Scalar>(mechanism: &Mechanism<'_, S>, groups: &Groups) -> GeopResult<()> {
-    let assembly = &mechanism.assembly;
-    let fastened: Vec<usize> = (0..assembly.joints.len())
-        .filter(|&j| matches!(assembly.joints[j].kind, JointKind::Fastened))
+/// Refuses parts that mates alone hold together but not rigidly: those of
+/// `mechanism` that `freedom` — how free each placed part is, by name,
+/// with every joint held at its coordinates — says can still move. Of the
+/// links of `tree`, which hold every part.
+pub fn check_rigid(
+    mechanism: &Mechanism,
+    tree: &Tree,
+    freedom: &BTreeMap<String, usize>,
+) -> GeopResult<()> {
+    let loose: Vec<usize> = (0..mechanism.bodies.len())
+        .filter(|&b| {
+            freedom
+                .get(&mechanism.bodies[b].name)
+                .is_some_and(|&dof| dof > 0)
+        })
         .collect();
-    if assembly.constraints.is_empty() && fastened.is_empty() {
+    if loose.is_empty() {
         return Ok(());
     }
-    let mut bodies = assembly.bodies.clone();
-    let mut anchored = HashSet::from([0]);
-    for (b, body) in bodies.iter_mut().enumerate() {
-        if anchored.insert(groups.find(b + 1)) {
-            body.free = false;
-        }
-    }
-    let mut rigid = Assembly::new(bodies, assembly.constraints.clone(), assembly.scale);
-    rigid.joints = fastened.iter().map(|&j| assembly.joints[j]).collect();
-    let freedom = rigid.freedom()?;
-    let Some(loose) = (0..assembly.bodies.len()).find(|&b| freedom.bodies[b] > 0) else {
-        return Ok(());
+    // The links of the loose parts, and the mates holding those together.
+    // The assembly itself is the root's.
+    let link_of = |body: Option<usize>| match body {
+        Some(b) => tree.links.iter().position(|l| l.bodies.contains(&b)),
+        None => Some(0),
     };
-    let group = groups.find(loose + 1);
-    let in_group = |body: Option<usize>| groups.find(node(body)) == group;
-    let parts: Vec<&str> = (0..assembly.bodies.len())
-        .filter(|&b| in_group(Some(b)) && freedom.bodies[b] > 0)
-        .map(|b| mechanism.bodies[b].name.as_str())
+    let links: HashSet<Option<usize>> = loose.iter().map(|&b| link_of(Some(b))).collect();
+    let in_links = |ends: [Option<usize>; 2]| ends.iter().any(|&e| links.contains(&link_of(e)));
+    let parts: Vec<&str> = (loose.iter())
+        .map(|&b| mechanism.bodies[b].name.as_str())
         .collect();
-    let mut mates: Vec<&str> = (0..assembly.constraints.len())
-        .filter(|&c| in_group(assembly.constraints[c].a.body))
-        .map(|c| mechanism.constraint_name(c))
+    let mut mates: Vec<&str> = (mechanism.constraints.iter())
+        .filter(|(_, ends)| in_links(*ends))
+        .map(|(name, _)| name.as_str())
         .collect();
     mates.extend(
-        fastened
-            .iter()
-            .filter(|&&j| in_group(assembly.joints[j].a.body))
-            .map(|&j| mechanism.joint_name(j)),
+        (mechanism.joints.iter())
+            .filter(|j| matches!(j.kind, JointKind::Fastened) && in_links([j.a.body, j.b.body]))
+            .map(|j| j.name.as_str()),
     );
     Err(GeopError::new(format!(
         "{} {} held by the mates {} alone, which leave {} free to move: a URDF robot moves only at its joints — join the parts by revolute or slider joints, or hold them fully",
@@ -275,8 +273,8 @@ fn check_rigid<S: Scalar>(mechanism: &Mechanism<'_, S>, groups: &Groups) -> Geop
 /// The error for the joint `closing`, which joins the link `from` to the
 /// link `reached`, already in the tree: the loop it closes, by its joints
 /// and its links.
-fn loop_error<S: Scalar>(
-    mechanism: &Mechanism<'_, S>,
+fn loop_error(
+    mechanism: &Mechanism,
     tree: &Tree,
     carried_by: &[Option<usize>],
     from: usize,
@@ -305,9 +303,9 @@ fn loop_error<S: Scalar>(
         .iter()
         .chain(&b)
         .filter_map(|&l| carried_by[l])
-        .map(|j| mechanism.joint_name(tree.joints[j].joint))
+        .map(|j| mechanism.joints[tree.joints[j].joint].name.as_str())
         .collect();
-    joints.push(mechanism.joint_name(closing));
+    joints.push(mechanism.joints[closing].name.as_str());
     joints.sort();
     let links: Vec<&str> = links.iter().map(|&l| tree.links[l].name.as_str()).collect();
     GeopError::new(format!(

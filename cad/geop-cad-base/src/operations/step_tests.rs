@@ -8,10 +8,11 @@ use geop_core_topology::{
     Model,
     validation::{ValidationParameters, validate},
 };
-use geop_ops::{NoFiles, Part};
+use geop_ops::{Design, NamedModel, model::model};
 use geop_ops_step::{ImportStepArgs, write_step};
 
-use crate::{PartOperation, Program, Workspace, examples};
+use crate::operations::{build, testing::Built, workspace};
+use crate::{Program, Push, examples};
 
 /// `(faces, edges, vertices)`.
 fn counts(model: &Model<S>) -> (usize, usize, usize) {
@@ -31,21 +32,21 @@ fn bounds(model: &Model<S>) -> ([f64; 3], [f64; 3]) {
     (lo, hi)
 }
 
-/// The part a program of one import step builds, reading `file` — named
+/// The model a program of one import step builds, reading `file` — named
 /// `part.step` next to the program — from `text`.
-fn imported(text: String) -> Part<S> {
-    let mut program = Program::default();
+fn imported(text: String) -> NamedModel<Design> {
+    let mut program = Program::new();
     program.push(
         "imp",
-        PartOperation::ImportStep(ImportStepArgs {
+        ImportStepArgs {
             file: "part.step".into(),
-        }),
+        },
     );
     let files = BTreeMap::from([("part.step".to_string(), text)]);
-    let workspace = Workspace::<S>::new(crate::stdlib::WithStandardParts(files));
-    program
-        .build(&workspace.scope("main.geop"))
-        .unwrap_or_else(|e| panic!("importing failed: {e}"))
+    let runner = build(&program, &workspace(files).scope("main.geop"))
+        .unwrap_or_else(|e| panic!("importing failed: {e}"));
+    let model = runner.part.current().retrieve_target(&model()).unwrap();
+    model.clone()
 }
 
 /// Example parts — extruded, revolved, drilled, filleted, booleaned — come
@@ -60,12 +61,16 @@ fn examples_round_trip_through_step() {
         "revolved_cone_on_box",
         "pin",
     ];
+    let mut found = 0;
     for (name, program) in examples::all() {
         if !chosen.contains(&name) {
             continue;
         }
-        let part = program().build(&NoFiles).unwrap();
-        let text = write_step(&part, name).unwrap();
+        found += 1;
+        let runner = program().built().unwrap();
+        let built = runner.part.current();
+        let part = built.retrieve_target(&model()).unwrap();
+        let text = write_step(built, name).unwrap();
         let back = imported(text);
         assert_eq!(
             counts(back.topology()),
@@ -84,4 +89,5 @@ fn examples_round_trip_through_step() {
         }
         assert_eq!(back.solid_names().len(), part.solid_names().len(), "{name}");
     }
+    assert_eq!(found, chosen.len(), "every example chosen is one");
 }

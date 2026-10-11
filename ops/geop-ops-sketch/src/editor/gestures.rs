@@ -2,18 +2,15 @@
 //! editor lets be dragged, dialog fields and keys — each answered with a new
 //! sketch.
 
-use geop_ops::{
-    EntityRef,
-    parameters::{evaluate, is_formula, number},
-};
+use geop_ops::{EntityRef, parameters::is_formula};
 
 use super::drawing::{Built, Hints, construct, curve_ending_at};
 use super::trim::Plan;
 use super::*;
-use crate::geometry::{angle_between, segments_cross, wrap};
+use crate::geometry::{segments_cross, swept};
 use crate::references::{Reference, Source};
 
-impl<S: Scalar> Editing<'_, S> {
+impl Editing<'_> {
     /// What a construction needs beyond its points, the pointer reaching
     /// `pointer`, `t` along its ray.
     fn hints(&self, pointer: &Pointer<S>, t: S) -> Hints {
@@ -67,11 +64,11 @@ impl<S: Scalar> Editing<'_, S> {
                     },
                 ],
             ) if draft.previous.is_some() => {
-                let at = to_world(&self.frame, pt(self.sketch(), end));
+                let at = to_world(&self.frame, xy(self.sketch(), end));
                 let near = hit_visuals(
                     &[Visual::new("end", Shape::Point { at }, Style::Free)],
                     pointer,
-                    None,
+                    geop_ops::ui::hit::no_instances,
                     |_| true,
                 )
                 .is_some();
@@ -82,13 +79,8 @@ impl<S: Scalar> Editing<'_, S> {
                 draft.at_end = near;
             }
             (DrawTool::CenterArc | DrawTool::ArcSlot, [m, s]) => {
-                let raw = angle_between(sub(s.at, m.at), sub(placed.at, m.at));
                 let previous = draft.sweep;
-                self.s.draft.sweep = if previous == 0.0 {
-                    raw
-                } else {
-                    previous + wrap(raw - previous)
-                };
+                self.s.draft.sweep = swept(previous, sub(s.at, m.at), sub(placed.at, m.at));
             }
             _ => {}
         }
@@ -144,7 +136,7 @@ impl<S: Scalar> Editing<'_, S> {
         self.s.draft = match (tool, end) {
             (DrawTool::Line, Some(end)) => Draft {
                 placed: vec![Placed {
-                    at: pt(self.sketch(), end),
+                    at: xy(self.sketch(), end),
                     snap: Some(Snap::Point(end)),
                 }],
                 previous: last,
@@ -272,7 +264,7 @@ impl<S: Scalar> Editing<'_, S> {
         if self.s.drag.is_none() {
             let sketch = self.sketch();
             let points = |points: Vec<PointId>| Drag::Points {
-                origins: points.iter().map(|&q| pt(sketch, q)).collect(),
+                origins: points.iter().map(|&q| xy(sketch, q)).collect(),
                 points,
                 grab: from,
             };
@@ -330,7 +322,7 @@ impl<S: Scalar> Editing<'_, S> {
                 let CurveKind::Circle { center, .. } = next.curves[&curve].kind else {
                     return;
                 };
-                let r = dist(pt(&next, center), to);
+                let r = dist(xy(&next, center), to);
                 if let Some(c) = next.curves.get_mut(&curve)
                     && let CurveKind::Circle { radius, .. } = &mut c.kind
                 {
@@ -341,7 +333,7 @@ impl<S: Scalar> Editing<'_, S> {
                 let CurveKind::Arc { start, end, .. } = next.curves[&curve].kind else {
                     return;
                 };
-                let through = crate::geometry::sweep_through(pt(&next, start), pt(&next, end), to);
+                let through = crate::geometry::sweep_through(xy(&next, start), xy(&next, end), to);
                 if !through.is_finite() {
                     return;
                 }
@@ -542,8 +534,7 @@ impl<S: Scalar> Editing<'_, S> {
             self.s.prompt = None;
             return;
         }
-        let inputs = self.before.state();
-        let value = match evaluate(text, |name| number(inputs, name)) {
+        let value = match (&mut &*self.before).evaluate(text) {
             Ok(v) => v,
             Err(e) => {
                 self.s.error = Some(e.root_message().to_string());
@@ -557,11 +548,6 @@ impl<S: Scalar> Editing<'_, S> {
         }
         let mut next = self.sketch().clone();
         let c = next.constraints.get_mut(&id).expect("checked above");
-        let value = if matches!(c, Constraint::Angle { .. }) {
-            value.to_radians()
-        } else {
-            value
-        };
         constraints::set_value(c, value);
         self.commit(next);
         self.s.prompt = None;
@@ -613,7 +599,7 @@ impl<S: Scalar> Editing<'_, S> {
                 continue;
             }
             let mut reference = Reference::new(source);
-            match reference.update(&mut next, self.before, &self.frame) {
+            match reference.update(&mut next, &mut &*self.before, &self.frame) {
                 Ok(()) => kept.push(reference),
                 Err(e) => {
                     reference.remove_from(&mut next);

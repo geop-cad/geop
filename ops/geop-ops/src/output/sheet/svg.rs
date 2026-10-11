@@ -2,7 +2,7 @@
 
 use std::fmt::Write;
 
-use crate::sheet::{Anchor, Layer, Shape, Sheet};
+use super::{Anchor, Layer, Shape, Sheet};
 
 /// How a layer's strokes look: width in millimetres, and dashes.
 fn style(layer: Layer) -> (f64, Option<&'static str>) {

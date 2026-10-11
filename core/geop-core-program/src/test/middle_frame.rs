@@ -1,12 +1,13 @@
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use serde::{Deserialize, Serialize};
 
-use crate::operation::{EditingPresentation, Operation, UserEvent};
-use crate::part::{Part, View};
+use crate::editing::{Event, Form};
+use crate::operation::{Context, Operation, OperationInfo};
+use crate::part::{Part, Retrieve};
 use crate::target::TargetReference;
-use crate::test::{Frame, Pose, Sc, label, no_presentation, record_built};
+use crate::test::{Frame, Pose, Sc, info, label, record_built};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct MiddleFrameArgs {
     pub frame1ref: String,
     pub frame2ref: String,
@@ -16,7 +17,7 @@ pub struct MiddleFrameArgs {
 pub struct MiddleFrameOperation;
 
 impl Operation for MiddleFrameOperation {
-    const NAME: &'static str = "middle_frame";
+    const INFO: OperationInfo = info("middle_frame");
     type Args = MiddleFrameArgs;
     type EditingState = ();
     type Input = Sc;
@@ -41,16 +42,20 @@ impl Operation for MiddleFrameOperation {
         )
     }
 
-    fn presentation(_: &View<Sc, Pose>, _: &Self::Args, _: &()) -> GeopResult<EditingPresentation> {
-        Ok(no_presentation())
+    fn new_args(_: &Context<Sc, Pose>) -> Self::Args {
+        Self::Args::default()
+    }
+
+    fn presentation(_: &Context<Sc, Pose>, _: &Self::Args, _: &()) -> Form<Sc> {
+        Form::default()
     }
 
     fn process_user_event(
-        _: &View<Sc, Pose>,
+        _: &Context<Sc, Pose>,
         args: &Self::Args,
         _: &(),
-        _: UserEvent,
-    ) -> GeopResult<(Self::Args, ())> {
-        Ok((args.clone(), ()))
+        _: Event<Sc>,
+    ) -> (Self::Args, ()) {
+        (args.clone(), ())
     }
 }

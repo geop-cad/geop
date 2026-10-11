@@ -1,7 +1,8 @@
 //! Cosmetic threads: threads recorded on a round face rather than modelled
 //! — what a drawing, a bill of materials or a fastener check reads, and
-//! what the viewer draws as a helix on the face. Kept in a part as the
-//! extension [`Threads`], read and written through [`PartThreads`].
+//! what the viewer draws as a helix on the face. Kept as the part's target
+//! [`threads`], and drawn as the [`annotations`] of the step that recorded
+//! them.
 
 use std::collections::BTreeMap;
 
@@ -15,12 +16,21 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_ops::{Annotation, Extension, Part, operation::frame_along, part::operation_of};
+use geop_core_program::{
+    part::Retrieve,
+    target::{Revisable, TargetReference},
+};
+use geop_ops::{
+    Design,
+    model::operation_of,
+    operation::{Build, BuildReader, frame_along},
+    ui::{Annotations, ViewAnnotation, annotations},
+};
 
 /// A thread recorded on a cylindrical face, by its specification and where
 /// it lies — kept as geometry, so that it says the same whatever later
 /// steps do to the face it was put on.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CosmeticThread<S: Scalar> {
     /// How it is called: `M6x1`.
     pub designation: String,
@@ -57,8 +67,8 @@ impl<S: Scalar> CosmeticThread<S> {
         )
     }
 
-    /// The helix as a polyline, [`SEGMENTS_PER_SPAN`] to a quarter turn.
-    fn polyline(&self) -> GeopResult<Vec<Vector3<S>>> {
+    /// The helix as a polyline, `SEGMENTS_PER_SPAN` segments to a quarter turn.
+    pub fn polyline(&self) -> GeopResult<Vec<Vector3<S>>> {
         let helix = self.helix()?;
         // A span between every pair of the double interior knots.
         let spans = (helix.control_points.len() - 1) / 2;
@@ -73,9 +83,15 @@ impl<S: Scalar> CosmeticThread<S> {
 /// turn.
 const SEGMENTS_PER_SPAN: usize = 8;
 
-/// A part's cosmetic threads, by name.
-#[derive(Clone, Debug)]
+/// A part's cosmetic threads, by name: the value of its target [`threads`],
+/// which every step that records one revises.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Threads<S: Scalar>(BTreeMap<String, CosmeticThread<S>>);
+
+/// The part's cosmetic threads.
+pub fn threads() -> TargetReference<Threads<Design>> {
+    TargetReference::new("threads")
+}
 
 impl<S: Scalar> Default for Threads<S> {
     fn default() -> Self {
@@ -83,14 +99,56 @@ impl<S: Scalar> Default for Threads<S> {
     }
 }
 
-impl<S: Scalar> Extension<S> for Threads<S> {
-    const NAME: &'static str = "threads";
+/// A part has few threads: a revision copies them.
+impl<S: Scalar + PartialEq> Revisable for Threads<S> {
+    fn to_revise(&self) -> Self {
+        self.clone()
+    }
+}
 
-    fn annotations(&self) -> GeopResult<Vec<Annotation<S>>> {
-        self.0
-            .iter()
+impl<S: Scalar> Threads<S> {
+    /// Records `thread` under `name`. Fails, leaving the threads as they
+    /// are, if there is a thread of that name already.
+    pub fn add(&mut self, name: impl Into<String>, thread: CosmeticThread<S>) -> GeopResult<()> {
+        let name = name.into();
+        if self.0.contains_key(&name) {
+            return Err(GeopError::new(format!(
+                "the part has a thread named {name:?} already"
+            )));
+        }
+        self.0.insert(name, thread);
+        Ok(())
+    }
+
+    /// Every cosmetic thread, by name.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &CosmeticThread<S>)> {
+        self.0.iter().map(|(name, thread)| (name.as_str(), thread))
+    }
+
+    /// The cosmetic thread `name`.
+    pub fn get(&self, name: &str) -> GeopResult<&CosmeticThread<S>> {
+        (self.0.get(name))
+            .ok_or_else(|| GeopError::new(format!("the part has no thread named {name:?}")))
+    }
+
+    /// The cosmetic threads the step `step` recorded — those named after
+    /// it — by name.
+    pub fn of_step(&self, step: &str) -> Vec<String> {
+        (self.0.keys())
+            .filter(|name| operation_of(name) == Some(step))
+            .cloned()
+            .collect()
+    }
+}
+
+impl Threads<Design> {
+    /// What a viewer draws of each thread the step `step` recorded: its
+    /// name, its designation and its helix as a polyline.
+    pub fn drawn(&self, step: &str) -> GeopResult<Vec<ViewAnnotation>> {
+        (self.0.iter())
+            .filter(|(name, _)| operation_of(name) == Some(step))
             .map(|(name, thread)| {
-                Ok(Annotation {
+                Ok(ViewAnnotation {
                     name: name.clone(),
                     label: thread.designation.clone(),
                     polyline: thread.polyline()?,
@@ -98,72 +156,19 @@ impl<S: Scalar> Extension<S> for Threads<S> {
             })
             .collect()
     }
-
-    fn describe(&self) -> BTreeMap<String, serde_json::Value> {
-        self.0
-            .iter()
-            .map(|(name, thread)| {
-                let description = serde_json::json!({
-                    "designation": thread.designation,
-                    "face": thread.face,
-                    "length": thread.length,
-                    "internal": thread.internal,
-                });
-                (name.clone(), description)
-            })
-            .collect()
-    }
 }
 
-/// A part's cosmetic threads (see the module).
-pub trait PartThreads<S: Scalar> {
-    /// Records `thread` under `name`. Fails, leaving the part unchanged, if
-    /// the part has a thread of that name already.
-    fn add_thread(&mut self, name: impl Into<String>, thread: CosmeticThread<S>) -> GeopResult<()>;
-
-    /// Every cosmetic thread, by name.
-    fn threads(&self) -> impl Iterator<Item = (&str, &CosmeticThread<S>)>;
-
-    /// The cosmetic thread `name`.
-    fn thread(&self, name: &str) -> GeopResult<&CosmeticThread<S>>;
-
-    /// The cosmetic threads the step `step` recorded — those named after
-    /// it — by name.
-    fn threads_of(&self, step: &str) -> Vec<String>;
+/// Draws the threads the step `step` recorded on the part, as its
+/// [`annotations`]: what a step that records threads does after.
+pub(crate) fn draw_threads(part: &mut Build, step: &str) -> GeopResult<()> {
+    part.define_target(&annotations(step), &step.to_string(), draw)
 }
 
-impl<S: Scalar> PartThreads<S> for Part<S> {
-    fn add_thread(&mut self, name: impl Into<String>, thread: CosmeticThread<S>) -> GeopResult<()> {
-        let name = name.into();
-        if self
-            .ext::<Threads<S>>()
-            .is_some_and(|t| t.0.contains_key(&name))
-        {
-            return Err(GeopError::new(format!(
-                "the part has a thread named {name:?} already"
-            )));
-        }
-        self.ext_mut::<Threads<S>>().0.insert(name, thread);
-        Ok(())
-    }
-
-    fn threads(&self) -> impl Iterator<Item = (&str, &CosmeticThread<S>)> {
-        self.ext::<Threads<S>>()
-            .into_iter()
-            .flat_map(|threads| threads.0.iter().map(|(name, t)| (name.as_str(), t)))
-    }
-
-    fn thread(&self, name: &str) -> GeopResult<&CosmeticThread<S>> {
-        self.ext::<Threads<S>>()
-            .and_then(|threads| threads.0.get(name))
-            .ok_or_else(|| GeopError::new(format!("the part has no thread named {name:?}")))
-    }
-
-    fn threads_of(&self, step: &str) -> Vec<String> {
-        self.threads()
-            .map(|(name, _)| name)
-            .filter(|name| operation_of(name) == Some(step))
-            .map(str::to_string)
-            .collect()
-    }
+/// The generator of [`draw_threads`]: its arguments, the step, are what a
+/// target is defined from, so owned.
+#[allow(clippy::ptr_arg)]
+fn draw(reader: &mut BuildReader, step: &String) -> GeopResult<Annotations> {
+    Ok(Annotations(
+        reader.retrieve_target(&threads())?.drawn(step)?,
+    ))
 }

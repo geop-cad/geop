@@ -3,6 +3,8 @@
 //! tables or by hand. [`Thread`]: put a thread on a cylindrical face,
 //! recorded or modelled.
 
+use geop_ops::operation::Input;
+use geop_ops::parameters::expressions;
 use std::collections::BTreeSet;
 
 use geop_core_math::{
@@ -12,23 +14,31 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_sketch::CurveKind;
-use geop_core_topology::Body;
-use geop_ops::{
-    Context, Library, Namer, Part,
-    operation::{Aspects, EntityRef, Operation, Role, frame_along},
-    parameters::expressions,
-    ui::{Choice, Form, Number, Shape, Style, Tone, Unit, Visual},
+use geop_core_program::{
+    editing::{Choice, Event, Form, Number, Shape, Style, Tone, Unit, Value, Visual},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+    part::Retrieve,
 };
-use geop_ops_booleans::{Combine, Tool, boolean::NOTHING_STOPS};
-use geop_ops_extrude_revolve::{
-    Extent,
-    operation::{hull, reach_past},
+use geop_core_sketch::CurveKind;
+use geop_core_topology::{Body, FaceId, SolidId};
+use geop_ops::{
+    Design, NamedModel, Namer, ParamValue, model,
+    operation::{
+        Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, ResolveEntity, Role, Scope,
+        Seen, build_model, frame_along,
+    },
+    parameters::Formula,
+    ui::formula_number,
+};
+use geop_ops_booleans::{
+    Combine, Extent, Tool,
+    boolean::{BooleanOp, Reach},
+    extent::{hull, reach_past},
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    cosmetic::PartThreads,
+    cosmetic::{CosmeticThread, Threads, draw_threads, threads},
     hole::{Head, HoleDepth, HoleShape, hole_tool},
     iso::{Fit, MetricSize, SIZES, metric},
     thread::{ThreadPlacement, Wall, thread_tool},
@@ -98,9 +108,9 @@ pub enum Standard {
 /// `hole(H,X,wall,q0)` .. `q3` by quarter turn, a counterbore's
 /// `hole(H,X,counterbore,q)` and `hole(H,X,shoulder,q)`, a countersink's
 /// `hole(H,X,countersink,q)`, a blind hole's bottom `hole(H,X,bottom,q)` or
-/// drill point `hole(H,X,point,q)` (see [`crate::hole`]); what the boolean
+/// drill point `hole(H,X,point,q)` (see `crate::hole`); what the boolean
 /// creates is named `combine(H,X,...)`. A tapped hole's cosmetic thread is
-/// the part's thread `hole(H,X,thread)`.
+/// the part's thread `hole(H,X,thread)` (see [`threads`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Hole;
 
@@ -216,11 +226,11 @@ impl HoleArgs {
     }
 }
 
-/// The hole centres `points` stand for in `part`: each by the name its
-/// hole's entities are scoped by, and where it is. A sketch stands for its
-/// points no line, arc or spline runs through.
+/// The hole centres `points` stand for, as `lookup` has them: each by the
+/// name its hole's entities are scoped by, and where it is. A sketch stands
+/// for its points no line, arc or spline runs through.
 fn centres<S: Scalar>(
-    part: &Part<S>,
+    lookup: &mut (impl Lookup<S> + ?Sized),
     points: &[EntityRef],
 ) -> GeopResult<Vec<(String, Vector3<S>)>> {
     let mut found = Vec::new();
@@ -228,7 +238,7 @@ fn centres<S: Scalar>(
         let ctx = with_context!("the hole centre {point}");
         match point {
             EntityRef::Sketch { name } => {
-                let placed = part.sketch(part.sketch_id(name).with_context(ctx)?)?;
+                let placed = lookup.sketch(name).with_context(ctx)?;
                 let sketch = &placed.sketch;
                 let on_curves: BTreeSet<_> = sketch
                     .curves
@@ -253,7 +263,7 @@ fn centres<S: Scalar>(
                 }
             }
             _ => {
-                let at = Aspects::of(point, part)
+                let at = Aspects::of(point, lookup)
                     .with_context(ctx)?
                     .point
                     .ok_or_else(|| GeopError::new(format!("{point} is not a point")))?;
@@ -296,16 +306,176 @@ fn size_choices() -> Vec<Choice> {
     SIZES.iter().map(|s| Choice::new(s.name, s.name)).collect()
 }
 
-impl Operation for Hole {
-    type Args = HoleArgs;
-    type Session = ();
+/// Where the holes go: the solid they are drilled into, by name, and each
+/// hole's scope and frame — at its centre on the face, `z` the face's
+/// normal, out of the solid — as `lookup` has them.
+struct Sites<S: Scalar> {
+    target: String,
+    holes: Vec<(String, CoordinateSystem<S>)>,
+}
 
-    fn formulas<'a>(&self, args: &'a mut HoleArgs) -> Vec<&'a mut String> {
+/// The [`Sites`] of the holes `args` drills.
+fn sites<S: Scalar>(
+    lookup: &mut (impl Lookup<S> + ?Sized),
+    args: &HoleArgs,
+) -> GeopResult<Sites<S>> {
+    if args.face.is_empty() {
+        return Err(GeopError::new("pick the planar face to drill into"));
+    }
+    let named = lookup.model();
+    let face = named.face_id(&args.face)?;
+    let model = named.topology();
+    let plane = (model.get_face(face)?.surface.as_plane())?.ok_or_else(|| {
+        GeopError::new(format!(
+            "face {:?} is not planar: holes are drilled into a planar face",
+            args.face
+        ))
+    })?;
+    let target = solid_of(named, face, &args.face, "holes are drilled into a solid")?;
+    if args.points.is_empty() {
+        return Err(GeopError::new("pick the points to drill at"));
+    }
+    let mut holes = Vec::new();
+    for (scope, at) in centres(lookup, &args.points)? {
+        if !plane.signed_distance(&at).could_be_equal(S::ZERO) {
+            return Err(GeopError::new(format!(
+                "the point {scope} does not lie on face {:?}: holes are drilled at points on the face",
+                args.face
+            )));
+        }
+        holes.push((scope, frame_along(at, &plane.normal)?));
+    }
+    Ok(Sites { target, holes })
+}
+
+/// The name of the solid `face`, named `name`, is a face of — refused, as
+/// `why` says, for a face standing on its own.
+fn solid_of<S: Scalar>(
+    model: &NamedModel<S>,
+    face: FaceId,
+    name: &str,
+    why: &str,
+) -> GeopResult<String> {
+    let Body::Solid(solid) = model.topology().body_of_face(face)? else {
+        return Err(GeopError::new(format!(
+            "face {name:?} stands on its own: {why}"
+        )));
+    };
+    Ok(model.name(solid)?.to_string())
+}
+
+impl ModelStep for Hole {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &HoleArgs,
+    ) -> GeopResult<()> {
+        let ctx = with_context!("hole({step}, {args:?})");
+        let namer = Namer::new("hole", step)?;
+        let shape = args.shape().with_context(ctx)?;
+        let (sites, blind) = {
+            let mut scope = Scope { model, reader };
+            let sites = sites(&mut scope, args).with_context(ctx)?;
+            (sites, args.end.end(&mut scope).with_context(ctx)?.length())
+        };
+        let target = sites.target;
+        let hull = match blind {
+            Some(_) => None,
+            None => hull(model, std::slice::from_ref(&target)).with_context(ctx)?,
+        };
+        let mut tools = Vec::new();
+        for (scope, axes) in &sites.holes {
+            let depth = match (blind, &hull) {
+                (Some(depth), _) => HoleDepth {
+                    depth,
+                    point: args.drill_point,
+                },
+                (None, Some(hull)) => HoleDepth {
+                    // Into the solid: against the face's normal.
+                    depth: reach_past(hull, axes, -1.0).with_context(ctx)?,
+                    point: false,
+                },
+                (None, None) => {
+                    return Err(GeopError::new(format!("solid {target:?} has no faces")))
+                        .with_context(ctx);
+                }
+            };
+            let named = namer.scoped(scope);
+            let solid = hole_tool(model, &named, &named.name(&["tool"]), axes, &shape, depth)
+                .with_context(ctx)?;
+            tools.push(Tool {
+                solid,
+                up_to_next: (args.end == Extent::UpToNext)
+                    .then(|| (named.name(&["top", "q0"]), named.name(&["bottom", "q0"]))),
+                scope: Some(scope.clone()),
+            });
+        }
+        let combine = Combine::With {
+            op: BooleanOp::Difference,
+            target,
+        };
+        match combine.apply(model, &namer, step, &tools).with_context(ctx)? {
+            Reach::Stopped(()) => Ok(()),
+            Reach::RunsOn(e) => Err(e.with_context(
+                "up to next: a hole does not come out of the solid all round — part of it runs on; drill it blind or through all",
+            ))
+            .with_context(ctx),
+        }
+    }
+}
+
+/// What a tapped hole's threads are recorded from: the step, its
+/// arguments, where each hole was drilled and how far it is threaded.
+type Tapped = (
+    String,
+    HoleArgs,
+    Vec<(String, CoordinateSystem<Design>)>,
+    Option<f64>,
+);
+
+/// Records the cosmetic thread of every hole a tapped hole drilled, on its
+/// wall in the model the hole left.
+fn tap(
+    mut threads: Threads<Design>,
+    reader: &mut BuildReader,
+    (step, args, holes, length): &Tapped,
+) -> GeopResult<Threads<Design>> {
+    let ctx = with_context!("the threads of hole({step})");
+    let namer = Namer::new("hole", step)?;
+    let shape = args.shape().with_context(ctx)?;
+    let Some(size) = shape.thread else {
+        return Ok(threads);
+    };
+    let model = reader.retrieve_target(&model()).with_context(ctx)?;
+    let result = model.solid_id(&namer.root()).with_context(ctx)?;
+    for hole in holes {
+        let thread = tapped_thread(model, result, hole, shape.diameter / 2.0, size, *length)
+            .with_context(ctx)?;
+        threads.add(namer.scoped(&hole.0).name(&["thread"]), thread)?;
+    }
+    Ok(threads)
+}
+
+impl Operation for Hole {
+    const INFO: OperationInfo = OperationInfo::new(
+        "hole",
+        "Hole",
+        "Drill simple, counterbored, countersunk or tapped holes at points on a planar face, sized by ISO tables or by hand.",
+        OperationGroup::Features,
+        OperationTier::Big,
+    );
+    type Args = HoleArgs;
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
+
+    fn formulas(args: &mut HoleArgs) -> Vec<&mut String> {
         expressions(args.end.length_mut())
     }
 
     /// No face or point yet; a simple M6 clearance hole, 10 deep.
-    fn new_args<S: Scalar>(&self, _: &Part<S>) -> HoleArgs {
+    fn new_args(_: &Context<Input, ParamValue>) -> HoleArgs {
         HoleArgs {
             face: String::new(),
             points: Vec::new(),
@@ -320,71 +490,155 @@ impl Operation for Hole {
         }
     }
 
+    /// Drills the holes, then — tapped — records their threads, where the
+    /// part before the step put them and on the walls the holes left.
+    fn run(step: &str, part: &mut Build, args: &HoleArgs) -> GeopResult<()> {
+        let tapped = args.shape().is_ok_and(|shape| shape.thread.is_some());
+        let planned = tapped.then(|| {
+            let mut seen = Seen::new(part.current());
+            let holes = sites(&mut seen, args)?.holes;
+            let length = args.thread_length.or(args.end.end(&mut seen)?.length());
+            Ok::<_, GeopError>((step.to_string(), args.clone(), holes, length))
+        });
+        build_model::<Self>(part, step, args)?;
+        match planned {
+            Some(planned) => {
+                part.revise_or_start(&threads(), &planned?, tap)?;
+                draw_threads(part, step)
+            }
+            None => Ok(()),
+        }
+    }
+
     /// The face and the points, picked; the kind of hole; its standard,
     /// size and fit — or its diameters by hand — and what they come to; how
     /// deep. Each hole drawn as a circle of its diameter on the face.
-    fn form<'a, S: Scalar>(
-        &self,
-        context: Context<'a, S>,
-        args: &HoleArgs,
-        _: &(),
-        _: &[String],
-    ) -> Form<'a, S, HoleArgs> {
-        let before = context.before;
-        let mut f = Form::<S, HoleArgs>::new();
-        f.reference(
-            "face",
-            "face",
-            EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face)),
-            &[Role::Plane],
-            None,
-            false,
-            |e, picked| {
-                e.args.face = EntityRef::names_of(EntityRef::face, &picked)
-                    .pop()
-                    .unwrap_or_default()
-            },
-        );
-        f.reference(
+    fn presentation(context: &Context<Input, ParamValue>, args: &HoleArgs, _: &()) -> Form<Design> {
+        let mut seen = Seen::new(context.before);
+        let mut form = Form::default();
+        let dialog = &mut form.dialog;
+        let face = EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face));
+        (dialog.reference("face", "face", face, &[Role::Plane], None, false)).reference(
             "points",
             "points",
             args.points.clone(),
             &[Role::Point, Role::Sketch],
             None,
             true,
-            |e, picked| e.args.points = picked,
         );
-        f.select(
-            "kind",
-            "type",
-            args.kind.value(),
-            HoleKind::ALL
-                .iter()
-                .map(|&(_, value, label)| Choice::new(value, label))
-                .collect(),
-            false,
-            |args, value| {
-                if let Some(&(kind, ..)) = HoleKind::ALL.iter().find(|k| k.1 == value) {
-                    args.kind = kind;
-                }
-            },
-        );
+        let kinds = HoleKind::ALL
+            .iter()
+            .map(|&(_, value, label)| Choice::new(value, label));
+        dialog.select("kind", "type", args.kind.value(), kinds.collect(), false);
         let standard = match args.standard {
             Standard::Iso { .. } => "iso",
             Standard::Custom { .. } => "custom",
         };
-        f.select(
-            "standard",
-            "standard",
-            standard,
-            vec![
-                Choice::new("iso", "ISO metric"),
-                Choice::new("custom", "Custom"),
-            ],
-            false,
-            |args, value| {
+        let standards = vec![
+            Choice::new("iso", "ISO metric"),
+            Choice::new("custom", "Custom"),
+        ];
+        dialog.select("standard", "standard", standard, standards, false);
+        match &args.standard {
+            Standard::Iso { size, fit } => {
+                dialog.select("size", "size", size.clone(), size_choices(), true);
+                if args.kind != HoleKind::Tapped {
+                    let fits = Fit::ALL.iter().map(|f| Choice::new(f.value(), f.label()));
+                    dialog.select("fit", "fit", fit.value(), fits.collect(), false);
+                }
+            }
+            Standard::Custom {
+                diameter,
+                head_diameter,
+                head_depth,
+            } => {
+                let length = |label: &str, value: f64, max: f64| {
+                    Number::new(label, value, Unit::Length).range(0.0, max)
+                };
+                dialog.number("diameter", length("diameter", *diameter, 50.0));
+                if matches!(args.kind, HoleKind::Counterbore | HoleKind::Countersink) {
+                    dialog.number(
+                        "head_diameter",
+                        length("head diameter", *head_diameter, 80.0),
+                    );
+                }
+                if args.kind == HoleKind::Counterbore {
+                    dialog.number("head_depth", length("head depth", *head_depth, 50.0));
+                }
+            }
+        }
+        match args.describe() {
+            Ok(text) => dialog.text("dimensions", text, Tone::Hint),
+            Err(e) => dialog.text("dimensions", e.root_message(), Tone::Error),
+        };
+        let end = Extent::mode(Some(&args.end));
+        dialog.select("end", "end", end, Extent::choices(false), false);
+        if let Extent::Blind(depth) = &args.end {
+            let depth = formula_number("depth", depth, &mut seen, Unit::Length);
+            (dialog.number("depth", depth.range(0.0, 100.0))).checkbox(
+                "drill_point",
+                "drill point (118°)",
+                args.drill_point,
+            );
+        }
+        if args.kind == HoleKind::Tapped {
+            let full = (args.end.end(&mut seen).ok()).and_then(|end| end.length());
+            let length = args.thread_length.or(full);
+            let all = args.thread_length.is_none();
+            dialog.checkbox("full_thread", "thread all the way", all);
+            if let (Some(length), Some(_)) = (length, args.thread_length) {
+                let number = Number::new("thread length", length, Unit::Length).range(0.0, 100.0);
+                dialog.number("thread_length", number);
+            }
+        }
+        // Each hole, drawn on the face.
+        let face = EntityRef::face(args.face.clone());
+        if let (Ok(shape), Ok(plane)) = (args.shape(), face.resolve_plane(&mut seen))
+            && let Ok(centres) = centres(&mut seen, &args.points)
+        {
+            let outer = match shape.head {
+                Head::None => shape.diameter,
+                Head::Counterbore { diameter, .. } | Head::Countersink { diameter } => diameter,
+            };
+            for (k, (_, at)) in centres.iter().enumerate() {
+                for (j, d) in [shape.diameter, outer].into_iter().enumerate() {
+                    if j == 1 && d == shape.diameter {
+                        continue;
+                    }
+                    if let Some(c) = circle(*at, plane.w(), d) {
+                        let visual = Visual::new(format!("hole{k}.{j}"), c, Style::Draft);
+                        form.visuals.push(visual);
+                    }
+                }
+            }
+        }
+        form
+    }
+
+    fn process_user_event(
+        context: &Context<Input, ParamValue>,
+        args: &HoleArgs,
+        _: &(),
+        event: Event<Design>,
+    ) -> (HoleArgs, ()) {
+        let mut args = args.clone();
+        let Event::Field { key, value } = event else {
+            return (args, ());
+        };
+        match (key.as_str(), value) {
+            ("face", Value::Entities(picked)) => {
+                args.face =
+                    (EntityRef::names_of(EntityRef::face, &picked).pop()).unwrap_or_default();
+            }
+            ("points", Value::Entities(picked)) => args.points = picked,
+            ("kind", Value::Choice(value)) => {
+                if let Some(&(kind, ..)) = HoleKind::ALL.iter().find(|k| k.1 == value) {
+                    args.kind = kind;
+                }
+            }
+            ("standard", Value::Choice(value)) => {
                 let shape = args.shape().ok();
-                match (value, &args.standard) {
+                match (value.as_str(), &args.standard) {
                     ("custom", Standard::Iso { .. }) => {
                         // Starting from what the ISO size made.
                         let (head_diameter, head_depth) = match shape.map(|s| s.head) {
@@ -406,354 +660,88 @@ impl Operation for Hole {
                     }
                     _ => {}
                 }
-            },
-        );
-        match &args.standard {
-            Standard::Iso { size, fit } => {
-                f.select(
-                    "size",
-                    "size",
-                    size.clone(),
-                    size_choices(),
-                    true,
-                    |args, value| {
-                        if let Standard::Iso { size, .. } = &mut args.standard {
-                            *size = value.to_string();
-                        }
-                    },
-                );
-                if args.kind != HoleKind::Tapped {
-                    f.select(
-                        "fit",
-                        "fit",
-                        fit.value(),
-                        Fit::ALL
-                            .iter()
-                            .map(|f| Choice::new(f.value(), f.label()))
-                            .collect(),
-                        false,
-                        |args, value| {
-                            if let (Standard::Iso { fit, .. }, Some(new)) =
-                                (&mut args.standard, Fit::from_value(value))
-                            {
-                                *fit = new;
-                            }
-                        },
-                    );
+            }
+            ("size", Value::Choice(value)) => {
+                if let Standard::Iso { size, .. } = &mut args.standard {
+                    *size = value;
                 }
             }
-            Standard::Custom {
-                diameter,
-                head_diameter,
-                head_depth,
-            } => {
-                f.number(
-                    "diameter",
-                    Number::new("diameter", *diameter, Unit::Length).range(0.0, 50.0),
-                    |args, v| {
-                        if let Standard::Custom { diameter, .. } = &mut args.standard {
-                            *diameter = v;
-                        }
-                    },
-                );
-                if matches!(args.kind, HoleKind::Counterbore | HoleKind::Countersink) {
-                    f.number(
-                        "head_diameter",
-                        Number::new("head diameter", *head_diameter, Unit::Length).range(0.0, 80.0),
-                        |args, v| {
-                            if let Standard::Custom { head_diameter, .. } = &mut args.standard {
-                                *head_diameter = v;
-                            }
-                        },
-                    );
-                }
-                if args.kind == HoleKind::Counterbore {
-                    f.number(
-                        "head_depth",
-                        Number::new("head depth", *head_depth, Unit::Length).range(0.0, 50.0),
-                        |args, v| {
-                            if let Standard::Custom { head_depth, .. } = &mut args.standard {
-                                *head_depth = v;
-                            }
-                        },
-                    );
+            ("fit", Value::Choice(value)) => {
+                if let (Standard::Iso { fit, .. }, Some(new)) =
+                    (&mut args.standard, Fit::from_value(&value))
+                {
+                    *fit = new;
                 }
             }
-        }
-        match args.describe() {
-            Ok(text) => f.text("dimensions", text, Tone::Hint),
-            Err(e) => f.text("dimensions", e.root_message(), Tone::Error),
-        };
-        let mode = match &args.end {
-            Extent::Blind(_) => "blind",
-            Extent::UpToNext => "up_to_next",
-            Extent::ThroughAll => "through_all",
-        };
-        f.select(
-            "end",
-            "end",
-            mode,
-            vec![
-                Choice::new("blind", "Blind"),
-                Choice::new("up_to_next", "Up to next"),
-                Choice::new("through_all", "Through all"),
-            ],
-            false,
-            |args, value| {
-                args.end = match (value, &args.end) {
-                    ("blind", Extent::Blind(d)) => Extent::Blind(d.clone()),
-                    ("blind", _) => Extent::blind(10.0),
-                    ("up_to_next", _) => Extent::UpToNext,
-                    ("through_all", _) => Extent::ThroughAll,
-                    (_, end) => end.clone(),
-                }
-            },
-        );
-        if let Extent::Blind(depth) = &args.end {
-            f.formula(
-                "depth",
-                Number::formula("depth", depth, before.state(), Unit::Length).range(0.0, 100.0),
-                |args, d| args.end = Extent::Blind(d),
-            );
-            f.checkbox(
-                "drill_point",
-                "drill point (118°)",
-                args.drill_point,
-                |args, b| args.drill_point = b,
-            );
-        }
-        if args.kind == HoleKind::Tapped {
-            let full = match &args.end {
-                Extent::Blind(depth) => depth.peek(before.state()).ok(),
-                _ => None,
-            };
-            let length = args.thread_length.or(full);
-            f.checkbox(
-                "full_thread",
-                "thread all the way",
-                args.thread_length.is_none(),
-                move |args, b| {
-                    args.thread_length = if b { None } else { Some(full.unwrap_or(10.0)) }
-                },
-            );
-            if let (Some(length), Some(_)) = (length, args.thread_length) {
-                f.number(
-                    "thread_length",
-                    Number::new("thread length", length, Unit::Length).range(0.0, 100.0),
-                    |args, l| args.thread_length = Some(l),
-                );
-            }
-        }
-        // Each hole, drawn on the face.
-        if let (Ok(shape), Ok(plane)) = (
-            args.shape(),
-            EntityRef::Face {
-                name: args.face.clone(),
-            }
-            .resolve_plane(before),
-        ) && let Ok(centres) = centres(before, &args.points)
-        {
-            let outer = match shape.head {
-                Head::None => shape.diameter,
-                Head::Counterbore { diameter, .. } | Head::Countersink { diameter } => diameter,
-            };
-            for (k, (_, at)) in centres.iter().enumerate() {
-                for (j, d) in [shape.diameter, outer].into_iter().enumerate() {
-                    if j == 1 && d == shape.diameter {
-                        continue;
-                    }
-                    if let Some(c) = circle(*at, plane.w(), d) {
-                        f.visuals
-                            .push(Visual::new(format!("hole{k}.{j}"), c, Style::Draft));
-                    }
+            ("diameter", Value::Number(v)) => {
+                if let Standard::Custom { diameter, .. } = &mut args.standard {
+                    *diameter = v;
                 }
             }
-        }
-        f
-    }
-
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
-        args: &HoleArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("hole({operation_id}, {args:?})");
-        let namer = Namer::new("hole", operation_id)?;
-        let shape = args.shape().with_context(ctx)?;
-        if args.face.is_empty() {
-            return Err(GeopError::new("pick the planar face to drill into")).with_context(ctx);
-        }
-        let face = part.face_id(&args.face).with_context(ctx)?;
-        let model = part.topology();
-        let plane = model
-            .get_face(face)?
-            .surface
-            .as_plane()
-            .with_context(ctx)?
-            .ok_or_else(|| {
-                GeopError::new(format!(
-                    "face {:?} is not planar: holes are drilled into a planar face",
-                    args.face
-                ))
-            })
-            .with_context(ctx)?;
-        let Body::Solid(solid) = model.body_of_face(face)? else {
-            return Err(GeopError::new(format!(
-                "face {:?} stands on its own: holes are drilled into a solid",
-                args.face
-            )))
-            .with_context(ctx);
-        };
-        let target = part
-            .name_of(solid)
-            .ok_or_else(|| GeopError::new(format!("{solid} has no name")))?
-            .to_string();
-        if args.points.is_empty() {
-            return Err(GeopError::new("pick the points to drill at")).with_context(ctx);
-        }
-        let centres = centres(&part, &args.points).with_context(ctx)?;
-        for (scope, at) in &centres {
-            if !plane.signed_distance(at).could_be_equal(S::ZERO) {
-                return Err(GeopError::new(format!(
-                    "the point {scope} does not lie on face {:?}: holes are drilled at points on the face",
-                    args.face
-                )))
-                .with_context(ctx);
-            }
-        }
-        let blind = match &args.end {
-            Extent::Blind(depth) => Some(depth.evaluate(&mut part).with_context(ctx)?),
-            Extent::UpToNext | Extent::ThroughAll => None,
-        };
-        let hull = match blind {
-            Some(_) => None,
-            None => hull(&part, std::slice::from_ref(&target)).with_context(ctx)?,
-        };
-        let mut tools = Vec::new();
-        let mut placed = Vec::new();
-        for (scope, at) in &centres {
-            let axes = frame_along(*at, &plane.normal).with_context(ctx)?;
-            let depth = match (blind, &hull) {
-                (Some(depth), _) => HoleDepth {
-                    depth,
-                    point: args.drill_point,
-                },
-                (None, Some(hull)) => HoleDepth {
-                    // Into the solid: against the face's normal.
-                    depth: reach_past(hull, &axes, -1.0).with_context(ctx)?,
-                    point: false,
-                },
-                (None, None) => {
-                    return Err(GeopError::new(format!("solid {target:?} has no faces")))
-                        .with_context(ctx);
+            ("head_diameter", Value::Number(v)) => {
+                if let Standard::Custom { head_diameter, .. } = &mut args.standard {
+                    *head_diameter = v;
                 }
-            };
-            let named = namer.scoped(scope);
-            let solid = hole_tool(
-                &mut part,
-                &named,
-                &named.name(&["tool"]),
-                &axes,
-                &shape,
-                depth,
-            )
-            .with_context(ctx)?;
-            tools.push(Tool {
-                solid,
-                up_to_next: (args.end == Extent::UpToNext)
-                    .then(|| (named.name(&["top", "q0"]), named.name(&["bottom", "q0"]))),
-                scope: Some(scope.clone()),
-            });
-            placed.push((scope, axes));
-        }
-        Combine::Difference {
-            target: target.clone(),
-        }
-        .apply(&mut part, &namer, operation_id, &tools)
-        .map_err(|e| {
-            if e.root_message().starts_with(NOTHING_STOPS) {
-                e.with_context(
-                    "up to next: a hole does not come out of the solid all round — part of it runs on; drill it blind or through all",
-                )
-            } else {
-                e
             }
-        })
-        .with_context(ctx)?;
-        if let Some(size) = shape.thread {
-            let result = part.solid_id(&namer.root()).with_context(ctx)?;
-            for (scope, axes) in placed {
-                let length = args.thread_length.or(blind);
-                record_tapped_thread(
-                    &mut part, &namer, result, scope, &axes, &shape, size, length,
-                )
-                .with_context(ctx)?;
+            ("head_depth", Value::Number(v)) => {
+                if let Standard::Custom { head_depth, .. } = &mut args.standard {
+                    *head_depth = v;
+                }
             }
+            ("end", Value::Choice(value)) => {
+                if let Some(end) = Extent::pick(Some(&args.end), &value, 10.0) {
+                    args.end = end;
+                }
+            }
+            ("depth", value) => {
+                if let Some(depth) = Formula::from_value(&value) {
+                    args.end = Extent::Blind(depth);
+                }
+            }
+            ("drill_point", Value::Bool(b)) => args.drill_point = b,
+            ("full_thread", Value::Bool(b)) => {
+                let full = (args.end.end(&mut Seen::new(context.before)).ok())
+                    .and_then(|end| end.length());
+                args.thread_length = if b { None } else { Some(full.unwrap_or(10.0)) };
+            }
+            ("thread_length", Value::Number(l)) => args.thread_length = Some(l),
+            _ => {}
         }
-        Ok(part)
+        (args, ())
     }
 }
 
-/// Records the cosmetic thread of the tapped hole drilled at `axes` — its
-/// wall in `solid` — as the thread `hole(H,X,thread)` for the scope `X`:
-/// from the face down, `length` far — a blind hole as deep as it was
-/// drilled, unless told otherwise — or, if none, all the way.
-#[allow(clippy::too_many_arguments)]
-fn record_tapped_thread<S: Scalar>(
-    part: &mut Part<S>,
-    namer: &Namer,
-    solid: geop_core_topology::SolidId,
-    scope: &str,
-    axes: &CoordinateSystem<S>,
-    shape: &HoleShape,
+/// The cosmetic thread of the tapped hole `(X, axes)` drilled at `axes`,
+/// of `radius` — on its wall in `solid` of `model` — the thread of `size`
+/// for the hole's scope `X`: from the face down, `length` far — a blind
+/// hole as deep as it was drilled, unless told otherwise — or, if none, all
+/// the way.
+fn tapped_thread<S: Scalar>(
+    model: &NamedModel<S>,
+    solid: SolidId,
+    (scope, axes): &(String, CoordinateSystem<S>),
+    radius: f64,
     size: &MetricSize,
     length: Option<f64>,
-) -> GeopResult<()> {
+) -> GeopResult<CosmeticThread<S>> {
     let ctx = with_context!("the thread of the hole at {scope}");
     let into = axes.w().neg();
-    let radius = S::from_f64(shape.diameter / 2.0);
+    let radius = S::from_f64(radius);
     let cylinder = geop_core_geometry::shape::Cylinder {
         axis: geop_core_geometry::shape::Axis::try_new(*axes.origin(), into)?,
         radius,
     };
-    let wall = Wall::at(part, solid, &cylinder, axes.origin())
+    let wall = Wall::at(model, solid, &cylinder, axes.origin())
         .with_context(ctx)?
         .ok_or_else(|| GeopError::new(format!("the hole at {scope} left no wall to thread")))?;
     // Measured into the solid from the face.
-    let entry = axes
-        .origin()
-        .sub(&wall.cylinder.axis.point)
-        .prod_dot(&wall.cylinder.axis.direction);
-    let runs = if wall
-        .cylinder
-        .axis
-        .direction
-        .prod_dot(&into)
-        .definitely_greater(S::ZERO)
-    {
-        wall.to.sub(entry)
-    } else {
-        entry.sub(wall.from)
-    };
-    let length = length.unwrap_or_else(|| runs.to_f64());
-    if S::from_f64(length).definitely_greater(runs) {
-        return Err(GeopError::new(format!(
-            "the thread runs {length} deep, but the hole at {scope} only {}",
-            runs.to_f64()
-        )));
-    }
-    let placement = ThreadPlacement {
-        start: *axes.origin(),
-        direction: into,
-        radius,
-        length,
-        internal: true,
-    };
-    placement.check_fits(size, &wall.face_name(part))?;
-    let thread = placement.cosmetic(size, wall.face_name(part))?;
-    part.add_thread(namer.scoped(scope).name(&["thread"]), thread)
+    let entry =
+        (axes.origin().sub(&wall.cylinder.axis.point)).prod_dot(&wall.cylinder.axis.direction);
+    let placement = wall
+        .placement((entry, into), radius, length)
+        .with_context(ctx)?;
+    placement.check_fits(size, &wall.face_name(model))?;
+    placement.cosmetic(size, wall.face_name(model))
 }
 
 /// Puts an ISO metric thread on the cylindrical face `face` — a shaft's or
@@ -762,9 +750,9 @@ fn record_tapped_thread<S: Scalar>(
 /// shaft ends, where a hole was drilled from — or, if both or neither are
 /// open, from one of them; from the other if `reversed`.
 ///
-/// Recorded, it is the part's cosmetic thread `thread(T)`, which drawings
-/// and the viewer read; the solid is left as it is. Modelled, its profile is
-/// swept along its helix and cut out of the solid (see [`crate::thread`]),
+/// Recorded, it is the part's cosmetic thread `thread(T)` (see
+/// [`threads`]), which drawings and the viewer read; the solid is left as it is. Modelled, its profile is
+/// swept along its helix and cut out of the solid (see `crate::thread`),
 /// which is replaced by `thread(T)`; the cut faces are named
 /// `thread(T,c0,q)` .. `thread(T,c3,q)` for each quarter turn `q`, and what
 /// the boolean creates `combine(T,...)`.
@@ -789,39 +777,91 @@ pub struct ThreadArgs {
 }
 
 impl ThreadArgs {
-    /// Where the thread runs in `part`, on the wall of its face.
-    fn placement<S: Scalar>(&self, part: &Part<S>) -> GeopResult<(Wall<S>, ThreadPlacement<S>)> {
+    /// Where the thread runs in `model`, on the wall of its face.
+    fn placement<S: Scalar>(
+        &self,
+        model: &NamedModel<S>,
+    ) -> GeopResult<(Wall<S>, ThreadPlacement<S>)> {
         if self.face.is_empty() {
             return Err(GeopError::new("pick the cylindrical face to thread"));
         }
-        let wall = Wall::of(part, part.face_id(&self.face)?)?;
-        let runs = wall.length();
-        let length = self.length.unwrap_or(runs.to_f64());
-        if S::from_f64(length).definitely_greater(runs) {
-            return Err(GeopError::new(format!(
-                "the thread runs {length} far, but face {:?} only {}",
-                self.face,
-                runs.to_f64()
-            )));
-        }
-        let (start, direction) = wall.start(self.reversed);
-        let placement = ThreadPlacement {
-            start: wall.axis_point(start),
-            direction,
-            radius: wall.cylinder.radius,
-            length,
-            internal: wall.internal,
-        };
+        let wall = Wall::of(model, model.face_id(&self.face)?)?;
+        let start = wall.start(self.reversed);
+        let placement = wall.placement(start, wall.cylinder.radius, self.length)?;
         Ok((wall, placement))
     }
 }
 
+impl ModelStep for Thread {
+    /// Cuts the thread's profile into the solid: a modelled thread.
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &ThreadArgs,
+    ) -> GeopResult<()> {
+        let ctx = with_context!("thread({step}, {args:?})");
+        let namer = Namer::new("thread", step)?;
+        let size = metric(&args.size).with_context(ctx)?;
+        let (wall, placement) = args.placement(model).with_context(ctx)?;
+        placement.check_fits(size, &args.face).with_context(ctx)?;
+        let face = *(wall.faces.first())
+            .ok_or_else(|| GeopError::new("the wall has no faces"))
+            .with_context(ctx)?;
+        let why = "a modelled thread is cut into a solid";
+        let target = solid_of(model, face, &args.face, why).with_context(ctx)?;
+        let tool = thread_tool(
+            model,
+            &namer,
+            &namer.name(&["tool"]),
+            size,
+            &placement,
+            &wall,
+        )
+        .with_context(ctx)?;
+        let combine = Combine::With {
+            op: BooleanOp::Difference,
+            target,
+        };
+        (combine.apply(model, &namer, step, &[Tool::whole(tool)]))
+            .and_then(Reach::stopped)
+            .with_context(ctx)
+    }
+}
+
+/// Records the cosmetic thread `thread(T)` of the step `T`, on the wall of
+/// its face in the model as it is.
+fn record(
+    mut threads: Threads<Design>,
+    reader: &mut BuildReader,
+    (step, args): &(String, ThreadArgs),
+) -> GeopResult<Threads<Design>> {
+    let ctx = with_context!("thread({step}, {args:?})");
+    let namer = Namer::new("thread", step)?;
+    let size = metric(&args.size).with_context(ctx)?;
+    let model = reader.retrieve_target(&model()).with_context(ctx)?;
+    let (_, placement) = args.placement(model).with_context(ctx)?;
+    placement.check_fits(size, &args.face).with_context(ctx)?;
+    let thread = placement.cosmetic(size, args.face.clone())?;
+    threads.add(namer.root(), thread).with_context(ctx)?;
+    Ok(threads)
+}
+
 impl Operation for Thread {
+    const INFO: OperationInfo = OperationInfo::new(
+        "thread",
+        "Thread",
+        "Put an ISO metric thread on a cylindrical face: recorded as a cosmetic thread, or modelled.",
+        OperationGroup::Features,
+        OperationTier::Small,
+    );
     type Args = ThreadArgs;
-    type Session = ();
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
 
     /// No face yet; M6, recorded, the whole wall.
-    fn new_args<S: Scalar>(&self, _: &Part<S>) -> ThreadArgs {
+    fn new_args(_: &Context<Input, ParamValue>) -> ThreadArgs {
         ThreadArgs {
             face: String::new(),
             size: "M6".into(),
@@ -831,39 +871,36 @@ impl Operation for Thread {
         }
     }
 
+    /// Modelled, cut into the solid; recorded, one more of the part's
+    /// threads.
+    fn run(step: &str, part: &mut Build, args: &ThreadArgs) -> GeopResult<()> {
+        if args.modelled {
+            build_model::<Self>(part, step, args)
+        } else {
+            part.revise_or_start(&threads(), &(step.to_string(), args.clone()), record)?;
+            draw_threads(part, step)
+        }
+    }
+
     /// The face, picked; the size; how far; which end; whether modelled.
     /// The thread drawn as its helix.
-    fn form<'a, S: Scalar>(
-        &self,
-        context: Context<'a, S>,
+    fn presentation(
+        context: &Context<Input, ParamValue>,
         args: &ThreadArgs,
         _: &(),
-        _: &[String],
-    ) -> Form<'a, S, ThreadArgs> {
-        let before = context.before;
-        let mut f = Form::<S, ThreadArgs>::new();
-        f.reference(
-            "face",
-            "face",
-            EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face)),
-            &[Role::Round],
-            None,
-            false,
-            |e, picked| {
-                e.args.face = EntityRef::names_of(EntityRef::face, &picked)
-                    .pop()
-                    .unwrap_or_default()
-            },
-        );
-        f.select(
+    ) -> Form<Design> {
+        let seen = Seen::new(context.before);
+        let mut form = Form::default();
+        let dialog = &mut form.dialog;
+        let face = EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face));
+        (dialog.reference("face", "face", face, &[Role::Round], None, false)).select(
             "size",
             "size",
             args.size.clone(),
             size_choices(),
             true,
-            |args, v| args.size = v.to_string(),
         );
-        let placed = args.placement(before);
+        let placed = args.placement(seen.model());
         if let Ok(size) = metric(&args.size) {
             let text = format!(
                 "{}: Ø{} major, Ø{:.3} minor",
@@ -871,11 +908,11 @@ impl Operation for Thread {
                 size.diameter,
                 size.minor_diameter()
             );
-            f.text("dimensions", text, Tone::Hint);
+            dialog.text("dimensions", text, Tone::Hint);
         }
         let problem = match &placed {
-            Ok((wall, p)) => metric(&args.size)
-                .and_then(|size| p.check_fits(size, &wall.face_name(before)))
+            Ok((wall, p)) => (metric(&args.size))
+                .and_then(|size| p.check_fits(size, &wall.face_name(seen.model())))
                 .err()
                 .map(|e| e.root_message().to_string()),
             Err(e) => Some(e.root_message().to_string()),
@@ -883,99 +920,50 @@ impl Operation for Thread {
         if let Some(problem) = problem
             && !args.face.is_empty()
         {
-            f.text("problem", problem, Tone::Error);
+            dialog.text("problem", problem, Tone::Error);
         }
-        f.checkbox(
-            "full_length",
-            "whole face",
-            args.length.is_none(),
-            |args, b| args.length = if b { None } else { Some(10.0) },
-        );
+        dialog.checkbox("full_length", "whole face", args.length.is_none());
         if let Some(length) = args.length {
-            f.number(
-                "length",
-                Number::new("length", length, Unit::Length).range(0.0, 100.0),
-                |args, l| args.length = Some(l),
-            );
+            let number = Number::new("length", length, Unit::Length).range(0.0, 100.0);
+            dialog.number("length", number);
         }
-        f.checkbox(
-            "reversed",
-            "start from the other end",
-            args.reversed,
-            |args, b| args.reversed = b,
+        (dialog.checkbox("reversed", "start from the other end", args.reversed)).checkbox(
+            "modelled",
+            "modelled",
+            args.modelled,
         );
-        f.checkbox("modelled", "modelled", args.modelled, |args, b| {
-            args.modelled = b
-        });
         if let (Ok((_, placement)), Ok(size)) = (&placed, metric(&args.size))
             && let Ok(thread) = placement.cosmetic(size, args.face.clone())
-            && let Ok(helix) = thread.helix()
+            && let Ok(points) = thread.polyline()
         {
-            let n = 8 * (helix.control_points.len() / 2) as i64;
-            let points: GeopResult<Vec<_>> = (0..=n)
-                .map(|i| helix.evaluate(S::from_ratio(i, n)?))
-                .collect();
-            if let Ok(points) = points {
-                f.visuals.push(Visual::new(
-                    "helix",
-                    Shape::Polyline { points },
-                    Style::Draft,
-                ));
-            }
+            let visual = Visual::new("helix", Shape::Polyline { points }, Style::Draft);
+            form.visuals.push(visual);
         }
-        f
+        form
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
         args: &ThreadArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("thread({operation_id}, {args:?})");
-        let namer = Namer::new("thread", operation_id)?;
-        let size = metric(&args.size).with_context(ctx)?;
-        let (wall, placement) = args.placement(&part).with_context(ctx)?;
-        placement.check_fits(size, &args.face).with_context(ctx)?;
-        if !args.modelled {
-            let thread = placement.cosmetic(size, args.face.clone())?;
-            part.add_thread(namer.root(), thread).with_context(ctx)?;
-            return Ok(part);
-        }
-        let model = part.topology();
-        let Body::Solid(solid) = model.body_of_face(wall.faces[0])? else {
-            return Err(GeopError::new(format!(
-                "face {:?} stands on its own: a modelled thread is cut into a solid",
-                args.face
-            )))
-            .with_context(ctx);
+        _: &(),
+        event: Event<Design>,
+    ) -> (ThreadArgs, ()) {
+        let mut args = args.clone();
+        let Event::Field { key, value } = event else {
+            return (args, ());
         };
-        let target = part
-            .name_of(solid)
-            .ok_or_else(|| GeopError::new(format!("{solid} has no name")))?
-            .to_string();
-        let tool = thread_tool(
-            &mut part,
-            &namer,
-            &namer.name(&["tool"]),
-            size,
-            &placement,
-            &wall,
-        )
-        .with_context(ctx)?;
-        Combine::Difference { target }
-            .apply(
-                &mut part,
-                &namer,
-                operation_id,
-                &[Tool {
-                    solid: tool,
-                    up_to_next: None,
-                    scope: None,
-                }],
-            )
-            .with_context(ctx)?;
-        Ok(part)
+        match (key.as_str(), value) {
+            ("face", Value::Entities(picked)) => {
+                args.face =
+                    (EntityRef::names_of(EntityRef::face, &picked).pop()).unwrap_or_default();
+            }
+            ("size", Value::Choice(size)) => args.size = size,
+            ("full_length", Value::Bool(b)) => args.length = if b { None } else { Some(10.0) },
+            ("length", Value::Number(l)) => args.length = Some(l),
+            ("reversed", Value::Bool(b)) => args.reversed = b,
+            ("modelled", Value::Bool(b)) => args.modelled = b,
+            _ => {}
+        }
+        (args, ())
     }
 }

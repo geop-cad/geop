@@ -1,21 +1,28 @@
-import type { StructureItem, StructureKind } from "./geop";
+import type { EntityRef, StructureItem, StructureKind } from "./geop";
 
 interface Props {
   items: StructureItem[];
   enabled: boolean;
   /** Show or hide `name`. */
   onVisibility: (name: string, visible: boolean) => void;
+  /** Light these entities in the view, or nothing. */
+  onLight: (entities: EntityRef[]) => void;
 }
 
-/** The kinds listed, in order, with what their group is called. */
+/** The kinds every part has, in the order listed, with what their group is called. */
 const GROUPS: [StructureKind, string][] = [
   ["solid", "Solids"],
   ["face", "Faces"],
   ["sketch", "Sketches"],
   ["datum", "Datums"],
   ["part", "Placed parts"],
-  ["mate", "Mates"],
 ];
+
+/** The group of the kind `kind` a step lists (`mate`): "Mates". */
+function title(kind: StructureKind): string {
+  const words = kind.replace(/_/g, " ");
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)}s`;
+}
 
 /** An eye, open or shut: whether something is shown. */
 function Eye({ open }: { open: boolean }) {
@@ -29,16 +36,17 @@ function Eye({ open }: { open: boolean }) {
 
 /**
  * What the part has beyond the faces of its solids — its solids, faces
- * standing on their own, sketches, datums, the parts placed in it and their
- * mates — grouped by kind, each with a
- * switch to show or hide it. Whether it is shown is the kernel's: what the
- * editor hides by itself — a sketch once extruded — until the user says
- * otherwise.
+ * standing on their own, sketches, datums, the parts placed in it, and
+ * whatever its steps list, such as mates — grouped by kind, each drawn one
+ * with a switch to show or hide it, each pointed at lighting what it
+ * refers to. Whether it is shown is the kernel's: what the editor hides by
+ * itself — a sketch once extruded — until the user says otherwise.
  */
-export function StructurePanel({ items, enabled, onVisibility }: Props) {
-  const groups = GROUPS.map(([kind, title]) => [title, items.filter((i) => i.kind === kind)] as const).filter(
-    ([, list]) => list.length > 0,
-  );
+export function StructurePanel({ items, enabled, onVisibility, onLight }: Props) {
+  const listed = [...new Set(items.map((i) => i.kind))].filter((kind) => !GROUPS.some(([k]) => k === kind));
+  const groups = [...GROUPS, ...listed.map((kind): [StructureKind, string] => [kind, title(kind)])]
+    .map(([kind, title]) => [title, items.filter((i) => i.kind === kind)] as const)
+    .filter(([, list]) => list.length > 0);
   if (groups.length === 0) return <p className="hint">Nothing yet.</p>;
   return (
     <div className="structure">
@@ -49,7 +57,13 @@ export function StructurePanel({ items, enabled, onVisibility }: Props) {
           </summary>
           <ul>
             {list.map((item) => (
-              <li key={item.name} className={item.visible === false ? "hidden-item" : ""} title={item.name}>
+              <li
+                key={item.name}
+                className={item.visible === false ? "hidden-item" : ""}
+                title={item.name}
+                onMouseEnter={() => item.entities.length > 0 && onLight(item.entities)}
+                onMouseLeave={() => item.entities.length > 0 && onLight([])}
+              >
                 <span className="structure-name">{item.name}</span>
                 {item.visible != null && (
                   <button

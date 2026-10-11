@@ -698,17 +698,10 @@ pub const DEGENERATE_SPLIT: &str = "degenerate split";
 /// anchor the two rings the old outer loop just split into.
 ///
 /// `keep`'s ring stays with `face_id`; `moved`'s ring becomes the outer loop
-/// of a brand-new face on the same surface and in the same shell. Both rings
-/// bound material — that is what distinguishes this from every other case in
-/// `splice_edge_into_face` — so neither can become a hole of the other.
-///
-/// The old face's holes then have to be re-sorted, since each now lies inside
-/// exactly one of the two faces and the split has no idea which. Each hole is
-/// classified by taking a point on it and asking `face_contains` — a hole that
-/// the new face contains moves there, everything else stays. A hole with no
-/// usable point (a bare `Vertex` boundary, or a loop whose `(u, v)` cannot be
-/// read) stays put rather than being dropped: leaving it on the wrong face is
-/// a recoverable error, losing it silently fills in a hole that should exist.
+/// of a brand-new face, and the holes are re-sorted between the two
+/// ([`new_face_from_ring`]). Both rings bound material — that is what
+/// distinguishes this from every other case in `splice_edge_into_face` — so
+/// neither can become a hole of the other.
 fn split_face<S: Scalar>(
     model: &mut Model<S>,
     face_id: FaceId,

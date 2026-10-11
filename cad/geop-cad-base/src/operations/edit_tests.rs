@@ -1,54 +1,31 @@
 //! The edit operations run as programs: deleting bodies, extracting faces
 //! — and splitting with them — and projecting sketches onto faces.
 
-use geop_core_math::primitives::{DatumComponent, FrameAxis};
-use geop_core_math::scalars::ScalInF64 as S;
-use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
-use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
+use geop_core_math::primitives::FrameAxis;
+use geop_ops::EntityRef;
 use geop_ops_booleans::{Combine, SplitArgs};
 use geop_ops_edit::{DeleteBodyArgs, ExtractFaceArgs, ProjectCurveArgs};
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs};
 use geop_ops_sketch::{AddSketchArgs, Sketch};
 
-use crate::Program;
 use crate::examples::n;
+use crate::operations::testing::{Built, assert_valid, error, extrusion, origin_plane, sketch};
+use crate::{Program, Push};
 
-fn assert_valid(part: &Part<S>) {
-    let params = ValidationParameters::default();
-    if let Err(e) = validate(&params, part.topology()) {
-        panic!("{e:?}");
-    }
-    if let Err(e) = validate_manifold(&params, part.topology()) {
-        panic!("{e:?}");
-    }
-    part.check_names().unwrap();
-}
-
-fn on_xy(sketch: Sketch) -> AddSketchArgs {
-    AddSketchArgs {
-        plane: Some(EntityRef::datum_component(
-            ORIGIN,
-            DatumComponent::Plane(FrameAxis::Z),
-        )),
-        sketch,
-        ..Default::default()
-    }
+fn on_xy(drawn: Sketch) -> AddSketchArgs {
+    sketch(origin_plane(FrameAxis::Z), drawn)
 }
 
 /// An extrude of `sketch` as a new body, from `from` to `to` along its
 /// plane's normal.
 fn extrude(sketch: &str, from: f64, to: f64) -> ExtrudeArgs {
-    ExtrudeArgs {
-        sketch: sketch.into(),
-        extent: Extents {
-            side1: Extent::blind(to),
-            symmetric: false,
-            side2: (from != 0.0).then_some(Extent::blind(-from)),
-            reversed: false,
-        },
-        face: false,
-        combine: Combine::NewBody,
-    }
+    let extent = Extents {
+        side1: Extent::blind(to),
+        symmetric: false,
+        side2: (from != 0.0).then_some(Extent::blind(-from)),
+        reversed: false,
+    };
+    extrusion(sketch, extent, Combine::NewBody)
 }
 
 /// A rectangle from `lo` to `hi`, its corners counter-clockwise: the ids
@@ -92,7 +69,7 @@ fn extract_a_wall_split_with_it_and_delete_the_rest() {
             face: extracted.clone(),
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.sheet_face_names(), [extracted.as_str()]);
     assert_eq!(
@@ -112,7 +89,7 @@ fn extract_a_wall_split_with_it_and_delete_the_rest() {
             ],
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert!(part.sheet_face_names().is_empty());
     assert_eq!(part.solid_names(), ["split(halves,0)", "split(halves,1)"]);
@@ -144,7 +121,7 @@ fn project_a_circle_onto_a_block_top() {
     let mut mark = Sketch::new();
     let c = mark.add_point(n(0.2), n(0.1));
     mark.add_circle(c, n(0.4));
-    let part = project_onto_top(mark).build::<S>(&NoFiles).unwrap();
+    let part = project_onto_top(mark).build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 1);
     assert!(part.sheet_face_names().is_empty());
@@ -161,7 +138,7 @@ fn project_a_line_across_a_block_top() {
     let a = mark.add_point(n(0.3), n(-2.0));
     let b = mark.add_point(n(0.3), n(2.0));
     mark.add_line(a, b);
-    let part = project_onto_top(mark).build::<S>(&NoFiles).unwrap();
+    let part = project_onto_top(mark).build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().faces.len(), 7);
     assert_eq!(
@@ -181,8 +158,6 @@ fn project_a_line_ending_on_the_face_fails() {
     let a = mark.add_point(n(0.3), n(-2.0));
     let b = mark.add_point(n(0.3), n(0.0));
     mark.add_line(a, b);
-    let Err(error) = project_onto_top(mark).build::<S>(&NoFiles) else {
-        panic!("projected");
-    };
+    let error = error(project_onto_top(mark).build_model());
     assert!(error.root_message().contains("end inside"), "{error:?}");
 }

@@ -46,7 +46,7 @@ use geop_core_topology::{
     Sense,
     build::{BodySpec, BuiltBody, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
-use geop_ops::{BodyNames, Namer, Part};
+use geop_ops::{BodyNames, NamedModel, Namer};
 
 use crate::common::{Profile, bilinear, embed_point, end_point, line2, start_point};
 
@@ -402,16 +402,6 @@ impl<S: Scalar> SweepLoop<S> {
         }
         Ok(())
     }
-
-    /// Joint `i`'s position in the profile plane.
-    fn joint(&self, i: usize) -> GeopResult<Vector2<S>> {
-        let curves = &self.profile.curves;
-        if i < curves.len() {
-            start_point(&curves[i])
-        } else {
-            end_point(&curves[i - 1])
-        }
-    }
 }
 
 /// A flat cap, at one station: the box around the profile in the
@@ -494,7 +484,7 @@ impl<'a, S: Scalar> Cap<'a, S> {
 /// the span's first station, run backwards along `u = 0`; the path of the
 /// curve's start along `v = 0`; the curve at the span's last station along
 /// `u = 1`; and the path of its end, backwards along `v = 1`.
-fn wall_pcurves<S: Scalar>() -> GeopResult<[NurbCurve2D<S>; 4]> {
+pub fn wall_pcurves<S: Scalar>() -> GeopResult<[NurbCurve2D<S>; 4]> {
     let p = |u: f64, v: f64| Vector2::from_array([S::from_f64(u), S::from_f64(v)]);
     Ok([
         line2(p(0.0, 1.0), p(0.0, 0.0))?,
@@ -524,14 +514,33 @@ fn wall_pcurves<S: Scalar>() -> GeopResult<[NurbCurve2D<S>; 4]> {
 /// turn leaves a hole — or a pocket closed off by the axis — sweeping a void
 /// of its own.
 pub fn sweep<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     path: &Path<S>,
     loops: &[SweepLoop<S>],
     solid: Option<&str>,
 ) -> GeopResult<BuiltBody> {
     let sections = vec![loops.to_vec(); path.stations.len()];
-    skin(part, namer, path, &sections, solid)
+    skin(model, namer, path, &sections, solid)
+}
+
+/// [`sweep`]s `loops` as they are drawn — the outer loop counter-clockwise
+/// in the stations' `(e1, e2)`, the holes clockwise — each run the other
+/// way first if the path runs along `e1 × e2`, where a counter-clockwise
+/// outer loop would sweep walls facing inwards.
+pub fn sweep_drawn<S: Scalar>(
+    model: &mut NamedModel<S>,
+    namer: &Namer,
+    path: &Path<S>,
+    loops: &[SweepLoop<S>],
+    solid: Option<&str>,
+) -> GeopResult<BuiltBody> {
+    if path.along_normal {
+        let reversed: Vec<SweepLoop<S>> = loops.iter().map(SweepLoop::reversed).collect();
+        sweep(model, namer, path, &reversed, solid)
+    } else {
+        sweep(model, namer, path, loops, solid)
+    }
 }
 
 /// Like [`sweep`], but with a section of its own at every station of
@@ -546,7 +555,7 @@ pub fn sweep<S: Scalar>(
 /// Everything is named after the first section's curves and joints, as
 /// [`sweep`] names it.
 pub fn skin<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     path: &Path<S>,
     sections: &[Vec<SweepLoop<S>>],
@@ -594,7 +603,7 @@ pub fn skin<S: Scalar>(
             let name = &profile.joint_names[i];
             if lp.poles[i] {
                 spec.vertices
-                    .push(path.stations[0].point(&section(0).joint(i)?));
+                    .push(path.stations[0].point(&section(0).profile.joint(i)?));
                 names.vertices.push(namer.name(&[name]));
                 joints.push(vec![spec.vertices.len() - 1; stations]);
             } else {
@@ -602,7 +611,7 @@ pub fn skin<S: Scalar>(
                     (0..stations)
                         .map(|s| {
                             spec.vertices
-                                .push(path.stations[s].point(&section(s).joint(i)?));
+                                .push(path.stations[s].point(&section(s).profile.joint(i)?));
                             names
                                 .vertices
                                 .push(namer.name(&[name, &path.station_names[s]]));
@@ -663,7 +672,7 @@ pub fn skin<S: Scalar>(
                             curve: path.lateral(
                                 j,
                                 &(0..stations)
-                                    .map(|s| section(s).joint(i))
+                                    .map(|s| section(s).profile.joint(i))
                                     .collect::<GeopResult<Vec<_>>>()?,
                             )?,
                             start: joints[i][j],
@@ -776,7 +785,7 @@ pub fn skin<S: Scalar>(
     }
 
     spec.shells = connected_faces(&spec);
-    part.build_body(spec, names).with_context(ctx)
+    model.build_body(spec, names).with_context(ctx)
 }
 
 /// Checks that `sections` fit `path` and each other, as [`skin`] needs:

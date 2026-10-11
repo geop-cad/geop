@@ -33,7 +33,7 @@ const AXIS_TINTS = [0xff8080, 0x80e080, 0x80b0ff].map((c) => new THREE.Color(c))
 
 /** How long a point datum's axes are on screen, in pixels. */
 const TRIAD_PX = 32;
-/** How long a coordinate system's axes are on screen, in pixels — `geop_ops::ui::view::FRAME` reaches. */
+/** How long a coordinate system's axes are on screen, in pixels — `geop_ops::ui::FRAME` reaches. */
 const FRAME_PX = 10 * REACH_PX;
 
 /** A coordinate system's axes, as its own `u`, `v`, `w` — at unit size, turned by the datum's basis. */

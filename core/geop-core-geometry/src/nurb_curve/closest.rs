@@ -71,7 +71,7 @@ impl<S: Scalar> NurbCurve<S, 4> {
     /// nearer is halved, and the search stops once halving does not help.
     /// Every iterate is clamped into `(t0, t1)`.
     fn refine_closest(&self, target: &Vector3<S>, mut t: S, (t0, t1): (S, S)) -> GeopResult<S> {
-        let clamp = |x: S| crate::nurb_surface::clamp(x, t0, t1);
+        let clamp = |x: S| x.clamped(t0, t1);
         let distance =
             |t: S| -> GeopResult<f64> { Ok(self.evaluate(t)?.sub(target).norm_sq().to_f64()) };
         let mut current = distance(t)?;

@@ -33,8 +33,10 @@ construction, not by the diligence of each caller.
   systems the part is built *with*, not *of* (the `Datum` of
   [geop-core-math](../core/geop-core-math.md#render-primitives)). Every datum
   carries a full right-handed frame, so anything built on it has axes to be
-  built along. Every part starts with one: the coordinate system `origin`
-  (`geop_ops::ORIGIN`), the world's origin and axes. A coordinate system
+  built along. Every part has one no step adds: the coordinate system
+  `origin` (`geop_ops::ORIGIN`), the world's origin and axes. Every other
+  datum is the target `datum(name)` its step defines, resolved through
+  `Lookup::datum` and drawn with the part. A coordinate system
   stands for its origin, its three axes and the three planes between them,
   each usable on its own (`DatumComponent`).
 - **Lookups by name** (`vertex_id`, `edge_id`, `face_id`, `solid_id`,
@@ -43,8 +45,8 @@ construction, not by the diligence of each caller.
 - **Instances** are other parts placed in this one — the part a program
   file builds, shared by every instance of it and drawn once, with the file
   it came from — at a `Pose`, free to be moved by the **mates**: constraints
-  between two entities, a `fixed` one among them holding a part in place (see the `assembly` module, which solves them with
-  [geop-core-math](../core/geop-core-math.md)'s constraint solver). A placed part is a
+  between two entities, a `fixed` one among them holding a part in place (see
+  [geop-ops-assembly](./geop-ops-assembly.md)). A placed part is a
   part too, so a part is a tree. An entity of a placed part is named behind
   its instance's name — `bolt/extrude(head,end)` — and resolves where it is
   placed: `Aspects::of`, `resolve_plane` and `resolve_datum` move what they
@@ -52,23 +54,29 @@ construction, not by the diligence of each caller.
 - **State**: the parameters a program is built with, kept in the
   program's `state` apart from its steps. A step reads one by
   name, declaring it (`Part::pose_parameter`): `add_part` places its part
-  where `<id>.pose` says. Solving a program's mates (`Part::solve_mates`)
-  gives new values for them, which the editor keeps — so every step sees
-  every placed part where the mates put it, however late in the program
-  those mates are.
+  where `<id>.pose` says. Solving the program's state (`solving`) gives
+  new values for them, which the editor keeps — so every step sees every
+  placed part where the constraints put it, however late in the program
+  those constraints are.
 - **`PartDescription::of`** describes the topology in names only, with no
   internal id anywhere, so two parts built by the same program describe
   identically and the description diffs well as text.
 
-## Mates
+## Solving the state (`solving`)
 
-The `mates` module builds systems of rigid bodies on the constraint solver
-of [geop-core-math](../core/geop-core-math.md): an `Assembly` of `Body`s and
-`Constraint`s, each a `Kind` — `Coincident`, `Concentric`, `Parallel`,
-`Perpendicular`, `Distance`, `Angle` — between two `Feature`s: a point, line
-or plane attached to a body, or to the ground. Joints with limits and the
-couplings between them are mates too, solved in groups no mate ties
-together. `geop-core-sketch` builds a sketch's system the same way.
+What an editor does with a part's state, the same for every program, on
+`geop_core_program::solve`: `solve` settles it so every constraint holds —
+pulled by a drag (`Pull::Point`), a pose typed in (`Pull::Pose`), a value
+set (`Pull::Value`, an angle driven there in steps) — `set` sets values a
+user sets, `check` says which constraints hold, `freedom` how free each
+placed part is, and `conflicting` which constraints cannot hold together.
+Nothing here knows what the constraints are. Each placed part moves by its
+pose state; a step declares any other value a solve moves, or holds one
+fixed, as an `Unknown` (a joint's coordinate, measured from its parts where
+the joint does not hold; the part a fixed mate holds), and the values a
+user sets directly as `Settings` (a joint's coordinates and limits), which
+`settings` lists for an editor. A solve's `Report` says which values no
+true solution is proven for, and why.
 
 ## Topological naming
 
@@ -118,7 +126,10 @@ sets:
 ```
 
 with the `Context` the part before the step, the step's id, the library,
-the program's state, and what the step built when it last ran. A
+the program's state, and what the step built when it last ran — and,
+with an event, the part as the editor draws it (`Context::scene`), so an
+operation picks in the editor's drawing rather than drawing the part
+again for every move of the pointer. A
 setter may also set a parameter (`Edit::state`), and a form may ask
 for placed parts to be dragged (`Form::drags`): solving them is the
 editor's.
@@ -173,7 +184,8 @@ the operation understands:
   field that goes away stops waiting. While a field waits for a pick, the
   part is shown as it stands, not the plane the step works in. Picks test
   against the part before the step, or — for an operation whose references
-  point into what it adds itself (`PICKS_BUILT`), a placed part's mates —
+  point into what it adds itself (`OperationInfo::picks_built`), a placed
+  part's mates —
   against what it builds.
 - **Handles** of number fields are drawn by the editor and dragged along
   their direction, the value following how far the pointer has moved along
@@ -190,10 +202,11 @@ the operation understands:
   eye.
 
 An operation that draws in a canvas of its own — a sketch — also takes what
-the editor passes on (`Operation::event`, a `CanvasEvent`): clicks while it
-has a tool in hand, and those on nothing, hovers, keys, and moves of its
-draggable visuals — with a `Session` for what it keeps between them: the
-tool in hand, a half-drawn curve. Every other operation's session is `()`.
+the editor passes on (`Operation::process_user_event`, an `Event::Canvas`):
+clicks while it has a tool in hand, and those on nothing, hovers, keys, and
+moves of its draggable visuals — with its `EditingState` for what it keeps
+between them: the tool in hand, a half-drawn curve. An operation that keeps
+nothing has `()`.
 What the editor sends back is a `Presentation`: the form, what the
 reference fields hold and what a click would pick lit, what is selected and
 hovered, the handles, and what a click picks now.
@@ -201,7 +214,8 @@ hovered, the handles, and what a click picks now.
 So an editor renders primitives and forwards raw input, and every decision
 — what a click picks, what a line snaps to, what a drag changes — is made in
 Rust, where it can be tested. Hit tests against visuals (`hit::hit_visuals`)
-and against the part as drawn (`PartView::pick`) decide what a pointer is
+and against the part as drawn (`PartView::pick`, an operation's through
+its context's `Scene`) decide what a pointer is
 over: near means within its reach, and the smallest entity under it wins —
 a vertex over an edge over a face, a coordinate system's origin over its
 axes over its planes. What the viewer draws at a constant size on screen —
@@ -231,19 +245,65 @@ this one and using nothing the others cannot: `AddSketch` in
 
 ## Operation sets
 
-A set of operations is an enum with one variant `Name(NameArgs)` per
-operation, implementing `Operations` — what a program step holds, and what
-serializes as `{"operation": "extrude", "args": {...}}`. Which operations
-an application offers is its own choice, so the set is defined there: the
-editor's is `PartOperation` in [geop-cad-base](../cad/geop-cad-base.md).
+An operation is a unit struct implementing `geop_core_program::operation::Operation`:
+its `INFO` (`OperationInfo`: the kind its steps are stored under, its label,
+doc, group and tier), its `Args` and its `EditingState`. A program step
+holds the kind and the arguments as JSON —
+`{"id": "...", "operation": "extrude", "args": {...}}` — and a run looks the
+kind up in a `Registry` of the operations the program may use. Which
+operations an application offers is its own choice, so the registry is made
+there: the editor's is `registry` in
+[geop-cad-base](../cad/geop-cad-base.md).
 
-## The derive crate
+## What an editor shows and makes of a part
 
-`#[derive(Operations)]` (from `geop-ops-derive`) on an enum of operations
-implements `Operations`: each variant `Name(NameArgs)` dispatches to the
-unit struct `Name`, the doc comment describes the operation, and
-`#[operation(label = "...")]` gives its short name. Sessions differ by
-operation, so the set carries a step's session boxed.
+An editor knows no operation by name. Whatever a crate adds to it beyond
+its operations, it adds through one of these, and the editor collects or
+offers it without knowing whose it is:
+
+- **Annotations** (`ui::annotations(step)`): what a step draws on the part
+  besides its topology — a cosmetic thread's helix and designation. A step
+  defines its target of type `ui::Annotations`; `PartView::of` draws every
+  step's, for the part and for each part placed in it. The hole crate's
+  `draw_threads` is the example.
+- **Structure entries** (`ui::listing(step)`): what a step lists in the
+  part's structure tree beside what every part has (datums, sketches,
+  solids, faces standing on their own, placed parts): a `ui::Listed` with a
+  kind (`mate`, the tree's group), a name and the entities it refers to.
+  A step defines its target of type `ui::Listing`, usually with the
+  generator `ui::listed`; `ui::structure` lists them all. `add_part` lists
+  its mates this way.
+- **Exporters** (`output::Exporter`): a kind of file written from what a
+  program built. A unit struct with its `INFO` (`ExporterInfo`: its kind,
+  label, a few words of what the file is for, and the formats it writes
+  by extension, the default first), its own `Options` (deserialized from
+  the JSON a front end sends; `Default` where it sends none) and
+  `export(output, format, options)`, which returns an `Export` (a name, a
+  media type, text or bytes). `Output` is what it is given: the part as far
+  as the program runs (the parts it places included, `part()`), what its
+  program says of it (`about()`: its file, material, title and
+  designation, the run's `placed::About` input), the step being edited and
+  the date — and `freedom(held)`, how free its placed parts are with some
+  values held, the one question that solves (the URDF export asks it with
+  every joint held, to find parts mates leave loose). `output::Stl` writes
+  the mesh the editor draws; drawings and flat patterns are laid out on an
+  `output::sheet::Sheet` and written as SVG or DXF. What several outputs
+  read of the part is shared: `solids` lists the solids a part shows,
+  wherever they are placed, each of its own part's material, with their
+  mass properties; `placed::owner` resolves an entity of a placed part. A
+  step's dialog offers a file of its own with
+  `Dialog::download(key, exporter, formats)`.
+- **Inspectors** (`output::Inspector`): a question answered about what a
+  program built. Its `INFO` (`InspectorInfo`) says whether it is asked of
+  the whole part or of picks (`Picks`: the roles it picks, at most how
+  many); `inspect(output, picked, options)` returns its `Report` (any
+  `Serialize`) and what to draw of it in the viewport. An inspector that
+  picks becomes the editor's pick tool, asked again with every pick.
+
+Exporters and inspectors are registered in an `output::Outputs` (`exporter`,
+`inspector`; a kind twice is refused), the application's choice like the
+operation registry: the editor's is `outputs` in
+[geop-cad-base](../cad/geop-cad-base.md).
 
 ## Parameters
 

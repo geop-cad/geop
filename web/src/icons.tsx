@@ -1,6 +1,6 @@
 // The icons actions are shown as (see `geop_ops::ui::Action::icon`), by
 // name: one per drawing tool and per kind of constraint the sketch editor
-// offers. Drawn on a 20 x 20 grid in the current colour, so a button's
+// offers, one per operation and per inspector, by its kind. Drawn on a 20 x 20 grid in the current colour, so a button's
 // state — active, disabled, hovered — colours its icon too.
 
 import type { ReactElement } from "react";
@@ -653,9 +653,12 @@ const ICONS: Record<string, ReactElement> = {
   ),
 };
 
+/** Names that are another icon's: an inspector named for what it answers. */
+const ALIASES: Record<string, string> = { mass_properties: "mass" };
+
 /** The icon `name` — or none, for a name there is no icon for. */
 export function Icon({ name }: { name: string }) {
-  const drawing = ICONS[name];
+  const drawing = ICONS[ALIASES[name] ?? name];
   if (!drawing) return null;
   return (
     <svg

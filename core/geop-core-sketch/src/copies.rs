@@ -69,31 +69,24 @@ impl Motion {
 
     /// The motion `by` stands for, as drawn: see [`Constraint::Moved`].
     fn of<S: Scalar>(sketch: &Sketch<S>, by: CurveId) -> GeopResult<Motion> {
-        Ok(match sketch.curve(by)?.kind {
-            CurveKind::Line { start, end } => Motion {
-                s: xy(sketch, start),
-                e: xy(sketch, end),
-                turn: 0.0,
-            },
-            CurveKind::Arc { start, end, sweep } => Motion {
-                s: xy(sketch, start),
-                e: xy(sketch, end),
-                turn: sweep.to_f64(),
-            },
+        let (start, end, turn) = match sketch.curve(by)?.kind {
+            CurveKind::Line { start, end } => (start, end, 0.0),
+            CurveKind::Arc { start, end, sweep } => (start, end, sweep.to_f64()),
             _ => {
                 return Err(GeopError::new(format!(
                     "curve {by} is no line or arc: it moves nothing"
                 )));
             }
+        };
+        Ok(Motion {
+            s: xy(sketch, start),
+            e: xy(sketch, end),
+            turn,
         })
     }
 }
 
 impl<S: Scalar> Sketch<S> {
-    fn new_point_at(&mut self, at: P2) -> PointId {
-        self.add_point(S::from_f64(at[0]), S::from_f64(at[1]))
-    }
-
     /// A copy of the curve `source`, its points mapped by `point`, tied to
     /// it where its points cannot say it all: an arc's sweep, a circle's
     /// radius. As construction geometry if the source is; never fixed.
@@ -112,18 +105,16 @@ impl<S: Scalar> Sketch<S> {
                 start: point(start),
                 end: point(end),
             },
-            // Mirrored, an arc from `s` to `e` counter-clockwise is one
-            // from `e'` to `s'`, counter-clockwise by as much.
-            CurveKind::Arc { start, end, sweep } if reverse => CurveKind::Arc {
-                start: point(end),
-                end: point(start),
-                sweep,
-            },
-            CurveKind::Arc { start, end, sweep } => CurveKind::Arc {
-                start: point(start),
-                end: point(end),
-                sweep,
-            },
+            CurveKind::Arc { start, end, sweep } => {
+                // Mirrored, an arc from `s` to `e` counter-clockwise is one
+                // from `e'` to `s'`, counter-clockwise by as much.
+                let (start, end) = if reverse { (end, start) } else { (start, end) };
+                CurveKind::Arc {
+                    start: point(start),
+                    end: point(end),
+                    sweep,
+                }
+            }
             CurveKind::Circle { center, radius } => CurveKind::Circle {
                 center: point(center),
                 radius,

@@ -1,4 +1,7 @@
-use super::{Field, Ring, Scalar};
+use super::{
+    Field, Ring, Scalar,
+    scal_in_f64::{interval_trig, next_down, next_up},
+};
 use crate::geop_error::{GeopError, GeopResult};
 
 /// Number of fractional bits.
@@ -39,63 +42,10 @@ fn sat_lo(v: i128) -> i64 {
     }
 }
 
+/// The real value of `v` units.
 #[inline]
-fn sat_hi(v: i128) -> i64 {
-    sat_lo(v)
-}
-
-// ── next_up / next_down for f64 (mirrored from scal_in_f64) ──────────────────
-
-#[inline]
-fn next_up_f64(x: f64) -> f64 {
-    if x.is_nan() || x == f64::INFINITY {
-        return x;
-    }
-    if x == 0.0 {
-        return f64::MIN_POSITIVE;
-    }
-    let bits = x.to_bits();
-    f64::from_bits(if x > 0.0 { bits + 1 } else { bits - 1 })
-}
-
-#[inline]
-fn next_down_f64(x: f64) -> f64 {
-    if x.is_nan() || x == f64::NEG_INFINITY {
-        return x;
-    }
-    if x == 0.0 {
-        return -f64::MIN_POSITIVE;
-    }
-    let bits = x.to_bits();
-    f64::from_bits(if x < 0.0 { bits + 1 } else { bits - 1 })
-}
-
-// ── Interval trigonometry (widened to f64, like `sqrt` above) ────────────────
-
-/// True iff `[lo, hi]` contains some `target + k * period` for an integer `k`.
-#[inline]
-fn contains_periodic(lo: f64, hi: f64, target: f64, period: f64) -> bool {
-    let k = ((lo - target) / period).ceil();
-    target + k * period <= hi
-}
-
-/// Outward-rounded enclosure of `sin`/`cos([lo, hi])`, as f64 bounds — mirrors
-/// `scal_in_f64::interval_trig`.
-fn interval_trig(lo: f64, hi: f64, f: impl Fn(f64) -> f64, max_at: f64, min_at: f64) -> (f64, f64) {
-    use std::f64::consts::TAU;
-    if !lo.is_finite() || !hi.is_finite() || hi - lo >= TAU {
-        return (-1.0, 1.0);
-    }
-    let (a, b) = (f(lo), f(hi));
-    let mut out_lo = next_down_f64(a.min(b));
-    let mut out_hi = next_up_f64(a.max(b));
-    if contains_periodic(lo, hi, max_at, TAU) {
-        out_hi = 1.0;
-    }
-    if contains_periodic(lo, hi, min_at, TAU) {
-        out_lo = -1.0;
-    }
-    (out_lo.max(-1.0), out_hi.min(1.0))
+fn real(v: i64) -> f64 {
+    v as f64 / SCALE as f64
 }
 
 // ── Type ──────────────────────────────────────────────────────────────────────
@@ -128,22 +78,20 @@ impl ScalInFPA64 {
     pub fn from_f64_outward(lo_f: f64, hi_f: f64) -> Self {
         let lo_i = (lo_f * SCALE as f64).floor() as i128;
         let hi_i = (hi_f * SCALE as f64).ceil() as i128;
-        ScalInFPA64::new(sat_lo(lo_i), sat_hi(hi_i))
+        ScalInFPA64::new(sat_lo(lo_i), sat_lo(hi_i))
     }
 }
 
 impl core::fmt::Debug for ScalInFPA64 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let lo_f = self.lo as f64 / SCALE as f64;
-        let hi_f = self.hi as f64 / SCALE as f64;
+        let (lo_f, hi_f) = (real(self.lo), real(self.hi));
         write!(f, "[{lo_f}, {hi_f}]")
     }
 }
 
 impl core::fmt::Display for ScalInFPA64 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let lo_f = self.lo as f64 / SCALE as f64;
-        let hi_f = self.hi as f64 / SCALE as f64;
+        let (lo_f, hi_f) = (real(self.lo), real(self.hi));
         write!(f, "{:.3}", (lo_f + hi_f) / 2.0)
     }
 }
@@ -151,12 +99,9 @@ impl core::fmt::Display for ScalInFPA64 {
 // ── Constants (pre-computed bit patterns) ─────────────────────────────────────
 //
 // π * 2^32 = 13493037704.92…  → floor = 13493037704, ceil = 13493037705
-// e * 2^32 = 11674931555.08…  → floor = 11674931555, ceil = 11674931556
 
 const PI_LO: i64 = 13493037704;
 const PI_HI: i64 = 13493037705;
-const E_LO: i64 = 11674931555;
-const E_HI: i64 = 11674931556;
 
 impl Ring for ScalInFPA64 {
     fn add(self, other: Self) -> Self {
@@ -182,7 +127,7 @@ impl Ring for ScalInFPA64 {
         let raw_hi = *products.iter().max().unwrap();
         let lo = floor_div(raw_lo, SCALE);
         let hi = ceil_div(raw_hi, SCALE);
-        ScalInFPA64::new(sat_lo(lo), sat_hi(hi))
+        ScalInFPA64::new(sat_lo(lo), sat_lo(hi))
     }
 
     fn neg(self) -> Self {
@@ -216,7 +161,7 @@ impl Field for ScalInFPA64 {
         ];
         let lo = *candidates.iter().min().unwrap();
         let hi = *candidates_hi.iter().max().unwrap();
-        Ok(ScalInFPA64::new(sat_lo(lo), sat_hi(hi)))
+        Ok(ScalInFPA64::new(sat_lo(lo), sat_lo(hi)))
     }
 }
 
@@ -236,7 +181,6 @@ impl Scalar for ScalInFPA64 {
         lo: PI_LO,
         hi: PI_HI,
     };
-    const E: Self = ScalInFPA64 { lo: E_LO, hi: E_HI };
     const INFINITY: Self = ScalInFPA64 {
         lo: OV_LO,
         hi: OV_HI,
@@ -269,7 +213,7 @@ impl Scalar for ScalInFPA64 {
         let d = den as i128;
         let lo = floor_div(n, d);
         let hi = ceil_div(n, d);
-        Ok(ScalInFPA64::new(sat_lo(lo), sat_hi(hi)))
+        Ok(ScalInFPA64::new(sat_lo(lo), sat_lo(hi)))
     }
 
     fn abs(self) -> Self {
@@ -291,14 +235,9 @@ impl Scalar for ScalInFPA64 {
         }
         let lo_clamped = if self.lo < 0 { 0i64 } else { self.lo };
         // Convert to f64, sqrt with outward rounding, convert back
-        let lo_f = (lo_clamped as f64) / SCALE as f64;
-        let hi_f = (self.hi as f64) / SCALE as f64;
-        let sqrt_lo = next_down_f64(lo_f.sqrt());
-        let sqrt_hi = next_up_f64(hi_f.sqrt());
-        // Convert back to fixed-point with outward rounding
-        let lo_fixed = (sqrt_lo * SCALE as f64).floor() as i64;
-        let hi_fixed = (sqrt_hi * SCALE as f64).ceil() as i64;
-        Ok(ScalInFPA64::new(lo_fixed, hi_fixed))
+        let sqrt_lo = next_down(real(lo_clamped).sqrt());
+        let sqrt_hi = next_up(real(self.hi).sqrt());
+        Ok(ScalInFPA64::from_f64_outward(sqrt_lo, sqrt_hi))
     }
 
     fn sin(self) -> Self {
@@ -309,8 +248,8 @@ impl Scalar for ScalInFPA64 {
         // correctly collapses to the full `[-1, 1]` range.
         use std::f64::consts::FRAC_PI_2;
         let (lo, hi) = interval_trig(
-            self.lo as f64 / SCALE as f64,
-            self.hi as f64 / SCALE as f64,
+            real(self.lo),
+            real(self.hi),
             f64::sin,
             FRAC_PI_2,
             -FRAC_PI_2,
@@ -320,20 +259,13 @@ impl Scalar for ScalInFPA64 {
 
     fn cos(self) -> Self {
         use std::f64::consts::PI;
-        let (lo, hi) = interval_trig(
-            self.lo as f64 / SCALE as f64,
-            self.hi as f64 / SCALE as f64,
-            f64::cos,
-            0.0,
-            PI,
-        );
+        let (lo, hi) = interval_trig(real(self.lo), real(self.hi), f64::cos, 0.0, PI);
         ScalInFPA64::from_f64_outward(lo, hi)
     }
 
     fn acos(self) -> GeopResult<Self> {
         // As `sqrt` does: in f64, rounded outward, and back.
-        let lo_f = self.lo as f64 / SCALE as f64;
-        let hi_f = self.hi as f64 / SCALE as f64;
+        let (lo_f, hi_f) = (real(self.lo), real(self.hi));
         if hi_f < -1.0 || lo_f > 1.0 {
             return Err(GeopError::new(format!(
                 "ScalInFPA64::acos: {self:?} lies outside [-1, 1]"
@@ -341,8 +273,8 @@ impl Scalar for ScalInFPA64 {
         }
         let (lo, hi) = (lo_f.max(-1.0), hi_f.min(1.0));
         Ok(ScalInFPA64::from_f64_outward(
-            next_down_f64(hi.acos()).max(0.0),
-            next_up_f64(lo.acos()),
+            next_down(hi.acos()).max(0.0),
+            next_up(lo.acos()),
         ))
     }
 
@@ -424,43 +356,6 @@ impl Scalar for ScalInFPA64 {
 
     fn is_subset_of(self, other: Self) -> bool {
         other.lo <= self.lo && self.hi <= other.hi
-    }
-}
-
-impl core::ops::Add for ScalInFPA64 {
-    type Output = Self;
-    fn add(self, rhs: Self) -> Self {
-        Ring::add(self, rhs)
-    }
-}
-impl core::ops::Sub for ScalInFPA64 {
-    type Output = Self;
-    fn sub(self, rhs: Self) -> Self {
-        Ring::sub(self, rhs)
-    }
-}
-impl core::ops::Mul for ScalInFPA64 {
-    type Output = Self;
-    fn mul(self, rhs: Self) -> Self {
-        Ring::mul(self, rhs)
-    }
-}
-impl core::ops::Neg for ScalInFPA64 {
-    type Output = Self;
-    fn neg(self) -> Self {
-        Ring::neg(self)
-    }
-}
-
-impl From<i64> for ScalInFPA64 {
-    fn from(v: i64) -> Self {
-        ScalInFPA64::from_i64(v)
-    }
-}
-
-impl From<f64> for ScalInFPA64 {
-    fn from(v: f64) -> Self {
-        ScalInFPA64::from_f64(v)
     }
 }
 

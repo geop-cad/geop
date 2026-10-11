@@ -1,52 +1,88 @@
-//! Routes laid between datum frames and through circular edges: their
+//! Routes laid between connectors and through circular edges: their
 //! lengths against the analytical ones, their bends checked, their bundles
 //! valid solids.
+//!
+//! A connector here is the frame on a short straight edge of a wire, at
+//! its middle, its `z` along the edge — a free point a vertex of a wire on
+//! its own.
 
-use crate::PartCables;
-use geop_core_math::{
-    for_all_scalars,
-    geop_error::GeopResult,
-    primitives::{CoordinateSystem, Datum, DatumKind},
-    scalars::Scalar,
-    vector::Vector3,
+use geop_core_math::{for_all_scalars, geop_error::GeopResult, scalars::Scalar, vector::Vector3};
+use geop_core_topology::{
+    build::{BodySpec, EdgeSpec},
+    validation::{ValidationParameters, validate, validate_manifold},
 };
-use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
-use geop_ops::{EntityRef, NoFiles, Operation, Part};
-use geop_ops_extrude_revolve::shapes::cylinder::revolved_cylinder;
+use geop_ops::{BodyNames, EntityRef, NamedModel};
+use geop_ops_extrude_revolve::{common::line3, shapes::cylinder::revolved_cylinder};
 
 use crate::{
-    Route, RouteArgs, Wire, WireSize,
+    Cable, RouteArgs, Wire, WireSize,
+    operation::lay,
     route::{RoutePath, Waypoint},
 };
+
+/// A part's model, in `S`.
+type Part<S> = NamedModel<S>;
 
 fn v<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
     Vector3::from_array([x, y, z].map(S::from_f64))
 }
 
-/// A part with a connector — a coordinate system the cable leaves along
-/// its `z` axis — named `name` at `at` for every `(name, at, z)`.
+/// A part with a connector — a frame the cable leaves along its `z` axis
+/// — named `name` at `at` for every `(name, at, z)`: the edge `name` of a
+/// wire from `at - z` to `at + z`, whose frame sits at its middle.
 fn connectors<S: Scalar>(part: &mut Part<S>, frames: &[(&str, Vector3<S>, Vector3<S>)]) {
     for (name, at, z) in frames {
-        let u = if z[0].to_f64().abs() < 0.9 {
-            v(1.0, 0.0, 0.0)
-        } else {
-            v(0.0, 1.0, 0.0)
+        let (start, end) = (at.sub(z), at.add(z));
+        let spec = BodySpec {
+            vertices: vec![start, end],
+            edges: vec![EdgeSpec {
+                curve: line3(start, end).unwrap(),
+                start: 0,
+                end: 1,
+            }],
+            faces: Vec::new(),
+            shells: Vec::new(),
+            solid: false,
         };
-        let u = u.sub(&z.prod_scalar(z.prod_dot(&u))).normalize().unwrap();
-        let frame = CoordinateSystem::try_new(*at, u, z.prod_cross(&u), *z).unwrap();
-        part.add_datum(
-            Datum {
-                kind: DatumKind::Frame,
-                frame,
-            },
-            *name,
-        )
-        .unwrap();
+        let names = BodyNames {
+            vertices: vec![format!("{name}.start"), format!("{name}.end")],
+            edges: vec![name.to_string()],
+            faces: Vec::new(),
+            solid: None,
+        };
+        part.build_body(spec, names).unwrap();
     }
 }
 
+/// A free point named `name` at `at`: a wire of the vertex alone.
+fn point<S: Scalar>(part: &mut Part<S>, name: &str, at: Vector3<S>) {
+    let spec = BodySpec {
+        vertices: vec![at],
+        edges: Vec::new(),
+        faces: Vec::new(),
+        shells: Vec::new(),
+        solid: false,
+    };
+    let names = BodyNames {
+        vertices: vec![name.to_string()],
+        edges: Vec::new(),
+        faces: Vec::new(),
+        solid: None,
+    };
+    part.build_body(spec, names).unwrap();
+}
+
+/// The connector `name`: the frame on its edge.
 fn datum(name: &str) -> EntityRef {
-    EntityRef::datum(name)
+    EntityRef::Frame {
+        on: Box::new(EntityRef::edge(name)),
+        at: None,
+    }
+}
+
+/// The free point `name`.
+fn vertex(name: &str) -> EntityRef {
+    EntityRef::vertex(name)
 }
 
 /// One wire `d` across: a bundle `d / sqrt(fill)` across.
@@ -63,8 +99,10 @@ fn args(through: Vec<EntityRef>, d: f64, bend_factor: f64) -> RouteArgs {
     }
 }
 
-fn route<S: Scalar>(part: Part<S>, args: &RouteArgs) -> GeopResult<Part<S>> {
-    Route.apply(part, "r", args, &NoFiles)
+/// The part with the route `r` of `args` laid in it, and its cable.
+fn route<S: Scalar>(mut part: Part<S>, args: &RouteArgs) -> GeopResult<(Part<S>, Cable<S>)> {
+    let cable = lay(&mut part, "r", args)?;
+    Ok((part, cable))
 }
 
 /// Why routing `args` in `part` is refused.
@@ -111,14 +149,13 @@ fn check_straight_route_between_facing_connectors<S: Scalar>() {
         colour: "#ff0000".into(),
         ..Wire::new("w2")
     });
-    let part = route(part, &args).unwrap();
+    let (part, cable) = route(part, &args).unwrap();
     assert_valid(&part);
     assert_eq!(
         part.topology().faces.len(),
         4 + 2,
         "a cylinder of four quarters, capped"
     );
-    let cable = part.cable("route(r)").unwrap();
     assert!(
         cable.length.could_be_equal(S::from_f64(120.0)),
         "{:?}",
@@ -155,15 +192,16 @@ fn check_quarter_turn_is_a_quarter_circle<S: Scalar>() {
             ("end", v(r, r, 0.0), v(0.0, -1.0, 0.0)),
         ],
     );
-    let part = route(part, &args(vec![datum("start"), datum("end")], 2.0, 5.0)).unwrap();
+    let (part, cable) = route(part, &args(vec![datum("start"), datum("end")], 2.0, 5.0)).unwrap();
     assert_valid(&part);
-    let cable = part.cable("route(r)").unwrap();
     let quarter = S::PI.mul(S::from_f64(r / 2.0));
     assert!(cable.length.could_be_equal(quarter), "{:?}", cable.length);
     let scalar = std::any::type_name::<S>();
     // Fixed point at this scale holds the arcs' centres to a few millionths.
+    // The connectors' directions are their edges', normalized, and so not
+    // exact: the length comes out up to two ten-thousandths wide.
     assert!(
-        cable.length.width().to_f64() < 1e-4,
+        cable.length.width().to_f64() < 5e-4,
         "{scalar}: {:?}",
         cable.length
     );
@@ -208,7 +246,9 @@ fn check_too_tight_a_bend_is_refused<S: Scalar>() {
         "{message}"
     );
     assert!(
-        message.contains("with radius 8.000 between point 1 (start) and point 2 (end)"),
+        message.contains(
+            "with radius 8.000 between point 1 (frame on start) and point 2 (frame on end)"
+        ),
         "{message}"
     );
 }
@@ -228,7 +268,7 @@ fn check_a_bend_at_the_limit_is_allowed<S: Scalar>() {
             ("end", v(r, r, 0.0), v(0.0, -1.0, 0.0)),
         ],
     );
-    let part = route(part, &args(vec![datum("start"), datum("end")], 2.0, 5.0)).unwrap();
+    let (part, _) = route(part, &args(vec![datum("start"), datum("end")], 2.0, 5.0)).unwrap();
     assert_valid(&part);
 }
 #[test]
@@ -278,7 +318,7 @@ fn check_route_through_a_clip<S: Scalar>() {
         EntityRef::Edge { name: rim.clone() },
         datum("end"),
     ];
-    let part = route(part, &args(through, 2.0, 5.0)).unwrap();
+    let (part, cable) = route(part, &args(through, 2.0, 5.0)).unwrap();
     assert_valid(&part);
     let model = part.topology();
     // The bundle's section at the clip is centred on the rim's centre,
@@ -293,7 +333,6 @@ fn check_route_through_a_clip<S: Scalar>() {
     // Each half swerves 10 sideways over 55 and 45, along z at both ends:
     // two equal arcs turning by `2 atan(10 / L)` each, of radius
     // `L / (2 sin)` — the shorter half bends tighter.
-    let cable = part.cable("route(r)").unwrap();
     let turn = |l: f64| 2.0 * (10.0 / l).atan();
     let radius = |l: f64| l / (2.0 * turn(l).sin());
     let tightest = cable.tightest_bend.unwrap();
@@ -324,22 +363,18 @@ fn check_free_points_choose_their_directions<S: Scalar>() {
         ("b", v(50.0, 0.0, 0.0)),
         ("c", v(100.0, 30.0, 0.0)),
     ] {
-        part.add_datum(
-            Datum {
-                kind: DatumKind::Point,
-                frame: CoordinateSystem::world_at(at),
-            },
-            name,
-        )
-        .unwrap();
+        point(&mut part, name, at);
     }
-    let straight = route(part.clone(), &args(vec![datum("a"), datum("b")], 2.0, 5.0)).unwrap();
-    let cable = straight.cable("route(r)").unwrap();
+    let (_, cable) = route(
+        part.clone(),
+        &args(vec![vertex("a"), vertex("b")], 2.0, 5.0),
+    )
+    .unwrap();
     assert!(cable.length.could_be_equal(S::from_f64(50.0)));
 
-    let bent = route(
+    let (bent, _) = route(
         part,
-        &args(vec![datum("a"), datum("b"), datum("c")], 2.0, 5.0),
+        &args(vec![vertex("a"), vertex("b"), vertex("c")], 2.0, 5.0),
     )
     .unwrap();
     assert_valid(&bent);
@@ -348,7 +383,7 @@ fn check_free_points_choose_their_directions<S: Scalar>() {
     let waypoints: Vec<Waypoint<S>> = ["a", "b", "c"]
         .iter()
         .enumerate()
-        .map(|(i, n)| Waypoint::of(&bent, &datum(n), i).unwrap())
+        .map(|(i, n)| Waypoint::of(&mut &bent, &vertex(n), i).unwrap())
         .collect();
     let path = RoutePath::through(&waypoints).unwrap();
     let measure = path.measure().unwrap();
@@ -382,14 +417,7 @@ fn check_unsupported_routes_are_refused<S: Scalar>() {
         ("below", v(10.0, -40.0, 0.0)),
         ("above", v(10.0, 60.0, 0.0)),
     ] {
-        part.add_datum(
-            Datum {
-                kind: DatumKind::Point,
-                frame: CoordinateSystem::world_at(at),
-            },
-            name,
-        )
-        .unwrap();
+        point(&mut part, name, at);
     }
     let refused = |through: Vec<EntityRef>| refusal(part.clone(), &args(through, 2.0, 5.0));
     let axis = EntityRef::datum_component(
@@ -402,7 +430,7 @@ fn check_unsupported_routes_are_refused<S: Scalar>() {
 
     let message = refused(vec![datum("start"), datum("same"), datum("end")]);
     assert!(
-        message.contains("point 1 (start) and point 2 (same) could be one point"),
+        message.contains("point 1 (frame on start) and point 2 (frame on same) could be one point"),
         "{message}"
     );
 
@@ -411,9 +439,9 @@ fn check_unsupported_routes_are_refused<S: Scalar>() {
 
     // A clip whose axis lies square to the way the route goes through it.
     let message = refused(vec![
-        datum("below"),
+        vertex("below"),
         EntityRef::Edge { name: rim.clone() },
-        datum("above"),
+        vertex("above"),
     ]);
     assert!(
         message.contains(&format!(
@@ -480,19 +508,15 @@ fn waypoint_configurations_route_or_are_refused() {
                     let mut points = vec![v::<S>(0.0, 0.0, 0.0)];
                     if let Some((at, heading)) = middle {
                         match heading {
-                            Some(z) => connectors(&mut part, &[("middle", *at, *z)]),
+                            Some(z) => {
+                                connectors(&mut part, &[("middle", *at, *z)]);
+                                through.push(datum("middle"));
+                            }
                             None => {
-                                part.add_datum(
-                                    Datum {
-                                        kind: DatumKind::Point,
-                                        frame: CoordinateSystem::world_at(*at),
-                                    },
-                                    "middle",
-                                )
-                                .unwrap();
+                                point(&mut part, "middle", *at);
+                                through.push(vertex("middle"));
                             }
                         }
-                        through.push(datum("middle"));
                         points.push(*at);
                     }
                     through.push(datum("end"));
@@ -500,8 +524,8 @@ fn waypoint_configurations_route_or_are_refused() {
                     let case =
                         format!("{start:?} -> {middle:?} -> {end:?} heading {end_heading:?}");
                     let args = args(through, 1.0, 1.0);
-                    let part = match route(part, &args) {
-                        Ok(part) => part,
+                    let (part, cable) = match route(part, &args) {
+                        Ok(built) => built,
                         Err(e) => {
                             let message = e.root_message();
                             assert!(message.starts_with("route: "), "{case}: {e:?}");
@@ -515,7 +539,6 @@ fn waypoint_configurations_route_or_are_refused() {
                     if let Err(e) = validate(&params, part.topology()) {
                         panic!("{case}: {e:?}");
                     }
-                    let cable = part.cable("route(r)").unwrap();
                     let chords: f64 = points
                         .windows(2)
                         .map(|w| w[1].sub(&w[0]).norm().to_f64())
@@ -529,7 +552,7 @@ fn waypoint_configurations_route_or_are_refused() {
                         .through
                         .iter()
                         .enumerate()
-                        .map(|(i, e)| Waypoint::of(&part, e, i).unwrap())
+                        .map(|(i, e)| Waypoint::of(&mut &part, e, i).unwrap())
                         .collect();
                     let path = RoutePath::through(&waypoints).unwrap();
                     let sampled: f64 = path

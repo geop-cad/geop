@@ -1,9 +1,10 @@
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
+    geop_error::{GeopResult, WithContext},
     scalars::Scalar,
+    with_context,
 };
 use geop_core_topology::{Body, Model, VertexId};
-use geop_ops::Part;
+use geop_ops::NamedModel;
 
 /// The first `(vertex_a, vertex_b)` pair — `vertex_a` from `solid_a`,
 /// `vertex_b` from `solid_b`, distinct ids — whose points coincide, if any.
@@ -18,11 +19,7 @@ fn find_coincident_vertex_pair<S: Scalar>(
     solid_a: Body,
     solid_b: Body,
 ) -> GeopResult<Option<(VertexId, VertexId)>> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "find_coincident_vertex_pair(solid_a={solid_a}, solid_b={solid_b})"
-        ))
-    };
+    let ctx = with_context!("find_coincident_vertex_pair(solid_a={solid_a}, solid_b={solid_b})");
 
     for vertex_a in model.iter_body_vertices(solid_a).with_context(&ctx)? {
         for vertex_b in model.iter_body_vertices(solid_b).with_context(&ctx)? {
@@ -45,15 +42,11 @@ fn find_coincident_vertex_pair<S: Scalar>(
 /// Merge every `solid_b` vertex into the `solid_a` vertex it coincides
 /// with. Creates nothing, so needs no names: each survivor keeps its own.
 pub fn remesh_vertices<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     solid_a: Body,
     solid_b: Body,
 ) -> GeopResult<()> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "remesh_vertices(solid_a={solid_a}, solid_b={solid_b})"
-        ))
-    };
+    let ctx = with_context!("remesh_vertices(solid_a={solid_a}, solid_b={solid_b})");
 
     // Every merge changes which vertices exist and which coincide with which
     // (a vertex not yet visited this pass may now already be welded to one
@@ -61,14 +54,13 @@ pub fn remesh_vertices<S: Scalar>(
     // the loop below always re-searches from scratch afterwards rather than
     // pressing on with anything from before the merge.
     while let Some((vertex_a, vertex_b)) =
-        find_coincident_vertex_pair(part.topology(), solid_a, solid_b).with_context(&ctx)?
+        find_coincident_vertex_pair(model.topology(), solid_a, solid_b).with_context(&ctx)?
     {
-        part.merge_vertex(vertex_a, vertex_b)
-            .with_context(&|e: GeopError| {
-                e.with_context(format!(
-                    "merge_vertex(vertex_a={vertex_a}, vertex_b={vertex_b})"
-                ))
-            })?;
+        model
+            .merge_vertex(vertex_a, vertex_b)
+            .with_context(with_context!(
+                "merge_vertex(vertex_a={vertex_a}, vertex_b={vertex_b})"
+            ))?;
     }
     Ok(())
 }

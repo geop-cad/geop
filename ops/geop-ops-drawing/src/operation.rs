@@ -17,33 +17,42 @@
 //! part and what the views depend on are the same (see
 //! [`DrawingSession::show`]).
 
-use std::{any::Any, cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    primitives::CoordinateSystem,
+    primitives::{CoordinateSystem, Pose},
     scalars::Scalar,
     vector::Vector3,
     with_context,
 };
+use geop_core_program::operation::{
+    Context, Operation, OperationGroup, OperationInfo, OperationTier,
+};
 use geop_core_sketch::plain::{add, sub};
 use geop_ops::{
-    Context, Library, Part,
-    operation::{Operation, Role},
+    Design, NamedModel, ParamValue,
+    model::model,
+    operation::{Build, BuildView, Input, ResolveEntity, Role, Seen},
+    output::sheet::{Anchor, Layer, P, Sheet},
+    placed::{About, Component, about, placed_parts},
     ui::{
-        Action, CanvasEvent, Choice, Edit, Extent, Form, InHand, ListItem, Pointer, Shape, Style,
-        Tone, Value, Visual, hit::hit_visuals,
+        Action, CanvasEvent, Choice, Edit, EditForm, Event, Extent, Form, FormState, InHand,
+        ListItem, Pointer, Shape, Style, Tone, Value, Visual,
+        hit::{hit_visuals, no_instances},
     },
 };
+use geop_ops_hole::{Threads, threads};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     annotation::{Along, Annotation, Candidate, Drawn, EdgeShape, Leader, Pickable, Target},
     drawing::{
-        DrawingArgs, Layout, PartsListLine, Projected, Projection, SCALES, SheetSize, annotated,
-        arrange, placed_edge, placed_vertex, project, scale_label,
+        DrawingArgs, Layout, Projected, Projection, SCALES, SheetSize, arrange, placed_edge,
+        placed_vertex, project, scale_label,
     },
-    sheet::{Anchor, Layer, P, Sheet},
+    export::{DrawingExporter, described, drawing},
+    parts::parts_list,
     view::{DrawnView, ViewKind},
 };
 
@@ -109,9 +118,9 @@ impl Tool {
     }
 }
 
-/// What editing a drawing keeps between events — and what the editor
-/// gives it that a drawing cannot work out itself: the bill of materials
-/// (see [`DrawingSession::show`]).
+/// What editing a drawing keeps between events, besides what is selected
+/// (see [`DrawingEditing`]).
+#[derive(Clone)]
 pub struct DrawingSession {
     tool: Tool,
     /// What was picked for the tool so far, all in one view.
@@ -127,22 +136,63 @@ pub struct DrawingSession {
     drag: Option<(usize, [f64; 2])>,
     /// Why the last annotation picked could not be added.
     refused: Option<String>,
-    /// The bill of materials the editor gave, for the part of which
-    /// revision and whether it was asked for: the sheet is shown once it
-    /// has been given one.
-    parts: Option<(u64, bool, Result<Vec<PartsListLine>, String>)>,
-    /// The views as last projected — a `Result<Projected<S>, String>` —
-    /// for the part of which revision, and what of the arguments they
-    /// depend on (see [`Projected::depends_on`]).
-    projected: Kept<dyn Any>,
-    /// The sheet as last laid out: for the part of which revision, and the
-    /// arguments without their annotations.
+    /// The views as last projected, for the part as it then was, and what
+    /// of the arguments they depend on (see [`Projected::depends_on`]).
+    projected: Kept<Result<Projected<Design>, String>>,
+    /// The sheet as last laid out — with its bill of materials — for the
+    /// part as it then was, and the arguments without their annotations.
     laid_out: Kept<Result<Layout, String>>,
 }
 
-/// What a session keeps of what it worked out: for the part of which
-/// revision, from which arguments, and what.
-type Kept<T> = RefCell<Option<(u64, DrawingArgs, Rc<T>)>>;
+/// What editing a drawing keeps: its session, and the annotations selected.
+pub type DrawingEditing = FormState<DrawingSession>;
+
+/// What a session keeps of what it worked out: for the part as it then
+/// was, from which arguments, and what.
+type Kept<T> = RefCell<Option<(Shown, DrawingArgs, Rc<T>)>>;
+
+/// What a drawing of the part a view shows depends on: its model and its
+/// cosmetic threads, what its program says of it — its name and material,
+/// for the title block — and every part placed in it, by the very build
+/// placed and where. Both models share their structure with the part's, so
+/// comparing two costs what tells them apart.
+#[derive(Clone)]
+struct Shown {
+    model: Option<NamedModel<Design>>,
+    threads: Option<Threads<Design>>,
+    about: Rc<About>,
+    placed: Vec<(String, Rc<Component>, Pose<Design>)>,
+}
+
+impl Shown {
+    /// What the part `view` shows is, as a drawing of it depends on.
+    fn of(view: BuildView) -> GeopResult<Self> {
+        Ok(Self {
+            model: view.retrieve_target(&model()).ok().cloned(),
+            threads: view.retrieve_target(&threads()).ok().cloned(),
+            about: about(view),
+            placed: (placed_parts(view)?.into_iter())
+                .map(|p| {
+                    let component = p.located.instance.component.clone();
+                    (p.name, component, p.located.world)
+                })
+                .collect(),
+        })
+    }
+}
+
+/// The same part: its model and threads equal, and every part placed the
+/// very same build, as far, where it was.
+impl PartialEq for Shown {
+    fn eq(&self, other: &Self) -> bool {
+        self.model == other.model
+            && self.threads == other.threads
+            && self.about == other.about
+            && self.placed.len() == other.placed.len()
+            && (self.placed.iter().zip(&other.placed))
+                .all(|(a, b)| a.0 == b.0 && Rc::ptr_eq(&a.1, &b.1) && a.2 == b.2)
+    }
+}
 
 impl Default for DrawingSession {
     fn default() -> Self {
@@ -154,7 +204,6 @@ impl Default for DrawingSession {
             note: "NOTE".into(),
             drag: None,
             refused: None,
-            parts: None,
             projected: RefCell::new(None),
             laid_out: RefCell::new(None),
         }
@@ -162,100 +211,57 @@ impl Default for DrawingSession {
 }
 
 impl DrawingSession {
-    /// Whether the editor still has to give it the bill of materials of the
-    /// part of `revision` (see [`Part::revision`]), asked for or not —
-    /// `bom` — before its sheet can be shown.
-    pub fn wants_parts(&self, revision: u64, bom: bool) -> bool {
-        self.parts
-            .as_ref()
-            .is_none_or(|(r, b, _)| *r != revision || *b != bom)
-    }
-
-    /// Shows the sheet in the viewport, with `parts` the bill of materials
-    /// of the part of `revision` if `bom` asks for one — or why it could
-    /// not be made. A drawing cannot list the parts placed itself: the
-    /// editor, which knows the program's files, does.
-    pub fn show(&mut self, revision: u64, bom: bool, parts: GeopResult<Vec<PartsListLine>>) {
-        self.parts = Some((revision, bom, parts.map_err(|e| e.to_string())));
-        // Laid out with the parts it had: to be laid out again.
-        *self.laid_out.get_mut() = None;
-    }
-
     /// The tool in hand.
     pub fn tool(&self) -> Tool {
         self.tool
     }
 
-    /// `args`' drawing of `part`, as downloaded — dated `date`, with
-    /// `parts` its bill of materials if `args` asks for one — from the
-    /// views as projected for the viewport (see [`crate::compose`]).
-    pub fn compose<S: Scalar>(
-        &self,
-        part: &Part<S>,
-        args: &DrawingArgs,
-        date: &str,
-        parts: &[PartsListLine],
-    ) -> GeopResult<Sheet> {
-        let projected = self.projected(part, args);
-        let projected = (*projected)
-            .as_ref()
-            .map_err(|e| GeopError::new(e.clone()))?;
-        annotated(part, args, &arrange(part, args, date, parts, projected)?)
-    }
-
-    /// `args`' sheet as drawn of `part` — laid out once, and kept while
-    /// `part` and what the views depend on are the same. None until the
-    /// editor has shown the sheet (see [`DrawingSession::show`]): a form
-    /// listed among the steps lays out nothing.
-    fn layout<S: Scalar>(
-        &self,
-        part: &Part<S>,
-        args: &DrawingArgs,
-    ) -> Option<Rc<Result<Layout, String>>> {
-        let revision = part.revision();
-        // Until the editor has given the parts for this part and these
-        // arguments — on its way, after an edit — there is nothing to show.
-        let (_, _, parts) = self
-            .parts
-            .as_ref()
-            .filter(|(r, bom, _)| *r == revision && *bom == args.bom)?;
+    /// `args`' sheet as drawn of the part `view` shows, with its bill of
+    /// materials if `args` asks for one — laid out once, and kept while
+    /// the part and what the views depend on are the same.
+    fn layout(&self, view: BuildView, args: &DrawingArgs) -> Rc<Result<Layout, String>> {
+        let shown = match Shown::of(view) {
+            Ok(shown) => shown,
+            Err(e) => return Rc::new(Err(e.root_message().to_string())),
+        };
         let mut key = args.clone();
         key.annotations.clear();
-        if let Some((r, a, laid)) = &*self.laid_out.borrow()
-            && *r == revision
+        if let Some((s, a, laid)) = &*self.laid_out.borrow()
+            && *s == shown
             && *a == key
         {
-            return Some(laid.clone());
+            return laid.clone();
         }
-        let laid = Rc::new(match (parts, &*self.projected(part, args)) {
+        let parts = parts_list(view, args).map_err(|e| e.root_message().to_string());
+        let laid = Rc::new(match (parts, &*self.projected(view, &shown, args)) {
             (Ok(parts), Ok(projected)) => {
-                arrange(part, args, "", parts, projected).map_err(|e| e.root_message().to_string())
+                arrange(view, args, "", &parts, projected).map_err(|e| e.root_message().to_string())
             }
             (Err(e), _) => Err(format!("the bill of materials: {e}")),
             (_, Err(e)) => Err(e.clone()),
         });
-        *self.laid_out.borrow_mut() = Some((revision, key, laid.clone()));
-        Some(laid)
+        *self.laid_out.borrow_mut() = Some((shown, key, laid.clone()));
+        laid
     }
 
-    /// `args`' views of `part`, projected — once, and kept while `part`
-    /// and what they depend on are the same.
-    fn projected<S: Scalar>(
+    /// `args`' views of the part `view` shows, which is `shown`, projected
+    /// — once, and kept while the part and what they depend on are the
+    /// same.
+    fn projected(
         &self,
-        part: &Part<S>,
+        view: BuildView,
+        shown: &Shown,
         args: &DrawingArgs,
-    ) -> Rc<Result<Projected<S>, String>> {
-        let revision = part.revision();
-        let key = Projected::<S>::depends_on(args);
-        if let Some((r, a, projected)) = &*self.projected.borrow()
-            && *r == revision
+    ) -> Rc<Result<Projected<Design>, String>> {
+        let key = Projected::<Design>::depends_on(args);
+        if let Some((s, a, projected)) = &*self.projected.borrow()
+            && s == shown
             && *a == key
-            && let Ok(projected) = projected.clone().downcast::<Result<Projected<S>, String>>()
         {
-            return projected;
+            return projected.clone();
         }
-        let projected = Rc::new(project(part, args).map_err(|e| e.root_message().to_string()));
-        *self.projected.borrow_mut() = Some((revision, key, projected.clone()));
+        let projected = Rc::new(project(view, args).map_err(|e| e.root_message().to_string()));
+        *self.projected.borrow_mut() = Some((shown.clone(), key, projected.clone()));
         projected
     }
 }
@@ -442,9 +448,9 @@ fn build(tool: Tool, picks: &[Candidate]) -> Option<Annotation> {
 
 /// `annotation` with its value placed at `at` on the sheet, measured in
 /// `part` as `layout` draws it — or why it cannot be drawn.
-fn placed_at<S: Scalar>(
+fn placed_at(
     mut annotation: Annotation,
-    part: &Part<S>,
+    part: BuildView,
     layout: &Layout,
     at: P,
 ) -> GeopResult<(Annotation, Drawn)> {
@@ -485,7 +491,7 @@ fn under<'l, S: Scalar>(
         .enumerate()
         .map(|(i, c)| Visual::new(i.to_string(), candidate_shape(c), Style::Free))
         .collect();
-    let hit = hit_visuals(&visuals, pointer, None, |_| true)?;
+    let hit = hit_visuals(&visuals, pointer, no_instances, |_| true)?;
     usable.get(hit.visual.key.parse::<usize>().ok()?).copied()
 }
 
@@ -505,7 +511,7 @@ const CIRCLE_POINTS: usize = 48;
 
 /// The sheet's strokes and texts as visuals, under keys starting `key`.
 fn sheet_visuals<S: Scalar>(sheet: &Sheet, key: &str, out: &mut Vec<Visual<S>>) {
-    use crate::sheet::Shape as Stroke;
+    use geop_ops::output::sheet::Shape as Stroke;
     let arc = |center: P, radius: f64, start: f64, sweep: f64| -> Vec<Vector3<S>> {
         let n = ((CIRCLE_POINTS as f64 * sweep / std::f64::consts::TAU).ceil() as usize).max(2);
         (0..=n)
@@ -648,27 +654,27 @@ fn hint(s: &DrawingSession) -> String {
 /// tools, what they ask for, the annotations — each with its value, or why
 /// it cannot be drawn — and the sheet itself in the viewport, with what
 /// is picked, what a click would pick, and the annotation being placed.
-fn annotate<'a, S: Scalar>(
-    f: &mut Form<'a, S, DrawingArgs, DrawingSession>,
-    part: &Part<S>,
+fn annotate(
+    f: &mut EditForm<'_, Design, DrawingArgs, DrawingSession>,
+    part: BuildView,
     args: &DrawingArgs,
     s: &DrawingSession,
     selection: &[String],
     layout: &Layout,
 ) {
     let sheet = &layout.sheet;
-    f.focus = Some(paper());
-    f.sheet = Some(Extent {
+    f.form.focus = Some(paper());
+    f.form.sheet = Some(Extent {
         center: world([sheet.width / 2.0, sheet.height / 2.0]),
-        size: S::from_f64(sheet.width.hypot(sheet.height)),
+        size: Design::from_f64(sheet.width.hypot(sheet.height)),
     });
-    f.tool = match s.tool {
+    f.form.tool = match s.tool {
         Tool::Select => InHand::Nothing,
         _ => InHand::Clicks,
     };
-    sheet_visuals(sheet, "sheet", &mut f.visuals);
+    sheet_visuals(sheet, "sheet", &mut f.form.visuals);
 
-    f.heading("annotate_heading", "Annotate");
+    f.form.dialog.heading("annotate_heading", "Annotate");
     let actions = TOOLS
         .iter()
         .map(|&(tool, name, label)| Action::new(name, label).icon(name).active(s.tool == tool))
@@ -681,9 +687,9 @@ fn annotate<'a, S: Scalar>(
         s.hover = None;
         s.refused = None;
     });
-    f.text("tool_hint", hint(s), Tone::Hint);
+    f.form.dialog.text("tool_hint", hint(s), Tone::Hint);
     if let Some(why) = &s.refused {
-        f.text("refused", format!("Not added: {why}"), Tone::Error);
+        (f.form.dialog).text("refused", format!("Not added: {why}"), Tone::Error);
     }
     if s.tool == Tool::Note {
         let mut item = ListItem::new("note_text", "Text");
@@ -693,7 +699,7 @@ fn annotate<'a, S: Scalar>(
                 edit.session.note = text;
             }
         });
-        f.list("note", vec![item], "");
+        f.form.dialog.list("note", vec![item], "");
     }
 
     let mut items = Vec::new();
@@ -717,7 +723,7 @@ fn annotate<'a, S: Scalar>(
                 };
                 // Its value — or a centre mark's line — is selected and
                 // dragged, unless a tool is in hand.
-                f.visuals.extend(
+                f.form.visuals.extend(
                     annotation_visuals(&drawn, &key, style, Style::Fixed)
                         .into_iter()
                         .map(|v| match v.key == key {
@@ -750,7 +756,7 @@ fn annotate<'a, S: Scalar>(
             _ => {}
         });
     }
-    f.list(
+    f.form.dialog.list(
         "annotations",
         items,
         "None yet: the views show their overall sizes.",
@@ -758,20 +764,19 @@ fn annotate<'a, S: Scalar>(
 
     // What is picked, what a click would pick, and what it would place.
     for (k, pick) in s.picks.iter().enumerate() {
-        f.visuals.push(Visual::new(
+        f.form.visuals.push(Visual::new(
             format!("picked{k}"),
             candidate_shape(pick),
             Style::Selected,
         ));
     }
     if let Some(hover) = &s.hover {
-        f.visuals
-            .push(Visual::new("hover", candidate_shape(hover), Style::Hover));
+        (f.form.visuals).push(Visual::new("hover", candidate_shape(hover), Style::Hover));
     }
     if let (Some(annotation), Some(cursor)) = (build(s.tool, &s.picks), s.cursor)
         && let Ok((_, drawn)) = placed_at(annotation, part, layout, cursor)
     {
-        f.visuals.extend(annotation_visuals(
+        f.form.visuals.extend(annotation_visuals(
             &drawn,
             "placing",
             Style::Draft,
@@ -784,10 +789,10 @@ impl DrawingSession {
     /// A click on the sheet at `at`, with the tool in hand: what is under
     /// the pointer — `hit` — picked for it, or, once it has all it needs,
     /// what it makes added to `args`, its value at `at`.
-    fn click<S: Scalar>(
+    fn click(
         &mut self,
         args: &mut DrawingArgs,
-        part: &Part<S>,
+        part: BuildView,
         layout: &Layout,
         at: P,
         hit: Option<Candidate>,
@@ -824,7 +829,7 @@ impl DrawingSession {
     }
 
     /// Adds what the tool makes of the picks, its value at `at`.
-    fn add<S: Scalar>(&mut self, args: &mut DrawingArgs, part: &Part<S>, layout: &Layout, at: P) {
+    fn add(&mut self, args: &mut DrawingArgs, part: BuildView, layout: &Layout, at: P) {
         let Some(mut annotation) = build(self.tool, &self.picks) else {
             return;
         };
@@ -848,7 +853,7 @@ fn shows(args: &DrawingArgs, view: DrawnView) -> bool {
 }
 
 /// Checks that `target` names something in `part`.
-fn resolve_target<S: Scalar>(part: &Part<S>, target: &Target) -> GeopResult<()> {
+fn resolve_target(part: BuildView, target: &Target) -> GeopResult<()> {
     match target {
         Target::Vertex { name } => placed_vertex(part, name).map(|_| ()),
         Target::Edge { name } => placed_edge(part, name).map(|_| ()),
@@ -857,7 +862,7 @@ fn resolve_target<S: Scalar>(part: &Part<S>, target: &Target) -> GeopResult<()> 
 }
 
 /// Checks that `edge` is a circular edge of `part`.
-fn circular<S: Scalar>(part: &Part<S>, edge: &str) -> GeopResult<()> {
+fn circular(part: BuildView, edge: &str) -> GeopResult<()> {
     match placed_edge(part, edge)?.as_arc()? {
         Some(_) => Ok(()),
         None => Err(GeopError::new(format!(
@@ -867,7 +872,7 @@ fn circular<S: Scalar>(part: &Part<S>, edge: &str) -> GeopResult<()> {
 }
 
 /// Checks that `edge` is a straight edge of `part`.
-fn straight<S: Scalar>(part: &Part<S>, edge: &str) -> GeopResult<()> {
+fn straight(part: BuildView, edge: &str) -> GeopResult<()> {
     match placed_edge(part, edge)?.as_line()? {
         Some(_) => Ok(()),
         None => Err(GeopError::new(format!(
@@ -876,321 +881,351 @@ fn straight<S: Scalar>(part: &Part<S>, edge: &str) -> GeopResult<()> {
     }
 }
 
+/// Checks that what the drawing `args` describe refers to is there in the
+/// part `part` shows — its section plane, and what each annotation names,
+/// in a view the drawing has. Whether each view sees what it is asked to
+/// measure is checked when the drawing is laid out.
+fn check(part: BuildView, step: &str, args: &DrawingArgs) -> GeopResult<()> {
+    let ctx = with_context!("drawing({step})");
+    if args.views.is_empty() && args.section.is_none() {
+        return Err(GeopError::new("a drawing needs a view")).with_context(ctx);
+    }
+    if let Some(plane) = &args.section {
+        plane
+            .resolve_plane(&mut Seen::new(part))
+            .with_context(ctx)?;
+    }
+    if let Some(scale) = args.scale
+        && !(scale.is_finite() && scale > 0.0)
+    {
+        return Err(GeopError::new(format!(
+            "the scale {scale} is not a positive number"
+        )))
+        .with_context(ctx);
+    }
+    for (index, annotation) in args.annotations.iter().enumerate() {
+        let ctx = |e: GeopError| {
+            e.with_context(format!(
+                "drawing({step}) annotation {}: {}",
+                index + 1,
+                annotation.describe()
+            ))
+        };
+        if let Some(view) = annotation.view()
+            && !shows(args, view)
+        {
+            return Err(GeopError::new(format!(
+                "the drawing has no {view} view any more: show it again, or remove the {}",
+                annotation.kind().to_lowercase()
+            )))
+            .with_context(&ctx);
+        }
+        match annotation {
+            Annotation::Distance { from, to, .. } => {
+                resolve_target(part, from).with_context(&ctx)?;
+                resolve_target(part, to).with_context(&ctx)?;
+            }
+            Annotation::Radius { edge, .. } | Annotation::CenterMark { edge, .. } => {
+                circular(part, edge).with_context(&ctx)?;
+            }
+            Annotation::Angle { a, b, .. } => {
+                straight(part, a).with_context(&ctx)?;
+                straight(part, b).with_context(&ctx)?;
+            }
+            Annotation::Note { leader, .. } => {
+                if let Some(leader) = leader {
+                    resolve_target(part, &leader.target).with_context(&ctx)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The form of the drawing `args` of the part `context` is edited against:
+/// its download, its sheet to annotate, its views and its title block.
+fn form<'a>(
+    context: &'a Context<Input, ParamValue>,
+    args: &DrawingArgs,
+    session: &DrawingSession,
+    selection: &[String],
+) -> EditForm<'a, Design, DrawingArgs, DrawingSession> {
+    let part = context.before;
+    let mut f = EditForm::<Design, DrawingArgs, DrawingSession>::default();
+    f.form.selection = selection.to_vec();
+    f.form.dialog.download(
+        "download",
+        <DrawingExporter as geop_ops::output::Exporter>::INFO.kind,
+        vec![Choice::new("svg", "SVG"), Choice::new("dxf", "DXF")],
+    );
+    match &*session.layout(part, args) {
+        Ok(layout) => annotate(&mut f, part, args, session, selection, layout),
+        Err(e) => {
+            f.form.dialog.text(
+                "sheet_error",
+                format!("The sheet cannot be laid out: {e}"),
+                Tone::Error,
+            );
+        }
+    }
+
+    f.form.dialog.heading("views_heading", "Views");
+    for kind in ViewKind::ALL {
+        f.checkbox(
+            &format!("view:{}", kind.name()),
+            label(kind),
+            args.views.contains(&kind),
+            move |args: &mut DrawingArgs, on| {
+                args.views.retain(|k| *k != kind);
+                if on {
+                    args.views.push(kind);
+                    args.views
+                        .sort_by_key(|k| ViewKind::ALL.iter().position(|a| a == k));
+                }
+            },
+        );
+    }
+    f.select(
+        "projection",
+        "projection",
+        match args.projection {
+            Projection::ThirdAngle => "third_angle",
+            Projection::FirstAngle => "first_angle",
+        },
+        vec![
+            Choice::new("third_angle", "Third angle"),
+            Choice::new("first_angle", "First angle"),
+        ],
+        false,
+        |args, value| {
+            args.projection = match value {
+                "first_angle" => Projection::FirstAngle,
+                _ => Projection::ThirdAngle,
+            }
+        },
+    );
+    f.checkbox(
+        "hidden_lines",
+        "Hidden lines",
+        args.hidden_lines,
+        |args, on| args.hidden_lines = on,
+    );
+    f.checkbox(
+        "tangent_edges",
+        "Tangent edges",
+        args.tangent_edges,
+        |args, on| args.tangent_edges = on,
+    );
+    f.reference(
+        "section",
+        "section plane",
+        args.section.iter().cloned().collect(),
+        &[Role::Plane],
+        None,
+        false,
+        |edit, picked| edit.args.section = picked.into_iter().next(),
+    );
+    f.form.dialog.optional("section");
+
+    f.form.dialog.heading("sheet_heading", "Sheet");
+    f.select(
+        "sheet",
+        "paper",
+        args.sheet.name(),
+        SheetSize::ALL
+            .iter()
+            .map(|s| Choice::new(s.name(), s.name().to_uppercase()))
+            .collect(),
+        false,
+        |args, value| {
+            if let Some(s) = SheetSize::ALL.into_iter().find(|s| s.name() == value) {
+                args.sheet = s;
+            }
+        },
+    );
+    let mut scales = vec![Choice::new("fit", "To fit")];
+    scales.extend(
+        SCALES
+            .iter()
+            .map(|&s| Choice::new(scale_label(s), scale_label(s))),
+    );
+    f.select(
+        "scale",
+        "scale",
+        args.scale.map(scale_label).unwrap_or_else(|| "fit".into()),
+        scales,
+        false,
+        |args, value| {
+            args.scale = SCALES.iter().copied().find(|&s| scale_label(s) == value);
+        },
+    );
+    f.checkbox("bom", "Bill of materials", args.bom, |args, on| {
+        args.bom = on
+    });
+    let mut title = Vec::new();
+    for (key, caption, value) in [
+        ("title:name", "Part name", &args.name),
+        ("title:material", "Material", &args.material),
+    ] {
+        f.on(key, move |edit, value| {
+            if let Value::Text(text) = value {
+                match key {
+                    "title:name" => edit.args.name = text,
+                    _ => edit.args.material = text,
+                }
+            }
+        });
+        let mut item = ListItem::new(key, caption);
+        item.text = Some(value.clone());
+        title.push(item);
+    }
+    f.form.dialog.list("title", title, "");
+    f
+}
+
+/// The pointer on the sheet of the part `part` shows: a tool picks what the
+/// views show and puts down what it makes; a value is dragged where it
+/// goes; Escape lets go of the picks, then of the tool; Delete removes the
+/// annotations selected.
+fn canvas(
+    part: BuildView,
+    edit: Edit<'_, DrawingArgs, DrawingSession>,
+    event: &CanvasEvent<Design>,
+) {
+    let Edit {
+        args,
+        session: s,
+        selection,
+    } = edit;
+    let laid = s.layout(part, args);
+    let Ok(layout) = &*laid else {
+        return;
+    };
+    match event {
+        CanvasEvent::Hover { pointer, .. } => {
+            s.cursor = on_sheet(pointer);
+            s.hover = match s.tool {
+                Tool::Select => None,
+                tool => under(layout, pointer, tool, &s.picks).cloned(),
+            };
+        }
+        CanvasEvent::Leave => {
+            s.cursor = None;
+            s.hover = None;
+        }
+        CanvasEvent::Click {
+            pointer,
+            double: false,
+            ..
+        } if s.tool != Tool::Select => {
+            let Some(at) = on_sheet(pointer) else {
+                return;
+            };
+            let hit = under(layout, pointer, s.tool, &s.picks).cloned();
+            s.click(args, part, layout, at, hit);
+            s.hover = under(layout, pointer, s.tool, &s.picks).cloned();
+        }
+        CanvasEvent::Confirm => s.picks.clear(),
+        CanvasEvent::Move {
+            key,
+            from,
+            to,
+            done,
+            ..
+        } => {
+            let Some(i) = annotation_of(key).filter(|_| !key.contains('/')) else {
+                return;
+            };
+            let Some(annotation) = args.annotations.get_mut(i) else {
+                return;
+            };
+            let grabbed = match s.drag {
+                Some((j, grabbed)) if j == i => grabbed,
+                _ => {
+                    let grabbed = annotation.label_mut().map_or([0.0, 0.0], |l| *l);
+                    s.drag = Some((i, grabbed));
+                    grabbed
+                }
+            };
+            let moved = [
+                to[0].to_f64() - from[0].to_f64(),
+                to[1].to_f64() - from[1].to_f64(),
+            ];
+            if let Some(label) = annotation.label_mut() {
+                *label = add(grabbed, moved);
+            }
+            if *done {
+                s.drag = None;
+            }
+        }
+        CanvasEvent::Cancel => {
+            s.refused = None;
+            if s.picks.is_empty() {
+                s.tool = Tool::Select;
+            }
+            s.picks.clear();
+            s.hover = None;
+        }
+        CanvasEvent::Delete => {
+            let mut gone: Vec<usize> = selection.iter().filter_map(|k| annotation_of(k)).collect();
+            gone.sort_unstable();
+            gone.dedup();
+            for i in gone.into_iter().rev() {
+                if i < args.annotations.len() {
+                    args.annotations.remove(i);
+                }
+            }
+            selection.clear();
+        }
+        _ => {}
+    }
+}
+
 impl Operation for Drawing {
+    const INFO: OperationInfo = OperationInfo::new(
+        "drawing",
+        "Drawing",
+        "A 2-D drawing of the part: views with hidden lines, a section, dimensions, notes and a title block — downloaded as SVG or DXF.",
+        OperationGroup::Output,
+        OperationTier::Big,
+    );
     type Args = DrawingArgs;
-    type Session = DrawingSession;
+    type EditingState = DrawingEditing;
+    type Input = Input;
+    type State = ParamValue;
 
     /// Front, top, right and isometric views, third angle, on A3.
-    fn new_args<S: Scalar>(&self, _before: &Part<S>) -> DrawingArgs {
+    fn new_args(_: &Context<Input, ParamValue>) -> DrawingArgs {
         DrawingArgs::default()
     }
 
-    fn form<'a, S: Scalar>(
-        &self,
-        context: Context<'a, S>,
-        args: &DrawingArgs,
-        session: &DrawingSession,
-        selection: &[String],
-    ) -> Form<'a, S, DrawingArgs, DrawingSession> {
-        let mut f = Form::<S, DrawingArgs, DrawingSession>::new();
-        f.download(
-            "download",
-            vec![Choice::new("svg", "SVG"), Choice::new("dxf", "DXF")],
-        );
-        if let Some(laid) = session.layout(context.before, args) {
-            match &*laid {
-                Ok(layout) => annotate(&mut f, context.before, args, session, selection, layout),
-                Err(e) => {
-                    f.text(
-                        "sheet_error",
-                        format!("The sheet cannot be laid out: {e}"),
-                        Tone::Error,
-                    );
-                }
-            }
-        }
-
-        f.heading("views_heading", "Views");
-        for kind in ViewKind::ALL {
-            f.checkbox(
-                &format!("view:{}", kind.name()),
-                label(kind),
-                args.views.contains(&kind),
-                move |args: &mut DrawingArgs, on| {
-                    args.views.retain(|k| *k != kind);
-                    if on {
-                        args.views.push(kind);
-                        args.views
-                            .sort_by_key(|k| ViewKind::ALL.iter().position(|a| a == k));
-                    }
-                },
-            );
-        }
-        f.select(
-            "projection",
-            "projection",
-            match args.projection {
-                Projection::ThirdAngle => "third_angle",
-                Projection::FirstAngle => "first_angle",
-            },
-            vec![
-                Choice::new("third_angle", "Third angle"),
-                Choice::new("first_angle", "First angle"),
-            ],
-            false,
-            |args, value| {
-                args.projection = match value {
-                    "first_angle" => Projection::FirstAngle,
-                    _ => Projection::ThirdAngle,
-                }
-            },
-        );
-        f.checkbox(
-            "hidden_lines",
-            "Hidden lines",
-            args.hidden_lines,
-            |args, on| args.hidden_lines = on,
-        );
-        f.checkbox(
-            "tangent_edges",
-            "Tangent edges",
-            args.tangent_edges,
-            |args, on| args.tangent_edges = on,
-        );
-        f.reference(
-            "section",
-            "section plane",
-            args.section.iter().cloned().collect(),
-            &[Role::Plane],
-            None,
-            false,
-            |edit, picked| edit.args.section = picked.into_iter().next(),
-        );
-        f.optional("section");
-
-        f.heading("sheet_heading", "Sheet");
-        f.select(
-            "sheet",
-            "paper",
-            args.sheet.name(),
-            SheetSize::ALL
-                .iter()
-                .map(|s| Choice::new(s.name(), s.name().to_uppercase()))
-                .collect(),
-            false,
-            |args, value| {
-                if let Some(s) = SheetSize::ALL.into_iter().find(|s| s.name() == value) {
-                    args.sheet = s;
-                }
-            },
-        );
-        let mut scales = vec![Choice::new("fit", "To fit")];
-        scales.extend(
-            SCALES
-                .iter()
-                .map(|&s| Choice::new(scale_label(s), scale_label(s))),
-        );
-        f.select(
-            "scale",
-            "scale",
-            args.scale.map(scale_label).unwrap_or_else(|| "fit".into()),
-            scales,
-            false,
-            |args, value| {
-                args.scale = SCALES.iter().copied().find(|&s| scale_label(s) == value);
-            },
-        );
-        f.checkbox("bom", "Bill of materials", args.bom, |args, on| {
-            args.bom = on
-        });
-        let mut title = Vec::new();
-        for (key, caption, value) in [
-            ("title:name", "Part name", &args.name),
-            ("title:material", "Material", &args.material),
-        ] {
-            f.on(key, move |edit, value| {
-                if let Value::Text(text) = value {
-                    match key {
-                        "title:name" => edit.args.name = text,
-                        _ => edit.args.material = text,
-                    }
-                }
-            });
-            let mut item = ListItem::new(key, caption);
-            item.text = Some(value.clone());
-            title.push(item);
-        }
-        f.list("title", title, "");
-        f
+    /// Records the drawing (see [`drawing`]), once what it refers to is
+    /// checked there in the part before it; it changes nothing else.
+    fn run(step: &str, part: &mut Build, args: &DrawingArgs) -> GeopResult<()> {
+        check(part.current(), step, args)?;
+        part.define_target(&drawing(step), args, described)
     }
 
-    /// The pointer on the sheet: a tool picks what the views show and puts
-    /// down what it makes; a value is dragged where it goes; Escape lets
-    /// go of the picks, then of the tool; Delete removes the annotations
-    /// selected.
-    fn event<S: Scalar>(
-        &self,
-        context: Context<'_, S>,
-        edit: Edit<'_, DrawingArgs, DrawingSession>,
-        event: &CanvasEvent<S>,
-    ) {
-        let Edit {
+    fn presentation(
+        context: &Context<Input, ParamValue>,
+        args: &DrawingArgs,
+        editing: &DrawingEditing,
+    ) -> Form<Design> {
+        form(context, args, &editing.session, &editing.selection).into_form()
+    }
+
+    fn process_user_event(
+        context: &Context<Input, ParamValue>,
+        args: &DrawingArgs,
+        editing: &DrawingEditing,
+        event: Event<Design>,
+    ) -> (DrawingArgs, DrawingEditing) {
+        editing.handle(
             args,
-            session: s,
-            selection,
-            ..
-        } = edit;
-        let Some(laid) = s.layout(context.before, args) else {
-            return;
-        };
-        let Ok(layout) = &*laid else {
-            return;
-        };
-        let part = context.before;
-        match event {
-            CanvasEvent::Hover { pointer, .. } => {
-                s.cursor = on_sheet(pointer);
-                s.hover = match s.tool {
-                    Tool::Select => None,
-                    tool => under(layout, pointer, tool, &s.picks).cloned(),
-                };
-            }
-            CanvasEvent::Leave => {
-                s.cursor = None;
-                s.hover = None;
-            }
-            CanvasEvent::Click {
-                pointer,
-                double: false,
-                ..
-            } if s.tool != Tool::Select => {
-                let Some(at) = on_sheet(pointer) else {
-                    return;
-                };
-                let hit = under(layout, pointer, s.tool, &s.picks).cloned();
-                s.click(args, part, layout, at, hit);
-                s.hover = under(layout, pointer, s.tool, &s.picks).cloned();
-            }
-            CanvasEvent::Confirm => s.picks.clear(),
-            CanvasEvent::Move {
-                key,
-                from,
-                to,
-                done,
-                ..
-            } => {
-                let Some(i) = annotation_of(key).filter(|_| !key.contains('/')) else {
-                    return;
-                };
-                let Some(annotation) = args.annotations.get_mut(i) else {
-                    return;
-                };
-                let grabbed = match s.drag {
-                    Some((j, grabbed)) if j == i => grabbed,
-                    _ => {
-                        let grabbed = annotation.label_mut().map_or([0.0, 0.0], |l| *l);
-                        s.drag = Some((i, grabbed));
-                        grabbed
-                    }
-                };
-                let moved = [
-                    to[0].to_f64() - from[0].to_f64(),
-                    to[1].to_f64() - from[1].to_f64(),
-                ];
-                if let Some(label) = annotation.label_mut() {
-                    *label = add(grabbed, moved);
-                }
-                if *done {
-                    s.drag = None;
-                }
-            }
-            CanvasEvent::Cancel => {
-                s.refused = None;
-                if s.picks.is_empty() {
-                    s.tool = Tool::Select;
-                }
-                s.picks.clear();
-                s.hover = None;
-            }
-            CanvasEvent::Delete => {
-                let mut gone: Vec<usize> =
-                    selection.iter().filter_map(|k| annotation_of(k)).collect();
-                gone.sort_unstable();
-                gone.dedup();
-                for i in gone.into_iter().rev() {
-                    if i < args.annotations.len() {
-                        args.annotations.remove(i);
-                    }
-                }
-                selection.clear();
-            }
-            _ => {}
-        }
-    }
-
-    /// Checks that what the drawing refers to is there — its section
-    /// plane, and what each annotation names, in a view the drawing has;
-    /// it changes nothing. Whether each view sees what it is asked to
-    /// measure is checked when the drawing is laid out.
-    fn apply<S: Scalar>(
-        &self,
-        part: Part<S>,
-        operation_id: &str,
-        args: &DrawingArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("drawing({operation_id})");
-        if args.views.is_empty() && args.section.is_none() {
-            return Err(GeopError::new("a drawing needs a view")).with_context(ctx);
-        }
-        if let Some(plane) = &args.section {
-            plane.resolve_plane(&part).with_context(ctx)?;
-        }
-        if let Some(scale) = args.scale
-            && !(scale.is_finite() && scale > 0.0)
-        {
-            return Err(GeopError::new(format!(
-                "the scale {scale} is not a positive number"
-            )))
-            .with_context(ctx);
-        }
-        for (index, annotation) in args.annotations.iter().enumerate() {
-            let ctx = |e: GeopError| {
-                e.with_context(format!(
-                    "drawing({operation_id}) annotation {}: {}",
-                    index + 1,
-                    annotation.describe()
-                ))
-            };
-            if let Some(view) = annotation.view()
-                && !shows(args, view)
-            {
-                return Err(GeopError::new(format!(
-                    "the drawing has no {view} view any more: show it again, or remove the {}",
-                    annotation.kind().to_lowercase()
-                )))
-                .with_context(&ctx);
-            }
-            match annotation {
-                Annotation::Distance { from, to, .. } => {
-                    resolve_target(&part, from).with_context(&ctx)?;
-                    resolve_target(&part, to).with_context(&ctx)?;
-                }
-                Annotation::Radius { edge, .. } | Annotation::CenterMark { edge, .. } => {
-                    circular(&part, edge).with_context(&ctx)?;
-                }
-                Annotation::Angle { a, b, .. } => {
-                    straight(&part, a).with_context(&ctx)?;
-                    straight(&part, b).with_context(&ctx)?;
-                }
-                Annotation::Note { leader, .. } => {
-                    if let Some(leader) = leader {
-                        resolve_target(&part, &leader.target).with_context(&ctx)?;
-                    }
-                }
-            }
-        }
-        Ok(part)
+            event,
+            |args, session, selection| form(context, args, session, selection),
+            |edit, event| canvas(context.before, edit, event),
+        )
     }
 }
 

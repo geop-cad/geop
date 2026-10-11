@@ -36,18 +36,20 @@ use geop_core_topology::{
         shell::{PointClassification, solid_contains},
     },
 };
-use geop_ops::{Namer, Part};
-use geop_ops_booleans::{Combine, Tool, boolean::NOTHING_STOPS};
+use geop_ops::{NamedModel, Namer};
+use geop_ops_booleans::{
+    Combine, Tool,
+    boolean::{BooleanOp, Reach},
+};
 use geop_ops_extrude_revolve::{
     common::{Profile, line2, line3},
     extrude::extrude,
     sweep::SweepLoop,
 };
 
-use crate::{
-    band::{Chain, Piece},
-    common::{MAX_NODES, min_subdivision_size},
-};
+use geop_ops_shell::shell::{MAX_NODES, min_subdivision_size};
+
+use crate::band::{Chain, Piece};
 
 /// Seeds the ray casts' containment queries: any fixed value keeps a rib
 /// reproducible run to run.
@@ -71,7 +73,7 @@ pub enum Growth {
 /// `namer`'s root. See the module docs.
 #[allow(clippy::too_many_arguments)]
 pub fn rib<S: Scalar>(
-    part: &mut Part<S>,
+    part: &mut NamedModel<S>,
     namer: &Namer,
     operation_id: &str,
     plane: &CoordinateSystem<S>,
@@ -93,11 +95,7 @@ pub fn rib<S: Scalar>(
         ))
         .with_context(ctx);
     }
-    let target_name = part
-        .name_of(target)
-        .ok_or_else(|| GeopError::new("the rib's solid has no name"))
-        .with_context(ctx)?
-        .to_string();
+    let target_name = part.name(target).with_context(ctx)?.to_string();
     let chain = extended(part, plane, profile, target).with_context(ctx)?;
     let reach = reach_past(part, plane, target).with_context(ctx)?;
     let tool_name = namer.name(&["tool"]);
@@ -141,27 +139,24 @@ pub fn rib<S: Scalar>(
         up_to_next: Some((start, end)),
         scope: None,
     };
-    Combine::Union {
+    let combine = Combine::With {
+        op: BooleanOp::Union,
         target: target_name,
+    };
+    match combine.apply(part, namer, operation_id, &[tool]).with_context(ctx)? {
+        Reach::Stopped(()) => Ok(()),
+        Reach::RunsOn(e) => Err(e.with_context(
+            "the rib's profile grows past the solid without meeting it all along: it has to run between faces that close it in",
+        ))
+        .with_context(ctx),
     }
-    .apply(part, namer, operation_id, &[tool])
-    .map_err(|e| {
-        if e.root_message().starts_with(NOTHING_STOPS) {
-            e.with_context(
-                "the rib's profile grows past the solid without meeting it all along: it has to run between faces that close it in",
-            )
-        } else {
-            e
-        }
-    })
-    .with_context(ctx)
 }
 
 /// How far along a direction of `plane`, from its origin, reaches past all
 /// of `target`: its distance to the furthest corner of the box around the
 /// solid's control points, and that box's diagonal again.
 fn reach_past<S: Scalar>(
-    part: &Part<S>,
+    part: &NamedModel<S>,
     plane: &CoordinateSystem<S>,
     target: SolidId,
 ) -> GeopResult<S> {
@@ -197,7 +192,7 @@ fn reach_past<S: Scalar>(
 /// `ext0` before it, `ext1` after it — or none, for an end inside the
 /// solid already.
 fn extended<S: Scalar>(
-    part: &Part<S>,
+    part: &NamedModel<S>,
     plane: &CoordinateSystem<S>,
     profile: &Profile<S>,
     target: SolidId,
@@ -309,7 +304,7 @@ fn arc_center<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<Option<Vector2<S>
 /// boundary, halfway to where it leaves. None for a point inside the solid:
 /// it is in the wall already. `reach` is a length past all of the solid.
 fn wall_middle<S: Scalar>(
-    part: &Part<S>,
+    part: &NamedModel<S>,
     target: SolidId,
     from: Vector3<S>,
     along: &Vector3<S>,

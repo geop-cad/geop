@@ -12,13 +12,20 @@ use geop_core_topology::{
     Body,
     validation::{ValidationParameters, validate, validate_manifold},
 };
-use geop_ops::{NoFiles, Part, operation::Operation};
+use geop_ops::NamedModel;
 
-use crate::{Cage, Mirror, Subd, SubdArgs};
+use crate::{Cage, Mirror, SubdArgs, build_subd};
+
+/// The model one subd step `s` of `args` builds.
+fn subd<S: Scalar>(args: &SubdArgs) -> geop_core_math::geop_error::GeopResult<NamedModel<S>> {
+    let mut model = NamedModel::new();
+    build_subd(&mut model, "s", args)?;
+    Ok(model)
+}
 
 /// Valid, and a manifold (`validate_manifold` runs `validate` first: once
 /// is enough), its names checked.
-fn assert_valid<S: Scalar>(part: &Part<S>) {
+fn assert_valid<S: Scalar>(part: &NamedModel<S>) {
     let params = ValidationParameters::default();
     if let Err(errors) = validate_manifold(&params, part.topology()) {
         let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
@@ -32,12 +39,11 @@ fn assert_valid<S: Scalar>(part: &Part<S>) {
 }
 
 /// The limit of `cage`, mirrored in `mirror`, built as step `s`.
-fn built<S: Scalar>(cage: Cage, mirror: Mirror) -> Part<S> {
-    Subd.apply(Part::new(), "s", &SubdArgs { cage, mirror }, &NoFiles)
-        .unwrap_or_else(|e| panic!("{e}"))
+fn built<S: Scalar>(cage: Cage, mirror: Mirror) -> NamedModel<S> {
+    subd(&SubdArgs { cage, mirror }).unwrap_or_else(|e| panic!("{e}"))
 }
 
-fn faces<S: Scalar>(part: &Part<S>) -> usize {
+fn faces<S: Scalar>(part: &NamedModel<S>) -> usize {
     part.topology().faces.len()
 }
 
@@ -122,7 +128,7 @@ fn regular_patch_matches_the_limit() {
 
 /// The largest angles, in degrees, between the normals of the two faces of
 /// any edge of `part`: sampled along every edge, and at its ends only.
-fn largest_kink(part: &Part<ScalInF64>) -> (f64, f64) {
+fn largest_kink(part: &NamedModel<ScalInF64>) -> (f64, f64) {
     type S = ScalInF64;
     let model = part.topology();
     let (mut largest, mut at_ends): (f64, f64) = (0.0, 0.0);
@@ -306,9 +312,8 @@ fn mirrored_cage_is_one_symmetric_solid() {
 fn bad_cages_are_refused() {
     type S = ScalInF64;
     let refused = |cage: Cage, mirror: Mirror| {
-        Subd.apply(Part::<S>::new(), "s", &SubdArgs { cage, mirror }, &NoFiles)
-            .err()
-            .expect("refused")
+        subd::<S>(&SubdArgs { cage, mirror })
+            .expect_err("refused")
             .to_string()
     };
     let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
@@ -447,17 +452,11 @@ fn random_cage_edits_build_valid_solids() {
         for _ in 0..6 {
             done.push(random_edit(&mut cage, mirror, &mut random));
         }
-        let part = Subd
-            .apply(
-                Part::<S>::new(),
-                "s",
-                &SubdArgs {
-                    cage: cage.clone(),
-                    mirror,
-                },
-                &NoFiles,
-            )
-            .unwrap_or_else(|e| panic!("seed {seed}, after {done:#?}: {e}"));
+        let part = subd::<S>(&SubdArgs {
+            cage: cage.clone(),
+            mirror,
+        })
+        .unwrap_or_else(|e| panic!("seed {seed}, after {done:#?}: {e}"));
         let params = ValidationParameters::default();
         if let Err(errors) = validate(&params, part.topology()) {
             let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();

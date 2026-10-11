@@ -17,12 +17,13 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     vector::Vector2,
+    with_context,
 };
 use geop_core_topology::{
     Body, CoedgeGeometry, EdgeId, FaceId, Model, ShellId, VertexId,
     contains::face::{PointClassification, face_contains},
 };
-use geop_ops::{Namer, Part, RefId};
+use geop_ops::{NamedModel, Namer};
 
 use crate::{
     naming::BooleanNaming,
@@ -65,70 +66,63 @@ fn body_edges<S: Scalar>(model: &Model<S>, body: Body) -> GeopResult<HashSet<Edg
 /// sheet crosses the face, or a curve ends inside it: a curve has to run
 /// from boundary to boundary of the face, or close on itself, to divide it.
 pub fn imprint_on_face<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     face: FaceId,
     sheets: &[ShellId],
     params: RemeshParams<S>,
 ) -> GeopResult<Vec<EdgeId>> {
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "imprint_on_face(name={}, face={face}, sheets={sheets:?})",
-            namer.root()
-        ))
-    };
-    let name = |part: &Part<S>, id: RefId| -> GeopResult<String> {
-        part.name_of(id)
-            .map(str::to_string)
-            .ok_or_else(|| GeopError::new(format!("imprint: {id} has no name")))
-    };
-    let body = part.topology().body_of_face(face).with_context(&ctx)?;
+    let ctx = with_context!(
+        "imprint_on_face(name={}, face={face}, sheets={sheets:?})",
+        namer.root()
+    );
+    let body = model.topology().body_of_face(face).with_context(&ctx)?;
     let sheets: Vec<Body> = sheets.iter().map(|&s| Body::Sheet(s)).collect();
 
     // The face on its own, crossed by every sheet.
-    let copy = part
+    let copy = model
         .copy_faces(&[face], None, |name| namer.name(&["copy", name]))
         .with_context(&ctx)?;
     let copy = Body::Sheet(copy.shells[0]);
     for &sheet in &sheets {
-        remesh(part, namer, copy, sheet, params).with_context(&ctx)?;
+        remesh(model, namer, copy, sheet, params).with_context(&ctx)?;
     }
 
     // The curves: the edges the copy now shares with a sheet, each with
     // where on the face it runs — its pcurve's middle, on the copy, whose
     // surface is the face's. In the order of their names, which does not
     // depend on how they were found.
-    let model = part.topology();
-    let on_copy = body_edges(model, copy).with_context(&ctx)?;
+    let topology = model.topology();
+    let on_copy = body_edges(topology, copy).with_context(&ctx)?;
     let mut on_sheets = HashSet::new();
     for &sheet in &sheets {
-        on_sheets.extend(body_edges(model, sheet).with_context(&ctx)?);
+        on_sheets.extend(body_edges(topology, sheet).with_context(&ctx)?);
     }
     let mut curves: Vec<(String, EdgeId, Vector2<S>)> = Vec::new();
     for &edge in on_copy.intersection(&on_sheets) {
-        let coedge = model
+        let coedge = topology
             .coedges_of_edge(edge)
             .into_iter()
             .find(|&c| {
-                model
+                topology
                     .get_coedge(c)
-                    .is_ok_and(|c| model.body_of_face(c.face).is_ok_and(|b| b == copy))
+                    .is_ok_and(|c| topology.body_of_face(c.face).is_ok_and(|b| b == copy))
             })
             .ok_or_else(|| {
                 ctx(GeopError::new(format!(
                     "imprint: edge {edge} is on no face of the copy"
                 )))
             })?;
-        let pcurve = &model.get_coedge(coedge)?.pcurve;
+        let pcurve = &topology.get_coedge(coedge)?.pcurve;
         let (t0, t1) = pcurve.domain();
         let middle = pcurve.evaluate(t0.add(t1).div(S::TWO)?)?;
-        curves.push((name(part, edge.into())?, edge, middle));
+        curves.push((model.name(edge).map(str::to_string)?, edge, middle));
     }
     curves.sort_by(|a, b| a.0.cmp(&b.0));
     if curves.is_empty() {
         return Err(ctx(GeopError::new(format!(
             "imprint: nothing crosses the face {:?}",
-            name(part, face.into())?
+            model.name(face).map(str::to_string)?
         ))));
     }
 
@@ -137,55 +131,47 @@ pub fn imprint_on_face<S: Scalar>(
     // or where another curve goes on.
     let boundary: HashSet<VertexId> = on_copy
         .difference(&on_sheets)
-        .map(|&e| model.get_edge(e).map(|e| [e.start_vertex, e.end_vertex]))
+        .map(|&e| topology.get_edge(e).map(|e| [e.start_vertex, e.end_vertex]))
         .collect::<GeopResult<Vec<_>>>()?
         .into_iter()
         .flatten()
         .collect();
     let mut ends: HashMap<VertexId, usize> = HashMap::new();
     for (_, edge, _) in &curves {
-        let edge = model.get_edge(*edge)?;
+        let edge = topology.get_edge(*edge)?;
         *ends.entry(edge.start_vertex).or_default() += 1;
         *ends.entry(edge.end_vertex).or_default() += 1;
     }
     let mut loose: Vec<String> = ends
         .iter()
         .filter(|&(v, &count)| count == 1 && !boundary.contains(v))
-        .map(|(&v, _)| name(part, v.into()))
+        .map(|(&v, _)| model.name(v).map(str::to_string))
         .collect::<GeopResult<_>>()?;
     if !loose.is_empty() {
         loose.sort();
         return Err(ctx(GeopError::new(format!(
             "imprint: the curves end inside the face {:?}, at {loose:?}; to divide it, they have to cross it or close on themselves",
-            name(part, face.into())?
+            model.name(face).map(str::to_string)?
         ))));
     }
 
-    part.assemble_sheet(&[copy], &[]).with_context(&ctx)?;
+    model.assemble_sheet(&[copy], &[]).with_context(&ctx)?;
 
     // The curves onto the face itself: its boundary split where they end on
     // it, each spliced into the piece it lies in.
     let mut bodies = vec![body];
     bodies.extend(&sheets);
-    let mut naming = BooleanNaming::new(part, namer, &bodies).with_context(&ctx)?;
+    let mut naming = BooleanNaming::new(model, namer, &bodies).with_context(&ctx)?;
     for &sheet in &sheets {
-        remesh_vertices(part, body, sheet).with_context(&ctx)?;
-        remesh_vertices_x_edges(
-            part,
-            &mut naming,
-            body,
-            sheet,
-            params.max_nodes,
-            params.min_subdivision_size,
-        )
-        .with_context(&ctx)?;
+        remesh_vertices(model, body, sheet).with_context(&ctx)?;
+        remesh_vertices_x_edges(model, &mut naming, body, sheet, &params).with_context(&ctx)?;
     }
     let mut pieces = vec![face];
     for (curve_name, edge, middle) in &curves {
         let mut target = None;
         for &piece in &pieces {
             let class = face_contains(
-                part.topology(),
+                model.topology(),
                 piece,
                 middle[0],
                 middle[1],
@@ -204,7 +190,7 @@ pub fn imprint_on_face<S: Scalar>(
                 "imprint: the curve {curve_name:?}, at {middle:?} on the face, lies inside none of its pieces"
             )))
         })?;
-        let split = part
+        let split = model
             .splice_edge_into_face(
                 *edge,
                 target,
@@ -216,8 +202,8 @@ pub fn imprint_on_face<S: Scalar>(
         naming.face_split(target, *edge, split)?;
         pieces.extend(split);
     }
-    naming.finish(part).with_context(&ctx)?;
-    part.assemble_sheet(&sheets, &[]).with_context(&ctx)?;
+    naming.finish(model).with_context(&ctx)?;
+    model.assemble_sheet(&sheets, &[]).with_context(&ctx)?;
     Ok(curves.into_iter().map(|(_, edge, _)| edge).collect())
 }
 
@@ -225,17 +211,15 @@ pub fn imprint_on_face<S: Scalar>(
 mod tests {
     use super::imprint_on_face;
     use crate::remesh::remesh::RemeshParams;
+    use crate::scenes::{assert_valid, v3};
     use geop_core_math::{
         geop_error::GeopResult,
         primitives::CoordinateSystem,
         scalars::{ScalInF64 as S, Scalar},
-        vector::{Vector2, Vector3},
+        vector::Vector2,
     };
-    use geop_core_topology::{
-        EdgeId, SolidId,
-        validation::{ValidationParameters, validate, validate_manifold},
-    };
-    use geop_ops::{Namer, Part};
+    use geop_core_topology::{EdgeId, SolidId};
+    use geop_ops::{NamedModel, Namer};
     use geop_ops_extrude_revolve::{
         common::{Profile, polygon, polyline},
         extrude::extrude,
@@ -246,10 +230,6 @@ mod tests {
         sweep::SweepLoop,
     };
 
-    fn v3(x: f64, y: f64, z: f64) -> Vector3<S> {
-        Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
-    }
-
     fn v2s(points: &[[f64; 2]]) -> Vec<Vector2<S>> {
         points
             .iter()
@@ -257,34 +237,21 @@ mod tests {
             .collect()
     }
 
-    fn assert_valid(part: &Part<S>) {
-        let params = ValidationParameters::default();
-        for result in [
-            validate(&params, part.topology()),
-            validate_manifold(&params, part.topology()),
-        ] {
-            if let Err(e) = result {
-                panic!("{e:?}");
-            }
-        }
-        part.check_names().unwrap();
-    }
-
     /// Imprints onto the face named `target` of the solid `build` makes
     /// the profile `profile`, drawn in the plane `z = 2` and swept down to
     /// `z = -3`, through the whole solid.
     fn imprint(
-        build: impl Fn(&mut Part<S>) -> SolidId,
+        build: impl Fn(&mut NamedModel<S>) -> SolidId,
         target: &str,
         profile: Profile<S>,
-    ) -> GeopResult<(Part<S>, Vec<EdgeId>)> {
-        let mut part = Part::<S>::new();
-        build(&mut part);
-        let target = part.face_id(target)?;
+    ) -> GeopResult<(NamedModel<S>, Vec<EdgeId>)> {
+        let mut model = NamedModel::<S>::new();
+        build(&mut model);
+        let target = model.face_id(target)?;
         let plane = CoordinateSystem::world_at(v3(0.0, 0.0, 2.0));
         let namer = Namer::new("project", "p")?;
         let swept = extrude(
-            &mut part,
+            &mut model,
             &namer,
             None,
             &plane,
@@ -293,17 +260,17 @@ mod tests {
             &[SweepLoop::plain(profile)],
         )?;
         let edges = imprint_on_face(
-            &mut part,
+            &mut model,
             &namer,
             target,
             &swept.shells,
             RemeshParams::default(),
         )?;
-        Ok((part, edges))
+        Ok((model, edges))
     }
 
-    fn cube(part: &mut Part<S>) -> SolidId {
-        cube_solid(part, "c", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap()
+    fn cube(model: &mut NamedModel<S>) -> SolidId {
+        cube_solid(model, "c", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap()
     }
 
     /// The unit cube's top face, at `z = 1`.
@@ -318,27 +285,27 @@ mod tests {
     /// whole.
     #[test]
     fn a_line_across_a_face_divides_it_in_two() {
-        let (part, edges) = imprint(cube, TOP, chain(&[[0.3, -1.0], [0.3, 2.0]])).unwrap();
-        assert_valid(&part);
+        let (model, edges) = imprint(cube, TOP, chain(&[[0.3, -1.0], [0.3, 2.0]])).unwrap();
+        assert_valid(&model);
         assert_eq!(edges.len(), 1);
-        assert_eq!(part.topology().solids.len(), 1);
-        assert!(part.sheet_face_names().is_empty(), "the sweep is gone");
+        assert_eq!(model.topology().solids.len(), 1);
+        assert!(model.sheet_face_names().is_empty(), "the sweep is gone");
         // Six faces and one more; twelve edges, two of them split, and the
         // one imprinted.
-        assert_eq!(part.topology().faces.len(), 7);
-        assert_eq!(part.topology().edges.len(), 15);
-        assert_eq!(part.topology().vertices.len(), 10);
+        assert_eq!(model.topology().faces.len(), 7);
+        assert_eq!(model.topology().edges.len(), 15);
+        assert_eq!(model.topology().vertices.len(), 10);
     }
 
     /// A bent chain whose corner lies on the face divides it along both
     /// of its legs.
     #[test]
     fn a_bent_chain_divides_a_face_along_both_legs() {
-        let (part, edges) =
+        let (model, edges) =
             imprint(cube, TOP, chain(&[[0.3, -1.0], [0.5, 0.5], [2.0, 0.6]])).unwrap();
-        assert_valid(&part);
+        assert_valid(&model);
         assert_eq!(edges.len(), 2);
-        assert_eq!(part.topology().faces.len(), 7);
+        assert_eq!(model.topology().faces.len(), 7);
     }
 
     /// A square inside the face closes on itself: it bounds a new face, a
@@ -346,13 +313,13 @@ mod tests {
     #[test]
     fn a_closed_loop_inside_a_face_cuts_out_a_face() {
         let square = polygon(&v2s(&[[0.2, 0.2], [0.6, 0.2], [0.6, 0.6], [0.2, 0.6]])).unwrap();
-        let (part, edges) = imprint(cube, TOP, Profile::closed(square)).unwrap();
-        assert_valid(&part);
+        let (model, edges) = imprint(cube, TOP, Profile::closed(square)).unwrap();
+        assert_valid(&model);
         assert_eq!(edges.len(), 4);
-        assert_eq!(part.topology().faces.len(), 7);
-        let top = part
+        assert_eq!(model.topology().faces.len(), 7);
+        let top = model
             .topology()
-            .get_face(part.face_id(TOP).unwrap())
+            .get_face(model.face_id(TOP).unwrap())
             .unwrap();
         assert_eq!(top.holes.len(), 1);
     }
@@ -364,9 +331,9 @@ mod tests {
     /// the edge between the quarters where it ends on it.
     #[test]
     fn a_slanted_line_divides_a_round_face_along_an_ellipse() {
-        let cylinder = |part: &mut Part<S>| {
+        let cylinder = |model: &mut NamedModel<S>| {
             revolved_cylinder_along_axis(
-                part,
+                model,
                 "y",
                 v3(-0.5, 0.0, 0.0),
                 S::from_f64(0.5),
@@ -375,34 +342,30 @@ mod tests {
             )
             .unwrap()
         };
-        let (part, edges) = imprint(
+        let (model, edges) = imprint(
             cylinder,
             "cylinder(y,c1,q0)",
             chain(&[[-1.0, -0.3], [1.0, 0.3]]),
         )
         .unwrap();
-        assert_valid(&part);
+        assert_valid(&model);
         assert_eq!(edges.len(), 1);
         // Four quarters of the side and four wedges in each cap, and the
         // piece split off.
-        assert_eq!(part.topology().faces.len(), 13);
+        assert_eq!(model.topology().faces.len(), 13);
     }
 
     /// A line ending inside the face divides nothing, and is refused.
     #[test]
     fn a_line_ending_inside_the_face_is_refused() {
-        let error = imprint(cube, TOP, chain(&[[0.3, -1.0], [0.3, 0.5]]))
-            .err()
-            .expect("refused");
+        let error = imprint(cube, TOP, chain(&[[0.3, -1.0], [0.3, 0.5]])).expect_err("refused");
         assert!(error.root_message().contains("end inside"), "{error:?}");
     }
 
     /// A line beside the face misses it, and is refused.
     #[test]
     fn a_line_beside_the_face_is_refused() {
-        let error = imprint(cube, TOP, chain(&[[3.0, -1.0], [3.0, 2.0]]))
-            .err()
-            .expect("refused");
+        let error = imprint(cube, TOP, chain(&[[3.0, -1.0], [3.0, 2.0]])).expect_err("refused");
         assert!(
             error.root_message().contains("nothing crosses"),
             "{error:?}"

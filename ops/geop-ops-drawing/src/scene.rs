@@ -41,7 +41,8 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_topology::{FaceId, Model};
-use geop_ops::{Part, operation::INSTANCE_SEPARATOR};
+use geop_ops::{Design, NamedModel, model::model, operation::BuildView, placed::placed_parts};
+use geop_ops_hole::{Threads, threads};
 
 use crate::{
     drawing::drawn_faces,
@@ -58,7 +59,10 @@ pub struct Body<'p, S: Scalar> {
     /// for the drawn part's own faces, `screw` for the part placed as
     /// `screw`, `arm/screw` for one placed in that.
     pub path: String,
-    pub part: &'p Part<S>,
+    /// Its part's model, which names its entities.
+    pub named: &'p NamedModel<S>,
+    /// Its part's cosmetic threads, if it records any.
+    pub threads: Option<&'p Threads<S>>,
     pub faces: Vec<FaceId>,
     /// Where its part is placed; `None` for the drawn part's own faces.
     pub pose: Option<Pose<S>>,
@@ -66,7 +70,7 @@ pub struct Body<'p, S: Scalar> {
 
 impl<'p, S: Scalar> Body<'p, S> {
     pub fn model(&self) -> &'p Model<S> {
-        self.part.topology()
+        self.named.topology()
     }
 
     /// How it is turned, if it is turned at all.
@@ -104,15 +108,6 @@ pub struct Scene<'p, S: Scalar> {
 }
 
 impl<'p, S: Scalar> Scene<'p, S> {
-    /// The faces of `part` and of every part placed in it, however deep,
-    /// each where it is placed: the part's own first, then those placed,
-    /// in the order they were placed, each followed by those placed in it.
-    pub fn of(part: &'p Part<S>) -> GeopResult<Self> {
-        let mut bodies = Vec::new();
-        collect(part, "", None, &mut bodies)?;
-        Self::new(bodies)
-    }
-
     /// The scene of `bodies`.
     pub fn new(bodies: Vec<Body<'p, S>>) -> GeopResult<Self> {
         let mut occluders: Vec<Vec<Occluder<S>>> = Vec::new();
@@ -627,36 +622,42 @@ fn same_turn<S: Scalar>(a: Option<Quaternion<S>>, b: Option<Quaternion<S>>) -> b
     }
 }
 
-/// Adds the bodies of `part`, placed at `pose`, as `path`, and of every
-/// part placed in it, to `bodies`.
-fn collect<'p, S: Scalar>(
-    part: &'p Part<S>,
-    path: &str,
-    pose: Option<Pose<S>>,
-    bodies: &mut Vec<Body<'p, S>>,
-) -> GeopResult<()> {
-    let faces = drawn_faces(part.topology());
+impl<'p> Scene<'p, Design> {
+    /// The faces of the part `view` shows and of every part placed in it,
+    /// however deep, each where it is placed: the part's own first, then
+    /// those placed, in the order they were placed, each followed by those
+    /// placed in it.
+    pub fn of(view: BuildView<'p>) -> GeopResult<Self> {
+        let mut bodies = Vec::new();
+        push(view, String::new(), None, &mut bodies);
+        for placed in placed_parts(view)? {
+            let inner = placed.located.instance.component.view();
+            push(inner, placed.name, Some(placed.located.world), &mut bodies);
+        }
+        Self::new(bodies)
+    }
+}
+
+/// Adds the body of the part `view` shows itself, placed at `pose`, as
+/// `path`, to `bodies` — if it has faces to draw.
+fn push<'p>(
+    view: BuildView<'p>,
+    path: String,
+    pose: Option<Pose<Design>>,
+    bodies: &mut Vec<Body<'p, Design>>,
+) {
+    // A part with no model has nothing to draw.
+    let Ok(named) = view.retrieve_target(&model()) else {
+        return;
+    };
+    let faces = drawn_faces(named.topology());
     if !faces.is_empty() {
         bodies.push(Body {
-            path: path.to_string(),
-            part,
+            path,
+            named,
+            threads: view.retrieve_target(&threads()).ok(),
             faces,
             pose,
         });
     }
-    for (id, instance) in part.instances() {
-        let name = part
-            .name_of(id)
-            .ok_or_else(|| GeopError::new(format!("placed part {id} has no name")))?;
-        let inner = match &pose {
-            Some(outer) => outer.compose(&instance.pose),
-            None => instance.pose,
-        };
-        let path = match path {
-            "" => name.to_string(),
-            _ => format!("{path}{INSTANCE_SEPARATOR}{name}"),
-        };
-        collect(&instance.part, &path, Some(inner), bodies)?;
-    }
-    Ok(())
 }

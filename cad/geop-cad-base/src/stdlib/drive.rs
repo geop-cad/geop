@@ -15,45 +15,43 @@
 //!
 //! Gears of one module mesh with their pitch circles touching: centres
 //! `m · (z1 + z2) / 2` apart. Each gear's datum `axis` is a joint's
-//! connector; a revolute joint on each, and a [`CouplingKind::Gear`] of
-//! the two joints with `ratio = z2 / z1` — the first joint's gear turns
-//! that many times per turn of the second's — and `reverse`, since external
-//! gears turn opposite ways, keeps them in mesh. A rack slides by the arc
-//! its pinion's pitch circle rolls off: a [`CouplingKind::RackPinion`] of
-//! `radius = m · z / 2`, the pinion's pitch radius, which its sketch
-//! `pitch` draws. Two GT2 pulleys on one belt turn the same way, at the
+//! connector; a revolute joint on each, and a [`Transmission::Gear`]
+//! coupling of the two joints with `value = z2 / z1`, the ratio — the
+//! first joint's gear turns that many times per turn of the second's — and
+//! `reverse`, since external gears turn opposite ways, keeps them in mesh.
+//! A rack slides by the arc its pinion's pitch circle rolls off: a
+//! [`Transmission::RackPinion`] coupling of `value = m · z / 2`, the
+//! pinion's pitch radius, which its sketch `pitch` draws. Two GT2 pulleys on one belt turn the same way, at the
 //! ratio of their tooth counts: a gear coupling without `reverse`.
 //!
 //! A gear has a tooth centred on `+x`. Two gears whose centres lie along
 //! `x` mesh when the second has a gap facing the first: turned half a
 //! tooth, `180° / z2`, if `z2` is even, and not at all if it is odd.
 //!
-//! [`CouplingKind::Gear`]: geop_ops_assembly::CouplingKind::Gear
-//! [`CouplingKind::RackPinion`]: geop_ops_assembly::CouplingKind::RackPinion
+//! [`Transmission::Gear`]: geop_ops_assembly::Transmission::Gear
+//! [`Transmission::RackPinion`]: geop_ops_assembly::Transmission::RackPinion
 
-use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::{DatumComponent, FrameAxis},
-};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
+use geop_ops::BooleanOp;
 use geop_ops::{
-    EntityRef, ORIGIN,
-    parameters::{Material, Parameter, ParameterKind, Parameters, Row},
+    EntityRef, origin_plane,
+    parameters::{Parameter, ParameterKind, Row},
 };
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extent, Extents};
-use geop_ops_pattern::{CircularPatternArgs, Spacing};
+use geop_ops_pattern::{CircularPatternArgs, Seeds, Spacing};
 
 use super::{
     StandardPart,
     drawing::Drawing,
     involute::{self, DEGREE, FEWEST_TEETH},
     steps::{
-        Around, axis_datum, col, extrude, offset_datum, outline_plane, plane_datum, profile_plane,
-        revolve, size, z_axis,
+        Around, axis_datum, col, extrude, family, offset_datum, outline_plane, plane_datum,
+        profile_plane, revolve, size, z_axis,
     },
     tables, titled,
 };
-use crate::Program;
+use crate::Push;
 
 /// The table parameter a gear's tooth count is chosen by.
 pub const TEETH: &str = "teeth";
@@ -98,49 +96,27 @@ fn teeth() -> GeopResult<Parameter> {
     })
 }
 
-/// A number parameter, `expression` by default — a formula of those
-/// before it, or a value.
-fn number(name: &str, expression: &str, min: f64, max: f64) -> Parameter {
-    Parameter {
-        name: name.into(),
-        kind: ParameterKind::Number {
-            expression: expression.into(),
-            min: Some(min),
-            max: Some(max),
-        },
-    }
-}
-
-fn steel() -> Option<Material> {
-    Some(Material {
-        name: "Steel".into(),
-        density: 7850.0,
-    })
-}
-
 /// An involute spur gear, 20° pressure angle, of module `size.m` and
 /// [`TEETH`]`.z` teeth, `width` wide up `z` from its side on the `xy`
 /// plane, bored `bore` through: a disc of the tip diameter, the gap of
 /// [`involute::gap`] patterned round it and cut away. Its datums: `axis`,
 /// `side`, and the sketch `pitch`, its pitch circle on the side.
 pub fn spur_gear(file: &'static str) -> GeopResult<StandardPart> {
-    let mut program = Program::new();
-    program.parameters = Parameters {
-        material: steel(),
-        color: Some("#9aa0a8".into()),
-        values: vec![
+    let mut program = family(
+        "Steel",
+        Some("#9aa0a8"),
+        vec![
             size(tables::gear_modules()),
             teeth()?,
-            number("width", &format!("8 * {}", col("m")), 1.0, 100.0),
-            number(
+            Parameter::number("width", &format!("8 * {}", col("m")), 1.0, 100.0),
+            Parameter::number(
                 "bore",
                 &format!("max(2, round({} * {TEETH}.z / 4))", col("m")),
                 1.0,
                 100.0,
             ),
         ],
-        ..Parameters::default()
-    };
+    );
     let m = col("m");
     let z = format!("{TEETH}.z");
     // The disc's rim in twelve arcs, one every 30°: every gap cut splits
@@ -172,7 +148,7 @@ pub fn spur_gear(file: &'static str) -> GeopResult<StandardPart> {
         (blank, outline_plane()),
         Extents::blind("width"),
         Combine::NewBody,
-    )?;
+    );
 
     // One gap, round from its foot on the root circle: up its lower side,
     // over a point on `x` past the tip circle, down its upper side — the
@@ -218,28 +194,30 @@ pub fn spur_gear(file: &'static str) -> GeopResult<StandardPart> {
             ..Extents::blind(format!("width + 2 * {m}"))
         },
         Combine::NewBody,
-    )?;
+    );
     program.push(
         "teeth",
         CircularPatternArgs {
-            features: Vec::new(),
-            bodies: vec![EntityRef::Solid {
-                name: "extrude(gap)".into(),
-            }],
+            seeds: Seeds::bodies(
+                vec![EntityRef::Solid {
+                    name: "extrude(gap)".into(),
+                }],
+                Combine::With {
+                    op: BooleanOp::Difference,
+                    target: "extrude(blank)".into(),
+                },
+            ),
             axis: Some(z_axis()),
             reversed: false,
             count: z.as_str().into(),
             angle: Spacing::extent(360.0),
-            combine: Combine::Difference {
-                target: "extrude(blank)".into(),
-            },
         },
     );
 
     let mut pitch = Drawing::new(&program.parameters)?;
     let centre = pitch.origin();
     pitch.circle(centre, &format!("{m} * {z}"))?;
-    program.push("pitch", pitch.on(outline_plane())?);
+    program.push("pitch", pitch.on(outline_plane()));
     axis_datum(&mut program);
     plane_datum(&mut program, "side", "0");
     Ok(StandardPart {
@@ -271,16 +249,14 @@ pub const RACK_TEETH: usize = 30;
 /// on the pitch plane — a slider joint's connector — `pitch`, `back`, and
 /// `end`.
 pub fn rack(file: &'static str) -> GeopResult<StandardPart> {
-    let mut program = Program::new();
-    program.parameters = Parameters {
-        material: steel(),
-        color: Some("#9aa0a8".into()),
-        values: vec![
+    let mut program = family(
+        "Steel",
+        Some("#9aa0a8"),
+        vec![
             size(tables::racks()),
-            number("teeth", "20", 1.0, RACK_TEETH as f64),
+            Parameter::number("teeth", "20", 1.0, RACK_TEETH as f64),
         ],
-        ..Parameters::default()
-    };
+    );
     let (m, b, h) = (col("m"), col("b"), col("h"));
     // In the profile plane: `x` up the teeth, along `y`; `y` along `z`.
     let half = |height: &str| format!("pi * {m} / 4 - {height} * tan(20)");
@@ -314,7 +290,7 @@ pub fn rack(file: &'static str) -> GeopResult<StandardPart> {
         (profile, profile_plane()),
         across(b.clone()),
         Combine::NewBody,
-    )?;
+    );
     let mut length = Drawing::new(&program.parameters)?;
     length.polygon(&[
         [format!("-{h} - {m}"), format!("-{m}")],
@@ -328,12 +304,13 @@ pub fn rack(file: &'static str) -> GeopResult<StandardPart> {
         "length",
         (length, profile_plane()),
         across(format!("{b} + 2 * {m}")),
-        Combine::Intersection {
+        Combine::With {
+            op: BooleanOp::Intersection,
             target: "extrude(teeth)".into(),
         },
-    )?;
+    );
     axis_datum(&mut program);
-    let xz = || EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Y));
+    let xz = || origin_plane(FrameAxis::Y);
     offset_datum(&mut program, "pitch", xz(), "0");
     offset_datum(&mut program, "back", xz(), &format!("-{h}"));
     plane_datum(&mut program, "end", "0");
@@ -342,13 +319,6 @@ pub fn rack(file: &'static str) -> GeopResult<StandardPart> {
         base: "back",
         program: titled(program, "Gear rack, 20° pressure angle", "Gear rack"),
         threaded: Vec::new(),
-    })
-}
-
-fn aluminium() -> Option<Material> {
-    Some(Material {
-        name: "Aluminium 6061".into(),
-        density: 2700.0,
     })
 }
 
@@ -371,14 +341,12 @@ const GT2_DEPTH: f64 = 0.76;
 /// and flanges turned in one profile — one boolean. Its datums: `axis`,
 /// `end`, and the plane `belt` through the middle of the belt, on which
 /// the sketch `pitch` draws its pitch circle.
-fn gt2_pulley(z: usize, file: &'static str, bores: tables::Table) -> GeopResult<StandardPart> {
-    let mut program = Program::new();
-    program.parameters = Parameters {
-        material: aluminium(),
-        color: Some("#c8ccd2".into()),
-        values: vec![size(bores)],
-        ..Parameters::default()
-    };
+fn gt2_pulley(z: usize, file: &'static str) -> GeopResult<StandardPart> {
+    let mut program = family(
+        "Aluminium 6061",
+        Some("#c8ccd2"),
+        vec![size(tables::gt2_pulleys(z))],
+    );
     let (d, dh, lh) = (col("d"), col("dh"), col("lh"));
     let (t, w) = (1.0, 7.0);
     let pitch = 2.0 * z as f64 / std::f64::consts::PI;
@@ -412,7 +380,7 @@ fn gt2_pulley(z: usize, file: &'static str, bores: tables::Table) -> GeopResult<
         profile,
         Around::ZAxis,
         Combine::NewBody,
-    )?;
+    );
 
     // The ring runs from the middle of one flange to the middle of the
     // other, so that none of its faces lies on one of theirs: round, per
@@ -453,10 +421,11 @@ fn gt2_pulley(z: usize, file: &'static str, bores: tables::Table) -> GeopResult<
         "ring_outline",
         (ring, EntityRef::datum("ring_floor")),
         Extents::blind(t + w),
-        Combine::Union {
+        Combine::With {
+            op: BooleanOp::Union,
             target: "revolve(body)".into(),
         },
-    )?;
+    );
 
     axis_datum(&mut program);
     plane_datum(&mut program, "end", "0");
@@ -464,7 +433,7 @@ fn gt2_pulley(z: usize, file: &'static str, bores: tables::Table) -> GeopResult<
     let mut circle = Drawing::new(&program.parameters)?;
     let centre_point = circle.origin();
     circle.circle(centre_point, &format!("{pitch}"))?;
-    program.push("pitch", circle.on(EntityRef::datum("belt"))?);
+    program.push("pitch", circle.on(EntityRef::datum("belt")));
     Ok(StandardPart {
         file,
         base: "end",
@@ -474,15 +443,15 @@ fn gt2_pulley(z: usize, file: &'static str, bores: tables::Table) -> GeopResult<
 }
 
 pub fn gt2_pulley_16(file: &'static str) -> GeopResult<StandardPart> {
-    gt2_pulley(16, file, tables::gt2_pulleys(16))
+    gt2_pulley(16, file)
 }
 
 pub fn gt2_pulley_20(file: &'static str) -> GeopResult<StandardPart> {
-    gt2_pulley(20, file, tables::gt2_pulleys(20))
+    gt2_pulley(20, file)
 }
 
 pub fn gt2_pulley_36(file: &'static str) -> GeopResult<StandardPart> {
-    gt2_pulley(36, file, tables::gt2_pulleys(36))
+    gt2_pulley(36, file)
 }
 
 /// A shaft collar after DIN 705 A: a ring bored `d`, `D` across and `b`
@@ -491,13 +460,11 @@ pub fn gt2_pulley_36(file: &'static str) -> GeopResult<StandardPart> {
 /// diameter. The boolean cutting it names the hole's faces after what it
 /// crossed, so they are not listed as threaded.
 pub fn shaft_collar(file: &'static str) -> GeopResult<StandardPart> {
-    let mut program = Program::new();
-    program.parameters = Parameters {
-        material: steel(),
-        color: Some("#8e949c".into()),
-        values: vec![size(tables::shaft_collars())],
-        ..Parameters::default()
-    };
+    let mut program = family(
+        "Steel",
+        Some("#8e949c"),
+        vec![size(tables::shaft_collars())],
+    );
     let (d, big, b) = (col("d"), col("D"), col("b"));
     let mut profile = Drawing::new(&program.parameters)?;
     profile.polygon(&[
@@ -513,7 +480,7 @@ pub fn shaft_collar(file: &'static str) -> GeopResult<StandardPart> {
         profile,
         Around::ZAxis,
         Combine::NewBody,
-    )?;
+    );
     // Drawn in the profile plane, through the axis, and extruded out along
     // `+x` from inside the bore.
     let mut hole = Drawing::new(&program.parameters)?;
@@ -530,10 +497,11 @@ pub fn shaft_collar(file: &'static str) -> GeopResult<StandardPart> {
             side2: None,
             reversed: false,
         },
-        Combine::Difference {
+        Combine::With {
+            op: BooleanOp::Difference,
             target: "revolve(ring)".into(),
         },
-    )?;
+    );
     axis_datum(&mut program);
     plane_datum(&mut program, "base", "0");
     Ok(StandardPart {
@@ -554,13 +522,11 @@ pub fn shaft_collar(file: &'static str) -> GeopResult<StandardPart> {
 /// `F` across and `f` thick together. Its datums: `axis`, `end` — the `d1`
 /// end — and `far_end`.
 pub fn flange_coupling(file: &'static str) -> GeopResult<StandardPart> {
-    let mut program = Program::new();
-    program.parameters = Parameters {
-        material: aluminium(),
-        color: Some("#c8ccd2".into()),
-        values: vec![size(tables::flange_couplings())],
-        ..Parameters::default()
-    };
+    let mut program = family(
+        "Aluminium 6061",
+        Some("#c8ccd2"),
+        vec![size(tables::flange_couplings())],
+    );
     let (d1, d2, big, flange, l, f) =
         (col("d1"), col("d2"), col("D"), col("F"), col("L"), col("f"));
     let (hub, rim) = (format!("{big} / 2"), format!("{flange} / 2"));
@@ -589,7 +555,7 @@ pub fn flange_coupling(file: &'static str) -> GeopResult<StandardPart> {
         profile,
         Around::ZAxis,
         Combine::NewBody,
-    )?;
+    );
     axis_datum(&mut program);
     plane_datum(&mut program, "end", "0");
     plane_datum(&mut program, "far_end", &l);

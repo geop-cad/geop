@@ -100,23 +100,41 @@ and every comparison downstream depends on that statement being honest.
   product, norm, normalization) plus the interval-aware `could_be_equal`
   and `union`.
 - `Matrix<S, R, C>`: a dense, row-major fixed-size matrix with `transpose`,
-  `mul_vec`, `mul_mat` and `solve_linear_system`.
-- `solvers::interval_newton`: a verified Gauss-Newton-Krawczyk contraction for
-  over-determined systems `F: R² → Rᴹ`, such as curve/curve intersection.
-  One step either proves that a box holds exactly one root (`verified`),
-  proves that it holds none (`empty`), or tightens it without deciding.
+  `mul_vec` and `mul_mat`.
 
 ## Solvers
 
-In `solvers`: `interval_newton`, `least_squares` and `system`.
+In `solvers`: `linear`, `newton`, `least_squares` and `system`. Every
+generic solver of the kernel lives here, written once. What stays outside
+are loops particular to one geometric problem around these (a foot point
+on a surface, a marching step, a rolling ball's center) and free-choice
+searches in plain numbers (a bisection for a station), whose arithmetic
+construction depends on to the last bit.
 
-What the constraint solvers of sketches and assemblies share:
+- `solvers::linear`: dense linear algebra in honest enclosures, one
+  implementation per algorithm — `solve_linear_system` (a small fixed-size
+  system, partial pivoting), `solve_pivoted` (several right-hand sides),
+  `solve_banded` (a banded system that needs no pivoting, as curve
+  interpolation's), `cholesky`/`solve_cholesky`, and Gauss-Jordan
+  elimination with complete pivoting over a Jacobian (`eliminate`,
+  `null_space`, `rank`, `inverse`). A pivot counts as zero exactly when it
+  could be. Two of them are the same algorithm with different arithmetic
+  (which pivot, divide or multiply by a reciprocal); their callers build
+  curves, so they are kept apart rather than merged into one that would
+  round differently for one of them.
+- `solvers::newton::refine`: Newton refinement of a root a subdivision
+  search has isolated — sharpened iterates but the last, the result
+  intersected with the box the search proved, and the box itself where
+  Newton stops.
 
 - `solvers::least_squares::minimize`: constrained Levenberg–Marquardt over any
   `Scalar` — a sum of squares minimized where other residuals vanish
-  exactly, with a BFGS estimate of the constraints' curvature. Steps are
-  free choices and sharpened; one is taken only where the merit definitely
-  drops, so no tolerance decides when it has converged.
+  exactly, with a symmetric rank-one estimate of the constraints'
+  curvature. Steps are free choices and sharpened; one is taken only where
+  the sum or the violation definitely drops, so no tolerance decides when
+  it has converged. A norm is taken scaled by the largest entry: squared as
+  they are, residuals of `1e-6` have a norm of `[0, 4.6e-5]` in fixed point,
+  which no step can definitely lower.
 - `dual::Dual<S, N>`: forward-mode automatic differentiation over any
   `Scalar`, carrying the gradient with respect to the `N` variables one
   residual depends on. Built over an interval scalar, a residual's value is
@@ -124,11 +142,6 @@ What the constraint solvers of sketches and assemblies share:
 
 ## Search helpers
 
-- `ConvexHull<S, N>`: a point set such as a NURBS control polygon, never
-  built explicitly. `could_overlap` and the containment queries run GJK
-  directly on the points. Because a NURBS curve or surface lies inside the
-  convex hull of its control points, this is what lets subdivision searches
-  throw away regions that cannot contain a solution.
 - `DisjointSet`: gathers the many small candidates a subdivision search
   finds near each real solution and merges every pair that
   `could_be_equal` (transitively, with `union`), so that no two entries
@@ -182,15 +195,16 @@ The `primitives` module holds `CoordinateSystem`, `TriangleFace` (a mesh
 triangle with the surface normals at its corners), `Ray`, `Datum` and
 `Pose`.
 
-`Pose` is where a rigid body sits, kept as a unit dual quaternion
-(`DualQuaternion`, generic over the scalar type, with `Quaternion`): no
-singular configurations, and polynomial in its rotation and translation,
-which keeps gradients through it well behaved. A file stores it as a
-position and a rotation quaternion; angles about `x`, `y` and `z`
-(`euler`, `from_euler`) are only for showing it to people. It is plain
-`f64` design data — where the designer, or a solver acting for them, chose
-to put a body — but what it does to geometry (`motion`) is computed in the
-geometry's own scalar type.
+`Pose` is where a rigid body sits: a rotation, a unit `Quaternion`, and a
+position, generic over the scalar type. A unit quaternion has no singular
+configurations, and moving a point by it is a polynomial of its
+components, which keeps gradients through it well behaved. A file stores
+the two as they are; angles about `x`, `y` and `z` (`euler_degrees`,
+`from_euler`) are only for showing it to people. What it does to geometry
+(`motion`) is computed in the geometry's own scalar type. A solver steps a
+pose by a twist in its own frame, through the exponential map
+(`Pose::exp`), so every step is taken from where the body is and no turn
+is ever far from the variables' origin.
 
 `Datum` is reference geometry: a right-handed orthonormal
 `CoordinateSystem` and the `DatumKind` saying which part of it the datum
@@ -208,43 +222,79 @@ nearest point of a line — what picking in a viewer is built on.
 
 ## Constraint systems (`solvers::system`)
 
-Solving constraints: the one engine behind sketches, assemblies and the
-parameters of programs.
+One layer for every constraint system of the kernel: a sketch's numbers
+(`geop-core-sketch`) and a program's state, where its parts are
+(`geop_core_program::solve`), are each only an adapter.
 
+- **Blocks** of variables (`Variable`): a number, a pose. A block moves by
+  steps along its own tangent space (`retract`: adding to a number; a pose
+  by the exponential map of a twist in its own frame), says what keeps it
+  where it was (`stay`), and — for enclosing — every value a box of steps
+  reaches (`retract_over`) and the differential of that map over the box
+  (`differential`): none for a number, the right Jacobian of the
+  exponential map for a pose (`Pose::exp_differential`).
+- **Terms** (`Equations`): constraints, each with what it asks of its
+  residuals (`Bound::Zero`, or `Bound::AtMost` for a limit), and
+  preferences — a drag's pulls. Evaluated at the blocks' values, a term
+  gives its residuals, each a length, and its Jacobian by the steps of
+  each block it reads.
+- **A system** (`System`): the equations, how each block may move
+  (`Mobility::Held`, held where it was as far as the constraints allow, or
+  `Mobility::Follows`, moved as the others need), and the system's size,
+  which a residual holds to one part in a billion of.
 
-A system has **parameters** (`Param`): numbers, and poses of rigid
-bodies — a unit dual quaternion and the point the body turns about. It has
-**residuals** (`Residual`): functions of a few parameters that are zero
-exactly when what they stand for holds. Solving moves the free parameters
-until every residual vanishes, changing them as little as it can: `solve`
-is a function of the parameters, what each may do (`Mobility`), the
-residuals and the size: it gives back where the parameters go, and leaves
-them as they were.
+On it, written once:
 
-- **Residuals are lengths**, so no kind dominates another by its units,
-  and one relative tolerance decides when a residual holds.
-- **Residuals are constraints.** A solve minimizes its preferences (pulls,
-  and staying put) among the configurations where every residual holds,
-  by constrained Levenberg–Marquardt (`solvers::least_squares`).
-  The residuals hold exactly: no preference can trade a little violation
-  of them for itself — which, behind a long lever, is a lot of motion.
-- **Honest enclosures.** Every residual is computed as a `Dual` over
-  `ScalInF64`, so its gradient is exact and its `sqrt`/`sin`/`PI` are
-  enclosed; the minimizer takes a step only where the merit definitely
-  drops, and stops where no step can tell.
-- **Increments.** The variables are increments from where the parameters
-  are when a solve starts. A pose's are a translation and a turn about the
-  body's center (`Pose::moved`: `T(c + dt) R(w) T(-c) q0`, with `R(w)` the
-  rational unit quaternion of the modified Rodrigues parameters `w / 4`). Turns are measured as lengths at the
-  system's size, so a step is as long for a turn as for a move. Poses have
-  no singular configurations.
-- **Pulls** (`Pull`) are preferences: a number towards a value, a body
-  towards a pose, a point of a body towards a point — a drag. Ranked below
-  them, a dragged body would rather not turn, and below that everything
-  else would rather stay where it is: from far off, a solve moves bodies as
-  little as it can rather than turning them over.
+- `groups`: blocks no term ties together are solved, enclosed and
+  measured apart — a plate with hundreds of screws is hundreds of systems
+  of one screw.
+- `solve`: each group that a preference pulls or whose constraints do not
+  hold, by the driver (`system::driver`): the constraints held exactly,
+  the preferences and staying put choosing among where they hold; where
+  they cannot all hold, a second minimization takes them into the sum,
+  least squares. A limit is kept by an active set: solved without the
+  limits first, every one the solve ends beyond is held at its bound, and
+  the group is solved again. Its `Solution` carries the enclosure of the
+  groups it solved, and how many times it made the terms
+  (`evaluations`, as the enclosure does): the work, which a test bounds.
+- `held`: which constraints hold, and the largest residual.
+- `enclose`: a rigorous box around a true solution near where a solve
+  ended, group by group — or why there is none: a singular configuration
+  (`EncloseError::Unproven`), or constraints that conflict, by index, with
+  those they depend on (`EncloseError::Conflict`). Each block is enclosed
+  in its own step coordinates around the solved point, `x = retract(x̃, δ)`
+  for a box of `δ`: Newton polishes the independent rows, and Krawczyk's
+  test, `K(Δ) = −Y f(x̃) + (I − Y J(Δ)) Δ ⊆ Δ` with `‖I − Y J(Δ)‖∞ < 1`,
+  proves the box holds exactly one solution of them; `J(Δ)` is the terms'
+  Jacobian over every value the box reaches, composed with the
+  retraction's differential. Which rows are independent is decided over a
+  box around the point — the point, then the solver's tolerance, doubling —
+  not at the point, so a redundant constraint (a rectangle's fourth right
+  angle, a mate a joint implies) is recognised. Then, over the proven box,
+  the rows left out must enclose zero and add nothing to the rank: a
+  constraint the others imply leaves the rank as it is wherever they all
+  hold, while one left out only because the configuration is singular — a
+  point on a circle and on its tangent — is independent a hair off the
+  singular point, where its value is too small to tell from zero but its
+  derivative is not. A row left out that does not vanish is a conflict
+  only where one is proven near where the solve ended: a combination of
+  the rows, which vanishes wherever they all do, definitely not zero over
+  the box of the selection (or the tolerance) in every variable, the free
+  ones too (`EncloseError::Conflict::within`). Interval arithmetic can
+  prove a conflict, never its absence: the box encloses a true solution of
+  the independent rows, the others consistent with it to every digit it
+  resolves, at first order too. `enclose_rest` encloses the groups an
+  enclosure does not cover — what a sketch's report needs after a solve.
+- `freedom`: how many independent ways each block can still move, decided
+  over the proven box (a limit leaves the motion away from it free) — at
+  the point where none is proven.
+- `conflicting`: a smallest set of constraints that cannot all hold
+  together — named by the enclosure where it proves the conflict, and by
+  leaving each constraint out in turn where nothing is proven.
 
-`report` says which residuals hold, `free_variables` how many
-degrees of freedom are left and which variables can still move, and
-`enclose` proves an interval enclosure of the exact solution of a system
-of numbers (Krawczyk).
+`Pose::exp` sums its coefficients near zero as series with the first term
+left out as their bound, so the map, and its differential, are enclosures
+for a box of twists around zero too. A pose a step sharpened is a hair off
+unit; `retract_over` makes it unit honestly first, since turning a point by
+a quaternion off unit scales it, and a box of such poses misses every
+rigid motion.

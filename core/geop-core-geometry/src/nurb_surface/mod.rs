@@ -15,8 +15,6 @@ mod translate;
 
 use std::fmt::Display;
 
-pub use project::clamp;
-
 use crate::aabb::compute_aabb;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -30,7 +28,7 @@ use geop_core_math::{
 ///
 /// Control points are stored row-major: `control_points[i * num_v + j]` is the
 /// point at u-index `i` (0 ≤ i < `num_u`) and v-index `j` (0 ≤ j < `num_v`).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NurbSurface<S: Scalar, const D: usize> {
     pub degree_u: usize,
     pub degree_v: usize,
@@ -187,14 +185,18 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
                 .all(|(a, b)| a.could_be_equal(b))
     }
 
-    /// Number of control points in the u direction.
-    pub fn num_u(&self) -> usize {
-        self.num_u
-    }
-
-    /// Number of control points in the v direction.
-    pub fn num_v(&self) -> usize {
-        self.num_v
+    /// The control row at index `k` along `u` (`u_fixed`: the points
+    /// `P[k][·]`, running along `v`), or else the column `P[·][k]` along
+    /// `u`.
+    pub(crate) fn control_row(&self, u_fixed: bool, k: usize) -> Vec<Vector<S, D>> {
+        let nv = self.num_v;
+        if u_fixed {
+            self.control_points[k * nv..(k + 1) * nv].to_vec()
+        } else {
+            (0..self.num_u)
+                .map(|i| self.control_points[i * nv + k])
+                .collect()
+        }
     }
 
     /// Whether this is the [`NurbSurface::everything`] placeholder — the

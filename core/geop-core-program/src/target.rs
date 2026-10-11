@@ -1,4 +1,6 @@
-use std::{any::Any, collections::HashMap};
+use std::{any::Any, collections::HashMap, rc::Rc};
+
+use crate::part::Remake;
 
 /// Counts the runs of a part, starting at 1. Revision 0 is before the first
 /// run: what was never set has not changed since then.
@@ -60,7 +62,7 @@ impl<T> TargetReference<T> {
 /// Only a `Revisable` target can be revised:
 ///
 /// ```compile_fail
-/// # use geop_core::{part::{Input, Part, State}, target::TargetReference};
+/// # use geop_core_program::{part::{Input, Part, State}, target::TargetReference};
 /// #[derive(Clone, PartialEq)]
 /// struct Datum;
 ///
@@ -71,7 +73,7 @@ impl<T> TargetReference<T> {
 /// ```
 ///
 /// ```
-/// # use geop_core::{part::{Input, Part, State}, target::{Revisable, TargetReference}};
+/// # use geop_core_program::{part::{Input, Part, State}, target::{Revisable, TargetReference}};
 /// #[derive(Clone, PartialEq)]
 /// struct Topology;
 ///
@@ -94,42 +96,59 @@ pub trait Revisable: PartialEq + 'static {
 /// One version of a target: what one step made it. A target is defined by
 /// one step and, if [`Revisable`], then revised by later ones, each revision
 /// a version of its own.
-pub(crate) struct Target {
+pub(crate) struct Target<I, S> {
     /// The step that made this version.
     pub(crate) step: String,
-    pub(crate) args: Box<dyn Any>,
+    /// The arguments it was made from, shared with `remake`: what a reuse
+    /// compares.
+    pub(crate) args: Rc<dyn Any>,
     pub(crate) dependencies: Vec<Dependency>,
     /// The value, or what made building it fail.
     pub(crate) data: Result<Box<dyn Any>, String>,
-    /// The run in which `data` last became different.
+    /// When `data` last became different (see `Part::revision`).
     pub(crate) changed_at: Revision,
-    /// The run in which the version was last made, rebuilt or reused.
+    /// When the version was last made, made again, or found current.
     pub(crate) verified_at: Revision,
+    /// The run it was made or reused in last.
+    pub(crate) run: Revision,
+    /// How it is made again.
+    pub(crate) remake: Remake<I, S>,
 }
 
 /// The versions of every target: by its name, then by the step that made
 /// each. A step makes at most one version of a target, so the two identify
 /// a version, in this run and the next.
-#[derive(Default)]
-pub(crate) struct TargetRegistry(HashMap<String, Vec<Target>>);
+pub(crate) struct TargetRegistry<I, S>(HashMap<String, Vec<Target<I, S>>>);
 
-impl TargetRegistry {
-    pub(crate) fn versions(&self, name: &str) -> impl Iterator<Item = &Target> {
+// By hand, since a derive would ask the same of `I` and `S`.
+impl<I, S> Default for TargetRegistry<I, S> {
+    fn default() -> Self {
+        Self(HashMap::new())
+    }
+}
+
+impl<I, S> TargetRegistry<I, S> {
+    pub(crate) fn versions(&self, name: &str) -> impl Iterator<Item = &Target<I, S>> {
         self.0.get(name).into_iter().flatten()
     }
 
+    /// The name of every target that has a version.
+    pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
+        self.0.keys().map(String::as_str)
+    }
+
     /// The version of `name` that `step` made.
-    pub(crate) fn get(&self, name: &str, step: &str) -> Option<&Target> {
+    pub(crate) fn get(&self, name: &str, step: &str) -> Option<&Target<I, S>> {
         self.versions(name).find(|target| target.step == step)
     }
 
-    pub(crate) fn get_mut(&mut self, name: &str, step: &str) -> Option<&mut Target> {
+    pub(crate) fn get_mut(&mut self, name: &str, step: &str) -> Option<&mut Target<I, S>> {
         (self.0.get_mut(name)?.iter_mut()).find(|target| target.step == step)
     }
 
     /// Stores `target` as the version of `name` its step made, in place of
     /// the one it made before.
-    pub(crate) fn insert(&mut self, name: &str, target: Target) {
+    pub(crate) fn insert(&mut self, name: &str, target: Target<I, S>) {
         match self.get_mut(name, &target.step) {
             Some(old) => *old = target,
             None => self.0.entry(name.to_string()).or_default().push(target),
@@ -141,7 +160,7 @@ impl TargetRegistry {
         (self.0.values().flatten()).flat_map(|target| &target.dependencies)
     }
 
-    pub(crate) fn retain(&mut self, keep: impl Fn(&Target) -> bool) {
+    pub(crate) fn retain(&mut self, keep: impl Fn(&Target<I, S>) -> bool) {
         self.0.retain(|_, versions| {
             versions.retain(|target| keep(target));
             !versions.is_empty()

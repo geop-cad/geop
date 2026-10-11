@@ -17,11 +17,11 @@
 //!
 //! **Columns.** Per part its name — a standard part's title, else its
 //! file's — the file, the parameter values it is built with, a standard
-//! part's designation (`ISO 4762 M4x12`, see [`Part::designation`]), its material,
-//! the thickness of its sheet-metal bodies, and its mass: per piece and
-//! for the quantity, from the exact geometry of its bodies and its own
-//! material (see [`geop_ops_inspect::mass`]). A part of no given material
-//! is weighed as water, and its line says so.
+//! part's designation (`ISO 4762 M4x12`, see [`designation`]), its
+//! material, the thickness of its sheet-metal bodies, and its mass: per
+//! piece and for the quantity, from the exact geometry of its bodies and
+//! its own material (see [`geop_ops::solids`]). A part of no given
+//! material is weighed as water, and its line says so.
 //!
 //! **Wires.** A routed harness (see [`geop_ops_harness::Cable`]) is ordered as its
 //! wires: each is a line of its own under the part that routes it, with its
@@ -29,18 +29,25 @@
 //! drawn, not something ordered, so it is neither a part's body nor
 //! weighed.
 //!
-//! [`Bom::to_csv`] writes the table for a spreadsheet.
+//! [`Bom::to_csv`] writes the table for a spreadsheet. The bill is offered
+//! as an inspector ([`BillOfMaterials`]) and as a CSV file
+//! ([`BomCsv`]).
 
 use std::collections::{BTreeMap, HashMap};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    scalars::Scalar,
+    scalars::{Ring, Scalar},
 };
-use geop_ops::{Part, part::ParamValue};
-use geop_ops_harness::PartCables;
-use geop_ops_inspect::{Bounded, bodies::PlacedSolid, mass::material_of};
-use geop_ops_sheetmetal::{FlatPatternData, Sheet};
+use geop_ops::{
+    Design, EntityRef, ParamValue,
+    operation::{BuildView, INSTANCE_SEPARATOR},
+    output::{Bounded, Content, Export, Exporter, ExporterInfo, Inspector, InspectorInfo, Output},
+    placed::{Instance, about, declared_values, designation, instance_name},
+    solids::{Shapes, own_solids},
+    ui::Visual,
+};
+use geop_ops_harness::cables;
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
@@ -137,19 +144,17 @@ pub struct Bom {
 
 /// What a part is, by what tells it apart from another: its file and the
 /// values of the parameters it defines.
-fn key<S: Scalar>(file: &str, part: &Part<S>) -> String {
-    format!("{file}\n{}", parameters(part))
+fn key(view: BuildView) -> String {
+    format!("{}\n{}", about(view).file, parameters(view))
 }
 
-/// The values of the parameters `part` defines, as built: `size=M4x12,
-/// length=40`.
-fn parameters<S: Scalar>(part: &Part<S>) -> String {
-    let inputs = part.state();
-    part.parameters()
-        .values
-        .iter()
+/// The values of the parameters the part `view` shows defines, as built:
+/// `size=M4x12, length=40`.
+fn parameters(view: BuildView) -> String {
+    let values = declared_values(view);
+    (about(view).parameters.values.iter())
         .filter_map(|p| {
-            let value = match inputs.get(&p.name)? {
+            let value = match values.get(&p.name)? {
                 ParamValue::Text(text) => text.clone(),
                 ParamValue::Number(n) => format!("{}", n.to_f64()),
                 ParamValue::Pose(_) => return None,
@@ -162,7 +167,7 @@ fn parameters<S: Scalar>(part: &Part<S>) -> String {
 
 /// What a bill needs of one part, worked out once however often it is
 /// placed.
-struct Info<S: Scalar> {
+struct Info {
     name: String,
     file: String,
     parameters: String,
@@ -174,42 +179,48 @@ struct Info<S: Scalar> {
     /// make or buy, rather than only an assembly of others.
     own_bodies: bool,
     /// The mass of its own bodies, or why it could not be computed.
-    own_mass: Result<S, String>,
+    own_mass: Result<Design, String>,
 }
 
 /// The parts placed in a part, grouped: one per kind of part, in the order
 /// each was first placed, with the names they are placed as.
-struct Group<'p, S: Scalar> {
+struct Group<'a> {
     key: String,
-    file: &'p str,
-    part: &'p Part<S>,
-    names: Vec<&'p str>,
+    view: BuildView<'a>,
+    names: Vec<&'a str>,
 }
 
-impl<S: Scalar> Group<'_, S> {
+impl Group<'_> {
     /// How many there are.
     fn count(&self) -> u64 {
         self.names.len() as u64
     }
 }
 
-fn groups<S: Scalar>(part: &Part<S>) -> Vec<Group<'_, S>> {
-    let mut out: Vec<Group<'_, S>> = Vec::new();
-    for (id, instance) in part.instances() {
-        let file = instance.file.as_str();
-        let key = key(file, &instance.part);
-        let name = part.name_of(id).unwrap_or_default();
+/// The parts placed in the part `view` shows itself, grouped.
+fn groups(view: BuildView<'_>) -> Vec<Group<'_>> {
+    let mut out: Vec<Group<'_>> = Vec::new();
+    for (target, instance) in view.targets_of::<Instance>() {
+        let Some(name) = instance_name(target) else {
+            continue;
+        };
+        let placed = instance.component.view();
+        let key = key(placed);
         match out.iter_mut().find(|g| g.key == key) {
             Some(group) => group.names.push(name),
             None => out.push(Group {
                 key,
-                file,
-                part: &instance.part,
+                view: placed,
                 names: vec![name],
             }),
         }
     }
     out
+}
+
+/// Whether the part `view` shows places no part.
+fn places_nothing(view: BuildView) -> bool {
+    view.targets_of::<Instance>().is_empty()
 }
 
 /// The paths of the parts placed as `name` in each of the parts placed at
@@ -220,109 +231,82 @@ fn placed_in(paths: &[String], names: &[&str]) -> Vec<String> {
         .flat_map(|path| {
             names.iter().map(move |name| match path.as_str() {
                 "" => name.to_string(),
-                _ => format!("{path}{}{name}", geop_ops::operation::INSTANCE_SEPARATOR),
+                _ => format!("{path}{INSTANCE_SEPARATOR}{name}"),
             })
         })
         .collect()
 }
 
 /// Builds a bill of materials, remembering what it worked out of each part.
-struct Builder<S: Scalar> {
-    infos: HashMap<String, Info<S>>,
+#[derive(Default)]
+struct Builder {
+    infos: HashMap<String, Info>,
     /// The mass of all of a part — its own bodies and those of the parts
     /// placed in it — by key.
-    whole: HashMap<String, Result<S, String>>,
+    whole: HashMap<String, Result<Design, String>>,
+    shapes: Shapes,
 }
 
-impl<S: Scalar> Builder<S> {
-    /// What the bill needs of the part `key`, built from `file` — placed
-    /// as a part placed (`placed`), unless it is the part the bill is of.
-    fn info(
-        &mut self,
-        key: &str,
-        file: &str,
-        part: &Part<S>,
-        placed: bool,
-    ) -> GeopResult<&Info<S>> {
+impl Builder {
+    /// What the bill needs of the part `key`, which `view` shows.
+    fn info(&mut self, key: &str, view: BuildView) -> GeopResult<&Info> {
         if !self.infos.contains_key(key) {
-            let info = self
-                .work_out(file, part, placed)
-                .with_context(&|e: GeopError| {
-                    e.with_context(format!("the bill of materials line of {file:?}"))
-                })?;
+            let info = self.work_out(view).with_context(&|e: GeopError| {
+                e.with_context(format!(
+                    "the bill of materials line of {:?}",
+                    about(view).file
+                ))
+            })?;
             self.infos.insert(key.to_string(), info);
         }
         Ok(&self.infos[key])
     }
 
-    fn work_out(&self, file: &str, part: &Part<S>, placed: bool) -> GeopResult<Info<S>> {
-        let stem = file
-            .rsplit(['/', ':'])
-            .next()
-            .unwrap_or(file)
-            .trim_end_matches(".geop");
-        let (material, _, assumed) = material_of(part);
+    fn work_out(&mut self, view: BuildView) -> GeopResult<Info> {
+        let about = about(view);
+        let material = about.material();
+        let cables = view.retrieve_target(&cables()).ok();
         // Its own bodies: every solid but a harness' bundle.
-        let bodies: Vec<String> = part
-            .solid_names()
-            .into_iter()
-            .filter(|name| part.cable(name).is_err())
+        let bodies: Vec<_> = (own_solids(view)?.into_iter())
+            .filter(|solid| cables.is_none_or(|cables| cables.get(&solid.name).is_err()))
             .collect();
-        let mut thickness: Vec<f64> = bodies
-            .iter()
-            .filter_map(|name| {
-                part.body_data::<Sheet<S>>(name)
-                    .map(|sheet| sheet.rules.thickness)
-                    .or_else(|| {
-                        part.body_data::<FlatPatternData>(name)
-                            .map(|flat| flat.thickness)
-                    })
-            })
+        let mut thickness: Vec<f64> = (bodies.iter())
+            .filter_map(|solid| geop_ops_sheetmetal::thickness(view, &solid.name))
             .collect();
         thickness.sort_by(f64::total_cmp);
         thickness.dedup();
-        let mut own_mass = Ok(S::ZERO);
-        for name in &bodies {
-            let solid = PlacedSolid {
-                name: name.clone(),
-                part,
-                cached: placed,
-                solid: part.solid_id(name)?,
-                pose: None,
-            };
-            own_mass = own_mass.and_then(|sum: S| match solid.mass_properties() {
-                Ok(p) => Ok(sum.add(p.mass)),
-                Err(e) => Err(format!("the mass of {name}: {e}")),
-            });
+        let mut own_mass = Ok(Design::ZERO);
+        for solid in &bodies {
+            own_mass =
+                own_mass.and_then(
+                    |sum: Design| match solid.mass_properties(&mut self.shapes) {
+                        Ok(p) => Ok(sum.add(p.mass)),
+                        Err(e) => Err(format!("the mass of {}: {e}", solid.name)),
+                    },
+                );
         }
         Ok(Info {
-            name: part.title().unwrap_or(stem).to_string(),
-            file: file.to_string(),
-            parameters: parameters(part),
-            designation: part.designation(),
-            material,
-            assumed,
+            name: about.name().to_string(),
+            file: about.file.clone(),
+            parameters: parameters(view),
+            designation: designation(view),
+            material: material.name,
+            assumed: material.assumed,
             thickness,
             own_bodies: !bodies.is_empty(),
             own_mass,
         })
     }
 
-    /// The mass of all of `part`: its own bodies, and every part placed in
-    /// it.
-    fn whole_mass(
-        &mut self,
-        key: &str,
-        file: &str,
-        part: &Part<S>,
-        placed: bool,
-    ) -> GeopResult<Result<S, String>> {
+    /// The mass of all of the part `key`, which `view` shows: its own
+    /// bodies, and every part placed in it.
+    fn whole_mass(&mut self, key: &str, view: BuildView) -> GeopResult<Result<Design, String>> {
         if let Some(mass) = self.whole.get(key) {
             return Ok(mass.clone());
         }
-        let mut mass = self.info(key, file, part, placed)?.own_mass.clone();
-        for group in groups(part) {
-            let placed = self.whole_mass(&group.key, group.file, group.part, true)?;
+        let mut mass = self.info(key, view)?.own_mass.clone();
+        for group in groups(view) {
+            let placed = self.whole_mass(&group.key, group.view)?;
             mass = mass.and_then(|m| Ok(m.add(times(group.count(), placed?))));
         }
         self.whole.insert(key.to_string(), mass.clone());
@@ -336,7 +320,7 @@ impl<S: Scalar> Builder<S> {
         key: &str,
         level: usize,
         placements: Vec<String>,
-        unit_mass: &Result<S, String>,
+        unit_mass: &Result<Design, String>,
     ) -> Line {
         let quantity = placements.len() as u64;
         let info = &self.infos[key];
@@ -368,22 +352,20 @@ impl<S: Scalar> Builder<S> {
         }
     }
 
-    /// Adds the parts of `part` — placed at `paths` (see
-    /// [`Line::placements`]) — to the flat bill `lines`, by key: itself if
-    /// it has bodies of its own, or is no assembly; the parts placed in it,
-    /// however deep; its wires.
+    /// Adds the parts of the part `key`, which `view` shows — placed at
+    /// `paths` (see [`Line::placements`]) — to the flat bill `lines`, by
+    /// key: itself if it has bodies of its own, or is no assembly; the
+    /// parts placed in it, however deep; its wires.
     fn flat(
         &mut self,
         key: &str,
-        file: &str,
-        part: &Part<S>,
-        placed: bool,
+        view: BuildView,
         paths: &[String],
         lines: &mut Vec<(String, Line)>,
     ) -> GeopResult<()> {
         let multiplier = paths.len() as u64;
-        let info = self.info(key, file, part, placed)?;
-        if info.own_bodies || part.instances().next().is_none() {
+        let info = self.info(key, view)?;
+        if info.own_bodies || places_nothing(view) {
             let mass = info.own_mass.clone();
             match lines.iter_mut().find(|(k, _)| k == key) {
                 Some((_, line)) => {
@@ -396,17 +378,11 @@ impl<S: Scalar> Builder<S> {
                 }
             }
         }
-        for group in groups(part) {
-            self.flat(
-                group.key.as_str(),
-                group.file,
-                group.part,
-                true,
-                &placed_in(paths, &group.names),
-                lines,
-            )?;
+        for group in groups(view) {
+            let paths = placed_in(paths, &group.names);
+            self.flat(&group.key, group.view, &paths, lines)?;
         }
-        for (cable, wire) in wire_lines(part, 0, multiplier) {
+        for (cable, wire) in wire_lines(view, 0, multiplier) {
             let wire_key = format!("{key}\n{cable}\n{}", wire.name);
             match lines.iter_mut().find(|(k, _)| *k == wire_key) {
                 Some((_, line)) => add_quantity(line, multiplier),
@@ -416,12 +392,12 @@ impl<S: Scalar> Builder<S> {
         Ok(())
     }
 
-    /// Adds what is placed in `part` — its groups, each followed by what is
-    /// placed in it, then its wires — to the indented bill `lines`, at
-    /// `level`, numbered after `item` from `after + 1` on.
+    /// Adds what is placed in the part `view` shows — its groups, each
+    /// followed by what is placed in it, then its wires — to the indented
+    /// bill `lines`, at `level`, numbered after `item` from `after + 1` on.
     fn indented(
         &mut self,
-        part: &Part<S>,
+        view: BuildView,
         item: &str,
         after: usize,
         level: usize,
@@ -436,15 +412,15 @@ impl<S: Scalar> Builder<S> {
             };
             line.item.clone()
         };
-        for group in groups(part) {
-            let mass = self.whole_mass(&group.key, group.file, group.part, true)?;
+        for group in groups(view) {
+            let mass = self.whole_mass(&group.key, group.view)?;
             let placements = group.names.iter().map(|n| n.to_string()).collect();
             let mut line = self.part_line(&group.key, level, placements, &mass);
             let item = next(&mut line);
             lines.push(line);
-            self.indented(group.part, &item, 0, level + 1, lines)?;
+            self.indented(group.view, &item, 0, level + 1, lines)?;
         }
-        for (_, mut wire) in wire_lines(part, level, 1) {
+        for (_, mut wire) in wire_lines(view, level, 1) {
             next(&mut wire);
             lines.push(wire);
         }
@@ -453,8 +429,8 @@ impl<S: Scalar> Builder<S> {
 }
 
 /// `n` times `m`.
-fn times<S: Scalar>(n: u64, m: S) -> S {
-    S::from_i64(n as i64).mul(m)
+fn times(n: u64, m: Design) -> Design {
+    Design::from_i64(n as i64).mul(m)
 }
 
 /// Adds `more` to a line's quantity, and its total with it.
@@ -482,11 +458,14 @@ fn scale_unit(unit: Bounded, quantity: u64) -> Bounded {
     }
 }
 
-/// The wires of every cable of `part` itself, each a line at `level` of
-/// `quantity` pieces, with the cable's name.
-fn wire_lines<S: Scalar>(part: &Part<S>, level: usize, quantity: u64) -> Vec<(String, Line)> {
+/// The wires of every cable of the part `view` shows itself, each a line at
+/// `level` of `quantity` pieces, with the cable's name.
+fn wire_lines(view: BuildView, level: usize, quantity: u64) -> Vec<(String, Line)> {
     let mut out = Vec::new();
-    for (cable_name, cable) in part.cables() {
+    let Ok(cables) = view.retrieve_target(&cables()) else {
+        return out;
+    };
+    for (cable_name, cable) in cables.iter() {
         for wire in &cable.wires {
             let cut_length = Bounded::of(wire.cut_length);
             let designation = match wire.gauge {
@@ -517,23 +496,20 @@ fn wire_lines<S: Scalar>(part: &Part<S>, level: usize, quantity: u64) -> Vec<(St
     out
 }
 
-/// The bill of materials of `part`, the program `file` builds, laid out as
+/// The bill of materials of the part `view` shows, laid out as
 /// `structure` says. A part placed is listed by its own title and
-/// designation, if it has them (see [`Part::designation`]).
+/// designation, if it has them (see [`designation`]).
 ///
 /// The part's own bodies — those it is modelled with besides what it
-/// places — are a line of their own, named after `file`: for a part that
-/// places nothing, that line is the whole bill.
-pub fn bom<S: Scalar>(part: &Part<S>, file: &str, structure: Structure) -> GeopResult<Bom> {
-    let mut builder = Builder {
-        infos: HashMap::new(),
-        whole: HashMap::new(),
-    };
-    let root = key(file, part);
+/// places — are a line of their own, named after its file: for a part
+/// that places nothing, that line is the whole bill.
+pub fn bom(view: BuildView, structure: Structure) -> GeopResult<Bom> {
+    let mut builder = Builder::default();
+    let root = key(view);
     let lines = match structure {
         Structure::Flat => {
             let mut keyed = Vec::new();
-            builder.flat(&root, file, part, false, &[String::new()], &mut keyed)?;
+            builder.flat(&root, view, &[String::new()], &mut keyed)?;
             let mut lines: Vec<Line> = keyed.into_iter().map(|(_, line)| line).collect();
             for (k, line) in lines.iter_mut().enumerate() {
                 line.item = (k + 1).to_string();
@@ -542,27 +518,75 @@ pub fn bom<S: Scalar>(part: &Part<S>, file: &str, structure: Structure) -> GeopR
         }
         Structure::Indented => {
             let mut lines = Vec::new();
-            let info = builder.info(&root, file, part, false)?;
-            if info.own_bodies || part.instances().next().is_none() {
+            let info = builder.info(&root, view)?;
+            if info.own_bodies || places_nothing(view) {
                 let mass = info.own_mass.clone();
                 let mut line = builder.part_line(&root, 1, vec![String::new()], &mass);
                 line.item = "1".into();
                 lines.push(line);
             }
             let after = lines.len();
-            builder.indented(part, "", after, 1, &mut lines)?;
+            builder.indented(view, "", after, 1, &mut lines)?;
             lines
         }
     };
-    let total_mass = builder
-        .whole_mass(&root, file, part, false)?
-        .ok()
-        .map(Bounded::of);
+    let total_mass = builder.whole_mass(&root, view)?.ok().map(Bounded::of);
     Ok(Bom {
         structure,
         lines,
         total_mass,
     })
+}
+
+/// How a bill of materials is asked for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct BomOptions {
+    pub structure: Structure,
+}
+
+/// The bill of materials of the part, as the inspect panel shows it.
+pub struct BillOfMaterials;
+
+impl Inspector for BillOfMaterials {
+    const INFO: InspectorInfo = InspectorInfo {
+        kind: "bom",
+        label: "Bill of materials",
+        doc: "Every part with its quantity, designation, material and mass, and every wire cut to length.",
+        picks: None,
+    };
+    type Options = BomOptions;
+    type Report = Bom;
+
+    fn inspect(
+        output: &mut Output,
+        _: &[EntityRef],
+        options: BomOptions,
+    ) -> GeopResult<(Bom, Vec<Visual<Design>>)> {
+        Ok((bom(output.part(), options.structure)?, Vec::new()))
+    }
+}
+
+/// The bill of materials of the part as a CSV file, for a spreadsheet.
+pub struct BomCsv;
+
+impl Exporter for BomCsv {
+    const INFO: ExporterInfo = ExporterInfo {
+        kind: "bom",
+        label: "Bill of materials",
+        doc: "parts and wires, for a spreadsheet",
+        formats: &["csv"],
+    };
+    type Options = BomOptions;
+
+    fn export(output: &mut Output, _: &str, options: BomOptions) -> GeopResult<Export> {
+        let bom = bom(output.part(), options.structure)?;
+        Ok(Export {
+            name: format!("{}_bom.csv", output.stem()),
+            media_type: "text/csv".into(),
+            content: Content::Text(bom.to_csv()),
+        })
+    }
 }
 
 impl Bom {

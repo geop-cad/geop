@@ -4,15 +4,17 @@
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_topology::validation::{ValidationParameters, validate_fast};
 use geop_ops::{
-    NoFiles, Part, RefId,
-    parameters::{ParameterKind, number},
-    part::ParamValue,
+    NamedModel, ParamValue, RefId,
+    model::{datum, model},
+    parameters::{ParameterKind, Values, number},
 };
-
-use geop_ops_assembly::PartMates;
+use geop_ops_pattern::{CircularPatternArgs, Spacing};
 
 use super::{StandardPart, drive::TEETH, parts, steps::SIZE};
-use crate::{Program, operations::regression_tests::check_valid};
+use crate::{
+    Program,
+    operations::testing::{Built, check_valid, edit_args, step},
+};
 
 /// How far out from the `z` axis, and from where to where along it, the
 /// part of `file` reaches, by the norm: `value` reads a column of the size
@@ -76,10 +78,14 @@ fn expected(file: &str, value: impl Fn(&str) -> f64) -> [f64; 3] {
 /// solid, valid as far as a fast check sees and fully if `fully`, with its
 /// datums and threaded faces named and reaching where its table says — or
 /// what is wrong with it.
-fn built(part: &StandardPart, program: &Program, fully: bool) -> Result<Part<S>, String> {
-    let built = program
-        .build::<S>(&NoFiles)
+fn built(family: &StandardPart, program: &Program, fully: bool) -> Result<NamedModel<S>, String> {
+    let runner = program
+        .built()
         .map_err(|e| format!("does not build: {e}"))?;
+    let part = runner.part.current();
+    let built = (part.retrieve_target(&model()))
+        .map_err(|e| format!("does not build: {e}"))?
+        .clone();
     if fully {
         check_valid(&built).map_err(|e| format!("is not valid: {e}"))?;
     } else if let Err(errors) = validate_fast(&ValidationParameters::default(), built.topology()) {
@@ -90,12 +96,10 @@ fn built(part: &StandardPart, program: &Program, fully: bool) -> Result<Part<S>,
     if solids.len() != 1 {
         return Err(format!("is not one solid: {solids:?}"));
     }
-    for datum in ["axis", part.base] {
-        built
-            .datum_id(datum)
-            .map_err(|_| format!("has no datum {datum}"))?;
+    for name in ["axis", family.base] {
+        (part.retrieve_target(&datum(name))).map_err(|_| format!("has no datum {name}"))?;
     }
-    for face in &part.threaded {
+    for face in &family.threaded {
         built.face_id(face).map_err(|_| {
             // What the step that cut it did name, to compare.
             let step = face.split(',').next().unwrap_or(face);
@@ -110,11 +114,11 @@ fn built(part: &StandardPart, program: &Program, fully: bool) -> Result<Part<S>,
             format!("has no threaded face {face}: its step named the faces {named:?}")
         })?;
     }
-    let inputs = program.inputs();
-    let want = expected(part.file, |name| {
-        number(&inputs, &format!("{SIZE}.{name}"))
-            .or_else(|| number(&inputs, name))
-            .unwrap_or_else(|| panic!("{} has no value {name}", part.file))
+    let values = program.values(&Values::new());
+    let want = expected(family.file, |name| {
+        number(&values, &format!("{SIZE}.{name}"))
+            .or_else(|| number(&values, name))
+            .unwrap_or_else(|| panic!("{} has no value {name}", family.file))
     });
     let points: Vec<[f64; 3]> = built
         .topology()
@@ -197,14 +201,23 @@ families_build! {
     mg996r_servos_build: "std:servo_mg996r.geop",
 }
 
+/// `program` with its parameter `name` set to `value`: the row of a table
+/// picked by its name, or a number's formula.
+fn sized(program: &Program, name: &str, value: &str) -> Program {
+    let mut program = program.clone();
+    let parameter = (program.parameters.values.iter_mut())
+        .find(|p| p.name == name)
+        .unwrap_or_else(|| panic!("there is no parameter {name}"));
+    match &mut parameter.kind {
+        ParameterKind::Table { selected, .. } => *selected = value.into(),
+        ParameterKind::Number { expression, .. } => *expression = value.into(),
+    }
+    program
+}
+
 /// The programs of `part` at every size it offers: a row of its table, or
 /// a few lengths of an extrusion.
 fn every_size(part: &StandardPart) -> Vec<(String, Program)> {
-    let with = |name: &str, value: ParamValue| {
-        let mut program = part.program.clone();
-        program.state.insert(name.into(), value);
-        program
-    };
     // A gear's module and tooth count are tables of their own: every
     // module with 20 teeth, and module 1 with each of a range of counts.
     let gear = matches!(
@@ -214,11 +227,8 @@ fn every_size(part: &StandardPart) -> Vec<(String, Program)> {
     match part.program.parameters.get(SIZE).map(|p| &p.kind) {
         Some(ParameterKind::Table { rows, .. }) if gear => {
             let geared = |module: &str, teeth: usize| {
-                let mut program = with(SIZE, ParamValue::Text(module.into()));
                 let z = format!("z{teeth}");
-                program
-                    .state
-                    .insert(TEETH.into(), ParamValue::Text(z.clone()));
+                let program = sized(&sized(&part.program, SIZE, module), TEETH, &z);
                 (format!("{module} {z}"), program)
             };
             rows.iter()
@@ -228,13 +238,15 @@ fn every_size(part: &StandardPart) -> Vec<(String, Program)> {
         }
         Some(ParameterKind::Table { rows, .. }) => rows
             .iter()
-            .map(|r| (r.name.clone(), with(SIZE, ParamValue::Text(r.name.clone()))))
+            .map(|r| (r.name.clone(), sized(&part.program, SIZE, &r.name)))
             .collect(),
         _ => [20.0, 333.3, 1000.0]
             .into_iter()
             .map(|l| {
-                let length = ParamValue::Number(geop_ops::Design::from_f64(l));
-                (format!("length {l}"), with("length", length))
+                (
+                    format!("length {l}"),
+                    sized(&part.program, "length", &l.to_string()),
+                )
             })
             .collect(),
     }
@@ -318,27 +330,31 @@ fn the_bolted_plate_holds_together() {
     use std::collections::BTreeMap;
 
     use geop_core_math::vector::Vector3;
-    use geop_ops::Design;
+    use geop_ops::{Design, placed::locate};
 
-    use super::WithStandardParts;
-    use crate::{Workspace, examples};
+    use crate::{
+        examples,
+        operations::{build, workspace},
+    };
 
     let files = BTreeMap::from([(
         "plate.geop".to_string(),
         examples::metric_plate().to_json().unwrap(),
     )]);
-    let workspace = Workspace::<S>::new(WithStandardParts(files));
-    let part = examples::bolted_plate()
-        .build(&workspace.scope("bolted_plate.geop"))
-        .unwrap();
-    assert!(part.check_mates(|_| true).unwrap().converged);
+    let runner = build(
+        &examples::bolted_plate(),
+        &workspace(files).scope("bolted_plate.geop"),
+    )
+    .unwrap();
+    let view = runner.part.current();
+    assert!(geop_ops::solving::check(view).unwrap().converged);
     let v = |p: [f64; 3]| Vector3::from_array(p.map(Design::from_f64));
     for (instance, local, want) in [
         ("screw", [0.0, 0.0, -12.0], [20.0, 20.0, -7.0]),
         ("nut", [0.0, 0.0, 3.2], [20.0, 20.0, -3.2]),
     ] {
-        let id = part.instance_id(instance).unwrap();
-        let got = part.instance(id).unwrap().pose.apply(&v(local));
+        let located = locate(&mut view.clone(), instance).unwrap();
+        let got = located.world.apply(&v(local));
         let got = [0, 1, 2].map(|k| got[k].to_f64());
         assert!(
             (0..3).all(|k| (got[k] - want[k]).abs() < 1e-6),
@@ -354,10 +370,7 @@ fn the_bolted_plate_holds_together() {
 #[ignore = "slow: twelve booleans — run with `cargo test -- --ignored`"]
 fn a_12_tooth_spur_gear_builds() {
     let part = super::part("std:spur_gear.geop").unwrap();
-    let mut program = part.program.clone();
-    program
-        .state
-        .insert("teeth".into(), ParamValue::Text("z12".into()));
+    let program = sized(&part.program, TEETH, "z12");
     if let Err(e) = built(part, &program, false) {
         panic!("a 12-tooth spur gear {e}");
     }
@@ -368,9 +381,7 @@ fn a_12_tooth_spur_gear_builds() {
 /// are made of; a servo weighs what it does.
 #[test]
 fn drive_and_motion_parts_are_designated_and_made_of_something() {
-    use geop_ops::part::State;
-
-    let text = |pairs: &[(&str, &str)]| -> State {
+    let text = |pairs: &[(&str, &str)]| -> Values {
         pairs
             .iter()
             .map(|(k, v)| (k.to_string(), ParamValue::Text(v.to_string())))
@@ -422,10 +433,15 @@ fn drive_and_motion_parts_are_designated_and_made_of_something() {
             "Linear carriage MGN12H",
             "Steel",
         ),
-        ("std:servo_sg90.geop", State::new(), "Servo SG90", "Plastic"),
+        (
+            "std:servo_sg90.geop",
+            Values::new(),
+            "Servo SG90",
+            "Plastic",
+        ),
         (
             "std:servo_mg996r.geop",
-            State::new(),
+            Values::new(),
             "Servo MG996R",
             "Plastic",
         ),
@@ -433,7 +449,7 @@ fn drive_and_motion_parts_are_designated_and_made_of_something() {
         let program = &super::part(file).unwrap().program;
         // Unset parameters are the family's own: designated as defined.
         let values = if values.is_empty() {
-            program.inputs()
+            program.values(&Values::new())
         } else {
             values
         };
@@ -464,21 +480,17 @@ fn drive_and_motion_parts_are_designated_and_made_of_something() {
 /// One gap of a gear of module 1 and `teeth` cut from its blank, turned
 /// `angle` degrees round: each is one boolean of building the gear.
 fn gaps_cut(teeth: &str, count: usize, angle: f64) -> Result<(), String> {
-    use crate::operations::PartOperation;
-    use geop_ops_pattern::Spacing;
-
-    let mut program = super::part("std:spur_gear.geop").unwrap().program.clone();
-    program
-        .state
-        .insert(TEETH.into(), ParamValue::Text(teeth.into()));
-    let k = program.index_of("teeth").unwrap();
-    let PartOperation::CircularPattern(args) = &mut program.steps[k].operation else {
-        panic!("the teeth are a circular pattern");
-    };
-    args.count = (count as f64).into();
-    args.angle = Spacing::step(angle);
+    let gear = &super::part("std:spur_gear.geop").unwrap().program;
+    let mut program = sized(gear, TEETH, teeth);
+    edit_args(
+        step(&mut program, "teeth"),
+        |args: &mut CircularPatternArgs| {
+            args.count = (count as f64).into();
+            args.angle = Spacing::step(angle);
+        },
+    );
     let built = program
-        .build::<S>(&NoFiles)
+        .build_model()
         .map_err(|e| format!("does not build: {e}"))?;
     check_valid(&built).map_err(|e| format!("is not valid: {e}"))
 }
@@ -511,15 +523,15 @@ fn twelve_gaps_of_a_42_tooth_gear_are_cut_valid() {
 fn gear_drive() -> Program {
     use std::collections::BTreeMap;
 
-    use geop_core_math::primitives::{DatumComponent, FrameAxis};
-    use geop_ops::{
-        EntityRef, ORIGIN,
-        part::{State, pose_parameter},
-    };
-    use geop_ops_assembly::{AddPartArgs, CouplingKind, JointKind, Mate};
+    use geop_core_math::primitives::FrameAxis;
+    use geop_ops::{EntityRef, ORIGIN, model::pose_parameter, origin_axis};
+    use geop_ops_assembly::{AddPartArgs, CouplingKind, JointKind, Mate, Transmission};
     use geop_ops_datums::{AddDatumArgs, Construction};
 
-    use crate::examples::{n, pose};
+    use crate::{
+        Push,
+        examples::{n, pose},
+    };
 
     let mut program = Program::new();
     program.push(
@@ -532,7 +544,7 @@ fn gear_drive() -> Program {
     );
     // The axes the gears turn about: the motor's, and one 13.5 along `x`,
     // through points 10 up.
-    let z_axis = EntityRef::datum_component(ORIGIN, DatumComponent::Axis(FrameAxis::Z));
+    let z_axis = origin_axis(FrameAxis::Z);
     for (id, x) in [("pinion", 0.0), ("wheel", 13.5)] {
         program.push(
             format!("{id}_centre"),
@@ -554,7 +566,7 @@ fn gear_drive() -> Program {
         );
     }
     let gear = |teeth: &str, bore: f64| {
-        State::from([
+        Values::from([
             ("teeth".to_string(), ParamValue::Text(teeth.into())),
             ("bore".to_string(), ParamValue::Number(n(bore))),
         ])
@@ -577,12 +589,12 @@ fn gear_drive() -> Program {
             file: "std:spur_gear.geop".into(),
             parameters: gear("z12", 5.0),
             mates: BTreeMap::from([("m1".into(), turning("pinion"))]),
-            ..Default::default()
         },
     );
     let coupling = Mate::coupling(
-        CouplingKind::Gear {
-            ratio: n(15.0 / 12.0),
+        CouplingKind {
+            transmission: Transmission::Gear,
+            value: n(15.0 / 12.0),
             reverse: true,
         },
         vec!["add_part(pinion,m1)".into(), "add_part(wheel,m1)".into()],
@@ -593,10 +605,9 @@ fn gear_drive() -> Program {
             file: "std:spur_gear.geop".into(),
             parameters: gear("z15", 6.0),
             mates: BTreeMap::from([("m1".into(), turning("wheel")), ("m2".into(), coupling)]),
-            ..Default::default()
         },
     );
-    program.state = State::from([
+    program.state = Values::from([
         (
             pose_parameter("motor"),
             ParamValue::Pose(pose([0.0; 3], [0.0; 3])),
@@ -620,18 +631,17 @@ fn gear_drive() -> Program {
 fn a_motor_drives_a_gear_pair_at_its_ratio() {
     use std::collections::BTreeMap;
 
-    use super::WithStandardParts;
-    use crate::Workspace;
+    use crate::operations::{build, workspace};
 
-    let workspace = Workspace::<S>::new(WithStandardParts(BTreeMap::<String, String>::new()));
-    let mut program = gear_drive();
+    let program = gear_drive();
+    let mut runner = build(
+        &program,
+        &workspace(BTreeMap::new()).scope("gear_drive.geop"),
+    )
+    .unwrap();
     let driver = "add_part(pinion,m1).angle";
-    program.state.insert(
-        driver.into(),
-        ParamValue::Number(geop_ops::Design::from_f64(90.0)),
-    );
-    let part = program.build(&workspace.scope("gear_drive.geop")).unwrap();
-    let (moved, report) = part.solve_joints(&[driver.to_string()]).unwrap();
+    let set = BTreeMap::from([(driver.to_string(), geop_ops::Design::from_f64(90.0))]);
+    let (moved, report) = geop_ops::solving::set(&mut runner.part, &program.state, &set).unwrap();
     assert!(report.converged, "{report:?}");
     let ParamValue::Number(driven) = moved["add_part(wheel,m1).angle"] else {
         panic!("the wheel's joint has an angle");

@@ -5,18 +5,25 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+    part::Retrieve,
+    target::TargetReference,
+};
 use geop_core_topology::{
     Model,
     validation::{ValidationParameters, validate_fast},
 };
 use geop_ops::{
-    BodyNames, Context, Library, Namer, Part,
-    operation::Operation,
-    ui::{Form, Tone},
+    BodyNames, Design, NamedModel, Namer, ParamValue,
+    operation::{Build, BuildReader, Input, ModelStep, build_model},
+    placed::library,
+    ui::{EditForm, FormState, Tone},
 };
 use serde::{Deserialize, Serialize};
 
-use crate::import::{Healing, ImportedBody, read_step};
+use crate::import::{ImportedBody, read_step};
 
 /// Adds every body of the STEP file `file` — its solids, and its sheets of
 /// faces — to the part, where the file has them: the parts of an assembly
@@ -33,10 +40,11 @@ use crate::import::{Healing, ImportedBody, read_step};
 /// meridians `fN,mM`; an edge split where a cut crosses it, or because it
 /// closes on itself, into pieces `eN,pM` at the vertices `eN,cM`.
 ///
-/// Where the file disagrees with itself further than the kernel can carry
-/// as one point or curve, what is rebuilt from its surfaces — and how far
-/// it moved — is recorded on the solid ([`Healed`]) and shown in the
-/// dialog.
+/// The file's bodies, as read, are the step's target [`imported`]: read
+/// once, and again only when the file changes. Where the file disagrees
+/// with itself further than the kernel can carry as one point or curve,
+/// what is rebuilt from its surfaces — and how far it moved — is kept with
+/// its body there ([`ImportedBody::healed`]) and shown in the dialog.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ImportStep;
 
@@ -57,12 +65,12 @@ pub fn is_step_file(path: &str) -> bool {
         .any(|e| lower.ends_with(&format!(".{e}")))
 }
 
-/// Adds the bodies `bodies` to `part`, named by `namer` as [`ImportStep`]
+/// Adds the bodies `bodies` to `model`, named by `namer` as [`ImportStep`]
 /// names them, after checking they are well formed on their own.
 pub fn add_bodies<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
-    bodies: Vec<ImportedBody<S>>,
+    bodies: &[ImportedBody<S>],
 ) -> GeopResult<()> {
     // Checked on their own first: a body the file describes badly is
     // refused by name, before it is mixed into the part.
@@ -102,7 +110,7 @@ pub fn add_bodies<S: Scalar>(
             mentioned.join(", ")
         )));
     }
-    for (k, body) in bodies.into_iter().enumerate() {
+    for (k, body) in bodies.iter().enumerate() {
         let solid = format!("s{k}");
         let named = |args: &[String]| {
             let mut all: Vec<&str> = vec![&solid];
@@ -115,132 +123,145 @@ pub fn add_bodies<S: Scalar>(
             faces: body.face_names.iter().map(|n| named(n)).collect(),
             solid: body.spec.solid.then(|| namer.name(&[&solid])),
         };
-        let solid = names.solid.clone();
-        part.build_body(body.spec, names)?;
-        if let Some(solid) = solid
-            && !body.healed.is_empty()
-        {
-            part.set_body_data(
-                &solid,
-                Healed {
-                    label: body.label,
-                    healing: body.healed,
-                },
-            )?;
-        }
+        model.build_body(body.spec.clone(), names)?;
     }
     Ok(())
 }
 
-/// What the import rebuilt of a solid where the file disagrees with itself
-/// further than the kernel can carry (see `import::body`), recorded on it
-/// for the step's dialog to show.
+/// The bodies of a STEP file, as read: the value of an import's target
+/// [`imported`].
 #[derive(Clone, Debug, PartialEq)]
-pub struct Healed {
-    /// What the file calls the solid.
-    pub label: String,
-    pub healing: Healing,
+pub struct Imported(pub Vec<ImportedBody<Design>>);
+
+/// The bodies the import step `step` read.
+pub fn imported(step: &str) -> TargetReference<Imported> {
+    TargetReference::new(format!("import:{step}"))
+}
+
+/// The bodies of the file the step `step` imports, read from the library
+/// the run was given.
+fn read(reader: &mut BuildReader, (step, args): &(String, ImportStepArgs)) -> GeopResult<Imported> {
+    let ctx = with_context!("import_step({step}, {args:?})");
+    if args.file.is_empty() {
+        return Err(GeopError::new("choose a STEP file to import")).with_context(ctx);
+    }
+    let (_, text) = library(reader)
+        .with_context(ctx)?
+        .read(&args.file)
+        .with_context(ctx)?;
+    let bodies = read_step::<Design>(&text).with_context(ctx)?;
+    if bodies.is_empty() {
+        return Err(GeopError::new(format!(
+            "{} has no solids or sheets",
+            args.file
+        )))
+        .with_context(ctx);
+    }
+    Ok(Imported(bodies))
+}
+
+impl ModelStep for ImportStep {
+    /// Adds the bodies the step read (see [`imported`]).
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        _: &ImportStepArgs,
+    ) -> GeopResult<()> {
+        let ctx = with_context!("import_step({step})");
+        let namer = Namer::new("import", step).with_context(ctx)?;
+        let Imported(bodies) = reader.retrieve_target(&imported(step)).with_context(ctx)?;
+        add_bodies(model, &namer, bodies).with_context(ctx)
+    }
+}
+
+/// The file: one of the STEP files next to the program, or one the user
+/// chooses from elsewhere, which the front end stores next to it — and
+/// what the import rebuilt, body by body, as the step last read them.
+fn form<'a>(
+    context: &Context<'_, Input, ParamValue>,
+    args: &ImportStepArgs,
+) -> EditForm<'a, Design, ImportStepArgs> {
+    let mut f = EditForm::<Design, ImportStepArgs>::default();
+    let mut files: Vec<String> = (library(&mut context.before.clone()).ok())
+        .map(|library| library.files())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|f| is_step_file(f))
+        .collect();
+    files.sort();
+    if !args.file.is_empty() && !files.contains(&args.file) {
+        files.push(args.file.clone());
+    }
+    f.file(
+        "file",
+        "file",
+        args.file.clone(),
+        files,
+        &STEP_EXTENSIONS,
+        |args, file| args.file = file.to_string(),
+    );
+    let read =
+        (context.built).and_then(|built| built.retrieve_target(&imported(context.step)).ok());
+    if let (Some(Imported(bodies)), Ok(namer)) = (read, Namer::new("import", context.step)) {
+        for (k, body) in bodies.iter().enumerate() {
+            if body.healed.is_empty() {
+                continue;
+            }
+            let solid = namer.name(&[&format!("s{k}")]);
+            f.form.dialog.text(
+                &format!("healed_{k}"),
+                format!(
+                    "Healed {} ({}): {}.",
+                    body.label,
+                    solid,
+                    body.healed.summary()
+                ),
+                Tone::Hint,
+            );
+        }
+    }
+    f
 }
 
 impl Operation for ImportStep {
+    const INFO: OperationInfo = OperationInfo::new(
+        "import_step",
+        "Import STEP",
+        "Add the solids and sheets of a STEP file next to the program.",
+        OperationGroup::Output,
+        OperationTier::Small,
+    );
     type Args = ImportStepArgs;
-    type Session = ();
+    type EditingState = FormState<()>;
+    type Input = Input;
+    type State = ParamValue;
 
-    fn new_args<S: Scalar>(&self, _: &Part<S>) -> ImportStepArgs {
+    /// No file yet.
+    fn new_args(_: &Context<Input, ParamValue>) -> ImportStepArgs {
         ImportStepArgs::default()
     }
 
-    /// The file: one of the STEP files next to the program, or one the
-    /// user chooses from elsewhere, which the front end stores next to it.
-    fn form<'a, S: Scalar>(
-        &self,
-        context: Context<'a, S>,
-        args: &ImportStepArgs,
-        _: &(),
-        _: &[String],
-    ) -> Form<'a, S, ImportStepArgs> {
-        let mut f = Form::<S, ImportStepArgs>::new();
-        let mut files: Vec<String> = context
-            .library
-            .files()
-            .into_iter()
-            .filter(|f| is_step_file(f))
-            .collect();
-        files.sort();
-        if !args.file.is_empty() && !files.contains(&args.file) {
-            files.push(args.file.clone());
-        }
-        f.file(
-            "file",
-            "file",
-            args.file.clone(),
-            files,
-            &STEP_EXTENSIONS,
-            |args, file| args.file = file.to_string(),
-        );
-        // What was rebuilt where the file disagrees with itself, solid by
-        // solid, as the step last built them.
-        if let (Some(built), Ok(namer)) = (context.built, Namer::new("import", context.id)) {
-            for k in 0.. {
-                let solid = namer.name(&[&format!("s{k}")]);
-                if built.solid_id(&solid).is_err() {
-                    break;
-                }
-                if let Some(healed) = built.body_data::<Healed>(&solid) {
-                    f.text(
-                        &format!("healed_{k}"),
-                        format!(
-                            "Healed {} ({}): {}.",
-                            healed.label,
-                            solid,
-                            healed.healing.summary()
-                        ),
-                        Tone::Hint,
-                    );
-                }
-            }
-        }
-        f
+    /// Reads the file, then adds its bodies.
+    fn run(step: &str, part: &mut Build, args: &ImportStepArgs) -> GeopResult<()> {
+        part.define_target(&imported(step), &(step.to_string(), args.clone()), read)?;
+        build_model::<Self>(part, step, args)
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    fn presentation(
+        context: &Context<Input, ParamValue>,
         args: &ImportStepArgs,
-        library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("import_step({operation_id}, {args:?})");
-        if args.file.is_empty() {
-            return Err(GeopError::new("choose a STEP file to import")).with_context(ctx);
-        }
-        let namer = Namer::new("import", operation_id).with_context(ctx)?;
-        let (_, text) = library.read(&args.file).with_context(ctx)?;
-        // Read once: kept by the file's text, read again only when it
-        // changes — or the reader does (see `crate::cache`).
-        let key = crate::cache::key::<S>(&text);
-        let kept = library
-            .cache()
-            .and_then(|cache| cache.load(&key))
-            .and_then(|bytes| crate::cache::decode::<S>(&bytes).ok());
-        let bodies = match kept {
-            Some(bodies) => bodies,
-            None => {
-                let bodies = read_step::<S>(&text).with_context(ctx)?;
-                if let (Some(cache), Ok(bytes)) = (library.cache(), crate::cache::encode(&bodies)) {
-                    cache.store(&key, &bytes);
-                }
-                bodies
-            }
-        };
-        if bodies.is_empty() {
-            return Err(GeopError::new(format!(
-                "{} has no solids or sheets",
-                args.file
-            )))
-            .with_context(ctx);
-        }
-        add_bodies(&mut part, &namer, bodies).with_context(ctx)?;
-        Ok(part)
+        _: &FormState<()>,
+    ) -> Form<Design> {
+        form(context, args).into_form()
+    }
+
+    fn process_user_event(
+        context: &Context<Input, ParamValue>,
+        args: &ImportStepArgs,
+        editing: &FormState<()>,
+        event: Event<Design>,
+    ) -> (ImportStepArgs, FormState<()>) {
+        editing.handle(args, event, |args, _, _| form(context, args), |_, _| {})
     }
 }

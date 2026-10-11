@@ -9,28 +9,184 @@ use geop_core_math::{
     scalars::{Field, Ring, ScalInF64 as S, Scalar},
     vector::Vector3,
 };
+use geop_core_program::operation::Operation;
 use geop_core_sketch::Sketch;
 use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
-use geop_ops::{Design, NoFiles, Operation, Part, PlacedSketch};
+use geop_ops::{
+    Design, NamedModel, PlacedSketch,
+    model::{model, sketch},
+    operation::{Build, BuildReader},
+    output::{Exporter, Output},
+};
 use geop_ops_rasterize::rasterize;
 
 use crate::{
     BaseFlange, BaseFlangeArgs, Corner, EdgeFlange, EdgeFlangeArgs, FlangePosition, FlatPattern,
-    FlatPatternArgs, FlatPatternData, Hem, HemArgs, HemKind, LengthReference, Relief, Sheet,
-    SheetCut, SheetCutArgs, SheetMetalRules, flat_pattern_dxf,
+    FlatPatternArgs, FlatPatternData, FlatPatternDxf, FlatPatternOptions, Hem, HemArgs, HemKind,
+    LengthReference, Relief, Sheet, SheetBody, SheetCut, SheetCutArgs, SheetMetalRules, sheets,
 };
 
 fn d(x: f64) -> Design {
     Design::from_f64(x)
 }
 
+/// A step of a part built here, as a program's would be.
+#[derive(Clone)]
+enum Step {
+    Sketch(Box<PlacedSketch<Design>>),
+    /// The solid `0` renamed `1`: another step's work on a body.
+    Rename(String, String),
+    Base(BaseFlangeArgs),
+    Edge(EdgeFlangeArgs),
+    Hem(HemArgs),
+    Cut(SheetCutArgs),
+    Flat(FlatPatternArgs),
+}
+
+macro_rules! steps {
+    ($($args:ty => $step:ident),*) => {
+        $(impl From<$args> for Step {
+            fn from(args: $args) -> Self {
+                Step::$step(args)
+            }
+        })*
+    };
+}
+
+steps!(BaseFlangeArgs => Base, EdgeFlangeArgs => Edge, HemArgs => Hem, SheetCutArgs => Cut, FlatPatternArgs => Flat);
+
+/// A part built by its steps, in order: each new step runs them all again,
+/// reusing what did not change.
+struct Part {
+    steps: Vec<(String, Step)>,
+    build: Build,
+}
+
+/// A copy builds its steps afresh.
+impl Clone for Part {
+    fn clone(&self) -> Self {
+        let mut part = Part {
+            steps: self.steps.clone(),
+            build: Build::default(),
+        };
+        part.run().expect("it built before");
+        part
+    }
+}
+
+/// The sketch given, as a step that draws it makes it.
+fn given_sketch(
+    _: &mut BuildReader,
+    placed: &PlacedSketch<Design>,
+) -> GeopResult<PlacedSketch<Design>> {
+    Ok(placed.clone())
+}
+
+/// The solid `from` renamed `to`.
+fn renamed(
+    mut model: NamedModel<Design>,
+    _: &mut BuildReader,
+    (from, to): &(String, String),
+) -> GeopResult<NamedModel<Design>> {
+    let id = model.solid_id(from)?;
+    model.rename(id, to.clone())?;
+    Ok(model)
+}
+
+impl Part {
+    fn new() -> Self {
+        Part {
+            steps: Vec::new(),
+            build: Build::default(),
+        }
+    }
+
+    fn run(&mut self) -> GeopResult<()> {
+        let build = &mut self.build;
+        build.begin_run(&Default::default(), &Default::default());
+        let mut result = Ok(());
+        for (id, step) in &self.steps {
+            result = build.begin_step(id).and_then(|()| match step {
+                Step::Sketch(placed) => build.define_target(&sketch(id), &**placed, given_sketch),
+                Step::Rename(from, to) => {
+                    build.revise_target(&model(), &(from.clone(), to.clone()), renamed)
+                }
+                Step::Base(args) => BaseFlange::run(id, build, args),
+                Step::Edge(args) => EdgeFlange::run(id, build, args),
+                Step::Hem(args) => Hem::run(id, build, args),
+                Step::Cut(args) => SheetCut::run(id, build, args),
+                Step::Flat(args) => FlatPattern::run(id, build, args),
+            });
+            if result.is_err() {
+                break;
+            }
+        }
+        build.end_run(Default::default());
+        result
+    }
+
+    /// The part with the step `id` added.
+    fn then(mut self, id: &str, step: Step) -> GeopResult<Self> {
+        self.steps.push((id.to_string(), step));
+        self.run()?;
+        Ok(self)
+    }
+
+    /// The sheet of the body `solid`, as it is bent.
+    fn sheet(&self, solid: &str) -> Option<Sheet<Design>> {
+        let sheets = self.build.current().retrieve_target(&sheets()).ok()?;
+        sheets.bent(solid).cloned()
+    }
+
+    /// What the flat pattern `solid` recorded.
+    fn flat_data(&self, solid: &str) -> Option<FlatPatternData> {
+        let sheets = self.build.current().retrieve_target(&sheets()).ok()?;
+        match sheets.get(solid)? {
+            SheetBody::Flat(data) => Some(data.clone()),
+            SheetBody::Bent(_) => None,
+        }
+    }
+
+    /// Whether it has the sketch `name`.
+    fn has_sketch(&self, name: &str) -> bool {
+        self.build.current().retrieve_target(&sketch(name)).is_ok()
+    }
+
+    /// The flat pattern of `solid` — the newest sheet-metal body's, if
+    /// none — as the DXF file its exporter writes.
+    fn dxf(&mut self, solid: Option<&str>) -> GeopResult<String> {
+        let state = Default::default();
+        let mut output = Output::new(&mut self.build, &state, None, "");
+        let options = FlatPatternOptions {
+            solid: solid.map(str::to_string),
+        };
+        let export = FlatPatternDxf::export(&mut output, "dxf", options)?;
+        Ok(export.text().expect("a DXF file is text").to_string())
+    }
+}
+
+impl std::ops::Deref for Part {
+    type Target = NamedModel<Design>;
+
+    fn deref(&self) -> &NamedModel<Design> {
+        self.build
+            .current()
+            .retrieve_target(&model())
+            .expect("the part has a model")
+    }
+}
+
+/// `part` with the step `id` of `args` added.
+fn apply<A: Clone + Into<Step>>(part: Part, id: &str, args: &A) -> GeopResult<Part> {
+    part.then(id, args.clone().into())
+}
+
 /// A part with the sketch `k` on the world's XY plane.
-fn sketched(sketch: Sketch<Design>) -> Part<S> {
-    let mut part = Part::<S>::new();
+fn sketched(sketch: Sketch<Design>) -> Part {
     let plane = CoordinateSystem::world_at(Vector3::zero());
-    part.add_sketch(PlacedSketch { plane, sketch }, "k")
-        .unwrap();
-    part
+    Part::new()
+        .then("k", Step::Sketch(Box::new(PlacedSketch { plane, sketch })))
+        .unwrap()
 }
 
 /// The open chain of lines through `points`.
@@ -68,14 +224,14 @@ fn rules(thickness: f64, radius: f64, k: f64) -> SheetMetalRules {
     }
 }
 
-fn base(part: Part<S>, rules: SheetMetalRules, depth: f64) -> Part<S> {
+fn base(part: Part, rules: SheetMetalRules, depth: f64) -> Part {
     let args = BaseFlangeArgs {
         sketch: "k".into(),
         rules,
         depth: depth.into(),
         flip: false,
     };
-    BaseFlange.apply(part, "b", &args, &NoFiles).unwrap()
+    apply(part, "b", &args).unwrap()
 }
 
 fn flange(edge: &str) -> EdgeFlangeArgs {
@@ -92,12 +248,12 @@ fn flange(edge: &str) -> EdgeFlangeArgs {
     }
 }
 
-fn unfold(part: Part<S>, solid: &str) -> Part<S> {
+fn unfold(part: Part, solid: &str) -> Part {
     let args = FlatPatternArgs {
         solid: solid.into(),
         keep: false,
     };
-    FlatPattern.apply(part, "fp", &args, &NoFiles).unwrap()
+    apply(part, "fp", &args).unwrap()
 }
 
 /// Why `result` was refused; panics if it was built.
@@ -108,7 +264,7 @@ fn refused<T>(result: GeopResult<T>) -> String {
     }
 }
 
-fn assert_valid(part: &Part<S>) {
+fn assert_valid(part: &Part) {
     let params = ValidationParameters::default();
     if let Err(errors) = validate(&params, part.topology()) {
         let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
@@ -126,7 +282,7 @@ fn assert_valid(part: &Part<S>) {
 
 /// The box around the solid's vertices: its lower and upper corner, each
 /// coordinate the hull of the vertices' enclosures.
-fn extent(part: &Part<S>) -> [S; 3] {
+fn extent(part: &Part) -> [S; 3] {
     let points: Vec<Vector3<S>> = part.topology().vertices.values().map(|v| v.point).collect();
     [0, 1, 2].map(|k| {
         let lo = points.iter().map(|p| p[k]).reduce(S::min).unwrap();
@@ -136,7 +292,7 @@ fn extent(part: &Part<S>) -> [S; 3] {
 }
 
 /// The area of the face named `name`, from its triangles.
-fn area(part: &Part<S>, name: &str) -> f64 {
+fn area(part: &Part, name: &str) -> f64 {
     let raster = rasterize(part.topology(), 64).unwrap();
     let face = part.face_id(name).unwrap();
     raster.faces[&face]
@@ -168,7 +324,7 @@ fn l_bracket_from_a_chain_unfolds_to_its_developed_length() {
         0.8,
     );
     assert_valid(&part);
-    let sheet = part.body_data::<Sheet<S>>("base_flange(b)").unwrap();
+    let sheet = part.sheet("base_flange(b)").unwrap();
     assert_eq!((sheet.flats.len(), sheet.bends.len()), (2, 1));
     // The material lies right of the chain, outside the corner: the bend
     // turns away from the B side, so the A side is its inside.
@@ -193,12 +349,10 @@ fn l_bracket_from_a_chain_unfolds_to_its_developed_length() {
     assert!(y.could_be_equal(developed), "{y:?} against {developed:?}");
     assert!(x.could_be_equal(s(t)), "{x:?}");
     assert!(z.could_be_equal(s(0.8)), "{z:?}");
-    let data = flat
-        .body_data::<FlatPatternData>("flat_pattern(fp)")
-        .unwrap();
+    let data = flat.flat_data("flat_pattern(fp)").unwrap();
     assert_eq!(data.bends.len(), 1);
     assert_eq!(data.bends[0].bend, "base_flange(b,k,p1)");
-    flat.sketch_id("flat_pattern(fp,bend_lines)").unwrap();
+    assert!(flat.has_sketch("flat_pattern(fp,bend_lines)"));
     flat.face_id("flat_pattern(fp,base_flange(b,k,p1,a))")
         .unwrap();
 }
@@ -217,7 +371,7 @@ fn u_channel_with_an_arc_bend() {
     s.add_line(p[3], p[4]);
     let part = base(sketched(s), rules(0.05, 0.1, 0.5), 0.5);
     assert_valid(&part);
-    let sheet = part.body_data::<Sheet<S>>("base_flange(b)").unwrap();
+    let sheet = part.sheet("base_flange(b)").unwrap();
     assert_eq!((sheet.flats.len(), sheet.bends.len()), (3, 2));
     assert!(sheet.bends[0].radius.could_be_equal(S::from_f64(0.3)));
     let flat = unfold(part, "base_flange(b)");
@@ -241,18 +395,13 @@ fn plate_with_two_flanges_and_reliefs_unfolds_area_for_area() {
     let mut first = flange("base_flange(b,k,c4,b)");
     first.offset_start = 0.4;
     first.offset_end = 0.5;
-    let part = EdgeFlange.apply(part, "f1", &first, &NoFiles).unwrap();
+    let part = apply(part, "f1", &first).unwrap();
     assert_valid(&part);
     part.face_id("edge_flange(f1,relief0,in)").unwrap();
     part.face_id("edge_flange(f1,relief1,across)").unwrap();
-    let part = EdgeFlange
-        .apply(part, "f2", &flange("base_flange(b,k,c5,b)"), &NoFiles)
-        .unwrap();
+    let part = apply(part, "f2", &flange("base_flange(b,k,c5,b)")).unwrap();
     assert_valid(&part);
-    let sheet = part
-        .body_data::<Sheet<S>>("edge_flange(f2)")
-        .unwrap()
-        .clone();
+    let sheet = part.sheet("edge_flange(f2)").unwrap().clone();
     assert_eq!((sheet.flats.len(), sheet.bends.len()), (3, 2));
     // The flanges stand up along +z, the B side's way, half a unit high.
     let [_, _, z] = extent(&part);
@@ -298,13 +447,9 @@ fn flanges_meeting_at_a_corner_keep_a_gap() {
         rules(0.1, 0.1, 0.44),
         1.0,
     );
-    let part = EdgeFlange
-        .apply(part, "f1", &flange("base_flange(b,k,c4,b)"), &NoFiles)
-        .unwrap();
+    let part = apply(part, "f1", &flange("base_flange(b,k,c4,b)")).unwrap();
     assert_valid(&part);
-    let part = EdgeFlange
-        .apply(part, "f2", &flange("base_flange(b,k,c5,b)"), &NoFiles)
-        .unwrap();
+    let part = apply(part, "f2", &flange("base_flange(b,k,c5,b)")).unwrap();
     assert_valid(&part);
     // The rest of the second edge beside the gap, and the step back to it.
     part.face_id("edge_flange(f2,before)").unwrap();
@@ -320,13 +465,11 @@ fn flange_on_a_flange() {
         rules(0.1, 0.1, 0.44),
         1.0,
     );
-    let part = EdgeFlange
-        .apply(part, "f1", &flange("base_flange(b,k,c4,b)"), &NoFiles)
-        .unwrap();
+    let part = apply(part, "f1", &flange("base_flange(b,k,c4,b)")).unwrap();
     let mut second = flange("edge_flange(f1,flange,end,a)");
     second.position = FlangePosition::BendOutside;
     second.angle = 60.0.into();
-    let part = EdgeFlange.apply(part, "f2", &second, &NoFiles).unwrap();
+    let part = apply(part, "f2", &second).unwrap();
     assert_valid(&part);
     let flat = unfold(part, "edge_flange(f2)");
     assert_valid(&flat);
@@ -342,22 +485,14 @@ fn what_is_not_sheet_metal_is_refused() {
         rules(0.1, 0.1, 0.44),
         1.0,
     );
-    let part = EdgeFlange
-        .apply(part, "f1", &flange("base_flange(b,k,c4,b)"), &NoFiles)
-        .unwrap();
+    let part = apply(part, "f1", &flange("base_flange(b,k,c4,b)")).unwrap();
     // The bend's own edge is no flat edge to bend.
-    let err = refused(EdgeFlange.apply(
-        part.clone(),
-        "f2",
-        &flange("edge_flange(f1,line,b)"),
-        &NoFiles,
-    ));
+    let err = refused(apply(part.clone(), "f2", &flange("edge_flange(f1,line,b)")));
     assert!(err.contains("already bent"), "{err}");
-    let err = refused(EdgeFlange.apply(
+    let err = refused(apply(
         part.clone(),
         "f2",
         &flange("edge_flange(f1,bend,s0,a)"),
-        &NoFiles,
     ));
     assert!(err.contains("no edge of a sheet-metal body"), "{err}");
 
@@ -367,32 +502,30 @@ fn what_is_not_sheet_metal_is_refused() {
     s.add_circle(c, d(0.2));
     let holed = base(sketched(s), rules(0.1, 0.1, 0.44), 1.0);
     assert_valid(&holed);
-    let rim = holed.body_data::<Sheet<S>>("base_flange(b)").unwrap().flats[0].holes[0][0]
+    let rim = holed.sheet("base_flange(b)").unwrap().flats[0].holes[0][0]
         .name
         .name(&["b"]);
-    let err = refused(EdgeFlange.apply(holed, "f", &flange(&rim), &NoFiles));
+    let err = refused(apply(holed, "f", &flange(&rim)));
     assert!(err.contains("no edge of a sheet-metal body"), "{err}");
 
     // A solid with no record of bends.
-    let mut plain = part.clone();
-    plain
-        .rename(plain.solid_id("edge_flange(f1)").unwrap(), "other")
+    let plain = (part.clone())
+        .then("r", Step::Rename("edge_flange(f1)".into(), "other".into()))
         .unwrap();
-    let err = refused(FlatPattern.apply(
+    let err = refused(apply(
         plain,
         "fp",
         &FlatPatternArgs {
             solid: "other".into(),
             keep: false,
         },
-        &NoFiles,
     ));
     assert!(err.contains("not a sheet-metal body"), "{err}");
 
     // Relief that does not fit beside a flange set in less than its width.
     let mut narrow = flange("base_flange(b,k,c6,b)");
     narrow.offset_start = 0.02;
-    let err = refused(EdgeFlange.apply(part, "f3", &narrow, &NoFiles));
+    let err = refused(apply(part, "f3", &narrow));
     assert!(err.contains("does not fit"), "{err}");
 }
 
@@ -411,17 +544,17 @@ fn tear_beside_a_bend_outside() {
     let mut args = flange("base_flange(b,k,c4,a)");
     args.offset_start = 0.2;
     args.offset_end = 0.2;
-    let err = refused(EdgeFlange.apply(part.clone(), "f1", &args, &NoFiles));
+    let err = refused(apply(part.clone(), "f1", &args));
     assert!(err.contains("needs a relief"), "{err}");
     args.position = FlangePosition::BendOutside;
-    let part = EdgeFlange.apply(part, "f1", &args, &NoFiles).unwrap();
+    let part = apply(part, "f1", &args).unwrap();
     assert_valid(&part);
-    let sheet = part.body_data::<Sheet<S>>("edge_flange(f1)").unwrap();
+    let sheet = part.sheet("edge_flange(f1)").unwrap();
     assert!(!sheet.bends[0].toward_b);
     let mut args = flange("base_flange(b,k,c6,b)");
     args.position = FlangePosition::BendOutside;
     args.reference = LengthReference::Tangent;
-    let part = EdgeFlange.apply(part, "f2", &args, &NoFiles).unwrap();
+    let part = apply(part, "f2", &args).unwrap();
     assert_valid(&part);
     assert_valid(&unfold(part, "edge_flange(f2)"));
 }
@@ -457,7 +590,7 @@ fn sweep_angles_radii_and_k_factors() {
                 args.angle = angle.into();
                 args.length = 1.5.into();
                 args.offset_start = 0.5;
-                match EdgeFlange.apply(part, "f1", &args, &NoFiles) {
+                match apply(part, "f1", &args) {
                     Err(e) => {
                         let e = e.to_string();
                         assert!(
@@ -495,7 +628,7 @@ fn sweep_angles_radii_and_k_factors() {
                     depth: 0.5.into(),
                     flip: false,
                 };
-                let part = match BaseFlange.apply(part, "b", &args, &NoFiles) {
+                let part = match apply(part, "b", &args) {
                     Ok(part) => part,
                     Err(e) => {
                         // A sharp bend of a large radius sets back further
@@ -508,7 +641,7 @@ fn sweep_angles_radii_and_k_factors() {
                     }
                 };
                 assert_valid(&part);
-                let sheet = part.body_data::<Sheet<S>>("base_flange(b)").unwrap();
+                let sheet = part.sheet("base_flange(b)").unwrap();
                 let bend = &sheet.bends[0];
                 assert!(!bend.toward_b, "{ctx}");
                 assert!(bend.angle.could_be_equal(theta), "{ctx}: {:?}", bend.angle);
@@ -545,10 +678,10 @@ fn flanged_bracket_mass_properties_converge() {
     front.length = 0.6.into();
     front.offset_start = 0.3;
     front.offset_end = 0.3;
-    let part = EdgeFlange.apply(part, "front", &front, &NoFiles).unwrap();
+    let part = apply(part, "front", &front).unwrap();
     let mut back = flange("base_flange(b,k,c6,b)");
     back.length = 0.4.into();
-    let part = EdgeFlange.apply(part, "back", &back, &NoFiles).unwrap();
+    let part = apply(part, "back", &back).unwrap();
     assert_valid(&part);
     let solid = part.solid_id("edge_flange(back)").unwrap();
     let mass = part.topology().mass_properties(solid).unwrap();
@@ -556,15 +689,9 @@ fn flanged_bracket_mass_properties_converge() {
 }
 
 /// `part` with the sketch `name` placed on `plane`.
-fn with_sketch(
-    mut part: Part<S>,
-    name: &str,
-    plane: CoordinateSystem<S>,
-    sketch: Sketch<Design>,
-) -> Part<S> {
-    part.add_sketch(PlacedSketch { plane, sketch }, name)
-        .unwrap();
-    part
+fn with_sketch(part: Part, name: &str, plane: CoordinateSystem<S>, sketch: Sketch<Design>) -> Part {
+    part.then(name, Step::Sketch(Box::new(PlacedSketch { plane, sketch })))
+        .unwrap()
 }
 
 /// The plane at `origin` spanned by `u` and `v`.
@@ -584,17 +711,17 @@ fn circles(centers: &[[f64; 2]], r: f64) -> Sketch<Design> {
     s
 }
 
-fn cut(part: Part<S>, id: &str, sketch: &str, face: &str) -> GeopResult<Part<S>> {
+fn cut(part: Part, id: &str, sketch: &str, face: &str) -> GeopResult<Part> {
     let args = SheetCutArgs {
         sketch: sketch.into(),
         face: face.into(),
     };
-    SheetCut.apply(part, id, &args, &NoFiles)
+    apply(part, id, &args)
 }
 
 /// The centres of the circles whose arcs make the A-side edges named
 /// `prefix...,a))` — of a flat pattern — each once.
-fn arc_centers(part: &Part<S>, prefix: &str) -> Vec<[f64; 2]> {
+fn arc_centers(part: &Part, prefix: &str) -> Vec<[f64; 2]> {
     let mut centers: Vec<[f64; 2]> = Vec::new();
     for (id, name) in part.names().iter() {
         let geop_ops::RefId::Edge(e) = id else {
@@ -622,7 +749,7 @@ fn arc_centers(part: &Part<S>, prefix: &str) -> Vec<[f64; 2]> {
 /// The bracket of the examples, flanged first: a plate 2 by 1.2, a flange
 /// set in from both ends of its front edge and one along its whole back
 /// edge, 0.4 high.
-fn flanged_bracket() -> Part<S> {
+fn flanged_bracket() -> Part {
     let part = base(
         sketched(polygon(&[[0.0, 0.0], [2.0, 0.0], [2.0, 1.2], [0.0, 1.2]])),
         rules(0.08, 0.08, 0.44),
@@ -632,10 +759,10 @@ fn flanged_bracket() -> Part<S> {
     front.length = 0.6.into();
     front.offset_start = 0.3;
     front.offset_end = 0.3;
-    let part = EdgeFlange.apply(part, "front", &front, &NoFiles).unwrap();
+    let part = apply(part, "front", &front).unwrap();
     let mut back = flange("base_flange(b,k,c6,b)");
     back.length = 0.4.into();
-    EdgeFlange.apply(part, "back", &back, &NoFiles).unwrap()
+    apply(part, "back", &back).unwrap()
 }
 
 /// Mounting holes cut after flanging — through the plate and through the
@@ -664,7 +791,7 @@ fn holes_cut_after_flanging_unfold_into_place() {
     );
     let part = cut(part, "c2", "f", "edge_flange(back,flange,a)").unwrap();
     assert_valid(&part);
-    let sheet = part.body_data::<Sheet<S>>("sheet_cut(c2)").unwrap();
+    let sheet = part.sheet("sheet_cut(c2)").unwrap();
     assert_eq!(sheet.cuts.len(), 2);
     part.face_id("sheet_cut(c2,f,c1)").unwrap();
 
@@ -747,12 +874,7 @@ fn notches_and_refused_cuts() {
     part.face_id("base_flange(b,k,c7,2)").unwrap();
     assert!(part.face_id("base_flange(b,k,c7,1)").is_err());
     part.face_id("sheet_cut(c,n,c5)").unwrap();
-    let err = refused(EdgeFlange.apply(
-        part.clone(),
-        "f",
-        &flange("base_flange(b,k,c7,b)"),
-        &NoFiles,
-    ));
+    let err = refused(apply(part.clone(), "f", &flange("base_flange(b,k,c7,b)")));
     assert!(err.contains("has been cut"), "{err}");
     assert_valid(&unfold(part, "sheet_cut(c)"));
 
@@ -802,9 +924,9 @@ fn hems_fold_back_and_unfold_to_their_developed_length() {
         offset_end: 0.0,
     };
     for (kind, gap, inner) in [(HemKind::Closed, 0.0, r), (HemKind::Open, 0.06, 0.03)] {
-        let part = Hem.apply(square(), "h", &hem(kind, gap), &NoFiles).unwrap();
+        let part = apply(square(), "h", &hem(kind, gap)).unwrap();
         assert_valid(&part);
-        let sheet = part.body_data::<Sheet<S>>("hem(h)").unwrap();
+        let sheet = part.sheet("hem(h)").unwrap();
         assert!(sheet.bends[0].angle.could_be_equal(S::PI));
         // Between vertices: the fold's outside, flush with the old edge,
         // is no vertex.
@@ -829,11 +951,11 @@ fn hems_fold_back_and_unfold_to_their_developed_length() {
             "{kind:?}: {y:?} against {developed:?}"
         );
     }
-    let err = refused(Hem.apply(square(), "h", &hem(HemKind::Open, 0.0), &NoFiles));
+    let err = refused(apply(square(), "h", &hem(HemKind::Open, 0.0)));
     assert!(err.contains("gap must be positive"), "{err}");
     let mut short = hem(HemKind::Closed, 0.0);
     short.length = 0.2;
-    let err = refused(Hem.apply(square(), "h", &short, &NoFiles));
+    let err = refused(apply(square(), "h", &short));
     assert!(err.contains("leaves nothing flat"), "{err}");
 }
 
@@ -849,16 +971,14 @@ fn a_closed_corner_reaches_to_the_flange_beside_it() {
         rules(t, r, 0.44),
         1.0,
     );
-    let part = EdgeFlange
-        .apply(part, "f1", &flange("base_flange(b,k,c4,b)"), &NoFiles)
-        .unwrap();
+    let part = apply(part, "f1", &flange("base_flange(b,k,c4,b)")).unwrap();
     let mut second = flange("base_flange(b,k,c5,b)");
     second.corner = Corner::Closed;
     let mut other_radius = second.clone();
     other_radius.radius = Some(0.05);
-    let err = refused(EdgeFlange.apply(part.clone(), "f2", &other_radius, &NoFiles));
+    let err = refused(apply(part.clone(), "f2", &other_radius));
     assert!(err.contains("radii differ"), "{err}");
-    let part = EdgeFlange.apply(part, "f2", &second, &NoFiles).unwrap();
+    let part = apply(part, "f2", &second).unwrap();
     assert_valid(&part);
     part.face_id("edge_flange(f2,flange,corner0)").unwrap();
     // The first flange's inside is a thickness in from the plate's front
@@ -932,8 +1052,9 @@ fn flat_pattern_dxf_reads_back_by_layer() {
         circles(&[[-1.0, 0.3]], 0.05),
     );
     let part = cut(part, "c2", "f", "edge_flange(back,flange,a)").unwrap();
-    let (body, dxf) = flat_pattern_dxf(&part, None).unwrap();
-    assert_eq!(body, "sheet_cut(c2)");
+    let mut part = part;
+    let dxf = part.dxf(None).unwrap();
+    assert_eq!(part.dxf(Some("sheet_cut(c2)")).unwrap(), dxf);
     let (entities, layers) = read_dxf(&dxf);
     assert_eq!(layers, ["CUT", "BEND"]);
     let count = |kind: &str, layer: &str| {
@@ -957,7 +1078,7 @@ fn flat_pattern_dxf_reads_back_by_layer() {
     assert_eq!(notes, ["UP 90%%d R0.08", "UP 90%%d R0.08"]);
     assert_eq!(entities.len(), 18, "{entities:?}");
 
-    let flat = unfold(part, "sheet_cut(c2)");
-    let (_, recorded) = flat_pattern_dxf(&flat, Some("flat_pattern(fp)")).unwrap();
+    let mut flat = unfold(part, "sheet_cut(c2)");
+    let recorded = flat.dxf(Some("flat_pattern(fp)")).unwrap();
     assert_eq!(recorded, dxf);
 }

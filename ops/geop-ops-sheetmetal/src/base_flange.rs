@@ -7,19 +7,24 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
     with_context,
 };
+use geop_core_program::{
+    editing::{Choice, Dialog, Event, Form, Number, Tone, Unit, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_core_sketch::{CurveKind, ProfileLoop, Shape};
 use geop_ops::{
-    Context, Library, Namer, Part, PlacedSketch,
-    operation::{EntityRef, Operation, Role},
+    Design, NamedModel, Namer, ParamValue, PlacedSketch,
+    model::model_or_empty,
+    operation::{Build, BuildReader, EntityRef, Input, Lookup, ModelStep, Role, Scope, Seen},
     parameters::{Formula, expressions},
-    ui::{Choice, Form, Number, Tone, Unit},
+    ui::formula_number,
 };
 use geop_ops_extrude_revolve::operation::shape_loops;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    body::{self, Made, Making, SheetStep},
     sheet::{Bend, BendFrame, Flat, FlatEdge, Placement, Relief, Sheet, SheetMetalRules, straight},
-    thicken::thicken,
 };
 
 /// Starts a sheet-metal body from a sketch, for the operation `B`: a solid
@@ -66,37 +71,92 @@ pub struct BaseFlangeArgs {
     pub flip: bool,
 }
 
-impl Operation for BaseFlange {
-    type Args = BaseFlangeArgs;
-    type Session = ();
+impl SheetStep for BaseFlange {
+    fn plan(reader: &mut BuildReader, step: &str, args: &BaseFlangeArgs) -> GeopResult<Made> {
+        let ctx = with_context!("base_flange({step}, {args:?})");
+        let namer = Namer::new("base_flange", step)?;
+        args.rules.check().with_context(ctx)?;
+        let model = model_or_empty(reader);
+        let mut scope = Scope {
+            model: &model,
+            reader,
+        };
+        let placed = scope.sketch(&args.sketch).with_context(ctx)?.clone();
+        let sheet = match placed.sketch.shape().with_context(ctx)? {
+            Shape::Region(region) => {
+                plate(&namer, &args.sketch, &placed, Shape::Region(region), args)
+            }
+            Shape::Chain(chain) => {
+                let depth = args.depth.evaluate(&mut scope).with_context(ctx)?;
+                strip(&namer, &args.sketch, &placed, &chain, depth, args)
+            }
+        }
+        .with_context(ctx)?;
+        Ok(Made {
+            consumes: None,
+            solid: namer.root(),
+            making: Making::Bent(sheet),
+        })
+    }
+}
 
-    fn formulas<'a>(&self, args: &'a mut BaseFlangeArgs) -> Vec<&'a mut String> {
+impl ModelStep for BaseFlange {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        _: &BaseFlangeArgs,
+    ) -> GeopResult<()> {
+        body::build(model, reader, step)
+    }
+}
+
+impl Operation for BaseFlange {
+    const INFO: OperationInfo = OperationInfo::new(
+        "base_flange",
+        "Base flange",
+        "Start a sheet-metal body from a sketch: a plate from its area, or a bent strip from a chain of lines and arcs.",
+        OperationGroup::SheetMetal,
+        OperationTier::Big,
+    );
+    type Args = BaseFlangeArgs;
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
+
+    fn formulas(args: &mut BaseFlangeArgs) -> Vec<&mut String> {
         expressions([&mut args.depth])
     }
 
     /// The newest sketch, with the default rules, a unit deep.
-    fn new_args<S: Scalar>(&self, before: &Part<S>) -> BaseFlangeArgs {
+    fn new_args(context: &Context<Input, ParamValue>) -> BaseFlangeArgs {
         BaseFlangeArgs {
-            sketch: before.sketch_names().pop().unwrap_or_default(),
+            sketch: Seen::new(context.before)
+                .sketch_names()
+                .pop()
+                .unwrap_or_default(),
             rules: SheetMetalRules::default(),
             depth: Formula::Plain(1.0),
             flip: false,
         }
     }
 
+    fn run(step: &str, part: &mut Build, args: &BaseFlangeArgs) -> GeopResult<()> {
+        body::run::<Self>(step, part, args)
+    }
+
     /// The sketch, picked; for a chain how deep; whether flipped; and the
     /// rules.
-    fn form<'a, S: Scalar>(
-        &self,
-        context: Context<'a, S>,
+    fn presentation(
+        context: &Context<Input, ParamValue>,
         args: &BaseFlangeArgs,
         _: &(),
-        _: &[String],
-    ) -> Form<'a, S, BaseFlangeArgs> {
-        let before = context.before;
-        let mut f = Form::<S, BaseFlangeArgs>::new();
-        if before.sketches().next().is_none() {
-            f.text("sketch", "No sketch yet — add one first.", Tone::Hint);
+    ) -> Form<Design> {
+        let mut seen = Seen::new(context.before);
+        let mut form = Form::default();
+        let dialog = &mut form.dialog;
+        if seen.sketches().is_empty() {
+            dialog.text("sketch", "No sketch yet — add one first.", Tone::Hint);
         } else {
             let value = (!args.sketch.is_empty())
                 .then(|| EntityRef::Sketch {
@@ -104,93 +164,64 @@ impl Operation for BaseFlange {
                 })
                 .into_iter()
                 .collect();
-            f.reference(
-                "sketch",
-                "sketch",
-                value,
-                &[Role::Sketch],
-                None,
-                false,
-                |edit, picked| {
-                    edit.args.sketch = match picked.as_slice() {
-                        [EntityRef::Sketch { name }] => name.clone(),
-                        _ => String::new(),
-                    }
-                },
-            );
+            dialog.reference("sketch", "sketch", value, &[Role::Sketch], None, false);
         }
-        let chain = before
-            .sketch_id(&args.sketch)
-            .and_then(|id| before.sketch(id))
+        let chain = (seen.sketch(&args.sketch))
             .and_then(|placed| placed.sketch.shape())
             .is_ok_and(|shape| matches!(shape, Shape::Chain(_)));
         if chain {
-            f.formula(
-                "depth",
-                Number::formula("depth", &args.depth, before.state(), Unit::Length)
-                    .range(0.0, 10.0),
-                |args, d| args.depth = d,
-            );
+            let depth = formula_number("depth", &args.depth, &mut seen, Unit::Length);
+            dialog.number("depth", depth.range(0.0, 10.0));
         }
-        f.checkbox("flip", "flip side", args.flip, |args, b| args.flip = b);
-        rules_fields(&mut f, &args.rules);
-        f
+        dialog.checkbox("flip", "flip side", args.flip);
+        rules_fields(dialog, &args.rules);
+        form
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
         args: &BaseFlangeArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("base_flange({operation_id}, {args:?})");
-        let namer = Namer::new("base_flange", operation_id)?;
-        args.rules.check().with_context(ctx)?;
-        let placed = part
-            .sketch(part.sketch_id(&args.sketch).with_context(ctx)?)?
-            .clone();
-        let sheet = match placed.sketch.shape().with_context(ctx)? {
-            Shape::Region(region) => {
-                plate(&namer, &args.sketch, &placed, Shape::Region(region), args)
+        _: &(),
+        event: Event<Design>,
+    ) -> (BaseFlangeArgs, ()) {
+        let mut args = args.clone();
+        let Event::Field { key, value } = event else {
+            return (args, ());
+        };
+        match (key.as_str(), value) {
+            ("sketch", Value::Entities(picked)) => {
+                args.sketch = match picked.as_slice() {
+                    [EntityRef::Sketch { name }] => name.clone(),
+                    _ => String::new(),
+                }
             }
-            Shape::Chain(chain) => {
-                let depth = args.depth.evaluate(&mut part).with_context(ctx)?;
-                strip(&namer, &args.sketch, &placed, &chain, depth, args)
+            ("depth", value) => {
+                if let Some(depth) = Formula::from_value(&value) {
+                    args.depth = depth;
+                }
             }
+            ("flip", Value::Bool(b)) => args.flip = b,
+            (key, value) => set_rule(&mut args.rules, key, value),
         }
-        .with_context(ctx)?;
-        let solid = namer.root();
-        thicken(
-            &mut part,
-            &sheet.folded().with_context(ctx)?,
-            &solid,
-            &|n| n,
-        )
-        .with_context(ctx)?;
-        part.set_body_data(&solid, sheet).with_context(ctx)?;
-        Ok(part)
+        (args, ())
     }
 }
 
 /// The fields of the sheet-metal rules.
-fn rules_fields<'a, S: Scalar>(f: &mut Form<'a, S, BaseFlangeArgs>, rules: &SheetMetalRules) {
-    f.number(
+fn rules_fields(dialog: &mut Dialog<Design>, rules: &SheetMetalRules) {
+    dialog.number(
         "thickness",
         Number::new("thickness", rules.thickness, Unit::Length).range(0.0, 1.0),
-        |args, t| args.rules.thickness = t,
     );
-    f.number(
+    dialog.number(
         "bend_radius",
         Number::new("bend radius", rules.bend_radius, Unit::Length).range(0.0, 1.0),
-        |args, r| args.rules.bend_radius = r,
     );
-    f.number(
+    dialog.number(
         "k_factor",
         Number::new("K-factor", rules.k_factor, Unit::Fraction).range(0.0, 1.0),
-        |args, k| args.rules.k_factor = k,
     );
-    f.select(
+    dialog.select(
         "relief",
         "relief",
         match rules.relief {
@@ -202,25 +233,35 @@ fn rules_fields<'a, S: Scalar>(f: &mut Form<'a, S, BaseFlangeArgs>, rules: &Shee
             Choice::new("tear", "Tear"),
         ],
         false,
-        |args, choice| {
-            args.rules.relief = match choice {
+    );
+    if rules.relief == Relief::Rectangular {
+        dialog.number(
+            "relief_ratio",
+            Number::new("relief ratio", rules.relief_ratio, Unit::Fraction).range(0.0, 2.0),
+        );
+    }
+    dialog.number(
+        "corner_gap",
+        Number::new("corner gap", rules.corner_gap, Unit::Length).range(0.0, 1.0),
+    );
+}
+
+/// `rules` with the field `key` of [`rules_fields`] set to `value`.
+fn set_rule(rules: &mut SheetMetalRules, key: &str, value: Value) {
+    match (key, value) {
+        ("thickness", Value::Number(t)) => rules.thickness = t,
+        ("bend_radius", Value::Number(r)) => rules.bend_radius = r,
+        ("k_factor", Value::Number(k)) => rules.k_factor = k,
+        ("relief", Value::Choice(choice)) => {
+            rules.relief = match choice.as_str() {
                 "tear" => Relief::Tear,
                 _ => Relief::Rectangular,
             }
-        },
-    );
-    if rules.relief == Relief::Rectangular {
-        f.number(
-            "relief_ratio",
-            Number::new("relief ratio", rules.relief_ratio, Unit::Fraction).range(0.0, 2.0),
-            |args, r| args.rules.relief_ratio = r,
-        );
+        }
+        ("relief_ratio", Value::Number(r)) => rules.relief_ratio = r,
+        ("corner_gap", Value::Number(g)) => rules.corner_gap = g,
+        _ => {}
     }
-    f.number(
-        "corner_gap",
-        Number::new("corner gap", rules.corner_gap, Unit::Length).range(0.0, 1.0),
-        |args, g| args.rules.corner_gap = g,
-    );
 }
 
 /// The sketch's area as one flat plate: on the sketch's plane, its B side

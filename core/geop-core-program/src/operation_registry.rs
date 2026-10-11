@@ -1,42 +1,38 @@
 use std::collections::BTreeMap;
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use serde::{Deserialize, Serialize};
 
 use crate::{
-    operation::{ErasedOperation, Operation},
-    program::{Program, ProgramStep},
+    operation::{ErasedOperation, Operation, OperationInfo},
+    part::State,
 };
 
-/// A step as a program is saved.
-#[derive(Serialize, Deserialize)]
-struct SavedStep {
-    id: String,
-    operation: String,
-    args: serde_json::Value,
-}
-
 /// The operations a program may use, by name.
-pub struct OperationRegistry<I, S>(BTreeMap<&'static str, Box<dyn ErasedOperation<I, S>>>);
+pub struct OperationRegistry<I, S: State>(BTreeMap<&'static str, Box<dyn ErasedOperation<I, S>>>);
 
-impl<I, S> Default for OperationRegistry<I, S> {
+impl<I, S: State> Default for OperationRegistry<I, S> {
     fn default() -> Self {
         Self(BTreeMap::new())
     }
 }
 
-impl<I, S> OperationRegistry<I, S> {
+impl<I, S: State> OperationRegistry<I, S> {
     /// Adds `operation`. Fails if an operation of its name is already there: a
     /// program could not tell the two apart.
     pub fn with<O: Operation<Input = I, State = S>>(mut self, operation: O) -> GeopResult<Self> {
-        if self.0.contains_key(O::NAME) {
+        if self.0.contains_key(O::INFO.kind) {
             return Err(GeopError::new(format!(
                 "operation `{}` is registered twice",
-                O::NAME
+                O::INFO.kind
             )));
         }
-        self.0.insert(O::NAME, Box::new(operation));
+        self.0.insert(O::INFO.kind, Box::new(operation));
         Ok(self)
+    }
+
+    /// What each operation is, in the order of their names.
+    pub fn infos(&self) -> impl Iterator<Item = &'static OperationInfo> + '_ {
+        self.0.values().map(|operation| operation.info())
     }
 
     pub fn get(&self, name: &str) -> GeopResult<&dyn ErasedOperation<I, S>> {
@@ -44,44 +40,5 @@ impl<I, S> OperationRegistry<I, S> {
             .get(name)
             .map(Box::as_ref)
             .ok_or_else(|| GeopError::new(format!("unknown operation `{name}`")))
-    }
-
-    pub fn save(&self, program: &Program) -> GeopResult<serde_json::Value> {
-        let steps = program
-            .steps
-            .iter()
-            .map(|step| {
-                Ok(SavedStep {
-                    id: step.id.clone(),
-                    operation: step.operation.to_string(),
-                    args: self.get(step.operation)?.args_to_json(&*step.args)?,
-                })
-            })
-            .collect::<GeopResult<Vec<_>>>()?;
-        serde_json::to_value(steps).map_err(|e| GeopError::new(format!("saving program: {e}")))
-    }
-
-    pub fn load(&self, json: serde_json::Value) -> GeopResult<Program> {
-        let steps: Vec<SavedStep> = serde_json::from_value(json)
-            .map_err(|e| GeopError::new(format!("loading program: {e}")))?;
-        let steps = steps
-            .into_iter()
-            .map(|step| {
-                let context = |e: GeopError| e.with_context(format!("loading step `{}`", step.id));
-                let (&name, operation) = (self.0.get_key_value(step.operation.as_str()))
-                    .ok_or_else(|| {
-                        context(GeopError::new(format!(
-                            "unknown operation `{}`",
-                            step.operation
-                        )))
-                    })?;
-                Ok(ProgramStep {
-                    args: operation.args_from_json(step.args).map_err(context)?,
-                    id: step.id,
-                    operation: name,
-                })
-            })
-            .collect::<GeopResult<_>>()?;
-        Ok(Program { steps })
     }
 }

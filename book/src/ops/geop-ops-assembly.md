@@ -56,9 +56,20 @@ changed — for a file that only places parts, only its placements.
 - Adding a mate arms its entities field. When a mate is added the editor
   solves the program, moving the step's own part first, the others only if
   that is not enough.
-- Picks test against the part as the step builds it (`PICKS_BUILT`), so the
+- Picks test against the part as the step builds it (`OperationInfo::picks_built`), so the
   placed part's own entities can be picked.
 - Dragging the placed part asks for the point grabbed to be pulled towards
   the pointer, in the plane through it facing the eye (`Form::drags`). The
   editor solves the whole program with that pull, every part that no fixed mate holds free to give way: a linkage follows the link dragged. A fixed part
   goes where it is dragged.
+
+## What the mates declare for solving
+
+The crate solves nothing itself: the editor solves every program's state the
+same way (`geop_ops::solving`). What the mates add besides their
+constraints is said in the part: a `fixed` mate declares the state of the
+part it holds as an `Unknown` held fixed; a joint declares each of its
+coordinates as an `Unknown` that follows its parts — started, where the
+joint does not hold, where its parts are, measured from them — and as
+`Settings`, with its limits, for the editor to list and set (the joints
+panel). Its limits are constraints of their own (`Bound::AtMost`).

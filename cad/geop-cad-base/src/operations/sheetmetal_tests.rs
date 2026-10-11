@@ -1,25 +1,20 @@
 //! Sheet metal in programs and in the editor: the bracket example built,
-//! flanged and unfolded by steps, the way the front end does it.
+//! flanged, cut, hemmed and unfolded by steps, the way the front end does
+//! it, and its flat pattern exported for cutting.
 
-use geop_core_math::{
-    primitives::Ray,
-    scalars::{ScalInF64 as S, Scalar},
-    vector::Vector3,
-};
 use geop_ops::{
-    NoFiles, Part,
-    ui::{Button, Pointer, Reach, StepEditEvent, Value},
+    model::{model, sketch},
+    ui::{Button, StepEditEvent, Value},
 };
-use geop_ops_sheetmetal::{FlatPatternArgs, FlatPatternData, Sheet};
+use geop_ops_sheetmetal::{
+    EdgeFlangeArgs, FlatPatternArgs, HemArgs, HemKind, SheetBody, SheetCutArgs, sheets,
+};
+use geop_ops_sketch::AddSketchArgs;
 
-use crate::{Command, Editor, PartOperation, examples};
-
-/// `validate_manifold` runs `validate` first: once is enough.
-fn assert_valid(part: &Part<S>) {
-    if let Err(report) = super::regression_tests::check_valid(part) {
-        panic!("{report}");
-    }
-}
+use super::testing::{
+    Built, args, assert_valid, click_at, dialog, disc, example_editor, from_above, handled, pointer,
+};
+use crate::{Command, Push, examples};
 
 /// The bracket example builds a valid sheet-metal body of three flats, two
 /// bends and the holes cut through it after flanging, survives a trip
@@ -33,9 +28,11 @@ fn bracket_example_builds_and_unfolds() {
         serde_json::from_str::<crate::Program>(&json).unwrap(),
         program
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
-    assert_valid(&part);
-    let sheet = part.body_data::<Sheet<S>>("sheet_cut(mount)").unwrap();
+    let runner = program.built().unwrap();
+    let view = runner.part.current();
+    assert_valid(view.retrieve_target(&model()).unwrap());
+    let recorded = view.retrieve_target(&sheets()).unwrap();
+    let sheet = recorded.bent("sheet_cut(mount)").unwrap();
     assert_eq!((sheet.flats.len(), sheet.bends.len()), (3, 2));
     assert_eq!(sheet.cuts.len(), 1);
     assert_eq!(sheet.cuts[0].loops.len(), 2);
@@ -47,14 +44,24 @@ fn bracket_example_builds_and_unfolds() {
             keep: false,
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
-    assert_valid(&part);
-    assert_eq!(part.solid_names(), ["flat_pattern(flat)"]);
-    let data = part
-        .body_data::<FlatPatternData>("flat_pattern(flat)")
-        .unwrap();
+    let runner = program.built().unwrap();
+    let view = runner.part.current();
+    let built = view.retrieve_target(&model()).unwrap();
+    assert_valid(built);
+    assert_eq!(built.solid_names(), ["flat_pattern(flat)"]);
+    let recorded = view.retrieve_target(&sheets()).unwrap();
+    let Some(SheetBody::Flat(data)) = recorded.get("flat_pattern(flat)") else {
+        panic!("no flat pattern recorded");
+    };
     assert_eq!(data.bends.len(), 2);
-    part.sketch_id("flat_pattern(flat,bend_lines)").unwrap();
+    assert!(
+        (view.retrieve_target(&sketch("flat_pattern(flat,bend_lines)"))).is_ok(),
+        "no bend lines"
+    );
+    assert_eq!(
+        geop_ops_sheetmetal::thickness(view, "flat_pattern(flat)"),
+        Some(0.08)
+    );
 }
 
 /// A new edge flange picks its edge by a click onto the bracket's right
@@ -62,63 +69,39 @@ fn bracket_example_builds_and_unfolds() {
 /// sets it, and a new flat pattern starts from the flanged body.
 #[test]
 fn new_edge_flange_picks_its_edge_and_unfolds() {
-    let mut editor = Editor::<S>::new();
-    let update = editor.handle(Command::LoadExample {
-        name: "sheet_metal_bracket".into(),
-    });
-    assert!(update.error.is_none(), "{:?}", update.error);
-    editor.handle(Command::New {
-        kind: "edge_flange".into(),
-    });
-    let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
-    let click = Command::Event {
-        event: StepEditEvent::Click {
-            pointer: Pointer {
-                ray: Ray::try_new(v([2.0, 0.4, 10.0]), v([0.0, 0.0, -1.0])).unwrap(),
-                reach: Reach::Tube {
-                    radius: S::from_f64(0.009),
-                },
-            },
-            button: Button::Primary,
-            double: false,
-            shift: false,
+    let mut editor = example_editor("sheet_metal_bracket");
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "edge_flange".into(),
         },
-    };
-    let update = editor.handle(click);
-    assert!(update.error.is_none(), "{:?}", update.error);
+    );
+    let update = handled(&mut editor, click_at(from_above(2.0, 0.4)));
     let step = update.step.expect("the flange is edited");
     assert!(step.missing.is_empty(), "{:?}", step.missing);
-    let dialog = |key: &str, value| Command::Event {
-        event: StepEditEvent::Dialog {
-            key: key.into(),
-            value,
-        },
-    };
-    editor.handle(dialog("length", Value::Number(0.3)));
-    editor.handle(dialog("position", Value::Choice("bend_outside".into())));
-    let update = editor.handle(Command::Commit);
-    assert!(update.error.is_none(), "{:?}", update.error);
-    let program = editor.program();
-    let step = program.steps.last().unwrap();
-    match &step.operation {
-        PartOperation::EdgeFlange(args) => {
-            assert_eq!(args.edge, "base_flange(plate,outline,c5,b)", "{args:?}");
-            assert_eq!(args.length, 0.3.into());
-        }
-        other => panic!("{other:?}"),
-    }
-    let id = step.id.clone();
-    let flanged = format!("edge_flange({id})");
+    handled(&mut editor, dialog("length", Value::Number(0.3)));
+    handled(
+        &mut editor,
+        dialog("position", Value::Choice("bend_outside".into())),
+    );
+    handled(&mut editor, Command::Commit);
+    let step = editor.program().program.steps.last().unwrap().clone();
+    assert_eq!(step.operation, "edge_flange");
+    let flange: EdgeFlangeArgs = args(&step);
+    assert_eq!(flange.edge, "base_flange(plate,outline,c5,b)", "{flange:?}");
+    assert_eq!(flange.length, 0.3.into());
+    let flanged = format!("edge_flange({})", step.id);
 
-    editor.handle(Command::New {
-        kind: "flat_pattern".into(),
-    });
-    let update = editor.handle(Command::Commit);
-    assert!(update.error.is_none(), "{:?}", update.error);
-    match &editor.program().steps.last().unwrap().operation {
-        PartOperation::FlatPattern(args) => assert_eq!(args.solid, flanged),
-        other => panic!("{other:?}"),
-    }
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "flat_pattern".into(),
+        },
+    );
+    let update = handled(&mut editor, Command::Commit);
+    let step = editor.program().program.steps.last().unwrap();
+    assert_eq!(step.operation, "flat_pattern");
+    assert_eq!(args::<FlatPatternArgs>(step).solid, flanged);
     let scene = update.scene.expect("the scene is sent anew");
     assert!(
         scene
@@ -129,4 +112,89 @@ fn new_edge_flange_picks_its_edge_and_unfolds() {
         "{:?}",
         scene.part.solids
     );
+}
+
+/// Sheet metal the way the front end does it, on the bracket: a sketch on
+/// the back flange cut through it by a new sheet-metal cut that takes the
+/// newest sketch and picks the flange by a click; a new hem picked on the
+/// plate's right edge and opened in the dialog; and the flat pattern
+/// exported for laser cutting, as the File menu asks for it.
+#[test]
+fn sheet_metal_cut_hem_and_cutting_export() {
+    let mut editor = example_editor("sheet_metal_bracket");
+    // A hole drawn on the back flange's outside, 0.3 up: the face's sketch
+    // `x` runs along the world's, its `y` down.
+    let mut program = editor.program().clone();
+    let hole = disc([1.0, -0.3], 0.05);
+    program.push(
+        "flange_hole",
+        AddSketchArgs {
+            plane: Some(geop_ops::EntityRef::Face {
+                name: "edge_flange(back,flange,a)".into(),
+            }),
+            sketch: hole,
+            ..Default::default()
+        },
+    );
+    handled(
+        &mut editor,
+        Command::Load {
+            program,
+            path: None,
+        },
+    );
+
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "sheet_cut".into(),
+        },
+    );
+    // The face is the one the sketch lies on unless picked: pressed, it
+    // takes the click.
+    handled(&mut editor, dialog("face", Value::Press));
+    handled(
+        &mut editor,
+        Command::Event {
+            event: StepEditEvent::Click {
+                pointer: pointer([1.0, 5.0, 0.3], [0.0, -1.0, 0.0]),
+                button: Button::Primary,
+                double: false,
+                shift: false,
+            },
+        },
+    );
+    let update = handled(&mut editor, Command::Commit);
+    let step = editor.program().program.steps.last().unwrap().clone();
+    assert_eq!(step.operation, "sheet_cut");
+    let cut: SheetCutArgs = args(&step);
+    assert_eq!(cut.sketch, "flange_hole");
+    assert_eq!(cut.face, "edge_flange(back,flange,a)");
+    let scene = update.scene.expect("the scene is sent anew");
+    assert_eq!(scene.part.solids, [format!("sheet_cut({})", step.id)]);
+
+    handled(&mut editor, Command::New { kind: "hem".into() });
+    handled(&mut editor, click_at(from_above(2.0, 0.4)));
+    handled(&mut editor, dialog("kind", Value::Choice("open".into())));
+    handled(&mut editor, dialog("gap", Value::Number(0.06)));
+    let update = handled(&mut editor, Command::Commit);
+    let step = editor.program().program.steps.last().unwrap().clone();
+    assert_eq!(step.operation, "hem");
+    let hem: HemArgs = args(&step);
+    assert_eq!(hem.edge, "base_flange(plate,outline,c5,b)");
+    assert_eq!((hem.kind, hem.gap), (HemKind::Open, 0.06));
+    let scene = update.scene.expect("the scene is sent anew");
+    assert_eq!(scene.part.solids, [format!("hem({})", step.id)]);
+
+    let json = editor
+        .handle_json(r#"{"command": "export", "exporter": "flat_pattern"}"#)
+        .unwrap();
+    let update: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(update["error"].is_null(), "{}", update["error"]);
+    assert_eq!(update["export"]["name"], "part_flat.dxf");
+    let dxf = update["export"]["text"].as_str().unwrap();
+    assert_eq!(dxf.matches("\nUP 90%%d R0.08\n").count(), 2, "{dxf}");
+    assert_eq!(dxf.matches("\nUP 180%%d R0.03\n").count(), 1, "{dxf}");
+    // Three holes, each one circle.
+    assert_eq!(dxf.matches("\nCIRCLE\n8\nCUT\n").count(), 3, "{dxf}");
 }

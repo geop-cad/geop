@@ -17,6 +17,7 @@
 //! edge projects to. All of it is reference geometry: fixed, construction,
 //! drawn as such, and never part of a profile.
 
+use geop_ops::operation::ResolveEntity;
 use std::collections::BTreeMap;
 
 use geop_core_geometry::nurb_curve::NurbCurve3D;
@@ -29,10 +30,13 @@ use geop_core_math::{
 };
 use geop_core_sketch::{CurveId, PointId, SplineShape};
 use geop_core_topology::CoedgeGeometry;
-use geop_ops::{Design, EntityRef, Part, RefId, operation::NamedCurve};
+use geop_ops::{
+    Design, EntityRef, RefId,
+    operation::{Lookup, NamedCurve},
+};
 use serde::{Deserialize, Serialize};
 
-use crate::{CurveKind, Sketch};
+use crate::{CurveKind, Sketch, geometry::of};
 
 /// Where reference geometry comes from.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -123,20 +127,21 @@ impl Reference {
     }
 
     /// Brings its points and curves in `sketch` up to date with what it
-    /// comes from in `part`, the sketch lying in `plane`: each moved to
-    /// where its source is now, those new to the source added, those gone
-    /// from it removed — with whatever constraints were on them.
+    /// comes from, as `lookup` has the part, the sketch lying in `plane`:
+    /// each moved to where its source is now, those new to the source
+    /// added, those gone from it removed — with whatever constraints were
+    /// on them.
     pub fn update<S: Scalar>(
         &mut self,
         sketch: &mut Sketch,
-        part: &Part<S>,
+        lookup: &mut (impl Lookup<S> + ?Sized),
         plane: &CoordinateSystem<S>,
     ) -> GeopResult<()> {
         let geometry = match &self.source {
             Source::Frame => frame_geometry(),
             Source::Projection { entity } => {
                 let ctx = with_context!("projecting {entity} into the sketch");
-                project(entity, part, plane).with_context(ctx)?
+                project(entity, lookup, plane).with_context(ctx)?
             }
         };
         self.sync(sketch, &geometry);
@@ -243,64 +248,44 @@ fn frame_geometry() -> Geometry {
     }
 }
 
-/// `entity` of `part` projected into `plane` along its normal, every key
-/// the name of the vertex or edge it comes from — behind the instance's
-/// name, for an entity of a part placed in this one.
+/// `entity`, as `lookup` has it, projected into `plane` along its normal,
+/// every key the name of the vertex or edge it comes from.
 fn project<S: Scalar>(
     entity: &EntityRef,
-    part: &Part<S>,
+    lookup: &mut (impl Lookup<S> + ?Sized),
     plane: &CoordinateSystem<S>,
 ) -> GeopResult<Geometry> {
-    if let Some((name, inner)) = entity.split_instance() {
-        // Projecting what is placed onto the plane is projecting it, where
-        // its own part has it, onto the plane where that part has it.
-        let instance = part.instance(part.instance_id(&name)?)?;
-        let local = instance.pose.inverse().motion().apply_frame(plane)?;
-        let inner = project(&inner, &instance.part, &local)?;
-        let prefix = |key: String| inner_name(&name, &key);
-        return Ok(Geometry {
-            points: inner
-                .points
-                .into_iter()
-                .map(|(k, p)| (prefix(k), p))
-                .collect(),
-            curves: inner
-                .curves
-                .into_iter()
-                .map(|(k, shape)| (prefix(k), shape.renamed(&|key| inner_name(&name, key))))
-                .collect(),
-        });
+    if entity.split_instance().is_some() {
+        return Err(GeopError::new(format!(
+            "{entity} is of a placed part: a sketch projects the part's own geometry, not a placed part's"
+        )));
     }
-    let topology = part.topology();
-    let name = |id: RefId| {
-        part.name_of(id)
-            .map(str::to_string)
-            .ok_or_else(|| GeopError::new("an entity of the part has no name"))
-    };
     let mut geometry = Geometry::default();
     let mut curves = Vec::new();
     match entity {
         EntityRef::Vertex { name: vertex } => {
-            let point = topology.get_vertex(part.vertex_id(vertex)?)?.point;
-            geometry
-                .points
-                .insert(vertex.clone(), plain(&in_plane(plane, &point)));
+            let named = lookup.model();
+            let point = named.topology().get_vertex(named.vertex_id(vertex)?)?.point;
+            (geometry.points).insert(vertex.clone(), of(&in_plane(plane, &point)));
         }
         EntityRef::Edge { .. } | EntityRef::SketchCurve { .. } => {
-            curves.push(entity.resolve_curve(part)?)
+            curves.push(entity.resolve_curve(lookup)?)
         }
         EntityRef::Face { name: face } => {
-            for coedge in topology.iterate_face_coedges(part.face_id(face)?) {
+            let named = lookup.model();
+            let topology = named.topology();
+            let name = |id: RefId| named.name(id).map(str::to_string);
+            for coedge in topology.iterate_face_coedges(named.face_id(face)?) {
                 match topology.get_coedge(coedge)?.geometry {
                     CoedgeGeometry::Edge(edge) => {
                         let name = name(edge.into())?;
-                        curves.push(EntityRef::Edge { name }.resolve_curve(part)?)
+                        // An edge of the model resolves in the model alone.
+                        curves.push(EntityRef::Edge { name }.resolve_curve(&mut &*named)?)
                     }
                     CoedgeGeometry::Vertex(vertex) => {
                         let point = topology.get_vertex(vertex)?.point;
-                        geometry
-                            .points
-                            .insert(name(vertex.into())?, plain(&in_plane(plane, &point)));
+                        (geometry.points)
+                            .insert(name(vertex.into())?, of(&in_plane(plane, &point)));
                     }
                 }
             }
@@ -321,7 +306,7 @@ fn project<S: Scalar>(
         for (at, point) in [&start, &end] {
             geometry
                 .points
-                .insert(at.clone(), plain(&in_plane(plane, point)));
+                .insert(at.clone(), of(&in_plane(plane, point)));
         }
         let ctx = with_context!("curve {key:?}");
         if let Some(shape) =
@@ -334,48 +319,9 @@ fn project<S: Scalar>(
     Ok(geometry)
 }
 
-/// The name of `key` of a part placed as `instance`, in the part placing it.
-fn inner_name(instance: &str, key: &str) -> String {
-    format!("{instance}{}{key}", geop_ops::operation::INSTANCE_SEPARATOR)
-}
-
-impl Shape {
-    /// The same curve, its point keys renamed by `rename`.
-    fn renamed(self, rename: &dyn Fn(&str) -> String) -> Shape {
-        match self {
-            Shape::Line { start, end } => Shape::Line {
-                start: rename(&start),
-                end: rename(&end),
-            },
-            Shape::Arc { start, end, sweep } => Shape::Arc {
-                start: rename(&start),
-                end: rename(&end),
-                sweep,
-            },
-            Shape::Circle { center, radius } => Shape::Circle {
-                center: rename(&center),
-                radius,
-            },
-            Shape::Spline {
-                control_points,
-                shape,
-            } => Shape::Spline {
-                control_points: control_points.iter().map(|k| rename(k)).collect(),
-                shape,
-            },
-        }
-    }
-}
-
 /// `p` in `plane`'s `u`/`v` coordinates: projected along its normal.
 fn in_plane<S: Scalar>(plane: &CoordinateSystem<S>, p: &Vector3<S>) -> Vector2<S> {
-    let q = plane.to_uvw(p);
-    Vector2::from_array([q[0], q[1]])
-}
-
-/// A position as design data holds it: its midpoint.
-fn plain<S: Scalar>(p: &Vector2<S>) -> [f64; 2] {
-    [p[0].to_f64(), p[1].to_f64()]
+    plane.to_uvw(p).head()
 }
 
 /// The edge curve `curve` — from the vertex keyed `start` to the one keyed
@@ -383,9 +329,9 @@ fn plain<S: Scalar>(p: &Vector2<S>) -> [f64; 2] {
 /// straight curve a line, a circular one in a plane parallel to the
 /// sketch's an arc or a circle, one seen edge-on a line, anything else the
 /// spline it projects to exactly. `None` for a curve that projects to a
-/// point. Points it needs
-/// beyond its end points — a circle's center, a spline's inner control
-/// points — are added to `points`, keyed behind `key`.
+/// point. Points it needs beyond its end points — a circle's center, a
+/// spline's inner control points — are added to `points`, keyed behind
+/// `key`.
 fn project_curve<S: Scalar>(
     curve: &NurbCurve3D<S>,
     plane: &CoordinateSystem<S>,
@@ -411,7 +357,7 @@ fn project_curve<S: Scalar>(
             .could_be_equal(&Vector3::zero())
         {
             let center = format!("{key}#center");
-            points.insert(center.clone(), plain(&in_plane(plane, &arc.circle.center)));
+            points.insert(center.clone(), of(&in_plane(plane, &arc.circle.center)));
             let radius = arc.circle.radius.to_f64();
             if arc.could_be_closed() {
                 return Ok(Some(Shape::Circle { center, radius }));
@@ -513,8 +459,8 @@ fn project_curve<S: Scalar>(
         }
         if arc.is_some() {
             let (from, to) = (format!("{key}#lo"), format!("{key}#hi"));
-            points.insert(from.clone(), plain(&lo));
-            points.insert(to.clone(), plain(&hi));
+            points.insert(from.clone(), of(&lo));
+            points.insert(to.clone(), of(&hi));
             return Ok(Some(Shape::Line {
                 start: from,
                 end: to,
@@ -539,7 +485,7 @@ fn project_curve<S: Scalar>(
         let w = cp[3];
         let p = Vector3::from_array([cp[0].div(w)?, cp[1].div(w)?, cp[2].div(w)?]);
         let inner = format!("{key}#{i}");
-        points.insert(inner.clone(), plain(&in_plane(plane, &p)));
+        points.insert(inner.clone(), of(&in_plane(plane, &p)));
         control_points.push(inner);
     }
     control_points.push(end);

@@ -24,7 +24,7 @@ use geop_core_math::{
 };
 use geop_core_topology::{Coedge, CoedgeId, Model, boundary::BoundaryType};
 
-use super::{Color10, Line, PrimitiveScene};
+use super::{Color10, PrimitiveScene};
 
 /// How far inward (in 3-D world units) a coedge's trim curve and its
 /// `0.1..0.9` markers are pulled off of the true boundary curve.
@@ -135,15 +135,11 @@ fn try_tangent<S: Scalar>(
 /// `away_this`/`away_neighbor` are each curve's unit tangent pointing *away*
 /// from the shared vertex (so `interior_angle` is the angle between them).
 /// Returns `0` (no trim) if any of the geometry needed is degenerate.
-#[allow(clippy::too_many_arguments)]
 fn miter_trim_delta_t<S: Scalar>(
     coedge: &Coedge<S>,
     surface: &NurbSurface3D<S>,
     t_this: S,
     away_this: Vector3<S>,
-    neighbor: &Coedge<S>,
-    neighbor_surface: &NurbSurface3D<S>,
-    t_neighbor: S,
     away_neighbor: Vector3<S>,
     inset: S,
 ) -> GeopResult<S> {
@@ -151,11 +147,6 @@ fn miter_trim_delta_t<S: Scalar>(
     if speed.could_be_equal(S::ZERO) {
         return Ok(S::ZERO);
     }
-    // Only used to keep `neighbor`/`neighbor_surface` meaningfully paired
-    // with `t_neighbor`/`away_neighbor` in the caller — the angle itself
-    // only needs the two (already-computed) "away" directions.
-    let _ = (neighbor, neighbor_surface, t_neighbor);
-
     let cos_theta = away_this.prod_dot(&away_neighbor).to_f64().clamp(-1.0, 1.0);
     let theta = cos_theta.acos();
     let half_tan = (theta / 2.0).tan();
@@ -191,12 +182,7 @@ fn add_direction_arrow<S: Scalar>(
     let left = back.add(&perp.prod_scalar(size.mul(half)));
     let right = back.sub(&perp.prod_scalar(size.mul(half)));
 
-    if let Ok(l) = Line::try_new(left, tip) {
-        scene.add_line(l, color);
-    }
-    if let Ok(l) = Line::try_new(right, tip) {
-        scene.add_line(l, color);
-    }
+    scene.add_polyline(&[left, tip, right], color);
     Ok(())
 }
 
@@ -211,9 +197,7 @@ fn add_arrow<S: Scalar>(
     color: Color10,
 ) -> GeopResult<()> {
     let tip = base.add(&dir.prod_scalar(length));
-    if let Ok(l) = Line::try_new(base, tip) {
-        scene.add_line(l, color);
-    }
+    scene.add_polyline(&[base, tip], color);
     add_direction_arrow(
         scene,
         tip,
@@ -397,17 +381,9 @@ fn rasterize_topology_inner<S: Scalar>(
                 let away_prev = try_tangent(prev, surface, prev.pcurve.domain().1)?
                     .map(|t| t.prod_scalar(neg_one));
                 let delta_start = match (away_this_start, away_prev) {
-                    (Some(away_this_start), Some(away_prev)) => miter_trim_delta_t(
-                        coedge,
-                        surface,
-                        t0,
-                        away_this_start,
-                        prev,
-                        surface,
-                        prev.pcurve.domain().1,
-                        away_prev,
-                        inset,
-                    )?,
+                    (Some(away_this_start), Some(away_prev)) => {
+                        miter_trim_delta_t(coedge, surface, t0, away_this_start, away_prev, inset)?
+                    }
                     // Degenerate coedge on one side of the corner (no
                     // well-defined tangent) — nothing to miter against.
                     _ => S::ZERO,
@@ -418,17 +394,9 @@ fn rasterize_topology_inner<S: Scalar>(
                     try_tangent(coedge, surface, t1)?.map(|t| t.prod_scalar(neg_one));
                 let away_next = try_tangent(next, surface, next.pcurve.domain().0)?;
                 let delta_end = match (away_this_end, away_next) {
-                    (Some(away_this_end), Some(away_next)) => miter_trim_delta_t(
-                        coedge,
-                        surface,
-                        t1,
-                        away_this_end,
-                        next,
-                        surface,
-                        next.pcurve.domain().0,
-                        away_next,
-                        inset,
-                    )?,
+                    (Some(away_this_end), Some(away_next)) => {
+                        miter_trim_delta_t(coedge, surface, t1, away_this_end, away_next, inset)?
+                    }
                     _ => S::ZERO,
                 };
 

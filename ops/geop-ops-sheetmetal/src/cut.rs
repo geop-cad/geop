@@ -9,16 +9,23 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form, Tone, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_core_sketch::Shape;
 use geop_ops::{
-    Context, Library, Namer, Part,
-    operation::{EntityRef, Operation, Role},
-    ui::{Form, Tone},
+    Design, NamedModel, Namer, ParamValue, PlacedSketch,
+    model::model_or_empty,
+    operation::{Build, BuildReader, EntityRef, Input, Lookup, ModelStep, Role, Scope, Seen},
 };
 use geop_ops_extrude_revolve::operation::shape_loops;
 use serde::{Deserialize, Serialize};
 
-use crate::sheet::{Cut, FlatEdge, Placement, Sheet};
+use crate::{
+    body::{self, Made, Making, SheetStep, Sheets, sheets_of},
+    sheet::{Cut, FlatEdge, Placement, Sheet},
+};
 
 /// Cuts through a sheet-metal body along a sketch, for the operation `C`:
 /// the body is consumed and rebuilt as `sheet_cut(C)`, every face, edge and
@@ -56,89 +63,21 @@ pub struct SheetCutArgs {
     pub face: String,
 }
 
-impl Operation for SheetCut {
-    type Args = SheetCutArgs;
-    type Session = ();
-
-    /// The newest sketch, on the face it lies on.
-    fn new_args<S: Scalar>(&self, before: &Part<S>) -> SheetCutArgs {
-        SheetCutArgs {
-            sketch: before.sketch_names().pop().unwrap_or_default(),
-            face: String::new(),
-        }
-    }
-
-    /// The sketch, picked, and the face, if not the one the sketch lies on.
-    fn form<'a, S: Scalar>(
-        &self,
-        context: Context<'a, S>,
-        args: &SheetCutArgs,
-        _: &(),
-        _: &[String],
-    ) -> Form<'a, S, SheetCutArgs> {
-        let mut f = Form::<S, SheetCutArgs>::new();
-        if context.before.sketches().next().is_none() {
-            f.text("sketch", "No sketch yet — add one first.", Tone::Hint);
-        } else {
-            let sketch = (!args.sketch.is_empty())
-                .then(|| EntityRef::Sketch {
-                    name: args.sketch.clone(),
-                })
-                .into_iter()
-                .collect();
-            f.reference(
-                "sketch",
-                "sketch",
-                sketch,
-                &[Role::Sketch],
-                None,
-                false,
-                |e, picked| {
-                    e.args.sketch = match picked.as_slice() {
-                        [EntityRef::Sketch { name }] => name.clone(),
-                        _ => String::new(),
-                    }
-                },
-            );
-        }
-        let face = (!args.face.is_empty())
-            .then(|| EntityRef::Face {
-                name: args.face.clone(),
-            })
-            .into_iter()
-            .collect();
-        f.reference(
-            "face",
-            "onto face",
-            face,
-            &[Role::Plane],
-            None,
-            false,
-            |e, picked| {
-                e.args.face = match picked.as_slice() {
-                    [EntityRef::Face { name }] => name.clone(),
-                    _ => String::new(),
-                }
-            },
-        );
-        // The face the sketch lies on, unless one is picked.
-        f.optional("face");
-        f
-    }
-
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
-        args: &SheetCutArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("sheet_cut({operation_id}, {args:?})");
-        let namer = Namer::new("sheet_cut", operation_id)?;
-        let placed = part
-            .sketch(part.sketch_id(&args.sketch).with_context(ctx)?)?
-            .clone();
-        let (solid, mut sheet, f) = target(&part, &args.face, &placed.plane).with_context(ctx)?;
+impl SheetStep for SheetCut {
+    fn plan(reader: &mut BuildReader, step: &str, args: &SheetCutArgs) -> GeopResult<Made> {
+        let ctx = with_context!("sheet_cut({step}, {args:?})");
+        let namer = Namer::new("sheet_cut", step)?;
+        let sheets = sheets_of(reader);
+        let model = model_or_empty(reader);
+        let placed = (Scope {
+            model: &model,
+            reader,
+        })
+        .sketch(&args.sketch)
+        .with_context(ctx)?
+        .clone();
+        let (solid, mut sheet, f) =
+            target(&model, &sheets, &args.face, &placed.plane).with_context(ctx)?;
         let loops =
             cut_loops(&namer, &args.sketch, &placed, &sheet.flats[f].place).with_context(ctx)?;
         sheet.cuts.push(Cut {
@@ -146,21 +85,122 @@ impl Operation for SheetCut {
             loops,
             name: namer.clone(),
         });
-        sheet
-            .replace(&mut part, &solid, &namer.root())
-            .with_context(ctx)?;
-        Ok(part)
+        Ok(Made {
+            consumes: Some(solid),
+            solid: namer.root(),
+            making: Making::Bent(sheet),
+        })
+    }
+}
+
+impl ModelStep for SheetCut {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        _: &SheetCutArgs,
+    ) -> GeopResult<()> {
+        body::build(model, reader, step)
+    }
+}
+
+impl Operation for SheetCut {
+    const INFO: OperationInfo = OperationInfo::new(
+        "sheet_cut",
+        "Sheet cut",
+        "Cut holes and notches through a sheet-metal body along a sketch, across its bends unrolled.",
+        OperationGroup::SheetMetal,
+        OperationTier::Small,
+    );
+    type Args = SheetCutArgs;
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
+
+    /// The newest sketch, on the face it lies on.
+    fn new_args(context: &Context<Input, ParamValue>) -> SheetCutArgs {
+        SheetCutArgs {
+            sketch: Seen::new(context.before)
+                .sketch_names()
+                .pop()
+                .unwrap_or_default(),
+            face: String::new(),
+        }
+    }
+
+    fn run(step: &str, part: &mut Build, args: &SheetCutArgs) -> GeopResult<()> {
+        body::run::<Self>(step, part, args)
+    }
+
+    /// The sketch, picked, and the face, if not the one the sketch lies on.
+    fn presentation(
+        context: &Context<Input, ParamValue>,
+        args: &SheetCutArgs,
+        _: &(),
+    ) -> Form<Design> {
+        let mut form = Form::default();
+        let dialog = &mut form.dialog;
+        if Seen::new(context.before).sketches().is_empty() {
+            dialog.text("sketch", "No sketch yet — add one first.", Tone::Hint);
+        } else {
+            let sketch = (!args.sketch.is_empty())
+                .then(|| EntityRef::Sketch {
+                    name: args.sketch.clone(),
+                })
+                .into_iter()
+                .collect();
+            dialog.reference("sketch", "sketch", sketch, &[Role::Sketch], None, false);
+        }
+        let face = (!args.face.is_empty())
+            .then(|| EntityRef::Face {
+                name: args.face.clone(),
+            })
+            .into_iter()
+            .collect();
+        // The face the sketch lies on, unless one is picked.
+        (dialog.reference("face", "onto face", face, &[Role::Plane], None, false)).optional("face");
+        form
+    }
+
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
+        args: &SheetCutArgs,
+        _: &(),
+        event: Event<Design>,
+    ) -> (SheetCutArgs, ()) {
+        let mut args = args.clone();
+        let Event::Field { key, value } = event else {
+            return (args, ());
+        };
+        match (key.as_str(), value) {
+            ("sketch", Value::Entities(picked)) => {
+                args.sketch = match picked.as_slice() {
+                    [EntityRef::Sketch { name }] => name.clone(),
+                    _ => String::new(),
+                }
+            }
+            ("face", Value::Entities(picked)) => {
+                args.face = match picked.as_slice() {
+                    [EntityRef::Face { name }] => name.clone(),
+                    _ => String::new(),
+                }
+            }
+            _ => {}
+        }
+        (args, ())
     }
 }
 
 /// The sheet-metal body to cut, its sheet, and the flat the sketch on the
 /// plane `plane` is projected onto: the one with the face `face`, or, if
 /// none is named, the one the plane lies on.
-fn target<S: Scalar>(
-    part: &Part<S>,
+fn target(
+    model: &NamedModel<Design>,
+    sheets: &Sheets,
     face: &str,
-    plane: &CoordinateSystem<S>,
-) -> GeopResult<(String, Sheet<S>, usize)> {
+    plane: &CoordinateSystem<Design>,
+) -> GeopResult<(String, Sheet<Design>, usize)> {
+    type S = Design;
     let parallel = |place: &Placement<S>| {
         plane
             .w()
@@ -169,8 +209,8 @@ fn target<S: Scalar>(
             .could_be_equal(S::ZERO)
     };
     let mut found = Vec::new();
-    for solid in part.solid_names() {
-        let Some(sheet) = part.body_data::<Sheet<S>>(&solid) else {
+    for solid in model.solid_names() {
+        let Some(sheet) = sheets.bent(&solid) else {
             continue;
         };
         for (f, flat) in sheet.flats.iter().enumerate() {
@@ -223,7 +263,7 @@ fn target<S: Scalar>(
 fn cut_loops<S: Scalar>(
     namer: &Namer,
     name: &str,
-    placed: &geop_ops::PlacedSketch<S>,
+    placed: &PlacedSketch<S>,
     place: &Placement<S>,
 ) -> GeopResult<Vec<Vec<FlatEdge<S>>>> {
     let sketch = &placed.sketch;

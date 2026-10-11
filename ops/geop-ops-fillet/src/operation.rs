@@ -6,11 +6,17 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
+use geop_core_program::{
+    editing::{Dialog, Event, Form, Number, Unit, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
+use geop_ops::operation::Input;
+use geop_ops::parameters::expressions;
 use geop_ops::{
-    Context, Library, Namer, Part,
-    operation::{EntityRef, Operation, Role},
-    parameters::{Formula, expressions},
-    ui::{Form, Number, Unit},
+    Design, NamedModel, Namer, ParamValue,
+    operation::{Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Scope, Seen, build_model},
+    parameters::Formula,
+    ui::formula_number,
 };
 use serde::{Deserialize, Serialize};
 
@@ -20,20 +26,9 @@ use crate::{
 };
 
 /// The edges field of both operations.
-fn edges_field<'a, S: Scalar, A: 'a>(
-    form: &mut Form<'a, S, A>,
-    edges: &[String],
-    set: fn(&mut A) -> &mut Vec<String>,
-) {
-    form.reference(
-        "edges",
-        "edges",
-        EntityRef::of_names(EntityRef::edge, edges),
-        &[Role::Edge],
-        None,
-        true,
-        move |e, picked| *set(e.args) = EntityRef::names_of(EntityRef::edge, &picked),
-    );
+fn edges_field<S: Scalar>(dialog: &mut Dialog<S>, edges: &[String]) {
+    let picked = EntityRef::of_names(EntityRef::edge, edges);
+    dialog.reference("edges", "edges", picked, &[Role::Edge], None, true);
 }
 
 /// Rounds the edges named `edges` of a solid with a fillet of `radius`, for
@@ -96,12 +91,12 @@ impl FilletArgs {
         self.end_radius.is_some() || !self.vertex_radii.is_empty()
     }
 
-    /// The radii, as the step building `part` reads them.
-    fn radii<S: Scalar>(&self, part: &mut Part<S>) -> GeopResult<Radii> {
+    /// The radii, as `lookup` reads the parameters.
+    fn radii<S: Scalar>(&self, lookup: &mut (impl Lookup<S> + ?Sized)) -> GeopResult<Radii> {
         Ok(Radii {
-            radius: self.radius.evaluate(part)?,
+            radius: self.radius.evaluate(lookup)?,
             end_radius: match &self.end_radius {
-                Some(r) => Some(r.evaluate(part)?),
+                Some(r) => Some(r.evaluate(lookup)?),
                 None => None,
             },
             at_vertices: self
@@ -113,119 +108,142 @@ impl FilletArgs {
     }
 }
 
-impl Operation for Fillet {
-    type Args = FilletArgs;
-    type Session = ();
+impl ModelStep for Fillet {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &FilletArgs,
+    ) -> GeopResult<()> {
+        let ctx = with_context!("fillet({step}, {args:?})");
+        let namer = Namer::new("fillet", step)?;
+        let radii = (args.radii(&mut Scope { model, reader })).with_context(ctx)?;
+        let shape = BlendShape::Fillet { radii };
+        blend(model, &namer, &args.edges, &shape).with_context(ctx)?;
+        Ok(())
+    }
+}
 
-    fn formulas<'a>(&self, args: &'a mut FilletArgs) -> Vec<&'a mut String> {
+impl Operation for Fillet {
+    const INFO: OperationInfo = OperationInfo::new(
+        "fillet",
+        "Fillet",
+        "Round a solid's straight and circular edges.",
+        OperationGroup::Features,
+        OperationTier::Big,
+    );
+    type Args = FilletArgs;
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
+
+    fn formulas(args: &mut FilletArgs) -> Vec<&mut String> {
         expressions(std::iter::once(&mut args.radius).chain(args.end_radius.as_mut()))
     }
 
     /// No edges yet, and a small radius.
-    fn new_args<S: Scalar>(&self, _: &Part<S>) -> FilletArgs {
+    fn new_args(_: &Context<Input, ParamValue>) -> FilletArgs {
         FilletArgs::constant(Vec::new(), 0.1)
+    }
+
+    fn run(step: &str, part: &mut Build, args: &FilletArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
     /// The edges, picked, and the radius — and, varying, the radius at the
     /// end and at vertices picked, each a number of its own.
-    fn form<'a, S: Scalar>(
-        &self,
-        context: Context<'a, S>,
+    fn presentation(
+        context: &Context<Input, ParamValue>,
         args: &FilletArgs,
         _: &(),
-        _: &[String],
-    ) -> Form<'a, S, FilletArgs> {
-        let inputs = context.before.state();
-        let mut f = Form::<S, FilletArgs>::new();
-        edges_field(&mut f, &args.edges, |a| &mut a.edges);
-        f.formula(
-            "radius",
-            Number::formula("radius", &args.radius, inputs, Unit::Length).range(0.0, 1.0),
-            |args, radius| args.radius = radius,
-        );
-        f.checkbox(
+    ) -> Form<Design> {
+        let mut seen = Seen::new(context.before);
+        let mut form = Form::default();
+        let dialog = &mut form.dialog;
+        edges_field(dialog, &args.edges);
+        let radius = formula_number("radius", &args.radius, &mut seen, Unit::Length);
+        (dialog.number("radius", radius.range(0.0, 1.0))).checkbox(
             "variable",
             "variable radius",
             args.variable(),
-            |args, on| {
-                args.end_radius = on.then(|| args.radius.clone());
-                if !on {
-                    args.vertex_radii.clear();
-                }
-            },
         );
         if args.variable() {
             let end = args.end_radius.as_ref().unwrap_or(&args.radius);
-            f.formula(
-                "end_radius",
-                Number::formula("end radius", end, inputs, Unit::Length).range(0.0, 1.0),
-                |args, radius| args.end_radius = Some(radius),
-            );
-            let vertices = args
-                .vertex_radii
-                .iter()
-                .map(|v| EntityRef::Vertex {
-                    name: v.vertex.clone(),
-                })
+            let end = formula_number("end radius", end, &mut seen, Unit::Length);
+            dialog.number("end_radius", end.range(0.0, 1.0));
+            let names: Vec<String> = (args.vertex_radii.iter())
+                .map(|v| v.vertex.clone())
                 .collect();
-            f.reference(
+            let vertices = EntityRef::of_names(EntityRef::vertex, &names);
+            (dialog.reference(
                 "radius_vertices",
                 "radii at vertices",
                 vertices,
                 &[Role::Point],
                 None,
                 true,
-                move |e, picked| {
-                    // A new vertex starts at the radius as it is now.
-                    let radius = e.args.radius.peek(inputs).unwrap_or(0.1);
-                    let old = std::mem::take(&mut e.args.vertex_radii);
-                    e.args.vertex_radii = picked
-                        .iter()
-                        .filter_map(|p| match p {
-                            EntityRef::Vertex { name } => Some(name.clone()),
-                            _ => None,
-                        })
-                        .map(|vertex| VertexRadius {
-                            radius: old
-                                .iter()
-                                .find(|v| v.vertex == vertex)
-                                .map_or(radius, |v| v.radius),
-                            vertex,
-                        })
-                        .collect();
-                },
-            );
-            f.optional("radius_vertices");
+            ))
+            .optional("radius_vertices");
             for (i, v) in args.vertex_radii.iter().enumerate() {
-                f.number(
-                    &format!("vertex_radius_{i}"),
-                    Number::new(format!("radius at {}", v.vertex), v.radius, Unit::Length)
-                        .range(0.0, 1.0),
-                    move |args, radius| {
-                        if let Some(v) = args.vertex_radii.get_mut(i) {
-                            v.radius = radius;
-                        }
-                    },
-                );
+                let label = format!("radius at {}", v.vertex);
+                let number = Number::new(label, v.radius, Unit::Length).range(0.0, 1.0);
+                dialog.number(&format!("vertex_radius_{i}"), number);
             }
         }
-        f
+        form
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    fn process_user_event(
+        context: &Context<Input, ParamValue>,
         args: &FilletArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("fillet({operation_id}, {args:?})");
-        let namer = Namer::new("fillet", operation_id)?;
-        let shape = BlendShape::Fillet {
-            radii: args.radii(&mut part).with_context(ctx)?,
+        _: &(),
+        event: Event<Design>,
+    ) -> (FilletArgs, ()) {
+        let mut args = args.clone();
+        let Event::Field { key, value } = event else {
+            return (args, ());
         };
-        blend(&mut part, &namer, &args.edges, &shape).with_context(ctx)?;
-        Ok(part)
+        match (key.as_str(), value) {
+            ("edges", Value::Entities(picked)) => {
+                args.edges = EntityRef::names_of(EntityRef::edge, &picked);
+            }
+            ("variable", Value::Bool(on)) => {
+                args.end_radius = on.then(|| args.radius.clone());
+                if !on {
+                    args.vertex_radii.clear();
+                }
+            }
+            ("radius_vertices", Value::Entities(picked)) => {
+                // A new vertex starts at the radius as it is now.
+                let radius = (args.radius.evaluate(&mut Seen::new(context.before))).unwrap_or(0.1);
+                let old = std::mem::take(&mut args.vertex_radii);
+                args.vertex_radii = (EntityRef::names_of(EntityRef::vertex, &picked).into_iter())
+                    .map(|vertex| VertexRadius {
+                        radius: (old.iter().find(|v| v.vertex == vertex))
+                            .map_or(radius, |v| v.radius),
+                        vertex,
+                    })
+                    .collect();
+            }
+            (key, value) => {
+                if let Some(radius) = Formula::from_value(&value) {
+                    match key {
+                        "radius" => args.radius = radius,
+                        "end_radius" => args.end_radius = Some(radius),
+                        _ => {}
+                    }
+                }
+                let vertex = key
+                    .strip_prefix("vertex_radius_")
+                    .and_then(|i| i.parse::<usize>().ok());
+                if let (Some(i), Value::Number(radius)) = (vertex, value)
+                    && let Some(v) = args.vertex_radii.get_mut(i)
+                {
+                    v.radius = radius;
+                }
+            }
+        }
+        (args, ())
     }
 }
 
@@ -254,28 +272,53 @@ pub struct ChamferArgs {
 }
 
 impl ChamferArgs {
-    /// Into the face on the left and on the right of each edge, as the
-    /// step building `part` reads them.
-    fn distances<S: Scalar>(&self, part: &mut Part<S>) -> GeopResult<[f64; 2]> {
-        let left = self.distance.evaluate(part)?;
+    /// Into the face on the left and on the right of each edge, as
+    /// `lookup` reads the parameters.
+    fn distances<S: Scalar>(&self, lookup: &mut (impl Lookup<S> + ?Sized)) -> GeopResult<[f64; 2]> {
+        let left = self.distance.evaluate(lookup)?;
         let right = match &self.distance2 {
-            Some(d) => d.evaluate(part)?,
+            Some(d) => d.evaluate(lookup)?,
             None => left,
         };
         Ok([left, right])
     }
 }
 
-impl Operation for Chamfer {
-    type Args = ChamferArgs;
-    type Session = ();
+impl ModelStep for Chamfer {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &ChamferArgs,
+    ) -> GeopResult<()> {
+        let ctx = with_context!("chamfer({step}, {args:?})");
+        let namer = Namer::new("chamfer", step)?;
+        let distances = (args.distances(&mut Scope { model, reader })).with_context(ctx)?;
+        let shape = BlendShape::Chamfer { distances };
+        blend(model, &namer, &args.edges, &shape).with_context(ctx)?;
+        Ok(())
+    }
+}
 
-    fn formulas<'a>(&self, args: &'a mut ChamferArgs) -> Vec<&'a mut String> {
+impl Operation for Chamfer {
+    const INFO: OperationInfo = OperationInfo::new(
+        "chamfer",
+        "Chamfer",
+        "Bevel a solid's straight and circular edges.",
+        OperationGroup::Features,
+        OperationTier::Small,
+    );
+    type Args = ChamferArgs;
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
+
+    fn formulas(args: &mut ChamferArgs) -> Vec<&mut String> {
         expressions(std::iter::once(&mut args.distance).chain(args.distance2.as_mut()))
     }
 
     /// No edges yet, and a small distance, the same into both faces.
-    fn new_args<S: Scalar>(&self, _: &Part<S>) -> ChamferArgs {
+    fn new_args(_: &Context<Input, ParamValue>) -> ChamferArgs {
         ChamferArgs {
             edges: Vec::new(),
             distance: Formula::Plain(0.1),
@@ -283,52 +326,57 @@ impl Operation for Chamfer {
         }
     }
 
+    fn run(step: &str, part: &mut Build, args: &ChamferArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
+    }
+
     /// The edges, picked, the distance, and whether the second face gets a
     /// distance of its own.
-    fn form<'a, S: Scalar>(
-        &self,
-        context: Context<'a, S>,
+    fn presentation(
+        context: &Context<Input, ParamValue>,
         args: &ChamferArgs,
         _: &(),
-        _: &[String],
-    ) -> Form<'a, S, ChamferArgs> {
-        let inputs = context.before.state();
-        let mut f = Form::<S, ChamferArgs>::new();
-        edges_field(&mut f, &args.edges, |a| &mut a.edges);
-        f.formula(
-            "distance",
-            Number::formula("distance", &args.distance, inputs, Unit::Length).range(0.0, 1.0),
-            |args, distance| args.distance = distance,
-        );
-        f.checkbox(
+    ) -> Form<Design> {
+        let mut seen = Seen::new(context.before);
+        let mut form = Form::default();
+        let dialog = &mut form.dialog;
+        edges_field(dialog, &args.edges);
+        let distance = formula_number("distance", &args.distance, &mut seen, Unit::Length);
+        (dialog.number("distance", distance.range(0.0, 1.0))).checkbox(
             "two_distances",
             "two distances",
             args.distance2.is_some(),
-            |args, on| args.distance2 = on.then(|| args.distance.clone()),
         );
         if let Some(distance2) = &args.distance2 {
-            f.formula(
-                "distance2",
-                Number::formula("distance 2", distance2, inputs, Unit::Length).range(0.0, 1.0),
-                |args, distance| args.distance2 = Some(distance),
-            );
+            let distance2 = formula_number("distance 2", distance2, &mut seen, Unit::Length);
+            dialog.number("distance2", distance2.range(0.0, 1.0));
         }
-        f
+        form
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
         args: &ChamferArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("chamfer({operation_id}, {args:?})");
-        let namer = Namer::new("chamfer", operation_id)?;
-        let shape = BlendShape::Chamfer {
-            distances: args.distances(&mut part).with_context(ctx)?,
+        _: &(),
+        event: Event<Design>,
+    ) -> (ChamferArgs, ()) {
+        let mut args = args.clone();
+        let Event::Field { key, value } = event else {
+            return (args, ());
         };
-        blend(&mut part, &namer, &args.edges, &shape).with_context(ctx)?;
-        Ok(part)
+        match (key.as_str(), value) {
+            ("edges", Value::Entities(picked)) => {
+                args.edges = EntityRef::names_of(EntityRef::edge, &picked);
+            }
+            ("two_distances", Value::Bool(on)) => {
+                args.distance2 = on.then(|| args.distance.clone());
+            }
+            (key, value) => match (key, Formula::from_value(&value)) {
+                ("distance", Some(distance)) => args.distance = distance,
+                ("distance2", Some(distance)) => args.distance2 = Some(distance),
+                _ => {}
+            },
+        }
+        (args, ())
     }
 }

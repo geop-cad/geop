@@ -4,13 +4,11 @@
 //! or its raw topology, every entity labelled ([`rasterize_topology`]).
 
 mod color;
-mod line;
 mod scene;
 mod topology;
 
 pub use color::Color10;
-pub use line::Line;
-pub use scene::{PrimitiveScene, PrimitiveSceneRecorder};
+pub use scene::PrimitiveScene;
 pub use topology::rasterize_topology;
 
 use geop_core_math::scalars::Scalar;

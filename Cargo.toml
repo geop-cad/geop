@@ -1,38 +1,37 @@
 [workspace]
 resolver = "2"
 members = [
-    "core/geop-core",
+    "core/geop-core-program",
     "core/geop-core-math",
     "core/geop-core-geometry",
     "core/geop-core-topology",
     "core/geop-core-sketch",
     "ops/geop-ops",
-    "ops/geop-ops-derive",
     "ops/geop-ops-sketch",
-#     "ops/geop-ops-datums",
+    "ops/geop-ops-datums",
     "ops/geop-ops-extrude-revolve",
     "ops/geop-ops-booleans",
-#     "ops/geop-ops-edit",
+    "ops/geop-ops-edit",
     "ops/geop-ops-fillet",
-#     "ops/geop-ops-shell",
+    "ops/geop-ops-shell",
     "ops/geop-ops-assembly",
     "ops/geop-ops-rasterize",
     "cad/geop-cad-base",
     "cad/geop-cad-web",
     "cad/geop-cad-cli",
-#     "ops/geop-ops-drawing",
-#     "ops/geop-ops-inspect",
-#     "ops/geop-ops-subd",
-#     "ops/geop-ops-sheetmetal",
-#     "ops/geop-ops-plastic",
-#     "ops/geop-ops-sketch3d",
-#     "ops/geop-ops-step",
-#     "ops/geop-ops-surface",
+    "ops/geop-ops-drawing",
+    "ops/geop-ops-inspect",
+    "ops/geop-ops-subd",
+    "ops/geop-ops-sheetmetal",
+    "ops/geop-ops-plastic",
+    "ops/geop-ops-sketch3d",
+    "ops/geop-ops-step",
+    "ops/geop-ops-surface",
     "ops/geop-ops-pattern",
-#     "ops/geop-ops-harness",
+    "ops/geop-ops-harness",
     "ops/geop-ops-hole",
-#     "ops/geop-ops-urdf",
-#     "ops/geop-ops-bom",
+    "ops/geop-ops-urdf",
+    "ops/geop-ops-bom",
 ]
 
 [workspace.package]
@@ -40,31 +39,30 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
-geop-core = { path = "core/geop-core" }
+geop-core-program = { path = "core/geop-core-program" }
 geop-core-math = { path = "core/geop-core-math" }
 geop-core-geometry = { path = "core/geop-core-geometry" }
 geop-core-topology = { path = "core/geop-core-topology" }
 geop-core-sketch = { path = "core/geop-core-sketch" }
 geop-ops = { path = "ops/geop-ops" }
-geop-ops-derive = { path = "ops/geop-ops-derive" }
 geop-ops-sketch = { path = "ops/geop-ops-sketch" }
-# geop-ops-datums = { path = "ops/geop-ops-datums" }
+geop-ops-datums = { path = "ops/geop-ops-datums" }
 geop-ops-extrude-revolve = { path = "ops/geop-ops-extrude-revolve" }
 geop-ops-booleans = { path = "ops/geop-ops-booleans" }
-# geop-ops-edit = { path = "ops/geop-ops-edit" }
+geop-ops-edit = { path = "ops/geop-ops-edit" }
 geop-ops-fillet = { path = "ops/geop-ops-fillet" }
-# geop-ops-shell = { path = "ops/geop-ops-shell" }
-# geop-ops-drawing = { path = "ops/geop-ops-drawing" }
+geop-ops-shell = { path = "ops/geop-ops-shell" }
+geop-ops-drawing = { path = "ops/geop-ops-drawing" }
 geop-ops-assembly = { path = "ops/geop-ops-assembly" }
-# geop-ops-inspect = { path = "ops/geop-ops-inspect" }
+geop-ops-inspect = { path = "ops/geop-ops-inspect" }
 geop-ops-rasterize = { path = "ops/geop-ops-rasterize" }
-# geop-ops-subd = { path = "ops/geop-ops-subd" }
+geop-ops-subd = { path = "ops/geop-ops-subd" }
 serde = { version = "1", features = ["derive"] }
-# geop-ops-sheetmetal = { path = "ops/geop-ops-sheetmetal" }
-# geop-ops-plastic = { path = "ops/geop-ops-plastic" }
-# geop-ops-step = { path = "ops/geop-ops-step" }
-# geop-ops-sketch3d = { path = "ops/geop-ops-sketch3d" }
-# geop-ops-surface = { path = "ops/geop-ops-surface" }
+geop-ops-sheetmetal = { path = "ops/geop-ops-sheetmetal" }
+geop-ops-plastic = { path = "ops/geop-ops-plastic" }
+geop-ops-step = { path = "ops/geop-ops-step" }
+geop-ops-sketch3d = { path = "ops/geop-ops-sketch3d" }
+geop-ops-surface = { path = "ops/geop-ops-surface" }
 # `float_roundtrip`: without it, parsing a float may land one ULP off the
 # value that was written, and a program read back from JSON would no longer
 # build the very same part.
@@ -72,17 +70,14 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 geop-cad-base = { path = "cad/geop-cad-base" }
 rayon = "1"
 indexmap = "2"
-# Stable generational keys for entries that come and go (see
-# `geop_core::target::TargetRegistry`).
-slotmap = "1"
-# A compact binary form for what steps keep between builds (see
-# `geop_ops::Cache`).
-postcard = { version = "1", default-features = false, features = ["alloc"] }
+# Maps that share structure with their copies, so that a version of a model
+# made by editing another copies only what the edit touched.
+imbl = "7"
 geop-ops-pattern = { path = "ops/geop-ops-pattern" }
-# geop-ops-harness = { path = "ops/geop-ops-harness" }
+geop-ops-harness = { path = "ops/geop-ops-harness" }
 geop-ops-hole = { path = "ops/geop-ops-hole" }
-# geop-ops-urdf = { path = "ops/geop-ops-urdf" }
-# geop-ops-bom = { path = "ops/geop-ops-bom" }
+geop-ops-urdf = { path = "ops/geop-ops-urdf" }
+geop-ops-bom = { path = "ops/geop-ops-bom" }
 
 # `cargo test` otherwise builds these crates unoptimized, which is fine for
 # cheap unit tests but disastrous for the render-test suites in

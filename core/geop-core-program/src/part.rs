@@ -1,8 +1,15 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::{
+    any::Any,
+    collections::{BTreeMap, BTreeSet, HashSet},
+    rc::Rc,
+};
 
 use indexmap::IndexSet;
 
-use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    solvers::system::Variable,
+};
 
 use crate::{
     constraint::Constraint,
@@ -17,14 +24,17 @@ impl<T: Clone + PartialEq + 'static> Input for T {}
 /// A value the state holds by name, which a solver moves until the
 /// [`Constraint`]s hold: a pose, say. A name the run gives no value reads as
 /// the default.
-pub trait State: Clone + PartialEq + Default + std::fmt::Debug + 'static {
-    /// The numbers the state, and the constraints on it, are made of. `==` on
-    /// them asks whether two enclosures are the same, as a check for change
-    /// does, never whether two values could be equal.
-    type Scalar: geop_core_math::scalars::Scalar + PartialEq;
-    /// What a constraint's derivative by a value of the state is: for a pose,
-    /// its twist.
-    type Tangent: Clone + PartialEq + std::fmt::Debug + 'static;
+///
+/// A solver moves a value by steps along it ([`Variable::retract`]): a
+/// number by adding to it, a pose by the exponential map of a twist. A
+/// constraint's derivatives are by such a step from where the value is.
+/// Its numbers ([`Variable::Scalar`]) are what the state, and the
+/// constraints on it, are made of; `==` on them asks whether two enclosures
+/// are the same, as a check for change does, never whether two values
+/// could be equal.
+pub trait State:
+    Variable<Scalar: geop_core_math::scalars::Scalar + PartialEq> + PartialEq + Default + 'static
+{
 }
 
 /// A value given to a run from outside, and the run in which it last changed.
@@ -73,33 +83,48 @@ fn changed_at<T>(given: &BTreeMap<String, Given<T>>, name: &str) -> Revision {
 /// a value equal to the last one counts as unchanged, so what read it is
 /// reused in turn.
 pub struct Part<I, S> {
+    /// What tells one state of the part from another: it ticks with every
+    /// run, and with every [`Part::update`] between runs. When a version
+    /// was made, and when it last changed, is told by it.
     revision: Revision,
+    /// The current or last run: what tells its versions from those only
+    /// kept for later steps.
+    run: Revision,
     /// The steps of the current or last run, in order. A step's id is what
     /// identifies it across runs; its position only orders it within one.
     steps: IndexSet<String>,
-    targets: TargetRegistry,
+    targets: TargetRegistry<I, S>,
     /// The constraints the steps of the current or last run defined.
     constraints: BTreeSet<String>,
     inputs: BTreeMap<String, Given<I>>,
     state: BTreeMap<String, Given<S>>,
+    /// How many versions of targets it has built — generators run — ever.
+    built: usize,
 }
 
 impl<I, S> Default for Part<I, S> {
     fn default() -> Self {
         Self {
             revision: 0,
+            run: 0,
             steps: IndexSet::new(),
             targets: TargetRegistry::default(),
             constraints: BTreeSet::new(),
             inputs: BTreeMap::new(),
             state: BTreeMap::new(),
+            built: 0,
         }
     }
 }
 
 impl<I: Input, S: State> Part<I, S> {
-    pub(crate) fn begin_run(&mut self, inputs: &BTreeMap<String, I>, state: &BTreeMap<String, S>) {
+    /// Starts a run with the given `inputs` and `state`, complete: what the
+    /// last run gave and this one does not is removed. A [`crate::program_runner::ProgramRunner`]
+    /// drives a part through a program; these drive it by hand, as a test of
+    /// one operation does.
+    pub fn begin_run(&mut self, inputs: &BTreeMap<String, I>, state: &BTreeMap<String, S>) {
         self.revision += 1;
+        self.run = self.revision;
         self.steps.clear();
         self.constraints.clear();
         replace_given(&mut self.inputs, inputs, self.revision);
@@ -108,7 +133,7 @@ impl<I: Input, S: State> Part<I, S> {
 
     /// Starts the step `step`. Fails if a step of that id ran before in this
     /// run: the id is what tells one step's versions from another's.
-    pub(crate) fn begin_step(&mut self, step: &str) -> GeopResult<()> {
+    pub fn begin_step(&mut self, step: &str) -> GeopResult<()> {
         if !self.steps.insert(step.to_string()) {
             return Err(GeopError::new(format!(
                 "step `{step}` appears twice in the program"
@@ -117,11 +142,12 @@ impl<I: Input, S: State> Part<I, S> {
         Ok(())
     }
 
-    /// Deletes the versions no step of this run made, and the removed inputs
-    /// and state no version left depends on.
-    pub(crate) fn end_run(&mut self) {
-        let revision = self.revision;
-        self.targets.retain(|target| target.verified_at == revision);
+    /// Deletes the versions no step made, of this run or of the `later` steps
+    /// it stopped before, and the removed inputs and state no version left
+    /// depends on.
+    pub fn end_run(&mut self, later: HashSet<&str>) {
+        let run = self.run;
+        (self.targets).retain(|target| target.run == run || later.contains(target.step.as_str()));
         let read: HashSet<&Dependency> = self.targets.dependencies().collect();
         self.inputs.retain(|name, entry| {
             entry.value.is_some() || read.contains(&Dependency::Input(name.clone()))
@@ -133,6 +159,13 @@ impl<I: Input, S: State> Part<I, S> {
 
     fn step(&self) -> &str {
         self.steps.last().map_or("", String::as_str)
+    }
+
+    /// How many versions of targets it has built — generators run — ever.
+    /// What a run costs grows with this, so a test can bound the work an
+    /// edit does by counting, rather than timing it.
+    pub fn built(&self) -> usize {
+        self.built
     }
 
     /// The part as it is now: during a run, with what the steps so far made;
@@ -151,13 +184,22 @@ impl<I: Input, S: State> Part<I, S> {
         Ok(View { part: self, before })
     }
 
+    /// The part as the step `step` of the last run left it, if it ran.
+    pub fn view_after(&self, step: &str) -> Option<View<'_, I, S>> {
+        let at = self.steps.get_index_of(step)?;
+        Some(View {
+            part: self,
+            before: at + 1,
+        })
+    }
+
     /// The version of `name` a read sees before the step at position
     /// `before` of this run: of the versions this run made, the one whose
     /// step came last.
-    fn resolve(&self, name: &str, before: usize) -> GeopResult<&Target> {
+    fn resolve(&self, name: &str, before: usize) -> GeopResult<&Target<I, S>> {
         self.targets
             .versions(name)
-            .filter(|target| target.verified_at == self.revision)
+            .filter(|target| target.run == self.run)
             .filter_map(|target| Some((self.steps.get_index_of(&target.step)?, target)))
             .filter(|&(position, _)| position < before)
             .max_by_key(|&(position, _)| position)
@@ -173,7 +215,7 @@ impl<I: Input, S: State> Part<I, S> {
     }
 
     /// The version of `name` a read sees now.
-    fn latest(&self, name: &str) -> Option<&Target> {
+    fn latest(&self, name: &str) -> Option<&Target<I, S>> {
         self.resolve(name, self.steps.len()).ok()
     }
 
@@ -181,7 +223,7 @@ impl<I: Input, S: State> Part<I, S> {
         &self,
         reference: &TargetReference<T>,
         before: usize,
-    ) -> GeopResult<(&Target, &T)> {
+    ) -> GeopResult<(&Target<I, S>, &T)> {
         let name = reference.name();
         let target = self.resolve(name, before)?;
         let data = target.data.as_ref().map_err(|e| {
@@ -212,13 +254,20 @@ impl<I: Input, S: State> Part<I, S> {
             .unwrap_or_default()
     }
 
-    /// Whether `dependency` is unchanged since `revision`. A version counts as
-    /// changed unless a read now still sees it, and its value is no newer
-    /// than `revision`.
-    fn unchanged_since(&self, dependency: &Dependency, revision: Revision) -> bool {
+    /// Whether `dependency` of the target `own`, read before the step at
+    /// position `before`, is unchanged since `revision`. A version counts as
+    /// changed unless a read there still sees it, and its value is no newer
+    /// than `revision`. A target reads its own name as of the steps before
+    /// its own (see [`Reader`]).
+    fn unchanged_since(
+        &self,
+        dependency: &Dependency,
+        revision: Revision,
+        own: &str,
+        before: usize,
+    ) -> bool {
         match dependency {
-            Dependency::Target { name, step } => self
-                .latest(name)
+            Dependency::Target { name, step } => (self.resolve(name, sees(name, own, before)).ok())
                 .is_some_and(|target| &target.step == step && target.changed_at <= revision),
             Dependency::Input(name) => changed_at(&self.inputs, name) <= revision,
             Dependency::State(name) => changed_at(&self.state, name) <= revision,
@@ -234,7 +283,7 @@ impl<I: Input, S: State> Part<I, S> {
     /// the version would be reused after it changed:
     ///
     /// ```compile_fail
-    /// # use geop_core::{part::{Input, Part, State}, target::TargetReference};
+    /// # use geop_core_program::{part::{Input, Part, State}, target::TargetReference};
     /// fn define<I: Input, S: State>(part: &mut Part<I, S>, outside: u32) {
     ///     let reference = TargetReference::<u32>::new("t");
     ///     part.define_target(&reference, &(), |_, _| Ok(outside));
@@ -255,7 +304,7 @@ impl<I: Input, S: State> Part<I, S> {
         &mut self,
         reference: &TargetReference<Out>,
         args: &Args,
-        generator: impl FnOnce(&mut Reader<I, S>, &Args) -> GeopResult<Out>,
+        generator: impl Fn(&mut Reader<I, S>, &Args) -> GeopResult<Out> + 'static,
     ) -> GeopResult<()> {
         let name = reference.name();
         if let Some(latest) = self.latest(name) {
@@ -288,76 +337,173 @@ impl<I: Input, S: State> Part<I, S> {
                 self.step()
             )));
         }
-        self.make_version(reference, args, |reader, args| {
-            let previous = reader.retrieve_target(reference)?.to_revise();
+        let own = reference.clone();
+        self.make_version(reference, args, move |reader, args| {
+            let previous = reader.retrieve_target(&own)?.to_revise();
             generator(previous, reader, args)
         })
     }
 
+    /// Revises the target `reference` as [`Part::revise_target`] does, or,
+    /// if no step has made it yet in this run, makes it from its default:
+    /// for a value a program's steps build up one after another from
+    /// nothing, like a part's model. A version that failed is one made: a
+    /// step after it fails too, rather than starting afresh.
+    pub fn revise_or_start<Out: Revisable + Default, Args: PartialEq + Clone + 'static>(
+        &mut self,
+        reference: &TargetReference<Out>,
+        args: &Args,
+        generator: fn(Out, &mut Reader<I, S>, &Args) -> GeopResult<Out>,
+    ) -> GeopResult<()> {
+        if self.latest(reference.name()).is_some() {
+            return self.revise_target(reference, args, generator);
+        }
+        self.make_version(reference, args, move |reader, args| {
+            generator(Out::default(), reader, args)
+        })
+    }
+
     /// Makes this step's version of `reference`, reusing the last run's when
-    /// nothing it read has changed.
+    /// nothing it read has changed. The version keeps how it is made, to
+    /// be made again between runs ([`Part::update`]).
     fn make_version<Out: PartialEq + 'static, Args: PartialEq + Clone + 'static>(
         &mut self,
         reference: &TargetReference<Out>,
         args: &Args,
-        generator: impl FnOnce(&mut Reader<I, S>, &Args) -> GeopResult<Out>,
+        generator: impl Fn(&mut Reader<I, S>, &Args) -> GeopResult<Out> + 'static,
     ) -> GeopResult<()> {
         let name = reference.name();
         let step = (self.steps.last().cloned())
             .ok_or_else(|| GeopError::new(format!("target `{name}` is made outside of a step")))?;
-        let revision = self.revision;
+        let (run, before) = (self.run, self.steps.len());
         let reusable = self.targets.get(name, &step).is_some_and(|target| {
             target.data.as_ref().is_ok_and(|data| data.is::<Out>())
                 && target.args.downcast_ref::<Args>() == Some(args)
-                && target
-                    .dependencies
-                    .iter()
-                    .all(|dependency| self.unchanged_since(dependency, target.verified_at))
+                && (target.dependencies.iter()).all(|dependency| {
+                    self.unchanged_since(dependency, target.verified_at, name, before)
+                })
         });
         if reusable && let Some(target) = self.targets.get_mut(name, &step) {
-            target.verified_at = revision;
+            target.verified_at = self.revision;
+            target.run = run;
             return Ok(());
         }
+        let args = Rc::new(args.clone());
+        let kept = args.clone();
+        let remake = Remake {
+            make: Rc::new(move |reader| Ok(Box::new(generator(reader, &kept)?) as Box<dyn Any>)),
+            same: |a, b| a.downcast_ref::<Out>() == b.downcast_ref::<Out>(),
+        };
+        self.make(name, step, args, run, before, remake)
+    }
 
+    /// Makes the version of `name` of the step `step` with `remake`,
+    /// reading before the step at position `before`, and keeps it with what
+    /// it read: changed now, unless it is equal to the version it replaces.
+    fn make(
+        &mut self,
+        name: &str,
+        step: String,
+        args: Rc<dyn Any>,
+        run: Revision,
+        before: usize,
+        remake: Remake<I, S>,
+    ) -> GeopResult<()> {
+        self.built += 1;
         let mut reader = Reader {
             part: self,
             dependencies: Vec::new(),
+            own: name.to_string(),
+            before,
         };
-        let built = generator(&mut reader, args);
+        let made = (remake.make)(&mut reader)
+            .map_err(|e| e.with_context(format!("making target `{name}` in step `{step}`")));
         let mut dependencies = reader.dependencies;
         dependencies.sort();
         dependencies.dedup();
-
-        let (data, result) = match built {
-            Ok(data) => (Ok(Box::new(data) as Box<dyn std::any::Any>), Ok(())),
-            Err(e) => (
-                Err(e.root_message().to_string()),
-                Err(e.with_context(format!("making target `{name}` in step `{step}`"))),
-            ),
+        let (data, result) = match made {
+            Ok(data) => (Ok(data), Ok(())),
+            Err(e) => (Err(e.root_message().to_string()), Err(e)),
         };
         let changed_at = match (self.targets.get(name, &step), &data) {
             (Some(old), Ok(new))
-                if old
-                    .data
-                    .as_ref()
-                    .is_ok_and(|old| old.downcast_ref::<Out>() == new.downcast_ref::<Out>()) =>
+                if (old.data.as_ref())
+                    .is_ok_and(|old_data| (old.remake.same)(&**old_data, &**new)) =>
             {
                 old.changed_at
             }
-            _ => revision,
+            _ => self.revision,
         };
-        self.targets.insert(
-            name,
-            Target {
-                step,
-                args: Box::new(args.clone()),
-                dependencies,
-                data,
-                changed_at,
-                verified_at: revision,
-            },
-        );
+        let target = Target {
+            step,
+            args,
+            dependencies,
+            data,
+            changed_at,
+            verified_at: self.revision,
+            run,
+            remake,
+        };
+        self.targets.insert(name, target);
         result
+    }
+
+    /// Brings the targets `names` up to date with the state `state` — and,
+    /// first, every version they read that is not — as the last run would
+    /// have made them with it, without running the program again: how a
+    /// solver moving the state reads its constraints. Only what read state
+    /// that changed is made again. Until the next run, the part's other
+    /// targets stay as the last run left them, and so does what failed to
+    /// be made: an update keeps going, and the failure is the version's.
+    pub fn update(&mut self, state: &BTreeMap<String, S>, names: &[&str]) {
+        self.revision += 1;
+        replace_given(&mut self.state, state, self.revision);
+        for name in names {
+            if let Some(step) = self.latest(name).map(|target| target.step.clone()) {
+                self.bring_up_to_date(name, &step);
+            }
+        }
+    }
+
+    /// The version of `name` of the step `step`, made again if anything it
+    /// read changed since it was made — what it read brought up to date
+    /// first.
+    fn bring_up_to_date(&mut self, name: &str, step: &str) {
+        let revision = self.revision;
+        let Some(target) = self.targets.get(name, step) else {
+            return;
+        };
+        if target.verified_at == revision {
+            return;
+        }
+        let Some(position) = self.steps.get_index_of(step) else {
+            return;
+        };
+        let before = position + 1;
+        let dependencies = target.dependencies.clone();
+        for dependency in &dependencies {
+            if let Dependency::Target { name: read, step } = dependency
+                && let Ok(seen) = self.resolve(read, sees(read, name, before))
+                && &seen.step == step
+            {
+                let seen = seen.step.clone();
+                self.bring_up_to_date(read, &seen);
+            }
+        }
+        let Some(target) = self.targets.get(name, step) else {
+            return;
+        };
+        let fresh = (dependencies.iter())
+            .all(|dependency| self.unchanged_since(dependency, target.verified_at, name, before));
+        if fresh {
+            if let Some(target) = self.targets.get_mut(name, step) {
+                target.verified_at = revision;
+            }
+            return;
+        }
+        let (args, run, remake) = (target.args.clone(), target.run, target.remake.clone());
+        // A failure is the version's to say: what reads it fails in turn.
+        let _ = self.make(name, step.to_string(), args, run, before, remake);
     }
 
     /// Defines the constraint `name` as what `generator` makes of `args`.
@@ -372,12 +518,13 @@ impl<I: Input, S: State> Part<I, S> {
         generator: Generator<I, S, Args, Constraint<S>>,
     ) -> GeopResult<()> {
         let reference = TargetReference::<Constraint<S>>::new(name);
-        self.define(&reference, args, |reader, args| {
+        let own = name.to_string();
+        self.define(&reference, args, move |reader, args| {
             let constraint = generator(reader, args)?;
-            constraint.check(name, |state| {
-                reader
-                    .dependencies
+            constraint.check(&own, |state| {
+                (reader.dependencies)
                     .contains(&Dependency::State(state.to_string()))
+                    .then(|| reader.part.state(state).dimension())
             })?;
             Ok(constraint)
         })?;
@@ -400,19 +547,65 @@ impl<I: Input, S: State> Part<I, S> {
 /// What makes a target's value from its arguments and what it reads.
 pub type Generator<I, S, Args, Out> = fn(&mut Reader<I, S>, &Args) -> GeopResult<Out>;
 
-/// What a target's generator reads the part through. It records each read,
-/// so that the target is rebuilt when any of it changes.
+/// A target's generator together with its arguments: what makes a version
+/// of it, from what it reads alone.
+type Make<I, S> = Rc<dyn Fn(&mut Reader<I, S>) -> GeopResult<Box<dyn Any>>>;
+
+/// How a version of a target is made again: its generator with its
+/// arguments, and how two values it made are compared.
+pub(crate) struct Remake<I, S> {
+    make: Make<I, S>,
+    same: fn(&dyn Any, &dyn Any) -> bool,
+}
+
+// By hand, since a derive would ask the same of `I` and `S`.
+impl<I, S> Clone for Remake<I, S> {
+    fn clone(&self) -> Self {
+        Remake {
+            make: self.make.clone(),
+            same: self.same,
+        }
+    }
+}
+
+/// Before which step position the target `own`, made before the step at
+/// position `before`, reads `name`: its own name as of the steps before
+/// its own — what it revises — anything else as of its own step.
+fn sees(name: &str, own: &str, before: usize) -> usize {
+    match name == own {
+        true => before.saturating_sub(1),
+        false => before,
+    }
+}
+
+/// What a target's generator reads the part through, as of its own step.
+/// It records each read, so that the target is rebuilt when any of it
+/// changes.
 pub struct Reader<'a, I, S> {
     part: &'a Part<I, S>,
     dependencies: Vec<Dependency>,
+    /// The target being made.
+    own: String,
+    /// The position of the step after the one it is made by.
+    before: usize,
 }
 
-impl<'a, I: Input, S: State> Reader<'a, I, S> {
-    pub fn retrieve_target<T: 'static>(
-        &mut self,
-        reference: &TargetReference<T>,
-    ) -> GeopResult<&'a T> {
-        let (target, data) = self.part.lookup(reference, self.part.steps.len())?;
+/// What reads a part — a generator through its [`Reader`], which records
+/// each read, or an editor through a [`View`], which does not — so that what
+/// is worked out from the part is written once for both. A view also reads
+/// through `&self`, by its inherent methods of the same names.
+pub trait Retrieve<'a, I, S> {
+    fn retrieve_target<T: 'static>(&mut self, reference: &TargetReference<T>) -> GeopResult<&'a T>;
+
+    fn retrieve_input(&mut self, name: &str) -> Option<I>;
+
+    fn retrieve_state(&mut self, name: &str) -> S;
+}
+
+impl<'a, I: Input, S: State> Retrieve<'a, I, S> for Reader<'a, I, S> {
+    fn retrieve_target<T: 'static>(&mut self, reference: &TargetReference<T>) -> GeopResult<&'a T> {
+        let before = sees(reference.name(), &self.own, self.before);
+        let (target, data) = self.part.lookup(reference, before)?;
         self.dependencies.push(Dependency::Target {
             name: reference.name().to_string(),
             step: target.step.clone(),
@@ -420,14 +613,28 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
         Ok(data)
     }
 
-    pub fn retrieve_input(&mut self, name: &str) -> Option<I> {
+    fn retrieve_input(&mut self, name: &str) -> Option<I> {
         self.dependencies.push(Dependency::Input(name.to_string()));
         self.part.input(name)
     }
 
-    pub fn retrieve_state(&mut self, name: &str) -> S {
+    fn retrieve_state(&mut self, name: &str) -> S {
         self.dependencies.push(Dependency::State(name.to_string()));
         self.part.state(name)
+    }
+}
+
+impl<'a, I: Input, S: State> Retrieve<'a, I, S> for View<'a, I, S> {
+    fn retrieve_target<T: 'static>(&mut self, reference: &TargetReference<T>) -> GeopResult<&'a T> {
+        View::retrieve_target(self, reference)
+    }
+
+    fn retrieve_input(&mut self, name: &str) -> Option<I> {
+        View::retrieve_input(self, name)
+    }
+
+    fn retrieve_state(&mut self, name: &str) -> S {
+        View::retrieve_state(self, name)
     }
 }
 
@@ -441,6 +648,16 @@ pub struct View<'a, I, S> {
     before: usize,
 }
 
+// By hand, since a derive would ask the same of `I` and `S`: a view is
+// only where it looks from.
+impl<I, S> Clone for View<'_, I, S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<I, S> Copy for View<'_, I, S> {}
+
 impl<'a, I: Input, S: State> View<'a, I, S> {
     pub fn retrieve_target<T: 'static>(&self, reference: &TargetReference<T>) -> GeopResult<&'a T> {
         Ok(self.part.lookup(reference, self.before)?.1)
@@ -452,6 +669,24 @@ impl<'a, I: Input, S: State> View<'a, I, S> {
 
     pub fn retrieve_state(&self, name: &str) -> S {
         self.part.state(name)
+    }
+
+    /// Every target the view sees whose value is a `T`, by name, in the
+    /// order the steps made them — of one step, by name: the sketches a
+    /// step could pick, say, the newest last.
+    pub fn targets_of<T: 'static>(&self) -> Vec<(&'a str, &'a T)> {
+        let mut found: Vec<(Option<usize>, &'a str, &'a T)> = (self.part.targets.names())
+            .filter_map(|name| {
+                let target = self.part.resolve(name, self.before).ok()?;
+                let data = target.data.as_ref().ok()?.downcast_ref::<T>()?;
+                Some((self.part.steps.get_index_of(&target.step), name, data))
+            })
+            .collect();
+        found.sort_by_key(|&(position, name, _)| (position, name));
+        found
+            .into_iter()
+            .map(|(_, name, data)| (name, data))
+            .collect()
     }
 }
 
@@ -476,15 +711,15 @@ mod tests {
 
         part.begin_run(&x, &BTreeMap::new());
         reads_x(&mut part);
-        part.end_run();
+        part.end_run(HashSet::new());
 
         part.begin_run(&BTreeMap::new(), &BTreeMap::new());
         reads_x(&mut part);
-        part.end_run();
+        part.end_run(HashSet::new());
         assert!(part.inputs.contains_key("x"));
 
         part.begin_run(&BTreeMap::new(), &BTreeMap::new());
-        part.end_run();
+        part.end_run(HashSet::new());
         assert!(!part.inputs.contains_key("x"));
     }
 }

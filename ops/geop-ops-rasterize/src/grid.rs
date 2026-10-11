@@ -2,8 +2,7 @@
 //! own curvature, with every cell clipped exactly against the trim
 //! boundary.
 //!
-//! Deliberately simple, after a constrained-Delaunay approach ([`super::delaunay`],
-//! now removed) turned out both too slow (the same triangle set could be
+//! Deliberately simple, after a constrained-Delaunay approach (now removed) turned out both too slow (the same triangle set could be
 //! reached by directly rasterizing a grid, without ever needing an
 //! incremental triangulation to converge) and occasionally wrong (a
 //! *reconstructed* Delaunay edge near the trim can end up connecting two
@@ -87,14 +86,14 @@ fn sub3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
-fn dist3(a: [f64; 3], b: [f64; 3]) -> f64 {
+pub(crate) fn dist3(a: [f64; 3], b: [f64; 3]) -> f64 {
     dot3(sub3(a, b), sub3(a, b)).sqrt()
 }
 
 /// Perpendicular distance from `p` to segment `a..b` — see `grid`'s
 /// module doc comment on why curvature is measured this way (immune to a
 /// merely non-uniformly parametrized but still flat surface).
-fn dist_point_to_segment(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> f64 {
+pub(crate) fn dist_point_to_segment(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> f64 {
     let ab = sub3(b, a);
     let len2 = dot3(ab, ab);
     let t = if len2 > 1e-18 {
@@ -719,7 +718,7 @@ mod tests {
     }
     use super::*;
     use geop_core_math::{for_all_scalars, vector::Vector3};
-    use geop_ops::Part;
+    use geop_ops::NamedModel;
     use geop_ops_extrude_revolve::shapes::{cube_solid, sphere::sphere_solid};
 
     fn triangle_area<S: Scalar>(a: Vector2<S>, b: Vector2<S>, c: Vector2<S>) -> f64 {
@@ -730,17 +729,17 @@ mod tests {
     }
 
     fn check_flat_face_stays_coarse<S: Scalar>() {
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         cube_solid(
-            &mut part,
+            &mut model,
             "t1",
             Vector3::from_array([S::ZERO; 3]),
             Vector3::from_array([S::ONE; 3]),
         )
         .unwrap();
-        let model = part.topology();
-        let face = model.faces.values().next().unwrap();
-        let tris = crate::face_triangles_uv(model, face, 32).unwrap();
+        let topology = model.topology();
+        let face = topology.faces.values().next().unwrap();
+        let tris = crate::face_triangles_uv(topology, face, 32).unwrap();
         // Zero curvature never triggers a resolution doubling, so the grid
         // stays at the minimum whatever quality was asked for: a flat face
         // is approximated exactly by any grid, and its trim is clipped
@@ -758,11 +757,11 @@ mod tests {
     }
 
     fn check_curved_face_is_refined<S: Scalar>() {
-        let mut part = Part::<S>::new();
-        sphere_solid(&mut part, "t3", Vector3::zero(), S::ONE).unwrap();
-        let model = part.topology();
-        let face = model.faces.values().next().unwrap();
-        let tris = crate::face_triangles_uv(model, face, 8).unwrap();
+        let mut model = NamedModel::<S>::new();
+        sphere_solid(&mut model, "t3", Vector3::zero(), S::ONE).unwrap();
+        let topology = model.topology();
+        let face = topology.faces.values().next().unwrap();
+        let tris = crate::face_triangles_uv(topology, face, 8).unwrap();
         assert!(
             tris.len() > 8,
             "a sphere quadrant should be refined well past a trivial fan, got {}",
@@ -775,11 +774,11 @@ mod tests {
     /// follows the shape instead of cutting corners off it. Checked on a
     /// unit sphere, where the distance to the surface is exact.
     fn check_curved_face_follows_the_surface<S: Scalar>() {
-        let mut part = Part::<S>::new();
-        sphere_solid(&mut part, "t4", Vector3::zero(), S::ONE).unwrap();
-        let model = part.topology();
-        let face = model.faces.values().next().unwrap();
-        let tris = crate::face_triangles_uv(model, face, 24).unwrap();
+        let mut model = NamedModel::<S>::new();
+        sphere_solid(&mut model, "t4", Vector3::zero(), S::ONE).unwrap();
+        let topology = model.topology();
+        let face = topology.faces.values().next().unwrap();
+        let tris = crate::face_triangles_uv(topology, face, 24).unwrap();
         let mut samples = Samples::new(face);
         let mut worst: f64 = 0.0;
         for (a, b, c) in &tris {
@@ -811,17 +810,17 @@ mod tests {
     }
 
     fn check_triangulation_covers_exact_area<S: Scalar>() {
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         cube_solid(
-            &mut part,
+            &mut model,
             "t2",
             Vector3::from_array([S::ZERO; 3]),
             Vector3::from_array([S::ONE; 3]),
         )
         .unwrap();
-        let model = part.topology();
-        let face = model.faces.values().next().unwrap();
-        let tris = crate::face_triangles_uv(model, face, 8).unwrap();
+        let topology = model.topology();
+        let face = topology.faces.values().next().unwrap();
+        let tris = crate::face_triangles_uv(topology, face, 8).unwrap();
         let total: f64 = tris.iter().map(|(a, b, c)| triangle_area(*a, *b, *c)).sum();
         assert!(
             (total - 1.0).abs() < 1e-6,
@@ -835,7 +834,7 @@ mod tests {
         use geop_core_math::primitives::CoordinateSystem;
         use geop_ops_extrude_revolve::common::{arc2, polygon, sqrt2_over_2};
 
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         let v2 = |x: f64, y: f64| Vector2::from_array([S::from_f64(x), S::from_f64(y)]);
         let cs = CoordinateSystem::try_new(
             Vector3::from_array([S::ZERO; 3]),
@@ -863,7 +862,7 @@ mod tests {
         let namer = geop_ops::Namer::new("extrude", "e").unwrap();
         use geop_ops_extrude_revolve::{common::Profile, sweep::SweepLoop};
         geop_ops_extrude_revolve::extrude::extrude(
-            &mut part,
+            &mut model,
             &namer,
             Some(&namer.root()),
             &cs,
@@ -875,17 +874,17 @@ mod tests {
             ],
         )
         .unwrap();
-        let model = part.topology();
+        let topology = model.topology();
 
         // The two cap faces are the ones with a hole.
-        let capped: Vec<_> = model
+        let capped: Vec<_> = topology
             .faces
             .values()
             .filter(|f| !f.holes.is_empty())
             .collect();
         assert_eq!(capped.len(), 2);
         for face in capped {
-            let tris = crate::face_triangles_uv(model, face, 8).unwrap();
+            let tris = crate::face_triangles_uv(topology, face, 8).unwrap();
             let area: f64 = tris.iter().map(|(a, b, c)| triangle_area(*a, *b, *c)).sum();
             // The cap's uv square spans the 4x4 footprint, so the hole is
             // π / 16 of it.
@@ -924,12 +923,13 @@ mod tests {
     /// result here is exactly the failure mode clipping is meant to rule
     /// out for trims a fixed grid-without-clipping can't represent.
     fn check_holed_footprint_triangulates_cleanly<S: Scalar>() {
-        let mut part = Part::<S>::new();
-        geop_ops_extrude_revolve::shapes::figure8_profile::figure8_profile(&mut part, "f").unwrap();
-        let model = part.topology();
+        let mut model = NamedModel::<S>::new();
+        geop_ops_extrude_revolve::shapes::figure8_profile::figure8_profile(&mut model, "f")
+            .unwrap();
+        let topology = model.topology();
         let mut total_triangles = 0;
-        for face in model.faces.values() {
-            let tris = crate::face_triangles_uv(model, face, 8).unwrap();
+        for face in topology.faces.values() {
+            let tris = crate::face_triangles_uv(topology, face, 8).unwrap();
             for (a, b, c) in &tris {
                 for v in [a, b, c] {
                     assert!(

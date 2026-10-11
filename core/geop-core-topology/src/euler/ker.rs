@@ -28,11 +28,6 @@ impl<S: Scalar> Model<S> {
 
         let cb = self.get_coedge(coedge_backward)?.clone();
         let ca = self.get_coedge(coedge_forward)?.clone();
-        if ca.edge().with_context(&ctx)? != cb.edge().with_context(&ctx)? {
-            return Err(ctx(GeopError::new(
-                "coedge_backward and coedge_forward must belong to the same edge",
-            )));
-        }
         if ca.face == cb.face {
             return Err(ctx(GeopError::new(
                 "coedge_backward and coedge_forward must belong to different faces (use kemr to merge two rings of the same face)",
@@ -60,17 +55,8 @@ impl<S: Scalar> Model<S> {
 
         let survivor = ca.prev;
 
-        // ca and cb each sit between one ring's root and the other ring's
-        // prev, so removing them reconnects across: ca's prev links up with
-        // cb's next, and cb's prev links up with ca's next — merging both
-        // rings into one.
-        self.coedges.get_mut(&ca.prev).unwrap().next = cb.next;
-        self.coedges.get_mut(&cb.next).unwrap().prev = ca.prev;
-        self.coedges.get_mut(&cb.prev).unwrap().next = ca.next;
-        self.coedges.get_mut(&ca.next).unwrap().prev = cb.prev;
-        self.coedges.remove(&coedge_forward);
-        self.coedges.remove(&coedge_backward);
-        self.edges.remove(&ca.edge().with_context(&ctx)?);
+        self.remove_edge_between(coedge_forward, coedge_backward)
+            .with_context(&ctx)?;
 
         // Every coedge that was on moved_face_id now belongs to the merged
         // ring on survivor_face_id.

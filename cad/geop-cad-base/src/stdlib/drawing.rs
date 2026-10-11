@@ -10,8 +10,8 @@ use geop_core_math::{
 use geop_core_sketch::{ConstraintId, CurveId, CurveKind, PointId, SplineShape};
 use geop_ops::{
     Design, EntityRef,
+    parameters::Values,
     parameters::{Parameters, evaluate, is_formula, number},
-    part::State,
 };
 use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch};
 
@@ -27,12 +27,12 @@ pub struct Drawing {
     origin: PointId,
     formulas: BTreeMap<ConstraintId, String>,
     /// What the parameters resolve to as defined: where to draw.
-    values: State,
+    values: Values,
 }
 
 impl Drawing {
     pub fn new(parameters: &Parameters) -> GeopResult<Self> {
-        let resolved = parameters.resolve(&State::new());
+        let resolved = parameters.resolve(&Values::new());
         if let Some((name, error)) = resolved.errors.iter().next() {
             return Err(GeopError::new(format!(
                 "the parameter {name:?} does not resolve: {error}"
@@ -180,12 +180,10 @@ impl Drawing {
     /// needs no solving — and a build with the parameters as defined then
     /// solves none (see `AddSketch`), which is what keeps a large profile, a
     /// rack's teeth, cheap to place.
-    pub fn on(self, plane: EntityRef) -> GeopResult<AddSketchArgs> {
-        Ok(AddSketchArgs {
-            plane: Some(plane),
-            sketch: self.sketch,
+    pub fn on(self, plane: EntityRef) -> AddSketchArgs {
+        AddSketchArgs {
             formulas: self.formulas,
-            ..Default::default()
-        })
+            ..AddSketchArgs::on(plane, self.sketch)
+        }
     }
 }

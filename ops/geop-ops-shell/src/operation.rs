@@ -6,11 +6,17 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form, Unit, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_ops::{
-    Context, Library, Namer, Part,
-    operation::{EntityRef, Operation, Role},
+    Design, NamedModel, Namer, ParamValue,
+    operation::{
+        Build, BuildReader, EntityRef, Input, Lookup, ModelStep, Role, Scope, Seen, build_model,
+    },
     parameters::{Formula, expressions},
-    ui::{Form, Number, Unit},
+    ui::formula_number,
 };
 use serde::{Deserialize, Serialize};
 
@@ -36,101 +42,111 @@ pub struct ShellArgs {
     pub thickness: Formula,
 }
 
-impl Operation for Shell {
-    type Args = ShellArgs;
-    type Session = ();
+impl ModelStep for Shell {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &ShellArgs,
+    ) -> GeopResult<()> {
+        let ctx = with_context!("shell({step}, {args:?})");
+        let namer = Namer::new("shell", step)?;
+        let thickness =
+            (args.thickness.evaluate(&mut Scope { model, reader })).with_context(ctx)?;
+        if !thickness.is_finite() {
+            return Err(GeopError::new("the thickness is not a number")).with_context(ctx);
+        }
+        let solid = model.solid_id(&args.solid).with_context(ctx)?;
+        let faces = (args.faces.iter())
+            .map(|name| model.face_id(name))
+            .collect::<GeopResult<Vec<_>>>()
+            .with_context(ctx)?;
+        shell(model, &namer, solid, &faces, Design::from_f64(thickness)).with_context(ctx)?;
+        Ok(())
+    }
+}
 
-    fn formulas<'a>(&self, args: &'a mut ShellArgs) -> Vec<&'a mut String> {
+impl Operation for Shell {
+    const INFO: OperationInfo = OperationInfo::new(
+        "shell",
+        "Shell",
+        "Hollow a solid out to walls of one thickness, open where faces are picked.",
+        OperationGroup::Features,
+        OperationTier::Small,
+    );
+    type Args = ShellArgs;
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
+
+    fn formulas(args: &mut ShellArgs) -> Vec<&mut String> {
         expressions([&mut args.thickness])
     }
 
     /// The newest solid, closed all round, a tenth thick.
-    fn new_args<S: Scalar>(&self, before: &Part<S>) -> ShellArgs {
+    fn new_args(context: &Context<Input, ParamValue>) -> ShellArgs {
         ShellArgs {
-            solid: before.solid_names().pop().unwrap_or_default(),
+            solid: (Seen::new(context.before).model().solid_names().pop()).unwrap_or_default(),
             faces: Vec::new(),
             thickness: Formula::Plain(0.1),
         }
     }
 
-    /// The solid and the faces to open it at, picked, and the thickness.
-    fn form<'a, S: Scalar>(
-        &self,
-        context: Context<'a, S>,
-        args: &ShellArgs,
-        _: &(),
-        _: &[String],
-    ) -> Form<'a, S, ShellArgs> {
-        let mut f = Form::<S, ShellArgs>::new();
-        let solid = (!args.solid.is_empty()).then(|| EntityRef::Solid {
-            name: args.solid.clone(),
-        });
-        f.reference(
-            "solid",
-            "solid",
-            solid.iter().cloned().collect(),
-            &[Role::Solid],
-            None,
-            false,
-            |e, picked| {
-                if let [EntityRef::Solid { name }] = picked.as_slice() {
-                    if *name != e.args.solid {
-                        e.args.faces.clear();
-                    }
-                    e.args.solid = name.clone();
-                } else {
-                    e.args.solid.clear();
-                    e.args.faces.clear();
-                }
-            },
-        );
-        // A shell offsets planes and round faces: those are what can be
-        // picked to open.
-        f.reference(
-            "faces",
-            "open faces",
-            EntityRef::of_names(EntityRef::face, &args.faces),
-            &[Role::Plane, Role::Round],
-            solid,
-            true,
-            |e, picked| e.args.faces = EntityRef::names_of(EntityRef::face, &picked),
-        );
-        f.optional("faces");
-        f.formula(
-            "thickness",
-            Number::formula(
-                "thickness",
-                &args.thickness,
-                context.before.state(),
-                Unit::Length,
-            )
-            .range(0.0, 1.0),
-            |args, t| args.thickness = t,
-        );
-        f
+    fn run(step: &str, part: &mut Build, args: &ShellArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    /// The solid and the faces to open it at, picked, and the thickness.
+    fn presentation(
+        context: &Context<Input, ParamValue>,
         args: &ShellArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("shell({operation_id}, {args:?})");
-        let namer = Namer::new("shell", operation_id)?;
-        let solid = part.solid_id(&args.solid).with_context(ctx)?;
-        let faces = args
-            .faces
-            .iter()
-            .map(|name| part.face_id(name))
-            .collect::<GeopResult<Vec<_>>>()
-            .with_context(ctx)?;
-        let thickness = args.thickness.evaluate(&mut part).with_context(ctx)?;
-        if !thickness.is_finite() {
-            return Err(GeopError::new("the thickness is not a number")).with_context(ctx);
+        _: &(),
+    ) -> Form<Design> {
+        let mut seen = Seen::new(context.before);
+        let mut form = Form::default();
+        let dialog = &mut form.dialog;
+        let solid = (!args.solid.is_empty()).then(|| EntityRef::solid(args.solid.clone()));
+        let picked = solid.iter().cloned().collect();
+        dialog.reference("solid", "solid", picked, &[Role::Solid], None, false);
+        // A shell offsets planes and round faces: those are what can be
+        // picked to open.
+        let faces = EntityRef::of_names(EntityRef::face, &args.faces);
+        let roles = [Role::Plane, Role::Round];
+        (dialog.reference("faces", "open faces", faces, &roles, solid, true)).optional("faces");
+        let thickness = formula_number("thickness", &args.thickness, &mut seen, Unit::Length);
+        dialog.number("thickness", thickness.range(0.0, 1.0));
+        form
+    }
+
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
+        args: &ShellArgs,
+        _: &(),
+        event: Event<Design>,
+    ) -> (ShellArgs, ()) {
+        let mut args = args.clone();
+        let Event::Field { key, value } = event else {
+            return (args, ());
+        };
+        match (key.as_str(), value) {
+            ("solid", Value::Entities(picked)) => {
+                let solid = EntityRef::names_of(EntityRef::solid, &picked).pop();
+                // The faces opened were of the solid before.
+                if solid.as_ref() != Some(&args.solid) {
+                    args.faces.clear();
+                }
+                args.solid = solid.unwrap_or_default();
+            }
+            ("faces", Value::Entities(picked)) => {
+                args.faces = EntityRef::names_of(EntityRef::face, &picked);
+            }
+            ("thickness", value) => {
+                if let Some(thickness) = Formula::from_value(&value) {
+                    args.thickness = thickness;
+                }
+            }
+            _ => {}
         }
-        shell(&mut part, &namer, solid, &faces, S::from_f64(thickness)).with_context(ctx)?;
-        Ok(part)
+        (args, ())
     }
 }

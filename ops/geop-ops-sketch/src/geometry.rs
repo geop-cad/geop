@@ -6,24 +6,19 @@
 //! with [`xy`] and written back as sharp values; what it means comes from
 //! its solver.
 
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector2};
+use geop_core_math::{geop_error::GeopResult, vector::Vector2};
 use geop_core_sketch::{ProfileLoop, Sketch, profile::curve_polyline};
 use geop_ops::Design;
 
 pub use geop_core_sketch::plain::{
-    P2, Plain, add, angle_between, cross, dist, dot, perp, rotate, scale, segments_cross, sub,
-    sweep_through, unit, wrap, xy,
+    P2, Plain, add, angle_between, cross, dist, dot, of, perp, rotate, scale, segments_cross, sub,
+    sweep_through, swept, unit, xy,
 };
 
 /// Points as drawn.
 fn plain(points: GeopResult<Vec<Vector2<Design>>>) -> Vec<P2> {
     points
-        .map(|points| {
-            points
-                .iter()
-                .map(|q| [q[0].to_f64(), q[1].to_f64()])
-                .collect()
-        })
+        .map(|points| points.iter().map(of).collect())
         .unwrap_or_default()
 }
 

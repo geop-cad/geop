@@ -1,20 +1,23 @@
-//! [`Mirror`]: a mirror image of bodies in a plane.
+//! [`Mirror`]: the mirror image of bodies in a plane.
 
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
-    primitives::{DatumComponent, FrameAxis, Motion},
+    geop_error::{GeopError, GeopResult},
+    primitives::{FrameAxis, Motion},
     scalars::Scalar,
-    with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
+use geop_ops::operation::Input;
 use geop_ops::{
-    Context, Library, Namer, ORIGIN, Part,
-    operation::{Aspects, EntityRef, Operation, Role},
-    ui::Form,
+    Design, NamedModel, ParamValue,
+    operation::{Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Seen},
+    origin_plane,
 };
-use geop_ops_booleans::Combine;
 use serde::{Deserialize, Serialize};
 
-use crate::common::{Seeds, seed_fields};
+use crate::common::{Naming, Pattern, Seeds, build_pattern, run_pattern};
 
 /// Mirrors the bodies `bodies` — solids, and sheets by one of their faces —
 /// or does the features `features` again mirrored, in a plane: a planar face, a datum plane, a frame's plane. The mirror
@@ -31,100 +34,111 @@ pub struct Mirror;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MirrorArgs {
-    /// The bodies to mirror: solids, or a face of each sheet.
-    pub bodies: Vec<EntityRef>,
-    /// Or the features to do again mirrored (see [`EntityRef::Feature`]).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub features: Vec<EntityRef>,
+    /// The bodies, or the features, to mirror, and how to combine an image
+    /// of bodies.
+    #[serde(flatten)]
+    pub seeds: Seeds,
     /// The plane to mirror in; none, for a step that has not picked it.
     pub plane: Option<EntityRef>,
-    /// Keep the image as new bodies, or combine it with a solid.
-    #[serde(default)]
-    pub combine: Combine,
+}
+
+impl Pattern for MirrorArgs {
+    const NAMING: Naming = Naming {
+        kind: "mirror",
+        labelled: false,
+    };
+
+    fn seeds(&self) -> &Seeds {
+        &self.seeds
+    }
+
+    fn seed_label(&self) -> &'static str {
+        "seed"
+    }
+
+    /// The one image, mirrored in the plane.
+    fn placements<S: Scalar>(
+        &self,
+        lookup: &mut (impl Lookup<S> + ?Sized),
+    ) -> GeopResult<Vec<(String, Motion<S>)>> {
+        let Some(plane_ref) = &self.plane else {
+            return Err(GeopError::new("pick a plane to mirror in"));
+        };
+        let plane = (Aspects::of(plane_ref, lookup)?.plane)
+            .ok_or_else(|| GeopError::new(format!("{plane_ref} is not planar")))?;
+        Ok(vec![(
+            "image".to_string(),
+            Motion::mirror(plane.origin(), plane.w())?,
+        )])
+    }
+}
+
+impl ModelStep for Mirror {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &MirrorArgs,
+    ) -> GeopResult<()> {
+        build_pattern(model, reader, step, args)
+    }
 }
 
 impl Operation for Mirror {
+    const INFO: OperationInfo = OperationInfo::new(
+        "mirror",
+        "Mirror",
+        "Mirror bodies in a plane.",
+        OperationGroup::Bodies,
+        OperationTier::Small,
+    );
     type Args = MirrorArgs;
-    type Session = ();
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
 
-    /// The newest solid, mirrored in the origin's `yz` plane, kept as a
-    /// new body.
-    fn new_args<S: Scalar>(&self, _: &Part<S>) -> MirrorArgs {
+    /// Mirrored in the origin's `yz` plane, kept as a new body.
+    fn new_args(_: &Context<Input, ParamValue>) -> MirrorArgs {
         MirrorArgs {
             // Nothing picked: what is patterned is the user's choice, a body
             // or a feature, never guessed.
-            bodies: Vec::new(),
-            features: Vec::new(),
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::X),
-            )),
-            combine: Combine::NewBody,
+            seeds: Seeds::default(),
+            plane: Some(origin_plane(FrameAxis::X)),
         }
+    }
+
+    fn run(step: &str, part: &mut Build, args: &MirrorArgs) -> GeopResult<()> {
+        run_pattern::<Self>(part, step, args)
     }
 
     /// The bodies or the features, and the plane, picked, and how to
     /// combine an image of bodies.
-    fn form<'a, S: Scalar>(
-        &self,
-        context: Context<'a, S>,
-        args: &MirrorArgs,
-        _: &(),
-        _: &[String],
-    ) -> Form<'a, S, MirrorArgs> {
-        let mut f = Form::<S, MirrorArgs>::new();
-        seed_fields(&mut f, &args.bodies, &args.features, |args| {
-            (&mut args.bodies, &mut args.features)
+    fn presentation(_: &Context<Input, ParamValue>, args: &MirrorArgs, _: &()) -> Form<Design> {
+        let mut form = Form::default();
+        args.seeds.show(&mut form, |form| {
+            let plane = args.plane.iter().cloned().collect();
+            (form.dialog).reference("plane", "plane", plane, &[Role::Plane], None, false);
         });
-        f.reference(
-            "plane",
-            "plane",
-            args.plane.iter().cloned().collect(),
-            &[Role::Plane],
-            None,
-            false,
-            |edit, picked| edit.args.plane = picked.into_iter().next(),
-        );
-        if args.features.is_empty() {
-            args.combine
-                .show(&mut f, context.before, |args| &mut args.combine);
-        }
-        f
+        form
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    fn process_user_event(
+        context: &Context<Input, ParamValue>,
         args: &MirrorArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("mirror({operation_id}, {args:?})");
-        let namer = Namer::new("mirror", operation_id)?;
-        let Some(plane_ref) = &args.plane else {
-            return Err(GeopError::new("pick a plane to mirror in")).with_context(ctx);
+        _: &(),
+        event: Event<Design>,
+    ) -> (MirrorArgs, ()) {
+        let mut args = args.clone();
+        let Event::Field { key, value } = event else {
+            return (args, ());
         };
-        let plane = Aspects::of(plane_ref, &part)
-            .with_context(ctx)?
-            .plane
-            .ok_or_else(|| GeopError::new(format!("{plane_ref} is not planar")))
-            .with_context(ctx)?;
-        let motion = Motion::mirror(plane.origin(), plane.w()).with_context(ctx)?;
-        let seeds = Seeds {
-            bodies: &args.bodies,
-            features: &args.features,
-            combine: &args.combine,
-        };
-        seeds
-            .repeat(
-                &mut part,
-                &namer,
-                operation_id,
-                "seed",
-                &[("image".to_string(), motion)],
-                |_, name| namer.name(&[name]),
-            )
-            .with_context(ctx)?;
-        Ok(part)
+        match (key.as_str(), &value) {
+            ("plane", Value::Entities(picked)) => args.plane = picked.first().cloned(),
+            (key, value) => {
+                args.seeds
+                    .set(key, value, Seen::new(context.before).model());
+            }
+        }
+        (args, ())
     }
 }

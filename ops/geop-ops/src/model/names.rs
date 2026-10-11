@@ -1,21 +1,22 @@
 //! [`NameRegistry`]: the two-way mapping between an entity and its name that
-//! [`crate::Part`] keeps in sync with its topology and sketches, and
-//! [`Namer`], which builds those names.
+//! [`super::NamedModel`] keeps in sync with its topology, and [`Namer`],
+//! which builds those names.
 
-use std::collections::HashMap;
+use imbl::HashMap;
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 
 use super::ids::RefId;
 
-/// A two-way `RefId <-> String` mapping. Every entity a [`crate::Part`]
-/// exposes — a vertex, edge, face, solid or sketch — has exactly one live
-/// entry here for as long as it exists.
+/// A two-way `RefId <-> String` mapping. Every entity a
+/// [`super::NamedModel`] exposes — a vertex, edge, face or solid — has
+/// exactly one live entry here for as long as it exists. Its maps share
+/// their structure with their copies, as the topology's do.
 ///
 /// Names are chosen by whoever creates the entity, following the scheme in
 /// the crate docs, never generated here from a counter: a counter depends on
 /// creation order, which is exactly what a name must not depend on.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct NameRegistry {
     id_to_name: HashMap<RefId, String>,
     name_to_id: HashMap<String, RefId>,
@@ -81,12 +82,6 @@ impl NameRegistry {
         }
     }
 
-    /// Forgets every entry whose id `alive` rejects.
-    pub fn retain(&mut self, mut alive: impl FnMut(RefId) -> bool) {
-        self.id_to_name.retain(|&id, _| alive(id));
-        self.name_to_id.retain(|_, id| alive(*id));
-    }
-
     pub fn name_of(&self, id: impl Into<RefId>) -> Option<&str> {
         self.id_to_name.get(&id.into()).map(String::as_str)
     }
@@ -131,7 +126,7 @@ pub fn operation_of(name: &str) -> Option<&str> {
 
 /// Builds the names one run of one operation gives to what it creates:
 /// `kind(operation,arg,...)`, see the crate docs.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Namer {
     kind: String,
     operation: String,

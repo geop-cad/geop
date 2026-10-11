@@ -6,10 +6,13 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form, Number, Unit, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_ops::{
-    Context, Library, Namer, Part,
-    operation::{EntityRef, Operation, Role},
-    ui::{Form, Number, Unit},
+    Design, NamedModel, Namer, ParamValue,
+    operation::{Build, BuildReader, EntityRef, Input, ModelStep, Role, build_model},
 };
 use geop_ops_shell::shell::offset_faces;
 use serde::{Deserialize, Serialize};
@@ -34,67 +37,88 @@ pub struct OffsetSurfaceArgs {
     pub distance: f64,
 }
 
-impl Operation for OffsetSurface {
-    type Args = OffsetSurfaceArgs;
-    type Session = ();
-
-    /// Nothing picked yet, a tenth out.
-    fn new_args<S: Scalar>(&self, _before: &Part<S>) -> OffsetSurfaceArgs {
-        OffsetSurfaceArgs {
-            faces: Vec::new(),
-            distance: 0.1,
-        }
-    }
-
-    /// The faces, picked, and the distance.
-    fn form<'a, S: Scalar>(
-        &self,
-        _: Context<'a, S>,
+impl ModelStep for OffsetSurface {
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
         args: &OffsetSurfaceArgs,
-        _: &(),
-        _: &[String],
-    ) -> Form<'a, S, OffsetSurfaceArgs> {
-        let mut f = Form::<S, OffsetSurfaceArgs>::new();
-        f.reference(
-            "faces",
-            "faces",
-            EntityRef::of_names(EntityRef::face, &args.faces),
-            &[Role::Face],
-            None,
-            true,
-            |e, picked| e.args.faces = EntityRef::names_of(EntityRef::face, &picked),
-        );
-        f.number(
-            "distance",
-            Number::new("distance", args.distance, Unit::Length).range(-1.0, 1.0),
-            |args, d| args.distance = d,
-        );
-        f
-    }
-
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
-        args: &OffsetSurfaceArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("offset_surface({operation_id}, {args:?})");
-        let namer = Namer::new("offset", operation_id)?;
+    ) -> GeopResult<()> {
+        let ctx = with_context!("offset_surface({step}, {args:?})");
+        let namer = Namer::new("offset", step)?;
         if !args.distance.is_finite() {
             return Err(GeopError::new("the distance is not a number")).with_context(ctx);
         }
         if args.faces.is_empty() {
             return Err(GeopError::new("no faces to offset")).with_context(ctx);
         }
-        let faces = args
-            .faces
-            .iter()
-            .map(|name| part.face_id(name))
+        let faces = (args.faces.iter())
+            .map(|name| model.face_id(name))
             .collect::<GeopResult<Vec<_>>>()
             .with_context(ctx)?;
-        offset_faces(&mut part, &namer, &faces, S::from_f64(args.distance)).with_context(ctx)?;
-        Ok(part)
+        offset_faces(model, &namer, &faces, Design::from_f64(args.distance)).with_context(ctx)?;
+        Ok(())
+    }
+}
+
+impl Operation for OffsetSurface {
+    const INFO: OperationInfo = OperationInfo::new(
+        "offset_surface",
+        "Offset surface",
+        "Copy faces a distance along their normals into a face standing on its own.",
+        OperationGroup::Surface,
+        OperationTier::Menu,
+    )
+    .experimental();
+    type Args = OffsetSurfaceArgs;
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
+
+    /// Nothing picked yet, a tenth out.
+    fn new_args(_: &Context<Input, ParamValue>) -> OffsetSurfaceArgs {
+        OffsetSurfaceArgs {
+            faces: Vec::new(),
+            distance: 0.1,
+        }
+    }
+
+    fn run(step: &str, part: &mut Build, args: &OffsetSurfaceArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
+    }
+
+    /// The faces, picked, and the distance.
+    fn presentation(
+        _: &Context<Input, ParamValue>,
+        args: &OffsetSurfaceArgs,
+        _: &(),
+    ) -> Form<Design> {
+        let mut form = Form::default();
+        let dialog = &mut form.dialog;
+        let faces = EntityRef::of_names(EntityRef::face, &args.faces);
+        dialog.reference("faces", "faces", faces, &[Role::Face], None, true);
+        let distance = Number::new("distance", args.distance, Unit::Length).range(-1.0, 1.0);
+        dialog.number("distance", distance);
+        form
+    }
+
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
+        args: &OffsetSurfaceArgs,
+        _: &(),
+        event: Event<Design>,
+    ) -> (OffsetSurfaceArgs, ()) {
+        let mut args = args.clone();
+        if let Event::Field { key, value } = event {
+            match (key.as_str(), value) {
+                ("faces", Value::Entities(picked)) => {
+                    args.faces = EntityRef::names_of(EntityRef::face, &picked)
+                }
+                ("distance", Value::Number(d)) => args.distance = d,
+                _ => {}
+            }
+        }
+        (args, ())
     }
 }
 

@@ -5,18 +5,23 @@
 //!   a bent strip from a chain of lines and arcs, with the body's
 //!   [`SheetMetalRules`] (thickness, bend radius, K-factor, reliefs).
 //! - [`EdgeFlange`] bends a flange up from a straight edge of the body,
-//!   cutting reliefs beside it and keeping a gap at corners.
+//!   cutting reliefs beside it and keeping a gap at corners; [`Hem`] folds
+//!   an edge right back on itself.
+//! - [`SheetCut`] cuts holes and notches through the body, across its bends
+//!   unrolled.
 //! - [`FlatPattern`] unfolds the body: each bend laid flat as long as its
-//!   developed length, with its bend lines.
+//!   developed length, with its bend lines; [`FlatPatternDxf`] writes it
+//!   for laser cutting.
 //!
-//! Each operation records the body's [`Sheet`] on the solid it builds (see
-//! [`geop_ops::Part::body_data`]): which faces are flat and which are
-//! bends, and how they join, so that the next flange and the flat pattern
-//! work from what the body is made of rather than guessing it from its
+//! Each operation records the body's [`Sheet`] for the solid it builds, in
+//! the part's target [`sheets`]: which faces are flat and which are bends,
+//! and how they join, so that the next flange and the flat pattern work
+//! from what the body is made of rather than guessing it from its
 //! geometry. The solid itself is built from the sheet in one go (see
 //! [`thicken`]).
 
 pub mod base_flange;
+pub mod body;
 pub mod cut;
 pub mod cutting;
 pub mod edge_flange;
@@ -31,8 +36,9 @@ pub mod thicken;
 mod tests;
 
 pub use base_flange::{BaseFlange, BaseFlangeArgs};
+pub use body::{SheetBody, Sheets, sheets, thickness};
 pub use cut::{SheetCut, SheetCutArgs};
-pub use cutting::{cutting_sheet, flat_pattern_dxf};
+pub use cutting::{FlatPatternDxf, FlatPatternOptions, cutting_sheet};
 pub use edge_flange::{Corner, EdgeFlange, EdgeFlangeArgs, FlangePosition, LengthReference};
 pub use flat_pattern::{BendLine, FlatPattern, FlatPatternArgs, FlatPatternData};
 pub use hem::{Hem, HemArgs, HemKind};

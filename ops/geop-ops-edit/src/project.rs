@@ -7,11 +7,14 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_core_topology::FaceId;
 use geop_ops::{
-    Context, EntityRef, Library, Namer, Part,
-    operation::{Operation, Role},
-    ui::Form,
+    Design, EntityRef, NamedModel, Namer, ParamValue,
+    operation::{Build, BuildReader, Input, Lookup, ModelStep, Role, Scope, Seen, build_model},
 };
 use geop_ops_booleans::{imprint::imprint_on_face, remesh::remesh::RemeshParams};
 use geop_ops_extrude_revolve::{extrude::extrude, operation::shape_loops};
@@ -49,106 +52,96 @@ pub struct ProjectCurveArgs {
     pub face: String,
 }
 
+impl ModelStep for ProjectCurve {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &ProjectCurveArgs,
+    ) -> GeopResult<()> {
+        let ctx = with_context!("project_curve({step}, {args:?})");
+        let namer = Namer::new("project", step)?;
+        let placed = (Scope { model, reader })
+            .sketch(&args.sketch)
+            .with_context(ctx)?
+            .clone();
+        let face = model.face_id(&args.face).with_context(ctx)?;
+        let sketch = &placed.sketch;
+        let geometry = sketch.enclose::<Design>().with_context(ctx)?;
+        let shape = sketch.shape().with_context(ctx)?;
+        let loops = shape_loops(&args.sketch, sketch, &geometry, shape).with_context(ctx)?;
+        let (from, to) = reach_across(model, face, &placed.plane).with_context(ctx)?;
+        let (from, to) = (Design::from_f64(from), Design::from_f64(to));
+        let swept =
+            extrude(model, &namer, None, &placed.plane, from, to, &loops).with_context(ctx)?;
+        let params = RemeshParams::default();
+        imprint_on_face(model, &namer, face, &swept.shells, params).with_context(ctx)?;
+        Ok(())
+    }
+}
+
 impl Operation for ProjectCurve {
+    const INFO: OperationInfo = OperationInfo::new(
+        "project_curve",
+        "Project curve",
+        "Project a sketch's curves along its plane's normal onto a face, dividing the face along them.",
+        OperationGroup::Surface,
+        OperationTier::Menu,
+    )
+    .experimental();
     type Args = ProjectCurveArgs;
-    type Session = ();
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
 
     /// The newest sketch, onto no face yet.
-    fn new_args<S: Scalar>(&self, before: &Part<S>) -> ProjectCurveArgs {
+    fn new_args(context: &Context<Input, ParamValue>) -> ProjectCurveArgs {
         ProjectCurveArgs {
-            sketch: before.sketch_names().pop().unwrap_or_default(),
+            sketch: (Seen::new(context.before).sketch_names().pop()).unwrap_or_default(),
             face: String::new(),
         }
     }
 
-    /// The sketch and the face, picked.
-    fn form<'a, S: Scalar>(
-        &self,
-        _: Context<'a, S>,
-        args: &ProjectCurveArgs,
-        _: &(),
-        _: &[String],
-    ) -> Form<'a, S, ProjectCurveArgs> {
-        let mut f = Form::<S, ProjectCurveArgs>::new();
-        let sketch = if args.sketch.is_empty() {
-            Vec::new()
-        } else {
-            vec![EntityRef::Sketch {
-                name: args.sketch.clone(),
-            }]
-        };
-        f.reference(
-            "sketch",
-            "sketch",
-            sketch,
-            &[Role::Sketch],
-            None,
-            false,
-            |e, picked| {
-                e.args.sketch = match picked.as_slice() {
-                    [EntityRef::Sketch { name }] => name.clone(),
-                    _ => String::new(),
-                }
-            },
-        );
-        f.reference(
-            "face",
-            "onto face",
-            EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face)),
-            &[Role::Face],
-            None,
-            false,
-            |e, p| {
-                e.args.face = EntityRef::names_of(EntityRef::face, &p)
-                    .pop()
-                    .unwrap_or_default()
-            },
-        );
-        f
+    fn run(step: &str, part: &mut Build, args: &ProjectCurveArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    /// The sketch and the face, picked.
+    fn presentation(
+        _: &Context<Input, ParamValue>,
         args: &ProjectCurveArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("project_curve({operation_id}, {args:?})");
-        let namer = Namer::new("project", operation_id)?;
-        let placed = part
-            .sketch(part.sketch_id(&args.sketch).with_context(ctx)?)?
-            .clone();
-        let face = part.face_id(&args.face).with_context(ctx)?;
-        let sketch = &placed.sketch;
-        let geometry = sketch.enclose::<S>().with_context(ctx)?;
-        let loops = shape_loops(
-            &args.sketch,
-            sketch,
-            &geometry,
-            sketch.shape().with_context(ctx)?,
-        )
-        .with_context(ctx)?;
-        let (from, to) = reach_across(&part, face, &placed.plane).with_context(ctx)?;
-        let swept = extrude(
-            &mut part,
-            &namer,
-            None,
-            &placed.plane,
-            S::from_f64(from),
-            S::from_f64(to),
-            &loops,
-        )
-        .with_context(ctx)?;
-        imprint_on_face(
-            &mut part,
-            &namer,
-            face,
-            &swept.shells,
-            RemeshParams::default(),
-        )
-        .with_context(ctx)?;
-        Ok(part)
+        _: &(),
+    ) -> Form<Design> {
+        let mut form = Form::default();
+        let dialog = &mut form.dialog;
+        let sketch = EntityRef::of_names(EntityRef::sketch, std::slice::from_ref(&args.sketch));
+        dialog.reference("sketch", "sketch", sketch, &[Role::Sketch], None, false);
+        let face = EntityRef::of_names(EntityRef::face, std::slice::from_ref(&args.face));
+        dialog.reference("face", "onto face", face, &[Role::Face], None, false);
+        form
+    }
+
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
+        args: &ProjectCurveArgs,
+        _: &(),
+        event: Event<Design>,
+    ) -> (ProjectCurveArgs, ()) {
+        let mut args = args.clone();
+        let Event::Field {
+            key,
+            value: Value::Entities(picked),
+        } = event
+        else {
+            return (args, ());
+        };
+        let one = |kind| EntityRef::names_of(kind, &picked).pop().unwrap_or_default();
+        match key.as_str() {
+            "sketch" => args.sketch = one(EntityRef::sketch),
+            "face" => args.face = one(EntityRef::face),
+            _ => {}
+        }
+        (args, ())
     }
 }
 
@@ -157,11 +150,11 @@ impl Operation for ProjectCurve {
 /// surface's control points — a NURBS surface lies within it — by the
 /// hull's diagonal both ways, so the sweep's ends are clear of the face.
 fn reach_across<S: Scalar>(
-    part: &Part<S>,
+    model: &NamedModel<S>,
     face: FaceId,
     plane: &CoordinateSystem<S>,
 ) -> GeopResult<(f64, f64)> {
-    let surface = &part.topology().get_face(face)?.surface;
+    let surface = &model.topology().get_face(face)?.surface;
     let o = [0, 1, 2].map(|k| plane.origin()[k].to_f64());
     let w = [0, 1, 2].map(|k| plane.w()[k].to_f64());
     let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);

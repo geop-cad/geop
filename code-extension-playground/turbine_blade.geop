@@ -140,9 +140,10 @@
           "symmetric": false,
           "reversed": false
         },
-        "face": false,
-        "combine": {
-          "mode": "new_body"
+        "output": {
+          "solid": {
+            "mode": "new_body"
+          }
         }
       }
     },
@@ -608,9 +609,10 @@
           "sketch2",
           "sketch3"
         ],
-        "face": false,
-        "combine": {
-          "mode": "new_body"
+        "output": {
+          "solid": {
+            "mode": "new_body"
+          }
         }
       }
     },
@@ -637,7 +639,8 @@
           "extent": 360
         },
         "combine": {
-          "mode": "union",
+          "mode": "with",
+          "op": "union",
           "target": "revolve(revolve1)"
         }
       }

@@ -2,14 +2,16 @@
 //! standing on their own — from the part.
 
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
-    scalars::Scalar,
+    geop_error::{GeopResult, WithContext},
     with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_ops::{
-    Context, EntityRef, Library, Part,
-    operation::{Operation, Role},
-    ui::Form,
+    Design, EntityRef, NamedModel, ParamValue,
+    operation::{Build, BuildReader, Input, ModelStep, Role, build_model, resolve_bodies},
 };
 use serde::{Deserialize, Serialize};
 
@@ -29,56 +31,66 @@ pub struct DeleteBodyArgs {
     pub bodies: Vec<EntityRef>,
 }
 
+impl ModelStep for DeleteBody {
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &DeleteBodyArgs,
+    ) -> GeopResult<()> {
+        let ctx = with_context!("delete_body({step}, {args:?})");
+        let bodies = resolve_bodies(&args.bodies, &mut &*model).with_context(ctx)?;
+        model.assemble_sheet(&bodies, &[]).with_context(ctx)?;
+        Ok(())
+    }
+}
+
 impl Operation for DeleteBody {
+    const INFO: OperationInfo = OperationInfo::new(
+        "delete_body",
+        "Delete body",
+        "Delete solids, and faces standing on their own.",
+        OperationGroup::Bodies,
+        OperationTier::Menu,
+    );
     type Args = DeleteBodyArgs;
-    type Session = ();
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
 
     /// Nothing picked yet: what to delete is never a guess.
-    fn new_args<S: Scalar>(&self, _before: &Part<S>) -> DeleteBodyArgs {
+    fn new_args(_: &Context<Input, ParamValue>) -> DeleteBodyArgs {
         DeleteBodyArgs::default()
     }
 
-    /// The bodies, picked.
-    fn form<'a, S: Scalar>(
-        &self,
-        _: Context<'a, S>,
-        args: &DeleteBodyArgs,
-        _: &(),
-        _: &[String],
-    ) -> Form<'a, S, DeleteBodyArgs> {
-        let mut f = Form::<S, DeleteBodyArgs>::new();
-        f.reference(
-            "bodies",
-            "bodies",
-            args.bodies.clone(),
-            &[Role::Solid, Role::Sheet],
-            None,
-            true,
-            |e, picked| e.args.bodies = picked,
-        );
-        f
+    fn run(step: &str, part: &mut Build, args: &DeleteBodyArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    /// The bodies, picked.
+    fn presentation(_: &Context<Input, ParamValue>, args: &DeleteBodyArgs, _: &()) -> Form<Design> {
+        let mut form = Form::default();
+        let roles = [Role::Solid, Role::Sheet];
+        (form.dialog).reference("bodies", "bodies", args.bodies.clone(), &roles, None, true);
+        form
+    }
+
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
         args: &DeleteBodyArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("delete_body({operation_id}, {args:?})");
-        if args.bodies.is_empty() {
-            return Err(GeopError::new("pick the bodies to delete")).with_context(ctx);
+        _: &(),
+        event: Event<Design>,
+    ) -> (DeleteBodyArgs, ()) {
+        let mut args = args.clone();
+        if let Event::Field {
+            key,
+            value: Value::Entities(picked),
+        } = event
+            && key == "bodies"
+        {
+            args.bodies = picked;
         }
-        let mut bodies = Vec::new();
-        for entity in &args.bodies {
-            let body = entity.resolve_body(&part).with_context(ctx)?;
-            if !bodies.contains(&body) {
-                bodies.push(body);
-            }
-        }
-        part.assemble_sheet(&bodies, &[]).with_context(ctx)?;
-        Ok(part)
+        (args, ())
     }
 }
 
@@ -89,15 +101,15 @@ mod tests {
         scalars::{ScalInF64 as S, Scalar},
         vector::Vector3,
     };
-    use geop_ops::NoFiles;
+    use geop_ops::operation::apply_to_model;
     use geop_ops_extrude_revolve::shapes::cube_solid;
 
     fn v3(x: f64, y: f64, z: f64) -> Vector3<S> {
         Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
     }
 
-    fn two_cubes() -> Part<S> {
-        let mut part = Part::<S>::new();
+    fn two_cubes() -> NamedModel<S> {
+        let mut part = NamedModel::<S>::new();
         cube_solid(&mut part, "a", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap();
         cube_solid(&mut part, "b", v3(2.0, 0.0, 0.0), v3(3.0, 1.0, 1.0)).unwrap();
         part
@@ -117,7 +129,7 @@ mod tests {
         let args = DeleteBodyArgs {
             bodies: vec![EntityRef::Solid { name: b }],
         };
-        let part = DeleteBody.apply(part, "del", &args, &NoFiles).unwrap();
+        let part = apply_to_model::<DeleteBody>(part, "del", &args).unwrap();
         assert_eq!(part.solid_names().len(), 1);
         assert_eq!(part.topology().faces.len(), kept_faces);
         assert_eq!(part.topology().vertices.len(), 8);
@@ -136,7 +148,7 @@ mod tests {
         let args = DeleteBodyArgs {
             bodies: vec![EntityRef::Face { name: face }, EntityRef::Solid { name }],
         };
-        let part = DeleteBody.apply(part, "del", &args, &NoFiles).unwrap();
+        let part = apply_to_model::<DeleteBody>(part, "del", &args).unwrap();
         assert_eq!(part.solid_names().len(), 1);
         assert_eq!(part.topology().vertices.len(), 8);
         part.check_names().unwrap();
@@ -145,18 +157,12 @@ mod tests {
     /// Nothing picked, or something that is no body, is refused.
     #[test]
     fn refuses_what_is_no_body() {
-        let error = DeleteBody
-            .apply(two_cubes(), "del", &DeleteBodyArgs::default(), &NoFiles)
-            .err()
-            .expect("refused");
+        let error = apply_to_model::<DeleteBody>(two_cubes(), "del", &DeleteBodyArgs::default())
+            .expect_err("refused");
         assert!(error.root_message().contains("pick"), "{error:?}");
         let args = DeleteBodyArgs {
             bodies: vec![EntityRef::Sketch { name: "s".into() }],
         };
-        assert!(
-            DeleteBody
-                .apply(two_cubes(), "del", &args, &NoFiles)
-                .is_err()
-        );
+        assert!(apply_to_model::<DeleteBody>(two_cubes(), "del", &args).is_err());
     }
 }

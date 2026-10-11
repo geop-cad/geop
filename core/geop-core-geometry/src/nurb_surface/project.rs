@@ -2,17 +2,6 @@ use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
 
 use super::NurbSurface;
 
-/// Clamp `x` into `[lo, hi]` using three-valued comparisons.
-pub fn clamp<S: Scalar>(x: S, lo: S, hi: S) -> S {
-    if x.definitely_less(lo) {
-        lo
-    } else if x.definitely_greater(hi) {
-        hi
-    } else {
-        x
-    }
-}
-
 impl<S: Scalar> NurbSurface<S, 4> {
     /// Fixed-iteration-count Newton foot-point projection of `target` onto
     /// this surface, starting from `(u0, v0)`.
@@ -47,8 +36,8 @@ impl<S: Scalar> NurbSurface<S, 4> {
     ) -> GeopResult<(S, S)> {
         let (u_lo, u_hi) = self.domain_u();
         let (v_lo, v_hi) = self.domain_v();
-        let mut u = clamp(u0, u_lo, u_hi);
-        let mut v = clamp(v0, v_lo, v_hi);
+        let mut u = u0.clamped(u_lo, u_hi);
+        let mut v = v0.clamped(v_lo, v_hi);
         // Every iteration's seed and its unsharpened step, in order.
         let mut taken: Vec<((S, S), (S, S))> = Vec::with_capacity(iterations);
 
@@ -90,14 +79,14 @@ impl<S: Scalar> NurbSurface<S, 4> {
             // single value inside the current iterate is an equally valid
             // starting point for the next step (see `Scalar::sharpen`).
             // Left unsharpened, each step's `du`/`dv` widens `(u, v)`
-            // further; `clamp` cannot pull that back, since an interval
+            // further; `clamped` cannot pull that back, since an interval
             // merely *straddling* a domain bound is neither definitely
             // inside nor definitely outside it. The widened parameter then
             // reaches `evaluate`, where a wide `t` makes the de Boor
             // weight straddle zero and the whole evaluation fail — even
             // though the seed was sharp and well inside the domain.
             // Sharpen *before* clamping, not after: on a sharp value
-            // `clamp`'s three-valued comparisons are exact, so the result
+            // `clamped`'s three-valued comparisons are exact, so the result
             // is guaranteed inside `[lo, hi]`. The other order can escape
             // the domain again — collapsing an interval that straddles a
             // bound to its midpoint can land just past that bound, and the
@@ -114,11 +103,11 @@ impl<S: Scalar> NurbSurface<S, 4> {
             // with anything else derived from the same uncertain point.
             let (next_u, next_v) = (u.add(du), v.add(dv));
             if iteration + 1 == iterations {
-                return Ok((clamp(next_u, u_lo, u_hi), clamp(next_v, v_lo, v_hi)));
+                return Ok((next_u.clamped(u_lo, u_hi), next_v.clamped(v_lo, v_hi)));
             }
             let (sharp_u, sharp_v) = (
-                clamp(next_u.sharpen(), u_lo, u_hi),
-                clamp(next_v.sharpen(), v_lo, v_hi),
+                next_u.sharpen().clamped(u_lo, u_hi),
+                next_v.sharpen().clamped(v_lo, v_hi),
             );
             // A seed the sharpened iteration has started from before: each
             // iterate is a deterministic function of the sharp seed before
@@ -138,7 +127,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
             {
                 let period = taken.len() - k;
                 let (_, (last_u, last_v)) = taken[k + (iterations - 1 - k) % period];
-                return Ok((clamp(last_u, u_lo, u_hi), clamp(last_v, v_lo, v_hi)));
+                return Ok((last_u.clamped(u_lo, u_hi), last_v.clamped(v_lo, v_hi)));
             }
             u = sharp_u;
             v = sharp_v;

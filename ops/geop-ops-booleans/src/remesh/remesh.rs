@@ -1,11 +1,12 @@
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
+    geop_error::{GeopResult, WithContext},
     scalars::Scalar,
+    with_context,
 };
 use std::collections::HashMap;
 
 use geop_core_topology::{Body, EdgeId, FaceId};
-use geop_ops::{Namer, Part};
+use geop_ops::{NamedModel, Namer};
 
 use crate::naming::BooleanNaming;
 use crate::remesh::{
@@ -84,22 +85,18 @@ impl<S: Scalar> Default for RemeshParams<S> {
 /// Returns what every face and edge of either body came from (see
 /// [`Origins`]).
 pub fn remesh<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     body_a: impl Into<Body>,
     body_b: impl Into<Body>,
     params: RemeshParams<S>,
 ) -> GeopResult<Origins> {
     let (body_a, body_b) = (body_a.into(), body_b.into());
-    let ctx = |e: GeopError| {
-        e.with_context(format!(
-            "remesh(body_a={body_a}, body_b={body_b}, params={params:?})"
-        ))
-    };
+    let ctx = with_context!("remesh(body_a={body_a}, body_b={body_b}, params={params:?})");
 
-    let mut naming = BooleanNaming::new(part, namer, &[body_a, body_b]).with_context(&ctx)?;
+    let mut naming = BooleanNaming::new(model, namer, &[body_a, body_b]).with_context(&ctx)?;
 
-    remesh_vertices(part, body_a, body_b).with_context(&ctx)?;
+    remesh_vertices(model, body_a, body_b).with_context(&ctx)?;
 
     // The one place an edge x face question creates a vertex ahead of the
     // edge phases: where an intersection branch leaves an edge along which
@@ -109,16 +106,8 @@ pub fn remesh<S: Scalar>(
     // the other solid's copy too, and `remesh_vertices_x_edges` below splits
     // that one like any other vertex on an edge.
     for (edge_solid, face_solid) in [(body_a, body_b), (body_b, body_a)] {
-        remesh_tangent_branches(
-            part,
-            &mut naming,
-            edge_solid,
-            face_solid,
-            params.max_edge_intersections,
-            params.max_nodes,
-            params.curve_curve_min_subdivision_size,
-        )
-        .with_context(&ctx)?;
+        remesh_tangent_branches(model, &mut naming, edge_solid, face_solid, &params)
+            .with_context(&ctx)?;
     }
 
     // `remesh_vertices_x_edges` only splits `body_a`'s edges at `body_b`'s
@@ -129,59 +118,24 @@ pub fn remesh<S: Scalar>(
     // direction B can't reopen the other: a coincidence direction B finds
     // was already there when direction A ran and would have been found
     // then too, and vice versa.
-    remesh_vertices_x_edges(
-        part,
-        &mut naming,
-        body_a,
-        body_b,
-        params.max_nodes,
-        params.min_subdivision_size,
-    )
-    .with_context(&ctx)?;
-    remesh_vertices_x_edges(
-        part,
-        &mut naming,
-        body_b,
-        body_a,
-        params.max_nodes,
-        params.min_subdivision_size,
-    )
-    .with_context(&ctx)?;
+    remesh_vertices_x_edges(model, &mut naming, body_a, body_b, &params).with_context(&ctx)?;
+    remesh_vertices_x_edges(model, &mut naming, body_b, body_a, &params).with_context(&ctx)?;
 
     // Unlike the vertex-onto-edge step above, this one already checks every
     // `body_a` edge against every `body_b` edge directly (both directions
     // in one nested loop), so it doesn't need a second, swapped call.
-    remesh_edges_x_edges(
-        part,
-        &mut naming,
-        body_a,
-        body_b,
-        params.max_edge_intersections,
-        params.max_nodes,
-        params.curve_curve_min_subdivision_size,
-    )
-    .with_context(&ctx)?;
+    remesh_edges_x_edges(model, &mut naming, body_a, body_b, &params).with_context(&ctx)?;
 
     // Last, and highest-dimensional: every edge that pierces or lies within
     // one of the other solid's faces. Like `remesh_edges_x_edges` this
     // handles both directions internally (see its own doc comment).
-    remesh_edges_x_faces(
-        part,
-        &mut naming,
-        body_a,
-        body_b,
-        params.max_edge_intersections,
-        params.max_nodes,
-        params.curve_curve_min_subdivision_size,
-        params.max_trace_steps,
-    )
-    .with_context(&ctx)?;
+    remesh_edges_x_faces(model, &mut naming, body_a, body_b, &params).with_context(&ctx)?;
 
     let origins = Origins {
         faces: naming.face_origins().clone(),
         edges: naming.edge_origins().clone(),
     };
-    naming.finish(part).with_context(&ctx)?;
+    naming.finish(model).with_context(&ctx)?;
     Ok(origins)
 }
 

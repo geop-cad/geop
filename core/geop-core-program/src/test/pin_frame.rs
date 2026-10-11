@@ -1,15 +1,16 @@
 use std::collections::BTreeMap;
 
-use geop_core_math::{geop_error::GeopResult, vector::Vector};
+use geop_core_math::geop_error::GeopResult;
 use serde::{Deserialize, Serialize};
 
-use crate::constraint::Constraint;
-use crate::operation::{EditingPresentation, Operation, UserEvent};
-use crate::part::{Part, View};
+use crate::constraint::{Bound, Constraint};
+use crate::editing::{Event, Form};
+use crate::operation::{Context, Operation, OperationInfo};
+use crate::part::{Part, Retrieve};
 use crate::target::TargetReference;
-use crate::test::{Frame, Pose, Sc, label, no_presentation, record_built};
+use crate::test::{Frame, Pose, Sc, identity, info, label, record_built};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PinFrameArgs {
     pub frame: String,
     pub state: String,
@@ -20,7 +21,7 @@ pub struct PinFrameArgs {
 pub struct PinFrameOperation;
 
 impl Operation for PinFrameOperation {
-    const NAME: &'static str = "pin_frame";
+    const INFO: OperationInfo = info("pin_frame");
     type Args = PinFrameArgs;
     type EditingState = ();
     type Input = Sc;
@@ -32,27 +33,28 @@ impl Operation for PinFrameOperation {
             record_built(label);
             let frame = part.retrieve_target(&TargetReference::<Frame>::new(&args.frame))?;
             let pose = part.retrieve_state(&args.state);
-            let position = pose.dual_quaternion().head::<3>();
             Ok(Constraint {
-                residuals: position.sub(&frame.data).to_array().to_vec(),
-                jacobian: BTreeMap::from([(
-                    args.state.clone(),
-                    (0..3).map(Vector::axis).collect(),
-                )]),
+                residuals: pose.position.sub(&frame.data).to_array().to_vec(),
+                jacobian: BTreeMap::from([(args.state.clone(), identity(3))]),
+                bound: Bound::Zero,
             })
         })
     }
 
-    fn presentation(_: &View<Sc, Pose>, _: &Self::Args, _: &()) -> GeopResult<EditingPresentation> {
-        Ok(no_presentation())
+    fn new_args(_: &Context<Sc, Pose>) -> Self::Args {
+        Self::Args::default()
+    }
+
+    fn presentation(_: &Context<Sc, Pose>, _: &Self::Args, _: &()) -> Form<Sc> {
+        Form::default()
     }
 
     fn process_user_event(
-        _: &View<Sc, Pose>,
+        _: &Context<Sc, Pose>,
         args: &Self::Args,
         _: &(),
-        _: UserEvent,
-    ) -> GeopResult<(Self::Args, ())> {
-        Ok((args.clone(), ()))
+        _: Event<Sc>,
+    ) -> (Self::Args, ()) {
+        (args.clone(), ())
     }
 }

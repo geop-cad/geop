@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -10,7 +9,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 
-use super::{Color10, Line};
+use super::Color10;
 
 // ── unique id counter ─────────────────────────────────────────────────────────
 
@@ -56,17 +55,9 @@ fn sample_surface_grid<S: Scalar>(
 
 pub struct PrimitiveScene<S: Scalar> {
     pub points: Vec<(Vector3<S>, Color10)>,
-    pub lines: Vec<(Line<S>, Color10)>,
-    /// Like `lines`, but rendered with depth-testing disabled (and after
-    /// everything else), so they stay visible on top of solid triangles
-    /// instead of being occluded — useful for highlighting intersection
-    /// curves on a solid (non-wireframe) render.
-    pub highlight_lines: Vec<(Line<S>, Color10)>,
+    /// Line segments, as their two ends.
+    pub lines: Vec<([Vector3<S>; 2], Color10)>,
     pub triangles: Vec<(TriangleFace<S>, Color10)>,
-    /// Triangles with an independent color per vertex (`a`, `b`, `c`),
-    /// interpolated across the face — useful for telling the three corners
-    /// of a debug triangle apart at a glance.
-    pub triangles_rgb: Vec<(TriangleFace<S>, Color10, Color10, Color10)>,
     /// Triangles rendered with alpha blending (`color`, `opacity` in
     /// `[0, 1]`) — e.g. so a face's fill doesn't hide the trim curves,
     /// vertices or labels drawn on top of/behind it.
@@ -78,7 +69,6 @@ pub struct PrimitiveScene<S: Scalar> {
     /// system axes, rendered as solid geometry instead of a `Line`, since a
     /// `THREE.Line`'s width can't be controlled portably across GPUs.
     pub cylinders: Vec<(Vector3<S>, Vector3<S>, f64, Color10)>,
-    pub debug_text: String,
     rendered_path: OnceLock<String>,
 }
 
@@ -99,13 +89,10 @@ impl<S: Scalar> PrimitiveScene<S> {
         Self {
             points: Vec::new(),
             lines: Vec::new(),
-            highlight_lines: Vec::new(),
             triangles: Vec::new(),
-            triangles_rgb: Vec::new(),
             triangles_transparent: Vec::new(),
             labels: Vec::new(),
             cylinders: Vec::new(),
-            debug_text: String::new(),
             rendered_path: OnceLock::new(),
         }
     }
@@ -114,44 +101,18 @@ impl<S: Scalar> PrimitiveScene<S> {
         self.points.push((p, c));
     }
 
-    pub fn add_line(&mut self, l: Line<S>, c: Color10) {
-        self.lines.push((l, c));
-    }
-
     /// Draw an already-sampled polyline as `n - 1` line segments, skipping
-    /// any consecutive pair of (near-)coincident points.
+    /// any between consecutive points that could coincide.
     pub fn add_polyline(&mut self, points: &[Vector3<S>], color: Color10) {
         for w in points.windows(2) {
-            if let Ok(seg) = Line::try_new(w[0], w[1]) {
-                self.add_line(seg, color);
-            }
-        }
-    }
-
-    /// Like `add_line`, but drawn with depth-testing disabled — see
-    /// `highlight_lines`'s doc comment.
-    pub fn add_highlight_line(&mut self, l: Line<S>, c: Color10) {
-        self.highlight_lines.push((l, c));
-    }
-
-    /// Like `add_polyline`, but drawn with depth-testing disabled — see
-    /// `highlight_lines`'s doc comment.
-    pub fn add_highlight_polyline(&mut self, points: &[Vector3<S>], color: Color10) {
-        for w in points.windows(2) {
-            if let Ok(seg) = Line::try_new(w[0], w[1]) {
-                self.add_highlight_line(seg, color);
+            if !w[1].sub(&w[0]).norm_sq().could_be_equal(S::ZERO) {
+                self.lines.push(([w[0], w[1]], color));
             }
         }
     }
 
     pub fn add_triangle(&mut self, t: TriangleFace<S>, c: Color10) {
         self.triangles.push((t, c));
-    }
-
-    /// Add a triangle with an independent color per vertex (`t.a` → `ca`,
-    /// `t.b` → `cb`, `t.c` → `cc`), interpolated across the face.
-    pub fn add_triangle_rgb(&mut self, t: TriangleFace<S>, ca: Color10, cb: Color10, cc: Color10) {
-        self.triangles_rgb.push((t, ca, cb, cc));
     }
 
     /// Add a triangle rendered with alpha blending — `opacity` in `[0, 1]`
@@ -171,34 +132,6 @@ impl<S: Scalar> PrimitiveScene<S> {
     /// of GPU line-width support.
     pub fn add_cylinder(&mut self, start: Vector3<S>, end: Vector3<S>, radius: f64, c: Color10) {
         self.cylinders.push((start, end, radius, c));
-    }
-
-    pub fn add_scene(&mut self, other: PrimitiveScene<S>) {
-        self.points.extend(other.points);
-        self.lines.extend(other.lines);
-        self.highlight_lines.extend(other.highlight_lines);
-        self.triangles.extend(other.triangles);
-        self.triangles_rgb.extend(other.triangles_rgb);
-        self.triangles_transparent
-            .extend(other.triangles_transparent);
-        self.labels.extend(other.labels);
-        self.cylinders.extend(other.cylinders);
-        if !other.debug_text.is_empty() {
-            if !self.debug_text.is_empty() {
-                self.debug_text.push('\n');
-            }
-            self.debug_text.push_str(&other.debug_text);
-        }
-    }
-
-    pub fn set_debug_text(&mut self, text: String) {
-        self.debug_text = text;
-    }
-    pub fn add_debug_text(&mut self, text: String) {
-        if !self.debug_text.is_empty() {
-            self.debug_text.push('\n');
-        }
-        self.debug_text.push_str(&text);
     }
 
     /// Rasterize a curve: n uniform samples → n-1 line segments.
@@ -225,44 +158,7 @@ impl<S: Scalar> PrimitiveScene<S> {
             };
             pts.push(curve.evaluate(t)?);
         }
-        for i in 0..n - 1 {
-            if let Ok(seg) = Line::try_new(pts[i], pts[i + 1]) {
-                self.add_line(seg, color);
-            }
-        }
-        Ok(())
-    }
-
-    /// Rasterize a surface: n×n quad grid → 2n² triangles.
-    #[allow(clippy::too_many_arguments)]
-    pub fn add_surface(
-        &mut self,
-        surface: &NurbSurface3D<S>,
-        color: Color10,
-        u_min: S,
-        u_max: S,
-        v_min: S,
-        v_max: S,
-        n: usize,
-    ) -> GeopResult<()> {
-        if n < 2 {
-            return Err(GeopError::new("add_surface: n must be >= 2"));
-        }
-        let grid = sample_surface_grid(surface, u_min, u_max, v_min, v_max, n)?;
-        for j in 0..n - 1 {
-            for i in 0..n - 1 {
-                let p00 = grid[j * n + i];
-                let p10 = grid[j * n + i + 1];
-                let p01 = grid[(j + 1) * n + i];
-                let p11 = grid[(j + 1) * n + i + 1];
-                if let Ok(t) = TriangleFace::try_new(p00, p10, p01) {
-                    self.add_triangle(t, color);
-                }
-                if let Ok(t) = TriangleFace::try_new(p10, p11, p01) {
-                    self.add_triangle(t, color);
-                }
-            }
-        }
+        self.add_polyline(&pts, color);
         Ok(())
     }
 
@@ -282,66 +178,14 @@ impl<S: Scalar> PrimitiveScene<S> {
             return Err(GeopError::new("add_surface_wireframe: n must be >= 2"));
         }
         let grid = sample_surface_grid(surface, u_min, u_max, v_min, v_max, n)?;
-        for j in 0..n {
-            for i in 0..n - 1 {
-                if let Ok(l) = Line::try_new(grid[j * n + i], grid[j * n + i + 1]) {
-                    self.add_line(l, color);
-                }
-            }
+        for row in grid.chunks(n) {
+            self.add_polyline(row, color);
         }
         for i in 0..n {
-            for j in 0..n - 1 {
-                if let Ok(l) = Line::try_new(grid[j * n + i], grid[(j + 1) * n + i]) {
-                    self.add_line(l, color);
-                }
-            }
+            let column: Vec<_> = (0..n).map(|j| grid[j * n + i]).collect();
+            self.add_polyline(&column, color);
         }
         Ok(())
-    }
-
-    /// Check that `self.triangles` forms a watertight (closed, 2-manifold)
-    /// mesh: every triangle edge, quantized to a grid of size `eps` and
-    /// identified regardless of direction, must be shared by exactly 2
-    /// triangles.
-    pub fn is_watertight(&self, eps: f64) -> Result<(), String> {
-        type Cell = (i64, i64, i64);
-        let quantize = |p: &Vector3<S>| -> Cell {
-            (
-                (p[0].to_f64() / eps).round() as i64,
-                (p[1].to_f64() / eps).round() as i64,
-                (p[2].to_f64() / eps).round() as i64,
-            )
-        };
-
-        let mut edge_uses: HashMap<(Cell, Cell), Vec<usize>> = HashMap::new();
-        for (idx, (t, _)) in self.triangles.iter().enumerate() {
-            let qa = quantize(&t.a);
-            let qb = quantize(&t.b);
-            let qc = quantize(&t.c);
-            for (p, q) in [(qa, qb), (qb, qc), (qc, qa)] {
-                let key = if p <= q { (p, q) } else { (q, p) };
-                edge_uses.entry(key).or_default().push(idx);
-            }
-        }
-
-        let bad: Vec<_> = edge_uses
-            .iter()
-            .filter(|(_, tris)| tris.len() != 2)
-            .collect();
-        if bad.is_empty() {
-            return Ok(());
-        }
-        let mut msg = format!(
-            "mesh is not watertight: {} edge(s) not shared by exactly 2 triangles:",
-            bad.len()
-        );
-        for (edge, tris) in bad.iter().take(10) {
-            msg.push_str(&format!(
-                "\n  edge {edge:?} used by {} triangle(s): {tris:?}",
-                tris.len()
-            ));
-        }
-        Err(msg)
     }
 
     /// Write a self-contained HTML file with an embedded three.js scene.
@@ -371,29 +215,7 @@ impl<S: Scalar> PrimitiveScene<S> {
         let lines_js = self
             .lines
             .iter()
-            .map(|(l, c)| {
-                let s = l.start();
-                let e = l.end();
-                format!(
-                    "[{},{},{},{},{},{},{}]",
-                    s[0].to_f64(),
-                    s[1].to_f64(),
-                    s[2].to_f64(),
-                    e[0].to_f64(),
-                    e[1].to_f64(),
-                    e[2].to_f64(),
-                    c.to_hex()
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-
-        let highlight_lines_js = self
-            .highlight_lines
-            .iter()
-            .map(|(l, c)| {
-                let s = l.start();
-                let e = l.end();
+            .map(|([s, e], c)| {
                 format!(
                     "[{},{},{},{},{},{},{}]",
                     s[0].to_f64(),
@@ -424,29 +246,6 @@ impl<S: Scalar> PrimitiveScene<S> {
                     t.c[1].to_f64(),
                     t.c[2].to_f64(),
                     c.to_hex()
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-
-        let tris_rgb_js = self
-            .triangles_rgb
-            .iter()
-            .map(|(t, ca, cb, cc)| {
-                format!(
-                    "[{},{},{},{},{},{},{},{},{},{},{},{}]",
-                    t.a[0].to_f64(),
-                    t.a[1].to_f64(),
-                    t.a[2].to_f64(),
-                    t.b[0].to_f64(),
-                    t.b[1].to_f64(),
-                    t.b[2].to_f64(),
-                    t.c[0].to_f64(),
-                    t.c[1].to_f64(),
-                    t.c[2].to_f64(),
-                    ca.to_hex(),
-                    cb.to_hex(),
-                    cc.to_hex()
                 )
             })
             .collect::<Vec<_>>()
@@ -510,16 +309,13 @@ impl<S: Scalar> PrimitiveScene<S> {
             .collect::<Vec<_>>()
             .join(",");
 
-        let text_js = self.debug_text.replace('`', "'").replace('\\', "\\\\");
-
         format!(
             r#"<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <title>Geop Debug Scene</title>
-<style>body{{margin:0;overflow:hidden;background:#1a1a2e}}#info{{position:absolute;top:8px;left:8px;color:#ccc;font:13px monospace;white-space:pre;pointer-events:none}}.geop-label{{font:11px monospace;padding:0 2px;background:rgba(0,0,0,0.55);border-radius:2px;white-space:nowrap;pointer-events:none}}</style>
+<style>body{{margin:0;overflow:hidden;background:#1a1a2e}}.geop-label{{font:11px monospace;padding:0 2px;background:rgba(0,0,0,0.55);border-radius:2px;white-space:nowrap;pointer-events:none}}</style>
 <script type="importmap">{{"imports":{{"three":"https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"}}}}</script>
 </head><body>
-<div id="info"></div>
 <script type="module">
 import * as THREE from 'three';
 import {{OrbitControls}} from 'three/addons/controls/OrbitControls.js';
@@ -551,15 +347,10 @@ controls.enableDamping=true;
 
 const POINTS=[{points_js}];
 const LINES=[{lines_js}];
-const HIGHLIGHT_LINES=[{highlight_lines_js}];
 const TRIS=[{tris_js}];
-const TRIS_RGB=[{tris_rgb_js}];
 const TRIS_TRANSPARENT=[{tris_transparent_js}];
 const LABELS=[{labels_js}];
 const CYLINDERS=[{cylinders_js}];
-const TEXT=`{text_js}`;
-
-document.getElementById('info').textContent=TEXT;
 
 // Points
 const ptGeo=new THREE.BufferGeometry();
@@ -592,26 +383,6 @@ if(LINES.length){{
   scene.add(new THREE.LineSegments(geo,new THREE.LineBasicMaterial({{vertexColors:true}})));
 }}
 
-// Highlight lines (depth-test disabled, drawn last, so they stay visible on
-// top of solid triangles instead of being occluded)
-if(HIGHLIGHT_LINES.length){{
-  const pos=new Float32Array(HIGHLIGHT_LINES.length*6);
-  const col=new Float32Array(HIGHLIGHT_LINES.length*6);
-  HIGHLIGHT_LINES.forEach(([x1,y1,z1,x2,y2,z2,hex],i)=>{{
-    pos[i*6]=x1;pos[i*6+1]=y1;pos[i*6+2]=z1;
-    pos[i*6+3]=x2;pos[i*6+4]=y2;pos[i*6+5]=z2;
-    const c=new THREE.Color(hex);
-    col[i*6]=c.r;col[i*6+1]=c.g;col[i*6+2]=c.b;
-    col[i*6+3]=c.r;col[i*6+4]=c.g;col[i*6+5]=c.b;
-  }});
-  const geo=new THREE.BufferGeometry();
-  geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
-  geo.setAttribute('color',new THREE.BufferAttribute(col,3));
-  const seg=new THREE.LineSegments(geo,new THREE.LineBasicMaterial({{vertexColors:true,depthTest:false,depthWrite:false}}));
-  seg.renderOrder=999;
-  scene.add(seg);
-}}
-
 // Triangles
 if(TRIS.length){{
   const pos=new Float32Array(TRIS.length*9);
@@ -630,30 +401,10 @@ if(TRIS.length){{
   scene.add(new THREE.Mesh(geo,new THREE.MeshLambertMaterial({{vertexColors:true,side:THREE.DoubleSide}})));
 }}
 
-// Vertex-colored triangles
-if(TRIS_RGB.length){{
-  const pos=new Float32Array(TRIS_RGB.length*9);
-  const col=new Float32Array(TRIS_RGB.length*9);
-  TRIS_RGB.forEach(([ax,ay,az,bx,by,bz,cx,cy,cz,ha,hb,hc],i)=>{{
-    pos[i*9+0]=ax;pos[i*9+1]=ay;pos[i*9+2]=az;
-    pos[i*9+3]=bx;pos[i*9+4]=by;pos[i*9+5]=bz;
-    pos[i*9+6]=cx;pos[i*9+7]=cy;pos[i*9+8]=cz;
-    const ca=new THREE.Color(ha),cb=new THREE.Color(hb),cc=new THREE.Color(hc);
-    col[i*9+0]=ca.r;col[i*9+1]=ca.g;col[i*9+2]=ca.b;
-    col[i*9+3]=cb.r;col[i*9+4]=cb.g;col[i*9+5]=cb.b;
-    col[i*9+6]=cc.r;col[i*9+7]=cc.g;col[i*9+8]=cc.b;
-  }});
-  const geo=new THREE.BufferGeometry();
-  geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
-  geo.setAttribute('color',new THREE.BufferAttribute(col,3));
-  geo.computeVertexNormals();
-  scene.add(new THREE.Mesh(geo,new THREE.MeshLambertMaterial({{vertexColors:true,side:THREE.DoubleSide}})));
-}}
-
 // Transparent triangles: one mesh per distinct (color, opacity) pair — not
 // one per triangle (opacity is a per-material, not per-vertex, property in
 // three.js, so triangles can't just be vertex-colored into a single mesh
-// like TRIS/TRIS_RGB above) — but a curved face rasterized at any real
+// like TRIS above) — but a curved face rasterized at any real
 // resolution has thousands of same-colored triangles, and a separate
 // Mesh/BufferGeometry/Material per one of those tanks frame rate; grouping
 // keeps draw calls down to the number of distinct (color, opacity) pairs
@@ -743,10 +494,8 @@ window.addEventListener('resize',()=>{{
             points_js = points_js,
             lines_js = lines_js,
             tris_js = tris_js,
-            tris_rgb_js = tris_rgb_js,
             tris_transparent_js = tris_transparent_js,
             labels_js = labels_js,
-            text_js = text_js,
         )
     }
 }
@@ -765,61 +514,6 @@ impl<S: Scalar> DebugContext for PrimitiveScene<S> {
                 return format!("PrimitiveScene (render failed: {e})");
             }
             path
-        })
-    }
-}
-
-// ── PrimitiveSceneRecorder ────────────────────────────────────────────────────
-
-pub struct PrimitiveSceneRecorder<S: Scalar> {
-    pub scenes: Vec<PrimitiveScene<S>>,
-    rendered_path: OnceLock<String>,
-}
-
-impl<S: Scalar> core::fmt::Debug for PrimitiveSceneRecorder<S> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "PrimitiveSceneRecorder({} scenes)", self.scenes.len())
-    }
-}
-
-impl<S: Scalar> PrimitiveSceneRecorder<S> {
-    pub fn new() -> Self {
-        Self {
-            scenes: Vec::new(),
-            rendered_path: OnceLock::new(),
-        }
-    }
-
-    pub fn add_scene(&mut self, scene: PrimitiveScene<S>) {
-        self.scenes.push(scene);
-    }
-
-    /// Write `scene_0.html`, `scene_1.html`, … into `folder_path`.
-    pub fn save_to_folder(&self, folder_path: &str) -> GeopResult<()> {
-        std::fs::create_dir_all(folder_path)
-            .map_err(|e| GeopError::new(format!("PrimitiveSceneRecorder: mkdir {e}")))?;
-        for (i, scene) in self.scenes.iter().enumerate() {
-            let path = format!("{folder_path}/scene_{i}.html");
-            scene.save_to_file(&path)?;
-        }
-        Ok(())
-    }
-}
-
-impl<S: Scalar> Default for PrimitiveSceneRecorder<S> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<S: Scalar> DebugContext for PrimitiveSceneRecorder<S> {
-    fn label(&self) -> &str {
-        self.rendered_path.get_or_init(|| {
-            let folder = format!("/tmp/geop_rec_{}", next_id());
-            if let Err(e) = self.save_to_folder(&folder) {
-                return format!("PrimitiveSceneRecorder (render failed: {e})");
-            }
-            folder
         })
     }
 }

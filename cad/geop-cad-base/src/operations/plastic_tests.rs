@@ -2,43 +2,29 @@
 //! shelled 0.2 thick, open at its top — drafted, ribbed, given a lip or a
 //! groove.
 
-use geop_core_math::primitives::{DatumComponent, FrameAxis};
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
-use geop_ops::{EntityRef, NoFiles, ORIGIN, Part};
+use geop_core_math::primitives::FrameAxis;
+use geop_core_math::scalars::Scalar;
+use geop_ops::{Design, EntityRef, NamedModel};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{AddDatumArgs, Construction};
-use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
+use geop_ops_extrude_revolve::Extents;
 use geop_ops_fillet::FilletArgs;
 use geop_ops_plastic::{DraftArgs, GrooveArgs, LipArgs, RibArgs, RibDirection, RibSide};
 use geop_ops_shell::ShellArgs;
-use geop_ops_sketch::{AddSketchArgs, Sketch};
+use geop_ops_sketch::Sketch;
 
-use crate::Program;
 use crate::examples::n;
-
-fn assert_valid(part: &Part<S>) {
-    assert_valid_case(part, "");
-}
+use crate::operations::testing::{
+    Built, assert_valid, check_valid, cut, extrusion, origin_plane, sketch,
+};
+use crate::{Program, Push};
 
 /// [`assert_valid`], saying which `case` of a sweep it is.
-fn assert_valid_case(part: &Part<S>, case: &str) {
-    let params = ValidationParameters::default();
-    if let Err(errors) = validate(&params, part.topology()) {
-        let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
-        panic!(
-            "{case}: {} validation error(s):\n{}",
-            messages.len(),
-            messages.join("\n")
-        );
+fn assert_valid_case(part: &NamedModel<Design>, case: &str) {
+    if let Err(report) = check_valid(part) {
+        panic!("{case}: {report}");
     }
-    if let Err(errors) = validate_manifold(&params, part.topology()) {
-        panic!("{case}: {errors:?}");
-    }
-}
-
-fn z_plane() -> EntityRef {
-    EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z))
+    part.check_names().unwrap();
 }
 
 fn face(name: &str) -> EntityRef {
@@ -59,22 +45,10 @@ fn boxed() -> Program {
     for i in 0..4 {
         s.add_line(p[i], p[(i + 1) % 4]);
     }
-    program.push(
-        "outline",
-        AddSketchArgs {
-            plane: Some(z_plane()),
-            sketch: s,
-            ..Default::default()
-        },
-    );
+    program.push("outline", sketch(origin_plane(FrameAxis::Z), s));
     program.push(
         "box",
-        ExtrudeArgs {
-            sketch: "outline".into(),
-            extent: Extents::blind(1.0),
-            face: false,
-            combine: Combine::NewBody,
-        },
+        extrusion("outline", Extents::blind(1.0), Combine::NewBody),
     );
     program
 }
@@ -117,7 +91,7 @@ fn enclosure_outside_drafted() {
     let mut program = enclosure();
     let walls: Vec<String> = WALLS.iter().map(|c| wall(c)).collect();
     program.push("d", draft(&walls, 3.0));
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     // The top of the +x wall leans in, the bottom stays.
     let top = part.vertex_id("extrude(box,outline,p2,end)").unwrap();
@@ -135,7 +109,7 @@ fn enclosure_inside_drafted() {
         .map(|c| format!("shell(s,{})", wall(c)))
         .collect();
     program.push("d", draft(&walls, 1.0));
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
 }
 
@@ -148,27 +122,13 @@ fn enclosure_with_a_port_drafted() {
     // On the +x wall, `u` runs along `y` and `v` along `z`.
     let c = s.add_point(n(1.0), n(0.5));
     s.add_circle(c, n(0.2));
-    program.push(
-        "port_sketch",
-        AddSketchArgs {
-            plane: Some(face(&wall("c5"))),
-            sketch: s,
-            ..Default::default()
-        },
-    );
+    program.push("port_sketch", sketch(face(&wall("c5")), s));
     program.push(
         "port",
-        ExtrudeArgs {
-            sketch: "port_sketch".into(),
-            extent: Extents::blind(-0.5),
-            face: false,
-            combine: Combine::Difference {
-                target: "shell(s)".into(),
-            },
-        },
+        extrusion("port_sketch", Extents::blind(-0.5), cut("shell(s)")),
     );
     program.push("d", draft(&[wall("c5")], 5.0));
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
 }
 
@@ -181,7 +141,7 @@ fn wall_next_to_a_fillet_is_refused() {
         FilletArgs::constant(vec!["extrude(box,outline,p1)".into()], 0.2),
     );
     program.push("d", draft(&[wall("c4")], 3.0));
-    let Err(error) = program.build::<S>(&NoFiles) else {
+    let Err(error) = program.build_model() else {
         panic!("drafting next to a fillet is refused");
     };
     let message = format!("{error}");
@@ -210,7 +170,7 @@ fn enclosure_lip_and_groove() {
             height: 0.1,
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert!(part.solid_id("lip(l)").is_ok());
 
@@ -225,7 +185,7 @@ fn enclosure_lip_and_groove() {
             clearance: 0.02,
         },
     );
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert!(part.solid_id("groove(g)").is_ok());
 }
@@ -245,7 +205,7 @@ fn lip_ending_at_a_corner_is_refused() {
             height: 0.1,
         },
     );
-    let Err(error) = program.build::<S>(&NoFiles) else {
+    let Err(error) = program.build_model() else {
         panic!("a lip ending at a corner is refused");
     };
     let message = format!("{error}");
@@ -265,7 +225,7 @@ fn lip_along_opposite_edges_is_refused() {
             height: 0.1,
         },
     );
-    let Err(error) = program.build::<S>(&NoFiles) else {
+    let Err(error) = program.build_model() else {
         panic!("a lip along two separate edges is refused");
     };
     let message = format!("{error}");
@@ -291,14 +251,7 @@ pub(super) fn enclosure_with_rib_sketch() -> Program {
     let a = s.add_point(n(0.5), n(0.7));
     let b = s.add_point(n(1.5), n(0.7));
     s.add_line(a, b);
-    program.push(
-        "rib_sketch",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum("middle")),
-            sketch: s,
-            ..Default::default()
-        },
-    );
+    program.push("rib_sketch", sketch(EntityRef::datum("middle"), s));
     program
 }
 
@@ -319,7 +272,7 @@ fn rib(direction: RibDirection, side: RibSide, flipped: bool) -> RibArgs {
 fn enclosure_rib() {
     let mut program = enclosure_with_rib_sketch();
     program.push("r", rib(RibDirection::Parallel, RibSide::Symmetric, true));
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert!(part.solid_id("rib(r)").is_ok());
 }
@@ -330,7 +283,7 @@ fn enclosure_rib() {
 fn rib_out_of_the_top_is_refused() {
     let mut program = enclosure_with_rib_sketch();
     program.push("r", rib(RibDirection::Parallel, RibSide::First, false));
-    let Err(error) = program.build::<S>(&NoFiles) else {
+    let Err(error) = program.build_model() else {
         panic!("a rib out of the top is refused");
     };
     let message = format!("{error}");
@@ -358,16 +311,9 @@ fn enclosure_rib_normal_to_its_sketch() {
     let a = s.add_point(n(0.5), n(1.0));
     let b = s.add_point(n(1.5), n(1.0));
     s.add_line(a, b);
-    program.push(
-        "rib_sketch",
-        AddSketchArgs {
-            plane: Some(EntityRef::datum("level")),
-            sketch: s,
-            ..Default::default()
-        },
-    );
+    program.push("rib_sketch", sketch(EntityRef::datum("level"), s));
     program.push("r", rib(RibDirection::Normal, RibSide::Symmetric, true));
-    let part = program.build::<S>(&NoFiles).unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
 }
 
@@ -383,7 +329,7 @@ fn plastic_sweep() {
             args.thickness = thickness;
             program.push("r", args);
             let part = program
-                .build::<S>(&NoFiles)
+                .build_model()
                 .unwrap_or_else(|e| panic!("rib {thickness} {side:?}: {e}"));
             assert_valid_case(&part, &format!("rib {thickness} {side:?}"));
         }
@@ -400,7 +346,7 @@ fn plastic_sweep() {
             },
         );
         assert_valid_case(
-            &program.build::<S>(&NoFiles).unwrap(),
+            &program.build_model().unwrap(),
             &format!("lip {width} {height}"),
         );
         let mut program = enclosure();
@@ -415,7 +361,7 @@ fn plastic_sweep() {
             },
         );
         let part = program
-            .build::<S>(&NoFiles)
+            .build_model()
             .unwrap_or_else(|e| panic!("groove {width} {height} {clearance}: {e}"));
         assert_valid_case(&part, &format!("groove {width} {height} {clearance}"));
     }
@@ -424,7 +370,7 @@ fn plastic_sweep() {
         let walls: Vec<String> = WALLS.iter().map(|c| wall(c)).collect();
         program.push("d", draft(&walls, angle));
         let part = program
-            .build::<S>(&NoFiles)
+            .build_model()
             .unwrap_or_else(|e| panic!("draft {angle}: {e}"));
         assert_valid_case(&part, &format!("draft {angle}"));
     }
@@ -452,7 +398,7 @@ fn narrow_groove() {
             clearance: 0.0,
         },
     );
-    assert_valid(&program.build::<S>(&NoFiles).unwrap());
+    assert_valid(&program.build_model().unwrap());
 }
 
 /// Drafted 15 degrees, the enclosure's 0.2 thick walls would lean in by
@@ -462,7 +408,7 @@ fn too_steep_a_draft_is_refused() {
     let mut program = enclosure();
     let walls: Vec<String> = WALLS.iter().map(|c| wall(c)).collect();
     program.push("d", draft(&walls, 15.0));
-    let Err(error) = program.build::<S>(&NoFiles) else {
+    let Err(error) = program.build_model() else {
         panic!("a draft crossing the walls is refused");
     };
     let message = format!("{error}");

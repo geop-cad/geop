@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+geop-core-program.workspace = true
 geop-core-geometry.workspace = true
 geop-core-math.workspace = true
 geop-core-sketch.workspace = true

@@ -13,7 +13,7 @@
 
 use crate::{
     common::{Profile, end_point, line2, sqrt2_over_2, start_point},
-    sweep::{Frame, Path, Span, SweepLoop, sweep},
+    sweep::{Frame, Path, Span, SweepLoop, sweep, sweep_drawn},
 };
 use geop_core_geometry::nurb_curve::{Handedness, HelixRow, cos_sin, helix_rows};
 use geop_core_math::{
@@ -23,7 +23,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_topology::{SolidId, build::BuiltBody};
-use geop_ops::{Namer, Part};
+use geop_ops::{NamedModel, Namer};
 
 /// The path around the axis `axes.w()` through `axes.origin()`, from the
 /// angle `from` to `to` — either way round — in degrees, angles turning
@@ -146,7 +146,7 @@ pub fn revolution<S: Scalar>(
 /// `N(P,a)` the vertex of `P` at `a` — `N(P)` for a pole — and for a partial
 /// turn, the caps `N(start)` and `N(end)`.
 pub fn revolve<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     solid: Option<&str>,
     axes: &CoordinateSystem<S>,
@@ -155,12 +155,7 @@ pub fn revolve<S: Scalar>(
     loops: &[SweepLoop<S>],
 ) -> GeopResult<BuiltBody> {
     let path = revolution(axes, from, to)?;
-    let loops: Vec<SweepLoop<S>> = if path.along_normal {
-        loops.iter().map(SweepLoop::reversed).collect()
-    } else {
-        loops.to_vec()
-    };
-    sweep(part, namer, &path, &loops, solid)
+    sweep_drawn(model, namer, &path, loops, solid)
 }
 
 /// The path of a screw motion around the axis `axes.w()` through
@@ -222,7 +217,7 @@ pub fn screw_path<S: Scalar>(
 /// `N(start)` and `N(end)`.
 #[allow(clippy::too_many_arguments)]
 pub fn screw<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     solid: &str,
     axes: &CoordinateSystem<S>,
@@ -232,12 +227,7 @@ pub fn screw<S: Scalar>(
     loops: &[SweepLoop<S>],
 ) -> GeopResult<SolidId> {
     let path = screw_path(axes, pitch, turns, handedness)?;
-    let loops: Vec<SweepLoop<S>> = if path.along_normal {
-        loops.iter().map(SweepLoop::reversed).collect()
-    } else {
-        loops.to_vec()
-    };
-    sweep(part, namer, &path, &loops, Some(solid))?
+    sweep_drawn(model, namer, &path, loops, Some(solid))?
         .solid
         .ok_or_else(|| GeopError::new("screw: built no solid"))
 }
@@ -250,7 +240,7 @@ pub fn screw<S: Scalar>(
 /// point of it there is a pole; a closed loop stays clear of the axis and
 /// sweeps a ring.
 pub fn revolve_at_oriented<S: Scalar>(
-    part: &mut Part<S>,
+    model: &mut NamedModel<S>,
     namer: &Namer,
     solid: &str,
     profile: &Profile<S>,
@@ -302,7 +292,7 @@ pub fn revolve_at_oriented<S: Scalar>(
     // A full turn runs along its stations' `e1 x e2`, so it takes the
     // profile clockwise: top-down, as given.
     let built = sweep(
-        part,
+        model,
         namer,
         &revolution(axes, 0.0, 360.0)?,
         &[lp],
@@ -313,56 +303,32 @@ pub fn revolve_at_oriented<S: Scalar>(
         .ok_or_else(|| GeopError::new("revolve: built no solid"))
 }
 
-/// [`revolve_at_oriented`] around the axis parallel to `z` through
-/// `origin`, with `a0` along `x`.
-pub fn revolve_at<S: Scalar>(
-    part: &mut Part<S>,
-    namer: &Namer,
-    profile: &Profile<S>,
-    origin: Vector3<S>,
-) -> GeopResult<SolidId> {
-    let axes = CoordinateSystem::try_new(
-        origin,
-        Vector3::from_array([S::ONE, S::ZERO, S::ZERO]),
-        Vector3::from_array([S::ZERO, S::ONE, S::ZERO]),
-        Vector3::from_array([S::ZERO, S::ZERO, S::ONE]),
-    )?;
-    revolve_at_oriented(part, namer, &namer.root(), profile, &axes)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::testing::{assert_valid, assert_valid_sheets, v2};
     use crate::common::{arc2, polyline};
     use geop_core_geometry::nurb_curve::NurbCurve2D;
     use geop_core_math::for_all_scalars;
     use geop_core_math::vector::Vector2;
-    use geop_core_topology::{
-        Model,
-        validation::{ValidationParameters, validate, validate_manifold},
-    };
+
+    /// Revolves `profile` a full turn around the z-axis, `a0` along `x`.
+    fn revolved_about_z<S: Scalar>(
+        model: &mut NamedModel<S>,
+        namer: &Namer,
+        profile: &Profile<S>,
+    ) -> GeopResult<SolidId> {
+        let axes = CoordinateSystem::world_at(Vector3::zero());
+        revolve_at_oriented(model, namer, &namer.root(), profile, &axes)
+    }
 
     /// Revolve `curves` around the z-axis into a fresh part, as operation `r`.
-    fn revolved<S: Scalar>(curves: Vec<NurbCurve2D<S>>) -> Part<S> {
-        let mut part = Part::<S>::new();
+    fn revolved<S: Scalar>(curves: Vec<NurbCurve2D<S>>) -> NamedModel<S> {
+        let mut model = NamedModel::<S>::new();
         let namer = Namer::new("revolve", "r").unwrap();
-        revolve_at(&mut part, &namer, &Profile::open(curves), Vector3::zero()).unwrap();
-        part.check_names().unwrap();
-        part
-    }
-
-    fn v2<S: Scalar>(x: f64, y: f64) -> Vector2<S> {
-        Vector2::from_array([S::from_f64(x), S::from_f64(y)])
-    }
-
-    fn assert_valid<S: Scalar>(model: &Model<S>) {
-        let params = ValidationParameters::default();
-        if let Err(e) = validate(&params, model) {
-            panic!("{e:?}");
-        }
-        if let Err(e) = validate_manifold(&params, model) {
-            panic!("{e:?}");
-        }
+        revolved_about_z(&mut model, &namer, &Profile::open(curves)).unwrap();
+        model.check_names().unwrap();
+        model
     }
 
     /// An exact sphere from two quarter arcs: curved profile edges become
@@ -373,10 +339,10 @@ mod tests {
             arc2(v2(0.0, 1.0), v2(1.0, 1.0), v2(1.0, 0.0), w).unwrap(),
             arc2(v2(1.0, 0.0), v2(1.0, -1.0), v2(0.0, -1.0), w).unwrap(),
         ];
-        let part = revolved(profile);
-        let model = part.topology();
-        assert_valid(model);
-        assert_eq!(model.faces.len(), 8);
+        let model = revolved(profile);
+        let topology = model.topology();
+        assert_valid(topology);
+        assert_eq!(topology.faces.len(), 8);
         // Two poles, and the equator's ring of four vertices named after the
         // joint between the arcs.
         for name in [
@@ -385,12 +351,12 @@ mod tests {
             "revolve(r,p1,a0)",
             "revolve(r,p1,a3)",
         ] {
-            part.vertex_id(name).unwrap();
+            model.vertex_id(name).unwrap();
         }
         for name in ["revolve(r,c0,a0)", "revolve(r,c1,a2)", "revolve(r,p1,q3)"] {
-            part.edge_id(name).unwrap();
+            model.edge_id(name).unwrap();
         }
-        part.face_id("revolve(r,c1,q3)").unwrap();
+        model.face_id("revolve(r,c1,q3)").unwrap();
     }
     #[test]
     fn sphere_from_arcs_is_valid() {
@@ -421,10 +387,10 @@ mod tests {
         let mut profile = polyline(&[v2(0.0, 2.0), v2(0.5, 2.0)]).unwrap();
         profile.push(spline);
         profile.extend(polyline(&[v2(1.0, 0.0), v2(0.0, 0.0)]).unwrap());
-        let part = revolved(profile);
-        let model = part.topology();
-        assert_valid(model);
-        assert_eq!(model.faces.len(), 12);
+        let model = revolved(profile);
+        let topology = model.topology();
+        assert_valid(topology);
+        assert_eq!(topology.faces.len(), 12);
     }
     #[test]
     fn vase_with_spline_is_valid() {
@@ -459,12 +425,12 @@ mod tests {
     }
 
     /// Revolve the closed loop `curves` around the z-axis into a fresh part.
-    fn revolved_ring<S: Scalar>(curves: Vec<NurbCurve2D<S>>) -> Part<S> {
-        let mut part = Part::<S>::new();
+    fn revolved_ring<S: Scalar>(curves: Vec<NurbCurve2D<S>>) -> NamedModel<S> {
+        let mut model = NamedModel::<S>::new();
         let namer = Namer::new("revolve", "r").unwrap();
-        revolve_at(&mut part, &namer, &Profile::closed(curves), Vector3::zero()).unwrap();
-        part.check_names().unwrap();
-        part
+        revolved_about_z(&mut model, &namer, &Profile::closed(curves)).unwrap();
+        model.check_names().unwrap();
+        model
     }
 
     /// A square off the axis revolves into a ring with a square cross
@@ -479,20 +445,20 @@ mod tests {
             v2(1.0, 1.0),
         ])
         .unwrap();
-        let part = revolved_ring(profile);
-        let model = part.topology();
-        assert_valid(model);
-        assert_eq!(model.faces.len(), 16);
-        assert_eq!(model.vertices.len(), 16);
-        assert_eq!(model.edges.len(), 32);
+        let model = revolved_ring(profile);
+        let topology = model.topology();
+        assert_valid(topology);
+        assert_eq!(topology.faces.len(), 16);
+        assert_eq!(topology.vertices.len(), 16);
+        assert_eq!(topology.edges.len(), 32);
         for name in ["revolve(r,c0,q0)", "revolve(r,c3,q3)", "revolve(r,p0,a3)"] {
             assert!(
-                part.face_id(name).is_ok() || part.vertex_id(name).is_ok(),
+                model.face_id(name).is_ok() || model.vertex_id(name).is_ok(),
                 "{name}"
             );
         }
-        part.edge_id("revolve(r,p0,q3)").unwrap();
-        part.edge_id("revolve(r,c3,a0)").unwrap();
+        model.edge_id("revolve(r,p0,q3)").unwrap();
+        model.edge_id("revolve(r,c3,a0)").unwrap();
     }
     #[test]
     fn square_ring_is_valid() {
@@ -509,10 +475,10 @@ mod tests {
             arc2(v2(2.0, -1.0), v2(1.0, -1.0), v2(1.0, 0.0), w).unwrap(),
             arc2(v2(1.0, 0.0), v2(1.0, 1.0), v2(2.0, 1.0), w).unwrap(),
         ];
-        let part = revolved_ring(profile);
-        let model = part.topology();
-        assert_valid(model);
-        assert_eq!(model.faces.len(), 16);
+        let model = revolved_ring(profile);
+        let topology = model.topology();
+        assert_valid(topology);
+        assert_eq!(topology.faces.len(), 16);
     }
     #[test]
     fn torus_is_valid() {
@@ -525,17 +491,9 @@ mod tests {
         type S = geop_core_math::scalars::ScalInF64;
         let profile =
             polyline(&[v2::<S>(0.0, 1.0), v2(1.0, 1.0), v2(1.0, 0.0), v2(0.0, 1.0)]).unwrap();
-        let mut part = Part::<S>::new();
+        let mut model = NamedModel::<S>::new();
         let namer = Namer::new("revolve", "r").unwrap();
-        assert!(
-            revolve_at(
-                &mut part,
-                &namer,
-                &Profile::closed(profile),
-                Vector3::zero()
-            )
-            .is_err()
-        );
+        assert!(revolved_about_z(&mut model, &namer, &Profile::closed(profile)).is_err());
     }
 
     /// The `(r, z)` square `[r0, r0 + 1] x [0, 1]`, counter-clockwise; with
@@ -565,11 +523,11 @@ mod tests {
 
     /// Revolves `loops` from `from` to `to` degrees around the z-axis into a
     /// solid of a fresh part, as operation `r`.
-    fn revolved_by<S: Scalar>(loops: &[SweepLoop<S>], from: f64, to: f64) -> Part<S> {
-        let mut part = Part::<S>::new();
+    fn revolved_by<S: Scalar>(loops: &[SweepLoop<S>], from: f64, to: f64) -> NamedModel<S> {
+        let mut model = NamedModel::<S>::new();
         let namer = Namer::new("revolve", "r").unwrap();
         revolve(
-            &mut part,
+            &mut model,
             &namer,
             Some("revolve(r)"),
             &z_axes(),
@@ -578,8 +536,8 @@ mod tests {
             loops,
         )
         .unwrap();
-        part.check_names().unwrap();
-        part
+        model.check_names().unwrap();
+        model
     }
 
     /// A partial turn of a region on the axis: walls for the three sides
@@ -591,16 +549,17 @@ mod tests {
             (0.0, -120.0, 2),
             (-30.0, 45.0, 1),
         ] {
-            let part = revolved_by(&[square_loop::<S>(0.0)], from, to);
-            let model = part.topology();
-            assert_valid(model);
-            assert_eq!(model.faces.len(), 3 * spans + 2, "{from} to {to}");
-            let axis = part.edge_id("revolve(r,c3)").unwrap();
-            let caps: Vec<_> = model
+            let model = revolved_by(&[square_loop::<S>(0.0)], from, to);
+            let topology = model.topology();
+            assert_valid(topology);
+            assert_eq!(topology.faces.len(), 3 * spans + 2, "{from} to {to}");
+            let axis = model.edge_id("revolve(r,c3)").unwrap();
+            let caps: Vec<_> = topology
                 .coedges_of_edge(axis)
                 .into_iter()
                 .map(|c| {
-                    part.name_of(model.get_coedge(c).unwrap().face)
+                    model
+                        .name_of(topology.get_coedge(c).unwrap().face)
                         .unwrap()
                         .to_string()
                 })
@@ -609,8 +568,8 @@ mod tests {
             assert!(caps.contains(&"revolve(r,start)".to_string()));
             assert!(caps.contains(&"revolve(r,end)".to_string()));
             // The end cap lies at `to`.
-            let corner = model
-                .get_vertex(part.vertex_id(&format!("revolve(r,p2,a{spans})")).unwrap())
+            let corner = topology
+                .get_vertex(model.vertex_id(&format!("revolve(r,p2,a{spans})")).unwrap())
                 .unwrap()
                 .point;
             let (c, s) = cos_sin(to);
@@ -678,7 +637,7 @@ mod tests {
             (polyline(&[v2::<S>(1.0, 0.0), v2(1.0, 1.0)]).unwrap(), 4, 8),
             (polyline(&[v2(0.0, 0.0), v2(1.0, 0.0)]).unwrap(), 4, 4),
         ] {
-            let mut part = Part::<S>::new();
+            let mut model = NamedModel::<S>::new();
             let profile = Profile::open(chain);
             let poles = profile
                 .joint_names
@@ -693,19 +652,17 @@ mod tests {
                 poles,
                 profile,
             };
-            let built = revolve(&mut part, &namer, None, &z_axes(), 0.0, 360.0, &[lp]).unwrap();
-            part.check_names().unwrap();
+            let built = revolve(&mut model, &namer, None, &z_axes(), 0.0, 360.0, &[lp]).unwrap();
+            model.check_names().unwrap();
             assert!(built.solid.is_none());
-            let model = part.topology();
-            if let Err(e) = validate(&ValidationParameters::default(), model) {
-                panic!("{e:?}");
-            }
-            assert_eq!(model.faces.len(), faces);
-            assert_eq!(part.sheet_face_names().len(), faces);
-            let one_sided = model
+            let topology = model.topology();
+            assert_valid_sheets(topology);
+            assert_eq!(topology.faces.len(), faces);
+            assert_eq!(model.sheet_face_names().len(), faces);
+            let one_sided = topology
                 .edges
                 .keys()
-                .filter(|&&e| model.coedges_of_edge(e).len() == 1)
+                .filter(|&&e| topology.coedges_of_edge(e).len() == 1)
                 .count();
             assert_eq!(one_sided, free);
         }
@@ -722,7 +679,7 @@ mod tests {
     fn check_a_screw_sweeps_a_thread<S: Scalar>() {
         use geop_core_geometry::nurb_curve::NurbCurve3D;
         for handedness in [Handedness::Right, Handedness::Left] {
-            let mut part = Part::<S>::new();
+            let mut model = NamedModel::<S>::new();
             let namer = Namer::new("screw", "t").unwrap();
             // Counter-clockwise in `(r, z)`.
             let corners = [
@@ -737,7 +694,7 @@ mod tests {
             let axes = CoordinateSystem::world_at(Vector3::zero());
             let pitch = S::ONE;
             screw(
-                &mut part,
+                &mut model,
                 &namer,
                 "screw(t)",
                 &axes,
@@ -747,13 +704,13 @@ mod tests {
                 &[SweepLoop::plain(profile)],
             )
             .unwrap();
-            part.check_names().unwrap();
-            assert_valid(part.topology());
-            assert_eq!(part.topology().faces.len(), 4 * 5 + 2);
+            model.check_names().unwrap();
+            assert_valid(model.topology());
+            assert_eq!(model.topology().faces.len(), 4 * 5 + 2);
             // The edge the inner bottom corner sweeps through the third
             // span is that stretch of the helix of radius 1, lowered by 0.2.
-            let edge = part.edge_id("screw(t,p0,q2)").unwrap();
-            let curve = &part.topology().get_edge(edge).unwrap().curve;
+            let edge = model.edge_id("screw(t,p0,q2)").unwrap();
+            let curve = &model.topology().get_edge(edge).unwrap().curve;
             let lowered = CoordinateSystem::world_at(Vector3::from_array([
                 S::ZERO,
                 S::ZERO,

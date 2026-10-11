@@ -56,30 +56,31 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    matrix::{Matrix, solve_linear_system},
+    matrix::Matrix,
     polygon::{loops_contain, polygon_signed_area},
     scalars::Scalar,
+    solvers::linear::solve_linear_system,
     vector::{Vector, Vector2, Vector3},
     with_context,
 };
 use geop_core_topology::{
     Body, Curve2, Curve3, FaceId, Sense, ShellId, SolidId,
-    build::{BodySpec, BuiltBody, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec, SpecSources},
+    build::{BodySpec, BuiltBody, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
-use geop_ops::{BodyNames, Namer, Part};
+use geop_ops::{BodyNames, NamedModel, Namer};
 use geop_ops_extrude_revolve::common::{line2, line3};
 
 /// Bounds how hard a containment search or a pcurve fit tries: effort, not
 /// what an answer means.
-const MAX_NODES: usize = 20_000;
+pub const MAX_NODES: usize = 20_000;
 
 /// Where a containment search hands over to Newton (see `AGENTS.md`).
-fn min_subdivision_size<S: Scalar>() -> S {
+pub fn min_subdivision_size<S: Scalar>() -> S {
     S::from_f64(1e-7)
 }
 
 /// Newton steps projecting a point onto a surface.
-const PROJECT_ITERATIONS: usize = 20;
+pub const PROJECT_ITERATIONS: usize = 20;
 
 /// Newton steps moving a vertex onto the offsets of its faces, at most: a
 /// vertex between planes lands in one, and curved faces converge
@@ -103,7 +104,7 @@ const AREA_SAMPLES: usize = 8;
 /// - `shell(S,E,start)` / `shell(S,E,end)`: what is left of an edge `E`
 ///   between two faces taken away, at its start and its end.
 pub fn shell<S: Scalar>(
-    part: &mut Part<S>,
+    part: &mut NamedModel<S>,
     namer: &Namer,
     solid: SolidId,
     open: &[FaceId],
@@ -134,7 +135,7 @@ pub fn shell<S: Scalar>(
         .with_context(ctx);
     }
     let (spec, sources) = model.body_spec(&faces, true).with_context(ctx)?;
-    let names = source_names(part, &sources).with_context(ctx)?;
+    let names = part.source_names(&sources).with_context(ctx)?;
     let removed: Vec<bool> = sources.faces.iter().map(|f| open.contains(f)).collect();
     if let Some((f, g, e)) = inward_corner(&spec, &removed).with_context(ctx)? {
         return Err(GeopError::new(format!(
@@ -164,7 +165,7 @@ pub fn shell<S: Scalar>(
 /// the sheet the wall is `N(E,side)`, with `N` the operation, the straight
 /// edge from a vertex `V` of it to its inner copy `N(V,side)`.
 pub fn thicken<S: Scalar>(
-    part: &mut Part<S>,
+    part: &mut NamedModel<S>,
     namer: &Namer,
     sheet: ShellId,
     thickness: S,
@@ -189,7 +190,7 @@ pub fn thicken<S: Scalar>(
             *face = face.reversed();
         }
     }
-    let names = source_names(part, &sources).with_context(ctx)?;
+    let names = part.source_names(&sources).with_context(ctx)?;
     let removed = vec![false; spec.faces.len()];
     let hollow = Hollow::new(&spec, &names, removed, thickness).with_context(ctx)?;
     let (result, result_names) = hollow.result(namer).with_context(ctx)?;
@@ -209,7 +210,7 @@ pub fn thicken<S: Scalar>(
 /// The copy of each face, edge and vertex `X` is named `N(X)`, with `N`
 /// the operation.
 pub fn offset_faces<S: Scalar>(
-    part: &mut Part<S>,
+    part: &mut NamedModel<S>,
     namer: &Namer,
     faces: &[FaceId],
     distance: S,
@@ -222,38 +223,11 @@ pub fn offset_faces<S: Scalar>(
         .with_context(ctx);
     }
     let (spec, sources) = part.topology().body_spec(faces, false).with_context(ctx)?;
-    let names = source_names(part, &sources).with_context(ctx)?;
+    let names = part.source_names(&sources).with_context(ctx)?;
     let removed = vec![false; spec.faces.len()];
     let hollow = Hollow::new(&spec, &names, removed, distance.neg()).with_context(ctx)?;
     let (result, result_names) = hollow.inner_side(namer).with_context(ctx)?;
     part.build_body(result, result_names).with_context(ctx)
-}
-
-/// The names of what `sources` says a [`BodySpec`]'s entities came from.
-fn source_names<S: Scalar>(part: &Part<S>, sources: &SpecSources) -> GeopResult<BodyNames> {
-    let name = |id: geop_ops::RefId| -> GeopResult<String> {
-        part.name_of(id)
-            .map(str::to_string)
-            .ok_or_else(|| GeopError::new(format!("{id:?} has no name")))
-    };
-    Ok(BodyNames {
-        vertices: sources
-            .vertices
-            .iter()
-            .map(|&v| name(v.into()))
-            .collect::<GeopResult<_>>()?,
-        edges: sources
-            .edges
-            .iter()
-            .map(|&e| name(e.into()))
-            .collect::<GeopResult<_>>()?,
-        faces: sources
-            .faces
-            .iter()
-            .map(|&f| name(f.into()))
-            .collect::<GeopResult<_>>()?,
-        solid: None,
-    })
 }
 
 /// A face taken away, `f`, that meets a face kept, `g`, at an inward
@@ -274,7 +248,7 @@ fn inward_corner<S: Scalar>(
     // Per edge, the faces it bounds, each with its coedge's sense and pcurve.
     let mut sides: Vec<Vec<(usize, Sense, &Curve2<S>)>> = vec![Vec::new(); spec.edges.len()];
     for (f, face) in spec.faces.iter().enumerate() {
-        for lp in loops_of(face) {
+        for lp in face.loops() {
             for c in lp {
                 if let CoedgeOn::Edge(e, sense) = c.on {
                     sides[e].push((f, sense, &c.pcurve));
@@ -321,11 +295,6 @@ fn inward_corner<S: Scalar>(
         }
     }
     Ok(None)
-}
-
-/// The loops of `face`, outer first.
-fn loops_of<S: Scalar>(face: &FaceSpec<S>) -> Vec<&Vec<CoedgeSpec<S>>> {
-    std::iter::once(&face.outer).chain(&face.holes).collect()
 }
 
 /// A coedge of the solid: face `f`, its loop `l` (0 the outer one), and
@@ -390,21 +359,6 @@ struct Hollow<'a, S: Scalar> {
     inner_ends: HashMap<At, Vector2<S>>,
 }
 
-/// The vertices a coedge runs from and to.
-fn ends<S: Scalar>(spec: &BodySpec<S>, on: CoedgeOn) -> (usize, usize) {
-    match on {
-        CoedgeOn::Edge(e, Sense::Forward) => (spec.edges[e].start, spec.edges[e].end),
-        CoedgeOn::Edge(e, Sense::Reversed) => (spec.edges[e].end, spec.edges[e].start),
-        CoedgeOn::Vertex(v) => (v, v),
-    }
-}
-
-/// Where `pcurve` starts and ends.
-fn pcurve_ends<S: Scalar>(pcurve: &Curve2<S>) -> GeopResult<(Vector2<S>, Vector2<S>)> {
-    let (t0, t1) = pcurve.domain();
-    Ok((pcurve.evaluate(t0)?, pcurve.evaluate(t1)?))
-}
-
 impl<'a, S: Scalar> Hollow<'a, S> {
     fn new(
         spec: &'a BodySpec<S>,
@@ -419,16 +373,16 @@ impl<'a, S: Scalar> Hollow<'a, S> {
         // the face's surface.
         let mut around: Vec<Vec<(usize, Vector2<S>)>> = vec![Vec::new(); spec.vertices.len()];
         for (f, face) in spec.faces.iter().enumerate() {
-            for lp in loops_of(face) {
+            for lp in face.loops() {
                 for c in lp {
-                    let (_, end) = ends(spec, c.on);
+                    let (_, end) = spec.ends(c.on)?;
                     walled[end] |= !removed[f];
                     if let CoedgeOn::Edge(e, _) = c.on {
                         open_edge[e] &= removed[f];
                         uses[e] += 1;
                     }
                     if !around[end].iter().any(|&(g, _)| g == f) {
-                        around[end].push((f, pcurve_ends(&c.pcurve)?.1));
+                        around[end].push((f, c.pcurve.ends()?.1));
                     }
                 }
             }
@@ -511,7 +465,7 @@ impl<'a, S: Scalar> Hollow<'a, S> {
     fn coedges(&self) -> impl Iterator<Item = (At, &'a CoedgeSpec<S>)> + 'a {
         let spec = self.spec;
         spec.faces.iter().enumerate().flat_map(|(f, face)| {
-            loops_of(face)
+            face.loops()
                 .into_iter()
                 .enumerate()
                 .flat_map(move |(l, lp)| {
@@ -521,12 +475,12 @@ impl<'a, S: Scalar> Hollow<'a, S> {
     }
 
     fn coedge(&self, at: At) -> &'a CoedgeSpec<S> {
-        &loops_of(&self.spec.faces[at.f])[at.l][at.k]
+        &self.spec.faces[at.f].loops()[at.l][at.k]
     }
 
     /// The coedge before `at` in its loop.
     fn previous(&self, at: At) -> At {
-        let n = loops_of(&self.spec.faces[at.f])[at.l].len();
+        let n = self.spec.faces[at.f].loops()[at.l].len();
         At {
             k: (at.k + n - 1) % n,
             ..at
@@ -605,11 +559,11 @@ impl<'a, S: Scalar> Hollow<'a, S> {
     fn inner_ends(&self) -> GeopResult<HashMap<At, Vector2<S>>> {
         let mut out = HashMap::new();
         for (at, c) in self.coedges() {
-            let (_, end) = ends(self.spec, c.on);
+            let (_, end) = self.spec.ends(c.on)?;
             if !self.walled[end] {
                 continue;
             }
-            let seed = pcurve_ends(&c.pcurve)?.1;
+            let seed = c.pcurve.ends()?.1;
             let surface = &self.inner_surfaces[at.f];
             let (u, v) = surface.project(
                 self.inner_point(end),
@@ -636,10 +590,9 @@ impl<'a, S: Scalar> Hollow<'a, S> {
         let c = self.coedge(at);
         let (start, end) = self.inner_pins(at);
         let curve = match c.on {
-            CoedgeOn::Edge(e, sense) => Some(oriented(
-                self.inner_curves[e].as_ref().expect("not open"),
-                sense,
-            )),
+            CoedgeOn::Edge(e, sense) => {
+                Some(sense.orient(self.inner_curves[e].as_ref().expect("not open")))
+            }
             CoedgeOn::Vertex(_) => None,
         };
         Ok(CoedgeSpec {
@@ -769,7 +722,7 @@ impl<'a, S: Scalar> Hollow<'a, S> {
             names.faces.push(name.clone());
 
             let inner_loop = |l: usize| -> GeopResult<Vec<CoedgeSpec<S>>> {
-                (0..loops_of(face)[l].len())
+                (0..face.loops()[l].len())
                     .map(|k| {
                         let mut c = self.inner_coedge(At { f, l, k })?;
                         c.on = map(c.on, &at.inner_edge, &at.inner_vertex);
@@ -800,7 +753,7 @@ impl<'a, S: Scalar> Hollow<'a, S> {
             if !self.free_edge[e] {
                 continue;
             }
-            let (x, y) = ends(spec, c.on);
+            let (x, y) = spec.ends(c.on)?;
             for v in [x, y] {
                 if side[v].is_none() {
                     side[v] = Some(out.edges.len());
@@ -814,8 +767,8 @@ impl<'a, S: Scalar> Hollow<'a, S> {
                         .push(namer.name(&[&self.names.vertices[v], "side"]));
                 }
             }
-            let outer = oriented(&spec.edges[e].curve, sense);
-            let inner = oriented(self.inner_curves[e].as_ref().expect("not open"), sense);
+            let outer = sense.orient(&spec.edges[e].curve);
+            let inner = sense.orient(self.inner_curves[e].as_ref().expect("not open"));
             let square = |k: usize| -> GeopResult<Curve2<S>> {
                 let corner = |k: usize| {
                     let (u, v) = [(0, 0), (1, 0), (1, 1), (0, 1)][k % 4];
@@ -898,7 +851,7 @@ impl<'a, S: Scalar> Hollow<'a, S> {
         }
         for (f, face) in spec.faces.iter().enumerate() {
             let inner_loop = |l: usize| -> GeopResult<Vec<CoedgeSpec<S>>> {
-                (0..loops_of(face)[l].len())
+                (0..face.loops()[l].len())
                     .map(|k| {
                         let mut c = self.inner_coedge(At { f, l, k })?;
                         c.on = match c.on {
@@ -948,7 +901,7 @@ impl<'a, S: Scalar> Hollow<'a, S> {
                 }
                 continue;
             };
-            let (x, y) = ends(spec, c.on);
+            let (x, y) = spec.ends(c.on)?;
             if !self.open_edge[e] {
                 // `f`'s own boundary where a wall stands on it...
                 coedges.push((
@@ -973,13 +926,13 @@ impl<'a, S: Scalar> Hollow<'a, S> {
             }
             // An edge to another face taken away: what is left of it, from
             // `x` to its inner copy and from `y`'s to `y`.
-            let (orig_start, orig_end) = pcurve_ends(&c.pcurve)?;
+            let (orig_start, orig_end) = c.pcurve.ends()?;
             let (start_piece, end_piece) = in_order(at.pieces[e], sense);
             let curves = &self.pieces[e];
             let (start_curve, end_curve) = in_order((&curves.0, &curves.1), sense);
             if let (Some(piece), Some(curve)) = (start_piece, start_curve) {
                 let to = self.inner_ends[&self.previous(here)];
-                let curve = oriented(curve, sense);
+                let curve = sense.orient(curve);
                 coedges.push((
                     CoedgeSpec {
                         on: CoedgeOn::Edge(piece, sense),
@@ -991,7 +944,7 @@ impl<'a, S: Scalar> Hollow<'a, S> {
             }
             if let (Some(piece), Some(curve)) = (end_piece, end_curve) {
                 let from = self.inner_ends[&here];
-                let curve = oriented(curve, sense);
+                let curve = sense.orient(curve);
                 coedges.push((
                     CoedgeSpec {
                         on: CoedgeOn::Edge(piece, sense),
@@ -1110,14 +1063,6 @@ fn sample<S: Scalar>(pcurve: &Curve2<S>) -> GeopResult<Vec<Vector2<S>>> {
         .collect()
 }
 
-/// `curve`, run the way a coedge of `sense` runs it.
-fn oriented<S: Scalar>(curve: &Curve3<S>, sense: Sense) -> Curve3<S> {
-    match sense {
-        Sense::Forward => curve.clone(),
-        Sense::Reversed => curve.reverse(),
-    }
-}
-
 /// A curve shaped like `curve` from `start` to `end` — all the way round
 /// a circle back to `start`, if `closed`: a line for a straight one, an arc
 /// around the same axis for a circular one. Fails for any other curve, and
@@ -1171,8 +1116,7 @@ fn shaped_like<S: Scalar>(
         })
         .collect::<GeopResult<Vec<_>>>()?;
     let moved = NurbCurve3D::try_new(curve.degree, control_points, curve.knot_vector.clone())?;
-    let (t0, t1) = moved.domain();
-    let (from, to) = (moved.evaluate(t0)?, moved.evaluate(t1)?);
+    let (from, to) = moved.ends()?;
     let end = if closed { start } else { end };
     if from.could_be_equal(&start) && to.could_be_equal(&end) {
         return Ok(moved);
@@ -1208,7 +1152,7 @@ pub fn pcurve<S: Scalar>(
         return line2(start, end);
     };
     let straight = original.degree == 1 && original.control_points.len() == 2 && {
-        let (a, b) = pcurve_ends(original)?;
+        let (a, b) = original.ends()?;
         let keeps = |k: usize| a[k].could_be_equal(b[k]) && start[k].could_be_equal(end[k]);
         surface.as_plane()?.is_some() || keeps(0) || keeps(1)
     };

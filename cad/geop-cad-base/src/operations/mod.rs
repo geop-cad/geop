@@ -1,67 +1,91 @@
 //! The operations the editor offers, as the one set its programs are
-//! written in: [`PartOperation`], and the program types over it.
+//! written in ([`registry`]), the program types over it, and the one way a
+//! program is built outside the editor ([`build`]).
 //!
 //! Every operation is defined by a crate of its own — placing sketches in
-//! `geop_ops_sketch`, datums in `geop_ops_datums`, extrude and revolve in
-//! `geop_ops_extrude_revolve`, booleans in `geop_ops_booleans`, fillets and
-//! chamfers in `geop_ops_fillet`, shells in `geop_ops_shell`, edits of
-//! existing bodies in `geop_ops_edit`, placed parts and their patterns in `geop_ops_assembly`,
-//! patterns, mirrors and moves of bodies in `geop_ops_pattern`,
-//! wire harness routes in `geop_ops_harness`,
-//! holes and threads in `geop_ops_hole`, surfaces in `geop_ops_surface`,
-//! 3-D sketches in `geop_ops_sketch3d`, ribs, lips, grooves and drafts in
-//! `geop_ops_plastic`, sheet metal in `geop_ops_sheetmetal`,
-//! subdivision surfaces in `geop_ops_subd`, drawings in `geop_ops_drawing`,
-//! STEP import in `geop_ops_step`.
-//! Which of them an editor offers is the editor's choice, made here.
+//! `geop_ops_sketch`, datums in `geop_ops_datums`, 3-D sketches in
+//! `geop_ops_sketch3d`, extrude, revolve, sweep and loft in
+//! `geop_ops_extrude_revolve`, holes and threads in `geop_ops_hole`, fillets
+//! and chamfers in `geop_ops_fillet`, shells in `geop_ops_shell`, drafts,
+//! lips, grooves and ribs in `geop_ops_plastic`, booleans and splits in
+//! `geop_ops_booleans`, patterns, mirrors and moves of bodies in
+//! `geop_ops_pattern`, deleting bodies, extracting faces and projecting
+//! curves in `geop_ops_edit`, faces standing on their own in
+//! `geop_ops_surface`, subdivision surfaces in `geop_ops_subd`, placed parts
+//! and their patterns in `geop_ops_assembly`, harness routes in
+//! `geop_ops_harness`, sheet metal in `geop_ops_sheetmetal`, drawings in
+//! `geop_ops_drawing`, STEP import in `geop_ops_step`. Which of them an
+//! editor offers is the editor's choice, made here — and so are the
+//! exporters and inspectors ([`outputs`]): STL, STEP, drawings, URDF, flat
+//! patterns and bills of materials; measuring, weighing, interference.
 
-use geop_ops::Operations;
+use std::{collections::BTreeMap, rc::Rc};
+
+use geop_core_math::geop_error::GeopResult;
+use geop_core_program::{
+    operation::{Operation, OperationInfo},
+    program::ProgramStep,
+    program_runner::ProgramRunner,
+};
+use geop_ops::{
+    ParamValue,
+    operation::Input,
+    output::{Outputs, Stl},
+    parameters::Values,
+    placed::Library,
+    program::{Files, ProgramFile, Registry},
+};
+
+use crate::stdlib::WithStandardParts;
 use geop_ops_assembly::{AddPart, AddPartArgs, PartPattern, PartPatternArgs};
+use geop_ops_bom::{BillOfMaterials, BomCsv};
 use geop_ops_booleans::{Boolean, BooleanArgs, Split, SplitArgs};
-// use geop_ops_datums::{AddDatum, AddDatumArgs};
-// use geop_ops_drawing::{Drawing, DrawingArgs};
-// use geop_ops_edit::{
-//     DeleteBody, DeleteBodyArgs, ExtractFace, ExtractFaceArgs, ProjectCurve, ProjectCurveArgs,
-// };
+use geop_ops_datums::{AddDatum, AddDatumArgs};
+use geop_ops_drawing::{Drawing, DrawingArgs, DrawingExporter};
+use geop_ops_edit::{
+    DeleteBody, DeleteBodyArgs, ExtractFace, ExtractFaceArgs, ProjectCurve, ProjectCurveArgs,
+};
 use geop_ops_extrude_revolve::{
     Extrude, ExtrudeArgs, Loft, LoftArgs, Revolve, RevolveArgs, Sweep, SweepArgs,
 };
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
-// use geop_ops_harness::{Route, RouteArgs};
+use geop_ops_harness::{Route, RouteArgs};
 use geop_ops_hole::{Hole, HoleArgs, Thread, ThreadArgs};
+use geop_ops_inspect::{Interference, MassProperties, Measure};
 use geop_ops_pattern::{
     CircularPattern, CircularPatternArgs, LinearPattern, LinearPatternArgs, Mirror, MirrorArgs,
     MoveBody, MoveBodyArgs,
 };
-// use geop_ops_plastic::{Draft, DraftArgs, Groove, GrooveArgs, Lip, LipArgs, Rib, RibArgs};
-// use geop_ops_sheetmetal::{
-//     BaseFlange, BaseFlangeArgs, EdgeFlange, EdgeFlangeArgs, FlatPattern, FlatPatternArgs, Hem,
-//     HemArgs, SheetCut, SheetCutArgs,
-// };
-// use geop_ops_shell::{Shell, ShellArgs};
+use geop_ops_plastic::{Draft, DraftArgs, Groove, GrooveArgs, Lip, LipArgs, Rib, RibArgs};
+use geop_ops_sheetmetal::{
+    BaseFlange, BaseFlangeArgs, EdgeFlange, EdgeFlangeArgs, FlatPattern, FlatPatternArgs,
+    FlatPatternDxf, Hem, HemArgs, SheetCut, SheetCutArgs,
+};
+use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
-// use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
-// use geop_ops_step::{ImportStep, ImportStepArgs};
-// use geop_ops_subd::{Subd, SubdArgs};
-// use geop_ops_surface::{
-//     BoundarySurface, BoundarySurfaceArgs, ExtendSurface, ExtendSurfaceArgs, Knit, KnitArgs,
-//     OffsetSurface, OffsetSurfaceArgs, Thicken, ThickenArgs, TrimSurface, TrimSurfaceArgs,
-// };
-// use geop_ops_surface::{NetworkSurface, NetworkSurfaceArgs};
-use serde::{Deserialize, Serialize};
+use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
+use geop_ops_step::{ImportStep, ImportStepArgs, Step};
+use geop_ops_subd::{Subd, SubdArgs};
+use geop_ops_surface::{
+    BoundarySurface, BoundarySurfaceArgs, ExtendSurface, ExtendSurfaceArgs, Knit, KnitArgs,
+    NetworkSurface, NetworkSurfaceArgs, OffsetSurface, OffsetSurfaceArgs, Thicken, ThickenArgs,
+    TrimSurface, TrimSurfaceArgs,
+};
+use geop_ops_urdf::Urdf;
+use serde::Serialize;
 
 #[cfg(test)]
 mod assembly_scale_tests;
 #[cfg(test)]
 mod assembly_tests;
-// #[cfg(test)]
-// mod bom_tests;
-// #[cfg(test)]
-// mod datum_tests;
-// #[cfg(test)]
-// mod drawing_tests;
-// #[cfg(test)]
-// mod edit_tests;
+#[cfg(test)]
+mod bom_tests;
+#[cfg(test)]
+mod datum_tests;
+#[cfg(test)]
+mod drawing_tests;
+#[cfg(test)]
+mod edit_tests;
 #[cfg(test)]
 mod editor_tests;
 #[cfg(test)]
@@ -70,215 +94,198 @@ mod feature_pattern_tests;
 mod fillet_tests;
 #[cfg(test)]
 mod frame_tests;
-// #[cfg(test)]
-// mod harness_tests;
+#[cfg(test)]
+mod harness_tests;
 #[cfg(test)]
 mod hole_tests;
-// #[cfg(test)]
-// mod inspect_tests;
+#[cfg(test)]
+mod inspect_tests;
 #[cfg(test)]
 mod pattern_tests;
-// #[cfg(test)]
-// mod plastic_tests;
+#[cfg(test)]
+mod plastic_tests;
 #[cfg(test)]
 mod program_tests;
 #[cfg(test)]
-pub(crate) mod regression_tests;
+mod regression_tests;
 #[cfg(test)]
 mod set_tests;
-// #[cfg(test)]
-// mod sheetmetal_tests;
-// #[cfg(test)]
-// mod shell_tests;
-// #[cfg(test)]
-// mod sketch3d_tests;
+#[cfg(test)]
+mod sheetmetal_tests;
+#[cfg(test)]
+mod shell_tests;
+#[cfg(test)]
+mod sketch3d_tests;
 #[cfg(test)]
 mod sketch_tests;
-// #[cfg(test)]
-// mod step_tests;
+#[cfg(test)]
+mod step_tests;
 #[cfg(test)]
 mod stress_tests;
-// #[cfg(test)]
-// mod subd_tests;
-// #[cfg(test)]
-// mod surface_tests;
+#[cfg(test)]
+mod subd_tests;
+#[cfg(test)]
+mod surface_tests;
 #[cfg(test)]
 mod sweep_loft_tests;
 #[cfg(test)]
+pub(crate) mod testing;
+#[cfg(test)]
 mod tests;
-// #[cfg(test)]
-// mod urdf_tests;
+#[cfg(test)]
+mod urdf_tests;
 #[cfg(test)]
 mod view_tests;
 
-/// An operation the editor offers, together with its arguments, not yet
-/// applied to any part.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Operations)]
-#[serde(tag = "operation", content = "args", rename_all = "snake_case")]
-pub enum PartOperation {
-    /// Draw a sketch on a plane of a coordinate system, a datum plane or a
-    /// planar face.
-    #[operation(label = "Sketch", group = Sketch, tier = Big)]
-    AddSketch(AddSketchArgs),
-    // /// Draw points, lines, arcs and splines in space: paths to sweep along.
-    // #[operation(label = "3-D sketch", group = Sketch, tier = Small)]
-    // AddSketch3d(AddSketch3dArgs),
-    // /// Add reference geometry — a point, an axis, a plane or a coordinate
-    // /// system — built from selected points, edges and planes.
-    // #[operation(label = "Reference", group = Sketch, tier = Small)]
-    // AddDatum(AddDatumArgs),
-    /// Sweep a sketch's area along its plane's normal into a solid, or its
-    /// curves into faces.
-    #[operation(group = Solid, tier = Big)]
-    Extrude(ExtrudeArgs),
-    /// Sweep a sketch's area around one of its lines into a solid, or its
-    /// curves into faces.
-    #[operation(group = Solid, tier = Big)]
-    Revolve(RevolveArgs),
-    /// Sweep a sketch's area along the curves of another sketch into a
-    /// solid, or its curves into faces.
-    #[operation(group = Solid, tier = Small)]
-    Sweep(SweepArgs),
-    /// Build a solid through the areas of several sketches, or faces
-    /// through their curves.
-    #[operation(group = Solid, tier = Small)]
-    Loft(LoftArgs),
-    /// Drill simple, counterbored, countersunk or tapped holes at points on
-    /// a planar face, sized by ISO tables or by hand.
-    #[operation(group = Features, tier = Big)]
-    Hole(HoleArgs),
-    /// Put an ISO metric thread on a cylindrical face: recorded as a
-    /// cosmetic thread, or modelled.
-    #[operation(group = Features, tier = Small)]
-    Thread(ThreadArgs),
-    // /// Grow a thin wall from an open sketch profile up to a solid's faces,
-    // /// and join it.
-    // #[operation(group = Features, tier = Menu, experimental)]
-    // Rib(RibArgs),
-    /// Round a solid's straight and circular edges.
-    #[operation(group = Features, tier = Big)]
-    Fillet(FilletArgs),
-    /// Bevel a solid's straight and circular edges.
-    #[operation(group = Features, tier = Small)]
-    Chamfer(ChamferArgs),
-    // /// Hollow a solid out to walls of one thickness, open where faces are
-    // /// picked.
-    // #[operation(group = Features, tier = Small)]
-    // Shell(ShellArgs),
-    // /// Tilt planar faces about a neutral plane, so the part comes out of
-    // /// its mould.
-    // #[operation(group = Features, tier = Menu, experimental)]
-    // Draft(DraftArgs),
-    // /// Raise a lip along the rim of one half of an enclosure.
-    // #[operation(group = Features, tier = Menu, experimental)]
-    // Lip(LipArgs),
-    // /// Cut the groove that takes a lip into the rim of the other half.
-    // #[operation(group = Features, tier = Menu, experimental)]
-    // Groove(GrooveArgs),
-    /// Unite, intersect or subtract two solids.
-    #[operation(group = Bodies, tier = Big)]
-    Boolean(BooleanArgs),
-    /// Cut a solid into pieces with a face standing on its own.
-    #[operation(group = Bodies, tier = Menu)]
-    Split(SplitArgs),
-    /// Copy bodies in a row along a direction, or in a grid along two.
-    #[operation(label = "Linear pattern", group = Bodies, tier = Big)]
-    LinearPattern(LinearPatternArgs),
-    /// Copy bodies turned around an axis.
-    #[operation(label = "Circular pattern", group = Bodies, tier = Small)]
-    CircularPattern(CircularPatternArgs),
-    /// Mirror bodies in a plane.
-    #[operation(group = Bodies, tier = Small)]
-    Mirror(MirrorArgs),
-    /// Move bodies, or a copy of them, turned and shifted.
-    #[operation(label = "Move body", group = Bodies, tier = Menu)]
-    MoveBody(MoveBodyArgs),
-    // /// Delete solids, and faces standing on their own.
-    // #[operation(label = "Delete body", group = Bodies, tier = Menu)]
-    // DeleteBody(DeleteBodyArgs),
-    // /// Span a face standing on its own between two edges, or fill a closed
-    // /// loop of edges — optionally tangent to the flat faces along them.
-    // #[operation(label = "Boundary surface", group = Surface, tier = Small, experimental)]
-    // BoundarySurface(BoundarySurfaceArgs),
-    // /// Copy faces a distance along their normals into a face standing on
-    // /// its own.
-    // #[operation(label = "Offset surface", group = Surface, tier = Menu, experimental)]
-    // OffsetSurface(OffsetSurfaceArgs),
-    // /// Make a solid of a face standing on its own, a thickness on either
-    // /// side of it or on both.
-    // #[operation(group = Surface, tier = Menu, experimental)]
-    // Thicken(ThickenArgs),
-    // /// Join faces standing on their own along the edges where they meet,
-    // /// into a solid once they close up.
-    // #[operation(group = Surface, tier = Menu, experimental)]
-    // Knit(KnitArgs),
-    // /// Cut a face standing on its own back to one side of another face.
-    // #[operation(label = "Trim surface", group = Surface, tier = Menu, experimental)]
-    // TrimSurface(TrimSurfaceArgs),
-    // /// Carry a face standing on its own on past one of its edges.
-    // #[operation(label = "Extend surface", group = Surface, tier = Menu, experimental)]
-    // ExtendSurface(ExtendSurfaceArgs),
-    // /// Copy a face out of its body into a face standing on its own.
-    // #[operation(label = "Extract face", group = Surface, tier = Menu, experimental)]
-    // ExtractFace(ExtractFaceArgs),
-    // /// Project a sketch's curves onto a face, dividing the face along them.
-    // #[operation(label = "Project curve", group = Surface, tier = Menu, experimental)]
-    // ProjectCurve(ProjectCurveArgs),
-    // /// Start a sheet-metal body: a plate from a sketch's area, or a bent
-    // /// strip from a chain of lines and arcs.
-    // #[operation(label = "Base flange", group = SheetMetal, tier = Big)]
-    // BaseFlange(BaseFlangeArgs),
-    // /// Bend a flange up from a straight edge of a sheet-metal body.
-    // #[operation(label = "Edge flange", group = SheetMetal, tier = Small)]
-    // EdgeFlange(EdgeFlangeArgs),
-    // /// Cut holes and notches through a sheet-metal body along a sketch,
-    // /// across its bends as they lie unrolled.
-    // #[operation(label = "Sheet-metal cut", group = SheetMetal, tier = Menu)]
-    // SheetCut(SheetCutArgs),
-    // /// Fold an edge of a sheet-metal body right back over it.
-    // #[operation(group = SheetMetal, tier = Menu)]
-    // Hem(HemArgs),
-    // /// Unfold a sheet-metal body into its flat pattern.
-    // #[operation(label = "Flat pattern", group = SheetMetal, tier = Small)]
-    // FlatPattern(FlatPatternArgs),
-    // /// Shape a freeform body by dragging the vertices, edges and faces of a
-    // /// control cage, built as its smooth subdivision surface.
-    // #[operation(label = "SubD", group = Surface, tier = Big)]
-    // Subd(SubdArgs),
-    /// Place the part another program file builds, and mate it to what is
-    /// already there.
-    #[operation(label = "Part", group = Assembly, tier = Big)]
-    AddPart(AddPartArgs),
-    /// Place copies of a placed part in a row along a line, or round an
-    /// axis.
-    #[operation(label = "Part pattern", group = Assembly, tier = Menu, experimental)]
-    PartPattern(PartPatternArgs),
-    // /// Route a bundle of wires from a connector through clips to another
-    // /// connector, its bends checked and every wire's cut length reported.
-    // #[operation(group = Assembly, tier = Small, experimental)]
-    // Route(RouteArgs),
-    // /// Describe a 2-D drawing of the part — views with hidden lines, a
-    // /// section and a title block — annotated on its sheet with dimensions,
-    // /// notes and centre marks, and downloaded as SVG or DXF.
-    // #[operation(group = Output, tier = Big)]
-    // Drawing(DrawingArgs),
-    // /// Add the solids and sheets of a STEP file next to the program.
-    // #[operation(label = "Import STEP", group = Output, tier = Small)]
-    // ImportStep(ImportStepArgs),
-    // /// Span a face standing on its own through a network of curves — u
-    // /// curves crossing v curves — running along every one of them.
-    // #[operation(label = "UV surface", group = Surface, tier = Small, experimental)]
-    // NetworkSurface(NetworkSurfaceArgs),
+/// Arguments that say which operation they are for: what a program written
+/// in Rust — an example, a standard part — pushes as a step
+/// ([`Push::push`]).
+pub trait StepArgs: Serialize {
+    /// The operation's kind, as a program stores it.
+    const KIND: &'static str;
 }
 
-/// A program of the editor's operations.
-pub type Program = geop_ops::Program<PartOperation>;
-/// A step of a [`Program`].
-pub type Step = geop_ops::Step<PartOperation>;
-/// Builds a [`Program`] incrementally.
-pub type ProgramRunner<S> = geop_ops::ProgramRunner<S, PartOperation>;
-/// The program files a [`Program`] places parts from: `F`'s, and the
-/// standard parts (see [`crate::stdlib`]). Made with
-/// `Workspace::new(WithStandardParts(files))`.
-pub type Workspace<S, F = std::collections::BTreeMap<String, String>> =
-    geop_ops::Workspace<PartOperation, S, crate::stdlib::WithStandardParts<F>>;
+/// The operations the editor offers, in the order it offers them within a
+/// group and tier: the registry its programs are run with ([`registry`]),
+/// what it lists ([`infos`]), and the arguments of each ([`StepArgs`]).
+macro_rules! operations {
+    ($($operation:ident($args:ident)),* $(,)?) => {
+        /// The operations the editor offers, as its programs are run with.
+        pub fn registry() -> GeopResult<Registry> {
+            let registry = Registry::default();
+            $(let registry = registry.with($operation)?;)*
+            Ok(registry)
+        }
+
+        /// What each operation the editor offers is, in the order it offers
+        /// them.
+        pub fn infos() -> Vec<&'static OperationInfo> {
+            vec![$(&<$operation as Operation>::INFO),*]
+        }
+
+        $(impl StepArgs for $args {
+            const KIND: &'static str = <$operation as Operation>::INFO.kind;
+        })*
+    };
+}
+
+operations! {
+    AddSketch(AddSketchArgs),
+    AddDatum(AddDatumArgs),
+    AddSketch3d(AddSketch3dArgs),
+    Extrude(ExtrudeArgs),
+    Revolve(RevolveArgs),
+    Sweep(SweepArgs),
+    Loft(LoftArgs),
+    Hole(HoleArgs),
+    Thread(ThreadArgs),
+    Rib(RibArgs),
+    Fillet(FilletArgs),
+    Chamfer(ChamferArgs),
+    Shell(ShellArgs),
+    Draft(DraftArgs),
+    Lip(LipArgs),
+    Groove(GrooveArgs),
+    Boolean(BooleanArgs),
+    Split(SplitArgs),
+    LinearPattern(LinearPatternArgs),
+    CircularPattern(CircularPatternArgs),
+    Mirror(MirrorArgs),
+    MoveBody(MoveBodyArgs),
+    Subd(SubdArgs),
+    DeleteBody(DeleteBodyArgs),
+    BoundarySurface(BoundarySurfaceArgs),
+    OffsetSurface(OffsetSurfaceArgs),
+    Thicken(ThickenArgs),
+    Knit(KnitArgs),
+    TrimSurface(TrimSurfaceArgs),
+    ExtendSurface(ExtendSurfaceArgs),
+    ExtractFace(ExtractFaceArgs),
+    ProjectCurve(ProjectCurveArgs),
+    NetworkSurface(NetworkSurfaceArgs),
+    BaseFlange(BaseFlangeArgs),
+    EdgeFlange(EdgeFlangeArgs),
+    Hem(HemArgs),
+    SheetCut(SheetCutArgs),
+    FlatPattern(FlatPatternArgs),
+    AddPart(AddPartArgs),
+    PartPattern(PartPatternArgs),
+    Route(RouteArgs),
+    ImportStep(ImportStepArgs),
+    Drawing(DrawingArgs),
+}
+
+/// The exporters and inspectors the editor offers (see [`geop_ops::output`]),
+/// in the order it offers them. Writing drawings, robots, bills
+/// of materials and flat patterns, and measuring, weighing and checking for
+/// interference, wait for their crates to come back into the workspace.
+pub fn outputs() -> GeopResult<Outputs> {
+    Outputs::default()
+        .exporter(Stl)?
+        .exporter(Step)?
+        .exporter(DrawingExporter)?
+        .exporter(Urdf)?
+        .exporter(FlatPatternDxf)?
+        .exporter(BomCsv)?
+        .inspector(Measure)?
+        .inspector(MassProperties)?
+        .inspector(Interference)?
+        .inspector(BillOfMaterials)
+}
+
+/// A program as the editor edits it and a file holds it.
+pub type Program = ProgramFile;
+
+/// Appending steps to a program written in Rust.
+pub trait Push {
+    /// Appends the step `id`, `args` for the operation they are for.
+    fn push<A: StepArgs>(&mut self, id: impl Into<String>, args: A);
+}
+
+impl Push for Program {
+    fn push<A: StepArgs>(&mut self, id: impl Into<String>, args: A) {
+        self.program.steps.push(ProgramStep {
+            id: id.into(),
+            operation: A::KIND.to_string(),
+            args: serde_json::to_value(args).expect("a program's arguments are plain data"),
+        });
+    }
+}
+
+/// The workspace the editor builds programs in: a set of program files, and
+/// the standard parts beside them.
+pub type Workspace<F = BTreeMap<String, String>> =
+    geop_ops::program::Workspace<WithStandardParts<F>>;
+
+/// The runner programs are built with.
+pub type Runner = ProgramRunner<Input, ParamValue>;
+
+/// The workspace of `files`, beside the standard parts, whose programs are
+/// written in the editor's operations.
+pub fn workspace<F: Files + 'static>(files: F) -> Rc<Workspace<F>> {
+    Workspace::new(WithStandardParts(files), registry)
+}
+
+/// A runner of the editor's operations, that has run nothing yet.
+pub fn runner() -> Runner {
+    ProgramRunner::new(registry().expect("the editor's operations each have a name of their own"))
+}
+
+/// Runs `program` with `library` on `runner`, which keeps what earlier
+/// runs built. Fails naming the first step that does.
+pub fn run(runner: &mut Runner, program: &Program, library: &Rc<dyn Library>) -> GeopResult<()> {
+    let inputs = program.inputs(&Values::new(), library.clone());
+    let output = runner.run(&program.program, &inputs, &program.state);
+    match output.step_errors.into_iter().next() {
+        Some((step, error)) => Err(error.with_context(format!("step {step:?}"))),
+        None => Ok(()),
+    }
+}
+
+/// Builds `program` with `library` — for a program on its own, the scope
+/// of an empty [`workspace`]: the runner, holding the part it built.
+pub fn build(program: &Program, library: &Rc<dyn Library>) -> GeopResult<Runner> {
+    let mut runner = runner();
+    run(&mut runner, program, library)?;
+    Ok(runner)
+}

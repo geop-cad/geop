@@ -10,7 +10,7 @@ use std::{
 
 use geop_core_math::scalars::scal_in_f64::ScalInF64;
 use geop_core_topology::validation::{ValidationParameters, validate};
-use geop_ops::{Namer, Part};
+use geop_ops::{NamedModel, Namer};
 
 use crate::{add_bodies, read_step};
 
@@ -93,8 +93,8 @@ fn import_file(path: &Path, full: bool) -> Result<Imported, String> {
                 .map(|line| format!("{}: {line}", b.label))
         })
         .collect();
-    let mut part = Part::new();
-    add_bodies(&mut part, &Namer::new("import", "i").unwrap(), bodies)
+    let mut part = NamedModel::new();
+    add_bodies(&mut part, &Namer::new("import", "i").unwrap(), &bodies)
         .map_err(|e| format!("{e:?}"))?;
     if full && let Err(errors) = validate(&ValidationParameters::default(), part.topology()) {
         // The cause first, as the table groups by it; then the whole.
@@ -187,7 +187,7 @@ fn corpus() {
         }
     }
     let mut ranked: Vec<_> = causes.into_iter().collect();
-    ranked.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    ranked.sort_by_key(|b| std::cmp::Reverse(b.1.len()));
     println!(
         "\n{passed} of {total} files imported valid ({:.0}%)",
         100.0 * passed as f64 / total as f64

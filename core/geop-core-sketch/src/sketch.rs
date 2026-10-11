@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::{Scalar, as_f64},
+    union_find::UnionFind,
     vector::Vector2,
 };
 
@@ -37,6 +38,20 @@ macro_rules! define_ids {
             impl std::fmt::Display for $name {
                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                     write!(f, concat!($prefix, "{}"), self.0)
+                }
+            }
+
+            /// The id as [`std::fmt::Display`] writes it, `p3`, read back.
+            impl std::str::FromStr for $name {
+                type Err = GeopError;
+
+                fn from_str(text: &str) -> GeopResult<Self> {
+                    (text.strip_prefix($prefix))
+                        .and_then(|id| id.parse().ok())
+                        .map($name)
+                        .ok_or_else(|| {
+                            GeopError::new(format!(concat!("{:?} is no id `", $prefix, "<n>`"), text))
+                        })
                 }
             }
 
@@ -86,8 +101,98 @@ define_ids!(
     ConstraintId => "k",
 );
 
-fn is_false(b: &bool) -> bool {
+pub(crate) fn is_false(b: &bool) -> bool {
     !*b
+}
+
+/// What a curve or a constraint of a sketch — planar, or a 3-D
+/// [`crate::space::Sketch3d`] — refers to.
+pub(crate) trait Uses {
+    /// The points it refers to directly.
+    fn points(&self) -> Vec<PointId>;
+    /// The curves it refers to.
+    fn curves(&self) -> Vec<CurveId> {
+        Vec::new()
+    }
+    /// The two points it makes one, if it is a coincidence.
+    fn coincident(&self) -> Option<(PointId, PointId)> {
+        None
+    }
+}
+
+/// Removes `points`, `curves` and `constraints` from a sketch whose
+/// entities are `all_points`, `all_curves` and `all_constraints`, and
+/// everything that depends on them: a curve on a removed point, a
+/// constraint on any removed entity, and a point nothing uses any more
+/// because of it — a lone point drawn on purpose stays. Everything else
+/// keeps its id. Returns the curves removed.
+pub(crate) fn remove<P, C: Uses, K: Uses>(
+    all_points: &mut BTreeMap<PointId, P>,
+    all_curves: &mut BTreeMap<CurveId, C>,
+    all_constraints: &mut BTreeMap<ConstraintId, K>,
+    points: &[PointId],
+    curves: &[CurveId],
+    constraints: &[ConstraintId],
+) -> BTreeSet<CurveId> {
+    let dead_curves: BTreeSet<CurveId> = all_curves
+        .iter()
+        .filter(|(id, c)| curves.contains(id) || c.points().iter().any(|p| points.contains(p)))
+        .map(|(&id, _)| id)
+        .collect();
+    let dead_constraints: BTreeSet<ConstraintId> = all_constraints
+        .iter()
+        .filter(|(id, c)| {
+            constraints.contains(id)
+                || c.points().iter().any(|p| points.contains(p))
+                || c.curves().iter().any(|k| dead_curves.contains(k))
+        })
+        .map(|(&id, _)| id)
+        .collect();
+    let mut used_before = BTreeSet::new();
+    let mut used_after = BTreeSet::new();
+    for (id, c) in all_curves.iter() {
+        for p in c.points() {
+            used_before.insert(p);
+            if !dead_curves.contains(id) {
+                used_after.insert(p);
+            }
+        }
+    }
+    for (id, c) in all_constraints.iter() {
+        for p in c.points() {
+            used_before.insert(p);
+            if !dead_constraints.contains(id) {
+                used_after.insert(p);
+            }
+        }
+    }
+    all_points.retain(|p, _| {
+        !points.contains(p) && !(used_before.contains(p) && !used_after.contains(p))
+    });
+    all_curves.retain(|id, _| !dead_curves.contains(id));
+    all_constraints.retain(|id, _| !dead_constraints.contains(id));
+    dead_curves
+}
+
+/// Union-find representative of each of `points` under the coincidences
+/// of `constraints`: points with the same representative are one point.
+/// The lowest id represents its class, so the representative does not
+/// depend on constraint order.
+pub(crate) fn point_classes<P, K: Uses>(
+    points: &BTreeMap<PointId, P>,
+    constraints: &BTreeMap<ConstraintId, K>,
+) -> BTreeMap<PointId, PointId> {
+    let ids: Vec<PointId> = points.keys().copied().collect();
+    let index: BTreeMap<PointId, usize> = ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+    // The lowest index represents a class, and the ids are in order: so
+    // does the lowest id.
+    let mut classes = UnionFind::new(ids.len());
+    for (a, b) in constraints.values().filter_map(Uses::coincident) {
+        classes.union(index[&a], index[&b]);
+    }
+    (ids.iter().enumerate())
+        .map(|(i, &id)| (id, ids[classes.find(i)]))
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -169,6 +274,12 @@ pub struct Curve<S: Scalar> {
     /// an arc's sweep or a circle's radius too (see the module docs).
     #[serde(default, skip_serializing_if = "is_false")]
     pub fixed: bool,
+}
+
+impl<S: Scalar> Uses for Curve<S> {
+    fn points(&self) -> Vec<PointId> {
+        Curve::points(self)
+    }
 }
 
 impl<S: Scalar> Curve<S> {
@@ -350,6 +461,23 @@ pub enum Constraint<S: Scalar> {
     },
 }
 
+impl<S: Scalar> Uses for Constraint<S> {
+    fn points(&self) -> Vec<PointId> {
+        Constraint::points(self)
+    }
+
+    fn curves(&self) -> Vec<CurveId> {
+        Constraint::curves(self)
+    }
+
+    fn coincident(&self) -> Option<(PointId, PointId)> {
+        match *self {
+            Constraint::Coincident { a, b } => Some((a, b)),
+            _ => None,
+        }
+    }
+}
+
 impl<S: Scalar> Constraint<S> {
     /// The points this constraint refers to directly (curves aside).
     pub fn points(&self) -> Vec<PointId> {
@@ -498,38 +626,15 @@ impl<S: Scalar> Sketch<S> {
         id
     }
 
-    /// Takes the id `id` for a new entity: `taken` says whether an entity of
-    /// its kind already has it. Ids only need to be unique per kind — `p0`
-    /// and `c0` are never confused — but the counter stays above all of
-    /// them.
-    fn claim_id(&mut self, id: u64, taken: bool) -> GeopResult<()> {
-        if taken {
-            return Err(GeopError::new(format!("sketch id {id} is already in use")));
-        }
-        self.next_id = self.next_id.max(id + 1);
-        Ok(())
-    }
-
-    /// Adds `point` under the id `id` rather than a fresh one — for reading
-    /// back a sketch whose ids were chosen already, so that what refers to
-    /// them keeps doing so. Fails if `id` is taken.
-    pub fn insert_point(&mut self, id: PointId, point: Point<S>) -> GeopResult<()> {
-        self.claim_id(id.0, self.points.contains_key(&id))?;
-        self.points.insert(id, point);
-        Ok(())
-    }
-
-    /// Like [`Sketch::insert_point`], for a curve.
-    pub fn insert_curve(&mut self, id: CurveId, curve: Curve<S>) -> GeopResult<()> {
-        self.claim_id(id.0, self.curves.contains_key(&id))?;
-        self.curves.insert(id, curve);
-        Ok(())
-    }
-
     pub fn add_point(&mut self, x: S, y: S) -> PointId {
         let id = PointId(self.fresh_id());
         self.points.insert(id, Point { x, y, fixed: false });
         id
+    }
+
+    /// A point at `at`, as drawn.
+    pub fn new_point_at(&mut self, at: [f64; 2]) -> PointId {
+        self.add_point(S::from_f64(at[0]), S::from_f64(at[1]))
     }
 
     /// A point given from outside the sketch, at `(x, y)` (see the module
@@ -588,50 +693,17 @@ impl<S: Scalar> Sketch<S> {
     }
 
     /// Removes `points`, `curves` and `constraints`, and everything that
-    /// depends on them: a curve on a removed point, a constraint on any
-    /// removed entity, and a point nothing uses any more because of it — a
-    /// lone point drawn on purpose stays. Everything else keeps its id.
+    /// depends on them (see [`remove`]).
     pub fn remove(&mut self, points: &[PointId], curves: &[CurveId], constraints: &[ConstraintId]) {
-        let dead_curves: BTreeSet<CurveId> = self
-            .curves
-            .iter()
-            .filter(|(id, c)| curves.contains(id) || c.points().iter().any(|p| points.contains(p)))
-            .map(|(&id, _)| id)
-            .collect();
-        let dead_constraints: BTreeSet<ConstraintId> = self
-            .constraints
-            .iter()
-            .filter(|(id, c)| {
-                constraints.contains(id)
-                    || c.points().iter().any(|p| points.contains(p))
-                    || c.curves().iter().any(|k| dead_curves.contains(k))
-            })
-            .map(|(&id, _)| id)
-            .collect();
-        let mut used_before = BTreeSet::new();
-        let mut used_after = BTreeSet::new();
-        for (id, c) in &self.curves {
-            for p in c.points() {
-                used_before.insert(p);
-                if !dead_curves.contains(id) {
-                    used_after.insert(p);
-                }
-            }
-        }
-        for (id, c) in &self.constraints {
-            for p in c.points() {
-                used_before.insert(p);
-                if !dead_constraints.contains(id) {
-                    used_after.insert(p);
-                }
-            }
-        }
-        self.points.retain(|p, _| {
-            !points.contains(p) && !(used_before.contains(p) && !used_after.contains(p))
-        });
-        self.curves.retain(|id, _| !dead_curves.contains(id));
-        self.constraints
-            .retain(|id, _| !dead_constraints.contains(id));
+        let (all_points, all_curves) = (&mut self.points, &mut self.curves);
+        remove(
+            all_points,
+            all_curves,
+            &mut self.constraints,
+            points,
+            curves,
+            constraints,
+        );
     }
 
     /// Check every reference and every constraint's operand kinds, so the
@@ -707,7 +779,9 @@ impl<S: Scalar> Sketch<S> {
         Ok(())
     }
 
-    fn validate_constraint(&self, c: &Constraint<S>) -> GeopResult<()> {
+    /// Whether `c` could be a constraint of the sketch: its points and
+    /// curves are there, and of the kinds it constrains.
+    pub fn validate_constraint(&self, c: &Constraint<S>) -> GeopResult<()> {
         use Constraint::*;
         for p in c.points() {
             self.point(p)?;
@@ -756,7 +830,7 @@ impl<S: Scalar> Sketch<S> {
                     "curves sharing an endpoint (not two lines), a line and a circle/arc, or two circles/arcs",
                 )
             }
-            Equal { a, b } => need(
+            Equal { a, b } | Offset { a, b, .. } => need(
                 is_line(*a)? && is_line(*b)? || is_round(*a)? && is_round(*b)?,
                 "two lines or two circles/arcs",
             ),
@@ -790,10 +864,6 @@ impl<S: Scalar> Sketch<S> {
                     && matches!(kind(*b)?, CurveKind::Arc { .. }),
                 "two arcs",
             ),
-            Offset { a, b, .. } => need(
-                is_line(*a)? && is_line(*b)? || is_round(*a)? && is_round(*b)?,
-                "two lines or two circles/arcs",
-            ),
         }
     }
 
@@ -801,34 +871,7 @@ impl<S: Scalar> Sketch<S> {
     /// [`Constraint::Coincident`]: points with the same representative are
     /// one point.
     pub fn point_classes(&self) -> BTreeMap<PointId, PointId> {
-        fn find(parent: &mut BTreeMap<PointId, PointId>, i: PointId) -> PointId {
-            let mut r = i;
-            while parent[&r] != r {
-                r = parent[&r];
-            }
-            let mut i = i;
-            while parent[&i] != r {
-                let next = parent[&i];
-                parent.insert(i, r);
-                i = next;
-            }
-            r
-        }
-        let mut parent: BTreeMap<PointId, PointId> =
-            self.points.keys().map(|&id| (id, id)).collect();
-        for c in self.constraints.values() {
-            if let Constraint::Coincident { a, b } = *c {
-                let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
-                // The lower id represents the class, so the representative
-                // does not depend on constraint order.
-                let (lo, hi) = (ra.min(rb), ra.max(rb));
-                parent.insert(hi, lo);
-            }
-        }
-        self.points
-            .keys()
-            .map(|&id| (id, find(&mut parent, id)))
-            .collect()
+        point_classes(&self.points, &self.constraints)
     }
 
     /// Every point the constraints put on the infinite line through the line
@@ -872,6 +915,13 @@ impl<S: Scalar> Sketch<S> {
             .filter(|(_, rep)| on.contains(rep))
             .map(|(&p, _)| p)
             .collect())
+    }
+
+    /// Whether a [`Constraint::Tangent`] ties the curves `a` and `b`.
+    pub fn tangent(&self, a: CurveId, b: CurveId) -> bool {
+        self.constraints.values().any(|c| {
+            matches!(*c, Constraint::Tangent { a: x, b: y } if (x, y) == (a, b) || (x, y) == (b, a))
+        })
     }
 
     /// Which ends `(a_at_end, b_at_end)` of open curves `a` and `b` are the

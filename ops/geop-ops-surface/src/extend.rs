@@ -24,20 +24,23 @@ use geop_core_math::{
     vector::Vector2,
     with_context,
 };
+use geop_core_program::{
+    editing::{Event, Form, Number, Unit, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_core_topology::{
     Body, CoedgeGeometry, FaceId, Sense,
     boundary::BoundaryType,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
 use geop_ops::{
-    BodyNames, Context, Library, Part,
-    operation::{EntityRef, Operation, Role},
-    ui::{Form, Number, Unit},
+    BodyNames, Design, NamedModel, ParamValue,
+    operation::{Build, BuildReader, EntityRef, Input, ModelStep, Role, build_model},
 };
 use geop_ops_extrude_revolve::common::line2;
 use serde::{Deserialize, Serialize};
 
-use crate::{name_of, sheet_of};
+use crate::sheet_of;
 
 /// Carries the face standing on its own that the edge named `edge` bounds
 /// on past that edge by `distance` (see the module docs). The face, its
@@ -54,66 +57,82 @@ pub struct ExtendSurfaceArgs {
     pub distance: f64,
 }
 
+impl ModelStep for ExtendSurface {
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &ExtendSurfaceArgs,
+    ) -> GeopResult<()> {
+        let ctx = with_context!("extend_surface({step}, {args:?})");
+        geop_ops::validate_operation_id(step)?;
+        if !args.distance.is_finite() {
+            return Err(GeopError::new("the distance is not a number")).with_context(ctx);
+        }
+        extend(model, &args.edge, Design::from_f64(args.distance)).with_context(ctx)?;
+        Ok(())
+    }
+}
+
 impl Operation for ExtendSurface {
+    const INFO: OperationInfo = OperationInfo::new(
+        "extend_surface",
+        "Extend surface",
+        "Carry a face standing on its own on past one of its edges.",
+        OperationGroup::Surface,
+        OperationTier::Menu,
+    )
+    .experimental();
     type Args = ExtendSurfaceArgs;
-    type Session = ();
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
 
     /// Nothing picked yet, a tenth on.
-    fn new_args<S: Scalar>(&self, _before: &Part<S>) -> ExtendSurfaceArgs {
+    fn new_args(_: &Context<Input, ParamValue>) -> ExtendSurfaceArgs {
         ExtendSurfaceArgs {
             edge: String::new(),
             distance: 0.1,
         }
     }
 
-    /// The edge, picked, and the distance.
-    fn form<'a, S: Scalar>(
-        &self,
-        _: Context<'a, S>,
-        args: &ExtendSurfaceArgs,
-        _: &(),
-        _: &[String],
-    ) -> Form<'a, S, ExtendSurfaceArgs> {
-        let mut f = Form::<S, ExtendSurfaceArgs>::new();
-        let picked: Vec<String> = (!args.edge.is_empty())
-            .then(|| args.edge.clone())
-            .into_iter()
-            .collect();
-        f.reference(
-            "edge",
-            "edge",
-            EntityRef::of_names(EntityRef::edge, &picked),
-            &[Role::Edge],
-            None,
-            false,
-            |e, picked: Vec<EntityRef>| {
-                e.args.edge = EntityRef::names_of(EntityRef::edge, &picked)
-                    .pop()
-                    .unwrap_or_default()
-            },
-        );
-        f.number(
-            "distance",
-            Number::new("distance", args.distance, Unit::Length).range(0.0, 1.0),
-            |args, d| args.distance = d,
-        );
-        f
+    fn run(step: &str, part: &mut Build, args: &ExtendSurfaceArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
+    /// The edge, picked, and the distance.
+    fn presentation(
+        _: &Context<Input, ParamValue>,
         args: &ExtendSurfaceArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("extend_surface({operation_id}, {args:?})");
-        geop_ops::validate_operation_id(operation_id)?;
-        if !args.distance.is_finite() {
-            return Err(GeopError::new("the distance is not a number")).with_context(ctx);
+        _: &(),
+    ) -> Form<Design> {
+        let mut form = Form::default();
+        let dialog = &mut form.dialog;
+        let edge = EntityRef::of_names(EntityRef::edge, std::slice::from_ref(&args.edge));
+        dialog.reference("edge", "edge", edge, &[Role::Edge], None, false);
+        let distance = Number::new("distance", args.distance, Unit::Length).range(0.0, 1.0);
+        dialog.number("distance", distance);
+        form
+    }
+
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
+        args: &ExtendSurfaceArgs,
+        _: &(),
+        event: Event<Design>,
+    ) -> (ExtendSurfaceArgs, ()) {
+        let mut args = args.clone();
+        if let Event::Field { key, value } = event {
+            match (key.as_str(), value) {
+                ("edge", Value::Entities(picked)) => {
+                    args.edge =
+                        (EntityRef::names_of(EntityRef::edge, &picked).pop()).unwrap_or_default()
+                }
+                ("distance", Value::Number(d)) => args.distance = d,
+                _ => {}
+            }
         }
-        extend(&mut part, &args.edge, S::from_f64(args.distance)).with_context(ctx)?;
-        Ok(part)
+        (args, ())
     }
 }
 
@@ -125,8 +144,7 @@ fn side_of<S: Scalar>(
     pcurve: &geop_core_topology::Curve2<S>,
 ) -> GeopResult<Option<usize>> {
     let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
-    let (t0, t1) = pcurve.domain();
-    let (a, b) = (pcurve.evaluate(t0)?, pcurve.evaluate(t1)?);
+    let (a, b) = pcurve.ends()?;
     let both = |k: usize, x: S| a[k].could_be_equal(x) && b[k].could_be_equal(x);
     // Straight along the side, not merely ending on it.
     let straight = pcurve.degree == 1 && pcurve.control_points.len() == 2;
@@ -142,7 +160,7 @@ fn side_of<S: Scalar>(
 
 /// Extends the face standing on its own that the edge `edge` bounds past
 /// it by `distance` (see the module docs).
-pub fn extend<S: Scalar>(part: &mut Part<S>, edge: &str, distance: S) -> GeopResult<FaceId> {
+pub fn extend<S: Scalar>(part: &mut NamedModel<S>, edge: &str, distance: S) -> GeopResult<FaceId> {
     let ctx = with_context!("extend({edge}, {distance:?})");
     if !distance.definitely_greater(S::ZERO) {
         return Err(GeopError::new(format!(
@@ -161,7 +179,7 @@ pub fn extend<S: Scalar>(part: &mut Part<S>, edge: &str, distance: S) -> GeopRes
         .with_context(ctx);
     };
     let face_id = model.get_coedge(*coedge)?.face;
-    let face_name = name_of(part, face_id)?;
+    let face_name = part.name(face_id).map(str::to_string)?;
     let (_, sheet) = sheet_of(part, &face_name).with_context(ctx)?;
     if model.body_faces(Body::Sheet(sheet))?.len() != 1 {
         return Err(GeopError::new(format!(
@@ -194,7 +212,7 @@ pub fn extend<S: Scalar>(part: &mut Part<S>, edge: &str, distance: S) -> GeopRes
             let (t0, t1) = coedge.pcurve.domain();
             return Err(not_whole().with_context(format!(
                 "edge {}: its pcurve of degree {} runs from {:?} to {:?}, on none of the sides of the domain {:?} x {:?}",
-                name_of(part, e)?,
+                part.name(e).map(str::to_string)?,
                 coedge.pcurve.degree,
                 coedge.pcurve.evaluate(t0)?,
                 coedge.pcurve.evaluate(t1)?,
@@ -302,11 +320,11 @@ pub fn extend<S: Scalar>(part: &mut Part<S>, edge: &str, distance: S) -> GeopRes
     let names = BodyNames {
         vertices: corners
             .iter()
-            .map(|&v| name_of(part, v))
+            .map(|&v| part.name(v).map(str::to_string))
             .collect::<GeopResult<_>>()?,
         edges: edges
             .iter()
-            .map(|&e| name_of(part, e))
+            .map(|&e| part.name(e).map(str::to_string))
             .collect::<GeopResult<_>>()?,
         faces: vec![face_name],
         solid: None,

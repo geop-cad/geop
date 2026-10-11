@@ -27,7 +27,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     /// containment searches clip against, say the curve is.
     ///
     /// At a clamped end, pinned sharply, the curve is its end control point.
-    fn evaluate_into(&self, t: S, out: &mut [S]) -> GeopResult<()> {
+    pub(super) fn evaluate_into(&self, t: S, out: &mut [S]) -> GeopResult<()> {
         let p = self.degree;
         let n = self.control_points.len();
         let inverse = |w: S, span: usize| -> GeopResult<S> {
@@ -86,6 +86,12 @@ impl<S: Scalar> NurbCurve<S, 4> {
         self.evaluate_into(t, &mut out)?;
         Ok(Vector3::from_array(out))
     }
+
+    /// Where it starts and where it ends.
+    pub fn ends(&self) -> GeopResult<(Vector3<S>, Vector3<S>)> {
+        let (t0, t1) = self.domain();
+        Ok((self.evaluate(t0)?, self.evaluate(t1)?))
+    }
 }
 
 // ── 2-D curve (pcurve): evaluate returns Vector2 ─────────────────────────────
@@ -96,6 +102,12 @@ impl<S: Scalar> NurbCurve<S, 3> {
         let mut out = [S::ZERO; 2];
         self.evaluate_into(t, &mut out)?;
         Ok(Vector2::from_array(out))
+    }
+
+    /// Where it starts and where it ends.
+    pub fn ends(&self) -> GeopResult<(Vector2<S>, Vector2<S>)> {
+        let (t0, t1) = self.domain();
+        Ok((self.evaluate(t0)?, self.evaluate(t1)?))
     }
 }
 

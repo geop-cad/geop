@@ -15,9 +15,9 @@ use geop_core_math::{
 };
 use geop_core_topology::{CoedgeId, EdgeId, FaceId, SolidId, VertexId, boundary::BoundaryType};
 
-use super::Part;
+use super::NamedModel;
 
-impl<S: Scalar> Part<S> {
+impl<S: Scalar> NamedModel<S> {
     /// Forwards to [`geop_core_topology::Model::mvfs`], naming the new
     /// vertex, face and solid it creates.
     pub fn mvfs(
@@ -27,10 +27,10 @@ impl<S: Scalar> Part<S> {
         face_name: impl Into<String>,
         solid_name: impl Into<String>,
     ) -> GeopResult<(VertexId, FaceId, SolidId)> {
-        let (vertex, face, solid) = self.store.topology_mut().mvfs(point);
-        self.store.insert_name(vertex, vertex_name)?;
-        self.store.insert_name(face, face_name)?;
-        self.store.insert_name(solid, solid_name)?;
+        let (vertex, face, solid) = self.topology.mvfs(point);
+        self.names.insert(vertex, vertex_name)?;
+        self.names.insert(face, face_name)?;
+        self.names.insert(solid, solid_name)?;
         Ok((vertex, face, solid))
     }
 
@@ -47,11 +47,10 @@ impl<S: Scalar> Part<S> {
         edge_name: impl Into<String>,
     ) -> GeopResult<(VertexId, CoedgeId, CoedgeId, EdgeId)> {
         let (vertex, c_out, c_in, edge) =
-            self.store
-                .topology_mut()
+            self.topology
                 .mve(coedge, curve, pcurve, pcurve_reversed, p)?;
-        self.store.insert_name(vertex, vertex_name)?;
-        self.store.insert_name(edge, edge_name)?;
+        self.names.insert(vertex, vertex_name)?;
+        self.names.insert(edge, edge_name)?;
         Ok((vertex, c_out, c_in, edge))
     }
 
@@ -68,16 +67,11 @@ impl<S: Scalar> Part<S> {
         vertex_name: impl Into<String>,
         edge_name: impl Into<String>,
     ) -> GeopResult<(VertexId, CoedgeId, CoedgeId, EdgeId)> {
-        let (new_vertex, c_out, c_in, edge) = self.store.topology_mut().mve_from_vertex(
-            face_id,
-            vertex,
-            curve,
-            pcurve,
-            pcurve_reversed,
-            p,
-        )?;
-        self.store.insert_name(new_vertex, vertex_name)?;
-        self.store.insert_name(edge, edge_name)?;
+        let (new_vertex, c_out, c_in, edge) =
+            self.topology
+                .mve_from_vertex(face_id, vertex, curve, pcurve, pcurve_reversed, p)?;
+        self.names.insert(new_vertex, vertex_name)?;
+        self.names.insert(edge, edge_name)?;
         Ok((new_vertex, c_out, c_in, edge))
     }
 
@@ -94,7 +88,7 @@ impl<S: Scalar> Part<S> {
         edge_name: impl Into<String>,
         face_name: impl Into<String>,
     ) -> GeopResult<(EdgeId, FaceId, CoedgeId, CoedgeId)> {
-        let (edge, face, c_forward, c_backward) = self.store.topology_mut().mef(
+        let (edge, face, c_forward, c_backward) = self.topology.mef(
             coedge1,
             coedge2,
             curve,
@@ -102,8 +96,8 @@ impl<S: Scalar> Part<S> {
             pcurve_reversed,
             new_surface,
         )?;
-        self.store.insert_name(edge, edge_name)?;
-        self.store.insert_name(face, face_name)?;
+        self.names.insert(edge, edge_name)?;
+        self.names.insert(face, face_name)?;
         Ok((edge, face, c_forward, c_backward))
     }
 
@@ -119,7 +113,7 @@ impl<S: Scalar> Part<S> {
         existing_face_id: FaceId,
         edge_name: impl Into<String>,
     ) -> GeopResult<(EdgeId, CoedgeId, CoedgeId)> {
-        let (edge, c_backward, c_forward) = self.store.topology_mut().mer(
+        let (edge, c_backward, c_forward) = self.topology.mer(
             coedge1,
             coedge2,
             curve,
@@ -127,7 +121,7 @@ impl<S: Scalar> Part<S> {
             pcurve_reversed,
             existing_face_id,
         )?;
-        self.store.insert_name(edge, edge_name)?;
+        self.names.insert(edge, edge_name)?;
         Ok((edge, c_backward, c_forward))
     }
 
@@ -141,11 +135,8 @@ impl<S: Scalar> Part<S> {
         pcurve: NurbCurve2D<S>,
         edge_name: impl Into<String>,
     ) -> GeopResult<(EdgeId, CoedgeId, CoedgeId)> {
-        let (edge, c_a, c_b) = self
-            .store
-            .topology_mut()
-            .mekr(coedge1, coedge2, curve, pcurve)?;
-        self.store.insert_name(edge, edge_name)?;
+        let (edge, c_a, c_b) = self.topology.mekr(coedge1, coedge2, curve, pcurve)?;
+        self.names.insert(edge, edge_name)?;
         Ok((edge, c_a, c_b))
     }
 
@@ -157,13 +148,13 @@ impl<S: Scalar> Part<S> {
         point: Vector3<S>,
         vertex_name: impl Into<String>,
     ) -> GeopResult<VertexId> {
-        let vertex = self.store.topology_mut().mvr(face_id, point)?;
-        self.store.insert_name(vertex, vertex_name)?;
+        let vertex = self.topology.mvr(face_id, point)?;
+        self.names.insert(vertex, vertex_name)?;
         Ok(vertex)
     }
 
     /// Forwards to [`geop_core_topology::Model::add_vertex_coedge`]. Creates
-    /// no vertex/edge/face/solid of its own (only a coedge, which `Part`
+    /// no vertex/edge/face/solid of its own (only a coedge, which `NamedModel`
     /// never names), so it takes no name argument.
     pub fn add_vertex_coedge(
         &mut self,
@@ -171,21 +162,19 @@ impl<S: Scalar> Part<S> {
         vertex: VertexId,
         pcurve: NurbCurve2D<S>,
     ) -> GeopResult<CoedgeId> {
-        self.store
-            .topology_mut()
-            .add_vertex_coedge(after, vertex, pcurve)
+        self.topology.add_vertex_coedge(after, vertex, pcurve)
     }
 
     /// Forwards to [`geop_core_topology::Model::kill_vertex_coedge`]. Deletes
     /// no named entity, so it takes no name argument.
     pub fn kill_vertex_coedge(&mut self, coedge: CoedgeId) -> GeopResult<()> {
-        self.store.topology_mut().kill_vertex_coedge(coedge)
+        self.topology.kill_vertex_coedge(coedge)
     }
 
     /// Forwards to [`geop_core_topology::Model::replace_face`]. Creates and
     /// deletes nothing: the face keeps its name with its new surface.
     pub fn replace_face(&mut self, face_id: FaceId, surface: NurbSurface3D<S>) -> GeopResult<()> {
-        self.store.topology_mut().replace_face(face_id, surface)
+        self.topology.replace_face(face_id, surface)
     }
 
     /// Forwards to [`geop_core_topology::Model::replace_pcurve`]. Coedges are
@@ -195,15 +184,15 @@ impl<S: Scalar> Part<S> {
         coedge_id: CoedgeId,
         pcurve: NurbCurve2D<S>,
     ) -> GeopResult<()> {
-        self.store.topology_mut().replace_pcurve(coedge_id, pcurve)
+        self.topology.replace_pcurve(coedge_id, pcurve)
     }
 
     /// Forwards to [`geop_core_topology::Model::kef`], forgetting the names
     /// of the edge and face it deletes (both already given as arguments).
     pub fn kef(&mut self, edge: EdgeId, killed_face: FaceId) -> GeopResult<()> {
-        self.store.topology_mut().kef(edge, killed_face)?;
-        self.store.remove_name(edge);
-        self.store.remove_name(killed_face);
+        self.topology.kef(edge, killed_face)?;
+        self.names.remove(edge);
+        self.names.remove(killed_face);
         Ok(())
     }
 
@@ -211,8 +200,8 @@ impl<S: Scalar> Part<S> {
     /// of the edge it deletes (`ca_id`/`cb_id`'s shared edge).
     pub fn kemr(&mut self, ca_id: CoedgeId, cb_id: CoedgeId) -> GeopResult<()> {
         let edge = self.topology().get_coedge(ca_id)?.edge()?;
-        self.store.topology_mut().kemr(ca_id, cb_id)?;
-        self.store.remove_name(edge);
+        self.topology.kemr(ca_id, cb_id)?;
+        self.names.remove(edge);
         Ok(())
     }
 
@@ -220,10 +209,8 @@ impl<S: Scalar> Part<S> {
     /// the edge it deletes (`coedge_backward`/`coedge_forward`'s shared edge).
     pub fn ker(&mut self, coedge_backward: CoedgeId, coedge_forward: CoedgeId) -> GeopResult<()> {
         let edge = self.topology().get_coedge(coedge_forward)?.edge()?;
-        self.store
-            .topology_mut()
-            .ker(coedge_backward, coedge_forward)?;
-        self.store.remove_name(edge);
+        self.topology.ker(coedge_backward, coedge_forward)?;
+        self.names.remove(edge);
         Ok(())
     }
 
@@ -231,9 +218,9 @@ impl<S: Scalar> Part<S> {
     /// of the edge (`c_out`/`c_in`'s shared edge) and vertex it deletes.
     pub fn kve(&mut self, c_out: CoedgeId, c_in: CoedgeId, vertex: VertexId) -> GeopResult<()> {
         let edge = self.topology().get_coedge(c_out)?.edge()?;
-        self.store.topology_mut().kve(c_out, c_in, vertex)?;
-        self.store.remove_name(edge);
-        self.store.remove_name(vertex);
+        self.topology.kve(c_out, c_in, vertex)?;
+        self.names.remove(edge);
+        self.names.remove(vertex);
         Ok(())
     }
 
@@ -266,18 +253,18 @@ impl<S: Scalar> Part<S> {
                 )));
             }
         };
-        self.store.topology_mut().kvfs(solid)?;
-        self.store.remove_name(vertex_id);
-        self.store.remove_name(face_id);
-        self.store.remove_name(solid);
+        self.topology.kvfs(solid)?;
+        self.names.remove(vertex_id);
+        self.names.remove(face_id);
+        self.names.remove(solid);
         Ok(())
     }
 
     /// Forwards to [`geop_core_topology::Model::kvr`], forgetting the name of
     /// the vertex it deletes (already given as an argument).
     pub fn kvr(&mut self, face_id: FaceId, vertex: VertexId) -> GeopResult<()> {
-        self.store.topology_mut().kvr(face_id, vertex)?;
-        self.store.remove_name(vertex);
+        self.topology.kvr(face_id, vertex)?;
+        self.names.remove(vertex);
         Ok(())
     }
 }

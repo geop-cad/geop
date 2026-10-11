@@ -4,28 +4,29 @@
 //! [`Role`]s that lets it fill. Which of them an entity is decides what it
 //! can be picked for, and what can be built on it.
 //!
-//! A curve is any: an edge of a solid or of a sheet, an edge of a wire —
-//! a 3-D sketch's line, arc or spline — or a curve of a planar sketch.
-//! What runs along a curve takes any of them ([`Role::Curve`]); what
-//! changes the faces at an edge — a fillet, a flange — only an edge of a
-//! face ([`Role::Edge`]).
+//! A curve is any: an edge of a solid, of a sheet or of a wire, or a curve
+//! of a sketch. What runs along a curve takes any of them
+//! ([`Role::Curve`]); what changes the faces at an edge — a fillet, a
+//! flange — only an edge of a face ([`Role::Edge`]). A 3-D sketch is a
+//! path as a whole; what it builds, edges and vertices of a wire, is
+//! picked like any other.
 
 use geop_core_geometry::{
     nurb_curve::NurbCurve3D,
     shape::{Arc, Axis, Circle},
 };
 use geop_core_math::{
-    geop_error::{GeopResult, WithContext},
+    geop_error::{GeopError, GeopResult, WithContext},
     primitives::{CoordinateSystem, DatumKind, Pose},
     scalars::Scalar,
     vector::Vector3,
     with_context,
 };
 use geop_core_sketch::CurveKind;
-use serde::Serialize;
 
-use super::EntityRef;
-use crate::Part;
+use super::{EntityRef, Lookup, ResolveEntity};
+
+pub use geop_core_program::editing::{Role, describe_roles};
 
 /// Everything an entity can be used as. An entity is usually several at
 /// once: a straight edge is a line, a curve and an edge, a circular edge an
@@ -60,32 +61,64 @@ pub struct Aspects<S: Scalar> {
     pub sheet: bool,
     /// A sketch, as a whole: its regions, to sweep.
     pub sketch: bool,
-    /// Curves to run along: a planar or a 3-D sketch's, or an edge of a
-    /// solid or a face.
+    /// Curves to run along: a sketch's, or an edge of a solid or a face.
     pub path: bool,
     /// A feature: what a step did by combining tools with a solid.
     pub feature: bool,
 }
 
 impl<S: Scalar> Aspects<S> {
+    /// Whether it can be used as `role`.
+    pub fn fits(&self, role: Role) -> bool {
+        let aspects = self;
+        match role {
+            Role::Point => aspects.point.is_some(),
+            Role::Line => aspects.line.is_some(),
+            Role::Plane => aspects.plane.is_some(),
+            Role::Edge => aspects.edge,
+            Role::Curve => aspects.curve.is_some(),
+            Role::Circle => aspects.arc.is_some(),
+            Role::Round => aspects.round.is_some(),
+            Role::Face => aspects.face,
+            Role::Solid => aspects.solid,
+            Role::Sheet => aspects.sheet,
+            Role::Sketch => aspects.sketch,
+            Role::Path => aspects.path,
+            Role::Feature => aspects.feature,
+            Role::Frame => {
+                aspects.point.is_some()
+                    || aspects.line.is_some()
+                    || aspects.plane.is_some()
+                    || aspects.round.is_some()
+                    || aspects.frame.is_some()
+            }
+        }
+    }
+
     /// What `entity` is in `part`. Fails if the part has no such entity.
-    pub fn of(entity: &EntityRef, part: &Part<S>) -> GeopResult<Self> {
+    pub fn of(entity: &EntityRef, lookup: &mut (impl Lookup<S> + ?Sized)) -> GeopResult<Self> {
         let ctx = with_context!("resolving {entity}");
-        if let Some((name, inner)) = entity.split_instance() {
-            let instance = part.instance(part.instance_id(&name).with_context(ctx)?)?;
-            return Aspects::of(&inner, &instance.part)
-                .with_context(ctx)?
-                .placed(&instance.pose);
+        // Of a placed part: what it is there, where that part is.
+        if let Some(placed) = lookup.in_placed(entity) {
+            let (mut inside, pose, local) = placed.with_context(ctx)?;
+            return (Aspects::of(&local, &mut *inside).with_context(ctx)?).placed(&pose);
+        }
+        if entity.split_instance().is_some() {
+            return Err(GeopError::new(format!(
+                "{entity} is of no part placed here"
+            )));
         }
         let mut g = Aspects::default();
         match entity {
             EntityRef::Vertex { name } => {
-                let id = part.vertex_id(name).with_context(ctx)?;
-                g.point = Some(part.topology().get_vertex(id).with_context(ctx)?.point);
+                let model = lookup.model();
+                let id = model.vertex_id(name).with_context(ctx)?;
+                g.point = Some(model.topology().get_vertex(id).with_context(ctx)?.point);
             }
             EntityRef::Edge { name } => {
-                let id = part.edge_id(name).with_context(ctx)?;
-                let curve = part
+                let model = lookup.model();
+                let id = model.edge_id(name).with_context(ctx)?;
+                let curve = model
                     .topology()
                     .get_edge(id)
                     .with_context(ctx)?
@@ -95,23 +128,24 @@ impl<S: Scalar> Aspects<S> {
                 g.arc = curve.as_arc().with_context(ctx)?;
                 g.round = g.arc.as_ref().map(|arc| arc.circle.axis());
                 g.curve = Some(curve);
-                g.edge = part.topology().wire_of_edge(id).is_none();
-                // A 3-D sketch's wire is picked as a whole (see `Sketch3d`).
+                g.edge = model.topology().wire_of_edge(id).is_none();
+                // An edge of a wire is no path on its own.
                 g.path = g.edge;
             }
             EntityRef::Face { name } => {
-                let id = part.face_id(name).with_context(ctx)?;
-                let surface = &part.topology().get_face(id).with_context(ctx)?.surface;
-                g.plane = entity.resolve_plane(part).ok();
+                g.plane = entity.resolve_plane(lookup).ok();
+                let model = lookup.model();
+                let id = model.face_id(name).with_context(ctx)?;
+                let surface = &model.topology().get_face(id).with_context(ctx)?.surface;
                 g.round = surface.axis_of_revolution().with_context(ctx)?;
                 g.face = true;
                 g.sheet = matches!(
-                    part.topology().body_of_face(id).with_context(ctx)?,
+                    model.topology().body_of_face(id).with_context(ctx)?,
                     geop_core_topology::Body::Sheet(_)
                 );
             }
             EntityRef::Datum { .. } => {
-                let datum = entity.resolve_datum(part)?;
+                let datum = entity.resolve_datum(lookup)?;
                 let frame = datum.frame;
                 match datum.kind {
                     DatumKind::Point => g.point = Some(*frame.origin()),
@@ -124,35 +158,35 @@ impl<S: Scalar> Aspects<S> {
                 g.frame = Some(frame);
             }
             EntityRef::Solid { name } => {
-                part.solid_id(name).with_context(ctx)?;
+                lookup.model().solid_id(name).with_context(ctx)?;
                 g.solid = true;
             }
             EntityRef::Sketch { name } => {
-                part.sketch_id(name).with_context(ctx)?;
+                lookup.sketch(name).with_context(ctx)?;
                 g.sketch = true;
                 g.path = true;
             }
             EntityRef::Sketch3d { name } => {
-                part.sketch3d_id(name).with_context(ctx)?;
+                lookup.sketch3d(name).with_context(ctx)?;
                 g.path = true;
             }
             EntityRef::Feature { name } => {
-                part.feature(name).with_context(ctx)?;
+                lookup.model().feature(name).with_context(ctx)?;
                 g.feature = true;
             }
             EntityRef::Frame { on, at } => {
-                let frame = Aspects::frame_on(on, at.as_deref(), part).with_context(ctx)?;
+                let frame = Aspects::frame_on(on, at.as_deref(), lookup).with_context(ctx)?;
                 g.point = Some(*frame.origin());
                 g.frame = Some(frame);
             }
             EntityRef::SketchPoint { sketch, point } => {
-                let placed = part.sketch(part.sketch_id(sketch).with_context(ctx)?)?;
+                let placed = lookup.sketch(sketch).with_context(ctx)?;
                 placed.sketch.point(*point).with_context(ctx)?;
                 let geometry = placed.sketch.enclose::<S>().with_context(ctx)?;
                 g.point = Some(placed.plane.uv_to_xyz(&geometry.points[point]));
             }
             EntityRef::SketchCurve { sketch, curve } => {
-                let placed = part.sketch(part.sketch_id(sketch).with_context(ctx)?)?;
+                let placed = lookup.sketch(sketch).with_context(ctx)?;
                 let kind = &placed.sketch.curve(*curve).with_context(ctx)?.kind;
                 let geometry = placed.sketch.enclose::<S>().with_context(ctx)?;
                 let at = |p| placed.plane.uv_to_xyz(&geometry.points[&p]);
@@ -175,6 +209,21 @@ impl<S: Scalar> Aspects<S> {
             }
         }
         Ok(g)
+    }
+
+    /// The axis `entity` gives in `lookup`: a line's — a straight edge, a
+    /// datum axis, a sketch line — or the one something round turns about:
+    /// a circular edge, a cylindrical or conical face, a sketch circle.
+    pub fn axis_of(
+        entity: &EntityRef,
+        lookup: &mut (impl Lookup<S> + ?Sized),
+    ) -> GeopResult<Axis<S>> {
+        let aspects = Self::of(entity, lookup)?;
+        aspects.line.or(aspects.round).ok_or_else(|| {
+            GeopError::new(format!(
+                "{entity} gives no axis: pick a straight edge, an axis, or a circular edge or round face to turn around its axis"
+            ))
+        })
     }
 
     /// What it is once its part is moved by `pose`: a part placed in
@@ -217,140 +266,7 @@ impl<S: Scalar> Aspects<S> {
     pub fn roles(&self) -> Vec<Role> {
         Role::ALL
             .into_iter()
-            .filter(|role| role.fits(self))
+            .filter(|&role| self.fits(role))
             .collect()
     }
-}
-
-/// What a step needs an entity it builds on to be: what a pick looks for,
-/// and what a datum construction needs as an input.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Role {
-    /// A vertex, a datum point, a frame's origin, a sketch point.
-    Point,
-    /// A straight edge, a datum axis, a frame's axis, a sketch line.
-    Line,
-    /// A planar face, a datum plane, a frame's plane.
-    Plane,
-    /// An edge of a face — of a solid or of a sheet.
-    Edge,
-    /// Any curve: an edge, a 3-D sketch's line, arc or spline, a planar
-    /// sketch's curve.
-    Curve,
-    /// A circular edge.
-    Circle,
-    /// Something that turns around an axis: a circular edge, a cylindrical,
-    /// conical or spherical face, a sketch circle.
-    Round,
-    /// Any face, of a solid or standing on its own.
-    Face,
-    /// A solid, as a whole.
-    Solid,
-    /// A face standing on its own, part of no solid.
-    Sheet,
-    /// A sketch, as a whole.
-    Sketch,
-    /// Curves to run along: a planar or a 3-D sketch, as a whole.
-    Path,
-    /// What a step did by combining tools with a solid, picked by a face
-    /// it made.
-    Feature,
-    /// A reference frame — what a mate's joint turns about or slides along:
-    /// where a face, an edge, a point or a datum is picked, a frame is put
-    /// (see [`Aspects::frame_on`]).
-    Frame,
-}
-
-impl Role {
-    pub const ALL: [Role; 14] = [
-        Role::Point,
-        Role::Line,
-        Role::Plane,
-        Role::Edge,
-        Role::Curve,
-        Role::Circle,
-        Role::Round,
-        Role::Face,
-        Role::Solid,
-        Role::Sheet,
-        Role::Sketch,
-        Role::Path,
-        Role::Feature,
-        Role::Frame,
-    ];
-
-    pub fn fits<S: Scalar>(self, aspects: &Aspects<S>) -> bool {
-        match self {
-            Role::Point => aspects.point.is_some(),
-            Role::Line => aspects.line.is_some(),
-            Role::Plane => aspects.plane.is_some(),
-            Role::Edge => aspects.edge,
-            Role::Curve => aspects.curve.is_some(),
-            Role::Circle => aspects.arc.is_some(),
-            Role::Round => aspects.round.is_some(),
-            Role::Face => aspects.face,
-            Role::Solid => aspects.solid,
-            Role::Sheet => aspects.sheet,
-            Role::Sketch => aspects.sketch,
-            Role::Path => aspects.path,
-            Role::Feature => aspects.feature,
-            Role::Frame => {
-                aspects.point.is_some()
-                    || aspects.line.is_some()
-                    || aspects.plane.is_some()
-                    || aspects.round.is_some()
-                    || aspects.frame.is_some()
-            }
-        }
-    }
-
-    /// As a requirement reads: `a point`.
-    pub fn describe(self) -> &'static str {
-        match self {
-            Role::Point => "a point",
-            Role::Line => "a line",
-            Role::Plane => "a plane",
-            Role::Edge => "an edge",
-            Role::Curve => "an edge or a sketch curve",
-            Role::Circle => "a circular edge",
-            Role::Round => "a circular edge or a round face",
-            Role::Face => "a face",
-            Role::Solid => "a solid",
-            Role::Sheet => "a face on its own",
-            Role::Sketch => "a sketch",
-            Role::Path => "a sketch, a 3-D sketch or an edge",
-            Role::Feature => "a feature, by a face it made",
-            Role::Frame => "a face, an edge, a point or a datum",
-        }
-    }
-
-    /// Its name, as a selection lists what an entity can be used as.
-    pub fn name(self) -> &'static str {
-        match self {
-            Role::Point => "point",
-            Role::Line => "line",
-            Role::Plane => "plane",
-            Role::Edge => "edge",
-            Role::Curve => "curve",
-            Role::Circle => "circle",
-            Role::Round => "round",
-            Role::Face => "face",
-            Role::Solid => "solid",
-            Role::Sheet => "sheet",
-            Role::Sketch => "sketch",
-            Role::Path => "path",
-            Role::Feature => "feature",
-            Role::Frame => "frame",
-        }
-    }
-}
-
-/// `roles` in words, as a requirement reads: `a point or a plane`.
-pub fn describe_roles(roles: &[Role], joiner: &str) -> String {
-    roles
-        .iter()
-        .map(|r| r.describe())
-        .collect::<Vec<_>>()
-        .join(joiner)
 }

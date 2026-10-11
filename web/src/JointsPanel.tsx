@@ -3,6 +3,8 @@ import type { JointInfo, MateFreedom } from "./geop";
 interface Props {
   joints: JointInfo[];
   freedom: MateFreedom | null;
+  /** A smallest set of mates that cannot all hold together. */
+  conflicting: string[];
   enabled: boolean;
   /** The joint coordinate `parameter` is set to `value`: the parts move to it. */
   onSet: (parameter: string, value: number) => void;
@@ -18,7 +20,7 @@ function label(name: string): string {
  * The program's joints, each coordinate set by typing it — or, limited, on a
  * slider between its limits — and how free each placed part still is.
  */
-export function JointsPanel({ joints, freedom, enabled, onSet }: Props) {
+export function JointsPanel({ joints, freedom, conflicting, enabled, onSet }: Props) {
   return (
     <div className="parameters">
       {joints.flatMap((joint) =>
@@ -66,10 +68,10 @@ export function JointsPanel({ joints, freedom, enabled, onSet }: Props) {
           );
         }),
       )}
-      {freedom && freedom.conflicting.length > 0 && (
+      {conflicting.length > 0 && (
         <div className="parameter-row failed">
           <span className="parameter-value">
-            cannot all hold: {freedom.conflicting.join(", ")}
+            cannot all hold: {conflicting.join(", ")}
           </span>
         </div>
       )}

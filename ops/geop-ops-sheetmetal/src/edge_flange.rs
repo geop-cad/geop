@@ -7,16 +7,24 @@ use geop_core_math::{
     vector::Vector2,
     with_context,
 };
+use geop_core_program::{
+    editing::{Choice, Event, Form, Number, Unit, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_ops::{
-    Context, Library, Namer, Part,
-    operation::{EntityRef, Operation, Role},
+    Design, NamedModel, Namer, ParamValue,
+    model::model_or_empty,
+    operation::{Build, BuildReader, EntityRef, Input, ModelStep, Role, Scope, Seen},
     parameters::{Formula, expressions},
-    ui::{Choice, Form, Number, Unit},
+    ui::formula_number,
 };
 use geop_ops_extrude_revolve::common::{line2, start_point};
 use serde::{Deserialize, Serialize};
 
-use crate::sheet::{Bend, BendFrame, Flat, FlatEdge, Sheet, SheetMetalRules, straight};
+use crate::{
+    body::{self, Made, Making, SheetStep, sheets_of, with_edge},
+    sheet::{Bend, BendFrame, Flat, FlatEdge, Sheet, SheetMetalRules, straight},
+};
 
 /// What a flange's length is measured from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,16 +123,80 @@ pub struct EdgeFlangeArgs {
     pub corner: Corner,
 }
 
-impl Operation for EdgeFlange {
-    type Args = EdgeFlangeArgs;
-    type Session = ();
+impl SheetStep for EdgeFlange {
+    fn plan(reader: &mut BuildReader, step: &str, args: &EdgeFlangeArgs) -> GeopResult<Made> {
+        let ctx = with_context!("edge_flange({step}, {args:?})");
+        let namer = Namer::new("edge_flange", step)?;
+        let sheets = sheets_of(reader);
+        let model = model_or_empty(reader);
+        let (solid, mut sheet, (f, k, toward_b)) =
+            with_edge(&model, &sheets, &args.edge, "a flange").with_context(ctx)?;
+        let mut scope = Scope {
+            model: &model,
+            reader,
+        };
+        let angle = args.angle.evaluate(&mut scope).with_context(ctx)?;
+        let length = args.length.evaluate(&mut scope).with_context(ctx)?;
+        let shape = args.shape(&sheet.rules, angle, length).with_context(ctx)?;
+        add_flange(&mut sheet, &namer, f, k, toward_b, &shape).with_context(ctx)?;
+        Ok(Made {
+            consumes: Some(solid),
+            solid: namer.root(),
+            making: Making::Bent(sheet),
+        })
+    }
+}
 
-    fn formulas<'a>(&self, args: &'a mut EdgeFlangeArgs) -> Vec<&'a mut String> {
+impl ModelStep for EdgeFlange {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        _: &EdgeFlangeArgs,
+    ) -> GeopResult<()> {
+        body::build(model, reader, step)
+    }
+}
+
+/// The edge field of a flange or hem, holding `edge`.
+pub(crate) fn edge_field(form: &mut Form<Design>, edge: &str) {
+    let edge = (!edge.is_empty())
+        .then(|| EntityRef::Edge {
+            name: edge.to_string(),
+        })
+        .into_iter()
+        .collect();
+    form.dialog
+        .reference("edge", "edge", edge, &[Role::Line], None, false);
+}
+
+/// The edge picked, as a flange or hem holds it.
+pub(crate) fn picked_edge(picked: &[EntityRef]) -> String {
+    match picked {
+        [EntityRef::Edge { name }] => name.clone(),
+        _ => String::new(),
+    }
+}
+
+impl Operation for EdgeFlange {
+    const INFO: OperationInfo = OperationInfo::new(
+        "edge_flange",
+        "Edge flange",
+        "Bend a flange up from a straight edge of a sheet-metal body.",
+        OperationGroup::SheetMetal,
+        OperationTier::Small,
+    );
+    type Args = EdgeFlangeArgs;
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
+
+    fn formulas(args: &mut EdgeFlangeArgs) -> Vec<&mut String> {
         expressions([&mut args.angle, &mut args.length])
     }
 
     /// No edge yet: a right angle, half a unit long, material inside.
-    fn new_args<S: Scalar>(&self, _: &Part<S>) -> EdgeFlangeArgs {
+    fn new_args(_: &Context<Input, ParamValue>) -> EdgeFlangeArgs {
         EdgeFlangeArgs {
             edge: String::new(),
             angle: Formula::Plain(90.0),
@@ -138,49 +210,27 @@ impl Operation for EdgeFlange {
         }
     }
 
+    fn run(step: &str, part: &mut Build, args: &EdgeFlangeArgs) -> GeopResult<()> {
+        body::run::<Self>(step, part, args)
+    }
+
     /// The edge, picked; angle and length; what the length is measured from
     /// and where the bend sits; the radius, if its own; and how far in
     /// from the edge's ends.
-    fn form<'a, S: Scalar>(
-        &self,
-        context: Context<'a, S>,
+    fn presentation(
+        context: &Context<Input, ParamValue>,
         args: &EdgeFlangeArgs,
         _: &(),
-        _: &[String],
-    ) -> Form<'a, S, EdgeFlangeArgs> {
-        let mut f = Form::<S, EdgeFlangeArgs>::new();
-        let edge = (!args.edge.is_empty())
-            .then(|| EntityRef::Edge {
-                name: args.edge.clone(),
-            })
-            .into_iter()
-            .collect();
-        f.reference(
-            "edge",
-            "edge",
-            edge,
-            &[Role::Line],
-            None,
-            false,
-            |e, picked| {
-                e.args.edge = match picked.as_slice() {
-                    [EntityRef::Edge { name }] => name.clone(),
-                    _ => String::new(),
-                }
-            },
-        );
-        let inputs = context.before.state();
-        f.formula(
-            "angle",
-            Number::formula("angle", &args.angle, inputs, Unit::Angle).range(0.0, 180.0),
-            |args, a| args.angle = a,
-        );
-        f.formula(
-            "length",
-            Number::formula("length", &args.length, inputs, Unit::Length).range(0.0, 5.0),
-            |args, l| args.length = l,
-        );
-        f.select(
+    ) -> Form<Design> {
+        let mut seen = Seen::new(context.before);
+        let mut form = Form::default();
+        edge_field(&mut form, &args.edge);
+        let dialog = &mut form.dialog;
+        let angle = formula_number("angle", &args.angle, &mut seen, Unit::Angle);
+        dialog.number("angle", angle.range(0.0, 180.0));
+        let length = formula_number("length", &args.length, &mut seen, Unit::Length);
+        dialog.number("length", length.range(0.0, 5.0));
+        dialog.select(
             "reference",
             "measured from",
             match args.reference {
@@ -194,15 +244,8 @@ impl Operation for EdgeFlange {
                 Choice::new("tangent", "Bend tangent"),
             ],
             false,
-            |args, choice| {
-                args.reference = match choice {
-                    "inner_sharp" => LengthReference::InnerSharp,
-                    "tangent" => LengthReference::Tangent,
-                    _ => LengthReference::OuterSharp,
-                }
-            },
         );
-        f.select(
+        dialog.select(
             "position",
             "position",
             match args.position {
@@ -216,38 +259,16 @@ impl Operation for EdgeFlange {
                 Choice::new("bend_outside", "Bend outside"),
             ],
             false,
-            |args, choice| {
-                args.position = match choice {
-                    "material_outside" => FlangePosition::MaterialOutside,
-                    "bend_outside" => FlangePosition::BendOutside,
-                    _ => FlangePosition::MaterialInside,
-                }
-            },
         );
-        f.checkbox(
-            "own_radius",
-            "own bend radius",
-            args.radius.is_some(),
-            |args, on| args.radius = on.then_some(args.radius.unwrap_or(0.1)),
-        );
+        dialog.checkbox("own_radius", "own bend radius", args.radius.is_some());
         if let Some(radius) = args.radius {
-            f.number(
+            dialog.number(
                 "radius",
                 Number::new("bend radius", radius, Unit::Length).range(0.0, 1.0),
-                |args, r| args.radius = Some(r),
             );
         }
-        f.number(
-            "offset_start",
-            Number::new("offset at start", args.offset_start, Unit::Length).range(0.0, 5.0),
-            |args, o| args.offset_start = o,
-        );
-        f.number(
-            "offset_end",
-            Number::new("offset at end", args.offset_end, Unit::Length).range(0.0, 5.0),
-            |args, o| args.offset_end = o,
-        );
-        f.select(
+        offset_fields(&mut form, args.offset_start, args.offset_end);
+        form.dialog.select(
             "corner",
             "corner",
             match args.corner {
@@ -256,36 +277,74 @@ impl Operation for EdgeFlange {
             },
             vec![Choice::new("open", "Open"), Choice::new("closed", "Closed")],
             false,
-            |args, choice| {
-                args.corner = match choice {
+        );
+        form
+    }
+
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
+        args: &EdgeFlangeArgs,
+        _: &(),
+        event: Event<Design>,
+    ) -> (EdgeFlangeArgs, ()) {
+        let mut args = args.clone();
+        let Event::Field { key, value } = event else {
+            return (args, ());
+        };
+        match (key.as_str(), value) {
+            ("edge", Value::Entities(picked)) => args.edge = picked_edge(&picked),
+            ("angle", value) => {
+                if let Some(angle) = Formula::from_value(&value) {
+                    args.angle = angle;
+                }
+            }
+            ("length", value) => {
+                if let Some(length) = Formula::from_value(&value) {
+                    args.length = length;
+                }
+            }
+            ("reference", Value::Choice(choice)) => {
+                args.reference = match choice.as_str() {
+                    "inner_sharp" => LengthReference::InnerSharp,
+                    "tangent" => LengthReference::Tangent,
+                    _ => LengthReference::OuterSharp,
+                }
+            }
+            ("position", Value::Choice(choice)) => {
+                args.position = match choice.as_str() {
+                    "material_outside" => FlangePosition::MaterialOutside,
+                    "bend_outside" => FlangePosition::BendOutside,
+                    _ => FlangePosition::MaterialInside,
+                }
+            }
+            ("own_radius", Value::Bool(on)) => {
+                args.radius = on.then_some(args.radius.unwrap_or(0.1))
+            }
+            ("radius", Value::Number(r)) => args.radius = Some(r),
+            ("offset_start", Value::Number(o)) => args.offset_start = o,
+            ("offset_end", Value::Number(o)) => args.offset_end = o,
+            ("corner", Value::Choice(choice)) => {
+                args.corner = match choice.as_str() {
                     "closed" => Corner::Closed,
                     _ => Corner::Open,
                 }
-            },
-        );
-        f
+            }
+            _ => {}
+        }
+        (args, ())
     }
+}
 
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
-        args: &EdgeFlangeArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("edge_flange({operation_id}, {args:?})");
-        let namer = Namer::new("edge_flange", operation_id)?;
-        let (solid, mut sheet, (f, k, toward_b)) =
-            Sheet::with_edge(&part, &args.edge, "a flange").with_context(ctx)?;
-        let angle = args.angle.evaluate(&mut part).with_context(ctx)?;
-        let length = args.length.evaluate(&mut part).with_context(ctx)?;
-        let shape = args.shape(&sheet.rules, angle, length).with_context(ctx)?;
-        add_flange(&mut sheet, &namer, f, k, toward_b, &shape).with_context(ctx)?;
-        sheet
-            .replace(&mut part, &solid, &namer.root())
-            .with_context(ctx)?;
-        Ok(part)
-    }
+/// The fields of how far in from the edge's ends a flange or hem runs.
+pub(crate) fn offset_fields(form: &mut Form<Design>, offset_start: f64, offset_end: f64) {
+    form.dialog.number(
+        "offset_start",
+        Number::new("offset at start", offset_start, Unit::Length).range(0.0, 5.0),
+    );
+    form.dialog.number(
+        "offset_end",
+        Number::new("offset at end", offset_end, Unit::Length).range(0.0, 5.0),
+    );
 }
 
 /// What a flange is, worked out from the arguments of the operation that

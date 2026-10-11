@@ -1,9 +1,14 @@
 use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar, vector::Vector3};
 use geop_core_topology::FaceId;
-use geop_ops::Part;
+use std::rc::Rc;
+
+use geop_ops::placed::Component;
 use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder};
 
-use crate::{LineKind, ProjectedView, ViewKind, ViewOptions, project_view};
+use crate::{
+    LineKind, ProjectedView, ViewKind, ViewOptions, project_view,
+    testing::{Part, built, built_with, component},
+};
 
 fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
     Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
@@ -130,12 +135,10 @@ fn cylinder_side_view_has_silhouettes() {
 /// a thin circle at it; labelled once.
 #[test]
 fn a_threaded_shaft_draws_its_thread() {
-    use crate::{
-        DrawingArgs, compose,
-        sheet::{Layer, Shape, Stroke},
-    };
+    use crate::{DrawingArgs, compose};
     use geop_core_geometry::{nurb_curve::Handedness, shape::Axis};
-    use geop_ops_hole::{CosmeticThread, PartThreads};
+    use geop_ops::output::sheet::{Layer, Shape, Stroke};
+    use geop_ops_hole::{CosmeticThread, Threads};
 
     let mut part = Part::<S>::new();
     revolved_cylinder(
@@ -147,28 +150,31 @@ fn a_threaded_shaft_draws_its_thread() {
     )
     .unwrap();
     let minor = 4.917;
-    part.add_thread(
-        "thread",
-        CosmeticThread {
-            designation: "M6x1".into(),
-            face: "the shaft's side".into(),
-            axis: Axis::try_new(v(0.0, 0.0, 10.0), v(0.0, 0.0, -1.0)).unwrap(),
-            radius: S::from_f64(3.0),
-            major_diameter: 6.0,
-            minor_diameter: minor,
-            pitch: 1.0,
-            length: 8.0,
-            internal: false,
-            handedness: Handedness::Right,
-        },
-    )
-    .unwrap();
+    let mut threads = Threads::default();
+    threads
+        .add(
+            "thread",
+            CosmeticThread {
+                designation: "M6x1".into(),
+                face: "the shaft's side".into(),
+                axis: Axis::try_new(v(0.0, 0.0, 10.0), v(0.0, 0.0, -1.0)).unwrap(),
+                radius: S::from_f64(3.0),
+                major_diameter: 6.0,
+                minor_diameter: minor,
+                pitch: 1.0,
+                length: 8.0,
+                internal: false,
+                handedness: Handedness::Right,
+            },
+        )
+        .unwrap();
     let args = DrawingArgs {
         views: vec![ViewKind::Front, ViewKind::Top],
         scale: Some(1.0),
         ..Default::default()
     };
-    let sheet = compose(&part, &args, "", &[]).unwrap();
+    let build = built_with(&part, Some(&threads), &[]);
+    let sheet = compose(build.current(), &args, "", &[]).unwrap();
     let thread = |s: &&Stroke| s.layer == Layer::Thread;
     let lines: Vec<(f64, f64)> = sheet
         .strokes
@@ -204,7 +210,8 @@ fn a_threaded_shaft_draws_its_thread() {
 /// paper is refused, saying which paper.
 #[test]
 fn a_bill_of_materials_stands_on_the_title_block() {
-    use crate::{DrawingArgs, PartsListLine, SheetSize, compose, sheet::Shape};
+    use crate::{DrawingArgs, PartsListLine, SheetSize, compose};
+    use geop_ops::output::sheet::{Layer, Shape};
     let mut part = Part::<S>::new();
     cube_solid(&mut part, "block", v(0.0, 0.0, 0.0), v(100.0, 100.0, 100.0)).unwrap();
     let line = |k: usize| PartsListLine {
@@ -221,7 +228,8 @@ fn a_bill_of_materials_stands_on_the_title_block() {
         sheet: SheetSize::A4,
         ..Default::default()
     };
-    let sheet = compose(&part, &args, "", &lines).unwrap();
+    let build = built(&part);
+    let sheet = compose(build.current(), &args, "", &lines).unwrap();
     for text in ["ITEM", "part 5", "ISO 4762 M4x12"] {
         assert!(sheet.labels.iter().any(|l| l.text == text), "{text}");
     }
@@ -229,7 +237,7 @@ fn a_bill_of_materials_stands_on_the_title_block() {
     let lowest = sheet
         .strokes
         .iter()
-        .filter(|s| s.layer == crate::sheet::Layer::Visible)
+        .filter(|s| s.layer == Layer::Visible)
         .flat_map(|s| match &s.shape {
             Shape::Line(a, b) => vec![a[1], b[1]],
             Shape::Polyline(points) => points.iter().map(|p| p[1]).collect(),
@@ -239,7 +247,9 @@ fn a_bill_of_materials_stands_on_the_title_block() {
     assert!(lowest > 86.0, "a view comes down to {lowest}");
 
     let many: Vec<PartsListLine> = (1..=40).map(line).collect();
-    let error = compose(&part, &args, "", &many).unwrap_err().to_string();
+    let error = (compose(build.current(), &args, "", &many))
+        .unwrap_err()
+        .to_string();
     assert!(
         error.contains("40 lines") && error.contains("A4"),
         "{error}"
@@ -247,27 +257,31 @@ fn a_bill_of_materials_stands_on_the_title_block() {
 }
 
 /// A block `size` on a side, as a part to place.
-fn block(size: f64) -> geop_ops::Instance<S> {
+fn block(size: f64) -> Rc<Component> {
     let mut part = Part::<S>::new();
     cube_solid(&mut part, "block", v(0.0, 0.0, 0.0), v(size, size, size)).unwrap();
-    geop_ops::Instance::of("block.geop".into(), part, Default::default())
+    component("block.geop", &part)
 }
 
-/// Places `block` in `part` as `name`, at `at`, turned `degrees` about
+/// What is placed in a part: each placed part's name, its part, and where.
+type Placed = Vec<(String, Rc<Component>, geop_core_math::primitives::Pose<S>)>;
+
+/// Places `block` in `placed` as `name`, at `at`, turned `degrees` about
 /// `x`, `y` and `z`.
 fn place(
-    part: &mut Part<S>,
-    block: &geop_ops::Instance<S>,
+    placed: &mut Placed,
+    block: &Rc<Component>,
     name: &str,
     at: Vector3<S>,
     degrees: [f64; 3],
 ) {
     let pose = geop_core_math::primitives::Pose::from_euler(at, degrees.map(S::from_f64)).unwrap();
-    let instance = geop_ops::Instance {
-        pose,
-        ..block.clone()
-    };
-    part.add_instance(instance, name).unwrap();
+    placed.push((name.to_string(), block.clone(), pose));
+}
+
+/// The part of nothing but `placed`.
+fn assembly(placed: &Placed) -> geop_ops::operation::Build {
+    built_with(&Part::new(), None, placed)
 }
 
 /// A hundred blocks of one part in a row, placed alike but for where: one
@@ -276,7 +290,7 @@ fn place(
 #[test]
 fn repeated_parts_share_their_view() {
     use crate::scene::Scene;
-    let mut part = Part::<S>::new();
+    let mut part = Placed::new();
     let unit = block(1.0);
     for k in 0..100 {
         place(
@@ -287,7 +301,8 @@ fn repeated_parts_share_their_view() {
             [0.0; 3],
         );
     }
-    let scene = Scene::of(&part).unwrap();
+    let build = assembly(&part);
+    let scene = Scene::of(build.current()).unwrap();
     assert_eq!(scene.bodies.len(), 100);
     assert_eq!(scene.groups().len(), 1, "one view of the block for all");
     let front = scene
@@ -304,12 +319,13 @@ fn repeated_parts_share_their_view() {
         v(0.0, 5.0, 0.0),
         [0.0, 0.0, 90.0],
     );
-    assert_eq!(Scene::of(&part).unwrap().groups().len(), 2);
+    let build = assembly(&part);
+    assert_eq!(Scene::of(build.current()).unwrap().groups().len(), 2);
 
     // A column of blocks seen from its end: the one in front hides the
     // others whole, and each of their lines lies on one of its own. Only
     // it is drawn.
-    let mut column = Part::<S>::new();
+    let mut column = Placed::new();
     for k in 0..10 {
         place(
             &mut column,
@@ -319,7 +335,8 @@ fn repeated_parts_share_their_view() {
             [0.0; 3],
         );
     }
-    let scene = Scene::of(&column).unwrap();
+    let build = assembly(&column);
+    let scene = Scene::of(build.current()).unwrap();
     let front = scene
         .project(&ViewKind::Front.frame().unwrap(), &ViewOptions::default())
         .unwrap();
@@ -339,11 +356,12 @@ fn repeated_parts_share_their_view() {
 #[test]
 fn a_part_in_front_hides_one_behind() {
     use crate::scene::Scene;
-    let mut part = Part::<S>::new();
+    let mut part = Placed::new();
     let big = block(2.0);
     place(&mut part, &big, "front", v(0.0, 0.0, 0.0), [0.0; 3]);
     place(&mut part, &big, "back", v(1.0, 5.0, 1.0), [0.0; 3]);
-    let scene = Scene::of(&part).unwrap();
+    let build = assembly(&part);
+    let scene = Scene::of(build.current()).unwrap();
     let front = scene
         .project(&ViewKind::Front.frame().unwrap(), &ViewOptions::default())
         .unwrap();
@@ -389,11 +407,9 @@ fn a_part_in_front_hides_one_behind() {
 /// the caller numbered; a line of no part drawn gets none.
 #[test]
 fn an_assembly_balloons_each_line_once() {
-    use crate::{
-        DrawingArgs, PartsListLine, compose,
-        sheet::{Layer, Shape},
-    };
-    let mut part = Part::<S>::new();
+    use crate::{DrawingArgs, PartsListLine, compose};
+    use geop_ops::output::sheet::{Layer, Shape};
+    let mut part = Placed::new();
     let (big, small) = (block(4.0), block(1.0));
     place(&mut part, &big, "base", v(0.0, 0.0, 0.0), [0.0; 3]);
     let mut placements = Vec::new();
@@ -428,7 +444,8 @@ fn an_assembly_balloons_each_line_once() {
         bom: true,
         ..Default::default()
     };
-    let sheet = compose(&part, &args, "", &lines).unwrap();
+    let build = assembly(&part);
+    let sheet = compose(build.current(), &args, "", &lines).unwrap();
     let balloons: Vec<[f64; 2]> = sheet
         .strokes
         .iter()

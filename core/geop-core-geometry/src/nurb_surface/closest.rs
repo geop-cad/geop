@@ -3,7 +3,7 @@
 
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
 
-use super::{NurbSurface, clamp};
+use super::NurbSurface;
 
 /// Samples per polynomial piece and direction the search starts from.
 /// Bounds effort only, as for curves.
@@ -134,8 +134,8 @@ impl<S: Scalar> NurbSurface<S, 4> {
             let mut scale = S::ONE;
             let mut moved = false;
             for _ in 0..HALVINGS {
-                let nu = clamp(u.add(du.mul(scale)).sharpen(), u_lo, u_hi);
-                let nv = clamp(v.add(dv.mul(scale)).sharpen(), v_lo, v_hi);
+                let nu = u.add(du.mul(scale)).sharpen().clamped(u_lo, u_hi);
+                let nv = v.add(dv.mul(scale)).sharpen().clamped(v_lo, v_hi);
                 let d = distance(nu, nv)?;
                 if d < current {
                     (u, v, current, moved) = (nu, nv, d, true);

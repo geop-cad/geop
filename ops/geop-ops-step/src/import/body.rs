@@ -68,6 +68,7 @@ use super::{
 /// A body read from a file, ready to build: its description, and the name
 /// of every entity in it — the arguments a step's names are made of, as
 /// `["f3", "q1"]` for the second sector of the file's fourth face.
+#[derive(Clone, Debug, PartialEq)]
 pub struct ImportedBody<S: Scalar> {
     /// What the file calls it.
     pub label: String,
@@ -2189,7 +2190,10 @@ fn poles_of<S: Scalar>(surface: &NurbSurface3D<S>, uncertainty: f64) -> GeopResu
     let (v_lo, v_hi) = surface.domain_v();
     let (nu, nv) = (surface.num_u, surface.num_v);
     let mut poles = Vec::new();
-    let rows: [(bool, S, Vec<(usize, usize)>); 4] = [
+    // Each boundary row: whether it is one of `u`, where, and its control
+    // points by index.
+    type Row<S> = (bool, S, Vec<(usize, usize)>);
+    let rows: [Row<S>; 4] = [
         (true, u_lo, (0..nv).map(|j| (0, j)).collect()),
         (true, u_hi, (0..nv).map(|j| (nu - 1, j)).collect()),
         (false, v_lo, (0..nu).map(|i| (i, 0)).collect()),

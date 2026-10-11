@@ -1,61 +1,80 @@
 //! Sketches drawn as an editor draws them: every gesture through a
 //! [`StepEditor`], as rays and keys.
 
+use std::collections::BTreeMap;
+
 use geop_core_math::{
     primitives::{DatumComponent, FrameAxis, Ray},
     scalars::ScalInF64 as S,
 };
-use geop_ops::{
-    Context, EntityRef, NoFiles, ORIGIN, Operations, Part,
-    part::{ParamValue, State},
-    ui::{Button, Control, PartView, Presentation, Reach, StepEditEvent, StepEditor},
+use geop_core_program::{
+    operation_registry::OperationRegistry,
+    program::{Program, ProgramStep},
+    program_runner::ProgramRunner,
+    step_editor::{Editing, StepEditor},
 };
-use serde::{Deserialize, Serialize};
+use geop_ops::{
+    ParamValue,
+    operation::{EntityRef, Input, ORIGIN, Seen},
+    ui::{Button, Control, PartScene, PartView, Presentation, Reach, StepEditEvent},
+};
 
 use super::*;
-use crate::AddSketch;
+use crate::{AddSketch, add_sketch::SketchEditing};
 
-/// The one operation, as a set an editor edits.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Operations)]
-#[serde(tag = "operation", content = "args", rename_all = "snake_case")]
-enum Ops {
-    #[operation(group = Sketch, tier = Big)]
-    AddSketch(AddSketchArgs),
-}
-
-/// A sketch step being edited on a part, as an editor drives it.
+/// A sketch step, `sketch`, being edited in a program of it alone, as an
+/// editor drives it: every event handled, then the program run again.
 struct Editor {
-    part: Part<S>,
-    view: PartView<S>,
-    editor: StepEditor<Ops, S>,
+    runner: ProgramRunner<Input, ParamValue>,
+    program: Program,
+    inputs: BTreeMap<String, Input>,
+    editor: StepEditor<S>,
     args: AddSketchArgs,
     presentation: Presentation<S>,
 }
 
-/// Editing the step `sketch` on `part`, which places no other parts.
-fn context(part: &Part<S>) -> Context<'_, S> {
-    Context::new(part, "sketch", &NoFiles)
+/// The sketch step's arguments, as `program` has them, and what `editor`
+/// shows of it, picking in the part before it.
+fn shown(
+    runner: &ProgramRunner<Input, ParamValue>,
+    program: &Program,
+    editor: &StepEditor<S>,
+) -> (AddSketchArgs, Presentation<S>) {
+    let args = serde_json::from_value(program.steps[0].args.clone()).unwrap();
+    let before = runner.part.view_before("sketch").unwrap();
+    let view = PartView::of(&Seen::new(before)).unwrap();
+    let scene = PartScene {
+        view: &view,
+        seen: Seen::new(before),
+    };
+    let presentation = editor.presentation(runner, program, &scene).unwrap();
+    (args, presentation)
 }
 
 impl Editor {
-    /// A new sketch step on `part` — or, not `new`, one on the origin's
-    /// `xy` plane being edited again.
-    fn on(part: Part<S>, new: bool) -> Self {
-        let view = PartView::of(&part).unwrap();
-        let mut step = Ops::new_step("add_sketch", &part).unwrap();
+    /// A new sketch step, with the program's parameters `inputs` — or, not
+    /// `new`, one on the origin's `xy` plane being edited again.
+    fn on(values: BTreeMap<String, ParamValue>, new: bool) -> Self {
+        let inputs: BTreeMap<String, Input> = (values.into_iter())
+            .map(|(name, value)| (name, Input::Value(value)))
+            .collect();
+        let registry = OperationRegistry::default().with(AddSketch).unwrap();
+        let mut runner = ProgramRunner::new(registry);
+        let mut step = runner.new_step("add_sketch", "sketch", None).unwrap();
         if !new {
-            let Ops::AddSketch(args) = &mut step;
-            args.plane = Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            ));
+            let plane = EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z));
+            let mut args: AddSketchArgs = serde_json::from_value(step.args).unwrap();
+            args.plane = Some(plane);
+            step = ProgramStep::new::<AddSketch>("sketch", &args).unwrap();
         }
-        let editor = StepEditor::new(step, context(&part), new);
-        let presentation = editor.presentation(context(&part), &part, &view);
-        let Ops::AddSketch(args) = editor.step().clone();
+        let program = Program::new(vec![step]);
+        runner.run(&program, &inputs, &BTreeMap::new());
+        let editor = StepEditor::new(&runner, &program, "sketch", new).unwrap();
+        let (args, presentation) = shown(&runner, &program, &editor);
         Editor {
-            part,
-            view,
+            runner,
+            program,
+            inputs,
             editor,
             args,
             presentation,
@@ -63,20 +82,32 @@ impl Editor {
     }
 
     fn new(new: bool) -> Self {
-        Self::on(Part::new(), new)
+        Self::on(BTreeMap::new(), new)
     }
 
     fn send(&mut self, event: StepEditEvent<S>) {
-        self.editor.handle(context(&self.part), &self.view, &event);
-        let Ops::AddSketch(args) = self.editor.step().clone();
-        self.args = args;
-        self.presentation = self
-            .editor
-            .presentation(context(&self.part), &self.part, &self.view);
+        let before = self.runner.part.view_before("sketch").unwrap();
+        let view = PartView::of(&Seen::new(before)).unwrap();
+        let scene = PartScene {
+            view: &view,
+            seen: Seen::new(before),
+        };
+        let editing = Editing {
+            runner: &self.runner,
+            program: &mut self.program,
+            scene: &scene,
+        };
+        self.editor.handle(editing, &event).unwrap();
+        (self.runner).run(&self.program, &self.inputs, &BTreeMap::new());
+        (self.args, self.presentation) = shown(&self.runner, &self.program, &self.editor);
+    }
+
+    fn editing(&self) -> &SketchEditing {
+        self.editor.editing().downcast_ref().unwrap()
     }
 
     fn session(&self) -> &SketchSession {
-        self.editor.session().downcast_ref().unwrap()
+        &self.editing().session
     }
 
     fn press(&mut self, key: &str) {
@@ -100,7 +131,7 @@ impl Editor {
 
     /// The keys of the visuals selected.
     fn selection(&self) -> &[String] {
-        self.editor.selection()
+        &self.editing().selection
     }
 
     fn click_with(&mut self, x: f64, y: f64, double: bool, shift: bool) {
@@ -702,11 +733,11 @@ fn the_origin_and_axes_are_selectable() {
 /// formula of the part's parameters, which it then follows.
 #[test]
 fn dimensions_take_values_and_formulas() {
-    let part = Part::new().with_state(State::from([(
+    let inputs = BTreeMap::from([(
         "width".to_string(),
         ParamValue::Number(Design::from_f64(4.0)),
-    )]));
-    let mut e = Editor::on(part, false);
+    )]);
+    let mut e = Editor::on(inputs, false);
     e.lines(&[[0.0, 0.5], [1.0, 0.8]]);
     e.click(0.5, 0.65);
     e.act("constrain", "distance");

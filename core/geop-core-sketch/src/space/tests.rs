@@ -253,3 +253,27 @@ fn curves_chain_up() {
     s.add_line(p[1], q);
     assert!(s.chains().unwrap_err().root_message().contains("branch"));
 }
+
+/// A line from a fixed point, given a direction it does not run along as
+/// drawn, is found not to hold and is solved onto it: its free end moves,
+/// its fixed one stays.
+#[test]
+fn a_line_turned_to_a_new_direction_is_solved_onto_it() {
+    let mut s = Sketch3d::<T>::new();
+    let p = s.add_fixed_point(v(1.0, 1.0, 1.0));
+    let q = s.add_point(v(1.2, 1.1, 2.0));
+    let line = s.add_line(p, q);
+    s.constrain(Constraint3d::ParallelTo {
+        line,
+        direction: v(0.0, 0.0, 1.0),
+    });
+    assert!(!s.check().unwrap().converged);
+    let report = s.solve().unwrap();
+    assert!(report.converged, "{report:?}");
+    assert!(close(&s.points[&p].at, [1.0, 1.0, 1.0]));
+    let at = s.points[&q].at;
+    assert!(
+        (at[0].to_f64() - 1.0).abs() < 1e-9 && (at[1].to_f64() - 1.0).abs() < 1e-9,
+        "{at:?}"
+    );
+}

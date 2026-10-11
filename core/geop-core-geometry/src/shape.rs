@@ -35,7 +35,7 @@ fn could_be_parallel<S: Scalar>(a: &Vector3<S>, b: &Vector3<S>) -> bool {
 }
 
 /// A straight line: through `point`, along the unit vector `direction`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Axis<S: Scalar> {
     pub point: Vector3<S>,
     pub direction: Vector3<S>,

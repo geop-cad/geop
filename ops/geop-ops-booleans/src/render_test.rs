@@ -17,10 +17,10 @@ mod tests {
     use crate::{
         boolean::{BooleanOp, boolean},
         remesh::remesh::RemeshParams,
-        scenes::map_scenes_parallel,
+        scenes::{map_scenes_parallel, validation},
     };
     use geop_core_math::scalars::ScalInF64;
-    use geop_core_topology::validation::{ValidationParameters, validate_fast};
+    use geop_core_topology::validation::validate_fast;
     use geop_ops::Namer;
     use geop_ops_rasterize::debug::rasterize_topology;
 
@@ -32,11 +32,7 @@ mod tests {
         // `remesh::render_test` matches them: a validation search with less
         // budget than the operation it is checking can fail to reach a
         // conclusion the operation already reached.
-        let validation_params = ValidationParameters {
-            max_nodes: params.max_nodes,
-            min_subdivision_size: params.curve_curve_min_subdivision_size,
-            ..ValidationParameters::default()
-        };
+        let validation_params = validation::<ScalInF64>();
 
         // One independent remesh + boolean per scene, so they run in
         // parallel; see `scenes::map_scenes_parallel`. Each thread writes its
@@ -48,7 +44,7 @@ mod tests {
 
             let namer = Namer::new("boolean", "ab").unwrap();
             match boolean(
-                &mut scene.part,
+                &mut scene.model,
                 &namer,
                 scene.solid_a,
                 scene.solid_b,
@@ -60,7 +56,7 @@ mod tests {
                 // legitimately nothing.
                 Ok(None) => empty = true,
                 Ok(Some(_)) => {
-                    if let Err(errors) = validate_fast(&validation_params, scene.part.topology()) {
+                    if let Err(errors) = validate_fast(&validation_params, scene.model.topology()) {
                         invalid = Some(errors);
                     }
                 }
@@ -68,7 +64,7 @@ mod tests {
             }
             // Whatever happened, no entity may be left without a name.
             if failure.is_none()
-                && let Err(e) = scene.part.check_names()
+                && let Err(e) = scene.model.check_names()
             {
                 failure = Some(e);
             }
@@ -77,7 +73,7 @@ mod tests {
             // so render whatever state it reached — that picture is the whole
             // point of this test for exactly those scenes. A model too broken
             // to rasterize is skipped rather than taking the run down.
-            let render_error = match rasterize_topology(scene.part.topology(), 12) {
+            let render_error = match rasterize_topology(scene.model.topology(), 12) {
                 Ok(render) => render
                     .save_to_file(&format!("{dir}/{}.html", scene.name))
                     .err()

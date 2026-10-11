@@ -5,16 +5,23 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
+use geop_core_program::{
+    editing::{Choice, Event, Form, Number, Unit, Value},
+    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+};
 use geop_ops::{
-    Context, Library, Namer, Part,
-    operation::{EntityRef, Operation, Role},
-    ui::{Choice, Form, Number, Unit},
+    Design, NamedModel, Namer, ParamValue,
+    model::model_or_empty,
+    operation::{Build, BuildReader, Input, ModelStep},
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    edge_flange::{Corner, FlangeShape, add_flange, check_offsets},
-    sheet::{Sheet, SheetMetalRules},
+    body::{self, Made, Making, SheetStep, sheets_of, with_edge},
+    edge_flange::{
+        Corner, FlangeShape, add_flange, check_offsets, edge_field, offset_fields, picked_edge,
+    },
+    sheet::SheetMetalRules,
 };
 
 /// How tight a hem is folded.
@@ -104,12 +111,50 @@ impl HemArgs {
     }
 }
 
+impl SheetStep for Hem {
+    fn plan(reader: &mut BuildReader, step: &str, args: &HemArgs) -> GeopResult<Made> {
+        let ctx = with_context!("hem({step}, {args:?})");
+        let namer = Namer::new("hem", step)?;
+        let sheets = sheets_of(reader);
+        let model = model_or_empty(reader);
+        let (solid, mut sheet, (f, k, toward_b)) =
+            with_edge(&model, &sheets, &args.edge, "a hem").with_context(ctx)?;
+        let shape = args.shape(&sheet.rules).with_context(ctx)?;
+        add_flange(&mut sheet, &namer, f, k, toward_b, &shape).with_context(ctx)?;
+        Ok(Made {
+            consumes: Some(solid),
+            solid: namer.root(),
+            making: Making::Bent(sheet),
+        })
+    }
+}
+
+impl ModelStep for Hem {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        _: &HemArgs,
+    ) -> GeopResult<()> {
+        body::build(model, reader, step)
+    }
+}
+
 impl Operation for Hem {
+    const INFO: OperationInfo = OperationInfo::new(
+        "hem",
+        "Hem",
+        "Fold the straight edge of a sheet-metal body right back on itself.",
+        OperationGroup::SheetMetal,
+        OperationTier::Small,
+    );
     type Args = HemArgs;
-    type Session = ();
+    type EditingState = ();
+    type Input = Input;
+    type State = ParamValue;
 
     /// No edge yet: a closed hem, a third of a unit long.
-    fn new_args<S: Scalar>(&self, _: &Part<S>) -> HemArgs {
+    fn new_args(_: &Context<Input, ParamValue>) -> HemArgs {
         HemArgs {
             edge: String::new(),
             kind: HemKind::Closed,
@@ -120,37 +165,17 @@ impl Operation for Hem {
         }
     }
 
+    fn run(step: &str, part: &mut Build, args: &HemArgs) -> GeopResult<()> {
+        body::run::<Self>(step, part, args)
+    }
+
     /// The edge, picked; how tight, and the gap if open; how long; and how
     /// far in from the edge's ends.
-    fn form<'a, S: Scalar>(
-        &self,
-        _: Context<'a, S>,
-        args: &HemArgs,
-        _: &(),
-        _: &[String],
-    ) -> Form<'a, S, HemArgs> {
-        let mut f = Form::<S, HemArgs>::new();
-        let edge = (!args.edge.is_empty())
-            .then(|| EntityRef::Edge {
-                name: args.edge.clone(),
-            })
-            .into_iter()
-            .collect();
-        f.reference(
-            "edge",
-            "edge",
-            edge,
-            &[Role::Line],
-            None,
-            false,
-            |e, picked| {
-                e.args.edge = match picked.as_slice() {
-                    [EntityRef::Edge { name }] => name.clone(),
-                    _ => String::new(),
-                }
-            },
-        );
-        f.select(
+    fn presentation(_: &Context<Input, ParamValue>, args: &HemArgs, _: &()) -> Form<Design> {
+        let mut form = Form::default();
+        edge_field(&mut form, &args.edge);
+        let dialog = &mut form.dialog;
+        dialog.select(
             "kind",
             "hem",
             match args.kind {
@@ -159,54 +184,45 @@ impl Operation for Hem {
             },
             vec![Choice::new("closed", "Closed"), Choice::new("open", "Open")],
             false,
-            |args, choice| {
-                args.kind = match choice {
+        );
+        if args.kind == HemKind::Open {
+            dialog.number(
+                "gap",
+                Number::new("gap", args.gap, Unit::Length).range(0.0, 1.0),
+            );
+        }
+        dialog.number(
+            "length",
+            Number::new("length", args.length, Unit::Length).range(0.0, 5.0),
+        );
+        offset_fields(&mut form, args.offset_start, args.offset_end);
+        form
+    }
+
+    fn process_user_event(
+        _: &Context<Input, ParamValue>,
+        args: &HemArgs,
+        _: &(),
+        event: Event<Design>,
+    ) -> (HemArgs, ()) {
+        let mut args = args.clone();
+        let Event::Field { key, value } = event else {
+            return (args, ());
+        };
+        match (key.as_str(), value) {
+            ("edge", Value::Entities(picked)) => args.edge = picked_edge(&picked),
+            ("kind", Value::Choice(choice)) => {
+                args.kind = match choice.as_str() {
                     "open" => HemKind::Open,
                     _ => HemKind::Closed,
                 }
-            },
-        );
-        if args.kind == HemKind::Open {
-            f.number(
-                "gap",
-                Number::new("gap", args.gap, Unit::Length).range(0.0, 1.0),
-                |args, g| args.gap = g,
-            );
+            }
+            ("gap", Value::Number(g)) => args.gap = g,
+            ("length", Value::Number(l)) => args.length = l,
+            ("offset_start", Value::Number(o)) => args.offset_start = o,
+            ("offset_end", Value::Number(o)) => args.offset_end = o,
+            _ => {}
         }
-        f.number(
-            "length",
-            Number::new("length", args.length, Unit::Length).range(0.0, 5.0),
-            |args, l| args.length = l,
-        );
-        f.number(
-            "offset_start",
-            Number::new("offset at start", args.offset_start, Unit::Length).range(0.0, 5.0),
-            |args, o| args.offset_start = o,
-        );
-        f.number(
-            "offset_end",
-            Number::new("offset at end", args.offset_end, Unit::Length).range(0.0, 5.0),
-            |args, o| args.offset_end = o,
-        );
-        f
-    }
-
-    fn apply<S: Scalar>(
-        &self,
-        mut part: Part<S>,
-        operation_id: &str,
-        args: &HemArgs,
-        _library: &dyn Library<S>,
-    ) -> GeopResult<Part<S>> {
-        let ctx = with_context!("hem({operation_id}, {args:?})");
-        let namer = Namer::new("hem", operation_id)?;
-        let (solid, mut sheet, (f, k, toward_b)) =
-            Sheet::with_edge(&part, &args.edge, "a hem").with_context(ctx)?;
-        let shape = args.shape(&sheet.rules).with_context(ctx)?;
-        add_flange(&mut sheet, &namer, f, k, toward_b, &shape).with_context(ctx)?;
-        sheet
-            .replace(&mut part, &solid, &namer.root())
-            .with_context(ctx)?;
-        Ok(part)
+        (args, ())
     }
 }

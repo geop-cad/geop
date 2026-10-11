@@ -28,7 +28,7 @@ use crate::{
 
 /// A body to build, its entities referring to each other by their index in
 /// the lists here: a solid, a sheet, or — with no faces — a wire.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BodySpec<S: Scalar> {
     pub vertices: Vec<Vector3<S>>,
     pub edges: Vec<EdgeSpec<S>>,
@@ -41,7 +41,7 @@ pub struct BodySpec<S: Scalar> {
 }
 
 /// An edge: its curve, running from vertex `start` to vertex `end`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EdgeSpec<S: Scalar> {
     pub curve: Curve3<S>,
     pub start: usize,
@@ -49,7 +49,7 @@ pub struct EdgeSpec<S: Scalar> {
 }
 
 /// A face: its surface, bounded by its `outer` loop and with its `holes`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FaceSpec<S: Scalar> {
     pub surface: NurbSurface3D<S>,
     pub outer: Vec<CoedgeSpec<S>>,
@@ -58,7 +58,7 @@ pub struct FaceSpec<S: Scalar> {
 
 /// One coedge of a loop, in the order the loop runs, with its pcurve on the
 /// loop's face.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CoedgeSpec<S: Scalar> {
     pub on: CoedgeOn,
     pub pcurve: Curve2<S>,
@@ -95,6 +95,11 @@ pub struct SpecSources {
 }
 
 impl<S: Scalar> FaceSpec<S> {
+    /// Its loops, the outer one first.
+    pub fn loops(&self) -> Vec<&Vec<CoedgeSpec<S>>> {
+        std::iter::once(&self.outer).chain(&self.holes).collect()
+    }
+
     /// The same face with its material side turned around, exactly as
     /// [`Model::reverse_face`] turns a face of a model around: the surface
     /// mirrored in `u`, each pcurve mirrored with it, and every loop run the
@@ -154,9 +159,10 @@ impl<S: Scalar> BodySpec<S> {
         }
     }
 
-    /// The vertex a coedge starts at, and the one it ends at.
-    fn ends(&self, coedge: &CoedgeSpec<S>) -> GeopResult<(usize, usize)> {
-        match coedge.on {
+    /// The vertex a coedge running along `on` starts at, and the one it
+    /// ends at.
+    pub fn ends(&self, on: CoedgeOn) -> GeopResult<(usize, usize)> {
+        match on {
             CoedgeOn::Edge(e, sense) => {
                 let edge = self
                     .edges
@@ -203,13 +209,13 @@ impl<S: Scalar> BodySpec<S> {
             vertex_used[edge.end] = true;
         }
         for (f, face) in self.faces.iter().enumerate() {
-            for (l, lp) in std::iter::once(&face.outer).chain(&face.holes).enumerate() {
+            for (l, lp) in face.loops().into_iter().enumerate() {
                 if lp.is_empty() {
                     return fail(format!("loop {l} of face {f} is empty"));
                 }
                 for (k, coedge) in lp.iter().enumerate() {
-                    let (_, end) = self.ends(coedge)?;
-                    let (start, _) = self.ends(&lp[(k + 1) % lp.len()])?;
+                    let (_, end) = self.ends(coedge.on)?;
+                    let (start, _) = self.ends(lp[(k + 1) % lp.len()].on)?;
                     if end != start {
                         return fail(format!(
                             "loop {l} of face {f}: coedge {k} ends at vertex {end}, but the next one starts at vertex {start}"
@@ -568,7 +574,8 @@ mod tests {
         let mut model = Model::<S>::new();
         test_cube_solid(&mut model);
         let built = model.build_body(wire_spec()).unwrap();
-        let coedge = model.coedges.values_mut().next().unwrap();
+        let first = *model.coedges.keys().next().unwrap();
+        let coedge = model.coedges.get_mut(&first).unwrap();
         coedge.geometry = CoedgeGeometry::Edge(built.edges[0]);
         let errors = validate(&ValidationParameters::default(), &model).unwrap_err();
         assert!(

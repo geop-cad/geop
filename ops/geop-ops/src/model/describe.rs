@@ -2,16 +2,11 @@
 
 use std::collections::BTreeMap;
 
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    primitives::Pose,
-    scalars::Scalar,
-};
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_core_topology::{CoedgeGeometry, Sense, boundary::BoundaryType};
 use serde::{Deserialize, Serialize};
 
-use super::{Part, ids::RefId};
-use crate::Design;
+use super::{NamedModel, ids::RefId};
 
 /// A face's boundary loops, each as the coedges it runs through: `+E` / `-E`
 /// for edge `E` traversed forwards / backwards, `@V` for a degenerate
@@ -28,13 +23,6 @@ pub struct EdgeDescription {
     pub end: String,
 }
 
-/// A part placed in another: the file it is built from, and where it is.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InstanceDescription {
-    pub file: String,
-    pub pose: Pose<Design>,
-}
-
 /// Everything about a part's topology that its names can express, and the
 /// positions of its vertices — with no internal id anywhere, so two parts
 /// built by the same program describe identically however their ids came
@@ -47,23 +35,12 @@ pub struct PartDescription {
     pub faces: BTreeMap<String, FaceDescription>,
     pub edges: BTreeMap<String, EdgeDescription>,
     pub vertices: BTreeMap<String, [f64; 3]>,
-    pub sketches: Vec<String>,
-    pub datums: Vec<String>,
-    pub instances: BTreeMap<String, InstanceDescription>,
-    /// What the extensions list of what they kept (see
-    /// [`super::Extension::describe`]), by extension and entry.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub extensions: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
 }
 
 impl PartDescription {
-    pub fn of<S: Scalar>(part: &Part<S>) -> GeopResult<Self> {
+    pub fn of<S: Scalar>(part: &NamedModel<S>) -> GeopResult<Self> {
         let model = part.topology();
-        let name = |id: RefId| -> GeopResult<String> {
-            part.name_of(id)
-                .map(str::to_string)
-                .ok_or_else(|| GeopError::new(format!("PartDescription: {id} has no name")))
-        };
+        let name = |id: RefId| part.name(id).map(str::to_string);
         let describe_loop = |boundary: BoundaryType| -> GeopResult<Vec<String>> {
             let mut entries = match boundary {
                 BoundaryType::Vertex(v) => vec![format!("@{}", name(v.into())?)],
@@ -139,37 +116,11 @@ impl PartDescription {
                 [p[0].to_f64(), p[1].to_f64(), p[2].to_f64()],
             );
         }
-        let mut sketches = part
-            .sketches()
-            .map(|(id, _)| name(id.into()))
-            .chain(part.sketches3d().map(|(id, _)| name(id.into())))
-            .collect::<GeopResult<Vec<_>>>()?;
-        sketches.sort();
-        let mut datums = part
-            .datums()
-            .map(|(id, _)| name(id.into()))
-            .collect::<GeopResult<Vec<_>>>()?;
-        datums.sort();
-        let instances = part
-            .instances()
-            .map(|(id, instance)| {
-                let instance_name = name(id.into())?;
-                let description = InstanceDescription {
-                    file: instance.file.clone(),
-                    pose: instance.pose.cast(),
-                };
-                Ok((instance_name, description))
-            })
-            .collect::<GeopResult<_>>()?;
         Ok(Self {
             solids,
             faces,
             edges,
             vertices,
-            sketches,
-            datums,
-            instances,
-            extensions: part.extension_descriptions(),
         })
     }
 }

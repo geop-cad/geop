@@ -41,7 +41,7 @@ use geop_core_topology::{
     contains::face::{PointClassification, face_contains},
 };
 
-use crate::{MAX_NODES, min_subdivision_size};
+use crate::{MAX_NODES, hidden_lines::cut_points, min_subdivision_size};
 
 /// Interior grid lines per direction of the domain, besides its boundary.
 const GRID_LINES: usize = 12;
@@ -59,7 +59,7 @@ const MAX_TRACE_STEPS: usize = 4000;
 /// Steps a trace takes along the face's size.
 const STEPS_PER_FACE: f64 = 24.0;
 /// Seed for the containment tests.
-const FACE_CONTAINS_SEED: u64 = 0x5_11_4u64;
+const FACE_CONTAINS_SEED: u64 = 0x5114_u64;
 
 /// A piece of a face's silhouette.
 #[derive(Clone, Debug)]
@@ -99,33 +99,38 @@ fn sign<S: Scalar>(surface: &NurbSurface3D<S>, d: &Vector3<S>, u: S, v: S) -> Op
     }
 }
 
-/// `x` clamped into `[lo, hi]`.
-fn clamp<S: Scalar>(x: S, lo: S, hi: S) -> S {
-    geop_core_geometry::nurb_surface::clamp(x, lo, hi)
-}
-
 /// `(u, v)` moved onto the silhouette by Newton steps along `g`'s gradient
-/// (the smallest step that zeroes `g` to first order), or `None` if it does
-/// not get there. Every iterate is sharpened: each is only the seed of the
+/// (the smallest step that zeroes `g` to first order), or why it does not
+/// get there. Every iterate is sharpened: each is only the seed of the
 /// next, and what is returned is a point *of* the silhouette, as good as any
-/// other there.
+/// other there. A start outside the domain — a sharpened foot point on its
+/// boundary can land a hair past it — is clamped into it first, as every
+/// iterate is.
 fn correct<S: Scalar>(
     surface: &NurbSurface3D<S>,
     d: &Vector3<S>,
-    (mut u, mut v): (S, S),
-) -> Option<(S, S)> {
+    start: (S, S),
+) -> GeopResult<(S, S)> {
     let (u_lo, u_hi) = surface.domain_u();
     let (v_lo, v_hi) = surface.domain_v();
+    let (mut u, mut v) = (start.0.clamped(u_lo, u_hi), start.1.clamped(v_lo, v_hi));
+    let mut last = None;
     for _ in 0..CORRECTOR_ITERATIONS {
-        let (g, gu, gv) = contour(surface, d, u, v).ok()?;
+        let (g, gu, gv) = contour(surface, d, u, v)?;
         if g.could_be_equal(S::ZERO) {
-            return Some((u, v));
+            return Ok((u, v));
         }
-        let scale = g.div(gu.mul(gu).add(gv.mul(gv))).ok()?;
-        u = clamp(u.sub(gu.mul(scale)).sharpen(), u_lo, u_hi);
-        v = clamp(v.sub(gv.mul(scale)).sharpen(), v_lo, v_hi);
+        let scale = g.div(gu.mul(gu).add(gv.mul(gv)))?;
+        last = Some((u, v, g, gu, gv));
+        u = u.sub(gu.mul(scale)).sharpen().clamped(u_lo, u_hi);
+        v = v.sub(gv.mul(scale)).sharpen().clamped(v_lo, v_hi);
     }
-    None
+    Err(GeopError::new(format!(
+        "the point does not converge onto the silhouette: from {start:?}, the last \
+         (u, v, g, g_u, g_v) {last:?}, in the domain {:?} x {:?}",
+        surface.domain_u(),
+        surface.domain_v()
+    )))
 }
 
 /// `(u, v)` on the domain's boundary line `fixed` moved onto the silhouette
@@ -144,9 +149,9 @@ fn correct_on_boundary<S: Scalar>(
             return Some((u, v));
         }
         if u_fixed {
-            v = clamp(v.sub(g.div(gv).ok()?).sharpen(), v_lo, v_hi);
+            v = v.sub(g.div(gv).ok()?).sharpen().clamped(v_lo, v_hi);
         } else {
-            u = clamp(u.sub(g.div(gu).ok()?).sharpen(), u_lo, u_hi);
+            u = u.sub(g.div(gu).ok()?).sharpen().clamped(u_lo, u_hi);
         }
     }
     None
@@ -280,22 +285,110 @@ fn seed<S: Scalar>(
         }
     }
     let t = a.add(b).div(S::TWO).ok()?.sharpen();
-    correct(surface, d, line.point(t))
+    correct(surface, d, line.point(t)).ok()
 }
 
-/// Marks traced every bracket the step from `a` to `b` crosses.
-fn mark_crossings<S: Scalar>(lines: &mut [GridLine<S>], a: (S, S), b: (S, S)) {
+/// Marks traced every bracket the step from `a` to `b` along the
+/// silhouette crosses or ends on.
+///
+/// Which brackets a trace has passed is only bookkeeping — it decides which
+/// seeds are left to trace — but a bracket missed is a silhouette traced a
+/// second time, a copy no search on the paper can tell from the first. Two
+/// ways a step passes a grid line without its ends lying on either side:
+///
+/// - It ends on it. A trace that leaves the domain lands on its boundary,
+///   inside the enclosure of the bound but not necessarily on the side of
+///   its midpoint the step came from: asked of the intervals.
+/// - It dips across and back. A silhouette whose extremum lies a hair past a
+///   grid line crosses the line twice between the ends of one step. So the
+///   step is taken as the cubic leaving `a` and arriving at `b` along the
+///   silhouette's tangents there (Hermite), which follows the silhouette to
+///   fourth order in the step, and its crossings are the line's.
+fn mark_crossings<S: Scalar>(
+    surface: &NurbSurface3D<S>,
+    d: &Vector3<S>,
+    lines: &mut [GridLine<S>],
+    a: (S, S),
+    b: (S, S),
+) {
     let (au, av, bu, bv) = (a.0.to_f64(), a.1.to_f64(), b.0.to_f64(), b.1.to_f64());
-    for line in lines.iter_mut() {
-        let c = line.value.to_f64();
-        let (from, to, other_from, other_to) = if line.u_fixed {
-            (au, bu, av, bv)
-        } else {
-            (av, bv, au, bu)
+    let chord = [bu - au, bv - av];
+    let length = chord[0].hypot(chord[1]);
+    // The tangent at `p`, as long as the chord and along it; the chord
+    // itself where there is none.
+    let tangent = |(u, v): (S, S)| -> [f64; 2] {
+        let Ok((_, gu, gv)) = contour(surface, d, u, v) else {
+            return chord;
         };
-        if (from - c) * (to - c) <= 0.0 && from != to {
-            let t = other_from + (c - from) / (to - from) * (other_to - other_from);
-            line.mark(t);
+        let t = [-gv.to_f64(), gu.to_f64()];
+        let norm = t[0].hypot(t[1]);
+        let along = t[0] * chord[0] + t[1] * chord[1];
+        if norm == 0.0 || along == 0.0 || !norm.is_finite() {
+            return chord;
+        }
+        let scale = length / norm * along.signum();
+        [t[0] * scale, t[1] * scale]
+    };
+    let (ta, tb) = (tangent(a), tangent(b));
+    // The step's cubic in coordinate `k` (0 for `u`, 1 for `v`), as power
+    // coefficients in `s` over `[0, 1]`.
+    let cubic = |k: usize| -> [f64; 4] {
+        let (x0, x1) = if k == 0 { (au, bu) } else { (av, bv) };
+        [
+            x0,
+            ta[k],
+            3.0 * (x1 - x0) - 2.0 * ta[k] - tb[k],
+            2.0 * (x0 - x1) + ta[k] + tb[k],
+        ]
+    };
+    let at = |c: &[f64; 4], s: f64| ((c[3] * s + c[2]) * s + c[1]) * s + c[0];
+    for line in lines.iter_mut() {
+        let (k, other) = if line.u_fixed { (0, 1) } else { (1, 0) };
+        for (end, p) in [(a, (au, av)), (b, (bu, bv))] {
+            let (x, y) = if line.u_fixed {
+                (end.0, p.1)
+            } else {
+                (end.1, p.0)
+            };
+            if x.could_be_equal(line.value) {
+                line.mark(y);
+            }
+        }
+        let mut here = cubic(k);
+        here[0] -= line.value.to_f64();
+        let across = cubic(other);
+        // The cubic's turning points split `[0, 1]` into pieces it is
+        // monotone along; a piece whose ends lie on either side of the line
+        // crosses it once, bisected.
+        let (qa, qb, qc) = (3.0 * here[3], 2.0 * here[2], here[1]);
+        let mut ends = vec![0.0, 1.0];
+        if qa == 0.0 {
+            if qb != 0.0 {
+                ends.push(-qc / qb);
+            }
+        } else {
+            let disc = qb * qb - 4.0 * qa * qc;
+            if disc >= 0.0 {
+                let root = disc.sqrt();
+                ends.extend([(-qb - root) / (2.0 * qa), (-qb + root) / (2.0 * qa)]);
+            }
+        }
+        ends.retain(|s| (0.0..=1.0).contains(s));
+        ends.sort_by(f64::total_cmp);
+        for pair in ends.windows(2) {
+            let (mut lo, mut hi) = (pair[0], pair[1]);
+            if at(&here, lo) * at(&here, hi) >= 0.0 {
+                continue;
+            }
+            for _ in 0..BISECTIONS {
+                let mid = 0.5 * (lo + hi);
+                if at(&here, lo) * at(&here, mid) <= 0.0 {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            line.mark(at(&across, 0.5 * (lo + hi)));
         }
     }
 }
@@ -354,26 +447,26 @@ fn march<S: Scalar>(
             let fv = if leaves_v { to(v, dv, v_lo, v_hi) } else { 1.0 };
             let f = S::from_f64(fu.min(fv));
             let landed = (
-                clamp(u.add(du.mul(f)).sharpen(), u_lo, u_hi),
-                clamp(v.add(dv.mul(f)).sharpen(), v_lo, v_hi),
+                u.add(du.mul(f)).sharpen().clamped(u_lo, u_hi),
+                v.add(dv.mul(f)).sharpen().clamped(v_lo, v_hi),
             );
             if let Some(end) = correct_on_boundary(surface, d, landed, fu <= fv) {
-                mark_crossings(lines, current, end);
+                mark_crossings(surface, d, lines, current, end);
                 points.push(end);
             }
             return Ok(Ending::Open);
         }
-        let Some(next) = correct(surface, d, (pu, pv)) else {
+        let Ok(next) = correct(surface, d, (pu, pv)) else {
             return Ok(Ending::Open);
         };
-        mark_crossings(lines, current, next);
+        mark_crossings(surface, d, lines, current, next);
         points.push(next);
         travelled = travelled.add(step);
         let here = surface.evaluate(next.0, next.1)?;
         if travelled.definitely_greater(step.mul(S::TWO))
             && here.sub(&start_point).norm().definitely_less(step)
         {
-            mark_crossings(lines, next, start);
+            mark_crossings(surface, d, lines, next, start);
             points.push(start);
             return Ok(Ending::Closed);
         }
@@ -510,9 +603,7 @@ impl<S: Scalar> Silhouette<S> {
         let (u, v) = surface
             .project(*near, seed[0], seed[1], CORRECTOR_ITERATIONS)
             .with_context(&ctx)?;
-        let (u, v) = correct(surface, d, (u.sharpen(), v.sharpen()))
-            .ok_or_else(|| GeopError::new("the point does not converge onto the silhouette"))
-            .with_context(&ctx)?;
+        let (u, v) = correct(surface, d, (u.sharpen(), v.sharpen())).with_context(&ctx)?;
         surface.evaluate(u, v).with_context(&ctx)
     }
 }
@@ -662,18 +753,23 @@ fn trim<S: Scalar>(
         .map_err(|e| e.with_context(format!("fitting the traced silhouette through {uv:?}")))?;
     let (t0, t1) = fit.domain();
 
-    // Where the trace crosses or runs along the face's trim.
-    let mut cuts = vec![t0, t1];
+    // Where the trace crosses or runs along the face's trim. A trace that
+    // left the domain ends exactly on its boundary, so the trim meets it
+    // there, at an end it already has: only a meeting definitely inside the
+    // trace is a cut. Cutting at the midpoint of the box found at an end
+    // left a sliver beyond it, which at a cone's apex lay a hair inside the
+    // face and drew a silhouette piece no longer than the rounding.
+    let mut meetings = Vec::new();
     for coedge_id in model.iterate_face_coedges(face_id) {
         let pcurve = &model.get_coedge(coedge_id)?.pcurve;
         let (overlaps, crossings) =
             curve_curve_overlaps_and_crossings(&fit, pcurve, MAX_NODES, min_subdivision_size())?;
-        cuts.extend(crossings.iter().map(|(s, _)| s.midpoint()));
-        cuts.extend(overlaps.iter().flat_map(|o| [o.start.t, o.end.t]));
+        meetings.extend(crossings.iter().map(|(s, _)| *s));
+        meetings.extend(overlaps.iter().flat_map(|o| [o.start.t, o.end.t]));
     }
-    let mut cuts: Vec<S> = cuts.into_iter().map(|t| t.midpoint()).collect();
-    cuts.sort_by(|a, b| a.to_f64().total_cmp(&b.to_f64()));
-    cuts.dedup_by(|b, a| !b.definitely_greater(*a));
+    let mut cuts = vec![t0];
+    cuts.extend(cut_points(meetings, (t0, t1)));
+    cuts.push(t1);
 
     let mut silhouettes = Vec::new();
     for pair in cuts.windows(2) {

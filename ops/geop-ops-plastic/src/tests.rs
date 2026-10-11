@@ -11,7 +11,7 @@ use geop_core_topology::{
     Body, FaceId, SolidId,
     validation::{ValidationParameters, validate, validate_manifold},
 };
-use geop_ops::{Namer, Part};
+use geop_ops::{NamedModel, Namer};
 use geop_ops_extrude_revolve::{
     common::{Profile, polyline},
     shapes::cube_solid,
@@ -31,7 +31,7 @@ fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
     Vector3::from_array([x, y, z].map(S::from_f64))
 }
 
-fn assert_valid(part: &Part<S>) {
+fn assert_valid(part: &NamedModel<S>) {
     let params = ValidationParameters::default();
     if let Err(errors) = validate(&params, part.topology()) {
         panic!("{errors:#?}");
@@ -47,7 +47,7 @@ const VOLUME_TOLERANCE: f64 = 1e-5;
 
 /// The volume `solid` encloses, from its outward-wound triangles — exact
 /// for faces that are flat, up to the `f32` corners.
-fn volume(part: &Part<S>, solid: SolidId) -> f64 {
+fn volume(part: &NamedModel<S>, solid: SolidId) -> f64 {
     let raster = rasterize(part.topology(), 16).unwrap();
     let faces = part.topology().body_faces(Body::Solid(solid)).unwrap();
     stl_triangles(&raster, &faces)
@@ -62,14 +62,14 @@ fn volume(part: &Part<S>, solid: SolidId) -> f64 {
 }
 
 /// The 2 x 2 x 1 box from the origin, `cube(b)`.
-fn unit_box() -> (Part<S>, SolidId) {
-    let mut part = Part::new();
+fn unit_box() -> (NamedModel<S>, SolidId) {
+    let mut part = NamedModel::new();
     let solid = cube_solid(&mut part, "b", v(0., 0., 0.), v(2., 2., 1.)).unwrap();
     (part, solid)
 }
 
 /// The unit box shelled `thickness` thick, open at its top: an enclosure.
-fn enclosure(thickness: f64) -> (Part<S>, SolidId) {
+fn enclosure(thickness: f64) -> (NamedModel<S>, SolidId) {
     let (mut part, solid) = unit_box();
     let top = face_towards(&part, solid, [0., 0., 1.]);
     let namer = Namer::new("shell", "s").unwrap();
@@ -79,7 +79,7 @@ fn enclosure(thickness: f64) -> (Part<S>, SolidId) {
 
 /// The planar face of `solid` whose outward normal is `normal`, lying
 /// furthest that way.
-fn face_towards(part: &Part<S>, solid: SolidId, normal: [f64; 3]) -> FaceId {
+fn face_towards(part: &NamedModel<S>, solid: SolidId, normal: [f64; 3]) -> FaceId {
     let n = v(normal[0], normal[1], normal[2]);
     let model = part.topology();
     model
@@ -99,7 +99,7 @@ fn face_towards(part: &Part<S>, solid: SolidId, normal: [f64; 3]) -> FaceId {
 }
 
 /// The four outer walls of a box or an enclosure.
-fn outer_walls(part: &Part<S>, solid: SolidId) -> Vec<FaceId> {
+fn outer_walls(part: &NamedModel<S>, solid: SolidId) -> Vec<FaceId> {
     [[1., 0., 0.], [-1., 0., 0.], [0., 1., 0.], [0., -1., 0.]]
         .iter()
         .map(|n| face_towards(part, solid, *n))
@@ -111,7 +111,7 @@ fn ground() -> Plane<S> {
     Plane::try_new(v(0., 0., 0.), v(0., 0., 1.)).unwrap()
 }
 
-fn drafted(mut part: Part<S>, faces: &[FaceId], degrees: f64) -> (Part<S>, SolidId) {
+fn drafted(mut part: NamedModel<S>, faces: &[FaceId], degrees: f64) -> (NamedModel<S>, SolidId) {
     let namer = Namer::new("draft", "d").unwrap();
     let solid = draft(
         &mut part,
@@ -169,7 +169,7 @@ fn enclosure_outside_drafted() {
 }
 
 /// The enclosure's rim, the face its open top leaves.
-fn rim(part: &Part<S>, solid: SolidId) -> FaceId {
+fn rim(part: &NamedModel<S>, solid: SolidId) -> FaceId {
     face_towards(part, solid, [0., 0., 1.])
 }
 

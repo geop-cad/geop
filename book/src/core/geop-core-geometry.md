@@ -112,9 +112,6 @@ result disjoint from the input all just return the incoming box, so
 refinement can only tighten. Callers use it where a parameter becomes a split
 point, not everywhere.
 
-The older hull-and-bisect versions (`*_bisect.rs`) are kept only as
-baselines for the benchmarks in `examples/`.
-
 ## Recognizing shapes
 
 `shape` answers *what* an entity is rather than *where*: `as_line`,
