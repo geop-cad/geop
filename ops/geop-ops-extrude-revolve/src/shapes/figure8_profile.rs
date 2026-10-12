@@ -103,8 +103,9 @@ pub fn figure8_profile<S: Scalar>(model: &mut NamedModel<S>, name: &str) -> Geop
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::testing::{assert_valid, render};
+    use crate::common::testing::render;
     use geop_core_math::for_all_scalars;
+    use geop_ops::testing::assert_model_valid;
 
     /// How many faces the figure-8 has, so the orientation counts below can
     /// be read as a fraction rather than a bare number.
@@ -158,7 +159,7 @@ mod tests {
         figure8_profile(&mut model, "t").unwrap();
         let topology = model.topology();
 
-        assert_valid(topology);
+        assert_model_valid(topology);
         render(topology, 8, "figure8_topology.html");
     }
     #[test]

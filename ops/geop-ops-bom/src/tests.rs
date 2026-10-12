@@ -8,18 +8,18 @@ use std::{
 
 use geop_core_math::{
     geop_error::GeopResult,
+    primitives::Pose,
     scalars::{ScalInF64 as S, Scalar},
-    vector::Vector3,
 };
 use geop_ops::{
     NamedModel, ParamValue,
-    model::{model, pose_parameter},
     operation::{Build, BuildReader, Input},
     parameters::{Material, Parameter, ParameterKind, Parameters, Row, Values},
-    placed::{ABOUT, About, Component, Instance, Placement, instance},
+    placed::{ABOUT, About, Component},
     solids::{CutWire, SolidNotes, solid_notes},
+    testing,
 };
-use geop_ops_extrude_revolve::shapes::cube::cube_solid;
+use geop_ops_extrude_revolve::shapes::block;
 
 use crate::{Bom, LineKind, Structure, bom};
 
@@ -34,12 +34,6 @@ fn steel() -> Parameters {
         }),
         ..Parameters::default()
     }
-}
-
-/// A cube of side `side` named `name` in `model`, its corner at the origin.
-fn cube(model: &mut NamedModel<S>, name: &str, side: f64) {
-    let v = |x: f64| Vector3::from_array([x; 3].map(S::from_f64));
-    cube_solid(model, name, v(0.0), v(side)).unwrap();
 }
 
 /// `value`, as the generator of a target that is given it.
@@ -86,21 +80,10 @@ impl Made {
             .map(|(name, value)| (name, Input::Value(value)))
             .collect();
         inputs.insert(ABOUT.into(), Input::About(Rc::new(about)));
-        let mut part = Build::default();
-        part.begin_run(&inputs, &BTreeMap::new());
-        part.begin_step("given").unwrap();
-        part.define_target(&model(), &self.model, given).unwrap();
-        for (name, component) in self.placed {
-            let placed = Instance {
-                component,
-                placement: Placement::Parameter(pose_parameter(name)),
-                fixed: false,
-            };
-            part.define_target(&instance(name), &placed, given).unwrap();
-        }
-        then(&mut part);
-        part.end_run(Default::default());
-        part
+        let placed: Vec<_> = (self.placed.iter())
+            .map(|(name, component)| (*name, component, Pose::identity()))
+            .collect();
+        testing::built_with(&inputs, &self.model, &placed, then)
     }
 
     /// It as a component, to place.
@@ -155,14 +138,14 @@ fn screw(size: &str) -> Rc<Component> {
         .values;
     let mut made = Made::new("std:screw.geop", parameters);
     made.values = values;
-    cube(&mut made.model, "body", 1.0);
+    block(&mut made.model, "body", [0.0; 3], [1.0; 3]);
     made.component()
 }
 
 /// A bracket of side 2, with two M4 screws in it.
 fn bracket() -> Rc<Component> {
     let mut made = Made::new("bracket.geop", steel());
-    cube(&mut made.model, "body", 2.0);
+    block(&mut made.model, "body", [0.0; 3], [2.0; 3]);
     let m4 = screw("M4");
     made.place(&m4, "s1").place(&m4, "s2").component()
 }
@@ -295,7 +278,7 @@ fn an_indented_bill_follows_the_sub_assemblies() {
 #[test]
 fn a_plain_part_is_one_line_with_its_sheet_thickness() {
     let mut made = Made::new("parts/cover.geop", Parameters::default());
-    cube(&mut made.model, "sheet", 1.0);
+    block(&mut made.model, "sheet", [0.0; 3], [1.0; 3]);
     let mut noted = SolidNotes::default();
     noted.note_mut("cube(sheet)").thickness = Some(1.5);
     let part = made.build(|part| part.define_target(&solid_notes(), &noted, given).unwrap());
@@ -322,7 +305,7 @@ fn a_plain_part_is_one_line_with_its_sheet_thickness() {
 #[test]
 fn wires_are_lines_of_their_own() {
     let mut harness = Made::new("harness.geop", Parameters::default());
-    cube(&mut harness.model, "cable", 1.0);
+    block(&mut harness.model, "cable", [0.0; 3], [1.0; 3]);
     let wire = |name: &str, gauge| CutWire {
         name: name.into(),
         colour: "#ff0000".into(),

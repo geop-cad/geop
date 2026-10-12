@@ -14,7 +14,7 @@ use geop_ops::{
         StepContext,
     },
     part_operation,
-    ui::{EditForm, FormState, Value, sketch_field},
+    ui::{EditForm, FormState},
 };
 use serde::{Deserialize, Serialize};
 
@@ -151,11 +151,8 @@ impl PartOperation for Loft {
     ) -> EditForm<'a, Design, LoftArgs> {
         let view = &context.before;
         let mut f = EditForm::<Design, LoftArgs>::default();
-        sketch_field(&mut f.form.dialog, view, "profiles", &args.profiles, true);
-        f.on("profiles", |edit, value| {
-            if let Value::Entities(picked) = value {
-                edit.args.profiles = EntityRef::names_of(EntityRef::sketch, &picked);
-            }
+        f.pick_sketches(view, "profiles", &args.profiles, |edit, names| {
+            edit.args.profiles = names
         });
         let matches = args.matches.clone();
         let guides = args.guides.clone();

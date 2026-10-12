@@ -6,27 +6,13 @@ use geop_core_math::{
     scalars::{Ring, ScalInF64 as S, Scalar},
     vector::{Vector3, Vector4},
 };
-use geop_core_topology::{
-    Body, Curve3,
-    validation::{ValidationParameters, validate},
-};
+use geop_core_topology::{Body, Curve3};
 use geop_ops::NamedModel;
 use geop_ops::operation::apply_to_model;
-use geop_ops_extrude_revolve::shapes::cube_solid;
+use geop_ops::testing::assert_valid_sheets;
+use geop_ops_extrude_revolve::shapes::{block, v3};
 
 use super::*;
-
-pub(crate) fn v3(x: f64, y: f64, z: f64) -> Vector3<S> {
-    Vector3::from_array([x, y, z].map(S::from_f64))
-}
-
-pub(crate) fn assert_valid(part: &NamedModel<S>) {
-    if let Err(errors) = validate(&ValidationParameters::default(), part.topology()) {
-        let messages: Vec<String> = errors.iter().map(|e| format!("{e}")).collect();
-        panic!("{} errors:\n{}", messages.len(), messages.join("\n"));
-    }
-    part.check_names().unwrap();
-}
 
 /// The name of the edge of `part` from `a` to `b`, either way.
 pub(crate) fn edge_between(part: &NamedModel<S>, a: [f64; 3], b: [f64; 3]) -> String {
@@ -48,7 +34,7 @@ pub(crate) fn edge_between(part: &NamedModel<S>, a: [f64; 3], b: [f64; 3]) -> St
 
 fn unit_cube() -> NamedModel<S> {
     let mut part = NamedModel::<S>::new();
-    cube_solid(&mut part, "c", v3(0., 0., 0.), v3(1., 1., 1.)).unwrap();
+    block(&mut part, "c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     part
 }
 
@@ -162,7 +148,7 @@ fn ruled_between_opposite_edges() {
     // Picked running the other way: turned to line up.
     let b = edge_between(&part, [0., 1., 1.], [1., 1., 1.]);
     let part = span(part, &[a.clone(), b], &[]).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     assert_eq!(part.sheet_face_names(), ["boundary(b)"]);
     assert!(part.edge_id(&format!("boundary(b,{a})")).is_ok());
 }
@@ -189,7 +175,7 @@ fn flat_loop_of_four_is_one_flat_face() {
         edge_between(&part, [0., 1., 1.], [0., 0., 1.]),
     ];
     let part = span(part, &edges, &[]).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     let face = part.face_id("boundary(b)").unwrap();
     let surface = &part.topology().get_face(face).unwrap().surface;
     assert!(surface.as_plane().unwrap().is_some());
@@ -212,7 +198,7 @@ fn hexagon_round_a_cube_is_six_quadrilaterals() {
         .map(|k| edge_between(&part, corners[k], corners[(k + 1) % 6]))
         .collect();
     let part = span(part, &edges, &[]).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     assert_eq!(sheet_faces(&part), 6 + 1);
     let inner = part.face_id("boundary(b,inner)").unwrap();
     let surface = &part.topology().get_face(inner).unwrap().surface;
@@ -240,7 +226,7 @@ fn coons_patch_of_a_twisted_loop() {
     );
     let edges: Vec<String> = (0..4).map(|k| format!("twist(e{k})")).collect();
     let part = span(part, &edges, &[]).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     let face = part.face_id("boundary(b)").unwrap();
     let face = part.topology().get_face(face).unwrap();
     assert!(face.surface.as_plane().unwrap().is_none());
@@ -295,7 +281,7 @@ fn cover_tangent_to_a_flange() {
         "guide(e3)".into(),
     ];
     let tangent = span(part.clone(), &edges, std::slice::from_ref(&lip)).unwrap();
-    assert_valid(&tangent);
+    assert_valid_sheets(&tangent);
     let face = tangent.face_id("boundary(b)").unwrap();
     let face = tangent.topology().get_face(face).unwrap();
     let up = v3(0., 0., 1.);
@@ -315,7 +301,7 @@ fn cover_tangent_to_a_flange() {
     ));
     // Tangent to a guide edge, whose face is curved: refused.
     let err = refused(span(part, &edges, &["guide(e2)".into()]));
-    assert!(err.contains("not flat"), "{err}");
+    assert!(err.contains("not planar"), "{err}");
 }
 
 /// Edges that do not close a loop are refused, naming where it breaks off.
@@ -355,7 +341,7 @@ fn circle_is_filled_flat() {
         .map(|(&id, _)| part.name_of(id).unwrap().to_string())
         .collect();
     let part = span(part, &rims, &[]).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     let sheet = part.face_id("boundary(b)").unwrap();
     assert!(matches!(
         part.topology().body_of_face(sheet).unwrap(),
@@ -392,7 +378,7 @@ fn fill_and_knit(n: usize, lift: f64) {
     let part = ring_of_strips(n, lift);
     let edges: Vec<String> = (0..n).map(|k| format!("strip{k}(e0)")).collect();
     let part = span(part, &edges, &[]).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     let fill = part.sheet_face_names().last().unwrap().clone();
     let mut faces: Vec<String> = (0..n).map(|k| format!("strip{k}(f)")).collect();
     faces.push(fill);
@@ -401,7 +387,7 @@ fn fill_and_knit(n: usize, lift: f64) {
         solid: false,
     };
     let part = apply_to_model::<crate::Knit>(part, "k", &args).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     assert_eq!(part.topology().shells.len(), 1, "{n} sides, lifted {lift}");
 }
 

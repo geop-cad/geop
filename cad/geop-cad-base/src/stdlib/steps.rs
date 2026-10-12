@@ -11,7 +11,6 @@
 
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
 use geop_core_sketch::CurveId;
-use geop_ops::BooleanOp;
 use geop_ops::{
     EntityRef, origin_axis, origin_plane,
     parameters::{Material, Parameter, ParameterKind, Parameters, Row},
@@ -190,10 +189,7 @@ pub fn cut_to(
         side2: None,
         reversed: false,
     };
-    let combine = Combine::With {
-        op: BooleanOp::Intersection,
-        target: target.into(),
-    };
+    let combine = Combine::intersect(target);
     extrude(program, id, sketch, (drawing, plane), extent, combine)
 }
 

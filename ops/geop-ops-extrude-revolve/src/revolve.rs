@@ -288,10 +288,11 @@ pub fn revolve_at_oriented<S: Scalar>(
 mod tests {
     use super::*;
     use crate::common::polyline;
-    use crate::common::testing::{assert_valid, assert_valid_sheets, v2};
+    use crate::shapes::v2;
     use geop_core_geometry::nurb_curve::sqrt2_over_2;
     use geop_core_math::for_all_scalars;
     use geop_core_math::vector::Vector2;
+    use geop_ops::testing::{assert_model_valid, assert_model_valid_sheets};
 
     /// Revolves `profile` a full turn around the z-axis, `a0` along `x`.
     fn revolved_about_z<S: Scalar>(
@@ -322,7 +323,7 @@ mod tests {
         ];
         let model = revolved(profile);
         let topology = model.topology();
-        assert_valid(topology);
+        assert_model_valid(topology);
         assert_eq!(topology.faces.len(), 8);
         // Two poles, and the equator's ring of four vertices named after the
         // joint between the arcs.
@@ -370,7 +371,7 @@ mod tests {
         profile.extend(polyline(&[v2(1.0, 0.0), v2(0.0, 0.0)]).unwrap());
         let model = revolved(profile);
         let topology = model.topology();
-        assert_valid(topology);
+        assert_model_valid(topology);
         assert_eq!(topology.faces.len(), 12);
     }
     #[test]
@@ -380,7 +381,7 @@ mod tests {
 
     fn check_cone_is_valid<S: Scalar>() {
         let profile = polyline(&[v2::<S>(0.0, 1.0), v2(1.0, 0.0), v2(0.0, 0.0)]).unwrap();
-        assert_valid(revolved(profile).topology());
+        assert_model_valid(revolved(profile).topology());
     }
     #[test]
     fn cone_is_valid() {
@@ -398,7 +399,7 @@ mod tests {
                 v2(t.sin(), t.cos())
             })
             .collect();
-        assert_valid(revolved(polyline(&points).unwrap()).topology());
+        assert_model_valid(revolved(polyline(&points).unwrap()).topology());
     }
     #[test]
     fn sphere_is_valid() {
@@ -428,7 +429,7 @@ mod tests {
         .unwrap();
         let model = revolved_ring(profile);
         let topology = model.topology();
-        assert_valid(topology);
+        assert_model_valid(topology);
         assert_eq!(topology.faces.len(), 16);
         assert_eq!(topology.vertices.len(), 16);
         assert_eq!(topology.edges.len(), 32);
@@ -458,7 +459,7 @@ mod tests {
         ];
         let model = revolved_ring(profile);
         let topology = model.topology();
-        assert_valid(topology);
+        assert_model_valid(topology);
         assert_eq!(topology.faces.len(), 16);
     }
     #[test]
@@ -532,7 +533,7 @@ mod tests {
         ] {
             let model = revolved_by(&[square_loop::<S>(0.0)], from, to);
             let topology = model.topology();
-            assert_valid(topology);
+            assert_model_valid(topology);
             assert_eq!(topology.faces.len(), 3 * spans + 2, "{from} to {to}");
             let axis = model.edge_id("revolve(r,c3)").unwrap();
             let caps: Vec<_> = topology
@@ -592,13 +593,13 @@ mod tests {
         );
         let loops = [outer, hole];
         let full = revolved_by(&loops, 0.0, 360.0);
-        assert_valid(full.topology());
+        assert_model_valid(full.topology());
         let solid = full.solid_id("revolve(r)").unwrap();
         assert_eq!(full.topology().get_solid(solid).unwrap().shells.len(), 2);
         assert_eq!(full.topology().faces.len(), 32);
 
         let quarter = revolved_by(&loops, 0.0, 90.0);
-        assert_valid(quarter.topology());
+        assert_model_valid(quarter.topology());
         assert_eq!(quarter.topology().faces.len(), 4 + 4 + 2);
         let cap = quarter.face_id("revolve(r,start)").unwrap();
         assert_eq!(quarter.topology().get_face(cap).unwrap().holes.len(), 1);
@@ -637,7 +638,7 @@ mod tests {
             model.check_names().unwrap();
             assert!(built.solid.is_none());
             let topology = model.topology();
-            assert_valid_sheets(topology);
+            assert_model_valid_sheets(topology);
             assert_eq!(topology.faces.len(), faces);
             assert_eq!(model.sheet_face_names().len(), faces);
             let one_sided = topology
@@ -686,7 +687,7 @@ mod tests {
             )
             .unwrap();
             model.check_names().unwrap();
-            assert_valid(model.topology());
+            assert_model_valid(model.topology());
             assert_eq!(model.topology().faces.len(), 4 * 5 + 2);
             // The edge the inner bottom corner sweeps through the third
             // span is that stretch of the helix of radius 1, lowered by 0.2.

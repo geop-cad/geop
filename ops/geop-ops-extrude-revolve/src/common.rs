@@ -48,79 +48,11 @@ pub fn circle_at<S: Scalar>(cx: f64, cy: f64, r: f64) -> GeopResult<Vec<NurbCurv
         .collect()
 }
 
-/// What the tests of this crate share.
+/// What the tests of this crate share besides [`crate::shapes`].
 #[cfg(test)]
 pub(crate) mod testing {
-    use geop_core_geometry::nurb_curve::NurbCurve2D;
-    use geop_core_math::{
-        primitives::CoordinateSystem,
-        scalars::Scalar,
-        vector::{Vector2, Vector3},
-    };
-    use geop_core_topology::{
-        Model,
-        validation::{ValidationParameters, validate, validate_manifold},
-    };
-
-    use super::polygon;
-
-    pub fn v2<S: Scalar>(x: f64, y: f64) -> Vector2<S> {
-        Vector2::from_array([S::from_f64(x), S::from_f64(y)])
-    }
-
-    pub fn v3<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
-        Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
-    }
-
-    /// A circle of radius `r` around `(cx, cy)` as four quarter arcs,
-    /// counter-clockwise (reversed: clockwise, for a hole).
-    pub fn circle_at<S: Scalar>(cx: f64, cy: f64, r: f64, clockwise: bool) -> Vec<NurbCurve2D<S>> {
-        let arcs = super::circle_at(cx, cy, r).unwrap();
-        match clockwise {
-            true => arcs.iter().rev().map(|c| c.reverse()).collect(),
-            false => arcs,
-        }
-    }
-
-    /// A circle of radius `r` around the origin, as four quarter arcs,
-    /// counter-clockwise.
-    pub fn circle<S: Scalar>(r: f64) -> Vec<NurbCurve2D<S>> {
-        circle_at(0.0, 0.0, r, false)
-    }
-
-    /// The square of half side `half` around the origin, counter-clockwise.
-    pub fn square<S: Scalar>(half: f64) -> Vec<NurbCurve2D<S>> {
-        polygon(&[
-            v2(-half, -half),
-            v2(half, -half),
-            v2(half, half),
-            v2(-half, half),
-        ])
-        .unwrap()
-    }
-
-    /// The plane through `origin` spanned by `u` and `v`.
-    pub fn plane<S: Scalar>(
-        origin: Vector3<S>,
-        u: Vector3<S>,
-        v: Vector3<S>,
-    ) -> CoordinateSystem<S> {
-        CoordinateSystem::try_new(origin, u, v, u.prod_cross(&v)).unwrap()
-    }
-
-    /// Checks `model` is a valid manifold model.
-    pub fn assert_valid<S: Scalar>(model: &Model<S>) {
-        if let Err(e) = validate_manifold(&ValidationParameters::default(), model) {
-            panic!("{e:?}");
-        }
-    }
-
-    /// Checks `model`, which may hold sheets, is valid.
-    pub fn assert_valid_sheets<S: Scalar>(model: &Model<S>) {
-        if let Err(e) = validate(&ValidationParameters::default(), model) {
-            panic!("{e:?}");
-        }
-    }
+    use geop_core_math::scalars::Scalar;
+    use geop_core_topology::Model;
 
     /// Draws `model`'s topology, `resolution` samples per curve, into
     /// `outputs/{file}`, checking it draws points, lines, faces and labels.

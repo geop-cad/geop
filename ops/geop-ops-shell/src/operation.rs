@@ -94,28 +94,25 @@ impl PartOperation for Shell {
     ) -> EditForm<'a, Design, ShellArgs> {
         let mut seen = Seen::new(context.before);
         let mut f = EditForm::<Design, ShellArgs>::default();
-        let solid = EntityRef::of_name(EntityRef::solid, &args.solid);
-        f.reference(
+        f.pick_one(
             "solid",
             "solid",
-            solid.clone(),
+            EntityRef::solid,
+            &args.solid,
             &[Role::Solid],
-            None,
-            false,
-            |edit, picked| {
-                let solid = EntityRef::last_name(EntityRef::solid, &picked);
+            |edit, solid| {
                 // The faces opened were of the solid before.
-                if solid.as_ref() != Some(&edit.args.solid) {
+                if solid != edit.args.solid {
                     edit.args.faces.clear();
                 }
-                edit.args.solid = solid.unwrap_or_default();
+                edit.args.solid = solid;
             },
         );
         // A shell offsets planes and round faces: those are what can be
         // picked to open.
         let faces = EntityRef::of_names(EntityRef::face, &args.faces);
         let roles = [Role::Plane, Role::Round];
-        let scope = solid.first().cloned();
+        let scope = EntityRef::of_name(EntityRef::solid, &args.solid).pop();
         f.reference(
             "faces",
             "open faces",

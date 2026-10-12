@@ -732,9 +732,6 @@ mod tests {
 
     use super::*;
 
-    fn edge(name: &str) -> EntityRef {
-        EntityRef::Edge { name: name.into() }
-    }
     fn origin() -> EntityRef {
         EntityRef::datum(ORIGIN)
     }
@@ -850,7 +847,9 @@ mod tests {
             )
             .contains("perpendicular")
         );
-        assert!(err(vec![edge("nowhere")], Construction::AlongLine {}).contains("nowhere"));
+        assert!(
+            err(vec![EntityRef::edge("nowhere")], Construction::AlongLine {}).contains("nowhere")
+        );
     }
 
     /// A datum step `d`, the only step of its program, being edited as an
@@ -979,7 +978,7 @@ mod tests {
     #[test]
     fn dialogs_say_what_a_selection_fits() {
         let args = AddDatumArgs {
-            selection: vec![origin(), edge("nowhere")],
+            selection: vec![origin(), EntityRef::edge("nowhere")],
             construction: Construction::Offset {
                 distance: 1.0.into(),
             },

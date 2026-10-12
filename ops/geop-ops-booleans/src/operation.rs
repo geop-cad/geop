@@ -100,31 +100,13 @@ impl PartOperation for Boolean {
         let ops = OPS
             .iter()
             .map(|&(_, value, label, _)| Choice::new(value, label));
-        let solid = |name: &String| EntityRef::of_name(EntityRef::solid, name);
-        let picked = |picked: &[EntityRef]| {
-            EntityRef::names_of(EntityRef::solid, picked)
-                .pop()
-                .unwrap_or_default()
-        };
         let roles = &[Role::Solid];
-        f.reference(
-            "a",
-            "a",
-            solid(&args.a),
-            roles,
-            None,
-            false,
-            move |edit, p| edit.args.a = picked(&p),
-        )
-        .reference(
-            "b",
-            "b",
-            solid(&args.b),
-            roles,
-            None,
-            false,
-            move |edit, p| edit.args.b = picked(&p),
-        )
+        f.pick_one("a", "a", EntityRef::solid, &args.a, roles, |edit, a| {
+            edit.args.a = a
+        })
+        .pick_one("b", "b", EntityRef::solid, &args.b, roles, |edit, b| {
+            edit.args.b = b
+        })
         .select(
             "op",
             "op",
@@ -167,6 +149,30 @@ pub enum Combine {
 }
 
 impl Combine {
+    /// Cutting the tools out of the solid named `target`.
+    pub fn cut(target: impl Into<String>) -> Self {
+        Combine::With {
+            op: BooleanOp::Difference,
+            target: target.into(),
+        }
+    }
+
+    /// Joining the tools onto the solid named `target`.
+    pub fn join(target: impl Into<String>) -> Self {
+        Combine::With {
+            op: BooleanOp::Union,
+            target: target.into(),
+        }
+    }
+
+    /// Keeping what the tools and the solid named `target` have in common.
+    pub fn intersect(target: impl Into<String>) -> Self {
+        Combine::With {
+            op: BooleanOp::Intersection,
+            target: target.into(),
+        }
+    }
+
     /// The solid it combines with, if any.
     pub fn target(&self) -> Option<&str> {
         match self {
@@ -179,10 +185,7 @@ impl Combine {
     /// there is one — building onto what is there is the common case.
     pub fn new_for<S: Scalar>(before: &NamedModel<S>) -> Self {
         match before.newest_solid() {
-            Some(target) => Combine::With {
-                op: BooleanOp::Union,
-                target,
-            },
+            Some(target) => Combine::join(target),
             None => Combine::NewBody,
         }
     }
@@ -208,24 +211,15 @@ impl Combine {
     }
 
     /// The field that picks the solid to combine with — or to go as far
-    /// as — labelled `label`, holding `target`, if any; `set` gets the
-    /// solid picked.
+    /// as — labelled `label`, holding the solid named `target` (empty for
+    /// none); `set` gets the name of the solid picked, or an empty one.
     pub fn target_field<'a, S: Scalar, A, T>(
         f: &mut EditForm<'a, S, A, T>,
         label: &str,
-        target: &[String],
-        set: impl Fn(Edit<'_, A, T>, Option<String>) + 'a,
+        target: &str,
+        set: impl Fn(Edit<'_, A, T>, String) + 'a,
     ) {
-        let picked = EntityRef::of_names(EntityRef::solid, target);
-        f.reference(
-            TARGET,
-            label,
-            picked,
-            &[Role::Solid],
-            None,
-            false,
-            move |edit, picked| set(edit, EntityRef::last_name(EntityRef::solid, &picked)),
-        );
+        f.pick_one(TARGET, label, EntityRef::solid, target, &[Role::Solid], set);
     }
 
     /// Its fields in `f`: the mode — chosen without a target, it takes the
@@ -266,9 +260,7 @@ impl Combine {
         );
         if let Combine::With { op, target } = self {
             let op = *op;
-            let target = std::slice::from_ref(target);
-            Self::target_field(f, "target", target, move |edit, picked| {
-                let target = picked.unwrap_or_default();
+            Self::target_field(f, "target", target, move |edit, target| {
                 set(edit.args, Combine::With { op, target })
             });
         }
@@ -518,12 +510,10 @@ impl PartOperation for Split {
         let namer = Namer::new("split", step)?;
         let solid = model.solid_id(&args.solid)?;
         let face = model.face_id(&args.face)?;
-        let Body::Sheet(sheet) = model.topology().body_of_face(face)? else {
-            return Err(GeopError::new(format!(
-                "{:?} is a face of a solid; cut with a face standing on its own, as an extrude or revolve builds in face mode",
-                args.face
-            )));
-        };
+        let sheet = model.sheet_of_face(
+            face,
+            "cut with a face standing on its own, as an extrude or revolve builds in face mode",
+        )?;
         split(model, &namer, solid, sheet, RemeshParams::default())?;
         Ok(())
     }
@@ -535,30 +525,21 @@ impl PartOperation for Split {
         _: &FormState<()>,
     ) -> EditForm<'a, Design, SplitArgs> {
         let mut f = EditForm::<Design, SplitArgs>::default();
-        let solid = EntityRef::of_name(EntityRef::solid, &args.solid);
-        let face = EntityRef::of_name(EntityRef::face, &args.face);
-        f.reference(
+        f.pick_one(
             "solid",
             "solid",
-            solid,
+            EntityRef::solid,
+            &args.solid,
             &[Role::Solid],
-            None,
-            false,
-            |edit, picked| {
-                edit.args.solid =
-                    EntityRef::last_name(EntityRef::solid, &picked).unwrap_or_default();
-            },
+            |edit, name| edit.args.solid = name,
         )
-        .reference(
+        .pick_one(
             "face",
             "face",
-            face,
+            EntityRef::face,
+            &args.face,
             &[Role::Sheet],
-            None,
-            false,
-            |edit, picked| {
-                edit.args.face = EntityRef::last_name(EntityRef::face, &picked).unwrap_or_default();
-            },
+            |edit, name| edit.args.face = name,
         );
         f
     }

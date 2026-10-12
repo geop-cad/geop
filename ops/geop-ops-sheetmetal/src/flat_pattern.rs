@@ -129,7 +129,7 @@ pub(crate) fn build(
     let unfolded = sheet.unfolded()?;
     if let Some(consumed) = consumes {
         let id = model.solid_id(consumed)?;
-        model.assemble_sheet(&[Body::Solid(id)], &[])?;
+        model.delete_bodies(&[Body::Solid(id)])?;
     }
     thicken(model, &unfolded, &namer.root(), &|n| namer.name(&[&n]))?;
     Ok(())
@@ -188,18 +188,13 @@ impl PartOperation for FlatPattern {
         _: &FormState<()>,
     ) -> EditForm<'a, Design, FlatPatternArgs> {
         let mut f = EditForm::<Design, FlatPatternArgs>::default();
-        let solid = EntityRef::of_name(EntityRef::solid, &args.solid);
-        f.reference(
+        f.pick_one(
             "solid",
             "body",
-            solid,
+            EntityRef::solid,
+            &args.solid,
             &[Role::Solid],
-            None,
-            false,
-            |edit, picked| {
-                edit.args.solid =
-                    EntityRef::last_name(EntityRef::solid, &picked).unwrap_or_default();
-            },
+            |edit, name| edit.args.solid = name,
         )
         .checkbox("keep", "keep bent body", args.keep, |edit, b| {
             edit.args.keep = b

@@ -3,10 +3,12 @@
 use geop_core_math::scalars::{Field, Ring, ScalInF64 as S, Scalar};
 use geop_ops::NamedModel;
 use geop_ops::operation::apply_to_model;
-use geop_ops_extrude_revolve::shapes::{cube_solid, cylinder::revolved_cylinder};
+use geop_ops_extrude_revolve::shapes::{block, cylinder::revolved_cylinder};
 
 use super::*;
-use crate::boundary::tests::{assert_valid, refused, v3};
+use crate::boundary::tests::refused;
+use geop_ops::testing::assert_valid_sheets;
+use geop_ops_extrude_revolve::shapes::v3;
 
 fn offset(part: NamedModel<S>, faces: Vec<String>, distance: f64) -> GeopResult<NamedModel<S>> {
     let args = OffsetSurfaceArgs { faces, distance };
@@ -39,7 +41,7 @@ fn offset_a_cylinder_face() {
         .collect();
     let faces_before = part.topology().faces.len();
     let part = offset(part, sides.clone(), 0.2).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     assert_eq!(part.topology().faces.len(), faces_before + sides.len());
     for name in &sides {
         let copy = part.face_id(&format!("offset(o,{name})")).unwrap();
@@ -62,7 +64,7 @@ fn offset_a_cylinder_face() {
 #[test]
 fn offset_three_faces_of_a_cube_inward() {
     let mut part = NamedModel::<S>::new();
-    let cube = cube_solid(&mut part, "c", v3(0., 0., 0.), v3(1., 1., 1.)).unwrap();
+    let cube = block(&mut part, "c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     let faces: Vec<String> = part
         .topology()
         .solid_faces(cube)
@@ -80,7 +82,7 @@ fn offset_three_faces_of_a_cube_inward() {
         .collect();
     assert_eq!(faces.len(), 3);
     let part = offset(part, faces, -0.1).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     let corner = part
         .topology()
         .vertices
@@ -93,7 +95,7 @@ fn offset_three_faces_of_a_cube_inward() {
 #[test]
 fn zero_distance_is_refused() {
     let mut part = NamedModel::<S>::new();
-    let cube = cube_solid(&mut part, "c", v3(0., 0., 0.), v3(1., 1., 1.)).unwrap();
+    let cube = block(&mut part, "c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     let face = part.topology().solid_faces(cube).unwrap()[0];
     let face = part.name_of(face).unwrap().to_string();
     let err = refused(offset(part, vec![face], 0.0));

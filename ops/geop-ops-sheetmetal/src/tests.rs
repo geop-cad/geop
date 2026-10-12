@@ -11,12 +11,12 @@ use geop_core_math::{
 };
 use geop_core_program::operation::Operation;
 use geop_core_sketch::Sketch;
-use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
 use geop_ops::{
     Design, NamedModel, PlacedSketch,
     model::{model, sketch},
     operation::{Build, BuildReader},
     output::{Exporter, Output},
+    testing::assert_valid,
 };
 use geop_ops_rasterize::rasterize;
 
@@ -262,22 +262,6 @@ fn refused<T>(result: GeopResult<T>) -> String {
         Ok(_) => panic!("built, but should have been refused"),
         Err(e) => e.to_string(),
     }
-}
-
-fn assert_valid(part: &Part) {
-    let params = ValidationParameters::default();
-    if let Err(errors) = validate(&params, part.topology()) {
-        let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
-        panic!(
-            "{} validation error(s):\n{}",
-            messages.len(),
-            messages.join("\n")
-        );
-    }
-    if let Err(errors) = validate_manifold(&params, part.topology()) {
-        panic!("{errors:?}");
-    }
-    part.check_names().unwrap();
 }
 
 /// The box around the solid's vertices: its lower and upper corner, each

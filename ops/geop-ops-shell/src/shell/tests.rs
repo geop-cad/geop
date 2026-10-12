@@ -5,39 +5,22 @@
 use geop_core_math::{
     for_all_scalars,
     scalars::{ScalInF64, Scalar},
-    vector::Vector3,
 };
-use geop_core_topology::{
-    Body, SolidId,
-    validation::{ValidationParameters, validate, validate_manifold},
-};
-use geop_ops::{NamedModel, Namer};
+use geop_core_topology::{Body, SolidId};
+use geop_ops::{NamedModel, Namer, testing::assert_valid};
 use geop_ops_extrude_revolve::shapes::{
-    cube_solid,
+    block,
     cylinder::{extruded_cylinder, revolved_cylinder},
     sphere::sphere_solid,
+    v3,
 };
 
 use super::shell;
 
-fn v<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
-    Vector3::from_array([x, y, z].map(S::from_f64))
-}
-
-fn assert_valid<S: Scalar>(part: &NamedModel<S>) {
-    let params = ValidationParameters::default();
-    if let Err(errors) = validate(&params, part.topology()) {
-        panic!("{errors:#?}");
-    }
-    if let Err(errors) = validate_manifold(&params, part.topology()) {
-        panic!("{errors:#?}");
-    }
-}
-
 /// The 2 x 2 x 1 box from the origin, `cube(b)`.
 fn unit_box<S: Scalar>() -> (NamedModel<S>, SolidId) {
     let mut part = NamedModel::new();
-    let solid = cube_solid(&mut part, "b", v(0., 0., 0.), v(2., 2., 1.)).unwrap();
+    let solid = block(&mut part, "b", [0., 0., 0.], [2., 2., 1.]);
     (part, solid)
 }
 
@@ -170,7 +153,7 @@ fn check_prism<S: Scalar>() {
     let solid = extruded_cylinder(
         &mut part,
         "p",
-        v(0., 0., 0.),
+        v3(0., 0., 0.),
         S::from_f64(1.),
         S::from_f64(1.5),
         6,
@@ -190,7 +173,7 @@ fn check_revolved_cylinder<S: Scalar>() {
     let solid = revolved_cylinder(
         &mut part,
         "c",
-        v(0., 0., 0.),
+        v3(0., 0., 0.),
         S::from_f64(1.),
         S::from_f64(2.),
     )
@@ -223,7 +206,7 @@ fn a_closed_revolved_cylinder() {
     let solid = revolved_cylinder(
         &mut part,
         "c",
-        v(0., 0., 0.),
+        v3(0., 0., 0.),
         ScalInF64::from_f64(1.),
         ScalInF64::from_f64(2.),
     )
@@ -249,7 +232,7 @@ fn walls_too_thick_are_refused() {
 fn a_sphere_closed_all_round() {
     type S = ScalInF64;
     let mut part = NamedModel::new();
-    let solid = sphere_solid(&mut part, "s", v(1., 0., 0.), S::from_f64(2.)).unwrap();
+    let solid = sphere_solid(&mut part, "s", v3(1., 0., 0.), S::from_f64(2.)).unwrap();
     let (part, solid) = shelled(part, solid, &[], 0.5);
     assert_valid(&part);
     assert_eq!(part.topology().get_solid(solid).unwrap().shells.len(), 2);
@@ -274,7 +257,7 @@ fn a_sphere_closed_all_round() {
 #[test]
 fn a_sphere_does_not_open_along_a_smooth_seam() {
     let mut part = NamedModel::<ScalInF64>::new();
-    let solid = sphere_solid(&mut part, "s", v(0., 0., 0.), ScalInF64::from_f64(1.)).unwrap();
+    let solid = sphere_solid(&mut part, "s", v3(0., 0., 0.), ScalInF64::from_f64(1.)).unwrap();
     let north: Vec<_> = (0..4)
         .map(|k| part.face_id(&format!("sphere(s,north,q{k})")).unwrap())
         .collect();

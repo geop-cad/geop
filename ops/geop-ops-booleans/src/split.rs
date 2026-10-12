@@ -240,21 +240,20 @@ pub fn split<S: Scalar>(
 mod tests {
     use super::split;
     use crate::remesh::remesh::RemeshParams;
-    use crate::scenes::{assert_valid, v3};
     use geop_core_math::{
         primitives::CoordinateSystem,
         scalars::{ScalInF64 as S, Scalar},
-        vector::{Vector2, Vector3},
+        vector::Vector3,
     };
     use geop_core_topology::{
         Body,
         contains::shell::{Classified, PointClassification, solid_contains},
     };
-    use geop_ops::{NamedModel, Namer};
+    use geop_ops::{NamedModel, Namer, testing::assert_valid};
     use geop_ops_extrude_revolve::{
         common::{Profile, polyline},
         extrude::extrude,
-        shapes::cube_solid,
+        shapes::{block, v2, v3},
         sweep::SweepLoop,
     };
 
@@ -262,14 +261,8 @@ mod tests {
     /// `points` in the `z = -1` plane, swept up to `z = 1`.
     fn cube_and_sheet(points: &[[f64; 2]]) -> (NamedModel<S>, geop_core_topology::SolidId, Body) {
         let mut model = NamedModel::<S>::new();
-        let cube = cube_solid(&mut model, "c", v3(-0.5, -0.5, -0.5), v3(0.5, 0.5, 0.5)).unwrap();
-        let chain = polyline(
-            &points
-                .iter()
-                .map(|p| Vector2::from_array([S::from_f64(p[0]), S::from_f64(p[1])]))
-                .collect::<Vec<_>>(),
-        )
-        .unwrap();
+        let cube = block(&mut model, "c", [-0.5; 3], [0.5; 3]);
+        let chain = polyline(&points.iter().map(|p| v2(p[0], p[1])).collect::<Vec<_>>()).unwrap();
         let plane = CoordinateSystem::world_at(v3(0.0, 0.0, -1.0));
         let namer = Namer::new("extrude", "cut").unwrap();
         let built = extrude(

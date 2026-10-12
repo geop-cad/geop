@@ -16,7 +16,7 @@ use geop_ops::{
         StepContext,
     },
     part_operation,
-    ui::{Choice, EditForm, FormState, Number, Unit, Value, sketch_field},
+    ui::{Choice, EditForm, FormState, Number, Unit},
 };
 use serde::{Deserialize, Serialize};
 
@@ -207,13 +207,8 @@ impl PartOperation for Sweep {
     ) -> EditForm<'a, Design, SweepArgs> {
         let view = &context.before;
         let mut f = EditForm::<Design, SweepArgs>::default();
-        let profile = std::slice::from_ref(&args.profile);
-        sketch_field(&mut f.form.dialog, view, "profile", profile, false);
-        f.on("profile", |edit, value| {
-            if let Value::Entities(picked) = value {
-                edit.args.profile =
-                    EntityRef::last_name(EntityRef::sketch, &picked).unwrap_or_default();
-            }
+        f.pick_sketch(view, "profile", &args.profile, |edit, name| {
+            edit.args.profile = name
         });
         let path = args.path.iter().cloned().collect();
         let rails = args.rails.clone();

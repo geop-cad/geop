@@ -18,7 +18,7 @@ use geop_ops::{
         Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Scope, Seen, StepContext,
     },
     part_operation,
-    ui::{EditForm, FormState, Value, sketch_field},
+    ui::{EditForm, FormState},
 };
 use geop_ops_extrude_revolve::operation::shape_loops;
 use serde::{Deserialize, Serialize};
@@ -139,13 +139,8 @@ impl PartOperation for SheetCut {
         _: &FormState<()>,
     ) -> EditForm<'a, Design, SheetCutArgs> {
         let mut f = EditForm::<Design, SheetCutArgs>::default();
-        let sketch = std::slice::from_ref(&args.sketch);
-        sketch_field(&mut f.form.dialog, &context.before, "sketch", sketch, false);
-        f.on("sketch", |edit, value| {
-            if let Value::Entities(picked) = value {
-                edit.args.sketch =
-                    EntityRef::last_name(EntityRef::sketch, &picked).unwrap_or_default();
-            }
+        f.pick_sketch(&context.before, "sketch", &args.sketch, |edit, name| {
+            edit.args.sketch = name
         });
         f.pick_one(
             "face",

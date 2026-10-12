@@ -759,7 +759,7 @@ mod tests {
     use geop_core_math::{scalars::ScalInF64, scalars::Scalar, vector::Vector3};
     use geop_core_topology::{contains::rng::Rng, validation::validate_fast};
     use geop_ops::Namer;
-    use geop_ops_extrude_revolve::shapes::cylinder::Axis;
+    use geop_ops_extrude_revolve::shapes::{block, cylinder::Axis, v3};
 
     /// A fresh operation id, so that every solid and boolean a test builds
     /// gets names of its own.
@@ -1125,24 +1125,18 @@ mod tests {
 
     type M = geop_ops::NamedModel<ScalInF64>;
 
-    fn v(x: f64, y: f64, z: f64) -> Vector3<ScalInF64> {
-        Vector3::from_array([x, y, z].map(ScalInF64::from_f64))
-    }
-
     /// `CreateCube(offset, dims)`: the axis-aligned box from `offset` to
     /// `offset + dims`.
     fn cube(model: &mut M, offset: [f64; 3], dims: [f64; 3]) -> geop_core_topology::SolidId {
-        let [x, y, z] = offset;
-        let [dx, dy, dz] = dims;
-        let (min, max) = (v(x, y, z), v(x + dx, y + dy, z + dz));
-        geop_ops_extrude_revolve::shapes::cube_solid(model, &fresh_id(), min, max).unwrap()
+        let max = [0, 1, 2].map(|k| offset[k] + dims[k]);
+        block(model, &fresh_id(), offset, max)
     }
 
     /// `CreateSphere(offset, r)`.
     fn sphere(model: &mut M, center: [f64; 3], r: f64) -> geop_core_topology::SolidId {
         let [x, y, z] = center;
         let r = ScalInF64::from_f64(r);
-        geop_ops_extrude_revolve::shapes::sphere::sphere_solid(model, &fresh_id(), v(x, y, z), r)
+        geop_ops_extrude_revolve::shapes::sphere::sphere_solid(model, &fresh_id(), v3(x, y, z), r)
             .unwrap()
     }
 
@@ -1158,7 +1152,7 @@ mod tests {
         geop_ops_extrude_revolve::shapes::cylinder::revolved_cylinder_along_axis(
             model,
             &fresh_id(),
-            v(x, y, z),
+            v3(x, y, z),
             ScalInF64::from_f64(r),
             ScalInF64::from_f64(h),
             axis,
@@ -1910,7 +1904,7 @@ mod tests {
         let classification = geop_core_topology::contains::shell::shell_contains(
             model.topology(),
             shell,
-            v(-0.005, -0.28, 0.825),
+            v3(-0.005, -0.28, 0.825),
             params.max_nodes,
             params.curve_curve_min_subdivision_size,
             super::SEED,
@@ -2074,7 +2068,7 @@ mod tests {
         // `validate_fast`.
         let shell = topology.get_solid(result).unwrap().shells[0];
         for z in [-0.45, 0.45] {
-            let p = v(0.0, 0.0, z);
+            let p = v3(0.0, 0.0, z);
             let outside = matches!(
                 geop_core_topology::contains::shell::shell_contains(
                     topology,

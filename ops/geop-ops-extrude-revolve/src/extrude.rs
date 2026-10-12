@@ -67,12 +67,12 @@ pub fn extrude<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::testing::{self, assert_valid_sheets, circle, circle_at, v2};
     use crate::common::{Profile, polygon};
+    use crate::shapes::{circle, circle_at, v2};
     use geop_core_geometry::nurb_curve::{NurbCurve2D, sqrt2_over_2};
     use geop_core_math::for_all_scalars;
     use geop_core_math::vector::Vector3;
-    use geop_core_topology::Model;
+    use geop_ops::testing::{assert_model_valid, assert_model_valid_sheets};
 
     fn unit_square<S: Scalar>() -> Vec<NurbCurve2D<S>> {
         polygon(&[v2(0.0, 0.0), v2(1.0, 0.0), v2(1.0, 1.0), v2(0.0, 1.0)]).unwrap()
@@ -133,18 +133,11 @@ mod tests {
         model
     }
 
-    fn assert_valid<S: Scalar>(model: &Model<S>) {
-        testing::assert_valid(model);
-        for edge_id in model.edges.keys() {
-            assert_eq!(model.coedges_of_edge(*edge_id).len(), 2);
-        }
-    }
-
     fn check_extruded_square_is_valid<S: Scalar>() {
         let cs = axis_aligned_coordinate_system(Vector3::from_array([S::ZERO; 3]));
         let model = extruded(&cs, unit_square::<S>(), vec![]);
         let topology = model.topology();
-        assert_valid(topology);
+        assert_model_valid(topology);
         assert_eq!(topology.faces.len(), 6);
         assert_eq!(topology.vertices.len(), 8);
         assert_eq!(topology.edges.len(), 12);
@@ -159,7 +152,7 @@ mod tests {
         let cs = axis_aligned_coordinate_system(Vector3::from_array([S::ZERO; 3]));
         let model = extruded(&cs, unit_square::<S>(), vec![hole]);
         let topology = model.topology();
-        assert_valid(topology);
+        assert_model_valid(topology);
         // 6 outer faces (4 sides + top + bottom) + 4 hole side walls; 8
         // outer vertices + 8 hole vertices (4 on the bottom cap, 4 on top).
         assert_eq!(topology.faces.len(), 6 + 4);
@@ -175,7 +168,7 @@ mod tests {
         let cs = axis_aligned_coordinate_system(origin);
         let model = extruded(&cs, unit_square::<S>(), vec![]);
         let topology = model.topology();
-        assert_valid(topology);
+        assert_model_valid(topology);
         // `w` points along `-z` (see `axis_aligned_coordinate_system`), so
         // the profile sits at the origin's own `z` and the far face one unit
         // *below* it.
@@ -200,7 +193,7 @@ mod tests {
         let outer = polygon(&[v2(-3.0, 2.0), v2(-1.0, 2.0), v2(-2.0, 5.0)]).unwrap();
         let model = extruded(&cs, outer, vec![]);
         let topology = model.topology();
-        assert_valid(topology);
+        assert_model_valid(topology);
         assert_eq!(topology.faces.len(), 5);
     }
     #[test]
@@ -215,7 +208,7 @@ mod tests {
         let hole = circle_at::<S>(0.3, 0.0, 1.0, true);
         let model = extruded(&cs, outer, vec![hole]);
         let topology = model.topology();
-        assert_valid(topology);
+        assert_model_valid(topology);
         assert_eq!(topology.faces.len(), 2 + 4 + 4);
     }
     #[test]
@@ -254,7 +247,7 @@ mod tests {
             .unwrap();
             model.check_names().unwrap();
             let topology = model.topology();
-            assert_valid(topology);
+            assert_model_valid(topology);
             assert!(
                 topology
                     .vertices
@@ -307,7 +300,7 @@ mod tests {
         model.check_names().unwrap();
         assert!(built.solid.is_none());
         let topology = model.topology();
-        assert_valid_sheets(topology);
+        assert_model_valid_sheets(topology);
         assert_eq!(topology.faces.len(), 2);
         let free = |e: &geop_core_topology::EdgeId| topology.coedges_of_edge(*e).len() == 1;
         assert_eq!(topology.edges.keys().filter(|e| free(e)).count(), 6);
@@ -334,7 +327,7 @@ mod tests {
             )
             .unwrap();
             let topology = model.topology();
-            assert_valid(topology);
+            assert_model_valid(topology);
             let height = |name: &str| {
                 topology
                     .get_vertex(model.vertex_id(name).unwrap())

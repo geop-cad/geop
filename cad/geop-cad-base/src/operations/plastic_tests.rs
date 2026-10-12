@@ -27,10 +27,6 @@ fn assert_valid_case(part: &NamedModel<Design>, case: &str) {
     part.check_names().unwrap();
 }
 
-fn face(name: &str) -> EntityRef {
-    EntityRef::Face { name: name.into() }
-}
-
 /// The 2 x 2 x 1 box `box`: its walls `extrude(box,outline,c4)` (towards
 /// `-y`), `c5` (`+x`), `c6` (`+y`) and `c7` (`-x`), its bottom
 /// `extrude(box,start)` and top `extrude(box,end)`.
@@ -78,7 +74,7 @@ pub(super) fn enclosure() -> Program {
 fn draft(faces: &[String], degrees: f64) -> DraftArgs {
     DraftArgs {
         faces: faces.to_vec(),
-        neutral: Some(face("extrude(box,start)")),
+        neutral: Some(EntityRef::face("extrude(box,start)")),
         angle: degrees,
         reversed: false,
     }
@@ -122,7 +118,7 @@ fn enclosure_with_a_port_drafted() {
     // On the +x wall, `u` runs along `y` and `v` along `z`.
     let c = s.add_point(n(1.0), n(0.5));
     s.add_circle(c, n(0.2));
-    program.push("port_sketch", sketch(face(&wall("c5")), s));
+    program.push("port_sketch", sketch(EntityRef::face(&wall("c5")), s));
     program.push(
         "port",
         extrusion("port_sketch", Extents::blind(-0.5), cut("shell(s)")),
@@ -241,7 +237,7 @@ pub(super) fn enclosure_with_rib_sketch() -> Program {
     program.push(
         "middle",
         AddDatumArgs {
-            selection: vec![face(&wall("c4"))],
+            selection: vec![EntityRef::face(&wall("c4"))],
             construction: Construction::Offset {
                 distance: (-1.0).into(),
             },
@@ -301,7 +297,7 @@ fn enclosure_rib_normal_to_its_sketch() {
     program.push(
         "level",
         AddDatumArgs {
-            selection: vec![face("shell(s,extrude(box,start))")],
+            selection: vec![EntityRef::face("shell(s,extrude(box,start))")],
             construction: Construction::Offset {
                 distance: 0.5.into(),
             },

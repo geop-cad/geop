@@ -100,13 +100,9 @@ pub fn draft<S: Scalar>(
     let Some(&first) = faces.first() else {
         return Err(GeopError::new("pick the faces to draft")).with_context(ctx);
     };
-    let Some(solid) = model.solid_of_face(first).with_context(ctx)? else {
-        return Err(GeopError::new(format!(
-            "face {} stands on its own; only faces of a solid can be drafted",
-            part.name(first)?
-        )))
-        .with_context(ctx);
-    };
+    let solid = part
+        .solid_of_face(first, "only faces of a solid can be drafted")
+        .with_context(ctx)?;
     let all = model.solid_faces(solid).with_context(ctx)?;
     if let Some(&f) = faces.iter().find(|f| !all.contains(f)) {
         return Err(GeopError::new(format!(
@@ -131,12 +127,8 @@ pub fn draft<S: Scalar>(
         .with_context(ctx)?
         .result()
         .with_context(ctx)?;
-    part.assemble_solid(&[solid.into()], &[], "")
-        .with_context(ctx)?;
-    let built = part.build_body(result, names).with_context(ctx)?;
-    built
-        .solid
-        .ok_or_else(|| GeopError::new("draft: building the result made no solid"))
+    part.replace_with_solid(&[solid.into()], result, names)
+        .with_context(ctx)
 }
 
 /// How a drafted face turns: about where its plane meets `neutral`, by the

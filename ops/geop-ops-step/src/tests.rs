@@ -4,18 +4,11 @@
 use geop_core_math::{
     scalars::Ring,
     scalars::{Scalar, scal_in_f64::ScalInF64},
-    vector::Vector3,
 };
-use geop_core_topology::{
-    Model,
-    validation::{ValidationParameters, validate},
-};
+use geop_core_topology::Model;
 use std::{collections::BTreeMap, rc::Rc};
 
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    primitives::Pose,
-};
+use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{
     operation_registry::OperationRegistry,
     program::{Program, ProgramStep},
@@ -23,13 +16,14 @@ use geop_core_program::{
 };
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue,
-    model::{model, pose_parameter},
-    operation::{Build, BuildReader, Input},
+    model::model,
+    operation::{Build, Input},
     parameters::{Parameters, Values},
-    placed::{Component, Instance, LIBRARY, Library, Placement, instance},
+    placed::{Component, LIBRARY, Library},
+    testing::{assert_model_valid_sheets, built, built_with},
 };
 use geop_ops_extrude_revolve::shapes::{
-    cube::cube_solid, cylinder::revolved_cylinder, sphere::sphere_solid,
+    cube::cube_solid, cylinder::revolved_cylinder, sphere::sphere_solid, v3,
 };
 
 use crate::{ImportStep, ImportStepArgs, add_bodies, read_step, write_step};
@@ -37,47 +31,9 @@ use crate::{ImportStep, ImportStepArgs, add_bodies, read_step, write_step};
 type S = ScalInF64;
 type Part<S> = NamedModel<S>;
 
-/// The model `model`, as the generator of a part's first target.
-fn given(_: &mut BuildReader, model: &NamedModel<Design>) -> GeopResult<NamedModel<Design>> {
-    Ok(model.clone())
-}
-
-/// The instance placed, as the generator of its target.
-fn placing(_: &mut BuildReader, placed: &Instance) -> GeopResult<Instance> {
-    Ok(placed.clone())
-}
-
-/// The part of the model `bodies` with `placed` placed in it, each instance
-/// at its pose: as a program of a step for each would build it.
-fn built(bodies: &NamedModel<Design>, placed: &[(&str, &Rc<Component>, Pose<Design>)]) -> Build {
-    let state = (placed.iter())
-        .map(|(name, _, pose)| (pose_parameter(name), ParamValue::Pose(*pose)))
-        .collect();
-    let mut part = Build::default();
-    part.begin_run(&BTreeMap::new(), &state);
-    part.begin_step("given").unwrap();
-    part.define_target(&model(), bodies, given).unwrap();
-    for (name, component, _) in placed {
-        part.begin_step(name).unwrap();
-        let placed = Instance {
-            component: Rc::clone(component),
-            placement: Placement::Parameter(pose_parameter(name)),
-            fixed: true,
-        };
-        part.define_target(&instance(name), &placed, placing)
-            .unwrap();
-    }
-    part.end_run(Default::default());
-    part
-}
-
 /// `model` as the text of a STEP file whose product is `name`.
 fn written(model: &NamedModel<Design>, name: &str) -> String {
-    write_step(built(model, &[]).current(), name).unwrap()
-}
-
-fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
-    Vector3::from_array([x, y, z].map(S::from_f64))
+    write_step(built(model).current(), name).unwrap()
 }
 
 /// The part the STEP text `text` imports into, checked valid.
@@ -86,15 +42,8 @@ fn import(text: &str) -> Part<S> {
     let mut part = Part::new();
     add_bodies(&mut part, &Namer::new("import", "i").unwrap(), &bodies)
         .unwrap_or_else(|e| panic!("adding failed: {e}"));
-    assert_valid(part.topology());
+    assert_model_valid_sheets(part.topology());
     part
-}
-
-fn assert_valid(model: &Model<S>) {
-    if let Err(errors) = validate(&ValidationParameters::default(), model) {
-        let shown: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
-        panic!("invalid model:\n{}", shown.join("\n"));
-    }
 }
 
 /// `(faces, edges, vertices)` of a model.
@@ -149,7 +98,7 @@ fn round_trip(part: &Part<S>) -> Part<S> {
 #[test]
 fn a_cube_round_trips() {
     let mut part = Part::new();
-    cube_solid(&mut part, "c", v(0.0, 0.0, 0.0), v(2.0, 1.0, 3.0)).unwrap();
+    cube_solid(&mut part, "c", v3(0.0, 0.0, 0.0), v3(2.0, 1.0, 3.0)).unwrap();
     let back = round_trip(&part);
     assert_eq!(back.solid_names(), vec!["import(i,s0)".to_string()]);
 }
@@ -160,7 +109,7 @@ fn a_cylinder_round_trips() {
     revolved_cylinder(
         &mut part,
         "c",
-        v(1.0, 2.0, 0.0),
+        v3(1.0, 2.0, 0.0),
         S::from_f64(0.5),
         S::from_f64(2.0),
     )
@@ -171,7 +120,7 @@ fn a_cylinder_round_trips() {
 #[test]
 fn a_sphere_round_trips() {
     let mut part = Part::new();
-    sphere_solid(&mut part, "s", v(0.0, 0.0, 1.0), S::from_f64(1.5)).unwrap();
+    sphere_solid(&mut part, "s", v3(0.0, 0.0, 1.0), S::from_f64(1.5)).unwrap();
     round_trip(&part);
 }
 
@@ -451,7 +400,7 @@ fn helix_entities(first: u64, z0: f64) -> String {
     use geop_core_geometry::nurb_curve::{Handedness, NurbCurve3D};
     use geop_core_math::primitives::CoordinateSystem;
     let helix = NurbCurve3D::<S>::helix(
-        &CoordinateSystem::world_at(v(0.0, 0.0, z0)),
+        &CoordinateSystem::world_at(v3(0.0, 0.0, z0)),
         S::ONE,
         S::ONE,
         1.5,
@@ -694,7 +643,7 @@ fn a_vertex_off_its_faces_is_put_where_they_meet() {
         .map(|v| v.point)
         .find(|q| q[0].to_f64() > 2.0 && q[1].to_f64() > 1.0 && q[2].to_f64() > 0.5)
         .expect("the corner");
-    assert!(corner.could_be_equal(&v(3.0, 2.0, 1.0)), "{corner:?}");
+    assert!(corner.could_be_equal(&v3(3.0, 2.0, 1.0)), "{corner:?}");
 }
 
 /// Four planes at a vertex that do not meet in a point: the box's top cut
@@ -920,22 +869,23 @@ fn an_assembly_is_written_as_products_and_occurrences() {
     revolved_cylinder(
         &mut peg,
         "c",
-        v(0.0, 0.0, 0.0),
+        v3(0.0, 0.0, 0.0),
         S::from_f64(0.5),
         S::from_f64(2.0),
     )
     .unwrap();
-    let peg = component("parts/peg.geop", built(&peg, &[]));
-    let at = |x: f64, y: f64, z: f64| Pose::new(v(x, y, z), Quaternion::identity()).unwrap();
-    let sub = built(&Part::new(), &[("p", &peg, at(0.0, 0.0, 1.0))]);
+    let peg = component("parts/peg.geop", built(&peg));
+    let at = |x: f64, y: f64, z: f64| Pose::new(v3(x, y, z), Quaternion::identity()).unwrap();
+    let placed = [("p", &peg, at(0.0, 0.0, 1.0))];
+    let sub = built_with(&BTreeMap::new(), &Part::new(), &placed, |_| {});
     let sub = component("sub.geop", sub);
 
     let mut base = Part::new();
-    cube_solid(&mut base, "base", v(0.0, 0.0, -1.0), v(10.0, 10.0, 0.0)).unwrap();
+    cube_solid(&mut base, "base", v3(0.0, 0.0, -1.0), v3(10.0, 10.0, 0.0)).unwrap();
     // About `y` by a quarter turn: the peg's `z` onto `x`.
     let half = std::f64::consts::FRAC_PI_4;
     let turned = Pose::new(
-        v(9.0, 8.0, 0.5),
+        v3(9.0, 8.0, 0.5),
         Quaternion::new(
             S::from_f64(half.cos()),
             S::ZERO,
@@ -944,14 +894,12 @@ fn an_assembly_is_written_as_products_and_occurrences() {
         ),
     )
     .unwrap();
-    let part = built(
-        &base,
-        &[
-            ("a", &peg, at(2.0, 2.0, 0.0)),
-            ("b", &peg, turned),
-            ("s", &sub, at(8.0, 2.0, 0.0)),
-        ],
-    );
+    let placed = [
+        ("a", &peg, at(2.0, 2.0, 0.0)),
+        ("b", &peg, turned),
+        ("s", &sub, at(8.0, 2.0, 0.0)),
+    ];
+    let part = built_with(&BTreeMap::new(), &base, &placed, |_| {});
 
     let text = write_step(part.current(), "robot").unwrap();
     // To check it in another CAD system: written where STEP_EXPORT_DIR says.
@@ -1011,7 +959,7 @@ fn an_import_reads_its_file_once() {
     revolved_cylinder(
         &mut cylinder,
         "c",
-        v(1.0, 2.0, 0.0),
+        v3(1.0, 2.0, 0.0),
         S::from_f64(0.5),
         S::from_f64(2.0),
     )
@@ -1044,5 +992,5 @@ fn an_import_reads_its_file_once() {
     assert_eq!(run(&mut runner, &files(&text)), first + 1);
     let model = runner.part.current().retrieve_target(&model()).unwrap();
     assert_eq!(model.solid_names(), vec!["import(i,s0)".to_string()]);
-    assert_valid(model.topology());
+    assert_model_valid_sheets(model.topology());
 }

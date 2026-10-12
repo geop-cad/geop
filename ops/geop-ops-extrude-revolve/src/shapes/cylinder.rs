@@ -144,9 +144,9 @@ pub fn extruded_cylinder<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::testing::{assert_valid, render};
+    use crate::common::testing::render;
     use geop_core_math::for_all_scalars;
-    use geop_core_topology::validation::{ValidationParameters, validate, validate_manifold};
+    use geop_ops::testing::{assert_model_valid, assert_model_valid_sheets};
 
     fn check_revolved_cylinder_is_valid<S: Scalar>() {
         let mut model = NamedModel::<S>::new();
@@ -161,7 +161,7 @@ mod tests {
         let topology = model.topology();
         assert_eq!(topology.faces.len(), 12);
 
-        assert_valid(topology);
+        assert_model_valid(topology);
         render(topology, 32, "revolved_cylinder_topology.html");
     }
     #[test]
@@ -182,7 +182,7 @@ mod tests {
         .unwrap();
         let topology = model.topology();
 
-        assert_valid(topology);
+        assert_model_valid(topology);
         render(topology, 8, "extruded_cylinder_topology.html");
         assert_eq!(topology.faces.len(), 12 + 2);
     }
@@ -197,7 +197,6 @@ mod tests {
     /// (`height`) with the circular cross-section in the *other* two
     /// coordinates, not still sitting on `z`.
     fn check_revolved_cylinder_along_axis_is_valid<S: Scalar>() {
-        let params = ValidationParameters::default();
         for (axis, extent_axis) in [(Axis::X, 0), (Axis::Y, 1), (Axis::Z, 2)] {
             let mut model = NamedModel::<S>::new();
             revolved_cylinder_along_axis(
@@ -212,8 +211,7 @@ mod tests {
             let topology = model.topology();
             assert_eq!(topology.faces.len(), 12, "{axis:?}");
 
-            validate(&params, topology).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
-            validate_manifold(&params, topology).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
+            assert_model_valid(topology);
 
             // Every vertex's coordinate along the *other* two axes stays
             // within the radius; `extent_axis` alone reaches all the way
@@ -255,7 +253,6 @@ mod tests {
     /// each cap's height came out tens wide, as wide as its distance from
     /// the origin (see `nurb_surface::evaluate`).
     fn check_revolved_cylinder_far_along_its_axis_is_valid<S: Scalar>() {
-        let params = ValidationParameters::default();
         let f = S::from_f64;
         for (axis, k) in [(Axis::X, 0), (Axis::Y, 1), (Axis::Z, 2)] {
             let mut base = [f(0.0); 3];
@@ -270,7 +267,7 @@ mod tests {
                 axis,
             )
             .unwrap();
-            validate(&params, model.topology()).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
+            assert_model_valid_sheets(model.topology());
         }
     }
     #[test]
@@ -289,7 +286,6 @@ mod tests {
     /// `fat_line::stalled` and the curve-surface test
     /// `spoke_touching_cap_quadrant_at_its_pole_far_from_the_origin`).
     fn check_revolved_cylinder_far_from_the_origin_is_valid<S: Scalar>() {
-        let params = ValidationParameters::default();
         let f = S::from_f64;
         for axis in [Axis::X, Axis::Y, Axis::Z] {
             let mut model = NamedModel::<S>::new();
@@ -302,7 +298,7 @@ mod tests {
                 axis,
             )
             .unwrap();
-            validate(&params, model.topology()).unwrap_or_else(|e| panic!("{axis:?}: {e:?}"));
+            assert_model_valid_sheets(model.topology());
         }
     }
     #[test]

@@ -5,18 +5,20 @@ use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_topology::Body;
 use geop_ops::NamedModel;
 use geop_ops::operation::apply_to_model;
-use geop_ops_extrude_revolve::shapes::{cube_solid, cylinder::revolved_cylinder};
+use geop_ops_extrude_revolve::shapes::{block, cylinder::revolved_cylinder};
 
 use super::*;
-use crate::boundary::tests::{assert_valid, edge_between, refused, v3};
+use crate::boundary::tests::{edge_between, refused};
 use crate::{BoundarySurface, BoundarySurfaceArgs};
+use geop_ops::testing::assert_valid_sheets;
+use geop_ops_extrude_revolve::shapes::v3;
 
 /// A unit cube's top loop filled with a boundary surface, the cube then
 /// deleted: a flat square sheet at `z = 1`, named `boundary(b)`, and
 /// which way its normal points along `z`.
 pub(crate) fn square_sheet() -> (NamedModel<S>, f64) {
     let mut part = NamedModel::<S>::new();
-    let cube = cube_solid(&mut part, "c", v3(0., 0., 0.), v3(1., 1., 1.)).unwrap();
+    let cube = block(&mut part, "c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     let corners = [[0., 0., 1.], [1., 0., 1.], [1., 1., 1.], [0., 1., 1.]];
     let edges = (0..4)
         .map(|k| geop_ops::EntityRef::Edge {
@@ -68,7 +70,7 @@ fn thicken_a_boundary_surface() {
     ] {
         let (part, up) = square_sheet();
         let part = thickened(part, "boundary(b)", side).unwrap();
-        assert_valid(&part);
+        assert_valid_sheets(&part);
         let solid = part.solid_id("thicken(t)").unwrap();
         assert_eq!(part.topology().solid_faces(solid).unwrap().len(), 6);
         assert!(part.sheet_face_names().is_empty(), "{side:?}");
@@ -108,7 +110,7 @@ fn thicken_a_cylinders_sides_into_a_tube() {
         .unwrap();
     let face = part.name_of(built.faces[0]).unwrap().to_string();
     let part = thickened(part, &face, ThickenSide::Against).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     let radii: Vec<f64> = part
         .topology()
         .vertices
@@ -122,7 +124,7 @@ fn thicken_a_cylinders_sides_into_a_tube() {
 #[test]
 fn a_solids_face_is_refused() {
     let mut part = NamedModel::<S>::new();
-    let cube = cube_solid(&mut part, "c", v3(0., 0., 0.), v3(1., 1., 1.)).unwrap();
+    let cube = block(&mut part, "c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     let face = part.topology().solid_faces(cube).unwrap()[0];
     let face = part.name_of(face).unwrap().to_string();
     let err = refused(thickened(part, &face, ThickenSide::Against));

@@ -27,7 +27,6 @@ use geop_ops::{
 use geop_ops_booleans::remesh::remesh::{RemeshParams, remesh};
 use serde::{Deserialize, Serialize};
 
-use crate::sheet_of;
 use geop_core_geometry::search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size};
 
 /// Which side of the cutting face a [`TrimSurface`] keeps, as its normal
@@ -108,28 +107,21 @@ impl PartOperation for TrimSurface {
         _: &FormState<()>,
     ) -> EditForm<'a, Design, TrimSurfaceArgs> {
         let mut f = EditForm::<Design, TrimSurfaceArgs>::default();
-        let one = |picked: &[EntityRef]| {
-            EntityRef::last_name(EntityRef::face, picked).unwrap_or_default()
-        };
-        let face = EntityRef::of_name(EntityRef::face, &args.face);
-        f.reference(
+        f.pick_one(
             "face",
             "sheet",
-            face,
+            EntityRef::face,
+            &args.face,
             &[Role::Sheet],
-            None,
-            false,
-            move |edit, picked| edit.args.face = one(&picked),
+            |edit, name| edit.args.face = name,
         );
-        let tool = EntityRef::of_name(EntityRef::face, &args.tool);
-        f.reference(
+        f.pick_one(
             "tool",
             "cut with",
-            tool,
+            EntityRef::face,
+            &args.tool,
             &[Role::Face],
-            None,
-            false,
-            move |edit, picked| edit.args.tool = one(&picked),
+            |edit, name| edit.args.tool = name,
         );
         let sides = vec![
             Choice::new("front", "in front of the face"),
@@ -184,7 +176,7 @@ pub fn trim<S: Scalar>(
     tool: FaceId,
     keep: TrimKeep,
 ) -> GeopResult<()> {
-    let (_, sheet) = sheet_of(part, face)?;
+    let sheet = part.sheet_of_face(part.face_id(face)?, "a sheet is trimmed")?;
     let tool_name = part.name(tool).map(str::to_string)?;
     if part
         .topology()
@@ -240,7 +232,7 @@ pub fn trim<S: Scalar>(
             if kept.is_empty() { "nothing" } else { "all" }
         )));
     }
-    part.assemble_sheet(&[cutter], &[])?;
+    part.delete_bodies(&[cutter])?;
     part.assemble_sheet(&[Body::Sheet(sheet)], &kept)?;
     Ok(())
 }

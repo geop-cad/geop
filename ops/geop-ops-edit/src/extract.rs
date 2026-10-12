@@ -81,30 +81,21 @@ impl PartOperation for ExtractFace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geop_core_math::{
-        scalars::{ScalInF64 as S, Scalar},
-        vector::Vector3,
-    };
-    use geop_core_topology::validation::{ValidationParameters, validate};
-    use geop_ops::operation::apply_to_model;
-    use geop_ops_extrude_revolve::shapes::cube_solid;
-
-    fn v3(x: f64, y: f64, z: f64) -> Vector3<S> {
-        Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
-    }
+    use geop_core_math::scalars::ScalInF64 as S;
+    use geop_ops::{operation::apply_to_model, testing::assert_valid_sheets};
+    use geop_ops_extrude_revolve::shapes::block;
 
     /// A face of a cube, extracted, stands on its own beside the cube,
     /// which is left as it was.
     #[test]
     fn extracts_a_face_of_a_cube() {
         let mut part = NamedModel::<S>::new();
-        let cube = cube_solid(&mut part, "c", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap();
+        let cube = block(&mut part, "c", [0.0; 3], [1.0; 3]);
         let face = part.topology().solid_faces(cube).unwrap()[0];
         let face = part.name_of(face).unwrap().to_string();
         let args = ExtractFaceArgs { face: face.clone() };
         let part = apply_to_model::<ExtractFace>(part, "x", &args).unwrap();
-        validate(&ValidationParameters::default(), part.topology()).unwrap();
-        part.check_names().unwrap();
+        assert_valid_sheets(&part);
         assert_eq!(part.sheet_face_names(), [format!("extract(x,{face})")]);
         assert_eq!(part.topology().solid_faces(cube).unwrap().len(), 6);
         assert_eq!(part.topology().faces.len(), 7);

@@ -11,8 +11,9 @@ use geop_ops::operation::apply_to_model;
 use geop_ops::{BodyNames, NamedModel};
 
 use super::*;
-use crate::boundary::tests::{assert_valid, refused};
+use crate::boundary::tests::refused;
 use crate::{BoundarySurface, BoundarySurfaceArgs, Thicken, ThickenArgs, ThickenSide};
+use geop_ops::testing::assert_valid_sheets;
 
 fn binomial(n: usize, k: usize) -> f64 {
     (0..k).fold(1.0, |c, i| c * (n - i) as f64 / (i + 1) as f64)
@@ -168,7 +169,7 @@ fn on_surface(surface: &NurbSurface3D<S>, p: &Vector3<S>) -> Result<(), String> 
 fn network_of_three_by_three_runs_along_every_curve() {
     let (part, u, v) = grid(1.0, &[], [0, 1, 2], [0, 1, 2]);
     let part = span(part, u, v).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     let surface = surface_of(&part, "network(n)");
     let (u, v) = grid_curves(1.0);
     for (k, curve) in u.iter().enumerate() {
@@ -207,7 +208,7 @@ fn network_picks_in_any_order_and_direction() {
     let ordered = surface_of(&span(part, u, v).unwrap(), "network(n)");
     let (part, u, v) = grid(1.0, &["u1", "v0", "v2"], [2, 0, 1], [1, 2, 0]);
     let part = span(part, u, v).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     let shuffled = surface_of(&part, "network(n)");
     for (a, b) in [(&ordered, &shuffled), (&shuffled, &ordered)] {
         for i in 0..=4 {
@@ -260,7 +261,7 @@ fn network_of_two_by_two_is_the_coons_patch() {
     ];
     let edges: Vec<EntityRef> = u.iter().chain(&v).cloned().collect();
     let part = span(part, u, v).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     let args = BoundarySurfaceArgs {
         edges,
         tangent: Vec::new(),
@@ -327,7 +328,7 @@ fn flat_network_sheet_thickens() {
         side: ThickenSide::Both,
     };
     let part = apply_to_model::<Thicken>(part, "t", &args).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     part.solid_id("thicken(t)").unwrap();
 }
 
@@ -401,7 +402,7 @@ fn random_networks_are_valid() {
             })
             .collect();
         let part = span(part, u, v).unwrap_or_else(|e| panic!("case {case}: {e}"));
-        assert_valid(&part);
+        assert_valid_sheets(&part);
         let surface = surface_of(&part, "network(n)");
         for j in 0..m {
             for i in 0..n {

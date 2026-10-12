@@ -1,18 +1,18 @@
 use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar, vector::Vector3};
 use geop_core_topology::FaceId;
-use std::rc::Rc;
+use std::{collections::BTreeMap, rc::Rc};
 
-use geop_ops::placed::Component;
-use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder};
+use geop_ops::{
+    operation::BuildReader,
+    placed::Component,
+    testing::{built, built_with},
+};
+use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder, v3};
 
 use crate::{
     LineKind, ProjectedView, ViewKind, ViewOptions, project_view,
-    testing::{Part, built, built_with, component},
+    testing::{Part, component},
 };
-
-fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
-    Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
-}
 
 fn all_faces(part: &Part<S>) -> Vec<FaceId> {
     let model = part.topology();
@@ -71,7 +71,7 @@ fn assert_extents(view: &ProjectedView<S>, expected: [f64; 4]) {
 #[test]
 fn box_front_view_is_a_rectangle() {
     let mut part = Part::<S>::new();
-    cube_solid(&mut part, "box", v(0.0, 0.0, 0.0), v(2.0, 1.0, 3.0)).unwrap();
+    cube_solid(&mut part, "box", v3(0.0, 0.0, 0.0), v3(2.0, 1.0, 3.0)).unwrap();
     let front = view(&part, ViewKind::Front, ViewOptions::default());
     assert_eq!(count(&front, true), 4, "{:#?}", summary(&front));
     assert_eq!(count(&front, false), 0);
@@ -109,7 +109,7 @@ fn box_front_view_is_a_rectangle() {
 #[test]
 fn cylinder_side_view_has_silhouettes() {
     let mut part = Part::<S>::new();
-    revolved_cylinder(&mut part, "c", v(0.0, 0.0, 0.0), S::ONE, S::TWO).unwrap();
+    revolved_cylinder(&mut part, "c", v3(0.0, 0.0, 0.0), S::ONE, S::TWO).unwrap();
     let front = view(&part, ViewKind::Front, ViewOptions::default());
     let silhouettes = front
         .lines
@@ -145,7 +145,7 @@ fn a_threaded_shaft_draws_its_thread() {
     revolved_cylinder(
         &mut part,
         "shaft",
-        v(0.0, 0.0, 0.0),
+        v3(0.0, 0.0, 0.0),
         S::from_f64(3.0),
         S::from_f64(10.0),
     )
@@ -158,7 +158,7 @@ fn a_threaded_shaft_draws_its_thread() {
             CosmeticThread {
                 designation: "M6x1".into(),
                 face: "the shaft's side".into(),
-                axis: Axis::try_new(v(0.0, 0.0, 10.0), v(0.0, 0.0, -1.0)).unwrap(),
+                axis: Axis::try_new(v3(0.0, 0.0, 10.0), v3(0.0, 0.0, -1.0)).unwrap(),
                 radius: S::from_f64(3.0),
                 major_diameter: 6.0,
                 minor_diameter: minor,
@@ -174,7 +174,10 @@ fn a_threaded_shaft_draws_its_thread() {
         scale: Some(1.0),
         ..Default::default()
     };
-    let build = built_with(&part, Some(&threads), &[]);
+    let given = |_: &mut BuildReader, threads: &Threads<S>| Ok(threads.clone());
+    let build = built_with(&BTreeMap::new(), &part, &[], |part| {
+        (part.define_target(&geop_ops::threads(), &threads, given)).unwrap()
+    });
     let sheet = compose(build.current(), &args, "", &[]).unwrap();
     let thread = |s: &&Stroke| s.layer == layer::THREAD;
     let lines: Vec<(f64, f64)> = sheet
@@ -215,7 +218,13 @@ fn a_bill_of_materials_stands_on_the_title_block() {
     use crate::{DrawingArgs, PartsListLine, SheetSize, compose};
     use geop_ops::output::sheet::Shape;
     let mut part = Part::<S>::new();
-    cube_solid(&mut part, "block", v(0.0, 0.0, 0.0), v(100.0, 100.0, 100.0)).unwrap();
+    cube_solid(
+        &mut part,
+        "block",
+        v3(0.0, 0.0, 0.0),
+        v3(100.0, 100.0, 100.0),
+    )
+    .unwrap();
     let line = |k: usize| PartsListLine {
         item: k.to_string(),
         quantity: 2,
@@ -261,7 +270,7 @@ fn a_bill_of_materials_stands_on_the_title_block() {
 /// A block `size` on a side, as a part to place.
 fn block(size: f64) -> Rc<Component> {
     let mut part = Part::<S>::new();
-    cube_solid(&mut part, "block", v(0.0, 0.0, 0.0), v(size, size, size)).unwrap();
+    cube_solid(&mut part, "block", v3(0.0, 0.0, 0.0), v3(size, size, size)).unwrap();
     component("block.geop", &part)
 }
 
@@ -283,7 +292,10 @@ fn place(
 
 /// The part of nothing but `placed`.
 fn assembly(placed: &Placed) -> geop_ops::operation::Build {
-    built_with(&Part::new(), None, placed)
+    let placed: Vec<_> = (placed.iter())
+        .map(|(name, component, pose)| (name.as_str(), component, *pose))
+        .collect();
+    built_with(&BTreeMap::new(), &Part::new(), &placed, |_| {})
 }
 
 /// A hundred blocks of one part in a row, placed alike but for where: one
@@ -299,7 +311,7 @@ fn repeated_parts_share_their_view() {
             &mut part,
             &unit,
             &format!("b{k}"),
-            v(2.0 * k as f64, 0.0, 0.0),
+            v3(2.0 * k as f64, 0.0, 0.0),
             [0.0; 3],
         );
     }
@@ -318,7 +330,7 @@ fn repeated_parts_share_their_view() {
         &mut part,
         &unit,
         "turned",
-        v(0.0, 5.0, 0.0),
+        v3(0.0, 5.0, 0.0),
         [0.0, 0.0, 90.0],
     );
     let build = assembly(&part);
@@ -333,7 +345,7 @@ fn repeated_parts_share_their_view() {
             &mut column,
             &unit,
             &format!("b{k}"),
-            v(0.0, 9.0 - 2.0 * k as f64, 0.0),
+            v3(0.0, 9.0 - 2.0 * k as f64, 0.0),
             [0.0; 3],
         );
     }
@@ -360,8 +372,8 @@ fn a_part_in_front_hides_one_behind() {
     use crate::scene::Scene;
     let mut part = Placed::new();
     let big = block(2.0);
-    place(&mut part, &big, "front", v(0.0, 0.0, 0.0), [0.0; 3]);
-    place(&mut part, &big, "back", v(1.0, 5.0, 1.0), [0.0; 3]);
+    place(&mut part, &big, "front", v3(0.0, 0.0, 0.0), [0.0; 3]);
+    place(&mut part, &big, "back", v3(1.0, 5.0, 1.0), [0.0; 3]);
     let build = assembly(&part);
     let scene = Scene::of(build.current()).unwrap();
     let front = scene
@@ -414,11 +426,11 @@ fn an_assembly_balloons_each_line_once() {
     use geop_ops::output::sheet::Shape;
     let mut part = Placed::new();
     let (big, small) = (block(4.0), block(1.0));
-    place(&mut part, &big, "base", v(0.0, 0.0, 0.0), [0.0; 3]);
+    place(&mut part, &big, "base", v3(0.0, 0.0, 0.0), [0.0; 3]);
     let mut placements = Vec::new();
     for k in 0..4 {
         let name = format!("peg{k}");
-        place(&mut part, &small, &name, v(k as f64, 1.0, 4.0), [0.0; 3]);
+        place(&mut part, &small, &name, v3(k as f64, 1.0, 4.0), [0.0; 3]);
         placements.push(name);
     }
     let lines = vec![

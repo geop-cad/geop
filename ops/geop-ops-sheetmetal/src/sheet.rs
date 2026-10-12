@@ -505,7 +505,7 @@ impl<S: Scalar> Sheet<S> {
         let folded = self.folded()?;
         if let Some(old) = old {
             let id = model.solid_id(old)?;
-            model.assemble_sheet(&[Body::Solid(id)], &[])?;
+            model.delete_bodies(&[Body::Solid(id)])?;
         }
         thicken(model, &folded, name, &|n| n)?;
         Ok(())

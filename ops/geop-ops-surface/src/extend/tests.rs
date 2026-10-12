@@ -3,13 +3,12 @@
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_ops::NamedModel;
 use geop_ops::operation::apply_to_model;
-use geop_ops_extrude_revolve::shapes::cube_solid;
+use geop_ops_extrude_revolve::shapes::block;
 
 use super::*;
-use crate::boundary::tests::{
-    assert_valid, coons_sheet, edge_between, line, refused, rising_arc, v3, wavy_top,
-};
+use crate::boundary::tests::{coons_sheet, edge_between, line, refused, rising_arc, wavy_top};
 use crate::thicken::tests::square_sheet;
+use geop_ops::testing::assert_valid_sheets;
 
 fn extended(part: NamedModel<S>, edge: &str, distance: f64) -> GeopResult<NamedModel<S>> {
     let args = ExtendSurfaceArgs {
@@ -33,7 +32,7 @@ fn extend_a_flat_square() {
     );
     let mut names_before: Vec<String> = part.names().iter().map(|(_, n)| n.to_string()).collect();
     let part = extended(part, "sq(e2)", 0.5).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     assert_eq!(edge_between(&part, [1., 1.5, 1.], [0., 1.5, 1.]), "sq(e2)");
     assert_eq!(edge_between(&part, [0., 0., 1.], [1., 0., 1.]), "sq(e0)");
     let mut names_after: Vec<String> = part.names().iter().map(|(_, n)| n.to_string()).collect();
@@ -68,7 +67,7 @@ fn extend_a_coons_patch() {
         ],
     );
     let part = extended(part, "guide(e1)", 0.3).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     // The side past which it grew is the same quarter circle, moved out
     // along the patch's `u`; the bottom edge reaches further.
     let bottom = part.edge_id("guide(e0)").unwrap();
@@ -81,7 +80,7 @@ fn extend_a_coons_patch() {
 #[test]
 fn a_solids_edge_is_refused() {
     let mut part = NamedModel::<S>::new();
-    cube_solid(&mut part, "c", v3(0., 0., 0.), v3(1., 1., 1.)).unwrap();
+    block(&mut part, "c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     let edge = edge_between(&part, [0., 0., 1.], [1., 0., 1.]);
     let err = refused(extended(part, &edge, 0.2));
     assert!(err.contains("bounds 2 faces"), "{err}");

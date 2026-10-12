@@ -90,7 +90,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{
-    Body, EdgeId, FaceId, Model, SolidId, VertexId,
+    EdgeId, FaceId, Model, SolidId, VertexId,
     contains::face::{PointClassification, face_contains},
 };
 use geop_ops::{NamedModel, Namer};
@@ -1304,9 +1304,9 @@ pub fn blend<S: Scalar>(
         let ctx = with_context!("edge {name:?}");
         let edge = model.edge_id(name).with_context(ctx)?;
         let [face, _] = faces(model.topology(), edge).with_context(ctx)?;
-        let Body::Solid(of) = model.topology().body_of_face(face)? else {
-            return Err(GeopError::new("the edge is not model of a solid")).with_context(ctx);
-        };
+        let of = model
+            .solid_of_face(face, "only edges of a solid are blended")
+            .with_context(ctx)?;
         match solid {
             None => solid = Some(of),
             Some(s) if s == of => {}

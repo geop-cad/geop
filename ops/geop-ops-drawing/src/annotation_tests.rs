@@ -1,20 +1,14 @@
 //! Annotations: measured in the views they name, drawn on the sheet and
 //! written out, and refused where a view cannot show what they measure.
 
-use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar, vector::Vector3};
-use geop_ops::{RefId, operation::BuildView, output::sheet::to_dxf};
-use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder};
+use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar};
+use geop_ops::{RefId, operation::BuildView, output::sheet::to_dxf, testing::built};
+use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder, v3};
 
 use crate::{
     Along, Annotation, DrawingArgs, DrawnView, EdgeShape, Layout, Leader, Pickable, Target,
-    ViewKind, compose, layer, layout,
-    testing::{Part, built},
-    writer_tests::read_dxf,
+    ViewKind, compose, layer, layout, testing::Part, writer_tests::read_dxf,
 };
-
-fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
-    Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
-}
 
 const FRONT: DrawnView = DrawnView::View(ViewKind::Front);
 const TOP: DrawnView = DrawnView::View(ViewKind::Top);
@@ -22,11 +16,11 @@ const TOP: DrawnView = DrawnView::View(ViewKind::Top);
 /// A 20 x 10 x 30 box beside a cylinder of radius 5 standing on it.
 fn part() -> Part<S> {
     let mut part = Part::<S>::new();
-    cube_solid(&mut part, "box", v(0.0, 0.0, 0.0), v(20.0, 10.0, 30.0)).unwrap();
+    cube_solid(&mut part, "box", v3(0.0, 0.0, 0.0), v3(20.0, 10.0, 30.0)).unwrap();
     revolved_cylinder(
         &mut part,
         "pin",
-        v(40.0, 5.0, 0.0),
+        v3(40.0, 5.0, 0.0),
         S::from_f64(5.0),
         S::from_f64(10.0),
     )

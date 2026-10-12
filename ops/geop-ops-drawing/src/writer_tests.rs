@@ -1,17 +1,13 @@
 //! Drawings composed and written as DXF and SVG, then read back.
 
-use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar, vector::Vector3};
-use geop_ops::output::sheet::{to_dxf, to_svg};
-use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder};
-
-use crate::{
-    DrawingArgs, ViewKind, compose,
-    testing::{Part, built},
+use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar};
+use geop_ops::{
+    output::sheet::{to_dxf, to_svg},
+    testing::built,
 };
+use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder, v3};
 
-fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
-    Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
-}
+use crate::{DrawingArgs, ViewKind, compose, testing::Part};
 
 /// A DXF entity read back: its type, layer and text.
 pub(crate) type Entity = (String, String, String);
@@ -65,7 +61,7 @@ fn svg_group<'a>(svg: &'a str, layer: &str) -> &'a str {
 #[test]
 fn box_drawing_reads_back() {
     let mut part = Part::<S>::new();
-    cube_solid(&mut part, "box", v(0.0, 0.0, 0.0), v(20.0, 10.0, 30.0)).unwrap();
+    cube_solid(&mut part, "box", v3(0.0, 0.0, 0.0), v3(20.0, 10.0, 30.0)).unwrap();
     let args = DrawingArgs {
         views: vec![ViewKind::Front],
         name: "Block".into(),
@@ -109,7 +105,7 @@ fn cylinder_drawing_has_circle_and_centre_mark() {
     revolved_cylinder(
         &mut part,
         "c",
-        v(0.0, 0.0, 0.0),
+        v3(0.0, 0.0, 0.0),
         S::from_f64(5.0),
         S::from_f64(10.0),
     )

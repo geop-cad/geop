@@ -1,6 +1,7 @@
 //! What the tests of programs share: building one, reading and changing
 //! its steps' arguments as their types, drawing the sketches it starts
-//! from, editing it as a front end does, and checking what it built.
+//! from, editing it as a front end does, and checking what it built (with
+//! what every operation's tests share, from `geop_ops::testing`).
 
 use std::collections::BTreeMap;
 
@@ -11,21 +12,22 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::program::ProgramStep;
-use geop_core_topology::{
-    Body,
-    validation::{ValidationParameters, validate_manifold},
-};
+use geop_core_topology::Body;
 use geop_ops::{
     Design, EntityRef, NamedModel,
     model::model,
     ui::{Button, Pointer, Reach, StepEditEvent, Value},
 };
-use geop_ops_booleans::{Combine, boolean::BooleanOp};
+use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, Output};
-use geop_ops_rasterize::{rasterize, stl::stl_triangles};
+use geop_ops_rasterize::{
+    rasterize,
+    stl::{enclosed_volume, stl_triangles},
+};
 use geop_ops_sketch::{AddSketchArgs, Sketch};
 use serde::{Serialize, de::DeserializeOwned};
 
+pub(crate) use geop_ops::testing::{assert_valid, check_valid, has_vertex};
 pub(crate) use geop_ops::{origin_axis, origin_plane};
 
 use super::{Program, Runner, build, workspace};
@@ -97,18 +99,12 @@ pub(crate) fn sketch(plane: EntityRef, sketch: Sketch) -> AddSketchArgs {
 
 /// Combined with the solid `target` by cutting it away.
 pub(crate) fn cut(target: impl Into<String>) -> Combine {
-    Combine::With {
-        op: BooleanOp::Difference,
-        target: target.into(),
-    }
+    Combine::cut(target)
 }
 
 /// Combined with the solid `target` by joining it.
 pub(crate) fn join(target: impl Into<String>) -> Combine {
-    Combine::With {
-        op: BooleanOp::Union,
-        target: target.into(),
-    }
+    Combine::join(target)
 }
 
 /// One side only, ending as `side1` says.
@@ -165,12 +161,6 @@ pub(crate) fn extrude_sketch(
 /// The rectangle from `(x0, y0)` to `(x1, y1)`.
 pub(crate) fn rectangle(x0: f64, y0: f64, x1: f64, y1: f64) -> Sketch {
     outline(&[[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
-}
-
-/// Whether `part` has a vertex that could be at `p`.
-pub(crate) fn has_vertex(part: &NamedModel<Design>, p: [f64; 3]) -> bool {
-    let p = p.map(S::from_f64);
-    (part.topology().vertices.values()).any(|v| (0..3).all(|k| v.point[k].could_be_equal(p[k])))
 }
 
 /// A sketch of nothing but the closed polygon through `corners` (see
@@ -262,15 +252,7 @@ pub(crate) fn volume(part: &NamedModel<Design>, solid: &str) -> f64 {
     let id = part.solid_id(solid).unwrap();
     let faces = part.topology().body_faces(Body::Solid(id)).unwrap();
     let raster = rasterize(part.topology(), 64).unwrap();
-    stl_triangles(&raster, &faces)
-        .iter()
-        .map(|t| {
-            let [a, b, c] = t.corners.map(|p| p.map(f64::from));
-            (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
-                + a[2] * (b[0] * c[1] - b[1] * c[0]))
-                / 6.0
-        })
-        .sum()
+    enclosed_volume(&stl_triangles(&raster, &faces))
 }
 
 /// Checks the solid named `solid` of `part` encloses `expected`, to within
@@ -281,33 +263,4 @@ pub(crate) fn assert_volume(part: &NamedModel<Design>, solid: &str, expected: f6
         (got - expected).abs() <= tolerance,
         "{solid} encloses {got}, expected {expected} (± {tolerance})"
     );
-}
-
-/// Checks `part` is a valid manifold model with consistent names, failing
-/// with the report of [`check_valid`].
-pub(crate) fn assert_valid(part: &NamedModel<Design>) {
-    if let Err(report) = check_valid(part) {
-        panic!("{report}");
-    }
-    part.check_names().unwrap();
-}
-
-/// Whether `part` is a valid manifold model — if not, every validation
-/// error's root message, one per line, and the names of the entities they
-/// mention.
-pub(crate) fn check_valid(part: &NamedModel<Design>) -> Result<(), String> {
-    // `validate_manifold` runs `validate` first.
-    let Err(errors) = validate_manifold(&ValidationParameters::default(), part.topology()) else {
-        return Ok(());
-    };
-    let all = errors
-        .iter()
-        .map(|e| e.root_message())
-        .collect::<Vec<_>>()
-        .join("\n");
-    Err(format!(
-        "{} validation error(s):\n{all}\nwhere {}",
-        errors.len(),
-        part.names_mentioned(&all).join(", ")
-    ))
 }

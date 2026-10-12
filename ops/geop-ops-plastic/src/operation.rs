@@ -170,34 +170,27 @@ fn rim_fields<'a, A: 'a>(
     edges: &[String],
     rim: fn(&mut A) -> (&mut String, &mut Vec<String>),
 ) {
-    let face = EntityRef::of_name(EntityRef::face, face);
-    f.reference(
+    f.pick_one(
         "face",
         "rim face",
+        EntityRef::face,
         face,
         &[Role::Plane],
-        None,
-        false,
-        move |edit, picked| {
+        move |edit, name| {
             let (face, edges) = rim(edit.args);
-            let name = EntityRef::last_name(EntityRef::face, &picked).unwrap_or_default();
             if name != *face {
                 edges.clear();
             }
             *face = name;
         },
     );
-    let edges = EntityRef::of_names(EntityRef::edge, edges);
-    f.reference(
+    f.pick_many(
         "edges",
         "edges",
+        EntityRef::edge,
         edges,
         &[Role::Edge],
-        None,
-        true,
-        move |edit, picked| {
-            *rim(edit.args).1 = EntityRef::names_of(EntityRef::edge, &picked);
-        },
+        move |edit, names| *rim(edit.args).1 = names,
     );
     f.form.dialog.optional("edges");
 }

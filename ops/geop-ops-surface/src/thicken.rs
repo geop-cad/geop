@@ -16,8 +16,6 @@ use geop_ops::{
 use geop_ops_shell::shell::{offset_faces, thicken};
 use serde::{Deserialize, Serialize};
 
-use crate::sheet_of;
-
 /// Which side of a sheet a [`Thicken`] adds its material on, as the sheet's
 /// faces' normals point.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,7 +109,7 @@ impl PartOperation for Thicken {
         if !args.thickness.is_finite() {
             return Err(GeopError::new("the thickness is not a number"));
         }
-        let (_, sheet) = sheet_of(model, &args.face)?;
+        let sheet = model.sheet_of_face(model.face_id(&args.face)?, "a sheet is thickened")?;
         let thickness = Design::from_f64(args.thickness);
         match args.side {
             ThickenSide::Against | ThickenSide::Along => {
@@ -122,7 +120,7 @@ impl PartOperation for Thicken {
                 let faces = model.topology().body_faces(Body::Sheet(sheet))?;
                 let half = thickness.div(Design::TWO)?;
                 let copy = offset_faces(model, &namer.scoped("both"), &faces, half)?;
-                model.assemble_sheet(&[Body::Sheet(sheet)], &[])?;
+                model.delete_bodies(&[Body::Sheet(sheet)])?;
                 thicken(model, &namer, copy.shells[0], thickness, false)?;
             }
         }

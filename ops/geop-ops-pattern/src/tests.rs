@@ -4,34 +4,22 @@
 use geop_core_math::{
     primitives::FrameAxis,
     scalars::{ScalInF64 as S, Scalar},
-    vector::Vector3,
 };
-use geop_core_topology::{
-    Body,
-    validation::{ValidationParameters, validate},
-};
+use geop_core_topology::Body;
 use geop_ops::BooleanOp;
+use geop_ops::testing::{assert_valid, assert_valid_sheets};
 use geop_ops::{EntityRef, NamedModel, operation::apply_to_model, origin_axis, origin_plane};
 use geop_ops_booleans::Combine;
-use geop_ops_extrude_revolve::shapes::cube_solid;
-use geop_ops_rasterize::{rasterize, stl::stl_triangles};
+use geop_ops_extrude_revolve::shapes::block;
+use geop_ops_rasterize::{
+    rasterize,
+    stl::{enclosed_volume, stl_triangles},
+};
 
 use crate::{
     CircularPattern, CircularPatternArgs, Direction, LinearPattern, LinearPatternArgs, Mirror,
     MirrorArgs, MoveBody, MoveBodyArgs, Seeds, Spacing,
 };
-
-fn v3(x: f64, y: f64, z: f64) -> Vector3<S> {
-    Vector3::from_array([x, y, z].map(S::from_f64))
-}
-
-pub(crate) fn assert_valid(part: &NamedModel<S>) {
-    if let Err(errors) = validate(&ValidationParameters::default(), part.topology()) {
-        let messages: Vec<String> = errors.iter().map(|e| format!("{e:?}")).collect();
-        panic!("{} errors:\n{}", messages.len(), messages.join("\n"));
-    }
-    part.check_names().unwrap();
-}
 
 /// The volume the solid named `solid` encloses, from its mesh as drawn:
 /// negative if its faces point in.
@@ -39,15 +27,7 @@ pub(crate) fn volume(part: &NamedModel<S>, solid: &str) -> f64 {
     let id = part.solid_id(solid).unwrap();
     let faces = part.topology().body_faces(Body::Solid(id)).unwrap();
     let raster = rasterize(part.topology(), 16).unwrap();
-    stl_triangles(&raster, &faces)
-        .iter()
-        .map(|t| {
-            let [a, b, c] = t.corners.map(|p| p.map(f64::from));
-            (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
-                + a[2] * (b[0] * c[1] - b[1] * c[0]))
-                / 6.0
-        })
-        .sum()
+    enclosed_volume(&stl_triangles(&raster, &faces))
 }
 
 /// The lowest corner of the solid named `solid`, by midpoints.
@@ -71,13 +51,7 @@ fn close(a: [f64; 3], b: [f64; 3]) -> bool {
 /// A unit cube at `min`, named `cube(c)`.
 fn cube_at(min: [f64; 3]) -> NamedModel<S> {
     let mut part = NamedModel::new();
-    cube_solid(
-        &mut part,
-        "c",
-        v3(min[0], min[1], min[2]),
-        v3(min[0] + 1.0, min[1] + 1.0, min[2] + 1.0),
-    )
-    .unwrap();
+    block(&mut part, "c", min, min.map(|x| x + 1.0));
     part
 }
 
@@ -317,7 +291,7 @@ fn sheets_are_copied_not_combined() {
         second: None,
     };
     let copied = apply_to_model::<LinearPattern>(part.clone(), "p", &args).unwrap();
-    assert_valid(&copied);
+    assert_valid_sheets(&copied);
     assert!(copied.id_of("linear_pattern(p,1,x(cube(c,end)))").is_some());
     args.seeds.combine = Combine::With {
         op: BooleanOp::Union,

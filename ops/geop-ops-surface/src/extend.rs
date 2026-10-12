@@ -40,8 +40,6 @@ use geop_ops::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::sheet_of;
-
 /// Carries the face standing on its own that the edge named `edge` bounds
 /// on past that edge by `distance` (see the module docs). The face, its
 /// edges and its vertices keep their names, moved and stretched as the
@@ -159,7 +157,7 @@ pub fn extend<S: Scalar>(part: &mut NamedModel<S>, edge: &str, distance: S) -> G
     };
     let face_id = model.get_coedge(*coedge)?.face;
     let face_name = part.name(face_id).map(str::to_string)?;
-    let (_, sheet) = sheet_of(part, &face_name).with_context(ctx)?;
+    let sheet = (part.sheet_of_face(face_id, "a sheet's face is extended")).with_context(ctx)?;
     if model.body_faces(Body::Sheet(sheet))?.len() != 1 {
         return Err(GeopError::new(format!(
             "face {face_name} shares edges with other faces of its sheet: extending a face standing alone is supported"
@@ -301,7 +299,7 @@ pub fn extend<S: Scalar>(part: &mut NamedModel<S>, edge: &str, distance: S) -> G
         faces: vec![face_name],
         solid: None,
     };
-    part.assemble_sheet(&[Body::Sheet(sheet)], &[])
+    part.delete_bodies(&[Body::Sheet(sheet)])
         .with_context(ctx)?;
     let built = part.build_body(spec, names).with_context(ctx)?;
     Ok(built.faces[0])

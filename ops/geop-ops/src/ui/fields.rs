@@ -4,12 +4,9 @@
 //! constraints stand.
 
 use geop_core_math::{primitives::CoordinateSystem, scalars::Scalar, vector::Vector2};
-use geop_core_program::editing::{Choice, Dialog, Number, Shape, Tone, Unit};
+use geop_core_program::editing::{Choice, Number, Shape, Tone, Unit};
 
-use crate::{
-    operation::{BuildView, EntityRef, Lookup, Role, Seen},
-    parameters::Formula,
-};
+use crate::{operation::Lookup, parameters::Formula};
 
 /// A number field of `formula`, evaluated with the parameters `lookup`
 /// reads, to show what it comes to — or, where it does not evaluate, why.
@@ -34,24 +31,6 @@ pub fn formula_number<S: Scalar>(
         error,
         ..Number::new(label, value, unit)
     }
-}
-
-/// The field `key` of a dialog, labelled the same, picking `sketches` of
-/// those `view` has — one, unless `many` — or, before there is any sketch,
-/// a hint to draw one.
-pub fn sketch_field<S: Scalar>(
-    dialog: &mut Dialog<S>,
-    view: &BuildView,
-    key: &str,
-    sketches: &[String],
-    many: bool,
-) {
-    if Seen::new(*view).sketch_names().is_empty() {
-        dialog.text(key, "No sketch yet — add one first.", Tone::Hint);
-        return;
-    }
-    let value = EntityRef::of_names(EntityRef::sketch, sketches);
-    dialog.reference(key, key, value, &[Role::Sketch], None, many);
 }
 
 /// A select field's table of options, each `(option, value, label)`: the

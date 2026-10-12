@@ -288,6 +288,28 @@ impl<S: Scalar> NamedModel<S> {
         Ok(sheet)
     }
 
+    /// Deletes `bodies` whole, with every entity in them, forgetting their
+    /// names.
+    pub fn delete_bodies(&mut self, bodies: &[Body]) -> GeopResult<()> {
+        self.assemble_sheet(bodies, &[])?;
+        Ok(())
+    }
+
+    /// Deletes `bodies` and builds the solid `spec` in their place, named
+    /// after `names` (see [`NamedModel::build_body`]), which may take up
+    /// the names of what it replaces. Fails if `spec` builds no solid.
+    pub fn replace_with_solid(
+        &mut self,
+        bodies: &[Body],
+        spec: BodySpec<S>,
+        names: BodyNames,
+    ) -> GeopResult<SolidId> {
+        self.delete_bodies(bodies)?;
+        self.build_body(spec, names)?
+            .solid
+            .ok_or_else(|| GeopError::new("building the result made no solid"))
+    }
+
     /// Forwards to [`geop_core_topology::Model::merge_solids`], forgetting
     /// the name of the solid it deletes.
     pub fn merge_solids(&mut self, into: SolidId, from: SolidId) -> GeopResult<()> {

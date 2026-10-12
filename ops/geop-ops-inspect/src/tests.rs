@@ -12,21 +12,17 @@ use geop_core_math::{
 use geop_core_program::operation::Operation;
 use geop_ops::{
     EntityRef, NamedModel,
-    model::model,
     operation::{Build, BuildReader, Input},
     output::Bounded,
     parameters::{Material, Parameters},
     placed::{ABOUT, About},
+    testing,
 };
 use geop_ops_extrude_revolve::shapes::{
-    cube::cube_solid, cylinder::revolved_cylinder, sphere::sphere_solid,
+    cube::cube_solid, cylinder::revolved_cylinder, sphere::sphere_solid, v3,
 };
 
 use crate::{interference::Contact, interference_report, mass::MassSummary, mass_report, measure};
-
-fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
-    Vector3::from_array([x, y, z].map(S::from_f64))
-}
 
 /// Steel, 7850 kg/m³.
 fn steel() -> Option<Material> {
@@ -34,11 +30,6 @@ fn steel() -> Option<Material> {
         name: "Steel".into(),
         density: 7850.0,
     })
-}
-
-/// The model `model`, as the generator of a program's one target.
-fn given(_: &mut BuildReader, model: &NamedModel<S>) -> GeopResult<NamedModel<S>> {
-    Ok(model.clone())
 }
 
 /// The part a program of one step building `model` builds, its material
@@ -55,14 +46,8 @@ fn built_with(
             ..Parameters::default()
         },
     };
-    let mut part = Build::default();
     let inputs = BTreeMap::from([(ABOUT.to_string(), Input::About(Rc::new(about)))]);
-    part.begin_run(&inputs, &BTreeMap::new());
-    part.begin_step("given").unwrap();
-    part.define_target(&model(), given_model, given).unwrap();
-    then(&mut part);
-    part.end_run(Default::default());
-    part
+    testing::built_with(&inputs, given_model, &[], then)
 }
 
 /// The part of `model`, made of `material`.
@@ -115,7 +100,7 @@ fn assert_diagonal(summary: &MassSummary, diagonal: [f64; 3], relative: f64) {
 #[test]
 fn box_mass_properties() {
     let mut part = NamedModel::<S>::new();
-    cube_solid(&mut part, "b", v(1.0, 2.0, 3.0), v(3.0, 6.0, 4.0)).unwrap();
+    cube_solid(&mut part, "b", v3(1.0, 2.0, 3.0), v3(3.0, 6.0, 4.0)).unwrap();
     let summary = only(&part);
     assert!(summary.converged);
     let (a, b, c) = (2.0, 4.0, 1.0);
@@ -145,7 +130,7 @@ fn cylinder_mass_properties() {
     revolved_cylinder(
         &mut part,
         "c",
-        v(1.0, -1.0, 2.0),
+        v3(1.0, -1.0, 2.0),
         S::from_f64(r),
         S::from_f64(h),
     )
@@ -167,7 +152,7 @@ fn cylinder_mass_properties() {
 fn sphere_mass_properties() {
     let mut part = NamedModel::<S>::new();
     let r = 2.0;
-    sphere_solid(&mut part, "s", v(0.5, 0.0, -1.0), S::from_f64(r)).unwrap();
+    sphere_solid(&mut part, "s", v3(0.5, 0.0, -1.0), S::from_f64(r)).unwrap();
     let summary = only(&part);
     let volume = 4.0 / 3.0 * PI * r * r * r;
     let mass = volume * 7850.0e-9;
@@ -185,8 +170,8 @@ fn sphere_mass_properties() {
 #[test]
 fn two_boxes_combine() {
     let mut part = NamedModel::<S>::new();
-    cube_solid(&mut part, "a", v(0.0, 0.0, 0.0), v(1.0, 1.0, 1.0)).unwrap();
-    cube_solid(&mut part, "b", v(3.0, 0.0, 0.0), v(4.0, 1.0, 1.0)).unwrap();
+    cube_solid(&mut part, "a", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap();
+    cube_solid(&mut part, "b", v3(3.0, 0.0, 0.0), v3(4.0, 1.0, 1.0)).unwrap();
     let part = built(&part, steel());
     let report = mass_report(part.current()).unwrap();
     assert_eq!(report.bodies.len(), 2);
@@ -214,12 +199,12 @@ fn distance_from_a_vertex_to_a_cylinder() {
     revolved_cylinder(
         &mut part,
         "c",
-        v(0.0, 0.0, 0.0),
+        v3(0.0, 0.0, 0.0),
         S::from_f64(1.0),
         S::from_f64(2.0),
     )
     .unwrap();
-    cube_solid(&mut part, "b", v(2.0, 0.5, 0.5), v(3.0, 1.5, 1.5)).unwrap();
+    cube_solid(&mut part, "b", v3(2.0, 0.5, 0.5), v3(3.0, 1.5, 1.5)).unwrap();
     let vertex = EntityRef::Vertex {
         name: "cube(b,p0,end)".into(),
     };
@@ -252,7 +237,7 @@ fn single_entities() {
     revolved_cylinder(
         &mut part,
         "c",
-        v(0.0, 0.0, 0.0),
+        v3(0.0, 0.0, 0.0),
         S::from_f64(1.5),
         S::from_f64(2.0),
     )
@@ -294,10 +279,10 @@ fn single_entities() {
 #[test]
 fn overlapping_and_touching_boxes() {
     let mut part = NamedModel::<S>::new();
-    cube_solid(&mut part, "a", v(0.0, 0.0, 0.0), v(2.0, 2.0, 2.0)).unwrap();
-    cube_solid(&mut part, "b", v(1.0, 1.0, 1.0), v(3.0, 3.5, 3.0)).unwrap();
-    cube_solid(&mut part, "c", v(-1.0, 0.0, 0.0), v(0.0, 1.0, 1.0)).unwrap();
-    cube_solid(&mut part, "d", v(10.0, 0.0, 0.0), v(11.0, 1.0, 1.0)).unwrap();
+    cube_solid(&mut part, "a", v3(0.0, 0.0, 0.0), v3(2.0, 2.0, 2.0)).unwrap();
+    cube_solid(&mut part, "b", v3(1.0, 1.0, 1.0), v3(3.0, 3.5, 3.0)).unwrap();
+    cube_solid(&mut part, "c", v3(-1.0, 0.0, 0.0), v3(0.0, 1.0, 1.0)).unwrap();
+    cube_solid(&mut part, "d", v3(10.0, 0.0, 0.0), v3(11.0, 1.0, 1.0)).unwrap();
     let report = interference_report(built(&part, None).current()).unwrap();
     assert!(report.unchecked.is_empty(), "{report:?}");
     assert_eq!(report.solids, 4);
@@ -319,10 +304,10 @@ fn overlapping_and_touching_boxes() {
 #[test]
 fn mass_properties_are_placed() {
     let mut part = NamedModel::<S>::new();
-    let solid = cube_solid(&mut part, "b", v(0.0, 0.0, 0.0), v(2.0, 1.0, 1.0)).unwrap();
+    let solid = cube_solid(&mut part, "b", v3(0.0, 0.0, 0.0), v3(2.0, 1.0, 1.0)).unwrap();
     let mass = part.topology().mass_properties(solid).unwrap();
     // A quarter turn about z, then up by 5.
-    let pose = Pose::from_euler(v(0.0, 0.0, 5.0), [0.0, 0.0, 90.0].map(S::from_f64)).unwrap();
+    let pose = Pose::from_euler(v3(0.0, 0.0, 5.0), [0.0, 0.0, 90.0].map(S::from_f64)).unwrap();
     let area = part.topology().solid_area(solid).unwrap();
     let placed = MassSummary::of(&mass.placed(&pose).unwrap(), area).unwrap();
     for (k, want) in [-0.5, 1.0, 5.5].into_iter().enumerate() {
@@ -344,8 +329,8 @@ fn mass_properties_are_placed() {
 #[test]
 fn long_bars_overlap() {
     let mut part = NamedModel::<S>::new();
-    cube_solid(&mut part, "a", v(0.0, 0.0, 0.0), v(50.0, 10.0, 10.0)).unwrap();
-    cube_solid(&mut part, "b", v(10.0, 5.0, 5.0), v(60.0, 15.0, 15.0)).unwrap();
+    cube_solid(&mut part, "a", v3(0.0, 0.0, 0.0), v3(50.0, 10.0, 10.0)).unwrap();
+    cube_solid(&mut part, "b", v3(10.0, 5.0, 5.0), v3(60.0, 15.0, 15.0)).unwrap();
     let report = interference_report(built(&part, None).current()).unwrap();
     assert!(report.unchecked.is_empty(), "{report:?}");
     assert_eq!(report.found.len(), 1, "{report:?}");

@@ -94,6 +94,8 @@ pub mod placed;
 pub mod program;
 pub mod solids;
 pub mod solving;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 pub mod ui;
 
 pub use model::{

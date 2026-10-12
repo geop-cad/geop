@@ -5,17 +5,18 @@ use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_topology::Body;
 use geop_ops::NamedModel;
 use geop_ops::operation::apply_to_model;
-use geop_ops_extrude_revolve::shapes::cube_solid;
+use geop_ops_extrude_revolve::shapes::block;
 
 use super::*;
-use crate::boundary::tests::{assert_valid, refused, v3};
+use crate::boundary::tests::refused;
+use geop_ops::testing::assert_valid_sheets;
 
 /// The six faces of a unit cube, each copied into a sheet of its own, the
 /// cube itself deleted: what is left is six faces standing on their own,
 /// the `k`-th face's sheet named `f{k}(...)`, its faces' names returned.
 fn six_sheets() -> (NamedModel<S>, Vec<String>) {
     let mut part = NamedModel::<S>::new();
-    let cube = cube_solid(&mut part, "c", v3(0., 0., 0.), v3(1., 1., 1.)).unwrap();
+    let cube = block(&mut part, "c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     let faces = part.topology().solid_faces(cube).unwrap();
     let mut names = Vec::new();
     for (k, &f) in faces.iter().enumerate() {
@@ -46,7 +47,7 @@ fn knit_faces(part: NamedModel<S>, faces: &[String], solid: bool) -> GeopResult<
 fn six_faces_knit_into_a_box() {
     let (part, faces) = six_sheets();
     let part = knit_faces(part, &faces, true).unwrap();
-    assert_valid(&part);
+    assert_valid_sheets(&part);
     let solid = part.solid_id("knit(k)").unwrap();
     assert_eq!(part.topology().solid_faces(solid).unwrap().len(), 6);
     assert_eq!(part.topology().edges.len(), 12);
@@ -66,7 +67,7 @@ fn five_faces_knit_into_an_open_box() {
     let err = refused(knit_faces(part.clone(), &faces[..5], true));
     assert!(err.contains("do not close up"), "{err}");
     let opened = knit_faces(part, &faces[..5], false).unwrap();
-    assert_valid(&opened);
+    assert_valid_sheets(&opened);
     assert!(opened.solid_names().is_empty());
     assert_eq!(opened.sheet_face_names().len(), 6 - 1 + 1);
 }

@@ -350,8 +350,9 @@ pub fn sphere_solid<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::testing::{assert_valid, render};
+    use crate::common::testing::render;
     use geop_core_math::for_all_scalars;
+    use geop_ops::testing::assert_model_valid;
 
     fn check_offset_sphere_is_valid<S: Scalar>() {
         let mut model = NamedModel::<S>::new();
@@ -359,7 +360,7 @@ mod tests {
         sphere_solid(&mut model, "t1", center, S::from_f64(2.0)).unwrap();
         let topology = model.topology();
 
-        assert_valid(topology);
+        assert_model_valid(topology);
         render(topology, 32, "offset_sphere_topology.html");
     }
     #[test]
@@ -396,7 +397,7 @@ mod tests {
         let topology = model.topology();
         assert_eq!(topology.faces.len(), 8);
 
-        assert_valid(topology);
+        assert_model_valid(topology);
         render(topology, 32, "sphere_topology.html");
     }
     #[test]

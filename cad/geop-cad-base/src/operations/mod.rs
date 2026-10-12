@@ -2,22 +2,10 @@
 //! written in ([`registry`]), the program types over it, and the one way a
 //! program is built outside the editor ([`build`]).
 //!
-//! Every operation is defined by a crate of its own — placing sketches in
-//! `geop_ops_sketch`, datums in `geop_ops_datums`, 3-D sketches in
-//! `geop_ops_sketch3d`, extrude, revolve, sweep and loft in
-//! `geop_ops_extrude_revolve`, holes and threads in `geop_ops_hole`, fillets
-//! and chamfers in `geop_ops_fillet`, shells in `geop_ops_shell`, drafts,
-//! lips, grooves and ribs in `geop_ops_plastic`, booleans and splits in
-//! `geop_ops_booleans`, patterns, mirrors and moves of bodies in
-//! `geop_ops_pattern`, deleting bodies, extracting faces and projecting
-//! curves in `geop_ops_edit`, faces standing on their own in
-//! `geop_ops_surface`, subdivision surfaces in `geop_ops_subd`, placed parts
-//! and their patterns in `geop_ops_assembly`, harness routes in
-//! `geop_ops_harness`, sheet metal in `geop_ops_sheetmetal`, drawings in
-//! `geop_ops_drawing`, STEP import in `geop_ops_step`. Which of them an
-//! editor offers is the editor's choice, made here — and so are the
-//! exporters and inspectors ([`outputs`]): STL, STEP, drawings, URDF, flat
-//! patterns and bills of materials; measuring, weighing, interference.
+//! Every operation is defined by a crate of its own (`geop_ops_*`, imported
+//! below), as a [`geop_ops::operation::PartOperation`]. Which of them an
+//! editor offers is the editor's choice, made here (the `operations!` list) — and so
+//! are the exporters and inspectors ([`outputs`]).
 
 use std::{collections::BTreeMap, rc::Rc};
 

@@ -1398,12 +1398,11 @@ pub fn sweep_along<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::testing::{
-        assert_valid, assert_valid_sheets, circle, plane, square, v2, v3,
-    };
     use crate::common::{Profile, polyline};
+    use crate::shapes::{circle, plane, square, v2, v3};
     use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve2D, sqrt2_over_2};
     use geop_core_math::for_all_scalars;
+    use geop_ops::testing::{assert_model_valid, assert_model_valid_sheets};
 
     /// The `yz` plane through `origin`: square to a path along `x`.
     fn yz<S: Scalar>(origin: Vector3<S>) -> CoordinateSystem<S> {
@@ -1442,7 +1441,7 @@ mod tests {
         )
         .unwrap();
         model.check_names().unwrap();
-        assert_valid(model.topology());
+        assert_model_valid(model.topology());
         model
     }
 
@@ -1643,7 +1642,7 @@ mod tests {
         .unwrap();
         assert!(built.solid.is_none());
         model.check_names().unwrap();
-        assert_valid_sheets(model.topology());
+        assert_model_valid_sheets(model.topology());
         assert_eq!(model.topology().faces.len(), 4);
     }
     #[test]
@@ -1746,7 +1745,7 @@ mod tests {
         )
         .unwrap();
         model.check_names().unwrap();
-        assert_valid(model.topology());
+        assert_model_valid(model.topology());
         model
     }
 
@@ -2184,7 +2183,7 @@ mod tests {
                         &with_rails(guides),
                     )
                     .unwrap_or_else(|e| panic!("{name}, two rails: {two}: {e:?}"));
-                    assert_valid(model.topology());
+                    assert_model_valid(model.topology());
                 }
             }
         }

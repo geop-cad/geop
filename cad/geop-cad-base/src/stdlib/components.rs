@@ -5,7 +5,6 @@
 //! `end`, `face`, `base`, `top` or `mount`.
 
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
-use geop_ops::BooleanOp;
 use geop_ops::parameters::Material;
 use geop_ops::parameters::{Parameter, Parameters};
 use geop_ops::{EntityRef, origin_plane};
@@ -230,10 +229,7 @@ pub fn nema17(file: &'static str) -> GeopResult<StandardPart> {
         "profile",
         drawing,
         Around::Line(lines[5]),
-        Combine::With {
-            op: BooleanOp::Union,
-            target: "extrude(body)".into(),
-        },
+        Combine::join("extrude(body)"),
     );
     let mut target = "revolve(top)".to_string();
     for (i, [x, y]) in [
@@ -258,10 +254,7 @@ pub fn nema17(file: &'static str) -> GeopResult<StandardPart> {
                     reversed: true,
                     ..Extents::blind(4.5)
                 },
-                output: Output::Solid(Combine::With {
-                    op: BooleanOp::Difference,
-                    target,
-                }),
+                output: Output::Solid(Combine::cut(target)),
             },
         );
         target = format!("extrude({id})");
@@ -409,10 +402,7 @@ pub fn linear_carriage(file: &'static str) -> GeopResult<StandardPart> {
                 reversed: true,
                 ..Extents::blind(format!("{} + 1", col("M")))
             },
-            Combine::With {
-                op: BooleanOp::Difference,
-                target,
-            },
+            Combine::cut(target),
         );
         target = format!("extrude({id})");
     }
@@ -547,10 +537,7 @@ fn servo(
         "profile",
         shaft,
         Around::Line(lines[5]),
-        Combine::With {
-            op: BooleanOp::Union,
-            target: "extrude(body)".into(),
-        },
+        Combine::join("extrude(body)"),
     );
     let mut target = "revolve(shaft)".to_string();
     let ys: &[f64] = if pair == 0.0 {
@@ -575,10 +562,7 @@ fn servo(
                         symmetric: true,
                         ..Extents::blind(4.0 * tab)
                     },
-                    output: Output::Solid(Combine::With {
-                        op: BooleanOp::Difference,
-                        target,
-                    }),
+                    output: Output::Solid(Combine::cut(target)),
                 },
             );
             target = format!("extrude({id})");

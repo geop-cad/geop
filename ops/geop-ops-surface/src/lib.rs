@@ -37,24 +37,5 @@ pub use offset::{OffsetSurface, OffsetSurfaceArgs};
 pub use thicken::{Thicken, ThickenArgs, ThickenSide};
 pub use trim::{TrimKeep, TrimSurface, TrimSurfaceArgs};
 
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
-};
-use geop_core_topology::{Body, FaceId, ShellId};
-use geop_ops::NamedModel;
-
 /// A sheet to build, and the names of what it is made of.
 pub type SheetSpec<S> = (geop_core_topology::build::BodySpec<S>, geop_ops::BodyNames);
-
-/// The sheet the face named `name` stands in — an error, naming it, if it
-/// is a solid's face.
-fn sheet_of<S: Scalar>(part: &NamedModel<S>, name: &str) -> GeopResult<(FaceId, ShellId)> {
-    let face = part.face_id(name)?;
-    match part.topology().body_of_face(face)? {
-        Body::Sheet(sheet) => Ok((face, sheet)),
-        Body::Solid(_) => Err(GeopError::new(format!(
-            "face {name} is a face of a solid, not one standing on its own"
-        ))),
-    }
-}

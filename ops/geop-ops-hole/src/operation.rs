@@ -33,7 +33,7 @@ use geop_ops::{
 };
 use geop_ops_booleans::{
     Combine, Extent, Tool,
-    boolean::{BooleanOp, Reach},
+    boolean::Reach,
     extent::{hull, reach_past},
 };
 use serde::{Deserialize, Serialize};
@@ -320,13 +320,7 @@ fn sites<S: Scalar>(
     }
     let named = lookup.model();
     let face = named.face_id(&args.face)?;
-    let model = named.topology();
-    let plane = (model.get_face(face)?.surface.as_plane())?.ok_or_else(|| {
-        GeopError::new(format!(
-            "face {:?} is not planar: holes are drilled into a planar face",
-            args.face
-        ))
-    })?;
+    let plane = named.plane_of_face(face, "holes are drilled into a planar face")?;
     let target = named.solid_name_of_face(face, "holes are drilled into a solid")?;
     if args.points.is_empty() {
         return Err(GeopError::new("pick the points to drill at"));
@@ -475,10 +469,7 @@ impl PartOperation for Hole {
                 },
             });
         }
-        let combine = Combine::With {
-            op: BooleanOp::Difference,
-            target,
-        };
+        let combine = Combine::cut(target);
         match combine.apply(model, &namer, step, &tools)? {
             Reach::Stopped(()) => Ok(()),
             Reach::RunsOn(e) => Err(e.with_context(
@@ -854,10 +845,7 @@ impl PartOperation for Thread {
             &placement,
             &wall,
         )?;
-        let combine = Combine::With {
-            op: BooleanOp::Difference,
-            target,
-        };
+        let combine = Combine::cut(target);
         (combine.apply(model, &namer, step, &[Tool::whole(tool)])).and_then(Reach::stopped)
     }
 

@@ -3,18 +3,20 @@
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_ops::NamedModel;
 use geop_ops::operation::apply_to_model;
-use geop_ops_extrude_revolve::shapes::cube_solid;
+use geop_ops_extrude_revolve::shapes::block;
 
 use super::*;
-use crate::boundary::tests::{assert_valid, refused, v3};
+use crate::boundary::tests::refused;
 use crate::thicken::tests::square_sheet;
+use geop_ops::testing::assert_valid_sheets;
+use geop_ops_extrude_revolve::shapes::v3;
 
 /// The flat square at `z = 1` and a box beside it from `x = 0.5`, whose
 /// face there stands across the square, its normal along `-x`; returns
 /// that face's name.
 fn square_and_wall() -> (NamedModel<S>, String) {
     let (mut part, _) = square_sheet();
-    let wall = cube_solid(&mut part, "w", v3(0.5, -1., 0.), v3(2., 2., 2.)).unwrap();
+    let wall = block(&mut part, "w", [0.5, -1.0, 0.0], [2.0, 2.0, 2.0]);
     let face = part
         .topology()
         .solid_faces(wall)
@@ -48,7 +50,7 @@ fn trim_a_square_with_a_face() {
     for (keep, from, to) in [(TrimKeep::Back, 0.5, 1.0), (TrimKeep::Front, 0.0, 0.5)] {
         let (part, tool) = square_and_wall();
         let part = trimmed(part, &tool, keep).unwrap();
-        assert_valid(&part);
+        assert_valid_sheets(&part);
         assert_eq!(part.sheet_face_names().len(), 1, "{keep:?}");
         let face = part.face_id(&part.sheet_face_names()[0]).unwrap();
         for c in part.topology().iterate_face_coedges(face) {
@@ -66,7 +68,7 @@ fn trim_a_square_with_a_face() {
 #[test]
 fn a_face_that_misses_is_refused() {
     let (mut part, _) = square_sheet();
-    let far = cube_solid(&mut part, "far", v3(3., 3., 3.), v3(4., 4., 4.)).unwrap();
+    let far = block(&mut part, "far", [3.0, 3.0, 3.0], [4.0, 4.0, 4.0]);
     let face = part.topology().solid_faces(far).unwrap()[0];
     let face = part.name_of(face).unwrap().to_string();
     let err = refused(trimmed(part, &face, TrimKeep::Front));

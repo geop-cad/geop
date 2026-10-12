@@ -17,6 +17,7 @@ use geop_core_program::{
     step_editor::{Editing, StepEditor},
 };
 use geop_core_sketch::space::{Constraint3d, CurveKind3d};
+use geop_ops::testing::vertex_at;
 use geop_ops::{
     Design, NamedModel, ORIGIN, ParamValue,
     model::{model, sketch3d},
@@ -27,7 +28,7 @@ use geop_ops::{
         StepEditEvent, Value,
     },
 };
-use geop_ops_extrude_revolve::shapes::cube_solid;
+use geop_ops_extrude_revolve::shapes::block;
 
 use crate::{
     AddSketch3d, AddSketch3dArgs, Reference3d, Sketch3d, Sketch3dEditing, Sketch3dSession, Target,
@@ -59,7 +60,7 @@ fn down(x: f64, y: f64) -> Pointer<S> {
 /// The box `[min, max]`, `cube(b)`.
 fn cube(min: [f64; 3], max: [f64; 3]) -> NamedModel<Design> {
     let mut model = NamedModel::new();
-    cube_solid(&mut model, "b", v(min), v(max)).unwrap();
+    block(&mut model, "b", min, max);
     model
 }
 
@@ -377,15 +378,6 @@ fn selections_are_constrained_and_points_dragged() {
     let (a, b) = (e.at(p[0]), e.at(p[1]));
     assert!((b[2].to_f64() - grab[2] - 1.0).abs() < 1e-6, "{b:?}");
     assert!((a[0].to_f64() - b[0].to_f64()).abs() < 1e-9, "{a:?} {b:?}");
-}
-
-/// The name of the vertex of `model` at `at`.
-fn vertex_at(model: &NamedModel<Design>, at: [f64; 3]) -> String {
-    let topology = model.topology();
-    let (&id, _) = (topology.vertices.iter())
-        .find(|(_, vertex)| close(&vertex.point, at))
-        .expect("a vertex there");
-    model.name_of(id).unwrap().to_string()
 }
 
 /// A point fixed at a vertex of the part follows it when the part changes,

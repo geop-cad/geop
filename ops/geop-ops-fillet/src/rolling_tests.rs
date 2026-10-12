@@ -6,17 +6,23 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops::{NamedModel, Namer};
+use geop_ops::{
+    NamedModel, Namer,
+    testing::{assert_valid, edges_with_middle_where, has_vertex, vertex_at},
+};
 use geop_ops_booleans::boolean::BooleanOp;
 use geop_ops_extrude_revolve::shapes::{
+    block,
     cube::cube_solid,
+    cylinder,
     cylinder::{Axis, revolved_cylinder, revolved_cylinder_along_axis},
     sphere::sphere_solid,
+    v3,
 };
 
 use crate::blend::{BlendShape, blend};
 use crate::rolling::{DEVIATION, Radii};
-use crate::tests::{assert_valid, combined, edges_where, has_vertex, refusal, unit_cube, v};
+use crate::tests::{combined, refusal, unit_cube};
 
 /// Blends `edges` of `model` into `shape` as the step `F`, and checks the
 /// result is valid — failing, with every entity the error mentions by name.
@@ -52,12 +58,11 @@ fn blended(model: &mut NamedModel<S>, edges: &[String], shape: &BlendShape) {
 /// sphere. The part, and the names of the edges of that circle.
 fn boss_on_sphere() -> (NamedModel<S>, Vec<String>) {
     let mut model = NamedModel::new();
-    let ball = sphere_solid(&mut model, "s", v(0.0, 0.0, 0.0), S::ONE).unwrap();
-    let boss =
-        revolved_cylinder(&mut model, "c", v(0.0, 0.0, 0.5), S::from_f64(0.4), S::ONE).unwrap();
+    let ball = sphere_solid(&mut model, "s", v3(0.0, 0.0, 0.0), S::ONE).unwrap();
+    let boss = cylinder(&mut model, "c", [0.0, 0.0, 0.5], 0.4, 1.0);
     combined(&mut model, ("union", "u"), ball, boss, BooleanOp::Union);
     let z = 0.84f64.sqrt();
-    let rim = edges_where(&model, |p| {
+    let rim = edges_with_middle_where(&model, |p| {
         ((p[0] * p[0] + p[1] * p[1]).sqrt() - 0.4).abs() < 1e-6 && (p[2] - z).abs() < 1e-6
     });
     assert!(
@@ -144,16 +149,15 @@ fn tee() -> (NamedModel<S>, Vec<String>) {
     let pipe = revolved_cylinder_along_axis(
         &mut model,
         "p",
-        v(-1.0, 0.0, 0.0),
+        v3(-1.0, 0.0, 0.0),
         S::from_f64(0.5),
         S::from_f64(2.0),
         Axis::X,
     )
     .unwrap();
-    let branch =
-        revolved_cylinder(&mut model, "b", v(0.0, 0.0, 0.0), S::from_f64(0.3), S::ONE).unwrap();
+    let branch = cylinder(&mut model, "b", [0.0, 0.0, 0.0], 0.3, 1.0);
     combined(&mut model, ("union", "u"), pipe, branch, BooleanOp::Union);
-    let saddle = edges_where(&model, |p| {
+    let saddle = edges_with_middle_where(&model, |p| {
         ((p[0] * p[0] + p[1] * p[1]).sqrt() - 0.3).abs() < 1e-6
             && ((p[1] * p[1] + p[2] * p[2]).sqrt() - 0.5).abs() < 1e-6
     });
@@ -255,10 +259,10 @@ fn d_shaft() -> NamedModel<S> {
 fn shaft_with_flat(radius: f64, height: f64, flat: f64) -> NamedModel<S> {
     let mut model = NamedModel::new();
     let (r, h) = (S::from_f64(radius), S::from_f64(height));
-    let shaft = revolved_cylinder(&mut model, "c", v(0.0, 0.0, 0.0), r, h).unwrap();
+    let shaft = revolved_cylinder(&mut model, "c", v3(0.0, 0.0, 0.0), r, h).unwrap();
     let (min, max) = (
-        v(flat, -2.0 * radius, -1.0),
-        v(2.0 * radius, 2.0 * radius, 2.0),
+        v3(flat, -2.0 * radius, -1.0),
+        v3(2.0 * radius, 2.0 * radius, 2.0),
     );
     let flat = cube_solid(&mut model, "f", min, max).unwrap();
     combined(
@@ -287,7 +291,7 @@ fn d_shaft_fillet_top_corners() {
         .filter(|(_, vertex)| {
             [y, -y]
                 .iter()
-                .any(|&y| vertex.point.could_be_equal(&v(0.3, y, 1.0)))
+                .any(|&y| vertex.point.could_be_equal(&v3(0.3, y, 1.0)))
         })
         .map(|(&id, _)| id)
         .collect();
@@ -304,7 +308,7 @@ fn d_shaft_fillet_top_corners() {
     blended(&mut model, &edges, &BlendShape::round(r));
     // `r` below the top, from the flat and inside the cylinder.
     let y = (0.16f64 - 0.04).sqrt();
-    let centers = [y, -y].map(|y| v::<S>(0.3 - r, y, 1.0 - r));
+    let centers = [y, -y].map(|y| v3::<S>(0.3 - r, y, 1.0 - r));
     let balls: Vec<_> = model
         .topology()
         .faces
@@ -317,7 +321,7 @@ fn d_shaft_fillet_top_corners() {
         let near = |c: &Vector3<S>| ps[0][1] * c[1].to_f64() > 0.0;
         let center = centers.iter().find(|c| near(c)).unwrap();
         for p in ps {
-            let off = v::<S>(p[0], p[1], p[2]).sub(center).norm().to_f64() - r;
+            let off = v3::<S>(p[0], p[1], p[2]).sub(center).norm().to_f64() - r;
             assert!(
                 off.abs() <= 2.0 * DEVIATION * r,
                 "{p:?} is {off:e} off the ball"
@@ -335,7 +339,7 @@ fn d_shaft_fillet_top_corners() {
 fn d_shaft_chamfer_flat_side() {
     let mut model = d_shaft();
     let y = 0.16f64.sqrt();
-    let side = edges_where(&model, |p| {
+    let side = edges_with_middle_where(&model, |p| {
         (p[0] - 0.3).abs() < 1e-6 && (p[1] - y).abs() < 1e-6
     });
     assert_eq!(side.len(), 1, "{side:?}");
@@ -360,7 +364,7 @@ fn d_shaft_chamfer_flat_side() {
     let angle = (y / 0.3f64).atan() + 2.0 * (d / 2.0 / 0.5f64).asin();
     let on_cylinder = [0.5 * angle.cos(), 0.5 * angle.sin(), 1.0];
     for p in [on_flat, on_cylinder] {
-        let p = v::<S>(p[0], p[1], p[2]);
+        let p = v3::<S>(p[0], p[1], p[2]);
         let near = model
             .topology()
             .vertices
@@ -399,15 +403,14 @@ fn tee_chamfer_around_the_saddle() {
 /// circle of radius 0.5 around `(1, 1)` cut off at `x = 1.3`.
 fn d_pocket() -> NamedModel<S> {
     let mut model = NamedModel::new();
-    let block = cube_solid(&mut model, "b", v(0.0, 0.0, 0.0), v(2.0, 2.0, 1.0)).unwrap();
-    let round =
-        revolved_cylinder(&mut model, "c", v(1.0, 1.0, 0.6), S::from_f64(0.5), S::ONE).unwrap();
-    let off = cube_solid(&mut model, "o", v(1.3, 0.0, 0.0), v(2.0, 2.0, 2.0)).unwrap();
+    let stock = block(&mut model, "b", [0.0, 0.0, 0.0], [2.0, 2.0, 1.0]);
+    let round = cylinder(&mut model, "c", [1.0, 1.0, 0.6], 0.5, 1.0);
+    let off = block(&mut model, "o", [1.3, 0.0, 0.0], [2.0, 2.0, 2.0]);
     let pocket = combined(&mut model, ("cut", "d"), round, off, BooleanOp::Difference);
     combined(
         &mut model,
         ("cut", "p"),
-        block,
+        stock,
         pocket,
         BooleanOp::Difference,
     );
@@ -425,7 +428,7 @@ fn d_pocket() -> NamedModel<S> {
 #[test]
 fn d_pocket_rim_fillet_is_refused() {
     let model = d_pocket();
-    let rim = edges_where(&model, |p| {
+    let rim = edges_with_middle_where(&model, |p| {
         (p[2] - 1.0).abs() < 1e-6 && (p[0] - 1.0).hypot(p[1] - 1.0) < 0.51
     });
     let why = refusal(model, &rim, BlendShape::round(0.1));
@@ -435,8 +438,8 @@ fn d_pocket_rim_fillet_is_refused() {
 /// A sphere of radius 1 around the origin, its half below `z = 0` cut off.
 fn hemisphere() -> NamedModel<S> {
     let mut model = NamedModel::new();
-    let ball = sphere_solid(&mut model, "s", v(0.0, 0.0, 0.0), S::ONE).unwrap();
-    let below = cube_solid(&mut model, "c", v(-2.0, -2.0, -2.0), v(2.0, 2.0, 0.0)).unwrap();
+    let ball = sphere_solid(&mut model, "s", v3(0.0, 0.0, 0.0), S::ONE).unwrap();
+    let below = block(&mut model, "c", [-2.0, -2.0, -2.0], [2.0, 2.0, 0.0]);
     combined(
         &mut model,
         ("half", "h"),
@@ -453,7 +456,7 @@ fn hemisphere() -> NamedModel<S> {
 #[test]
 fn hemisphere_rim_chamfer() {
     let mut model = hemisphere();
-    let rim = edges_where(&model, |p| p[2].abs() < 1e-6);
+    let rim = edges_with_middle_where(&model, |p| p[2].abs() < 1e-6);
     assert!(!rim.is_empty());
     blended(
         &mut model,
@@ -469,7 +472,7 @@ fn hemisphere_rim_chamfer() {
 #[test]
 fn wide_d_shaft_chamfer_flat_side() {
     let mut model = shaft_with_flat(1.0, 1.5, 0.6);
-    let side = edges_where(&model, |p| {
+    let side = edges_with_middle_where(&model, |p| {
         (p[0] - 0.6).abs() < 1e-6 && (p[1] - 0.8).abs() < 1e-6
     });
     assert_eq!(side.len(), 1, "{side:?}");
@@ -480,18 +483,6 @@ fn wide_d_shaft_chamfer_flat_side() {
             distances: [0.1, 0.1],
         },
     );
-}
-
-/// The vertex at `p` of `model`, by name.
-fn vertex_at(model: &NamedModel<S>, p: [f64; 3]) -> String {
-    let p = v::<S>(p[0], p[1], p[2]);
-    let (&id, _) = model
-        .topology()
-        .vertices
-        .iter()
-        .find(|(_, vertex)| vertex.point.could_be_equal(&p))
-        .expect("a vertex there");
-    model.name_of(id).unwrap().to_string()
 }
 
 /// The three edges at the cube's corner `(0, 0, 1)` rounded with a radius
@@ -520,9 +511,9 @@ fn cube_corner_rounded_with_a_varying_radius() {
         .filter(|&(&id, _)| model.name_of(id).unwrap().ends_with(",corner)"))
         .collect();
     assert_eq!(balls.len(), 1);
-    let center = v::<S>(0.2, 0.2, 0.8);
+    let center = v3::<S>(0.2, 0.2, 0.8);
     for p in samples(&balls[0].1.surface, 4) {
-        let off = v::<S>(p[0], p[1], p[2]).sub(&center).norm().to_f64() - 0.2;
+        let off = v3::<S>(p[0], p[1], p[2]).sub(&center).norm().to_f64() - 0.2;
         assert!(off.abs() <= 1e-9, "{p:?} is {off:e} off the ball");
     }
 }

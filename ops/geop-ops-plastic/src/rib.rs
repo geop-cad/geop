@@ -40,7 +40,7 @@ use geop_core_topology::{
 use geop_ops::{NamedModel, Namer, ToolReach};
 use geop_ops_booleans::{
     Combine, Tool,
-    boolean::{BooleanOp, Reach},
+    boolean::Reach,
     extent::{bounds, face_hull},
 };
 use geop_ops_extrude_revolve::{common::Profile, extrude::extrude, sweep::SweepLoop};
@@ -139,10 +139,7 @@ pub fn rib<S: Scalar>(
             scope: None,
         },
     };
-    let combine = Combine::With {
-        op: BooleanOp::Union,
-        target: target_name,
-    };
+    let combine = Combine::join(target_name);
     match combine.apply(part, namer, operation_id, &[tool]).with_context(ctx)? {
         Reach::Stopped(()) => Ok(()),
         Reach::RunsOn(e) => Err(e.with_context(

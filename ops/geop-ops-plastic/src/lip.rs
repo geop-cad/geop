@@ -32,10 +32,7 @@ use geop_core_topology::{
     build::{BodySpec, CoedgeOn, CoedgeSpec},
 };
 use geop_ops::{NamedModel, Namer, operation::frame_along};
-use geop_ops_booleans::{
-    Combine, Tool,
-    boolean::{BooleanOp, Reach},
-};
+use geop_ops_booleans::{Combine, Tool, boolean::Reach};
 use geop_ops_extrude_revolve::{extrude::extrude, sweep::SweepLoop};
 
 use crate::{
@@ -56,12 +53,8 @@ pub fn rim_chain<S: Scalar>(
 ) -> GeopResult<(CoordinateSystem<S>, Chain<S>)> {
     let model = part.topology();
     let name = |id: geop_ops::RefId| part.name_of(id).unwrap_or("?").to_string();
-    let Some(solid) = model.solid_of_face(face)? else {
-        return Err(GeopError::new(format!(
-            "face {} stands on its own; a rim is a face of a solid",
-            name(face.into())
-        )));
-    };
+    let solid = part.solid_of_face(face, "a rim is a face of a solid")?;
+    let plane = part.plane_of_face(face, "a lip or groove runs along a flat rim")?;
     let faces = model.solid_faces(solid)?;
     let (spec, sources) = model.body_spec(&faces, true)?;
     let f = sources
@@ -69,12 +62,6 @@ pub fn rim_chain<S: Scalar>(
         .iter()
         .position(|&x| x == face)
         .expect("a face of its solid");
-    let plane = spec.faces[f].surface.as_plane()?.ok_or_else(|| {
-        GeopError::new(format!(
-            "face {} is not planar: a lip or groove runs along a flat rim",
-            name(face.into())
-        ))
-    })?;
     let frame = frame_along(plane.point, &plane.normal)?;
     let loops = spec.faces[f].loops();
     let edge_index = |e: EdgeId| sources.edges.iter().position(|&x| x == e);
@@ -338,10 +325,7 @@ pub fn lip<S: Scalar>(
     )
     .with_context(ctx)?;
     let tool = Tool::whole(built.solid.expect("extruded as a solid"));
-    let combine = Combine::With {
-        op: BooleanOp::Union,
-        target,
-    };
+    let combine = Combine::join(target);
     (combine.apply(part, namer, operation_id, &[tool]))
         .and_then(Reach::stopped)
         .with_context(ctx)
@@ -396,10 +380,7 @@ pub fn groove<S: Scalar>(
     )
     .with_context(ctx)?;
     let tool = Tool::whole(built.solid.expect("extruded as a solid"));
-    let combine = Combine::With {
-        op: BooleanOp::Difference,
-        target,
-    };
+    let combine = Combine::cut(target);
     (combine.apply(part, namer, operation_id, &[tool]))
         .and_then(Reach::stopped)
         .with_context(ctx)

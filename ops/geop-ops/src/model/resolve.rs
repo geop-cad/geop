@@ -1,11 +1,12 @@
 //! Looking an entity up by its name instead of its id — what every
 //! operation that refers to existing entities by name is built on.
 
+use geop_core_geometry::shape::Plane;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_topology::{EdgeId, FaceId, SolidId, VertexId};
+use geop_core_topology::{Body, EdgeId, FaceId, ShellId, SolidId, VertexId};
 
 use super::NamedModel;
 use super::ids::RefId;
@@ -66,16 +67,46 @@ impl<S: Scalar> NamedModel<S> {
         })
     }
 
-    /// The name of the solid `face` is part of. An error for a face of a
-    /// sheet, naming the face and saying `why` it has to be a solid's.
-    pub fn solid_name_of_face(&self, face: FaceId, why: &str) -> GeopResult<String> {
-        let Some(solid) = self.topology().solid_of_face(face)? else {
-            return Err(GeopError::new(format!(
+    /// The solid `face` is part of. An error for a face of a sheet, naming
+    /// the face and saying `why` it has to be a solid's.
+    pub fn solid_of_face(&self, face: FaceId, why: &str) -> GeopResult<SolidId> {
+        match self.topology().body_of_face(face)? {
+            Body::Solid(solid) => Ok(solid),
+            Body::Sheet(_) => Err(GeopError::new(format!(
                 "face {:?} stands on its own: {why}",
                 self.name(face)?
-            )));
-        };
+            ))),
+        }
+    }
+
+    /// The name of the solid `face` is part of, as [`Self::solid_of_face`].
+    pub fn solid_name_of_face(&self, face: FaceId, why: &str) -> GeopResult<String> {
+        let solid = self.solid_of_face(face, why)?;
         Ok(self.name(solid)?.to_string())
+    }
+
+    /// The sheet `face` is part of. An error for a face of a solid, naming
+    /// the face and saying `why` it has to stand on its own.
+    pub fn sheet_of_face(&self, face: FaceId, why: &str) -> GeopResult<ShellId> {
+        match self.topology().body_of_face(face)? {
+            Body::Sheet(sheet) => Ok(sheet),
+            Body::Solid(_) => Err(GeopError::new(format!(
+                "face {:?} is a face of a solid, not one standing on its own: {why}",
+                self.name(face)?
+            ))),
+        }
+    }
+
+    /// The plane `face` lies in. An error for a face that is not planar,
+    /// naming the face and saying `why` it has to be.
+    pub fn plane_of_face(&self, face: FaceId, why: &str) -> GeopResult<Plane<S>> {
+        match self.topology().get_face(face)?.surface.as_plane()? {
+            Some(plane) => Ok(plane),
+            None => Err(GeopError::new(format!(
+                "face {:?} is not planar: {why}",
+                self.name(face)?
+            ))),
+        }
     }
 
     /// Every solid's name, oldest first.

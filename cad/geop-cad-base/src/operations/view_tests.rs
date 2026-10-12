@@ -5,23 +5,19 @@ use crate::operations::testing::{origin_axis, origin_plane, pointer};
 use geop_core_math::{
     primitives::{CoordinateSystem, DatumKind, FrameAxis, Ray},
     scalars::{ScalInF64 as S, Scalar},
-    vector::Vector3,
 };
 use std::collections::BTreeMap;
 
 use geop_core_math::geop_error::GeopResult;
 use geop_ops::{
     Design, EntityRef, NamedModel, ORIGIN, PlacedSketch,
-    model::{model, sketch},
-    operation::{Build, BuildReader, Role, Seen},
+    model::sketch,
+    operation::{BuildReader, Role, Seen},
+    testing::built_with,
     ui::{PartView, Pointer, Reach, ViewDatum},
 };
-use geop_ops_extrude_revolve::shapes::cube_solid;
+use geop_ops_extrude_revolve::shapes::{block, v3};
 use geop_ops_sketch::Sketch;
-
-fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
-    Vector3::from_array([x, y, z].map(S::from_f64))
-}
 
 fn down(x: f64, y: f64) -> Pointer<S> {
     pointer([x, y, 5.0], [0.0, 0.0, -1.0])
@@ -30,12 +26,8 @@ fn down(x: f64, y: f64) -> Pointer<S> {
 /// The unit cube, named `cube(c)`.
 fn cube() -> NamedModel<S> {
     let mut part = NamedModel::new();
-    cube_solid(&mut part, "c", v(0.0, 0.0, 0.0), v(1.0, 1.0, 1.0)).unwrap();
+    block(&mut part, "c", [0.0; 3], [1.0; 3]);
     part
-}
-
-fn given_model(_: &mut BuildReader, m: &NamedModel<Design>) -> GeopResult<NamedModel<Design>> {
-    Ok(m.clone())
 }
 
 fn given_sketch(_: &mut BuildReader, s: &PlacedSketch<Design>) -> GeopResult<PlacedSketch<Design>> {
@@ -44,16 +36,12 @@ fn given_sketch(_: &mut BuildReader, s: &PlacedSketch<Design>) -> GeopResult<Pla
 
 /// `model`, with `sketches` by name, as drawn: a part a program of one step
 /// would have built.
-fn drawn(model_: &NamedModel<S>, sketches: &[(&str, PlacedSketch<S>)]) -> PartView {
-    let mut part = Build::default();
-    part.begin_run(&BTreeMap::new(), &BTreeMap::new());
-    part.begin_step("given").unwrap();
-    part.define_target(&model(), model_, given_model).unwrap();
-    for (name, placed) in sketches {
-        part.define_target(&sketch(name), placed, given_sketch)
-            .unwrap();
-    }
-    part.end_run(Default::default());
+fn drawn(model: &NamedModel<S>, sketches: &[(&str, PlacedSketch<S>)]) -> PartView {
+    let part = built_with(&BTreeMap::new(), model, &[], |part| {
+        for (name, placed) in sketches {
+            (part.define_target(&sketch(name), placed, given_sketch)).unwrap();
+        }
+    });
     PartView::of(&Seen::new(part.current())).unwrap()
 }
 
@@ -114,10 +102,10 @@ fn sketches() {
     }
     let placed = |z: f64| PlacedSketch {
         plane: CoordinateSystem::try_new(
-            v(0.0, 0.0, z),
-            v(1.0, 0.0, 0.0),
-            v(0.0, 1.0, 0.0),
-            v(0.0, 0.0, 1.0),
+            v3(0.0, 0.0, z),
+            v3(1.0, 0.0, 0.0),
+            v3(0.0, 1.0, 0.0),
+            v3(0.0, 0.0, 1.0),
         )
         .unwrap(),
         sketch: square.clone(),
@@ -145,10 +133,10 @@ fn sketches() {
 fn datums() {
     let frame = |z: f64| {
         CoordinateSystem::try_new(
-            v(0.0, 0.0, z),
-            v(1.0, 0.0, 0.0),
-            v(0.0, 1.0, 0.0),
-            v(0.0, 0.0, 1.0),
+            v3(0.0, 0.0, z),
+            v3(1.0, 0.0, 0.0),
+            v3(0.0, 1.0, 0.0),
+            v3(0.0, 0.0, 1.0),
         )
         .unwrap()
     };
@@ -210,10 +198,10 @@ fn sketch_lines() {
     }
     let placed = |z: f64| PlacedSketch {
         plane: CoordinateSystem::try_new(
-            v(0.0, 0.0, z),
-            v(1.0, 0.0, 0.0),
-            v(0.0, 1.0, 0.0),
-            v(0.0, 0.0, 1.0),
+            v3(0.0, 0.0, z),
+            v3(1.0, 0.0, 0.0),
+            v3(0.0, 1.0, 0.0),
+            v3(0.0, 0.0, 1.0),
         )
         .unwrap(),
         sketch: square.clone(),
@@ -263,8 +251,8 @@ fn edge_of_the_face_hit_at_a_glancing_angle() {
     let (origin, aim) = ([0.5, -10.0, 1.1], [0.5, 0.9, 1.0]);
     let glancing = Pointer {
         ray: Ray::try_new(
-            v(origin[0], origin[1], origin[2]),
-            v(aim[0] - origin[0], aim[1] - origin[1], aim[2] - origin[2]),
+            v3(origin[0], origin[1], origin[2]),
+            v3(aim[0] - origin[0], aim[1] - origin[1], aim[2] - origin[2]),
         )
         .unwrap(),
         reach: Reach::Cone {

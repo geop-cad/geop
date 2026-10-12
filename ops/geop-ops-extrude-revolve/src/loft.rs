@@ -957,11 +957,10 @@ pub fn loft<S: Scalar>(
 mod tests {
     use super::*;
     use crate::common::polygon;
-    use crate::common::testing::{
-        assert_valid, assert_valid_sheets, circle, plane, square, v2, v3,
-    };
+    use crate::shapes::{circle, plane, square, v2, v3};
     use geop_core_geometry::nurb_curve::{NurbCurve2D, sqrt2_over_2};
     use geop_core_math::for_all_scalars;
+    use geop_ops::testing::{assert_model_valid, assert_model_valid_sheets};
 
     /// The plane `z = height`, along `x` and `y`.
     fn level<S: Scalar>(height: f64) -> CoordinateSystem<S> {
@@ -999,7 +998,7 @@ mod tests {
         let namer = Namer::new("loft", "l").unwrap();
         loft(&mut model, &namer, Some(&namer.root()), sections, &[]).unwrap();
         model.check_names().unwrap();
-        assert_valid(model.topology());
+        assert_model_valid(model.topology());
         model
     }
 
@@ -1142,7 +1141,7 @@ mod tests {
         .unwrap();
         assert!(built.solid.is_none());
         model.check_names().unwrap();
-        assert_valid_sheets(model.topology());
+        assert_model_valid_sheets(model.topology());
         assert_eq!(model.topology().faces.len(), 1);
     }
     #[test]
@@ -1194,7 +1193,7 @@ mod tests {
         let namer = Namer::new("loft", "l").unwrap();
         loft(&mut model, &namer, Some(&namer.root()), sections, guides).unwrap();
         model.check_names().unwrap();
-        assert_valid(model.topology());
+        assert_model_valid(model.topology());
         model
     }
 

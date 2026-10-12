@@ -10,9 +10,9 @@ use geop_core_math::{
 };
 use geop_core_topology::{
     Body,
-    validation::{ValidationParameters, validate, validate_manifold},
+    validation::{ValidationParameters, validate},
 };
-use geop_ops::NamedModel;
+use geop_ops::{NamedModel, testing::assert_valid};
 
 use crate::{Cage, Mirror, SubdArgs, build_subd};
 
@@ -21,21 +21,6 @@ fn subd<S: Scalar>(args: &SubdArgs) -> geop_core_math::geop_error::GeopResult<Na
     let mut model = NamedModel::new();
     build_subd(&mut model, "s", args)?;
     Ok(model)
-}
-
-/// Valid, and a manifold (`validate_manifold` runs `validate` first: once
-/// is enough), its names checked.
-fn assert_valid<S: Scalar>(part: &NamedModel<S>) {
-    let params = ValidationParameters::default();
-    if let Err(errors) = validate_manifold(&params, part.topology()) {
-        let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
-        panic!(
-            "{} validation errors:\n{}",
-            messages.len(),
-            messages.join("\n")
-        );
-    }
-    part.check_names().unwrap();
 }
 
 /// The limit of `cage`, mirrored in `mirror`, built as step `s`.

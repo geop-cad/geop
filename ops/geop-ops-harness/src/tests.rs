@@ -10,10 +10,10 @@ use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{for_all_scalars, geop_error::GeopResult, scalars::Scalar, vector::Vector3};
 use geop_core_topology::{
     build::{BodySpec, EdgeSpec},
-    validation::{ValidationParameters, validate, validate_manifold},
+    validation::{ValidationParameters, validate},
 };
-use geop_ops::{BodyNames, EntityRef, NamedModel};
-use geop_ops_extrude_revolve::shapes::cylinder::revolved_cylinder;
+use geop_ops::{BodyNames, EntityRef, NamedModel, testing::assert_valid};
+use geop_ops_extrude_revolve::shapes::{cylinder::revolved_cylinder, v3};
 
 use crate::{
     Cable, RouteArgs, Wire, WireSize,
@@ -23,10 +23,6 @@ use crate::{
 
 /// A part's model, in `S`.
 type Part<S> = NamedModel<S>;
-
-fn v<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
-    Vector3::from_array([x, y, z].map(S::from_f64))
-}
 
 /// A part with a connector — a frame the cable leaves along its `z` axis
 /// — named `name` at `at` for every `(name, at, z)`: the edge `name` of a
@@ -81,11 +77,6 @@ fn datum(name: &str) -> EntityRef {
     }
 }
 
-/// The free point `name`.
-fn vertex(name: &str) -> EntityRef {
-    EntityRef::vertex(name)
-}
-
 /// One wire `d` across: a bundle `d / sqrt(fill)` across.
 fn args(through: Vec<EntityRef>, d: f64, bend_factor: f64) -> RouteArgs {
     RouteArgs {
@@ -115,19 +106,6 @@ fn refusal<S: Scalar>(part: Part<S>, args: &RouteArgs) -> String {
     }
 }
 
-#[track_caller]
-fn assert_valid<S: Scalar>(part: &Part<S>) {
-    part.check_names().unwrap();
-    let params = ValidationParameters::default();
-    let scalar = std::any::type_name::<S>();
-    if let Err(e) = validate(&params, part.topology()) {
-        panic!("in {scalar}: {e:?}");
-    }
-    if let Err(e) = validate_manifold(&params, part.topology()) {
-        panic!("in {scalar}: {e:?}");
-    }
-}
-
 /// Between two connectors facing each other, the route runs straight: as
 /// long as they are apart, every wire cut to that and a service loop at
 /// each end, the bundle a straight cylinder.
@@ -136,8 +114,8 @@ fn check_straight_route_between_facing_connectors<S: Scalar>() {
     connectors(
         &mut part,
         &[
-            ("start", v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0)),
-            ("end", v(120.0, 0.0, 0.0), v(-1.0, 0.0, 0.0)),
+            ("start", v3(0.0, 0.0, 0.0), v3(1.0, 0.0, 0.0)),
+            ("end", v3(120.0, 0.0, 0.0), v3(-1.0, 0.0, 0.0)),
         ],
     );
     let mut args = args(vec![datum("start"), datum("end")], 2.0, 5.0);
@@ -189,8 +167,8 @@ fn check_quarter_turn_is_a_quarter_circle<S: Scalar>() {
     connectors(
         &mut part,
         &[
-            ("start", v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0)),
-            ("end", v(r, r, 0.0), v(0.0, -1.0, 0.0)),
+            ("start", v3(0.0, 0.0, 0.0), v3(1.0, 0.0, 0.0)),
+            ("end", v3(r, r, 0.0), v3(0.0, -1.0, 0.0)),
         ],
     );
     let (part, cable) = route(part, &args(vec![datum("start"), datum("end")], 2.0, 5.0)).unwrap();
@@ -211,7 +189,7 @@ fn check_quarter_turn_is_a_quarter_circle<S: Scalar>() {
     // Halfway round, the bundle's centre passes `R (1 - 1/sqrt 2)` off
     // either axis: its section there is centred on the circle.
     let half = r * (1.0 - std::f64::consts::FRAC_1_SQRT_2);
-    let centre = v::<S>(r - half, half, 0.0);
+    let centre = v3::<S>(r - half, half, 0.0);
     let model = part.topology();
     for p in 0..4 {
         let vertex = part.vertex_id(&format!("route(r,p{p},m0)")).unwrap();
@@ -236,8 +214,8 @@ fn check_too_tight_a_bend_is_refused<S: Scalar>() {
     connectors(
         &mut part,
         &[
-            ("start", v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0)),
-            ("end", v(r, r, 0.0), v(0.0, -1.0, 0.0)),
+            ("start", v3(0.0, 0.0, 0.0), v3(1.0, 0.0, 0.0)),
+            ("end", v3(r, r, 0.0), v3(0.0, -1.0, 0.0)),
         ],
     );
     // A bundle 2 across, bent no tighter than 5 diameters: radius 10.
@@ -265,8 +243,8 @@ fn check_a_bend_at_the_limit_is_allowed<S: Scalar>() {
     connectors(
         &mut part,
         &[
-            ("start", v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0)),
-            ("end", v(r, r, 0.0), v(0.0, -1.0, 0.0)),
+            ("start", v3(0.0, 0.0, 0.0), v3(1.0, 0.0, 0.0)),
+            ("end", v3(r, r, 0.0), v3(0.0, -1.0, 0.0)),
         ],
     );
     let (part, _) = route(part, &args(vec![datum("start"), datum("end")], 2.0, 5.0)).unwrap();
@@ -309,11 +287,11 @@ fn check_route_through_a_clip<S: Scalar>() {
     connectors(
         &mut part,
         &[
-            ("start", v(0.0, 0.0, -55.0), v(0.0, 0.0, 1.0)),
-            ("end", v(0.0, 0.0, 45.0), v(0.0, 0.0, -1.0)),
+            ("start", v3(0.0, 0.0, -55.0), v3(0.0, 0.0, 1.0)),
+            ("end", v3(0.0, 0.0, 45.0), v3(0.0, 0.0, -1.0)),
         ],
     );
-    let rim = clip(&mut part, "clip", v(10.0, 0.0, 0.0));
+    let rim = clip(&mut part, "clip", v3(10.0, 0.0, 0.0));
     let through = vec![
         datum("start"),
         EntityRef::Edge { name: rim.clone() },
@@ -328,7 +306,7 @@ fn check_route_through_a_clip<S: Scalar>() {
         let vertex = part.vertex_id(&format!("route(r,p{p},w1)")).unwrap();
         let at = model.get_vertex(vertex).unwrap().point;
         assert!(at[2].could_be_equal(S::ZERO), "{at:?}");
-        let off = at.sub(&v(10.0, 0.0, 0.0)).norm();
+        let off = at.sub(&v3(10.0, 0.0, 0.0)).norm();
         assert!(off.could_be_equal(S::ONE), "{at:?}");
     }
     // Each half swerves 10 sideways over 55 and 45, along z at both ends:
@@ -360,22 +338,34 @@ fn route_through_a_clip() {
 fn check_free_points_choose_their_directions<S: Scalar>() {
     let mut part = Part::<S>::new();
     for (name, at) in [
-        ("a", v(0.0, 0.0, 0.0)),
-        ("b", v(50.0, 0.0, 0.0)),
-        ("c", v(100.0, 30.0, 0.0)),
+        ("a", v3(0.0, 0.0, 0.0)),
+        ("b", v3(50.0, 0.0, 0.0)),
+        ("c", v3(100.0, 30.0, 0.0)),
     ] {
         point(&mut part, name, at);
     }
     let (_, cable) = route(
         part.clone(),
-        &args(vec![vertex("a"), vertex("b")], 2.0, 5.0),
+        &args(
+            vec![EntityRef::vertex("a"), EntityRef::vertex("b")],
+            2.0,
+            5.0,
+        ),
     )
     .unwrap();
     assert!(cable.length.could_be_equal(S::from_f64(50.0)));
 
     let (bent, _) = route(
         part,
-        &args(vec![vertex("a"), vertex("b"), vertex("c")], 2.0, 5.0),
+        &args(
+            vec![
+                EntityRef::vertex("a"),
+                EntityRef::vertex("b"),
+                EntityRef::vertex("c"),
+            ],
+            2.0,
+            5.0,
+        ),
     )
     .unwrap();
     assert_valid(&bent);
@@ -384,7 +374,7 @@ fn check_free_points_choose_their_directions<S: Scalar>() {
     let waypoints: Vec<Waypoint<S>> = ["a", "b", "c"]
         .iter()
         .enumerate()
-        .map(|(i, n)| Waypoint::of(&mut &bent, &vertex(n), i).unwrap())
+        .map(|(i, n)| Waypoint::of(&mut &bent, &EntityRef::vertex(*n), i).unwrap())
         .collect();
     let path = RoutePath::through(&waypoints).unwrap();
     let measure = path.measure().unwrap();
@@ -408,15 +398,15 @@ fn check_unsupported_routes_are_refused<S: Scalar>() {
     connectors(
         &mut part,
         &[
-            ("start", v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0)),
-            ("same", v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0)),
-            ("end", v(100.0, 0.0, 0.0), v(-1.0, 0.0, 0.0)),
+            ("start", v3(0.0, 0.0, 0.0), v3(1.0, 0.0, 0.0)),
+            ("same", v3(0.0, 0.0, 0.0), v3(1.0, 0.0, 0.0)),
+            ("end", v3(100.0, 0.0, 0.0), v3(-1.0, 0.0, 0.0)),
         ],
     );
-    let rim = clip(&mut part, "clip", v(10.0, 0.0, 0.0));
+    let rim = clip(&mut part, "clip", v3(10.0, 0.0, 0.0));
     for (name, at) in [
-        ("below", v(10.0, -40.0, 0.0)),
-        ("above", v(10.0, 60.0, 0.0)),
+        ("below", v3(10.0, -40.0, 0.0)),
+        ("above", v3(10.0, 60.0, 0.0)),
     ] {
         point(&mut part, name, at);
     }
@@ -440,9 +430,9 @@ fn check_unsupported_routes_are_refused<S: Scalar>() {
 
     // A clip whose axis lies square to the way the route goes through it.
     let message = refused(vec![
-        vertex("below"),
+        EntityRef::vertex("below"),
         EntityRef::Edge { name: rim.clone() },
-        vertex("above"),
+        EntityRef::vertex("above"),
     ]);
     assert!(
         message.contains(&format!(
@@ -472,25 +462,25 @@ fn unsupported_routes_are_refused() {
 fn waypoint_configurations_route_or_are_refused() {
     type S = geop_core_math::scalars::ScalInF64;
     let directions: [Vector3<S>; 6] = [
-        v(1.0, 0.0, 0.0),
-        v(0.0, 1.0, 0.0),
-        v(0.0, 0.0, 1.0),
-        v(-1.0, 0.0, 0.0),
-        v(0.0, -1.0, 0.0),
-        v(0.6, 0.0, 0.8),
+        v3(1.0, 0.0, 0.0),
+        v3(0.0, 1.0, 0.0),
+        v3(0.0, 0.0, 1.0),
+        v3(-1.0, 0.0, 0.0),
+        v3(0.0, -1.0, 0.0),
+        v3(0.6, 0.0, 0.8),
     ];
     let ends = [
-        v(60.0, 0.0, 0.0),
-        v(40.0, 30.0, 0.0),
-        v(10.0, -20.0, 35.0),
-        v(-30.0, 25.0, 15.0),
+        v3(60.0, 0.0, 0.0),
+        v3(40.0, 30.0, 0.0),
+        v3(10.0, -20.0, 35.0),
+        v3(-30.0, 25.0, 15.0),
     ];
     // Where a middle point is, and the z axis of the frame there, if any.
     type Middle = Option<(Vector3<S>, Option<Vector3<S>>)>;
     let middles: [Middle; 3] = [
         None,
-        Some((v(25.0, 15.0, 10.0), None)),
-        Some((v(20.0, -10.0, 5.0), Some(v(0.0, 0.0, 1.0)))),
+        Some((v3(25.0, 15.0, 10.0), None)),
+        Some((v3(20.0, -10.0, 5.0), Some(v3(0.0, 0.0, 1.0)))),
     ];
     let (mut built, mut refused) = (0, 0);
     for start in &directions {
@@ -501,12 +491,12 @@ fn waypoint_configurations_route_or_are_refused() {
                     connectors(
                         &mut part,
                         &[
-                            ("start", v(0.0, 0.0, 0.0), *start),
+                            ("start", v3(0.0, 0.0, 0.0), *start),
                             ("end", *end, *end_heading),
                         ],
                     );
                     let mut through = vec![datum("start")];
-                    let mut points = vec![v::<S>(0.0, 0.0, 0.0)];
+                    let mut points = vec![v3::<S>(0.0, 0.0, 0.0)];
                     if let Some((at, heading)) = middle {
                         match heading {
                             Some(z) => {
@@ -515,7 +505,7 @@ fn waypoint_configurations_route_or_are_refused() {
                             }
                             None => {
                                 point(&mut part, "middle", *at);
-                                through.push(vertex("middle"));
+                                through.push(EntityRef::vertex("middle"));
                             }
                         }
                         points.push(*at);

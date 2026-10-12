@@ -174,21 +174,18 @@ impl PartOperation for Fillet {
         let names: Vec<String> = (args.vertex_radii.iter())
             .map(|v| v.vertex.clone())
             .collect();
-        let vertices = EntityRef::of_names(EntityRef::vertex, &names);
-        let label = "radii at vertices";
-        f.reference(
+        f.pick_many(
             "radius_vertices",
-            label,
-            vertices,
+            "radii at vertices",
+            EntityRef::vertex,
+            &names,
             &[Role::Point],
-            None,
-            true,
             |edit, picked| {
                 // A new vertex starts at the radius as it is now.
                 let args = edit.args;
                 let radius = (args.radius.evaluate(&mut Seen::new(context.before))).unwrap_or(0.1);
                 let old = std::mem::take(&mut args.vertex_radii);
-                args.vertex_radii = (EntityRef::names_of(EntityRef::vertex, &picked).into_iter())
+                args.vertex_radii = (picked.into_iter())
                     .map(|vertex| VertexRadius {
                         radius: (old.iter().find(|v| v.vertex == vertex))
                             .map_or(radius, |v| v.radius),

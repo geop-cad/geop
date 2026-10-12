@@ -53,7 +53,7 @@ impl PartOperation for DeleteBody {
         args: &DeleteBodyArgs,
     ) -> GeopResult<()> {
         let bodies = resolve_bodies(&args.bodies, &mut &*model)?;
-        model.assemble_sheet(&bodies, &[])?;
+        model.delete_bodies(&bodies)?;
         Ok(())
     }
 
@@ -82,21 +82,14 @@ impl PartOperation for DeleteBody {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geop_core_math::{
-        scalars::{ScalInF64 as S, Scalar},
-        vector::Vector3,
-    };
+    use geop_core_math::scalars::ScalInF64 as S;
     use geop_ops::operation::apply_to_model;
-    use geop_ops_extrude_revolve::shapes::cube_solid;
-
-    fn v3(x: f64, y: f64, z: f64) -> Vector3<S> {
-        Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
-    }
+    use geop_ops_extrude_revolve::shapes::block;
 
     fn two_cubes() -> NamedModel<S> {
         let mut part = NamedModel::<S>::new();
-        cube_solid(&mut part, "a", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap();
-        cube_solid(&mut part, "b", v3(2.0, 0.0, 0.0), v3(3.0, 1.0, 1.0)).unwrap();
+        block(&mut part, "a", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        block(&mut part, "b", [2.0, 0.0, 0.0], [3.0, 1.0, 1.0]);
         part
     }
 

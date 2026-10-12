@@ -78,6 +78,21 @@ pub fn stl_triangles<S: Scalar>(raster: &RasterizedModel<S>, faces: &[FaceId]) -
         .collect()
 }
 
+/// The volume `triangles`, wound outward, enclose: the sum of the signed
+/// tetrahedra they span with the origin, negative if they are wound in.
+/// Exact for a closed mesh, up to its `f32` corners.
+pub fn enclosed_volume(triangles: &[StlTriangle]) -> f64 {
+    triangles
+        .iter()
+        .map(|t| {
+            let [a, b, c] = t.corners.map(|p| p.map(f64::from));
+            (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+                + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                / 6.0
+        })
+        .sum()
+}
+
 /// Write `triangles` as an STL file named `name` (the solid name an ASCII
 /// file carries, and the header of a binary one).
 pub fn write_stl(

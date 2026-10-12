@@ -32,7 +32,6 @@
 //! [`Transmission::RackPinion`]: geop_ops_assembly::Transmission::RackPinion
 
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
-use geop_ops::BooleanOp;
 use geop_ops::{
     EntityRef, origin_plane,
     parameters::{Parameter, ParameterKind, Row},
@@ -202,10 +201,7 @@ pub fn spur_gear(file: &'static str) -> GeopResult<StandardPart> {
                 vec![EntityRef::Solid {
                     name: "extrude(gap)".into(),
                 }],
-                Combine::With {
-                    op: BooleanOp::Difference,
-                    target: "extrude(blank)".into(),
-                },
+                Combine::cut("extrude(blank)"),
             ),
             axis: Some(z_axis()),
             reversed: false,
@@ -304,10 +300,7 @@ pub fn rack(file: &'static str) -> GeopResult<StandardPart> {
         "length",
         (length, profile_plane()),
         across(format!("{b} + 2 * {m}")),
-        Combine::With {
-            op: BooleanOp::Intersection,
-            target: "extrude(teeth)".into(),
-        },
+        Combine::intersect("extrude(teeth)"),
     );
     axis_datum(&mut program);
     let xz = || origin_plane(FrameAxis::Y);
@@ -421,10 +414,7 @@ fn gt2_pulley(z: usize, file: &'static str) -> GeopResult<StandardPart> {
         "ring_outline",
         (ring, EntityRef::datum("ring_floor")),
         Extents::blind(t + w),
-        Combine::With {
-            op: BooleanOp::Union,
-            target: "revolve(body)".into(),
-        },
+        Combine::join("revolve(body)"),
     );
 
     axis_datum(&mut program);
@@ -497,10 +487,7 @@ pub fn shaft_collar(file: &'static str) -> GeopResult<StandardPart> {
             side2: None,
             reversed: false,
         },
-        Combine::With {
-            op: BooleanOp::Difference,
-            target: "revolve(ring)".into(),
-        },
+        Combine::cut("revolve(ring)"),
     );
     axis_datum(&mut program);
     plane_datum(&mut program, "base", "0");

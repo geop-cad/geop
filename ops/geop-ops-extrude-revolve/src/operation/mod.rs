@@ -127,10 +127,7 @@ impl Output {
             },
             Output::Faces {
                 up_to: Some(target),
-            } => Output::Solid(Combine::With {
-                op: BooleanOp::Union,
-                target: target.clone(),
-            }),
+            } => Output::Solid(Combine::join(target.clone())),
             Output::Faces { up_to: None } => Output::new_for(before),
         };
         let set_faces = set.clone();
@@ -146,7 +143,9 @@ impl Output {
                 });
             }
             Output::Faces { up_to } if reaches => {
-                Combine::target_field(f, "up to solid", up_to.as_slice(), move |edit, up_to| {
+                let up_to = up_to.as_deref().unwrap_or_default();
+                Combine::target_field(f, "up to solid", up_to, move |edit, up_to| {
+                    let up_to = (!up_to.is_empty()).then_some(up_to);
                     set(edit.args, Output::Faces { up_to })
                 });
             }
@@ -557,7 +556,7 @@ fn combine_sides(
         let Some(contact) = first_contact(model, step, solid, &stops, measure)? else {
             return Err(runs_on);
         };
-        model.assemble_solid(&[solid.into()], &[], "")?;
+        model.delete_bodies(&[solid.into()])?;
         let far = sides[k].to.abs();
         if *op != BooleanOp::Union {
             let mut scratch = model.clone();
@@ -582,7 +581,7 @@ fn combine_sides(
                     tools[k] = rest;
                     continue;
                 }
-                model.assemble_solid(&[rest.solid.into()], &[], "")?;
+                model.delete_bodies(&[rest.solid.into()])?;
             }
         }
         tools[k].solid = rebuild(model, k, 0.0, sweeping.all_the_way(far))?;

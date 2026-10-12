@@ -151,7 +151,7 @@ pub fn imprint_on_face<S: Scalar>(
         ))));
     }
 
-    model.assemble_sheet(&[copy], &[]).with_context(&ctx)?;
+    model.delete_bodies(&[copy]).with_context(&ctx)?;
 
     // The curves onto the face itself: its boundary split where they end on
     // it, each spliced into the piece it lies in.
@@ -199,7 +199,7 @@ pub fn imprint_on_face<S: Scalar>(
         pieces.extend(split);
     }
     naming.finish(model).with_context(&ctx)?;
-    model.assemble_sheet(&sheets, &[]).with_context(&ctx)?;
+    model.delete_bodies(&sheets).with_context(&ctx)?;
     Ok(curves.into_iter().map(|(_, edge, _)| edge).collect())
 }
 
@@ -207,7 +207,6 @@ pub fn imprint_on_face<S: Scalar>(
 mod tests {
     use super::imprint_on_face;
     use crate::remesh::remesh::RemeshParams;
-    use crate::scenes::{assert_valid, v3};
     use geop_core_math::{
         geop_error::GeopResult,
         primitives::CoordinateSystem,
@@ -215,13 +214,14 @@ mod tests {
         vector::Vector2,
     };
     use geop_core_topology::{EdgeId, SolidId};
-    use geop_ops::{NamedModel, Namer};
+    use geop_ops::{NamedModel, Namer, testing::assert_valid};
     use geop_ops_extrude_revolve::{
         common::{Profile, polygon, polyline},
         extrude::extrude,
         shapes::{
-            cube::cube_solid,
+            block,
             cylinder::{Axis, revolved_cylinder_along_axis},
+            v3,
         },
         sweep::SweepLoop,
     };
@@ -266,7 +266,7 @@ mod tests {
     }
 
     fn cube(model: &mut NamedModel<S>) -> SolidId {
-        cube_solid(model, "c", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap()
+        block(model, "c", [0.0; 3], [1.0; 3])
     }
 
     /// The unit cube's top face, at `z = 1`.

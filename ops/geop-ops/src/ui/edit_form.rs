@@ -12,10 +12,10 @@
 //! construction it fits.
 
 use geop_core_math::scalars::Scalar;
-use geop_core_program::editing::{Action, CanvasEvent, Choice, Event, Form, Number, Value};
+use geop_core_program::editing::{Action, CanvasEvent, Choice, Event, Form, Number, Tone, Value};
 
 use crate::{
-    operation::{EntityRef, Role},
+    operation::{BuildView, EntityRef, Role, Seen},
     parameters::Formula,
 };
 
@@ -272,6 +272,48 @@ impl<'a, S: Scalar, A, T> EditForm<'a, S, A, T> {
         self.reference(key, label, value, roles, None, true, move |edit, picked| {
             set(edit, EntityRef::names_of(kind, &picked))
         })
+    }
+
+    /// The sketch named `name` (empty for none) of those `view` has, in the
+    /// field `key`, labelled the same — or, before there is any sketch, a
+    /// hint to draw one; `set` gets the name of the one picked last, or an
+    /// empty one.
+    pub fn pick_sketch(
+        &mut self,
+        view: &BuildView,
+        key: &str,
+        name: &str,
+        set: impl Fn(Edit<'_, A, T>, String) + 'a,
+    ) -> &mut Self {
+        if self.no_sketch_yet(view, key) {
+            return self;
+        }
+        self.pick_one(key, key, EntityRef::sketch, name, &[Role::Sketch], set)
+    }
+
+    /// The sketches named `names` of those `view` has, as
+    /// [`Self::pick_sketch`]; `set` gets the names of those picked.
+    pub fn pick_sketches(
+        &mut self,
+        view: &BuildView,
+        key: &str,
+        names: &[String],
+        set: impl Fn(Edit<'_, A, T>, Vec<String>) + 'a,
+    ) -> &mut Self {
+        if self.no_sketch_yet(view, key) {
+            return self;
+        }
+        self.pick_many(key, key, EntityRef::sketch, names, &[Role::Sketch], set)
+    }
+
+    /// Whether `view` has no sketch yet, and if so, a hint to draw one in
+    /// place of the field `key`.
+    fn no_sketch_yet(&mut self, view: &BuildView, key: &str) -> bool {
+        let none = Seen::new(*view).sketch_names().is_empty();
+        if none {
+            (self.form.dialog).text(key, "No sketch yet — add one first.", Tone::Hint);
+        }
+        none
     }
 
     /// Entities that can fill one of `roles` — and, with a `scope`, are part

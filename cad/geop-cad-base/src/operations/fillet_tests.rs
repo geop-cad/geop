@@ -4,7 +4,7 @@
 use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{Ring, ScalInF64 as S, Scalar};
 use geop_ops::operation::Role;
-use geop_ops::{EntityRef, NamedModel};
+use geop_ops::{EntityRef, NamedModel, testing::edges_where};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{AddDatumArgs, Construction};
 use geop_ops_extrude_revolve::{Extents, LoftArgs, Output};
@@ -17,22 +17,6 @@ use crate::operations::testing::{
     origin_plane, outline, rectangle, sketch,
 };
 use crate::{Command, Program, Push};
-
-/// The names of the edges of `part` whose curve `keep` accepts, sorted.
-fn edges_where(
-    part: &NamedModel<S>,
-    keep: impl Fn(&geop_core_topology::Edge<S>) -> bool,
-) -> Vec<String> {
-    let model = part.topology();
-    let mut names: Vec<String> = model
-        .edges
-        .iter()
-        .filter(|(_, e)| keep(e))
-        .map(|(&id, _)| part.name_of(id).unwrap().to_string())
-        .collect();
-    names.sort();
-    names
-}
 
 /// The straight edges of `part` standing upright at `(x, y)`.
 fn upright_edges_at(part: &NamedModel<S>, x: f64, y: f64) -> Vec<String> {

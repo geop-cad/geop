@@ -22,7 +22,7 @@ use geop_ops::{
     },
     parameters::Formula,
     part_operation,
-    ui::{EditForm, FormState, Unit, Value, formula_number, sketch_field},
+    ui::{EditForm, FormState, Unit, formula_number},
 };
 use geop_ops_booleans::Extent;
 use serde::{Deserialize, Serialize};
@@ -365,24 +365,23 @@ impl PartOperation for Revolve {
     ) -> EditForm<'a, Design, RevolveArgs> {
         let mut seen = Seen::new(context.before);
         let mut f = EditForm::<Design, RevolveArgs>::default();
-        let sketch = std::slice::from_ref(&args.sketch);
-        sketch_field(&mut f.form.dialog, &context.before, "sketch", sketch, false);
-        f.on("sketch", move |edit, value| {
-            let Value::Entities(picked) = value else {
-                return;
-            };
-            let args = edit.args;
-            let picked = EntityRef::last_name(EntityRef::sketch, &picked);
-            let old = std::mem::replace(&mut args.sketch, picked.unwrap_or_default());
-            let of_old = match &args.axis {
-                None => true,
-                Some(EntityRef::SketchCurve { sketch, .. }) => *sketch == old,
-                Some(_) => false,
-            };
-            if of_old {
-                args.axis = default_axis(&mut Seen::new(context.before), &args.sketch);
-            }
-        });
+        f.pick_sketch(
+            &context.before,
+            "sketch",
+            &args.sketch,
+            move |edit, picked| {
+                let args = edit.args;
+                let old = std::mem::replace(&mut args.sketch, picked);
+                let of_old = match &args.axis {
+                    None => true,
+                    Some(EntityRef::SketchCurve { sketch, .. }) => *sketch == old,
+                    Some(_) => false,
+                };
+                if of_old {
+                    args.axis = default_axis(&mut Seen::new(context.before), &args.sketch);
+                }
+            },
+        );
         let axis = args.axis.iter().cloned().collect();
         f.reference(
             "axis",

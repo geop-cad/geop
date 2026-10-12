@@ -43,7 +43,6 @@ use geop_ops::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::sheet_of;
 use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 
 /// Joins the sheets the faces named `faces` stand in into one, along the
@@ -95,7 +94,7 @@ impl PartOperation for Knit {
         let namer = Namer::new("knit", step)?;
         let mut sheets: Vec<ShellId> = Vec::new();
         for name in &args.faces {
-            let (_, sheet) = sheet_of(model, name)?;
+            let sheet = model.sheet_of_face(model.face_id(name)?, "sheets are knit")?;
             if !sheets.contains(&sheet) {
                 sheets.push(sheet);
             }
@@ -111,15 +110,13 @@ impl PartOperation for Knit {
         _: &FormState<()>,
     ) -> EditForm<'a, Design, KnitArgs> {
         let mut f = EditForm::<Design, KnitArgs>::default();
-        let faces = EntityRef::of_names(EntityRef::face, &args.faces);
-        f.reference(
+        f.pick_many(
             "faces",
             "sheets",
-            faces,
+            EntityRef::face,
+            &args.faces,
             &[Role::Sheet],
-            None,
-            true,
-            |edit, picked| edit.args.faces = EntityRef::names_of(EntityRef::face, &picked),
+            |edit, names| edit.args.faces = names,
         );
         f.checkbox("solid", "close into a solid", args.solid, |edit, solid| {
             edit.args.solid = solid
@@ -192,7 +189,7 @@ pub fn knit<S: Scalar>(
     };
     turn_consistently(&mut out, &names)?;
     let consumed: Vec<Body> = sheets.iter().map(|&s| Body::Sheet(s)).collect();
-    part.assemble_sheet(&consumed, &[])?;
+    part.delete_bodies(&consumed)?;
     let built = part.build_body(out, names)?;
     let Some(solid_id) = built.solid else {
         return Ok(Body::Sheet(built.shells[0]));

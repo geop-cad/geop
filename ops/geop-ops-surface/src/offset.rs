@@ -85,15 +85,13 @@ impl PartOperation for OffsetSurface {
         _: &FormState<()>,
     ) -> EditForm<'a, Design, OffsetSurfaceArgs> {
         let mut f = EditForm::<Design, OffsetSurfaceArgs>::default();
-        let faces = EntityRef::of_names(EntityRef::face, &args.faces);
-        f.reference(
+        f.pick_many(
             "faces",
             "faces",
-            faces,
+            EntityRef::face,
+            &args.faces,
             &[Role::Face],
-            None,
-            true,
-            |edit, picked| edit.args.faces = EntityRef::names_of(EntityRef::face, &picked),
+            |edit, names| edit.args.faces = names,
         );
         let distance = Number::new("distance", args.distance, Unit::Length).range(-1.0, 1.0);
         f.number("distance", distance, |edit, d| edit.args.distance = d);

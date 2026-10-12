@@ -17,15 +17,15 @@ use geop_core_program::{
 };
 use geop_ops::{
     Design, EntityRef, NamedModel, ParamValue,
-    model::model,
     operation::{Aspects, BuildView, Input, Role, Seen},
     parameters::{Parameters, Values},
     placed::{Component, LIBRARY, Library, locate, placed_parts},
+    testing::built,
     ui::{
         CanvasEvent, Control, PartScene, PartView, Pointer, Pull, Reach, StepEditEvent, Tone, Value,
     },
 };
-use geop_ops_extrude_revolve::shapes::cube_solid;
+use geop_ops_extrude_revolve::shapes::{block, v3};
 
 use super::*;
 use crate::{Kind, MateKind, editor::PART};
@@ -52,27 +52,11 @@ impl Library for Shelf {
     }
 }
 
-fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
-    Vector3::from_array([x, y, z].map(S::from_f64))
-}
-
-/// The model `model`, as the generator of a program's one target.
-fn given(
-    _: &mut geop_ops::operation::BuildReader,
-    model: &NamedModel<Design>,
-) -> GeopResult<NamedModel<Design>> {
-    Ok(model.clone())
-}
-
 /// A shelf with `cube.geop`: the unit cube from the origin to `(1, 1, 1)`.
 fn shelf() -> Rc<Shelf> {
     let mut cube = NamedModel::new();
-    cube_solid(&mut cube, "c", v(0.0, 0.0, 0.0), v(1.0, 1.0, 1.0)).unwrap();
-    let mut part = geop_ops::operation::Build::default();
-    part.begin_run(&BTreeMap::new(), &BTreeMap::new());
-    part.begin_step("cube").unwrap();
-    part.define_target(&model(), &cube, given).unwrap();
-    part.end_run(Default::default());
+    block(&mut cube, "c", [0.0; 3], [1.0; 3]);
+    let part = built(&cube);
     let files = BTreeSet::from(["cube.geop".to_string()]);
     let component = Component::new(
         "cube.geop".into(),
@@ -156,7 +140,7 @@ const SOLVED: f64 = 1e-8;
 /// A pointer looking straight down at `at`.
 fn down_at(at: Vector3<S>) -> Pointer<S> {
     Pointer {
-        ray: Ray::try_new(at.add(&v(0.0, 0.0, 10.0)), v(0.0, 0.0, -1.0)).unwrap(),
+        ray: Ray::try_new(at.add(&v3(0.0, 0.0, 10.0)), v3(0.0, 0.0, -1.0)).unwrap(),
         reach: Reach::Tube {
             radius: S::from_f64(0.01),
         },
@@ -284,7 +268,7 @@ fn a_placed_part_is_where_its_pose_puts_it() {
     }
     // And picked where it is, named behind its instance's name.
     let hit = view
-        .pick(&down_at(v(1.5, 0.5, 0.0)), &[Role::Plane], None)
+        .pick(&down_at(v3(1.5, 0.5, 0.0)), &[Role::Plane], None)
         .unwrap();
     assert!(
         matches!(&hit.entity, EntityRef::Face { name } if name.starts_with("p/")),
@@ -467,9 +451,9 @@ fn a_drag_pulls_the_point_grabbed() {
     let drag = |editing: &PartEditing, done: bool| {
         let event = CanvasEvent::Move {
             key: PART.into(),
-            from: v(1.0, 0.0, 0.0),
-            to: v(0.0, 1.0, 0.0),
-            pointer: down_at(v(0.0, 1.0, 0.0)),
+            from: v3(1.0, 0.0, 0.0),
+            to: v3(0.0, 1.0, 0.0),
+            pointer: down_at(v3(0.0, 1.0, 0.0)),
             done,
             shift: false,
         };
@@ -519,12 +503,12 @@ fn a_drag_pulls_the_point_grabbed() {
 fn a_fixed_part_goes_where_it_is_dragged() {
     let mut editor = Editor::new(Assembly::on_a(&[("b", args(true, &[]))], Values::new()));
     editor.send(StepEditEvent::Hover {
-        pointer: down_at(v(0.5, 0.5, 1.0)),
+        pointer: down_at(v3(0.5, 0.5, 1.0)),
         shift: false,
     });
     editor.send(StepEditEvent::Drag {
-        from: down_at(v(0.5, 0.5, 1.0)),
-        to: down_at(v(2.5, 0.0, 1.0)),
+        from: down_at(v3(0.5, 0.5, 1.0)),
+        to: down_at(v3(2.5, 0.0, 1.0)),
         done: true,
         shift: false,
     });
@@ -924,8 +908,8 @@ fn a_slider_stops_at_its_limits() {
     assert!(assembly.solve(&[]).converged);
     let pull = Pull::Point {
         parameter: pose_parameter("b"),
-        local: v(0.0, 0.0, 0.0),
-        target: v(0.5, 0.0, 5.0),
+        local: v3(0.0, 0.0, 0.0),
+        target: v3(0.5, 0.0, 5.0),
     };
     let report = assembly.solve(&[pull]);
     assert!(report.converged, "{report:?}");

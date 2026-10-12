@@ -4,7 +4,6 @@
 //! the recipe it is: `extrude(box,end)` is the end cap of the step `box`,
 //! whatever internal id it happens to get.
 
-use geop_ops::BooleanOp;
 use geop_ops::operation::{ResolveEntity, Seen};
 use geop_ops_extrude_revolve::Output;
 use std::collections::BTreeMap;
@@ -174,10 +173,7 @@ pub fn box_with_drill_hole() -> Program {
         ExtrudeArgs {
             sketch: "hole_sketch".into(),
             extent: Extents::blind(-0.5),
-            output: Output::Solid(Combine::With {
-                op: BooleanOp::Difference,
-                target: "extrude(box)".into(),
-            }),
+            output: Output::Solid(Combine::cut("extrude(box)")),
         },
     );
     program
@@ -224,10 +220,7 @@ pub fn bracket() -> Program {
         ExtrudeArgs {
             sketch: "hole_sketch".into(),
             extent: Extents::blind(-10.0),
-            output: Output::Solid(Combine::With {
-                op: BooleanOp::Difference,
-                target: "extrude(block)".into(),
-            }),
+            output: Output::Solid(Combine::cut("extrude(block)")),
         },
     );
     program
@@ -325,10 +318,7 @@ pub fn cross_drilled_shaft() -> Program {
                 side2: None,
                 reversed: false,
             },
-            output: Output::Solid(Combine::With {
-                op: BooleanOp::Difference,
-                target: "revolve(shaft)".into(),
-            }),
+            output: Output::Solid(Combine::cut("revolve(shaft)")),
         },
     );
     program
@@ -458,10 +448,7 @@ pub fn boss_on_reference_plane() -> Program {
         ExtrudeArgs {
             sketch: "boss_sketch".into(),
             extent: Extents::blind(-0.75),
-            output: Output::Solid(Combine::With {
-                op: BooleanOp::Union,
-                target: "extrude(box)".into(),
-            }),
+            output: Output::Solid(Combine::join("extrude(box)")),
         },
     );
     program
@@ -546,10 +533,7 @@ pub fn handle_with_hole() -> Program {
                 side2: None,
                 reversed: false,
             },
-            output: Output::Solid(Combine::With {
-                op: BooleanOp::Difference,
-                target: "extrude(handle)".into(),
-            }),
+            output: Output::Solid(Combine::cut("extrude(handle)")),
         },
     );
     program
@@ -696,10 +680,7 @@ pub fn revolved_cone_on_box() -> Program {
                 curve: axis,
             }),
             extent: Extents::blind(360.0),
-            output: Output::Solid(Combine::With {
-                op: BooleanOp::Union,
-                target: "extrude(extrude1)".into(),
-            }),
+            output: Output::Solid(Combine::join("extrude(extrude1)")),
         },
     );
     program
@@ -1137,10 +1118,7 @@ pub fn parametric_plate() -> Program {
         ExtrudeArgs {
             sketch: "hole_sketch".into(),
             extent: Extents::blind(-0.3),
-            output: Output::Solid(Combine::With {
-                op: BooleanOp::Difference,
-                target: "extrude(plate)".into(),
-            }),
+            output: Output::Solid(Combine::cut("extrude(plate)")),
         },
     );
     program
@@ -1223,10 +1201,7 @@ pub fn metric_plate() -> Program {
                 side1: Extent::ThroughAll,
                 ..Extents::blind(0.0)
             },
-            output: Output::Solid(Combine::With {
-                op: BooleanOp::Difference,
-                target: "extrude(plate)".into(),
-            }),
+            output: Output::Solid(Combine::cut("extrude(plate)")),
         },
     );
     program
@@ -1604,10 +1579,7 @@ pub fn patterned_plate() -> Program {
         ExtrudeArgs {
             sketch: "hole_sketch".into(),
             extent: through,
-            output: Output::Solid(Combine::With {
-                op: BooleanOp::Difference,
-                target: "extrude(plate)".into(),
-            }),
+            output: Output::Solid(Combine::cut("extrude(plate)")),
         },
     );
     program.push(

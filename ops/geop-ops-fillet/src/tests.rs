@@ -1,30 +1,23 @@
 //! Blending the edges of basic solids.
 
-use geop_core_math::{
-    scalars::{Ring, ScalInF64 as S, Scalar},
-    vector::Vector3,
+use geop_core_math::scalars::{Ring, ScalInF64 as S, Scalar};
+use geop_core_topology::SolidId;
+use geop_ops::{
+    NamedModel, Namer,
+    testing::{assert_valid, edges_where, edges_with_middle_where, has_vertex},
 };
-use geop_core_topology::{
-    SolidId,
-    validation::{ValidationParameters, validate_manifold},
-};
-use geop_ops::{NamedModel, Namer};
 use geop_ops_booleans::{
     boolean::{BooleanOp, boolean},
     remesh::remesh::RemeshParams,
 };
-use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder};
+use geop_ops_extrude_revolve::shapes::{self, block, v3};
 
 use crate::blend::{BlendShape, blend};
-
-pub(super) fn v<T: Scalar>(x: f64, y: f64, z: f64) -> Vector3<T> {
-    Vector3::from_array([T::from_f64(x), T::from_f64(y), T::from_f64(z)])
-}
 
 /// The unit cube `[0, 1]^3`, named `cube(b)`.
 pub(super) fn unit_cube() -> NamedModel<S> {
     let mut model = NamedModel::new();
-    cube_solid(&mut model, "b", v(0.0, 0.0, 0.0), v(1.0, 1.0, 1.0)).unwrap();
+    block(&mut model, "b", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     model
 }
 
@@ -32,7 +25,7 @@ pub(super) fn unit_cube() -> NamedModel<S> {
 /// `cylinder(c)`.
 fn cylinder() -> NamedModel<S> {
     let mut model = NamedModel::new();
-    revolved_cylinder(&mut model, "c", v(0.0, 0.0, 0.0), S::from_f64(0.5), S::ONE).unwrap();
+    shapes::cylinder(&mut model, "c", [0.0, 0.0, 0.0], 0.5, 1.0);
     model
 }
 
@@ -49,13 +42,6 @@ pub(super) fn combined(
     boolean(model, &namer, a, b, op, RemeshParams::default())
         .unwrap()
         .unwrap()
-}
-
-/// Checks `model` is a valid manifold model.
-pub(super) fn assert_valid(model: &NamedModel<S>) {
-    if let Err(e) = validate_manifold(&ValidationParameters::default(), model.topology()) {
-        panic!("{e:?}");
-    }
 }
 
 /// Blends `edges` of `model` into `shape` as the step `F`, and checks the
@@ -81,16 +67,6 @@ fn assert_has_face(model: &NamedModel<S>, name: &str) {
         model.face_id(name).is_ok(),
         "no face {name:?}, only {faces:?}"
     );
-}
-
-/// Whether `model` has a vertex that could be at `p`.
-pub(super) fn has_vertex(model: &NamedModel<S>, p: [f64; 3]) -> bool {
-    let p = v::<S>(p[0], p[1], p[2]);
-    model
-        .topology()
-        .vertices
-        .values()
-        .any(|vertex| vertex.point.could_be_equal(&p))
 }
 
 /// One vertical edge of the cube rounded: one round face more, touching
@@ -253,18 +229,6 @@ fn refuses_what_it_cannot_blend() {
     assert!(wide.contains("too large"), "{wide}");
 }
 
-/// The names of every edge of `model`, sorted.
-fn all_edges(model: &NamedModel<S>) -> Vec<String> {
-    let mut edges: Vec<String> = model
-        .topology()
-        .edges
-        .keys()
-        .map(|&id| model.name_of(id).unwrap().to_string())
-        .collect();
-    edges.sort();
-    edges
-}
-
 /// Checks the faces of `model` whose names end in `corner)` are pieces of
 /// spheres of `radius`, one around each of `centers`, sampled over them.
 fn assert_corner_balls(model: &NamedModel<S>, radius: f64, centers: &[[f64; 3]]) {
@@ -282,12 +246,12 @@ fn assert_corner_balls(model: &NamedModel<S>, radius: f64, centers: &[[f64; 3]])
             surface.evaluate(u, w).unwrap()
         };
         let near = at(1, 1);
-        let distance = |c: [f64; 3]| near.sub(&v(c[0], c[1], c[2])).norm().to_f64();
+        let distance = |c: [f64; 3]| near.sub(&v3(c[0], c[1], c[2])).norm().to_f64();
         let k = (0..centers.len())
             .min_by(|&a, &b| distance(centers[a]).total_cmp(&distance(centers[b])))
             .unwrap();
         found[k] += 1;
-        let c = v::<S>(centers[k][0], centers[k][1], centers[k][2]);
+        let c = v3::<S>(centers[k][0], centers[k][1], centers[k][2]);
         for i in 0..=4 {
             for j in 0..=4 {
                 let r = at(i, j).sub(&c).norm();
@@ -325,7 +289,7 @@ fn cube_fillet_one_corner() {
 #[test]
 fn cube_fillet_all_edges() {
     let model = unit_cube();
-    let edges = all_edges(&model);
+    let edges = edges_where(&model, |_| true);
     let r = 0.2;
     let model = blended(model, &edges, BlendShape::round(r));
     assert_eq!(model.topology().faces.len(), 26);
@@ -343,37 +307,16 @@ fn cube_fillet_all_edges() {
 /// A block of 2 x 2 x 1 with a pocket of 1 x 1, 0.4 deep, in its top.
 fn pocketed() -> NamedModel<S> {
     let mut model = NamedModel::new();
-    let block = cube_solid(&mut model, "b", v(0.0, 0.0, 0.0), v(2.0, 2.0, 1.0)).unwrap();
-    let pocket = cube_solid(&mut model, "p", v(0.5, 0.5, 0.6), v(1.5, 1.5, 1.5)).unwrap();
+    let stock = block(&mut model, "b", [0.0, 0.0, 0.0], [2.0, 2.0, 1.0]);
+    let pocket = block(&mut model, "p", [0.5, 0.5, 0.6], [1.5, 1.5, 1.5]);
     combined(
         &mut model,
         ("pocket", "P"),
-        block,
+        stock,
         pocket,
         BooleanOp::Difference,
     );
     model
-}
-
-/// The names of the edges of `model` whose middle `keep` accepts, as plain
-/// numbers.
-pub(super) fn edges_where(model: &NamedModel<S>, keep: impl Fn([f64; 3]) -> bool) -> Vec<String> {
-    let topology = model.topology();
-    let mut names: Vec<String> = topology
-        .edges
-        .iter()
-        .filter(|(_, e)| {
-            let (t0, t1) = e.curve.domain();
-            let p = e
-                .curve
-                .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
-                .unwrap();
-            keep([p[0].to_f64(), p[1].to_f64(), p[2].to_f64()])
-        })
-        .map(|(&id, _)| model.name_of(id).unwrap().to_string())
-        .collect();
-    names.sort();
-    names
 }
 
 /// The pocket's floor and upright edges rounded: concave, so the fillets
@@ -383,7 +326,7 @@ pub(super) fn edges_where(model: &NamedModel<S>, keep: impl Fn([f64; 3]) -> bool
 fn pocket_floor_fillet() {
     let model = pocketed();
     let inside = |p: [f64; 3]| (0.4..=1.6).contains(&p[0]) && (0.4..=1.6).contains(&p[1]);
-    let edges = edges_where(&model, |p| inside(p) && p[2] < 0.99);
+    let edges = edges_with_middle_where(&model, |p| inside(p) && p[2] < 0.99);
     assert_eq!(edges.len(), 8, "{edges:?}");
     let r = 0.1;
     let model = blended(model, &edges, BlendShape::round(r));
@@ -401,7 +344,7 @@ fn pocket_floor_fillet() {
 #[test]
 fn pocketed_block_fillet_every_edge_is_refused() {
     let model = pocketed();
-    let edges = all_edges(&model);
+    let edges = edges_where(&model, |_| true);
     let why = refusal(model, &edges, BlendShape::round(0.1));
     assert!(why.contains("bend the same way"), "{why}");
 }
@@ -417,8 +360,8 @@ fn pocketed_block_fillet_all_but_upright_edges() {
         let on = |x: f64| (x - 0.5).abs() < 1e-9 || (x - 1.5).abs() < 1e-9;
         on(p[0]) && on(p[1])
     };
-    let edges = edges_where(&model, |p| !upright(p));
-    assert_eq!(edges.len(), all_edges(&model).len() - 4);
+    let edges = edges_with_middle_where(&model, |p| !upright(p));
+    assert_eq!(edges.len(), edges_where(&model, |_| true).len() - 4);
     let r = 0.1;
     let built = blended(model, &edges, BlendShape::round(r));
     let mut centers = Vec::new();
@@ -436,8 +379,8 @@ fn pocketed_block_fillet_all_but_upright_edges() {
 /// with its sides: the union leaves each side two faces in one plane.
 fn plate_on_base() -> NamedModel<S> {
     let mut model = NamedModel::new();
-    let base = cube_solid(&mut model, "b", v(0.0, 0.0, 0.0), v(4.0, 4.0, 1.0)).unwrap();
-    let plate = cube_solid(&mut model, "p", v(0.0, 0.0, 1.0), v(1.0, 4.0, 3.0)).unwrap();
+    let base = block(&mut model, "b", [0.0, 0.0, 0.0], [4.0, 4.0, 1.0]);
+    let plate = block(&mut model, "p", [0.0, 0.0, 1.0], [1.0, 4.0, 3.0]);
     combined(&mut model, ("join", "J"), base, plate, BooleanOp::Union);
     model
 }
@@ -450,7 +393,7 @@ fn plate_on_base() -> NamedModel<S> {
 #[test]
 fn fillet_up_to_a_wall_two_faces_make() {
     let model = plate_on_base();
-    let edges = edges_where(&model, |p| {
+    let edges = edges_with_middle_where(&model, |p| {
         (p[0] - 1.0).abs() < 1e-9 && (p[1] - 2.0).abs() < 1e-9 && (p[2] - 1.0).abs() < 1e-9
     });
     assert_eq!(edges.len(), 1, "{edges:?}");
@@ -475,7 +418,10 @@ fn fillet_up_to_a_wall_two_faces_make() {
 #[test]
 fn far_bar_rim_fillet() {
     use geop_ops_extrude_revolve::shapes::cylinder::{Axis, revolved_cylinder_along_axis};
-    for (axis, base) in [(Axis::X, v(225.0, 0.0, 0.0)), (Axis::Z, v(0.0, 0.0, 225.0))] {
+    for (axis, base) in [
+        (Axis::X, v3(225.0, 0.0, 0.0)),
+        (Axis::Z, v3(0.0, 0.0, 225.0)),
+    ] {
         let mut model = NamedModel::new();
         revolved_cylinder_along_axis(
             &mut model,

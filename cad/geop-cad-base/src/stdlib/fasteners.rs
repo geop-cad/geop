@@ -9,7 +9,6 @@
 
 use geop_core_math::geop_error::GeopResult;
 use geop_core_sketch::{CurveId, PointId};
-use geop_ops::BooleanOp;
 use geop_ops::EntityRef;
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::Extents;
@@ -169,10 +168,7 @@ fn socket(program: &mut Program, top: &str, target: &str) -> GeopResult<()> {
         "socket_hex",
         (outline, EntityRef::datum("socket_floor")),
         Extents::blind(format!("{t} + {s}")),
-        Combine::With {
-            op: BooleanOp::Difference,
-            target: target.into(),
-        },
+        Combine::cut(target),
     );
     Ok(())
 }

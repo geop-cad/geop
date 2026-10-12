@@ -13,6 +13,7 @@ geop-ops-booleans.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+geop-ops = { workspace = true, features = ["testing"] }
 geop-core-program.workspace = true
 geop-core-sketch.workspace = true
 # The 3-D sketches whose curves are measured.

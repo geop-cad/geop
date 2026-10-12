@@ -408,13 +408,10 @@ fn tangent_plane<S: Scalar>(part: &NamedModel<S>, entity: &EntityRef) -> GeopRes
         )));
     };
     let coedge = model.get_coedge(*coedge)?;
-    let face = model.get_face(coedge.face)?;
-    let Some(plane) = face.surface.as_plane()? else {
-        return Err(GeopError::new(format!(
-            "face {} along edge {name} is not flat: tangency is supported to flat faces",
-            part.name(coedge.face).map(str::to_string)?
-        )));
-    };
+    let plane = part.plane_of_face(
+        coedge.face,
+        &format!("tangency along edge {name} is supported to flat faces"),
+    )?;
     // The face lies to the left of its boundary, seen from where its normal
     // points: away from it is the edge's direction, as the face runs it,
     // crossed with the normal.

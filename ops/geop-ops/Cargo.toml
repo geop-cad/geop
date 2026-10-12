@@ -14,3 +14,7 @@ serde.workspace = true
 serde_json.workspace = true
 # The name registry shares its structure with its copies, as the topology does.
 imbl.workspace = true
+
+[features]
+# What the tests of the operations share, see `testing`.
+testing = []

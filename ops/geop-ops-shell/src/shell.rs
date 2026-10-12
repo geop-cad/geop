@@ -138,12 +138,8 @@ pub fn shell<S: Scalar>(
 
     let hollow = Hollow::new(&spec, &names, removed, thickness).with_context(ctx)?;
     let (result, result_names) = hollow.result(namer).with_context(ctx)?;
-    part.assemble_solid(&[solid.into()], &[], "")
-        .with_context(ctx)?;
-    let built = part.build_body(result, result_names).with_context(ctx)?;
-    built
-        .solid
-        .ok_or_else(|| GeopError::new("shell: building the result made no solid"))
+    part.replace_with_solid(&[solid.into()], result, result_names)
+        .with_context(ctx)
 }
 
 /// Thickens the sheet `sheet` of `part` into a solid of walls `thickness`
@@ -185,12 +181,8 @@ pub fn thicken<S: Scalar>(
     let removed = vec![false; spec.faces.len()];
     let hollow = Hollow::new(&spec, &names, removed, thickness).with_context(ctx)?;
     let (result, result_names) = hollow.result(namer).with_context(ctx)?;
-    part.assemble_sheet(&[Body::Sheet(sheet)], &[])
-        .with_context(ctx)?;
-    let built = part.build_body(result, result_names).with_context(ctx)?;
-    built
-        .solid
-        .ok_or_else(|| GeopError::new("thicken: building the result made no solid"))
+    part.replace_with_solid(&[Body::Sheet(sheet)], result, result_names)
+        .with_context(ctx)
 }
 
 /// Copies the faces `faces` of `part` — of a solid or of a sheet — into a

@@ -12,11 +12,11 @@ use geop_core_sketch::{Enclosure, Region, Shape, Sketch, profile::curve_polyline
 use geop_core_topology::build::BuiltBody;
 use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, EntityRef, NamedModel, Namer,
+    Design, NamedModel, Namer,
     operation::{BuildReader, Lookup, PartOperation, Scope, Seen, StepContext},
     parameters::Formula,
     part_operation,
-    ui::{EditForm, FormState, Track, Unit, Value, formula_number, sketch_field},
+    ui::{EditForm, FormState, Track, Unit, formula_number},
 };
 use geop_ops_booleans::{Extent, extent::reach_past};
 use serde::{Deserialize, Serialize};
@@ -157,13 +157,8 @@ impl PartOperation for Extrude {
     ) -> EditForm<'a, Design, ExtrudeArgs> {
         let mut seen = Seen::new(context.before);
         let mut f = EditForm::<Design, ExtrudeArgs>::default();
-        let sketch = std::slice::from_ref(&args.sketch);
-        sketch_field(&mut f.form.dialog, &context.before, "sketch", sketch, false);
-        f.on("sketch", |edit, value| {
-            if let Value::Entities(picked) = value {
-                edit.args.sketch =
-                    EntityRef::last_name(EntityRef::sketch, &picked).unwrap_or_default();
-            }
+        f.pick_sketch(&context.before, "sketch", &args.sketch, |edit, name| {
+            edit.args.sketch = name
         });
         let amount = |length: &Formula, second| {
             let label = if second { "distance 2" } else { "distance" };

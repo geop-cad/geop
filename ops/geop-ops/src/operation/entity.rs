@@ -142,11 +142,10 @@ impl ResolveEntity for EntityRef {
             EntityRef::Face { name } => {
                 let model = lookup.model();
                 let id = model.face_id(name).with_context(ctx)?;
-                let surface = &model.topology().get_face(id).with_context(ctx)?.surface;
-                match surface.as_plane().with_context(ctx)? {
-                    Some(plane) => frame_along(plane.project(&Vector3::zero()), &plane.normal),
-                    None => Err(GeopError::new(format!("{self} is not planar"))),
-                }
+                let plane = model
+                    .plane_of_face(id, "only a planar face has a plane to sketch or place on")
+                    .with_context(ctx)?;
+                frame_along(plane.project(&Vector3::zero()), &plane.normal)
             }
             EntityRef::Datum { .. } => {
                 let datum = self.resolve_datum(lookup)?;

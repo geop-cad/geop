@@ -11,14 +11,10 @@ use geop_core_math::{
     scalars::{ScalInF64, Scalar},
     vector::Vector3,
 };
-use geop_core_topology::{
-    SolidId,
-    validation::{ValidationParameters, validate_manifold},
-};
+use geop_core_topology::{SolidId, validation::ValidationParameters};
 use geop_ops::{NamedModel, Namer};
 use geop_ops_extrude_revolve::shapes::{
-    cube::cube_solid, cylinder::revolved_cylinder, figure8_profile::figure8_profile,
-    sphere::sphere_solid,
+    block, cylinder, figure8_profile::figure8_profile, sphere::sphere_solid,
 };
 use rayon::prelude::*;
 
@@ -67,19 +63,6 @@ pub fn validation<S: Scalar>() -> ValidationParameters<S> {
     }
 }
 
-/// The point `(x, y, z)`.
-pub fn v3<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
-    Vector3::from_array([x, y, z].map(S::from_f64))
-}
-
-/// Checks `model` is a valid manifold model with consistent names.
-pub fn assert_valid<S: Scalar>(model: &NamedModel<S>) {
-    if let Err(e) = validate_manifold(&ValidationParameters::default(), model.topology()) {
-        panic!("{e:?}");
-    }
-    model.check_names().unwrap();
-}
-
 /// Turn an offset value into a filesystem-safe label, e.g. `-0.5` -> `n0p5`.
 fn offset_label(v: f64) -> String {
     format!("{v:.2}").replace('-', "n").replace('.', "p")
@@ -93,32 +76,8 @@ pub fn unit_cube_at<S: Scalar>(
     cy: f64,
     cz: f64,
 ) -> SolidId {
-    let f = S::from_f64;
-    let min = Vector3::from_array([f(cx - 0.5), f(cy - 0.5), f(cz - 0.5)]);
-    let max = Vector3::from_array([f(cx + 0.5), f(cy + 0.5), f(cz + 0.5)]);
-    cube_solid(model, name, min, max).unwrap()
-}
-
-/// A capped cylinder of `radius`/`height`, axis parallel to z, bottom cap
-/// centered at `(cx, cy, cz)`.
-fn cyl<S: Scalar>(
-    model: &mut NamedModel<S>,
-    name: &str,
-    cx: f64,
-    cy: f64,
-    cz: f64,
-    radius: f64,
-    height: f64,
-) -> SolidId {
-    let f = S::from_f64;
-    revolved_cylinder(
-        model,
-        name,
-        Vector3::from_array([f(cx), f(cy), f(cz)]),
-        f(radius),
-        f(height),
-    )
-    .unwrap()
+    let (min, max) = ([cx, cy, cz].map(|c| c - 0.5), [cx, cy, cz].map(|c| c + 0.5));
+    block(model, name, min, max)
 }
 
 // ─────────────────────────────── grid tests ────────────────────────────────
@@ -420,7 +379,7 @@ pub fn box_cylinder_scenes<S: Scalar>() -> Vec<TestScene<S>> {
         .map(|c| {
             let mut model = NamedModel::<S>::new();
             let solid_a = unit_cube_at(&mut model, "a", 0.0, 0.0, 0.0);
-            let solid_b = cyl(&mut model, "b", c.cx, c.cy, c.cz, c.radius, c.height);
+            let solid_b = cylinder(&mut model, "b", [c.cx, c.cy, c.cz], c.radius, c.height);
             TestScene {
                 name: format!("box_cylinder_{}", c.name),
                 model,
@@ -440,7 +399,7 @@ fn figure8_cylinder_scenes<S: Scalar>() -> Vec<TestScene<S>> {
         .map(|c| {
             let mut model = NamedModel::<S>::new();
             let solid_a = figure8_profile(&mut model, "a").unwrap();
-            let solid_b = cyl(&mut model, "b", c.cx, c.cy, c.cz, c.radius, c.height);
+            let solid_b = cylinder(&mut model, "b", [c.cx, c.cy, c.cz], c.radius, c.height);
             TestScene {
                 name: format!("figure8_cylinder_{}", c.name),
                 model,

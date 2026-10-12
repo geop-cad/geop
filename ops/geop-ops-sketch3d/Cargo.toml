@@ -13,5 +13,6 @@ geop-ops.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+geop-ops = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
 geop-ops-extrude-revolve = { workspace = true, features = ["test-shapes"] }

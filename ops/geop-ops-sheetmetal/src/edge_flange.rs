@@ -152,21 +152,7 @@ pub(crate) fn edge_field<'a, A>(
     edge: &str,
     set: impl Fn(Edit<'_, A, ()>, String) + 'a,
 ) {
-    let edge = EntityRef::of_name(EntityRef::edge, edge);
-    f.reference(
-        "edge",
-        "edge",
-        edge,
-        &[Role::Line],
-        None,
-        false,
-        move |edit, picked| {
-            set(
-                edit,
-                EntityRef::last_name(EntityRef::edge, &picked).unwrap_or_default(),
-            )
-        },
-    );
+    f.pick_one("edge", "edge", EntityRef::edge, edge, &[Role::Line], set);
 }
 
 part_operation!(EdgeFlange);

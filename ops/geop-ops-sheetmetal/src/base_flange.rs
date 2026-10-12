@@ -12,10 +12,10 @@ use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
     Design, NamedModel, Namer, PlacedSketch,
     model::model_or_empty,
-    operation::{Build, BuildReader, EntityRef, Lookup, PartOperation, Scope, Seen, StepContext},
+    operation::{Build, BuildReader, Lookup, PartOperation, Scope, Seen, StepContext},
     parameters::{Formula, expressions},
     part_operation,
-    ui::{Choice, EditForm, FormState, Number, Unit, Value, formula_number, sketch_field},
+    ui::{Choice, EditForm, FormState, Number, Unit, formula_number},
 };
 use geop_ops_extrude_revolve::operation::shape_loops;
 use serde::{Deserialize, Serialize};
@@ -151,13 +151,8 @@ impl PartOperation for BaseFlange {
     ) -> EditForm<'a, Design, BaseFlangeArgs> {
         let mut seen = Seen::new(context.before);
         let mut f = EditForm::<Design, BaseFlangeArgs>::default();
-        let sketch = std::slice::from_ref(&args.sketch);
-        sketch_field(&mut f.form.dialog, &context.before, "sketch", sketch, false);
-        f.on("sketch", |edit, value| {
-            if let Value::Entities(picked) = value {
-                edit.args.sketch =
-                    EntityRef::last_name(EntityRef::sketch, &picked).unwrap_or_default();
-            }
+        f.pick_sketch(&context.before, "sketch", &args.sketch, |edit, name| {
+            edit.args.sketch = name
         });
         let chain = (seen.sketch(&args.sketch))
             .and_then(|placed| placed.sketch.shape())
