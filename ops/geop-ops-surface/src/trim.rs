@@ -12,19 +12,17 @@
 
 use geop_core_geometry::nurb_surface::NurbSurface3D;
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
+    geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     vector::Vector3,
-    with_context,
-};
-use geop_core_program::{
-    editing::{Choice, Event, Form, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
 };
 use geop_core_topology::{Body, FaceId, contains::face::face_interior_point};
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, EntityRef, Input, LegacyModelStep, Role, legacy_build_model},
+    Design, NamedModel, Namer,
+    operation::{BuildReader, EntityRef, PartOperation, Role, StepContext},
+    part_operation,
+    ui::{Choice, EditForm, FormState},
 };
 use geop_ops_booleans::remesh::remesh::{RemeshParams, remesh};
 use serde::{Deserialize, Serialize};
@@ -63,20 +61,6 @@ pub struct TrimSurfaceArgs {
     pub keep: TrimKeep,
 }
 
-impl LegacyModelStep for TrimSurface {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        step: &str,
-        args: &TrimSurfaceArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("trim_surface({step}, {args:?})");
-        let namer = Namer::new("trim", step)?;
-        let tool = model.face_id(&args.tool).with_context(ctx)?;
-        trim(model, &namer, &args.face, tool, args.keep).with_context(ctx)
-    }
-}
-
 impl TrimKeep {
     fn key(self) -> &'static str {
         match self {
@@ -86,7 +70,9 @@ impl TrimKeep {
     }
 }
 
-impl Operation for TrimSurface {
+part_operation!(TrimSurface);
+
+impl PartOperation for TrimSurface {
     const INFO: OperationInfo = OperationInfo::new(
         "trim_surface",
         "Trim surface",
@@ -97,64 +83,73 @@ impl Operation for TrimSurface {
     .experimental()
     .icon(crate::icons::TRIM_SURFACE);
     type Args = TrimSurfaceArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// Nothing picked yet, keeping the front.
-    fn new_args(_: &Context<Input, ParamValue>) -> TrimSurfaceArgs {
+    fn new_args(_: &StepContext) -> TrimSurfaceArgs {
         TrimSurfaceArgs::default()
     }
 
-    fn run(step: &str, part: &mut Build, args: &TrimSurfaceArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &TrimSurfaceArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("trim", step)?;
+        let tool = model.face_id(&args.tool)?;
+        trim(model, &namer, &args.face, tool, args.keep)
     }
 
     /// The sheet and the tool, picked, and the side to keep.
-    fn presentation(
-        _: &Context<Input, ParamValue>,
+    fn form<'a>(
+        _: &'a StepContext<'a>,
         args: &TrimSurfaceArgs,
-        _: &(),
-    ) -> Form<Design> {
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, TrimSurfaceArgs> {
+        let mut f = EditForm::<Design, TrimSurfaceArgs>::default();
+        let one = |picked: &[EntityRef]| {
+            EntityRef::last_name(EntityRef::face, picked).unwrap_or_default()
+        };
         let face = EntityRef::of_name(EntityRef::face, &args.face);
-        dialog.reference("face", "sheet", face, &[Role::Sheet], None, false);
+        f.reference(
+            "face",
+            "sheet",
+            face,
+            &[Role::Sheet],
+            None,
+            false,
+            move |edit, picked| edit.args.face = one(&picked),
+        );
         let tool = EntityRef::of_name(EntityRef::face, &args.tool);
-        dialog.reference("tool", "cut with", tool, &[Role::Face], None, false);
+        f.reference(
+            "tool",
+            "cut with",
+            tool,
+            &[Role::Face],
+            None,
+            false,
+            move |edit, picked| edit.args.tool = one(&picked),
+        );
         let sides = vec![
             Choice::new("front", "in front of the face"),
             Choice::new("back", "behind the face"),
         ];
-        dialog.select("keep", "keep", args.keep.key(), sides, false);
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
-        args: &TrimSurfaceArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (TrimSurfaceArgs, ()) {
-        let mut args = args.clone();
-        let one = |picked: &[EntityRef]| {
-            EntityRef::last_name(EntityRef::face, picked).unwrap_or_default()
-        };
-        if let Event::Field { key, value } = event {
-            match (key.as_str(), value) {
-                ("face", Value::Entities(picked)) => args.face = one(&picked),
-                ("tool", Value::Entities(picked)) => args.tool = one(&picked),
-                ("keep", Value::Choice(choice)) => {
-                    args.keep = if choice == "back" {
-                        TrimKeep::Back
-                    } else {
-                        TrimKeep::Front
-                    }
+        f.select(
+            "keep",
+            "keep",
+            args.keep.key(),
+            sides,
+            false,
+            |edit, choice| {
+                edit.args.keep = if choice == "back" {
+                    TrimKeep::Back
+                } else {
+                    TrimKeep::Front
                 }
-                _ => {}
-            }
-        }
-        (args, ())
+            },
+        );
+        f
     }
 }
 

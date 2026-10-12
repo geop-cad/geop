@@ -1,17 +1,13 @@
 //! [`ExtractFace`]: copy a face out of its body, into a face standing on
 //! its own.
 
-use geop_core_math::{
-    geop_error::{GeopResult, WithContext},
-    with_context,
-};
-use geop_core_program::{
-    editing::{Event, Form, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
+use geop_core_math::geop_error::GeopResult;
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, EntityRef, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, Input, LegacyModelStep, Role, legacy_build_model},
+    Design, EntityRef, NamedModel, Namer,
+    operation::{BuildReader, PartOperation, Role, StepContext},
+    part_operation,
+    ui::{EditForm, FormState},
 };
 use serde::{Deserialize, Serialize};
 
@@ -31,22 +27,9 @@ pub struct ExtractFaceArgs {
     pub face: String,
 }
 
-impl LegacyModelStep for ExtractFace {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        step: &str,
-        args: &ExtractFaceArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("extract_face({step}, {args:?})");
-        let namer = Namer::new("extract", step)?;
-        let face = model.face_id(&args.face).with_context(ctx)?;
-        (model.copy_faces(&[face], None, |name| namer.name(&[name]))).with_context(ctx)?;
-        Ok(())
-    }
-}
+part_operation!(ExtractFace);
 
-impl Operation for ExtractFace {
+impl PartOperation for ExtractFace {
     const INFO: OperationInfo = OperationInfo::new(
         "extract_face",
         "Extract face",
@@ -57,47 +40,41 @@ impl Operation for ExtractFace {
     .experimental()
     .icon(crate::icons::EXTRACT_FACE);
     type Args = ExtractFaceArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// Nothing picked yet.
-    fn new_args(_: &Context<Input, ParamValue>) -> ExtractFaceArgs {
+    fn new_args(_: &StepContext) -> ExtractFaceArgs {
         ExtractFaceArgs::default()
     }
 
-    fn run(step: &str, part: &mut Build, args: &ExtractFaceArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &ExtractFaceArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("extract", step)?;
+        let face = model.face_id(&args.face)?;
+        model.copy_faces(&[face], None, |name| namer.name(&[name]))?;
+        Ok(())
     }
 
     /// The face, picked.
-    fn presentation(
-        _: &Context<Input, ParamValue>,
+    fn form<'a>(
+        _: &'a StepContext<'a>,
         args: &ExtractFaceArgs,
-        _: &(),
-    ) -> Form<Design> {
-        let mut form = Form::default();
-        let face = EntityRef::of_name(EntityRef::face, &args.face);
-        (form.dialog).reference("face", "face", face, &[Role::Face], None, false);
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
-        args: &ExtractFaceArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (ExtractFaceArgs, ()) {
-        let mut args = args.clone();
-        if let Event::Field {
-            key,
-            value: Value::Entities(picked),
-        } = event
-            && key == "face"
-        {
-            args.face = EntityRef::last_name(EntityRef::face, &picked).unwrap_or_default();
-        }
-        (args, ())
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, ExtractFaceArgs> {
+        let mut f = EditForm::<Design, ExtractFaceArgs>::default();
+        f.pick_one(
+            "face",
+            "face",
+            EntityRef::face,
+            &args.face,
+            &[Role::Face],
+            |edit, name| edit.args.face = name,
+        );
+        f
     }
 }
 

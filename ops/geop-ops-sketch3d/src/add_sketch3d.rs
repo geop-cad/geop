@@ -10,8 +10,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{
-    editing::{Event, Form},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+    operation::{OperationGroup, OperationInfo, OperationTier},
     part::Retrieve,
 };
 use geop_core_sketch::{
@@ -20,12 +19,14 @@ use geop_core_sketch::{
 };
 use geop_core_topology::build::{BodySpec, EdgeSpec};
 use geop_ops::{
-    BodyNames, Design, NamedModel, Namer, ParamValue,
+    BodyNames, Design, NamedModel, Namer,
     model::{PlacedSketch3d, model_or_empty, sketch3d},
     operation::{
-        Aspects, Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, Scope, Seen, legacy_build_model,
+        Aspects, Build, BuildReader, EntityRef, Lookup, PartOperation, Scope, Seen, StepContext,
+        build_model,
     },
-    ui::FormState,
+    part_operation,
+    ui::{CanvasEvent, Edit, EditForm, FormState},
 };
 use serde::{Deserialize, Serialize};
 
@@ -292,30 +293,13 @@ fn wire_of<S: Scalar>(
     Ok(Some((spec, names)))
 }
 
-impl LegacyModelStep for AddSketch3d {
-    /// Builds the 3-D sketch the step defined as a wire (see
-    /// [`AddSketch3d`]).
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        _: &AddSketch3dArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("add_sketch3d({step}): its wire");
-        let placed = reader.retrieve_target(&sketch3d(step)).with_context(ctx)?;
-        let namer = Namer::new("sketch3d", step).with_context(ctx)?;
-        if let Some((spec, names)) = wire_of(&placed.sketch, &namer).with_context(ctx)? {
-            model.build_body(spec, names).with_context(ctx)?;
-        }
-        Ok(())
-    }
-}
-
 /// What a 3-D sketch step keeps while it is edited: the drawing's session,
 /// and the keys of the visuals selected.
 pub type Sketch3dEditing = FormState<Sketch3dSession>;
 
-impl Operation for AddSketch3d {
+part_operation!(AddSketch3d);
+
+impl PartOperation for AddSketch3d {
     const INFO: OperationInfo = OperationInfo::new(
         "add_sketch3d",
         "3-D sketch",
@@ -325,12 +309,10 @@ impl Operation for AddSketch3d {
     )
     .icon(crate::icons::ADD_SKETCH3D);
     type Args = AddSketch3dArgs;
-    type EditingState = Sketch3dEditing;
-    type Input = Input;
-    type State = ParamValue;
+    type Session = Sketch3dSession;
 
     /// An empty sketch: the first click starts drawing.
-    fn new_args(_: &Context<Input, ParamValue>) -> AddSketch3dArgs {
+    fn new_args(_: &StepContext) -> AddSketch3dArgs {
         AddSketch3dArgs::default()
     }
 
@@ -338,32 +320,40 @@ impl Operation for AddSketch3d {
     /// wire.
     fn run(step: &str, part: &mut Build, args: &AddSketch3dArgs) -> GeopResult<()> {
         part.define_target(&sketch3d(step), &(step.to_string(), args.clone()), draw)?;
-        legacy_build_model::<Self>(part, step, args)
+        build_model::<Self>(part, step, args)
+    }
+
+    /// Builds the 3-D sketch the step defined as a wire (see
+    /// [`AddSketch3d`]).
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        _: &AddSketch3dArgs,
+    ) -> GeopResult<()> {
+        let placed = reader.retrieve_target(&sketch3d(step))?;
+        let namer = Namer::new("sketch3d", step)?;
+        if let Some((spec, names)) = wire_of(&placed.sketch, &namer)? {
+            model.build_body(spec, names)?;
+        }
+        Ok(())
     }
 
     /// The tools, the coordinates of a point, the constraints: see
     /// [`crate::editor`].
-    fn presentation(
-        context: &Context<Input, ParamValue>,
+    fn form<'a>(
+        context: &'a StepContext<'a>,
         args: &AddSketch3dArgs,
         editing: &Sketch3dEditing,
-    ) -> Form<Design> {
-        let seen = Seen::new(context.before);
-        editor::form(&seen, args, &editing.session, &editing.selection).into_form()
+    ) -> EditForm<'a, Design, AddSketch3dArgs, Sketch3dSession> {
+        editor::form(context.before, args, &editing.session, &editing.selection)
     }
 
-    fn process_user_event(
-        context: &Context<Input, ParamValue>,
-        args: &AddSketch3dArgs,
-        editing: &Sketch3dEditing,
-        event: Event<Design>,
-    ) -> (AddSketch3dArgs, Sketch3dEditing) {
-        let seen = Seen::new(context.before);
-        editing.handle(
-            args,
-            event,
-            |args, e| editor::form(&seen, args, &e.session, &e.selection),
-            |edit, event| editor::event(&seen, context.scene, edit, event),
-        )
+    fn canvas(
+        context: &StepContext,
+        edit: Edit<'_, AddSketch3dArgs, Sketch3dSession>,
+        event: &CanvasEvent<Design>,
+    ) {
+        editor::event(&Seen::new(context.before), context.scene, edit, event)
     }
 }

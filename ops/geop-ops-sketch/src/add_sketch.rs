@@ -1,6 +1,5 @@
 //! [`AddSketch`]: place a sketch in the part.
 
-use geop_ops::operation::Input;
 use geop_ops::operation::ResolveEntity;
 use std::collections::BTreeMap;
 
@@ -10,16 +9,14 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
-use geop_core_program::{
-    editing::{Event, Form},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
 use geop_core_sketch::ConstraintId;
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, ParamValue,
+    Design,
     model::{PlacedSketch, model_or_empty, sketch},
-    operation::{Build, BuildReader, EntityRef, Lookup, Scope, Seen},
-    ui::FormState,
+    operation::{Build, BuildReader, EntityRef, Lookup, PartOperation, Scope, StepContext},
+    part_operation,
+    ui::{CanvasEvent, Edit, EditForm, FormState},
 };
 use serde::{Deserialize, Serialize};
 
@@ -183,7 +180,9 @@ fn draw(
     })
 }
 
-impl Operation for AddSketch {
+part_operation!(AddSketch);
+
+impl PartOperation for AddSketch {
     const INFO: OperationInfo = OperationInfo::new(
         "add_sketch",
         "Sketch",
@@ -193,9 +192,7 @@ impl Operation for AddSketch {
     )
     .icon(crate::icons::ADD_SKETCH);
     type Args = AddSketchArgs;
-    type EditingState = SketchEditing;
-    type Input = Input;
-    type State = ParamValue;
+    type Session = SketchSession;
 
     fn formulas(args: &mut AddSketchArgs) -> Vec<&mut String> {
         args.formulas.values_mut().collect()
@@ -203,7 +200,7 @@ impl Operation for AddSketch {
 
     /// An empty sketch, on no plane yet: where to sketch is the first thing
     /// a new sketch asks for.
-    fn new_args(_: &Context<Input, ParamValue>) -> AddSketchArgs {
+    fn new_args(_: &StepContext) -> AddSketchArgs {
         AddSketchArgs::new(None)
     }
 
@@ -214,27 +211,19 @@ impl Operation for AddSketch {
 
     /// The plane, picked, and the sketch drawn in it: see
     /// [`crate::editor`].
-    fn presentation(
-        context: &Context<Input, ParamValue>,
+    fn form<'a>(
+        context: &'a StepContext<'a>,
         args: &AddSketchArgs,
         editing: &SketchEditing,
-    ) -> Form<Design> {
-        let seen = Seen::new(context.before);
-        editor::form(&seen, args, &editing.session, &editing.selection).into_form()
+    ) -> EditForm<'a, Design, AddSketchArgs, SketchSession> {
+        editor::form(context.before, args, &editing.session, &editing.selection)
     }
 
-    fn process_user_event(
-        context: &Context<Input, ParamValue>,
-        args: &AddSketchArgs,
-        editing: &SketchEditing,
-        event: Event<Design>,
-    ) -> (AddSketchArgs, SketchEditing) {
-        let seen = Seen::new(context.before);
-        editing.handle(
-            args,
-            event,
-            |args, e| editor::form(&seen, args, &e.session, &e.selection),
-            |edit, event| editor::event(&seen, edit, event),
-        )
+    fn canvas(
+        context: &StepContext,
+        edit: Edit<'_, AddSketchArgs, SketchSession>,
+        event: &CanvasEvent<Design>,
+    ) {
+        editor::event(context.before, edit, event)
     }
 }

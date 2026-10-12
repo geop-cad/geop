@@ -6,21 +6,18 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_program::{
-    editing::{Event, Form, Unit, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
-use geop_ops::operation::Input;
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::parameters::expressions;
 use geop_ops::{
-    Design, NamedModel, ParamValue,
+    Design, NamedModel,
     operation::{
-        Aspects, Build, BuildReader, EntityRef, Lookup, LegacyModelStep, Role, Seen,
-        pattern::{Row, Spacing, count_field, count_of, whole_count},
+        Aspects, Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Seen, StepContext,
+        pattern::{Row, Spacing, count_field, whole_count},
     },
     origin_axis,
     parameters::Formula,
-    ui::formula_number,
+    part_operation,
+    ui::{EditForm, FormState, Unit, formula_number},
 };
 use serde::{Deserialize, Serialize};
 
@@ -165,30 +162,50 @@ impl Direction {
         self.spacing.along(count, value(self.spacing.value())?)
     }
 
-    /// Its fields in `form`, keyed with `suffix`: what it goes along, its
-    /// sense, the count and the spacing, with handles from `at`.
-    fn show(
+    /// Its fields in `f`, keyed with `suffix`: what it goes along, its
+    /// sense, the count and the spacing, with handles from `at`. `set` puts
+    /// the direction set where the arguments keep it.
+    fn fields<'a, A: 'a>(
         &self,
-        form: &mut Form<Design>,
+        f: &mut EditForm<'a, Design, A>,
         seen: &mut Seen,
         at: Option<Vector3<Design>>,
         suffix: &str,
+        set: impl Fn(&mut A, Direction) + Clone + 'a,
     ) {
-        let dialog = &mut form.dialog;
+        // What setting one of its fields to `change` makes of it.
+        fn with<A, V>(
+            direction: Direction,
+            set: impl Fn(&mut A, Direction) + Clone,
+            change: fn(&mut Direction, V),
+        ) -> impl Fn(&mut A, V) + Clone {
+            move |args, value| {
+                let mut direction = direction.clone();
+                change(&mut direction, value);
+                set(args, direction);
+            }
+        }
         let along = self.along.iter().cloned().collect();
         let roles = [Role::Line, Role::Plane];
-        (dialog.reference(
-            &format!("direction{suffix}"),
+        let key = |name: &str| format!("{name}{suffix}");
+        let set_along = with(self.clone(), set.clone(), |d, picked: Vec<EntityRef>| {
+            d.along = picked.first().cloned()
+        });
+        let set_reversed = with(self.clone(), set.clone(), |d, b| d.reversed = b);
+        f.reference(
+            &key("direction"),
             "direction",
             along,
             &roles,
             None,
             false,
-        ))
+            move |edit, p| set_along(edit.args, p),
+        )
         .checkbox(
-            &format!("reversed{suffix}"),
+            &key("reversed"),
             "reverse direction",
             self.reversed,
+            move |edit, b| set_reversed(edit.args, b),
         );
         // Moving the spacing's handle by the unit direction adds one to it;
         // the count's, by one step, adds an instance.
@@ -206,17 +223,18 @@ impl Direction {
                         unit.prod_scalar(Design::from_f64(step)),
                     )
                 });
+        let set_count = with(self.clone(), set.clone(), |d, count| d.count = count);
         count_field(
-            dialog,
-            &format!("count{suffix}"),
+            f,
+            &key("count"),
             &self.count,
             seen,
             count_handle,
+            move |edit, count| set_count(edit.args, count),
         );
-        let spacing_key = format!("spacing{suffix}");
-        self.spacing.show(
-            dialog,
-            &spacing_key,
+        self.spacing.fields(
+            f,
+            &key("spacing"),
             ["spacing", "total"],
             |label, value| {
                 let number = formula_number(label, value, seen, Unit::Length);
@@ -228,44 +246,14 @@ impl Direction {
                 });
                 number.handle(at)
             },
+            with(self.clone(), set.clone(), |d, spacing| d.spacing = spacing),
         );
     }
-
-    /// Its field `field` of those [`Direction::show`] shows, keyed with
-    /// `suffix`, set to `value`, and whether it was one.
-    fn set(&mut self, suffix: &str, field: &str, value: &Value) -> bool {
-        let key = |name: &str| format!("{name}{suffix}");
-        if field == key("direction") {
-            if let Value::Entities(picked) = value {
-                self.along = picked.first().cloned();
-            }
-        } else if field == key("reversed") {
-            if let Value::Bool(b) = value {
-                self.reversed = *b;
-            }
-        } else if field == key("count") {
-            if let Some(count) = count_of(value) {
-                self.count = count;
-            }
-        } else {
-            return self.spacing.set(&key("spacing"), field, value);
-        }
-        true
-    }
 }
 
-impl LegacyModelStep for LinearPattern {
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &LinearPatternArgs,
-    ) -> GeopResult<()> {
-        build_pattern(model, reader, step, args)
-    }
-}
+part_operation!(LinearPattern);
 
-impl Operation for LinearPattern {
+impl PartOperation for LinearPattern {
     const INFO: OperationInfo = OperationInfo::new(
         "linear_pattern",
         "Linear pattern",
@@ -275,9 +263,7 @@ impl Operation for LinearPattern {
     )
     .icon(geop_ops::ui::icons::LINEAR_PATTERN);
     type Args = LinearPatternArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     fn formulas(args: &mut LinearPatternArgs) -> Vec<&mut String> {
         expressions(
@@ -289,7 +275,7 @@ impl Operation for LinearPattern {
 
     /// Three times a unit apart along the origin's `x` axis, kept as new
     /// bodies.
-    fn new_args(_: &Context<Input, ParamValue>) -> LinearPatternArgs {
+    fn new_args(_: &StepContext) -> LinearPatternArgs {
         LinearPatternArgs {
             // Nothing picked: what is patterned is the user's choice, a body
             // or a feature, never guessed.
@@ -303,48 +289,45 @@ impl Operation for LinearPattern {
         run_pattern::<Self>(part, step, args)
     }
 
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &LinearPatternArgs,
+    ) -> GeopResult<()> {
+        build_pattern(model, reader, step, args)
+    }
+
     /// The bodies or the features, picked; each direction — the second
     /// turned on or off — with its count and spacing, both dragged by
     /// handles; and how to combine copies of bodies.
-    fn presentation(
-        context: &Context<Input, ParamValue>,
+    fn form<'a>(
+        context: &'a StepContext<'a>,
         args: &LinearPatternArgs,
-        _: &(),
-    ) -> Form<Design> {
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, LinearPatternArgs> {
         let mut seen = Seen::new(context.before);
-        let mut form = Form::default();
-        let at = args.seeds.center(seen.model());
-        args.seeds.show(&mut form, |form| {
-            args.first.show(form, &mut seen, at, "");
-            (form.dialog).checkbox("grid", "second direction", args.second.is_some());
+        let mut f = EditForm::default();
+        let before = Seen::new(context.before);
+        let at = args.seeds.center(before.model());
+        let set_seeds = |args: &mut LinearPatternArgs, seeds| args.seeds = seeds;
+        (args.seeds).fields(&mut f, before.model(), set_seeds, |f| {
+            args.first
+                .fields(f, &mut seen, at, "", |args, first| args.first = first);
+            f.checkbox(
+                "grid",
+                "second direction",
+                args.second.is_some(),
+                |edit, on| {
+                    edit.args.second = on.then(|| Direction::along(FrameAxis::Y));
+                },
+            );
             if let Some(second) = &args.second {
-                second.show(form, &mut seen, at, "2");
+                second.fields(f, &mut seen, at, "2", |args, second| {
+                    args.second = Some(second)
+                });
             }
         });
-        form
-    }
-
-    fn process_user_event(
-        context: &Context<Input, ParamValue>,
-        args: &LinearPatternArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (LinearPatternArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field { key, value } = event else {
-            return (args, ());
-        };
-        let seen = Seen::new(context.before);
-        match (key.as_str(), &value) {
-            ("grid", Value::Bool(on)) => {
-                args.second = on.then(|| Direction::along(FrameAxis::Y));
-            }
-            (key, value) => {
-                let _ = args.seeds.set(key, value, seen.model())
-                    || args.first.set("", key, value)
-                    || (args.second.as_mut()).is_some_and(|second| second.set("2", key, value));
-            }
-        }
-        (args, ())
+        f
     }
 }

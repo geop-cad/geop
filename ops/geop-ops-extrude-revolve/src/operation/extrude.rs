@@ -3,24 +3,20 @@
 
 use geop_core_math::scalars::Ring;
 use geop_core_math::{
-    geop_error::{GeopResult, WithContext},
+    geop_error::GeopResult,
     primitives::CoordinateSystem,
     scalars::Scalar,
     vector::{Vector2, Vector3},
-    with_context,
-};
-use geop_core_program::{
-    editing::{Event, Form, Track, Unit, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
 };
 use geop_core_sketch::{Enclosure, Region, Shape, Sketch, profile::curve_polyline};
 use geop_core_topology::build::BuiltBody;
-use geop_ops::operation::Input;
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, EntityRef, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, Lookup, LegacyModelStep, Scope, Seen, legacy_build_model},
+    Design, EntityRef, NamedModel, Namer,
+    operation::{BuildReader, Lookup, PartOperation, Scope, Seen, StepContext},
     parameters::Formula,
-    ui::{formula_number, sketch_field},
+    part_operation,
+    ui::{EditForm, FormState, Track, Unit, Value, formula_number, sketch_field},
 };
 use geop_ops_booleans::{Extent, extent::reach_past};
 use serde::{Deserialize, Serialize};
@@ -95,7 +91,9 @@ fn distance_handle<S: Scalar>(
     })
 }
 
-impl Operation for Extrude {
+part_operation!(Extrude);
+
+impl PartOperation for Extrude {
     const INFO: OperationInfo = OperationInfo::new(
         "extrude",
         "Extrude",
@@ -105,9 +103,7 @@ impl Operation for Extrude {
     )
     .icon(crate::icons::EXTRUDE);
     type Args = ExtrudeArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     fn formulas(args: &mut ExtrudeArgs) -> Vec<&mut String> {
         args.extent.formulas()
@@ -115,7 +111,7 @@ impl Operation for Extrude {
 
     /// The newest sketch, a unit up, joined to the newest solid if there is
     /// one.
-    fn new_args(context: &Context<Input, ParamValue>) -> ExtrudeArgs {
+    fn new_args(context: &StepContext) -> ExtrudeArgs {
         let seen = Seen::new(context.before);
         ExtrudeArgs {
             sketch: seen.sketch_names().pop().unwrap_or_default(),
@@ -124,94 +120,76 @@ impl Operation for Extrude {
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &ExtrudeArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
-    }
-
-    /// The sketch, picked; how far, each length typed or dragged as a
-    /// handle; whether a face; and how to combine.
-    fn presentation(
-        context: &Context<Input, ParamValue>,
-        args: &ExtrudeArgs,
-        _: &(),
-    ) -> Form<Design> {
-        let mut seen = Seen::new(context.before);
-        let mut form = Form::default();
-        let sketch = std::slice::from_ref(&args.sketch);
-        sketch_field(&mut form.dialog, &context.before, "sketch", sketch, false);
-        args.extent
-            .show(&mut form.dialog, "distance", |length, second| {
-                let label = if second { "distance 2" } else { "distance" };
-                let number = formula_number(label, length, &mut seen, Unit::Length);
-                let at = distance_handle(&mut seen, args, number.value, second);
-                number.range(-10.0, 10.0).handle(at)
-            });
-        (args.output).show(&mut form.dialog, args.extent.reaches_target());
-        form
-    }
-
-    /// A length typed or dragged across the sketch plane turns a join into
-    /// a cut, and back (see [`Combine::follow_sign`](geop_ops_booleans::Combine::follow_sign)); a formula is
-    /// followed, not steered by.
-    fn process_user_event(
-        context: &Context<Input, ParamValue>,
-        args: &ExtrudeArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (ExtrudeArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field { key, value } = event else {
-            return (args, ());
-        };
-        match (key.as_str(), &value) {
-            ("sketch", Value::Entities(picked)) => {
-                args.sketch = EntityRef::last_name(EntityRef::sketch, picked).unwrap_or_default();
-            }
-            ("distance", _) => {
-                let to = Formula::from_value(&value).and_then(|length| length.plain());
-                if let (Some(Extent::Blind(Formula::Plain(from))), Some(to)) =
-                    (args.extent.set_length(&value), to)
-                    && let Output::Solid(combine) = &mut args.output
-                {
-                    combine.follow_sign(from, to);
-                }
-            }
-            (key, value) => {
-                let seen = Seen::new(context.before);
-                let _ = args.extent.set("distance", key, value, 1.0)
-                    || args.output.set(key, value, seen.model());
-            }
-        }
-        (args, ())
-    }
-}
-
-impl LegacyModelStep for Extrude {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,
         step: &str,
         args: &ExtrudeArgs,
     ) -> GeopResult<()> {
-        let ctx = with_context!("extrude({step}, {args:?})");
         let namer = Namer::new("extrude", step)?;
         let placed = (Scope {
             model,
             reader: &mut *reader,
         })
-        .sketch(&args.sketch)
-        .with_context(ctx)?
+        .sketch(&args.sketch)?
         .clone();
         let sketch = &placed.sketch;
-        let geometry = sketch.enclose::<Design>().with_context(ctx)?;
-        let shape = args.output.shape(sketch).with_context(ctx)?;
-        let loops = shape_loops(&args.sketch, sketch, &geometry, shape).with_context(ctx)?;
+        let geometry = sketch.enclose::<Design>()?;
+        let shape = args.output.shape(sketch)?;
+        let loops = shape_loops(&args.sketch, sketch, &geometry, shape)?;
         let extruding = Extruding {
             plane: &placed.plane,
             loops: &loops,
         };
         let how = (&args.extent, &args.output);
-        build_extents(model, reader, &namer, step, how, &extruding).with_context(ctx)
+        build_extents(model, reader, &namer, step, how, &extruding)
+    }
+
+    /// The sketch, picked; how far, each length typed or dragged as a
+    /// handle; whether a face; and how to combine. A length typed or
+    /// dragged across the sketch plane turns a join into a cut, and back
+    /// (see [`Combine::follow_sign`](geop_ops_booleans::Combine::follow_sign));
+    /// a formula is followed, not steered by.
+    fn form<'a>(
+        context: &'a StepContext<'a>,
+        args: &ExtrudeArgs,
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, ExtrudeArgs> {
+        let mut seen = Seen::new(context.before);
+        let mut f = EditForm::<Design, ExtrudeArgs>::default();
+        let sketch = std::slice::from_ref(&args.sketch);
+        sketch_field(&mut f.form.dialog, &context.before, "sketch", sketch, false);
+        f.on("sketch", |edit, value| {
+            if let Value::Entities(picked) = value {
+                edit.args.sketch =
+                    EntityRef::last_name(EntityRef::sketch, &picked).unwrap_or_default();
+            }
+        });
+        let amount = |length: &Formula, second| {
+            let label = if second { "distance 2" } else { "distance" };
+            let number = formula_number(label, length, &mut seen, Unit::Length);
+            let at = distance_handle(&mut seen, args, number.value, second);
+            number.range(-10.0, 10.0).handle(at)
+        };
+        args.extent.fields(
+            &mut f,
+            ("distance", 1.0),
+            amount,
+            |args| &mut args.extent,
+            |edit, length| {
+                let to = length.plain();
+                let from = std::mem::replace(&mut edit.args.extent.side1, Extent::Blind(length));
+                if let (Extent::Blind(Formula::Plain(from)), Some(to)) = (from, to)
+                    && let Output::Solid(combine) = &mut edit.args.output
+                {
+                    combine.follow_sign(from, to);
+                }
+            },
+        );
+        let reaches = args.extent.reaches_target();
+        let output = |args: &mut ExtrudeArgs, output| args.output = output;
+        (args.output).fields(&mut f, Seen::new(context.before).model(), reaches, output);
+        f
     }
 }
 

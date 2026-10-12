@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     operation::Lookup,
     parameters::Formula,
-    ui::{Choice, Dialog, Number, Track, Unit, Value, formula_number},
+    ui::{Choice, Edit, EditForm, Number, Track, Unit, Value, formula_number},
 };
 
 /// How far apart the instances of a pattern are: each `Step` from the
@@ -114,15 +114,17 @@ impl Spacing {
         })
     }
 
-    /// Its fields in `dialog`: which kind — keyed `{key}_mode` — and the
-    /// number, keyed `key`, made by `number(label, value)` (see
-    /// [`formula_number`]).
-    pub fn show<S: Scalar>(
+    /// Its fields in `f`: which kind — keyed `{key}_mode` — and the number,
+    /// keyed `key`, made by `number(label, value)` (see [`formula_number`]).
+    /// Switching the kind keeps the number. `set` puts the spacing set where the
+    /// arguments keep it.
+    pub fn fields<'a, S: Scalar, A, T>(
         &self,
-        dialog: &mut Dialog<S>,
+        f: &mut EditForm<'a, S, A, T>,
         key: &str,
         labels: [&str; 2],
         number: impl FnOnce(&str, &Formula) -> Number<S>,
+        set: impl Fn(&mut A, Spacing) + Clone + 'a,
     ) {
         let (mode, label) = match self {
             Spacing::Step(_) => ("step", labels[0]),
@@ -132,31 +134,28 @@ impl Spacing {
             Choice::new("step", labels[0]),
             Choice::new("extent", labels[1]),
         ];
-        (dialog.select(&format!("{key}_mode"), "spacing", mode, modes, false))
-            .number(key, number(label, self.value()));
-    }
-
-    /// Its field `field` of those [`Spacing::show`] shows, keyed `key`, set
-    /// to `value` — switching the kind keeps the number — and whether it was
-    /// one.
-    pub fn set(&mut self, key: &str, field: &str, value: &Value) -> bool {
-        if field == format!("{key}_mode") {
-            if let Value::Choice(mode) = value {
-                let number = self.value().clone();
-                *self = match mode.as_str() {
-                    "extent" => Spacing::Extent(number),
-                    _ => Spacing::Step(number),
-                };
-            }
-            return true;
-        }
-        if field == key {
-            if let Some(number) = Formula::from_value(value) {
-                *self = self.with_value(number);
-            }
-            return true;
-        }
-        false
+        let (value, kind) = (self.value().clone(), self.clone());
+        let set_mode = set.clone();
+        f.select(
+            &format!("{key}_mode"),
+            "spacing",
+            mode,
+            modes,
+            false,
+            move |edit, mode| {
+                let number = value.clone();
+                set_mode(
+                    edit.args,
+                    match mode {
+                        "extent" => Spacing::Extent(number),
+                        _ => Spacing::Step(number),
+                    },
+                );
+            },
+        )
+        .formula(key, number(label, self.value()), move |edit, number| {
+            set(edit.args, kind.with_value(number))
+        });
     }
 }
 
@@ -213,26 +212,32 @@ impl Row {
     }
 }
 
-/// The count field of a pattern, keyed `key`, of `count` as `lookup` reads
-/// the parameters — dragged by `handle` unless it follows a formula; set by
-/// [`count_of`].
-pub fn count_field<S: Scalar>(
-    dialog: &mut Dialog<S>,
+/// The count field of a pattern in `f`, keyed `key`, of `count` as
+/// `lookup` reads the parameters — dragged by `handle` unless it follows a
+/// formula — calling `set` with the count it is set to (see [`count_of`]).
+pub fn count_field<'a, S: Scalar, A, T>(
+    f: &mut EditForm<'a, S, A, T>,
     key: &str,
     count: &Formula,
     lookup: &mut (impl Lookup<S> + ?Sized),
     handle: Option<Track<S>>,
+    set: impl Fn(Edit<'_, A, T>, Formula) + 'a,
 ) {
     let mut number = formula_number("count", count, lookup, Unit::Count)
         .range(1.0, 24.0)
         .handle(handle);
     number.step = 1.0;
-    dialog.number(key, number);
+    f.form.dialog.number(key, number);
+    f.on(key, move |edit, value| {
+        if let Some(count) = count_of(&value) {
+            set(edit, count);
+        }
+    });
 }
 
 /// What a count field set to `value` makes the count: a formula as typed,
 /// a number rounded to a whole one of at least one, the seed alone.
-pub fn count_of(value: &Value) -> Option<Formula> {
+fn count_of(value: &Value) -> Option<Formula> {
     Some(match Formula::from_value(value)? {
         Formula::Plain(value) if value.is_finite() && value >= 1.0 => Formula::Plain(value.round()),
         Formula::Plain(_) => Formula::Plain(1.0),

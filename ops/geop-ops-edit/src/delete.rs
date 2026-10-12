@@ -1,17 +1,13 @@
 //! [`DeleteBody`]: delete whole bodies — solids, and sheets of faces
 //! standing on their own — from the part.
 
-use geop_core_math::{
-    geop_error::{GeopResult, WithContext},
-    with_context,
-};
-use geop_core_program::{
-    editing::{Event, Form, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
+use geop_core_math::geop_error::GeopResult;
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, EntityRef, NamedModel, ParamValue,
-    operation::{Build, BuildReader, Input, LegacyModelStep, Role, legacy_build_model, resolve_bodies},
+    Design, EntityRef, NamedModel,
+    operation::{BuildReader, PartOperation, Role, StepContext, resolve_bodies},
+    part_operation,
+    ui::{EditForm, FormState},
 };
 use serde::{Deserialize, Serialize};
 
@@ -31,21 +27,9 @@ pub struct DeleteBodyArgs {
     pub bodies: Vec<EntityRef>,
 }
 
-impl LegacyModelStep for DeleteBody {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        step: &str,
-        args: &DeleteBodyArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("delete_body({step}, {args:?})");
-        let bodies = resolve_bodies(&args.bodies, &mut &*model).with_context(ctx)?;
-        model.assemble_sheet(&bodies, &[]).with_context(ctx)?;
-        Ok(())
-    }
-}
+part_operation!(DeleteBody);
 
-impl Operation for DeleteBody {
+impl PartOperation for DeleteBody {
     const INFO: OperationInfo = OperationInfo::new(
         "delete_body",
         "Delete body",
@@ -55,43 +39,43 @@ impl Operation for DeleteBody {
     )
     .icon(crate::icons::DELETE_BODY);
     type Args = DeleteBodyArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// Nothing picked yet: what to delete is never a guess.
-    fn new_args(_: &Context<Input, ParamValue>) -> DeleteBodyArgs {
+    fn new_args(_: &StepContext) -> DeleteBodyArgs {
         DeleteBodyArgs::default()
     }
 
-    fn run(step: &str, part: &mut Build, args: &DeleteBodyArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        _: &str,
+        args: &DeleteBodyArgs,
+    ) -> GeopResult<()> {
+        let bodies = resolve_bodies(&args.bodies, &mut &*model)?;
+        model.assemble_sheet(&bodies, &[])?;
+        Ok(())
     }
 
     /// The bodies, picked.
-    fn presentation(_: &Context<Input, ParamValue>, args: &DeleteBodyArgs, _: &()) -> Form<Design> {
-        let mut form = Form::default();
-        let roles = [Role::Solid, Role::Sheet];
-        (form.dialog).reference("bodies", "bodies", args.bodies.clone(), &roles, None, true);
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
+    fn form<'a>(
+        _: &'a StepContext<'a>,
         args: &DeleteBodyArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (DeleteBodyArgs, ()) {
-        let mut args = args.clone();
-        if let Event::Field {
-            key,
-            value: Value::Entities(picked),
-        } = event
-            && key == "bodies"
-        {
-            args.bodies = picked;
-        }
-        (args, ())
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, DeleteBodyArgs> {
+        let mut f = EditForm::<Design, DeleteBodyArgs>::default();
+        let roles = [Role::Solid, Role::Sheet];
+        let bodies = args.bodies.clone();
+        f.reference(
+            "bodies",
+            "bodies",
+            bodies,
+            &roles,
+            None,
+            true,
+            |edit, picked| edit.args.bodies = picked,
+        );
+        f
     }
 }
 

@@ -5,7 +5,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_program::operation::{OperationGroup, OperationInfo, OperationTier};
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
     Design, NamedModel, Namer,
     operation::{BuildReader, EntityRef, Lookup, PartOperation, Role, Scope, Seen, StepContext},
@@ -95,22 +95,38 @@ impl PartOperation for Shell {
         let mut seen = Seen::new(context.before);
         let mut f = EditForm::<Design, ShellArgs>::default();
         let solid = EntityRef::of_name(EntityRef::solid, &args.solid);
-        f.reference("solid", "solid", solid.clone(), &[Role::Solid], None, false, |edit, picked| {
-            let solid = EntityRef::last_name(EntityRef::solid, &picked);
-            // The faces opened were of the solid before.
-            if solid.as_ref() != Some(&edit.args.solid) {
-                edit.args.faces.clear();
-            }
-            edit.args.solid = solid.unwrap_or_default();
-        });
+        f.reference(
+            "solid",
+            "solid",
+            solid.clone(),
+            &[Role::Solid],
+            None,
+            false,
+            |edit, picked| {
+                let solid = EntityRef::last_name(EntityRef::solid, &picked);
+                // The faces opened were of the solid before.
+                if solid.as_ref() != Some(&edit.args.solid) {
+                    edit.args.faces.clear();
+                }
+                edit.args.solid = solid.unwrap_or_default();
+            },
+        );
         // A shell offsets planes and round faces: those are what can be
         // picked to open.
         let faces = EntityRef::of_names(EntityRef::face, &args.faces);
         let roles = [Role::Plane, Role::Round];
         let scope = solid.first().cloned();
-        f.reference("faces", "open faces", faces, &roles, scope, true, |edit, picked| {
-            edit.args.faces = EntityRef::names_of(EntityRef::face, &picked);
-        });
+        f.reference(
+            "faces",
+            "open faces",
+            faces,
+            &roles,
+            scope,
+            true,
+            |edit, picked| {
+                edit.args.faces = EntityRef::names_of(EntityRef::face, &picked);
+            },
+        );
         f.form.dialog.optional("faces");
         let thickness = formula_number("thickness", &args.thickness, &mut seen, Unit::Length);
         f.formula("thickness", thickness.range(0.0, 1.0), |edit, thickness| {

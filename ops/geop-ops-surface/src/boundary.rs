@@ -36,26 +36,23 @@ use geop_core_geometry::{
     shape::Plane,
 };
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
+    geop_error::{GeopError, GeopResult},
     polygon::polygon_signed_area,
     scalars::Scalar,
     vector::{Vector3, Vector4},
-    with_context,
-};
-use geop_core_program::{
-    editing::{Event, Form, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
 };
 use geop_core_topology::{
     Curve3, Sense,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    BodyNames, Design, NamedModel, Namer, ParamValue,
+    BodyNames, Design, NamedModel, Namer,
     operation::{
-        Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, ResolveEntity, Role, Scope,
-        legacy_build_model,
+        BuildReader, EntityRef, Lookup, PartOperation, ResolveEntity, Role, Scope, StepContext,
     },
+    part_operation,
+    ui::{EditForm, FormState},
 };
 use serde::{Deserialize, Serialize};
 
@@ -89,28 +86,9 @@ pub struct BoundarySurfaceArgs {
     pub tangent: Vec<EntityRef>,
 }
 
-impl LegacyModelStep for BoundarySurface {
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &BoundarySurfaceArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("boundary_surface({step}, {args:?})");
-        let namer = Namer::new("boundary", step)?;
-        let (spec, names) = boundary_surface(
-            &mut Scope { model, reader },
-            &namer,
-            &args.edges,
-            &args.tangent,
-        )
-        .with_context(ctx)?;
-        model.build_body(spec, names).with_context(ctx)?;
-        Ok(())
-    }
-}
+part_operation!(BoundarySurface);
 
-impl Operation for BoundarySurface {
+impl PartOperation for BoundarySurface {
     const INFO: OperationInfo = OperationInfo::new(
         "boundary_surface",
         "Boundary surface",
@@ -121,61 +99,60 @@ impl Operation for BoundarySurface {
     .experimental()
     .icon(crate::icons::BOUNDARY_SURFACE);
     type Args = BoundarySurfaceArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// Nothing picked yet.
-    fn new_args(_: &Context<Input, ParamValue>) -> BoundarySurfaceArgs {
+    fn new_args(_: &StepContext) -> BoundarySurfaceArgs {
         BoundarySurfaceArgs::default()
     }
 
-    fn run(step: &str, part: &mut Build, args: &BoundarySurfaceArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &BoundarySurfaceArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("boundary", step)?;
+        let (spec, names) = boundary_surface(
+            &mut Scope { model, reader },
+            &namer,
+            &args.edges,
+            &args.tangent,
+        )?;
+        model.build_body(spec, names)?;
+        Ok(())
     }
 
     /// The edges, picked, and those to be tangent along.
-    fn presentation(
-        _: &Context<Input, ParamValue>,
+    fn form<'a>(
+        _: &'a StepContext<'a>,
         args: &BoundarySurfaceArgs,
-        _: &(),
-    ) -> Form<Design> {
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, BoundarySurfaceArgs> {
+        let mut f = EditForm::<Design, BoundarySurfaceArgs>::default();
         let edges = args.edges.clone();
-        dialog.reference("edges", "edges", edges, &[Role::Curve], None, true);
+        f.reference(
+            "edges",
+            "edges",
+            edges,
+            &[Role::Curve],
+            None,
+            true,
+            |edit, picked| edit.args.edges = picked,
+        );
         let tangent = args.tangent.clone();
-        (dialog.reference(
+        let roles = [Role::Edge];
+        f.reference(
             "tangent",
             "tangent along",
             tangent,
-            &[Role::Edge],
+            &roles,
             None,
             true,
-        ))
-        .optional("tangent");
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
-        args: &BoundarySurfaceArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (BoundarySurfaceArgs, ()) {
-        let mut args = args.clone();
-        if let Event::Field {
-            key,
-            value: Value::Entities(picked),
-        } = event
-        {
-            match key.as_str() {
-                "edges" => args.edges = picked,
-                "tangent" => args.tangent = picked,
-                _ => {}
-            }
-        }
-        (args, ())
+            |edit, picked| edit.args.tangent = picked,
+        );
+        f.form.dialog.optional("tangent");
+        f
     }
 }
 

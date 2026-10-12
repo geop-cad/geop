@@ -9,16 +9,16 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::{
-    editing::{Event, Form, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
 use geop_core_sketch::Shape;
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, NamedModel, Namer, ParamValue, PlacedSketch,
+    Design, NamedModel, Namer, PlacedSketch,
     model::model_or_empty,
-    operation::{Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, Role, Scope, Seen},
-    ui::sketch_field,
+    operation::{
+        Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Scope, Seen, StepContext,
+    },
+    part_operation,
+    ui::{EditForm, FormState, Value, sketch_field},
 };
 use geop_ops_extrude_revolve::operation::shape_loops;
 use serde::{Deserialize, Serialize};
@@ -94,18 +94,9 @@ impl SheetStep for SheetCut {
     }
 }
 
-impl LegacyModelStep for SheetCut {
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        _: &SheetCutArgs,
-    ) -> GeopResult<()> {
-        body::build(model, reader, step)
-    }
-}
+part_operation!(SheetCut);
 
-impl Operation for SheetCut {
+impl PartOperation for SheetCut {
     const INFO: OperationInfo = OperationInfo::new(
         "sheet_cut",
         "Sheet cut",
@@ -115,12 +106,10 @@ impl Operation for SheetCut {
     )
     .icon(crate::icons::SHEET_CUT);
     type Args = SheetCutArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// The newest sketch, on the face it lies on.
-    fn new_args(context: &Context<Input, ParamValue>) -> SheetCutArgs {
+    fn new_args(context: &StepContext) -> SheetCutArgs {
         SheetCutArgs {
             sketch: Seen::new(context.before)
                 .sketch_names()
@@ -134,42 +123,41 @@ impl Operation for SheetCut {
         body::run::<Self>(step, part, args)
     }
 
-    /// The sketch, picked, and the face, if not the one the sketch lies on.
-    fn presentation(
-        context: &Context<Input, ParamValue>,
-        args: &SheetCutArgs,
-        _: &(),
-    ) -> Form<Design> {
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
-        let sketch = std::slice::from_ref(&args.sketch);
-        sketch_field(dialog, &context.before, "sketch", sketch, false);
-        let face = EntityRef::of_name(EntityRef::face, &args.face);
-        // The face the sketch lies on, unless one is picked.
-        (dialog.reference("face", "onto face", face, &[Role::Plane], None, false)).optional("face");
-        form
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        _: &SheetCutArgs,
+    ) -> GeopResult<()> {
+        body::build(model, reader, step)
     }
 
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
+    /// The sketch, picked, and the face, if not the one the sketch lies on.
+    fn form<'a>(
+        context: &'a StepContext<'a>,
         args: &SheetCutArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (SheetCutArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field { key, value } = event else {
-            return (args, ());
-        };
-        match (key.as_str(), value) {
-            ("sketch", Value::Entities(picked)) => {
-                args.sketch = EntityRef::last_name(EntityRef::sketch, &picked).unwrap_or_default();
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, SheetCutArgs> {
+        let mut f = EditForm::<Design, SheetCutArgs>::default();
+        let sketch = std::slice::from_ref(&args.sketch);
+        sketch_field(&mut f.form.dialog, &context.before, "sketch", sketch, false);
+        f.on("sketch", |edit, value| {
+            if let Value::Entities(picked) = value {
+                edit.args.sketch =
+                    EntityRef::last_name(EntityRef::sketch, &picked).unwrap_or_default();
             }
-            ("face", Value::Entities(picked)) => {
-                args.face = EntityRef::last_name(EntityRef::face, &picked).unwrap_or_default();
-            }
-            _ => {}
-        }
-        (args, ())
+        });
+        f.pick_one(
+            "face",
+            "onto face",
+            EntityRef::face,
+            &args.face,
+            &[Role::Plane],
+            |edit, name| edit.args.face = name,
+        );
+        // The face the sketch lies on, unless one is picked.
+        f.form.dialog.optional("face");
+        f
     }
 }
 

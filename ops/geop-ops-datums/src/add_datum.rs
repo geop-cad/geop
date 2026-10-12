@@ -18,18 +18,17 @@ use geop_core_math::{
 };
 use serde::{Deserialize, Serialize};
 
-use geop_core_program::{
-    editing::{Event, Form},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, ORIGIN, ParamValue,
+    Design, ORIGIN,
     model::{datum, model_or_empty},
     operation::{
-        Aspects, Build, BuildReader, EntityRef, Input, Lookup, Role, Scope, Seen, frame_along,
+        Aspects, Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Scope, Seen,
+        StepContext, frame_along,
     },
     parameters::{Formula, expressions},
-    ui::Unit,
+    part_operation,
+    ui::{CanvasEvent, Edit, EditForm, FormState, Unit},
 };
 
 use crate::editor;
@@ -658,7 +657,9 @@ fn add(
     })
 }
 
-impl Operation for AddDatum {
+part_operation!(AddDatum);
+
+impl PartOperation for AddDatum {
     const INFO: OperationInfo = OperationInfo::new(
         "add_datum",
         "Reference",
@@ -668,16 +669,14 @@ impl Operation for AddDatum {
     )
     .icon(crate::icons::ADD_DATUM);
     type Args = AddDatumArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     fn formulas(args: &mut AddDatumArgs) -> Vec<&mut String> {
         args.construction.formulas()
     }
 
     /// Nothing selected yet, and the first construction.
-    fn new_args(_: &Context<Input, ParamValue>) -> AddDatumArgs {
+    fn new_args(_: &StepContext) -> AddDatumArgs {
         AddDatumArgs {
             selection: Vec::new(),
             construction: Construction::default_of(&CONSTRUCTIONS[0]),
@@ -691,30 +690,20 @@ impl Operation for AddDatum {
 
     /// Picking the selection, choosing among the constructions that fit
     /// it, and offsets as handles and a gizmo: see [`crate::editor`].
-    fn presentation(
-        context: &Context<Input, ParamValue>,
+    fn form<'a>(
+        context: &'a StepContext<'a>,
         args: &AddDatumArgs,
-        _: &(),
-    ) -> Form<Design> {
-        let seen = Seen::new(context.before);
-        editor::form(&seen, args).into_form()
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, AddDatumArgs> {
+        editor::form(context.before, args)
     }
 
-    fn process_user_event(
-        context: &Context<Input, ParamValue>,
-        args: &AddDatumArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (AddDatumArgs, ()) {
-        let seen = Seen::new(context.before);
-        match event {
-            Event::Canvas(event) => {
-                let mut args = args.clone();
-                editor::event(&seen, &mut args, &event);
-                (args, ())
-            }
-            event => (editor::form(&seen, args).apply(args, event), ()),
-        }
+    fn canvas(
+        context: &StepContext,
+        edit: Edit<'_, AddDatumArgs, ()>,
+        event: &CanvasEvent<Design>,
+    ) {
+        editor::event(&Seen::new(context.before), edit.args, event);
     }
 }
 
@@ -733,8 +722,8 @@ mod tests {
         step_editor::{Editing, StepEditor},
     };
     use geop_ops::{
-        NamedModel,
-        operation::apply,
+        NamedModel, ParamValue,
+        operation::{Input, apply},
         ui::{
             Axis, Button, Control, GizmoPart, PartScene, PartView, Pointer, Presentation, Reach,
             StepEditEvent, Tone, Value,

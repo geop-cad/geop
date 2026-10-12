@@ -35,7 +35,7 @@ use geop_core_sketch::{
 };
 use geop_ops::{
     Design,
-    operation::{Aspects, EntityRef, Role, Seen},
+    operation::{Aspects, BuildView, EntityRef, Role, Seen},
     ui::{
         Action, CanvasEvent, Edit, EditForm, Gizmo, InHand, ListItem, Number, Pointer, Shape,
         Style, Tone, Unit, Value, Visual, constraint_status,
@@ -892,13 +892,15 @@ fn visuals(
     out
 }
 
-/// The form of a 3-D sketch step on `before` (see the module docs).
+/// The form of a 3-D sketch step on the part `view` shows (see the module
+/// docs).
 pub(crate) fn form<'a>(
-    before: &'a Seen<'a>,
+    view: BuildView<'a>,
     args: &AddSketch3dArgs,
     s: &Sketch3dSession,
     selection: &[String],
 ) -> EditForm<'a, S, AddSketch3dArgs, Sketch3dSession> {
+    let before = &Seen::new(view);
     let mut f = EditForm::default();
     let tool = s.tool(args);
     f.form.tool = if tool.draws() {
@@ -926,6 +928,7 @@ pub(crate) fn form<'a>(
             .group("Draw"),
     );
     f.actions("tools", tools, move |edit, value| {
+        let before = &Seen::new(view);
         let Edit { args, session, .. } = edit;
         match value {
             "finish" => finish(before, args, session),
@@ -952,7 +955,7 @@ pub(crate) fn form<'a>(
                     move |Edit { args, .. }, v| {
                         let mut to = args.sketch.points[&p].at;
                         to[axis.index()] = Design::from_f64(v);
-                        solve(before, args, &[(p, to)]);
+                        solve(&Seen::new(view), args, &[(p, to)]);
                     },
                 );
             }
@@ -974,7 +977,7 @@ pub(crate) fn form<'a>(
                     let Edit { args, session, .. } = edit;
                     let at = Vector3::from_array(session.typed.map(Design::from_f64));
                     let tool = session.tool(args);
-                    click(before, args, session, tool, Located::Free(at));
+                    click(&Seen::new(view), args, session, tool, Located::Free(at));
                 },
             );
         }
@@ -1001,7 +1004,7 @@ pub(crate) fn form<'a>(
                     args.sketch.constrain(c);
                 }
                 selection.clear();
-                solve(before, args, &[]);
+                solve(&Seen::new(view), args, &[]);
             }
         });
     }
@@ -1014,6 +1017,7 @@ pub(crate) fn form<'a>(
             None,
             false,
             move |edit, entities| {
+                let before = &Seen::new(view);
                 let Edit {
                     args, selection, ..
                 } = edit;
@@ -1063,6 +1067,7 @@ pub(crate) fn form<'a>(
     (f.form.dialog).list("constraints", items, "No constraints yet");
     for &id in args.sketch.constraints.keys() {
         f.on(id.to_string(), move |edit, value| {
+            let before = &Seen::new(view);
             let args = edit.args;
             match value {
                 Value::Remove => {

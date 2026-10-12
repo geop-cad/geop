@@ -5,19 +5,16 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
-use geop_core_program::{
-    editing::{Event, Form, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
 use geop_core_sketch::{PointId, Shape};
-use geop_ops::operation::Input;
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, NamedModel, Namer, ParamValue,
+    Design, NamedModel, Namer,
     operation::{
-        Build, BuildReader, EntityRef, Lookup, LegacyModelStep, ResolveEntity, Role, Scope, Seen,
-        legacy_build_model,
+        BuildReader, EntityRef, Lookup, PartOperation, ResolveEntity, Role, Scope, Seen,
+        StepContext,
     },
-    ui::sketch_field,
+    part_operation,
+    ui::{EditForm, FormState, Value, sketch_field},
 };
 use serde::{Deserialize, Serialize};
 
@@ -81,7 +78,9 @@ pub struct LoftArgs {
     pub output: Output,
 }
 
-impl Operation for Loft {
+part_operation!(Loft);
+
+impl PartOperation for Loft {
     const INFO: OperationInfo = OperationInfo::new(
         "loft",
         "Loft",
@@ -91,13 +90,11 @@ impl Operation for Loft {
     )
     .icon(crate::icons::LOFT);
     type Args = LoftArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// Through the two newest sketches, joined to the newest solid if there
     /// is one.
-    fn new_args(context: &Context<Input, ParamValue>) -> LoftArgs {
+    fn new_args(context: &StepContext) -> LoftArgs {
         let seen = Seen::new(context.before);
         let sketches = seen.sketch_names();
         LoftArgs {
@@ -111,70 +108,12 @@ impl Operation for Loft {
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &LoftArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
-    }
-
-    /// The sketches, picked in order; the points matched on them, or the
-    /// guide curves; whether a face; and how to combine.
-    fn presentation(context: &Context<Input, ParamValue>, args: &LoftArgs, _: &()) -> Form<Design> {
-        let view = &context.before;
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
-        sketch_field(dialog, view, "profiles", &args.profiles, true);
-        let matches = args.matches.clone();
-        let guides = args.guides.clone();
-        (dialog.reference(
-            "matches",
-            "matching points",
-            matches,
-            &[Role::Point],
-            None,
-            true,
-        ))
-        .optional("matches")
-        .reference("guides", "guide curves", guides, &[Role::Path], None, true)
-        .optional("guides");
-        args.output.show(dialog, false);
-        form
-    }
-
-    fn process_user_event(
-        context: &Context<Input, ParamValue>,
-        args: &LoftArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (LoftArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field { key, value } = event else {
-            return (args, ());
-        };
-        match (key.as_str(), value) {
-            ("profiles", Value::Entities(picked)) => {
-                args.profiles = EntityRef::names_of(EntityRef::sketch, &picked);
-            }
-            ("matches", Value::Entities(picked)) => {
-                args.matches = (picked.into_iter())
-                    .filter(|entity| matches!(entity, EntityRef::SketchPoint { .. }))
-                    .collect();
-            }
-            ("guides", Value::Entities(picked)) => args.guides = picked,
-            (key, value) => {
-                (args.output).set(key, &value, Seen::new(context.before).model());
-            }
-        }
-        (args, ())
-    }
-}
-
-impl LegacyModelStep for Loft {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,
         step: &str,
         args: &LoftArgs,
     ) -> GeopResult<()> {
-        let ctx = with_context!("loft({step}, {args:?})");
         let mut scope = Scope {
             model: &mut *model,
             reader,
@@ -184,8 +123,7 @@ impl LegacyModelStep for Loft {
             .profiles
             .iter()
             .map(|name| section(&mut scope, name, &args.output, &matched_points(args, name)?))
-            .collect::<GeopResult<Vec<_>>>()
-            .with_context(ctx)?;
+            .collect::<GeopResult<Vec<_>>>()?;
         let guides = args
             .guides
             .iter()
@@ -199,13 +137,57 @@ impl LegacyModelStep for Loft {
                 }
                 guide.resolve_chain(&mut scope)
             })
-            .collect::<GeopResult<Vec<_>>>()
-            .with_context(ctx)?;
-        (args.output)
-            .build_whole(model, &namer, step, |model, name| {
-                loft(model, &namer, name, &sections, &guides)
-            })
-            .with_context(ctx)
+            .collect::<GeopResult<Vec<_>>>()?;
+        (args.output).build_whole(model, &namer, step, |model, name| {
+            loft(model, &namer, name, &sections, &guides)
+        })
+    }
+    /// The sketches, picked in order; the points matched on them, or the
+    /// guide curves; whether a face; and how to combine.
+    fn form<'a>(
+        context: &'a StepContext<'a>,
+        args: &LoftArgs,
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, LoftArgs> {
+        let view = &context.before;
+        let mut f = EditForm::<Design, LoftArgs>::default();
+        sketch_field(&mut f.form.dialog, view, "profiles", &args.profiles, true);
+        f.on("profiles", |edit, value| {
+            if let Value::Entities(picked) = value {
+                edit.args.profiles = EntityRef::names_of(EntityRef::sketch, &picked);
+            }
+        });
+        let matches = args.matches.clone();
+        let guides = args.guides.clone();
+        let label = "matching points";
+        f.reference(
+            "matches",
+            label,
+            matches,
+            &[Role::Point],
+            None,
+            true,
+            |edit, picked| {
+                edit.args.matches = (picked.into_iter())
+                    .filter(|entity| matches!(entity, EntityRef::SketchPoint { .. }))
+                    .collect();
+            },
+        );
+        f.form.dialog.optional("matches");
+        let label = "guide curves";
+        f.reference(
+            "guides",
+            label,
+            guides,
+            &[Role::Path],
+            None,
+            true,
+            |edit, picked| edit.args.guides = picked,
+        );
+        f.form.dialog.optional("guides");
+        let output = |args: &mut LoftArgs, output| args.output = output;
+        (args.output).fields(&mut f, Seen::new(context.before).model(), false, output);
+        f
     }
 }
 

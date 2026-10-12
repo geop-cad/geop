@@ -26,17 +26,16 @@ use geop_core_math::{
     primitives::{Pose, Quaternion},
     scalars::Scalar,
 };
-use geop_core_program::operation::Context;
 use geop_ops::{
     Design, EntityRef, Namer, ParamValue,
     model::pose_parameter,
-    operation::Input,
+    operation::{Input, StepContext},
     parameters::{COLOR, ParameterKind, Values, validate_color},
     placed::{instance, library, library_files},
     solving::{SettingsState, check, settings},
     ui::{
-        Action, CanvasEvent, Choice, Edit, EditForm, Event, Gizmo, ListItem, Number, Pull, Shape,
-        Style, Tone, Unit, Value, Visual,
+        Action, CanvasEvent, Choice, Edit, EditForm, FormState, Gizmo, ListItem, Number, Pull,
+        Shape, Style, Tone, Unit, Value, Visual,
     },
 };
 
@@ -46,7 +45,7 @@ use crate::{
 };
 
 /// The form of a step placing a part, and what setting its fields does.
-type PartForm = EditForm<'static, Design, AddPartArgs, PartEditing>;
+type PartForm = EditForm<'static, Design, AddPartArgs, PartSession>;
 
 /// The key of the placed part, as drawn to be dragged.
 pub const PART: &str = "part";
@@ -155,7 +154,7 @@ fn kinds() -> Vec<(&'static str, MateKind, &'static str, &'static str)> {
 
 /// What the editor keeps while a placed part is edited.
 #[derive(Clone, Debug, Default)]
-pub struct PartEditing {
+pub struct PartSession {
     /// The mate whose entities are picked.
     pub selected: Option<String>,
     /// What points of the part are pulled where: while it is dragged — the
@@ -172,9 +171,23 @@ pub struct PartEditing {
     held: BTreeMap<String, f64>,
 }
 
+impl PartSession {
+    /// Lets go of the pulls released at the event before: they pulled once
+    /// more, and are gone at this one (see
+    /// [`geop_ops::operation::PartOperation::begin_event`]).
+    pub(crate) fn let_go(&mut self) {
+        if std::mem::take(&mut self.released) {
+            self.pulls.clear();
+        }
+    }
+}
+
+/// What a step placing a part keeps while it is edited.
+pub type PartEditing = FormState<PartSession>;
+
 /// Where the part the step places is: the program's state, or — before
 /// anything was solved for it — the origin.
-fn pose_of(context: &Context<Input, ParamValue>) -> Pose<Design> {
+fn pose_of(context: &StepContext) -> Pose<Design> {
     match context.before.retrieve_state(&pose_parameter(context.step)) {
         ParamValue::Pose(pose) => pose,
         _ => Pose::identity(),
@@ -200,8 +213,8 @@ fn value_of(kind: &MateKind) -> Option<f64> {
 
 /// Sets the joint coordinate `parameter` to `value` and keeps it there
 /// while the step is edited: the parts move to it (see [`Pull::Value`]).
-fn set_joint(editing: &mut PartEditing, parameter: &str, value: f64) {
-    editing.held.insert(parameter.to_string(), value);
+fn set_joint(session: &mut PartSession, parameter: &str, value: f64) {
+    session.held.insert(parameter.to_string(), value);
 }
 
 /// The value a kind of mate holds is `v` now.
@@ -384,7 +397,7 @@ fn selected(
             let parameter = value.parameter.clone();
             let number = Number::new(motion.name(), value.value, unit);
             f.number(&key, number, move |edit, v| {
-                set_joint(edit.session, &parameter, v)
+                set_joint(edit.session, &parameter, v);
             });
         }
         if !matches!(kind, JointKind::Revolute { .. } | JointKind::Slider { .. }) {
@@ -450,7 +463,7 @@ fn parameter_key(name: &str) -> String {
 /// The placed part's own parameters, each as what it is given here: its
 /// colour picked, a number on a slider, a table's row chosen from a list
 /// to search.
-fn parameters(f: &mut PartForm, context: &Context<Input, ParamValue>, args: &AddPartArgs) {
+fn parameters(f: &mut PartForm, context: &StepContext, args: &AddPartArgs) {
     if args.file.is_empty() {
         return;
     }
@@ -514,7 +527,7 @@ fn parameters(f: &mut PartForm, context: &Context<Input, ParamValue>, args: &Add
                 let hi = max.unwrap_or(0.0_f64.max(2.0 * value)).max(lo + 1e-9);
                 let number = Number::new(&p.name, value, Unit::Length).range(lo, hi);
                 f.number(&key, number, move |Edit { args, .. }, v| {
-                    set(args, ParamValue::Number(Design::from_f64(v)))
+                    set(args, ParamValue::Number(Design::from_f64(v)));
                 });
             }
             ParameterKind::Table { rows, selected, .. } => {
@@ -531,7 +544,9 @@ fn parameters(f: &mut PartForm, context: &Context<Input, ParamValue>, args: &Add
                     value,
                     options,
                     true,
-                    move |Edit { args, .. }, row| set(args, ParamValue::Text(row.to_string())),
+                    move |Edit { args, .. }, row| {
+                        set(args, ParamValue::Text(row.to_string()));
+                    },
                 );
             }
         }
@@ -541,11 +556,7 @@ fn parameters(f: &mut PartForm, context: &Context<Input, ParamValue>, args: &Add
 /// The file to place, whether it stays put, where it goes, its mates — the
 /// one selected with its entities to pick — and the part as placed, to
 /// drag.
-pub(crate) fn form(
-    context: &Context<Input, ParamValue>,
-    args: &AddPartArgs,
-    editing: &PartEditing,
-) -> PartForm {
+pub(crate) fn form(context: &StepContext, args: &AddPartArgs, session: &PartSession) -> PartForm {
     let mut f = PartForm::default();
     let step = context.step.to_string();
     let built = context
@@ -574,7 +585,9 @@ pub(crate) fn form(
         args.file.clone(),
         options,
         true,
-        |Edit { args, .. }, file| args.file = file.to_string(),
+        |Edit { args, .. }, file| {
+            args.file = file.to_string();
+        },
     );
 
     parameters(&mut f, context, args);
@@ -682,7 +695,7 @@ pub(crate) fn form(
                 (true, true) => Tone::Normal,
                 (true, false) => Tone::Error,
             };
-            item.selected = editing.selected.as_deref() == Some(id);
+            item.selected = session.selected.as_deref() == Some(id);
             item.removable = true;
             item.value = (first.map(|v| v.value)).or_else(|| value_of(&mate.kind));
             item
@@ -711,7 +724,7 @@ pub(crate) fn form(
     );
 
     if let Some((id, mate)) =
-        (editing.selected.as_ref()).and_then(|id| args.mates.get_key_value(id))
+        (session.selected.as_ref()).and_then(|id| args.mates.get_key_value(id))
     {
         let joint = joints.iter().find(|j| j.name == namer(id));
         selected(&mut f, id, mate, joint, &joints);
@@ -727,10 +740,10 @@ pub(crate) fn form(
             Tone::Error,
         );
     }
-    f.form.pulls.extend(editing.pulls.iter().cloned());
+    f.form.pulls.extend(session.pulls.iter().cloned());
     f.form
         .pulls
-        .extend(editing.held.iter().map(|(parameter, value)| Pull::Value {
+        .extend(session.held.iter().map(|(parameter, value)| Pull::Value {
             parameter: parameter.clone(),
             value: Design::from_f64(*value),
         }));
@@ -757,37 +770,11 @@ pub(crate) fn form(
     f
 }
 
-/// The step's arguments and editing state after `event`: a field set, or
-/// the part dragged — Delete removes the mate selected, Escape stops
-/// editing it.
-pub(crate) fn process(
-    context: &Context<Input, ParamValue>,
-    args: &AddPartArgs,
-    editing: &PartEditing,
-    event: Event<Design>,
-) -> (AddPartArgs, PartEditing) {
-    let (mut next, mut session, mut selection) = (args.clone(), editing.clone(), Vec::new());
-    if std::mem::take(&mut session.released) {
-        session.pulls.clear();
-    }
-    let edit = Edit {
-        args: &mut next,
-        session: &mut session,
-        selection: &mut selection,
-    };
-    match event {
-        Event::Field { key, value } => form(context, args, editing).set(&key, edit, value),
-        Event::Select(_) => {}
-        Event::Canvas(event) => canvas(context, edit, &event),
-    }
-    (next, session)
-}
-
 /// A pointer or key event: the part dragged (see the module docs); Delete
 /// removes the mate selected, Escape stops editing it.
-fn canvas(
-    context: &Context<Input, ParamValue>,
-    edit: Edit<'_, AddPartArgs, PartEditing>,
+pub(crate) fn canvas(
+    context: &StepContext,
+    edit: Edit<'_, AddPartArgs, PartSession>,
     event: &CanvasEvent<Design>,
 ) {
     let Edit { args, session, .. } = edit;

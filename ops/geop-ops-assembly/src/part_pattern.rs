@@ -6,20 +6,18 @@ use geop_core_math::{
     primitives::{Pose, Quaternion},
     with_context,
 };
-use geop_core_program::{
-    editing::{Event, Form},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-    part::Retrieve,
-};
+use geop_core_program::part::Retrieve;
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, Namer, ParamValue,
+    Design, Namer,
     operation::{
-        Aspects, Build, BuildReader, EntityRef, Input, Lookup, Role, Seen,
-        pattern::{Spacing, count_field, count_of, whole_count},
+        Aspects, Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Seen, StepContext,
+        pattern::{Spacing, count_field, whole_count},
     },
     parameters::{Formula, expressions},
+    part_operation,
     placed::{Instance, Placement, instance, instance_name},
-    ui::{Choice, Edit, EditForm, Tone, Unit, formula_number},
+    ui::{Choice, Edit, EditForm, FormState, Tone, Unit, formula_number},
 };
 use serde::{Deserialize, Serialize};
 
@@ -152,7 +150,9 @@ fn check(args: &PartPatternArgs) -> GeopResult<&EntityRef> {
     })
 }
 
-impl Operation for PartPattern {
+part_operation!(PartPattern);
+
+impl PartOperation for PartPattern {
     const INFO: OperationInfo = OperationInfo::new(
         "part_pattern",
         "Part pattern",
@@ -163,16 +163,14 @@ impl Operation for PartPattern {
     .experimental()
     .icon(crate::icons::PART_PATTERN);
     type Args = PartPatternArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     fn formulas(args: &mut PartPatternArgs) -> Vec<&mut String> {
         expressions([&mut args.count, args.layout.spacing_mut().value_mut()])
     }
 
     /// The newest placed part, six round an axis still to pick.
-    fn new_args(context: &Context<Input, ParamValue>) -> PartPatternArgs {
+    fn new_args(context: &StepContext) -> PartPatternArgs {
         PartPatternArgs {
             part: placed_names(context.before).pop().unwrap_or_default(),
             axis: None,
@@ -213,111 +211,92 @@ impl Operation for PartPattern {
     }
 
     /// The part to copy, the line or axis, the layout and how many.
-    fn presentation(
-        context: &Context<Input, ParamValue>,
+    fn form<'a>(
+        context: &'a StepContext<'a>,
         args: &PartPatternArgs,
-        _: &(),
-    ) -> Form<Design> {
-        form(context, args).into_form()
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, PartPatternArgs> {
+        let mut f = EditForm::<Design, PartPatternArgs>::default();
+        let options = std::iter::once(Choice::new("", "Choose a placed part…"))
+            .chain(
+                placed_names(context.before)
+                    .into_iter()
+                    .map(|name| Choice::new(name.clone(), name)),
+            )
+            .collect();
+        f.select(
+            "part",
+            "part",
+            args.part.clone(),
+            options,
+            true,
+            |Edit { args, .. }, part| args.part = part.to_string(),
+        );
+        f.reference(
+            "axis",
+            "along or round",
+            args.axis.iter().cloned().collect(),
+            &[Role::Line, Role::Round],
+            None,
+            false,
+            |e, picked| e.args.axis = picked.into_iter().next(),
+        );
+        f.checkbox(
+            "reversed",
+            "reverse direction",
+            args.reversed,
+            |Edit { args, .. }, reversed| args.reversed = reversed,
+        );
+        let circular = matches!(args.layout, Layout::Circular { .. });
+        let choices = vec![
+            Choice::new("circular", "round the axis"),
+            Choice::new("linear", "along the line"),
+        ];
+        let way = if circular { "circular" } else { "linear" };
+        f.select(
+            "layout",
+            "layout",
+            way,
+            choices,
+            false,
+            |Edit { args, .. }, way| {
+                args.layout = match (way, &args.layout) {
+                    ("linear", Layout::Circular { .. }) => Layout::Linear {
+                        spacing: Spacing::step(1.0),
+                    },
+                    ("circular", Layout::Linear { .. }) => Layout::Circular {
+                        angle: Spacing::extent(360.0),
+                    },
+                    (_, layout) => layout.clone(),
+                };
+            },
+        );
+        let mut seen = Seen::new(context.before);
+        let (key, labels, unit) = if circular {
+            ("angle", ["angle between", "total angle"], Unit::Angle)
+        } else {
+            ("spacing", ["spacing", "total"], Unit::Length)
+        };
+        args.layout.spacing().fields(
+            &mut f,
+            key,
+            labels,
+            |label, value| formula_number(label, value, &mut seen, unit),
+            |args: &mut PartPatternArgs, spacing| *args.layout.spacing_mut() = spacing,
+        );
+        count_field(
+            &mut f,
+            "count",
+            &args.count,
+            &mut seen,
+            None,
+            |edit, count| edit.args.count = count,
+        );
+        f.form.dialog.text(
+            "hint",
+            "Each copy is a placed part of its own, named part_pattern(step,k); it moves with the part.",
+            Tone::Hint,
+        );
+        f
     }
-
-    fn process_user_event(
-        context: &Context<Input, ParamValue>,
-        args: &PartPatternArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (PartPatternArgs, ()) {
-        (form(context, args).apply(args, event), ())
-    }
-}
-
-/// The part to copy, the line or axis, the layout and how many.
-fn form(
-    context: &Context<Input, ParamValue>,
-    args: &PartPatternArgs,
-) -> EditForm<'static, Design, PartPatternArgs> {
-    let mut f = EditForm::<Design, PartPatternArgs>::default();
-    let options = std::iter::once(Choice::new("", "Choose a placed part…"))
-        .chain(
-            placed_names(context.before)
-                .into_iter()
-                .map(|name| Choice::new(name.clone(), name)),
-        )
-        .collect();
-    f.select(
-        "part",
-        "part",
-        args.part.clone(),
-        options,
-        true,
-        |Edit { args, .. }, part| args.part = part.to_string(),
-    );
-    f.reference(
-        "axis",
-        "along or round",
-        args.axis.iter().cloned().collect(),
-        &[Role::Line, Role::Round],
-        None,
-        false,
-        |e, picked| e.args.axis = picked.into_iter().next(),
-    );
-    f.checkbox(
-        "reversed",
-        "reverse direction",
-        args.reversed,
-        |Edit { args, .. }, reversed| args.reversed = reversed,
-    );
-    let circular = matches!(args.layout, Layout::Circular { .. });
-    let choices = vec![
-        Choice::new("circular", "round the axis"),
-        Choice::new("linear", "along the line"),
-    ];
-    let way = if circular { "circular" } else { "linear" };
-    f.select(
-        "layout",
-        "layout",
-        way,
-        choices,
-        false,
-        |Edit { args, .. }, way| {
-            args.layout = match (way, &args.layout) {
-                ("linear", Layout::Circular { .. }) => Layout::Linear {
-                    spacing: Spacing::step(1.0),
-                },
-                ("circular", Layout::Linear { .. }) => Layout::Circular {
-                    angle: Spacing::extent(360.0),
-                },
-                (_, layout) => layout.clone(),
-            };
-        },
-    );
-    let mut seen = Seen::new(context.before);
-    let (key, labels, unit) = if circular {
-        ("angle", ["angle between", "total angle"], Unit::Angle)
-    } else {
-        ("spacing", ["spacing", "total"], Unit::Length)
-    };
-    args.layout
-        .spacing()
-        .show(&mut f.form.dialog, key, labels, |label, value| {
-            formula_number(label, value, &mut seen, unit)
-        });
-    for field in [format!("{key}_mode"), key.to_string()] {
-        let at = field.clone();
-        f.on(field, move |Edit { args, .. }, value| {
-            args.layout.spacing_mut().set(key, &at, &value);
-        });
-    }
-    count_field(&mut f.form.dialog, "count", &args.count, &mut seen, None);
-    f.on("count", |Edit { args, .. }, value| {
-        if let Some(count) = count_of(&value) {
-            args.count = count;
-        }
-    });
-    f.form.dialog.text(
-        "hint",
-        "Each copy is a placed part of its own, named part_pattern(step,k); it moves with the part.",
-        Tone::Hint,
-    );
-    f
 }

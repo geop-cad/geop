@@ -103,7 +103,7 @@ fn sweep_a_square_round_a_corner() {
         ),
     );
     program.push("tube", swept("profile", "path"));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 1);
     assert_eq!(part.topology().faces.len(), 4 * 2 + 2);
@@ -122,7 +122,7 @@ fn sweep_a_pipe_through_a_bend() {
     );
     program.push("path", sketch(origin_plane(FrameAxis::Z), bend()));
     program.push("pipe", swept("profile", "path"));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().faces.len(), 3 * 4 + 2);
     let model = part.topology();
@@ -155,7 +155,7 @@ fn sweep_starts_at_the_end_of_the_path_the_profile_is_at() {
     program.push("profile", sketch(EntityRef::datum("far_plane"), far));
     program.push("path", sketch(origin_plane(FrameAxis::Z), bend()));
     program.push("bar", swept("profile", "path"));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     // The start cap where the profile is drawn, the end cap at the origin.
     let model = part.topology();
@@ -180,7 +180,7 @@ fn sweep_a_circle_round_a_circle_is_a_torus() {
         sketch(origin_plane(FrameAxis::Z), disc([0.0, 0.0], 2.0)),
     );
     program.push("ring", swept("profile", "path"));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().faces.len(), 16);
     assert!(part.face_id("sweep(ring,start)").is_err());
@@ -208,7 +208,7 @@ fn sweep_joins_a_block() {
             ..swept("profile", "path")
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 1);
     assert!(part.solid_id("sweep(pipe)").is_ok());
@@ -236,7 +236,7 @@ fn sweep_an_open_profile_as_faces() {
             ..swept("profile", "path")
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     if let Err(e) = validate(&ValidationParameters::default(), part.topology()) {
         panic!("{e:?}");
     }
@@ -254,7 +254,7 @@ fn sweep_refuses_what_it_cannot_sweep() {
         sketch(origin_plane(FrameAxis::X), disc([0.0, 0.0], 0.3)),
     );
     program.push("same", swept("profile", "profile"));
-    assert!(program.legacy_build_model().is_err());
+    assert!(program.build_model().is_err());
 
     let mut kinked = Sketch::new();
     let p = [
@@ -271,7 +271,7 @@ fn sweep_refuses_what_it_cannot_sweep() {
     );
     program.push("path", sketch(origin_plane(FrameAxis::Z), kinked));
     program.push("pipe", swept("profile", "path"));
-    let Err(error) = program.legacy_build_model() else {
+    let Err(error) = program.build_model() else {
         panic!("built");
     };
     assert!(error.root_message().contains("corner"), "{error:?}");
@@ -289,7 +289,7 @@ fn loft_a_square_to_a_circle() {
         sketch(EntityRef::datum("top_plane"), disc([0.0, 0.0], 0.6)),
     );
     program.push("transition", lofted(&["bottom", "top"]));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 1);
     assert_eq!(part.topology().faces.len(), 4 + 2);
@@ -328,7 +328,7 @@ fn loft_through_three_profiles_cuts_a_block() {
             ..lofted(&["a", "b", "c"])
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 1);
     assert!(part.solid_id("loft(pocket)").is_ok());
@@ -367,7 +367,7 @@ fn loft_between_two_curves_as_a_face() {
             ..lofted(&["low", "high"])
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     if let Err(e) = validate(&ValidationParameters::default(), part.topology()) {
         panic!("{e:?}");
     }
@@ -383,7 +383,7 @@ fn loft_refuses_what_it_cannot_loft() {
     let mut program = Program::new();
     program.push("only", sketch(origin_plane(FrameAxis::Z), square(1.0)));
     program.push("one", lofted(&["only"]));
-    assert!(program.legacy_build_model().is_err());
+    assert!(program.build_model().is_err());
 
     let mut holed = square(1.0);
     let c = holed.add_point(n(0.0), n(0.0));
@@ -393,7 +393,7 @@ fn loft_refuses_what_it_cannot_loft() {
     // Refused for its first profile, wherever the second lies.
     program.push("top", sketch(origin_plane(FrameAxis::X), square(0.5)));
     program.push("loft", lofted(&["holed", "top"]));
-    let Err(error) = program.legacy_build_model() else {
+    let Err(error) = program.build_model() else {
         panic!("built");
     };
     assert!(error.root_message().contains("holes"), "{error:?}");
@@ -431,7 +431,7 @@ fn sweep_a_ring_cuts_a_slab() {
             ..swept("profile", "path")
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 1);
 }
@@ -471,7 +471,7 @@ fn sweep_along_a_spline_cuts_a_slab() {
             ..swept("profile", "path")
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 1);
 }
@@ -543,7 +543,7 @@ fn loft_a_d_into_a_triangle() {
         ),
     );
     program.push("loft", lofted(&["d", "triangle"]));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["loft(loft)"]);
 }
@@ -571,7 +571,7 @@ fn loft_a_rectangle_through_a_triangle_into_a_circle() {
     program.push("triangle", sketch(on("one"), triangle));
     program.push("circle", sketch(on("two"), disc([0.0, 0.0], 0.4)));
     program.push("loft", lofted(&["rectangle", "triangle", "circle"]));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["loft(loft)"]);
 }
@@ -624,7 +624,7 @@ fn loft_with_matched_points() {
         },
     ];
     program.push("loft", args);
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     let model = part.topology();
     let at = |q: [f64; 3]| {
@@ -705,7 +705,7 @@ fn loft_a_d_into_a_triangle_matched_at_two_points() {
         point("triangle", q[1]),
     ];
     program.push("loft", args);
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     let model = part.topology();
     let at = |x: f64, y: f64, z: f64| {
@@ -769,7 +769,7 @@ fn sweep_along_a_rail_tapers() {
             ..swept("profile", "path")
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     let model = part.topology();
     let end = part.face_id("sweep(cone,end)").unwrap();
@@ -795,7 +795,7 @@ fn sweep_a_twisted_tapering_bar() {
             ..swept("profile", "path")
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().faces.len(), 3 * 4 + 2);
 }
@@ -825,7 +825,7 @@ fn loft_along_a_guide() {
             ..lofted(&["bottom", "top"])
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     // The edge along the guide bulges out to it.
     let edge = part.edge_id("loft(bulge,bottom,guide)").unwrap();
@@ -915,7 +915,7 @@ fn loft_along_a_3d_sketch_guide() {
             ..lofted(&["bottom", "top"])
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     let edge = part.edge_id("loft(bulge,bottom,guide)").unwrap();
     let curve = &part.topology().edges[&edge].curve;
@@ -972,7 +972,7 @@ fn sweep_along_an_edge() {
         "profile",
         sketch(origin_plane(FrameAxis::X), disc([0.0, 0.0], 0.1)),
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     let model = part.topology();
     let along_x = model
         .edges
@@ -999,7 +999,7 @@ fn sweep_along_an_edge() {
             ..swept("profile", "unused")
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 2);
     assert!(part.face_id("sweep(rod,start)").is_ok());

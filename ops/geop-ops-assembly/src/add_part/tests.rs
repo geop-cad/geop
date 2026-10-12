@@ -9,15 +9,16 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::{
+    operation::Operation,
     operation_registry::OperationRegistry,
     program::{Program, ProgramStep},
     program_runner::{ProgramRunner, RunOutput},
     step_editor::{Editing, StepEditor},
 };
 use geop_ops::{
-    Design, EntityRef, NamedModel,
+    Design, EntityRef, NamedModel, ParamValue,
     model::model,
-    operation::{Aspects, BuildView, Role, Seen},
+    operation::{Aspects, BuildView, Input, Role, Seen},
     parameters::{Parameters, Values},
     placed::{Component, LIBRARY, Library, locate, placed_parts},
     ui::{

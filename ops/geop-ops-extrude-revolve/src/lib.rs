@@ -17,9 +17,9 @@ pub mod operation;
 pub mod path_sweep;
 mod plain;
 pub mod revolve;
-pub mod skin;
 #[cfg(any(test, feature = "test-shapes"))]
 pub mod shapes;
+pub mod skin;
 pub mod sweep;
 
 pub use geop_ops_booleans::Extent;

@@ -80,11 +80,11 @@ fn vertex_on_circle(part: &NamedModel<S>, [cx, cy, z]: [f64; 3], radius: f64) ->
 #[test]
 fn fillet_drill_hole_rim() {
     let mut program = examples::box_with_drill_hole();
-    let before = program.legacy_build_model().unwrap();
+    let before = program.build_model().unwrap();
     let rim = arcs_at(&before, [1.0, 1.0, 1.0], 0.4);
     assert_eq!(rim.len(), 4, "{rim:?}");
     program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["fillet(round)"]);
     assert!(vertex_on_circle(&part, [1.0, 1.0, 1.0], 0.5));
@@ -96,7 +96,7 @@ fn fillet_drill_hole_rim() {
 #[test]
 fn chamfer_box_edges_and_rim() {
     let mut program = examples::box_with_drill_hole();
-    let before = program.legacy_build_model().unwrap();
+    let before = program.build_model().unwrap();
     let mut edges = Vec::new();
     for (x, y) in [(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)] {
         edges.extend(upright_edges_at(&before, x, y));
@@ -119,7 +119,7 @@ fn chamfer_box_edges_and_rim() {
             distance2: Some(0.05.into()),
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["chamfer(countersink)"]);
     assert!(upright_edges_at(&part, 0.0, 0.0).is_empty());
@@ -183,13 +183,13 @@ fn l_block() -> Program {
 #[test]
 fn fillet_l_block_inner_edge() {
     let mut program = l_block();
-    let before = program.legacy_build_model().unwrap();
+    let before = program.build_model().unwrap();
     let inner = upright_edges_at(&before, 1.0, 1.0);
     let outer = upright_edges_at(&before, 2.0, 0.0);
     assert_eq!((inner.len(), outer.len()), (1, 1));
     program.push("round", FilletArgs::constant(outer, 0.2));
     program.push("inner", FilletArgs::constant(inner, 0.2));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["fillet(inner)"]);
     for p in [
@@ -207,7 +207,7 @@ fn fillet_l_block_inner_edge() {
 #[test]
 fn chamfer_l_block_inner_edge() {
     let mut program = l_block();
-    let before = program.legacy_build_model().unwrap();
+    let before = program.build_model().unwrap();
     program.push(
         "bevel",
         ChamferArgs {
@@ -216,7 +216,7 @@ fn chamfer_l_block_inner_edge() {
             distance2: None,
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert!(upright_edges_at(&part, 1.0, 1.0).is_empty());
 }
@@ -248,7 +248,7 @@ fn fillet_boss_on_block() {
         "boss",
         extrusion("boss_sketch", Extents::blind(0.5), join("extrude(block)")),
     );
-    let before = program.legacy_build_model().unwrap();
+    let before = program.build_model().unwrap();
     let foot = arcs_at(&before, [0.5, 0.5, 1.0], 0.3);
     let rim = arcs_at(&before, [0.5, 0.5, 1.5], 0.3);
     assert!(!foot.is_empty() && !rim.is_empty(), "{foot:?} {rim:?}");
@@ -256,7 +256,7 @@ fn fillet_boss_on_block() {
         "round",
         FilletArgs::constant(vec![foot[0].clone(), rim[0].clone()], 0.1),
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert!(vertex_on_circle(&part, [0.5, 0.5, 1.0], 0.4));
     assert!(vertex_on_circle(&part, [0.5, 0.5, 1.1], 0.3));
@@ -322,7 +322,7 @@ fn stepped_block() -> Program {
 /// the side wall's front edge (convex) runs up into the ceiling.
 #[test]
 fn fillet_edges_ending_at_a_wall() {
-    let before = stepped_block().legacy_build_model().unwrap();
+    let before = stepped_block().build_model().unwrap();
     let cases = [
         ([0.0, 2.0, 0.5], [1.0, 2.0, 0.5]),
         ([0.0, 1.5, 0.5], [1.0, 1.5, 0.5]),
@@ -335,7 +335,7 @@ fn fillet_edges_ending_at_a_wall() {
         let mut program = stepped_block();
         program.push("round", FilletArgs::constant(edges, 0.1));
         let checked = std::panic::catch_unwind(|| {
-            let part = program.legacy_build_model().unwrap();
+            let part = program.build_model().unwrap();
             assert_valid(&part);
             assert!(
                 edges_from_to(&part, a, b).is_empty(),
@@ -385,7 +385,7 @@ fn pocketed_block() -> Program {
 /// corner, on the walls 0.1 down the corner edge.
 #[test]
 fn fillet_pocket_rim_corner() {
-    let before = pocketed_block().legacy_build_model().unwrap();
+    let before = pocketed_block().build_model().unwrap();
     let edges = [
         edges_from_to(&before, [0.5, 0.5, 1.0], [1.5, 0.5, 1.0]),
         edges_from_to(&before, [1.5, 0.5, 1.0], [1.5, 1.5, 1.0]),
@@ -394,7 +394,7 @@ fn fillet_pocket_rim_corner() {
     assert_eq!(edges.len(), 2, "{edges:?}");
     let mut program = pocketed_block();
     program.push("round", FilletArgs::constant(edges, 0.1));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert!(has_vertex(&part, [1.6, 0.4, 1.0]), "no mitre on the top");
     assert!(has_vertex(&part, [1.5, 0.5, 0.9]), "no mitre on the walls");
@@ -411,7 +411,7 @@ fn fillet_pocket_rim_corner() {
 #[test]
 #[ignore = "slow: the full set of pocket blends — run with `cargo test -- --ignored`"]
 fn fillet_pocket_edges_together() {
-    let before = pocketed_block().legacy_build_model().unwrap();
+    let before = pocketed_block().build_model().unwrap();
     let rim =
         |a: [f64; 2], b: [f64; 2]| edges_from_to(&before, [a[0], a[1], 1.0], [b[0], b[1], 1.0]);
     let floor =
@@ -453,7 +453,7 @@ fn fillet_pocket_edges_together() {
         assert!(edges.len() >= 2, "{case}: {edges:?}");
         let mut program = pocketed_block();
         program.push("round", FilletArgs::constant(edges, 0.1));
-        match program.legacy_build_model() {
+        match program.build_model() {
             Err(e) => failures.push(format!("{case}: {}", e.root_message())),
             Ok(part) => {
                 if let Err(e) = check_valid(&part) {
@@ -469,7 +469,7 @@ fn fillet_pocket_edges_together() {
     // pocket's corners and on the walls 0.1 down its corner edges.
     let mut program = pocketed_block();
     program.push("round", FilletArgs::constant(all(&rim), 0.1));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     for [x, y] in [[0.5, 0.5], [1.5, 0.5], [1.5, 1.5], [0.5, 1.5]] {
         let out = |c: f64| if c < 1.0 { c - 0.1 } else { c + 0.1 };
         assert!(
@@ -546,7 +546,7 @@ fn lofted(bottom: Sketch, top: Sketch) -> Program {
 #[test]
 fn fillet_lofted_rim() {
     let mut program = lofted(circle_sketch(0.0, 0.0, 1.0), circle_sketch(0.3, 0.0, 0.6));
-    let before = program.legacy_build_model().unwrap();
+    let before = program.build_model().unwrap();
     let rim = edges_where(&before, |e| {
         let (t0, t1) = e.curve.domain();
         let p = e
@@ -557,7 +557,7 @@ fn fillet_lofted_rim() {
     });
     assert_eq!(rim.len(), 4, "{rim:?}");
     program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["fillet(round)"]);
     assert!(!vertex_on_circle(&part, [0.3, 0.0, 2.0], 0.6));
@@ -575,7 +575,7 @@ fn fillet_lofted_rim() {
 #[test]
 fn fillet_lofted_bottom_edge_is_refused() {
     let mut program = square_to_circle();
-    let before = program.legacy_build_model().unwrap();
+    let before = program.build_model().unwrap();
     let bottom = edges_where(&before, |e| {
         let (t0, t1) = e.curve.domain();
         let p = e
@@ -585,7 +585,7 @@ fn fillet_lofted_bottom_edge_is_refused() {
         p[2].could_be_equal(S::ZERO)
     });
     program.push("round", FilletArgs::constant(vec![bottom[0].clone()], 0.1));
-    let Err(error) = program.legacy_build_model() else {
+    let Err(error) = program.build_model() else {
         panic!("rounding a bottom edge of the loft is not refused");
     };
     let error = format!("{error:?}");
@@ -623,11 +623,11 @@ fn slot() -> Program {
 #[test]
 fn fillet_slot_rim_as_one_chain() {
     let mut program = slot();
-    let before = program.legacy_build_model().unwrap();
+    let before = program.build_model().unwrap();
     let side = edges_from_to(&before, [-1.0, -0.5, 1.0], [1.0, -0.5, 1.0]);
     assert_eq!(side.len(), 1, "{side:?}");
     program.push("round", FilletArgs::constant(side, 0.1));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["fillet(round)"]);
     let near = |p: [f64; 3]| {
@@ -654,7 +654,7 @@ fn fillet_slot_rim_as_one_chain() {
 #[test]
 fn fillet_rim_over_creases_is_refused() {
     let mut program = square_to_circle();
-    let before = program.legacy_build_model().unwrap();
+    let before = program.build_model().unwrap();
     let rim = edges_where(&before, |e| {
         let (t0, t1) = e.curve.domain();
         let p = e
@@ -664,7 +664,7 @@ fn fillet_rim_over_creases_is_refused() {
         p[2].could_be_equal(S::from_f64(2.0))
     });
     program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
-    let Err(error) = program.legacy_build_model() else {
+    let Err(error) = program.build_model() else {
         panic!("rounding the rim over the creases is not refused");
     };
     let error = format!("{error:?}");
@@ -679,7 +679,7 @@ fn fillet_rim_over_creases_is_refused() {
 #[test]
 fn fillet_slot_rim_with_radii_at_vertices() {
     let mut program = slot();
-    let before = program.legacy_build_model().unwrap();
+    let before = program.build_model().unwrap();
     let side = edges_from_to(&before, [-1.0, -0.5, 1.0], [1.0, -0.5, 1.0]);
     let vertex_at = |p: [f64; 3]| {
         let (&id, _) = before
@@ -704,7 +704,7 @@ fn fillet_slot_rim_with_radii_at_vertices() {
             ..FilletArgs::constant(side, 0.1)
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     let near = |p: [f64; 3]| {
         part.topology()
@@ -740,7 +740,7 @@ fn press_handle_rim_fillet_is_narrow() {
         .into_iter()
         .find(|(path, _)| *path == "handle.geop")
         .unwrap();
-    let part = handle.legacy_build_model().unwrap();
+    let part = handle.build_model().unwrap();
     let face = part
         .face_id("fillet(fillet1,revolve(revolve1,sketch2,p5,q3),fillet,q3)")
         .unwrap();

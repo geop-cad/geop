@@ -5,14 +5,13 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
-use geop_core_program::{
-    editing::{Choice, Event, Form, Number, Unit, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, NamedModel, Namer, ParamValue,
+    Design, NamedModel, Namer,
     model::model_or_empty,
-    operation::{Build, BuildReader, EntityRef, Input, LegacyModelStep},
+    operation::{Build, BuildReader, PartOperation, StepContext},
+    part_operation,
+    ui::{Choice, EditForm, FormState, Number, Unit},
 };
 use serde::{Deserialize, Serialize};
 
@@ -127,18 +126,9 @@ impl SheetStep for Hem {
     }
 }
 
-impl LegacyModelStep for Hem {
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        _: &HemArgs,
-    ) -> GeopResult<()> {
-        body::build(model, reader, step)
-    }
-}
+part_operation!(Hem);
 
-impl Operation for Hem {
+impl PartOperation for Hem {
     const INFO: OperationInfo = OperationInfo::new(
         "hem",
         "Hem",
@@ -148,12 +138,10 @@ impl Operation for Hem {
     )
     .icon(crate::icons::HEM);
     type Args = HemArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// No edge yet: a closed hem, a third of a unit long.
-    fn new_args(_: &Context<Input, ParamValue>) -> HemArgs {
+    fn new_args(_: &StepContext) -> HemArgs {
         HemArgs {
             edge: String::new(),
             kind: HemKind::Closed,
@@ -168,13 +156,25 @@ impl Operation for Hem {
         body::run::<Self>(step, part, args)
     }
 
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        _: &HemArgs,
+    ) -> GeopResult<()> {
+        body::build(model, reader, step)
+    }
+
     /// The edge, picked; how tight, and the gap if open; how long; and how
     /// far in from the edge's ends.
-    fn presentation(_: &Context<Input, ParamValue>, args: &HemArgs, _: &()) -> Form<Design> {
-        let mut form = Form::default();
-        edge_field(&mut form, &args.edge);
-        let dialog = &mut form.dialog;
-        dialog.select(
+    fn form<'a>(
+        _: &'a StepContext<'a>,
+        args: &HemArgs,
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, HemArgs> {
+        let mut f = EditForm::<Design, HemArgs>::default();
+        edge_field(&mut f, &args.edge, |edit, edge| edit.args.edge = edge);
+        f.select(
             "kind",
             "hem",
             match args.kind {
@@ -183,47 +183,28 @@ impl Operation for Hem {
             },
             vec![Choice::new("closed", "Closed"), Choice::new("open", "Open")],
             false,
-        );
-        if args.kind == HemKind::Open {
-            dialog.number(
-                "gap",
-                Number::new("gap", args.gap, Unit::Length).range(0.0, 1.0),
-            );
-        }
-        dialog.number(
-            "length",
-            Number::new("length", args.length, Unit::Length).range(0.0, 5.0),
-        );
-        offset_fields(&mut form, args.offset_start, args.offset_end);
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
-        args: &HemArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (HemArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field { key, value } = event else {
-            return (args, ());
-        };
-        match (key.as_str(), value) {
-            ("edge", Value::Entities(picked)) => {
-                args.edge = EntityRef::last_name(EntityRef::edge, &picked).unwrap_or_default()
-            }
-            ("kind", Value::Choice(choice)) => {
-                args.kind = match choice.as_str() {
+            |edit, choice| {
+                edit.args.kind = match choice {
                     "open" => HemKind::Open,
                     _ => HemKind::Closed,
                 }
-            }
-            ("gap", Value::Number(g)) => args.gap = g,
-            ("length", Value::Number(l)) => args.length = l,
-            ("offset_start", Value::Number(o)) => args.offset_start = o,
-            ("offset_end", Value::Number(o)) => args.offset_end = o,
-            _ => {}
+            },
+        );
+        if args.kind == HemKind::Open {
+            let gap = Number::new("gap", args.gap, Unit::Length).range(0.0, 1.0);
+            f.number("gap", gap, |edit, g| edit.args.gap = g);
         }
-        (args, ())
+        let length = Number::new("length", args.length, Unit::Length).range(0.0, 5.0);
+        f.number("length", length, |edit, l| edit.args.length = l);
+        offset_fields(
+            &mut f,
+            args.offset_start,
+            args.offset_end,
+            |args, [start, end]| {
+                args.offset_start = start;
+                args.offset_end = end;
+            },
+        );
+        f
     }
 }

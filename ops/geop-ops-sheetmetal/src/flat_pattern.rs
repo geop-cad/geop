@@ -9,17 +9,16 @@ use geop_core_math::{
     vector::Vector2,
     with_context,
 };
-use geop_core_program::{
-    editing::{Event, Form, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
 use geop_core_sketch::Sketch;
 use geop_core_topology::Body;
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, NamedModel, Namer, ParamValue, PlacedSketch,
+    Design, NamedModel, Namer, PlacedSketch,
     model::model_or_empty,
-    operation::{Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, Role, Seen},
+    operation::{Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Seen, StepContext},
     output::sheet::Sheet as Paper,
+    part_operation,
+    ui::{EditForm, FormState},
 };
 use serde::{Deserialize, Serialize};
 
@@ -119,17 +118,6 @@ impl SheetStep for FlatPattern {
     }
 }
 
-impl LegacyModelStep for FlatPattern {
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        _: &FlatPatternArgs,
-    ) -> GeopResult<()> {
-        body::build(model, reader, step)
-    }
-}
-
 /// Builds the flat pattern of `sheet` into `model`, named by `namer`, in
 /// place of the solid `consumes`, if any.
 pub(crate) fn build(
@@ -147,7 +135,9 @@ pub(crate) fn build(
     Ok(())
 }
 
-impl Operation for FlatPattern {
+part_operation!(FlatPattern);
+
+impl PartOperation for FlatPattern {
     const INFO: OperationInfo = OperationInfo::new(
         "flat_pattern",
         "Flat pattern",
@@ -157,12 +147,10 @@ impl Operation for FlatPattern {
     )
     .icon(crate::icons::FLAT_PATTERN);
     type Args = FlatPatternArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// The newest sheet-metal body.
-    fn new_args(context: &Context<Input, ParamValue>) -> FlatPatternArgs {
+    fn new_args(context: &StepContext) -> FlatPatternArgs {
         let seen = Seen::new(context.before);
         let sheets = context.before.retrieve_target(&sheets()).ok();
         FlatPatternArgs {
@@ -184,39 +172,39 @@ impl Operation for FlatPattern {
         body::add_bend_lines(part, step, &namer.name(&["bend_lines"]))
     }
 
-    /// The body, picked, and whether to keep it.
-    fn presentation(
-        _: &Context<Input, ParamValue>,
-        args: &FlatPatternArgs,
-        _: &(),
-    ) -> Form<Design> {
-        let mut form = Form::default();
-        let solid = EntityRef::of_name(EntityRef::solid, &args.solid);
-        (form
-            .dialog
-            .reference("solid", "body", solid, &[Role::Solid], None, false))
-        .checkbox("keep", "keep bent body", args.keep);
-        form
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        _: &FlatPatternArgs,
+    ) -> GeopResult<()> {
+        body::build(model, reader, step)
     }
 
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
+    /// The body, picked, and whether to keep it.
+    fn form<'a>(
+        _: &'a StepContext<'a>,
         args: &FlatPatternArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (FlatPatternArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field { key, value } = event else {
-            return (args, ());
-        };
-        match (key.as_str(), value) {
-            ("solid", Value::Entities(picked)) => {
-                args.solid = EntityRef::last_name(EntityRef::solid, &picked).unwrap_or_default();
-            }
-            ("keep", Value::Bool(b)) => args.keep = b,
-            _ => {}
-        }
-        (args, ())
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, FlatPatternArgs> {
+        let mut f = EditForm::<Design, FlatPatternArgs>::default();
+        let solid = EntityRef::of_name(EntityRef::solid, &args.solid);
+        f.reference(
+            "solid",
+            "body",
+            solid,
+            &[Role::Solid],
+            None,
+            false,
+            |edit, picked| {
+                edit.args.solid =
+                    EntityRef::last_name(EntityRef::solid, &picked).unwrap_or_default();
+            },
+        )
+        .checkbox("keep", "keep bent body", args.keep, |edit, b| {
+            edit.args.keep = b
+        });
+        f
     }
 }
 

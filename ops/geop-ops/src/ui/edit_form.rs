@@ -64,25 +64,6 @@ impl<T: Clone> FormState<T> {
     }
 }
 
-impl<S: Scalar, A: Clone> EditForm<'_, S, A> {
-    /// The arguments `args` after `event`, for an operation that keeps
-    /// nothing while a step is edited (its editing state `()`): a field
-    /// set by its setter in this form, made of them as they are; a
-    /// selection or what the pointer did changes nothing.
-    pub fn apply(&self, args: &A, event: Event<S>) -> A {
-        let mut edited = args.clone();
-        if let Event::Field { key, value } = event {
-            let edit = Edit {
-                args: &mut edited,
-                session: &mut (),
-                selection: &mut Vec::new(),
-            };
-            self.set(&key, edit, value);
-        }
-        edited
-    }
-}
-
 /// What setting a field does.
 type Setter<'a, A, T> = Box<dyn Fn(Edit<'_, A, T>, Value) + 'a>;
 
@@ -243,6 +224,54 @@ impl<'a, S: Scalar, A, T> EditForm<'a, S, A, T> {
             }
         });
         self
+    }
+
+    /// One entity, of the kind `kind` makes of a name — a face, a solid, a
+    /// sketch — that can fill one of `roles`, held by its name `name`
+    /// (empty for none); `set` gets the name of the one picked last, or an
+    /// empty one.
+    pub fn pick_one(
+        &mut self,
+        key: &str,
+        label: impl Into<String>,
+        kind: fn(String) -> EntityRef,
+        name: &str,
+        roles: &[Role],
+        set: impl Fn(Edit<'_, A, T>, String) + 'a,
+    ) -> &mut Self {
+        let value = EntityRef::of_name(kind, name);
+        self.reference(
+            key,
+            label,
+            value,
+            roles,
+            None,
+            false,
+            move |edit, picked| {
+                set(
+                    edit,
+                    EntityRef::last_name(kind, &picked).unwrap_or_default(),
+                )
+            },
+        )
+    }
+
+    /// Entities of the kind `kind` makes of a name that can fill one of
+    /// `roles`, held by their names `names`; `set` gets the names of those
+    /// picked.
+    pub fn pick_many(
+        &mut self,
+        key: &str,
+        label: impl Into<String>,
+        kind: fn(String) -> EntityRef,
+        names: &[String],
+        roles: &[Role],
+        set: impl Fn(Edit<'_, A, T>, Vec<String>) + 'a,
+    ) -> &mut Self {
+        let value = EntityRef::of_names(kind, names);
+        self.reference(key, label, value, roles, None, true, move |edit, picked| {
+            set(edit, EntityRef::names_of(kind, &picked))
+        })
     }
 
     /// Entities that can fill one of `roles` — and, with a `scope`, are part

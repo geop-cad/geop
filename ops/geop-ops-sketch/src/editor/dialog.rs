@@ -189,11 +189,11 @@ fn status(sketch: &Sketch, s: &SketchSession) -> (String, Tone) {
     }
 }
 
-/// The fields for drawing in the sketch of `args` on `before`, lying in
-/// `frame`, with `keys` the keys of the visuals selected.
+/// The fields for drawing in the sketch of `args` on the part `view`
+/// shows, lying in `frame`, with `keys` the keys of the visuals selected.
 pub(super) fn draw_dialog<'a>(
     d: &mut EditForm<'a, S, AddSketchArgs, SketchSession>,
-    before: &'a Seen<'_>,
+    view: BuildView<'a>,
     args: &AddSketchArgs,
     s: &SketchSession,
     keys: &[String],
@@ -248,7 +248,7 @@ pub(super) fn draw_dialog<'a>(
             .active(s.construction),
     );
     d.actions("tool", tools, move |edit, name| {
-        editing(before, edit, |e| match name {
+        editing(view, edit, |e| match name {
             "construction" => e.toggle_construction(),
             "trim" => e.take(Tool::Trim),
             name => {
@@ -267,7 +267,7 @@ pub(super) fn draw_dialog<'a>(
         let field = Number::new("pattern count", count as f64, Unit::Count).range(2.0, 24.0);
         d.number("pattern_count", field, move |edit, n| {
             let count = (n.round().max(2.0)) as usize;
-            editing(before, edit, |e| e.set_pattern_count(by, count));
+            editing(view, edit, |e| e.set_pattern_count(by, count));
         });
     }
 
@@ -292,7 +292,7 @@ pub(super) fn draw_dialog<'a>(
         .collect();
     d.actions("constrain", constraints, move |edit, name| {
         if let Some(tool) = ConstraintTool::by_name(name) {
-            editing(before, edit, |e| e.press_constraint(tool));
+            editing(view, edit, |e| e.press_constraint(tool));
         }
     });
 
@@ -311,7 +311,7 @@ pub(super) fn draw_dialog<'a>(
         &[Role::Point, Role::Curve, Role::Plane, Role::Round],
         None,
         true,
-        move |edit, entities| editing(before, edit, |e| e.project(entities)),
+        move |edit, entities| editing(view, edit, |e| e.project(entities)),
     );
     d.form.dialog.optional("project");
 
@@ -332,7 +332,7 @@ pub(super) fn draw_dialog<'a>(
         .map(|(&id, c)| {
             let key = format!("constraint:{}", id.0);
             d.on(key.clone(), move |edit, value| {
-                editing(before, edit, |e| e.constraint(id, &value))
+                editing(view, edit, |e| e.constraint(id, &value))
             });
             let mut item = ListItem::new(key, constraints::name(c));
             item.selected = selected_constraints.contains(&id);
@@ -362,7 +362,7 @@ pub(super) fn draw_dialog<'a>(
     {
         d.on("prompt", move |edit, value| {
             if let Value::Text(text) = value {
-                editing(before, edit, |e| e.set_value(id, &text));
+                editing(view, edit, |e| e.set_value(id, &text));
             }
         });
         d.form.prompt = Some(Prompt {

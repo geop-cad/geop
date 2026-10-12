@@ -6,15 +6,15 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{
-    editing::{Event, Form},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+    operation::{OperationGroup, OperationInfo, OperationTier},
     part::Retrieve,
     target::TargetReference,
 };
 use geop_core_topology::validation::{ValidationParameters, validate_fast};
 use geop_ops::{
-    BodyNames, Design, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, Input, LegacyModelStep, legacy_build_model},
+    BodyNames, Design, NamedModel, Namer,
+    operation::{Build, BuildReader, PartOperation, StepContext, build_model},
+    part_operation,
     placed::{library, library_files},
     ui::{Edit, EditForm, FormState, Tone},
 };
@@ -149,62 +149,9 @@ fn read(reader: &mut BuildReader, (step, args): &(String, ImportStepArgs)) -> Ge
     Ok(Imported(bodies))
 }
 
-impl LegacyModelStep for ImportStep {
-    /// Adds the bodies the step read (see [`imported`]).
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        _: &ImportStepArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("import_step({step})");
-        let namer = Namer::new("import", step).with_context(ctx)?;
-        let Imported(bodies) = reader.retrieve_target(&imported(step)).with_context(ctx)?;
-        add_bodies(model, &namer, bodies).with_context(ctx)
-    }
-}
+part_operation!(ImportStep);
 
-/// The file: one of the STEP files next to the program, or one the user
-/// chooses from elsewhere, which the front end stores next to it — and
-/// what the import rebuilt, body by body, as the step last read them.
-fn form<'a>(
-    context: &Context<'_, Input, ParamValue>,
-    args: &ImportStepArgs,
-) -> EditForm<'a, Design, ImportStepArgs> {
-    let mut f = EditForm::<Design, ImportStepArgs>::default();
-    let files = library_files(&mut context.before.clone(), is_step_file, &args.file);
-    f.file(
-        "file",
-        "file",
-        args.file.clone(),
-        files,
-        &STEP_EXTENSIONS,
-        |Edit { args, .. }, file| args.file = file.to_string(),
-    );
-    let read =
-        (context.built).and_then(|built| built.retrieve_target(&imported(context.step)).ok());
-    if let (Some(Imported(bodies)), Ok(namer)) = (read, Namer::new("import", context.step)) {
-        for (k, body) in bodies.iter().enumerate() {
-            if body.healed.is_empty() {
-                continue;
-            }
-            let solid = namer.name(&[&format!("s{k}")]);
-            f.form.dialog.text(
-                &format!("healed_{k}"),
-                format!(
-                    "Healed {} ({}): {}.",
-                    body.label,
-                    solid,
-                    body.healed.summary()
-                ),
-                Tone::Hint,
-            );
-        }
-    }
-    f
-}
-
-impl Operation for ImportStep {
+impl PartOperation for ImportStep {
     const INFO: OperationInfo = OperationInfo::new(
         "import_step",
         "Import STEP",
@@ -215,35 +162,69 @@ impl Operation for ImportStep {
     .reads(&STEP_EXTENSIONS)
     .icon(crate::icons::IMPORT_STEP);
     type Args = ImportStepArgs;
-    type EditingState = FormState<()>;
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// No file yet.
-    fn new_args(_: &Context<Input, ParamValue>) -> ImportStepArgs {
+    fn new_args(_: &StepContext) -> ImportStepArgs {
         ImportStepArgs::default()
     }
 
     /// Reads the file, then adds its bodies.
     fn run(step: &str, part: &mut Build, args: &ImportStepArgs) -> GeopResult<()> {
         part.define_target(&imported(step), &(step.to_string(), args.clone()), read)?;
-        legacy_build_model::<Self>(part, step, args)
+        build_model::<Self>(part, step, args)
     }
 
-    fn presentation(
-        context: &Context<Input, ParamValue>,
+    /// Adds the bodies the step read (see [`imported`]).
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        _: &ImportStepArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("import", step)?;
+        let Imported(bodies) = reader.retrieve_target(&imported(step))?;
+        add_bodies(model, &namer, bodies)
+    }
+
+    /// The file: one of the STEP files next to the program, or one the user
+    /// chooses from elsewhere, which the front end stores next to it — and
+    /// what the import rebuilt, body by body, as the step last read them.
+    fn form<'a>(
+        context: &'a StepContext<'a>,
         args: &ImportStepArgs,
         _: &FormState<()>,
-    ) -> Form<Design> {
-        form(context, args).into_form()
-    }
-
-    fn process_user_event(
-        context: &Context<Input, ParamValue>,
-        args: &ImportStepArgs,
-        editing: &FormState<()>,
-        event: Event<Design>,
-    ) -> (ImportStepArgs, FormState<()>) {
-        editing.handle(args, event, |args, _| form(context, args), |_, _| {})
+    ) -> EditForm<'a, Design, ImportStepArgs> {
+        let mut f = EditForm::<Design, ImportStepArgs>::default();
+        let files = library_files(&mut context.before.clone(), is_step_file, &args.file);
+        f.file(
+            "file",
+            "file",
+            args.file.clone(),
+            files,
+            &STEP_EXTENSIONS,
+            |Edit { args, .. }, file| args.file = file.to_string(),
+        );
+        let read =
+            (context.built).and_then(|built| built.retrieve_target(&imported(context.step)).ok());
+        if let (Some(Imported(bodies)), Ok(namer)) = (read, Namer::new("import", context.step)) {
+            for (k, body) in bodies.iter().enumerate() {
+                if body.healed.is_empty() {
+                    continue;
+                }
+                let solid = namer.name(&[&format!("s{k}")]);
+                f.form.dialog.text(
+                    &format!("healed_{k}"),
+                    format!(
+                        "Healed {} ({}): {}.",
+                        body.label,
+                        solid,
+                        body.healed.summary()
+                    ),
+                    Tone::Hint,
+                );
+            }
+        }
+        f
     }
 }

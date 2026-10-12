@@ -357,7 +357,7 @@ fn what_is_no_feature_is_refused() {
     let refused = |args: LinearPatternArgs| {
         let mut program = program.clone();
         program.push("p", args);
-        program.legacy_build_model().err().unwrap().to_string()
+        program.build_model().err().unwrap().to_string()
     };
     let mut both = linear(&["hole"], 2.0, 2.0);
     both.seeds.bodies = vec![EntityRef::Solid {

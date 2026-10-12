@@ -5,21 +5,18 @@ use geop_core_math::{
     primitives::{FrameAxis, Motion},
     scalars::Scalar,
 };
-use geop_core_program::{
-    editing::{Event, Form, Unit, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
-use geop_ops::operation::Input;
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::parameters::expressions;
 use geop_ops::{
-    Design, NamedModel, ParamValue,
+    Design, NamedModel,
     operation::{
-        Aspects, Build, BuildReader, EntityRef, Lookup, LegacyModelStep, Role, Seen,
-        pattern::{Row, Spacing, count_field, count_of, whole_count},
+        Aspects, Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Seen, StepContext,
+        pattern::{Row, Spacing, count_field, whole_count},
     },
     origin_axis,
     parameters::Formula,
-    ui::formula_number,
+    part_operation,
+    ui::{EditForm, FormState, Unit, formula_number},
 };
 use serde::{Deserialize, Serialize};
 
@@ -106,18 +103,9 @@ impl CircularPatternArgs {
     }
 }
 
-impl LegacyModelStep for CircularPattern {
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &CircularPatternArgs,
-    ) -> GeopResult<()> {
-        build_pattern(model, reader, step, args)
-    }
-}
+part_operation!(CircularPattern);
 
-impl Operation for CircularPattern {
+impl PartOperation for CircularPattern {
     const INFO: OperationInfo = OperationInfo::new(
         "circular_pattern",
         "Circular pattern",
@@ -127,16 +115,14 @@ impl Operation for CircularPattern {
     )
     .icon(geop_ops::ui::icons::CIRCULAR_PATTERN);
     type Args = CircularPatternArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     fn formulas(args: &mut CircularPatternArgs) -> Vec<&mut String> {
         expressions([&mut args.count, args.angle.value_mut()])
     }
 
     /// Four times around the origin's `z` axis, kept as new bodies.
-    fn new_args(_: &Context<Input, ParamValue>) -> CircularPatternArgs {
+    fn new_args(_: &StepContext) -> CircularPatternArgs {
         CircularPatternArgs {
             // Nothing picked: what is patterned is the user's choice, a body
             // or a feature, never guessed.
@@ -152,59 +138,48 @@ impl Operation for CircularPattern {
         run_pattern::<Self>(part, step, args)
     }
 
-    /// The bodies or the features, and the axis, picked; the count and the
-    /// angles; and how to combine copies of bodies.
-    fn presentation(
-        context: &Context<Input, ParamValue>,
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
         args: &CircularPatternArgs,
-        _: &(),
-    ) -> Form<Design> {
-        let mut seen = Seen::new(context.before);
-        let mut form = Form::default();
-        args.seeds.show(&mut form, |form| {
-            let dialog = &mut form.dialog;
-            let axis = args.axis.iter().cloned().collect();
-            (dialog.reference(
-                "axis",
-                "axis",
-                axis,
-                &[Role::Line, Role::Round],
-                None,
-                false,
-            ))
-            .checkbox("reversed", "reverse direction", args.reversed);
-            count_field(dialog, "count", &args.count, &mut seen, None);
-            args.angle
-                .show(dialog, "angle", ["angle", "total angle"], |label, value| {
-                    formula_number(label, value, &mut seen, Unit::Angle).range(-360.0, 360.0)
-                });
-        });
-        form
+    ) -> GeopResult<()> {
+        build_pattern(model, reader, step, args)
     }
 
-    fn process_user_event(
-        context: &Context<Input, ParamValue>,
+    /// The bodies or the features, and the axis, picked; the count and the
+    /// angles; and how to combine copies of bodies.
+    fn form<'a>(
+        context: &'a StepContext<'a>,
         args: &CircularPatternArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (CircularPatternArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field { key, value } = event else {
-            return (args, ());
-        };
-        match (key.as_str(), &value) {
-            ("axis", Value::Entities(picked)) => args.axis = picked.first().cloned(),
-            ("reversed", Value::Bool(b)) => args.reversed = *b,
-            ("count", value) => {
-                if let Some(count) = count_of(value) {
-                    args.count = count;
-                }
-            }
-            (key, value) => {
-                let _ = args.angle.set("angle", key, value)
-                    || (args.seeds).set(key, value, Seen::new(context.before).model());
-            }
-        }
-        (args, ())
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, CircularPatternArgs> {
+        let mut seen = Seen::new(context.before);
+        let mut f = EditForm::default();
+        let set_seeds = |args: &mut CircularPatternArgs, seeds| args.seeds = seeds;
+        let before = Seen::new(context.before);
+        (args.seeds).fields(&mut f, before.model(), set_seeds, |f| {
+            let axis = args.axis.iter().cloned().collect();
+            let roles = [Role::Line, Role::Round];
+            f.reference("axis", "axis", axis, &roles, None, false, |edit, picked| {
+                edit.args.axis = picked.first().cloned()
+            })
+            .checkbox("reversed", "reverse direction", args.reversed, |edit, b| {
+                edit.args.reversed = b
+            });
+            count_field(f, "count", &args.count, &mut seen, None, |edit, count| {
+                edit.args.count = count
+            });
+            args.angle.fields(
+                f,
+                "angle",
+                ["angle", "total angle"],
+                |label, value| {
+                    formula_number(label, value, &mut seen, Unit::Angle).range(-360.0, 360.0)
+                },
+                |args, angle| args.angle = angle,
+            );
+        });
+        f
     }
 }

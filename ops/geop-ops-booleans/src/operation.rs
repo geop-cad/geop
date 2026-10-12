@@ -7,15 +7,13 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
-use geop_core_program::{
-    editing::{Choice, Dialog, Event, Form, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
 use geop_core_topology::{Body, SolidId};
-use geop_ops::operation::Input;
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, FeatureTool, NamedModel, Namer, ParamValue, ToolReach,
-    operation::{Build, BuildReader, EntityRef, Lookup, LegacyModelStep, Role, Seen, legacy_build_model},
+    Design, FeatureTool, NamedModel, Namer, ToolReach,
+    operation::{BuildReader, EntityRef, Lookup, PartOperation, Role, Seen, StepContext},
+    part_operation,
+    ui::{Choice, Edit, EditForm, FormState},
 };
 use serde::{Deserialize, Serialize};
 
@@ -49,23 +47,9 @@ pub struct BooleanArgs {
     pub op: BooleanOp,
 }
 
-impl LegacyModelStep for Boolean {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        step: &str,
-        args: &BooleanArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("boolean({step}, {args:?})");
-        let namer = Namer::new("boolean", step)?;
-        let a = model.solid_id(&args.a).with_context(ctx)?;
-        let b = model.solid_id(&args.b).with_context(ctx)?;
-        boolean(model, &namer, a, b, args.op, RemeshParams::default()).with_context(ctx)?;
-        Ok(())
-    }
-}
+part_operation!(Boolean, Split);
 
-impl Operation for Boolean {
+impl PartOperation for Boolean {
     const INFO: OperationInfo = OperationInfo::new(
         "boolean",
         "Boolean",
@@ -75,13 +59,11 @@ impl Operation for Boolean {
     )
     .icon(crate::icons::BOOLEAN);
     type Args = BooleanArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// The difference of the two newest solids: the older cut by the one
     /// just built as a tool.
-    fn new_args(context: &Context<Input, ParamValue>) -> BooleanArgs {
+    fn new_args(context: &StepContext) -> BooleanArgs {
         let solids = Seen::new(context.before).model().solid_names();
         let newest = |back: usize| {
             (solids.len().checked_sub(back))
@@ -95,49 +77,67 @@ impl Operation for Boolean {
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &BooleanArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &BooleanArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("boolean", step)?;
+        let a = model.solid_id(&args.a)?;
+        let b = model.solid_id(&args.b)?;
+        boolean(model, &namer, a, b, args.op, RemeshParams::default())?;
+        Ok(())
     }
 
     /// The two solids, picked, and how to combine them.
-    fn presentation(_: &Context<Input, ParamValue>, args: &BooleanArgs, _: &()) -> Form<Design> {
-        let mut form = Form::default();
+    fn form<'a>(
+        _: &'a StepContext<'a>,
+        args: &BooleanArgs,
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, BooleanArgs> {
+        let mut f = EditForm::<Design, BooleanArgs>::default();
         let ops = OPS
             .iter()
             .map(|&(_, value, label, _)| Choice::new(value, label));
         let solid = |name: &String| EntityRef::of_name(EntityRef::solid, name);
-        (form.dialog)
-            .reference("a", "a", solid(&args.a), &[Role::Solid], None, false)
-            .reference("b", "b", solid(&args.b), &[Role::Solid], None, false)
-            .select("op", "op", value_of(args.op), ops.collect(), false);
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
-        args: &BooleanArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (BooleanArgs, ()) {
-        let mut args = args.clone();
-        let solid = |picked: &[EntityRef]| {
+        let picked = |picked: &[EntityRef]| {
             EntityRef::names_of(EntityRef::solid, picked)
                 .pop()
                 .unwrap_or_default()
         };
-        if let Event::Field { key, value } = event {
-            match (key.as_str(), value) {
-                ("a", Value::Entities(picked)) => args.a = solid(&picked),
-                ("b", Value::Entities(picked)) => args.b = solid(&picked),
-                ("op", Value::Choice(choice)) => {
-                    if let Some(op) = op_of(&choice) {
-                        args.op = op;
-                    }
+        let roles = &[Role::Solid];
+        f.reference(
+            "a",
+            "a",
+            solid(&args.a),
+            roles,
+            None,
+            false,
+            move |edit, p| edit.args.a = picked(&p),
+        )
+        .reference(
+            "b",
+            "b",
+            solid(&args.b),
+            roles,
+            None,
+            false,
+            move |edit, p| edit.args.b = picked(&p),
+        )
+        .select(
+            "op",
+            "op",
+            value_of(args.op),
+            ops.collect(),
+            false,
+            |edit, choice| {
+                if let Some(op) = op_of(choice) {
+                    edit.args.op = op;
                 }
-                _ => {}
-            }
-        }
-        (args, ())
+            },
+        );
+        f
     }
 }
 
@@ -207,15 +207,36 @@ impl Combine {
         }
     }
 
-    /// The field of `dialog` that picks the solid to combine with — or to
-    /// go as far as — labelled `label`, holding `target`, if any.
-    pub fn target_field<S: Scalar>(dialog: &mut Dialog<S>, label: &str, target: &[String]) {
+    /// The field that picks the solid to combine with — or to go as far
+    /// as — labelled `label`, holding `target`, if any; `set` gets the
+    /// solid picked.
+    pub fn target_field<'a, S: Scalar, A, T>(
+        f: &mut EditForm<'a, S, A, T>,
+        label: &str,
+        target: &[String],
+        set: impl Fn(Edit<'_, A, T>, Option<String>) + 'a,
+    ) {
         let picked = EntityRef::of_names(EntityRef::solid, target);
-        dialog.reference(TARGET, label, picked, &[Role::Solid], None, false);
+        f.reference(
+            TARGET,
+            label,
+            picked,
+            &[Role::Solid],
+            None,
+            false,
+            move |edit, picked| set(edit, EntityRef::last_name(EntityRef::solid, &picked)),
+        );
     }
 
-    /// Its fields in `dialog`: the mode, and the target to pick.
-    pub fn show<S: Scalar>(&self, dialog: &mut Dialog<S>) {
+    /// Its fields in `f`: the mode — chosen without a target, it takes the
+    /// newest solid of `before` — and the target to pick. `set` puts the
+    /// combination set where the arguments keep it.
+    pub fn fields<'a, S: Scalar, A, T>(
+        &self,
+        f: &mut EditForm<'a, S, A, T>,
+        before: &NamedModel<S>,
+        set: impl Fn(&mut A, Combine) + Clone + 'a,
+    ) {
         let mode = match self {
             Combine::NewBody => NEW_BODY,
             Combine::With { op, .. } => value_of(*op),
@@ -224,37 +245,32 @@ impl Combine {
             OPS.iter()
                 .map(|&(_, value, _, label)| Choice::new(value, label)),
         );
-        dialog.select("combine", "combine", mode, modes.collect(), false);
-        if let Combine::With { target, .. } = self {
-            Self::target_field(dialog, "target", std::slice::from_ref(target));
-        }
-    }
-
-    /// Its field `key` set to `value`, if `key` is one of [`Combine::show`]'s
-    /// — a mode chosen without a target takes the newest solid of `before`
-    /// — and whether it was.
-    pub fn set<S: Scalar>(&mut self, key: &str, value: &Value, before: &NamedModel<S>) -> bool {
-        match (key, value) {
-            ("combine", Value::Choice(mode)) => {
-                let target = (self.target().map(str::to_string))
-                    .or_else(|| before.newest_solid())
-                    .unwrap_or_default();
+        let target = (self.target().map(str::to_string))
+            .or_else(|| before.newest_solid())
+            .unwrap_or_default();
+        let set_mode = set.clone();
+        f.select(
+            "combine",
+            "combine",
+            mode,
+            modes.collect(),
+            false,
+            move |edit, mode| {
                 if mode == NEW_BODY {
-                    *self = Combine::NewBody;
+                    set_mode(edit.args, Combine::NewBody);
                 } else if let Some(op) = op_of(mode) {
-                    *self = Combine::With { op, target };
+                    let target = target.clone();
+                    set_mode(edit.args, Combine::With { op, target });
                 }
-                true
-            }
-            (TARGET, Value::Entities(picked)) => {
-                if let Combine::With { target, .. } = self {
-                    *target = EntityRef::names_of(EntityRef::solid, picked)
-                        .pop()
-                        .unwrap_or_default();
-                }
-                true
-            }
-            _ => false,
+            },
+        );
+        if let Combine::With { op, target } = self {
+            let op = *op;
+            let target = std::slice::from_ref(target);
+            Self::target_field(f, "target", target, move |edit, picked| {
+                let target = picked.unwrap_or_default();
+                set(edit.args, Combine::With { op, target })
+            });
         }
     }
 
@@ -472,30 +488,7 @@ pub struct SplitArgs {
     pub face: String,
 }
 
-impl LegacyModelStep for Split {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        step: &str,
-        args: &SplitArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("split({step}, {args:?})");
-        let namer = Namer::new("split", step)?;
-        let solid = model.solid_id(&args.solid).with_context(ctx)?;
-        let face = model.face_id(&args.face).with_context(ctx)?;
-        let Body::Sheet(sheet) = model.topology().body_of_face(face)? else {
-            return Err(GeopError::new(format!(
-                "{:?} is a face of a solid; cut with a face standing on its own, as an extrude or revolve builds in face mode",
-                args.face
-            )))
-            .with_context(ctx);
-        };
-        split(model, &namer, solid, sheet, RemeshParams::default()).with_context(ctx)?;
-        Ok(())
-    }
-}
-
-impl Operation for Split {
+impl PartOperation for Split {
     const INFO: OperationInfo = OperationInfo::new(
         "split",
         "Split",
@@ -505,12 +498,10 @@ impl Operation for Split {
     )
     .icon(crate::icons::SPLIT);
     type Args = SplitArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// The newest solid, cut by the newest face standing on its own.
-    fn new_args(context: &Context<Input, ParamValue>) -> SplitArgs {
+    fn new_args(context: &StepContext) -> SplitArgs {
         let seen = Seen::new(context.before);
         SplitArgs {
             solid: seen.model().newest_solid().unwrap_or_default(),
@@ -518,40 +509,57 @@ impl Operation for Split {
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &SplitArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &SplitArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("split", step)?;
+        let solid = model.solid_id(&args.solid)?;
+        let face = model.face_id(&args.face)?;
+        let Body::Sheet(sheet) = model.topology().body_of_face(face)? else {
+            return Err(GeopError::new(format!(
+                "{:?} is a face of a solid; cut with a face standing on its own, as an extrude or revolve builds in face mode",
+                args.face
+            )));
+        };
+        split(model, &namer, solid, sheet, RemeshParams::default())?;
+        Ok(())
     }
 
     /// The solid and the face, picked.
-    fn presentation(_: &Context<Input, ParamValue>, args: &SplitArgs, _: &()) -> Form<Design> {
-        let mut form = Form::default();
+    fn form<'a>(
+        _: &'a StepContext<'a>,
+        args: &SplitArgs,
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, SplitArgs> {
+        let mut f = EditForm::<Design, SplitArgs>::default();
         let solid = EntityRef::of_name(EntityRef::solid, &args.solid);
         let face = EntityRef::of_name(EntityRef::face, &args.face);
-        (form.dialog)
-            .reference("solid", "solid", solid, &[Role::Solid], None, false)
-            .reference("face", "face", face, &[Role::Sheet], None, false);
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
-        args: &SplitArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (SplitArgs, ()) {
-        let mut args = args.clone();
-        if let Event::Field { key, value } = event {
-            match (key.as_str(), value) {
-                ("solid", Value::Entities(picked)) => {
-                    args.solid =
-                        EntityRef::last_name(EntityRef::solid, &picked).unwrap_or_default();
-                }
-                ("face", Value::Entities(picked)) => {
-                    args.face = EntityRef::last_name(EntityRef::face, &picked).unwrap_or_default();
-                }
-                _ => {}
-            }
-        }
-        (args, ())
+        f.reference(
+            "solid",
+            "solid",
+            solid,
+            &[Role::Solid],
+            None,
+            false,
+            |edit, picked| {
+                edit.args.solid =
+                    EntityRef::last_name(EntityRef::solid, &picked).unwrap_or_default();
+            },
+        )
+        .reference(
+            "face",
+            "face",
+            face,
+            &[Role::Sheet],
+            None,
+            false,
+            |edit, picked| {
+                edit.args.face = EntityRef::last_name(EntityRef::face, &picked).unwrap_or_default();
+            },
+        );
+        f
     }
 }

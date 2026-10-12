@@ -6,23 +6,21 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     with_context,
 };
-use geop_core_program::{
-    editing::{Event, Form},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    EntityRef, Namer, ORIGIN, ParamValue,
+    Design, EntityRef, Namer, ORIGIN,
     model::pose_parameter,
-    operation::{Build, BuildReader, Input, instance_path},
+    operation::{Build, BuildReader, PartOperation, StepContext, instance_path},
     parameters::Values,
+    part_operation,
     placed::{Instance, Placement, instance, library},
-    ui::{self, Listed, Listing, listing},
+    ui::{self, CanvasEvent, Edit, EditForm, Listed, Listing, listing},
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     Mate, Resolved,
-    editor::{self, PartEditing},
+    editor::{self, PartEditing, PartSession},
     mate,
     mechanism::{define, mates_of, resolve},
 };
@@ -117,7 +115,9 @@ fn carry(_: &mut BuildReader, resolved: &Resolved) -> GeopResult<Resolved> {
     Ok(resolved.clone())
 }
 
-impl Operation for AddPart {
+part_operation!(AddPart);
+
+impl PartOperation for AddPart {
     const INFO: OperationInfo = OperationInfo::new(
         "add_part",
         "Part",
@@ -128,18 +128,21 @@ impl Operation for AddPart {
     .picks_built()
     .icon(crate::icons::ADD_PART);
     type Args = AddPartArgs;
-    type EditingState = PartEditing;
-    type Input = Input;
-    type State = ParamValue;
+    type Session = PartSession;
 
     /// No file yet; the first part placed is fixed, the ones after it are
     /// not — something has to stay put for the others to mate to.
-    fn new_args(context: &Context<Input, ParamValue>) -> AddPartArgs {
+    fn new_args(context: &StepContext) -> AddPartArgs {
         let args = AddPartArgs::default();
         match context.before.targets_of::<Instance>().is_empty() {
             true => args.fixed(),
             false => args,
         }
+    }
+
+    /// Pulls released at the event before are let go of.
+    fn begin_event(session: &mut PartSession) {
+        session.let_go();
     }
 
     /// Places the part, then defines each mate: resolved, and as a
@@ -208,21 +211,22 @@ impl Operation for AddPart {
     }
 
     /// The file, where it goes, and its mates: see [`crate::editor`].
-    fn presentation(
-        context: &Context<Input, ParamValue>,
+    fn form<'a>(
+        context: &'a StepContext<'a>,
         args: &AddPartArgs,
         editing: &PartEditing,
-    ) -> Form<geop_ops::Design> {
-        editor::form(context, args, editing).into_form()
+    ) -> EditForm<'a, Design, AddPartArgs, PartSession> {
+        editor::form(context, args, &editing.session)
     }
 
-    fn process_user_event(
-        context: &Context<Input, ParamValue>,
-        args: &AddPartArgs,
-        editing: &PartEditing,
-        event: Event<geop_ops::Design>,
-    ) -> (AddPartArgs, PartEditing) {
-        editor::process(context, args, editing, event)
+    /// The part dragged; Delete removes the mate selected, Escape stops
+    /// editing it: see [`crate::editor`].
+    fn canvas(
+        context: &StepContext,
+        edit: Edit<'_, AddPartArgs, PartSession>,
+        event: &CanvasEvent<Design>,
+    ) {
+        editor::canvas(context, edit, event)
     }
 }
 

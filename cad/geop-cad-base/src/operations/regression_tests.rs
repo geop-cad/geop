@@ -22,7 +22,7 @@ use crate::{Program, Push};
 /// Checks the part `program` builds is valid (see [`assert_valid`]) and is
 /// drawn as it is (see [`assert_draws_its_trims`]).
 fn assert_builds_valid(program: &Program) {
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_draws_its_trims(&part);
 }
@@ -598,7 +598,7 @@ fn torus_up_to_next(bracket: &Bracket, around_x_axis: bool, stopped_all_round: b
                 torus_turned_up_to_next(bracket, around_x_axis, reversed, combine.clone());
             let case = format!("around_x_axis={around_x_axis}, reversed={reversed}, {combine:?}");
             if combine == Combine::NewBody && !stopped_all_round {
-                match program.legacy_build_model() {
+                match program.build_model() {
                     Err(e) if e.root_message().contains("nothing stops the profile") => {}
                     other => failures.push(format!("{case}: not refused: {:?}", other.err())),
                 }

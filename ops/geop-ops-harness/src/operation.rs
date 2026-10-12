@@ -6,18 +6,16 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::{
-    editing::{Event, Form},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-    part::Retrieve,
-};
+use geop_core_program::part::Retrieve;
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, NamedModel, Namer, ParamValue,
+    Design, NamedModel, Namer,
     model::model,
     operation::{
-        Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, Role, Scope, Seen, legacy_build_model,
-        frame_along,
+        Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Scope, Seen, StepContext,
+        build_model, frame_along,
     },
+    part_operation,
     solids::{CutWire, SolidNotes, solid_notes},
     ui::{
         Action, Choice, Edit, EditForm, FormState, ListItem, Number, Shape, Style, Tone, Unit,
@@ -207,14 +205,13 @@ fn sweep<S: Scalar>(
     step: &str,
     args: &RouteArgs,
 ) -> GeopResult<()> {
-    let ctx = with_context!("route({step}, {args:?})");
     let namer = Namer::new("route", step)?;
-    let plan = args.plan(lookup).with_context(ctx)?;
-    plan.check_bends(args.bend_factor).with_context(ctx)?;
+    let plan = args.plan(lookup)?;
+    plan.check_bends(args.bend_factor)?;
     // The bundle's section, square to the route where it starts.
     let chain = &plan.path.chain;
     let start = chain.joints()?[0];
-    let plane = frame_along(start, &chain.curves[0].tangent(S::ZERO)?).with_context(ctx)?;
+    let plane = frame_along(start, &chain.curves[0].tangent(S::ZERO)?)?;
     let section = SweepLoop::plain(Profile::closed(circle_at(0.0, 0.0, plan.diameter / 2.0)?));
     let name = namer.root();
     sweep_along(
@@ -225,8 +222,7 @@ fn sweep<S: Scalar>(
         &plane,
         &[section],
         &Control::default(),
-    )
-    .with_context(ctx)?;
+    )?;
     Ok(())
 }
 
@@ -273,22 +269,6 @@ pub(crate) fn lay<S: Scalar>(
     cable(&mut &before, args)
 }
 
-impl LegacyModelStep for Route {
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &RouteArgs,
-    ) -> GeopResult<()> {
-        let before = model.clone();
-        let mut scope = Scope {
-            model: &before,
-            reader,
-        };
-        sweep(model, &mut scope, step, args)
-    }
-}
-
 /// Records the cable `route(R)` of the step `R`, through its points in the
 /// model it swept the bundle into.
 fn record(
@@ -326,7 +306,7 @@ fn note(mut notes: SolidNotes, reader: &mut BuildReader, step: &String) -> GeopR
 /// loop; what was built — and the route drawn, its points numbered and its
 /// bends too tight marked.
 fn form<'a>(
-    context: &Context<'a, Input, ParamValue>,
+    context: &StepContext<'a>,
     seen: &mut Seen<'_>,
     args: &RouteArgs,
     session: &RouteSession,
@@ -502,7 +482,9 @@ fn form<'a>(
     f
 }
 
-impl Operation for Route {
+part_operation!(Route);
+
+impl PartOperation for Route {
     const INFO: OperationInfo = OperationInfo::new(
         "route",
         "Route",
@@ -513,13 +495,11 @@ impl Operation for Route {
     .experimental()
     .icon(crate::icons::ROUTE);
     type Args = RouteArgs;
-    type EditingState = RouteEditing;
-    type Input = Input;
-    type State = ParamValue;
+    type Session = RouteSession;
 
     /// Nothing picked yet; one hookup wire, filling three quarters of the
     /// bundle, bent no tighter than five diameters.
-    fn new_args(_: &Context<Input, ParamValue>) -> RouteArgs {
+    fn new_args(_: &StepContext) -> RouteArgs {
         RouteArgs {
             through: Vec::new(),
             wires: vec![Wire::new("w1")],
@@ -531,33 +511,32 @@ impl Operation for Route {
 
     /// Sweeps the bundle, then records its cable, and notes the bundle.
     fn run(step: &str, part: &mut Build, args: &RouteArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)?;
+        build_model::<Self>(part, step, args)?;
         part.revise_or_start(&cables(), &(step.to_string(), args.clone()), record)?;
         part.revise_or_start(&solid_notes(), &step.to_string(), note)
     }
 
-    fn presentation(
-        context: &Context<Input, ParamValue>,
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
         args: &RouteArgs,
-        editing: &RouteEditing,
-    ) -> Form<Design> {
-        let mut seen = Seen::new(context.before);
-        form(context, &mut seen, args, &editing.session).into_form()
+    ) -> GeopResult<()> {
+        let before = model.clone();
+        let mut scope = Scope {
+            model: &before,
+            reader,
+        };
+        sweep(model, &mut scope, step, args)
     }
 
-    fn process_user_event(
-        context: &Context<Input, ParamValue>,
+    fn form<'a>(
+        context: &'a StepContext<'a>,
         args: &RouteArgs,
         editing: &RouteEditing,
-        event: Event<Design>,
-    ) -> (RouteArgs, RouteEditing) {
+    ) -> EditForm<'a, Design, RouteArgs, RouteSession> {
         let mut seen = Seen::new(context.before);
-        editing.handle(
-            args,
-            event,
-            |args, e| form(context, &mut seen, args, &e.session),
-            |_, _| {},
-        )
+        form(context, &mut seen, args, &editing.session)
     }
 }
 

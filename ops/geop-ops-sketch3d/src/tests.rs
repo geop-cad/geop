@@ -10,8 +10,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::{
-    editing::{Event, Form},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+    operation::{OperationGroup, OperationInfo, OperationTier},
     operation_registry::OperationRegistry,
     program::{Program, ProgramStep},
     program_runner::ProgramRunner,
@@ -21,8 +20,12 @@ use geop_core_sketch::space::{Constraint3d, CurveKind3d};
 use geop_ops::{
     Design, NamedModel, ORIGIN, ParamValue,
     model::{model, sketch3d},
-    operation::{Build, EntityRef, Input, Seen, apply},
-    ui::{Button, PartScene, PartView, Pointer, Presentation, Reach, StepEditEvent, Value},
+    operation::{BuildReader, EntityRef, Input, PartOperation, Seen, StepContext, apply},
+    part_operation,
+    ui::{
+        Button, EditForm, FormState, PartScene, PartView, Pointer, Presentation, Reach,
+        StepEditEvent, Value,
+    },
 };
 use geop_ops_extrude_revolve::shapes::cube_solid;
 
@@ -64,11 +67,9 @@ fn cube(min: [f64; 3], max: [f64; 3]) -> NamedModel<Design> {
 /// `cube(b)`: what a 3-D sketch is drawn on.
 struct Boxed;
 
-fn boxed(_: &mut geop_ops::operation::BuildReader, _: &()) -> GeopResult<NamedModel<Design>> {
-    Ok(cube([1.0, 1.0, 0.0], [2.0, 2.0, 1.0]))
-}
+part_operation!(Boxed);
 
-impl Operation for Boxed {
+impl PartOperation for Boxed {
     const INFO: OperationInfo = OperationInfo::new(
         "boxed",
         "Box",
@@ -77,27 +78,22 @@ impl Operation for Boxed {
         OperationTier::Menu,
     );
     type Args = ();
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
-    fn new_args(_: &Context<Input, ParamValue>) {}
+    fn new_args(_: &StepContext) {}
 
-    fn run(_: &str, part: &mut Build, args: &()) -> GeopResult<()> {
-        part.define_target(&model(), args, boxed)
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        _: &str,
+        _: &(),
+    ) -> GeopResult<()> {
+        *model = cube([1.0, 1.0, 0.0], [2.0, 2.0, 1.0]);
+        Ok(())
     }
 
-    fn presentation(_: &Context<Input, ParamValue>, _: &(), _: &()) -> Form<Design> {
-        Form::default()
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
-        _: &(),
-        _: &(),
-        _: Event<Design>,
-    ) -> ((), ()) {
-        ((), ())
+    fn form<'a>(_: &'a StepContext<'a>, _: &(), _: &FormState<()>) -> EditForm<'a, Design, ()> {
+        EditForm::default()
     }
 }
 

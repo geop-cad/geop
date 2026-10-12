@@ -30,25 +30,22 @@ use geop_core_geometry::{
     nurb_surface::NurbSurface3D,
 };
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
+    geop_error::{GeopError, GeopResult},
     scalars::Scalar,
-    with_context,
-};
-use geop_core_program::{
-    editing::{Event, Form, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
 };
 use geop_core_topology::{
     Sense,
     build::{BodySpec, CoedgeOn, EdgeSpec, FaceSpec},
     distance::{Feature, closest_points},
 };
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    BodyNames, Design, NamedModel, Namer, ParamValue,
+    BodyNames, Design, NamedModel, Namer,
     operation::{
-        Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, ResolveEntity, Role, Scope,
-        legacy_build_model,
+        BuildReader, EntityRef, Lookup, PartOperation, ResolveEntity, Role, Scope, StepContext,
     },
+    part_operation,
+    ui::{EditForm, FormState},
 };
 use serde::{Deserialize, Serialize};
 
@@ -74,28 +71,9 @@ pub struct NetworkSurfaceArgs {
     pub v_curves: Vec<EntityRef>,
 }
 
-impl LegacyModelStep for NetworkSurface {
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &NetworkSurfaceArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("network_surface({step}, {args:?})");
-        let namer = Namer::new("network", step)?;
-        let (spec, names) = network_surface(
-            &mut Scope { model, reader },
-            &namer,
-            &args.u_curves,
-            &args.v_curves,
-        )
-        .with_context(ctx)?;
-        model.build_body(spec, names).with_context(ctx)?;
-        Ok(())
-    }
-}
+part_operation!(NetworkSurface);
 
-impl Operation for NetworkSurface {
+impl PartOperation for NetworkSurface {
     const INFO: OperationInfo = OperationInfo::new(
         "network_surface",
         "UV surface",
@@ -106,58 +84,57 @@ impl Operation for NetworkSurface {
     .experimental()
     .icon(crate::icons::NETWORK_SURFACE);
     type Args = NetworkSurfaceArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// Nothing picked yet.
-    fn new_args(_: &Context<Input, ParamValue>) -> NetworkSurfaceArgs {
+    fn new_args(_: &StepContext) -> NetworkSurfaceArgs {
         NetworkSurfaceArgs::default()
     }
 
-    fn run(step: &str, part: &mut Build, args: &NetworkSurfaceArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &NetworkSurfaceArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("network", step)?;
+        let (spec, names) = network_surface(
+            &mut Scope { model, reader },
+            &namer,
+            &args.u_curves,
+            &args.v_curves,
+        )?;
+        model.build_body(spec, names)?;
+        Ok(())
     }
 
     /// The curves of each direction, picked.
-    fn presentation(
-        _: &Context<Input, ParamValue>,
+    fn form<'a>(
+        _: &'a StepContext<'a>,
         args: &NetworkSurfaceArgs,
-        _: &(),
-    ) -> Form<Design> {
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
-        let u = args.u_curves.clone();
-        (dialog.reference("u_curves", "u curves", u, &[Role::Curve], None, true)).reference(
-            "v_curves",
-            "v curves",
-            args.v_curves.clone(),
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, NetworkSurfaceArgs> {
+        let mut f = EditForm::<Design, NetworkSurfaceArgs>::default();
+        let (u, v) = (args.u_curves.clone(), args.v_curves.clone());
+        f.reference(
+            "u_curves",
+            "u curves",
+            u,
             &[Role::Curve],
             None,
             true,
+            |edit, picked| edit.args.u_curves = picked,
         );
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
-        args: &NetworkSurfaceArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (NetworkSurfaceArgs, ()) {
-        let mut args = args.clone();
-        if let Event::Field {
-            key,
-            value: Value::Entities(picked),
-        } = event
-        {
-            match key.as_str() {
-                "u_curves" => args.u_curves = picked,
-                "v_curves" => args.v_curves = picked,
-                _ => {}
-            }
-        }
-        (args, ())
+        f.reference(
+            "v_curves",
+            "v curves",
+            v,
+            &[Role::Curve],
+            None,
+            true,
+            |edit, picked| edit.args.v_curves = picked,
+        );
+        f
     }
 }
 

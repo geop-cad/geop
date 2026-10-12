@@ -32,9 +32,9 @@ use geop_core_sketch::{Shape, Sketch};
 use geop_core_topology::{SolidId, build::BuiltBody};
 use geop_ops::{
     Design, NamedModel, Namer, ToolReach,
-    operation::{BuildReader, EntityRef, Lookup, Scope},
+    operation::{BuildReader, Lookup, Scope},
     parameters::{Formula, expressions},
-    ui::{Dialog, Number, Value},
+    ui::{Edit, EditForm, Number},
 };
 use geop_ops_booleans::{
     Combine, Extent, Tool,
@@ -106,54 +106,51 @@ impl Output {
         }
     }
 
-    /// Its fields in `dialog`: whether faces; for a solid, how to combine
-    /// it; for faces going as far as a solid, `reaches`, which solid.
-    pub(crate) fn show<S: Scalar>(&self, dialog: &mut Dialog<S>, reaches: bool) {
-        let faces = matches!(self, Output::Faces { .. });
-        dialog.checkbox("face", "face", faces);
-        match self {
-            Output::Solid(combine) => combine.show(dialog),
-            Output::Faces { up_to } if reaches => {
-                Combine::target_field(dialog, "up to solid", up_to.as_slice());
-            }
-            Output::Faces { .. } => {}
-        }
-    }
-
-    /// Its field `key` set to `value`, if `key` is one of
-    /// [`Output::show`]'s, and whether it was. Faces turned into a solid
-    /// join the solid they went up to — or, if none, are combined as
+    /// Its fields in `f`: whether faces; for a solid, how to combine it;
+    /// for faces going as far as a solid, `reaches`, which solid. `set`
+    /// puts the output set where the arguments keep it. Faces turned into a
+    /// solid join the solid they went up to — or, if none, are combined as
     /// [`Output::new_for`] `before`; a solid turned into faces goes up to
     /// what it was combined with.
-    pub(crate) fn set<S: Scalar>(
-        &mut self,
-        key: &str,
-        value: &Value,
+    pub(crate) fn fields<'a, S: Scalar, A, T>(
+        &self,
+        f: &mut EditForm<'a, S, A, T>,
         before: &NamedModel<S>,
-    ) -> bool {
-        match (key, value, &mut *self) {
-            ("face", Value::Bool(true), Output::Solid(combine)) => {
-                let up_to = combine.target().map(str::to_string);
-                *self = Output::Faces { up_to };
-                true
+        reaches: bool,
+        set: impl Fn(&mut A, Output) + Clone + 'a,
+    ) {
+        let faces = matches!(self, Output::Faces { .. });
+        // What the other way round is: faces of a solid, a solid of faces.
+        let turned = match self {
+            Output::Solid(combine) => Output::Faces {
+                up_to: combine.target().map(str::to_string),
+            },
+            Output::Faces {
+                up_to: Some(target),
+            } => Output::Solid(Combine::With {
+                op: BooleanOp::Union,
+                target: target.clone(),
+            }),
+            Output::Faces { up_to: None } => Output::new_for(before),
+        };
+        let set_faces = set.clone();
+        f.checkbox("face", "face", faces, move |edit, checked| {
+            if checked != faces {
+                set_faces(edit.args, turned.clone());
             }
-            ("face", Value::Bool(false), Output::Faces { up_to }) => {
-                *self = match up_to.take() {
-                    Some(target) => Output::Solid(Combine::With {
-                        op: BooleanOp::Union,
-                        target,
-                    }),
-                    None => Output::new_for(before),
-                };
-                true
+        });
+        match self {
+            Output::Solid(combine) => {
+                combine.fields(f, before, move |args, combine| {
+                    set(args, Output::Solid(combine))
+                });
             }
-            ("face", Value::Bool(_), _) => true,
-            (key, value, Output::Solid(combine)) => combine.set(key, value, before),
-            ("combine_target", Value::Entities(picked), Output::Faces { up_to }) => {
-                *up_to = EntityRef::last_name(EntityRef::solid, picked);
-                true
+            Output::Faces { up_to } if reaches => {
+                Combine::target_field(f, "up to solid", up_to.as_slice(), move |edit, up_to| {
+                    set(edit.args, Output::Faces { up_to })
+                });
             }
-            _ => false,
+            Output::Faces { .. } => {}
         }
     }
 
@@ -262,73 +259,59 @@ impl Extents {
     /// The fields to say how far: how the first side ends and, blind, how
     /// far — typed, as a number or a formula of the part's parameters, or
     /// dragged on its handle — whether it is turned the other way, whether
-    /// symmetric, and unless so, the other side the same way.
-    /// `amount(length, second)` makes a side's number field (see
-    /// [`geop_ops::ui::formula_number`]), keyed `key` for the first side and
-    /// `key2` for the second.
-    pub(crate) fn show<S: Scalar>(
+    /// symmetric, and unless so, the other side the same way, a side turned
+    /// blind starting `default` far. `amount(length, second)` makes a
+    /// side's number field (see [`geop_ops::ui::formula_number`]), keyed
+    /// `key` for the first side and `key2` for the second; `get` finds the
+    /// extents in the arguments. The first side's length is `length`'s to
+    /// set, which an operation may want to react to.
+    pub(crate) fn fields<'a, S: Scalar, A, T>(
         &self,
-        dialog: &mut Dialog<S>,
-        key: &str,
+        f: &mut EditForm<'a, S, A, T>,
+        (key, default): (&str, f64),
         mut amount: impl FnMut(&Formula, bool) -> Number<S>,
+        get: impl Fn(&mut A) -> &mut Extents + Copy + 'a,
+        length: impl Fn(Edit<'_, A, T>, Formula) + 'a,
     ) {
         let side1 = Extent::mode(Some(&self.side1));
-        dialog.select("end", "end", side1, Extent::choices(false), false);
+        let choices = Extent::choices(false);
+        f.select("end", "end", side1, choices, false, move |edit, mode| {
+            let extents = get(edit.args);
+            if let Some(extent) = Extent::pick(Some(&extents.side1), mode, default) {
+                extents.side1 = extent;
+            }
+        });
         if let Extent::Blind(d) = &self.side1 {
-            dialog.number(key, amount(d, false));
+            f.formula(key, amount(d, false), length);
         }
-        (dialog.checkbox("reversed", "reverse direction", self.reversed)).checkbox(
-            "symmetric",
-            "symmetric",
-            self.symmetric,
-        );
+        let reversed = self.reversed;
+        f.checkbox("reversed", "reverse direction", reversed, move |edit, b| {
+            get(edit.args).reversed = b
+        })
+        .checkbox("symmetric", "symmetric", self.symmetric, move |edit, b| {
+            get(edit.args).symmetric = b
+        });
         if self.symmetric {
             return;
         }
         let second = Extent::mode(self.side2.as_ref());
-        dialog.select(
+        let choices = Extent::choices(true);
+        f.select(
             "second",
             "second side",
             second,
-            Extent::choices(true),
+            choices,
             false,
+            move |edit, mode| {
+                let extents = get(edit.args);
+                extents.side2 = Extent::pick(extents.side2.as_ref(), mode, default);
+            },
         );
         if let Some(Extent::Blind(d)) = &self.side2 {
-            dialog.number(&format!("{key}2"), amount(d, true));
+            f.formula(&format!("{key}2"), amount(d, true), move |edit, length| {
+                get(edit.args).side2 = Some(Extent::Blind(length))
+            });
         }
-    }
-
-    /// Its field `field` of those [`Extents::show`] shows, keyed `key`, set
-    /// to `value` — a side turned blind starts `default` far — and whether
-    /// it was one. The first side's length is the caller's to set (see
-    /// [`Extents::set_length`]), which an operation may want to react to.
-    pub(crate) fn set(&mut self, key: &str, field: &str, value: &Value, default: f64) -> bool {
-        match (field, value) {
-            ("end", Value::Choice(mode)) => {
-                if let Some(extent) = Extent::pick(Some(&self.side1), mode, default) {
-                    self.side1 = extent;
-                }
-            }
-            ("reversed", Value::Bool(b)) => self.reversed = *b,
-            ("symmetric", Value::Bool(b)) => self.symmetric = *b,
-            ("second", Value::Choice(mode)) => {
-                self.side2 = Extent::pick(self.side2.as_ref(), mode, default);
-            }
-            (field, value) if field == format!("{key}2") => {
-                if let Some(length) = Formula::from_value(value) {
-                    self.side2 = Some(Extent::Blind(length));
-                }
-            }
-            _ => return false,
-        }
-        true
-    }
-
-    /// The first side's length, if `value` sets one: what it was set from,
-    /// for an operation that reacts to the change.
-    pub(crate) fn set_length(&mut self, value: &Value) -> Option<Extent> {
-        let length = Formula::from_value(value)?;
-        Some(std::mem::replace(&mut self.side1, Extent::Blind(length)))
     }
 }
 

@@ -12,7 +12,7 @@ use geop_core_math::{
 };
 use geop_ops::{
     Design,
-    operation::{Role, Seen},
+    operation::{BuildView, Role, Seen},
     parameters::Formula,
     ui::{Action, CanvasEvent, Change, Edit, EditForm, Gizmo, Tone, Track, formula_number},
 };
@@ -139,9 +139,10 @@ fn follow_selection(seen: &Seen, args: &mut AddDatumArgs) {
 /// saying what they need, and the construction's values, offsets with
 /// handles.
 pub(crate) fn form<'a>(
-    seen: &'a Seen<'a>,
+    view: BuildView<'a>,
     args: &AddDatumArgs,
 ) -> EditForm<'a, Design, AddDatumArgs> {
+    let seen = &Seen::new(view);
     let mut f = EditForm::<Design, AddDatumArgs>::default();
     let fits = fitting_constructions(&mut { seen }, &args.selection);
     f.reference(
@@ -153,7 +154,7 @@ pub(crate) fn form<'a>(
         true,
         move |edit, selection| {
             edit.args.selection = selection;
-            follow_selection(seen, edit.args);
+            follow_selection(&Seen::new(view), edit.args);
         },
     );
 

@@ -21,13 +21,13 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{
-    editing::{Event, Form},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+    operation::{OperationGroup, OperationInfo, OperationTier},
     step_editor::DRAG_SNAP,
 };
 use geop_ops::{
-    Design, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, Input, LegacyModelStep, legacy_build_model},
+    Design, NamedModel, Namer,
+    operation::{BuildReader, PartOperation, StepContext},
+    part_operation,
     ui::{
         Action, CanvasEvent, Edit, EditForm, FormState, Gizmo, Number, Shape, Style, Tone, Unit,
         Visual, choices, chosen,
@@ -576,18 +576,9 @@ pub fn build_subd<S: Scalar>(
     Ok(())
 }
 
-impl LegacyModelStep for Subd {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        step: &str,
-        args: &SubdArgs,
-    ) -> GeopResult<()> {
-        build_subd(model, step, args)
-    }
-}
+part_operation!(Subd);
 
-impl Operation for Subd {
+impl PartOperation for Subd {
     const INFO: OperationInfo = OperationInfo::new(
         "subd",
         "SubD",
@@ -597,36 +588,34 @@ impl Operation for Subd {
     )
     .icon(crate::icons::SUBD);
     type Args = SubdArgs;
-    type EditingState = SubdEditing;
-    type Input = Input;
-    type State = ParamValue;
+    type Session = SubdSession;
 
     /// A box cage, two units a side, around the origin.
-    fn new_args(_: &Context<Input, ParamValue>) -> SubdArgs {
+    fn new_args(_: &StepContext) -> SubdArgs {
         SubdArgs {
             cage: Cage::cuboid([2.0, 2.0, 2.0]),
             mirror: Mirror::None,
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &SubdArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &SubdArgs,
+    ) -> GeopResult<()> {
+        build_subd(model, step, args)
     }
 
-    fn presentation(
-        _: &Context<Input, ParamValue>,
+    fn form<'a>(
+        _: &'a StepContext<'a>,
         args: &SubdArgs,
         editing: &SubdEditing,
-    ) -> Form<Design> {
-        form(args, &editing.session, &editing.selection).into_form()
+    ) -> EditForm<'a, Design, SubdArgs, SubdSession> {
+        form(args, &editing.session, &editing.selection)
     }
 
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
-        args: &SubdArgs,
-        editing: &SubdEditing,
-        event: Event<Design>,
-    ) -> (SubdArgs, SubdEditing) {
-        editing.handle(args, event, |a, e| form(a, &e.session, &e.selection), on_canvas)
+    fn canvas(_: &StepContext, edit: Edit<'_, SubdArgs, SubdSession>, event: &CanvasEvent<Design>) {
+        on_canvas(edit, event)
     }
 }

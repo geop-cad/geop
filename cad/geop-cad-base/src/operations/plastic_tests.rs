@@ -91,7 +91,7 @@ fn enclosure_outside_drafted() {
     let mut program = enclosure();
     let walls: Vec<String> = WALLS.iter().map(|c| wall(c)).collect();
     program.push("d", draft(&walls, 3.0));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     // The top of the +x wall leans in, the bottom stays.
     let top = part.vertex_id("extrude(box,outline,p2,end)").unwrap();
@@ -109,7 +109,7 @@ fn enclosure_inside_drafted() {
         .map(|c| format!("shell(s,{})", wall(c)))
         .collect();
     program.push("d", draft(&walls, 1.0));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
 }
 
@@ -128,7 +128,7 @@ fn enclosure_with_a_port_drafted() {
         extrusion("port_sketch", Extents::blind(-0.5), cut("shell(s)")),
     );
     program.push("d", draft(&[wall("c5")], 5.0));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
 }
 
@@ -141,7 +141,7 @@ fn wall_next_to_a_fillet_is_refused() {
         FilletArgs::constant(vec!["extrude(box,outline,p1)".into()], 0.2),
     );
     program.push("d", draft(&[wall("c4")], 3.0));
-    let Err(error) = program.legacy_build_model() else {
+    let Err(error) = program.build_model() else {
         panic!("drafting next to a fillet is refused");
     };
     let message = format!("{error}");
@@ -170,7 +170,7 @@ fn enclosure_lip_and_groove() {
             height: 0.1,
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert!(part.solid_id("lip(l)").is_ok());
 
@@ -185,7 +185,7 @@ fn enclosure_lip_and_groove() {
             clearance: 0.02,
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert!(part.solid_id("groove(g)").is_ok());
 }
@@ -205,7 +205,7 @@ fn lip_ending_at_a_corner_is_refused() {
             height: 0.1,
         },
     );
-    let Err(error) = program.legacy_build_model() else {
+    let Err(error) = program.build_model() else {
         panic!("a lip ending at a corner is refused");
     };
     let message = format!("{error}");
@@ -225,7 +225,7 @@ fn lip_along_opposite_edges_is_refused() {
             height: 0.1,
         },
     );
-    let Err(error) = program.legacy_build_model() else {
+    let Err(error) = program.build_model() else {
         panic!("a lip along two separate edges is refused");
     };
     let message = format!("{error}");
@@ -272,7 +272,7 @@ fn rib(direction: RibDirection, side: RibSide, flipped: bool) -> RibArgs {
 fn enclosure_rib() {
     let mut program = enclosure_with_rib_sketch();
     program.push("r", rib(RibDirection::Parallel, RibSide::Symmetric, true));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert!(part.solid_id("rib(r)").is_ok());
 }
@@ -283,7 +283,7 @@ fn enclosure_rib() {
 fn rib_out_of_the_top_is_refused() {
     let mut program = enclosure_with_rib_sketch();
     program.push("r", rib(RibDirection::Parallel, RibSide::First, false));
-    let Err(error) = program.legacy_build_model() else {
+    let Err(error) = program.build_model() else {
         panic!("a rib out of the top is refused");
     };
     let message = format!("{error}");
@@ -313,7 +313,7 @@ fn enclosure_rib_normal_to_its_sketch() {
     s.add_line(a, b);
     program.push("rib_sketch", sketch(EntityRef::datum("level"), s));
     program.push("r", rib(RibDirection::Normal, RibSide::Symmetric, true));
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
 }
 
@@ -329,7 +329,7 @@ fn plastic_sweep() {
             args.thickness = thickness;
             program.push("r", args);
             let part = program
-                .legacy_build_model()
+                .build_model()
                 .unwrap_or_else(|e| panic!("rib {thickness} {side:?}: {e}"));
             assert_valid_case(&part, &format!("rib {thickness} {side:?}"));
         }
@@ -346,7 +346,7 @@ fn plastic_sweep() {
             },
         );
         assert_valid_case(
-            &program.legacy_build_model().unwrap(),
+            &program.build_model().unwrap(),
             &format!("lip {width} {height}"),
         );
         let mut program = enclosure();
@@ -361,7 +361,7 @@ fn plastic_sweep() {
             },
         );
         let part = program
-            .legacy_build_model()
+            .build_model()
             .unwrap_or_else(|e| panic!("groove {width} {height} {clearance}: {e}"));
         assert_valid_case(&part, &format!("groove {width} {height} {clearance}"));
     }
@@ -370,7 +370,7 @@ fn plastic_sweep() {
         let walls: Vec<String> = WALLS.iter().map(|c| wall(c)).collect();
         program.push("d", draft(&walls, angle));
         let part = program
-            .legacy_build_model()
+            .build_model()
             .unwrap_or_else(|e| panic!("draft {angle}: {e}"));
         assert_valid_case(&part, &format!("draft {angle}"));
     }
@@ -398,7 +398,7 @@ fn narrow_groove() {
             clearance: 0.0,
         },
     );
-    assert_valid(&program.legacy_build_model().unwrap());
+    assert_valid(&program.build_model().unwrap());
 }
 
 /// Drafted 15 degrees, the enclosure's 0.2 thick walls would lean in by
@@ -408,7 +408,7 @@ fn too_steep_a_draft_is_refused() {
     let mut program = enclosure();
     let walls: Vec<String> = WALLS.iter().map(|c| wall(c)).collect();
     program.push("d", draft(&walls, 15.0));
-    let Err(error) = program.legacy_build_model() else {
+    let Err(error) = program.build_model() else {
         panic!("a draft crossing the walls is refused");
     };
     let message = format!("{error}");

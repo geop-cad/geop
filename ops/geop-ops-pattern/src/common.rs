@@ -11,11 +11,11 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::Body;
-use geop_ops::ui::{Dialog, Form, Track, Value};
+use geop_ops::ui::{Edit, EditForm, Track};
 use geop_ops::{
     Design, NamedModel, Namer, ToolReach,
     operation::{
-        Build, BuildReader, EntityRef, Lookup, LegacyModelStep, Role, Scope, Seen, legacy_build_model,
+        Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Scope, Seen, build_model,
         resolve_bodies,
     },
 };
@@ -24,10 +24,14 @@ use geop_ops_booleans::{Combine, Tool, boolean::Reach};
 use serde::{Deserialize, Serialize};
 
 /// The field picking the bodies a step acts on, keyed `bodies`: solids,
-/// and sheets by one of their faces.
-pub(crate) fn bodies_field<S: Scalar>(dialog: &mut Dialog<S>, bodies: &[EntityRef]) {
+/// and sheets by one of their faces. `set` gets the bodies picked.
+pub(crate) fn bodies_field<'a, A>(
+    f: &mut EditForm<'a, Design, A>,
+    bodies: &[EntityRef],
+    set: impl Fn(Edit<'_, A, ()>, Vec<EntityRef>) + 'a,
+) {
     let roles = [Role::Solid, Role::Sheet];
-    dialog.reference("bodies", "bodies", bodies.to_vec(), &roles, None, true);
+    f.reference("bodies", "bodies", bodies.to_vec(), &roles, None, true, set);
 }
 
 /// What a pattern repeats: `bodies` — kept as new bodies, or combined as
@@ -65,55 +69,68 @@ impl Seeds {
         }
     }
 
-    /// Its fields in `form`, around those `own` adds: first the bodies (see
+    /// Its fields in `f`, around those `own` adds: first the bodies (see
     /// [`bodies_field`]) or the features, keyed `features`, each by a face
     /// it made — a hole by its wall — and last, of bodies, how to combine
-    /// them. A step repeats one or the other, so only the one in use waits
-    /// for picks (see [`Seeds::set`]).
-    pub(crate) fn show<S: Scalar>(&self, form: &mut Form<S>, own: impl FnOnce(&mut Form<S>)) {
-        let dialog = &mut form.dialog;
-        bodies_field(dialog, &self.bodies);
+    /// them (see [`Combine::fields`], a mode defaulting to the newest solid
+    /// of `before`). A step repeats one or the other, so only the one in
+    /// use waits for picks, and picking bodies empties the features, and
+    /// the other way round. `set` puts the seeds set where the arguments
+    /// keep them.
+    pub(crate) fn fields<'a, A>(
+        &self,
+        f: &mut EditForm<'a, Design, A>,
+        before: &NamedModel<Design>,
+        set: impl Fn(&mut A, Seeds) + Clone + 'a,
+        own: impl FnOnce(&mut EditForm<'a, Design, A>),
+    ) {
+        let (seeds, set_bodies) = (self.clone(), set.clone());
+        bodies_field(f, &self.bodies, move |edit, picked| {
+            let mut seeds = seeds.clone();
+            if !picked.is_empty() {
+                seeds.features.clear();
+            }
+            seeds.bodies = picked;
+            set_bodies(edit.args, seeds);
+        });
         let features = self.features.clone();
-        dialog.reference(
+        let (seeds, set_features) = (self.clone(), set.clone());
+        let roles = [Role::Feature];
+        f.reference(
             "features",
             "features",
             features,
-            &[Role::Feature],
+            &roles,
             None,
             true,
+            move |edit, picked| {
+                let mut seeds = seeds.clone();
+                if !picked.is_empty() {
+                    seeds.bodies.clear();
+                }
+                seeds.features = picked;
+                set_features(edit.args, seeds);
+            },
         );
         // Only the one in use is needed; the other is picked for when asked.
-        dialog.optional(if self.features.is_empty() {
+        f.form.dialog.optional(if self.features.is_empty() {
             "features"
         } else {
             "bodies"
         });
-        own(form);
+        own(f);
         if self.features.is_empty() {
-            self.combine.show(&mut form.dialog);
+            let seeds = self.clone();
+            self.combine.fields(f, before, move |args, combine| {
+                set(
+                    args,
+                    Seeds {
+                        combine,
+                        ..seeds.clone()
+                    },
+                )
+            });
         }
-    }
-
-    /// Its field `field` of those [`Seeds::show`] shows set to `value`, and
-    /// whether it was one: picking bodies empties the features, and the
-    /// other way round; a combination defaults to the newest solid of
-    /// `before`.
-    pub(crate) fn set<S: Scalar>(
-        &mut self,
-        field: &str,
-        value: &Value,
-        before: &NamedModel<S>,
-    ) -> bool {
-        let (this, other, picked) = match (field, value) {
-            ("bodies", Value::Entities(p)) => (&mut self.bodies, &mut self.features, p),
-            ("features", Value::Entities(p)) => (&mut self.features, &mut self.bodies, p),
-            _ => return self.combine.set(field, value, before),
-        };
-        if !picked.is_empty() {
-            other.clear();
-        }
-        *this = picked.clone();
-        true
     }
 
     /// Copies what it picks to every placement — a label and the motion
@@ -228,19 +245,16 @@ pub(crate) trait Pattern: std::fmt::Debug {
 }
 
 /// Builds the pattern `args` as the step `step` into `model`: its
-/// [`LegacyModelStep::build`].
+/// [`PartOperation::build`].
 pub(crate) fn build_pattern<A: Pattern>(
     model: &mut NamedModel<Design>,
     reader: &mut BuildReader,
     step: &str,
     args: &A,
 ) -> GeopResult<()> {
-    let ctx = with_context!("{}({step}, {args:?})", A::NAMING.kind);
-    let names = A::NAMING.of(step).with_context(ctx)?;
-    let placements = (args.placements(&mut Scope { model, reader })).with_context(ctx)?;
-    (args.seeds())
-        .repeat(model, &names, step, args.seed_label(), &placements)
-        .with_context(ctx)
+    let names = A::NAMING.of(step)?;
+    let placements = args.placements(&mut Scope { model, reader })?;
+    (args.seeds()).repeat(model, &names, step, args.seed_label(), &placements)
 }
 
 /// One body a step leaves behind as one of its instances — a seed, or a
@@ -447,7 +461,7 @@ fn copy_threads(
 /// of its seeds in the model, at its placements — of the part as it is
 /// before the step — and, of features, copies of their cosmetic threads,
 /// drawn as the step's annotations.
-pub(crate) fn run_pattern<O: LegacyModelStep>(
+pub(crate) fn run_pattern<O: PartOperation>(
     part: &mut Build,
     step: &str,
     args: &O::Args,
@@ -465,7 +479,7 @@ where
             placements: args.placements(&mut seen)?,
         })
     });
-    legacy_build_model::<O>(part, step, args)?;
+    build_model::<O>(part, step, args)?;
     match copies {
         Some(copies) => {
             part.revise_or_start(&threads(), &copies?, copy_threads)?;

@@ -7,17 +7,15 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
     with_context,
 };
-use geop_core_program::{
-    editing::{Choice, Dialog, Event, Form, Number, Unit, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
 use geop_core_sketch::{CurveKind, ProfileLoop, Shape};
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, NamedModel, Namer, ParamValue, PlacedSketch,
+    Design, NamedModel, Namer, PlacedSketch,
     model::model_or_empty,
-    operation::{Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, Scope, Seen},
+    operation::{Build, BuildReader, EntityRef, Lookup, PartOperation, Scope, Seen, StepContext},
     parameters::{Formula, expressions},
-    ui::{formula_number, sketch_field},
+    part_operation,
+    ui::{Choice, EditForm, FormState, Number, Unit, Value, formula_number, sketch_field},
 };
 use geop_ops_extrude_revolve::operation::shape_loops;
 use serde::{Deserialize, Serialize};
@@ -100,18 +98,9 @@ impl SheetStep for BaseFlange {
     }
 }
 
-impl LegacyModelStep for BaseFlange {
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        _: &BaseFlangeArgs,
-    ) -> GeopResult<()> {
-        body::build(model, reader, step)
-    }
-}
+part_operation!(BaseFlange);
 
-impl Operation for BaseFlange {
+impl PartOperation for BaseFlange {
     const INFO: OperationInfo = OperationInfo::new(
         "base_flange",
         "Base flange",
@@ -121,16 +110,14 @@ impl Operation for BaseFlange {
     )
     .icon(crate::icons::BASE_FLANGE);
     type Args = BaseFlangeArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     fn formulas(args: &mut BaseFlangeArgs) -> Vec<&mut String> {
         expressions([&mut args.depth])
     }
 
     /// The newest sketch, with the default rules, a unit deep.
-    fn new_args(context: &Context<Input, ParamValue>) -> BaseFlangeArgs {
+    fn new_args(context: &StepContext) -> BaseFlangeArgs {
         BaseFlangeArgs {
             sketch: Seen::new(context.before)
                 .sketch_names()
@@ -146,71 +133,60 @@ impl Operation for BaseFlange {
         body::run::<Self>(step, part, args)
     }
 
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        _: &BaseFlangeArgs,
+    ) -> GeopResult<()> {
+        body::build(model, reader, step)
+    }
+
     /// The sketch, picked; for a chain how deep; whether flipped; and the
     /// rules.
-    fn presentation(
-        context: &Context<Input, ParamValue>,
+    fn form<'a>(
+        context: &'a StepContext<'a>,
         args: &BaseFlangeArgs,
-        _: &(),
-    ) -> Form<Design> {
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, BaseFlangeArgs> {
         let mut seen = Seen::new(context.before);
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
+        let mut f = EditForm::<Design, BaseFlangeArgs>::default();
         let sketch = std::slice::from_ref(&args.sketch);
-        sketch_field(dialog, &context.before, "sketch", sketch, false);
+        sketch_field(&mut f.form.dialog, &context.before, "sketch", sketch, false);
+        f.on("sketch", |edit, value| {
+            if let Value::Entities(picked) = value {
+                edit.args.sketch =
+                    EntityRef::last_name(EntityRef::sketch, &picked).unwrap_or_default();
+            }
+        });
         let chain = (seen.sketch(&args.sketch))
             .and_then(|placed| placed.sketch.shape())
             .is_ok_and(|shape| matches!(shape, Shape::Chain(_)));
         if chain {
             let depth = formula_number("depth", &args.depth, &mut seen, Unit::Length);
-            dialog.number("depth", depth.range(0.0, 10.0));
+            f.formula("depth", depth.range(0.0, 10.0), |edit, depth| {
+                edit.args.depth = depth
+            });
         }
-        dialog.checkbox("flip", "flip side", args.flip);
-        rules_fields(dialog, &args.rules);
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
-        args: &BaseFlangeArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (BaseFlangeArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field { key, value } = event else {
-            return (args, ());
-        };
-        match (key.as_str(), value) {
-            ("sketch", Value::Entities(picked)) => {
-                args.sketch = EntityRef::last_name(EntityRef::sketch, &picked).unwrap_or_default();
-            }
-            ("depth", value) => {
-                if let Some(depth) = Formula::from_value(&value) {
-                    args.depth = depth;
-                }
-            }
-            ("flip", Value::Bool(b)) => args.flip = b,
-            (key, value) => set_rule(&mut args.rules, key, value),
-        }
-        (args, ())
+        f.checkbox("flip", "flip side", args.flip, |edit, b| edit.args.flip = b);
+        rules_fields(&mut f, &args.rules);
+        f
     }
 }
 
 /// The fields of the sheet-metal rules.
-fn rules_fields(dialog: &mut Dialog<Design>, rules: &SheetMetalRules) {
-    dialog.number(
-        "thickness",
-        Number::new("thickness", rules.thickness, Unit::Length).range(0.0, 1.0),
-    );
-    dialog.number(
-        "bend_radius",
-        Number::new("bend radius", rules.bend_radius, Unit::Length).range(0.0, 1.0),
-    );
-    dialog.number(
-        "k_factor",
-        Number::new("K-factor", rules.k_factor, Unit::Fraction).range(0.0, 1.0),
-    );
-    dialog.select(
+fn rules_fields(f: &mut EditForm<'_, Design, BaseFlangeArgs>, rules: &SheetMetalRules) {
+    let thickness = Number::new("thickness", rules.thickness, Unit::Length).range(0.0, 1.0);
+    f.number("thickness", thickness, |edit, t| {
+        edit.args.rules.thickness = t
+    });
+    let radius = Number::new("bend radius", rules.bend_radius, Unit::Length).range(0.0, 1.0);
+    f.number("bend_radius", radius, |edit, r| {
+        edit.args.rules.bend_radius = r
+    });
+    let k_factor = Number::new("K-factor", rules.k_factor, Unit::Fraction).range(0.0, 1.0);
+    f.number("k_factor", k_factor, |edit, k| edit.args.rules.k_factor = k);
+    f.select(
         "relief",
         "relief",
         match rules.relief {
@@ -222,35 +198,21 @@ fn rules_fields(dialog: &mut Dialog<Design>, rules: &SheetMetalRules) {
             Choice::new("tear", "Tear"),
         ],
         false,
-    );
-    if rules.relief == Relief::Rectangular {
-        dialog.number(
-            "relief_ratio",
-            Number::new("relief ratio", rules.relief_ratio, Unit::Fraction).range(0.0, 2.0),
-        );
-    }
-    dialog.number(
-        "corner_gap",
-        Number::new("corner gap", rules.corner_gap, Unit::Length).range(0.0, 1.0),
-    );
-}
-
-/// `rules` with the field `key` of [`rules_fields`] set to `value`.
-fn set_rule(rules: &mut SheetMetalRules, key: &str, value: Value) {
-    match (key, value) {
-        ("thickness", Value::Number(t)) => rules.thickness = t,
-        ("bend_radius", Value::Number(r)) => rules.bend_radius = r,
-        ("k_factor", Value::Number(k)) => rules.k_factor = k,
-        ("relief", Value::Choice(choice)) => {
-            rules.relief = match choice.as_str() {
+        |edit, choice| {
+            edit.args.rules.relief = match choice {
                 "tear" => Relief::Tear,
                 _ => Relief::Rectangular,
             }
-        }
-        ("relief_ratio", Value::Number(r)) => rules.relief_ratio = r,
-        ("corner_gap", Value::Number(g)) => rules.corner_gap = g,
-        _ => {}
+        },
+    );
+    if rules.relief == Relief::Rectangular {
+        let ratio = Number::new("relief ratio", rules.relief_ratio, Unit::Fraction).range(0.0, 2.0);
+        f.number("relief_ratio", ratio, |edit, r| {
+            edit.args.rules.relief_ratio = r
+        });
     }
+    let gap = Number::new("corner gap", rules.corner_gap, Unit::Length).range(0.0, 1.0);
+    f.number("corner_gap", gap, |edit, g| edit.args.rules.corner_gap = g);
 }
 
 /// The sketch's area as one flat plate: on the sketch's plane, its B side

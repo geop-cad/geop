@@ -81,6 +81,12 @@ pub trait PartOperation: 'static {
         editing: &FormState<Self::Session>,
     ) -> EditForm<'a, Design, Self::Args, Self::Session>;
 
+    /// What the session forgets at the start of every event, before the
+    /// event is handled: nothing, by default.
+    fn begin_event(session: &mut Self::Session) {
+        let _ = session;
+    }
+
     /// What the pointer or a key did on the canvas: nothing, by default.
     fn canvas(
         context: &StepContext,
@@ -133,6 +139,10 @@ macro_rules! part_operation {
                 editing: &Self::EditingState,
                 event: $crate::ui::Event<$crate::Design>,
             ) -> (Self::Args, Self::EditingState) {
+                let mut editing = editing.clone();
+                <$operation as $crate::operation::PartOperation>::begin_event(
+                    &mut editing.session,
+                );
                 editing.handle(
                     args,
                     event,
@@ -224,33 +234,4 @@ where
         .current()
         .retrieve_target(&crate::model::model())?
         .clone())
-}
-
-/// Transitional: an operation not yet a [`PartOperation`].
-pub trait LegacyModelStep:
-    geop_core_program::operation::Operation<Input = Input, State = ParamValue, Args: PartialEq + Clone>
-{
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &Self::Args,
-    ) -> GeopResult<()>;
-}
-
-/// Transitional: [`build_model`] of a [`LegacyModelStep`].
-pub fn legacy_build_model<O: LegacyModelStep>(
-    part: &mut Build,
-    step: &str,
-    args: &O::Args,
-) -> GeopResult<()> {
-    fn generate<O: LegacyModelStep>(
-        mut model: NamedModel<Design>,
-        reader: &mut BuildReader,
-        (step, args): &(String, O::Args),
-    ) -> GeopResult<NamedModel<Design>> {
-        O::build(&mut model, reader, step, args)?;
-        Ok(model)
-    }
-    part.revise_or_start(&model(), &(step.to_string(), args.clone()), generate::<O>)
 }

@@ -2,18 +2,16 @@
 //! (see [`geop_ops_shell::shell::thicken`]).
 
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
+    geop_error::{GeopError, GeopResult},
     scalars::{Field, Scalar},
-    with_context,
-};
-use geop_core_program::{
-    editing::{Choice, Event, Form, Number, Unit, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
 };
 use geop_core_topology::Body;
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, Role, Seen, legacy_build_model},
+    Design, NamedModel, Namer,
+    operation::{BuildReader, EntityRef, Lookup, PartOperation, Role, Seen, StepContext},
+    part_operation,
+    ui::{Choice, EditForm, FormState, Number, Unit},
 };
 use geop_ops_shell::shell::{offset_faces, thicken};
 use serde::{Deserialize, Serialize};
@@ -78,41 +76,9 @@ pub struct ThickenArgs {
     pub side: ThickenSide,
 }
 
-impl LegacyModelStep for Thicken {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        step: &str,
-        args: &ThickenArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("thicken({step}, {args:?})");
-        let namer = Namer::new("thicken", step)?;
-        if !args.thickness.is_finite() {
-            return Err(GeopError::new("the thickness is not a number")).with_context(ctx);
-        }
-        let (_, sheet) = sheet_of(model, &args.face).with_context(ctx)?;
-        let thickness = Design::from_f64(args.thickness);
-        match args.side {
-            ThickenSide::Against | ThickenSide::Along => {
-                let along = args.side == ThickenSide::Along;
-                thicken(model, &namer, sheet, thickness, along).with_context(ctx)?;
-            }
-            ThickenSide::Both => {
-                let faces = (model.topology())
-                    .body_faces(Body::Sheet(sheet))
-                    .with_context(ctx)?;
-                let half = thickness.div(Design::TWO).with_context(ctx)?;
-                let copy =
-                    offset_faces(model, &namer.scoped("both"), &faces, half).with_context(ctx)?;
-                (model.assemble_sheet(&[Body::Sheet(sheet)], &[])).with_context(ctx)?;
-                thicken(model, &namer, copy.shells[0], thickness, false).with_context(ctx)?;
-            }
-        }
-        Ok(())
-    }
-}
+part_operation!(Thicken);
 
-impl Operation for Thicken {
+impl PartOperation for Thicken {
     const INFO: OperationInfo = OperationInfo::new(
         "thicken",
         "Thicken",
@@ -123,12 +89,10 @@ impl Operation for Thicken {
     .experimental()
     .icon(crate::icons::THICKEN);
     type Args = ThickenArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// The newest sheet, a tenth thick, behind its normals.
-    fn new_args(context: &Context<Input, ParamValue>) -> ThickenArgs {
+    fn new_args(context: &StepContext) -> ThickenArgs {
         let seen = Seen::new(context.before);
         ThickenArgs {
             face: seen.model().sheet_face_names().pop().unwrap_or_default(),
@@ -137,47 +101,67 @@ impl Operation for Thicken {
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &ThickenArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &ThickenArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("thicken", step)?;
+        if !args.thickness.is_finite() {
+            return Err(GeopError::new("the thickness is not a number"));
+        }
+        let (_, sheet) = sheet_of(model, &args.face)?;
+        let thickness = Design::from_f64(args.thickness);
+        match args.side {
+            ThickenSide::Against | ThickenSide::Along => {
+                let along = args.side == ThickenSide::Along;
+                thicken(model, &namer, sheet, thickness, along)?;
+            }
+            ThickenSide::Both => {
+                let faces = model.topology().body_faces(Body::Sheet(sheet))?;
+                let half = thickness.div(Design::TWO)?;
+                let copy = offset_faces(model, &namer.scoped("both"), &faces, half)?;
+                model.assemble_sheet(&[Body::Sheet(sheet)], &[])?;
+                thicken(model, &namer, copy.shells[0], thickness, false)?;
+            }
+        }
+        Ok(())
     }
 
     /// The sheet, picked, the thickness and the side.
-    fn presentation(_: &Context<Input, ParamValue>, args: &ThickenArgs, _: &()) -> Form<Design> {
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
-        let face = EntityRef::of_name(EntityRef::face, &args.face);
-        dialog.reference("face", "sheet", face, &[Role::Sheet], None, false);
+    fn form<'a>(
+        _: &'a StepContext<'a>,
+        args: &ThickenArgs,
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, ThickenArgs> {
+        let mut f = EditForm::<Design, ThickenArgs>::default();
+        f.pick_one(
+            "face",
+            "sheet",
+            EntityRef::face,
+            &args.face,
+            &[Role::Sheet],
+            |edit, name| edit.args.face = name,
+        );
         let thickness = Number::new("thickness", args.thickness, Unit::Length).range(0.0, 1.0);
-        dialog.number("thickness", thickness);
+        f.number("thickness", thickness, |edit, t| edit.args.thickness = t);
         let sides = (ThickenSide::ALL.iter())
             .map(|s| Choice::new(s.key(), s.label()))
             .collect();
-        dialog.select("side", "side", args.side.key(), sides, false);
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
-        args: &ThickenArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (ThickenArgs, ()) {
-        let mut args = args.clone();
-        if let Event::Field { key, value } = event {
-            match (key.as_str(), value) {
-                ("face", Value::Entities(picked)) => {
-                    args.face = EntityRef::last_name(EntityRef::face, &picked).unwrap_or_default()
+        f.select(
+            "side",
+            "side",
+            args.side.key(),
+            sides,
+            false,
+            |edit, key| {
+                if let Some(side) = ThickenSide::ALL.into_iter().find(|s| s.key() == key) {
+                    edit.args.side = side;
                 }
-                ("thickness", Value::Number(t)) => args.thickness = t,
-                ("side", Value::Choice(key)) => {
-                    if let Some(side) = ThickenSide::ALL.into_iter().find(|s| s.key() == key) {
-                        args.side = side;
-                    }
-                }
-                _ => {}
-            }
-        }
-        (args, ())
+            },
+        );
+        f
     }
 }
 

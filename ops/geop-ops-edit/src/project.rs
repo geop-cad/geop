@@ -2,20 +2,15 @@
 //! face along them.
 
 use geop_core_math::{
-    geop_error::{GeopResult, WithContext},
-    plain,
-    primitives::CoordinateSystem,
-    scalars::Scalar,
-    with_context,
-};
-use geop_core_program::{
-    editing::{Event, Form, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
+    geop_error::GeopResult, plain, primitives::CoordinateSystem, scalars::Scalar,
 };
 use geop_core_topology::FaceId;
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, EntityRef, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, Input, Lookup, LegacyModelStep, Role, Scope, Seen, legacy_build_model},
+    Design, EntityRef, NamedModel, Namer,
+    operation::{BuildReader, Lookup, PartOperation, Role, Scope, Seen, StepContext},
+    part_operation,
+    ui::{EditForm, FormState},
 };
 use geop_ops_booleans::{
     extent::{bounds, face_hull, spread_along},
@@ -57,35 +52,9 @@ pub struct ProjectCurveArgs {
     pub face: String,
 }
 
-impl LegacyModelStep for ProjectCurve {
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &ProjectCurveArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("project_curve({step}, {args:?})");
-        let namer = Namer::new("project", step)?;
-        let placed = (Scope { model, reader })
-            .sketch(&args.sketch)
-            .with_context(ctx)?
-            .clone();
-        let face = model.face_id(&args.face).with_context(ctx)?;
-        let sketch = &placed.sketch;
-        let geometry = sketch.enclose::<Design>().with_context(ctx)?;
-        let shape = sketch.shape().with_context(ctx)?;
-        let loops = shape_loops(&args.sketch, sketch, &geometry, shape).with_context(ctx)?;
-        let (from, to) = reach_across(model, face, &placed.plane).with_context(ctx)?;
-        let (from, to) = (Design::from_f64(from), Design::from_f64(to));
-        let swept =
-            extrude(model, &namer, None, &placed.plane, from, to, &loops).with_context(ctx)?;
-        let params = RemeshParams::default();
-        imprint_on_face(model, &namer, face, &swept.shells, params).with_context(ctx)?;
-        Ok(())
-    }
-}
+part_operation!(ProjectCurve);
 
-impl Operation for ProjectCurve {
+impl PartOperation for ProjectCurve {
     const INFO: OperationInfo = OperationInfo::new(
         "project_curve",
         "Project curve",
@@ -96,58 +65,61 @@ impl Operation for ProjectCurve {
     .experimental()
     .icon(crate::icons::PROJECT_CURVE);
     type Args = ProjectCurveArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// The newest sketch, onto no face yet.
-    fn new_args(context: &Context<Input, ParamValue>) -> ProjectCurveArgs {
+    fn new_args(context: &StepContext) -> ProjectCurveArgs {
         ProjectCurveArgs {
             sketch: (Seen::new(context.before).sketch_names().pop()).unwrap_or_default(),
             face: String::new(),
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &ProjectCurveArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &ProjectCurveArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("project", step)?;
+        let placed = (Scope { model, reader }).sketch(&args.sketch)?.clone();
+        let face = model.face_id(&args.face)?;
+        let sketch = &placed.sketch;
+        let geometry = sketch.enclose::<Design>()?;
+        let shape = sketch.shape()?;
+        let loops = shape_loops(&args.sketch, sketch, &geometry, shape)?;
+        let (from, to) = reach_across(model, face, &placed.plane)?;
+        let (from, to) = (Design::from_f64(from), Design::from_f64(to));
+        let swept = extrude(model, &namer, None, &placed.plane, from, to, &loops)?;
+        let params = RemeshParams::default();
+        imprint_on_face(model, &namer, face, &swept.shells, params)?;
+        Ok(())
     }
 
     /// The sketch and the face, picked.
-    fn presentation(
-        _: &Context<Input, ParamValue>,
+    fn form<'a>(
+        _: &'a StepContext<'a>,
         args: &ProjectCurveArgs,
-        _: &(),
-    ) -> Form<Design> {
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
-        let sketch = EntityRef::of_name(EntityRef::sketch, &args.sketch);
-        dialog.reference("sketch", "sketch", sketch, &[Role::Sketch], None, false);
-        let face = EntityRef::of_name(EntityRef::face, &args.face);
-        dialog.reference("face", "onto face", face, &[Role::Face], None, false);
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
-        args: &ProjectCurveArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (ProjectCurveArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field {
-            key,
-            value: Value::Entities(picked),
-        } = event
-        else {
-            return (args, ());
-        };
-        let one = |kind| EntityRef::last_name(kind, &picked).unwrap_or_default();
-        match key.as_str() {
-            "sketch" => args.sketch = one(EntityRef::sketch),
-            "face" => args.face = one(EntityRef::face),
-            _ => {}
-        }
-        (args, ())
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, ProjectCurveArgs> {
+        let mut f = EditForm::<Design, ProjectCurveArgs>::default();
+        f.pick_one(
+            "sketch",
+            "sketch",
+            EntityRef::sketch,
+            &args.sketch,
+            &[Role::Sketch],
+            |edit, name| edit.args.sketch = name,
+        );
+        f.pick_one(
+            "face",
+            "onto face",
+            EntityRef::face,
+            &args.face,
+            &[Role::Face],
+            |edit, name| edit.args.face = name,
+        );
+        f
     }
 }
 

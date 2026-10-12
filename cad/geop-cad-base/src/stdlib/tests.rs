@@ -490,7 +490,7 @@ fn gaps_cut(teeth: &str, count: usize, angle: f64) -> Result<(), String> {
         },
     );
     let built = program
-        .legacy_build_model()
+        .build_model()
         .map_err(|e| format!("does not build: {e}"))?;
     check_valid(&built).map_err(|e| format!("is not valid: {e}"))
 }

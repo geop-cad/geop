@@ -26,18 +26,17 @@ use geop_core_math::{
     vector::Vector2,
     with_context,
 };
-use geop_core_program::{
-    editing::{Event, Form, Number, Unit, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
 use geop_core_topology::{
     Body, CoedgeGeometry, FaceId, Sense,
     boundary::BoundaryType,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    BodyNames, Design, NamedModel, ParamValue,
-    operation::{Build, BuildReader, EntityRef, Input, LegacyModelStep, Role, legacy_build_model},
+    BodyNames, Design, NamedModel,
+    operation::{BuildReader, EntityRef, PartOperation, Role, StepContext},
+    part_operation,
+    ui::{EditForm, FormState, Number, Unit},
 };
 use serde::{Deserialize, Serialize};
 
@@ -58,24 +57,9 @@ pub struct ExtendSurfaceArgs {
     pub distance: f64,
 }
 
-impl LegacyModelStep for ExtendSurface {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        step: &str,
-        args: &ExtendSurfaceArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("extend_surface({step}, {args:?})");
-        geop_ops::validate_operation_id(step)?;
-        if !args.distance.is_finite() {
-            return Err(GeopError::new("the distance is not a number")).with_context(ctx);
-        }
-        extend(model, &args.edge, Design::from_f64(args.distance)).with_context(ctx)?;
-        Ok(())
-    }
-}
+part_operation!(ExtendSurface);
 
-impl Operation for ExtendSurface {
+impl PartOperation for ExtendSurface {
     const INFO: OperationInfo = OperationInfo::new(
         "extend_surface",
         "Extend surface",
@@ -86,54 +70,48 @@ impl Operation for ExtendSurface {
     .experimental()
     .icon(crate::icons::EXTEND_SURFACE);
     type Args = ExtendSurfaceArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// Nothing picked yet, a tenth on.
-    fn new_args(_: &Context<Input, ParamValue>) -> ExtendSurfaceArgs {
+    fn new_args(_: &StepContext) -> ExtendSurfaceArgs {
         ExtendSurfaceArgs {
             edge: String::new(),
             distance: 0.1,
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &ExtendSurfaceArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &ExtendSurfaceArgs,
+    ) -> GeopResult<()> {
+        geop_ops::validate_operation_id(step)?;
+        if !args.distance.is_finite() {
+            return Err(GeopError::new("the distance is not a number"));
+        }
+        extend(model, &args.edge, Design::from_f64(args.distance))?;
+        Ok(())
     }
 
     /// The edge, picked, and the distance.
-    fn presentation(
-        _: &Context<Input, ParamValue>,
+    fn form<'a>(
+        _: &'a StepContext<'a>,
         args: &ExtendSurfaceArgs,
-        _: &(),
-    ) -> Form<Design> {
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
-        let edge = EntityRef::of_name(EntityRef::edge, &args.edge);
-        dialog.reference("edge", "edge", edge, &[Role::Edge], None, false);
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, ExtendSurfaceArgs> {
+        let mut f = EditForm::<Design, ExtendSurfaceArgs>::default();
+        f.pick_one(
+            "edge",
+            "edge",
+            EntityRef::edge,
+            &args.edge,
+            &[Role::Edge],
+            |edit, name| edit.args.edge = name,
+        );
         let distance = Number::new("distance", args.distance, Unit::Length).range(0.0, 1.0);
-        dialog.number("distance", distance);
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
-        args: &ExtendSurfaceArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (ExtendSurfaceArgs, ()) {
-        let mut args = args.clone();
-        if let Event::Field { key, value } = event {
-            match (key.as_str(), value) {
-                ("edge", Value::Entities(picked)) => {
-                    args.edge = EntityRef::last_name(EntityRef::edge, &picked).unwrap_or_default()
-                }
-                ("distance", Value::Number(d)) => args.distance = d,
-                _ => {}
-            }
-        }
-        (args, ())
+        f.number("distance", distance, |edit, d| edit.args.distance = d);
+        f
     }
 }
 

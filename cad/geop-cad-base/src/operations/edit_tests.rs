@@ -69,7 +69,7 @@ fn extract_a_wall_split_with_it_and_delete_the_rest() {
             face: extracted.clone(),
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.sheet_face_names(), [extracted.as_str()]);
     assert_eq!(
@@ -89,7 +89,7 @@ fn extract_a_wall_split_with_it_and_delete_the_rest() {
             ],
         },
     );
-    let part = program.legacy_build_model().unwrap();
+    let part = program.build_model().unwrap();
     assert_valid(&part);
     assert!(part.sheet_face_names().is_empty());
     assert_eq!(part.solid_names(), ["split(halves,0)", "split(halves,1)"]);
@@ -121,7 +121,7 @@ fn project_a_circle_onto_a_block_top() {
     let mut mark = Sketch::new();
     let c = mark.add_point(n(0.2), n(0.1));
     mark.add_circle(c, n(0.4));
-    let part = project_onto_top(mark).legacy_build_model().unwrap();
+    let part = project_onto_top(mark).build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 1);
     assert!(part.sheet_face_names().is_empty());
@@ -138,7 +138,7 @@ fn project_a_line_across_a_block_top() {
     let a = mark.add_point(n(0.3), n(-2.0));
     let b = mark.add_point(n(0.3), n(2.0));
     mark.add_line(a, b);
-    let part = project_onto_top(mark).legacy_build_model().unwrap();
+    let part = project_onto_top(mark).build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().faces.len(), 7);
     assert_eq!(
@@ -158,6 +158,6 @@ fn project_a_line_ending_on_the_face_fails() {
     let a = mark.add_point(n(0.3), n(-2.0));
     let b = mark.add_point(n(0.3), n(0.0));
     mark.add_line(a, b);
-    let error = error(project_onto_top(mark).legacy_build_model());
+    let error = error(project_onto_top(mark).build_model());
     assert!(error.root_message().contains("end inside"), "{error:?}");
 }

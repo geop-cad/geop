@@ -3,23 +3,20 @@
 
 use geop_core_geometry::shape::Plane;
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
+    geop_error::{GeopError, GeopResult},
     scalars::Scalar,
-    with_context,
-};
-use geop_core_program::{
-    editing::{Dialog, Event, Form, Number, Unit, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
 };
 use geop_core_sketch::Shape;
 use geop_core_topology::{EdgeId, FaceId};
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, NamedModel, Namer, ParamValue,
+    Design, NamedModel, Namer,
     operation::{
-        Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, ResolveEntity, Role, Scope, Seen,
-        legacy_build_model,
+        BuildReader, EntityRef, Lookup, PartOperation, ResolveEntity, Role, Scope, Seen,
+        StepContext,
     },
-    ui::{choices, chosen},
+    part_operation,
+    ui::{EditForm, FormState, Number, Unit, choices, chosen},
 };
 use geop_ops_extrude_revolve::operation::shape_loops;
 use serde::{Deserialize, Serialize};
@@ -75,39 +72,9 @@ pub struct DraftArgs {
     pub reversed: bool,
 }
 
-impl LegacyModelStep for Draft {
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &DraftArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("draft({step}, {args:?})");
-        let namer = Namer::new("draft", step)?;
-        let faces = (args.faces.iter())
-            .map(|name| model.face_id(name))
-            .collect::<GeopResult<Vec<_>>>()
-            .with_context(ctx)?;
-        let Some(neutral) = &args.neutral else {
-            return Err(GeopError::new("pick the neutral plane")).with_context(ctx);
-        };
-        let frame = (neutral.resolve_plane(&mut Scope { model, reader })).with_context(ctx)?;
-        // A face's frame points out of its solid; the pull goes into it.
-        let into_solid = matches!(neutral, EntityRef::Face { .. });
-        let pull = if into_solid != args.reversed {
-            frame.w().neg()
-        } else {
-            *frame.w()
-        };
-        let plane = Plane::try_new(*frame.origin(), pull).with_context(ctx)?;
-        finite("angle", args.angle).with_context(ctx)?;
-        let angle = Design::from_f64(args.angle.to_radians());
-        draft(model, &namer, &faces, &plane, angle).with_context(ctx)?;
-        Ok(())
-    }
-}
+part_operation!(Draft, Lip, Groove, Rib);
 
-impl Operation for Draft {
+impl PartOperation for Draft {
     const INFO: OperationInfo = info(
         "draft",
         "Draft",
@@ -115,12 +82,10 @@ impl Operation for Draft {
     )
     .icon(crate::icons::DRAFT);
     type Args = DraftArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// No faces yet, no neutral plane, and three degrees.
-    fn new_args(_: &Context<Input, ParamValue>) -> DraftArgs {
+    fn new_args(_: &StepContext) -> DraftArgs {
         DraftArgs {
             faces: Vec::new(),
             neutral: None,
@@ -129,86 +94,112 @@ impl Operation for Draft {
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &DraftArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &DraftArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("draft", step)?;
+        let faces = (args.faces.iter())
+            .map(|name| model.face_id(name))
+            .collect::<GeopResult<Vec<_>>>()?;
+        let Some(neutral) = &args.neutral else {
+            return Err(GeopError::new("pick the neutral plane"));
+        };
+        let frame = neutral.resolve_plane(&mut Scope { model, reader })?;
+        // A face's frame points out of its solid; the pull goes into it.
+        let into_solid = matches!(neutral, EntityRef::Face { .. });
+        let pull = if into_solid != args.reversed {
+            frame.w().neg()
+        } else {
+            *frame.w()
+        };
+        let plane = Plane::try_new(*frame.origin(), pull)?;
+        finite("angle", args.angle)?;
+        let angle = Design::from_f64(args.angle.to_radians());
+        draft(model, &namer, &faces, &plane, angle)?;
+        Ok(())
     }
 
     /// The faces and the neutral plane, picked, the angle and the pull
     /// direction.
-    fn presentation(_: &Context<Input, ParamValue>, args: &DraftArgs, _: &()) -> Form<Design> {
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
-        let faces = EntityRef::of_names(EntityRef::face, &args.faces);
-        dialog.reference("faces", "faces", faces, &[Role::Plane], None, true);
+    fn form<'a>(
+        _: &'a StepContext<'a>,
+        args: &DraftArgs,
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, DraftArgs> {
+        let mut f = EditForm::<Design, DraftArgs>::default();
+        f.pick_many(
+            "faces",
+            "faces",
+            EntityRef::face,
+            &args.faces,
+            &[Role::Plane],
+            |edit, names| edit.args.faces = names,
+        );
         let neutral = args.neutral.iter().cloned().collect();
-        dialog.reference(
+        let roles = [Role::Plane];
+        f.reference(
             "neutral",
             "neutral plane",
             neutral,
-            &[Role::Plane],
+            &roles,
             None,
             false,
+            |edit, picked| edit.args.neutral = picked.into_iter().next(),
         );
         let angle = Number::new("angle", args.angle, Unit::Angle).range(-45.0, 45.0);
-        (dialog.number("angle", angle)).checkbox(
+        f.number("angle", angle, |edit, angle| edit.args.angle = angle);
+        f.checkbox(
             "reversed",
             "reverse pull direction",
             args.reversed,
+            |edit, b| edit.args.reversed = b,
         );
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
-        args: &DraftArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (DraftArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field { key, value } = event else {
-            return (args, ());
-        };
-        match (key.as_str(), value) {
-            ("faces", Value::Entities(picked)) => {
-                args.faces = EntityRef::names_of(EntityRef::face, &picked);
-            }
-            ("neutral", Value::Entities(picked)) => args.neutral = picked.into_iter().next(),
-            ("angle", Value::Number(angle)) => args.angle = angle,
-            ("reversed", Value::Bool(b)) => args.reversed = b,
-            _ => {}
-        }
-        (args, ())
+        f
     }
 }
 
-/// The rim face and its edges, as the fields of a lip or a groove hold
-/// them.
-fn rim_fields<S: Scalar>(dialog: &mut Dialog<S>, face: &str, edges: &[String]) {
+/// The fields of the rim face `face` and its edges `edges`, of a lip or a
+/// groove whose arguments `rim` says where they are held: the edges picked
+/// go with the face they were picked on.
+fn rim_fields<'a, A: 'a>(
+    f: &mut EditForm<'a, Design, A>,
+    face: &str,
+    edges: &[String],
+    rim: fn(&mut A) -> (&mut String, &mut Vec<String>),
+) {
     let face = EntityRef::of_name(EntityRef::face, face);
-    dialog.reference("face", "rim face", face, &[Role::Plane], None, false);
-    let edges = EntityRef::of_names(EntityRef::edge, edges);
-    (dialog.reference("edges", "edges", edges, &[Role::Edge], None, true)).optional("edges");
-}
-
-/// The rim face `face` and its edges `edges` after the field `key` is set
-/// to `value`: the edges picked go with the face they were picked on.
-/// Whether `key` is a rim field.
-fn set_rim(face: &mut String, edges: &mut Vec<String>, key: &str, value: &Value) -> bool {
-    match (key, value) {
-        ("face", Value::Entities(picked)) => {
-            let name = EntityRef::last_name(EntityRef::face, picked).unwrap_or_default();
+    f.reference(
+        "face",
+        "rim face",
+        face,
+        &[Role::Plane],
+        None,
+        false,
+        move |edit, picked| {
+            let (face, edges) = rim(edit.args);
+            let name = EntityRef::last_name(EntityRef::face, &picked).unwrap_or_default();
             if name != *face {
                 edges.clear();
             }
             *face = name;
-            true
-        }
-        ("edges", Value::Entities(picked)) => {
-            *edges = EntityRef::names_of(EntityRef::edge, picked);
-            true
-        }
-        _ => false,
-    }
+        },
+    );
+    let edges = EntityRef::of_names(EntityRef::edge, edges);
+    f.reference(
+        "edges",
+        "edges",
+        edges,
+        &[Role::Edge],
+        None,
+        true,
+        move |edit, picked| {
+            *rim(edit.args).1 = EntityRef::names_of(EntityRef::edge, &picked);
+        },
+    );
+    f.form.dialog.optional("edges");
 }
 
 /// The rim face and edges named, resolved.
@@ -249,27 +240,7 @@ pub struct LipArgs {
     pub height: f64,
 }
 
-impl LegacyModelStep for Lip {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        step: &str,
-        args: &LipArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("lip({step}, {args:?})");
-        let namer = Namer::new("lip", step)?;
-        let (face, edges) = resolve_rim(model, &args.face, &args.edges).with_context(ctx)?;
-        finite("width", args.width).with_context(ctx)?;
-        finite("height", args.height).with_context(ctx)?;
-        let size = LipSize {
-            width: Design::from_f64(args.width),
-            height: Design::from_f64(args.height),
-        };
-        lip(model, &namer, step, face, &edges, size).with_context(ctx)
-    }
-}
-
-impl Operation for Lip {
+impl PartOperation for Lip {
     const INFO: OperationInfo = info(
         "lip",
         "Lip",
@@ -277,12 +248,10 @@ impl Operation for Lip {
     )
     .icon(crate::icons::LIP);
     type Args = LipArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// No rim yet, a lip 0.05 wide and 0.1 high.
-    fn new_args(_: &Context<Input, ParamValue>) -> LipArgs {
+    fn new_args(_: &StepContext) -> LipArgs {
         LipArgs {
             face: String::new(),
             edges: Vec::new(),
@@ -291,39 +260,45 @@ impl Operation for Lip {
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &LipArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &LipArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("lip", step)?;
+        let (face, edges) = resolve_rim(model, &args.face, &args.edges)?;
+        finite("width", args.width)?;
+        finite("height", args.height)?;
+        let size = LipSize {
+            width: Design::from_f64(args.width),
+            height: Design::from_f64(args.height),
+        };
+        lip(model, &namer, step, face, &edges, size)
     }
 
     /// The rim and its edges, picked, the width and the height.
-    fn presentation(_: &Context<Input, ParamValue>, args: &LipArgs, _: &()) -> Form<Design> {
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
-        rim_fields(dialog, &args.face, &args.edges);
-        let length = |label: &str, value: f64| Number::new(label, value, Unit::Length);
-        (dialog.number("width", length("width", args.width).range(0.0, 1.0)))
-            .number("height", length("height", args.height).range(0.0, 1.0));
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
+    fn form<'a>(
+        _: &'a StepContext<'a>,
         args: &LipArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (LipArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field { key, value } = event else {
-            return (args, ());
-        };
-        if !set_rim(&mut args.face, &mut args.edges, &key, &value) {
-            match (key.as_str(), value) {
-                ("width", Value::Number(w)) => args.width = w,
-                ("height", Value::Number(h)) => args.height = h,
-                _ => {}
-            }
-        }
-        (args, ())
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, LipArgs> {
+        let mut f = EditForm::<Design, LipArgs>::default();
+        rim_fields(&mut f, &args.face, &args.edges, |a| {
+            (&mut a.face, &mut a.edges)
+        });
+        let length = |label: &str, value: f64| Number::new(label, value, Unit::Length);
+        f.number(
+            "width",
+            length("width", args.width).range(0.0, 1.0),
+            |edit, w| edit.args.width = w,
+        );
+        f.number(
+            "height",
+            length("height", args.height).range(0.0, 1.0),
+            |edit, h| edit.args.height = h,
+        );
+        f
     }
 }
 
@@ -350,29 +325,7 @@ pub struct GrooveArgs {
     pub clearance: f64,
 }
 
-impl LegacyModelStep for Groove {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        step: &str,
-        args: &GrooveArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("groove({step}, {args:?})");
-        let namer = Namer::new("groove", step)?;
-        let (face, edges) = resolve_rim(model, &args.face, &args.edges).with_context(ctx)?;
-        finite("width", args.width).with_context(ctx)?;
-        finite("height", args.height).with_context(ctx)?;
-        finite("clearance", args.clearance).with_context(ctx)?;
-        let size = LipSize {
-            width: Design::from_f64(args.width),
-            height: Design::from_f64(args.height),
-        };
-        let clearance = Design::from_f64(args.clearance);
-        groove(model, &namer, step, face, &edges, size, clearance).with_context(ctx)
-    }
-}
-
-impl Operation for Groove {
+impl PartOperation for Groove {
     const INFO: OperationInfo = info(
         "groove",
         "Groove",
@@ -380,12 +333,10 @@ impl Operation for Groove {
     )
     .icon(crate::icons::GROOVE);
     type Args = GrooveArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// No rim yet, for a lip 0.05 wide and 0.1 high, 0.01 clearance.
-    fn new_args(_: &Context<Input, ParamValue>) -> GrooveArgs {
+    fn new_args(_: &StepContext) -> GrooveArgs {
         GrooveArgs {
             face: String::new(),
             edges: Vec::new(),
@@ -395,45 +346,50 @@ impl Operation for Groove {
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &GrooveArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &GrooveArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("groove", step)?;
+        let (face, edges) = resolve_rim(model, &args.face, &args.edges)?;
+        finite("width", args.width)?;
+        finite("height", args.height)?;
+        finite("clearance", args.clearance)?;
+        let size = LipSize {
+            width: Design::from_f64(args.width),
+            height: Design::from_f64(args.height),
+        };
+        let clearance = Design::from_f64(args.clearance);
+        groove(model, &namer, step, face, &edges, size, clearance)
     }
 
     /// The rim and its edges, picked, the lip's width and height, and the
     /// clearance.
-    fn presentation(_: &Context<Input, ParamValue>, args: &GrooveArgs, _: &()) -> Form<Design> {
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
-        rim_fields(dialog, &args.face, &args.edges);
-        let length = |label: &str, value: f64| Number::new(label, value, Unit::Length);
-        (dialog.number("width", length("lip width", args.width).range(0.0, 1.0)))
-            .number("height", length("lip height", args.height).range(0.0, 1.0))
-            .number(
-                "clearance",
-                length("clearance", args.clearance).range(0.0, 0.1),
-            );
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
+    fn form<'a>(
+        _: &'a StepContext<'a>,
         args: &GrooveArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (GrooveArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field { key, value } = event else {
-            return (args, ());
-        };
-        if !set_rim(&mut args.face, &mut args.edges, &key, &value) {
-            match (key.as_str(), value) {
-                ("width", Value::Number(w)) => args.width = w,
-                ("height", Value::Number(h)) => args.height = h,
-                ("clearance", Value::Number(c)) => args.clearance = c,
-                _ => {}
-            }
-        }
-        (args, ())
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, GrooveArgs> {
+        let mut f = EditForm::<Design, GrooveArgs>::default();
+        rim_fields(&mut f, &args.face, &args.edges, |a| {
+            (&mut a.face, &mut a.edges)
+        });
+        let length = |label: &str, value: f64| Number::new(label, value, Unit::Length);
+        f.number(
+            "width",
+            length("lip width", args.width).range(0.0, 1.0),
+            |edit, w| edit.args.width = w,
+        );
+        f.number(
+            "height",
+            length("lip height", args.height).range(0.0, 1.0),
+            |edit, h| edit.args.height = h,
+        );
+        let clearance = length("clearance", args.clearance).range(0.0, 0.1);
+        f.number("clearance", clearance, |edit, c| edit.args.clearance = c);
+        f
     }
 }
 
@@ -501,36 +457,54 @@ pub struct RibArgs {
     pub flipped: bool,
 }
 
-impl LegacyModelStep for Rib {
+impl PartOperation for Rib {
+    const INFO: OperationInfo = info(
+        "rib",
+        "Rib",
+        "Grow a thin wall from an open sketch profile up to a solid's faces, and join it.",
+    )
+    .icon(crate::icons::RIB);
+    type Args = RibArgs;
+    type Session = ();
+
+    /// The newest sketch and solid, 0.05 thick, symmetric, parallel to the
+    /// sketch.
+    fn new_args(context: &StepContext) -> RibArgs {
+        let seen = Seen::new(context.before);
+        RibArgs {
+            sketch: seen.sketch_names().pop().unwrap_or_default(),
+            solid: seen.model().newest_solid().unwrap_or_default(),
+            thickness: 0.05,
+            side: RibSide::Symmetric,
+            direction: RibDirection::Parallel,
+            flipped: false,
+        }
+    }
+
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,
         step: &str,
         args: &RibArgs,
     ) -> GeopResult<()> {
-        let ctx = with_context!("rib({step}, {args:?})");
         let namer = Namer::new("rib", step)?;
-        let placed = (Scope { model, reader }.sketch(&args.sketch))
-            .with_context(ctx)?
-            .clone();
-        let target = model.solid_id(&args.solid).with_context(ctx)?;
+        let placed = (Scope { model, reader }.sketch(&args.sketch))?.clone();
+        let target = model.solid_id(&args.solid)?;
         let sketch = &placed.sketch;
-        let geometry = sketch.enclose::<Design>().with_context(ctx)?;
-        let chain = match sketch.shape().with_context(ctx)? {
+        let geometry = sketch.enclose::<Design>()?;
+        let chain = match sketch.shape()? {
             chain @ Shape::Chain(_) => chain,
             Shape::Region(_) => {
                 return Err(GeopError::new(format!(
                     "sketch {:?} encloses an area: a rib grows from an open profile",
                     args.sketch
-                )))
-                .with_context(ctx);
+                )));
             }
         };
-        let profile = (shape_loops(&args.sketch, sketch, &geometry, chain))
-            .with_context(ctx)?
+        let profile = shape_loops(&args.sketch, sketch, &geometry, chain)?
             .remove(0)
             .profile;
-        finite("thickness", args.thickness).with_context(ctx)?;
+        finite("thickness", args.thickness)?;
         let t = args.thickness;
         let (near, far) = match args.side {
             RibSide::Symmetric => (-t / 2.0, t / 2.0),
@@ -556,93 +530,63 @@ impl LegacyModelStep for Rib {
             thickness,
             growth,
         )
-        .with_context(ctx)
-    }
-}
-
-impl Operation for Rib {
-    const INFO: OperationInfo = info(
-        "rib",
-        "Rib",
-        "Grow a thin wall from an open sketch profile up to a solid's faces, and join it.",
-    )
-    .icon(crate::icons::RIB);
-    type Args = RibArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
-
-    /// The newest sketch and solid, 0.05 thick, symmetric, parallel to the
-    /// sketch.
-    fn new_args(context: &Context<Input, ParamValue>) -> RibArgs {
-        let seen = Seen::new(context.before);
-        RibArgs {
-            sketch: seen.sketch_names().pop().unwrap_or_default(),
-            solid: seen.model().newest_solid().unwrap_or_default(),
-            thickness: 0.05,
-            side: RibSide::Symmetric,
-            direction: RibDirection::Parallel,
-            flipped: false,
-        }
-    }
-
-    fn run(step: &str, part: &mut Build, args: &RibArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The sketch and the solid, picked, the thickness and its side, which
     /// way it grows.
-    fn presentation(_: &Context<Input, ParamValue>, args: &RibArgs, _: &()) -> Form<Design> {
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
-        let sketch = EntityRef::of_name(EntityRef::sketch, &args.sketch);
-        dialog.reference("sketch", "sketch", sketch, &[Role::Sketch], None, false);
-        let solid = EntityRef::of_name(EntityRef::solid, &args.solid);
-        dialog.reference("solid", "solid", solid, &[Role::Solid], None, false);
-        let thickness = Number::new("thickness", args.thickness, Unit::Length).range(0.0, 1.0);
-        dialog.number("thickness", thickness);
-        let (side, sides) = choices(&RibSide::ALL, &args.side);
-        dialog.select("side", "thickness side", side, sides, false);
-        let (direction, directions) = choices(&RibDirection::ALL, &args.direction);
-        (dialog.select("direction", "direction", direction, directions, false)).checkbox(
-            "flipped",
-            "flip direction",
-            args.flipped,
-        );
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
+    fn form<'a>(
+        _: &'a StepContext<'a>,
         args: &RibArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (RibArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field { key, value } = event else {
-            return (args, ());
-        };
-        match (key.as_str(), value) {
-            ("sketch", Value::Entities(picked)) => {
-                args.sketch = EntityRef::last_name(EntityRef::sketch, &picked).unwrap_or_default();
-            }
-            ("solid", Value::Entities(picked)) => {
-                args.solid = EntityRef::last_name(EntityRef::solid, &picked).unwrap_or_default();
-            }
-            ("thickness", Value::Number(t)) => args.thickness = t,
-            ("side", Value::Choice(value)) => {
-                if let Some(side) = chosen(&RibSide::ALL, &value) {
-                    args.side = side;
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, RibArgs> {
+        let mut f = EditForm::<Design, RibArgs>::default();
+        f.pick_one(
+            "sketch",
+            "sketch",
+            EntityRef::sketch,
+            &args.sketch,
+            &[Role::Sketch],
+            |edit, name| edit.args.sketch = name,
+        );
+        f.pick_one(
+            "solid",
+            "solid",
+            EntityRef::solid,
+            &args.solid,
+            &[Role::Solid],
+            |edit, name| edit.args.solid = name,
+        );
+        let thickness = Number::new("thickness", args.thickness, Unit::Length).range(0.0, 1.0);
+        f.number("thickness", thickness, |edit, t| edit.args.thickness = t);
+        let (side, sides) = choices(&RibSide::ALL, &args.side);
+        f.select(
+            "side",
+            "thickness side",
+            side,
+            sides,
+            false,
+            |edit, value| {
+                if let Some(side) = chosen(&RibSide::ALL, value) {
+                    edit.args.side = side;
                 }
-            }
-            ("direction", Value::Choice(value)) => {
-                if let Some(direction) = chosen(&RibDirection::ALL, &value) {
-                    args.direction = direction;
+            },
+        );
+        let (direction, directions) = choices(&RibDirection::ALL, &args.direction);
+        f.select(
+            "direction",
+            "direction",
+            direction,
+            directions,
+            false,
+            |edit, value| {
+                if let Some(direction) = chosen(&RibDirection::ALL, value) {
+                    edit.args.direction = direction;
                 }
-            }
-            ("flipped", Value::Bool(b)) => args.flipped = b,
-            _ => {}
-        }
-        (args, ())
+            },
+        );
+        f.checkbox("flipped", "flip direction", args.flipped, |edit, b| {
+            edit.args.flipped = b
+        });
+        f
     }
 }

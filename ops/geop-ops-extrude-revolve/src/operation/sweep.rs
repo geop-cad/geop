@@ -3,24 +3,20 @@
 
 use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
+    geop_error::{GeopError, GeopResult},
     primitives::CoordinateSystem,
     scalars::Scalar,
     vector::Vector3,
-    with_context,
 };
-use geop_core_program::{
-    editing::{Choice, Event, Form, Number, Unit, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
-use geop_ops::operation::Input;
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, NamedModel, Namer, ParamValue,
+    Design, NamedModel, Namer,
     operation::{
-        Build, BuildReader, Chain, EntityRef, Lookup, LegacyModelStep, ResolveEntity, Role, Scope, Seen,
-        legacy_build_model,
+        BuildReader, Chain, EntityRef, Lookup, PartOperation, ResolveEntity, Role, Scope, Seen,
+        StepContext,
     },
-    ui::sketch_field,
+    part_operation,
+    ui::{Choice, EditForm, FormState, Number, Unit, Value, sketch_field},
 };
 use serde::{Deserialize, Serialize};
 
@@ -116,7 +112,9 @@ const ORIENTATIONS: [(Orientation, &str, &str); 2] = [
     ),
 ];
 
-impl Operation for Sweep {
+part_operation!(Sweep);
+
+impl PartOperation for Sweep {
     const INFO: OperationInfo = OperationInfo::new(
         "sweep",
         "Sweep",
@@ -126,13 +124,11 @@ impl Operation for Sweep {
     )
     .icon(crate::icons::SWEEP);
     type Args = SweepArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// The newest sketch along the sketch before it — joined to the newest
     /// solid if there is one.
-    fn new_args(context: &Context<Input, ParamValue>) -> SweepArgs {
+    fn new_args(context: &StepContext) -> SweepArgs {
         let seen = Seen::new(context.before);
         let mut sketches = seen.sketch_names();
         // The newest 3-D sketch, which is drawn to be swept along; else
@@ -152,92 +148,6 @@ impl Operation for Sweep {
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &SweepArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
-    }
-
-    /// The profile and the path, picked; the rails, if any; how the profile
-    /// turns, twists and scales; whether a face; and how to combine.
-    fn presentation(
-        context: &Context<Input, ParamValue>,
-        args: &SweepArgs,
-        _: &(),
-    ) -> Form<Design> {
-        let view = &context.before;
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
-        sketch_field(
-            dialog,
-            view,
-            "profile",
-            std::slice::from_ref(&args.profile),
-            false,
-        );
-        let path = args.path.iter().cloned().collect();
-        (dialog.reference("path", "path", path, &[Role::Path], None, false))
-            .reference(
-                "rails",
-                "guide rails",
-                args.rails.clone(),
-                &[Role::Path],
-                None,
-                true,
-            )
-            .optional("rails");
-        let orientation =
-            (ORIENTATIONS.iter().find(|o| o.0 == args.orientation)).map_or("", |o| o.1);
-        let orientations = ORIENTATIONS
-            .iter()
-            .map(|&(_, value, label)| Choice::new(value, label));
-        dialog.select(
-            "orientation",
-            "orientation",
-            orientation,
-            orientations.collect(),
-            false,
-        );
-        if args.rails.is_empty() {
-            dialog.number("twist", Number::new("twist", args.twist, Unit::Angle));
-            let end_scale =
-                Number::new("end scale", args.end_scale, Unit::Fraction).range(0.0, 4.0);
-            dialog.number("end_scale", end_scale);
-        }
-        args.output.show(dialog, false);
-        form
-    }
-
-    fn process_user_event(
-        context: &Context<Input, ParamValue>,
-        args: &SweepArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (SweepArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field { key, value } = event else {
-            return (args, ());
-        };
-        match (key.as_str(), value) {
-            ("profile", Value::Entities(picked)) => {
-                args.profile = EntityRef::last_name(EntityRef::sketch, &picked).unwrap_or_default();
-            }
-            ("path", Value::Entities(picked)) => args.path = picked.into_iter().next(),
-            ("rails", Value::Entities(picked)) => args.rails = picked,
-            ("orientation", Value::Choice(choice)) => {
-                if let Some(&(orientation, ..)) = ORIENTATIONS.iter().find(|o| o.1 == choice) {
-                    args.orientation = orientation;
-                }
-            }
-            ("twist", Value::Number(v)) => args.twist = v,
-            ("end_scale", Value::Number(v)) => args.end_scale = v,
-            (key, value) => {
-                (args.output).set(key, &value, Seen::new(context.before).model());
-            }
-        }
-        (args, ())
-    }
-}
-
-impl LegacyModelStep for Sweep {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,
@@ -245,41 +155,37 @@ impl LegacyModelStep for Sweep {
         args: &SweepArgs,
     ) -> GeopResult<()> {
         type S = Design;
-        let ctx = with_context!("sweep({step}, {args:?})");
         let namer = Namer::new("sweep", step)?;
         let profile = EntityRef::sketch(args.profile.clone());
         let path = args
             .path
             .as_ref()
-            .ok_or_else(|| GeopError::new("sweep: pick the path to sweep along"))
-            .with_context(ctx)?;
+            .ok_or_else(|| GeopError::new("sweep: pick the path to sweep along"))?;
         if *path == profile {
             return Err(GeopError::new(
                 "sweep: the profile and the path are two different sketches",
-            ))
-            .with_context(ctx);
+            ));
         }
         let mut scope = Scope {
             model: &mut *model,
             reader,
         };
-        let placed = scope.sketch(&args.profile).with_context(ctx)?.clone();
+        let placed = scope.sketch(&args.profile)?.clone();
         let sketch = &placed.sketch;
-        let geometry = sketch.enclose::<S>().with_context(ctx)?;
-        let shape = args.output.shape(sketch).with_context(ctx)?;
-        let loops = shape_loops(&args.profile, sketch, &geometry, shape).with_context(ctx)?;
+        let geometry = sketch.enclose::<S>()?;
+        let shape = args.output.shape(sketch)?;
+        let loops = shape_loops(&args.profile, sketch, &geometry, shape)?;
         let plane = &placed.plane;
-        let chain = path.resolve_chain(&mut scope).with_context(ctx)?;
+        let chain = path.resolve_chain(&mut scope)?;
         let chain = starting_near(chain, &profile_centre(plane, &loops)?)?;
         let mut rails = Vec::new();
         for rail in &args.rails {
             if *rail == profile || rail == path {
                 return Err(GeopError::new(format!(
                     "sweep: the rail {rail} is the profile or the path: a rail is a curve of its own"
-                )))
-                .with_context(ctx);
+                )));
             }
-            rails.push(rail.resolve_chain(&mut scope).with_context(ctx)?);
+            rails.push(rail.resolve_chain(&mut scope)?);
         }
         let control = Control {
             orientation: args.orientation,
@@ -288,11 +194,76 @@ impl LegacyModelStep for Sweep {
             rails,
         };
 
-        (args.output)
-            .build_whole(model, &namer, step, |model, name| {
-                sweep_along(model, &namer, name, &chain, plane, &loops, &control)
-            })
-            .with_context(ctx)
+        (args.output).build_whole(model, &namer, step, |model, name| {
+            sweep_along(model, &namer, name, &chain, plane, &loops, &control)
+        })
+    }
+    /// The profile and the path, picked; the rails, if any; how the profile
+    /// turns, twists and scales; whether a face; and how to combine.
+    fn form<'a>(
+        context: &'a StepContext<'a>,
+        args: &SweepArgs,
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, SweepArgs> {
+        let view = &context.before;
+        let mut f = EditForm::<Design, SweepArgs>::default();
+        let profile = std::slice::from_ref(&args.profile);
+        sketch_field(&mut f.form.dialog, view, "profile", profile, false);
+        f.on("profile", |edit, value| {
+            if let Value::Entities(picked) = value {
+                edit.args.profile =
+                    EntityRef::last_name(EntityRef::sketch, &picked).unwrap_or_default();
+            }
+        });
+        let path = args.path.iter().cloned().collect();
+        let rails = args.rails.clone();
+        f.reference(
+            "path",
+            "path",
+            path,
+            &[Role::Path],
+            None,
+            false,
+            |edit, picked| edit.args.path = picked.into_iter().next(),
+        )
+        .reference(
+            "rails",
+            "guide rails",
+            rails,
+            &[Role::Path],
+            None,
+            true,
+            |edit, picked| edit.args.rails = picked,
+        );
+        f.form.dialog.optional("rails");
+        let orientation =
+            (ORIENTATIONS.iter().find(|o| o.0 == args.orientation)).map_or("", |o| o.1);
+        let orientations = ORIENTATIONS
+            .iter()
+            .map(|&(_, value, label)| Choice::new(value, label));
+        let label = "orientation";
+        f.select(
+            label,
+            label,
+            orientation,
+            orientations.collect(),
+            false,
+            |edit, choice| {
+                if let Some(&(orientation, ..)) = ORIENTATIONS.iter().find(|o| o.1 == choice) {
+                    edit.args.orientation = orientation;
+                }
+            },
+        );
+        if args.rails.is_empty() {
+            let twist = Number::new("twist", args.twist, Unit::Angle);
+            f.number("twist", twist, |edit, v| edit.args.twist = v);
+            let end_scale =
+                Number::new("end scale", args.end_scale, Unit::Fraction).range(0.0, 4.0);
+            f.number("end_scale", end_scale, |edit, v| edit.args.end_scale = v);
+        }
+        let output = |args: &mut SweepArgs, output| args.output = output;
+        (args.output).fields(&mut f, Seen::new(context.before).model(), false, output);
+        f
     }
 }
 

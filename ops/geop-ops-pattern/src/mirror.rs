@@ -5,15 +5,14 @@ use geop_core_math::{
     primitives::{FrameAxis, Motion},
     scalars::Scalar,
 };
-use geop_core_program::{
-    editing::{Event, Form, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
-use geop_ops::operation::Input;
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, NamedModel, ParamValue,
-    operation::{Aspects, Build, BuildReader, EntityRef, Lookup, LegacyModelStep, Role, Seen},
-    origin_plane,
+    Design, NamedModel,
+    operation::{
+        Aspects, Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Seen, StepContext,
+    },
+    origin_plane, part_operation,
+    ui::{EditForm, FormState},
 };
 use serde::{Deserialize, Serialize};
 
@@ -73,18 +72,9 @@ impl Pattern for MirrorArgs {
     }
 }
 
-impl LegacyModelStep for Mirror {
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &MirrorArgs,
-    ) -> GeopResult<()> {
-        build_pattern(model, reader, step, args)
-    }
-}
+part_operation!(Mirror);
 
-impl Operation for Mirror {
+impl PartOperation for Mirror {
     const INFO: OperationInfo = OperationInfo::new(
         "mirror",
         "Mirror",
@@ -94,12 +84,10 @@ impl Operation for Mirror {
     )
     .icon(geop_ops::ui::icons::MIRROR);
     type Args = MirrorArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// Mirrored in the origin's `yz` plane, kept as a new body.
-    fn new_args(_: &Context<Input, ParamValue>) -> MirrorArgs {
+    fn new_args(_: &StepContext) -> MirrorArgs {
         MirrorArgs {
             // Nothing picked: what is patterned is the user's choice, a body
             // or a feature, never guessed.
@@ -112,34 +100,37 @@ impl Operation for Mirror {
         run_pattern::<Self>(part, step, args)
     }
 
-    /// The bodies or the features, and the plane, picked, and how to
-    /// combine an image of bodies.
-    fn presentation(_: &Context<Input, ParamValue>, args: &MirrorArgs, _: &()) -> Form<Design> {
-        let mut form = Form::default();
-        args.seeds.show(&mut form, |form| {
-            let plane = args.plane.iter().cloned().collect();
-            (form.dialog).reference("plane", "plane", plane, &[Role::Plane], None, false);
-        });
-        form
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &MirrorArgs,
+    ) -> GeopResult<()> {
+        build_pattern(model, reader, step, args)
     }
 
-    fn process_user_event(
-        context: &Context<Input, ParamValue>,
+    /// The bodies or the features, and the plane, picked, and how to
+    /// combine an image of bodies.
+    fn form<'a>(
+        context: &'a StepContext<'a>,
         args: &MirrorArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (MirrorArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field { key, value } = event else {
-            return (args, ());
-        };
-        match (key.as_str(), &value) {
-            ("plane", Value::Entities(picked)) => args.plane = picked.first().cloned(),
-            (key, value) => {
-                args.seeds
-                    .set(key, value, Seen::new(context.before).model());
-            }
-        }
-        (args, ())
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, MirrorArgs> {
+        let mut f = EditForm::default();
+        let set_seeds = |args: &mut MirrorArgs, seeds| args.seeds = seeds;
+        let before = Seen::new(context.before);
+        (args.seeds).fields(&mut f, before.model(), set_seeds, |f| {
+            let plane = args.plane.iter().cloned().collect();
+            f.reference(
+                "plane",
+                "plane",
+                plane,
+                &[Role::Plane],
+                None,
+                false,
+                |edit, picked| edit.args.plane = picked.first().cloned(),
+            );
+        });
+        f
     }
 }

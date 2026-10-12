@@ -26,19 +26,18 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::operation::{
-    Context, Operation, OperationGroup, OperationInfo, OperationTier,
-};
 use geop_core_sketch::plain::{add, sub};
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, NamedModel, ParamValue,
+    Design, NamedModel,
     model::model,
-    operation::{Build, BuildView, Input, ResolveEntity, Role, Seen},
+    operation::{Build, BuildView, PartOperation, ResolveEntity, Role, Seen, StepContext},
     output::sheet::{Anchor, Layer, P, Sheet},
+    part_operation,
     placed::{About, Component, about, placed_parts},
     ui::{
-        Action, CanvasEvent, Choice, Edit, EditForm, Event, Extent, Form, FormState, InHand,
-        ListItem, Pointer, Shape, Style, Tone, Value, Visual,
+        Action, CanvasEvent, Choice, Edit, EditForm, Extent, FormState, InHand, ListItem, Pointer,
+        Shape, Style, Tone, Value, Visual,
         hit::{hit_visuals, no_instances},
     },
 };
@@ -968,234 +967,9 @@ fn check(part: BuildView, step: &str, args: &DrawingArgs) -> GeopResult<()> {
     Ok(())
 }
 
-/// The form of the drawing `args` of the part `context` is edited against:
-/// its download, its sheet to annotate, its views and its title block.
-fn form<'a>(
-    context: &'a Context<Input, ParamValue>,
-    args: &DrawingArgs,
-    session: &DrawingSession,
-    selection: &[String],
-) -> EditForm<'a, Design, DrawingArgs, DrawingSession> {
-    let part = context.before;
-    let mut f = EditForm::<Design, DrawingArgs, DrawingSession>::default();
-    f.form.selection = selection.to_vec();
-    f.form.dialog.download(
-        "download",
-        <DrawingExporter as geop_ops::output::Exporter>::INFO.kind,
-        vec![Choice::new("svg", "SVG"), Choice::new("dxf", "DXF")],
-    );
-    match &*session.layout(part, args) {
-        Ok(layout) => annotate(&mut f, part, args, session, selection, layout),
-        Err(e) => {
-            f.form.dialog.text(
-                "sheet_error",
-                format!("The sheet cannot be laid out: {e}"),
-                Tone::Error,
-            );
-        }
-    }
+part_operation!(Drawing);
 
-    f.form.dialog.heading("views_heading", "Views");
-    for kind in ViewKind::ALL {
-        f.checkbox(
-            &format!("view:{}", kind.name()),
-            label(kind),
-            args.views.contains(&kind),
-            move |Edit { args, .. }, on| {
-                args.views.retain(|k| *k != kind);
-                if on {
-                    args.views.push(kind);
-                    args.views
-                        .sort_by_key(|k| ViewKind::ALL.iter().position(|a| a == k));
-                }
-            },
-        );
-    }
-    f.select(
-        "projection",
-        "projection",
-        match args.projection {
-            Projection::ThirdAngle => "third_angle",
-            Projection::FirstAngle => "first_angle",
-        },
-        vec![
-            Choice::new("third_angle", "Third angle"),
-            Choice::new("first_angle", "First angle"),
-        ],
-        false,
-        |Edit { args, .. }, value| {
-            args.projection = match value {
-                "first_angle" => Projection::FirstAngle,
-                _ => Projection::ThirdAngle,
-            }
-        },
-    );
-    f.checkbox(
-        "hidden_lines",
-        "Hidden lines",
-        args.hidden_lines,
-        |Edit { args, .. }, on| args.hidden_lines = on,
-    );
-    f.checkbox(
-        "tangent_edges",
-        "Tangent edges",
-        args.tangent_edges,
-        |Edit { args, .. }, on| args.tangent_edges = on,
-    );
-    f.reference(
-        "section",
-        "section plane",
-        args.section.iter().cloned().collect(),
-        &[Role::Plane],
-        None,
-        false,
-        |edit, picked| edit.args.section = picked.into_iter().next(),
-    );
-    f.form.dialog.optional("section");
-
-    f.form.dialog.heading("sheet_heading", "Sheet");
-    f.select(
-        "sheet",
-        "paper",
-        args.sheet.name(),
-        SheetSize::ALL
-            .iter()
-            .map(|s| Choice::new(s.name(), s.name().to_uppercase()))
-            .collect(),
-        false,
-        |Edit { args, .. }, value| {
-            if let Some(s) = SheetSize::ALL.into_iter().find(|s| s.name() == value) {
-                args.sheet = s;
-            }
-        },
-    );
-    let mut scales = vec![Choice::new("fit", "To fit")];
-    scales.extend(
-        SCALES
-            .iter()
-            .map(|&s| Choice::new(scale_label(s), scale_label(s))),
-    );
-    f.select(
-        "scale",
-        "scale",
-        args.scale.map(scale_label).unwrap_or_else(|| "fit".into()),
-        scales,
-        false,
-        |Edit { args, .. }, value| {
-            args.scale = SCALES.iter().copied().find(|&s| scale_label(s) == value);
-        },
-    );
-    f.checkbox(
-        "bom",
-        "Bill of materials",
-        args.bom,
-        |Edit { args, .. }, on| args.bom = on,
-    );
-    let mut title = Vec::new();
-    for (key, caption, value) in [
-        ("title:name", "Part name", &args.name),
-        ("title:material", "Material", &args.material),
-    ] {
-        f.on(key, move |edit, value| {
-            if let Value::Text(text) = value {
-                match key {
-                    "title:name" => edit.args.name = text,
-                    _ => edit.args.material = text,
-                }
-            }
-        });
-        let mut item = ListItem::new(key, caption);
-        item.text = Some(value.clone());
-        title.push(item);
-    }
-    f.form.dialog.list("title", title, "");
-    f
-}
-
-/// The pointer on the sheet of the part `part` shows: a tool picks what the
-/// views show and puts down what it makes; a value is dragged where it
-/// goes; Escape lets go of the picks, then of the tool; Delete removes the
-/// annotations selected.
-fn canvas(
-    part: BuildView,
-    edit: Edit<'_, DrawingArgs, DrawingSession>,
-    event: &CanvasEvent<Design>,
-) {
-    let Edit {
-        args,
-        session: s,
-        selection,
-    } = edit;
-    let laid = s.layout(part, args);
-    let Ok(layout) = &*laid else {
-        return;
-    };
-    match event {
-        CanvasEvent::Hover { pointer, .. } => {
-            s.cursor = on_sheet(pointer);
-            s.hover = match s.tool {
-                Tool::Select => None,
-                tool => under(layout, pointer, tool, &s.picks).cloned(),
-            };
-        }
-        CanvasEvent::Leave => {
-            s.cursor = None;
-            s.hover = None;
-        }
-        CanvasEvent::Click {
-            pointer,
-            double: false,
-            ..
-        } if s.tool != Tool::Select => {
-            let Some(at) = on_sheet(pointer) else {
-                return;
-            };
-            let hit = under(layout, pointer, s.tool, &s.picks).cloned();
-            s.click(args, part, layout, at, hit);
-            s.hover = under(layout, pointer, s.tool, &s.picks).cloned();
-        }
-        CanvasEvent::Confirm => s.picks.clear(),
-        // Each event of a drag reaches the annotation as it was when grabbed
-        // (see `Visual::from_grab`).
-        CanvasEvent::Move { key, from, to, .. } => {
-            let Some(i) = annotation_of(key).filter(|_| !key.contains('/')) else {
-                return;
-            };
-            let Some(annotation) = args.annotations.get_mut(i) else {
-                return;
-            };
-            let moved = [
-                to[0].to_f64() - from[0].to_f64(),
-                to[1].to_f64() - from[1].to_f64(),
-            ];
-            if let Some(label) = annotation.label_mut() {
-                *label = add(*label, moved);
-            }
-        }
-        CanvasEvent::Cancel => {
-            s.refused = None;
-            if s.picks.is_empty() {
-                s.tool = Tool::Select;
-            }
-            s.picks.clear();
-            s.hover = None;
-        }
-        CanvasEvent::Delete => {
-            let mut gone: Vec<usize> = selection.iter().filter_map(|k| annotation_of(k)).collect();
-            gone.sort_unstable();
-            gone.dedup();
-            for i in gone.into_iter().rev() {
-                if i < args.annotations.len() {
-                    args.annotations.remove(i);
-                }
-            }
-            selection.clear();
-        }
-        _ => {}
-    }
-}
-
-impl Operation for Drawing {
+impl PartOperation for Drawing {
     const INFO: OperationInfo = OperationInfo::new(
         "drawing",
         "Drawing",
@@ -1205,12 +979,10 @@ impl Operation for Drawing {
     )
     .icon(crate::icons::DRAWING);
     type Args = DrawingArgs;
-    type EditingState = DrawingEditing;
-    type Input = Input;
-    type State = ParamValue;
+    type Session = DrawingSession;
 
     /// Front, top, right and isometric views, third angle, on A3.
-    fn new_args(_: &Context<Input, ParamValue>) -> DrawingArgs {
+    fn new_args(_: &StepContext) -> DrawingArgs {
         DrawingArgs::default()
     }
 
@@ -1221,26 +993,233 @@ impl Operation for Drawing {
         part.define_target(&drawing(step), args, described)
     }
 
-    fn presentation(
-        context: &Context<Input, ParamValue>,
+    /// The form of the drawing `args` of the part `context` is edited against:
+    /// its download, its sheet to annotate, its views and its title block.
+    fn form<'a>(
+        context: &'a StepContext<'a>,
         args: &DrawingArgs,
         editing: &DrawingEditing,
-    ) -> Form<Design> {
-        form(context, args, &editing.session, &editing.selection).into_form()
+    ) -> EditForm<'a, Design, DrawingArgs, DrawingSession> {
+        let (session, selection) = (&editing.session, &editing.selection[..]);
+        let part = context.before;
+        let mut f = EditForm::<Design, DrawingArgs, DrawingSession>::default();
+        f.form.selection = selection.to_vec();
+        f.form.dialog.download(
+            "download",
+            <DrawingExporter as geop_ops::output::Exporter>::INFO.kind,
+            vec![Choice::new("svg", "SVG"), Choice::new("dxf", "DXF")],
+        );
+        match &*session.layout(part, args) {
+            Ok(layout) => annotate(&mut f, part, args, session, selection, layout),
+            Err(e) => {
+                f.form.dialog.text(
+                    "sheet_error",
+                    format!("The sheet cannot be laid out: {e}"),
+                    Tone::Error,
+                );
+            }
+        }
+
+        f.form.dialog.heading("views_heading", "Views");
+        for kind in ViewKind::ALL {
+            f.checkbox(
+                &format!("view:{}", kind.name()),
+                label(kind),
+                args.views.contains(&kind),
+                move |Edit { args, .. }, on| {
+                    args.views.retain(|k| *k != kind);
+                    if on {
+                        args.views.push(kind);
+                        args.views
+                            .sort_by_key(|k| ViewKind::ALL.iter().position(|a| a == k));
+                    }
+                },
+            );
+        }
+        f.select(
+            "projection",
+            "projection",
+            match args.projection {
+                Projection::ThirdAngle => "third_angle",
+                Projection::FirstAngle => "first_angle",
+            },
+            vec![
+                Choice::new("third_angle", "Third angle"),
+                Choice::new("first_angle", "First angle"),
+            ],
+            false,
+            |Edit { args, .. }, value| {
+                args.projection = match value {
+                    "first_angle" => Projection::FirstAngle,
+                    _ => Projection::ThirdAngle,
+                }
+            },
+        );
+        f.checkbox(
+            "hidden_lines",
+            "Hidden lines",
+            args.hidden_lines,
+            |Edit { args, .. }, on| args.hidden_lines = on,
+        );
+        f.checkbox(
+            "tangent_edges",
+            "Tangent edges",
+            args.tangent_edges,
+            |Edit { args, .. }, on| args.tangent_edges = on,
+        );
+        f.reference(
+            "section",
+            "section plane",
+            args.section.iter().cloned().collect(),
+            &[Role::Plane],
+            None,
+            false,
+            |edit, picked| edit.args.section = picked.into_iter().next(),
+        );
+        f.form.dialog.optional("section");
+
+        f.form.dialog.heading("sheet_heading", "Sheet");
+        f.select(
+            "sheet",
+            "paper",
+            args.sheet.name(),
+            SheetSize::ALL
+                .iter()
+                .map(|s| Choice::new(s.name(), s.name().to_uppercase()))
+                .collect(),
+            false,
+            |Edit { args, .. }, value| {
+                if let Some(s) = SheetSize::ALL.into_iter().find(|s| s.name() == value) {
+                    args.sheet = s;
+                }
+            },
+        );
+        let mut scales = vec![Choice::new("fit", "To fit")];
+        scales.extend(
+            SCALES
+                .iter()
+                .map(|&s| Choice::new(scale_label(s), scale_label(s))),
+        );
+        f.select(
+            "scale",
+            "scale",
+            args.scale.map(scale_label).unwrap_or_else(|| "fit".into()),
+            scales,
+            false,
+            |Edit { args, .. }, value| {
+                args.scale = SCALES.iter().copied().find(|&s| scale_label(s) == value);
+            },
+        );
+        f.checkbox(
+            "bom",
+            "Bill of materials",
+            args.bom,
+            |Edit { args, .. }, on| args.bom = on,
+        );
+        let mut title = Vec::new();
+        for (key, caption, value) in [
+            ("title:name", "Part name", &args.name),
+            ("title:material", "Material", &args.material),
+        ] {
+            f.on(key, move |edit, value| {
+                if let Value::Text(text) = value {
+                    match key {
+                        "title:name" => edit.args.name = text,
+                        _ => edit.args.material = text,
+                    }
+                }
+            });
+            let mut item = ListItem::new(key, caption);
+            item.text = Some(value.clone());
+            title.push(item);
+        }
+        f.form.dialog.list("title", title, "");
+        f
     }
 
-    fn process_user_event(
-        context: &Context<Input, ParamValue>,
-        args: &DrawingArgs,
-        editing: &DrawingEditing,
-        event: Event<Design>,
-    ) -> (DrawingArgs, DrawingEditing) {
-        editing.handle(
+    /// The pointer on the sheet of the part `context` is edited against: a
+    /// tool picks what the views show and puts down what it makes; a value is
+    /// dragged where it goes; Escape lets go of the picks, then of the tool;
+    /// Delete removes the annotations selected.
+    fn canvas(
+        context: &StepContext,
+        edit: Edit<'_, DrawingArgs, DrawingSession>,
+        event: &CanvasEvent<Design>,
+    ) {
+        let part = context.before;
+        let Edit {
             args,
-            event,
-            |args, e| form(context, args, &e.session, &e.selection),
-            |edit, event| canvas(context.before, edit, event),
-        )
+            session: s,
+            selection,
+        } = edit;
+        let laid = s.layout(part, args);
+        let Ok(layout) = &*laid else {
+            return;
+        };
+        match event {
+            CanvasEvent::Hover { pointer, .. } => {
+                s.cursor = on_sheet(pointer);
+                s.hover = match s.tool {
+                    Tool::Select => None,
+                    tool => under(layout, pointer, tool, &s.picks).cloned(),
+                };
+            }
+            CanvasEvent::Leave => {
+                s.cursor = None;
+                s.hover = None;
+            }
+            CanvasEvent::Click {
+                pointer,
+                double: false,
+                ..
+            } if s.tool != Tool::Select => {
+                let Some(at) = on_sheet(pointer) else {
+                    return;
+                };
+                let hit = under(layout, pointer, s.tool, &s.picks).cloned();
+                s.click(args, part, layout, at, hit);
+                s.hover = under(layout, pointer, s.tool, &s.picks).cloned();
+            }
+            CanvasEvent::Confirm => s.picks.clear(),
+            // Each event of a drag reaches the annotation as it was when grabbed
+            // (see `Visual::from_grab`).
+            CanvasEvent::Move { key, from, to, .. } => {
+                let Some(i) = annotation_of(key).filter(|_| !key.contains('/')) else {
+                    return;
+                };
+                let Some(annotation) = args.annotations.get_mut(i) else {
+                    return;
+                };
+                let moved = [
+                    to[0].to_f64() - from[0].to_f64(),
+                    to[1].to_f64() - from[1].to_f64(),
+                ];
+                if let Some(label) = annotation.label_mut() {
+                    *label = add(*label, moved);
+                }
+            }
+            CanvasEvent::Cancel => {
+                s.refused = None;
+                if s.picks.is_empty() {
+                    s.tool = Tool::Select;
+                }
+                s.picks.clear();
+                s.hover = None;
+            }
+            CanvasEvent::Delete => {
+                let mut gone: Vec<usize> =
+                    selection.iter().filter_map(|k| annotation_of(k)).collect();
+                gone.sort_unstable();
+                gone.dedup();
+                for i in gone.into_iter().rev() {
+                    if i < args.annotations.len() {
+                        args.annotations.remove(i);
+                    }
+                }
+                selection.clear();
+            }
+            _ => {}
+        }
     }
 }
 

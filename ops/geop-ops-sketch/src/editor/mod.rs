@@ -49,7 +49,7 @@ use geop_core_sketch::{ConstraintId, CurveId, PointId, offset::Corners};
 use geop_ops::{
     Design,
     operation::Role,
-    operation::{Lookup, Seen},
+    operation::{BuildView, Lookup, Seen},
     ui::{
         Action, CanvasEvent, Edit, EditForm, InHand, ListItem, Pointer, Shape, Style, Tone, Value,
         Visual, hit::hit_visuals,
@@ -551,11 +551,12 @@ impl Editing<'_> {
 /// What a sketch step shows: the plane to pick and, once it is one, the
 /// sketch drawn in it with the tools, constraints and state of the drawing.
 pub(crate) fn form<'a>(
-    before: &'a Seen<'a>,
+    view: BuildView<'a>,
     args: &AddSketchArgs,
     s: &SketchSession,
     selection: &[String],
 ) -> EditForm<'a, S, AddSketchArgs, SketchSession> {
+    let before = Seen::new(view);
     let mut f = EditForm::<S, AddSketchArgs, SketchSession>::default();
     // Only a plane is taken; another one moves the drawing onto it.
     f.reference(
@@ -567,7 +568,7 @@ pub(crate) fn form<'a>(
         false,
         move |edit, picked| {
             if let [plane] = picked.as_slice()
-                && plane.resolve_plane(&mut &*before).is_ok()
+                && plane.resolve_plane(&mut Seen::new(view)).is_ok()
             {
                 edit.args.plane = Some(plane.clone());
                 edit.session.draft = Draft::default();
@@ -577,7 +578,7 @@ pub(crate) fn form<'a>(
     let Some(plane) = &args.plane else {
         return f;
     };
-    let frame = match plane.resolve_plane(&mut &*before) {
+    let frame = match plane.resolve_plane(&mut &before) {
         Ok(frame) => frame,
         Err(e) => {
             f.form
@@ -588,8 +589,8 @@ pub(crate) fn form<'a>(
     };
     let mut args = args.clone();
     let mut s = s.clone();
-    refresh(&mut args, &mut s, before, &frame);
-    draw_dialog(&mut f, before, &args, &s, selection, &frame);
+    refresh(&mut args, &mut s, &before, &frame);
+    draw_dialog(&mut f, view, &args, &s, selection, &frame);
     f.form.visuals = visuals(&args, &s, selection, &frame);
     f.form.selection = selection.to_vec();
     f.form.focus = Some(frame);
@@ -603,20 +604,21 @@ pub(crate) fn form<'a>(
 
 /// A pointer or key event in the drawing.
 pub(crate) fn event(
-    before: &Seen<'_>,
+    view: BuildView<'_>,
     edit: Edit<'_, AddSketchArgs, SketchSession>,
     event: &CanvasEvent<S>,
 ) {
-    editing(before, edit, |e| e.event(event));
+    editing(view, edit, |e| e.event(event));
 }
 
-/// `f` applied to the drawing, brought up to date with the part — and so
-/// solved — first. Nothing, while the plane is none.
+/// `f` applied to the drawing, brought up to date with the part `view`
+/// shows — and so solved — first. Nothing, while the plane is none.
 fn editing(
-    before: &Seen<'_>,
+    view: BuildView<'_>,
     edit: Edit<'_, AddSketchArgs, SketchSession>,
     f: impl FnOnce(&mut Editing),
 ) {
+    let before = &Seen::new(view);
     let Edit {
         args,
         session: s,

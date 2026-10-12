@@ -24,24 +24,22 @@ use std::collections::HashMap;
 
 use geop_core_geometry::contains::curve::curve_could_contain;
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
+    geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     solvers::walk::{Take, flood},
     union_find::UnionFind,
-    with_context,
-};
-use geop_core_program::{
-    editing::{Event, Form, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
 };
 use geop_core_topology::{
     Body, ShellId,
     build::{BodySpec, CoedgeOn, EdgeSpec, FaceSpec},
     validation::{Outward, ValidationParameters, normal_points_outward},
 };
+use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    BodyNames, Design, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, EntityRef, Input, LegacyModelStep, Role, legacy_build_model},
+    BodyNames, Design, NamedModel, Namer,
+    operation::{BuildReader, EntityRef, PartOperation, Role, StepContext},
+    part_operation,
+    ui::{EditForm, FormState},
 };
 use serde::{Deserialize, Serialize};
 
@@ -65,28 +63,9 @@ pub struct KnitArgs {
     pub solid: bool,
 }
 
-impl LegacyModelStep for Knit {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        step: &str,
-        args: &KnitArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("knit({step}, {args:?})");
-        let namer = Namer::new("knit", step)?;
-        let mut sheets: Vec<ShellId> = Vec::new();
-        for name in &args.faces {
-            let (_, sheet) = sheet_of(model, name).with_context(ctx)?;
-            if !sheets.contains(&sheet) {
-                sheets.push(sheet);
-            }
-        }
-        knit(model, &namer, &sheets, args.solid).with_context(ctx)?;
-        Ok(())
-    }
-}
+part_operation!(Knit);
 
-impl Operation for Knit {
+impl PartOperation for Knit {
     const INFO: OperationInfo = OperationInfo::new(
         "knit",
         "Knit",
@@ -97,52 +76,55 @@ impl Operation for Knit {
     .experimental()
     .icon(crate::icons::KNIT);
     type Args = KnitArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     /// Nothing picked yet; a solid wanted.
-    fn new_args(_: &Context<Input, ParamValue>) -> KnitArgs {
+    fn new_args(_: &StepContext) -> KnitArgs {
         KnitArgs {
             faces: Vec::new(),
             solid: true,
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &KnitArgs) -> GeopResult<()> {
-        legacy_build_model::<Self>(part, step, args)
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &mut BuildReader,
+        step: &str,
+        args: &KnitArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("knit", step)?;
+        let mut sheets: Vec<ShellId> = Vec::new();
+        for name in &args.faces {
+            let (_, sheet) = sheet_of(model, name)?;
+            if !sheets.contains(&sheet) {
+                sheets.push(sheet);
+            }
+        }
+        knit(model, &namer, &sheets, args.solid)?;
+        Ok(())
     }
 
     /// The sheets, picked by a face of each, and whether they must close.
-    fn presentation(_: &Context<Input, ParamValue>, args: &KnitArgs, _: &()) -> Form<Design> {
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
-        let faces = EntityRef::of_names(EntityRef::face, &args.faces);
-        (dialog.reference("faces", "sheets", faces, &[Role::Sheet], None, true)).checkbox(
-            "solid",
-            "close into a solid",
-            args.solid,
-        );
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
+    fn form<'a>(
+        _: &'a StepContext<'a>,
         args: &KnitArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (KnitArgs, ()) {
-        let mut args = args.clone();
-        if let Event::Field { key, value } = event {
-            match (key.as_str(), value) {
-                ("faces", Value::Entities(picked)) => {
-                    args.faces = EntityRef::names_of(EntityRef::face, &picked)
-                }
-                ("solid", Value::Bool(solid)) => args.solid = solid,
-                _ => {}
-            }
-        }
-        (args, ())
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, KnitArgs> {
+        let mut f = EditForm::<Design, KnitArgs>::default();
+        let faces = EntityRef::of_names(EntityRef::face, &args.faces);
+        f.reference(
+            "faces",
+            "sheets",
+            faces,
+            &[Role::Sheet],
+            None,
+            true,
+            |edit, picked| edit.args.faces = EntityRef::names_of(EntityRef::face, &picked),
+        );
+        f.checkbox("solid", "close into a solid", args.solid, |edit, solid| {
+            edit.args.solid = solid
+        });
+        f
     }
 }
 
