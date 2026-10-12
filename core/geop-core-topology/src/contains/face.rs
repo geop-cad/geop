@@ -316,8 +316,7 @@ pub fn face_interior_point_where<S: Scalar>(
     let mut found_any = false;
     for &coedge_id in &coedges {
         let pcurve = &model.get_coedge(coedge_id)?.pcurve;
-        let (t0, t1) = pcurve.domain();
-        let t = t0.add(t1).div(S::TWO)?.sharpen();
+        let t = pcurve.mid_parameter()?;
         let Ok(base) = pcurve.evaluate(t) else {
             continue;
         };
@@ -502,14 +501,12 @@ mod interior_point_tests {
 #[cfg(test)]
 mod tests {
     use super::{PointClassification, face_contains};
+    use crate::test_fixtures::line2;
     use crate::{
         Coedge, CoedgeGeometry, CoedgeId, Edge, Face, FaceId, Model, Sense, ShellId, Vertex,
         VertexId, boundary::BoundaryType, model::Curve3,
     };
-    use geop_core_geometry::{
-        nurb_curve::{NurbCurve, NurbCurve2D},
-        nurb_surface::NurbSurface3D,
-    };
+    use geop_core_geometry::nurb_surface::NurbSurface3D;
     use geop_core_math::{
         for_all_scalars,
         scalars::Scalar,
@@ -519,19 +516,6 @@ mod tests {
     const MAX: usize = 200;
     const MIN_SUBDIVISION_SIZE: f64 = 1e-3;
     const SEED: u64 = 12345;
-
-    fn p2<S: Scalar>(x: f64, y: f64) -> Vector3<S> {
-        Vector3::from_array([S::from_f64(x), S::from_f64(y), S::ONE])
-    }
-
-    fn line2<S: Scalar>(a: (f64, f64), b: (f64, f64)) -> NurbCurve2D<S> {
-        NurbCurve::try_new(
-            1,
-            vec![p2(a.0, a.1), p2(b.0, b.1)],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-        )
-        .unwrap()
-    }
 
     /// A polygon face on the unit-square `[0,1]^2` parameter surface, built
     /// from `points` (CCW, `(u, v) == (x, y)`).

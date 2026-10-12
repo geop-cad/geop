@@ -14,7 +14,7 @@ use geop_core_geometry::nurb_curve::NurbCurve2D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
-    vector::{Vector2, Vector3},
+    vector::Vector2,
 };
 use geop_ops_extrude_revolve::common::Profile;
 
@@ -118,8 +118,7 @@ fn with_ends<S: Scalar>(
     let mut curve = curve.clone();
     let last = curve.control_points.len() - 1;
     for (i, p) in [(0, start), (last, end)] {
-        let w = curve.control_points[i][2];
-        curve.control_points[i] = Vector3::from_array([p[0].mul(w), p[1].mul(w), w]);
+        curve.control_points[i] = p.homogeneous(curve.control_points[i][2]);
     }
     curve.recompute_aabb();
     Ok(curve)

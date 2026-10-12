@@ -580,6 +580,7 @@ pub struct Cylinder<S: Scalar> {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_fixtures::knots;
     use geop_core_math::{
         for_all_scalars,
         scalars::Scalar,
@@ -596,10 +597,6 @@ mod tests {
     /// `(x, y, z)` with weight `w`, homogeneous.
     fn h<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
         Vector4::from_array([x * w, y * w, z * w, w].map(S::from_f64))
-    }
-
-    fn knots<S: Scalar>(ks: &[f64]) -> Vec<S> {
-        ks.iter().map(|&k| S::from_f64(k)).collect()
     }
 
     const R2: f64 = std::f64::consts::FRAC_1_SQRT_2;

@@ -4,7 +4,10 @@
 use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{Ring, ScalInF64 as S, Scalar};
 use geop_ops::operation::Role;
-use geop_ops::{EntityRef, NamedModel, testing::edges_where};
+use geop_ops::{
+    EntityRef, NamedModel,
+    testing::{edges_where, middle},
+};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{AddDatumArgs, Construction};
 use geop_ops_extrude_revolve::{Extents, LoftArgs, Output};
@@ -532,11 +535,7 @@ fn fillet_lofted_rim() {
     let mut program = lofted(circle_sketch(0.0, 0.0, 1.0), circle_sketch(0.3, 0.0, 0.6));
     let before = program.build_model().unwrap();
     let rim = edges_where(&before, |e| {
-        let (t0, t1) = e.curve.domain();
-        let p = e
-            .curve
-            .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
-            .unwrap();
+        let p = middle(e);
         p[2].could_be_equal(S::from_f64(2.0))
     });
     assert_eq!(rim.len(), 4, "{rim:?}");
@@ -561,11 +560,7 @@ fn fillet_lofted_bottom_edge_is_refused() {
     let mut program = square_to_circle();
     let before = program.build_model().unwrap();
     let bottom = edges_where(&before, |e| {
-        let (t0, t1) = e.curve.domain();
-        let p = e
-            .curve
-            .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
-            .unwrap();
+        let p = middle(e);
         p[2].could_be_equal(S::ZERO)
     });
     program.push("round", FilletArgs::constant(vec![bottom[0].clone()], 0.1));
@@ -640,11 +635,7 @@ fn fillet_rim_over_creases_is_refused() {
     let mut program = square_to_circle();
     let before = program.build_model().unwrap();
     let rim = edges_where(&before, |e| {
-        let (t0, t1) = e.curve.domain();
-        let p = e
-            .curve
-            .evaluate(S::interpolate(t0, t1, S::from_f64(0.5)))
-            .unwrap();
+        let p = middle(e);
         p[2].could_be_equal(S::from_f64(2.0))
     });
     program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));

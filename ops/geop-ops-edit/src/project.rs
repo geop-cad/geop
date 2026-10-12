@@ -2,7 +2,10 @@
 //! face along them.
 
 use geop_core_math::{
-    geop_error::GeopResult, plain, primitives::CoordinateSystem, scalars::Scalar,
+    geop_error::{GeopError, GeopResult},
+    plain,
+    primitives::CoordinateSystem,
+    scalars::Scalar,
 };
 use geop_core_topology::FaceId;
 use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
@@ -13,7 +16,7 @@ use geop_ops::{
     ui::{EditForm, FormState},
 };
 use geop_ops_booleans::{
-    extent::{bounds, face_hull, spread_along},
+    extent::{face_hull, spread_along},
     imprint::imprint_on_face,
     remesh::remesh::RemeshParams,
 };
@@ -134,7 +137,8 @@ fn reach_across<S: Scalar>(
 ) -> GeopResult<(f64, f64)> {
     let hull = face_hull(model.topology(), &[face])?;
     let (near, far) = spread_along(&hull, plane);
-    let [lo, hi] = bounds(&hull);
+    let (lo, hi) = plain::bounds(hull.iter().copied())
+        .ok_or_else(|| GeopError::new(format!("face {face:?} has no control points")))?;
     let diagonal = plain::diagonal(lo, hi);
     Ok((near - diagonal, far + diagonal))
 }

@@ -175,34 +175,12 @@ where
 mod tests {
     use super::curve_could_contain;
     use crate::nurb_curve::NurbCurve;
+    use crate::test_fixtures::{hom, line};
     use geop_core_math::for_all_scalars;
-    use geop_core_math::{
-        scalars::Scalar,
-        vector::{Vector3, Vector4},
-    };
-
-    fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
-        Vector4::from_array([
-            S::from_f64(x),
-            S::from_f64(y),
-            S::from_f64(z),
-            S::from_f64(w),
-        ])
-    }
+    use geop_core_math::{scalars::Scalar, vector::Vector3};
 
     const MAX: usize = 500;
     const MIN_SUBDIVISION_SIZE: f64 = 1e-3;
-
-    /// Degree-1 line from (0,0,0) to (1,0,0).
-    fn line<S: Scalar>() -> NurbCurve<S, 4> {
-        let f = S::from_f64;
-        NurbCurve::try_new(
-            1,
-            vec![pt(0., 0., 0., 1.), pt(1., 0., 0., 1.)],
-            vec![f(0.), f(0.), f(1.), f(1.)],
-        )
-        .unwrap()
-    }
 
     /// Exact rational quarter circle of radius 1 in the xy-plane.
     fn quarter_circle<S: Scalar>() -> NurbCurve<S, 4> {
@@ -210,7 +188,7 @@ mod tests {
         let w = std::f64::consts::FRAC_1_SQRT_2;
         NurbCurve::try_new(
             2,
-            vec![pt(1., 0., 0., 1.), pt(w, w, 0., w), pt(0., 1., 0., 1.)],
+            vec![hom(1., 0., 0., 1.), hom(w, w, 0., w), hom(0., 1., 0., 1.)],
             vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
         )
         .unwrap()
@@ -222,12 +200,12 @@ mod tests {
         NurbCurve::try_new(
             3,
             vec![
-                pt(0., 0., 0., 1.),
-                pt(1., 2., 0., 1.),
-                pt(2., -1., 1., 1.),
-                pt(3., 2., 0., 1.),
-                pt(4., 0., -1., 1.),
-                pt(5., 1., 0., 1.),
+                hom(0., 0., 0., 1.),
+                hom(1., 2., 0., 1.),
+                hom(2., -1., 1., 1.),
+                hom(3., 2., 0., 1.),
+                hom(4., 0., -1., 1.),
+                hom(5., 1., 0., 1.),
             ],
             vec![
                 f(0.),
@@ -260,7 +238,7 @@ mod tests {
 
     fn check_line_contains<S: Scalar>() {
         for t in [0., 0.25, 0.5, 1.] {
-            assert_contains_at(&line::<S>(), t);
+            assert_contains_at(&line::<S>([0.; 3], [1., 0., 0.]), t);
         }
     }
     #[test]
@@ -326,7 +304,7 @@ mod tests {
         // Beside the line, beyond its end.
         assert!(
             curve_could_contain(
-                &line::<S>(),
+                &line::<S>([0.; 3], [1., 0., 0.]),
                 &off(1.5, 0., 0.),
                 MAX,
                 f(MIN_SUBDIVISION_SIZE)
@@ -336,7 +314,7 @@ mod tests {
         );
         assert!(
             curve_could_contain(
-                &line::<S>(),
+                &line::<S>([0.; 3], [1., 0., 0.]),
                 &off(0.5, 0.1, 0.),
                 MAX,
                 f(MIN_SUBDIVISION_SIZE)

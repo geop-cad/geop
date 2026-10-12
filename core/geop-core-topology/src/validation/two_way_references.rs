@@ -216,20 +216,12 @@ fn check_wires<S: Scalar>(errors: &mut Vec<GeopError>, model: &Model<S>) {
 #[cfg(test)]
 mod tests {
     use super::check_two_way_references;
-    use crate::test_fixtures::test_cube_solid;
-    use crate::{Model, validation::ValidationParameters};
+    use crate::Model;
+    use crate::test_fixtures::{check_errors, test_cube_model, test_cube_solid};
     use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
 
-    fn run<S: Scalar>(model: &Model<S>) -> Vec<geop_core_math::geop_error::GeopError> {
-        let mut errors = Vec::new();
-        check_two_way_references(&ValidationParameters::default(), &mut errors, model);
-        errors
-    }
-
     fn check_valid_cube_passes<S: Scalar>() {
-        let mut model = Model::<S>::new();
-        test_cube_solid(&mut model);
-        assert!(run(&model).is_empty());
+        assert!(check_errors(check_two_way_references, &test_cube_model::<S>()).is_empty());
     }
     #[test]
     fn valid_cube_passes() {
@@ -249,7 +241,7 @@ mod tests {
             .find(|&&id| id != coedge_id && id != real_next)
             .unwrap();
         model.coedges.get_mut(&coedge_id).unwrap().next = other_id;
-        assert!(!run(&model).is_empty());
+        assert!(!check_errors(check_two_way_references, &model).is_empty());
     }
     #[test]
     fn broken_next_prev_fails() {
@@ -261,7 +253,7 @@ mod tests {
         let (_v, _f, solid_id) = model.mvfs(Vector3::from_array([S::ZERO; 3]));
         let shell_id = model.get_solid(solid_id).unwrap().shells[0];
         model.shells.get_mut(&shell_id).unwrap().faces = vec![];
-        assert!(!run(&model).is_empty());
+        assert!(!check_errors(check_two_way_references, &model).is_empty());
     }
     #[test]
     fn mismatched_shell_backref_fails() {
@@ -274,7 +266,7 @@ mod tests {
         // The shell still (validly) names `solid_id`, but the solid no
         // longer lists it back — a mismatch, not a dangling reference.
         model.solids.get_mut(&solid_id).unwrap().shells = vec![];
-        assert!(!run(&model).is_empty());
+        assert!(!check_errors(check_two_way_references, &model).is_empty());
     }
     #[test]
     fn mismatched_solid_backref_fails() {
@@ -305,7 +297,7 @@ mod tests {
             .faces
             .retain(|&f| f != face_id);
 
-        assert!(run(&model).len() >= 2);
+        assert!(check_errors(check_two_way_references, &model).len() >= 2);
     }
     #[test]
     fn multiple_independent_violations_are_all_reported() {

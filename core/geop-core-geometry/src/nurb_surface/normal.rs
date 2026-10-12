@@ -219,17 +219,9 @@ impl<S: Scalar> NurbSurface<S, 4> {
 #[cfg(test)]
 mod tests {
     use crate::nurb_surface::NurbSurface;
+    use crate::test_fixtures::hom;
     use geop_core_math::for_all_scalars;
-    use geop_core_math::{scalars::Scalar, vector::Vector4};
-
-    fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
-        Vector4::from_array([
-            S::from_f64(x),
-            S::from_f64(y),
-            S::from_f64(z),
-            S::from_f64(w),
-        ])
-    }
+    use geop_core_math::scalars::Scalar;
 
     /// Flat unit patch in the xy-plane: normal should be constant +z everywhere.
     fn flat_xy<S: Scalar>() -> NurbSurface<S, 4> {
@@ -238,10 +230,10 @@ mod tests {
             1,
             1,
             vec![
-                pt(0., 0., 0., 1.),
-                pt(0., 1., 0., 1.),
-                pt(1., 0., 0., 1.),
-                pt(1., 1., 0., 1.),
+                hom(0., 0., 0., 1.),
+                hom(0., 1., 0., 1.),
+                hom(1., 0., 0., 1.),
+                hom(1., 1., 0., 1.),
             ],
             vec![f(0.), f(0.), f(1.), f(1.)],
             vec![f(0.), f(0.), f(1.), f(1.)],
@@ -272,10 +264,10 @@ mod tests {
             1,
             1,
             vec![
-                pt(0., 0., 0., 1.),
-                pt(0., 2., 1., 1.),
-                pt(2., 0., 1., 1.),
-                pt(2., 2., 0., 1.),
+                hom(0., 0., 0., 1.),
+                hom(0., 2., 1., 1.),
+                hom(2., 0., 1., 1.),
+                hom(2., 2., 0., 1.),
             ],
             vec![f(0.), f(0.), f(1.), f(1.)],
             vec![f(0.), f(0.), f(1.), f(1.)],
@@ -307,8 +299,8 @@ mod tests {
         let rim = [(1., 0., 1.), (1., 1., w), (0., 1., 1.)];
         let mut cps = Vec::new();
         for (x, y, wi) in rim {
-            cps.push(pt(0., 0., apex_z * wi, wi));
-            cps.push(pt(x * wi, y * wi, rim_z * wi, wi));
+            cps.push(hom(0., 0., apex_z * wi, wi));
+            cps.push(hom(x * wi, y * wi, rim_z * wi, wi));
         }
         NurbSurface::try_new(
             2,
@@ -361,15 +353,15 @@ mod tests {
             2,
             2,
             vec![
-                pt(1., 0., 0., 1.),
-                pt(w, 0., w, w),
-                pt(0., 0., 1., 1.),
-                pt(w, w, 0., w),
-                pt(0.5, 0.5, 0.5, 0.5),
-                pt(0., 0., w, w),
-                pt(0., 1., 0., 1.),
-                pt(0., w, w, w),
-                pt(0., 0., 1., 1.),
+                hom(1., 0., 0., 1.),
+                hom(w, 0., w, w),
+                hom(0., 0., 1., 1.),
+                hom(w, w, 0., w),
+                hom(0.5, 0.5, 0.5, 0.5),
+                hom(0., 0., w, w),
+                hom(0., 1., 0., 1.),
+                hom(0., w, w, w),
+                hom(0., 0., 1., 1.),
             ],
             vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
             vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],

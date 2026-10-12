@@ -421,8 +421,7 @@ fn tangent_plane<S: Scalar>(part: &NamedModel<S>, entity: &EntityRef) -> GeopRes
     // points: away from it is the edge's direction, as the face runs it,
     // crossed with the normal.
     let curve = &model.get_edge(edge)?.curve;
-    let (t0, t1) = curve.domain();
-    let mut along = curve.tangent(t0.add(t1).div(S::TWO)?.sharpen())?;
+    let mut along = curve.tangent(curve.mid_parameter()?)?;
     if coedge.sense == Sense::Reversed {
         along = along.neg();
     }

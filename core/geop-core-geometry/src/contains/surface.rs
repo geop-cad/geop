@@ -239,32 +239,16 @@ pub fn surface_could_contain<S: Scalar>(
 mod tests {
     use super::surface_could_contain;
     use crate::nurb_surface::NurbSurface;
+    use crate::test_fixtures::{knots, sphere_octant, weighted};
     use geop_core_math::for_all_scalars;
     use geop_core_math::scalars::ScalInF64;
-    use geop_core_math::{
-        scalars::Scalar,
-        vector::{Vector3, Vector4},
-    };
+    use geop_core_math::{scalars::Scalar, vector::Vector3};
 
     const MAX: usize = 2000;
     const MIN_SUBDIVISION_SIZE: f64 = 1e-4;
 
-    /// Homogeneous control point for Cartesian `(x, y, z)` with weight `w`.
-    fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
-        Vector4::from_array([
-            S::from_f64(x * w),
-            S::from_f64(y * w),
-            S::from_f64(z * w),
-            S::from_f64(w),
-        ])
-    }
-
     fn v3<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
         Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
-    }
-
-    fn knots<S: Scalar>(k: &[f64]) -> Vec<S> {
-        k.iter().map(|&x| S::from_f64(x)).collect()
     }
 
     /// Bilinear patch with one corner lifted to z=1.
@@ -273,10 +257,10 @@ mod tests {
             1,
             1,
             vec![
-                pt(0., 0., 0., 1.),
-                pt(0., 1., 0., 1.),
-                pt(1., 0., 0., 1.),
-                pt(1., 1., 1., 1.),
+                weighted(0., 0., 0., 1.),
+                weighted(0., 1., 0., 1.),
+                weighted(1., 0., 0., 1.),
+                weighted(1., 1., 1., 1.),
             ],
             knots(&[0., 0., 1., 1.]),
             knots(&[0., 0., 1., 1.]),
@@ -290,7 +274,7 @@ mod tests {
         let circle = [(1., 0., 1.), (1., 1., w), (0., 1., 1.)];
         let cps = circle
             .iter()
-            .flat_map(|&(x, y, wi)| [pt(x, y, 0., wi), pt(x, y, 1., wi)])
+            .flat_map(|&(x, y, wi)| [weighted(x, y, 0., wi), weighted(x, y, 1., wi)])
             .collect();
         NurbSurface::try_new(
             2,
@@ -302,30 +286,13 @@ mod tests {
         .unwrap()
     }
 
-    /// Exact rational sphere octant; `v = 1` is the pole (0, 0, 1).
-    fn sphere_octant<S: Scalar>() -> NurbSurface<S, 4> {
-        let w = std::f64::consts::FRAC_1_SQRT_2;
-        let circle = [(1., 0., 1.), (1., 1., w), (0., 1., 1.)];
-        let meridian = [(1., 0., 1.), (1., 1., w), (0., 1., 1.)];
-        let cps = circle
-            .iter()
-            .flat_map(|&(x, y, wu)| {
-                meridian
-                    .iter()
-                    .map(move |&(r, z, wv)| pt(x * r, y * r, z, wu * wv))
-            })
-            .collect();
-        let k = knots(&[0., 0., 0., 1., 1., 1.]);
-        NurbSurface::try_new(2, 2, cps, k.clone(), k).unwrap()
-    }
-
     /// Bicubic 5×5 net with interior knots in both directions, wavy in z.
     fn wavy<S: Scalar>() -> NurbSurface<S, 4> {
         let cps = (0..5)
             .flat_map(|i| {
                 (0..5).map(move |j| {
                     let z = ((i * 3 + j * 5) % 7) as f64 / 7.0 - 0.5;
-                    pt(i as f64, j as f64, z, 1.0)
+                    weighted(i as f64, j as f64, z, 1.0)
                 })
             })
             .collect();

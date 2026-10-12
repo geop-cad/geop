@@ -3,7 +3,7 @@
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_ops::NamedModel;
 use geop_ops::operation::apply_to_model;
-use geop_ops_extrude_revolve::shapes::block;
+use geop_ops_extrude_revolve::shapes::block_part;
 
 use super::*;
 use crate::boundary::tests::{coons_sheet, edge_between, line, refused, rising_arc, wavy_top};
@@ -79,8 +79,7 @@ fn extend_a_coons_patch() {
 /// A cube's edge bounds two faces: no face standing on its own to extend.
 #[test]
 fn a_solids_edge_is_refused() {
-    let mut part = NamedModel::<S>::new();
-    block(&mut part, "c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+    let part = block_part::<S>("c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     let edge = edge_between(&part, [0., 0., 1.], [1., 0., 1.]);
     let err = refused(extended(part, &edge, 0.2));
     assert!(err.contains("bounds 2 faces"), "{err}");

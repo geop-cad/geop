@@ -114,25 +114,14 @@ impl<S: Scalar> NurbCurve<S, 3> {
 #[cfg(test)]
 mod tests {
     use crate::nurb_curve::NurbCurve;
+    use crate::test_fixtures::hom;
     use geop_core_math::for_all_scalars;
-    use geop_core_math::{
-        scalars::Scalar,
-        vector::{Vector3, Vector4},
-    };
-
-    fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
-        Vector4::from_array([
-            S::from_f64(x),
-            S::from_f64(y),
-            S::from_f64(z),
-            S::from_f64(w),
-        ])
-    }
+    use geop_core_math::{scalars::Scalar, vector::Vector3};
 
     fn line_curve<S: Scalar>() -> NurbCurve<S, 4> {
         NurbCurve::try_new(
             1,
-            vec![pt(0.0, 0.0, 0.0, 1.0), pt(1.0, 0.0, 0.0, 1.0)],
+            vec![hom(0.0, 0.0, 0.0, 1.0), hom(1.0, 0.0, 0.0, 1.0)],
             vec![
                 S::from_f64(0.0),
                 S::from_f64(0.0),
@@ -189,9 +178,9 @@ mod tests {
         let curve = NurbCurve::try_new(
             2,
             vec![
-                pt(0.0, 0.0, 0.0, 1.0),
-                pt(0.5, 0.0, 0.0, 1.0),
-                pt(1.0, 0.0, 0.0, 1.0),
+                hom(0.0, 0.0, 0.0, 1.0),
+                hom(0.5, 0.0, 0.0, 1.0),
+                hom(1.0, 0.0, 0.0, 1.0),
             ],
             vec![
                 S::from_f64(0.0),
@@ -221,7 +210,7 @@ mod tests {
     fn check_weight_one_constant_line_does_not_report_zero_weight<S: Scalar>() {
         let curve = NurbCurve::try_new(
             1,
-            vec![pt(0.5, 0.5, 0.5, 1.0), pt(0.5, 0.5, -0.5, 1.0)],
+            vec![hom(0.5, 0.5, 0.5, 1.0), hom(0.5, 0.5, -0.5, 1.0)],
             vec![
                 S::from_f64(0.0),
                 S::from_f64(0.0),
@@ -250,7 +239,7 @@ mod tests {
             2,
             [(3.0, 0.0, 1.0), (3.0, 3.0, h), (0.0, 3.0, 1.0)]
                 .iter()
-                .map(|&(x, y, w)| pt((cx + x) * w, (cy + y) * w, z * w, w))
+                .map(|&(x, y, w)| hom((cx + x) * w, (cy + y) * w, z * w, w))
                 .collect(),
             [0., 0., 0., 1., 1., 1.].map(S::from_f64).to_vec(),
         )

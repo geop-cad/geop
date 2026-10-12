@@ -192,7 +192,7 @@ pub fn knit<S: Scalar>(
     part.delete_bodies(&consumed)?;
     let built = part.build_body(out, names)?;
     let Some(solid_id) = built.solid else {
-        return Ok(Body::Sheet(built.shells[0]));
+        return built.body();
     };
     // The faces wind consistently, but which way round is a guess: turned
     // all, if they point into the solid.
@@ -407,10 +407,7 @@ impl Joined {
 /// Whether two edges between the same vertices are one: the middle of each
 /// lies on the other's curve.
 fn coincide<S: Scalar>(a: &EdgeSpec<S>, b: &EdgeSpec<S>) -> GeopResult<bool> {
-    let middle = |e: &EdgeSpec<S>| -> GeopResult<_> {
-        let (t0, t1) = e.curve.domain();
-        e.curve.evaluate(t0.add(t1).div(S::TWO)?)
-    };
+    let middle = |e: &EdgeSpec<S>| e.curve.evaluate(e.curve.mid_parameter()?);
     let on = |e: &EdgeSpec<S>, p| -> GeopResult<bool> {
         Ok(curve_could_contain(&e.curve, &p, MAX_NODES, min_subdivision_size())?.is_some())
     };

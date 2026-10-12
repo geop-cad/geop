@@ -50,7 +50,7 @@ use crate::{
     drawing::drawn_faces,
     hidden_lines::{
         COARSE_SUBDIVISION, Occluder, ProjectedView, ViewLine, ViewOptions, bounds, boxes_meet,
-        cut_points, drop_drawn, meetings, project_view, ray_length, seen,
+        cut_points, drop_drawn, meetings, occluders_bounds, project_view, ray_length, seen,
     },
     view::{ViewAxis, ViewFrame},
 };
@@ -134,15 +134,11 @@ impl<'p, S: Scalar> Scene<'p, S> {
             };
             occluders_of.push(index);
             let motion = body.pose.map(|p| p.motion());
-            let mut b = [[f64::INFINITY, f64::NEG_INFINITY]; 3];
-            for o in &occluders[index] {
-                for (b, o) in b.iter_mut().zip(&o.bounds) {
-                    *b = [b[0].min(o[0]), b[1].max(o[1])];
-                }
-            }
+            let (lo, hi) = occluders_bounds(&occluders[index]);
             corners.push(std::array::from_fn(|i| {
-                let c =
-                    Vector3::from_array(std::array::from_fn(|k| S::from_f64(b[k][(i >> k) & 1])));
+                let c = Vector3::from_array(std::array::from_fn(|k| {
+                    S::from_f64(if (i >> k) & 1 == 1 { hi[k] } else { lo[k] })
+                }));
                 match &motion {
                     Some(m) => m.apply(&c),
                     None => c,

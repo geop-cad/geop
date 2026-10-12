@@ -51,7 +51,8 @@ fn real(v: i64) -> f64 {
 // ── Type ──────────────────────────────────────────────────────────────────────
 
 /// Interval fixed-point scalar: `[lo, hi]` at 2^-32 resolution (i64 units).
-#[derive(Copy, Clone, PartialEq)]
+/// The default is zero, `[0, 0]`.
+#[derive(Copy, Clone, Default, PartialEq)]
 pub struct ScalInFPA64 {
     pub lo: i64,
     pub hi: i64,
@@ -168,6 +169,8 @@ impl Field for ScalInFPA64 {
 // ── Scalar impl ───────────────────────────────────────────────────────────────
 
 impl Scalar for ScalInFPA64 {
+    interval_bound_methods!();
+
     const ZERO: Self = ScalInFPA64 { lo: 0, hi: 0 };
     const ONE: Self = ScalInFPA64 {
         lo: SCALE as i64,
@@ -278,30 +281,6 @@ impl Scalar for ScalInFPA64 {
         ))
     }
 
-    fn could_be_equal(self, other: Self) -> bool {
-        self.lo <= other.hi && other.lo <= self.hi
-    }
-
-    fn definitely_not_equal(self, other: Self) -> bool {
-        self.hi < other.lo || self.lo > other.hi
-    }
-
-    fn could_be_greater(self, other: Self) -> bool {
-        self.hi > other.lo
-    }
-
-    fn definitely_greater(self, other: Self) -> bool {
-        self.lo > other.hi
-    }
-
-    fn could_be_less(self, other: Self) -> bool {
-        self.lo < other.hi
-    }
-
-    fn definitely_less(self, other: Self) -> bool {
-        self.hi < other.lo
-    }
-
     fn is_infinite(self) -> bool {
         self.is_overflow()
     }
@@ -314,18 +293,6 @@ impl Scalar for ScalInFPA64 {
         // Avoid overflow: (lo + hi) / 2 using i128
         let m = ((self.lo as i128 + self.hi as i128) / 2) as i64;
         ScalInFPA64::degenerate(m)
-    }
-
-    fn is_sharp(self) -> bool {
-        self.lo == self.hi
-    }
-
-    fn lower(self) -> Self {
-        ScalInFPA64::degenerate(self.lo)
-    }
-
-    fn upper(self) -> Self {
-        ScalInFPA64::degenerate(self.hi)
     }
 
     fn width(self) -> Self {
@@ -348,20 +315,6 @@ impl Scalar for ScalInFPA64 {
     fn to_f64(self) -> f64 {
         let m = (self.lo as i128 + self.hi as i128) / 2;
         m as f64 / SCALE as f64
-    }
-
-    fn union(self, other: Self) -> Self {
-        ScalInFPA64::new(self.lo.min(other.lo), self.hi.max(other.hi))
-    }
-
-    fn is_subset_of(self, other: Self) -> bool {
-        other.lo <= self.lo && self.hi <= other.hi
-    }
-}
-
-impl Default for ScalInFPA64 {
-    fn default() -> Self {
-        ScalInFPA64::ZERO
     }
 }
 

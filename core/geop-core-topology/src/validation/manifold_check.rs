@@ -1,8 +1,8 @@
 use super::{ValidationParameters, validate};
-use geop_core_math::{geop_error::GeopError, scalars::Scalar, vector::Vector3};
+use geop_core_math::{geop_error::GeopError, plain, scalars::Scalar, vector::Vector3};
 
 use crate::{
-    Model, Sense, VertexId,
+    Model, Sense,
     contains::{
         rng::Rng,
         shell::{PointClassification, cast_ray, ray_length_for, shell_vertices_and_edges},
@@ -57,23 +57,6 @@ fn check_every_edge_has_two_coedges<S: Scalar>(errors: &mut Vec<GeopError>, mode
     }
 }
 
-/// The axis-aligned bounding box of `vertex_ids`' positions, as plain
-/// `f64`s (only used to pick random sample points, so exactness doesn't
-/// matter here).
-fn vertex_bounds<S: Scalar>(model: &Model<S>, vertex_ids: &[VertexId]) -> ([f64; 3], [f64; 3]) {
-    let mut lo = [f64::INFINITY; 3];
-    let mut hi = [f64::NEG_INFINITY; 3];
-    for &vertex_id in vertex_ids {
-        let p = model.vertices[&vertex_id].point;
-        for axis in 0..3 {
-            let x = p[axis].to_f64();
-            lo[axis] = lo[axis].min(x);
-            hi[axis] = hi[axis].max(x);
-        }
-    }
-    (lo, hi)
-}
-
 /// For every shell, samples `params.manifold_ray_sample_count` random points
 /// (drawn from a box around the shell, so both interior and exterior points
 /// come up) and, for each, casts `params.manifold_ray_sample_count` random
@@ -94,10 +77,14 @@ fn check_ray_direction_consistency<S: Scalar>(
     // Only a solid's shells enclose anything to be inside of.
     for (&shell_id, _) in model.shells.iter().filter(|(_, s)| s.solid.is_some()) {
         let (vertex_ids, edge_ids) = shell_vertices_and_edges(model, shell_id);
-        if vertex_ids.is_empty() {
+        // The box around the shell's vertices, as plain `f64`s: it only
+        // places random sample points, so exactness does not matter here.
+        let points = vertex_ids
+            .iter()
+            .map(|v| model.vertices[v].point.to_f64_array());
+        let Some((lo, hi)) = plain::bounds(points) else {
             continue;
-        }
-        let (lo, hi) = vertex_bounds(model, &vertex_ids);
+        };
         // Expand the box by half its size each way, so roughly-exterior
         // points come up too, not just interior ones.
         let margin: Vec<f64> = (0..3)

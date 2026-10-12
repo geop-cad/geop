@@ -99,3 +99,32 @@ pub fn unwrap_angle(a: f64, reference: f64) -> f64 {
 pub fn diagonal<const N: usize>(lo: [f64; N], hi: [f64; N]) -> f64 {
     (0..N).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt()
 }
+
+/// The box around `points`: its lowest corner and its highest, or `None`
+/// if there are no points.
+pub fn bounds<const N: usize>(
+    points: impl IntoIterator<Item = [f64; N]>,
+) -> Option<([f64; N], [f64; N])> {
+    let mut points = points.into_iter();
+    let first = points.next()?;
+    Some(points.fold((first, first), |(lo, hi), p| {
+        (
+            std::array::from_fn(|k| lo[k].min(p[k])),
+            std::array::from_fn(|k| hi[k].max(p[k])),
+        )
+    }))
+}
+
+/// The mean of `points`, summed in their order and then divided by their
+/// count, or `None` if there are no points.
+pub fn centroid<const N: usize>(points: impl IntoIterator<Item = [f64; N]>) -> Option<[f64; N]> {
+    let mut sum = [0.0; N];
+    let mut n = 0usize;
+    for p in points {
+        for k in 0..N {
+            sum[k] += p[k];
+        }
+        n += 1;
+    }
+    (n > 0).then(|| sum.map(|s| s / n as f64))
+}

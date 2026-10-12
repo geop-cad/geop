@@ -188,8 +188,9 @@ pub fn trim<S: Scalar>(
         )));
     }
     let surface = part.topology().get_face(tool)?.surface.clone();
-    let cutter = part.copy_faces(&[tool], None, |name| namer.name(&[name, "tool"]))?;
-    let cutter = Body::Sheet(cutter.shells[0]);
+    let cutter = part
+        .copy_faces(&[tool], None, |name| namer.name(&[name, "tool"]))?
+        .body()?;
     remesh(
         part,
         namer,

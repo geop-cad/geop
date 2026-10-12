@@ -99,13 +99,10 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector4};
+    use crate::test_fixtures::weighted;
+    use geop_core_math::{for_all_scalars, scalars::Scalar};
 
     use crate::nurb_curve::{NurbCurve, NurbCurve3D};
-
-    fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
-        Vector4::from_array([x * w, y * w, z * w, w].map(S::from_f64))
-    }
 
     /// A cubic with an interior knot, continued at either end: the same
     /// curve where it was, and on its own polynomial beyond.
@@ -114,11 +111,11 @@ mod tests {
         let curve: NurbCurve3D<S> = NurbCurve::try_new(
             3,
             vec![
-                pt(0., 0., 0., 1.),
-                pt(1., 2., 0., 1.),
-                pt(2., -1., 1., 1.),
-                pt(3., 1., 0., 1.),
-                pt(4., 0., 2., 1.),
+                weighted(0., 0., 0., 1.),
+                weighted(1., 2., 0., 1.),
+                weighted(2., -1., 1., 1.),
+                weighted(3., 1., 0., 1.),
+                weighted(4., 0., 2., 1.),
             ],
             [0., 0., 0., 0., 0.5, 1., 1., 1., 1.].map(f).to_vec(),
         )
@@ -161,9 +158,9 @@ mod tests {
         let arc: NurbCurve3D<S> = NurbCurve::try_new(
             2,
             vec![
-                pt(1., 0., 0., 1.),
-                pt(1., 1., 0., std::f64::consts::SQRT_2 / 2.0),
-                pt(0., 1., 0., 1.),
+                weighted(1., 0., 0., 1.),
+                weighted(1., 1., 0., std::f64::consts::SQRT_2 / 2.0),
+                weighted(0., 1., 0., 1.),
             ],
             [0., 0., 0., 1., 1., 1.].map(f).to_vec(),
         )

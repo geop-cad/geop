@@ -38,11 +38,7 @@ use geop_core_topology::{
     },
 };
 use geop_ops::{NamedModel, Namer, ToolReach};
-use geop_ops_booleans::{
-    Combine, Tool,
-    boolean::Reach,
-    extent::{bounds, face_hull},
-};
+use geop_ops_booleans::{Combine, Tool, boolean::Reach, extent::face_hull};
 use geop_ops_extrude_revolve::{common::Profile, extrude::extrude, sweep::SweepLoop};
 
 use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
@@ -158,7 +154,9 @@ fn reach_past<S: Scalar>(
     target: SolidId,
 ) -> GeopResult<S> {
     let model = part.topology();
-    let [lo, hi] = bounds(&face_hull(model, &model.body_faces(Body::Solid(target))?)?);
+    let hull = face_hull(model, &model.body_faces(Body::Solid(target))?)?;
+    let (lo, hi) = plain::bounds(hull)
+        .ok_or_else(|| GeopError::new(format!("solid {target:?} has no faces")))?;
     let origin = [0, 1, 2].map(|k| plane.origin()[k].to_f64());
     let diagonal = plain::diagonal(lo, hi);
     let furthest = (0..8)

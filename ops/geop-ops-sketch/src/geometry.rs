@@ -11,8 +11,8 @@ use geop_core_sketch::{ProfileLoop, Sketch, profile::curve_polyline};
 use geop_ops::Design;
 
 pub use geop_core_sketch::plain::{
-    P2, Plain, add, angle_between, cross, distance, dot, of, perp, rotate, scale, segments_cross,
-    sub, sweep_through, swept, unit, xy,
+    P2, Plain, add, angle_between, bounds, cross, distance, dot, of, perp, rotate, scale,
+    segments_cross, sub, sweep_through, swept, unit, xy,
 };
 
 /// Points as drawn.

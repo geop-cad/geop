@@ -8,7 +8,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     solvers::walk::{Walked, walk_by},
-    vector::{Vector3, Vector4},
+    vector::Vector3,
     with_context,
 };
 
@@ -28,11 +28,6 @@ pub struct Chain3d {
     pub closed: bool,
 }
 
-/// A homogeneous control point of weight `w`.
-fn hom<T: Scalar>(p: &Vector3<T>, w: T) -> Vector4<T> {
-    Vector4::from_array([p[0].mul(w), p[1].mul(w), p[2].mul(w), w])
-}
-
 /// The rational quadratic of the arc from `p` to `q` turning by twice the
 /// angle with cosine `cos` and sine `sin` about `normal`: its middle control
 /// point where the tangents at its ends meet, `(L/2) tan` out from the
@@ -47,11 +42,7 @@ fn conic<T: Scalar>(
 ) -> GeopResult<NurbCurve3D<T>> {
     let (mid, out) = chord_frame(p, q, normal)?;
     let m = mid.add(&out.prod_scalar(sin.div(cos)?));
-    NurbCurve::try_new(
-        2,
-        vec![hom(p, T::ONE), hom(&m, cos), hom(q, T::ONE)],
-        vec![T::ZERO, T::ZERO, T::ZERO, T::ONE, T::ONE, T::ONE],
-    )
+    NurbCurve3D::arc(*p, m, *q, cos)
 }
 
 /// The middle of the chord from `p` to `q`, and half its length towards the
@@ -87,12 +78,7 @@ impl<S: Scalar> Sketch3d<S> {
         let at = |p: &PointId| geometry.points[p];
         match &self.curve(curve).with_context(ctx)?.kind {
             CurveKind3d::Line { start, end } => Ok(vec![
-                NurbCurve::try_new(
-                    1,
-                    vec![hom(&at(start), T::ONE), hom(&at(end), T::ONE)],
-                    vec![T::ZERO, T::ZERO, T::ONE, T::ONE],
-                )
-                .with_context(ctx)?,
+                NurbCurve3D::line(at(start), at(end)).with_context(ctx)?,
             ]),
             CurveKind3d::Arc {
                 start,

@@ -151,6 +151,15 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         (self.knot_vector[p], self.knot_vector[n + 1])
     }
 
+    /// The middle of [`Self::domain`], sharp: a parameter inside the curve
+    /// for a sample, a seed or a split point. Any value in the enclosure of
+    /// the middle serves as well, so it is a free choice, and sharpening it
+    /// loses nothing (see AGENTS.md).
+    pub fn mid_parameter(&self) -> GeopResult<S> {
+        let (t0, t1) = self.domain();
+        Ok(t0.add(t1).div(S::TWO)?.sharpen())
+    }
+
     /// Where the curve stops being one polynomial piece: the ends of its
     /// domain and every distinct knot between them (see
     /// [`crate::spline::breakpoints`]).

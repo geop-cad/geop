@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
+use geop_core_math::{plain, scalars::ScalInF64 as S};
 use geop_core_topology::{
     Model,
     validation::{ValidationParameters, validate},
@@ -21,15 +21,7 @@ fn counts(model: &Model<S>) -> (usize, usize, usize) {
 
 /// The box around a model's vertices.
 fn bounds(model: &Model<S>) -> ([f64; 3], [f64; 3]) {
-    let mut lo = [f64::INFINITY; 3];
-    let mut hi = [f64::NEG_INFINITY; 3];
-    for v in model.vertices.values() {
-        for c in 0..3 {
-            lo[c] = lo[c].min(v.point[c].to_f64());
-            hi[c] = hi[c].max(v.point[c].to_f64());
-        }
-    }
-    (lo, hi)
+    plain::bounds(model.vertices.values().map(|v| v.point.to_f64_array())).unwrap()
 }
 
 /// The model a program of one import step builds, reading `file` — named

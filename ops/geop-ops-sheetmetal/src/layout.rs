@@ -753,10 +753,7 @@ impl<S: Scalar> Seg<S> {
                 let bisector = a.sub(center).add(&b.sub(center)).normalize()?;
                 Ok(center.add(&bisector.prod_scalar(*radius)))
             }
-            Seg::Other => {
-                let (t0, t1) = curve.domain();
-                curve.evaluate(t0.add(t1).div(S::TWO)?.sharpen())
-            }
+            Seg::Other => curve.evaluate(curve.mid_parameter()?),
         }
     }
 

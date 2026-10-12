@@ -37,6 +37,7 @@ pub use solve::SolveReport;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plain::xy;
     use geop_core_math::{
         for_all_scalars,
         scalars::{Scalar, scal_in_f64::ScalInF64},
@@ -58,15 +59,9 @@ mod tests {
         Vector2::from_array(p.map(T::from_f64))
     }
 
-    fn xy(s: &Sketch<T>, p: PointId) -> [f64; 2] {
-        let q = s.points[&p].xy();
-        [q[0].to_f64(), q[1].to_f64()]
-    }
-
-    /// A sloppily drawn quadrilateral becomes an exact, fully constrained
-    /// 2 x 1 rectangle anchored at the origin.
-    #[test]
-    fn rectangle_is_solved_and_fully_constrained() {
+    /// A sloppily drawn quadrilateral, its corners, constrained to the
+    /// 2 x 1 rectangle anchored at the origin, from there counter-clockwise.
+    fn sloppy_rectangle() -> (Sketch<T>, [PointId; 4]) {
         let mut s = Sketch::new();
         let p = [
             s.add_point(n(0.1), n(-0.1)),
@@ -93,6 +88,14 @@ mod tests {
             b: p[2],
             value: n(1.0),
         });
+        (s, p)
+    }
+
+    /// A sloppily drawn quadrilateral becomes an exact, fully constrained
+    /// 2 x 1 rectangle anchored at the origin.
+    #[test]
+    fn rectangle_is_solved_and_fully_constrained() {
+        let (mut s, p) = sloppy_rectangle();
 
         let report = s.solve().unwrap();
         assert!(report.converged, "{report:?}");
@@ -625,32 +628,7 @@ mod tests {
     /// each holding the corner the constraints mean.
     #[test]
     fn solutions_are_enclosed() {
-        let mut s = Sketch::new();
-        let p = [
-            s.add_point(n(0.1), n(-0.1)),
-            s.add_point(n(2.2), n(0.2)),
-            s.add_point(n(1.9), n(1.3)),
-            s.add_point(n(-0.2), n(0.8)),
-        ];
-        let l: Vec<CurveId> = (0..4).map(|i| s.add_line(p[i], p[(i + 1) % 4])).collect();
-        s.constrain(Constraint::Fix {
-            point: p[0],
-            x: n(0.0),
-            y: n(0.0),
-        });
-        s.constrain(Constraint::Horizontal { line: l[0] });
-        s.constrain(Constraint::Horizontal { line: l[2] });
-        s.constrain(Constraint::Vertical { line: l[1] });
-        s.constrain(Constraint::Vertical { line: l[3] });
-        s.constrain(Constraint::Length {
-            curve: l[0],
-            value: n(2.0),
-        });
-        s.constrain(Constraint::Distance {
-            a: p[1],
-            b: p[2],
-            value: n(1.0),
-        });
+        let (mut s, p) = sloppy_rectangle();
         assert!(s.solve().unwrap().converged);
         let enclosed = s.enclose::<ScalInF64>().unwrap();
         let exact = [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]];

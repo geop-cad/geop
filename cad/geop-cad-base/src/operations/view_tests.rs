@@ -16,7 +16,7 @@ use geop_ops::{
     testing::built_with,
     ui::{PartView, Pointer, Reach, ViewDatum},
 };
-use geop_ops_extrude_revolve::shapes::{block, v3};
+use geop_ops_extrude_revolve::shapes::{block_part, v3};
 use geop_ops_sketch::Sketch;
 
 fn down(x: f64, y: f64) -> Pointer<S> {
@@ -25,9 +25,7 @@ fn down(x: f64, y: f64) -> Pointer<S> {
 
 /// The unit cube, named `cube(c)`.
 fn cube() -> NamedModel<S> {
-    let mut part = NamedModel::new();
-    block(&mut part, "c", [0.0; 3], [1.0; 3]);
-    part
+    block_part("c", [0.0; 3], [1.0; 3])
 }
 
 fn given_sketch(_: &mut BuildReader, s: &PlacedSketch<Design>) -> GeopResult<PlacedSketch<Design>> {

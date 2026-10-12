@@ -6,7 +6,6 @@ use geop_core_topology::Curve3;
 
 /// Halfway along `curve`: the point, and the direction it runs there.
 pub fn halfway<S: Scalar>(curve: &Curve3<S>) -> GeopResult<(Vector3<S>, Vector3<S>)> {
-    let (t0, t1) = curve.domain();
-    let t = S::interpolate(t0, t1, S::from_f64(0.5));
+    let t = curve.mid_parameter()?;
     Ok((curve.evaluate(t)?, curve.tangent(t)?))
 }

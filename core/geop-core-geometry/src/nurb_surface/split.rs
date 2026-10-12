@@ -146,35 +146,9 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::NurbSurface;
+    use crate::test_fixtures::bilinear;
     use geop_core_math::for_all_scalars;
-    use geop_core_math::{scalars::Scalar, vector::Vector4};
-
-    fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
-        Vector4::from_array([
-            S::from_f64(x),
-            S::from_f64(y),
-            S::from_f64(z),
-            S::from_f64(w),
-        ])
-    }
-
-    fn bilinear<S: Scalar>() -> NurbSurface<S, 4> {
-        let f = S::from_f64;
-        NurbSurface::try_new(
-            1,
-            1,
-            vec![
-                pt(0., 0., 0., 1.),
-                pt(0., 1., 0., 1.),
-                pt(1., 0., 0., 1.),
-                pt(1., 1., 0., 1.),
-            ],
-            vec![f(0.), f(0.), f(1.), f(1.)],
-            vec![f(0.), f(0.), f(1.), f(1.)],
-        )
-        .unwrap()
-    }
+    use geop_core_math::scalars::Scalar;
 
     fn check_split_u_junction_matches<S: Scalar>() {
         let orig = bilinear::<S>();

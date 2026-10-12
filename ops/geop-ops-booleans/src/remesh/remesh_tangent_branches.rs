@@ -141,7 +141,7 @@ fn tangent_branch_points<S: Scalar>(
     params: &RemeshParams<S>,
 ) -> GeopResult<Vec<S>> {
     let (t0, t1) = curve.domain();
-    let mid = curve.evaluate(t0.add(t1).div(S::TWO)?.sharpen())?;
+    let mid = curve.evaluate(curve.mid_parameter()?)?;
     let locate = |surface: &NurbSurface3D<S>| {
         surface.locate(
             &mid,
@@ -268,8 +268,7 @@ fn branch_can_leave<S: Scalar>(
     let [coedge_g] = on_g[..] else {
         return Ok(true);
     };
-    let (t0, t1) = edge.curve.domain();
-    let mid = edge.curve.evaluate(t0.add(t1).div(S::TWO)?.sharpen())?;
+    let mid = edge.curve.evaluate(edge.curve.mid_parameter()?)?;
     let mut along_f = None;
     for coedge_id in model.iterate_face_coedges(f) {
         let coedge = model.get_coedge(coedge_id)?;
@@ -301,8 +300,7 @@ fn branch_can_leave<S: Scalar>(
 
     let normal_at_mid = |face: &geop_core_topology::Face<S>, coedge| -> GeopResult<Vector3<S>> {
         let pcurve = &model.get_coedge(coedge)?.pcurve;
-        let (a, b) = pcurve.domain();
-        let uv = pcurve.evaluate(a.add(b).div(S::TWO)?.sharpen())?;
+        let uv = pcurve.evaluate(pcurve.mid_parameter()?)?;
         face.surface.normal(uv[0], uv[1])
     };
     let (Ok(n_g), Ok(n_f)) = (

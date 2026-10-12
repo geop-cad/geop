@@ -1,3 +1,66 @@
+/// The methods of [`Scalar`] that only compare or pick an interval's bounds,
+/// alike for every representation of them: expanded inside
+/// `impl Scalar for T`, for a `T` with bound fields `lo` and `hi` that order
+/// as the values do, and constructors `new(lo, hi)` and `degenerate(v)`.
+macro_rules! interval_bound_methods {
+    () => {
+        #[inline]
+        fn could_be_equal(self, other: Self) -> bool {
+            self.lo <= other.hi && other.lo <= self.hi
+        }
+
+        #[inline]
+        fn definitely_not_equal(self, other: Self) -> bool {
+            self.hi < other.lo || self.lo > other.hi
+        }
+
+        #[inline]
+        fn could_be_greater(self, other: Self) -> bool {
+            self.hi > other.lo
+        }
+
+        #[inline]
+        fn definitely_greater(self, other: Self) -> bool {
+            self.lo > other.hi
+        }
+
+        #[inline]
+        fn could_be_less(self, other: Self) -> bool {
+            self.lo < other.hi
+        }
+
+        #[inline]
+        fn definitely_less(self, other: Self) -> bool {
+            self.hi < other.lo
+        }
+
+        #[inline]
+        fn is_sharp(self) -> bool {
+            self.lo == self.hi
+        }
+
+        #[inline]
+        fn lower(self) -> Self {
+            Self::degenerate(self.lo)
+        }
+
+        #[inline]
+        fn upper(self) -> Self {
+            Self::degenerate(self.hi)
+        }
+
+        #[inline]
+        fn union(self, other: Self) -> Self {
+            Self::new(self.lo.min(other.lo), self.hi.max(other.hi))
+        }
+
+        #[inline]
+        fn is_subset_of(self, other: Self) -> bool {
+            other.lo <= self.lo && self.hi <= other.hi
+        }
+    };
+}
+
 pub mod scal_in_f64;
 pub mod scal_in_fpa64;
 

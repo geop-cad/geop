@@ -223,13 +223,11 @@ fn edge_kind<S: Scalar>(
         return Ok(LineKind::Edge);
     };
     let curve = &model.get_edge(edge_id)?.curve;
-    let (t0, t1) = curve.domain();
-    let point = curve.evaluate(t0.add(t1).div(S::TWO)?.sharpen())?;
+    let point = curve.evaluate(curve.mid_parameter()?)?;
     let normal = |coedge_id: CoedgeId| -> GeopResult<Vector3<S>> {
         let coedge = model.get_coedge(coedge_id)?;
         let surface = &model.get_face(coedge.face)?.surface;
-        let (s0, s1) = coedge.pcurve.domain();
-        let seed = coedge.pcurve.evaluate(s0.add(s1).div(S::TWO)?.sharpen())?;
+        let seed = coedge.pcurve.evaluate(coedge.pcurve.mid_parameter()?)?;
         let (u, v) = surface.project(point, seed[0], seed[1], PROJECT_ITERATIONS)?;
         surface.normal(u, v)
     };
@@ -337,9 +335,11 @@ pub(crate) fn seen<S: Scalar>(
     Ok(!behind_an_edge)
 }
 
-/// The ray length that clears every occluder from anywhere on them: twice
-/// the diagonal of their boxes' box.
-pub(crate) fn ray_length<'o, S: Scalar>(occluders: impl IntoIterator<Item = &'o Occluder<S>>) -> S {
+/// The box holding the boxes of all `occluders`: its lowest corner and its
+/// highest, the other way round if there are none.
+pub(crate) fn occluders_bounds<'o, S: Scalar>(
+    occluders: impl IntoIterator<Item = &'o Occluder<S>>,
+) -> ([f64; 3], [f64; 3]) {
     let mut lo = [f64::INFINITY; 3];
     let mut hi = [f64::NEG_INFINITY; 3];
     for o in occluders {
@@ -348,6 +348,13 @@ pub(crate) fn ray_length<'o, S: Scalar>(occluders: impl IntoIterator<Item = &'o 
             hi[k] = hi[k].max(o.bounds[k][1]);
         }
     }
+    (lo, hi)
+}
+
+/// The ray length that clears every occluder from anywhere on them: twice
+/// the diagonal of their boxes' box.
+pub(crate) fn ray_length<'o, S: Scalar>(occluders: impl IntoIterator<Item = &'o Occluder<S>>) -> S {
+    let (lo, hi) = occluders_bounds(occluders);
     S::from_f64(2.0 * diagonal(lo, hi) + 1.0)
 }
 
@@ -783,8 +790,7 @@ pub(crate) fn drop_drawn<S: Scalar>(
     lines.sort_by_key(|l| !l.visible);
     let mut kept: Vec<(ViewLine<S>, [f64; 4])> = Vec::new();
     for line in lines {
-        let (a, b) = line.curve.domain();
-        let mid = line.curve.evaluate(a.add(b).div(S::TWO)?.sharpen())?;
+        let mid = line.curve.evaluate(line.curve.mid_parameter()?)?;
         let here = bounds(&line.curve);
         let mut drawn = false;
         for (other, there) in &kept {

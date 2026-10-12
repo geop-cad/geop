@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    plain::{cross, dot, norm, normalize, scale, sub},
+    plain::{centroid, cross, dot, norm, normalize, scale, sub},
     solvers::walk::walk_by,
 };
 
@@ -225,17 +225,11 @@ impl Cage {
 
     /// The centre of the vertices `vertices`: their average.
     pub fn centre(&self, vertices: &BTreeSet<u32>) -> Option<[f64; 3]> {
-        if vertices.is_empty() {
-            return None;
-        }
-        let mut sum = [0.0; 3];
-        for &v in vertices {
-            let at = self.vertex(v).ok()?.at;
-            for c in 0..3 {
-                sum[c] += at[c];
-            }
-        }
-        Some(sum.map(|s| s / vertices.len() as f64))
+        let ats = vertices
+            .iter()
+            .map(|&v| Some(self.vertex(v).ok()?.at))
+            .collect::<Option<Vec<_>>>()?;
+        centroid(ats)
     }
 
     /// The vertices `vertices` moved to where `f` takes them — those on the

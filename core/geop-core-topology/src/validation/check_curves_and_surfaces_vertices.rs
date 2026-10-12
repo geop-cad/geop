@@ -86,20 +86,14 @@ pub fn check_curves_and_surfaces_vertices<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::check_curves_and_surfaces_vertices;
-    use crate::test_fixtures::test_cube_solid;
-    use crate::{Model, validation::ValidationParameters};
+    use crate::Model;
+    use crate::test_fixtures::{check_errors, test_cube_model, test_cube_solid};
     use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
 
-    fn run<S: Scalar>(model: &Model<S>) -> Vec<geop_core_math::geop_error::GeopError> {
-        let mut errors = Vec::new();
-        check_curves_and_surfaces_vertices(&ValidationParameters::default(), &mut errors, model);
-        errors
-    }
-
     fn check_valid_cube_passes<S: Scalar>() {
-        let mut model = Model::<S>::new();
-        test_cube_solid(&mut model);
-        assert!(run(&model).is_empty());
+        assert!(
+            check_errors(check_curves_and_surfaces_vertices, &test_cube_model::<S>()).is_empty()
+        );
     }
     #[test]
     fn valid_cube_passes() {
@@ -112,7 +106,7 @@ mod tests {
         let vertex_id = *model.vertices.keys().next().unwrap();
         model.vertices.get_mut(&vertex_id).unwrap().point =
             Vector3::from_array([S::from_f64(42.0); 3]);
-        assert!(!run(&model).is_empty());
+        assert!(!check_errors(check_curves_and_surfaces_vertices, &model).is_empty());
     }
     #[test]
     fn moved_vertex_breaks_edge_curve() {
@@ -127,7 +121,7 @@ mod tests {
         let v2 = ids.next().unwrap();
         model.vertices.get_mut(&v1).unwrap().point = Vector3::from_array([S::from_f64(42.0); 3]);
         model.vertices.get_mut(&v2).unwrap().point = Vector3::from_array([S::from_f64(43.0); 3]);
-        assert!(run(&model).len() >= 2);
+        assert!(check_errors(check_curves_and_surfaces_vertices, &model).len() >= 2);
     }
     #[test]
     fn moving_two_vertices_reports_both() {

@@ -395,40 +395,23 @@ where
 mod tests {
     use super::curve_curve_crossings;
     use crate::nurb_curve::NurbCurve;
+    use crate::test_fixtures::{knots, line, weighted};
     use geop_core_math::for_all_scalars;
-    use geop_core_math::{scalars::Scalar, vector::Vector4};
+    use geop_core_math::scalars::Scalar;
 
     const MAX: usize = 5000;
     const MIN_SUBDIVISION_SIZE: f64 = 1e-6;
-
-    fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
-        Vector4::from_array([
-            S::from_f64(x * w),
-            S::from_f64(y * w),
-            S::from_f64(z * w),
-            S::from_f64(w),
-        ])
-    }
-
-    fn knots<S: Scalar>(k: &[f64]) -> Vec<S> {
-        k.iter().map(|&x| S::from_f64(x)).collect()
-    }
-
-    fn line<S: Scalar>(a: [f64; 3], b: [f64; 3]) -> NurbCurve<S, 4> {
-        NurbCurve::try_new(
-            1,
-            vec![pt(a[0], a[1], a[2], 1.), pt(b[0], b[1], b[2], 1.)],
-            knots(&[0., 0., 1., 1.]),
-        )
-        .unwrap()
-    }
 
     /// Exact rational quarter circle of radius 1 in the xy-plane.
     fn quarter_circle<S: Scalar>() -> NurbCurve<S, 4> {
         let w = std::f64::consts::FRAC_1_SQRT_2;
         NurbCurve::try_new(
             2,
-            vec![pt(1., 0., 0., 1.), pt(1., 1., 0., w), pt(0., 1., 0., 1.)],
+            vec![
+                weighted(1., 0., 0., 1.),
+                weighted(1., 1., 0., w),
+                weighted(0., 1., 0., 1.),
+            ],
             knots(&[0., 0., 0., 1., 1., 1.]),
         )
         .unwrap()

@@ -238,7 +238,7 @@ fn check_faces_of_body<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::check_face_face_numerical_intersection;
-    use crate::test_fixtures::test_cube_solid;
+    use crate::test_fixtures::{check_errors, test_cube_model};
     use crate::{
         Coedge, CoedgeGeometry, CoedgeId, Face, FaceId, Model, Sense, ShellId, Vertex,
         boundary::BoundaryType, validation::ValidationParameters,
@@ -253,20 +253,9 @@ mod tests {
         vector::{Vector3, Vector4},
     };
 
-    fn run<S: Scalar>(model: &Model<S>) -> Vec<geop_core_math::geop_error::GeopError> {
-        let mut errors = Vec::new();
-        check_face_face_numerical_intersection(
-            &ValidationParameters::default(),
-            &mut errors,
-            model,
-        );
-        errors
-    }
-
     fn check_welded_cube_passes<S: Scalar>() {
-        let mut model = Model::<S>::new();
-        test_cube_solid(&mut model);
-        assert!(run(&model).is_empty());
+        let model = test_cube_model::<S>();
+        assert!(check_errors(check_face_face_numerical_intersection, &model).is_empty());
     }
     #[test]
     fn welded_cube_passes() {
@@ -387,7 +376,8 @@ mod tests {
         quarter_face(&mut model, (0.0, 0.0), (0.5, 0.0), (0.5, 0.5), (0.0, 0.5));
         quarter_face(&mut model, (0.5, 0.5), (1.0, 0.5), (1.0, 1.0), (0.5, 1.0));
 
-        assert!(run(&model).is_empty(), "{:?}", run(&model));
+        let errors = check_errors(check_face_face_numerical_intersection, &model);
+        assert!(errors.is_empty(), "{errors:?}");
     }
     fn check_coincident_planes_with_identical_trims_fail<S: Scalar>() {
         let mut model = Model::<S>::new();
@@ -398,7 +388,7 @@ mod tests {
         quarter_face(&mut model, (0.0, 0.0), (0.5, 0.0), (0.5, 0.5), (0.0, 0.5));
         quarter_face(&mut model, (0.0, 0.0), (0.5, 0.0), (0.5, 0.5), (0.0, 0.5));
 
-        assert!(!run(&model).is_empty());
+        assert!(!check_errors(check_face_face_numerical_intersection, &model).is_empty());
     }
     #[test]
     fn coincident_planes_with_identical_trims_fail() {

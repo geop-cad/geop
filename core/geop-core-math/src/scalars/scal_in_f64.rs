@@ -79,8 +79,9 @@ pub(super) fn interval_trig(
 
 // ── Type ──────────────────────────────────────────────────────────────────────
 
-/// Interval f64 scalar: `[lo, hi]` with outward-rounded arithmetic.
-#[derive(Copy, Clone, Debug, PartialEq)]
+/// Interval f64 scalar: `[lo, hi]` with outward-rounded arithmetic. The
+/// default is zero, `[0, 0]`.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct ScalInF64 {
     pub lo: f64,
     pub hi: f64,
@@ -156,6 +157,8 @@ impl Field for ScalInF64 {
 // ── Scalar impl ───────────────────────────────────────────────────────────────
 
 impl Scalar for ScalInF64 {
+    interval_bound_methods!();
+
     const ZERO: Self = ScalInF64 { lo: 0.0, hi: 0.0 };
     const ONE: Self = ScalInF64 { lo: 1.0, hi: 1.0 };
     const TWO: Self = ScalInF64 { lo: 2.0, hi: 2.0 };
@@ -248,36 +251,6 @@ impl Scalar for ScalInF64 {
     }
 
     #[inline]
-    fn could_be_equal(self, other: Self) -> bool {
-        self.lo <= other.hi && other.lo <= self.hi
-    }
-
-    #[inline]
-    fn definitely_not_equal(self, other: Self) -> bool {
-        self.hi < other.lo || self.lo > other.hi
-    }
-
-    #[inline]
-    fn could_be_greater(self, other: Self) -> bool {
-        self.hi > other.lo
-    }
-
-    #[inline]
-    fn definitely_greater(self, other: Self) -> bool {
-        self.lo > other.hi
-    }
-
-    #[inline]
-    fn could_be_less(self, other: Self) -> bool {
-        self.lo < other.hi
-    }
-
-    #[inline]
-    fn definitely_less(self, other: Self) -> bool {
-        self.hi < other.lo
-    }
-
-    #[inline]
     fn is_infinite(self) -> bool {
         self.lo == f64::NEG_INFINITY || self.hi == f64::INFINITY
     }
@@ -291,21 +264,6 @@ impl Scalar for ScalInF64 {
     fn midpoint(self) -> Self {
         let m = (self.lo + self.hi) / 2.0;
         ScalInF64::degenerate(m)
-    }
-
-    #[inline]
-    fn is_sharp(self) -> bool {
-        self.lo == self.hi
-    }
-
-    #[inline]
-    fn lower(self) -> Self {
-        ScalInF64::degenerate(self.lo)
-    }
-
-    #[inline]
-    fn upper(self) -> Self {
-        ScalInF64::degenerate(self.hi)
     }
 
     #[inline]
@@ -331,23 +289,6 @@ impl Scalar for ScalInF64 {
     #[inline]
     fn to_f64(self) -> f64 {
         (self.lo + self.hi) / 2.0
-    }
-
-    #[inline]
-    fn union(self, other: Self) -> Self {
-        ScalInF64::new(self.lo.min(other.lo), self.hi.max(other.hi))
-    }
-
-    #[inline]
-    fn is_subset_of(self, other: Self) -> bool {
-        other.lo <= self.lo && self.hi <= other.hi
-    }
-}
-
-impl Default for ScalInF64 {
-    #[inline]
-    fn default() -> Self {
-        ScalInF64::ZERO
     }
 }
 

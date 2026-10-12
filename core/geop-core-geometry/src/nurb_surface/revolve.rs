@@ -109,23 +109,14 @@ impl<S: Scalar> NurbSurface<S, 4> {
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::{
-        for_all_scalars,
-        scalars::Scalar,
-        vector::{Vector3, Vector4},
-    };
+    use crate::test_fixtures::line;
+    use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
 
     use super::super::NurbSurface3D;
-    use crate::{nurb_curve::NurbCurve3D, shape::Axis};
+    use crate::shape::Axis;
 
     fn v3<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
         Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
-    }
-
-    fn line<S: Scalar>(a: [f64; 3], b: [f64; 3]) -> NurbCurve3D<S> {
-        let f = S::from_f64;
-        let h = |c: [f64; 3]| Vector4::from_array([f(c[0]), f(c[1]), f(c[2]), S::ONE]);
-        NurbCurve3D::try_new(1, vec![h(a), h(b)], vec![S::ZERO, S::ZERO, S::ONE, S::ONE]).unwrap()
     }
 
     /// A line beside the axis turns into a cylinder: every point at its

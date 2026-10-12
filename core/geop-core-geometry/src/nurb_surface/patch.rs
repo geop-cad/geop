@@ -474,11 +474,8 @@ impl<S: Scalar> NurbSurface3D<S> {
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::{
-        for_all_scalars,
-        scalars::Scalar,
-        vector::{Vector3, Vector4},
-    };
+    use crate::test_fixtures::{line, weighted};
+    use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
 
     use crate::{
         nurb_curve::{NurbCurve, NurbCurve3D},
@@ -490,14 +487,6 @@ mod tests {
         Vector3::from_array([x, y, z].map(S::from_f64))
     }
 
-    fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
-        Vector4::from_array([x * w, y * w, z * w, w].map(S::from_f64))
-    }
-
-    fn line<S: Scalar>(a: [f64; 3], b: [f64; 3]) -> NurbCurve3D<S> {
-        NurbCurve3D::line(v(a[0], a[1], a[2]), v(b[0], b[1], b[2])).unwrap()
-    }
-
     /// The quarter circle in the plane `x = x0` from `(x0, 0, 0)` round
     /// the center `(x0, 0, 1)` to `(x0, 1, 1)`: it leaves the plane `z = 0`
     /// along `y`.
@@ -506,9 +495,9 @@ mod tests {
         NurbCurve::try_new(
             2,
             vec![
-                pt(x0, 0., 0., 1.),
-                pt(x0, 1., 0., std::f64::consts::SQRT_2 / 2.0),
-                pt(x0, 1., 1., 1.),
+                weighted(x0, 0., 0., 1.),
+                weighted(x0, 1., 0., std::f64::consts::SQRT_2 / 2.0),
+                weighted(x0, 1., 1., 1.),
             ],
             vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
         )
@@ -522,11 +511,11 @@ mod tests {
         NurbCurve::try_new(
             3,
             vec![
-                pt(0., 0., 0., 1.),
-                pt(0.3, -0.2, 0.4 * lift, 1.),
-                pt(0.6, 0.3, -0.2 * lift, 1.),
-                pt(0.8, -0.1, 0.3 * lift, 1.),
-                pt(1., 0., 0., 1.),
+                weighted(0., 0., 0., 1.),
+                weighted(0.3, -0.2, 0.4 * lift, 1.),
+                weighted(0.6, 0.3, -0.2 * lift, 1.),
+                weighted(0.8, -0.1, 0.3 * lift, 1.),
+                weighted(1., 0., 0., 1.),
             ],
             vec![
                 f(0.),
@@ -646,11 +635,11 @@ mod tests {
             NurbCurve::try_new(
                 3,
                 vec![
-                    pt(0., 1., 1., 1.),
-                    pt(0.3, 1., 1.5, 1.),
-                    pt(0.6, 1., 0.6, 1.),
-                    pt(0.8, 1., 1.3, 1.),
-                    pt(1., 1., 1., 1.),
+                    weighted(0., 1., 1., 1.),
+                    weighted(0.3, 1., 1.5, 1.),
+                    weighted(0.6, 1., 0.6, 1.),
+                    weighted(0.8, 1., 1.3, 1.),
+                    weighted(1., 1., 1., 1.),
                 ],
                 [0., 0., 0., 0., 0.5, 1., 1., 1., 1.].map(f).to_vec(),
             )

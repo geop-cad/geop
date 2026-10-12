@@ -123,17 +123,9 @@ impl<S: Scalar> NurbSurface<S, 4> {
 #[cfg(test)]
 mod tests {
     use crate::nurb_surface::NurbSurface;
+    use crate::test_fixtures::hom;
     use geop_core_math::for_all_scalars;
-    use geop_core_math::{scalars::Scalar, vector::Vector4};
-
-    fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
-        Vector4::from_array([
-            S::from_f64(x),
-            S::from_f64(y),
-            S::from_f64(z),
-            S::from_f64(w),
-        ])
-    }
+    use geop_core_math::scalars::Scalar;
 
     /// A flat bilinear patch has zero curvature everywhere: no radius limit.
     fn check_flat_patch_has_no_curvature_radius<S: Scalar>() {
@@ -142,10 +134,10 @@ mod tests {
             1,
             1,
             vec![
-                pt(0., 0., 0., 1.),
-                pt(0., 1., 0., 1.),
-                pt(1., 0., 0., 1.),
-                pt(1., 1., 0., 1.),
+                hom(0., 0., 0., 1.),
+                hom(0., 1., 0., 1.),
+                hom(1., 0., 0., 1.),
+                hom(1., 1., 0., 1.),
             ],
             vec![f(0.), f(0.), f(1.), f(1.)],
             vec![f(0.), f(0.), f(1.), f(1.)],
@@ -168,10 +160,10 @@ mod tests {
             1,
             1,
             vec![
-                pt(0., 0., 0., 1.),
-                pt(0., 1., 0., 1.),
-                pt(1., 0., 0., 1.),
-                pt(1., 1., 1., 1.),
+                hom(0., 0., 0., 1.),
+                hom(0., 1., 0., 1.),
+                hom(1., 0., 0., 1.),
+                hom(1., 1., 1., 1.),
             ],
             vec![f(0.), f(0.), f(1.), f(1.)],
             vec![f(0.), f(0.), f(1.), f(1.)],
@@ -195,7 +187,7 @@ mod tests {
         let mut cps = Vec::new();
         for (x, y, wi) in [(1., 0., 1.), (1., 1., w), (0., 1., 1.)] {
             for z in [0., 1.] {
-                cps.push(pt(x * r * wi, y * r * wi, z * wi, wi));
+                cps.push(hom(x * r * wi, y * r * wi, z * wi, wi));
             }
         }
         let s = NurbSurface::try_new(
@@ -227,7 +219,7 @@ mod tests {
         let mut cps = Vec::new();
         for (x, y, wi) in [(1., 0., 1.), (1., 1., w), (0., 1., 1.)] {
             for z in [0., 1.] {
-                cps.push(pt(x * r * wi, y * r * wi, z * wi, wi));
+                cps.push(hom(x * r * wi, y * r * wi, z * wi, wi));
             }
         }
         let s = NurbSurface::try_new(

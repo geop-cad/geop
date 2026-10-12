@@ -95,46 +95,23 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
 
     /// Split at the midpoint of the parameter domain.
     pub fn split_mid(&self) -> GeopResult<(NurbCurve<S, D>, NurbCurve<S, D>)> {
-        let (t0, t1) = self.domain();
-        // A self-chosen subdivision point: any value in the interval cuts
-        // it equally well, so sharpening loses no accuracy and keeps
-        // repeated splits from compounding width (see AGENTS.md).
-        let mid = t0.add(t1).div(S::TWO)?.sharpen();
-        self.split(mid)
+        // A self-chosen subdivision point, sharp, so repeated splits do not
+        // compound width.
+        self.split(self.mid_parameter()?)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::nurb_curve::NurbCurve;
+    use crate::test_fixtures::{hom, line};
     use geop_core_math::for_all_scalars;
-    use geop_core_math::{scalars::Scalar, vector::Vector4};
-
-    fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
-        Vector4::from_array([
-            S::from_f64(x),
-            S::from_f64(y),
-            S::from_f64(z),
-            S::from_f64(w),
-        ])
-    }
-
-    fn line<S: Scalar>() -> NurbCurve<S, 4> {
-        NurbCurve::try_new(
-            1,
-            vec![pt(0.0, 0.0, 0.0, 1.0), pt(1.0, 0.0, 0.0, 1.0)],
-            vec![
-                S::from_f64(0.0),
-                S::from_f64(0.0),
-                S::from_f64(1.0),
-                S::from_f64(1.0),
-            ],
-        )
-        .unwrap()
-    }
+    use geop_core_math::scalars::Scalar;
 
     fn check_split_line_halves_domain<S: Scalar>() {
-        let (left, right) = line::<S>().split(S::from_f64(0.5)).unwrap();
+        let (left, right) = line::<S>([0.; 3], [1., 0., 0.])
+            .split(S::from_f64(0.5))
+            .unwrap();
 
         let l0 = left.evaluate(S::ZERO).unwrap();
         assert!(l0[0].could_be_equal(S::ZERO));
@@ -153,7 +130,7 @@ mod tests {
     }
 
     fn check_split_preserves_points_on_curve<S: Scalar>() {
-        let curve = line::<S>();
+        let curve = line::<S>([0.; 3], [1., 0., 0.]);
         let (left, right) = curve.split(S::from_f64(0.25)).unwrap();
 
         let orig = curve.evaluate(S::from_f64(0.1)).unwrap();
@@ -170,7 +147,7 @@ mod tests {
     }
 
     fn check_split_at_boundary_returns_err<S: Scalar>() {
-        let c = line::<S>();
+        let c = line::<S>([0.; 3], [1., 0., 0.]);
         assert!(c.split(S::ZERO).is_err());
         assert!(c.split(S::ONE).is_err());
     }
@@ -184,11 +161,11 @@ mod tests {
         let curve = NurbCurve::try_new(
             3,
             vec![
-                pt(0.0, 0.0, 0.0, 1.0),
-                pt(0.25, 1.0, 0.0, 1.0),
-                pt(0.5, 0.0, 0.0, 1.0),
-                pt(0.75, 1.0, 0.0, 1.0),
-                pt(1.0, 0.0, 0.0, 1.0),
+                hom(0.0, 0.0, 0.0, 1.0),
+                hom(0.25, 1.0, 0.0, 1.0),
+                hom(0.5, 0.0, 0.0, 1.0),
+                hom(0.75, 1.0, 0.0, 1.0),
+                hom(1.0, 0.0, 0.0, 1.0),
             ],
             vec![
                 f(0.0),

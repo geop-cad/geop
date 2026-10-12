@@ -10,13 +10,9 @@ use geop_core_math::{scalars::Scalar, vector::Vector2};
 
 use crate::sketch::{CurveId, CurveKind, PointId, Sketch};
 
-pub use geop_core_math::plain::{P2, add, cross2 as cross, distance, dot, scale, sub};
-
-/// `v` of length one; none for no direction at all.
-pub fn unit(v: P2) -> Option<P2> {
-    let n = v[0].hypot(v[1]);
-    (n > 0.0).then(|| scale(v, 1.0 / n))
-}
+pub use geop_core_math::plain::{
+    P2, add, bounds, cross2 as cross, distance, dot, normalize as unit, scale, sub,
+};
 
 /// `v` turned a quarter counter-clockwise.
 pub fn perp(v: P2) -> P2 {

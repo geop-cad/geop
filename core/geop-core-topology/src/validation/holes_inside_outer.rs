@@ -116,9 +116,7 @@ fn hole_point<S: Scalar>(
             // about which side of it the hole lies on. The curve's interior
             // carries the same information without the coincidence.
             let pcurve = &model.get_coedge(anchor)?.pcurve;
-            let (t0, t1) = pcurve.domain();
-            let mid = t0.add(t1).div(S::TWO)?.sharpen();
-            Ok(Some(pcurve.evaluate(mid)?))
+            Ok(Some(pcurve.evaluate(pcurve.mid_parameter()?)?))
         }
         BoundaryType::Vertex(vertex_id) => {
             let point = model.get_vertex(vertex_id)?.point;
@@ -137,31 +135,17 @@ fn hole_point<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::check_holes_inside_outer;
+    use crate::test_fixtures::line2;
     use crate::{
         Coedge, CoedgeGeometry, CoedgeId, Edge, Face, FaceId, Model, Sense, ShellId, Vertex,
         VertexId, boundary::BoundaryType, validation::ValidationParameters,
     };
-    use geop_core_geometry::{
-        nurb_curve::{NurbCurve, NurbCurve2D},
-        nurb_surface::NurbSurface3D,
-    };
+    use geop_core_geometry::{nurb_curve::NurbCurve, nurb_surface::NurbSurface3D};
     use geop_core_math::{
         for_all_scalars,
         scalars::Scalar,
         vector::{Vector3, Vector4},
     };
-
-    fn line2<S: Scalar>(a: (f64, f64), b: (f64, f64)) -> NurbCurve2D<S> {
-        NurbCurve::try_new(
-            1,
-            vec![
-                Vector3::from_array([S::from_f64(a.0), S::from_f64(a.1), S::ONE]),
-                Vector3::from_array([S::from_f64(b.0), S::from_f64(b.1), S::ONE]),
-            ],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-        )
-        .unwrap()
-    }
 
     /// A flat unit patch in the xy-plane, big enough to hold every fixture
     /// below inside its own `(u, v)` domain.

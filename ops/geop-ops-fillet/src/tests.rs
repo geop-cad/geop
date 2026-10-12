@@ -10,15 +10,13 @@ use geop_ops_booleans::{
     boolean::{BooleanOp, boolean},
     remesh::remesh::RemeshParams,
 };
-use geop_ops_extrude_revolve::shapes::{self, block, v3};
+use geop_ops_extrude_revolve::shapes::{self, block, block_part, v3};
 
 use crate::blend::{BlendShape, blend};
 
 /// The unit cube `[0, 1]^3`, named `cube(b)`.
 pub(super) fn unit_cube() -> NamedModel<S> {
-    let mut model = NamedModel::new();
-    block(&mut model, "b", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
-    model
+    block_part("b", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0])
 }
 
 /// A cylinder of radius 0.5 and height 1 standing on the origin, named

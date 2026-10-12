@@ -147,16 +147,12 @@ pub fn check_pointers<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::check_pointers;
-    use crate::test_fixtures::test_cube_solid;
-    use crate::{Model, validation::ValidationParameters};
+    use crate::Model;
+    use crate::test_fixtures::{check_errors, test_cube_model};
     use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
 
     fn check_valid_cube_passes<S: Scalar>() {
-        let mut model = Model::<S>::new();
-        test_cube_solid(&mut model);
-        let mut errors = Vec::new();
-        check_pointers(&ValidationParameters::default(), &mut errors, &model);
-        assert!(errors.is_empty());
+        assert!(check_errors(check_pointers, &test_cube_model::<S>()).is_empty());
     }
     #[test]
     fn valid_cube_passes() {
@@ -169,8 +165,7 @@ mod tests {
         let shell_id = model.get_solid(solid_id).unwrap().shells[0];
         let face_id = model.get_shell(shell_id).unwrap().faces[0];
         model.faces.get_mut(&face_id).unwrap().shell = crate::ShellId(9999);
-        let mut errors = Vec::new();
-        check_pointers(&ValidationParameters::default(), &mut errors, &model);
+        let errors = check_errors(check_pointers, &model);
         assert!(!errors.is_empty());
     }
     #[test]
@@ -185,8 +180,7 @@ mod tests {
         let face_id = model.get_shell(shell_id).unwrap().faces[0];
         model.faces.get_mut(&face_id).unwrap().shell = crate::ShellId(9999);
         model.shells.get_mut(&shell_id).unwrap().solid = Some(crate::SolidId(9999));
-        let mut errors = Vec::new();
-        check_pointers(&ValidationParameters::default(), &mut errors, &model);
+        let errors = check_errors(check_pointers, &model);
         assert_eq!(errors.len(), 2);
     }
     #[test]

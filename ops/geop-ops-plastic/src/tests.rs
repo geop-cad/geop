@@ -7,18 +7,14 @@ use geop_core_math::{
     scalars::{ScalInF64, Scalar},
     vector::Vector2,
 };
-use geop_core_topology::{Body, FaceId, SolidId};
+use geop_core_topology::{FaceId, SolidId};
 use geop_ops::{
     NamedModel, Namer,
-    testing::{assert_valid, face_towards},
+    testing::{assert_valid, face_towards, volume},
 };
 use geop_ops_extrude_revolve::{
     common::{Profile, polyline},
     shapes::{block, v3},
-};
-use geop_ops_rasterize::{
-    rasterize,
-    stl::{enclosed_volume, stl_triangles},
 };
 use geop_ops_shell::shell::shell;
 
@@ -31,16 +27,8 @@ use crate::{
 type S = ScalInF64;
 
 /// How closely [`volume`] measures: its triangles' corners are `f32`, as
-/// STL stores them. A test's measuring stick, not a kernel comparison.
+/// STL stores them — exact for faces that are flat, up to those corners.
 const VOLUME_TOLERANCE: f64 = 1e-5;
-
-/// The volume `solid` encloses, from its outward-wound triangles — exact
-/// for faces that are flat, up to the `f32` corners.
-fn volume(part: &NamedModel<S>, solid: SolidId) -> f64 {
-    let raster = rasterize(part.topology(), 16).unwrap();
-    let faces = part.topology().body_faces(Body::Solid(solid)).unwrap();
-    enclosed_volume(&stl_triangles(&raster, &faces))
-}
 
 /// The 2 x 2 x 1 box from the origin, `cube(b)`.
 fn unit_box() -> (NamedModel<S>, SolidId) {
@@ -96,12 +84,12 @@ fn frustum(side: f64, height: f64, degrees: f64) -> f64 {
 #[test]
 fn box_side_drafted() {
     let (part, solid) = unit_box();
-    let before = volume(&part, solid);
+    let before = volume(&part, solid, 16);
     let side = face_towards(&part, solid, [1., 0., 0.]);
     let name = part.name_of(side).unwrap().to_string();
     let (part, solid) = drafted(part, &[side], 5.0);
     assert_valid(&part);
-    let after = volume(&part, solid);
+    let after = volume(&part, solid, 16);
     let wedge = 0.5 * 1.0 * 5f64.to_radians().tan() * 2.0;
     assert!(
         (before - after - wedge).abs() < VOLUME_TOLERANCE,
@@ -116,11 +104,11 @@ fn box_side_drafted() {
 #[test]
 fn enclosure_outside_drafted() {
     let (part, solid) = enclosure(0.2);
-    let before = volume(&part, solid);
+    let before = volume(&part, solid, 16);
     let walls = outer_walls(&part, solid);
     let (part, solid) = drafted(part, &walls, 3.0);
     assert_valid(&part);
-    let after = volume(&part, solid);
+    let after = volume(&part, solid, 16);
     let taken = 4.0 - frustum(2.0, 1.0, 3.0);
     assert!(
         (before - after - taken).abs() < VOLUME_TOLERANCE,
@@ -144,7 +132,7 @@ fn ring(out: f64) -> f64 {
 #[test]
 fn enclosure_lip() {
     let (mut part, solid) = enclosure(0.2);
-    let before = volume(&part, solid);
+    let before = volume(&part, solid, 16);
     let face = rim(&part, solid);
     let namer = Namer::new("lip", "l").unwrap();
     let size = LipSize {
@@ -154,7 +142,7 @@ fn enclosure_lip() {
     lip(&mut part, &namer, "l", face, &[], size).unwrap();
     assert_valid(&part);
     let solid = part.solid_id("lip(l)").unwrap();
-    let added = volume(&part, solid) - before;
+    let added = volume(&part, solid, 16) - before;
     let expected = ring(0.08) * 0.1;
     assert!(
         (added - expected).abs() < VOLUME_TOLERANCE,
@@ -167,7 +155,7 @@ fn enclosure_lip() {
 #[test]
 fn enclosure_groove() {
     let (mut part, solid) = enclosure(0.2);
-    let before = volume(&part, solid);
+    let before = volume(&part, solid, 16);
     let face = rim(&part, solid);
     let namer = Namer::new("groove", "g").unwrap();
     let size = LipSize {
@@ -177,7 +165,7 @@ fn enclosure_groove() {
     groove(&mut part, &namer, "g", face, &[], size, S::from_f64(0.02)).unwrap();
     assert_valid(&part);
     let solid = part.solid_id("groove(g)").unwrap();
-    let taken = before - volume(&part, solid);
+    let taken = before - volume(&part, solid, 16);
     let expected = ring(0.1) * 0.12;
     assert!(
         (taken - expected).abs() < VOLUME_TOLERANCE,
@@ -191,7 +179,7 @@ fn enclosure_groove() {
 /// to the floor at 0.2, 0.05 thick.
 fn check_rib(plane: CoordinateSystem<S>, line: [[f64; 2]; 2], growth: Growth) {
     let (mut part, solid) = enclosure(0.2);
-    let before = volume(&part, solid);
+    let before = volume(&part, solid, 16);
     let profile = Profile::open(polyline(&[q(line[0]), q(line[1])]).unwrap());
     let namer = Namer::new("rib", "r").unwrap();
     let half = S::from_f64(0.025);
@@ -208,7 +196,7 @@ fn check_rib(plane: CoordinateSystem<S>, line: [[f64; 2]; 2], growth: Growth) {
     .unwrap();
     assert_valid(&part);
     let solid = part.solid_id("rib(r)").unwrap();
-    let added = volume(&part, solid) - before;
+    let added = volume(&part, solid, 16) - before;
     let expected = 1.6 * 0.5 * 0.05;
     assert!(
         (added - expected).abs() < VOLUME_TOLERANCE,

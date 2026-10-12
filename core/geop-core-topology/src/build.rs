@@ -22,8 +22,8 @@ use geop_core_math::{
 };
 
 use crate::{
-    Coedge, CoedgeGeometry, CoedgeId, Curve2, Curve3, Edge, EdgeId, Face, FaceId, Model, Sense,
-    Shell, ShellId, Solid, SolidId, Vertex, VertexId, Wire, WireId, boundary::BoundaryType,
+    Body, Coedge, CoedgeGeometry, CoedgeId, Curve2, Curve3, Edge, EdgeId, Face, FaceId, Model,
+    Sense, Shell, ShellId, Solid, SolidId, Vertex, VertexId, Wire, WireId, boundary::BoundaryType,
 };
 
 /// A body to build, its entities referring to each other by their index in
@@ -87,6 +87,18 @@ pub struct BuiltBody {
     pub solid: Option<SolidId>,
     /// The wire, for a description without faces.
     pub wire: Option<WireId>,
+}
+
+impl BuiltBody {
+    /// The body built: its solid, or else its first shell as a sheet. A
+    /// description without faces built a wire, which is no body.
+    pub fn body(&self) -> GeopResult<Body> {
+        match (self.solid, self.shells.first()) {
+            (Some(solid), _) => Ok(Body::Solid(solid)),
+            (None, Some(&shell)) => Ok(Body::Sheet(shell)),
+            (None, None) => Err(GeopError::new("built a wire, which is no body")),
+        }
+    }
 }
 
 /// Where each entity of a [`BodySpec`] made by [`Model::body_spec`] came
@@ -585,12 +597,7 @@ impl<S: Scalar> Model<S> {
 
 #[cfg(test)]
 mod tests {
-    use geop_core_geometry::nurb_curve::NurbCurve;
-    use geop_core_math::{
-        for_all_scalars,
-        scalars::Scalar,
-        vector::{Vector3, Vector4},
-    };
+    use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
 
     use super::{BodySpec, EdgeSpec};
     use crate::{
@@ -604,13 +611,8 @@ mod tests {
     }
 
     fn line<S: Scalar>(a: [f64; 3], b: [f64; 3]) -> crate::Curve3<S> {
-        let h = |p: [f64; 3]| Vector4::from_array([p[0], p[1], p[2], 1.0].map(S::from_f64));
-        NurbCurve::try_new(
-            1,
-            vec![h(a), h(b)],
-            [0.0, 0.0, 1.0, 1.0].map(S::from_f64).to_vec(),
-        )
-        .unwrap()
+        let p = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+        crate::Curve3::line(p(a), p(b)).unwrap()
     }
 
     /// Two lines from one corner, and a point on its own, beside the unit
@@ -650,10 +652,11 @@ mod tests {
         let built = model.build_body(wire_spec()).unwrap();
         let wire = built.wire.expect("a wire");
         assert_eq!(built.solid, None);
-        assert_eq!(model.get_wire(wire).unwrap().vertices.len(), 4);
-        assert_eq!(model.get_wire(wire).unwrap().edges.len(), 2);
+        let built_wire = &model.wires[&wire];
+        assert_eq!(built_wire.vertices.len(), 4);
+        assert_eq!(built_wire.edges.len(), 2);
+        assert!(built_wire.vertices.contains(&built.vertices[3]));
         assert_eq!(model.wire_of_edge(built.edges[1]), Some(wire));
-        assert_eq!(model.wire_of_vertex(built.vertices[3]), Some(wire));
         let params = ValidationParameters::default();
         validate(&params, &model).unwrap();
         validate_manifold(&params, &model).unwrap();

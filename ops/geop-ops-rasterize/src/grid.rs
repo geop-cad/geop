@@ -60,7 +60,7 @@ use std::collections::HashMap;
 
 use geop_core_math::{
     geop_error::GeopResult,
-    plain::{distance, dot, sub},
+    plain::{bounds, distance, dot, sub},
     polygon::ear_clip,
     scalars::Scalar,
     solvers::refine::{Refine, refine},
@@ -315,12 +315,9 @@ pub(crate) fn triangulate_face<S: Scalar>(
         .map(|h| h.iter().map(|p| [p[0].to_f64(), p[1].to_f64()]).collect())
         .collect();
 
-    let mut min = outer_f64[0];
-    let mut max = outer_f64[0];
-    for &p in &outer_f64 {
-        min = [min[0].min(p[0]), min[1].min(p[1])];
-        max = [max[0].max(p[0]), max[1].max(p[1])];
-    }
+    let Some((min, max)) = bounds(outer_f64.iter().copied()) else {
+        return Ok(Vec::new());
+    };
     if max[0] <= min[0] || max[1] <= min[1] {
         return Ok(Vec::new());
     }
@@ -332,15 +329,11 @@ pub(crate) fn triangulate_face<S: Scalar>(
     // quarters its sagitta): that makes `n` mean "about this many cells
     // across a face that curves through a quarter turn", and it is what
     // decides how round a cylinder's silhouette looks.
-    let mut bbox_min = [f64::INFINITY; 3];
-    let mut bbox_max = [f64::NEG_INFINITY; 3];
-    for &p in &outer_f64 {
-        let e = samples.point_f64(p)?;
-        for i in 0..3 {
-            bbox_min[i] = bbox_min[i].min(e[i]);
-            bbox_max[i] = bbox_max[i].max(e[i]);
-        }
-    }
+    let evaluated = outer_f64
+        .iter()
+        .map(|&p| samples.point_f64(p))
+        .collect::<GeopResult<Vec<_>>>()?;
+    let (bbox_min, bbox_max) = bounds(evaluated).expect("the outer loop has points");
     let face_size = distance(bbox_min, bbox_max).max(1e-9);
     let quality = n.max(2) as f64;
     let max_sagitta = (face_size / (4.0 * quality * quality)).max(1e-9);

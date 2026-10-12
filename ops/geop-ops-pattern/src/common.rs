@@ -5,6 +5,7 @@
 use geop_core_geometry::shape::Axis;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
+    plain,
     primitives::Motion,
     scalars::Scalar,
     vector::Vector3,
@@ -299,11 +300,7 @@ pub(crate) fn copy_seeds<S: Scalar>(
 ) -> GeopResult<Vec<Instance>> {
     let mut copies = Vec::with_capacity(seeds.len());
     for (k, &seed) in seeds.iter().enumerate() {
-        let built = part.copy_body(seed, &rename)?;
-        let body = match built.solid {
-            Some(solid) => Body::Solid(solid),
-            None => Body::Sheet(built.shells[0]),
-        };
+        let body = part.copy_body(seed, &rename)?.body()?;
         part.transform_body(body, motion)?;
         copies.push(Instance {
             body,
@@ -399,15 +396,8 @@ pub(crate) fn center<S: Scalar>(part: &NamedModel<S>, refs: &[EntityRef]) -> Opt
 pub(crate) fn middle<S: Scalar>(
     points: impl IntoIterator<Item = Vector3<S>>,
 ) -> Option<Vector3<S>> {
-    let mut sum = [0.0; 3];
-    let mut n = 0usize;
-    for p in points {
-        for (k, s) in sum.iter_mut().enumerate() {
-            *s += p[k].to_f64();
-        }
-        n += 1;
-    }
-    (n > 0).then(|| Vector3::from_array(sum.map(|s| S::from_f64(s / n as f64))))
+    let c = plain::centroid(points.into_iter().map(|p| p.to_f64_array()))?;
+    Some(Vector3::from_array(c.map(S::from_f64)))
 }
 
 /// A handle at `at`, dragged along `direction`; none for a direction that

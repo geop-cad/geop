@@ -30,7 +30,6 @@
 //! along an edge). An angle so large that an edge turns around is refused.
 
 use geop_core_geometry::{
-    contains::surface::surface_could_contain,
     nurb_curve::NurbCurve3D,
     nurb_surface::NurbSurface3D,
     search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size},
@@ -48,7 +47,7 @@ use geop_core_topology::{
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
 use geop_ops::{BodyNames, NamedModel, Namer};
-use geop_ops_shell::shell::{extended, offset_vertex, pcurve};
+use geop_ops_shell::shell::{extended, offset_vertex, pcurve, surface_missed};
 
 use crate::common::halfway;
 
@@ -389,21 +388,12 @@ impl<'a, S: Scalar> Drafted<'a, S> {
         }
         // It is only right if it lies on both surfaces: say so if not,
         // rather than build an edge off its faces.
-        let (t0, t1) = curve.domain();
-        let middle = curve.evaluate(t0.add(t1).div(S::TWO)?)?;
-        for &face in faces {
-            let on = surface_could_contain(
-                &self.surfaces[face],
-                &middle,
-                MAX_NODES,
-                min_subdivision_size(),
-            )?;
-            if on.is_none() {
-                return Err(GeopError::new(format!(
-                    "its new curve from {start:?} to {end:?} is not on face {} at {middle:?}",
-                    self.names.faces[face]
-                )));
-            }
+        if let Some((face, middle)) = surface_missed(&curve, faces.iter().copied(), &self.surfaces)?
+        {
+            return Err(GeopError::new(format!(
+                "its new curve from {start:?} to {end:?} is not on face {} at {middle:?}",
+                self.names.faces[face]
+            )));
         }
         Ok(Some(curve))
     }

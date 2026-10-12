@@ -396,29 +396,18 @@ fn join_placed<S: Scalar, const D: usize>(
 #[cfg(test)]
 mod tests {
     use crate::nurb_curve::{NurbCurve, NurbCurve3D};
+    use crate::test_fixtures::{line, weighted};
     use geop_core_math::for_all_scalars;
-    use geop_core_math::{
-        scalars::Scalar,
-        vector::{Vector3, Vector4},
-    };
-
-    fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
-        Vector4::from_array([
-            S::from_f64(x * w),
-            S::from_f64(y * w),
-            S::from_f64(z * w),
-            S::from_f64(w),
-        ])
-    }
+    use geop_core_math::{scalars::Scalar, vector::Vector3};
 
     fn quarter_arc<S: Scalar>() -> NurbCurve3D<S> {
         let f = S::from_f64;
         NurbCurve::try_new(
             2,
             vec![
-                pt(1., 0., 0., 1.),
-                pt(1., 1., 0., std::f64::consts::SQRT_2 / 2.0),
-                pt(0., 1., 0., 1.),
+                weighted(1., 0., 0., 1.),
+                weighted(1., 1., 0., std::f64::consts::SQRT_2 / 2.0),
+                weighted(0., 1., 0., 1.),
             ],
             vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
         )
@@ -430,11 +419,11 @@ mod tests {
         NurbCurve::try_new(
             3,
             vec![
-                pt(0., 0., 0., 1.),
-                pt(1., 2., 0., 1.),
-                pt(2., -1., 1., 1.),
-                pt(3., 1., 0., 1.),
-                pt(4., 0., 2., 1.),
+                weighted(0., 0., 0., 1.),
+                weighted(1., 2., 0., 1.),
+                weighted(2., -1., 1., 1.),
+                weighted(3., 1., 0., 1.),
+                weighted(4., 0., 2., 1.),
             ],
             vec![
                 f(0.),
@@ -451,16 +440,6 @@ mod tests {
         .unwrap()
     }
 
-    fn line<S: Scalar>() -> NurbCurve3D<S> {
-        let f = S::from_f64;
-        NurbCurve::try_new(
-            1,
-            vec![pt(0., 0., 0., 1.), pt(2., 1., 3., 1.)],
-            vec![f(0.), f(0.), f(1.), f(1.)],
-        )
-        .unwrap()
-    }
-
     fn assert_same_curve<S: Scalar>(a: &NurbCurve3D<S>, b: &NurbCurve3D<S>) {
         for i in 0..=16 {
             let t = S::from_ratio(i, 16).unwrap();
@@ -472,7 +451,11 @@ mod tests {
     /// Raising the degree keeps the curve: a rational arc, and a cubic
     /// spline with an interior knot.
     fn check_elevate_degree_keeps_the_curve<S: Scalar>() {
-        for curve in [quarter_arc::<S>(), cubic_spline(), line()] {
+        for curve in [
+            quarter_arc::<S>(),
+            cubic_spline(),
+            line([0.; 3], [2., 1., 3.]),
+        ] {
             let raised = curve.elevate_degree().unwrap();
             assert_eq!(raised.degree, curve.degree + 1);
             assert_same_curve(&curve, &raised);
@@ -488,7 +471,11 @@ mod tests {
     /// A line, an arc and a spline brought onto one degree and one knot
     /// vector, each still the curve it was.
     fn check_compatible_curves_share_degree_and_knots<S: Scalar>() {
-        let curves = [line::<S>(), quarter_arc(), cubic_spline()];
+        let curves = [
+            line::<S>([0.; 3], [2., 1., 3.]),
+            quarter_arc(),
+            cubic_spline(),
+        ];
         let out = NurbCurve::compatible(&curves).unwrap();
         for (before, after) in curves.iter().zip(&out) {
             assert_eq!(after.degree, 3);
@@ -552,7 +539,7 @@ mod tests {
         let f = S::from_f64;
         let on = NurbCurve::try_new(
             1,
-            vec![pt(0., 1., 0., 1.), pt(-1., 1., 0., 1.)],
+            vec![weighted(0., 1., 0., 1.), weighted(-1., 1., 0., 1.)],
             vec![f(0.), f(0.), f(1.), f(1.)],
         )
         .unwrap();
@@ -570,7 +557,7 @@ mod tests {
             let (a, b) = (joined.evaluate(half(1.0)).unwrap(), on.evaluate(t).unwrap());
             assert!(a.could_be_equal(&b), "{a:?} vs {b:?}");
         }
-        assert!(NurbCurve::join(&[arc, line()]).is_err());
+        assert!(NurbCurve::join(&[arc, line([0.; 3], [2., 1., 3.])]).is_err());
     }
     #[test]
     fn join_lays_curves_end_to_end() {

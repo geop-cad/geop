@@ -128,9 +128,8 @@ fn middle_of<S: Scalar>(
         return Ok(arc.circle.center.sharpen());
     }
     if let Some(curve) = &aspects.curve {
-        let (t0, t1) = curve.domain();
         return Ok(curve
-            .evaluate(t0.add(t1).div(S::TWO).with_context(ctx)?.sharpen())
+            .evaluate(curve.mid_parameter().with_context(ctx)?)
             .with_context(ctx)?
             .sharpen());
     }

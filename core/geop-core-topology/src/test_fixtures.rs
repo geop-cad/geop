@@ -14,12 +14,20 @@
 //! six planar faces, twelve shared edges, eight shared vertices — no
 //! `extrude` generality (arbitrary footprints, holes) required.
 
-use geop_core_geometry::{nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D};
-use geop_core_math::{scalars::Scalar, vector::Vector3};
+use geop_core_geometry::{
+    nurb_curve::{NurbCurve2D, NurbCurve3D},
+    nurb_surface::NurbSurface3D,
+};
+use geop_core_math::{
+    geop_error::GeopError,
+    scalars::Scalar,
+    vector::{Vector2, Vector3},
+};
 
 use crate::{
     Model, Sense, SolidId,
     build::{BodySpec, CoedgeOn, EdgeSpec},
+    validation::ValidationParameters,
 };
 
 /// Build `model`'s unit cube (corners at `0`/`1` on every axis) and return
@@ -82,4 +90,34 @@ pub fn test_cube_solid<S: Scalar>(model: &mut Model<S>) -> SolidId {
         .unwrap()
         .solid
         .expect("built as a solid")
+}
+
+/// A new model holding only [`test_cube_solid`].
+pub fn test_cube_model<S: Scalar>() -> Model<S> {
+    let mut model = Model::new();
+    test_cube_solid(&mut model);
+    model
+}
+
+/// One check of [`crate::validation`]: it adds what it finds wrong with a
+/// model to the errors.
+pub type Check<S> = fn(&ValidationParameters<S>, &mut Vec<GeopError>, &Model<S>);
+
+/// The errors `check` finds in `model`, under the default parameters.
+pub fn check_errors<S: Scalar>(check: Check<S>, model: &Model<S>) -> Vec<GeopError> {
+    let mut errors = Vec::new();
+    check(&ValidationParameters::default(), &mut errors, model);
+    errors
+}
+
+/// The straight line from `a` to `b`, over `[0, 1]`.
+pub fn line3<S: Scalar>(a: (f64, f64, f64), b: (f64, f64, f64)) -> NurbCurve3D<S> {
+    let p = |(x, y, z): (f64, f64, f64)| Vector3::from_array([x, y, z].map(S::from_f64));
+    NurbCurve3D::line(p(a), p(b)).unwrap()
+}
+
+/// The straight pcurve from `(u, v)` `a` to `b`, over `[0, 1]`.
+pub fn line2<S: Scalar>(a: (f64, f64), b: (f64, f64)) -> NurbCurve2D<S> {
+    let p = |(u, v): (f64, f64)| Vector2::from_array([u, v].map(S::from_f64));
+    NurbCurve2D::line(p(a), p(b)).unwrap()
 }

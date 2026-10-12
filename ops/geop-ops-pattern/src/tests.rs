@@ -1,47 +1,26 @@
 //! The operations on boxes built directly: validity, where the copies are,
 //! how much they hold, what they are named, and what is refused.
 
-use geop_core_math::{
-    primitives::FrameAxis,
-    scalars::{ScalInF64 as S, Scalar},
-};
-use geop_core_topology::Body;
+use geop_core_math::{plain, primitives::FrameAxis, scalars::ScalInF64 as S};
 use geop_ops::BooleanOp;
-use geop_ops::testing::{assert_valid, assert_valid_sheets};
+use geop_ops::testing::{assert_valid, assert_valid_sheets, volume};
 use geop_ops::{EntityRef, NamedModel, operation::apply_to_model, origin_axis, origin_plane};
 use geop_ops_booleans::Combine;
-use geop_ops_extrude_revolve::shapes::block;
-use geop_ops_rasterize::{
-    rasterize,
-    stl::{enclosed_volume, stl_triangles},
-};
+use geop_ops_extrude_revolve::shapes::block_part;
 
 use crate::{
     CircularPattern, CircularPatternArgs, Direction, LinearPattern, LinearPatternArgs, Mirror,
     MirrorArgs, MoveBody, MoveBodyArgs, Seeds, Spacing,
 };
 
-/// The volume the solid named `solid` encloses, from its mesh as drawn:
-/// negative if its faces point in.
-pub(crate) fn volume(part: &NamedModel<S>, solid: &str) -> f64 {
-    let id = part.solid_id(solid).unwrap();
-    let faces = part.topology().body_faces(Body::Solid(id)).unwrap();
-    let raster = rasterize(part.topology(), 16).unwrap();
-    enclosed_volume(&stl_triangles(&raster, &faces))
-}
-
 /// The lowest corner of the solid named `solid`, by midpoints.
 fn min_corner(part: &NamedModel<S>, solid: &str) -> [f64; 3] {
     let id = part.solid_id(solid).unwrap();
     let model = part.topology();
-    let mut min = [f64::INFINITY; 3];
-    for vertex in model.iter_body_vertices(id).unwrap() {
-        let p = model.get_vertex(vertex).unwrap().point;
-        for k in 0..3 {
-            min[k] = min[k].min(p[k].to_f64());
-        }
-    }
-    min
+    let corners = model.iter_body_vertices(id).unwrap();
+    plain::bounds(corners.map(|vertex| model.get_vertex(vertex).unwrap().point.to_f64_array()))
+        .unwrap()
+        .0
 }
 
 fn close(a: [f64; 3], b: [f64; 3]) -> bool {
@@ -50,9 +29,7 @@ fn close(a: [f64; 3], b: [f64; 3]) -> bool {
 
 /// A unit cube at `min`, named `cube(c)`.
 fn cube_at(min: [f64; 3]) -> NamedModel<S> {
-    let mut part = NamedModel::new();
-    block(&mut part, "c", min, min.map(|x| x + 1.0));
-    part
+    block_part("c", min, min.map(|x| x + 1.0))
 }
 
 fn cube() -> Vec<EntityRef> {
@@ -98,7 +75,15 @@ fn row_of_new_bodies() {
         [4.0, 0.0, 0.0]
     ));
     assert!(part.id_of("linear_pattern(p,1,cube(c,end))").is_some());
-    assert!((volume(&part, "linear_pattern(p,1,cube(c))") - 1.0).abs() < 1e-6);
+    assert!(
+        (volume(
+            &part,
+            part.solid_id("linear_pattern(p,1,cube(c))").unwrap(),
+            16
+        ) - 1.0)
+            .abs()
+            < 1e-6
+    );
 }
 
 /// Spread over a total, reversed: four over six against `y`, two apart.
@@ -137,7 +122,7 @@ fn overlapping_copies_joined_to_the_seed() {
     let part = apply_to_model::<LinearPattern>(cube_at([0.0; 3]), "p", &args).unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["linear_pattern(p)"]);
-    assert!((volume(&part, "linear_pattern(p)") - 2.0).abs() < 1e-6);
+    assert!((volume(&part, part.solid_id("linear_pattern(p)").unwrap(), 16) - 2.0).abs() < 1e-6);
 }
 
 /// A grid of two by three, named `i.j`.
@@ -192,7 +177,11 @@ fn full_turn_around_an_axis() {
         min_corner(&part, "circular_pattern(r,3,cube(c))"),
         [-3.0, -0.5, 0.0]
     ));
-    let turned = volume(&part, "circular_pattern(r,1,cube(c))");
+    let turned = volume(
+        &part,
+        part.solid_id("circular_pattern(r,1,cube(c))").unwrap(),
+        16,
+    );
     assert!((turned - 1.0).abs() < 1e-6, "{turned}");
 }
 
@@ -225,7 +214,7 @@ fn mirrored_cube_faces_out() {
         min_corner(&part, "mirror(m,cube(c))"),
         [-2.0, 0.0, 0.0]
     ));
-    let image = volume(&part, "mirror(m,cube(c))");
+    let image = volume(&part, part.solid_id("mirror(m,cube(c))").unwrap(), 16);
     assert!((image - 1.0).abs() < 1e-6, "{image}");
 }
 

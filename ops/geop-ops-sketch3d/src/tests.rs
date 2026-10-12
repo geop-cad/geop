@@ -28,7 +28,7 @@ use geop_ops::{
         StepEditEvent, Value,
     },
 };
-use geop_ops_extrude_revolve::shapes::block;
+use geop_ops_extrude_revolve::shapes::block_part;
 
 use crate::{
     AddSketch3d, AddSketch3dArgs, Reference3d, Sketch3d, Sketch3dEditing, Sketch3dSession, Target,
@@ -57,13 +57,6 @@ fn down(x: f64, y: f64) -> Pointer<S> {
     pointer([x, y, 10.0], [0.0, 0.0, -1.0])
 }
 
-/// The box `[min, max]`, `cube(b)`.
-fn cube(min: [f64; 3], max: [f64; 3]) -> NamedModel<Design> {
-    let mut model = NamedModel::new();
-    block(&mut model, "b", min, max);
-    model
-}
-
 /// A step that starts the part with the box `[1, 2] x [1, 2] x [0, 1]`,
 /// `cube(b)`: what a 3-D sketch is drawn on.
 struct Boxed;
@@ -89,7 +82,7 @@ impl PartOperation for Boxed {
         _: &str,
         _: &(),
     ) -> GeopResult<()> {
-        *model = cube([1.0, 1.0, 0.0], [2.0, 2.0, 1.0]);
+        *model = block_part("b", [1.0, 1.0, 0.0], [2.0, 2.0, 1.0]);
         Ok(())
     }
 
@@ -392,7 +385,10 @@ fn references_follow_the_part() {
         line,
         direction: v([0.0, 1.0, 0.0]),
     });
-    let corner = vertex_at(&cube([0.0; 3], [1.0; 3]), [1.0, 1.0, 1.0]);
+    let corner = vertex_at(
+        &block_part::<Design>("b", [0.0; 3], [1.0; 3]),
+        [1.0, 1.0, 1.0],
+    );
     let args = AddSketch3dArgs {
         sketch,
         references: vec![
@@ -407,7 +403,8 @@ fn references_follow_the_part() {
         ],
     };
     let at = |size: f64| {
-        let built = apply::<AddSketch3d>(cube([0.0; 3], [size; 3]), "route", &args).unwrap();
+        let built =
+            apply::<AddSketch3d>(block_part("b", [0.0; 3], [size; 3]), "route", &args).unwrap();
         let s = &built
             .current()
             .retrieve_target(&sketch3d("route"))

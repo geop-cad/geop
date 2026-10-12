@@ -78,8 +78,8 @@ pub fn imprint_on_face<S: Scalar>(
     // The face on its own, crossed by every sheet.
     let copy = model
         .copy_faces(&[face], None, |name| namer.name(&["copy", name]))
+        .and_then(|built| built.body())
         .with_context(&ctx)?;
-    let copy = Body::Sheet(copy.shells[0]);
     for &sheet in &sheets {
         remesh(model, namer, copy, sheet, params).with_context(&ctx)?;
     }
@@ -110,8 +110,7 @@ pub fn imprint_on_face<S: Scalar>(
                 )))
             })?;
         let pcurve = &topology.get_coedge(coedge)?.pcurve;
-        let (t0, t1) = pcurve.domain();
-        let middle = pcurve.evaluate(t0.add(t1).div(S::TWO)?)?;
+        let middle = pcurve.evaluate(pcurve.mid_parameter()?)?;
         curves.push((model.name(edge).map(str::to_string)?, edge, middle));
     }
     curves.sort_by(|a, b| a.0.cmp(&b.0));

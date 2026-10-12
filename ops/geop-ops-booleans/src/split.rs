@@ -68,8 +68,8 @@ pub fn split<S: Scalar>(
         .with_context(&ctx)?;
     let cutter = model
         .copy_faces(&sheet_faces, None, |name| namer.name(&[name]))
+        .and_then(|built| built.body())
         .with_context(&ctx)?;
-    let cutter = Body::Sheet(cutter.shells[0]);
 
     remesh(model, namer, solid, cutter, params).with_context(&ctx)?;
     let topology = model.topology();
@@ -275,7 +275,7 @@ mod tests {
             &[SweepLoop::plain(Profile::open(chain))],
         )
         .unwrap();
-        (model, cube, Body::Sheet(built.shells[0]))
+        (model, cube, built.body().unwrap())
     }
 
     /// Which of `pieces` holds `p`.

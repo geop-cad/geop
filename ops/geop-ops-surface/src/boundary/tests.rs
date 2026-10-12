@@ -10,7 +10,7 @@ use geop_core_topology::{Body, Curve3};
 use geop_ops::NamedModel;
 use geop_ops::operation::apply_to_model;
 use geop_ops::testing::assert_valid_sheets;
-use geop_ops_extrude_revolve::shapes::{block, v3};
+use geop_ops_extrude_revolve::shapes::{block_part, v3};
 
 use super::*;
 
@@ -33,9 +33,7 @@ pub(crate) fn edge_between(part: &NamedModel<S>, a: [f64; 3], b: [f64; 3]) -> St
 }
 
 fn unit_cube() -> NamedModel<S> {
-    let mut part = NamedModel::<S>::new();
-    block(&mut part, "c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
-    part
+    block_part("c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0])
 }
 
 fn span(part: NamedModel<S>, edges: &[String], tangent: &[String]) -> GeopResult<NamedModel<S>> {

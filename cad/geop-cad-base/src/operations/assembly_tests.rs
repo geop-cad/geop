@@ -17,6 +17,7 @@ use geop_ops::{
     operation::{Aspects, BuildView, Seen},
     parameters::Values,
     placed::{Library, instance, instance_name, locate},
+    testing::assert_close,
     ui::{Control, Pointer, Pull, Reach, StepEditEvent, Value},
 };
 use geop_ops_assembly::{AddPartArgs, PartPatternArgs, Resolved, mate_name};
@@ -164,14 +165,6 @@ fn parts() -> BTreeMap<String, String> {
 fn point(part: &Built, entity: &EntityRef) -> [f64; 3] {
     let p = part.aspects(entity).point.unwrap();
     [0, 1, 2].map(|k| p[k].to_f64())
-}
-
-#[track_caller]
-fn assert_close(a: [f64; 3], b: [f64; 3], tol: f64) {
-    assert!(
-        (0..3).all(|k| (a[k] - b[k]).abs() < tol),
-        "{a:?} is not within {tol} of {b:?}"
-    );
 }
 
 /// The pin is mated into the plate's hole: on the hole's axis, its bottom

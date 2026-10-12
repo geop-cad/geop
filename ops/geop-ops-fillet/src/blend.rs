@@ -86,7 +86,7 @@ use geop_core_math::{
     primitives::CoordinateSystem,
     scalars::Scalar,
     solvers::walk::{Walked, walk_by},
-    vector::{Vector2, Vector3, Vector4},
+    vector::{Vector2, Vector3},
     with_context,
 };
 use geop_core_topology::{
@@ -910,7 +910,7 @@ pub(crate) fn straight_tool<S: Scalar>(
         if chord {
             e.homogeneous(S::ONE)
         } else {
-            Vector3::from_array([e[0].mul(w), e[1].mul(w), w])
+            e.homogeneous(w)
         },
         second.homogeneous(S::ONE),
         q.homogeneous(S::ONE),
@@ -932,7 +932,7 @@ pub(crate) fn straight_tool<S: Scalar>(
                 stations.push(ToolStation {
                     points: [
                         a.homogeneous(S::ONE),
-                        Vector4::from_array([base[0].mul(w), base[1].mul(w), base[2].mul(w), w]),
+                        base.homogeneous(w),
                         b.homogeneous(S::ONE),
                         apex.homogeneous(S::ONE),
                     ],
@@ -974,8 +974,7 @@ pub(crate) fn straight_tool<S: Scalar>(
                 let middle = if chord {
                     one(&e)?
                 } else {
-                    let [x, y] = in_plane(*from)?;
-                    Vector3::from_array([x.mul(w), y.mul(w), w])
+                    Vector2::from_array(in_plane(*from)?).homogeneous(w)
                 };
                 let flat = [one(&first)?, middle, one(&second)?, one(&q)?];
                 let points = flat.map(|p| embed(&p, &plane));

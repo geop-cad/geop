@@ -16,16 +16,16 @@ use geop_core_program::{
     step_editor::{Editing, StepEditor},
 };
 use geop_ops::{
-    Design, EntityRef, NamedModel, ParamValue,
+    Design, EntityRef, ParamValue,
     operation::{Aspects, BuildView, Input, Role, Seen},
     parameters::{Parameters, Values},
     placed::{Component, LIBRARY, Library, locate, placed_parts},
-    testing::built,
+    testing::{assert_close, built},
     ui::{
         CanvasEvent, Control, PartScene, PartView, Pointer, Pull, Reach, StepEditEvent, Tone, Value,
     },
 };
-use geop_ops_extrude_revolve::shapes::{block, v3};
+use geop_ops_extrude_revolve::shapes::{block_part, v3};
 
 use super::*;
 use crate::{Kind, MateKind, editor::PART};
@@ -54,9 +54,7 @@ impl Library for Shelf {
 
 /// A shelf with `cube.geop`: the unit cube from the origin to `(1, 1, 1)`.
 fn shelf() -> Rc<Shelf> {
-    let mut cube = NamedModel::new();
-    block(&mut cube, "c", [0.0; 3], [1.0; 3]);
-    let part = built(&cube);
+    let part = built(&block_part("c", [0.0; 3], [1.0; 3]));
     let files = BTreeSet::from(["cube.geop".to_string()]);
     let component = Component::new(
         "cube.geop".into(),
@@ -121,15 +119,6 @@ fn axis(instance: &str) -> EntityRef {
 
 fn base(instance: &str) -> EntityRef {
     origin(instance, Some(DatumComponent::Plane(FrameAxis::Z)))
-}
-
-/// Asserts `a` is within `tol` of `b` in every coordinate.
-#[track_caller]
-fn assert_close(a: [f64; 3], b: [f64; 3], tol: f64) {
-    assert!(
-        (0..3).all(|k| (a[k] - b[k]).abs() < tol),
-        "{a:?} is not within {tol} of {b:?}"
-    );
 }
 
 /// How near the solver brings mates to holding: a billionth of the

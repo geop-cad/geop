@@ -45,6 +45,14 @@ pub fn block<S: Scalar>(
     cube_solid(model, name, v3(x0, y0, z0), v3(x1, y1, z1)).unwrap()
 }
 
+/// A part of only the box spanning `[min, max]`, named `cube(name)` (see
+/// [`block`]).
+pub fn block_part<S: Scalar>(name: &str, min: [f64; 3], max: [f64; 3]) -> NamedModel<S> {
+    let mut part = NamedModel::new();
+    block(&mut part, name, min, max);
+    part
+}
+
 /// The cylinder of `radius` and `height` in `model`, standing on
 /// `base_center` along `z`, named `cylinder(name)` (see
 /// [`cylinder::revolved_cylinder`]).

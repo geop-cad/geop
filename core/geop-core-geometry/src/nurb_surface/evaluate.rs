@@ -52,34 +52,9 @@ impl<S: Scalar> NurbSurface<S, 4> {
 #[cfg(test)]
 mod tests {
     use super::super::NurbSurface;
+    use crate::test_fixtures::{bilinear, hom};
     use geop_core_math::for_all_scalars;
-    use geop_core_math::{scalars::Scalar, vector::Vector4};
-
-    fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
-        Vector4::from_array([
-            S::from_f64(x),
-            S::from_f64(y),
-            S::from_f64(z),
-            S::from_f64(w),
-        ])
-    }
-
-    fn bilinear<S: Scalar>() -> NurbSurface<S, 4> {
-        let f = S::from_f64;
-        NurbSurface::try_new(
-            1,
-            1,
-            vec![
-                pt(0., 0., 0., 1.),
-                pt(0., 1., 0., 1.),
-                pt(1., 0., 0., 1.),
-                pt(1., 1., 0., 1.),
-            ],
-            vec![f(0.), f(0.), f(1.), f(1.)],
-            vec![f(0.), f(0.), f(1.), f(1.)],
-        )
-        .unwrap()
-    }
+    use geop_core_math::scalars::Scalar;
 
     fn check_bilinear_corner_00<S: Scalar>() {
         let s = bilinear::<S>();
@@ -175,12 +150,12 @@ mod tests {
             2,
             1,
             vec![
-                pt(0., 0., 0., 1.),
-                pt(0., 1., 0., 1.),
-                pt(0.5, 0., 1., 1.),
-                pt(0.5, 1., 1., 1.),
-                pt(1., 0., 0., 1.),
-                pt(1., 1., 0., 1.),
+                hom(0., 0., 0., 1.),
+                hom(0., 1., 0., 1.),
+                hom(0.5, 0., 1., 1.),
+                hom(0.5, 1., 1., 1.),
+                hom(1., 0., 0., 1.),
+                hom(1., 1., 0., 1.),
             ],
             vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
             vec![f(0.), f(0.), f(1.), f(1.)],
@@ -212,8 +187,8 @@ mod tests {
             .iter()
             .flat_map(|&(x, y, w)| {
                 [
-                    pt(0.0, 0.0, z * w, w),
-                    pt(3.0 * x * w, 3.0 * y * w, z * w, w),
+                    hom(0.0, 0.0, z * w, w),
+                    hom(3.0 * x * w, 3.0 * y * w, z * w, w),
                 ]
             })
             .collect();

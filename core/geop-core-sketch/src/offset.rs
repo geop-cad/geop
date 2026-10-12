@@ -37,7 +37,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     plain::{
-        self, P2, Plain, add, angle_between, cross, distance, dot, perp, scale, sub, unit, wrap, xy,
+        self, P2, Plain, add, angle_between, bounds, cross, distance, dot, perp, scale, sub, unit,
+        wrap, xy,
     },
     profile::Chain,
     sketch::{Constraint, ConstraintId, CurveId, CurveKind, PointId, Sketch},
@@ -217,13 +218,8 @@ impl<S: Scalar> Sketch<S> {
         // The finest the solver tells points apart, in this sketch: one
         // part in `RELATIVE_TOLERANCE` of its size.
         let resolution = {
-            let points: Vec<P2> = self.points.keys().map(|&p| xy(self, p)).collect();
-            let span = |k: usize| {
-                let lo = points.iter().map(|q| q[k]).fold(f64::MAX, f64::min);
-                let hi = points.iter().map(|q| q[k]).fold(f64::MIN, f64::max);
-                hi - lo
-            };
-            let size = span(0).hypot(span(1));
+            let size = bounds(self.points.keys().map(|&p| xy(self, p)))
+                .map_or(0.0, |(lo, hi)| (hi[0] - lo[0]).hypot(hi[1] - lo[1]));
             // As the solver: one, where the sketch has no size at all.
             let size = if size > 0.0 { size } else { 1.0 };
             size / RELATIVE_TOLERANCE as f64
@@ -593,19 +589,9 @@ mod tests {
 
     /// The bounding box of the points of `curves`, as solved.
     fn bounds(s: &Sketch<T>, curves: &[CurveId]) -> [f64; 4] {
-        let mut b = [f64::MAX, f64::MAX, f64::MIN, f64::MIN];
-        for c in curves {
-            for p in s.curves[c].points() {
-                let q = xy(s, p);
-                b = [
-                    b[0].min(q[0]),
-                    b[1].min(q[1]),
-                    b[2].max(q[0]),
-                    b[3].max(q[1]),
-                ];
-            }
-        }
-        b
+        let points = curves.iter().flat_map(|c| s.curves[c].points());
+        let (lo, hi) = plain::bounds(points.map(|p| xy(s, p))).unwrap();
+        [lo[0], lo[1], hi[0], hi[1]]
     }
 
     fn near(a: [f64; 4], b: [f64; 4]) -> bool {

@@ -50,7 +50,7 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    plain::{P3, add, distance, dot, inverse2, scale, sub},
+    plain::{self, P3, add, distance, dot, inverse2, scale, sub},
     primitives::CoordinateSystem,
     scalars::Scalar,
     solvers::repeat::{Step, repeat},
@@ -539,15 +539,14 @@ fn plane_patch<S: Scalar>(
     plane: &CoordinateSystem<S>,
     chain: &Chain<NurbCurve3D<S>>,
 ) -> GeopResult<NurbSurface3D<S>> {
-    let mut lo = [f64::INFINITY; 2];
-    let mut hi = [f64::NEG_INFINITY; 2];
-    for cp in chain.curves.iter().flat_map(|c| &c.control_points) {
-        let uv = plane.to_uv(&cp.dehomogenized()?);
-        for k in 0..2 {
-            lo[k] = lo[k].min(uv[k].to_f64());
-            hi[k] = hi[k].max(uv[k].to_f64());
-        }
-    }
+    let uvs = chain
+        .curves
+        .iter()
+        .flat_map(|c| &c.control_points)
+        .map(|cp| Ok(plane.to_uv(&cp.dehomogenized()?).to_f64_array()))
+        .collect::<GeopResult<Vec<_>>>()?;
+    let (lo, hi) =
+        plain::bounds(uvs).ok_or_else(|| GeopError::new("the path has no control points"))?;
     let margin = (hi[0] - lo[0]).max(hi[1] - lo[1]).max(1.0);
     let corner =
         |u: f64, v: f64| plane.uv_to_xyz(&Vector2::from_array([S::from_f64(u), S::from_f64(v)]));

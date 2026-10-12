@@ -21,7 +21,7 @@ use crate::sketch::{CurveId, CurveKind, Enclosure, PointId, Sketch};
 use geop_core_geometry::{
     aabb::union_aabb,
     intersection::curve_curve_intersect,
-    nurb_curve::{NurbCurve, NurbCurve2D, bezier_knots},
+    nurb_curve::{NurbCurve, NurbCurve2D},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -31,7 +31,7 @@ use geop_core_math::{
         repeat,
         walk::walk_by,
     },
-    vector::{Vector2, Vector3},
+    vector::Vector2,
     with_context,
 };
 use std::collections::BTreeMap;
@@ -674,30 +674,6 @@ fn spline_knots<S: Scalar>(n: usize, degree: usize) -> GeopResult<Vec<S>> {
     Ok(knots)
 }
 
-/// Homogeneous control point `(w x, w y, w)`.
-fn hom<S: Scalar>(p: Vector2<S>, w: S) -> Vector3<S> {
-    Vector3::from_array([p[0].mul(w), p[1].mul(w), w])
-}
-
-/// A rational quadratic from `p0` to `p2` through the tangent intersection
-/// `m`, with middle weight `w`.
-fn conic<S: Scalar>(
-    p0: Vector2<S>,
-    m: Vector2<S>,
-    p2: Vector2<S>,
-    w: S,
-) -> GeopResult<NurbCurve2D<S>> {
-    NurbCurve::try_new(
-        2,
-        vec![hom(p0, S::ONE), hom(m, w), hom(p2, S::ONE)],
-        bezier_knots(2),
-    )
-}
-
-fn line<S: Scalar>(p0: Vector2<S>, p1: Vector2<S>) -> GeopResult<NurbCurve2D<S>> {
-    NurbCurve::try_new(1, vec![hom(p0, S::ONE), hom(p1, S::ONE)], bezier_knots(1))
-}
-
 /// One sketch curve as NURBS pieces from its start to its end, built from
 /// `geometry` — how many pieces, from the sketch as drawn, which is design
 /// data, so the pieces and their names do not depend on how precisely the
@@ -711,11 +687,11 @@ pub fn curve_nurbs<D: Scalar, S: Scalar>(
     let param = || geometry.params[&curve];
     let one_half = S::ONE.div(S::TWO)?;
     match &sketch.curve(curve)?.kind {
-        CurveKind::Line { start, end } => Ok(vec![line(at(start), at(end))?]),
+        CurveKind::Line { start, end } => Ok(vec![NurbCurve2D::line(at(start), at(end))?]),
         CurveKind::Arc { start, end, sweep } => {
             let (s, e) = (at(start), at(end));
             if sweep.is_sharp() && sweep.could_be_equal(D::ZERO) {
-                return Ok(vec![line(s, e)?]);
+                return Ok(vec![NurbCurve2D::line(s, e)?]);
             }
             // As many pieces as quarter turns the sweep spans, one that could
             // be exactly `k` of them spanning `k`: counted on the sweep as
@@ -762,7 +738,7 @@ pub fn curve_nurbs<D: Scalar, S: Scalar>(
                     let bulge = length.mul(one_half).mul(half.sin()).div(half.cos())?;
                     let mid = w[0].add(&w[1]).prod_scalar(one_half);
                     let m = mid.sub(&left.prod_scalar(bulge));
-                    conic(w[0], m, w[1], half.cos())
+                    NurbCurve2D::arc(w[0], m, w[1], half.cos())
                 })
                 .collect()
         }
@@ -785,7 +761,7 @@ pub fn curve_nurbs<D: Scalar, S: Scalar>(
             // cos(45°), honestly: √2 / 2 is irrational.
             let w = one_half.sqrt()?;
             (0..4)
-                .map(|j| conic(q[j], corners[j], q[(j + 1) % 4], w))
+                .map(|j| NurbCurve2D::arc(q[j], corners[j], q[(j + 1) % 4], w))
                 .collect()
         }
         CurveKind::Spline {
@@ -797,7 +773,10 @@ pub fn curve_nurbs<D: Scalar, S: Scalar>(
                 let degree = spline_degree(n);
                 return Ok(vec![NurbCurve::try_new(
                     degree,
-                    control_points.iter().map(|p| hom(at(p), S::ONE)).collect(),
+                    control_points
+                        .iter()
+                        .map(|p| at(p).homogeneous(S::ONE))
+                        .collect(),
                     spline_knots(n, degree)?,
                 )?]);
             };
@@ -808,7 +787,7 @@ pub fn curve_nurbs<D: Scalar, S: Scalar>(
                 control_points
                     .iter()
                     .zip(&shape.weights)
-                    .map(|(p, w)| hom(at(p), w.cast()))
+                    .map(|(p, w)| at(p).homogeneous(w.cast()))
                     .collect(),
                 shape.knots.iter().map(|k| k.cast()).collect(),
             )?;
@@ -834,8 +813,7 @@ fn extent_of<S: Scalar>(loops: &[Vec<NurbCurve2D<S>>]) -> GeopResult<S> {
 
 /// The point halfway along `curve` — a probe, chosen freely, so sharp.
 fn midpoint<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<Vector2<S>> {
-    let (t0, t1) = curve.domain();
-    Ok(curve.evaluate(t0.add(t1).div(S::TWO)?.sharpen())?.sharpen())
+    Ok(curve.evaluate(curve.mid_parameter()?)?.sharpen())
 }
 
 /// A segment from `from` in direction `dir`, long enough to leave a profile
@@ -844,7 +822,7 @@ fn ray<S: Scalar>(from: &Vector2<S>, dir: &Vector2<S>, extent: S) -> GeopResult<
     let to = from
         .add(&dir.prod_scalar(S::from_i64(3).mul(extent)))
         .sharpen();
-    line(*from, to)
+    NurbCurve2D::line(*from, to)
 }
 
 /// Is `probe` inside the closed loop `curves`?
@@ -929,8 +907,7 @@ fn loop_contains<S: Scalar>(
 /// feature narrower than the first step simply takes another halving.
 fn turns_counter_clockwise<S: Scalar>(curves: &[NurbCurve2D<S>], extent: S) -> GeopResult<bool> {
     let curve = &curves[0];
-    let (t0, t1) = curve.domain();
-    let mid = t0.add(t1).div(S::TWO)?.sharpen();
+    let mid = curve.mid_parameter()?;
     let point = curve.evaluate(mid)?;
     let tangent = curve.tangent(mid)?;
     let left = tangent.perp();

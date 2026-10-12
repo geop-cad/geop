@@ -229,10 +229,7 @@ fn stitch<S: Scalar>(chain: &mut Chain<S>) -> GeopResult<()> {
             )));
         }
         let at = Vector2::from_array([a[0].intersect(b[0]), a[1].intersect(b[1])]);
-        let set = |h: &mut Vector3<S>| {
-            let w = h[2];
-            *h = Vector3::from_array([at[0].mul(w), at[1].mul(w), w]);
-        };
+        let set = |h: &mut Vector3<S>| *h = at.homogeneous(h[2]);
         set(chain.pieces[i].curve.control_points.last_mut().unwrap());
         set(&mut chain.pieces[j].curve.control_points[0]);
     }

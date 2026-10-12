@@ -882,7 +882,7 @@ fn section_points<S: Scalar>(station: &Station<S>) -> [Vector4<S>; 4] {
         if station.chord {
             e.homogeneous(S::ONE)
         } else {
-            Vector4::from_array([e[0].mul(w), e[1].mul(w), e[2].mul(w), w])
+            e.homogeneous(w)
         },
         station.contact[1].sharpen().homogeneous(S::ONE),
         station.apex.homogeneous(S::ONE),
@@ -1301,8 +1301,7 @@ fn crossed_edge<S: Scalar>(
     let mut best: Option<(f64, EdgeId, S, S)> = None;
     for edge in edges_between(model, from, onto)? {
         let curve = &model.get_edge(edge)?.curve;
-        let (lo, hi) = curve.domain();
-        let middle = S::interpolate(lo, hi, S::from_f64(0.5)).sharpen();
+        let middle = curve.mid_parameter()?;
         let t0 = curve.closest_parameter_from(&before.contact[k], middle)?;
         let t1 = curve.closest_parameter_from(&after.contact[k], middle)?;
         let near = distance(&curve.evaluate(t0)?, &before.contact[k])

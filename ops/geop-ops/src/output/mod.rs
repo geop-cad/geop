@@ -236,15 +236,7 @@ impl Outputs {
 
     /// The exporter `kind`.
     pub fn get_exporter(&self, kind: &str) -> GeopResult<&dyn ErasedExporter> {
-        (self.exporters.iter().find(|e| e.info().kind == kind))
-            .map(Box::as_ref)
-            .ok_or_else(|| {
-                let known: Vec<&str> = self.exporters.iter().map(|e| e.info().kind).collect();
-                GeopError::new(format!(
-                    "there is no exporter `{kind}`; there are: {}",
-                    known.join(", ")
-                ))
-            })
+        of_kind(&self.exporters, kind, "exporter", |e| e.info().kind)
     }
 
     /// The exporter that writes `format` — a file's extension, `stl` —
@@ -267,14 +259,27 @@ impl Outputs {
 
     /// The inspector `kind`.
     pub fn get_inspector(&self, kind: &str) -> GeopResult<&dyn ErasedInspector> {
-        (self.inspectors.iter().find(|i| i.info().kind == kind))
-            .map(Box::as_ref)
-            .ok_or_else(|| {
-                let known: Vec<&str> = self.inspectors.iter().map(|i| i.info().kind).collect();
-                GeopError::new(format!(
-                    "there is no inspector `{kind}`; there are: {}",
-                    known.join(", ")
-                ))
-            })
+        of_kind(&self.inspectors, kind, "inspector", |i| i.info().kind)
     }
+}
+
+/// The one of `entries` whose kind, as `kind_of` reads it, is `kind`; if
+/// there is none, an error naming the kinds there are, each a `what`.
+fn of_kind<'a, T: ?Sized>(
+    entries: &'a [Box<T>],
+    kind: &str,
+    what: &str,
+    kind_of: impl Fn(&T) -> &'static str,
+) -> GeopResult<&'a T> {
+    (entries
+        .iter()
+        .map(Box::as_ref)
+        .find(|&e| kind_of(e) == kind))
+    .ok_or_else(|| {
+        let known: Vec<&str> = entries.iter().map(Box::as_ref).map(&kind_of).collect();
+        GeopError::new(format!(
+            "there is no {what} `{kind}`; there are: {}",
+            known.join(", ")
+        ))
+    })
 }

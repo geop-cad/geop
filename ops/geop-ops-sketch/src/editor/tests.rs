@@ -1349,19 +1349,9 @@ fn the_axes_neither_cut_nor_are_trimmed() {
 
 /// The bounding box of the points of `curves`, as solved.
 fn bounds(s: &Sketch, curves: &[CurveId]) -> [f64; 4] {
-    let mut b = [f64::MAX, f64::MAX, f64::MIN, f64::MIN];
-    for c in curves {
-        for p in s.curves[c].points() {
-            let q = xy(s, p);
-            b = [
-                b[0].min(q[0]),
-                b[1].min(q[1]),
-                b[2].max(q[0]),
-                b[3].max(q[1]),
-            ];
-        }
-    }
-    b
+    let points = curves.iter().flat_map(|c| s.curves[c].points());
+    let (lo, hi) = crate::geometry::bounds(points.map(|p| xy(s, p))).unwrap();
+    [lo[0], lo[1], hi[0], hi[1]]
 }
 
 fn near(a: [f64; 4], b: [f64; 4]) -> bool {

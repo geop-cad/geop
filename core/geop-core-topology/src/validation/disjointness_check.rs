@@ -232,13 +232,13 @@ fn check_edge_and_face_consistent<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::{check_edges_and_faces_consistent, check_edges_disjoint, check_vertices_disjoint};
-    use crate::test_fixtures::test_cube_solid;
+    use crate::test_fixtures::{check_errors, line3, test_cube_solid};
     use crate::{
         Coedge, CoedgeGeometry, CoedgeId, Edge, EdgeId, Face, FaceId, Model, Sense, Vertex,
         boundary::BoundaryType, validation::ValidationParameters,
     };
     use geop_core_geometry::{
-        nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D},
+        nurb_curve::{NurbCurve, NurbCurve2D},
         nurb_surface::NurbSurface3D,
     };
     use geop_core_math::{
@@ -288,18 +288,6 @@ mod tests {
         for_all_scalars!(check_welded_cube_passes_all_three);
     }
 
-    fn line3<S: Scalar>(a: (f64, f64, f64), b: (f64, f64, f64)) -> NurbCurve3D<S> {
-        let p = |x: f64, y: f64, z: f64| {
-            Vector4::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z), S::ONE])
-        };
-        NurbCurve3D::try_new(
-            1,
-            vec![p(a.0, a.1, a.2), p(b.0, b.1, b.2)],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-        )
-        .unwrap()
-    }
-
     fn point3<S: Scalar>(p: (f64, f64, f64)) -> Vector3<S> {
         Vector3::from_array([S::from_f64(p.0), S::from_f64(p.1), S::from_f64(p.2)])
     }
@@ -314,8 +302,7 @@ mod tests {
         model.insert_vertex(Vertex {
             point: point3((1.0, 0.0, 0.0)),
         });
-        let mut errors = Vec::new();
-        check_vertices_disjoint(&ValidationParameters::default(), &mut errors, &model);
+        let errors = check_errors(check_vertices_disjoint, &model);
         assert!(errors.is_empty());
     }
     #[test]
@@ -331,8 +318,7 @@ mod tests {
         model.insert_vertex(Vertex {
             point: point3((0.0, 0.0, 0.0)),
         });
-        let mut errors = Vec::new();
-        check_vertices_disjoint(&ValidationParameters::default(), &mut errors, &model);
+        let errors = check_errors(check_vertices_disjoint, &model);
         assert_eq!(errors.len(), 1);
     }
     #[test]

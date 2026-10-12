@@ -752,8 +752,7 @@ impl<S: Scalar> Builder<'_, S> {
         for e in 0..self.edges.len() {
             let edge = &self.edges[e];
             if edge.alive && edge.start == edge.end {
-                let (lo, hi) = edge.curve.domain();
-                let mid = lo.add(hi).div(S::TWO)?.sharpen();
+                let mid = edge.curve.mid_parameter()?;
                 self.split_edge(e, &[mid])?;
             }
         }

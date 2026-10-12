@@ -236,8 +236,7 @@ fn inward_corner<S: Scalar>(
             _ => continue,
         };
         let curve = &spec.edges[e].curve;
-        let (t0, t1) = curve.domain();
-        let t = S::interpolate(t0, t1, S::from_f64(0.5));
+        let t = curve.mid_parameter()?;
         let point = curve.evaluate(t)?;
         let tangent = curve.tangent(t)?;
         let along = match f_sense {
@@ -246,8 +245,7 @@ fn inward_corner<S: Scalar>(
         };
         let normal = |face: usize, pcurve: &Curve2<S>| -> GeopResult<Vector3<S>> {
             let surface = &spec.faces[face].surface;
-            let (p0, p1) = pcurve.domain();
-            let seed = pcurve.evaluate(S::interpolate(p0, p1, S::from_f64(0.5)))?;
+            let seed = pcurve.evaluate(pcurve.mid_parameter()?)?;
             let (u, v) = surface.project(
                 point,
                 seed[0].sharpen(),
@@ -480,22 +478,13 @@ impl<'a, S: Scalar> Hollow<'a, S> {
         let curve = shaped_like(&edge.curve, start, end, edge.start == edge.end).map_err(ctx)?;
         // It is only right if it lies on both inner surfaces: say so if not,
         // rather than build an edge off its faces.
-        let (t0, t1) = curve.domain();
-        let middle = curve.evaluate(t0.add(t1).div(S::TWO)?)?;
-        for f in self.faces_of_edge(e) {
-            let on = surface_could_contain(
-                &self.inner_surfaces[f],
-                &middle,
-                MAX_NODES,
-                min_subdivision_size(),
-            )
-            .map_err(ctx)?;
-            if on.is_none() {
-                return Err(ctx(GeopError::new(format!(
-                    "its curve from {start:?} to {end:?} is not on the offset of face {} at {middle:?}: offsetting this kind of edge is not supported",
-                    self.names.faces[f]
-                ))));
-            }
+        if let Some((f, middle)) =
+            surface_missed(&curve, self.faces_of_edge(e), &self.inner_surfaces).map_err(ctx)?
+        {
+            return Err(ctx(GeopError::new(format!(
+                "its curve from {start:?} to {end:?} is not on the offset of face {} at {middle:?}: offsetting this kind of edge is not supported",
+                self.names.faces[f]
+            ))));
         }
         Ok(Some(curve))
     }
@@ -1050,6 +1039,25 @@ fn shaped_like<S: Scalar>(
         end,
     }
     .to_curve()
+}
+
+/// The first of the faces `faces`, indices into `surfaces`, whose surface
+/// `curve` does not lie on, with the point that shows it: the curve's
+/// midpoint. `None` if the curve could lie on all of them. A curve built
+/// for an edge between moved faces is only right if it does.
+pub fn surface_missed<S: Scalar>(
+    curve: &NurbCurve3D<S>,
+    faces: impl IntoIterator<Item = usize>,
+    surfaces: &[NurbSurface3D<S>],
+) -> GeopResult<Option<(usize, Vector3<S>)>> {
+    let middle = curve.evaluate(curve.mid_parameter()?)?;
+    for f in faces {
+        let on = surface_could_contain(&surfaces[f], &middle, MAX_NODES, min_subdivision_size())?;
+        if on.is_none() {
+            return Ok(Some((f, middle)));
+        }
+    }
+    Ok(None)
 }
 
 /// The pcurve on `surface` of a coedge that runs along `curve` — or sits at

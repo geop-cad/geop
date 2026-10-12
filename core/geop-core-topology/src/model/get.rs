@@ -1,6 +1,6 @@
 use crate::{
     Coedge, CoedgeGeometry, CoedgeId, Edge, EdgeId, Face, FaceId, Sense, Shell, ShellId, Solid,
-    SolidId, Vertex, VertexId, Wire, WireId,
+    SolidId, Vertex, VertexId, WireId,
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -82,25 +82,11 @@ impl<S: Scalar> Model<S> {
             .ok_or_else(|| GeopError::new(format!("solid with id {} does not exist", id.0)))
     }
 
-    pub fn get_wire(&self, id: WireId) -> GeopResult<&Wire> {
-        self.wires
-            .get(&id)
-            .ok_or_else(|| GeopError::new(format!("wire with id {} does not exist", id.0)))
-    }
-
     /// The wire `edge` is an edge of, if any.
     pub fn wire_of_edge(&self, edge: EdgeId) -> Option<WireId> {
         self.wires
             .iter()
             .find(|(_, w)| w.edges.contains(&edge))
-            .map(|(&id, _)| id)
-    }
-
-    /// The wire `vertex` is a vertex of, if any.
-    pub fn wire_of_vertex(&self, vertex: VertexId) -> Option<WireId> {
-        self.wires
-            .iter()
-            .find(|(_, w)| w.vertices.contains(&vertex))
             .map(|(&id, _)| id)
     }
 

@@ -1,28 +1,10 @@
+use crate::test_fixtures::line3;
 use crate::{
     Coedge, CoedgeGeometry, CoedgeId, Edge, EdgeId, Face, Model, Sense, Vertex, VertexId,
     boundary::BoundaryType,
 };
-use geop_core_geometry::{
-    nurb_curve::{NurbCurve2D, NurbCurve3D},
-    nurb_surface::NurbSurface3D,
-};
-use geop_core_math::{
-    for_all_scalars,
-    scalars::Scalar,
-    vector::{Vector3, Vector4},
-};
-
-fn line3<S: Scalar>(a: (f64, f64, f64), b: (f64, f64, f64)) -> NurbCurve3D<S> {
-    let p = |x: f64, y: f64, z: f64| {
-        Vector4::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z), S::ONE])
-    };
-    NurbCurve3D::try_new(
-        1,
-        vec![p(a.0, a.1, a.2), p(b.0, b.1, b.2)],
-        vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-    )
-    .unwrap()
-}
+use geop_core_geometry::{nurb_curve::NurbCurve2D, nurb_surface::NurbSurface3D};
+use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
 
 // `NurbSurface3D::everything()` maps every (u, v) to a point that
 // `could_be_equal`s anything, so the pcurve's actual shape never matters for

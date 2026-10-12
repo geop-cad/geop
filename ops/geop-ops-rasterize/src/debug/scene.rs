@@ -1,22 +1,12 @@
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use geop_core_geometry::{nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D};
 use geop_core_math::{
-    geop_error::{DebugContext, GeopError, GeopResult},
+    geop_error::{GeopError, GeopResult},
     primitives::TriangleFace,
     scalars::Scalar,
     vector::Vector3,
 };
 
 use super::Color10;
-
-// ── unique id counter ─────────────────────────────────────────────────────────
-
-static SCENE_ID: AtomicU64 = AtomicU64::new(0);
-fn next_id() -> u64 {
-    SCENE_ID.fetch_add(1, Ordering::Relaxed)
-}
 
 fn sample_surface_grid<S: Scalar>(
     surface: &NurbSurface3D<S>,
@@ -69,7 +59,6 @@ pub struct PrimitiveScene<S: Scalar> {
     /// system axes, rendered as solid geometry instead of a `Line`, since a
     /// `THREE.Line`'s width can't be controlled portably across GPUs.
     pub cylinders: Vec<(Vector3<S>, Vector3<S>, f64, Color10)>,
-    rendered_path: OnceLock<String>,
 }
 
 impl<S: Scalar> core::fmt::Debug for PrimitiveScene<S> {
@@ -93,7 +82,6 @@ impl<S: Scalar> PrimitiveScene<S> {
             triangles_transparent: Vec::new(),
             labels: Vec::new(),
             cylinders: Vec::new(),
-            rendered_path: OnceLock::new(),
         }
     }
 
@@ -503,17 +491,5 @@ window.addEventListener('resize',()=>{{
 impl<S: Scalar> Default for PrimitiveScene<S> {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl<S: Scalar> DebugContext for PrimitiveScene<S> {
-    fn label(&self) -> &str {
-        self.rendered_path.get_or_init(|| {
-            let path = format!("/tmp/geop_scene_{}.html", next_id());
-            if let Err(e) = self.save_to_file(&path) {
-                return format!("PrimitiveScene (render failed: {e})");
-            }
-            path
-        })
     }
 }

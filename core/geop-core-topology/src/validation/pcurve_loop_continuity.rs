@@ -50,20 +50,15 @@ pub fn check_pcurve_loop_continuity<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::check_pcurve_loop_continuity;
-    use crate::{Model, test_fixtures::test_cube_solid, validation::ValidationParameters};
+    use crate::{
+        Model,
+        test_fixtures::{check_errors, test_cube_model, test_cube_solid},
+    };
     use geop_core_geometry::nurb_curve::NurbCurve2D;
     use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector2};
 
-    fn run<S: Scalar>(model: &Model<S>) -> Vec<geop_core_math::geop_error::GeopError> {
-        let mut errors = Vec::new();
-        check_pcurve_loop_continuity(&ValidationParameters::default(), &mut errors, model);
-        errors
-    }
-
     fn check_valid_cube_passes<S: Scalar>() {
-        let mut model = Model::<S>::new();
-        test_cube_solid(&mut model);
-        assert!(run(&model).is_empty());
+        assert!(check_errors(check_pcurve_loop_continuity, &test_cube_model::<S>()).is_empty());
     }
     #[test]
     fn valid_cube_passes() {
@@ -79,7 +74,7 @@ mod tests {
             Vector2::from_array([S::from_f64(0.9), S::from_f64(0.9)]),
         )
         .unwrap();
-        assert!(!run(&model).is_empty());
+        assert!(!check_errors(check_pcurve_loop_continuity, &model).is_empty());
     }
     #[test]
     fn broken_pcurve_gap_is_caught() {

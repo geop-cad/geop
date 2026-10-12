@@ -8,3 +8,5 @@ pub mod nurb_surface;
 pub mod search;
 pub mod shape;
 mod spline;
+#[cfg(test)]
+pub(crate) mod test_fixtures;

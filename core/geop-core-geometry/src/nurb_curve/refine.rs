@@ -69,19 +69,20 @@ impl<S: Scalar> ParameterRefinable<S, 2> for NurbCurve<S, 3> {
 #[cfg(test)]
 mod tests {
     use crate::nurb_curve::NurbCurve;
+    use crate::test_fixtures::hom;
     use geop_core_math::for_all_scalars;
-    use geop_core_math::{scalars::Scalar, vector::Vector4};
-
-    fn pt<S: Scalar>(x: f64, y: f64, z: f64) -> Vector4<S> {
-        Vector4::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z), S::ONE])
-    }
+    use geop_core_math::scalars::Scalar;
 
     /// Degree-2 arc, so the parametrization is genuinely nonlinear.
     fn arc<S: Scalar>() -> NurbCurve<S, 4> {
         let f = S::from_f64;
         NurbCurve::try_new(
             2,
-            vec![pt(0.0, 0.0, 0.0), pt(1.0, 2.0, 0.0), pt(2.0, 0.0, 0.0)],
+            vec![
+                hom(0.0, 0.0, 0.0, 1.),
+                hom(1.0, 2.0, 0.0, 1.),
+                hom(2.0, 0.0, 0.0, 1.),
+            ],
             vec![f(0.), f(0.), f(0.), f(1.), f(1.), f(1.)],
         )
         .unwrap()

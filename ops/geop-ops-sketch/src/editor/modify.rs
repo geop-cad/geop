@@ -22,7 +22,7 @@ use geop_core_sketch::{
 };
 
 use super::*;
-use crate::geometry::{dot, scale};
+use crate::geometry::{bounds, dot, scale};
 
 /// A full turn, in degrees: a circular pattern spread over all of it has
 /// its angle given by the formula `360/count`, which follows its count.
@@ -243,12 +243,7 @@ impl Editing<'_> {
             .iter()
             .flat_map(|&c| polyline(sketch, c))
             .collect();
-        let span = |k: usize| {
-            let lo = points.iter().map(|p| p[k]).fold(f64::MAX, f64::min);
-            let hi = points.iter().map(|p| p[k]).fold(f64::MIN, f64::max);
-            hi - lo
-        };
-        let reach = span(0).max(span(1));
+        let reach = bounds(points).map_or(0.0, |(lo, hi)| (hi[0] - lo[0]).max(hi[1] - lo[1]));
         if reach.is_finite() && reach > 0.0 {
             1.5 * reach
         } else {

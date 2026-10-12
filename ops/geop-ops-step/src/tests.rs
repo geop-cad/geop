@@ -2,6 +2,7 @@
 //! written and read back the same.
 
 use geop_core_math::{
+    plain,
     scalars::Ring,
     scalars::{Scalar, scal_in_f64::ScalInF64},
 };
@@ -53,20 +54,14 @@ fn counts(model: &Model<S>) -> (usize, usize, usize) {
 
 /// The box around a model's edges, sampled.
 fn bounds(model: &Model<S>) -> ([f64; 3], [f64; 3]) {
-    let mut lo = [f64::INFINITY; 3];
-    let mut hi = [f64::NEG_INFINITY; 3];
-    for edge in model.edges.values() {
+    plain::bounds(model.edges.values().flat_map(|edge| {
         let (t0, t1) = edge.curve.domain();
-        for i in 0..=256 {
+        (0..=256).map(move |i| {
             let t = t0.to_f64() + (t1.to_f64() - t0.to_f64()) * i as f64 / 256.0;
-            let p = edge.curve.evaluate(S::from_f64(t)).unwrap();
-            for c in 0..3 {
-                lo[c] = lo[c].min(p[c].to_f64());
-                hi[c] = hi[c].max(p[c].to_f64());
-            }
-        }
-    }
-    (lo, hi)
+            edge.curve.evaluate(S::from_f64(t)).unwrap().to_f64_array()
+        })
+    }))
+    .unwrap()
 }
 
 fn assert_bounds(model: &Model<S>, lo: [f64; 3], hi: [f64; 3]) {

@@ -1,20 +1,15 @@
 use std::backtrace::Backtrace;
 
-/// A renderable diagnostic artefact that can be attached to any
-/// frame of a `GeopError`.
-pub trait DebugContext: Send + Sync + core::fmt::Debug {
-    /// One-line label shown in the error chain display.
-    fn label(&self) -> &str;
-}
-
 pub enum GeopError {
     Root {
         message: String,
         backtrace: Backtrace,
     },
+    /// `inner`, reported through a frame that says what was being done:
+    /// one line of the chain that [`GeopError::with_context`] builds.
     Context {
         inner: Box<GeopError>,
-        context: Option<Box<dyn DebugContext>>,
+        message: String,
     },
 }
 
@@ -30,18 +25,9 @@ impl GeopError {
 
     /// Wrap this error in a Context frame with a string message.
     pub fn with_context(self, message: impl Into<String>) -> Self {
-        let label = message.into();
         GeopError::Context {
             inner: Box::new(self),
-            context: Some(Box::new(StringContext(label))),
-        }
-    }
-
-    /// Wrap this error in a Context frame with a debug scene.
-    pub fn with_scene(self, scene: impl DebugContext + 'static) -> Self {
-        GeopError::Context {
-            inner: Box::new(self),
-            context: Some(Box::new(scene)),
+            message: message.into(),
         }
     }
 
@@ -51,20 +37,6 @@ impl GeopError {
         match self {
             GeopError::Root { message, .. } => message,
             GeopError::Context { inner, .. } => inner.root_message(),
-        }
-    }
-
-    /// Walk the chain and collect labels of all attached scenes, root-first.
-    pub fn scene_labels(&self) -> Vec<&str> {
-        match self {
-            GeopError::Root { .. } => vec![],
-            GeopError::Context { inner, context } => {
-                let mut labels = inner.scene_labels();
-                if let Some(ctx) = context {
-                    labels.push(ctx.label());
-                }
-                labels
-            }
         }
     }
 }
@@ -77,12 +49,9 @@ impl std::fmt::Display for GeopError {
                 writeln!(f, "Backtrace: {}", backtrace)?;
                 writeln!(f, "RootError: {}", message)
             }
-            GeopError::Context { inner, context } => {
+            GeopError::Context { inner, message } => {
                 write!(f, "{}", inner)?;
-                match context {
-                    Some(ctx) => writeln!(f, "Context:\n{}", ctx.label()),
-                    None => writeln!(f, "Context: (no details)"),
-                }
+                writeln!(f, "Context:\n{}", message)
             }
         }
     }
@@ -160,15 +129,4 @@ macro_rules! with_context {
     ($($arg:tt)*) => {
         &|e: $crate::geop_error::GeopError| e.with_context(format!($($arg)*))
     };
-}
-
-// ── internal helper ──────────────────────────────────────────────────────────
-
-#[derive(Debug)]
-struct StringContext(String);
-
-impl DebugContext for StringContext {
-    fn label(&self) -> &str {
-        &self.0
-    }
 }

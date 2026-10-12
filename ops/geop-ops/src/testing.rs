@@ -11,6 +11,11 @@ use geop_core_topology::{
     validation::{ValidationParameters, validate, validate_manifold},
 };
 
+use geop_ops_rasterize::{
+    rasterize,
+    stl::{enclosed_volume, stl_triangles},
+};
+
 use crate::{
     Design, NamedModel, ParamValue,
     model::{model, pose_parameter},
@@ -119,11 +124,7 @@ pub fn vertex_at<S: Scalar>(part: &NamedModel<S>, p: [f64; 3]) -> String {
 
 /// The middle of `edge`, halfway along its curve's domain.
 pub fn middle<S: Scalar>(edge: &Edge<S>) -> Vector3<S> {
-    let (t0, t1) = edge.curve.domain();
-    (edge
-        .curve
-        .evaluate(S::interpolate(t0, t1, S::from_f64(0.5))))
-    .unwrap()
+    (edge.curve.evaluate(edge.curve.mid_parameter().unwrap())).unwrap()
 }
 
 /// The names of the edges of `part` that `keep` accepts, sorted.
@@ -175,6 +176,27 @@ pub fn face_towards<S: Scalar>(part: &NamedModel<S>, solid: SolidId, normal: [f6
         .max_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(f, _)| f)
         .unwrap_or_else(|| panic!("no face towards {normal:?}"))
+}
+
+// ── Measures ────────────────────────────────────────────────────────────────
+
+/// The volume `solid` of `part` encloses, from its mesh as drawn at
+/// `resolution` (see [`rasterize`]): negative if its faces point in. Its
+/// triangles' corners are `f32`, as STL stores them: a test's measuring
+/// stick, not a kernel comparison.
+pub fn volume<S: Scalar>(part: &NamedModel<S>, solid: SolidId, resolution: usize) -> f64 {
+    let faces = part.topology().body_faces(Body::Solid(solid)).unwrap();
+    let raster = rasterize(part.topology(), resolution).unwrap();
+    enclosed_volume(&stl_triangles(&raster, &faces))
+}
+
+/// Checks `a` is within `tol` of `b` in every coordinate.
+#[track_caller]
+pub fn assert_close(a: [f64; 3], b: [f64; 3], tol: f64) {
+    assert!(
+        (0..3).all(|k| (a[k] - b[k]).abs() < tol),
+        "{a:?} is not within {tol} of {b:?}"
+    );
 }
 
 // ── Parts built from a model ────────────────────────────────────────────────

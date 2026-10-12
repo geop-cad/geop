@@ -422,6 +422,7 @@ pub fn refine_crossing<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::curve_surface_crossings;
+    use crate::test_fixtures::{knots, line, sphere_octant, weighted};
     use crate::{nurb_curve::NurbCurve, nurb_surface::NurbSurface};
     use geop_core_math::for_all_scalars;
     use geop_core_math::{scalars::Scalar, vector::Vector4};
@@ -429,59 +430,21 @@ mod tests {
     const MAX: usize = 5000;
     const MIN_SUBDIVISION_SIZE: f64 = 1e-6;
 
-    fn pt<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
-        Vector4::from_array([
-            S::from_f64(x * w),
-            S::from_f64(y * w),
-            S::from_f64(z * w),
-            S::from_f64(w),
-        ])
-    }
-
-    fn knots<S: Scalar>(k: &[f64]) -> Vec<S> {
-        k.iter().map(|&x| S::from_f64(x)).collect()
-    }
-
-    fn line<S: Scalar>(a: [f64; 3], b: [f64; 3]) -> NurbCurve<S, 4> {
-        NurbCurve::try_new(
-            1,
-            vec![pt(a[0], a[1], a[2], 1.), pt(b[0], b[1], b[2], 1.)],
-            knots(&[0., 0., 1., 1.]),
-        )
-        .unwrap()
-    }
-
     /// The unit square `S(u, v) = (u, v, 0)`.
     fn plane<S: Scalar>() -> NurbSurface<S, 4> {
         NurbSurface::try_new(
             1,
             1,
             vec![
-                pt(0., 0., 0., 1.),
-                pt(0., 1., 0., 1.),
-                pt(1., 0., 0., 1.),
-                pt(1., 1., 0., 1.),
+                weighted(0., 0., 0., 1.),
+                weighted(0., 1., 0., 1.),
+                weighted(1., 0., 0., 1.),
+                weighted(1., 1., 0., 1.),
             ],
             knots(&[0., 0., 1., 1.]),
             knots(&[0., 0., 1., 1.]),
         )
         .unwrap()
-    }
-
-    /// Exact rational sphere octant; `v = 1` is the pole (0, 0, 1).
-    fn sphere_octant<S: Scalar>() -> NurbSurface<S, 4> {
-        let w = std::f64::consts::FRAC_1_SQRT_2;
-        let circle = [(1., 0., 1.), (1., 1., w), (0., 1., 1.)];
-        let cps = circle
-            .iter()
-            .flat_map(|&(x, y, wu)| {
-                circle
-                    .iter()
-                    .map(move |&(r, z, wv)| pt(x * r, y * r, z, wu * wv))
-            })
-            .collect();
-        let k = knots(&[0., 0., 0., 1., 1., 1.]);
-        NurbSurface::try_new(2, 2, cps, k.clone(), k).unwrap()
     }
 
     fn solve<S: Scalar>(c: &NurbCurve<S, 4>, s: &NurbSurface<S, 4>) -> Vec<(S, [S; 2])> {
@@ -596,7 +559,11 @@ mod tests {
         let w = std::f64::consts::FRAC_1_SQRT_2;
         let equator = NurbCurve::try_new(
             2,
-            vec![pt(1., 0., 0., 1.), pt(1., 1., 0., w), pt(0., 1., 0., 1.)],
+            vec![
+                weighted(1., 0., 0., 1.),
+                weighted(1., 1., 0., w),
+                weighted(0., 1., 0., 1.),
+            ],
             knots(&[0., 0., 0., 1., 1., 1.]),
         )
         .unwrap();
@@ -654,9 +621,9 @@ mod tests {
         let bump = NurbCurve::try_new(
             2,
             vec![
-                pt(0.2, 0.5, 0., 1.),
-                pt(0.5, 0.5, 0.6, 1.),
-                pt(0.8, 0.5, 0., 1.),
+                weighted(0.2, 0.5, 0., 1.),
+                weighted(0.5, 0.5, 0.6, 1.),
+                weighted(0.8, 0.5, 0., 1.),
             ],
             knots(&[0., 0., 0., 1., 1., 1.]),
         )
@@ -678,17 +645,17 @@ mod tests {
     /// extent.
     fn check_spoke_touching_cap_quadrant_at_its_pole<S: Scalar>() {
         let w = std::f64::consts::FRAC_1_SQRT_2;
-        let pole = pt(0., 0., 2., 1.);
+        let pole = weighted(0., 0., 2., 1.);
         let quadrant = NurbSurface::try_new(
             2,
             1,
             vec![
                 pole,
-                pt(1., 0., 2., 1.),
+                weighted(1., 0., 2., 1.),
                 pole,
-                pt(1., -1., 2., w),
+                weighted(1., -1., 2., w),
                 pole,
-                pt(0., -1., 2., 1.),
+                weighted(0., -1., 2., 1.),
             ],
             knots(&[0., 0., 0., 1., 1., 1.]),
             knots(&[0., 0., 1., 1.]),

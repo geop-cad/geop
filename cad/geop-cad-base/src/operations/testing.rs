@@ -12,7 +12,6 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::program::ProgramStep;
-use geop_core_topology::Body;
 use geop_ops::{
     Design, EntityRef, NamedModel,
     model::model,
@@ -20,10 +19,6 @@ use geop_ops::{
 };
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, Output};
-use geop_ops_rasterize::{
-    rasterize,
-    stl::{enclosed_volume, stl_triangles},
-};
 use geop_ops_sketch::{AddSketchArgs, Sketch};
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -249,10 +244,7 @@ pub(crate) fn dialog(key: &str, value: Value) -> Command {
 /// The volume the solid named `solid` of `part` encloses, from its mesh as
 /// drawn.
 pub(crate) fn volume(part: &NamedModel<Design>, solid: &str) -> f64 {
-    let id = part.solid_id(solid).unwrap();
-    let faces = part.topology().body_faces(Body::Solid(id)).unwrap();
-    let raster = rasterize(part.topology(), 64).unwrap();
-    enclosed_volume(&stl_triangles(&raster, &faces))
+    geop_ops::testing::volume(part, part.solid_id(solid).unwrap(), 64)
 }
 
 /// Checks the solid named `solid` of `part` encloses `expected`, to within

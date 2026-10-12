@@ -46,45 +46,17 @@ impl<S: Scalar> Model<S> {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_fixtures::{line2, line3};
     use crate::{
         Coedge, CoedgeGeometry, CoedgeId, Edge, Face, Model, Sense, ShellId, Vertex,
         boundary::BoundaryType,
     };
-    use geop_core_geometry::{
-        nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D},
-        nurb_surface::NurbSurface3D,
-    };
+    use geop_core_geometry::nurb_surface::NurbSurface3D;
     use geop_core_math::{
         for_all_scalars,
         scalars::Scalar,
         vector::{Vector3, Vector4},
     };
-
-    fn line3<S: Scalar>(a: (f64, f64, f64), b: (f64, f64, f64)) -> NurbCurve3D<S> {
-        let p = |x: f64, y: f64, z: f64| {
-            Vector4::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z), S::ONE])
-        };
-        NurbCurve3D::try_new(
-            1,
-            vec![p(a.0, a.1, a.2), p(b.0, b.1, b.2)],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-        )
-        .unwrap()
-    }
-
-    /// A pcurve matching the unit-square bilinear surface built below:
-    /// `pcurve.evaluate(t) == (a + (b-a)*t, ...)` in `(u, v)`, exactly
-    /// tracing the 3-D straight line `a -> b` since the surface is planar
-    /// and bilinear.
-    fn line2<S: Scalar>(a: (f64, f64), b: (f64, f64)) -> NurbCurve2D<S> {
-        let p = |x: f64, y: f64| Vector3::from_array([S::from_f64(x), S::from_f64(y), S::ONE]);
-        NurbCurve::try_new(
-            1,
-            vec![p(a.0, a.1), p(b.0, b.1)],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-        )
-        .unwrap()
-    }
 
     fn unit_square_surface<S: Scalar>() -> NurbSurface3D<S> {
         let p =

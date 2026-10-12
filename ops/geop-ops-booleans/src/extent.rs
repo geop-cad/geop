@@ -134,18 +134,6 @@ pub fn face_hull<S: Scalar>(model: &Model<S>, faces: &[FaceId]) -> GeopResult<Ve
     Ok(points)
 }
 
-/// The box around `points`: its lowest corner and its highest.
-pub fn bounds(points: &[[f64; 3]]) -> [[f64; 3]; 2] {
-    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
-    for p in points {
-        for k in 0..3 {
-            lo[k] = lo[k].min(p[k]);
-            hi[k] = hi[k].max(p[k]);
-        }
-    }
-    [lo, hi]
-}
-
 /// How far along `plane`'s normal the nearest and the furthest of
 /// `points` lie from it.
 pub fn spread_along<S: Scalar>(points: &[[f64; 3]], plane: &CoordinateSystem<S>) -> (f64, f64) {
@@ -178,6 +166,7 @@ pub fn reach_past<S: Scalar>(
         )));
     }
     // Well past the target, so the tool's end is clear of all of it.
-    let [lo, hi] = bounds(hull);
+    let (lo, hi) = plain::bounds(hull.iter().copied())
+        .ok_or_else(|| GeopError::new("up to next: the target has no faces"))?;
     Ok(ahead + plain::diagonal(lo, hi))
 }

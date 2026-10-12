@@ -84,11 +84,10 @@ mod tests {
     use super::*;
     use geop_core_math::scalars::ScalInF64 as S;
     use geop_ops::operation::apply_to_model;
-    use geop_ops_extrude_revolve::shapes::block;
+    use geop_ops_extrude_revolve::shapes::{block, block_part};
 
     fn two_cubes() -> NamedModel<S> {
-        let mut part = NamedModel::<S>::new();
-        block(&mut part, "a", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let mut part = block_part("a", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
         block(&mut part, "b", [2.0, 0.0, 0.0], [3.0, 1.0, 1.0]);
         part
     }
