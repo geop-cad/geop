@@ -79,6 +79,13 @@
 /// built in it; algorithms take any scalar.
 pub type Design = geop_core_math::scalars::ScalInF64;
 
+/// What [`part_operation!`] expands to refers to, whichever crates the
+/// operation's own depends on.
+#[doc(hidden)]
+pub mod __program {
+    pub use geop_core_math::geop_error::GeopResult as __GeopResult;
+    pub use geop_core_program::*;
+}
 pub mod model;
 pub mod operation;
 pub mod output;

@@ -15,7 +15,7 @@ use geop_ops::parameters::expressions;
 use geop_ops::{
     Design, NamedModel, ParamValue,
     operation::{
-        Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Seen,
+        Aspects, Build, BuildReader, EntityRef, Lookup, LegacyModelStep, Role, Seen,
         pattern::{Row, Spacing, count_field, count_of, whole_count},
     },
     origin_axis,
@@ -254,7 +254,7 @@ impl Direction {
     }
 }
 
-impl ModelStep for LinearPattern {
+impl LegacyModelStep for LinearPattern {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,

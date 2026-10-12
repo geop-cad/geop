@@ -46,8 +46,8 @@ use geop_core_topology::{
 use geop_ops::{
     BodyNames, Design, NamedModel, Namer, ParamValue,
     operation::{
-        Build, BuildReader, EntityRef, Input, Lookup, ModelStep, ResolveEntity, Role, Scope,
-        build_model,
+        Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, ResolveEntity, Role, Scope,
+        legacy_build_model,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -74,7 +74,7 @@ pub struct NetworkSurfaceArgs {
     pub v_curves: Vec<EntityRef>,
 }
 
-impl ModelStep for NetworkSurface {
+impl LegacyModelStep for NetworkSurface {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,
@@ -116,7 +116,7 @@ impl Operation for NetworkSurface {
     }
 
     fn run(step: &str, part: &mut Build, args: &NetworkSurfaceArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The curves of each direction, picked.

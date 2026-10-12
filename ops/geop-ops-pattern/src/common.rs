@@ -15,7 +15,7 @@ use geop_ops::ui::{Dialog, Form, Track, Value};
 use geop_ops::{
     Design, NamedModel, Namer, ToolReach,
     operation::{
-        Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Scope, Seen, build_model,
+        Build, BuildReader, EntityRef, Lookup, LegacyModelStep, Role, Scope, Seen, legacy_build_model,
         resolve_bodies,
     },
 };
@@ -228,7 +228,7 @@ pub(crate) trait Pattern: std::fmt::Debug {
 }
 
 /// Builds the pattern `args` as the step `step` into `model`: its
-/// [`ModelStep::build`].
+/// [`LegacyModelStep::build`].
 pub(crate) fn build_pattern<A: Pattern>(
     model: &mut NamedModel<Design>,
     reader: &mut BuildReader,
@@ -447,7 +447,7 @@ fn copy_threads(
 /// of its seeds in the model, at its placements — of the part as it is
 /// before the step — and, of features, copies of their cosmetic threads,
 /// drawn as the step's annotations.
-pub(crate) fn run_pattern<O: ModelStep>(
+pub(crate) fn run_pattern<O: LegacyModelStep>(
     part: &mut Build,
     step: &str,
     args: &O::Args,
@@ -465,7 +465,7 @@ where
             placements: args.placements(&mut seen)?,
         })
     });
-    build_model::<O>(part, step, args)?;
+    legacy_build_model::<O>(part, step, args)?;
     match copies {
         Some(copies) => {
             part.revise_or_start(&threads(), &copies?, copy_threads)?;

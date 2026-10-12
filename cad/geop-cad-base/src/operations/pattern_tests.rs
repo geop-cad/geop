@@ -56,7 +56,7 @@ pub(super) fn build(program: &Program) -> NamedModel<Design> {
     let json = serde_json::to_string(program).unwrap();
     let read: Program = serde_json::from_str(&json).unwrap();
     assert_eq!(&read, program);
-    read.build_model().unwrap()
+    read.legacy_build_model().unwrap()
 }
 
 /// The pin patterned four times two apart and cut from the plate — itself
@@ -250,7 +250,7 @@ fn circular_patterns_sweep() {
             },
         );
         let part = program
-            .build_model()
+            .legacy_build_model()
             .unwrap_or_else(|e| panic!("{count} at {angle:?}: {e:?}"));
         assert_valid(&part);
         let solids = part.solid_names();
@@ -293,7 +293,7 @@ fn three_turned_boxes_joined() {
             op: geop_ops_booleans::boolean::BooleanOp::Union,
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
 }
 
@@ -347,7 +347,7 @@ fn three_turned_boxes_one_a_turned_copy_joined() {
             op: geop_ops_booleans::boolean::BooleanOp::Union,
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     let (width, edge) = widest_pcurve(&part);
     assert!(width < 1e-9, "{edge}: {width:e}");
@@ -403,7 +403,7 @@ fn turned_copy_joined_stays_tight() {
             angle: Spacing::step(13.0),
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     let (width, edge) = widest_pcurve(&part);
     assert!(width < 1e-9, "{edge}: {width:e}");
@@ -444,7 +444,7 @@ fn linear_patterns_and_moves_sweep() {
             },
         );
         let part = program
-            .build_model()
+            .legacy_build_model()
             .unwrap_or_else(|e| panic!("{along} x {across}: {e:?}"));
         assert_valid(&part);
         let holes = (along * across) as f64;
@@ -467,7 +467,7 @@ fn linear_patterns_and_moves_sweep() {
             },
         );
         let part = program
-            .build_model()
+            .legacy_build_model()
             .unwrap_or_else(|e| panic!("{degrees}°: {e:?}"));
         assert_valid(&part);
         assert_volume(&part, "move(mv,extrude(plate))", 8.0, 1e-6);

@@ -91,7 +91,7 @@ fn walls() -> Program {
 #[test]
 fn extruded_faces_knit_into_a_box() {
     let mut program = walls();
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     let wall = part.sheet_face_names()[0].clone();
     fill(&mut program, "bottom", sheet_edges_at(&part, 0.0));
     fill(&mut program, "top", sheet_edges_at(&part, 1.0));
@@ -102,7 +102,7 @@ fn extruded_faces_knit_into_a_box() {
             solid: true,
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     let solid = part.solid_id("knit(box)").unwrap();
     assert_eq!(part.topology().solid_faces(solid).unwrap().len(), 6);
@@ -114,7 +114,7 @@ fn extruded_faces_knit_into_a_box() {
 #[test]
 fn open_box_thickened_into_a_cover() {
     let mut program = walls();
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     let wall = part.sheet_face_names()[0].clone();
     fill(&mut program, "top", sheet_edges_at(&part, 1.0));
     program.push(
@@ -132,7 +132,7 @@ fn open_box_thickened_into_a_cover() {
             side: ThickenSide::Against,
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     let solid = part.solid_id("thicken(thick)").unwrap();
     // Five faces, their inner copies, and a wall along each of the four
@@ -174,7 +174,7 @@ fn lofted_faces_knit_into_a_solid() {
             output: Output::Faces { up_to: None },
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     let wall = part.sheet_face_names()[0].clone();
     fill(&mut program, "base", sheet_edges_at(&part, 0.0));
     fill(&mut program, "lid", sheet_edges_at(&part, 2.0));
@@ -185,7 +185,7 @@ fn lofted_faces_knit_into_a_solid() {
             solid: true,
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     let solid = part.solid_id("knit(solid)").unwrap();
     assert_eq!(part.topology().solid_faces(solid).unwrap().len(), 4 + 2);

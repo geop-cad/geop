@@ -110,7 +110,7 @@ fn runner_stops_early_and_reuses_the_unchanged_prefix() {
     assert_eq!(running.run(&program, None), []);
     assert_eq!(
         describe(&running.model()),
-        describe(&program.build_model().unwrap())
+        describe(&program.legacy_build_model().unwrap())
     );
 
     // Back in time: only the box.
@@ -130,7 +130,7 @@ fn runner_stops_early_and_reuses_the_unchanged_prefix() {
     assert_eq!(running.run(&edited, None), []);
     assert_eq!(
         describe(&running.model()),
-        describe(&edited.build_model().unwrap())
+        describe(&edited.legacy_build_model().unwrap())
     );
 }
 
@@ -358,7 +358,7 @@ fn a_runner_builds_what_building_from_scratch_builds() {
         for (edit, program) in edits {
             let context = format!("{name}, {edit}");
             let errors = running.run(&program, None);
-            match program.build_model() {
+            match program.legacy_build_model() {
                 Ok(scratch) => {
                     assert_eq!(errors, [], "{context}");
                     assert_eq!(describe(&running.model()), describe(&scratch), "{context}");

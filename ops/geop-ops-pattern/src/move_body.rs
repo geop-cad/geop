@@ -15,7 +15,7 @@ use geop_ops::operation::Input;
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue,
     operation::{
-        Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Scope, Seen, build_model,
+        Aspects, Build, BuildReader, EntityRef, Lookup, LegacyModelStep, Role, Scope, Seen, legacy_build_model,
         resolve_bodies,
     },
 };
@@ -93,7 +93,7 @@ impl MoveBodyArgs {
 /// The keys and labels of the shift's three fields.
 const AXES: [(&str, &str); 3] = [("x", "shift x"), ("y", "shift y"), ("z", "shift z")];
 
-impl ModelStep for MoveBody {
+impl LegacyModelStep for MoveBody {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,
@@ -158,7 +158,7 @@ impl Operation for MoveBody {
     }
 
     fn run(step: &str, part: &mut Build, args: &MoveBodyArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The bodies, picked; the shift along each axis, dragged by a gizmo

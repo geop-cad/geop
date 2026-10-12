@@ -27,7 +27,7 @@ use geop_core_program::{
 };
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, Input, ModelStep, build_model},
+    operation::{Build, BuildReader, Input, LegacyModelStep, legacy_build_model},
     ui::{
         Action, CanvasEvent, Edit, EditForm, FormState, Gizmo, Number, Shape, Style, Tone, Unit,
         Visual, choices, chosen,
@@ -576,7 +576,7 @@ pub fn build_subd<S: Scalar>(
     Ok(())
 }
 
-impl ModelStep for Subd {
+impl LegacyModelStep for Subd {
     fn build(
         model: &mut NamedModel<Design>,
         _: &mut BuildReader,
@@ -610,7 +610,7 @@ impl Operation for Subd {
     }
 
     fn run(step: &str, part: &mut Build, args: &SubdArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     fn presentation(
@@ -627,6 +627,6 @@ impl Operation for Subd {
         editing: &SubdEditing,
         event: Event<Design>,
     ) -> (SubdArgs, SubdEditing) {
-        editing.handle(args, event, form, on_canvas)
+        editing.handle(args, event, |a, e| form(a, &e.session, &e.selection), on_canvas)
     }
 }

@@ -45,7 +45,7 @@ impl<T: Clone> FormState<T> {
         &self,
         args: &A,
         event: Event<S>,
-        form: impl FnOnce(&A, &T, &[String]) -> EditForm<'f, S, A, T>,
+        form: impl FnOnce(&A, &Self) -> EditForm<'f, S, A, T>,
         canvas: impl FnOnce(Edit<'_, A, T>, &CanvasEvent<S>),
     ) -> (A, Self) {
         let mut edited = args.clone();
@@ -56,9 +56,7 @@ impl<T: Clone> FormState<T> {
             selection: &mut state.selection,
         };
         match event {
-            Event::Field { key, value } => {
-                form(args, &self.session, &self.selection).set(&key, edit, value)
-            }
+            Event::Field { key, value } => form(args, self).set(&key, edit, value),
             Event::Select(keys) => *edit.selection = keys,
             Event::Canvas(event) => canvas(edit, &event),
         }

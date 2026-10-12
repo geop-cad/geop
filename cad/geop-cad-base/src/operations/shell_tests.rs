@@ -54,7 +54,7 @@ fn face_count(part: &NamedModel<Design>, solid: &str) -> usize {
 fn drilled_box_opened_at_its_top() {
     let mut program = examples::box_with_drill_hole();
     program.push("s", shell("extrude(hole)", &["extrude(box,end)"], 0.1));
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     let rims: Vec<_> = part
         .names()
@@ -64,7 +64,7 @@ fn drilled_box_opened_at_its_top() {
         .collect();
     assert_eq!(rims.len(), 2, "{rims:?}");
     // The outside, its inner copy less the top, and the two rims.
-    let before = examples::box_with_drill_hole().build_model().unwrap();
+    let before = examples::box_with_drill_hole().legacy_build_model().unwrap();
     assert_eq!(
         face_count(&part, "shell(s)"),
         2 * face_count(&before, "extrude(hole)") - 1 + 1
@@ -80,7 +80,7 @@ fn cup() {
     s.add_circle(c, n(1.0));
     extruded(&mut program, "can", s, 2.0);
     program.push("s", shell("extrude(can)", &["extrude(can,end)"], 0.1));
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     let rim = part.face_id("shell(s,extrude(can,end))").unwrap();
     assert_eq!(part.topology().get_face(rim).unwrap().holes.len(), 1);
@@ -98,7 +98,7 @@ fn l_block_opened_at_its_top() {
         1.0,
     );
     program.push("s", shell("extrude(l)", &["extrude(l,end)"], 0.2));
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     // 7 outer faces and their copies, and the rim.
     assert_eq!(face_count(&part, "shell(s)"), 7 + 7 + 1);
@@ -124,7 +124,7 @@ fn slot_plate_closed_all_round() {
     let mut program = Program::new();
     extruded(&mut program, "plate", s, 0.5);
     program.push("s", shell("extrude(plate)", &[], 0.05));
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     let solid = part.solid_id("shell(s)").unwrap();
     assert_eq!(part.topology().get_solid(solid).unwrap().shells.len(), 2);
@@ -141,7 +141,7 @@ fn channel() {
         polygon(&[[0., 0.], [2., 0.], [2., 1.], [0., 1.]]),
         1.0,
     );
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     // The two short sides: those whose faces are normal to x.
     let ends: Vec<String> = part
         .topology()
@@ -165,7 +165,7 @@ fn channel() {
         "s",
         shell("extrude(b)", &["extrude(b,end)", &ends[0], &ends[1]], 0.1),
     );
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     for k in 0..2 {
         part.face_id(&format!("shell(s,extrude(b,end),{k})"))
@@ -240,7 +240,7 @@ fn hole_through_the_walls_of_a_shelled_box() {
         ..Extents::blind(3.0)
     };
     program.push("hole", extrusion("hole_sketch", through, cut("shell(s)")));
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     // The cup's 11 faces, and the hole's wall through each of the two.
     assert!(face_count(&part, "extrude(hole)") > 11);
@@ -279,8 +279,8 @@ fn shells_refuse_what_they_cannot_build() {
     );
     let mut zero = program.clone();
     zero.push("s", shell("extrude(a)", &[], 0.0));
-    assert!(zero.build_model().is_err());
+    assert!(zero.legacy_build_model().is_err());
     let mut other = program.clone();
     other.push("s", shell("extrude(a)", &["extrude(b,end)"], 0.1));
-    assert!(other.build_model().is_err());
+    assert!(other.legacy_build_model().is_err());
 }

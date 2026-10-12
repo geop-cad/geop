@@ -15,7 +15,7 @@ use geop_core_program::{
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue,
     model::model_or_empty,
-    operation::{Build, BuildReader, EntityRef, Input, ModelStep, Role, Scope, Seen},
+    operation::{Build, BuildReader, EntityRef, Input, LegacyModelStep, Role, Scope, Seen},
     parameters::{Formula, expressions},
     ui::formula_number,
 };
@@ -147,7 +147,7 @@ impl SheetStep for EdgeFlange {
     }
 }
 
-impl ModelStep for EdgeFlange {
+impl LegacyModelStep for EdgeFlange {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,

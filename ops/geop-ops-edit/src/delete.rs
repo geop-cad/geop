@@ -11,7 +11,7 @@ use geop_core_program::{
 };
 use geop_ops::{
     Design, EntityRef, NamedModel, ParamValue,
-    operation::{Build, BuildReader, Input, ModelStep, Role, build_model, resolve_bodies},
+    operation::{Build, BuildReader, Input, LegacyModelStep, Role, legacy_build_model, resolve_bodies},
 };
 use serde::{Deserialize, Serialize};
 
@@ -31,7 +31,7 @@ pub struct DeleteBodyArgs {
     pub bodies: Vec<EntityRef>,
 }
 
-impl ModelStep for DeleteBody {
+impl LegacyModelStep for DeleteBody {
     fn build(
         model: &mut NamedModel<Design>,
         _: &mut BuildReader,
@@ -65,7 +65,7 @@ impl Operation for DeleteBody {
     }
 
     fn run(step: &str, part: &mut Build, args: &DeleteBodyArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The bodies, picked.

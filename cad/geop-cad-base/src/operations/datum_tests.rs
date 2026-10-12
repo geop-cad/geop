@@ -493,7 +493,7 @@ fn planes() {
 #[test]
 fn sketches_go_on_datum_planes() {
     let mut part = Part::of(examples::boss_on_reference_plane());
-    part.program.build_model().unwrap().check_names().unwrap();
+    part.program.legacy_build_model().unwrap().check_names().unwrap();
     let lifted = part.datum_named("lifted");
     let placed = part.seen().sketch("boss_sketch").unwrap().clone();
     assert!(placed.plane.origin().could_be_equal(lifted.frame.origin()));

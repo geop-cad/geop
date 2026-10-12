@@ -40,7 +40,7 @@ pub(crate) trait Built {
     fn built(&self) -> GeopResult<Runner>;
 
     /// The model the program builds, or why a step fails.
-    fn build_model(&self) -> GeopResult<NamedModel<Design>>;
+    fn legacy_build_model(&self) -> GeopResult<NamedModel<Design>>;
 }
 
 impl Built for Program {
@@ -48,7 +48,7 @@ impl Built for Program {
         build(self, &workspace(BTreeMap::new()).scope(""))
     }
 
-    fn build_model(&self) -> GeopResult<NamedModel<Design>> {
+    fn legacy_build_model(&self) -> GeopResult<NamedModel<Design>> {
         let runner = self.built()?;
         let built = runner.part.current().retrieve_target(&model());
         // A program that builds no topology builds an empty model.

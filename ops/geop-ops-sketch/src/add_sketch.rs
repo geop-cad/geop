@@ -233,7 +233,7 @@ impl Operation for AddSketch {
         editing.handle(
             args,
             event,
-            |args, session, selection| editor::form(&seen, args, session, selection),
+            |args, e| editor::form(&seen, args, &e.session, &e.selection),
             |edit, event| editor::event(&seen, edit, event),
         )
     }

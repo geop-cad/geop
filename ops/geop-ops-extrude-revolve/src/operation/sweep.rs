@@ -17,8 +17,8 @@ use geop_ops::operation::Input;
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue,
     operation::{
-        Build, BuildReader, Chain, EntityRef, Lookup, ModelStep, ResolveEntity, Role, Scope, Seen,
-        build_model,
+        Build, BuildReader, Chain, EntityRef, Lookup, LegacyModelStep, ResolveEntity, Role, Scope, Seen,
+        legacy_build_model,
     },
     ui::sketch_field,
 };
@@ -153,7 +153,7 @@ impl Operation for Sweep {
     }
 
     fn run(step: &str, part: &mut Build, args: &SweepArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The profile and the path, picked; the rails, if any; how the profile
@@ -237,7 +237,7 @@ impl Operation for Sweep {
     }
 }
 
-impl ModelStep for Sweep {
+impl LegacyModelStep for Sweep {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,

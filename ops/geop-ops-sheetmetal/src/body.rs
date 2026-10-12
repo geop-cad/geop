@@ -15,7 +15,7 @@ use geop_core_program::{part::Retrieve, target::TargetReference};
 use geop_ops::{
     Design, NamedModel, Namer, PlacedSketch,
     model::{Records, sketch},
-    operation::{Build, BuildReader, ModelStep, build_model},
+    operation::{Build, BuildReader, LegacyModelStep, legacy_build_model},
     solids::{SolidNotes, solid_notes},
 };
 
@@ -126,7 +126,7 @@ pub fn made(step: &str) -> TargetReference<Made> {
 /// A sheet-metal operation: it works out what it makes from the part read
 /// — the sketches, the sheet-metal bodies there are — and is then built
 /// alike ([`run`]).
-pub(crate) trait SheetStep: ModelStep {
+pub(crate) trait SheetStep: LegacyModelStep {
     /// What the step `step` with `args` makes, as `reader` reads the part.
     fn plan(reader: &mut BuildReader, step: &str, args: &Self::Args) -> GeopResult<Made>;
 }
@@ -178,7 +178,7 @@ pub(crate) fn run<O: SheetStep>(step: &str, part: &mut Build, args: &O::Args) ->
     part.define_target(&made(step), &(step.to_string(), args.clone()), planned::<O>)?;
     part.revise_or_start(&sheets(), &step.to_string(), record)?;
     part.revise_or_start(&solid_notes(), &step.to_string(), note)?;
-    build_model::<O>(part, step, args)
+    legacy_build_model::<O>(part, step, args)
 }
 
 /// The sketch of the bend lines of the flat pattern the step `step` made.
@@ -198,7 +198,7 @@ pub(crate) fn add_bend_lines(part: &mut Build, step: &str, name: &str) -> GeopRe
     part.define_target(&sketch(name), &step.to_string(), bend_lines)
 }
 
-/// Builds what the step `step` made into `model` ([`ModelStep::build`] of
+/// Builds what the step `step` made into `model` ([`LegacyModelStep::build`] of
 /// every sheet-metal operation).
 pub(crate) fn build(
     model: &mut NamedModel<Design>,

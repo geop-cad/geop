@@ -17,7 +17,7 @@ use geop_core_sketch::Shape;
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue, PlacedSketch,
     model::model_or_empty,
-    operation::{Build, BuildReader, EntityRef, Input, Lookup, ModelStep, Role, Scope, Seen},
+    operation::{Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, Role, Scope, Seen},
     ui::sketch_field,
 };
 use geop_ops_extrude_revolve::operation::shape_loops;
@@ -94,7 +94,7 @@ impl SheetStep for SheetCut {
     }
 }
 
-impl ModelStep for SheetCut {
+impl LegacyModelStep for SheetCut {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,

@@ -23,7 +23,7 @@ use geop_ops::{
     BodyNames, Design, NamedModel, Namer, ParamValue,
     model::{PlacedSketch3d, model_or_empty, sketch3d},
     operation::{
-        Aspects, Build, BuildReader, EntityRef, Input, Lookup, ModelStep, Scope, Seen, build_model,
+        Aspects, Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, Scope, Seen, legacy_build_model,
     },
     ui::FormState,
 };
@@ -292,7 +292,7 @@ fn wire_of<S: Scalar>(
     Ok(Some((spec, names)))
 }
 
-impl ModelStep for AddSketch3d {
+impl LegacyModelStep for AddSketch3d {
     /// Builds the 3-D sketch the step defined as a wire (see
     /// [`AddSketch3d`]).
     fn build(
@@ -338,7 +338,7 @@ impl Operation for AddSketch3d {
     /// wire.
     fn run(step: &str, part: &mut Build, args: &AddSketch3dArgs) -> GeopResult<()> {
         part.define_target(&sketch3d(step), &(step.to_string(), args.clone()), draw)?;
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The tools, the coordinates of a point, the constraints: see
@@ -362,7 +362,7 @@ impl Operation for AddSketch3d {
         editing.handle(
             args,
             event,
-            |args, session, selection| editor::form(&seen, args, session, selection),
+            |args, e| editor::form(&seen, args, &e.session, &e.selection),
             |edit, event| editor::event(&seen, context.scene, edit, event),
         )
     }

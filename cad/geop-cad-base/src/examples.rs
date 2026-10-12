@@ -2146,7 +2146,7 @@ mod tests {
     /// the very same part: every name, every piece of topology between
     /// names, and every bit of geometry.
     fn build_and_round_trip(name: &str, program: &Program) -> NamedModel<S> {
-        let part = program.build_model().unwrap();
+        let part = program.legacy_build_model().unwrap();
         if let Err(report) = check_valid(&part) {
             panic!("{name}: {report}");
         }
@@ -2177,7 +2177,7 @@ mod tests {
             "{name}: JSON is not stable"
         );
 
-        let rebuilt = read_back.build_model().unwrap();
+        let rebuilt = read_back.legacy_build_model().unwrap();
         assert_eq!(
             PartDescription::of(&rebuilt).unwrap(),
             description,
@@ -2402,7 +2402,7 @@ mod tests {
     #[test]
     fn names_survive_a_change_of_dimensions() {
         let names = |program: &Program| {
-            let part = program.build_model().unwrap();
+            let part = program.legacy_build_model().unwrap();
             let description = PartDescription::of(&part).unwrap();
             (
                 description.faces.keys().cloned().collect::<Vec<_>>(),
@@ -2439,7 +2439,7 @@ mod tests {
                 name: "extrude(box,side)".into(),
             })
         });
-        let err = error(program.build_model());
+        let err = error(program.legacy_build_model());
         assert!(format!("{err:?}").contains("extrude(box,side)"), "{err:?}");
     }
 
@@ -2450,7 +2450,7 @@ mod tests {
         let mut program = box_with_drill_hole();
         program.program.steps[3].id = "box".into();
         assert!(program.validate().is_err());
-        assert!(program.build_model().is_err());
+        assert!(program.legacy_build_model().is_err());
     }
 
     /// Reproduces the real bug report described on `handle_with_hole`.

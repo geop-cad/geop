@@ -2,21 +2,16 @@
 //! faces are picked.
 
 use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
+    geop_error::{GeopError, GeopResult},
     scalars::Scalar,
-    with_context,
 };
-use geop_core_program::{
-    editing::{Event, Form, Unit, Value},
-    operation::{Context, Operation, OperationGroup, OperationInfo, OperationTier},
-};
+use geop_core_program::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
-    Design, NamedModel, Namer, ParamValue,
-    operation::{
-        Build, BuildReader, EntityRef, Input, Lookup, ModelStep, Role, Scope, Seen, build_model,
-    },
+    Design, NamedModel, Namer,
+    operation::{BuildReader, EntityRef, Lookup, PartOperation, Role, Scope, Seen, StepContext},
     parameters::{Formula, expressions},
-    ui::formula_number,
+    part_operation,
+    ui::{EditForm, FormState, Unit, formula_number},
 };
 use serde::{Deserialize, Serialize};
 
@@ -42,31 +37,9 @@ pub struct ShellArgs {
     pub thickness: Formula,
 }
 
-impl ModelStep for Shell {
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &ShellArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("shell({step}, {args:?})");
-        let namer = Namer::new("shell", step)?;
-        let thickness =
-            (args.thickness.evaluate(&mut Scope { model, reader })).with_context(ctx)?;
-        if !thickness.is_finite() {
-            return Err(GeopError::new("the thickness is not a number")).with_context(ctx);
-        }
-        let solid = model.solid_id(&args.solid).with_context(ctx)?;
-        let faces = (args.faces.iter())
-            .map(|name| model.face_id(name))
-            .collect::<GeopResult<Vec<_>>>()
-            .with_context(ctx)?;
-        shell(model, &namer, solid, &faces, Design::from_f64(thickness)).with_context(ctx)?;
-        Ok(())
-    }
-}
+part_operation!(Shell);
 
-impl Operation for Shell {
+impl PartOperation for Shell {
     const INFO: OperationInfo = OperationInfo::new(
         "shell",
         "Shell",
@@ -76,16 +49,14 @@ impl Operation for Shell {
     )
     .icon(crate::icons::SHELL);
     type Args = ShellArgs;
-    type EditingState = ();
-    type Input = Input;
-    type State = ParamValue;
+    type Session = ();
 
     fn formulas(args: &mut ShellArgs) -> Vec<&mut String> {
         expressions([&mut args.thickness])
     }
 
     /// The newest solid, closed all round, a tenth thick.
-    fn new_args(context: &Context<Input, ParamValue>) -> ShellArgs {
+    fn new_args(context: &StepContext) -> ShellArgs {
         ShellArgs {
             solid: Seen::new(context.before)
                 .model()
@@ -96,61 +67,55 @@ impl Operation for Shell {
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &ShellArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &mut BuildReader,
+        step: &str,
+        args: &ShellArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("shell", step)?;
+        let thickness = args.thickness.evaluate(&mut Scope { model, reader })?;
+        if !thickness.is_finite() {
+            return Err(GeopError::new("the thickness is not a number"));
+        }
+        let solid = model.solid_id(&args.solid)?;
+        let faces = (args.faces.iter())
+            .map(|name| model.face_id(name))
+            .collect::<GeopResult<Vec<_>>>()?;
+        shell(model, &namer, solid, &faces, Design::from_f64(thickness))?;
+        Ok(())
     }
 
     /// The solid and the faces to open it at, picked, and the thickness.
-    fn presentation(
-        context: &Context<Input, ParamValue>,
+    fn form<'a>(
+        context: &'a StepContext<'a>,
         args: &ShellArgs,
-        _: &(),
-    ) -> Form<Design> {
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, ShellArgs> {
         let mut seen = Seen::new(context.before);
-        let mut form = Form::default();
-        let dialog = &mut form.dialog;
+        let mut f = EditForm::<Design, ShellArgs>::default();
         let solid = EntityRef::of_name(EntityRef::solid, &args.solid);
-        dialog.reference("solid", "solid", solid.clone(), &[Role::Solid], None, false);
+        f.reference("solid", "solid", solid.clone(), &[Role::Solid], None, false, |edit, picked| {
+            let solid = EntityRef::last_name(EntityRef::solid, &picked);
+            // The faces opened were of the solid before.
+            if solid.as_ref() != Some(&edit.args.solid) {
+                edit.args.faces.clear();
+            }
+            edit.args.solid = solid.unwrap_or_default();
+        });
         // A shell offsets planes and round faces: those are what can be
         // picked to open.
         let faces = EntityRef::of_names(EntityRef::face, &args.faces);
         let roles = [Role::Plane, Role::Round];
         let scope = solid.first().cloned();
-        (dialog.reference("faces", "open faces", faces, &roles, scope, true)).optional("faces");
+        f.reference("faces", "open faces", faces, &roles, scope, true, |edit, picked| {
+            edit.args.faces = EntityRef::names_of(EntityRef::face, &picked);
+        });
+        f.form.dialog.optional("faces");
         let thickness = formula_number("thickness", &args.thickness, &mut seen, Unit::Length);
-        dialog.number("thickness", thickness.range(0.0, 1.0));
-        form
-    }
-
-    fn process_user_event(
-        _: &Context<Input, ParamValue>,
-        args: &ShellArgs,
-        _: &(),
-        event: Event<Design>,
-    ) -> (ShellArgs, ()) {
-        let mut args = args.clone();
-        let Event::Field { key, value } = event else {
-            return (args, ());
-        };
-        match (key.as_str(), value) {
-            ("solid", Value::Entities(picked)) => {
-                let solid = EntityRef::last_name(EntityRef::solid, &picked);
-                // The faces opened were of the solid before.
-                if solid.as_ref() != Some(&args.solid) {
-                    args.faces.clear();
-                }
-                args.solid = solid.unwrap_or_default();
-            }
-            ("faces", Value::Entities(picked)) => {
-                args.faces = EntityRef::names_of(EntityRef::face, &picked);
-            }
-            ("thickness", value) => {
-                if let Some(thickness) = Formula::from_value(&value) {
-                    args.thickness = thickness;
-                }
-            }
-            _ => {}
-        }
-        (args, ())
+        f.formula("thickness", thickness.range(0.0, 1.0), |edit, thickness| {
+            edit.args.thickness = thickness
+        });
+        f
     }
 }

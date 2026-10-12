@@ -12,7 +12,7 @@ use geop_core_program::{
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue,
     model::model_or_empty,
-    operation::{Build, BuildReader, EntityRef, Input, ModelStep},
+    operation::{Build, BuildReader, EntityRef, Input, LegacyModelStep},
 };
 use serde::{Deserialize, Serialize};
 
@@ -127,7 +127,7 @@ impl SheetStep for Hem {
     }
 }
 
-impl ModelStep for Hem {
+impl LegacyModelStep for Hem {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,

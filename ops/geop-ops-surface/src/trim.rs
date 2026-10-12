@@ -24,7 +24,7 @@ use geop_core_program::{
 use geop_core_topology::{Body, FaceId, contains::face::face_interior_point};
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, EntityRef, Input, ModelStep, Role, build_model},
+    operation::{Build, BuildReader, EntityRef, Input, LegacyModelStep, Role, legacy_build_model},
 };
 use geop_ops_booleans::remesh::remesh::{RemeshParams, remesh};
 use serde::{Deserialize, Serialize};
@@ -63,7 +63,7 @@ pub struct TrimSurfaceArgs {
     pub keep: TrimKeep,
 }
 
-impl ModelStep for TrimSurface {
+impl LegacyModelStep for TrimSurface {
     fn build(
         model: &mut NamedModel<Design>,
         _: &mut BuildReader,
@@ -107,7 +107,7 @@ impl Operation for TrimSurface {
     }
 
     fn run(step: &str, part: &mut Build, args: &TrimSurfaceArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The sheet and the tool, picked, and the side to keep.

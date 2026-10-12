@@ -14,8 +14,8 @@ use geop_ops::operation::Input;
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue,
     operation::{
-        Build, BuildReader, EntityRef, Lookup, ModelStep, ResolveEntity, Role, Scope, Seen,
-        build_model,
+        Build, BuildReader, EntityRef, Lookup, LegacyModelStep, ResolveEntity, Role, Scope, Seen,
+        legacy_build_model,
     },
     ui::sketch_field,
 };
@@ -112,7 +112,7 @@ impl Operation for Loft {
     }
 
     fn run(step: &str, part: &mut Build, args: &LoftArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The sketches, picked in order; the points matched on them, or the
@@ -167,7 +167,7 @@ impl Operation for Loft {
     }
 }
 
-impl ModelStep for Loft {
+impl LegacyModelStep for Loft {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,

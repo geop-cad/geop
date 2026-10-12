@@ -11,7 +11,7 @@ use geop_core_program::{
 };
 use geop_ops::{
     Design, EntityRef, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, Input, ModelStep, Role, build_model},
+    operation::{Build, BuildReader, Input, LegacyModelStep, Role, legacy_build_model},
 };
 use serde::{Deserialize, Serialize};
 
@@ -31,7 +31,7 @@ pub struct ExtractFaceArgs {
     pub face: String,
 }
 
-impl ModelStep for ExtractFace {
+impl LegacyModelStep for ExtractFace {
     fn build(
         model: &mut NamedModel<Design>,
         _: &mut BuildReader,
@@ -67,7 +67,7 @@ impl Operation for ExtractFace {
     }
 
     fn run(step: &str, part: &mut Build, args: &ExtractFaceArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The face, picked.

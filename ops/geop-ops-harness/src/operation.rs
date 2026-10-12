@@ -15,7 +15,7 @@ use geop_ops::{
     Design, NamedModel, Namer, ParamValue,
     model::model,
     operation::{
-        Build, BuildReader, EntityRef, Input, Lookup, ModelStep, Role, Scope, Seen, build_model,
+        Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, Role, Scope, Seen, legacy_build_model,
         frame_along,
     },
     solids::{CutWire, SolidNotes, solid_notes},
@@ -273,7 +273,7 @@ pub(crate) fn lay<S: Scalar>(
     cable(&mut &before, args)
 }
 
-impl ModelStep for Route {
+impl LegacyModelStep for Route {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,
@@ -531,7 +531,7 @@ impl Operation for Route {
 
     /// Sweeps the bundle, then records its cable, and notes the bundle.
     fn run(step: &str, part: &mut Build, args: &RouteArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)?;
+        legacy_build_model::<Self>(part, step, args)?;
         part.revise_or_start(&cables(), &(step.to_string(), args.clone()), record)?;
         part.revise_or_start(&solid_notes(), &step.to_string(), note)
     }
@@ -555,7 +555,7 @@ impl Operation for Route {
         editing.handle(
             args,
             event,
-            |args, session, _| form(context, &mut seen, args, session),
+            |args, e| form(context, &mut seen, args, &e.session),
             |_, _| {},
         )
     }

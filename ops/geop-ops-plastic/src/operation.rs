@@ -16,8 +16,8 @@ use geop_core_topology::{EdgeId, FaceId};
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue,
     operation::{
-        Build, BuildReader, EntityRef, Input, Lookup, ModelStep, ResolveEntity, Role, Scope, Seen,
-        build_model,
+        Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, ResolveEntity, Role, Scope, Seen,
+        legacy_build_model,
     },
     ui::{choices, chosen},
 };
@@ -75,7 +75,7 @@ pub struct DraftArgs {
     pub reversed: bool,
 }
 
-impl ModelStep for Draft {
+impl LegacyModelStep for Draft {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,
@@ -130,7 +130,7 @@ impl Operation for Draft {
     }
 
     fn run(step: &str, part: &mut Build, args: &DraftArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The faces and the neutral plane, picked, the angle and the pull
@@ -249,7 +249,7 @@ pub struct LipArgs {
     pub height: f64,
 }
 
-impl ModelStep for Lip {
+impl LegacyModelStep for Lip {
     fn build(
         model: &mut NamedModel<Design>,
         _: &mut BuildReader,
@@ -292,7 +292,7 @@ impl Operation for Lip {
     }
 
     fn run(step: &str, part: &mut Build, args: &LipArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The rim and its edges, picked, the width and the height.
@@ -350,7 +350,7 @@ pub struct GrooveArgs {
     pub clearance: f64,
 }
 
-impl ModelStep for Groove {
+impl LegacyModelStep for Groove {
     fn build(
         model: &mut NamedModel<Design>,
         _: &mut BuildReader,
@@ -396,7 +396,7 @@ impl Operation for Groove {
     }
 
     fn run(step: &str, part: &mut Build, args: &GrooveArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The rim and its edges, picked, the lip's width and height, and the
@@ -501,7 +501,7 @@ pub struct RibArgs {
     pub flipped: bool,
 }
 
-impl ModelStep for Rib {
+impl LegacyModelStep for Rib {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,
@@ -587,7 +587,7 @@ impl Operation for Rib {
     }
 
     fn run(step: &str, part: &mut Build, args: &RibArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The sketch and the solid, picked, the thickness and its side, which

@@ -14,7 +14,7 @@ use geop_ops::operation::Input;
 use geop_ops::parameters::expressions;
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Scope, Seen, build_model},
+    operation::{Build, BuildReader, EntityRef, Lookup, LegacyModelStep, Role, Scope, Seen, legacy_build_model},
     parameters::Formula,
     ui::{EditForm, formula_number},
 };
@@ -102,7 +102,7 @@ impl FilletArgs {
     }
 }
 
-impl ModelStep for Fillet {
+impl LegacyModelStep for Fillet {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,
@@ -142,7 +142,7 @@ impl Operation for Fillet {
     }
 
     fn run(step: &str, part: &mut Build, args: &FilletArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     fn presentation(
@@ -286,7 +286,7 @@ impl ChamferArgs {
     }
 }
 
-impl ModelStep for Chamfer {
+impl LegacyModelStep for Chamfer {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,
@@ -330,7 +330,7 @@ impl Operation for Chamfer {
     }
 
     fn run(step: &str, part: &mut Build, args: &ChamferArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The edges, picked, the distance, and whether the second face gets a

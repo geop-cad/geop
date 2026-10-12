@@ -15,7 +15,7 @@ use geop_core_sketch::{CurveKind, ProfileLoop, Shape};
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue, PlacedSketch,
     model::model_or_empty,
-    operation::{Build, BuildReader, EntityRef, Input, Lookup, ModelStep, Scope, Seen},
+    operation::{Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, Scope, Seen},
     parameters::{Formula, expressions},
     ui::{formula_number, sketch_field},
 };
@@ -100,7 +100,7 @@ impl SheetStep for BaseFlange {
     }
 }
 
-impl ModelStep for BaseFlange {
+impl LegacyModelStep for BaseFlange {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,

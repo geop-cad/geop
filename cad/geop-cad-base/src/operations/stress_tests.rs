@@ -237,7 +237,7 @@ fn hemisphere() -> Program {
 
 /// The one solid `program` builds, and its name.
 fn build(program: &Program) -> (NamedModel<Design>, String) {
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     let solids = part.solid_names();
     let [solid] = solids.as_slice() else {
         panic!("not one solid: {solids:?}");

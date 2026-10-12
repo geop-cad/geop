@@ -39,7 +39,7 @@ fn subd_body_united_with_a_box() {
             op: BooleanOp::Union,
         },
     );
-    let part = program.build_model().unwrap_or_else(|e| panic!("{e}"));
+    let part = program.legacy_build_model().unwrap_or_else(|e| panic!("{e}"));
     assert_valid(&part);
     assert_eq!(part.solid_names().len(), 1, "{:?}", part.solid_names());
 }

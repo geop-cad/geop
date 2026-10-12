@@ -5,7 +5,7 @@
 //! [`skin`] builds the same grid through a different section at every
 //! station, as a loft does (see [`crate::loft`]). The grid itself — its
 //! vertices, edges, walls and caps, and their names — is built by
-//! [`geop_ops::operation::skin`], as a blend's tool's is; what is the
+//! [`crate::skin`], as a blend's tool's is; what is the
 //! sweep's own is where its sections are: placed by the path's frames.
 //!
 //! A sweep is a grid: every profile joint sits at every station of the path
@@ -46,12 +46,12 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::build::{BodySpec, BuiltBody, CoedgeOn};
-use geop_ops::{
-    BodyNames, NamedModel, Namer,
-    operation::skin::{self, Strip, StripCap, StripGeometry},
-};
+use geop_ops::{BodyNames, NamedModel, Namer};
 
-use crate::common::Profile;
+use crate::{
+    common::Profile,
+    skin::{self, Strip, StripCap, StripGeometry},
+};
 
 /// Where the profile's plane is at one station of a path: a profile point
 /// `(x, y)` lies at `origin + x e1 + y e2`.

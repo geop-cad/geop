@@ -18,7 +18,7 @@ use geop_core_topology::Body;
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue, PlacedSketch,
     model::model_or_empty,
-    operation::{Build, BuildReader, EntityRef, Input, Lookup, ModelStep, Role, Seen},
+    operation::{Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, Role, Seen},
     output::sheet::Sheet as Paper,
 };
 use serde::{Deserialize, Serialize};
@@ -119,7 +119,7 @@ impl SheetStep for FlatPattern {
     }
 }
 
-impl ModelStep for FlatPattern {
+impl LegacyModelStep for FlatPattern {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,

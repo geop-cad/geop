@@ -73,7 +73,7 @@ fn sweep_along_a_3d_spline() {
         0.2,
         spline(&[[0.0, 0.0, 0.0], [2.0, 0.5, 0.5], [4.0, -0.5, 1.5], end]),
     );
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().faces.len(), 4 + 2);
     let model = part.topology();
@@ -99,7 +99,7 @@ fn a_path_of_two_chains_is_refused() {
         let b = route.add_point(v([x + 1.0, 0.0, 0.0]));
         route.add_line(a, b);
     }
-    let error = piped(0.2, route).build_model().expect_err("refused");
+    let error = piped(0.2, route).legacy_build_model().expect_err("refused");
     assert!(error.root_message().contains("2 chains"), "{error:?}");
 }
 
@@ -108,7 +108,7 @@ fn a_path_of_two_chains_is_refused() {
 #[test]
 fn a_bend_tighter_than_the_pipe_is_refused() {
     let route = crate::examples::pipe_route(0.25);
-    let error = piped(0.3, route).build_model().expect_err("refused");
+    let error = piped(0.3, route).legacy_build_model().expect_err("refused");
     assert!(error.root_message().contains("bend"), "{error:?}");
 }
 
@@ -145,7 +145,7 @@ fn sweeps_along_paths_of_varied_curvature() {
     ];
     for (i, points) in splines.iter().enumerate() {
         for r in [0.05, 0.15, 0.3] {
-            let built = piped(r, spline(points)).build_model();
+            let built = piped(r, spline(points)).legacy_build_model();
             match built {
                 Ok(part) => assert_valid(&part),
                 Err(e) => panic!("spline {i}, radius {r}: {e:?}"),
@@ -155,7 +155,7 @@ fn sweeps_along_paths_of_varied_curvature() {
     for bend in [0.4, 1.0, 1.5] {
         let route = crate::examples::pipe_route(bend);
         for r in [0.1, 0.3, 0.39, 0.5] {
-            match piped(r, route.clone()).build_model() {
+            match piped(r, route.clone()).legacy_build_model() {
                 Ok(part) => assert_valid(&part),
                 Err(e) if r >= bend && e.root_message().contains("bend") => {}
                 Err(e) => panic!("bend {bend}, radius {r}: {e:?}"),

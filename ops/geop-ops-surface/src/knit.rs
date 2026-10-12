@@ -41,7 +41,7 @@ use geop_core_topology::{
 };
 use geop_ops::{
     BodyNames, Design, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, EntityRef, Input, ModelStep, Role, build_model},
+    operation::{Build, BuildReader, EntityRef, Input, LegacyModelStep, Role, legacy_build_model},
 };
 use serde::{Deserialize, Serialize};
 
@@ -65,7 +65,7 @@ pub struct KnitArgs {
     pub solid: bool,
 }
 
-impl ModelStep for Knit {
+impl LegacyModelStep for Knit {
     fn build(
         model: &mut NamedModel<Design>,
         _: &mut BuildReader,
@@ -110,7 +110,7 @@ impl Operation for Knit {
     }
 
     fn run(step: &str, part: &mut Build, args: &KnitArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The sheets, picked by a face of each, and whether they must close.

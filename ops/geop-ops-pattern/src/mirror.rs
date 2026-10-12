@@ -12,7 +12,7 @@ use geop_core_program::{
 use geop_ops::operation::Input;
 use geop_ops::{
     Design, NamedModel, ParamValue,
-    operation::{Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Seen},
+    operation::{Aspects, Build, BuildReader, EntityRef, Lookup, LegacyModelStep, Role, Seen},
     origin_plane,
 };
 use serde::{Deserialize, Serialize};
@@ -73,7 +73,7 @@ impl Pattern for MirrorArgs {
     }
 }
 
-impl ModelStep for Mirror {
+impl LegacyModelStep for Mirror {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,

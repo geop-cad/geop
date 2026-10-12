@@ -43,7 +43,7 @@ fn symmetric_extrude_is_centered_on_the_sketch_plane() {
     let mut program = Program::new();
     program.push("square", sketch(origin_plane(FrameAxis::Z), s));
     program.push("slab", extrude("square", 1.0, true));
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     for v in part.topology().vertices.values() {
         assert!(
@@ -75,7 +75,7 @@ fn extrude_slot_plate_with_hole() {
     let mut program = Program::new();
     program.push("slot", sketch(origin_plane(FrameAxis::Z), s));
     program.push("plate", extrude("slot", 0.5, false));
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     // 2 caps + 6 outer walls (the half circles are split in quarters) + 4
     // hole walls.
@@ -115,7 +115,7 @@ fn boss_on_block_top_face() {
             op: BooleanOp::Union,
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 1, "the boss joined the block");
     // The boss sits on top of the block, not below the sketch plane.
@@ -150,7 +150,7 @@ fn revolve_half_disc_is_sphere() {
             output: Output::Solid(Combine::NewBody),
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     // The half circle is split into two quarters.
     assert_eq!(part.topology().faces.len(), 8);
@@ -180,7 +180,7 @@ fn revolve_across_axis_fails() {
             output: Output::Solid(Combine::NewBody),
         },
     );
-    assert!(program.build_model().is_err());
+    assert!(program.legacy_build_model().is_err());
 }
 
 /// Revolves `s`, sketched on the origin's zx plane, around `axis`.
@@ -199,7 +199,7 @@ fn revolved_on_zx(
             output: Output::Solid(Combine::NewBody),
         },
     );
-    program.build_model()
+    program.legacy_build_model()
 }
 
 /// A square clear of an axis from outside the sketch — the origin's z axis,
@@ -272,7 +272,7 @@ fn extrude_of_non_sketch_fails() {
     program.push("square", sketch(origin_plane(FrameAxis::Z), s));
     program.push("slab", extrude("square", 1.0, false));
     program.push("again", extrude("extrude(slab)", 1.0, false));
-    assert!(program.build_model().is_err());
+    assert!(program.legacy_build_model().is_err());
 }
 
 /// The boss again, joined to the block by its own extrude: the result is
@@ -306,7 +306,7 @@ fn extrude_combines_with_its_target() {
             ..extrude("boss_sketch", 0.4, false)
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 1);
     assert!(part.solid_id("extrude(boss)").is_ok());
@@ -351,7 +351,7 @@ fn revolved_rectangle(
             },
         },
     );
-    program.build_model()
+    program.legacy_build_model()
 }
 
 /// Any angle up to a full turn, either way, symmetric or each side its
@@ -403,7 +403,7 @@ fn revolve_with_a_hole() {
             output: Output::Solid(Combine::NewBody),
         },
     );
-    let quarter = program.build_model().unwrap();
+    let quarter = program.legacy_build_model().unwrap();
     assert_valid(&quarter);
     assert_eq!(quarter.topology().faces.len(), 4 + 4 + 2);
 }
@@ -417,7 +417,7 @@ fn a_sketch_of_two_areas_is_refused() {
     let mut program = Program::new();
     program.push("squares", sketch(origin_plane(FrameAxis::Z), s));
     program.push("slabs", extrude("squares", 1.0, false));
-    let Err(error) = program.build_model() else {
+    let Err(error) = program.legacy_build_model() else {
         panic!("extruded");
     };
     assert!(error.root_message().contains("separate areas"), "{error:?}");
@@ -430,7 +430,7 @@ fn on_unit_square(step: ExtrudeArgs) -> geop_core_math::geop_error::GeopResult<N
     let mut program = Program::new();
     program.push("square", sketch(origin_plane(FrameAxis::Z), s));
     program.push("e", step);
-    program.build_model()
+    program.legacy_build_model()
 }
 
 /// Each side its own length: from one below the plane to the other above.
@@ -494,7 +494,7 @@ fn sweep_a_line_as_a_face() {
             output: Output::Faces { up_to: None },
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert!(part.topology().solids.is_empty());
     assert!(part.face_id(&format!("extrude(wall,slant,{line})")).is_ok());
     assert_eq!(part.sheet_face_names().len(), 1 + 4);
@@ -532,7 +532,7 @@ fn on_block(
     );
     program.push("post_sketch", sketch(origin_plane(FrameAxis::Z), post));
     program.program.steps.extend(steps);
-    program.build_model()
+    program.legacy_build_model()
 }
 
 /// An extrude going up to the next face of a target: the post sketched
@@ -645,7 +645,7 @@ fn turned_up_to_walls(
             output: Output::Solid(join(target)),
         },
     );
-    program.build_model()
+    program.legacy_build_model()
 }
 
 /// A revolve going up to the next face: the square turns until it runs
@@ -774,7 +774,7 @@ fn extrude_up_to_next_from_a_face_of_the_target() {
             ..extrude("post_sketch", 1.0, false)
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["extrude(post)"]);
     // The post spans the gap, from the lower block's top to the upper one's
@@ -944,7 +944,7 @@ fn join_up_to_next_partly_under_a_wedge_goes_through_all() {
     let z_plane = origin_plane(FrameAxis::Z);
     program.push("post_sketch", sketch(z_plane, post));
     program.program.steps.extend(wedge_steps);
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["extrude(post)"]);
     // Past the wedge's top.

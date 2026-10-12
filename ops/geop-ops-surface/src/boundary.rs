@@ -53,8 +53,8 @@ use geop_core_topology::{
 use geop_ops::{
     BodyNames, Design, NamedModel, Namer, ParamValue,
     operation::{
-        Build, BuildReader, EntityRef, Input, Lookup, ModelStep, ResolveEntity, Role, Scope,
-        build_model,
+        Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, ResolveEntity, Role, Scope,
+        legacy_build_model,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -89,7 +89,7 @@ pub struct BoundarySurfaceArgs {
     pub tangent: Vec<EntityRef>,
 }
 
-impl ModelStep for BoundarySurface {
+impl LegacyModelStep for BoundarySurface {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,
@@ -131,7 +131,7 @@ impl Operation for BoundarySurface {
     }
 
     fn run(step: &str, part: &mut Build, args: &BoundarySurfaceArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The edges, picked, and those to be tangent along.

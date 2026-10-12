@@ -283,7 +283,7 @@ fn tapped_hole_carries_a_cosmetic_thread() {
     args.thread_length = Some(9.0);
     let mut program = plate(&[[20.0, 20.0]]);
     program.push("h", args);
-    let error = program.build_model().expect_err("refused");
+    let error = program.legacy_build_model().expect_err("refused");
     assert!(error.root_message().contains("only 8"), "{error}");
 }
 
@@ -408,7 +408,7 @@ fn hole_coming_out_through_a_curved_face() {
     );
     let top = "extrude(bar,d,c2)";
     // Measured on the same mesh, so its error on the round bottom cancels.
-    let bar = volume(&program.build_model().unwrap(), "extrude(bar)");
+    let bar = volume(&program.legacy_build_model().unwrap(), "extrude(bar)");
     // On the top, normal `+z`: sketch `x`, `y` are world `x`, `y`.
     program.push(
         "centres",
@@ -450,7 +450,7 @@ fn unsupported_holes_are_refused() {
     let refused = |program: Program, args: HoleArgs, says: &str| {
         let mut program = program;
         program.push("h", args);
-        let error = program.build_model().expect_err("refused");
+        let error = program.legacy_build_model().expect_err("refused");
         assert!(error.root_message().contains(says), "{error}");
     };
     let mut off = plate(&[[20.0, 20.0]]);
@@ -555,7 +555,7 @@ fn shaft_side(part: &NamedModel<S>) -> String {
 #[test]
 fn cosmetic_thread_on_a_shaft() {
     let program = shaft();
-    let side = shaft_side(&program.build_model().unwrap());
+    let side = shaft_side(&program.legacy_build_model().unwrap());
     let mut threaded = program.clone();
     threaded.push(
         "t",
@@ -602,7 +602,7 @@ fn cosmetic_thread_on_a_shaft() {
             modelled: false,
         },
     );
-    let error = wrong.build_model().expect_err("refused");
+    let error = wrong.legacy_build_model().expect_err("refused");
     assert!(error.root_message().contains("needs a shaft of"), "{error}");
 }
 
@@ -625,7 +625,7 @@ fn groove_per_turn(radius: f64, minor: f64, pitch: f64) -> f64 {
 #[ignore = "slow: a modelled thread's booleans take half a minute — run with `cargo test -- --ignored`"]
 fn modelled_thread_on_a_shaft() {
     let program = shaft();
-    let blank = program.build_model().unwrap();
+    let blank = program.legacy_build_model().unwrap();
     let side = shaft_side(&blank);
     let mut threaded = program;
     threaded.push(
@@ -675,7 +675,7 @@ fn modelled_thread_in_a_tapped_hole() {
             modelled: true,
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert_valid(&part);
     let before = plate_volume() - cylinder(5.0, PLATE[2]);
     let removed = before - volume(&part, "thread(t)");
@@ -729,7 +729,7 @@ fn every_iso_size_and_kind() {
                 );
                 program.push("h", hole(kind, iso(size.name, Fit::Normal), end.clone()));
                 let label = format!("{} {kind:?} {end:?}", size.name);
-                match program.build_model() {
+                match program.legacy_build_model() {
                     Err(e) => failures.push(format!("{label}: {e}")),
                     Ok(part) => {
                         if let Err(report) = check_valid(&part) {

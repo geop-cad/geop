@@ -391,7 +391,7 @@ fn examples_load_by_name() {
 #[test]
 fn seeking_back_before_a_fillet() {
     let (mut editor, _) = editor();
-    let before = editor.program().build_model().unwrap();
+    let before = editor.program().legacy_build_model().unwrap();
     let rim = before
         .topology()
         .edges
@@ -1052,7 +1052,7 @@ fn a_3d_sketch_is_drawn_and_swept_along() {
         (sweep.profile.as_str(), sweep.path.as_ref()),
         ("section", Some(&EntityRef::sketch3d(route.id.as_str())))
     );
-    let part = editor.program().build_model().unwrap();
+    let part = editor.program().legacy_build_model().unwrap();
     assert_eq!(part.solid_names().len(), 1);
     let params = geop_core_topology::validation::ValidationParameters::default();
     geop_core_topology::validation::validate(&params, part.topology()).unwrap();
@@ -2478,7 +2478,7 @@ fn variable_fillet_set_up_in_the_dialog() {
     assert_eq!(args.end_radius, Some(0.2.into()), "{args:?}");
     assert_eq!(args.vertex_radii.len(), 1, "{args:?}");
     assert_eq!(args.vertex_radii[0].radius, 0.15, "{args:?}");
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     assert!(
         part.solid_names().iter().any(|s| s.starts_with("fillet(")),
         "{:?}",
@@ -2510,7 +2510,7 @@ fn fillet_rounds_a_corner_picked_edge_by_edge() {
     let program = editor.program();
     let args: geop_ops_fillet::FilletArgs = args(program.program.steps.last().unwrap());
     assert_eq!(args.edges.len(), 3, "{args:?}");
-    let part = program.build_model().unwrap();
+    let part = program.legacy_build_model().unwrap();
     let corners: Vec<&str> = part
         .topology()
         .faces
@@ -2735,7 +2735,7 @@ fn sketch_tools_draw_profiles_that_extrude() {
         });
         editor.handle(dialog("distance", Value::Number(0.3)));
         handled(editor, Command::Commit);
-        let part = editor.program().build_model().unwrap();
+        let part = editor.program().legacy_build_model().unwrap();
         if let Err(e) = super::testing::check_valid(&part) {
             panic!("{e}");
         }
@@ -3600,7 +3600,7 @@ fn a_3d_sketch_point_and_line_are_picked() {
             }
         ]
     );
-    let part = editor.program().build_model().unwrap();
+    let part = editor.program().legacy_build_model().unwrap();
     part.check_names().unwrap();
 }
 
@@ -3649,7 +3649,7 @@ fn a_boundary_surface_spans_sketch_lines() {
             }
         ]
     );
-    let part = editor.program().build_model().unwrap();
+    let part = editor.program().legacy_build_model().unwrap();
     assert!(part.face_id("boundary(boundary_surface1)").is_ok());
     let params = geop_core_topology::validation::ValidationParameters::default();
     geop_core_topology::validation::validate(&params, part.topology()).unwrap();
@@ -3693,7 +3693,7 @@ fn a_sweep_takes_a_3d_sketch_as_its_rail() {
     let args: geop_ops_extrude_revolve::SweepArgs =
         args(editor.program().program.steps.last().unwrap());
     assert_eq!(args.rails, [EntityRef::sketch3d("flare")]);
-    let part = editor.program().build_model().unwrap();
+    let part = editor.program().legacy_build_model().unwrap();
     assert_eq!(part.solid_names().len(), 1);
     let params = geop_core_topology::validation::ValidationParameters::default();
     geop_core_topology::validation::validate(&params, part.topology()).unwrap();
@@ -3764,7 +3764,7 @@ fn a_uv_surface_picks_its_curves_by_clicks() {
     let scene = update.scene.expect("the scene is sent anew");
     let faces: Vec<&str> = scene.part.faces.iter().map(|f| f.name.as_str()).collect();
     assert!(faces.contains(&"network(uv_surface1)"), "{faces:?}");
-    let part = editor.program().build_model().unwrap();
+    let part = editor.program().legacy_build_model().unwrap();
     let params = geop_core_topology::validation::ValidationParameters::default();
     geop_core_topology::validation::validate(&params, part.topology()).unwrap();
     // Its corner where the first u curve picked meets the first v curve.

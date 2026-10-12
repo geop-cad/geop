@@ -15,7 +15,7 @@ use geop_core_program::{
 use geop_core_topology::FaceId;
 use geop_ops::{
     Design, EntityRef, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, Input, Lookup, ModelStep, Role, Scope, Seen, build_model},
+    operation::{Build, BuildReader, Input, Lookup, LegacyModelStep, Role, Scope, Seen, legacy_build_model},
 };
 use geop_ops_booleans::{
     extent::{bounds, face_hull, spread_along},
@@ -57,7 +57,7 @@ pub struct ProjectCurveArgs {
     pub face: String,
 }
 
-impl ModelStep for ProjectCurve {
+impl LegacyModelStep for ProjectCurve {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,
@@ -109,7 +109,7 @@ impl Operation for ProjectCurve {
     }
 
     fn run(step: &str, part: &mut Build, args: &ProjectCurveArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The sketch and the face, picked.

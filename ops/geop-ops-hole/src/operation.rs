@@ -24,8 +24,8 @@ use geop_core_topology::SolidId;
 use geop_ops::{
     CosmeticThread, Design, NamedModel, Namer, ParamValue, Threads, ToolReach, draw_threads, model,
     operation::{
-        Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, ResolveEntity, Role, Scope,
-        Seen, build_model, frame_along,
+        Aspects, Build, BuildReader, EntityRef, Lookup, LegacyModelStep, ResolveEntity, Role, Scope,
+        Seen, legacy_build_model, frame_along,
     },
     parameters::Formula,
     threads,
@@ -344,7 +344,7 @@ fn sites<S: Scalar>(
     Ok(Sites { target, holes })
 }
 
-impl ModelStep for Hole {
+impl LegacyModelStep for Hole {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,
@@ -483,7 +483,7 @@ impl Operation for Hole {
             let length = args.thread_length.or(args.end.end(&mut seen)?.length());
             Ok::<_, GeopError>((step.to_string(), args.clone(), holes, length))
         });
-        build_model::<Self>(part, step, args)?;
+        legacy_build_model::<Self>(part, step, args)?;
         match planned {
             Some(planned) => {
                 part.revise_or_start(&threads(), &planned?, tap)?;
@@ -772,7 +772,7 @@ impl ThreadArgs {
     }
 }
 
-impl ModelStep for Thread {
+impl LegacyModelStep for Thread {
     /// Cuts the thread's profile into the solid: a modelled thread.
     fn build(
         model: &mut NamedModel<Design>,
@@ -856,7 +856,7 @@ impl Operation for Thread {
     /// threads.
     fn run(step: &str, part: &mut Build, args: &ThreadArgs) -> GeopResult<()> {
         if args.modelled {
-            build_model::<Self>(part, step, args)
+            legacy_build_model::<Self>(part, step, args)
         } else {
             part.revise_or_start(&threads(), &(step.to_string(), args.clone()), record)?;
             draw_threads(part, step)

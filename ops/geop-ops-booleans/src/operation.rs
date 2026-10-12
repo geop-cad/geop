@@ -15,7 +15,7 @@ use geop_core_topology::{Body, SolidId};
 use geop_ops::operation::Input;
 use geop_ops::{
     Design, FeatureTool, NamedModel, Namer, ParamValue, ToolReach,
-    operation::{Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Seen, build_model},
+    operation::{Build, BuildReader, EntityRef, Lookup, LegacyModelStep, Role, Seen, legacy_build_model},
 };
 use serde::{Deserialize, Serialize};
 
@@ -49,7 +49,7 @@ pub struct BooleanArgs {
     pub op: BooleanOp,
 }
 
-impl ModelStep for Boolean {
+impl LegacyModelStep for Boolean {
     fn build(
         model: &mut NamedModel<Design>,
         _: &mut BuildReader,
@@ -96,7 +96,7 @@ impl Operation for Boolean {
     }
 
     fn run(step: &str, part: &mut Build, args: &BooleanArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The two solids, picked, and how to combine them.
@@ -472,7 +472,7 @@ pub struct SplitArgs {
     pub face: String,
 }
 
-impl ModelStep for Split {
+impl LegacyModelStep for Split {
     fn build(
         model: &mut NamedModel<Design>,
         _: &mut BuildReader,
@@ -519,7 +519,7 @@ impl Operation for Split {
     }
 
     fn run(step: &str, part: &mut Build, args: &SplitArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The solid and the face, picked.

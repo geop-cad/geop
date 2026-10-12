@@ -1238,7 +1238,7 @@ impl Operation for Drawing {
         editing.handle(
             args,
             event,
-            |args, session, selection| form(context, args, session, selection),
+            |args, e| form(context, args, &e.session, &e.selection),
             |edit, event| canvas(context.before, edit, event),
         )
     }

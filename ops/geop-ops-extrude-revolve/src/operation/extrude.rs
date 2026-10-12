@@ -18,7 +18,7 @@ use geop_core_topology::build::BuiltBody;
 use geop_ops::operation::Input;
 use geop_ops::{
     Design, EntityRef, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, Lookup, ModelStep, Scope, Seen, build_model},
+    operation::{Build, BuildReader, Lookup, LegacyModelStep, Scope, Seen, legacy_build_model},
     parameters::Formula,
     ui::{formula_number, sketch_field},
 };
@@ -125,7 +125,7 @@ impl Operation for Extrude {
     }
 
     fn run(step: &str, part: &mut Build, args: &ExtrudeArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The sketch, picked; how far, each length typed or dragged as a
@@ -186,7 +186,7 @@ impl Operation for Extrude {
     }
 }
 
-impl ModelStep for Extrude {
+impl LegacyModelStep for Extrude {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,

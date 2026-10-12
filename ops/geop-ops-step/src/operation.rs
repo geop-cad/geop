@@ -14,7 +14,7 @@ use geop_core_program::{
 use geop_core_topology::validation::{ValidationParameters, validate_fast};
 use geop_ops::{
     BodyNames, Design, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, Input, ModelStep, build_model},
+    operation::{Build, BuildReader, Input, LegacyModelStep, legacy_build_model},
     placed::{library, library_files},
     ui::{Edit, EditForm, FormState, Tone},
 };
@@ -149,7 +149,7 @@ fn read(reader: &mut BuildReader, (step, args): &(String, ImportStepArgs)) -> Ge
     Ok(Imported(bodies))
 }
 
-impl ModelStep for ImportStep {
+impl LegacyModelStep for ImportStep {
     /// Adds the bodies the step read (see [`imported`]).
     fn build(
         model: &mut NamedModel<Design>,
@@ -227,7 +227,7 @@ impl Operation for ImportStep {
     /// Reads the file, then adds its bodies.
     fn run(step: &str, part: &mut Build, args: &ImportStepArgs) -> GeopResult<()> {
         part.define_target(&imported(step), &(step.to_string(), args.clone()), read)?;
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     fn presentation(
@@ -244,6 +244,6 @@ impl Operation for ImportStep {
         editing: &FormState<()>,
         event: Event<Design>,
     ) -> (ImportStepArgs, FormState<()>) {
-        editing.handle(args, event, |args, _, _| form(context, args), |_, _| {})
+        editing.handle(args, event, |args, _| form(context, args), |_, _| {})
     }
 }

@@ -250,7 +250,7 @@ fn placed_parts_take_the_parameters_given() {
 #[test]
 fn the_parametric_plate_is_a_plate_with_a_hole() {
     let built = examples::parametric_plate().built().unwrap();
-    let part = examples::parametric_plate().build_model().unwrap();
+    let part = examples::parametric_plate().legacy_build_model().unwrap();
     let points: Vec<[f64; 3]> = part
         .topology()
         .vertices
@@ -304,7 +304,7 @@ fn wide_plate_with_an_m6_hole() {
         panic!("screw is a table")
     };
     *selected = "M6".into();
-    plate.build_model().unwrap();
+    plate.legacy_build_model().unwrap();
 }
 
 /// Placing the plate, its parameters are offered as what they are: its
@@ -988,7 +988,7 @@ mod tools {
             "body",
             extrusion("outline", Extents::blind(height), Combine::NewBody),
         );
-        let part = program.build_model().unwrap();
+        let part = program.legacy_build_model().unwrap();
         if let Err(e) = check_valid(&part) {
             panic!("{e}");
         }
@@ -1154,7 +1154,7 @@ mod tools {
             "pad",
             extrusion("pad_sketch", Extents::blind(0.2), Combine::NewBody),
         );
-        let part = program.build_model().unwrap();
+        let part = program.legacy_build_model().unwrap();
         if let Err(e) = check_valid(&part) {
             panic!("{e}");
         }

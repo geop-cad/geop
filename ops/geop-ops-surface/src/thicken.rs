@@ -13,7 +13,7 @@ use geop_core_program::{
 use geop_core_topology::Body;
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue,
-    operation::{Build, BuildReader, EntityRef, Input, Lookup, ModelStep, Role, Seen, build_model},
+    operation::{Build, BuildReader, EntityRef, Input, Lookup, LegacyModelStep, Role, Seen, legacy_build_model},
 };
 use geop_ops_shell::shell::{offset_faces, thicken};
 use serde::{Deserialize, Serialize};
@@ -78,7 +78,7 @@ pub struct ThickenArgs {
     pub side: ThickenSide,
 }
 
-impl ModelStep for Thicken {
+impl LegacyModelStep for Thicken {
     fn build(
         model: &mut NamedModel<Design>,
         _: &mut BuildReader,
@@ -138,7 +138,7 @@ impl Operation for Thicken {
     }
 
     fn run(step: &str, part: &mut Build, args: &ThickenArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The sheet, picked, the thickness and the side.

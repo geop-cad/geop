@@ -22,7 +22,7 @@ use geop_core_topology::build::BuiltBody;
 use geop_ops::{
     Design, NamedModel, Namer, ParamValue, PlacedSketch,
     operation::{
-        Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Scope, Seen, build_model,
+        Aspects, Build, BuildReader, EntityRef, Lookup, LegacyModelStep, Role, Scope, Seen, legacy_build_model,
     },
     ui::{formula_number, sketch_field},
 };
@@ -216,7 +216,7 @@ impl Operation for Revolve {
     }
 
     fn run(step: &str, part: &mut Build, args: &RevolveArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+        legacy_build_model::<Self>(part, step, args)
     }
 
     /// The sketch and the axis, picked; how far; whether a face; and how to
@@ -281,7 +281,7 @@ impl Operation for Revolve {
     }
 }
 
-impl ModelStep for Revolve {
+impl LegacyModelStep for Revolve {
     fn build(
         model: &mut NamedModel<Design>,
         reader: &mut BuildReader,
