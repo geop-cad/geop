@@ -21,7 +21,7 @@ use std::{collections::HashMap, rc::Rc};
 
 use geop_core_math::{
     geop_error::GeopResult,
-    polygon::loops_contain,
+    polygon::polygons_contain,
     primitives::{CoordinateSystem, DatumComponent, DatumKind, FrameAxis, Motion, Pose, Ray},
     scalars::{Field, Ring, Scalar},
     vector::{Vector2, Vector3},
@@ -1114,7 +1114,10 @@ impl PartView {
             .filter_map(|sketch| {
                 let (t, p) = pointer.ray.intersect_uv_plane(&sketch.plane)?;
                 let reach = pointer.reach_at(1.0, t);
-                let in_region = sketch.regions.iter().any(|loops| loops_contain(loops, &p));
+                let in_region = sketch
+                    .regions
+                    .iter()
+                    .any(|loops| polygons_contain(loops, &p));
                 let on_curve = || {
                     sketch.curves.iter().any(|c| {
                         c.polyline.windows(2).any(|w| {

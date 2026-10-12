@@ -28,7 +28,7 @@ use geop_core_math::{
 };
 
 use crate::{
-    plain::{P2, add, dist, reflect, rotate, scale, sub, unit, xy},
+    plain::{P2, add, distance, reflect, rotate, scale, sub, unit, xy},
     sketch::{Constraint, ConstraintId, Curve, CurveId, CurveKind, PointId, Sketch},
 };
 
@@ -289,8 +289,8 @@ impl<S: Scalar> Sketch<S> {
                     .iter()
                     .copied()
                     .filter(|&p| class[&p] != class[&center])
-                    .max_by(|&p, &q| dist(xy(self, p), c).total_cmp(&dist(xy(self, q), c)))
-                    .filter(|&p| dist(xy(self, p), c) > 0.0)
+                    .max_by(|&p, &q| distance(xy(self, p), c).total_cmp(&distance(xy(self, q), c)))
+                    .filter(|&p| distance(xy(self, p), c) > 0.0)
                     .ok_or_else(|| {
                         GeopError::new(format!(
                             "every point copied is at the center {center}: turning moves nothing"
@@ -572,7 +572,7 @@ mod tests {
     }
 
     fn close(a: P2, b: P2) -> bool {
-        dist(a, b) < 1e-7
+        distance(a, b) < 1e-7
     }
 
     /// A unit square at `(x, y)`, its corner fixed and its sides

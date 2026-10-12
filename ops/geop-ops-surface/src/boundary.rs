@@ -44,6 +44,7 @@ use geop_core_math::{
 use geop_core_topology::{
     Curve3, Sense,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
+    loop_sampling::sample_pcurves_to_polygon,
 };
 use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
 use geop_ops::{
@@ -57,6 +58,10 @@ use geop_ops::{
 use serde::{Deserialize, Serialize};
 
 use crate::SheetSpec;
+
+/// Samples per side when telling which way the loop runs round from its
+/// area: only the sign is used.
+const AREA_SAMPLES: usize = 8;
 
 /// Spans a face standing on its own between the curves `edges` — two of
 /// them ruled, a closed loop of them filled, see the module docs — for the
@@ -611,15 +616,7 @@ fn flat_face<S: Scalar>(sides: &[Side<S>], plane: &Plane<S>) -> GeopResult<FaceS
             NurbCurve::try_new(curve.degree, control_points, curve.knot_vector.clone())
         })
         .collect::<GeopResult<Vec<NurbCurve2D<S>>>>()?;
-    let mut polygon = Vec::new();
-    for curve in &local {
-        let (t0, t1) = curve.domain();
-        for i in 0..8 {
-            let fraction = S::from_ratio(i, 8)?;
-            polygon.push(curve.evaluate(S::interpolate(t0, t1, fraction))?);
-        }
-    }
-    let area = polygon_signed_area(&polygon);
+    let area = polygon_signed_area(&sample_pcurves_to_polygon(&local, AREA_SAMPLES)?);
     let swapped = if area.definitely_greater(S::ZERO) {
         false
     } else if area.definitely_less(S::ZERO) {

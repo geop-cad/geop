@@ -7,6 +7,8 @@
 //! - [`solve_pivoted`]: a square system with several right-hand sides, by
 //!   Gaussian elimination with partial pivoting on midpoints.
 //! - [`solve_banded`]: a banded system that needs no pivoting.
+//! - [`solve_symmetric2`]: a symmetric 2x2 system — a Newton step on a
+//!   surface's two parameters — by Cramer's rule.
 //! - [`cholesky`] and [`solve_cholesky`]: a symmetric positive
 //!   semi-definite one, rows that say nothing new left out.
 //! - [`shortest_solution`]: the shortest step meeting a few linear
@@ -98,6 +100,20 @@ pub fn solve_linear_system<S: Scalar, const N: usize>(
         })?;
     }
     Ok(x)
+}
+
+/// The solution `(x, y)` of the symmetric 2x2 system
+/// `[[a11, a12], [a12, a22]] (x, y) = (b1, b2)`, by Cramer's rule: an error
+/// where the determinant could be zero.
+pub fn solve_symmetric2<S: Scalar>(
+    (a11, a12, a22): (S, S, S),
+    (b1, b2): (S, S),
+) -> GeopResult<(S, S)> {
+    let det = a11.mul(a22).sub(a12.mul(a12));
+    Ok((
+        b1.mul(a22).sub(b2.mul(a12)).div(det)?,
+        a11.mul(b2).sub(a12.mul(b1)).div(det)?,
+    ))
 }
 
 /// Solves `a x = rhs` for the `n x n` matrix `a` and `C` right-hand sides

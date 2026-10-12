@@ -57,7 +57,7 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    polygon::{loops_contain, polygon_signed_area},
+    polygon::{polygon_signed_area, polygons_contain},
     scalars::Scalar,
     solvers::{
         iterate::{Repeat, Step, iterate},
@@ -70,6 +70,7 @@ use geop_core_math::{
 use geop_core_topology::{
     Body, Curve2, Curve3, FaceId, Sense, ShellId, SolidId,
     build::{BodySpec, BuiltBody, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
+    loop_sampling::sample_pcurves_to_polygon,
 };
 use geop_ops::{BodyNames, NamedModel, Namer};
 
@@ -933,11 +934,8 @@ impl<'a, S: Scalar> Hollow<'a, S> {
         let mut outers: Vec<(Vec<usize>, Vec<Vector2<S>>, S)> = Vec::new();
         let mut holes: Vec<(Vec<usize>, Vec<Vector2<S>>)> = Vec::new();
         for lp in loops {
-            let polygon = lp
-                .iter()
-                .map(|&i| sample(&coedges[i].0.pcurve))
-                .collect::<GeopResult<Vec<_>>>()?
-                .concat();
+            let polygon =
+                sample_pcurves_to_polygon(lp.iter().map(|&i| &coedges[i].0.pcurve), AREA_SAMPLES)?;
             let area = polygon_signed_area(&polygon);
             if area.definitely_greater(S::ZERO) {
                 outers.push((lp, polygon, area));
@@ -964,7 +962,7 @@ impl<'a, S: Scalar> Hollow<'a, S> {
         for (lp, polygon) in &holes {
             let mut owner: Option<usize> = None;
             for (i, (_, outer, area)) in outers.iter().enumerate() {
-                if loops_contain(std::slice::from_ref(outer), &polygon[0])
+                if polygons_contain(std::slice::from_ref(outer), &polygon[0])
                     && owner.is_none_or(|o| area.definitely_less(outers[o].2))
                 {
                     owner = Some(i);
@@ -982,17 +980,6 @@ impl<'a, S: Scalar> Hollow<'a, S> {
         }
         Ok(faces)
     }
-}
-
-/// Points along `pcurve`, its end left out: the next coedge starts there.
-fn sample<S: Scalar>(pcurve: &Curve2<S>) -> GeopResult<Vec<Vector2<S>>> {
-    let (t0, t1) = pcurve.domain();
-    (0..AREA_SAMPLES)
-        .map(|i| {
-            let fraction = S::from_ratio(i as i64, AREA_SAMPLES as i64)?;
-            pcurve.evaluate(S::interpolate(t0, t1, fraction))
-        })
-        .collect()
 }
 
 /// A curve shaped like `curve` from `start` to `end` — all the way round

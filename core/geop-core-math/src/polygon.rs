@@ -31,7 +31,7 @@ pub fn polygon_signed_area<S: Scalar>(poly: &[Vector2<S>]) -> S {
 /// and holes alike: an odd number of crossings of a ray from `p` along `+x`.
 /// Only crossings that definitely happen count, so a `p` whose ray could
 /// graze a corner is decided as if it did not.
-pub fn loops_contain<S: Scalar>(loops: &[Vec<Vector2<S>>], p: &Vector2<S>) -> bool {
+pub fn polygons_contain<S: Scalar>(loops: &[Vec<Vector2<S>>], p: &Vector2<S>) -> bool {
     let mut inside = false;
     for poly in loops {
         for (i, a) in poly.iter().enumerate() {

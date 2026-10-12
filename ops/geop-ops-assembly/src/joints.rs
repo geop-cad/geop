@@ -17,6 +17,7 @@
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
+    plain::{cross, dot, sub},
     primitives::Pose,
     scalars::{Field, Ring, Scalar, as_f64},
     vector::Vector3,
@@ -319,14 +320,9 @@ pub fn measure(a: &Connector<D>, b: &Connector<D>) -> [f64; 2] {
         f(&b.origin),
         f(&b.reference),
     );
-    let dot = |a: [f64; 3], b: [f64; 3]| (0..3).map(|k| a[k] * b[k]).sum::<f64>();
-    let ya = [
-        za[1] * ra[2] - za[2] * ra[1],
-        za[2] * ra[0] - za[0] * ra[2],
-        za[0] * ra[1] - za[1] * ra[0],
-    ];
+    let ya = cross(za, ra);
     let angle = dot(rb, ya).atan2(dot(rb, ra)).to_degrees();
-    let distance = dot([0, 1, 2].map(|k| ob[k] - oa[k]), za);
+    let distance = dot(sub(ob, oa), za);
     [angle, distance]
 }
 

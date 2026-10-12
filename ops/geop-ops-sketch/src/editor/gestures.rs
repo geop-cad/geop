@@ -322,7 +322,7 @@ impl Editing<'_> {
                 let CurveKind::Circle { center, .. } = next.curves[&curve].kind else {
                     return;
                 };
-                let r = dist(xy(&next, center), to);
+                let r = distance(xy(&next, center), to);
                 if let Some(c) = next.curves.get_mut(&curve)
                     && let CurveKind::Circle { radius, .. } = &mut c.kind
                 {

@@ -59,7 +59,7 @@ use geop_ops::{
 use crate::{
     AddSketchArgs, Constraint, CurveKind, Sketch,
     constraints::{self, ConstraintTool, Pick},
-    geometry::{P2, add, dist, loop_polyline, of, polyline, sub, xy},
+    geometry::{P2, add, distance, loop_polyline, of, polyline, sub, xy},
 };
 
 type SolveReport = geop_core_sketch::SolveReport<Design>;

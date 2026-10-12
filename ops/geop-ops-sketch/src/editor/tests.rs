@@ -313,7 +313,7 @@ fn drawing() -> Editor {
 }
 
 fn close(a: P2, b: P2) -> bool {
-    dist(a, b) < 1e-6
+    distance(a, b) < 1e-6
 }
 
 /// A new sketch has no plane, and starts by waiting for one to be picked;
@@ -615,7 +615,7 @@ fn lines_leave_tangent_arcs_tangentially() {
     let t = super::drawing::leaving_tangent(s, arc, start).unwrap();
     let d = sub(xy(s, end), xy(s, start));
     assert!(
-        crate::geometry::cross(t, d).abs() < 1e-6 * dist(xy(s, end), xy(s, start)),
+        crate::geometry::cross(t, d).abs() < 1e-6 * distance(xy(s, end), xy(s, start)),
         "{t:?} vs {d:?}"
     );
 }
@@ -769,7 +769,7 @@ fn dimensions_take_values_and_formulas() {
     let length = |e: &Editor| {
         let s = e.sketch();
         let ends: Vec<P2> = e.drawn_points().iter().map(|&p| xy(s, p)).collect();
-        dist(ends[0], ends[1])
+        distance(ends[0], ends[1])
     };
     assert!((length(&e) - 2.0).abs() < 1e-6);
     // Its value is where it was placed, with its dimension lines; it can
@@ -789,7 +789,7 @@ fn dimensions_take_values_and_formulas() {
     };
     // Placed off the line's middle, it stays there as the line grows.
     assert!(
-        dist(label_at(&e), add(middle(&e), placed)) < 1e-9,
+        distance(label_at(&e), add(middle(&e), placed)) < 1e-9,
         "{:?}",
         label_at(&e)
     );
@@ -804,7 +804,10 @@ fn dimensions_take_values_and_formulas() {
     let from = label_at(&e);
     e.drag(from, [from[0] + 0.5, from[1] + 0.3], false);
     let to = label_at(&e);
-    assert!(dist(to, [from[0] + 0.5, from[1] + 0.3]) < 1e-9, "{to:?}");
+    assert!(
+        distance(to, [from[0] + 0.5, from[1] + 0.3]) < 1e-9,
+        "{to:?}"
+    );
     assert!(
         (length(&e) - 2.0).abs() < 1e-6,
         "moving the value moves nothing"
@@ -1052,7 +1055,7 @@ fn angles_are_placed_and_dragged() {
     e.drag(from, [from[0] + 0.2, from[1] + 0.2], false);
     let after = e.args.labels[&id];
     assert!(
-        dist(sub(after, before), [0.2, 0.2]) < 1e-9,
+        distance(sub(after, before), [0.2, 0.2]) < 1e-9,
         "{before:?} -> {after:?}"
     );
 }
@@ -1092,7 +1095,7 @@ fn points_snap_to_intersections() {
         let p = *e.drawn_points().last().unwrap();
         assert_eq!(on(&e, p), 2, "{near:?}");
         assert!(
-            dist(xy(e.sketch(), p), at) < 1e-6,
+            distance(xy(e.sketch(), p), at) < 1e-6,
             "{:?}",
             xy(e.sketch(), p)
         );
@@ -1690,7 +1693,7 @@ fn circumscribed_polygons_touch_their_circle() {
     let corners: Vec<f64> = e
         .drawn_points()
         .iter()
-        .map(|&p| dist(xy(s, p), [1.0, 1.0]))
+        .map(|&p| distance(xy(s, p), [1.0, 1.0]))
         .filter(|&r| r > 0.1)
         .collect();
     let across_corners = 0.5 / (std::f64::consts::PI / 6.0).cos();
@@ -1730,7 +1733,7 @@ fn chamfers_bevel_corners() {
         })
         .expect("the bevel");
     assert!(
-        (dist(bevel.0, bevel.1) - 0.1 * 2f64.sqrt()).abs() < 1e-6,
+        (distance(bevel.0, bevel.1) - 0.1 * 2f64.sqrt()).abs() < 1e-6,
         "{bevel:?}"
     );
     e.sketch().enclose::<S>().unwrap();

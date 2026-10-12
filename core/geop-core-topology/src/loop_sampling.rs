@@ -1,4 +1,4 @@
-//! Sample a coedge loop's pcurves into a closed `(u, v)` polygon.
+//! Sample a loop's pcurves into a closed `(u, v)` polygon.
 //!
 //! Lives in `geop-core-topology` rather than `geop-ops-rasterize` (which
 //! also uses it, for triangulation) because `geop-core-topology`'s own edit
@@ -7,7 +7,7 @@
 
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector2};
 
-use crate::{CoedgeId, Model};
+use crate::{CoedgeId, Curve2, Model};
 
 /// Sample the pcurves of the loop anchored at `first` (in traversal order)
 /// into a closed `(u, v)` polygon, `n` samples per coedge (the last sample of
@@ -18,12 +18,26 @@ pub fn sample_loop_to_polygon<S: Scalar>(
     first: CoedgeId,
     n: usize,
 ) -> GeopResult<Vec<Vector2<S>>> {
+    sample_pcurves_to_polygon(
+        model
+            .iterate_loop_coedges(first)
+            .map(|coedge| &model.coedges[&coedge].pcurve),
+        n - 1,
+    )
+}
+
+/// Sample `pcurves`, a loop's in order, into a closed `(u, v)` polygon: `n`
+/// points evenly along each one's domain, its end left out, as the next
+/// one starts there.
+pub fn sample_pcurves_to_polygon<'a, S: Scalar>(
+    pcurves: impl IntoIterator<Item = &'a Curve2<S>>,
+    n: usize,
+) -> GeopResult<Vec<Vector2<S>>> {
     let mut poly = Vec::new();
-    for current in model.iterate_loop_coedges(first) {
-        let pcurve = &model.coedges[&current].pcurve;
+    for pcurve in pcurves {
         let (t0, t1) = pcurve.domain();
-        for i in 0..n - 1 {
-            let frac = S::from_ratio(i as i64, (n - 1) as i64)?;
+        for i in 0..n {
+            let frac = S::from_ratio(i as i64, n as i64)?;
             let t = t0.add(t1.sub(t0).mul(frac));
             poly.push(pcurve.evaluate(t)?);
         }

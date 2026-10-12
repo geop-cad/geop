@@ -10,12 +10,7 @@ use geop_core_math::{scalars::Scalar, vector::Vector2};
 
 use crate::sketch::{CurveId, CurveKind, PointId, Sketch};
 
-pub use geop_core_math::plain::{P2, add, cross2 as cross, dot, scale, sub};
-
-pub fn dist(a: P2, b: P2) -> f64 {
-    let d = sub(a, b);
-    d[0].hypot(d[1])
-}
+pub use geop_core_math::plain::{P2, add, cross2 as cross, distance, dot, scale, sub};
 
 /// `v` of length one; none for no direction at all.
 pub fn unit(v: P2) -> Option<P2> {
@@ -379,11 +374,11 @@ mod tests {
     #[test]
     fn reflections_and_tangents() {
         let r = reflect([1.0, 2.0], [0.0, 0.0], [1.0, 1.0]);
-        assert!(dist(r, [2.0, 1.0]) < 1e-12, "{r:?}");
+        assert!(distance(r, [2.0, 1.0]) < 1e-12, "{r:?}");
         // A quarter circle counter-clockwise from (1, 0): leaving upwards,
         // arriving leftwards.
         let q = Plain::arc([1.0, 0.0], [0.0, 1.0], PI / 2.0).unwrap();
-        assert!(dist(q.tangent(0.0), [0.0, 1.0]) < 1e-12);
-        assert!(dist(q.tangent(1.0), [-1.0, 0.0]) < 1e-12);
+        assert!(distance(q.tangent(0.0), [0.0, 1.0]) < 1e-12);
+        assert!(distance(q.tangent(1.0), [-1.0, 0.0]) < 1e-12);
     }
 }

@@ -38,7 +38,7 @@ impl<S: Scalar> NurbCurve<S, 4> {
     /// which more samples, not a tolerance, would fix.
     pub fn closest_point(&self, target: &Vector3<S>) -> GeopResult<(S, Vector3<S>)> {
         let breaks = self.breakpoints();
-        let (t0, t1) = self.domain();
+        let (_, t1) = self.domain();
         let mut samples = Vec::new();
         for w in breaks.windows(2) {
             for i in 0..SAMPLES_PER_PIECE {
@@ -55,7 +55,7 @@ impl<S: Scalar> NurbCurve<S, 4> {
         scored.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut best: Option<(f64, S, Vector3<S>)> = None;
         for &(_, seed) in scored.iter().take(SEEDS) {
-            let t = self.refine_closest(target, seed, (t0, t1))?;
+            let t = self.closest_parameter_from(target, seed)?;
             let p = self.evaluate(t)?;
             let d = distance(&p);
             if best.as_ref().is_none_or(|(b, ..)| d < *b) {
@@ -66,13 +66,20 @@ impl<S: Scalar> NurbCurve<S, 4> {
         Ok((t, p))
     }
 
+    /// The parameter of the point of the curve nearest `target` around the
+    /// seed `t`, sharp: the local search [`NurbCurve::closest_point`]
+    /// refines each of its seeds with, for a caller that already knows
+    /// where to look.
+    ///
     /// Damped Newton on `f(t) = (C(t) - target) · C'(t)` from `t`: the full
     /// derivative `f'` where it is definitely positive — near the nearest
     /// point — and `|C'|²` where not (Gauss–Newton, a descent direction
     /// wherever the curve is regular). A step that does not bring the point
     /// nearer is halved, and the search stops once halving does not help.
-    /// Every iterate is clamped into `(t0, t1)`.
-    fn refine_closest(&self, target: &Vector3<S>, t: S, (t0, t1): (S, S)) -> GeopResult<S> {
+    /// Every iterate is sharpened — which point is returned is a free
+    /// choice — and clamped into the domain.
+    pub fn closest_parameter_from(&self, target: &Vector3<S>, t: S) -> GeopResult<S> {
+        let (t0, t1) = self.domain();
         descend(
             t,
             NEWTON_STEPS,

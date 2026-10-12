@@ -36,7 +36,9 @@ use geop_core_math::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    plain::{P2, Plain, add, angle_between, cross, dist, dot, perp, scale, sub, unit, wrap, xy},
+    plain::{
+        self, P2, Plain, add, angle_between, cross, distance, dot, perp, scale, sub, unit, wrap, xy,
+    },
     profile::Chain,
     sketch::{Constraint, ConstraintId, CurveId, CurveKind, PointId, Sketch},
 };
@@ -158,7 +160,7 @@ impl<S: Scalar> Sketch<S> {
             let piece = oriented(self, edge.curve, edge.reversed)?;
             let t = piece.nearest(p);
             let q = piece.at(t);
-            let d = dist(p, q);
+            let d = distance(p, q);
             if best.is_none_or(|(b, _)| d < b) {
                 let side = cross(piece.tangent(t), sub(p, q)).signum();
                 best = Some((d, side * d));
@@ -273,7 +275,7 @@ impl<S: Scalar> Sketch<S> {
             // speak of — two lines of a mirrored outline meeting on the
             // mirror line, say.
             let (from, to) = (add(p, scale(normal, d)), add(p, scale(perp(tj), d)));
-            let straight = dist(from, to) <= resolution && dot(ti, tj) > 0.0;
+            let straight = plain::distance(from, to) <= resolution && dot(ti, tj) > 0.0;
             let lines = matches!(
                 (offsets[i], offsets[j]),
                 (Plain::Line { .. }, Plain::Line { .. })
@@ -313,7 +315,7 @@ impl<S: Scalar> Sketch<S> {
                 let crossings = offsets[i].full().crossings(&offsets[j].full(), false);
                 let Some(at) = crossings
                     .into_iter()
-                    .min_by(|a, b| dist(*a, near).total_cmp(&dist(*b, near)))
+                    .min_by(|a, b| plain::distance(*a, near).total_cmp(&plain::distance(*b, near)))
                 else {
                     return Err(GeopError::new(format!(
                         "the offsets of {ci} and {cj} by {d} do not meet: round their corner instead"

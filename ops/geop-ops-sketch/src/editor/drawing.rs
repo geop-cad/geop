@@ -251,7 +251,7 @@ fn build(
     hints: &Hints,
 ) -> Option<Built> {
     use DrawTool::*;
-    let far = |a: P2, b: P2| dist(a, b) > hints.min_size;
+    let far = |a: P2, b: P2| distance(a, b) > hints.min_size;
     match (tool, placed) {
         (Point, [p]) => {
             let end = p.materialize(sketch);
@@ -352,7 +352,7 @@ fn build(
             Some(Built::default())
         }
         (Circle, [m, r]) => {
-            let radius = dist(m.at, r.at);
+            let radius = distance(m.at, r.at);
             if radius <= hints.min_size {
                 return None;
             }
@@ -368,7 +368,7 @@ fn build(
         }
         (ThreePointCircle, [a, b, c]) => {
             let center = circumcenter(a.at, b.at, c.at)?;
-            let radius = dist(center, a.at);
+            let radius = distance(center, a.at);
             if !far(a.at, b.at) || !far(b.at, c.at) || !far(a.at, c.at) {
                 return None;
             }
@@ -447,7 +447,7 @@ fn build(
             };
             // Corners on a circle, sides of one length: regular.
             let center = m.materialize(sketch);
-            let circle = sketch.add_circle(center, Design::from_f64(dist(first, [0.0, 0.0])));
+            let circle = sketch.add_circle(center, Design::from_f64(distance(first, [0.0, 0.0])));
             sketch.set_construction(circle, true);
             let mut corners = vec![if hints.circumscribed {
                 sketch.new_point_at(add(m.at, first))
@@ -532,7 +532,7 @@ fn build(
                 return None;
             }
             let sweep = swept(hints.sweep, from, to);
-            let width = (dist(w.at, m.at) - radius).abs();
+            let width = (distance(w.at, m.at) - radius).abs();
             if sweep.abs() >= TAU
                 || sweep.abs() * radius <= hints.min_size
                 || width <= hints.min_size

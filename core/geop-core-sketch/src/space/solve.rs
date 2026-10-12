@@ -26,10 +26,7 @@
 use std::collections::BTreeMap;
 
 use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve3D};
-use geop_core_math::solvers::{
-    iterate::{Repeat, Step, iterate},
-    system::{self, Phase},
-};
+use geop_core_math::solvers::system::{self, Phase};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::{Ring, Scalar, as_f64},
@@ -49,11 +46,6 @@ use crate::{
 /// The most variables one constraint depends on: a tangency between two
 /// arcs, five points.
 const MAX_LOCAL_VARS: usize = 16;
-
-/// Samples along a reference curve to seed where on it a point is from,
-/// and Newton steps polishing the nearest.
-const SEED_SAMPLES: usize = 64;
-const SEED_NEWTON_STEPS: usize = 8;
 
 type Dual<S> = geop_core_math::dual::Dual<S, MAX_LOCAL_VARS>;
 
@@ -321,7 +313,11 @@ impl<'a, S: Scalar> Problem<'a, S> {
                                         .collect(),
                                     curve.knot_vector.iter().map(|&k| Dual::cst(k)).collect(),
                                 )?);
-                                nearest_parameter(curve, &p)?
+                                // Nearest `p`: a point that lies on the
+                                // curve is found where it is, and a solve
+                                // does not move it along the curve to meet
+                                // a parameter merely near its own.
+                                curve.closest_point(&p)?.0
                             }
                         };
                         // Where to start looking from: a free choice, sharp.
@@ -522,49 +518,6 @@ impl<S: Scalar> Residuals<S, MAX_LOCAL_VARS> for Problem<'_, S> {
 
 /// The 3-D sketch's system (see [`Variables`]).
 type Spatial<'p, 'a, S> = Variables<'p, S, Problem<'a, S>, MAX_LOCAL_VARS>;
-
-/// The parameter of `curve` whose point is nearest `p`: the nearest of
-/// evenly spaced samples, polished by Newton's method on `(C(t) - p) .
-/// C'(t) = 0` — where a solve starts looking from, a free choice, worked
-/// out in plain numbers. Polished, a point that lies on the curve is
-/// found where it is, and a solve does not move it along the curve to
-/// meet a parameter merely near its own.
-fn nearest_parameter<S: Scalar>(curve: &NurbCurve3D<S>, p: &Vector3<S>) -> GeopResult<S> {
-    let (t0, t1) = curve.domain();
-    let (t0, t1) = (t0.to_f64(), t1.to_f64());
-    let mut best = (f64::INFINITY, t0);
-    for i in 0..=SEED_SAMPLES {
-        let t = t0 + (t1 - t0) * i as f64 / SEED_SAMPLES as f64;
-        let d = curve.evaluate(S::from_f64(t))?.sub(p).norm_sq().to_f64();
-        if d < best.0 {
-            best = (d, t);
-        }
-    }
-    let plain = |v: Vector3<S>| v.to_array().map(|c| c.to_f64());
-    let dot = |a: [f64; 3], b: [f64; 3]| (0..3).map(|k| a[k] * b[k]).sum::<f64>();
-    let t = iterate(
-        best.1,
-        best.1,
-        SEED_NEWTON_STEPS,
-        Repeat::Cycle,
-        |&next| (next, next),
-        |&t| -> GeopResult<Step<f64>> {
-            let at = S::from_f64(t);
-            let off = plain(curve.evaluate(at)?.sub(p));
-            let (d1, d2) = (
-                plain(curve.tangent(at)?),
-                plain(curve.second_derivative(at)?),
-            );
-            let slope = dot(d1, d1) + dot(off, d2);
-            if slope.is_nan() || slope <= 0.0 {
-                return Ok(Step::Stuck);
-            }
-            Ok(Step::Next((t - dot(off, d1) / slope).clamp(t0, t1)))
-        },
-    )?
-    .seed;
-    Ok(S::from_f64(t))
-}
 
 /// The outcome of solving a 3-D sketch.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

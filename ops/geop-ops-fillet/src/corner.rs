@@ -42,10 +42,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     matrix::Matrix,
     scalars::Scalar,
-    solvers::{
-        iterate::{Repeat, Step, iterate},
-        linear::solve_linear_system,
-    },
+    solvers::linear::solve_linear_system,
     vector::Vector3,
     with_context,
 };
@@ -54,12 +51,9 @@ use geop_ops::{NamedModel, Namer};
 
 use crate::{
     blend::{Bend, BlendShape, End, Plan, Sweep, ToolProfile, check_touch},
-    rolling::{Chain, ChainCorner, RadiusLaw, chain_bend, foot, seed_on, sharp_in},
+    rolling::{Chain, ChainCorner, RadiusLaw, ball_center, chain_bend, foot, seed_on},
     tool::{Corner, CornerEnd},
 };
-
-/// Newton iterations placing a corner's ball against curved faces.
-const NEWTON_ITERATIONS: usize = 30;
 
 /// The corners every edge of which is filleted, planned (see
 /// [`plan_corners`]): each with its tools' ends — by index into the plans,
@@ -343,11 +337,8 @@ fn plan_corner<S: Scalar>(
 /// and where it touches each.
 ///
 /// Three planes give it exactly, by one linear solve. Against curved faces
-/// it is Newton's method, from the planes tangent to the faces at the
-/// corner: each step the center `sr` from the planes tangent at its feet,
-/// every iterate sharpened — the center is where the ball is chosen to be,
-/// and its contacts are evaluated on the faces, so they lie on them however
-/// exactly it was found. Checked against every face at the end.
+/// it is Newton's method ([`ball_center`]), from the planes tangent to the
+/// faces at the corner. Checked against every face at the end.
 fn ball<S: Scalar>(
     model: &Model<S>,
     faces: [FaceId; 3],
@@ -384,28 +375,7 @@ fn ball<S: Scalar>(
     for k in 0..3 {
         uv[k] = seed_on(surfaces[k], at)?;
     }
-    let center = iterate(
-        center,
-        center,
-        NEWTON_ITERATIONS,
-        Repeat::FixedPoint,
-        |next| (next.sharpen(), *next),
-        |center| -> GeopResult<Step<Vector3<S>>> {
-            let mut offsets = [S::ZERO; 3];
-            for k in 0..3 {
-                uv[k] = sharp_in(surfaces[k], foot(surfaces[k], center, uv[k])?);
-                let p = surfaces[k].evaluate(uv[k].0, uv[k].1)?;
-                normals[k] = surfaces[k].normal(uv[k].0, uv[k].1)?.normalize()?;
-                offsets[k] = normals[k].prod_dot(&p).add(sr);
-            }
-            let rows = normals;
-            Ok(Step::Next(solve_linear_system(
-                &Matrix::from_rows(rows.map(|n| n.to_array())),
-                &Vector3::from_array(offsets),
-            )?))
-        },
-    )?
-    .seed;
+    let center = ball_center(&surfaces, &mut uv, &[], sr, center)?;
     let mut contacts = [Vector3::zero(); 3];
     for k in 0..3 {
         let (u, v) = foot(surfaces[k], &center, uv[k])?;

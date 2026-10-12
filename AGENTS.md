@@ -754,6 +754,21 @@ not in slow arithmetic:
   unite their spans' parts (`find_spans`); surfaces still extrapolate, and
   the tangent-branch search on blends pays for it.
 
+## An operation is a `PartOperation`, edited through one form
+
+Every operation of a part implements `geop_ops::operation::PartOperation`
+and is made an `Operation` by `part_operation!`: its info, arguments,
+`new_args`, `build` (or a `run` that defines targets of its own) and one
+`form`, whose fields each carry their setter (`EditForm`). A field's key is
+written once; a hand-written `match` over event keys drifts from the form it
+answers. Sub-forms shared by several operations (`Combine::fields`,
+`Spacing::fields`, `Extents::fields`) add fields with setters to an
+`EditForm`, never a `show`/`set` pair. What a whole session forgets before
+each event goes in `begin_event`, not into every setter. Shared test helpers
+live in `geop_ops::testing` (feature `testing`) and
+`geop_ops_extrude_revolve::shapes` (feature `test-shapes`): look there
+before writing an `assert_valid`, a cube or a `v3` of your own.
+
 ## Working in parallel worktrees
 
 Features developed side by side in separate worktrees (one agent each)

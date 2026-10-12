@@ -47,11 +47,13 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    plain::{P3, add, cross, distance, dot, norm, normalize, scale, signed_area2, sub},
+    plain::{P3, add, cross, distance, dot, norm, normalize, scale, sub, unwrap_angle},
+    polygon::polygon_signed_area,
     scalars::Scalar,
     solvers::{
         bisect::{Bracket, bisect},
         iterate::{Repeat, Step, iterate},
+        linear::solve_symmetric2,
         minimize::GoldenSection,
         refine::{Refine, Refined, refine},
         repeat::{self, repeat},
@@ -62,6 +64,7 @@ use geop_core_math::{
 use geop_core_topology::{
     Sense,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
+    loop_sampling::sample_pcurves_to_polygon,
 };
 
 use super::{
@@ -1515,7 +1518,7 @@ impl<S: Scalar> Builder<'_, S> {
     /// turning along a meridian at each crossing it reaches — the face
     /// stays on the left throughout.
     fn cut_helical_face(&mut self, f: usize, revolved: &Revolved) -> GeopResult<()> {
-        use std::f64::consts::{PI, TAU};
+        use std::f64::consts::PI;
         if self.faces[f].loops.len() != 1 {
             return Err(GeopError::new(format!(
                 "it has {} loops: only a strip bounded by one loop is cut",
@@ -1538,7 +1541,7 @@ impl<S: Scalar> Builder<'_, S> {
                         "its loop runs through its axis at {p:?}"
                     )));
                 };
-                let a = prev.map_or(a, |r| r + (a - r + PI).rem_euclid(TAU) - PI);
+                let a = prev.map_or(a, |r| unwrap_angle(a, r));
                 prev = Some(a);
                 samples.push((k, t, a, v));
             }
@@ -1595,7 +1598,7 @@ impl<S: Scalar> Builder<'_, S> {
                         .chart(p)
                         .0
                         .ok_or_else(|| GeopError::new("its loop runs through its axis"))?;
-                    Ok(cut + (a - cut + PI).rem_euclid(TAU) - PI)
+                    Ok(unwrap_angle(a, cut))
                 };
                 let below = angle_at(t0)? < cut;
                 let Bracket { lo, hi, .. } =
@@ -1816,8 +1819,7 @@ impl<S: Scalar> Builder<'_, S> {
         cut: f64,
         angle_of: &dyn Fn(P3) -> Option<f64>,
     ) -> GeopResult<(usize, f64)> {
-        use std::f64::consts::{PI, TAU};
-        let near = |a: f64, reference: f64| reference + (a - reference + PI).rem_euclid(TAU) - PI;
+        use std::f64::consts::TAU;
         let mut prev: Option<f64> = None;
         let mut covered = (f64::INFINITY, f64::NEG_INFINITY);
         for &u in lp {
@@ -1828,7 +1830,7 @@ impl<S: Scalar> Builder<'_, S> {
                     continue;
                 };
                 let a = match prev {
-                    Some(r) => near(a, r),
+                    Some(r) => unwrap_angle(a, r),
                     None => a,
                 };
                 if let Some((t_prev, a_prev)) = last {
@@ -1840,7 +1842,7 @@ impl<S: Scalar> Builder<'_, S> {
                             let angle = angle_of(p).ok_or_else(|| {
                                 GeopError::new("a loop round its axis runs through it")
                             })?;
-                            Ok(near(angle, x) - x)
+                            Ok(unwrap_angle(angle, x) - x)
                         };
                         let below = theta(t_prev)? <= 0.0;
                         let Bracket { lo, hi, .. } =
@@ -1984,9 +1986,15 @@ impl<S: Scalar> Builder<'_, S> {
             let outer = match face.outer {
                 Some(k) => k,
                 None => {
+                    // The signed area each loop encloses in the patch:
+                    // positive counter-clockwise.
                     let areas: Vec<f64> = loops
                         .iter()
-                        .map(|lp| signed_area(lp))
+                        .map(|lp| {
+                            let pcurves = lp.iter().map(|(_, pcurve)| pcurve);
+                            let polygon = sample_pcurves_to_polygon(pcurves, LOOP_SAMPLES)?;
+                            Ok(polygon_signed_area(&polygon).to_f64())
+                        })
                         .collect::<GeopResult<_>>()
                         .map_err(&ctx)?;
                     let ccw: Vec<usize> = (0..areas.len()).filter(|&k| areas[k] > 0.0).collect();
@@ -2240,7 +2248,7 @@ fn poles_of<S: Scalar>(surface: &NurbSurface3D<S>, uncertainty: f64) -> GeopResu
 /// backwards in angle, along one at the bottom forwards, as it runs along
 /// the top and bottom of its region.
 fn unwrap(revolved: &Revolved, points: &[P3], closing: bool, ccw: bool) -> Vec<f64> {
-    use std::f64::consts::{PI, TAU};
+    use std::f64::consts::TAU;
     // Start at a point with an angle, so that a pole is always passed
     // between two.
     let start = points
@@ -2260,7 +2268,7 @@ fn unwrap(revolved: &Revolved, points: &[P3], closing: bool, ccw: bool) -> Vec<f
         };
         let a = match (out.last(), pole.take()) {
             (None, _) => a,
-            (Some(&prev), None) => prev + (a - prev + PI).rem_euclid(TAU) - PI,
+            (Some(&prev), None) => unwrap_angle(a, prev),
             (Some(&prev), Some(v)) => {
                 let turn = (a - prev).rem_euclid(TAU);
                 let forwards = ccw != (v > mean_v);
@@ -2280,7 +2288,6 @@ fn unwrap(revolved: &Revolved, points: &[P3], closing: bool, ccw: bool) -> Vec<f
 /// `points`, a loop's in order: each within half a turn of the one before.
 /// With `closing`, the loop is followed back to where it started.
 fn unwrap_tube(revolved: &Revolved, points: &[P3], closing: bool) -> Vec<f64> {
-    use std::f64::consts::{PI, TAU};
     let n = points.len();
     if n == 0 {
         return Vec::new();
@@ -2290,7 +2297,7 @@ fn unwrap_tube(revolved: &Revolved, points: &[P3], closing: bool) -> Vec<f64> {
         let a = revolved.chart(points[k % n]).1;
         out.push(match out.last() {
             None => a,
-            Some(&prev) => prev + (a - prev + PI).rem_euclid(TAU) - PI,
+            Some(&prev) => unwrap_angle(a, prev),
         });
     }
     out
@@ -3322,8 +3329,7 @@ fn plane_pcurve<S: Scalar>(
     };
     let origin = corner(0, 0);
     let (e1, e2) = (corner(1, 0).sub(&origin), corner(0, 1).sub(&origin));
-    let (a, b, c) = (e1.prod_dot(&e1), e1.prod_dot(&e2), e2.prod_dot(&e2));
-    let det = a.mul(c).sub(b.mul(b));
+    let gram = (e1.prod_dot(&e1), e1.prod_dot(&e2), e2.prod_dot(&e2));
     let n = curve.control_points.len();
     let mut control_points = Vec::with_capacity(n);
     for (k, cp) in curve.control_points.iter().enumerate() {
@@ -3337,11 +3343,7 @@ fn plane_pcurve<S: Scalar>(
             Some(p) => (p[0].mul(w), p[1].mul(w)),
             None => {
                 let d = Vector3::from_array([cp[0], cp[1], cp[2]]).sub(&origin.prod_scalar(w));
-                let (s1, s2) = (d.prod_dot(&e1), d.prod_dot(&e2));
-                (
-                    c.mul(s1).sub(b.mul(s2)).div(det)?,
-                    a.mul(s2).sub(b.mul(s1)).div(det)?,
-                )
+                solve_symmetric2(gram, (d.prod_dot(&e1), d.prod_dot(&e2)))?
             }
         };
         control_points.push(Vector3::from_array([u, v, w]));
@@ -3540,20 +3542,4 @@ fn widened<S: Scalar>(curve: &NurbCurve3D<S>, gap: [f64; 3]) -> GeopResult<NurbC
         })
         .collect();
     NurbCurve::try_new(curve.degree, control_points, curve.knot_vector.clone())
-}
-
-/// The signed area a loop of pcurves encloses in the patch: positive
-/// counter-clockwise.
-fn signed_area<S: Scalar>(lp: &[(CoedgeOnLocal, NurbCurve2D<S>)]) -> GeopResult<f64> {
-    let mut points = Vec::new();
-    for (_, pcurve) in lp {
-        let (t0, t1) = pcurve.domain();
-        let (t0, t1) = (t0.to_f64(), t1.to_f64());
-        for i in 0..LOOP_SAMPLES {
-            let t = t0 + (t1 - t0) * i as f64 / LOOP_SAMPLES as f64;
-            let p = pcurve.evaluate(S::from_f64(t))?;
-            points.push([p[0].to_f64(), p[1].to_f64()]);
-        }
-    }
-    Ok(signed_area2(&points) / 2.0)
 }

@@ -14,7 +14,7 @@ use geop_core_math::{
     solvers::iterate::{Repeat, Step, iterate},
 };
 
-use geop_core_math::plain::{P3, dot, norm, sub};
+use geop_core_math::plain::{P3, dot, norm, solve2, sub};
 
 /// A curve's midpoints in `f64`: its control points, weights and knots each
 /// at the middle of its enclosure. For searches whose answer is a free
@@ -178,10 +178,7 @@ impl SurfaceMidpoints {
                     let (a11, a12, a22) = (dot(su, su), dot(su, sv), dot(sv, sv));
                     let (b1, b2) = (dot(su, r), dot(sv, r));
                     let (du, dv) = match along {
-                        None => {
-                            let det = a11 * a22 - a12 * a12;
-                            ((b1 * a22 - b2 * a12) / det, (a11 * b2 - a12 * b1) / det)
-                        }
+                        None => solve2([[a11, a12], [a12, a22]], [b1, b2]).into(),
                         Some(true) => (b1 / a11, 0.0),
                         Some(false) => (0.0, b2 / a22),
                     };

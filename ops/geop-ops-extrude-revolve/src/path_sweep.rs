@@ -40,7 +40,7 @@
 use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    plain::{P3, add, cross, dot, normalize, scale, sub},
+    plain::{P3, add, cross, cross2, dot, inverse2, normalize, scale, solve2, sub},
     primitives::CoordinateSystem,
     scalars::Scalar,
     solvers::iterate::{Repeat, Step, iterate},
@@ -743,9 +743,10 @@ fn in_plane(frame: &Plain, x: P3) -> [f64; 2] {
         dot(frame.e1, frame.e2),
         dot(frame.e2, frame.e2),
     );
-    let (r1, r2) = (dot(d, frame.e1), dot(d, frame.e2));
-    let det = g11 * g22 - g12 * g12;
-    [(g22 * r1 - g12 * r2) / det, (g11 * r2 - g12 * r1) / det]
+    solve2(
+        [[g11, g12], [g12, g22]],
+        [dot(d, frame.e1), dot(d, frame.e2)],
+    )
 }
 
 /// A rail followed along the sweep: where along it the last section
@@ -880,23 +881,19 @@ impl<'a, S: Scalar> Tracked<'a, S> {
 /// taking its start where it is now; with two, the linear map taking both
 /// starts where they are now.
 fn rail_map(c: [f64; 2], start: &[[f64; 2]], now: &[[f64; 2]]) -> Mat {
-    let rel = |p: [f64; 2]| [p[0] - c[0], p[1] - c[1]];
+    let rel = |p: [f64; 2]| sub(p, c);
     match start.len() {
         1 => {
             // (now - c) / (start - c), as complex numbers.
             let (q, r) = (rel(start[0]), rel(now[0]));
-            let n = q[0] * q[0] + q[1] * q[1];
-            let (a, b) = (
-                (r[0] * q[0] + r[1] * q[1]) / n,
-                (r[1] * q[0] - r[0] * q[1]) / n,
-            );
+            let n = dot(q, q);
+            let (a, b) = (dot(r, q) / n, cross2(q, r) / n);
             [[a, -b], [b, a]]
         }
         _ => {
             // [r0 r1] [q0 q1]^-1, the points as columns.
             let (q0, q1, r0, r1) = (rel(start[0]), rel(start[1]), rel(now[0]), rel(now[1]));
-            let det = q0[0] * q1[1] - q1[0] * q0[1];
-            let inv = [[q1[1] / det, -q1[0] / det], [-q0[1] / det, q0[0] / det]];
+            let inv = inverse2([[q0[0], q1[0]], [q0[1], q1[1]]]);
             let r = [[r0[0], r1[0]], [r0[1], r1[1]]];
             std::array::from_fn(|i| {
                 std::array::from_fn(|j| r[i][0] * inv[0][j] + r[i][1] * inv[1][j])

@@ -1,7 +1,10 @@
 use geop_core_math::{
     geop_error::GeopResult,
     scalars::Scalar,
-    solvers::iterate::{End, Repeat, Step, iterate},
+    solvers::{
+        iterate::{End, Repeat, Step, iterate},
+        linear::solve_symmetric2,
+    },
     vector::Vector3,
 };
 
@@ -87,11 +90,8 @@ impl<S: Scalar> NurbSurface<S, 4> {
                 let b1 = su.prod_dot(&r);
                 let b2 = sv.prod_dot(&r);
 
-                let det = a11.mul(a22).sub(a12.mul(a12));
-                let du = b1.mul(a22).sub(b2.mul(a12)).div(det);
-                let dv = a11.mul(b2).sub(a12.mul(b1)).div(det);
-                let (du, dv) = match (du, dv) {
-                    (Ok(du), Ok(dv)) => (du, dv),
+                let (du, dv) = match solve_symmetric2((a11, a12, a22), (b1, b2)) {
+                    Ok(step) => step,
                     // Singular: along the one derivative that moves the point.
                     _ if a22.definitely_greater(S::ZERO) => {
                         match self.off_pole(target, &p, (v, v_lo, v_hi), (u, u_lo, u_hi), false)? {

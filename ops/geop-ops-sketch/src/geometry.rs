@@ -11,8 +11,8 @@ use geop_core_sketch::{ProfileLoop, Sketch, profile::curve_polyline};
 use geop_ops::Design;
 
 pub use geop_core_sketch::plain::{
-    P2, Plain, add, angle_between, cross, dist, dot, of, perp, rotate, scale, segments_cross, sub,
-    sweep_through, swept, unit, xy,
+    P2, Plain, add, angle_between, cross, distance, dot, of, perp, rotate, scale, segments_cross,
+    sub, sweep_through, swept, unit, xy,
 };
 
 /// Points as drawn.
@@ -35,10 +35,10 @@ pub fn loop_polyline(sketch: &Sketch<Design>, lp: &ProfileLoop) -> Vec<P2> {
 /// The point halfway along a polyline, by length: where a curve's label
 /// goes.
 pub fn polyline_mid(poly: &[P2]) -> P2 {
-    let total: f64 = poly.windows(2).map(|w| dist(w[0], w[1])).sum();
+    let total: f64 = poly.windows(2).map(|w| distance(w[0], w[1])).sum();
     let mut along = 0.0;
     for w in poly.windows(2) {
-        let d = dist(w[0], w[1]);
+        let d = distance(w[0], w[1]);
         if along + d >= total / 2.0 && d > 0.0 {
             return add(w[0], scale(sub(w[1], w[0]), (total / 2.0 - along) / d));
         }

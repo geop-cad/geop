@@ -38,7 +38,7 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    polygon::loops_contain,
+    polygon::polygons_contain,
     scalars::Scalar,
     vector::{Vector2, Vector3, Vector4},
     with_context,
@@ -439,7 +439,7 @@ impl<'a, S: Scalar> Drafted<'a, S> {
                 };
                 let outer = outline(&drafted_face.outer)?;
                 for hole in &drafted_face.holes {
-                    if !outline(hole)?.iter().all(|p| loops_contain(std::slice::from_ref(&outer), p)) {
+                    if !outline(hole)?.iter().all(|p| polygons_contain(std::slice::from_ref(&outer), p)) {
                         return Err(GeopError::new(format!(
                             "the draft is too steep: face {} runs into its own hole — the sides of a wall would cross",
                             self.names.faces[f]

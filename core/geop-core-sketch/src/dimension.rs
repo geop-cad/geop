@@ -8,7 +8,7 @@
 //! goes is the designer's free choice — never a result the kernel reasons
 //! about.
 
-use crate::plain::{P2, add, dist, dot, perp, rotate, scale, sub, unit};
+use crate::plain::{P2, add, distance, dot, perp, rotate, scale, sub, unit};
 
 /// What a dimension measures, where it is in the plane.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -86,7 +86,7 @@ impl Measure {
             Measure::Angular {
                 vertex, from, to, ..
             } => {
-                let r = dist(label, vertex);
+                let r = distance(label, vertex);
                 let side = |d: P2| vec![vertex, add(vertex, scale(unit(d).unwrap_or(d), r))];
                 vec![self.arc(r), side(from), side(to)]
             }
@@ -129,7 +129,7 @@ impl Measure {
                 sweep,
                 ..
             } => {
-                let r = dist(label, vertex);
+                let r = distance(label, vertex);
                 let (Some(from), true) = (unit(from), r > 0.0 && sweep != 0.0) else {
                     return Vec::new();
                 };
@@ -179,7 +179,7 @@ mod tests {
     use super::*;
 
     fn near(a: P2, b: P2) -> bool {
-        dist(a, b) < 1e-12
+        distance(a, b) < 1e-12
     }
 
     /// A horizontal distance drawn above what it measures: extension lines

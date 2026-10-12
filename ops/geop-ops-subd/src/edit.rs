@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    plain::cross,
+    plain::{cross, dot, norm, normalize, scale, sub},
     solvers::walk::walk_by,
 };
 
@@ -150,8 +150,8 @@ impl Cage {
                     c[v] = b;
                     *index.entry(c).or_insert_with(|| {
                         let p = c.map(f64::from);
-                        let norm = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
-                        points.push(p.map(|x| radius * x / norm));
+                        let length = norm(p);
+                        points.push(p.map(|x| radius * x / length));
                         points.len() - 1
                     })
                 };
@@ -294,22 +294,17 @@ impl Cage {
     /// both unit and square to each other. `None` for no faces, or faces
     /// whose normals cancel out.
     pub fn frame(&self, faces: &BTreeSet<u32>) -> Option<[[f64; 3]; 3]> {
-        let unit = |v: [f64; 3]| {
-            let n = v.iter().map(|c| c * c).sum::<f64>().sqrt();
-            (n > 0.0 && n.is_finite()).then(|| v.map(|c| c / n))
-        };
         let mut normal = [0.0; 3];
         for &f in faces {
             let n = self.normal(self.face(f).ok()?).ok()?;
             (0..3).for_each(|i| normal[i] += n[i]);
         }
-        let w = unit(normal)?;
+        let w = normalize(normal)?;
         let first = self.face(*faces.first()?).ok()?;
         let a = self.vertex(*first.vertices.first()?).ok()?.at;
         let b = self.vertex(*first.vertices.get(1)?).ok()?.at;
-        let edge = [0, 1, 2].map(|i| b[i] - a[i]);
-        let along = edge.iter().zip(&w).map(|(e, n)| e * n).sum::<f64>();
-        let u = unit([0, 1, 2].map(|i| edge[i] - along * w[i]))?;
+        let edge = sub(b, a);
+        let u = normalize(sub(edge, scale(w, dot(edge, w))))?;
         Some([u, cross(w, u), w])
     }
 

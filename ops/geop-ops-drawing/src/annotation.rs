@@ -16,7 +16,7 @@ use geop_core_math::{
 };
 use geop_core_sketch::{
     dimension::Measure,
-    plain::{add, cross, dist, dot, perp, scale, sub, unit},
+    plain::{add, cross, distance, dot, perp, scale, sub, unit},
 };
 use geop_core_topology::EdgeId;
 use geop_ops::{
@@ -303,7 +303,7 @@ impl Annotation {
                 let (p, frame) = measuring::<Design>(layout, *view)?;
                 let (a, b) = (paper(part, &frame, from)?, paper(part, &frame, to)?);
                 let (direction, value) = match along {
-                    Along::Aligned => (sub(b, a), dist(a, b)),
+                    Along::Aligned => (sub(b, a), distance(a, b)),
                     Along::Horizontal => ([1.0, 0.0], (b[0] - a[0]).abs()),
                     Along::Vertical => ([0.0, 1.0], (b[1] - a[1]).abs()),
                 };

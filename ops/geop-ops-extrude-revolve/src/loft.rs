@@ -50,7 +50,7 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    plain::{P3, add, scale, sub},
+    plain::{P3, add, distance, dot, inverse2, scale, sub},
     primitives::CoordinateSystem,
     scalars::Scalar,
     solvers::repeat::{Step, repeat},
@@ -133,10 +133,6 @@ pub(crate) fn centre(points: &[[f64; 3]]) -> [f64; 3] {
     c
 }
 
-fn distance_sq(a: [f64; 3], b: [f64; 3]) -> f64 {
-    (0..3).map(|k| (a[k] - b[k]).powi(2)).sum()
-}
-
 /// The control polygon's length of `curve`: how long it is, near enough to
 /// pick the longest curve to halve — a free choice.
 fn polygon_length<S: Scalar>(curve: &NurbCurve2D<S>) -> f64 {
@@ -148,10 +144,7 @@ fn polygon_length<S: Scalar>(curve: &NurbCurve2D<S>) -> f64 {
             [cp[0].to_f64() / w, cp[1].to_f64() / w]
         })
         .collect();
-    points
-        .windows(2)
-        .map(|w| ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt())
-        .sum()
+    points.windows(2).map(|w| distance(w[1], w[0])).sum()
 }
 
 /// `profile` with its curve `i` halved, at the middle of its parameters:
@@ -434,10 +427,9 @@ fn correspond<S: Scalar>(sections: &[Section<S>]) -> GeopResult<Vec<Placed<S>>> 
             let cost: f64 = joints
                 .iter()
                 .zip(&before)
-                .map(|(a, b)| {
-                    let a = [a[0] - ca[0], a[1] - ca[1], a[2] - ca[2]];
-                    let b = [b[0] - cb[0], b[1] - cb[1], b[2] - cb[2]];
-                    distance_sq(a, b)
+                .map(|(&a, &b)| {
+                    let d = sub(sub(a, ca), sub(b, cb));
+                    dot(d, d)
                 })
                 .sum();
             if best.as_ref().is_none_or(|(c, _)| cost < *c) {
@@ -779,20 +771,15 @@ fn affine_through(q: &[[f64; 2]], d: &[P3]) -> (P3, [P3; 2]) {
     let m = match q.len() {
         1 => [[0.0; 3]; 2],
         2 => {
-            let dq = [q[1][0] - q[0][0], q[1][1] - q[0][1]];
-            let dd = sub(d[1], d[0]);
-            let n = dq[0] * dq[0] + dq[1] * dq[1];
+            let (dq, dd) = (sub(q[1], q[0]), sub(d[1], d[0]));
+            let n = dot(dq, dq);
             [scale(dd, dq[0] / n), scale(dd, dq[1] / n)]
         }
         _ => {
-            let (q1, q2) = (
-                [q[1][0] - q[0][0], q[1][1] - q[0][1]],
-                [q[2][0] - q[0][0], q[2][1] - q[0][1]],
-            );
+            let (q1, q2) = (sub(q[1], q[0]), sub(q[2], q[0]));
             let (d1, d2) = (sub(d[1], d[0]), sub(d[2], d[0]));
             // [d1 d2] [q1 q2]^-1, the points as columns.
-            let det = q1[0] * q2[1] - q2[0] * q1[1];
-            let inv = [[q2[1] / det, -q2[0] / det], [-q1[1] / det, q1[0] / det]];
+            let inv = inverse2([[q1[0], q2[0]], [q1[1], q2[1]]]);
             [
                 add(scale(d1, inv[0][0]), scale(d2, inv[1][0])),
                 add(scale(d1, inv[0][1]), scale(d2, inv[1][1])),
@@ -822,7 +809,7 @@ fn through<S: Scalar>(placed: &[Placed<S>]) -> GeopResult<Vec<Span<S>>> {
         .map(|p| Ok(centre(&p.joints()?)))
         .collect::<GeopResult<Vec<_>>>()?;
     let mut d: Vec<f64> = (0..n)
-        .map(|j| distance_sq(centres[j], centres[j + 1]).sqrt())
+        .map(|j| distance(centres[j], centres[j + 1]))
         .collect();
     if d.iter().any(|&d| d <= 0.0) {
         d = vec![1.0; n];

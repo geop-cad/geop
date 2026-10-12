@@ -2,7 +2,10 @@
 //! point.
 
 use geop_core_math::{
-    geop_error::GeopResult, scalars::Scalar, solvers::minimize::descend, vector::Vector3,
+    geop_error::GeopResult,
+    scalars::Scalar,
+    solvers::{linear::solve_symmetric2, minimize::descend},
+    vector::Vector3,
 };
 
 use super::NurbSurface;
@@ -118,17 +121,11 @@ impl<S: Scalar> NurbSurface<S, 4> {
                     a12.add(r.prod_dot(&suv)),
                     a22.add(r.prod_dot(&svv)),
                 );
-                let solve = |m11: S, m12: S, m22: S| -> GeopResult<(S, S)> {
-                    let det = m11.mul(m22).sub(m12.mul(m12));
-                    Ok((
-                        gv.mul(m12).sub(gu.mul(m22)).div(det)?,
-                        gu.mul(m12).sub(gv.mul(m11)).div(det)?,
-                    ))
-                };
+                let downhill = (gu.neg(), gv.neg());
                 let (du, dv) = if positive(h11, h12, h22) {
-                    solve(h11, h12, h22)?
+                    solve_symmetric2((h11, h12, h22), downhill)?
                 } else if positive(a11, a12, a22) {
-                    solve(a11, a12, a22)?
+                    solve_symmetric2((a11, a12, a22), downhill)?
                 } else if a11.definitely_greater(S::ZERO) {
                     (gu.neg().div(a11)?, S::ZERO)
                 } else if a22.definitely_greater(S::ZERO) {

@@ -67,6 +67,33 @@ pub fn signed_area2(poly: &[P2]) -> f64 {
         .sum()
 }
 
+/// The solution `x` of `m x = r` for the 2x2 matrix `m`, by Cramer's rule:
+/// not finite where `m` is singular.
+pub fn solve2(m: [P2; 2], r: P2) -> P2 {
+    let det = m[0][0] * m[1][1] - m[0][1] * m[1][0];
+    [
+        (m[1][1] * r[0] - m[0][1] * r[1]) / det,
+        (m[0][0] * r[1] - m[1][0] * r[0]) / det,
+    ]
+}
+
+/// The inverse of the 2x2 matrix `m`: not finite where it is singular.
+pub fn inverse2(m: [P2; 2]) -> [P2; 2] {
+    let det = m[0][0] * m[1][1] - m[0][1] * m[1][0];
+    [
+        [m[1][1] / det, -m[0][1] / det],
+        [-m[1][0] / det, m[0][0] / det],
+    ]
+}
+
+/// The angle `a`, turned by whole turns to within half a turn of
+/// `reference`: in `[reference - π, reference + π)`, how an angle measured
+/// in `(-π, π]` is followed on from the one before.
+pub fn unwrap_angle(a: f64, reference: f64) -> f64 {
+    use std::f64::consts::{PI, TAU};
+    reference + (a - reference + PI).rem_euclid(TAU) - PI
+}
+
 /// The length of the diagonal of the box from `lo` to `hi`: how far apart
 /// any two points in it can be.
 pub fn diagonal<const N: usize>(lo: [f64; N], hi: [f64; N]) -> f64 {

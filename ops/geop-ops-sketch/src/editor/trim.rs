@@ -281,7 +281,7 @@ impl<'a> Plan<'a> {
                     }
                     let at = xy(sketch, p);
                     if let Some(k) = (0..found.len())
-                        .min_by(|&i, &j| dist(found[i], at).total_cmp(&dist(found[j], at)))
+                        .min_by(|&i, &j| distance(found[i], at).total_cmp(&distance(found[j], at)))
                     {
                         found.remove(k);
                     }

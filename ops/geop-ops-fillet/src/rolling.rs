@@ -591,11 +591,6 @@ struct Station<S: Scalar> {
 /// behind them — touching `surfaces` in the plane through `p` square to the
 /// unit `tangent`, Newton's method from the foot points `seeds` (see the
 /// module docs): its center and the foot points' `(u, v)`.
-///
-/// Every iterate is sharpened, the last too: the center is a construction
-/// aid, not an answer anything is compared against — the contact points
-/// are evaluated on the surfaces, so they lie on them however exactly the
-/// center was found.
 fn roll<S: Scalar>(
     surfaces: [&NurbSurface3D<S>; 2],
     seeds: [(S, S); 2],
@@ -609,7 +604,33 @@ fn roll<S: Scalar>(
     let spread = S::ONE.add(n0.prod_dot(&n1));
     let center = p.add(&n0.add(&n1).prod_scalar(sr.div(spread)?)).sharpen();
     let mut uv = seeds;
-    let center = iterate(
+    let center = ball_center(&surfaces, &mut uv, &[(*tangent, *p)], sr, center)?;
+    Ok((center, uv))
+}
+
+/// The center of the ball of signed radius `sr` — `r` along the unit
+/// normal of each of `surfaces`, negative behind them — that lies in each
+/// of `planes` (a unit normal and a point each), three conditions in all:
+/// Newton's method from `center`, each step measuring how far off each
+/// condition the center is and solving for the step that corrects all of
+/// them, to first order. `uv` holds the foot points' `(u, v)` on
+/// `surfaces`, seeds in, and where the center touches them out (sharp).
+///
+/// Every iterate is sharpened, the last too: the center is a construction
+/// aid, not an answer anything is compared against — the contact points
+/// are evaluated on the surfaces, so they lie on them however exactly the
+/// center was found. Shared by [`roll`], a station's ball between two
+/// faces, and the ball rounding a corner of three
+/// ([`crate::corner`]).
+pub(crate) fn ball_center<S: Scalar>(
+    surfaces: &[&NurbSurface3D<S>],
+    uv: &mut [(S, S)],
+    planes: &[(Vector3<S>, Vector3<S>)],
+    sr: S,
+    center: Vector3<S>,
+) -> GeopResult<Vector3<S>> {
+    debug_assert_eq!(surfaces.len() + planes.len(), 3);
+    Ok(iterate(
         center,
         center,
         NEWTON_ITERATIONS,
@@ -618,15 +639,17 @@ fn roll<S: Scalar>(
         |center| -> GeopResult<Step<Vector3<S>>> {
             let mut rows = Vec::with_capacity(3);
             let mut residual = Vec::with_capacity(3);
-            for k in 0..2 {
-                uv[k] = sharp_in(surfaces[k], foot(surfaces[k], center, uv[k])?);
-                let at = surfaces[k].evaluate(uv[k].0, uv[k].1)?;
-                let n = normal(k, uv[k])?;
+            for (k, surface) in surfaces.iter().enumerate() {
+                uv[k] = sharp_in(surface, foot(surface, center, uv[k])?);
+                let at = surface.evaluate(uv[k].0, uv[k].1)?;
+                let n = surface.normal(uv[k].0, uv[k].1)?.normalize()?;
                 residual.push(center.sub(&at).prod_dot(&n).sub(sr));
                 rows.push(n);
             }
-            rows.push(*tangent);
-            residual.push(center.sub(p).prod_dot(tangent));
+            for (n, p) in planes {
+                residual.push(center.sub(p).prod_dot(n));
+                rows.push(*n);
+            }
             let jacobian =
                 Matrix::from_rows([rows[0].to_array(), rows[1].to_array(), rows[2].to_array()]);
             let step = solve_linear_system(
@@ -636,8 +659,7 @@ fn roll<S: Scalar>(
             Ok(Step::Next(center.sub(&step)))
         },
     )?
-    .seed;
-    Ok((center, uv))
+    .seed)
 }
 
 /// How far, as a plain number, the foot point `foot` of `center` on a
@@ -1265,31 +1287,6 @@ fn edges_between<S: Scalar>(model: &Model<S>, a: FaceId, b: FaceId) -> GeopResul
     Ok(found)
 }
 
-/// The parameter of `curve` nearest `point`, Newton from `seed` — sharp:
-/// where to look, a free choice.
-fn nearest_parameter<S: Scalar>(
-    curve: &NurbCurve3D<S>,
-    point: &Vector3<S>,
-    seed: S,
-) -> GeopResult<S> {
-    let (lo, hi) = curve.domain();
-    Ok(iterate(
-        seed,
-        seed,
-        PROJECT_ITERATIONS,
-        Repeat::Cycle,
-        |next| (next.sharpen().clamped(lo, hi), *next),
-        |&t| -> GeopResult<Step<S>> {
-            let d = curve.evaluate(t)?.sub(point);
-            let tangent = curve.tangent(t)?;
-            Ok(Step::Next(t.sub(
-                d.prod_dot(&tangent).div(tangent.prod_dot(&tangent))?,
-            )))
-        },
-    )?
-    .seed)
-}
-
 /// The edge between the faces `from` and `onto` that side `k` of the
 /// blend crosses going from the station `before` to `after`: of the edges
 /// between them, the one their contacts there lie nearest, with where along
@@ -1306,8 +1303,8 @@ fn crossed_edge<S: Scalar>(
         let curve = &model.get_edge(edge)?.curve;
         let (lo, hi) = curve.domain();
         let middle = S::interpolate(lo, hi, S::from_f64(0.5)).sharpen();
-        let t0 = nearest_parameter(curve, &before.contact[k], middle)?;
-        let t1 = nearest_parameter(curve, &after.contact[k], middle)?;
+        let t0 = curve.closest_parameter_from(&before.contact[k], middle)?;
+        let t1 = curve.closest_parameter_from(&after.contact[k], middle)?;
         let near = distance(&curve.evaluate(t0)?, &before.contact[k])
             + distance(&curve.evaluate(t1)?, &after.contact[k]);
         if best.as_ref().is_none_or(|(b, ..)| near < *b) {
@@ -1835,7 +1832,7 @@ fn span_deviation<S: Scalar>(
     for (s, station) in between.iter().flatten() {
         for k in [0, 2] {
             let truth = station.contact[k / 2];
-            let t = nearest_parameter(&curves[k], &truth, *s)?;
+            let t = curves[k].closest_parameter_from(&truth, *s)?;
             let got = curves[k].evaluate(t)?;
             note(distance(&got, &truth), "a contact", s, &got, &truth);
             // The blend has to leave the face towards the ball, never dip
