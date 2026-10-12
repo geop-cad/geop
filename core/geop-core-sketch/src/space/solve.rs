@@ -607,16 +607,12 @@ impl<S: Scalar> Sketch3d<S> {
         drags: &[(PointId, Vector3<S>)],
     ) -> GeopResult<Solve3dReport<S>> {
         let problem = Problem::new(self)?;
-        let pulls: Vec<(usize, S)> = drags
-            .iter()
-            .flat_map(|&(point, target)| {
-                let i = problem.layout.point_var[&point];
-                (0..3).map(move |k| (i + k, target[k]))
-            })
-            .collect();
-        let variables = Spatial::new(&problem, problem.start.clone(), pulls);
-        let solved = variables.system().solve(&variables.start())?;
-        let x = variables.all(&solved.values);
+        let (_, solved, x) = Spatial::dragged(
+            &problem,
+            problem.start.clone(),
+            &problem.layout.point_var,
+            drags,
+        )?;
         let report = problem.report(x.clone(), solved.phases, Some(solved.enclosure))?;
         // Where the solve put the points is the sketch's state, and a free
         // choice: sharp.

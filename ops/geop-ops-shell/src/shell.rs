@@ -62,6 +62,7 @@ use geop_core_math::{
     solvers::{
         iterate::{Repeat, Step, iterate},
         linear::shortest_solution,
+        walk::{Walked, walk},
     },
     vector::{Vector, Vector2, Vector3},
     with_context,
@@ -911,28 +912,28 @@ impl<'a, S: Scalar> Hollow<'a, S> {
             if used[first] {
                 continue;
             }
-            let mut lp = Vec::new();
-            let mut i = first;
-            loop {
-                used[i] = true;
-                lp.push(i);
-                i = *starting.get(&coedges[i].2).ok_or_else(|| {
+            // On from each coedge to the one starting where it ends. One
+            // running into a loop already followed runs round that loop
+            // into itself.
+            let around = walk(first, |&i| {
+                let next = starting.get(&coedges[i].2).ok_or_else(|| {
                     GeopError::new(format!(
                         "what is left of face {} does not close up",
                         self.names.faces[f]
                     ))
                 })?;
-                if i == first {
-                    break;
-                }
-                if used[i] {
-                    return Err(GeopError::new(format!(
-                        "what is left of face {} runs into itself",
-                        self.names.faces[f]
-                    )));
-                }
+                Ok::<_, GeopError>(Some(*next))
+            })?;
+            if around.end != Walked::Closed {
+                return Err(GeopError::new(format!(
+                    "what is left of face {} runs into itself",
+                    self.names.faces[f]
+                )));
             }
-            loops.push(lp);
+            for &i in &around.nodes {
+                used[i] = true;
+            }
+            loops.push(around.nodes);
         }
 
         // Outer loops run counter-clockwise in `(u, v)`, holes clockwise;

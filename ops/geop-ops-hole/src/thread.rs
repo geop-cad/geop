@@ -19,6 +19,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
     scalars::Scalar,
+    solvers::walk::{Take, flood},
     vector::{Vector2, Vector3},
     with_context,
 };
@@ -87,9 +88,11 @@ impl<S: Scalar> Wall<S> {
                 "face {name:?} is not cylindrical: a thread runs on a cylindrical face"
             )));
         };
+        // Out from `face` across its edges to every face of the same
+        // cylinder.
         let mut faces = vec![face];
-        let mut todo = vec![face];
-        while let Some(f) = todo.pop() {
+        flood([face], Take::Newest, |&f| {
+            let mut found = Vec::new();
             for n in neighbours(model, f) {
                 if faces.contains(&n) {
                     continue;
@@ -97,10 +100,11 @@ impl<S: Scalar> Wall<S> {
                 let on = topology.get_face(n)?.surface.as_cylinder()?;
                 if on.is_some_and(|c| same_cylinder(&cylinder, &c)) {
                     faces.push(n);
-                    todo.push(n);
+                    found.push(n);
                 }
             }
-        }
+            Ok::<_, GeopError>(found)
+        })?;
         faces.sort_by_key(|f| f.0);
         let mut extent: Option<(S, S)> = None;
         for &f in &faces {

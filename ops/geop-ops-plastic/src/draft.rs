@@ -50,7 +50,7 @@ use geop_core_topology::{
 use geop_ops::{BodyNames, NamedModel, Namer};
 use geop_ops_shell::shell::{extended, offset_vertex, pcurve};
 
-use crate::common::{halfway, normal_at};
+use crate::common::halfway;
 
 /// The surface a face lies on, as far as a draft cares.
 #[derive(Clone, Debug)]
@@ -519,8 +519,12 @@ impl<'a, S: Scalar> Drafted<'a, S> {
 /// their normals, halfway along it, could be parallel.
 fn tangent_along<S: Scalar>(spec: &BodySpec<S>, e: usize, f: usize, g: usize) -> GeopResult<bool> {
     let (point, _) = halfway(&spec.edges[e].curve)?;
-    let n_f = normal_at(&spec.faces[f].surface, &point)?;
-    let n_g = normal_at(&spec.faces[g].surface, &point)?;
+    let n_f = spec.faces[f]
+        .surface
+        .normal_at(&point, MAX_NODES, min_subdivision_size())?;
+    let n_g = spec.faces[g]
+        .surface
+        .normal_at(&point, MAX_NODES, min_subdivision_size())?;
     Ok(n_f.prod_cross(&n_g).norm_sq().could_be_equal(S::ZERO))
 }
 

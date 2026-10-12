@@ -39,6 +39,7 @@ use geop_core_math::{
     plain,
     primitives::{Motion, Pose, Quaternion},
     scalars::Scalar,
+    solvers::probe::first_success,
     vector::Vector3,
 };
 use geop_core_topology::{FaceId, Model};
@@ -567,24 +568,21 @@ impl<'p, S: Scalar> Scene<'p, S> {
         let mut pieces: Vec<(S, S, GeopResult<bool>)> = Vec::new();
         for pair in ends.windows(2) {
             let (lo, hi) = (pair[0], pair[1]);
-            let mut outcome = Err(GeopError::new("no point tried"));
-            for f in [0.5, 0.25, 0.75] {
+            let outcome = first_success([0.5, 0.25, 0.75], |f| {
                 let at = || -> GeopResult<bool> {
                     let t = S::fraction(lo, hi, S::from_f64(f));
                     let point = line.curve3.evaluate(t)?;
                     Ok(!self.hidden_by([b], reach, frame, point)?)
                 };
-                outcome = at().map_err(|e| {
+                at().map_err(|e| {
                     e.with_context(format!(
                         "the piece [{lo:?}, {hi:?}] of the {:?} of edge {:?} of the part \
                          placed as {:?}",
                         line.kind, line.edge, self.bodies[line.body].path
                     ))
-                });
-                if outcome.is_ok() {
-                    break;
-                }
-            }
+                })
+            })
+            .map_err(|e| e.unwrap_or_else(|| GeopError::new("no point tried")));
             pieces.push((lo, hi, outcome));
         }
         let known: Vec<Option<bool>> = pieces.iter().map(|p| p.2.as_ref().ok().copied()).collect();

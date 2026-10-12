@@ -25,7 +25,8 @@
 //!    cells it overlaps ([`super::clip::clip_to_rect`], exact for a convex
 //!    part: one convex piece, or none). Then in each cell subtract the
 //!    holes' pieces from the outer boundary's
-//!    ([`super::clip::subtract_convex`]), and ear-clip whatever's left.
+//!    ([`super::clip::subtract_convex`]), and ear-clip whatever's left
+//!    ([`geop_core_math::polygon::ear_clip`]).
 //!
 //!    Three earlier versions of this step turned out wrong. The first
 //!    globally merged outer+holes into one ring (via a zero-width "slit"
@@ -60,6 +61,7 @@ use std::collections::HashMap;
 use geop_core_math::{
     geop_error::GeopResult,
     plain::{distance, dot, sub},
+    polygon::ear_clip,
     scalars::Scalar,
     solvers::refine::{Refine, refine},
     vector::{Vector2, Vector3},
@@ -68,7 +70,7 @@ use geop_core_topology::{
     Face, Model, boundary::BoundaryType, loop_sampling::sample_loop_to_polygon,
 };
 
-use crate::clip::{Point, clip_to_rect, ear_clip, is_convex, subtract_convex};
+use crate::clip::{Point, clip_to_rect, is_convex, subtract_convex};
 
 /// Where the grid starts, before curvature refines it: a flat face needs
 /// nothing finer, whatever `n` the caller asked for, since its cells
@@ -536,7 +538,7 @@ mod tests {
         let triangles =
             triangulate_region(&square, &[crescent.clone()], [0.0, 0.0], [4.0, 4.0], 1, 1);
         let hole = covered(
-            &crate::clip::ear_clip(&crescent)
+            &ear_clip(&crescent)
                 .into_iter()
                 .map(|t| [crescent[t[0]], crescent[t[1]], crescent[t[2]]])
                 .collect::<Vec<_>>(),

@@ -2,7 +2,11 @@ use crate::{
     FaceId, Model, argument_validation::validate_pcurve_start_and_end, boundary::BoundaryType,
 };
 use geop_core_geometry::nurb_surface::NurbSurface3D;
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    scalars::Scalar,
+    solvers::walk::{Walked, walk},
+};
 
 impl<S: Scalar> Model<S> {
     // Swap `face_id`'s surface for `surface` — e.g. dropping in a real
@@ -21,17 +25,17 @@ impl<S: Scalar> Model<S> {
             let BoundaryType::Loop(anchor) = boundary else {
                 continue;
             };
-            let mut cursor = anchor;
-            loop {
+            let around = walk(anchor, |&cursor| {
                 let coedge = self.get_coedge(cursor)?.clone();
                 let start = self.coedge_start_vertex(cursor)?.clone();
                 let end = self.coedge_end_vertex(cursor)?.clone();
                 validate_pcurve_start_and_end(&surface, &coedge.pcurve, &start.point, &end.point)?;
-
-                cursor = coedge.next;
-                if cursor == anchor {
-                    break;
-                }
+                Ok::<_, GeopError>(Some(coedge.next))
+            })?;
+            if let Walked::Revisited(c) = around.end {
+                return Err(GeopError::new(format!(
+                    "replace_face: the loop anchored at coedge {anchor} runs into itself at coedge {c}"
+                )));
             }
         }
 

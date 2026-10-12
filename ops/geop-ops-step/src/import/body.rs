@@ -54,6 +54,8 @@ use geop_core_math::{
         iterate::{Repeat, Step, iterate},
         minimize::GoldenSection,
         refine::{Refine, Refined, refine},
+        repeat::{self, repeat},
+        walk::{Walked, walk},
     },
     vector::{Vector2, Vector3},
 };
@@ -163,6 +165,10 @@ impl Healing {
 /// values are the kernel's usual ones.
 const MAX_NODES: usize = 5000;
 const MIN_SUBDIVISION_SIZE: f64 = 1e-4;
+/// How many faces normalizing a body may look at, each kept or cut into
+/// pieces that are looked at in turn: an effort budget only. A body whose
+/// faces keep being cut beyond it is refused, never taken as normalized.
+const NORMALIZE_STEPS: usize = 1_000_000;
 
 /// Samples per edge when walking a loop around an axis: enough that two
 /// consecutive ones are less than half a turn apart even on an edge going
@@ -678,8 +684,13 @@ impl<S: Scalar> Builder<'_, S> {
     /// Brings the faces read into the shape geop needs: wrapping faces cut
     /// into sectors, closed edges split.
     fn normalize(&mut self) -> GeopResult<()> {
+        // Each step keeps the face `f` and moves on, or cuts it, taking it
+        // out and adding its pieces at the end, to be looked at in turn.
         let mut f = 0;
-        while f < self.faces.len() {
+        repeat(NORMALIZE_STEPS, || -> GeopResult<_> {
+            if f >= self.faces.len() {
+                return Ok(repeat::Step::Done(()));
+            }
             let face = &self.faces[f];
             let id = face.id;
             let revolved = face.surface.revolved().cloned();
@@ -718,7 +729,7 @@ impl<S: Scalar> Builder<'_, S> {
                     })?;
                 }
                 // Its pieces were pushed at the end; it is gone.
-                continue;
+                return Ok(repeat::Step::Again);
             }
             if let Some(revolved) = &revolved
                 && self.turns_more_than_once(f, revolved)?
@@ -728,10 +739,12 @@ impl<S: Scalar> Builder<'_, S> {
                         "cutting the face #{id}, which turns about its axis more than once without going round it, along meridians"
                     ))
                 })?;
-                continue;
+                return Ok(repeat::Step::Again);
             }
             f += 1;
-        }
+            Ok(repeat::Step::Again)
+        })?
+        .done("cutting the faces into the shape geop needs")?;
         // Closed edges left: split each in two.
         for e in 0..self.edges.len() {
             let edge = &self.edges[e];
@@ -1672,26 +1685,28 @@ impl<S: Scalar> Builder<'_, S> {
             if used[first] {
                 continue;
             }
+            // On along the loop, or across the meridian where one leaves.
+            // One running into a piece already traced runs round it into
+            // itself.
+            let around = walk(first, |&i| {
+                let end = self.ends(lp[i]).1;
+                Ok::<_, GeopError>(Some(match partner.get(&end) {
+                    Some(&(other, _)) => starting[&other],
+                    None => (i + 1) % lp.len(),
+                }))
+            })?;
+            if around.end != Walked::Closed {
+                return Err(GeopError::new(
+                    "tracing a piece along its loop and the meridians did not close",
+                ));
+            }
             let mut piece = Vec::new();
-            let mut i = first;
-            loop {
-                if used[i] || piece.len() > 2 * lp.len() + partner.len() {
-                    return Err(GeopError::new(
-                        "tracing a piece along its loop and the meridians did not close",
-                    ));
-                }
+            for &i in &around.nodes {
                 used[i] = true;
                 piece.push(lp[i]);
                 let end = self.ends(lp[i]).1;
-                i = match partner.get(&end) {
-                    Some(&(other, m)) => {
-                        piece.push((m, self.edges[m].start == end));
-                        starting[&other]
-                    }
-                    None => (i + 1) % lp.len(),
-                };
-                if i == first {
-                    break;
+                if let Some(&(_, m)) = partner.get(&end) {
+                    piece.push((m, self.edges[m].start == end));
                 }
             }
             pieces.push(piece);

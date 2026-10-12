@@ -15,6 +15,13 @@
 //!   built at it is good enough.
 //! - [`subdivide`]: subdivision search, the global method that finds every
 //!   solution in a region within a node budget.
+//! - [`repeat`]: a step repeated until it says it is done, within a
+//!   budget — worklists rewritten until nothing is left to rewrite, marches
+//!   stepped on until they arrive, passes until one changes nothing.
+//! - [`walk`]: a chain followed node by node until it closes, ends or runs
+//!   into itself, and a graph flooded from some nodes to all it reaches.
+//! - [`continuation`]: values driven to where they are to be in stages, a
+//!   problem solved at each.
 //! - [`newton`]: Newton refinement of a root a subdivision search has
 //!   isolated.
 //! - [`least_squares`]: constrained Levenberg–Marquardt over any scalar.
@@ -25,6 +32,7 @@
 //!   and prefers pulls and staying put among where they hold.
 
 pub mod bisect;
+pub mod continuation;
 pub mod iterate;
 pub mod least_squares;
 pub mod linear;
@@ -32,5 +40,7 @@ pub mod minimize;
 pub mod newton;
 pub mod probe;
 pub mod refine;
+pub mod repeat;
 pub mod subdivide;
 pub mod system;
+pub mod walk;

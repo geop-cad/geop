@@ -579,8 +579,11 @@ fn a_pattern_places_copies_after_the_part() {
             geop_ops::ORIGIN,
             DatumComponent::Axis(FrameAxis::X),
         )),
-        layout: crate::Layout::Linear { spacing: 2.0 },
-        count: 3,
+        reversed: false,
+        layout: crate::Layout::Linear {
+            spacing: geop_ops::operation::pattern::Spacing::step(2.0),
+        },
+        count: 3.0.into(),
     };
     let steps = vec![
         ProgramStep::new::<AddPart>("a", &args(false, &[])).unwrap(),

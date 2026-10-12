@@ -454,7 +454,7 @@ pub(crate) fn add_flange<S: Scalar>(
     // Along the edge `s`, into the flat `h`.
     let edge_length = b.sub(&a).norm();
     let tau = b.sub(&a).normalize()?;
-    let inward = Vector2::from_array([tau[1].neg(), tau[0]]);
+    let inward = tau.perp();
     let at = |along: S, into: S| {
         a.add(&tau.prod_scalar(along))
             .add(&inward.prod_scalar(into))

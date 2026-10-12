@@ -7,15 +7,13 @@ use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve3D};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
+    solvers::walk::{Walked, walk_by},
     vector::{Vector3, Vector4},
     with_context,
 };
 
 use super::{Constraint3d, Curve3d, CurveKind3d, Enclosure3d, End, Sketch3d, geometry::Arc3};
 use crate::{CurveId, PointId, ProfileEdge, ProfileJoint};
-
-/// Samples per piece of a curve drawn as a polyline.
-const SAMPLES: usize = 16;
 
 /// One NURBS piece of a chain, on `[0, 1]`, named as a planar sketch's
 /// pieces are (see [`crate::profile::Piece`]).
@@ -107,12 +105,13 @@ impl<S: Scalar> Sketch3d<S> {
                     e: self.points[end].at,
                 };
                 let (cos, _) = drawn.half_sweep().with_context(ctx)?;
-                let pieces = if !cos.definitely_less(S::ONE.div(S::TWO)?.sqrt()?) {
-                    1
+                // Into one, two or four pieces: halved none, once or twice.
+                let halvings = if !cos.definitely_less(S::ONE.div(S::TWO)?.sqrt()?) {
+                    0
                 } else if !cos.definitely_less(S::ZERO) {
-                    2
+                    1
                 } else {
-                    4
+                    2
                 };
                 let arc = Arc3 {
                     s: at(start),
@@ -121,11 +120,11 @@ impl<S: Scalar> Sketch3d<S> {
                 };
                 let normal = arc.normal().with_context(ctx)?;
                 let (cos, sin) = arc.half_sweep().with_context(ctx)?;
-                // Halve the arc until it has as many pieces: each bisected
-                // at its middle, `(L/2) tan(quarter)` out from its chord.
+                // Halve the arc as often: each piece bisected at its
+                // middle, `(L/2) tan(quarter)` out from its chord.
                 let mut ends = vec![arc.s, arc.e];
                 let (mut cos, mut sin) = (cos, sin);
-                while ends.len() - 1 < pieces {
+                for _ in 0..halvings {
                     let tan_quarter = sin.div(T::ONE.add(cos))?;
                     let mut halved = vec![ends[0]];
                     for w in ends.windows(2) {
@@ -237,19 +236,7 @@ impl<S: Scalar> Sketch3d<S> {
     /// dense enough to draw it.
     pub fn curve_polyline(&self, curve: CurveId) -> GeopResult<Vec<Vector3<S>>> {
         let pieces = self.curve_nurbs(curve, &Enclosure3d::as_drawn(self))?;
-        let mut out = Vec::new();
-        for piece in &pieces {
-            let spans = if piece.degree == 1 {
-                1
-            } else {
-                SAMPLES * (piece.control_points.len() - 1)
-            };
-            out.pop();
-            for i in 0..=spans {
-                out.push(piece.evaluate(S::from_ratio(i as i64, spans as i64)?)?);
-            }
-        }
-        Ok(out)
+        crate::profile::polyline(&pieces, NurbCurve3D::evaluate)
     }
 
     /// The curves that become edges, oldest first: those drawn, but for
@@ -295,41 +282,58 @@ impl<S: Scalar> Sketch3d<S> {
             drawn.iter().map(|&(id, s, e)| (id, (s, e))).collect();
         // The other curve at the point `p` of the curve `c`.
         let next = |c: CurveId, p: PointId| at[&p].iter().copied().find(|&k| k != c);
+        // Where a chain is not a path: no curve meets more than one other
+        // at a point, so it cannot.
+        let runs_into_itself =
+            |k: CurveId| GeopError::new(format!("the chain through curve {k} runs into itself"));
         let mut used = BTreeSet::new();
         let mut chains = Vec::new();
         for &(first, _, _) in &drawn {
             if used.contains(&first) {
                 continue;
             }
-            // Back from the oldest curve's start to where the chain begins.
-            let (mut curve, mut point) = (first, ends[&first].0);
-            let mut closed = false;
-            while let Some(k) = next(curve, point) {
-                if k == first {
-                    closed = true;
-                    break;
-                }
-                let (s, e) = ends[&k];
-                point = if s == point { e } else { s };
-                curve = k;
-            }
-            let (mut curve, mut from) = if closed {
+            // Back from the oldest curve's start to where the chain begins:
+            // each curve, and the point it is left at.
+            let back = walk_by(
+                (first, ends[&first].0),
+                |&(c, _)| c,
+                |&(c, p)| {
+                    Ok::<_, GeopError>(next(c, p).map(|k| {
+                        let (s, e) = ends[&k];
+                        (k, if s == p { e } else { s })
+                    }))
+                },
+            )?;
+            let closed = match back.end {
+                Walked::Closed => true,
+                Walked::Open => false,
+                Walked::Revisited((k, _)) => return Err(runs_into_itself(k)),
+            };
+            // Then on from there: each curve, and the point it is entered at.
+            let start = if closed {
                 (first, ends[&first].0)
             } else {
-                (curve, point)
+                *back.nodes.last().expect("never empty")
             };
-            let mut edges = Vec::new();
-            loop {
-                let (s, e) = ends[&curve];
-                let reversed = s != from;
-                edges.push(ProfileEdge { curve, reversed });
-                used.insert(curve);
-                from = if reversed { s } else { e };
-                match next(curve, from) {
-                    Some(k) if k != edges[0].curve => curve = k,
-                    _ => break,
-                }
+            let on = walk_by(
+                start,
+                |&(c, _)| c,
+                |&(c, from)| {
+                    let (s, e) = ends[&c];
+                    let to = if s != from { s } else { e };
+                    Ok::<_, GeopError>(next(c, to).map(|k| (k, to)))
+                },
+            )?;
+            if let Walked::Revisited((k, _)) = on.end {
+                return Err(runs_into_itself(k));
             }
+            let edges: Vec<ProfileEdge> = (on.nodes.iter())
+                .map(|&(curve, from)| ProfileEdge {
+                    curve,
+                    reversed: ends[&curve].0 != from,
+                })
+                .collect();
+            used.extend(edges.iter().map(|edge| edge.curve));
             chains.push(Chain3d { edges, closed });
         }
         Ok(chains)

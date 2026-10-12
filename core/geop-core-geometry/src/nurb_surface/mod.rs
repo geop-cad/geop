@@ -2,6 +2,8 @@ mod closest;
 mod curvature;
 mod evaluate;
 mod fit_pcurve;
+mod flat;
+pub use flat::FlatPatch;
 mod gordon;
 mod normal;
 mod offset;

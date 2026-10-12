@@ -1,5 +1,4 @@
 use crate::{
-    contains::surface::surface_could_contain,
     nurb_curve::{NurbCurve, NurbCurve2D, true_point_fractions},
     spline::interior_knots,
 };
@@ -71,9 +70,8 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// merely orthogonal to the boundary — and every later sample, seeded
     /// from its predecessor, follows it there. So the start is `pin_start`
     /// when there is one (the face's own authoritative `(u, v)`), and is
-    /// otherwise isolated by [`surface_could_contain`] (`max_nodes` /
-    /// `min_subdivision_size` bound that search) — subdivide to isolate,
-    /// then Newton to refine. A curve that does not start on this surface is
+    /// otherwise located by [`Self::locate`] (`max_nodes` /
+    /// `min_subdivision_size` bound its search). A curve that does not start on this surface is
     /// an error: there is no trace of it to fit.
     ///
     /// `pin_start` / `pin_end` override the projected `(u, v)` of the first
@@ -110,7 +108,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
             Some(pin) => (pin[0], pin[1]),
             None => {
                 let start = curve.evaluate(t0).with_context(&ctx)?;
-                surface_could_contain(self, &start, max_nodes, min_subdivision_size)
+                self.locate(&start, max_nodes, min_subdivision_size)
                     .with_context(&ctx)?
                     .ok_or_else(|| {
                         ctx(GeopError::new(format!(

@@ -10,6 +10,7 @@
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
+    solvers::repeat::{Step, repeat},
     vector::{Vector3, Vector4},
 };
 
@@ -351,11 +352,23 @@ impl<S: Scalar> NurbSurface3D<S> {
             (false, false) => 0,
         };
         let mut surface = self.clone();
-        while surface.num_v < rows_needed(0, 2) {
-            surface = surface.elevate_degree(false)?;
-        }
-        while surface.num_u < rows_needed(1, 3) {
-            surface = surface.elevate_degree(true)?;
+        // Raised along `v` for the sides 0 and 2, along `u` for 1 and 3,
+        // until there are as many rows as the planes need. Each raise adds
+        // a row at least.
+        for (along_u, needed) in [(false, rows_needed(0, 2)), (true, rows_needed(1, 3))] {
+            repeat(needed + 1, || -> GeopResult<_> {
+                let rows = if along_u {
+                    surface.num_u
+                } else {
+                    surface.num_v
+                };
+                if rows >= needed {
+                    return Ok(Step::Done(()));
+                }
+                surface = surface.elevate_degree(along_u)?;
+                Ok(Step::Again)
+            })?
+            .done("raising the patch's degree for its tangent planes")?;
         }
         let (nu, nv) = (surface.num_u, surface.num_v);
         let at = |i: usize, j: usize| i * nv + j;

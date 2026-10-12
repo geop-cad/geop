@@ -11,7 +11,7 @@ use crate::{
     boundary::BoundaryType,
     contains::{
         face::face_interior_point,
-        shell::{PointClassification, solid_contains},
+        shell::{Classified, PointClassification, solid_contains},
     },
     loop_sampling::sample_loop_to_polygon,
     validation::ValidationParameters,
@@ -238,6 +238,7 @@ pub fn normal_points_outward<S: Scalar>(
                 params.max_nodes,
                 params.min_subdivision_size,
                 SEED,
+                &mut Classified::default(),
             ),
             solid_contains(
                 model,
@@ -246,6 +247,7 @@ pub fn normal_points_outward<S: Scalar>(
                 params.max_nodes,
                 params.min_subdivision_size,
                 SEED,
+                &mut Classified::default(),
             ),
         ) {
             let resolved = match (out_class, in_class) {

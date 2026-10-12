@@ -15,24 +15,6 @@ use geop_core_topology::{CoedgeGeometry, FaceId};
 use super::{Aspects, EntityRef, Lookup, frame_along};
 use crate::model::NamedModel;
 
-/// Two unit directions square to the unit vector `axis` and to each other:
-/// the first from whichever of `x`, `y`, `z` runs least along it — the
-/// first no other definitely runs less along, so that an axis a hair off
-/// one of them does not pick between two by noise. A free choice, made the
-/// same way wherever a direction across an axis is measured from: a joint's
-/// turns, a frame's `x`.
-pub fn across<S: Scalar>(axis: &Vector3<S>) -> GeopResult<[Vector3<S>; 2]> {
-    let size = |k: usize| axis[k].abs();
-    let least = (0..3)
-        .find(|&k| !(0..3).any(|j| size(j).definitely_less(size(k))))
-        .unwrap_or(0);
-    let reference = Vector3::axis(least);
-    let first = (reference.sub(&axis.prod_scalar(axis.prod_dot(&reference))))
-        .normalize()
-        .map_err(|e| e.with_context(format!("a direction square to {axis:?}")))?;
-    Ok([first, axis.prod_cross(&first)])
-}
-
 /// How many points of each of a face's edges its middle is measured from.
 const SAMPLES: i64 = 8;
 

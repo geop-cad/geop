@@ -199,6 +199,21 @@ impl<S: Scalar> NurbSurface<S, 4> {
         }
         regular
     }
+
+    /// The unit normal of this surface at `point`, which lies on it: at
+    /// its `(u, v)` there ([`Self::locate`]). An error if the point is not
+    /// on the surface.
+    pub fn normal_at(
+        &self,
+        point: &Vector3<S>,
+        max_nodes: usize,
+        min_subdivision_size: S,
+    ) -> GeopResult<Vector3<S>> {
+        let (u, v) = self
+            .locate(point, max_nodes, min_subdivision_size)?
+            .ok_or_else(|| GeopError::new(format!("{point:?} is not on the surface")))?;
+        self.normal(u, v)
+    }
 }
 
 #[cfg(test)]

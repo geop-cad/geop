@@ -19,7 +19,10 @@ use geop_core_geometry::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
-    solvers::probe::{Probe, attempts},
+    solvers::{
+        probe::{Probe, attempts},
+        walk::{Walked, walk},
+    },
     vector::{Vector2, Vector3},
     with_context,
 };
@@ -288,7 +291,7 @@ impl<S: Scalar> Layout<S> {
             let edge = &self.edges[e];
             for (l, lp) in cut.iter().enumerate() {
                 for (i, c) in lp.iter().enumerate() {
-                    if !boxes_overlap(&edge.curve, &c.curve)? {
+                    if !edge.curve.could_overlap(&c.curve) {
                         continue;
                     }
                     let found = crossings(&segs[&e], &cut_segs[l][i], &edge.curve, &c.curve)
@@ -509,26 +512,29 @@ fn relink<S: Scalar>(
         if used[first] {
             continue;
         }
-        let mut lp = Vec::new();
-        let mut k = first;
-        while !used[k] {
-            used[k] = true;
-            lp.push(pool[k]);
+        // On from each piece to the one leaving where it ends. One running
+        // into a loop already followed runs round that loop into itself.
+        let around = walk(first, |&k| {
             let (_, to) = ends(&pool[k]);
-            k = *leaving.get(&to).ok_or_else(|| {
+            let next = leaving.get(&to).ok_or_else(|| {
                 GeopError::new(format!(
                     "the cut leaves face {} open at {:?}",
                     face.name.root(),
                     vertices[to].at
                 ))
             })?;
-        }
-        if k != first {
+            Ok::<_, GeopError>(Some(*next))
+        })?;
+        if around.end != Walked::Closed {
             return Err(GeopError::new(format!(
                 "the cut leaves face {}'s boundary tangled",
                 face.name.root()
             )));
         }
+        for &k in &around.nodes {
+            used[k] = true;
+        }
+        let lp: Vec<(usize, Sense)> = around.nodes.iter().map(|&k| pool[k]).collect();
         let area = loop_area(&lp, edges)?;
         if area.definitely_greater(S::ZERO) {
             outer.push(lp);
@@ -644,25 +650,6 @@ fn loop_area<S: Scalar>(lp: &[(usize, Sense)], edges: &[LayoutEdge<S>]) -> GeopR
         });
     }
     Ok(area)
-}
-
-/// Whether the boxes around two curves' control points overlap.
-fn boxes_overlap<S: Scalar>(a: &NurbCurve2D<S>, b: &NurbCurve2D<S>) -> GeopResult<bool> {
-    let (a, b) = (bounds(a)?, bounds(b)?);
-    Ok((0..2).all(|k| a[k].could_be_equal(b[k])))
-}
-
-/// The box around a curve's control points, which it lies in.
-fn bounds<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<[S; 2]> {
-    let mut points = curve
-        .control_points
-        .iter()
-        .map(|cp| Ok([cp[0].div(cp[2])?, cp[1].div(cp[2])?]));
-    let first: [S; 2] = points.next().expect("a curve has control points")?;
-    points.try_fold(first, |acc, p: GeopResult<[S; 2]>| {
-        let p = p?;
-        Ok([acc[0].union(p[0]), acc[1].union(p[1])])
-    })
 }
 
 /// A curve of the layout, as far as cutting is concerned: a line, an arc
@@ -996,7 +983,7 @@ fn circle_circle<S: Scalar>(
         return Ok(Vec::new());
     }
     let base = c1.add(&d.prod_scalar(k));
-    let across = Vector2::from_array([d[1].neg(), d[0]]);
+    let across = d.perp();
     if h2.could_be_equal(S::ZERO) {
         return Ok(vec![(base, true)]);
     }
@@ -1031,10 +1018,7 @@ fn contains<S: Scalar>(loops: &[Vec<Piece<'_, S>>], p: &Vector2<S>) -> Result<bo
     let reach = loops
         .iter()
         .flatten()
-        .map(|piece| bounds(piece.curve))
-        .collect::<GeopResult<Vec<_>>>()
-        .map_err(|e| e.to_string())?
-        .into_iter()
+        .map(|piece| piece.curve.aabb())
         .map(|b| {
             [0, 1]
                 .map(|k| b[k].sub(p[k]).abs().upper().to_f64())

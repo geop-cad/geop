@@ -20,6 +20,7 @@ use geop_core_math::{
     primitives::Pose,
     scalars::{Ring, Scalar},
     solvers::{
+        continuation::continuation,
         least_squares::{Rows, Stop},
         system::{Phase, Variable, tolerance},
     },
@@ -331,16 +332,6 @@ fn seeded(
 /// as a pose's variables.
 pub type D = Dual<Design, 6>;
 
-/// The step of a pose by its six variables: a turn, then a move, in its
-/// own frame (see [`Variable::retract`]).
-pub fn twist() -> GeopResult<Pose<D>> {
-    let var = |k: usize| D::var(Design::ZERO, k);
-    Pose::exp(
-        &Vector3::from_array([var(0), var(1), var(2)]),
-        &Vector3::from_array([var(3), var(4), var(5)]),
-    )
-}
-
 /// A point of a placed part pulled towards a point in the world: a drag.
 /// The part resists turning — a hundredth as strongly — so that a point
 /// pulled alone moves it rather than spins it.
@@ -362,7 +353,8 @@ const TURN_RESISTANCE: (i64, i64) = (1, 100);
 /// placement reads, so its step moves the part in its own frame.
 fn stepped(view: BuildView, path: &str) -> GeopResult<Pose<D>> {
     let world = locate(&mut view.clone(), path)?.world;
-    Ok(world.map(D::cst).compose(&twist()?))
+    let step = Pose::exp_with_derivatives(&Vector3::zero(), &Vector3::zero())?;
+    Ok(world.map(D::cst).compose(&step))
 }
 
 /// The rows `values` as a constraint by `parameter`'s step.
@@ -560,25 +552,22 @@ pub fn solve(
     }
     // A held angle driven there in steps, the rest following each; the
     // pulls pull in the last.
-    let driven: Vec<(String, f64, f64)> = (set.iter())
+    let (driven, ranges): (Vec<String>, Vec<(f64, f64)>) = (set.iter())
         .filter(|(parameter, _)| turns.contains(*parameter))
         .filter_map(|(parameter, to)| match start.get(parameter) {
-            Some(ParamValue::Number(from)) => Some((parameter.clone(), from.to_f64(), to.to_f64())),
+            Some(ParamValue::Number(from)) => {
+                Some((parameter.clone(), (from.to_f64(), to.to_f64())))
+            }
             _ => None,
         })
-        .collect();
-    let steps = (driven.iter())
-        .map(|(_, from, to)| ((to - from).abs() / TURN_STEP).ceil() as usize)
-        .max()
-        .unwrap_or(0);
-    for k in 1..steps {
-        for (parameter, from, to) in &driven {
-            // Where a step goes is a free choice: any angle between.
-            let at = from + (to - from) * k as f64 / steps as f64;
-            start.insert(parameter.clone(), ParamValue::Number(Design::from_f64(at)));
+        .unzip();
+    continuation(&ranges, TURN_STEP, |at| {
+        for (parameter, at) in driven.iter().zip(at) {
+            start.insert(parameter.clone(), ParamValue::Number(Design::from_f64(*at)));
         }
         start = solve::solve(part, &start, &problem(&free, Vec::new(), scale))?.state;
-    }
+        Ok::<_, GeopError>(())
+    })?;
     for (parameter, value) in &set {
         start.insert(parameter.clone(), ParamValue::Number(*value));
     }

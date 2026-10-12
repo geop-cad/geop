@@ -19,13 +19,18 @@
 
 use crate::sketch::{CurveId, CurveKind, Enclosure, PointId, Sketch};
 use geop_core_geometry::{
+    aabb::union_aabb,
     intersection::curve_curve_intersect,
     nurb_curve::{NurbCurve, NurbCurve2D, bezier_knots},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
-    solvers::probe::{Probe, attempts, halve},
+    solvers::{
+        probe::{Probe, attempts, halve},
+        repeat,
+        walk::walk_by,
+    },
     vector::{Vector2, Vector3},
     with_context,
 };
@@ -183,21 +188,24 @@ impl<S: Scalar> Sketch<S> {
             (c, ends(c).0 != p)
         });
         let closed = start.is_none();
-        let (mut c, mut reversed) = start.unwrap_or((first, false));
-        let mut edges = vec![ProfileEdge { curve: c, reversed }];
-        loop {
-            let (s, e) = ends(c);
-            let end = if reversed { s } else { e };
-            let Some(&next) = at[&end]
-                .iter()
-                .find(|&&k| !edges.iter().any(|edge| edge.curve == k))
-            else {
-                break;
-            };
-            reversed = ends(next).1 == end;
-            c = next;
-            edges.push(ProfileEdge { curve: c, reversed });
-        }
+        let (c, reversed) = start.unwrap_or((first, false));
+        // On from each curve's end to the other curve there, until there is
+        // none, or it is one already in the chain.
+        let edges = walk_by(
+            ProfileEdge { curve: c, reversed },
+            |edge| edge.curve,
+            |edge| {
+                let (s, e) = ends(edge.curve);
+                let end = if edge.reversed { s } else { e };
+                Ok::<_, GeopError>(at[&end].iter().find(|&&k| k != edge.curve).map(|&next| {
+                    ProfileEdge {
+                        curve: next,
+                        reversed: ends(next).1 == end,
+                    }
+                }))
+            },
+        )?
+        .nodes;
         if let Some(apart) = ids
             .iter()
             .find(|&&k| !edges.iter().any(|edge| edge.curve == k))
@@ -234,14 +242,23 @@ impl<S: Scalar> Sketch<S> {
         };
         let mut chain = vec![curve];
         for from in [class[&e], class[&s]] {
-            let (mut c, mut p) = (curve, from);
-            while let [(next, far)] = others_at(p, c)[..] {
-                if chain.contains(&next) {
-                    break;
-                }
-                chain.push(next);
-                (c, p) = (next, far);
-            }
+            // On from each curve to the one other joined at its far end, as
+            // far as the chain has not come already.
+            let on = walk_by(
+                (curve, from),
+                |&(c, _)| c,
+                |&(c, p)| {
+                    Ok::<_, GeopError>(match others_at(p, c)[..] {
+                        [(next, far)] => Some((next, far)),
+                        _ => None,
+                    })
+                },
+            )?;
+            let new: Vec<CurveId> = (on.nodes[1..].iter())
+                .map(|&(c, _)| c)
+                .take_while(|c| !chain.contains(c))
+                .collect();
+            chain.extend(new);
         }
         Ok(chain)
     }
@@ -359,20 +376,16 @@ impl<S: Scalar> Sketch<S> {
             *degree.entry(a).or_default() += 1;
             *degree.entry(b).or_default() += 1;
         }
-        loop {
-            let mut changed = false;
-            for (k, &(_, a, b)) in edges.iter().enumerate() {
-                if alive[k] && (degree[&a] == 1 || degree[&b] == 1) {
-                    alive[k] = false;
-                    *degree.get_mut(&a).unwrap() -= 1;
-                    *degree.get_mut(&b).unwrap() -= 1;
-                    changed = true;
-                }
+        let _ = repeat::resolve((0..edges.len()).collect(), |&k| {
+            let (_, a, b) = edges[k];
+            if degree[&a] != 1 && degree[&b] != 1 {
+                return Err(());
             }
-            if !changed {
-                break;
-            }
-        }
+            alive[k] = false;
+            *degree.get_mut(&a).unwrap() -= 1;
+            *degree.get_mut(&b).unwrap() -= 1;
+            Ok(())
+        });
         if let Some((p, d)) = degree.iter().find(|(_, d)| **d > 2) {
             return Err(GeopError::new(format!(
                 "profile curves branch at point {p}: {d} curves meet there"
@@ -385,24 +398,31 @@ impl<S: Scalar> Sketch<S> {
             if !alive[start] || used[start] {
                 continue;
             }
-            let mut lp = Vec::new();
-            let (mut k, mut at_end) = (start, false);
-            loop {
-                used[k] = true;
-                let (id, a, b) = edges[k];
-                lp.push(ProfileEdge {
-                    curve: id,
+            // On to an edge not walked yet at each edge's far end.
+            let around = walk_by(
+                (start, false),
+                |&(k, _)| k,
+                |&(k, at_end)| {
+                    used[k] = true;
+                    let (_, a, b) = edges[k];
+                    let next_point = if at_end { a } else { b };
+                    Ok::<_, GeopError>(
+                        (0..edges.len())
+                            .find(|&j| {
+                                alive[j]
+                                    && !used[j]
+                                    && (edges[j].1 == next_point || edges[j].2 == next_point)
+                            })
+                            .map(|next| (next, edges[next].2 == next_point)),
+                    )
+                },
+            )?;
+            let lp = (around.nodes.iter())
+                .map(|&(k, at_end)| ProfileEdge {
+                    curve: edges[k].0,
                     reversed: at_end,
-                });
-                let next_point = if at_end { a } else { b };
-                let Some(next) = (0..edges.len()).find(|&j| {
-                    alive[j] && !used[j] && (edges[j].1 == next_point || edges[j].2 == next_point)
-                }) else {
-                    break;
-                };
-                at_end = edges[next].2 == next_point;
-                k = next;
-            }
+                })
+                .collect();
             loops.push(ProfileLoop { edges: lp });
         }
         Ok(loops)
@@ -611,8 +631,19 @@ pub fn curve_polyline<S: Scalar>(
     curve: CurveId,
 ) -> GeopResult<Vec<Vector2<S>>> {
     let pieces = curve_nurbs(sketch, &Enclosure::as_drawn(sketch), curve)?;
+    polyline(&pieces, NurbCurve2D::evaluate)
+}
+
+/// Points along `pieces`, a chain of curves on `[0, 1]` each starting where
+/// the one before ends, as `evaluate` gives them: a straight piece by its
+/// ends, any other by `SAMPLES` per span of its control points — dense
+/// enough to draw it.
+pub(crate) fn polyline<S: Scalar, const D: usize, P>(
+    pieces: &[NurbCurve<S, D>],
+    evaluate: impl Fn(&NurbCurve<S, D>, S) -> GeopResult<P>,
+) -> GeopResult<Vec<P>> {
     let mut out = Vec::new();
-    for piece in &pieces {
+    for piece in pieces {
         let spans = if piece.degree == 1 {
             1
         } else {
@@ -621,7 +652,7 @@ pub fn curve_polyline<S: Scalar>(
         // Each piece's last sample is the next piece's first.
         out.pop();
         for i in 0..=spans {
-            out.push(piece.evaluate(S::from_ratio(i as i64, spans as i64)?)?);
+            out.push(evaluate(piece, S::from_ratio(i as i64, spans as i64)?)?);
         }
     }
     Ok(out)
@@ -667,12 +698,6 @@ fn line<S: Scalar>(p0: Vector2<S>, p1: Vector2<S>) -> GeopResult<NurbCurve2D<S>>
     NurbCurve::try_new(1, vec![hom(p0, S::ONE), hom(p1, S::ONE)], bezier_knots(1))
 }
 
-/// `v` turned a quarter counter-clockwise — by `neg`, which is exact, where
-/// [`Vector2::perp`] subtracts from zero.
-fn perpendicular<S: Scalar>(v: Vector2<S>) -> Vector2<S> {
-    Vector2::from_array([v[1].neg(), v[0]])
-}
-
 /// One sketch curve as NURBS pieces from its start to its end, built from
 /// `geometry` — how many pieces, from the sketch as drawn, which is design
 /// data, so the pieces and their names do not depend on how precisely the
@@ -715,7 +740,7 @@ pub fn curve_nurbs<D: Scalar, S: Scalar>(
                 let whole = param().div(S::TWO)?;
                 let chord = e.sub(&s);
                 let length = chord.norm();
-                let left = perpendicular(chord.normalize()?);
+                let left = chord.normalize()?.perp();
                 let mid = s.add(&e).prod_scalar(one_half);
                 let offset = length.mul(one_half).mul(whole.cos()).div(whole.sin())?;
                 let center = mid.add(&left.prod_scalar(offset));
@@ -733,7 +758,7 @@ pub fn curve_nurbs<D: Scalar, S: Scalar>(
                     // nearly straight arc whose center is far away.
                     let chord = w[1].sub(&w[0]);
                     let length = chord.norm();
-                    let left = perpendicular(chord.normalize()?);
+                    let left = chord.normalize()?.perp();
                     let bulge = length.mul(one_half).mul(half.sin()).div(half.cos())?;
                     let mid = w[0].add(&w[1]).prod_scalar(one_half);
                     let m = mid.sub(&left.prod_scalar(bulge));
@@ -798,25 +823,8 @@ pub fn curve_nurbs<D: Scalar, S: Scalar>(
 /// box — how long a ray has to be to leave every loop behind, and the
 /// length the probe offsets below are measured against.
 fn extent_of<S: Scalar>(loops: &[Vec<NurbCurve2D<S>>]) -> GeopResult<S> {
-    let points: Vec<Vector2<S>> = loops
-        .iter()
-        .flatten()
-        .flat_map(|c| c.control_points.iter())
-        .map(|cp| {
-            Ok(Vector2::from_array([
-                cp[0].div(cp[2])?.sharpen(),
-                cp[1].div(cp[2])?.sharpen(),
-            ]))
-        })
-        .collect::<GeopResult<_>>()?;
-    let span = |k: usize| {
-        let hi = points.iter().map(|p| p[k]).reduce(S::max);
-        let lo = points.iter().map(|p| p[k]).reduce(S::min);
-        match (hi, lo) {
-            (Some(hi), Some(lo)) => hi.sub(lo),
-            _ => S::ZERO,
-        }
-    };
+    let bounds = union_aabb(loops.iter().flatten().map(NurbCurve::aabb));
+    let span = |k: usize| bounds.map_or(S::ZERO, |b| b[k].upper().sub(b[k].lower()));
     let extent = span(0).mul(span(0)).add(span(1).mul(span(1))).sqrt()?;
     if !extent.definitely_greater(S::ZERO) {
         return Err(GeopError::new("the profile's loops have no extent"));
@@ -925,7 +933,7 @@ fn turns_counter_clockwise<S: Scalar>(curves: &[NurbCurve2D<S>], extent: S) -> G
     let mid = t0.add(t1).div(S::TWO)?.sharpen();
     let point = curve.evaluate(mid)?;
     let tangent = curve.tangent(mid)?;
-    let left = Vector2::from_array([tangent[1].neg(), tangent[0]]);
+    let left = tangent.perp();
     let found = halve(extent.div(S::from_i64(64))?, 24, |&step| -> GeopResult<_> {
         let at = |sign: S| point.add(&left.prod_scalar(step.mul(sign))).sharpen();
         let inside_left = loop_contains(curves, &at(S::ONE), extent)?;

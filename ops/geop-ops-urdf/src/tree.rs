@@ -11,10 +11,11 @@
 //! then form a tree hanging from the root: a joint closing a loop, or a
 //! link no joint reaches, is refused too, by name.
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
+    solvers::walk::{Take, flood},
     union_find::UnionFind,
 };
 use geop_ops_assembly::JointKind;
@@ -117,9 +118,11 @@ pub fn tree(mechanism: &Mechanism) -> GeopResult<Tree> {
     // Per link, the joint carrying it, by index into `tree.joints`.
     let mut carried_by: Vec<Option<usize>> = vec![None];
     let mut used = HashSet::new();
-    let mut queue = VecDeque::from([0]);
-    while let Some(link) = queue.pop_front() {
+    // Out from the root, level by level: each link carries the links its
+    // joints not yet used lead to.
+    flood([0], Take::Oldest, |&link| {
         let group = group_of_link[link];
+        let mut children = Vec::new();
         for &j in &moving {
             let (a, b) = ends(j);
             if used.contains(&j) || (a != group && b != group) {
@@ -147,9 +150,10 @@ pub fn tree(mechanism: &Mechanism) -> GeopResult<Tree> {
                 child,
                 forward,
             });
-            queue.push_back(child);
+            children.push(child);
         }
-    }
+        Ok(children)
+    })?;
 
     let unreached: Vec<&str> = (0..count)
         .filter(|&b| !link_of_group.contains_key(&groups[b + 1]))
@@ -262,13 +266,11 @@ fn loop_error(
     closing: usize,
 ) -> GeopError {
     // Each link's way back to the root: the links, from it.
-    let up = |mut link: usize| {
-        let mut path = vec![link];
-        while let Some(j) = carried_by[link] {
-            link = tree.joints[j].parent;
-            path.push(link);
-        }
-        path
+    let up = |link: usize| -> Vec<usize> {
+        std::iter::successors(Some(link), |&l| {
+            carried_by[l].map(|j| tree.joints[j].parent)
+        })
+        .collect()
     };
     let (a, b) = (up(from), up(reached));
     let common = a.iter().find(|l| b.contains(l)).copied().unwrap_or(0);

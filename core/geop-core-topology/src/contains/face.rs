@@ -330,7 +330,7 @@ pub fn face_interior_point_where<S: Scalar>(
         // winding, so both are tried and whichever lands inside wins —
         // cheaper and more robust than deriving the winding.
         let normals = [
-            Vector2::from_array([tangent[1].neg(), tangent[0]]),
+            tangent.perp(),
             Vector2::from_array([tangent[1], tangent[0].neg()]),
         ];
 

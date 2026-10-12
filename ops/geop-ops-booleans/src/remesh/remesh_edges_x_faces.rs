@@ -40,7 +40,9 @@ use geop_core_math::{
     solvers::{
         iterate::{Repeat, Step, iterate},
         linear::solve_linear_system,
+        probe::{Probe, attempts},
         refine::{Refine, Refined, refine},
+        repeat::{self, repeat, rewrite},
     },
     vector::{Vector, Vector3},
     with_context,
@@ -420,18 +422,25 @@ fn split_piercing_crossings<S: Scalar>(
     );
 
     let mut settled = std::collections::HashSet::new();
-    while let Some((edge_id, t, vertex, point, face_id)) = find_piercing_crossing(
-        model.topology(),
-        &mut settled,
-        edge_solid,
-        face_solid,
-        params,
+    rewrite(
+        model,
+        params.max_rewrites,
+        |model| {
+            find_piercing_crossing(
+                model.topology(),
+                &mut settled,
+                edge_solid,
+                face_solid,
+                params,
+            )
+        },
+        |model, (edge_id, t, vertex, point, face_id)| {
+            split_at_crossing(model, naming, edge_id, t, vertex, point, face_id, params)
+        },
     )
     .with_context(&ctx)?
-    {
-        split_at_crossing(model, naming, edge_id, t, vertex, point, face_id, params)
-            .with_context(&ctx)?;
-    }
+    .done("splitting edges where they pierce faces")
+    .with_context(&ctx)?;
     Ok(())
 }
 
@@ -661,11 +670,17 @@ fn imprint_coincident_pairs<S: Scalar>(
         "imprint_coincident_pairs(edge_solid={edge_solid}, face_solid={face_solid}, params={params:?})"
     );
 
-    while let Some((edge_id, face_id)) =
-        find_coincident_pair(model.topology(), edge_solid, face_solid, params).with_context(&ctx)?
-    {
-        imprint_coincident_edge(model, naming, edge_id, face_id, params).with_context(&ctx)?;
-    }
+    rewrite(
+        model,
+        params.max_rewrites,
+        |model| find_coincident_pair(model.topology(), edge_solid, face_solid, params),
+        |model, (edge_id, face_id)| {
+            imprint_coincident_edge(model, naming, edge_id, face_id, params)
+        },
+    )
+    .with_context(&ctx)?
+    .done("imprinting edges lying in faces")
+    .with_context(&ctx)?;
     Ok(())
 }
 
@@ -1114,7 +1129,7 @@ fn trace_from_start_point<S: Scalar>(
     );
 
     let mut tried: std::collections::HashSet<(FaceId, FaceId)> = std::collections::HashSet::new();
-    loop {
+    repeat(params.max_rewrites, || -> GeopResult<_> {
         let topology = model.topology();
         let faces_a = faces_at_vertex(topology, start.edge_solid, start.vertex, None, params)
             .with_context(&ctx)?;
@@ -1131,7 +1146,7 @@ fn trace_from_start_point<S: Scalar>(
             .flat_map(|&face_a| faces_b.iter().map(move |&face_b| (face_a, face_b)))
             .find(|pair| !tried.contains(pair));
         let Some((face_a, face_b)) = untried else {
-            return Ok(());
+            return Ok(repeat::Step::Done(()));
         };
         tried.insert((face_a, face_b));
         trace_one_side(
@@ -1145,7 +1160,10 @@ fn trace_from_start_point<S: Scalar>(
         )
         .with_context(with_context!("face_a={face_a}, face_b={face_b}"))
         .with_context(&ctx)?;
-    }
+        Ok(repeat::Step::Again)
+    })?
+    .done("tracing from every pair of faces at the start point")
+    .with_context(&ctx)
 }
 
 /// Every face of `solid` whose closure holds `vertex`, starting from
@@ -1315,7 +1333,6 @@ fn trace_one_side<S: Scalar>(
     // containment every step would only re-derive the same answer.
     let first_step =
         adaptive_step_size(&surf_a, &surf_b, u_a0, v_a0, u_b0, v_b0, &axis).with_context(&ctx)?;
-    let mut chosen = None;
     let mut last_rejection: Option<(PointClassification, PointClassification)> = None;
     // The trial step that decides the direction must not overshoot the curve.
     // A step leaving either trimmed face is rejected whichever way it goes, so
@@ -1353,52 +1370,60 @@ fn trace_one_side<S: Scalar>(
         };
     }
     trials.push((first_step, toward_near));
-    'trial: for (trial, not_toward) in trials {
-        for (forward, sign) in [(true, S::ONE), (false, S::ONE.neg())] {
-            if not_toward == Some(forward) {
-                continue;
-            }
-            let dir = axis.prod_scalar(sign);
-            // A step in the wrong direction leaves one of the two patches, so its
-            // two projections land somewhere different and
-            // `predictor_corrector_step` rejects them as disagreeing. During
-            // *selection* that isn't a failure — it's precisely the signal that
-            // this is the wrong way to go — so try the other sign. Once a
-            // direction is committed the same disagreement is a real error (the
-            // march lost the curve), and is propagated below.
-            let (next_point, na, va, nb, vb) = match predictor_corrector_step(
-                &surf_a, &surf_b, point, dir, u_a0, v_a0, u_b0, v_b0, trial,
-            ) {
-                Ok(step) => step,
-                Err(_) => continue,
-            };
-            let inside_a = face_contains(
-                topology,
-                face_a,
-                na,
-                va,
-                params.max_nodes,
-                params.curve_curve_min_subdivision_size,
-                FACE_CONTAINS_SEED,
-            )
-            .with_context(&ctx)?;
-            let inside_b = face_contains(
-                topology,
-                face_b,
-                nb,
-                vb,
-                params.max_nodes,
-                params.curve_curve_min_subdivision_size,
-                FACE_CONTAINS_SEED,
-            )
-            .with_context(&ctx)?;
-            if inside_a == PointClassification::Inside && inside_b == PointClassification::Inside {
-                chosen = Some((next_point, na, va, nb, vb, dir, inside_a, inside_b));
-                break 'trial;
-            }
-            last_rejection = Some((inside_a, inside_b));
+    // Every trial step, each way it may go, in turn: the first that lands
+    // inside both faces decides the direction.
+    let tries: Vec<(S, S)> = (trials.iter())
+        .flat_map(|&(trial, not_toward)| {
+            [(true, S::ONE), (false, S::ONE.neg())]
+                .into_iter()
+                .filter(move |&(forward, _)| not_toward != Some(forward))
+                .map(move |(_, sign)| (trial, sign))
+        })
+        .collect();
+    let chosen = attempts(tries.len(), |&k| -> GeopResult<_> {
+        let (trial, sign) = tries[k];
+        let dir = axis.prod_scalar(sign);
+        // A step in the wrong direction leaves one of the two patches, so its
+        // two projections land somewhere different and
+        // `predictor_corrector_step` rejects them as disagreeing. During
+        // *selection* that isn't a failure — it's precisely the signal that
+        // this is the wrong way to go — so try the other sign. Once a
+        // direction is committed the same disagreement is a real error (the
+        // march lost the curve), and is propagated below.
+        let (next_point, na, va, nb, vb) = match predictor_corrector_step(
+            &surf_a, &surf_b, point, dir, u_a0, v_a0, u_b0, v_b0, trial,
+        ) {
+            Ok(step) => step,
+            Err(_) => return Ok(Probe::Next),
+        };
+        let inside_a = face_contains(
+            topology,
+            face_a,
+            na,
+            va,
+            params.max_nodes,
+            params.curve_curve_min_subdivision_size,
+            FACE_CONTAINS_SEED,
+        )
+        .with_context(&ctx)?;
+        let inside_b = face_contains(
+            topology,
+            face_b,
+            nb,
+            vb,
+            params.max_nodes,
+            params.curve_curve_min_subdivision_size,
+            FACE_CONTAINS_SEED,
+        )
+        .with_context(&ctx)?;
+        if inside_a == PointClassification::Inside && inside_b == PointClassification::Inside {
+            return Ok(Probe::Found((
+                next_point, na, va, nb, vb, dir, inside_a, inside_b,
+            )));
         }
-    }
+        last_rejection = Some((inside_a, inside_b));
+        Ok(Probe::Next)
+    })?;
 
     // Neither direction viable means no intersection curve emanates from
     // this start point, which is a legitimate and common outcome rather
@@ -1444,8 +1469,7 @@ fn trace_one_side<S: Scalar>(
     // March until we reach another vertex: one on the stretch of curve the
     // next stride runs along, from `cur_point` up to the plane at `step`
     // along `dir` that the corrector lands it on (see `candidate_within`).
-    let mut hit_vertex = None;
-    for _ in 0..params.max_trace_steps {
+    let marched = repeat(params.max_trace_steps, || -> GeopResult<_> {
         let step =
             adaptive_step_size(&surf_a, &surf_b, u_a, v_a, u_b, v_b, &dir).with_context(&ctx)?;
         let reached = |radius: S| {
@@ -1467,8 +1491,7 @@ fn trace_one_side<S: Scalar>(
         // matters where the curve ends at the edge of a patch the stride
         // would have to leave.
         if let Some(hit) = reached(step).with_context(&ctx)? {
-            hit_vertex = Some(hit);
-            break;
+            return Ok(repeat::Step::Done(hit));
         }
         let (next_point, na, va, nb, vb) =
             predictor_corrector_step(&surf_a, &surf_b, cur_point, dir, u_a, v_a, u_b, v_b, step)
@@ -1483,8 +1506,7 @@ fn trace_one_side<S: Scalar>(
         // sphere's circle across the first slot's floor ran past the corner
         // of the second slot it ends at.
         if let Some(hit) = reached(next_point.sub(&cur_point).norm()).with_context(&ctx)? {
-            hit_vertex = Some(hit);
-            break;
+            return Ok(repeat::Step::Done(hit));
         }
         cur_point = next_point;
         (u_a, v_a, u_b, v_b) = (na, va, nb, vb);
@@ -1502,18 +1524,19 @@ fn trace_one_side<S: Scalar>(
                 new_axis.neg()
             };
         }
-    }
+        Ok(repeat::Step::Again)
+    })?;
 
     // An intersection curve of two faces has to end at a vertex — every
     // place it can end is a point where one face's boundary pierces the
     // other, which this pass has already split a vertex into. Ending
     // anywhere else means the trace lost the curve.
-    let Some(hit_vertex) = hit_vertex else {
-        return Err(ctx(GeopError::new(format!(
+    let hit_vertex = marched.done_or(|_| {
+        ctx(GeopError::new(format!(
             "traced {} step(s) from {cur_point:?} without reaching another vertex",
             points.len()
-        ))));
-    };
+        )))
+    })?;
     // Land the traced polyline exactly on the vertex it ends at, so the
     // fitted curve's endpoint and the edge's `end_vertex` agree.
     let hit_point = topology.get_vertex(hit_vertex).with_context(&ctx)?.point;

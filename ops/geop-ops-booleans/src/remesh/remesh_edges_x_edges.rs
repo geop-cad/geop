@@ -2,6 +2,7 @@ use geop_core_geometry::intersection::{curve_curve_intersect, refine_curve_curve
 use geop_core_math::{
     geop_error::{GeopResult, WithContext},
     scalars::Scalar,
+    solvers::repeat::rewrite,
     vector::Vector3,
     with_context,
 };
@@ -193,107 +194,113 @@ pub fn remesh_edges_x_edges<S: Scalar>(
         "remesh_edges_x_edges(solid_a={solid_a}, solid_b={solid_b}, params={params:?})"
     );
 
-    while let Some(action) =
-        find_edge_edge_action(model.topology(), solid_a, solid_b, params).with_context(&ctx)?
-    {
-        match action {
-            EdgeEdgeAction::Merge {
-                edge_into,
-                edge_deleted,
-                reversed,
-            } => {
-                model.merge_edge(edge_into, edge_deleted, reversed)
-                    .with_context(with_context!("merge_edge(edge_into={edge_into}, edge_deleted={edge_deleted}, reversed={reversed})"))
-                    .with_context(&ctx)?;
-            }
-            EdgeEdgeAction::Split {
-                edge_a,
-                t_a,
-                split_a,
-                edge_b,
-                t_b,
-                split_b,
-                vertex,
-                point,
-            } => {
-                let split_ctx = with_context!(
-                    "edge_a={edge_a}, t_a={t_a}, edge_b={edge_b}, t_b={t_b}, point={point}"
-                );
-
-                let vertex_id = match vertex {
-                    Some(v) => v,
-                    None => {
-                        // `find_vertex_at_point` already ruled out `point`
-                        // being `could_be_equal` to any existing vertex, but
-                        // "not equal" still allows a spurious near-duplicate
-                        // a hair's breadth away from a real vertex — which
-                        // is exactly what an under-resolved
-                        // `curve_curve_intersect` result (a wildly
-                        // over-wide `t` interval, say) can produce: a new
-                        // vertex, and the sliver edge connecting it to its
-                        // almost-coincident neighbor, that shouldn't exist.
-                        // Debug-only (not a correctness bound, just a
-                        // canary — see `AGENTS.md`): assert every existing
-                        // vertex is at least `10 * curve_curve_min_subdivision_size`
-                        // away.
-                        #[cfg(debug_assertions)]
-                        {
-                            let threshold = params
-                                .curve_curve_min_subdivision_size
-                                .mul(S::from_f64(10.0));
-                            let topology = model.topology();
-                            let existing = topology
-                                .iter_body_vertices(solid_a)
-                                .with_context(&ctx)?
-                                .chain(topology.iter_body_vertices(solid_b).with_context(&ctx)?);
-                            for existing_id in existing {
-                                let existing =
-                                    topology.get_vertex(existing_id).with_context(&ctx)?;
-                                let dist = point.sub(&existing.point).norm();
-                                debug_assert!(
-                                    !dist.definitely_less(threshold),
-                                    "remesh: about to insert a new vertex at {point:?}, only {dist:?} away from existing vertex {existing_id} at {:?} (threshold={threshold:?}) — likely a spurious near-duplicate from an under-resolved intersection search rather than a genuine new crossing",
-                                    existing.point
-                                );
-                            }
-                        }
-                        let vertex = model
-                            .insert_vertex(point, naming.provisional())
-                            .with_context(&ctx)?;
-                        naming.edge_crossing(vertex, (edge_a, t_a), (edge_b, t_b))?;
-                        vertex
-                    }
-                };
-
-                // `point` (and `t_a`/`t_b`) is only ever as precise as
-                // `curve_curve_intersect`'s own convergence — asking
-                // `split_edge_at_vertex` to relocate it on a coedge's
-                // surface/pcurve with a *tighter* tolerance than that
-                // wouldn't add real precision, just search effort (or
-                // outright non-convergence) for nothing, so it gets the same
-                // `curve_curve_min_subdivision_size` this whole search
-                // already used to find it.
-                for (split, edge, t) in [(split_a, edge_a, t_a), (split_b, edge_b, t_b)] {
-                    if !split {
-                        continue;
-                    }
-                    let new_edge = model
-                        .split_edge_at_vertex(
-                            edge,
-                            t,
-                            vertex_id,
-                            params.max_nodes,
-                            params.curve_curve_min_subdivision_size,
-                            naming.provisional(),
-                        )
-                        .with_context(&split_ctx)
+    rewrite(
+        model,
+        params.max_rewrites,
+        |model| find_edge_edge_action(model.topology(), solid_a, solid_b, params),
+        |model, action| {
+            match action {
+                EdgeEdgeAction::Merge {
+                    edge_into,
+                    edge_deleted,
+                    reversed,
+                } => {
+                    model.merge_edge(edge_into, edge_deleted, reversed)
+                        .with_context(with_context!("merge_edge(edge_into={edge_into}, edge_deleted={edge_deleted}, reversed={reversed})"))
                         .with_context(&ctx)?;
-                    naming.edge_split(edge, new_edge, vertex_id)?;
+                }
+                EdgeEdgeAction::Split {
+                    edge_a,
+                    t_a,
+                    split_a,
+                    edge_b,
+                    t_b,
+                    split_b,
+                    vertex,
+                    point,
+                } => {
+                    let split_ctx = with_context!(
+                        "edge_a={edge_a}, t_a={t_a}, edge_b={edge_b}, t_b={t_b}, point={point}"
+                    );
+
+                    let vertex_id = match vertex {
+                        Some(v) => v,
+                        None => {
+                            // `find_vertex_at_point` already ruled out `point`
+                            // being `could_be_equal` to any existing vertex, but
+                            // "not equal" still allows a spurious near-duplicate
+                            // a hair's breadth away from a real vertex — which
+                            // is exactly what an under-resolved
+                            // `curve_curve_intersect` result (a wildly
+                            // over-wide `t` interval, say) can produce: a new
+                            // vertex, and the sliver edge connecting it to its
+                            // almost-coincident neighbor, that shouldn't exist.
+                            // Debug-only (not a correctness bound, just a
+                            // canary — see `AGENTS.md`): assert every existing
+                            // vertex is at least `10 * curve_curve_min_subdivision_size`
+                            // away.
+                            #[cfg(debug_assertions)]
+                            {
+                                let threshold = params
+                                    .curve_curve_min_subdivision_size
+                                    .mul(S::from_f64(10.0));
+                                let topology = model.topology();
+                                let existing = topology
+                                    .iter_body_vertices(solid_a)
+                                    .with_context(&ctx)?
+                                    .chain(topology.iter_body_vertices(solid_b).with_context(&ctx)?);
+                                for existing_id in existing {
+                                    let existing =
+                                        topology.get_vertex(existing_id).with_context(&ctx)?;
+                                    let dist = point.sub(&existing.point).norm();
+                                    debug_assert!(
+                                        !dist.definitely_less(threshold),
+                                        "remesh: about to insert a new vertex at {point:?}, only {dist:?} away from existing vertex {existing_id} at {:?} (threshold={threshold:?}) — likely a spurious near-duplicate from an under-resolved intersection search rather than a genuine new crossing",
+                                        existing.point
+                                    );
+                                }
+                            }
+                            let vertex = model
+                                .insert_vertex(point, naming.provisional())
+                                .with_context(&ctx)?;
+                            naming.edge_crossing(vertex, (edge_a, t_a), (edge_b, t_b))?;
+                            vertex
+                        }
+                    };
+
+                    // `point` (and `t_a`/`t_b`) is only ever as precise as
+                    // `curve_curve_intersect`'s own convergence — asking
+                    // `split_edge_at_vertex` to relocate it on a coedge's
+                    // surface/pcurve with a *tighter* tolerance than that
+                    // wouldn't add real precision, just search effort (or
+                    // outright non-convergence) for nothing, so it gets the same
+                    // `curve_curve_min_subdivision_size` this whole search
+                    // already used to find it.
+                    for (split, edge, t) in [(split_a, edge_a, t_a), (split_b, edge_b, t_b)] {
+                        if !split {
+                            continue;
+                        }
+                        let new_edge = model
+                            .split_edge_at_vertex(
+                                edge,
+                                t,
+                                vertex_id,
+                                params.max_nodes,
+                                params.curve_curve_min_subdivision_size,
+                                naming.provisional(),
+                            )
+                            .with_context(&split_ctx)
+                            .with_context(&ctx)?;
+                        naming.edge_split(edge, new_edge, vertex_id)?;
+                    }
                 }
             }
-        }
-    }
-
+            Ok(())
+        },
+    )
+    .with_context(&ctx)?
+    .done("splitting edges where they cross")
+    .with_context(&ctx)?;
     Ok(())
 }
 

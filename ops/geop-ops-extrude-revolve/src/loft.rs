@@ -53,6 +53,7 @@ use geop_core_math::{
     plain::{P3, add, scale, sub},
     primitives::CoordinateSystem,
     scalars::Scalar,
+    solvers::repeat::{Step, repeat},
     vector::{Vector2, Vector3},
     with_context,
 };
@@ -367,21 +368,25 @@ fn correspond<S: Scalar>(sections: &[Section<S>]) -> GeopResult<Vec<Placed<S>>> 
         *last += most - matched_total;
     }
     for (s, p) in placed.iter_mut().enumerate() {
+        // Each halving one curve more.
         if points[s].is_empty() {
-            while p.profile.curves.len() < most {
+            for _ in p.profile.curves.len()..most {
                 let longest = longest_among(&p.profile, 0..p.profile.curves.len());
                 p.profile = halved(&p.profile, longest)?;
             }
             continue;
         }
-        loop {
+        // The first run short of its target one curve longer, until none
+        // is: as many halvings as the targets add up to at most, and one
+        // more step that finds none short.
+        repeat(most + 1, || -> GeopResult<_> {
             let indices = matched_indices(&p.profile, &points[s], &sections[s].name)?;
             let short = runs(&p.profile, &indices)
                 .into_iter()
                 .zip(&targets)
                 .position(|(run, &target)| run < target);
             let Some(j) = short else {
-                break;
+                return Ok(Step::Done(()));
             };
             let end = indices
                 .get(j + 1)
@@ -389,7 +394,9 @@ fn correspond<S: Scalar>(sections: &[Section<S>]) -> GeopResult<Vec<Placed<S>>> 
                 .unwrap_or(p.profile.curves.len());
             let longest = longest_among(&p.profile, indices[j]..end);
             p.profile = halved(&p.profile, longest)?;
-        }
+            Ok(Step::Again)
+        })?
+        .done("halving the section's runs to their targets")?;
     }
 
     // Start: a matched section where it is matched; the others lined up

@@ -32,7 +32,7 @@
 
 use geop_core_geometry::{
     nurb_curve::{NurbCurve, NurbCurve2D, NurbCurve3D, flatten_point},
-    nurb_surface::NurbSurface3D,
+    nurb_surface::{FlatPatch, NurbSurface3D},
     shape::Plane,
 };
 use geop_core_math::{
@@ -368,7 +368,8 @@ fn ruled<S: Scalar>(
 fn chain<S: Scalar>(sides: &[Side<S>]) -> GeopResult<Vec<Side<S>>> {
     let mut left: Vec<Side<S>> = sides[1..].to_vec();
     let mut out = vec![sides[0].clone()];
-    while !left.is_empty() {
+    // Each round takes one side out of `left`, or refuses.
+    for _ in 1..sides.len() {
         let end = out.last().expect("one side at least").end;
         let mut next: Vec<(usize, bool)> = Vec::new();
         for (i, s) in left.iter().enumerate() {
@@ -622,52 +623,26 @@ fn flat_face<S: Scalar>(sides: &[Side<S>], plane: &Plane<S>) -> GeopResult<FaceS
         .sub(&plane.normal.prod_scalar(e1.prod_dot(&plane.normal)))
         .normalize()?;
     let e2 = plane.normal.prod_cross(&e1);
-    // In the plane's coordinates, homogeneous.
-    let local = |curve: &Curve3<S>| -> Vec<Vector3<S>> {
-        curve
-            .control_points
-            .iter()
-            .map(|cp| flatten_point(cp, &origin, &e1, &e2))
-            .collect()
-    };
-    let oriented: Vec<Curve3<S>> = sides.iter().map(Side::oriented).collect();
-    let mut lo = [f64::INFINITY; 2];
-    let mut hi = [f64::NEG_INFINITY; 2];
-    for curve in &oriented {
-        for cp in local(curve) {
-            for k in 0..2 {
-                let x = cp[k].div(cp[2])?;
-                lo[k] = lo[k].min(x.lower().to_f64());
-                hi[k] = hi[k].max(x.upper().to_f64());
-            }
-        }
-    }
-    // The patch spans exactly this box: a curve stays within the hull of
-    // its control points, and these are the outer bounds of theirs.
-    let lo = [S::from_f64(lo[0]), S::from_f64(lo[1])];
-    let size = [S::from_f64(hi[0]).sub(lo[0]), S::from_f64(hi[1]).sub(lo[1])];
-    let pcurves = oriented
+    // The loop in the plane's coordinates: each curve's control points
+    // flattened, an affine map.
+    let local = sides
         .iter()
-        .map(|curve| {
-            let control_points = local(curve)
+        .map(|side| {
+            let curve = side.oriented();
+            let control_points = curve
+                .control_points
                 .iter()
-                .map(|cp| {
-                    Ok(Vector3::from_array([
-                        cp[0].sub(cp[2].mul(lo[0])).div(size[0])?,
-                        cp[1].sub(cp[2].mul(lo[1])).div(size[1])?,
-                        cp[2],
-                    ]))
-                })
-                .collect::<GeopResult<Vec<_>>>()?;
+                .map(|cp| flatten_point(cp, &origin, &e1, &e2))
+                .collect();
             NurbCurve::try_new(curve.degree, control_points, curve.knot_vector.clone())
         })
         .collect::<GeopResult<Vec<NurbCurve2D<S>>>>()?;
     let mut polygon = Vec::new();
-    for pcurve in &pcurves {
-        let (t0, t1) = pcurve.domain();
+    for curve in &local {
+        let (t0, t1) = curve.domain();
         for i in 0..8 {
             let fraction = S::from_ratio(i, 8)?;
-            polygon.push(pcurve.evaluate(S::interpolate(t0, t1, fraction))?);
+            polygon.push(curve.evaluate(S::interpolate(t0, t1, fraction))?);
         }
     }
     let area = polygon_signed_area(&polygon);
@@ -680,23 +655,19 @@ fn flat_face<S: Scalar>(sides: &[Side<S>], plane: &Plane<S>) -> GeopResult<FaceS
             "cannot tell which way the loop runs round: it encloses no area",
         ));
     };
-    let corner = |i: usize, j: usize| {
-        let x = if i == 1 { lo[0].add(size[0]) } else { lo[0] };
-        let y = if j == 1 { lo[1].add(size[1]) } else { lo[1] };
-        origin.add(&e1.prod_scalar(x)).add(&e2.prod_scalar(y))
-    };
-    let surface = if swapped {
-        NurbSurface3D::bilinear(corner(0, 0), corner(0, 1), corner(1, 1), corner(1, 0))?
-    } else {
-        NurbSurface3D::bilinear(corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1))?
-    };
+    let patch = FlatPatch::around(origin, e1, e2, &local, swapped)?;
+    let surface = patch.surface()?;
+    let pcurves = local
+        .iter()
+        .map(|curve| patch.pcurve(curve))
+        .collect::<GeopResult<Vec<_>>>()?;
     let outer = sides
         .iter()
         .zip(pcurves)
         .enumerate()
         .map(|(k, (s, pcurve))| CoedgeSpec {
             on: CoedgeOn::Edge(k, s.sense()),
-            pcurve: if swapped { pcurve.swap_xy() } else { pcurve },
+            pcurve,
         })
         .collect();
     Ok(FaceSpec {

@@ -39,7 +39,8 @@ mod move_body;
 mod tests;
 
 pub use circular::{CircularPattern, CircularPatternArgs};
-pub use common::{Seeds, Spacing};
+pub use common::Seeds;
+pub use geop_ops::operation::pattern::Spacing;
 pub use linear::{Direction, LinearPattern, LinearPatternArgs};
 pub use mirror::{Mirror, MirrorArgs};
 pub use move_body::{MoveBody, MoveBodyArgs};

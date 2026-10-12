@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::CoordinateSystem;
 use crate::{
+    dual::Dual,
     geop_error::{GeopError, GeopResult},
     scalars::{Ring, Scalar},
     solvers::{least_squares::Rows, system::Variable},
@@ -495,12 +496,7 @@ impl<S: Scalar> Pose<S> {
     /// position `t`.
     #[allow(clippy::needless_range_loop, reason = "a column of each of two blocks")]
     pub fn exp_differential(omega: &Vector3<S>, v: &Vector3<S>) -> GeopResult<[[S; 6]; 6]> {
-        type D<S> = crate::dual::Dual<S, 6>;
-        let var = |k: usize, x: S| D::var(x, k);
-        let moved = Pose::<D<S>>::exp(
-            &Vector3::from_array([var(0, omega[0]), var(1, omega[1]), var(2, omega[2])]),
-            &Vector3::from_array([var(3, v[0]), var(4, v[1]), var(5, v[2])]),
-        )?;
+        let moved = Pose::exp_with_derivatives(omega, v)?;
         let r = moved.rotation();
         let at = r.map(|c| c.v);
         let [x, y, z] = at.rotation_columns()?;
@@ -571,6 +567,20 @@ impl<S: Scalar> Pose<S> {
 /// A pose steps by a twist `(ω, v)` in its own frame — turning about its
 /// own origin, and moving along its own axes — by the exponential map:
 /// `pose ∘ exp(ω, v)`.
+impl<S: Scalar> Pose<Dual<S, 6>> {
+    /// The pose of the twist `(omega, v)` (see [`Pose::exp`]), with its
+    /// derivatives by the twist's six numbers — a turn's three, then a
+    /// move's: at a twist of zero, the step of a pose by its own six
+    /// variables, in its own frame.
+    pub fn exp_with_derivatives(omega: &Vector3<S>, v: &Vector3<S>) -> GeopResult<Self> {
+        let var = |k: usize, x: S| Dual::var(x, k);
+        Pose::exp(
+            &Vector3::from_array([var(0, omega[0]), var(1, omega[1]), var(2, omega[2])]),
+            &Vector3::from_array([var(3, v[0]), var(4, v[1]), var(5, v[2])]),
+        )
+    }
+}
+
 impl<S: Scalar + PartialEq> Variable for Pose<S> {
     type Scalar = S;
 
@@ -617,11 +627,7 @@ impl<S: Scalar + PartialEq> Variable for Pose<S> {
     /// distance it moves a point `scale` from its axis.
     fn stay(&self, at: &Self, scale: S) -> GeopResult<Rows<S>> {
         type D<S> = crate::dual::Dual<S, 6>;
-        let var = |k: usize| D::var(S::ZERO, k);
-        let step = Pose::<D<S>>::exp(
-            &Vector3::from_array([var(0), var(1), var(2)]),
-            &Vector3::from_array([var(3), var(4), var(5)]),
-        )?;
+        let step = Pose::exp_with_derivatives(&Vector3::zero(), &Vector3::zero())?;
         let moved = self.map(D::cst).compose(&step);
         let offset = moved.position().sub(&at.position().map(D::cst));
         let r = moved.rotation();

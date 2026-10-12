@@ -132,12 +132,8 @@ impl FeatureFaces<'_> {
     /// None for a face no feature made: one of a solid built on its own,
     /// or what a later step made of it.
     pub fn of(&self, face: &str) -> Option<&str> {
-        let mut name = face;
-        loop {
-            if let Some(step) = self.steps.get(name) {
-                return Some(step);
-            }
-            name = origin_of(name)?;
-        }
+        // Each origin a shorter name than the piece's: the chain ends.
+        std::iter::successors(Some(face), |&name| origin_of(name))
+            .find_map(|name| self.steps.get(name).copied())
     }
 }

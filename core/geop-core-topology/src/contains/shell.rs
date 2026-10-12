@@ -14,7 +14,7 @@
 
 use std::collections::HashSet;
 
-use crate::{CoedgeGeometry, EdgeId, Model, ShellId, VertexId};
+use crate::{CoedgeGeometry, EdgeId, FaceId, Model, ShellId, SolidId, VertexId};
 use geop_core_geometry::{
     contains::{curve::curve_could_contain, surface::surface_could_contain},
     intersection::{
@@ -340,7 +340,6 @@ fn classify<S: Scalar>(
     epsilon: S,
     seed: u64,
 ) -> GeopResult<PointClassification> {
-    let shell = &model.shells[&shell_id];
     let (vertex_ids, edge_ids) = shell_vertices_and_edges(model, shell_id);
 
     // Coincidence pre-check: vertex, then edge, then face — each a full
@@ -357,27 +356,8 @@ fn classify<S: Scalar>(
             return Ok(PointClassification::OnEdge);
         }
     }
-    for &face_id in &shell.faces {
-        // Proximity to the face's *untrimmed* supporting surface is not
-        // membership (see AGENTS.md) — a face's surface generally extends
-        // well past its own trim loop (e.g. two faces split from one
-        // larger one still share that one surface), so a point can sit
-        // squarely on the surface while lying nowhere near this face's
-        // actual boundary. Require `face_contains` to agree the point is
-        // actually within the trim (or on it) before calling it a match —
-        // exactly the check `shell_normal_at` already makes for the same
-        // reason.
-        let Some((u, v)) =
-            surface_could_contain(&model.faces[&face_id].surface, &point, max_nodes, epsilon)?
-        else {
-            continue;
-        };
-        if !matches!(
-            face_contains(model, face_id, u, v, max_nodes, epsilon, seed ^ face_id.0)?,
-            FaceClassification::Outside
-        ) {
-            return Ok(PointClassification::OnFace);
-        }
+    if shell_face_at(model, shell_id, &point, max_nodes, epsilon, seed)?.is_some() {
+        return Ok(PointClassification::OnFace);
     }
 
     let mut last_rejection = String::new();
@@ -487,24 +467,94 @@ fn classify<S: Scalar>(
     )))
 }
 
+/// The face of `shell_id` that `point` lies on, if any, and where on its
+/// surface: the first, in the shell's order.
+///
+/// Proximity to a face's *untrimmed* surface is not membership (see
+/// AGENTS.md): a face's surface generally extends well past its own trim
+/// loop (two faces split from one larger one still share that surface), so
+/// a point can sit squarely on the surface nowhere near the face. The face
+/// has to contain the point within its trim, or on it.
+pub fn shell_face_at<S: Scalar>(
+    model: &Model<S>,
+    shell_id: ShellId,
+    point: &Vector3<S>,
+    max_nodes: usize,
+    epsilon: S,
+    seed: u64,
+) -> GeopResult<Option<(FaceId, S, S)>> {
+    for &face_id in &model.get_shell(shell_id)?.faces {
+        let Some((u, v)) =
+            surface_could_contain(&model.faces[&face_id].surface, point, max_nodes, epsilon)?
+        else {
+            continue;
+        };
+        if !matches!(
+            face_contains(model, face_id, u, v, max_nodes, epsilon, seed ^ face_id.0)?,
+            FaceClassification::Outside
+        ) {
+            return Ok(Some((face_id, u, v)));
+        }
+    }
+    Ok(None)
+}
+
+/// Points already classified against shells, each strictly inside or
+/// outside: what [`solid_contains`] classifies later points from, along a
+/// short path from the nearest (see [`shell_contains_from`]) instead of a
+/// ray across the whole shell.
+#[derive(Clone, Debug)]
+pub struct Classified<S: Scalar> {
+    points: Vec<(ShellId, Vector3<S>, bool)>,
+}
+
+impl<S: Scalar> Default for Classified<S> {
+    fn default() -> Self {
+        Self { points: Vec::new() }
+    }
+}
+
+impl<S: Scalar> Classified<S> {
+    /// The point classified against `shell` nearest to `point`, and whether
+    /// it is inside: which one is a free choice, so it is chosen by the
+    /// midpoints.
+    fn nearest(&self, shell: ShellId, point: &Vector3<S>) -> Option<(Vector3<S>, bool)> {
+        let distance = |p: &Vector3<S>| p.sub(point).norm_sq().to_f64();
+        self.points
+            .iter()
+            .filter(|(s, _, _)| *s == shell)
+            .min_by(|a, b| distance(&a.1).total_cmp(&distance(&b.1)))
+            .map(|&(_, p, inside)| (p, inside))
+    }
+}
+
 /// Classify `point` against the solid `solid_id`: on its boundary if on any
 /// of its shells', else inside exactly when inside an odd number of them —
 /// inside the outer shell and no void, say — for the shells of one solid
 /// never cross. Asking each shell alone would put a point in a void inside
-/// the solid. Arguments as for [`shell_contains`].
+/// the solid. Each shell is asked from the nearest point `classified`
+/// already holds for it, if any (see [`shell_contains_from`]), and a point
+/// found strictly inside or outside a shell is added to it. Other arguments
+/// as for [`shell_contains`].
 pub fn solid_contains<S: Scalar>(
     model: &Model<S>,
-    solid_id: crate::SolidId,
+    solid_id: SolidId,
     point: Vector3<S>,
     max_nodes: usize,
     epsilon: S,
     seed: u64,
+    classified: &mut Classified<S>,
 ) -> GeopResult<PointClassification> {
     let mut inside = false;
     for &shell_id in &model.get_solid(solid_id)?.shells {
-        match shell_contains(model, shell_id, point, max_nodes, epsilon, seed)? {
-            PointClassification::Inside => inside = !inside,
-            PointClassification::Outside => {}
+        let from = classified.nearest(shell_id, &point);
+        let class = classify(model, shell_id, point, from, max_nodes, epsilon, seed)?;
+        match class {
+            PointClassification::Inside | PointClassification::Outside => {
+                let is_inside = class == PointClassification::Inside;
+                classified.points.push((shell_id, point, is_inside));
+                inside ^= is_inside;
+            }
             on => return Ok(on),
         }
     }
@@ -513,6 +563,24 @@ pub fn solid_contains<S: Scalar>(
     } else {
         PointClassification::Outside
     })
+}
+
+/// The face of the solid `solid_id` that `point` lies on, if any, and where
+/// on its surface (see [`shell_face_at`]).
+pub fn solid_face_at<S: Scalar>(
+    model: &Model<S>,
+    solid_id: SolidId,
+    point: &Vector3<S>,
+    max_nodes: usize,
+    epsilon: S,
+    seed: u64,
+) -> GeopResult<Option<(FaceId, S, S)>> {
+    for &shell_id in &model.get_solid(solid_id)?.shells {
+        if let Some(at) = shell_face_at(model, shell_id, point, max_nodes, epsilon, seed)? {
+            return Ok(Some(at));
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]

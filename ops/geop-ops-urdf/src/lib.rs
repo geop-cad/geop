@@ -49,6 +49,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::{Pose, Quaternion},
     scalars::Scalar,
+    solvers::walk::{Walked, walk},
     vector::Vector3,
 };
 use geop_core_topology::mass::MassProperties;
@@ -486,12 +487,15 @@ impl Meshes {
             None
         } else {
             let stem = file_name(stem);
-            let mut path = format!("meshes/{stem}.stl");
-            let mut n = 1;
-            while self.files.iter().any(|(p, _)| *p == path) {
-                n += 1;
-                path = format!("meshes/{stem}_{n}.stl");
-            }
+            // The first name no file has: of one more names than there
+            // are files, one is free.
+            let path = (1..=self.files.len() + 1)
+                .map(|n| match n {
+                    1 => format!("meshes/{stem}.stl"),
+                    n => format!("meshes/{stem}_{n}.stl"),
+                })
+                .find(|path| self.files.iter().all(|(p, _)| p != path))
+                .expect("one of more names than files is free");
             let bytes = stl_bytes(triangles, &stem, StlFormat::Binary)?;
             self.files.push((path.clone(), bytes));
             Some(path)
@@ -696,23 +700,25 @@ fn mimics(mechanism: &Mechanism, tree: &tree::Tree, joints: &mut [Joint]) -> Geo
         .enumerate()
         .map(|(k, tj)| (tj.joint, k))
         .collect();
-    for (&driven, &(first, factor, _)) in &drives {
-        let (mut driver, mut multiplier) = (first, factor);
-        let mut through = vec![driven];
-        while let Some(&(next, factor, _)) = drives.get(&driver) {
-            if through.contains(&driver) {
-                let names: Vec<&str> = (through.iter())
-                    .map(|&j| mechanism.joints[j].name.as_str())
-                    .collect();
-                return Err(GeopError::new(format!(
-                    "the couplings of the joints {} drive each other round in a circle, which URDF's mimic joints cannot express",
-                    names.join(", ")
-                )));
-            }
-            through.push(driver);
-            multiplier *= factor;
-            driver = next;
+    for (&driven, &(_, factor, _)) in &drives {
+        // From the joint driven to each joint driving it, to the one
+        // nothing drives.
+        let through = walk(driven, |j| {
+            Ok::<_, GeopError>(drives.get(j).map(|&(next, _, _)| next))
+        })?;
+        if through.end != Walked::Open {
+            let names: Vec<&str> = (through.nodes.iter())
+                .map(|&j| mechanism.joints[j].name.as_str())
+                .collect();
+            return Err(GeopError::new(format!(
+                "the couplings of the joints {} drive each other round in a circle, which URDF's mimic joints cannot express",
+                names.join(", ")
+            )));
         }
+        let (&driver, between) = through.nodes[1..]
+            .split_last()
+            .expect("driven by one joint at least");
+        let multiplier = (between.iter()).fold(factor, |m, j| m * drives[j].1);
         joints[index[&driven]].mimic = Some(Mimic {
             joint: mechanism.joints[driver].name.clone(),
             multiplier,

@@ -38,6 +38,7 @@ use geop_core_math::{
     solvers::{
         bisect::bisect,
         iterate::{End, Repeat, Step, iterate},
+        repeat::{self, repeat},
     },
     vector::{Vector2, Vector3},
 };
@@ -437,10 +438,10 @@ fn march<S: Scalar>(
     let start_point = surface.evaluate(start.0, start.1)?;
     let mut current = start;
     let mut travelled = S::ZERO;
-    for _ in 0..MAX_TRACE_STEPS {
+    repeat(MAX_TRACE_STEPS, || -> GeopResult<_> {
         let (u, v) = current;
         let Ok((_, gu, gv)) = contour(surface, d, u, v) else {
-            return Ok(Ending::Open);
+            return Ok(repeat::Step::Done(Ending::Open));
         };
         let (mut tu, mut tv) = (gv.neg(), gu);
         if !forward {
@@ -449,34 +450,43 @@ fn march<S: Scalar>(
         let (su, sv) = surface.derivatives(u, v)?;
         let speed = su.prod_scalar(tu).add(&sv.prod_scalar(tv)).norm();
         let Ok(scale) = step.div(speed) else {
-            return Ok(Ending::Open);
+            return Ok(repeat::Step::Done(Ending::Open));
         };
         let (du, dv) = (tu.mul(scale), tv.mul(scale));
         let (pu, pv) = (u.add(du).sharpen(), v.add(dv).sharpen());
         let leaves_u = pu.definitely_less(u_lo) || pu.definitely_greater(u_hi);
         let leaves_v = pv.definitely_less(v_lo) || pv.definitely_greater(v_hi);
         if leaves_u || leaves_v {
-            // The fraction of the step to the boundary it reaches first, and
-            // from there onto the silhouette along that boundary.
-            let to = |x: S, dx: S, lo: S, hi: S| -> f64 {
+            // The boundary the step reaches first, and the fraction of the
+            // step to it: the point there, then onto the silhouette along
+            // that boundary.
+            let to = |x: S, dx: S, lo: S, hi: S| -> (f64, S) {
                 let bound = if dx.to_f64() < 0.0 { lo } else { hi };
-                (bound.sub(x).to_f64() / dx.to_f64()).clamp(0.0, 1.0)
+                ((bound.sub(x).to_f64() / dx.to_f64()).clamp(0.0, 1.0), bound)
             };
-            let fu = if leaves_u { to(u, du, u_lo, u_hi) } else { 1.0 };
-            let fv = if leaves_v { to(v, dv, v_lo, v_hi) } else { 1.0 };
-            let f = S::from_f64(fu.min(fv));
-            let landed = (
-                u.add(du.mul(f)).sharpen().clamped(u_lo, u_hi),
-                v.add(dv.mul(f)).sharpen().clamped(v_lo, v_hi),
-            );
-            if let Some(end) = correct_on_boundary(surface, d, landed, fu <= fv) {
+            let (fu, bound_u) = to(u, du, u_lo, u_hi);
+            let (fv, bound_v) = to(v, dv, v_lo, v_hi);
+            let u_first = leaves_u && (!leaves_v || fu <= fv);
+            // On the boundary, exactly: the step's own arithmetic lands a
+            // rounding off it — a hair inside, on no grid line — and a
+            // trace ending there does not mark the bracket the boundary
+            // line has where it ends, which then seeds the same silhouette
+            // again.
+            let landed = if u_first {
+                let f = S::from_f64(fu);
+                (bound_u, v.add(dv.mul(f)).sharpen().clamped(v_lo, v_hi))
+            } else {
+                let f = S::from_f64(fv);
+                (u.add(du.mul(f)).sharpen().clamped(u_lo, u_hi), bound_v)
+            };
+            if let Some(end) = correct_on_boundary(surface, d, landed, u_first) {
                 mark_crossings(surface, d, lines, current, end);
                 points.push(end);
             }
-            return Ok(Ending::Open);
+            return Ok(repeat::Step::Done(Ending::Open));
         }
         let Ok(next) = correct(surface, d, (pu, pv)) else {
-            return Ok(Ending::Open);
+            return Ok(repeat::Step::Done(Ending::Open));
         };
         mark_crossings(surface, d, lines, current, next);
         points.push(next);
@@ -487,14 +497,16 @@ fn march<S: Scalar>(
         {
             mark_crossings(surface, d, lines, next, start);
             points.push(start);
-            return Ok(Ending::Closed);
+            return Ok(repeat::Step::Done(Ending::Closed));
         }
         current = next;
-    }
-    Err(GeopError::new(format!(
-        "the silhouette trace from {start:?} did not end within {MAX_TRACE_STEPS} steps of \
-         {step:?}"
-    )))
+        Ok(repeat::Step::Again)
+    })?
+    .done_or(|steps| {
+        GeopError::new(format!(
+            "the silhouette trace from {start:?} did not end within {steps} steps of {step:?}"
+        ))
+    })
 }
 
 /// The silhouette through `seed`, traced both ways, as `(u, v)` points.
@@ -550,17 +562,12 @@ fn thin<S: Scalar>(
 }
 
 /// The size of `surface`: the diagonal of its control points' box.
-fn extent<S: Scalar>(surface: &NurbSurface3D<S>) -> GeopResult<S> {
-    let mut lo = [f64::INFINITY; 3];
-    let mut hi = [f64::NEG_INFINITY; 3];
-    for q in &surface.control_points {
-        for k in 0..3 {
-            let x = q[k].div(q[3])?.to_f64();
-            lo[k] = lo[k].min(x);
-            hi[k] = hi[k].max(x);
-        }
-    }
-    Ok(S::from_f64(plain::diagonal(lo, hi)))
+fn extent<S: Scalar>(surface: &NurbSurface3D<S>) -> S {
+    let b = surface.aabb();
+    S::from_f64(plain::diagonal(
+        b.map(|x| x.lower().to_f64()),
+        b.map(|x| x.upper().to_f64()),
+    ))
 }
 
 /// Whether `surface` is swept straight along `d` in one of its parameter
@@ -714,7 +721,6 @@ pub fn face_silhouettes<S: Scalar>(
         return Ok(Vec::new());
     }
     let step = extent(surface)
-        .with_context(&ctx)?
         .div(S::from_f64(STEPS_PER_FACE))
         .with_context(&ctx)?;
     let mut lines = grid(surface, d);

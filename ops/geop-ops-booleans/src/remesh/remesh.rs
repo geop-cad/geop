@@ -53,6 +53,12 @@ pub struct RemeshParams<S: Scalar> {
     /// between and their curvature, not with the model's units, so a curve
     /// takes about 16 steps across a flat face and 64 around a turn.
     pub max_trace_steps: usize,
+    /// How many rewrites — splits, merges, imprints — one stage of the
+    /// remesh may make before it is considered not to settle, and how many
+    /// pairs of faces one start point may trace between. An effort budget
+    /// only: a stage that settles makes the same rewrites whatever the
+    /// budget, and one that runs out is an error, never taken as settled.
+    pub max_rewrites: usize,
 }
 
 impl<S: Scalar> Default for RemeshParams<S> {
@@ -63,6 +69,7 @@ impl<S: Scalar> Default for RemeshParams<S> {
             min_subdivision_size: search::min_subdivision_size(),
             curve_curve_min_subdivision_size: S::from_f64(1e-4),
             max_trace_steps: 1_000,
+            max_rewrites: 100_000,
         }
     }
 }

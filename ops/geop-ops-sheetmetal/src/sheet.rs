@@ -19,6 +19,7 @@
 //! or away from it.
 
 use geop_core_geometry::{
+    aabb::union_aabb,
     nurb_curve::{NurbCurve2D, NurbCurve3D},
     nurb_surface::{NurbSurface, NurbSurface3D},
 };
@@ -169,21 +170,13 @@ impl<S: Scalar> Placement<S> {
     /// sheet coordinates over the box around `curves`: so a curve drawn in
     /// sheet coordinates is its own pcurve on it.
     pub(crate) fn plane(&self, curves: &[&NurbCurve2D<S>]) -> GeopResult<NurbSurface3D<S>> {
-        let mut lo = [f64::INFINITY; 2];
-        let mut hi = [f64::NEG_INFINITY; 2];
-        for curve in curves {
-            for cp in &curve.control_points {
-                for k in 0..2 {
-                    let x = cp[k].div(cp[2])?;
-                    lo[k] = lo[k].min(x.lower().to_f64());
-                    hi[k] = hi[k].max(x.upper().to_f64());
-                }
-            }
-        }
+        let bounds = union_aabb(curves.iter().map(|c| c.aabb()))
+            .ok_or_else(|| GeopError::new("Placement::plane: no curves to span"))?;
         // The box's corners are a free choice — any box around the curves
         // will do — so sharp: and it encloses them, a NURBS curve lying in
         // the hull of its control points.
-        let (lo, hi) = (lo.map(S::from_f64), hi.map(S::from_f64));
+        let lo: [S; 2] = std::array::from_fn(|k| S::from_f64(bounds[k].lower().to_f64()));
+        let hi: [S; 2] = std::array::from_fn(|k| S::from_f64(bounds[k].upper().to_f64()));
         let corner = |x: S, y: S| {
             let p = self.point(&Vector2::from_array([x, y]));
             Vector4::from_array([p[0], p[1], p[2], S::ONE])

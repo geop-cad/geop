@@ -303,7 +303,7 @@ impl ModelStep for Revolve {
         let geometry = sketch.enclose::<S>().with_context(ctx)?;
         let axis = SketchAxis::of(axis, &mut scope, &args.sketch, &placed, &geometry)?;
         let (a, dir) = axis.drawn;
-        let axis_left = Vector2::from_array([axis.direction[1].neg(), axis.direction[0]]);
+        let axis_left = axis.direction.perp();
         let on_axis = &axis.on_axis;
 
         // What to sweep, each loop as the sketch runs it: an area's outer
@@ -358,7 +358,7 @@ impl ModelStep for Revolve {
         // radii as they are. Points the constraints put on the axis get `r =
         // 0` exactly: that is what the constraints say.
         let r_dir = axis_left.prod_scalar(if left { S::ONE } else { S::ONE.neg() });
-        let z_dir = Vector2::from_array([r_dir[1].neg(), r_dir[0]]);
+        let z_dir = r_dir.perp();
         let rz = Enclosure {
             points: geometry
                 .points

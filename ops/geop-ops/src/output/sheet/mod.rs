@@ -13,7 +13,12 @@ pub use dxf::to_dxf;
 pub use svg::to_svg;
 
 use geop_core_geometry::nurb_curve::NurbCurve2D;
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
+use geop_core_math::{
+    geop_error::GeopResult,
+    scalars::Scalar,
+    solvers::repeat::{Step, repeat},
+    vector::Vector3,
+};
 
 /// A point on the paper.
 pub type P = [f64; 2];
@@ -354,8 +359,16 @@ pub fn strokes_of<S: Scalar>(
         .iter()
         .map(|(layer, curve)| Ok((*layer, piece(curve)?)))
         .collect::<GeopResult<_>>()?;
+    // Each piece joined with every one that continues it, until none does:
+    // a step either joins two pieces or moves on to the next, and every
+    // join takes one piece away, so there are at most twice as many steps
+    // as pieces, and one more that finds the last piece passed.
     let mut i = 0;
-    while i < pieces.len() {
+    let most = 2 * pieces.len() + 1;
+    repeat(most, || -> GeopResult<_> {
+        if i >= pieces.len() {
+            return Ok(Step::Done(()));
+        }
         let joined = (0..pieces.len()).find_map(|j| {
             if j == i || pieces[j].0 != pieces[i].0 {
                 return None;
@@ -372,7 +385,9 @@ pub fn strokes_of<S: Scalar>(
             }
             None => i += 1,
         }
-    }
+        Ok(Step::Again)
+    })?
+    .done("joining the strokes that continue each other")?;
     let at = |p: &Vector3<S>| place([p[0].to_f64(), p[1].to_f64()]);
     Ok(pieces
         .into_iter()

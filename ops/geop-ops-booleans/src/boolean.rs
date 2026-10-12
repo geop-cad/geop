@@ -29,10 +29,10 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{
-    EdgeId, FaceId, Model, ShellId, SolidId,
+    EdgeId, FaceId, Model, SolidId,
     contains::{
-        face::{PointClassification as FacePoint, face_contains, face_interior_point_where},
-        shell::{PointClassification as ShellPoint, shell_contains, shell_contains_from},
+        face::face_interior_point_where,
+        shell::{Classified, PointClassification as ShellPoint, solid_contains, solid_face_at},
     },
 };
 use geop_ops::{NamedModel, Namer};
@@ -651,59 +651,28 @@ pub(crate) fn classify_face<S: Scalar>(
     classified: &mut Classified<S>,
 ) -> GeopResult<FaceClassification> {
     let face = model.get_face(face_id)?;
-    let shells = model.get_solid(other_solid)?.shells.clone();
     let mut decided: Vec<(FaceClassification, Vector3<S>)> = Vec::new();
     let mut on_boundary = Vec::new();
-    face_interior_point_where(
-        model,
-        face_id,
-        params.max_nodes,
-        params.curve_curve_min_subdivision_size,
-        SEED,
-        |u, v| {
-            let point = face.surface.evaluate(u, v)?;
-            // Inside the solid is inside an odd number of its shells: inside
-            // its outer shell, but not in a void.
-            let mut inside = false;
-            for &shell_id in &shells {
-                let (max_nodes, epsilon) =
-                    (params.max_nodes, params.curve_curve_min_subdivision_size);
-                let class = match classified.nearest(shell_id, &point) {
-                    Some((from, from_inside)) => shell_contains_from(
-                        model,
-                        shell_id,
-                        point,
-                        from,
-                        from_inside,
-                        max_nodes,
-                        epsilon,
-                        SEED,
-                    )?,
-                    None => shell_contains(model, shell_id, point, max_nodes, epsilon, SEED)?,
-                };
-                if let ShellPoint::Inside | ShellPoint::Outside = class {
-                    classified.add(shell_id, point, class == ShellPoint::Inside);
-                }
-                match class {
-                    ShellPoint::Inside => inside = !inside,
-                    ShellPoint::Outside => {}
-                    ShellPoint::OnFace | ShellPoint::OnEdge | ShellPoint::OnVertex => {
-                        on_boundary.push((u, v, point, shell_id));
-                        return Ok(false);
-                    }
-                }
+    let (max_nodes, epsilon) = (params.max_nodes, params.curve_curve_min_subdivision_size);
+    face_interior_point_where(model, face_id, max_nodes, epsilon, SEED, |u, v| {
+        let point = face.surface.evaluate(u, v)?;
+        match solid_contains(
+            model,
+            other_solid,
+            point,
+            max_nodes,
+            epsilon,
+            SEED,
+            classified,
+        )? {
+            ShellPoint::Inside => decided.push((FaceClassification::Inside, point)),
+            ShellPoint::Outside => decided.push((FaceClassification::Outside, point)),
+            ShellPoint::OnFace | ShellPoint::OnEdge | ShellPoint::OnVertex => {
+                on_boundary.push((u, v, point));
             }
-            decided.push((
-                if inside {
-                    FaceClassification::Inside
-                } else {
-                    FaceClassification::Outside
-                },
-                point,
-            ));
-            Ok(false)
-        },
-    )?;
+        }
+        Ok(false)
+    })?;
     if let Some(&(classification, point)) = decided.first() {
         if let Some((other, other_point)) = decided.iter().find(|(c, _)| *c != classification) {
             // The face's boundary: which curves were imprinted into it, and
@@ -723,11 +692,11 @@ pub(crate) fn classify_face<S: Scalar>(
     // normals exist is used — a revolve's cap collapses to its pole, where
     // it has none.
     let mut undefined = None;
-    for &(u, v, point, shell_id) in &on_boundary {
+    for &(u, v, point) in &on_boundary {
         let normals = face
             .surface
             .normal(u, v)
-            .and_then(|n| Ok((n, shell_normal_at(model, shell_id, &point, params)?)));
+            .and_then(|n| Ok((n, solid_normal_at(model, other_solid, &point, params)?)));
         let (this_normal, other_normal) = match normals {
             Ok(normals) => normals,
             Err(e) => {
@@ -757,77 +726,32 @@ pub(crate) fn classify_face<S: Scalar>(
     })
 }
 
-/// Points already classified against shells, each strictly inside or
-/// outside: what [`classify_face`] classifies later points from.
-pub(crate) struct Classified<S: Scalar> {
-    points: Vec<(ShellId, Vector3<S>, bool)>,
-}
-
-impl<S: Scalar> Default for Classified<S> {
-    fn default() -> Self {
-        Self { points: Vec::new() }
-    }
-}
-
-impl<S: Scalar> Classified<S> {
-    /// The point classified against `shell` nearest to `point`, and whether
-    /// it is inside: which one is a free choice, so it is chosen by the
-    /// midpoints.
-    fn nearest(&self, shell: ShellId, point: &Vector3<S>) -> Option<(Vector3<S>, bool)> {
-        let distance = |p: &Vector3<S>| p.sub(point).norm_sq().to_f64();
-        self.points
-            .iter()
-            .filter(|(s, _, _)| *s == shell)
-            .min_by(|a, b| distance(&a.1).total_cmp(&distance(&b.1)))
-            .map(|&(_, p, inside)| (p, inside))
-    }
-
-    fn add(&mut self, shell: ShellId, point: Vector3<S>, inside: bool) {
-        self.points.push((shell, point, inside));
-    }
-}
-
-/// The normal of whichever face of `shell_id` contains `point`.
-fn shell_normal_at<S: Scalar>(
+/// The normal of whichever face of `solid_id` contains `point`.
+fn solid_normal_at<S: Scalar>(
     model: &Model<S>,
-    shell_id: ShellId,
+    solid_id: SolidId,
     point: &Vector3<S>,
     params: RemeshParams<S>,
 ) -> GeopResult<Vector3<S>> {
-    for &face_id in &model.get_shell(shell_id)?.faces {
-        let surface = &model.get_face(face_id)?.surface;
-        let Some((u, v)) = geop_core_geometry::contains::surface::surface_could_contain(
-            surface,
-            point,
-            params.max_nodes,
-            params.curve_curve_min_subdivision_size,
-        )?
-        else {
-            continue;
-        };
-        if !matches!(
-            face_contains(
-                model,
-                face_id,
-                u,
-                v,
-                params.max_nodes,
-                params.curve_curve_min_subdivision_size,
-                SEED,
-            )?,
-            FacePoint::Outside
-        ) {
-            return surface.normal(u, v);
-        }
+    let at = solid_face_at(
+        model,
+        solid_id,
+        point,
+        params.max_nodes,
+        params.curve_curve_min_subdivision_size,
+        SEED,
+    )?;
+    match at {
+        Some((face_id, u, v)) => model.get_face(face_id)?.surface.normal(u, v),
+        None => Err(GeopError::new(format!(
+            "boolean: no face of solid {solid_id} contains {point:?}, although the solid reported the point on its boundary"
+        ))),
     }
-    Err(GeopError::new(format!(
-        "boolean: no face of shell {shell_id} contains {point:?}, although the shell reported the point on its boundary"
-    )))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BooleanOp, FaceClassification, boolean, classify_face};
+    use super::{BooleanOp, Classified, FaceClassification, boolean, classify_face};
     use crate::{
         remesh::remesh::RemeshParams,
         scenes::{scene, validation},
@@ -863,7 +787,7 @@ mod tests {
         let mut inside = 0;
         let mut outside = 0;
         for face_id in s.model.topology().solid_faces(s.solid_a).unwrap() {
-            let mut classified = super::Classified::default();
+            let mut classified = Classified::default();
             match classify_face(
                 s.model.topology(),
                 face_id,

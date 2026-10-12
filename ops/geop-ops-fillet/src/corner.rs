@@ -37,6 +37,7 @@
 //! or overlapping. A chamfered corner is left to its chamfers, which cross
 //! in a point.
 
+use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     matrix::Matrix,
@@ -53,7 +54,7 @@ use geop_ops::{NamedModel, Namer};
 
 use crate::{
     blend::{Bend, BlendShape, End, Plan, Sweep, ToolProfile, check_touch},
-    rolling::{Chain, ChainCorner, RadiusLaw, chain_bend, foot, normal_at, seed_on, sharp_in},
+    rolling::{Chain, ChainCorner, RadiusLaw, chain_bend, foot, seed_on, sharp_in},
     tool::{Corner, CornerEnd},
 };
 
@@ -376,7 +377,7 @@ fn ball<S: Scalar>(
     let surfaces = faces.map(|f| &model.get_face(f).expect("a face").surface);
     let mut normals = [Vector3::zero(); 3];
     for k in 0..3 {
-        normals[k] = normal_at(model, faces[k], at)?;
+        normals[k] = surfaces[k].normal_at(at, MAX_NODES, min_subdivision_size())?;
     }
     let center = at.add(&solve(normals, [sr; 3])?).sharpen();
     let mut uv = [(S::ZERO, S::ZERO); 3];

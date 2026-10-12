@@ -20,16 +20,16 @@ use crate::nurb_curve::NurbCurve;
 /// the whole bounding box.
 ///
 /// Every weight is definitely positive by construction
-/// (`NurbCurve`/`NurbSurface::try_new`), so dehomogenizing cannot fail.
+/// (`NurbCurve`/`NurbSurface::try_new`), so dehomogenizing cannot fail. Each
+/// coordinate is divided by its weight, one rounding, rather than multiplied
+/// by a reciprocal, two: the box is the tightest the control points give.
 pub(crate) fn compute_aabb<S: Scalar, const D: usize>(control_points: &[Vector<S, D>]) -> [S; 3] {
     let mut acc: [Option<S>; 3] = [None; 3];
     for p in control_points {
-        // One reciprocal per control point, shared by all its axes.
-        let inv_w = S::ONE
-            .div(p[D - 1])
-            .expect("weights are definitely positive by construction");
         for (axis, slot) in acc.iter_mut().enumerate().take(D - 1) {
-            let coord = p[axis].mul(inv_w);
+            let coord = p[axis]
+                .div(p[D - 1])
+                .expect("weights are definitely positive by construction");
             *slot = Some(match *slot {
                 None => coord,
                 Some(a) => a.union(coord),
@@ -37,6 +37,18 @@ pub(crate) fn compute_aabb<S: Scalar, const D: usize>(control_points: &[Vector<S
         }
     }
     acc.map(|a| a.unwrap_or(S::ENTIRE))
+}
+
+/// The box around all of `boxes` (each a curve's or a surface's, see
+/// [`crate::nurb_curve::NurbCurve::aabb`]): per axis the union of theirs.
+/// None for no boxes.
+pub fn union_aabb<'a, S: Scalar + 'a>(
+    boxes: impl IntoIterator<Item = &'a [S; 3]>,
+) -> Option<[S; 3]> {
+    boxes
+        .into_iter()
+        .copied()
+        .reduce(|a, b| std::array::from_fn(|k| a[k].union(b[k])))
 }
 
 /// True if two cached [`compute_aabb`] boxes could overlap, comparing only

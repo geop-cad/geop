@@ -6,6 +6,7 @@ use geop_core_math::{
 };
 
 use super::NurbSurface;
+use crate::{contains::surface::surface_could_contain, search::PROJECT_ITERATIONS};
 
 impl<S: Scalar> NurbSurface<S, 4> {
     /// Fixed-iteration-count Newton foot-point projection of `target` onto
@@ -115,6 +116,37 @@ impl<S: Scalar> NurbSurface<S, 4> {
             End::Stuck => iterated.seed,
             End::Done | End::Exhausted => iterated.answer,
         })
+    }
+
+    /// Where `point`, a point of this surface, lies on it: its `(u, v)`, or
+    /// `None` if it is not on the surface.
+    ///
+    /// Subdivide to isolate, then Newton to refine (see `AGENTS.md`): the
+    /// containment search ([`surface_could_contain`], with `max_nodes` and
+    /// `min_subdivision_size` bounding its effort) proves the point lies in
+    /// a box only `min_subdivision_size` narrow, and [`Self::project`] from
+    /// the box's midpoint polishes that to what the point's own width
+    /// allows. Both enclose the same foot point, so the answer is their
+    /// intersection. The refinement only tightens: where Newton fails or
+    /// leaves the box, the box is the answer.
+    pub fn locate(
+        &self,
+        point: &Vector3<S>,
+        max_nodes: usize,
+        min_subdivision_size: S,
+    ) -> GeopResult<Option<(S, S)>> {
+        let Some((u, v)) = surface_could_contain(self, point, max_nodes, min_subdivision_size)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(
+            match self.project(*point, u.sharpen(), v.sharpen(), PROJECT_ITERATIONS) {
+                Ok((ru, rv)) if ru.could_be_equal(u) && rv.could_be_equal(v) => {
+                    (u.intersect(ru), v.intersect(rv))
+                }
+                _ => (u, v),
+            },
+        ))
     }
 
     /// The foot point of `target` as [`Self::project`] finds it, within the

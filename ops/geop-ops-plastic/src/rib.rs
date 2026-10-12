@@ -34,7 +34,7 @@ use geop_core_topology::{
     Body, SolidId,
     contains::{
         face::{PointClassification as OnFace, face_contains},
-        shell::{PointClassification, solid_contains},
+        shell::{Classified, PointClassification, solid_contains},
     },
 };
 use geop_ops::{NamedModel, Namer, ToolReach};
@@ -277,8 +277,15 @@ fn wall_middle<S: Scalar>(
     reach: S,
 ) -> GeopResult<Option<Vector3<S>>> {
     let model = part.topology();
-    let start = match solid_contains(model, target, from, MAX_NODES, min_subdivision_size(), SEED)?
-    {
+    let start = match solid_contains(
+        model,
+        target,
+        from,
+        MAX_NODES,
+        min_subdivision_size(),
+        SEED,
+        &mut Classified::default(),
+    )? {
         PointClassification::Inside => return Ok(None),
         PointClassification::Outside => None,
         _ => Some(0.0),
@@ -357,7 +364,7 @@ fn swept_region<S: Scalar>(chain: &Chain<S>, reach: S, flipped: bool) -> GeopRes
             }
         }
     }
-    let left = Vector2::from_array([chord[1].neg(), chord[0]]);
+    let left = chord.perp();
     let sweep = if flipped { left.neg() } else { left }.prod_scalar(reach);
     let (end_far, start_far) = (end.add(&sweep), start.add(&sweep));
     let mut curves: Vec<NurbCurve2D<S>> = chain.pieces.iter().map(|p| p.curve.clone()).collect();

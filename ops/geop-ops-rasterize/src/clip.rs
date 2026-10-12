@@ -61,8 +61,13 @@ fn clip_half_plane(poly: &[Point], side: impl Fn(Point) -> f64) -> Vec<Point> {
     // half-planes, `ear_clip`'s turns) gets a meaningless answer from it.
     // Drop them here, at the one place they are created.
     out.dedup_by(|a, b| points_equal(*a, *b));
-    while out.len() > 1 && points_equal(out[0], out[out.len() - 1]) {
-        out.pop();
+    // So is a last vertex repeating the first, and the one before it, ...
+    // but never the first itself.
+    if let Some(&first) = out.first() {
+        let repeats = (out.iter().skip(1).rev())
+            .take_while(|&&p| points_equal(first, p))
+            .count();
+        out.truncate(out.len() - repeats);
     }
     out
 }
@@ -176,77 +181,6 @@ pub fn subtract_convex(subject: &[Point], hole: &[Point]) -> Vec<Vec<Point>> {
         return vec![subject.to_vec()];
     }
     pieces
-}
-
-/// Ear-clip a (possibly non-convex) simple polygon into triangles, as
-/// index triples into `poly`.
-pub fn ear_clip(poly: &[Point]) -> Vec<[usize; 3]> {
-    let n = poly.len();
-    if n < 3 {
-        return Vec::new();
-    }
-    let orient_positive = signed_area2(poly) >= 0.0;
-    let point_in_triangle = |p: Point, a: Point, b: Point, c: Point| -> bool {
-        let d1 = cross2(sub(b, a), sub(p, a));
-        let d2 = cross2(sub(c, b), sub(p, b));
-        let d3 = cross2(sub(a, c), sub(p, c));
-        let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
-        let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
-        !(has_neg && has_pos)
-    };
-
-    let mut indices: Vec<usize> = (0..n).collect();
-    let mut triangles = Vec::with_capacity(n.saturating_sub(2));
-    let max_iters = n * n + 8;
-    let mut iters = 0;
-    while indices.len() > 3 && iters < max_iters {
-        iters += 1;
-        let m = indices.len();
-        let mut clipped = false;
-        for k in 0..m {
-            let ip = indices[(k + m - 1) % m];
-            let ic = indices[k];
-            let inext = indices[(k + 1) % m];
-            let turn = cross2(sub(poly[ic], poly[ip]), sub(poly[inext], poly[ic]));
-            let is_convex = if orient_positive {
-                turn > 0.0
-            } else {
-                turn < 0.0
-            };
-            if !is_convex {
-                continue;
-            }
-            // A vertex coinciding with one of the ear's own corners (e.g.
-            // a zero-width slit bridge's duplicated endpoint) lies on the
-            // triangle's boundary by construction, not its interior —
-            // don't let that reject an otherwise-valid ear.
-            let contains_other = indices.iter().any(|&iq| {
-                iq != ip
-                    && iq != ic
-                    && iq != inext
-                    && !points_equal(poly[iq], poly[ip])
-                    && !points_equal(poly[iq], poly[ic])
-                    && !points_equal(poly[iq], poly[inext])
-                    && point_in_triangle(poly[iq], poly[ip], poly[ic], poly[inext])
-            });
-            if contains_other {
-                continue;
-            }
-            triangles.push([ip, ic, inext]);
-            indices.remove(k);
-            clipped = true;
-            break;
-        }
-        if !clipped {
-            let m = indices.len();
-            triangles.push([indices[m - 1], indices[0], indices[1]]);
-            indices.remove(0);
-        }
-    }
-    if indices.len() == 3 {
-        triangles.push([indices[0], indices[1], indices[2]]);
-    }
-    triangles
 }
 
 #[cfg(test)]
@@ -373,17 +307,6 @@ mod tests {
         let pieces = subtract_convex(&square, &hole);
         let total: f64 = pieces.iter().map(|p| area(p)).sum();
         assert!((total - 0.5).abs() < 1e-9, "total={total}");
-    }
-
-    #[test]
-    fn ear_clip_triangulates_convex_polygon_fully() {
-        let poly = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
-        let tris = ear_clip(&poly);
-        let total: f64 = tris
-            .iter()
-            .map(|t| cross2(sub(poly[t[1]], poly[t[0]]), sub(poly[t[2]], poly[t[0]])).abs() / 2.0)
-            .sum();
-        assert!((total - 1.0).abs() < 1e-9);
     }
 }
 

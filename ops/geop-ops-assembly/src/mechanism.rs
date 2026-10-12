@@ -30,6 +30,7 @@ use geop_core_math::{
     primitives::Pose,
     scalars::{Ring, Scalar},
     solvers::system::tolerance,
+    vector::Vector3,
     with_context,
 };
 use geop_core_program::{
@@ -43,7 +44,7 @@ use geop_ops::{
     model::model_or_empty,
     operation::{Aspects, Build, BuildReader, BuildView, EntityRef, Input, Lookup, Scope, Seen},
     placed::{locate, locate_in, moved_by, within},
-    solving::{Setting, Settings, Unknown, largest, scale_of, settings_of, twist, unknown},
+    solving::{Setting, Settings, Unknown, largest, scale_of, settings_of, unknown},
 };
 
 use crate::{
@@ -339,7 +340,8 @@ fn differentiated(
     bound: Bound,
     evaluate: impl Fn(&mut BuildReader, &mut Reading) -> GeopResult<Vec<D>>,
 ) -> GeopResult<Constraint<ParamValue>> {
-    let twist = twist()?;
+    // The step of a pose by its six variables, in its own frame.
+    let twist = Pose::exp_with_derivatives(&Vector3::zero(), &Vector3::zero())?;
     let mut plain = Reading {
         read: BTreeMap::new(),
         by: None,

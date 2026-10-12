@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     plain::cross,
+    solvers::walk::walk_by,
 };
 
 use crate::cage::{
@@ -465,22 +466,30 @@ impl Cage {
         // The quads to split, by index.
         let mut splits: Vec<usize> = Vec::new();
         for start in [(a, b), (b, a)] {
-            let mut edge = start;
-            while let Some(&f) = owner.get(&edge) {
-                let face = &self.faces[f].vertices;
-                if face.len() != 4 || splits.contains(&f) {
-                    break;
-                }
-                splits.push(f);
-                let k = face.iter().position(|&v| v == edge.0).expect("on its face");
-                let across = (face[(k + 2) % 4], face[(k + 3) % 4]);
-                let key = undirected(across.0, across.1);
-                if ring.contains(&key) {
-                    break;
-                }
-                ring.push(key);
-                edge = (across.1, across.0);
-            }
+            // Across each quad to the opposite edge, until a quad or an edge
+            // is one the ring has already, from either side.
+            walk_by(
+                start,
+                |&(x, y)| undirected(x, y),
+                |&edge| {
+                    let Some(&f) = owner.get(&edge) else {
+                        return Ok::<_, GeopError>(None);
+                    };
+                    let face = &self.faces[f].vertices;
+                    if face.len() != 4 || splits.contains(&f) {
+                        return Ok(None);
+                    }
+                    splits.push(f);
+                    let k = face.iter().position(|&v| v == edge.0).expect("on its face");
+                    let across = (face[(k + 2) % 4], face[(k + 3) % 4]);
+                    let key = undirected(across.0, across.1);
+                    if ring.contains(&key) {
+                        return Ok(None);
+                    }
+                    ring.push(key);
+                    Ok(Some((across.1, across.0)))
+                },
+            )?;
         }
         let mut middle: HashMap<[u32; 2], u32> = HashMap::new();
         for &[x, y] in &ring {
@@ -588,12 +597,11 @@ impl Cage {
             let first = (0..m)
                 .find(|&i| at(ring[i]) < 0.0 && at(ring[(i + 1) % m]) >= 0.0)
                 .expect("mixed");
-            let mut run = Vec::new();
-            let mut i = (first + 1) % m;
-            while at(ring[i]) >= 0.0 {
-                run.push(ring[i]);
-                i = (i + 1) % m;
-            }
+            // `ring[first]` is on the negative side: the run ends by it.
+            let run: Vec<u32> = (1..=m)
+                .map(|j| ring[(first + j) % m])
+                .take_while(|&v| at(v) >= 0.0)
+                .collect();
             let positive = ring.iter().filter(|&&v| at(v) > 0.0).count();
             if run.iter().filter(|&&v| at(v) > 0.0).count() != positive || run.len() < 3 {
                 return Err(GeopError::new(format!(

@@ -1281,8 +1281,11 @@ fn six_pins_are_patterned_round_a_hole() {
             axis: Some(EntityRef::Face {
                 name: "plate/extrude(hole,hole_sketch,c1)".into(),
             }),
-            layout: geop_ops_assembly::Layout::Circular { angle: 60.0 },
-            count: 6,
+            reversed: false,
+            layout: geop_ops_assembly::Layout::Circular {
+                angle: geop_ops::operation::pattern::Spacing::step(60.0),
+            },
+            count: 6.0.into(),
         },
     );
     program.state = BTreeMap::from([
@@ -1329,7 +1332,7 @@ fn six_pins_are_patterned_round_a_hole() {
         &mut program.program.steps[2],
         |pattern: &mut PartPatternArgs| {
             pattern.part = "pin".into();
-            pattern.count = 1;
+            pattern.count = 1.0.into();
         },
     );
     let err = build(&program, &library).err().unwrap().to_string();

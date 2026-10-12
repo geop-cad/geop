@@ -145,6 +145,24 @@ impl<S: Scalar, const N: usize> Vector<S, N> {
 }
 
 impl<S: Scalar> Vector3<S> {
+    /// Two unit directions square to the unit vector `self` and to each
+    /// other: the first from whichever of `x`, `y`, `z` runs least along it
+    /// — the first no other definitely runs less along, so that an axis a
+    /// hair off one of them does not pick between two by noise. A free
+    /// choice, made the same way wherever a direction across an axis is
+    /// measured from: a joint's turns, a frame's `x`, a sketch's parallel.
+    pub fn across(&self) -> GeopResult<[Self; 2]> {
+        let size = |k: usize| self[k].abs();
+        let least = (0..3)
+            .find(|&k| !(0..3).any(|j| size(j).definitely_less(size(k))))
+            .unwrap_or(0);
+        let reference = Self::axis(least);
+        let first = (reference.sub(&self.prod_scalar(self.prod_dot(&reference))))
+            .normalize()
+            .map_err(|e| e.with_context(format!("a direction square to {self:?}")))?;
+        Ok([first, self.prod_cross(&first)])
+    }
+
     pub fn prod_cross(&self, other: &Self) -> Self {
         let mut out = Self::new();
         out[0] = self[1].mul(other[2]).sub(self[2].mul(other[1]));
@@ -222,9 +240,10 @@ impl<S: Scalar> Vector2<S> {
         }
     }
 
-    /// Rotated 90 degrees counter-clockwise.
+    /// Rotated 90 degrees counter-clockwise — by `neg`, which is exact,
+    /// where subtracting from zero would round.
     pub fn perp(&self) -> Self {
-        Self::from_array([S::ZERO.sub(self[1]), self[0]])
+        Self::from_array([self[1].neg(), self[0]])
     }
 
     /// Rotated counter-clockwise by the angle with cosine `c` and sine `s`.

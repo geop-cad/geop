@@ -27,11 +27,12 @@ use geop_core_math::{
 use geop_core_topology::{
     Body, CoedgeGeometry, EdgeId, FaceId, ShellId, SolidId,
     build::{BodySpec, BuiltBody},
+    contains::shell::Classified,
 };
 use geop_ops::{BodyNames, NamedModel, Namer, RefId};
 
 use crate::{
-    boolean::{Classified, FaceClassification, classify_face},
+    boolean::{FaceClassification, classify_face},
     remesh::remesh::{RemeshParams, remesh},
 };
 
@@ -247,7 +248,7 @@ mod tests {
     };
     use geop_core_topology::{
         Body,
-        contains::shell::{PointClassification, solid_contains},
+        contains::shell::{Classified, PointClassification, solid_contains},
     };
     use geop_ops::{NamedModel, Namer};
     use geop_ops_extrude_revolve::{
@@ -292,7 +293,16 @@ mod tests {
     ) -> Vec<usize> {
         (0..pieces.len())
             .filter(|&k| {
-                solid_contains(model.topology(), pieces[k], p, 2000, S::from_f64(1e-7), 7).unwrap()
+                solid_contains(
+                    model.topology(),
+                    pieces[k],
+                    p,
+                    2000,
+                    S::from_f64(1e-7),
+                    7,
+                    &mut Classified::default(),
+                )
+                .unwrap()
                     == PointClassification::Inside
             })
             .collect()

@@ -176,6 +176,38 @@ impl<S: Scalar> BodySpec<S> {
         }
     }
 
+    /// A face on `surface` over the unit square of its parameters (see
+    /// [`FaceSpec::on_unit_square`]), its corners at the vertices `corners`:
+    /// each side along the edge — or at the vertex — `sides` gives, each
+    /// edge in the sense it runs from one corner to the next. Fails for an
+    /// edge that does not join its side's corners.
+    pub fn square_face(
+        &self,
+        surface: NurbSurface3D<S>,
+        corners: [usize; 4],
+        sides: [CoedgeOn; 4],
+    ) -> GeopResult<FaceSpec<S>> {
+        let mut oriented = sides;
+        for (k, on) in oriented.iter_mut().enumerate() {
+            if let CoedgeOn::Edge(e, _) = *on {
+                let edge = &self.edges[e];
+                let (from, to) = (corners[k], corners[(k + 1) % 4]);
+                let sense = if (edge.start, edge.end) == (from, to) {
+                    Sense::Forward
+                } else if (edge.start, edge.end) == (to, from) {
+                    Sense::Reversed
+                } else {
+                    return Err(GeopError::new(format!(
+                        "a face's side runs from vertex {from} to {to} along edge {e}, between {} and {}",
+                        edge.start, edge.end
+                    )));
+                };
+                *on = CoedgeOn::Edge(e, sense);
+            }
+        }
+        FaceSpec::on_unit_square(surface, oriented)
+    }
+
     /// The same body moved by the rigid motion `pose`: its vertices, edge
     /// curves and surfaces moved, its pcurves — on surfaces moved with the
     /// same parametrization — as they are.

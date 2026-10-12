@@ -17,7 +17,7 @@ use geop_core_geometry::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     plain::{P3, add, cross, distance, dot, norm, normalize, scale, sub},
-    primitives::{Pose, Quaternion},
+    primitives::Pose,
     scalars::Scalar,
     vector::{Vector3, Vector4},
 };
@@ -529,20 +529,10 @@ impl Revolved {
         }
     }
 
-    /// The motion turning by `angle` about the axis.
+    /// The motion turning by `angle` radians about the axis.
     pub fn turn<S: Scalar>(&self, angle: f64) -> GeopResult<Pose<S>> {
-        let (half_sin, half_cos) = (angle / 2.0).sin_cos();
-        let z = self.frame.z;
-        let rotation = Quaternion::new(
-            S::from_f64(half_cos),
-            S::from_f64(z[0] * half_sin),
-            S::from_f64(z[1] * half_sin),
-            S::from_f64(z[2] * half_sin),
-        )
-        .normalized()?;
-        let turned = Pose::new(Vector3::zero(), rotation)?;
-        let o = Vector3::from_array(self.frame.origin.map(S::from_f64));
-        Pose::new(o.sub(&turned.apply(&o)), rotation)
+        let axis = self.axis::<S>()?;
+        Pose::rotation_about(&axis.point, &axis.direction, S::from_f64(angle))
     }
 }
 

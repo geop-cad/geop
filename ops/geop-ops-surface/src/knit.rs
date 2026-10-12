@@ -26,6 +26,7 @@ use geop_core_geometry::contains::curve::curve_could_contain;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
+    solvers::walk::{Take, flood},
     union_find::UnionFind,
     with_context,
 };
@@ -472,9 +473,9 @@ fn turn_consistently<S: Scalar>(spec: &mut BodySpec<S>, names: &BodyNames) -> Ge
     let n = spec.faces.len();
     let mut turned: Vec<Option<bool>> = vec![None; n];
     turned[0] = Some(false);
-    let mut queue = vec![0];
-    while let Some(f) = queue.pop() {
+    flood([0], Take::Newest, |&f| {
         let flip = turned[f].expect("visited");
+        let mut found = Vec::new();
         for (e, at) in users.iter().enumerate() {
             let [(a, sa), (b, sb)] = at.as_slice() else {
                 continue;
@@ -491,7 +492,7 @@ fn turn_consistently<S: Scalar>(spec: &mut BodySpec<S>, names: &BodyNames) -> Ge
             match turned[g] {
                 None => {
                     turned[g] = Some(want);
-                    queue.push(g);
+                    found.push(g);
                 }
                 Some(have) if have != want => {
                     return Err(GeopError::new(format!(
@@ -502,7 +503,8 @@ fn turn_consistently<S: Scalar>(spec: &mut BodySpec<S>, names: &BodyNames) -> Ge
                 Some(_) => {}
             }
         }
-    }
+        Ok(found)
+    })?;
     if let Some(f) = turned.iter().position(Option::is_none) {
         return Err(GeopError::new(format!(
             "face {} meets none of the others along an edge: the sheets do not hang together",

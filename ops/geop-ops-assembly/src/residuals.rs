@@ -15,7 +15,7 @@ use geop_core_math::{
 };
 use geop_ops::{
     Design,
-    operation::{Aspects, Role, across},
+    operation::{Aspects, Role},
 };
 use serde::{Deserialize, Serialize};
 
@@ -229,7 +229,7 @@ impl Geometry {
             let d = d.map(D::cst).normalize()?;
             Ok(Direction {
                 along: placing.turn(&d),
-                across: across(&d)?.map(|v| placing.turn(&v)),
+                across: d.across()?.map(|v| placing.turn(&v)),
             })
         };
         Ok(match self {

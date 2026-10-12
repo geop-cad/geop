@@ -1,6 +1,7 @@
 use geop_core_math::{
     geop_error::{GeopResult, WithContext},
     scalars::Scalar,
+    solvers::repeat::rewrite,
     with_context,
 };
 use geop_core_topology::{Body, Model, VertexId};
@@ -51,16 +52,34 @@ pub fn remesh_vertices<S: Scalar>(
     // Every merge changes which vertices exist and which coincide with which
     // (a vertex not yet visited this pass may now already be welded to one
     // visited earlier), so each one invalidates the search that found it —
-    // the loop below always re-searches from scratch afterwards rather than
-    // pressing on with anything from before the merge.
-    while let Some((vertex_a, vertex_b)) =
-        find_coincident_vertex_pair(model.topology(), solid_a, solid_b).with_context(&ctx)?
-    {
-        model
-            .merge_vertex(vertex_a, vertex_b)
-            .with_context(with_context!(
-                "merge_vertex(vertex_a={vertex_a}, vertex_b={vertex_b})"
-            ))?;
-    }
+    // the search always starts over afterwards rather than pressing on with
+    // anything from before the merge. Every merge removes one of the
+    // vertices, so the searches are as many as there are vertices, and one
+    // more that finds nothing.
+    let vertices = model
+        .topology()
+        .iter_body_vertices(solid_a)
+        .with_context(&ctx)?
+        .count()
+        + model
+            .topology()
+            .iter_body_vertices(solid_b)
+            .with_context(&ctx)?
+            .count();
+    rewrite(
+        model,
+        vertices + 1,
+        |model| find_coincident_vertex_pair(model.topology(), solid_a, solid_b),
+        |model, (vertex_a, vertex_b)| {
+            model
+                .merge_vertex(vertex_a, vertex_b)
+                .with_context(with_context!(
+                    "merge_vertex(vertex_a={vertex_a}, vertex_b={vertex_b})"
+                ))
+        },
+    )
+    .with_context(&ctx)?
+    .done("merging coincident vertices")
+    .with_context(&ctx)?;
     Ok(())
 }

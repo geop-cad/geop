@@ -7,6 +7,7 @@
 //! line ballooned where its part is drawn.
 
 use geop_core_geometry::{
+    aabb::union_aabb,
     intersection::curve_curve_overlaps_and_crossings,
     nurb_curve::{NurbCurve2D, NurbCurve3D},
 };
@@ -14,16 +15,18 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     plain::{self, add, normalize, sub},
     scalars::Scalar,
+    solvers::{
+        probe::{Probe, attempts},
+        repeat::{Step, repeat},
+    },
     vector::{Vector2, Vector3},
 };
 use geop_core_sketch::dimension::Measure;
 use geop_core_topology::{FaceId, Model};
 use geop_ops::{
     Design, EntityRef,
-    model::model,
     operation::{self, Aspects, BuildView, ResolveEntity},
     output::sheet::{Anchor, Layer, P, Shape, Sheet, decimal, strokes_of},
-    placed::owner,
 };
 use serde::{Deserialize, Serialize};
 
@@ -1190,16 +1193,10 @@ fn center_marks<S: Scalar>(sheet: &mut Sheet, p: &Placed<S>, scale: f64) -> Geop
 /// Where the vertex `name` of the part `view` shows — or of a part placed
 /// in it, named as that part names it — is.
 pub(crate) fn placed_vertex(view: BuildView, name: &str) -> GeopResult<Vector3<Design>> {
-    let (owner, pose, local) = owner(view, &EntityRef::Vertex { name: name.into() })?;
-    let owner = owner.retrieve_target(&model())?;
-    let point = owner
-        .topology()
-        .get_vertex(owner.vertex_id(&local.label())?)?
-        .point;
-    Ok(match pose {
-        Some(pose) => pose.apply(&point),
-        None => point,
-    })
+    let vertex = EntityRef::Vertex { name: name.into() };
+    Aspects::of(&vertex, &mut operation::Seen::new(view))?
+        .point
+        .ok_or_else(|| GeopError::new(format!("{vertex} has no point")))
 }
 
 /// The curve of the edge `name` of the part `view` shows — or of a part
@@ -1309,7 +1306,7 @@ fn section_view(
     let up = if normal[2].to_f64().abs() < 0.9 {
         Vector3::axis(2)
     } else {
-        operation::across(&normal)?[0]
+        normal.across()?[0]
     };
     let frame = ViewFrame::looking(normal.neg(), up)?;
     // Each body as it is drawn: whole, or its part cut where the plane is
@@ -1419,17 +1416,11 @@ fn hatch<S: Scalar>(
             .map(|(a, b)| (back(a), back(b)))
             .collect());
     }
-    let mut lo = [f64::INFINITY; 2];
-    let mut hi = [f64::NEG_INFINITY; 2];
-    for curve in boundary {
-        for q in &curve.control_points {
-            for k in 0..2 {
-                let x = q[k].div(q[2])?.to_f64();
-                lo[k] = lo[k].min(x);
-                hi[k] = hi[k].max(x);
-            }
-        }
-    }
+    let Some(bounds) = union_aabb(boundary.iter().map(|c| c.aabb())) else {
+        return Ok(Vec::new());
+    };
+    let lo: [f64; 2] = std::array::from_fn(|k| bounds[k].lower().to_f64());
+    let hi: [f64; 2] = std::array::from_fn(|k| bounds[k].upper().to_f64());
     if !(lo[0] < hi[0] && lo[1] < hi[1]) {
         return Ok(Vec::new());
     }
@@ -1438,24 +1429,35 @@ fn hatch<S: Scalar>(
     let (c_lo, c_hi) = (lo[0] - hi[1], hi[0] - lo[1]);
     let reach = (hi[0] - lo[0]) + (hi[1] - lo[1]) + 1.0;
     let mut out = Vec::new();
+    // One line a spacing on from the one before, from half a spacing in to
+    // the far corner: as many as the spacings across, and one for the
+    // rounding, and a step that finds the corner passed.
     let mut c = c_lo + spacing / 2.0;
-    while c < c_hi {
-        for shift in [0.0, 0.37, -0.29] {
-            let cc = c + shift * spacing;
-            // From a point of the line left of the box to one right of it.
-            let x_start = lo[0] - 1.0;
-            let a = [x_start, x_start - cc];
-            let b = [x_start + reach, x_start + reach - cc];
-            match hatch_line(boundary, a, b)? {
-                Some(stretches) => {
-                    out.extend(stretches);
-                    break;
-                }
-                None => continue,
+    let lines = ((c_hi - c) / spacing).max(0.0).ceil() as usize;
+    repeat(lines + 2, || -> GeopResult<_> {
+        if c < c_hi {
+            let shifts = [0.0, 0.37, -0.29];
+            let line = attempts(shifts.len(), |&k| -> GeopResult<_> {
+                let cc = c + shifts[k] * spacing;
+                // From a point of the line left of the box to one right of it.
+                let x_start = lo[0] - 1.0;
+                let a = [x_start, x_start - cc];
+                let b = [x_start + reach, x_start + reach - cc];
+                Ok(match hatch_line(boundary, a, b)? {
+                    Some(stretches) => Probe::Found(stretches),
+                    None => Probe::Next,
+                })
+            })?;
+            if let Some(stretches) = line {
+                out.extend(stretches);
             }
+            c += spacing;
+            Ok(Step::Again)
+        } else {
+            Ok(Step::Done(()))
         }
-        c += spacing;
-    }
+    })?
+    .done("hatching across the face")?;
     Ok(out)
 }
 

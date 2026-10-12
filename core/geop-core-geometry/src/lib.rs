@@ -1,4 +1,4 @@
-mod aabb;
+pub mod aabb;
 pub mod contains;
 mod fat_line;
 pub mod intersection;

@@ -1,8 +1,10 @@
 //! A [`Sheet`] as SVG: one group per layer, sized in millimetres.
 
-use std::fmt::Write;
+use std::{convert::Infallible, fmt::Write};
 
-use super::{Anchor, LineType, Shape, Sheet};
+use geop_core_math::solvers::repeat::{Repeated, Step, repeat};
+
+use super::{Anchor, LineType, Shape, Sheet, decimal};
 use crate::output::xml_escape;
 
 /// How a layer's strokes are dashed, as SVG's `stroke-dasharray`.
@@ -14,11 +16,9 @@ fn dashes(line_type: LineType) -> Option<String> {
     })
 }
 
-/// `n` without trailing zeros, to a thousandth of a millimetre.
+/// `n` to a thousandth of a millimetre (see [`decimal`]).
 fn num(n: f64) -> String {
-    let s = format!("{n:.3}");
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s == "-0" { "0".into() } else { s.into() }
+    decimal(n, 3)
 }
 
 /// The sheet as an SVG document. The paper's `y` points up, SVG's down: every
@@ -73,10 +73,23 @@ pub fn to_svg(sheet: &Sheet) -> String {
                     start,
                     end,
                 } => {
+                    // Turned on by whole turns until positive: no more of
+                    // them than the turns it is short by, and one for the
+                    // rounding.
                     let mut sweep = end - start;
-                    while sweep <= 0.0 {
-                        sweep += std::f64::consts::TAU;
-                    }
+                    let turns = (-sweep / std::f64::consts::TAU).max(0.0).ceil() as usize;
+                    let run = repeat::<_, Infallible>(turns + 2, || {
+                        Ok(if sweep <= 0.0 {
+                            sweep += std::f64::consts::TAU;
+                            Step::Again
+                        } else {
+                            Step::Done(())
+                        })
+                    });
+                    assert!(
+                        matches!(run, Ok(Repeated::Done { .. })),
+                        "an arc's sweep becomes positive within its turns: {sweep:?}"
+                    );
                     let at = |a: f64| [center[0] + radius * a.cos(), center[1] + radius * a.sin()];
                     let large = if sweep > std::f64::consts::PI { 1 } else { 0 };
                     writeln!(

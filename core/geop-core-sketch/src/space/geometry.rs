@@ -72,10 +72,10 @@ impl<T: Scalar> Arc3<T> {
 
 /// `(u, v)`: two unit vectors that span, with `direction`, all of space —
 /// to measure how far another vector is from parallel to it along. Which
-/// two is a free choice: worked out in plain numbers, sharp.
+/// two is a free choice (see [`Vector3::across`]): worked out in plain
+/// numbers, sharp.
 pub fn across<S: Scalar>(direction: &Vector3<S>) -> GeopResult<[Vector3<S>; 2]> {
-    let d = direction.map(|c| S::from_f64(c.to_f64()));
-    let complement = d.orthonormal_complement()?;
     let sharp = |v: &Vector3<S>| v.map(|c| S::from_f64(c.to_f64()));
-    Ok([sharp(&complement[0]), sharp(&complement[1])])
+    let [u, v] = sharp(direction).normalize()?.across()?;
+    Ok([sharp(&u), sharp(&v)])
 }

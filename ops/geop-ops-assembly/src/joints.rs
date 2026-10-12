@@ -21,10 +21,7 @@ use geop_core_math::{
     scalars::{Field, Ring, Scalar, as_f64},
     vector::Vector3,
 };
-use geop_ops::{
-    Design,
-    operation::{Aspects, across},
-};
+use geop_ops::{Design, operation::Aspects};
 use serde::{Deserialize, Serialize};
 
 use crate::residuals::{D, Placing, parallel};
@@ -56,7 +53,7 @@ impl Connector<Design> {
             .normalize()
             .map_err(|e| e.with_context(format!("the axis {axis:?} of a joint")))?;
         let reference = match reference {
-            None => across(&axis)?[0],
+            None => axis.across()?[0],
             Some(reference) => {
                 let square = reference.sub(&axis.prod_scalar(axis.prod_dot(&reference)));
                 square.normalize().map_err(|e| {

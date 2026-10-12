@@ -23,7 +23,7 @@
 //! curvatures* agree.
 
 use geop_core_geometry::{
-    contains::{curve::curve_could_contain, surface::surface_could_contain},
+    contains::curve::curve_could_contain,
     intersection::{Intersections, curve_surface_intersect},
     nurb_curve::NurbCurve,
     nurb_surface::NurbSurface3D,
@@ -33,6 +33,7 @@ use geop_core_math::{
     scalars::Scalar,
     solvers::{
         bisect::bisect,
+        repeat::rewrite,
         subdivide::{Order, Split, subdivide},
     },
     vector::Vector3,
@@ -129,7 +130,7 @@ fn sign<S: Scalar>(gap: &GeopResult<Option<S>>) -> Option<bool> {
 /// cannot be told apart — the surfaces agreeing in curvature along a whole
 /// stretch, or touching without crossing — has no branch leaving it.
 ///
-/// The foot points are found once, globally ([`surface_could_contain`] at
+/// The foot points are found once, globally ([`NurbSurface3D::locate`] at
 /// the curve's midpoint), and every later projection seeds from its parent
 /// stretch's, so each stays on the sheet the subdivision started on. A curve
 /// whose midpoint is not on `surf_f` has no branch points found.
@@ -141,20 +142,14 @@ fn tangent_branch_points<S: Scalar>(
 ) -> GeopResult<Vec<S>> {
     let (t0, t1) = curve.domain();
     let mid = curve.evaluate(t0.add(t1).div(S::TWO)?.sharpen())?;
-    let (Some(seed_g), Some(seed_f)) = (
-        surface_could_contain(
-            surf_g,
+    let locate = |surface: &NurbSurface3D<S>| {
+        surface.locate(
             &mid,
             params.max_nodes,
             params.curve_curve_min_subdivision_size,
-        )?,
-        surface_could_contain(
-            surf_f,
-            &mid,
-            params.max_nodes,
-            params.curve_curve_min_subdivision_size,
-        )?,
-    ) else {
+        )
+    };
+    let (Some(seed_g), Some(seed_f)) = (locate(surf_g)?, locate(surf_f)?) else {
         return Ok(vec![]);
     };
     let sharp = |(u, v): (S, S)| (u.sharpen(), v.sharpen());
@@ -406,11 +401,16 @@ pub fn remesh_tangent_branches<S: Scalar>(
     let ctx = with_context!(
         "remesh_tangent_branches(edge_solid={edge_solid}, face_solid={face_solid}, params={params:?})"
     );
-    while let Some((edge_id, t, vertex, point, face_id)) =
-        find_tangent_branch(model.topology(), edge_solid, face_solid, params).with_context(&ctx)?
-    {
-        split_at_crossing(model, naming, edge_id, t, vertex, point, face_id, params)
-            .with_context(&ctx)?;
-    }
+    rewrite(
+        model,
+        params.max_rewrites,
+        |model| find_tangent_branch(model.topology(), edge_solid, face_solid, params),
+        |model, (edge_id, t, vertex, point, face_id)| {
+            split_at_crossing(model, naming, edge_id, t, vertex, point, face_id, params)
+        },
+    )
+    .with_context(&ctx)?
+    .done("splitting edges where tangent branches leave them")
+    .with_context(&ctx)?;
     Ok(())
 }

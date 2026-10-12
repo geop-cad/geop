@@ -19,6 +19,7 @@
 //! rim along it, so the space beside the edge, over the wall, is air.
 
 use geop_core_geometry::nurb_curve::{NurbCurve2D, flatten_point};
+use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
@@ -39,7 +40,7 @@ use geop_ops_extrude_revolve::{extrude::extrude, sweep::SweepLoop};
 
 use crate::{
     band::{Chain, Piece},
-    common::{halfway, normal_at},
+    common::halfway,
 };
 
 /// The chain of `face`'s edges `edges` — or, if none, its one hole — in
@@ -269,7 +270,9 @@ fn convex_along<S: Scalar>(
         .ok_or_else(|| GeopError::new("the edge bounds the rim alone"))?;
     let (point, along) = halfway(curve)?;
     let right = along.prod_cross(up);
-    let normal = normal_at(&spec.faces[other].surface, &point)?;
+    let normal = spec.faces[other]
+        .surface
+        .normal_at(&point, MAX_NODES, min_subdivision_size())?;
     if !normal.prod_dot(&right).definitely_greater(S::ZERO) {
         return Err(GeopError::new(
             "the solid is not convex along it: a lip or groove runs along an edge where the wall falls away from the rim",

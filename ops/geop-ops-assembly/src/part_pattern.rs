@@ -4,7 +4,6 @@ use geop_core_geometry::shape::Axis;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::{Pose, Quaternion},
-    scalars::Scalar,
     with_context,
 };
 use geop_core_program::{
@@ -14,9 +13,13 @@ use geop_core_program::{
 };
 use geop_ops::{
     Design, Namer, ParamValue,
-    operation::{Aspects, Build, BuildReader, EntityRef, Input, Role, Seen},
+    operation::{
+        Aspects, Build, BuildReader, EntityRef, Input, Lookup, Role, Seen,
+        pattern::{Spacing, count_field, count_of, whole_count},
+    },
+    parameters::{Formula, expressions},
     placed::{Instance, Placement, instance, instance_name},
-    ui::{Choice, Edit, EditForm, Number, Tone, Unit},
+    ui::{Choice, Edit, EditForm, Tone, Unit, formula_number},
 };
 use serde::{Deserialize, Serialize};
 
@@ -34,13 +37,31 @@ use serde::{Deserialize, Serialize};
 pub struct PartPattern;
 
 /// How the copies are laid out.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Layout {
-    /// Each copy `spacing` further along the line's direction.
-    Linear { spacing: f64 },
-    /// Each copy turned `angle` degrees further round the axis.
-    Circular { angle: f64 },
+    /// In a row along the line's direction, `spacing` apart.
+    Linear { spacing: Spacing },
+    /// Turned round the axis, `angle` degrees apart.
+    Circular { angle: Spacing },
+}
+
+impl Layout {
+    /// How far apart the copies are.
+    fn spacing(&self) -> &Spacing {
+        match self {
+            Layout::Linear { spacing } => spacing,
+            Layout::Circular { angle } => angle,
+        }
+    }
+
+    /// How far apart the copies are, to change.
+    fn spacing_mut(&mut self) -> &mut Spacing {
+        match self {
+            Layout::Linear { spacing } => spacing,
+            Layout::Circular { angle } => angle,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -52,25 +73,50 @@ pub struct PartPatternArgs {
     /// or circular edge, a round face, a datum axis.
     #[serde(default)]
     pub axis: Option<EntityRef>,
+    /// Go against the line, or turn the other way round the axis.
+    #[serde(default)]
+    pub reversed: bool,
     pub layout: Layout,
-    /// How many there are, the part itself included.
-    pub count: usize,
+    /// How many there are, the part itself included: a number, or a
+    /// formula of the part's parameters.
+    pub count: Formula,
 }
 
-/// The motion moving the part to copy `k`: along `axis` by `k` spacings,
-/// or round it by `k` angles.
-fn motion<S: Scalar>(layout: Layout, axis: &Axis<S>, k: usize) -> GeopResult<Pose<S>> {
-    let k = S::from_i64(k as i64);
-    match layout {
-        Layout::Linear { spacing } => Pose::new(
-            axis.direction.prod_scalar(S::from_f64(spacing).mul(k)),
-            Quaternion::identity(),
-        ),
-        Layout::Circular { angle } => Pose::rotation_about(
-            &axis.point,
-            &axis.direction,
-            S::from_f64(angle).mul(k).degrees_to_radians()?,
-        ),
+/// The motions moving the part to each copy, `k` from 1: along `axis` or
+/// round it, as `args` lays them out, its formulas read by `lookup`.
+fn motions(
+    args: &PartPatternArgs,
+    axis: &Axis<Design>,
+    lookup: &mut (impl Lookup<Design> + ?Sized),
+) -> GeopResult<Vec<Pose<Design>>> {
+    let count = whole_count(&args.count, args.count.evaluate(lookup)?)?;
+    if count < 2 {
+        return Err(GeopError::new(format!(
+            "a pattern of {count} is no pattern: it needs 2 or more"
+        )));
+    }
+    let value = args.layout.spacing().value().evaluate(lookup)?;
+    let direction = if args.reversed {
+        axis.direction.neg()
+    } else {
+        axis.direction
+    };
+    match &args.layout {
+        Layout::Linear { spacing } => {
+            let row = spacing.along(count, value)?;
+            (1..count)
+                .map(|k| {
+                    let offset = row.offset(&direction, k)?.expect("a copy is no seed");
+                    Pose::new(offset, Quaternion::identity())
+                })
+                .collect()
+        }
+        Layout::Circular { angle } => {
+            let row = angle.round(count, value)?;
+            (1..count)
+                .map(|k| row.turn(&axis.point, &direction, k))
+                .collect()
+        }
     }
 }
 
@@ -101,28 +147,9 @@ fn check(args: &PartPatternArgs) -> GeopResult<&EntityRef> {
     if args.part.is_empty() {
         return Err(GeopError::new("choose the placed part to pattern"));
     }
-    let Some(axis) = &args.axis else {
-        return Err(GeopError::new(
-            "pick the line the copies go along, or the axis they go round",
-        ));
-    };
-    if args.count < 2 {
-        return Err(GeopError::new(format!(
-            "a pattern of {} is no pattern: it needs 2 or more",
-            args.count
-        )));
-    }
-    let step = match args.layout {
-        Layout::Linear { spacing } => spacing,
-        Layout::Circular { angle } => angle,
-    };
-    if !step.is_finite() || step == 0.0 {
-        return Err(GeopError::new(format!(
-            "the copies would all be in one place: {:?}",
-            args.layout
-        )));
-    }
-    Ok(axis)
+    args.axis.as_ref().ok_or_else(|| {
+        GeopError::new("pick the line the copies go along, or the axis they go round")
+    })
 }
 
 impl Operation for PartPattern {
@@ -140,13 +167,20 @@ impl Operation for PartPattern {
     type Input = Input;
     type State = ParamValue;
 
+    fn formulas(args: &mut PartPatternArgs) -> Vec<&mut String> {
+        expressions([&mut args.count, args.layout.spacing_mut().value_mut()])
+    }
+
     /// The newest placed part, six round an axis still to pick.
     fn new_args(context: &Context<Input, ParamValue>) -> PartPatternArgs {
         PartPatternArgs {
             part: placed_names(context.before).pop().unwrap_or_default(),
             axis: None,
-            layout: Layout::Circular { angle: 60.0 },
-            count: 6,
+            reversed: false,
+            layout: Layout::Circular {
+                angle: Spacing::step(60.0),
+            },
+            count: Formula::Plain(6.0),
         }
     }
 
@@ -166,10 +200,11 @@ impl Operation for PartPattern {
             )))
             .with_context(ctx);
         }
-        let axis = Aspects::axis_of(axis, &mut Seen::new(part.current())).with_context(ctx)?;
+        let mut seen = Seen::new(part.current());
+        let axis = Aspects::axis_of(axis, &mut seen).with_context(ctx)?;
+        let motions = motions(args, &axis, &mut seen).with_context(ctx)?;
         let namer = Namer::new("part_pattern", step)?;
-        for k in 1..args.count {
-            let motion = motion(args.layout, &axis, k).with_context(ctx)?;
+        for (k, motion) in (1..).zip(motions) {
             let name = namer.name(&[&k.to_string()]);
             part.define_target(&instance(&name), &(args.part.clone(), motion), copy)
                 .with_context(ctx)?;
@@ -226,6 +261,12 @@ fn form(
         false,
         |e, picked| e.args.axis = picked.into_iter().next(),
     );
+    f.checkbox(
+        "reversed",
+        "reverse direction",
+        args.reversed,
+        |Edit { args, .. }, reversed| args.reversed = reversed,
+    );
     let circular = matches!(args.layout, Layout::Circular { .. });
     let choices = vec![
         Choice::new("circular", "round the axis"),
@@ -239,36 +280,40 @@ fn form(
         choices,
         false,
         |Edit { args, .. }, way| {
-            args.layout = match (way, args.layout) {
-                ("linear", Layout::Circular { .. }) => Layout::Linear { spacing: 1.0 },
-                ("circular", Layout::Linear { .. }) => Layout::Circular {
-                    angle: 360.0 / args.count.max(1) as f64,
+            args.layout = match (way, &args.layout) {
+                ("linear", Layout::Circular { .. }) => Layout::Linear {
+                    spacing: Spacing::step(1.0),
                 },
-                (_, layout) => layout,
+                ("circular", Layout::Linear { .. }) => Layout::Circular {
+                    angle: Spacing::extent(360.0),
+                },
+                (_, layout) => layout.clone(),
             };
         },
     );
-    match args.layout {
-        Layout::Linear { spacing } => {
-            f.number(
-                "spacing",
-                Number::new("spacing", spacing, Unit::Length),
-                |Edit { args, .. }, v| args.layout = Layout::Linear { spacing: v },
-            );
-        }
-        Layout::Circular { angle } => {
-            f.number(
-                "angle",
-                Number::new("angle between", angle, Unit::Angle),
-                |Edit { args, .. }, v| args.layout = Layout::Circular { angle: v },
-            );
-        }
+    let mut seen = Seen::new(context.before);
+    let (key, labels, unit) = if circular {
+        ("angle", ["angle between", "total angle"], Unit::Angle)
+    } else {
+        ("spacing", ["spacing", "total"], Unit::Length)
+    };
+    args.layout
+        .spacing()
+        .show(&mut f.form.dialog, key, labels, |label, value| {
+            formula_number(label, value, &mut seen, unit)
+        });
+    for field in [format!("{key}_mode"), key.to_string()] {
+        let at = field.clone();
+        f.on(field, move |Edit { args, .. }, value| {
+            args.layout.spacing_mut().set(key, &at, &value);
+        });
     }
-    f.number(
-        "count",
-        Number::new("count", args.count as f64, Unit::Count).range(2.0, 100.0),
-        |Edit { args, .. }, v| args.count = v.round().max(2.0) as usize,
-    );
+    count_field(&mut f.form.dialog, "count", &args.count, &mut seen, None);
+    f.on("count", |Edit { args, .. }, value| {
+        if let Some(count) = count_of(&value) {
+            args.count = count;
+        }
+    });
     f.form.dialog.text(
         "hint",
         "Each copy is a placed part of its own, named part_pattern(step,k); it moves with the part.",

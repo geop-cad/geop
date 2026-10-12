@@ -11,6 +11,8 @@
 //! that has to stop at a coarse result says so by building it from the
 //! exhausted resolution; one that must not, errs.
 
+use crate::solvers::repeat::{Repeated, Step, repeat};
+
 /// What one step made of its resolution.
 pub enum Refine<X, T> {
     /// Good enough: the result.
@@ -46,14 +48,24 @@ pub fn refine<X, T, E>(
     most: usize,
     mut step: impl FnMut(X) -> Result<Refine<X, T>, E>,
 ) -> Result<Refined<X, T>, E> {
-    let mut x = start;
-    for _ in 0..most {
-        match step(x)? {
-            Refine::Done(done) => return Ok(Refined::Done(done)),
-            Refine::Finer(finer) => x = finer,
+    // The resolution the next step is taken from: there between steps.
+    let mut x = Some(start);
+    let run = repeat(most, || {
+        let at = x.take().expect("each step leaves the next resolution");
+        Ok(match step(at)? {
+            Refine::Done(done) => Step::Done(done),
+            Refine::Finer(finer) => {
+                x = Some(finer);
+                Step::Again
+            }
+        })
+    })?;
+    Ok(match run {
+        Repeated::Done { value, .. } => Refined::Done(value),
+        Repeated::Exhausted { .. } => {
+            Refined::Exhausted(x.expect("a step not done leaves the next resolution"))
         }
-    }
-    Ok(Refined::Exhausted(x))
+    })
 }
 
 #[cfg(test)]

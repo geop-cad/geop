@@ -85,6 +85,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
     scalars::Scalar,
+    solvers::walk::{Walked, walk_by},
     vector::{Vector2, Vector3, Vector4},
     with_context,
 };
@@ -102,7 +103,7 @@ use geop_ops_extrude_revolve::{
 };
 
 use crate::corner;
-use crate::rolling::{self, Chain, Radii, Rolled, foot, normal_at, seed_on, tangent_chain};
+use crate::rolling::{self, Chain, Radii, Rolled, tangent_chain};
 use crate::tool::{self, Cap, Corner, CornerEnd, Joint, Tool, ToolSpan, ToolStation, embed};
 
 /// What a blend replaces an edge's corner with (see the module docs).
@@ -411,7 +412,11 @@ pub(crate) fn tool_end<S: Scalar>(
     let plane = model.get_face(*other)?.surface.as_plane()?;
     let normal = match &plane {
         Some(plane) => plane.normal.normalize()?,
-        None => normal_at(model, *other, &model.get_vertex(vertex)?.point)?,
+        None => model.get_face(*other)?.surface.normal_at(
+            &model.get_vertex(vertex)?.point,
+            MAX_NODES,
+            min_subdivision_size(),
+        )?,
     };
     let squareness = leaving.prod_dot(&normal);
     let leaves = if squareness.definitely_greater(S::ZERO) {
@@ -470,7 +475,7 @@ fn same_circle<S: Scalar>(a: &Circle<S>, b: &Circle<S>) -> bool {
 /// revolution around it whose profile is one straight line (a cylinder, a
 /// cone), so that it traces a line in every cross-section.
 ///
-/// The normal is the surface's own at `p`'s foot point, not one taken
+/// The normal is the surface's own at `p`, not one taken
 /// anywhere else on the profile and turned into `p`'s half-plane: the axis
 /// is only known to its width, and turning by it a point a long profile
 /// away (the far end of a bar) multiplies that width by the bar's length.
@@ -496,8 +501,11 @@ fn round_face_normal<S: Scalar>(
     if !straight {
         return Ok(None);
     }
-    let (u, v) = foot(surface, p, seed_on(surface, p)?)?;
-    Ok(Some(surface.normal(u, v)?))
+    Ok(Some(surface.normal_at(
+        p,
+        MAX_NODES,
+        min_subdivision_size(),
+    )?))
 }
 
 /// The cross-section of the circular edge `edge`, an arc of `circle`,
@@ -560,39 +568,46 @@ fn circle_edges<S: Scalar>(
     edge: EdgeId,
     circle: &Circle<S>,
 ) -> GeopResult<Vec<EdgeId>> {
-    let mut chain = vec![edge];
-    let mut vertex = model.get_edge(edge)?.end_vertex;
-    loop {
-        let mut next: Vec<EdgeId> = Vec::new();
-        for (&id, e) in &model.edges {
-            if (e.start_vertex == vertex || e.end_vertex == vertex)
-                && id != *chain.last().expect("never empty")
-                && matches!(circle_of(&e.curve)?, Some(c) if same_circle(&c, circle))
-            {
-                next.push(id);
+    // Each arc, and the vertex it leads on to.
+    let around = walk_by(
+        (edge, model.get_edge(edge)?.end_vertex),
+        |&(e, _)| e,
+        |&(last, vertex)| {
+            let mut next: Vec<EdgeId> = Vec::new();
+            for (&id, e) in &model.edges {
+                if (e.start_vertex == vertex || e.end_vertex == vertex)
+                    && id != last
+                    && matches!(circle_of(&e.curve)?, Some(c) if same_circle(&c, circle))
+                {
+                    next.push(id);
+                }
             }
-        }
-        let [next] = next.as_slice() else {
-            return Err(GeopError::new(format!(
-                "at vertex {vertex}, the circle of the edge goes on along {} arcs: only edges of a whole circle are blended",
-                next.len()
-            )));
-        };
-        if *next == edge {
-            return Ok(chain);
-        }
-        if chain.contains(next) {
-            return Err(GeopError::new(format!(
+            let [next] = next.as_slice() else {
+                return Err(GeopError::new(format!(
+                    "at vertex {vertex}, the circle of the edge goes on along {} arcs: only edges of a whole circle are blended",
+                    next.len()
+                )));
+            };
+            if *next == edge {
+                return Ok(Some((*next, vertex)));
+            }
+            let e = model.get_edge(*next)?;
+            let far = if e.start_vertex == vertex {
+                e.end_vertex
+            } else {
+                e.start_vertex
+            };
+            Ok(Some((*next, far)))
+        },
+    )?;
+    match around.end {
+        Walked::Closed => Ok(around.nodes.into_iter().map(|(e, _)| e).collect()),
+        Walked::Revisited(_) | Walked::Open => {
+            let (_, vertex) = *around.nodes.last().expect("never empty");
+            Err(GeopError::new(format!(
                 "the arcs of the circle of the edge run round in a loop not through it, at vertex {vertex}"
-            )));
+            )))
         }
-        chain.push(*next);
-        let e = model.get_edge(*next)?;
-        vertex = if e.start_vertex == vertex {
-            e.end_vertex
-        } else {
-            e.start_vertex
-        };
     }
 }
 

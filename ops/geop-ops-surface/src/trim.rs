@@ -30,7 +30,7 @@ use geop_ops_booleans::remesh::remesh::{RemeshParams, remesh};
 use serde::{Deserialize, Serialize};
 
 use crate::sheet_of;
-use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
+use geop_core_geometry::search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size};
 
 /// Which side of the cutting face a [`TrimSurface`] keeps, as its normal
 /// points.
@@ -160,27 +160,14 @@ impl Operation for TrimSurface {
 
 /// On which side of `surface` the point `p` lies: `Some(true)` in front,
 /// where its normal points, `None` if it could be on it — measured from
-/// the foot of `p` on it, found by Newton from the nearest of a grid of
-/// seeds (which seed is a free choice).
+/// the foot of `p` on it, refined by Newton from the point of the surface
+/// nearest it.
 fn in_front<S: Scalar>(surface: &NurbSurface3D<S>, p: &Vector3<S>) -> GeopResult<Option<bool>> {
     let distance = if let Some(plane) = surface.as_plane()? {
         plane.signed_distance(p)
     } else {
-        const GRID: i64 = 8;
-        let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
-        let mut best: Option<(f64, S, S)> = None;
-        for i in 0..=GRID {
-            for j in 0..=GRID {
-                let u = S::interpolate(u0, u1, S::from_ratio(i, GRID)?).sharpen();
-                let v = S::interpolate(v0, v1, S::from_ratio(j, GRID)?).sharpen();
-                let d = surface.evaluate(u, v)?.sub(p).norm_sq().to_f64();
-                if best.is_none_or(|(b, _, _)| d < b) {
-                    best = Some((d, u, v));
-                }
-            }
-        }
-        let (_, u, v) = best.expect("a grid of seeds");
-        let (u, v) = surface.project(*p, u, v, 20)?;
+        let (u, v, _) = surface.closest_point(p)?;
+        let (u, v) = surface.project(*p, u, v, PROJECT_ITERATIONS)?;
         let foot = surface.evaluate(u, v)?;
         p.sub(&foot).prod_dot(&surface.normal(u, v)?)
     };

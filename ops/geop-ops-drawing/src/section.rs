@@ -2,6 +2,7 @@
 //! normal points to taken away — by the kernel's own boolean, subtracting a
 //! box standing on the plane from every solid.
 
+use geop_core_geometry::aabb::union_aabb;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     plain,
@@ -22,17 +23,9 @@ use geop_ops_extrude_revolve::{
 
 /// The box holding every face of `model`, `[lo, hi]` per axis.
 fn bounds<S: Scalar>(model: &Model<S>) -> GeopResult<[[f64; 2]; 3]> {
-    let mut b = [[f64::INFINITY, f64::NEG_INFINITY]; 3];
-    for face in model.faces.values() {
-        for q in &face.surface.control_points {
-            for (k, b) in b.iter_mut().enumerate() {
-                let x = q[k].div(q[3])?.to_f64();
-                b[0] = b[0].min(x);
-                b[1] = b[1].max(x);
-            }
-        }
-    }
-    Ok(b)
+    let b = union_aabb(model.faces.values().map(|f| f.surface.aabb()))
+        .ok_or_else(|| GeopError::new("the part has no face"))?;
+    Ok(b.map(|x| [x.lower().to_f64(), x.upper().to_f64()]))
 }
 
 /// `model` with every solid cut by the plane through `origin` normal to the

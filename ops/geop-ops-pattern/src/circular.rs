@@ -2,7 +2,7 @@
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    primitives::{FrameAxis, Motion, Pose},
+    primitives::{FrameAxis, Motion},
     scalars::Scalar,
 };
 use geop_core_program::{
@@ -13,16 +13,17 @@ use geop_ops::operation::Input;
 use geop_ops::parameters::expressions;
 use geop_ops::{
     Design, NamedModel, ParamValue,
-    operation::{Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Seen},
+    operation::{
+        Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Seen,
+        pattern::{Row, Spacing, count_field, count_of, whole_count},
+    },
     origin_axis,
     parameters::Formula,
     ui::formula_number,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::common::{
-    Naming, Pattern, Seeds, Spacing, build_pattern, count_field, count_of, run_pattern, whole_count,
-};
+use crate::common::{Naming, Pattern, Seeds, build_pattern, run_pattern};
 
 /// Copies the bodies `bodies` — solids, and sheets by one of their faces —
 /// or does the features `features` again, turned around an axis: `count` instances, the bodies themselves the
@@ -86,16 +87,10 @@ impl Pattern for CircularPatternArgs {
         } else {
             axis.direction
         };
-        let (count, degrees, divisor) = self.angles(|f| f.evaluate(lookup))?;
+        let row = self.row(|f| f.evaluate(lookup))?;
         let mut placements = Vec::new();
-        for k in 1..count {
-            // `degrees * k / divisor` in radians, enclosed in one go rather
-            // than accumulated step by step.
-            let radians = S::from_f64(degrees)
-                .mul(S::from_i64(k as i64))
-                .mul(S::PI)
-                .div(S::from_i64(180 * divisor as i64))?;
-            let motion = Pose::rotation_about(&axis.point, &direction, radians)?.motion();
+        for k in 1..row.count {
+            let motion = row.turn(&axis.point, &direction, k)?.motion();
             placements.push((k.to_string(), motion));
         }
         Ok(placements)
@@ -103,39 +98,11 @@ impl Pattern for CircularPatternArgs {
 }
 
 impl CircularPatternArgs {
-    /// How many instances there are, and how far the instance `k` is
-    /// turned, in degrees, as `value * k / divisor`: `(count, value,
-    /// divisor)`, with `value` giving the count's and the angle's values.
-    /// Refuses spacings that put copies on the bodies.
-    fn angles(
-        &self,
-        mut value: impl FnMut(&Formula) -> GeopResult<f64>,
-    ) -> GeopResult<(usize, f64, usize)> {
+    /// The instances round the axis, with `value` giving the count's and
+    /// the angle's values.
+    fn row(&self, mut value: impl FnMut(&Formula) -> GeopResult<f64>) -> GeopResult<Row> {
         let count = whole_count(&self.count, value(&self.count)?)?;
-        let angle = value(self.angle.value())?;
-        if !angle.is_finite() || angle == 0.0 {
-            return Err(GeopError::new(format!(
-                "the angle {angle}° puts every copy on top of the bodies"
-            )));
-        }
-        let span = |step: f64| step.abs() * (count - 1) as f64;
-        let (value, divisor) = match self.angle {
-            Spacing::Extent(_) if angle.abs() == 360.0 => (angle, count),
-            Spacing::Extent(_) if angle.abs() > 360.0 => {
-                return Err(GeopError::new(format!(
-                    "the pattern spans {angle}°, more than a full turn: copies would come round onto each other"
-                )));
-            }
-            Spacing::Extent(_) => (angle, (count - 1).max(1)),
-            Spacing::Step(_) if span(angle) >= 360.0 => {
-                return Err(GeopError::new(format!(
-                    "{} steps of {angle}° come round onto the bodies again: spread the instances over 360° instead",
-                    count - 1
-                )));
-            }
-            Spacing::Step(_) => (angle, 1),
-        };
-        Ok((count, value, divisor))
+        self.angle.round(count, value(self.angle.value())?)
     }
 }
 

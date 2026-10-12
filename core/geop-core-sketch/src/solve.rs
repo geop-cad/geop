@@ -760,24 +760,12 @@ impl<S: Scalar> Sketch<S> {
     ) -> GeopResult<SolveReport<S>> {
         let problem = Problem::new(self)?;
         let start = problem.layout.read(self)?;
-        // A dragged point is pulled towards the cursor among the
-        // configurations that meet the constraints: it follows the cursor
-        // exactly where it is free to.
-        let pulls: Vec<(usize, S)> = drags
-            .iter()
-            .flat_map(|&(point, target)| {
-                let i = problem.layout.point_var[&point];
-                (0..2).map(move |k| (i + k, target[k]))
-            })
-            .collect();
-        let variables = Planar::new(&problem, start, pulls);
-        let solved = variables.system().solve(&variables.start())?;
+        let (variables, solved, x) =
+            Planar::dragged(&problem, start, &problem.layout.point_var, drags)?;
         let report = variables.report(&solved.values, solved.phases, solved.enclosure)?;
         // Where the solve put the points is the sketch's state, and a free
         // choice: sharp.
-        let x: Vec<S> = (variables.all(&solved.values).into_iter())
-            .map(Scalar::sharpen)
-            .collect();
+        let x: Vec<S> = x.into_iter().map(Scalar::sharpen).collect();
         problem.layout.write(self, &x);
         Ok(report)
     }

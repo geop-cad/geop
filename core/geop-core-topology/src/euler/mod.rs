@@ -33,6 +33,7 @@ use geop_core_geometry::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
+    solvers::walk::{Walked, walk},
     vector::Vector3,
     with_context,
 };
@@ -110,10 +111,21 @@ impl<S: Scalar> Model<S> {
 
         let boundary = self.find_boundary_containing(face_id, coedge1)?;
 
-        let mut ring = vec![coedge2];
-        while *ring.last().unwrap() != coedge1 {
-            ring.push(self.get_coedge(*ring.last().unwrap())?.next);
+        // From `coedge2` round to `coedge1`, which `validate_same_loop`
+        // found on its loop.
+        let ring = walk(coedge2, |&c| {
+            Ok::<_, GeopError>(if c == coedge1 {
+                None
+            } else {
+                Some(self.get_coedge(c)?.next)
+            })
+        })?;
+        if ring.end != Walked::Open {
+            return Err(GeopError::new(format!(
+                "the loop of coedge {coedge2} does not reach coedge {coedge1}"
+            )));
         }
+        let ring = ring.nodes;
         for &member in &ring {
             let c = self.get_coedge(member)?;
             let sp = self.coedge_start_vertex(member)?.point;

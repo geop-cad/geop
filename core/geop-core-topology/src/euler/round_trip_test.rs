@@ -105,13 +105,7 @@ fn make_face<S: Scalar>(model: &mut Model<S>) -> crate::FaceId {
 }
 
 fn ring_len<S: Scalar>(model: &Model<S>, start: CoedgeId) -> usize {
-    let mut cursor = model.get_coedge(start).unwrap().next;
-    let mut count = 1;
-    while cursor != start {
-        cursor = model.get_coedge(cursor).unwrap().next;
-        count += 1;
-    }
-    count
+    model.iterate_loop_coedges(start).count()
 }
 
 fn check_mvfs_kvfs_round_trip<S: Scalar>() {

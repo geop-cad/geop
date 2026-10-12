@@ -3,8 +3,8 @@
 //! placed in it, by its name there behind the instance's
 //! ([`INSTANCE_SEPARATOR`]).
 
+use super::Lookup;
 use super::{Chain, piece_names};
-use super::{Lookup, across};
 use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -39,7 +39,7 @@ pub fn frame_along<S: Scalar>(
     normal: &Vector3<S>,
 ) -> GeopResult<CoordinateSystem<S>> {
     let n = normal.normalize()?;
-    let [u, v] = across(&n)?;
+    let [u, v] = n.across()?;
     CoordinateSystem::try_new(origin, u, v, n)
 }
 

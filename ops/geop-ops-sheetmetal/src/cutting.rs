@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use geop_core_geometry::nurb_curve::NurbCurve2D;
+use geop_core_geometry::{aabb::union_aabb, nurb_curve::NurbCurve2D};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
@@ -66,20 +66,11 @@ pub fn cutting_sheet<S: Scalar>(sheet: &Sheet<S>) -> GeopResult<Paper> {
         .filter(|(_, n)| **n == 1)
         .map(|(&e, _)| &layout.edges[e].curve)
         .collect();
-    let mut lo = [f64::INFINITY; 2];
-    let mut hi = [f64::NEG_INFINITY; 2];
-    for curve in &boundary {
-        for cp in &curve.control_points {
-            for k in 0..2 {
-                let x = cp[k].div(cp[2])?;
-                lo[k] = lo[k].min(x.lower().to_f64());
-                hi[k] = hi[k].max(x.upper().to_f64());
-            }
-        }
-    }
-    if !(lo[0].is_finite() && lo[1].is_finite()) {
+    let Some(bounds) = union_aabb(boundary.iter().map(|c| c.aabb())) else {
         return Err(GeopError::new("the flat pattern has no outline")).with_context(ctx);
-    }
+    };
+    let lo: [f64; 2] = std::array::from_fn(|k| bounds[k].lower().to_f64());
+    let hi: [f64; 2] = std::array::from_fn(|k| bounds[k].upper().to_f64());
     let place = |p: [f64; 2]| [p[0] - lo[0], p[1] - lo[1]];
     let curves: Vec<(Layer, &NurbCurve2D<S>)> = boundary.iter().map(|&c| (CUT, c)).collect();
     let mut paper = Paper {

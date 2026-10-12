@@ -20,6 +20,7 @@ use std::collections::BTreeMap;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
+    solvers::repeat,
 };
 use serde::{Deserialize, Serialize};
 
@@ -351,30 +352,15 @@ impl Parameters {
         }
         // Each pass evaluates what it can; one that resolves nothing more
         // leaves what never will.
-        while !numbers.is_empty() {
-            let count = numbers.len();
-            let mut left = Vec::new();
-            let mut failures = Vec::new();
-            for (name, expression) in numbers {
-                match evaluate(expression, |n| number(&out.values, n)) {
-                    Ok(v) => {
-                        out.values
-                            .insert(name.clone(), ParamValue::Number(Design::from_f64(v)));
-                    }
-                    Err(e) => {
-                        left.push((name, expression));
-                        failures.push((name, e));
-                    }
-                }
-            }
-            if left.len() == count {
-                for (name, e) in failures {
-                    out.errors
-                        .insert(name.clone(), e.root_message().to_string());
-                }
-                break;
-            }
-            numbers = left;
+        let unresolved = repeat::resolve(numbers, |(name, expression)| {
+            let v = evaluate(expression, |n| number(&out.values, n))?;
+            out.values
+                .insert((*name).clone(), ParamValue::Number(Design::from_f64(v)));
+            Ok::<_, GeopError>(())
+        });
+        for ((name, _), e) in unresolved {
+            out.errors
+                .insert(name.clone(), e.root_message().to_string());
         }
         out
     }

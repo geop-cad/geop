@@ -81,7 +81,6 @@
 //! the chord whose point lies on the edge between them.
 
 use geop_core_geometry::{
-    contains::surface::surface_could_contain,
     nurb_curve::{NurbCurve, NurbCurve3D, bezier_knots, true_point_fractions},
     nurb_surface::NurbSurface3D,
     search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size},
@@ -96,6 +95,7 @@ use geop_core_math::{
         linear::solve_linear_system,
         probe::{Probe, probe},
         refine::{Refine, Refined, refine},
+        walk::{Walked, walk_by},
     },
     vector::{Vector2, Vector3, Vector4},
     with_context,
@@ -267,35 +267,20 @@ fn same_direction<S: Scalar>(a: &Vector3<S>, b: &Vector3<S>) -> bool {
     a.could_be_parallel(b) && a.prod_dot(b).definitely_greater(S::ZERO)
 }
 
-/// The `(u, v)` of `point` on `surface`, sharp — a seed — found globally
-/// where the point lies on the surface, else from the middle of its domain.
+/// The `(u, v)` of `point` on `surface`, sharp — a seed: where the point
+/// lies on the surface ([`NurbSurface3D::locate`]), else that of the point
+/// of the surface nearest it — on a cylinder, not the one across its axis.
 pub(crate) fn seed_on<S: Scalar>(
     surface: &NurbSurface3D<S>,
     point: &Vector3<S>,
 ) -> GeopResult<(S, S)> {
-    let found = surface_could_contain(surface, point, MAX_NODES, min_subdivision_size())?;
-    let (u, v) = match found {
+    let (u, v) = match surface.locate(point, MAX_NODES, min_subdivision_size())? {
         Some(uv) => uv,
         None => {
-            // Off the surface: from whichever of a grid over its domain
-            // lies nearest, so that Newton finds the foot point near the
-            // point — on a cylinder, not the one across its axis.
-            let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
-            let mut best = (f64::INFINITY, (u0, v0));
-            for i in 0..=4 {
-                for j in 0..=4 {
-                    let u = S::interpolate(u0, u1, S::from_f64(i as f64 / 4.0)).sharpen();
-                    let v = S::interpolate(v0, v1, S::from_f64(j as f64 / 4.0)).sharpen();
-                    let d = distance(&surface.evaluate(u, v)?, point);
-                    if d < best.0 {
-                        best = (d, (u, v));
-                    }
-                }
-            }
-            best.1
+            let (u, v, _) = surface.closest_point(point)?;
+            foot(surface, point, (u, v))?
         }
     };
-    let (u, v) = foot(surface, point, (u.sharpen(), v.sharpen()))?;
     Ok(sharp_in(surface, (u, v)))
 }
 
@@ -316,17 +301,6 @@ pub(crate) fn sharp_in<S: Scalar>(surface: &NurbSurface3D<S>, (u, v): (S, S)) ->
     (u.sharpen().clamped(u0, u1), v.sharpen().clamped(v0, v1))
 }
 
-/// The unit outward normal of `face` at its point `point`.
-pub(crate) fn normal_at<S: Scalar>(
-    model: &Model<S>,
-    face: FaceId,
-    point: &Vector3<S>,
-) -> GeopResult<Vector3<S>> {
-    let surface = &model.get_face(face)?.surface;
-    let (u, v) = seed_on(surface, point)?;
-    surface.normal(u, v)?.normalize()
-}
-
 /// The link the chain goes on along from `link`, past the vertex it leaves
 /// at: the one other edge there it runs on into tangentially, between faces
 /// tangent to its own — or none. An error if more than one could be.
@@ -341,10 +315,14 @@ fn next_link<S: Scalar>(model: &Model<S>, link: &Link) -> GeopResult<Option<Link
     let vertex = link.vertices(model)?[1];
     let at = model.get_vertex(vertex)?.point;
     let (_, arriving) = link.at(model, S::ONE)?;
-    let normals = [
-        normal_at(model, link.faces[0], &at)?,
-        normal_at(model, link.faces[1], &at)?,
-    ];
+    let normals_at = |faces: [FaceId; 2]| -> GeopResult<[Vector3<S>; 2]> {
+        let normal = |face| {
+            let surface = &model.get_face(face)?.surface;
+            surface.normal_at(&at, MAX_NODES, min_subdivision_size())
+        };
+        Ok([normal(faces[0])?, normal(faces[1])?])
+    };
+    let normals = normals_at(link.faces)?;
     let mut found = Vec::new();
     for (&id, e) in &model.edges {
         if id == link.edge {
@@ -364,10 +342,7 @@ fn next_link<S: Scalar>(model: &Model<S>, link: &Link) -> GeopResult<Option<Link
             if !arriving.prod_dot(&leaving).definitely_greater(S::ZERO) {
                 continue;
             }
-            let theirs = [
-                normal_at(model, candidate.faces[0], &at)?,
-                normal_at(model, candidate.faces[1], &at)?,
-            ];
+            let theirs = normals_at(candidate.faces)?;
             if (0..2).all(|k| same_direction(&normals[k], &theirs[k])) {
                 found.push(candidate);
             }
@@ -386,22 +361,14 @@ fn next_link<S: Scalar>(model: &Model<S>, link: &Link) -> GeopResult<Option<Link
 /// edge does.
 pub(crate) fn tangent_chain<S: Scalar>(model: &Model<S>, edge: EdgeId) -> GeopResult<Chain> {
     let walk = |first: Link| -> GeopResult<(Vec<Link>, bool)> {
-        let mut links = vec![first];
-        loop {
-            let last = links.last().expect("never empty");
-            let Some(next) = next_link(model, last)? else {
-                return Ok((links, false));
-            };
-            if next.edge == edge {
-                return Ok((links, true));
-            }
-            if links.iter().any(|l| l.edge == next.edge) {
-                return Err(GeopError::new(format!(
-                    "the tangent chain of the edge runs round a loop not through it, at edge {}",
-                    next.edge
-                )));
-            }
-            links.push(next);
+        let chain = walk_by(first, |l| l.edge, |last| next_link(model, last))?;
+        match chain.end {
+            Walked::Closed => Ok((chain.nodes, true)),
+            Walked::Open => Ok((chain.nodes, false)),
+            Walked::Revisited(next) => Err(GeopError::new(format!(
+                "the tangent chain of the edge runs round a loop not through it, at edge {}",
+                next.edge
+            ))),
         }
     };
     let (ahead, closed) = walk(Link::new(model, edge, true)?)?;
@@ -2019,8 +1986,11 @@ pub(crate) fn chain_bend<S: Scalar>(model: &Model<S>, chain: &Chain) -> GeopResu
     // its coedge runs, the chain's — against the right one's normal.
     let bend_at = |link: &Link, fraction: S| -> GeopResult<Bend> {
         let (p, t) = link.at(model, fraction)?;
-        let n_l = normal_at(model, link.faces[0], &p)?;
-        let n_r = normal_at(model, link.faces[1], &p)?;
+        let normal = |face| {
+            let surface = &model.get_face(face)?.surface;
+            surface.normal_at(&p, MAX_NODES, min_subdivision_size())
+        };
+        let (n_l, n_r) = (normal(link.faces[0])?, normal(link.faces[1])?);
         if n_l.could_be_parallel(&n_r) {
             return Err(GeopError::new(format!(
                 "faces {} and {} could meet tangentially at edge {}: there is no corner to blend",

@@ -5,13 +5,17 @@
 //! one number, every constraint a term over the variables it reads, every
 //! dragged variable a preference.
 
+use std::collections::BTreeMap;
+
 use geop_core_math::{
     dual::Dual,
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     solvers::system::{
-        Bound, EncloseError, Enclosure, Equations, Held, Linearized, Mobility, System, Term,
+        Bound, EncloseError, Enclosure, Equations, Held, Linearized, Mobility, Solution, System,
+        Term,
     },
+    vector::Vector,
 };
 
 /// A sketch's constraints over its variables: what [`Variables`] needs of
@@ -64,6 +68,32 @@ impl<'p, S: Scalar, const N: usize, P: Residuals<S, N>> Variables<'p, S, P, N> {
             params,
             pulls,
         }
+    }
+
+    /// The system solved from `params` with each `(point, target)` pulled
+    /// towards its target as far as the constraints allow — dragging;
+    /// `point_var` names each point's first coordinate, the others follow.
+    /// The variables, the solution, and every variable where the solve put
+    /// it.
+    pub fn dragged<Id: Ord, const D: usize>(
+        problem: &'p P,
+        params: Vec<S>,
+        point_var: &BTreeMap<Id, usize>,
+        drags: &[(Id, Vector<S, D>)],
+    ) -> GeopResult<(Self, Solution<S>, Vec<S>)> {
+        // A dragged point is pulled towards the cursor among the
+        // configurations that meet the constraints: it follows the cursor
+        // exactly where it is free to.
+        let pulls = (drags.iter())
+            .flat_map(|(point, target)| {
+                let i = point_var[point];
+                (0..D).map(move |k| (i + k, target[k]))
+            })
+            .collect();
+        let variables = Variables::new(problem, params, pulls);
+        let solved = variables.system().solve(&variables.start())?;
+        let all = variables.all(&solved.values);
+        Ok((variables, solved, all))
     }
 
     /// The free variables' values: the blocks where a solve starts.

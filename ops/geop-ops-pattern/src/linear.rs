@@ -14,17 +14,17 @@ use geop_ops::operation::Input;
 use geop_ops::parameters::expressions;
 use geop_ops::{
     Design, NamedModel, ParamValue,
-    operation::{Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Seen},
+    operation::{
+        Aspects, Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Seen,
+        pattern::{Row, Spacing, count_field, count_of, whole_count},
+    },
     origin_axis,
     parameters::Formula,
     ui::formula_number,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::common::{
-    Naming, Pattern, Seeds, Spacing, build_pattern, count_field, count_of, run_pattern, track,
-    whole_count,
-};
+use crate::common::{Naming, Pattern, Seeds, build_pattern, run_pattern, track};
 
 /// Copies the bodies `bodies` — solids, and sheets by one of their faces —
 /// or the features `features` in a row along a direction, or in a grid
@@ -99,7 +99,7 @@ impl Pattern for LinearPatternArgs {
         lookup: &mut (impl Lookup<S> + ?Sized),
     ) -> GeopResult<Vec<(String, Motion<S>)>> {
         let first = self.first.unit(lookup)?;
-        let (first_count, first_step) = self.first.measure(|f| f.evaluate(lookup))?;
+        let first_row = self.first.row(|f| f.evaluate(lookup))?;
         let second = match &self.second {
             None => None,
             Some(direction) => {
@@ -110,17 +110,16 @@ impl Pattern for LinearPatternArgs {
                         "the two directions are parallel: the grid's rows would lie on top of each other",
                     ));
                 }
-                let (count, step) = direction.measure(|f| f.evaluate(lookup))?;
-                Some((count, unit, step))
+                Some((unit, direction.row(|f| f.evaluate(lookup))?))
             }
         };
-        let rows = second.as_ref().map_or(1, |(count, ..)| *count);
+        let rows = second.as_ref().map_or(1, |(_, row)| row.count);
         let mut placements = Vec::new();
-        for i in 0..first_count {
+        for i in 0..first_row.count {
             for j in 0..rows {
-                let along = Direction::offset(&first, first_step, i)?;
+                let along = first_row.offset(&first, i)?;
                 let across = match &second {
-                    Some((_, unit, step)) => Direction::offset(unit, *step, j)?,
+                    Some((unit, row)) => row.offset(unit, j)?,
                     None => None,
                 };
                 let offset = match (along, across) {
@@ -159,41 +158,11 @@ impl Direction {
         Ok(if self.reversed { d.neg() } else { d })
     }
 
-    /// How many instances there are, and how far apart two neighbouring
-    /// ones, as `step / count`: none for a single instance, which has no
-    /// neighbour. `value` gives the count's and the spacing's values.
-    fn measure(
-        &self,
-        mut value: impl FnMut(&Formula) -> GeopResult<f64>,
-    ) -> GeopResult<(usize, Option<(f64, usize)>)> {
+    /// The instances along it, with `value` giving the count's and the
+    /// spacing's values.
+    fn row(&self, mut value: impl FnMut(&Formula) -> GeopResult<f64>) -> GeopResult<Row> {
         let count = whole_count(&self.count, value(&self.count)?)?;
-        let spacing = value(self.spacing.value())?;
-        if !spacing.is_finite() || spacing == 0.0 {
-            return Err(GeopError::new(format!(
-                "the spacing {spacing} puts every copy on top of the bodies"
-            )));
-        }
-        let step = (count > 1).then_some(match self.spacing {
-            Spacing::Step(_) => (spacing, 1),
-            Spacing::Extent(_) => (spacing, count - 1),
-        });
-        Ok((count, step))
-    }
-
-    /// Where its instance `i` is, relative to the bodies: `i` steps along
-    /// `unit` — none for the bodies themselves.
-    fn offset<S: Scalar>(
-        unit: &Vector3<S>,
-        step: Option<(f64, usize)>,
-        i: usize,
-    ) -> GeopResult<Option<Vector3<S>>> {
-        let Some((value, divisor)) = step.filter(|_| i > 0) else {
-            return Ok(None);
-        };
-        let distance = S::from_f64(value)
-            .mul(S::from_i64(i as i64))
-            .div(S::from_i64(divisor as i64))?;
-        Ok(Some(unit.prod_scalar(distance)))
+        self.spacing.along(count, value(self.spacing.value())?)
     }
 
     /// Its fields in `form`, keyed with `suffix`: what it goes along, its
@@ -224,19 +193,19 @@ impl Direction {
         // Moving the spacing's handle by the unit direction adds one to it;
         // the count's, by one step, adds an instance.
         let unit = self.unit(seen).ok();
-        let measured = self.measure(|f| f.evaluate(seen)).ok();
+        let row = self.row(|f| f.evaluate(seen)).ok();
         let handles = at.zip(unit);
-        let count_handle = handles
-            .zip(measured)
-            .and_then(|((at, unit), (count, step))| {
-                let (value, divisor) = step?;
-                let step = value / divisor as f64;
-                let end = (count - 1) as f64 * step;
-                track(
-                    at.add(&unit.prod_scalar(Design::from_f64(end))),
-                    unit.prod_scalar(Design::from_f64(step)),
-                )
-            });
+        let count_handle =
+            handles
+                .zip(row.filter(|row| row.count > 1))
+                .and_then(|((at, unit), row)| {
+                    let step = row.step();
+                    let end = (row.count - 1) as f64 * step;
+                    track(
+                        at.add(&unit.prod_scalar(Design::from_f64(end))),
+                        unit.prod_scalar(Design::from_f64(step)),
+                    )
+                });
         count_field(
             dialog,
             &format!("count{suffix}"),

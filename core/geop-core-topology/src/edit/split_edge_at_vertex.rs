@@ -1,10 +1,5 @@
-/// Newton iterations for the `(u, v)` foot-point refinement. Like
-/// `NurbCurve::refine_parameter_at_point`'s own count, this only affects how
-/// tightly an already-isolated answer is pinned down.
-const NEWTON_ITERATIONS: usize = 20;
-
 use crate::{Coedge, CoedgeGeometry, Edge, EdgeId, Model, Sense, VertexId};
-use geop_core_geometry::contains::{curve::curve_could_contain, surface::surface_could_contain};
+use geop_core_geometry::contains::curve::curve_could_contain;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
@@ -90,39 +85,21 @@ impl<S: Scalar> Model<S> {
             // `t` values, so the split point is relocated geometrically:
             // locate the vertex in the face's `(u, v)` space, then project
             // that `(u, v)` back onto the coedge's own pcurve.
-            let (u, v) = surface_could_contain(
-                surface,
-                &vertex_point,
-                max_nodes,
-                min_subdivision_size,
-            )
-            .with_context(&ctx)
-            .with_context(&coedge_ctx)?
-            .ok_or_else(|| {
-                ctx(coedge_ctx(GeopError::new(format!(
-                    "could not locate vertex {vertex_id} (at {vertex_point}) on face {}'s surface",
-                    coedge.face
-                ))))
-            })?;
-            // `surface_could_contain` isolates the `(u, v)` to its own
-            // subdivision tolerance, which is far too wide to serve as the
-            // *target* of the pcurve refinement below: a wide target makes a
-            // wide residual, which makes a wide step, and the refined pcurve
-            // parameter comes back no narrower than it started. So refine the
-            // target first, by the same subdivide-to-isolate-then-Newton
-            // split of labour — `project` polishes the foot point and keeps
-            // its last iterate unsharpened, so the result is narrow and still
-            // honest. Intersected with the box the search proved it lies in,
-            // and falling back to that box if Newton left it.
-            let refined = surface
-                .project(vertex_point, u.sharpen(), v.sharpen(), NEWTON_ITERATIONS)
+            // Located, not merely isolated: the containment search alone
+            // pins `(u, v)` only to its own subdivision tolerance, far too
+            // wide to serve as the *target* of the pcurve refinement below
+            // (a wide target makes a wide residual, a wide step, and a
+            // pcurve parameter no narrower than it started).
+            let (u, v) = surface
+                .locate(&vertex_point, max_nodes, min_subdivision_size)
                 .with_context(&ctx)
-                .with_context(&coedge_ctx)?;
-            let (u, v) = if refined.0.could_be_equal(u) && refined.1.could_be_equal(v) {
-                (u.intersect(refined.0), v.intersect(refined.1))
-            } else {
-                (u, v)
-            };
+                .with_context(&coedge_ctx)?
+                .ok_or_else(|| {
+                    ctx(coedge_ctx(GeopError::new(format!(
+                        "could not locate vertex {vertex_id} (at {vertex_point}) on face {}'s surface",
+                        coedge.face
+                    ))))
+                })?;
             let uv = Vector2::from_array([u, v]);
             let uv_ctx = |e: GeopError| e.with_context(format!("found uv=({u}, {v})"));
             let pcurve_t =

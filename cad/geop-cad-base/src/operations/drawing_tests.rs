@@ -369,6 +369,52 @@ fn conebox_cone_from_the_top_shows_whole_generators() {
     }
 }
 
+/// The mouse's face `f11` seen from the front: every piece of its
+/// silhouette traced once — no two pieces between the same two points.
+///
+/// Its silhouette leaves the domain `[0, 2]²` through the boundary `v = 0`
+/// at `u = 1`, the point `(0.575, 0, -0.4)`. The trace's last step landed
+/// there by its own arithmetic, at `v = 1.4e-17`: a hair inside, on no
+/// grid line, so the bracket the line `v = 0` has there stayed unmarked and
+/// seeded the same silhouette a second time. Which rounding the step got
+/// came down to the last bit of the face's measured size.
+#[test]
+fn subd_mouse_face_f11_silhouette_is_traced_once() {
+    let built = build(&examples::subd_mouse());
+    let part = model(&built);
+    let Some(RefId::Face(face)) = part.names().id_of("subd(mouse,f11)") else {
+        panic!("no face f11");
+    };
+    let d = ViewKind::Front.frame::<S>().unwrap().direction.vector();
+    let pieces = geop_ops_drawing::silhouette::face_silhouettes(part.topology(), face, &d).unwrap();
+    let ends: Vec<_> = pieces
+        .iter()
+        .map(|piece| {
+            let (a, b) = piece.curve.domain();
+            (
+                piece.curve.evaluate(a).unwrap(),
+                piece.curve.evaluate(b).unwrap(),
+            )
+        })
+        .collect();
+    for (i, (p, q)) in ends.iter().enumerate() {
+        for (r, s) in &ends[i + 1..] {
+            let same = (p.could_be_equal(r) && q.could_be_equal(s))
+                || (p.could_be_equal(s) && q.could_be_equal(r));
+            assert!(!same, "two pieces from {p:?} to {q:?}: {ends:?}");
+        }
+    }
+}
+
+/// The mouse's face `f11` has a silhouette from the front and from the
+/// back, which the view crosses with itself (see
+/// `subd_mouse_face_f11_silhouette_is_traced_once`).
+#[test]
+fn subd_mouse_from_the_front_and_back_draws() {
+    example_view("subd_mouse", ViewKind::Front).unwrap();
+    example_view("subd_mouse", ViewKind::Back).unwrap();
+}
+
 #[test]
 fn conebox_from_the_top_draws() {
     example_view("conebox", ViewKind::Top).unwrap();

@@ -10,7 +10,10 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    solvers::walk::{Take, flood, walk},
+};
 use serde::{Deserialize, Serialize};
 
 /// A vertex of the cage: where it is.
@@ -364,15 +367,14 @@ impl Topology {
                 .find(|&&c| !directed.contains_key(&(next(faces, c), v)))
                 .copied();
             let closed = start.is_none();
-            let mut fan = vec![start.unwrap_or(around[0])];
-            loop {
-                let last = fan[fan.len() - 1];
-                match directed.get(&(v, prev(faces, last))) {
-                    Some(&c) if c == fan[0] => break,
-                    Some(&c) if fan.len() < around.len() => fan.push(c),
-                    _ => break,
-                }
-            }
+            // Round the vertex from corner to corner across the edge
+            // between them, until back at the first, at the boundary, or at
+            // a corner already passed: every corner there is is one of
+            // `around`.
+            let fan = walk(start.unwrap_or(around[0]), |&last| {
+                Ok::<_, GeopError>(directed.get(&(v, prev(faces, last))).copied())
+            })?
+            .nodes;
             if fan.len() != around.len() {
                 return Err(GeopError::new(format!(
                     "the faces around vertex {} do not make one fan: the surface pinches there",
@@ -422,17 +424,17 @@ impl Mesh {
             &self.vertex_names,
             &self.face_names,
         )?;
+        // From vertex 0 to every vertex of a face around one reached.
         let mut seen = vec![false; self.positions.len()];
-        let mut stack = vec![0];
-        seen[0] = true;
-        while let Some(v) = stack.pop() {
-            for &(f, _) in &topology.fans[v].0 {
-                for &w in &self.faces[f] {
-                    if !std::mem::replace(&mut seen[w], true) {
-                        stack.push(w);
-                    }
-                }
-            }
+        let reached = flood([0], Take::Newest, |&v| {
+            Ok::<_, GeopError>(
+                (topology.fans[v].0.iter())
+                    .flat_map(|&(f, _)| self.faces[f].iter().copied())
+                    .collect(),
+            )
+        })?;
+        for v in reached {
+            seen[v] = true;
         }
         if let Some(apart) = seen.iter().position(|s| !s) {
             return Err(GeopError::new(format!(

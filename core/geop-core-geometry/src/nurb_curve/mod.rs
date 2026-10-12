@@ -138,6 +138,12 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         &self.aabb
     }
 
+    /// Whether the boxes around two curves' control points could overlap:
+    /// `false` proves the curves apart.
+    pub fn could_overlap(&self, other: &Self) -> bool {
+        crate::aabb::aabb_could_overlap(&self.aabb, &other.aabb, D - 1)
+    }
+
     /// Valid parameter range `(start_t, end_t)` of this curve.
     pub fn domain(&self) -> (S, S) {
         let p = self.degree;

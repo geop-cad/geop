@@ -18,11 +18,11 @@ use geop_core_math::{
     union_find::UnionFind,
     with_context,
 };
-use geop_core_topology::{Body, EdgeId, FaceId, ShellId, SolidId};
+use geop_core_topology::{Body, EdgeId, FaceId, ShellId, SolidId, contains::shell::Classified};
 use geop_ops::{NamedModel, Namer};
 
 use crate::{
-    boolean::{Classified, classify_face, copy_of},
+    boolean::{classify_face, copy_of},
     remesh::remesh::{RemeshParams, remesh},
 };
 

@@ -152,7 +152,8 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
                 )));
             }
             let mut curve = curve.clone();
-            while curve.degree < degree {
+            // Each raise one degree.
+            for _ in curve.degree..degree {
                 curve = curve.elevate_degree()?;
             }
             out.push(curve);
@@ -360,7 +361,8 @@ fn join_placed<S: Scalar, const D: usize>(
         .collect::<GeopResult<Vec<_>>>()?;
     let degree = pieces.iter().map(|c| c.degree).max().unwrap_or(0);
     for piece in &mut pieces {
-        while piece.degree < degree {
+        // Each raise one degree.
+        for _ in piece.degree..degree {
             *piece = piece.elevate_degree()?;
         }
     }

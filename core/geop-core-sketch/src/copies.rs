@@ -24,6 +24,7 @@ use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
+    solvers::repeat,
 };
 
 use crate::{
@@ -415,22 +416,16 @@ impl<S: Scalar> Sketch<S> {
             .filter(|(a, _)| !targets.contains(a))
             .map(|&(a, _)| (a, 0))
             .collect();
-        // Each copy one step on from the point it is moved from; at most
-        // as many rounds as there are constraints.
-        for _ in 0..moved.len() {
-            let mut changed = false;
-            for &(a, b) in &moved {
-                if let Some(&k) = steps.get(&a)
-                    && !steps.contains_key(&b)
-                {
-                    steps.insert(b, k + 1);
-                    changed = true;
-                }
+        // Each copy one step on from the point it is moved from, in passes
+        // while that places more; a constraint whose copy is placed from
+        // elsewhere, or not at all, is left.
+        let _ = repeat::resolve(moved, |&(a, b)| match steps.get(&a) {
+            Some(&k) if !steps.contains_key(&b) => {
+                steps.insert(b, k + 1);
+                Ok(())
             }
-            if !changed {
-                break;
-            }
-        }
+            _ => Err(()),
+        });
         Some(steps)
     }
 

@@ -2,6 +2,7 @@ use geop_core_geometry::contains::curve::curve_could_contain;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
+    solvers::repeat::rewrite,
     with_context,
 };
 use geop_core_topology::{Body, EdgeId, Model, VertexId};
@@ -88,23 +89,28 @@ pub fn remesh_vertices_x_edges<S: Scalar>(
         "remesh_vertices_x_edges(solid_a={solid_a}, solid_b={solid_b}, params={params:?})"
     );
 
-    while let Some((edge_a, t, vertex_b)) =
-        find_edge_vertex_split(model.topology(), solid_a, solid_b, params).with_context(&ctx)?
-    {
-        let new_edge = model
-            .split_edge_at_vertex(
-                edge_a,
-                t,
-                vertex_b,
-                params.max_nodes,
-                params.min_subdivision_size,
-                naming.provisional(),
-            )
-            .with_context(with_context!(
-                "split_edge_at_vertex(edge_a={edge_a}, t={t}, vertex_b={vertex_b})"
-            ))
-            .with_context(&ctx)?;
-        naming.edge_split(edge_a, new_edge, vertex_b)?;
-    }
+    rewrite(
+        model,
+        params.max_rewrites,
+        |model| find_edge_vertex_split(model.topology(), solid_a, solid_b, params),
+        |model, (edge_a, t, vertex_b)| {
+            let new_edge = model
+                .split_edge_at_vertex(
+                    edge_a,
+                    t,
+                    vertex_b,
+                    params.max_nodes,
+                    params.min_subdivision_size,
+                    naming.provisional(),
+                )
+                .with_context(with_context!(
+                    "split_edge_at_vertex(edge_a={edge_a}, t={t}, vertex_b={vertex_b})"
+                ))?;
+            naming.edge_split(edge_a, new_edge, vertex_b)
+        },
+    )
+    .with_context(&ctx)?
+    .done("splitting edges at vertices")
+    .with_context(&ctx)?;
     Ok(())
 }

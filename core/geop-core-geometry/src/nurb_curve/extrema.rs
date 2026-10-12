@@ -48,7 +48,8 @@ fn halves<S: Scalar>(coefficients: &[S]) -> GeopResult<(Vec<S>, Vec<S>)> {
     let mut right = Vec::with_capacity(row.len());
     left.push(row[0]);
     right.push(row[row.len() - 1]);
-    while row.len() > 1 {
+    // Each round one coefficient fewer, down to one.
+    for _ in 1..coefficients.len() {
         row = row
             .windows(2)
             .map(|pair| pair[0].add(pair[1]).div(S::TWO))

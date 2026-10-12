@@ -11,148 +11,17 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::Body;
-use geop_ops::ui::{Choice, Dialog, Form, Number, Track, Unit, Value};
+use geop_ops::ui::{Dialog, Form, Track, Value};
 use geop_ops::{
     Design, NamedModel, Namer, ToolReach,
     operation::{
         Build, BuildReader, EntityRef, Lookup, ModelStep, Role, Scope, Seen, build_model,
         resolve_bodies,
     },
-    parameters::Formula,
-    ui::formula_number,
 };
 use geop_ops::{Threads, draw_threads, threads};
 use geop_ops_booleans::{Combine, Tool, boolean::Reach};
 use serde::{Deserialize, Serialize};
-
-/// How far apart the instances of a pattern are: each `Step` from the
-/// last, or spread evenly over the `Extent` from the first to the last —
-/// a length, or an angle in degrees, plain or a formula of the part's
-/// parameters. Serialized as `{"step": 2.0}`, `{"extent": 10.0}` or
-/// `{"step": "pitch"}`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Spacing {
-    Step(Formula),
-    Extent(Formula),
-}
-
-impl Spacing {
-    /// Each `step` — a number, or a formula's text — from the last.
-    pub fn step(step: impl Into<Formula>) -> Self {
-        Spacing::Step(step.into())
-    }
-
-    /// Spread evenly over `extent` — a number, or a formula's text.
-    pub fn extent(extent: impl Into<Formula>) -> Self {
-        Spacing::Extent(extent.into())
-    }
-
-    /// The number it holds, whichever it is.
-    pub fn value(&self) -> &Formula {
-        match self {
-            Spacing::Step(v) | Spacing::Extent(v) => v,
-        }
-    }
-
-    /// The number it holds, to change.
-    pub fn value_mut(&mut self) -> &mut Formula {
-        match self {
-            Spacing::Step(v) | Spacing::Extent(v) => v,
-        }
-    }
-
-    /// The same kind of spacing, holding `value`.
-    fn with_value(&self, value: Formula) -> Self {
-        match self {
-            Spacing::Step(_) => Spacing::Step(value),
-            Spacing::Extent(_) => Spacing::Extent(value),
-        }
-    }
-
-    /// Its fields in `dialog`: which kind — keyed `{key}_mode` — and the
-    /// number, keyed `key`, made by `number(label, value)` (see
-    /// [`formula_number`]).
-    pub(crate) fn show<S: Scalar>(
-        &self,
-        dialog: &mut Dialog<S>,
-        key: &str,
-        labels: [&str; 2],
-        number: impl FnOnce(&str, &Formula) -> Number<S>,
-    ) {
-        let (mode, label) = match self {
-            Spacing::Step(_) => ("step", labels[0]),
-            Spacing::Extent(_) => ("extent", labels[1]),
-        };
-        let modes = vec![
-            Choice::new("step", labels[0]),
-            Choice::new("extent", labels[1]),
-        ];
-        (dialog.select(&format!("{key}_mode"), "spacing", mode, modes, false))
-            .number(key, number(label, self.value()));
-    }
-
-    /// Its field `field` of those [`Spacing::show`] shows, keyed `key`, set
-    /// to `value` — switching the kind keeps the number — and whether it was
-    /// one.
-    pub(crate) fn set(&mut self, key: &str, field: &str, value: &Value) -> bool {
-        if field == format!("{key}_mode") {
-            if let Value::Choice(mode) = value {
-                let number = self.value().clone();
-                *self = match mode.as_str() {
-                    "extent" => Spacing::Extent(number),
-                    _ => Spacing::Step(number),
-                };
-            }
-            return true;
-        }
-        if field == key {
-            if let Some(number) = Formula::from_value(value) {
-                *self = self.with_value(number);
-            }
-            return true;
-        }
-        false
-    }
-}
-
-/// The count field of a pattern, keyed `key`, of `count` as `lookup` reads
-/// the parameters — dragged by `handle` unless it follows a formula; set by
-/// [`count_of`].
-pub(crate) fn count_field<S: Scalar>(
-    dialog: &mut Dialog<S>,
-    key: &str,
-    count: &Formula,
-    lookup: &mut (impl Lookup<S> + ?Sized),
-    handle: Option<Track<S>>,
-) {
-    let mut number = formula_number("count", count, lookup, Unit::Count)
-        .range(1.0, 24.0)
-        .handle(handle);
-    number.step = 1.0;
-    dialog.number(key, number);
-}
-
-/// What a count field set to `value` makes the count: a formula as typed,
-/// a number rounded to a whole one of at least one, the seed alone.
-pub(crate) fn count_of(value: &Value) -> Option<Formula> {
-    Some(match Formula::from_value(value)? {
-        Formula::Plain(value) if value.is_finite() && value >= 1.0 => Formula::Plain(value.round()),
-        Formula::Plain(_) => Formula::Plain(1.0),
-        formula => formula,
-    })
-}
-
-/// The count `formula` comes to, `value`: a whole number of instances, at
-/// least one — the seed alone. Anything else is refused, saying so.
-pub(crate) fn whole_count(formula: &Formula, value: f64) -> GeopResult<usize> {
-    if value.fract() != 0.0 || value < 1.0 {
-        return Err(GeopError::new(format!(
-            "the count {formula} comes to {value}: a pattern has a whole number of instances, at least one — round a formula with round(), floor() or ceil()"
-        )));
-    }
-    Ok(value as usize)
-}
 
 /// The field picking the bodies a step acts on, keyed `bodies`: solids,
 /// and sheets by one of their faces.

@@ -1,10 +1,7 @@
 //! Network surfaces through curves standing on their own — each a wire of
 //! its own — picked in any order and running either way.
 
-use geop_core_geometry::{
-    contains::surface::surface_could_contain,
-    nurb_curve::{NurbCurve, NurbCurve3D},
-};
+use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve3D};
 use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::{Vector3, Vector4},
@@ -144,16 +141,16 @@ fn surface_of(part: &NamedModel<S>, face: &str) -> NurbSurface3D<S> {
     part.topology().get_face(face).unwrap().surface.clone()
 }
 
-/// Whether `p` is a point of `surface`: located by a containment search,
-/// refined by Newton, and the point there `p`'s enclosure — or what of
+/// Whether `p` is a point of `surface`: located on it
+/// ([`NurbSurface3D::locate`]), and the point there `p`'s enclosure — or what of
 /// that failed.
 fn on_surface(surface: &NurbSurface3D<S>, p: &Vector3<S>) -> Result<(), String> {
-    let Some((u, v)) =
-        surface_could_contain(surface, p, MAX_NODES, min_subdivision_size()).unwrap()
+    let Some((u, v)) = surface
+        .locate(p, MAX_NODES, min_subdivision_size())
+        .unwrap()
     else {
         return Err("the containment search finds it nowhere".into());
     };
-    let (u, v) = surface.project(*p, u.sharpen(), v.sharpen(), 20).unwrap();
     let q = surface.evaluate(u, v).unwrap();
     if q.could_be_equal(p) {
         Ok(())

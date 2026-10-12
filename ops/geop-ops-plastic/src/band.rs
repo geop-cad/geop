@@ -39,11 +39,6 @@ pub struct Chain<S: Scalar> {
     pub closed: bool,
 }
 
-/// The unit vector to the left of `t`.
-fn left<S: Scalar>(t: &Vector2<S>) -> Vector2<S> {
-    Vector2::from_array([t[1].neg(), t[0]])
-}
-
 impl<S: Scalar> Piece<S> {
     fn start(&self) -> GeopResult<Vector2<S>> {
         self.curve.start()
@@ -69,7 +64,7 @@ impl<S: Scalar> Piece<S> {
         let (start, _) = self.directions()?;
         match &self.center {
             None => {
-                let shift = left(&start).prod_scalar(distance);
+                let shift = start.perp().prod_scalar(distance);
                 for cp in &mut curve.control_points {
                     cp[0] = cp[0].add(shift[0].mul(cp[2]));
                     cp[1] = cp[1].add(shift[1].mul(cp[2]));
@@ -187,7 +182,7 @@ impl<S: Scalar> Chain<S> {
         if arriving.prod_cross(&leaving).could_be_equal(S::ZERO)
             && arriving.prod_dot(&leaving).definitely_greater(S::ZERO)
         {
-            return Ok(at.add(&left(&leaving).prod_scalar(distance)));
+            return Ok(at.add(&leaving.perp().prod_scalar(distance)));
         }
         if self.pieces[before].center.is_some() || self.pieces[i].center.is_some() {
             return Err(GeopError::new(format!(
