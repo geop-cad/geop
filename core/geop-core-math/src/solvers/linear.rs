@@ -12,8 +12,7 @@
 //! - [`cholesky`] and [`solve_cholesky`]: a symmetric positive
 //!   semi-definite one, rows that say nothing new left out.
 //! - [`shortest_solution`]: the shortest step meeting a few linear
-//!   conditions in space — least squares where they are too many — and
-//!   [`damped_least_squares`], a short step where they leave one free.
+//!   conditions in space — least squares where they are too many.
 //! - [`eliminate`], [`null_space`], [`rank`], [`inverse`]: Gauss-Jordan
 //!   elimination with complete pivoting over a Jacobian — which rows are
 //!   independent, what they leave free, and inverses.
@@ -488,35 +487,20 @@ pub fn shortest_solution<S: Scalar>(rows: &[(Vector3<S>, S)]) -> GeopResult<Vect
             ]),
             &Vector3::from_array([rows[0].1, rows[1].1, rows[2].1]),
         ),
-        _ => damped_least_squares(rows, S::ZERO),
-    }
-}
-
-/// The `d` that misses `n_i . d = r_i` least in the least-squares sense,
-/// `damping` times its squared length added (Levenberg–Marquardt):
-/// `(sum_i n_i n_i^T + damping I) d = sum_i n_i r_i`. Where the conditions
-/// leave a direction free, or nearly free — their normals dependent, or
-/// nearly so, as surfaces tangent to within a file's accuracy are — a
-/// positive damping keeps `d` short along it, where [`shortest_solution`]
-/// has no answer or one running off along it.
-pub fn damped_least_squares<S: Scalar>(
-    rows: &[(Vector3<S>, S)],
-    damping: S,
-) -> GeopResult<Vector3<S>> {
-    let mut normal = Matrix::<S, 3, 3>::zero();
-    let mut b = Vector::<S, 3>::zero();
-    for i in 0..3 {
-        normal[(i, i)] = damping;
-    }
-    for (n, r) in rows {
-        for i in 0..3 {
-            b[i] = b[i].add(n[i].mul(*r));
-            for j in 0..3 {
-                normal[(i, j)] = normal[(i, j)].add(n[i].mul(n[j]));
+        _ => {
+            let mut normal = Matrix::<S, 3, 3>::zero();
+            let mut b = Vector::<S, 3>::zero();
+            for (n, r) in rows {
+                for i in 0..3 {
+                    b[i] = b[i].add(n[i].mul(*r));
+                    for j in 0..3 {
+                        normal[(i, j)] = normal[(i, j)].add(n[i].mul(n[j]));
+                    }
+                }
             }
+            solve_linear_system(&normal, &b)
         }
     }
-    solve_linear_system(&normal, &b)
 }
 
 #[cfg(test)]

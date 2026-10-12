@@ -12,6 +12,7 @@
 
 pub mod body;
 pub mod geometry;
+pub mod midpoints;
 pub mod reader;
 pub mod structure;
 
