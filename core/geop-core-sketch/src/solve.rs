@@ -22,8 +22,8 @@
 //! domain) makes that point infeasible.
 use crate::{
     geometry::{Arc, line_distance},
-    sketch::{Constraint, ConstraintId, CurveId, CurveKind, Enclosure, PointId, Sketch},
-    variables::{Residuals, Standing, Variables},
+    sketch::{Constraint, ConstraintId, CurveId, CurveKind, Enclosure, Point, PointId, Sketch},
+    variables::{PointLayout, Residuals, SketchPoint, Standing, Variables},
 };
 use geop_core_math::solvers::system::{self, Phase};
 use geop_core_math::{
@@ -44,88 +44,46 @@ type Dual<S> = geop_core_math::dual::Dual<S, MAX_LOCAL_VARS>;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Maps sketch entities to solver variables.
+/// Maps sketch entities to solver variables: each class of points a pair
+/// (see [`PointLayout`]), then every arc's half sweep and circle's radius.
 struct Layout {
-    /// Index of the `x` variable of each point (its `y` follows).
-    point_var: BTreeMap<PointId, usize>,
+    points: PointLayout<2>,
     /// The arc's half sweep or the circle's radius, for every arc and circle.
     curve_var: BTreeMap<CurveId, usize>,
-    /// Per variable: whether the solver may change it — not for a class of
-    /// points one of which is fixed, nor for a fixed curve's own parameter.
-    free: Vec<bool>,
+}
+
+impl<S: Scalar> SketchPoint<S, 2> for Point<S> {
+    fn fixed(&self) -> bool {
+        self.fixed
+    }
+
+    fn coordinates(&self) -> [S; 2] {
+        [self.x, self.y]
+    }
+
+    fn set_coordinates(&mut self, [x, y]: [S; 2]) {
+        (self.x, self.y) = (x, y);
+    }
 }
 
 impl Layout {
     fn new<S: Scalar>(sketch: &Sketch<S>) -> Self {
-        let class = sketch.point_classes();
-        let mut free = Vec::new();
-        let mut class_var = BTreeMap::new();
-        for rep in class.values() {
-            class_var.entry(*rep).or_insert_with(|| {
-                free.extend([true, true]);
-                free.len() - 2
-            });
-        }
-        let point_var: BTreeMap<PointId, usize> =
-            class.iter().map(|(&p, rep)| (p, class_var[rep])).collect();
-        for (id, p) in &sketch.points {
-            if p.fixed {
-                free[point_var[id]] = false;
-                free[point_var[id] + 1] = false;
-            }
-        }
+        let mut points = PointLayout::new(&sketch.points, &sketch.point_classes());
         let curve_var = sketch
             .curves
             .iter()
             .filter(|(_, c)| matches!(c.kind, CurveKind::Arc { .. } | CurveKind::Circle { .. }))
-            .map(|(&id, c)| {
-                free.push(!c.fixed);
-                (id, free.len() - 1)
-            })
+            .map(|(&id, c)| (id, points.push(!c.fixed)))
             .collect();
-        Layout {
-            point_var,
-            curve_var,
-            free,
-        }
+        Layout { points, curve_var }
     }
 
-    fn n(&self) -> usize {
-        self.free.len()
-    }
-
-    /// Per variable, its index among the free ones: how the solver's own
-    /// vectors are laid out.
-    fn offsets(&self) -> Vec<Option<usize>> {
-        let mut n = 0;
-        self.free
-            .iter()
-            .map(|&free| {
-                free.then(|| {
-                    n += 1;
-                    n - 1
-                })
-            })
-            .collect()
-    }
-
-    /// The current variable values, read from the sketch. Where things are
-    /// is the sketch's state — a free choice — so the variables are sharp,
-    /// and so is what [`Layout::write`] writes back. A class of points with
-    /// a fixed one is where that one is.
+    /// The current variable values, read from the sketch: the points as
+    /// [`PointLayout::read`] reads them, each curve's own variable as
+    /// sharp as they.
     fn read<S: Scalar>(&self, sketch: &Sketch<S>) -> GeopResult<Vec<S>> {
-        let mut x = vec![S::ZERO; self.n()];
-        // Iterate in reverse so a class takes its representative's (lowest
-        // id) position — or, after, its fixed point's.
-        let points = sketch.points.iter().rev();
-        for (id, p) in points
-            .clone()
-            .filter(|(_, p)| !p.fixed)
-            .chain(points.filter(|(_, p)| p.fixed))
-        {
-            x[self.point_var[id]] = p.x;
-            x[self.point_var[id] + 1] = p.y;
-        }
+        let mut x = vec![S::ZERO; self.points.len()];
+        self.points.read(&sketch.points, &mut x);
         for (id, c) in &sketch.curves {
             match c.kind {
                 CurveKind::Arc { sweep, .. } => {
@@ -141,10 +99,7 @@ impl Layout {
     /// Write variable values back into the sketch — all but what is fixed,
     /// which stays as given.
     fn write<S: Scalar>(&self, sketch: &mut Sketch<S>, x: &[S]) {
-        for (id, p) in sketch.points.iter_mut().filter(|(_, p)| !p.fixed) {
-            p.x = x[self.point_var[id]];
-            p.y = x[self.point_var[id] + 1];
-        }
+        self.points.write(&mut sketch.points, x);
         for (id, c) in sketch.curves.iter_mut().filter(|(_, c)| !c.fixed) {
             match &mut c.kind {
                 CurveKind::Arc { sweep, .. } => {
@@ -159,7 +114,7 @@ impl Layout {
     /// The variables a curve depends on.
     fn curve_vars<S: Scalar>(&self, sketch: &Sketch<S>, c: CurveId, out: &mut Vec<usize>) {
         for p in sketch.curves[&c].points() {
-            out.extend([self.point_var[&p], self.point_var[&p] + 1]);
+            self.points.point_vars(p, out);
         }
         out.extend(self.curve_var.get(&c));
     }
@@ -182,7 +137,7 @@ impl<S: Scalar, T: Scalar> Geo<'_, S, T> {
             .expect("every variable a constraint reads is seeded")
     }
     fn point(&self, p: PointId) -> Vector2<T> {
-        let i = self.layout.point_var[&p];
+        let i = self.layout.points.point_var[&p];
         Vector2::from_array([self.var(i), self.var(i + 1)])
     }
     fn line(&self, c: CurveId) -> (Vector2<T>, Vector2<T>) {
@@ -316,9 +271,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
         for (&id, c) in &sketch.constraints {
             use Constraint::*;
             let mut vars = Vec::new();
-            let pt = |p: &PointId, vars: &mut Vec<usize>| {
-                vars.extend([layout.point_var[p], layout.point_var[p] + 1])
-            };
+            let pt = |p: &PointId, vars: &mut Vec<usize>| layout.points.point_vars(*p, vars);
             match c {
                 // Coincidence of two fixed points is a fact about where
                 // they are, checked as given.
@@ -624,7 +577,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
 
 impl<'a, S: Scalar> Residuals<S, MAX_LOCAL_VARS> for Problem<'a, S> {
     fn offsets(&self) -> Vec<Option<usize>> {
-        self.layout.offsets()
+        self.layout.points.offsets()
     }
 
     fn constraints(&self) -> usize {
@@ -723,10 +676,8 @@ impl<S: Scalar> Sketch<S> {
         let layout = &problem.layout;
         let to_t = |v: S| -> T { v.cast() };
         Ok(Enclosure {
-            points: layout
-                .point_var
-                .iter()
-                .map(|(&p, &i)| (p, Vector2::from_array([to_t(x[i]), to_t(x[i + 1])])))
+            points: (layout.points.point_var.keys())
+                .map(|&p| (p, Vector2::from_array(layout.points.point(&x, p).map(to_t))))
                 .collect(),
             params: self
                 .curves
@@ -761,7 +712,7 @@ impl<S: Scalar> Sketch<S> {
         let problem = Problem::new(self)?;
         let start = problem.layout.read(self)?;
         let (variables, solved, x) =
-            Planar::dragged(&problem, start, &problem.layout.point_var, drags)?;
+            Planar::dragged(&problem, start, &problem.layout.points.point_var, drags)?;
         let report = variables.report(&solved.values, solved.phases, solved.enclosure)?;
         // Where the solve put the points is the sketch's state, and a free
         // choice: sharp.
@@ -790,11 +741,9 @@ impl<S: Scalar> Planar<'_, '_, S> {
         let failed_constraints = (held.failed.iter())
             .map(|&i| problem.constraints[i].id)
             .collect::<Vec<_>>();
-        let free_points = problem
-            .layout
-            .point_var
-            .iter()
-            .map(|(&p, &i)| (p, free_vars[i] || free_vars[i + 1]))
+        let points = &problem.layout.points;
+        let free_points = (points.point_var.keys())
+            .map(|&p| (p, points.point(&free_vars, p).contains(&true)))
             .collect();
         let free_curves = problem
             .sketch

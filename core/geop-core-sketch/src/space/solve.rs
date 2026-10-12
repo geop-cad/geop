@@ -35,12 +35,12 @@ use geop_core_math::{
 use serde::{Deserialize, Serialize};
 
 use super::{
-    Constraint3d, CurveKind3d, Enclosure3d, End, Sketch3d,
+    Constraint3d, CurveKind3d, Enclosure3d, End, Point3d, Sketch3d,
     geometry::{Arc3, across},
 };
 use crate::{
     ConstraintId, CurveId, PointId,
-    variables::{Residuals, Standing, Variables},
+    variables::{PointLayout, Residuals, SketchPoint, Standing, Variables},
 };
 
 /// The most variables one constraint depends on: a tangency between two
@@ -49,35 +49,33 @@ const MAX_LOCAL_VARS: usize = 16;
 
 type Dual<S> = geop_core_math::dual::Dual<S, MAX_LOCAL_VARS>;
 
-/// Maps the sketch's entities to solver variables.
+/// Maps the sketch's entities to solver variables: each class of points a
+/// triple (see [`PointLayout`]), then a parameter for each point on a line
+/// or a reference curve.
 struct Layout {
-    /// The index of each point's `x` (its `y` and `z` follow).
-    point_var: BTreeMap<PointId, usize>,
+    points: PointLayout<3>,
     /// The parameter of each [`Constraint3d::OnCurve`] on a line or a
     /// reference curve.
     param_var: BTreeMap<ConstraintId, usize>,
-    /// Per variable: whether the solver may change it.
-    free: Vec<bool>,
+}
+
+impl<S: Scalar> SketchPoint<S, 3> for Point3d<S> {
+    fn fixed(&self) -> bool {
+        self.fixed
+    }
+
+    fn coordinates(&self) -> [S; 3] {
+        self.at.to_array()
+    }
+
+    fn set_coordinates(&mut self, at: [S; 3]) {
+        self.at = Vector3::from_array(at);
+    }
 }
 
 impl Layout {
     fn new<S: Scalar>(sketch: &Sketch3d<S>) -> Self {
-        let class = sketch.point_classes();
-        let mut free = Vec::new();
-        let mut class_var = BTreeMap::new();
-        for rep in class.values() {
-            class_var.entry(*rep).or_insert_with(|| {
-                free.extend([true; 3]);
-                free.len() - 3
-            });
-        }
-        let point_var: BTreeMap<PointId, usize> =
-            class.iter().map(|(&p, rep)| (p, class_var[rep])).collect();
-        for (id, p) in &sketch.points {
-            if p.fixed {
-                free[point_var[id]..point_var[id] + 3].fill(false);
-            }
-        }
+        let mut points = PointLayout::new(&sketch.points, &sketch.point_classes());
         let mut param_var = BTreeMap::new();
         for (&id, c) in &sketch.constraints {
             if let Constraint3d::OnCurve { curve, .. } = c
@@ -86,57 +84,10 @@ impl Layout {
                     CurveKind3d::Line { .. } | CurveKind3d::Reference
                 )
             {
-                free.push(true);
-                param_var.insert(id, free.len() - 1);
+                param_var.insert(id, points.push(true));
             }
         }
-        Layout {
-            point_var,
-            param_var,
-            free,
-        }
-    }
-
-    /// Per variable, its index among the free ones.
-    fn offsets(&self) -> Vec<Option<usize>> {
-        let mut n = 0;
-        self.free
-            .iter()
-            .map(|&free| {
-                free.then(|| {
-                    n += 1;
-                    n - 1
-                })
-            })
-            .collect()
-    }
-
-    /// The points' variables, read from the sketch: a class where its fixed
-    /// point is, else where its representative (lowest id) is. Where things
-    /// are is a free choice, sharp.
-    fn read<S: Scalar>(&self, sketch: &Sketch3d<S>, x: &mut [S]) {
-        let points = sketch.points.iter().rev();
-        for (id, p) in points
-            .clone()
-            .filter(|(_, p)| !p.fixed)
-            .chain(points.filter(|(_, p)| p.fixed))
-        {
-            let i = self.point_var[id];
-            x[i..i + 3].copy_from_slice(&p.at.to_array());
-        }
-    }
-
-    /// Writes the points back, all but the fixed ones.
-    fn write<S: Scalar>(&self, sketch: &mut Sketch3d<S>, x: &[S]) {
-        for (id, p) in sketch.points.iter_mut().filter(|(_, p)| !p.fixed) {
-            let i = self.point_var[id];
-            p.at = Vector3::from_array([x[i], x[i + 1], x[i + 2]]);
-        }
-    }
-
-    fn point_vars(&self, p: PointId, out: &mut Vec<usize>) {
-        let i = self.point_var[&p];
-        out.extend([i, i + 1, i + 2]);
+        Layout { points, param_var }
     }
 }
 
@@ -167,8 +118,7 @@ struct Problem<'a, S: Scalar> {
 
 /// The point `p` of `x`.
 fn point_of<T: Scalar>(layout: &Layout, x: &[T], p: PointId) -> Vector3<T> {
-    let i = layout.point_var[&p];
-    Vector3::from_array([x[i], x[i + 1], x[i + 2]])
+    Vector3::from_array(layout.points.point(x, p))
 }
 
 /// The sketch's curve `c` as an arc, at the variables `x`; `None` for
@@ -228,8 +178,8 @@ impl<'a, S: Scalar> Problem<'a, S> {
     fn new(sketch: &'a Sketch3d<S>) -> GeopResult<Self> {
         sketch.validate()?;
         let layout = Layout::new(sketch);
-        let mut start = vec![S::ZERO; layout.free.len()];
-        layout.read(sketch, &mut start);
+        let mut start = vec![S::ZERO; layout.points.len()];
+        layout.points.read(&sketch.points, &mut start);
 
         let span = |k: usize| {
             let values = || sketch.points.values().map(move |p| p.at[k]);
@@ -255,17 +205,17 @@ impl<'a, S: Scalar> Problem<'a, S> {
             let mut reference = None;
             let curve_vars = |c: CurveId, vars: &mut Vec<usize>| {
                 for p in sketch.curves[&c].points() {
-                    layout.point_vars(p, vars);
+                    layout.points.point_vars(p, vars);
                 }
             };
             match c {
                 Coincident { a, b } if sketch.points[a].fixed && sketch.points[b].fixed => {}
                 // Built into the layout.
                 Coincident { .. } => continue,
-                Coordinate { point, .. } => layout.point_vars(*point, &mut vars),
+                Coordinate { point, .. } => layout.points.point_vars(*point, &mut vars),
                 Distance { a, b, .. } => {
-                    layout.point_vars(*a, &mut vars);
-                    layout.point_vars(*b, &mut vars);
+                    layout.points.point_vars(*a, &mut vars);
+                    layout.points.point_vars(*b, &mut vars);
                 }
                 Length { line: c, .. } | Radius { arc: c, .. } => curve_vars(*c, &mut vars),
                 Parallel { a, b } => {
@@ -291,7 +241,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
                     across_ = Some(across(direction)?);
                 }
                 OnCurve { point, curve } => {
-                    layout.point_vars(*point, &mut vars);
+                    layout.points.point_vars(*point, &mut vars);
                     curve_vars(*curve, &mut vars);
                     if let Some(&t) = layout.param_var.get(&id) {
                         vars.push(t);
@@ -464,11 +414,9 @@ impl<'a, S: Scalar> Problem<'a, S> {
         let failed_constraints = (held.failed.iter())
             .map(|&i| self.constraints[i].id)
             .collect::<Vec<_>>();
-        let free_points = self
-            .layout
-            .point_var
-            .iter()
-            .map(|(&p, &i)| (p, free_vars[i..i + 3].iter().any(|&f| f)))
+        let points = &self.layout.points;
+        let free_points = (points.point_var.keys())
+            .map(|&p| (p, points.point(&free_vars, p).contains(&true)))
             .collect();
         Ok(Solve3dReport {
             converged: failed_constraints.is_empty(),
@@ -485,7 +433,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
 
 impl<S: Scalar> Residuals<S, MAX_LOCAL_VARS> for Problem<'_, S> {
     fn offsets(&self) -> Vec<Option<usize>> {
-        self.layout.offsets()
+        self.layout.points.offsets()
     }
 
     fn constraints(&self) -> usize {
@@ -499,7 +447,7 @@ impl<S: Scalar> Residuals<S, MAX_LOCAL_VARS> for Problem<'_, S> {
     fn residuals(&self, c: usize, values: &[Dual<S>], out: &mut Vec<Dual<S>>) -> GeopResult<()> {
         let prepared = &self.constraints[c];
         // Only the variables it depends on are read: the rest are zero.
-        let mut x = vec![Dual::cst(S::ZERO); self.layout.free.len()];
+        let mut x = vec![Dual::cst(S::ZERO); self.layout.points.len()];
         for (&i, &v) in prepared.vars.iter().zip(values) {
             x[i] = v;
         }
@@ -563,14 +511,14 @@ impl<S: Scalar> Sketch3d<S> {
         let (_, solved, x) = Spatial::dragged(
             &problem,
             problem.start.clone(),
-            &problem.layout.point_var,
+            &problem.layout.points.point_var,
             drags,
         )?;
         let report = problem.report(x.clone(), solved.phases, Some(solved.enclosure))?;
         // Where the solve put the points is the sketch's state, and a free
         // choice: sharp.
         let x: Vec<S> = x.into_iter().map(Scalar::sharpen).collect();
-        problem.layout.write(self, &x);
+        problem.layout.points.write(&mut self.points, &x);
         Ok(report)
     }
 
@@ -596,15 +544,13 @@ impl<S: Scalar> Sketch3d<S> {
         }
         // What is fixed is as given; the rest as enclosed.
         let x = variables.enclosed(&start).map_err(ctx)?;
-        let layout = &problem.layout;
+        let points = &problem.layout.points;
         Ok(Enclosure3d {
-            points: layout
-                .point_var
-                .iter()
-                .map(|(&p, &i)| {
+            points: (points.point_var.keys())
+                .map(|&p| {
                     (
                         p,
-                        Vector3::from_array([x[i], x[i + 1], x[i + 2]]).map(|c| c.cast()),
+                        Vector3::from_array(points.point(&x, p)).map(|c| c.cast()),
                     )
                 })
                 .collect(),

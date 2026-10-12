@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::sketch::PointId;
 use geop_core_math::{
     dual::Dual,
     geop_error::{GeopError, GeopResult},
@@ -17,6 +18,125 @@ use geop_core_math::{
     },
     vector::Vector,
 };
+
+/// A point of a sketch as its solve reads and writes it: `D` coordinates,
+/// and whether it is given rather than solved for.
+pub(crate) trait SketchPoint<S: Scalar, const D: usize> {
+    fn fixed(&self) -> bool;
+    fn coordinates(&self) -> [S; D];
+    fn set_coordinates(&mut self, at: [S; D]);
+}
+
+/// Where a sketch's points are among its variables: one block of `D`
+/// coordinates for each class of coincident points (see
+/// [`crate::sketch::Sketch::point_classes`]) — coincidence is no residual,
+/// it removes the coordinates by construction — none of them free for a
+/// class with a fixed point. Whatever else a sketch solves for follows
+/// ([`PointLayout::push`]).
+pub(crate) struct PointLayout<const D: usize> {
+    /// The index of each point's first coordinate (the others follow).
+    pub point_var: BTreeMap<PointId, usize>,
+    /// Per variable: whether the solver may change it.
+    pub free: Vec<bool>,
+}
+
+impl<const D: usize> PointLayout<D> {
+    /// The blocks of `points`, coincident by `classes`.
+    pub fn new<S: Scalar, P: SketchPoint<S, D>>(
+        points: &BTreeMap<PointId, P>,
+        classes: &BTreeMap<PointId, PointId>,
+    ) -> Self {
+        let mut free = Vec::new();
+        let mut class_var = BTreeMap::new();
+        for rep in classes.values() {
+            class_var.entry(*rep).or_insert_with(|| {
+                free.extend([true; D]);
+                free.len() - D
+            });
+        }
+        let point_var: BTreeMap<PointId, usize> = classes
+            .iter()
+            .map(|(&p, rep)| (p, class_var[rep]))
+            .collect();
+        for (id, p) in points {
+            if p.fixed() {
+                free[point_var[id]..point_var[id] + D].fill(false);
+            }
+        }
+        PointLayout { point_var, free }
+    }
+
+    /// One more variable, free or not: its index.
+    pub fn push(&mut self, free: bool) -> usize {
+        self.free.push(free);
+        self.free.len() - 1
+    }
+
+    /// How many variables there are.
+    pub fn len(&self) -> usize {
+        self.free.len()
+    }
+
+    /// Per variable, its index among the free ones: how the solver's own
+    /// vectors are laid out.
+    pub fn offsets(&self) -> Vec<Option<usize>> {
+        let mut n = 0;
+        self.free
+            .iter()
+            .map(|&free| {
+                free.then(|| {
+                    n += 1;
+                    n - 1
+                })
+            })
+            .collect()
+    }
+
+    /// The variables of point `p`, added to `out`.
+    pub fn point_vars(&self, p: PointId, out: &mut Vec<usize>) {
+        let i = self.point_var[&p];
+        out.extend(i..i + D);
+    }
+
+    /// The point `p` of the variables `x`.
+    pub fn point<T: Copy>(&self, x: &[T], p: PointId) -> [T; D] {
+        let i = self.point_var[&p];
+        std::array::from_fn(|k| x[i + k])
+    }
+
+    /// The points' variables, read from `points` into `x`: a class where
+    /// its fixed point is, else where its representative (lowest id) is.
+    /// Where things are is the sketch's state, a free choice, sharp.
+    pub fn read<S: Scalar, P: SketchPoint<S, D>>(
+        &self,
+        points: &BTreeMap<PointId, P>,
+        x: &mut [S],
+    ) {
+        // In reverse, so a class takes its representative's position — or,
+        // after, its fixed point's.
+        let points = points.iter().rev();
+        for (id, p) in points
+            .clone()
+            .filter(|(_, p)| !p.fixed())
+            .chain(points.filter(|(_, p)| p.fixed()))
+        {
+            let i = self.point_var[id];
+            x[i..i + D].copy_from_slice(&p.coordinates());
+        }
+    }
+
+    /// Writes the points of `x` back into `points`, all but the fixed
+    /// ones, which stay as given.
+    pub fn write<S: Scalar, P: SketchPoint<S, D>>(
+        &self,
+        points: &mut BTreeMap<PointId, P>,
+        x: &[S],
+    ) {
+        for (id, p) in points.iter_mut().filter(|(_, p)| !p.fixed()) {
+            p.set_coordinates(self.point(x, *id));
+        }
+    }
+}
 
 /// A sketch's constraints over its variables: what [`Variables`] needs of
 /// the planar and the 3-D sketch alike. `N` is the most variables one
