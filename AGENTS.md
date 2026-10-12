@@ -354,8 +354,8 @@ control point to a box so wide the pcurve had no usable tangent left
 
 ### Check an iterative answer against every condition it was asked to meet
 
-An iteration that stops is not an iteration that converged. The shell's
-`offset_vertex` moves a vertex onto the offsets of its faces by Gauss-Newton.
+An iteration that stops is not an iteration that converged. The shell
+moves a vertex onto the offsets of its faces by Gauss-Newton (`meet`).
 It returned a hemisphere's pole at `(0, 0.9, 0.1)`, on the offset plane but
 off the offset sphere, and the failure surfaced two steps later as "not on
 the circle". Two silent causes: a dropped condition, and a projection that
@@ -541,12 +541,12 @@ coordinates as if they were the geometry:
   positive.
 - **Decide tangency where the geometry is, not at moving foot points.** Two
   quarters of one sphere meet at its pole: one smooth surface, so one
-  condition. `offset_vertex` compared normals at foot points that each patch
+  condition. The shell compared normals at foot points that each patch
   clamps to its own domain. Those normals differed a little, the two quarters
   counted as two nearly equal conditions, and the system went singular.
-  Group surfaces by tangency once, at the vertex, and measure each group from
-  its nearest foot point, which is the foot point on the union of the
-  pieces.
+  Group surfaces by tangency once, at the vertex (`tangent_groups`), and
+  measure each group from its nearest foot point, which is the foot point on
+  the union of the pieces.
 - **Straight in `(u, v)` is not preserved by offsetting.** The shell kept an
   inner trim curve straight whenever the original was straight. That holds
   on a plane (affine coordinates) and along an iso-line. It fails for a
@@ -765,9 +765,14 @@ answers. Sub-forms shared by several operations (`Combine::fields`,
 `Spacing::fields`, `Extents::fields`) add fields with setters to an
 `EditForm`, never a `show`/`set` pair. What a whole session forgets before
 each event goes in `begin_event`, not into every setter. Shared test helpers
-live in `geop_ops::testing` (feature `testing`) and
-`geop_ops_extrude_revolve::shapes` (feature `test-shapes`): look there
-before writing an `assert_valid`, a cube or a `v3` of your own.
+live in `geop_ops::testing` (feature `testing`: validity, entities by
+where they are, building a program in the operations of a registry) and
+`geop_ops_extrude_revolve`'s `shapes` and `testing` (feature `testing`:
+basic solids, sketches and the steps extruding them): look there before
+writing an `assert_valid`, a cube or a `v3` of your own. An operation's
+program tests live in its own crate (`program_tests.rs`), with a registry
+of the operations they use; only tests that drive the editor, the examples
+or the standard parts stay in `geop-cad-base`.
 
 ## Working in parallel worktrees
 

@@ -74,7 +74,7 @@ pub struct ThickenArgs {
     pub side: ThickenSide,
 }
 
-part_operation!(Thicken);
+part_operation!(Thicken(ThickenArgs));
 
 impl PartOperation for Thicken {
     const INFO: OperationInfo = OperationInfo::new(

@@ -115,7 +115,7 @@ fn carry(_: &mut BuildReader, resolved: &Resolved) -> GeopResult<Resolved> {
     Ok(resolved.clone())
 }
 
-part_operation!(AddPart);
+part_operation!(AddPart(AddPartArgs));
 
 impl PartOperation for AddPart {
     const INFO: OperationInfo = OperationInfo::new(

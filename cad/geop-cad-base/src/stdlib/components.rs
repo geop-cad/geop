@@ -21,7 +21,7 @@ use super::{
     },
     tables, titled,
 };
-use crate::{Program, Push};
+use crate::Program;
 
 /// A deep-groove ball bearing as one solid: rings `d` bore and `D`
 /// outside, `B` wide, their edges chamfered by `r`, with the gap between

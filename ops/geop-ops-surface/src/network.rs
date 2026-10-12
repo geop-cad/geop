@@ -71,7 +71,7 @@ pub struct NetworkSurfaceArgs {
     pub v_curves: Vec<EntityRef>,
 }
 
-part_operation!(NetworkSurface);
+part_operation!(NetworkSurface(NetworkSurfaceArgs));
 
 impl PartOperation for NetworkSurface {
     const INFO: OperationInfo = OperationInfo::new(

@@ -657,7 +657,7 @@ fn add(
     })
 }
 
-part_operation!(AddDatum);
+part_operation!(AddDatum(AddDatumArgs));
 
 impl PartOperation for AddDatum {
     const INFO: OperationInfo = OperationInfo::new(

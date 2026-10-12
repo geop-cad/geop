@@ -117,6 +117,16 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         })
     }
 
+    /// The same curve with every control point coordinate, weight and knot
+    /// mapped by `f` — into another scalar type, say.
+    pub fn map<T: Scalar>(&self, f: impl Fn(S) -> T) -> GeopResult<NurbCurve<T, D>> {
+        NurbCurve::try_new(
+            self.degree,
+            self.control_points.iter().map(|p| p.map(&f)).collect(),
+            self.knot_vector.iter().map(|&k| f(k)).collect(),
+        )
+    }
+
     /// Refresh the cached [`Self::aabb`] from the current `control_points`.
     ///
     /// Every constructor in this module keeps `aabb` in sync automatically,

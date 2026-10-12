@@ -9,72 +9,37 @@
 
 use std::f64::consts::PI;
 
+use crate::{
+    HoleArgs, HoleKind, Standard, ThreadArgs,
+    iso::{Fit, SIZES, metric},
+};
 use geop_core_math::geop_error::GeopResult;
 use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_ops::{Design, EntityRef, NamedModel, Threads, model::model, threads};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extent, Extents};
-use geop_ops_hole::{
-    HoleArgs, HoleKind, Standard, ThreadArgs,
-    iso::{Fit, SIZES, metric},
-};
-use geop_ops_sketch::{Constraint, Sketch};
+use geop_ops_sketch::Sketch;
 
-use crate::examples::n;
-use crate::operations::testing::{
-    Built, assert_valid, assert_volume, check_valid, extrusion, join, origin_plane, outline,
-    sketch, volume,
-};
-use crate::{Program, Push};
+use geop_ops::origin_plane;
+use geop_ops::program::{ProgramFile, Registry};
+use geop_ops::testing::{Built, assert_valid, assert_volume, check_valid, solid_volume};
+use geop_ops_datums::AddDatum;
+use geop_ops_extrude_revolve::testing::{extrusion, n, outline, sketch};
+use geop_ops_pattern::{CircularPattern, LinearPattern, Mirror};
 
-/// The plate's size: 60 x 40, 10 thick, its top at `z = 10`.
-const PLATE: [f64; 3] = [60.0, 40.0, 10.0];
+use crate::testing::{PLATE, plate, points_sketch};
+use crate::{Hole, Thread};
 
-/// A sketch of fixed points at `points`: `p0`, `p1`, ...
-pub(super) fn points_sketch(points: &[[f64; 2]]) -> Sketch {
-    let mut s = Sketch::new();
-    let ids: Vec<_> = points
-        .iter()
-        .map(|p| s.add_point(n(p[0]), n(p[1])))
-        .collect();
-    for (id, p) in ids.into_iter().zip(points) {
-        s.constrain(Constraint::Fix {
-            point: id,
-            x: n(p[0]),
-            y: n(p[1]),
-        });
-    }
-    s.solve().unwrap();
-    s
-}
-
-/// The plate `extrude(plate)`, and the sketch `centres` on its top with
-/// points at `points` (in world `x`, `y`).
-pub(super) fn plate(points: &[[f64; 2]]) -> Program {
-    let mut program = Program::new();
-    let [w, d, t] = PLATE;
-    program.push(
-        "outline",
-        sketch(
-            origin_plane(FrameAxis::Z),
-            outline(&[[0.0, 0.0], [w, 0.0], [w, d], [0.0, d]]),
-        ),
-    );
-    program.push(
-        "plate",
-        extrusion("outline", Extents::blind(t), Combine::NewBody),
-    );
-    program.push(
-        "centres",
-        sketch(
-            EntityRef::Face {
-                name: "extrude(plate,end)".into(),
-            },
-            points_sketch(points),
-        ),
-    );
-    program
+/// The operations these tests' programs are written in, and those of
+/// [`super::pattern_tests`].
+pub(super) fn registry() -> GeopResult<Registry> {
+    (geop_ops_extrude_revolve::testing::registry()?.with(AddDatum)?)
+        .with(Hole)?
+        .with(Thread)?
+        .with(LinearPattern)?
+        .with(CircularPattern)?
+        .with(Mirror)
 }
 
 /// A hole of `kind` and `standard` drilled into the plate's top at every
@@ -123,8 +88,8 @@ impl Made {
 }
 
 /// `program`, built: its model and threads.
-pub(super) fn made(program: &Program) -> GeopResult<Made> {
-    let runner = program.built()?;
+pub(super) fn made(program: &ProgramFile) -> GeopResult<Made> {
+    let runner = program.built(registry)?;
     let view = runner.part.current();
     Ok(Made {
         model: view.retrieve_target(&model()).cloned().unwrap_or_default(),
@@ -136,7 +101,7 @@ pub(super) fn made(program: &Program) -> GeopResult<Made> {
 }
 
 /// `program` with `args` as the step `h`, built and checked valid.
-fn drilled(mut program: Program, args: HoleArgs) -> Made {
+fn drilled(mut program: ProgramFile, args: HoleArgs) -> Made {
     program.push("h", args);
     let part = made(&program).unwrap();
     assert_valid(&part);
@@ -283,7 +248,7 @@ fn tapped_hole_carries_a_cosmetic_thread() {
     args.thread_length = Some(9.0);
     let mut program = plate(&[[20.0, 20.0]]);
     program.push("h", args);
-    let error = program.build_model().expect_err("refused");
+    let error = program.build_model(registry).expect_err("refused");
     assert!(error.root_message().contains("only 8"), "{error}");
 }
 
@@ -342,7 +307,7 @@ fn points_picked_one_by_one() {
 #[test]
 fn up_to_next_stops_in_the_gap() {
     let program = || {
-        let mut program = Program::new();
+        let mut program = ProgramFile::new();
         program.push(
             "c",
             sketch(
@@ -392,7 +357,7 @@ fn up_to_next_stops_in_the_gap() {
 /// through its round bottom.
 #[test]
 fn hole_coming_out_through_a_curved_face() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     // On the X plane: sketch `x` is world `y`, sketch `y` world `z`. A flat
     // top at `z = 10`, the bottom a half circle of radius 10 around `z =
     // 10`.
@@ -408,7 +373,7 @@ fn hole_coming_out_through_a_curved_face() {
     );
     let top = "extrude(bar,d,c2)";
     // Measured on the same mesh, so its error on the round bottom cancels.
-    let bar = volume(&program.build_model().unwrap(), "extrude(bar)");
+    let bar = solid_volume(&program.build_model(registry).unwrap(), "extrude(bar)");
     // On the top, normal `+z`: sketch `x`, `y` are world `x`, `y`.
     program.push(
         "centres",
@@ -447,10 +412,10 @@ fn hole_coming_out_through_a_curved_face() {
 /// hole of a custom size.
 #[test]
 fn unsupported_holes_are_refused() {
-    let refused = |program: Program, args: HoleArgs, says: &str| {
+    let refused = |program: ProgramFile, args: HoleArgs, says: &str| {
         let mut program = program;
         program.push("h", args);
-        let error = program.build_model().expect_err("refused");
+        let error = program.build_model(registry).expect_err("refused");
         assert!(error.root_message().contains(says), "{error}");
     };
     let mut off = plate(&[[20.0, 20.0]]);
@@ -503,8 +468,8 @@ fn unsupported_holes_are_refused() {
 
 /// A bolt's blank, its axis `z`: a head Ø10 and 5 high, and on it a shank
 /// Ø6 and 20 long, `extrude(shank)`.
-fn shaft() -> Program {
-    let mut program = Program::new();
+fn shaft() -> ProgramFile {
+    let mut program = ProgramFile::new();
     let circle = |r: f64| {
         let mut s = Sketch::new();
         let c = s.add_point(n(0.0), n(0.0));
@@ -530,7 +495,11 @@ fn shaft() -> Program {
     );
     program.push(
         "shank",
-        extrusion("shank_circle", Extents::blind(20.0), join("extrude(head)")),
+        extrusion(
+            "shank_circle",
+            Extents::blind(20.0),
+            Combine::join("extrude(head)"),
+        ),
     );
     program
 }
@@ -555,7 +524,7 @@ fn shaft_side(part: &NamedModel<S>) -> String {
 #[test]
 fn cosmetic_thread_on_a_shaft() {
     let program = shaft();
-    let side = shaft_side(&program.build_model().unwrap());
+    let side = shaft_side(&program.build_model(registry).unwrap());
     let mut threaded = program.clone();
     threaded.push(
         "t",
@@ -602,7 +571,7 @@ fn cosmetic_thread_on_a_shaft() {
             modelled: false,
         },
     );
-    let error = wrong.build_model().expect_err("refused");
+    let error = wrong.build_model(registry).expect_err("refused");
     assert!(error.root_message().contains("needs a shaft of"), "{error}");
 }
 
@@ -625,7 +594,7 @@ fn groove_per_turn(radius: f64, minor: f64, pitch: f64) -> f64 {
 #[ignore = "slow: a modelled thread's booleans take half a minute — run with `cargo test -- --ignored`"]
 fn modelled_thread_on_a_shaft() {
     let program = shaft();
-    let blank = program.build_model().unwrap();
+    let blank = program.build_model(registry).unwrap();
     let side = shaft_side(&blank);
     let mut threaded = program;
     threaded.push(
@@ -647,7 +616,7 @@ fn modelled_thread_on_a_shaft() {
         "no face of the thread is left"
     );
     let size = metric("M6").unwrap();
-    let removed = volume(&blank, "extrude(shank)") - volume(&part, "thread(t)");
+    let removed = solid_volume(&blank, "extrude(shank)") - solid_volume(&part, "thread(t)");
     let groove = 5.0 * groove_per_turn(3.0, size.minor_diameter(), size.pitch);
     assert!(
         removed > 0.85 * groove && removed < 1.02 * groove,
@@ -675,10 +644,10 @@ fn modelled_thread_in_a_tapped_hole() {
             modelled: true,
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     let before = plate_volume() - cylinder(5.0, PLATE[2]);
-    let removed = before - volume(&part, "thread(t)");
+    let removed = before - solid_volume(&part, "thread(t)");
     assert!(removed > 0.0, "removed {removed}");
 }
 
@@ -705,7 +674,7 @@ fn every_iso_size_and_kind() {
                 continue;
             }
             for end in [Extent::blind(30.0), Extent::ThroughAll] {
-                let mut program = Program::new();
+                let mut program = ProgramFile::new();
                 let (w, t) = (100.0, 40.0);
                 program.push(
                     "outline",
@@ -729,7 +698,7 @@ fn every_iso_size_and_kind() {
                 );
                 program.push("h", hole(kind, iso(size.name, Fit::Normal), end.clone()));
                 let label = format!("{} {kind:?} {end:?}", size.name);
-                match program.build_model() {
+                match program.build_model(registry) {
                     Err(e) => failures.push(format!("{label}: {e}")),
                     Ok(part) => {
                         if let Err(report) = check_valid(&part) {

@@ -14,8 +14,8 @@ use geop_ops_assembly::AddPartArgs;
 use geop_ops_bom::{Bom, LineKind, Structure, bom};
 
 use super::{Runner, workspace};
+use crate::Program;
 use crate::examples::{self, pose};
-use crate::{Program, Push};
 
 /// `program`, saved as `path` among `files`, built.
 fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Runner {

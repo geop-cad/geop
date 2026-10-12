@@ -183,7 +183,7 @@ impl<S: Scalar> SketchAxis<S> {
     }
 }
 
-part_operation!(Revolve);
+part_operation!(Revolve(RevolveArgs));
 
 impl PartOperation for Revolve {
     const INFO: OperationInfo = OperationInfo::new(

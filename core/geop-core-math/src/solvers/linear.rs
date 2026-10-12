@@ -12,7 +12,8 @@
 //! - [`cholesky`] and [`solve_cholesky`]: a symmetric positive
 //!   semi-definite one, rows that say nothing new left out.
 //! - [`shortest_solution`]: the shortest step meeting a few linear
-//!   conditions in space — least squares where they are too many.
+//!   conditions in space — least squares where they are too many — and
+//!   [`damped_least_squares`], a short step where they leave one free.
 //! - [`eliminate`], [`null_space`], [`rank`], [`inverse`]: Gauss-Jordan
 //!   elimination with complete pivoting over a Jacobian — which rows are
 //!   independent, what they leave free, and inverses.
@@ -455,6 +456,9 @@ pub fn inverse<S: Scalar>(a: &[Vec<S>]) -> Option<Vec<Vec<S>>> {
 /// The shortest `d` with `n_i . d = r_i` for every `(n_i, r_i)` — for more
 /// than three conditions, of which three can be met at most, the `d` that
 /// misses them least in the least-squares sense.
+///
+/// Three independent conditions leave only one `d`, solved for directly:
+/// the Gram matrix the fewer need squares the system's condition number.
 pub fn shortest_solution<S: Scalar>(rows: &[(Vector3<S>, S)]) -> GeopResult<Vector3<S>> {
     // `d = sum_i lambda_i n_i`, with the Gram matrix `G_ij = n_i . n_j`
     // solving `G lambda = r`.
@@ -473,24 +477,46 @@ pub fn shortest_solution<S: Scalar>(rows: &[(Vector3<S>, S)]) -> GeopResult<Vect
         }))
     }
     match rows.len() {
-        0 => Err(GeopError::new("a vertex on no surface")),
+        0 => Err(GeopError::new("no condition to meet")),
         1 => combine::<S, 1>(rows),
         2 => combine::<S, 2>(rows),
-        3 => combine::<S, 3>(rows),
-        _ => {
-            let mut normal = Matrix::<S, 3, 3>::zero();
-            let mut b = Vector::<S, 3>::zero();
-            for (n, r) in rows {
-                for i in 0..3 {
-                    b[i] = b[i].add(n[i].mul(*r));
-                    for j in 0..3 {
-                        normal[(i, j)] = normal[(i, j)].add(n[i].mul(n[j]));
-                    }
-                }
+        3 => solve_linear_system(
+            &Matrix::from_rows([
+                rows[0].0.to_array(),
+                rows[1].0.to_array(),
+                rows[2].0.to_array(),
+            ]),
+            &Vector3::from_array([rows[0].1, rows[1].1, rows[2].1]),
+        ),
+        _ => damped_least_squares(rows, S::ZERO),
+    }
+}
+
+/// The `d` that misses `n_i . d = r_i` least in the least-squares sense,
+/// `damping` times its squared length added (Levenberg–Marquardt):
+/// `(sum_i n_i n_i^T + damping I) d = sum_i n_i r_i`. Where the conditions
+/// leave a direction free, or nearly free — their normals dependent, or
+/// nearly so, as surfaces tangent to within a file's accuracy are — a
+/// positive damping keeps `d` short along it, where [`shortest_solution`]
+/// has no answer or one running off along it.
+pub fn damped_least_squares<S: Scalar>(
+    rows: &[(Vector3<S>, S)],
+    damping: S,
+) -> GeopResult<Vector3<S>> {
+    let mut normal = Matrix::<S, 3, 3>::zero();
+    let mut b = Vector::<S, 3>::zero();
+    for i in 0..3 {
+        normal[(i, i)] = damping;
+    }
+    for (n, r) in rows {
+        for i in 0..3 {
+            b[i] = b[i].add(n[i].mul(*r));
+            for j in 0..3 {
+                normal[(i, j)] = normal[(i, j)].add(n[i].mul(n[j]));
             }
-            solve_linear_system(&normal, &b)
         }
     }
+    solve_linear_system(&normal, &b)
 }
 
 #[cfg(test)]

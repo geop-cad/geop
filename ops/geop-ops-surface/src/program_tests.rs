@@ -1,6 +1,7 @@
 //! Surfaces built by programs: the walls an extrude or a loft sweeps as
 //! faces, capped with boundary surfaces, knit into solids, thickened.
 
+use crate::{BoundarySurfaceArgs, KnitArgs, ThickenArgs, ThickenSide};
 use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_sketch::PointId;
@@ -8,11 +9,24 @@ use geop_ops::{Design, EntityRef, NamedModel};
 use geop_ops_datums::{AddDatumArgs, Construction};
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, LoftArgs, Output};
 use geop_ops_sketch::Sketch;
-use geop_ops_surface::{BoundarySurfaceArgs, KnitArgs, ThickenArgs, ThickenSide};
 
-use crate::examples::n;
-use crate::operations::testing::{Built, assert_valid, origin_plane, sketch};
-use crate::{Program, Push};
+use geop_core_math::geop_error::GeopResult;
+use geop_ops::origin_plane;
+use geop_ops::program::{ProgramFile, Registry};
+use geop_ops::testing::{Built, assert_valid};
+use geop_ops_datums::AddDatum;
+use geop_ops_extrude_revolve::testing::{n, sketch};
+
+use crate::{BoundarySurface, Knit, Thicken};
+
+/// The operations these tests' programs are written in.
+fn registry() -> GeopResult<Registry> {
+    geop_ops_extrude_revolve::testing::registry()?
+        .with(AddDatum)?
+        .with(BoundarySurface)?
+        .with(Knit)?
+        .with(Thicken)
+}
 
 fn z_plane() -> EntityRef {
     origin_plane(FrameAxis::Z)
@@ -51,7 +65,7 @@ fn sheet_edges_at(part: &NamedModel<Design>, z: f64) -> Vec<String> {
     names
 }
 
-fn fill(program: &mut Program, id: &str, edges: Vec<String>) {
+fn fill(program: &mut ProgramFile, id: &str, edges: Vec<String>) {
     program.push(
         id,
         BoundarySurfaceArgs {
@@ -66,8 +80,8 @@ fn fill(program: &mut Program, id: &str, edges: Vec<String>) {
 
 /// A rectangle's outline extruded as faces: four walls standing on their
 /// own, open at top and bottom.
-fn walls() -> Program {
-    let mut program = Program::new();
+fn walls() -> ProgramFile {
+    let mut program = ProgramFile::new();
     program.push(
         "outline",
         sketch(
@@ -91,7 +105,7 @@ fn walls() -> Program {
 #[test]
 fn extruded_faces_knit_into_a_box() {
     let mut program = walls();
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     let wall = part.sheet_face_names()[0].clone();
     fill(&mut program, "bottom", sheet_edges_at(&part, 0.0));
     fill(&mut program, "top", sheet_edges_at(&part, 1.0));
@@ -102,7 +116,7 @@ fn extruded_faces_knit_into_a_box() {
             solid: true,
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     let solid = part.solid_id("knit(box)").unwrap();
     assert_eq!(part.topology().solid_faces(solid).unwrap().len(), 6);
@@ -114,7 +128,7 @@ fn extruded_faces_knit_into_a_box() {
 #[test]
 fn open_box_thickened_into_a_cover() {
     let mut program = walls();
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     let wall = part.sheet_face_names()[0].clone();
     fill(&mut program, "top", sheet_edges_at(&part, 1.0));
     program.push(
@@ -132,7 +146,7 @@ fn open_box_thickened_into_a_cover() {
             side: ThickenSide::Against,
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     let solid = part.solid_id("thicken(thick)").unwrap();
     // Five faces, their inner copies, and a wall along each of the four
@@ -144,7 +158,7 @@ fn open_box_thickened_into_a_cover() {
 /// flat disc, knit into a closed solid.
 #[test]
 fn lofted_faces_knit_into_a_solid() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     program.push(
         "bottom",
         sketch(
@@ -174,7 +188,7 @@ fn lofted_faces_knit_into_a_solid() {
             output: Output::Faces { up_to: None },
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     let wall = part.sheet_face_names()[0].clone();
     fill(&mut program, "base", sheet_edges_at(&part, 0.0));
     fill(&mut program, "lid", sheet_edges_at(&part, 2.0));
@@ -185,7 +199,7 @@ fn lofted_faces_knit_into_a_solid() {
             solid: true,
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     let solid = part.solid_id("knit(solid)").unwrap();
     assert_eq!(part.topology().solid_faces(solid).unwrap().len(), 4 + 2);

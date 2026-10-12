@@ -576,7 +576,7 @@ pub fn build_subd<S: Scalar>(
     Ok(())
 }
 
-part_operation!(Subd);
+part_operation!(Subd(SubdArgs));
 
 impl PartOperation for Subd {
     const INFO: OperationInfo = OperationInfo::new(

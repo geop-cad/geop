@@ -72,7 +72,12 @@ pub struct DraftArgs {
     pub reversed: bool,
 }
 
-part_operation!(Draft, Lip, Groove, Rib);
+part_operation!(
+    Draft(DraftArgs),
+    Lip(LipArgs),
+    Groove(GrooveArgs),
+    Rib(RibArgs)
+);
 
 impl PartOperation for Draft {
     const INFO: OperationInfo = info(

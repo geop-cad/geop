@@ -18,7 +18,7 @@ use geop_ops_harness::{RouteArgs, Wire, WireSize, cables};
 
 use crate::examples::pose;
 use crate::operations::testing::{Built, origin_plane};
-use crate::{Command, Editor, Program, Push, examples};
+use crate::{Command, Editor, Program, examples};
 
 /// An assembly of two plates: `a` fixed at the origin, `b` 4 along `x`,
 /// its `xy` plane mated onto `a`'s, so it slides in that plane — and a

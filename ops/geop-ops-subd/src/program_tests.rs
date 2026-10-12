@@ -1,20 +1,33 @@
 //! SubD bodies in programs: built from their cage, and worked on further
 //! by the other operations like any solid.
 
+use crate::{Cage, Mirror, SubdArgs};
 use geop_core_math::primitives::FrameAxis;
 use geop_ops_booleans::{BooleanArgs, Combine, boolean::BooleanOp};
 use geop_ops_extrude_revolve::Extents;
-use geop_ops_subd::{Cage, Mirror, SubdArgs};
 
-use crate::operations::testing::{Built, assert_valid, extrusion, origin_plane, outline, sketch};
-use crate::{Program, Push};
+use geop_core_math::geop_error::GeopResult;
+use geop_ops::origin_plane;
+use geop_ops::program::{ProgramFile, Registry};
+use geop_ops::testing::{Built, assert_valid};
+use geop_ops_booleans::Boolean;
+use geop_ops_extrude_revolve::testing::{extrusion, outline, sketch};
+
+use crate::Subd;
+
+/// The operations these tests' programs are written in.
+fn registry() -> GeopResult<Registry> {
+    geop_ops_extrude_revolve::testing::registry()?
+        .with(Boolean)?
+        .with(Subd)
+}
 
 /// A rounded blob — the limit of a box cage two units a side around the
 /// origin — united with a block reaching into it from one corner: one
 /// valid solid.
 #[test]
 fn subd_body_united_with_a_box() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     program.push(
         "blob",
         SubdArgs {
@@ -39,7 +52,9 @@ fn subd_body_united_with_a_box() {
             op: BooleanOp::Union,
         },
     );
-    let part = program.build_model().unwrap_or_else(|e| panic!("{e}"));
+    let part = program
+        .build_model(registry)
+        .unwrap_or_else(|e| panic!("{e}"));
     assert_valid(&part);
     assert_eq!(part.solid_names().len(), 1, "{:?}", part.solid_names());
 }

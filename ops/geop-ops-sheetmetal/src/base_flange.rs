@@ -98,7 +98,7 @@ impl SheetStep for BaseFlange {
     }
 }
 
-part_operation!(BaseFlange);
+part_operation!(BaseFlange(BaseFlangeArgs));
 
 impl PartOperation for BaseFlange {
     const INFO: OperationInfo = OperationInfo::new(

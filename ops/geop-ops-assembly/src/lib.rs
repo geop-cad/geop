@@ -8,6 +8,8 @@
 
 mod add_part;
 pub mod editor;
+#[cfg(test)]
+mod frame_tests;
 mod icons;
 pub mod joints;
 pub mod mates;

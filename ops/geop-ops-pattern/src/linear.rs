@@ -251,7 +251,7 @@ impl Direction {
     }
 }
 
-part_operation!(LinearPattern);
+part_operation!(LinearPattern(LinearPatternArgs));
 
 impl PartOperation for LinearPattern {
     const INFO: OperationInfo = OperationInfo::new(

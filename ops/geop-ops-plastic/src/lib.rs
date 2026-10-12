@@ -16,4 +16,8 @@ pub use operation::{
 
 mod icons;
 #[cfg(test)]
+mod program_tests;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+#[cfg(test)]
 mod tests;

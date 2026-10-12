@@ -32,7 +32,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     solvers::{
-        bisect::bisect,
+        bisect::sign_changes,
         repeat::rewrite,
         subdivide::{Order, Split, subdivide},
     },
@@ -191,20 +191,16 @@ fn tangent_branch_points<S: Scalar>(
 
     let mut found = Vec::new();
     for (a, b, mut seeds) in runs {
-        let (Some(sign_a), Some(sign_b)) = (
-            sign(&curvature_gap(curve, surf_g, surf_f, a, &mut seeds)),
-            sign(&curvature_gap(curve, surf_g, surf_f, b, &mut seeds)),
-        ) else {
-            continue;
-        };
-        if sign_a == sign_b {
-            continue;
-        }
+        let gap_sign =
+            |t| -> GeopResult<_> { Ok(sign(&curvature_gap(curve, surf_g, surf_f, t, &mut seeds))) };
         // Until the bracket cannot shrink, or the sign is undecided.
-        let bracket = bisect(a, b, usize::MAX, true, |_, m| -> GeopResult<_> {
-            Ok(sign(&curvature_gap(curve, surf_g, surf_f, m, &mut seeds)).map(|s| s == sign_a))
-        })?;
-        found.push(bracket.lo.union(bracket.hi));
+        if let Some(bracket) = sign_changes([a, b], gap_sign)
+            .bisected(usize::MAX, true)
+            .next()
+            .transpose()?
+        {
+            found.push(bracket.lo.union(bracket.hi));
+        }
     }
     Ok(found)
 }

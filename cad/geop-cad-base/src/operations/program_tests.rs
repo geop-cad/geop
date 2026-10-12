@@ -1,6 +1,6 @@
 //! Programs of the editor's operations, run.
 
-use crate::operations::testing::{cut, extrusion};
+use crate::operations::testing::extrusion;
 use geop_ops_extrude_revolve::Output;
 use std::{collections::BTreeMap, rc::Rc};
 
@@ -140,7 +140,7 @@ fn runner_stops_early_and_reuses_the_unchanged_prefix() {
 fn runner_reports_the_failing_step() {
     let mut program = box_with_drill_hole();
     edit_args(step(&mut program, "hole"), |args: &mut ExtrudeArgs| {
-        args.output = Output::Solid(cut("extrude(nothing)"))
+        args.output = Output::Solid(Combine::cut("extrude(nothing)"))
     });
     let mut running = Running::new();
     let errors = running.run(&program, None);

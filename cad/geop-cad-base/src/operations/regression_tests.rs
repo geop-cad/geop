@@ -13,11 +13,9 @@ use geop_ops_rasterize::face_triangles_uv;
 use geop_ops_sketch::AddSketchArgs;
 use geop_ops_sketch::{Constraint, Sketch};
 
+use crate::Program;
 use crate::examples::n;
-use crate::operations::testing::{
-    Built, args, assert_valid, cut, extrusion, join, origin_plane, sketch,
-};
-use crate::{Program, Push};
+use crate::operations::testing::{Built, args, assert_valid, extrusion, origin_plane, sketch};
 
 /// Checks the part `program` builds is valid (see [`assert_valid`]) and is
 /// drawn as it is (see [`assert_draws_its_trims`]).
@@ -169,7 +167,11 @@ fn cylinder_joined_over_a_hole() {
     );
     program.push(
         "extrude2",
-        extrusion("sketch2", Extents::blind(1.0), join("extrude(extrude1)")),
+        extrusion(
+            "sketch2",
+            Extents::blind(1.0),
+            Combine::join("extrude(extrude1)"),
+        ),
     );
     assert_builds_valid(&program);
 }
@@ -215,7 +217,7 @@ fn outline_revolved_around_its_edge_joined_to_its_box() {
                 curve: right,
             }),
             extent: Extents::blind(360.0),
-            output: Output::Solid(join("extrude(hole)")),
+            output: Output::Solid(Combine::join("extrude(hole)")),
         },
     );
     assert_builds_valid(&program);
@@ -287,7 +289,11 @@ fn spline_revolved_then_extruded_and_joined() {
     );
     program.push(
         "extrude1",
-        extrusion("sketch1", Extents::blind(1.0), join("revolve(revolve1)")),
+        extrusion(
+            "sketch1",
+            Extents::blind(1.0),
+            Combine::join("revolve(revolve1)"),
+        ),
     );
     assert_builds_valid(&program);
 }
@@ -354,7 +360,7 @@ fn ring_revolved_onto_plate() {
                 curve: axis,
             }),
             extent: Extents::blind(360.0),
-            output: Output::Solid(join("extrude(extrude1)")),
+            output: Output::Solid(Combine::join("extrude(extrude1)")),
         },
     );
     assert_builds_valid(&program);
@@ -499,7 +505,7 @@ fn bracket_with_torus(
                 side1: geop_ops_extrude_revolve::Extent::UpToNext,
                 ..Extents::blind(1.0)
             },
-            cut("extrude(extrude1)"),
+            Combine::cut("extrude(extrude1)"),
         ),
     );
     let mut ring = Sketch::new();
@@ -537,7 +543,7 @@ fn bracket_with_torus(
 
 /// Joined to the bracket.
 fn joined() -> Combine {
-    join("extrude(extrude2)")
+    Combine::join("extrude(extrude2)")
 }
 
 #[test]
@@ -587,8 +593,8 @@ fn torus_up_to_next(bracket: &Bracket, around_x_axis: bool, stopped_all_round: b
     for reversed in [false, true] {
         for combine in [
             Combine::NewBody,
-            join(target()),
-            cut(target()),
+            Combine::join(target()),
+            Combine::cut(target()),
             Combine::With {
                 op: geop_ops::BooleanOp::Intersection,
                 target: target(),
@@ -621,7 +627,7 @@ fn torus_up_to_next_stopped_all_round() {
         &FULLY_STOPPED,
         false,
         false,
-        cut(target),
+        Combine::cut(target),
     ));
 }
 
@@ -651,7 +657,7 @@ fn torus_up_to_next_partly_stopped() {
         &PARTLY_STOPPED,
         true,
         true,
-        cut(target),
+        Combine::cut(target),
     ));
 }
 
@@ -767,5 +773,5 @@ fn spindle_revolved_about_an_axis_through_the_middle_of_a_box_edge_as_a_new_body
 
 #[test]
 fn spindle_revolved_about_an_axis_through_the_middle_of_a_box_edge_and_joined() {
-    assert_builds_valid(&conebox(join("extrude(extrude1)")));
+    assert_builds_valid(&conebox(Combine::join("extrude(extrude1)")));
 }

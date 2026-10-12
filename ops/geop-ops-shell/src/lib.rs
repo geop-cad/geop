@@ -4,6 +4,8 @@
 
 mod icons;
 pub mod operation;
+#[cfg(test)]
+mod program_tests;
 pub mod shell;
 
 pub use operation::{Shell, ShellArgs};

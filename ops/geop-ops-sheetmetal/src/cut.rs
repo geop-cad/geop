@@ -94,7 +94,7 @@ impl SheetStep for SheetCut {
     }
 }
 
-part_operation!(SheetCut);
+part_operation!(SheetCut(SheetCutArgs));
 
 impl PartOperation for SheetCut {
     const INFO: OperationInfo = OperationInfo::new(

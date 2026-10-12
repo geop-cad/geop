@@ -126,7 +126,7 @@ impl SheetStep for Hem {
     }
 }
 
-part_operation!(Hem);
+part_operation!(Hem(HemArgs));
 
 impl PartOperation for Hem {
     const INFO: OperationInfo = OperationInfo::new(

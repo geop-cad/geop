@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::{AddDatumArgs, Construction, fitting_constructions};
 use geop_core_geometry::shape::Plane;
 use geop_core_math::{
     geop_error::GeopResult,
@@ -13,24 +14,32 @@ use geop_ops::{
     model::datum,
     operation::{Aspects, Lookup, Role, Seen},
     origin_axis as axis, origin_plane as base,
+    parameters::Values,
 };
-use geop_ops_datums::{AddDatumArgs, Construction, fitting_constructions};
 use geop_ops_extrude_revolve::shapes::v3;
 
-use super::{Runner, run, testing::Built, workspace};
-use crate::{Program, Push, examples};
+use geop_ops::program::{ProgramFile, Registry, Runner, Workspace};
+use geop_ops::testing::Built;
+use geop_ops_extrude_revolve::testing::drilled_box as drilled;
+
+use crate::AddDatum;
+
+/// The operations these tests' programs are written in.
+fn registry() -> GeopResult<Registry> {
+    geop_ops_extrude_revolve::testing::registry()?.with(AddDatum)
+}
 
 /// A program and the runner that built it: a datum step added to it is
 /// built on what the runner kept.
 struct Part {
-    program: Program,
+    program: ProgramFile,
     runner: Runner,
 }
 
 impl Part {
     /// `program`, built.
-    fn of(program: Program) -> Self {
-        let runner = program.built().unwrap();
+    fn of(program: ProgramFile) -> Self {
+        let runner = program.built(registry).unwrap();
         Part { program, runner }
     }
 
@@ -41,7 +50,7 @@ impl Part {
         id: &str,
         selection: Vec<EntityRef>,
         construction: Construction,
-    ) -> GeopResult<Program> {
+    ) -> GeopResult<ProgramFile> {
         let mut program = self.program.clone();
         program.push(
             id,
@@ -50,8 +59,8 @@ impl Part {
                 construction,
             },
         );
-        let library = workspace(BTreeMap::new()).scope("");
-        run(&mut self.runner, &program, &library)?;
+        let library = Workspace::new(BTreeMap::new(), registry).scope("");
+        program.run(&mut self.runner, &Values::new(), &library)?;
         Ok(program)
     }
 
@@ -85,8 +94,10 @@ impl Part {
 
     /// The part as the program — without a datum step tried since — has it.
     fn seen(&mut self) -> Seen<'_> {
-        let library = workspace(BTreeMap::new()).scope("");
-        run(&mut self.runner, &self.program, &library).unwrap();
+        let library = Workspace::new(BTreeMap::new(), registry).scope("");
+        self.program
+            .run(&mut self.runner, &Values::new(), &library)
+            .unwrap();
         Seen::new(self.runner.part.current())
     }
 
@@ -104,7 +115,7 @@ impl Part {
 /// The 2 x 2 x 1 box with a hole of radius 0.4 drilled 0.5 deep into
 /// the middle of its top.
 fn drilled_box() -> Part {
-    Part::of(examples::box_with_drill_hole())
+    Part::of(drilled())
 }
 
 /// Sketch data is solved, not exact: agreeing to 1e-9 is agreeing.
@@ -484,19 +495,6 @@ fn planes() {
         },
     );
     assert!(on_plane(&d.frame, [1.4, 1., 1.]) && on_plane(&d.frame, [1., 1., 1.]));
-}
-
-/// A datum is a named entity, and a sketch can be placed on a datum
-/// plane: its frame, exactly.
-#[test]
-fn sketches_go_on_datum_planes() {
-    let mut part = Part::of(examples::boss_on_reference_plane());
-    part.program.build_model().unwrap().check_names().unwrap();
-    let lifted = part.datum_named("lifted");
-    let placed = part.seen().sketch("boss_sketch").unwrap().clone();
-    assert!(placed.plane.origin().could_be_equal(lifted.frame.origin()));
-    assert!(placed.plane.u().could_be_equal(lifted.frame.u()));
-    assert_at(&placed.plane, [0., 0., 1.5], [0., 0., 1.]);
 }
 
 /// A coordinate system through three points: at the first, x towards the

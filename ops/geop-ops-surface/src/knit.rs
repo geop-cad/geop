@@ -62,7 +62,7 @@ pub struct KnitArgs {
     pub solid: bool,
 }
 
-part_operation!(Knit);
+part_operation!(Knit(KnitArgs));
 
 impl PartOperation for Knit {
     const INFO: OperationInfo = OperationInfo::new(

@@ -22,7 +22,7 @@ use geop_ops_sketch::{
 
 use super::program_tests::Running;
 use crate::{
-    Program, Push, examples,
+    Program, examples,
     operations::{
         Runner,
         testing::{Built, args, origin_plane, sketch},

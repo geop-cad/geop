@@ -9,6 +9,8 @@ mod add_sketch3d;
 mod editor;
 mod icons;
 #[cfg(test)]
+mod program_tests;
+#[cfg(test)]
 mod tests;
 
 pub use add_sketch3d::{AddSketch3d, AddSketch3dArgs, Reference3d, Sketch3dEditing, Target};

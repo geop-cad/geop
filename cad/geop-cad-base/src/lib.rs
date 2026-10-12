@@ -11,4 +11,4 @@ pub mod operations;
 pub mod stdlib;
 
 pub use editor::{Command, Editor, Update};
-pub use operations::{Program, Push, StepArgs, Workspace, infos, outputs, registry};
+pub use operations::{Program, Workspace, infos, outputs, registry};

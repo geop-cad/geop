@@ -12,10 +12,14 @@ use std::{
 };
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::program::{Program, ProgramStep};
+use geop_core_program::{
+    program::{Program, ProgramStep},
+    program_runner::ProgramRunner,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    ParamValue,
     operation::Input,
     parameters::{
         ParameterKind, Parameters, Values, names_in, parameter_of, rename_in, validate_name,
@@ -23,6 +27,18 @@ use crate::{
     placed::{ABOUT, About, LIBRARY, Library},
     validate_operation_id,
 };
+
+/// Arguments that say which operation they are for: what a program written
+/// in Rust — an example, a standard part, a test — pushes as a step
+/// ([`ProgramFile::push`]). [`part_operation!`](crate::part_operation)
+/// implements it for every operation's arguments.
+pub trait StepArgs: Serialize {
+    /// The operation's kind, as a program stores it.
+    const KIND: &'static str;
+}
+
+/// The runner programs are built with.
+pub type Runner = ProgramRunner<Input, ParamValue>;
 
 /// A program as a file holds it: the parameters its design is given by (see
 /// [`crate::parameters`]), its steps, and its state — where its placed parts
@@ -82,6 +98,32 @@ impl ProgramFile {
                 (ABOUT.to_string(), Input::About(Rc::new(about))),
             ])
             .collect()
+    }
+
+    /// Appends the step `id`, `args` for the operation they are for.
+    pub fn push<A: StepArgs>(&mut self, id: impl Into<String>, args: A) {
+        self.program.steps.push(ProgramStep {
+            id: id.into(),
+            operation: A::KIND.to_string(),
+            args: serde_json::to_value(args).expect("a program's arguments are plain data"),
+        });
+    }
+
+    /// Runs it with its parameters `overrides` instead of its own and
+    /// `library` on `runner`, which keeps what earlier runs built. Fails
+    /// naming the first step that does.
+    pub fn run(
+        &self,
+        runner: &mut Runner,
+        overrides: &Values,
+        library: &Rc<dyn Library>,
+    ) -> GeopResult<()> {
+        let inputs = self.inputs(overrides, library.clone());
+        let output = runner.run(&self.program, &inputs, &self.state);
+        match output.step_errors.into_iter().next() {
+            Some((step, error)) => Err(error.with_context(format!("step {step:?}"))),
+            None => Ok(()),
+        }
     }
 
     /// The position of the step `id`.

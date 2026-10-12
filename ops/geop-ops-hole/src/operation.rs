@@ -370,7 +370,7 @@ fn tap(
     Ok(threads)
 }
 
-part_operation!(Hole, Thread);
+part_operation!(Hole(HoleArgs), Thread(ThreadArgs));
 
 impl PartOperation for Hole {
     const INFO: OperationInfo = OperationInfo::new(

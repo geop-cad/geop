@@ -21,7 +21,7 @@ use geop_ops_extrude_revolve::Output;
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, RevolveArgs};
 
 use super::{drawing::Drawing, tables::Table};
-use crate::{Program, Push};
+use crate::Program;
 
 /// The name of the table parameter every family's size is chosen by.
 pub const SIZE: &str = "size";

@@ -12,11 +12,18 @@ geop-core-sketch.workspace = true
 geop-ops.workspace = true
 geop-ops-booleans.workspace = true
 serde.workspace = true
+# Only for `testing`: the sketches its programs extrude.
+geop-ops-sketch = { workspace = true, optional = true }
 
 [features]
-# The basic solids of `shapes`, for other crates' tests.
-test-shapes = []
+# For other crates' tests: the basic solids of `shapes`, and the sketches
+# and extrusions of `testing` that their programs are written with.
+testing = ["dep:geop-ops-sketch", "geop-ops/testing"]
 
 [dev-dependencies]
 geop-ops = { workspace = true, features = ["testing"] }
 geop-ops-rasterize.workspace = true
+geop-ops-sketch.workspace = true
+geop-ops-datums.workspace = true
+geop-ops-sketch3d.workspace = true
+serde_json.workspace = true

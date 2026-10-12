@@ -30,6 +30,7 @@
 //! along an edge). An angle so large that an edge turns around is refused.
 
 use geop_core_geometry::{
+    meet::{Offset, meet, tangent_groups},
     nurb_curve::NurbCurve3D,
     nurb_surface::NurbSurface3D,
     search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size},
@@ -47,7 +48,7 @@ use geop_core_topology::{
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
 use geop_ops::{BodyNames, NamedModel, Namer};
-use geop_ops_shell::shell::{extended, offset_vertex, pcurve, surface_missed};
+use geop_ops_shell::shell::{extended, pcurve, surface_missed};
 
 use crate::common::halfway;
 
@@ -291,17 +292,12 @@ impl<'a, S: Scalar> Drafted<'a, S> {
             surfaces.push(surface);
         }
 
-        let size = spec
-            .vertices
-            .iter()
-            .map(|p| p.sub(&spec.vertices[0]).norm())
-            .fold(S::ONE, |a, b| a.max(b));
         let mut points = spec.vertices.clone();
         for (v, faces) in around.iter().enumerate() {
             if !moved[v] {
                 continue;
             }
-            points[v] = move_vertex(spec.vertices[v], faces, &surfaces, &kinds, size)
+            points[v] = move_vertex(spec.vertices[v], faces, &surfaces, &kinds)
                 .map_err(|e| e.with_context(format!("moving vertex {}", names.vertices[v])))?;
         }
 
@@ -512,33 +508,33 @@ fn tangent_along<S: Scalar>(spec: &BodySpec<S>, e: usize, f: usize, g: usize) ->
 
 /// Where a vertex at `point` goes: where the surfaces of the faces around
 /// it, `faces` (each with where the vertex was on it), now meet — nearest
-/// to where it was (see [`offset_vertex`]).
+/// to where it was (see [`meet`]). Surfaces tangent to each other there
+/// are pieces of one smooth surface, and one condition.
 ///
 /// Where only two smooth surfaces meet — a drafted face and a cylinder,
 /// at the seam of a hole through it — the vertex is free to slide along
 /// their intersection. It is the end of the cylinder's seam or ruling
 /// there, so it stays on that: the plane through the cylinder's axis and
-/// the vertex is the third condition, `size` how far that plane's patch
-/// reaches, which only has to be past where the vertex can go.
+/// the vertex is the third condition.
 fn move_vertex<S: Scalar>(
     point: Vector3<S>,
     faces: &[(usize, Vector2<S>)],
     surfaces: &[NurbSurface3D<S>],
     kinds: &[Kind<S>],
-    size: S,
 ) -> GeopResult<Vector3<S>> {
-    let mut normals: Vec<Vector3<S>> = Vec::new();
-    for &(f, at) in faces {
-        let normal = surfaces[f].normal(at[0], at[1])?;
-        if !normals
-            .iter()
-            .any(|n| n.prod_cross(&normal).norm_sq().could_be_equal(S::ZERO))
-        {
-            normals.push(normal);
-        }
-    }
-    let mut extra: Option<NurbSurface3D<S>> = None;
-    if normals.len() < 3 {
+    let pieces: Vec<_> = faces
+        .iter()
+        .map(|&(f, at)| (&surfaces[f], (at[0], at[1])))
+        .collect();
+    let mut offsets: Vec<Offset<S>> = tangent_groups(&pieces)?
+        .into_iter()
+        .map(|group| Offset {
+            pieces: group.into_iter().map(|i| pieces[i]).collect(),
+            offset: S::ZERO,
+        })
+        .collect();
+    let mut planes = Vec::new();
+    if offsets.len() < 3 {
         let axis = faces
             .iter()
             .find_map(|&(f, _)| match &kinds[f] {
@@ -548,42 +544,13 @@ fn move_vertex<S: Scalar>(
             .ok_or_else(|| {
                 GeopError::new(format!(
                     "only {} surface(s) meet there and none is a cylinder: where it goes is not determined",
-                    normals.len()
+                    offsets.len()
                 ))
             })?;
         let radial = point.sub(&axis.project(&point));
-        extra = Some(plane_patch(
-            point,
-            axis.direction.prod_scalar(size),
-            radial.normalize()?.prod_scalar(size),
-        )?);
+        planes.push((axis.direction.prod_cross(&radial).normalize()?, point));
     }
-    let mut constraints: Vec<(&NurbSurface3D<S>, Vector2<S>, bool)> = faces
-        .iter()
-        .map(|&(f, at)| (&surfaces[f], at, false))
-        .collect();
-    let half = S::ONE.div(S::TWO)?;
-    if let Some(plane) = &extra {
-        constraints.push((plane, Vector2::from_array([half, half]), false));
-    }
-    offset_vertex(point, &constraints)
-}
-
-/// The patch of the plane through `center` spanned by `e1` and `e2`, from
-/// `center - e1 - e2` to `center + e1 + e2`.
-fn plane_patch<S: Scalar>(
-    center: Vector3<S>,
-    e1: Vector3<S>,
-    e2: Vector3<S>,
-) -> GeopResult<NurbSurface3D<S>> {
-    let corner = |a: S, b: S| center.add(&e1.prod_scalar(a)).add(&e2.prod_scalar(b));
-    let (lo, hi) = (S::ONE.neg(), S::ONE);
-    NurbSurface3D::bilinear(
-        corner(lo, lo),
-        corner(hi, lo),
-        corner(hi, hi),
-        corner(lo, hi),
-    )
+    meet(point, &mut offsets, &planes)
 }
 
 /// Where `plane` cuts the cylinder around `axis`, from `start` to `end` —

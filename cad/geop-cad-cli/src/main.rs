@@ -21,11 +21,12 @@ use std::{
 use clap::{Parser, Subcommand};
 use geop_cad_base::{
     Editor, Program,
-    operations::{Runner, outputs, run, runner, workspace},
+    operations::{Runner, outputs, runner, workspace},
 };
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_ops::{
     output::Output,
+    parameters::Values,
     program::Files,
     solving::{check as check_mates, solve},
 };
@@ -172,12 +173,12 @@ fn build(path: &Path) -> GeopResult<(Program, Runner, Vec<String>)> {
     let mut program = Program::from_json(&workspace.files().read(&path)?)?;
     let library = workspace.scope(&path);
     let mut runner = runner();
-    run(&mut runner, &program, &library)?;
+    program.run(&mut runner, &Values::new(), &library)?;
     let report = check_mates(runner.part.current())?;
     if !report.converged {
         let (moved, _) = solve(&mut runner.part, &program.state, &[], None)?;
         program.state.extend(moved);
-        run(&mut runner, &program, &library)?;
+        program.run(&mut runner, &Values::new(), &library)?;
     }
     Ok((program, runner, report.failed))
 }
@@ -368,7 +369,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use geop_cad_base::{Push, examples};
+    use geop_cad_base::examples;
 
     use geop_core_math::{primitives::Pose, scalars::Scalar};
     use geop_ops::Design;

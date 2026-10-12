@@ -1,11 +1,18 @@
 //! What the tests of the operations share: checking a model valid, finding
-//! its entities by where they are, and building a part as a program would
-//! from a model given. Only built for tests: with `testing`, or in this
-//! crate's own.
+//! its entities by where they are, building a part as a program would from
+//! a model given, and building programs, reading their steps' arguments as
+//! their types. Only built for tests: with `testing`, or in this crate's
+//! own.
 
 use std::{collections::BTreeMap, rc::Rc};
 
-use geop_core_math::{geop_error::GeopError, primitives::Pose, scalars::Scalar, vector::Vector3};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    primitives::{Pose, Ray},
+    scalars::{ScalInF64, Scalar},
+    vector::Vector3,
+};
+use geop_core_program::program::ProgramStep;
 use geop_core_topology::{
     Body, Edge, FaceId, Model, SolidId,
     validation::{ValidationParameters, validate, validate_manifold},
@@ -16,11 +23,16 @@ use geop_ops_rasterize::{
     stl::{enclosed_volume, stl_triangles},
 };
 
+use serde::{Serialize, de::DeserializeOwned};
+
 use crate::{
     Design, NamedModel, ParamValue,
     model::{model, pose_parameter},
     operation::{Build, BuildReader, Input, given},
+    parameters::Values,
     placed::{Component, Instance, Placement, instance},
+    program::{ProgramFile, Registry, Runner, Workspace},
+    ui::{Pointer, Reach},
 };
 
 // ── Validity ────────────────────────────────────────────────────────────────
@@ -243,4 +255,105 @@ pub fn built_with(
 /// else (see [`built_with`]).
 pub fn built(bodies: &NamedModel<Design>) -> Build {
     built_with(&BTreeMap::new(), bodies, &[], |_| {})
+}
+
+/// The volume the solid named `solid` of `part` encloses, from its mesh as
+/// drawn (see [`volume`]).
+#[track_caller]
+pub fn solid_volume(part: &NamedModel<Design>, solid: &str) -> f64 {
+    volume(part, part.solid_id(solid).unwrap(), 64)
+}
+
+/// Checks the solid named `solid` of `part` encloses `expected`, to within
+/// `tolerance` (see [`solid_volume`]).
+#[track_caller]
+pub fn assert_volume(part: &NamedModel<Design>, solid: &str, expected: f64, tolerance: f64) {
+    let got = solid_volume(part, solid);
+    assert!(
+        (got - expected).abs() <= tolerance,
+        "{solid} encloses {got}, expected {expected} (± {tolerance})"
+    );
+}
+
+// ── Programs ────────────────────────────────────────────────────────────────
+
+/// Building a program on its own, in an empty [`Workspace`] whose programs
+/// are written in the operations `registry` makes.
+pub trait Built {
+    /// The runner, holding the part the program builds.
+    fn built(&self, registry: fn() -> GeopResult<Registry>) -> GeopResult<Runner>;
+
+    /// The model the program builds, or why a step fails.
+    fn build_model(
+        &self,
+        registry: fn() -> GeopResult<Registry>,
+    ) -> GeopResult<NamedModel<Design>> {
+        Ok(model_of(&self.built(registry)?))
+    }
+}
+
+impl Built for ProgramFile {
+    fn built(&self, registry: fn() -> GeopResult<Registry>) -> GeopResult<Runner> {
+        let library = Workspace::new(BTreeMap::new(), registry).scope("");
+        let mut runner = Runner::new(registry()?);
+        self.run(&mut runner, &Values::new(), &library)?;
+        Ok(runner)
+    }
+}
+
+/// The model the part `runner` built holds: empty if it built no topology.
+pub fn model_of(runner: &Runner) -> NamedModel<Design> {
+    let built = runner.part.current().retrieve_target(&model());
+    built.cloned().unwrap_or_default()
+}
+
+/// The arguments of `step`, as their type `A`.
+#[track_caller]
+pub fn args<A: DeserializeOwned>(step: &ProgramStep) -> A {
+    serde_json::from_value(step.args.clone())
+        .unwrap_or_else(|e| panic!("step {:?} holds no such arguments: {e}", step.id))
+}
+
+/// Changes the arguments of `step`, as their type `A`, by `edit`.
+pub fn edit_args<A: Serialize + DeserializeOwned>(
+    step: &mut ProgramStep,
+    edit: impl FnOnce(&mut A),
+) {
+    let mut args: A = args(step);
+    edit(&mut args);
+    step.args = serde_json::to_value(args).expect("arguments are plain data");
+}
+
+/// The step `id` of `program`.
+#[track_caller]
+pub fn step<'a>(program: &'a mut ProgramFile, id: &str) -> &'a mut ProgramStep {
+    let index = program.index_of(id).unwrap_or_else(|e| panic!("{e}"));
+    &mut program.program.steps[index]
+}
+
+/// The error `result` holds, for a test that expects one.
+#[track_caller]
+pub fn error<T>(result: GeopResult<T>) -> GeopError {
+    match result {
+        Ok(_) => panic!("expected an error"),
+        Err(e) => e,
+    }
+}
+
+// ── Pointers ────────────────────────────────────────────────────────────────
+
+/// A pointer from `origin` along `dir`, reaching 0.009 units.
+pub fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer<ScalInF64> {
+    let v = |p: [f64; 3]| Vector3::from_array(p.map(ScalInF64::from_f64));
+    Pointer {
+        ray: Ray::try_new(v(origin), v(dir)).unwrap(),
+        reach: Reach::Tube {
+            radius: ScalInF64::from_f64(0.009),
+        },
+    }
+}
+
+/// Looking straight down at `(x, y)`.
+pub fn from_above(x: f64, y: f64) -> Pointer<ScalInF64> {
+    pointer([x, y, 10.0], [0.0, 0.0, -1.0])
 }

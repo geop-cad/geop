@@ -482,7 +482,7 @@ fn form<'a>(
     f
 }
 
-part_operation!(Route);
+part_operation!(Route(RouteArgs));
 
 impl PartOperation for Route {
     const INFO: OperationInfo = OperationInfo::new(

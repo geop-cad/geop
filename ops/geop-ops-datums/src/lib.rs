@@ -6,6 +6,8 @@
 mod add_datum;
 mod editor;
 mod icons;
+#[cfg(test)]
+mod program_tests;
 
 pub use add_datum::{
     AddDatum, AddDatumArgs, CONSTRUCTIONS, Construction, ConstructionSchema, Param, ParamKind,

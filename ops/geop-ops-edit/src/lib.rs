@@ -10,6 +10,8 @@
 pub mod delete;
 pub mod extract;
 mod icons;
+#[cfg(test)]
+mod program_tests;
 pub mod project;
 
 pub use delete::{DeleteBody, DeleteBodyArgs};

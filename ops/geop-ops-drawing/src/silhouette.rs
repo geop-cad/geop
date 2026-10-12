@@ -26,6 +26,8 @@
 //! visibility test does: a ray grazing a face at its silhouette tells the
 //! truth only from the exact point — asks [`Silhouette::exact_point`].
 
+use std::convert::Infallible;
+
 use geop_core_geometry::{
     intersection::curve_curve_overlaps_and_crossings,
     nurb_curve::{NurbCurve2D, NurbCurve3D},
@@ -36,8 +38,9 @@ use geop_core_math::{
     plain,
     scalars::Scalar,
     solvers::{
-        bisect::bisect,
+        bisect::sign_changes,
         iterate::{End, Repeat, Step, iterate},
+        newton::{Arrive, newton_1d},
         repeat::{self, repeat},
     },
     vector::{Vector2, Vector3},
@@ -163,27 +166,19 @@ fn correct_on_boundary<S: Scalar>(
         (u, surface.domain_u())
     };
     let at = |t: S| if u_fixed { (u, t) } else { (t, v) };
-    let corrected = iterate(
+    let corrected = newton_1d(
         moving,
-        moving,
+        (lo, hi),
         CORRECTOR_ITERATIONS,
-        Repeat::Never,
-        |next| {
-            let sharp = next.sharpen().clamped(lo, hi);
-            (sharp, sharp)
-        },
-        |&t| -> Result<Step<S>, ()> {
+        Arrive::AtZero,
+        |t| -> GeopResult<_> {
             let (u, v) = at(t);
-            let (g, gu, gv) = contour(surface, d, u, v).map_err(|_| ())?;
-            if g.could_be_equal(S::ZERO) {
-                return Ok(Step::Done);
-            }
-            let slope = if u_fixed { gv } else { gu };
-            Ok(Step::Next(t.sub(g.div(slope).map_err(|_| ())?)))
+            let (g, gu, gv) = contour(surface, d, u, v)?;
+            Ok((g, if u_fixed { gv } else { gu }))
         },
-    )
-    .ok()?;
-    (corrected.end == End::Done).then(|| at(corrected.seed))
+    );
+    let (t, arrived) = corrected.ok()?;
+    arrived.then(|| at(t))
 }
 
 /// An iso line of the domain the seeds are sampled along.
@@ -263,20 +258,15 @@ fn grid<S: Scalar>(surface: &NurbSurface3D<S>, d: &Vector3<S>) -> Vec<GridLine<S
                 brackets: Vec::new(),
                 traced: Vec::new(),
             };
-            let mut last: Option<(usize, bool)> = None;
-            for k in 0..line.params.len() {
+            let brackets: Vec<(usize, usize)> = sign_changes(0..line.params.len(), |k| {
                 let (u, v) = line.point(line.params[k]);
-                let Some(s) = sign(surface, d, u, v) else {
-                    continue;
-                };
-                if let Some((j, previous)) = last
-                    && previous != s
-                {
-                    line.brackets.push((j, k));
-                }
-                last = Some((k, s));
-            }
-            line.traced = vec![false; line.brackets.len()];
+                Ok::<_, Infallible>(sign(surface, d, u, v))
+            })
+            .flatten()
+            .map(|(j, k, _)| (j, k))
+            .collect();
+            line.traced = vec![false; brackets.len()];
+            line.brackets = brackets;
             lines.push(line);
         }
     }
@@ -291,14 +281,14 @@ fn seed<S: Scalar>(
     line: &GridLine<S>,
     (lo, hi): (usize, usize),
 ) -> Option<(S, S)> {
-    let (a, b) = (line.params[lo], line.params[hi]);
-    let (u, v) = line.point(a);
-    let sign_a = sign(surface, d, u, v)?;
-    let bracket = bisect(a, b, BISECTIONS, false, |_, mid| -> GeopResult<_> {
-        let (u, v) = line.point(mid);
-        Ok(sign(surface, d, u, v).map(|s| s == sign_a))
-    })
-    .ok()?;
+    let sign_at = |t| -> GeopResult<_> {
+        let (u, v) = line.point(t);
+        Ok(sign(surface, d, u, v))
+    };
+    let bracket = sign_changes([line.params[lo], line.params[hi]], sign_at)
+        .bisected(BISECTIONS, false)
+        .next()?
+        .ok()?;
     // Where the sign cannot be told, the silhouette is there.
     let (a, b) = match bracket.undecided {
         Some(mid) => (mid, mid),
@@ -395,20 +385,17 @@ fn mark_crossings<S: Scalar>(
         }
         ends.retain(|s| (0.0..=1.0).contains(s));
         ends.sort_by(f64::total_cmp);
-        for pair in ends.windows(2) {
-            let (lo, hi) = (pair[0], pair[1]);
-            if at(&here, lo) * at(&here, hi) >= 0.0 {
-                continue;
-            }
-            // The middle is on `lo`'s side unless the cubic changes sign
-            // (or vanishes) between them.
-            let Ok(bracket) = bisect::<f64, GeopError>(lo, hi, BISECTIONS, false, |lo, mid| {
-                let product = at(&here, lo) * at(&here, mid);
-                Ok(Some(product.is_nan() || product > 0.0))
-            }) else {
-                continue;
-            };
-            line.mark(at(&across, 0.5 * (bracket.lo + bracket.hi)));
+        // Where the cubic vanishes, it has no side.
+        let side = |s| {
+            let x = at(&here, s);
+            Ok::<_, GeopError>((x != 0.0 && !x.is_nan()).then_some(x > 0.0))
+        };
+        for bracket in sign_changes(ends, side)
+            .bisected(BISECTIONS, false)
+            .flatten()
+        {
+            let s = bracket.undecided.unwrap_or(0.5 * (bracket.lo + bracket.hi));
+            line.mark(at(&across, s));
         }
     }
 }
@@ -681,31 +668,20 @@ pub fn edge_crossings<S: Scalar>(
         let (u, v) = foot(t)?;
         sign(surface, d, u, v)
     };
-    let params: Vec<S> = (0..=EDGE_SAMPLES)
-        .map(|k| match k {
-            0 => t0,
-            k if k == EDGE_SAMPLES => t1,
-            k => S::fraction(t0, t1, S::from_f64(k as f64 / EDGE_SAMPLES as f64)),
+    let params = (0..=EDGE_SAMPLES).map(|k| match k {
+        0 => t0,
+        k if k == EDGE_SAMPLES => t1,
+        k => S::fraction(t0, t1, S::from_f64(k as f64 / EDGE_SAMPLES as f64)),
+    });
+    sign_changes(params, |t| -> GeopResult<_> { Ok(sign_at(t)) })
+        .bisected(BISECTIONS, false)
+        .map(|bracket| {
+            let bracket = bracket?;
+            Ok(bracket
+                .undecided
+                .unwrap_or_else(|| bracket.lo.union(bracket.hi)))
         })
-        .collect();
-    let mut crossings = Vec::new();
-    let mut last: Option<(S, bool)> = None;
-    for &t in &params {
-        let Some(s) = sign_at(t) else { continue };
-        if let Some((a, previous)) = last
-            && previous != s
-        {
-            let bracket = bisect(a, t, BISECTIONS, false, |_, mid| -> GeopResult<_> {
-                Ok(sign_at(mid).map(|m| m == previous))
-            })?;
-            crossings.push(match bracket.undecided {
-                Some(mid) => mid,
-                None => bracket.lo.union(bracket.hi),
-            });
-        }
-        last = Some((t, s));
-    }
-    Ok(crossings)
+        .collect()
 }
 
 /// The silhouette of `face_id` seen along the unit vector `d`, as curves on

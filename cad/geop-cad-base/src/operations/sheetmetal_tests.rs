@@ -14,7 +14,7 @@ use geop_ops_sketch::AddSketchArgs;
 use super::testing::{
     Built, args, assert_valid, click_at, dialog, disc, example_editor, from_above, handled, pointer,
 };
-use crate::{Command, Push, examples};
+use crate::{Command, examples};
 
 /// The bracket example builds a valid sheet-metal body of three flats, two
 /// bends and the holes cut through it after flanging, survives a trip

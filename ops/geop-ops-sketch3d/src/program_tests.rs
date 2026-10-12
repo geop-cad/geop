@@ -1,17 +1,26 @@
 //! Sweeps along 3-D sketches, run as programs: the solids they build, and
 //! what they refuse.
 
+use crate::{AddSketch3dArgs, Constraint3d, Sketch3d};
 use geop_core_math::{primitives::FrameAxis, scalars::Scalar, vector::Vector3};
 use geop_core_sketch::space::End;
 use geop_ops::EntityRef;
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Orientation, Output, SweepArgs};
-use geop_ops_sketch::{AddSketchArgs, Sketch};
-use geop_ops_sketch3d::{AddSketch3dArgs, Constraint3d, Sketch3d};
+use geop_ops_sketch::AddSketchArgs;
 
-use crate::examples::n;
-use crate::operations::testing::{Built, assert_valid, origin_plane, sketch};
-use crate::{Program, Push};
+use geop_core_math::geop_error::GeopResult;
+use geop_ops::origin_plane;
+use geop_ops::program::{ProgramFile, Registry};
+use geop_ops::testing::{Built, assert_valid};
+use geop_ops_extrude_revolve::testing::{disc, n, sketch};
+
+use crate::AddSketch3d;
+
+/// The operations these tests' programs are written in.
+fn registry() -> GeopResult<Registry> {
+    geop_ops_extrude_revolve::testing::registry()?.with(AddSketch3d)
+}
 
 fn v(p: [f64; 3]) -> Vector3<geop_ops::Design> {
     Vector3::from_array(p.map(n))
@@ -19,10 +28,7 @@ fn v(p: [f64; 3]) -> Vector3<geop_ops::Design> {
 
 /// A circle of radius `r` around the origin, on the origin's `x` plane.
 fn section(r: f64) -> AddSketchArgs {
-    let mut s = Sketch::new();
-    let c = s.add_point(n(0.0), n(0.0));
-    s.add_circle(c, n(r));
-    sketch(origin_plane(FrameAxis::X), s)
+    sketch(origin_plane(FrameAxis::X), disc([0.0, 0.0], r))
 }
 
 /// The spline through `points`, leaving the first along `x`.
@@ -39,8 +45,8 @@ fn spline(points: &[[f64; 3]]) -> Sketch3d {
 }
 
 /// The circle `section(r)` swept along the 3-D sketch `route`.
-fn piped(r: f64, route: Sketch3d) -> Program {
-    let mut program = Program::new();
+fn piped(r: f64, route: Sketch3d) -> ProgramFile {
+    let mut program = ProgramFile::new();
     program.push("section", section(r));
     program.push(
         "route",
@@ -73,7 +79,7 @@ fn sweep_along_a_3d_spline() {
         0.2,
         spline(&[[0.0, 0.0, 0.0], [2.0, 0.5, 0.5], [4.0, -0.5, 1.5], end]),
     );
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().faces.len(), 4 + 2);
     let model = part.topology();
@@ -99,27 +105,19 @@ fn a_path_of_two_chains_is_refused() {
         let b = route.add_point(v([x + 1.0, 0.0, 0.0]));
         route.add_line(a, b);
     }
-    let error = piped(0.2, route).build_model().expect_err("refused");
+    let error = piped(0.2, route)
+        .build_model(registry)
+        .expect_err("refused");
     assert!(error.root_message().contains("2 chains"), "{error:?}");
 }
 
-/// A pipe bent tighter than it is thick is refused, naming the bend —
-/// rather than built crossing itself.
-#[test]
-fn a_bend_tighter_than_the_pipe_is_refused() {
-    let route = crate::examples::pipe_route(0.25);
-    let error = piped(0.3, route).build_model().expect_err("refused");
-    assert!(error.root_message().contains("bend"), "{error:?}");
-}
-
-/// Sweeps along paths of every kind of curvature: splines bending gently
-/// and sharply, in and out of a plane, and polylines with bends of
-/// several radii — each piped with circles from thin to as thick as the
-/// tightest bend allows, and beyond. Every one builds a valid solid, or is
-/// refused for a bend tighter than the pipe.
+/// Sweeps along splines bending gently and sharply, in and out of a plane,
+/// each piped with circles from thin to as thick as the tightest bend
+/// allows: every one builds a valid solid. (Polylines with bends of
+/// several radii are swept by the example `pipe`'s tests.)
 #[test]
 #[ignore = "slow: sweeps along paths of varied curvature — run with `cargo test -- --ignored`"]
-fn sweeps_along_paths_of_varied_curvature() {
+fn sweeps_along_splines_of_varied_curvature() {
     let splines: [&[[f64; 3]]; 4] = [
         &[[0.0, 0.0, 0.0], [3.0, 0.2, 0.1], [6.0, 0.0, 0.3]],
         &[
@@ -145,20 +143,10 @@ fn sweeps_along_paths_of_varied_curvature() {
     ];
     for (i, points) in splines.iter().enumerate() {
         for r in [0.05, 0.15, 0.3] {
-            let built = piped(r, spline(points)).build_model();
+            let built = piped(r, spline(points)).build_model(registry);
             match built {
                 Ok(part) => assert_valid(&part),
                 Err(e) => panic!("spline {i}, radius {r}: {e:?}"),
-            }
-        }
-    }
-    for bend in [0.4, 1.0, 1.5] {
-        let route = crate::examples::pipe_route(bend);
-        for r in [0.1, 0.3, 0.39, 0.5] {
-            match piped(r, route.clone()).build_model() {
-                Ok(part) => assert_valid(&part),
-                Err(e) if r >= bend && e.root_message().contains("bend") => {}
-                Err(e) => panic!("bend {bend}, radius {r}: {e:?}"),
             }
         }
     }

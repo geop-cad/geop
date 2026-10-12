@@ -27,7 +27,7 @@ pub struct DeleteBodyArgs {
     pub bodies: Vec<EntityRef>,
 }
 
-part_operation!(DeleteBody);
+part_operation!(DeleteBody(DeleteBodyArgs));
 
 impl PartOperation for DeleteBody {
     const INFO: OperationInfo = OperationInfo::new(

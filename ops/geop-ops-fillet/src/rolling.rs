@@ -81,6 +81,7 @@
 //! the chord whose point lies on the edge between them.
 
 use geop_core_geometry::{
+    meet::{Offset, meet},
     nurb_curve::{NurbCurve, NurbCurve3D, bezier_knots, true_point_fractions},
     nurb_surface::NurbSurface3D,
     search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size},
@@ -90,9 +91,10 @@ use geop_core_math::{
     matrix::Matrix,
     scalars::Scalar,
     solvers::{
-        bisect::{Bracket, bisect},
+        bisect::{Bracket, bisect, sign_changes},
         iterate::{Repeat, Step, iterate},
         linear::solve_linear_system,
+        newton::{Arrive, newton_1d},
         probe::{Probe, probe},
         refine::{Refine, Refined, refine},
         walk::{Walked, walk_by},
@@ -124,8 +126,6 @@ pub const DEVIATION: f64 = 1e-6;
 /// alone: a crease of a millionth of a radian nobody sees, where exact
 /// tangency was never to be had.
 const TILT: f64 = DEVIATION;
-/// Newton iterations placing the ball at a station.
-const NEWTON_ITERATIONS: usize = 30;
 /// How often the reach for a bracket of where the ball rolls across an
 /// edge doubles, at most: `2^64` times the first reach is past any edge's
 /// domain, which ends the search first.
@@ -589,8 +589,10 @@ struct Station<S: Scalar> {
 
 /// The ball of signed radius `sr` — `r` along both normals, negative
 /// behind them — touching `surfaces` in the plane through `p` square to the
-/// unit `tangent`, Newton's method from the foot points `seeds` (see the
-/// module docs): its center and the foot points' `(u, v)`.
+/// unit `tangent`, [`meet`] from the foot points `seeds` (see the module
+/// docs): its center, sharp — a construction aid: the contacts are
+/// evaluated on the surfaces, so they lie on them however exactly the
+/// center was found — and the foot points' `(u, v)`, sharp seeds.
 fn roll<S: Scalar>(
     surfaces: [&NurbSurface3D<S>; 2],
     seeds: [(S, S); 2],
@@ -603,63 +605,9 @@ fn roll<S: Scalar>(
     // Exact for two planes through `p`: `r` from both.
     let spread = S::ONE.add(n0.prod_dot(&n1));
     let center = p.add(&n0.add(&n1).prod_scalar(sr.div(spread)?)).sharpen();
-    let mut uv = seeds;
-    let center = ball_center(&surfaces, &mut uv, &[(*tangent, *p)], sr, center)?;
-    Ok((center, uv))
-}
-
-/// The center of the ball of signed radius `sr` — `r` along the unit
-/// normal of each of `surfaces`, negative behind them — that lies in each
-/// of `planes` (a unit normal and a point each), three conditions in all:
-/// Newton's method from `center`, each step measuring how far off each
-/// condition the center is and solving for the step that corrects all of
-/// them, to first order. `uv` holds the foot points' `(u, v)` on
-/// `surfaces`, seeds in, and where the center touches them out (sharp).
-///
-/// Every iterate is sharpened, the last too: the center is a construction
-/// aid, not an answer anything is compared against — the contact points
-/// are evaluated on the surfaces, so they lie on them however exactly the
-/// center was found. Shared by [`roll`], a station's ball between two
-/// faces, and the ball rounding a corner of three
-/// ([`crate::corner`]).
-pub(crate) fn ball_center<S: Scalar>(
-    surfaces: &[&NurbSurface3D<S>],
-    uv: &mut [(S, S)],
-    planes: &[(Vector3<S>, Vector3<S>)],
-    sr: S,
-    center: Vector3<S>,
-) -> GeopResult<Vector3<S>> {
-    debug_assert_eq!(surfaces.len() + planes.len(), 3);
-    Ok(iterate(
-        center,
-        center,
-        NEWTON_ITERATIONS,
-        Repeat::FixedPoint,
-        |next| (next.sharpen(), *next),
-        |center| -> GeopResult<Step<Vector3<S>>> {
-            let mut rows = Vec::with_capacity(3);
-            let mut residual = Vec::with_capacity(3);
-            for (k, surface) in surfaces.iter().enumerate() {
-                uv[k] = sharp_in(surface, foot(surface, center, uv[k])?);
-                let at = surface.evaluate(uv[k].0, uv[k].1)?;
-                let n = surface.normal(uv[k].0, uv[k].1)?.normalize()?;
-                residual.push(center.sub(&at).prod_dot(&n).sub(sr));
-                rows.push(n);
-            }
-            for (n, p) in planes {
-                residual.push(center.sub(p).prod_dot(n));
-                rows.push(*n);
-            }
-            let jacobian =
-                Matrix::from_rows([rows[0].to_array(), rows[1].to_array(), rows[2].to_array()]);
-            let step = solve_linear_system(
-                &jacobian,
-                &Vector3::from_array([residual[0], residual[1], residual[2]]),
-            )?;
-            Ok(Step::Next(center.sub(&step)))
-        },
-    )?
-    .seed)
+    let mut offsets = [0, 1].map(|k| Offset::new(surfaces[k], seeds[k], sr));
+    let center = meet(center, &mut offsets, &[(*tangent, *p)])?.sharpen();
+    Ok((center, offsets.map(|o| o.pieces[0].1)))
 }
 
 /// How far, as a plain number, the foot point `foot` of `center` on a
@@ -1094,19 +1042,18 @@ fn chamfer_crossing<S: Scalar>(
             .with_context(with_context!(
                 "the chamfer's section {x} of the way along link {link}"
             ))?;
-        let t = iterate(
+        let t = newton_1d(
             seed,
-            seed,
+            (lo, hi),
             PROJECT_ITERATIONS,
-            Repeat::Cycle,
-            |next| (next.sharpen().clamped(lo, hi), *next),
-            |&t| -> GeopResult<Step<S>> {
+            Arrive::Exhausted,
+            |t| -> GeopResult<_> {
                 let off = curve.evaluate(t)?.sub(&p);
                 let rate = S::TWO.mul(off.prod_dot(&curve.tangent(t)?));
-                Ok(Step::Next(t.sub(off.prod_dot(&off).sub(d2).div(rate)?)))
+                Ok((off.prod_dot(&off).sub(d2), rate))
             },
         )?
-        .seed;
+        .0;
         let ahead = curve.evaluate(t)?.sub(&p).prod_dot(&tangent);
         Ok((ahead.midpoint().to_f64(), t, p, tangent, feet))
     };
@@ -1123,7 +1070,7 @@ fn chamfer_crossing<S: Scalar>(
     }
     // Bisection: where along the chain is a free choice up to where the
     // chamfer's point lies on the edge, and the halves only close in on it.
-    let bracket = bisect(lo_c, hi_c, 60, false, |_, mid| -> GeopResult<_> {
+    let bracket = bisect(lo_c, hi_c, 60, false, |mid| -> GeopResult<_> {
         let (g, tm, ..) = at(mid, t)?;
         t = tm;
         Ok(Some(g.signum() == g_lo.signum()))
@@ -1407,7 +1354,7 @@ fn crossing<S: Scalar>(
     };
     // Bisection: where along the edge is a free choice up to where the
     // ball touches both, and the halves only ever close in on that.
-    let bracket = bisect(lo, hi, 60, true, |_, mid| -> GeopResult<_> {
+    let bracket = bisect(lo, hi, 60, true, |mid| -> GeopResult<_> {
         Ok(Some(ball(mid)?.0.signum() == g_lo.signum()))
     })?;
     let t = 0.5 * (bracket.lo + bracket.hi);
@@ -1648,13 +1595,14 @@ fn fillet_placing<'a, S: Scalar>(
                 let (p, t) = chain.links[link].at(topology, S::from_f64(f))?;
                 Ok(x.center.sub(&p).prod_dot(&t).midpoint().to_f64())
             };
-            let off_lo = off(ca)?;
-            if off_lo.signum() == off(cb)?.signum() {
+            let side = |c| -> GeopResult<_> { Ok(Some(off(c)?.is_sign_positive())) };
+            let Some(Bracket { lo, hi, .. }) = sign_changes([ca, cb], side)
+                .bisected(60, false)
+                .next()
+                .transpose()?
+            else {
                 return Ok(0.5);
-            }
-            let Bracket { lo, hi, .. } = bisect(ca, cb, 60, false, |_, mid| -> GeopResult<_> {
-                Ok(Some(off(mid)?.signum() == off_lo.signum()))
-            })?;
+            };
             Ok((0.5 * (lo + hi) - ca) / (cb - ca))
         };
         let guess = crossing(topology, k, a, b, radius_at(0.5 * (ca + cb)))?;
@@ -2055,7 +2003,7 @@ fn corner_position<S: Scalar>(
         },
     )?
     .ok_or_else(missed)?;
-    let Bracket { lo, hi, .. } = bisect(near, far, 60, false, |_, mid| -> GeopResult<_> {
+    let Bracket { lo, hi, .. } = bisect(near, far, 60, false, |mid| -> GeopResult<_> {
         Ok(Some(ahead(mid)? > 0.0))
     })?;
     Ok(0.5 * (lo + hi))

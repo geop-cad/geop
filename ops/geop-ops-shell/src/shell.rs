@@ -50,6 +50,7 @@ use std::collections::HashMap;
 
 use geop_core_geometry::{
     contains::surface::surface_could_contain,
+    meet::{Offset, meet, tangent_groups},
     nurb_curve::{NurbCurve2D, NurbCurve3D},
     nurb_surface::NurbSurface3D,
     search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size},
@@ -59,11 +60,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     polygon::{polygon_signed_area, polygons_contain},
     scalars::Scalar,
-    solvers::{
-        iterate::{Repeat, Step, iterate},
-        linear::shortest_solution,
-        walk::{Walked, walk},
-    },
+    solvers::walk::{Walked, walk},
     vector::{Vector, Vector2, Vector3},
     with_context,
 };
@@ -73,11 +70,6 @@ use geop_core_topology::{
     loop_sampling::sample_pcurves_to_polygon,
 };
 use geop_ops::{BodyNames, NamedModel, Namer};
-
-/// Newton steps moving a vertex onto the offsets of its faces, at most: a
-/// vertex between planes lands in one, and curved faces converge
-/// quadratically from a start a thickness away.
-const VERTEX_ITERATIONS: usize = 8;
 
 /// Samples per coedge when telling a loop's sense from its area: only the
 /// sign is used.
@@ -376,11 +368,31 @@ impl<'a, S: Scalar> Hollow<'a, S> {
                 if !walled[v] {
                     return Ok(None);
                 }
-                let constraints: Vec<_> = around[v]
+                // Where the inner surfaces around it meet, nearest to it.
+                // Surfaces tangent to each other there are pieces of one
+                // smooth surface — the quarters of a revolved face meeting
+                // at its pole — and so one condition. One whose face is
+                // taken away cannot be tangent to one whose face is kept:
+                // the walls would have to end on a smooth surface.
+                let pieces: Vec<_> = around[v]
                     .iter()
-                    .map(|&(f, uv)| (&inner_surfaces[f], uv, removed[f]))
+                    .map(|&(f, uv)| (&inner_surfaces[f], (uv[0], uv[1])))
                     .collect();
-                offset_vertex(spec.vertices[v], &constraints)
+                let mut offsets = Vec::new();
+                for group in tangent_groups(&pieces)? {
+                    let f = |i: usize| around[v][i].0;
+                    if group.iter().any(|&i| removed[f(i)] != removed[f(group[0])]) {
+                        return Err(GeopError::new(format!(
+                            "at vertex {}, a face taken away is tangent to one kept: the walls cannot end on a smooth surface",
+                            names.vertices[v]
+                        )));
+                    }
+                    offsets.push(Offset {
+                        pieces: group.iter().map(|&i| pieces[i]).collect(),
+                        offset: S::ZERO,
+                    });
+                }
+                meet(spec.vertices[v], &mut offsets, &[])
                     .map(Some)
                     .map_err(|e| {
                         e.with_context(format!("moving vertex {} inward", names.vertices[v]))
@@ -1175,123 +1187,6 @@ pub fn extended<S: Scalar>(mut surface: NurbSurface3D<S>) -> GeopResult<NurbSurf
         };
     }
     Ok(surface)
-}
-
-/// The inner copy of the vertex at `point`: where the surfaces around it
-/// meet, each with where the vertex is on it and whether its face is
-/// taken away.
-///
-/// Gauss-Newton for the point nearest `point` on all of them: each step
-/// measures how far off each surface the iterate is, along its normal, and
-/// takes the shortest step that corrects all of them at once, to first
-/// order. Between planes that is exact in one step.
-///
-/// Surfaces tangent to each other at the vertex are pieces of one smooth
-/// surface — the quarters of a revolved face meeting at its pole — and so
-/// one condition, not several: decided once, at the vertex, and each step
-/// measures from the nearest foot point on any of the pieces, the foot
-/// point on their union. Deciding it at the foot points instead fails
-/// where each piece clamps the foot point to its own patch: their normals
-/// there differ a little, and the nearly equal conditions leave no step
-/// to take. Tangent surfaces where one face is taken away and the other is
-/// not cannot be: the walls would have to step across a smooth surface.
-///
-/// The iterates are seeds for the next step, so they are sharpened — but
-/// they are also the answer: where fewer than three surfaces meet, the
-/// vertex is free to slide along where they do, and only the steps taken
-/// say how far it has. So the answer is carried alongside, unsharpened:
-/// `point` less every step, each with the width its own measurement gave
-/// it (keep two copies, see `AGENTS.md`). Without that, a vertex on the
-/// edge of a patch — where a revolved face's quarters meet — slides a
-/// rounding error off it with nothing to say it might not have.
-///
-/// Public, with [`extended`] and [`pcurve`], for the other operations that
-/// rebuild a solid face by face: a draft (`geop_ops_plastic`) moves its
-/// vertices onto tilted planes with it.
-pub fn offset_vertex<S: Scalar>(
-    point: Vector3<S>,
-    surfaces: &[(&NurbSurface3D<S>, Vector2<S>, bool)],
-) -> GeopResult<Vector3<S>> {
-    // The surfaces, grouped by tangency at the vertex.
-    let mut groups: Vec<(Vector3<S>, bool, Vec<usize>)> = Vec::new();
-    for (i, &(surface, at, removed)) in surfaces.iter().enumerate() {
-        let normal = surface.normal(at[0], at[1])?;
-        match groups
-            .iter_mut()
-            .find(|(n, _, _)| n.prod_cross(&normal).norm_sq().could_be_equal(S::ZERO))
-        {
-            Some((_, other, members)) => {
-                if *other != removed {
-                    return Err(GeopError::new(
-                        "a face taken away is tangent to one kept at a vertex: the walls cannot end on a smooth surface",
-                    ));
-                }
-                members.push(i);
-            }
-            None => groups.push((normal, removed, vec![i])),
-        }
-    }
-    // The foot point of `p` on surface `i`, and the normal there.
-    let foot = |i: usize, p: Vector3<S>| -> GeopResult<(Vector3<S>, Vector3<S>)> {
-        let (surface, at, _) = surfaces[i];
-        let (u, v) = surface.project(p, at[0].sharpen(), at[1].sharpen(), PROJECT_ITERATIONS)?;
-        // The foot point is on the patch: its `(u, v)` are in the domain as
-        // much as where the projection says.
-        let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
-        let (u, v) = (u.intersect(u0.union(u1)), v.intersect(v0.union(v1)));
-        Ok((surface.evaluate(u, v)?, surface.normal(u, v)?))
-    };
-    // The foot point of `p` on the union of a group's pieces: the nearest
-    // of theirs — which piece is a free choice where they tie.
-    let nearest_foot = |members: &[usize], p: Vector3<S>| -> GeopResult<(Vector3<S>, Vector3<S>)> {
-        let mut best: Option<(f64, Vector3<S>, Vector3<S>)> = None;
-        for &i in members {
-            let (at, normal) = foot(i, p)?;
-            let distance = at.sub(&p).norm_sq().upper().to_f64();
-            if best.as_ref().is_none_or(|(d, _, _)| distance < *d) {
-                best = Some((distance, at, normal));
-            }
-        }
-        let (_, at, normal) = best.expect("a group has members");
-        Ok((at, normal))
-    };
-
-    // The step from each sharp seed is added to the answer as it is, with
-    // its width: the answer is `point` moved by every step, the seed only
-    // where the next step starts. A fixed point of the sharpened iteration
-    // ends it: every further step would start from the very same seed and
-    // only add its width again — not a tolerance, the seed is bit for bit
-    // unchanged.
-    let mut answer = point;
-    iterate(
-        point,
-        point,
-        VERTEX_ITERATIONS,
-        Repeat::FixedPoint,
-        |next| (next.sharpen(), *next),
-        |seed| -> GeopResult<Step<Vector3<S>>> {
-            let mut rows: Vec<(Vector3<S>, S)> = Vec::new();
-            for (_, _, members) in &groups {
-                let (at, normal) = nearest_foot(members, *seed)?;
-                rows.push((normal, normal.prod_dot(&seed.sub(&at))));
-            }
-            let step = shortest_solution(&rows)?;
-            answer = answer.sub(&step);
-            Ok(Step::Next(seed.sub(&step)))
-        },
-    )?;
-    // The answer has to be on every group's surface: a condition lost on
-    // the way leaves it off one.
-    for (g, (_, _, members)) in groups.iter().enumerate() {
-        let (at, normal) = nearest_foot(members, answer)?;
-        if !at.could_be_equal(&answer) {
-            return Err(GeopError::new(format!(
-                "the inner copy {answer:?} of the vertex at {point:?} is not on surface group {g} of {} (surfaces {members:?}), whose nearest point is {at:?}, normal {normal:?}",
-                groups.len()
-            )));
-        }
-    }
-    Ok(answer)
 }
 
 #[cfg(test)]

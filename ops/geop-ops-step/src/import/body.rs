@@ -49,12 +49,11 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     plain::{P3, add, cross, distance, dot, norm, normalize, scale, sub, unwrap_angle},
     polygon::polygon_signed_area,
-    scalars::Scalar,
+    scalars::{ScalInF64, Scalar},
     solvers::{
-        bisect::{Bracket, bisect},
+        bisect::{Bracket, bisect, sign_changes},
         iterate::{Repeat, Step, iterate},
-        linear::solve_symmetric2,
-        minimize::GoldenSection,
+        linear::{damped_least_squares, solve_symmetric2},
         refine::{Refine, Refined, refine},
         repeat::{self, repeat},
         walk::{Walked, walk},
@@ -69,7 +68,6 @@ use geop_core_topology::{
 
 use super::{
     geometry::{Frame, Profile, Revolved, Scope, Shape, SurfaceDef, SurfaceKind, parameter_of},
-    midpoints::{CurveMidpoints, SurfaceMidpoints},
     reader::{Reader, unsupported},
     structure::Item,
 };
@@ -203,20 +201,35 @@ impl<S: Scalar> Vertex<S> {
 }
 
 /// Points along the loop `lp` of `edges`, `LOOP_SAMPLES` per coedge as it
-/// runs, each coedge's end left out as the next one's start. Where to
-/// sample is a free choice, and the points are compared in `f64`.
-fn loop_points<S: Scalar>(edges: &[Edge<S>], lp: &[Use]) -> Vec<P3> {
+/// runs, each coedge's end left out as the next one's start.
+fn loop_points<S: Scalar>(edges: &[Edge<S>], lp: &[Use]) -> GeopResult<Vec<P3>> {
     let mut points = Vec::new();
-    for &(e, forward) in lp {
-        let curve = CurveMidpoints::of(&edges[e].curve);
-        let (lo, hi) = curve.domain();
-        for i in 0..LOOP_SAMPLES {
-            let f = i as f64 / LOOP_SAMPLES as f64;
-            let f = if forward { f } else { 1.0 - f };
-            points.push(curve.point(lo + (hi - lo) * f));
-        }
+    for &u in lp {
+        let mut samples = coedge_samples(edges, u, LOOP_SAMPLES)?;
+        samples.pop();
+        points.extend(samples.into_iter().map(|(_, p)| p));
     }
-    points
+    Ok(points)
+}
+
+/// Points along the coedge `(e, forward)` of `edges`, as it runs, with the
+/// edge parameter of each: `n + 1` of them, ends included. Where to sample
+/// is a free choice, and the points are compared in `f64`.
+fn coedge_samples<S: Scalar>(
+    edges: &[Edge<S>],
+    (e, forward): Use,
+    n: usize,
+) -> GeopResult<Vec<(f64, P3)>> {
+    let curve = &edges[e].curve;
+    let (lo, hi) = curve.domain();
+    let (lo, hi) = (lo.to_f64(), hi.to_f64());
+    (0..=n)
+        .map(|i| {
+            let f = i as f64 / n as f64;
+            let t = lo + (hi - lo) * if forward { f } else { 1.0 - f };
+            Ok((t, super::geometry::point_at(curve, t)?))
+        })
+        .collect()
 }
 
 struct Edge<S: Scalar> {
@@ -600,25 +613,14 @@ impl<S: Scalar> Builder<'_, S> {
 
     /// Points along a coedge, as it runs, with the edge parameter of each:
     /// `n + 1` of them, ends included.
-    fn samples(&self, (e, forward): Use, n: usize) -> GeopResult<Vec<(f64, P3)>> {
-        // Where to sample is a free choice, and the points are compared in
-        // `f64`.
-        let midpoints = CurveMidpoints::of(&self.edges[e].curve);
-        let (lo, hi) = midpoints.domain();
-        let mut out = Vec::with_capacity(n + 1);
-        for i in 0..=n {
-            let f = i as f64 / n as f64;
-            let f = if forward { f } else { 1.0 - f };
-            let t = lo + (hi - lo) * f;
-            out.push((t, midpoints.point(t)));
-        }
-        Ok(out)
+    fn samples(&self, u: Use, n: usize) -> GeopResult<Vec<(f64, P3)>> {
+        coedge_samples(&self.edges, u, n)
     }
 
     /// Points along a loop, each coedge's last one left out as the next
     /// one's first.
     fn loop_points(&self, lp: &[Use]) -> GeopResult<Vec<P3>> {
-        Ok(loop_points(&self.edges, lp))
+        loop_points(&self.edges, lp)
     }
 
     /// Splits `edge` at the parameters `ts`, strictly inside its domain
@@ -1576,39 +1578,24 @@ impl<S: Scalar> Builder<'_, S> {
             .collect();
 
         // Where the loop crosses each cut: the edge, its parameter, and
-        // the profile parameter there.
+        // the profile parameter there. Once for each crossing, a sample on
+        // the cut included.
         let mut crossings: Vec<(usize, f64, usize, f64)> = Vec::new(); // (edge, t, cut, v)
-        for w in samples.windows(2) {
-            let ((k0, t0, a0, _), (k1, t1, a1, _)) = (w[0], w[1]);
-            if k0 != k1 {
-                continue;
-            }
-            let u = lp[k0];
-            for (c, &cut) in cuts.iter().enumerate() {
-                // Once for each crossing, a sample on the cut included.
-                if (a0 < cut) == (a1 < cut) {
+        let angle_of = |p: P3| revolved.chart(p).0;
+        for (c, &cut) in cuts.iter().enumerate() {
+            let below =
+                |&(_, _, a, _): &(usize, f64, f64, f64)| -> GeopResult<_> { Ok(Some(a < cut)) };
+            for bracket in sign_changes(&samples, below) {
+                let (&(k0, t0, _, _), &(k1, t1, _, _), _) = bracket?;
+                if k0 != k1 {
                     continue;
                 }
-                // Bisection, as far as `f64` goes: where exactly is a free
-                // choice the meridian is built through.
-                let angle_at = |t: f64| -> GeopResult<f64> {
-                    let p = super::geometry::point_at(&self.edges[u.0].curve, t)?;
-                    let a = revolved
-                        .chart(p)
-                        .0
-                        .ok_or_else(|| GeopError::new("its loop runs through its axis"))?;
-                    Ok(unwrap_angle(a, cut))
-                };
-                let below = angle_at(t0)? < cut;
-                let Bracket { lo, hi, .. } =
-                    bisect(t0, t1, 100, true, |_, mid| -> GeopResult<_> {
-                        Ok(Some((angle_at(mid)? < cut) == below))
-                    })?;
-                let t = 0.5 * (lo + hi);
+                let e = lp[k0].0;
+                let t = self.angle_crossing(e, (t0, t1), cut, &angle_of)?;
                 let v = revolved
-                    .chart(super::geometry::point_at(&self.edges[u.0].curve, t)?)
+                    .chart(super::geometry::point_at(&self.edges[e].curve, t)?)
                     .1;
-                crossings.push((u.0, t, c, v));
+                crossings.push((e, t, c, v));
             }
         }
         // Split every edge where it is crossed.
@@ -1808,10 +1795,9 @@ impl<S: Scalar> Builder<'_, S> {
         Err(GeopError::new("a ring does not reach the next cut"))
     }
 
-    /// Where along the ring `lp` it crosses the angle `cut`: the edge,
-    /// and its parameter there. A free choice of where exactly, refined
-    /// as far as `f64` bisection goes: the cut's meridian is built through
-    /// what the edge has there.
+    /// Where along the ring `lp` it crosses the angle `cut`, as `angle_of`
+    /// measures it, by whole turns: the edge, and its parameter there (see
+    /// [`Self::angle_crossing`]).
     fn crossing(
         &self,
         lp: &[Use],
@@ -1822,33 +1808,18 @@ impl<S: Scalar> Builder<'_, S> {
         let mut prev: Option<f64> = None;
         let mut covered = (f64::INFINITY, f64::NEG_INFINITY);
         for &u in lp {
-            let samples = self.samples(u, LOOP_SAMPLES)?;
             let mut last: Option<(f64, f64)> = None; // (parameter, unwrapped angle)
-            for &(t, p) in &samples {
+            for (t, p) in self.samples(u, LOOP_SAMPLES)? {
                 let Some(a) = angle_of(p) else {
                     continue;
                 };
-                let a = match prev {
-                    Some(r) => unwrap_angle(a, r),
-                    None => a,
-                };
+                let a = prev.map_or(a, |r| unwrap_angle(a, r));
+                // A sample on the cut counts with either neighbour.
                 if let Some((t_prev, a_prev)) = last {
                     let (lo, hi) = (a_prev.min(a), a_prev.max(a));
                     let x = cut + TAU * ((lo - cut) / TAU).ceil();
                     if x <= hi && lo < hi {
-                        let theta = |t: f64| -> GeopResult<f64> {
-                            let p = super::geometry::point_at(&self.edges[u.0].curve, t)?;
-                            let angle = angle_of(p).ok_or_else(|| {
-                                GeopError::new("a loop round its axis runs through it")
-                            })?;
-                            Ok(unwrap_angle(angle, x) - x)
-                        };
-                        let below = theta(t_prev)? <= 0.0;
-                        let Bracket { lo, hi, .. } =
-                            bisect(t_prev, t, 100, true, |_, mid| -> GeopResult<_> {
-                                Ok(Some((theta(mid)? <= 0.0) == below))
-                            })?;
-                        return Ok((u.0, 0.5 * (lo + hi)));
+                        return Ok((u.0, self.angle_crossing(u.0, (t_prev, t), cut, angle_of)?));
                     }
                 }
                 last = Some((t, a));
@@ -1859,6 +1830,34 @@ impl<S: Scalar> Builder<'_, S> {
         Err(GeopError::new(format!(
             "a loop round its axis never reaches the angle {cut}: it covers the angles {covered:?}"
         )))
+    }
+
+    /// Where between its parameters `t0` and `t1` the edge `e` crosses the
+    /// angle `cut`, as `angle_of` measures it, by whole turns. A free choice
+    /// of where exactly, refined as far as `f64` bisection goes: a cut's
+    /// meridian is built through what the edge has there.
+    fn angle_crossing(
+        &self,
+        e: usize,
+        (t0, t1): (f64, f64),
+        cut: f64,
+        angle_of: &dyn Fn(P3) -> Option<f64>,
+    ) -> GeopResult<f64> {
+        let below = |t: f64| -> GeopResult<bool> {
+            let p = super::geometry::point_at(&self.edges[e].curve, t)?;
+            let a = angle_of(p).ok_or_else(|| {
+                GeopError::new(format!(
+                    "the edge {} runs through the axis at {p:?}",
+                    self.edges[e].label()
+                ))
+            })?;
+            Ok(unwrap_angle(a, cut) < cut)
+        };
+        let start = below(t0)?;
+        let Bracket { lo, hi, .. } = bisect(t0, t1, 100, true, |mid| -> GeopResult<_> {
+            Ok(Some(below(mid)? == start))
+        })?;
+        Ok(0.5 * (lo + hi))
     }
 
     /// The meridian at angle `angle` from `bottom` to `top`, each a point,
@@ -1949,20 +1948,21 @@ impl<S: Scalar> Builder<'_, S> {
             } else {
                 patch.surface.reverse_u()
             };
-            let grid = Grid::new(&surface);
+            let grid = Grid::new(&surface).map_err(&ctx)?;
             built.push((patch, surface, grid));
         }
         let (rebuild, healed) = heal(&faces, &built, &mut edges, &mut vertices, &scope)?;
         for (f, face) in faces.iter().enumerate() {
             if rebuild[f] {
-                let surface = rebuilt_surface(face, &edges).map_err(|e| {
+                let ctx = |e: GeopError| {
                     e.with_context(format!(
                         "rebuilding the face #{} ({}) from its edges, where its surface contradicts its neighbours'",
                         face.id,
                         face.name.join(",")
                     ))
-                })?;
-                let grid = Grid::new(&surface);
+                };
+                let surface = rebuilt_surface(face, &edges).map_err(ctx)?;
+                let grid = Grid::new(&surface).map_err(ctx)?;
                 let patch = Patch {
                     surface: surface.clone(),
                     extent: None,
@@ -2565,64 +2565,90 @@ fn revolved_extent(
     Ok([lo - margin, hi + margin, v0, v1])
 }
 
-/// A grid of a patch's points, to seed projections onto it from, and its
-/// midpoints to search for foot points on in `f64`.
+/// A sharp copy of a patch — its control points, weights and knots at the
+/// middles of their enclosures — and a grid of its points, cached: to find
+/// foot points on where where exactly is a free choice of where to start
+/// from, or a measurement in `f64`. Off the patch only by roundings, and
+/// many times cheaper to search than its enclosure.
 struct Grid {
-    surface: SurfaceMidpoints,
-    points: Vec<(f64, f64, P3)>,
+    surface: NurbSurface3D<Sharp>,
+    points: Vec<((Sharp, Sharp), P3)>,
 }
 
-const GRID: usize = 12;
+/// Grid points per polynomial piece of a patch and direction.
+const GRID: usize = 6;
 
 /// How many of the nearest grid points a projection tries Newton from.
 const SEEDS: usize = 4;
 
+/// Newton steps of a projection onto a patch, at most.
+const PROJECT_STEPS: usize = 30;
+
 impl Grid {
-    fn new<S: Scalar>(surface: &NurbSurface3D<S>) -> Self {
-        let surface = SurfaceMidpoints::of(surface);
-        let (u0, u1) = surface.domain_u();
-        let (v0, v1) = surface.domain_v();
-        let mut points = Vec::with_capacity((GRID + 1) * (GRID + 1));
-        for i in 0..=GRID {
-            for j in 0..=GRID {
-                let u = u0 + (u1 - u0) * i as f64 / GRID as f64;
-                let v = v0 + (v1 - v0) * j as f64 / GRID as f64;
-                points.push((u, v, surface.point(u, v)));
-            }
-        }
-        Self { surface, points }
+    fn new<S: Scalar>(surface: &NurbSurface3D<S>) -> GeopResult<Self> {
+        let surface = surface.map(sharp)?;
+        let mut points = surface
+            .sample_parameters(GRID)?
+            .into_iter()
+            .map(|(u, v)| Ok(((u, v), surface.evaluate(u, v)?.to_f64_array())))
+            .collect::<GeopResult<Vec<_>>>()?;
+        // A pole is one point however many `(u, v)` sample it: one seed,
+        // not the few nearest.
+        let mut seen = std::collections::HashSet::new();
+        points.retain(|(_, p)| seen.insert(p.map(f64::to_bits)));
+        Ok(Self { surface, points })
     }
 
-    /// The foot point `(u, v)` of `p` on the surface's midpoints, a free
-    /// choice of where to start from or a measurement in `f64`: Newton
-    /// runs from the few nearest grid points, and from `seed` if there is
-    /// one, and the foot point nearest `p` wins — on a curved patch the
-    /// nearest grid point can lie in the basin of another foot point, and a
-    /// seed at a pole may lead down the wrong meridian.
-    fn foot(&self, p: P3, seed: Option<(f64, f64)>) -> (f64, f64) {
-        let mut near: Vec<&(f64, f64, P3)> = self.points.iter().collect();
+    /// The foot point `(u, v)` of `p` on the sharp copy, a free choice of
+    /// where to start from or a measurement in `f64`, and the point there:
+    /// Newton ([`NurbSurface::project`]) runs from the few nearest grid
+    /// points, and from `seed` if there is one, and the foot point nearest
+    /// `p` wins — on a curved patch the nearest grid point can lie in the
+    /// basin of another foot point, and a seed at a pole may lead down the
+    /// wrong meridian.
+    fn foot(&self, p: P3, seed: Option<(Sharp, Sharp)>) -> GeopResult<((Sharp, Sharp), P3)> {
+        let mut near: Vec<&((Sharp, Sharp), P3)> = self.points.iter().collect();
         let nearest = SEEDS.min(near.len());
         near.select_nth_unstable_by(nearest - 1, |a, b| {
-            distance(a.2, p).total_cmp(&distance(b.2, p))
+            distance(a.1, p).total_cmp(&distance(b.1, p))
         });
-        let seeds = near[..nearest].iter().map(|&&(u, v, _)| (u, v));
-        let mut best = (f64::INFINITY, (near[0].0, near[0].1));
+        let seeds = near[..nearest].iter().map(|&&(uv, _)| uv);
+        let ((u0, u1), (v0, v1)) = (self.surface.domain_u(), self.surface.domain_v());
+        let mut best: Option<(f64, (Sharp, Sharp), P3)> = None;
         for (u, v) in seed.into_iter().chain(seeds) {
-            let (u, v) = self.surface.project(p, u, v);
-            let d = distance(self.surface.point(u, v), p);
-            if d < best.0 {
-                best = (d, (u, v));
+            // Sharpened before it is clamped, so it stays in the domain.
+            let (u, v) = self.surface.project(s3(p), u, v, PROJECT_STEPS)?;
+            let uv = (u.sharpen().clamped(u0, u1), v.sharpen().clamped(v0, v1));
+            let at = self.surface.evaluate(uv.0, uv.1)?.to_f64_array();
+            let d = distance(at, p);
+            if best.is_none_or(|(least, ..)| d < least) {
+                best = Some((d, uv, at));
             }
         }
-        best.1
+        let (_, uv, at) = best.expect("a grid has points");
+        Ok((uv, at))
     }
 
     /// The foot point of `p` on `surface`, the patch's own: Newton on the
-    /// enclosures, from the foot point on its midpoints.
+    /// enclosures, from the foot point on its sharp copy.
     fn project<S: Scalar>(&self, surface: &NurbSurface3D<S>, p: &Vector3<S>) -> GeopResult<(S, S)> {
-        let (u, v) = self.foot(p.to_f64_array(), None);
-        surface.project(*p, S::from_f64(u), S::from_f64(v), 30)
+        let ((u, v), _) = self.foot(p.to_f64_array(), None)?;
+        surface.project(
+            *p,
+            S::from_f64(u.to_f64()),
+            S::from_f64(v.to_f64()),
+            PROJECT_STEPS,
+        )
     }
+}
+
+/// The scalar of the sharp copies of curves and surfaces the importer
+/// samples and measures on in `f64` (see [`Grid`]).
+type Sharp = ScalInF64;
+
+/// The middle of `c`'s enclosure, as a [`Sharp`] scalar.
+fn sharp<S: Scalar>(c: S) -> Sharp {
+    Sharp::from_f64(c.to_f64())
 }
 
 /// Fits the pcurves of the loop `lp` on `surface`, pinning both ends of
@@ -2790,26 +2816,17 @@ fn fit_loop<S: Scalar>(
     Ok(joined)
 }
 
-/// The nearest point of `surface` to `p`, and the surface's unit normal
-/// there — none at an apex, where it has no single one. Measured on its
-/// midpoints, where the derivatives there span a plane; at a pole, where
-/// they do not, the surface's own limit normal.
-fn foot<S: Scalar>(surface: &NurbSurface3D<S>, grid: &Grid, p: P3) -> GeopResult<(P3, Option<P3>)> {
-    let (u, v) = grid.foot(p, None);
-    let (at, su, sv) = grid.surface.partials(u, v);
-    let normal = match normalize(cross(su, sv)) {
-        Some(n) => Some(n),
-        None => surface
-            .normal(S::from_f64(u), S::from_f64(v))
-            .ok()
-            .map(|n| n.to_f64_array()),
-    };
+/// The nearest point to `p` of the surface `grid` is of, and the surface's
+/// unit normal there — none at an apex, where it has no single one.
+fn foot(grid: &Grid, p: P3) -> GeopResult<(P3, Option<P3>)> {
+    let ((u, v), at) = grid.foot(p, None)?;
+    let normal = grid.surface.normal(u, v).ok().map(|n| n.to_f64_array());
     Ok((at, normal))
 }
 
-/// How far `p` lies from `surface`.
-fn off<S: Scalar>(surface: &NurbSurface3D<S>, grid: &Grid, p: P3) -> GeopResult<f64> {
-    Ok(distance(foot(surface, grid, p)?.0, p))
+/// How far `p` lies from the surface `grid` is of.
+fn off(grid: &Grid, p: P3) -> GeopResult<f64> {
+    Ok(distance(foot(grid, p)?.0, p))
 }
 
 /// Samples along an edge telling whether it strays from its faces.
@@ -2818,36 +2835,37 @@ const STRAY_SAMPLES: usize = 16;
 /// How far `curve` strays from the surface `grid` is of, sampled: each
 /// sample's foot point found from the grid and, a walk along the curve as
 /// `fit_pcurve` takes, from the one before.
-fn strays(curve: &CurveMidpoints, grid: &Grid) -> f64 {
+fn strays<S: Scalar>(curve: &NurbCurve3D<S>, grid: &Grid) -> GeopResult<f64> {
     let (lo, hi) = curve.domain();
-    let mut seed: Option<(f64, f64)> = None;
+    let (lo, hi) = (lo.to_f64(), hi.to_f64());
+    let mut seed = None;
     let mut most = 0.0f64;
     for k in 0..=STRAY_SAMPLES {
-        let p = curve.point(lo + (hi - lo) * k as f64 / STRAY_SAMPLES as f64);
-        let (u, v) = grid.foot(p, seed);
-        seed = Some((u, v));
-        most = most.max(distance(grid.surface.point(u, v), p));
+        let p = super::geometry::point_at(curve, lo + (hi - lo) * k as f64 / STRAY_SAMPLES as f64)?;
+        let (uv, at) = grid.foot(p, seed)?;
+        seed = Some(uv);
+        most = most.max(distance(at, p));
     }
-    most
+    Ok(most)
 }
 
 /// Newton steps taken towards where surfaces meet.
 const MEET_ITERATIONS: usize = 40;
 
 /// How much a step towards where surfaces meet is held back along a
-/// direction they barely constrain (Levenberg–Marquardt damping, against
+/// direction they barely constrain (see [`damped_least_squares`], against
 /// unit normals): where surfaces meet at an angle under a thousandth of a
 /// radian, the point stays near where it was along their tangent instead of
 /// running off along it. A free choice of which point, among those the
 /// surfaces leave free; whether it lies on them is checked after.
 const MEET_DAMPING: f64 = 1e-6;
 
-/// The point near `start` lying on every one of `surfaces`, where they
-/// meet: Newton's step on their tangent planes, from `start`, each moving
-/// the point as little as satisfies them. Whether it got there is for the
-/// caller to check ([`off`]): surfaces that do not meet leave it where they
-/// come nearest to each other.
-fn meet<S: Scalar>(start: P3, surfaces: &[(&NurbSurface3D<S>, &Grid)]) -> GeopResult<P3> {
+/// The point near `start` lying on every one of the surfaces of `grids`,
+/// where they meet: Newton's step on their tangent planes, from `start`,
+/// each moving the point as little as satisfies them. Whether it got there
+/// is for the caller to check ([`off`]): surfaces that do not meet leave it
+/// where they come nearest to each other.
+fn meet(start: P3, grids: &[&Grid]) -> GeopResult<P3> {
     // In plain numbers, so a step that changes nothing is a fixed point.
     Ok(iterate(
         start,
@@ -2856,37 +2874,18 @@ fn meet<S: Scalar>(start: P3, surfaces: &[(&NurbSurface3D<S>, &Grid)]) -> GeopRe
         Repeat::FixedPoint,
         |&next| (next, next),
         |&x| -> GeopResult<Step<P3>> {
-            // (Σ n nᵀ + μ I) dx = -Σ n (n · (x - f)).
-            let mut a: [[f64; 3]; 3] = std::array::from_fn(|i| {
-                std::array::from_fn(|j| if i == j { MEET_DAMPING } else { 0.0 })
-            });
-            let mut b = [0.0f64; 3];
-            for (surface, grid) in surfaces {
-                let (f, normal) = foot(surface, grid, x)?;
+            let mut rows = Vec::with_capacity(grids.len());
+            for grid in grids {
+                let (f, normal) = foot(grid, x)?;
                 // Off the surface, the way to its nearest point is its normal
                 // there, whatever the surface's own: what an apex has instead.
                 let Some(n) = normal.or_else(|| normalize(sub(x, f))) else {
                     continue;
                 };
-                let r = dot(n, sub(x, f));
-                for i in 0..3 {
-                    for j in 0..3 {
-                        a[i][j] += n[i] * n[j];
-                    }
-                    b[i] -= n[i] * r;
-                }
+                rows.push((s3(n), Sharp::from_f64(dot(n, sub(f, x)))));
             }
-            let det = |m: [[f64; 3]; 3]| dot(m[0], cross(m[1], m[2]));
-            let d = det(a);
-            // Cramer's rule: `a` is symmetric positive definite.
-            let dx: P3 = std::array::from_fn(|c| {
-                let mut m = a;
-                for (row, value) in m.iter_mut().zip(b) {
-                    row[c] = value;
-                }
-                det(m) / d
-            });
-            Ok(Step::Next(add(x, dx)))
+            let step = damped_least_squares(&rows, Sharp::from_f64(MEET_DAMPING))?;
+            Ok(Step::Next(add(x, step.to_f64_array())))
         },
     )?
     .seed)
@@ -2942,9 +2941,7 @@ fn heal<S: Scalar>(
             }
         }
     }
-    let surfaces = |fs: &[usize]| -> Vec<(&NurbSurface3D<S>, &Grid)> {
-        fs.iter().map(|&f| (&built[f].1, &built[f].2)).collect()
-    };
+    let surfaces = |fs: &[usize]| -> Vec<&Grid> { fs.iter().map(|&f| &built[f].2).collect() };
     let names = |fs: &[usize]| -> String {
         fs.iter()
             .map(|&f| format!("{} (#{})", faces[f].name.join(","), faces[f].id))
@@ -2954,8 +2951,8 @@ fn heal<S: Scalar>(
     // How far `p` lies from each of `fs`, at most.
     let furthest = |p: P3, fs: &[usize]| -> GeopResult<f64> {
         let mut most = 0.0f64;
-        for (surface, grid) in surfaces(fs) {
-            most = most.max(off(surface, grid, p)?);
+        for grid in surfaces(fs) {
+            most = most.max(off(grid, p)?);
         }
         Ok(most)
     };
@@ -2972,7 +2969,7 @@ fn heal<S: Scalar>(
     for face in faces {
         let mut area = [0.0f64; 3];
         for lp in &face.loops {
-            let points = loop_points(edges, lp);
+            let points = loop_points(edges, lp)?;
             for (k, &p) in points.iter().enumerate() {
                 area = add(area, scale(cross(p, points[(k + 1) % points.len()]), 0.5));
             }
@@ -3034,8 +3031,24 @@ fn heal<S: Scalar>(
             return Ok(healed);
         }
         let (left, healed) = nearest.unwrap_or((0.0, p));
+        // How far the point lies from each surface to begin with, and
+        // where on each the search found its nearest point.
+        let apart = kept
+            .iter()
+            .map(|&f| {
+                let grid = &built[f].2;
+                let ((u, v), at) = grid.foot(p, None)?;
+                Ok(format!(
+                    "{:e} mm from {at:?}, at {:?} of the domain {:?}",
+                    distance(at, p),
+                    (u.to_f64(), v.to_f64()),
+                    (grid.surface.domain_u(), grid.surface.domain_v()),
+                ))
+            })
+            .collect::<GeopResult<Vec<_>>>()?
+            .join("; ");
         Err(GeopError::new(format!(
-            "the surfaces of its faces {} {} — and no choice of the faces of one loop of four edges or more among them, rebuilt from their edges instead, leaves the rest meeting there",
+            "the surfaces of its faces {} (it lies {apart}) {} — and no choice of the faces of one loop of four edges or more among them, rebuilt from their edges instead, leaves the rest meeting there",
             names(&kept),
             if left > scope.uncertainty {
                 format!(
@@ -3115,10 +3128,9 @@ fn heal<S: Scalar>(
             let apart = match &edge_apart[e] {
                 Some((measured, apart)) if *measured == fs => *apart,
                 _ => {
-                    let midpoints = CurveMidpoints::of(&old);
                     let mut apart = 0.0f64;
-                    for (_, grid) in surfaces(&fs) {
-                        apart = apart.max(strays(&midpoints, grid));
+                    for grid in surfaces(&fs) {
+                        apart = apart.max(strays(&old, grid).map_err(&ectx)?);
                     }
                     apart
                 }
@@ -3363,14 +3375,6 @@ const WIDENINGS: usize = 4;
 /// kernel's validation samples at among them.
 const GAP_SAMPLES: usize = 64;
 
-/// Golden-section steps finding the nearest point of an edge to a pcurve's
-/// sample: from two table steps down to a rounding of the parameter.
-const NEAREST_ITERATIONS: usize = 80;
-
-/// Of those, the last ones, taken on the curve's enclosure rather than its
-/// midpoints in `f64`.
-const NEAREST_ON_ENCLOSURE: usize = 12;
-
 /// How far, per coordinate, the points a pcurve puts on its surface lie
 /// from the edge's curve `curve` — sampled, each against the curve's
 /// nearest point: how far the point's midpoint, the pcurve's own best
@@ -3385,17 +3389,21 @@ fn edge_gap<S: Scalar>(
     let mut gap = [0.0f64; 3];
     let mut worst: Option<Worst> = None;
     // Each sample's nearest curve point: the nearest of a table of the
-    // curve's points, polished by Newton.
+    // points of the curve's sharp copy, polished by Newton on it. Which
+    // parameter is a free choice — a nearer point only measures a smaller
+    // gap — so it is found on the sharp copy, which is cheap.
     let (c0f, c1f) = (c0.to_f64(), c1.to_f64());
-    let midpoints = CurveMidpoints::of(curve);
+    let sharp_curve = curve.map(sharp)?;
     let rows = 8 * curve.control_points.len() + 32;
-    let table: Vec<(f64, P3)> = (0..=rows)
+    let table: Vec<(Sharp, P3)> = (0..=rows)
         .map(|k| {
-            let t = c0f + (c1f - c0f) * k as f64 / rows as f64;
-            (t, midpoints.point(t))
+            let t = (c0f + (c1f - c0f) * k as f64 / rows as f64).min(c1f);
+            Ok((
+                Sharp::from_f64(t),
+                super::geometry::point_at(&sharp_curve, t)?,
+            ))
         })
-        .collect();
-    let step = (c1f - c0f) / rows as f64;
+        .collect::<GeopResult<_>>()?;
     for i in 0..=GAP_SAMPLES {
         let f = S::from_ratio(i as i64, GAP_SAMPLES as i64)?;
         let t = match i {
@@ -3414,25 +3422,9 @@ fn edge_gap<S: Scalar>(
             .iter()
             .min_by(|a, b| distance(a.1, target).total_cmp(&distance(b.1, target)))
             .expect("a table of points");
-        // Which parameter is a free choice — a nearer point only measures
-        // a smaller gap — so it is found in `f64`, on the curve's
-        // midpoints, by golden section between the table's neighbours of
-        // the nearest. (Newton's refinement gives its window back for a
-        // point at an end, reached a rounding past it, and the window's
-        // middle is half a step off; on a widened curve its last step
-        // inherits the width, and is off along the curve by about that.)
-        // The midpoints in `f64` narrow the window, which is cheap; the
-        // enclosure's own midpoints, which the gap is measured against,
-        // decide its last bits, where the two differ by roundings.
-        let mut search = GoldenSection::new((seed - step).max(c0f), (seed + step).min(c1f));
-        search.narrow(NEAREST_ITERATIONS - NEAREST_ON_ENCLOSURE, |t| {
-            Ok::<_, GeopError>(distance(midpoints.point(t), target))
-        })?;
-        // The last steps on the enclosure.
-        search.narrow(NEAREST_ON_ENCLOSURE, |t| {
-            Ok::<_, GeopError>(distance(super::geometry::point_at(curve, t)?, target))
-        })?;
-        let GoldenSection { a, b, .. } = search;
+        let t = sharp_curve
+            .closest_parameter_from(&s3(target), seed)?
+            .to_f64();
         // The ends are the domain's own. The pcurve's own ends are pinned
         // where the edge ends, at its vertices: they are measured against
         // the curve's nearer end, never a point next to it — which can be
@@ -3440,11 +3432,7 @@ fn edge_gap<S: Scalar>(
         // end's does not, while the validation's clipping, tight at an
         // end, holds to the end's. Which is nearest is told on the curve's
         // enclosure, which the gap is measured against.
-        let candidates = [
-            (c0f, c0),
-            (c1f, c1),
-            ((a + b) / 2.0, S::from_f64((a + b) / 2.0)),
-        ];
+        let candidates = [(c0f, c0), (c1f, c1), (t, S::from_f64(t))];
         let exact_gap_at = |t: f64| -> GeopResult<f64> {
             Ok(distance(super::geometry::point_at(curve, t)?, target))
         };

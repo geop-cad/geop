@@ -9,6 +9,12 @@ mod hole;
 mod icons;
 pub mod iso;
 pub mod operation;
+#[cfg(test)]
+mod pattern_tests;
+#[cfg(test)]
+mod program_tests;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 mod thread;
 
 pub use operation::{Hole, HoleArgs, HoleKind, Standard, Thread, ThreadArgs};

@@ -528,10 +528,7 @@ fn gear_drive() -> Program {
     use geop_ops_assembly::{AddPartArgs, CouplingKind, JointKind, Mate, Transmission};
     use geop_ops_datums::{AddDatumArgs, Construction};
 
-    use crate::{
-        Push,
-        examples::{n, pose},
-    };
+    use crate::examples::{n, pose};
 
     let mut program = Program::new();
     program.push(

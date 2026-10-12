@@ -20,9 +20,9 @@ use geop_ops::{
 use geop_ops_assembly::{AddPartArgs, CouplingKind, JointKind, Mate, Transmission};
 use geop_ops_urdf::{JointType, Mechanism, Origin, Robot, URDF_FILE, UrdfExport, export};
 
+use crate::Program;
 use crate::examples::{self, n, pose};
-use crate::operations::{Runner, run, runner, workspace};
-use crate::{Program, Push};
+use crate::operations::{Runner, runner, workspace};
 
 /// The files of the workspace example `name`, by path, and its first
 /// program.
@@ -61,11 +61,11 @@ fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Buil
     let library = workspace(files).scope(path);
     let mut program = program.clone();
     let mut built = runner();
-    run(&mut built, &program, &library).unwrap();
+    program.run(&mut built, &Values::new(), &library).unwrap();
     let (moved, report) = solving::solve(&mut built.part, &program.state, &[], None).unwrap();
     assert!(report.converged, "{report:?}");
     program.state.extend(moved);
-    run(&mut built, &program, &library).unwrap();
+    program.run(&mut built, &Values::new(), &library).unwrap();
     Built(built, program.state)
 }
 

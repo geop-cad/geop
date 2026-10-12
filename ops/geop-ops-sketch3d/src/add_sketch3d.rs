@@ -297,7 +297,7 @@ fn wire_of<S: Scalar>(
 /// and the keys of the visuals selected.
 pub type Sketch3dEditing = FormState<Sketch3dSession>;
 
-part_operation!(AddSketch3d);
+part_operation!(AddSketch3d(AddSketch3dArgs));
 
 impl PartOperation for AddSketch3d {
     const INFO: OperationInfo = OperationInfo::new(

@@ -55,7 +55,7 @@ pub struct ExtendSurfaceArgs {
     pub distance: f64,
 }
 
-part_operation!(ExtendSurface);
+part_operation!(ExtendSurface(ExtendSurfaceArgs));
 
 impl PartOperation for ExtendSurface {
     const INFO: OperationInfo = OperationInfo::new(

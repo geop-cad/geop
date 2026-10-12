@@ -23,6 +23,8 @@ pub mod subdivide;
 
 mod icons;
 #[cfg(test)]
+mod program_tests;
+#[cfg(test)]
 mod tests;
 
 pub use cage::{Cage, CageFace, CageVertex, Mirror};

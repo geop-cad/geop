@@ -94,7 +94,7 @@ impl FilletArgs {
     }
 }
 
-part_operation!(Fillet, Chamfer);
+part_operation!(Fillet(FilletArgs), Chamfer(ChamferArgs));
 
 impl PartOperation for Fillet {
     const INFO: OperationInfo = OperationInfo::new(

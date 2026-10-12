@@ -106,6 +106,18 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
         })
     }
 
+    /// The same surface with every control point coordinate, weight and
+    /// knot mapped by `f` — into another scalar type, say.
+    pub fn map<T: Scalar>(&self, f: impl Fn(S) -> T) -> GeopResult<NurbSurface<T, D>> {
+        NurbSurface::try_new(
+            self.degree_u,
+            self.degree_v,
+            self.control_points.iter().map(|p| p.map(&f)).collect(),
+            self.knot_vector_u.iter().map(|&k| f(k)).collect(),
+            self.knot_vector_v.iter().map(|&k| f(k)).collect(),
+        )
+    }
+
     /// Refresh the cached [`Self::aabb`] from the current `control_points`
     /// — see [`crate::nurb_curve::NurbCurve::recompute_aabb`]'s identical
     /// doc comment for why this is needed at all (`control_points` is

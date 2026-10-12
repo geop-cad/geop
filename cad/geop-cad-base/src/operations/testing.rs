@@ -1,35 +1,27 @@
-//! What the tests of programs share: building one, reading and changing
-//! its steps' arguments as their types, drawing the sketches it starts
-//! from, editing it as a front end does, and checking what it built (with
-//! what every operation's tests share, from `geop_ops::testing`).
+//! What the tests of programs share beyond what every operation's tests
+//! do (`geop_ops::testing`, `geop_ops_extrude_revolve::testing`): building
+//! one beside the standard parts, and editing it as a front end does.
 
 use std::collections::BTreeMap;
 
-use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_math::{
-    primitives::Ray,
-    scalars::{ScalInF64 as S, Scalar},
-    vector::Vector3,
-};
-use geop_core_program::program::ProgramStep;
+use geop_core_math::geop_error::GeopResult;
+use geop_core_math::scalars::ScalInF64 as S;
 use geop_ops::{
-    Design, EntityRef, NamedModel,
-    model::model,
-    ui::{Button, Pointer, Reach, StepEditEvent, Value},
+    Design, NamedModel,
+    testing::model_of,
+    ui::{Button, Pointer, StepEditEvent, Value},
 };
-use geop_ops_booleans::Combine;
-use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, Output};
-use geop_ops_sketch::{AddSketchArgs, Sketch};
-use serde::{Serialize, de::DeserializeOwned};
 
-pub(crate) use geop_ops::testing::{assert_valid, check_valid, has_vertex};
+pub(crate) use geop_ops::testing::{
+    args, assert_valid, check_valid, edit_args, error, from_above, pointer, solid_volume, step,
+};
 pub(crate) use geop_ops::{origin_axis, origin_plane};
+pub(crate) use geop_ops_extrude_revolve::testing::{
+    both_ways, disc, extrude_sketch, extrusion, one_way, outline, rectangle, sketch, two_ways,
+};
 
 use super::{Program, Runner, build, workspace};
-use crate::{
-    Command, Editor, Push, Update,
-    examples::{n, polygon},
-};
+use crate::{Command, Editor, Update};
 
 /// Building a program on its own, in an empty [`workspace`] (see [`build`]).
 pub(crate) trait Built {
@@ -46,132 +38,8 @@ impl Built for Program {
     }
 
     fn build_model(&self) -> GeopResult<NamedModel<Design>> {
-        let runner = self.built()?;
-        let built = runner.part.current().retrieve_target(&model());
-        // A program that builds no topology builds an empty model.
-        Ok(built.cloned().unwrap_or_default())
+        Ok(model_of(&self.built()?))
     }
-}
-
-/// The arguments of `step`, as their type `A`.
-pub(crate) fn args<A: DeserializeOwned>(step: &ProgramStep) -> A {
-    serde_json::from_value(step.args.clone())
-        .unwrap_or_else(|e| panic!("step {:?} holds no such arguments: {e}", step.id))
-}
-
-/// Changes the arguments of `step`, as their type `A`, by `edit`.
-pub(crate) fn edit_args<A: Serialize + DeserializeOwned>(
-    step: &mut ProgramStep,
-    edit: impl FnOnce(&mut A),
-) {
-    let mut args: A = args(step);
-    edit(&mut args);
-    step.args = serde_json::to_value(args).expect("arguments are plain data");
-}
-
-/// The step `id` of `program`.
-pub(crate) fn step<'a>(program: &'a mut Program, id: &str) -> &'a mut ProgramStep {
-    let index = program.index_of(id).unwrap_or_else(|e| panic!("{e}"));
-    &mut program.program.steps[index]
-}
-
-/// The error `result` holds, for a test that expects one.
-pub(crate) fn error<T>(result: GeopResult<T>) -> GeopError {
-    match result {
-        Ok(_) => panic!("expected an error"),
-        Err(e) => e,
-    }
-}
-
-/// The step drawing `sketch` on `plane`.
-pub(crate) fn sketch(plane: EntityRef, sketch: Sketch) -> AddSketchArgs {
-    AddSketchArgs {
-        plane: Some(plane),
-        sketch,
-        ..Default::default()
-    }
-}
-
-/// Combined with the solid `target` by cutting it away.
-pub(crate) fn cut(target: impl Into<String>) -> Combine {
-    Combine::cut(target)
-}
-
-/// Combined with the solid `target` by joining it.
-pub(crate) fn join(target: impl Into<String>) -> Combine {
-    Combine::join(target)
-}
-
-/// One side only, ending as `side1` says.
-pub(crate) fn one_way(side1: Extent) -> Extents {
-    Extents {
-        side1,
-        symmetric: false,
-        side2: None,
-        reversed: false,
-    }
-}
-
-/// Both ways alike, `length` in all.
-pub(crate) fn both_ways(length: f64) -> Extents {
-    Extents {
-        symmetric: true,
-        ..Extents::blind(length)
-    }
-}
-
-/// `first` one way and `second` the other.
-pub(crate) fn two_ways(first: f64, second: f64) -> Extents {
-    Extents {
-        side2: Some(Extent::blind(second)),
-        ..Extents::blind(first)
-    }
-}
-
-/// The step extruding the sketch `sketch` as far as `extent` says into a
-/// solid, combined as `combine` says.
-pub(crate) fn extrusion(sketch: &str, extent: Extents, combine: Combine) -> ExtrudeArgs {
-    ExtrudeArgs {
-        sketch: sketch.into(),
-        extent,
-        output: Output::Solid(combine),
-    }
-}
-
-/// Pushes `drawn` on `on` as `{name}_sketch`, and its extrude as far as
-/// `extent` says as `name`, combined as `combine` says.
-pub(crate) fn extrude_sketch(
-    program: &mut Program,
-    name: &str,
-    on: EntityRef,
-    drawn: Sketch,
-    extent: Extents,
-    combine: Combine,
-) {
-    let sketch_name = format!("{name}_sketch");
-    program.push(&sketch_name, sketch(on, drawn));
-    program.push(name, extrusion(&sketch_name, extent, combine));
-}
-
-/// The rectangle from `(x0, y0)` to `(x1, y1)`.
-pub(crate) fn rectangle(x0: f64, y0: f64, x1: f64, y1: f64) -> Sketch {
-    outline(&[[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
-}
-
-/// A sketch of nothing but the closed polygon through `corners` (see
-/// [`polygon`]).
-pub(crate) fn outline(corners: &[[f64; 2]]) -> Sketch {
-    let mut sketch = Sketch::new();
-    polygon(&mut sketch, corners);
-    sketch
-}
-
-/// A sketch of nothing but the circle of `radius` around `center`.
-pub(crate) fn disc(center: [f64; 2], radius: f64) -> Sketch {
-    let mut sketch = Sketch::new();
-    let c = sketch.add_point(n(center[0]), n(center[1]));
-    sketch.add_circle(c, n(radius));
-    sketch
 }
 
 /// What `editor` sends back on `command`, which it has to take without an
@@ -180,22 +48,6 @@ pub(crate) fn handled(editor: &mut Editor, command: Command) -> Update {
     let update = editor.handle(command);
     assert!(update.error.is_none(), "{:?}", update.error);
     update
-}
-
-/// A pointer from `origin` along `dir`, reaching 0.009 units.
-pub(crate) fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer<S> {
-    let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
-    Pointer {
-        ray: Ray::try_new(v(origin), v(dir)).unwrap(),
-        reach: Reach::Tube {
-            radius: S::from_f64(0.009),
-        },
-    }
-}
-
-/// Looking straight down at `(x, y)`.
-pub(crate) fn from_above(x: f64, y: f64) -> Pointer<S> {
-    pointer([x, y, 10.0], [0.0, 0.0, -1.0])
 }
 
 /// A click of the primary button with `pointer`.
@@ -239,20 +91,4 @@ pub(crate) fn dialog(key: &str, value: Value) -> Command {
             value,
         },
     }
-}
-
-/// The volume the solid named `solid` of `part` encloses, from its mesh as
-/// drawn.
-pub(crate) fn volume(part: &NamedModel<Design>, solid: &str) -> f64 {
-    geop_ops::testing::volume(part, part.solid_id(solid).unwrap(), 64)
-}
-
-/// Checks the solid named `solid` of `part` encloses `expected`, to within
-/// `tolerance` (see [`volume`]).
-pub(crate) fn assert_volume(part: &NamedModel<Design>, solid: &str, expected: f64, tolerance: f64) {
-    let got = volume(part, solid);
-    assert!(
-        (got - expected).abs() <= tolerance,
-        "{solid} encloses {got}, expected {expected} (± {tolerance})"
-    );
 }

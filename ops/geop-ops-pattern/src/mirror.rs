@@ -72,7 +72,7 @@ impl Pattern for MirrorArgs {
     }
 }
 
-part_operation!(Mirror);
+part_operation!(Mirror(MirrorArgs));
 
 impl PartOperation for Mirror {
     const INFO: OperationInfo = OperationInfo::new(

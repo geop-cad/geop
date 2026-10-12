@@ -180,7 +180,7 @@ fn draw(
     })
 }
 
-part_operation!(AddSketch);
+part_operation!(AddSketch(AddSketchArgs));
 
 impl PartOperation for AddSketch {
     const INFO: OperationInfo = OperationInfo::new(

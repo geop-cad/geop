@@ -103,7 +103,7 @@ impl CircularPatternArgs {
     }
 }
 
-part_operation!(CircularPattern);
+part_operation!(CircularPattern(CircularPatternArgs));
 
 impl PartOperation for CircularPattern {
     const INFO: OperationInfo = OperationInfo::new(

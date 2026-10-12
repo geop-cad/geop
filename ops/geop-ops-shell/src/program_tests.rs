@@ -3,6 +3,7 @@
 
 use std::f64::consts::PI;
 
+use crate::ShellArgs;
 use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_topology::Body;
@@ -10,17 +11,28 @@ use geop_ops::{Design, EntityRef, NamedModel, model::datum};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{AddDatumArgs, Construction};
 use geop_ops_extrude_revolve::Extents;
-use geop_ops_shell::ShellArgs;
 use geop_ops_sketch::Sketch;
 
-use crate::examples::{self, n};
-use crate::operations::testing::{
-    Built, assert_valid, cut, extrude_sketch, extrusion, origin_plane, outline, sketch,
+use geop_core_math::geop_error::GeopResult;
+use geop_ops::origin_plane;
+use geop_ops::program::{ProgramFile, Registry};
+use geop_ops::testing::{Built, assert_valid};
+use geop_ops_datums::AddDatum;
+use geop_ops_extrude_revolve::testing::{
+    drilled_box, extrude_sketch, extrusion, n, outline, sketch,
 };
-use crate::{Program, Push};
+
+use crate::Shell;
+
+/// The operations these tests' programs are written in.
+fn registry() -> GeopResult<Registry> {
+    geop_ops_extrude_revolve::testing::registry()?
+        .with(AddDatum)?
+        .with(Shell)
+}
 
 /// A sketch on the Z plane, and `name` its extrude `height` up, a new body.
-fn extruded(program: &mut Program, name: &str, sketch: Sketch, height: f64) {
+fn extruded(program: &mut ProgramFile, name: &str, sketch: Sketch, height: f64) {
     extrude_sketch(
         program,
         name,
@@ -29,10 +41,6 @@ fn extruded(program: &mut Program, name: &str, sketch: Sketch, height: f64) {
         Extents::blind(height),
         Combine::NewBody,
     );
-}
-
-fn polygon(corners: &[[f64; 2]]) -> Sketch {
-    outline(corners)
 }
 
 fn shell(solid: &str, faces: &[&str], thickness: f64) -> ShellArgs {
@@ -52,9 +60,9 @@ fn face_count(part: &NamedModel<Design>, solid: &str) -> usize {
 /// walls, and another around the hole's, which the walls also line.
 #[test]
 fn drilled_box_opened_at_its_top() {
-    let mut program = examples::box_with_drill_hole();
+    let mut program = drilled_box();
     program.push("s", shell("extrude(hole)", &["extrude(box,end)"], 0.1));
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     let rims: Vec<_> = part
         .names()
@@ -64,7 +72,7 @@ fn drilled_box_opened_at_its_top() {
         .collect();
     assert_eq!(rims.len(), 2, "{rims:?}");
     // The outside, its inner copy less the top, and the two rims.
-    let before = examples::box_with_drill_hole().build_model().unwrap();
+    let before = drilled_box().build_model(registry).unwrap();
     assert_eq!(
         face_count(&part, "shell(s)"),
         2 * face_count(&before, "extrude(hole)") - 1 + 1
@@ -74,13 +82,13 @@ fn drilled_box_opened_at_its_top() {
 /// A round cylinder, its circle extruded, opened at its top: a cup.
 #[test]
 fn cup() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     let mut s = Sketch::new();
     let c = s.add_point(n(0.0), n(0.0));
     s.add_circle(c, n(1.0));
     extruded(&mut program, "can", s, 2.0);
     program.push("s", shell("extrude(can)", &["extrude(can,end)"], 0.1));
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     let rim = part.face_id("shell(s,extrude(can,end))").unwrap();
     assert_eq!(part.topology().get_face(rim).unwrap().holes.len(), 1);
@@ -90,15 +98,15 @@ fn cup() {
 /// where their inner sides reach past the faces they are copies of.
 #[test]
 fn l_block_opened_at_its_top() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     extruded(
         &mut program,
         "l",
-        polygon(&[[0., 0.], [3., 0.], [3., 1.], [1., 1.], [1., 2.], [0., 2.]]),
+        outline(&[[0., 0.], [3., 0.], [3., 1.], [1., 1.], [1., 2.], [0., 2.]]),
         1.0,
     );
     program.push("s", shell("extrude(l)", &["extrude(l,end)"], 0.2));
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     // 7 outer faces and their copies, and the rim.
     assert_eq!(face_count(&part, "shell(s)"), 7 + 7 + 1);
@@ -121,10 +129,10 @@ fn slot_plate_closed_all_round() {
     s.add_arc(p[3], p[0], n(PI));
     let c = s.add_point(n(1.0), n(0.5));
     s.add_circle(c, n(0.25));
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     extruded(&mut program, "plate", s, 0.5);
     program.push("s", shell("extrude(plate)", &[], 0.05));
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     let solid = part.solid_id("shell(s)").unwrap();
     assert_eq!(part.topology().get_solid(solid).unwrap().shells.len(), 2);
@@ -134,14 +142,14 @@ fn slot_plate_closed_all_round() {
 /// in two strips.
 #[test]
 fn channel() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     extruded(
         &mut program,
         "b",
-        polygon(&[[0., 0.], [2., 0.], [2., 1.], [0., 1.]]),
+        outline(&[[0., 0.], [2., 0.], [2., 1.], [0., 1.]]),
         1.0,
     );
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     // The two short sides: those whose faces are normal to x.
     let ends: Vec<String> = part
         .topology()
@@ -165,7 +173,7 @@ fn channel() {
         "s",
         shell("extrude(b)", &["extrude(b,end)", &ends[0], &ends[1]], 0.1),
     );
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     for k in 0..2 {
         part.face_id(&format!("shell(s,extrude(b,end),{k})"))
@@ -180,11 +188,11 @@ fn channel() {
 /// lifted.
 #[test]
 fn offset_plane_from_a_shelled_face() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     extruded(
         &mut program,
         "b",
-        polygon(&[[0., 0.], [2., 0.], [2., 2.], [0., 2.]]),
+        outline(&[[0., 0.], [2., 0.], [2., 2.], [0., 2.]]),
         1.0,
     );
     program.push("s", shell("extrude(b)", &["extrude(b,end)"], 0.25));
@@ -199,7 +207,7 @@ fn offset_plane_from_a_shelled_face() {
             },
         },
     );
-    let runner = program.built().unwrap();
+    let runner = program.built(registry).unwrap();
     let datum = (runner.part.current().retrieve_target(&datum("d"))).unwrap();
     // The inner floor faces up, into the cup, at z = 0.25.
     let z = datum.frame.origin()[2].to_f64();
@@ -212,11 +220,11 @@ fn offset_plane_from_a_shelled_face() {
 /// it.
 #[test]
 fn hole_through_the_walls_of_a_shelled_box() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     extruded(
         &mut program,
         "b",
-        polygon(&[[0., 0.], [2., 0.], [2., 2.], [0., 2.]]),
+        outline(&[[0., 0.], [2., 0.], [2., 2.], [0., 2.]]),
         1.0,
     );
     program.push("s", shell("extrude(b)", &["extrude(b,end)"], 0.2));
@@ -239,8 +247,11 @@ fn hole_through_the_walls_of_a_shelled_box() {
         symmetric: true,
         ..Extents::blind(3.0)
     };
-    program.push("hole", extrusion("hole_sketch", through, cut("shell(s)")));
-    let part = program.build_model().unwrap();
+    program.push(
+        "hole",
+        extrusion("hole_sketch", through, Combine::cut("shell(s)")),
+    );
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     // The cup's 11 faces, and the hole's wall through each of the two.
     assert!(face_count(&part, "extrude(hole)") > 11);
@@ -250,13 +261,13 @@ fn hole_through_the_walls_of_a_shelled_box() {
 #[test]
 fn shell_steps_round_trip_through_json() {
     let args = shell("extrude(b)", &["extrude(b,end)"], 0.25);
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     program.push("s", args.clone());
     let json = serde_json::to_value(&program.program.steps[0]).unwrap();
     assert_eq!(json["operation"], "shell");
     assert_eq!(json["args"]["thickness"], 0.25);
     assert_eq!(
-        super::testing::args::<ShellArgs>(&program.program.steps[0]),
+        geop_ops::testing::args::<ShellArgs>(&program.program.steps[0]),
         args
     );
 }
@@ -264,23 +275,23 @@ fn shell_steps_round_trip_through_json() {
 /// Walls need a thickness, and the faces opened must be the solid's.
 #[test]
 fn shells_refuse_what_they_cannot_build() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     extruded(
         &mut program,
         "a",
-        polygon(&[[0., 0.], [1., 0.], [1., 1.], [0., 1.]]),
+        outline(&[[0., 0.], [1., 0.], [1., 1.], [0., 1.]]),
         1.0,
     );
     extruded(
         &mut program,
         "b",
-        polygon(&[[3., 0.], [4., 0.], [4., 1.], [3., 1.]]),
+        outline(&[[3., 0.], [4., 0.], [4., 1.], [3., 1.]]),
         1.0,
     );
     let mut zero = program.clone();
     zero.push("s", shell("extrude(a)", &[], 0.0));
-    assert!(zero.build_model().is_err());
+    assert!(zero.build_model(registry).is_err());
     let mut other = program.clone();
     other.push("s", shell("extrude(a)", &["extrude(b,end)"], 0.1));
-    assert!(other.build_model().is_err());
+    assert!(other.build_model(registry).is_err());
 }

@@ -26,6 +26,8 @@ mod icons;
 pub mod knit;
 pub mod network;
 pub mod offset;
+#[cfg(test)]
+mod program_tests;
 pub mod thicken;
 pub mod trim;
 

@@ -13,7 +13,7 @@ use geop_ops_drawing::{
 };
 
 use super::{Runner, testing::Built};
-use crate::{Program, Push, examples};
+use crate::{Program, examples};
 
 type Part<T> = NamedModel<T>;
 

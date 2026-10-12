@@ -2,22 +2,36 @@
 //! shelled 0.2 thick, open at its top — drafted, ribbed, given a lip or a
 //! groove.
 
-use geop_core_math::primitives::FrameAxis;
+use crate::{DraftArgs, GrooveArgs, LipArgs, RibArgs, RibDirection, RibSide};
 use geop_core_math::scalars::Scalar;
 use geop_ops::{Design, EntityRef, NamedModel};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{AddDatumArgs, Construction};
 use geop_ops_extrude_revolve::Extents;
 use geop_ops_fillet::FilletArgs;
-use geop_ops_plastic::{DraftArgs, GrooveArgs, LipArgs, RibArgs, RibDirection, RibSide};
-use geop_ops_shell::ShellArgs;
 use geop_ops_sketch::Sketch;
 
-use crate::examples::n;
-use crate::operations::testing::{
-    Built, assert_valid, check_valid, cut, extrusion, origin_plane, sketch,
-};
-use crate::{Program, Push};
+use geop_core_math::geop_error::GeopResult;
+use geop_ops::program::Registry;
+use geop_ops::testing::{Built, assert_valid, check_valid};
+use geop_ops_datums::AddDatum;
+use geop_ops_extrude_revolve::testing::{extrusion, n, sketch};
+use geop_ops_fillet::Fillet;
+use geop_ops_shell::Shell;
+
+use crate::testing::{boxed, enclosure, enclosure_with_rib_sketch, wall};
+use crate::{Draft, Groove, Lip, Rib};
+
+/// The operations these tests' programs are written in.
+fn registry() -> GeopResult<Registry> {
+    (geop_ops_extrude_revolve::testing::registry()?.with(AddDatum)?)
+        .with(Fillet)?
+        .with(Shell)?
+        .with(Draft)?
+        .with(Lip)?
+        .with(Groove)?
+        .with(Rib)
+}
 
 /// [`assert_valid`], saying which `case` of a sweep it is.
 fn assert_valid_case(part: &NamedModel<Design>, case: &str) {
@@ -27,49 +41,7 @@ fn assert_valid_case(part: &NamedModel<Design>, case: &str) {
     part.check_names().unwrap();
 }
 
-/// The 2 x 2 x 1 box `box`: its walls `extrude(box,outline,c4)` (towards
-/// `-y`), `c5` (`+x`), `c6` (`+y`) and `c7` (`-x`), its bottom
-/// `extrude(box,start)` and top `extrude(box,end)`.
-fn boxed() -> Program {
-    let mut program = Program::new();
-    let mut s = Sketch::new();
-    let corners = [[0., 0.], [2., 0.], [2., 2.], [0., 2.]];
-    let p: Vec<_> = corners
-        .iter()
-        .map(|c| s.add_point(n(c[0]), n(c[1])))
-        .collect();
-    for i in 0..4 {
-        s.add_line(p[i], p[(i + 1) % 4]);
-    }
-    program.push("outline", sketch(origin_plane(FrameAxis::Z), s));
-    program.push(
-        "box",
-        extrusion("outline", Extents::blind(1.0), Combine::NewBody),
-    );
-    program
-}
-
 const WALLS: [&str; 4] = ["c4", "c5", "c6", "c7"];
-
-pub(super) fn wall(c: &str) -> String {
-    format!("extrude(box,outline,{c})")
-}
-
-/// The box, shelled 0.2 thick open at its top: the solid `shell(s)`, its
-/// inner walls `shell(s,extrude(box,outline,c4))` and so on, its rim
-/// `shell(s,extrude(box,end))`.
-pub(super) fn enclosure() -> Program {
-    let mut program = boxed();
-    program.push(
-        "s",
-        ShellArgs {
-            solid: "extrude(box)".into(),
-            faces: vec!["extrude(box,end)".into()],
-            thickness: 0.2.into(),
-        },
-    );
-    program
-}
 
 fn draft(faces: &[String], degrees: f64) -> DraftArgs {
     DraftArgs {
@@ -87,7 +59,7 @@ fn enclosure_outside_drafted() {
     let mut program = enclosure();
     let walls: Vec<String> = WALLS.iter().map(|c| wall(c)).collect();
     program.push("d", draft(&walls, 3.0));
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     // The top of the +x wall leans in, the bottom stays.
     let top = part.vertex_id("extrude(box,outline,p2,end)").unwrap();
@@ -105,7 +77,7 @@ fn enclosure_inside_drafted() {
         .map(|c| format!("shell(s,{})", wall(c)))
         .collect();
     program.push("d", draft(&walls, 1.0));
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
 }
 
@@ -121,10 +93,14 @@ fn enclosure_with_a_port_drafted() {
     program.push("port_sketch", sketch(EntityRef::face(&wall("c5")), s));
     program.push(
         "port",
-        extrusion("port_sketch", Extents::blind(-0.5), cut("shell(s)")),
+        extrusion(
+            "port_sketch",
+            Extents::blind(-0.5),
+            Combine::cut("shell(s)"),
+        ),
     );
     program.push("d", draft(&[wall("c5")], 5.0));
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
 }
 
@@ -137,7 +113,7 @@ fn wall_next_to_a_fillet_is_refused() {
         FilletArgs::constant(vec!["extrude(box,outline,p1)".into()], 0.2),
     );
     program.push("d", draft(&[wall("c4")], 3.0));
-    let Err(error) = program.build_model() else {
+    let Err(error) = program.build_model(registry) else {
         panic!("drafting next to a fillet is refused");
     };
     let message = format!("{error}");
@@ -166,7 +142,7 @@ fn enclosure_lip_and_groove() {
             height: 0.1,
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     assert!(part.solid_id("lip(l)").is_ok());
 
@@ -181,7 +157,7 @@ fn enclosure_lip_and_groove() {
             clearance: 0.02,
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     assert!(part.solid_id("groove(g)").is_ok());
 }
@@ -201,7 +177,7 @@ fn lip_ending_at_a_corner_is_refused() {
             height: 0.1,
         },
     );
-    let Err(error) = program.build_model() else {
+    let Err(error) = program.build_model(registry) else {
         panic!("a lip ending at a corner is refused");
     };
     let message = format!("{error}");
@@ -221,34 +197,11 @@ fn lip_along_opposite_edges_is_refused() {
             height: 0.1,
         },
     );
-    let Err(error) = program.build_model() else {
+    let Err(error) = program.build_model(registry) else {
         panic!("a lip along two separate edges is refused");
     };
     let message = format!("{error}");
     assert!(message.contains("not one chain"), "{message}");
-}
-
-/// The enclosure with a reference plane through its middle, `middle`, at
-/// `y = 1` — offset from the `-y` wall, whose plane runs `u` along `x` and
-/// `v` along `z` — and on it the sketch `rib_sketch` of a line across the
-/// cavity at height 0.7, from `x = 0.5` to `x = 1.5`.
-pub(super) fn enclosure_with_rib_sketch() -> Program {
-    let mut program = enclosure();
-    program.push(
-        "middle",
-        AddDatumArgs {
-            selection: vec![EntityRef::face(&wall("c4"))],
-            construction: Construction::Offset {
-                distance: (-1.0).into(),
-            },
-        },
-    );
-    let mut s = Sketch::new();
-    let a = s.add_point(n(0.5), n(0.7));
-    let b = s.add_point(n(1.5), n(0.7));
-    s.add_line(a, b);
-    program.push("rib_sketch", sketch(EntityRef::datum("middle"), s));
-    program
 }
 
 fn rib(direction: RibDirection, side: RibSide, flipped: bool) -> RibArgs {
@@ -268,7 +221,7 @@ fn rib(direction: RibDirection, side: RibSide, flipped: bool) -> RibArgs {
 fn enclosure_rib() {
     let mut program = enclosure_with_rib_sketch();
     program.push("r", rib(RibDirection::Parallel, RibSide::Symmetric, true));
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     assert!(part.solid_id("rib(r)").is_ok());
 }
@@ -279,7 +232,7 @@ fn enclosure_rib() {
 fn rib_out_of_the_top_is_refused() {
     let mut program = enclosure_with_rib_sketch();
     program.push("r", rib(RibDirection::Parallel, RibSide::First, false));
-    let Err(error) = program.build_model() else {
+    let Err(error) = program.build_model(registry) else {
         panic!("a rib out of the top is refused");
     };
     let message = format!("{error}");
@@ -309,7 +262,7 @@ fn enclosure_rib_normal_to_its_sketch() {
     s.add_line(a, b);
     program.push("rib_sketch", sketch(EntityRef::datum("level"), s));
     program.push("r", rib(RibDirection::Normal, RibSide::Symmetric, true));
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
 }
 
@@ -325,7 +278,7 @@ fn plastic_sweep() {
             args.thickness = thickness;
             program.push("r", args);
             let part = program
-                .build_model()
+                .build_model(registry)
                 .unwrap_or_else(|e| panic!("rib {thickness} {side:?}: {e}"));
             assert_valid_case(&part, &format!("rib {thickness} {side:?}"));
         }
@@ -342,7 +295,7 @@ fn plastic_sweep() {
             },
         );
         assert_valid_case(
-            &program.build_model().unwrap(),
+            &program.build_model(registry).unwrap(),
             &format!("lip {width} {height}"),
         );
         let mut program = enclosure();
@@ -357,7 +310,7 @@ fn plastic_sweep() {
             },
         );
         let part = program
-            .build_model()
+            .build_model(registry)
             .unwrap_or_else(|e| panic!("groove {width} {height} {clearance}: {e}"));
         assert_valid_case(&part, &format!("groove {width} {height} {clearance}"));
     }
@@ -366,7 +319,7 @@ fn plastic_sweep() {
         let walls: Vec<String> = WALLS.iter().map(|c| wall(c)).collect();
         program.push("d", draft(&walls, angle));
         let part = program
-            .build_model()
+            .build_model(registry)
             .unwrap_or_else(|e| panic!("draft {angle}: {e}"));
         assert_valid_case(&part, &format!("draft {angle}"));
     }
@@ -394,7 +347,7 @@ fn narrow_groove() {
             clearance: 0.0,
         },
     );
-    assert_valid(&program.build_model().unwrap());
+    assert_valid(&program.build_model(registry).unwrap());
 }
 
 /// Drafted 15 degrees, the enclosure's 0.2 thick walls would lean in by
@@ -404,7 +357,7 @@ fn too_steep_a_draft_is_refused() {
     let mut program = enclosure();
     let walls: Vec<String> = WALLS.iter().map(|c| wall(c)).collect();
     program.push("d", draft(&walls, 15.0));
-    let Err(error) = program.build_model() else {
+    let Err(error) = program.build_model(registry) else {
         panic!("a draft crossing the walls is refused");
     };
     let message = format!("{error}");

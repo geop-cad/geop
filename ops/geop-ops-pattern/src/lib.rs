@@ -36,6 +36,8 @@ mod linear;
 mod mirror;
 mod move_body;
 #[cfg(test)]
+mod program_tests;
+#[cfg(test)]
 mod tests;
 
 pub use circular::{CircularPattern, CircularPatternArgs};

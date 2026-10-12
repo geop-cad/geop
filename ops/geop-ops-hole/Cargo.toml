@@ -14,3 +14,16 @@ geop-ops-booleans.workspace = true
 geop-ops-extrude-revolve.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Only for `testing`: the sketches its plates are drawn with.
+geop-ops-sketch = { workspace = true, optional = true }
+
+[features]
+# The plates of `testing`, for other crates' tests.
+testing = ["dep:geop-ops-sketch", "geop-ops-extrude-revolve/testing"]
+
+[dev-dependencies]
+geop-ops = { workspace = true, features = ["testing"] }
+geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-ops-datums.workspace = true
+geop-ops-pattern.workspace = true
+geop-ops-sketch.workspace = true

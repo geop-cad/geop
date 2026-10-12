@@ -12,7 +12,7 @@ use geop_ops::{Design, NamedModel, model::model};
 use geop_ops_step::{ImportStepArgs, write_step};
 
 use crate::operations::{build, testing::Built, workspace};
-use crate::{Program, Push, examples};
+use crate::{Program, examples};
 
 /// `(faces, edges, vertices)`.
 fn counts(model: &Model<S>) -> (usize, usize, usize) {

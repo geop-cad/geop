@@ -1,6 +1,6 @@
 //! Basic solids built directly from profiles and surface patches — cubes,
 //! cylinders, spheres, a figure-eight prism — for tests to be written
-//! against. Only built for tests: with `test-shapes`, or in this crate's
+//! against. Only built for tests: with `testing`, or in this crate's
 //! own. Besides the solids, what tests describe them with: points, plain
 //! profiles and planes, from plain numbers.
 

@@ -91,7 +91,7 @@ pub struct BoundarySurfaceArgs {
     pub tangent: Vec<EntityRef>,
 }
 
-part_operation!(BoundarySurface);
+part_operation!(BoundarySurface(BoundarySurfaceArgs));
 
 impl PartOperation for BoundarySurface {
     const INFO: OperationInfo = OperationInfo::new(

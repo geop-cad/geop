@@ -25,7 +25,7 @@ use crate::operations::testing::{
     Built, args, click_at, dialog, example_editor, from_above, handled, loaded, origin_axis,
     pointer,
 };
-use crate::{Command, Editor, Program, Push, Update, examples};
+use crate::{Command, Editor, Program, Update, examples};
 use geop_ops_extrude_revolve::ExtrudeArgs;
 
 /// The model the program builds as far as the editor runs it.
@@ -869,7 +869,7 @@ fn sweep_with_rails_twist_and_orientation() {
 /// committed, and the plate drilled; made tapped, its thread drawn.
 #[test]
 fn new_hole_from_the_dialog() {
-    let mut editor = loaded(super::hole_tests::plate(&[[20.0, 20.0]]));
+    let mut editor = loaded(geop_ops_hole::testing::plate(&[[20.0, 20.0]]));
     editor.handle(Command::New {
         kind: "hole".into(),
     });
@@ -1172,7 +1172,7 @@ fn a_revolute_joint_is_dragged_up_to_its_limit() {
 fn new_draft_picks_its_faces_and_neutral_plane() {
     let mut editor = Editor::new();
     let update = editor.handle(Command::Load {
-        program: super::plastic_tests::enclosure(),
+        program: geop_ops_plastic::testing::enclosure(),
         path: None,
     });
     assert!(update.error.is_none(), "{:?}", update.error);
@@ -1199,7 +1199,11 @@ fn new_draft_picks_its_faces_and_neutral_plane() {
         .expect("the program changed");
     assert!(step.steps.iter().all(|s| s.error.is_none()));
     let args: geop_ops_plastic::DraftArgs = args(editor.program().program.steps.last().unwrap());
-    assert_eq!(args.faces, [super::plastic_tests::wall("c5")], "{args:?}");
+    assert_eq!(
+        args.faces,
+        [geop_ops_plastic::testing::wall("c5")],
+        "{args:?}"
+    );
     assert_eq!(
         args.neutral,
         Some(EntityRef::Face {
@@ -1224,7 +1228,7 @@ fn new_draft_picks_its_faces_and_neutral_plane() {
 fn new_rib_grows_from_the_newest_sketch() {
     let mut editor = Editor::new();
     let update = editor.handle(Command::Load {
-        program: super::plastic_tests::enclosure_with_rib_sketch(),
+        program: geop_ops_plastic::testing::enclosure_with_rib_sketch(),
         path: None,
     });
     assert!(update.error.is_none(), "{:?}", update.error);
@@ -2826,7 +2830,7 @@ fn renaming_a_parameter_renames_what_reads_it() {
     let volume = |editor: &Editor| {
         let part = model(editor);
         let [name] = part.solid_names().try_into().expect("one solid");
-        super::testing::volume(&part, &name)
+        super::testing::solid_volume(&part, &name)
     };
     let before = volume(&editor);
 
@@ -2988,7 +2992,7 @@ fn an_assembly_drawing_lists_its_parts() {
 /// plate alone, drilled four times.
 #[test]
 fn new_linear_pattern_picks_a_feature_by_its_wall() {
-    let mut editor = loaded(super::feature_pattern_tests::plate_with_hole());
+    let mut editor = loaded(geop_ops_hole::testing::plate_with_hole());
     editor.handle(Command::New {
         kind: "linear_pattern".into(),
     });
@@ -4232,5 +4236,18 @@ fn a_tools_key_is_the_same_typed_in_capitals() {
             curves.len() == 1 && curves[0].contains("Arc"),
             "{key:?}: {curves:#?}"
         );
+    }
+}
+
+/// A new fillet waits for its edges to be picked, as edges.
+#[test]
+fn new_fillet_picks_edges() {
+    let mut editor = example_editor("box_with_drill_hole");
+    for kind in ["fillet", "chamfer"] {
+        let update = editor.handle(Command::New { kind: kind.into() });
+        let step = update.step.expect("a step is edited");
+        assert_eq!(step.missing, ["edges"]);
+        assert_eq!(step.presentation.pickable, [Role::Edge]);
+        editor.handle(Command::Cancel);
     }
 }

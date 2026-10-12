@@ -61,7 +61,11 @@ fn down(x: f64, y: f64) -> Pointer<S> {
 /// `cube(b)`: what a 3-D sketch is drawn on.
 struct Boxed;
 
-part_operation!(Boxed);
+/// What a [`Boxed`] step is given: nothing.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct Nothing;
+
+part_operation!(Boxed(Nothing));
 
 impl PartOperation for Boxed {
     const INFO: OperationInfo = OperationInfo::new(
@@ -71,22 +75,28 @@ impl PartOperation for Boxed {
         OperationGroup::Solid,
         OperationTier::Menu,
     );
-    type Args = ();
+    type Args = Nothing;
     type Session = ();
 
-    fn new_args(_: &StepContext) {}
+    fn new_args(_: &StepContext) -> Nothing {
+        Nothing
+    }
 
     fn build(
         model: &mut NamedModel<Design>,
         _: &mut BuildReader,
         _: &str,
-        _: &(),
+        _: &Nothing,
     ) -> GeopResult<()> {
         *model = block_part("b", [1.0, 1.0, 0.0], [2.0, 2.0, 1.0]);
         Ok(())
     }
 
-    fn form<'a>(_: &'a StepContext<'a>, _: &(), _: &FormState<()>) -> EditForm<'a, Design, ()> {
+    fn form<'a>(
+        _: &'a StepContext<'a>,
+        _: &Nothing,
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, Nothing> {
         EditForm::default()
     }
 }
@@ -124,7 +134,7 @@ impl Editor {
         let mut runner = ProgramRunner::new(registry);
         let mut steps = Vec::new();
         if on_box {
-            steps.push(ProgramStep::new::<Boxed>("box", &()).unwrap());
+            steps.push(ProgramStep::new::<Boxed>("box", &Nothing).unwrap());
         }
         steps.push(runner.new_step("add_sketch3d", "route", None).unwrap());
         let program = Program::new(steps);

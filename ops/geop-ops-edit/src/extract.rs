@@ -27,7 +27,7 @@ pub struct ExtractFaceArgs {
     pub face: String,
 }
 
-part_operation!(ExtractFace);
+part_operation!(ExtractFace(ExtractFaceArgs));
 
 impl PartOperation for ExtractFace {
     const INFO: OperationInfo = OperationInfo::new(

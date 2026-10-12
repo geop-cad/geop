@@ -55,7 +55,7 @@ pub struct ProjectCurveArgs {
     pub face: String,
 }
 
-part_operation!(ProjectCurve);
+part_operation!(ProjectCurve(ProjectCurveArgs));
 
 impl PartOperation for ProjectCurve {
     const INFO: OperationInfo = OperationInfo::new(

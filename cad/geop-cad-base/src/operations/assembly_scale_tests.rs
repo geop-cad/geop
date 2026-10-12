@@ -35,7 +35,7 @@ use geop_ops_sketch::Sketch;
 use crate::examples::{circle, pose, rectangle, solved};
 use crate::stdlib::WithStandardParts;
 use crate::{
-    Command, Editor, Program, Push, Update, Workspace,
+    Command, Editor, Program, Update, Workspace,
     operations::{Runner, registry},
 };
 

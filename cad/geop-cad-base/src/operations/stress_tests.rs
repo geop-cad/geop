@@ -30,12 +30,11 @@ use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::Sketch;
 
+use crate::Program;
 use crate::examples::n;
 use crate::operations::testing::{
-    Built, both_ways, check_valid, cut, disc, extrude_sketch, join, origin_plane, outline,
-    rectangle, sketch,
+    Built, both_ways, check_valid, disc, extrude_sketch, origin_plane, outline, rectangle, sketch,
 };
-use crate::{Program, Push};
 
 /// What one blend or shell came to.
 enum Outcome {
@@ -174,7 +173,7 @@ fn block_corner_cut_off() -> Program {
         origin_plane(FrameAxis::Z),
         outline(&[[1.5, 2.5], [2.5, 1.5], [2.5, 2.5]]),
         Extents::blind(1.0),
-        cut("extrude(body)"),
+        Combine::cut("extrude(body)"),
     );
     program
 }
@@ -188,7 +187,7 @@ fn block_pocketed() -> Program {
         top(),
         rectangle(0.5, 0.5, 1.5, 1.5),
         Extents::blind(-0.4),
-        cut("extrude(body)"),
+        Combine::cut("extrude(body)"),
     );
     program
 }
@@ -202,7 +201,7 @@ fn block_stepped() -> Program {
         origin_plane(FrameAxis::Z),
         rectangle(-0.5, 1.5, 1.0, 2.5),
         Extents::blind(0.5),
-        cut("extrude(body)"),
+        Combine::cut("extrude(body)"),
     );
     program
 }
@@ -216,7 +215,7 @@ fn cylinder_with_flat() -> Program {
         origin_plane(FrameAxis::Z),
         rectangle(0.6, -2.0, 2.0, 2.0),
         Extents::blind(1.5),
-        cut("extrude(body)"),
+        Combine::cut("extrude(body)"),
     );
     program
 }
@@ -230,7 +229,7 @@ fn hemisphere() -> Program {
         origin_plane(FrameAxis::Z),
         rectangle(-2.0, -2.0, 2.0, 2.0),
         Extents::blind(-2.0),
-        cut("revolve(body)"),
+        Combine::cut("revolve(body)"),
     );
     program
 }
@@ -388,7 +387,7 @@ fn stress_block_drilled() {
         origin_plane(FrameAxis::Z),
         disc([1.0, 1.0], 0.4),
         Extents::blind(1.0),
-        cut("extrude(body)"),
+        Combine::cut("extrude(body)"),
     );
     stress(program, 0.1);
 }
@@ -420,7 +419,7 @@ fn stress_block_with_boss() {
         top(),
         disc([1.0, 1.0], 0.4),
         Extents::blind(0.5),
-        join("extrude(body)"),
+        Combine::join("extrude(body)"),
     );
     stress(program, 0.1);
 }
@@ -441,7 +440,7 @@ fn stress_cylinder_drilled() {
         origin_plane(FrameAxis::Z),
         disc([0.0, 0.0], 0.3),
         Extents::blind(1.5),
-        cut("extrude(body)"),
+        Combine::cut("extrude(body)"),
     );
     stress(program, 0.1);
 }
@@ -456,7 +455,7 @@ fn stress_cylinder_drilled_off_axis() {
         origin_plane(FrameAxis::Z),
         disc([0.4, 0.0], 0.2),
         Extents::blind(1.5),
-        cut("extrude(body)"),
+        Combine::cut("extrude(body)"),
     );
     stress(program, 0.1);
 }
@@ -476,7 +475,7 @@ fn stress_cylinder_pocketed() {
         top(),
         disc([0.0, 0.0], 0.5),
         Extents::blind(-0.5),
-        cut("extrude(body)"),
+        Combine::cut("extrude(body)"),
     );
     stress(program, 0.1);
 }
@@ -491,7 +490,7 @@ fn stress_cylinder_with_boss() {
         top(),
         disc([0.0, 0.0], 0.4),
         Extents::blind(0.5),
-        join("extrude(body)"),
+        Combine::join("extrude(body)"),
     );
     stress(program, 0.1);
 }
@@ -515,7 +514,7 @@ fn stress_sphere_drilled() {
         origin_plane(FrameAxis::Z),
         disc([0.0, 0.0], 0.3),
         both_ways(2.0),
-        cut("revolve(body)"),
+        Combine::cut("revolve(body)"),
     );
     stress(program, 0.1);
 }
@@ -529,7 +528,7 @@ fn stress_sphere_with_side_cut_off() {
         origin_plane(FrameAxis::Z),
         rectangle(0.5, -2.0, 2.0, 2.0),
         both_ways(2.0),
-        cut("revolve(body)"),
+        Combine::cut("revolve(body)"),
     );
     stress(program, 0.1);
 }
@@ -545,7 +544,7 @@ fn sphere_with_boss() -> Program {
         origin_plane(FrameAxis::Z),
         disc([0.0, 0.0], 0.4),
         Extents::blind(1.5),
-        join("revolve(body)"),
+        Combine::join("revolve(body)"),
     );
     program
 }
@@ -569,7 +568,7 @@ fn pipe_tee() -> Program {
         origin_plane(FrameAxis::Z),
         disc([0.0, 0.0], 0.3),
         Extents::blind(1.0),
-        join("extrude(pipe)"),
+        Combine::join("extrude(pipe)"),
     );
     program
 }

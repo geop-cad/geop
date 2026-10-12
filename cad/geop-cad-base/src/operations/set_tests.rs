@@ -4,13 +4,14 @@
 use geop_ops_extrude_revolve::Output;
 use std::collections::HashSet;
 
+use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::ExtrudeArgs;
 
 use crate::{
     examples,
     operations::{
         infos, registry,
-        testing::{Built, args, handled, join},
+        testing::{Built, args, handled},
     },
 };
 
@@ -48,7 +49,10 @@ fn new_steps_start_from_what_was_built() {
     let step = runner.new_step("extrude", "new", None).unwrap();
     let extrude: ExtrudeArgs = args(&step);
     assert_eq!(extrude.sketch, "hole_sketch");
-    assert_eq!(extrude.output, Output::Solid(join("extrude(hole)")));
+    assert_eq!(
+        extrude.output,
+        Output::Solid(Combine::join("extrude(hole)"))
+    );
     for info in infos() {
         let step = runner.new_step(info.kind, "new", None).unwrap();
         assert_eq!(step.operation, info.kind);

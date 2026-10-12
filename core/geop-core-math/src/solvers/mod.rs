@@ -6,7 +6,8 @@
 //!   builds on.
 //! - [`iterate`]: fixed-point iteration from sharp seeds, keeping the
 //!   honest answer beside the seed — the loop of every Newton-type method.
-//! - [`bisect`]: bisection of a bracket, in plain numbers or sharp scalars.
+//! - [`bisect`]: bisection of a bracket, in plain numbers or sharp scalars,
+//!   and the scan of samples for the brackets of a sign change.
 //! - [`minimize`]: damped descent, golden-section search and alternating
 //!   projections for a point that is a free choice.
 //! - [`probe`]: a sequence of trial values — a step halved, a reach
@@ -23,7 +24,7 @@
 //! - [`continuation`]: values driven to where they are to be in stages, a
 //!   problem solved at each.
 //! - [`newton`]: Newton refinement of a root a subdivision search has
-//!   isolated.
+//!   isolated, and Newton's method on one unknown from a seed.
 //! - [`least_squares`]: constrained Levenberg–Marquardt over any scalar.
 //! - [`system`]: constraint systems on blocks of variables — numbers,
 //!   poses — solved by the driver, checked, measured for freedom and

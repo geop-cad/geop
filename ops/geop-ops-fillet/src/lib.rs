@@ -20,6 +20,8 @@ mod tool;
 pub use operation::{Chamfer, ChamferArgs, Fillet, FilletArgs, VertexRadius};
 
 #[cfg(test)]
+mod program_tests;
+#[cfg(test)]
 mod rolling_tests;
 #[cfg(test)]
 mod tests;

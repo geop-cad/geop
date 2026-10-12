@@ -609,16 +609,14 @@ impl<S: Scalar> Leg<'_, S> {
             t_mid,
             EXIT_BISECTIONS,
             false,
-            |_, t| -> GeopResult<_> {
+            |t| -> GeopResult<_> {
                 point = self.pcurve.evaluate(t)?.sub(&origin);
-                let excess = point.norm_sq().sub(radius_sq);
-                Ok(if excess.definitely_less(S::ZERO) {
-                    Some(true)
-                } else if excess.definitely_greater(S::ZERO) {
-                    Some(false)
-                } else {
-                    None
-                })
+                // Inside the circle is the vertex's side.
+                Ok(point
+                    .norm_sq()
+                    .sub(radius_sq)
+                    .definite_sign()
+                    .map(|out| !out))
             },
         )?;
         Ok(point)

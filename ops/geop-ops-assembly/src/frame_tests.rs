@@ -1,30 +1,26 @@
 //! Reference frames: what a face, an edge or a point gives where a mate puts
 //! one, and what a pick for one finds where the pointer is.
 
-use crate::operations::testing::from_above;
 use geop_core_math::{
     primitives::CoordinateSystem,
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops::testing::{edge_at, vertex_at};
+use geop_ops::program::Runner;
+use geop_ops::testing::{Built, edge_at, from_above, vertex_at};
 use geop_ops::{
     Design, EntityRef, NamedModel,
     model::model,
     operation::{Aspects, Role, Seen},
     ui::PartView,
 };
+use geop_ops_extrude_revolve::testing::{drilled_box, registry};
 
-use crate::{
-    examples,
-    operations::{Runner, testing::Built},
-};
-
-/// The plate of [`examples::box_with_drill_hole`]: `[0, 2] x [0, 2] x [0, 1]`,
-/// with a hole of radius 0.4 round `(1, 1)` from its top down to `z = 0.5`,
-/// as built.
+/// The drilled box (see [`drilled_box`]): `[0, 2] x [0, 2] x [0, 1]`, with
+/// a hole of radius 0.4 round `(1, 1)` from its top down to `z = 0.5`, as
+/// built.
 fn plate() -> Runner {
-    examples::box_with_drill_hole().built().unwrap()
+    drilled_box().built(registry).unwrap()
 }
 
 /// The model `runner` built.

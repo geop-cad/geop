@@ -47,7 +47,7 @@ pub struct BooleanArgs {
     pub op: BooleanOp,
 }
 
-part_operation!(Boolean, Split);
+part_operation!(Boolean(BooleanArgs), Split(SplitArgs));
 
 impl PartOperation for Boolean {
     const INFO: OperationInfo = OperationInfo::new(

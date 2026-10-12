@@ -91,7 +91,7 @@ fn distance_handle<S: Scalar>(
     })
 }
 
-part_operation!(Extrude);
+part_operation!(Extrude(ExtrudeArgs));
 
 impl PartOperation for Extrude {
     const INFO: OperationInfo = OperationInfo::new(

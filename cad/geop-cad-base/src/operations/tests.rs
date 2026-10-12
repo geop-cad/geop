@@ -13,12 +13,11 @@ use geop_ops_booleans::{BooleanArgs, Combine, boolean::BooleanOp};
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, RevolveArgs};
 use geop_ops_sketch::{Constraint, Sketch};
 
+use crate::Program;
 use crate::examples::{n, polygon};
 use crate::operations::testing::{
-    Built, assert_valid, both_ways, cut, extrusion, join, one_way, origin_axis, origin_plane,
-    sketch, two_ways,
+    Built, assert_valid, both_ways, extrusion, one_way, origin_axis, origin_plane, sketch, two_ways,
 };
-use crate::{Program, Push, StepArgs};
 
 fn extrude(sketch: &str, distance: f64, symmetric: bool) -> ExtrudeArgs {
     extrusion(
@@ -302,7 +301,7 @@ fn extrude_combines_with_its_target() {
     program.push(
         "boss",
         ExtrudeArgs {
-            output: Output::Solid(join("extrude(block)")),
+            output: Output::Solid(Combine::join("extrude(block)")),
             ..extrude("boss_sketch", 0.4, false)
         },
     );
@@ -504,7 +503,7 @@ fn sweep_a_line_as_a_face() {
 }
 
 /// The step `id`, `args` for the operation they are for.
-fn as_step<A: StepArgs>(id: &str, args: A) -> ProgramStep {
+fn as_step<A: geop_ops::program::StepArgs>(id: &str, args: A) -> ProgramStep {
     let mut program = Program::new();
     program.push(id, args);
     program.program.steps.remove(0)
@@ -552,7 +551,7 @@ fn extrude_up_to_next() {
     };
     let target = || "extrude(block)".to_string();
 
-    let joined = on_block(2.0, 3.0, vec![up_to_next(join(target()))]).unwrap();
+    let joined = on_block(2.0, 3.0, vec![up_to_next(Combine::join(target()))]).unwrap();
     assert_valid(&joined);
     assert_eq!(joined.solid_names(), ["extrude(post)"]);
     // The post's foot on the sketch, its head on the block's bottom: none of
@@ -564,13 +563,13 @@ fn extrude_up_to_next() {
     // pieces it leaves are not merged back.
     assert_eq!(joined.topology().faces.len(), 6 + 4 + 1 + 1);
 
-    let cut = on_block(0.0, 1.0, vec![up_to_next(cut(target()))]).unwrap();
+    let cut = on_block(0.0, 1.0, vec![up_to_next(Combine::cut(target()))]).unwrap();
     assert_valid(&cut);
     assert_eq!(heights(&cut), [0, 1000]);
     assert_eq!(cut.topology().faces.len(), 6 + 4);
 
     // Nothing ahead to stop at.
-    let Err(error) = on_block(-2.0, -1.0, vec![up_to_next(join(target()))]) else {
+    let Err(error) = on_block(-2.0, -1.0, vec![up_to_next(Combine::join(target()))]) else {
         panic!("extruded");
     };
     assert!(error.root_message().contains("nothing"), "{error:?}");
@@ -642,7 +641,7 @@ fn turned_up_to_walls(
             sketch: "profile".into(),
             axis: Some(origin_axis(FrameAxis::Z)),
             extent: one_way(Extent::UpToNext),
-            output: Output::Solid(join(target)),
+            output: Output::Solid(Combine::join(target)),
         },
     );
     program.build_model()
@@ -770,7 +769,7 @@ fn extrude_up_to_next_from_a_face_of_the_target() {
         "post",
         ExtrudeArgs {
             extent: one_way(Extent::UpToNext),
-            output: Output::Solid(join("boolean(c2)")),
+            output: Output::Solid(Combine::join("boolean(c2)")),
             ..extrude("post_sketch", 1.0, false)
         },
     );
@@ -933,7 +932,7 @@ fn join_up_to_next_partly_under_a_wedge_goes_through_all() {
             "post",
             ExtrudeArgs {
                 extent: one_way(Extent::UpToNext),
-                output: Output::Solid(join("extrude(wedge)")),
+                output: Output::Solid(Combine::join("extrude(wedge)")),
                 ..extrude("post_sketch", 1.0, false)
             },
         ),

@@ -97,16 +97,22 @@ pub trait PartOperation: 'static {
     }
 }
 
-/// Makes each [`PartOperation`] named an
+/// Makes each [`PartOperation`] named, `Operation(Args)`, an
 /// [`Operation`](geop_core_program::operation::Operation) of a part, edited
-/// through its form.
+/// through its form, and its arguments the
+/// [`StepArgs`](crate::program::StepArgs) of it. (Named, since what an
+/// operation's `Args` stand for is not known to other crates' impls.)
 #[macro_export]
 macro_rules! part_operation {
-    ($($operation:ty),* $(,)?) => {$(
+    ($($operation:ident($args:ty)),* $(,)?) => {$(
+        impl $crate::program::StepArgs for $args {
+            const KIND: &'static str = <$operation as $crate::operation::PartOperation>::INFO.kind;
+        }
+
         impl $crate::__program::operation::Operation for $operation {
             const INFO: $crate::__program::operation::OperationInfo =
                 <$operation as $crate::operation::PartOperation>::INFO;
-            type Args = <$operation as $crate::operation::PartOperation>::Args;
+            type Args = $args;
             type EditingState =
                 $crate::ui::FormState<<$operation as $crate::operation::PartOperation>::Session>;
             type Input = $crate::operation::Input;

@@ -26,7 +26,7 @@ use geop_ops_extrude_revolve::ExtrudeArgs;
 
 use crate::examples::{n, pose};
 use crate::{
-    Command, Editor, Program, Push, examples,
+    Command, Editor, Program, examples,
     operations::{
         self, Runner,
         testing::{dialog, edit_args, example_editor, from_above, handled},

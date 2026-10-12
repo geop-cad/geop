@@ -24,9 +24,9 @@ use std::{
 };
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::{operation_registry::OperationRegistry, program_runner::ProgramRunner};
+use geop_core_program::operation_registry::OperationRegistry;
 
-use super::ProgramFile;
+use super::{ProgramFile, Runner};
 use crate::{
     model::ParamValue,
     operation::Input,
@@ -209,14 +209,10 @@ impl<F: Files + 'static> Scope<F> {
             building: [self.building.clone(), vec![path.to_string()]].concat(),
             placed: RefCell::new(BTreeSet::new()),
         });
-        let mut runner = ProgramRunner::new(self.workspace.registry()?);
+        let mut runner = Runner::new(self.workspace.registry()?);
         let library: Rc<dyn Library> = child.clone();
-        let output = runner.run(&file.program, &file.inputs(overrides, library), &file.state);
-        if let Some((step, error)) = output.step_errors.into_iter().next() {
-            return Err(error
-                .with_context(format!("step {step:?}"))
-                .with_context(format!("building {path}")));
-        }
+        (file.run(&mut runner, overrides, &library))
+            .map_err(|e| e.with_context(format!("building {path}")))?;
         let mut files = child.placed.take();
         files.insert(path.to_string());
         let builds = self.workspace.builds.get() + 1;

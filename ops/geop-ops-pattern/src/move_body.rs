@@ -90,7 +90,7 @@ impl MoveBodyArgs {
 /// The keys and labels of the shift's three fields.
 const AXES: [(&str, &str); 3] = [("x", "shift x"), ("y", "shift y"), ("z", "shift z")];
 
-part_operation!(MoveBody);
+part_operation!(MoveBody(MoveBodyArgs));
 
 impl PartOperation for MoveBody {
     const INFO: OperationInfo = OperationInfo::new(

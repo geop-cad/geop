@@ -43,7 +43,7 @@ use geop_core_math::{
     plain::{P3, add, cross, cross2, dot, inverse2, normalize, scale, solve2, sub},
     primitives::CoordinateSystem,
     scalars::Scalar,
-    solvers::iterate::{Repeat, Step, iterate},
+    solvers::newton::{Arrive, newton_1d},
     vector::{Vector2, Vector3, Vector4},
     with_context,
 };
@@ -808,44 +808,33 @@ impl<'a, S: Scalar> Tracked<'a, S> {
     /// shrinking.
     fn crossing(&mut self, frame: &Plain) -> GeopResult<[f64; 2]> {
         let normal = cross(frame.e1, frame.e2);
-        let mut last_step = f64::INFINITY;
-        // The rail's point where the steps stopped shrinking.
-        let mut arrived = None;
-        let iterated = iterate(
+        // The rail reaches the last section (see `reaches_the_end`), so a
+        // step past its end is a step past a crossing at the end.
+        let (tau, arrived) = newton_1d(
             self.tau,
-            self.tau,
+            (0.0, self.length()),
             RAIL_NEWTON_STEPS,
-            Repeat::Never,
-            |&next| (next, next),
-            |&tau| -> GeopResult<Step<f64>> {
+            Arrive::StepsStopShrinking,
+            |tau| -> GeopResult<_> {
                 let (x, d) = self.at(tau)?;
-                let (value, slope) = (dot(sub(x, frame.origin), normal), dot(d, normal));
+                let slope = dot(d, normal);
                 if slope == 0.0 {
                     return Err(GeopError::new(format!(
                         "path sweep: the rail {} runs along a section of the sweep, at its parameter {tau:?}",
                         self.rail.name
                     )));
                 }
-                let step = value / slope;
-                if step.abs() >= last_step || step.is_nan() {
-                    arrived = Some(x);
-                    return Ok(Step::Done);
-                }
-                last_step = step.abs();
-                // The rail reaches the last section (see `reaches_the_end`),
-                // so a step past its end is a step past a crossing at the end.
-                Ok(Step::Next((tau - step).clamp(0.0, self.length())))
+                Ok((dot(sub(x, frame.origin), normal), slope))
             },
         )?;
-        let tau = iterated.seed;
-        if let Some(x) = arrived {
-            self.tau = tau;
-            return Ok(in_plane(frame, x));
+        if !arrived {
+            return Err(GeopError::new(format!(
+                "path sweep: could not find where the rail {} crosses a section near its parameter {:?}",
+                self.rail.name, self.tau
+            )));
         }
-        Err(GeopError::new(format!(
-            "path sweep: could not find where the rail {} crosses a section near its parameter {tau:?}",
-            self.rail.name
-        )))
+        self.tau = tau;
+        Ok(in_plane(frame, self.at(tau)?.0))
     }
 
     /// Checks the rail reaches the plane of the path's last station, `end`,

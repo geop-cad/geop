@@ -149,7 +149,7 @@ fn read(reader: &mut BuildReader, (step, args): &(String, ImportStepArgs)) -> Ge
     Ok(Imported(bodies))
 }
 
-part_operation!(ImportStep);
+part_operation!(ImportStep(ImportStepArgs));
 
 impl PartOperation for ImportStep {
     const INFO: OperationInfo = OperationInfo::new(

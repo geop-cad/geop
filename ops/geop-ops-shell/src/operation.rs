@@ -37,7 +37,7 @@ pub struct ShellArgs {
     pub thickness: Formula,
 }
 
-part_operation!(Shell);
+part_operation!(Shell(ShellArgs));
 
 impl PartOperation for Shell {
     const INFO: OperationInfo = OperationInfo::new(

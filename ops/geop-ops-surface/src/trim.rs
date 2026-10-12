@@ -69,7 +69,7 @@ impl TrimKeep {
     }
 }
 
-part_operation!(TrimSurface);
+part_operation!(TrimSurface(TrimSurfaceArgs));
 
 impl PartOperation for TrimSurface {
     const INFO: OperationInfo = OperationInfo::new(

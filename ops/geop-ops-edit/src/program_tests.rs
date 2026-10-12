@@ -1,16 +1,30 @@
 //! The edit operations run as programs: deleting bodies, extracting faces
 //! — and splitting with them — and projecting sketches onto faces.
 
+use crate::{DeleteBodyArgs, ExtractFaceArgs, ProjectCurveArgs};
 use geop_core_math::primitives::FrameAxis;
 use geop_ops::EntityRef;
 use geop_ops_booleans::{Combine, SplitArgs};
-use geop_ops_edit::{DeleteBodyArgs, ExtractFaceArgs, ProjectCurveArgs};
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs};
 use geop_ops_sketch::{AddSketchArgs, Sketch};
 
-use crate::examples::n;
-use crate::operations::testing::{Built, assert_valid, error, extrusion, origin_plane, sketch};
-use crate::{Program, Push};
+use geop_core_math::geop_error::GeopResult;
+use geop_ops::origin_plane;
+use geop_ops::program::{ProgramFile, Registry};
+use geop_ops::testing::{Built, assert_valid, error};
+use geop_ops_booleans::Split;
+use geop_ops_extrude_revolve::testing::{extrusion, n, sketch};
+
+use crate::{DeleteBody, ExtractFace, ProjectCurve};
+
+/// The operations these tests' programs are written in.
+fn registry() -> GeopResult<Registry> {
+    geop_ops_extrude_revolve::testing::registry()?
+        .with(Split)?
+        .with(DeleteBody)?
+        .with(ExtractFace)?
+        .with(ProjectCurve)
+}
 
 fn on_xy(drawn: Sketch) -> AddSketchArgs {
     sketch(origin_plane(FrameAxis::Z), drawn)
@@ -56,7 +70,7 @@ fn extract_a_wall_split_with_it_and_delete_the_rest() {
     let wall = format!("extrude(a,big,{})", sides[1]);
     let extracted = format!("extract(x,{wall})");
 
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     program.push("big", on_xy(big));
     program.push("a", extrude("big", -1.0, 1.0));
     program.push("small", on_xy(small));
@@ -69,7 +83,7 @@ fn extract_a_wall_split_with_it_and_delete_the_rest() {
             face: extracted.clone(),
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     assert_eq!(part.sheet_face_names(), [extracted.as_str()]);
     assert_eq!(
@@ -89,7 +103,7 @@ fn extract_a_wall_split_with_it_and_delete_the_rest() {
             ],
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     assert!(part.sheet_face_names().is_empty());
     assert_eq!(part.solid_names(), ["split(halves,0)", "split(halves,1)"]);
@@ -97,10 +111,10 @@ fn extract_a_wall_split_with_it_and_delete_the_rest() {
 
 /// A block of `[-1, 1]^2 x [0, 1]` with the sketch `mark` on the plane
 /// `z = 0` projected onto its top.
-fn project_onto_top(mark: Sketch) -> Program {
+fn project_onto_top(mark: Sketch) -> ProgramFile {
     let mut block = Sketch::new();
     rectangle(&mut block, [-1.0, -1.0], [1.0, 1.0]);
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     program.push("block_sketch", on_xy(block));
     program.push("block", extrude("block_sketch", 0.0, 1.0));
     program.push("mark", on_xy(mark));
@@ -121,7 +135,7 @@ fn project_a_circle_onto_a_block_top() {
     let mut mark = Sketch::new();
     let c = mark.add_point(n(0.2), n(0.1));
     mark.add_circle(c, n(0.4));
-    let part = project_onto_top(mark).build_model().unwrap();
+    let part = project_onto_top(mark).build_model(registry).unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().solids.len(), 1);
     assert!(part.sheet_face_names().is_empty());
@@ -138,7 +152,7 @@ fn project_a_line_across_a_block_top() {
     let a = mark.add_point(n(0.3), n(-2.0));
     let b = mark.add_point(n(0.3), n(2.0));
     mark.add_line(a, b);
-    let part = project_onto_top(mark).build_model().unwrap();
+    let part = project_onto_top(mark).build_model(registry).unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().faces.len(), 7);
     assert_eq!(
@@ -158,6 +172,6 @@ fn project_a_line_ending_on_the_face_fails() {
     let a = mark.add_point(n(0.3), n(-2.0));
     let b = mark.add_point(n(0.3), n(0.0));
     mark.add_line(a, b);
-    let error = error(project_onto_top(mark).build_model());
+    let error = error(project_onto_top(mark).build_model(registry));
     assert!(error.root_message().contains("end inside"), "{error:?}");
 }

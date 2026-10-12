@@ -5,30 +5,37 @@
 
 use std::f64::consts::PI;
 
+use crate::{HoleArgs, HoleKind, iso::Fit};
 use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_math::vector::Vector3;
 use geop_ops::{EntityRef, NamedModel};
+use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extent, Extents};
-use geop_ops_hole::{HoleArgs, HoleKind, iso::Fit};
 use geop_ops_pattern::{
     CircularPatternArgs, Direction, LinearPatternArgs, MirrorArgs, Seeds, Spacing,
 };
-use geop_ops_sketch::AddSketchArgs;
+use geop_ops_sketch::{AddSketchArgs, Sketch};
 
-use super::hole_tests::{Made, hole, iso, made, points_sketch};
-use super::pattern_tests::{axis, extruded};
-use super::testing::{
-    assert_valid, assert_volume, both_ways, cut, disc, extrude_sketch, extrusion, join,
-    origin_plane, outline,
-};
-use crate::operations::testing::Built;
-use crate::{Program, Push};
+use geop_ops::program::ProgramFile;
+use geop_ops::testing::{Built, assert_valid, assert_volume};
+use geop_ops::{origin_axis, origin_plane};
+use geop_ops_extrude_revolve::testing::{both_ways, disc, extrude_sketch, extrusion, outline};
+
+use crate::program_tests::{Made, hole, iso, made, registry};
+use crate::testing::{plate, plate_with_hole, points_sketch};
+
+/// A sketch on the Z plane, and `name` its extrude, as `extent` says, a
+/// new body.
+fn extruded(program: &mut ProgramFile, name: &str, sketch: Sketch, extent: Extents) {
+    let plane = origin_plane(FrameAxis::Z);
+    extrude_sketch(program, name, plane, sketch, extent, Combine::NewBody);
+}
 
 /// `program`, read back from its JSON as saved, built.
-fn build(program: &Program) -> Made {
+fn build(program: &ProgramFile) -> Made {
     let json = serde_json::to_string(program).unwrap();
-    let read: Program = serde_json::from_str(&json).unwrap();
+    let read: ProgramFile = serde_json::from_str(&json).unwrap();
     assert_eq!(&read, program);
     made(&read).unwrap()
 }
@@ -40,7 +47,7 @@ fn feature(step: &str) -> Vec<EntityRef> {
 /// `count` instances along `x`, `step` apart.
 fn along_x(count: f64, step: f64) -> Direction {
     Direction {
-        along: axis(FrameAxis::X),
+        along: Some(origin_axis(FrameAxis::X)),
         reversed: false,
         count: count.into(),
         spacing: Spacing::step(step),
@@ -61,27 +68,6 @@ fn linear(features: &[&str], count: f64, step: f64) -> LinearPatternArgs {
         first: along_x(count, step),
         second: None,
     }
-}
-
-/// A plate 8 x 2 x 0.5, `extrude(plate)`, with a hole of radius 0.3 at
-/// (1, 1) cut through it by the extrude `hole`.
-pub(super) fn plate_with_hole() -> Program {
-    let mut program = Program::new();
-    extruded(
-        &mut program,
-        "plate",
-        outline(&[[0.0, 0.0], [8.0, 0.0], [8.0, 2.0], [0.0, 2.0]]),
-        Extents::blind(0.5),
-    );
-    extrude_sketch(
-        &mut program,
-        "hole",
-        origin_plane(FrameAxis::Z),
-        disc([1.0, 1.0], 0.3),
-        both_ways(2.0),
-        cut("extrude(plate)"),
-    );
-    program
 }
 
 /// The faces of `part` the feature of `step` made, as a pick tells.
@@ -130,7 +116,7 @@ fn extruded_hole_patterned_in_a_row() {
 /// plate's middle: a bolt circle.
 #[test]
 fn extruded_hole_patterned_around_an_axis() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     extruded(
         &mut program,
         "plate",
@@ -143,13 +129,13 @@ fn extruded_hole_patterned_around_an_axis() {
         origin_plane(FrameAxis::Z),
         disc([2.0, 0.0], 0.3),
         both_ways(2.0),
-        cut("extrude(plate)"),
+        Combine::cut("extrude(plate)"),
     );
     program.push(
         "bolts",
         CircularPatternArgs {
             seeds: Seeds::features(feature("hole")),
-            axis: axis(FrameAxis::Z),
+            axis: Some(origin_axis(FrameAxis::Z)),
             reversed: false,
             count: 6.0.into(),
             angle: Spacing::extent(360.0),
@@ -167,7 +153,7 @@ fn extruded_hole_patterned_around_an_axis() {
 /// The pattern is a feature like any other: its copies are its tools.
 #[test]
 fn pattern_of_holes_mirrored() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     extruded(
         &mut program,
         "plate",
@@ -180,7 +166,7 @@ fn pattern_of_holes_mirrored() {
         origin_plane(FrameAxis::Z),
         disc([1.0, 1.0], 0.3),
         both_ways(2.0),
-        cut("extrude(plate)"),
+        Combine::cut("extrude(plate)"),
     );
     program.push("holes", linear(&["hole"], 4.0, 2.0));
     program.push(
@@ -206,7 +192,7 @@ fn pattern_of_holes_mirrored() {
 /// times: three bosses on one solid.
 #[test]
 fn boss_patterned_in_a_row() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     extruded(
         &mut program,
         "plate",
@@ -225,7 +211,11 @@ fn boss_patterned_in_a_row() {
     );
     program.push(
         "boss",
-        extrusion("boss_sketch", Extents::blind(0.5), join("extrude(plate)")),
+        extrusion(
+            "boss_sketch",
+            Extents::blind(0.5),
+            Combine::join("extrude(plate)"),
+        ),
     );
     program.push("bosses", linear(&["boss"], 3.0, 2.5));
     let part = build(&program);
@@ -247,7 +237,7 @@ fn simple_m6(face: &str, end: Extent) -> HoleArgs {
 /// of the thread, named after the pattern, on its axis.
 #[test]
 fn tapped_hole_patterned_with_its_thread() {
-    let mut program = super::hole_tests::plate(&[[10.0, 20.0]]);
+    let mut program = plate(&[[10.0, 20.0]]);
     let mut tapped = simple_m6("extrude(plate,end)", Extent::blind(8.0));
     tapped.kind = HoleKind::Tapped;
     program.push("h", tapped);
@@ -286,12 +276,12 @@ fn tapped_hole_patterned_with_its_thread() {
 /// shown, once.
 #[test]
 fn a_patterned_thread_is_drawn() {
-    let mut program = super::hole_tests::plate(&[[10.0, 20.0]]);
+    let mut program = plate(&[[10.0, 20.0]]);
     let mut tapped = simple_m6("extrude(plate,end)", Extent::blind(8.0));
     tapped.kind = HoleKind::Tapped;
     program.push("h", tapped);
     program.push("p", linear(&["h"], 3.0, 15.0));
-    let runner = program.built().unwrap();
+    let runner = program.built(registry).unwrap();
     let drawn = geop_ops::ui::annotations_of(runner.part.current());
     let mut names: Vec<&str> = drawn.iter().map(|a| a.name.as_str()).collect();
     names.sort();
@@ -316,7 +306,7 @@ fn a_patterned_thread_is_drawn() {
 /// 20, as a hole drilled there would.
 #[test]
 fn hole_up_to_next_patterned_stops_at_the_next_face_where_it_is() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     extruded(
         &mut program,
         "low",
@@ -329,7 +319,7 @@ fn hole_up_to_next_patterned_stops_at_the_next_face_where_it_is() {
         origin_plane(FrameAxis::Z),
         outline(&[[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]]),
         Extents::blind(20.0),
-        join("extrude(low)"),
+        Combine::join("extrude(low)"),
     );
     program.push(
         "centres",
@@ -357,7 +347,7 @@ fn what_is_no_feature_is_refused() {
     let refused = |args: LinearPatternArgs| {
         let mut program = program.clone();
         program.push("p", args);
-        program.build_model().err().unwrap().to_string()
+        program.build_model(registry).err().unwrap().to_string()
     };
     let mut both = linear(&["hole"], 2.0, 2.0);
     both.seeds.bodies = vec![EntityRef::Solid {

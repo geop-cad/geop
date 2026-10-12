@@ -150,7 +150,7 @@ fn check(args: &PartPatternArgs) -> GeopResult<&EntityRef> {
     })
 }
 
-part_operation!(PartPattern);
+part_operation!(PartPattern(PartPatternArgs));
 
 impl PartOperation for PartPattern {
     const INFO: OperationInfo = OperationInfo::new(

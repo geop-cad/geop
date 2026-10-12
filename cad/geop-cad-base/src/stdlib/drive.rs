@@ -50,7 +50,6 @@ use super::{
     },
     tables, titled,
 };
-use crate::Push;
 
 /// The table parameter a gear's tooth count is chosen by.
 pub const TEETH: &str = "teeth";

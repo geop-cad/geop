@@ -967,7 +967,7 @@ fn check(part: BuildView, step: &str, args: &DrawingArgs) -> GeopResult<()> {
     Ok(())
 }
 
-part_operation!(Drawing);
+part_operation!(Drawing(DrawingArgs));
 
 impl PartOperation for Drawing {
     const INFO: OperationInfo = OperationInfo::new(

@@ -43,7 +43,7 @@ use geop_ops_subd::{Cage, Mirror, SubdArgs};
 use geop_ops_surface::NetworkSurfaceArgs;
 
 use crate::{
-    Program, Push,
+    Program,
     operations::{build, workspace},
 };
 
@@ -2081,9 +2081,13 @@ pub fn all() -> Vec<Example<Program>> {
 mod tests {
     use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar, vector::Vector3};
     use geop_core_topology::contains::shell::{PointClassification, shell_contains};
-    use geop_ops::{NamedModel, PartDescription, RefId};
+    use geop_ops::{
+        NamedModel, PartDescription, RefId, model::datum, operation::Lookup, testing::model_of,
+    };
 
-    use crate::operations::testing::{Built, args, check_valid, edit_args, error};
+    use crate::operations::testing::{
+        Built, args, assert_valid, check_valid, disc, edit_args, error, step,
+    };
 
     use super::*;
 
@@ -2572,5 +2576,100 @@ mod tests {
             .evaluate(S::from_f64(0.7), S::from_f64(1.2))
             .unwrap();
         assert!(p[2].could_be_equal(S::from_f64(-0.4)), "{p:?}");
+    }
+
+    /// The press handle's rim rounded: a bar 236 long whose rim lies 225 from
+    /// the origin. The blend face's control points were 8e-8 wide, and a ray
+    /// grazing it at its silhouette could not be resolved (see
+    /// `drawing_tests::press_from_the_iso_view_draws`): the cylinder's normal
+    /// was taken at the bar's far end and turned around an axis known to
+    /// 1e-12, and the weight was `r / |E - C|`, with the corner `E`'s width in
+    /// it twice. What is left is the weight's width, from the faces'
+    /// directions, times the distance from the origin.
+    #[test]
+    fn press_handle_rim_fillet_is_narrow() {
+        let (_, files) = workspaces()
+            .into_iter()
+            .find(|(n, _)| *n == "press")
+            .unwrap();
+        let (_, handle) = files()
+            .into_iter()
+            .find(|(path, _)| *path == "handle.geop")
+            .unwrap();
+        let part = handle.build_model().unwrap();
+        let face = part
+            .face_id("fillet(fillet1,revolve(revolve1,sketch2,p5,q3),fillet,q3)")
+            .unwrap();
+        let surface = &part.topology().get_face(face).unwrap().surface;
+        let widest = surface
+            .control_points
+            .iter()
+            .flat_map(|p| (0..4).map(move |k| p[k].width().to_f64()))
+            .fold(0.0, f64::max);
+        assert!(widest < 3e-9, "{widest:e}: {:?}", surface.control_points);
+    }
+
+    /// The example `pipe`, of radius `r`, along its route bent at radius
+    /// `bend`.
+    fn pipe_of(r: f64, bend: f64) -> Program {
+        let mut program = pipe();
+        edit_args(step(&mut program, "section"), |args: &mut AddSketchArgs| {
+            args.sketch = disc([0.0, 0.0], r);
+        });
+        edit_args(step(&mut program, "route"), |args: &mut AddSketch3dArgs| {
+            args.sketch = pipe_route(bend);
+        });
+        program
+    }
+
+    /// A pipe bent tighter than it is thick is refused, naming the bend —
+    /// rather than built crossing itself.
+    #[test]
+    fn a_bend_tighter_than_the_pipe_is_refused() {
+        let error = pipe_of(0.3, 0.25).build_model().expect_err("refused");
+        assert!(error.root_message().contains("bend"), "{error:?}");
+    }
+
+    /// Pipes along routes of lines and bends of several radii, from thin to
+    /// as thick as the tightest bend allows, and beyond: every one builds a
+    /// valid solid, or is refused for a bend tighter than the pipe.
+    #[test]
+    #[ignore = "slow: sweeps along paths of varied curvature — run with `cargo test -- --ignored`"]
+    fn pipes_bent_at_varied_radii() {
+        for bend in [0.4, 1.0, 1.5] {
+            for r in [0.1, 0.3, 0.39, 0.5] {
+                match pipe_of(r, bend).build_model() {
+                    Ok(part) => assert_valid(&part),
+                    Err(e) if r >= bend && e.root_message().contains("bend") => {}
+                    Err(e) => panic!("bend {bend}, radius {r}: {e:?}"),
+                }
+            }
+        }
+    }
+
+    /// A datum is a named entity, and a sketch can be placed on a datum
+    /// plane: its frame, exactly.
+    #[test]
+    fn sketches_go_on_datum_planes() {
+        let runner = boss_on_reference_plane().built().unwrap();
+        model_of(&runner).check_names().unwrap();
+        let built = runner.part.current();
+        let lifted = built.retrieve_target(&datum("lifted")).unwrap();
+        let placed = Seen::new(built).sketch("boss_sketch").unwrap().clone();
+        assert!(placed.plane.origin().could_be_equal(lifted.frame.origin()));
+        assert!(placed.plane.u().could_be_equal(lifted.frame.u()));
+        // Sketch data is solved, not exact: agreeing to 1e-9 is agreeing.
+        let off =
+            |a: &Vector3<S>, b: [f64; 3]| a.sub(&Vector3::from_array(b.map(n))).norm().to_f64();
+        assert!(
+            off(placed.plane.origin(), [0.0, 0.0, 1.5]) < 1e-9,
+            "{}",
+            placed.plane
+        );
+        assert!(
+            off(placed.plane.w(), [0.0, 0.0, 1.0]) < 1e-9,
+            "{}",
+            placed.plane
+        );
     }
 }

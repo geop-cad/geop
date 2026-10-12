@@ -37,4 +37,6 @@ geop-ops-bom.workspace = true
 [dev-dependencies]
 geop-ops = { workspace = true, features = ["testing"] }
 geop-ops-rasterize.workspace = true
-geop-ops-extrude-revolve = { workspace = true, features = ["test-shapes"] }
+geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-ops-hole = { workspace = true, features = ["testing"] }
+geop-ops-plastic = { workspace = true, features = ["testing"] }

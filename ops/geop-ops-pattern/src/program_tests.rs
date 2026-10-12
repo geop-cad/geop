@@ -4,25 +4,39 @@
 
 use std::f64::consts::PI;
 
+use crate::{
+    CircularPatternArgs, Direction, LinearPatternArgs, MirrorArgs, MoveBodyArgs, Seeds, Spacing,
+};
 use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::Scalar;
 use geop_ops::{Design, EntityRef, NamedModel};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::Extents;
-use geop_ops_pattern::{
-    CircularPatternArgs, Direction, LinearPatternArgs, MirrorArgs, MoveBodyArgs, Seeds, Spacing,
-};
 use geop_ops_sketch::Sketch;
 
-use crate::operations::testing::{
-    Built, assert_valid, assert_volume, both_ways, cut, disc, extrude_sketch, join, origin_axis,
-    origin_plane, outline,
-};
-use crate::{Program, Push};
+use geop_core_math::geop_error::GeopResult;
+use geop_ops::program::{ProgramFile, Registry};
+use geop_ops::testing::{Built, assert_valid, assert_volume};
+use geop_ops::{origin_axis, origin_plane};
+use geop_ops_booleans::Boolean;
+use geop_ops_extrude_revolve::testing::{both_ways, disc, extrude_sketch, n, outline, sketch};
+use geop_ops_sketch3d::AddSketch3d;
+
+use crate::{CircularPattern, LinearPattern, Mirror, MoveBody};
+
+/// The operations these tests' programs are written in.
+fn registry() -> GeopResult<Registry> {
+    (geop_ops_extrude_revolve::testing::registry()?.with(AddSketch3d)?)
+        .with(Boolean)?
+        .with(LinearPattern)?
+        .with(CircularPattern)?
+        .with(Mirror)?
+        .with(MoveBody)
+}
 
 /// A sketch on the Z plane, and `name` its extrude, as `extent` says, a
 /// new body.
-pub(super) fn extruded(program: &mut Program, name: &str, sketch: Sketch, extent: Extents) {
+fn extruded(program: &mut ProgramFile, name: &str, sketch: Sketch, extent: Extents) {
     let plane = origin_plane(FrameAxis::Z);
     extrude_sketch(program, name, plane, sketch, extent, Combine::NewBody);
 }
@@ -31,14 +45,10 @@ fn solid(name: &str) -> Vec<EntityRef> {
     vec![EntityRef::Solid { name: name.into() }]
 }
 
-pub(super) fn axis(a: FrameAxis) -> Option<EntityRef> {
-    Some(origin_axis(a))
-}
-
 /// A plate 8 x 2 x 0.5, and a pin of radius 0.3 at (1, 1) through it — a
 /// tool kept as a body of its own.
-fn plate_and_pin() -> Program {
-    let mut program = Program::new();
+fn plate_and_pin() -> ProgramFile {
+    let mut program = ProgramFile::new();
     extruded(
         &mut program,
         "plate",
@@ -52,11 +62,11 @@ fn plate_and_pin() -> Program {
 
 /// Builds `program`, with every step read back from its JSON first: what
 /// a program file holds builds the same part.
-pub(super) fn build(program: &Program) -> NamedModel<Design> {
+fn build(program: &ProgramFile) -> NamedModel<Design> {
     let json = serde_json::to_string(program).unwrap();
-    let read: Program = serde_json::from_str(&json).unwrap();
+    let read: ProgramFile = serde_json::from_str(&json).unwrap();
     assert_eq!(&read, program);
-    read.build_model().unwrap()
+    read.build_model(registry).unwrap()
 }
 
 /// The pin patterned four times two apart and cut from the plate — itself
@@ -67,9 +77,9 @@ fn row_of_holes_cut_by_a_patterned_tool() {
     program.push(
         "holes",
         LinearPatternArgs {
-            seeds: Seeds::bodies(solid("extrude(pin)"), cut("extrude(plate)")),
+            seeds: Seeds::bodies(solid("extrude(pin)"), Combine::cut("extrude(plate)")),
             first: Direction {
-                along: axis(FrameAxis::X),
+                along: Some(origin_axis(FrameAxis::X)),
                 reversed: false,
                 count: 4.0.into(),
                 spacing: Spacing::step(2.0),
@@ -95,7 +105,7 @@ fn row_of_holes_cut_by_a_patterned_tool() {
 /// square plate: a bolt circle.
 #[test]
 fn bolt_circle_cut_by_a_patterned_tool() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     extruded(
         &mut program,
         "plate",
@@ -107,8 +117,8 @@ fn bolt_circle_cut_by_a_patterned_tool() {
     program.push(
         "bolts",
         CircularPatternArgs {
-            seeds: Seeds::bodies(solid("extrude(pin)"), cut("extrude(plate)")),
-            axis: axis(FrameAxis::Z),
+            seeds: Seeds::bodies(solid("extrude(pin)"), Combine::cut("extrude(plate)")),
+            axis: Some(origin_axis(FrameAxis::Z)),
             reversed: false,
             count: 6.0.into(),
             angle: Spacing::extent(360.0),
@@ -124,7 +134,7 @@ fn bolt_circle_cut_by_a_patterned_tool() {
 /// symmetric T, twice the L.
 #[test]
 fn half_mirrored_and_joined() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     let l = [
         [0.0, 0.0],
         [2.0, 0.0],
@@ -137,7 +147,7 @@ fn half_mirrored_and_joined() {
     program.push(
         "m",
         MirrorArgs {
-            seeds: Seeds::bodies(solid("extrude(half)"), join("extrude(half)")),
+            seeds: Seeds::bodies(solid("extrude(half)"), Combine::join("extrude(half)")),
             plane: Some(origin_plane(FrameAxis::X)),
         },
     );
@@ -152,7 +162,7 @@ fn half_mirrored_and_joined() {
 /// out.
 #[test]
 fn asymmetric_body_mirrored() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     let l = [
         [1.0, 0.0],
         [3.0, 0.0],
@@ -204,7 +214,7 @@ fn tool_moved_into_place_and_cut() {
             axis: None,
             angle: 0.0,
             copy: false,
-            combine: cut("extrude(plate)"),
+            combine: Combine::cut("extrude(plate)"),
         },
     );
     let part = build(&program);
@@ -225,7 +235,7 @@ fn circular_patterns_sweep() {
         (2, Spacing::step(13.0), true),
         (12, Spacing::extent(360.0), true),
     ] {
-        let mut program = Program::new();
+        let mut program = ProgramFile::new();
         extruded(
             &mut program,
             "b",
@@ -238,19 +248,19 @@ fn circular_patterns_sweep() {
                 seeds: Seeds::bodies(
                     solid("extrude(b)"),
                     if joined {
-                        join("extrude(b)")
+                        Combine::join("extrude(b)")
                     } else {
                         Combine::NewBody
                     },
                 ),
-                axis: axis(FrameAxis::Z),
+                axis: Some(origin_axis(FrameAxis::Z)),
                 reversed: false,
                 count: (count as f64).into(),
                 angle: angle.clone(),
             },
         );
         let part = program
-            .build_model()
+            .build_model(registry)
             .unwrap_or_else(|e| panic!("{count} at {angle:?}: {e:?}"));
         assert_valid(&part);
         let solids = part.solid_names();
@@ -268,7 +278,7 @@ fn circular_patterns_sweep() {
 /// what a circular pattern joined to its seed does.
 #[test]
 fn three_turned_boxes_joined() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     for (k, name) in ["a", "b", "c"].into_iter().enumerate() {
         let (s, c) = (13.0 * k as f64).to_radians().sin_cos();
         let corners: Vec<[f64; 2]> = [[2.0, -0.4], [3.0, -0.4], [3.0, 0.4], [2.0, 0.4]]
@@ -293,7 +303,7 @@ fn three_turned_boxes_joined() {
             op: geop_ops_booleans::boolean::BooleanOp::Union,
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
 }
 
@@ -311,7 +321,7 @@ fn three_turned_boxes_joined() {
 /// transversal crossing is now a piercing.
 #[test]
 fn three_turned_boxes_one_a_turned_copy_joined() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     for (k, name) in ["a", "b"].into_iter().enumerate() {
         let (s, c) = (13.0 * k as f64).to_radians().sin_cos();
         let corners: Vec<[f64; 2]> = [[2.0, -0.4], [3.0, -0.4], [3.0, 0.4], [2.0, 0.4]]
@@ -325,7 +335,7 @@ fn three_turned_boxes_one_a_turned_copy_joined() {
         MoveBodyArgs {
             bodies: solid("extrude(a)"),
             translation: [0.0; 3],
-            axis: axis(FrameAxis::Z),
+            axis: Some(origin_axis(FrameAxis::Z)),
             angle: 26.0,
             copy: true,
             combine: Combine::NewBody,
@@ -347,7 +357,7 @@ fn three_turned_boxes_one_a_turned_copy_joined() {
             op: geop_ops_booleans::boolean::BooleanOp::Union,
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     let (width, edge) = widest_pcurve(&part);
     assert!(width < 1e-9, "{edge}: {width:e}");
@@ -386,7 +396,7 @@ fn widest_pcurve(part: &NamedModel<Design>) -> (f64, String) {
 /// where they are.
 #[test]
 fn turned_copy_joined_stays_tight() {
-    let mut program = Program::new();
+    let mut program = ProgramFile::new();
     extruded(
         &mut program,
         "b",
@@ -396,14 +406,14 @@ fn turned_copy_joined_stays_tight() {
     program.push(
         "r",
         CircularPatternArgs {
-            seeds: Seeds::bodies(solid("extrude(b)"), join("extrude(b)")),
-            axis: axis(FrameAxis::Z),
+            seeds: Seeds::bodies(solid("extrude(b)"), Combine::join("extrude(b)")),
+            axis: Some(origin_axis(FrameAxis::Z)),
             reversed: false,
             count: 2.0.into(),
             angle: Spacing::step(13.0),
         },
     );
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     let (width, edge) = widest_pcurve(&part);
     assert!(width < 1e-9, "{edge}: {width:e}");
@@ -416,7 +426,7 @@ fn turned_copy_joined_stays_tight() {
 #[ignore = "slow: rows and grids of up to 24 holes, copies turned at awkward angles — run with `cargo test -- --ignored`"]
 fn linear_patterns_and_moves_sweep() {
     for (along, across) in [(24, 1), (6, 4), (3, 3)] {
-        let mut program = Program::new();
+        let mut program = ProgramFile::new();
         extruded(
             &mut program,
             "plate",
@@ -428,15 +438,15 @@ fn linear_patterns_and_moves_sweep() {
         program.push(
             "holes",
             LinearPatternArgs {
-                seeds: Seeds::bodies(solid("extrude(pin)"), cut("extrude(plate)")),
+                seeds: Seeds::bodies(solid("extrude(pin)"), Combine::cut("extrude(plate)")),
                 first: Direction {
-                    along: axis(FrameAxis::X),
+                    along: Some(origin_axis(FrameAxis::X)),
                     reversed: false,
                     count: (along as f64).into(),
                     spacing: Spacing::step(1.2),
                 },
                 second: (across > 1).then(|| Direction {
-                    along: axis(FrameAxis::Y),
+                    along: Some(origin_axis(FrameAxis::Y)),
                     reversed: false,
                     count: (across as f64).into(),
                     spacing: Spacing::extent(1.3 * (across - 1) as f64),
@@ -444,7 +454,7 @@ fn linear_patterns_and_moves_sweep() {
             },
         );
         let part = program
-            .build_model()
+            .build_model(registry)
             .unwrap_or_else(|e| panic!("{along} x {across}: {e:?}"));
         assert_valid(&part);
         let holes = (along * across) as f64;
@@ -467,7 +477,7 @@ fn linear_patterns_and_moves_sweep() {
             },
         );
         let part = program
-            .build_model()
+            .build_model(registry)
             .unwrap_or_else(|e| panic!("{degrees}°: {e:?}"));
         assert_valid(&part);
         assert_volume(&part, "move(mv,extrude(plate))", 8.0, 1e-6);
@@ -482,7 +492,7 @@ fn linear_patterns_and_moves_sweep() {
 fn holes_patterned_along_sketch_lines() {
     let mut program = plate_and_pin();
     let mut route = geop_ops_sketch3d::Sketch3d::new();
-    let at = |p: [f64; 3]| geop_core_math::vector::Vector3::from_array(p.map(crate::examples::n));
+    let at = |p: [f64; 3]| geop_core_math::vector::Vector3::from_array(p.map(n));
     let (a, b) = (
         route.add_point(at([0.0, 3.0, 0.0])),
         route.add_point(at([1.0, 3.0, 0.0])),
@@ -496,20 +506,16 @@ fn holes_patterned_along_sketch_lines() {
         },
     );
     let mut across = Sketch::new();
-    let n = crate::examples::n;
     let (a, b) = (
         across.add_point(n(-1.0), n(0.0)),
         across.add_point(n(-1.0), n(1.0)),
     );
     let line = across.add_line(a, b);
-    program.push(
-        "across",
-        crate::operations::testing::sketch(origin_plane(FrameAxis::Z), across),
-    );
+    program.push("across", sketch(origin_plane(FrameAxis::Z), across));
     program.push(
         "holes",
         LinearPatternArgs {
-            seeds: Seeds::bodies(solid("extrude(pin)"), cut("extrude(plate)")),
+            seeds: Seeds::bodies(solid("extrude(pin)"), Combine::cut("extrude(plate)")),
             first: Direction {
                 along: Some(EntityRef::Edge {
                     name: "sketch3d(rail,c2)".into(),

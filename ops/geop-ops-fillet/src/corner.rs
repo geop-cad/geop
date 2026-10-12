@@ -37,7 +37,10 @@
 //! or overlapping. A chamfered corner is left to its chamfers, which cross
 //! in a point.
 
-use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
+use geop_core_geometry::{
+    meet::{Offset, meet},
+    search::{MAX_NODES, min_subdivision_size},
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     matrix::Matrix,
@@ -51,7 +54,7 @@ use geop_ops::{NamedModel, Namer};
 
 use crate::{
     blend::{Bend, BlendShape, End, Plan, Sweep, ToolProfile, check_touch},
-    rolling::{Chain, ChainCorner, RadiusLaw, ball_center, chain_bend, foot, seed_on},
+    rolling::{Chain, ChainCorner, RadiusLaw, chain_bend, foot, seed_on},
     tool::{Corner, CornerEnd},
 };
 
@@ -337,8 +340,8 @@ fn plan_corner<S: Scalar>(
 /// and where it touches each.
 ///
 /// Three planes give it exactly, by one linear solve. Against curved faces
-/// it is Newton's method ([`ball_center`]), from the planes tangent to the
-/// faces at the corner. Checked against every face at the end.
+/// it is Newton's method ([`meet`], which checks it against every face),
+/// from the planes tangent to the faces at the corner.
 fn ball<S: Scalar>(
     model: &Model<S>,
     faces: [FaceId; 3],
@@ -371,28 +374,16 @@ fn ball<S: Scalar>(
         normals[k] = surfaces[k].normal_at(at, MAX_NODES, min_subdivision_size())?;
     }
     let center = at.add(&solve(normals, [sr; 3])?).sharpen();
-    let mut uv = [(S::ZERO, S::ZERO); 3];
+    let mut offsets = Vec::new();
     for k in 0..3 {
-        uv[k] = seed_on(surfaces[k], at)?;
+        offsets.push(Offset::new(surfaces[k], seed_on(surfaces[k], at)?, sr));
     }
-    let center = ball_center(&surfaces, &mut uv, &[], sr, center)?;
+    // A construction aid, sharp: the contacts are evaluated on the faces.
+    let center = meet(center, &mut offsets, &[])?.sharpen();
     let mut contacts = [Vector3::zero(); 3];
-    for k in 0..3 {
-        let (u, v) = foot(surfaces[k], &center, uv[k])?;
+    for (k, offset) in offsets.iter().enumerate() {
+        let (u, v) = foot(surfaces[k], &center, offset.pieces[0].1)?;
         contacts[k] = surfaces[k].evaluate(u, v)?;
-        let n = surfaces[k].normal(u, v)?.normalize()?;
-        let off = center.sub(&contacts[k]);
-        let along = off.prod_dot(&n);
-        let across = off.sub(&n.prod_scalar(along)).norm();
-        // `sr` along the normal, and nothing across it, to within how far
-        // the blend may stray from the ball anywhere.
-        let slack = S::from_f64(crate::rolling::DEVIATION * sr.abs().upper().to_f64());
-        if !(along.sub(sr).abs().definitely_less(slack) && across.definitely_less(slack)) {
-            return Err(GeopError::new(format!(
-                "the ball rounding the corner, centered at {center:?}, does not touch face {} truly: {along:?} off it along its normal, {across:?} across it",
-                faces[k]
-            )));
-        }
     }
     Ok((center, contacts))
 }

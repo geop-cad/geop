@@ -135,7 +135,7 @@ pub(crate) fn build(
     Ok(())
 }
 
-part_operation!(FlatPattern);
+part_operation!(FlatPattern(FlatPatternArgs));
 
 impl PartOperation for FlatPattern {
     const INFO: OperationInfo = OperationInfo::new(

@@ -155,7 +155,7 @@ pub(crate) fn edge_field<'a, A>(
     f.pick_one("edge", "edge", EntityRef::edge, edge, &[Role::Line], set);
 }
 
-part_operation!(EdgeFlange);
+part_operation!(EdgeFlange(EdgeFlangeArgs));
 
 impl PartOperation for EdgeFlange {
     const INFO: OperationInfo = OperationInfo::new(

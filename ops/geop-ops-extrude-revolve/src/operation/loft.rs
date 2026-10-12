@@ -78,7 +78,7 @@ pub struct LoftArgs {
     pub output: Output,
 }
 
-part_operation!(Loft);
+part_operation!(Loft(LoftArgs));
 
 impl PartOperation for Loft {
     const INFO: OperationInfo = OperationInfo::new(

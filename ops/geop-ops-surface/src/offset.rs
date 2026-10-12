@@ -35,7 +35,7 @@ pub struct OffsetSurfaceArgs {
     pub distance: f64,
 }
 
-part_operation!(OffsetSurface);
+part_operation!(OffsetSurface(OffsetSurfaceArgs));
 
 impl PartOperation for OffsetSurface {
     const INFO: OperationInfo = OperationInfo::new(

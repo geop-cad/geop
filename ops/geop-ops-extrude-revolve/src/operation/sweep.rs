@@ -112,7 +112,7 @@ const ORIENTATIONS: [(Orientation, &str, &str); 2] = [
     ),
 ];
 
-part_operation!(Sweep);
+part_operation!(Sweep(SweepArgs));
 
 impl PartOperation for Sweep {
     const INFO: OperationInfo = OperationInfo::new(
