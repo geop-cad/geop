@@ -15,6 +15,7 @@
 
 pub mod constraint;
 pub mod editing;
+pub mod element;
 pub mod operation;
 pub mod operation_registry;
 pub mod part;
