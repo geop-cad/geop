@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "core/geop-core-program",
+    "core/geop-core-editor",
     "core/geop-core-math",
     "core/geop-core-geometry",
     "core/geop-core-topology",
@@ -32,6 +33,7 @@ members = [
     "ops/geop-ops-hole",
     "ops/geop-ops-urdf",
     "ops/geop-ops-bom",
+    "ops/geop-ops-constraints",
 ]
 
 [workspace.package]
@@ -40,6 +42,7 @@ edition = "2024"
 
 [workspace.dependencies]
 geop-core-program = { path = "core/geop-core-program" }
+geop-core-editor = { path = "core/geop-core-editor" }
 geop-core-math = { path = "core/geop-core-math" }
 geop-core-geometry = { path = "core/geop-core-geometry" }
 geop-core-topology = { path = "core/geop-core-topology" }
@@ -78,6 +81,7 @@ geop-ops-harness = { path = "ops/geop-ops-harness" }
 geop-ops-hole = { path = "ops/geop-ops-hole" }
 geop-ops-urdf = { path = "ops/geop-ops-urdf" }
 geop-ops-bom = { path = "ops/geop-ops-bom" }
+geop-ops-constraints = { path = "ops/geop-ops-constraints" }
 
 # `cargo test` otherwise builds these crates unoptimized, which is fine for
 # cheap unit tests but disastrous for the render-test suites in

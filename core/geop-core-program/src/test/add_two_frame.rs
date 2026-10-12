@@ -2,11 +2,10 @@ use geop_core_math::geop_error::GeopResult;
 use geop_core_math::vector::Vector3;
 use serde::{Deserialize, Serialize};
 
-use crate::editing::{Event, Form};
-use crate::operation::{Context, Operation, OperationInfo};
+use crate::operation::Operation;
 use crate::part::Part;
 use crate::target::TargetReference;
-use crate::test::{Frame, Pose, Sc, info, label, record_built};
+use crate::test::{Frame, Pose, Sc, label, record_built};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AddTwoFrameArgs {
@@ -18,9 +17,8 @@ pub struct AddTwoFrameArgs {
 pub struct AddTwoFrameOperation;
 
 impl Operation for AddTwoFrameOperation {
-    const INFO: OperationInfo = info("add_two_frame");
+    const KIND: &'static str = "add_two_frame";
     type Args = AddTwoFrameArgs;
-    type EditingState = ();
     type Input = Sc;
     type State = Pose;
 
@@ -34,22 +32,5 @@ impl Operation for AddTwoFrameOperation {
             })?;
         }
         Ok(())
-    }
-
-    fn new_args(_: &Context<Sc, Pose>) -> Self::Args {
-        Self::Args::default()
-    }
-
-    fn presentation(_: &Context<Sc, Pose>, _: &Self::Args, _: &()) -> Form<Sc> {
-        Form::default()
-    }
-
-    fn process_user_event(
-        _: &Context<Sc, Pose>,
-        args: &Self::Args,
-        _: &(),
-        _: Event<Sc>,
-    ) -> (Self::Args, ()) {
-        (args.clone(), ())
     }
 }

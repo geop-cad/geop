@@ -9,6 +9,7 @@ pub mod examples;
 pub mod inspect;
 pub mod operations;
 pub mod stdlib;
+pub mod step_editor;
 
 pub use editor::{Command, Editor, Update};
 pub use operations::{Program, Workspace, infos, outputs, registry};

@@ -8,7 +8,8 @@ use geop_core_math::{
 };
 use serde::Serialize;
 
-use super::{Dialog, EntityRef, GizmoView, Role};
+use super::{Dialog, GizmoView};
+use geop_core_program::element::PickedElement;
 
 /// What a visual is.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -41,7 +42,7 @@ pub enum Shape<S: Scalar> {
         direction: Vector3<S>,
     },
     /// A part placed in the part, by its instance's name, as the viewer
-    /// draws it already (see [`crate::step_editor::Scene::hit_instance`]): lit when
+    /// draws it already (see [`super::hit::Scene::hit_instance`]): lit when
     /// hovered or selected, hit where its faces are.
     Instance {
         name: String,
@@ -119,7 +120,7 @@ pub struct Prompt<S: Scalar> {
 /// Something an operation draws in the viewport, under a key the hit tests
 /// report (see [`super::hit::hit_visuals`]) — and what the user can do with
 /// it, which the editor handles alike for every operation (see
-/// [`crate::step_editor::StepEditor`]).
+/// the step editor, `geop_cad_base::step_editor`).
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(bound = "S: Scalar")]
 pub struct Visual<S: Scalar> {
@@ -182,13 +183,12 @@ impl<S: Scalar> Visual<S> {
 pub struct Presentation<S: Scalar> {
     pub dialog: Dialog<S>,
     pub visuals: Vec<Visual<S>>,
-    /// Entities of the part to draw lit: what is picked, what a click would
+    /// Elements of the part to draw lit: what is picked, what a click would
     /// pick.
-    pub highlights: Vec<EntityRef>,
-    /// What a click in the viewport picks right now: entities that can
-    /// fill one of these roles. The viewer shows datums that can, and fades
-    /// the rest.
-    pub pickable: Vec<Role>,
+    pub highlights: Vec<PickedElement>,
+    /// What a click in the viewport picks right now: elements of these
+    /// kinds.
+    pub pickable: Vec<String>,
     /// A plane to work in, its `u`/`v` plane: the viewer faces it head on,
     /// stops orbiting, and draws a grid on it.
     pub focus: Option<CoordinateSystem<S>>,

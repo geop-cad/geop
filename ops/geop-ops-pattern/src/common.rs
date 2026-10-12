@@ -472,7 +472,7 @@ where
     build_model::<O>(part, step, args)?;
     match copies {
         Some(copies) => {
-            part.revise_or_start(&threads(), &copies?, copy_threads)?;
+            part.revise_target(&threads(), &copies?, copy_threads)?;
             draw_threads(part, step)
         }
         None => Ok(()),

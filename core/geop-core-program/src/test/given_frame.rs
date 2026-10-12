@@ -5,11 +5,10 @@ use geop_core_math::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::editing::{Event, Form};
-use crate::operation::{Context, Operation, OperationInfo};
-use crate::part::{Part, Retrieve};
+use crate::operation::Operation;
+use crate::part::Part;
 use crate::target::TargetReference;
-use crate::test::{Frame, Pose, Sc, info, label, record_built};
+use crate::test::{Frame, Pose, Sc, label, record_built};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct InputFrameArgs {
@@ -21,9 +20,8 @@ pub struct InputFrameArgs {
 pub struct InputFrameOperation;
 
 impl Operation for InputFrameOperation {
-    const INFO: OperationInfo = info("input_frame");
+    const KIND: &'static str = "input_frame";
     type Args = InputFrameArgs;
-    type EditingState = ();
     type Input = Sc;
     type State = Pose;
 
@@ -40,23 +38,6 @@ impl Operation for InputFrameOperation {
             })
         })
     }
-
-    fn new_args(_: &Context<Sc, Pose>) -> Self::Args {
-        Self::Args::default()
-    }
-
-    fn presentation(_: &Context<Sc, Pose>, _: &Self::Args, _: &()) -> Form<Sc> {
-        Form::default()
-    }
-
-    fn process_user_event(
-        _: &Context<Sc, Pose>,
-        args: &Self::Args,
-        _: &(),
-        _: Event<Sc>,
-    ) -> (Self::Args, ()) {
-        (args.clone(), ())
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -69,9 +50,8 @@ pub struct StateFrameArgs {
 pub struct StateFrameOperation;
 
 impl Operation for StateFrameOperation {
-    const INFO: OperationInfo = info("state_frame");
+    const KIND: &'static str = "state_frame";
     type Args = StateFrameArgs;
-    type EditingState = ();
     type Input = Sc;
     type State = Pose;
 
@@ -88,22 +68,5 @@ impl Operation for StateFrameOperation {
                 })
             },
         )
-    }
-
-    fn new_args(_: &Context<Sc, Pose>) -> Self::Args {
-        Self::Args::default()
-    }
-
-    fn presentation(_: &Context<Sc, Pose>, _: &Self::Args, _: &()) -> Form<Sc> {
-        Form::default()
-    }
-
-    fn process_user_event(
-        _: &Context<Sc, Pose>,
-        args: &Self::Args,
-        _: &(),
-        _: Event<Sc>,
-    ) -> (Self::Args, ()) {
-        (args.clone(), ())
     }
 }

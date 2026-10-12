@@ -6,17 +6,17 @@
 //! The values of the state a solve may move are the caller's to say
 //! ([`Problem::free`]), each a block of the system, stepped along its own
 //! steps ([`geop_core_math::solvers::system::Variable::retract`]: a pose by
-//! the exponential map of a twist). The constraints are those the last run
-//! of the part reported, brought up to date with every state tried
-//! ([`Part::update`]), not the whole program run again. What a solve
+//! the exponential map of a twist). The constraints are those the program
+//! defines, run again at every state tried: what did not read the state
+//! that changed is reused, not built again. What a solve
 //! should prefer among the states the constraints allow is the caller's
 //! too: [`Preference`]s pull — a drag — and every value nothing pulls stays
 //! as near where it was as the constraints let it.
 //!
 //! What steps let a solve move is said in the program itself: a step
-//! declares a value of the state ([`Unknown`], a target of the part), how
-//! a solve may move it, and where one starts from — so a solve of any
-//! program is set up from the part alone ([`unknowns`]).
+//! declares a value of the state ([`crate::unknown::Unknown`]), how a solve
+//! may move it, and where one starts from — so a solve of any program is set
+//! up from the part alone ([`crate::unknown::Unknowns`]).
 //!
 //! Every solve comes with an enclosure of a true solution near where it
 //! ended ([`Solved::enclosure`]), each value in its own step coordinates
@@ -35,22 +35,42 @@ use geop_core_math::{
 
 pub use geop_core_math::solvers::system::Mobility;
 
-use crate::{
-    constraint::Constraint,
-    part::{Input, Part, State, View},
-    target::TargetReference,
+use geop_core_program::{
+    part::{Input, Part, Reader},
+    program::Program,
+    program_runner::ProgramRunner,
 };
+
+use crate::{
+    Solvable,
+    constraint::{Constraint, Constraints},
+};
+
+/// A program to run again at every state a solve tries, with its inputs.
+pub struct Run<'r, I, S: Solvable> {
+    pub runner: &'r mut ProgramRunner<I, S>,
+    pub program: &'r Program,
+    pub inputs: &'r BTreeMap<String, I>,
+}
+
+impl<I: Input, S: Solvable> Run<'_, I, S> {
+    /// The part the program builds at `state`.
+    fn at(&mut self, state: &BTreeMap<String, S>) -> &Part<I, S> {
+        self.runner.run(self.program, self.inputs, state);
+        &self.runner.part
+    }
+}
 
 /// What a solve should prefer among the states where the constraints
 /// hold: residuals it wants small — not zero at any price — where the part
-/// is as `view` shows it, each a length, and their derivatives by the
+/// is as `reader` reads it, each a length, and their derivatives by the
 /// state. A drag, pulling a point of a placed part towards the pointer.
-pub trait Preference<I, S: State> {
-    fn evaluate(&self, view: View<'_, I, S>) -> GeopResult<Constraint<S>>;
+pub trait Preference<I, S: Solvable> {
+    fn evaluate(&self, reader: &Reader<'_, I, S>) -> GeopResult<Constraint<S>>;
 }
 
 /// What a [`solve`] may move, and towards what.
-pub struct Problem<'p, I, S: State> {
+pub struct Problem<'p, I, S: Solvable> {
     /// The values the solve may move, by name, and how; it leaves every
     /// other value — and every one [`Mobility::Fixed`] — as it is.
     pub free: BTreeMap<String, Mobility>,
@@ -87,7 +107,7 @@ pub struct Report<T: geop_core_math::scalars::Scalar> {
 /// could have, by name — or, for the values whose groups none is proven
 /// for, why not.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Enclosure<S: State> {
+pub struct Enclosure<S: Solvable> {
     /// Per value enclosed, the box its true value is in.
     pub state: BTreeMap<String, S>,
     /// Per group of values not proven, its values and why: the constraints
@@ -97,7 +117,7 @@ pub struct Enclosure<S: State> {
 
 /// Where a solve put the state, how it went, and the enclosure of a true
 /// solution near there of every group it solved.
-pub struct Solved<S: State> {
+pub struct Solved<S: Solvable> {
     pub state: BTreeMap<String, S>,
     pub report: Report<S::Scalar>,
     pub enclosure: Enclosure<S>,
@@ -114,52 +134,12 @@ pub struct Freedom {
     pub total: usize,
 }
 
-/// A value of the state as a step declares it for solving (see the module
-/// docs): the state it is, and how a solve may move it — or that it holds
-/// it fixed. A solve starts it from `seed` where the state has none of it,
-/// and — given a constraint `unless` — where that constraint does not hold
-/// either: a joint's coordinate, measured from where its parts are unless
-/// the joint holds.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Unknown<S: State> {
-    pub state: String,
-    pub mobility: Mobility,
-    pub seed: Option<S>,
-    pub unless: Option<String>,
-}
-
-/// What a target declaring an unknown is named, before what declares it.
-const UNKNOWN: &str = "unknown:";
-
-/// The target declaring an unknown, named after what declares it: a mate,
-/// or the state itself.
-pub fn unknown<S: State>(by: &str) -> TargetReference<Unknown<S>> {
-    TargetReference::new(format!("{UNKNOWN}{by}"))
-}
-
-/// Every unknown the part `view` shows declares, by the state it is: of
-/// several declarations of one state, one that holds it fixed wins, and
-/// otherwise the first made.
-pub fn unknowns<I: Input, S: State>(view: View<'_, I, S>) -> BTreeMap<String, Unknown<S>> {
-    let mut out: BTreeMap<String, Unknown<S>> = BTreeMap::new();
-    for (_, declared) in view.targets_of::<Unknown<S>>() {
-        match out.get_mut(&declared.state) {
-            None => {
-                out.insert(declared.state.clone(), declared.clone());
-            }
-            Some(kept) if declared.mobility == Mobility::Fixed => kept.mobility = Mobility::Fixed,
-            Some(_) => {}
-        }
-    }
-    out
-}
-
 /// A part's constraints and preferences, on the values a problem frees: the
 /// [`Equations`] of its system. Each value a solve may move is a block, in
 /// order of their names; each constraint is one by its name, in order.
-struct Program<'m, 'p, I, S: State> {
-    part: RefCell<&'m mut Part<I, S>>,
-    /// The whole state, as the part was last updated with: the blocks'
+struct Solving<'r, 'p, I, S: Solvable> {
+    run: RefCell<Run<'r, I, S>>,
+    /// The whole state, as the program was last run with: the blocks'
     /// values written into it.
     working: RefCell<BTreeMap<String, S>>,
     /// Per block, the value it is.
@@ -170,23 +150,17 @@ struct Program<'m, 'p, I, S: State> {
     preferences: &'p [&'p dyn Preference<I, S>],
 }
 
-impl<'m, 'p, I: Input, S: State> Program<'m, 'p, I, S> {
-    /// The system of `part`, its state at `state`, the values `problem`
-    /// frees as its blocks: and their values where `state` has them.
+impl<'r, 'p, I: Input, S: Solvable> Solving<'r, 'p, I, S> {
+    /// The system of the program `run` runs, its state at `state`, the
+    /// values `problem` frees as its blocks: and their values where `state`
+    /// has them.
     fn new(
-        part: &'m mut Part<I, S>,
+        mut run: Run<'r, I, S>,
         state: &BTreeMap<String, S>,
         problem: &'p Problem<'p, I, S>,
-    ) -> (Self, Vec<S>) {
-        let names: Vec<String> = part.constraints().into_keys().map(str::to_string).collect();
-        let all: Vec<&str> = names.iter().map(String::as_str).collect();
-        part.update(state, &all);
-        let made = part.constraints();
-        let constraints = (names.iter())
-            .map(|name| {
-                let bound = made.get(name.as_str()).map_or(Bound::Zero, |c| c.bound);
-                (name.clone(), bound)
-            })
+    ) -> GeopResult<(Self, Vec<S>)> {
+        let constraints = (Constraints::of(&run.at(state).current())?.iter())
+            .map(|(name, constraint)| (name.to_string(), constraint.bound))
             .collect();
         let blocks: Vec<String> = (problem.free.iter())
             .filter(|(_, mobility)| mobility.free())
@@ -198,15 +172,15 @@ impl<'m, 'p, I: Input, S: State> Program<'m, 'p, I, S> {
         let index = (blocks.iter().enumerate())
             .map(|(k, name)| (name.clone(), k))
             .collect();
-        let program = Program {
-            part: RefCell::new(part),
+        let solving = Solving {
+            run: RefCell::new(run),
             working: RefCell::new(state.clone()),
             blocks,
             index,
             constraints,
             preferences: &problem.preferences,
         };
-        (program, values)
+        Ok((solving, values))
     }
 
     /// The system: how each block may move, and its size.
@@ -227,10 +201,9 @@ impl<'m, 'p, I: Input, S: State> Program<'m, 'p, I, S> {
             .collect()
     }
 
-    /// The part, left as the state `state` has it.
+    /// The part, left as the program builds it at `state`.
     fn finish(self, state: &BTreeMap<String, S>) {
-        let names: Vec<&str> = self.constraints.iter().map(|(n, _)| n.as_str()).collect();
-        self.part.into_inner().update(state, &names);
+        self.run.into_inner().at(state);
     }
 
     /// `constraint` as a term of the system: its derivatives by the
@@ -245,7 +218,7 @@ impl<'m, 'p, I: Input, S: State> Program<'m, 'p, I, S> {
     }
 }
 
-impl<I: Input, S: State> Equations for Program<'_, '_, I, S> {
+impl<I: Input, S: Solvable> Equations for Solving<'_, '_, I, S> {
     type Value = S;
 
     fn count(&self) -> (usize, usize) {
@@ -267,25 +240,17 @@ impl<I: Input, S: State> Equations for Program<'_, '_, I, S> {
                 }
             }
         }
-        let constraints: Vec<usize> = (which.iter())
-            .filter_map(|term| match term {
-                Term::Constraint(c) => Some(*c),
-                Term::Preference(_) => None,
-            })
-            .collect();
-        let names = self.names(&constraints);
-        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        let mut part = self.part.borrow_mut();
-        part.update(&self.working.borrow(), &refs);
-        let made = part.constraints();
+        let mut run = self.run.borrow_mut();
+        let reader = run.at(&self.working.borrow()).current();
+        let made = Constraints::of(&reader);
         (which.iter())
             .map(|term| match term {
                 Term::Constraint(c) => {
                     let (name, _) = self.constraints.get(*c)?;
-                    Some(self.linearized(made.get(name.as_str())?))
+                    Some(self.linearized(made.as_ref().ok()?.get(name)?))
                 }
                 Term::Preference(p) => {
-                    let preference = self.preferences.get(*p)?.evaluate(part.current()).ok()?;
+                    let preference = self.preferences.get(*p)?.evaluate(&reader).ok()?;
                     Some(self.linearized(&preference))
                 }
             })
@@ -294,8 +259,8 @@ impl<I: Input, S: State> Equations for Program<'_, '_, I, S> {
 }
 
 /// The enclosure `enclosure` of `program`'s system, by name.
-fn named<I: Input, S: State>(
-    program: &Program<I, S>,
+fn named<I: Input, S: Solvable>(
+    program: &Solving<I, S>,
     enclosure: system::Enclosure<S>,
 ) -> Enclosure<S> {
     let state = (program.blocks.iter().zip(enclosure.boxes))
@@ -315,21 +280,20 @@ fn named<I: Input, S: State>(
 }
 
 /// Where the values `problem` frees have to be — from where `state` has
-/// them — for every constraint of `part` to hold, as near where they are as
-/// the constraints allow, pulled as its preferences ask (see
-/// [`System::solve`]), and an enclosure of a true solution near there. The
-/// constraints are those the last run of `part` reported; the part is
-/// brought up to date with each state tried, and is left at the one found —
-/// whose other targets the caller runs again to see.
+/// them — for every constraint the program `run` runs defines to hold, as
+/// near where they are as the constraints allow, pulled as its preferences
+/// ask (see [`System::solve`]), and an enclosure of a true solution near
+/// there. The program is run at each state tried, and the part is left as
+/// it builds at the one found.
 ///
 /// The state is moved even where the constraints cannot all hold, to where
 /// they come closest; the report says which do not.
-pub fn solve<I: Input, S: State>(
-    part: &mut Part<I, S>,
+pub fn solve<I: Input, S: Solvable>(
+    run: Run<'_, I, S>,
     state: &BTreeMap<String, S>,
     problem: &Problem<I, S>,
 ) -> GeopResult<Solved<S>> {
-    let (program, start) = Program::new(part, state, problem);
+    let (program, start) = Solving::new(run, state, problem)?;
     let system = program.system(problem);
     let solution = system.solve(&start)?;
     let held = system.held(&solution.values)?;
@@ -359,15 +323,16 @@ pub fn solve<I: Input, S: State>(
     })
 }
 
-/// An enclosure of a true solution of `part`'s constraints near where
+/// An enclosure of a true solution of the constraints of the program `run`
+/// runs near where
 /// `state` has the values `problem` frees — a solution to the solver's
 /// tolerance (see [`System::enclose`]).
-pub fn enclose<I: Input, S: State>(
-    part: &mut Part<I, S>,
+pub fn enclose<I: Input, S: Solvable>(
+    run: Run<'_, I, S>,
     state: &BTreeMap<String, S>,
     problem: &Problem<I, S>,
 ) -> GeopResult<Enclosure<S>> {
-    let (program, start) = Program::new(part, state, problem);
+    let (program, start) = Solving::new(run, state, problem)?;
     let enclosure = program.system(problem).enclose(&start)?;
     let enclosure = named(&program, enclosure);
     program.finish(state);
@@ -379,12 +344,12 @@ pub fn enclose<I: Input, S: State>(
 /// first order, and of those, how many move each value — decided over the
 /// box an enclosure of the solution proves (see
 /// [`System::freedom`]). A limit leaves free the motion away from it.
-pub fn freedom<I: Input, S: State>(
-    part: &mut Part<I, S>,
+pub fn freedom<I: Input, S: Solvable>(
+    run: Run<'_, I, S>,
     state: &BTreeMap<String, S>,
     problem: &Problem<I, S>,
 ) -> GeopResult<Freedom> {
-    let (program, start) = Program::new(part, state, problem);
+    let (program, start) = Solving::new(run, state, problem)?;
     let freedom = program.system(problem).freedom(&start)?;
     let states = (program.blocks.iter().cloned())
         .zip(freedom.blocks)
@@ -396,15 +361,16 @@ pub fn freedom<I: Input, S: State>(
     })
 }
 
-/// A smallest set of `part`'s constraints that cannot all hold together —
+/// A smallest set of the constraints of the program `run` runs that cannot
+/// all hold together —
 /// none, where they all hold after a solve from `state` (see
 /// [`System::conflicting`]), by name.
-pub fn conflicting<I: Input, S: State>(
-    part: &mut Part<I, S>,
+pub fn conflicting<I: Input, S: Solvable>(
+    run: Run<'_, I, S>,
     state: &BTreeMap<String, S>,
     problem: &Problem<I, S>,
 ) -> GeopResult<Vec<String>> {
-    let (program, start) = Program::new(part, state, problem);
+    let (program, start) = Solving::new(run, state, problem)?;
     let conflicting = program.system(problem).conflicting(&start)?;
     let names: BTreeSet<String> = program.names(&conflicting).into_iter().collect();
     program.finish(state);

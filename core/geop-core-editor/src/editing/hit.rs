@@ -10,7 +10,8 @@ use std::cmp::Ordering;
 
 use geop_core_math::{scalars::Scalar, vector::Vector3};
 
-use super::{EntityRef, Pointer, Shape, Style, Visual};
+use super::{Pointer, Shape, Style, Visual};
+use geop_core_program::element::PickedElement;
 
 /// A handle's radius, in reaches; its arrows reach three times as far along
 /// its direction.
@@ -25,11 +26,25 @@ pub fn nearer<S: Scalar>(a: S, b: S) -> Ordering {
     a.to_f64().total_cmp(&b.to_f64())
 }
 
-/// An entity of the part a pointer is over, as drawn: where, and how far
-/// along its ray (see [`crate::step_editor::Scene::pick`]).
+/// The part as an editor draws it, which picks are made in: what an editor
+/// needs to know of it beyond a step's own visuals, and what an operation
+/// is given to find what the pointer is over (see
+/// [`crate::editable::Context::scene`]).
+pub trait Scene<S: Scalar> {
+    /// What a click with `pointer` picks: the element nearest the eye of
+    /// one of the kinds `accepts`, and where it is hit.
+    fn pick(&self, pointer: &Pointer<S>, accepts: &[String]) -> Option<ElementHit<S>>;
+
+    /// How far along `pointer`'s ray the placed part `name` is hit, if it
+    /// is (see [`Shape::Instance`]).
+    fn hit_instance(&self, name: &str, pointer: &Pointer<S>) -> Option<S>;
+}
+
+/// An element of the part a pointer is over, as drawn: where, and how far
+/// along its ray (see [`Scene::pick`]).
 #[derive(Clone, Debug, PartialEq)]
-pub struct EntityHit<S: Scalar> {
-    pub entity: EntityRef,
+pub struct ElementHit<S: Scalar> {
+    pub element: PickedElement,
     pub point: Vector3<S>,
     pub t: S,
 }

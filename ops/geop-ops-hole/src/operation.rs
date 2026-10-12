@@ -417,7 +417,7 @@ impl PartOperation for Hole {
         build_model::<Self>(part, step, args)?;
         match planned {
             Some(planned) => {
-                part.revise_or_start(&threads(), &planned?, tap)?;
+                part.revise_target(&threads(), &planned?, tap)?;
                 draw_threads(part, step)
             }
             None => Ok(()),
@@ -818,7 +818,7 @@ impl PartOperation for Thread {
         if args.modelled {
             build_model::<Self>(part, step, args)
         } else {
-            part.revise_or_start(&threads(), &(step.to_string(), args.clone()), record)?;
+            part.revise_target(&threads(), &(step.to_string(), args.clone()), record)?;
             draw_threads(part, step)
         }
     }

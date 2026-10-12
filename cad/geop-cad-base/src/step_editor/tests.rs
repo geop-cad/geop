@@ -1,32 +1,40 @@
-//! The [`StepEditor`] driving an operation as an editor does: picks,
+//! The step editor driving an operation as an editor does: picks,
 //! handles, selection and keys turned into the operation's events.
 
-use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::{CoordinateSystem, Ray},
-    scalars::Scalar,
-    vector::Vector3,
-};
-use serde::{Deserialize, Serialize};
-
-use crate::{
+use geop_core_editor::{
+    editable::{Context, Editable, Editors, OperationGroup, OperationInfo, OperationTier},
     editing::{
-        CanvasEvent, Control, EntityRef, Event, Form, Number, Pointer, Reach, Role, Shape,
-        StepEditEvent, Style, Track, Unit, Value, Visual, hit::EntityHit,
+        CanvasEvent, Control, Event, Form, Number, Picked, Pointer, Reach, Shape, StepEditEvent,
+        Style, Tone, Track, Unit, Value, Visual,
+        hit::{ElementHit, Scene},
     },
-    operation::{Context, Operation, OperationInfo},
-    operation_registry::OperationRegistry,
+    numeric_input::NumericInput,
+};
+use geop_core_math::{geop_error::GeopResult, primitives::Ray, scalars::{ScalInF64, Scalar}, vector::Vector3};
+use geop_core_program::{
+    element::PickedElement,
+    operation::Operation,
     part::Part,
     program::{Program, ProgramStep},
     program_runner::ProgramRunner,
-    step_editor::{Editing, Scene, StepEditor},
-    test::{Pose, Sc, info},
 };
+use serde::{Deserialize, Serialize};
+
+use super::{Editing, StepEditor};
+
+/// The tests' numbers: what a part is given, its state and its forms.
+type Sc = ScalInF64;
+
+/// A part of the tests, given numbers and a number as its state.
+type TestPart = Part<Sc, Sc>;
+
+/// What a test operation is to an editor: only its name matters.
+const INFO: OperationInfo = OperationInfo::new("", "", OperationGroup::Solid, OperationTier::Menu);
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 struct MarkArgs {
-    on: Vec<EntityRef>,
-    distance: f64,
+    on: Vec<PickedElement>,
+    distance: NumericInput,
 }
 
 /// What a mark keeps while edited: the selection, and the canvas events it
@@ -46,29 +54,35 @@ fn v(x: f64, y: f64, z: f64) -> Vector3<Sc> {
 }
 
 impl Operation for MarkOperation {
-    const INFO: OperationInfo = info("mark");
+    const KIND: &'static str = "mark";
     type Args = MarkArgs;
-    type EditingState = MarkEditing;
     type Input = Sc;
-    type State = Pose;
+    type State = Sc;
 
-    fn new_args(_: &Context<Sc, Pose>) -> MarkArgs {
+    fn run(_: &str, _: &mut TestPart, _: &MarkArgs) -> GeopResult<()> {
+        Ok(())
+    }
+}
+
+impl Editable for MarkOperation {
+    const INFO: OperationInfo = INFO;
+    type Scalar = Sc;
+    type EditingState = MarkEditing;
+
+    fn new_args(_: &Context<Sc, Sc, Sc>) -> MarkArgs {
         MarkArgs::default()
     }
 
-    fn run(_: &str, _: &mut Part<Sc, Pose>, _: &MarkArgs) -> GeopResult<()> {
-        Ok(())
-    }
-
-    fn presentation(_: &Context<Sc, Pose>, args: &MarkArgs, editing: &MarkEditing) -> Form<Sc> {
+    fn presentation(_: &Context<Sc, Sc, Sc>, args: &MarkArgs, editing: &MarkEditing) -> Form<Sc> {
         let mut form = Form::default();
         let handle = Track {
             at: v(0.0, 0.0, 0.0),
             direction: v(1.0, 0.0, 0.0),
         };
-        let distance = Number::new("Distance", args.distance, Unit::Length).handle(Some(handle));
+        let value = args.distance.plain().unwrap_or_default();
+        let distance = Number::new("Distance", value, Unit::Length).handle(Some(handle));
         (form.dialog)
-            .reference("on", "On", args.on.clone(), &[Role::Face], None, false)
+            .reference("on", "On", picked(&args.on), &["face"], false)
             .number("distance", distance);
         let dot = Shape::Point {
             at: v(5.0, 0.0, 0.0),
@@ -79,7 +93,7 @@ impl Operation for MarkOperation {
     }
 
     fn process_user_event(
-        _: &Context<Sc, Pose>,
+        _: &Context<Sc, Sc, Sc>,
         args: &MarkArgs,
         editing: &MarkEditing,
         event: Event<Sc>,
@@ -90,12 +104,13 @@ impl Operation for MarkOperation {
         match event {
             Event::Field {
                 key,
-                value: Value::Entities(on),
+                value: Value::Elements(on),
             } if key == "on" => args.on = on,
-            Event::Field {
-                key,
-                value: Value::Number(distance),
-            } if key == "distance" => args.distance = distance,
+            Event::Field { key, value } if key == "distance" => {
+                if let Some(distance) = NumericInput::from_value(&value) {
+                    args.distance = distance;
+                }
+            }
             Event::Field { .. } => {}
             Event::Select(keys) => selection = keys,
             Event::Canvas(event) => events.push(match event {
@@ -113,14 +128,9 @@ impl Operation for MarkOperation {
 struct OneFace;
 
 impl Scene<Sc> for OneFace {
-    fn pick(
-        &self,
-        p: &Pointer<Sc>,
-        roles: &[Role],
-        _: Option<&EntityRef>,
-    ) -> Option<EntityHit<Sc>> {
-        roles.contains(&Role::Face).then(|| EntityHit {
-            entity: EntityRef::face("top"),
+    fn pick(&self, p: &Pointer<Sc>, accepts: &[String]) -> Option<ElementHit<Sc>> {
+        accepts.iter().any(|k| k == "face").then(|| ElementHit {
+            element: face("top"),
             point: *p.ray.origin(),
             t: Sc::from_f64(0.0),
         })
@@ -129,18 +139,26 @@ impl Scene<Sc> for OneFace {
     fn hit_instance(&self, _: &str, _: &Pointer<Sc>) -> Option<Sc> {
         None
     }
+}
 
-    fn roles(&self, _: &EntityRef) -> GeopResult<Vec<Role>> {
-        Ok(vec![Role::Face])
+/// The face `name` of the part, as a pick names it.
+fn face(name: &str) -> PickedElement {
+    PickedElement {
+        target: "model".into(),
+        kind: "face".into(),
+        name: name.into(),
     }
+}
 
-    fn lies_in(&self, _: &EntityRef, _: &EntityRef) -> bool {
-        true
-    }
-
-    fn frame(&self, _: &EntityRef) -> Option<CoordinateSystem<Sc>> {
-        None
-    }
+/// `elements`, as a reference field holds them.
+fn picked(elements: &[PickedElement]) -> Vec<Picked> {
+    (elements.iter().cloned())
+        .map(|element| Picked {
+            element,
+            detail: None,
+            tone: Tone::Normal,
+        })
+        .collect()
 }
 
 /// Looking straight down `-z` at `(x, y)`, reaching a tenth of a unit.
@@ -155,7 +173,8 @@ fn down(x: f64, y: f64) -> Pointer<Sc> {
 
 /// A mark step, `mark`, being edited, as an editor drives it.
 struct Editor {
-    runner: ProgramRunner<Sc, Pose>,
+    editors: Editors<Sc, Sc, Sc>,
+    runner: ProgramRunner<Sc, Sc>,
     program: Program,
     editor: StepEditor<Sc>,
 }
@@ -163,14 +182,15 @@ struct Editor {
 impl Editor {
     /// A mark with `args` — `new`, as just inserted, or opened again.
     fn new(args: MarkArgs, new: bool) -> Self {
-        let registry = OperationRegistry::default().with(MarkOperation).unwrap();
-        let mut runner = ProgramRunner::new(registry);
+        let editors = Editors::default().with(MarkOperation).unwrap();
+        let mut runner = ProgramRunner::new(editors.operations().unwrap());
         let program = Program::new(vec![
             ProgramStep::new::<MarkOperation>("mark", &args).unwrap(),
         ]);
         runner.run(&program, &Default::default(), &Default::default());
-        let editor = StepEditor::new(&runner, &program, "mark", new).unwrap();
+        let editor = StepEditor::new(&editors, &runner, &program, "mark", new).unwrap();
         Self {
+            editors,
             runner,
             program,
             editor,
@@ -179,6 +199,7 @@ impl Editor {
 
     fn send(&mut self, event: StepEditEvent<Sc>) {
         let editing = Editing {
+            editors: &self.editors,
             runner: &self.runner,
             program: &mut self.program,
             scene: &OneFace,
@@ -207,7 +228,7 @@ impl Editor {
     /// Whether the field `on` waits for a click.
     fn armed(&self) -> bool {
         let presentation = (self.editor)
-            .presentation(&self.runner, &self.program, &OneFace)
+            .presentation(&self.editors, &self.runner, &self.program, &OneFace)
             .unwrap();
         matches!(presentation.dialog.get("on"), Some(Control::Reference(r)) if r.armed)
     }
@@ -220,7 +241,7 @@ fn a_new_step_picks_for_its_empty_reference() {
     let mut editor = Editor::new(MarkArgs::default(), true);
     assert!(editor.armed());
     editor.click(0.0, 0.0);
-    assert_eq!(editor.args().on, vec![EntityRef::face("top")]);
+    assert_eq!(editor.args().on, vec![face("top")]);
     assert!(!editor.armed());
     assert_eq!(editor.editing().events, Vec::<&str>::new());
 }
@@ -241,8 +262,8 @@ fn an_opened_step_picks_nothing_until_asked() {
 #[test]
 fn a_handle_drags_its_number() {
     let args = MarkArgs {
-        on: vec![EntityRef::face("top")],
-        distance: 1.0,
+        on: vec![face("top")],
+        distance: NumericInput::Plain(1.0),
     };
     let mut editor = Editor::new(args, false);
     editor.send(StepEditEvent::Drag {
@@ -251,7 +272,7 @@ fn a_handle_drags_its_number() {
         done: true,
         shift: false,
     });
-    assert_eq!(editor.args().distance, 2.23);
+    assert_eq!(editor.args().distance, NumericInput::Plain(2.23));
 }
 
 /// A click on a selectable visual selects it, and the operation is sent
@@ -260,14 +281,14 @@ fn a_handle_drags_its_number() {
 #[test]
 fn clicks_select_and_escape_clears() {
     let args = MarkArgs {
-        on: vec![EntityRef::face("top")],
-        distance: 1.0,
+        on: vec![face("top")],
+        distance: NumericInput::Plain(1.0),
     };
     let mut editor = Editor::new(args, false);
     editor.click(5.0, 0.0);
     assert_eq!(editor.editing().selection, vec!["dot".to_string()]);
     let presentation = (editor.editor)
-        .presentation(&editor.runner, &editor.program, &OneFace)
+        .presentation(&editor.editors, &editor.runner, &editor.program, &OneFace)
         .unwrap();
     let dot = presentation
         .visuals
@@ -283,3 +304,4 @@ fn clicks_select_and_escape_clears() {
     editor.click(20.0, 20.0);
     assert_eq!(editor.editing().events, vec!["cancel", "click"]);
 }
+

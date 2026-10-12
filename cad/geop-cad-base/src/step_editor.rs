@@ -4,58 +4,29 @@
 
 use std::{any::Any, rc::Rc};
 
-use geop_core_math::{
-    geop_error::GeopResult, primitives::CoordinateSystem, scalars::Scalar, vector::Vector3,
-};
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
 
-use crate::{
+use geop_core_editor::{
+    editable::Editors,
     editing::{
-        Action, Button, CanvasEvent, Control, Dialog, EntityRef, Event, Form, Gizmo, GizmoView,
-        InHand, Orientation, Pointer, Presentation, Reference, Role, Shape, StepEditEvent, Style,
-        Tone, Value, Visual, describe_roles,
+        Action, Button, CanvasEvent, Control, DRAG_SNAP, Dialog, Event, Form, Gizmo, GizmoView,
+        InHand, Orientation, Pointer, Presentation, Reference, Shape, StepEditEvent, Style, Value,
+        Visual,
         gizmo::GizmoGrab,
-        hit::{EntityHit, hit_visuals},
+        hit::{Scene, hit_visuals},
     },
+};
+use geop_core_program::{
+    element::PickedElement,
     part::{Input, State},
     program::Program,
     program_runner::ProgramRunner,
 };
 
-/// Dragged values snap to this: a drag is for rough shaping, a dialog for
-/// exact values.
-pub const DRAG_SNAP: f64 = 0.01;
-
 /// The key of the field the editor adds to a dialog whose gizmo has an
 /// orientation of its own: the world's axes or its own, as
 /// [`Value::Choice`] `world` or `local`.
 pub const GIZMO_ORIENTATION: &str = "gizmo_orientation";
-
-/// The part as an editor draws it, which picks are made in: what the
-/// [`StepEditor`] needs to know of it beyond the step's own visuals.
-pub trait Scene<S: Scalar> {
-    /// What a click with `pointer` picks: the entity nearest the eye that
-    /// can fill one of `roles` — and, with a `scope`, lies in it — and
-    /// where it is hit.
-    fn pick(
-        &self,
-        pointer: &Pointer<S>,
-        roles: &[Role],
-        scope: Option<&EntityRef>,
-    ) -> Option<EntityHit<S>>;
-
-    /// How far along `pointer`'s ray the placed part `name` is hit, if it
-    /// is (see [`Shape::Instance`]).
-    fn hit_instance(&self, name: &str, pointer: &Pointer<S>) -> Option<S>;
-
-    /// What `entity` can be used as — or why it cannot be used at all.
-    fn roles(&self, entity: &EntityRef) -> GeopResult<Vec<Role>>;
-
-    /// Whether `entity` is part of `scope`.
-    fn lies_in(&self, entity: &EntityRef, scope: &EntityRef) -> bool;
-
-    /// Where the frame `entity` sits, if it is one.
-    fn frame(&self, entity: &EntityRef) -> Option<CoordinateSystem<S>>;
-}
 
 /// The step's arguments and the operation's editing state, as a drag
 /// found them when it grabbed what it drags.
@@ -140,7 +111,7 @@ pub struct StepEditor<S: Scalar> {
     /// The reference field waiting for a click.
     armed: Option<String>,
     /// What a click would pick for it.
-    hover: Option<EntityRef>,
+    hover: Option<PickedElement>,
     /// Where the pointer last was, if over the viewport.
     pointer: Option<Pointer<S>>,
     /// Where the drag under way went down, and what it holds.
@@ -201,61 +172,33 @@ fn references<S: Scalar>(form: &Form<S>) -> Vec<String> {
         .collect()
 }
 
-/// Says what each entity `reference` holds is, in `scene`: what it can be
-/// used as, if the field takes several kinds — or why it cannot be used.
-fn describe<S: Scalar>(scene: &impl Scene<S>, reference: &mut Reference) {
-    for picked in &mut reference.value {
-        let fits: Vec<Role> = match scene.roles(&picked.entity) {
-            Ok(roles) => (roles.into_iter())
-                .filter(|r| reference.roles.contains(r))
-                .collect(),
-            Err(e) => {
-                picked.tone = Tone::Error;
-                picked.detail = Some(e.root_message().to_string());
-                continue;
-            }
-        };
-        let in_scope =
-            (reference.scope.as_ref()).is_none_or(|scope| scene.lies_in(&picked.entity, scope));
-        if fits.is_empty() || !in_scope {
-            picked.tone = Tone::Error;
-            let scope = match &reference.scope {
-                Some(scope) => format!(" of {scope}"),
-                None => String::new(),
-            };
-            let roles = describe_roles(&reference.roles);
-            picked.detail = Some(format!("not {roles}{scope}"));
-        } else if reference.roles.len() > 1 {
-            let names: Vec<&str> = fits.iter().map(|r| r.name()).collect();
-            picked.detail = Some(names.join(" · "));
-        }
-    }
-}
-
-/// The program a step editor edits, the runner that last ran it, and the
-/// scene picks are made in — what every event is handled against.
-pub struct Editing<'a, I, St: State, Sc> {
+/// The program a step editor edits, the operations it is edited with, the
+/// runner that last ran it, and the scene picks are made in — what every
+/// event is handled against.
+pub struct Editing<'a, I, St: State, S: Scalar, Sc> {
+    pub editors: &'a Editors<I, St, S>,
     pub runner: &'a ProgramRunner<I, St>,
     pub program: &'a mut Program,
     pub scene: &'a Sc,
 }
 
-impl<S: Scalar> StepEditor<S> {
+impl<S: Scalar + PartialEq> StepEditor<S> {
     /// Editing the step `step` of `program`. A new step whose first
     /// reference field is still empty starts by picking for it: what it is
     /// built on is what it needs first. One that already holds something —
     /// the newest sketch, say — needs no click, and leaves the pointer to
     /// the rest of the step: its handles, its drawing.
-    pub fn new<I: Input, St: State<Scalar = S>>(
+    pub fn new<I: Input, St: State>(
+        editors: &Editors<I, St, S>,
         runner: &ProgramRunner<I, St>,
         program: &Program,
         step: &str,
         new: bool,
     ) -> GeopResult<Self> {
-        let editing: Rc<dyn Any> = Rc::from(runner.initial_editing(program, step)?);
+        let editing: Rc<dyn Any> = Rc::from(editors.initial_editing(program, step)?);
         let armed = match new {
             true => {
-                let form = runner.presentation(program, step, &*editing)?;
+                let form = editors.presentation(runner, program, step, &*editing)?;
                 let first =
                     (form.dialog.0.iter()).find(|f| matches!(f.control, Control::Reference(_)));
                 first
@@ -289,12 +232,12 @@ impl<S: Scalar> StepEditor<S> {
     /// opened, nothing picked for or dragged — after the step's arguments
     /// were put back as an edit found them: undoing one. What the old
     /// editing state held may not be in the step any more.
-    pub fn restart<I: Input, St: State<Scalar = S>>(
+    pub fn restart<I: Input, St: State>(
         &mut self,
-        runner: &ProgramRunner<I, St>,
+        editors: &Editors<I, St, S>,
         program: &Program,
     ) -> GeopResult<()> {
-        self.editing = Rc::from(runner.initial_editing(program, &self.step)?);
+        self.editing = Rc::from(editors.initial_editing(program, &self.step)?);
         self.armed = None;
         self.hover = None;
         self.grab = None;
@@ -302,12 +245,13 @@ impl<S: Scalar> StepEditor<S> {
     }
 
     /// The step's form.
-    pub fn form<I: Input, St: State<Scalar = S>>(
+    pub fn form<I: Input, St: State>(
         &self,
+        editors: &Editors<I, St, S>,
         runner: &ProgramRunner<I, St>,
         program: &Program,
     ) -> GeopResult<Form<S>> {
-        runner.presentation(program, &self.step, &*self.editing)
+        editors.presentation(runner, program, &self.step, &*self.editing)
     }
 
     /// Sends `event` to the operation, and keeps what it made of the step:
@@ -315,14 +259,15 @@ impl<S: Scalar> StepEditor<S> {
     /// field that is gone after it waits for no pick any more, and one that
     /// appeared empty waits for one — what the step needs picked next, as
     /// for a new step.
-    fn send<I: Input, St: State<Scalar = S>, Sc: Scene<S>>(
+    fn send<I: Input, St: State, Sc: Scene<S>>(
         &mut self,
-        e: &mut Editing<'_, I, St, Sc>,
+        e: &mut Editing<'_, I, St, S, Sc>,
         event: Event<S>,
     ) -> GeopResult<()> {
-        let before = references(&self.form(e.runner, e.program)?);
+        let before = references(&self.form(e.editors, e.runner, e.program)?);
         let scene: &dyn Scene<S> = e.scene;
-        let edited = (e.runner).process_user_event(
+        let edited = (e.editors).process_user_event(
+            e.runner,
             e.program,
             &self.step,
             &*self.editing,
@@ -331,7 +276,7 @@ impl<S: Scalar> StepEditor<S> {
         )?;
         e.program.step_mut(&self.step)?.args = edited.args;
         self.editing = Rc::from(edited.editing);
-        let form = self.form(e.runner, e.program)?;
+        let form = self.form(e.editors, e.runner, e.program)?;
         if let Some(armed) = &self.armed
             && !references(&form).contains(armed)
         {
@@ -345,18 +290,18 @@ impl<S: Scalar> StepEditor<S> {
         Ok(())
     }
 
-    fn pass<I: Input, St: State<Scalar = S>, Sc: Scene<S>>(
+    fn pass<I: Input, St: State, Sc: Scene<S>>(
         &mut self,
-        e: &mut Editing<'_, I, St, Sc>,
+        e: &mut Editing<'_, I, St, S, Sc>,
         event: CanvasEvent<S>,
     ) -> GeopResult<()> {
         self.send(e, Event::Canvas(event))
     }
 
     /// The selection is `selection` now.
-    fn select<I: Input, St: State<Scalar = S>, Sc: Scene<S>>(
+    fn select<I: Input, St: State, Sc: Scene<S>>(
         &mut self,
-        e: &mut Editing<'_, I, St, Sc>,
+        e: &mut Editing<'_, I, St, S, Sc>,
         form: &Form<S>,
         selection: Vec<String>,
     ) -> GeopResult<()> {
@@ -367,10 +312,7 @@ impl<S: Scalar> StepEditor<S> {
     }
 
     /// The step as it is now, for a drag to start from.
-    fn start<I: Input, St: State<Scalar = S>, Sc: Scene<S>>(
-        &self,
-        e: &Editing<'_, I, St, Sc>,
-    ) -> Start {
+    fn start<I: Input, St: State, Sc: Scene<S>>(&self, e: &Editing<'_, I, St, S, Sc>) -> Start {
         let args = (e.program.step(&self.step))
             .map(|s| s.args.clone())
             .unwrap_or_default();
@@ -378,9 +320,9 @@ impl<S: Scalar> StepEditor<S> {
     }
 
     /// The step back as a drag found it, `start`.
-    fn restore<I: Input, St: State<Scalar = S>, Sc: Scene<S>>(
+    fn restore<I: Input, St: State, Sc: Scene<S>>(
         &mut self,
-        e: &mut Editing<'_, I, St, Sc>,
+        e: &mut Editing<'_, I, St, S, Sc>,
         start: &Start,
     ) {
         if let Ok(step) = e.program.step_mut(&self.step) {
@@ -397,13 +339,13 @@ impl<S: Scalar> StepEditor<S> {
     /// Applies `event`, picking in `e.scene`: the part before the step as
     /// drawn, or, for an operation whose picks are made in what it builds,
     /// that.
-    pub fn handle<I: Input, St: State<Scalar = S>, Sc: Scene<S>>(
+    pub fn handle<I: Input, St: State, Sc: Scene<S>>(
         &mut self,
-        mut e: Editing<'_, I, St, Sc>,
+        mut e: Editing<'_, I, St, S, Sc>,
         event: &StepEditEvent<S>,
     ) -> GeopResult<()> {
         let e = &mut e;
-        let form = self.form(e.runner, e.program)?;
+        let form = self.form(e.editors, e.runner, e.program)?;
         if let StepEditEvent::Dialog { key, value } = event {
             return self.dialog(e, &form, key, value.clone());
         }
@@ -508,9 +450,9 @@ impl<S: Scalar> StepEditor<S> {
 
     /// The dialog field `key` used: a reference field armed, or an entity
     /// taken out of it, or all of them; any other field set.
-    fn dialog<I: Input, St: State<Scalar = S>, Sc: Scene<S>>(
+    fn dialog<I: Input, St: State, Sc: Scene<S>>(
         &mut self,
-        e: &mut Editing<'_, I, St, Sc>,
+        e: &mut Editing<'_, I, St, S, Sc>,
         form: &Form<S>,
         key: &str,
         value: Value,
@@ -527,38 +469,39 @@ impl<S: Scalar> StepEditor<S> {
             let key = key.to_string();
             return self.send(e, Event::Field { key, value });
         };
-        let mut entities: Vec<EntityRef> = reference.entities().cloned().collect();
+        let mut elements: Vec<PickedElement> = reference.elements().cloned().collect();
         match value {
             Value::Press => {
                 self.armed = (self.armed.as_deref() != Some(key)).then(|| key.to_string());
                 self.hover = None;
                 return Ok(());
             }
-            Value::RemoveAt(i) if i < entities.len() => {
-                entities.remove(i);
+            Value::RemoveAt(i) if i < elements.len() => {
+                elements.remove(i);
             }
-            Value::Clear => entities.clear(),
-            Value::Entities(set) => entities = set,
+            Value::Clear => elements.clear(),
+            Value::Elements(set) => elements = set,
             _ => return Ok(()),
         }
-        let (key, value) = (key.to_string(), Value::Entities(entities));
+        let (key, value) = (key.to_string(), Value::Elements(elements));
         self.send(e, Event::Field { key, value })
     }
 
     /// A pointer event while the reference field `key` waits for a click:
     /// a hover finds what a click would pick, a click picks it — and, for a
     /// field of one entity, is done. Escape stops picking.
-    fn pick<I: Input, St: State<Scalar = S>, Sc: Scene<S>>(
+    fn pick<I: Input, St: State, Sc: Scene<S>>(
         &mut self,
-        e: &mut Editing<'_, I, St, Sc>,
+        e: &mut Editing<'_, I, St, S, Sc>,
         event: &StepEditEvent<S>,
         key: &str,
         reference: &Reference,
     ) -> GeopResult<()> {
         let scene = e.scene;
         let pick = |pointer| {
-            let hit = scene.pick(pointer, &reference.roles, reference.scope.as_ref());
-            hit.map(|hit| hit.entity)
+            scene
+                .pick(pointer, &reference.accepts)
+                .map(|hit| hit.element)
         };
         match event {
             StepEditEvent::Hover { pointer, .. } => self.hover = pick(pointer),
@@ -569,15 +512,15 @@ impl<S: Scalar> StepEditor<S> {
                 ..
             } => {
                 self.hover = None;
-                if let Some(entity) = pick(pointer) {
-                    let mut entities: Vec<EntityRef> = reference.entities().cloned().collect();
+                if let Some(element) = pick(pointer) {
+                    let mut elements: Vec<PickedElement> = reference.elements().cloned().collect();
                     if reference.multiple {
-                        toggle(&mut entities, entity);
+                        toggle(&mut elements, element);
                     } else {
-                        entities = vec![entity];
+                        elements = vec![element];
                         self.armed = None;
                     }
-                    let (key, value) = (key.to_string(), Value::Entities(entities));
+                    let (key, value) = (key.to_string(), Value::Elements(elements));
                     return self.send(e, Event::Field { key, value });
                 }
             }
@@ -606,9 +549,9 @@ impl<S: Scalar> StepEditor<S> {
     /// plane). With `handles_only` — while a field waits for a pick — only a
     /// handle is grabbed.
     #[allow(clippy::too_many_arguments)]
-    fn drag<I: Input, St: State<Scalar = S>, Sc: Scene<S>>(
+    fn drag<I: Input, St: State, Sc: Scene<S>>(
         &mut self,
-        e: &mut Editing<'_, I, St, Sc>,
+        e: &mut Editing<'_, I, St, S, Sc>,
         form: &Form<S>,
         from: &Pointer<S>,
         to: &Pointer<S>,
@@ -673,9 +616,9 @@ impl<S: Scalar> StepEditor<S> {
 
     /// What dragging `grab` from `from` to `to` does.
     #[allow(clippy::too_many_arguments)]
-    fn drag_by<I: Input, St: State<Scalar = S>, Sc: Scene<S>>(
+    fn drag_by<I: Input, St: State, Sc: Scene<S>>(
         &mut self,
-        e: &mut Editing<'_, I, St, Sc>,
+        e: &mut Editing<'_, I, St, S, Sc>,
         form: &Form<S>,
         handles: &[Visual<S>],
         grab: &mut Grab<S>,
@@ -771,19 +714,19 @@ impl<S: Scalar> StepEditor<S> {
     /// there is no plane to work in: what can be picked is shown in the
     /// part as it stands — and of the visuals, only the handles can be
     /// grabbed.
-    pub fn presentation<I: Input, St: State<Scalar = S>>(
+    pub fn presentation<I: Input, St: State>(
         &self,
+        editors: &Editors<I, St, S>,
         runner: &ProgramRunner<I, St>,
         program: &Program,
         scene: &impl Scene<S>,
     ) -> GeopResult<Presentation<S>> {
-        let mut form = self.form(runner, program)?;
+        let mut form = self.form(editors, runner, program)?;
         let mut pickable = Vec::new();
         for (key, reference) in form.dialog.references_mut() {
-            describe(scene, reference);
             if self.armed.as_deref() == Some(key) {
                 reference.armed = true;
-                pickable = reference.roles.clone();
+                pickable = reference.accepts.clone();
             }
         }
         let mut gizmo = self.gizmo(&form);
@@ -845,29 +788,9 @@ impl<S: Scalar> StepEditor<S> {
                 visual.style = Style::Hover;
             }
         }
-        // A frame is lit as what it is on and where it sits, and drawn as
-        // the three axes it has.
-        let mut highlights = Vec::new();
-        let picked = form.dialog.picked().cloned().map(|e| (e, Style::Selected));
-        for (entity, style) in picked.chain(self.hover.clone().map(|e| (e, Style::Hover))) {
-            let EntityRef::Frame { on, at } = &entity else {
-                highlights.push(entity);
-                continue;
-            };
-            highlights.push((**on).clone());
-            highlights.extend(at.as_ref().map(|at| (**at).clone()));
-            if let Some(frame) = scene.frame(&entity) {
-                let shape = Shape::Triad {
-                    at: *frame.origin(),
-                    axes: [*frame.u(), *frame.v(), *frame.w()],
-                };
-                visuals.push(Visual::new(
-                    format!("frame:{}", visuals.len()),
-                    shape,
-                    style,
-                ));
-            }
-        }
+        let highlights = (form.dialog.picked().cloned())
+            .chain(self.hover.clone())
+            .collect();
         Ok(Presentation {
             dialog: form.dialog,
             visuals,
@@ -885,3 +808,6 @@ impl<S: Scalar> StepEditor<S> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

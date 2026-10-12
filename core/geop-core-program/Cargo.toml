@@ -5,9 +5,5 @@ edition.workspace = true
 
 [dependencies]
 geop-core-math.workspace = true
-# `EntityRef` names sketch curves and points by their ids.
-geop-core-sketch.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-# The steps of a run: in order, and found by id.
-indexmap.workspace = true

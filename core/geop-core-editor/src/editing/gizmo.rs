@@ -9,7 +9,7 @@
 //! operation what the drag did as a [`GizmoDrag`]: a translation, a turn
 //! about one of its axes, or a scale along them — always measured from
 //! where the drag started, and applied by the operation to its arguments
-//! as they were then (see [`crate::step_editor::StepEditor`]).
+//! as they were then (see `geop_cad_base::step_editor`).
 //!
 //! It is laid out in the pointer's reaches (see [`super::Reach`]), so it
 //! keeps its size on screen however far away or zoomed in the view is: a

@@ -180,7 +180,7 @@ pub fn build_model<O: PartOperation + ?Sized>(
     step: &str,
     args: &O::Args,
 ) -> GeopResult<()> {
-    part.revise_or_start(&model(), &(step.to_string(), args.clone()), generate::<O>)
+    part.revise_target(&model(), &(step.to_string(), args.clone()), generate::<O>)
 }
 
 /// The generator of [`build_model`]: a function of `O` alone, so it

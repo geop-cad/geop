@@ -13,16 +13,15 @@
     )
 )]
 
-pub mod constraint;
-pub mod editing;
 pub mod element;
 pub mod operation;
 pub mod operation_registry;
 pub mod part;
 pub mod program;
 pub mod program_runner;
-pub mod solve;
-pub mod step_editor;
+mod revisioned_value;
 pub mod target;
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod test2;

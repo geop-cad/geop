@@ -176,8 +176,8 @@ fn note(mut notes: SolidNotes, reader: &mut BuildReader, step: &String) -> GeopR
 /// builds it into the model.
 pub(crate) fn run<O: SheetStep>(step: &str, part: &mut Build, args: &O::Args) -> GeopResult<()> {
     part.define_target(&made(step), &(step.to_string(), args.clone()), planned::<O>)?;
-    part.revise_or_start(&sheets(), &step.to_string(), record)?;
-    part.revise_or_start(&solid_notes(), &step.to_string(), note)?;
+    part.revise_target(&sheets(), &step.to_string(), record)?;
+    part.revise_target(&solid_notes(), &step.to_string(), note)?;
     build_model::<O>(part, step, args)
 }
 

@@ -1,0 +1,10 @@
+[package]
+name = "geop-core-editor"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-program.workspace = true
+serde.workspace = true
+serde_json.workspace = true

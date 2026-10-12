@@ -512,8 +512,8 @@ impl PartOperation for Route {
     /// Sweeps the bundle, then records its cable, and notes the bundle.
     fn run(step: &str, part: &mut Build, args: &RouteArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)?;
-        part.revise_or_start(&cables(), &(step.to_string(), args.clone()), record)?;
-        part.revise_or_start(&solid_notes(), &step.to_string(), note)
+        part.revise_target(&cables(), &(step.to_string(), args.clone()), record)?;
+        part.revise_target(&solid_notes(), &step.to_string(), note)
     }
 
     fn build(

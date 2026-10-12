@@ -1,14 +1,14 @@
 //! [`Dialog`]: the fields an operation shows for a step, in order.
 //!
-//! A field says what its value *means* — a length, an angle, entities of the
-//! part that can fill some [`Role`], things to do — never how to edit it:
+//! A field says what its value *means* — a length, an angle, elements of the
+//! part of some kinds, things to do — never how to edit it:
 //! that is the editor's, the same for every operation (see
-//! [`crate::step_editor::StepEditor`]).
+//! the step editor, `geop_cad_base::step_editor`).
 
 use geop_core_math::{scalars::Scalar, vector::Vector3};
 use serde::Serialize;
 
-use super::{EntityRef, Role};
+use geop_core_program::element::PickedElement;
 
 /// Whether `text`, as a number field holds it, is a formula rather than a
 /// plain number.
@@ -42,7 +42,7 @@ pub struct Action {
     pub active: bool,
     /// The icon it is shown as, with its label as its tooltip — SVG on a
     /// 20 × 20 grid, drawn in the current colour (see
-    /// [`crate::operation::OperationInfo::icon`]); none to show the label.
+    /// [`crate::editable::OperationInfo::icon`]); none to show the label.
     pub icon: Option<&'static str>,
 }
 
@@ -235,29 +235,28 @@ impl<S: Scalar> Number<S> {
     }
 }
 
-/// An entity a [`Reference`] holds, and what the editor found it to be.
+/// An element a [`Reference`] holds, and what the operation says of it.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Picked {
-    pub entity: EntityRef,
+    pub element: PickedElement,
     /// What it is used as, or why it cannot be.
     pub detail: Option<String>,
     pub tone: Tone,
 }
 
-/// Entities of the part a step builds on, picked in the viewport: any
-/// entity that can fill one of `roles` — and, with a `scope`, is part of it,
-/// like a line of one sketch. One entity, or — `multiple` — any number, a
-/// pick adding or taking out one.
+/// Elements of the part a step builds on, picked in the viewport: any
+/// element of one of the kinds `accepts` (see
+/// [`geop_core_program::element::Kind::NAME`]). One element, or — `multiple` — any
+/// number, a pick adding or taking out one. Which of them the step can use
+/// is the operation's to say, in what it holds ([`Picked::tone`]).
 ///
-/// The editor does all of the editing (see [`crate::step_editor::StepEditor`]): arming it
-/// for picks, removing and clearing entities, saying what each held is.
-/// An operation only ever gets what it holds now, as
-/// [`super::Value::Entities`].
+/// The editor does all of the editing (see `geop_cad_base::step_editor`): arming it
+/// for picks, removing and clearing elements. An operation only ever gets
+/// what it holds now, as [`super::Value::Elements`].
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Reference {
     pub label: String,
-    pub roles: Vec<Role>,
-    pub scope: Option<EntityRef>,
+    pub accepts: Vec<String>,
     pub value: Vec<Picked>,
     pub multiple: bool,
     /// Whether the step needs it to hold something before it can be built;
@@ -273,9 +272,9 @@ impl Reference {
         self.required && self.value.is_empty()
     }
 
-    /// The entities it holds.
-    pub fn entities(&self) -> impl Iterator<Item = &EntityRef> {
-        self.value.iter().map(|p| &p.entity)
+    /// The elements it holds.
+    pub fn elements(&self) -> impl Iterator<Item = &PickedElement> {
+        self.value.iter().map(|p| &p.element)
     }
 }
 
@@ -496,31 +495,21 @@ impl<S: Scalar> Dialog<S> {
         )
     }
 
-    /// Entities that can fill one of `roles` — and, with a `scope`, are part
-    /// of it (see [`Reference`]) — holding `value`. Required: see
-    /// [`Dialog::optional`].
+    /// Elements of the kinds `accepts` (see [`Reference`]), holding `value`.
+    /// Required: see [`Dialog::optional`].
     pub fn reference(
         &mut self,
         key: &str,
         label: impl Into<String>,
-        value: Vec<EntityRef>,
-        roles: &[Role],
-        scope: Option<EntityRef>,
+        value: Vec<Picked>,
+        accepts: &[&str],
         multiple: bool,
     ) -> &mut Self {
-        let value = (value.into_iter())
-            .map(|entity| Picked {
-                entity,
-                detail: None,
-                tone: Tone::Normal,
-            })
-            .collect();
         self.push(
             key,
             Control::Reference(Reference {
                 label: label.into(),
-                roles: roles.to_vec(),
-                scope,
+                accepts: accepts.iter().map(|k| k.to_string()).collect(),
                 value,
                 multiple,
                 required: true,
@@ -554,15 +543,15 @@ impl<S: Scalar> Dialog<S> {
         })
     }
 
-    /// Every entity its reference fields hold: what the step builds on.
-    pub fn picked(&self) -> impl Iterator<Item = &EntityRef> {
+    /// Every element its reference fields hold: what the step builds on.
+    pub fn picked(&self) -> impl Iterator<Item = &PickedElement> {
         self.0
             .iter()
             .flat_map(|f| match &f.control {
                 Control::Reference(r) => r.value.as_slice(),
                 _ => &[],
             })
-            .map(|p| &p.entity)
+            .map(|p| &p.element)
     }
 
     /// The labels of its reference fields that hold nothing yet: what the
@@ -616,8 +605,8 @@ impl<S: Scalar> Dialog<S> {
                     ),
                     Control::Reference(r) => (
                         &r.label,
-                        r.entities()
-                            .map(EntityRef::label)
+                        r.elements()
+                            .map(PickedElement::label)
                             .collect::<Vec<_>>()
                             .join(" & "),
                     ),
@@ -657,10 +646,13 @@ mod tests {
             "sketch",
             Control::Reference(Reference {
                 label: "sketch".into(),
-                roles: vec![Role::Sketch],
-                scope: None,
+                accepts: vec!["sketch".into()],
                 value: vec![Picked {
-                    entity: EntityRef::Sketch { name: "k".into() },
+                    element: PickedElement {
+                        target: "k".into(),
+                        kind: "sketch".into(),
+                        name: String::new(),
+                    },
                     detail: None,
                     tone: Tone::Normal,
                 }],
@@ -687,10 +679,9 @@ mod tests {
                     "key": "sketch",
                     "type": "reference",
                     "label": "sketch",
-                    "roles": ["sketch"],
-                    "scope": null,
+                    "accepts": ["sketch"],
                     "value": [{
-                        "entity": {"type": "Sketch", "name": "k"},
+                        "element": {"target": "k", "kind": "sketch", "name": ""},
                         "detail": null,
                         "tone": "normal",
                     }],

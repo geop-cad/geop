@@ -7,7 +7,12 @@ use geop_core_math::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{EntityRef, Gizmo, GizmoDrag};
+use super::{Gizmo, GizmoDrag};
+use geop_core_program::element::PickedElement;
+
+/// Dragged values snap to this: a drag is for rough shaping, a dialog for
+/// exact values.
+pub const DRAG_SNAP: f64 = 0.01;
 
 /// How far from its ray a [`Pointer`] reaches: what counts as under it, at
 /// any distance along the ray. Everything a viewer draws at a constant size
@@ -85,13 +90,13 @@ pub enum Value {
     Text(String),
     /// An action, or a select's option, by its value.
     Choice(String),
-    /// The entity at this index was taken out of a reference field.
+    /// The element at this index was taken out of a reference field.
     RemoveAt(usize),
     /// Everything was taken out of a reference field.
     Clear,
     /// What a reference field holds now: all an operation is ever sent for
     /// one (see [`super::Reference`]).
-    Entities(Vec<EntityRef>),
+    Elements(Vec<PickedElement>),
 }
 
 /// One thing the user did while editing a step.
@@ -160,7 +165,7 @@ impl<S: Scalar> StepEditEvent<S> {
 
 /// A pointer or key event the editor passes on to an operation, having
 /// taken what is its own: picks, selecting, dragging handles (see
-/// [`crate::step_editor::StepEditor`]).
+/// the step editor, `geop_cad_base::step_editor`).
 #[derive(Clone, Debug, PartialEq)]
 pub enum CanvasEvent<S: Scalar> {
     /// The pointer moved over the viewport with no button held, `shift`

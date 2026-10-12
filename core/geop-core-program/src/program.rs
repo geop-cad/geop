@@ -20,7 +20,7 @@ impl ProgramStep {
         let args = saved::<O>(args).map_err(|e| e.with_context(format!("step `{id}`")))?;
         Ok(Self {
             id,
-            operation: O::INFO.kind.to_string(),
+            operation: O::KIND.to_string(),
             args,
         })
     }
