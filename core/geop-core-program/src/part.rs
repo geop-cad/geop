@@ -397,21 +397,37 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
     /// made them — of one step, by name: the sketches a step could pick,
     /// say, the newest last.
     pub fn targets_of<T: 'static>(&self) -> Vec<TargetReference<T>> {
-        let mut found: Vec<(usize, &'a str)> = (self.part.targets.names())
+        (self.versions_of::<T>().into_iter())
+            .filter(|(_, target)| target.failure("").is_none())
+            .map(|(name, _)| TargetReference::new(name))
+            .collect()
+    }
+
+    /// Why every target it sees that is defined to hold a `T` but failed
+    /// did, in the order the steps made them: what a question over all of
+    /// them — every constraint of a part — cannot be answered without.
+    pub fn failed_targets_of<T: 'static>(&self) -> Vec<GeopError> {
+        (self.versions_of::<T>().into_iter())
+            .filter_map(|(name, target)| target.failure(name))
+            .collect()
+    }
+
+    /// The latest version it sees of every target defined to hold a `T`,
+    /// made or failed, in the order the steps made them, each read
+    /// recorded.
+    fn versions_of<T: 'static>(&self) -> Vec<(&'a str, &'a Target)> {
+        let mut found: Vec<(usize, &'a str, &'a Target)> = (self.part.targets.names())
             .filter_map(|name| {
-                let target = self.version(name).ok()?;
-                target.value::<T>(name).ok()?;
+                let target = self.version(name).ok().filter(|target| target.is::<T>())?;
                 self.record(Dependency::Target {
                     name: name.to_string(),
                     step: target.step,
                 });
-                Some((target.step, name))
+                Some((target.step, name, target))
             })
             .collect();
-        found.sort();
-        (found.into_iter())
-            .map(|(_, name)| TargetReference::new(name))
-            .collect()
+        found.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+        (found.into_iter()).map(|(_, name, target)| (name, target)).collect()
     }
 }
 

@@ -2,47 +2,16 @@
 //! ([`NameRegistry`], [`Namer`]) — changed only through its own methods,
 //! so no entity is ever without a name.
 
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_program::{
-    part::Retrieve,
-    target::{Revisable, TargetReference},
-};
+use geop_core_program::{element::ElementReference, target::TargetReference};
 use geop_core_topology::Model;
 
-mod datum;
-mod describe;
-mod edit;
-mod euler;
-mod feature;
-mod ids;
-mod mesh;
-mod names;
-mod records;
-mod resolve;
-mod sketch;
-mod state;
-mod threads;
-
-pub use datum::{datum, datum_name};
-pub use describe::{EdgeDescription, FaceDescription, PartDescription};
-pub use edit::BodyNames;
-pub use feature::{BooleanOp, Feature, FeatureFaces, FeatureTool, ToolReach};
-pub use ids::RefId;
-pub use mesh::SolidMeshes;
-pub use names::{
-    LONGEST_ARGUMENT, NameRegistry, Namer, digest, operation_of, origin_of, validate_operation_id,
-};
-pub use records::Records;
-pub use sketch::{PlacedSketch, PlacedSketch3d, sketch, sketch_name, sketch3d, sketch3d_name};
-pub use state::{ParamValue, pose_parameter};
-pub use threads::{CosmeticThread, Threads, draw_threads, threads};
-
-use crate::{Design, operation::Input};
+use crate::{Design, Feature, ids::RefId, names::NameRegistry};
 
 /// A part's boundary-representation topology and the name of every vertex,
 /// edge, face and solid in it: what the steps of a program build, one
@@ -61,11 +30,11 @@ use crate::{Design, operation::Input};
 /// them apart.
 #[derive(Clone, Debug)]
 pub struct NamedModel<S: Scalar> {
-    topology: Model<S>,
-    names: NameRegistry,
+    pub(crate) topology: Model<S>,
+    pub(crate) names: NameRegistry,
     /// What each step that combined tools with a solid did, in the order
     /// the steps ran (see [`Feature`]).
-    features: Vec<(String, Arc<Feature<S>>)>,
+    pub(crate) features: Vec<(String, Arc<Feature<S>>)>,
 }
 
 /// Equal when the topology and the names are, and the features are the very
@@ -86,21 +55,10 @@ pub fn model() -> TargetReference<NamedModel<Design>> {
     TargetReference::new("model")
 }
 
-/// The model as `part` has it: empty, before the first step that builds
-/// any topology — where only what needs none, the origin, resolves.
-pub fn model_or_empty<'a>(
-    part: &mut impl Retrieve<'a, Input, ParamValue>,
-) -> Cow<'a, NamedModel<Design>> {
-    match part.retrieve_target(&model()) {
-        Ok(model) => Cow::Borrowed(model),
-        Err(_) => Cow::Owned(NamedModel::new()),
-    }
-}
-
-impl<S: Scalar + PartialEq> Revisable for NamedModel<S> {
-    fn to_revise(&self) -> Self {
-        self.clone()
-    }
+/// The element `name` of the model, of the kind `K`: what a step's
+/// arguments refer to it by.
+pub fn element<K>(name: impl Into<String>) -> ElementReference<NamedModel<Design>, K> {
+    ElementReference::new(model(), name)
 }
 
 impl<S: Scalar> Default for NamedModel<S> {
@@ -292,7 +250,7 @@ mod tests {
     fn a_revision_is_equal_until_changed() {
         let mut model = NamedModel::<ScalInF64>::new();
         model.mvfs(origin(), "v0", "f0", "s0").unwrap();
-        let mut revision = model.to_revise();
+        let mut revision = model.clone();
         assert_eq!(revision, model);
         revision.mvfs(origin(), "v1", "f1", "s1").unwrap();
         assert_ne!(revision, model);

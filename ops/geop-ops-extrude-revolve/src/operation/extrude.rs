@@ -1,5 +1,5 @@
 //! [`Extrude`]: sweep a sketch's area along its plane's normal, and how a
-//! sketch becomes the named [`Profile`]s extrude and revolve sweep.
+//! sketch becomes the named [`Profile`](geop_ops_model::Profile)s extrude and revolve sweep.
 
 use geop_core_math::scalars::Ring;
 use geop_core_math::{
@@ -10,19 +10,24 @@ use geop_core_math::{
 };
 use geop_core_sketch::{Enclosure, Region, Shape, Sketch, profile::curve_polyline};
 use geop_core_topology::build::BuiltBody;
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, NamedModel, Namer,
-    operation::{BuildReader, Lookup, PartOperation, Scope, Seen, StepContext},
-    parameters::Formula,
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::{Track, Unit},
+    numeric_input::NumericInput,
     part_operation,
-    ui::{EditForm, FormState, Track, Unit, formula_number},
+    part_operation::PartOperation,
 };
 use geop_ops_booleans::{Extent, extent::reach_past};
+use geop_ops_model::{Design, ModelOperation, NamedModel, Namer, build_model, read_model};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_sketch::{PlacedSketch, SketchRef};
 use serde::{Deserialize, Serialize};
 
 use super::{Extents, Output, Sweeping, build_extents};
-use crate::{common::Profile, extrude::extrude, sweep::SweepLoop};
+use geop_ops_sketch::chain_of_pieces;
+
+use crate::{extrude::extrude, sweep::SweepLoop};
 
 /// Extrudes the one area of a sketch along the sketch plane's normal, into
 /// a solid named `extrude(E)` for the operation `E` — kept as a new body,
@@ -56,7 +61,7 @@ pub struct Extrude;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExtrudeArgs {
     /// The sketch to extrude.
-    pub sketch: String,
+    pub sketch: SketchRef,
     /// How far, along the sketch plane's normal — backwards for a negative
     /// length.
     pub extent: Extents,
@@ -69,14 +74,14 @@ pub struct ExtrudeArgs {
 /// along the sketch plane's normal — backwards for the second side. None
 /// while the sketch cannot be found.
 fn distance_handle<S: Scalar>(
-    lookup: &mut (impl Lookup<S> + ?Sized),
+    reader: &PartReader,
     args: &ExtrudeArgs,
     length: f64,
     second: bool,
 ) -> Option<Track<S>> {
-    let placed = lookup.sketch(&args.sketch).ok()?;
+    let placed = reader.retrieve_element(&args.sketch).ok()?;
     let plane = &placed.plane;
-    let center = plane.uv_to_xyz(&sketch_center(&placed.sketch)?);
+    let center = plane.uv_to_xyz(&sketch_center(&placed.sketch)?).map(|c| c.cast::<S>());
     // A symmetric extrude goes half its length either way; the second side
     // the other way.
     let scale = match (args.extent.symmetric, second) {
@@ -84,7 +89,7 @@ fn distance_handle<S: Scalar>(
         (false, false) => 1.0,
         (false, true) => -1.0,
     };
-    let normal = *plane.w();
+    let normal = plane.w().map(|c| c.cast::<S>());
     Some(Track {
         at: center.add(&normal.prod_scalar(S::from_f64(length * scale))),
         direction: normal.prod_scalar(S::from_f64(scale)),
@@ -94,8 +99,8 @@ fn distance_handle<S: Scalar>(
 part_operation!(Extrude(ExtrudeArgs));
 
 impl PartOperation for Extrude {
+    const KIND: &'static str = "extrude";
     const INFO: OperationInfo = OperationInfo::new(
-        "extrude",
         "Extrude",
         "Sweep a sketch's area along its plane's normal into a solid, or its curves into faces.",
         OperationGroup::Solid,
@@ -103,46 +108,25 @@ impl PartOperation for Extrude {
     )
     .icon(crate::icons::EXTRUDE);
     type Args = ExtrudeArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
-
-    fn formulas(args: &mut ExtrudeArgs) -> Vec<&mut String> {
-        args.extent.formulas()
-    }
 
     /// The newest sketch, a unit up, joined to the newest solid if there is
     /// one.
     fn new_args(context: &StepContext) -> ExtrudeArgs {
-        let seen = Seen::new(context.before);
+        let before = &context.before;
+        let newest = before.targets_of::<PlacedSketch<Design>>().pop();
         ExtrudeArgs {
-            sketch: seen.sketch_names().pop().unwrap_or_default(),
+            sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_sketch::sketch(""))),
             extent: Extents::blind(1.0),
-            output: Output::new_for(seen.model()),
+            output: Output::new_for(&read_model(before).unwrap_or_default()),
         }
     }
 
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &ExtrudeArgs,
-    ) -> GeopResult<()> {
-        let namer = Namer::new("extrude", step)?;
-        let placed = (Scope {
-            model,
-            reader: &mut *reader,
-        })
-        .sketch(&args.sketch)?
-        .clone();
-        let sketch = &placed.sketch;
-        let geometry = sketch.enclose::<Design>()?;
-        let shape = args.output.shape(sketch)?;
-        let loops = shape_loops(&args.sketch, sketch, &geometry, shape)?;
-        let extruding = Extruding {
-            plane: &placed.plane,
-            loops: &loops,
-        };
-        let how = (&args.extent, &args.output);
-        build_extents(model, reader, &namer, step, how, &extruding)
+    fn run(step: &str, part: &mut BuildPart, args: &ExtrudeArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
     /// The sketch, picked; how far, each length typed or dragged as a
@@ -155,15 +139,15 @@ impl PartOperation for Extrude {
         args: &ExtrudeArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, ExtrudeArgs> {
-        let mut seen = Seen::new(context.before);
+        let before = &context.before;
         let mut f = EditForm::<Design, ExtrudeArgs>::default();
-        f.pick_sketch(&context.before, "sketch", &args.sketch, |edit, name| {
-            edit.args.sketch = name
+        f.pick_one("sketch", "sketch", before, Some(&args.sketch), |edit, sketch| {
+            edit.args.sketch = sketch
         });
-        let amount = |length: &Formula, second| {
+        let amount = |length: &NumericInput, second| {
             let label = if second { "distance 2" } else { "distance" };
-            let number = formula_number(label, length, &mut seen, Unit::Length);
-            let at = distance_handle(&mut seen, args, number.value, second);
+            let number = length.number(label, before, Unit::Length);
+            let at = distance_handle(before, args, number.value, second);
             number.range(-10.0, 10.0).handle(at)
         };
         args.extent.fields(
@@ -174,7 +158,7 @@ impl PartOperation for Extrude {
             |edit, length| {
                 let to = length.plain();
                 let from = std::mem::replace(&mut edit.args.extent.side1, Extent::Blind(length));
-                if let (Extent::Blind(Formula::Plain(from)), Some(to)) = (from, to)
+                if let (Extent::Blind(NumericInput::Plain(from)), Some(to)) = (from, to)
                     && let Output::Solid(combine) = &mut edit.args.output
                 {
                     combine.follow_sign(from, to);
@@ -183,8 +167,30 @@ impl PartOperation for Extrude {
         );
         let reaches = args.extent.reaches_target();
         let output = |args: &mut ExtrudeArgs, output| args.output = output;
-        (args.output).fields(&mut f, Seen::new(context.before).model(), reaches, output);
+        (args.output).fields(&mut f, before, reaches, output);
         f
+    }
+}
+
+impl ModelOperation for Extrude {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &PartReader,
+        step: &str,
+        args: &ExtrudeArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("extrude", step)?;
+        let placed = reader.retrieve_element(&args.sketch)?;
+        let sketch = &placed.sketch;
+        let geometry = sketch.enclose::<Design>()?;
+        let shape = args.output.shape(sketch)?;
+        let loops = shape_loops(&placed.name, sketch, &geometry, shape)?;
+        let extruding = Extruding {
+            plane: &placed.plane,
+            loops: &loops,
+        };
+        let how = (&args.extent, &args.output);
+        build_extents(model, reader, &namer, step, how, &extruding)
     }
 }
 
@@ -245,7 +251,7 @@ fn region_loops<S: Scalar>(
     std::iter::once(&region.outer)
         .chain(&region.holes)
         .map(|lp| {
-            Ok(SweepLoop::plain(Profile::of_pieces(
+            Ok(SweepLoop::plain(chain_of_pieces(
                 name,
                 lp.to_nurbs(sketch, geometry)?,
                 true,
@@ -264,7 +270,7 @@ pub fn shape_loops<S: Scalar>(
 ) -> GeopResult<Vec<SweepLoop<S>>> {
     match shape {
         Shape::Region(region) => region_loops(name, sketch, geometry, &region),
-        Shape::Chain(chain) => Ok(vec![SweepLoop::plain(Profile::of_pieces(
+        Shape::Chain(chain) => Ok(vec![SweepLoop::plain(chain_of_pieces(
             name,
             chain.to_nurbs(sketch, geometry)?,
             false,

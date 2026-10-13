@@ -5,11 +5,7 @@
       "operation": "add_sketch",
       "args": {
         "plane": {
-          "type": "Datum",
-          "name": "origin",
-          "component": {
-            "plane": "z"
-          }
+          "datum": "origin:xy"
         },
         "sketch": {
           "points": {
@@ -125,13 +121,11 @@
       "id": "revolve1",
       "operation": "revolve",
       "args": {
-        "sketch": "sketch4",
+        "sketch": {
+          "target": "sketch:sketch4"
+        },
         "axis": {
-          "type": "Datum",
-          "name": "origin",
-          "component": {
-            "axis": "y"
-          }
+          "datum": "origin:y"
         },
         "extent": {
           "side1": {
@@ -153,11 +147,7 @@
       "args": {
         "selection": [
           {
-            "type": "Datum",
-            "name": "origin",
-            "component": {
-              "plane": "x"
-            }
+            "datum": "origin:yz"
           }
         ],
         "construction": {
@@ -172,8 +162,7 @@
       "args": {
         "selection": [
           {
-            "type": "Datum",
-            "name": "reference1"
+            "datum": "reference1"
           }
         ],
         "construction": {
@@ -188,8 +177,7 @@
       "args": {
         "selection": [
           {
-            "type": "Datum",
-            "name": "reference2"
+            "datum": "reference2"
           }
         ],
         "construction": {
@@ -203,8 +191,7 @@
       "operation": "add_sketch",
       "args": {
         "plane": {
-          "type": "Datum",
-          "name": "reference1"
+          "datum": "reference1"
         },
         "sketch": {
           "points": {
@@ -337,8 +324,7 @@
       "operation": "add_sketch",
       "args": {
         "plane": {
-          "type": "Datum",
-          "name": "reference2"
+          "datum": "reference2"
         },
         "sketch": {
           "points": {
@@ -471,8 +457,7 @@
       "operation": "add_sketch",
       "args": {
         "plane": {
-          "type": "Datum",
-          "name": "reference3"
+          "datum": "reference3"
         },
         "sketch": {
           "points": {
@@ -605,9 +590,15 @@
       "operation": "loft",
       "args": {
         "profiles": [
-          "sketch1",
-          "sketch2",
-          "sketch3"
+          {
+            "target": "sketch:sketch1"
+          },
+          {
+            "target": "sketch:sketch2"
+          },
+          {
+            "target": "sketch:sketch3"
+          }
         ],
         "output": {
           "solid": {
@@ -621,17 +612,10 @@
       "operation": "circular_pattern",
       "args": {
         "bodies": [
-          {
-            "type": "Solid",
-            "name": "loft(loft1)"
-          }
+          "loft(loft1)"
         ],
         "axis": {
-          "type": "Datum",
-          "name": "origin",
-          "component": {
-            "axis": "y"
-          }
+          "datum": "origin:y"
         },
         "reversed": false,
         "count": 6,

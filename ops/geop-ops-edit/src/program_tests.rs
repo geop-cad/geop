@@ -3,17 +3,17 @@
 
 use crate::{DeleteBodyArgs, ExtractFaceArgs, ProjectCurveArgs};
 use geop_core_math::primitives::FrameAxis;
-use geop_ops::EntityRef;
-use geop_ops_booleans::{Combine, SplitArgs};
+use geop_core_program::element::ElementReference;
+use geop_ops_booleans::{Combine, SplitArgs, solid};
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs};
-use geop_ops_sketch::{AddSketchArgs, Sketch};
+use geop_ops_model::{Design, NamedModel, model};
+use geop_ops_sketch::{AddSketchArgs, Sketch, whole_sketch};
 
 use geop_core_math::geop_error::GeopResult;
-use geop_ops::origin_plane;
-use geop_ops::program::{ProgramFile, Registry};
-use geop_ops::testing::{Built, assert_valid, error};
 use geop_ops_booleans::Split;
-use geop_ops_extrude_revolve::testing::{extrusion, n, sketch};
+use geop_ops_extrude_revolve::testing::{Built, extrusion, n, on_origin, sketch};
+use geop_ops_model::testing::{assert_valid, error};
+use geop_ops_parameters::{ProgramFile, Registry};
 
 use crate::{DeleteBody, ExtractFace, ProjectCurve};
 
@@ -27,7 +27,12 @@ fn registry() -> GeopResult<Registry> {
 }
 
 fn on_xy(drawn: Sketch) -> AddSketchArgs {
-    sketch(origin_plane(FrameAxis::Z), drawn)
+    sketch(on_origin(FrameAxis::Z), drawn)
+}
+
+/// The element `name` of the part's model, as a `K`.
+fn named<K>(name: impl Into<String>) -> ElementReference<NamedModel<Design>, K> {
+    ElementReference::new(model(), name)
 }
 
 /// An extrude of `sketch` as a new body, from `from` to `to` along its
@@ -75,12 +80,12 @@ fn extract_a_wall_split_with_it_and_delete_the_rest() {
     program.push("a", extrude("big", -1.0, 1.0));
     program.push("small", on_xy(small));
     program.push("b", extrude("small", -0.5, 0.5));
-    program.push("x", ExtractFaceArgs { face: wall.clone() });
+    program.push("x", ExtractFaceArgs { face: named(&wall) });
     program.push(
         "halves",
         SplitArgs {
-            solid: "extrude(b)".into(),
-            face: extracted.clone(),
+            solid: solid("extrude(b)"),
+            face: named(&extracted),
         },
     );
     let part = program.build_model(registry).unwrap();
@@ -95,12 +100,7 @@ fn extract_a_wall_split_with_it_and_delete_the_rest() {
     program.push(
         "clean",
         DeleteBodyArgs {
-            bodies: vec![
-                EntityRef::Solid {
-                    name: "extrude(a)".into(),
-                },
-                EntityRef::Face { name: extracted },
-            ],
+            bodies: vec![named("extrude(a)"), named(extracted)],
         },
     );
     let part = program.build_model(registry).unwrap();
@@ -121,8 +121,8 @@ fn project_onto_top(mark: Sketch) -> ProgramFile {
     program.push(
         "p",
         ProjectCurveArgs {
-            sketch: "mark".into(),
-            face: "extrude(block,end)".into(),
+            sketch: whole_sketch("mark"),
+            face: named("extrude(block,end)"),
         },
     );
     program

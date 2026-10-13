@@ -11,13 +11,14 @@ use geop_core_topology::{
     Body, SolidId,
     distance::{Feature, PlacedFace, closest_points},
 };
-use geop_ops::{
-    Design, EntityRef, NamedModel, Namer,
-    operation::BuildView,
-    output::{Answer, Block, Bounded, Row},
-    solids::{PlacedSolid, placed_solids},
-    ui::Tone,
-};
+use geop_core_editor::editing::Tone;
+use geop_core_program::element::PickedElement;
+use geop_ops_assembly::solids::{PlacedSolid, placed_solids};
+use geop_ops_model::{BodyNames, Design, NamedModel, Namer};
+use geop_ops_output::{Answer, Block, Bounded, Row};
+use geop_ops_parameters::PartReader;
+
+use crate::mass::drawn;
 use geop_ops_booleans::{
     boolean::{BooleanOp, boolean},
     remesh::remesh::RemeshParams,
@@ -84,6 +85,9 @@ pub struct Interference {
     pub contact: Contact,
     /// The volume they share, in mm³, for an overlap.
     pub volume: Option<Bounded>,
+    /// What is drawn of the two, to light.
+    #[serde(skip)]
+    pub drawn: Vec<PickedElement>,
 }
 
 /// A pair that could not be checked, and why.
@@ -126,7 +130,7 @@ impl InterferenceReport {
                     Contact::Touch => ("touch".into(), Tone::Normal),
                 };
                 Row {
-                    light: vec![EntityRef::solid(f.a.clone()), EntityRef::solid(f.b.clone())],
+                    light: f.drawn.clone(),
                     tone,
                     ..Row::of(vec![format!("{} × {}: {how}", f.a, f.b)])
                 }
@@ -147,7 +151,7 @@ impl InterferenceReport {
     }
 }
 
-/// Which solids of the part `view` shows — its own, and those of the parts
+/// Which solids of the part `reader` reads — its own, and those of the parts
 /// placed in it, where they are — overlap, and by how much, and which only
 /// touch.
 ///
@@ -156,8 +160,8 @@ impl InterferenceReport {
 /// overlap, measured by its volume. Nothing left, the two touch if the
 /// least distance between their faces could be zero (see
 /// [`closest_points`]), and are apart otherwise.
-pub fn interference_report(view: BuildView) -> GeopResult<InterferenceReport> {
-    let solids = placed_solids(view)?;
+pub fn interference_report(reader: &PartReader) -> GeopResult<InterferenceReport> {
+    let solids = placed_solids(reader)?;
     let boxes = (solids.iter())
         .map(|s| bounding_box(s, &s.model.topology().solid_faces(s.solid)?))
         .collect::<GeopResult<Vec<_>>>()?;
@@ -175,6 +179,7 @@ pub fn interference_report(view: BuildView) -> GeopResult<InterferenceReport> {
                     b: b.name.clone(),
                     contact,
                     volume,
+                    drawn: [drawn(a), drawn(b)].concat(),
                 }),
                 Ok(None) => {}
                 Err(e) => unchecked.push(Unchecked {
@@ -270,7 +275,7 @@ fn copy_solid(
         Some(pose) => spec.placed(pose),
         None => spec,
     };
-    let names = geop_ops::BodyNames {
+    let names = BodyNames {
         solid: Some(prefix.to_string()),
         ..names.renamed(|name| format!("{prefix}.{name}"))
     };

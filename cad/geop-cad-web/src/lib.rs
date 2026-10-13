@@ -85,7 +85,7 @@ mod tests {
 
         let empty = send(serde_json::json!({"command": "load", "program": {"steps": []}}));
         // Drawn as big as a robot's part, not 1 mm: lengths are millimetres
-        // (`geop_ops::ui::EMPTY_EXTENT`).
+        // (`geop_ops_view::EMPTY_EXTENT`).
         assert_eq!(
             empty["scene"]["part"]["extent"]["size"],
             serde_json::json!(100.0)

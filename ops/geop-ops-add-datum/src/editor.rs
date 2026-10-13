@@ -5,33 +5,23 @@
 
 use std::collections::BTreeMap;
 
+use geop_core_editor::{
+    edit_form::{Edit, EditForm},
+    editing::{Action, CanvasEvent, Change, Control, Dialog, Gizmo, Tone, Track},
+    numeric_input::NumericInput,
+};
 use geop_core_math::{
     primitives::{CoordinateSystem, DatumKind},
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_ops::{
-    Design,
-    operation::{BuildView, Role, Seen},
-    parameters::Formula,
-    ui::{Action, CanvasEvent, Change, Edit, EditForm, Gizmo, Tone, Track, formula_number},
-};
+use geop_ops_model::Design;
+use geop_ops_parameters::PartReader;
 
 use crate::{
-    AddDatumArgs, CONSTRUCTIONS, Construction,
+    AddDatumArgs, CONSTRUCTIONS, Construction, Role, Selected,
     add_datum::{ConstructionSchema, ParamKind, fitting_constructions},
 };
-
-/// What a datum can be built from: whatever can be an input of some
-/// construction.
-const SELECTION_ROLES: &[Role] = &[
-    Role::Point,
-    Role::Line,
-    Role::Plane,
-    Role::Curve,
-    Role::Circle,
-    Role::Round,
-];
 
 /// What a group of constructions is called: by what they build.
 fn group(result: DatumKind) -> &'static str {
@@ -45,24 +35,23 @@ fn group(result: DatumKind) -> &'static str {
 
 /// What `construction` needs selected, in words: `a point and a plane`.
 fn needs(construction: &ConstructionSchema) -> String {
-    let roles: Vec<String> = construction.inputs.iter().map(|&r| r.describe()).collect();
+    let roles: Vec<&str> = construction.inputs.iter().map(|&r| r.describe()).collect();
     roles.join(" and ")
 }
 
-/// What `args` builds as `seen` has the part, its numbers as the form
+/// What `args` builds as `before` reads the part, its numbers as the form
 /// shows them.
-fn built(seen: &Seen, args: &AddDatumArgs) -> Option<CoordinateSystem<Design>> {
-    let mut seen = seen;
-    let inputs = args.inputs(&mut seen).ok()?;
+fn built(before: &PartReader, args: &AddDatumArgs) -> Option<CoordinateSystem<Design>> {
+    let inputs = args.inputs(before).ok()?;
     (args.construction)
-        .build(&inputs, |f| f.evaluate(&mut seen))
+        .build(&inputs, |f| f.resolve(before))
         .ok()
 }
 
 /// Where the offsets of what `args` builds are dragged, by the name of
 /// their value: an offset plane's distance on the plane, along its normal.
 /// None for a step that does not build.
-fn handles(seen: &Seen, args: &AddDatumArgs) -> BTreeMap<&'static str, Track<Design>> {
+fn handles(seen: &PartReader, args: &AddDatumArgs) -> BTreeMap<&'static str, Track<Design>> {
     match (&args.construction, built(seen, args)) {
         (Construction::Offset { .. }, Some(built)) => BTreeMap::from([(
             "distance",
@@ -87,7 +76,7 @@ fn unit_axes(frame: &CoordinateSystem<Design>) -> Option<[Vector3<Design>; 3]> {
 /// The gizmo an offset point is moved by: at the point, along the axes its
 /// offsets are measured along — while they are plain numbers, not
 /// formulas, which a drag would overwrite.
-fn gizmo(seen: &Seen, args: &AddDatumArgs) -> Option<Gizmo<Design>> {
+fn gizmo(seen: &PartReader, args: &AddDatumArgs) -> Option<Gizmo<Design>> {
     let Construction::Point { x, y, z } = &args.construction else {
         return None;
     };
@@ -105,7 +94,7 @@ fn gizmo(seen: &Seen, args: &AddDatumArgs) -> Option<Gizmo<Design>> {
 
 /// The gizmo dragged: an offset point's offsets moved by as much along
 /// their axes.
-pub(crate) fn event(seen: &Seen, args: &mut AddDatumArgs, event: &CanvasEvent<Design>) {
+pub(crate) fn event(seen: &PartReader, args: &mut AddDatumArgs, event: &CanvasEvent<Design>) {
     let CanvasEvent::Gizmo { drag, .. } = event else {
         return;
     };
@@ -117,7 +106,7 @@ pub(crate) fn event(seen: &Seen, args: &mut AddDatumArgs, event: &CanvasEvent<De
     if let Construction::Point { x, y, z } = &mut args.construction {
         for (offset, axis) in [x, y, z].into_iter().zip(&axes) {
             if let Some(v) = offset.plain() {
-                *offset = Formula::Plain(v + by.prod_dot(axis).to_f64());
+                *offset = NumericInput::Plain(v + by.prod_dot(axis).to_f64());
             }
         }
     }
@@ -125,12 +114,36 @@ pub(crate) fn event(seen: &Seen, args: &mut AddDatumArgs, event: &CanvasEvent<De
 
 /// Keeps the construction fitting the selection: one that no longer fits
 /// gives way to the first that does, if any does.
-fn follow_selection(seen: &Seen, args: &mut AddDatumArgs) {
-    let fits = fitting_constructions(&mut { seen }, &args.selection);
+fn follow_selection(before: &PartReader, args: &mut AddDatumArgs) {
+    let fits = fitting_constructions(before, &args.selection);
     if !fits.contains(&args.construction.schema().method)
         && let Some(first) = CONSTRUCTIONS.iter().find(|c| fits.contains(&c.method))
     {
         args.construction = Construction::default_of(first);
+    }
+}
+
+/// Says of each element the selection field of `dialog` holds,
+/// `selection`, what it can be used as — or, where the part has no such
+/// element, why it cannot be used.
+fn describe_selection(reader: &PartReader, selection: &[Selected], dialog: &mut Dialog<Design>) {
+    let Some(field) = dialog.0.iter_mut().find(|f| f.key == "selection") else {
+        return;
+    };
+    let Control::Reference(reference) = &mut field.control else {
+        return;
+    };
+    for (picked, selected) in reference.value.iter_mut().zip(selection) {
+        match selected.shape(reader) {
+            Ok(shape) => {
+                let roles: Vec<&str> = shape.roles().into_iter().map(Role::name).collect();
+                picked.detail = Some(roles.join(" · "));
+            }
+            Err(e) => {
+                picked.tone = Tone::Error;
+                picked.detail = Some(e.root_message().to_string());
+            }
+        }
     }
 }
 
@@ -139,24 +152,24 @@ fn follow_selection(seen: &Seen, args: &mut AddDatumArgs) {
 /// saying what they need, and the construction's values, offsets with
 /// handles.
 pub(crate) fn form<'a>(
-    view: BuildView<'a>,
+    before: &'a PartReader<'a>,
     args: &AddDatumArgs,
 ) -> EditForm<'a, Design, AddDatumArgs> {
-    let seen = &Seen::new(view);
+    let seen = before;
     let mut f = EditForm::<Design, AddDatumArgs>::default();
-    let fits = fitting_constructions(&mut { seen }, &args.selection);
-    f.reference(
+    let fits = fitting_constructions(before, &args.selection);
+    f.pick(
         "selection",
         "selection",
-        args.selection.clone(),
-        SELECTION_ROLES,
-        None,
+        before,
+        &args.selection,
         true,
         move |edit, selection| {
             edit.args.selection = selection;
-            follow_selection(&Seen::new(view), edit.args);
+            follow_selection(before, edit.args);
         },
     );
+    describe_selection(before, &args.selection, &mut f.form.dialog);
 
     let chosen = args.construction.schema();
     let actions = (CONSTRUCTIONS.iter())
@@ -195,13 +208,13 @@ pub(crate) fn form<'a>(
         let value = args.construction.param(name);
         match param.kind {
             ParamKind::Number { min, max, unit, .. } => {
-                let formula = value
-                    .and_then(|v| serde_json::from_value::<Formula>(v).ok())
-                    .unwrap_or(Formula::Plain(0.0));
-                let number = formula_number(name, &formula, &mut { seen }, unit)
+                let input = value
+                    .and_then(|v| serde_json::from_value::<NumericInput>(v).ok())
+                    .unwrap_or_default();
+                let number = (input.number(name, seen, unit))
                     .range(min, max)
                     .handle(handles.remove(name));
-                f.formula(name, number, move |Edit { args, .. }, v| {
+                f.numeric(name, number, move |Edit { args, .. }, v| {
                     if let Ok(v) = serde_json::to_value(v) {
                         set(args, v)
                     }

@@ -6,21 +6,20 @@ use std::f64::consts::PI;
 use crate::ShellArgs;
 use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
+use geop_core_program::element::ElementReference;
 use geop_core_topology::Body;
-use geop_ops::{Design, EntityRef, NamedModel, model::datum};
-use geop_ops_booleans::Combine;
-use geop_ops_datums::{AddDatumArgs, Construction};
+use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
+use geop_ops_booleans::{Combine, solid};
+use geop_ops_datums::{datums, read_datums};
 use geop_ops_extrude_revolve::Extents;
-use geop_ops_sketch::Sketch;
+use geop_ops_model::{Design, NamedModel, model, testing::assert_valid};
+use geop_ops_sketch::{Sketch, SketchPlane};
 
 use geop_core_math::geop_error::GeopResult;
-use geop_ops::origin_plane;
-use geop_ops::program::{ProgramFile, Registry};
-use geop_ops::testing::{Built, assert_valid};
-use geop_ops_datums::AddDatum;
 use geop_ops_extrude_revolve::testing::{
-    drilled_box, extrude_sketch, extrusion, n, outline, sketch,
+    Built, args, drilled_box, extrude_sketch, extrusion, n, on_origin, outline, sketch,
 };
+use geop_ops_parameters::{ProgramFile, Registry};
 
 use crate::Shell;
 
@@ -36,17 +35,19 @@ fn extruded(program: &mut ProgramFile, name: &str, sketch: Sketch, height: f64) 
     extrude_sketch(
         program,
         name,
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         sketch,
         Extents::blind(height),
         Combine::NewBody,
     );
 }
 
-fn shell(solid: &str, faces: &[&str], thickness: f64) -> ShellArgs {
+fn shell(name: &str, faces: &[&str], thickness: f64) -> ShellArgs {
     ShellArgs {
-        solid: solid.into(),
-        faces: faces.iter().map(|f| f.to_string()).collect(),
+        solid: solid(name),
+        faces: (faces.iter())
+            .map(|f| ElementReference::new(model(), *f))
+            .collect(),
         thickness: thickness.into(),
     }
 }
@@ -199,16 +200,20 @@ fn offset_plane_from_a_shelled_face() {
     program.push(
         "d",
         AddDatumArgs {
-            selection: vec![EntityRef::Face {
-                name: "shell(s,extrude(b,start))".into(),
-            }],
+            selection: vec![Selected::Face(ElementReference::new(
+                model(),
+                "shell(s,extrude(b,start))",
+            ))],
             construction: Construction::Offset {
                 distance: 0.5.into(),
             },
         },
     );
     let runner = program.built(registry).unwrap();
-    let datum = (runner.part.current().retrieve_target(&datum("d"))).unwrap();
+    let datum = read_datums(&runner.part.current())
+        .unwrap()
+        .get("d")
+        .unwrap();
     // The inner floor faces up, into the cup, at z = 0.25.
     let z = datum.frame.origin()[2].to_f64();
     assert!((z - 0.75).abs() < 1e-9, "{z}");
@@ -231,7 +236,13 @@ fn hole_through_the_walls_of_a_shelled_box() {
     program.push(
         "middle",
         AddDatumArgs {
-            selection: vec![origin_plane(FrameAxis::Y)],
+            selection: vec![Selected::Datum(ElementReference::new(
+                datums(),
+                geop_ops_datums::component_name(
+                    geop_ops_datums::ORIGIN,
+                    geop_core_math::primitives::DatumComponent::Plane(FrameAxis::Y),
+                ),
+            ))],
             construction: Construction::Offset {
                 distance: 1.0.into(),
             },
@@ -242,7 +253,13 @@ fn hole_through_the_walls_of_a_shelled_box() {
     // -z: the circle is around x = 0.5, z = 0.5.
     let c = s.add_point(n(0.5), n(-0.5));
     s.add_circle(c, n(0.2));
-    program.push("hole_sketch", sketch(EntityRef::datum("middle"), s));
+    program.push(
+        "hole_sketch",
+        sketch(
+            SketchPlane::Datum(ElementReference::new(datums(), "middle")),
+            s,
+        ),
+    );
     let through = Extents {
         symmetric: true,
         ..Extents::blind(3.0)
@@ -260,16 +277,16 @@ fn hole_through_the_walls_of_a_shelled_box() {
 /// A shell step is written as the others are.
 #[test]
 fn shell_steps_round_trip_through_json() {
-    let args = shell("extrude(b)", &["extrude(b,end)"], 0.25);
+    let shell_args = shell("extrude(b)", &["extrude(b,end)"], 0.25);
     let mut program = ProgramFile::new();
-    program.push("s", args.clone());
+    program.push("s", shell_args.clone());
     let json = serde_json::to_value(&program.program.steps[0]).unwrap();
     assert_eq!(json["operation"], "shell");
     assert_eq!(json["args"]["thickness"], 0.25);
-    assert_eq!(
-        geop_ops::testing::args::<ShellArgs>(&program.program.steps[0]),
-        args
-    );
+    // The solid and the faces are saved by their names.
+    assert_eq!(json["args"]["solid"], "extrude(b)");
+    assert_eq!(json["args"]["faces"][0], "extrude(b,end)");
+    assert_eq!(args::<ShellArgs>(&program.program.steps[0]), shell_args);
 }
 
 /// Walls need a thickness, and the faces opened must be the solid's.

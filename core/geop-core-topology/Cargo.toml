@@ -8,3 +8,7 @@ geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 # The arenas of `Model`: a copy shares every entity the copy does not edit.
 imbl.workspace = true
+
+[features]
+# A unit cube and small checks, for other crates' tests (see `test_fixtures`).
+testing = []

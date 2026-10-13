@@ -5,11 +5,7 @@
       "operation": "add_sketch",
       "args": {
         "plane": {
-          "type": "Datum",
-          "name": "origin",
-          "component": {
-            "plane": "z"
-          }
+          "datum": "origin:xy"
         },
         "sketch": {
           "points": {
@@ -190,11 +186,14 @@
       "id": "revolve1",
       "operation": "revolve",
       "args": {
-        "sketch": "sketch1",
+        "sketch": {
+          "target": "sketch:sketch1"
+        },
         "axis": {
-          "type": "SketchCurve",
-          "sketch": "sketch1",
-          "curve": 6
+          "sketch": {
+            "target": "sketch:sketch1",
+            "name": "c6"
+          }
         },
         "extent": {
           "side1": {
@@ -215,11 +214,7 @@
       "operation": "add_sketch",
       "args": {
         "plane": {
-          "type": "Datum",
-          "name": "origin",
-          "component": {
-            "plane": "y"
-          }
+          "datum": "origin:zx"
         },
         "sketch": {
           "points": {
@@ -295,7 +290,9 @@
       "id": "extrude1",
       "operation": "extrude",
       "args": {
-        "sketch": "sketch2",
+        "sketch": {
+          "target": "sketch:sketch2"
+        },
         "extent": {
           "side1": "through_all",
           "symmetric": false,
@@ -316,17 +313,10 @@
       "args": {
         "bodies": [],
         "features": [
-          {
-            "type": "Feature",
-            "name": "extrude1"
-          }
+          "extrude1"
         ],
         "axis": {
-          "type": "Datum",
-          "name": "origin",
-          "component": {
-            "axis": "y"
-          }
+          "datum": "origin:y"
         },
         "reversed": false,
         "count": 16,

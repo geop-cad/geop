@@ -1,26 +1,29 @@
 //! [`ProjectCurve`]: project a sketch's curves onto a face, dividing the
 //! face along them.
 
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     plain,
     primitives::CoordinateSystem,
     scalars::Scalar,
 };
+use geop_core_program::element::ElementReference;
 use geop_core_topology::FaceId;
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, EntityRef, NamedModel, Namer,
-    operation::{BuildReader, Lookup, PartOperation, Role, Scope, Seen, StepContext},
-    part_operation,
-    ui::{EditForm, FormState},
-};
 use geop_ops_booleans::{
     extent::{face_hull, spread_along},
     imprint::imprint_on_face,
     remesh::remesh::RemeshParams,
 };
 use geop_ops_extrude_revolve::{extrude::extrude, operation::shape_loops};
+use geop_ops_model::{Design, Face, ModelOperation, NamedModel, Namer, build_model, model};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_sketch::{PlacedSketch, SketchRef};
 use serde::{Deserialize, Serialize};
 
 /// Projects the curves of the sketch named `sketch` along its plane's
@@ -47,19 +50,19 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ProjectCurve;
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProjectCurveArgs {
     /// The sketch whose curves to project.
-    pub sketch: String,
+    pub sketch: SketchRef,
     /// The face to project them onto.
-    pub face: String,
+    pub face: ElementReference<NamedModel<Design>, Face>,
 }
 
 part_operation!(ProjectCurve(ProjectCurveArgs));
 
 impl PartOperation for ProjectCurve {
+    const KIND: &'static str = "project_curve";
     const INFO: OperationInfo = OperationInfo::new(
-        "project_curve",
         "Project curve",
         "Project a sketch's curves along its plane's normal onto a face, dividing the face along them.",
         OperationGroup::Surface,
@@ -68,61 +71,70 @@ impl PartOperation for ProjectCurve {
     .experimental()
     .icon(crate::icons::PROJECT_CURVE);
     type Args = ProjectCurveArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
 
-    /// The newest sketch, onto no face yet.
+    /// The newest sketch, onto no face yet: no face has the empty name.
     fn new_args(context: &StepContext) -> ProjectCurveArgs {
+        let newest = context.before.targets_of::<PlacedSketch<Design>>().pop();
         ProjectCurveArgs {
-            sketch: (Seen::new(context.before).sketch_names().pop()).unwrap_or_default(),
-            face: String::new(),
+            sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_sketch::sketch(""))),
+            face: ElementReference::new(model(), ""),
         }
     }
 
+    fn run(step: &str, part: &mut BuildPart, args: &ProjectCurveArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
+    }
+
+    /// The sketch and the face, picked.
+    fn form<'a>(
+        context: &'a StepContext<'a>,
+        args: &ProjectCurveArgs,
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, ProjectCurveArgs> {
+        let before = &context.before;
+        let mut f = EditForm::<Design, ProjectCurveArgs>::default();
+        f.pick_one(
+            "sketch",
+            "sketch",
+            before,
+            Some(&args.sketch),
+            |edit, sketch| edit.args.sketch = sketch,
+        )
+        .pick_one(
+            "face",
+            "onto face",
+            before,
+            Some(&args.face),
+            |edit, face| edit.args.face = face,
+        );
+        f
+    }
+}
+
+impl ModelOperation for ProjectCurve {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
+        reader: &PartReader,
         step: &str,
         args: &ProjectCurveArgs,
     ) -> GeopResult<()> {
         let namer = Namer::new("project", step)?;
-        let placed = (Scope { model, reader }).sketch(&args.sketch)?.clone();
-        let face = model.face_id(&args.face)?;
+        let placed = reader.retrieve_element(&args.sketch)?;
+        let face = model.face_id(args.face.name())?;
         let sketch = &placed.sketch;
         let geometry = sketch.enclose::<Design>()?;
         let shape = sketch.shape()?;
-        let loops = shape_loops(&args.sketch, sketch, &geometry, shape)?;
+        let loops = shape_loops(&placed.name, sketch, &geometry, shape)?;
         let (from, to) = reach_across(model, face, &placed.plane)?;
         let (from, to) = (Design::from_f64(from), Design::from_f64(to));
         let swept = extrude(model, &namer, None, &placed.plane, from, to, &loops)?;
         let params = RemeshParams::default();
         imprint_on_face(model, &namer, face, &swept.shells, params)?;
         Ok(())
-    }
-
-    /// The sketch and the face, picked.
-    fn form<'a>(
-        _: &'a StepContext<'a>,
-        args: &ProjectCurveArgs,
-        _: &FormState<()>,
-    ) -> EditForm<'a, Design, ProjectCurveArgs> {
-        let mut f = EditForm::<Design, ProjectCurveArgs>::default();
-        f.pick_one(
-            "sketch",
-            "sketch",
-            EntityRef::sketch,
-            &args.sketch,
-            &[Role::Sketch],
-            |edit, name| edit.args.sketch = name,
-        );
-        f.pick_one(
-            "face",
-            "onto face",
-            EntityRef::face,
-            &args.face,
-            &[Role::Face],
-            |edit, name| edit.args.face = name,
-        );
-        f
     }
 }
 

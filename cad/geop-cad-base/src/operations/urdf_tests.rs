@@ -9,20 +9,18 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops::{
-    ParamValue,
-    model::pose_parameter,
-    output::Output,
-    parameters::Values,
+use geop_ops_assembly::{
+    AddPartArgs, CouplingKind, JointKind, Mate, Transmission,
     solids::{Shapes, placed_solids},
-    solving,
+    solving::{self, Rerun},
 };
-use geop_ops_assembly::{AddPartArgs, CouplingKind, JointKind, Mate, Transmission};
+use geop_ops_output::Output;
+use geop_ops_parameters::{Settings, StateValue, pose_state};
 use geop_ops_urdf::{JointType, Mechanism, Origin, Robot, URDF_FILE, UrdfExport, export};
 
 use crate::Program;
 use crate::examples::{self, n, pose};
-use crate::operations::{Runner, runner, workspace};
+use crate::operations::{Runner, workspace};
 
 /// The files of the workspace example `name`, by path, and its first
 /// program.
@@ -40,17 +38,19 @@ fn workspace_example(name: &str) -> (BTreeMap<String, String>, Program) {
     (files, program)
 }
 
-/// What a program built, and the state it ran with.
-struct Built(Runner, Values);
+/// What a program built, and the program with the state it ran with.
+struct Built(Runner, Program);
 
 impl Built {
     /// It exported as the robot `name`, meshed coarsely.
     fn export(&mut self, name: &str) -> geop_core_math::geop_error::GeopResult<UrdfExport> {
-        export(
-            &mut Output::new(&mut self.0.part, &self.1, None, ""),
-            name,
-            8,
-        )
+        let mut output = Output {
+            runner: &mut self.0,
+            file: &self.1,
+            editing: None,
+            date: "",
+        };
+        export(&mut output, name, 8)
     }
 }
 
@@ -58,15 +58,19 @@ impl Built {
 /// first, as the editor settles a program it loads: what the state does not
 /// give started where the parts are, and solved for.
 fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Built {
-    let library = workspace(files).scope(path);
     let mut program = program.clone();
-    let mut built = runner();
-    program.run(&mut built, &Values::new(), &library).unwrap();
-    let (moved, report) = solving::solve(&mut built.part, &program.state, &[], None).unwrap();
+    let mut built = super::build(&program, path, workspace(files).scope(path)).unwrap();
+    let inputs = program.inputs(&Settings::new());
+    let mut rerun = Rerun {
+        runner: &mut built,
+        program: &program.program,
+        inputs: &inputs,
+    };
+    let (moved, report) = solving::solve(&mut rerun, &program.state, &[], None).unwrap();
     assert!(report.converged, "{report:?}");
     program.state.extend(moved);
-    program.run(&mut built, &Values::new(), &library).unwrap();
-    Built(built, program.state)
+    program.run(&mut built, &Settings::new()).unwrap();
+    Built(built, program)
 }
 
 /// The arm, exported.
@@ -223,7 +227,7 @@ fn assert_same_pose(a: &Pose<S>, b: &Pose<S>, what: &str) {
 /// Placed by its joints at the coordinates the assembly is at, every part
 /// of `robot` is where `part` has it.
 fn assert_links_where_drawn(part: &Built, robot: &Robot) {
-    let mechanism = Mechanism::of(part.0.part.current()).unwrap();
+    let mechanism = Mechanism::of(&part.0.part.current()).unwrap();
     let mut coordinates = HashMap::new();
     for joint in &mechanism.joints {
         let q = match joint.kind {
@@ -275,8 +279,8 @@ fn the_arm_exports_its_joints_limits_and_masses() {
         assert!(joint.mimic.is_none());
     }
 
-    let view = part.0.part.current();
-    let solids = placed_solids(view).unwrap();
+    let reader = part.0.part.current();
+    let solids = placed_solids(&reader).unwrap();
     let mut shapes = Shapes::default();
     let weighed = |prefix: &str, shapes: &mut Shapes| {
         (solids.iter())
@@ -510,21 +514,21 @@ fn a_gear_coupling_exports_as_a_mimic_joint() {
             vec![pin_joint("base", 1, "driven", 0), gear],
         ),
     );
-    let at = |x: f64, turn: f64| ParamValue::Pose(pose([x, 0.0, 0.2], [0.0, 0.0, turn]));
+    let at = |x: f64, turn: f64| StateValue::Pose(pose([x, 0.0, 0.2], [0.0, 0.0, turn]));
     program.state = BTreeMap::from([
         (
-            pose_parameter("base"),
-            ParamValue::Pose(pose([0.0; 3], [0.0; 3])),
+            pose_state("base"),
+            StateValue::Pose(pose([0.0; 3], [0.0; 3])),
         ),
-        (pose_parameter("driver"), at(0.0, 90.0)),
-        (pose_parameter("driven"), at(3.0, -45.0)),
+        (pose_state("driver"), at(0.0, 90.0)),
+        (pose_state("driven"), at(3.0, -45.0)),
         (
             "add_part(driver,m1).angle".into(),
-            ParamValue::Number(n(90.0)),
+            StateValue::Number(n(90.0)),
         ),
         (
             "add_part(driven,m1).angle".into(),
-            ParamValue::Number(n(-45.0)),
+            StateValue::Number(n(-45.0)),
         ),
     ]);
     let mut part = build(files, "gears.geop", &program);
@@ -640,12 +644,12 @@ fn sliders_fastened_parts_and_reversed_joints() {
         ],
     );
     program.push("swing", placed("link.geop", false, vec![hinge]));
-    let at = |p: [f64; 3], turn: f64| ParamValue::Pose(pose(p, [0.0, 0.0, turn]));
+    let at = |p: [f64; 3], turn: f64| StateValue::Pose(pose(p, [0.0, 0.0, turn]));
     program.state = BTreeMap::from([
-        (pose_parameter("base"), at([0.0; 3], 0.0)),
-        (pose_parameter("lift"), at([0.0, 0.0, 0.7], 0.0)),
-        (pose_parameter("tool"), at([3.0, 0.0, 0.9], 0.0)),
-        (pose_parameter("swing"), at([3.0, 0.0, 0.2], 40.0)),
+        (pose_state("base"), at([0.0; 3], 0.0)),
+        (pose_state("lift"), at([0.0, 0.0, 0.7], 0.0)),
+        (pose_state("tool"), at([3.0, 0.0, 0.9], 0.0)),
+        (pose_state("swing"), at([3.0, 0.0, 0.2], 40.0)),
     ]);
     let mut part = build(files, "machine.geop", &program);
     let robot = part.export("machine").unwrap().robot;
@@ -713,10 +717,10 @@ fn what_urdf_cannot_express_is_refused_by_name() {
             .into_iter()
             .collect();
         program.push("arm", placed("link.geop", false, mates));
-        let at = |x: f64, z: f64| ParamValue::Pose(pose([x, 0.0, z], [0.0; 3]));
+        let at = |x: f64, z: f64| StateValue::Pose(pose([x, 0.0, z], [0.0; 3]));
         program.state = BTreeMap::from([
-            (pose_parameter("base"), at(0.0, 0.0)),
-            (pose_parameter("arm"), at(3.0, 0.2)),
+            (pose_state("base"), at(0.0, 0.0)),
+            (pose_state("arm"), at(3.0, 0.2)),
         ]);
         let mut part = build(files.clone(), "bad.geop", &program);
         part.export("bad").unwrap_err().to_string()

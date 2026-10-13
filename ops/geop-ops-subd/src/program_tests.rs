@@ -3,15 +3,14 @@
 
 use crate::{Cage, Mirror, SubdArgs};
 use geop_core_math::primitives::FrameAxis;
-use geop_ops_booleans::{BooleanArgs, Combine, boolean::BooleanOp};
+use geop_ops_booleans::{BooleanArgs, Combine, boolean::BooleanOp, solid};
 use geop_ops_extrude_revolve::Extents;
 
 use geop_core_math::geop_error::GeopResult;
-use geop_ops::origin_plane;
-use geop_ops::program::{ProgramFile, Registry};
-use geop_ops::testing::{Built, assert_valid};
 use geop_ops_booleans::Boolean;
-use geop_ops_extrude_revolve::testing::{extrusion, outline, sketch};
+use geop_ops_extrude_revolve::testing::{Built, extrusion, on_origin, outline, sketch};
+use geop_ops_model::testing::assert_valid;
+use geop_ops_parameters::{ProgramFile, Registry};
 
 use crate::Subd;
 
@@ -38,7 +37,7 @@ fn subd_body_united_with_a_box() {
     let corners = [[0.1, 0.15], [1.4, 0.15], [1.4, 1.35], [0.1, 1.35]];
     program.push(
         "block_sketch",
-        sketch(origin_plane(FrameAxis::Z), outline(&corners)),
+        sketch(on_origin(FrameAxis::Z), outline(&corners)),
     );
     program.push(
         "block",
@@ -47,8 +46,8 @@ fn subd_body_united_with_a_box() {
     program.push(
         "join",
         BooleanArgs {
-            a: "subd(blob)".into(),
-            b: "extrude(block)".into(),
+            a: solid("subd(blob)"),
+            b: solid("extrude(block)"),
             op: BooleanOp::Union,
         },
     );

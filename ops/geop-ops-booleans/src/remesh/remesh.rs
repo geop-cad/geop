@@ -8,7 +8,7 @@ use geop_core_math::{
 use std::collections::HashMap;
 
 use geop_core_topology::{Body, EdgeId, FaceId, VertexId};
-use geop_ops::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer};
 
 use crate::naming::BooleanNaming;
 use crate::remesh::{

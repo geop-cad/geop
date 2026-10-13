@@ -1,6 +1,6 @@
 //! Inspecting a part: what an engineer asks of a design without changing
 //! it — none of it is an operation, and none of it adds a step. Each is an
-//! [`Inspector`] an editor offers (see [`geop_ops::output`]):
+//! [`Inspector`] an editor offers (see [`geop_ops_output`]):
 //!
 //! - [`Measure`]: distances, angles, lengths, areas and radii of picked
 //!   entities ([`measure()`]).
@@ -14,7 +14,7 @@
 //! is known ([`Bounded`]): an interval enclosure, widened — for the
 //! integrals — by the quadrature's estimate of its truncation error (see
 //! [`geop_core_math::quadrature`]). Lengths are millimetres, masses
-//! kilograms (see [`geop_ops::parameters::Material`]).
+//! kilograms (see [`geop_ops_parameters::Material`]).
 
 pub mod interference;
 pub mod mass;
@@ -25,11 +25,10 @@ pub use mass::{MassReport, mass_report};
 pub use measure::{Measurement, measure};
 
 use geop_core_math::geop_error::GeopResult;
-use geop_ops::{
-    Design, EntityRef,
-    output::{Answer, Inspector, InspectorInfo, Output, Picks},
-    ui::Visual,
-};
+use geop_core_editor::editing::Visual;
+use geop_core_program::element::PickedElement;
+use geop_ops_model::Design;
+use geop_ops_output::{Answer, Inspector, InspectorInfo, Output, Picks};
 
 /// Measures picked entities: one alone, or the two last picked together.
 pub struct Measure;
@@ -41,7 +40,7 @@ impl Inspector for Measure {
         doc: "Measure picked entities: a point, a length, an area, a radius; the distance and angle between two.",
         icon: Some(crate::icons::MEASURE),
         picks: Some(Picks {
-            roles: measure::PICKS,
+            accepts: measure::PICKS,
             most: 2,
         }),
     };
@@ -50,10 +49,10 @@ impl Inspector for Measure {
 
     fn inspect(
         output: &mut Output,
-        picked: &[EntityRef],
+        picked: &[PickedElement],
         (): (),
     ) -> GeopResult<(Measurement, Vec<Visual<Design>>)> {
-        let measurement = measure(output.part(), picked);
+        let measurement = measure(&output.part(), picked);
         let visuals = measurement.visuals();
         Ok((measurement, visuals))
     }
@@ -79,10 +78,10 @@ impl Inspector for MassProperties {
 
     fn inspect(
         output: &mut Output,
-        _: &[EntityRef],
+        _: &[PickedElement],
         (): (),
     ) -> GeopResult<(MassReport, Vec<Visual<Design>>)> {
-        Ok((mass_report(output.part())?, Vec::new()))
+        Ok((mass_report(&output.part())?, Vec::new()))
     }
 
     fn show(report: &MassReport) -> Answer {
@@ -106,10 +105,10 @@ impl Inspector for Interference {
 
     fn inspect(
         output: &mut Output,
-        _: &[EntityRef],
+        _: &[PickedElement],
         (): (),
     ) -> GeopResult<(InterferenceReport, Vec<Visual<Design>>)> {
-        Ok((interference_report(output.part())?, Vec::new()))
+        Ok((interference_report(&output.part())?, Vec::new()))
     }
 
     fn show(report: &InterferenceReport) -> Answer {

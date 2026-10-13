@@ -8,19 +8,21 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, NamedModel, Namer,
-    operation::{
-        BuildReader, Chain, EntityRef, Lookup, PartOperation, ResolveEntity, Role, Scope, Seen,
-        StepContext,
-    },
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::{Choice, Number, Unit},
     part_operation,
-    ui::{Choice, EditForm, FormState, Number, Unit},
+    part_operation::PartOperation,
 };
+use geop_core_program::element::ElementReference;
+use geop_ops_model::{Chain, Design, ModelOperation, NamedModel, Namer, build_model, read_model};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_sketch::{PlacedSketch, SketchRef};
+use geop_ops_sketch3d::PlacedSketch3d;
 use serde::{Deserialize, Serialize};
 
-use super::{Output, extrude::shape_loops};
+use super::{Output, PathRef, extrude::shape_loops};
 use crate::{
     loft::centre,
     path_sweep::{Control, Orientation, sweep_along},
@@ -67,10 +69,10 @@ pub struct Sweep;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SweepArgs {
     /// The sketch to sweep.
-    pub profile: String,
+    pub profile: SketchRef,
     /// What it is swept along: a sketch's or a 3-D sketch's one chain of
     /// curves, or one loop, or an edge.
-    pub path: Option<EntityRef>,
+    pub path: Option<PathRef>,
     /// Whether the profile turns with the path or keeps facing one way.
     #[serde(default)]
     pub orientation: Orientation,
@@ -84,7 +86,7 @@ pub struct SweepArgs {
     /// What guides the profile — one or two, each a path as the sweep's
     /// own is.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub rails: Vec<EntityRef>,
+    pub rails: Vec<PathRef>,
     /// A solid, kept as a new body or combined with another, or faces.
     #[serde(default)]
     pub output: Output,
@@ -115,8 +117,8 @@ const ORIENTATIONS: [(Orientation, &str, &str); 2] = [
 part_operation!(Sweep(SweepArgs));
 
 impl PartOperation for Sweep {
+    const KIND: &'static str = "sweep";
     const INFO: OperationInfo = OperationInfo::new(
-        "sweep",
         "Sweep",
         "Sweep a sketch's area along the curves of another sketch into a solid, or its curves into faces.",
         OperationGroup::Solid,
@@ -124,79 +126,36 @@ impl PartOperation for Sweep {
     )
     .icon(crate::icons::SWEEP);
     type Args = SweepArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
 
     /// The newest sketch along the sketch before it — joined to the newest
     /// solid if there is one.
     fn new_args(context: &StepContext) -> SweepArgs {
-        let seen = Seen::new(context.before);
-        let mut sketches = seen.sketch_names();
+        let before = &context.before;
+        let mut sketches = before.targets_of::<PlacedSketch<Design>>();
         // The newest 3-D sketch, which is drawn to be swept along; else
         // the newest sketch.
-        let path = match seen.sketch3d_names().pop() {
-            Some(name) => Some(EntityRef::sketch3d(name)),
-            None => sketches.pop().map(EntityRef::sketch),
+        let path = match before.targets_of::<PlacedSketch3d>().pop() {
+            Some(sketch) => Some(PathRef::Sketch3d(ElementReference::whole(sketch))),
+            None => (sketches.pop()).map(|sketch| PathRef::Sketch(ElementReference::whole(sketch))),
         };
+        let profile = sketches.pop().unwrap_or_else(|| geop_ops_sketch::sketch(""));
         SweepArgs {
-            profile: sketches.pop().unwrap_or_default(),
+            profile: SketchRef::whole(profile),
             path,
             orientation: Orientation::FollowPath,
             twist: 0.0,
             end_scale: 1.0,
             rails: Vec::new(),
-            output: Output::new_for(seen.model()),
+            output: Output::new_for(&read_model(before).unwrap_or_default()),
         }
     }
 
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &SweepArgs,
-    ) -> GeopResult<()> {
-        type S = Design;
-        let namer = Namer::new("sweep", step)?;
-        let profile = EntityRef::sketch(args.profile.clone());
-        let path = args
-            .path
-            .as_ref()
-            .ok_or_else(|| GeopError::new("sweep: pick the path to sweep along"))?;
-        if *path == profile {
-            return Err(GeopError::new(
-                "sweep: the profile and the path are two different sketches",
-            ));
-        }
-        let mut scope = Scope {
-            model: &mut *model,
-            reader,
-        };
-        let placed = scope.sketch(&args.profile)?.clone();
-        let sketch = &placed.sketch;
-        let geometry = sketch.enclose::<S>()?;
-        let shape = args.output.shape(sketch)?;
-        let loops = shape_loops(&args.profile, sketch, &geometry, shape)?;
-        let plane = &placed.plane;
-        let chain = path.resolve_chain(&mut scope)?;
-        let chain = starting_near(chain, &profile_centre(plane, &loops)?)?;
-        let mut rails = Vec::new();
-        for rail in &args.rails {
-            if *rail == profile || rail == path {
-                return Err(GeopError::new(format!(
-                    "sweep: the rail {rail} is the profile or the path: a rail is a curve of its own"
-                )));
-            }
-            rails.push(rail.resolve_chain(&mut scope)?);
-        }
-        let control = Control {
-            orientation: args.orientation,
-            twist: args.twist.to_radians(),
-            end_scale: args.end_scale,
-            rails,
-        };
-
-        (args.output).build_whole(model, &namer, step, |model, name| {
-            sweep_along(model, &namer, name, &chain, plane, &loops, &control)
-        })
+    fn run(step: &str, part: &mut BuildPart, args: &SweepArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
     /// The profile and the path, picked; the rails, if any; how the profile
     /// turns, twists and scales; whether a face; and how to combine.
@@ -205,31 +164,17 @@ impl PartOperation for Sweep {
         args: &SweepArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, SweepArgs> {
-        let view = &context.before;
+        let before = &context.before;
         let mut f = EditForm::<Design, SweepArgs>::default();
-        f.pick_sketch(view, "profile", &args.profile, |edit, name| {
-            edit.args.profile = name
+        f.pick_one("profile", "profile", before, Some(&args.profile), |edit, profile| {
+            edit.args.profile = profile
+        })
+        .pick_one("path", "path", before, args.path.as_ref(), |edit, path| {
+            edit.args.path = Some(path)
+        })
+        .pick("rails", "guide rails", before, &args.rails, true, |edit, rails| {
+            edit.args.rails = rails
         });
-        let path = args.path.iter().cloned().collect();
-        let rails = args.rails.clone();
-        f.reference(
-            "path",
-            "path",
-            path,
-            &[Role::Path],
-            None,
-            false,
-            |edit, picked| edit.args.path = picked.into_iter().next(),
-        )
-        .reference(
-            "rails",
-            "guide rails",
-            rails,
-            &[Role::Path],
-            None,
-            true,
-            |edit, picked| edit.args.rails = picked,
-        );
         f.form.dialog.optional("rails");
         let orientation =
             (ORIENTATIONS.iter().find(|o| o.0 == args.orientation)).map_or("", |o| o.1);
@@ -257,8 +202,54 @@ impl PartOperation for Sweep {
             f.number("end_scale", end_scale, |edit, v| edit.args.end_scale = v);
         }
         let output = |args: &mut SweepArgs, output| args.output = output;
-        (args.output).fields(&mut f, Seen::new(context.before).model(), false, output);
+        (args.output).fields(&mut f, before, false, output);
         f
+    }
+}
+
+impl ModelOperation for Sweep {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &PartReader,
+        step: &str,
+        args: &SweepArgs,
+    ) -> GeopResult<()> {
+        type S = Design;
+        let namer = Namer::new("sweep", step)?;
+        let path = (args.path.as_ref())
+            .ok_or_else(|| GeopError::new("sweep: pick the path to sweep along"))?;
+        if path.is_sketch(&args.profile) {
+            return Err(GeopError::new(
+                "sweep: the profile and the path are two different sketches",
+            ));
+        }
+        let placed = reader.retrieve_element(&args.profile)?;
+        let sketch = &placed.sketch;
+        let geometry = sketch.enclose::<S>()?;
+        let shape = args.output.shape(sketch)?;
+        let loops = shape_loops(&placed.name, sketch, &geometry, shape)?;
+        let plane = &placed.plane;
+        let chain = path.resolve(reader)?;
+        let chain = starting_near(chain, &profile_centre(plane, &loops)?)?;
+        let mut rails = Vec::new();
+        for rail in &args.rails {
+            if rail.is_sketch(&args.profile) || rail == path {
+                return Err(GeopError::new(format!(
+                    "sweep: the rail {rail:?} is the profile or the path: a rail is a curve of its own"
+                )));
+            }
+            rails.push(rail.resolve(reader)?);
+        }
+        let control = Control {
+            orientation: args.orientation,
+            twist: args.twist.to_radians(),
+            end_scale: args.end_scale,
+            rails,
+        };
+
+        (args.output).build_whole(model, &namer, step, |model, name| {
+            sweep_along(model, &namer, name, &chain, plane, &loops, &control)
+        })
     }
 }
 

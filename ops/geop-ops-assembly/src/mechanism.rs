@@ -2,7 +2,7 @@
 //! — where its placed parts are, how its joints are turned — and what they
 //! declare for solving it: the parts a fixed mate holds, each joint's
 //! coordinates as values a solve moves and a user sets. Solving, checking
-//! and measuring is generic ([`geop_ops::solving`]).
+//! and measuring is generic ([`crate::solving`]).
 //!
 //! A mate is worked out in two steps, each a target of the run. Its
 //! entities are resolved once, in the frames of the parts they are of
@@ -13,15 +13,18 @@
 //! anywhere short of them.
 //!
 //! A constraint's derivatives are by the state's own steps (see
-//! [`geop_core_program::part::State`]): a pose's by a twist in its own frame, a
+//! [`geop_ops_parameters::StateValue`]): a pose's by a twist in its own frame, a
 //! coordinate's by what is added to it. They are exact, through every pose
 //! a placement reads — a part placed in a placed part moves with both —
 //! computed in dual numbers, one state at a time.
 //!
-//! The editor solves ([`geop_ops::solving::solve`]): the solve moves the
-//! state until the constraints the run reported hold, bringing only them up
-//! to date for every state it tries, and the editor runs the program again
-//! with the state found.
+//! The editor solves ([`crate::solving::solve`]): the solve moves the state
+//! until the constraints hold, running the program again for every state it
+//! tries — what read no state that changed is reused — and the editor runs
+//! the program once more with the state found.
+//!
+//! The constraints of one step's mates are defined together, and so are
+//! their unknowns (see [`define`]).
 
 use std::collections::BTreeMap;
 
@@ -29,35 +32,34 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::Pose,
     scalars::{Ring, Scalar},
-    solvers::system::tolerance,
+    solvers::system::{Mobility, tolerance},
     vector::Vector3,
     with_context,
 };
-use geop_core_program::{
-    constraint::{Bound, Constraint},
-    part::Retrieve,
-    solve::Mobility,
-    target::TargetReference,
+use geop_core_program::element::ElementReference;
+use geop_ops_add_datum::Selected;
+use geop_ops_constraints::{
+    Bound, Constraint, Constraints,
+    constraint::define_constraints,
+    unknown::{Unknown, declare_unknowns},
 };
-use geop_ops::{
-    Design, ParamValue,
-    model::model_or_empty,
-    operation::{Aspects, Build, BuildReader, BuildView, EntityRef, Input, Lookup, Scope, Seen},
-    placed::{locate, locate_in, moved_by, within},
-    solving::{Setting, Settings, Unknown, largest, scale_of, settings_of, unknown},
-};
+use geop_ops_model::Design;
+use geop_ops_parameters::{BuildPart, PartReader, StateValue};
 
 use crate::{
+    frame::MateEntity,
     joints::{Connector, JointKind, Motion, joint_residuals, measure},
     mates::{Mate, MateKind, On, Resolved, joint_parameter, mate, mate_name},
+    placed::{locate, locate_in, moved_by},
     residuals::{D, Geometry, Kind, residuals},
+    solving::{Setting, Settings, largest, scale_of, settings_of},
 };
 
 thread_local! {
     static MATES_RESOLVED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// How many mates this thread has resolved — their entities found and
+/// How many mates this thread has resolved — their elements found and
 /// measured on the parts placed — ever. What any question about the mates
 /// costs grows with this, so a test can bound the work an edit does by the
 /// mates it touches, rather than time it.
@@ -67,89 +69,63 @@ pub fn mates_resolved() -> usize {
 
 /// The size of the placed parts `bodies` — at least one: what a mate
 /// between them turns a turn into a length by.
-fn size(reader: &mut BuildReader, bodies: &[&Option<String>]) -> GeopResult<Design> {
+fn size(reader: &PartReader, bodies: &[&Option<String>]) -> GeopResult<Design> {
     largest((bodies.iter().copied().flatten()).map(|body| Ok(locate(reader, body)?.instance)))
 }
 
-/// The geometry the entity `entity` of `mate`, a constraint of `kind`, is
-/// to it, in `lookup`.
+/// The geometry `entity` of `mate`, a constraint of `kind`, is to it, in its
+/// own part.
 fn geometry_in(
     kind: &Kind,
     mate: &Mate,
-    entity: &EntityRef,
-    lookup: &mut (impl Lookup<Design> + ?Sized),
+    entity: &MateEntity,
+    reader: &PartReader,
 ) -> GeopResult<Geometry> {
-    let aspects = Aspects::of(entity, lookup)?;
-    kind.geometry(&aspects)
-        .ok_or_else(|| GeopError::new(format!("{entity} is not {}", mate.needs())))
+    let shape = entity.shape(reader)?;
+    kind.geometry(&shape)
+        .ok_or_else(|| GeopError::new(format!("{} is not {}", entity.label(), mate.needs())))
 }
 
-/// The connector the entity `entity` is to a joint, in `lookup`: what it
-/// makes one of itself, or the frame it gives.
-fn connector_in(
-    entity: &EntityRef,
-    lookup: &mut (impl Lookup<Design> + ?Sized),
-) -> GeopResult<Connector<Design>> {
-    let aspects = Aspects::of(entity, lookup)?;
-    match Connector::of(&aspects) {
+/// The connector `entity` is to a joint, in its own part: what it makes one
+/// of itself, or the frame it gives.
+fn connector_in(entity: &MateEntity, reader: &PartReader) -> GeopResult<Connector<Design>> {
+    let shape = entity.shape(reader)?;
+    let face = matches!(entity.on, Selected::Face(_)) && entity.at.is_none();
+    match Connector::of(&shape, face) {
         Some(connector) => connector,
         None => {
-            let frame = Aspects::frame_on(entity, None, lookup)?;
+            let frame = entity.frame(reader)?;
             Connector::new(*frame.origin(), *frame.w(), Some(*frame.u()))
         }
     }
 }
 
-/// What `what` makes of the entity `entity` of the part read, on the body
-/// it moves with: in the frame of the placed part it is of, or of the part
-/// itself.
+/// What `what` makes of `entity`, on the body it moves with: in the frame
+/// of the placed part it is of, or of the part itself.
 fn on<T>(
-    reader: &mut BuildReader,
-    entity: &EntityRef,
-    what: impl Fn(&EntityRef, &mut dyn Lookup<Design>) -> GeopResult<T>,
+    reader: &PartReader,
+    entity: &MateEntity,
+    what: impl Fn(&MateEntity, &PartReader) -> GeopResult<T>,
 ) -> GeopResult<On<T>> {
-    let (body, local) = match within(reader, entity) {
-        Some((path, placed, local)) => (Some((path, placed.component.view())), local),
-        None => (None, entity.clone()),
-    };
-    let what = match &body {
-        Some((_, view)) => what(&local, &mut Seen::new(*view))?,
-        None => {
-            // Before the first step that builds any topology, an entity of
-            // the part itself can only be one that needs none: its origin.
-            let built = model_or_empty(reader);
-            what(
-                &local,
-                &mut Scope {
-                    model: &built,
-                    reader,
-                },
-            )?
-        }
-    };
     Ok(On {
-        body: body.map(|(name, _)| name),
-        what,
+        body: (!entity.part.is_empty()).then(|| entity.part.clone()),
+        what: what(entity, reader)?,
         entity: entity.clone(),
     })
 }
 
 /// The mate `name`, `mate`, resolved in the part read: the generator of its
-/// target [`crate::mate`]. A fixed mate fixes the part its entity is of.
-pub(crate) fn resolve(
-    reader: &mut BuildReader,
-    (name, mate): &(String, Mate),
-) -> GeopResult<Resolved> {
+/// target [`crate::mate`]. A fixed mate fixes the part its element is of.
+pub(crate) fn resolve(reader: &PartReader, (name, mate): &(String, Mate)) -> GeopResult<Resolved> {
     MATES_RESOLVED.set(MATES_RESOLVED.get() + 1);
     let ctx = with_context!("mate {name:?}");
     let resolved = match mate.kind {
         MateKind::Constraint(kind) => {
             let [a, b] = mate
                 .pair()
-                .ok_or_else(|| GeopError::new("it needs two entities"))
+                .ok_or_else(|| GeopError::new("it needs two elements"))
                 .with_context(ctx)?;
-            let geometry =
-                |e: &EntityRef, l: &mut dyn Lookup<Design>| geometry_in(&kind, mate, e, l);
+            let geometry = |e: &MateEntity, r: &PartReader| geometry_in(&kind, mate, e, r);
             let (a, b) = (on(reader, a, geometry)?, on(reader, b, geometry)?);
             // Whether the kind can hold between the two is a question of
             // their geometry alone, whatever bodies they are of.
@@ -164,8 +140,8 @@ pub(crate) fn resolve(
             kind.validate().with_context(ctx)?;
             Resolved::Joint {
                 kind,
-                a: on(reader, a, |e, l| connector_in(e, l))?,
-                b: on(reader, b, |e, l| connector_in(e, l))?,
+                a: on(reader, a, connector_in)?,
+                b: on(reader, b, connector_in)?,
             }
         }
         MateKind::Coupling(kind) => match mate.joints.as_slice() {
@@ -177,20 +153,26 @@ pub(crate) fn resolve(
         },
         MateKind::Anchor(_) => {
             let [entity] = mate.entities.as_slice() else {
-                return Err(GeopError::new("it needs one entity")).with_context(ctx);
+                return Err(GeopError::new("it needs one element")).with_context(ctx);
             };
-            match within(reader, entity) {
-                Some((body, _, _)) => Resolved::Fixed { body },
-                None => {
-                    return Err(GeopError::new(format!(
-                        "{entity} is of this part itself, which never moves: a fixed mate holds a part placed in it"
-                    )))
-                    .with_context(ctx);
-                }
+            if entity.part.is_empty() {
+                return Err(GeopError::new(format!(
+                    "{} is of this part itself, which never moves: a fixed mate holds a part placed in it",
+                    entity.label()
+                )))
+                .with_context(ctx);
+            }
+            Resolved::Fixed {
+                body: entity.part.clone(),
             }
         }
     };
     Ok(resolved)
+}
+
+/// The mate `name` of the part `reader` reads, resolved.
+fn resolved<'a>(reader: &PartReader<'a>, name: &str) -> GeopResult<&'a Resolved> {
+    reader.retrieve_element(&ElementReference::whole(mate(name)))
 }
 
 /// What a state is to a mate that reads it.
@@ -213,11 +195,7 @@ struct Reading<'a> {
 impl Reading<'_> {
     /// Where the placed part `body` is, as the state has it — none for the
     /// part itself, which never moves.
-    fn pose(
-        &mut self,
-        reader: &mut BuildReader,
-        body: &Option<String>,
-    ) -> GeopResult<Option<Pose<D>>> {
+    fn pose(&mut self, reader: &PartReader, body: &Option<String>) -> GeopResult<Option<Pose<D>>> {
         let Some(body) = body else {
             return Ok(None);
         };
@@ -233,15 +211,15 @@ impl Reading<'_> {
         Ok(Some(located.world))
     }
 
-    /// The coordinate `parameter`, as the state has it.
-    fn coordinate(&mut self, reader: &mut BuildReader, parameter: &str) -> GeopResult<D> {
-        self.read.insert(parameter.to_string(), Read::Coordinate);
-        let ParamValue::Number(value) = reader.retrieve_state(parameter) else {
+    /// The coordinate `state`, as the state has it.
+    fn coordinate(&mut self, reader: &PartReader, state: &str) -> GeopResult<D> {
+        self.read.insert(state.to_string(), Read::Coordinate);
+        let StateValue::Number(value) = reader.retrieve_state(state) else {
             return Err(GeopError::new(format!(
-                "the joint coordinate {parameter:?} holds no number"
+                "the joint coordinate {state:?} holds no number"
             )));
         };
-        Ok(match self.by == Some(parameter) {
+        Ok(match self.by == Some(state) {
             true => D::var(value, 0),
             false => D::cst(value),
         })
@@ -251,7 +229,7 @@ impl Reading<'_> {
     /// zero for a motion it does not free.
     fn coordinates(
         &mut self,
-        reader: &mut BuildReader,
+        reader: &PartReader,
         name: &str,
         kind: &JointKind,
     ) -> GeopResult<[D; 2]> {
@@ -269,7 +247,7 @@ impl Reading<'_> {
     /// has them.
     fn ends<T>(
         &mut self,
-        reader: &mut BuildReader,
+        reader: &PartReader,
         a: &On<T>,
         b: &On<T>,
     ) -> GeopResult<(D, [Option<Pose<D>>; 2])> {
@@ -287,8 +265,8 @@ type Joint<'a> = (
 );
 
 /// The joint `name` of the part read, resolved.
-fn joint<'a>(reader: &mut BuildReader<'a>, name: &str) -> GeopResult<Joint<'a>> {
-    match reader.retrieve_target(&mate(name))? {
+fn joint<'a>(reader: &PartReader<'a>, name: &str) -> GeopResult<Joint<'a>> {
+    match resolved(reader, name)? {
         Resolved::Joint { kind, a, b } => Ok((kind, a, b)),
         _ => Err(GeopError::new(format!("the mate {name:?} is no joint"))),
     }
@@ -297,7 +275,7 @@ fn joint<'a>(reader: &mut BuildReader<'a>, name: &str) -> GeopResult<Joint<'a>> 
 /// The residuals of the mate `name`, `resolved`, where the state has its
 /// parts and joints (see [`constrain`]).
 fn residuals_of(
-    reader: &mut BuildReader,
+    reader: &PartReader,
     name: &str,
     resolved: &Resolved,
     reading: &mut Reading,
@@ -336,10 +314,10 @@ fn residuals_of(
 /// as — a pose not solved for yet puts its part at the origin, and is not
 /// one to move.
 fn differentiated(
-    reader: &mut BuildReader,
+    reader: &PartReader,
     bound: Bound,
-    evaluate: impl Fn(&mut BuildReader, &mut Reading) -> GeopResult<Vec<D>>,
-) -> GeopResult<Constraint<ParamValue>> {
+    evaluate: impl Fn(&PartReader, &mut Reading) -> GeopResult<Vec<D>>,
+) -> GeopResult<Constraint<StateValue>> {
     // The step of a pose by its six variables, in its own frame.
     let twist = Pose::exp_with_derivatives(&Vector3::zero(), &Vector3::zero())?;
     let mut plain = Reading {
@@ -351,8 +329,8 @@ fn differentiated(
     let mut jacobian = BTreeMap::new();
     for (state, read) in plain.read {
         let dimension = match (reader.retrieve_state(&state), read) {
-            (ParamValue::Pose(_), Read::Pose) => 6,
-            (ParamValue::Number(_), Read::Coordinate) => 1,
+            (StateValue::Pose(_), Read::Pose) => 6,
+            (StateValue::Number(_), Read::Coordinate) => 1,
             _ => continue,
         };
         let mut by = Reading {
@@ -372,40 +350,34 @@ fn differentiated(
     })
 }
 
-/// The constraint the mate `name` puts on the state: the generator of its
-/// constraint, named as the mate is. Its residuals are lengths — a turn's
-/// the distance it moves a point as far from its axis as its parts are
-/// large — that vanish where it holds.
-#[expect(
-    clippy::ptr_arg,
-    reason = "a generator is handed its arguments as they are kept"
-)]
-pub(crate) fn constrain(
-    reader: &mut BuildReader,
-    name: &String,
-) -> GeopResult<Constraint<ParamValue>> {
-    let resolved = reader.retrieve_target(&mate(name))?;
+/// The constraint the mate `name` puts on the state. Its residuals are
+/// lengths — a turn's the distance it moves a point as far from its axis as
+/// its parts are large — that vanish where it holds.
+fn constrain(reader: &PartReader, name: &str) -> GeopResult<Constraint<StateValue>> {
+    let resolved = resolved(reader, name)?;
     differentiated(reader, Bound::Zero, |reader, reading| {
         residuals_of(reader, name, resolved, reading)
     })
 }
 
-/// The name of the constraint that keeps the coordinate `parameter` of a
-/// joint within its upper limit, or its lower: `….angle.max`.
-fn limit_name(parameter: &str, upper: bool) -> String {
-    format!("{parameter}.{}", if upper { "max" } else { "min" })
+/// The name of the constraint that keeps the coordinate `state` of a joint
+/// within its upper limit, or its lower: `….angle.max`.
+fn limit_name(state: &str, upper: bool) -> String {
+    format!("{state}.{}", if upper { "max" } else { "min" })
 }
 
 /// The constraint that keeps the coordinate of `motion` of the joint
 /// `name` within its upper limit, or its lower: a limit (see
 /// [`Bound::AtMost`]), as a length as [`constrain`]'s are.
-pub(crate) fn limit(
-    reader: &mut BuildReader,
-    (name, motion, upper): &(String, Motion, bool),
-) -> GeopResult<Constraint<ParamValue>> {
+fn limit(
+    reader: &PartReader,
+    name: &str,
+    motion: Motion,
+    upper: bool,
+) -> GeopResult<Constraint<StateValue>> {
     let (kind, a, b) = joint(reader, name)?;
-    let [min, max] = kind.limits(*motion);
-    let bound = (if *upper { max } else { min })
+    let [min, max] = kind.limits(motion);
+    let bound = (if upper { max } else { min })
         .ok_or_else(|| GeopError::new(format!("the joint {name:?} has no such limit")))?;
     // An angle is turned into a length by the parts' size; a distance is
     // one, and is not multiplied by an exact one.
@@ -413,9 +385,9 @@ pub(crate) fn limit(
         Motion::Turn => Some(size(reader, &[&a.body, &b.body])?),
         Motion::Slide => None,
     };
-    let parameter = joint_parameter(name, *motion);
+    let state = joint_parameter(name, motion);
     differentiated(reader, Bound::AtMost, |reader, reading| {
-        let value = reading.coordinate(reader, &parameter)?;
+        let value = reading.coordinate(reader, &state)?;
         let past = match upper {
             true => value.sub(D::cst(bound)),
             false => D::cst(bound).sub(value),
@@ -428,56 +400,100 @@ pub(crate) fn limit(
     })
 }
 
-/// Defines what the mate `name`, resolved already in the part, puts on the
-/// state: its constraint, and its limits'. A fixed mate puts none: it
-/// declares the part it holds fixed. A joint declares its coordinates as
-/// values a solve moves, and a user sets, called `label`.
-pub(crate) fn define(part: &mut Build, name: &str, label: &str) -> GeopResult<()> {
-    let resolved = part.current().retrieve_target(&mate(name))?.clone();
-    if let Resolved::Fixed { .. } = resolved {
-        return part.define_target(&unknown(name), &name.to_string(), fixed);
-    }
-    part.define_constraint(name, &name.to_string(), constrain)?;
-    if let Resolved::Joint { kind, .. } = resolved {
-        let named = (name.to_string(), label.to_string());
-        part.define_target(&settings_of(name), &named, settings)?;
-        for motion in kind.motions() {
-            let parameter = joint_parameter(name, motion);
-            part.define_target(
-                &unknown(&parameter),
-                &(name.to_string(), motion),
-                coordinate,
-            )?;
-            for (upper, given) in [false, true].into_iter().zip(kind.limits(motion)) {
-                if given.is_some() {
-                    let args = (name.to_string(), motion, upper);
-                    part.define_constraint(&limit_name(&parameter, upper), &args, limit)?;
+/// The constraints the mates `names`, resolved already in the part, put on
+/// the state: each mate's own, named as the mate is, and its limits'. A
+/// fixed mate puts none: it declares the part it holds fixed. The generator
+/// of a step's constraints.
+fn constraints_of_mates(
+    reader: &PartReader,
+    names: &Vec<String>,
+) -> GeopResult<BTreeMap<String, Constraint<StateValue>>> {
+    let mut out = BTreeMap::new();
+    for name in names {
+        let resolved = resolved(reader, name)?;
+        if let Resolved::Fixed { .. } = resolved {
+            continue;
+        }
+        out.insert(name.clone(), constrain(reader, name)?);
+        if let Resolved::Joint { kind, .. } = resolved {
+            for motion in kind.motions() {
+                let state = joint_parameter(name, motion);
+                for (upper, given) in [false, true].into_iter().zip(kind.limits(motion)) {
+                    if given.is_some() {
+                        let constraint = limit(reader, name, motion, upper)?;
+                        out.insert(limit_name(&state, upper), constraint);
+                    }
                 }
             }
         }
     }
-    Ok(())
+    Ok(out)
 }
 
-/// The mates of the part `view` shows, resolved, by name, in the order the
-/// steps made them.
-pub fn mates_of<'a>(view: BuildView<'a>) -> Vec<(&'a str, &'a Resolved)> {
-    (view.targets_of::<Resolved>().into_iter())
-        .filter_map(|(target, resolved)| Some((mate_name(target)?, resolved)))
+/// The unknowns the mates `names` declare: the part a fixed mate holds,
+/// and each joint's coordinates. The generator of a step's unknowns.
+fn unknowns_of_mates(reader: &PartReader, names: &Vec<String>) -> GeopResult<Vec<Unknown<StateValue>>> {
+    let mut out = Vec::new();
+    for name in names {
+        match resolved(reader, name)? {
+            Resolved::Fixed { body } => out.push(fixed(reader, body)?),
+            Resolved::Joint { kind, .. } => {
+                for motion in kind.motions() {
+                    out.push(coordinate(reader, name, motion)?);
+                }
+            }
+            Resolved::Constraint { .. } | Resolved::Coupling { .. } => {}
+        }
+    }
+    Ok(out)
+}
+
+/// Defines what the mates `mates` of the step `step`, each resolved already
+/// in the part and called as `labels` says, put on the state: their
+/// constraints and limits, the parts the fixed ones hold and the joints'
+/// coordinates as values a solve moves — and, as values a user sets, each
+/// joint's coordinates.
+pub(crate) fn define(
+    part: &mut BuildPart,
+    step: &str,
+    mates: &[(String, String)],
+) -> GeopResult<()> {
+    let names: Vec<String> = mates.iter().map(|(name, _)| name.clone()).collect();
+    let constrained = define_constraints(part, step, &names, constraints_of_mates);
+    let declared = declare_unknowns(part, &names, unknowns_of_mates);
+    let mut set = Ok(());
+    for (name, label) in mates {
+        let is_joint = matches!(resolved(&part.current(), name), Ok(Resolved::Joint { .. }));
+        if is_joint {
+            let named = (name.clone(), label.clone());
+            set = set.and(part.define_target(&settings_of(name), &named, settings));
+        }
+    }
+    constrained.and(declared).and(set)
+}
+
+/// The mates of the part `reader` reads, resolved, by name, in the order
+/// the steps made them.
+pub fn mates_of<'a>(reader: &PartReader<'a>) -> Vec<(String, &'a Resolved)> {
+    (reader.targets_of::<Resolved>().into_iter())
+        .filter_map(|target| {
+            let name = mate_name(target.name())?.to_string();
+            let resolved = reader.retrieve_element(&ElementReference::whole(target)).ok()?;
+            Some((name, resolved))
+        })
         .collect()
 }
 
 /// Where the connectors of the joint `a`–`b` are, as the part read has
 /// them: in the world.
-fn connectors_at<'a>(
-    r: &mut impl Retrieve<'a, Input, ParamValue>,
+fn connectors_at(
+    reader: &PartReader,
     a: &On<Connector<Design>>,
     b: &On<Connector<Design>>,
 ) -> GeopResult<[Connector<D>; 2]> {
-    let mut world = |on: &On<Connector<Design>>| -> GeopResult<Option<Pose<D>>> {
-        on.body
-            .as_ref()
-            .map(|body| Ok(locate(&mut *r, body)?.world.map(D::cst)))
+    let world = |on: &On<Connector<Design>>| -> GeopResult<Option<Pose<D>>> {
+        (on.body.as_ref())
+            .map(|body| Ok(locate(reader, body)?.world.map(D::cst)))
             .transpose()
     };
     let (wa, wb) = (world(a)?, world(b)?);
@@ -486,26 +502,23 @@ fn connectors_at<'a>(
 
 /// The coordinates `[angle, distance]` of a joint, measured where its parts
 /// are — an angle at the turn nearest `near`.
-fn measured<'a>(
-    r: &mut impl Retrieve<'a, Input, ParamValue>,
+fn measured(
+    reader: &PartReader,
     a: &On<Connector<Design>>,
     b: &On<Connector<Design>>,
     near: f64,
 ) -> GeopResult<[f64; 2]> {
-    let [ca, cb] = connectors_at(r, a, b)?;
+    let [ca, cb] = connectors_at(reader, a, b)?;
     let [angle, distance] = measure(&ca, &cb);
     Ok([angle + 360.0 * ((near - angle) / 360.0).round(), distance])
 }
 
-/// What the fixed mate `name` declares: the state of the part it holds,
-/// fixed — the generator of its unknown. A part no state moves is fixed
-/// already, and so is a state none has.
-fn fixed(reader: &mut BuildReader, name: &String) -> GeopResult<Unknown<ParamValue>> {
-    let Resolved::Fixed { body } = reader.retrieve_target(&mate(name))? else {
-        return Err(GeopError::new(format!("the mate {name:?} fixes nothing")));
-    };
+/// What a fixed mate declares of the placed part `body` it holds: its
+/// state, fixed. A part no state moves is fixed already, and so is a state
+/// none has.
+fn fixed(reader: &PartReader, body: &str) -> GeopResult<Unknown<StateValue>> {
     Ok(Unknown {
-        state: moved_by(reader, body)?.unwrap_or_else(|| body.clone()),
+        state: moved_by(reader, body)?.unwrap_or_else(|| body.to_string()),
         mobility: Mobility::Fixed,
         seed: None,
         unless: None,
@@ -515,36 +528,32 @@ fn fixed(reader: &mut BuildReader, name: &String) -> GeopResult<Unknown<ParamVal
 /// The coordinate of `motion` of the joint `name`, as a value a solve
 /// moves: following its parts, and — where the joint does not hold —
 /// started where they are, measured from them at the turn nearest where it
-/// is: a seed, so a free choice, which the solve makes exact. The
-/// generator of its unknown.
-fn coordinate(
-    reader: &mut BuildReader,
-    (name, motion): &(String, Motion),
-) -> GeopResult<Unknown<ParamValue>> {
-    let parameter = joint_parameter(name, *motion);
-    let near = match reader.retrieve_state(&parameter) {
-        ParamValue::Number(v) => v.to_f64(),
-        _ => 0.0,
+/// is: a seed, so a free choice, which the solve makes exact.
+fn coordinate(reader: &PartReader, name: &str, motion: Motion) -> GeopResult<Unknown<StateValue>> {
+    let state = joint_parameter(name, motion);
+    let near = match reader.retrieve_state(&state) {
+        StateValue::Number(v) => v.to_f64(),
+        StateValue::Pose(_) => 0.0,
     };
     let (_, a, b) = joint(reader, name)?;
     // Where the parts cannot be measured, there is nothing to start from.
     let seed = measured(reader, a, b, near).ok().map(|[angle, distance]| {
-        ParamValue::Number(Design::from_f64(match motion {
+        StateValue::Number(Design::from_f64(match motion {
             Motion::Turn => angle,
             Motion::Slide => distance,
         }))
     });
     Ok(Unknown {
-        state: parameter,
+        state,
         mobility: Mobility::Follows,
         seed,
-        unless: Some(name.clone()),
+        unless: Some(name.to_string()),
     })
 }
 
 /// The coordinates of the joint `name`, called `label`, as values a user
 /// sets, with their limits: the generator of its settings.
-fn settings(reader: &mut BuildReader, (name, label): &(String, String)) -> GeopResult<Settings> {
+fn settings(reader: &PartReader, (name, label): &(String, String)) -> GeopResult<Settings> {
     let (kind, a, b) = joint(reader, name)?;
     Ok(Settings {
         name: name.clone(),
@@ -555,7 +564,7 @@ fn settings(reader: &mut BuildReader, (name, label): &(String, String)) -> GeopR
             .map(|motion| {
                 let [min, max] = kind.limits(motion);
                 Setting {
-                    parameter: joint_parameter(name, motion),
+                    state: joint_parameter(name, motion),
                     measure: motion.measure(),
                     min,
                     max,
@@ -565,14 +574,14 @@ fn settings(reader: &mut BuildReader, (name, label): &(String, String)) -> GeopR
     })
 }
 
-/// Whether the constraint of the mate `name`, as `view` has it, holds.
-pub(crate) fn mate_holds(view: BuildView, name: &str) -> bool {
-    let reference = TargetReference::<Constraint<ParamValue>>::new(name);
-    match (
-        view.retrieve_target(&reference),
-        scale_of(view).and_then(tolerance),
-    ) {
-        (Ok(constraint), Ok(tolerance)) => constraint.holds(tolerance),
-        _ => false,
-    }
+/// Whether the constraint of the mate `name`, as `reader` reads the part,
+/// holds.
+pub(crate) fn mate_holds(reader: &PartReader, name: &str) -> bool {
+    let (Ok(constraints), Ok(tolerance)) = (
+        Constraints::<StateValue>::of(reader),
+        scale_of(reader).and_then(tolerance),
+    ) else {
+        return false;
+    };
+    (constraints.get(name)).is_some_and(|constraint| constraint.holds(tolerance))
 }

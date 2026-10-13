@@ -6,11 +6,12 @@ use std::collections::HashSet;
 
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::ExtrudeArgs;
+use geop_ops_sketch::whole_sketch;
 
 use crate::{
     examples,
     operations::{
-        infos, registry,
+        editors, infos, registry,
         testing::{Built, args, handled},
     },
 };
@@ -24,12 +25,16 @@ fn every_operation_is_offered() {
     let kinds: Vec<&str> = infos.iter().map(|i| i.kind).collect();
     assert_eq!(kinds.iter().collect::<HashSet<_>>().len(), kinds.len());
     assert_eq!(kinds[0], "add_sketch");
-    assert_eq!(infos[0].label, "Sketch");
+    assert_eq!(infos[0].info.label, "Sketch");
     assert_eq!(kinds[1], "add_datum");
     let extrude = infos.iter().find(|i| i.kind == "extrude").unwrap();
-    assert!(extrude.doc.starts_with("Sweep a sketch"), "{}", extrude.doc);
+    assert!(
+        extrude.info.doc.starts_with("Sweep a sketch"),
+        "{}",
+        extrude.info.doc
+    );
     for info in &infos {
-        assert_eq!(registry.get(info.kind).unwrap().info(), *info);
+        assert_eq!(registry.get(info.kind).unwrap().kind(), info.kind);
     }
     for (_, program) in examples::all() {
         for step in &program().program.steps {
@@ -45,19 +50,22 @@ fn every_operation_is_offered() {
 /// A new step starts from what the steps before it built.
 #[test]
 fn new_steps_start_from_what_was_built() {
-    let runner = examples::box_with_drill_hole().built().unwrap();
-    let step = runner.new_step("extrude", "new", None).unwrap();
+    let program = examples::box_with_drill_hole();
+    let runner = program.built().unwrap();
+    let editors = editors().unwrap();
+    let new_step = |kind: &str| editors.new_step(&runner, &program.program, kind, "new", None);
+    let step = new_step("extrude").unwrap();
     let extrude: ExtrudeArgs = args(&step);
-    assert_eq!(extrude.sketch, "hole_sketch");
+    assert_eq!(extrude.sketch, whole_sketch("hole_sketch"));
     assert_eq!(
         extrude.output,
         Output::Solid(Combine::join("extrude(hole)"))
     );
     for info in infos() {
-        let step = runner.new_step(info.kind, "new", None).unwrap();
+        let step = new_step(info.kind).unwrap();
         assert_eq!(step.operation, info.kind);
     }
-    assert!(runner.new_step("no_such_operation", "new", None).is_err());
+    assert!(new_step("no_such_operation").is_err());
 }
 
 /// Every operation's dialog opens, the way the toolbar opens it, on an

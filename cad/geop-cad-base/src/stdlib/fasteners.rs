@@ -9,7 +9,6 @@
 
 use geop_core_math::geop_error::GeopResult;
 use geop_core_sketch::{CurveId, PointId};
-use geop_ops::EntityRef;
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::Extents;
 
@@ -17,7 +16,7 @@ use super::{
     StandardPart,
     drawing::Drawing,
     steps::{
-        Around, Through, axis_datum, col, cut_to, extrude, family, hexagon, outline_plane,
+        Around, Through, axis_datum, col, cut_to, datum_plane, extrude, family, hexagon, outline_plane,
         plane_datum, revolve, size, swept,
     },
     tables::{self, Table},
@@ -166,7 +165,7 @@ fn socket(program: &mut Program, top: &str, target: &str) -> GeopResult<()> {
         program,
         "socket",
         "socket_hex",
-        (outline, EntityRef::datum("socket_floor")),
+        (outline, datum_plane("socket_floor")),
         Extents::blind(format!("{t} + {s}")),
         Combine::cut(target),
     );

@@ -69,7 +69,7 @@ use geop_core_topology::{
     build::{BodySpec, BuiltBody, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
     loop_sampling::sample_pcurves_to_polygon,
 };
-use geop_ops::{BodyNames, NamedModel, Namer};
+use geop_ops_model::{BodyNames, NamedModel, Namer};
 
 /// Samples per coedge when telling a loop's sense from its area: only the
 /// sign is used.

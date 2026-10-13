@@ -58,7 +58,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::build::BuiltBody;
-use geop_ops::{NamedModel, Namer, operation::Chain};
+use geop_ops_model::{Chain, NamedModel, Namer};
 
 use crate::{
     common::Profile,
@@ -946,7 +946,7 @@ mod tests {
     use crate::shapes::{circle, plane, square, v2, v3};
     use geop_core_geometry::nurb_curve::{NurbCurve2D, sqrt2_over_2};
     use geop_core_math::for_all_scalars;
-    use geop_ops::testing::{assert_model_valid, assert_model_valid_sheets};
+    use geop_ops_model::testing::{assert_model_valid, assert_model_valid_sheets};
 
     /// The plane `z = height`, along `x` and `y`.
     fn level<S: Scalar>(height: f64) -> CoordinateSystem<S> {

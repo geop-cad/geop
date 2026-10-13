@@ -2,17 +2,15 @@
 
 use crate::operations::testing::extrusion;
 use geop_ops_extrude_revolve::Output;
-use std::{collections::BTreeMap, rc::Rc};
+use std::{borrow::Cow, collections::BTreeMap, rc::Rc};
 
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_ops::{
-    Design, NamedModel, PartDescription,
-    model::{model, sketch},
-    parameters::{Parameter, ParameterKind, Parameters, Values},
-    placed::Library,
-};
+use geop_core_math::scalars::Scalar;
+use geop_ops_assembly::Library;
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
+use geop_ops_model::{Design, NamedModel, PartDescription, read_model};
+use geop_ops_parameters::{Parameter, ParameterKind, Parameters, Settings, StateValue, pose_state};
+use geop_ops_sketch::whole_sketch;
 
 use crate::{
     Program,
@@ -21,7 +19,7 @@ use crate::{
         Runner,
         testing::{Built, edit_args, step},
     },
-    registry,
+    part,
 };
 
 fn extrude(sketch: &str, distance: f64) -> ExtrudeArgs {
@@ -53,7 +51,10 @@ impl Running {
     pub(super) fn run(&mut self, program: &Program, end: Option<usize>) -> Vec<(String, String)> {
         let steps = &program.program;
         let end = end.unwrap_or(steps.steps.len());
-        let inputs = program.inputs(&Values::new(), self.library.clone());
+        let overrides = Settings::new();
+        let about = program.about("part.geop", &overrides);
+        self.runner.given = Some(part::given(about, self.library.clone()));
+        let inputs = program.inputs(&overrides);
         let output = self.runner.run_until(steps, end, &inputs, &program.state);
         (output.step_errors.into_iter())
             .map(|(step, error)| (step, error.to_string()))
@@ -62,8 +63,8 @@ impl Running {
 
     /// The model the last run built.
     pub(super) fn model(&self) -> NamedModel<Design> {
-        let built = self.runner.part.current().retrieve_target(&model());
-        built.cloned().unwrap_or_default()
+        let built = read_model(&self.runner.part.current());
+        built.map(|model| model.into_owned()).unwrap_or_default()
     }
 
     /// How many steps of `program` the last run built anew: whose sketch,
@@ -72,19 +73,19 @@ impl Running {
     /// while the old one still is, so elsewhere.
     pub(super) fn built_anew(&mut self, program: &Program) -> usize {
         let mut anew = 0;
-        for step in &program.program.steps {
-            let Some(view) = self.runner.part.view_after(&step.id) else {
-                continue;
-            };
+        for (index, step) in program.program.steps.iter().enumerate() {
+            let view = (self.runner.part).reader(Runner::position(index) + 1);
             let address = match step.operation.as_str() {
                 "add_sketch" => view
-                    .retrieve_target(&sketch(&step.id))
-                    .map(|s| s as *const _ as usize),
-                _ => view
-                    .retrieve_target(&model())
-                    .map(|m| m as *const _ as usize),
+                    .retrieve_element(&whole_sketch(&step.id))
+                    .map(|s| s as *const _ as usize)
+                    .ok(),
+                _ => match read_model(&view) {
+                    Ok(Cow::Borrowed(m)) => Some(m as *const _ as usize),
+                    _ => None,
+                },
             };
-            let Ok(address) = address else {
+            let Some(address) = address else {
                 continue;
             };
             if self.seen.insert(step.id.clone(), address) != Some(address) {
@@ -95,7 +96,7 @@ impl Running {
     }
 }
 
-fn describe(part: &NamedModel<S>) -> PartDescription {
+fn describe(part: &NamedModel<Design>) -> PartDescription {
     PartDescription::of(part).unwrap()
 }
 
@@ -150,8 +151,8 @@ fn runner_reports_the_failing_step() {
     assert_eq!(id, "hole");
     assert!(error.contains("extrude(nothing)"), "{error}");
     // The model the steps before it built is there for it to build on.
-    let before = running.runner.part.view_before("hole").unwrap();
-    let built = before.retrieve_target(&model()).unwrap();
+    let before = (running.runner.part).reader(Runner::position(program.index_of("hole").unwrap()));
+    let built = read_model(&before).unwrap();
     assert!(built.solid_id("extrude(box)").is_ok());
 }
 
@@ -204,7 +205,7 @@ fn set(program: &mut Program, name: &str, expression: &str) {
 
 /// Checks the part's vertices lie at the heights `want`, and each of
 /// those has some.
-fn assert_heights(part: &NamedModel<S>, want: &[f64]) {
+fn assert_heights(part: &NamedModel<Design>, want: &[f64]) {
     let z: Vec<f64> = part
         .topology()
         .vertices
@@ -224,7 +225,7 @@ fn assert_heights(part: &NamedModel<S>, want: &[f64]) {
 /// does not read does: changing `depth` builds the hole again, but not
 /// the box; changing `height` the box and all after it; changing
 /// `unrelated` nothing. A plain number saves as a number, a formula as its
-/// text, and both read back as they were.
+/// text (`{"formula": ...}`), and both read back as they were.
 #[test]
 fn extrudes_follow_the_parameters_they_read() {
     let mut program = box_by_formulas();
@@ -233,7 +234,7 @@ fn extrudes_follow_the_parameters_they_read() {
     assert_eq!(running.built_anew(&program), 4);
     // The bottom, the hole's floor and the top.
     assert_heights(&running.model(), &[0.0, 0.5, 1.0]);
-    let uses = program.parameter_uses(&registry().unwrap());
+    let uses = program.parameter_uses();
     let read: Vec<&String> = uses.keys().collect();
     assert_eq!(read, ["depth", "height"]);
 
@@ -252,7 +253,11 @@ fn extrudes_follow_the_parameters_they_read() {
     assert_eq!(running.built_anew(&program), 0, "no step reads unrelated");
 
     let json = program.to_json().unwrap();
-    assert!(json.contains(r#""blind": "height""#), "{json}");
+    let compact: String = json.split_whitespace().collect();
+    assert!(
+        compact.contains(r#""blind":{"formula":"height"}"#),
+        "{json}"
+    );
     let plain = box_with_drill_hole().to_json().unwrap();
     assert!(plain.contains(r#""blind": 1.0"#), "{plain}");
     assert_eq!(Program::from_json(&json).unwrap(), program);
@@ -282,14 +287,13 @@ fn formula_errors_name_the_step_and_the_formula() {
 /// merely named like it stays behind.
 #[test]
 fn a_pasted_step_takes_its_state_along() {
-    use geop_ops::{ParamValue, model::pose_parameter};
     let mut program = box_with_drill_hole();
     let id = program.program.steps[0].id.clone();
-    let pose = ParamValue::Pose(crate::examples::pose([1.0, 2.0, 3.0], [0.0; 3]));
-    program.state.insert(pose_parameter(&id), pose.clone());
+    let pose = StateValue::Pose(crate::examples::pose([1.0, 2.0, 3.0], [0.0; 3]));
+    program.state.insert(pose_state(&id), pose.clone());
     program.state.insert(
         format!("{id}_width"),
-        ParamValue::Number(geop_ops::Design::from_f64(2.0)),
+        StateValue::Number(Design::from_f64(2.0)),
     );
 
     let copied = program.excerpt(&id).unwrap();
@@ -299,7 +303,7 @@ fn a_pasted_step_takes_its_state_along() {
     assert_eq!(ids.len(), 1);
     assert_ne!(ids[0], id);
     assert_eq!(program.program.steps[at].id, ids[0]);
-    assert_eq!(program.state.get(&pose_parameter(&ids[0])), Some(&pose));
+    assert_eq!(program.state.get(&pose_state(&ids[0])), Some(&pose));
     assert!(!program.state.contains_key(&format!("{}_width", ids[0])));
     program.validate().unwrap();
 }

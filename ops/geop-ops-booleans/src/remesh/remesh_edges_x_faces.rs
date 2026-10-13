@@ -51,7 +51,7 @@ use geop_core_topology::{
     Body, CoedgeGeometry, Edge, EdgeId, FaceId, Model, VertexId,
     contains::face::{PointClassification, face_contains, face_interior_point},
 };
-use geop_ops::NamedModel;
+use geop_ops_model::NamedModel;
 
 use crate::naming::BooleanNaming;
 use crate::remesh::{
@@ -1807,7 +1807,7 @@ mod tests {
     };
     use crate::scenes::unit_cube_at;
     use geop_core_math::scalars::ScalInF64;
-    use geop_ops::Namer;
+    use geop_ops_model::Namer;
 
     /// Two unit cubes offset by half a cube-width along x: a simple, fully
     /// planar scene (no curved surfaces at all) exercising every phase —

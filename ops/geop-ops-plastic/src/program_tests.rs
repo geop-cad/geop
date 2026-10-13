@@ -4,19 +4,22 @@
 
 use crate::{DraftArgs, GrooveArgs, LipArgs, RibArgs, RibDirection, RibSide};
 use geop_core_math::scalars::Scalar;
-use geop_ops::{Design, EntityRef, NamedModel};
-use geop_ops_booleans::Combine;
-use geop_ops_datums::{AddDatumArgs, Construction};
+use geop_core_program::element::ElementReference;
+use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
+use geop_ops_booleans::{Combine, solid};
+use geop_ops_datums::datums;
 use geop_ops_extrude_revolve::Extents;
 use geop_ops_fillet::FilletArgs;
-use geop_ops_sketch::Sketch;
+use geop_ops_model::{
+    Design, NamedModel, model,
+    testing::{assert_valid, check_valid},
+};
+use geop_ops_sketch::{Sketch, SketchPlane, whole_sketch};
 
 use geop_core_math::geop_error::GeopResult;
-use geop_ops::program::Registry;
-use geop_ops::testing::{Built, assert_valid, check_valid};
-use geop_ops_datums::AddDatum;
-use geop_ops_extrude_revolve::testing::{extrusion, n, sketch};
+use geop_ops_extrude_revolve::testing::{Built, extrusion, n, on_face, sketch};
 use geop_ops_fillet::Fillet;
+use geop_ops_parameters::Registry;
 use geop_ops_shell::Shell;
 
 use crate::testing::{boxed, enclosure, enclosure_with_rib_sketch, wall};
@@ -45,8 +48,13 @@ const WALLS: [&str; 4] = ["c4", "c5", "c6", "c7"];
 
 fn draft(faces: &[String], degrees: f64) -> DraftArgs {
     DraftArgs {
-        faces: faces.to_vec(),
-        neutral: Some(EntityRef::face("extrude(box,start)")),
+        faces: (faces.iter())
+            .map(|f| ElementReference::new(model(), f))
+            .collect(),
+        neutral: Some(SketchPlane::Face(ElementReference::new(
+            model(),
+            "extrude(box,start)",
+        ))),
         angle: degrees,
         reversed: false,
     }
@@ -90,7 +98,7 @@ fn enclosure_with_a_port_drafted() {
     // On the +x wall, `u` runs along `y` and `v` along `z`.
     let c = s.add_point(n(1.0), n(0.5));
     s.add_circle(c, n(0.2));
-    program.push("port_sketch", sketch(EntityRef::face(&wall("c5")), s));
+    program.push("port_sketch", sketch(on_face(&wall("c5")), s));
     program.push(
         "port",
         extrusion(
@@ -124,8 +132,8 @@ fn wall_next_to_a_fillet_is_refused() {
 const RIM: &str = "shell(s,extrude(box,end))";
 
 /// The inner edge of the rim along the wall `c`.
-fn inner_edge(c: &str) -> String {
-    format!("shell(s,extrude(box,outline,{c},end))")
+fn inner_edge(c: &str) -> ElementReference<NamedModel<Design>, geop_ops_model::Edge> {
+    ElementReference::new(model(), format!("shell(s,extrude(box,outline,{c},end))"))
 }
 
 /// A lip all along the inside of the rim, and on a second enclosure the
@@ -136,7 +144,7 @@ fn enclosure_lip_and_groove() {
     program.push(
         "l",
         LipArgs {
-            face: RIM.into(),
+            face: ElementReference::new(model(), RIM),
             edges: Vec::new(),
             width: 0.08,
             height: 0.1,
@@ -150,7 +158,7 @@ fn enclosure_lip_and_groove() {
     program.push(
         "g",
         GrooveArgs {
-            face: RIM.into(),
+            face: ElementReference::new(model(), RIM),
             edges: Vec::new(),
             width: 0.08,
             height: 0.1,
@@ -171,7 +179,7 @@ fn lip_ending_at_a_corner_is_refused() {
     program.push(
         "l",
         LipArgs {
-            face: RIM.into(),
+            face: ElementReference::new(model(), RIM),
             edges: vec![inner_edge("c5"), inner_edge("c6")],
             width: 0.08,
             height: 0.1,
@@ -191,7 +199,7 @@ fn lip_along_opposite_edges_is_refused() {
     program.push(
         "l",
         LipArgs {
-            face: RIM.into(),
+            face: ElementReference::new(model(), RIM),
             edges: vec![inner_edge("c4"), inner_edge("c6")],
             width: 0.08,
             height: 0.1,
@@ -206,8 +214,8 @@ fn lip_along_opposite_edges_is_refused() {
 
 fn rib(direction: RibDirection, side: RibSide, flipped: bool) -> RibArgs {
     RibArgs {
-        sketch: "rib_sketch".into(),
-        solid: "shell(s)".into(),
+        sketch: whole_sketch("rib_sketch"),
+        solid: solid("shell(s)"),
         thickness: 0.05,
         side,
         direction,
@@ -250,7 +258,10 @@ fn enclosure_rib_normal_to_its_sketch() {
     program.push(
         "level",
         AddDatumArgs {
-            selection: vec![EntityRef::face("shell(s,extrude(box,start))")],
+            selection: vec![Selected::Face(ElementReference::new(
+                model(),
+                "shell(s,extrude(box,start))",
+            ))],
             construction: Construction::Offset {
                 distance: 0.5.into(),
             },
@@ -260,7 +271,13 @@ fn enclosure_rib_normal_to_its_sketch() {
     let a = s.add_point(n(0.5), n(1.0));
     let b = s.add_point(n(1.5), n(1.0));
     s.add_line(a, b);
-    program.push("rib_sketch", sketch(EntityRef::datum("level"), s));
+    program.push(
+        "rib_sketch",
+        sketch(
+            SketchPlane::Datum(ElementReference::new(datums(), "level")),
+            s,
+        ),
+    );
     program.push("r", rib(RibDirection::Normal, RibSide::Symmetric, true));
     let part = program.build_model(registry).unwrap();
     assert_valid(&part);
@@ -288,7 +305,7 @@ fn plastic_sweep() {
         program.push(
             "l",
             LipArgs {
-                face: RIM.into(),
+                face: ElementReference::new(model(), RIM),
                 edges: Vec::new(),
                 width,
                 height,
@@ -302,7 +319,7 @@ fn plastic_sweep() {
         program.push(
             "g",
             GrooveArgs {
-                face: RIM.into(),
+                face: ElementReference::new(model(), RIM),
                 edges: Vec::new(),
                 width,
                 height,
@@ -340,7 +357,7 @@ fn narrow_groove() {
     program.push(
         "g",
         GrooveArgs {
-            face: RIM.into(),
+            face: ElementReference::new(model(), RIM),
             edges: Vec::new(),
             width: 0.05,
             height: 0.05,

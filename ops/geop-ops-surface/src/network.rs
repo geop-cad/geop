@@ -24,6 +24,12 @@
 //! conditions: the face meets the faces along its border as the curves
 //! make it.
 
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_geometry::{
     intersection::{Intersections, curve_curve_intersect, refine_curve_curve_crossing},
     nurb_curve::NurbCurve3D,
@@ -38,18 +44,12 @@ use geop_core_topology::{
     build::{BodySpec, CoedgeOn, EdgeSpec, FaceSpec},
     distance::{Feature, closest_points},
 };
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    BodyNames, Design, NamedModel, Namer,
-    operation::{
-        BuildReader, EntityRef, Lookup, PartOperation, ResolveEntity, Role, Scope, StepContext,
-    },
-    part_operation,
-    ui::{EditForm, FormState},
-};
+use geop_ops_model::{BodyNames, Chain, Design, ModelOperation, NamedModel, Namer, build_model};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_sketch3d::CurveSource;
 use serde::{Deserialize, Serialize};
 
-use crate::SheetSpec;
+use crate::{NamedCurve, SheetSpec};
 use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 
 /// Spans a face standing on its own through a network of curves, `u_curves`
@@ -58,7 +58,7 @@ use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 ///
 /// The face is named `network(N)`. The copy of each outer curve `X` along
 /// its border is `network(N,X)` — for a sketch's curve `X` is `K,c3` (see
-/// [`EntityRef::resolve_curve`]) — and the corner where the `u` curve `X`
+/// [`NamedCurve`]) — and the corner where the `u` curve `X`
 /// crosses the `v` curve `Y` is `network(N,X,Y)`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct NetworkSurface;
@@ -66,16 +66,16 @@ pub struct NetworkSurface;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct NetworkSurfaceArgs {
     /// The curves in one direction: two at least, in any order.
-    pub u_curves: Vec<EntityRef>,
+    pub u_curves: Vec<CurveSource>,
     /// The curves crossing them: two at least, in any order.
-    pub v_curves: Vec<EntityRef>,
+    pub v_curves: Vec<CurveSource>,
 }
 
 part_operation!(NetworkSurface(NetworkSurfaceArgs));
 
 impl PartOperation for NetworkSurface {
+    const KIND: &'static str = "network_surface";
     const INFO: OperationInfo = OperationInfo::new(
-        "network_surface",
         "UV surface",
         "Span a face standing on its own through a network of curves — u curves crossing v curves — running along every one of them.",
         OperationGroup::Surface,
@@ -84,6 +84,9 @@ impl PartOperation for NetworkSurface {
     .experimental()
     .icon(crate::icons::NETWORK_SURFACE);
     type Args = NetworkSurfaceArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
 
     /// Nothing picked yet.
@@ -91,50 +94,55 @@ impl PartOperation for NetworkSurface {
         NetworkSurfaceArgs::default()
     }
 
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &NetworkSurfaceArgs,
-    ) -> GeopResult<()> {
-        let namer = Namer::new("network", step)?;
-        let (spec, names) = network_surface(
-            &mut Scope { model, reader },
-            &namer,
-            &args.u_curves,
-            &args.v_curves,
-        )?;
-        model.build_body(spec, names)?;
-        Ok(())
+    fn run(step: &str, part: &mut BuildPart, args: &NetworkSurfaceArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
     /// The curves of each direction, picked.
     fn form<'a>(
-        _: &'a StepContext<'a>,
+        context: &'a StepContext<'a>,
         args: &NetworkSurfaceArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, NetworkSurfaceArgs> {
+        let before = &context.before;
         let mut f = EditForm::<Design, NetworkSurfaceArgs>::default();
-        let (u, v) = (args.u_curves.clone(), args.v_curves.clone());
-        f.reference(
+        f.pick(
             "u_curves",
             "u curves",
-            u,
-            &[Role::Curve],
-            None,
+            before,
+            &args.u_curves,
             true,
             |edit, picked| edit.args.u_curves = picked,
         );
-        f.reference(
+        f.pick(
             "v_curves",
             "v curves",
-            v,
-            &[Role::Curve],
-            None,
+            before,
+            &args.v_curves,
             true,
             |edit, picked| edit.args.v_curves = picked,
         );
         f
+    }
+}
+
+impl ModelOperation for NetworkSurface {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &PartReader,
+        step: &str,
+        args: &NetworkSurfaceArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("network", step)?;
+        let resolve = |curves: &[CurveSource]| {
+            (curves.iter())
+                .map(|c| c.resolve(reader))
+                .collect::<GeopResult<Vec<_>>>()
+        };
+        let (u, v) = (resolve(&args.u_curves)?, resolve(&args.v_curves)?);
+        let (spec, names) = network_surface(&namer, &u, &v)?;
+        model.build_body(spec, names)?;
+        Ok(())
     }
 }
 
@@ -151,12 +159,8 @@ struct Strand<S: Scalar> {
 }
 
 impl<S: Scalar> Strand<S> {
-    fn of(
-        lookup: &mut (impl Lookup<S> + ?Sized),
-        entity: &EntityRef,
-        direction: &str,
-    ) -> GeopResult<Self> {
-        let named = entity.resolve_curve(lookup)?;
+    fn of(chain: &Chain<NurbCurve3D<S>>, direction: &str) -> GeopResult<Self> {
+        let named = NamedCurve::of(chain)?;
         let label = format!("{direction} curve {}", named.name);
         if named.start.0 == named.end.0 {
             return Err(GeopError::new(format!(
@@ -281,13 +285,12 @@ fn aligned<S: Scalar>(
 }
 
 /// The sheet spanned through the network of `u_curves` and `v_curves`
-/// (see the module docs), as `lookup` has them: what to build, named after
+/// (see the module docs), each a curve picked: what to build, named after
 /// `namer`, as [`NetworkSurface`] says.
 pub fn network_surface<S: Scalar>(
-    lookup: &mut (impl Lookup<S> + ?Sized),
     namer: &Namer,
-    u_curves: &[EntityRef],
-    v_curves: &[EntityRef],
+    u_curves: &[Chain<NurbCurve3D<S>>],
+    v_curves: &[Chain<NurbCurve3D<S>>],
 ) -> GeopResult<SheetSpec<S>> {
     if u_curves.len() < 2 || v_curves.len() < 2 {
         return Err(GeopError::new(format!(
@@ -296,7 +299,9 @@ pub fn network_surface<S: Scalar>(
             v_curves.len()
         )));
     }
-    let picked: Vec<&EntityRef> = u_curves.iter().chain(v_curves).collect();
+    let picked: Vec<&str> = (u_curves.iter().chain(v_curves))
+        .map(|c| c.name.as_str())
+        .collect();
     if let Some((_, twice)) = picked
         .iter()
         .enumerate()
@@ -308,11 +313,11 @@ pub fn network_surface<S: Scalar>(
     }
     let u = u_curves
         .iter()
-        .map(|e| Strand::of(lookup, e, "u"))
+        .map(|c| Strand::of(c, "u"))
         .collect::<GeopResult<Vec<_>>>()?;
     let v = v_curves
         .iter()
-        .map(|e| Strand::of(lookup, e, "v"))
+        .map(|c| Strand::of(c, "v"))
         .collect::<GeopResult<Vec<_>>>()?;
     let (m, n) = (u.len(), v.len());
     // `on_u[j][i]` and `on_v[i][j]`: where `u[j]` and `v[i]` cross, on each.

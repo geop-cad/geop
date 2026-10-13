@@ -18,7 +18,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::SolidId;
-use geop_ops::NamedModel;
+use geop_ops_model::NamedModel;
 
 use crate::common::polygon;
 

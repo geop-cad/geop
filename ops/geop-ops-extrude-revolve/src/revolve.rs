@@ -25,7 +25,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::{SolidId, build::BuiltBody};
-use geop_ops::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer};
 
 /// The path around the axis `axes.w()` through `axes.origin()`, from the
 /// angle `from` to `to` — either way round — in degrees, angles turning
@@ -292,7 +292,7 @@ mod tests {
     use geop_core_geometry::nurb_curve::sqrt2_over_2;
     use geop_core_math::for_all_scalars;
     use geop_core_math::vector::Vector2;
-    use geop_ops::testing::{assert_model_valid, assert_model_valid_sheets};
+    use geop_ops_model::testing::{assert_model_valid, assert_model_valid_sheets};
 
     /// Revolves `profile` a full turn around the z-axis, `a0` along `x`.
     fn revolved_about_z<S: Scalar>(

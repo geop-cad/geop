@@ -22,7 +22,8 @@ use geop_core_math::{
     scalars::{Field, Ring, Scalar, as_f64},
     vector::Vector3,
 };
-use geop_ops::{Design, operation::Aspects};
+use geop_ops_add_datum::Shape;
+use geop_ops_model::Design;
 use serde::{Deserialize, Serialize};
 
 use crate::residuals::{D, Placing, parallel};
@@ -75,8 +76,8 @@ impl Connector<Design> {
     /// entity is — an axis through a point it defines: a circular edge's
     /// center and normal, a sketch circle's, or the origin and `z` axis of
     /// a frame, turns measured from its `x` axis. Of anything else, there is
-    /// none: it is used by the frame it gives (see [`Aspects::frame_on`]).
-    pub fn of(aspects: &Aspects<Design>) -> Option<GeopResult<Self>> {
+    /// none: it is used by the frame it gives (see [`crate::MateEntity::frame`]).
+    pub fn of(aspects: &Shape, face: bool) -> Option<GeopResult<Self>> {
         if let Some(arc) = &aspects.arc {
             return Some(Connector::new(arc.circle.center, arc.circle.normal, None));
         }
@@ -87,7 +88,7 @@ impl Connector<Design> {
                 Some(*frame.u()),
             ));
         }
-        if let (Some(round), false) = (&aspects.round, aspects.face) {
+        if let (Some(round), false) = (&aspects.round, face) {
             return Some(Connector::new(round.point, round.direction, None));
         }
         None
@@ -129,10 +130,10 @@ impl Motion {
     }
 
     /// What its coordinate measures, as a user sets it.
-    pub fn measure(self) -> geop_ops::solving::Measure {
+    pub fn measure(self) -> crate::solving::Measure {
         match self {
-            Motion::Turn => geop_ops::solving::Measure::Angle,
-            Motion::Slide => geop_ops::solving::Measure::Distance,
+            Motion::Turn => crate::solving::Measure::Angle,
+            Motion::Slide => crate::solving::Measure::Distance,
         }
     }
 

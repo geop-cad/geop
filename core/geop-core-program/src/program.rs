@@ -1,7 +1,7 @@
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use serde::{Deserialize, Serialize};
 
-use crate::operation::{Operation, saved};
+use crate::operation::{Operation, StepArgs, saved};
 
 /// One step of a program: which operation, with which arguments, as saved.
 /// The operation reads its arguments from their saved form each time it
@@ -15,6 +15,20 @@ pub struct ProgramStep {
 }
 
 impl ProgramStep {
+    /// The step `id` of the operation `args` are for.
+    pub fn of<A: StepArgs>(id: impl Into<String>, args: &A) -> GeopResult<Self> {
+        let id = id.into();
+        let args = serde_json::to_value(args).map_err(|e| {
+            GeopError::new(format!("arguments of operation `{}`: {e}", A::KIND))
+                .with_context(format!("step `{id}`"))
+        })?;
+        Ok(Self {
+            id,
+            operation: A::KIND.to_string(),
+            args,
+        })
+    }
+
     pub fn new<O: Operation>(id: impl Into<String>, args: &O::Args) -> GeopResult<Self> {
         let id = id.into();
         let args = saved::<O>(args).map_err(|e| e.with_context(format!("step `{id}`")))?;

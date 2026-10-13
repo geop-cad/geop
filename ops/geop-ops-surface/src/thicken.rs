@@ -1,18 +1,23 @@
 //! [`Thicken`]: a sheet made a solid of one thickness — the sheet shelled
 //! (see [`geop_ops_shell::shell::thicken`]).
 
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::{Choice, Number, Unit},
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::{Field, Scalar},
 };
+use geop_core_program::element::ElementReference;
 use geop_core_topology::Body;
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, NamedModel, Namer,
-    operation::{BuildReader, EntityRef, Lookup, PartOperation, Role, Seen, StepContext},
-    part_operation,
-    ui::{Choice, EditForm, FormState, Number, Unit},
+use geop_ops_model::{
+    Design, Face, ModelOperation, NamedModel, Namer, build_model, model, read_model,
 };
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
 use geop_ops_shell::shell::{offset_faces, thicken};
 use serde::{Deserialize, Serialize};
 
@@ -68,7 +73,7 @@ pub struct Thicken;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ThickenArgs {
     /// A face of the sheet to thicken.
-    pub face: String,
+    pub face: ElementReference<NamedModel<Design>, Face>,
     pub thickness: f64,
     #[serde(default)]
     pub side: ThickenSide,
@@ -77,8 +82,8 @@ pub struct ThickenArgs {
 part_operation!(Thicken(ThickenArgs));
 
 impl PartOperation for Thicken {
+    const KIND: &'static str = "thicken";
     const INFO: OperationInfo = OperationInfo::new(
-        "thicken",
         "Thicken",
         "Make a solid of a face standing on its own, a thickness on either side of it or on both.",
         OperationGroup::Surface,
@@ -87,49 +92,30 @@ impl PartOperation for Thicken {
     .experimental()
     .icon(crate::icons::THICKEN);
     type Args = ThickenArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
 
     /// The newest sheet, a tenth thick, behind its normals.
     fn new_args(context: &StepContext) -> ThickenArgs {
-        let seen = Seen::new(context.before);
+        let sheet = read_model(&context.before)
+            .ok()
+            .and_then(|model| model.sheet_face_names().pop());
         ThickenArgs {
-            face: seen.model().sheet_face_names().pop().unwrap_or_default(),
+            face: ElementReference::new(model(), sheet.unwrap_or_default()),
             thickness: 0.1,
             side: ThickenSide::Against,
         }
     }
 
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        step: &str,
-        args: &ThickenArgs,
-    ) -> GeopResult<()> {
-        let namer = Namer::new("thicken", step)?;
-        if !args.thickness.is_finite() {
-            return Err(GeopError::new("the thickness is not a number"));
-        }
-        let sheet = model.sheet_of_face(model.face_id(&args.face)?, "a sheet is thickened")?;
-        let thickness = Design::from_f64(args.thickness);
-        match args.side {
-            ThickenSide::Against | ThickenSide::Along => {
-                let along = args.side == ThickenSide::Along;
-                thicken(model, &namer, sheet, thickness, along)?;
-            }
-            ThickenSide::Both => {
-                let faces = model.topology().body_faces(Body::Sheet(sheet))?;
-                let half = thickness.div(Design::TWO)?;
-                let copy = offset_faces(model, &namer.scoped("both"), &faces, half)?;
-                model.delete_bodies(&[Body::Sheet(sheet)])?;
-                thicken(model, &namer, copy.shells[0], thickness, false)?;
-            }
-        }
-        Ok(())
+    fn run(step: &str, part: &mut BuildPart, args: &ThickenArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
     /// The sheet, picked, the thickness and the side.
     fn form<'a>(
-        _: &'a StepContext<'a>,
+        context: &'a StepContext<'a>,
         args: &ThickenArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, ThickenArgs> {
@@ -137,10 +123,9 @@ impl PartOperation for Thicken {
         f.pick_one(
             "face",
             "sheet",
-            EntityRef::face,
-            &args.face,
-            &[Role::Sheet],
-            |edit, name| edit.args.face = name,
+            &context.before,
+            Some(&args.face),
+            |edit, face| edit.args.face = face,
         );
         let thickness = Number::new("thickness", args.thickness, Unit::Length).range(0.0, 1.0);
         f.number("thickness", thickness, |edit, t| edit.args.thickness = t);
@@ -160,6 +145,37 @@ impl PartOperation for Thicken {
             },
         );
         f
+    }
+}
+
+impl ModelOperation for Thicken {
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &PartReader,
+        step: &str,
+        args: &ThickenArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("thicken", step)?;
+        if !args.thickness.is_finite() {
+            return Err(GeopError::new("the thickness is not a number"));
+        }
+        let sheet =
+            model.sheet_of_face(model.face_id(args.face.name())?, "a sheet is thickened")?;
+        let thickness = Design::from_f64(args.thickness);
+        match args.side {
+            ThickenSide::Against | ThickenSide::Along => {
+                let along = args.side == ThickenSide::Along;
+                thicken(model, &namer, sheet, thickness, along)?;
+            }
+            ThickenSide::Both => {
+                let faces = model.topology().body_faces(Body::Sheet(sheet))?;
+                let half = thickness.div(Design::TWO)?;
+                let copy = offset_faces(model, &namer.scoped("both"), &faces, half)?;
+                model.delete_bodies(&[Body::Sheet(sheet)])?;
+                thicken(model, &namer, copy.shells[0], thickness, false)?;
+            }
+        }
+        Ok(())
     }
 }
 

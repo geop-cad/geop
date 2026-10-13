@@ -6,13 +6,12 @@ use geop_core_math::{
     scalars::{Ring, Scalar},
 };
 use geop_core_topology::mass::MassProperties;
-use geop_ops::{
-    Design, EntityRef,
-    operation::BuildView,
-    output::{Answer, Block, Bounded, Row},
-    solids::{Shapes, placed_solids},
-    ui::Tone,
-};
+use geop_core_editor::{editing::Tone, selectable::SelectableElement};
+use geop_core_program::element::{ElementReference, PickedElement};
+use geop_ops_assembly::solids::{PlacedSolid, Shapes, placed_solids};
+use geop_ops_model::{Design, Solid, model};
+use geop_ops_output::{Answer, Block, Bounded, Row};
+use geop_ops_parameters::PartReader;
 use serde::Serialize;
 
 /// Mass properties as shown, in millimetres and kilograms: the volume
@@ -106,6 +105,9 @@ pub struct BodyMass {
     pub assumed: bool,
     pub properties: Option<MassSummary>,
     pub error: Option<String>,
+    /// What is drawn of it, to light.
+    #[serde(skip)]
+    pub drawn: Vec<PickedElement>,
 }
 
 /// The mass properties of every solid a part shows, and of all of them.
@@ -155,7 +157,7 @@ impl MassReport {
                 title: body.name.clone(),
                 detail: Some(body.material.clone()),
                 open: self.bodies.len() == 1,
-                light: vec![EntityRef::solid(body.name.clone())],
+                light: body.drawn.clone(),
                 blocks: shown,
             });
         }
@@ -166,17 +168,17 @@ impl MassReport {
     }
 }
 
-/// The mass properties of every solid of the part `view` shows — its own,
+/// The mass properties of every solid of the part `reader` reads — its own,
 /// and those of the parts placed in it, where they are and of their own
 /// parts' materials — and of all of them together. A part placed many
 /// times is integrated once.
-pub fn mass_report(view: BuildView) -> GeopResult<MassReport> {
+pub fn mass_report(reader: &PartReader) -> GeopResult<MassReport> {
     let mut bodies = Vec::new();
     let mut all = Vec::new();
     let mut area = (Design::ZERO, true);
     let mut complete = true;
     let mut shapes = Shapes::default();
-    for placed in placed_solids(view)? {
+    for placed in placed_solids(reader)? {
         let material = placed.material();
         let computed = placed.mass_properties(&mut shapes).and_then(|p| {
             let a = placed.model.topology().solid_area(placed.solid)?;
@@ -194,6 +196,7 @@ pub fn mass_report(view: BuildView) -> GeopResult<MassReport> {
             }
         };
         bodies.push(BodyMass {
+            drawn: drawn(&placed),
             name: placed.name,
             material: material.name,
             density: material.density,
@@ -209,4 +212,21 @@ pub fn mass_report(view: BuildView) -> GeopResult<MassReport> {
         false => None,
     };
     Ok(MassReport { bodies, total })
+}
+
+/// What is drawn of `solid` where its part is placed, to light: its faces,
+/// named as the part read names them — behind the path of the part placed
+/// that it is of.
+pub(crate) fn drawn(solid: &PlacedSolid) -> Vec<PickedElement> {
+    let Some(own) = solid.model.name_of(solid.solid) else {
+        return Vec::new();
+    };
+    let path = solid.name.strip_suffix(own).unwrap_or_default();
+    let reference = ElementReference::new(model(), own);
+    (Solid::drawn(&solid.reader, &reference).into_iter())
+        .map(|face| PickedElement {
+            target: format!("{path}{}", face.target),
+            ..face
+        })
+        .collect()
 }

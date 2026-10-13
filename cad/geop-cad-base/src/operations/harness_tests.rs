@@ -7,17 +7,20 @@ use geop_core_math::{
     primitives::{DatumComponent, FrameAxis},
     scalars::{Ring, ScalInF64 as S, Scalar},
 };
-use geop_ops::{
-    Design, EntityRef, ParamValue,
-    model::{model, pose_parameter},
-    parameters::Values,
-    ui::{StepEditEvent, Value},
+use geop_core_editor::editing::{StepEditEvent, Value};
+use geop_ops_add_datum::Selected;
+use geop_ops_assembly::{
+    AddPartArgs, Kind, Mate, MateEntity, PlacedElement, solids::placed_solids,
 };
-use geop_ops_assembly::{AddPartArgs, Kind, Mate};
-use geop_ops_harness::{RouteArgs, Wire, WireSize, cables};
+use geop_ops_datums::{ORIGIN, component_name, datum};
+use geop_ops_harness::{RouteArgs, Wire, WireSize, cable};
+use geop_ops_model::{Design, element, read_model};
+use geop_ops_output::Bounded;
+use geop_ops_parameters::{StateValue, StateValues, pose_state};
+use geop_ops_sketch::sketch_element;
 
 use crate::examples::pose;
-use crate::operations::testing::{Built, origin_plane};
+use crate::operations::testing::{Built, on_origin};
 use crate::{Command, Editor, Program, examples};
 
 /// An assembly of two plates: `a` fixed at the origin, `b` 4 along `x`,
@@ -35,9 +38,12 @@ fn assembly() -> Program {
         .fixed(),
     );
     let xy = |instance: &str| {
-        EntityRef::datum_component(
-            format!("{instance}/origin"),
-            DatumComponent::Plane(FrameAxis::Z),
+        MateEntity::of(
+            instance,
+            Selected::Datum(datum(component_name(
+                ORIGIN,
+                DatumComponent::Plane(FrameAxis::Z),
+            ))),
         )
     };
     program.push(
@@ -54,7 +60,10 @@ fn assembly() -> Program {
     program.push(
         "cable",
         RouteArgs {
-            through: vec![EntityRef::datum("a/origin"), EntityRef::datum("b/origin")],
+            through: vec![
+                PlacedElement::of("a", Selected::Datum(datum(ORIGIN))),
+                PlacedElement::of("b", Selected::Datum(datum(ORIGIN))),
+            ],
             wires: vec![Wire {
                 size: WireSize::Diameter(0.2),
                 ..Wire::new("signal")
@@ -64,19 +73,14 @@ fn assembly() -> Program {
             service_loop: 0.0,
         },
     );
-    let at = |x: f64| ParamValue::Pose(pose([x, 0.0, 0.0], [0.0; 3]));
-    program.state = Values::from([
-        (pose_parameter("a"), at(0.0)),
-        (pose_parameter("b"), at(4.0)),
-    ]);
+    let at = |x: f64| StateValue::Pose(pose([x, 0.0, 0.0], [0.0; 3]));
+    program.state = StateValues::from([(pose_state("a"), at(0.0)), (pose_state("b"), at(4.0))]);
     program
 }
 
 /// The cable's length in what `editor` built.
 fn cable_length(editor: &Editor) -> Design {
-    let part = editor.part();
-    let cables = part.retrieve_target(&cables()).unwrap();
-    cables.get("route(cable)").unwrap().length
+    cable(&editor.part(), "route(cable)").unwrap().length
 }
 
 /// Moving the mated plate in the editor — its placement's `x` typed in —
@@ -116,7 +120,8 @@ fn moving_a_mated_part_reroutes_the_cable() {
     let after = cable_length(&editor);
     assert!(after.could_be_equal(half_circle(6.0)), "{after:?}");
     // The bundle's end cap went with the plate: centred on its frame.
-    let part = editor.part().retrieve_target(&model()).unwrap();
+    let reader = editor.part();
+    let part = read_model(&reader).unwrap();
     let end = part.face_id("route(cable,end)").unwrap();
     let model = part.topology();
     let centre: f64 = model
@@ -151,22 +156,15 @@ fn a_route_runs_through_sketch_points() {
     let p = floor.add_point(examples::n(4.0), examples::n(4.0));
     program.push(
         "floor",
-        crate::operations::testing::sketch(origin_plane(FrameAxis::Z), floor),
+        crate::operations::testing::sketch(on_origin(FrameAxis::Z), floor),
     );
     program.push(
         "route",
         RouteArgs {
             through: vec![
-                EntityRef::Vertex {
-                    name: "sketch3d(corners,p0)".into(),
-                },
-                EntityRef::Vertex {
-                    name: "sketch3d(corners,p1)".into(),
-                },
-                EntityRef::SketchPoint {
-                    sketch: "floor".into(),
-                    point: p,
-                },
+                PlacedElement::own(Selected::Vertex(element("sketch3d(corners,p0)"))),
+                PlacedElement::own(Selected::Vertex(element("sketch3d(corners,p1)"))),
+                PlacedElement::own(Selected::SketchPoint(sketch_element("floor", p))),
             ],
             wires: vec![Wire {
                 size: WireSize::Diameter(0.1),
@@ -178,8 +176,8 @@ fn a_route_runs_through_sketch_points() {
         },
     );
     let runner = program.built().unwrap();
-    let cables = runner.part.current().retrieve_target(&cables()).unwrap();
-    let cable = cables.get("route(route)").unwrap();
+    let reader = runner.part.current();
+    let cable = cable(&reader, "route(route)").unwrap();
     let length = cable.length.to_f64();
     // Two runs of 4 with a quarter-turn bend between them, rounded.
     assert!(length > 7.5 && length < 10.0, "{:?}", cable.length);
@@ -204,8 +202,8 @@ fn a_cable_bundle_is_no_body_to_weigh_or_check() {
     assert!(update.error.is_none(), "{:?}", update.error);
     let steps = update.program.unwrap().steps;
     assert!(steps.iter().all(|s| s.error.is_none()), "{steps:?}");
-    let view = editor.part();
-    let solids: Vec<String> = (geop_ops::solids::placed_solids(view).unwrap().into_iter())
+    let view = &editor.part();
+    let solids: Vec<String> = (placed_solids(view).unwrap().into_iter())
         .map(|s| s.name)
         .collect();
     assert!(!solids.iter().any(|s| s.contains("route")), "{solids:?}");
@@ -217,7 +215,7 @@ fn a_cable_bundle_is_no_body_to_weigh_or_check() {
     assert_eq!(interference.solids, 2, "{:?}", interference.found);
 
     let bill = geop_ops_bom::bom(view, geop_ops_bom::Structure::Flat).unwrap();
-    let total = |b: geop_ops::output::Bounded| b.value;
+    let total = |b: Bounded| b.value;
     let weighed = mass.total.as_ref().unwrap().mass.value;
     assert!(
         (total(bill.total_mass.unwrap()) - weighed).abs() < 1e-12,

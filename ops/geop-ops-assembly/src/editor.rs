@@ -12,7 +12,7 @@
 //!
 //! A joint is made between frames, one picked on each part: a click on a
 //! face, an edge or a point puts one there (see
-//! [`geop_ops::operation::Aspects::frame_on`]), and the hover shows the
+//! [`crate::MateEntity::frame`]), and the hover shows the
 //! frame it would pick, as three arrows. A coupling is made of two joints
 //! already made, offered by what they join.
 //!
@@ -26,26 +26,35 @@ use geop_core_math::{
     primitives::{Pose, Quaternion},
     scalars::Scalar,
 };
-use geop_ops::{
-    Design, EntityRef, Namer, ParamValue,
-    model::pose_parameter,
-    operation::{Input, StepContext},
-    parameters::{COLOR, ParameterKind, Values, validate_color},
-    placed::{instance, library, library_files},
-    solving::{SettingsState, check, settings},
-    ui::{
-        Action, CanvasEvent, Choice, Edit, EditForm, FormState, Gizmo, ListItem, Number, Pull,
-        Shape, Style, Tone, Unit, Value, Visual,
+use geop_core_editor::{
+    edit_form::{Edit, EditForm, FormState},
+    editing::{
+        Action, CanvasEvent, Choice, Gizmo, ListItem, Number, Pull, Shape, Style, Tone, Unit,
+        Value, Visual,
     },
+};
+use geop_ops_model::{Design, Namer};
+use geop_ops_parameters::{
+    COLOR, ParameterKind, Setting, Settings, StateValue, StepContext,
+    about::file_choices,
+    parameters::validate_color,
+    pose_state, read_about,
 };
 
 use crate::{
     AddPartArgs, Anchor, CouplingKind, JointKind, Kind, Mate, MateKind, Motion, Transmission,
     mechanism::mate_holds,
+    placed::{read_instance, read_library},
+    solving::{SettingsState, check, settings},
 };
 
+/// Whether `file` is a program file, which a part can be placed from.
+fn is_program(file: &str) -> bool {
+    file.ends_with(".geop")
+}
+
 /// The form of a step placing a part, and what setting its fields does.
-type PartForm = EditForm<'static, Design, AddPartArgs, PartSession>;
+type PartForm<'a> = EditForm<'a, Design, AddPartArgs, PartSession>;
 
 /// The key of the placed part, as drawn to be dragged.
 pub const PART: &str = "part";
@@ -174,7 +183,7 @@ pub struct PartSession {
 impl PartSession {
     /// Lets go of the pulls released at the event before: they pulled once
     /// more, and are gone at this one (see
-    /// [`geop_ops::operation::PartOperation::begin_event`]).
+    /// [`geop_core_editor::part_operation::PartOperation::begin_event`]).
     pub(crate) fn let_go(&mut self) {
         if std::mem::take(&mut self.released) {
             self.pulls.clear();
@@ -188,16 +197,16 @@ pub type PartEditing = FormState<PartSession>;
 /// Where the part the step places is: the program's state, or — before
 /// anything was solved for it — the origin.
 fn pose_of(context: &StepContext) -> Pose<Design> {
-    match context.before.retrieve_state(&pose_parameter(context.step)) {
-        ParamValue::Pose(pose) => pose,
-        _ => Pose::identity(),
+    match context.before.retrieve_state(&pose_state(context.step)) {
+        StateValue::Pose(pose) => pose,
+        StateValue::Number(_) => Pose::identity(),
     }
 }
 
 /// The part placed as `step` pulled to `target` as a whole.
 fn pulled_to(step: &str, target: Pose<Design>) -> Vec<Pull<Design>> {
     vec![Pull::Pose {
-        parameter: pose_parameter(step),
+        parameter: pose_state(step),
         target: target.map(|c| c.sharpen()),
     }]
 }
@@ -230,8 +239,9 @@ fn set_value(kind: &mut MateKind, v: f64) {
 /// The fields of the mate `id` selected: the entities to pick for a
 /// constraint or a joint; a joint's coordinates — set, they hold — and its
 /// limits; the joints a coupling ties, and how.
-fn selected(
-    f: &mut PartForm,
+fn selected<'a>(
+    f: &mut PartForm<'a>,
+    before: &geop_ops_parameters::PartReader<'a>,
     id: &str,
     mate: &Mate,
     joint: Option<&SettingsState>,
@@ -342,16 +352,16 @@ fn selected(
     }
 
     let mate_id = id.to_string();
-    f.reference(
+    let label = if matches!(mate.kind, MateKind::Joint(_)) {
+        "frames"
+    } else {
+        "elements"
+    };
+    f.pick(
         &format!("mate:{id}:entities"),
-        if matches!(mate.kind, MateKind::Joint(_)) {
-            "frames"
-        } else {
-            "entities"
-        },
-        mate.entities.clone(),
-        mate.kind.roles(),
-        None,
+        label,
+        before,
+        &mate.entities,
         true,
         move |edit, mut entities| {
             // Two at most: a third pick replaces the oldest.
@@ -394,7 +404,7 @@ fn selected(
         let value = joint.and_then(|j| j.values.iter().find(|v| v.measure == motion.measure()));
         if let Some(value) = value {
             let key = format!("mate:{id}:{}", motion.name());
-            let parameter = value.parameter.clone();
+            let parameter = value.state.clone();
             let number = Number::new(motion.name(), value.value, unit);
             f.number(&key, number, move |edit, v| {
                 set_joint(edit.session, &parameter, v);
@@ -467,13 +477,12 @@ fn parameters(f: &mut PartForm, context: &StepContext, args: &AddPartArgs) {
     if args.file.is_empty() {
         return;
     }
-    let mut before = context.before;
-    let Ok(library) = library(&mut before) else {
+    let Ok(library) = read_library(&context.before) else {
         return;
     };
     // As placed here: what a number not given reads follows what is.
     let Ok(placed) = (library.component(&args.file, &args.parameters))
-        .or_else(|_| library.component(&args.file, &Values::new()))
+        .or_else(|_| library.component(&args.file, &Settings::new()))
     else {
         return;
     };
@@ -481,23 +490,18 @@ fn parameters(f: &mut PartForm, context: &StepContext, args: &AddPartArgs) {
     if defined.is_empty() {
         return;
     }
-    let built = placed.view();
-    let given = |name: &str| match args.parameters.get(name) {
-        Some(value) => Some(value.clone()),
-        None => match built.retrieve_input(name) {
-            Some(Input::Value(value)) => Some(value),
-            _ => None,
-        },
-    };
+    let chosen = (read_about(&placed.reader()).map(|about| about.chosen.clone()))
+        .unwrap_or_default();
+    let given = |name: &str| (args.parameters.get(name)).or(chosen.get(name)).cloned();
     f.form.dialog.heading("parameters_heading", "Parameters");
     let set = |name: String| {
-        move |args: &mut AddPartArgs, value: ParamValue| {
+        move |args: &mut AddPartArgs, value: Setting| {
             args.parameters.insert(name.clone(), value);
         }
     };
     if defined.color.is_some() || args.parameters.contains_key(COLOR) {
         let color = match given(COLOR) {
-            Some(ParamValue::Text(c)) => c,
+            Some(Setting::Text(c)) => c,
             _ => "#a0a8b8".into(),
         };
         let set = set(COLOR.into());
@@ -507,7 +511,7 @@ fn parameters(f: &mut PartForm, context: &StepContext, args: &AddPartArgs) {
             color,
             move |Edit { args, .. }, c| {
                 if validate_color(c).is_ok() {
-                    set(args, ParamValue::Text(c.to_string()));
+                    set(args, Setting::Text(c.to_string()));
                 }
             },
         );
@@ -518,7 +522,7 @@ fn parameters(f: &mut PartForm, context: &StepContext, args: &AddPartArgs) {
         match &p.kind {
             ParameterKind::Number { min, max, .. } => {
                 let value = match given(&p.name) {
-                    Some(ParamValue::Number(v)) => v.to_f64(),
+                    Some(Setting::Number(v)) => v,
                     _ => continue,
                 };
                 // A slider over what the parameter offers — or, with no
@@ -527,12 +531,12 @@ fn parameters(f: &mut PartForm, context: &StepContext, args: &AddPartArgs) {
                 let hi = max.unwrap_or(0.0_f64.max(2.0 * value)).max(lo + 1e-9);
                 let number = Number::new(&p.name, value, Unit::Length).range(lo, hi);
                 f.number(&key, number, move |Edit { args, .. }, v| {
-                    set(args, ParamValue::Number(Design::from_f64(v)));
+                    set(args, Setting::Number(v));
                 });
             }
             ParameterKind::Table { rows, selected, .. } => {
                 let value = match given(&p.name) {
-                    Some(ParamValue::Text(row)) => row,
+                    Some(Setting::Text(row)) => row,
                     _ => selected.clone(),
                 };
                 let options = (rows.iter())
@@ -545,7 +549,7 @@ fn parameters(f: &mut PartForm, context: &StepContext, args: &AddPartArgs) {
                     options,
                     true,
                     move |Edit { args, .. }, row| {
-                        set(args, ParamValue::Text(row.to_string()));
+                        set(args, Setting::Text(row.to_string()));
                     },
                 );
             }
@@ -556,15 +560,15 @@ fn parameters(f: &mut PartForm, context: &StepContext, args: &AddPartArgs) {
 /// The file to place, whether it stays put, where it goes, its mates — the
 /// one selected with its entities to pick — and the part as placed, to
 /// drag.
-pub(crate) fn form(context: &StepContext, args: &AddPartArgs, session: &PartSession) -> PartForm {
+pub(crate) fn form<'a>(
+    context: &'a StepContext<'a>,
+    args: &AddPartArgs,
+    session: &PartSession,
+) -> PartForm<'a> {
     let mut f = PartForm::default();
     let step = context.step.to_string();
-    let built = context
-        .built
-        .filter(|view| view.retrieve_target(&instance(&step)).is_ok());
-
-    let mut before = context.before;
-    let files = library_files(&mut before, geop_ops::program::is_program, &args.file);
+    let built = (context.built.as_ref()).filter(|view| read_instance(view, &step).is_ok());
+    let files = file_choices(&context.before, is_program, &args.file);
     if files.is_empty() {
         f.form.dialog.text(
             "no_files",
@@ -635,7 +639,7 @@ pub(crate) fn form(context: &StepContext, args: &AddPartArgs, session: &PartSess
             let mate_id = id.clone();
             let joint = joints.iter().find(|j| j.name == namer(id)).cloned();
             let first = joint.as_ref().and_then(|j| j.values.first().cloned());
-            let parameter = first.as_ref().map(|v| v.parameter.clone());
+            let parameter = first.as_ref().map(|v| v.state.clone());
             f.on(key.clone(), move |edit, value| {
                 let args = &mut *edit.args;
                 match value {
@@ -663,18 +667,17 @@ pub(crate) fn form(context: &StepContext, args: &AddPartArgs, session: &PartSess
             // puts no constraint on where it is.
             let complete = mate.is_complete() || mate.is_fixed();
             let holds = mate.is_fixed() || built.is_some_and(|view| mate_holds(view, &namer(id)));
-            // Two entities of one part keep where they are to each other
+            // Two elements of one part keep where they are to each other
             // whatever moves: such a mate holds nothing together.
             let one_part = mate.pair().and_then(|[a, b]| {
-                let (a, b) = (a.split_instance()?.0, b.split_instance()?.0);
-                (a == b).then_some(a)
+                (!a.part.is_empty() && a.part == b.part).then(|| a.part.clone())
             });
             let what = match mate.kind {
                 MateKind::Anchor(_) => "holds this part where it is".to_string(),
                 MateKind::Coupling(_) => mate.joints.join(" & "),
                 _ => {
                     let entities: Vec<String> =
-                        mate.entities.iter().map(EntityRef::label).collect();
+                        mate.entities.iter().map(|e| e.label()).collect();
                     entities.join(" & ")
                 }
             };
@@ -727,7 +730,7 @@ pub(crate) fn form(context: &StepContext, args: &AddPartArgs, session: &PartSess
         (session.selected.as_ref()).and_then(|id| args.mates.get_key_value(id))
     {
         let joint = joints.iter().find(|j| j.name == namer(id));
-        selected(&mut f, id, mate, joint, &joints);
+        selected(&mut f, &context.before, id, mate, joint, &joints);
     }
 
     if let Some(view) = built
@@ -796,7 +799,7 @@ pub(crate) fn canvas(
             // A drag moves the joints set in the dialog too.
             session.held.clear();
             session.pulls = vec![Pull::Point {
-                parameter: pose_parameter(context.step),
+                parameter: pose_state(context.step),
                 local,
                 target,
             }];

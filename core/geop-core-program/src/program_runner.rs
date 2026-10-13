@@ -1,6 +1,9 @@
-use std::collections::{BTreeMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashSet},
+    rc::Rc,
+};
 
-use geop_core_math::geop_error::GeopError;
+use geop_core_math::geop_error::{GeopError, GeopResult};
 
 use crate::{
     operation_registry::OperationRegistry,
@@ -8,8 +11,21 @@ use crate::{
     program::Program,
 };
 
+/// What a run is given besides its inputs and state, as targets of a step
+/// of its own: the step at position 0 of every run, before the program's
+/// own, which define what is given that is no number — a part's colour,
+/// the files it places parts from.
+pub type Given<I, S> = Rc<dyn Fn(&mut Part<I, S>) -> GeopResult<()>>;
+
+/// The id a failure of the given step is reported by.
+pub const GIVEN: &str = "given";
+
+/// Runs programs on one part, with the operations of `registry`. The part
+/// begins every run with the given step ([`Given`]), so the step at
+/// position `k` of a program is at position `k + 1` of the part.
 pub struct ProgramRunner<I, S: State> {
     pub registry: OperationRegistry<I, S>,
+    pub given: Option<Given<I, S>>,
     pub part: Part<I, S>,
 }
 
@@ -24,8 +40,15 @@ impl<I: Input, S: State> ProgramRunner<I, S> {
     pub fn new(registry: OperationRegistry<I, S>) -> Self {
         Self {
             registry,
+            given: None,
             part: Part::default(),
         }
+    }
+
+    /// The position in the part of the step at position `step` of the
+    /// program: after the given step.
+    pub fn position(step: usize) -> usize {
+        step + 1
     }
 
     /// Runs `program` on the given `inputs` and `state`, which are complete:
@@ -52,6 +75,12 @@ impl<I: Input, S: State> ProgramRunner<I, S> {
         let (run, later) = program.steps.split_at(end.min(program.steps.len()));
         self.part.begin_run(inputs, state);
         let mut step_errors = Vec::new();
+        self.part.begin_step();
+        if let Some(given) = &self.given
+            && let Err(e) = given(&mut self.part)
+        {
+            step_errors.push((GIVEN.to_string(), e));
+        }
         let mut ids = HashSet::new();
         for step in run {
             self.part.begin_step();

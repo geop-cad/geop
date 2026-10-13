@@ -1,5 +1,5 @@
-//! Extrude, revolve, sweep and loft as operations of a program (see
-//! [`geop_ops::operation`]): a sketch's one area swept into a solid — along
+//! Extrude, revolve, sweep and loft as operations of a program: a sketch's
+//! one area swept into a solid — along
 //! its plane's normal, around an axis, along another sketch's curves, or
 //! through other sketches' profiles — kept as a new body or combined with
 //! one the model has; or its curves swept into a sheet, faces standing on
@@ -18,7 +18,7 @@ mod sweep;
 
 pub use extrude::{Extrude, ExtrudeArgs, shape_loops};
 pub use loft::{Loft, LoftArgs};
-pub use revolve::{Revolve, RevolveArgs};
+pub use revolve::{Revolve, RevolveArgs, RevolveAxis};
 pub use sweep::{Sweep, SweepArgs};
 
 use std::collections::HashSet;
@@ -30,14 +30,14 @@ use geop_core_math::{
 };
 use geop_core_sketch::{Shape, Sketch};
 use geop_core_topology::{SolidId, build::BuiltBody};
-use geop_ops::{
-    Design, NamedModel, Namer, ToolReach,
-    operation::{BuildReader, Lookup, Scope},
-    parameters::{Formula, expressions},
-    ui::{Edit, EditForm, Number},
+use geop_core_editor::{
+    edit_form::{Edit, EditForm},
+    editing::Number,
+    numeric_input::NumericInput,
 };
+use geop_core_program::part::{Input, Reader, State};
 use geop_ops_booleans::{
-    Combine, Extent, Tool,
+    Combine, Extent, SolidRef, Tool,
     boolean::{BooleanOp, Reach, boolean},
     extent::{End, hull},
     remesh::remesh::RemeshParams,
@@ -45,7 +45,33 @@ use geop_ops_booleans::{
 };
 use serde::{Deserialize, Serialize};
 
+use geop_core_editor::one_of;
+use geop_core_geometry::nurb_curve::NurbCurve3D;
+use geop_core_program::element::ElementReference;
+use geop_ops_model::{Chain, Design, NamedModel, Namer, Path, ToolReach, read_model};
+use geop_ops_sketch::{PlacedSketch, SketchRef};
+use geop_ops_sketch3d::PlacedSketch3d;
+use geop_ops_parameters::PartReader;
+
 use crate::sweep::SweepLoop;
+
+one_of! {
+    /// Curves a sweep runs along, or a rail or a guide follows: a sketch's
+    /// or a 3-D sketch's one chain of curves, or one loop, or an edge of a
+    /// face.
+    pub enum PathRef -> Chain<NurbCurve3D<Design>> {
+        Sketch(ElementReference<PlacedSketch<Design>, Path>),
+        Sketch3d(ElementReference<PlacedSketch3d, Path>),
+        Edge(ElementReference<NamedModel<Design>, Path>),
+    }
+}
+
+impl PathRef {
+    /// Whether it is the sketch `sketch`, as a path.
+    pub fn is_sketch(&self, sketch: &SketchRef) -> bool {
+        matches!(self, PathRef::Sketch(path) if path.target() == sketch.target())
+    }
+}
 
 /// What a step sweeping a profile makes of it: a solid — kept as a new
 /// body, or combined with another solid as [`Combine`] says — or faces
@@ -59,7 +85,7 @@ pub enum Output {
     Solid(Combine),
     Faces {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        up_to: Option<String>,
+        up_to: Option<SolidRef>,
     },
 }
 
@@ -98,7 +124,7 @@ impl Output {
     fn stops<S: Scalar>(&self, model: &NamedModel<S>) -> Vec<String> {
         let target = match self {
             Output::Solid(combine) => combine.target(),
-            Output::Faces { up_to } => up_to.as_deref(),
+            Output::Faces { up_to } => up_to.as_ref().map(|solid| solid.name()),
         };
         match target {
             Some(target) => vec![target.to_string()],
@@ -110,25 +136,28 @@ impl Output {
     /// for faces going as far as a solid, `reaches`, which solid. `set`
     /// puts the output set where the arguments keep it. Faces turned into a
     /// solid join the solid they went up to — or, if none, are combined as
-    /// [`Output::new_for`] `before`; a solid turned into faces goes up to
-    /// what it was combined with.
-    pub(crate) fn fields<'a, S: Scalar, A, T>(
+    /// [`Output::new_for`] the part `reader` reads; a solid turned into
+    /// faces goes up to what it was combined with.
+    pub(crate) fn fields<'a, S: Scalar, I: Input, St: State, A, T>(
         &self,
         f: &mut EditForm<'a, S, A, T>,
-        before: &NamedModel<S>,
+        reader: &Reader<'a, I, St>,
         reaches: bool,
         set: impl Fn(&mut A, Output) + Clone + 'a,
     ) {
         let faces = matches!(self, Output::Faces { .. });
         // What the other way round is: faces of a solid, a solid of faces.
         let turned = match self {
-            Output::Solid(combine) => Output::Faces {
-                up_to: combine.target().map(str::to_string),
+            Output::Solid(Combine::With { target, .. }) => Output::Faces {
+                up_to: Some(target.clone()),
             },
+            Output::Solid(Combine::NewBody) => Output::Faces { up_to: None },
             Output::Faces {
                 up_to: Some(target),
-            } => Output::Solid(Combine::join(target.clone())),
-            Output::Faces { up_to: None } => Output::new_for(before),
+            } => Output::Solid(Combine::join(target.name())),
+            Output::Faces { up_to: None } => {
+                Output::new_for(&*read_model(reader).unwrap_or_default())
+            }
         };
         let set_faces = set.clone();
         f.checkbox("face", "face", faces, move |edit, checked| {
@@ -138,15 +167,13 @@ impl Output {
         });
         match self {
             Output::Solid(combine) => {
-                combine.fields(f, before, move |args, combine| {
+                combine.fields(f, reader, move |args, combine| {
                     set(args, Output::Solid(combine))
                 });
             }
             Output::Faces { up_to } if reaches => {
-                let up_to = up_to.as_deref().unwrap_or_default();
-                Combine::target_field(f, "up to solid", up_to, move |edit, up_to| {
-                    let up_to = (!up_to.is_empty()).then_some(up_to);
-                    set(edit.args, Output::Faces { up_to })
+                Combine::target_field(f, reader, "up to solid", up_to.as_ref(), move |edit, up_to| {
+                    set(edit.args, Output::Faces { up_to: Some(up_to) })
                 });
             }
             Output::Faces { .. } => {}
@@ -192,20 +219,13 @@ pub struct Extents {
 
 impl Extents {
     /// One side, `amount` far: a number, or a formula's text.
-    pub fn blind(amount: impl Into<Formula>) -> Self {
+    pub fn blind(amount: impl Into<NumericInput>) -> Self {
         Self {
             side1: Extent::blind(amount),
             symmetric: false,
             side2: None,
             reversed: false,
         }
-    }
-
-    /// The formulas of its sides' lengths (see
-    /// [`geop_core_program::operation::Operation::formulas`]).
-    pub fn formulas(&mut self) -> Vec<&mut String> {
-        let sides = [Some(&mut self.side1), self.side2.as_mut()];
-        expressions(sides.into_iter().flatten().filter_map(Extent::length_mut))
     }
 
     /// Whether a side goes as far as the solid it is combined with, which
@@ -216,18 +236,14 @@ impl Extents {
     }
 
     /// What to build for it, see [`Plan`], its lengths' formulas reading
-    /// the parameters through `lookup`: `far(sign)` is how far, the way
+    /// the parameters through `reader`: `far(sign)` is how far, the way
     /// `sign` says, reaches past the solid it is combined with.
-    fn plan<S: Scalar>(
-        &self,
-        lookup: &mut (impl Lookup<S> + ?Sized),
-        far: impl Fn(f64) -> GeopResult<f64>,
-    ) -> GeopResult<Plan> {
+    fn plan(&self, reader: &PartReader, far: impl Fn(f64) -> GeopResult<f64>) -> GeopResult<Plan> {
         use End::*;
         let ahead = if self.reversed { -1.0 } else { 1.0 };
-        let side1 = self.side1.end(lookup)?;
+        let side1 = self.side1.end(reader)?;
         let side2 = match &self.side2 {
-            Some(e) if !self.symmetric => Some(e.end(lookup)?),
+            Some(e) if !self.symmetric => Some(e.end(reader)?),
             _ => None,
         };
         let side = |sign: f64, end: End| -> GeopResult<Side> {
@@ -260,17 +276,17 @@ impl Extents {
     /// dragged on its handle — whether it is turned the other way, whether
     /// symmetric, and unless so, the other side the same way, a side turned
     /// blind starting `default` far. `amount(length, second)` makes a
-    /// side's number field (see [`geop_ops::ui::formula_number`]), keyed
-    /// `key` for the first side and `key2` for the second; `get` finds the
-    /// extents in the arguments. The first side's length is `length`'s to
-    /// set, which an operation may want to react to.
+    /// side's number field (see [`NumericInput::number`]), keyed `key` for
+    /// the first side and `key2` for the second; `get` finds the extents in
+    /// the arguments. The first side's length is `length`'s to set, which an
+    /// operation may want to react to.
     pub(crate) fn fields<'a, S: Scalar, A, T>(
         &self,
         f: &mut EditForm<'a, S, A, T>,
         (key, default): (&str, f64),
-        mut amount: impl FnMut(&Formula, bool) -> Number<S>,
+        mut amount: impl FnMut(&NumericInput, bool) -> Number<S>,
         get: impl Fn(&mut A) -> &mut Extents + Copy + 'a,
-        length: impl Fn(Edit<'_, A, T>, Formula) + 'a,
+        length: impl Fn(Edit<'_, A, T>, NumericInput) + 'a,
     ) {
         let side1 = Extent::mode(Some(&self.side1));
         let choices = Extent::choices(false);
@@ -281,7 +297,7 @@ impl Extents {
             }
         });
         if let Extent::Blind(d) = &self.side1 {
-            f.formula(key, amount(d, false), length);
+            f.numeric(key, amount(d, false), length);
         }
         let reversed = self.reversed;
         f.checkbox("reversed", "reverse direction", reversed, move |edit, b| {
@@ -307,7 +323,7 @@ impl Extents {
             },
         );
         if let Some(Extent::Blind(d)) = &self.side2 {
-            f.formula(&format!("{key}2"), amount(d, true), move |edit, length| {
+            f.numeric(&format!("{key}2"), amount(d, true), move |edit, length| {
                 get(edit.args).side2 = Some(Extent::Blind(length))
             });
         }
@@ -391,7 +407,7 @@ trait Sweeping {
 /// — or combined (see [`combine_sides`]).
 fn build_extents(
     model: &mut NamedModel<Design>,
-    reader: &mut BuildReader,
+    reader: &PartReader,
     namer: &Namer,
     step: &str,
     (extents, output): (&Extents, &Output),
@@ -403,7 +419,7 @@ fn build_extents(
     } else {
         None
     };
-    let plan = extents.plan(&mut Scope { model, reader }, |sign| match &hull {
+    let plan = extents.plan(reader, |sign| match &hull {
         Some(hull) => sweeping.past(hull, sign),
         None => Err(GeopError::new(
             "up to next and through all go as far as a solid, and the model has none yet",

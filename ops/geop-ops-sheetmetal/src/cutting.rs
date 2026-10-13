@@ -11,19 +11,15 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
-use geop_ops::{
-    model::model,
-    output::{
-        Content, Export, Exporter, ExporterInfo, Output,
-        sheet::{
-            Anchor, Format, Label, Layer, LineType, Shape, Sheet as Paper, decimal, strokes_of,
-        },
-    },
+use geop_ops_model::read_model;
+use geop_ops_output::{
+    Content, Export, Exporter, ExporterInfo, Output,
+    sheet::{Anchor, Format, Label, Layer, LineType, Shape, Sheet as Paper, decimal, strokes_of},
 };
 use serde::Deserialize;
 
 use crate::{
-    body::{SheetBody, sheets},
+    body::{SheetBody, sheet_body},
     sheet::Sheet,
 };
 
@@ -135,16 +131,12 @@ impl Exporter for FlatPatternDxf {
 
     fn export(output: &mut Output, _: &str, options: FlatPatternOptions) -> GeopResult<Export> {
         let part = output.part();
-        let all = part.retrieve_target(&sheets()).ok();
         let candidates: Vec<String> = match &options.solid {
             Some(name) => vec![name.clone()],
-            None => match part.retrieve_target(&model()) {
-                Ok(model) => model.solid_names().into_iter().rev().collect(),
-                Err(_) => Vec::new(),
-            },
+            None => read_model(&part)?.solid_names().into_iter().rev().collect(),
         };
         let found = candidates.into_iter().find_map(|name| {
-            let body = all?.get(&name)?;
+            let body = sheet_body(&part, &name)?;
             Some((name, body))
         });
         let Some((_, body)) = found else {
@@ -161,7 +153,7 @@ impl Exporter for FlatPatternDxf {
         };
         let format = Format::Dxf;
         Ok(Export {
-            name: format!("{}_flat.{}", output.stem(), format.extension()),
+            name: format!("{}_flat.{}", output.stem()?, format.extension()),
             media_type: format.media_type().into(),
             content: Content::Text(paper.write(format)),
         })

@@ -5,11 +5,7 @@
       "operation": "add_sketch",
       "args": {
         "plane": {
-          "type": "Datum",
-          "name": "origin",
-          "component": {
-            "plane": "y"
-          }
+          "datum": "origin:zx"
         },
         "sketch": {
           "points": {
@@ -162,7 +158,9 @@
       "id": "extrude1",
       "operation": "extrude",
       "args": {
-        "sketch": "sketch1",
+        "sketch": {
+          "target": "sketch:sketch1"
+        },
         "extent": {
           "side1": {
             "blind": 2.83
@@ -182,11 +180,7 @@
       "operation": "add_sketch",
       "args": {
         "plane": {
-          "type": "Datum",
-          "name": "origin",
-          "component": {
-            "plane": "x"
-          }
+          "datum": "origin:yz"
         },
         "sketch": {
           "points": {
@@ -383,8 +377,7 @@
           {
             "type": "projection",
             "entity": {
-              "type": "Edge",
-              "name": "extrude(extrude1,sketch1,c8,end)"
+              "edge": "extrude(extrude1,sketch1,c8,end)"
             },
             "points": {
               "extrude(extrude1,sketch1,p5,end)": 5,
@@ -401,7 +394,9 @@
       "id": "extrude2",
       "operation": "extrude",
       "args": {
-        "sketch": "sketch2",
+        "sketch": {
+          "target": "sketch:sketch2"
+        },
         "extent": {
           "side1": {
             "blind": 2.74
@@ -423,11 +418,7 @@
       "operation": "add_sketch",
       "args": {
         "plane": {
-          "type": "Datum",
-          "name": "origin",
-          "component": {
-            "plane": "z"
-          }
+          "datum": "origin:xy"
         },
         "sketch": {
           "points": {
@@ -686,8 +677,7 @@
           {
             "type": "projection",
             "entity": {
-              "type": "Face",
-              "name": "extrude(extrude2,end)"
+              "face": "extrude(extrude2,end)"
             },
             "points": {
               "extrude(extrude2,sketch2,p11,end)": 5,
@@ -707,8 +697,7 @@
           {
             "type": "projection",
             "entity": {
-              "type": "Face",
-              "name": "extrude(extrude1,end)"
+              "face": "extrude(extrude1,end)"
             },
             "points": {
               "extrude(extrude1,sketch1,c14@1,end)": 15,
@@ -739,7 +728,9 @@
       "id": "extrude3",
       "operation": "extrude",
       "args": {
-        "sketch": "sketch3",
+        "sketch": {
+          "target": "sketch:sketch3"
+        },
         "extent": {
           "side1": {
             "blind": 1

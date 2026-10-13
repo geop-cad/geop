@@ -38,7 +38,7 @@ Everything crosses the boundary as JSON, entities by name, never by number.
   camera.
 - **Keys** go to the step unless a field is being typed into.
 
-The viewer draws the part (a serialized `geop_ops::ui::PartView`), lights
+The viewer draws the part (a serialized `geop_ops_view::PartView`), lights
 the presentation's highlights, draws its visuals (`web/src/visuals3d.ts`)
 over the model at the same on-screen sizes the kernel hit-tests them at,
 fades reference geometry that cannot be picked, and — when the presentation

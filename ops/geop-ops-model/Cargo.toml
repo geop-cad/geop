@@ -1,0 +1,24 @@
+[package]
+name = "geop-ops-model"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-geometry.workspace = true
+geop-core-topology.workspace = true
+geop-core-program.workspace = true
+geop-core-editor.workspace = true
+geop-ops-rasterize.workspace = true
+geop-ops-view.workspace = true
+serde.workspace = true
+# The name registry shares its structure with its copies, as the topology does.
+imbl.workspace = true
+
+[features]
+# What the tests of the operations share about the model (see `testing`).
+testing = ["geop-core-topology/testing"]
+
+[dev-dependencies]
+geop-core-topology = { workspace = true, features = ["testing"] }
+serde_json.workspace = true

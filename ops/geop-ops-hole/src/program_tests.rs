@@ -10,22 +10,25 @@
 use std::f64::consts::PI;
 
 use crate::{
-    HoleArgs, HoleKind, Standard, ThreadArgs,
+    HoleArgs, HoleCentre, HoleKind, Standard, ThreadArgs,
     iso::{Fit, SIZES, metric},
 };
 use geop_core_math::geop_error::GeopResult;
 use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_ops::{Design, EntityRef, NamedModel, Threads, model::model, threads};
+use geop_core_program::element::ElementReference;
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extent, Extents};
-use geop_ops_sketch::Sketch;
+use geop_ops_model::{CosmeticThread, Design, NamedModel, Threads, model, read_model, read_threads};
+use geop_ops_sketch::{Sketch, sketch_element, whole_sketch};
 
-use geop_ops::origin_plane;
-use geop_ops::program::{ProgramFile, Registry};
-use geop_ops::testing::{Built, assert_valid, assert_volume, check_valid, solid_volume};
-use geop_ops_datums::AddDatum;
-use geop_ops_extrude_revolve::testing::{extrusion, n, outline, sketch};
+use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
+use geop_ops_datums::datums;
+use geop_ops_extrude_revolve::testing::{
+    Built, extrusion, n, on_face, on_origin, outline, sketch,
+};
+use geop_ops_model::testing::{assert_valid, assert_volume, check_valid, solid_volume};
+use geop_ops_parameters::{ProgramFile, Registry};
 use geop_ops_pattern::{CircularPattern, LinearPattern, Mirror};
 
 use crate::testing::{PLATE, plate, points_sketch};
@@ -46,16 +49,19 @@ pub(super) fn registry() -> GeopResult<Registry> {
 /// point of the sketch `centres`, as far as `end`.
 pub(super) fn hole(kind: HoleKind, standard: Standard, end: Extent) -> HoleArgs {
     HoleArgs {
-        face: "extrude(plate,end)".into(),
-        points: vec![EntityRef::Sketch {
-            name: "centres".into(),
-        }],
+        face: Some(named("extrude(plate,end)")),
+        points: vec![HoleCentre::Sketch(whole_sketch("centres"))],
         kind,
         standard,
         end,
         drill_point: false,
         thread_length: None,
     }
+}
+
+/// The entity of the model named `name`, as a `K`.
+pub(super) fn named<K>(name: &str) -> ElementReference<NamedModel<Design>, K> {
+    ElementReference::new(model(), name)
 }
 
 pub(super) fn iso(size: &str, fit: Fit) -> Standard {
@@ -82,7 +88,7 @@ impl std::ops::Deref for Made {
 
 impl Made {
     /// The cosmetic thread `name`.
-    pub(super) fn thread(&self, name: &str) -> GeopResult<&geop_ops::CosmeticThread<Design>> {
+    pub(super) fn thread(&self, name: &str) -> GeopResult<&CosmeticThread<Design>> {
         self.threads.get(name)
     }
 }
@@ -92,11 +98,8 @@ pub(super) fn made(program: &ProgramFile) -> GeopResult<Made> {
     let runner = program.built(registry)?;
     let view = runner.part.current();
     Ok(Made {
-        model: view.retrieve_target(&model()).cloned().unwrap_or_default(),
-        threads: view
-            .retrieve_target(&threads())
-            .cloned()
-            .unwrap_or_default(),
+        model: read_model(&view)?.into_owned(),
+        threads: read_threads(&view)?.into_owned(),
     })
 }
 
@@ -275,11 +278,9 @@ fn points_picked_one_by_one() {
     let mut program = plate(&[[20.0, 20.0], [40.0, 20.0]]);
     program.push(
         "corner",
-        geop_ops_datums::AddDatumArgs {
-            selection: vec![EntityRef::Vertex {
-                name: "extrude(plate,outline,p2,end)".into(),
-            }],
-            construction: geop_ops_datums::Construction::Point {
+        AddDatumArgs {
+            selection: vec![Selected::Vertex(named("extrude(plate,outline,p2,end)"))],
+            construction: Construction::Point {
                 x: (-10.0).into(),
                 y: (-10.0).into(),
                 z: 0.0.into(),
@@ -288,11 +289,8 @@ fn points_picked_one_by_one() {
     );
     let mut args = hole(HoleKind::Simple, iso("M3", Fit::Close), Extent::blind(3.0));
     args.points = vec![
-        EntityRef::SketchPoint {
-            sketch: "centres".into(),
-            point: geop_core_sketch::PointId(1),
-        },
-        EntityRef::datum("corner"),
+        HoleCentre::SketchPoint(sketch_element("centres", geop_core_sketch::PointId(1))),
+        HoleCentre::Datum(ElementReference::new(datums(), "corner")),
     ];
     let part = drilled(program, args);
     part.face_id("hole(h,centres,p1,wall,q0)").unwrap();
@@ -311,7 +309,7 @@ fn up_to_next_stops_in_the_gap() {
         program.push(
             "c",
             sketch(
-                origin_plane(FrameAxis::Z),
+                on_origin(FrameAxis::Z),
                 outline(&[
                     [0.0, 0.0],
                     [40.0, 0.0],
@@ -333,16 +331,14 @@ fn up_to_next_stops_in_the_gap() {
         program.push(
             "centres",
             sketch(
-                EntityRef::Face {
-                    name: "extrude(block,c,c14)".into(),
-                },
+                on_face("extrude(block,c,c14)"),
                 points_sketch(&[[25.0, -5.0]]),
             ),
         );
         program
     };
     let args = |end| HoleArgs {
-        face: "extrude(block,c,c14)".into(),
+        face: Some(named("extrude(block,c,c14)")),
         ..hole(HoleKind::Simple, iso("M6", Fit::Normal), end)
     };
     let block = 40.0 * 30.0 * 10.0 - 30.0 * 10.0 * 10.0;
@@ -366,7 +362,7 @@ fn hole_coming_out_through_a_curved_face() {
     let b = d.add_point(n(-10.0), n(10.0));
     d.add_line(a, b);
     d.add_arc(b, a, n(PI));
-    program.push("d", sketch(origin_plane(FrameAxis::X), d));
+    program.push("d", sketch(on_origin(FrameAxis::X), d));
     program.push(
         "bar",
         extrusion("d", Extents::blind(30.0), Combine::NewBody),
@@ -377,15 +373,12 @@ fn hole_coming_out_through_a_curved_face() {
     // On the top, normal `+z`: sketch `x`, `y` are world `x`, `y`.
     program.push(
         "centres",
-        sketch(
-            EntityRef::Face { name: top.into() },
-            points_sketch(&[[15.0, 3.0]]),
-        ),
+        sketch(on_face(top), points_sketch(&[[15.0, 3.0]])),
     );
     let part = drilled(
         program,
         HoleArgs {
-            face: top.into(),
+            face: Some(named(top)),
             ..hole(HoleKind::Simple, iso("M5", Fit::Normal), Extent::ThroughAll)
         },
     );
@@ -421,14 +414,12 @@ fn unsupported_holes_are_refused() {
     let mut off = plate(&[[20.0, 20.0]]);
     off.push(
         "below",
-        sketch(origin_plane(FrameAxis::Z), points_sketch(&[[5.0, 5.0]])),
+        sketch(on_origin(FrameAxis::Z), points_sketch(&[[5.0, 5.0]])),
     );
     refused(
         off,
         HoleArgs {
-            points: vec![EntityRef::Sketch {
-                name: "below".into(),
-            }],
+            points: vec![HoleCentre::Sketch(whole_sketch("below"))],
             ..hole(HoleKind::Simple, iso("M6", Fit::Normal), Extent::blind(3.0))
         },
         "does not lie on face",
@@ -478,7 +469,7 @@ fn shaft() -> ProgramFile {
     };
     program.push(
         "head_circle",
-        sketch(origin_plane(FrameAxis::Z), circle(5.0)),
+        sketch(on_origin(FrameAxis::Z), circle(5.0)),
     );
     program.push(
         "head",
@@ -486,12 +477,7 @@ fn shaft() -> ProgramFile {
     );
     program.push(
         "shank_circle",
-        sketch(
-            EntityRef::Face {
-                name: "extrude(head,end)".into(),
-            },
-            circle(3.0),
-        ),
+        sketch(on_face("extrude(head,end)"), circle(3.0)),
     );
     program.push(
         "shank",
@@ -529,7 +515,7 @@ fn cosmetic_thread_on_a_shaft() {
     threaded.push(
         "t",
         ThreadArgs {
-            face: side.clone(),
+            face: Some(named(&side)),
             size: "M6".into(),
             length: None,
             reversed: false,
@@ -547,7 +533,7 @@ fn cosmetic_thread_on_a_shaft() {
     reversed.push(
         "t",
         ThreadArgs {
-            face: side.clone(),
+            face: Some(named(&side)),
             size: "M6".into(),
             length: Some(12.0),
             reversed: true,
@@ -564,7 +550,7 @@ fn cosmetic_thread_on_a_shaft() {
     wrong.push(
         "t",
         ThreadArgs {
-            face: side,
+            face: Some(named(&side)),
             size: "M8".into(),
             length: None,
             reversed: false,
@@ -600,7 +586,7 @@ fn modelled_thread_on_a_shaft() {
     threaded.push(
         "t",
         ThreadArgs {
-            face: side,
+            face: Some(named(&side)),
             size: "M6".into(),
             length: Some(5.0),
             reversed: false,
@@ -637,7 +623,7 @@ fn modelled_thread_in_a_tapped_hole() {
     program.push(
         "t",
         ThreadArgs {
-            face: "hole(h,centres,p0,wall,q0)".into(),
+            face: Some(named("hole(h,centres,p0,wall,q0)")),
             size: "M6".into(),
             length: Some(6.0),
             reversed: false,
@@ -679,7 +665,7 @@ fn every_iso_size_and_kind() {
                 program.push(
                     "outline",
                     sketch(
-                        origin_plane(FrameAxis::Z),
+                        on_origin(FrameAxis::Z),
                         outline(&[[0.0, 0.0], [w, 0.0], [w, w], [0.0, w]]),
                     ),
                 );
@@ -690,9 +676,7 @@ fn every_iso_size_and_kind() {
                 program.push(
                     "centres",
                     sketch(
-                        EntityRef::Face {
-                            name: "extrude(plate,end)".into(),
-                        },
+                        on_face("extrude(plate,end)"),
                         points_sketch(&[[50.0, 50.0]]),
                     ),
                 );

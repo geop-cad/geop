@@ -2,27 +2,46 @@
 //! solids and faces they build, combined with others, and what they refuse.
 
 use crate::Output;
-use geop_ops::operation::ResolveEntity;
 use std::f64::consts::PI;
 
-use crate::{Extents, LoftArgs, Orientation, SweepArgs};
-use geop_core_math::primitives::FrameAxis;
+use crate::{Extents, LoftArgs, Orientation, PathRef, SweepArgs};
+use geop_core_math::primitives::{DatumComponent, FrameAxis};
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
+use geop_core_program::element::ElementReference;
 use geop_core_sketch::PointId;
 use geop_core_topology::validation::{ValidationParameters, validate};
-use geop_ops::{EntityRef, model::sketch as sketch_target, operation::Seen};
+use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_booleans::Combine;
-use geop_ops_datums::{AddDatumArgs, Construction};
-use geop_ops_sketch::{Constraint, Sketch};
+use geop_ops_datums::{AnyDatum, Datums, ORIGIN, component_name, datums};
+use geop_ops_model::{Curve, testing::assert_valid};
+use geop_ops_parameters::{ProgramFile, Registry};
+use geop_ops_sketch::{
+    Constraint, PlacedSketch, Sketch, SketchPlane, sketch as sketch_target, sketch_element,
+    whole_sketch,
+};
+use geop_ops_sketch3d::{AddSketch3d, sketch3d_path};
 
 use geop_core_math::geop_error::GeopResult;
-use geop_ops::origin_plane;
-use geop_ops::program::{ProgramFile, Registry};
-use geop_ops::testing::{Built, assert_valid};
-use geop_ops_datums::AddDatum;
-use geop_ops_sketch3d::AddSketch3d;
 
-use crate::testing::{both_ways, disc, extrusion, n, outline, polygon, sketch};
+use crate::testing::{
+    Built, both_ways, disc, extrusion, n, on_origin, outline, polygon, sketch,
+};
+
+/// The sketch `name` as a path.
+fn sketch_path(name: &str) -> PathRef {
+    PathRef::Sketch(ElementReference::whole(sketch_target(name)))
+}
+
+/// The datum `name`, to sketch on.
+fn on_datum(name: &str) -> SketchPlane {
+    SketchPlane::Datum(ElementReference::new(datums(), name))
+}
+
+/// The plane of the origin normal to `normal`, to build a datum on.
+fn origin_plane(normal: FrameAxis) -> Selected {
+    let name = component_name(ORIGIN, DatumComponent::Plane(normal));
+    Selected::Datum(ElementReference::<Datums, AnyDatum>::new(datums(), name))
+}
 
 /// The operations these tests' programs are written in.
 fn registry() -> GeopResult<Registry> {
@@ -67,8 +86,8 @@ fn bend() -> Sketch {
 
 fn swept(profile: &str, path: &str) -> SweepArgs {
     SweepArgs {
-        profile: profile.into(),
-        path: Some(EntityRef::sketch(path)),
+        profile: whole_sketch(profile),
+        path: Some(sketch_path(path)),
         orientation: Orientation::FollowPath,
         twist: 0.0,
         end_scale: 1.0,
@@ -79,7 +98,7 @@ fn swept(profile: &str, path: &str) -> SweepArgs {
 
 fn lofted(profiles: &[&str]) -> LoftArgs {
     LoftArgs {
-        profiles: profiles.iter().map(|p| p.to_string()).collect(),
+        profiles: profiles.iter().map(|p| whole_sketch(p)).collect(),
         matches: Vec::new(),
         guides: Vec::new(),
         output: Output::Solid(Combine::NewBody),
@@ -104,11 +123,10 @@ fn lifted(program: &mut ProgramFile, name: &str, distance: f64) {
 #[test]
 fn sweep_a_square_round_a_corner() {
     let mut program = ProgramFile::new();
-    program.push("profile", sketch(origin_plane(FrameAxis::X), square(0.25)));
+    program.push("profile", sketch(on_origin(FrameAxis::X), square(0.25)));
     program.push(
         "path",
-        sketch(
-            origin_plane(FrameAxis::Z),
+        sketch(on_origin(FrameAxis::Z),
             polyline(&[[0.0, 0.0], [2.0, 0.0], [2.0, 2.0]]),
         ),
     );
@@ -128,9 +146,9 @@ fn sweep_a_pipe_through_a_bend() {
     let mut program = ProgramFile::new();
     program.push(
         "profile",
-        sketch(origin_plane(FrameAxis::X), disc([0.0, 0.0], 0.3)),
+        sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.3)),
     );
-    program.push("path", sketch(origin_plane(FrameAxis::Z), bend()));
+    program.push("path", sketch(on_origin(FrameAxis::Z), bend()));
     program.push("pipe", swept("profile", "path"));
     let part = program.build_model(registry).unwrap();
     assert_valid(&part);
@@ -162,8 +180,8 @@ fn sweep_starts_at_the_end_of_the_path_the_profile_is_at() {
             },
         },
     );
-    program.push("profile", sketch(EntityRef::datum("far_plane"), far));
-    program.push("path", sketch(origin_plane(FrameAxis::Z), bend()));
+    program.push("profile", sketch(on_datum("far_plane"), far));
+    program.push("path", sketch(on_origin(FrameAxis::Z), bend()));
     program.push("bar", swept("profile", "path"));
     let part = program.build_model(registry).unwrap();
     assert_valid(&part);
@@ -183,11 +201,11 @@ fn sweep_a_circle_round_a_circle_is_a_torus() {
     let mut program = ProgramFile::new();
     program.push(
         "profile",
-        sketch(origin_plane(FrameAxis::Y), disc([2.0, 0.0], 0.5)),
+        sketch(on_origin(FrameAxis::Y), disc([2.0, 0.0], 0.5)),
     );
     program.push(
         "path",
-        sketch(origin_plane(FrameAxis::Z), disc([0.0, 0.0], 2.0)),
+        sketch(on_origin(FrameAxis::Z), disc([0.0, 0.0], 2.0)),
     );
     program.push("ring", swept("profile", "path"));
     let part = program.build_model(registry).unwrap();
@@ -201,16 +219,16 @@ fn sweep_a_circle_round_a_circle_is_a_torus() {
 fn sweep_joins_a_block() {
     let mut program = ProgramFile::new();
     let block = outline(&[[-1.0, -1.0], [0.5, -1.0], [0.5, 1.0], [-1.0, 1.0]]);
-    program.push("block_sketch", sketch(origin_plane(FrameAxis::Z), block));
+    program.push("block_sketch", sketch(on_origin(FrameAxis::Z), block));
     program.push(
         "block",
         extrusion("block_sketch", both_ways(1.0), Combine::NewBody),
     );
     program.push(
         "profile",
-        sketch(origin_plane(FrameAxis::X), disc([0.0, 0.0], 0.3)),
+        sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.3)),
     );
-    program.push("path", sketch(origin_plane(FrameAxis::Z), bend()));
+    program.push("path", sketch(on_origin(FrameAxis::Z), bend()));
     program.push(
         "pipe",
         SweepArgs {
@@ -233,12 +251,11 @@ fn sweep_an_open_profile_as_faces() {
     let mut program = ProgramFile::new();
     program.push(
         "profile",
-        sketch(
-            origin_plane(FrameAxis::X),
+        sketch(on_origin(FrameAxis::X),
             polyline(&[[-0.5, 0.0], [0.0, 0.5], [0.5, 0.0]]),
         ),
     );
-    program.push("path", sketch(origin_plane(FrameAxis::Z), bend()));
+    program.push("path", sketch(on_origin(FrameAxis::Z), bend()));
     program.push(
         "sheet",
         SweepArgs {
@@ -261,7 +278,7 @@ fn sweep_refuses_what_it_cannot_sweep() {
     let mut program = ProgramFile::new();
     program.push(
         "profile",
-        sketch(origin_plane(FrameAxis::X), disc([0.0, 0.0], 0.3)),
+        sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.3)),
     );
     program.push("same", swept("profile", "profile"));
     assert!(program.build_model(registry).is_err());
@@ -277,9 +294,9 @@ fn sweep_refuses_what_it_cannot_sweep() {
     let mut program = ProgramFile::new();
     program.push(
         "profile",
-        sketch(origin_plane(FrameAxis::X), disc([0.0, 0.0], 0.3)),
+        sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.3)),
     );
-    program.push("path", sketch(origin_plane(FrameAxis::Z), kinked));
+    program.push("path", sketch(on_origin(FrameAxis::Z), kinked));
     program.push("pipe", swept("profile", "path"));
     let Err(error) = program.build_model(registry) else {
         panic!("built");
@@ -292,11 +309,11 @@ fn sweep_refuses_what_it_cannot_sweep() {
 #[test]
 fn loft_a_square_to_a_circle() {
     let mut program = ProgramFile::new();
-    program.push("bottom", sketch(origin_plane(FrameAxis::Z), square(1.0)));
+    program.push("bottom", sketch(on_origin(FrameAxis::Z), square(1.0)));
     lifted(&mut program, "top_plane", 2.0);
     program.push(
         "top",
-        sketch(EntityRef::datum("top_plane"), disc([0.0, 0.0], 0.6)),
+        sketch(on_datum("top_plane"), disc([0.0, 0.0], 0.6)),
     );
     program.push("transition", lofted(&["bottom", "top"]));
     let part = program.build_model(registry).unwrap();
@@ -317,20 +334,20 @@ fn loft_through_three_profiles_cuts_a_block() {
         &mut block,
         &[[-2.0, -2.0], [2.0, -2.0], [2.0, 2.0], [-2.0, 2.0]],
     );
-    program.push("block_sketch", sketch(origin_plane(FrameAxis::Z), block));
+    program.push("block_sketch", sketch(on_origin(FrameAxis::Z), block));
     program.push(
         "block",
         extrusion("block_sketch", Extents::blind(1.5), Combine::NewBody),
     );
     lifted(&mut program, "low", -0.5);
-    program.push("a", sketch(EntityRef::datum("low"), square(1.0)));
+    program.push("a", sketch(on_datum("low"), square(1.0)));
     lifted(&mut program, "middle", 0.75);
     program.push(
         "b",
-        sketch(EntityRef::datum("middle"), disc([0.0, 0.0], 0.7)),
+        sketch(on_datum("middle"), disc([0.0, 0.0], 0.7)),
     );
     lifted(&mut program, "high", 2.0);
-    program.push("c", sketch(EntityRef::datum("high"), square(0.5)));
+    program.push("c", sketch(on_datum("high"), square(0.5)));
     program.push(
         "pocket",
         LoftArgs {
@@ -357,8 +374,7 @@ fn loft_between_two_curves_as_a_face() {
     let mut program = ProgramFile::new();
     program.push(
         "low",
-        sketch(
-            origin_plane(FrameAxis::Z),
+        sketch(on_origin(FrameAxis::Z),
             polyline(&[[-1.0, 0.0], [1.0, 0.0]]),
         ),
     );
@@ -369,7 +385,7 @@ fn loft_between_two_curves_as_a_face() {
         arc.add_point(n(-1.0), n(0.0)),
     ];
     arc.add_arc(p[0], p[1], n(PI / 2.0));
-    program.push("high", sketch(EntityRef::datum("high_plane"), arc));
+    program.push("high", sketch(on_datum("high_plane"), arc));
     program.push(
         "skin",
         LoftArgs {
@@ -391,7 +407,7 @@ fn loft_between_two_curves_as_a_face() {
 #[test]
 fn loft_refuses_what_it_cannot_loft() {
     let mut program = ProgramFile::new();
-    program.push("only", sketch(origin_plane(FrameAxis::Z), square(1.0)));
+    program.push("only", sketch(on_origin(FrameAxis::Z), square(1.0)));
     program.push("one", lofted(&["only"]));
     assert!(program.build_model(registry).is_err());
 
@@ -399,9 +415,9 @@ fn loft_refuses_what_it_cannot_loft() {
     let c = holed.add_point(n(0.0), n(0.0));
     holed.add_circle(c, n(0.3));
     let mut program = ProgramFile::new();
-    program.push("holed", sketch(origin_plane(FrameAxis::Z), holed));
+    program.push("holed", sketch(on_origin(FrameAxis::Z), holed));
     // Refused for its first profile, wherever the second lies.
-    program.push("top", sketch(origin_plane(FrameAxis::X), square(0.5)));
+    program.push("top", sketch(on_origin(FrameAxis::X), square(0.5)));
     program.push("loft", lofted(&["holed", "top"]));
     let Err(error) = program.build_model(registry) else {
         panic!("built");
@@ -413,7 +429,7 @@ fn loft_refuses_what_it_cannot_loft() {
 /// `[-1, 1.5] x [-3, 3]` — for the solids below to be cut from.
 fn slab(program: &mut ProgramFile) {
     let block = outline(&[[-1.0, -3.0], [1.5, -3.0], [1.5, 3.0], [-1.0, 3.0]]);
-    program.push("slab_sketch", sketch(origin_plane(FrameAxis::Z), block));
+    program.push("slab_sketch", sketch(on_origin(FrameAxis::Z), block));
     program.push(
         "slab",
         extrusion("slab_sketch", both_ways(1.0), Combine::NewBody),
@@ -428,11 +444,11 @@ fn sweep_a_ring_cuts_a_slab() {
     slab(&mut program);
     program.push(
         "profile",
-        sketch(origin_plane(FrameAxis::Y), disc([2.0, 0.0], 0.3)),
+        sketch(on_origin(FrameAxis::Y), disc([2.0, 0.0], 0.3)),
     );
     program.push(
         "path",
-        sketch(origin_plane(FrameAxis::Z), disc([0.0, 0.0], 2.0)),
+        sketch(on_origin(FrameAxis::Z), disc([0.0, 0.0], 2.0)),
     );
     program.push(
         "channel",
@@ -471,9 +487,9 @@ fn sweep_along_a_spline_cuts_a_slab() {
     );
     program.push(
         "profile",
-        sketch(EntityRef::datum("start_plane"), disc([-1.0, 0.0], 0.2)),
+        sketch(on_datum("start_plane"), disc([-1.0, 0.0], 0.2)),
     );
-    program.push("path", sketch(origin_plane(FrameAxis::Z), wave));
+    program.push("path", sketch(on_origin(FrameAxis::Z), wave));
     program.push(
         "hole",
         SweepArgs {
@@ -492,14 +508,14 @@ fn sweep_and_loft_steps_round_trip() {
     let mut program = ProgramFile::new();
     program.push(
         "profile",
-        sketch(origin_plane(FrameAxis::X), disc([0.0, 0.0], 0.3)),
+        sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.3)),
     );
-    program.push("path", sketch(origin_plane(FrameAxis::Z), bend()));
+    program.push("path", sketch(on_origin(FrameAxis::Z), bend()));
     program.push("pipe", swept("profile", "path"));
-    program.push("bottom", sketch(origin_plane(FrameAxis::Z), square(1.0)));
+    program.push("bottom", sketch(on_origin(FrameAxis::Z), square(1.0)));
     program.push(
         "top",
-        sketch(origin_plane(FrameAxis::X), disc([0.0, 0.0], 0.6)),
+        sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.6)),
     );
     program.push("transition", lofted(&["bottom", "top"]));
     let json = serde_json::to_string(&program).unwrap();
@@ -540,15 +556,12 @@ fn loft_a_d_into_a_triangle() {
         ],
     );
     let mut program = ProgramFile::new();
-    program.push("d", sketch(origin_plane(FrameAxis::Z), d));
+    program.push("d", sketch(on_origin(FrameAxis::Z), d));
     lifted(&mut program, "above", 1.0);
     program.push(
         "triangle",
         sketch(
-            EntityRef::Datum {
-                name: "above".into(),
-                component: None,
-            },
+            on_datum("above"),
             triangle,
         ),
     );
@@ -570,14 +583,11 @@ fn loft_a_rectangle_through_a_triangle_into_a_circle() {
     let mut triangle = Sketch::new();
     polygon(&mut triangle, &[[-0.5, -0.4], [0.5, -0.4], [0.0, 0.5]]);
     let mut program = ProgramFile::new();
-    program.push("rectangle", sketch(origin_plane(FrameAxis::Z), rectangle));
+    program.push("rectangle", sketch(on_origin(FrameAxis::Z), rectangle));
     for (name, distance) in [("one", 1.0), ("two", 2.0)] {
         lifted(&mut program, name, distance);
     }
-    let on = |name: &str| EntityRef::Datum {
-        name: name.into(),
-        component: None,
-    };
+    let on = on_datum;
     program.push("triangle", sketch(on("one"), triangle));
     program.push("circle", sketch(on("two"), disc([0.0, 0.0], 0.4)));
     program.push("loft", lofted(&["rectangle", "triangle", "circle"]));
@@ -610,28 +620,19 @@ fn loft_with_matched_points() {
         curve: rim,
     });
     let mut program = ProgramFile::new();
-    program.push("square", sketch(origin_plane(FrameAxis::Z), square));
+    program.push("square", sketch(on_origin(FrameAxis::Z), square));
     lifted(&mut program, "above", 1.0);
     program.push(
         "round",
         sketch(
-            EntityRef::Datum {
-                name: "above".into(),
-                component: None,
-            },
+            on_datum("above"),
             round,
         ),
     );
     let mut args = lofted(&["square", "round"]);
     args.matches = vec![
-        EntityRef::SketchPoint {
-            sketch: "square".into(),
-            point: p[2],
-        },
-        EntityRef::SketchPoint {
-            sketch: "round".into(),
-            point: mark,
-        },
+        sketch_element("square", p[2]),
+        sketch_element("round", mark),
     ];
     program.push("loft", args);
     let part = program.build_model(registry).unwrap();
@@ -691,22 +692,16 @@ fn loft_a_d_into_a_triangle_matched_at_two_points() {
         triangle.add_line(q[i], q[(i + 1) % 3]);
     }
     let mut program = ProgramFile::new();
-    program.push("d", sketch(origin_plane(FrameAxis::Z), d));
+    program.push("d", sketch(on_origin(FrameAxis::Z), d));
     lifted(&mut program, "above", 1.0);
     program.push(
         "triangle",
         sketch(
-            EntityRef::Datum {
-                name: "above".into(),
-                component: None,
-            },
+            on_datum("above"),
             triangle,
         ),
     );
-    let point = |sketch: &str, point: PointId| EntityRef::SketchPoint {
-        sketch: sketch.into(),
-        point,
-    };
+    let point = |sketch: &str, point: PointId| sketch_element(sketch, point);
     let mut args = lofted(&["d", "triangle"]);
     args.matches = vec![
         point("d", p[0]),
@@ -756,26 +751,24 @@ fn sweep_along_a_rail_tapers() {
     let mut program = ProgramFile::new();
     program.push(
         "profile",
-        sketch(origin_plane(FrameAxis::X), disc([0.0, 0.0], 0.5)),
+        sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.5)),
     );
     program.push(
         "path",
-        sketch(
-            origin_plane(FrameAxis::Z),
+        sketch(on_origin(FrameAxis::Z),
             polyline(&[[0.0, 0.0], [2.0, 0.0]]),
         ),
     );
     program.push(
         "rail",
-        sketch(
-            origin_plane(FrameAxis::Z),
+        sketch(on_origin(FrameAxis::Z),
             polyline(&[[0.0, 0.5], [2.0, 1.0]]),
         ),
     );
     program.push(
         "cone",
         SweepArgs {
-            rails: vec![EntityRef::sketch("rail")],
+            rails: vec![sketch_path("rail")],
             ..swept("profile", "path")
         },
     );
@@ -795,8 +788,8 @@ fn sweep_along_a_rail_tapers() {
 #[test]
 fn sweep_a_twisted_tapering_bar() {
     let mut program = ProgramFile::new();
-    program.push("profile", sketch(origin_plane(FrameAxis::X), square(0.25)));
-    program.push("path", sketch(origin_plane(FrameAxis::Z), bend()));
+    program.push("profile", sketch(on_origin(FrameAxis::X), square(0.25)));
+    program.push("path", sketch(on_origin(FrameAxis::Z), bend()));
     program.push(
         "bar",
         SweepArgs {
@@ -815,9 +808,9 @@ fn sweep_a_twisted_tapering_bar() {
 #[test]
 fn loft_along_a_guide() {
     let mut program = ProgramFile::new();
-    program.push("bottom", sketch(origin_plane(FrameAxis::Z), square(1.0)));
+    program.push("bottom", sketch(on_origin(FrameAxis::Z), square(1.0)));
     lifted(&mut program, "top_plane", 2.0);
-    program.push("top", sketch(EntityRef::datum("top_plane"), square(1.0)));
+    program.push("top", sketch(on_datum("top_plane"), square(1.0)));
     // In the plane y = 0, drawn in (x, -z): from (1, 0, 0) out to x = 1.5
     // and back to (1, 0, 2).
     let mut bow = Sketch::new();
@@ -827,11 +820,11 @@ fn loft_along_a_guide() {
         bow.add_point(n(1.0), n(-2.0)),
     ];
     bow.add_spline(p.to_vec());
-    program.push("guide", sketch(origin_plane(FrameAxis::Y), bow));
+    program.push("guide", sketch(on_origin(FrameAxis::Y), bow));
     program.push(
         "bulge",
         LoftArgs {
-            guides: vec![EntityRef::sketch("guide")],
+            guides: vec![sketch_path("guide")],
             ..lofted(&["bottom", "top"])
         },
     );
@@ -850,26 +843,24 @@ fn rails_and_guides_round_trip() {
     let mut program = ProgramFile::new();
     program.push(
         "profile",
-        sketch(origin_plane(FrameAxis::X), disc([0.0, 0.0], 0.5)),
+        sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.5)),
     );
     program.push(
         "path",
-        sketch(
-            origin_plane(FrameAxis::Z),
+        sketch(on_origin(FrameAxis::Z),
             polyline(&[[0.0, 0.0], [2.0, 0.0]]),
         ),
     );
     program.push(
         "rail",
-        sketch(
-            origin_plane(FrameAxis::Z),
+        sketch(on_origin(FrameAxis::Z),
             polyline(&[[0.0, 0.5], [2.0, 1.0]]),
         ),
     );
     program.push(
         "cone",
         SweepArgs {
-            rails: vec![EntityRef::sketch("rail")],
+            rails: vec![sketch_path("rail")],
             orientation: Orientation::FixedNormal,
             ..swept("profile", "path")
         },
@@ -885,13 +876,13 @@ fn rails_and_guides_round_trip() {
     program.push(
         "skin",
         LoftArgs {
-            guides: vec![EntityRef::sketch("rail")],
+            guides: vec![sketch_path("rail")],
             ..lofted(&["profile", "path"])
         },
     );
     let json = serde_json::to_string(&program).unwrap();
     assert!(
-        json.contains("\"rails\":[{\"name\":\"rail\",\"type\":\"Sketch\"}]"),
+        json.contains("\"rails\":[{\"sketch\":{\"target\":\"sketch:rail\"}}]"),
         "{json}"
     );
     assert!(json.contains("\"fixed_normal\""), "{json}");
@@ -904,9 +895,9 @@ fn rails_and_guides_round_trip() {
 #[test]
 fn loft_along_a_3d_sketch_guide() {
     let mut program = ProgramFile::new();
-    program.push("bottom", sketch(origin_plane(FrameAxis::Z), square(1.0)));
+    program.push("bottom", sketch(on_origin(FrameAxis::Z), square(1.0)));
     lifted(&mut program, "top_plane", 2.0);
-    program.push("top", sketch(EntityRef::datum("top_plane"), square(1.0)));
+    program.push("top", sketch(on_datum("top_plane"), square(1.0)));
     let mut bow = geop_ops_sketch3d::Sketch3d::new();
     let p = [[1.0, 0.0, 0.0], [1.5, 0.0, 1.0], [1.0, 0.0, 2.0]]
         .map(|p| bow.add_point(geop_core_math::vector::Vector3::from_array(p.map(n))));
@@ -921,7 +912,7 @@ fn loft_along_a_3d_sketch_guide() {
     program.push(
         "bulge",
         LoftArgs {
-            guides: vec![EntityRef::sketch3d("guide")],
+            guides: vec![PathRef::Sketch3d(sketch3d_path("guide"))],
             ..lofted(&["bottom", "top"])
         },
     );
@@ -939,28 +930,19 @@ fn loft_along_a_3d_sketch_guide() {
 #[test]
 fn a_sketchs_chain_is_named_as_its_curves_are() {
     let mut program = ProgramFile::new();
-    program.push("path", sketch(origin_plane(FrameAxis::Z), bend()));
+    program.push("path", sketch(on_origin(FrameAxis::Z), bend()));
     let runner = program.built(registry).unwrap();
-    let mut seen = Seen::new(runner.part.current());
-    let chain = EntityRef::sketch("path").resolve_chain(&mut seen).unwrap();
+    let reader = runner.part.current();
+    let chain = sketch_path("path").resolve(&reader).unwrap();
     assert!(!chain.is_closed());
-    let placed = runner
-        .part
-        .current()
-        .retrieve_target(&sketch_target("path"))
-        .unwrap();
+    let placed: &PlacedSketch<S> = reader.retrieve_element(&whole_sketch("path")).unwrap();
     let sketch = &placed.sketch;
     assert_eq!(chain.curves.len(), sketch.curves.len());
     for (k, id) in sketch.curves.keys().enumerate() {
-        let alone = EntityRef::SketchCurve {
-            sketch: "path".into(),
-            curve: *id,
-        }
-        .resolve_curve(&mut seen)
-        .unwrap();
-        assert_eq!(chain.curve_names[k], alone.name);
+        let alone = reader.retrieve_element(&sketch_element::<Curve>("path", id)).unwrap();
+        assert_eq!(chain.curve_names[k], alone.curve_names[0]);
         let mut joints = [&chain.joint_names[k], &chain.joint_names[k + 1]];
-        let mut ends = [&alone.start.0, &alone.end.0];
+        let mut ends = [&alone.joint_names[0], &alone.joint_names[1]];
         joints.sort();
         ends.sort();
         assert_eq!(joints, ends, "the joints of {}", alone.name);
@@ -973,14 +955,14 @@ fn a_sketchs_chain_is_named_as_its_curves_are() {
 fn sweep_along_an_edge() {
     let mut program = ProgramFile::new();
     let footprint = outline(&[[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]]);
-    program.push("footprint", sketch(origin_plane(FrameAxis::Z), footprint));
+    program.push("footprint", sketch(on_origin(FrameAxis::Z), footprint));
     program.push(
         "block",
         extrusion("footprint", Extents::blind(1.0), Combine::NewBody),
     );
     program.push(
         "profile",
-        sketch(origin_plane(FrameAxis::X), disc([0.0, 0.0], 0.1)),
+        sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.1)),
     );
     let part = program.build_model(registry).unwrap();
     let model = part.topology();
@@ -1005,7 +987,7 @@ fn sweep_along_an_edge() {
     program.push(
         "rod",
         SweepArgs {
-            path: Some(EntityRef::Edge { name: along_x }),
+            path: Some(PathRef::Edge(ElementReference::new(geop_ops_model::model(), along_x))),
             ..swept("profile", "unused")
         },
     );

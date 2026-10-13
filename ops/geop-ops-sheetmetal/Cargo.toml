@@ -9,12 +9,16 @@ geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-core-sketch.workspace = true
 geop-core-program.workspace = true
-geop-ops.workspace = true
-# For its line and arc constructors, and the profiles a sketch's area
-# becomes (`shape_loops`).
+geop-core-editor.workspace = true
+geop-ops-model.workspace = true
+geop-ops-parameters.workspace = true
+geop-ops-sketch.workspace = true
+geop-ops-output.workspace = true
+# For the profiles a sketch's area becomes (`shape_loops`).
 geop-ops-extrude-revolve.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
-geop-ops = { workspace = true, features = ["testing"] }
+geop-ops-model = { workspace = true, features = ["testing"] }
+geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
 geop-ops-rasterize.workspace = true

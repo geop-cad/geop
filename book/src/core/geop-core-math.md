@@ -224,7 +224,7 @@ nearest point of a line — what picking in a viewer is built on.
 
 One layer for every constraint system of the kernel: a sketch's numbers
 (`geop-core-sketch`) and a program's state, where its parts are
-(`geop_core_program::solve`), are each only an adapter.
+(`geop_ops_constraints::solve`), are each only an adapter.
 
 - **Blocks** of variables (`Variable`): a number, a pose. A block moves by
   steps along its own tangent space (`retract`: adding to a number; a pose
@@ -247,7 +247,13 @@ On it, written once:
 
 - `groups`: blocks no term ties together are solved, enclosed and
   measured apart — a plate with hundreds of screws is hundreds of systems
-  of one screw.
+  of one screw. They are worked on in lockstep (`system::lockstep`): each
+  group's work asks its terms of a batch, and one `Equations::evaluate`,
+  every group at its own values, answers all that wait. A program run
+  again per evaluation then runs once per step of the slowest group, not
+  once per step of every group; a term that cannot be made with every
+  group moved is asked again of its group alone, so one group's failure
+  is never another's.
 - `solve`: each group that a preference pulls or whose constraints do not
   hold, by the driver (`system::driver`): the constraints held exactly,
   the preferences and staying put choosing among where they hold; where
@@ -255,8 +261,9 @@ On it, written once:
   least squares. A limit is kept by an active set: solved without the
   limits first, every one the solve ends beyond is held at its bound, and
   the group is solved again. Its `Solution` carries the enclosure of the
-  groups it solved, and how many times it made the terms
-  (`evaluations`, as the enclosure does): the work, which a test bounds.
+  groups it solved, and how many times it made the terms, every group's
+  at once (`evaluations`, as the enclosure does): the work, which a test
+  bounds.
 - `held`: which constraints hold, and the largest residual.
 - `enclose`: a rigorous box around a true solution near where a solve
   ended, group by group — or why there is none: a singular configuration

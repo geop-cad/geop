@@ -7,9 +7,13 @@ members = [
     "core/geop-core-geometry",
     "core/geop-core-topology",
     "core/geop-core-sketch",
-    "ops/geop-ops",
+    "ops/geop-ops-view",
+    "ops/geop-ops-model",
+    "ops/geop-ops-parameters",
+    "ops/geop-ops-output",
     "ops/geop-ops-sketch",
     "ops/geop-ops-datums",
+    "ops/geop-ops-add-datum",
     "ops/geop-ops-extrude-revolve",
     "ops/geop-ops-booleans",
     "ops/geop-ops-edit",
@@ -47,9 +51,13 @@ geop-core-math = { path = "core/geop-core-math" }
 geop-core-geometry = { path = "core/geop-core-geometry" }
 geop-core-topology = { path = "core/geop-core-topology" }
 geop-core-sketch = { path = "core/geop-core-sketch" }
-geop-ops = { path = "ops/geop-ops" }
+geop-ops-view = { path = "ops/geop-ops-view" }
+geop-ops-model = { path = "ops/geop-ops-model" }
+geop-ops-parameters = { path = "ops/geop-ops-parameters" }
+geop-ops-output = { path = "ops/geop-ops-output" }
 geop-ops-sketch = { path = "ops/geop-ops-sketch" }
 geop-ops-datums = { path = "ops/geop-ops-datums" }
+geop-ops-add-datum = { path = "ops/geop-ops-add-datum" }
 geop-ops-extrude-revolve = { path = "ops/geop-ops-extrude-revolve" }
 geop-ops-booleans = { path = "ops/geop-ops-booleans" }
 geop-ops-edit = { path = "ops/geop-ops-edit" }

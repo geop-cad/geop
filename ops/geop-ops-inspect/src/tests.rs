@@ -1,28 +1,34 @@
 //! Mass properties, measurements and interference of basic solids, against
 //! their closed forms — each within the bounds returned.
 
-use std::{collections::BTreeMap, f64::consts::PI, rc::Rc};
+use std::f64::consts::PI;
 
+use geop_core_editor::selectable::Selectable;
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::Pose,
     scalars::{Ring, ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_program::operation::Operation;
-use geop_ops::{
-    EntityRef, NamedModel,
-    operation::{Build, BuildReader, Input},
-    output::Bounded,
-    parameters::{Material, Parameters},
-    placed::{ABOUT, About},
-    testing,
+use geop_core_program::{
+    element::PickedElement,
+    operation::Operation,
 };
+use geop_ops_add_datum::Selected;
 use geop_ops_extrude_revolve::shapes::{
     cube::cube_solid, cylinder::revolved_cylinder, sphere::sphere_solid, v3,
 };
+use geop_ops_model::{NamedModel, model};
+use geop_ops_output::Bounded;
+use geop_ops_parameters::{
+    About, BuildPart, Material, Parameters, PartReader, about::define_about,
+};
+use geop_ops_view::drawn;
 
-use crate::{interference::Contact, interference_report, mass::MassSummary, mass_report, measure};
+use crate::{
+    interference::Contact, interference_report, mass::MassSummary, mass_report, measure,
+    measure::PICKS,
+};
 
 /// Steel, 7850 kg/m³.
 fn steel() -> Option<Material> {
@@ -32,27 +38,49 @@ fn steel() -> Option<Material> {
     })
 }
 
+/// `value`, as the generator of a target that is given it.
+fn given<T: Clone>(_: &PartReader, value: &T) -> GeopResult<T> {
+    Ok(value.clone())
+}
+
 /// The part a program of one step building `model` builds, its material
 /// `material` — and, after it, what `then` adds.
 fn built_with(
     given_model: &NamedModel<S>,
     material: Option<Material>,
-    then: impl FnOnce(&mut Build),
-) -> Build {
+    then: impl FnOnce(&mut BuildPart),
+) -> BuildPart {
     let about = About {
         file: "part.geop".into(),
         parameters: Parameters {
             material,
             ..Parameters::default()
         },
+        ..About::default()
     };
-    let inputs = BTreeMap::from([(ABOUT.to_string(), Input::About(Rc::new(about)))]);
-    testing::built_with(&inputs, given_model, &[], then)
+    let mut part = BuildPart::default();
+    part.begin_run(&Default::default(), &Default::default());
+    part.begin_step();
+    define_about(&mut part, &about).unwrap();
+    part.define_target(&model(), given_model, given).unwrap();
+    then(&mut part);
+    part.end_run(0);
+    part
 }
 
 /// The part of `model`, made of `material`.
-fn built(model: &NamedModel<S>, material: Option<Material>) -> Build {
+fn built(model: &NamedModel<S>, material: Option<Material>) -> BuildPart {
     built_with(model, material, |_| {})
+}
+
+/// A pick of the element of the model named `name`, of what is drawn as
+/// `kind`.
+fn pick(kind: &str, name: &str) -> PickedElement {
+    PickedElement {
+        target: model().name().to_string(),
+        kind: kind.to_string(),
+        name: name.to_string(),
+    }
 }
 
 /// `bounded` contains `exact`, and is no wider than `relative` of it.
@@ -71,7 +99,7 @@ fn assert_near(what: &str, bounded: Bounded, exact: f64, relative: f64) {
 /// The one solid's summary of a report, of `model` made of steel.
 fn only(model: &NamedModel<S>) -> MassSummary {
     let part = built(model, steel());
-    let report = mass_report(part.current()).unwrap();
+    let report = mass_report(&part.current()).unwrap();
     assert_eq!(report.bodies.len(), 1, "{report:?}");
     let body = &report.bodies[0];
     assert!(body.error.is_none(), "{body:?}");
@@ -173,7 +201,7 @@ fn two_boxes_combine() {
     cube_solid(&mut part, "a", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap();
     cube_solid(&mut part, "b", v3(3.0, 0.0, 0.0), v3(4.0, 1.0, 1.0)).unwrap();
     let part = built(&part, steel());
-    let report = mass_report(part.current()).unwrap();
+    let report = mass_report(&part.current()).unwrap();
     assert_eq!(report.bodies.len(), 2);
     let total = report.total.unwrap();
     let m = 7850.0e-9;
@@ -205,15 +233,11 @@ fn distance_from_a_vertex_to_a_cylinder() {
     )
     .unwrap();
     cube_solid(&mut part, "b", v3(2.0, 0.5, 0.5), v3(3.0, 1.5, 1.5)).unwrap();
-    let vertex = EntityRef::Vertex {
-        name: "cube(b,p0,end)".into(),
-    };
+    let vertex = pick(drawn::VERTEX, "cube(b,p0,end)");
     // The quarter of the side from +x to +y.
-    let side = EntityRef::Face {
-        name: "cylinder(c,c1,q0)".into(),
-    };
+    let side = pick(drawn::FACE, "cylinder(c,c1,q0)");
     let part = built(&part, None);
-    let measured = measure(part.current(), &[vertex, side]);
+    let measured = measure(&part.current(), &[vertex, side]);
     assert!(measured.error.is_none(), "{measured:?}");
     let distance = &measured
         .values
@@ -243,8 +267,8 @@ fn single_entities() {
     )
     .unwrap();
     let part = built(&part, None);
-    let value = |entity: EntityRef, label: &str| {
-        let measured = measure(part.current(), &[entity]);
+    let value = |entity: PickedElement, label: &str| {
+        let measured = measure(&part.current(), &[entity]);
         assert!(measured.error.is_none(), "{measured:?}");
         measured
             .values
@@ -253,14 +277,10 @@ fn single_entities() {
             .unwrap_or_else(|| panic!("no {label} in {measured:?}"))
             .value
     };
-    let rim = || EntityRef::Edge {
-        name: "cylinder(c,p1,q0)".into(),
-    };
+    let rim = || pick(drawn::EDGE, "cylinder(c,p1,q0)");
     assert_near("rim", value(rim(), "Length"), 3.0 * PI / 4.0, 1e-9);
     assert_near("rim radius", value(rim(), "Radius"), 1.5, 1e-9);
-    let side = || EntityRef::Face {
-        name: "cylinder(c,c1,q1)".into(),
-    };
+    let side = || pick(drawn::FACE, "cylinder(c,c1,q1)");
     assert_near(
         "side",
         value(side(), "Area"),
@@ -268,10 +288,8 @@ fn single_entities() {
         1e-8,
     );
     assert_near("side radius", value(side(), "Radius"), 1.5, 1e-9);
-    let top = EntityRef::Face {
-        name: "cylinder(c,c0,q2)".into(),
-    };
-    assert!(measure(part.current(), &[top]).plane.is_some());
+    let top = pick(drawn::FACE, "cylinder(c,c0,q2)");
+    assert!(measure(&part.current(), &[top]).plane.is_some());
 }
 
 /// Two boxes sharing a corner region overlap by its volume; two sharing a
@@ -283,7 +301,7 @@ fn overlapping_and_touching_boxes() {
     cube_solid(&mut part, "b", v3(1.0, 1.0, 1.0), v3(3.0, 3.5, 3.0)).unwrap();
     cube_solid(&mut part, "c", v3(-1.0, 0.0, 0.0), v3(0.0, 1.0, 1.0)).unwrap();
     cube_solid(&mut part, "d", v3(10.0, 0.0, 0.0), v3(11.0, 1.0, 1.0)).unwrap();
-    let report = interference_report(built(&part, None).current()).unwrap();
+    let report = interference_report(&built(&part, None).current()).unwrap();
     assert!(report.unchecked.is_empty(), "{report:?}");
     assert_eq!(report.solids, 4);
     assert_eq!(report.found.len(), 2, "{report:?}");
@@ -331,7 +349,7 @@ fn long_bars_overlap() {
     let mut part = NamedModel::<S>::new();
     cube_solid(&mut part, "a", v3(0.0, 0.0, 0.0), v3(50.0, 10.0, 10.0)).unwrap();
     cube_solid(&mut part, "b", v3(10.0, 5.0, 5.0), v3(60.0, 15.0, 15.0)).unwrap();
-    let report = interference_report(built(&part, None).current()).unwrap();
+    let report = interference_report(&built(&part, None).current()).unwrap();
     assert!(report.unchecked.is_empty(), "{report:?}");
     assert_eq!(report.found.len(), 1, "{report:?}");
     assert_near(
@@ -348,15 +366,17 @@ fn long_bars_overlap() {
 #[test]
 fn sketch_curves_are_measured() {
     use geop_core_math::primitives::CoordinateSystem;
-    use geop_core_sketch::{Sketch, space::Sketch3d};
-    let d = geop_ops::Design::from_f64;
-    let mut arc = Sketch::new();
+    use geop_core_sketch::space::Sketch3d;
+    use geop_ops_sketch::{PlacedSketch, sketch};
+    let d = S::from_f64;
+    let mut arc = geop_ops_sketch::Sketch::new();
     let (a, b) = (
         arc.add_point(d(1.0), d(0.0)),
         arc.add_point(d(-1.0), d(0.0)),
     );
     let half = arc.add_arc(a, b, d(PI));
-    let arc = geop_ops::PlacedSketch {
+    let arc = PlacedSketch {
+        name: "arc".into(),
         plane: CoordinateSystem::world_at(Vector3::zero()),
         sketch: arc,
     };
@@ -367,16 +387,9 @@ fn sketch_curves_are_measured() {
         line.add_point(at([2.0, 2.0, 0.0])),
     );
     line.add_line(a, b);
-    fn placed(
-        _: &mut BuildReader,
-        sketch: &geop_ops::PlacedSketch<S>,
-    ) -> GeopResult<geop_ops::PlacedSketch<S>> {
-        Ok(sketch.clone())
-    }
     let part = built_with(&NamedModel::new(), None, |part| {
-        part.define_target(&geop_ops::sketch("arc"), &arc, placed)
-            .unwrap();
-        part.begin_step("route").unwrap();
+        part.define_target(&sketch("arc"), &arc, given).unwrap();
+        part.begin_step();
         let args = geop_ops_sketch3d::AddSketch3dArgs {
             sketch: line,
             references: Vec::new(),
@@ -384,15 +397,14 @@ fn sketch_curves_are_measured() {
         geop_ops_sketch3d::AddSketch3d::run("route", part, &args).unwrap();
     });
 
-    let curve = EntityRef::SketchCurve {
-        sketch: "arc".into(),
-        curve: half,
+    let curve = PickedElement {
+        target: sketch("arc").name().to_string(),
+        kind: drawn::SKETCH_CURVE.to_string(),
+        name: half.to_string(),
     };
-    let edge = EntityRef::Edge {
-        name: "sketch3d(route,c2)".into(),
-    };
-    let value = |entities: &[EntityRef], label: &str| {
-        let measured = measure(part.current(), entities);
+    let edge = pick(drawn::EDGE, "sketch3d(route,c2)");
+    let value = |entities: &[PickedElement], label: &str| {
+        let measured = measure(&part.current(), entities);
         assert!(measured.error.is_none(), "{measured:?}");
         measured
             .values
@@ -420,4 +432,63 @@ fn sketch_curves_are_measured() {
         1e-9,
     );
     assert_near("between", value(&[curve, edge], "Distance"), 1.0, 1e-6);
+}
+
+/// What the measure tool picks is what a measured element is picked from.
+#[test]
+fn measure_picks_what_it_measures() {
+    let mut accepts = PICKS.to_vec();
+    let mut picked_from = Selected::picked_from();
+    accepts.sort();
+    picked_from.sort();
+    picked_from.dedup();
+    assert_eq!(accepts, picked_from);
+}
+
+/// An element of a part placed is measured where the part is placed: a
+/// corner at the origin of a unit cube placed 10 along `x` is at 10.
+#[test]
+fn placed_parts_are_measured_where_they_are() {
+    use geop_ops_assembly::{Component, Instance, Placement, instance};
+    use geop_ops_parameters::{StateValue, pose_state};
+    use geop_ops_view::{INSTANCE_SEPARATOR, PartView};
+    use std::{collections::BTreeSet, rc::Rc};
+    fn undrawn(_: &PartReader) -> GeopResult<PartView> {
+        Ok(PartView::default())
+    }
+    let mut cube = NamedModel::<S>::new();
+    cube_solid(&mut cube, "c", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap();
+    let component = Rc::new(Component::new(
+        "cube.geop".into(),
+        BTreeSet::from(["cube.geop".to_string()]),
+        "cube.geop".into(),
+        Parameters::default(),
+        built(&cube, None),
+        undrawn,
+    ));
+    let at = Pose::identity().with_position(v3(10.0, 0.0, 0.0));
+    let mut part = BuildPart::default();
+    let state = [(pose_state("p"), StateValue::Pose(at))].into();
+    part.begin_run(&Default::default(), &state);
+    part.begin_step();
+    let placed = Instance {
+        component,
+        placement: Placement::State(pose_state("p")),
+        fixed: true,
+    };
+    part.define_target(&instance("p"), &placed, given).unwrap();
+    part.end_run(0);
+
+    let corner = |name: &str| PickedElement {
+        target: format!("p{INSTANCE_SEPARATOR}{}", model().name()),
+        ..pick(drawn::VERTEX, name)
+    };
+    let measured = measure(&part.current(), &[corner("cube(c,p0,end)")]);
+    assert!(measured.error.is_none(), "{measured:?}");
+    let x = measured.values.iter().find(|m| m.label == "X").unwrap();
+    assert!(x.value.contains(10.0), "{measured:?}");
+    let report = mass_report(&part.current()).unwrap();
+    let body = &report.bodies[0];
+    assert!(body.drawn.iter().all(|face| face.target == format!("p{INSTANCE_SEPARATOR}model")));
+    assert_eq!(body.drawn.len(), 6, "{body:?}");
 }

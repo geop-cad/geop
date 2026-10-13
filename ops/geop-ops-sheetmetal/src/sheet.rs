@@ -30,7 +30,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3, Vector4},
 };
 use geop_core_topology::Body;
-use geop_ops::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer};
 use serde::{Deserialize, Serialize};
 
 use crate::thicken::thicken;

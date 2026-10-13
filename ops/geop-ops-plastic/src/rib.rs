@@ -37,9 +37,9 @@ use geop_core_topology::{
         shell::{Classified, PointClassification, solid_contains},
     },
 };
-use geop_ops::{NamedModel, Namer, ToolReach};
 use geop_ops_booleans::{Combine, Tool, boolean::Reach, extent::face_hull};
 use geop_ops_extrude_revolve::{common::Profile, extrude::extrude, sweep::SweepLoop};
+use geop_ops_model::{NamedModel, Namer, ToolReach};
 
 use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 

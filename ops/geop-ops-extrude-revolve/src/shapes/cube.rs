@@ -15,7 +15,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::SolidId;
-use geop_ops::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer};
 
 /// A box solid spanning `[min, max]`, built as `extrude`'s start cap (the
 /// unit square in `(u, v)`, at `z = max.z`) swept down to `min.z`.
@@ -69,7 +69,7 @@ mod tests {
     use crate::common::testing::render;
     use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
     use geop_core_topology::contains::shell::{PointClassification, shell_contains};
-    use geop_ops::NamedModel;
+    use geop_ops_model::NamedModel;
 
     const MAX: usize = 200;
     const MIN_SUBDIVISION_SIZE: f64 = 1e-3;

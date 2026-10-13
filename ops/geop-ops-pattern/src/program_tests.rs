@@ -5,21 +5,25 @@
 use std::f64::consts::PI;
 
 use crate::{
-    CircularPatternArgs, Direction, LinearPatternArgs, MirrorArgs, MoveBodyArgs, Seeds, Spacing,
+    BodyRef, CircularPatternArgs, Direction, LinearPatternArgs, MirrorArgs, MoveBodyArgs,
+    PatternDirection, Seeds, Spacing, TurnAxis, body,
 };
 use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::Scalar;
-use geop_ops::{Design, EntityRef, NamedModel};
-use geop_ops_booleans::Combine;
+use geop_core_program::element::ElementReference;
+use geop_ops_booleans::{Combine, solid};
 use geop_ops_extrude_revolve::Extents;
-use geop_ops_sketch::Sketch;
+use geop_ops_model::{Design, NamedModel, model};
+use geop_ops_sketch::{Sketch, SketchPlane, sketch_element};
 
 use geop_core_math::geop_error::GeopResult;
-use geop_ops::program::{ProgramFile, Registry};
-use geop_ops::testing::{Built, assert_valid, assert_volume};
-use geop_ops::{origin_axis, origin_plane};
 use geop_ops_booleans::Boolean;
-use geop_ops_extrude_revolve::testing::{both_ways, disc, extrude_sketch, n, outline, sketch};
+use geop_ops_datums::{origin_axis, origin_plane};
+use geop_ops_extrude_revolve::testing::{
+    Built, both_ways, disc, extrude_sketch, n, on_origin, outline, sketch,
+};
+use geop_ops_model::testing::{assert_valid, assert_volume};
+use geop_ops_parameters::{ProgramFile, Registry};
 use geop_ops_sketch3d::AddSketch3d;
 
 use crate::{CircularPattern, LinearPattern, Mirror, MoveBody};
@@ -37,12 +41,27 @@ fn registry() -> GeopResult<Registry> {
 /// A sketch on the Z plane, and `name` its extrude, as `extent` says, a
 /// new body.
 fn extruded(program: &mut ProgramFile, name: &str, sketch: Sketch, extent: Extents) {
-    let plane = origin_plane(FrameAxis::Z);
+    let plane = on_origin(FrameAxis::Z);
     extrude_sketch(program, name, plane, sketch, extent, Combine::NewBody);
 }
 
-fn solid(name: &str) -> Vec<EntityRef> {
-    vec![EntityRef::Solid { name: name.into() }]
+fn bodies(name: &str) -> Vec<BodyRef> {
+    vec![body(name)]
+}
+
+/// Along the origin's axis `axis`.
+fn origin_direction(axis: FrameAxis) -> Option<PatternDirection> {
+    Some(PatternDirection::Datum(origin_axis(axis)))
+}
+
+/// About the origin's axis `axis`.
+fn origin_turn(axis: FrameAxis) -> Option<TurnAxis> {
+    Some(TurnAxis::Datum(origin_axis(axis)))
+}
+
+/// In the origin's plane normal to `normal`.
+fn origin_mirror(normal: FrameAxis) -> Option<SketchPlane> {
+    Some(SketchPlane::Datum(origin_plane(normal)))
 }
 
 /// A plate 8 x 2 x 0.5, and a pin of radius 0.3 at (1, 1) through it — a
@@ -77,9 +96,9 @@ fn row_of_holes_cut_by_a_patterned_tool() {
     program.push(
         "holes",
         LinearPatternArgs {
-            seeds: Seeds::bodies(solid("extrude(pin)"), Combine::cut("extrude(plate)")),
+            seeds: Seeds::bodies(bodies("extrude(pin)"), Combine::cut("extrude(plate)")),
             first: Direction {
-                along: Some(origin_axis(FrameAxis::X)),
+                along: origin_direction(FrameAxis::X),
                 reversed: false,
                 count: 4.0.into(),
                 spacing: Spacing::step(2.0),
@@ -95,7 +114,7 @@ fn row_of_holes_cut_by_a_patterned_tool() {
     // The wall of the third copy's hole is the pin's side, copied — cut
     // where the plate's faces cross it, and named by the cut after it.
     let wall = part.names().iter().any(|(id, name)| {
-        matches!(id, geop_ops::RefId::Face(_))
+        matches!(id, geop_ops_model::RefId::Face(_))
             && name.starts_with("combine(holes,3,linear_pattern(holes,3,extrude(pin,pin_sketch,c1")
     });
     assert!(wall, "no face of the third hole");
@@ -117,8 +136,8 @@ fn bolt_circle_cut_by_a_patterned_tool() {
     program.push(
         "bolts",
         CircularPatternArgs {
-            seeds: Seeds::bodies(solid("extrude(pin)"), Combine::cut("extrude(plate)")),
-            axis: Some(origin_axis(FrameAxis::Z)),
+            seeds: Seeds::bodies(bodies("extrude(pin)"), Combine::cut("extrude(plate)")),
+            axis: origin_turn(FrameAxis::Z),
             reversed: false,
             count: 6.0.into(),
             angle: Spacing::extent(360.0),
@@ -147,8 +166,8 @@ fn half_mirrored_and_joined() {
     program.push(
         "m",
         MirrorArgs {
-            seeds: Seeds::bodies(solid("extrude(half)"), Combine::join("extrude(half)")),
-            plane: Some(origin_plane(FrameAxis::X)),
+            seeds: Seeds::bodies(bodies("extrude(half)"), Combine::join("extrude(half)")),
+            plane: origin_mirror(FrameAxis::X),
         },
     );
     let part = build(&program);
@@ -175,8 +194,8 @@ fn asymmetric_body_mirrored() {
     program.push(
         "m",
         MirrorArgs {
-            seeds: Seeds::bodies(solid("extrude(l)"), Combine::NewBody),
-            plane: Some(origin_plane(FrameAxis::X)),
+            seeds: Seeds::bodies(bodies("extrude(l)"), Combine::NewBody),
+            plane: origin_mirror(FrameAxis::X),
         },
     );
     let part = build(&program);
@@ -209,7 +228,7 @@ fn tool_moved_into_place_and_cut() {
     program.push(
         "mv",
         MoveBodyArgs {
-            bodies: solid("extrude(pin)"),
+            bodies: bodies("extrude(pin)"),
             translation: [4.0, 0.0, 0.0],
             axis: None,
             angle: 0.0,
@@ -246,14 +265,14 @@ fn circular_patterns_sweep() {
             "r",
             CircularPatternArgs {
                 seeds: Seeds::bodies(
-                    solid("extrude(b)"),
+                    bodies("extrude(b)"),
                     if joined {
                         Combine::join("extrude(b)")
                     } else {
                         Combine::NewBody
                     },
                 ),
-                axis: Some(origin_axis(FrameAxis::Z)),
+                axis: origin_turn(FrameAxis::Z),
                 reversed: false,
                 count: (count as f64).into(),
                 angle: angle.clone(),
@@ -290,17 +309,17 @@ fn three_turned_boxes_joined() {
     program.push(
         "ab",
         geop_ops_booleans::BooleanArgs {
-            a: "extrude(a)".into(),
-            b: "extrude(b)".into(),
-            op: geop_ops_booleans::boolean::BooleanOp::Union,
+            a: solid("extrude(a)"),
+            b: solid("extrude(b)"),
+            op: geop_ops_model::BooleanOp::Union,
         },
     );
     program.push(
         "abc",
         geop_ops_booleans::BooleanArgs {
-            a: "boolean(ab)".into(),
-            b: "extrude(c)".into(),
-            op: geop_ops_booleans::boolean::BooleanOp::Union,
+            a: solid("boolean(ab)"),
+            b: solid("extrude(c)"),
+            op: geop_ops_model::BooleanOp::Union,
         },
     );
     let part = program.build_model(registry).unwrap();
@@ -333,9 +352,9 @@ fn three_turned_boxes_one_a_turned_copy_joined() {
     program.push(
         "c",
         MoveBodyArgs {
-            bodies: solid("extrude(a)"),
+            bodies: bodies("extrude(a)"),
             translation: [0.0; 3],
-            axis: Some(origin_axis(FrameAxis::Z)),
+            axis: origin_turn(FrameAxis::Z),
             angle: 26.0,
             copy: true,
             combine: Combine::NewBody,
@@ -344,17 +363,17 @@ fn three_turned_boxes_one_a_turned_copy_joined() {
     program.push(
         "ab",
         geop_ops_booleans::BooleanArgs {
-            a: "extrude(a)".into(),
-            b: "extrude(b)".into(),
-            op: geop_ops_booleans::boolean::BooleanOp::Union,
+            a: solid("extrude(a)"),
+            b: solid("extrude(b)"),
+            op: geop_ops_model::BooleanOp::Union,
         },
     );
     program.push(
         "abc",
         geop_ops_booleans::BooleanArgs {
-            a: "boolean(ab)".into(),
-            b: "move(c,extrude(a))".into(),
-            op: geop_ops_booleans::boolean::BooleanOp::Union,
+            a: solid("boolean(ab)"),
+            b: solid("move(c,extrude(a))"),
+            op: geop_ops_model::BooleanOp::Union,
         },
     );
     let part = program.build_model(registry).unwrap();
@@ -406,8 +425,8 @@ fn turned_copy_joined_stays_tight() {
     program.push(
         "r",
         CircularPatternArgs {
-            seeds: Seeds::bodies(solid("extrude(b)"), Combine::join("extrude(b)")),
-            axis: Some(origin_axis(FrameAxis::Z)),
+            seeds: Seeds::bodies(bodies("extrude(b)"), Combine::join("extrude(b)")),
+            axis: origin_turn(FrameAxis::Z),
             reversed: false,
             count: 2.0.into(),
             angle: Spacing::step(13.0),
@@ -438,15 +457,15 @@ fn linear_patterns_and_moves_sweep() {
         program.push(
             "holes",
             LinearPatternArgs {
-                seeds: Seeds::bodies(solid("extrude(pin)"), Combine::cut("extrude(plate)")),
+                seeds: Seeds::bodies(bodies("extrude(pin)"), Combine::cut("extrude(plate)")),
                 first: Direction {
-                    along: Some(origin_axis(FrameAxis::X)),
+                    along: origin_direction(FrameAxis::X),
                     reversed: false,
                     count: (along as f64).into(),
                     spacing: Spacing::step(1.2),
                 },
                 second: (across > 1).then(|| Direction {
-                    along: Some(origin_axis(FrameAxis::Y)),
+                    along: origin_direction(FrameAxis::Y),
                     reversed: false,
                     count: (across as f64).into(),
                     spacing: Spacing::extent(1.3 * (across - 1) as f64),
@@ -466,11 +485,12 @@ fn linear_patterns_and_moves_sweep() {
         program.push(
             "mv",
             MoveBodyArgs {
-                bodies: solid("extrude(plate)"),
+                bodies: bodies("extrude(plate)"),
                 translation: [0.3, -1.7, 2.2],
-                axis: Some(EntityRef::Edge {
-                    name: "extrude(plate,plate_sketch,p0)".into(),
-                }),
+                axis: Some(TurnAxis::Edge(ElementReference::new(
+                    model(),
+                    "extrude(plate,plate_sketch,p0)",
+                ))),
                 angle: degrees,
                 copy: true,
                 combine: Combine::NewBody,
@@ -511,24 +531,22 @@ fn holes_patterned_along_sketch_lines() {
         across.add_point(n(-1.0), n(1.0)),
     );
     let line = across.add_line(a, b);
-    program.push("across", sketch(origin_plane(FrameAxis::Z), across));
+    program.push("across", sketch(on_origin(FrameAxis::Z), across));
     program.push(
         "holes",
         LinearPatternArgs {
-            seeds: Seeds::bodies(solid("extrude(pin)"), Combine::cut("extrude(plate)")),
+            seeds: Seeds::bodies(bodies("extrude(pin)"), Combine::cut("extrude(plate)")),
             first: Direction {
-                along: Some(EntityRef::Edge {
-                    name: "sketch3d(rail,c2)".into(),
-                }),
+                along: Some(PatternDirection::Edge(ElementReference::new(
+                    model(),
+                    "sketch3d(rail,c2)",
+                ))),
                 reversed: false,
                 count: 4.0.into(),
                 spacing: Spacing::step(2.0),
             },
             second: Some(Direction {
-                along: Some(EntityRef::SketchCurve {
-                    sketch: "across".into(),
-                    curve: line,
-                }),
+                along: Some(PatternDirection::Sketch(sketch_element("across", line))),
                 reversed: true,
                 count: 2.0.into(),
                 spacing: Spacing::step(0.65),

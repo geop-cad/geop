@@ -8,7 +8,7 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_core_topology::build::BuiltBody;
-use geop_ops::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer};
 
 /// The straight path along `plane.w()` from `from` to `to` (in multiples of
 /// `w`): the profile, drawn in the plane's `(u, v)`, at stations `start`
@@ -72,7 +72,7 @@ mod tests {
     use geop_core_geometry::nurb_curve::{NurbCurve2D, sqrt2_over_2};
     use geop_core_math::for_all_scalars;
     use geop_core_math::vector::Vector3;
-    use geop_ops::testing::{assert_model_valid, assert_model_valid_sheets};
+    use geop_ops_model::testing::{assert_model_valid, assert_model_valid_sheets};
 
     fn unit_square<S: Scalar>() -> Vec<NurbCurve2D<S>> {
         polygon(&[v2(0.0, 0.0), v2(1.0, 0.0), v2(1.0, 1.0), v2(0.0, 1.0)]).unwrap()
@@ -385,7 +385,7 @@ mod naming_tests {
         .unwrap();
         model.check_names().unwrap();
 
-        let description = geop_ops::PartDescription::of(&model).unwrap();
+        let description = geop_ops_model::PartDescription::of(&model).unwrap();
         assert_eq!(description.solids.len(), 1);
         assert_eq!(description.solids["extrude(box)"][0].len(), 6);
         let mut side = description.faces["extrude(box,c0)"].outer.clone();

@@ -199,11 +199,11 @@ fn a_step_sees_only_the_datums_added_before_it() {
         [
             (
                 "m".to_string(),
-                "target `datums` is not defined before any step".to_string()
+                "target `datums` is not defined by the step at position 0 or before".to_string()
             ),
             (
                 "s1".to_string(),
-                "target `datums` failed in the step at position 0: target `datums` is not defined before any step"
+                "target `datums` failed in the step at position 1: target `datums` is not defined by the step at position 0 or before"
                     .to_string()
             ),
         ]

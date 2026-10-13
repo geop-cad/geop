@@ -1,5 +1,6 @@
-//! Test-only fixture: a plain axis-aligned unit-cube-shaped solid, described
-//! whole and built at once (see [`crate::build`]).
+//! Test fixture — this crate's tests, and others' with the `testing`
+//! feature: a plain axis-aligned unit-cube-shaped solid, described whole
+//! and built at once (see [`crate::build`]).
 //!
 //! This crate sits *below* `geop-ops-extrude-revolve` in the workspace's
 //! dependency order (that crate is what actually builds shapes like a real

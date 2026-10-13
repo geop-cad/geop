@@ -21,15 +21,13 @@ use std::{
 use clap::{Parser, Subcommand};
 use geop_cad_base::{
     Editor, Program,
-    operations::{Runner, outputs, runner, workspace},
+    operations::{self, Runner, outputs, workspace},
+    workspace::FileStore,
 };
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_ops::{
-    output::Output,
-    parameters::Values,
-    program::Files,
-    solving::{check as check_mates, solve},
-};
+use geop_ops_assembly::solving::{Rerun, check as check_mates, solve};
+use geop_ops_output::Output;
+use geop_ops_parameters::Settings;
 
 #[derive(Parser)]
 #[command(
@@ -147,7 +145,7 @@ fn default_output(program: &Path) -> GeopResult<PathBuf> {
 /// The program files on disk, by their paths.
 struct Disk;
 
-impl Files for Disk {
+impl FileStore for Disk {
     /// A file that is not UTF-8 throughout — a STEP file with a Latin-1
     /// name in it — is read with what is not replaced.
     fn read(&self, path: &str) -> GeopResult<String> {
@@ -171,14 +169,18 @@ fn build(path: &Path) -> GeopResult<(Program, Runner, Vec<String>)> {
     // A standard part — `std:iso4032_hex_nut.geop` — builds too.
     let workspace = workspace(Disk);
     let mut program = Program::from_json(&workspace.files().read(&path)?)?;
-    let library = workspace.scope(&path);
-    let mut runner = runner();
-    program.run(&mut runner, &Values::new(), &library)?;
-    let report = check_mates(runner.part.current())?;
+    let mut runner = operations::build(&program, &path, workspace.scope(&path))?;
+    let report = check_mates(&runner.part.current())?;
     if !report.converged {
-        let (moved, _) = solve(&mut runner.part, &program.state, &[], None)?;
+        let inputs = program.inputs(&Settings::new());
+        let mut rerun = Rerun {
+            runner: &mut runner,
+            program: &program.program,
+            inputs: &inputs,
+        };
+        let (moved, _) = solve(&mut rerun, &program.state, &[], None)?;
         program.state.extend(moved);
-        program.run(&mut runner, &Values::new(), &library)?;
+        program.run(&mut runner, &Settings::new())?;
     }
     Ok((program, runner, report.failed))
 }
@@ -204,7 +206,12 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
     let exporter = outputs.exporter_for(format)?;
     let options = options(&args.options)?;
     let today = today();
-    let mut built = Output::new(&mut runner.part, &program.state, None, &today);
+    let mut built = Output {
+        runner: &mut runner,
+        file: &program,
+        editing: None,
+        date: &today,
+    };
     let export = exporter.export(&mut built, Some(format), &options)?;
     std::fs::write(&output, export.bytes()).map_err(io_err("writing", &output))?;
 
@@ -372,7 +379,7 @@ mod tests {
     use geop_cad_base::examples;
 
     use geop_core_math::{primitives::Pose, scalars::Scalar};
-    use geop_ops::Design;
+    use geop_ops_model::Design;
 
     use super::*;
 
@@ -472,7 +479,7 @@ mod tests {
         let solids = |path: &Path| {
             let (_, runner, _) = build(path).unwrap();
             let part = runner.part.current();
-            part.retrieve_target(&geop_ops::model())
+            geop_ops_model::read_model(&part)
                 .unwrap()
                 .solid_names()
                 .len()
@@ -608,8 +615,8 @@ mod tests {
         // Its state stale, it is solved for before it is written.
         let mut stale = examples::pin_in_plate_assembly();
         stale.state.insert(
-            geop_ops::model::pose_parameter("pin"),
-            geop_ops::ParamValue::Pose(
+            geop_ops_parameters::pose_state("pin"),
+            geop_ops_parameters::StateValue::Pose(
                 Pose::from_euler(
                     geop_core_math::vector::Vector3::from_array(
                         [3.5, 1.0, 0.0].map(Design::from_f64),
@@ -692,7 +699,12 @@ mod tests {
         let (program, mut runner, _) = build(&path).unwrap();
         let outputs = outputs().unwrap();
         let exporter = outputs.get_exporter("flat_pattern").unwrap();
-        let mut built = Output::new(&mut runner.part, &program.state, None, "");
+        let mut built = Output {
+            runner: &mut runner,
+            file: &program,
+            editing: None,
+            date: "",
+        };
         let export = exporter
             .export(&mut built, None, &serde_json::Value::Null)
             .unwrap();

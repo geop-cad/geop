@@ -15,7 +15,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::SolidId;
-use geop_ops::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer};
 
 /// Which axis a cylinder's own axis runs parallel to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,7 +146,7 @@ mod tests {
     use super::*;
     use crate::common::testing::render;
     use geop_core_math::for_all_scalars;
-    use geop_ops::testing::{assert_model_valid, assert_model_valid_sheets};
+    use geop_ops_model::testing::{assert_model_valid, assert_model_valid_sheets};
 
     fn check_revolved_cylinder_is_valid<S: Scalar>() {
         let mut model = NamedModel::<S>::new();

@@ -40,7 +40,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{Body, EdgeId, FaceId, Model, Sense, VertexId};
-use geop_ops::NamedModel;
+use geop_ops_model::NamedModel;
 
 use crate::naming::BooleanNaming;
 use crate::remesh::{

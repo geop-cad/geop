@@ -53,9 +53,22 @@ pub struct Run<'r, I, S: Solvable> {
     pub inputs: &'r BTreeMap<String, I>,
 }
 
+thread_local! {
+    static RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times this thread has run a program for a question about its
+/// constraints — a solve, an enclosure, how free its values are — ever.
+/// Each run costs what the program's steps do, so a test can bound the
+/// work a question takes by the runs it makes, rather than time it.
+pub fn runs() -> usize {
+    RUNS.get()
+}
+
 impl<I: Input, S: Solvable> Run<'_, I, S> {
     /// The part the program builds at `state`.
     fn at(&mut self, state: &BTreeMap<String, S>) -> &Part<I, S> {
+        RUNS.set(RUNS.get() + 1);
         self.runner.run(self.program, self.inputs, state);
         &self.runner.part
     }

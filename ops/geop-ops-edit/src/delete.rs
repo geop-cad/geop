@@ -1,14 +1,16 @@
 //! [`DeleteBody`]: delete whole bodies — solids, and sheets of faces
 //! standing on their own — from the part.
 
-use geop_core_math::geop_error::GeopResult;
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, EntityRef, NamedModel,
-    operation::{BuildReader, PartOperation, Role, StepContext, resolve_bodies},
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
     part_operation,
-    ui::{EditForm, FormState},
+    part_operation::PartOperation,
 };
+use geop_core_math::geop_error::GeopResult;
+use geop_core_program::element::ElementReference;
+use geop_ops_model::{Body, Design, ModelOperation, NamedModel, build_model, resolve_bodies};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 /// Deletes the bodies `bodies` refers to, and everything of them: a solid
@@ -24,14 +26,14 @@ pub struct DeleteBody;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct DeleteBodyArgs {
     /// The bodies to delete: solids, or a face of each sheet.
-    pub bodies: Vec<EntityRef>,
+    pub bodies: Vec<ElementReference<NamedModel<Design>, Body>>,
 }
 
 part_operation!(DeleteBody(DeleteBodyArgs));
 
 impl PartOperation for DeleteBody {
+    const KIND: &'static str = "delete_body";
     const INFO: OperationInfo = OperationInfo::new(
-        "delete_body",
         "Delete body",
         "Delete solids, and faces standing on their own.",
         OperationGroup::Bodies,
@@ -39,6 +41,9 @@ impl PartOperation for DeleteBody {
     )
     .icon(crate::icons::DELETE_BODY);
     type Args = DeleteBodyArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
 
     /// Nothing picked yet: what to delete is never a guess.
@@ -46,32 +51,22 @@ impl PartOperation for DeleteBody {
         DeleteBodyArgs::default()
     }
 
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        _: &str,
-        args: &DeleteBodyArgs,
-    ) -> GeopResult<()> {
-        let bodies = resolve_bodies(&args.bodies, &mut &*model)?;
-        model.delete_bodies(&bodies)?;
-        Ok(())
+    fn run(step: &str, part: &mut BuildPart, args: &DeleteBodyArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
     /// The bodies, picked.
     fn form<'a>(
-        _: &'a StepContext<'a>,
+        context: &'a StepContext<'a>,
         args: &DeleteBodyArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, DeleteBodyArgs> {
         let mut f = EditForm::<Design, DeleteBodyArgs>::default();
-        let roles = [Role::Solid, Role::Sheet];
-        let bodies = args.bodies.clone();
-        f.reference(
+        f.pick(
             "bodies",
             "bodies",
-            bodies,
-            &roles,
-            None,
+            &context.before,
+            &args.bodies,
             true,
             |edit, picked| edit.args.bodies = picked,
         );
@@ -79,14 +74,32 @@ impl PartOperation for DeleteBody {
     }
 }
 
+impl ModelOperation for DeleteBody {
+    /// The bodies are resolved in the model as the steps before left it,
+    /// which `model` is a copy of.
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &PartReader,
+        _: &str,
+        args: &DeleteBodyArgs,
+    ) -> GeopResult<()> {
+        let bodies = resolve_bodies(reader, &args.bodies)?;
+        model.delete_bodies(&bodies)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geop_core_math::scalars::ScalInF64 as S;
-    use geop_ops::operation::apply_to_model;
     use geop_ops_extrude_revolve::shapes::{block, block_part};
+    use geop_ops_model::{model, testing::apply_to_model};
 
-    fn two_cubes() -> NamedModel<S> {
+    fn body(name: impl Into<String>) -> ElementReference<NamedModel<Design>, Body> {
+        ElementReference::new(model(), name)
+    }
+
+    fn two_cubes() -> NamedModel<Design> {
         let mut part = block_part("a", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
         block(&mut part, "b", [2.0, 0.0, 0.0], [3.0, 1.0, 1.0]);
         part
@@ -104,7 +117,7 @@ mod tests {
             .unwrap()
             .len();
         let args = DeleteBodyArgs {
-            bodies: vec![EntityRef::Solid { name: b }],
+            bodies: vec![body(b)],
         };
         let part = apply_to_model::<DeleteBody>(part, "del", &args).unwrap();
         assert_eq!(part.solid_names().len(), 1);
@@ -123,7 +136,7 @@ mod tests {
         let face = part.name_of(face).unwrap().to_string();
         let name = part.name_of(a).unwrap().to_string();
         let args = DeleteBodyArgs {
-            bodies: vec![EntityRef::Face { name: face }, EntityRef::Solid { name }],
+            bodies: vec![body(face), body(name)],
         };
         let part = apply_to_model::<DeleteBody>(part, "del", &args).unwrap();
         assert_eq!(part.solid_names().len(), 1);
@@ -131,15 +144,25 @@ mod tests {
         part.check_names().unwrap();
     }
 
-    /// Nothing picked, or something that is no body, is refused.
+    /// Nothing picked, or a name of something that is no body — an edge —
+    /// is refused.
     #[test]
     fn refuses_what_is_no_body() {
         let error = apply_to_model::<DeleteBody>(two_cubes(), "del", &DeleteBodyArgs::default())
             .expect_err("refused");
         assert!(error.root_message().contains("pick"), "{error:?}");
+        let part = two_cubes();
+        let edge = part
+            .topology()
+            .edges
+            .keys()
+            .copied()
+            .min_by_key(|e| e.0)
+            .unwrap();
         let args = DeleteBodyArgs {
-            bodies: vec![EntityRef::Sketch { name: "s".into() }],
+            bodies: vec![body(part.name_of(edge).unwrap())],
         };
-        assert!(apply_to_model::<DeleteBody>(two_cubes(), "del", &args).is_err());
+        let error = apply_to_model::<DeleteBody>(part, "del", &args).expect_err("refused");
+        assert!(error.root_message().contains("no body"), "{error:?}");
     }
 }

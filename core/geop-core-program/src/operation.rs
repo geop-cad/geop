@@ -22,6 +22,14 @@ pub trait Operation: 'static {
     ) -> GeopResult<()>;
 }
 
+/// Arguments that say which operation they are for: what a program written
+/// in Rust — an example, a standard part, a test — pushes as a step without
+/// naming the operation again.
+pub trait StepArgs: Serialize {
+    /// The kind of the operation they are for (see [`Operation::KIND`]).
+    const KIND: &'static str;
+}
+
 /// An [`Operation`] with its types erased, so that operations of all kinds
 /// can be kept in one [`crate::operation_registry::OperationRegistry`].
 /// Every operation is one, through its value. Arguments come as saved.

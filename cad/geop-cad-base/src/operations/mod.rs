@@ -1,30 +1,33 @@
 //! The operations the editor offers, as the one set its programs are
-//! written in ([`registry`]), the program types over it, and the one way a
-//! program is built outside the editor ([`build`]).
+//! written in and edited with ([`editors`]), the program types over it, and
+//! the one way a program is built outside the editor ([`build`]).
 //!
 //! Every operation is defined by a crate of its own (`geop_ops_*`, imported
-//! below), as a [`geop_ops::operation::PartOperation`]. Which of them an
+//! below), as a [`geop_core_editor::part_operation::PartOperation`]. Which of them an
 //! editor offers is the editor's choice, made here (the `operations!` list) — and so
 //! are the exporters and inspectors ([`outputs`]).
 
 use std::{collections::BTreeMap, rc::Rc};
 
+use geop_core_editor::editable::{Editable, Listed};
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::operation::{Operation, OperationInfo};
-use geop_ops::{
-    output::{Outputs, Stl},
-    parameters::Values,
-    placed::Library,
-    program::{Files, ProgramFile, Registry},
+use geop_core_program::operation::Operation;
+use geop_ops_assembly::Library;
+use geop_ops_model::Design;
+use geop_ops_output::Outputs;
+use geop_ops_parameters::{ProgramFile, Registry, Settings, StateValue};
+
+pub use geop_ops_parameters::Runner;
+
+use crate::{
+    part,
+    stdlib::WithStandardParts,
+    workspace::{self, FileStore},
 };
-
-pub use geop_ops::program::Runner;
-
-use crate::stdlib::WithStandardParts;
-use geop_ops_assembly::{AddPart, PartPattern};
+use geop_ops_add_datum::AddDatum;
+use geop_ops_assembly::{AddPart, PartPattern, Stl};
 use geop_ops_bom::{BillOfMaterials, BomCsv};
 use geop_ops_booleans::{Boolean, Split};
-use geop_ops_datums::AddDatum;
 use geop_ops_drawing::{Drawing, DrawingExporter};
 use geop_ops_edit::{DeleteBody, ExtractFace, ProjectCurve};
 use geop_ops_extrude_revolve::{Extrude, Loft, Revolve, Sweep};
@@ -45,6 +48,16 @@ use geop_ops_surface::{
 };
 use geop_ops_urdf::Urdf;
 
+#[cfg(test)]
+mod add_datum_editor_tests;
+#[cfg(test)]
+mod assembly_editor_tests;
+#[cfg(test)]
+mod sketch3d_editor_tests;
+#[cfg(test)]
+mod sketch_editor_tests;
+#[cfg(test)]
+mod step_export_tests;
 #[cfg(test)]
 mod assembly_scale_tests;
 #[cfg(test)]
@@ -82,24 +95,35 @@ mod urdf_tests;
 #[cfg(test)]
 mod view_tests;
 
+/// The operations of the editor's programs, and how each is edited.
+pub type Editors = geop_core_editor::editable::Editors<Design, StateValue, Design>;
+
 /// The operations the editor offers, in the order it offers them within a
-/// group and tier: the registry its programs are run with ([`registry`]),
-/// and what it lists ([`infos`]).
+/// group and tier: how its programs are edited ([`editors`]), and what it
+/// lists ([`infos`]).
 macro_rules! operations {
     ($($operation:ident),* $(,)?) => {
-        /// The operations the editor offers, as its programs are run with.
-        pub fn registry() -> GeopResult<Registry> {
-            let registry = Registry::default();
-            $(let registry = registry.with($operation)?;)*
-            Ok(registry)
+        /// The operations the editor offers, and how each is edited.
+        pub fn editors() -> GeopResult<Editors> {
+            let editors = Editors::default();
+            $(let editors = editors.with($operation)?;)*
+            Ok(editors)
         }
 
         /// What each operation the editor offers is, in the order it offers
         /// them.
-        pub fn infos() -> Vec<&'static OperationInfo> {
-            vec![$(&<$operation as Operation>::INFO),*]
+        pub fn infos() -> Vec<Listed> {
+            vec![$(Listed {
+                kind: <$operation as Operation>::KIND,
+                info: &<$operation as Editable>::INFO,
+            }),*]
         }
     };
+}
+
+/// The operations the editor offers, as its programs are run with.
+pub fn registry() -> GeopResult<Registry> {
+    editors()?.operations()
 }
 
 operations! {
@@ -148,7 +172,7 @@ operations! {
     Drawing,
 }
 
-/// The exporters and inspectors the editor offers (see [`geop_ops::output`]),
+/// The exporters and inspectors the editor offers (see [`geop_ops_output`]),
 /// in the order it offers them: the first exporter's first format is what
 /// a part is written in unless told otherwise.
 pub fn outputs() -> GeopResult<Outputs> {
@@ -170,12 +194,11 @@ pub type Program = ProgramFile;
 
 /// The workspace the editor builds programs in: a set of program files, and
 /// the standard parts beside them.
-pub type Workspace<F = BTreeMap<String, String>> =
-    geop_ops::program::Workspace<WithStandardParts<F>>;
+pub type Workspace<F = BTreeMap<String, String>> = workspace::Workspace<WithStandardParts<F>>;
 
 /// The workspace of `files`, beside the standard parts, whose programs are
 /// written in the editor's operations.
-pub fn workspace<F: Files + 'static>(files: F) -> Rc<Workspace<F>> {
+pub fn workspace<F: FileStore + 'static>(files: F) -> Rc<Workspace<F>> {
     Workspace::new(WithStandardParts(files), registry)
 }
 
@@ -184,10 +207,13 @@ pub fn runner() -> Runner {
     Runner::new(registry().expect("the editor's operations each have a name of their own"))
 }
 
-/// Builds `program` with `library` — for a program on its own, the scope
-/// of an empty [`workspace`]: the runner, holding the part it built.
-pub fn build(program: &Program, library: &Rc<dyn Library>) -> GeopResult<Runner> {
+/// Builds `program`, the file `file`, with `library` — for a program on
+/// its own, the scope of an empty [`workspace`]: the runner, holding the
+/// part it built.
+pub fn build(program: &Program, file: &str, library: Rc<dyn Library>) -> GeopResult<Runner> {
     let mut runner = runner();
-    program.run(&mut runner, &Values::new(), library)?;
+    let overrides = Settings::new();
+    runner.given = Some(part::given(program.about(file, &overrides), library));
+    program.run(&mut runner, &overrides)?;
     Ok(runner)
 }

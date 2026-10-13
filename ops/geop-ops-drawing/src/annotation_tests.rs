@@ -2,12 +2,16 @@
 //! written out, and refused where a view cannot show what they measure.
 
 use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar};
-use geop_ops::{RefId, operation::BuildView, output::sheet::to_dxf, testing::built};
+use geop_ops_model::RefId;
+use geop_ops_output::sheet::to_dxf;
+use geop_ops_parameters::PartReader;
 use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder, v3};
 
 use crate::{
     Along, Annotation, DrawingArgs, DrawnView, EdgeShape, Layout, Leader, Pickable, Target,
-    ViewKind, compose, layer, layout, testing::Part, writer_tests::read_dxf,
+    ViewKind, compose, layer, layout,
+    testing::{Part, built},
+    writer_tests::read_dxf,
 };
 
 const FRONT: DrawnView = DrawnView::View(ViewKind::Front);
@@ -69,7 +73,7 @@ fn edges(layout: &Layout, view: DrawnView, shape: fn(&EdgeShape) -> bool) -> Vec
 
 /// The text the dimension `annotation` shows on `part`'s drawing, laid out
 /// as `laid`: an annotation does not move the views.
-fn value(part: BuildView, laid: &Layout, annotation: Annotation) -> String {
+fn value(part: &PartReader, laid: &Layout, annotation: Annotation) -> String {
     annotation
         .drawn(part, laid)
         .unwrap()
@@ -87,7 +91,7 @@ fn value(part: BuildView, laid: &Layout, annotation: Annotation) -> String {
 fn every_annotation_measures_its_view() {
     let named = part();
     let build = built(&named);
-    let part = build.current();
+    let part = &build.current();
     let laid = layout(part, &args(Vec::new()), "", &[]).unwrap();
     // The box's corner at `(x, y, z)`, by name.
     let at = |x: f64, y: f64, z: f64| {
@@ -196,7 +200,7 @@ fn every_annotation_measures_its_view() {
 fn annotations_a_view_cannot_show_are_refused() {
     let named = part();
     let build = built(&named);
-    let part = build.current();
+    let part = &build.current();
     let laid = layout(part, &args(Vec::new()), "", &[]).unwrap();
     let circle = edges(&laid, TOP, |s| matches!(s, EdgeShape::Circle { .. }))[0].clone();
     let radius = |view| Annotation::Radius {

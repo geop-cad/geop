@@ -1,18 +1,19 @@
 //! Extending a flat square and a Coons patch past their edges.
 
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_ops::NamedModel;
-use geop_ops::operation::apply_to_model;
 use geop_ops_extrude_revolve::shapes::block_part;
+use geop_ops_model::NamedModel;
+use geop_ops_model::testing::apply_to_model;
 
 use super::*;
 use crate::boundary::tests::{coons_sheet, edge_between, line, refused, rising_arc, wavy_top};
+use crate::test_refs::*;
 use crate::thicken::tests::square_sheet;
-use geop_ops::testing::assert_valid_sheets;
+use geop_ops_model::testing::assert_valid_sheets;
 
 fn extended(part: NamedModel<S>, edge: &str, distance: f64) -> GeopResult<NamedModel<S>> {
     let args = ExtendSurfaceArgs {
-        edge: edge.into(),
+        edge: named(edge),
         distance,
     };
     apply_to_model::<ExtendSurface>(part, "x", &args)

@@ -48,7 +48,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::build::BuiltBody;
-use geop_ops::{NamedModel, Namer, operation::Chain};
+use geop_ops_model::{Chain, NamedModel, Namer};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -1388,7 +1388,7 @@ mod tests {
     use crate::shapes::{circle, plane, square, v2, v3};
     use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve2D, sqrt2_over_2};
     use geop_core_math::for_all_scalars;
-    use geop_ops::testing::{assert_model_valid, assert_model_valid_sheets};
+    use geop_ops_model::testing::{assert_model_valid, assert_model_valid_sheets};
 
     /// The `yz` plane through `origin`: square to a path along `x`.
     fn yz<S: Scalar>(origin: Vector3<S>) -> CoordinateSystem<S> {

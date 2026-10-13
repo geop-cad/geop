@@ -27,7 +27,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::Sense;
-use geop_ops::Namer;
+use geop_ops_model::Namer;
 
 use crate::sheet::Sheet;
 

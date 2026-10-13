@@ -4,41 +4,42 @@
 //! the recipe it is: `extrude(box,end)` is the end cap of the step `box`,
 //! whatever internal id it happens to get.
 
-use geop_ops::operation::{ResolveEntity, Seen};
-use geop_ops_extrude_revolve::Output;
 use std::collections::BTreeMap;
 
+use geop_core_editor::numeric_input::NumericInput;
 use geop_core_math::{
     primitives::{DatumComponent, FrameAxis, Pose},
     scalars::Scalar,
     vector::Vector3,
 };
+use geop_core_program::element::ElementReference;
 use geop_core_sketch::{CurveId, PointId};
-use geop_ops::{
-    Design, EntityRef, ORIGIN, ParamValue,
-    model::pose_parameter,
-    origin_plane,
-    parameters::Values,
-    parameters::{Material, Parameter, ParameterKind, Parameters, Row},
-};
-use geop_ops_assembly::{AddPartArgs, JointKind, Kind, Mate, Motion, joint_parameter};
-use geop_ops_booleans::{Combine, SplitArgs};
-use geop_ops_datums::{AddDatumArgs, Construction};
+use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
+use geop_ops_assembly::{AddPartArgs, JointKind, Kind, Mate, MateEntity, Motion, joint_parameter};
+use geop_ops_booleans::{Combine, SplitArgs, solid};
+use geop_ops_datums::{ORIGIN, component_name, datum, origin_axis, origin_plane};
 use geop_ops_extrude_revolve::{
-    Extent, Extents, ExtrudeArgs, LoftArgs, Orientation, RevolveArgs, SweepArgs,
+    Extent, Extents, ExtrudeArgs, LoftArgs, Orientation, Output, PathRef, RevolveArgs, RevolveAxis,
+    SweepArgs,
 };
 use geop_ops_fillet::FilletArgs;
-use geop_ops_hole::{HoleArgs, HoleKind, Standard, iso::Fit};
-use geop_ops_pattern::{Direction, LinearPatternArgs, Seeds, Spacing};
+use geop_ops_hole::{HoleArgs, HoleCentre, HoleKind, Standard, iso::Fit};
+use geop_ops_model::{Design, PartDescription, element, read_model};
+use geop_ops_parameters::{
+    Material, Parameter, ParameterKind, Parameters, Setting, Settings, StateValue, StateValues,
+    parameters::Row, pose_state,
+};
+use geop_ops_pattern::{Direction, LinearPatternArgs, PatternDirection, Seeds, Spacing, feature};
 use geop_ops_sheetmetal::{
     BaseFlangeArgs, Corner, EdgeFlangeArgs, FlangePosition, LengthReference, SheetCutArgs,
-    SheetMetalRules,
+    SheetMetalRules, edge,
 };
 use geop_ops_sketch::{
-    AddSketchArgs, Constraint, Sketch,
-    references::{Reference, Source},
+    AddSketchArgs, Constraint, Sketch, SketchPlane,
+    references::{Projected, Reference, Source},
+    sketch, sketch_element, whole_sketch,
 };
-use geop_ops_sketch3d::{AddSketch3dArgs, Constraint3d, Sketch3d};
+use geop_ops_sketch3d::{AddSketch3dArgs, Constraint3d, CurveSource, Sketch3d, sketch3d_path};
 use geop_ops_subd::{Cage, Mirror, SubdArgs};
 use geop_ops_surface::NetworkSurfaceArgs;
 
@@ -53,6 +54,16 @@ type P2 = [f64; 2];
 /// A number of an example, as design data.
 pub(crate) fn n(x: f64) -> Design {
     Design::from_f64(x)
+}
+
+/// The flat face `name` of the part, as a plane to sketch on.
+fn on_face(name: impl Into<String>) -> SketchPlane {
+    SketchPlane::Face(element(name))
+}
+
+/// The plane of the origin normal to `normal`, as a plane to sketch on.
+fn on_origin(normal: FrameAxis) -> SketchPlane {
+    SketchPlane::Datum(origin_plane(normal))
 }
 
 /// A pose of an example: at `position`, turned by `degrees` (see
@@ -146,12 +157,12 @@ pub fn box_with_drill_hole() -> Program {
     rectangle(&mut outline, [0.0, 0.0], 2.0, 2.0);
     program.push(
         "outline",
-        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(outline)),
+        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)),
     );
     program.push(
         "box",
         ExtrudeArgs {
-            sketch: "outline".into(),
+            sketch: whole_sketch("outline"),
             extent: Extents::blind(1.0),
             output: Output::Solid(Combine::NewBody),
         },
@@ -161,17 +172,12 @@ pub fn box_with_drill_hole() -> Program {
     circle(&mut hole, [1.0, 1.0], 0.4);
     program.push(
         "hole_sketch",
-        AddSketchArgs::on(
-            EntityRef::Face {
-                name: "extrude(box,end)".into(),
-            },
-            solved(hole),
-        ),
+        AddSketchArgs::on(on_face("extrude(box,end)"), solved(hole)),
     );
     program.push(
         "hole",
         ExtrudeArgs {
-            sketch: "hole_sketch".into(),
+            sketch: whole_sketch("hole_sketch"),
             extent: Extents::blind(-0.5),
             output: Output::Solid(Combine::cut("extrude(box)")),
         },
@@ -193,12 +199,12 @@ pub fn bracket() -> Program {
     rectangle(&mut outline, [0.0, 0.0], 40.0, 40.0);
     program.push(
         "outline",
-        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(outline)),
+        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)),
     );
     program.push(
         "block",
         ExtrudeArgs {
-            sketch: "outline".into(),
+            sketch: whole_sketch("outline"),
             extent: Extents::blind(10.0),
             output: Output::Solid(Combine::NewBody),
         },
@@ -208,17 +214,12 @@ pub fn bracket() -> Program {
     circle(&mut hole, [20.0, 20.0], 3.0);
     program.push(
         "hole_sketch",
-        AddSketchArgs::on(
-            EntityRef::Face {
-                name: "extrude(block,end)".into(),
-            },
-            solved(hole),
-        ),
+        AddSketchArgs::on(on_face("extrude(block,end)"), solved(hole)),
     );
     program.push(
         "hole",
         ExtrudeArgs {
-            sketch: "hole_sketch".into(),
+            sketch: whole_sketch("hole_sketch"),
             extent: Extents::blind(-10.0),
             output: Output::Solid(Combine::cut("extrude(block)")),
         },
@@ -285,16 +286,13 @@ pub fn cross_drilled_shaft() -> Program {
     });
     program.push(
         "section",
-        AddSketchArgs::on(origin_plane(FrameAxis::X), solved(section)),
+        AddSketchArgs::on(on_origin(FrameAxis::X), solved(section)),
     );
     program.push(
         "shaft",
         RevolveArgs {
-            sketch: "section".into(),
-            axis: Some(EntityRef::SketchCurve {
-                sketch: "section".into(),
-                curve: axis,
-            }),
+            sketch: whole_sketch("section"),
+            axis: Some(RevolveAxis::Sketch(sketch_element("section", axis))),
             extent: Extents::blind(360.0),
             output: Output::Solid(Combine::NewBody),
         },
@@ -306,12 +304,12 @@ pub fn cross_drilled_shaft() -> Program {
     circle(&mut bore, [0.0, -2.2], 0.25);
     program.push(
         "bore_sketch",
-        AddSketchArgs::on(origin_plane(FrameAxis::Y), solved(bore)),
+        AddSketchArgs::on(on_origin(FrameAxis::Y), solved(bore)),
     );
     program.push(
         "bore",
         ExtrudeArgs {
-            sketch: "bore_sketch".into(),
+            sketch: whole_sketch("bore_sketch"),
             extent: Extents {
                 side1: Extent::blind(3.0),
                 symmetric: true,
@@ -336,12 +334,12 @@ pub fn split_plate() -> Program {
     circle(&mut plate, [0.75, 0.5], 0.3);
     program.push(
         "plate_sketch",
-        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(plate)),
+        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(plate)),
     );
     program.push(
         "plate",
         ExtrudeArgs {
-            sketch: "plate_sketch".into(),
+            sketch: whole_sketch("plate_sketch"),
             extent: Extents {
                 side1: Extent::blind(0.5),
                 symmetric: true,
@@ -369,12 +367,12 @@ pub fn split_plate() -> Program {
     }
     program.push(
         "cut_sketch",
-        AddSketchArgs::on(origin_plane(FrameAxis::Y), solved(cut)),
+        AddSketchArgs::on(on_origin(FrameAxis::Y), solved(cut)),
     );
     program.push(
         "cut",
         ExtrudeArgs {
-            sketch: "cut_sketch".into(),
+            sketch: whole_sketch("cut_sketch"),
             extent: Extents {
                 side1: Extent::blind(3.0),
                 symmetric: true,
@@ -387,8 +385,8 @@ pub fn split_plate() -> Program {
     program.push(
         "halves",
         SplitArgs {
-            solid: "extrude(plate)".into(),
-            face: format!("extrude(cut,cut_sketch,{line})"),
+            solid: solid("extrude(plate)"),
+            face: element(format!("extrude(cut,cut_sketch,{line})")),
         },
     );
     program
@@ -406,10 +404,7 @@ pub fn boss_on_reference_plane() -> Program {
     program.push(
         "outline",
         AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
+            plane: Some(on_origin(FrameAxis::Z)),
             sketch: solved(outline),
             ..Default::default()
         },
@@ -417,7 +412,7 @@ pub fn boss_on_reference_plane() -> Program {
     program.push(
         "box",
         ExtrudeArgs {
-            sketch: "outline".into(),
+            sketch: whole_sketch("outline"),
             extent: Extents::blind(1.0),
             output: Output::Solid(Combine::NewBody),
         },
@@ -425,9 +420,7 @@ pub fn boss_on_reference_plane() -> Program {
     program.push(
         "lifted",
         AddDatumArgs {
-            selection: vec![EntityRef::Face {
-                name: "extrude(box,end)".into(),
-            }],
+            selection: vec![Selected::Face(element("extrude(box,end)"))],
             construction: Construction::Offset {
                 distance: 0.5.into(),
             },
@@ -438,7 +431,7 @@ pub fn boss_on_reference_plane() -> Program {
     program.push(
         "boss_sketch",
         AddSketchArgs {
-            plane: Some(EntityRef::datum("lifted")),
+            plane: Some(SketchPlane::Datum(datum("lifted"))),
             sketch: solved(boss),
             ..Default::default()
         },
@@ -446,7 +439,7 @@ pub fn boss_on_reference_plane() -> Program {
     program.push(
         "boss",
         ExtrudeArgs {
-            sketch: "boss_sketch".into(),
+            sketch: whole_sketch("boss_sketch"),
             extent: Extents::blind(-0.75),
             output: Output::Solid(Combine::join("extrude(box)")),
         },
@@ -505,12 +498,12 @@ pub fn handle_with_hole() -> Program {
 
     program.push(
         "outline",
-        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(outline)),
+        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)),
     );
     program.push(
         "handle",
         ExtrudeArgs {
-            sketch: "outline".into(),
+            sketch: whole_sketch("outline"),
             extent: Extents::blind(1.0),
             output: Output::Solid(Combine::NewBody),
         },
@@ -521,12 +514,12 @@ pub fn handle_with_hole() -> Program {
     hole.add_circle(center, n(0.31727744879927977));
     program.push(
         "hole_sketch",
-        AddSketchArgs::on(origin_plane(FrameAxis::Y), solved(hole)),
+        AddSketchArgs::on(on_origin(FrameAxis::Y), solved(hole)),
     );
     program.push(
         "hole",
         ExtrudeArgs {
-            sketch: "hole_sketch".into(),
+            sketch: whole_sketch("hole_sketch"),
             extent: Extents {
                 side1: Extent::blind(2.44),
                 symmetric: true,
@@ -595,12 +588,12 @@ pub fn luggage_tag() -> Program {
 
     program.push(
         "outline",
-        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(outline)),
+        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)),
     );
     program.push(
         "tag",
         ExtrudeArgs {
-            sketch: "outline".into(),
+            sketch: whole_sketch("outline"),
             extent: Extents {
                 side1: Extent::blind(1.0 / 3.0),
                 symmetric: true,
@@ -643,12 +636,12 @@ pub fn revolved_cone_on_box() -> Program {
     outline.add_circle(center, n(0.771466957205246));
     program.push(
         "sketch1",
-        AddSketchArgs::on(origin_plane(FrameAxis::Z), outline),
+        AddSketchArgs::on(on_origin(FrameAxis::Z), outline),
     );
     program.push(
         "extrude1",
         ExtrudeArgs {
-            sketch: "sketch1".into(),
+            sketch: whole_sketch("sketch1"),
             extent: Extents::blind(1.8900000000000001),
             output: Output::Solid(Combine::NewBody),
         },
@@ -665,20 +658,15 @@ pub fn revolved_cone_on_box() -> Program {
     program.push(
         "sketch2",
         AddSketchArgs::on(
-            EntityRef::Face {
-                name: format!("extrude(extrude1,sketch1,{right})"),
-            },
+            on_face(format!("extrude(extrude1,sketch1,{right})")),
             triangle,
         ),
     );
     program.push(
         "revolve1",
         RevolveArgs {
-            sketch: "sketch2".into(),
-            axis: Some(EntityRef::SketchCurve {
-                sketch: "sketch2".into(),
-                curve: axis,
-            }),
+            sketch: whole_sketch("sketch2"),
+            axis: Some(RevolveAxis::Sketch(sketch_element("sketch2", axis))),
             extent: Extents::blind(360.0),
             output: Output::Solid(Combine::join("extrude(extrude1)")),
         },
@@ -694,12 +682,12 @@ pub fn pin() -> Program {
     circle(&mut sketch, [0.0, 0.0], 0.4);
     program.push(
         "pin_sketch",
-        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(sketch)),
+        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(sketch)),
     );
     program.push(
         "pin",
         ExtrudeArgs {
-            sketch: "pin_sketch".into(),
+            sketch: whole_sketch("pin_sketch"),
             extent: Extents::blind(2.0),
             output: Output::Solid(Combine::NewBody),
         },
@@ -721,8 +709,9 @@ pub fn pin_in_plate_assembly() -> Program {
         }
         .fixed(),
     );
-    let face = |name: &str| EntityRef::Face { name: name.into() };
-    let mate = |kind, a: &str, b: &str| Mate::constraint(kind, vec![face(a), face(b)]);
+    let mate = |kind, [a, b]: [&str; 2]| {
+        Mate::constraint(kind, vec![placed_face("pin", a), placed_face("plate", b)])
+    };
     program.push(
         "pin",
         AddPartArgs {
@@ -732,26 +721,24 @@ pub fn pin_in_plate_assembly() -> Program {
                     "m1".into(),
                     mate(
                         Kind::Concentric,
-                        "pin/extrude(pin,pin_sketch,c1)",
-                        "plate/extrude(hole,hole_sketch,c1)",
+                        ["extrude(pin,pin_sketch,c1)", "extrude(hole,hole_sketch,c1)"],
                     ),
                 ),
                 (
                     "m2".into(),
                     mate(
                         Kind::Coincident,
-                        "pin/extrude(pin,start)",
-                        "plate/extrude(hole,end)",
+                        ["extrude(pin,start)", "extrude(hole,end)"],
                     ),
                 ),
             ]),
             ..Default::default()
         },
     );
-    let pose = |position| ParamValue::Pose(pose(position, [0.0; 3]));
-    program.state = Values::from([
-        (pose_parameter("plate"), pose([0.0; 3])),
-        (pose_parameter("pin"), pose([1.0, 1.0, 0.5])),
+    let pose = |position| StateValue::Pose(pose(position, [0.0; 3]));
+    program.state = StateValues::from([
+        (pose_state("plate"), pose([0.0; 3])),
+        (pose_state("pin"), pose([1.0, 1.0, 0.5])),
     ]);
     program
 }
@@ -776,12 +763,12 @@ pub fn bar(length: f64) -> Program {
     let mut program = Program::new();
     program.push(
         "link_sketch",
-        AddSketchArgs::on(origin_plane(FrameAxis::Z), link_sketch(length).0),
+        AddSketchArgs::on(on_origin(FrameAxis::Z), link_sketch(length).0),
     );
     program.push(
         "link",
         ExtrudeArgs {
-            sketch: "link_sketch".into(),
+            sketch: whole_sketch("link_sketch"),
             extent: Extents::blind(0.2),
             output: Output::Solid(Combine::NewBody),
         },
@@ -794,11 +781,15 @@ pub fn link() -> Program {
     bar(3.0)
 }
 
+/// The face `name` of the part placed as `instance`, as a mate holds it.
+fn placed_face(instance: &str, name: impl Into<String>) -> MateEntity {
+    MateEntity::of(instance, Selected::Face(element(name)))
+}
+
 /// The faces of the holes of a [`bar`] placed as `instance`, near one first.
-pub fn link_holes(instance: &str) -> [EntityRef; 2] {
-    link_sketch(3.0).1.map(|hole| EntityRef::Face {
-        name: format!("{instance}/extrude(link,link_sketch,{hole})"),
-    })
+pub fn link_holes(instance: &str) -> [MateEntity; 2] {
+    (link_sketch(3.0).1)
+        .map(|hole| placed_face(instance, format!("extrude(link,link_sketch,{hole})")))
 }
 
 /// The [`bar`] placed as `above` lies on the one placed as `below`: its
@@ -808,12 +799,8 @@ fn on_top(above: &str, below: &str) -> Mate {
     Mate::constraint(
         Kind::Coincident,
         vec![
-            EntityRef::Face {
-                name: format!("{above}/extrude(link,start)"),
-            },
-            EntityRef::Face {
-                name: format!("{below}/extrude(link,end)"),
-            },
+            placed_face(above, "extrude(link,start)"),
+            placed_face(below, "extrude(link,end)"),
         ],
     )
 }
@@ -857,33 +844,25 @@ pub fn chain_assembly() -> Program {
             ),
         );
     }
-    let pose = |x, z| ParamValue::Pose(pose([x, 0.0, z], [0.0; 3]));
-    program.state = Values::from([
-        (pose_parameter("link1"), pose(0.0, 0.0)),
-        (pose_parameter("link2"), pose(3.0, 0.2)),
-        (pose_parameter("link3"), pose(6.0, 0.4)),
+    let pose = |x, z| StateValue::Pose(pose([x, 0.0, z], [0.0; 3]));
+    program.state = StateValues::from([
+        (pose_state("link1"), pose(0.0, 0.0)),
+        (pose_state("link2"), pose(3.0, 0.2)),
+        (pose_state("link3"), pose(6.0, 0.4)),
     ]);
     program
 }
 
 /// The circular edge of the hole `hole` (0 near, 1 far) of the [`link`]
-/// placed as `instance`, on its top (`end`) or bottom (`start`) face.
-pub fn link_rim(instance: &str, hole: usize, cap: &str) -> EntityRef {
-    EntityRef::Edge {
-        name: format!(
-            "{instance}/extrude(link,link_sketch,{},{cap})",
-            link_sketch(3.0).1[hole]
-        ),
-    }
-}
-
-/// The frame a circular edge gives: at its center, its `z` along its axis —
-/// what a click on the rim of a hole picks.
-fn frame_on(entity: EntityRef) -> EntityRef {
-    EntityRef::Frame {
-        on: Box::new(entity),
-        at: None,
-    }
+/// placed as `instance`, on its top (`end`) or bottom (`start`) face — and
+/// the frame it gives: at its center, its `z` along its axis, what a click
+/// on the rim of a hole picks.
+pub fn link_rim(instance: &str, hole: usize, cap: &str) -> MateEntity {
+    let name = format!(
+        "extrude(link,link_sketch,{},{cap})",
+        link_sketch(3.0).1[hole]
+    );
+    MateEntity::of(instance, Selected::Edge(element(name)))
 }
 
 /// The [`link`] placed as `link` turns on the one placed as `on`: a
@@ -896,10 +875,7 @@ fn hinged(link: &str, on: &str, min: f64, max: f64) -> Mate {
             min: Some(n(min)),
             max: Some(n(max)),
         },
-        vec![
-            frame_on(link_rim(on, 1, "end")),
-            frame_on(link_rim(link, 0, "start")),
-        ],
+        vec![link_rim(on, 1, "end"), link_rim(link, 0, "start")],
     )
 }
 
@@ -937,18 +913,18 @@ pub fn arm_assembly() -> Program {
     let fore = [3.0, 0.0];
     let [dx, dy] = turned(elbow);
     let hand = [fore[0] + dx, fore[1] + dy];
-    let at = |[x, y]: [f64; 2], z, turn| ParamValue::Pose(pose([x, y, z], [0.0, 0.0, turn]));
-    program.state = Values::from([
-        (pose_parameter("upper"), at([0.0, 0.0], 0.0, 0.0)),
-        (pose_parameter("fore"), at(fore, 0.2, elbow)),
-        (pose_parameter("hand"), at(hand, 0.4, elbow + wrist)),
+    let at = |[x, y]: [f64; 2], z, turn| StateValue::Pose(pose([x, y, z], [0.0, 0.0, turn]));
+    program.state = StateValues::from([
+        (pose_state("upper"), at([0.0, 0.0], 0.0, 0.0)),
+        (pose_state("fore"), at(fore, 0.2, elbow)),
+        (pose_state("hand"), at(hand, 0.4, elbow + wrist)),
         (
             joint_parameter("add_part(fore,m1)", Motion::Turn),
-            ParamValue::Number(n(elbow)),
+            StateValue::Number(n(elbow)),
         ),
         (
             joint_parameter("add_part(hand,m1)", Motion::Turn),
-            ParamValue::Number(n(wrist)),
+            StateValue::Number(n(wrist)),
         ),
     ]);
     program
@@ -992,16 +968,16 @@ pub fn four_bar_assembly() -> Program {
     );
     // The crank at 60°, and where that puts the others (worked out from the
     // bars' lengths; the mates hold them there exactly).
-    let pose = |position, turn| ParamValue::Pose(pose(position, [0.0, 0.0, turn]));
-    program.state = Values::from([
-        (pose_parameter("ground"), pose([0.0, 0.0, 0.0], 0.0)),
-        (pose_parameter("crank"), pose([0.0, 0.0, 0.2], 60.0)),
+    let pose = |position, turn| StateValue::Pose(pose(position, [0.0, 0.0, turn]));
+    program.state = StateValues::from([
+        (pose_state("ground"), pose([0.0, 0.0, 0.0], 0.0)),
+        (pose_state("crank"), pose([0.0, 0.0, 0.2], 60.0)),
         (
-            pose_parameter("rocker"),
+            pose_state("rocker"),
             pose([4.0, 0.0, 0.2], 82.690_722_887_668_12),
         ),
         (
-            pose_parameter("coupler"),
+            pose_state("coupler"),
             pose([0.75, 1.299_038_105_676_658, 0.4], 24.780_674_143_948_414),
         ),
     ]);
@@ -1058,20 +1034,20 @@ pub fn parametric_plate() -> Program {
             .expect("the rectangle's lengths")
     };
     let formulas = BTreeMap::from([
-        (length(lines[0]), "width".to_string()),
-        (length(lines[1]), "depth".to_string()),
+        (length(lines[0]), NumericInput::from("width")),
+        (length(lines[1]), NumericInput::from("depth")),
     ]);
     program.push(
         "outline",
         AddSketchArgs {
             formulas,
-            ..AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(outline))
+            ..AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline))
         },
     );
     program.push(
         "plate",
         ExtrudeArgs {
-            sketch: "outline".into(),
+            sketch: whole_sketch("outline"),
             extent: Extents::blind("thickness"),
             output: Output::Solid(Combine::NewBody),
         },
@@ -1080,17 +1056,16 @@ pub fn parametric_plate() -> Program {
     // The hole's center is the middle of the top's diagonal, between two
     // of its corners as projected: wherever the parameters put them.
     let mut hole = Sketch::new();
-    let top = EntityRef::Face {
-        name: "extrude(plate,end)".into(),
-    };
+    let top = "extrude(plate,end)";
     let mut projection = Reference::new(Source::Projection {
-        entity: top.clone(),
+        entity: Projected::Face(element(top)),
     });
-    let built = build(&program, &workspace(BTreeMap::new()).scope("")).expect("the plate builds");
-    let mut seen = Seen::new(built.part.current());
-    let plane = top.resolve_plane(&mut seen).expect("the top is planar");
+    let built =
+        build(&program, "", workspace(BTreeMap::new()).scope("")).expect("the plate builds");
+    let reader = built.part.current();
+    let plane = (on_face(top).resolve(&reader)).expect("the top is planar");
     projection
-        .update(&mut hole, &mut seen, &plane)
+        .update(&mut hole, &reader, &plane)
         .expect("the top projects");
     let corner = |p: &str| projection.points[&format!("extrude(plate,outline,{p},end)")];
     let diagonal = hole.add_line(corner("p0"), corner("p2"));
@@ -1109,14 +1084,14 @@ pub fn parametric_plate() -> Program {
         "hole_sketch",
         AddSketchArgs {
             references: vec![projection],
-            formulas: BTreeMap::from([(diameter, "screw.clearance".to_string())]),
-            ..AddSketchArgs::on(top, solved(hole))
+            formulas: BTreeMap::from([(diameter, NumericInput::from("screw.clearance"))]),
+            ..AddSketchArgs::on(on_face(top), solved(hole))
         },
     );
     program.push(
         "hole",
         ExtrudeArgs {
-            sketch: "hole_sketch".into(),
+            sketch: whole_sketch("hole_sketch"),
             extent: Extents::blind(-0.3),
             output: Output::Solid(Combine::cut("extrude(plate)")),
         },
@@ -1140,23 +1115,23 @@ pub fn plates_assembly() -> Program {
         "large",
         AddPartArgs {
             file: "plate.geop".into(),
-            parameters: Values::from([
-                ("width".to_string(), ParamValue::Number(n(5.0))),
-                ("screw".to_string(), ParamValue::Text("M6".into())),
-                ("color".to_string(), ParamValue::Text("#3e7bd0".into())),
+            parameters: Settings::from([
+                ("width".to_string(), Setting::Number(5.0)),
+                ("screw".to_string(), Setting::Text("M6".into())),
+                ("color".to_string(), Setting::Text("#3e7bd0".into())),
             ]),
             ..Default::default()
         }
         .fixed(),
     );
-    program.state = Values::from([
+    program.state = StateValues::from([
         (
-            pose_parameter("small"),
-            ParamValue::Pose(pose([0.0; 3], [0.0; 3])),
+            pose_state("small"),
+            StateValue::Pose(pose([0.0; 3], [0.0; 3])),
         ),
         (
-            pose_parameter("large"),
-            ParamValue::Pose(pose([0.0, 3.0, 0.0], [0.0; 3])),
+            pose_state("large"),
+            StateValue::Pose(pose([0.0, 3.0, 0.0], [0.0; 3])),
         ),
     ]);
     program
@@ -1187,7 +1162,7 @@ pub fn metric_plate() -> Program {
     program.push(
         "plate",
         ExtrudeArgs {
-            sketch: "outline".into(),
+            sketch: whole_sketch("outline"),
             extent: Extents::blind(5.0),
             output: Output::Solid(Combine::NewBody),
         },
@@ -1196,7 +1171,7 @@ pub fn metric_plate() -> Program {
     program.push(
         "hole",
         ExtrudeArgs {
-            sketch: "hole_sketch".into(),
+            sketch: whole_sketch("hole_sketch"),
             extent: Extents {
                 side1: Extent::ThroughAll,
                 ..Extents::blind(0.0)
@@ -1210,11 +1185,9 @@ pub fn metric_plate() -> Program {
 /// The name of the face of [`metric_plate`]'s hole.
 pub fn metric_plate_hole() -> String {
     let built =
-        build(&metric_plate(), &workspace(BTreeMap::new()).scope("")).expect("the plate builds");
-    let part = (built.part.current())
-        .retrieve_target(&geop_ops::model())
-        .expect("the plate has a model");
-    geop_ops::PartDescription::of(part)
+        build(&metric_plate(), "", workspace(BTreeMap::new()).scope("")).expect("the plate builds");
+    let part = read_model(&built.part.current()).expect("the plate has a model");
+    PartDescription::of(&part)
         .expect("the plate describes itself")
         .faces
         .into_keys()
@@ -1235,9 +1208,9 @@ pub fn bolted_plate() -> Program {
         }
         .fixed(),
     );
-    let mate = |kind, a: EntityRef, b: EntityRef| Mate::constraint(kind, vec![a, b]);
-    let face = |name: String| EntityRef::Face { name };
-    let size = |row: &str| Values::from([("size".to_string(), ParamValue::Text(row.into()))]);
+    let mate = |kind, a: MateEntity, b: MateEntity| Mate::constraint(kind, vec![a, b]);
+    let datum_of = |part: &str, name: &str| MateEntity::of(part, Selected::Datum(datum(name)));
+    let size = |row: &str| Settings::from([("size".to_string(), Setting::Text(row.into()))]);
     program.push(
         "screw",
         AddPartArgs {
@@ -1248,16 +1221,16 @@ pub fn bolted_plate() -> Program {
                     "m1".into(),
                     mate(
                         Kind::Concentric,
-                        EntityRef::datum("screw/axis"),
-                        face(format!("plate/{}", metric_plate_hole())),
+                        datum_of("screw", "axis"),
+                        placed_face("plate", metric_plate_hole()),
                     ),
                 ),
                 (
                     "m2".into(),
                     mate(
                         Kind::Coincident,
-                        EntityRef::datum("screw/seat"),
-                        face("plate/extrude(plate,end)".into()),
+                        datum_of("screw", "seat"),
+                        placed_face("plate", "extrude(plate,end)"),
                     ),
                 ),
             ]),
@@ -1273,33 +1246,33 @@ pub fn bolted_plate() -> Program {
                     "m1".into(),
                     mate(
                         Kind::Concentric,
-                        EntityRef::datum("nut/axis"),
-                        EntityRef::datum("screw/axis"),
+                        datum_of("nut", "axis"),
+                        datum_of("screw", "axis"),
                     ),
                 ),
                 (
                     "m2".into(),
                     mate(
                         Kind::Coincident,
-                        EntityRef::datum("nut/base"),
-                        face("plate/extrude(plate,start)".into()),
+                        datum_of("nut", "base"),
+                        placed_face("plate", "extrude(plate,start)"),
                     ),
                 ),
             ]),
         },
     );
-    program.state = Values::from([
+    program.state = StateValues::from([
         (
-            pose_parameter("plate"),
-            ParamValue::Pose(pose([0.0; 3], [0.0; 3])),
+            pose_state("plate"),
+            StateValue::Pose(pose([0.0; 3], [0.0; 3])),
         ),
         (
-            pose_parameter("screw"),
-            ParamValue::Pose(pose([20.0, 20.0, 5.0], [0.0; 3])),
+            pose_state("screw"),
+            StateValue::Pose(pose([20.0, 20.0, 5.0], [0.0; 3])),
         ),
         (
-            pose_parameter("nut"),
-            ParamValue::Pose(pose([20.0, 20.0, 0.0], [180.0, 0.0, 0.0])),
+            pose_state("nut"),
+            StateValue::Pose(pose([20.0, 20.0, 0.0], [180.0, 0.0, 0.0])),
         ),
     ]);
     program
@@ -1445,10 +1418,7 @@ pub fn airfoil_wing() -> Program {
     program.push(
         "root",
         AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Y),
-            )),
+            plane: Some(on_origin(FrameAxis::Y)),
             sketch: naca_2412(1.0, 0.0),
             ..Default::default()
         },
@@ -1456,10 +1426,10 @@ pub fn airfoil_wing() -> Program {
     program.push(
         "span",
         AddDatumArgs {
-            selection: vec![EntityRef::datum_component(
+            selection: vec![Selected::Datum(datum(component_name(
                 ORIGIN,
                 DatumComponent::Plane(FrameAxis::Y),
-            )],
+            )))],
             construction: Construction::Offset {
                 distance: 3.0.into(),
             },
@@ -1468,10 +1438,7 @@ pub fn airfoil_wing() -> Program {
     program.push(
         "tip",
         AddSketchArgs {
-            plane: Some(EntityRef::Datum {
-                name: "span".into(),
-                component: None,
-            }),
+            plane: Some(SketchPlane::Datum(datum("span"))),
             sketch: naca_2412(0.6, 0.3),
             ..Default::default()
         },
@@ -1479,7 +1446,7 @@ pub fn airfoil_wing() -> Program {
     program.push(
         "wing",
         LoftArgs {
-            profiles: vec!["root".into(), "tip".into()],
+            profiles: vec![whole_sketch("root"), whole_sketch("tip")],
             matches: Vec::new(),
             guides: Vec::new(),
             output: Output::Solid(Combine::NewBody),
@@ -1492,12 +1459,7 @@ pub fn airfoil_wing() -> Program {
 /// a spline flaring out beside the path, which the circle's point on it
 /// follows.
 pub fn horn() -> Program {
-    let base = |axis| {
-        Some(EntityRef::datum_component(
-            ORIGIN,
-            DatumComponent::Plane(axis),
-        ))
-    };
+    let base = |axis| Some(on_origin(axis));
     let mut program = Program::new();
     let mut mouth = Sketch::new();
     let c = mouth.add_point(n(0.0), n(0.0));
@@ -1539,12 +1501,12 @@ pub fn horn() -> Program {
     program.push(
         "horn",
         SweepArgs {
-            profile: "mouth".into(),
-            path: Some(EntityRef::sketch("axis")),
+            profile: whole_sketch("mouth"),
+            path: Some(PathRef::Sketch(ElementReference::whole(sketch("axis")))),
             orientation: Orientation::FollowPath,
             twist: 0.0,
             end_scale: 1.0,
-            rails: vec![EntityRef::sketch("flare")],
+            rails: vec![PathRef::Sketch(ElementReference::whole(sketch("flare")))],
             output: Output::Solid(Combine::NewBody),
         },
     );
@@ -1557,14 +1519,14 @@ pub fn horn() -> Program {
 /// `linear_pattern(holes)`, and the holes follow the hole when it changes.
 pub fn patterned_plate() -> Program {
     let mut program = Program::new();
-    let z_plane = || origin_plane(FrameAxis::Z);
+    let z_plane = || on_origin(FrameAxis::Z);
     let mut outline = Sketch::new();
     rectangle(&mut outline, [0.0, 0.0], 8.0, 3.0);
     program.push("outline", AddSketchArgs::on(z_plane(), solved(outline)));
     program.push(
         "plate",
         ExtrudeArgs {
-            sketch: "outline".into(),
+            sketch: whole_sketch("outline"),
             extent: Extents::blind(0.5),
             output: Output::Solid(Combine::NewBody),
         },
@@ -1577,7 +1539,7 @@ pub fn patterned_plate() -> Program {
     program.push(
         "hole",
         ExtrudeArgs {
-            sketch: "hole_sketch".into(),
+            sketch: whole_sketch("hole_sketch"),
             extent: through,
             output: Output::Solid(Combine::cut("extrude(plate)")),
         },
@@ -1585,14 +1547,9 @@ pub fn patterned_plate() -> Program {
     program.push(
         "holes",
         LinearPatternArgs {
-            seeds: Seeds::features(vec![EntityRef::Feature {
-                name: "hole".into(),
-            }]),
+            seeds: Seeds::features(vec![feature("hole")]),
             first: Direction {
-                along: Some(EntityRef::datum_component(
-                    ORIGIN,
-                    DatumComponent::Axis(FrameAxis::X),
-                )),
+                along: Some(PatternDirection::Datum(origin_axis(FrameAxis::X))),
                 reversed: false,
                 count: 4.0.into(),
                 spacing: Spacing::step(2.0),
@@ -1613,12 +1570,12 @@ pub fn hole_plate() -> Program {
     rectangle(&mut outline, [0.0, 0.0], 60.0, 40.0);
     program.push(
         "outline",
-        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(outline)),
+        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)),
     );
     program.push(
         "plate",
         ExtrudeArgs {
-            sketch: "outline".into(),
+            sketch: whole_sketch("outline"),
             extent: Extents::blind(10.0),
             output: Output::Solid(Combine::NewBody),
         },
@@ -1638,9 +1595,7 @@ pub fn hole_plate() -> Program {
         }
         solved(sketch)
     };
-    let top = || EntityRef::Face {
-        name: "extrude(plate,end)".into(),
-    };
+    let top = || on_face("extrude(plate,end)");
     program.push(
         "corners",
         AddSketchArgs::on(
@@ -1651,10 +1606,8 @@ pub fn hole_plate() -> Program {
     program.push(
         "bolts",
         HoleArgs {
-            face: "extrude(plate,end)".into(),
-            points: vec![EntityRef::Sketch {
-                name: "corners".into(),
-            }],
+            face: Some(element("extrude(plate,end)")),
+            points: vec![HoleCentre::Sketch(whole_sketch("corners"))],
             kind: HoleKind::Counterbore,
             standard: Standard::Iso {
                 size: "M5".into(),
@@ -1669,10 +1622,8 @@ pub fn hole_plate() -> Program {
     program.push(
         "tapped",
         HoleArgs {
-            face: "extrude(plate,end)".into(),
-            points: vec![EntityRef::Sketch {
-                name: "middle".into(),
-            }],
+            face: Some(element("extrude(plate,end)")),
+            points: vec![HoleCentre::Sketch(whole_sketch("middle"))],
             kind: HoleKind::Tapped,
             standard: Standard::Iso {
                 size: "M6".into(),
@@ -1746,7 +1697,7 @@ pub fn pipe() -> Program {
     circle(&mut section, [0.0, 0.0], 0.3);
     program.push(
         "section",
-        AddSketchArgs::on(origin_plane(FrameAxis::X), solved(section)),
+        AddSketchArgs::on(on_origin(FrameAxis::X), solved(section)),
     );
     program.push(
         "route",
@@ -1758,8 +1709,8 @@ pub fn pipe() -> Program {
     program.push(
         "pipe",
         SweepArgs {
-            profile: "section".into(),
-            path: Some(EntityRef::sketch3d("route")),
+            profile: whole_sketch("section"),
+            path: Some(PathRef::Sketch3d(sketch3d_path("route"))),
             orientation: Orientation::FollowPath,
             twist: 0.0,
             end_scale: 1.0,
@@ -1782,10 +1733,7 @@ pub fn sheet_metal_bracket() -> Program {
     program.push(
         "outline",
         AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
+            plane: Some(on_origin(FrameAxis::Z)),
             sketch: solved(outline),
             ..Default::default()
         },
@@ -1793,7 +1741,7 @@ pub fn sheet_metal_bracket() -> Program {
     program.push(
         "plate",
         BaseFlangeArgs {
-            sketch: "outline".into(),
+            sketch: whole_sketch("outline"),
             rules: SheetMetalRules {
                 thickness: 0.08,
                 bend_radius: 0.08,
@@ -1803,9 +1751,8 @@ pub fn sheet_metal_bracket() -> Program {
             flip: false,
         },
     );
-    let edge = |line: CurveId| format!("base_flange(plate,outline,{line},b)");
     let flange = |line: CurveId, length: f64, offset: f64| EdgeFlangeArgs {
-        edge: edge(line),
+        edge: Some(edge(format!("base_flange(plate,outline,{line},b)"))),
         angle: 90.0.into(),
         length: length.into(),
         reference: LengthReference::OuterSharp,
@@ -1823,10 +1770,7 @@ pub fn sheet_metal_bracket() -> Program {
     program.push(
         "holes",
         AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Z),
-            )),
+            plane: Some(on_origin(FrameAxis::Z)),
             sketch: solved(holes),
             ..Default::default()
         },
@@ -1834,8 +1778,8 @@ pub fn sheet_metal_bracket() -> Program {
     program.push(
         "mount",
         SheetCutArgs {
-            sketch: "holes".into(),
-            face: String::new(),
+            sketch: whole_sketch("holes"),
+            face: None,
         },
     );
     program
@@ -1882,12 +1826,12 @@ pub fn rounded_box() -> Program {
     let lines = rectangle(&mut outline, [0.0, 0.0], 2.0, 1.5);
     program.push(
         "outline",
-        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(outline)),
+        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)),
     );
     program.push(
         "box",
         ExtrudeArgs {
-            sketch: "outline".into(),
+            sketch: whole_sketch("outline"),
             extent: Extents::blind(1.0),
             output: Output::Solid(Combine::NewBody),
         },
@@ -1939,12 +1883,12 @@ pub fn motor_flange() -> Program {
         .expect("a hole off the middle turns round it");
     program.push(
         "outline",
-        AddSketchArgs::on(origin_plane(FrameAxis::Z), solved(outline)),
+        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)),
     );
     program.push(
         "flange",
         ExtrudeArgs {
-            sketch: "outline".into(),
+            sketch: whole_sketch("outline"),
             extent: Extents::blind(2.5),
             output: Output::Solid(Combine::NewBody),
         },
@@ -1962,7 +1906,7 @@ pub fn motor_flange() -> Program {
 pub fn curved_panel() -> Program {
     let height = |x: f64, z: f64| 0.6 + 0.08 * (x - 2.0).powi(2) - 0.12 * (z - 1.5).powi(2);
     let mut program = Program::new();
-    let mut splines = |name: &str, lines: Vec<Vec<[f64; 2]>>| -> Vec<EntityRef> {
+    let mut splines = |name: &str, lines: Vec<Vec<[f64; 2]>>| -> Vec<CurveSource> {
         let mut sketch = Sketch3d::new();
         let mut curves = Vec::new();
         for line in lines {
@@ -1974,9 +1918,9 @@ pub fn curved_panel() -> Program {
                 })
                 .collect();
             let curve = sketch.add_spline(points);
-            curves.push(EntityRef::Edge {
-                name: format!("sketch3d({name},{curve})"),
-            });
+            curves.push(CurveSource::Edge(element(format!(
+                "sketch3d({name},{curve})"
+            ))));
         }
         program.push(
             name,
@@ -2014,10 +1958,7 @@ pub fn curved_panel() -> Program {
     program.push(
         "block_sketch",
         AddSketchArgs {
-            plane: Some(EntityRef::datum_component(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Y),
-            )),
+            plane: Some(on_origin(FrameAxis::Y)),
             sketch: solved(outline),
             ..Default::default()
         },
@@ -2025,7 +1966,7 @@ pub fn curved_panel() -> Program {
     program.push(
         "block",
         ExtrudeArgs {
-            sketch: "block_sketch".into(),
+            sketch: whole_sketch("block_sketch"),
             extent: Extents::blind(15.0),
             output: Output::Solid(Combine::NewBody),
         },
@@ -2033,8 +1974,8 @@ pub fn curved_panel() -> Program {
     program.push(
         "shaped",
         SplitArgs {
-            solid: "extrude(block)".into(),
-            face: "network(panel)".into(),
+            solid: solid("extrude(block)"),
+            face: element("network(panel)"),
         },
     );
     program
@@ -2081,9 +2022,9 @@ pub fn all() -> Vec<Example<Program>> {
 mod tests {
     use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar, vector::Vector3};
     use geop_core_topology::contains::shell::{PointClassification, shell_contains};
-    use geop_ops::{
-        NamedModel, PartDescription, RefId, model::datum, operation::Lookup, testing::model_of,
-    };
+    use geop_ops_datums::read_datums;
+    use geop_ops_extrude_revolve::testing::model_of;
+    use geop_ops_model::{NamedModel, RefId};
 
     use crate::operations::testing::{
         Built, args, assert_valid, check_valid, disc, edit_args, error, step,
@@ -2320,10 +2261,8 @@ mod tests {
         );
         // The datum the boss is sketched on is one of the part's.
         let runner = boss_on_reference_plane().built().unwrap();
-        let datums: Vec<&str> = (Seen::new(runner.part.current()).datums().into_iter())
-            .map(|(name, _)| name)
-            .collect();
-        assert_eq!(datums, ["lifted"]);
+        let datums = read_datums(&runner.part.current()).unwrap();
+        assert_eq!(datums.names(), ["lifted"]);
         // The boss stands on the box: from the box's top up to the plane.
         assert_eq!(
             inside(&part, "extrude(boss)", [1.0, 1.0, 1.3]),
@@ -2411,9 +2350,7 @@ mod tests {
     fn referring_to_a_missing_entity_fails() {
         let mut program = box_with_drill_hole();
         edit_args::<AddSketchArgs>(&mut program.program.steps[2], |args| {
-            args.plane = Some(EntityRef::Face {
-                name: "extrude(box,side)".into(),
-            })
+            args.plane = Some(on_face("extrude(box,side)"));
         });
         let err = error(program.build_model());
         assert!(format!("{err:?}").contains("extrude(box,side)"), "{err:?}");
@@ -2654,8 +2591,10 @@ mod tests {
         let runner = boss_on_reference_plane().built().unwrap();
         model_of(&runner).check_names().unwrap();
         let built = runner.part.current();
-        let lifted = built.retrieve_target(&datum("lifted")).unwrap();
-        let placed = Seen::new(built).sketch("boss_sketch").unwrap().clone();
+        let lifted = read_datums(&built).unwrap().get("lifted").unwrap();
+        let placed = built
+            .retrieve_element(&whole_sketch("boss_sketch"))
+            .unwrap();
         assert!(placed.plane.origin().could_be_equal(lifted.frame.origin()));
         assert!(placed.plane.u().could_be_equal(lifted.frame.u()));
         // Sketch data is solved, not exact: agreeing to 1e-9 is agreeing.

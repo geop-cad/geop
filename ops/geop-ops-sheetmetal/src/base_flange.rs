@@ -1,6 +1,14 @@
 //! [`BaseFlange`]: the first piece of a sheet-metal body — a plate from a
 //! sketch's area, or a bent strip from a chain of lines and arcs.
 
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::{Choice, Number, Unit},
+    numeric_input::NumericInput,
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
@@ -8,16 +16,10 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_sketch::{CurveKind, ProfileLoop, Shape};
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, NamedModel, Namer, PlacedSketch,
-    model::model_or_empty,
-    operation::{Build, BuildReader, Lookup, PartOperation, Scope, Seen, StepContext},
-    parameters::{Formula, expressions},
-    part_operation,
-    ui::{Choice, EditForm, FormState, Number, Unit, formula_number},
-};
-use geop_ops_extrude_revolve::operation::shape_loops;
+use geop_ops_extrude_revolve::{operation::shape_loops, sweep::SweepLoop};
+use geop_ops_model::{Design, ModelOperation, NamedModel, Namer};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_sketch::{PlacedSketch, SketchRef};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -58,11 +60,11 @@ pub struct BaseFlange;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BaseFlangeArgs {
     /// The sketch: one area, or one chain of lines and arcs.
-    pub sketch: String,
+    pub sketch: SketchRef,
     pub rules: SheetMetalRules,
     /// How far a chain's strip runs along the sketch's normal: a number,
     /// or a formula of the part's parameters.
-    pub depth: Formula,
+    pub depth: NumericInput,
     /// Put the material on the other side: of the sketch's plane, for an
     /// area; of the chain, for a chain.
     #[serde(default)]
@@ -70,23 +72,16 @@ pub struct BaseFlangeArgs {
 }
 
 impl SheetStep for BaseFlange {
-    fn plan(reader: &mut BuildReader, step: &str, args: &BaseFlangeArgs) -> GeopResult<Made> {
+    fn plan(reader: &PartReader, step: &str, args: &BaseFlangeArgs) -> GeopResult<Made> {
         let ctx = with_context!("base_flange({step}, {args:?})");
         let namer = Namer::new("base_flange", step)?;
         args.rules.check().with_context(ctx)?;
-        let model = model_or_empty(reader);
-        let mut scope = Scope {
-            model: &model,
-            reader,
-        };
-        let placed = scope.sketch(&args.sketch).with_context(ctx)?.clone();
+        let placed = reader.retrieve_element(&args.sketch).with_context(ctx)?;
         let sheet = match placed.sketch.shape().with_context(ctx)? {
-            Shape::Region(region) => {
-                plate(&namer, &args.sketch, &placed, Shape::Region(region), args)
-            }
+            Shape::Region(region) => plate(&namer, placed, Shape::Region(region), args),
             Shape::Chain(chain) => {
-                let depth = args.depth.evaluate(&mut scope).with_context(ctx)?;
-                strip(&namer, &args.sketch, &placed, &chain, depth, args)
+                let depth = args.depth.resolve(reader).with_context(ctx)?;
+                strip(&namer, placed, &chain, depth, args)
             }
         }
         .with_context(ctx)?;
@@ -101,8 +96,8 @@ impl SheetStep for BaseFlange {
 part_operation!(BaseFlange(BaseFlangeArgs));
 
 impl PartOperation for BaseFlange {
+    const KIND: &'static str = "base_flange";
     const INFO: OperationInfo = OperationInfo::new(
-        "base_flange",
         "Base flange",
         "Start a sheet-metal body from a sketch: a plate from its area, or a bent strip from a chain of lines and arcs.",
         OperationGroup::SheetMetal,
@@ -110,36 +105,24 @@ impl PartOperation for BaseFlange {
     )
     .icon(crate::icons::BASE_FLANGE);
     type Args = BaseFlangeArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
-
-    fn formulas(args: &mut BaseFlangeArgs) -> Vec<&mut String> {
-        expressions([&mut args.depth])
-    }
 
     /// The newest sketch, with the default rules, a unit deep.
     fn new_args(context: &StepContext) -> BaseFlangeArgs {
+        let newest = context.before.targets_of::<PlacedSketch<Design>>().pop();
         BaseFlangeArgs {
-            sketch: Seen::new(context.before)
-                .sketch_names()
-                .pop()
-                .unwrap_or_default(),
+            sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_sketch::sketch(""))),
             rules: SheetMetalRules::default(),
-            depth: Formula::Plain(1.0),
+            depth: NumericInput::Plain(1.0),
             flip: false,
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &BaseFlangeArgs) -> GeopResult<()> {
+    fn run(step: &str, part: &mut BuildPart, args: &BaseFlangeArgs) -> GeopResult<()> {
         body::run::<Self>(step, part, args)
-    }
-
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        _: &BaseFlangeArgs,
-    ) -> GeopResult<()> {
-        body::build(model, reader, step)
     }
 
     /// The sketch, picked; for a chain how deep; whether flipped; and the
@@ -149,23 +132,38 @@ impl PartOperation for BaseFlange {
         args: &BaseFlangeArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, BaseFlangeArgs> {
-        let mut seen = Seen::new(context.before);
+        let before = &context.before;
         let mut f = EditForm::<Design, BaseFlangeArgs>::default();
-        f.pick_sketch(&context.before, "sketch", &args.sketch, |edit, name| {
-            edit.args.sketch = name
-        });
-        let chain = (seen.sketch(&args.sketch))
+        f.pick_one(
+            "sketch",
+            "sketch",
+            before,
+            Some(&args.sketch),
+            |edit, sketch| edit.args.sketch = sketch,
+        );
+        let chain = (before.retrieve_element(&args.sketch))
             .and_then(|placed| placed.sketch.shape())
             .is_ok_and(|shape| matches!(shape, Shape::Chain(_)));
         if chain {
-            let depth = formula_number("depth", &args.depth, &mut seen, Unit::Length);
-            f.formula("depth", depth.range(0.0, 10.0), |edit, depth| {
+            let depth = args.depth.number("depth", before, Unit::Length);
+            f.numeric("depth", depth.range(0.0, 10.0), |edit, depth| {
                 edit.args.depth = depth
             });
         }
         f.checkbox("flip", "flip side", args.flip, |edit, b| edit.args.flip = b);
         rules_fields(&mut f, &args.rules);
         f
+    }
+}
+
+impl ModelOperation for BaseFlange {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &PartReader,
+        step: &str,
+        _: &BaseFlangeArgs,
+    ) -> GeopResult<()> {
+        body::build(model, reader, step)
     }
 }
 
@@ -215,14 +213,13 @@ fn rules_fields(f: &mut EditForm<'_, Design, BaseFlangeArgs>, rules: &SheetMetal
 /// A side behind it.
 fn plate<S: Scalar>(
     namer: &Namer,
-    sketch_name: &str,
     placed: &PlacedSketch<S>,
     region: Shape,
     args: &BaseFlangeArgs,
 ) -> GeopResult<Sheet<S>> {
     let sketch = &placed.sketch;
     let geometry = sketch.enclose::<S>()?;
-    let loops = shape_loops(sketch_name, sketch, &geometry, region)?;
+    let loops = shape_loops(&placed.name, sketch, &geometry, region)?;
     let plane = &placed.plane;
     let n = *plane.w();
     let origin = if args.flip {
@@ -238,7 +235,7 @@ fn plate<S: Scalar>(
         e2: *plane.v(),
         n,
     };
-    let edges = |lp: &geop_ops_extrude_revolve::sweep::SweepLoop<S>| -> Vec<FlatEdge<S>> {
+    let edges = |lp: &SweepLoop<S>| -> Vec<FlatEdge<S>> {
         lp.profile
             .curves
             .iter()
@@ -306,7 +303,6 @@ struct Turn<S: Scalar> {
 /// [`BaseFlange`]).
 fn strip<S: Scalar>(
     namer: &Namer,
-    sketch_name: &str,
     placed: &PlacedSketch<S>,
     chain: &ProfileLoop,
     depth: f64,
@@ -404,7 +400,7 @@ fn strip<S: Scalar>(
     }
 
     let depth = S::from_f64(depth);
-    let sketch_namer = namer.scoped(sketch_name);
+    let sketch_namer = namer.scoped(&placed.name);
     let mut flats: Vec<Flat<S>> = Vec::new();
     let mut bends: Vec<Bend<S>> = Vec::new();
     let mut x0 = S::ZERO;

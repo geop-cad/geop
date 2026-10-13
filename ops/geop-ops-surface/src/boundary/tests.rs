@@ -7,12 +7,13 @@ use geop_core_math::{
     vector::{Vector3, Vector4},
 };
 use geop_core_topology::{Body, Curve3};
-use geop_ops::NamedModel;
-use geop_ops::operation::apply_to_model;
-use geop_ops::testing::assert_valid_sheets;
 use geop_ops_extrude_revolve::shapes::{block_part, v3};
+use geop_ops_model::NamedModel;
+use geop_ops_model::testing::apply_to_model;
+use geop_ops_model::testing::assert_valid_sheets;
 
 use super::*;
+use crate::test_refs::*;
 
 /// The name of the edge of `part` from `a` to `b`, either way.
 pub(crate) fn edge_between(part: &NamedModel<S>, a: [f64; 3], b: [f64; 3]) -> String {
@@ -37,10 +38,9 @@ fn unit_cube() -> NamedModel<S> {
 }
 
 fn span(part: NamedModel<S>, edges: &[String], tangent: &[String]) -> GeopResult<NamedModel<S>> {
-    let edge = |name: &String| EntityRef::Edge { name: name.clone() };
     let args = BoundarySurfaceArgs {
-        edges: edges.iter().map(edge).collect(),
-        tangent: tangent.iter().map(edge).collect(),
+        edges: edges.iter().map(edge_curve).collect(),
+        tangent: tangent.iter().map(named).collect(),
     };
     apply_to_model::<BoundarySurface>(part, "b", &args)
 }
@@ -381,7 +381,7 @@ fn fill_and_knit(n: usize, lift: f64) {
     let mut faces: Vec<String> = (0..n).map(|k| format!("strip{k}(f)")).collect();
     faces.push(fill);
     let args = crate::KnitArgs {
-        faces,
+        faces: faces.iter().map(named).collect(),
         solid: false,
     };
     let part = apply_to_model::<crate::Knit>(part, "k", &args).unwrap();

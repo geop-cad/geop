@@ -97,16 +97,16 @@ use geop_core_math::{
         newton::{Arrive, newton_1d},
         probe::{Probe, probe},
         refine::{Refine, Refined, refine},
-        walk::{Walked, walk_by},
     },
     vector::{Vector2, Vector3, Vector4},
     with_context,
 };
 use geop_core_topology::{EdgeId, FaceId, Model, VertexId};
-use geop_ops::NamedModel;
+use geop_ops_model::NamedModel;
 
-use crate::blend::{Bend, End, bend, check_touch_at, faces, tool_end};
+use crate::blend::{Bend, End, bend, check_touch_at, tool_end};
 use crate::tool::{Cap, Tool, ToolSpan, ToolStation, embed, flatten, flatten_point, wall_surface};
+use geop_ops_model::tangent::{Link, TangentChain as Chain};
 
 /// Stations per edge of a chain to start with.
 const FIRST_STATIONS: usize = 8;
@@ -130,142 +130,6 @@ const TILT: f64 = DEVIATION;
 /// edge doubles, at most: `2^64` times the first reach is past any edge's
 /// domain, which ends the search first.
 const MOST_WIDENINGS: usize = 64;
-
-/// One edge of a chain, as the chain runs along it: along the edge's own
-/// direction, `forward`, or against it; with the faces on its left and
-/// right as it runs (seen from outside the solid).
-#[derive(Clone, Debug)]
-pub(crate) struct Link {
-    pub edge: EdgeId,
-    pub forward: bool,
-    pub faces: [FaceId; 2],
-}
-
-impl Link {
-    /// The unit tangent of the edge at `p`, where its faces' normals there
-    /// are `normals`: square to both, turned to run `along` the link. An
-    /// error where the faces could meet tangentially.
-    fn tangent<S: Scalar>(
-        &self,
-        normals: [Vector3<S>; 2],
-        along: &Vector3<S>,
-        p: &Vector3<S>,
-    ) -> GeopResult<Vector3<S>> {
-        let across = normals[0].prod_cross(&normals[1]);
-        if across.prod_dot(along).definitely_less(S::ZERO) {
-            across.neg()
-        } else {
-            across
-        }
-        .normalize()
-        .map_err(|_| {
-            GeopError::new(format!(
-                "faces {} and {} could meet tangentially at {p:?} on edge {}: there is no corner to blend there (normals {:?} and {:?})",
-                self.faces[0], self.faces[1], self.edge, normals[0], normals[1]
-            ))
-        })
-    }
-
-    fn new<S: Scalar>(model: &Model<S>, edge: EdgeId, forward: bool) -> GeopResult<Self> {
-        let [l, r] = faces(model, edge)?;
-        Ok(Link {
-            edge,
-            forward,
-            faces: if forward { [l, r] } else { [r, l] },
-        })
-    }
-
-    fn reversed(&self) -> Self {
-        Link {
-            edge: self.edge,
-            forward: !self.forward,
-            faces: [self.faces[1], self.faces[0]],
-        }
-    }
-
-    /// The vertex the chain enters the edge at, and the one it leaves at.
-    fn vertices<S: Scalar>(&self, model: &Model<S>) -> GeopResult<[VertexId; 2]> {
-        let e = model.get_edge(self.edge)?;
-        Ok(if self.forward {
-            [e.start_vertex, e.end_vertex]
-        } else {
-            [e.end_vertex, e.start_vertex]
-        })
-    }
-
-    /// The edge's point `fraction` of the way along it as the chain runs —
-    /// of its parameter — and the unit tangent there, the way it runs.
-    fn at<S: Scalar>(&self, model: &Model<S>, fraction: S) -> GeopResult<(Vector3<S>, Vector3<S>)> {
-        let curve = &model.get_edge(self.edge)?.curve;
-        let (t0, t1) = curve.domain();
-        let f = if self.forward {
-            fraction
-        } else {
-            S::ONE.sub(fraction)
-        };
-        let t = S::interpolate(t0, t1, f);
-        let tangent = curve.tangent(t)?.normalize()?;
-        Ok((
-            curve.evaluate(t)?,
-            if self.forward { tangent } else { tangent.neg() },
-        ))
-    }
-}
-
-/// The edges blended as one: a tangent chain (see the module docs), in the
-/// order it runs, around to the first again if `closed`.
-#[derive(Clone, Debug)]
-pub(crate) struct Chain {
-    pub links: Vec<Link>,
-    pub closed: bool,
-}
-
-impl Chain {
-    /// The chain's vertices in order: where each link starts, and — for an
-    /// open chain — where the last one ends.
-    pub fn vertices<S: Scalar>(&self, model: &Model<S>) -> GeopResult<Vec<VertexId>> {
-        let mut vertices = Vec::new();
-        for link in &self.links {
-            vertices.push(link.vertices(model)?[0]);
-        }
-        if !self.closed {
-            let last = self.links.last().expect("a chain has links");
-            vertices.push(last.vertices(model)?[1]);
-        }
-        Ok(vertices)
-    }
-
-    pub fn edges(&self) -> Vec<EdgeId> {
-        self.links.iter().map(|l| l.edge).collect()
-    }
-
-    /// An open chain's start and end: at each its vertex, the faces either
-    /// side of the link there, and the unit direction out of the chain.
-    #[allow(clippy::type_complexity)]
-    fn ends<S: Scalar>(
-        &self,
-        model: &Model<S>,
-    ) -> GeopResult<[(VertexId, [FaceId; 2], Vector3<S>); 2]> {
-        let vertices = self.vertices(model)?;
-        let first = &self.links[0];
-        let last = self.links.last().expect("a chain has links");
-        let (_, t0) = first.at(model, S::ZERO)?;
-        let (_, t1) = last.at(model, S::ONE)?;
-        Ok([
-            (vertices[0], first.faces, t0.neg()),
-            (
-                *vertices.last().expect("a chain has vertices"),
-                last.faces,
-                t1,
-            ),
-        ])
-    }
-}
-
-/// Whether the unit vectors `a` and `b` could point the same way.
-fn same_direction<S: Scalar>(a: &Vector3<S>, b: &Vector3<S>) -> bool {
-    a.could_be_parallel(b) && a.prod_dot(b).definitely_greater(S::ZERO)
-}
 
 /// The `(u, v)` of `point` on `surface`, sharp — a seed: where the point
 /// lies on the surface ([`NurbSurface3D::locate`]), else that of the point
@@ -299,92 +163,6 @@ pub(crate) fn foot<S: Scalar>(
 pub(crate) fn sharp_in<S: Scalar>(surface: &NurbSurface3D<S>, (u, v): (S, S)) -> (S, S) {
     let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
     (u.sharpen().clamped(u0, u1), v.sharpen().clamped(v0, v1))
-}
-
-/// The link the chain goes on along from `link`, past the vertex it leaves
-/// at: the one other edge there it runs on into tangentially, between faces
-/// tangent to its own — or none. An error if more than one could be.
-///
-/// Tangency is asked of the faces, whose normals at the vertex the
-/// surfaces state exactly: where both faces either side go on tangentially,
-/// so does the edge between them, which runs along both tangent planes.
-/// The edges' own tangents only tell which way the next one runs on — an
-/// edge traced as an intersection only encloses its points, not its
-/// direction.
-fn next_link<S: Scalar>(model: &Model<S>, link: &Link) -> GeopResult<Option<Link>> {
-    let vertex = link.vertices(model)?[1];
-    let at = model.get_vertex(vertex)?.point;
-    let (_, arriving) = link.at(model, S::ONE)?;
-    let normals_at = |faces: [FaceId; 2]| -> GeopResult<[Vector3<S>; 2]> {
-        let normal = |face| {
-            let surface = &model.get_face(face)?.surface;
-            surface.normal_at(&at, MAX_NODES, min_subdivision_size())
-        };
-        Ok([normal(faces[0])?, normal(faces[1])?])
-    };
-    let normals = normals_at(link.faces)?;
-    let mut found = Vec::new();
-    for (&id, e) in &model.edges {
-        if id == link.edge {
-            continue;
-        }
-        for forward in [true, false] {
-            let leaves = if forward {
-                e.start_vertex
-            } else {
-                e.end_vertex
-            };
-            if leaves != vertex {
-                continue;
-            }
-            let candidate = Link::new(model, id, forward)?;
-            let (_, leaving) = candidate.at(model, S::ZERO)?;
-            if !arriving.prod_dot(&leaving).definitely_greater(S::ZERO) {
-                continue;
-            }
-            let theirs = normals_at(candidate.faces)?;
-            if (0..2).all(|k| same_direction(&normals[k], &theirs[k])) {
-                found.push(candidate);
-            }
-        }
-    }
-    match found.len() {
-        0 => Ok(None),
-        1 => Ok(found.pop()),
-        n => Err(GeopError::new(format!(
-            "at vertex {vertex}, the edge runs on tangentially into {n} edges: no one chain to blend"
-        ))),
-    }
-}
-
-/// The tangent chain of `edge` (see the module docs), running the way the
-/// edge does.
-pub(crate) fn tangent_chain<S: Scalar>(model: &Model<S>, edge: EdgeId) -> GeopResult<Chain> {
-    let walk = |first: Link| -> GeopResult<(Vec<Link>, bool)> {
-        let chain = walk_by(first, |l| l.edge, |last| next_link(model, last))?;
-        match chain.end {
-            Walked::Closed => Ok((chain.nodes, true)),
-            Walked::Open => Ok((chain.nodes, false)),
-            Walked::Revisited(next) => Err(GeopError::new(format!(
-                "the tangent chain of the edge runs round a loop not through it, at edge {}",
-                next.edge
-            ))),
-        }
-    };
-    let (ahead, closed) = walk(Link::new(model, edge, true)?)?;
-    if closed {
-        return Ok(Chain {
-            links: ahead,
-            closed,
-        });
-    }
-    let (behind, _) = walk(Link::new(model, edge, false)?)?;
-    let mut links: Vec<Link> = behind[1..].iter().rev().map(Link::reversed).collect();
-    links.extend(ahead);
-    Ok(Chain {
-        links,
-        closed: false,
-    })
 }
 
 /// How a fillet's radius runs along its edges: `radius` at the start of

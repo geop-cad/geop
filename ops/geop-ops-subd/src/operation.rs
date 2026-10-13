@@ -14,25 +14,21 @@
 
 use std::collections::BTreeSet;
 
+use geop_core_editor::{
+    edit_form::{Edit, EditForm, FormState, choices, chosen},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::{Action, CanvasEvent, DRAG_SNAP, Gizmo, Number, Shape, Style, Tone, Unit, Visual},
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_math::{
     geop_error::{GeopResult, WithContext},
     scalars::{Ring, Scalar},
     vector::Vector3,
     with_context,
 };
-use geop_core_program::{
-    operation::{OperationGroup, OperationInfo, OperationTier},
-    step_editor::DRAG_SNAP,
-};
-use geop_ops::{
-    Design, NamedModel, Namer,
-    operation::{BuildReader, PartOperation, StepContext},
-    part_operation,
-    ui::{
-        Action, CanvasEvent, Edit, EditForm, FormState, Gizmo, Number, Shape, Style, Tone, Unit,
-        Visual, choices, chosen,
-    },
-};
+use geop_ops_model::{Design, ModelOperation, NamedModel, Namer, build_model};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -506,7 +502,7 @@ fn form<'a>(
 /// moved as far as the pointer from where it was grabbed, snapped to
 /// [`DRAG_SNAP`] unless shift is held — to the cage as it was then, which
 /// the editor gives each event of the drag (see
-/// [`geop_ops::ui::Visual::from_grab`]). The gizmo dragged: what is selected moved, turned or scaled as the
+/// [`Visual::from_grab`]). The gizmo dragged: what is selected moved, turned or scaled as the
 /// drag did. Escape clears the selection; Delete deletes the faces
 /// selected.
 fn on_canvas(edit: Edit<'_, SubdArgs, SubdSession>, event: &CanvasEvent<Design>) {
@@ -579,8 +575,8 @@ pub fn build_subd<S: Scalar>(
 part_operation!(Subd(SubdArgs));
 
 impl PartOperation for Subd {
+    const KIND: &'static str = "subd";
     const INFO: OperationInfo = OperationInfo::new(
-        "subd",
         "SubD",
         "Shape a freeform body by dragging the vertices, edges and faces of a control cage, built as its smooth subdivision surface.",
         OperationGroup::Surface,
@@ -588,6 +584,9 @@ impl PartOperation for Subd {
     )
     .icon(crate::icons::SUBD);
     type Args = SubdArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = SubdSession;
 
     /// A box cage, two units a side, around the origin.
@@ -598,13 +597,8 @@ impl PartOperation for Subd {
         }
     }
 
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        step: &str,
-        args: &SubdArgs,
-    ) -> GeopResult<()> {
-        build_subd(model, step, args)
+    fn run(step: &str, part: &mut BuildPart, args: &SubdArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
     fn form<'a>(
@@ -617,5 +611,16 @@ impl PartOperation for Subd {
 
     fn canvas(_: &StepContext, edit: Edit<'_, SubdArgs, SubdSession>, event: &CanvasEvent<Design>) {
         on_canvas(edit, event)
+    }
+}
+
+impl ModelOperation for Subd {
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &PartReader,
+        step: &str,
+        args: &SubdArgs,
+    ) -> GeopResult<()> {
+        build_subd(model, step, args)
     }
 }

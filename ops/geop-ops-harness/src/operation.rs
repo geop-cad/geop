@@ -1,36 +1,33 @@
 //! [`Route`]: lay a bundle of wires between connectors, through clips.
 
+use geop_core_editor::{
+    edit_form::{Edit, EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::{Action, Choice, ListItem, Number, Shape, Style, Tone, Unit, Value, Visual},
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     vector::Vector3,
     with_context,
 };
-use geop_core_program::part::Retrieve;
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, NamedModel, Namer,
-    model::model,
-    operation::{
-        Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Scope, Seen, StepContext,
-        build_model, frame_along,
-    },
-    part_operation,
-    solids::{CutWire, SolidNotes, solid_notes},
-    ui::{
-        Action, Choice, Edit, EditForm, FormState, ListItem, Number, Shape, Style, Tone, Unit,
-        Value, Visual,
-    },
-};
+use geop_ops_assembly::PlacedElement;
 use geop_ops_extrude_revolve::{
     common::{Profile, circle_at},
     path_sweep::{Control, sweep_along},
     sweep::SweepLoop,
 };
+use geop_ops_model::{
+    CutWire, Design, ModelOperation, NamedModel, Namer, SolidNotes, build_model, frame_along,
+    solid_notes,
+};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    cable::{Cable, Cables, cables},
+    cable::{Cable, Cables, cable, cables},
     route::{Measure, RoutePath, Waypoint},
     wire::{GAUGES, Wire, WireSize, bundle_diameter},
 };
@@ -61,12 +58,12 @@ pub struct Route;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RouteArgs {
-    /// What the route runs through, in order: points, coordinate systems
-    /// (along their `z` axis: out of a connector at the start, into one at
-    /// the end) and circular edges (through their centre, along their
-    /// axis).
+    /// What the route runs through, in order, of the part or of parts
+    /// placed in it: points, coordinate systems (along their `z` axis: out
+    /// of a connector at the start, into one at the end) and circular edges
+    /// (through their centre, along their axis) — see [`Waypoint::of`].
     #[serde(default)]
-    pub through: Vec<EntityRef>,
+    pub through: Vec<PlacedElement>,
     /// The wires bundled.
     pub wires: Vec<Wire>,
     /// The fraction of the bundle's section its wires fill (see
@@ -98,7 +95,15 @@ struct Plan<S: Scalar> {
 }
 
 impl RouteArgs {
-    fn plan<S: Scalar>(&self, lookup: &mut (impl Lookup<S> + ?Sized)) -> GeopResult<Plan<S>> {
+    /// The points it runs through, in the part `reader` reads.
+    fn waypoints(&self, reader: &PartReader) -> GeopResult<Vec<Waypoint<Design>>> {
+        (self.through.iter().enumerate())
+            .map(|(i, entity)| Waypoint::of(reader, entity, i))
+            .collect()
+    }
+
+    /// The route through `waypoints`, the points it runs through.
+    fn plan<S: Scalar>(&self, waypoints: &[Waypoint<S>]) -> GeopResult<Plan<S>> {
         let diameter = bundle_diameter(&self.wires, self.fill)?;
         // Any tighter, and the bundle would fold into itself.
         if !(self.bend_factor > 0.5 && self.bend_factor.is_finite()) {
@@ -113,13 +118,7 @@ impl RouteArgs {
                 self.service_loop
             )));
         }
-        let waypoints = self
-            .through
-            .iter()
-            .enumerate()
-            .map(|(i, entity)| Waypoint::of(lookup, entity, i))
-            .collect::<GeopResult<Vec<_>>>()?;
-        let path = RoutePath::through(&waypoints)?;
+        let path = RoutePath::through(waypoints)?;
         let measure = path.measure()?;
         Ok(Plan {
             diameter,
@@ -197,16 +196,16 @@ fn wire_detail(wire: &Wire, cut: Option<f64>) -> String {
 /// Samples along each curve of the route, to draw it by.
 const SAMPLES_PER_CURVE: usize = 16;
 
-/// The step `R`'s bundle swept along its route through the points it
-/// picked, as `lookup` has them, into the solid `route(R)` (see [`Route`]).
+/// The step `R`'s bundle swept along its route through `waypoints`, the
+/// points it picked, into the solid `route(R)` (see [`Route`]).
 fn sweep<S: Scalar>(
     model: &mut NamedModel<S>,
-    lookup: &mut (impl Lookup<S> + ?Sized),
     step: &str,
     args: &RouteArgs,
+    waypoints: &[Waypoint<S>],
 ) -> GeopResult<()> {
     let namer = Namer::new("route", step)?;
-    let plan = args.plan(lookup)?;
+    let plan = args.plan(waypoints)?;
     plan.check_bends(args.bend_factor)?;
     // The bundle's section, square to the route where it starts.
     let chain = &plan.path.chain;
@@ -226,13 +225,10 @@ fn sweep<S: Scalar>(
     Ok(())
 }
 
-/// The cable the step `R` lays, `route(R)` (see [`Route`]), through the
-/// points it picked as `lookup` has them.
-fn cable<S: Scalar>(
-    lookup: &mut (impl Lookup<S> + ?Sized),
-    args: &RouteArgs,
-) -> GeopResult<Cable<S>> {
-    let plan = args.plan(lookup)?;
+/// The cable the step `R` lays, `route(R)` (see [`Route`]), through
+/// `waypoints`, the points it picked.
+fn cable_through<S: Scalar>(args: &RouteArgs, waypoints: &[Waypoint<S>]) -> GeopResult<Cable<S>> {
+    let plan = args.plan(waypoints)?;
     let length = plan.measure.length;
     let extra = S::from_f64(2.0 * args.service_loop);
     let wires = (args.wires.iter())
@@ -255,32 +251,28 @@ fn cable<S: Scalar>(
     })
 }
 
-/// Builds the route of `args` as the step `step` into `model`, resolving
-/// its points against it as well, and the cable it lays: a route in a model
-/// on its own, in any scalar, as a test lays one.
+/// Builds the route of `args` through `waypoints` as the step `step` into
+/// `model`, and the cable it lays: a route in a model on its own, in any
+/// scalar, as a test lays one.
 #[cfg(test)]
 pub(crate) fn lay<S: Scalar>(
     model: &mut NamedModel<S>,
     step: &str,
     args: &RouteArgs,
+    waypoints: &[Waypoint<S>],
 ) -> GeopResult<Cable<S>> {
-    let before = model.clone();
-    sweep(model, &mut &before, step, args)?;
-    cable(&mut &before, args)
+    sweep(model, step, args, waypoints)?;
+    cable_through(args, waypoints)
 }
 
 /// Records the cable `route(R)` of the step `R`, through its points in the
-/// model it swept the bundle into.
-fn record(
-    mut cables: Cables<Design>,
-    reader: &mut BuildReader,
-    (step, args): &(String, RouteArgs),
-) -> GeopResult<Cables<Design>> {
+/// part `reader` reads.
+fn record(reader: &PartReader, (step, args): &(String, RouteArgs)) -> GeopResult<Cables<Design>> {
     let ctx = with_context!("the cable of route({step})");
     let namer = Namer::new("route", step)?;
-    let model = reader.retrieve_target(&model()).with_context(ctx)?;
-    let mut scope = Scope { model, reader };
-    let cable = cable(&mut scope, args).with_context(ctx)?;
+    let mut cables: Cables<Design> = reader.previous()?;
+    let waypoints = args.waypoints(reader).with_context(ctx)?;
+    let cable = cable_through(args, &waypoints).with_context(ctx)?;
     cables.add(namer.root(), cable).with_context(ctx)?;
     Ok(cables)
 }
@@ -289,15 +281,14 @@ fn record(
 /// wires ordered in its place.
 // A generator's arguments are a type of their own: the step's id, a `String`.
 #[allow(clippy::ptr_arg)]
-fn note(mut notes: SolidNotes, reader: &mut BuildReader, step: &String) -> GeopResult<SolidNotes> {
+fn note(reader: &PartReader, step: &String) -> GeopResult<SolidNotes> {
     let bundle = Namer::new("route", step)?.root();
-    let cables = reader.retrieve_target(&cables())?;
-    let cable = (cables.get(&bundle))
+    let mut notes: SolidNotes = reader.previous()?;
+    let cable = cable(reader, &bundle)
         .ok_or_else(|| GeopError::new(format!("the part has no cable named {bundle:?}")))?;
-    let wires = cable.wires.clone();
     let note = notes.note_mut(bundle);
     note.drawn_only = true;
-    note.wires = wires;
+    note.wires = cable.wires.clone();
     Ok(notes)
 }
 
@@ -306,18 +297,17 @@ fn note(mut notes: SolidNotes, reader: &mut BuildReader, step: &String) -> GeopR
 /// loop; what was built — and the route drawn, its points numbered and its
 /// bends too tight marked.
 fn form<'a>(
-    context: &StepContext<'a>,
-    seen: &mut Seen<'_>,
+    context: &'a StepContext<'a>,
     args: &RouteArgs,
     session: &RouteSession,
 ) -> EditForm<'a, Design, RouteArgs, RouteSession> {
+    let before = &context.before;
     let mut f = EditForm::<Design, RouteArgs, RouteSession>::default();
-    f.reference(
+    f.pick(
         "through",
         "through",
-        args.through.clone(),
-        &[Role::Point, Role::Circle],
-        None,
+        before,
+        &args.through,
         true,
         |edit, picked| edit.args.through = picked,
     );
@@ -327,9 +317,8 @@ fn form<'a>(
             Tone::Hint,
         );
 
-    let cable = (context.built)
-        .and_then(|built| built.retrieve_target(&cables()).ok())
-        .and_then(|cables| cables.get(&format!("route({})", context.step)));
+    let cable = (context.built.as_ref())
+        .and_then(|built| cable(built, &format!("route({})", context.step)));
     f.form.dialog.heading("wires_heading", "Wires");
     let items = args
         .wires
@@ -478,15 +467,15 @@ fn form<'a>(
             Tone::Success,
         );
     }
-    draw(&mut f, seen, args);
+    draw(&mut f, before, args);
     f
 }
 
 part_operation!(Route(RouteArgs));
 
 impl PartOperation for Route {
+    const KIND: &'static str = "route";
     const INFO: OperationInfo = OperationInfo::new(
-        "route",
         "Route",
         "Route a bundle of wires from a connector through clips to another connector, its bends checked and every wire's cut length reported.",
         OperationGroup::Assembly,
@@ -495,6 +484,9 @@ impl PartOperation for Route {
     .experimental()
     .icon(crate::icons::ROUTE);
     type Args = RouteArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = RouteSession;
 
     /// Nothing picked yet; one hookup wire, filling three quarters of the
@@ -510,24 +502,10 @@ impl PartOperation for Route {
     }
 
     /// Sweeps the bundle, then records its cable, and notes the bundle.
-    fn run(step: &str, part: &mut Build, args: &RouteArgs) -> GeopResult<()> {
+    fn run(step: &str, part: &mut BuildPart, args: &RouteArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)?;
         part.revise_target(&cables(), &(step.to_string(), args.clone()), record)?;
         part.revise_target(&solid_notes(), &step.to_string(), note)
-    }
-
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &RouteArgs,
-    ) -> GeopResult<()> {
-        let before = model.clone();
-        let mut scope = Scope {
-            model: &before,
-            reader,
-        };
-        sweep(model, &mut scope, step, args)
     }
 
     fn form<'a>(
@@ -535,22 +513,36 @@ impl PartOperation for Route {
         args: &RouteArgs,
         editing: &RouteEditing,
     ) -> EditForm<'a, Design, RouteArgs, RouteSession> {
-        let mut seen = Seen::new(context.before);
-        form(context, &mut seen, args, &editing.session)
+        form(context, args, &editing.session)
+    }
+}
+
+impl ModelOperation for Route {
+    /// The points are resolved in the part as the steps before left it.
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &PartReader,
+        step: &str,
+        args: &RouteArgs,
+    ) -> GeopResult<()> {
+        let waypoints = args.waypoints(reader)?;
+        sweep(model, step, args, &waypoints)
     }
 }
 
 /// The route drawn: its points numbered, as what it says about them counts
 /// them, and its centre line, the bends too tight marked as failed.
-fn draw(f: &mut EditForm<'_, Design, RouteArgs, RouteSession>, seen: &mut Seen, args: &RouteArgs) {
+fn draw(
+    f: &mut EditForm<'_, Design, RouteArgs, RouteSession>,
+    reader: &PartReader,
+    args: &RouteArgs,
+) {
     type S = Design;
-    let waypoints: Vec<Waypoint<S>> = args
-        .through
-        .iter()
-        .enumerate()
-        .filter_map(|(i, entity)| Waypoint::of(seen, entity, i).ok())
+    let waypoints: Vec<Option<Waypoint<S>>> = (args.through.iter().enumerate())
+        .map(|(i, entity)| Waypoint::of(reader, entity, i).ok())
         .collect();
     for (i, waypoint) in waypoints.iter().enumerate() {
+        let Some(waypoint) = waypoint else { continue };
         f.form.visuals.push(Visual::new(
             format!("point:{i}"),
             Shape::Label {
@@ -561,7 +553,10 @@ fn draw(f: &mut EditForm<'_, Design, RouteArgs, RouteSession>, seen: &mut Seen, 
             Style::Reference,
         ));
     }
-    let Ok(plan) = args.plan(seen) else {
+    let Some(waypoints) = waypoints.into_iter().collect::<Option<Vec<_>>>() else {
+        return;
+    };
+    let Ok(plan) = args.plan(&waypoints) else {
         return;
     };
     let tight: Vec<usize> = plan

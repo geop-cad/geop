@@ -2,14 +2,15 @@
 //! flanged, cut, hemmed and unfolded by steps, the way the front end does
 //! it, and its flat pattern exported for cutting.
 
-use geop_ops::{
-    model::{model, sketch},
-    ui::{Button, StepEditEvent, Value},
-};
+use geop_core_editor::editing::{Button, StepEditEvent, Value};
+use geop_ops_booleans::solid;
+use geop_ops_model::{element, notes_of};
 use geop_ops_sheetmetal::{
-    EdgeFlangeArgs, FlatPatternArgs, HemArgs, HemKind, SheetBody, SheetCutArgs, sheets,
+    EdgeFlangeArgs, FlatPatternArgs, HemArgs, HemKind, SheetBody, SheetCutArgs, edge, sheet_body,
 };
-use geop_ops_sketch::AddSketchArgs;
+use geop_ops_sketch::{AddSketchArgs, SketchPlane, whole_sketch};
+
+use geop_ops_extrude_revolve::testing::model_of;
 
 use super::testing::{
     Built, args, assert_valid, click_at, dialog, disc, example_editor, from_above, handled, pointer,
@@ -30,10 +31,8 @@ fn bracket_example_builds_and_unfolds() {
     );
     let runner = program.built().unwrap();
     let view = runner.part.current();
-    assert_valid(view.retrieve_target(&model()).unwrap());
-    let recorded = view.retrieve_target(&sheets()).unwrap();
-    let sheet = recorded
-        .get("sheet_cut(mount)")
+    assert_valid(&model_of(&runner));
+    let sheet = sheet_body(&view, "sheet_cut(mount)")
         .and_then(|b| b.bent())
         .unwrap();
     assert_eq!((sheet.flats.len(), sheet.bends.len()), (3, 2));
@@ -43,25 +42,24 @@ fn bracket_example_builds_and_unfolds() {
     program.push(
         "flat",
         FlatPatternArgs {
-            solid: "sheet_cut(mount)".into(),
+            solid: solid("sheet_cut(mount)"),
             keep: false,
         },
     );
     let runner = program.built().unwrap();
     let view = runner.part.current();
-    let built = view.retrieve_target(&model()).unwrap();
-    assert_valid(built);
+    let built = model_of(&runner);
+    assert_valid(&built);
     assert_eq!(built.solid_names(), ["flat_pattern(flat)"]);
-    let recorded = view.retrieve_target(&sheets()).unwrap();
-    let Some(SheetBody::Flat(data)) = recorded.get("flat_pattern(flat)") else {
+    let Some(SheetBody::Flat(data)) = sheet_body(&view, "flat_pattern(flat)") else {
         panic!("no flat pattern recorded");
     };
     assert_eq!(data.bends.len(), 2);
     assert!(
-        (view.retrieve_target(&sketch("flat_pattern(flat,bend_lines)"))).is_ok(),
+        (view.retrieve_element(&whole_sketch("flat_pattern(flat,bend_lines)"))).is_ok(),
         "no bend lines"
     );
-    let notes = geop_ops::solids::notes_of(view).unwrap();
+    let notes = notes_of(&view).unwrap();
     assert_eq!(
         notes.get("flat_pattern(flat)").unwrap().thickness,
         Some(0.08)
@@ -92,7 +90,11 @@ fn new_edge_flange_picks_its_edge_and_unfolds() {
     let step = editor.program().program.steps.last().unwrap().clone();
     assert_eq!(step.operation, "edge_flange");
     let flange: EdgeFlangeArgs = args(&step);
-    assert_eq!(flange.edge, "base_flange(plate,outline,c5,b)", "{flange:?}");
+    assert_eq!(
+        flange.edge,
+        Some(edge("base_flange(plate,outline,c5,b)")),
+        "{flange:?}"
+    );
     assert_eq!(flange.length, 0.3.into());
     let flanged = format!("edge_flange({})", step.id);
 
@@ -105,7 +107,7 @@ fn new_edge_flange_picks_its_edge_and_unfolds() {
     let update = handled(&mut editor, Command::Commit);
     let step = editor.program().program.steps.last().unwrap();
     assert_eq!(step.operation, "flat_pattern");
-    assert_eq!(args::<FlatPatternArgs>(step).solid, flanged);
+    assert_eq!(args::<FlatPatternArgs>(step).solid, solid(flanged));
     let scene = update.scene.expect("the scene is sent anew");
     assert!(
         scene
@@ -133,9 +135,7 @@ fn sheet_metal_cut_hem_and_cutting_export() {
     program.push(
         "flange_hole",
         AddSketchArgs {
-            plane: Some(geop_ops::EntityRef::Face {
-                name: "edge_flange(back,flange,a)".into(),
-            }),
+            plane: Some(SketchPlane::Face(element("edge_flange(back,flange,a)"))),
             sketch: hole,
             ..Default::default()
         },
@@ -172,8 +172,8 @@ fn sheet_metal_cut_hem_and_cutting_export() {
     let step = editor.program().program.steps.last().unwrap().clone();
     assert_eq!(step.operation, "sheet_cut");
     let cut: SheetCutArgs = args(&step);
-    assert_eq!(cut.sketch, "flange_hole");
-    assert_eq!(cut.face, "edge_flange(back,flange,a)");
+    assert_eq!(cut.sketch, whole_sketch("flange_hole"));
+    assert_eq!(cut.face, Some(element("edge_flange(back,flange,a)")));
     let scene = update.scene.expect("the scene is sent anew");
     assert_eq!(scene.part.solids, [format!("sheet_cut({})", step.id)]);
 
@@ -185,7 +185,7 @@ fn sheet_metal_cut_hem_and_cutting_export() {
     let step = editor.program().program.steps.last().unwrap().clone();
     assert_eq!(step.operation, "hem");
     let hem: HemArgs = args(&step);
-    assert_eq!(hem.edge, "base_flange(plate,outline,c5,b)");
+    assert_eq!(hem.edge, Some(edge("base_flange(plate,outline,c5,b)")));
     assert_eq!((hem.kind, hem.gap), (HemKind::Open, 0.06));
     let scene = update.scene.expect("the scene is sent anew");
     assert_eq!(scene.part.solids, [format!("hem({})", step.id)]);

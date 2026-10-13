@@ -1,21 +1,24 @@
 //! Programs from bug reports, with the coordinates they were reported with:
 //! a "clean" equivalent may not carry the same numerical case at all.
 
-use geop_core_math::primitives::FrameAxis;
+use geop_core_math::primitives::{DatumComponent, FrameAxis};
 use geop_core_math::scalars::Scalar;
 use geop_core_topology::{boundary::BoundaryType, loop_sampling::sample_loop_to_polygon};
-use geop_ops::{Design, EntityRef, NamedModel};
-use geop_ops_booleans::Combine;
-use geop_ops_datums::{AddDatumArgs, Construction};
+use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
+use geop_ops_booleans::{Combine, solid};
+use geop_ops_datums::{ORIGIN, component_name, datum};
 use geop_ops_extrude_revolve::Output;
-use geop_ops_extrude_revolve::{Extents, RevolveArgs};
+use geop_ops_extrude_revolve::{Extents, RevolveArgs, RevolveAxis};
+use geop_ops_model::{BooleanOp, Design, NamedModel, element};
 use geop_ops_rasterize::face_triangles_uv;
-use geop_ops_sketch::AddSketchArgs;
+use geop_ops_sketch::{AddSketchArgs, SketchPlane, sketch_element, whole_sketch};
 use geop_ops_sketch::{Constraint, Sketch};
 
 use crate::Program;
 use crate::examples::n;
-use crate::operations::testing::{Built, args, assert_valid, extrusion, origin_plane, sketch};
+use crate::operations::testing::{
+    Built, args, assert_valid, extrusion, on_face, on_origin, sketch,
+};
 
 /// Checks the part `program` builds is valid (see [`assert_valid`]) and is
 /// drawn as it is (see [`assert_draws_its_trims`]).
@@ -131,7 +134,7 @@ fn cylinder_joined_over_a_hole() {
     program.push(
         "sketch1",
         AddSketchArgs {
-            plane: Some(origin_plane(FrameAxis::Z)),
+            plane: Some(on_origin(FrameAxis::Z)),
             sketch: plate,
             ..Default::default()
         },
@@ -144,12 +147,8 @@ fn cylinder_joined_over_a_hole() {
         "reference1",
         AddDatumArgs {
             selection: vec![
-                EntityRef::Face {
-                    name: "extrude(extrude1,end)".into(),
-                },
-                EntityRef::Face {
-                    name: "extrude(extrude1,sketch1,c4)".into(),
-                },
+                Selected::Face(element("extrude(extrude1,end)")),
+                Selected::Face(element("extrude(extrude1,sketch1,c4)")),
             ],
             construction: Construction::Midplane { other: false },
         },
@@ -160,7 +159,7 @@ fn cylinder_joined_over_a_hole() {
     program.push(
         "sketch2",
         AddSketchArgs {
-            plane: Some(EntityRef::datum("reference1")),
+            plane: Some(SketchPlane::Datum(datum("reference1"))),
             sketch: boss,
             ..Default::default()
         },
@@ -211,11 +210,8 @@ fn outline_revolved_around_its_edge_joined_to_its_box() {
     program.push(
         "revolve1",
         RevolveArgs {
-            sketch: "outline".into(),
-            axis: Some(EntityRef::SketchCurve {
-                sketch: "outline".into(),
-                curve: right,
-            }),
+            sketch: whole_sketch("outline"),
+            axis: Some(RevolveAxis::Sketch(sketch_element("outline", right))),
             extent: Extents::blind(360.0),
             output: Output::Solid(Combine::join("extrude(hole)")),
         },
@@ -273,16 +269,13 @@ fn spline_revolved_then_extruded_and_joined() {
     sketch.constrain(Constraint::Vertical { line: axis });
     program.push(
         "sketch1",
-        crate::operations::testing::sketch(origin_plane(FrameAxis::Z), sketch),
+        crate::operations::testing::sketch(on_origin(FrameAxis::Z), sketch),
     );
     program.push(
         "revolve1",
         RevolveArgs {
-            sketch: "sketch1".into(),
-            axis: Some(EntityRef::SketchCurve {
-                sketch: "sketch1".into(),
-                curve: axis,
-            }),
+            sketch: whole_sketch("sketch1"),
+            axis: Some(RevolveAxis::Sketch(sketch_element("sketch1", axis))),
             extent: Extents::blind(360.0),
             output: Output::Solid(Combine::NewBody),
         },
@@ -323,7 +316,7 @@ fn ring_revolved_onto_plate() {
     }
     let center = plate.add_point(n(0.0), n(0.0));
     plate.add_circle(center, n(1.4999999999999998));
-    program.push("sketch1", sketch(origin_plane(FrameAxis::Z), plate));
+    program.push("sketch1", sketch(on_origin(FrameAxis::Z), plate));
     program.push(
         "extrude1",
         extrusion("sketch1", Extents::blind(1.0), Combine::NewBody),
@@ -350,15 +343,12 @@ fn ring_revolved_onto_plate() {
     let along = ring.add_point(n(1.0), n(0.0));
     let axis = ring.add_line(origin, along);
     ring.set_construction(axis, true);
-    program.push("sketch2", sketch(origin_plane(FrameAxis::X), ring));
+    program.push("sketch2", sketch(on_origin(FrameAxis::X), ring));
     program.push(
         "revolve1",
         RevolveArgs {
-            sketch: "sketch2".into(),
-            axis: Some(EntityRef::SketchCurve {
-                sketch: "sketch2".into(),
-                curve: axis,
-            }),
+            sketch: whole_sketch("sketch2"),
+            axis: Some(RevolveAxis::Sketch(sketch_element("sketch2", axis))),
             extent: Extents::blind(360.0),
             output: Output::Solid(Combine::join("extrude(extrude1)")),
         },
@@ -458,7 +448,7 @@ fn bracket_with_torus(
     program.push(
         "sketch1",
         AddSketchArgs {
-            plane: Some(origin_plane(FrameAxis::X)),
+            plane: Some(on_origin(FrameAxis::X)),
             sketch: outline,
             ..Default::default()
         },
@@ -475,9 +465,7 @@ fn bracket_with_torus(
         ),
     );
     // The edges swept by the outline's second and fourth corners.
-    let edge = |k: usize| EntityRef::Edge {
-        name: format!("extrude(extrude1,sketch1,{})", p[k]),
-    };
+    let edge = |k: usize| Selected::Edge(element(format!("extrude(extrude1,sketch1,{})", p[k])));
     program.push(
         "reference1",
         AddDatumArgs {
@@ -492,7 +480,7 @@ fn bracket_with_torus(
     program.push(
         "sketch2",
         AddSketchArgs {
-            plane: Some(EntityRef::datum("reference1")),
+            plane: Some(SketchPlane::Datum(datum("reference1"))),
             sketch: hole,
             ..Default::default()
         },
@@ -519,9 +507,7 @@ fn bracket_with_torus(
     program.push(
         "sketch3",
         AddSketchArgs {
-            plane: Some(EntityRef::Face {
-                name: "extrude(extrude1,start)".into(),
-            }),
+            plane: Some(on_face("extrude(extrude1,start)")),
             sketch: ring,
             ..Default::default()
         },
@@ -529,11 +515,11 @@ fn bracket_with_torus(
     program.push(
         "revolve1",
         RevolveArgs {
-            sketch: "sketch3".into(),
-            axis: Some(EntityRef::SketchCurve {
-                sketch: "sketch3".into(),
-                curve: if around_x_axis { x_axis } else { line },
-            }),
+            sketch: whole_sketch("sketch3"),
+            axis: Some(RevolveAxis::Sketch(sketch_element(
+                "sketch3",
+                if around_x_axis { x_axis } else { line },
+            ))),
             extent,
             output: Output::Solid(combine),
         },
@@ -596,8 +582,8 @@ fn torus_up_to_next(bracket: &Bracket, around_x_axis: bool, stopped_all_round: b
             Combine::join(target()),
             Combine::cut(target()),
             Combine::With {
-                op: geop_ops::BooleanOp::Intersection,
-                target: target(),
+                op: BooleanOp::Intersection,
+                target: solid(target()),
             },
         ] {
             let program =
@@ -706,7 +692,7 @@ fn conebox(combine: Combine) -> Program {
     program.push(
         "sketch1",
         AddSketchArgs {
-            plane: Some(origin_plane(FrameAxis::Z)),
+            plane: Some(on_origin(FrameAxis::Z)),
             sketch: outline,
             ..Default::default()
         },
@@ -726,10 +712,14 @@ fn conebox(combine: Combine) -> Program {
         "reference1",
         AddDatumArgs {
             selection: vec![
-                EntityRef::Edge {
-                    name: format!("extrude(extrude1,sketch1,{},end)", sides[3]),
-                },
-                origin_plane(FrameAxis::Z),
+                Selected::Edge(element(format!(
+                    "extrude(extrude1,sketch1,{},end)",
+                    sides[3]
+                ))),
+                Selected::Datum(datum(component_name(
+                    ORIGIN,
+                    DatumComponent::Plane(FrameAxis::Z),
+                ))),
             ],
             construction: Construction::Angle { angle: 45.0.into() },
         },
@@ -746,7 +736,7 @@ fn conebox(combine: Combine) -> Program {
     program.push(
         "sketch2",
         AddSketchArgs {
-            plane: Some(EntityRef::datum("reference1")),
+            plane: Some(SketchPlane::Datum(datum("reference1"))),
             sketch: spindle,
             ..Default::default()
         },
@@ -754,11 +744,8 @@ fn conebox(combine: Combine) -> Program {
     program.push(
         "revolve1",
         RevolveArgs {
-            sketch: "sketch2".into(),
-            axis: Some(EntityRef::SketchCurve {
-                sketch: "sketch2".into(),
-                curve: axis,
-            }),
+            sketch: whole_sketch("sketch2"),
+            axis: Some(RevolveAxis::Sketch(sketch_element("sketch2", axis))),
             extent: Extents::blind(360.0),
             output: Output::Solid(combine),
         },

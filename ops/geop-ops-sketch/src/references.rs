@@ -3,8 +3,8 @@
 //! fixed points and curves (see [`geop_core_sketch::sketch`]), which
 //! constraints can then be measured against.
 //!
-//! A projection refers to what it projects by name ([`EntityRef`]), never by
-//! position: every time the sketch is built, each reference is brought up
+//! A projection refers to what it projects by name ([`Projected`]), never
+//! by position: every time the sketch is built, each reference is brought up
 //! to date with the part as it is then ([`Reference::update`]), so a sketch
 //! dimensioned against a projected edge follows that edge when an earlier
 //! step moves it — and the sketch's ids for what it projected stay the
@@ -17,7 +17,6 @@
 //! edge projects to. All of it is reference geometry: fixed, construction,
 //! drawn as such, and never part of a profile.
 
-use geop_ops::operation::ResolveEntity;
 use std::collections::BTreeMap;
 
 use geop_core_geometry::nurb_curve::NurbCurve3D;
@@ -28,15 +27,26 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
     with_context,
 };
+use geop_core_editor::one_of;
+use geop_core_program::element::ElementReference;
 use geop_core_sketch::{CurveId, PointId, SplineShape};
 use geop_core_topology::CoedgeGeometry;
-use geop_ops::{
-    Design, EntityRef, RefId,
-    operation::{Lookup, NamedCurve},
-};
+use geop_ops_model::{Chain, Curve, Design, Face, NamedModel, RefId, Vertex};
+use geop_ops_parameters::PartReader;
 use serde::{Deserialize, Serialize};
 
-use crate::{CurveKind, Sketch, geometry::of};
+use crate::{CurveKind, Sketch, geometry::of, placed::PlacedSketch};
+
+one_of! {
+    /// What a sketch projects of the part: a vertex, an edge, a face — its
+    /// boundary — or another sketch's curve.
+    pub enum Projected {
+        Vertex(ElementReference<NamedModel<Design>, Vertex>),
+        Edge(ElementReference<NamedModel<Design>, Curve>),
+        Face(ElementReference<NamedModel<Design>, Face>),
+        SketchCurve(ElementReference<PlacedSketch<Design>, Curve>),
+    }
+}
 
 /// Where reference geometry comes from.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -47,7 +57,7 @@ pub enum Source {
     Frame,
     /// A vertex, an edge or a face of the part — its boundary — projected
     /// into the sketch's plane along the plane's normal.
-    Projection { entity: EntityRef },
+    Projection { entity: Projected },
 }
 
 /// Reference geometry in a sketch: where it comes from, and the fixed
@@ -127,21 +137,21 @@ impl Reference {
     }
 
     /// Brings its points and curves in `sketch` up to date with what it
-    /// comes from, as `lookup` has the part, the sketch lying in `plane`:
+    /// comes from, as `reader` reads the part, the sketch lying in `plane`:
     /// each moved to where its source is now, those new to the source
     /// added, those gone from it removed — with whatever constraints were
     /// on them.
-    pub fn update<S: Scalar>(
+    pub fn update(
         &mut self,
         sketch: &mut Sketch,
-        lookup: &mut (impl Lookup<S> + ?Sized),
-        plane: &CoordinateSystem<S>,
+        reader: &PartReader,
+        plane: &CoordinateSystem<Design>,
     ) -> GeopResult<()> {
         let geometry = match &self.source {
             Source::Frame => frame_geometry(),
             Source::Projection { entity } => {
-                let ctx = with_context!("projecting {entity} into the sketch");
-                project(entity, lookup, plane).with_context(ctx)?
+                let ctx = with_context!("projecting {entity:?} into the sketch");
+                project(entity, reader, plane).with_context(ctx)?
             }
         };
         self.sync(sketch, &geometry);
@@ -248,72 +258,84 @@ fn frame_geometry() -> Geometry {
     }
 }
 
-/// `entity`, as `lookup` has it, projected into `plane` along its normal,
-/// every key the name of the vertex or edge it comes from.
-fn project<S: Scalar>(
-    entity: &EntityRef,
-    lookup: &mut (impl Lookup<S> + ?Sized),
-    plane: &CoordinateSystem<S>,
+/// `entity`, as `reader` reads it, projected into `plane` along its
+/// normal, every key the name of the vertex or edge it comes from.
+fn project(
+    entity: &Projected,
+    reader: &PartReader,
+    plane: &CoordinateSystem<Design>,
 ) -> GeopResult<Geometry> {
-    if entity.split_instance().is_some() {
-        return Err(GeopError::new(format!(
-            "{entity} is of a placed part: a sketch projects the part's own geometry, not a placed part's"
-        )));
-    }
     let mut geometry = Geometry::default();
+    let mut point = |name: &str, at: &Vector3<Design>| {
+        (geometry.points).insert(name.to_string(), of(&plane.to_uv(at)));
+    };
     let mut curves = Vec::new();
     match entity {
-        EntityRef::Vertex { name: vertex } => {
-            let named = lookup.model();
-            let point = named.topology().get_vertex(named.vertex_id(vertex)?)?.point;
-            (geometry.points).insert(vertex.clone(), of(&plane.to_uv(&point)));
+        Projected::Vertex(vertex) => {
+            let found = reader.retrieve_element(vertex)?;
+            point(vertex.name(), &found.model.topology().get_vertex(found.id)?.point);
         }
-        EntityRef::Edge { .. } | EntityRef::SketchCurve { .. } => {
-            curves.push(entity.resolve_curve(lookup)?)
-        }
-        EntityRef::Face { name: face } => {
-            let named = lookup.model();
-            let topology = named.topology();
-            let name = |id: RefId| named.name(id).map(str::to_string);
-            for coedge in topology.iterate_face_coedges(named.face_id(face)?) {
+        Projected::Edge(edge) => curves.push(reader.retrieve_element(edge)?),
+        Projected::SketchCurve(curve) => curves.push(reader.retrieve_element(curve)?),
+        Projected::Face(face) => {
+            let found = reader.retrieve_element(face)?;
+            let (named, topology) = (found.model, found.model.topology());
+            for coedge in topology.iterate_face_coedges(found.id) {
                 match topology.get_coedge(coedge)?.geometry {
-                    CoedgeGeometry::Edge(edge) => {
-                        let name = name(edge.into())?;
-                        // An edge of the model resolves in the model alone.
-                        curves.push(EntityRef::Edge { name }.resolve_curve(&mut &*named)?)
-                    }
+                    CoedgeGeometry::Edge(edge) => curves.push(named.edge_chain(edge)?),
                     CoedgeGeometry::Vertex(vertex) => {
-                        let point = topology.get_vertex(vertex)?.point;
-                        (geometry.points).insert(name(vertex.into())?, of(&plane.to_uv(&point)));
+                        let name = named.name(RefId::from(vertex))?;
+                        point(name, &topology.get_vertex(vertex)?.point);
                     }
                 }
             }
         }
-        other => {
-            return Err(GeopError::new(format!(
-                "{other} cannot be projected: pick a vertex, an edge, a sketch's curve or a face"
-            )));
-        }
     }
-    for curve in curves {
-        let NamedCurve {
-            name: key,
-            curve,
-            start,
-            end,
-        } = curve;
-        for (at, point) in [&start, &end] {
-            geometry.points.insert(at.clone(), of(&plane.to_uv(point)));
-        }
-        let ctx = with_context!("curve {key:?}");
-        if let Some(shape) =
-            project_curve(&curve, plane, &key, start.0, end.0, &mut geometry.points)
-                .with_context(ctx)?
-        {
-            geometry.curves.insert(key, shape);
-        }
+    for chain in curves {
+        project_chain(&chain, plane, &mut geometry)?;
     }
     Ok(geometry)
+}
+
+/// The one curve of `chain` — an edge's or a sketch curve's, named after it
+/// and its ends — projected into `plane`, added to `geometry`.
+fn project_chain(
+    chain: &Chain<NurbCurve3D<Design>>,
+    plane: &CoordinateSystem<Design>,
+    geometry: &mut Geometry,
+) -> GeopResult<()> {
+    let ([curve], [key]) = (chain.curves.as_slice(), chain.curve_names.as_slice()) else {
+        return Err(GeopError::new(format!(
+            "{:?} is {} curves, not one",
+            chain.name,
+            chain.curves.len()
+        )));
+    };
+    let joints = chain.joints()?;
+    let (Some(start), Some(end)) = (joints.first(), joints.last()) else {
+        return Err(GeopError::new(format!("{key:?} has no ends")));
+    };
+    let (Some(start_name), Some(end_name)) = (chain.joint_names.first(), chain.joint_names.last())
+    else {
+        return Err(GeopError::new(format!("{key:?} has no names for its ends")));
+    };
+    for (name, at) in [(start_name, start), (end_name, end)] {
+        geometry.points.insert(name.clone(), of(&plane.to_uv(at)));
+    }
+    let ctx = with_context!("curve {key:?}");
+    let shape = project_curve(
+        curve,
+        plane,
+        key,
+        start_name.clone(),
+        end_name.clone(),
+        &mut geometry.points,
+    )
+    .with_context(ctx)?;
+    if let Some(shape) = shape {
+        geometry.curves.insert(key.clone(), shape);
+    }
+    Ok(())
 }
 
 /// The edge curve `curve` — from the vertex keyed `start` to the one keyed
@@ -509,7 +531,7 @@ mod tests {
 
     fn projected(normal: [f64; 3]) -> (Option<Shape>, BTreeMap<String, [f64; 2]>) {
         let n = Vector3::from_array(normal.map(S::from_f64));
-        let plane = geop_ops::operation::frame_along(Vector3::zero(), &n).unwrap();
+        let plane = geop_ops_model::frame_along(Vector3::zero(), &n).unwrap();
         let mut points = BTreeMap::new();
         let shape =
             project_curve(&quarter(), &plane, "e", "a".into(), "b".into(), &mut points).unwrap();

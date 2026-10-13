@@ -19,7 +19,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::SolidId;
-use geop_ops::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer};
 
 /// The outer boundary of the figure-8 profile, as a CCW polygon in `(u, v) ∈
 /// [0, 1]^2` parameter space.
@@ -105,7 +105,7 @@ mod tests {
     use super::*;
     use crate::common::testing::render;
     use geop_core_math::for_all_scalars;
-    use geop_ops::testing::assert_model_valid;
+    use geop_ops_model::testing::assert_model_valid;
 
     /// How many faces the figure-8 has, so the orientation counts below can
     /// be read as a fraction rather than a bare number.

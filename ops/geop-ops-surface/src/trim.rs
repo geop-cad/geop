@@ -10,21 +10,24 @@
 //! A piece that reaches both sides means the face does not cut the sheet
 //! clean through there: refused, naming the piece.
 
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::Choice,
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_geometry::nurb_surface::NurbSurface3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     vector::Vector3,
 };
+use geop_core_program::element::ElementReference;
 use geop_core_topology::{Body, FaceId, contains::face::face_interior_point};
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, NamedModel, Namer,
-    operation::{BuildReader, EntityRef, PartOperation, Role, StepContext},
-    part_operation,
-    ui::{Choice, EditForm, FormState},
-};
 use geop_ops_booleans::remesh::remesh::{RemeshParams, remesh};
+use geop_ops_model::{Design, Face, ModelOperation, NamedModel, Namer, build_model, model};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use geop_core_geometry::search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size};
@@ -49,12 +52,12 @@ pub enum TrimKeep {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TrimSurface;
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TrimSurfaceArgs {
     /// A face of the sheet to trim.
-    pub face: String,
+    pub face: ElementReference<NamedModel<Design>, Face>,
     /// The face to cut it with.
-    pub tool: String,
+    pub tool: ElementReference<NamedModel<Design>, Face>,
     /// The side of the tool to keep.
     #[serde(default)]
     pub keep: TrimKeep,
@@ -72,8 +75,8 @@ impl TrimKeep {
 part_operation!(TrimSurface(TrimSurfaceArgs));
 
 impl PartOperation for TrimSurface {
+    const KIND: &'static str = "trim_surface";
     const INFO: OperationInfo = OperationInfo::new(
-        "trim_surface",
         "Trim surface",
         "Cut a face standing on its own back to one side of another face.",
         OperationGroup::Surface,
@@ -82,46 +85,41 @@ impl PartOperation for TrimSurface {
     .experimental()
     .icon(crate::icons::TRIM_SURFACE);
     type Args = TrimSurfaceArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
 
     /// Nothing picked yet, keeping the front.
     fn new_args(_: &StepContext) -> TrimSurfaceArgs {
-        TrimSurfaceArgs::default()
+        TrimSurfaceArgs {
+            face: ElementReference::new(model(), ""),
+            tool: ElementReference::new(model(), ""),
+            keep: TrimKeep::Front,
+        }
     }
 
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        step: &str,
-        args: &TrimSurfaceArgs,
-    ) -> GeopResult<()> {
-        let namer = Namer::new("trim", step)?;
-        let tool = model.face_id(&args.tool)?;
-        trim(model, &namer, &args.face, tool, args.keep)
+    fn run(step: &str, part: &mut BuildPart, args: &TrimSurfaceArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
     /// The sheet and the tool, picked, and the side to keep.
     fn form<'a>(
-        _: &'a StepContext<'a>,
+        context: &'a StepContext<'a>,
         args: &TrimSurfaceArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, TrimSurfaceArgs> {
+        let before = &context.before;
         let mut f = EditForm::<Design, TrimSurfaceArgs>::default();
-        f.pick_one(
-            "face",
-            "sheet",
-            EntityRef::face,
-            &args.face,
-            &[Role::Sheet],
-            |edit, name| edit.args.face = name,
-        );
+        f.pick_one("face", "sheet", before, Some(&args.face), |edit, face| {
+            edit.args.face = face
+        });
         f.pick_one(
             "tool",
             "cut with",
-            EntityRef::face,
-            &args.tool,
-            &[Role::Face],
-            |edit, name| edit.args.tool = name,
+            before,
+            Some(&args.tool),
+            |edit, tool| edit.args.tool = tool,
         );
         let sides = vec![
             Choice::new("front", "in front of the face"),
@@ -142,6 +140,19 @@ impl PartOperation for TrimSurface {
             },
         );
         f
+    }
+}
+
+impl ModelOperation for TrimSurface {
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &PartReader,
+        step: &str,
+        args: &TrimSurfaceArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("trim", step)?;
+        let tool = model.face_id(args.tool.name())?;
+        trim(model, &namer, args.face.name(), tool, args.keep)
     }
 }
 

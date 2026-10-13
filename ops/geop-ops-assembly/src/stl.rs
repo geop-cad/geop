@@ -10,7 +10,8 @@ use geop_core_math::{
 use geop_ops_rasterize::stl::{StlFormat, StlTriangle, outward, write_stl};
 use serde::Deserialize;
 
-use super::{Content, Export, Exporter, ExporterInfo, Output};
+use geop_ops_output::{Content, Export, Exporter, ExporterInfo, Output};
+
 use crate::placed::solid_meshes;
 
 /// Writes the solids of the part as an STL mesh.
@@ -33,7 +34,7 @@ pub struct StlOptions {
 
 /// How finely an STL file's curved faces are meshed unless asked otherwise:
 /// as finely as the editor draws them.
-pub const STL_QUALITY: usize = crate::ui::RESOLUTION;
+pub const STL_QUALITY: usize = geop_ops_view::RESOLUTION;
 
 impl Default for StlOptions {
     fn default() -> Self {
@@ -55,7 +56,7 @@ impl Exporter for Stl {
     type Options = StlOptions;
 
     fn export(output: &mut Output, _: &str, options: StlOptions) -> GeopResult<Export> {
-        let all = solid_meshes(output.part(), options.quality)?;
+        let all = solid_meshes(&output.part(), options.quality)?;
         let chosen: Vec<_> = match options.solids.is_empty() {
             true => all.iter().collect(),
             false => (options.solids.iter())
@@ -72,7 +73,7 @@ impl Exporter for Stl {
             true => StlFormat::Ascii,
             false => StlFormat::Binary,
         };
-        let name = &output.stem();
+        let name = &output.stem()?;
         let triangles = chosen.iter().flat_map(|(_, triangles)| triangles);
         let bytes = stl_bytes(triangles, name, format)?;
         Ok(Export {

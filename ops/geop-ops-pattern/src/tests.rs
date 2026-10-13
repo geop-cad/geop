@@ -1,17 +1,36 @@
 //! The operations on boxes built directly: validity, where the copies are,
 //! how much they hold, what they are named, and what is refused.
 
-use geop_core_math::{plain, primitives::FrameAxis, scalars::ScalInF64 as S};
-use geop_ops::BooleanOp;
-use geop_ops::testing::{assert_valid, assert_valid_sheets, volume};
-use geop_ops::{EntityRef, NamedModel, operation::apply_to_model, origin_axis, origin_plane};
-use geop_ops_booleans::Combine;
+use geop_core_math::{
+    geop_error::GeopResult, plain, primitives::FrameAxis, scalars::ScalInF64 as S,
+};
+use geop_core_program::operation::Operation;
+use geop_ops_booleans::{Combine, solid};
+use geop_ops_datums::{define_datums, origin_axis, origin_plane};
 use geop_ops_extrude_revolve::shapes::block_part;
+use geop_ops_model::testing::{assert_valid, assert_valid_sheets, given_part, volume};
+use geop_ops_model::{BooleanOp, NamedModel, read_model};
+use geop_ops_sketch::SketchPlane;
 
 use crate::{
-    CircularPattern, CircularPatternArgs, Direction, LinearPattern, LinearPatternArgs, Mirror,
-    MirrorArgs, MoveBody, MoveBodyArgs, Seeds, Spacing,
+    BodyRef, CircularPattern, CircularPatternArgs, Direction, LinearPattern, LinearPatternArgs,
+    Mirror, MirrorArgs, MoveBody, MoveBodyArgs, PatternDirection, Seeds, Spacing, TurnAxis, body,
 };
+
+/// What `O`'s step `step` with `args` makes of `model`, given with the
+/// datums, as a program of two steps would build it.
+fn apply_to_model<O: Operation<Input = S, State = geop_ops_parameters::StateValue>>(
+    model: NamedModel<S>,
+    step: &str,
+    args: &O::Args,
+) -> GeopResult<NamedModel<S>> {
+    let mut part = given_part(&model)?;
+    define_datums(&mut part)?;
+    part.begin_step();
+    O::run(step, &mut part, args)?;
+    part.end_run(0);
+    Ok(read_model(&part.current())?.into_owned())
+}
 
 /// The lowest corner of the solid named `solid`, by midpoints.
 fn min_corner(part: &NamedModel<S>, solid: &str) -> [f64; 3] {
@@ -32,19 +51,17 @@ fn cube_at(min: [f64; 3]) -> NamedModel<S> {
     block_part("c", min, min.map(|x| x + 1.0))
 }
 
-fn cube() -> Vec<EntityRef> {
-    vec![EntityRef::Solid {
-        name: "cube(c)".into(),
-    }]
+fn cube() -> Vec<BodyRef> {
+    vec![body("cube(c)")]
 }
 
-fn axis(axis: FrameAxis) -> Option<EntityRef> {
-    Some(origin_axis(axis))
+fn axis(axis: FrameAxis) -> Option<TurnAxis> {
+    Some(TurnAxis::Datum(origin_axis(axis)))
 }
 
 fn along(a: FrameAxis, count: usize, spacing: Spacing) -> Direction {
     Direction {
-        along: axis(a),
+        along: Some(PatternDirection::Datum(origin_axis(a))),
         reversed: false,
         count: (count as f64).into(),
         spacing,
@@ -113,7 +130,7 @@ fn overlapping_copies_joined_to_the_seed() {
             cube(),
             Combine::With {
                 op: BooleanOp::Union,
-                target: "cube(c)".into(),
+                target: solid("cube(c)"),
             },
         ),
         first: along(FrameAxis::X, 3, Spacing::step(0.5)),
@@ -206,7 +223,7 @@ fn coming_round_again_is_refused() {
 fn mirrored_cube_faces_out() {
     let args = MirrorArgs {
         seeds: Seeds::bodies(cube(), Combine::NewBody),
-        plane: Some(origin_plane(FrameAxis::X)),
+        plane: Some(SketchPlane::Datum(origin_plane(FrameAxis::X))),
     };
     let part = apply_to_model::<Mirror>(cube_at([1.0, 0.0, 0.0]), "m", &args).unwrap();
     assert_valid(&part);
@@ -271,9 +288,7 @@ fn sheets_are_copied_not_combined() {
     let face = part.face_id("cube(c,end)").unwrap();
     part.copy_faces(&[face], None, |n| format!("x({n})"))
         .unwrap();
-    let sheet = vec![EntityRef::Face {
-        name: "x(cube(c,end))".into(),
-    }];
+    let sheet = vec![body("x(cube(c,end))")];
     let mut args = LinearPatternArgs {
         seeds: Seeds::bodies(sheet, Combine::NewBody),
         first: along(FrameAxis::Z, 2, Spacing::step(2.0)),
@@ -284,7 +299,7 @@ fn sheets_are_copied_not_combined() {
     assert!(copied.id_of("linear_pattern(p,1,x(cube(c,end)))").is_some());
     args.seeds.combine = Combine::With {
         op: BooleanOp::Union,
-        target: "cube(c)".into(),
+        target: solid("cube(c)"),
     };
     let error = apply_to_model::<LinearPattern>(part, "p", &args).expect_err("refused");
     assert!(error.root_message().contains("no solid"), "{error:?}");

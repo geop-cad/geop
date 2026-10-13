@@ -41,6 +41,14 @@ pub trait HasElements<K: Kind>: 'static {
 
     /// The element `name`, or why there is none.
     fn element(&self, name: &str) -> GeopResult<Self::Element<'_>>;
+
+    /// Whether the target named `name` could be one of this type: what
+    /// tells a pick of an element of it from one of a target of another
+    /// type with elements of the same kind ([`ElementReference::from_picked`]).
+    /// The singleton's name, for a singleton; any name, by default.
+    fn names_target(name: &str) -> bool {
+        Self::SINGLETON.is_none_or(|singleton| singleton == name)
+    }
 }
 
 /// The element of the kind `K` named `name` in the target `target`. Saved
@@ -115,9 +123,10 @@ impl<T: HasElements<K>, K: Kind> ElementReference<T, K> {
         Ok(Self::new(TargetReference::new(target), name))
     }
 
-    /// The reference `picked` is, if it picked an element of the kind `K`.
+    /// The reference `picked` is, if it picked an element of the kind `K`
+    /// of a target of the type `T`.
     pub fn from_picked(picked: &PickedElement) -> Option<Self> {
-        (picked.kind == K::NAME)
+        (picked.kind == K::NAME && T::names_target(&picked.target))
             .then(|| Self::new(TargetReference::new(picked.target.clone()), &picked.name))
     }
 
@@ -128,6 +137,18 @@ impl<T: HasElements<K>, K: Kind> ElementReference<T, K> {
             kind: K::NAME.to_string(),
             name: self.name.clone(),
         }
+    }
+}
+
+/// What a target read whole resolves its one element to: itself, for the
+/// empty name ([`ElementReference::whole`]); any other names nothing.
+pub fn whole<'a, T>(target: &'a T, name: &str) -> GeopResult<&'a T> {
+    match name {
+        "" => Ok(target),
+        _ => Err(GeopError::new(format!(
+            "`{}` is read whole, not by `{name}`",
+            std::any::type_name::<T>()
+        ))),
     }
 }
 

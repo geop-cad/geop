@@ -34,7 +34,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{Body, EdgeId, FaceId, VertexId};
-use geop_ops::{NamedModel, Namer, RefId};
+use geop_ops_model::{NamedModel, Namer, RefId};
 
 /// What a created entity was made from — everything its final name derives
 /// from (see the module docs).

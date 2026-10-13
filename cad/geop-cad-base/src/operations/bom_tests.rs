@@ -4,13 +4,9 @@
 
 use std::collections::BTreeMap;
 
-use geop_ops::{
-    ParamValue,
-    model::{model, pose_parameter},
-    parameters::Values,
-    placed::placed_parts,
-};
-use geop_ops_assembly::AddPartArgs;
+use geop_ops_assembly::{AddPartArgs, placed::placed_parts};
+use geop_ops_model::read_model;
+use geop_ops_parameters::{Setting, Settings, StateValue, pose_state};
 use geop_ops_bom::{Bom, LineKind, Structure, bom};
 
 use super::{Runner, workspace};
@@ -19,13 +15,13 @@ use crate::examples::{self, pose};
 
 /// `program`, saved as `path` among `files`, built.
 fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Runner {
-    super::build(program, &workspace(files).scope(path)).unwrap()
+    super::build(program, path, workspace(files).scope(path)).unwrap()
 }
 
 /// The bill of materials of what `runner` built, laid out as `structure`
 /// says.
 fn bill_of_materials(runner: &Runner, structure: Structure) -> Bom {
-    bom(runner.part.current(), structure).unwrap()
+    bom(&runner.part.current(), structure).unwrap()
 }
 
 /// `(item, level, quantity, name, designation)` of every line.
@@ -118,7 +114,7 @@ fn the_bolted_plate_lists_its_screw_and_nut() {
 /// Places `file`, sized `size`, as `id`, at `x` — free: it has no mates.
 fn placed(program: &mut Program, id: &str, file: &str, size: Option<&str>, x: f64) {
     let parameters = size
-        .map(|row| Values::from([("size".to_string(), ParamValue::Text(row.into()))]))
+        .map(|row| Settings::from([("size".to_string(), Setting::Text(row.into()))]))
         .unwrap_or_default();
     program.push(
         id,
@@ -129,8 +125,8 @@ fn placed(program: &mut Program, id: &str, file: &str, size: Option<&str>, x: f6
         },
     );
     program.state.insert(
-        pose_parameter(id),
-        ParamValue::Pose(pose([x, 0.0, 0.0], [0.0; 3])),
+        pose_state(id),
+        StateValue::Pose(pose([x, 0.0, 0.0], [0.0; 3])),
     );
 }
 
@@ -253,16 +249,14 @@ fn the_bolted_plate_is_weighed_in_bounded_work() {
         .map(|(path, program)| (path.to_string(), program.to_json().unwrap()))
         .collect();
     let part = build(files, "bolted_plate.geop", &program);
-    let view = part.part.current();
-    let mut parts = vec![view];
-    let placed = placed_parts(view).unwrap();
-    parts.extend(placed.iter().map(|p| p.located.instance.component.view()));
+    let reader = part.part.current();
+    let placed = placed_parts(&reader).unwrap();
+    let mut parts = vec![reader.clone()];
+    parts.extend(placed.iter().map(|p| p.located.instance.component.reader()));
     let mut evaluations = Vec::new();
     for p in parts {
-        // An assembly that only places parts has no model of its own.
-        let Ok(p) = p.retrieve_target(&model()) else {
-            continue;
-        };
+        // An assembly that only places parts has an empty model of its own.
+        let p = read_model(&p).unwrap();
         for name in p.solid_names() {
             let mass = p
                 .topology()

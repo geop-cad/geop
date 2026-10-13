@@ -215,10 +215,11 @@ dependencies = [
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
- "geop-ops",
+ "geop-ops-add-datum",
  "geop-ops-assembly",
  "geop-ops-bom",
  "geop-ops-booleans",
+ "geop-ops-constraints",
  "geop-ops-datums",
  "geop-ops-drawing",
  "geop-ops-edit",
@@ -227,6 +228,9 @@ dependencies = [
  "geop-ops-harness",
  "geop-ops-hole",
  "geop-ops-inspect",
+ "geop-ops-model",
+ "geop-ops-output",
+ "geop-ops-parameters",
  "geop-ops-pattern",
  "geop-ops-plastic",
  "geop-ops-rasterize",
@@ -238,6 +242,7 @@ dependencies = [
  "geop-ops-subd",
  "geop-ops-surface",
  "geop-ops-urdf",
+ "geop-ops-view",
  "serde",
  "serde_json",
 ]
@@ -250,7 +255,10 @@ dependencies = [
  "geop-cad-base",
  "geop-core-math",
  "geop-core-program",
- "geop-ops",
+ "geop-ops-assembly",
+ "geop-ops-model",
+ "geop-ops-output",
+ "geop-ops-parameters",
  "geop-ops-step",
  "serde_json",
 ]
@@ -309,16 +317,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "geop-ops"
+name = "geop-ops-add-datum"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
- "geop-core-sketch",
- "geop-core-topology",
- "geop-ops-rasterize",
- "imbl",
+ "geop-ops-datums",
+ "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-parameters",
+ "geop-ops-sketch",
  "serde",
  "serde_json",
 ]
@@ -327,11 +337,22 @@ dependencies = [
 name = "geop-ops-assembly"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
- "geop-ops",
+ "geop-core-topology",
+ "geop-ops-add-datum",
+ "geop-ops-constraints",
+ "geop-ops-datums",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-output",
+ "geop-ops-parameters",
+ "geop-ops-pattern",
+ "geop-ops-rasterize",
+ "geop-ops-sketch",
+ "geop-ops-view",
  "serde",
  "serde_json",
 ]
@@ -340,9 +361,15 @@ dependencies = [
 name = "geop-ops-bom"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-math",
- "geop-ops",
+ "geop-core-program",
+ "geop-ops-assembly",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-output",
+ "geop-ops-parameters",
+ "geop-ops-view",
  "serde",
  "serde_json",
 ]
@@ -351,12 +378,14 @@ dependencies = [
 name = "geop-ops-booleans"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-topology",
- "geop-ops",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-parameters",
  "geop-ops-rasterize",
  "rayon",
  "serde",
@@ -375,11 +404,12 @@ dependencies = [
 name = "geop-ops-datums"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
- "geop-ops",
- "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-view",
  "serde",
  "serde_json",
 ]
@@ -388,15 +418,21 @@ dependencies = [
 name = "geop-ops-drawing"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
- "geop-ops",
+ "geop-ops-assembly",
  "geop-ops-bom",
  "geop-ops-booleans",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-output",
+ "geop-ops-parameters",
+ "geop-ops-sketch",
+ "geop-ops-view",
  "serde",
  "serde_json",
 ]
@@ -405,13 +441,16 @@ dependencies = [
 name = "geop-ops-edit"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-math",
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
- "geop-ops",
  "geop-ops-booleans",
+ "geop-ops-datums",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-parameters",
  "geop-ops-sketch",
  "serde",
 ]
@@ -420,14 +459,17 @@ dependencies = [
 name = "geop-ops-extrude-revolve"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
- "geop-ops",
+ "geop-ops-add-datum",
  "geop-ops-booleans",
  "geop-ops-datums",
+ "geop-ops-model",
+ "geop-ops-parameters",
  "geop-ops-rasterize",
  "geop-ops-sketch",
  "geop-ops-sketch3d",
@@ -439,15 +481,19 @@ dependencies = [
 name = "geop-ops-fillet"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-topology",
- "geop-ops",
+ "geop-ops-add-datum",
  "geop-ops-booleans",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-parameters",
  "geop-ops-sketch",
+ "geop-ops-view",
  "serde",
  "serde_json",
 ]
@@ -456,12 +502,18 @@ dependencies = [
 name = "geop-ops-harness"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-topology",
- "geop-ops",
+ "geop-ops-add-datum",
+ "geop-ops-assembly",
+ "geop-ops-booleans",
+ "geop-ops-datums",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-parameters",
  "serde",
 ]
 
@@ -469,17 +521,21 @@ dependencies = [
 name = "geop-ops-hole"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
- "geop-ops",
+ "geop-ops-add-datum",
  "geop-ops-booleans",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-parameters",
  "geop-ops-pattern",
  "geop-ops-sketch",
+ "geop-ops-view",
  "serde",
  "serde_json",
 ]
@@ -488,31 +544,85 @@ dependencies = [
 name = "geop-ops-inspect"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
- "geop-ops",
+ "geop-ops-add-datum",
+ "geop-ops-assembly",
  "geop-ops-booleans",
+ "geop-ops-datums",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-output",
+ "geop-ops-parameters",
+ "geop-ops-sketch",
  "geop-ops-sketch3d",
+ "geop-ops-view",
  "serde",
+]
+
+[[package]]
+name = "geop-ops-model"
+version = "0.1.0"
+dependencies = [
+ "geop-core-editor",
+ "geop-core-geometry",
+ "geop-core-math",
+ "geop-core-program",
+ "geop-core-topology",
+ "geop-ops-rasterize",
+ "geop-ops-view",
+ "imbl",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "geop-ops-output"
+version = "0.1.0"
+dependencies = [
+ "geop-core-editor",
+ "geop-core-geometry",
+ "geop-core-math",
+ "geop-core-program",
+ "geop-ops-model",
+ "geop-ops-parameters",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "geop-ops-parameters"
+version = "0.1.0"
+dependencies = [
+ "geop-core-editor",
+ "geop-core-math",
+ "geop-core-program",
+ "geop-ops-model",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "geop-ops-pattern"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-topology",
- "geop-ops",
  "geop-ops-booleans",
+ "geop-ops-datums",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-parameters",
  "geop-ops-sketch",
  "geop-ops-sketch3d",
+ "geop-ops-view",
  "serde",
  "serde_json",
 ]
@@ -521,16 +631,19 @@ dependencies = [
 name = "geop-ops-plastic"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
- "geop-ops",
+ "geop-ops-add-datum",
  "geop-ops-booleans",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-fillet",
+ "geop-ops-model",
+ "geop-ops-parameters",
  "geop-ops-shell",
  "geop-ops-sketch",
  "serde",
@@ -543,22 +656,26 @@ dependencies = [
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-topology",
- "geop-ops",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
 ]
 
 [[package]]
 name = "geop-ops-sheetmetal"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
- "geop-ops",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-output",
+ "geop-ops-parameters",
  "geop-ops-rasterize",
+ "geop-ops-sketch",
  "serde",
 ]
 
@@ -566,14 +683,17 @@ dependencies = [
 name = "geop-ops-shell"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-topology",
- "geop-ops",
+ "geop-ops-add-datum",
  "geop-ops-booleans",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-parameters",
  "geop-ops-sketch",
  "serde",
  "serde_json",
@@ -583,12 +703,17 @@ dependencies = [
 name = "geop-ops-sketch"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
- "geop-ops",
+ "geop-ops-datums",
+ "geop-ops-model",
+ "geop-ops-parameters",
+ "geop-ops-rasterize",
+ "geop-ops-view",
  "serde",
  "serde_json",
 ]
@@ -597,15 +722,18 @@ dependencies = [
 name = "geop-ops-sketch3d"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
- "geop-ops",
- "geop-ops-booleans",
+ "geop-ops-datums",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-parameters",
  "geop-ops-sketch",
+ "geop-ops-view",
  "serde",
  "serde_json",
 ]
@@ -614,12 +742,16 @@ dependencies = [
 name = "geop-ops-step"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-topology",
- "geop-ops",
+ "geop-ops-assembly",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-output",
+ "geop-ops-parameters",
  "serde",
 ]
 
@@ -627,13 +759,14 @@ dependencies = [
 name = "geop-ops-subd"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
- "geop-core-program",
  "geop-core-topology",
- "geop-ops",
  "geop-ops-booleans",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-parameters",
  "serde",
  "serde_json",
 ]
@@ -642,17 +775,21 @@ dependencies = [
 name = "geop-ops-surface"
 version = "0.1.0"
 dependencies = [
+ "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
- "geop-ops",
+ "geop-ops-add-datum",
  "geop-ops-booleans",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-parameters",
  "geop-ops-shell",
  "geop-ops-sketch",
+ "geop-ops-sketch3d",
  "serde",
 ]
 
@@ -662,9 +799,21 @@ version = "0.1.0"
 dependencies = [
  "geop-core-math",
  "geop-core-topology",
- "geop-ops",
  "geop-ops-assembly",
+ "geop-ops-model",
+ "geop-ops-output",
+ "geop-ops-parameters",
  "geop-ops-rasterize",
+ "serde",
+]
+
+[[package]]
+name = "geop-ops-view"
+version = "0.1.0"
+dependencies = [
+ "geop-core-editor",
+ "geop-core-math",
+ "geop-core-program",
  "serde",
 ]
 

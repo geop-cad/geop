@@ -8,8 +8,10 @@ pub mod editor;
 pub mod examples;
 pub mod inspect;
 pub mod operations;
+pub mod part;
 pub mod stdlib;
 pub mod step_editor;
+pub mod workspace;
 
 pub use editor::{Command, Editor, Update};
 pub use operations::{Program, Workspace, infos, outputs, registry};

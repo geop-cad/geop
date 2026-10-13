@@ -122,7 +122,7 @@ turned around on the other. Which face of the solid is on which side of a
 cut is topological: of the two faces along an edge where the sheet crossed
 the solid's boundary, the one running the edge the other way than the cut
 does. So the pieces are the connected sets of face sides, each built as a
-solid of its own (`Part::build_body`), sharing nothing. A sheet ending inside
+solid of its own (`NamedModel::build_body`), sharing nothing. A sheet ending inside
 the solid, or one the solid stays connected around, splits nothing and is an
 error.
 
@@ -163,7 +163,7 @@ sheet — into pieces named `split(S,0)`, `split(S,1)`, ..., leaving the face
 as it was.
 
 `Boolean` is the operation a program uses (see
-[geop-ops](./geop-ops.md#operations)) to unite, intersect or subtract two
-solids of the part by name. `Combine` is the same done by another
+[geop-core-editor](../core/geop-core-editor.md#an-operation-partoperation))
+to unite, intersect or subtract two solids of the part by name. `Combine` is the same done by another
 operation with the solid it builds — an extrude cutting a pocket, say — and
 is what extrude and revolve take for it.

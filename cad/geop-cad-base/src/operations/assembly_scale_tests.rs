@@ -4,7 +4,7 @@
 //! is drawn once however often it is placed, and the timings of the whole
 //! (an ignored test) are printed.
 
-use crate::operations::testing::{extrusion, handled, origin_plane};
+use crate::operations::testing::{extrusion, handled, on_origin};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -12,28 +12,28 @@ use std::{
     time::Instant,
 };
 
+use geop_core_editor::editing::{Pointer, Reach, StepEditEvent};
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::{FrameAxis, Pose, Ray},
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops::solving::check as check_mates;
-use geop_ops::{
-    Design, EntityRef, ParamValue,
-    model::{model, pose_parameter},
-    parameters::Values,
+use geop_ops_add_datum::Selected;
+use geop_ops_assembly::{
+    AddPartArgs, Kind, Mate, MateEntity, Resolved,
     placed::{locate, placed_parts},
-    program::{Files, FilesMut},
-    ui::{Pointer, Reach, StepEditEvent},
+    solving::check as check_mates,
 };
-use geop_ops_assembly::{AddPartArgs, Kind, Mate, Resolved};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::Extents;
+use geop_ops_model::{Design, element, read_model};
+use geop_ops_parameters::{Settings, StateValue, StateValues, pose_state};
 use geop_ops_sketch::Sketch;
 
 use crate::examples::{circle, pose, rectangle, solved};
 use crate::stdlib::WithStandardParts;
+use crate::workspace::{FileStore, FileStoreMut};
 use crate::{
     Command, Editor, Program, Update, Workspace,
     operations::{Runner, registry},
@@ -47,7 +47,7 @@ fn extruded(id: &str, sketch: Sketch, height: f64) -> Program {
     let sketch_id = format!("{id}_sketch");
     program.push(
         sketch_id.clone(),
-        crate::operations::testing::sketch(origin_plane(FrameAxis::Z), solved(sketch)),
+        crate::operations::testing::sketch(on_origin(FrameAxis::Z), solved(sketch)),
     );
     program.push(
         id,
@@ -70,15 +70,18 @@ fn plate() -> Program {
     extruded("plate", sketch, 0.2)
 }
 
-/// The face `face` of the part placed as `instance`.
-fn face(instance: &str, face: &str) -> EntityRef {
-    EntityRef::Face {
-        name: format!("{instance}/{face}"),
-    }
+/// The face `face` of the part placed as `instance` — `plate/extrude(…)`,
+/// of a part placed in it.
+fn face(instance: &str, face: &str) -> MateEntity {
+    let (part, face) = match face.split_once('/') {
+        Some((inner, face)) => (format!("{instance}/{inner}"), face),
+        None => (instance.to_string(), face),
+    };
+    MateEntity::of(part, Selected::Face(element(face)))
 }
 
 /// Placed from `file`, its face `below` lying on the face `on`.
-fn resting(file: &str, below: EntityRef, on: EntityRef) -> AddPartArgs {
+fn resting(file: &str, below: MateEntity, on: MateEntity) -> AddPartArgs {
     AddPartArgs {
         file: file.into(),
         mates: BTreeMap::from([(
@@ -92,7 +95,7 @@ fn resting(file: &str, below: EntityRef, on: EntityRef) -> AddPartArgs {
 /// A program placing `plate.geop` fixed as `plate`, then every part of
 /// `parts` — `(id, file, bottom face, position)` — lying on the plate's top
 /// or on the face named, where its state puts each.
-fn assembly(parts: Vec<(String, &str, EntityRef, EntityRef, [f64; 3])>) -> Program {
+fn assembly(parts: Vec<(String, &str, MateEntity, MateEntity, [f64; 3])>) -> Program {
     let mut program = Program::new();
     program.push(
         "plate",
@@ -102,12 +105,12 @@ fn assembly(parts: Vec<(String, &str, EntityRef, EntityRef, [f64; 3])>) -> Progr
         }
         .fixed(),
     );
-    let mut state = Values::from([(
-        pose_parameter("plate"),
-        ParamValue::Pose(pose([0.0; 3], [0.0; 3])),
+    let mut state = StateValues::from([(
+        pose_state("plate"),
+        StateValue::Pose(pose([0.0; 3], [0.0; 3])),
     )]);
     for (id, file, below, on, at) in parts {
-        state.insert(pose_parameter(&id), ParamValue::Pose(pose(at, [0.0; 3])));
+        state.insert(pose_state(&id), StateValue::Pose(pose(at, [0.0; 3])));
         program.push(id, resting(file, below, on));
     }
     program.state = state;
@@ -190,7 +193,7 @@ impl Counted {
     }
 }
 
-impl Files for Counted {
+impl FileStore for Counted {
     fn read(&self, path: &str) -> GeopResult<String> {
         *self.reads.borrow_mut().entry(path.to_string()).or_default() += 1;
         self.files.read(path)
@@ -201,7 +204,7 @@ impl Files for Counted {
     }
 }
 
-impl FilesMut for Counted {
+impl FileStoreMut for Counted {
     fn write(&mut self, path: &str, text: Option<String>) {
         self.files.write(path, text);
     }
@@ -211,7 +214,7 @@ impl FilesMut for Counted {
 /// of the builds of it, which a build again tells apart.
 fn builds(runner: &Runner) -> BTreeMap<String, BTreeSet<String>> {
     let mut builds: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for placed in placed_parts(runner.part.current()).unwrap() {
+    for placed in placed_parts(&runner.part.current()).unwrap() {
         let component = &placed.located.instance.component;
         builds
             .entry(component.file.clone())
@@ -279,9 +282,9 @@ fn editing_a_file_rebuilds_only_what_places_it() {
     );
     // And it is the longer screw that is placed, however deep.
     for screw in ["screw0", "board1/module3/screw9"] {
-        let located = locate(&mut runner.part.current(), screw).unwrap();
-        let heights: BTreeSet<_> = (located.instance.component.view())
-            .retrieve_target(&model())
+        let reader = runner.part.current();
+        let located = locate(&reader, screw).unwrap();
+        let heights: BTreeSet<_> = read_model(&located.instance.component.reader())
             .unwrap()
             .topology()
             .vertices
@@ -315,12 +318,9 @@ fn moving_a_part_builds_again_only_what_reads_where_it_is() {
         }),
         registry,
     );
-    let library = workspace.scope("robot.geop");
-    let inputs = robot.inputs(&Values::new(), library);
-    let mut runner = super::runner();
+    let inputs = robot.inputs(&Settings::new());
     let resolved = geop_ops_assembly::mates_resolved();
-    let output = runner.run(&robot.program, &inputs, &robot.state);
-    assert!(output.step_errors.is_empty(), "{:?}", output.step_errors);
+    let mut runner = super::build(&robot, "robot.geop", workspace.scope("robot.geop")).unwrap();
     assert_eq!(
         geop_ops_assembly::mates_resolved() - resolved,
         31,
@@ -330,8 +330,8 @@ fn moving_a_part_builds_again_only_what_reads_where_it_is() {
 
     let mut moved = robot.clone();
     moved.state.insert(
-        pose_parameter("screw7"),
-        ParamValue::Pose(pose([4.0, 3.0, 0.2], [0.0; 3])),
+        pose_state("screw7"),
+        StateValue::Pose(pose([4.0, 3.0, 0.2], [0.0; 3])),
     );
     let resolved = geop_ops_assembly::mates_resolved();
     let output = runner.run(&moved.program, &inputs, &moved.state);
@@ -349,7 +349,7 @@ fn moving_a_part_builds_again_only_what_reads_where_it_is() {
 
     let scratch = build_in(&workspace, &moved);
     let at = |runner: &Runner| -> Pose<Design> {
-        locate(&mut runner.part.current(), "screw7").unwrap().world
+        locate(&runner.part.current(), "screw7").unwrap().world
     };
     assert_eq!(at(&runner), at(&scratch));
 }
@@ -357,8 +357,8 @@ fn moving_a_part_builds_again_only_what_reads_where_it_is() {
 /// `program`, the file `robot.geop` of `workspace`, built from scratch, its
 /// mates holding as its state has its parts.
 fn build_in(workspace: &Rc<Workspace<Counted>>, program: &Program) -> Runner {
-    let runner = super::build(program, &workspace.scope("robot.geop")).unwrap();
-    assert!(check_mates(runner.part.current()).unwrap().converged);
+    let runner = super::build(program, "robot.geop", workspace.scope("robot.geop")).unwrap();
+    assert!(check_mates(&runner.part.current()).unwrap().converged);
     runner
 }
 
@@ -532,19 +532,35 @@ fn robot_timings() {
 /// timed, so it shows at a modest size: per mate of the assembly — those
 /// of the parts placed in it included — an edit resolves a few, however
 /// many there are.
+///
+/// Nor once per screw: each is a group of the system no mate ties to the
+/// others, and the groups are solved, enclosed and measured in lockstep,
+/// one run of the program answering all of them (see
+/// [`geop_core_math::solvers::system`]). Asked one group at a time, a
+/// question cost a run of every step per group, and a drag of a 2000-part
+/// robot took seconds. Counted in program runs (see
+/// [`geop_ops_constraints::solve::runs`]): four times the screws, the same
+/// runs.
 #[test]
 fn an_edit_resolves_each_mate_a_few_times() {
+    let mut runs = Vec::new();
     for screws in [20, 80] {
         let resolved = |f: &mut dyn FnMut()| {
-            let before = geop_ops_assembly::mates_resolved();
+            let before = (
+                geop_ops_assembly::mates_resolved(),
+                geop_ops_constraints::solve::runs(),
+            );
             f();
-            geop_ops_assembly::mates_resolved() - before
+            (
+                geop_ops_assembly::mates_resolved() - before.0,
+                geop_ops_constraints::solve::runs() - before.1,
+            )
         };
         let mut editor = None;
-        let load = resolved(&mut || editor = Some(robot_editor(1, screws).0));
+        let (load, load_runs) = resolved(&mut || editor = Some(robot_editor(1, screws).0));
         let mut editor = editor.unwrap();
         let mates = editor.part().targets_of::<Resolved>().len();
-        let drag = resolved(&mut || {
+        let (drag, drag_runs) = resolved(&mut || {
             editor.handle(Command::DragTool { on: true });
             handled(
                 &mut editor,
@@ -559,9 +575,10 @@ fn an_edit_resolves_each_mate_a_few_times() {
             );
         });
         let last = editor.program().program.steps.last().unwrap().id.clone();
-        let remove = resolved(&mut || {
+        let (remove, remove_runs) = resolved(&mut || {
             handled(&mut editor, Command::Remove { id: last.clone() });
         });
+        runs.push((screws, [load_runs, drag_runs, remove_runs]));
         // Now 3, 7 and 3 per mate; once per step, it was 7, 14 and 7 per
         // mate with 21 mates, and 86, 173 and 84 with 81.
         for (edit, resolved) in [("load", load), ("drag", drag), ("remove", remove)] {
@@ -571,4 +588,11 @@ fn an_edit_resolves_each_mate_a_few_times() {
             );
         }
     }
+    let [(_, few), (_, many)] = runs[..] else {
+        unreachable!()
+    };
+    assert!(
+        (0..3).all(|k| many[k] <= few[k]),
+        "the program runs of a load, a drag and a remove grow with the screws: {runs:?}"
+    );
 }

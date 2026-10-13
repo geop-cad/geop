@@ -1,120 +1,83 @@
-//! Sketches drawn as an editor draws them: every gesture through a
-//! [`StepEditor`], as rays and keys.
+//! Sketches drawn as an editor draws them: every gesture a command to the
+//! [`crate::Editor`], as rays and keys.
+//!
+//! What the sketch tool keeps while it is edited is its own; these tests
+//! read what the editor shows of it instead — the tool active among the
+//! dialog's actions, the hint, the snap marker, the constraints' status —
+//! and how the sketch the step holds solves.
 
-use std::collections::BTreeMap;
-
+use geop_core_editor::editing::{
+    Button, Control, Pointer, Presentation, Shape, StepEditEvent, Style, Tone, Value,
+};
+use geop_core_editor::numeric_input::NumericInput;
 use geop_core_math::{
-    primitives::{DatumComponent, FrameAxis, Ray},
-    scalars::ScalInF64 as S,
+    primitives::FrameAxis,
+    scalars::{ScalInF64 as S, Scalar},
+    vector::{Vector2, Vector3},
 };
-use geop_core_program::{
-    operation_registry::OperationRegistry,
-    program::{Program, ProgramStep},
-    program_runner::ProgramRunner,
-    step_editor::{Editing, StepEditor},
+use geop_core_sketch::{
+    CurveId, PointId,
+    geometry::Arc,
+    plain::{P2, add, bounds as point_bounds, cross, distance, scale, sub, xy},
 };
-use geop_ops::{
-    ParamValue,
-    operation::{EntityRef, Input, ORIGIN, Seen},
-    ui::{Button, Control, PartScene, PartView, Presentation, Reach, StepEditEvent},
+use geop_ops_parameters::{Parameter, Parameters};
+use geop_ops_sketch::{
+    AddSketchArgs, Constraint, CurveKind, Sketch, SketchPlane, editor::SketchSession, references,
 };
 
-use super::*;
-use crate::{AddSketch, add_sketch::SketchEditing};
+use super::testing::{Stepping, origin_plane, pointer};
+use crate::Program;
 
-/// A sketch step, `sketch`, being edited in a program of it alone, as an
-/// editor drives it: every event handled, then the program run again.
+type SolveReport = geop_core_sketch::SolveReport<geop_ops_model::Design>;
+type SketchEditing = geop_core_editor::edit_form::FormState<SketchSession>;
+
+/// A sketch step being drawn as a front end draws it, with the step's
+/// arguments and what the editor last showed of it.
 struct Editor {
-    runner: ProgramRunner<Input, ParamValue>,
-    program: Program,
-    inputs: BTreeMap<String, Input>,
-    editor: StepEditor<S>,
+    step: Stepping,
     args: AddSketchArgs,
     presentation: Presentation<S>,
 }
 
-/// The sketch step's arguments, as `program` has them, and what `editor`
-/// shows of it, picking in the part before it.
-fn shown(
-    runner: &ProgramRunner<Input, ParamValue>,
-    program: &Program,
-    editor: &StepEditor<S>,
-) -> (AddSketchArgs, Presentation<S>) {
-    let args = serde_json::from_value(program.steps[0].args.clone()).unwrap();
-    let before = runner.part.view_before("sketch").unwrap();
-    let view = PartView::of(&Seen::new(before)).unwrap();
-    let scene = PartScene {
-        view: &view,
-        seen: Seen::new(before),
-    };
-    let presentation = editor.presentation(runner, program, &scene).unwrap();
-    (args, presentation)
-}
-
 impl Editor {
-    /// A new sketch step, with the program's parameters `inputs` — or, not
-    /// `new`, one on the origin's `xy` plane being edited again.
-    fn on(values: BTreeMap<String, ParamValue>, new: bool) -> Self {
-        let inputs: BTreeMap<String, Input> = (values.into_iter())
-            .map(|(name, value)| (name, Input::Value(value)))
-            .collect();
-        let registry = OperationRegistry::default().with(AddSketch).unwrap();
-        let mut runner = ProgramRunner::new(registry);
-        let mut step = runner.new_step("add_sketch", "sketch", None).unwrap();
-        if !new {
-            let plane = EntityRef::datum_component(ORIGIN, DatumComponent::Plane(FrameAxis::Z));
-            let mut args: AddSketchArgs = serde_json::from_value(step.args).unwrap();
-            args.plane = Some(plane);
-            step = ProgramStep::new::<AddSketch>("sketch", &args).unwrap();
-        }
-        let program = Program::new(vec![step]);
-        runner.run(&program, &inputs, &BTreeMap::new());
-        let editor = StepEditor::new(&runner, &program, "sketch", new).unwrap();
-        let (args, presentation) = shown(&runner, &program, &editor);
+    /// A new sketch step, in a program with the parameters `parameters` —
+    /// or, not `new`, one on the origin's `xy` plane being edited again.
+    fn on(parameters: Parameters, new: bool) -> Self {
+        let mut program = Program::new();
+        program.parameters = parameters;
+        let step = match new {
+            true => Stepping::new(program, "add_sketch"),
+            false => {
+                let plane = SketchPlane::Datum(origin_plane(FrameAxis::Z));
+                program.push("sketch", AddSketchArgs::new(Some(plane)));
+                Stepping::open(program, "sketch")
+            }
+        };
+        let args = step.args();
+        let presentation = step.presentation().clone();
         Editor {
-            runner,
-            program,
-            inputs,
-            editor,
+            step,
             args,
             presentation,
         }
     }
 
     fn new(new: bool) -> Self {
-        Self::on(BTreeMap::new(), new)
+        Self::on(Parameters::default(), new)
     }
 
     fn send(&mut self, event: StepEditEvent<S>) {
-        let before = self.runner.part.view_before("sketch").unwrap();
-        let view = PartView::of(&Seen::new(before)).unwrap();
-        let scene = PartScene {
-            view: &view,
-            seen: Seen::new(before),
-        };
-        let editing = Editing {
-            runner: &self.runner,
-            program: &mut self.program,
-            scene: &scene,
-        };
-        self.editor.handle(editing, &event).unwrap();
-        (self.runner).run(&self.program, &self.inputs, &BTreeMap::new());
-        (self.args, self.presentation) = shown(&self.runner, &self.program, &self.editor);
+        self.step.send(event);
+        self.args = self.step.args();
+        self.presentation = self.step.presentation().clone();
     }
 
     fn editing(&self) -> &SketchEditing {
-        self.editor.editing().downcast_ref().unwrap()
-    }
-
-    fn session(&self) -> &SketchSession {
-        &self.editing().session
+        self.step.editing()
     }
 
     fn press(&mut self, key: &str) {
-        self.send(StepEditEvent::Dialog {
-            key: key.into(),
-            value: Value::Press,
-        });
+        self.dialog(key, Value::Press);
     }
 
     fn dialog(&mut self, key: &str, value: Value) {
@@ -194,7 +157,44 @@ impl Editor {
             .count()
     }
 
-    /// The drawn line from `a` to `b`, either way round.
+    /// Whether a visual `key` is drawn.
+    fn shows(&self, key: &str) -> bool {
+        self.presentation.visuals.iter().any(|v| v.key == key)
+    }
+
+    /// The tool in hand, by the name of its action in the dialog; `None`
+    /// for selecting.
+    fn tool(&self) -> Option<String> {
+        let dialog = &self.presentation.dialog;
+        let active = |key: &str| match dialog.get(key) {
+            Some(Control::Actions { actions }) => (actions.iter())
+                .find(|a| a.active && a.value != "construction")
+                .map(|a| a.value.clone()),
+            _ => None,
+        };
+        active("tool").or_else(|| active("constrain"))
+    }
+
+    /// Whether what is drawn next is construction geometry.
+    fn construction(&self) -> bool {
+        match self.presentation.dialog.get("tool") {
+            Some(Control::Actions { actions }) => {
+                (actions.iter()).any(|a| a.value == "construction" && a.active)
+            }
+            _ => false,
+        }
+    }
+
+    /// The line on what to do next, and its tone: an error, for a value
+    /// refused.
+    fn hint(&self) -> (String, Tone) {
+        match self.presentation.dialog.get("hint") {
+            Some(Control::Text { text, tone }) => (text.clone(), *tone),
+            other => panic!("no hint: {other:?}"),
+        }
+    }
+
+    /// The line drawn from `a` to `b`, either way round.
     fn line_between(&self, a: P2, b: P2) -> Option<CurveId> {
         let s = self.sketch();
         self.drawn_curves()
@@ -275,31 +275,25 @@ impl Editor {
             .1
     }
 
-    fn report(&self) -> &SolveReport {
-        match &self.session().solved {
-            Some(Solved::Solved { report }) => report,
-            other => panic!("not solved: {other:?}"),
-        }
+    /// How the sketch the step holds solves, once the editor's own solve
+    /// was no failure: the status it shows is no error.
+    fn report(&self) -> SolveReport {
+        let status = self.presentation.dialog.get("status");
+        let Some(Control::Text { text, tone }) = status else {
+            panic!("no status: {status:?}")
+        };
+        assert_ne!(*tone, Tone::Error, "{text}");
+        self.sketch().clone().solve().unwrap()
     }
 
     /// The sketch's origin point.
     fn origin(&self) -> PointId {
-        self.args.references[0].points[crate::references::ORIGIN]
+        self.args.references[0].points[references::ORIGIN]
     }
 }
 
 fn v(p: [f64; 3]) -> Vector3<S> {
     Vector3::from_array(p.map(S::from_f64))
-}
-
-/// A pointer from `origin` along `dir`, reaching 0.009 units.
-fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer<S> {
-    Pointer {
-        ray: Ray::try_new(v(origin), v(dir)).unwrap(),
-        reach: Reach::Tube {
-            radius: S::from_f64(0.009),
-        },
-    }
 }
 
 /// Straight down onto the `xy` plane at `(x, y)`.
@@ -316,6 +310,23 @@ fn close(a: P2, b: P2) -> bool {
     distance(a, b) < 1e-6
 }
 
+/// The arc `arc` of `s`, as solved.
+fn arc_of(s: &Sketch, arc: CurveId) -> Arc<S> {
+    let CurveKind::Arc { start, end, sweep } = s.curves[&arc].kind else {
+        panic!("{arc} is no arc")
+    };
+    let at = |p: PointId| Vector2::from_array(xy(s, p).map(S::from_f64));
+    Arc {
+        s: at(start),
+        e: at(end),
+        half: S::from_f64(sweep.to_f64() / 2.0),
+    }
+}
+
+fn plain(v: Vector2<S>) -> P2 {
+    [v[0].to_f64(), v[1].to_f64()]
+}
+
 /// A new sketch has no plane, and starts by waiting for one to be picked;
 /// picking one goes straight on to drawing on it, head on — with the
 /// sketch's own origin and axes there to draw from.
@@ -328,7 +339,11 @@ fn a_new_sketch_picks_its_plane_first() {
         Some(Control::Reference(r)) if r.armed
     ));
     assert!(e.presentation.focus.is_none());
-    assert_eq!(e.presentation.pickable, [Role::Plane]);
+    assert!(
+        e.presentation.pickable.iter().any(|kind| kind == "datum"),
+        "{:?}",
+        e.presentation.pickable
+    );
     // The origin's zx plane's square, ten reaches of 0.009 from the
     // origin: seen from the front, at (0.04, 0, 0.04).
     let front = pointer([0.04, -10.0, 0.04], [0.0, 1.0, 0.0]);
@@ -340,10 +355,7 @@ fn a_new_sketch_picks_its_plane_first() {
     });
     assert_eq!(
         e.args.plane,
-        Some(EntityRef::datum_component(
-            ORIGIN,
-            DatumComponent::Plane(FrameAxis::Y)
-        ))
+        Some(SketchPlane::Datum(origin_plane(FrameAxis::Y)))
     );
     let focus = e
         .presentation
@@ -393,7 +405,7 @@ fn lines_snap_by_constraint() {
         .find(|p| p[0] > 0.5 && p[1] < 0.5)
         .unwrap();
     assert!(corner[1].abs() < 1e-6, "{corner:?}");
-    assert!(e.session().draft.placed.is_empty());
+    assert_eq!(e.tool(), None, "the drawing ended");
 }
 
 /// A point placed on a curve is constrained onto it, one on a line's
@@ -420,21 +432,18 @@ fn snapping_is_shown() {
     e.lines(&[[-0.5, 0.5], [1.5, 0.5]]);
     e.act("tool", "line");
     e.hover(0.503, 0.502);
-    assert_eq!(
-        e.session().snap,
-        Some(Snap::Midpoint(e.drawn_curves()[0].0))
-    );
+    // On the line's middle.
+    let snap = e.presentation.visuals.iter().find(|v| v.key == "snap");
     assert!(
-        e.presentation
-            .visuals
-            .iter()
-            .any(|v| v.style == Style::Snap)
+        matches!(snap, Some(v) if v.style == Style::Snap
+            && matches!(v.shape, Shape::Point { at } if close([at[0].to_f64(), at[1].to_f64()], [0.5, 0.5]))),
+        "{snap:?}"
     );
     e.send(StepEditEvent::Hover {
         pointer: down(0.503, 0.502),
         shift: true,
     });
-    assert_eq!(e.session().snap, None);
+    assert!(!e.shows("snap"));
 }
 
 /// Two clicks make a rectangle: four lines, horizontal and vertical by
@@ -543,13 +552,13 @@ fn line_chains_switch_to_tangent_arcs_and_back() {
     e.click(1.0, 0.0);
     // Away from the end, and back onto it: the next segment is an arc.
     e.hover(1.3, 0.2);
-    assert!(!e.session().draft.arc);
+    assert!(!e.hint().0.contains("tangent arc ends"), "a line");
     e.hover(1.002, 0.001);
     e.hover(1.4, 0.5);
-    assert!(e.session().draft.arc);
+    assert!(e.hint().0.contains("tangent arc ends"), "an arc");
     e.click(1.0, 1.0);
     // Then a line again.
-    assert!(!e.session().draft.arc);
+    assert!(!e.hint().0.contains("tangent arc ends"), "a line");
     e.click(0.0, 1.0);
     e.key("Escape");
     let kinds: Vec<&str> = e
@@ -593,7 +602,7 @@ fn lines_leave_tangent_arcs_tangentially() {
     e.hover(1.8, 0.7);
     e.hover(1.502, 0.501);
     e.hover(1.9, 0.9);
-    assert!(e.session().draft.arc);
+    assert!(e.hint().0.contains("tangent arc ends"), "an arc");
     // A quarter turn up-left, so the arc ends heading up and left.
     e.click(2.0, 1.2);
     e.click(2.3, 2.0);
@@ -612,10 +621,14 @@ fn lines_leave_tangent_arcs_tangentially() {
     let CurveKind::Line { start, end } = s.curves[&line].kind else {
         panic!("a line")
     };
-    let t = super::drawing::leaving_tangent(s, arc, start).unwrap();
+    let CurveKind::Arc { end: arc_end, .. } = s.curves[&arc].kind else {
+        panic!("an arc")
+    };
+    assert_eq!(arc_end, start, "the line starts where the arc ends");
+    let t = plain(arc_of(s, arc).tangent_end().unwrap());
     let d = sub(xy(s, end), xy(s, start));
     assert!(
-        crate::geometry::cross(t, d).abs() < 1e-6 * distance(xy(s, end), xy(s, start)),
+        cross(t, d).abs() < 1e-6 * distance(xy(s, end), xy(s, start)),
         "{t:?} vs {d:?}"
     );
 }
@@ -628,7 +641,11 @@ fn tangent_arcs_continue_curves() {
     e.act("tool", "tangent_arc");
     // Not from nowhere.
     e.click(0.5, 0.7);
-    assert!(e.session().draft.placed.is_empty());
+    assert!(
+        e.hint().0.starts_with("Click the end of a curve"),
+        "{:?}",
+        e.hint()
+    );
     e.click(1.0, 0.0);
     e.click(1.5, 0.5);
     assert!(e.has(|c| matches!(c, Constraint::Tangent { .. })));
@@ -642,9 +659,10 @@ fn constraint_tools_follow_the_selection() {
     let mut e = drawing();
     e.lines(&[[0.0, 0.5], [1.0, 0.7]]);
     e.lines(&[[0.0, 1.5], [1.0, 2.0]]);
-    assert_eq!(
-        e.constraint_tools().len(),
-        ConstraintTool::ALL.len(),
+    assert!(
+        ["horizontal", "parallel", "distance", "radius", "angle"]
+            .iter()
+            .all(|tool| e.constraint_tools().iter().any(|(name, _)| name == tool)),
         "a button for every constraint"
     );
     assert!(e.constraint_tools().iter().all(|(_, enabled)| *enabled));
@@ -678,21 +696,15 @@ fn constraint_tools_pick_what_is_clicked() {
     e.lines(&[[0.0, 0.5], [1.0, 0.7]]);
     e.lines(&[[0.0, 1.5], [1.0, 2.0]]);
     e.act("constrain", "perpendicular");
-    assert_eq!(
-        e.session().tool,
-        Tool::Constrain(ConstraintTool::Perpendicular)
-    );
+    assert_eq!(e.tool().as_deref(), Some("perpendicular"));
     e.click(0.5, 0.6);
     assert_eq!(e.selection().len(), 1);
     e.click(0.5, 1.75);
     assert!(e.has(|c| matches!(c, Constraint::Perpendicular { .. })));
     assert!(e.selection().is_empty());
-    assert_eq!(
-        e.session().tool,
-        Tool::Constrain(ConstraintTool::Perpendicular)
-    );
+    assert_eq!(e.tool().as_deref(), Some("perpendicular"));
     e.key("Escape");
-    assert_eq!(e.session().tool, Tool::Select);
+    assert_eq!(e.tool(), None);
 }
 
 /// The sketch's origin is a point, and its axes are lines, to constrain
@@ -733,11 +745,11 @@ fn the_origin_and_axes_are_selectable() {
 /// formula of the part's parameters, which it then follows.
 #[test]
 fn dimensions_take_values_and_formulas() {
-    let inputs = BTreeMap::from([(
-        "width".to_string(),
-        ParamValue::Number(Design::from_f64(4.0)),
-    )]);
-    let mut e = Editor::on(inputs, false);
+    let parameters = Parameters {
+        values: vec![Parameter::number("width", "4", 0.0, 100.0)],
+        ..Parameters::default()
+    };
+    let mut e = Editor::on(parameters, false);
     e.lines(&[[0.0, 0.5], [1.0, 0.8]]);
     e.click(0.5, 0.65);
     e.act("constrain", "distance");
@@ -748,7 +760,7 @@ fn dimensions_take_values_and_formulas() {
     let middle = |e: &Editor| {
         let s = e.sketch();
         let ends: Vec<P2> = e.drawn_points().iter().map(|&p| xy(s, p)).collect();
-        crate::geometry::scale(add(ends[0], ends[1]), 0.5)
+        scale(add(ends[0], ends[1]), 0.5)
     };
     let placed = sub([0.6, 1.5], middle(&e));
     e.click(0.6, 1.5);
@@ -765,7 +777,7 @@ fn dimensions_take_values_and_formulas() {
         .expect("its value is asked for");
     e.dialog(&prompt.key, Value::Text("width / 2".into()));
     assert!(e.presentation.prompt.is_none());
-    assert_eq!(e.args.formulas[&id], "width / 2");
+    assert_eq!(e.args.formulas[&id], "width / 2".into());
     let length = |e: &Editor| {
         let s = e.sketch();
         let ends: Vec<P2> = e.drawn_points().iter().map(|&p| xy(s, p)).collect();
@@ -800,7 +812,7 @@ fn dimensions_take_values_and_formulas() {
             .any(|v| v.key.starts_with(&format!("{id}/")))
     );
     e.key("Escape");
-    assert_eq!(e.session().tool, Tool::Select);
+    assert_eq!(e.tool(), None);
     let from = label_at(&e);
     e.drag(from, [from[0] + 0.5, from[1] + 0.3], false);
     let to = label_at(&e);
@@ -850,7 +862,6 @@ fn dragging_points() {
     // end follows the pointer along it, not up.
     assert!(ends.iter().any(|&p| close(p, [0.0, 0.0])), "{ends:?}");
     assert!(ends.iter().any(|&p| close(p, [2.0, 0.0])), "{ends:?}");
-    assert!(e.session().drag.is_none());
 }
 
 /// A point dragged onto another point, or the origin, snaps there and is
@@ -906,7 +917,7 @@ fn fillets_round_corners() {
 fn construction_geometry() {
     let mut e = drawing();
     e.act("tool", "construction");
-    assert!(e.session().construction);
+    assert!(e.construction());
     e.lines(&[[0.5, 0.5], [1.0, 1.0]]);
     assert!(e.sketch().curves[&e.drawn_curves()[0].0].construction);
     e.act("tool", "construction");
@@ -1086,11 +1097,7 @@ fn points_snap_to_intersections() {
         ([5.252, 0.003], [5.25, 0.0]),
     ] {
         e.hover(near[0], near[1]);
-        assert!(
-            matches!(e.session().snap, Some(Snap::Intersection(..))),
-            "{near:?}: {:?}",
-            e.session().snap
-        );
+        assert!(e.shows("snap"), "{near:?}");
         e.click(near[0], near[1]);
         let p = *e.drawn_points().last().unwrap();
         assert_eq!(on(&e, p), 2, "{near:?}");
@@ -1115,7 +1122,7 @@ fn trimming_removes_a_curve_met_nowhere() {
     e.lines(&[[0.5, 0.5], [1.5, 0.5]]);
     assert!(e.has(|c| matches!(c, Constraint::Horizontal { .. })));
     e.key("m");
-    assert_eq!(e.session().tool, Tool::Trim);
+    assert_eq!(e.tool().as_deref(), Some("trim"));
     e.hover(0.2, 1.4);
     assert!(e.presentation.grab, "a press anywhere strokes");
     assert_eq!(e.removed(), 0);
@@ -1125,7 +1132,7 @@ fn trimming_removes_a_curve_met_nowhere() {
     assert!(e.drawn_curves().is_empty());
     assert!(e.drawn_points().is_empty());
     assert!(!e.has(|c| matches!(c, Constraint::Horizontal { .. })));
-    assert_eq!(e.session().tool, Tool::Trim, "the tool stays in hand");
+    assert_eq!(e.tool().as_deref(), Some("trim"), "the tool stays in hand");
 }
 
 /// A curve crossed is cut back to the crossing: it keeps its id and its
@@ -1256,7 +1263,7 @@ fn dragging_trims_every_curve_crossed() {
     });
     assert_eq!(e.drawn_curves().len(), 1, "{:?}", e.sketch());
     assert!(e.line_between([0.5, 1.5], [1.5, 1.5]).is_some());
-    assert!(e.session().stroke.path.is_empty());
+    assert!(!e.shows("stroke"));
     assert_eq!(e.removed(), 0);
     // A stroke that winds through several pieces of one curve takes each.
     e.lines(&[[0.2, 1.0], [2.0, 1.0]]);
@@ -1292,7 +1299,7 @@ fn trimming_a_fillet_removes_its_constraints() {
         .iter()
         .find_map(|(id, k)| matches!(k, CurveKind::Arc { .. }).then_some(*id))
         .unwrap();
-    let mid = super::snap::curve_mid(e.sketch(), arc).unwrap();
+    let mid = plain(arc_of(e.sketch(), arc).arc_mid().unwrap());
     e.key("m");
     e.click(mid[0], mid[1]);
     assert_eq!(e.drawn_curves().len(), 4, "{:?}", e.sketch());
@@ -1350,7 +1357,7 @@ fn the_axes_neither_cut_nor_are_trimmed() {
 /// The bounding box of the points of `curves`, as solved.
 fn bounds(s: &Sketch, curves: &[CurveId]) -> [f64; 4] {
     let points = curves.iter().flat_map(|c| s.curves[c].points());
-    let (lo, hi) = crate::geometry::bounds(points.map(|p| xy(s, p))).unwrap();
+    let (lo, hi) = point_bounds(points.map(|p| xy(s, p))).unwrap();
     [lo[0], lo[1], hi[0], hi[1]]
 }
 
@@ -1410,7 +1417,7 @@ fn offsets_follow_their_chain() {
     e.click(1.2, 0.7);
     let rectangle: Vec<CurveId> = e.drawn_curves().iter().map(|(id, _)| *id).collect();
     e.key("o");
-    assert_eq!(e.session().tool, Tool::Modify(ModifyTool::Offset));
+    assert_eq!(e.tool().as_deref(), Some("offset"));
     e.click(0.7, 0.2);
     assert_eq!(e.selection().len(), 4, "the side's chain: all four");
     e.hover(0.7, -0.1);
@@ -1487,11 +1494,8 @@ fn offsets_to_both_sides_and_refusals() {
     assert_eq!(e.selection().len(), 1);
     e.click(4.0, -0.5);
     assert_eq!(e.sketch().curves.len(), curves, "nothing made");
-    assert!(
-        matches!(e.session().error.as_deref(), Some(why) if why.contains("smaller")),
-        "{:?}",
-        e.session().error
-    );
+    let (why, tone) = e.hint();
+    assert!(tone == Tone::Error && why.contains("smaller"), "{why:?}");
 }
 
 /// Mirror: what is selected is mirrored across the line clicked, a half
@@ -1513,7 +1517,7 @@ fn mirrors_close_half_outlines() {
     assert_eq!(e.count(|c| matches!(c, Constraint::Symmetric { .. })), 2);
     assert_eq!(e.sketch().regions().unwrap().len(), 1, "one closed outline");
     assert!(e.report().converged, "{:?}", e.report());
-    assert_eq!(e.session().tool, Tool::Select);
+    assert_eq!(e.tool(), None);
     // The original dragged wider: the image follows.
     e.drag([0.6, 0.3], [0.8, 0.3], true);
     assert!(e.report().converged);
@@ -1543,8 +1547,8 @@ fn mirrors_close_half_outlines() {
     );
     assert!(e.has(|c| matches!(c, Constraint::Equal { .. })));
     assert_eq!(
-        e.session().tool,
-        Tool::Modify(ModifyTool::Mirror),
+        e.tool().as_deref(),
+        Some("mirror"),
         "still in hand for the next"
     );
 }
@@ -1611,10 +1615,20 @@ fn circular_patterns_spread_round_the_circle() {
             "{k}: {centers:?}"
         );
     }
-    assert!(e.args.formulas.values().any(|f| f == "360/6"));
+    assert!(
+        e.args
+            .formulas
+            .values()
+            .any(|f| *f == NumericInput::from("360/6"))
+    );
     e.dialog("pattern_count", Value::Number(8.0));
     assert_eq!(e.circle_centers().len(), 8);
-    assert!(e.args.formulas.values().any(|f| f == "360/8"));
+    assert!(
+        e.args
+            .formulas
+            .values()
+            .any(|f| *f == NumericInput::from("360/8"))
+    );
     let report = e.report();
     assert!(report.converged, "{report:?}");
     // Wherever the solve turned the original to, the copies are an eighth

@@ -47,7 +47,7 @@ use geop_core_topology::{
     Curve3, FaceId, SolidId,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
-use geop_ops::{BodyNames, NamedModel, Namer};
+use geop_ops_model::{BodyNames, NamedModel, Namer};
 use geop_ops_shell::shell::{extended, pcurve, surface_missed};
 
 use crate::common::halfway;

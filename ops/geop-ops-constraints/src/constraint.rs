@@ -1,14 +1,15 @@
 //! What steps require of the state: [`Constraint`]s, defined by name, and
-//! the part's one target holding them all ([`Constraints`]).
+//! all of a part's together ([`Constraints`]).
 //!
-//! A step defines its constraints with [`define_constraints`] in two
-//! targets: its own constraints, made by its generator and rebuilt only
-//! when what that read changes, and its revision of [`Constraints`], which
-//! adds them to those of the steps before. A solve runs the program at every
-//! state it tries; the split keeps a step's generator from running again
-//! only because a constraint of an earlier step moved.
+//! A step defines its constraints with [`define_constraints`] in a target
+//! of its own, made by its generator and made again only when what that
+//! read changes. A solve runs the program at every state it tries, and
+//! gathers them all once per run ([`Constraints::of`]): no step builds on
+//! the constraints of the steps before it, so a constraint that moves makes
+//! no other step's again — which a target revised by every step would, at a
+//! cost growing with the square of the steps.
 
-use std::{borrow::Cow, collections::BTreeMap};
+use std::collections::BTreeMap;
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{
@@ -75,12 +76,11 @@ impl<S: Solvable> Constraint<S> {
     }
 }
 
-/// The name of the part's [`Constraints`] target.
+/// What the name of a step's constraints target starts with.
 const CONSTRAINTS: &str = "constraints";
 
 /// Every constraint the steps so far defined, by name, each with the step
-/// that defined it. A part has one, the target [`constraints`], read whole:
-/// it is a kind of element of its own (see [`HasElements`]).
+/// that defined it: gathered from their targets ([`Constraints::of`]).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Constraints<S: Solvable>(BTreeMap<String, Defined<S>>);
 
@@ -93,14 +93,31 @@ struct Defined<S: Solvable> {
 
 impl<S: Solvable> Constraints<S> {
     /// The constraints of the part `reader` reads: none where no step
-    /// defined any, an error where one failed — every step after it fails
-    /// too, since each revises what the one before made.
-    pub fn of<'a, I: Input>(reader: &Reader<'a, I, S>) -> GeopResult<Cow<'a, Self>> {
-        let reference = constraints::<S>();
-        if !reader.defines(&reference) {
-            return Ok(Cow::Owned(Self::default()));
+    /// defined any. A step whose constraints failed fails them all: a
+    /// solve must not go on without a constraint it could not make. A name
+    /// two steps defined is an error naming both.
+    pub fn of<I: Input>(reader: &Reader<I, S>) -> GeopResult<Self> {
+        if let Some(failed) = reader.failed_targets_of::<StepConstraints<S>>().pop() {
+            return Err(failed);
         }
-        (reader.retrieve_element(&ElementReference::whole(reference))).map(Cow::Borrowed)
+        let mut all = Self::default();
+        for own in reader.targets_of::<StepConstraints<S>>() {
+            let own = reader.retrieve_element(&ElementReference::whole(own))?;
+            for (name, constraint) in &own.constraints {
+                if let Some(earlier) = all.0.get(name) {
+                    return Err(GeopError::new(format!(
+                        "constraint `{name}` is defined twice: by step `{}` and by step `{}`",
+                        earlier.step, own.step
+                    )));
+                }
+                let defined = Defined {
+                    step: own.step.clone(),
+                    constraint: constraint.clone(),
+                };
+                all.0.insert(name.clone(), defined);
+            }
+        }
+        Ok(all)
     }
 
     /// The constraint `name`, if a step defined it.
@@ -122,32 +139,7 @@ impl<S: Solvable> Constraints<S> {
     }
 }
 
-/// The part's constraints, read whole.
-impl<S: Solvable> Kind for Constraints<S> {
-    const NAME: &'static str = CONSTRAINTS;
-}
-
-impl<S: Solvable> HasElements<Constraints<S>> for Constraints<S> {
-    type Element<'a> = &'a Constraints<S>;
-    const SINGLETON: Option<&'static str> = Some(CONSTRAINTS);
-
-    fn element(&self, name: &str) -> GeopResult<&Self> {
-        match name.is_empty() {
-            true => Ok(self),
-            false => Err(GeopError::new(format!(
-                "the constraints have no element `{name}`: they are read whole"
-            ))),
-        }
-    }
-}
-
-/// The target holding the part's constraints.
-pub fn constraints<S: Solvable>() -> TargetReference<Constraints<S>> {
-    TargetReference::new(CONSTRAINTS)
-}
-
-/// The constraints one step defined, by name: the target its revision of
-/// [`Constraints`] adds to those before.
+/// The constraints one step defined, by name: its target.
 #[derive(Clone, PartialEq)]
 struct StepConstraints<S: Solvable> {
     step: String,
@@ -177,14 +169,14 @@ impl<S: Solvable> HasElements<StepConstraints<S>> for StepConstraints<S> {
 pub type ConstraintGenerator<I, S, Args> = Generator<I, S, Args, BTreeMap<String, Constraint<S>>>;
 
 /// Defines the constraints `generator` makes of `args` in the step `step`,
-/// and adds them to the part's [`Constraints`]. Each is checked: its
-/// derivatives are by states its generator read, a row per residual, as
-/// many numbers as a step of the state takes. A name an earlier step
-/// defined is an error naming both steps. A plain function, like
+/// one of the part's [`Constraints`]. Each is checked: its derivatives are
+/// by states its generator read, a row per residual, as many numbers as a
+/// step of the state takes. A plain function, like
 /// [`Part::define_target`]'s.
 ///
-/// A step that fails here still revises [`Constraints`], into a failure:
-/// a solve must not go on without a constraint it could not make.
+/// A step that fails here leaves a failed target, which fails
+/// [`Constraints::of`]: a solve must not go on without a constraint it
+/// could not make.
 pub fn define_constraints<I: Input, S: Solvable, Args: PartialEq + Clone + 'static>(
     part: &mut Part<I, S>,
     step: &str,
@@ -196,9 +188,7 @@ pub fn define_constraints<I: Input, S: Solvable, Args: PartialEq + Clone + 'stat
         args: args.clone(),
         generator,
     };
-    let defined = part.define_target(&own, &(step.to_string(), generated), make);
-    let added = part.revise_target(&constraints(), &own, add);
-    defined.and(added)
+    part.define_target(&own, &(step.to_string(), generated), make)
 }
 
 /// The arguments of a step's own constraints: the step, and its generator
@@ -225,25 +215,3 @@ fn make<I: Input, S: Solvable, Args>(
     })
 }
 
-/// `all` with the constraints of one step, `own`, added.
-fn add<I: Input, S: Solvable>(
-    reader: &Reader<I, S>,
-    own: &TargetReference<StepConstraints<S>>,
-) -> GeopResult<Constraints<S>> {
-    let mut all: Constraints<S> = reader.previous()?;
-    let own = reader.retrieve_element(&ElementReference::whole(own.clone()))?;
-    for (name, constraint) in &own.constraints {
-        if let Some(earlier) = all.0.get(name) {
-            return Err(GeopError::new(format!(
-                "constraint `{name}` is defined twice: by step `{}` and by step `{}`",
-                earlier.step, own.step
-            )));
-        }
-        let defined = Defined {
-            step: own.step.clone(),
-            constraint: constraint.clone(),
-        };
-        all.0.insert(name.clone(), defined);
-    }
-    Ok(all)
-}

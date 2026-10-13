@@ -12,7 +12,7 @@ use geop_core_topology::{
     Body,
     validation::{ValidationParameters, validate},
 };
-use geop_ops::{NamedModel, testing::assert_valid};
+use geop_ops_model::{NamedModel, testing::assert_valid};
 
 use crate::{Cage, Mirror, SubdArgs, build_subd};
 

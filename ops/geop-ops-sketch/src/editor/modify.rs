@@ -15,6 +15,7 @@
 //!   construction curve is selected after, to change its count, and its
 //!   spacing asked for.
 
+use geop_core_editor::numeric_input::NumericInput;
 use geop_core_math::geop_error::GeopResult;
 use geop_core_sketch::{
     copies::{Made, Step},
@@ -26,8 +27,10 @@ use crate::geometry::{bounds, dot, scale};
 
 /// A full turn, in degrees: a circular pattern spread over all of it has
 /// its angle given by the formula `360/count`, which follows its count.
-fn full_turn(count: usize) -> String {
-    format!("360/{count}")
+fn full_turn(count: usize) -> NumericInput {
+    NumericInput::Formula {
+        formula: format!("360/{count}"),
+    }
 }
 
 /// `curves`, a chain, offset in `sketch` as far as `at` is from it and to

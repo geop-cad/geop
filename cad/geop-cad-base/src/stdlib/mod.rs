@@ -1,6 +1,6 @@
 //! The standard parts library: fasteners and purchased components every
 //! workspace can place, as read-only files named `std:…` (see
-//! [`geop_ops::program::library::is_shared`]) — `std:iso4032_hex_nut.geop`.
+//! [`crate::workspace::is_shared`]) — `std:iso4032_hex_nut.geop`.
 //!
 //! Each family is one program, generated here in Rust and never saved:
 //! its sizes are the rows of its table parameter `size` — `M5`,
@@ -46,7 +46,7 @@ use std::{
 };
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_ops::program::{Files, FilesMut};
+use crate::workspace::{FileStore, FileStoreMut};
 
 use crate::Program;
 
@@ -73,7 +73,7 @@ pub struct StandardPart {
 /// size of it ordered as `designation` and the size: the norm, `ISO 4762`
 /// for `ISO 4762 M4x12`, or the catalogue name. Every consumer of a placed
 /// part reads them from its program (see
-/// [`geop_ops::parameters::Parameters::designate`]).
+/// [`geop_ops_parameters::Parameters::designate`]).
 fn titled(mut program: Program, title: &str, designation: &str) -> Program {
     program.parameters.title = Some(title.into());
     program.parameters.designation = Some(designation.into());
@@ -181,7 +181,7 @@ impl<F> DerefMut for WithStandardParts<F> {
     }
 }
 
-impl<F: Files> Files for WithStandardParts<F> {
+impl<F: FileStore> FileStore for WithStandardParts<F> {
     fn read(&self, path: &str) -> GeopResult<String> {
         if !path.starts_with(PREFIX) {
             return self.0.read(path);
@@ -203,7 +203,7 @@ impl<F: Files> Files for WithStandardParts<F> {
 
 /// Writes go to `F`, but never over a standard part: those are read-only,
 /// so a write to a [`PREFIX`]`…` name changes nothing.
-impl<F: FilesMut> FilesMut for WithStandardParts<F> {
+impl<F: FileStoreMut> FileStoreMut for WithStandardParts<F> {
     fn write(&mut self, path: &str, text: Option<String>) {
         if !path.starts_with(PREFIX) {
             self.0.write(path, text);

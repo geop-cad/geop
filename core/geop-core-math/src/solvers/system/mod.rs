@@ -13,7 +13,10 @@
 //!   measured apart ([`System::groups`]): a plate with hundreds of screws
 //!   is hundreds of systems of one screw. The answer is the same, since
 //!   what a solve minimizes is a sum over the groups; a group whose
-//!   constraints hold and that nothing pulls is not solved at all.
+//!   constraints hold and that nothing pulls is not solved at all. The
+//!   groups are worked on in lockstep ([`lockstep`]): one evaluation
+//!   answers every group waiting, so the evaluations a solve takes do not
+//!   grow with the number of groups.
 //! - **Solve** ([`System::solve`]) by the driver every solve shares
 //!   ([`driver`]): the constraints held exactly, the
 //!   preferences and staying put ([`Variable::stay`]) only choosing among
@@ -50,11 +53,13 @@ use crate::{
 
 mod driver;
 mod enclose;
+mod lockstep;
 
 pub use driver::{DAMPING, Mobility, Phase, RELATIVE_TOLERANCE, tolerance};
 use driver::{Values, largest};
 
 pub use enclose::{EncloseError, Enclosure};
+use lockstep::{Batch, Made};
 
 /// A value a solve moves: a block of variables, stepped along its own
 /// tangent space.
@@ -245,8 +250,8 @@ pub struct Solution<V: Variable> {
     /// left.
     pub iterations: usize,
     pub phases: Vec<Phase<V::Scalar>>,
-    /// How many times the solve made the terms: the work it took, its
-    /// enclosure's apart.
+    /// How many times the solve made the terms — every group's at once:
+    /// the work it took, its enclosure's apart.
     pub evaluations: usize,
     /// An enclosure of a true solution near where the solved groups ended
     /// (see [`System::enclose`]) — of those only: the others were not
@@ -368,6 +373,28 @@ impl<E: Equations> System<'_, E> {
     pub fn solve(&self, start: &[E::Value]) -> GeopResult<Solution<E::Value>> {
         let tolerance = tolerance(self.scale)?;
         let groups = self.groups(start);
+        let batch = Batch::new(self, start);
+        let solved = batch.run(groups.iter().map(|group| {
+            let batch = &batch;
+            async move {
+                let solving = Solving::new(self, start, group, batch);
+                let first = solving.start();
+                let needs = !group.preferences.is_empty()
+                    || !(solving.check(&first, &group.constraints, tolerance).await).1;
+                if !needs {
+                    return Ok(None);
+                }
+                let mut active = Vec::new();
+                loop {
+                    let (solved, phases) = solving.solve(first.clone(), &active, &[]).await?;
+                    let beyond = solving.beyond(&solved, &active, tolerance).await;
+                    if beyond.is_empty() {
+                        return Ok(Some((solved, phases, active)));
+                    }
+                    active.extend(beyond);
+                }
+            }
+        }))?;
         let mut values = start.to_vec();
         let mut solution = Solution {
             values: Vec::new(),
@@ -375,31 +402,17 @@ impl<E: Equations> System<'_, E> {
             at_limit: Vec::new(),
             iterations: 0,
             phases: Vec::new(),
-            evaluations: 0,
+            evaluations: batch.evaluations(),
             enclosure: Enclosure::empty(self.mobility.len()),
         };
-        for group in groups {
-            let solving = Solving::new(self, start, &group);
-            let first = solving.start();
-            let needs = !group.preferences.is_empty()
-                || !solving.check(&first, &group.constraints, tolerance).1;
-            if !needs {
+        for (group, solved) in groups.into_iter().zip(solved) {
+            let Some((solved, group_phases, active)) = solved else {
                 continue;
-            }
-            let mut active = Vec::new();
-            let (solved, group_phases) = loop {
-                let (solved, group_phases) = solving.solve(first.clone(), &active, &[])?;
-                let beyond = solving.beyond(&solved, &active, tolerance);
-                if beyond.is_empty() {
-                    break (solved, group_phases);
-                }
-                active.extend(beyond);
             };
             solution.iterations = solution
                 .iterations
                 .max(group_phases.iter().map(|p| p.iterations).sum());
             worst(&mut solution.phases, group_phases);
-            solution.evaluations += solving.evaluations.get();
             for (&block, value) in group.blocks.iter().zip(solved) {
                 values[block] = value;
             }
@@ -475,56 +488,70 @@ impl<E: Equations> System<'_, E> {
     /// there are constraints, so for a dialog to show, never for every drag.
     pub fn conflicting(&self, start: &[E::Value]) -> GeopResult<Vec<usize>> {
         let tolerance = tolerance(self.scale)?;
-        let mut conflicting = Vec::new();
-        for group in self.groups(start) {
-            let solving = Solving::new(self, start, &group);
-            let first = solving.start();
-            if solving.check(&first, &group.constraints, tolerance).1 {
-                continue;
-            }
-            let holds = |left_out: &[usize]| -> GeopResult<(Vec<E::Value>, bool)> {
-                let (solved, _) = solving.solve(first.clone(), &[], left_out)?;
-                let kept: Vec<usize> = (group.constraints.iter())
-                    .filter(|c| !left_out.contains(c))
-                    .copied()
-                    .collect();
-                let holds = solving.check(&solved, &kept, tolerance).1;
-                Ok((solved, holds))
-            };
-            let (solved, all) = holds(&[])?;
-            if all {
-                continue;
-            }
-            let mut at = start.to_vec();
-            for (&block, value) in group.blocks.iter().zip(&solved) {
-                at[block] = value.clone();
-            }
-            let proven = self.enclose_group(&at, &group)?;
-            if let Err(EncloseError::Conflict {
-                conflicting: off,
-                with,
-                ..
-            }) = proven.boxes
-            {
-                conflicting.extend(off.into_iter().map(|(c, _)| c).chain(with));
-                continue;
-            }
-            let mut left_out = Vec::new();
-            for &c in &group.constraints {
-                left_out.push(c);
-                if holds(&left_out)?.1 {
-                    left_out.pop();
-                }
-            }
-            conflicting.extend(
-                (group.constraints.iter())
-                    .filter(|c| !left_out.contains(c))
-                    .copied(),
-            );
-        }
+        let groups = self.groups(start);
+        let batch = Batch::new(self, start);
+        let found = batch.run(groups.iter().map(|group| {
+            let batch = &batch;
+            async move { self.conflicting_in(start, group, batch, tolerance).await }
+        }))?;
+        let mut conflicting: Vec<usize> = found.into_iter().flatten().collect();
         conflicting.sort_unstable();
         conflicting.dedup();
         Ok(conflicting)
+    }
+
+    /// [`System::conflicting`] of the group `group`, from `start`.
+    async fn conflicting_in(
+        &self,
+        start: &[E::Value],
+        group: &Group,
+        batch: &Batch<'_, '_, E>,
+        tolerance: ScalarOf<E>,
+    ) -> GeopResult<Vec<usize>> {
+        let solving = Solving::new(self, start, group, batch);
+        let first = solving.start();
+        if (solving.check(&first, &group.constraints, tolerance).await).1 {
+            return Ok(Vec::new());
+        }
+        let holds = async |left_out: &[usize]| -> GeopResult<(Vec<E::Value>, bool)> {
+            let (solved, _) = solving.solve(first.clone(), &[], left_out).await?;
+            let kept: Vec<usize> = (group.constraints.iter())
+                .filter(|c| !left_out.contains(c))
+                .copied()
+                .collect();
+            let holds = solving.check(&solved, &kept, tolerance).await.1;
+            Ok((solved, holds))
+        };
+        let (solved, all) = holds(&[]).await?;
+        if all {
+            return Ok(Vec::new());
+        }
+        let mut at = start.to_vec();
+        for (&block, value) in group.blocks.iter().zip(&solved) {
+            at[block] = value.clone();
+        }
+        let proven = self.enclose_group(&at, group, batch).await?;
+        if let Err(EncloseError::Conflict {
+            conflicting, with, ..
+        }) = proven.boxes
+        {
+            return Ok(conflicting
+                .into_iter()
+                .map(|(c, _)| c)
+                .chain(with)
+                .collect());
+        }
+        let mut left_out = Vec::new();
+        for &c in &group.constraints {
+            left_out.push(c);
+            if holds(&left_out).await?.1 {
+                left_out.pop();
+            }
+        }
+        Ok((group.constraints.iter())
+            .filter(|c| !left_out.contains(c))
+            .copied()
+            .collect())
     }
 }
 
@@ -553,17 +580,22 @@ struct Solving<'s, 'e, E: Equations> {
     system: &'s System<'e, E>,
     base: &'s [E::Value],
     group: &'s Group,
+    /// Where its terms are asked, with every other group's.
+    batch: &'s Batch<'s, 'e, E>,
     /// Per block of the group, where its variables start.
     columns: Vec<usize>,
     /// How many variables the group has.
     n: usize,
     space: Values<E::Value>,
-    /// How many times the terms were made: the work done on the group.
-    evaluations: std::cell::Cell<usize>,
 }
 
 impl<'s, 'e, E: Equations> Solving<'s, 'e, E> {
-    fn new(system: &'s System<'e, E>, base: &'s [E::Value], group: &'s Group) -> Self {
+    fn new(
+        system: &'s System<'e, E>,
+        base: &'s [E::Value],
+        group: &'s Group,
+        batch: &'s Batch<'s, 'e, E>,
+    ) -> Self {
         let mut columns = Vec::with_capacity(group.blocks.len());
         let mut n = 0;
         for &block in &group.blocks {
@@ -574,10 +606,10 @@ impl<'s, 'e, E: Equations> Solving<'s, 'e, E> {
             system,
             base,
             group,
+            batch,
             columns,
             n,
             space: Values(std::marker::PhantomData),
-            evaluations: Default::default(),
         }
     }
 
@@ -589,19 +621,9 @@ impl<'s, 'e, E: Equations> Solving<'s, 'e, E> {
     }
 
     /// The terms `which` with the group at `values` (see
-    /// [`Equations::evaluate`]), counted.
-    fn made(&self, values: &[E::Value], which: &[Term]) -> Vec<Option<Linearized<ScalarOf<E>>>> {
-        self.evaluations.set(self.evaluations.get() + 1);
-        (self.system.equations).evaluate(&self.everywhere(values), which)
-    }
-
-    /// Every block's value, the group's at `values`.
-    fn everywhere(&self, values: &[E::Value]) -> Vec<E::Value> {
-        let mut all = self.base.to_vec();
-        for (&block, value) in self.group.blocks.iter().zip(values) {
-            all[block] = value.clone();
-        }
-        all
+    /// [`Equations::evaluate`]), asked with every other group's.
+    async fn made(&self, values: &[E::Value], which: &[Term]) -> Made<E> {
+        self.batch.ask(&self.group.blocks, values, which).await
     }
 
     /// Where the variables of `block` are among the group's, if it is one
@@ -653,24 +675,24 @@ impl<'s, 'e, E: Equations> Solving<'s, 'e, E> {
 
     /// The constraints `which` with the group at `values`; `None` if one
     /// cannot be made there.
-    fn constraints_at(
+    async fn constraints_at(
         &self,
         values: &[E::Value],
         which: &[usize],
     ) -> Option<Vec<Linearized<ScalarOf<E>>>> {
         let terms: Vec<Term> = which.iter().map(|&c| Term::Constraint(c)).collect();
-        self.made(values, &terms).into_iter().collect()
+        self.made(values, &terms).await.into_iter().collect()
     }
 
     /// The largest residual of the constraints `which` at `values`, and
     /// whether they all hold there.
-    fn check(
+    async fn check(
         &self,
         values: &[E::Value],
         which: &[usize],
         tolerance: ScalarOf<E>,
     ) -> (ScalarOf<E>, bool) {
-        let Some(made) = self.constraints_at(values, which) else {
+        let Some(made) = self.constraints_at(values, which).await else {
             return (ScalarOf::<E>::INFINITY, false);
         };
         let holds = (which.iter().zip(&made)).all(|(&c, made)| {
@@ -685,13 +707,18 @@ impl<'s, 'e, E: Equations> Solving<'s, 'e, E> {
 
     /// The limits of the group not held at their bounds that `values` is
     /// beyond.
-    fn beyond(&self, values: &[E::Value], active: &[usize], tolerance: ScalarOf<E>) -> Vec<usize> {
+    async fn beyond(
+        &self,
+        values: &[E::Value],
+        active: &[usize],
+        tolerance: ScalarOf<E>,
+    ) -> Vec<usize> {
         let limits: Vec<usize> = (self.group.constraints.iter())
             .filter(|c| !active.contains(c))
             .filter(|&&c| self.system.equations.bound(c) == Bound::AtMost)
             .copied()
             .collect();
-        let Some(made) = self.constraints_at(values, &limits) else {
+        let Some(made) = self.constraints_at(values, &limits).await else {
             return Vec::new();
         };
         (limits.iter().zip(&made))

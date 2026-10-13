@@ -2,7 +2,7 @@
 //! program file's part, as a [`Component`] — and the [`Instance`]s that
 //! place them, each a target of its own ([`instance`]).
 //!
-//! Where an instance is, is the program's state: the pose parameter of its
+//! Where an instance is, is the program's state: the pose state of its
 //! [`Placement`], or a fixed motion after another instance, as a pattern's
 //! copy goes. The parts placed in a placed part are the placing program's
 //! to move too: their poses are its state, behind the instance's name
@@ -22,159 +22,79 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_core_program::{
-    part::{Retrieve, View},
+    element::{ElementReference, HasElements, Kind, whole},
+    part::{Input, Part, Reader, State},
     target::TargetReference,
 };
-
-use crate::{
-    Design,
-    model::{ParamValue, SolidMeshes, model_or_empty},
-    operation::{Build, EntityRef, INSTANCE_SEPARATOR, Input, Seen, instance_path},
-    parameters::{Parameters, Values},
-    ui::PartView,
+use geop_ops_model::{Design, SolidMeshes, read_model};
+use geop_ops_parameters::{
+    BuildPart, Files, Parameters, PartReader, Settings, StateValue, read_about,
 };
+use geop_ops_view::{INSTANCE_SEPARATOR, PartView};
 
-/// The name of the input a run finds its [`Library`] under.
-pub const LIBRARY: &str = "library";
-
-/// Where a program being built finds the parts it places, and the files its
-/// steps read.
-pub trait Library {
-    /// The program being built's own file, as the library names files.
-    fn file(&self) -> String;
-
+/// Where a program being built finds the parts it places, besides the files
+/// its steps read: the given target [`library`].
+pub trait Library: Files {
     /// The part the program in `file` builds — `file` relative to the
     /// program being built — with its parameters `overrides` instead of
     /// its own.
-    fn component(&self, file: &str, overrides: &Values) -> GeopResult<Rc<Component>>;
-
-    /// The files the program being built could place or read, as it would
-    /// name them: every file but its own.
-    fn files(&self) -> Vec<String>;
-
-    /// The file `file`, relative to the program being built: its path, as
-    /// the library names files, and its text.
-    fn read(&self, file: &str) -> GeopResult<(String, String)>;
+    fn component(&self, file: &str, overrides: &Settings) -> GeopResult<Rc<Component>>;
 }
 
-/// The library a run was given: none, for a program that places nothing.
-pub fn library<'a>(r: &mut impl Retrieve<'a, Input, ParamValue>) -> GeopResult<Rc<dyn Library>> {
-    match r.retrieve_input(LIBRARY) {
-        Some(Input::Library(library)) => Ok(library),
-        _ => Err(GeopError::new(
+/// The library a run places parts from, as given to it: equal only to
+/// itself, so a step reading it is rebuilt when it is given another.
+#[derive(Clone)]
+pub struct GivenLibrary(pub Rc<dyn Library>);
+
+impl PartialEq for GivenLibrary {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// The library a run places parts from, defined by the given step.
+pub fn library() -> TargetReference<GivenLibrary> {
+    TargetReference::new("library")
+}
+
+/// Read whole.
+impl Kind for GivenLibrary {
+    const NAME: &'static str = "library";
+}
+
+impl HasElements<GivenLibrary> for GivenLibrary {
+    type Element<'a> = &'a dyn Library;
+    const SINGLETON: Option<&'static str> = Some("library");
+
+    fn element(&self, name: &str) -> GeopResult<&dyn Library> {
+        Ok(whole(self, name)?.0.as_ref())
+    }
+}
+
+/// Defines `library` as the run's [`library`]: in the given step.
+pub fn define_library<I: Input, S: State>(
+    part: &mut Part<I, S>,
+    library: &GivenLibrary,
+) -> GeopResult<()> {
+    part.define_target(&self::library(), library, |_, library| Ok(library.clone()))
+}
+
+/// The library a run of `reader` places parts from: an error, for a program
+/// that is built without one.
+pub fn read_library<'a, I: Input, S: State>(
+    reader: &Reader<'a, I, S>,
+) -> GeopResult<&'a dyn Library> {
+    if !reader.defines(&library()) {
+        return Err(GeopError::new(
             "this program is built without any other files: there is no library to place parts from",
-        )),
+        ));
     }
+    reader.retrieve_element(&ElementReference::whole(library()))
 }
 
-/// What a field picking a file of the library offers: the files of it
-/// `kind` takes, sorted, and `current`, if a file is picked that is not
-/// among them. None, without a library.
-pub fn library_files<'a>(
-    r: &mut impl Retrieve<'a, Input, ParamValue>,
-    kind: impl Fn(&str) -> bool,
-    current: &str,
-) -> Vec<String> {
-    let mut files: Vec<String> = (library(r).map(|library| library.files()))
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|f| kind(f))
-        .collect();
-    files.sort();
-    if !current.is_empty() && !files.iter().any(|f| f == current) {
-        files.push(current.to_string());
-    }
-    files
-}
-
-/// The name of the input a run finds its [`About`] under.
-pub const ABOUT: &str = "about";
-
-/// What the program a run builds says of its part besides its steps: the
-/// file it is in, as the library names files, and the parameters it
-/// declares — its colour, material, title and designation.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct About {
-    pub file: String,
-    pub parameters: Parameters,
-}
-
-/// What a part whose material is not given is weighed as: water, 1000
-/// kg/m³.
-const UNGIVEN_DENSITY: f64 = 1000.0;
-
-/// What a part is made of, as it is weighed.
-#[derive(Clone, Debug, PartialEq)]
-pub struct MaterialOf {
-    pub name: String,
-    /// kg/m³.
-    pub density: f64,
-    /// Whether no material was given, and it is weighed as water.
-    pub assumed: bool,
-}
-
-impl About {
-    /// What its part is made of: its material — or, not given, water, and
-    /// said so.
-    pub fn material(&self) -> MaterialOf {
-        match &self.parameters.material {
-            Some(material) => MaterialOf {
-                name: material.name.clone(),
-                density: material.density,
-                assumed: false,
-            },
-            None => MaterialOf {
-                name: "Water (no material given)".into(),
-                density: UNGIVEN_DENSITY,
-                assumed: true,
-            },
-        }
-    }
-
-    /// The name of its file, without folders or `.geop`: what a file
-    /// written from its part is named after — `part` if that leaves
-    /// nothing.
-    pub fn stem(&self) -> &str {
-        let file = self.file.rsplit(['/', ':']).next().unwrap_or_default();
-        match file.trim_end_matches(".geop") {
-            "" => "part",
-            stem => stem,
-        }
-    }
-
-    /// What its part is called where it is listed: its title, else its
-    /// file's [`About::stem`].
-    pub fn name(&self) -> &str {
-        self.parameters.title.as_deref().unwrap_or(self.stem())
-    }
-}
-
-/// What the program of the part `view` shows says of it: nothing, for a
-/// part built without a program — an operation's test.
-pub fn about(view: View<'_, Input, ParamValue>) -> Rc<About> {
-    match view.retrieve_input(ABOUT) {
-        Some(Input::About(about)) => about,
-        _ => Rc::default(),
-    }
-}
-
-/// The values of the parameters the program of the part `view` shows
-/// declares, as it was built with them.
-pub fn declared_values(view: View<'_, Input, ParamValue>) -> Values {
-    (about(view).parameters.values.iter())
-        .filter_map(|parameter| match view.retrieve_input(&parameter.name)? {
-            Input::Value(value) => Some((parameter.name.clone(), value)),
-            Input::Library(_) | Input::About(_) => None,
-        })
-        .collect()
-}
-
-/// What the part `view` shows is ordered as, with the values it was built
-/// with (see [`Parameters::designate`]): none for a part made rather than
-/// bought.
-pub fn designation(view: View<'_, Input, ParamValue>) -> Option<String> {
-    about(view).parameters.designate(&declared_values(view))
-}
+/// How a component's part is drawn: what the application composes of what
+/// each crate draws.
+pub type Draw = fn(&PartReader) -> GeopResult<PartView>;
 
 /// The part another program file builds, as its run left it: what an
 /// [`Instance`] places.
@@ -191,7 +111,8 @@ pub struct Component {
     /// The parameters its program declares, which a program placing it
     /// can give values of its own.
     pub parameters: Parameters,
-    pub part: Build,
+    pub part: BuildPart,
+    draw: Draw,
     drawn: OnceCell<Rc<PartView>>,
 }
 
@@ -207,7 +128,8 @@ impl Component {
         files: BTreeSet<String>,
         key: String,
         parameters: Parameters,
-        part: Build,
+        part: BuildPart,
+        draw: Draw,
     ) -> Self {
         Self {
             file,
@@ -215,18 +137,20 @@ impl Component {
             key,
             parameters,
             part,
+            draw,
             drawn: OnceCell::new(),
         }
     }
 
     /// The part as its program left it.
-    pub fn view(&self) -> View<'_, Input, ParamValue> {
+    pub fn reader(&self) -> PartReader<'_> {
         self.part.current()
     }
 
-    /// What its part is ordered as (see [`designation`]).
+    /// What its part is ordered as (see
+    /// [`geop_ops_parameters::About::designation`]).
     pub fn designation(&self) -> Option<String> {
-        designation(self.view())
+        read_about(&self.reader()).ok()?.designation()
     }
 
     /// The part as drawn where it is placed: drawn once, the first time it
@@ -236,7 +160,7 @@ impl Component {
         if let Some(view) = self.drawn.get() {
             return Ok(view.clone());
         }
-        let mut view = PartView::of(&Seen::new(self.view()))?;
+        let mut view = (self.draw)(&self.reader())?;
         view.sketches.clear();
         let view = Rc::new(view);
         Ok(self.drawn.get_or_init(|| view).clone())
@@ -246,9 +170,9 @@ impl Component {
 /// Where an [`Instance`] is, in the part it is placed in.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Placement {
-    /// Where the pose state `parameter` puts it: moved by solving the
-    /// mates, and by dragging it.
-    Parameter(String),
+    /// Where the pose state `state` puts it: moved by solving the mates,
+    /// and by dragging it.
+    State(String),
     /// `motion` after where the instance `of` of the same part is: a copy
     /// of a pattern, which goes with the part it copies.
     After { of: String, motion: Pose<Design> },
@@ -286,58 +210,86 @@ pub fn instance_name(target: &str) -> Option<&str> {
     target.strip_prefix(PREFIX)
 }
 
+/// The path of the part placed as `name` in the part placed at `outer`:
+/// `asm/bolt`.
+pub fn instance_path(outer: &str, name: &str) -> String {
+    format!("{outer}{INSTANCE_SEPARATOR}{name}")
+}
+
+/// Read whole.
+impl Kind for Instance {
+    const NAME: &'static str = "instance";
+}
+
+impl HasElements<Instance> for Instance {
+    type Element<'a> = &'a Instance;
+
+    fn element(&self, name: &str) -> GeopResult<&Instance> {
+        whole(self, name)
+    }
+
+    fn names_target(name: &str) -> bool {
+        name.starts_with(PREFIX)
+    }
+}
+
+/// The instance `name` of the part `reader` reads.
+pub fn read_instance<'a, I: Input, S: State>(
+    reader: &Reader<'a, I, S>,
+    name: &str,
+) -> GeopResult<&'a Instance> {
+    reader.retrieve_element(&ElementReference::whole(instance(name)))
+}
+
 /// The pose a state holds, if it holds one.
-fn pose_in(value: ParamValue) -> Option<Pose<Design>> {
+fn pose_in(value: StateValue) -> Option<Pose<Design>> {
     match value {
-        ParamValue::Pose(pose) => Some(pose),
-        _ => None,
+        StateValue::Pose(pose) => Some(pose),
+        StateValue::Number(_) => None,
     }
 }
 
 /// One part of the instances a path names: the instances it reads, and
 /// where they are.
 trait Level<'a> {
-    fn instance(&mut self, name: &str) -> GeopResult<&'a Instance>;
+    fn instance(&self, name: &str) -> GeopResult<&'a Instance>;
 
-    /// The state the parameter `parameter` of this part is, as the part
-    /// read names it, and the pose it holds there, if any.
-    fn pose(&mut self, parameter: &str) -> (String, Option<Pose<Design>>);
+    /// The state the pose state `state` of this part is, as the part read
+    /// names it, and the pose it holds there, if any.
+    fn pose(&self, state: &str) -> (String, Option<Pose<Design>>);
 }
 
 /// The part read itself: its instances, and its state.
-struct Top<'r, R>(&'r mut R);
+struct Top<'r, 'a>(&'r PartReader<'a>);
 
-impl<'a, R: Retrieve<'a, Input, ParamValue>> Level<'a> for Top<'_, R> {
-    fn instance(&mut self, name: &str) -> GeopResult<&'a Instance> {
-        self.0.retrieve_target(&instance(name))
+impl<'a> Level<'a> for Top<'_, 'a> {
+    fn instance(&self, name: &str) -> GeopResult<&'a Instance> {
+        read_instance(self.0, name)
     }
 
-    fn pose(&mut self, parameter: &str) -> (String, Option<Pose<Design>>) {
-        (
-            parameter.to_string(),
-            pose_in(self.0.retrieve_state(parameter)),
-        )
+    fn pose(&self, state: &str) -> (String, Option<Pose<Design>>) {
+        (state.to_string(), pose_in(self.0.retrieve_state(state)))
     }
 }
 
 /// A part placed — however deep — in the part read, at `prefix`: its
 /// instances are its own, where they are the part read's state, behind
 /// the prefix, or else its own.
-struct Nested<'r, 'a, R> {
-    outer: &'r mut R,
-    view: View<'a, Input, ParamValue>,
+struct Nested<'r, 'a> {
+    outer: &'r PartReader<'a>,
+    inner: PartReader<'a>,
     prefix: String,
 }
 
-impl<'a, R: Retrieve<'a, Input, ParamValue>> Level<'a> for Nested<'_, 'a, R> {
-    fn instance(&mut self, name: &str) -> GeopResult<&'a Instance> {
-        self.view.retrieve_target(&instance(name))
+impl<'a> Level<'a> for Nested<'_, 'a> {
+    fn instance(&self, name: &str) -> GeopResult<&'a Instance> {
+        read_instance(&self.inner, name)
     }
 
-    fn pose(&mut self, parameter: &str) -> (String, Option<Pose<Design>>) {
-        let outer = format!("{}{parameter}", self.prefix);
+    fn pose(&self, state: &str) -> (String, Option<Pose<Design>>) {
+        let outer = format!("{}{state}", self.prefix);
         let pose = pose_in(self.outer.retrieve_state(&outer))
-            .or_else(|| pose_in(self.view.retrieve_state(parameter)));
+            .or_else(|| pose_in(self.inner.retrieve_state(state)));
         (outer, pose)
     }
 }
@@ -348,17 +300,17 @@ impl<'a, R: Retrieve<'a, Input, ParamValue>> Level<'a> for Nested<'_, 'a, R> {
 pub type PoseOf<'f, T> = dyn FnMut(&str, Pose<Design>) -> Pose<T> + 'f;
 
 /// The instance `name` of `level`, and where it is in its part, in `T` —
-/// each pose state it reads entering as `pose_of` has it. A parameter that
+/// each pose state it reads entering as `pose_of` has it. A state that
 /// holds no pose — before anything solved for it — puts it at the origin.
 fn place<'a, T: Scalar>(
-    level: &mut impl Level<'a>,
+    level: &impl Level<'a>,
     name: &str,
     pose_of: &mut PoseOf<'_, T>,
 ) -> GeopResult<(&'a Instance, Pose<T>)> {
     let instance = level.instance(name)?;
     let pose = match &instance.placement {
-        Placement::Parameter(parameter) => {
-            let (state, pose) = level.pose(parameter);
+        Placement::State(state) => {
+            let (state, pose) = level.pose(state);
             pose_of(&state, pose.unwrap_or_else(Pose::identity))
         }
         Placement::After { of, motion } => {
@@ -372,163 +324,138 @@ fn place<'a, T: Scalar>(
 }
 
 /// A part placed in the part read, however deep: its instance, its pose in
-/// the part read, and the parameter that pose is, if it is the part read's
-/// to move.
+/// the part read, and the state that pose is, if it is the part read's to
+/// move.
 pub struct Located<'a, T: Scalar = Design> {
     pub instance: &'a Instance,
     pub world: Pose<T>,
     /// Where it is in the part it is placed in.
     pub local: Pose<T>,
-    pub parameter: Option<String>,
+    pub state: Option<String>,
 }
 
 /// The part placed at `path` — `bolt`, or `asm/bolt` for one placed in a
-/// placed part — read through `r`.
-pub fn locate<'a, R: Retrieve<'a, Input, ParamValue>>(
-    r: &mut R,
-    path: &str,
-) -> GeopResult<Located<'a>> {
-    locate_in(r, path, &mut |_, pose| pose)
+/// placed part — of the part `reader` reads.
+pub fn locate<'a>(reader: &PartReader<'a>, path: &str) -> GeopResult<Located<'a>> {
+    locate_in(reader, path, &mut |_, pose| pose)
 }
 
 /// [`locate`] in `T`, each pose state the placement reads entering as
 /// `pose_of` has it — as it is, or moved by a step, to differentiate where
 /// the part is by that state.
-pub fn locate_in<'a, T: Scalar, R: Retrieve<'a, Input, ParamValue>>(
-    r: &mut R,
+pub fn locate_in<'a, T: Scalar>(
+    reader: &PartReader<'a>,
     path: &str,
     pose_of: &mut PoseOf<'_, T>,
 ) -> GeopResult<Located<'a, T>> {
     let ctx = |e: GeopError| e.with_context(format!("the placed part {path:?}"));
     let mut names = path.split(INSTANCE_SEPARATOR);
     let first = names.next().unwrap_or_default();
-    let (mut instance, mut local) = place(&mut Top(r), first, pose_of).with_context(&ctx)?;
+    let (mut instance, mut local) = place(&Top(reader), first, pose_of).with_context(&ctx)?;
     let mut world = local;
     let mut prefix = format!("{first}{INSTANCE_SEPARATOR}");
-    let mut parameter = parameter_of(instance, "");
+    let mut state = state_of(instance, "");
     for name in names {
-        let view = instance.component.view();
-        let mut level = Nested {
-            outer: &mut *r,
-            view,
+        let level = Nested {
+            outer: reader,
+            inner: instance.component.reader(),
             prefix: prefix.clone(),
         };
-        (instance, local) = place(&mut level, name, pose_of).with_context(&ctx)?;
+        (instance, local) = place(&level, name, pose_of).with_context(&ctx)?;
         world = world.compose(&local);
-        parameter = parameter.and(parameter_of(instance, &prefix));
+        state = state.and(state_of(instance, &prefix));
         prefix = format!("{prefix}{name}{INSTANCE_SEPARATOR}");
     }
     Ok(Located {
         instance,
         world,
         local,
-        parameter,
+        state,
     })
 }
 
 /// The state that moves `instance`, placed behind `prefix`: its pose's
-/// parameter, if it has one. A part moves only with its own parameter, and
-/// those of the parts placed flexibly around it: a copy's parts go with the
-/// copy.
-fn parameter_of(instance: &Instance, prefix: &str) -> Option<String> {
+/// state, if it has one. A part moves only with its own state, and those
+/// of the parts placed flexibly around it: a copy's parts go with the copy.
+fn state_of(instance: &Instance, prefix: &str) -> Option<String> {
     match &instance.placement {
-        Placement::Parameter(parameter) => Some(format!("{prefix}{parameter}")),
+        Placement::State(state) => Some(format!("{prefix}{state}")),
         Placement::After { .. } => None,
     }
 }
 
-/// The state that moves the part placed at `path` — as [`Located::parameter`]
-/// has it, if the part read moves it at all — read through `r`. Reads no
-/// state: which state moves a part does not depend on where it is.
-pub fn moved_by<'a>(
-    r: &mut impl Retrieve<'a, Input, ParamValue>,
-    path: &str,
-) -> GeopResult<Option<String>> {
+/// The state that moves the part placed at `path` — as [`Located::state`]
+/// has it, if the part read moves it at all. Reads no state: which state
+/// moves a part does not depend on where it is.
+pub fn moved_by(reader: &PartReader, path: &str) -> GeopResult<Option<String>> {
     let mut names = path.split(INSTANCE_SEPARATOR);
     let first = names.next().unwrap_or_default();
-    let mut placed = r.retrieve_target(&instance(first))?;
-    let mut parameter = parameter_of(placed, "");
+    let mut placed = read_instance(reader, first)?;
+    let mut state = state_of(placed, "");
     let mut prefix = format!("{first}{INSTANCE_SEPARATOR}");
     for name in names {
-        placed = placed.component.view().retrieve_target(&instance(name))?;
-        parameter = parameter.and(parameter_of(placed, &prefix));
+        placed = read_instance(&placed.component.reader(), name)?;
+        state = state.and(state_of(placed, &prefix));
         prefix = format!("{prefix}{name}{INSTANCE_SEPARATOR}");
     }
-    Ok(parameter)
+    Ok(state)
 }
 
-/// The part placed in the part read that `entity` is an entity of — the
-/// innermost, however deep, by its path: `hinge/pin` — its instance, and
-/// the entity as that part names it. None for an entity of the part read
-/// itself. Reads no state: what a placed part is does not depend on where
-/// it is.
-pub fn within<'a>(
-    r: &mut impl Retrieve<'a, Input, ParamValue>,
-    entity: &EntityRef,
-) -> Option<(String, &'a Instance, EntityRef)> {
-    let mut found: Option<(String, &'a Instance)> = None;
-    let mut rest = entity.clone();
-    while let Some((name, inner)) = rest.split_instance() {
-        let placed = match &found {
-            None => r.retrieve_target(&instance(&name)),
-            Some((_, outer)) => outer.component.view().retrieve_target(&instance(&name)),
-        };
-        let Ok(placed) = placed else {
-            break;
-        };
-        let path = match &found {
-            None => name,
-            Some((outer, _)) => instance_path(outer, &name),
-        };
-        found = Some((path, placed));
-        rest = inner;
+/// The part placed at `path` in the part `reader` reads, as its own
+/// program left it: the part itself, for an empty path. Reads no state:
+/// what a placed part is does not depend on where it is.
+pub fn component_at<'a>(reader: &PartReader<'a>, path: &str) -> GeopResult<PartReader<'a>> {
+    if path.is_empty() {
+        return Ok(reader.clone());
     }
-    found.map(|(path, placed)| (path, placed, rest))
-}
-
-/// The part an entity is of, where it is, and the entity as that part
-/// names it (see [`owner`]).
-pub type Owner<'a> = (View<'a, Input, ParamValue>, Option<Pose<Design>>, EntityRef);
-
-/// The part `entity` is an entity of — the part `view` shows, or one
-/// placed in it, however deep, as its own program left it — where it is in
-/// the part `view` shows (`None` for that part itself), and the entity as
-/// that part names it.
-pub fn owner<'a>(view: View<'a, Input, ParamValue>, entity: &EntityRef) -> GeopResult<Owner<'a>> {
-    match within(&mut view.clone(), entity) {
-        None => Ok((view, None, entity.clone())),
-        Some((path, placed, local)) => {
-            let located = locate(&mut view.clone(), &path)?;
-            Ok((placed.component.view(), Some(located.world), local))
-        }
+    let mut inside = reader.clone();
+    for name in path.split(INSTANCE_SEPARATOR) {
+        inside = read_instance(&inside, name)?.component.reader();
     }
+    Ok(inside)
 }
 
-/// A part placed in the part a view shows, however deep.
+/// The part placed at `path` in the part `reader` reads, as its own
+/// program left it, and where it is: the part itself, at no pose, for an
+/// empty path.
+pub fn part_at<'a>(
+    reader: &PartReader<'a>,
+    path: &str,
+) -> GeopResult<(PartReader<'a>, Option<Pose<Design>>)> {
+    if path.is_empty() {
+        return Ok((reader.clone(), None));
+    }
+    let located = locate(reader, path)?;
+    Ok((located.instance.component.reader(), Some(located.world)))
+}
+
+/// A part placed in the part a reader reads, however deep.
 pub struct Placed<'a> {
     pub name: String,
     pub located: Located<'a>,
     /// The part it is placed in, by index among them all, if not the
-    /// part shown itself.
+    /// part read itself.
     pub parent: Option<usize>,
 }
 
-/// Every part placed in the part `view` shows, and in those, however deep:
-/// each before those placed in it, in the order the steps placed them.
-pub fn placed_parts(view: View<'_, Input, ParamValue>) -> GeopResult<Vec<Placed<'_>>> {
+/// Every part placed in the part `reader` reads, and in those, however
+/// deep: each before those placed in it, in the order the steps placed
+/// them.
+pub fn placed_parts<'a>(reader: &PartReader<'a>) -> GeopResult<Vec<Placed<'a>>> {
     fn within<'a>(
-        outer: View<'a, Input, ParamValue>,
-        level: View<'a, Input, ParamValue>,
+        outer: &PartReader<'a>,
+        level: &PartReader<'a>,
         prefix: &str,
         parent: Option<usize>,
         out: &mut Vec<Placed<'a>>,
     ) -> GeopResult<()> {
-        for (target, inner) in level.targets_of::<Instance>() {
-            let Some(name) = instance_name(target) else {
+        for target in level.targets_of::<Instance>() {
+            let Some(name) = instance_name(target.name()) else {
                 continue;
             };
+            let inner = level.retrieve_element(&ElementReference::whole(target.clone()))?;
             let path = format!("{prefix}{name}");
-            let located = locate(&mut outer.clone(), &path)?;
+            let located = locate(outer, &path)?;
             out.push(Placed {
                 name: path.clone(),
                 located,
@@ -536,32 +463,30 @@ pub fn placed_parts(view: View<'_, Input, ParamValue>) -> GeopResult<Vec<Placed<
             });
             let index = Some(out.len() - 1);
             let prefix = format!("{path}{INSTANCE_SEPARATOR}");
-            within(outer, inner.component.view(), &prefix, index, out)?;
+            within(outer, &inner.component.reader(), &prefix, index, out)?;
         }
         Ok(())
     }
     let mut out = Vec::new();
-    within(view, view, "", None, &mut out)?;
+    within(reader, reader, "", None, &mut out)?;
     Ok(out)
 }
 
-/// Every solid of the part `view` shows, meshed `quality` fine: its own,
+/// Every solid of the part `reader` reads, meshed `quality` fine: its own,
 /// and those of every part placed in it, however deep — each where it is,
-/// named behind its name in the part shown: `pin/extrude(pin)`. A part
+/// named behind its name in the part read: `pin/extrude(pin)`. A part
 /// placed many times is meshed once.
-pub fn solid_meshes(
-    view: View<'_, Input, ParamValue>,
-    quality: usize,
-) -> GeopResult<SolidMeshes<Design>> {
-    let own =
-        |mut view: View<'_, Input, ParamValue>| model_or_empty(&mut view).solid_meshes(quality);
-    let mut out = own(view)?;
+pub fn solid_meshes(reader: &PartReader, quality: usize) -> GeopResult<SolidMeshes<Design>> {
+    let own = |reader: &PartReader| read_model(reader)?.solid_meshes(quality);
+    let mut out = own(reader)?;
     let mut meshed: HashMap<*const Component, SolidMeshes<Design>> = HashMap::new();
-    for placed in placed_parts(view)? {
+    for placed in placed_parts(reader)? {
         let component = &placed.located.instance.component;
         let meshes = match meshed.entry(Rc::as_ptr(component)) {
             std::collections::hash_map::Entry::Occupied(meshes) => meshes.into_mut(),
-            std::collections::hash_map::Entry::Vacant(slot) => slot.insert(own(component.view())?),
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert(own(&component.reader())?)
+            }
         };
         let motion = placed.located.world.motion();
         for (name, triangles) in meshes.iter() {
@@ -578,4 +503,27 @@ pub fn solid_meshes(
         }
     }
     Ok(out)
+}
+
+/// Draws every part placed in the part `reader` reads, however deep, into
+/// `view`, where the state has it: each as its own part's view, which
+/// leaves out the parts placed in it — they are drawn here already.
+pub fn draw_instances(reader: &PartReader, view: &mut PartView) -> GeopResult<()> {
+    for placed in placed_parts(reader)? {
+        let located = placed.located;
+        let pose = located.world;
+        let origin = geop_core_math::primitives::CoordinateSystem::world_at(
+            geop_core_math::vector::Vector3::zero(),
+        );
+        view.instances.push(geop_ops_view::ViewInstance {
+            frame: pose.motion().apply_frame(&origin)?,
+            name: placed.name,
+            component: located.instance.component.key.clone(),
+            pose,
+            view: located.instance.component.drawn()?,
+            state: located.state,
+            fixed: located.instance.fixed,
+        });
+    }
+    Ok(())
 }

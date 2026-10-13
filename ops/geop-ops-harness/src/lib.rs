@@ -10,10 +10,12 @@ pub mod operation;
 pub mod route;
 pub mod wire;
 
-pub use cable::{Cable, Cables, cables};
+pub use cable::{Cable, Cables, cable, cables};
 pub use operation::{Route, RouteArgs, RouteEditing, RouteSession};
 pub use wire::{Wire, WireSize};
 
 mod icons;
+#[cfg(test)]
+mod program_tests;
 #[cfg(test)]
 mod tests;

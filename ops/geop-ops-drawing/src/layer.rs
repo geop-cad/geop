@@ -1,7 +1,7 @@
 //! The layers a drawing is drawn on (see [`Layer`]), in the order a sheet
 //! writes them ([`ALL`]).
 
-use geop_ops::output::sheet::{Layer, LineType};
+use geop_ops_output::sheet::{Layer, LineType};
 
 /// The part's edges and silhouettes seen.
 pub const VISIBLE: Layer = Layer {

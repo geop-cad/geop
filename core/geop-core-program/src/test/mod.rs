@@ -165,9 +165,12 @@ fn frame(runner: &ProgramRunner<Sc, Pose>, name: &str) -> Vector3<Sc> {
     view.retrieve_element(&whole_frame(name)).unwrap().data
 }
 
-/// The frame `name` as it was before the step at position `step`.
+/// The frame `name` as it was before the step at position `step` of the
+/// program.
 fn frame_before(runner: &ProgramRunner<Sc, Pose>, step: usize, name: &str) -> Vector3<Sc> {
-    let view = runner.part.reader(step);
+    let view = runner
+        .part
+        .reader(ProgramRunner::<Sc, Pose>::position(step));
     view.retrieve_element(&whole_frame(name)).unwrap().data
 }
 
@@ -232,7 +235,7 @@ fn failed_target_is_rebuilt_once_its_input_returns() {
             ("b".into(), "input `y` is not given".into()),
             (
                 "m".into(),
-                "target `b` failed in the step at position 1: input `y` is not given".into()
+                "target `b` failed in the step at position 2: input `y` is not given".into()
             ),
         ]
     );
@@ -252,7 +255,7 @@ fn step_reads_only_targets_defined_before_it() {
     let middle = || middle_frame("step2", "step1_1", "step1_2");
     let not_defined = vec![(
         "step2".to_string(),
-        "target `step1_1` is not defined by the step at position 0 or before".to_string(),
+        "target `step1_1` is not defined by the step at position 1 or before".to_string(),
     )];
 
     ok(runner.run(
@@ -290,7 +293,7 @@ fn target_defined_twice_is_an_error() {
             errors(&output),
             [(
                 "second".into(),
-                "target `a` is defined twice: by the steps at positions 0 and 1".into()
+                "target `a` is defined twice: by the steps at positions 1 and 2".into()
             )]
         );
         assert_encloses(frame(&runner, "a"), [1.0, 0.0, 0.0]);
@@ -426,7 +429,7 @@ fn step_makes_one_version_of_a_target() {
         errors(&output),
         [(
             "s".into(),
-            "target `a` is made twice by the step at position 1".into()
+            "target `a` is made twice by the step at position 2".into()
         )]
     );
     assert_encloses(frame(&runner, "a"), [2.0, 0.0, 0.0]);
@@ -643,6 +646,29 @@ fn a_revision_from_the_default_follows_a_step_inserted_before_it() {
     assert_encloses(frame(&runner, "a"), [6.0, 0.0, 0.0]);
 }
 
+/// What a run is given besides its inputs is defined by the given step,
+/// before the program's own: its steps read it like any target, and a
+/// failure of it is reported as the given step's.
+#[test]
+fn the_given_step_defines_what_a_run_is_given() {
+    let mut runner = runner();
+    runner.given = Some(std::rc::Rc::new(|part| {
+        let given = TargetReference::<Frame>::new("given");
+        part.define_target(&given, &(), |_, _| {
+            Ok(Frame {
+                data: vector([4.0, 0.0, 0.0]),
+            })
+        })
+    }));
+    let program = Program::new(vec![middle_frame("m", "given", "given")]);
+    ok(runner.run(&program, &inputs(&[]), &no_state()));
+    assert_encloses(frame(&runner, "m"), [4.0, 0.0, 0.0]);
+
+    runner.given = Some(std::rc::Rc::new(|_| Err("no files".into())));
+    let output = runner.run(&Program::new(vec![]), &inputs(&[]), &no_state());
+    assert_eq!(errors(&output), [("given".into(), "no files".into())]);
+}
+
 /// A view lists the targets of a kind it sees, in the order their steps
 /// made them: those made before it, not after.
 #[test]
@@ -659,7 +685,8 @@ fn view_lists_targets_of_a_kind() {
         frames.iter().map(|f| f.name().to_string()).collect()
     }
     assert_eq!(names(runner.part.current()), ["b", "a", "c"]);
-    assert_eq!(names(runner.part.reader(2)), ["b", "a"]);
+    let before_c = ProgramRunner::<Sc, Pose>::position(2);
+    assert_eq!(names(runner.part.reader(before_c)), ["b", "a"]);
     assert!(runner.part.current().targets_of::<Pose>().is_empty());
 }
 

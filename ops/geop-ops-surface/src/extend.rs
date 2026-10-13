@@ -17,6 +17,13 @@
 //! patch's four sides, as a boundary surface or an extruded face is — and
 //! stands alone in its sheet. Anything else is refused, by name.
 
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::{Number, Unit},
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_geometry::{
     contains::surface::boundary_curve, nurb_curve::NurbCurve2D, nurb_surface::NurbSurface3D,
 };
@@ -26,18 +33,16 @@ use geop_core_math::{
     vector::Vector2,
     with_context,
 };
+use geop_core_program::element::ElementReference;
 use geop_core_topology::{
     Body, CoedgeGeometry, FaceId, Sense,
     boundary::BoundaryType,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    BodyNames, Design, NamedModel,
-    operation::{BuildReader, EntityRef, PartOperation, Role, StepContext},
-    part_operation,
-    ui::{EditForm, FormState, Number, Unit},
+use geop_ops_model::{
+    BodyNames, Design, Edge, ModelOperation, NamedModel, build_model, model, validate_operation_id,
 };
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 /// Carries the face standing on its own that the edge named `edge` bounds
@@ -50,7 +55,7 @@ pub struct ExtendSurface;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExtendSurfaceArgs {
     /// The edge of a face standing on its own to extend the face past.
-    pub edge: String,
+    pub edge: ElementReference<NamedModel<Design>, Edge>,
     /// How far, along the surface across the middle of the edge.
     pub distance: f64,
 }
@@ -58,8 +63,8 @@ pub struct ExtendSurfaceArgs {
 part_operation!(ExtendSurface(ExtendSurfaceArgs));
 
 impl PartOperation for ExtendSurface {
+    const KIND: &'static str = "extend_surface";
     const INFO: OperationInfo = OperationInfo::new(
-        "extend_surface",
         "Extend surface",
         "Carry a face standing on its own on past one of its edges.",
         OperationGroup::Surface,
@@ -68,33 +73,26 @@ impl PartOperation for ExtendSurface {
     .experimental()
     .icon(crate::icons::EXTEND_SURFACE);
     type Args = ExtendSurfaceArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
 
     /// Nothing picked yet, a tenth on.
     fn new_args(_: &StepContext) -> ExtendSurfaceArgs {
         ExtendSurfaceArgs {
-            edge: String::new(),
+            edge: ElementReference::new(model(), ""),
             distance: 0.1,
         }
     }
 
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        step: &str,
-        args: &ExtendSurfaceArgs,
-    ) -> GeopResult<()> {
-        geop_ops::validate_operation_id(step)?;
-        if !args.distance.is_finite() {
-            return Err(GeopError::new("the distance is not a number"));
-        }
-        extend(model, &args.edge, Design::from_f64(args.distance))?;
-        Ok(())
+    fn run(step: &str, part: &mut BuildPart, args: &ExtendSurfaceArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
     /// The edge, picked, and the distance.
     fn form<'a>(
-        _: &'a StepContext<'a>,
+        context: &'a StepContext<'a>,
         args: &ExtendSurfaceArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, ExtendSurfaceArgs> {
@@ -102,14 +100,29 @@ impl PartOperation for ExtendSurface {
         f.pick_one(
             "edge",
             "edge",
-            EntityRef::edge,
-            &args.edge,
-            &[Role::Edge],
-            |edit, name| edit.args.edge = name,
+            &context.before,
+            Some(&args.edge),
+            |edit, edge| edit.args.edge = edge,
         );
         let distance = Number::new("distance", args.distance, Unit::Length).range(0.0, 1.0);
         f.number("distance", distance, |edit, d| edit.args.distance = d);
         f
+    }
+}
+
+impl ModelOperation for ExtendSurface {
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &PartReader,
+        step: &str,
+        args: &ExtendSurfaceArgs,
+    ) -> GeopResult<()> {
+        validate_operation_id(step)?;
+        if !args.distance.is_finite() {
+            return Err(GeopError::new("the distance is not a number"));
+        }
+        extend(model, args.edge.name(), Design::from_f64(args.distance))?;
+        Ok(())
     }
 }
 

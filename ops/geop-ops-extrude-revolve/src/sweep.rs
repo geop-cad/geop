@@ -46,7 +46,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::build::{BodySpec, BuiltBody, CoedgeOn};
-use geop_ops::{BodyNames, NamedModel, Namer};
+use geop_ops_model::{BodyNames, NamedModel, Namer};
 
 use crate::{
     common::Profile,

@@ -1,17 +1,20 @@
 //! [`OffsetSurface`]: faces copied a distance along their normals — the
 //! inner side of a shell (see [`geop_ops_shell::shell::offset_faces`]).
 
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::{Number, Unit},
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, NamedModel, Namer,
-    operation::{BuildReader, EntityRef, PartOperation, Role, StepContext},
-    part_operation,
-    ui::{EditForm, FormState, Number, Unit},
-};
+use geop_core_program::element::ElementReference;
+use geop_ops_model::{Design, Face, ModelOperation, NamedModel, Namer, build_model};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
 use geop_ops_shell::shell::offset_faces;
 use serde::{Deserialize, Serialize};
 
@@ -30,7 +33,7 @@ pub struct OffsetSurface;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OffsetSurfaceArgs {
     /// The faces to copy.
-    pub faces: Vec<String>,
+    pub faces: Vec<ElementReference<NamedModel<Design>, Face>>,
     /// How far along their normals.
     pub distance: f64,
 }
@@ -38,8 +41,8 @@ pub struct OffsetSurfaceArgs {
 part_operation!(OffsetSurface(OffsetSurfaceArgs));
 
 impl PartOperation for OffsetSurface {
+    const KIND: &'static str = "offset_surface";
     const INFO: OperationInfo = OperationInfo::new(
-        "offset_surface",
         "Offset surface",
         "Copy faces a distance along their normals into a face standing on its own.",
         OperationGroup::Surface,
@@ -48,6 +51,9 @@ impl PartOperation for OffsetSurface {
     .experimental()
     .icon(crate::icons::OFFSET_SURFACE);
     type Args = OffsetSurfaceArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
 
     /// Nothing picked yet, a tenth out.
@@ -58,9 +64,35 @@ impl PartOperation for OffsetSurface {
         }
     }
 
+    fn run(step: &str, part: &mut BuildPart, args: &OffsetSurfaceArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
+    }
+
+    /// The faces, picked, and the distance.
+    fn form<'a>(
+        context: &'a StepContext<'a>,
+        args: &OffsetSurfaceArgs,
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, OffsetSurfaceArgs> {
+        let mut f = EditForm::<Design, OffsetSurfaceArgs>::default();
+        f.pick(
+            "faces",
+            "faces",
+            &context.before,
+            &args.faces,
+            true,
+            |edit, faces| edit.args.faces = faces,
+        );
+        let distance = Number::new("distance", args.distance, Unit::Length).range(-1.0, 1.0);
+        f.number("distance", distance, |edit, d| edit.args.distance = d);
+        f
+    }
+}
+
+impl ModelOperation for OffsetSurface {
     fn build(
         model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
+        _: &PartReader,
         step: &str,
         args: &OffsetSurfaceArgs,
     ) -> GeopResult<()> {
@@ -72,30 +104,10 @@ impl PartOperation for OffsetSurface {
             return Err(GeopError::new("no faces to offset"));
         }
         let faces = (args.faces.iter())
-            .map(|name| model.face_id(name))
+            .map(|face| model.face_id(face.name()))
             .collect::<GeopResult<Vec<_>>>()?;
         offset_faces(model, &namer, &faces, Design::from_f64(args.distance))?;
         Ok(())
-    }
-
-    /// The faces, picked, and the distance.
-    fn form<'a>(
-        _: &'a StepContext<'a>,
-        args: &OffsetSurfaceArgs,
-        _: &FormState<()>,
-    ) -> EditForm<'a, Design, OffsetSurfaceArgs> {
-        let mut f = EditForm::<Design, OffsetSurfaceArgs>::default();
-        f.pick_many(
-            "faces",
-            "faces",
-            EntityRef::face,
-            &args.faces,
-            &[Role::Face],
-            |edit, names| edit.args.faces = names,
-        );
-        let distance = Number::new("distance", args.distance, Unit::Length).range(-1.0, 1.0);
-        f.number("distance", distance, |edit, d| edit.args.distance = d);
-        f
     }
 }
 

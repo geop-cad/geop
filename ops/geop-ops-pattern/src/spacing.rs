@@ -1,69 +1,73 @@
 //! How the instances of a pattern are spaced — the bodies of a linear or
 //! circular pattern, the copies of a placed part — and the fields that set
-//! it: [`Spacing`], the [`Row`] of instances it lays out, and the count.
+//! it: [`Spacing`], the [`Row`] of instances it lays out, and the count
+//! ([`count_field`], [`whole_count`]).
+//!
+//! Every number here is a [`NumericInput`]: plain, or a formula of the
+//! part's parameters, resolved through whatever reader the step or its
+//! form reads the part with.
 
+use geop_core_editor::{
+    edit_form::{Edit, EditForm},
+    editing::{Choice, Number, Track, Unit, Value},
+    numeric_input::NumericInput,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::Pose,
     scalars::Scalar,
     vector::Vector3,
 };
+use geop_core_program::part::{Input, Reader, State};
 use serde::{Deserialize, Serialize};
-
-use crate::{
-    operation::Lookup,
-    parameters::Formula,
-    ui::{Choice, Edit, EditForm, Number, Track, Unit, Value, formula_number},
-};
 
 /// How far apart the instances of a pattern are: each `Step` from the
 /// last, or spread evenly over the `Extent` from the first to the last —
 /// a length, or an angle in degrees, plain or a formula of the part's
 /// parameters. Serialized as `{"step": 2.0}`, `{"extent": 10.0}` or
-/// `{"step": "pitch"}`.
+/// `{"step": {"formula": "pitch"}}`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Spacing {
-    Step(Formula),
-    Extent(Formula),
+    Step(NumericInput),
+    Extent(NumericInput),
 }
 
 impl Spacing {
     /// Each `step` — a number, or a formula's text — from the last.
-    pub fn step(step: impl Into<Formula>) -> Self {
+    pub fn step(step: impl Into<NumericInput>) -> Self {
         Spacing::Step(step.into())
     }
 
     /// Spread evenly over `extent` — a number, or a formula's text.
-    pub fn extent(extent: impl Into<Formula>) -> Self {
+    pub fn extent(extent: impl Into<NumericInput>) -> Self {
         Spacing::Extent(extent.into())
     }
 
     /// The number it holds, whichever it is.
-    pub fn value(&self) -> &Formula {
-        match self {
-            Spacing::Step(v) | Spacing::Extent(v) => v,
-        }
-    }
-
-    /// The number it holds, to change.
-    pub fn value_mut(&mut self) -> &mut Formula {
+    pub fn value(&self) -> &NumericInput {
         match self {
             Spacing::Step(v) | Spacing::Extent(v) => v,
         }
     }
 
     /// The same kind of spacing, holding `value`.
-    fn with_value(&self, value: Formula) -> Self {
+    fn with_value(&self, value: NumericInput) -> Self {
         match self {
             Spacing::Step(_) => Spacing::Step(value),
             Spacing::Extent(_) => Spacing::Extent(value),
         }
     }
 
-    /// `count` instances in a row along a line, this spacing coming to the
-    /// length `value`. Refuses a spacing that puts them on top of each other.
-    pub fn along(&self, count: usize, value: f64) -> GeopResult<Row> {
+    /// `count` instances in a row along a line, this spacing coming to a
+    /// length as `reader` reads the parameters. Refuses a spacing that puts
+    /// them on top of each other.
+    pub fn along<I: Input + Scalar, St: State>(
+        &self,
+        count: usize,
+        reader: &Reader<I, St>,
+    ) -> GeopResult<Row> {
+        let value = self.value().resolve(reader)?;
         if !value.is_finite() || value == 0.0 {
             return Err(GeopError::new(format!(
                 "the spacing {value} puts every copy on top of the bodies"
@@ -80,11 +84,17 @@ impl Spacing {
         })
     }
 
-    /// `count` instances in a row round an axis, this spacing coming to
-    /// `value` degrees — an extent of a full turn spreading them over it,
-    /// the last a step short of the first. Refuses a spacing that puts them
-    /// on top of each other, or brings them round onto the first again.
-    pub fn round(&self, count: usize, value: f64) -> GeopResult<Row> {
+    /// `count` instances in a row round an axis, this spacing coming to an
+    /// angle in degrees as `reader` reads the parameters — an extent of a
+    /// full turn spreading them over it, the last a step short of the
+    /// first. Refuses a spacing that puts them on top of each other, or
+    /// brings them round onto the first again.
+    pub fn round<I: Input + Scalar, St: State>(
+        &self,
+        count: usize,
+        reader: &Reader<I, St>,
+    ) -> GeopResult<Row> {
+        let value = self.value().resolve(reader)?;
         if !value.is_finite() || value == 0.0 {
             return Err(GeopError::new(format!(
                 "the angle {value}° puts every copy on top of the bodies"
@@ -115,15 +125,15 @@ impl Spacing {
     }
 
     /// Its fields in `f`: which kind — keyed `{key}_mode` — and the number,
-    /// keyed `key`, made by `number(label, value)` (see [`formula_number`]).
-    /// Switching the kind keeps the number. `set` puts the spacing set where the
-    /// arguments keep it.
+    /// keyed `key`, made by `number(label, value)` (see
+    /// [`NumericInput::number`]). Switching the kind keeps the number. `set`
+    /// puts the spacing set where the arguments keep it.
     pub fn fields<'a, S: Scalar, A, T>(
         &self,
         f: &mut EditForm<'a, S, A, T>,
         key: &str,
         labels: [&str; 2],
-        number: impl FnOnce(&str, &Formula) -> Number<S>,
+        number: impl FnOnce(&str, &NumericInput) -> Number<S>,
         set: impl Fn(&mut A, Spacing) + Clone + 'a,
     ) {
         let (mode, label) = match self {
@@ -153,7 +163,7 @@ impl Spacing {
                 );
             },
         )
-        .formula(key, number(label, self.value()), move |edit, number| {
+        .numeric(key, number(label, self.value()), move |edit, number| {
             set(edit.args, kind.with_value(number))
         });
     }
@@ -213,17 +223,19 @@ impl Row {
 }
 
 /// The count field of a pattern in `f`, keyed `key`, of `count` as
-/// `lookup` reads the parameters — dragged by `handle` unless it follows a
-/// formula — calling `set` with the count it is set to (see [`count_of`]).
-pub fn count_field<'a, S: Scalar, A, T>(
+/// `reader` reads the parameters — dragged by `handle` unless it follows a
+/// formula — calling `set` with the count it is set to: a formula as
+/// typed, a number rounded to a whole one of at least one, the seed alone.
+pub fn count_field<'a, I: Input + Scalar, St: State, S: Scalar, A, T>(
     f: &mut EditForm<'a, S, A, T>,
     key: &str,
-    count: &Formula,
-    lookup: &mut (impl Lookup<S> + ?Sized),
+    count: &NumericInput,
+    reader: &Reader<I, St>,
     handle: Option<Track<S>>,
-    set: impl Fn(Edit<'_, A, T>, Formula) + 'a,
+    set: impl Fn(Edit<'_, A, T>, NumericInput) + 'a,
 ) {
-    let mut number = formula_number("count", count, lookup, Unit::Count)
+    let mut number = count
+        .number("count", reader, Unit::Count)
         .range(1.0, 24.0)
         .handle(handle);
     number.step = 1.0;
@@ -235,22 +247,28 @@ pub fn count_field<'a, S: Scalar, A, T>(
     });
 }
 
-/// What a count field set to `value` makes the count: a formula as typed,
-/// a number rounded to a whole one of at least one, the seed alone.
-fn count_of(value: &Value) -> Option<Formula> {
-    Some(match Formula::from_value(value)? {
-        Formula::Plain(value) if value.is_finite() && value >= 1.0 => Formula::Plain(value.round()),
-        Formula::Plain(_) => Formula::Plain(1.0),
+/// What a count field set to `value` makes the count (see [`count_field`]).
+fn count_of(value: &Value) -> Option<NumericInput> {
+    Some(match NumericInput::from_value(value)? {
+        NumericInput::Plain(value) if value.is_finite() && value >= 1.0 => {
+            NumericInput::Plain(value.round())
+        }
+        NumericInput::Plain(_) => NumericInput::Plain(1.0),
         formula => formula,
     })
 }
 
-/// The count `formula` comes to, `value`: a whole number of instances, at
-/// least one — the seed alone. Anything else is refused, saying so.
-pub fn whole_count(formula: &Formula, value: f64) -> GeopResult<usize> {
+/// The number of instances `count` comes to as `reader` reads the
+/// parameters: a whole number, at least one — the seed alone. Anything else
+/// is refused, saying so.
+pub fn whole_count<I: Input + Scalar, St: State>(
+    count: &NumericInput,
+    reader: &Reader<I, St>,
+) -> GeopResult<usize> {
+    let value = count.resolve(reader)?;
     if value.fract() != 0.0 || value < 1.0 {
         return Err(GeopError::new(format!(
-            "the count {formula} comes to {value}: a pattern has a whole number of instances, at least one — round a formula with round(), floor() or ceil()"
+            "the count {count} comes to {value}: a pattern has a whole number of instances, at least one — round a formula with round(), floor() or ceil()"
         )));
     }
     Ok(value as usize)

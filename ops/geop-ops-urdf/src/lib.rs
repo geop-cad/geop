@@ -23,7 +23,7 @@
 //!
 //! **Inertia.** Each link's mass, centre of mass and inertia tensor come
 //! from the exact B-rep of its solids, each of its own part's material
-//! (see [`geop_ops::solids`]), the tensor about the centre of mass
+//! (see [`geop_ops_assembly::solids`]), the tensor about the centre of mass
 //! along the link frame's axes.
 //!
 //! **Meshes.** Each placed component is meshed once, in its own frame, as
@@ -53,21 +53,20 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_topology::mass::MassProperties;
-use geop_ops::{
-    Design, ParamValue,
-    model::model_or_empty,
-    operation::{BuildView, instance_path},
-    output::{Content, Export, Exporter, ExporterInfo, Output, STL_QUALITY, stl_bytes},
-    placed::{Component, Instance, about, placed_parts},
-    solids::{Shapes, own_solids_at},
-    solving::check,
-};
 use geop_ops_assembly::{
-    CouplingKind, JointKind, Motion, Resolved, joint_parameter,
+    Component, CouplingKind, Instance, JointKind, Motion, Resolved, STL_QUALITY, instance_path,
+    joint_parameter,
     joints::{Connector, measure},
     mechanism::mates_of,
+    placed_parts,
     residuals::D,
+    solids::{Shapes, own_solids_at},
+    solving::{self, Rerun, check},
+    stl_bytes,
 };
+use geop_ops_model::{Design, read_model};
+use geop_ops_output::{Content, Export, Exporter, ExporterInfo, Output};
+use geop_ops_parameters::{PartReader, Settings, StateValue, read_about};
 use geop_ops_rasterize::stl::StlFormat;
 use serde::Deserialize;
 
@@ -235,7 +234,7 @@ impl Exporter for Urdf {
     type Options = UrdfOptions;
 
     fn export(output: &mut Output, _: &str, options: UrdfOptions) -> GeopResult<Export> {
-        let name = output.stem();
+        let name = output.stem()?;
         let robot = export(output, &name, options.quality)?;
         Ok(Export {
             name: format!("{name}.zip"),
@@ -300,7 +299,7 @@ pub struct Coupling {
 }
 
 /// The rigid bodies of an assembly and its mates between them, as the
-/// part a view shows has them: the bodies in the order they were placed,
+/// part a reader reads has them: the bodies in the order they were placed,
 /// the constraints — by name, and the bodies of their two entities — the
 /// joints and the couplings each in the order the steps made them.
 pub struct Mechanism<'a> {
@@ -311,12 +310,12 @@ pub struct Mechanism<'a> {
 }
 
 impl<'a> Mechanism<'a> {
-    /// The mechanism of the part `view` shows, its joints at the
+    /// The mechanism of the part `reader` reads, its joints at the
     /// coordinates the state has them — or, where it has none, where their
     /// parts are.
-    pub fn of(view: BuildView<'a>) -> GeopResult<Self> {
-        let placed = placed_parts(view)?;
-        let resolved = mates_of(view);
+    pub fn of(reader: &PartReader<'a>) -> GeopResult<Self> {
+        let placed = placed_parts(reader)?;
+        let resolved = mates_of(reader);
         let fixed: BTreeSet<&str> = (resolved.iter())
             .filter_map(|(_, r)| match r {
                 Resolved::Fixed { body } => Some(body.as_str()),
@@ -325,7 +324,7 @@ impl<'a> Mechanism<'a> {
             .collect();
         let bodies: Vec<Body> = (placed.into_iter())
             .map(|p| Body {
-                free: p.located.parameter.is_some() && !fixed.contains(p.name.as_str()),
+                free: p.located.state.is_some() && !fixed.contains(p.name.as_str()),
                 world: p.located.world,
                 instance: p.located.instance,
                 name: p.name,
@@ -375,8 +374,8 @@ impl<'a> Mechanism<'a> {
                     for (k, motion) in Motion::ALL.into_iter().enumerate() {
                         if kind.moves(motion) {
                             coordinates[k] =
-                                match view.retrieve_state(&joint_parameter(name, motion)) {
-                                    ParamValue::Number(value) => value,
+                                match reader.retrieve_state(&joint_parameter(name, motion)) {
+                                    StateValue::Number(value) => value,
                                     // Where its parts are: what a solve
                                     // would start it from.
                                     _ => Design::from_f64(measured[k]),
@@ -468,7 +467,7 @@ struct Meshes {
 }
 
 impl Meshes {
-    /// The path of the mesh of the solids of the part `view` shows itself —
+    /// The path of the mesh of the solids of the part `reader` reads itself —
     /// not of the parts placed in it, which are bodies of their own — in its
     /// own frame, called `stem`, written now if it was not yet; `None` if it
     /// has no solids. `key` names the part.
@@ -476,12 +475,12 @@ impl Meshes {
         &mut self,
         key: Option<*const Component>,
         stem: &str,
-        view: BuildView,
+        reader: &PartReader,
     ) -> GeopResult<Option<String>> {
         if let Some(path) = self.paths.get(&key) {
             return Ok(path.clone());
         }
-        let meshes = model_or_empty(&mut view.clone()).solid_meshes(self.quality)?;
+        let meshes = read_model(reader)?.solid_meshes(self.quality)?;
         let triangles: Vec<_> = meshes.iter().flat_map(|(_, triangles)| triangles).collect();
         let path = if triangles.is_empty() {
             None
@@ -505,17 +504,17 @@ impl Meshes {
     }
 }
 
-/// The mass properties of the solids of the part `view` shows itself,
+/// The mass properties of the solids of the part `reader` reads itself,
 /// named behind `prefix`, where `pose` puts them, each of its part's
 /// material (see [`own_solids_at`]).
 fn masses(
-    view: BuildView,
+    reader: &PartReader,
     prefix: &str,
     pose: Option<Pose<Design>>,
     shapes: &mut Shapes,
     out: &mut Vec<MassProperties<Design>>,
 ) -> GeopResult<()> {
-    for solid in own_solids_at(view, prefix, pose)? {
+    for solid in own_solids_at(reader, prefix, pose)? {
         out.push(solid.mass_properties(shapes)?);
     }
     Ok(())
@@ -528,7 +527,7 @@ fn masses(
 /// one drawn — and one URDF cannot express (see [`tree`]).
 pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<UrdfExport> {
     let ctx = |e: GeopError| e.with_context(format!("exporting {name:?} as URDF"));
-    let report = check(output.part()).with_context(&ctx)?;
+    let report = check(&output.part()).with_context(&ctx)?;
     if !report.converged {
         return Err(ctx(GeopError::new(format!(
             "the mates {} do not hold where the parts are: solve the assembly before exporting it",
@@ -538,15 +537,21 @@ pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<Urd
     // The tree, and every joint's coordinates: what is held to ask what
     // mates alone leave free to move.
     let (tree, held) = {
-        let mechanism = Mechanism::of(output.part()).with_context(&ctx)?;
+        let mechanism = Mechanism::of(&output.part()).with_context(&ctx)?;
         let held: BTreeSet<String> = (mechanism.joints.iter())
             .flat_map(|j| (j.kind.motions().into_iter()).map(|m| joint_parameter(&j.name, m)))
             .collect();
         (tree::tree(&mechanism).with_context(&ctx)?, held)
     };
-    let freedom = output.freedom(&held).with_context(&ctx)?;
-    let view = output.part();
-    let mechanism = Mechanism::of(view).with_context(&ctx)?;
+    let inputs = output.file.inputs(&Settings::new());
+    let mut rerun = Rerun {
+        runner: &mut *output.runner,
+        program: &output.file.program,
+        inputs: &inputs,
+    };
+    let freedom = solving::freedom(&mut rerun, &output.file.state, &held).with_context(&ctx)?;
+    let reader = output.part();
+    let mechanism = Mechanism::of(&reader).with_context(&ctx)?;
     tree::check_rigid(&mechanism, &tree, &freedom.parts).with_context(&ctx)?;
     let bodies = &mechanism.bodies;
 
@@ -612,8 +617,8 @@ pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<Urd
         let mut visuals = Vec::new();
         // The assembly's own solids are the ground's: the root's.
         if index == 0 {
-            masses(view, "", None, &mut shapes, &mut masses_of).with_context(&ctx)?;
-            if let Some(mesh) = meshes.of(None, "base", view)? {
+            masses(&reader, "", None, &mut shapes, &mut masses_of).with_context(&ctx)?;
+            if let Some(mesh) = meshes.of(None, "base", &reader)? {
                 visuals.push(Visual {
                     name: "base".into(),
                     origin: Origin::of(&back),
@@ -627,11 +632,12 @@ pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<Urd
             // A part placed is a body of its own solids: the parts placed
             // in it are bodies of their own.
             let prefix = instance_path(&body.name, "");
-            let view = component.view();
-            masses(view, &prefix, Some(body.world), &mut shapes, &mut masses_of)
+            let placed = component.reader();
+            masses(&placed, &prefix, Some(body.world), &mut shapes, &mut masses_of)
                 .with_context(&ctx)?;
             let key = Some(Rc::as_ptr(component));
-            if let Some(mesh) = meshes.of(key, about(component.view()).stem(), component.view())? {
+            let stem = read_about(&placed)?.stem().to_string();
+            if let Some(mesh) = meshes.of(key, &stem, &placed)? {
                 visuals.push(Visual {
                     name: body.name.clone(),
                     origin: Origin::of(&back.compose(&body.world)),

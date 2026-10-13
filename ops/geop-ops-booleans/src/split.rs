@@ -29,7 +29,7 @@ use geop_core_topology::{
     build::{BodySpec, BuiltBody},
     contains::shell::Classified,
 };
-use geop_ops::{BodyNames, NamedModel, Namer, RefId};
+use geop_ops_model::{BodyNames, NamedModel, Namer, RefId};
 
 use crate::{
     boolean::{FaceClassification, classify_face},
@@ -249,7 +249,7 @@ mod tests {
         Body,
         contains::shell::{Classified, PointClassification, solid_contains},
     };
-    use geop_ops::{NamedModel, Namer, testing::assert_valid};
+    use geop_ops_model::{NamedModel, Namer, testing::assert_valid};
     use geop_ops_extrude_revolve::{
         common::{Profile, polyline},
         extrude::extrude,

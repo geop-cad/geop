@@ -1,15 +1,19 @@
 //! [`Fillet`]: round a solid's edges. [`Chamfer`]: bevel them. Both blend
 //! the edges picked (see [`crate::blend`]).
 
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, NamedModel, Namer,
-    operation::{BuildReader, EntityRef, Lookup, PartOperation, Role, Scope, Seen, StepContext},
-    parameters::{Formula, expressions},
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::{Number, Unit},
+    numeric_input::NumericInput,
     part_operation,
-    ui::{EditForm, FormState, Number, Unit, formula_number},
+    part_operation::PartOperation,
 };
+use geop_core_math::geop_error::GeopResult;
+use geop_core_program::element::ElementReference;
+use geop_ops_model::{Design, Edge, ModelOperation, NamedModel, Namer, Vertex, build_model, model};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_view::icons;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -42,12 +46,12 @@ pub struct Fillet;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FilletArgs {
     /// The edges to round, all of one solid.
-    pub edges: Vec<String>,
+    pub edges: Vec<ElementReference<NamedModel<Design>, Edge>>,
     /// The radius: a number, or a formula of the part's parameters.
-    pub radius: Formula,
+    pub radius: NumericInput,
     /// The radius at the end of every chain, if it changes along it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub end_radius: Option<Formula>,
+    pub end_radius: Option<NumericInput>,
     /// Radii at vertices along the chains.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vertex_radii: Vec<VertexRadius>,
@@ -56,16 +60,16 @@ pub struct FilletArgs {
 /// The radius a fillet has at a vertex, by name.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VertexRadius {
-    pub vertex: String,
+    pub vertex: ElementReference<NamedModel<Design>, Vertex>,
     pub radius: f64,
 }
 
 impl FilletArgs {
-    /// Round `edges` with `radius` — a number, or a formula's text — the
-    /// same all along.
-    pub fn constant(edges: Vec<String>, radius: impl Into<Formula>) -> Self {
+    /// Round the edges named `edges` with `radius` — a number, or a
+    /// formula's text — the same all along.
+    pub fn constant(edges: Vec<String>, radius: impl Into<NumericInput>) -> Self {
         FilletArgs {
-            edges,
+            edges: edge_refs(edges),
             radius: radius.into(),
             end_radius: None,
             vertex_radii: Vec::new(),
@@ -77,57 +81,59 @@ impl FilletArgs {
         self.end_radius.is_some() || !self.vertex_radii.is_empty()
     }
 
-    /// The radii, as `lookup` reads the parameters.
-    fn radii<S: Scalar>(&self, lookup: &mut (impl Lookup<S> + ?Sized)) -> GeopResult<Radii> {
+    /// The radii, as `reader` reads the parameters.
+    fn radii(&self, reader: &PartReader) -> GeopResult<Radii> {
         Ok(Radii {
-            radius: self.radius.evaluate(lookup)?,
+            radius: self.radius.resolve(reader)?,
             end_radius: match &self.end_radius {
-                Some(r) => Some(r.evaluate(lookup)?),
+                Some(r) => Some(r.resolve(reader)?),
                 None => None,
             },
             at_vertices: self
                 .vertex_radii
                 .iter()
-                .map(|v| (v.vertex.clone(), v.radius))
+                .map(|v| (v.vertex.name().to_string(), v.radius))
                 .collect(),
         })
     }
 }
 
+/// The edges named `names`.
+fn edge_refs(names: Vec<String>) -> Vec<ElementReference<NamedModel<Design>, Edge>> {
+    (names.into_iter())
+        .map(|name| ElementReference::new(model(), name))
+        .collect()
+}
+
+/// The names of `edges`, as [`blend`] takes them.
+fn edge_names(edges: &[ElementReference<NamedModel<Design>, Edge>]) -> Vec<String> {
+    edges.iter().map(|e| e.name().to_string()).collect()
+}
+
 part_operation!(Fillet(FilletArgs), Chamfer(ChamferArgs));
 
 impl PartOperation for Fillet {
+    const KIND: &'static str = "fillet";
     const INFO: OperationInfo = OperationInfo::new(
-        "fillet",
         "Fillet",
         "Round a solid's edges.",
         OperationGroup::Features,
         OperationTier::Big,
     )
-    .icon(geop_ops::ui::icons::FILLET);
+    .icon(icons::FILLET);
     type Args = FilletArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
-
-    fn formulas(args: &mut FilletArgs) -> Vec<&mut String> {
-        expressions(std::iter::once(&mut args.radius).chain(args.end_radius.as_mut()))
-    }
 
     /// No edges yet, and a small radius.
     fn new_args(_: &StepContext) -> FilletArgs {
         FilletArgs::constant(Vec::new(), 0.1)
     }
 
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &FilletArgs,
-    ) -> GeopResult<()> {
-        let namer = Namer::new("fillet", step)?;
-        let radii = args.radii(&mut Scope { model, reader })?;
-        let shape = BlendShape::Fillet { radii };
-        blend(model, &namer, &args.edges, &shape)?;
-        Ok(())
+    fn run(step: &str, part: &mut BuildPart, args: &FilletArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
     /// The edges, picked, and the radius — and, varying, the radius at the
@@ -137,18 +143,18 @@ impl PartOperation for Fillet {
         args: &FilletArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, FilletArgs> {
-        let mut seen = Seen::new(context.before);
+        let before = &context.before;
         let mut f = EditForm::<Design, FilletArgs>::default();
-        f.pick_many(
+        f.pick(
             "edges",
             "edges",
-            EntityRef::edge,
+            before,
             &args.edges,
-            &[Role::Edge],
-            |edit, names| edit.args.edges = names,
+            true,
+            |edit, edges| edit.args.edges = edges,
         );
-        let radius = formula_number("radius", &args.radius, &mut seen, Unit::Length);
-        f.formula("radius", radius.range(0.0, 1.0), |edit, radius| {
+        let radius = args.radius.number("radius", before, Unit::Length);
+        f.numeric("radius", radius.range(0.0, 1.0), |edit, radius| {
             edit.args.radius = radius
         })
         .checkbox(
@@ -167,23 +173,23 @@ impl PartOperation for Fillet {
             return f;
         }
         let end = args.end_radius.as_ref().unwrap_or(&args.radius);
-        let end = formula_number("end radius", end, &mut seen, Unit::Length);
-        f.formula("end_radius", end.range(0.0, 1.0), |edit, radius| {
+        let end = end.number("end radius", before, Unit::Length);
+        f.numeric("end_radius", end.range(0.0, 1.0), |edit, radius| {
             edit.args.end_radius = Some(radius)
         });
-        let names: Vec<String> = (args.vertex_radii.iter())
+        let vertices: Vec<_> = (args.vertex_radii.iter())
             .map(|v| v.vertex.clone())
             .collect();
-        f.pick_many(
+        f.pick(
             "radius_vertices",
             "radii at vertices",
-            EntityRef::vertex,
-            &names,
-            &[Role::Point],
+            before,
+            &vertices,
+            true,
             |edit, picked| {
                 // A new vertex starts at the radius as it is now.
                 let args = edit.args;
-                let radius = (args.radius.evaluate(&mut Seen::new(context.before))).unwrap_or(0.1);
+                let radius = args.radius.resolve(before).unwrap_or(0.1);
                 let old = std::mem::take(&mut args.vertex_radii);
                 args.vertex_radii = (picked.into_iter())
                     .map(|vertex| VertexRadius {
@@ -196,7 +202,7 @@ impl PartOperation for Fillet {
         );
         f.form.dialog.optional("radius_vertices");
         for (i, v) in args.vertex_radii.iter().enumerate() {
-            let label = format!("radius at {}", v.vertex);
+            let label = format!("radius at {}", v.vertex.name());
             let number = Number::new(label, v.radius, Unit::Length).range(0.0, 1.0);
             f.number(
                 &format!("vertex_radius_{i}"),
@@ -209,6 +215,21 @@ impl PartOperation for Fillet {
             );
         }
         f
+    }
+}
+
+impl ModelOperation for Fillet {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &PartReader,
+        step: &str,
+        args: &FilletArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("fillet", step)?;
+        let radii = args.radii(reader)?;
+        let shape = BlendShape::Fillet { radii };
+        blend(model, &namer, &edge_names(&args.edges), &shape)?;
+        Ok(())
     }
 }
 
@@ -227,22 +248,32 @@ pub struct Chamfer;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChamferArgs {
     /// The edges to bevel, all of one solid.
-    pub edges: Vec<String>,
+    pub edges: Vec<ElementReference<NamedModel<Design>, Edge>>,
     /// How far into the faces: a number, or a formula of the part's
     /// parameters.
-    pub distance: Formula,
+    pub distance: NumericInput,
     /// The distance into the face on each edge's right, if it differs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub distance2: Option<Formula>,
+    pub distance2: Option<NumericInput>,
 }
 
 impl ChamferArgs {
+    /// Bevel the edges named `edges` by `distance` — a number, or a
+    /// formula's text — into both faces.
+    pub fn even(edges: Vec<String>, distance: impl Into<NumericInput>) -> Self {
+        ChamferArgs {
+            edges: edge_refs(edges),
+            distance: distance.into(),
+            distance2: None,
+        }
+    }
+
     /// Into the face on the left and on the right of each edge, as
-    /// `lookup` reads the parameters.
-    fn distances<S: Scalar>(&self, lookup: &mut (impl Lookup<S> + ?Sized)) -> GeopResult<[f64; 2]> {
-        let left = self.distance.evaluate(lookup)?;
+    /// `reader` reads the parameters.
+    fn distances(&self, reader: &PartReader) -> GeopResult<[f64; 2]> {
+        let left = self.distance.resolve(reader)?;
         let right = match &self.distance2 {
-            Some(d) => d.evaluate(lookup)?,
+            Some(d) => d.resolve(reader)?,
             None => left,
         };
         Ok([left, right])
@@ -250,41 +281,27 @@ impl ChamferArgs {
 }
 
 impl PartOperation for Chamfer {
+    const KIND: &'static str = "chamfer";
     const INFO: OperationInfo = OperationInfo::new(
-        "chamfer",
         "Chamfer",
         "Bevel a solid's edges.",
         OperationGroup::Features,
         OperationTier::Small,
     )
-    .icon(geop_ops::ui::icons::CHAMFER);
+    .icon(icons::CHAMFER);
     type Args = ChamferArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
-
-    fn formulas(args: &mut ChamferArgs) -> Vec<&mut String> {
-        expressions(std::iter::once(&mut args.distance).chain(args.distance2.as_mut()))
-    }
 
     /// No edges yet, and a small distance, the same into both faces.
     fn new_args(_: &StepContext) -> ChamferArgs {
-        ChamferArgs {
-            edges: Vec::new(),
-            distance: Formula::Plain(0.1),
-            distance2: None,
-        }
+        ChamferArgs::even(Vec::new(), 0.1)
     }
 
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &ChamferArgs,
-    ) -> GeopResult<()> {
-        let namer = Namer::new("chamfer", step)?;
-        let distances = args.distances(&mut Scope { model, reader })?;
-        let shape = BlendShape::Chamfer { distances };
-        blend(model, &namer, &args.edges, &shape)?;
-        Ok(())
+    fn run(step: &str, part: &mut BuildPart, args: &ChamferArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
     /// The edges, picked, the distance, and whether the second face gets a
@@ -294,18 +311,18 @@ impl PartOperation for Chamfer {
         args: &ChamferArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, ChamferArgs> {
-        let mut seen = Seen::new(context.before);
+        let before = &context.before;
         let mut f = EditForm::<Design, ChamferArgs>::default();
-        f.pick_many(
+        f.pick(
             "edges",
             "edges",
-            EntityRef::edge,
+            before,
             &args.edges,
-            &[Role::Edge],
-            |edit, names| edit.args.edges = names,
+            true,
+            |edit, edges| edit.args.edges = edges,
         );
-        let distance = formula_number("distance", &args.distance, &mut seen, Unit::Length);
-        f.formula("distance", distance.range(0.0, 1.0), |edit, distance| {
+        let distance = args.distance.number("distance", before, Unit::Length);
+        f.numeric("distance", distance.range(0.0, 1.0), |edit, distance| {
             edit.args.distance = distance
         });
         let two = args.distance2.is_some();
@@ -313,11 +330,26 @@ impl PartOperation for Chamfer {
             edit.args.distance2 = on.then(|| edit.args.distance.clone());
         });
         if let Some(distance2) = &args.distance2 {
-            let distance2 = formula_number("distance 2", distance2, &mut seen, Unit::Length);
-            f.formula("distance2", distance2.range(0.0, 1.0), |edit, distance| {
+            let distance2 = distance2.number("distance 2", before, Unit::Length);
+            f.numeric("distance2", distance2.range(0.0, 1.0), |edit, distance| {
                 edit.args.distance2 = Some(distance)
             });
         }
         f
+    }
+}
+
+impl ModelOperation for Chamfer {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &PartReader,
+        step: &str,
+        args: &ChamferArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("chamfer", step)?;
+        let distances = args.distances(reader)?;
+        let shape = BlendShape::Chamfer { distances };
+        blend(model, &namer, &edge_names(&args.edges), &shape)?;
+        Ok(())
     }
 }

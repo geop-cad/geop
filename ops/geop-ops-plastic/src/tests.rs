@@ -8,13 +8,13 @@ use geop_core_math::{
     vector::Vector2,
 };
 use geop_core_topology::{FaceId, SolidId};
-use geop_ops::{
-    NamedModel, Namer,
-    testing::{assert_valid, face_towards, volume},
-};
 use geop_ops_extrude_revolve::{
     common::{Profile, polyline},
     shapes::{block, v3},
+};
+use geop_ops_model::{
+    NamedModel, Namer,
+    testing::{assert_valid, face_towards, volume},
 };
 use geop_ops_shell::shell::shell;
 

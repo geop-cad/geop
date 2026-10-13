@@ -1,6 +1,12 @@
 //! [`SheetCut`]: holes and notches cut through a sheet-metal body along a
 //! sketch, across its bends unrolled.
 
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve2D};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -9,22 +15,16 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
+use geop_core_program::element::ElementReference;
 use geop_core_sketch::Shape;
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, NamedModel, Namer, PlacedSketch,
-    model::model_or_empty,
-    operation::{
-        Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Scope, Seen, StepContext,
-    },
-    part_operation,
-    ui::{EditForm, FormState},
-};
 use geop_ops_extrude_revolve::operation::shape_loops;
+use geop_ops_model::{Design, ModelOperation, NamedModel, Namer, Plane, read_model};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_sketch::{PlacedSketch, SketchRef};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    body::{self, Made, Making, SheetBody, SheetStep, Sheets, sheets_of},
+    body::{self, Made, Making, SheetBody, SheetStep, sheet_body},
     sheet::{Cut, FlatEdge, Placement, Sheet},
 };
 
@@ -54,33 +54,29 @@ use crate::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SheetCut;
 
+/// A flat face of the part, by name.
+pub type FlatFaceRef = ElementReference<NamedModel<Design>, Plane>;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SheetCutArgs {
     /// The sketch: one area or several, none with a hole.
-    pub sketch: String,
+    pub sketch: SketchRef,
     /// A flat face of a sheet-metal body — either side — parallel to the
-    /// sketch. Empty: the flat face the sketch lies on.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub face: String,
+    /// sketch. None: the flat face the sketch lies on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub face: Option<FlatFaceRef>,
 }
 
 impl SheetStep for SheetCut {
-    fn plan(reader: &mut BuildReader, step: &str, args: &SheetCutArgs) -> GeopResult<Made> {
+    fn plan(reader: &PartReader, step: &str, args: &SheetCutArgs) -> GeopResult<Made> {
         let ctx = with_context!("sheet_cut({step}, {args:?})");
         let namer = Namer::new("sheet_cut", step)?;
-        let sheets = sheets_of(reader);
-        let model = model_or_empty(reader);
-        let placed = (Scope {
-            model: &model,
-            reader,
-        })
-        .sketch(&args.sketch)
-        .with_context(ctx)?
-        .clone();
+        let model = read_model(reader).with_context(ctx)?;
+        let placed = reader.retrieve_element(&args.sketch).with_context(ctx)?;
+        let face = args.face.as_ref().map(ElementReference::name);
         let (solid, mut sheet, f) =
-            target(&model, &sheets, &args.face, &placed.plane).with_context(ctx)?;
-        let loops =
-            cut_loops(&namer, &args.sketch, &placed, &sheet.flats[f].place).with_context(ctx)?;
+            target(&model, reader, face, &placed.plane).with_context(ctx)?;
+        let loops = cut_loops(&namer, placed, &sheet.flats[f].place).with_context(ctx)?;
         sheet.cuts.push(Cut {
             flat: f,
             loops,
@@ -97,8 +93,8 @@ impl SheetStep for SheetCut {
 part_operation!(SheetCut(SheetCutArgs));
 
 impl PartOperation for SheetCut {
+    const KIND: &'static str = "sheet_cut";
     const INFO: OperationInfo = OperationInfo::new(
-        "sheet_cut",
         "Sheet cut",
         "Cut holes and notches through a sheet-metal body along a sketch, across its bends unrolled.",
         OperationGroup::SheetMetal,
@@ -106,30 +102,22 @@ impl PartOperation for SheetCut {
     )
     .icon(crate::icons::SHEET_CUT);
     type Args = SheetCutArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
 
     /// The newest sketch, on the face it lies on.
     fn new_args(context: &StepContext) -> SheetCutArgs {
+        let newest = context.before.targets_of::<PlacedSketch<Design>>().pop();
         SheetCutArgs {
-            sketch: Seen::new(context.before)
-                .sketch_names()
-                .pop()
-                .unwrap_or_default(),
-            face: String::new(),
+            sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_sketch::sketch(""))),
+            face: None,
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &SheetCutArgs) -> GeopResult<()> {
+    fn run(step: &str, part: &mut BuildPart, args: &SheetCutArgs) -> GeopResult<()> {
         body::run::<Self>(step, part, args)
-    }
-
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        _: &SheetCutArgs,
-    ) -> GeopResult<()> {
-        body::build(model, reader, step)
     }
 
     /// The sketch, picked, and the face, if not the one the sketch lies on.
@@ -138,21 +126,38 @@ impl PartOperation for SheetCut {
         args: &SheetCutArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, SheetCutArgs> {
+        let before = &context.before;
         let mut f = EditForm::<Design, SheetCutArgs>::default();
-        f.pick_sketch(&context.before, "sketch", &args.sketch, |edit, name| {
-            edit.args.sketch = name
-        });
         f.pick_one(
+            "sketch",
+            "sketch",
+            before,
+            Some(&args.sketch),
+            |edit, sketch| edit.args.sketch = sketch,
+        );
+        let face = args.face.as_slice();
+        f.pick(
             "face",
             "onto face",
-            EntityRef::face,
-            &args.face,
-            &[Role::Plane],
-            |edit, name| edit.args.face = name,
+            before,
+            face,
+            false,
+            |edit, mut face| edit.args.face = face.pop(),
         );
         // The face the sketch lies on, unless one is picked.
         f.form.dialog.optional("face");
         f
+    }
+}
+
+impl ModelOperation for SheetCut {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &PartReader,
+        step: &str,
+        _: &SheetCutArgs,
+    ) -> GeopResult<()> {
+        body::build(model, reader, step)
     }
 }
 
@@ -161,8 +166,8 @@ impl PartOperation for SheetCut {
 /// none is named, the one the plane lies on.
 fn target(
     model: &NamedModel<Design>,
-    sheets: &Sheets,
-    face: &str,
+    reader: &PartReader,
+    face: Option<&str>,
     plane: &CoordinateSystem<Design>,
 ) -> GeopResult<(String, Sheet<Design>, usize)> {
     type S = Design;
@@ -175,13 +180,11 @@ fn target(
     };
     let mut found = Vec::new();
     for solid in model.solid_names() {
-        let Some(sheet) = sheets.get(&solid).and_then(SheetBody::bent) else {
+        let Some(sheet) = sheet_body(reader, &solid).and_then(SheetBody::bent) else {
             continue;
         };
         for (f, flat) in sheet.flats.iter().enumerate() {
-            let named = !face.is_empty()
-                && (flat.name.name(&["a"]) == face || flat.name.name(&["b"]) == face);
-            if face.is_empty() {
+            let Some(face) = face else {
                 // On the A side's plane or the B side's.
                 let t = S::from_f64(sheet.rules.thickness);
                 let on = |place: &Placement<S>| {
@@ -195,7 +198,9 @@ fn target(
                 if on(&flat.place) || on(&flat.place.offset(t)) {
                     found.push((solid.clone(), sheet.clone(), f));
                 }
-            } else if named {
+                continue;
+            };
+            if flat.name.name(&["a"]) == face || flat.name.name(&["b"]) == face {
                 if !parallel(&flat.place) {
                     return Err(GeopError::new(format!(
                         "the sketch's plane is not parallel to face {face}: a sketch is cut through a sheet along the normal of a flat face it is parallel to"
@@ -205,7 +210,7 @@ fn target(
             }
         }
     }
-    if !face.is_empty() {
+    if let Some(face) = face {
         return Err(GeopError::new(format!(
             "{face:?} is no flat face of a sheet-metal body: a cut is projected onto one of those"
         )));
@@ -222,16 +227,15 @@ fn target(
     }
 }
 
-/// The areas of the sketch `name`, placed at `placed`, projected into the
-/// sheet coordinates of the flat at `place`: each a loop counter-clockwise
-/// there, its curves named `C,K,X`.
+/// The areas of the sketch `placed` projected into the sheet coordinates of
+/// the flat at `place`: each a loop counter-clockwise there, its curves
+/// named `C,K,X`.
 fn cut_loops<S: Scalar>(
     namer: &Namer,
-    name: &str,
     placed: &PlacedSketch<S>,
     place: &Placement<S>,
 ) -> GeopResult<Vec<Vec<FlatEdge<S>>>> {
-    let sketch = &placed.sketch;
+    let (name, sketch) = (&placed.name, &placed.sketch);
     let geometry = sketch.enclose::<S>()?;
     let plane = &placed.plane;
     // Sketch coordinates to sheet coordinates: affine, so exact on the

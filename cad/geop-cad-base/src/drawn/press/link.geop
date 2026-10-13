@@ -5,11 +5,7 @@
       "operation": "add_sketch",
       "args": {
         "plane": {
-          "type": "Datum",
-          "name": "origin",
-          "component": {
-            "plane": "z"
-          }
+          "datum": "origin:xy"
         },
         "sketch": {
           "points": {
@@ -201,7 +197,9 @@
       "id": "extrude1",
       "operation": "extrude",
       "args": {
-        "sketch": "sketch1",
+        "sketch": {
+          "target": "sketch:sketch1"
+        },
         "extent": {
           "side1": {
             "blind": 35
@@ -221,11 +219,7 @@
       "operation": "add_sketch",
       "args": {
         "plane": {
-          "type": "Datum",
-          "name": "origin",
-          "component": {
-            "plane": "x"
-          }
+          "datum": "origin:yz"
         },
         "sketch": {
           "points": {
@@ -527,8 +521,7 @@
           {
             "type": "projection",
             "entity": {
-              "type": "Vertex",
-              "name": "extrude(extrude1,sketch1,c15@1,end)"
+              "vertex": "extrude(extrude1,sketch1,c15@1,end)"
             },
             "points": {
               "extrude(extrude1,sketch1,c15@1,end)": 5
@@ -542,7 +535,9 @@
       "id": "extrude2",
       "operation": "extrude",
       "args": {
-        "sketch": "sketch2",
+        "sketch": {
+          "target": "sketch:sketch2"
+        },
         "extent": {
           "side1": "through_all",
           "symmetric": true,

@@ -35,13 +35,13 @@ use geop_core_topology::{
         shell::{Classified, PointClassification as ShellPoint, solid_contains, solid_face_at},
     },
 };
-use geop_ops::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer};
 
 use crate::remesh::remesh::{RemeshParams, remesh};
 
 /// Which boolean to perform — defined with the features that record it
-/// (see [`geop_ops::Feature`]).
-pub use geop_ops::BooleanOp;
+/// (see [`geop_ops_model::Feature`]).
+pub use geop_ops_model::BooleanOp;
 
 /// Where one solid's face sits relative to the *other* solid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -758,7 +758,7 @@ mod tests {
     };
     use geop_core_math::{scalars::ScalInF64, scalars::Scalar, vector::Vector3};
     use geop_core_topology::{contains::rng::Rng, validation::validate_fast};
-    use geop_ops::Namer;
+    use geop_ops_model::Namer;
     use geop_ops_extrude_revolve::shapes::{block, cylinder::Axis, v3};
 
     /// A fresh operation id, so that every solid and boolean a test builds
@@ -1123,7 +1123,7 @@ mod tests {
     // legitimately overlaps the others in space — which the validation would
     // report as edges crossing faces.
 
-    type M = geop_ops::NamedModel<ScalInF64>;
+    type M = geop_ops_model::NamedModel<ScalInF64>;
 
     /// `CreateCube(offset, dims)`: the axis-aligned box from `offset` to
     /// `offset + dims`.

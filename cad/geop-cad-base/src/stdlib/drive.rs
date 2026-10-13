@@ -32,21 +32,19 @@
 //! [`Transmission::RackPinion`]: geop_ops_assembly::Transmission::RackPinion
 
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
-use geop_ops::{
-    EntityRef, origin_plane,
-    parameters::{Parameter, ParameterKind, Row},
-};
 use geop_ops_booleans::Combine;
+use geop_ops_datums::{origin_axis, origin_plane};
 use geop_ops_extrude_revolve::{Extent, Extents};
-use geop_ops_pattern::{CircularPatternArgs, Seeds, Spacing};
+use geop_ops_parameters::{Parameter, ParameterKind, parameters::Row};
+use geop_ops_pattern::{CircularPatternArgs, Seeds, Spacing, TurnAxis, body};
 
 use super::{
     StandardPart,
     drawing::Drawing,
     involute::{self, DEGREE, FEWEST_TEETH},
     steps::{
-        Around, axis_datum, col, extrude, family, offset_datum, outline_plane, plane_datum,
-        profile_plane, revolve, size, z_axis,
+        Around, axis_datum, col, datum_plane, extrude, family, offset_datum, outline_plane,
+        plane_datum, profile_plane, revolve, size,
     },
     tables, titled,
 };
@@ -186,7 +184,7 @@ pub fn spur_gear(file: &'static str) -> GeopResult<StandardPart> {
         &mut program,
         "gap",
         "gap_outline",
-        (gap, EntityRef::datum("middle")),
+        (gap, datum_plane("middle")),
         Extents {
             symmetric: true,
             ..Extents::blind(format!("width + 2 * {m}"))
@@ -197,12 +195,10 @@ pub fn spur_gear(file: &'static str) -> GeopResult<StandardPart> {
         "teeth",
         CircularPatternArgs {
             seeds: Seeds::bodies(
-                vec![EntityRef::Solid {
-                    name: "extrude(gap)".into(),
-                }],
+                vec![body("extrude(gap)")],
                 Combine::cut("extrude(blank)"),
             ),
-            axis: Some(z_axis()),
+            axis: Some(TurnAxis::Datum(origin_axis(FrameAxis::Z))),
             reversed: false,
             count: z.as_str().into(),
             angle: Spacing::extent(360.0),
@@ -302,9 +298,9 @@ pub fn rack(file: &'static str) -> GeopResult<StandardPart> {
         Combine::intersect("extrude(teeth)"),
     );
     axis_datum(&mut program);
-    let xz = || origin_plane(FrameAxis::Y);
-    offset_datum(&mut program, "pitch", xz(), "0");
-    offset_datum(&mut program, "back", xz(), &format!("-{h}"));
+    let xz = origin_plane(FrameAxis::Y);
+    offset_datum(&mut program, "pitch", xz.name(), "0");
+    offset_datum(&mut program, "back", xz.name(), &format!("-{h}"));
     plane_datum(&mut program, "end", "0");
     Ok(StandardPart {
         file,
@@ -411,7 +407,7 @@ fn gt2_pulley(z: usize, file: &'static str) -> GeopResult<StandardPart> {
         &mut program,
         "ring",
         "ring_outline",
-        (ring, EntityRef::datum("ring_floor")),
+        (ring, datum_plane("ring_floor")),
         Extents::blind(t + w),
         Combine::join("revolve(body)"),
     );
@@ -422,7 +418,7 @@ fn gt2_pulley(z: usize, file: &'static str) -> GeopResult<StandardPart> {
     let mut circle = Drawing::new(&program.parameters)?;
     let centre_point = circle.origin();
     circle.circle(centre_point, &format!("{pitch}"))?;
-    program.push("pitch", circle.on(EntityRef::datum("belt")));
+    program.push("pitch", circle.on(datum_plane("belt")));
     Ok(StandardPart {
         file,
         base: "end",

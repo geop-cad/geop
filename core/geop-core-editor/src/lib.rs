@@ -21,8 +21,18 @@
     )
 )]
 
+pub mod edit_form;
 pub mod editable;
 pub mod editing;
 pub mod numeric_input;
+pub mod part_operation;
+pub mod selectable;
 #[cfg(test)]
 mod tests;
+
+/// What [`part_operation!`] expands to refers to, whichever crates the
+/// operation's own depends on.
+#[doc(hidden)]
+pub use geop_core_math::geop_error::GeopResult as __GeopResult;
+#[doc(hidden)]
+pub use geop_core_program as __program;

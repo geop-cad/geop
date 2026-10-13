@@ -10,7 +10,7 @@ use std::{
 
 use geop_core_math::scalars::scal_in_f64::ScalInF64;
 use geop_core_topology::validation::{ValidationParameters, validate};
-use geop_ops::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer};
 
 use crate::{add_bodies, read_step};
 

@@ -531,15 +531,19 @@ fn step<S: Scalar>(
 /// point infeasible. Where the constraints cannot all hold, it ends where
 /// they come closest. Always returns the best point found; whether it is
 /// good enough is the caller's question.
-pub fn minimize<S: Scalar, P: Space<S>>(
+///
+/// `evaluate` is awaited: a caller running many minimizations side by side
+/// answers all their evaluations at once (see
+/// [`crate::solvers::system`]'s groups).
+pub async fn minimize<S: Scalar, P: Space<S>>(
     space: &P,
-    evaluate: impl Fn(&P::Point) -> Option<Evaluation<S>>,
+    evaluate: impl AsyncFn(&P::Point) -> Option<Evaluation<S>>,
     x0: P::Point,
     options: Options<S>,
 ) -> GeopResult<Outcome<P::Point>> {
     let n = space.dimension(&x0);
     let mut x = x0;
-    let Some(mut e) = evaluate(&x) else {
+    let Some(mut e) = evaluate(&x).await else {
         return Ok(Outcome {
             x,
             iterations: 0,
@@ -651,11 +655,16 @@ pub fn minimize<S: Scalar, P: Space<S>>(
                     // How far the step went, before any correction: what
                     // the radius shrinks from where it is turned down.
                     let tried = norm(&delta)?;
-                    let landed = (next.and_then(|next| Some((evaluate(&next)?, next))))
-                        .map(|(e_next, next)| {
-                            corrected(space, &evaluate, &moving, theta, next, e_next, delta)
-                        })
-                        .transpose()?;
+                    let landed = match next {
+                        Some(next) => match evaluate(&next).await {
+                            Some(e_next) => Some(
+                                corrected(space, &evaluate, &moving, theta, next, e_next, delta)
+                                    .await?,
+                            ),
+                            None => None,
+                        },
+                        None => None,
+                    };
                     if let Some(landed) = landed {
                         let judged = judge(&e, &landed.1, theta, &filter, last, landed.2)?;
                         if first && judged.undecided && last.is_some() && !judged.contracting {
@@ -671,7 +680,14 @@ pub fn minimize<S: Scalar, P: Space<S>>(
                         if taken(&judged) {
                             let (next, e_next, _) = landed;
                             let length = judged.length;
-                            mu = mu.div(S::from_i64(SHRINK))?.sharpen();
+                            // Never to zero, which the scalar's resolution
+                            // rounds a small one to in fixed point: no
+                            // growth brings it back, and a step turned down
+                            // is then tried again as it was, forever.
+                            let shrunk = mu.div(S::from_i64(SHRINK))?.sharpen();
+                            if shrunk.definitely_greater(S::ZERO) {
+                                mu = shrunk;
+                            }
                             let reach = S::TWO.mul(length);
                             if reach.definitely_greater(radius) {
                                 radius = if reach.definitely_less(options.max_step) {
@@ -822,9 +838,9 @@ const CORRECTIONS: usize = 4;
 /// A step that brought the constraints nearer is left as it is: the
 /// shortest moves are not the ones the sum prefers, and correcting every
 /// step drifted a sketch's line off where it was.
-fn corrected<S: Scalar, P: Space<S>>(
+async fn corrected<S: Scalar, P: Space<S>>(
     space: &P,
-    evaluate: &impl Fn(&P::Point) -> Option<Evaluation<S>>,
+    evaluate: &impl AsyncFn(&P::Point) -> Option<Evaluation<S>>,
     moving: &[bool],
     before: S,
     mut x: P::Point,
@@ -862,7 +878,7 @@ fn corrected<S: Scalar, P: Space<S>>(
         if space.same(&next, &x) {
             break;
         }
-        let Some(e_next) = evaluate(&next) else {
+        let Some(e_next) = evaluate(&next).await else {
             break;
         };
         if !norm(&e_next.constraints.values)?.definitely_less(theta) {
@@ -967,6 +983,26 @@ fn update_curvature<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`super::minimize`], every evaluation answered as it is asked.
+    fn minimize<P: Space<S>>(
+        space: &P,
+        evaluate: impl Fn(&P::Point) -> Option<Evaluation<S>>,
+        x0: P::Point,
+        options: Options<S>,
+    ) -> GeopResult<Outcome<P::Point>> {
+        let work = std::pin::pin!(super::minimize(
+            space,
+            async |x: &P::Point| evaluate(x),
+            x0,
+            options
+        ));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        match std::future::Future::poll(work, &mut context) {
+            std::task::Poll::Ready(outcome) => outcome,
+            std::task::Poll::Pending => panic!("nothing awaited is pending"),
+        }
+    }
     use crate::scalars::{Field, Ring, ScalInF64};
 
     type S = ScalInF64;

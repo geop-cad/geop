@@ -2,6 +2,11 @@
 //! of them moved by a [`Motion`] and named after what they copy, combining
 //! the result as an extrude would, and the directions they move along.
 
+use geop_core_editor::{
+    edit_form::{Edit, EditForm},
+    editing::Track,
+    part_operation::PartOperation,
+};
 use geop_core_geometry::shape::Axis;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -11,28 +16,37 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
+use geop_core_program::element::ElementReference;
 use geop_core_topology::Body;
-use geop_ops::ui::{Edit, EditForm, Track};
-use geop_ops::{
-    Design, NamedModel, Namer, ToolReach,
-    operation::{
-        Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Scope, Seen, build_model,
-        resolve_bodies,
-    },
-};
-use geop_ops::{Threads, draw_threads, threads};
 use geop_ops_booleans::{Combine, Tool, boolean::Reach};
+use geop_ops_model::{
+    Design, ModelOperation, NamedModel, Namer, Threads, ToolReach, build_model, draw_threads,
+    read_model, resolve_bodies, threads,
+};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue};
 use serde::{Deserialize, Serialize};
 
-/// The field picking the bodies a step acts on, keyed `bodies`: solids,
-/// and sheets by one of their faces. `set` gets the bodies picked.
+use crate::features::FeatureRef;
+
+/// A body of the part: a solid by its name, or a sheet by one of its
+/// faces'.
+pub type BodyRef = ElementReference<NamedModel<Design>, geop_ops_model::Body>;
+
+/// The body named `name`: a solid, or the sheet of the face of that name.
+pub fn body(name: impl Into<String>) -> BodyRef {
+    ElementReference::new(geop_ops_model::model(), name)
+}
+
+/// The field picking the bodies a step acts on, keyed `bodies`, in the part
+/// `before` reads: solids, and sheets by one of their faces. `set` gets the
+/// bodies picked.
 pub(crate) fn bodies_field<'a, A>(
     f: &mut EditForm<'a, Design, A>,
-    bodies: &[EntityRef],
-    set: impl Fn(Edit<'_, A, ()>, Vec<EntityRef>) + 'a,
+    before: &PartReader<'a>,
+    bodies: &[BodyRef],
+    set: impl Fn(Edit<'_, A, ()>, Vec<BodyRef>) + 'a,
 ) {
-    let roles = [Role::Solid, Role::Sheet];
-    f.reference("bodies", "bodies", bodies.to_vec(), &roles, None, true, set);
+    f.pick("bodies", "bodies", before, bodies, true, set);
 }
 
 /// What a pattern repeats: `bodies` — kept as new bodies, or combined as
@@ -42,10 +56,10 @@ pub(crate) fn bodies_field<'a, A>(
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Seeds {
     /// The bodies to copy: solids, or a face of each sheet.
-    pub bodies: Vec<EntityRef>,
-    /// Or the features to do again (see [`EntityRef::Feature`]).
+    pub bodies: Vec<BodyRef>,
+    /// Or the features to do again (see [`crate::Feature`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub features: Vec<EntityRef>,
+    pub features: Vec<FeatureRef>,
     /// Keep the copies of bodies as new bodies, or combine them with a
     /// solid.
     #[serde(default)]
@@ -54,7 +68,7 @@ pub struct Seeds {
 
 impl Seeds {
     /// The bodies `bodies`, the copies combined as `combine` says.
-    pub fn bodies(bodies: Vec<EntityRef>, combine: Combine) -> Self {
+    pub fn bodies(bodies: Vec<BodyRef>, combine: Combine) -> Self {
         Seeds {
             bodies,
             features: Vec::new(),
@@ -63,7 +77,7 @@ impl Seeds {
     }
 
     /// The features `features`.
-    pub fn features(features: Vec<EntityRef>) -> Self {
+    pub fn features(features: Vec<FeatureRef>) -> Self {
         Seeds {
             features,
             ..Seeds::default()
@@ -74,19 +88,19 @@ impl Seeds {
     /// [`bodies_field`]) or the features, keyed `features`, each by a face
     /// it made — a hole by its wall — and last, of bodies, how to combine
     /// them (see [`Combine::fields`], a mode defaulting to the newest solid
-    /// of `before`). A step repeats one or the other, so only the one in
+    /// `before` reads). A step repeats one or the other, so only the one in
     /// use waits for picks, and picking bodies empties the features, and
     /// the other way round. `set` puts the seeds set where the arguments
     /// keep them.
     pub(crate) fn fields<'a, A>(
         &self,
         f: &mut EditForm<'a, Design, A>,
-        before: &NamedModel<Design>,
+        before: &PartReader<'a>,
         set: impl Fn(&mut A, Seeds) + Clone + 'a,
         own: impl FnOnce(&mut EditForm<'a, Design, A>),
     ) {
         let (seeds, set_bodies) = (self.clone(), set.clone());
-        bodies_field(f, &self.bodies, move |edit, picked| {
+        bodies_field(f, before, &self.bodies, move |edit, picked| {
             let mut seeds = seeds.clone();
             if !picked.is_empty() {
                 seeds.features.clear();
@@ -94,15 +108,12 @@ impl Seeds {
             seeds.bodies = picked;
             set_bodies(edit.args, seeds);
         });
-        let features = self.features.clone();
         let (seeds, set_features) = (self.clone(), set.clone());
-        let roles = [Role::Feature];
-        f.reference(
+        f.pick(
             "features",
             "features",
-            features,
-            &roles,
-            None,
+            before,
+            &self.features,
             true,
             move |edit, picked| {
                 let mut seeds = seeds.clone();
@@ -134,22 +145,24 @@ impl Seeds {
         }
     }
 
-    /// Copies what it picks to every placement — a label and the motion
-    /// from where the seeds are — as the step `operation_id`, whose names
-    /// `names` gives (see [`Names::copy`]). Bodies are then kept, or
-    /// combined as [`combine_instances`] does, the bodies themselves
-    /// labelled `seed_label`; features are done again (see
+    /// Copies what it picks in `part` — the model `reader` reads before the
+    /// step — to every placement — a label and the motion from where the
+    /// seeds are — as the step `operation_id`, whose names `names` gives
+    /// (see [`Names::copy`]). Bodies are then kept, or combined as
+    /// [`combine_instances`] does, the bodies themselves labelled
+    /// `seed_label`; features are done again (see
     /// [`crate::features::repeat_features`]).
     ///
     /// Bodies and features both, or neither, are refused. The features'
     /// cosmetic threads are copied by [`copy_threads`].
-    pub(crate) fn repeat<S: Scalar>(
+    pub(crate) fn repeat(
         &self,
-        part: &mut NamedModel<S>,
+        part: &mut NamedModel<Design>,
+        reader: &PartReader,
         names: &Names,
         operation_id: &str,
         seed_label: &str,
-        placements: &[(String, Motion<S>)],
+        placements: &[(String, Motion<Design>)],
     ) -> GeopResult<()> {
         match (self.bodies.is_empty(), self.features.is_empty()) {
             (false, false) => Err(GeopError::new(
@@ -164,7 +177,7 @@ impl Seeds {
                 placements,
             ),
             (false, true) => {
-                let seeds = resolve_bodies(&self.bodies, &mut &*part)?;
+                let seeds = resolve_bodies(reader, &self.bodies)?;
                 let mut instances = seed_instances(&seeds, seed_label);
                 for (label, motion) in placements {
                     instances.extend(copy_seeds(part, &seeds, motion, label, |name| {
@@ -176,14 +189,14 @@ impl Seeds {
         }
     }
 
-    /// Where the handles of a step repeating it sit: the middle of the
-    /// corners of the bodies, or of the tools of the features. None, if
-    /// it picks none.
-    pub(crate) fn center<S: Scalar>(&self, part: &NamedModel<S>) -> Option<Vector3<S>> {
+    /// Where the handles of a step repeating it sit, in the part `reader`
+    /// reads: the middle of the corners of the bodies, or of the tools of
+    /// the features. None, if it picks none.
+    pub(crate) fn center(&self, reader: &PartReader) -> Option<Vector3<Design>> {
         if self.features.is_empty() {
-            center(part, &self.bodies)
+            center(reader, &self.bodies)
         } else {
-            crate::features::features_center(part, &self.features)
+            crate::features::features_center(&*read_model(reader).ok()?, &self.features)
         }
     }
 }
@@ -237,25 +250,22 @@ pub(crate) trait Pattern: std::fmt::Debug {
     /// The label of the seeds themselves among the instances.
     fn seed_label(&self) -> &'static str;
 
-    /// Where its instances go, as `lookup` has the part: each a label and
+    /// Where its instances go, as `reader` reads the part: each a label and
     /// the motion from the seeds, the seeds themselves left out.
-    fn placements<S: Scalar>(
-        &self,
-        lookup: &mut (impl Lookup<S> + ?Sized),
-    ) -> GeopResult<Vec<(String, Motion<S>)>>;
+    fn placements(&self, reader: &PartReader) -> GeopResult<Vec<(String, Motion<Design>)>>;
 }
 
-/// Builds the pattern `args` as the step `step` into `model`: its
-/// [`PartOperation::build`].
+/// Builds the pattern `args` as the step `step` into `model`, reading the
+/// part before it through `reader`: its [`ModelOperation::build`].
 pub(crate) fn build_pattern<A: Pattern>(
     model: &mut NamedModel<Design>,
-    reader: &mut BuildReader,
+    reader: &PartReader,
     step: &str,
     args: &A,
 ) -> GeopResult<()> {
     let names = A::NAMING.of(step)?;
-    let placements = args.placements(&mut Scope { model, reader })?;
-    (args.seeds()).repeat(model, &names, step, args.seed_label(), &placements)
+    let placements = args.placements(reader)?;
+    (args.seeds()).repeat(model, reader, &names, step, args.seed_label(), &placements)
 }
 
 /// One body a step leaves behind as one of its instances — a seed, or a
@@ -378,12 +388,14 @@ pub(crate) fn combine_instances<S: Scalar>(
         .with_context(ctx)
 }
 
-/// Where the handles of a step acting on `refs` sit: the middle of the
-/// corners of the bodies they refer to. None, if they refer to none.
-pub(crate) fn center<S: Scalar>(part: &NamedModel<S>, refs: &[EntityRef]) -> Option<Vector3<S>> {
+/// Where the handles of a step acting on `bodies` sit, in the part
+/// `reader` reads: the middle of the corners of the bodies. None, if it
+/// refers to none.
+pub(crate) fn center(reader: &PartReader, bodies: &[BodyRef]) -> Option<Vector3<Design>> {
+    let part = read_model(reader).ok()?;
     let model = part.topology();
     let mut corners = Vec::new();
-    for body in resolve_bodies(refs, &mut &*part).ok()? {
+    for body in resolve_bodies(reader, bodies).ok()? {
         for vertex in model.iter_body_vertices(body).ok()? {
             corners.push(model.get_vertex(vertex).ok()?.point);
         }
@@ -421,11 +433,8 @@ pub(crate) struct ThreadCopies {
 
 /// The part's cosmetic threads with those each feature of `copies`
 /// recorded copied to every placement, named alike.
-fn copy_threads(
-    mut threads: Threads<Design>,
-    _: &mut BuildReader,
-    copies: &ThreadCopies,
-) -> GeopResult<Threads<Design>> {
+fn copy_threads(reader: &PartReader, copies: &ThreadCopies) -> GeopResult<Threads<Design>> {
+    let mut threads: Threads<Design> = reader.previous()?;
     let names = copies.naming.of(&copies.step)?;
     for step in &copies.features {
         let ctx = with_context!("copying the threads of feature {step:?}");
@@ -451,22 +460,19 @@ fn copy_threads(
 /// of its seeds in the model, at its placements — of the part as it is
 /// before the step — and, of features, copies of their cosmetic threads,
 /// drawn as the step's annotations.
-pub(crate) fn run_pattern<O: PartOperation>(
-    part: &mut Build,
-    step: &str,
-    args: &O::Args,
-) -> GeopResult<()>
+pub(crate) fn run_pattern<O>(part: &mut BuildPart, step: &str, args: &O::Args) -> GeopResult<()>
 where
+    O: ModelOperation + PartOperation<Input = Design, State = StateValue>,
     O::Args: Pattern,
 {
     let features = &args.seeds().features;
     let copies = (!features.is_empty()).then(|| {
-        let mut seen = Seen::new(part.current());
+        let before = part.current();
         Ok::<_, GeopError>(ThreadCopies {
             step: step.to_string(),
             naming: O::Args::NAMING,
-            features: crate::features::feature_steps(seen.model(), features)?,
-            placements: args.placements(&mut seen)?,
+            features: crate::features::feature_steps(&*read_model(&before)?, features)?,
+            placements: args.placements(&before)?,
         })
     });
     build_model::<O>(part, step, args)?;

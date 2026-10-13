@@ -9,12 +9,10 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_core_sketch::{ConstraintId, CurveId, CurveKind, PointId, SplineShape};
-use geop_ops::{
-    Design, EntityRef,
-    parameters::Values,
-    parameters::{Parameters, evaluate, is_formula, number},
-};
-use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch};
+use geop_core_editor::numeric_input::{NumericInput, evaluate};
+use geop_ops_model::Design;
+use geop_ops_parameters::{Parameters, Settings};
+use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch, SketchPlane};
 
 /// A sketch drawn point by point, each point placed by two formulas — its
 /// `x` and `y` from a fixed origin — so that every point follows the
@@ -26,14 +24,14 @@ use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch};
 pub struct Drawing {
     sketch: Sketch,
     origin: PointId,
-    formulas: BTreeMap<ConstraintId, String>,
-    /// What the parameters resolve to as defined: where to draw.
-    values: Values,
+    formulas: BTreeMap<ConstraintId, NumericInput>,
+    /// The numbers the parameters resolve to as defined: where to draw.
+    numbers: BTreeMap<String, Design>,
 }
 
 impl Drawing {
     pub fn new(parameters: &Parameters) -> GeopResult<Self> {
-        let resolved = parameters.resolve(&Values::new());
+        let resolved = parameters.resolve(&Settings::new());
         if let Some((name, error)) = resolved.errors.iter().next() {
             return Err(GeopError::new(format!(
                 "the parameter {name:?} does not resolve: {error}"
@@ -45,21 +43,22 @@ impl Drawing {
             sketch,
             origin,
             formulas: BTreeMap::new(),
-            values: resolved.values,
+            numbers: resolved.numbers,
         })
     }
 
     /// The value of `formula` with the parameters as defined.
     fn value(&self, formula: &str) -> GeopResult<f64> {
-        evaluate(formula, |name| number(&self.values, name))
+        evaluate(formula, |name| self.numbers.get(name).map(|n| n.to_f64()))
     }
 
     /// Adds the dimension `constraint`, given by `formula` — a plain
     /// number is a value, not a formula.
     fn dimension(&mut self, constraint: Constraint, formula: &str) {
         let id = self.sketch.constrain(constraint);
-        if is_formula(formula) {
-            self.formulas.insert(id, formula.to_string());
+        let input = NumericInput::from(formula);
+        if input.plain().is_none() {
+            self.formulas.insert(id, input);
         }
     }
 
@@ -180,7 +179,7 @@ impl Drawing {
     /// needs no solving — and a build with the parameters as defined then
     /// solves none (see `AddSketch`), which is what keeps a large profile, a
     /// rack's teeth, cheap to place.
-    pub fn on(self, plane: EntityRef) -> AddSketchArgs {
+    pub fn on(self, plane: SketchPlane) -> AddSketchArgs {
         AddSketchArgs {
             formulas: self.formulas,
             ..AddSketchArgs::on(plane, self.sketch)

@@ -1,23 +1,26 @@
 //! [`Hem`]: the edge of a sheet folded right back on itself.
 
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::{Choice, Number, Unit},
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     with_context,
 };
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, NamedModel, Namer,
-    model::model_or_empty,
-    operation::{Build, BuildReader, PartOperation, StepContext},
-    part_operation,
-    ui::{Choice, EditForm, FormState, Number, Unit},
-};
+use geop_ops_model::{Design, ModelOperation, NamedModel, Namer, read_model};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    body::{self, Made, Making, SheetStep, sheets_of, with_edge},
-    edge_flange::{Corner, FlangeShape, add_flange, check_offsets, edge_field, offset_fields},
+    body::{self, Made, Making, SheetStep, with_edge},
+    edge_flange::{
+        Corner, EdgeRef, FlangeShape, add_flange, check_offsets, edge_field, offset_fields,
+    },
     sheet::SheetMetalRules,
 };
 
@@ -53,8 +56,10 @@ pub struct Hem;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HemArgs {
-    /// The edge, of a flat face of a sheet-metal body.
-    pub edge: String,
+    /// The edge, of a flat face of a sheet-metal body; none yet, for a new
+    /// hem waiting for one to be picked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<EdgeRef>,
     #[serde(default)]
     pub kind: HemKind,
     /// How far the hem reaches back over the sheet, from the fold's
@@ -109,13 +114,12 @@ impl HemArgs {
 }
 
 impl SheetStep for Hem {
-    fn plan(reader: &mut BuildReader, step: &str, args: &HemArgs) -> GeopResult<Made> {
+    fn plan(reader: &PartReader, step: &str, args: &HemArgs) -> GeopResult<Made> {
         let ctx = with_context!("hem({step}, {args:?})");
         let namer = Namer::new("hem", step)?;
-        let sheets = sheets_of(reader);
-        let model = model_or_empty(reader);
+        let model = read_model(reader).with_context(ctx)?;
         let (solid, mut sheet, (f, k, toward_b)) =
-            with_edge(&model, &sheets, &args.edge, "a hem").with_context(ctx)?;
+            with_edge(&model, reader, args.edge.as_ref(), "a hem").with_context(ctx)?;
         let shape = args.shape(&sheet.rules).with_context(ctx)?;
         add_flange(&mut sheet, &namer, f, k, toward_b, &shape).with_context(ctx)?;
         Ok(Made {
@@ -129,8 +133,8 @@ impl SheetStep for Hem {
 part_operation!(Hem(HemArgs));
 
 impl PartOperation for Hem {
+    const KIND: &'static str = "hem";
     const INFO: OperationInfo = OperationInfo::new(
-        "hem",
         "Hem",
         "Fold the straight edge of a sheet-metal body right back on itself.",
         OperationGroup::SheetMetal,
@@ -138,12 +142,15 @@ impl PartOperation for Hem {
     )
     .icon(crate::icons::HEM);
     type Args = HemArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
 
     /// No edge yet: a closed hem, a third of a unit long.
     fn new_args(_: &StepContext) -> HemArgs {
         HemArgs {
-            edge: String::new(),
+            edge: None,
             kind: HemKind::Closed,
             length: 0.3,
             gap: 0.1,
@@ -152,28 +159,21 @@ impl PartOperation for Hem {
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &HemArgs) -> GeopResult<()> {
+    fn run(step: &str, part: &mut BuildPart, args: &HemArgs) -> GeopResult<()> {
         body::run::<Self>(step, part, args)
-    }
-
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        _: &HemArgs,
-    ) -> GeopResult<()> {
-        body::build(model, reader, step)
     }
 
     /// The edge, picked; how tight, and the gap if open; how long; and how
     /// far in from the edge's ends.
     fn form<'a>(
-        _: &'a StepContext<'a>,
+        context: &'a StepContext<'a>,
         args: &HemArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, HemArgs> {
         let mut f = EditForm::<Design, HemArgs>::default();
-        edge_field(&mut f, &args.edge, |edit, edge| edit.args.edge = edge);
+        edge_field(&mut f, &context.before, args.edge.as_ref(), |edit, edge| {
+            edit.args.edge = Some(edge)
+        });
         f.select(
             "kind",
             "hem",
@@ -206,5 +206,16 @@ impl PartOperation for Hem {
             },
         );
         f
+    }
+}
+
+impl ModelOperation for Hem {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &PartReader,
+        step: &str,
+        _: &HemArgs,
+    ) -> GeopResult<()> {
+        body::build(model, reader, step)
     }
 }

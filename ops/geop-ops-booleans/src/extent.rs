@@ -9,19 +9,20 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_core_topology::{Body, FaceId, Model};
-use geop_ops::ui::Choice;
-use geop_ops::{NamedModel, operation::Lookup, parameters::Formula};
+use geop_core_editor::{editing::Choice, numeric_input::NumericInput};
+use geop_core_program::part::{Input, Reader, State};
+use geop_ops_model::NamedModel;
 use serde::{Deserialize, Serialize};
 
 /// How far one side of a tool goes: a length — an angle, in degrees, for a
 /// revolve — plain or a formula of the part's parameters, or as far as the
 /// solid it is combined with: up to its next face, or through all of it.
-/// Serialized as `{"blind": 20.0}`, `{"blind": "height - 2"}`,
+/// Serialized as `{"blind": 20.0}`, `{"blind": {"formula": "height - 2"}}`,
 /// `"up_to_next"` or `"through_all"`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Extent {
-    Blind(Formula),
+    Blind(NumericInput),
     UpToNext,
     ThroughAll,
 }
@@ -46,22 +47,22 @@ impl End {
 
 impl Extent {
     /// A side `amount` far: a number, or a formula's text.
-    pub fn blind(amount: impl Into<Formula>) -> Self {
+    pub fn blind(amount: impl Into<NumericInput>) -> Self {
         Extent::Blind(amount.into())
     }
 
     /// Its length, to change, if it is blind.
-    pub fn length_mut(&mut self) -> Option<&mut Formula> {
+    pub fn length_mut(&mut self) -> Option<&mut NumericInput> {
         match self {
             Extent::Blind(length) => Some(length),
             Extent::UpToNext | Extent::ThroughAll => None,
         }
     }
 
-    /// Where it ends, its length as `lookup` reads the parameters.
-    pub fn end<S: Scalar>(&self, lookup: &mut (impl Lookup<S> + ?Sized)) -> GeopResult<End> {
+    /// Where it ends, its length as `reader` reads the parameters.
+    pub fn end<I: Input + Scalar, St: State>(&self, reader: &Reader<I, St>) -> GeopResult<End> {
         Ok(match self {
-            Extent::Blind(length) => End::Blind(length.evaluate(lookup)?),
+            Extent::Blind(length) => End::Blind(length.resolve(reader)?),
             Extent::UpToNext => End::UpToNext,
             Extent::ThroughAll => End::ThroughAll,
         })
@@ -96,7 +97,7 @@ impl Extent {
         match mode {
             "blind" => Some(Extent::Blind(match old {
                 Some(Extent::Blind(d)) => d.clone(),
-                _ => Formula::Plain(default),
+                _ => NumericInput::Plain(default),
             })),
             "up_to_next" => Some(Extent::UpToNext),
             "through_all" => Some(Extent::ThroughAll),

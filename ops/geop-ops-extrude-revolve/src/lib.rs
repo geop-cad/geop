@@ -23,12 +23,15 @@ pub mod revolve;
 #[cfg(any(test, feature = "testing"))]
 pub mod shapes;
 pub mod skin;
+#[cfg(test)]
+mod sketch3d_program_tests;
 pub mod sweep;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
 pub use geop_ops_booleans::Extent;
 pub use operation::{
-    Extents, Extrude, ExtrudeArgs, Loft, LoftArgs, Output, Revolve, RevolveArgs, Sweep, SweepArgs,
+    Extents, Extrude, ExtrudeArgs, Loft, LoftArgs, Output, PathRef, Revolve, RevolveArgs,
+    RevolveAxis, Sweep, SweepArgs,
 };
 pub use path_sweep::Orientation;

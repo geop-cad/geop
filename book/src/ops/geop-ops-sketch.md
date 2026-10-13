@@ -2,13 +2,22 @@
 
 > Brief overview only — full documentation is coming later.
 
-Sketches as an operation (see [geop-ops](./geop-ops.md#operations)).
+Sketches as an operation (see
+[geop-core-editor](../core/geop-core-editor.md#an-operation-partoperation)).
 `AddSketch` places a sketch, drawn with
-[geop-core-sketch](../core/geop-core-sketch.md), on a planar face, a datum
-plane or a plane of a coordinate system — like the part's `origin` — of the
-part. The plane is resolved when the step
-runs, so a sketch on a face stays where the face was, whatever later steps
-do to it.
+[geop-core-sketch](../core/geop-core-sketch.md), on a plane of the part
+(`SketchPlane`): a planar face, a datum plane — the planes of the origin
+among them — or another sketch's plane. The plane is resolved when the
+step runs, so a sketch on a face stays where the face was, whatever later
+steps do to it.
+
+The sketch is a target of the part, `sketch(name)`, a `PlacedSketch` —
+the sketch and the plane it lies on — which is what later steps build on:
+read whole (`whole_sketch`, what an extrude sweeps) or by its elements
+(`sketch_element`), which have the geometric kinds of
+[geop-ops-model](./geop-ops-model.md#elements-and-what-they-are-used-as)
+where they have that shape — a sketch's line is a `Line`, its plane a
+`Plane`, its one chain or loop a `Path`.
 
 ## Reference geometry
 
@@ -20,8 +29,8 @@ that the solver never moves and constraints are measured against.
   point and its `x` and `y` axes as construction lines through it, so a
   point can be made coincident with the origin and a line parallel to an
   axis like with anything else drawn.
-- **Projections.** A vertex, an edge or a face of the part — of a placed
-  part too — projected into the plane along its normal. A projection
+- **Projections.** A vertex, an edge or a face of the part, or a curve of
+  another sketch, projected into the plane along its normal. A projection
   refers to what it projects by name, never by position: every time the
   sketch is built it is brought up to date with the part, so a sketch
   dimensioned against a projected edge follows the edge when an earlier
@@ -43,7 +52,7 @@ region itself.
 ## Dimensions as formulas
 
 A dimension's value can be a formula of the part's parameters (see
-[geop-ops](./geop-ops.md#parameters)) — `width / 2`, `screw.clearance` —
+[geop-ops-parameters](./geop-ops-parameters.md#parameters)) — `width / 2`, `screw.clearance` —
 kept with the step and evaluated every time it is built, the sketch solved
 anew when that, or what it projects, changed. Angles are in degrees.
 
@@ -54,7 +63,8 @@ other, so picking another one later moves the drawing onto it — and once it
 has one it is drawn on it, the viewer facing it head on. Selecting and
 dragging are the editor's, as in every operation; drawing is `AddSketch`'s
 own: it takes the clicks while a tool is in hand, the keys, and where its
-points and curves are dragged to (see [geop-ops](./geop-ops.md#operations)).
+points and curves are dragged to (`PartOperation::canvas`, see
+[geop-core-editor](../core/geop-core-editor.md#an-operation-partoperation)).
 Every tool is a button of its own, shown as an icon.
 
 - **Drawing tools** — line, corner, center and 3-point rectangle, center

@@ -27,21 +27,25 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_sketch::plain::{add, sub};
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, NamedModel,
-    model::model,
-    operation::{Build, BuildView, PartOperation, ResolveEntity, Role, Seen, StepContext},
-    output::sheet::{Anchor, Layer, P, Sheet},
-    part_operation,
-    placed::{About, Component, about, placed_parts},
-    ui::{
-        Action, CanvasEvent, Choice, Edit, EditForm, Extent, FormState, InHand, ListItem, Pointer,
-        Shape, Style, Tone, Value, Visual,
+use geop_core_editor::{
+    edit_form::{Edit, EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::{
+        Action, CanvasEvent, Choice, Extent, InHand, ListItem, Pointer, Shape, Style, Tone, Value,
+        Visual,
         hit::{hit_visuals, no_instances},
     },
+    part_operation,
+    part_operation::PartOperation,
 };
-use geop_ops::{Threads, threads};
+use geop_ops_assembly::{Component, placed_parts};
+use geop_ops_model::{Design, NamedModel, Threads, model, read_model, read_threads, threads};
+use geop_ops_output::{
+    Exporter,
+    sheet::{Anchor, Layer, P, Sheet},
+};
+use geop_ops_parameters::{About, BuildPart, PartReader, StateValue, StepContext, read_about};
+use geop_ops_view::icons;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -87,37 +91,37 @@ const TOOLS: [(Tool, &str, &str, &str); 8] = [
         Tool::Dimension,
         "distance",
         "Dimension — two points, a line, two lines or a circle",
-        geop_ops::ui::icons::DISTANCE,
+        icons::DISTANCE,
     ),
     (
         Tool::Horizontal,
         "distance_x",
         "Horizontal distance — two points or a line",
-        geop_ops::ui::icons::DISTANCE_X,
+        icons::DISTANCE_X,
     ),
     (
         Tool::Vertical,
         "distance_y",
         "Vertical distance — two points or a line",
-        geop_ops::ui::icons::DISTANCE_Y,
+        icons::DISTANCE_Y,
     ),
     (
         Tool::Radius,
         "radius",
         "Radius of a circle or an arc",
-        geop_ops::ui::icons::RADIUS,
+        icons::RADIUS,
     ),
     (
         Tool::Diameter,
         "diameter",
         "Diameter of a circle or an arc",
-        geop_ops::ui::icons::DIAMETER,
+        icons::DIAMETER,
     ),
     (
         Tool::Angle,
         "angle",
         "Angle between two lines",
-        geop_ops::ui::icons::ANGLE,
+        icons::ANGLE,
     ),
     (
         Tool::Note,
@@ -173,7 +177,7 @@ pub type DrawingEditing = FormState<DrawingSession>;
 /// was, from which arguments, and what.
 type Kept<T> = RefCell<Option<(Shown, DrawingArgs, Rc<T>)>>;
 
-/// What a drawing of the part a view shows depends on: its model and its
+/// What a drawing of the part a reader reads depends on: its model and its
 /// cosmetic threads, what its program says of it — its name and material,
 /// for the title block — and every part placed in it, by the very build
 /// placed and where. Both models share their structure with the part's, so
@@ -182,18 +186,26 @@ type Kept<T> = RefCell<Option<(Shown, DrawingArgs, Rc<T>)>>;
 struct Shown {
     model: Option<NamedModel<Design>>,
     threads: Option<Threads<Design>>,
-    about: Rc<About>,
+    about: About,
     placed: Vec<(String, Rc<Component>, Pose<Design>)>,
 }
 
 impl Shown {
-    /// What the part `view` shows is, as a drawing of it depends on.
-    fn of(view: BuildView) -> GeopResult<Self> {
+    /// What the part `reader` reads is, as a drawing of it depends on.
+    fn of(reader: &PartReader) -> GeopResult<Self> {
+        let model = match reader.defines(&model()) {
+            true => Some(read_model(reader)?.into_owned()),
+            false => None,
+        };
+        let threads = match reader.defines(&threads()) {
+            true => Some(read_threads(reader)?.into_owned()),
+            false => None,
+        };
         Ok(Self {
-            model: view.retrieve_target(&model()).ok().cloned(),
-            threads: view.retrieve_target(&threads()).ok().cloned(),
-            about: about(view),
-            placed: (placed_parts(view)?.into_iter())
+            model,
+            threads,
+            about: read_about(reader)?.into_owned(),
+            placed: (placed_parts(reader)?.into_iter())
                 .map(|p| {
                     let component = p.located.instance.component.clone();
                     (p.name, component, p.located.world)
@@ -240,7 +252,7 @@ impl DrawingSession {
     /// `args`' sheet as drawn of the part `view` shows, with its bill of
     /// materials if `args` asks for one — laid out once, and kept while
     /// the part and what the views depend on are the same.
-    fn layout(&self, view: BuildView, args: &DrawingArgs) -> Rc<Result<Layout, String>> {
+    fn layout(&self, view: &PartReader, args: &DrawingArgs) -> Rc<Result<Layout, String>> {
         let shown = match Shown::of(view) {
             Ok(shown) => shown,
             Err(e) => return Rc::new(Err(e.root_message().to_string())),
@@ -270,7 +282,7 @@ impl DrawingSession {
     /// same.
     fn projected(
         &self,
-        view: BuildView,
+        view: &PartReader,
         shown: &Shown,
         args: &DrawingArgs,
     ) -> Rc<Result<Projected<Design>, String>> {
@@ -471,7 +483,7 @@ fn build(tool: Tool, picks: &[Candidate]) -> Option<Annotation> {
 /// `part` as `layout` draws it — or why it cannot be drawn.
 fn placed_at(
     mut annotation: Annotation,
-    part: BuildView,
+    part: &PartReader,
     layout: &Layout,
     at: P,
 ) -> GeopResult<(Annotation, Drawn)> {
@@ -534,7 +546,7 @@ const CIRCLE_POINTS: usize = 48;
 
 /// The sheet's strokes and texts as visuals, under keys starting `key`.
 fn sheet_visuals<S: Scalar>(sheet: &Sheet, key: &str, out: &mut Vec<Visual<S>>) {
-    use geop_ops::output::sheet::Shape as Stroke;
+    use geop_ops_output::sheet::Shape as Stroke;
     let arc = |center: P, radius: f64, start: f64, sweep: f64| -> Vec<Vector3<S>> {
         let n = ((CIRCLE_POINTS as f64 * sweep / std::f64::consts::TAU).ceil() as usize).max(2);
         (0..=n)
@@ -680,7 +692,7 @@ fn hint(s: &DrawingSession) -> String {
 /// is picked, what a click would pick, and the annotation being placed.
 fn annotate(
     f: &mut EditForm<'_, Design, DrawingArgs, DrawingSession>,
-    part: BuildView,
+    part: &PartReader,
     args: &DrawingArgs,
     s: &DrawingSession,
     selection: &[String],
@@ -817,7 +829,7 @@ impl DrawingSession {
     fn click(
         &mut self,
         args: &mut DrawingArgs,
-        part: BuildView,
+        part: &PartReader,
         layout: &Layout,
         at: P,
         hit: Option<Candidate>,
@@ -854,7 +866,7 @@ impl DrawingSession {
     }
 
     /// Adds what the tool makes of the picks, its value at `at`.
-    fn add(&mut self, args: &mut DrawingArgs, part: BuildView, layout: &Layout, at: P) {
+    fn add(&mut self, args: &mut DrawingArgs, part: &PartReader, layout: &Layout, at: P) {
         let Some(mut annotation) = build(self.tool, &self.picks) else {
             return;
         };
@@ -878,7 +890,7 @@ fn shows(args: &DrawingArgs, view: DrawnView) -> bool {
 }
 
 /// Checks that `target` names something in `part`.
-fn resolve_target(part: BuildView, target: &Target) -> GeopResult<()> {
+fn resolve_target(part: &PartReader, target: &Target) -> GeopResult<()> {
     match target {
         Target::Vertex { name } => placed_vertex(part, name).map(|_| ()),
         Target::Edge { name } => placed_edge(part, name).map(|_| ()),
@@ -887,7 +899,7 @@ fn resolve_target(part: BuildView, target: &Target) -> GeopResult<()> {
 }
 
 /// Checks that `edge` is a circular edge of `part`.
-fn circular(part: BuildView, edge: &str) -> GeopResult<()> {
+fn circular(part: &PartReader, edge: &str) -> GeopResult<()> {
     match placed_edge(part, edge)?.as_arc()? {
         Some(_) => Ok(()),
         None => Err(GeopError::new(format!(
@@ -897,7 +909,7 @@ fn circular(part: BuildView, edge: &str) -> GeopResult<()> {
 }
 
 /// Checks that `edge` is a straight edge of `part`.
-fn straight(part: BuildView, edge: &str) -> GeopResult<()> {
+fn straight(part: &PartReader, edge: &str) -> GeopResult<()> {
     match placed_edge(part, edge)?.as_line()? {
         Some(_) => Ok(()),
         None => Err(GeopError::new(format!(
@@ -910,15 +922,13 @@ fn straight(part: BuildView, edge: &str) -> GeopResult<()> {
 /// part `part` shows — its section plane, and what each annotation names,
 /// in a view the drawing has. Whether each view sees what it is asked to
 /// measure is checked when the drawing is laid out.
-fn check(part: BuildView, step: &str, args: &DrawingArgs) -> GeopResult<()> {
+fn check(part: &PartReader, step: &str, args: &DrawingArgs) -> GeopResult<()> {
     let ctx = with_context!("drawing({step})");
     if args.views.is_empty() && args.section.is_none() {
         return Err(GeopError::new("a drawing needs a view")).with_context(ctx);
     }
     if let Some(plane) = &args.section {
-        plane
-            .resolve_plane(&mut Seen::new(part))
-            .with_context(ctx)?;
+        plane.resolve(part).with_context(ctx)?;
     }
     if let Some(scale) = args.scale
         && !(scale.is_finite() && scale > 0.0)
@@ -970,8 +980,8 @@ fn check(part: BuildView, step: &str, args: &DrawingArgs) -> GeopResult<()> {
 part_operation!(Drawing(DrawingArgs));
 
 impl PartOperation for Drawing {
+    const KIND: &'static str = "drawing";
     const INFO: OperationInfo = OperationInfo::new(
-        "drawing",
         "Drawing",
         "A 2-D drawing of the part: views with hidden lines, a section, dimensions, notes and a title block — downloaded as SVG or DXF.",
         OperationGroup::Output,
@@ -979,6 +989,9 @@ impl PartOperation for Drawing {
     )
     .icon(crate::icons::DRAWING);
     type Args = DrawingArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = DrawingSession;
 
     /// Front, top, right and isometric views, third angle, on A3.
@@ -988,8 +1001,8 @@ impl PartOperation for Drawing {
 
     /// Records the drawing (see [`drawing`]), once what it refers to is
     /// checked there in the part before it; it changes nothing else.
-    fn run(step: &str, part: &mut Build, args: &DrawingArgs) -> GeopResult<()> {
-        check(part.current(), step, args)?;
+    fn run(step: &str, part: &mut BuildPart, args: &DrawingArgs) -> GeopResult<()> {
+        check(&part.current(), step, args)?;
         part.define_target(&drawing(step), args, described)
     }
 
@@ -1001,12 +1014,12 @@ impl PartOperation for Drawing {
         editing: &DrawingEditing,
     ) -> EditForm<'a, Design, DrawingArgs, DrawingSession> {
         let (session, selection) = (&editing.session, &editing.selection[..]);
-        let part = context.before;
+        let part = &context.before;
         let mut f = EditForm::<Design, DrawingArgs, DrawingSession>::default();
         f.form.selection = selection.to_vec();
         f.form.dialog.download(
             "download",
-            <DrawingExporter as geop_ops::output::Exporter>::INFO.kind,
+            <DrawingExporter as Exporter>::INFO.kind,
             vec![Choice::new("svg", "SVG"), Choice::new("dxf", "DXF")],
         );
         match &*session.layout(part, args) {
@@ -1067,14 +1080,13 @@ impl PartOperation for Drawing {
             args.tangent_edges,
             |Edit { args, .. }, on| args.tangent_edges = on,
         );
-        f.reference(
+        f.pick(
             "section",
             "section plane",
-            args.section.iter().cloned().collect(),
-            &[Role::Plane],
-            None,
+            part,
+            args.section.as_slice(),
             false,
-            |edit, picked| edit.args.section = picked.into_iter().next(),
+            |edit, picked| edit.args.section = picked.into_iter().next_back(),
         );
         f.form.dialog.optional("section");
 
@@ -1146,7 +1158,7 @@ impl PartOperation for Drawing {
         edit: Edit<'_, DrawingArgs, DrawingSession>,
         event: &CanvasEvent<Design>,
     ) {
-        let part = context.before;
+        let part = &context.before;
         let Edit {
             args,
             session: s,

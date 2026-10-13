@@ -7,13 +7,13 @@ use geop_core_math::{
     scalars::{ScalInF64, Scalar},
 };
 use geop_core_topology::{Body, SolidId};
-use geop_ops::{NamedModel, Namer, testing::assert_valid};
 use geop_ops_extrude_revolve::shapes::{
     block,
     cylinder::{extruded_cylinder, revolved_cylinder},
     sphere::sphere_solid,
     v3,
 };
+use geop_ops_model::{NamedModel, Namer, testing::assert_valid};
 
 use super::shell;
 

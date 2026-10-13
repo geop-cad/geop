@@ -781,3 +781,130 @@ fn poses_far_from_the_start_are_enclosed<S: Scalar + PartialEq>() {
 fn poses_far_from_the_start_are_enclosed_in_every_scalar() {
     for_all_scalars!(poses_far_from_the_start_are_enclosed);
 }
+
+/// Copies of a circle `x² + y² = r²` and a line `y = a x + c`, each over
+/// two numbers of its own — `2k` and `2k + 1` for copy `k`, its circle
+/// constraint `2k` and its line `2k + 1` — and how many times they were
+/// made.
+struct Copies<S: Scalar> {
+    copies: Vec<[S; 3]>,
+    evaluations: std::cell::Cell<usize>,
+}
+
+impl<S: Scalar> Copies<S> {
+    fn new(copies: Vec<[f64; 3]>) -> Self {
+        Self {
+            copies: copies.into_iter().map(|c| c.map(n)).collect(),
+            evaluations: Default::default(),
+        }
+    }
+}
+
+impl<S: Scalar> Equations for Copies<S> {
+    type Value = S;
+
+    fn count(&self) -> (usize, usize) {
+        (2 * self.copies.len(), 0)
+    }
+
+    fn bound(&self, _: usize) -> Bound {
+        Bound::Zero
+    }
+
+    fn evaluate(&self, values: &[S], which: &[Term]) -> Vec<Option<Linearized<S>>> {
+        self.evaluations.set(self.evaluations.get() + 1);
+        (which.iter())
+            .map(|term| {
+                let Term::Constraint(c) = term else {
+                    return None;
+                };
+                let k = c / 2;
+                let [r, a, offset] = self.copies[k].map(Dual::<S, 2>::cst);
+                let (x, y) = (Dual::var(values[2 * k], 0), Dual::var(values[2 * k + 1], 1));
+                let residual = match c % 2 {
+                    0 => x.mul(x).add(y.mul(y)).sub(r.mul(r)),
+                    _ => y.sub(a.mul(x)).sub(offset),
+                };
+                Some(linearized(&[residual], &[(2 * k, 0..1), (2 * k + 1, 1..2)]))
+            })
+            .collect()
+    }
+}
+
+/// How many evaluations each question about `copies`, from `start` (two
+/// numbers per copy), takes: a solve and the enclosure of what it solved,
+/// an enclosure, freedom and conflicts.
+fn evaluations_asking<S: Scalar>(copies: &[[f64; 3]], start: &[[f64; 2]]) -> [usize; 5] {
+    let equations = Copies::<S>::new(copies.to_vec());
+    let system = System {
+        equations: &equations,
+        mobility: vec![Mobility::Held; 2 * copies.len()],
+        scale: n(5.0),
+    };
+    let start: Vec<S> = start.iter().flatten().map(|&v| n(v)).collect();
+    let solved = system.solve(&start).unwrap();
+    let mut counts = [solved.evaluations, solved.enclosure.evaluations, 0, 0, 0];
+    let questions: [&dyn Fn(); 3] = [
+        &|| drop(system.enclose(&start).unwrap()),
+        &|| drop(system.freedom(&start).unwrap()),
+        &|| drop(system.conflicting(&start).unwrap()),
+    ];
+    for (count, question) in counts[2..].iter_mut().zip(questions) {
+        equations.evaluations.set(0);
+        question();
+        *count = equations.evaluations.get();
+    }
+    counts
+}
+
+/// Many independent groups are worked on in lockstep: one evaluation
+/// answers every group waiting, so a system of forty copies of a circle
+/// crossing a line — and of forty lines missing their circles — takes no
+/// more evaluations than its slowest copy does alone. Counted, not timed:
+/// asked one group at a time, a program's assembly re-ran per group, and a
+/// drag of 2000 parts took seconds.
+fn independent_groups_are_evaluated_together<S: Scalar>() {
+    for line in [[5.0, 1.0, 1.0], [1.0, 0.0, 1.5]] {
+        let copies: Vec<[f64; 3]> = vec![line; 40];
+        let start: Vec<[f64; 2]> = (0..40)
+            .map(|k| [2.5 + 0.02 * k as f64, 3.6 - 0.01 * k as f64])
+            .collect();
+        let alone: Vec<[usize; 5]> = (copies.iter().zip(&start))
+            .map(|(copy, start)| evaluations_asking::<S>(&[*copy], &[*start]))
+            .collect();
+        let slowest: [usize; 5] =
+            std::array::from_fn(|q| alone.iter().map(|counts| counts[q]).max().unwrap_or(0));
+        let together = evaluations_asking::<S>(&copies, &start);
+        assert!(
+            (0..5).all(|q| together[q] <= slowest[q]),
+            "{line:?}: {together:?} evaluations for 40 copies, the slowest alone {slowest:?}"
+        );
+    }
+}
+
+#[test]
+fn independent_groups_are_evaluated_together_in_every_scalar() {
+    for_all_scalars!(independent_groups_are_evaluated_together);
+}
+
+/// The unit circle and the line `y = 1.5`, which misses it, from `(3.26,
+/// 3.22)`: the solve ends, in every scalar. In fixed point the damping
+/// shrank to zero after enough steps taken, no growth brought it back,
+/// and a step turned down was tried again as it was, forever.
+fn a_line_missing_a_circle_from_afar_ends<S: Scalar>() {
+    let copies = Copies::<S>::new(vec![[1.0, 0.0, 1.5]]);
+    let system = System {
+        equations: &copies,
+        mobility: vec![Mobility::Held; 2],
+        scale: n(5.0),
+    };
+    let start = [n::<S>(3.26), n::<S>(3.22)];
+    let solved = system.solve(&start).unwrap();
+    assert!(!system.held(&solved.values).unwrap().converged);
+    assert_eq!(system.conflicting(&start).unwrap(), [0, 1]);
+}
+
+#[test]
+fn a_line_missing_a_circle_from_afar_ends_in_every_scalar() {
+    for_all_scalars!(a_line_missing_a_circle_from_afar_ends);
+}

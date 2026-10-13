@@ -5,25 +5,27 @@ edition.workspace = true
 
 [dependencies]
 geop-core-program.workspace = true
+geop-core-editor.workspace = true
 geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-core-sketch.workspace = true
-geop-ops.workspace = true
+geop-ops-model.workspace = true
+geop-ops-datums.workspace = true
+geop-ops-parameters.workspace = true
+geop-ops-sketch.workspace = true
 geop-ops-booleans.workspace = true
 geop-ops-extrude-revolve.workspace = true
 serde.workspace = true
-serde_json.workspace = true
-# Only for `testing`: the sketches its plates are drawn with.
-geop-ops-sketch = { workspace = true, optional = true }
 
 [features]
 # The plates of `testing`, for other crates' tests.
-testing = ["dep:geop-ops-sketch", "geop-ops-extrude-revolve/testing"]
+testing = ["geop-ops-extrude-revolve/testing"]
 
 [dev-dependencies]
-geop-ops = { workspace = true, features = ["testing"] }
+geop-ops-model = { workspace = true, features = ["testing"] }
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
-geop-ops-datums.workspace = true
+geop-ops-view.workspace = true
+geop-ops-add-datum.workspace = true
 geop-ops-pattern.workspace = true
-geop-ops-sketch.workspace = true
+serde_json.workspace = true

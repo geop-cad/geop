@@ -13,13 +13,11 @@ use geop_core_math::{
     scalars::{Field, Ring, Scalar, as_f64},
     vector::Vector3,
 };
-use geop_ops::{
-    Design,
-    operation::{Aspects, Role},
-};
+use geop_ops_add_datum::{Role, Shape};
+use geop_ops_model::Design;
 use serde::{Deserialize, Serialize};
 
-pub use geop_ops::solving::D;
+pub use crate::solving::D;
 
 /// Where a pose puts the points of a part and turns its directions — or,
 /// with none, where they are: of a part that never moves.
@@ -88,20 +86,20 @@ impl Geometry {
         }
     }
 
-    /// What `aspects` gives used as `role`, if it fits it: a point — the
+    /// What `shape` gives used as `role`, if it fits it: a point — the
     /// center of a circle is one — a line, an axis as a line, a plane.
-    fn as_role(role: Role, aspects: &Aspects<Design>) -> Option<Geometry> {
+    fn as_role(role: Role, shape: &Shape) -> Option<Geometry> {
         let line = |a: &geop_core_geometry::shape::Axis<Design>| Geometry::Line {
             point: a.point,
             direction: a.direction,
         };
         match role {
-            Role::Point => (aspects.point.as_ref())
-                .or(aspects.arc.as_ref().map(|a| &a.circle.center))
+            Role::Point => (shape.point.as_ref())
+                .or(shape.arc.as_ref().map(|a| &a.circle.center))
                 .map(|at| Geometry::Point { at: *at }),
-            Role::Line => aspects.line.as_ref().map(line),
-            Role::Round => aspects.round.as_ref().map(line),
-            Role::Plane => aspects.plane.as_ref().map(|p| Geometry::Plane {
+            Role::Line => shape.line.as_ref().map(line),
+            Role::Round => shape.round.as_ref().map(line),
+            Role::Plane => shape.plane.as_ref().map(|p| Geometry::Plane {
                 point: *p.origin(),
                 normal: *p.w(),
             }),
@@ -167,10 +165,10 @@ impl Kind {
         }
     }
 
-    /// The geometry `aspects` contributes to a constraint of this kind: as
+    /// The geometry `shape` contributes to a constraint of this kind: as
     /// the first of its [`Kind::roles`] it fits.
-    pub fn geometry(&self, aspects: &Aspects<Design>) -> Option<Geometry> {
-        (self.roles().iter()).find_map(|&role| Geometry::as_role(role, aspects))
+    pub fn geometry(&self, shape: &Shape) -> Option<Geometry> {
+        (self.roles().iter()).find_map(|&role| Geometry::as_role(role, shape))
     }
 
     /// Checks that it can hold between `a` and `b` at all: a distance

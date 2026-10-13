@@ -132,7 +132,7 @@ impl<E: Equations> Solving<'_, '_, E> {
     /// The group solved from `start` with the limits `active` held at
     /// their bounds and the constraints `left_out` left out (see
     /// [`Asked::solve`]).
-    pub(super) fn solve(
+    pub(super) async fn solve(
         &self,
         start: Vec<E::Value>,
         active: &[usize],
@@ -148,6 +148,7 @@ impl<E: Equations> Solving<'_, '_, E> {
             hard,
         }
         .solve(start)
+        .await
     }
 }
 
@@ -172,7 +173,7 @@ impl<E: Equations> Asked<'_, '_, '_, E> {
     /// nothing is pulled, and every value held stays), every value held
     /// staying where it is at `anchor`. `None` where one is undecidable,
     /// which makes `values` infeasible.
-    fn terms(
+    async fn terms(
         &self,
         values: &[E::Value],
         anchor: &[E::Value],
@@ -190,7 +191,7 @@ impl<E: Equations> Asked<'_, '_, '_, E> {
                     .map(|&p| Term::Preference(p)),
             );
         }
-        let made = solving.made(values, &which);
+        let made = solving.made(values, &which).await;
         let mut constraints = Rows::default();
         let mut pulls = Rows::default();
         let mut pulled = Vec::new();
@@ -233,9 +234,9 @@ impl<E: Equations> Asked<'_, '_, '_, E> {
     /// The largest residual of the constraints at `values` — an upper
     /// bound, infinite where one is undecidable (see [`largest`]) — and
     /// whether they all hold there.
-    fn check(&self, values: &[E::Value]) -> GeopResult<(ScalarOf<E>, bool)> {
+    async fn check(&self, values: &[E::Value]) -> GeopResult<(ScalarOf<E>, bool)> {
         let tolerance = tolerance(self.solving.system.scale)?;
-        Ok(self.solving.check(values, &self.hard, tolerance))
+        Ok(self.solving.check(values, &self.hard, tolerance).await)
     }
 
     /// Where the group has to be, from `start`, for its constraints to
@@ -243,13 +244,13 @@ impl<E: Equations> Asked<'_, '_, '_, E> {
     /// `start` as the constraints allow — or, where they cannot all hold,
     /// where they come closest (see the module docs). The point is given
     /// whether or not they hold, with the phases that put it there.
-    fn solve(&self, start: Vec<E::Value>) -> GeopResult<Phased<E>> {
-        let (solved, phase, holds) = self.minimize(start, true)?;
+    async fn solve(&self, start: Vec<E::Value>) -> GeopResult<Phased<E>> {
+        let (solved, phase, holds) = self.minimize(start, true).await?;
         let mut phases = vec![phase];
         if holds {
             return Ok((solved, phases));
         }
-        let (solved, phase, _) = self.minimize(solved, false)?;
+        let (solved, phase, _) = self.minimize(solved, false).await?;
         phases.push(phase);
         Ok((solved, phases))
     }
@@ -258,10 +259,10 @@ impl<E: Equations> Asked<'_, '_, '_, E> {
     /// group pulled if `hard`, else the constraints in the sum; every value
     /// held where it is at `from`. Where it ended, how, and whether the
     /// constraints hold there.
-    fn minimize(&self, from: Vec<E::Value>, hard: bool) -> GeopResult<Minimized<E>> {
+    async fn minimize(&self, from: Vec<E::Value>, hard: bool) -> GeopResult<Minimized<E>> {
         let space = &self.solving.space;
         if space.dimension(&from) == 0 {
-            let (max_residual, holds) = self.check(&from)?;
+            let (max_residual, holds) = self.check(&from).await?;
             let phase = Phase {
                 stop: Stop::NoChange { rejected: None },
                 iterations: 0,
@@ -272,12 +273,12 @@ impl<E: Equations> Asked<'_, '_, '_, E> {
         }
         let damping = ScalarOf::<E>::from_ratio(DAMPING.0, DAMPING.1)?;
         let anchor = from.clone();
-        let evaluate = |at: &Vec<E::Value>| {
+        let evaluate = async |at: &Vec<E::Value>| {
             let Terms {
                 constraints,
                 pulls,
                 stays,
-            } = self.terms(at, &anchor, hard)?;
+            } = self.terms(at, &anchor, hard).await?;
             let mut evaluation = Evaluation::default();
             if hard {
                 evaluation.constraints = constraints;
@@ -308,8 +309,9 @@ impl<E: Equations> Asked<'_, '_, '_, E> {
                 max_iterations: MAX_ITERATIONS,
                 max_step: self.solving.system.scale,
             },
-        )?;
-        let (max_residual, holds) = self.check(&outcome.x)?;
+        )
+        .await?;
+        let (max_residual, holds) = self.check(&outcome.x).await?;
         let phase = Phase {
             stop: outcome.stop,
             iterations: outcome.iterations,

@@ -3,13 +3,14 @@
 
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_topology::Body;
-use geop_ops::NamedModel;
-use geop_ops::operation::apply_to_model;
 use geop_ops_extrude_revolve::shapes::block;
+use geop_ops_model::NamedModel;
+use geop_ops_model::testing::apply_to_model;
 
 use super::*;
 use crate::boundary::tests::refused;
-use geop_ops::testing::assert_valid_sheets;
+use crate::test_refs::*;
+use geop_ops_model::testing::assert_valid_sheets;
 
 /// The six faces of a unit cube, each copied into a sheet of its own, the
 /// cube itself deleted: what is left is six faces standing on their own,
@@ -36,7 +37,7 @@ fn six_sheets() -> (NamedModel<S>, Vec<String>) {
 
 fn knit_faces(part: NamedModel<S>, faces: &[String], solid: bool) -> GeopResult<NamedModel<S>> {
     let args = KnitArgs {
-        faces: faces.to_vec(),
+        faces: faces.iter().map(named).collect(),
         solid,
     };
     apply_to_model::<Knit>(part, "k", &args)

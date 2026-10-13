@@ -6,29 +6,34 @@
 use std::f64::consts::PI;
 
 use crate::{HoleArgs, HoleKind, iso::Fit};
+use geop_core_editor::selectable::{Selectable, selected};
 use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_math::vector::Vector3;
-use geop_ops::{EntityRef, NamedModel};
+use geop_core_program::element::{ElementReference, PickedElement};
 use geop_ops_booleans::Combine;
+use geop_ops_datums::{origin_axis, origin_plane};
 use geop_ops_extrude_revolve::{Extent, Extents};
+use geop_ops_model::{Face, NamedModel, model};
 use geop_ops_pattern::{
-    CircularPatternArgs, Direction, LinearPatternArgs, MirrorArgs, Seeds, Spacing,
+    CircularPatternArgs, Direction, FeatureRef, LinearPatternArgs, MirrorArgs, PatternDirection,
+    Seeds, Spacing, TurnAxis, body, feature,
 };
-use geop_ops_sketch::{AddSketchArgs, Sketch};
+use geop_ops_sketch::{AddSketchArgs, Sketch, SketchPlane};
 
-use geop_ops::program::ProgramFile;
-use geop_ops::testing::{Built, assert_valid, assert_volume};
-use geop_ops::{origin_axis, origin_plane};
-use geop_ops_extrude_revolve::testing::{both_ways, disc, extrude_sketch, extrusion, outline};
+use geop_ops_extrude_revolve::testing::{
+    Built, both_ways, disc, extrude_sketch, extrusion, on_face, on_origin, outline,
+};
+use geop_ops_model::testing::{assert_valid, assert_volume};
+use geop_ops_parameters::ProgramFile;
 
-use crate::program_tests::{Made, hole, iso, made, registry};
+use crate::program_tests::{Made, hole, iso, made, named, registry};
 use crate::testing::{plate, plate_with_hole, points_sketch};
 
 /// A sketch on the Z plane, and `name` its extrude, as `extent` says, a
 /// new body.
 fn extruded(program: &mut ProgramFile, name: &str, sketch: Sketch, extent: Extents) {
-    let plane = origin_plane(FrameAxis::Z);
+    let plane = on_origin(FrameAxis::Z);
     extrude_sketch(program, name, plane, sketch, extent, Combine::NewBody);
 }
 
@@ -40,14 +45,14 @@ fn build(program: &ProgramFile) -> Made {
     made(&read).unwrap()
 }
 
-fn feature(step: &str) -> Vec<EntityRef> {
-    vec![EntityRef::Feature { name: step.into() }]
+fn features(steps: &[&str]) -> Vec<FeatureRef> {
+    steps.iter().map(|&step| feature(step)).collect()
 }
 
 /// `count` instances along `x`, `step` apart.
 fn along_x(count: f64, step: f64) -> Direction {
     Direction {
-        along: Some(origin_axis(FrameAxis::X)),
+        along: Some(PatternDirection::Datum(origin_axis(FrameAxis::X))),
         reversed: false,
         count: count.into(),
         spacing: Spacing::step(step),
@@ -57,14 +62,7 @@ fn along_x(count: f64, step: f64) -> Direction {
 /// A linear pattern of the features `features`, `count` along `x`.
 fn linear(features: &[&str], count: f64, step: f64) -> LinearPatternArgs {
     LinearPatternArgs {
-        seeds: Seeds::features(
-            features
-                .iter()
-                .map(|f| EntityRef::Feature {
-                    name: f.to_string(),
-                })
-                .collect(),
-        ),
+        seeds: Seeds::features(self::features(features)),
         first: along_x(count, step),
         second: None,
     }
@@ -126,7 +124,7 @@ fn extruded_hole_patterned_around_an_axis() {
     extrude_sketch(
         &mut program,
         "hole",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         disc([2.0, 0.0], 0.3),
         both_ways(2.0),
         Combine::cut("extrude(plate)"),
@@ -134,8 +132,8 @@ fn extruded_hole_patterned_around_an_axis() {
     program.push(
         "bolts",
         CircularPatternArgs {
-            seeds: Seeds::features(feature("hole")),
-            axis: Some(origin_axis(FrameAxis::Z)),
+            seeds: Seeds::features(features(&["hole"])),
+            axis: Some(TurnAxis::Datum(origin_axis(FrameAxis::Z))),
             reversed: false,
             count: 6.0.into(),
             angle: Spacing::extent(360.0),
@@ -163,7 +161,7 @@ fn pattern_of_holes_mirrored() {
     extrude_sketch(
         &mut program,
         "hole",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         disc([1.0, 1.0], 0.3),
         both_ways(2.0),
         Combine::cut("extrude(plate)"),
@@ -172,13 +170,8 @@ fn pattern_of_holes_mirrored() {
     program.push(
         "m",
         MirrorArgs {
-            seeds: Seeds::features(
-                feature("hole")
-                    .into_iter()
-                    .chain(feature("holes"))
-                    .collect(),
-            ),
-            plane: Some(origin_plane(FrameAxis::X)),
+            seeds: Seeds::features(features(&["hole", "holes"])),
+            plane: Some(SketchPlane::Datum(origin_plane(FrameAxis::X))),
         },
     );
     let part = build(&program);
@@ -202,9 +195,7 @@ fn boss_patterned_in_a_row() {
     program.push(
         "boss_sketch",
         AddSketchArgs {
-            plane: Some(EntityRef::Face {
-                name: "extrude(plate,end)".into(),
-            }),
+            plane: Some(on_face("extrude(plate,end)")),
             sketch: disc([1.0, 1.0], 0.3),
             ..Default::default()
         },
@@ -227,7 +218,7 @@ fn boss_patterned_in_a_row() {
 
 fn simple_m6(face: &str, end: Extent) -> HoleArgs {
     HoleArgs {
-        face: face.into(),
+        face: Some(named(face)),
         ..hole(HoleKind::Simple, iso("M6", Fit::Normal), end)
     }
 }
@@ -282,7 +273,7 @@ fn a_patterned_thread_is_drawn() {
     program.push("h", tapped);
     program.push("p", linear(&["h"], 3.0, 15.0));
     let runner = program.built(registry).unwrap();
-    let drawn = geop_ops::ui::annotations_of(runner.part.current());
+    let drawn = geop_ops_view::annotations_of(&runner.part.current());
     let mut names: Vec<&str> = drawn.iter().map(|a| a.name.as_str()).collect();
     names.sort();
     assert_eq!(
@@ -316,7 +307,7 @@ fn hole_up_to_next_patterned_stops_at_the_next_face_where_it_is() {
     extrude_sketch(
         &mut program,
         "high",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         outline(&[[30.0, 0.0], [60.0, 0.0], [60.0, 40.0], [30.0, 40.0]]),
         Extents::blind(20.0),
         Combine::join("extrude(low)"),
@@ -324,7 +315,7 @@ fn hole_up_to_next_patterned_stops_at_the_next_face_where_it_is() {
     program.push(
         "centres",
         AddSketchArgs {
-            plane: Some(origin_plane(FrameAxis::Z)),
+            plane: Some(on_origin(FrameAxis::Z)),
             sketch: points_sketch(&[[15.0, 20.0]]),
             ..Default::default()
         },
@@ -339,8 +330,8 @@ fn hole_up_to_next_patterned_stops_at_the_next_face_where_it_is() {
     assert_volume(&part, "linear_pattern(p)", expected, 5e-3 * removed);
 }
 
-/// Bodies and features at once, a body picked as a feature, and a step
-/// that made no feature are refused, saying so.
+/// Bodies and features at once, and a step that made no feature, are
+/// refused, saying so.
 #[test]
 fn what_is_no_feature_is_refused() {
     let program = plate_with_hole();
@@ -350,16 +341,29 @@ fn what_is_no_feature_is_refused() {
         program.build_model(registry).err().unwrap().to_string()
     };
     let mut both = linear(&["hole"], 2.0, 2.0);
-    both.seeds.bodies = vec![EntityRef::Solid {
-        name: "extrude(hole)".into(),
-    }];
+    both.seeds.bodies = vec![body("extrude(hole)")];
     assert!(refused(both).contains("one or the other"));
     let error = refused(linear(&["plate"], 2.0, 2.0));
     assert!(error.contains("is no feature"), "{error}");
-    let mut solid = linear(&[], 2.0, 2.0);
-    solid.seeds.features = vec![EntityRef::Solid {
-        name: "extrude(hole)".into(),
-    }];
-    let error = refused(solid);
-    assert!(error.contains("is no feature"), "{error}");
+}
+
+/// A feature is picked by clicking a face it made — the hole by its wall —
+/// and lit as every face of it; a face no feature made picks none.
+#[test]
+fn a_feature_is_picked_by_a_face_it_made() {
+    let runner = plate_with_hole().built(registry).unwrap();
+    let reader = runner.part.current();
+    let part = made(&plate_with_hole()).unwrap();
+    let face_named = |name: &str| ElementReference::<NamedModel<S>, Face>::new(model(), name);
+    let wall = faces_of(&part, "hole");
+    let hit: PickedElement = face_named(&wall[0]).picked();
+    let picked: Vec<FeatureRef> = selected(&reader, &[hit]);
+    assert_eq!(picked, [feature("hole")]);
+    let mut lit: Vec<String> = (picked[0].drawn(&reader).into_iter())
+        .map(|face| face.name)
+        .collect();
+    lit.sort();
+    assert_eq!(lit, wall);
+    let top = face_named("extrude(plate,end)").picked();
+    assert!(selected::<_, _, FeatureRef>(&reader, &[top]).is_empty());
 }

@@ -5,32 +5,36 @@ edition.workspace = true
 
 [dependencies]
 geop-core-program.workspace = true
+geop-core-editor.workspace = true
 geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-core-sketch.workspace = true
-geop-ops.workspace = true
+geop-ops-model.workspace = true
+geop-ops-parameters.workspace = true
+geop-ops-sketch.workspace = true
 geop-ops-extrude-revolve.workspace = true
 geop-ops-booleans.workspace = true
 # For rebuilding a solid face by face: moving vertices onto new surfaces,
 # room around a surface, pcurves on it.
 geop-ops-shell.workspace = true
 serde.workspace = true
-# Only for `testing`: the sketch and the plane its enclosure is drawn with.
+# Only for `testing`: the datums the enclosure's reference plane is built
+# among, and the step building it.
 geop-ops-datums = { workspace = true, optional = true }
-geop-ops-sketch = { workspace = true, optional = true }
+geop-ops-add-datum = { workspace = true, optional = true }
 
 [features]
 # The enclosure of `testing`, for other crates' tests.
 testing = [
     "dep:geop-ops-datums",
-    "dep:geop-ops-sketch",
+    "dep:geop-ops-add-datum",
     "geop-ops-extrude-revolve/testing",
 ]
 
 [dev-dependencies]
-geop-ops = { workspace = true, features = ["testing"] }
+geop-ops-model = { workspace = true, features = ["testing"] }
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
 geop-ops-datums.workspace = true
+geop-ops-add-datum.workspace = true
 geop-ops-fillet.workspace = true
-geop-ops-sketch.workspace = true

@@ -9,7 +9,7 @@ use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector2};
 // ── Profiles ────────────────────────────────────────────────────────────────
 
 /// The named curve chain extrude and revolve sweep.
-pub use geop_ops::operation::Profile;
+pub use geop_ops_model::Profile;
 
 // ── Profile shapes ───────────────────────────────────────────────────────────
 

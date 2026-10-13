@@ -1,26 +1,27 @@
 //! [`CircularPattern`]: copies of bodies turned around an axis.
 
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::Unit,
+    numeric_input::NumericInput,
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::{FrameAxis, Motion},
-    scalars::Scalar,
 };
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::parameters::expressions;
-use geop_ops::{
-    Design, NamedModel,
-    operation::{
-        Aspects, Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Seen, StepContext,
-        pattern::{Row, Spacing, count_field, whole_count},
-    },
-    origin_axis,
-    parameters::Formula,
-    part_operation,
-    ui::{EditForm, FormState, Unit, formula_number},
-};
+use geop_ops_datums::origin_axis;
+use geop_ops_model::{Design, ModelOperation, NamedModel};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
-use crate::common::{Naming, Pattern, Seeds, build_pattern, run_pattern};
+use crate::{
+    common::{Naming, Pattern, Seeds, build_pattern, run_pattern},
+    references::TurnAxis,
+    spacing::{Row, Spacing, count_field, whole_count},
+};
 
 /// Copies the bodies `bodies` — solids, and sheets by one of their faces —
 /// or does the features `features` again, turned around an axis: `count` instances, the bodies themselves the
@@ -46,13 +47,13 @@ pub struct CircularPatternArgs {
     #[serde(flatten)]
     pub seeds: Seeds,
     /// What to turn around; none, for a step that has not picked it.
-    pub axis: Option<EntityRef>,
+    pub axis: Option<TurnAxis>,
     /// Turn the other way.
     #[serde(default)]
     pub reversed: bool,
     /// How many instances, the bodies themselves included: a number, or a
     /// formula of the part's parameters.
-    pub count: Formula,
+    pub count: NumericInput,
     /// How far apart they are, in degrees.
     pub angle: Spacing,
 }
@@ -71,20 +72,17 @@ impl Pattern for CircularPatternArgs {
         "0"
     }
 
-    fn placements<S: Scalar>(
-        &self,
-        lookup: &mut (impl Lookup<S> + ?Sized),
-    ) -> GeopResult<Vec<(String, Motion<S>)>> {
-        let Some(axis_ref) = &self.axis else {
+    fn placements(&self, reader: &PartReader) -> GeopResult<Vec<(String, Motion<Design>)>> {
+        let Some(axis) = &self.axis else {
             return Err(GeopError::new("pick an axis to turn around"));
         };
-        let axis = Aspects::axis_of(axis_ref, lookup)?;
+        let axis = axis.resolve(reader)?;
         let direction = if self.reversed {
             axis.direction.neg()
         } else {
             axis.direction
         };
-        let row = self.row(|f| f.evaluate(lookup))?;
+        let row = self.row(reader)?;
         let mut placements = Vec::new();
         for k in 1..row.count {
             let motion = row.turn(&axis.point, &direction, k)?.motion();
@@ -95,31 +93,29 @@ impl Pattern for CircularPatternArgs {
 }
 
 impl CircularPatternArgs {
-    /// The instances round the axis, with `value` giving the count's and
-    /// the angle's values.
-    fn row(&self, mut value: impl FnMut(&Formula) -> GeopResult<f64>) -> GeopResult<Row> {
-        let count = whole_count(&self.count, value(&self.count)?)?;
-        self.angle.round(count, value(self.angle.value())?)
+    /// The instances round the axis, as `reader` reads the parameters.
+    fn row(&self, reader: &PartReader) -> GeopResult<Row> {
+        let count = whole_count(&self.count, reader)?;
+        self.angle.round(count, reader)
     }
 }
 
 part_operation!(CircularPattern(CircularPatternArgs));
 
 impl PartOperation for CircularPattern {
+    const KIND: &'static str = "circular_pattern";
     const INFO: OperationInfo = OperationInfo::new(
-        "circular_pattern",
         "Circular pattern",
         "Copy bodies turned around an axis.",
         OperationGroup::Bodies,
         OperationTier::Small,
     )
-    .icon(geop_ops::ui::icons::CIRCULAR_PATTERN);
+    .icon(geop_ops_view::icons::CIRCULAR_PATTERN);
     type Args = CircularPatternArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
-
-    fn formulas(args: &mut CircularPatternArgs) -> Vec<&mut String> {
-        expressions([&mut args.count, args.angle.value_mut()])
-    }
 
     /// Four times around the origin's `z` axis, kept as new bodies.
     fn new_args(_: &StepContext) -> CircularPatternArgs {
@@ -127,24 +123,15 @@ impl PartOperation for CircularPattern {
             // Nothing picked: what is patterned is the user's choice, a body
             // or a feature, never guessed.
             seeds: Seeds::default(),
-            axis: Some(origin_axis(FrameAxis::Z)),
+            axis: Some(TurnAxis::Datum(origin_axis(FrameAxis::Z))),
             reversed: false,
-            count: Formula::Plain(4.0),
+            count: NumericInput::Plain(4.0),
             angle: Spacing::extent(360.0),
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &CircularPatternArgs) -> GeopResult<()> {
+    fn run(step: &str, part: &mut BuildPart, args: &CircularPatternArgs) -> GeopResult<()> {
         run_pattern::<Self>(part, step, args)
-    }
-
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &CircularPatternArgs,
-    ) -> GeopResult<()> {
-        build_pattern(model, reader, step, args)
     }
 
     /// The bodies or the features, and the axis, picked; the count and the
@@ -154,32 +141,38 @@ impl PartOperation for CircularPattern {
         args: &CircularPatternArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, CircularPatternArgs> {
-        let mut seen = Seen::new(context.before);
+        let before = &context.before;
         let mut f = EditForm::default();
         let set_seeds = |args: &mut CircularPatternArgs, seeds| args.seeds = seeds;
-        let before = Seen::new(context.before);
-        (args.seeds).fields(&mut f, before.model(), set_seeds, |f| {
-            let axis = args.axis.iter().cloned().collect();
-            let roles = [Role::Line, Role::Round];
-            f.reference("axis", "axis", axis, &roles, None, false, |edit, picked| {
-                edit.args.axis = picked.first().cloned()
+        (args.seeds).fields(&mut f, before, set_seeds, |f| {
+            f.pick_one("axis", "axis", before, args.axis.as_ref(), |edit, picked| {
+                edit.args.axis = Some(picked)
             })
             .checkbox("reversed", "reverse direction", args.reversed, |edit, b| {
                 edit.args.reversed = b
             });
-            count_field(f, "count", &args.count, &mut seen, None, |edit, count| {
+            count_field(f, "count", &args.count, before, None, |edit, count| {
                 edit.args.count = count
             });
             args.angle.fields(
                 f,
                 "angle",
                 ["angle", "total angle"],
-                |label, value| {
-                    formula_number(label, value, &mut seen, Unit::Angle).range(-360.0, 360.0)
-                },
+                |label, value| value.number(label, before, Unit::Angle).range(-360.0, 360.0),
                 |args, angle| args.angle = angle,
             );
         });
         f
+    }
+}
+
+impl ModelOperation for CircularPattern {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &PartReader,
+        step: &str,
+        args: &CircularPatternArgs,
+    ) -> GeopResult<()> {
+        build_pattern(model, reader, step, args)
     }
 }

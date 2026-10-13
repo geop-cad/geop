@@ -1,22 +1,26 @@
 //! [`ImportStep`]: add the bodies of a STEP file to the part.
 
+use geop_core_editor::{
+    edit_form::{Edit, EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::Tone,
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     with_context,
 };
 use geop_core_program::{
-    operation::{OperationGroup, OperationInfo, OperationTier},
-    part::Retrieve,
+    element::{ElementReference, HasElements, Kind, whole},
     target::TargetReference,
 };
 use geop_core_topology::validation::{ValidationParameters, validate_fast};
-use geop_ops::{
-    BodyNames, Design, NamedModel, Namer,
-    operation::{Build, BuildReader, PartOperation, StepContext, build_model},
-    part_operation,
-    placed::{library, library_files},
-    ui::{Edit, EditForm, FormState, Tone},
+use geop_ops_model::{BodyNames, Design, ModelOperation, NamedModel, Namer, build_model};
+use geop_ops_parameters::{
+    BuildPart, PartReader, StateValue, StepContext,
+    about::{file_choices, read_files},
 };
 use serde::{Deserialize, Serialize};
 
@@ -122,19 +126,38 @@ pub fn add_bodies<S: Scalar>(
 #[derive(Clone, Debug, PartialEq)]
 pub struct Imported(pub Vec<ImportedBody<Design>>);
 
+/// Read whole.
+impl Kind for Imported {
+    const NAME: &'static str = "imported";
+}
+
+impl HasElements<Imported> for Imported {
+    type Element<'a> = &'a Imported;
+    const SINGLETON: Option<&'static str> = None;
+
+    fn element(&self, name: &str) -> GeopResult<&Imported> {
+        whole(self, name)
+    }
+}
+
 /// The bodies the import step `step` read.
 pub fn imported(step: &str) -> TargetReference<Imported> {
     TargetReference::new(format!("import:{step}"))
 }
 
-/// The bodies of the file the step `step` imports, read from the library
-/// the run was given.
-fn read(reader: &mut BuildReader, (step, args): &(String, ImportStepArgs)) -> GeopResult<Imported> {
+/// The bodies the import step `step` of the part `reader` reads read.
+pub fn read_imported<'a>(reader: &PartReader<'a>, step: &str) -> GeopResult<&'a Imported> {
+    reader.retrieve_element(&ElementReference::whole(imported(step)))
+}
+
+/// The bodies of the file the step `step` imports, read from the files the
+/// run was given.
+fn read(reader: &PartReader, (step, args): &(String, ImportStepArgs)) -> GeopResult<Imported> {
     let ctx = with_context!("import_step({step}, {args:?})");
     if args.file.is_empty() {
         return Err(GeopError::new("choose a STEP file to import")).with_context(ctx);
     }
-    let (_, text) = library(reader)
+    let (_, text) = read_files(reader)
         .with_context(ctx)?
         .read(&args.file)
         .with_context(ctx)?;
@@ -152,8 +175,8 @@ fn read(reader: &mut BuildReader, (step, args): &(String, ImportStepArgs)) -> Ge
 part_operation!(ImportStep(ImportStepArgs));
 
 impl PartOperation for ImportStep {
+    const KIND: &'static str = "import_step";
     const INFO: OperationInfo = OperationInfo::new(
-        "import_step",
         "Import STEP",
         "Add the solids and sheets of a STEP file next to the program.",
         OperationGroup::Output,
@@ -162,6 +185,9 @@ impl PartOperation for ImportStep {
     .reads(&STEP_EXTENSIONS)
     .icon(crate::icons::IMPORT_STEP);
     type Args = ImportStepArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
 
     /// No file yet.
@@ -170,21 +196,9 @@ impl PartOperation for ImportStep {
     }
 
     /// Reads the file, then adds its bodies.
-    fn run(step: &str, part: &mut Build, args: &ImportStepArgs) -> GeopResult<()> {
+    fn run(step: &str, part: &mut BuildPart, args: &ImportStepArgs) -> GeopResult<()> {
         part.define_target(&imported(step), &(step.to_string(), args.clone()), read)?;
         build_model::<Self>(part, step, args)
-    }
-
-    /// Adds the bodies the step read (see [`imported`]).
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        _: &ImportStepArgs,
-    ) -> GeopResult<()> {
-        let namer = Namer::new("import", step)?;
-        let Imported(bodies) = reader.retrieve_target(&imported(step))?;
-        add_bodies(model, &namer, bodies)
     }
 
     /// The file: one of the STEP files next to the program, or one the user
@@ -196,7 +210,7 @@ impl PartOperation for ImportStep {
         _: &FormState<()>,
     ) -> EditForm<'a, Design, ImportStepArgs> {
         let mut f = EditForm::<Design, ImportStepArgs>::default();
-        let files = library_files(&mut context.before.clone(), is_step_file, &args.file);
+        let files = file_choices(&context.before, is_step_file, &args.file);
         f.file(
             "file",
             "file",
@@ -206,7 +220,7 @@ impl PartOperation for ImportStep {
             |Edit { args, .. }, file| args.file = file.to_string(),
         );
         let read =
-            (context.built).and_then(|built| built.retrieve_target(&imported(context.step)).ok());
+            (context.built.as_ref()).and_then(|built| read_imported(built, context.step).ok());
         if let (Some(Imported(bodies)), Ok(namer)) = (read, Namer::new("import", context.step)) {
             for (k, body) in bodies.iter().enumerate() {
                 if body.healed.is_empty() {
@@ -226,5 +240,19 @@ impl PartOperation for ImportStep {
             }
         }
         f
+    }
+}
+
+impl ModelOperation for ImportStep {
+    /// Adds the bodies the step read (see [`imported`]).
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &PartReader,
+        step: &str,
+        _: &ImportStepArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("import", step)?;
+        let Imported(bodies) = read_imported(reader, step)?;
+        add_bodies(model, &namer, bodies)
     }
 }

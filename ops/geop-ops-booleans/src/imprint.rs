@@ -23,7 +23,7 @@ use geop_core_topology::{
     Body, EdgeId, FaceId, Model, ShellId, VertexId,
     contains::face::{PointClassification, face_contains},
 };
-use geop_ops::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer};
 
 use crate::{
     naming::BooleanNaming,
@@ -213,7 +213,7 @@ mod tests {
         vector::Vector2,
     };
     use geop_core_topology::{EdgeId, SolidId};
-    use geop_ops::{NamedModel, Namer, testing::assert_valid};
+    use geop_ops_model::{NamedModel, Namer, testing::assert_valid};
     use geop_ops_extrude_revolve::{
         common::{Profile, polygon, polyline},
         extrude::extrude,

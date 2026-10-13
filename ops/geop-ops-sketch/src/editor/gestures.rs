@@ -2,13 +2,13 @@
 //! editor lets be dragged, dialog fields and keys — each answered with a new
 //! sketch.
 
-use geop_ops::{EntityRef, parameters::is_formula};
+use geop_core_editor::{editing::hit::no_instances, numeric_input::NumericInput};
 
 use super::drawing::{Built, Hints, construct, curve_ending_at};
 use super::trim::Plan;
 use super::*;
 use crate::geometry::{segments_cross, swept};
-use crate::references::{Reference, Source};
+use crate::references::{Projected, Reference, Source};
 
 impl Editing<'_> {
     /// What a construction needs beyond its points, the pointer reaching
@@ -68,7 +68,7 @@ impl Editing<'_> {
                 let near = hit_visuals(
                     &[Visual::new("end", Shape::Point { at }, Style::Free)],
                     pointer,
-                    geop_ops::ui::hit::no_instances,
+                    no_instances,
                     |_| true,
                 )
                 .is_some();
@@ -534,17 +534,21 @@ impl Editing<'_> {
             self.s.prompt = None;
             return;
         }
-        let value = match (&mut &*self.before).evaluate(text) {
+        let input = NumericInput::from(text);
+        let value = match input.resolve(self.before) {
             Ok(v) => v,
             Err(e) => {
                 self.s.error = Some(e.root_message().to_string());
                 return;
             }
         };
-        if is_formula(text) {
-            self.args.formulas.insert(id, text.to_string());
-        } else {
-            self.args.formulas.remove(&id);
+        match input {
+            NumericInput::Formula { .. } => {
+                self.args.formulas.insert(id, input);
+            }
+            NumericInput::Plain(_) => {
+                self.args.formulas.remove(&id);
+            }
         }
         let mut next = self.sketch().clone();
         let c = next.constraints.get_mut(&id).expect("checked above");
@@ -572,16 +576,8 @@ impl Editing<'_> {
     }
 
     /// What the sketch projects is now `entities`: projections of those it
-    /// no longer holds are removed, and those new to it projected — those
-    /// that are neither a vertex, nor an edge, nor a face skipped.
-    pub(super) fn project(&mut self, entities: Vec<EntityRef>) {
-        let projectable = |e: &EntityRef| {
-            let inner = e.split_instance().map_or(e.clone(), |(_, inner)| inner);
-            matches!(
-                inner,
-                EntityRef::Vertex { .. } | EntityRef::Edge { .. } | EntityRef::Face { .. }
-            )
-        };
+    /// no longer holds are removed, and those new to it projected.
+    pub(super) fn project(&mut self, entities: Vec<Projected>) {
         let mut next = self.sketch().clone();
         let mut kept = Vec::new();
         for reference in std::mem::take(&mut self.args.references) {
@@ -593,13 +589,13 @@ impl Editing<'_> {
             }
         }
         self.s.error = None;
-        for entity in entities.into_iter().filter(projectable) {
+        for entity in entities {
             let source = Source::Projection { entity };
             if kept.iter().any(|r| r.source == source) {
                 continue;
             }
             let mut reference = Reference::new(source);
-            match reference.update(&mut next, &mut &*self.before, &self.frame) {
+            match reference.update(&mut next, self.before, &self.frame) {
                 Ok(()) => kept.push(reference),
                 Err(e) => {
                     reference.remove_from(&mut next);

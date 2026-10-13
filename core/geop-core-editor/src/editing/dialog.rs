@@ -8,7 +8,12 @@
 use geop_core_math::{scalars::Scalar, vector::Vector3};
 use serde::Serialize;
 
-use geop_core_program::element::PickedElement;
+use geop_core_program::{
+    element::PickedElement,
+    part::{Input, Reader, State},
+};
+
+use crate::selectable::Selectable;
 
 /// Whether `text`, as a number field holds it, is a formula rather than a
 /// plain number.
@@ -239,9 +244,25 @@ impl<S: Scalar> Number<S> {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Picked {
     pub element: PickedElement,
+    /// What an editor draws of it, lit while it is held (see
+    /// [`crate::selectable::Selectable::drawn`]).
+    #[serde(skip)]
+    pub drawn: Vec<PickedElement>,
     /// What it is used as, or why it cannot be.
     pub detail: Option<String>,
     pub tone: Tone,
+}
+
+impl Picked {
+    /// `element`, drawn as itself, said nothing of.
+    pub fn new(element: PickedElement) -> Self {
+        Self {
+            drawn: vec![element.clone()],
+            element,
+            detail: None,
+            tone: Tone::Normal,
+        }
+    }
 }
 
 /// Elements of the part a step builds on, picked in the viewport: any
@@ -495,6 +516,26 @@ impl<S: Scalar> Dialog<S> {
         )
     }
 
+    /// Values picked, holding `value`, each selected by a click as `P` says
+    /// (see [`Selectable`]) in the part `reader` reads. What a field so made
+    /// is sent back, [`crate::selectable::selected`] turns into values. Required: see [`Dialog::optional`].
+    pub fn pick<I: Input, St: State, P: Selectable>(
+        &mut self,
+        key: &str,
+        label: impl Into<String>,
+        reader: &Reader<I, St>,
+        value: &[P],
+        multiple: bool,
+    ) -> &mut Self {
+        let value = (value.iter())
+            .map(|held| Picked {
+                drawn: held.drawn(reader),
+                ..Picked::new(held.picked())
+            })
+            .collect();
+        self.reference(key, label, value, &P::picked_from(), multiple)
+    }
+
     /// Elements of the kinds `accepts` (see [`Reference`]), holding `value`.
     /// Required: see [`Dialog::optional`].
     pub fn reference(
@@ -543,7 +584,8 @@ impl<S: Scalar> Dialog<S> {
         })
     }
 
-    /// Every element its reference fields hold: what the step builds on.
+    /// What an editor draws of every element its reference fields hold:
+    /// what the step builds on, to light.
     pub fn picked(&self) -> impl Iterator<Item = &PickedElement> {
         self.0
             .iter()
@@ -551,7 +593,7 @@ impl<S: Scalar> Dialog<S> {
                 Control::Reference(r) => r.value.as_slice(),
                 _ => &[],
             })
-            .map(|p| &p.element)
+            .flat_map(|p| &p.drawn)
     }
 
     /// The labels of its reference fields that hold nothing yet: what the
@@ -647,15 +689,11 @@ mod tests {
             Control::Reference(Reference {
                 label: "sketch".into(),
                 accepts: vec!["sketch".into()],
-                value: vec![Picked {
-                    element: PickedElement {
-                        target: "k".into(),
-                        kind: "sketch".into(),
-                        name: String::new(),
-                    },
-                    detail: None,
-                    tone: Tone::Normal,
-                }],
+                value: vec![Picked::new(PickedElement {
+                    target: "k".into(),
+                    kind: "sketch".into(),
+                    name: String::new(),
+                })],
                 multiple: false,
                 required: true,
                 armed: false,

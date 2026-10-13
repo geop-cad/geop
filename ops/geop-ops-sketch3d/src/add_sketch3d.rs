@@ -2,43 +2,76 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve3D};
+use geop_core_editor::{
+    edit_form::{Edit, EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::CanvasEvent,
+    one_of, part_operation,
+    part_operation::PartOperation,
+};
+use geop_core_geometry::{
+    nurb_curve::{NurbCurve, NurbCurve3D},
+    shape::Axis,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     vector::Vector3,
     with_context,
 };
-use geop_core_program::{
-    operation::{OperationGroup, OperationInfo, OperationTier},
-    part::Retrieve,
-};
+use geop_core_program::element::{ElementReference, PickedElement};
 use geop_core_sketch::{
     ConstraintId, CurveId, PointId,
     space::{Constraint3d, CurveKind3d},
 };
 use geop_core_topology::build::{BodySpec, EdgeSpec};
-use geop_ops::{
-    BodyNames, Design, NamedModel, Namer,
-    model::{PlacedSketch3d, model_or_empty, sketch3d},
-    operation::{
-        Aspects, Build, BuildReader, EntityRef, Lookup, PartOperation, Scope, Seen, StepContext,
-        build_model,
-    },
-    part_operation,
-    ui::{CanvasEvent, Edit, EditForm, FormState},
+use geop_ops_datums::Datums;
+use geop_ops_model::{
+    BodyNames, Chain, Curve, Design, Line, ModelOperation, NamedModel, Namer, Point, build_model,
 };
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_sketch::PlacedSketch;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     Sketch3d,
     editor::{self, Sketch3dSession},
+    placed::{PlacedSketch3d, sketch3d},
 };
+
+one_of! {
+    /// A point of the part a 3-D sketch's fixed point is at: a vertex, a
+    /// datum point or a frame's origin, a sketch's point.
+    pub enum PointSource -> Vector3<Design> {
+        Vertex(ElementReference<NamedModel<Design>, Point>),
+        Datum(ElementReference<Datums, Point>),
+        Sketch(ElementReference<PlacedSketch<Design>, Point>),
+    }
+}
+
+one_of! {
+    /// A curve of the part a 3-D sketch's reference curve is: an edge, a
+    /// sketch's curve.
+    pub enum CurveSource -> Chain<NurbCurve3D<Design>> {
+        Edge(ElementReference<NamedModel<Design>, Curve>),
+        Sketch(ElementReference<PlacedSketch<Design>, Curve>),
+    }
+}
+
+one_of! {
+    /// A line of the part a 3-D sketch's direction runs along: a straight
+    /// edge, a datum axis or a frame's, a sketch's line.
+    pub enum LineSource -> Axis<Design> {
+        Edge(ElementReference<NamedModel<Design>, Line>),
+        Datum(ElementReference<Datums, Line>),
+        Sketch(ElementReference<PlacedSketch<Design>, Line>),
+    }
+}
 
 /// Adds a sketch in space to the part, named by the operation's id: points,
 /// lines, arcs through three points and splines through points, with the
 /// constraints of a 3-D sketch (see [`geop_core_sketch::space`]). The step
-/// `K` defines the part's 3-D sketch `K` (see [`geop_ops::model::sketch3d`]),
+/// `K` defines the part's 3-D sketch `K` (see [`sketch3d`]),
 /// a path as a whole, and builds it as a wire: an edge for every curve
 /// drawn, construction curves aside, and a vertex for every point a curve
 /// of it ends at or that stands on its own. Points made one by a
@@ -68,12 +101,35 @@ pub enum Target {
     Direction { constraint: ConstraintId },
 }
 
-/// Something of the sketch given by an entity of the part.
+/// Something of the sketch given by an element of the part: where a fixed
+/// point is, what a reference curve is, which way a direction runs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Reference3d {
-    pub entity: EntityRef,
-    #[serde(flatten)]
-    pub target: Target,
+#[serde(tag = "target", rename_all = "snake_case")]
+pub enum Reference3d {
+    Point { point: PointId, from: PointSource },
+    Curve { curve: CurveId, from: CurveSource },
+    Direction { constraint: ConstraintId, from: LineSource },
+}
+
+impl Reference3d {
+    /// What of the sketch it gives.
+    pub fn target(&self) -> Target {
+        match *self {
+            Reference3d::Point { point, .. } => Target::Point { point },
+            Reference3d::Curve { curve, .. } => Target::Curve { curve },
+            Reference3d::Direction { constraint, .. } => Target::Direction { constraint },
+        }
+    }
+
+    /// What of the part gives it, as a pick names it.
+    pub fn source(&self) -> PickedElement {
+        use geop_core_editor::selectable::Selectable;
+        match self {
+            Reference3d::Point { from, .. } => from.picked(),
+            Reference3d::Curve { from, .. } => from.picked(),
+            Reference3d::Direction { from, .. } => from.picked(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -101,46 +157,50 @@ fn to_design<S: Scalar>(curve: &NurbCurve3D<S>) -> GeopResult<NurbCurve3D<Design
 impl AddSketch3dArgs {
     /// The reference that gives `target`, if any.
     pub fn reference_of(&self, target: Target) -> Option<&Reference3d> {
-        self.references.iter().find(|r| r.target == target)
+        self.references.iter().find(|r| r.target() == target)
     }
 
     /// Forgets the references whose target the sketch no longer has.
     fn forget_dead_references(&mut self) {
         let sketch = &self.sketch;
-        self.references.retain(|r| match r.target {
+        self.references.retain(|r| match r.target() {
             Target::Point { point } => sketch.points.contains_key(&point),
             Target::Curve { curve } => sketch.curves.contains_key(&curve),
             Target::Direction { constraint } => sketch.constraints.contains_key(&constraint),
         });
     }
 
-    /// Brings what the part gives the sketch up to date with `lookup`:
-    /// moves its fixed points, hands in its reference curves' geometry,
-    /// turns its directions. Forgets references whose target is gone.
-    pub fn resolve<S: Scalar>(&mut self, lookup: &mut (impl Lookup<S> + ?Sized)) -> GeopResult<()> {
+    /// Brings what the part gives the sketch up to date with the part
+    /// `reader` reads: moves its fixed points, hands in its reference
+    /// curves' geometry, turns its directions. Forgets references whose
+    /// target is gone.
+    pub fn resolve(&mut self, reader: &PartReader) -> GeopResult<()> {
         self.forget_dead_references();
         for r in &self.references {
-            let ctx = with_context!("the 3-D sketch's reference to {}", r.entity);
-            let aspects = Aspects::of(&r.entity, lookup).with_context(ctx)?;
-            let missing = |what: &str| GeopError::new(format!("{} is not {what}", r.entity));
-            match r.target {
-                Target::Point { point } => {
-                    let at = aspects.point.ok_or_else(|| missing("a point"))?;
-                    let p = (self.sketch.points.get_mut(&point)).ok_or_else(|| {
+            let ctx = with_context!("the 3-D sketch's reference to {}", r.source().label());
+            match r {
+                Reference3d::Point { point, from } => {
+                    let at = from.resolve(reader).with_context(ctx)?;
+                    let p = (self.sketch.points.get_mut(point)).ok_or_else(|| {
                         GeopError::new(format!("the sketch has no point {point}"))
                     })?;
-                    p.at = at.map(|c| c.cast());
+                    p.at = at;
                     p.fixed = true;
                 }
-                Target::Curve { curve } => {
-                    let edge = aspects.curve.ok_or_else(|| missing("an edge"))?;
+                Reference3d::Curve { curve, from } => {
+                    let chain = from.resolve(reader).with_context(ctx)?;
+                    let [edge] = chain.curves.as_slice() else {
+                        return Err(GeopError::new("it is more than one curve")).with_context(ctx);
+                    };
                     self.sketch
                         .references
-                        .insert(curve, to_design(&edge).with_context(ctx)?);
+                        .insert(*curve, to_design(edge).with_context(ctx)?);
                 }
-                Target::Direction { constraint } => {
-                    let line = aspects.line.ok_or_else(|| missing("a line"))?;
-                    let d = line.direction.map(|c| c.cast());
+                &Reference3d::Direction {
+                    constraint,
+                    ref from,
+                } => {
+                    let d = from.resolve(reader).with_context(ctx)?.direction;
                     match self.sketch.constraints.get_mut(&constraint) {
                         Some(
                             Constraint3d::ParallelTo { direction, .. }
@@ -180,18 +240,18 @@ impl AddSketch3dArgs {
         self.forget_dead_references();
     }
 
-    /// The sketch built on what `lookup` has: what the part gives it
+    /// The sketch built on the part `reader` reads: what the part gives it
     /// brought up to date, solved anew where its constraints no longer hold
     /// as drawn — a sketch as it was drawn is as it was solved — and every
     /// curve of it checked to build.
-    pub fn build<S: Scalar>(&self, lookup: &mut (impl Lookup<S> + ?Sized)) -> GeopResult<Sketch3d> {
+    pub fn build(&self, reader: &PartReader) -> GeopResult<Sketch3d> {
         let mut args = self.clone();
-        args.resolve(lookup)?;
+        args.resolve(reader)?;
         let mut sketch = args.sketch;
         if !sketch.check()?.converged {
             sketch.solve()?;
         }
-        let geometry = sketch.enclose::<S>()?;
+        let geometry = sketch.enclose::<Design>()?;
         for (&id, curve) in &sketch.curves {
             if curve.is_drawn() {
                 sketch.curve_nurbs(id, &geometry)?;
@@ -203,22 +263,18 @@ impl AddSketch3dArgs {
 
 /// The 3-D sketch the step `step` draws with `args`, on the part before it,
 /// and the names of the edges it is built as.
-fn draw(
-    reader: &mut BuildReader,
-    (step, args): &(String, AddSketch3dArgs),
-) -> GeopResult<PlacedSketch3d> {
+fn draw(reader: &PartReader, (step, args): &(String, AddSketch3dArgs)) -> GeopResult<PlacedSketch3d> {
     let ctx = with_context!("add_sketch3d({step})");
-    let model = model_or_empty(reader);
-    let mut scope = Scope {
-        model: &model,
-        reader,
-    };
-    let sketch = args.build(&mut scope).with_context(ctx)?;
+    let sketch = args.build(reader).with_context(ctx)?;
     let namer = Namer::new("sketch3d", step).with_context(ctx)?;
     let edges = (drawn(&sketch).with_context(ctx)?.iter())
         .map(|(id, _)| namer.name(&[&id.to_string()]))
         .collect();
-    Ok(PlacedSketch3d { sketch, edges })
+    Ok(PlacedSketch3d {
+        name: step.clone(),
+        sketch,
+        edges,
+    })
 }
 
 /// The curves of `sketch` its wire has an edge for — those drawn, but for
@@ -300,8 +356,8 @@ pub type Sketch3dEditing = FormState<Sketch3dSession>;
 part_operation!(AddSketch3d(AddSketch3dArgs));
 
 impl PartOperation for AddSketch3d {
+    const KIND: &'static str = "add_sketch3d";
     const INFO: OperationInfo = OperationInfo::new(
-        "add_sketch3d",
         "3-D sketch",
         "Draw points, lines, arcs and splines in space: paths to sweep along.",
         OperationGroup::Sketch,
@@ -309,6 +365,9 @@ impl PartOperation for AddSketch3d {
     )
     .icon(crate::icons::ADD_SKETCH3D);
     type Args = AddSketch3dArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = Sketch3dSession;
 
     /// An empty sketch: the first click starts drawing.
@@ -318,25 +377,9 @@ impl PartOperation for AddSketch3d {
 
     /// Defines the 3-D sketch named after the step, and builds it as a
     /// wire.
-    fn run(step: &str, part: &mut Build, args: &AddSketch3dArgs) -> GeopResult<()> {
+    fn run(step: &str, part: &mut BuildPart, args: &AddSketch3dArgs) -> GeopResult<()> {
         part.define_target(&sketch3d(step), &(step.to_string(), args.clone()), draw)?;
         build_model::<Self>(part, step, args)
-    }
-
-    /// Builds the 3-D sketch the step defined as a wire (see
-    /// [`AddSketch3d`]).
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        _: &AddSketch3dArgs,
-    ) -> GeopResult<()> {
-        let placed = reader.retrieve_target(&sketch3d(step))?;
-        let namer = Namer::new("sketch3d", step)?;
-        if let Some((spec, names)) = wire_of(&placed.sketch, &namer)? {
-            model.build_body(spec, names)?;
-        }
-        Ok(())
     }
 
     /// The tools, the coordinates of a point, the constraints: see
@@ -346,7 +389,7 @@ impl PartOperation for AddSketch3d {
         args: &AddSketch3dArgs,
         editing: &Sketch3dEditing,
     ) -> EditForm<'a, Design, AddSketch3dArgs, Sketch3dSession> {
-        editor::form(context.before, args, &editing.session, &editing.selection)
+        editor::form(&context.before, args, &editing.session, &editing.selection)
     }
 
     fn canvas(
@@ -354,6 +397,25 @@ impl PartOperation for AddSketch3d {
         edit: Edit<'_, AddSketch3dArgs, Sketch3dSession>,
         event: &CanvasEvent<Design>,
     ) {
-        editor::event(&Seen::new(context.before), context.scene, edit, event)
+        editor::event(&context.before, context.scene, edit, event)
+    }
+}
+
+impl ModelOperation for AddSketch3d {
+    /// Builds the 3-D sketch the step defined as a wire (see
+    /// [`AddSketch3d`]).
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &PartReader,
+        step: &str,
+        _: &AddSketch3dArgs,
+    ) -> GeopResult<()> {
+        let whole = ElementReference::<PlacedSketch3d, PlacedSketch3d>::whole(sketch3d(step));
+        let placed = reader.retrieve_element(&whole)?;
+        let namer = Namer::new("sketch3d", step)?;
+        if let Some((spec, names)) = wire_of(&placed.sketch, &namer)? {
+            model.build_body(spec, names)?;
+        }
+        Ok(())
     }
 }

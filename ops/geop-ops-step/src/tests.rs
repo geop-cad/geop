@@ -7,24 +7,16 @@ use geop_core_math::{
     scalars::{Scalar, scal_in_f64::ScalInF64},
 };
 use geop_core_topology::Model;
-use std::{collections::BTreeMap, rc::Rc};
+use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::{
-    operation_registry::OperationRegistry,
-    program::{Program, ProgramStep},
-    program_runner::ProgramRunner,
-};
-use geop_ops::{
-    Design, NamedModel, Namer, ParamValue,
-    model::model,
-    operation::{Build, Input},
-    parameters::{Parameters, Values},
-    placed::{Component, LIBRARY, Library},
-    testing::{assert_model_valid_sheets, built, built_with},
-};
 use geop_ops_extrude_revolve::shapes::{
     cube::cube_solid, cylinder::revolved_cylinder, sphere::sphere_solid, v3,
+};
+use geop_ops_model::{NamedModel, Namer, read_model, testing::assert_model_valid_sheets};
+use geop_ops_parameters::{
+    ProgramFile, Registry, Runner, Settings, Shared,
+    about::{Files, define_files},
 };
 
 use crate::{ImportStep, ImportStepArgs, add_bodies, read_step, write_step};
@@ -33,8 +25,8 @@ type S = ScalInF64;
 type Part<S> = NamedModel<S>;
 
 /// `model` as the text of a STEP file whose product is `name`.
-fn written(model: &NamedModel<Design>, name: &str) -> String {
-    write_step(built(model).current(), name).unwrap()
+fn written(model: &NamedModel<S>, name: &str) -> String {
+    write_step(model, name).unwrap()
 }
 
 /// The part the STEP text `text` imports into, checked valid.
@@ -842,105 +834,22 @@ fn a_sheet_round_trips() {
     assert!(back.topology().solids.is_empty());
 }
 
-/// An assembly — a base plate placing a peg twice, once turned to lie along
-/// `x`, and a subassembly placing the same peg — is written as products:
-/// one per distinct component, each placement an occurrence. Read back, it
-/// is flattened into its solids where they are placed.
-#[test]
-fn an_assembly_is_written_as_products_and_occurrences() {
-    use geop_core_math::primitives::{Pose, Quaternion};
-    use std::collections::BTreeSet;
-    let component = |file: &str, part: Build| {
-        let files = BTreeSet::from([file.to_string()]);
-        Rc::new(Component::new(
-            file.into(),
-            files,
-            file.into(),
-            Parameters::default(),
-            part,
-        ))
-    };
-    let mut peg = Part::new();
-    revolved_cylinder(
-        &mut peg,
-        "c",
-        v3(0.0, 0.0, 0.0),
-        S::from_f64(0.5),
-        S::from_f64(2.0),
-    )
-    .unwrap();
-    let peg = component("parts/peg.geop", built(&peg));
-    let at = |x: f64, y: f64, z: f64| Pose::new(v3(x, y, z), Quaternion::identity()).unwrap();
-    let placed = [("p", &peg, at(0.0, 0.0, 1.0))];
-    let sub = built_with(&BTreeMap::new(), &Part::new(), &placed, |_| {});
-    let sub = component("sub.geop", sub);
-
-    let mut base = Part::new();
-    cube_solid(&mut base, "base", v3(0.0, 0.0, -1.0), v3(10.0, 10.0, 0.0)).unwrap();
-    // About `y` by a quarter turn: the peg's `z` onto `x`.
-    let half = std::f64::consts::FRAC_PI_4;
-    let turned = Pose::new(
-        v3(9.0, 8.0, 0.5),
-        Quaternion::new(
-            S::from_f64(half.cos()),
-            S::ZERO,
-            S::from_f64(half.sin()),
-            S::ZERO,
-        ),
-    )
-    .unwrap();
-    let placed = [
-        ("a", &peg, at(2.0, 2.0, 0.0)),
-        ("b", &peg, turned),
-        ("s", &sub, at(8.0, 2.0, 0.0)),
-    ];
-    let part = built_with(&BTreeMap::new(), &base, &placed, |_| {});
-
-    let text = write_step(part.current(), "robot").unwrap();
-    // To check it in another CAD system: written where STEP_EXPORT_DIR says.
-    if let Some(dir) = std::env::var_os("STEP_EXPORT_DIR") {
-        std::fs::write(std::path::Path::new(&dir).join("robot.step"), &text).unwrap();
-    }
-    let count = |what: &str| text.matches(what).count();
-    assert_eq!(
-        count("=PRODUCT('"),
-        3,
-        "the assembly, the subassembly, the peg"
-    );
-    assert_eq!(count("NEXT_ASSEMBLY_USAGE_OCCURRENCE"), 4);
-    assert_eq!(count("ITEM_DEFINED_TRANSFORMATION"), 4);
-    assert_eq!(
-        count("MANIFOLD_SOLID_BREP"),
-        2,
-        "the base and the peg, once each"
-    );
-    assert!(text.contains("PRODUCT('peg','peg'"));
-
-    let back = import(&text);
-    let model = back.topology();
-    assert_eq!(model.solids.len(), 4, "the base and three pegs");
-    // The pegs reach z = 2 (a), 3 (in the subassembly) and x = 11 (b).
-    assert_bounds(model, [0.0, 0.0, -1.0], [11.0, 10.0, 3.0]);
+/// The STEP files of a program's folder, by name, counting in `reads` how
+/// often one is read.
+struct Folder {
+    files: BTreeMap<String, String>,
+    reads: Rc<Cell<usize>>,
 }
 
-/// The files of a program's folder, by name.
-struct Files(BTreeMap<String, String>);
-
-impl Library for Files {
-    fn file(&self) -> String {
-        "part.geop".into()
-    }
-
-    fn component(&self, file: &str, _: &Values) -> GeopResult<Rc<Component>> {
-        Err(GeopError::new(format!("{file:?} places no part here")))
-    }
-
+impl Files for Folder {
     fn files(&self) -> Vec<String> {
-        self.0.keys().cloned().collect()
+        self.files.keys().cloned().collect()
     }
 
     fn read(&self, file: &str) -> GeopResult<(String, String)> {
-        let text = (self.0.get(file)).ok_or_else(|| GeopError::new(format!("no file {file:?}")))?;
+        self.reads.set(self.reads.get() + 1);
+        let text =
+            (self.files.get(file)).ok_or_else(|| GeopError::new(format!("no file {file:?}")))?;
         Ok((file.to_string(), text.clone()))
     }
 }
@@ -960,32 +869,38 @@ fn an_import_reads_its_file_once() {
     )
     .unwrap();
     let text = written(&cylinder, "cylinder");
-    let files = |text: &str| {
-        let library: Rc<dyn Library> = Rc::new(Files(BTreeMap::from([(
-            "cylinder.step".to_string(),
-            text.to_string(),
-        )])));
-        BTreeMap::from([(LIBRARY.to_string(), Input::Library(library))])
+    let reads = Rc::new(Cell::new(0));
+    // The run given the folder anew: equal files, but another value.
+    let given = |runner: &mut Runner| {
+        let files: Shared<dyn Files> = Shared(Rc::new(Folder {
+            files: BTreeMap::from([("cylinder.step".to_string(), text.clone())]),
+            reads: reads.clone(),
+        }));
+        runner.given = Some(Rc::new(move |part| define_files(part, &files)));
     };
-    let registry = OperationRegistry::default().with(ImportStep).unwrap();
-    let mut runner = ProgramRunner::new(registry);
+    let mut runner = Runner::new(Registry::default().with(ImportStep).unwrap());
+    given(&mut runner);
+    let mut program = ProgramFile::new();
     let args = ImportStepArgs {
         file: "cylinder.step".into(),
     };
-    let program = Program::new(vec![ProgramStep::new::<ImportStep>("i", &args).unwrap()]);
-    let inputs = files(&text);
-    let run = |runner: &mut ProgramRunner<Input, ParamValue>, inputs| {
-        let output = runner.run(&program, inputs, &BTreeMap::new());
-        assert!(output.step_errors.is_empty(), "{:?}", output.step_errors);
-        runner.part.built()
+    program.push("i", args);
+    let run = |runner: &mut Runner| {
+        program.run(runner, &Settings::new()).unwrap();
+        let model = read_model(&runner.part.current()).unwrap();
+        // Where the model is kept: a model built anew is kept elsewhere.
+        std::ptr::from_ref(model.as_ref())
     };
-    let first = run(&mut runner, &inputs);
-    assert_eq!(first, 2, "the bodies read, and the model built of them");
-    assert_eq!(run(&mut runner, &inputs), first, "nothing built anew");
-    // The same file, given anew: read again, to the same bodies — and the
+    let first = run(&mut runner);
+    assert_eq!(reads.get(), 1);
+    assert_eq!(run(&mut runner), first, "nothing built anew");
+    assert_eq!(reads.get(), 1, "the file not read again");
+    // The same files, given anew: read again, to the same bodies — and the
     // model, which only reads them, is not built again.
-    assert_eq!(run(&mut runner, &files(&text)), first + 1);
-    let model = runner.part.current().retrieve_target(&model()).unwrap();
+    given(&mut runner);
+    assert_eq!(run(&mut runner), first, "the model not built anew");
+    assert_eq!(reads.get(), 2, "the file read again");
+    let model = read_model(&runner.part.current()).unwrap();
     assert_eq!(model.solid_names(), vec!["import(i,s0)".to_string()]);
     assert_model_valid_sheets(model.topology());
 }

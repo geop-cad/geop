@@ -5,7 +5,7 @@ use geop_core_editor::{
     editable::{Context, Editable, Editors, OperationGroup, OperationInfo, OperationTier},
     editing::{
         CanvasEvent, Control, Event, Form, Number, Picked, Pointer, Reach, Shape, StepEditEvent,
-        Style, Tone, Track, Unit, Value, Visual,
+        Style, Track, Unit, Value, Visual,
         hit::{ElementHit, Scene},
     },
     numeric_input::NumericInput,
@@ -153,11 +153,7 @@ fn face(name: &str) -> PickedElement {
 /// `elements`, as a reference field holds them.
 fn picked(elements: &[PickedElement]) -> Vec<Picked> {
     (elements.iter().cloned())
-        .map(|element| Picked {
-            element,
-            detail: None,
-            tone: Tone::Normal,
-        })
+        .map(Picked::new)
         .collect()
 }
 

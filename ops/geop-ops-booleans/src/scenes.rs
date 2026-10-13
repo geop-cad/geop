@@ -12,7 +12,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_topology::{SolidId, validation::ValidationParameters};
-use geop_ops::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer};
 use geop_ops_extrude_revolve::shapes::{
     block, cylinder, figure8_profile::figure8_profile, sphere::sphere_solid,
 };

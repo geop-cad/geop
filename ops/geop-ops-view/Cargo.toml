@@ -1,0 +1,10 @@
+[package]
+name = "geop-ops-view"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-program.workspace = true
+geop-core-editor.workspace = true
+serde.workspace = true

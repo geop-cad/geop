@@ -26,7 +26,7 @@ use geop_core_topology::{
     Curve3, Sense,
     build::{BodySpec, BuiltBody, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
-use geop_ops::{BodyNames, NamedModel, Namer};
+use geop_ops_model::{BodyNames, NamedModel, Namer};
 
 /// A vertex of the A side, and where it is on the B side.
 #[derive(Clone, Debug)]

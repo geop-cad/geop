@@ -1,23 +1,21 @@
 //! Sketches built on the part: what they project of it, and the
 //! parameters their dimensions follow.
 
-use geop_ops::operation::ResolveEntity;
-use std::collections::BTreeMap;
+use std::{borrow::Cow, collections::BTreeMap};
 
+use geop_core_editor::selectable::Selectable;
 use geop_core_math::{
     primitives::FrameAxis,
     scalars::{ScalInF64 as S, Scalar},
 };
 use geop_core_sketch::PointId;
-use geop_ops::{
-    Design, EntityRef, ParamValue, PlacedSketch,
-    operation::{Aspects, BuildView, Input, Lookup, Seen},
-    parameters::{COLOR, ParameterKind},
-    placed::{locate, placed_parts},
-};
+use geop_ops_assembly::placed::{Placed, locate, placed_parts};
+use geop_ops_model::{Design, Point, element, read_model};
+use geop_ops_parameters::{COLOR, ParameterKind, PartReader, Setting, Settings, read_about};
 use geop_ops_sketch::{
-    AddSketchArgs, CurveKind, Sketch,
-    references::{Reference, Source},
+    AddSketchArgs, CurveKind, PlacedSketch, Sketch, SketchPlane,
+    references::{Projected, Reference, Source},
+    sketch_element, whole_sketch,
 };
 
 use super::program_tests::Running;
@@ -25,34 +23,51 @@ use crate::{
     Program, examples,
     operations::{
         Runner,
-        testing::{Built, args, origin_plane, sketch},
+        testing::{Built, args, from_above, on_face, on_origin, sketch},
     },
 };
 
 /// The sketch `name` of the part `runner` built.
 fn placed_sketch(runner: &Runner, name: &str) -> PlacedSketch<Design> {
-    Seen::new(runner.part.current())
-        .sketch(name)
+    let reader = runner.part.current();
+    reader
+        .retrieve_element(&whole_sketch(name))
         .unwrap()
         .clone()
 }
 
-/// The value of the parameter `name` the part `view` shows was built with.
-fn input(view: BuildView, name: &str) -> Option<ParamValue> {
-    match view.retrieve_input(name)? {
-        Input::Value(value) => Some(value),
-        Input::Library(_) | Input::About(_) => None,
+/// The value of the parameter `name` the part `view` shows was built with:
+/// what its program chose — a table's row, a number, the colour — or a
+/// number it was given, a table's column among them.
+fn input(view: &PartReader, name: &str) -> Option<Setting> {
+    match read_about(view).ok()?.chosen.get(name) {
+        Some(setting) => Some(setting.clone()),
+        None => view
+            .retrieve_input(name)
+            .map(|v| Setting::Number(v.to_f64())),
     }
+}
+
+/// The point `p2` of the sketch `outline` of the part `view`, in space.
+fn outline_corner(view: &PartReader) -> [f64; 3] {
+    let corner = view.retrieve_element(&sketch_element::<Point>("outline", PointId(2)));
+    let p = corner.unwrap();
+    [0, 1, 2].map(|k| p[k].to_f64())
+}
+
+/// The top face of the box of [`examples::box_with_drill_hole`].
+fn box_top() -> Projected {
+    Projected::Face(element("extrude(box,end)"))
 }
 
 /// `entity` of `part` projected into a new sketch on `plane`: the sketch,
 /// and the reference that gave it.
-fn projected(part: &Runner, plane: &EntityRef, entity: EntityRef) -> (Sketch, Reference) {
-    let mut seen = Seen::new(part.part.current());
-    let frame = plane.resolve_plane(&mut seen).unwrap();
+fn projected(part: &Runner, plane: &SketchPlane, entity: Projected) -> (Sketch, Reference) {
+    let reader = part.part.current();
+    let frame = plane.resolve(&reader).unwrap();
     let mut sketch = Sketch::new();
     let mut reference = Reference::new(Source::Projection { entity });
-    reference.update(&mut sketch, &mut seen, &frame).unwrap();
+    reference.update(&mut sketch, &reader, &frame).unwrap();
     sketch.validate().unwrap();
     (sketch, reference)
 }
@@ -81,10 +96,8 @@ fn kinds(sketch: &Sketch) -> Vec<&'static str> {
 #[test]
 fn projections_read_lines_arcs_and_splines() {
     let part = examples::box_with_drill_hole().built().unwrap();
-    let top = EntityRef::Face {
-        name: "extrude(box,end)".into(),
-    };
-    let (sketch, reference) = projected(&part, &origin_plane(FrameAxis::Z), top.clone());
+    let top = box_top();
+    let (sketch, reference) = projected(&part, &on_origin(FrameAxis::Z), top.clone());
     let round = kinds(&sketch)
         .iter()
         .filter(|k| **k == "arc" || **k == "circle")
@@ -110,7 +123,7 @@ fn projections_read_lines_arcs_and_splines() {
     // Seen from the front the top is edge-on: its edges along the view are
     // points, the others lines, and the hole's circle the line it collapses
     // to — no spline lying flat along one.
-    let (front, _) = projected(&part, &origin_plane(FrameAxis::Y), top);
+    let (front, _) = projected(&part, &on_origin(FrameAxis::Y), top);
     assert!(front.validate().is_ok());
     let kinds = kinds(&front);
     assert!(
@@ -125,12 +138,10 @@ fn projections_read_lines_arcs_and_splines() {
 #[test]
 fn projections_follow_the_part() {
     let mut program = examples::parametric_plate();
-    let mut on_floor = AddSketchArgs::new(Some(origin_plane(FrameAxis::Z)));
+    let mut on_floor = AddSketchArgs::new(Some(on_origin(FrameAxis::Z)));
     // What it projects is put into the sketch when it is built.
     on_floor.references.push(Reference::new(Source::Projection {
-        entity: EntityRef::Face {
-            name: "extrude(plate,end)".into(),
-        },
+        entity: Projected::Face(element("extrude(plate,end)")),
     }));
     // Right after the plate: the hole renames the faces it cuts.
     let mut floor = Program::new();
@@ -170,16 +181,9 @@ fn dimensions_follow_parameters() {
     let program = examples::parametric_plate();
     let part = program.built().unwrap();
     let view = part.part.current();
-    assert_eq!(input(view, COLOR), Some(ParamValue::Text("#d0893e".into())));
-    let corner = EntityRef::SketchPoint {
-        sketch: "outline".into(),
-        point: PointId(2),
-    };
-    let p = Aspects::of(&corner, &mut Seen::new(view))
-        .unwrap()
-        .point
-        .unwrap();
-    assert!((p[0].to_f64() - 4.0).abs() < 1e-9 && (p[1].to_f64() - 2.0).abs() < 1e-9);
+    assert_eq!(input(&view, COLOR), Some(Setting::Text("#d0893e".into())));
+    let p = outline_corner(&view);
+    assert!((p[0] - 4.0).abs() < 1e-9 && (p[1] - 2.0).abs() < 1e-9);
     // Read back from JSON, the same.
     let json = program.to_json().unwrap();
     assert!(json.contains("screw.clearance"), "{json}");
@@ -197,21 +201,16 @@ fn placed_parts_take_the_parameters_given() {
         examples::parametric_plate().to_json().unwrap(),
     )]));
     let program = examples::plates_assembly();
-    let mut runner = super::runner();
-    let given = program.inputs(&Default::default(), workspace.scope("plates.geop"));
-    let output = runner.run(&program.program, &given, &program.state);
-    assert!(output.step_errors.is_empty(), "{:?}", output.step_errors);
+    let runner = super::build(&program, "plates.geop", workspace.scope("plates.geop")).unwrap();
     let view = runner.part.current();
-    // An entity of a placed part, where it is placed.
+    // An element of a placed part, where it is placed.
     let corner = |instance: &str| {
-        let located = locate(&mut view.clone(), instance).unwrap();
-        let entity = EntityRef::SketchPoint {
-            sketch: "outline".into(),
-            point: PointId(2),
-        };
-        let mut seen = Seen::new(located.instance.component.view());
-        let aspects = Aspects::of(&entity, &mut seen).unwrap();
-        let p = aspects.placed(&located.world).unwrap().point.unwrap();
+        let located = locate(&view, instance).unwrap();
+        let component = located.instance.component.reader();
+        let reference = sketch_element::<Point>("outline", PointId(2));
+        let p = located
+            .world
+            .apply(&component.retrieve_element(&reference).unwrap());
         [p[0].to_f64(), p[1].to_f64()]
     };
     let small = corner("small");
@@ -225,20 +224,19 @@ fn placed_parts_take_the_parameters_given() {
         (large[0] - 5.0).abs() < 1e-9 && (large[1] - 5.5).abs() < 1e-9,
         "{large:?}"
     );
-    let placed = placed_parts(view).unwrap();
-    let color =
-        |part: &geop_ops::placed::Placed| input(part.located.instance.component.view(), COLOR);
-    let colors: Vec<Option<ParamValue>> = placed.iter().map(color).collect();
-    let text = |c: &str| Some(ParamValue::Text(c.into()));
+    let placed = placed_parts(&view).unwrap();
+    let color = |part: &Placed| input(&part.located.instance.component.reader(), COLOR);
+    let colors: Vec<Option<Setting>> = placed.iter().map(color).collect();
+    let text = |c: &str| Some(Setting::Text(c.into()));
     assert!(colors.contains(&text("#3e7bd0")), "{colors:?}");
     assert!(colors.contains(&text("#d0893e")), "{colors:?}");
     // The table's row and the number given are what the large plate was
     // built with.
     let large = placed.iter().find(|p| color(p) == text("#3e7bd0")).unwrap();
-    let large = large.located.instance.component.view();
-    assert_eq!(input(large, "screw"), text("M6"));
-    let clearance = match input(large, "screw.clearance") {
-        Some(ParamValue::Number(v)) => Some(v.to_f64()),
+    let large = large.located.instance.component.reader();
+    assert_eq!(input(&large, "screw"), text("M6"));
+    let clearance = match input(&large, "screw.clearance") {
+        Some(Setting::Number(v)) => Some(v),
         _ => None,
     };
     assert_eq!(clearance, Some(0.66));
@@ -316,7 +314,7 @@ fn wide_plate_with_an_m6_hole() {
 fn placing_a_part_offers_its_parameters() {
     use crate::operations::testing::handled;
     use crate::{Command, Editor};
-    use geop_ops::ui::{Control, StepEditEvent, Value};
+    use geop_core_editor::editing::{Control, StepEditEvent, Value};
     let mut editor = Editor::new();
     let files = BTreeMap::from([(
         "plate.geop".to_string(),
@@ -366,7 +364,7 @@ fn placing_a_part_offers_its_parameters() {
     );
     handled(&mut editor, Command::Commit);
     let args: geop_ops_assembly::AddPartArgs = args(&editor.program().program.steps[1]);
-    assert_eq!(args.parameters["screw"], ParamValue::Text("M3".into()));
+    assert_eq!(args.parameters["screw"], Setting::Text("M3".into()));
 }
 
 /// The project field of a sketch takes edges, vertices and faces of the
@@ -377,7 +375,7 @@ fn placing_a_part_offers_its_parameters() {
 fn the_project_field_projects_what_is_picked() {
     use crate::operations::testing::handled;
     use crate::{Command, Editor};
-    use geop_ops::ui::{Control, StepEditEvent, Value};
+    use geop_core_editor::editing::{Control, StepEditEvent, Value};
     let mut editor = Editor::new();
     let mut program = examples::parametric_plate();
     program.program.steps.truncate(2);
@@ -393,16 +391,14 @@ fn the_project_field_projects_what_is_picked() {
     editor.handle(Command::New {
         kind: "add_sketch".into(),
     });
-    let top = EntityRef::Face {
-        name: "extrude(plate,end)".into(),
-    };
+    let top = on_face("extrude(plate,end)");
     let dialog = |key: &str, value: Value| Command::Event {
         event: StepEditEvent::Dialog {
             key: key.into(),
             value,
         },
     };
-    editor.handle(dialog("plane", Value::Entities(vec![top])));
+    editor.handle(dialog("plane", Value::Elements(vec![top.picked()])));
     let update = editor.handle(Command::Show);
     let step = update.step.unwrap();
     assert!(
@@ -414,10 +410,11 @@ fn the_project_field_projects_what_is_picked() {
         step.presentation.dialog.get("project"),
         Some(Control::Reference(r)) if !r.armed && !r.required
     ));
-    let edge = EntityRef::Edge {
-        name: "extrude(plate,outline,c4,end)".into(),
-    };
-    handled(&mut editor, dialog("project", Value::Entities(vec![edge])));
+    let edge = Projected::Edge(element("extrude(plate,outline,c4,end)"));
+    handled(
+        &mut editor,
+        dialog("project", Value::Elements(vec![edge.picked()])),
+    );
     let projected = |editor: &Editor| {
         let args: AddSketchArgs = args(editor.editing().unwrap());
         let curves: Vec<_> = args
@@ -430,7 +427,7 @@ fn the_project_field_projects_what_is_picked() {
         curves.len()
     };
     assert_eq!(projected(&editor), 1);
-    editor.handle(dialog("project", Value::Entities(vec![])));
+    editor.handle(dialog("project", Value::Elements(vec![])));
     assert_eq!(projected(&editor), 0);
 }
 
@@ -470,8 +467,8 @@ fn parameters_are_edited_and_undone() {
         .program
         .unwrap();
     assert_eq!(
-        geop_ops::parameters::number(&state.parameters.values, "depth"),
-        Some(1.0)
+        state.parameters.values.get("depth"),
+        Some(&Setting::Number(1.0))
     );
     assert!(
         state.steps.iter().all(|s| s.error.is_none()),
@@ -556,27 +553,15 @@ fn the_structure_is_listed_and_shown_as_chosen() {
 fn parameters_changed_rebuild_what_reads_them() {
     use crate::operations::testing::handled;
     use crate::{Command, Editor};
-    use geop_ops::parameters::{Parameter, Row};
-    use geop_ops::ui::{Shape, StepEditEvent, Value};
+    use geop_core_editor::editing::{Control, Shape, StepEditEvent, Tone, Value};
+    use geop_ops_parameters::{Parameter, Parameters, parameters::Row};
     let mut editor = Editor::new();
     let program = examples::parametric_plate();
     editor.handle(Command::Load {
         program: program.clone(),
         path: None,
     });
-    let corner_x = |view: BuildView| {
-        Aspects::of(
-            &EntityRef::SketchPoint {
-                sketch: "outline".into(),
-                point: PointId(2),
-            },
-            &mut Seen::new(view),
-        )
-        .unwrap()
-        .point
-        .unwrap()[0]
-            .to_f64()
-    };
+    let corner_x = |view: PartReader| outline_corner(&view)[0];
     assert!((corner_x(editor.part()) - 4.0).abs() < 1e-9);
     // Its state is where its parts are — it places none.
     assert!(
@@ -585,7 +570,7 @@ fn parameters_changed_rebuild_what_reads_them() {
         editor.program().state
     );
     let mut parameters = program.parameters.clone();
-    let set_width = |parameters: &mut geop_ops::parameters::Parameters, w: &str| {
+    let set_width = |parameters: &mut Parameters, w: &str| {
         let ParameterKind::Number { expression, .. } = &mut parameters.values[0].kind else {
             panic!("width is a number")
         };
@@ -620,7 +605,10 @@ fn parameters_changed_rebuild_what_reads_them() {
         (corner_built - 5.0).abs() < 1e-9,
         "the program itself: {corner_built}"
     );
-    let sketch_of = |view: BuildView| Seen::new(view).sketch("outline").unwrap().sketch.clone();
+    let sketch_of = |view: PartReader| {
+        let placed = view.retrieve_element(&whole_sketch("outline"));
+        placed.unwrap().sketch.clone()
+    };
     assert!(
         (corner_x(editor.part()) - 5.0).abs() < 1e-9,
         "{}: {:?} vs built {:?}",
@@ -698,15 +686,15 @@ fn parameters_changed_rebuild_what_reads_them() {
     assert!(
         !matches!(
             hint,
-            Some(geop_ops::ui::Control::Text {
-                tone: geop_ops::ui::Tone::Error,
+            Some(Control::Text {
+                tone: Tone::Error,
                 ..
             })
         ),
         "{hint:?}"
     );
     let sketch: AddSketchArgs = args(editor.editing().unwrap());
-    assert_eq!(sketch.formulas[&diameter], "size.diameter");
+    assert_eq!(sketch.formulas[&diameter], "size.diameter".into());
     handled(&mut editor, Command::Commit);
 }
 
@@ -715,29 +703,15 @@ fn parameters_changed_rebuild_what_reads_them() {
 fn runners_rebuild_when_parameters_change() {
     let mut program = examples::parametric_plate();
     let mut running = Running::new();
-    let corner = |running: &Running| {
-        Aspects::of(
-            &EntityRef::SketchPoint {
-                sketch: "outline".into(),
-                point: PointId(2),
-            },
-            &mut Seen::new(running.runner.part.current()),
-        )
-        .unwrap()
-        .point
-        .unwrap()[0]
-            .to_f64()
-    };
+    let corner = |running: &Running| outline_corner(&running.runner.part.current())[0];
     assert_eq!(running.run(&program, None), []);
     assert!((corner(&running) - 4.0).abs() < 1e-9);
     let ParameterKind::Number { expression, .. } = &mut program.parameters.values[0].kind else {
         panic!("width is a number")
     };
     *expression = "5".into();
-    assert_eq!(
-        geop_ops::parameters::number(&program.values(&Default::default()), "width"),
-        Some(5.0)
-    );
+    let resolved = program.parameters.resolve(&Settings::new());
+    assert_eq!(resolved.numbers.get("width").map(|w| w.to_f64()), Some(5.0));
     assert_eq!(running.run(&program, None), []);
     assert!(
         (corner(&running) - 5.0).abs() < 1e-9,
@@ -753,23 +727,13 @@ fn runners_rebuild_when_parameters_change() {
 fn sketches_undo_their_own_edits() {
     use crate::operations::testing::{handled, loaded};
     use crate::{Command, Editor};
-    use geop_core_math::primitives::Ray;
-    use geop_ops::ui::{Button, Pointer, Reach, StepEditEvent};
+    use geop_core_editor::editing::{Button, StepEditEvent};
     let mut editor = loaded(Program::new());
     editor.handle(Command::New {
         kind: "add_sketch".into(),
     });
     let event = |editor: &mut Editor, event| editor.handle(Command::Event { event });
-    let down = |x: f64, y: f64| Pointer {
-        ray: Ray::try_new(
-            geop_core_math::vector::Vector3::from_array([x, y, 10.0].map(S::from_f64)),
-            geop_core_math::vector::Vector3::from_array([0.0, 0.0, -1.0].map(S::from_f64)),
-        )
-        .unwrap(),
-        reach: Reach::Tube {
-            radius: S::from_f64(0.009),
-        },
-    };
+    let down = from_above;
     let click = |editor: &mut Editor, x, y| {
         event(
             editor,
@@ -866,10 +830,7 @@ fn sketches_undo_their_own_edits() {
 #[test]
 fn drawing_on_an_edge_on_projection() {
     let part = examples::box_with_drill_hole().built().unwrap();
-    let top = EntityRef::Face {
-        name: "extrude(box,end)".into(),
-    };
-    let (mut sketch, reference) = projected(&part, &origin_plane(FrameAxis::Y), top);
+    let (mut sketch, reference) = projected(&part, &on_origin(FrameAxis::Y), box_top());
     // Down from the top's two projected corners, and across.
     let corners: Vec<_> = reference.points.values().copied().collect();
     let xs: Vec<f64> = corners
@@ -913,8 +874,8 @@ fn parameters_no_step_reads_rebuild_nothing() {
     program.parameters.color = Some("#123456".into());
     assert_eq!(running.run(&program, None), []);
     assert_eq!(
-        input(running.runner.part.current(), COLOR),
-        Some(ParamValue::Text("#123456".into()))
+        input(&running.runner.part.current(), COLOR),
+        Some(Setting::Text("#123456".into()))
     );
     // Counted, not timed: no step read the colour, so none is built again.
     assert_eq!(
@@ -923,8 +884,8 @@ fn parameters_no_step_reads_rebuild_nothing() {
         "a colour change rebuilt steps"
     );
     assert_eq!(
-        geop_ops::PartDescription::of(&running.model()).unwrap(),
-        geop_ops::PartDescription::of(&built).unwrap()
+        geop_ops_model::PartDescription::of(&running.model()).unwrap(),
+        geop_ops_model::PartDescription::of(&built).unwrap()
     );
 }
 
@@ -940,9 +901,9 @@ fn colours_are_picked_without_rebuilding() {
         path: None,
     });
     // What the program built: kept, not built again, it is the very same.
-    let model = |editor: &Editor| {
-        let built = editor.part().retrieve_target(&geop_ops::model()).unwrap();
-        built as *const _ as usize
+    let model = |editor: &Editor| match read_model(&editor.part()) {
+        Ok(Cow::Borrowed(built)) => built as *const _ as usize,
+        other => panic!("no model built: {:?}", other.err()),
     };
     let before = model(&editor);
     let mut parameters = program.parameters.clone();
@@ -967,22 +928,21 @@ mod tools {
     use std::f64::consts::PI;
 
     use geop_core_sketch::{copies::Step, offset::Corners};
-    use geop_ops::Design;
     use geop_ops_booleans::Combine;
     use geop_ops_extrude_revolve::Extents;
     use geop_ops_sketch::Constraint;
 
     use super::*;
     use crate::examples::{circle, n, rectangle, solved};
-    use crate::operations::testing::{check_valid, extrusion, origin_plane};
+    use crate::operations::testing::{check_valid, extrusion};
 
     /// `sketch`, solved, on the origin's `xy` plane, extruded up by
     /// `height`: the part, checked to be valid.
-    fn extruded(sketch: Sketch, height: f64) -> geop_ops::NamedModel<S> {
+    fn extruded(sketch: Sketch, height: f64) -> geop_ops_model::NamedModel<S> {
         let mut program = Program::new();
         program.push(
             "outline",
-            crate::operations::testing::sketch(origin_plane(FrameAxis::Z), solved(sketch)),
+            crate::operations::testing::sketch(on_origin(FrameAxis::Z), solved(sketch)),
         );
         program.push(
             "body",
@@ -1112,11 +1072,8 @@ mod tools {
     fn projected_edges_offset_into_a_profile() {
         let mut program = examples::box_with_drill_hole();
         let built = program.built().unwrap();
-        let top = EntityRef::Face {
-            name: "extrude(box,end)".into(),
-        };
-        let plane = top.clone();
-        let (mut sketch, reference) = projected(&built, &plane, top);
+        let plane = on_face("extrude(box,end)");
+        let (mut sketch, reference) = projected(&built, &plane, box_top());
         let line = *sketch
             .curves
             .iter()
@@ -1177,13 +1134,10 @@ fn sketch_curves_are_projected() {
     let mut floor = Sketch::new();
     let c = floor.add_point(examples::n(1.0), examples::n(1.0));
     let circle = floor.add_circle(c, examples::n(0.5));
-    program.push("floor", sketch(origin_plane(FrameAxis::Z), floor));
+    program.push("floor", sketch(on_origin(FrameAxis::Z), floor));
     let part = program.built().unwrap();
-    let curve = EntityRef::SketchCurve {
-        sketch: "floor".into(),
-        curve: circle,
-    };
-    let (sketch, reference) = projected(&part, &origin_plane(FrameAxis::Z), curve);
+    let curve = Projected::SketchCurve(sketch_element("floor", circle));
+    let (sketch, reference) = projected(&part, &on_origin(FrameAxis::Z), curve);
     assert_eq!(kinds(&sketch), ["circle"]);
     assert!(
         reference
@@ -1193,8 +1147,9 @@ fn sketch_curves_are_projected() {
     );
 }
 
-/// A sketch projects a 3-D sketch's curve as it projects an edge: a line
-/// rising across the view is the line beneath it, keyed by its edge's name.
+/// A sketch projects a 3-D sketch's curve as it projects an edge — it is
+/// one, of the wire the 3-D sketch is built as: a line rising across the
+/// view is the line beneath it, keyed by its edge's name.
 #[test]
 fn sketch3d_curves_are_projected() {
     let mut program = Program::new();
@@ -1213,10 +1168,8 @@ fn sketch3d_curves_are_projected() {
         },
     );
     let part = program.built().unwrap();
-    let edge = EntityRef::Edge {
-        name: "sketch3d(route,c2)".into(),
-    };
-    let (sketch, reference) = projected(&part, &origin_plane(FrameAxis::Z), edge);
+    let edge = Projected::Edge(element("sketch3d(route,c2)"));
+    let (sketch, reference) = projected(&part, &on_origin(FrameAxis::Z), edge);
     assert_eq!(kinds(&sketch), ["line"]);
     assert_eq!(
         reference.curves.keys().collect::<Vec<_>>(),

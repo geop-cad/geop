@@ -4,17 +4,15 @@
 //! parts (see [`crate::mechanism`]).
 //!
 //! What a mate asks is said by [`crate::residuals`] and [`crate::joints`].
-//! What is added here is how an entity, named like any other
-//! ([`EntityRef`]), becomes a point, a line, a plane or a joint's connector
-//! of a placed part: an entity of a placed part — named behind the
-//! instance's name — moves with that part; an entity of the part itself
-//! never moves.
+//! What is added here is how an element ([`MateEntity`]) becomes a point, a
+//! line, a plane or a joint's connector of a placed part: an element of a
+//! placed part moves with that part; an element of the part itself never
+//! moves.
 //!
 //! A joint is made between two frames, one on each part, which a click puts
 //! on whatever is picked — a face, an edge, a point or a datum (see
-//! [`EntityRef::Frame`] and [`Aspects::frame_on`]): it turns about, or slides
-//! along, their common `z` axis, the second part's frame moving on the
-//! first's.
+//! [`MateEntity::frame`]): it turns about, or slides along, their common `z`
+//! axis, the second part's frame moving on the first's.
 //!
 //! A joint's coordinates — how far it is turned and slid — are parameters of
 //! the part's state, like the poses of its placed parts: named after the
@@ -24,12 +22,29 @@
 
 pub use crate::joints::{Connector, CouplingKind, JointKind, Motion, Transmission};
 pub use crate::residuals::{Geometry, Kind};
-use geop_core_program::target::TargetReference;
-use geop_ops::{
-    Design,
-    operation::{EntityRef, Role, describe_roles, instance_path},
+use geop_core_math::geop_error::GeopResult;
+use geop_core_program::{
+    element::{HasElements, Kind as ElementKind, whole},
+    target::TargetReference,
 };
+use geop_ops_add_datum::Role;
+use geop_ops_model::Design;
 use serde::{Deserialize, Serialize};
+
+pub use crate::frame::MateEntity;
+use crate::placed::instance_path;
+
+/// `roles` in words: `a point, a line or a plane`.
+fn describe_roles(roles: &[Role]) -> String {
+    match roles {
+        [] => String::new(),
+        [only] => only.describe().to_string(),
+        [rest @ .., last] => {
+            let rest: Vec<&str> = rest.iter().map(|r| r.describe()).collect();
+            format!("{} or {}", rest.join(", "), last.describe())
+        }
+    }
+}
 
 /// What a mate asks: that two entities touch, line up or keep a distance
 /// (a constraint); that one part may only turn or slide against another
@@ -63,15 +78,14 @@ impl MateKind {
         }
     }
 
-    /// What an entity of a mate of this kind can be: of a constraint, what
-    /// its geometry is taken from (see [`Kind::roles`]); of a joint, where a
-    /// frame is put. A coupling ties joints, and a fixed mate is given its
-    /// entity by the step: neither is picked.
+    /// What an element of a mate of this kind can be, for a constraint:
+    /// what its geometry is taken from (see [`Kind::roles`]). A joint puts
+    /// a frame on any element; a coupling ties joints, and a fixed mate is
+    /// given its element by the step: neither is picked by role.
     pub fn roles(&self) -> &'static [Role] {
         match self {
             MateKind::Constraint(kind) => kind.roles(),
-            MateKind::Joint(_) => &[Role::Frame],
-            MateKind::Coupling(_) | MateKind::Anchor(_) => &[],
+            MateKind::Joint(_) | MateKind::Coupling(_) | MateKind::Anchor(_) => &[],
         }
     }
 }
@@ -94,7 +108,7 @@ pub struct Mate {
     #[serde(flatten)]
     pub kind: MateKind,
     #[serde(default)]
-    pub entities: Vec<EntityRef>,
+    pub entities: Vec<MateEntity>,
     /// The joints a coupling ties, by their names in the part:
     /// `add_part(gear2,m1)`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -103,7 +117,7 @@ pub struct Mate {
 
 impl Mate {
     /// A constraint of `kind` between `entities`.
-    pub fn constraint(kind: Kind, entities: Vec<EntityRef>) -> Self {
+    pub fn constraint(kind: Kind, entities: Vec<MateEntity>) -> Self {
         Mate {
             kind: MateKind::Constraint(kind),
             entities,
@@ -113,7 +127,7 @@ impl Mate {
 
     /// A joint of `kind` between `entities`: the first part's connector,
     /// then the second's.
-    pub fn joint(kind: JointKind, entities: Vec<EntityRef>) -> Self {
+    pub fn joint(kind: JointKind, entities: Vec<MateEntity>) -> Self {
         Mate {
             kind: MateKind::Joint(kind),
             entities,
@@ -146,7 +160,7 @@ impl Mate {
     }
 
     /// Its two entities, if it has exactly two.
-    pub fn pair(&self) -> Option<[&EntityRef; 2]> {
+    pub fn pair(&self) -> Option<[&MateEntity; 2]> {
         match self.entities.as_slice() {
             [a, b] => Some([a, b]),
             _ => None,
@@ -169,10 +183,8 @@ impl Mate {
         match self.kind {
             MateKind::Constraint(_) => describe_roles(self.kind.roles()),
             MateKind::Joint(_) => {
-                format!(
-                    "{}: where it is picked, a frame is put",
-                    Role::Frame.describe()
-                )
+                "a face, an edge, a point or a datum: where it is picked, a frame is put"
+                    .to_string()
             }
             MateKind::Anchor(_) => "an entity of the part to hold".to_string(),
             MateKind::Coupling(kind) => match kind.transmission.motions() {
@@ -191,7 +203,7 @@ impl Mate {
 pub struct On<T> {
     pub body: Option<String>,
     pub what: T,
-    pub entity: EntityRef,
+    pub entity: MateEntity,
 }
 
 /// A mate as a solve takes it, its entities resolved where their parts
@@ -229,7 +241,7 @@ impl<T: Clone> On<T> {
                 None => instance.to_string(),
             }),
             what: self.what.clone(),
-            entity: self.entity.in_instance(instance),
+            entity: self.entity.behind(instance),
         }
     }
 }
@@ -262,7 +274,7 @@ impl Resolved {
 
     /// The entities it is between: none for a coupling, which is between
     /// joints, or for a part held where it is.
-    pub fn entities(&self) -> Vec<EntityRef> {
+    pub fn entities(&self) -> Vec<MateEntity> {
         match self {
             Resolved::Constraint { a, b, .. } => vec![a.entity.clone(), b.entity.clone()],
             Resolved::Joint { a, b, .. } => vec![a.entity.clone(), b.entity.clone()],
@@ -282,4 +294,21 @@ pub fn mate(name: &str) -> TargetReference<Resolved> {
 /// The name of the mate whose target is named `target`, if it is one.
 pub fn mate_name(target: &str) -> Option<&str> {
     target.strip_prefix(PREFIX)
+}
+
+/// Read whole.
+impl ElementKind for Resolved {
+    const NAME: &'static str = "mate";
+}
+
+impl HasElements<Resolved> for Resolved {
+    type Element<'a> = &'a Resolved;
+
+    fn element(&self, name: &str) -> GeopResult<&Resolved> {
+        whole(self, name)
+    }
+
+    fn names_target(name: &str) -> bool {
+        name.starts_with(PREFIX)
+    }
 }

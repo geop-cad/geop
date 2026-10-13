@@ -6,14 +6,14 @@
 //! weight is not one. Lengths are millimetres: a length of one in the
 //! kernel is one millimetre.
 //!
-//! An assembly is written as one: each distinct component placed in it —
-//! every instance sharing one built component — a product of its own with
-//! its bodies in its own frame, and each placement a
-//! `NEXT_ASSEMBLY_USAGE_OCCURRENCE` of it in the product it is placed in,
-//! with an `ITEM_DEFINED_TRANSFORMATION` saying where. A part placing
-//! others has a `SHAPE_REPRESENTATION` of the placements, its own bodies
-//! related to it; a part placing none has its bodies' representation as
-//! its shape.
+//! A part placing others ([`write_part`]) is written as an assembly: each
+//! distinct component placed in it — every instance sharing one built
+//! component — a product of its own with its bodies in its own frame, and
+//! each placement a `NEXT_ASSEMBLY_USAGE_OCCURRENCE` of it in the product
+//! it is placed in, with an `ITEM_DEFINED_TRANSFORMATION` saying where. A
+//! part placing others has a `SHAPE_REPRESENTATION` of the placements, its
+//! own bodies related to it; a part placing none has its bodies'
+//! representation as its shape.
 //!
 //! Every value is written as its interval's midpoint. Entities are named
 //! after the part's names for them, so a face picked as `extrude(E,end)`
@@ -31,13 +31,10 @@ use geop_core_math::{
 use geop_core_topology::{
     CoedgeGeometry, EdgeId, FaceId, Model, Sense, ShellId, VertexId, boundary::BoundaryType,
 };
-use geop_ops::{
-    NamedModel, RefId,
-    model::model,
-    operation::BuildView,
-    output::{Content, Export, Exporter, ExporterInfo, NoOptions, Output},
-    placed::{self, Component, instance_name, locate},
-};
+use geop_ops_assembly::{Component, placed_parts};
+use geop_ops_model::{Design, NamedModel, RefId, read_model};
+use geop_ops_output::{Content, Export, Exporter, ExporterInfo, NoOptions, Output};
+use geop_ops_parameters::{PartReader, about::read_about};
 
 use crate::part21::{Exchange, Instance, Record, Value};
 
@@ -47,42 +44,22 @@ use crate::part21::{Exchange, Instance, Record, Value};
 /// topology — far tighter than any feature.
 const UNCERTAINTY: f64 = 1e-7;
 
-/// The part `view` shows — its bodies and the parts placed in it, however
-/// deep — as the text of a STEP file whose product is called `name`.
-pub fn write_step(view: BuildView<'_>, name: &str) -> GeopResult<String> {
+/// The bodies of `model` as the text of a STEP file whose product is
+/// called `name`.
+pub fn write_step<S: Scalar>(model: &NamedModel<S>, name: &str) -> GeopResult<String> {
     let mut writer = Writer::default();
     let context = writer.context();
-    writer.assembly(view, name, &context, &mut HashMap::new())?;
+    writer.part(model, &[], name, &context)?;
+    Ok(writer.file(name))
+}
 
-    let file_name = format!("{name}.step");
-    Ok(Exchange {
-        header: vec![
-            Record {
-                name: "FILE_DESCRIPTION".into(),
-                args: vec![Value::List(vec![string(name)]), string("2;1")],
-            },
-            Record {
-                name: "FILE_NAME".into(),
-                args: vec![
-                    string(&file_name),
-                    string(""),
-                    Value::List(vec![string("")]),
-                    Value::List(vec![string("")]),
-                    string("geop"),
-                    string("geop"),
-                    string(""),
-                ],
-            },
-            Record {
-                name: "FILE_SCHEMA".into(),
-                args: vec![Value::List(vec![string(
-                    "AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }",
-                )])],
-            },
-        ],
-        instances: writer.instances,
-    }
-    .write())
+/// The part `reader` reads — its bodies and the parts placed in it, however
+/// deep — as the text of a STEP file whose product is called `name`.
+pub fn write_part(reader: &PartReader, name: &str) -> GeopResult<String> {
+    let mut writer = Writer::default();
+    let context = writer.context();
+    writer.assembly(reader, name, &context, &mut HashMap::new())?;
+    Ok(writer.file(name))
 }
 
 /// A product written: what an assembly placing it refers to.
@@ -94,6 +71,42 @@ struct Written {
     shape: u64,
     /// The placement in `shape` its own frame is.
     origin: u64,
+}
+
+impl Writer {
+    /// What it has written, as the text of a STEP file whose product is
+    /// called `name`.
+    fn file(self, name: &str) -> String {
+        let file_name = format!("{name}.step");
+        Exchange {
+            header: vec![
+                Record {
+                    name: "FILE_DESCRIPTION".into(),
+                    args: vec![Value::List(vec![string(name)]), string("2;1")],
+                },
+                Record {
+                    name: "FILE_NAME".into(),
+                    args: vec![
+                        string(&file_name),
+                        string(""),
+                        Value::List(vec![string("")]),
+                        Value::List(vec![string("")]),
+                        string("geop"),
+                        string("geop"),
+                        string(""),
+                    ],
+                },
+                Record {
+                    name: "FILE_SCHEMA".into(),
+                    args: vec![Value::List(vec![string(
+                        "AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }",
+                    )])],
+                },
+            ],
+            instances: self.instances,
+        }
+        .write()
+    }
 }
 
 fn string(s: &str) -> Value {
@@ -299,57 +312,65 @@ impl Writer {
     }
 
     /// The placement the pose `pose` moves the frame of what it places to.
-    fn pose<S: Scalar>(&mut self, pose: &Pose<S>) -> GeopResult<u64> {
-        let plain = |q: Vector3<S>| q.to_f64_array();
+    fn pose(&mut self, pose: &Pose<Design>) -> GeopResult<u64> {
+        let plain = |q: Vector3<Design>| q.to_f64_array();
         // Where its `x` and `z` turn to.
         let [x, _, z] = pose.rotation().rotation_columns()?;
         Ok(self.placement(plain(pose.position()), plain(z), plain(x)))
     }
 
-    /// The part `view` shows as the product `name`, and each part placed
+    /// The part `reader` reads as the product `name`, and each part placed
     /// in it as a product of its own — once, however often it is placed:
     /// `written` keeps those already written, by component. A product's
     /// placements are where its own part puts them.
     fn assembly(
         &mut self,
-        view: BuildView<'_>,
+        reader: &PartReader,
         name: &str,
         context: &Context,
         written: &mut HashMap<*const Component, Written>,
     ) -> GeopResult<Written> {
+        let ctx = |e: GeopError| e.with_context(format!("writing the part {name:?} as STEP"));
         let mut placed = Vec::new();
-        for (target, _) in view.targets_of::<placed::Instance>() {
-            let Some(instance) = instance_name(target) else {
-                continue;
-            };
-            let located = locate(&mut view.clone(), instance)?;
-            let component = &located.instance.component;
+        let parts = placed_parts(reader).map_err(ctx)?;
+        for part in parts.iter().filter(|p| p.parent.is_none()) {
+            let component = &part.located.instance.component;
             let key = Rc::as_ptr(component);
             let child = match written.get(&key) {
                 Some(&child) => child,
                 None => {
                     // Its designation (`ISO 4762 M4x12`), else what it is
                     // listed as: its title, else its file's stem.
-                    let about = placed::About {
-                        file: component.file.clone(),
-                        parameters: component.parameters.clone(),
+                    let inner = component.reader();
+                    let name = match component.designation() {
+                        Some(designation) => designation,
+                        None => read_about(&inner).map_err(ctx)?.name().to_string(),
                     };
-                    let name =
-                        (component.designation()).unwrap_or_else(|| about.name().to_string());
-                    let child = self.assembly(component.view(), &name, context, written)?;
+                    let child = self.assembly(&inner, &name, context, written)?;
                     written.insert(key, child);
                     child
                 }
             };
-            placed.push((instance.to_string(), child, located.local));
+            placed.push((part.name.clone(), child, part.located.local));
         }
+        let model = read_model(reader).map_err(ctx)?;
+        self.part(model.as_ref(), &placed, name, context)
+    }
 
+    /// The bodies of `model`, placing the products `placed` — each by its
+    /// instance's name, where its pose puts it — as the product `name`:
+    /// its shape the representation of its solids if it places nothing,
+    /// else of the placements, its bodies related to it.
+    fn part<S: Scalar>(
+        &mut self,
+        model: &NamedModel<S>,
+        placed: &[(String, Written, Pose<Design>)],
+        name: &str,
+        context: &Context,
+    ) -> GeopResult<Written> {
         let mut solids = Vec::new();
         let mut sheets = Vec::new();
-        // A part with no model has no bodies.
-        if let Ok(model) = view.retrieve_target(&model()) {
-            self.bodies(model, &mut solids, &mut sheets)?;
-        }
+        self.bodies(model, &mut solids, &mut sheets)?;
         let (definition, product_shape) = self.product(name, context.application);
         let origin = self.placement([0.0; 3], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
         let representation = |writer: &mut Self, kind: &str, items: &[u64]| {
@@ -786,8 +807,9 @@ impl<S: Scalar, N: Fn(RefId) -> String> BodyWriter<'_, '_, S, N> {
     }
 }
 
-/// Writes the part shown as a STEP file (see [`write_step`]), named after
-/// the program's file.
+/// Writes the part as far as the program runs as a STEP file — the parts
+/// placed in it as an assembly (see [`write_part`]) — named after the
+/// program's file.
 pub struct Step;
 
 impl Exporter for Step {
@@ -800,11 +822,12 @@ impl Exporter for Step {
     type Options = NoOptions;
 
     fn export(output: &mut Output, format: &str, _: NoOptions) -> GeopResult<Export> {
-        let name = &output.stem();
+        let name = output.stem()?;
+        let text = write_part(&output.part(), &name)?;
         Ok(Export {
             name: format!("{name}.{format}"),
             media_type: "model/step".into(),
-            content: Content::Text(write_step(output.part(), name)?),
+            content: Content::Text(text),
         })
     }
 }

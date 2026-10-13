@@ -33,7 +33,7 @@ use geop_core_topology::{
     Curve2, Curve3, Sense,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
-use geop_ops::{BodyNames, Namer};
+use geop_ops_model::{BodyNames, Namer};
 
 use crate::{
     cage::{Mesh, undirected},

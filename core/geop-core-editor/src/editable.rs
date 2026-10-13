@@ -348,8 +348,9 @@ impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
 
     /// The step `step` of `program` and its operation, and what it is
     /// edited against in the part `runner` last ran: the part before it and
-    /// after it, at its position in `program`. A program edited since the
-    /// last run is read at its new positions until it runs again.
+    /// after it, at its position in `program` — after the given step (see
+    /// [`ProgramRunner::position`]). A program edited since the last run is
+    /// read at its new positions until it runs again.
     fn step<'a>(
         &'a self,
         runner: &'a ProgramRunner<I, S>,
@@ -357,7 +358,7 @@ impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
         step: &'a str,
     ) -> GeopResult<Step<'a, I, S, N>> {
         let program_step = program.step(step)?;
-        let position = position(program, step)?;
+        let position = ProgramRunner::<I, S>::position(position(program, step)?);
         let context = Context {
             step,
             before: runner.part.reader(position),
@@ -383,7 +384,9 @@ impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
     ) -> GeopResult<ProgramStep> {
         let operation = self.get(kind)?;
         let before = match before {
-            Some(step) => runner.part.reader(position(program, step)?),
+            Some(step) => {
+                (runner.part).reader(ProgramRunner::<I, S>::position(position(program, step)?))
+            }
             None => runner.part.current(),
         };
         let context = Context {

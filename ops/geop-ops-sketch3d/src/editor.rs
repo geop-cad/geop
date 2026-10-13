@@ -28,28 +28,30 @@ use geop_core_math::{
     scalars::{Field, Scalar},
     vector::Vector3,
 };
-use geop_core_program::step_editor::Scene;
+use geop_core_editor::{
+    edit_form::{Edit, EditForm},
+    editing::{
+        Action, CanvasEvent, Gizmo, InHand, ListItem, Number, Pointer, Shape, Style, Tone, Unit,
+        Value, Visual,
+        hit::{Scene, hit_visuals, no_instances},
+    },
+    selectable,
+};
 use geop_core_sketch::{
     ConstraintId, CurveId, PointId,
     space::{Arc3, Constraint3d, Coordinate, CurveKind3d, End, Solve3dReport},
 };
-use geop_ops::{
-    Design,
-    operation::{Aspects, BuildView, EntityRef, Role, Seen},
-    ui::{
-        Action, CanvasEvent, Edit, EditForm, Gizmo, InHand, ListItem, Number, Pointer, Shape,
-        Style, Tone, Unit, Value, Visual, constraint_status,
-        hit::{hit_visuals, no_instances},
-        icons,
-    },
-};
+use geop_ops_model::Design;
+use geop_ops_parameters::PartReader;
+use geop_ops_sketch::fields::constraint_status;
+use geop_ops_view::{drawn, icons};
 
 /// How near the pointer, in its reaches, must pass the line along `x`,
 /// `y` or `z` through the point a line starts at for the line's end to
 /// snap onto it: an allowance on screen, like the pointer's own reach.
 const AXIS_SNAP: f64 = 2.0;
 
-use crate::{AddSketch3dArgs, Reference3d, Target};
+use crate::{AddSketch3dArgs, CurveSource, LineSource, PointSource, Reference3d, Target};
 
 /// 3-D sketches are edited in the scalar their programs hold.
 type S = Design;
@@ -157,11 +159,11 @@ fn picked(args: &AddSketch3dArgs, selection: &[String]) -> Picks {
 /// `args` with what the part `before` gives it brought up to date, and how
 /// its constraints stand — or why that cannot be said.
 fn checked(
-    before: &Seen<'_>,
+    before: &PartReader,
     args: &AddSketch3dArgs,
 ) -> Result<(AddSketch3dArgs, Solve3dReport<Design>), String> {
     let mut args = args.clone();
-    args.resolve(&mut &*before)
+    args.resolve(before)
         .map_err(|e| e.root_message().to_string())?;
     let report = args
         .sketch
@@ -173,9 +175,9 @@ fn checked(
 /// Solves `args` on `before`, pulling `drags` — what the part gives
 /// brought up to date first. What cannot be solved is left as it is, and
 /// the form says why.
-fn solve(before: &Seen<'_>, args: &mut AddSketch3dArgs, drags: &[(PointId, V3)]) {
+fn solve(before: &PartReader, args: &mut AddSketch3dArgs, drags: &[(PointId, V3)]) {
     args.tidy();
-    if args.resolve(&mut &*before).is_ok() {
+    if args.resolve(before).is_ok() {
         let _ = args.sketch.solve_with_drag(drags);
     }
 }
@@ -188,9 +190,9 @@ enum Located {
     /// A point the sketch has.
     Point(PointId),
     /// A point of the part — a vertex, a datum point: a fixed point there.
-    Fixed(EntityRef, V3),
+    Fixed(PointSource, V3),
     /// A point of an edge of the part, or of a sketch's curve: on it.
-    OnEdge(EntityRef, V3),
+    OnEdge(CurveSource, V3),
     /// A point on the line along `axis` through the point a line starts
     /// at: there, the line parallel to the axis.
     Along(Coordinate, V3),
@@ -235,7 +237,7 @@ fn along_axis(from: &V3, pointer: &Pointer<S>) -> Option<Located> {
 /// the tool `tool` in hand — snapped, unless `shift` is held — on the part
 /// `before` as drawn, `scene`.
 fn locate(
-    before: &Seen<'_>,
+    before: &PartReader,
     scene: Option<&dyn Scene<S>>,
     args: &AddSketch3dArgs,
     s: &Sketch3dSession,
@@ -253,13 +255,16 @@ fn locate(
         if let Some(hit) = hit_visuals(&points, pointer, no_instances, |_| true) {
             return Some(Located::Point(hit.visual.key.parse().ok()?));
         }
-        let pick = |roles: &[Role]| scene.and_then(|scene| scene.pick(pointer, roles, None));
-        if let Some(hit) = pick(&[Role::Point]) {
-            let at = Aspects::of(&hit.entity, &mut &*before).ok()?.point?;
-            return Some(Located::Fixed(hit.entity, at));
-        }
-        if let Some(hit) = pick(&[Role::Curve]) {
-            return Some(Located::OnEdge(hit.entity, hit.point));
+        if let Some(scene) = scene {
+            if let Some((point, _)) = selectable::pick::<PointSource, _, _, _>(scene, before, pointer)
+            {
+                let at = point.resolve(before).ok()?;
+                return Some(Located::Fixed(point, at));
+            }
+            if let Some((curve, at)) = selectable::pick::<CurveSource, _, _, _>(scene, before, pointer)
+            {
+                return Some(Located::OnEdge(curve, at));
+            }
         }
         let from = s.placed.last().map(|p| args.sketch.points[p].at);
         if tool == Tool::Line
@@ -269,7 +274,7 @@ fn locate(
         }
     }
     if let Some(scene) = scene
-        && let Some(hit) = scene.pick(pointer, &[Role::Face, Role::Plane], None)
+        && let Some(hit) = scene.pick(pointer, &[drawn::FACE.into(), drawn::DATUM.into()])
     {
         return Some(Located::Free(hit.point));
     }
@@ -288,31 +293,31 @@ fn place(args: &mut AddSketch3dArgs, s: &mut Sketch3dSession, located: Located) 
     let sketch = &mut args.sketch;
     match located {
         Located::Point(p) => p,
-        Located::Fixed(entity, at) => {
-            let known = args.references.iter().find_map(|r| match r.target {
-                Target::Point { point } if r.entity == entity => Some(point),
+        Located::Fixed(source, at) => {
+            let known = args.references.iter().find_map(|r| match r {
+                Reference3d::Point { point, from } if *from == source => Some(*point),
                 _ => None,
             });
             known.unwrap_or_else(|| {
                 let point = sketch.add_fixed_point(at);
-                args.references.push(Reference3d {
-                    entity,
-                    target: Target::Point { point },
+                args.references.push(Reference3d::Point {
+                    point,
+                    from: source,
                 });
                 s.fresh.push(point);
                 point
             })
         }
-        Located::OnEdge(entity, at) => {
-            let known = args.references.iter().find_map(|r| match r.target {
-                Target::Curve { curve } if r.entity == entity => Some(curve),
+        Located::OnEdge(source, at) => {
+            let known = args.references.iter().find_map(|r| match r {
+                Reference3d::Curve { curve, from } if *from == source => Some(*curve),
                 _ => None,
             });
             let curve = known.unwrap_or_else(|| {
                 let curve = sketch.add_curve(CurveKind3d::Reference);
-                args.references.push(Reference3d {
-                    entity,
-                    target: Target::Curve { curve },
+                args.references.push(Reference3d::Curve {
+                    curve,
+                    from: source,
                 });
                 curve
             });
@@ -380,7 +385,7 @@ fn smooth_joints(args: &mut AddSketch3dArgs, curve: CurveId) {
 
 /// A click of the tool `tool` at `located`.
 fn click(
-    before: &Seen<'_>,
+    before: &PartReader,
     args: &mut AddSketch3dArgs,
     s: &mut Sketch3dSession,
     tool: Tool,
@@ -436,7 +441,7 @@ fn click(
 
 /// Ends what is being drawn: a spline is added through the points placed,
 /// and points placed for nothing go again.
-fn finish(before: &Seen<'_>, args: &mut AddSketch3dArgs, s: &mut Sketch3dSession) {
+fn finish(before: &PartReader, args: &mut AddSketch3dArgs, s: &mut Sketch3dSession) {
     if s.tool(args) == Tool::Spline && s.placed.len() >= 2 {
         let spline = args.sketch.add_spline(std::mem::take(&mut s.placed));
         smooth_joints(args, spline);
@@ -460,14 +465,14 @@ fn finish(before: &Seen<'_>, args: &mut AddSketch3dArgs, s: &mut Sketch3dSession
 }
 
 /// Takes up `tool`, ending what was being drawn.
-fn take_up(before: &Seen<'_>, args: &mut AddSketch3dArgs, s: &mut Sketch3dSession, tool: Tool) {
+fn take_up(before: &PartReader, args: &mut AddSketch3dArgs, s: &mut Sketch3dSession, tool: Tool) {
     finish(before, args, s);
     s.tool = Some(tool);
     s.hover = None;
 }
 
 /// Removes what is selected, and everything on it.
-fn remove_selected(before: &Seen<'_>, args: &mut AddSketch3dArgs, selection: &mut Vec<String>) {
+fn remove_selected(before: &PartReader, args: &mut AddSketch3dArgs, selection: &mut Vec<String>) {
     let picks = picked(args, selection);
     args.sketch.remove(&picks.points, &picks.curves, &[]);
     selection.clear();
@@ -478,7 +483,7 @@ fn remove_selected(before: &Seen<'_>, args: &mut AddSketch3dArgs, selection: &mu
 /// pointer is over found in the part `before` as the editor draws it,
 /// `scene`.
 pub(crate) fn event(
-    before: &Seen<'_>,
+    before: &PartReader,
     scene: Option<&dyn Scene<S>>,
     edit: Edit<'_, AddSketch3dArgs, Sketch3dSession>,
     event: &CanvasEvent<S>,
@@ -568,7 +573,7 @@ fn axis_of(direction: &V3) -> Option<Coordinate> {
 fn describe(args: &AddSketch3dArgs, id: ConstraintId, c: &Constraint3d<Design>) -> String {
     use Constraint3d::*;
     let direction = |direction: &V3| match args.reference_of(Target::Direction { constraint: id }) {
-        Some(r) => r.entity.label(),
+        Some(r) => r.source().label(),
         None => match axis_of(direction) {
             Some(axis) => axis.name().to_string(),
             None => "a direction".to_string(),
@@ -592,7 +597,7 @@ fn describe(args: &AddSketch3dArgs, id: ConstraintId, c: &Constraint3d<Design>) 
             direction: d,
         } => format!("{curve} {} along {}", end(*e), direction(d)),
         OnCurve { point, curve } => match args.reference_of(Target::Curve { curve: *curve }) {
-            Some(r) => format!("{point} on {}", r.entity.label()),
+            Some(r) => format!("{point} on {}", r.source().label()),
             None => format!("{point} on {curve}"),
         },
         Tangent { a, b } => format!("Tangent {a} {b}"),
@@ -892,15 +897,14 @@ fn visuals(
     out
 }
 
-/// The form of a 3-D sketch step on the part `view` shows (see the module
+/// The form of a 3-D sketch step on the part `before` reads (see the module
 /// docs).
 pub(crate) fn form<'a>(
-    view: BuildView<'a>,
+    before: &'a PartReader<'a>,
     args: &AddSketch3dArgs,
     s: &Sketch3dSession,
     selection: &[String],
 ) -> EditForm<'a, S, AddSketch3dArgs, Sketch3dSession> {
-    let before = &Seen::new(view);
     let mut f = EditForm::default();
     let tool = s.tool(args);
     f.form.tool = if tool.draws() {
@@ -928,7 +932,6 @@ pub(crate) fn form<'a>(
             .group("Draw"),
     );
     f.actions("tools", tools, move |edit, value| {
-        let before = &Seen::new(view);
         let Edit { args, session, .. } = edit;
         match value {
             "finish" => finish(before, args, session),
@@ -955,7 +958,7 @@ pub(crate) fn form<'a>(
                     move |Edit { args, .. }, v| {
                         let mut to = args.sketch.points[&p].at;
                         to[axis.index()] = Design::from_f64(v);
-                        solve(&Seen::new(view), args, &[(p, to)]);
+                        solve(before, args, &[(p, to)]);
                     },
                 );
             }
@@ -977,7 +980,7 @@ pub(crate) fn form<'a>(
                     let Edit { args, session, .. } = edit;
                     let at = Vector3::from_array(session.typed.map(Design::from_f64));
                     let tool = session.tool(args);
-                    click(&Seen::new(view), args, session, tool, Located::Free(at));
+                    click(before, args, session, tool, Located::Free(at));
                 },
             );
         }
@@ -1004,37 +1007,33 @@ pub(crate) fn form<'a>(
                     args.sketch.constrain(c);
                 }
                 selection.clear();
-                solve(&Seen::new(view), args, &[]);
+                solve(before, args, &[]);
             }
         });
     }
     if along(args, &picks, V3::from_array([Design::ONE; 3])).is_some() {
-        f.reference(
+        f.pick(
             "along",
             "Along an axis or edge",
-            Vec::new(),
-            &[Role::Line],
-            None,
+            before,
+            &[] as &[LineSource],
             false,
-            move |edit, entities| {
-                let before = &Seen::new(view);
+            move |edit, lines| {
                 let Edit {
                     args, selection, ..
                 } = edit;
-                let [entity] = &entities[..] else {
+                let [line] = &lines[..] else {
                     return;
                 };
-                let Some(line) = Aspects::of(entity, &mut &*before).ok().and_then(|a| a.line)
-                else {
+                let Ok(axis) = line.resolve(before) else {
                     return;
                 };
                 let picks = picked(args, selection);
-                let direction = line.direction;
-                if let Some(c) = along(args, &picks, direction) {
+                if let Some(c) = along(args, &picks, axis.direction) {
                     let constraint = args.sketch.constrain(c);
-                    args.references.push(Reference3d {
-                        entity: entity.clone(),
-                        target: Target::Direction { constraint },
+                    args.references.push(Reference3d::Direction {
+                        constraint,
+                        from: line.clone(),
                     });
                     selection.clear();
                     solve(before, args, &[]);
@@ -1067,8 +1066,7 @@ pub(crate) fn form<'a>(
     (f.form.dialog).list("constraints", items, "No constraints yet");
     for &id in args.sketch.constraints.keys() {
         f.on(id.to_string(), move |edit, value| {
-            let before = &Seen::new(view);
-            let args = edit.args;
+                let args = edit.args;
             match value {
                 Value::Remove => {
                     args.sketch.remove(&[], &[], &[id]);

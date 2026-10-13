@@ -1,27 +1,29 @@
 //! [`LinearPattern`]: copies of bodies in a row, or in a grid of two rows.
 
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::Unit,
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::{FrameAxis, Motion},
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::parameters::expressions;
-use geop_ops::{
-    Design, NamedModel,
-    operation::{
-        Aspects, Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Seen, StepContext,
-        pattern::{Row, Spacing, count_field, whole_count},
-    },
-    origin_axis,
-    parameters::Formula,
-    part_operation,
-    ui::{EditForm, FormState, Unit, formula_number},
-};
+use geop_core_editor::numeric_input::NumericInput;
+use geop_ops_datums::origin_axis;
+use geop_ops_model::{Design, ModelOperation, NamedModel};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
-use crate::common::{Naming, Pattern, Seeds, build_pattern, run_pattern, track};
+use crate::{
+    common::{Naming, Pattern, Seeds, build_pattern, run_pattern, track},
+    references::PatternDirection,
+    spacing::{Row, Spacing, count_field, whole_count},
+};
 
 /// Copies the bodies `bodies` — solids, and sheets by one of their faces —
 /// or the features `features` in a row along a direction, or in a grid
@@ -33,7 +35,7 @@ use crate::common::{Naming, Pattern, Seeds, build_pattern, run_pattern, track};
 /// its tools copied and combined with the solid it lies on as it combined
 /// them (see [`crate::features`]), its cosmetic threads copied with it.
 ///
-/// The copies are kept as new bodies, or combined as [`Combine`] says:
+/// The copies are kept as new bodies, or combined as [`geop_ops_booleans::Combine`] says:
 /// joined to, cut from or intersected with the target, the bodies
 /// themselves too unless they are the target — so a tool built as a new
 /// body, patterned and cut from a plate, drills a row of holes. Combined,
@@ -53,13 +55,13 @@ pub struct Direction {
     /// What gives the direction: a line — a straight edge, an axis, a
     /// sketch line — or a plane, along its normal; none, for a step that
     /// has not picked one.
-    pub along: Option<EntityRef>,
+    pub along: Option<PatternDirection>,
     /// Go against it instead.
     #[serde(default)]
     pub reversed: bool,
     /// How many instances along it, the bodies themselves included: a
     /// number, or a formula of the part's parameters.
-    pub count: Formula,
+    pub count: NumericInput,
     /// How far apart they are.
     pub spacing: Spacing,
 }
@@ -91,23 +93,20 @@ impl Pattern for LinearPatternArgs {
         if self.second.is_some() { "0.0" } else { "0" }
     }
 
-    fn placements<S: Scalar>(
-        &self,
-        lookup: &mut (impl Lookup<S> + ?Sized),
-    ) -> GeopResult<Vec<(String, Motion<S>)>> {
-        let first = self.first.unit(lookup)?;
-        let first_row = self.first.row(|f| f.evaluate(lookup))?;
+    fn placements(&self, reader: &PartReader) -> GeopResult<Vec<(String, Motion<Design>)>> {
+        let first = self.first.unit(reader)?;
+        let first_row = self.first.row(reader)?;
         let second = match &self.second {
             None => None,
             Some(direction) => {
-                let unit = direction.unit(lookup)?;
+                let unit = direction.unit(reader)?;
                 let cross = first.prod_cross(&unit);
-                if (0..3).all(|k| cross[k].could_be_equal(S::ZERO)) {
+                if (0..3).all(|k| cross[k].could_be_equal(Design::ZERO)) {
                     return Err(GeopError::new(
                         "the two directions are parallel: the grid's rows would lie on top of each other",
                     ));
                 }
-                Some((unit, direction.row(|f| f.evaluate(lookup))?))
+                Some((unit, direction.row(reader)?))
             }
         };
         let rows = second.as_ref().map_or(1, |(_, row)| row.count);
@@ -140,26 +139,25 @@ impl Direction {
     /// Along the origin's axis `axis`, three instances a unit apart.
     fn along(axis: FrameAxis) -> Self {
         Direction {
-            along: Some(origin_axis(axis)),
+            along: Some(PatternDirection::Datum(origin_axis(axis))),
             reversed: false,
-            count: Formula::Plain(3.0),
+            count: NumericInput::Plain(3.0),
             spacing: Spacing::step(1.0),
         }
     }
 
-    /// The unit vector it goes along, as `lookup` has the part.
-    fn unit<S: Scalar>(&self, lookup: &mut (impl Lookup<S> + ?Sized)) -> GeopResult<Vector3<S>> {
+    /// The unit vector it goes along, as `reader` reads the part.
+    fn unit(&self, reader: &PartReader) -> GeopResult<Vector3<Design>> {
         let along = (self.along.as_ref())
             .ok_or_else(|| GeopError::new("pick a direction to pattern along"))?;
-        let d = Aspects::direction_of(along, lookup)?;
+        let d = along.direction(reader)?;
         Ok(if self.reversed { d.neg() } else { d })
     }
 
-    /// The instances along it, with `value` giving the count's and the
-    /// spacing's values.
-    fn row(&self, mut value: impl FnMut(&Formula) -> GeopResult<f64>) -> GeopResult<Row> {
-        let count = whole_count(&self.count, value(&self.count)?)?;
-        self.spacing.along(count, value(self.spacing.value())?)
+    /// The instances along it, as `reader` reads the parameters.
+    fn row(&self, reader: &PartReader) -> GeopResult<Row> {
+        let count = whole_count(&self.count, reader)?;
+        self.spacing.along(count, reader)
     }
 
     /// Its fields in `f`, keyed with `suffix`: what it goes along, its
@@ -168,7 +166,7 @@ impl Direction {
     fn fields<'a, A: 'a>(
         &self,
         f: &mut EditForm<'a, Design, A>,
-        seen: &mut Seen,
+        before: &PartReader<'a>,
         at: Option<Vector3<Design>>,
         suffix: &str,
         set: impl Fn(&mut A, Direction) + Clone + 'a,
@@ -185,20 +183,14 @@ impl Direction {
                 set(args, direction);
             }
         }
-        let along = self.along.iter().cloned().collect();
-        let roles = [Role::Line, Role::Plane];
         let key = |name: &str| format!("{name}{suffix}");
-        let set_along = with(self.clone(), set.clone(), |d, picked: Vec<EntityRef>| {
-            d.along = picked.first().cloned()
-        });
+        let set_along = with(self.clone(), set.clone(), |d, picked| d.along = Some(picked));
         let set_reversed = with(self.clone(), set.clone(), |d, b| d.reversed = b);
-        f.reference(
+        f.pick_one(
             &key("direction"),
             "direction",
-            along,
-            &roles,
-            None,
-            false,
+            before,
+            self.along.as_ref(),
             move |edit, p| set_along(edit.args, p),
         )
         .checkbox(
@@ -209,8 +201,8 @@ impl Direction {
         );
         // Moving the spacing's handle by the unit direction adds one to it;
         // the count's, by one step, adds an instance.
-        let unit = self.unit(seen).ok();
-        let row = self.row(|f| f.evaluate(seen)).ok();
+        let unit = self.unit(before).ok();
+        let row = self.row(before).ok();
         let handles = at.zip(unit);
         let count_handle =
             handles
@@ -228,7 +220,7 @@ impl Direction {
             f,
             &key("count"),
             &self.count,
-            seen,
+            before,
             count_handle,
             move |edit, count| set_count(edit.args, count),
         );
@@ -237,7 +229,7 @@ impl Direction {
             &key("spacing"),
             ["spacing", "total"],
             |label, value| {
-                let number = formula_number(label, value, seen, Unit::Length);
+                let number = value.number(label, before, Unit::Length);
                 let at = handles.and_then(|(at, unit)| {
                     track(
                         at.add(&unit.prod_scalar(Design::from_f64(number.value))),
@@ -254,24 +246,19 @@ impl Direction {
 part_operation!(LinearPattern(LinearPatternArgs));
 
 impl PartOperation for LinearPattern {
+    const KIND: &'static str = "linear_pattern";
     const INFO: OperationInfo = OperationInfo::new(
-        "linear_pattern",
         "Linear pattern",
         "Copy bodies in a row along a direction, or in a grid along two.",
         OperationGroup::Bodies,
         OperationTier::Big,
     )
-    .icon(geop_ops::ui::icons::LINEAR_PATTERN);
+    .icon(geop_ops_view::icons::LINEAR_PATTERN);
     type Args = LinearPatternArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
-
-    fn formulas(args: &mut LinearPatternArgs) -> Vec<&mut String> {
-        expressions(
-            std::iter::once(&mut args.first)
-                .chain(args.second.as_mut())
-                .flat_map(|d| [&mut d.count, d.spacing.value_mut()]),
-        )
-    }
 
     /// Three times a unit apart along the origin's `x` axis, kept as new
     /// bodies.
@@ -285,17 +272,8 @@ impl PartOperation for LinearPattern {
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &LinearPatternArgs) -> GeopResult<()> {
+    fn run(step: &str, part: &mut BuildPart, args: &LinearPatternArgs) -> GeopResult<()> {
         run_pattern::<Self>(part, step, args)
-    }
-
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        args: &LinearPatternArgs,
-    ) -> GeopResult<()> {
-        build_pattern(model, reader, step, args)
     }
 
     /// The bodies or the features, picked; each direction — the second
@@ -306,14 +284,13 @@ impl PartOperation for LinearPattern {
         args: &LinearPatternArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, LinearPatternArgs> {
-        let mut seen = Seen::new(context.before);
+        let before = &context.before;
         let mut f = EditForm::default();
-        let before = Seen::new(context.before);
-        let at = args.seeds.center(before.model());
+        let at = args.seeds.center(before);
         let set_seeds = |args: &mut LinearPatternArgs, seeds| args.seeds = seeds;
-        (args.seeds).fields(&mut f, before.model(), set_seeds, |f| {
+        (args.seeds).fields(&mut f, before, set_seeds, |f| {
             args.first
-                .fields(f, &mut seen, at, "", |args, first| args.first = first);
+                .fields(f, before, at, "", |args, first| args.first = first);
             f.checkbox(
                 "grid",
                 "second direction",
@@ -323,11 +300,22 @@ impl PartOperation for LinearPattern {
                 },
             );
             if let Some(second) = &args.second {
-                second.fields(f, &mut seen, at, "2", |args, second| {
+                second.fields(f, before, at, "2", |args, second| {
                     args.second = Some(second)
                 });
             }
         });
         f
+    }
+}
+
+impl ModelOperation for LinearPattern {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &PartReader,
+        step: &str,
+        args: &LinearPatternArgs,
+    ) -> GeopResult<()> {
+        build_pattern(model, reader, step, args)
     }
 }

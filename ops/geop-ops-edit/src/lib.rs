@@ -1,5 +1,5 @@
 //! Simple edits of the bodies a part already has, as operations of a
-//! program (see [`geop_ops::operation`]):
+//! program (see [`geop_core_editor::part_operation`]):
 //!
 //! - [`DeleteBody`]: delete solids and faces standing on their own.
 //! - [`ExtractFace`]: copy a face out of its body into a face standing on

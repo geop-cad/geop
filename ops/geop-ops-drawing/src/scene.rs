@@ -43,8 +43,10 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_topology::{FaceId, Model};
-use geop_ops::{Design, NamedModel, model::model, operation::BuildView, placed::placed_parts};
-use geop_ops::{Threads, threads};
+use geop_core_program::element::ElementReference;
+use geop_ops_assembly::placed_parts;
+use geop_ops_model::{Design, NamedModel, Threads, model, threads};
+use geop_ops_parameters::PartReader;
 
 use crate::{
     drawing::drawn_faces,
@@ -615,41 +617,51 @@ fn same_turn<S: Scalar>(a: Option<Quaternion<S>>, b: Option<Quaternion<S>>) -> b
 }
 
 impl<'p> Scene<'p, Design> {
-    /// The faces of the part `view` shows and of every part placed in it,
-    /// however deep, each where it is placed: the part's own first, then
-    /// those placed, in the order they were placed, each followed by those
-    /// placed in it.
-    pub fn of(view: BuildView<'p>) -> GeopResult<Self> {
+    /// The faces of the part `reader` reads and of every part placed in
+    /// it, however deep, each where it is placed: the part's own first,
+    /// then those placed, in the order they were placed, each followed by
+    /// those placed in it.
+    pub fn of(reader: &PartReader<'p>) -> GeopResult<Self> {
         let mut bodies = Vec::new();
-        push(view, String::new(), None, &mut bodies);
-        for placed in placed_parts(view)? {
-            let inner = placed.located.instance.component.view();
-            push(inner, placed.name, Some(placed.located.world), &mut bodies);
+        push(reader, String::new(), None, &mut bodies)?;
+        for placed in placed_parts(reader)? {
+            let inner = placed.located.instance.component.reader();
+            push(&inner, placed.name, Some(placed.located.world), &mut bodies)?;
         }
         Self::new(bodies)
     }
 }
 
-/// Adds the body of the part `view` shows itself, placed at `pose`, as
+/// Adds the body of the part `reader` reads itself, placed at `pose`, as
 /// `path`, to `bodies` — if it has faces to draw.
 fn push<'p>(
-    view: BuildView<'p>,
+    reader: &PartReader<'p>,
     path: String,
     pose: Option<Pose<Design>>,
     bodies: &mut Vec<Body<'p, Design>>,
-) {
+) -> GeopResult<()> {
     // A part with no model has nothing to draw.
-    let Ok(named) = view.retrieve_target(&model()) else {
-        return;
-    };
+    if !reader.defines(&model()) {
+        return Ok(());
+    }
+    let whole = ElementReference::<NamedModel<Design>, NamedModel<Design>>::whole(model());
+    let named = reader.retrieve_element(&whole)?;
     let faces = drawn_faces(named.topology());
     if !faces.is_empty() {
+        let threads = match reader.defines(&threads()) {
+            true => {
+                let whole = ElementReference::<Threads<Design>, Threads<Design>>::whole(threads());
+                Some(reader.retrieve_element(&whole)?)
+            }
+            false => None,
+        };
         bodies.push(Body {
             path,
             named,
-            threads: view.retrieve_target(&threads()).ok(),
+            threads,
             faces,
             pose,
         });
     }
+    Ok(())
 }

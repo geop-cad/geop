@@ -4,7 +4,7 @@
 //!
 //! Which constructions can be chosen depends on what is selected, and on its
 //! shape, not only its kind: a straight edge is a line, a circular one has a
-//! center and an axis, a flat face is a plane (see [`Aspects`]).
+//! center and an axis, a flat face is a plane (see [`Shape`]).
 //! [`fitting_constructions`] tells an editor which constructions fit a
 //! selection, by exactly the matching a step applies.
 
@@ -12,49 +12,34 @@ use geop_core_geometry::shape::Plane;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::{CoordinateSystem, Datum, DatumKind},
-    scalars::Scalar,
+    scalars::{Field, Ring, Scalar},
     vector::Vector3,
     with_context,
 };
 use serde::{Deserialize, Serialize};
 
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, ORIGIN,
-    model::{datum, model_or_empty},
-    operation::{
-        Aspects, Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Scope, Seen,
-        StepContext, frame_along,
-    },
-    parameters::{Formula, expressions},
+use geop_core_editor::{
+    edit_form::{Edit, EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::{CanvasEvent, Unit},
+    numeric_input::NumericInput,
     part_operation,
-    ui::{CanvasEvent, Edit, EditForm, FormState, Unit},
+    part_operation::PartOperation,
 };
+use geop_ops_datums::{Datums, datums};
+use geop_ops_model::{Design, frame_along};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
 
-use crate::editor;
-
-/// A value a construction takes besides its selection, as
-/// [`Construction::formulas`] lists it: a number's formula, or nothing.
-trait Value {
-    fn formula(&mut self) -> Option<&mut Formula>;
-}
-
-impl Value for Formula {
-    fn formula(&mut self) -> Option<&mut Formula> {
-        Some(self)
-    }
-}
-
-impl Value for bool {
-    fn formula(&mut self) -> Option<&mut Formula> {
-        None
-    }
-}
+use crate::{
+    editor,
+    selection::{Role, Selected, Shape},
+};
 
 /// What kind of value a construction takes besides its selection.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ParamKind {
-    /// A number, or a formula of the part's parameters (see [`Formula`]);
+    /// A number, or a formula of the part's parameters (see
+    /// [`NumericInput`]);
     /// `min`/`max` bound what a slider offers, not what is valid.
     Number {
         default: f64,
@@ -130,17 +115,6 @@ macro_rules! constructions {
         )*];
 
         impl Construction {
-            /// The formulas of its numbers (see [`Operation::formulas`]).
-            pub fn formulas(&mut self) -> Vec<&mut String> {
-                let mut formulas = Vec::new();
-                match self {
-                    $(Construction::$variant { $($param),* } => {
-                        $(formulas.extend(Value::formula($param));)*
-                    })*
-                }
-                expressions(formulas)
-            }
-
             /// How it is described among [`CONSTRUCTIONS`].
             pub fn schema(&self) -> &'static ConstructionSchema {
                 let method = match self {
@@ -159,15 +133,15 @@ constructions! {
     // ── points ──
     Point "point" "Point" [Point] -> Point,
     "A point offset from the selected one: along its own axes if it is a datum or the origin, along the world's otherwise. Its frame is that point's, moved." {
-        x: Formula = Number { default: 0.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along x.";
-        y: Formula = Number { default: 0.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along y.";
-        z: Formula = Number { default: 0.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along z.";
+        x: NumericInput = Number { default: 0.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along x.";
+        y: NumericInput = Number { default: 0.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along y.";
+        z: NumericInput = Number { default: 0.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along z.";
     }
     Midpoint "midpoint" "Midpoint" [Point, Point] -> Point,
     "The point halfway between two points." {}
     EdgePoint "edge_point" "Point on edge" [Curve] -> Point,
     "A point along an edge or a sketch's curve, its z axis along it." {
-        position: Formula = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
+        position: NumericInput = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
     }
     Center "center" "Center" [Circle] -> Point,
     "The center of a circular edge or a sketch's arc or circle, its z axis the one it turns around." {}
@@ -203,13 +177,13 @@ constructions! {
     }
     Tangent "tangent" "Tangent to edge" [Curve] -> Axis,
     "The tangent to an edge or a sketch's curve at a point along it." {
-        position: Formula = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
+        position: NumericInput = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
     }
 
     // ── planes ──
     Offset "offset" "Offset plane" [Plane] -> Plane,
     "A plane parallel to the selected one, a distance along its normal." {
-        distance: Formula = Number { default: 1.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along the plane's normal; backwards if negative.";
+        distance: NumericInput = Number { default: 1.0, min: -10.0, max: 10.0, unit: Unit::Length }, "How far along the plane's normal; backwards if negative.";
     }
     Midplane "midplane" "Midplane" [Plane, Plane] -> Plane,
     "The plane halfway between two parallel planes, or halving the angle between two that meet." {
@@ -219,7 +193,7 @@ constructions! {
     "The plane through three points." {}
     Angle "angle" "Plane at angle" [Plane, Line] -> Plane,
     "The plane through a line at an angle to a plane: turned around the line from the plane through it most nearly parallel to the selected one — which, for a line parallel to that plane, is parallel to it." {
-        angle: Formula = Number { default: 45.0, min: -180.0, max: 180.0, unit: Unit::Angle }, "How far to turn, in degrees, right-handed about the line's direction.";
+        angle: NumericInput = Number { default: 45.0, min: -180.0, max: 180.0, unit: Unit::Angle }, "How far to turn, in degrees, right-handed about the line's direction.";
     }
     LinePoint "line_point" "Plane through line and point" [Line, Point] -> Plane,
     "The plane through a line and a point off it." {}
@@ -231,7 +205,7 @@ constructions! {
     "The plane through a point perpendicular to a line." {}
     NormalToEdge "normal_to_edge" "Plane normal to edge" [Curve] -> Plane,
     "The plane perpendicular to an edge or a sketch's curve at a point along it." {
-        position: Formula = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
+        position: NumericInput = Number { default: 0.5, min: 0.0, max: 1.0, unit: Unit::Fraction }, "Where along the edge, from its start (0) to its end (1): by length on a straight or circular edge, by parameter on any other.";
     }
 
     // ── coordinate systems ──
@@ -252,7 +226,7 @@ pub struct AddDatum;
 pub struct AddDatumArgs {
     /// What it is built from: points, edges, faces and other references,
     /// picked in the viewport.
-    pub selection: Vec<EntityRef>,
+    pub selection: Vec<Selected>,
     /// How it is built from them; only the ways that fit what is selected
     /// can be chosen.
     pub construction: Construction,
@@ -261,10 +235,10 @@ pub struct AddDatumArgs {
 /// Which selected entity fills each of `inputs`, in order: one entity per
 /// input, each able to fill its role, and of all such assignments the first
 /// in selection order. `None` if there is none.
-fn assign<S: Scalar>(inputs: &[Role], selection: &[Aspects<S>]) -> Option<Vec<usize>> {
-    fn extend<S: Scalar>(
+fn assign(inputs: &[Role], selection: &[Shape]) -> Option<Vec<usize>> {
+    fn extend(
         inputs: &[Role],
-        selection: &[Aspects<S>],
+        selection: &[Shape],
         chosen: &mut Vec<usize>,
     ) -> bool {
         let Some(role) = inputs.get(chosen.len()) else {
@@ -285,16 +259,13 @@ fn assign<S: Scalar>(inputs: &[Role], selection: &[Aspects<S>]) -> Option<Vec<us
     (inputs.len() == selection.len() && extend(inputs, selection, &mut chosen)).then_some(chosen)
 }
 
-/// The method of every construction that fits `selection` as `lookup` has
-/// the part — by the same matching a step applies. None, if the part lacks
-/// an entity of it.
-pub fn fitting_constructions<S: Scalar>(
-    lookup: &mut (impl Lookup<S> + ?Sized),
-    selection: &[EntityRef],
-) -> Vec<&'static str> {
+/// The method of every construction that fits `selection` as `reader`
+/// reads the part — by the same matching a step applies. None, if the part
+/// lacks an element of it.
+pub fn fitting_constructions(reader: &PartReader, selection: &[Selected]) -> Vec<&'static str> {
     let Ok(resolved) = selection
         .iter()
-        .map(|e| Aspects::of(e, lookup))
+        .map(|e| e.shape(reader))
         .collect::<GeopResult<Vec<_>>>()
     else {
         return Vec::new();
@@ -307,20 +278,17 @@ pub fn fitting_constructions<S: Scalar>(
 }
 
 impl AddDatumArgs {
-    /// The selection resolved as `lookup` has the part, and ordered as the
-    /// construction takes it.
-    pub(crate) fn inputs<S: Scalar>(
-        &self,
-        lookup: &mut (impl Lookup<S> + ?Sized),
-    ) -> GeopResult<Vec<Aspects<S>>> {
+    /// The selection resolved as `reader` reads the part, and ordered as
+    /// the construction takes it.
+    pub(crate) fn inputs(&self, reader: &PartReader) -> GeopResult<Vec<Shape>> {
         let schema = self.construction.schema();
         let resolved = self
             .selection
             .iter()
-            .map(|e| Aspects::of(e, lookup))
+            .map(|e| e.shape(reader))
             .collect::<GeopResult<Vec<_>>>()?;
         let Some(order) = assign(schema.inputs, &resolved) else {
-            let needs: Vec<String> = schema.inputs.iter().map(|&r| r.describe()).collect();
+            let needs: Vec<&str> = schema.inputs.iter().map(|&r| r.describe()).collect();
             return Err(GeopError::new(format!(
                 "{} needs {} selected, one each, and nothing else",
                 schema.label,
@@ -349,7 +317,8 @@ fn moved<S: Scalar>(
 
 /// The point `position` of the way along the edge `edge` (see
 /// [`Construction::EdgePoint`]), and the unit tangent there.
-fn along_edge<S: Scalar>(edge: &Aspects<S>, position: f64) -> GeopResult<(Vector3<S>, Vector3<S>)> {
+fn along_edge(edge: &Shape, position: f64) -> GeopResult<(Vector3<Design>, Vector3<Design>)> {
+    type S = Design;
     if !(0.0..=1.0).contains(&position) {
         return Err(GeopError::new(format!(
             "position {position} is not along the edge: it must be from 0 to 1"
@@ -405,11 +374,12 @@ impl Construction {
     /// The frame it builds from `inputs`, ordered as it takes them (see
     /// [`AddDatumArgs::inputs`]), `value` giving the values of its numbers
     /// — as a step reads them, or as a form shows them.
-    pub(crate) fn build<S: Scalar>(
+    pub(crate) fn build(
         &self,
-        inputs: &[Aspects<S>],
-        mut value: impl FnMut(&Formula) -> GeopResult<f64>,
-    ) -> GeopResult<CoordinateSystem<S>> {
+        inputs: &[Shape],
+        mut value: impl FnMut(&NumericInput) -> GeopResult<f64>,
+    ) -> GeopResult<CoordinateSystem<Design>> {
+        type S = Design;
         let point = |i: usize| inputs[i].point.expect("assigned a point");
         let line = |i: usize| inputs[i].line.clone().expect("assigned a line");
         let frame = |i: usize| inputs[i].plane.clone().expect("assigned a plane");
@@ -630,38 +600,28 @@ impl Construction {
     }
 }
 
-/// The datum the step `step` adds with `args`, built from its selection as
-/// the part before it has it.
-fn add(
-    reader: &mut BuildReader,
-    (step, args): &(String, AddDatumArgs),
-) -> GeopResult<Datum<Design>> {
+/// The datums with the one the step `step` adds with `args`, built from its
+/// selection as the part before it has it.
+fn add(reader: &PartReader, (step, args): &(String, AddDatumArgs)) -> GeopResult<Datums> {
     let ctx = with_context!("add_datum({step}, {args:?})");
-    if step == ORIGIN {
-        return Err(GeopError::new(format!(
-            "a datum cannot be named {ORIGIN:?}: every part has that one"
-        )));
-    }
-    let model = model_or_empty(reader);
-    let mut scope = Scope {
-        model: &model,
-        reader,
-    };
-    let inputs = args.inputs(&mut scope).with_context(ctx)?;
+    let inputs = args.inputs(reader).with_context(ctx)?;
     let frame = (args.construction)
-        .build(&inputs, |f| f.evaluate(&mut scope))
+        .build(&inputs, |f| f.resolve(reader))
         .with_context(ctx)?;
-    Ok(Datum {
+    let mut datums: Datums = reader.previous()?;
+    let datum = Datum {
         kind: args.construction.schema().result,
         frame,
-    })
+    };
+    datums.insert(step, datum).with_context(ctx)?;
+    Ok(datums)
 }
 
 part_operation!(AddDatum(AddDatumArgs));
 
 impl PartOperation for AddDatum {
+    const KIND: &'static str = "add_datum";
     const INFO: OperationInfo = OperationInfo::new(
-        "add_datum",
         "Reference",
         "Add a point, an axis, a plane or a coordinate system to build with, made from what is picked.",
         OperationGroup::Sketch,
@@ -669,11 +629,10 @@ impl PartOperation for AddDatum {
     )
     .icon(crate::icons::ADD_DATUM);
     type Args = AddDatumArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
-
-    fn formulas(args: &mut AddDatumArgs) -> Vec<&mut String> {
-        args.construction.formulas()
-    }
 
     /// Nothing selected yet, and the first construction.
     fn new_args(_: &StepContext) -> AddDatumArgs {
@@ -683,9 +642,9 @@ impl PartOperation for AddDatum {
         }
     }
 
-    /// Defines the datum named after the step.
-    fn run(step: &str, part: &mut Build, args: &AddDatumArgs) -> GeopResult<()> {
-        part.define_target(&datum(step), &(step.to_string(), args.clone()), add)
+    /// Adds the datum named after the step to the part's datums.
+    fn run(step: &str, part: &mut BuildPart, args: &AddDatumArgs) -> GeopResult<()> {
+        part.revise_target(&datums(), &(step.to_string(), args.clone()), add)
     }
 
     /// Picking the selection, choosing among the constructions that fit
@@ -695,7 +654,7 @@ impl PartOperation for AddDatum {
         args: &AddDatumArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, AddDatumArgs> {
-        editor::form(context.before, args)
+        editor::form(&context.before, args)
     }
 
     fn canvas(
@@ -703,57 +662,50 @@ impl PartOperation for AddDatum {
         edit: Edit<'_, AddDatumArgs, ()>,
         event: &CanvasEvent<Design>,
     ) {
-        editor::event(&Seen::new(context.before), edit.args, event);
+        editor::event(&context.before, edit.args, event);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use geop_core_math::{
-        primitives::{FrameAxis, Ray},
+        primitives::{DatumComponent, FrameAxis},
         scalars::ScalInF64 as S,
     };
-    use geop_core_program::{
-        operation_registry::OperationRegistry,
-        program::{Program, ProgramStep},
-        program_runner::ProgramRunner,
-        step_editor::{Editing, StepEditor},
-    };
-    use geop_ops::{
-        NamedModel, ParamValue,
-        operation::{Input, apply},
-        ui::{
-            Axis, Button, Control, GizmoPart, PartScene, PartView, Pointer, Presentation, Reach,
-            StepEditEvent, Tone, Value,
-        },
-    };
+    use geop_core_program::{element::ElementReference, operation::Operation};
+    use geop_ops_datums::{AnyDatum, ORIGIN, component_name, define_datums, read_datums};
+    use geop_ops_model::model;
 
     use super::*;
 
-    fn origin() -> EntityRef {
-        EntityRef::datum(ORIGIN)
+    fn datum(name: impl Into<String>) -> Selected {
+        Selected::Datum(ElementReference::<Datums, AnyDatum>::new(datums(), name))
     }
-    use geop_ops::{origin_axis as axis, origin_plane as base};
+    fn origin() -> Selected {
+        datum(ORIGIN)
+    }
+    fn base(normal: FrameAxis) -> Selected {
+        datum(component_name(ORIGIN, DatumComponent::Plane(normal)))
+    }
+    fn axis(along: FrameAxis) -> Selected {
+        datum(component_name(ORIGIN, DatumComponent::Axis(along)))
+    }
     fn v(p: [f64; 3]) -> Vector3<S> {
         Vector3::from_array(p.map(S::from_f64))
     }
-    /// A pointer from `origin` along `dir`, reaching a hundredth of a unit.
-    fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer<S> {
-        Pointer {
-            ray: Ray::try_new(v(origin), v(dir)).unwrap(),
-            reach: Reach::Tube {
-                radius: S::from_f64(0.01),
-            },
-        }
-    }
 
-    /// The datum step `d` with `args` adds to an empty part, or why it
-    /// fails.
+    /// The datum step `d` with `args` adds to a part of nothing but the
+    /// origin, or why it fails.
     fn added(args: &AddDatumArgs) -> GeopResult<Datum<S>> {
-        let part = apply::<AddDatum>(NamedModel::new(), "d", args)?;
-        part.current().retrieve_target(&datum("d")).cloned()
+        let mut part = BuildPart::default();
+        part.begin_run(&Default::default(), &Default::default());
+        part.begin_step();
+        define_datums(&mut part)?;
+        part.begin_step();
+        <AddDatum as Operation>::run("d", &mut part, args)?;
+        part.end_run(0);
+        let datums = read_datums(&part.current())?.into_owned();
+        datums.get("d")
     }
 
     /// Every construction serializes under its own method, with exactly the
@@ -776,7 +728,8 @@ mod tests {
         }
     }
 
-    /// A datum is the step's target: built where its selection puts it.
+    /// A datum is added to the part's datums: built where its selection
+    /// puts it.
     #[test]
     fn an_offset_plane_is_added() {
         let args = AddDatumArgs {
@@ -789,6 +742,10 @@ mod tests {
         assert_eq!(datum.kind, DatumKind::Plane);
         assert!(datum.frame.origin().could_be_equal(&v([0.0, 0.0, 2.0])));
         assert!(datum.frame.w().could_be_equal(&v([0.0, 0.0, 1.0])));
+        assert_eq!(
+            serde_json::to_value(&args.selection).unwrap(),
+            serde_json::json!([{"datum": "origin:xy"}])
+        );
     }
 
     #[test]
@@ -808,8 +765,7 @@ mod tests {
     /// Degenerate selections are refused, saying why.
     #[test]
     fn degenerate_selections_fail() {
-        let origin = origin();
-        let err = |selection: Vec<EntityRef>, construction: Construction| {
+        let err = |selection: Vec<Selected>, construction: Construction| {
             let args = AddDatumArgs {
                 selection,
                 construction,
@@ -819,13 +775,7 @@ mod tests {
                 Err(e) => format!("{e:?}"),
             }
         };
-        assert!(
-            err(
-                vec![origin.clone(), origin.clone()],
-                Construction::TwoPoints {}
-            )
-            .contains("coincide")
-        );
+        assert!(err(vec![origin(), origin()], Construction::TwoPoints {}).contains("coincide"));
         assert!(
             err(
                 vec![base(FrameAxis::Z), base(FrameAxis::Z)],
@@ -835,7 +785,7 @@ mod tests {
         );
         assert!(
             err(
-                vec![origin.clone(), axis(FrameAxis::X)],
+                vec![origin(), axis(FrameAxis::X)],
                 Construction::PerpendicularToLine {}
             )
             .contains("lies on the line")
@@ -847,202 +797,7 @@ mod tests {
             )
             .contains("perpendicular")
         );
-        assert!(
-            err(vec![EntityRef::edge("nowhere")], Construction::AlongLine {}).contains("nowhere")
-        );
-    }
-
-    /// A datum step `d`, the only step of its program, being edited as an
-    /// editor drives it: every event handled, then the program run again.
-    struct Editor {
-        runner: ProgramRunner<Input, ParamValue>,
-        program: Program,
-        editor: StepEditor<S>,
-    }
-
-    impl Editor {
-        /// Editing `args` — `new`, starting with a pick.
-        fn on(args: AddDatumArgs, new: bool) -> Self {
-            let registry = OperationRegistry::default().with(AddDatum).unwrap();
-            let mut runner = ProgramRunner::new(registry);
-            let program = Program::new(vec![ProgramStep::new::<AddDatum>("d", &args).unwrap()]);
-            runner.run(&program, &BTreeMap::new(), &BTreeMap::new());
-            let editor = StepEditor::new(&runner, &program, "d", new).unwrap();
-            Editor {
-                runner,
-                program,
-                editor,
-            }
-        }
-
-        fn send(&mut self, event: StepEditEvent<S>) {
-            let before = self.runner.part.view_before("d").unwrap();
-            let view = PartView::of(&Seen::new(before)).unwrap();
-            let scene = PartScene {
-                view: &view,
-                seen: Seen::new(before),
-            };
-            let editing = Editing {
-                runner: &self.runner,
-                program: &mut self.program,
-                scene: &scene,
-            };
-            self.editor.handle(editing, &event).unwrap();
-            (self.runner).run(&self.program, &BTreeMap::new(), &BTreeMap::new());
-        }
-
-        fn args(&self) -> AddDatumArgs {
-            serde_json::from_value(self.program.steps[0].args.clone()).unwrap()
-        }
-
-        fn shown(&self) -> Presentation<S> {
-            let before = self.runner.part.view_before("d").unwrap();
-            let view = PartView::of(&Seen::new(before)).unwrap();
-            let scene = PartScene {
-                view: &view,
-                seen: Seen::new(before),
-            };
-            (self.editor)
-                .presentation(&self.runner, &self.program, &scene)
-                .unwrap()
-        }
-    }
-
-    /// `args` edited by `events`, and what is shown after them.
-    fn edited(
-        args: AddDatumArgs,
-        new: bool,
-        events: &[StepEditEvent<S>],
-    ) -> (AddDatumArgs, Presentation<S>) {
-        let mut editor = Editor::on(args, new);
-        for event in events {
-            editor.send(event.clone());
-        }
-        (editor.args(), editor.shown())
-    }
-
-    /// An offset point is moved by a gizmo at it, along the axes its
-    /// offsets are measured along: its `z` arrow dragged edits `z`.
-    #[test]
-    fn offset_points_are_dragged_by_a_gizmo() {
-        let args = AddDatumArgs {
-            selection: vec![origin()],
-            construction: Construction::Point {
-                x: 1.0.into(),
-                y: 2.0.into(),
-                z: 3.0.into(),
-            },
-        };
-        let shown = edited(args.clone(), false, &[]).1;
-        assert!(shown.visuals.is_empty(), "no handles: {:?}", shown.visuals);
-        let gizmo = shown.gizmo.expect("a gizmo");
-        assert!(
-            gizmo.at.could_be_equal(&v([1.0, 2.0, 3.0])),
-            "{:?}",
-            gizmo.at
-        );
-        assert!(gizmo.modes.translate && !gizmo.modes.rotate);
-        // Seen from the side, its `z` arrow dragged half a unit up — the
-        // grid a reach of 0.01 snaps to being a tenth.
-        let side = |z: f64| pointer([1.0, -10.0, z], [0.0, 1.0, 0.0]);
-        let hover = StepEditEvent::Hover {
-            pointer: side(3.05),
-            shift: false,
-        };
-        let hovered = edited(args.clone(), false, std::slice::from_ref(&hover)).1;
-        assert_eq!(
-            hovered.gizmo.and_then(|g| g.hover),
-            Some(GizmoPart::Move(Axis::Z))
-        );
-        assert!(hovered.grab);
-        let drag = StepEditEvent::Drag {
-            from: side(3.05),
-            to: side(3.57),
-            done: true,
-            shift: false,
-        };
-        let (dragged, _) = edited(args, false, &[drag]);
-        assert_eq!(
-            dragged.construction,
-            Construction::Point {
-                x: 1.0.into(),
-                y: 2.0.into(),
-                z: 3.5.into()
-            }
-        );
-    }
-
-    /// The dialog says what each selected entity can be used as, and offers
-    /// only the constructions that fit the selection — for a step that does
-    /// not build too.
-    #[test]
-    fn dialogs_say_what_a_selection_fits() {
-        let args = AddDatumArgs {
-            selection: vec![origin(), EntityRef::edge("nowhere")],
-            construction: Construction::Offset {
-                distance: 1.0.into(),
-            },
-        };
-        assert!(added(&args).is_err());
-        let dialog = edited(args.clone(), false, &[]).1.dialog;
-        let Some(Control::Reference(selection)) = dialog.get("selection") else {
-            panic!("the selection is a reference field");
-        };
-        assert_eq!(selection.value[0].detail.as_deref(), Some("point"));
-        assert_eq!(selection.value[1].tone, Tone::Error);
-        assert!(dialog.get("construction_needs").is_some());
-
-        let args = AddDatumArgs {
-            selection: vec![base(FrameAxis::Z)],
-            ..args
-        };
-        let dialog = edited(args, false, &[]).1.dialog;
-        let Some(Control::Actions { actions }) = dialog.get("construction") else {
-            panic!("the constructions are actions");
-        };
-        let enabled = |method: &str| actions.iter().find(|a| a.value == method).unwrap().enabled;
-        assert!(enabled("offset"));
-        assert!(!enabled("midpoint"));
-    }
-
-    /// Picking in the viewport adds to the selection, and again takes out;
-    /// the construction follows what fits.
-    #[test]
-    fn picks_build_the_selection() {
-        let args = AddDatumArgs {
-            selection: Vec::new(),
-            construction: Construction::default_of(&CONSTRUCTIONS[0]),
-        };
-        // The origin's ball, from above.
-        let click = StepEditEvent::Click {
-            pointer: pointer([0.0, 0.0, 10.0], [0.0, 0.0, -1.0]),
-            button: Button::Primary,
-            double: false,
-            shift: false,
-        };
-        let (once, shown) = edited(args.clone(), true, std::slice::from_ref(&click));
-        assert_eq!(once.selection, [origin()]);
-        assert!(shown.pickable.contains(&Role::Point));
-        let (twice, _) = edited(args, true, &[click.clone(), click]);
-        assert!(twice.selection.is_empty());
-    }
-
-    /// Entities are taken out of the selection in its field, one or all —
-    /// by the editor, as for any reference field; the construction follows.
-    #[test]
-    fn selections_are_edited_in_their_field() {
-        let args = AddDatumArgs {
-            selection: vec![origin(), axis(FrameAxis::X)],
-            construction: Construction::Perpendicular {},
-        };
-        let field = |value| StepEditEvent::Dialog {
-            key: "selection".into(),
-            value,
-        };
-        let (removed, _) = edited(args.clone(), false, &[field(Value::RemoveAt(0))]);
-        assert_eq!(removed.selection, [axis(FrameAxis::X)]);
-        assert_eq!(removed.construction.schema().method, "along_line");
-        let (cleared, _) = edited(args, false, &[field(Value::Clear)]);
-        assert!(cleared.selection.is_empty());
+        let nowhere = Selected::Edge(ElementReference::new(model(), "nowhere"));
+        assert!(err(vec![nowhere], Construction::AlongLine {}).contains("nowhere"));
     }
 }

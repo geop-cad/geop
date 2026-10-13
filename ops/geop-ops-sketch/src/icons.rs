@@ -1,6 +1,6 @@
 //! The icons of a sketch's step and its tools: SVG on a 20 × 20 grid, drawn
 //! in the current colour as a front end draws every icon (see
-//! [`geop_core_program::operation::OperationInfo::icon`]).
+//! [`geop_core_editor::editable::OperationInfo::icon`]).
 
 pub(crate) const RECTANGLE: &str = r#"<rect x="3.5" y="5.5" width="13" height="9"/><circle cx="3.5" cy="14.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="16.5" cy="5.5" r="1.6" fill="currentColor" stroke="none"/>"#;
 pub(crate) const CENTER_RECTANGLE: &str = r#"<rect x="3.5" y="5.5" width="13" height="9"/><path d="M3.5 14.5 L16.5 5.5" stroke-dasharray="1.5 1.5"/><circle cx="10" cy="10" r="1.6" fill="currentColor" stroke="none"/><circle cx="16.5" cy="5.5" r="1.6" fill="currentColor" stroke="none"/>"#;
@@ -37,7 +37,7 @@ pub(crate) const ADD_SKETCH: &str =
 /// The icon of the drawing tool or the constraint named `name` in events:
 /// its own, or one it shares with other operations.
 pub(crate) fn named(name: &str) -> Option<&'static str> {
-    use geop_ops::ui::icons as shared;
+    use geop_ops_view::icons as shared;
     Some(match name {
         "rectangle" => RECTANGLE,
         "center_rectangle" => CENTER_RECTANGLE,

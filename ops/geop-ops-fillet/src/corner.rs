@@ -50,11 +50,12 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{EdgeId, FaceId, Model, VertexId};
-use geop_ops::{NamedModel, Namer};
+use geop_ops_model::tangent::TangentChain as Chain;
+use geop_ops_model::{NamedModel, Namer};
 
 use crate::{
     blend::{Bend, BlendShape, End, Plan, Sweep, ToolProfile, check_touch},
-    rolling::{Chain, ChainCorner, RadiusLaw, chain_bend, foot, seed_on},
+    rolling::{ChainCorner, RadiusLaw, chain_bend, foot, seed_on},
     tool::{Corner, CornerEnd},
 };
 

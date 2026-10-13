@@ -707,7 +707,7 @@ that is cubic in the parts. What fixed it, and what to keep doing:
   state. Questions about what was built, over the whole assembly, are for
   the one dialog open, once per edit.
 - A system that splits into independent groups is solved group by group,
-  and so is any question about it (`geop_core_program::solve::freedom`, like the
+  and so is any question about it (`geop_ops_constraints::solve::freedom`, like the
   solve).
 - Listing must not build: example programs and standard parts are listed
   by name, and made when opened or read.
@@ -756,23 +756,39 @@ not in slow arithmetic:
 
 ## An operation is a `PartOperation`, edited through one form
 
-Every operation of a part implements `geop_ops::operation::PartOperation`
-and is made an `Operation` by `part_operation!`: its info, arguments,
-`new_args`, `build` (or a `run` that defines targets of its own) and one
-`form`, whose fields each carry their setter (`EditForm`). A field's key is
-written once; a hand-written `match` over event keys drifts from the form it
-answers. Sub-forms shared by several operations (`Combine::fields`,
-`Spacing::fields`, `Extents::fields`) add fields with setters to an
-`EditForm`, never a `show`/`set` pair. What a whole session forgets before
-each event goes in `begin_event`, not into every setter. Shared test helpers
-live in `geop_ops::testing` (feature `testing`: validity, entities by
-where they are, building a program in the operations of a registry) and
+Every operation of a part implements
+`geop_core_editor::part_operation::PartOperation` and is made an
+`Operation` by `part_operation!(Op(Args))`: its info, arguments,
+`new_args`, a `run` that defines and revises targets (or, for one that
+only changes the model, `geop_ops_model::ModelOperation` through
+`build_model`) and one `form`, whose fields each carry their setter
+(`EditForm`). A field's key is written once; a hand-written `match` over
+event keys drifts from the form it answers. Sub-forms shared by several
+operations (`Combine::fields`, `Spacing::fields`, `Extents::fields`) add
+fields with setters to an `EditForm`, never a `show`/`set` pair. What a
+whole session forgets before each event goes in `begin_event`, not into
+every setter.
+
+A step's arguments refer to what other steps built by typed references
+(`ElementReference<Target, Kind>`), never by bare strings: a face to sketch
+on is `ElementReference<NamedModel<Design>, Plane>`, made with
+`geop_ops_model::element(name)`; a datum with `geop_ops_datums::datum`; a
+sketch with `geop_ops_sketch::whole_sketch`. A field that takes one of
+several kinds of thing is an enum made by `one_of!`, which derives how it
+is saved, picked and resolved. Each crate defines its own targets and draws
+them; `geop_cad_base::part` only composes them (the given step, the drawing,
+the structure). A run's inputs are numbers only: text parameters, colour,
+material and the library are targets of the given step.
+
+Shared test helpers live in `geop_ops_model::testing` (feature `testing`:
+validity, entities by where they are, applying an operation to a part) and
 `geop_ops_extrude_revolve`'s `shapes` and `testing` (feature `testing`:
-basic solids, sketches and the steps extruding them): look there before
-writing an `assert_valid`, a cube or a `v3` of your own. An operation's
-program tests live in its own crate (`program_tests.rs`), with a registry
-of the operations they use; only tests that drive the editor, the examples
-or the standard parts stay in `geop-cad-base`.
+basic solids, sketches, the steps extruding them, building a program in the
+operations of a registry): look there before writing an `assert_valid`, a
+cube or a `v3` of your own. An operation's program tests live in its own
+crate (`program_tests.rs`), with a registry of the operations they use; only
+tests that drive the editor, the examples or the standard parts stay in
+`geop-cad-base`.
 
 ## Working in parallel worktrees
 

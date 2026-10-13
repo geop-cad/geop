@@ -2,7 +2,9 @@
 //! what the sketch projects; one line on what to do next and one on how
 //! the sketch stands; and its constraints.
 
-use geop_ops::ui::{Choice, Number, Prompt, Unit, constraint_status};
+use geop_core_editor::editing::{Choice, Number, Prompt, Unit};
+
+use crate::fields::constraint_status;
 
 use super::*;
 use crate::{icons, references::Source};
@@ -193,7 +195,7 @@ fn status(sketch: &Sketch, s: &SketchSession) -> (String, Tone) {
 /// shows, lying in `frame`, with `keys` the keys of the visuals selected.
 pub(super) fn draw_dialog<'a>(
     d: &mut EditForm<'a, S, AddSketchArgs, SketchSession>,
-    view: BuildView<'a>,
+    view: &'a PartReader<'a>,
     args: &AddSketchArgs,
     s: &SketchSession,
     keys: &[String],
@@ -304,12 +306,11 @@ pub(super) fn draw_dialog<'a>(
             Source::Frame => None,
         })
         .collect();
-    d.reference(
+    d.pick(
         "project",
         "project",
-        projected,
-        &[Role::Point, Role::Curve, Role::Plane, Role::Round],
-        None,
+        view,
+        &projected,
         true,
         move |edit, entities| editing(view, edit, |e| e.project(entities)),
     );
@@ -343,7 +344,7 @@ pub(super) fn draw_dialog<'a>(
                 Tone::Normal
             };
             item.text =
-                args.formulas.get(&id).cloned().or_else(|| {
+                args.formulas.get(&id).map(|f| f.to_string()).or_else(|| {
                     constraints::value(c).map(|v| format!("{}", (v * 1e6).round() / 1e6))
                 });
             item
@@ -368,10 +369,8 @@ pub(super) fn draw_dialog<'a>(
         d.form.prompt = Some(Prompt {
             key: "prompt".into(),
             label: constraints::name(c),
-            value: args
-                .formulas
-                .get(&id)
-                .cloned()
+            value: (args.formulas.get(&id))
+                .map(|f| f.to_string())
                 .unwrap_or_else(|| format!("{}", (value * 1e6).round() / 1e6)),
             at: to_world(frame, at),
         });

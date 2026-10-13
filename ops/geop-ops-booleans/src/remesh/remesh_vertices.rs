@@ -5,7 +5,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{Body, Model, VertexId};
-use geop_ops::NamedModel;
+use geop_ops_model::NamedModel;
 
 /// The first `(vertex_a, vertex_b)` pair — `vertex_a` from `solid_a`,
 /// `vertex_b` from `solid_b`, distinct ids — whose points coincide, if any.

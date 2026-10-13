@@ -18,7 +18,7 @@ use geop_core_math::{
 use geop_core_program::part::{Input, Reader, State};
 use serde::{Deserialize, Serialize};
 
-use crate::editing::Value;
+use crate::editing::{Number, Unit, Value};
 
 /// A number an operation is given: a plain value, or a formula of the
 /// program's parameters that it follows. Saved as a number when plain, and
@@ -89,6 +89,31 @@ impl NumericInput {
             NumericInput::Formula { formula } => evaluate(formula, |name| {
                 reader.retrieve_input(name).map(|input| input.to_f64())
             }),
+        }
+    }
+
+    /// A number field of it, labelled `label`, showing what it comes to as
+    /// `reader` reads the parameters — or, where it does not evaluate, why.
+    ///
+    /// A value that follows a formula is neither slid nor dragged: moving it
+    /// would have to either break the formula or move the parameters it
+    /// reads, and neither is what a drag means. So such a field has no
+    /// slider and no handle ([`Number::range`] and [`Number::handle`] keep
+    /// none); to drag the value again, type a number.
+    pub fn number<I: Input + Scalar, St: State, S: Scalar>(
+        &self,
+        label: impl Into<String>,
+        reader: &Reader<I, St>,
+        unit: Unit,
+    ) -> Number<S> {
+        let (value, error) = match self.resolve(reader) {
+            Ok(value) => (value, None),
+            Err(e) => (0.0, Some(e.root_message().to_string())),
+        };
+        Number {
+            text: Some(self.to_string()),
+            error,
+            ..Number::new(label, value, unit)
         }
     }
 

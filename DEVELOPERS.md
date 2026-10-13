@@ -32,34 +32,44 @@ core/geop-core-sketch         2-D constraint sketches: entities, constraints
                                as residuals, profile extraction, geometry
                                made from geometry (mirror, patterns, offset),
                                how a dimension is drawn in a plane
-ops/geop-ops                  parts (topology, sketches, datums, placed
-                               parts, the features their steps
-                               combined, cosmetic threads, every entity
-                               with a stable name), what an operation is and how it is
-                               edited (events, dialogs, visuals, hit tests,
-                               the gizmo every drag in space goes by),
-                               parameters and the formulas reading them —
-                               a sketch dimension, an operation's length,
-                               angle or count — programs, the
-                               files they place parts from, and
-                               running them — a workspace rebuilds only what
-                               a changed file reaches, and a scene sends
-                               placed parts as changes; what an editor
-                               collects from steps (annotations, structure
-                               entries) and the exporter and inspector
-                               interfaces (`output`), with the STL export
-                               and the sheet drawings and flat patterns are
-                               written on (SVG, DXF, each layer defined by
-                               who draws on it); the solids a part shows
-                               wherever they are placed, each of its own
-                               material, what its steps noted of them
-                               (only drawn, sheet thickness, wires to
-                               order), and their mass properties
+core/geop-core-program        programs and the parts they build: targets a
+                               step defines and revises, typed references
+                               to their elements (`ElementReference`), the
+                               operations a program is written in, and
+                               running it from the given step on
+core/geop-core-editor         what an operation is and how it is edited
+                               (`PartOperation`, `EditForm`): events,
+                               dialogs, visuals, hit tests, the gizmo every
+                               drag in space goes by; picking typed
+                               references (`Selectable`, `one_of!`); numbers
+                               as typed or formulas (`NumericInput`)
+ops/geop-ops-model            the model a part's steps build: topology with
+                               stable names, the features their steps
+                               combined, geometric kinds of its elements
+                               (point, line, plane, round, curve, body),
+                               cosmetic threads, solid notes; how it is drawn
+ops/geop-ops-parameters       a program file: its parameters (numbers,
+                               tables, colour, material) and the formulas
+                               reading them, its state, what it says of its
+                               part (`About`), and running it
+ops/geop-ops-view             what an editor draws of a part (`PartView`):
+                               picking by drawn kind, annotations and the
+                               structure entries steps list
+ops/geop-ops-output           the exporter and inspector interfaces, and the
+                               sheets drawings and flat patterns are written
+                               on (SVG, DXF, each layer defined by who draws
+                               on it)
+ops/geop-ops-constraints      the constraints and unknowns of a part's state
+                               (mates, joints), and the solver re-running the
+                               program over them
+ops/geop-ops-datums           the part's datums: the origin, and those steps
+                               add, picked as points, axes and planes
 ops/geop-ops-sketch           the sketch operation: drawing and constraint
                                tools, snapping, reference geometry and
                                projections of the part
-ops/geop-ops-datums           the datum operation: reference points, axes,
-                               planes and coordinate systems
+ops/geop-ops-add-datum        the datum operation: reference points, axes,
+                               planes and coordinate systems built from what
+                               is picked
 ops/geop-ops-booleans         3-D boolean operations (union/intersection/diff),
                                the boolean operation
 ops/geop-ops-edit             edits of existing bodies: delete a body,
@@ -121,7 +131,9 @@ ops/geop-ops-harness          wire harnesses: wires routed through connectors
                                route operation
 ops/geop-ops-assembly         the part operation: place another file's part,
                                mate it, joint it, drag it; patterns of
-                               placed parts
+                               placed parts; the library parts are placed
+                               from, the solids a part shows wherever they
+                               are placed, and the STL export
 ops/geop-ops-inspect          inspecting a part without changing it: mass
                                properties of its solids and placed parts,
                                measurements of picked entities, interference;
@@ -131,7 +143,10 @@ ops/geop-ops-urdf             URDF export of an assembly: the tree of links
                                stored ZIP writer; an exporter (`geop compile
                                robot.geop -o robot.zip`)
 cad/geop-cad-base             the operations the editor offers, the editor engine,
-                               example programs, the standard parts (below)
+                               the part as it composes it from every crate
+                               (the given step, drawing, structure), the
+                               workspace programs place parts from, example
+                               programs, the standard parts (below)
 cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)
 cad/geop-cad-cli              the `geop` command-line tool; `compile` meshes
                                each placed component once
@@ -150,13 +165,14 @@ ops/geop-ops-bom              bills of materials: placed parts grouped by
                                an inspector, and a CSV exporter
 ```
 
-An operation crate plugs into the editor without the editor knowing it
-(see the book's geop-ops page, "What an editor shows and makes of a
-part"): what a step draws on the part is its `ui::annotations` target,
-what it lists in the structure tree its `ui::listing` target; a file
-written from the part is an `output::Exporter`, a question about it an
-`output::Inspector`, registered in `geop_cad_base::outputs` beside the
-operations in `registry`. `geop compile` picks the exporter by the
+An operation crate plugs into the editor without the editor knowing it:
+it defines its own targets and draws them, and `geop_cad_base::part`
+composes the part from every crate's (`given`, `draw`, `structure`).
+What a step draws on the part is its `geop_ops_view::annotations` target,
+what it lists in the structure tree its `geop_ops_view::listing` target; a
+file written from the part is a `geop_ops_output::Exporter`, a question
+about it a `geop_ops_output::Inspector`, registered in
+`geop_cad_base::outputs` beside the operations in `editors`. `geop compile` picks the exporter by the
 output's extension and passes it the options given as `-O key=value`.
 The web app builds its export menu and inspect buttons from the lists the
 program state sends, and shows every inspector's answer as the inspector

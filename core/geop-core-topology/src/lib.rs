@@ -15,8 +15,8 @@ pub mod mass;
 pub mod model;
 pub mod shell;
 pub mod solid;
-#[cfg(test)]
-pub(crate) mod test_fixtures;
+#[cfg(any(test, feature = "testing"))]
+pub mod test_fixtures;
 pub mod validation;
 pub mod vertex;
 pub mod wire;

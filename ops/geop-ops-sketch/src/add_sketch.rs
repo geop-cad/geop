@@ -1,34 +1,47 @@
 //! [`AddSketch`]: place a sketch in the part.
 
-use geop_ops::operation::ResolveEntity;
 use std::collections::BTreeMap;
 
+use geop_core_editor::{
+    edit_form::{Edit, EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::CanvasEvent,
+    numeric_input::NumericInput,
+    one_of, part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
-    scalars::Scalar,
     with_context,
 };
+use geop_core_program::element::ElementReference;
 use geop_core_sketch::ConstraintId;
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design,
-    model::{PlacedSketch, model_or_empty, sketch},
-    operation::{Build, BuildReader, EntityRef, Lookup, PartOperation, Scope, StepContext},
-    part_operation,
-    ui::{CanvasEvent, Edit, EditForm, FormState},
-};
+use geop_ops_datums::Datums;
+use geop_ops_model::{Design, NamedModel, Plane};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     Sketch,
     constraints::{Pick, set_value},
     editor::{self, SketchSession},
+    placed::{PlacedSketch, sketch},
     references::{Reference, Source},
 };
 
+one_of! {
+    /// The plane a sketch is placed on: a flat face, a datum plane — the
+    /// origin's among them — or another sketch's plane.
+    pub enum SketchPlane -> CoordinateSystem<Design> {
+        Face(ElementReference<NamedModel<Design>, Plane>),
+        Datum(ElementReference<Datums, Plane>),
+        Sketch(ElementReference<PlacedSketch<Design>, Plane>),
+    }
+}
+
 /// Adds a sketch on a plane to the part, named by the operation's id: a
-/// planar face, a datum plane or a frame's plane (see [`EntityRef`]). The plane is
+/// planar face, a datum plane or a frame's plane (see [`SketchPlane`]). The plane is
 /// resolved when the sketch is added: a sketch on a face stays where the
 /// face was, whatever later operations do to the face.
 ///
@@ -43,18 +56,17 @@ pub struct AddSketchArgs {
     /// The plane to sketch on: a planar face, a datum plane or a frame's
     /// plane; none yet, for a new sketch waiting for one to be picked.
     #[serde(default)]
-    pub plane: Option<EntityRef>,
+    pub plane: Option<SketchPlane>,
     /// The sketch as drawn; solve it first for its constraints to hold.
     pub sketch: Sketch,
     /// Its reference geometry: its own origin and axes, and what it
     /// projects of the part.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub references: Vec<Reference>,
-    /// The dimensions given by a formula of the part's parameters (see
-    /// [`geop_ops::parameters`]) rather than a number, by constraint —
-    /// an angle's in degrees.
+    /// The dimensions given by a formula of the part's parameters rather
+    /// than a number, by constraint — an angle's in degrees.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub formulas: BTreeMap<ConstraintId, String>,
+    pub formulas: BTreeMap<ConstraintId, NumericInput>,
     /// Where each dimension placed by the designer shows its value: an
     /// offset in the plane from what it measures, so it moves with the
     /// geometry. Only what the editor draws; nothing built reads it.
@@ -65,7 +77,7 @@ pub struct AddSketchArgs {
 impl AddSketchArgs {
     /// A new sketch on `plane`, with nothing in it but its own origin and
     /// axes.
-    pub fn new(plane: Option<EntityRef>) -> Self {
+    pub fn new(plane: Option<SketchPlane>) -> Self {
         let mut args = AddSketchArgs {
             plane,
             sketch: Sketch::new(),
@@ -79,7 +91,7 @@ impl AddSketchArgs {
 
     /// `sketch`, drawn in code, on `plane` — without its own origin and
     /// axes, which [`AddSketchArgs::ensure_frame`] adds once it is edited.
-    pub fn on(plane: EntityRef, sketch: Sketch) -> Self {
+    pub fn on(plane: SketchPlane, sketch: Sketch) -> Self {
         Self {
             plane: Some(plane),
             sketch,
@@ -105,35 +117,32 @@ impl AddSketchArgs {
         })
     }
 
-    /// Brings what the sketch projects up to date with `lookup`, the sketch
-    /// lying in `plane` (see [`Reference::update`]).
-    pub fn update_references<S: Scalar>(
+    /// Brings what the sketch projects up to date with the part `reader`
+    /// reads, the sketch lying in `plane` (see [`Reference::update`]).
+    pub fn update_references(
         &mut self,
-        lookup: &mut (impl Lookup<S> + ?Sized),
-        plane: &CoordinateSystem<S>,
+        reader: &PartReader,
+        plane: &CoordinateSystem<Design>,
     ) -> GeopResult<()> {
         for reference in &mut self.references {
-            reference.update(&mut self.sketch, lookup, plane)?;
+            reference.update(&mut self.sketch, reader, plane)?;
         }
         Ok(())
     }
 
-    /// Gives every dimension with a formula its value, `evaluate` reading
-    /// the parameters — and forgets the formulas and labels of constraints
-    /// gone.
-    pub fn apply_formulas(
-        &mut self,
-        mut evaluate: impl FnMut(&str) -> GeopResult<f64>,
-    ) -> GeopResult<()> {
-        self.formulas
-            .retain(|k, _| self.sketch.constraints.contains_key(k));
-        self.labels
-            .retain(|k, _| self.sketch.constraints.contains_key(k));
+    /// Gives every dimension with a formula its value, the parameters read
+    /// through `reader` — and forgets the formulas and labels of
+    /// constraints gone.
+    pub fn apply_formulas(&mut self, reader: &PartReader) -> GeopResult<()> {
+        let sketch = &mut self.sketch;
+        self.formulas.retain(|k, _| sketch.constraints.contains_key(k));
+        self.labels.retain(|k, _| sketch.constraints.contains_key(k));
         for (k, formula) in &self.formulas {
-            let c = self.sketch.constraints.get_mut(k).expect("retained");
-            let ctx = with_context!("the formula {formula:?} of constraint {k}");
-            let v = evaluate(formula).with_context(ctx)?;
-            set_value(c, v);
+            let ctx = with_context!("the formula {formula} of constraint {k}");
+            let c = (sketch.constraints.get_mut(k))
+                .ok_or_else(|| GeopError::new("retained"))
+                .with_context(ctx)?;
+            set_value(c, formula.resolve(reader).with_context(ctx)?);
         }
         Ok(())
     }
@@ -146,27 +155,15 @@ pub type SketchEditing = FormState<SketchSession>;
 /// The sketch the step `step` draws with `args`: on its plane as the part
 /// before it has it, with what it projects and its formulas brought up to
 /// date, solved anew if either changed what was drawn.
-fn draw(
-    reader: &mut BuildReader,
-    (step, args): &(String, AddSketchArgs),
-) -> GeopResult<PlacedSketch<Design>> {
+fn draw(reader: &PartReader, (step, args): &(String, AddSketchArgs)) -> GeopResult<PlacedSketch<Design>> {
     let ctx = with_context!("add_sketch({step}, plane={:?})", args.plane);
     let Some(plane) = &args.plane else {
         return Err(GeopError::new("pick a plane to sketch on")).with_context(ctx);
     };
-    let model = model_or_empty(reader);
-    let mut scope = Scope {
-        model: &model,
-        reader,
-    };
-    let plane = plane.resolve_plane(&mut scope).with_context(ctx)?;
+    let plane = plane.resolve(reader).with_context(ctx)?;
     let mut drawn = args.clone();
-    drawn
-        .update_references(&mut scope, &plane)
-        .with_context(ctx)?;
-    drawn
-        .apply_formulas(|formula| scope.evaluate(formula))
-        .with_context(ctx)?;
+    drawn.update_references(reader, &plane).with_context(ctx)?;
+    drawn.apply_formulas(reader).with_context(ctx)?;
     drawn.sketch.validate().with_context(ctx)?;
     // What it is given, or the values of its dimensions, changed since
     // it was drawn: solved anew, for its constraints to hold. A sketch
@@ -175,6 +172,7 @@ fn draw(
         drawn.sketch.solve().with_context(ctx)?;
     }
     Ok(PlacedSketch {
+        name: step.clone(),
         plane,
         sketch: drawn.sketch,
     })
@@ -183,8 +181,8 @@ fn draw(
 part_operation!(AddSketch(AddSketchArgs));
 
 impl PartOperation for AddSketch {
+    const KIND: &'static str = "add_sketch";
     const INFO: OperationInfo = OperationInfo::new(
-        "add_sketch",
         "Sketch",
         "Draw a sketch on a plane of a coordinate system, a datum plane or a planar face.",
         OperationGroup::Sketch,
@@ -192,11 +190,10 @@ impl PartOperation for AddSketch {
     )
     .icon(crate::icons::ADD_SKETCH);
     type Args = AddSketchArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = SketchSession;
-
-    fn formulas(args: &mut AddSketchArgs) -> Vec<&mut String> {
-        args.formulas.values_mut().collect()
-    }
 
     /// An empty sketch, on no plane yet: where to sketch is the first thing
     /// a new sketch asks for.
@@ -205,7 +202,7 @@ impl PartOperation for AddSketch {
     }
 
     /// Defines the sketch named after the step.
-    fn run(step: &str, part: &mut Build, args: &AddSketchArgs) -> GeopResult<()> {
+    fn run(step: &str, part: &mut BuildPart, args: &AddSketchArgs) -> GeopResult<()> {
         part.define_target(&sketch(step), &(step.to_string(), args.clone()), draw)
     }
 
@@ -216,7 +213,7 @@ impl PartOperation for AddSketch {
         args: &AddSketchArgs,
         editing: &SketchEditing,
     ) -> EditForm<'a, Design, AddSketchArgs, SketchSession> {
-        editor::form(context.before, args, &editing.session, &editing.selection)
+        editor::form(&context.before, args, &editing.session, &editing.selection)
     }
 
     fn canvas(
@@ -224,6 +221,6 @@ impl PartOperation for AddSketch {
         edit: Edit<'_, AddSketchArgs, SketchSession>,
         event: &CanvasEvent<Design>,
     ) {
-        editor::event(context.before, edit, event)
+        editor::event(&context.before, edit, event)
     }
 }

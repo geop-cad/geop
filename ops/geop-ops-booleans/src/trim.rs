@@ -19,7 +19,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{Body, EdgeId, FaceId, ShellId, SolidId, contains::shell::Classified};
-use geop_ops::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer};
 
 use crate::{
     boolean::{classify_face, copy_of},

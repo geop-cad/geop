@@ -1,17 +1,13 @@
 use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar, vector::Vector3};
 use geop_core_topology::FaceId;
-use std::{collections::BTreeMap, rc::Rc};
+use std::rc::Rc;
 
-use geop_ops::{
-    operation::BuildReader,
-    placed::Component,
-    testing::{built, built_with},
-};
+use geop_ops_assembly::Component;
 use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder, v3};
 
 use crate::{
     LineKind, ProjectedView, ViewKind, ViewOptions, project_view,
-    testing::{Part, component},
+    testing::{Part, built, built_with, component, given},
 };
 
 fn all_faces(part: &Part<S>) -> Vec<FaceId> {
@@ -138,8 +134,8 @@ fn a_threaded_shaft_draws_its_thread() {
     use crate::layer;
     use crate::{DrawingArgs, compose};
     use geop_core_geometry::{nurb_curve::Handedness, shape::Axis};
-    use geop_ops::output::sheet::{Shape, Stroke};
-    use geop_ops::{CosmeticThread, Threads};
+    use geop_ops_model::{CosmeticThread, Threads};
+    use geop_ops_output::sheet::{Shape, Stroke};
 
     let mut part = Part::<S>::new();
     revolved_cylinder(
@@ -174,11 +170,10 @@ fn a_threaded_shaft_draws_its_thread() {
         scale: Some(1.0),
         ..Default::default()
     };
-    let given = |_: &mut BuildReader, threads: &Threads<S>| Ok(threads.clone());
-    let build = built_with(&BTreeMap::new(), &part, &[], |part| {
-        (part.define_target(&geop_ops::threads(), &threads, given)).unwrap()
+    let build = built_with(&part, &[], |part| {
+        (part.define_target(&geop_ops_model::threads(), &threads, given)).unwrap()
     });
-    let sheet = compose(build.current(), &args, "", &[]).unwrap();
+    let sheet = compose(&build.current(), &args, "", &[]).unwrap();
     let thread = |s: &&Stroke| s.layer == layer::THREAD;
     let lines: Vec<(f64, f64)> = sheet
         .strokes
@@ -216,7 +211,7 @@ fn a_threaded_shaft_draws_its_thread() {
 fn a_bill_of_materials_stands_on_the_title_block() {
     use crate::layer;
     use crate::{DrawingArgs, PartsListLine, SheetSize, compose};
-    use geop_ops::output::sheet::Shape;
+    use geop_ops_output::sheet::Shape;
     let mut part = Part::<S>::new();
     cube_solid(
         &mut part,
@@ -240,7 +235,7 @@ fn a_bill_of_materials_stands_on_the_title_block() {
         ..Default::default()
     };
     let build = built(&part);
-    let sheet = compose(build.current(), &args, "", &lines).unwrap();
+    let sheet = compose(&build.current(), &args, "", &lines).unwrap();
     for text in ["ITEM", "part 5", "ISO 4762 M4x12"] {
         assert!(sheet.labels.iter().any(|l| l.text == text), "{text}");
     }
@@ -258,7 +253,7 @@ fn a_bill_of_materials_stands_on_the_title_block() {
     assert!(lowest > 86.0, "a view comes down to {lowest}");
 
     let many: Vec<PartsListLine> = (1..=40).map(line).collect();
-    let error = (compose(build.current(), &args, "", &many))
+    let error = (compose(&build.current(), &args, "", &many))
         .unwrap_err()
         .to_string();
     assert!(
@@ -291,11 +286,11 @@ fn place(
 }
 
 /// The part of nothing but `placed`.
-fn assembly(placed: &Placed) -> geop_ops::operation::Build {
+fn assembly(placed: &Placed) -> geop_ops_parameters::BuildPart {
     let placed: Vec<_> = (placed.iter())
         .map(|(name, component, pose)| (name.as_str(), component, *pose))
         .collect();
-    built_with(&BTreeMap::new(), &Part::new(), &placed, |_| {})
+    built_with(&Part::new(), &placed, |_| {})
 }
 
 /// A hundred blocks of one part in a row, placed alike but for where: one
@@ -316,7 +311,7 @@ fn repeated_parts_share_their_view() {
         );
     }
     let build = assembly(&part);
-    let scene = Scene::of(build.current()).unwrap();
+    let scene = Scene::of(&build.current()).unwrap();
     assert_eq!(scene.bodies.len(), 100);
     assert_eq!(scene.groups().len(), 1, "one view of the block for all");
     let front = scene
@@ -334,7 +329,7 @@ fn repeated_parts_share_their_view() {
         [0.0, 0.0, 90.0],
     );
     let build = assembly(&part);
-    assert_eq!(Scene::of(build.current()).unwrap().groups().len(), 2);
+    assert_eq!(Scene::of(&build.current()).unwrap().groups().len(), 2);
 
     // A column of blocks seen from its end: the one in front hides the
     // others whole, and each of their lines lies on one of its own. Only
@@ -350,7 +345,7 @@ fn repeated_parts_share_their_view() {
         );
     }
     let build = assembly(&column);
-    let scene = Scene::of(build.current()).unwrap();
+    let scene = Scene::of(&build.current()).unwrap();
     let front = scene
         .project(&ViewKind::Front.frame().unwrap(), &ViewOptions::default())
         .unwrap();
@@ -375,7 +370,7 @@ fn a_part_in_front_hides_one_behind() {
     place(&mut part, &big, "front", v3(0.0, 0.0, 0.0), [0.0; 3]);
     place(&mut part, &big, "back", v3(1.0, 5.0, 1.0), [0.0; 3]);
     let build = assembly(&part);
-    let scene = Scene::of(build.current()).unwrap();
+    let scene = Scene::of(&build.current()).unwrap();
     let front = scene
         .project(&ViewKind::Front.frame().unwrap(), &ViewOptions::default())
         .unwrap();
@@ -423,7 +418,7 @@ fn a_part_in_front_hides_one_behind() {
 fn an_assembly_balloons_each_line_once() {
     use crate::layer;
     use crate::{DrawingArgs, PartsListLine, compose};
-    use geop_ops::output::sheet::Shape;
+    use geop_ops_output::sheet::Shape;
     let mut part = Placed::new();
     let (big, small) = (block(4.0), block(1.0));
     place(&mut part, &big, "base", v3(0.0, 0.0, 0.0), [0.0; 3]);
@@ -460,7 +455,7 @@ fn an_assembly_balloons_each_line_once() {
         ..Default::default()
     };
     let build = assembly(&part);
-    let sheet = compose(build.current(), &args, "", &lines).unwrap();
+    let sheet = compose(&build.current(), &args, "", &lines).unwrap();
     let balloons: Vec<[f64; 2]> = sheet
         .strokes
         .iter()

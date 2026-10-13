@@ -1,0 +1,12 @@
+[package]
+name = "geop-ops-parameters"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-program.workspace = true
+geop-core-editor.workspace = true
+geop-ops-model.workspace = true
+serde.workspace = true
+serde_json.workspace = true

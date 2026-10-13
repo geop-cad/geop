@@ -4,6 +4,10 @@
 //! the caller supplied for it (see the crate docs for how names are chosen), and forgets the name of whichever
 //! one it deleted.
 
+// Each operator takes the topology's own arguments and a name for every
+// entity it creates: more than clippy's seven, by what it is.
+#![allow(clippy::too_many_arguments)]
+
 use geop_core_geometry::{
     nurb_curve::{NurbCurve2D, NurbCurve3D},
     nurb_surface::NurbSurface3D,

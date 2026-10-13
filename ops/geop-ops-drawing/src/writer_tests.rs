@@ -1,13 +1,13 @@
 //! Drawings composed and written as DXF and SVG, then read back.
 
 use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar};
-use geop_ops::{
-    output::sheet::{to_dxf, to_svg},
-    testing::built,
-};
+use geop_ops_output::sheet::{to_dxf, to_svg};
 use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder, v3};
 
-use crate::{DrawingArgs, ViewKind, compose, testing::Part};
+use crate::{
+    DrawingArgs, ViewKind, compose,
+    testing::{Part, built},
+};
 
 /// A DXF entity read back: its type, layer and text.
 pub(crate) type Entity = (String, String, String);
@@ -68,7 +68,7 @@ fn box_drawing_reads_back() {
         material: "Aluminium 6061".into(),
         ..Default::default()
     };
-    let sheet = compose(built(&part).current(), &args, "2026-10-04", &[]).unwrap();
+    let sheet = compose(&built(&part).current(), &args, "2026-10-04", &[]).unwrap();
 
     let entities = read_dxf(&to_dxf(&sheet));
     assert_eq!(dxf_count(&entities, "LINE", "VISIBLE"), 4);
@@ -114,7 +114,7 @@ fn cylinder_drawing_has_circle_and_centre_mark() {
         views: vec![ViewKind::Front, ViewKind::Top],
         ..Default::default()
     };
-    let sheet = compose(built(&part).current(), &args, "today", &[]).unwrap();
+    let sheet = compose(&built(&part).current(), &args, "today", &[]).unwrap();
     let entities = read_dxf(&to_dxf(&sheet));
     assert_eq!(dxf_count(&entities, "CIRCLE", "VISIBLE"), 1, "{entities:?}");
     assert_eq!(dxf_count(&entities, "LINE", "CENTER"), 2);

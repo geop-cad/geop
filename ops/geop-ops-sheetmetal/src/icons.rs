@@ -1,6 +1,6 @@
 //! The icons of this crate's operations: SVG on a 20 × 20 grid, drawn in
 //! the current colour as a front end draws every icon (see
-//! [`geop_core_program::operation::OperationInfo::icon`]).
+//! [`geop_core_editor::editable::OperationInfo::icon`]).
 
 pub(crate) const BASE_FLANGE: &str = r#"<path d="M3 13 L10 16.5 L17 13 L10 9.5 Z"/><path d="M3 13 L3 14.5 L10 18 L17 14.5 L17 13" stroke-width="1"/>"#;
 pub(crate) const EDGE_FLANGE: &str =

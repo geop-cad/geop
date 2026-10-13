@@ -6,28 +6,33 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     with_context,
 };
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, EntityRef, Namer, ORIGIN,
-    model::pose_parameter,
-    operation::{Build, BuildReader, PartOperation, StepContext, instance_path},
-    parameters::Values,
+use geop_core_editor::{
+    edit_form::{Edit, EditForm},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::CanvasEvent,
     part_operation,
-    placed::{Instance, Placement, instance, library},
-    ui::{self, CanvasEvent, Edit, EditForm, Listed, Listing, listing},
+    part_operation::PartOperation,
+    selectable::Selectable,
 };
+use geop_core_program::element::ElementReference;
+use geop_ops_add_datum::Selected;
+use geop_ops_datums::{ORIGIN, datums};
+use geop_ops_model::{Design, Namer};
+use geop_ops_parameters::{BuildPart, PartReader, Settings, StateValue, StepContext, pose_state};
+use geop_ops_view::{Listed, Listing, listing};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Mate, Resolved,
+    Mate, MateEntity, Resolved,
     editor::{self, PartEditing, PartSession},
     mate,
     mechanism::{define, mates_of, resolve},
+    placed::{Instance, Placement, instance, instance_path, read_instance, read_library},
 };
 
 /// Places the part the program in another file builds, named by the
-/// step's id: its entities are then the part's, behind that name —
-/// `bolt/extrude(head,end)` (see [`geop_ops::operation::INSTANCE_SEPARATOR`]).
+/// step's id: its elements are then the part's, behind that name (see
+/// [`MateEntity`]).
 ///
 /// The part goes where the program's state `<id>.pose` puts it, and the
 /// step adds its mates. It solves nothing: where every placed part is, so
@@ -42,7 +47,7 @@ use crate::{
 ///
 /// The parts placed in the part placed are this program's to move too:
 /// their poses are its state, behind the step's id, starting where the
-/// placed part's program has them (see [`geop_ops::placed`]); and their
+/// placed part's program has them (see [`crate::placed`]); and their
 /// mates hold them here as they held them there.
 ///
 /// A [`Mate::fixed_here`] among its mates, given no entity, holds the part this
@@ -61,11 +66,11 @@ pub struct AddPartArgs {
     #[serde(default)]
     pub mates: BTreeMap<String, Mate>,
     /// The values the part's own parameters (see
-    /// [`geop_ops::parameters::Parameters`]) are given here instead of its
+    /// [`geop_ops_parameters::Parameters`]) are given here instead of its
     /// own, by name: a number, a table's row, the colour — the part as this
     /// program places it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub parameters: Values,
+    pub parameters: Settings,
 }
 
 impl AddPartArgs {
@@ -95,13 +100,13 @@ impl AddPartArgs {
 /// `parameters` give them, where its pose state puts it — held there if
 /// `fixed`: the generator of its instance.
 fn place(
-    reader: &mut BuildReader,
-    (step, file, parameters, fixed): &(String, String, Values, bool),
+    reader: &PartReader,
+    (step, file, parameters, fixed): &(String, String, Settings, bool),
 ) -> GeopResult<Instance> {
-    let component = library(reader)?.component(file, parameters)?;
+    let component = read_library(reader)?.component(file, parameters)?;
     Ok(Instance {
         component,
-        placement: Placement::Parameter(pose_parameter(step)),
+        placement: Placement::State(pose_state(step)),
         fixed: *fixed,
     })
 }
@@ -111,15 +116,15 @@ const MATE: &str = "mate";
 
 /// A mate of the part placed, as this part has it already: the generator of
 /// its target.
-fn carry(_: &mut BuildReader, resolved: &Resolved) -> GeopResult<Resolved> {
+fn carry(_: &PartReader, resolved: &Resolved) -> GeopResult<Resolved> {
     Ok(resolved.clone())
 }
 
 part_operation!(AddPart(AddPartArgs));
 
 impl PartOperation for AddPart {
+    const KIND: &'static str = "add_part";
     const INFO: OperationInfo = OperationInfo::new(
-        "add_part",
         "Part",
         "Place the part another program file builds, and mate it to what is already there.",
         OperationGroup::Assembly,
@@ -128,6 +133,9 @@ impl PartOperation for AddPart {
     .picks_built()
     .icon(crate::icons::ADD_PART);
     type Args = AddPartArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = PartSession;
 
     /// No file yet; the first part placed is fixed, the ones after it are
@@ -145,10 +153,10 @@ impl PartOperation for AddPart {
         session.let_go();
     }
 
-    /// Places the part, then defines each mate: resolved, and as a
-    /// constraint on the state. A mate that cannot be resolved fails the
+    /// Places the part, then defines each mate: resolved, and as
+    /// constraints on the state. A mate that cannot be resolved fails the
     /// step, after the others are defined.
-    fn run(step: &str, part: &mut Build, args: &AddPartArgs) -> GeopResult<()> {
+    fn run(step: &str, part: &mut BuildPart, args: &AddPartArgs) -> GeopResult<()> {
         let ctx = with_context!("add_part({step}, file={:?})", args.file);
         if args.file.is_empty() {
             return Err(GeopError::new("choose a file to place")).with_context(ctx);
@@ -162,10 +170,15 @@ impl PartOperation for AddPart {
         part.define_target(&instance(step), &placing, place)
             .with_context(ctx)?;
         let namer = Namer::new("add_part", step)?;
-        let own_frame = EntityRef::datum(instance_path(step, ORIGIN));
+        let own_frame = MateEntity::of(
+            step,
+            Selected::Datum(ElementReference::new(datums(), ORIGIN)),
+        );
         let mut failed = Ok(());
-        // What the structure lists: every mate the step defines.
-        let mut mates = Vec::new();
+        // What the structure lists: every mate the step defines; what the
+        // state is constrained by: each, by its name and what it is called.
+        let mut listed = Vec::new();
+        let mut defined = Vec::new();
         for (id, mate) in &args.mates {
             let mut mate = mate.clone();
             if mate.is_fixed() && mate.entities.is_empty() {
@@ -175,39 +188,43 @@ impl PartOperation for AddPart {
                 continue;
             }
             let name = namer.name(&[id]);
-            mates.push(Listed {
+            listed.push(Listed {
                 kind: MATE.into(),
                 name: name.clone(),
-                entities: mate.entities.clone(),
+                elements: mate.entities.iter().map(Selectable::picked).collect(),
             });
-            let label = format!("{step} {id}");
-            let defined = (part.define_target(&crate::mate(&name), &(name.clone(), mate), resolve))
-                .and_then(|()| define(part, &name, &label));
-            failed = failed.and(defined);
+            let resolved =
+                part.define_target(&crate::mate(&name), &(name.clone(), mate), resolve);
+            if resolved.is_ok() {
+                defined.push((name, format!("{step} {id}")));
+            }
+            failed = failed.and(resolved);
         }
         // The placed part's own mates, behind its name.
-        let carried: Vec<(String, Resolved)> = match part.current().retrieve_target(&instance(step))
-        {
-            Ok(placed) => (mates_of(placed.component.view()).into_iter())
+        let carried: Vec<(String, Resolved)> = match read_instance(&part.current(), step) {
+            Ok(placed) => (mates_of(&placed.component.reader()).into_iter())
                 .filter_map(|(name, resolved)| {
-                    let name = instance_path(step, name);
+                    let name = instance_path(step, &name);
                     Some((name, resolved.behind(step)?))
                 })
                 .collect(),
             Err(_) => Vec::new(),
         };
         for (name, resolved) in carried {
-            mates.push(Listed {
+            listed.push(Listed {
                 kind: MATE.into(),
                 name: name.clone(),
-                entities: resolved.entities(),
+                elements: resolved.entities().iter().map(Selectable::picked).collect(),
             });
-            let defined = (part.define_target(&mate(&name), &resolved, carry))
-                .and_then(|()| define(part, &name, &name));
-            failed = failed.and(defined);
+            let carried = part.define_target(&mate(&name), &resolved, carry);
+            if carried.is_ok() {
+                defined.push((name.clone(), name));
+            }
+            failed = failed.and(carried);
         }
-        let listed = part.define_target(&listing(step), &Listing(mates), ui::listed);
-        failed.and(listed).with_context(ctx)
+        let constrained = define(part, step, &defined);
+        let listing = part.define_target(&listing(step), &Listing(listed), |_, l| Ok(l.clone()));
+        failed.and(constrained).and(listing).with_context(ctx)
     }
 
     /// The file, where it goes, and its mates: see [`crate::editor`].

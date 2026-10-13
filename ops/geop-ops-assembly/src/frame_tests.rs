@@ -1,31 +1,32 @@
 //! Reference frames: what a face, an edge or a point gives where a mate puts
 //! one, and what a pick for one finds where the pointer is.
 
+use geop_core_editor::{
+    editing::{Pointer, Reach},
+    selectable::Selectable,
+};
 use geop_core_math::{
-    primitives::CoordinateSystem,
+    primitives::{CoordinateSystem, Ray},
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops::program::Runner;
-use geop_ops::testing::{Built, edge_at, from_above, vertex_at};
-use geop_ops::{
-    Design, EntityRef, NamedModel,
-    model::model,
-    operation::{Aspects, Role, Seen},
-    ui::PartView,
+use geop_core_program::element::ElementReference;
+use geop_ops_add_datum::Selected;
+use geop_ops_extrude_revolve::testing::{Built, drilled_box, model_of, registry};
+use geop_ops_model::{
+    Design, NamedModel, model,
+    testing::{edge_at, vertex_at},
 };
-use geop_ops_extrude_revolve::testing::{drilled_box, registry};
+use geop_ops_parameters::Runner;
+use geop_ops_view::{PartView, drawn};
+
+use crate::MateEntity;
 
 /// The drilled box (see [`drilled_box`]): `[0, 2] x [0, 2] x [0, 1]`, with
 /// a hole of radius 0.4 round `(1, 1)` from its top down to `z = 0.5`, as
 /// built.
 fn plate() -> Runner {
     drilled_box().built(registry).unwrap()
-}
-
-/// The model `runner` built.
-fn model_of(runner: &Runner) -> &NamedModel<Design> {
-    runner.part.current().retrieve_target(&model()).unwrap()
 }
 
 fn v(p: [f64; 3]) -> Vector3<S> {
@@ -40,23 +41,29 @@ fn placed(frame: &CoordinateSystem<S>) -> ([f64; 3], [f64; 3]) {
 
 #[track_caller]
 fn assert_close(a: [f64; 3], b: [f64; 3]) {
-    assert!(
-        (0..3).all(|k| (a[k] - b[k]).abs() < 1e-9),
-        "{a:?} is not {b:?}"
-    );
+    geop_ops_model::testing::assert_close(a, b, 1e-9);
+}
+
+/// The frame `on`, put at `at`, gives in the part `runner` built.
+fn frame_of(runner: &Runner, on: Selected, at: Option<Selected>) -> CoordinateSystem<S> {
+    let entity = MateEntity {
+        at,
+        ..MateEntity::own(on)
+    };
+    entity.frame(&runner.part.current()).unwrap()
 }
 
 /// The frame `on` gives at `at`, as numbers: where, and its `z`, which may
 /// point either way along an axis.
 #[track_caller]
 fn assert_frame(
-    part: &NamedModel<Design>,
-    on: &EntityRef,
-    at: Option<&EntityRef>,
+    runner: &Runner,
+    on: &Selected,
+    at: Option<&Selected>,
     origin: [f64; 3],
     z: [f64; 3],
 ) {
-    let frame = Aspects::frame_on(on, at, &mut &*part).unwrap();
+    let frame = frame_of(runner, on.clone(), at.cloned());
     let (found, axis) = placed(&frame);
     assert_close(found, origin);
     let along = (0..3).map(|k| axis[k] * z[k]).sum::<f64>();
@@ -66,8 +73,20 @@ fn assert_frame(
     );
 }
 
-fn top() -> EntityRef {
-    EntityRef::face("extrude(box,end)")
+fn face(name: &str) -> Selected {
+    Selected::Face(ElementReference::new(model(), name))
+}
+
+fn edge(name: &str) -> Selected {
+    Selected::Edge(ElementReference::new(model(), name))
+}
+
+fn vertex(name: &str) -> Selected {
+    Selected::Vertex(ElementReference::new(model(), name))
+}
+
+fn top() -> Selected {
+    face("extrude(box,end)")
 }
 
 /// A planar face has its frame at its middle, `z` along its normal; where it
@@ -76,19 +95,25 @@ fn top() -> EntityRef {
 fn a_planar_face_gives_its_middle_or_the_corner_or_side_it_is_near() {
     let runner = plate();
     let part = model_of(&runner);
-    assert_frame(part, &top(), None, [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
-    let corner = EntityRef::vertex(vertex_at(part, [0.0, 0.0, 1.0]));
+    assert_frame(&runner, &top(), None, [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
+    let corner = vertex(&vertex_at(&part, [0.0, 0.0, 1.0]));
     assert_frame(
-        part,
+        &runner,
         &top(),
         Some(&corner),
         [0.0, 0.0, 1.0],
         [0.0, 0.0, 1.0],
     );
-    let side = EntityRef::edge(edge_at(part, [1.0, 0.0, 1.0]));
-    assert_frame(part, &top(), Some(&side), [1.0, 0.0, 1.0], [0.0, 0.0, 1.0]);
+    let side = edge(&edge_at(&part, [1.0, 0.0, 1.0]));
+    assert_frame(
+        &runner,
+        &top(),
+        Some(&side),
+        [1.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+    );
     // Out of the solid: up, on the top.
-    let frame = Aspects::frame_on(&top(), None, &mut &*part).unwrap();
+    let frame = frame_of(&runner, top(), None);
     assert!(placed(&frame).1[2] > 0.99);
 }
 
@@ -107,10 +132,10 @@ fn round_things_give_their_axis() {
         .find(|name| name.starts_with("extrude(hole,hole_sketch"))
         .unwrap()
         .to_string();
-    let wall = EntityRef::Face { name: wall };
-    assert_frame(part, &wall, None, [1.0, 1.0, 0.75], [0.0, 0.0, 1.0]);
-    let rim = EntityRef::vertex(vertex_at(part, [1.4, 1.0, 1.0]));
-    assert_frame(part, &wall, Some(&rim), [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
+    let wall = face(&wall);
+    assert_frame(&runner, &wall, None, [1.0, 1.0, 0.75], [0.0, 0.0, 1.0]);
+    let rim = vertex(&vertex_at(&part, [1.4, 1.0, 1.0]));
+    assert_frame(&runner, &wall, Some(&rim), [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
     let model = part.topology();
     let rim_edge = model
         .edges
@@ -121,11 +146,9 @@ fn round_things_give_their_axis() {
                 .unwrap()
                 .is_some_and(|arc| arc.circle.center.could_be_equal(&v([1.0, 1.0, 1.0])))
         })
-        .map(|(&id, _)| EntityRef::Edge {
-            name: part.name_of(id).unwrap().to_string(),
-        })
+        .map(|(&id, _)| edge(part.name_of(id).unwrap()))
         .expect("the hole's rim");
-    assert_frame(part, &rim_edge, None, [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
+    assert_frame(&runner, &rim_edge, None, [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
 }
 
 /// A straight edge has its frame at its middle, `z` along it — or at the
@@ -134,12 +157,12 @@ fn round_things_give_their_axis() {
 fn a_straight_edge_gives_its_middle_or_its_end_and_a_point_the_world() {
     let runner = plate();
     let part = model_of(&runner);
-    let edge = EntityRef::edge(edge_at(part, [1.0, 0.0, 1.0]));
-    assert_frame(part, &edge, None, [1.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
-    let end = EntityRef::vertex(vertex_at(part, [0.0, 0.0, 1.0]));
-    assert_frame(part, &edge, Some(&end), [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
-    let corner = EntityRef::vertex(vertex_at(part, [2.0, 2.0, 0.0]));
-    let frame = Aspects::frame_on(&corner, None, &mut &*part).unwrap();
+    let side = edge(&edge_at(&part, [1.0, 0.0, 1.0]));
+    assert_frame(&runner, &side, None, [1.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+    let end = vertex(&vertex_at(&part, [0.0, 0.0, 1.0]));
+    assert_frame(&runner, &side, Some(&end), [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+    let corner = vertex(&vertex_at(&part, [2.0, 2.0, 0.0]));
+    let frame = frame_of(&runner, corner, None);
     let (at, z) = placed(&frame);
     assert_close(at, [2.0, 2.0, 0.0]);
     assert_close(z, [0.0, 0.0, 1.0]);
@@ -150,16 +173,32 @@ fn placed_x(frame: &CoordinateSystem<S>) -> [f64; 3] {
     [0, 1, 2].map(|k| frame.u()[k].to_f64())
 }
 
-/// What a pick for a frame finds, as the frame's entity and where it sits.
-fn picked(runner: &Runner, x: f64, y: f64) -> (EntityRef, Option<EntityRef>) {
-    let view = PartView::of(&Seen::new(runner.part.current())).unwrap();
-    let hit = view
-        .pick(&from_above(x, y), &[Role::Frame], None)
-        .unwrap_or_else(|| panic!("nothing to put a frame on at ({x}, {y})"));
-    match hit.entity {
-        EntityRef::Frame { on, at } => (*on, at.map(|at| *at)),
-        other => panic!("{other} is no frame"),
+/// Looking down at `(x, y)` from above the plate.
+fn from_above(x: f64, y: f64) -> Pointer<Design> {
+    Pointer {
+        ray: Ray::try_new(v([x, y, 10.0]), v([0.0, 0.0, -1.0])).unwrap(),
+        reach: Reach::Tube {
+            radius: Design::from_f64(0.01),
+        },
     }
+}
+
+/// The model of `runner`'s part, drawn: what a frame is picked in.
+fn drawn_model(runner: &Runner) -> PartView {
+    let mut view = PartView::new();
+    model_of(runner).draw("model", &mut view).unwrap();
+    view.finish()
+}
+
+/// What a pick for a frame finds, as the frame's element and where it sits.
+fn picked(view: &PartView, x: f64, y: f64) -> (Selected, Option<Selected>) {
+    let hit = view
+        .pick(&from_above(x, y), &[drawn::FRAME.to_string()])
+        .unwrap_or_else(|| panic!("nothing to put a frame on at ({x}, {y})"));
+    let entity = MateEntity::from_picked(&hit.element)
+        .unwrap_or_else(|| panic!("{:?} is no frame", hit.element));
+    assert_eq!(entity.part, "", "the part itself is picked in");
+    (entity.on, entity.at)
 }
 
 /// A pick for a frame over a face finds the face — at its middle where the
@@ -168,19 +207,17 @@ fn picked(runner: &Runner, x: f64, y: f64) -> (EntityRef, Option<EntityRef>) {
 #[test]
 fn a_pick_over_a_face_puts_the_frame_at_the_corner_or_side_it_is_near() {
     let runner = plate();
-    let part = model_of(&runner);
-    let (on, at) = picked(&runner, 1.0, 1.7);
+    let part: NamedModel<Design> = model_of(&runner);
+    let view = drawn_model(&runner);
+    let (on, at) = picked(&view, 1.0, 1.7);
     assert_eq!(on, top());
     assert_eq!(at, None);
-    let (on, at) = picked(&runner, 0.5, 0.012);
+    let (on, at) = picked(&view, 0.5, 0.012);
     assert_eq!(on, top());
-    assert_eq!(at, Some(EntityRef::edge(edge_at(part, [1.0, 0.0, 1.0]))));
-    let (on, at) = picked(&runner, 0.02, 0.02);
+    assert_eq!(at, Some(edge(&edge_at(&part, [1.0, 0.0, 1.0]))));
+    let (on, at) = picked(&view, 0.02, 0.02);
     assert_eq!(on, top());
-    assert_eq!(
-        at,
-        Some(EntityRef::vertex(vertex_at(part, [0.0, 0.0, 1.0])))
-    );
+    assert_eq!(at, Some(vertex(&vertex_at(&part, [0.0, 0.0, 1.0]))));
 }
 
 /// A pick for a frame right on a straight edge finds it, at its middle —
@@ -189,15 +226,11 @@ fn a_pick_over_a_face_puts_the_frame_at_the_corner_or_side_it_is_near() {
 fn a_pick_over_an_edge_puts_the_frame_at_its_middle_or_the_end_it_is_near() {
     let runner = plate();
     let part = model_of(&runner);
-    let edge = EntityRef::edge(edge_at(part, [1.0, 0.0, 1.0]));
-    let (on, at) = picked(&runner, 1.0, 0.0);
-    assert_eq!((on, at), (edge.clone(), None));
-    let (on, at) = picked(&runner, 0.2, 0.0);
+    let view = drawn_model(&runner);
+    let side = edge(&edge_at(&part, [1.0, 0.0, 1.0]));
+    assert_eq!(picked(&view, 1.0, 0.0), (side.clone(), None));
     assert_eq!(
-        (on, at),
-        (
-            edge,
-            Some(EntityRef::vertex(vertex_at(part, [0.0, 0.0, 1.0])))
-        )
+        picked(&view, 0.2, 0.0),
+        (side, Some(vertex(&vertex_at(&part, [0.0, 0.0, 1.0]))))
     );
 }

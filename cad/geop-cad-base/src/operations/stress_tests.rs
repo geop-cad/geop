@@ -18,22 +18,19 @@
 use geop_core_math::primitives::FrameAxis;
 use geop_core_program::operation::Operation;
 use geop_core_topology::EdgeId;
-use geop_ops::{
-    Design, EntityRef, NamedModel, ParamValue,
-    model::model,
-    operation::{Input, apply},
-};
-use geop_ops_booleans::Combine;
+use geop_ops_booleans::{Combine, solid};
 use geop_ops_extrude_revolve::Output;
-use geop_ops_extrude_revolve::{Extents, RevolveArgs};
+use geop_ops_extrude_revolve::{Extents, RevolveArgs, RevolveAxis};
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
+use geop_ops_model::{Design, NamedModel, element, testing::apply_to_model};
 use geop_ops_shell::{Shell, ShellArgs};
-use geop_ops_sketch::Sketch;
+use geop_ops_sketch::{Sketch, SketchPlane, sketch_element, whole_sketch};
 
 use crate::Program;
 use crate::examples::n;
 use crate::operations::testing::{
-    Built, both_ways, check_valid, disc, extrude_sketch, origin_plane, outline, rectangle, sketch,
+    Built, both_ways, check_valid, disc, extrude_sketch, on_face, on_origin, outline, rectangle,
+    sketch,
 };
 
 /// What one blend or shell came to.
@@ -71,19 +68,11 @@ fn is_refusal(message: &str) -> bool {
     .any(|refusal| message.contains(refusal))
 }
 
-/// A step of `O` built on a model, as a test builds it.
-trait Applied: Operation<Input = Input, State = ParamValue> {}
-
-impl<O: Operation<Input = Input, State = ParamValue>> Applied for O {}
-
 /// Applies a step of `O` with `args` to a copy of `part` and says how it
 /// went.
-fn outcome<O: Applied>(part: &NamedModel<Design>, args: &O::Args) -> Outcome {
+fn outcome<O: Operation>(part: &NamedModel<Design>, args: &O::Args) -> Outcome {
     let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let built = apply::<O>(part.clone(), "op", args)?;
-        Ok::<_, geop_core_math::geop_error::GeopError>(
-            built.current().retrieve_target(&model())?.clone(),
-        )
+        apply_to_model::<O>(part.clone(), "op", args)
     }));
     match run {
         Err(panic) => Outcome::Wrong(format!(
@@ -104,10 +93,8 @@ fn outcome<O: Applied>(part: &NamedModel<Design>, args: &O::Args) -> Outcome {
 }
 
 /// The top face of the solid `extrude(body)`.
-fn top() -> EntityRef {
-    EntityRef::Face {
-        name: "extrude(body,end)".into(),
-    }
+fn top() -> SketchPlane {
+    on_face("extrude(body,end)")
 }
 
 /// A box of 2 x 2 x 1 on the ground: the solid `extrude(body)`.
@@ -116,7 +103,7 @@ fn block() -> Program {
     extrude_sketch(
         &mut program,
         "body",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         rectangle(0.0, 0.0, 2.0, 2.0),
         Extents::blind(1.0),
         Combine::NewBody,
@@ -131,7 +118,7 @@ fn cylinder() -> Program {
     extrude_sketch(
         &mut program,
         "body",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         disc([0.0, 0.0], 1.0),
         Extents::blind(1.5),
         Combine::NewBody,
@@ -148,15 +135,12 @@ fn sphere() -> Program {
     s.add_arc(bottom, top, n(std::f64::consts::PI));
     let axis = s.add_line(top, bottom);
     let mut program = Program::new();
-    program.push("body_sketch", sketch(origin_plane(FrameAxis::Z), s));
+    program.push("body_sketch", sketch(on_origin(FrameAxis::Z), s));
     program.push(
         "body",
         RevolveArgs {
-            sketch: "body_sketch".into(),
-            axis: Some(EntityRef::SketchCurve {
-                sketch: "body_sketch".into(),
-                curve: axis,
-            }),
+            sketch: whole_sketch("body_sketch"),
+            axis: Some(RevolveAxis::Sketch(sketch_element("body_sketch", axis))),
             extent: Extents::blind(360.0),
             output: Output::Solid(Combine::NewBody),
         },
@@ -170,7 +154,7 @@ fn block_corner_cut_off() -> Program {
     extrude_sketch(
         &mut program,
         "corner",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         outline(&[[1.5, 2.5], [2.5, 1.5], [2.5, 2.5]]),
         Extents::blind(1.0),
         Combine::cut("extrude(body)"),
@@ -198,7 +182,7 @@ fn block_stepped() -> Program {
     extrude_sketch(
         &mut program,
         "step",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         rectangle(-0.5, 1.5, 1.0, 2.5),
         Extents::blind(0.5),
         Combine::cut("extrude(body)"),
@@ -212,7 +196,7 @@ fn cylinder_with_flat() -> Program {
     extrude_sketch(
         &mut program,
         "flat",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         rectangle(0.6, -2.0, 2.0, 2.0),
         Extents::blind(1.5),
         Combine::cut("extrude(body)"),
@@ -226,7 +210,7 @@ fn hemisphere() -> Program {
     extrude_sketch(
         &mut program,
         "half",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         rectangle(-2.0, -2.0, 2.0, 2.0),
         Extents::blind(-2.0),
         Combine::cut("revolve(body)"),
@@ -253,22 +237,20 @@ fn build(program: &Program) -> (NamedModel<Design>, String) {
 /// every case gone wrong. `size` is the fillet's radius, the chamfer's
 /// distance and the shell's thickness.
 fn stress(program: Program, size: f64) {
-    let (part, solid) = build(&program);
+    let (part, solid_name) = build(&program);
     let model = part.topology();
-    let names = |ids: Vec<geop_ops::RefId>| {
-        let mut names: Vec<String> = (ids.into_iter())
-            .map(|id| part.name_of(id).unwrap().to_string())
-            .collect();
+    let sorted = |mut names: Vec<String>| {
         names.sort();
         names
     };
-    let edges = names(model.edges.keys().map(|&id| id.into()).collect());
-    let faces = names(model.faces.keys().map(|&id| id.into()).collect());
+    let name = |id: geop_ops_model::RefId| part.name_of(id).unwrap().to_string();
+    let edges = sorted(model.edges.keys().map(|&id| name(id.into())).collect());
+    let faces = sorted(model.faces.keys().map(|&id| name(id.into())).collect());
     let groups = edges.into_iter().map(|e| (e.clone(), vec![e])).collect();
     let shells = (std::iter::once(Vec::new()).chain(faces.into_iter().map(|f| vec![f])))
-        .map(|open| ShellArgs {
-            solid: solid.clone(),
-            faces: open,
+        .map(|open: Vec<String>| ShellArgs {
+            solid: solid(&solid_name),
+            faces: open.into_iter().map(element).collect(),
             thickness: size.into(),
         })
         .collect();
@@ -295,15 +277,12 @@ fn blend_cases(
     for (what, edges) in groups {
         let args = FilletArgs::constant(edges.clone(), size);
         record(format!("fillet {what}"), outcome::<Fillet>(part, &args));
-        let args = ChamferArgs {
-            edges,
-            distance: size.into(),
-            distance2: None,
-        };
+        let args = ChamferArgs::even(edges, size);
         record(format!("chamfer {what}"), outcome::<Chamfer>(part, &args));
     }
     for args in shells {
-        let case = format!("shell open at {:?}", args.faces);
+        let open: Vec<&str> = args.faces.iter().map(|f| f.name()).collect();
+        let case = format!("shell open at {open:?}");
         record(case, outcome::<Shell>(part, &args));
     }
     let [built, refused] = tally;
@@ -384,7 +363,7 @@ fn stress_block_drilled() {
     extrude_sketch(
         &mut program,
         "hole",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         disc([1.0, 1.0], 0.4),
         Extents::blind(1.0),
         Combine::cut("extrude(body)"),
@@ -437,7 +416,7 @@ fn stress_cylinder_drilled() {
     extrude_sketch(
         &mut program,
         "hole",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         disc([0.0, 0.0], 0.3),
         Extents::blind(1.5),
         Combine::cut("extrude(body)"),
@@ -452,7 +431,7 @@ fn stress_cylinder_drilled_off_axis() {
     extrude_sketch(
         &mut program,
         "hole",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         disc([0.4, 0.0], 0.2),
         Extents::blind(1.5),
         Combine::cut("extrude(body)"),
@@ -511,7 +490,7 @@ fn stress_sphere_drilled() {
     extrude_sketch(
         &mut program,
         "hole",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         disc([0.0, 0.0], 0.3),
         both_ways(2.0),
         Combine::cut("revolve(body)"),
@@ -525,7 +504,7 @@ fn stress_sphere_with_side_cut_off() {
     extrude_sketch(
         &mut program,
         "side",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         rectangle(0.5, -2.0, 2.0, 2.0),
         both_ways(2.0),
         Combine::cut("revolve(body)"),
@@ -541,7 +520,7 @@ fn sphere_with_boss() -> Program {
     extrude_sketch(
         &mut program,
         "boss",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         disc([0.0, 0.0], 0.4),
         Extents::blind(1.5),
         Combine::join("revolve(body)"),
@@ -557,7 +536,7 @@ fn pipe_tee() -> Program {
     extrude_sketch(
         &mut program,
         "pipe",
-        origin_plane(FrameAxis::X),
+        on_origin(FrameAxis::X),
         disc([0.0, 0.0], 0.5),
         both_ways(1.0),
         Combine::NewBody,
@@ -565,7 +544,7 @@ fn pipe_tee() -> Program {
     extrude_sketch(
         &mut program,
         "branch",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         disc([0.0, 0.0], 0.3),
         Extents::blind(1.0),
         Combine::join("extrude(pipe)"),
@@ -587,7 +566,7 @@ fn stress_pipe_tee() {
 
 /// Applies `operation` with `args` to the one solid `program` builds, and
 /// checks it builds valid, saying why not.
-fn assert_builds<O: Applied>(program: Program, args: O::Args) {
+fn assert_builds<O: Operation>(program: Program, args: O::Args) {
     let (part, _) = build(&program);
     if let Outcome::Wrong(why) = outcome::<O>(&part, &args) {
         panic!("{why}");
@@ -600,11 +579,7 @@ fn assert_builds<O: Applied>(program: Program, args: O::Args) {
 #[test]
 fn chamfer_hemisphere_rim() {
     let program = hemisphere();
-    let args = ChamferArgs {
-        edges: vec!["revolve(body,body_sketch,c2,a0)".into()],
-        distance: 0.1.into(),
-        distance2: None,
-    };
+    let args = ChamferArgs::even(vec!["revolve(body,body_sketch,c2,a0)".into()], 0.1);
     assert_builds::<Chamfer>(program, args);
 }
 
@@ -613,10 +588,6 @@ fn chamfer_hemisphere_rim() {
 #[test]
 fn chamfer_cylinder_flat_side() {
     let program = cylinder_with_flat();
-    let args = ChamferArgs {
-        edges: vec!["combine(flat,extrude(body,body_sketch,c1),extrude(flat,flat_sketch,c7),combine(flat,extrude(body,body_sketch,c1,end),extrude(flat,flat_sketch,c7,end),0,1),combine(flat,extrude(body,body_sketch,c1,start),extrude(flat,flat_sketch,c7,start),0,1))".into()],
-        distance: 0.1.into(),
-        distance2: None,
-    };
+    let args = ChamferArgs::even(vec!["combine(flat,extrude(body,body_sketch,c1),extrude(flat,flat_sketch,c7),combine(flat,extrude(body,body_sketch,c1,end),extrude(flat,flat_sketch,c7,end),0,1),combine(flat,extrude(body,body_sketch,c1,start),extrude(flat,flat_sketch,c7,start),0,1))".into()], 0.1);
     assert_builds::<Chamfer>(program, args);
 }

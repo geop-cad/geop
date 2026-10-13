@@ -2,25 +2,25 @@
 //! picked by name, rounded and bevelled.
 
 use crate::{ChamferArgs, FilletArgs, VertexRadius};
+use geop_core_math::primitives::DatumComponent;
 use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{Ring, ScalInF64 as S, Scalar};
-use geop_ops::{
-    EntityRef, NamedModel,
-    testing::{edges_where, middle},
-};
+use geop_core_program::element::ElementReference;
+use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_booleans::Combine;
-use geop_ops_datums::{AddDatumArgs, Construction};
+use geop_ops_datums::{ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::{Extents, LoftArgs, Output};
-use geop_ops_sketch::Sketch;
+use geop_ops_model::{
+    NamedModel, model,
+    testing::{assert_valid, check_valid, edges_where, has_vertex, middle},
+};
+use geop_ops_sketch::{Sketch, SketchPlane, whole_sketch};
 
 use geop_core_math::geop_error::GeopResult;
-use geop_ops::origin_plane;
-use geop_ops::program::{ProgramFile, Registry};
-use geop_ops::testing::{Built, assert_valid, check_valid, has_vertex};
-use geop_ops_datums::AddDatum;
 use geop_ops_extrude_revolve::testing::{
-    disc, drilled_box, extrusion, n, outline, rectangle, sketch,
+    Built, disc, drilled_box, extrusion, n, on_face, on_origin, outline, rectangle, sketch,
 };
+use geop_ops_parameters::{ProgramFile, Registry};
 
 use crate::{Chamfer, Fillet};
 
@@ -100,21 +100,13 @@ fn chamfer_box_edges_and_rim() {
         edges.extend(upright_edges_at(&before, x, y));
     }
     assert_eq!(edges.len(), 4, "{edges:?}");
-    program.push(
-        "bevel",
-        ChamferArgs {
-            edges,
-            distance: 0.2.into(),
-            distance2: None,
-        },
-    );
+    program.push("bevel", ChamferArgs::even(edges, 0.2));
     let rim = arcs_at(&before, [1.0, 1.0, 1.0], 0.4);
     program.push(
         "countersink",
         ChamferArgs {
-            edges: vec![rim[2].clone()],
-            distance: 0.1.into(),
             distance2: Some(0.05.into()),
+            ..ChamferArgs::even(vec![rim[2].clone()], 0.1)
         },
     );
     let part = program.build_model(registry).unwrap();
@@ -133,7 +125,7 @@ fn fillet_and_chamfer_round_trip_through_json() {
         FilletArgs {
             end_radius: Some(0.3.into()),
             vertex_radii: vec![VertexRadius {
-                vertex: "v".into(),
+                vertex: ElementReference::new(model(), "v"),
                 radius: 0.2,
             }],
             ..FilletArgs::constant(vec!["a".into(), "b".into()], 0.25)
@@ -142,9 +134,8 @@ fn fillet_and_chamfer_round_trip_through_json() {
     program.push(
         "bevel",
         ChamferArgs {
-            edges: vec!["c".into()],
-            distance: 0.1.into(),
             distance2: Some(0.2.into()),
+            ..ChamferArgs::even(vec!["c".into()], 0.1)
         },
     );
     let json = serde_json::to_value(&program).unwrap();
@@ -167,7 +158,7 @@ fn l_block() -> ProgramFile {
         [0.0, 2.0],
     ]);
     let mut program = ProgramFile::new();
-    program.push("outline", sketch(origin_plane(FrameAxis::Z), s));
+    program.push("outline", sketch(on_origin(FrameAxis::Z), s));
     program.push(
         "block",
         extrusion("outline", Extents::blind(1.0), Combine::NewBody),
@@ -208,11 +199,7 @@ fn chamfer_l_block_inner_edge() {
     let before = program.build_model(registry).unwrap();
     program.push(
         "bevel",
-        ChamferArgs {
-            edges: upright_edges_at(&before, 1.0, 1.0),
-            distance: 0.3.into(),
-            distance2: None,
-        },
+        ChamferArgs::even(upright_edges_at(&before, 1.0, 1.0), 0.3),
     );
     let part = program.build_model(registry).unwrap();
     assert_valid(&part);
@@ -228,20 +215,12 @@ fn fillet_boss_on_block() {
     let block = rectangle(0.0, 0.0, 1.0, 1.0);
     let boss = disc([0.5, 0.5], 0.3);
     let mut program = ProgramFile::new();
-    program.push("base", sketch(origin_plane(FrameAxis::Z), block));
+    program.push("base", sketch(on_origin(FrameAxis::Z), block));
     program.push(
         "block",
         extrusion("base", Extents::blind(1.0), Combine::NewBody),
     );
-    program.push(
-        "boss_sketch",
-        sketch(
-            EntityRef::Face {
-                name: "extrude(block,end)".into(),
-            },
-            boss,
-        ),
-    );
+    program.push("boss_sketch", sketch(on_face("extrude(block,end)"), boss));
     program.push(
         "boss",
         extrusion(
@@ -284,7 +263,7 @@ fn edges_from_to(part: &NamedModel<S>, a: [f64; 3], b: [f64; 3]) -> Vec<String> 
 /// its side wall at `x = 1`, open at the bottom, the front and the side.
 fn stepped_block() -> ProgramFile {
     let mut program = ProgramFile::new();
-    let ground = origin_plane(FrameAxis::Z);
+    let ground = on_origin(FrameAxis::Z);
     program.push(
         "outline",
         sketch(ground.clone(), rectangle(0.0, 0.0, 2.0, 2.0)),
@@ -352,14 +331,12 @@ fn fillet_edges_ending_at_a_wall() {
 fn pocketed_block() -> ProgramFile {
     let mut program = ProgramFile::new();
     let outline = rectangle(0.0, 0.0, 2.0, 2.0);
-    program.push("outline", sketch(origin_plane(FrameAxis::Z), outline));
+    program.push("outline", sketch(on_origin(FrameAxis::Z), outline));
     program.push(
         "block",
         extrusion("outline", Extents::blind(1.0), Combine::NewBody),
     );
-    let top = EntityRef::Face {
-        name: "extrude(block,end)".into(),
-    };
+    let top = on_face("extrude(block,end)");
     program.push("pocket_outline", sketch(top, rectangle(0.5, 0.5, 1.5, 1.5)));
     program.push(
         "pocket",
@@ -507,22 +484,31 @@ fn square_to_circle() -> ProgramFile {
 /// it.
 fn lofted(bottom: Sketch, top: Sketch) -> ProgramFile {
     let mut program = ProgramFile::new();
-    let xy = origin_plane(FrameAxis::Z);
+    let xy = on_origin(FrameAxis::Z);
     program.push("bottom", sketch(xy.clone(), bottom));
     program.push(
         "top_plane",
         AddDatumArgs {
-            selection: vec![xy],
+            selection: vec![Selected::Datum(ElementReference::new(
+                datums(),
+                component_name(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
+            ))],
             construction: Construction::Offset {
                 distance: 2.0.into(),
             },
         },
     );
-    program.push("top", sketch(EntityRef::datum("top_plane"), top));
+    program.push(
+        "top",
+        sketch(
+            SketchPlane::Datum(ElementReference::new(datums(), "top_plane")),
+            top,
+        ),
+    );
     program.push(
         "transition",
         LoftArgs {
-            profiles: vec!["bottom".into(), "top".into()],
+            profiles: vec![whole_sketch("bottom"), whole_sketch("top")],
             matches: Vec::new(),
             guides: Vec::new(),
             output: Output::Solid(Combine::NewBody),
@@ -593,7 +579,7 @@ fn slot() -> ProgramFile {
     s.add_line(p[2], p[3]);
     s.add_arc(p[3], p[0], n(std::f64::consts::PI));
     let mut program = ProgramFile::new();
-    program.push("outline", sketch(origin_plane(FrameAxis::Z), s));
+    program.push("outline", sketch(on_origin(FrameAxis::Z), s));
     program.push(
         "slot",
         extrusion("outline", Extents::blind(1.0), Combine::NewBody),
@@ -678,7 +664,7 @@ fn fillet_slot_rim_with_radii_at_vertices() {
             vertex_radii: radii
                 .iter()
                 .map(|&(p, radius)| VertexRadius {
-                    vertex: vertex_at(p),
+                    vertex: ElementReference::new(model(), vertex_at(p)),
                     radius,
                 })
                 .collect(),

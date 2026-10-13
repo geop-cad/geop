@@ -3,12 +3,12 @@
 //! Only built for tests: with `testing`, or in this crate's own.
 
 use geop_core_math::primitives::FrameAxis;
-use geop_ops::{EntityRef, origin_plane, program::ProgramFile};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{
     Extents,
-    testing::{both_ways, disc, extrude_sketch, extrusion, n, outline, sketch},
+    testing::{both_ways, disc, extrude_sketch, extrusion, n, on_face, on_origin, outline, sketch},
 };
+use geop_ops_parameters::ProgramFile;
 use geop_ops_sketch::{Constraint, Sketch};
 
 /// The plate's size: 60 x 40, 10 thick, its top at `z = 10`.
@@ -40,7 +40,7 @@ pub fn plate(points: &[[f64; 2]]) -> ProgramFile {
     program.push(
         "outline",
         sketch(
-            origin_plane(FrameAxis::Z),
+            on_origin(FrameAxis::Z),
             outline(&[[0.0, 0.0], [w, 0.0], [w, d], [0.0, d]]),
         ),
     );
@@ -51,9 +51,7 @@ pub fn plate(points: &[[f64; 2]]) -> ProgramFile {
     program.push(
         "centres",
         sketch(
-            EntityRef::Face {
-                name: "extrude(plate,end)".into(),
-            },
+            on_face("extrude(plate,end)"),
             points_sketch(points),
         ),
     );
@@ -67,7 +65,7 @@ pub fn plate_with_hole() -> ProgramFile {
     extrude_sketch(
         &mut program,
         "plate",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         outline(&[[0.0, 0.0], [8.0, 0.0], [8.0, 2.0], [0.0, 2.0]]),
         Extents::blind(0.5),
         Combine::NewBody,
@@ -75,7 +73,7 @@ pub fn plate_with_hole() -> ProgramFile {
     extrude_sketch(
         &mut program,
         "hole",
-        origin_plane(FrameAxis::Z),
+        on_origin(FrameAxis::Z),
         disc([1.0, 1.0], 0.3),
         both_ways(2.0),
         Combine::cut("extrude(plate)"),

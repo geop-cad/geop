@@ -71,7 +71,7 @@ use crate::{
     solvers::linear::{augmented, eliminate, inverse, null_space, rank},
 };
 
-use super::{Bound, Equations, Group, ScalarOf, Solving, System, Term, Variable, tolerance};
+use super::{Batch, Bound, Equations, Group, ScalarOf, Solving, System, Term, Variable, tolerance};
 
 /// Newton steps polishing a solution before it is enclosed: each squares the
 /// error, so a handful take [`super::RELATIVE_TOLERANCE`]
@@ -97,8 +97,8 @@ pub struct Enclosure<V: Variable> {
     pub total: usize,
     /// Why the groups not proven were not, each with its blocks.
     pub failures: Vec<(Vec<usize>, EncloseError<V::Scalar>)>,
-    /// How many times the equations were made to enclose it: the work it
-    /// took, which a test can bound.
+    /// How many times the equations were made to enclose it — every
+    /// group's at once: the work it took, which a test can bound.
     pub evaluations: usize,
 }
 
@@ -201,7 +201,6 @@ pub(super) struct Enclosed<V: Variable> {
     /// Per block of the group.
     pub freedom: Vec<usize>,
     pub total: usize,
-    pub evaluations: usize,
 }
 
 impl<E: Equations> System<'_, E> {
@@ -211,14 +210,18 @@ impl<E: Equations> System<'_, E> {
         at: &[E::Value],
         groups: &[Group],
     ) -> GeopResult<super::Enclosure<E::Value>> {
+        let batch = Batch::new(self, at);
+        let enclosed = batch.run(groups.iter().map(|group| {
+            let batch = &batch;
+            async move { self.enclose_group(at, group, batch).await }
+        }))?;
         let mut enclosure = Enclosure::empty(self.mobility.len());
-        for group in groups {
-            let enclosed = self.enclose_group(at, group)?;
+        enclosure.evaluations = batch.evaluations();
+        for (group, enclosed) in groups.iter().zip(enclosed) {
             for (k, &block) in group.blocks.iter().enumerate() {
                 enclosure.freedom[block] = enclosed.freedom[k];
             }
             enclosure.total += enclosed.total;
-            enclosure.evaluations += enclosed.evaluations;
             match enclosed.boxes {
                 Ok(boxes) => {
                     for (&block, value) in group.blocks.iter().zip(boxes) {
@@ -231,13 +234,15 @@ impl<E: Equations> System<'_, E> {
         Ok(enclosure)
     }
 
-    /// The enclosure of the group `group` of the blocks at `at`.
-    pub(super) fn enclose_group(
+    /// The enclosure of the group `group` of the blocks at `at`, its terms
+    /// asked of `batch`.
+    pub(super) async fn enclose_group(
         &self,
         at: &[E::Value],
         group: &Group,
+        batch: &Batch<'_, '_, E>,
     ) -> GeopResult<Enclosed<E::Value>> {
-        let solving = Solving::new(self, at, group);
+        let solving = Solving::new(self, at, group, batch);
         let x = solving.start();
         let n = solving.n;
         let tolerance = tolerance(self.scale)?;
@@ -249,7 +254,7 @@ impl<E: Equations> System<'_, E> {
             .collect();
         let made = match limits.is_empty() {
             true => Some(Vec::new()),
-            false => solving.constraints_at(&x, &limits),
+            false => solving.constraints_at(&x, &limits).await,
         };
         let (mut equalities, mut inactive) = (Vec::new(), Vec::new());
         for &c in &group.constraints {
@@ -290,7 +295,7 @@ impl<E: Equations> System<'_, E> {
                 0 => zero.clone(),
                 _ => vec![radius.neg().union(radius); n],
             };
-            let rows = match solving.rows_over(&x, &around, &equalities) {
+            let rows = match solving.rows_over(&x, &around, &equalities).await {
                 Ok(rows) => rows,
                 // Undecidable somewhere in this box: no wider one helps.
                 Err(e) => {
@@ -311,16 +316,22 @@ impl<E: Equations> System<'_, E> {
             // At the point, the rows chosen over it are those Newton starts
             // from.
             let at = (attempt == 0).then(|| rows.clone());
-            let proven = solving
-                .prove(x.clone(), at, &equalities, &pivots)
-                .and_then(|(center, steps)| {
-                    let over = solving.verify(&center, &steps, &equalities, &inactive, &pivots)?;
-                    Ok((center, steps, over))
-                })
-                .map_err(|e| match e {
-                    Off(off) => solving.conflict(&x, radius, &equalities, &rows, &off),
-                    Failed(e) => e,
-                });
+            let proven = match solving.prove(x.clone(), at, &equalities, &pivots).await {
+                Ok((center, steps)) => {
+                    match (solving.verify(&center, &steps, &equalities, &inactive, &pivots)).await {
+                        Ok(over) => Ok((center, steps, over)),
+                        Err(e) => Err(e),
+                    }
+                }
+                Err(e) => Err(e),
+            };
+            let proven = match proven {
+                Ok(proven) => Ok(proven),
+                Err(Off(off)) => {
+                    Err((solving.conflict(&x, radius, &equalities, &rows, &off)).await)
+                }
+                Err(Failed(e)) => Err(e),
+            };
             match proven {
                 Ok((center, steps, over)) => {
                     let boxes = (group.blocks.iter().enumerate())
@@ -336,7 +347,6 @@ impl<E: Equations> System<'_, E> {
                         boxes: Ok(boxes),
                         freedom,
                         total,
-                        evaluations: solving.evaluations.get(),
                     });
                 }
                 Err(e) => {
@@ -367,7 +377,6 @@ impl<E: Equations> System<'_, E> {
             boxes: Err(failure),
             freedom,
             total,
-            evaluations: solving.evaluations.get(),
         })
     }
 }
@@ -377,7 +386,7 @@ impl<E: Equations> Solving<'_, '_, E> {
     /// from `x` — the group's values — and its derivative by every step:
     /// an enclosure of both, for every point of the box. Fails where a
     /// constraint cannot be made somewhere in it.
-    fn rows_over(
+    async fn rows_over(
         &self,
         x: &[E::Value],
         steps: &[ScalarOf<E>],
@@ -392,7 +401,7 @@ impl<E: Equations> Solving<'_, '_, E> {
             differentials.push(value.differential(own)?);
         }
         let terms: Vec<Term> = which.iter().map(|&c| Term::Constraint(c)).collect();
-        let made = self.made(&values, &terms);
+        let made = self.made(&values, &terms).await;
         let differential = |block: usize| {
             let k = self.group.blocks.binary_search(&block).ok()?;
             differentials.get(k)?.as_ref()
@@ -440,7 +449,7 @@ impl<E: Equations> Solving<'_, '_, E> {
     /// from it holding their solution, every variable no pivot determines
     /// at an exact zero step.
     #[allow(clippy::type_complexity)]
-    fn prove(
+    async fn prove(
         &self,
         x: Vec<E::Value>,
         at: Option<Vec<Row<ScalarOf<E>>>>,
@@ -494,7 +503,7 @@ impl<E: Equations> Solving<'_, '_, E> {
         let (rows, y) = loop {
             let rows = match made.take() {
                 Some(rows) => rows,
-                None => self.rows_over(&xt, &zero, which)?,
+                None => self.rows_over(&xt, &zero, which).await?,
             };
             let y = inverse(&square(&rows)).ok_or_else(|| singular(&rows))?;
             if polished == POLISH_STEPS {
@@ -532,7 +541,7 @@ impl<E: Equations> Solving<'_, '_, E> {
             for (k, &c) in cols.iter().enumerate() {
                 boxed[c] = candidate[k];
             }
-            let over = self.rows_over(&xt, &boxed, which)?;
+            let over = self.rows_over(&xt, &boxed, which).await?;
             // `I - Y J(Δ)`.
             let slack: Vec<Vec<ScalarOf<E>>> = (0..m)
                 .map(|k| {
@@ -611,7 +620,7 @@ impl<E: Equations> Solving<'_, '_, E> {
     /// independent a hair off its singular point, where the free variables
     /// were left. Its value there is too small to tell from zero, its
     /// derivative is not.
-    fn verify(
+    async fn verify(
         &self,
         center: &[E::Value],
         steps: &[ScalarOf<E>],
@@ -621,7 +630,7 @@ impl<E: Equations> Solving<'_, '_, E> {
     ) -> Result<Vec<Row<ScalarOf<E>>>, Rejected<ScalarOf<E>>> {
         let limits = match inactive.is_empty() {
             true => Vec::new(),
-            false => self.rows_over(center, steps, inactive)?,
+            false => self.rows_over(center, steps, inactive).await?,
         };
         for row in limits {
             if row.value.could_be_greater(ScalarOf::<E>::ZERO) {
@@ -633,7 +642,7 @@ impl<E: Equations> Solving<'_, '_, E> {
             }
         }
         let picked: Vec<usize> = pivots.iter().map(|&(_, r)| r).collect();
-        let rows = self.rows_over(center, steps, which)?;
+        let rows = self.rows_over(center, steps, which).await?;
         let off: Vec<usize> = (0..rows.len())
             .filter(|i| !picked.contains(i) && !rows[*i].value.could_be_equal(ScalarOf::<E>::ZERO))
             .collect();
@@ -672,7 +681,7 @@ impl<E: Equations> Solving<'_, '_, E> {
     /// is the one the elimination that chose the rows reduced each of
     /// `off` by, sharpened: any combination serves, and that one makes
     /// `∇g` as small as the rows allow.
-    fn conflict(
+    async fn conflict(
         &self,
         x: &[E::Value],
         radius: ScalarOf<E>,
@@ -681,11 +690,11 @@ impl<E: Equations> Solving<'_, '_, E> {
         off: &[usize],
     ) -> EncloseError<ScalarOf<E>> {
         let n = self.n;
-        let proven = || -> GeopResult<Option<EncloseError<ScalarOf<E>>>> {
+        let proven = async || -> GeopResult<Option<EncloseError<ScalarOf<E>>>> {
             let within = radius.max(tolerance(self.system.scale)?);
-            let at = self.rows_over(x, &vec![ScalarOf::<E>::ZERO; n], which)?;
+            let at = (self.rows_over(x, &vec![ScalarOf::<E>::ZERO; n], which)).await?;
             let around = vec![within.neg().union(within); n];
-            let over = self.rows_over(x, &around, which)?;
+            let over = self.rows_over(x, &around, which).await?;
             let reduced = eliminate(augmented(selection.iter().map(|r| r.slope.clone())), n);
             let (mut conflicting, mut with) = (Vec::new(), Vec::new());
             for (k, &o) in reduced.origin.iter().enumerate() {
@@ -729,7 +738,7 @@ impl<E: Equations> Solving<'_, '_, E> {
             }))
         };
         let named: Vec<usize> = off.iter().map(|&o| selection[o].constraint).collect();
-        match proven() {
+        match proven().await {
             Ok(Some(conflict)) => conflict,
             Ok(None) => EncloseError::Unproven(GeopError::new(format!(
                 "the constraints {named:?} do not vanish over the box around the solution of the others, but no conflict is proven near where the solve ended: a singular configuration"

@@ -27,7 +27,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::{CoedgeId, SolidId};
-use geop_ops::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer};
 
 /// Bridges a quadrant face's own `(u, v)` boundary-loop gap at a pole it
 /// touches on its `v = 0` side: the face's two meridian edges meet at the
@@ -352,7 +352,7 @@ mod tests {
     use super::*;
     use crate::common::testing::render;
     use geop_core_math::for_all_scalars;
-    use geop_ops::testing::assert_model_valid;
+    use geop_ops_model::testing::assert_model_valid;
 
     fn check_offset_sphere_is_valid<S: Scalar>() {
         let mut model = NamedModel::<S>::new();

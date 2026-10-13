@@ -5,7 +5,7 @@ use std::{convert::Infallible, fmt::Write};
 use geop_core_math::solvers::repeat::{Repeated, Step, repeat};
 
 use super::{Anchor, LineType, Shape, Sheet, decimal};
-use crate::output::xml_escape;
+use crate::xml_escape;
 
 /// How a layer's strokes are dashed, as SVG's `stroke-dasharray`.
 fn dashes(line_type: LineType) -> Option<String> {

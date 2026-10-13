@@ -42,13 +42,14 @@
 //!
 //! # Directions
 //!
-//! A coordinate system — a frame on an entity, or a datum frame — says
-//! which way the cable leaves it: along its `z` axis — out of a connector
-//! at the start, into one (against its `z` axis) at the end, along it in
-//! between. A circular edge — a clip, a grommet —
-//! says the axis the route passes along, and the route passes the way it
-//! is going. Anything else — a vertex, a datum point — leaves the direction
-//! free, and the route chooses it (see [`RoutePath::through`]).
+//! A point — a vertex, a sketch's point, a datum point — leaves the
+//! direction free, and the route chooses it (see [`RoutePath::through`]).
+//! A circular edge — a clip, a grommet — says the axis the route passes
+//! along, and the route passes the way it is going. Anything else gives a
+//! coordinate system — a datum frame, or the frame on a face or an edge
+//! (see [`MateEntity::frame`]) — which says which way the cable leaves it:
+//! along its `z` axis — out of a connector at the start, into one (against
+//! its `z` axis) at the end, along it in between.
 
 use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{
@@ -58,7 +59,10 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_ops::operation::{Aspects, Chain, EntityRef, Lookup, ResolveEntity};
+use geop_ops_add_datum::{Selected, Shape};
+use geop_ops_assembly::{MateEntity, PlacedElement, placed::part_at};
+use geop_ops_model::{Chain, Design};
+use geop_ops_parameters::PartReader;
 
 /// Which way the route is told to run through a [`Waypoint`].
 #[derive(Clone, Debug)]
@@ -81,38 +85,67 @@ pub struct Waypoint<S: Scalar> {
     pub label: String,
 }
 
-impl<S: Scalar> Waypoint<S> {
-    /// The `index`-th point the route runs through, `entity` as `lookup`
-    /// has it: a coordinate system, its origin and `z` axis; a circular
-    /// edge, its centre and axis; any other point, just where it is.
-    pub fn of(
-        lookup: &mut (impl Lookup<S> + ?Sized),
-        entity: &EntityRef,
-        index: usize,
-    ) -> GeopResult<Self> {
+impl<S: Scalar> Heading<S> {
+    /// It with its direction turned by `turn`.
+    fn turned(self, turn: impl Fn(&Vector3<S>) -> Vector3<S>) -> Self {
+        match self {
+            Heading::Free => Heading::Free,
+            Heading::Axis(d) => Heading::Axis(turn(&d)),
+            Heading::Exit(d) => Heading::Exit(turn(&d)),
+        }
+    }
+}
+
+impl Waypoint<Design> {
+    /// The `index`-th point the route runs through, `entity` in the part
+    /// `reader` reads — where the part it is of is placed there (see the
+    /// module docs): a point, just where it is; a circular edge, its
+    /// centre and axis; a coordinate system, its origin and `z` axis.
+    pub fn of(reader: &PartReader, entity: &PlacedElement, index: usize) -> GeopResult<Self> {
         let label = format!("point {} ({})", index + 1, entity.label());
         let ctx = with_context!("resolving the route's {label}");
-        let unsupported = || {
+        let unsupported = |what: &str| {
             GeopError::new(format!(
-                "route: {label} is {entity}: a route runs through points, coordinate systems (along their z axis) and circular edges (through their centre, along their axis)"
+                "route: {label} is {what}: a route runs through points, coordinate systems (along their z axis) and circular edges (through their centre, along their axis)"
             ))
         };
-        let (point, heading) = if let EntityRef::Datum { .. } = entity {
-            let datum = entity.resolve_datum(lookup).with_context(ctx)?;
+        let (inside, pose) = part_at(reader, &entity.part).with_context(ctx)?;
+        let (point, heading) = if let Selected::Datum(datum) = &entity.on {
+            let datum = inside.retrieve_element(datum).with_context(ctx)?;
             let heading = match datum.kind {
                 DatumKind::Point => Heading::Free,
                 DatumKind::Frame => Heading::Exit(*datum.frame.w()),
-                DatumKind::Axis | DatumKind::Plane => return Err(unsupported()),
+                DatumKind::Axis => return Err(unsupported("an axis")),
+                DatumKind::Plane => return Err(unsupported("a plane")),
             };
             (*datum.frame.origin(), heading)
         } else {
-            let aspects = Aspects::of(entity, lookup).with_context(ctx)?;
-            match (aspects.frame, aspects.point, aspects.arc) {
-                (Some(frame), ..) => (*frame.origin(), Heading::Exit(*frame.w())),
-                (None, Some(point), _) => (point, Heading::Free),
-                (None, None, Some(arc)) => (arc.circle.center, Heading::Axis(arc.circle.normal)),
-                (None, None, None) => return Err(unsupported()),
+            let shape = entity.on.shape(&inside).with_context(ctx)?;
+            match (&entity.on, shape) {
+                (
+                    Selected::Vertex(_) | Selected::SketchPoint(_),
+                    Shape {
+                        point: Some(point), ..
+                    },
+                ) => (point, Heading::Free),
+                (_, Shape { arc: Some(arc), .. }) => {
+                    (arc.circle.center, Heading::Axis(arc.circle.normal))
+                }
+                // In its own part, which `pose` places.
+                _ => {
+                    let frame = MateEntity::from(entity.clone()).frame(reader);
+                    let frame = frame.with_context(ctx)?;
+                    (*frame.origin(), Heading::Exit(*frame.w()))
+                }
             }
+        };
+        let (point, heading) = match pose {
+            Some(pose) => {
+                let motion = pose.motion();
+                let heading = heading.turned(|d| motion.rotate(d));
+                (motion.apply(&point), heading)
+            }
+            None => (point, heading),
         };
         Ok(Waypoint {
             point,

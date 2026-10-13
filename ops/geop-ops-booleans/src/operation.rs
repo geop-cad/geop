@@ -2,19 +2,28 @@
 //! extrude or revolve with the solid it builds. [`Split`]: cut a solid into
 //! pieces with a face standing on its own.
 
+use geop_core_editor::{
+    edit_form::{Edit, EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::Choice,
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     with_context,
 };
-use geop_core_topology::{Body, SolidId};
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, FeatureTool, NamedModel, Namer, ToolReach,
-    operation::{BuildReader, EntityRef, Lookup, PartOperation, Role, Seen, StepContext},
-    part_operation,
-    ui::{Choice, Edit, EditForm, FormState},
+use geop_core_program::{
+    element::ElementReference,
+    part::{Input, Reader, State},
 };
+use geop_core_topology::{Body, SolidId};
+use geop_ops_model::{
+    Design, Face, FeatureTool, ModelOperation, NamedModel, Namer, Solid, ToolReach, build_model,
+    model, read_model,
+};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -37,12 +46,20 @@ use crate::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Boolean;
 
+/// A solid of the part, by name.
+pub type SolidRef = ElementReference<NamedModel<Design>, Solid>;
+
+/// The solid named `name`.
+pub fn solid(name: impl Into<String>) -> SolidRef {
+    ElementReference::new(model(), name)
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BooleanArgs {
     /// The first solid; for a difference, the one cut from.
-    pub a: String,
+    pub a: SolidRef,
     /// The second solid; for a difference, the one cut away.
-    pub b: String,
+    pub b: SolidRef,
     /// How to combine them.
     pub op: BooleanOp,
 }
@@ -50,8 +67,8 @@ pub struct BooleanArgs {
 part_operation!(Boolean(BooleanArgs), Split(SplitArgs));
 
 impl PartOperation for Boolean {
+    const KIND: &'static str = "boolean";
     const INFO: OperationInfo = OperationInfo::new(
-        "boolean",
         "Boolean",
         "Unite, intersect or subtract two solids.",
         OperationGroup::Bodies,
@@ -59,40 +76,35 @@ impl PartOperation for Boolean {
     )
     .icon(crate::icons::BOOLEAN);
     type Args = BooleanArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
 
     /// The difference of the two newest solids: the older cut by the one
     /// just built as a tool.
     fn new_args(context: &StepContext) -> BooleanArgs {
-        let solids = Seen::new(context.before).model().solid_names();
+        let solids = (read_model(&context.before).map(|model| model.solid_names()))
+            .unwrap_or_default();
         let newest = |back: usize| {
             (solids.len().checked_sub(back))
                 .and_then(|i| solids.get(i).cloned())
                 .unwrap_or_default()
         };
         BooleanArgs {
-            a: newest(2),
-            b: newest(1),
+            a: solid(newest(2)),
+            b: solid(newest(1)),
             op: BooleanOp::Difference,
         }
     }
 
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
-        step: &str,
-        args: &BooleanArgs,
-    ) -> GeopResult<()> {
-        let namer = Namer::new("boolean", step)?;
-        let a = model.solid_id(&args.a)?;
-        let b = model.solid_id(&args.b)?;
-        boolean(model, &namer, a, b, args.op, RemeshParams::default())?;
-        Ok(())
+    fn run(step: &str, part: &mut BuildPart, args: &BooleanArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
     }
 
     /// The two solids, picked, and how to combine them.
     fn form<'a>(
-        _: &'a StepContext<'a>,
+        context: &'a StepContext<'a>,
         args: &BooleanArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, BooleanArgs> {
@@ -100,14 +112,10 @@ impl PartOperation for Boolean {
         let ops = OPS
             .iter()
             .map(|&(_, value, label, _)| Choice::new(value, label));
-        let roles = &[Role::Solid];
-        f.pick_one("a", "a", EntityRef::solid, &args.a, roles, |edit, a| {
-            edit.args.a = a
-        })
-        .pick_one("b", "b", EntityRef::solid, &args.b, roles, |edit, b| {
-            edit.args.b = b
-        })
-        .select(
+        let before = &context.before;
+        f.pick_one("a", "a", before, Some(&args.a), |edit, a| edit.args.a = a)
+            .pick_one("b", "b", before, Some(&args.b), |edit, b| edit.args.b = b)
+            .select(
             "op",
             "op",
             value_of(args.op),
@@ -120,6 +128,21 @@ impl PartOperation for Boolean {
             },
         );
         f
+    }
+}
+
+impl ModelOperation for Boolean {
+    fn build(
+        model: &mut NamedModel<Design>,
+        _: &PartReader,
+        step: &str,
+        args: &BooleanArgs,
+    ) -> GeopResult<()> {
+        let namer = Namer::new("boolean", step)?;
+        let a = model.solid_id(args.a.name())?;
+        let b = model.solid_id(args.b.name())?;
+        boolean(model, &namer, a, b, args.op, RemeshParams::default())?;
+        Ok(())
     }
 }
 
@@ -142,10 +165,7 @@ impl PartOperation for Boolean {
 pub enum Combine {
     #[default]
     NewBody,
-    With {
-        op: BooleanOp,
-        target: String,
-    },
+    With { op: BooleanOp, target: SolidRef },
 }
 
 impl Combine {
@@ -153,7 +173,7 @@ impl Combine {
     pub fn cut(target: impl Into<String>) -> Self {
         Combine::With {
             op: BooleanOp::Difference,
-            target: target.into(),
+            target: solid(target),
         }
     }
 
@@ -161,7 +181,7 @@ impl Combine {
     pub fn join(target: impl Into<String>) -> Self {
         Combine::With {
             op: BooleanOp::Union,
-            target: target.into(),
+            target: solid(target),
         }
     }
 
@@ -169,7 +189,7 @@ impl Combine {
     pub fn intersect(target: impl Into<String>) -> Self {
         Combine::With {
             op: BooleanOp::Intersection,
-            target: target.into(),
+            target: solid(target),
         }
     }
 
@@ -177,7 +197,7 @@ impl Combine {
     pub fn target(&self) -> Option<&str> {
         match self {
             Combine::NewBody => None,
-            Combine::With { target, .. } => Some(target),
+            Combine::With { target, .. } => Some(target.name()),
         }
     }
 
@@ -211,24 +231,25 @@ impl Combine {
     }
 
     /// The field that picks the solid to combine with — or to go as far
-    /// as — labelled `label`, holding the solid named `target` (empty for
-    /// none); `set` gets the name of the solid picked, or an empty one.
-    pub fn target_field<'a, S: Scalar, A, T>(
+    /// as — labelled `label`, holding `target`, in the part `reader` reads;
+    /// `set` gets the solid picked.
+    pub fn target_field<'a, S: Scalar, I: Input, St: State, A, T>(
         f: &mut EditForm<'a, S, A, T>,
+        reader: &Reader<'a, I, St>,
         label: &str,
-        target: &str,
-        set: impl Fn(Edit<'_, A, T>, String) + 'a,
+        target: Option<&SolidRef>,
+        set: impl Fn(Edit<'_, A, T>, SolidRef) + 'a,
     ) {
-        f.pick_one(TARGET, label, EntityRef::solid, target, &[Role::Solid], set);
+        f.pick_one(TARGET, label, reader, target, set);
     }
 
     /// Its fields in `f`: the mode — chosen without a target, it takes the
-    /// newest solid of `before` — and the target to pick. `set` puts the
-    /// combination set where the arguments keep it.
-    pub fn fields<'a, S: Scalar, A, T>(
+    /// newest solid of the part `reader` reads — and the target to pick.
+    /// `set` puts the combination set where the arguments keep it.
+    pub fn fields<'a, S: Scalar, I: Input, St: State, A, T>(
         &self,
         f: &mut EditForm<'a, S, A, T>,
-        before: &NamedModel<S>,
+        reader: &Reader<'a, I, St>,
         set: impl Fn(&mut A, Combine) + Clone + 'a,
     ) {
         let mode = match self {
@@ -239,8 +260,9 @@ impl Combine {
             OPS.iter()
                 .map(|&(_, value, _, label)| Choice::new(value, label)),
         );
+        let newest = read_model(reader).ok().and_then(|model| model.newest_solid());
         let target = (self.target().map(str::to_string))
-            .or_else(|| before.newest_solid())
+            .or(newest)
             .unwrap_or_default();
         let set_mode = set.clone();
         f.select(
@@ -253,14 +275,14 @@ impl Combine {
                 if mode == NEW_BODY {
                     set_mode(edit.args, Combine::NewBody);
                 } else if let Some(op) = op_of(mode) {
-                    let target = target.clone();
+                    let target = solid(&target);
                     set_mode(edit.args, Combine::With { op, target });
                 }
             },
         );
         if let Combine::With { op, target } = self {
             let op = *op;
-            Self::target_field(f, "target", target, move |edit, target| {
+            Self::target_field(f, reader, "target", Some(target), move |edit, target| {
                 set(edit.args, Combine::With { op, target })
             });
         }
@@ -289,7 +311,7 @@ impl Combine {
     /// those solids left as they are — joined into one.
     ///
     /// Combined with a target, each tool is recorded, as built, as the
-    /// feature of the step (see [`geop_ops::Feature`]): what a pattern of
+    /// feature of the step (see [`geop_ops_model::Feature`]): what a pattern of
     /// the feature copies and combines the same way. A new body is no
     /// feature: it is a body, patterned as one.
     pub fn apply<S: Scalar>(
@@ -303,8 +325,8 @@ impl Combine {
             Combine::NewBody => return new_body(model, namer, step, tools),
             Combine::With { op, target } => (*op, target),
         };
-        let ctx = with_context!("combining with {target:?} ({op:?})");
-        let mut target = model.solid_id(target).with_context(ctx)?;
+        let ctx = with_context!("combining with {:?} ({op:?})", target.name());
+        let mut target = model.solid_id(target.name()).with_context(ctx)?;
         for tool in tools {
             let (spec, names) = model.body_record(tool.solid.into()).with_context(ctx)?;
             model.record_feature_tool(
@@ -475,14 +497,14 @@ pub struct Split;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SplitArgs {
     /// The solid to cut.
-    pub solid: String,
+    pub solid: SolidRef,
     /// A face of the sheet to cut it with.
-    pub face: String,
+    pub face: ElementReference<NamedModel<Design>, Face>,
 }
 
 impl PartOperation for Split {
+    const KIND: &'static str = "split";
     const INFO: OperationInfo = OperationInfo::new(
-        "split",
         "Split",
         "Cut a solid into pieces with a face standing on its own.",
         OperationGroup::Bodies,
@@ -490,57 +512,57 @@ impl PartOperation for Split {
     )
     .icon(crate::icons::SPLIT);
     type Args = SplitArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
 
     /// The newest solid, cut by the newest face standing on its own.
     fn new_args(context: &StepContext) -> SplitArgs {
-        let seen = Seen::new(context.before);
+        let before = read_model(&context.before).unwrap_or_default();
         SplitArgs {
-            solid: seen.model().newest_solid().unwrap_or_default(),
-            face: seen.model().sheet_face_names().pop().unwrap_or_default(),
+            solid: solid(before.newest_solid().unwrap_or_default()),
+            face: ElementReference::new(model(), before.sheet_face_names().pop().unwrap_or_default()),
         }
     }
 
+    fn run(step: &str, part: &mut BuildPart, args: &SplitArgs) -> GeopResult<()> {
+        build_model::<Self>(part, step, args)
+    }
+
+    /// The solid and the face, picked.
+    fn form<'a>(
+        context: &'a StepContext<'a>,
+        args: &SplitArgs,
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, SplitArgs> {
+        let mut f = EditForm::<Design, SplitArgs>::default();
+        let before = &context.before;
+        f.pick_one("solid", "solid", before, Some(&args.solid), |edit, solid| {
+            edit.args.solid = solid
+        })
+        .pick_one("face", "face", before, Some(&args.face), |edit, face| {
+            edit.args.face = face
+        });
+        f
+    }
+}
+
+impl ModelOperation for Split {
     fn build(
         model: &mut NamedModel<Design>,
-        _: &mut BuildReader,
+        _: &PartReader,
         step: &str,
         args: &SplitArgs,
     ) -> GeopResult<()> {
         let namer = Namer::new("split", step)?;
-        let solid = model.solid_id(&args.solid)?;
-        let face = model.face_id(&args.face)?;
+        let solid = model.solid_id(args.solid.name())?;
+        let face = model.face_id(args.face.name())?;
         let sheet = model.sheet_of_face(
             face,
             "cut with a face standing on its own, as an extrude or revolve builds in face mode",
         )?;
         split(model, &namer, solid, sheet, RemeshParams::default())?;
         Ok(())
-    }
-
-    /// The solid and the face, picked.
-    fn form<'a>(
-        _: &'a StepContext<'a>,
-        args: &SplitArgs,
-        _: &FormState<()>,
-    ) -> EditForm<'a, Design, SplitArgs> {
-        let mut f = EditForm::<Design, SplitArgs>::default();
-        f.pick_one(
-            "solid",
-            "solid",
-            EntityRef::solid,
-            &args.solid,
-            &[Role::Solid],
-            |edit, name| edit.args.solid = name,
-        )
-        .pick_one(
-            "face",
-            "face",
-            EntityRef::face,
-            &args.face,
-            &[Role::Sheet],
-            |edit, name| edit.args.face = name,
-        );
-        f
     }
 }

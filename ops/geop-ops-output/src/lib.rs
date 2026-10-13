@@ -9,32 +9,36 @@
 //! those registered in its [`Outputs`], by their infos, and knows nothing
 //! more of them. The options each takes are its own, sent as JSON.
 
+// Library code reports what goes wrong as an error, never by panicking;
+// tests may unwrap.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::unreachable
+    )
+)]
+
 mod export;
 mod inspect;
 pub mod sheet;
-mod stl;
 
 pub use export::{Content, ErasedExporter, Export, Exporter, ExporterInfo};
 pub use inspect::{
     Answer, AnswerAction, Block, Does, ErasedInspector, Inspection, Inspector, InspectorInfo,
     Picks, Row,
 };
-pub use stl::{STL_QUALITY, Stl, StlOptions, stl_bytes};
-
-use std::{collections::BTreeSet, rc::Rc};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
+use geop_ops_parameters::{About, PartReader, ProgramFile, Runner, read_about};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-
-use crate::{
-    operation::{Build, BuildView},
-    parameters::Values,
-    placed::{About, about},
-    solving::{self, Freedom},
-};
 
 /// `text` fit for XML: for an element's content, or an attribute's value
 /// between either kind of quotes.
@@ -106,11 +110,12 @@ impl Bounded {
 }
 
 /// What a program built, as an exporter or an inspector is given it: the
-/// part as far as the program runs, the parts it places included, and the
-/// state it ran with — to ask how its parts can move ([`Output::freedom`]).
+/// runner holding the part as far as the program runs, the parts it places
+/// included, and the program it ran, with its state — to ask how its parts
+/// can move by running it again.
 pub struct Output<'a> {
-    build: &'a mut Build,
-    state: &'a Values,
+    pub runner: &'a mut Runner,
+    pub file: &'a ProgramFile,
     /// The step being edited, if one is: what an export of one step's
     /// result (a drawing) writes unless told which.
     pub editing: Option<&'a str>,
@@ -120,50 +125,28 @@ pub struct Output<'a> {
 }
 
 impl<'a> Output<'a> {
-    /// What `build` built, run last with `state`.
-    pub fn new(
-        build: &'a mut Build,
-        state: &'a Values,
-        editing: Option<&'a str>,
-        date: &'a str,
-    ) -> Self {
-        Self {
-            build,
-            state,
-            editing,
-            date,
-        }
-    }
-
     /// The part as far as the program runs.
-    pub fn part(&self) -> BuildView<'_> {
-        self.build.current()
+    pub fn part(&self) -> PartReader<'_> {
+        self.runner.part.current()
     }
 
     /// The part as it was before the step `step`: what a step that
     /// describes an output of the part — a drawing — is of.
-    pub fn part_before(&self, step: &str) -> GeopResult<BuildView<'_>> {
-        self.build.view_before(step)
+    pub fn part_before(&self, step: &str) -> GeopResult<PartReader<'_>> {
+        let position = Runner::position(self.file.index_of(step)?);
+        Ok(self.runner.part.reader(position))
     }
 
     /// What the program says of its part: its file, its material, its
     /// title (see [`About`]).
-    pub fn about(&self) -> Rc<About> {
-        about(self.part())
+    pub fn about(&self) -> GeopResult<About> {
+        Ok(read_about(&self.part())?.into_owned())
     }
 
     /// The name of the program's file, without folders or `.geop`: what a
     /// file written from it is named after (see [`About::stem`]).
-    pub fn stem(&self) -> String {
-        self.about().stem().to_string()
-    }
-
-    /// How free every placed part is where the state has it, the values
-    /// `held` held (see [`solving::freedom`]). It brings the part's
-    /// constraints to the states it tries, and back: what an output reads
-    /// of the part is as it was.
-    pub fn freedom(&mut self, held: &BTreeSet<String>) -> GeopResult<Freedom> {
-        solving::freedom(self.build, self.state, held)
+    pub fn stem(&self) -> GeopResult<String> {
+        Ok(self.about()?.stem().to_string())
     }
 }
 

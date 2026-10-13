@@ -271,7 +271,7 @@ fn runner() -> ProgramRunner<Sc, Pose> {
 
 /// The constraints of the part as it is now.
 fn constraints_now(part: &Part<Sc, Pose>) -> GeopResult<Constraints<Pose>> {
-    Constraints::of(&part.current()).map(|constraints| constraints.into_owned())
+    Constraints::of(&part.current())
 }
 
 /// An operation constrains the state, and the run reports the constraint
@@ -353,12 +353,11 @@ fn inconsistent_constraint_is_an_error() {
     assert!(constraints_now(&part).is_err());
 }
 
-/// The part's constraints are one target, each step revising what the one
-/// before made: once a step's constraints fail, every later step's do too,
-/// and a solve reading them finds the failure, not a part with fewer
-/// constraints.
+/// Each step's constraints are a target of its own: one that fails leaves
+/// the later steps' alone, and a solve reading them all finds the failure,
+/// not a part with fewer constraints.
 #[test]
-fn a_failed_constraint_step_fails_every_later_one() {
+fn a_failed_constraint_step_fails_the_constraints() {
     let mut runner = runner();
     let program = Program::new(vec![
         input_frame("a", "a", "x"),
@@ -367,24 +366,20 @@ fn a_failed_constraint_step_fails_every_later_one() {
     ]);
     let output = runner.run(&program, &inputs(&[("x", 1.0)]), &pose_at(0.0));
     let errors = errors(&output);
-    let [(broken, why_broken), (pin, why_pin)] = &errors[..] else {
+    let [(broken, why_broken)] = &errors[..] else {
         panic!("{errors:?}");
     };
-    assert_eq!((broken.as_str(), pin.as_str()), ("broken", "pin"));
+    assert_eq!(broken, "broken");
     assert!(
         why_broken.contains("target `missing` is not defined"),
         "{why_broken}"
-    );
-    assert!(
-        why_pin.contains("target `constraints` failed in the step at position 1"),
-        "{why_pin}"
     );
     let error = constraints_now(&runner.part).unwrap_err();
     assert!(error.root_message().contains("`constraints:broken` failed"), "{error}");
 }
 
 /// A constraint's name is the part's to resolve by: a second step defining
-/// it is an error naming both.
+/// it makes the part's constraints an error naming both.
 #[test]
 fn constraint_defined_twice_is_an_error() {
     fn define(_: &Reader<Sc, Pose>, _: &()) -> GeopResult<BTreeMap<String, Constraint<Pose>>> {
@@ -400,13 +395,12 @@ fn constraint_defined_twice_is_an_error() {
     part.begin_step();
     define_constraints(&mut part, "one", &(), define).unwrap();
     part.begin_step();
-    let twice = define_constraints(&mut part, "two", &(), define);
+    define_constraints(&mut part, "two", &(), define).unwrap();
+    part.end_run(0);
     assert_eq!(
-        twice.unwrap_err().root_message(),
+        constraints_now(&part).unwrap_err().root_message(),
         "constraint `pin` is defined twice: by step `one` and by step `two`"
     );
-    part.end_run(0);
-    assert!(constraints_now(&part).is_err());
 }
 
 /// The unknowns are one target by the state they are: of two declarations

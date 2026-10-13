@@ -21,7 +21,7 @@ mod tests {
     };
     use geop_core_math::scalars::ScalInF64;
     use geop_core_topology::validation::validate_fast;
-    use geop_ops::Namer;
+    use geop_ops_model::Namer;
     use geop_ops_rasterize::debug::rasterize_topology;
 
     fn run_op(op: BooleanOp, dir: &str) {

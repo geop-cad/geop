@@ -54,7 +54,7 @@ pub fn face_triangles_uv<S: Scalar>(
 /// kept alongside the id of the entity it came from.
 ///
 /// This is the single place the crate turns topology into sampled geometry
-/// — drawing and ray picking (`geop_ops::ui::PartView`), STL, and debug
+/// — drawing and ray picking (`geop_ops_view::PartView`), STL, and debug
 /// rendering ([`debug`]) all build on top of it, rather than each walking
 /// `Model` and sampling curves/surfaces on their own. That matters beyond
 /// not repeating code: it guarantees a pick can never disagree with what
@@ -186,7 +186,7 @@ mod tests {
     use crate::debug::Color10;
     use geop_core_math::for_all_scalars;
     use geop_core_math::primitives::TriangleFace;
-    use geop_ops::NamedModel;
+    use geop_ops_model::NamedModel;
     use geop_ops_extrude_revolve::shapes::{cube_solid, sphere::sphere_solid};
 
     /// Rasterize `model`, sanity-check it's a non-empty mesh, and save it to

@@ -34,13 +34,15 @@ pub mod thicken;
 
 mod icons;
 #[cfg(test)]
-mod tests;
+mod program_tests;
 
 pub use base_flange::{BaseFlange, BaseFlangeArgs};
-pub use body::{SheetBody, Sheets, sheets};
-pub use cut::{SheetCut, SheetCutArgs};
+pub use body::{SheetBody, Sheets, sheet_body, sheets};
+pub use cut::{FlatFaceRef, SheetCut, SheetCutArgs};
 pub use cutting::{FlatPatternDxf, FlatPatternOptions, cutting_sheet};
-pub use edge_flange::{Corner, EdgeFlange, EdgeFlangeArgs, FlangePosition, LengthReference};
-pub use flat_pattern::{BendLine, FlatPattern, FlatPatternArgs, FlatPatternData};
+pub use edge_flange::{
+    Corner, EdgeFlange, EdgeFlangeArgs, EdgeRef, FlangePosition, LengthReference, edge,
+};
+pub use flat_pattern::{BendLine, FlatPattern, FlatPatternArgs, FlatPatternData, SolidRef};
 pub use hem::{Hem, HemArgs, HemKind};
 pub use sheet::{Relief, Sheet, SheetMetalRules};

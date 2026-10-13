@@ -43,7 +43,7 @@ use geop_core_topology::{
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
 
-use geop_ops::{BodyNames, Namer};
+use geop_ops_model::{BodyNames, Namer};
 
 /// Where a strip's entities are: its joints, curves, laterals and walls,
 /// by station `s`, span `j`, joint or curve `i`.

@@ -10,7 +10,8 @@ straight for an extrude, around an axis for a revolve, along a chain of
 curves for a sweep — or a loft's several profiles skinned together, into a
 solid, or, without one, into a sheet of faces standing on their own. A sweep is
 described whole, as a `BodySpec` of vertices, edges and faces, and built in
-one go by `Part::build_body` (see [geop-core-topology](../core/geop-core-topology.md)),
+one go by `NamedModel::build_body` (see [geop-ops-model](./geop-ops-model.md) and
+[geop-core-topology](../core/geop-core-topology.md)),
 which checks it is consistent first and names every entity it builds.
 
 ## Profiles
@@ -85,7 +86,7 @@ built: an open chain from pole to pole, or a ring clear of the axis.
 ## Sweep along a path
 
 `path_sweep::sweep_along` carries a profile, from where it is drawn, along a
-`Chain` (`geop_ops::operation::Chain`) of 3-D curves by the rigid motion that keeps it square to the
+`Chain` (`geop_ops_model::Chain`) of 3-D curves by the rigid motion that keeps it square to the
 path — a rotation-minimizing frame, which for a planar path keeps the
 path's plane normal fixed. Every joint of the path is a station, every curve
 a span: a line moves the profile straight on and an arc turns it about the
@@ -131,8 +132,8 @@ new body or take a `Combine`, and as a `face` build faces standing on
 their own.
 
 `Extrude` and `Revolve` are the operations a program uses (see
-[geop-ops](./geop-ops.md#operations)): they sweep a sketch of the part into
-a solid, and name everything after the sketch's elements. A sketch is one
+[geop-core-editor](../core/geop-core-editor.md#an-operation-partoperation)):
+they sweep a sketch of the part into a solid, and name everything after the sketch's elements. A sketch is one
 area to sweep — an outer loop and its holes; a sketch of several separate
 areas is refused.
 

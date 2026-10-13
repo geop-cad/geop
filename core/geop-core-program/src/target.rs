@@ -1,4 +1,7 @@
-use std::{any::Any, collections::HashMap};
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+};
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 
@@ -68,6 +71,8 @@ pub(crate) struct Target {
     pub(crate) dependencies: Vec<Dependency>,
     /// The value, or what made building it fail.
     data: Result<Box<dyn Any>, String>,
+    /// The type of value it is defined to hold, whether or not it failed.
+    kind: TypeId,
     /// The run in which `data` last became different.
     pub(crate) changed_at: Revision,
     /// The run it was made or reused in last: what it read is unchanged
@@ -96,6 +101,7 @@ impl Target {
             args: Box::new(args),
             dependencies,
             data: made.map(|data| Box::new(data) as Box<dyn Any>),
+            kind: TypeId::of::<Out>(),
             changed_at,
             run,
         }
@@ -104,18 +110,31 @@ impl Target {
     /// Its value, a `T` — or why there is none: it failed, or it is no `T`.
     /// `name` is the target's, for the error.
     pub(crate) fn value<T: 'static>(&self, name: &str) -> GeopResult<&T> {
-        let data = self.data.as_ref().map_err(|e| {
-            GeopError::new(format!(
-                "target `{name}` failed in the step at position {}: {e}",
-                self.step
-            ))
-        })?;
+        let data = self.data.as_ref().map_err(|e| self.failed(name, e))?;
         data.downcast_ref::<T>().ok_or_else(|| {
             GeopError::new(format!(
                 "target `{name}` is not a `{}`",
                 std::any::type_name::<T>()
             ))
         })
+    }
+
+    /// Whether it is defined to hold a `T`, made or failed.
+    pub(crate) fn is<T: 'static>(&self) -> bool {
+        self.kind == TypeId::of::<T>()
+    }
+
+    /// Why it failed, if it did. `name` is the target's, for the error.
+    pub(crate) fn failure(&self, name: &str) -> Option<GeopError> {
+        self.data.as_ref().err().map(|e| self.failed(name, e))
+    }
+
+    /// That it failed, for `e`.
+    fn failed(&self, name: &str, e: &str) -> GeopError {
+        GeopError::new(format!(
+            "target `{name}` failed in the step at position {}: {e}",
+            self.step
+        ))
     }
 
     /// Whether it was made, as an `Out`, from `args`: what a reuse asks.

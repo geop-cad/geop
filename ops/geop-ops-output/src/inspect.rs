@@ -1,5 +1,5 @@
 //! [`Inspector`]: a question answered about what a program built — of the
-//! whole part (its mass properties), or of entities picked in it (what
+//! whole part (its mass properties), or of elements picked in it (what
 //! they measure).
 
 use geop_core_math::{
@@ -9,11 +9,9 @@ use geop_core_math::{
 use serde::{Serialize, de::DeserializeOwned};
 
 use super::{Output, read_options};
-use crate::{
-    Design, EntityRef,
-    operation::Role,
-    ui::{Tone, Visual},
-};
+use geop_core_editor::editing::{Tone, Visual};
+use geop_core_program::element::PickedElement;
+use geop_ops_model::Design;
 
 /// What an inspector is to a front end: how it is asked, what it is
 /// offered as, and whether it is asked of the whole part or of picks.
@@ -26,18 +24,21 @@ pub struct InspectorInfo {
     /// What it answers, in a sentence.
     pub doc: &'static str,
     /// What it is shown as (see
-    /// [`geop_core_program::operation::OperationInfo::icon`]).
+    /// [`geop_core_editor::editable::OperationInfo::icon`]).
     pub icon: Option<&'static str>,
     /// What it is asked of, if not the whole part: a tool that picks these
     /// in the viewport, and answers again with every pick.
     pub picks: Option<Picks>,
 }
 
-/// What an inspector that picks takes: entities filling one of `roles`, at
-/// most `most` of them — another pick then replaces the oldest.
+/// What an inspector that picks takes: elements of what an editor draws of
+/// the kinds `accepts` (see [`geop_core_editor::editing::hit::Scene::pick`]),
+/// at most `most` of them — another pick then replaces the oldest. What
+/// each is to the inspector, it selects itself (see
+/// [`geop_core_editor::selectable`]).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Picks {
-    pub roles: &'static [Role],
+    pub accepts: &'static [&'static str],
     pub most: usize,
 }
 
@@ -51,12 +52,12 @@ pub trait Inspector: 'static {
     /// Its answer, as a front end is sent it.
     type Report: Serialize;
 
-    /// The answer about `output` — of the entities `picked`, for one that
+    /// The answer about `output` — of the elements `picked`, for one that
     /// picks ([`InspectorInfo::picks`]) — and what to draw of it in the
     /// viewport: the points a distance is measured between.
     fn inspect(
         output: &mut Output,
-        picked: &[EntityRef],
+        picked: &[PickedElement],
         options: Self::Options,
     ) -> GeopResult<(Self::Report, Vec<Visual<Design>>)>;
 
@@ -102,7 +103,7 @@ pub enum Block {
         detail: Option<String>,
         open: bool,
         /// What to light while the title is pointed at.
-        light: Vec<EntityRef>,
+        light: Vec<PickedElement>,
         blocks: Vec<Block>,
     },
     /// Buttons, side by side.
@@ -118,7 +119,7 @@ pub struct Row {
     /// Said in full while it is pointed at.
     pub detail: Option<String>,
     /// What to light while it is pointed at.
-    pub light: Vec<EntityRef>,
+    pub light: Vec<PickedElement>,
     pub tone: Tone,
 }
 
@@ -175,7 +176,7 @@ pub trait ErasedInspector {
     fn inspect(
         &self,
         output: &mut Output,
-        picked: &[EntityRef],
+        picked: &[PickedElement],
         options: &serde_json::Value,
     ) -> GeopResult<Inspection>;
 }
@@ -188,7 +189,7 @@ impl<I: Inspector> ErasedInspector for I {
     fn inspect(
         &self,
         output: &mut Output,
-        picked: &[EntityRef],
+        picked: &[PickedElement],
         options: &serde_json::Value,
     ) -> GeopResult<Inspection> {
         let kind = I::INFO.kind;

@@ -1,6 +1,14 @@
 //! [`EdgeFlange`]: a flange bent up from a straight edge of a sheet-metal
 //! body.
 
+use geop_core_editor::{
+    edit_form::{Edit, EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::{Choice, Number, Unit},
+    numeric_input::NumericInput,
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_geometry::nurb_curve::NurbCurve2D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -8,19 +16,13 @@ use geop_core_math::{
     vector::Vector2,
     with_context,
 };
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, NamedModel, Namer,
-    model::model_or_empty,
-    operation::{Build, BuildReader, EntityRef, PartOperation, Role, Scope, Seen, StepContext},
-    parameters::{Formula, expressions},
-    part_operation,
-    ui::{Choice, Edit, EditForm, FormState, Number, Unit, formula_number},
-};
+use geop_core_program::element::ElementReference;
+use geop_ops_model::{Design, Line, ModelOperation, NamedModel, Namer, read_model};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    body::{self, Made, Making, SheetStep, sheets_of, with_edge},
+    body::{self, Made, Making, SheetStep, with_edge},
     sheet::{Bend, BendFrame, Flat, FlatEdge, Sheet, SheetMetalRules, straight},
 };
 
@@ -96,16 +98,26 @@ pub enum Corner {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EdgeFlange;
 
+/// A straight edge of the part, by name.
+pub type EdgeRef = ElementReference<NamedModel<Design>, Line>;
+
+/// The straight edge named `name`.
+pub fn edge(name: impl Into<String>) -> EdgeRef {
+    ElementReference::new(geop_ops_model::model(), name)
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EdgeFlangeArgs {
-    /// The edge, of a flat face of a sheet-metal body.
-    pub edge: String,
+    /// The edge, of a flat face of a sheet-metal body; none yet, for a new
+    /// flange waiting for one to be picked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<EdgeRef>,
     /// How far the flange turns, in degrees: more than 0, less than 180 —
     /// a number, or a formula of the part's parameters.
-    pub angle: Formula,
+    pub angle: NumericInput,
     /// How long it is, measured from its `reference`: a number, or a
     /// formula of the part's parameters.
-    pub length: Formula,
+    pub length: NumericInput,
     #[serde(default)]
     pub reference: LengthReference,
     #[serde(default)]
@@ -122,19 +134,14 @@ pub struct EdgeFlangeArgs {
 }
 
 impl SheetStep for EdgeFlange {
-    fn plan(reader: &mut BuildReader, step: &str, args: &EdgeFlangeArgs) -> GeopResult<Made> {
+    fn plan(reader: &PartReader, step: &str, args: &EdgeFlangeArgs) -> GeopResult<Made> {
         let ctx = with_context!("edge_flange({step}, {args:?})");
         let namer = Namer::new("edge_flange", step)?;
-        let sheets = sheets_of(reader);
-        let model = model_or_empty(reader);
+        let model = read_model(reader).with_context(ctx)?;
         let (solid, mut sheet, (f, k, toward_b)) =
-            with_edge(&model, &sheets, &args.edge, "a flange").with_context(ctx)?;
-        let mut scope = Scope {
-            model: &model,
-            reader,
-        };
-        let angle = args.angle.evaluate(&mut scope).with_context(ctx)?;
-        let length = args.length.evaluate(&mut scope).with_context(ctx)?;
+            with_edge(&model, reader, args.edge.as_ref(), "a flange").with_context(ctx)?;
+        let angle = args.angle.resolve(reader).with_context(ctx)?;
+        let length = args.length.resolve(reader).with_context(ctx)?;
         let shape = args.shape(&sheet.rules, angle, length).with_context(ctx)?;
         add_flange(&mut sheet, &namer, f, k, toward_b, &shape).with_context(ctx)?;
         Ok(Made {
@@ -145,21 +152,22 @@ impl SheetStep for EdgeFlange {
     }
 }
 
-/// The edge field of a flange or hem, holding `edge`; `set` gets the edge
-/// picked.
+/// The edge field of a flange or hem, holding `edge`, in the part `reader`
+/// reads; `set` gets the edge picked.
 pub(crate) fn edge_field<'a, A>(
     f: &mut EditForm<'a, Design, A>,
-    edge: &str,
-    set: impl Fn(Edit<'_, A, ()>, String) + 'a,
+    reader: &PartReader<'a>,
+    edge: Option<&EdgeRef>,
+    set: impl Fn(Edit<'_, A, ()>, EdgeRef) + 'a,
 ) {
-    f.pick_one("edge", "edge", EntityRef::edge, edge, &[Role::Line], set);
+    f.pick_one("edge", "edge", reader, edge, set);
 }
 
 part_operation!(EdgeFlange(EdgeFlangeArgs));
 
 impl PartOperation for EdgeFlange {
+    const KIND: &'static str = "edge_flange";
     const INFO: OperationInfo = OperationInfo::new(
-        "edge_flange",
         "Edge flange",
         "Bend a flange up from a straight edge of a sheet-metal body.",
         OperationGroup::SheetMetal,
@@ -167,18 +175,17 @@ impl PartOperation for EdgeFlange {
     )
     .icon(crate::icons::EDGE_FLANGE);
     type Args = EdgeFlangeArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
-
-    fn formulas(args: &mut EdgeFlangeArgs) -> Vec<&mut String> {
-        expressions([&mut args.angle, &mut args.length])
-    }
 
     /// No edge yet: a right angle, half a unit long, material inside.
     fn new_args(_: &StepContext) -> EdgeFlangeArgs {
         EdgeFlangeArgs {
-            edge: String::new(),
-            angle: Formula::Plain(90.0),
-            length: Formula::Plain(0.5),
+            edge: None,
+            angle: NumericInput::Plain(90.0),
+            length: NumericInput::Plain(0.5),
             reference: LengthReference::default(),
             position: FlangePosition::default(),
             radius: None,
@@ -188,17 +195,8 @@ impl PartOperation for EdgeFlange {
         }
     }
 
-    fn run(step: &str, part: &mut Build, args: &EdgeFlangeArgs) -> GeopResult<()> {
+    fn run(step: &str, part: &mut BuildPart, args: &EdgeFlangeArgs) -> GeopResult<()> {
         body::run::<Self>(step, part, args)
-    }
-
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &mut BuildReader,
-        step: &str,
-        _: &EdgeFlangeArgs,
-    ) -> GeopResult<()> {
-        body::build(model, reader, step)
     }
 
     /// The edge, picked; angle and length; what the length is measured from
@@ -209,15 +207,17 @@ impl PartOperation for EdgeFlange {
         args: &EdgeFlangeArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, EdgeFlangeArgs> {
-        let mut seen = Seen::new(context.before);
+        let before = &context.before;
         let mut f = EditForm::<Design, EdgeFlangeArgs>::default();
-        edge_field(&mut f, &args.edge, |edit, edge| edit.args.edge = edge);
-        let angle = formula_number("angle", &args.angle, &mut seen, Unit::Angle);
-        f.formula("angle", angle.range(0.0, 180.0), |edit, angle| {
+        edge_field(&mut f, before, args.edge.as_ref(), |edit, edge| {
+            edit.args.edge = Some(edge)
+        });
+        let angle = args.angle.number("angle", before, Unit::Angle);
+        f.numeric("angle", angle.range(0.0, 180.0), |edit, angle| {
             edit.args.angle = angle
         });
-        let length = formula_number("length", &args.length, &mut seen, Unit::Length);
-        f.formula("length", length.range(0.0, 5.0), |edit, length| {
+        let length = args.length.number("length", before, Unit::Length);
+        f.numeric("length", length.range(0.0, 5.0), |edit, length| {
             edit.args.length = length
         });
         f.select(
@@ -300,6 +300,17 @@ impl PartOperation for EdgeFlange {
             },
         );
         f
+    }
+}
+
+impl ModelOperation for EdgeFlange {
+    fn build(
+        model: &mut NamedModel<Design>,
+        reader: &PartReader,
+        step: &str,
+        _: &EdgeFlangeArgs,
+    ) -> GeopResult<()> {
+        body::build(model, reader, step)
     }
 }
 

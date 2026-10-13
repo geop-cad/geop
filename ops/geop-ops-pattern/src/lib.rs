@@ -1,5 +1,5 @@
 //! Repeating and moving bodies, as operations of a program (see
-//! [`geop_ops::operation`]):
+//! [`geop_core_editor::part_operation::PartOperation`]):
 //!
 //! - [`LinearPattern`]: copies in a row along a direction, or in a grid
 //!   along two.
@@ -23,10 +23,17 @@
 //! each made. A step only sees the part the steps before it built, never
 //! their arguments; what it sees of a feature is what the feature's step
 //! recorded on the part as it combined its tools (see
-//! [`geop_ops::Feature`]). A pattern copies those tools, moves them, and
+//! [`geop_ops_model::Feature`]), and a feature is picked by a face it made
+//! ([`Feature`]). A pattern copies those tools, moves them, and
 //! combines each copy with the solid the feature lies on as the feature
 //! combined it: why that, rather than running the step again, is said in
 //! `features.rs`.
+//!
+//! # Spacing
+//!
+//! How instances are spaced in a row — each a step from the last, or spread
+//! over an extent — and how many there are is [`spacing`]'s, public for any
+//! operation that lays out instances (a placed part's copies, too).
 
 mod circular;
 mod common;
@@ -37,12 +44,16 @@ mod mirror;
 mod move_body;
 #[cfg(test)]
 mod program_tests;
+mod references;
+pub mod spacing;
 #[cfg(test)]
 mod tests;
 
 pub use circular::{CircularPattern, CircularPatternArgs};
-pub use common::Seeds;
-pub use geop_ops::operation::pattern::Spacing;
+pub use common::{BodyRef, Seeds, body};
+pub use features::{Feature, FeatureRef, feature};
 pub use linear::{Direction, LinearPattern, LinearPatternArgs};
 pub use mirror::{Mirror, MirrorArgs};
 pub use move_body::{MoveBody, MoveBodyArgs};
+pub use references::{PatternDirection, TurnAxis};
+pub use spacing::{Row, Spacing};

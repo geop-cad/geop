@@ -11,14 +11,16 @@
 
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
 use geop_core_sketch::CurveId;
-use geop_ops::{
-    EntityRef, origin_axis, origin_plane,
-    parameters::{Material, Parameter, ParameterKind, Parameters, Row},
-};
+use geop_core_program::element::ElementReference;
+use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
 use geop_ops_booleans::Combine;
-use geop_ops_datums::{AddDatumArgs, Construction};
-use geop_ops_extrude_revolve::Output;
-use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, RevolveArgs};
+use geop_ops_datums::{Datums, datums, origin_axis, origin_plane};
+use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, Output, RevolveArgs, RevolveAxis};
+use geop_ops_parameters::{
+    Material, Parameter, ParameterKind, Parameters,
+    parameters::Row,
+};
+use geop_ops_sketch::{SketchPlane, sketch_element, whole_sketch};
 
 use super::{drawing::Drawing, tables::Table};
 use crate::Program;
@@ -62,8 +64,8 @@ pub fn col(column: &str) -> String {
 
 /// The plane profiles are drawn in: the origin's `yz` plane, its `x` the
 /// radius out from the `z` axis — along `y` — and its `y` along `z`.
-pub fn profile_plane() -> EntityRef {
-    origin_plane(FrameAxis::X)
+pub fn profile_plane() -> SketchPlane {
+    SketchPlane::Datum(origin_plane(FrameAxis::X))
 }
 
 /// Where an outline extruded up through a solid is drawn: below it.
@@ -71,13 +73,18 @@ pub const BELOW: &str = "below";
 
 /// The plane outlines are drawn in, around the `z` axis: the origin's `xy`
 /// plane.
-pub fn outline_plane() -> EntityRef {
-    origin_plane(FrameAxis::Z)
+pub fn outline_plane() -> SketchPlane {
+    SketchPlane::Datum(origin_plane(FrameAxis::Z))
 }
 
-/// The axis parts turn around: the origin's `z` axis.
-pub fn z_axis() -> EntityRef {
-    origin_axis(FrameAxis::Z)
+/// The datum plane `name`, as a sketch is drawn on it.
+pub fn datum_plane(name: &str) -> SketchPlane {
+    SketchPlane::Datum(ElementReference::new(datums(), name))
+}
+
+/// The datum `name`, as a datum is built from it.
+pub fn datum(name: &str) -> Selected {
+    Selected::Datum(ElementReference::<Datums, _>::new(datums(), name))
 }
 
 /// The face a full turn of the profile line `curve` of the sketch
@@ -108,16 +115,13 @@ pub fn revolve(
 ) {
     program.push(sketch, drawing.on(profile_plane()));
     let axis = match around {
-        Around::Line(curve) => EntityRef::SketchCurve {
-            sketch: sketch.into(),
-            curve,
-        },
-        Around::ZAxis => z_axis(),
+        Around::Line(curve) => RevolveAxis::Sketch(sketch_element(sketch, curve)),
+        Around::ZAxis => RevolveAxis::Datum(origin_axis(FrameAxis::Z)),
     };
     program.push(
         id,
         RevolveArgs {
-            sketch: sketch.into(),
+            sketch: whole_sketch(sketch),
             axis: Some(axis),
             extent: Extents::blind(360.0),
             output: Output::Solid(combine),
@@ -140,7 +144,7 @@ pub fn extrude(
     program: &mut Program,
     id: &str,
     sketch: &str,
-    (drawing, plane): (Drawing, EntityRef),
+    (drawing, plane): (Drawing, SketchPlane),
     extent: Extents,
     combine: Combine,
 ) {
@@ -148,7 +152,7 @@ pub fn extrude(
     program.push(
         id,
         ExtrudeArgs {
-            sketch: sketch.into(),
+            sketch: whole_sketch(sketch),
             extent,
             output: Output::Solid(combine),
         },
@@ -173,14 +177,14 @@ pub fn cut_to(
                 program.push(
                     BELOW,
                     AddDatumArgs {
-                        selection: vec![outline_plane()],
+                        selection: vec![datum(origin_plane(FrameAxis::Z).name())],
                         construction: Construction::Offset {
                             distance: (-1.0).into(),
                         },
                     },
                 );
             }
-            EntityRef::datum(BELOW)
+            datum_plane(BELOW)
         }
     };
     let extent = Extents {
@@ -216,7 +220,7 @@ pub fn axis_datum(program: &mut Program) {
     program.push(
         "axis",
         AddDatumArgs {
-            selection: vec![z_axis()],
+            selection: vec![datum(origin_axis(FrameAxis::Z).name())],
             construction: Construction::AlongLine {},
         },
     );
@@ -226,17 +230,17 @@ pub fn axis_datum(program: &mut Program) {
 /// up it: through the origin, the face a part sits on, put there — what a
 /// coincident mate picks — or a plane to draw an outline on.
 pub fn plane_datum(program: &mut Program, id: &str, height: &str) {
-    offset_datum(program, id, outline_plane(), height);
+    offset_datum(program, id, origin_plane(FrameAxis::Z).name(), height);
 }
 
-/// The datum plane `id` parallel to the plane `plane`, `distance` — a
-/// formula of the size — along its normal: for a part that runs along `z`,
-/// a face it sits on beside the axis.
-pub fn offset_datum(program: &mut Program, id: &str, plane: EntityRef, distance: &str) {
+/// The datum plane `id` parallel to the datum plane `plane`, `distance` —
+/// a formula of the size — along its normal: for a part that runs along
+/// `z`, a face it sits on beside the axis.
+pub fn offset_datum(program: &mut Program, id: &str, plane: &str, distance: &str) {
     program.push(
         id,
         AddDatumArgs {
-            selection: vec![plane],
+            selection: vec![datum(plane)],
             construction: Construction::Offset {
                 distance: distance.into(),
             },

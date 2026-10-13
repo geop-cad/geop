@@ -93,7 +93,6 @@ use geop_core_topology::{
     EdgeId, FaceId, Model, SolidId, VertexId,
     contains::face::{PointClassification, face_contains},
 };
-use geop_ops::{NamedModel, Namer};
 use geop_ops_booleans::{
     boolean::{BooleanOp, boolean},
     remesh::remesh::RemeshParams,
@@ -101,10 +100,12 @@ use geop_ops_booleans::{
 use geop_ops_extrude_revolve::{
     common::Profile, extrude::extrude, revolve::revolve, sweep::SweepLoop,
 };
+use geop_ops_model::{NamedModel, Namer};
 
 use crate::corner;
-use crate::rolling::{self, Chain, Radii, Rolled, tangent_chain};
+use crate::rolling::{self, Radii, Rolled};
 use crate::tool::{self, Cap, Corner, CornerEnd, Joint, Tool, ToolSpan, ToolStation, embed};
+use geop_ops_model::tangent::{TangentChain as Chain, tangent_chain};
 
 /// What a blend replaces an edge's corner with (see the module docs).
 #[derive(Clone, Debug, PartialEq)]

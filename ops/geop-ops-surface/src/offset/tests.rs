@@ -1,17 +1,21 @@
 //! Offsetting the round sides of a cylinder and a cube's faces.
 
 use geop_core_math::scalars::{Field, Ring, ScalInF64 as S, Scalar};
-use geop_ops::NamedModel;
-use geop_ops::operation::apply_to_model;
 use geop_ops_extrude_revolve::shapes::{block, cylinder::revolved_cylinder};
+use geop_ops_model::NamedModel;
+use geop_ops_model::testing::apply_to_model;
 
 use super::*;
 use crate::boundary::tests::refused;
-use geop_ops::testing::assert_valid_sheets;
+use crate::test_refs::*;
 use geop_ops_extrude_revolve::shapes::v3;
+use geop_ops_model::testing::assert_valid_sheets;
 
 fn offset(part: NamedModel<S>, faces: Vec<String>, distance: f64) -> GeopResult<NamedModel<S>> {
-    let args = OffsetSurfaceArgs { faces, distance };
+    let args = OffsetSurfaceArgs {
+        faces: faces.into_iter().map(named).collect(),
+        distance,
+    };
     apply_to_model::<OffsetSurface>(part, "o", &args)
 }
 

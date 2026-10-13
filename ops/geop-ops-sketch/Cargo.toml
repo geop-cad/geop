@@ -5,12 +5,18 @@ edition.workspace = true
 
 [dependencies]
 geop-core-program.workspace = true
+geop-core-editor.workspace = true
 geop-core-geometry.workspace = true
 geop-core-math.workspace = true
 geop-core-sketch.workspace = true
 geop-core-topology.workspace = true
-geop-ops.workspace = true
+geop-ops-model.workspace = true
+geop-ops-datums.workspace = true
+geop-ops-parameters.workspace = true
+geop-ops-rasterize.workspace = true
+geop-ops-view.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+geop-ops-model = { workspace = true, features = ["testing"] }

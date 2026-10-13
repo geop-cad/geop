@@ -6,17 +6,19 @@ use std::f64::consts::PI;
 
 use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
+use geop_core_program::operation::StepArgs;
 use geop_core_program::program::ProgramStep;
 use geop_core_topology::validation::{ValidationParameters, validate};
-use geop_ops::{EntityRef, NamedModel};
-use geop_ops_booleans::{BooleanArgs, Combine, boolean::BooleanOp};
-use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, RevolveArgs};
-use geop_ops_sketch::{Constraint, Sketch};
+use geop_ops_booleans::{BooleanArgs, Combine, SplitArgs, solid};
+use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, RevolveArgs, RevolveAxis};
+use geop_ops_model::{BooleanOp, NamedModel, element};
+use geop_ops_sketch::{Constraint, Sketch, sketch_element, whole_sketch};
 
 use crate::Program;
 use crate::examples::{n, polygon};
 use crate::operations::testing::{
-    Built, assert_valid, both_ways, extrusion, one_way, origin_axis, origin_plane, sketch, two_ways,
+    Built, assert_valid, both_ways, extrusion, on_face, on_origin, one_way, origin_axis, sketch,
+    two_ways,
 };
 
 fn extrude(sketch: &str, distance: f64, symmetric: bool) -> ExtrudeArgs {
@@ -40,7 +42,7 @@ fn symmetric_extrude_is_centered_on_the_sketch_plane() {
     let mut s = Sketch::new();
     polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
     let mut program = Program::new();
-    program.push("square", sketch(origin_plane(FrameAxis::Z), s));
+    program.push("square", sketch(on_origin(FrameAxis::Z), s));
     program.push("slab", extrude("square", 1.0, true));
     let part = program.build_model().unwrap();
     assert_valid(&part);
@@ -72,7 +74,7 @@ fn extrude_slot_plate_with_hole() {
     let c = s.add_point(n(1.0), n(0.5));
     s.add_circle(c, n(0.25));
     let mut program = Program::new();
-    program.push("slot", sketch(origin_plane(FrameAxis::Z), s));
+    program.push("slot", sketch(on_origin(FrameAxis::Z), s));
     program.push("plate", extrude("slot", 0.5, false));
     let part = program.build_model().unwrap();
     assert_valid(&part);
@@ -94,23 +96,15 @@ fn boss_on_block_top_face() {
     let c = boss.add_point(n(0.5), n(0.5));
     boss.add_circle(c, n(0.3));
     let mut program = Program::new();
-    program.push("base", sketch(origin_plane(FrameAxis::Z), block));
+    program.push("base", sketch(on_origin(FrameAxis::Z), block));
     program.push("block", extrude("base", 1.0, false));
-    program.push(
-        "boss_sketch",
-        sketch(
-            EntityRef::Face {
-                name: "extrude(block,end)".into(),
-            },
-            boss,
-        ),
-    );
+    program.push("boss_sketch", sketch(on_face("extrude(block,end)"), boss));
     program.push("boss", extrude("boss_sketch", 0.4, false));
     program.push(
         "join",
         BooleanArgs {
-            a: "extrude(block)".into(),
-            b: "extrude(boss)".into(),
+            a: solid("extrude(block)"),
+            b: solid("extrude(boss)"),
             op: BooleanOp::Union,
         },
     );
@@ -136,15 +130,12 @@ fn revolve_half_disc_is_sphere() {
     let axis = s.add_line(bottom, top);
     s.add_arc(top, bottom, n(PI));
     let mut program = Program::new();
-    program.push("half_disc", sketch(origin_plane(FrameAxis::X), s));
+    program.push("half_disc", sketch(on_origin(FrameAxis::X), s));
     program.push(
         "ball",
         RevolveArgs {
-            sketch: "half_disc".into(),
-            axis: Some(EntityRef::SketchCurve {
-                sketch: "half_disc".into(),
-                curve: axis,
-            }),
+            sketch: whole_sketch("half_disc"),
+            axis: Some(RevolveAxis::Sketch(sketch_element("half_disc", axis))),
             extent: Extents::blind(360.0),
             output: Output::Solid(Combine::NewBody),
         },
@@ -166,15 +157,12 @@ fn revolve_across_axis_fails() {
     s.set_construction(axis, true);
     polygon(&mut s, &[[-0.5, 0.0], [1.0, 0.0], [1.0, 1.0], [-0.5, 1.0]]);
     let mut program = Program::new();
-    program.push("profile", sketch(origin_plane(FrameAxis::Z), s));
+    program.push("profile", sketch(on_origin(FrameAxis::Z), s));
     program.push(
         "bad",
         RevolveArgs {
-            sketch: "profile".into(),
-            axis: Some(EntityRef::SketchCurve {
-                sketch: "profile".into(),
-                curve: axis,
-            }),
+            sketch: whole_sketch("profile"),
+            axis: Some(RevolveAxis::Sketch(sketch_element("profile", axis))),
             extent: Extents::blind(360.0),
             output: Output::Solid(Combine::NewBody),
         },
@@ -185,14 +173,14 @@ fn revolve_across_axis_fails() {
 /// Revolves `s`, sketched on the origin's zx plane, around `axis`.
 fn revolved_on_zx(
     s: Sketch,
-    axis: EntityRef,
-) -> geop_core_math::geop_error::GeopResult<NamedModel<S>> {
+    axis: RevolveAxis,
+) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_ops_model::Design>> {
     let mut program = Program::new();
-    program.push("profile", sketch(origin_plane(FrameAxis::Y), s));
+    program.push("profile", sketch(on_origin(FrameAxis::Y), s));
     program.push(
         "ring",
         RevolveArgs {
-            sketch: "profile".into(),
+            sketch: whole_sketch("profile"),
             axis: Some(axis),
             extent: Extents::blind(360.0),
             output: Output::Solid(Combine::NewBody),
@@ -208,7 +196,7 @@ fn revolved_on_zx(
 fn revolve_square_around_an_outside_axis_is_a_ring() {
     let mut s = Sketch::new();
     polygon(&mut s, &[[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0]]);
-    let z = origin_axis(FrameAxis::Z);
+    let z = RevolveAxis::Datum(origin_axis(FrameAxis::Z));
     let part = revolved_on_zx(s, z).unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().faces.len(), 16);
@@ -225,14 +213,7 @@ fn revolve_circle_clear_of_its_axis_is_a_torus() {
     s.set_construction(axis, true);
     let center = s.add_point(n(3.0), n(0.0));
     s.add_circle(center, n(1.0));
-    let part = revolved_on_zx(
-        s,
-        EntityRef::SketchCurve {
-            sketch: "profile".into(),
-            curve: axis,
-        },
-    )
-    .unwrap();
+    let part = revolved_on_zx(s, RevolveAxis::Sketch(sketch_element("profile", axis))).unwrap();
     assert_valid(&part);
     assert_eq!(part.topology().faces.len(), 16);
 }
@@ -243,7 +224,7 @@ fn revolve_circle_clear_of_its_axis_is_a_torus() {
 fn revolve_touching_an_outside_axis_fails() {
     let mut s = Sketch::new();
     polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
-    let z = origin_axis(FrameAxis::Z);
+    let z = RevolveAxis::Datum(origin_axis(FrameAxis::Z));
     let Err(error) = revolved_on_zx(s, z) else {
         panic!("revolved");
     };
@@ -255,7 +236,7 @@ fn revolve_touching_an_outside_axis_fails() {
 fn revolve_around_an_axis_off_the_plane_fails() {
     let mut s = Sketch::new();
     polygon(&mut s, &[[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0]]);
-    let y = origin_axis(FrameAxis::Y);
+    let y = RevolveAxis::Datum(origin_axis(FrameAxis::Y));
     let Err(error) = revolved_on_zx(s, y) else {
         panic!("revolved");
     };
@@ -268,7 +249,7 @@ fn extrude_of_non_sketch_fails() {
     let mut s = Sketch::new();
     polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
     let mut program = Program::new();
-    program.push("square", sketch(origin_plane(FrameAxis::Z), s));
+    program.push("square", sketch(on_origin(FrameAxis::Z), s));
     program.push("slab", extrude("square", 1.0, false));
     program.push("again", extrude("extrude(slab)", 1.0, false));
     assert!(program.build_model().is_err());
@@ -287,17 +268,9 @@ fn extrude_combines_with_its_target() {
     let c = boss.add_point(n(0.5), n(0.5));
     boss.add_circle(c, n(0.3));
     let mut program = Program::new();
-    program.push("base", sketch(origin_plane(FrameAxis::Z), block));
+    program.push("base", sketch(on_origin(FrameAxis::Z), block));
     program.push("block", extrude("base", 1.0, false));
-    program.push(
-        "boss_sketch",
-        sketch(
-            EntityRef::Face {
-                name: "extrude(block,end)".into(),
-            },
-            boss,
-        ),
-    );
+    program.push("boss_sketch", sketch(on_face("extrude(block,end)"), boss));
     program.push(
         "boss",
         ExtrudeArgs {
@@ -322,7 +295,7 @@ fn extrude_combines_with_its_target() {
 fn revolved_rectangle(
     extent: Extents,
     face: bool,
-) -> geop_core_math::geop_error::GeopResult<NamedModel<S>> {
+) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_ops_model::Design>> {
     let mut s = Sketch::new();
     let a0 = s.add_point(n(0.0), n(-1.0));
     let a1 = s.add_point(n(0.0), n(2.0));
@@ -333,15 +306,12 @@ fn revolved_rectangle(
         s.constrain(Constraint::PointOnCurve { point, curve: axis });
     }
     let mut program = Program::new();
-    program.push("profile", sketch(origin_plane(FrameAxis::Y), s));
+    program.push("profile", sketch(on_origin(FrameAxis::Y), s));
     program.push(
         "turn",
         RevolveArgs {
-            sketch: "profile".into(),
-            axis: Some(EntityRef::SketchCurve {
-                sketch: "profile".into(),
-                curve: axis,
-            }),
+            sketch: whole_sketch("profile"),
+            axis: Some(RevolveAxis::Sketch(sketch_element("profile", axis))),
             extent,
             output: if face {
                 Output::Faces { up_to: None }
@@ -385,18 +355,18 @@ fn revolve_with_a_hole() {
     let mut s = Sketch::new();
     polygon(&mut s, &[[1.0, 1.0], [4.0, 1.0], [4.0, 4.0], [1.0, 4.0]]);
     polygon(&mut s, &[[2.0, 2.0], [3.0, 2.0], [3.0, 3.0], [2.0, 3.0]]);
-    let z = origin_axis(FrameAxis::Z);
+    let z = RevolveAxis::Datum(origin_axis(FrameAxis::Z));
     let full = revolved_on_zx(s.clone(), z.clone()).unwrap();
     assert_valid(&full);
     let ring = full.solid_id("revolve(ring)").unwrap();
     assert_eq!(full.topology().get_solid(ring).unwrap().shells.len(), 2);
 
     let mut program = Program::new();
-    program.push("profile", sketch(origin_plane(FrameAxis::Y), s));
+    program.push("profile", sketch(on_origin(FrameAxis::Y), s));
     program.push(
         "ring",
         RevolveArgs {
-            sketch: "profile".into(),
+            sketch: whole_sketch("profile"),
             axis: Some(z),
             extent: Extents::blind(90.0),
             output: Output::Solid(Combine::NewBody),
@@ -414,7 +384,7 @@ fn a_sketch_of_two_areas_is_refused() {
     polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
     polygon(&mut s, &[[2.0, 0.0], [3.0, 0.0], [3.0, 1.0], [2.0, 1.0]]);
     let mut program = Program::new();
-    program.push("squares", sketch(origin_plane(FrameAxis::Z), s));
+    program.push("squares", sketch(on_origin(FrameAxis::Z), s));
     program.push("slabs", extrude("squares", 1.0, false));
     let Err(error) = program.build_model() else {
         panic!("extruded");
@@ -423,11 +393,13 @@ fn a_sketch_of_two_areas_is_refused() {
 }
 
 /// A unit square on the Z plane, and `step` built on it.
-fn on_unit_square(step: ExtrudeArgs) -> geop_core_math::geop_error::GeopResult<NamedModel<S>> {
+fn on_unit_square(
+    step: ExtrudeArgs,
+) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_ops_model::Design>> {
     let mut s = Sketch::new();
     polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
     let mut program = Program::new();
-    program.push("square", sketch(origin_plane(FrameAxis::Z), s));
+    program.push("square", sketch(on_origin(FrameAxis::Z), s));
     program.push("e", step);
     program.build_model()
 }
@@ -476,7 +448,7 @@ fn sweep_a_line_as_a_face() {
     let b = s.add_point(n(2.0), n(1.0));
     let line = s.add_line(a, b);
     let mut program = Program::new();
-    program.push("slant", sketch(origin_plane(FrameAxis::Y), s));
+    program.push("slant", sketch(on_origin(FrameAxis::Y), s));
     program.push(
         "wall",
         ExtrudeArgs {
@@ -487,8 +459,8 @@ fn sweep_a_line_as_a_face() {
     program.push(
         "cone",
         RevolveArgs {
-            sketch: "slant".into(),
-            axis: Some(origin_axis(FrameAxis::Z)),
+            sketch: whole_sketch("slant"),
+            axis: Some(RevolveAxis::Datum(origin_axis(FrameAxis::Z))),
             extent: Extents::blind(360.0),
             output: Output::Faces { up_to: None },
         },
@@ -503,7 +475,7 @@ fn sweep_a_line_as_a_face() {
 }
 
 /// The step `id`, `args` for the operation they are for.
-fn as_step<A: geop_ops::program::StepArgs>(id: &str, args: A) -> ProgramStep {
+fn as_step<A: StepArgs>(id: &str, args: A) -> ProgramStep {
     let mut program = Program::new();
     program.push(id, args);
     program.program.steps.remove(0)
@@ -515,13 +487,13 @@ fn on_block(
     z0: f64,
     z1: f64,
     steps: Vec<ProgramStep>,
-) -> geop_core_math::geop_error::GeopResult<NamedModel<S>> {
+) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_ops_model::Design>> {
     let mut base = Sketch::new();
     polygon(&mut base, &[[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0]]);
     let mut post = Sketch::new();
     polygon(&mut post, &[[0.5, 0.5], [1.5, 0.5], [1.5, 1.5], [0.5, 1.5]]);
     let mut program = Program::new();
-    program.push("base", sketch(origin_plane(FrameAxis::Z), base));
+    program.push("base", sketch(on_origin(FrameAxis::Z), base));
     program.push(
         "block",
         ExtrudeArgs {
@@ -529,7 +501,7 @@ fn on_block(
             ..extrude("base", 1.0, false)
         },
     );
-    program.push("post_sketch", sketch(origin_plane(FrameAxis::Z), post));
+    program.push("post_sketch", sketch(on_origin(FrameAxis::Z), post));
     program.program.steps.extend(steps);
     program.build_model()
 }
@@ -598,14 +570,14 @@ fn extrude_up_to_next() {
 /// `2` — united into one solid.
 fn turned_up_to_walls(
     walls: &[[[f64; 2]; 4]],
-) -> geop_core_math::geop_error::GeopResult<NamedModel<S>> {
+) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_ops_model::Design>> {
     let mut program = Program::new();
     let mut solids = Vec::new();
     for (k, corners) in walls.iter().enumerate() {
         let mut wall = Sketch::new();
         polygon(&mut wall, corners);
         let (sketch_id, id) = (format!("wall_sketch{k}"), format!("wall{k}"));
-        program.push(&sketch_id, sketch(origin_plane(FrameAxis::Z), wall));
+        program.push(&sketch_id, sketch(on_origin(FrameAxis::Z), wall));
         program.push(
             &id,
             ExtrudeArgs {
@@ -621,8 +593,8 @@ fn turned_up_to_walls(
         program.push(
             &id,
             BooleanArgs {
-                a: target,
-                b: other.clone(),
+                a: solid(target),
+                b: solid(other.clone()),
                 op: BooleanOp::Union,
             },
         );
@@ -634,12 +606,12 @@ fn turned_up_to_walls(
         &mut profile,
         &[[2.0, -1.0], [3.0, -1.0], [3.0, 0.0], [2.0, 0.0]],
     );
-    program.push("profile", sketch(origin_plane(FrameAxis::Y), profile));
+    program.push("profile", sketch(on_origin(FrameAxis::Y), profile));
     program.push(
         "arm",
         RevolveArgs {
-            sketch: "profile".into(),
-            axis: Some(origin_axis(FrameAxis::Z)),
+            sketch: whole_sketch("profile"),
+            axis: Some(RevolveAxis::Datum(origin_axis(FrameAxis::Z))),
             extent: one_way(Extent::UpToNext),
             output: Output::Solid(Combine::join(target)),
         },
@@ -685,7 +657,7 @@ fn split_by_a_face_ending_inside_fails() {
     let b = cut.add_point(n(1.0), n(1.0));
     let line = cut.add_line(a, b);
     let program_steps = vec![
-        as_step("cut_sketch", sketch(origin_plane(FrameAxis::Y), cut)),
+        as_step("cut_sketch", sketch(on_origin(FrameAxis::Y), cut)),
         as_step(
             "cut",
             ExtrudeArgs {
@@ -696,9 +668,9 @@ fn split_by_a_face_ending_inside_fails() {
         ),
         as_step(
             "halves",
-            geop_ops_booleans::SplitArgs {
-                solid: "extrude(block)".into(),
-                face: format!("extrude(cut,cut_sketch,{line})"),
+            SplitArgs {
+                solid: solid("extrude(block)"),
+                face: element(format!("extrude(cut,cut_sketch,{line})")),
             },
         ),
     ];
@@ -735,7 +707,7 @@ fn extrude_up_to_next_from_a_face_of_the_target() {
     ] {
         let mut s = Sketch::new();
         polygon(&mut s, &corners);
-        program.push(id, sketch(origin_plane(FrameAxis::Z), s));
+        program.push(id, sketch(on_origin(FrameAxis::Z), s));
     }
     program.push("lower", between("slab_sketch", 0.0, 1.0));
     program.push("upper", between("slab_sketch", 2.0, 3.0));
@@ -747,8 +719,8 @@ fn extrude_up_to_next_from_a_face_of_the_target() {
         program.push(
             id,
             BooleanArgs {
-                a: a.into(),
-                b: b.into(),
+                a: solid(a),
+                b: solid(b),
                 op: BooleanOp::Union,
             },
         );
@@ -756,15 +728,7 @@ fn extrude_up_to_next_from_a_face_of_the_target() {
     let mut post = Sketch::new();
     let c = post.add_point(n(0.5), n(1.0));
     post.add_circle(c, n(0.3));
-    program.push(
-        "post_sketch",
-        sketch(
-            EntityRef::Face {
-                name: "extrude(lower,end)".into(),
-            },
-            post,
-        ),
-    );
+    program.push("post_sketch", sketch(on_face("extrude(lower,end)"), post));
     program.push(
         "post",
         ExtrudeArgs {
@@ -804,7 +768,7 @@ fn post_to_block(
     side1: Extent,
     reversed: bool,
     op: BooleanOp,
-) -> geop_core_math::geop_error::GeopResult<NamedModel<S>> {
+) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_ops_model::Design>> {
     let post = ExtrudeArgs {
         extent: Extents {
             side1,
@@ -814,7 +778,7 @@ fn post_to_block(
         },
         output: Output::Solid(Combine::With {
             op,
-            target: "extrude(block)".into(),
+            target: solid("extrude(block)"),
         }),
         ..extrude("post_sketch", 1.0, false)
     };
@@ -822,7 +786,7 @@ fn post_to_block(
 }
 
 /// The heights of `part`'s vertices, in thousandths.
-fn heights(part: &NamedModel<S>) -> Vec<i64> {
+fn heights(part: &NamedModel<geop_ops_model::Design>) -> Vec<i64> {
     let mut z: Vec<i64> = part
         .topology()
         .vertices
@@ -891,7 +855,7 @@ fn faces_up_to_next_and_through_all() {
                 reversed: false,
             },
             output: Output::Faces {
-                up_to: Some("extrude(block)".into()),
+                up_to: Some(solid("extrude(block)")),
             },
             ..extrude("post_sketch", 1.0, false)
         };
@@ -923,7 +887,7 @@ fn join_up_to_next_partly_under_a_wedge_goes_through_all() {
     // Sketch x along world x, sketch y along world -z: the edge at `z = 2`,
     // the top at `z = 4`.
     polygon(&mut wedge, &[[1.0, -2.0], [3.0, -4.0], [-1.0, -4.0]]);
-    let y_plane = origin_plane(FrameAxis::Y);
+    let y_plane = on_origin(FrameAxis::Y);
     let wedge_steps = vec![
         as_step("wedge_sketch", sketch(y_plane, wedge)),
         // From `y = 0` to `y = 1`: over half the post, `y` in `[0.5, 1.5]`.
@@ -940,7 +904,7 @@ fn join_up_to_next_partly_under_a_wedge_goes_through_all() {
     let mut program = Program::new();
     let mut post = Sketch::new();
     polygon(&mut post, &[[0.5, 0.5], [1.5, 0.5], [1.5, 1.5], [0.5, 1.5]]);
-    let z_plane = origin_plane(FrameAxis::Z);
+    let z_plane = on_origin(FrameAxis::Z);
     program.push("post_sketch", sketch(z_plane, post));
     program.program.steps.extend(wedge_steps);
     let part = program.build_model().unwrap();

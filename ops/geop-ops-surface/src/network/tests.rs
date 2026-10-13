@@ -7,13 +7,14 @@ use geop_core_math::{
     vector::{Vector3, Vector4},
 };
 use geop_core_topology::build::{BodySpec, EdgeSpec};
-use geop_ops::operation::apply_to_model;
-use geop_ops::{BodyNames, NamedModel};
+use geop_ops_model::testing::apply_to_model;
+use geop_ops_model::{BodyNames, NamedModel};
 
 use super::*;
 use crate::boundary::tests::refused;
+use crate::test_refs::*;
 use crate::{BoundarySurface, BoundarySurfaceArgs, Thicken, ThickenArgs, ThickenSide};
-use geop_ops::testing::assert_valid_sheets;
+use geop_ops_model::testing::assert_valid_sheets;
 
 fn binomial(n: usize, k: usize) -> f64 {
     (0..k).fold(1.0, |c, i| c * (n - i) as f64 / (i + 1) as f64)
@@ -39,7 +40,7 @@ fn polynomial(coords: [&[f64]; 3], degree: usize) -> NurbCurve3D<S> {
 }
 
 /// `curve` added to `part` as a wire of its own, its edge named `name`.
-fn wire(part: &mut NamedModel<S>, name: &str, curve: NurbCurve3D<S>) -> EntityRef {
+fn wire(part: &mut NamedModel<S>, name: &str, curve: NurbCurve3D<S>) -> CurveSource {
     let (t0, t1) = curve.domain();
     let spec = BodySpec {
         vertices: vec![curve.evaluate(t0).unwrap(), curve.evaluate(t1).unwrap()],
@@ -59,7 +60,7 @@ fn wire(part: &mut NamedModel<S>, name: &str, curve: NurbCurve3D<S>) -> EntityRe
         solid: None,
     };
     part.build_body(spec, names).unwrap();
-    EntityRef::Edge { name: name.into() }
+    edge_curve(name)
 }
 
 /// Curves on `z = lift (0.3 x² - 0.2 y² + 0.1 x y)`: along `x` from 0 to
@@ -102,10 +103,10 @@ fn grid(
     turned: &[&str],
     u_order: [usize; 3],
     v_order: [usize; 3],
-) -> (NamedModel<S>, Vec<EntityRef>, Vec<EntityRef>) {
+) -> (NamedModel<S>, Vec<CurveSource>, Vec<CurveSource>) {
     let mut part = NamedModel::new();
     let (u, v) = grid_curves(lift);
-    let mut add = |prefix: &str, curves: Vec<NurbCurve3D<S>>| -> Vec<EntityRef> {
+    let mut add = |prefix: &str, curves: Vec<NurbCurve3D<S>>| -> Vec<CurveSource> {
         curves
             .into_iter()
             .enumerate()
@@ -129,7 +130,11 @@ fn grid(
     )
 }
 
-fn span(part: NamedModel<S>, u: Vec<EntityRef>, v: Vec<EntityRef>) -> GeopResult<NamedModel<S>> {
+fn span(
+    part: NamedModel<S>,
+    u: Vec<CurveSource>,
+    v: Vec<CurveSource>,
+) -> GeopResult<NamedModel<S>> {
     let args = NetworkSurfaceArgs {
         u_curves: u,
         v_curves: v,
@@ -259,7 +264,7 @@ fn network_of_two_by_two_is_the_coons_patch() {
             polynomial([&[1.], &[0., 1.], &[0., 1.]], 1),
         ),
     ];
-    let edges: Vec<EntityRef> = u.iter().chain(&v).cloned().collect();
+    let edges: Vec<CurveSource> = u.iter().chain(&v).cloned().collect();
     let part = span(part, u, v).unwrap();
     assert_valid_sheets(&part);
     let args = BoundarySurfaceArgs {
@@ -323,7 +328,7 @@ fn flat_network_sheet_thickens() {
     let (part, u, v) = grid(0.0, &[], [0, 1, 2], [0, 1, 2]);
     let part = span(part, u, v).unwrap();
     let args = ThickenArgs {
-        face: "network(n)".into(),
+        face: named("network(n)"),
         thickness: 0.05,
         side: ThickenSide::Both,
     };
@@ -367,7 +372,7 @@ fn random_networks_are_valid() {
             .collect();
         let point = |x: f64, y: f64, h: f64| Vector3::from_array([x, y, h].map(S::from_f64));
         let mut part = NamedModel::new();
-        let u: Vec<EntityRef> = (0..m)
+        let u: Vec<CurveSource> = (0..m)
             .map(|j| {
                 let mut points = Vec::new();
                 for i in 0..n {
@@ -384,7 +389,7 @@ fn random_networks_are_valid() {
                 )
             })
             .collect();
-        let v: Vec<EntityRef> = (0..n)
+        let v: Vec<CurveSource> = (0..n)
             .map(|i| {
                 let mut points = Vec::new();
                 for j in 0..m {

@@ -6,20 +6,35 @@ use geop_core_math::{
     primitives::{Pose, Quaternion},
     with_context,
 };
-use geop_core_program::part::Retrieve;
-use geop_ops::operation::{OperationGroup, OperationInfo, OperationTier};
-use geop_ops::{
-    Design, Namer,
-    operation::{
-        Aspects, Build, BuildReader, EntityRef, Lookup, PartOperation, Role, Seen, StepContext,
-        pattern::{Spacing, count_field, whole_count},
-    },
-    parameters::{Formula, expressions},
-    part_operation,
-    placed::{Instance, Placement, instance, instance_name},
-    ui::{Choice, Edit, EditForm, FormState, Tone, Unit, formula_number},
+use geop_core_editor::{
+    edit_form::{Edit, EditForm, FormState},
+    editable::{OperationGroup, OperationInfo, OperationTier},
+    editing::{Choice, Tone, Unit},
+    numeric_input::NumericInput,
+    one_of, part_operation,
+    part_operation::PartOperation,
 };
+use geop_core_program::element::ElementReference;
+use geop_ops_datums::Datums;
+use geop_ops_model::{Design, Line, NamedModel, Namer, Round};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_pattern::spacing::{Spacing, count_field, whole_count};
+use geop_ops_sketch::PlacedSketch;
 use serde::{Deserialize, Serialize};
+
+use crate::placed::{Instance, Placement, instance, instance_name, read_instance};
+
+one_of! {
+    /// The line copies of a placed part go along, or the axis they go round,
+    /// in the part itself: a straight edge, a circular edge or a round face,
+    /// a datum axis, a sketch's line.
+    pub enum PatternAxis -> Axis<Design> {
+        Line(ElementReference<NamedModel<Design>, Line>),
+        Round(ElementReference<NamedModel<Design>, Round>),
+        Datum(ElementReference<Datums, Line>),
+        Sketch(ElementReference<PlacedSketch<Design>, Line>),
+    }
+}
 
 /// Places copies of the part placed by the step `part` — the same part,
 /// built once — in a row along a line, or round an axis: `count` in all,
@@ -70,30 +85,29 @@ pub struct PartPatternArgs {
     /// The line the copies go along, or the axis they go round: a straight
     /// or circular edge, a round face, a datum axis.
     #[serde(default)]
-    pub axis: Option<EntityRef>,
+    pub axis: Option<PatternAxis>,
     /// Go against the line, or turn the other way round the axis.
     #[serde(default)]
     pub reversed: bool,
     pub layout: Layout,
     /// How many there are, the part itself included: a number, or a
     /// formula of the part's parameters.
-    pub count: Formula,
+    pub count: NumericInput,
 }
 
 /// The motions moving the part to each copy, `k` from 1: along `axis` or
-/// round it, as `args` lays them out, its formulas read by `lookup`.
+/// round it, as `args` lays them out, its formulas read through `reader`.
 fn motions(
     args: &PartPatternArgs,
     axis: &Axis<Design>,
-    lookup: &mut (impl Lookup<Design> + ?Sized),
+    reader: &PartReader,
 ) -> GeopResult<Vec<Pose<Design>>> {
-    let count = whole_count(&args.count, args.count.evaluate(lookup)?)?;
+    let count = whole_count(&args.count, reader)?;
     if count < 2 {
         return Err(GeopError::new(format!(
             "a pattern of {count} is no pattern: it needs 2 or more"
         )));
     }
-    let value = args.layout.spacing().value().evaluate(lookup)?;
     let direction = if args.reversed {
         axis.direction.neg()
     } else {
@@ -101,7 +115,7 @@ fn motions(
     };
     match &args.layout {
         Layout::Linear { spacing } => {
-            let row = spacing.along(count, value)?;
+            let row = spacing.along(count, reader)?;
             (1..count)
                 .map(|k| {
                     let offset = row.offset(&direction, k)?.expect("a copy is no seed");
@@ -110,7 +124,7 @@ fn motions(
                 .collect()
         }
         Layout::Circular { angle } => {
-            let row = angle.round(count, value)?;
+            let row = angle.round(count, reader)?;
             (1..count)
                 .map(|k| row.turn(&axis.point, &direction, k))
                 .collect()
@@ -119,16 +133,16 @@ fn motions(
 }
 
 /// The placed parts the steps before have placed, by name, in order.
-fn placed_names(before: geop_ops::operation::BuildView) -> Vec<String> {
+fn placed_names(before: &PartReader) -> Vec<String> {
     (before.targets_of::<Instance>().into_iter())
-        .filter_map(|(target, _)| instance_name(target).map(str::to_string))
+        .filter_map(|target| instance_name(target.name()).map(str::to_string))
         .collect()
 }
 
 /// The copy of the placed part `seed` going `motion` after it: the
 /// generator of a copy's instance.
-fn copy(reader: &mut BuildReader, (seed, motion): &(String, Pose<Design>)) -> GeopResult<Instance> {
-    let placed = reader.retrieve_target(&instance(seed))?;
+fn copy(reader: &PartReader, (seed, motion): &(String, Pose<Design>)) -> GeopResult<Instance> {
+    let placed = read_instance(reader, seed)?;
     Ok(Instance {
         component: placed.component.clone(),
         placement: Placement::After {
@@ -141,7 +155,7 @@ fn copy(reader: &mut BuildReader, (seed, motion): &(String, Pose<Design>)) -> Ge
 
 /// Checks the arguments ask for a pattern at all, before anything is
 /// resolved.
-fn check(args: &PartPatternArgs) -> GeopResult<&EntityRef> {
+fn check(args: &PartPatternArgs) -> GeopResult<&PatternAxis> {
     if args.part.is_empty() {
         return Err(GeopError::new("choose the placed part to pattern"));
     }
@@ -153,8 +167,8 @@ fn check(args: &PartPatternArgs) -> GeopResult<&EntityRef> {
 part_operation!(PartPattern(PartPatternArgs));
 
 impl PartOperation for PartPattern {
+    const KIND: &'static str = "part_pattern";
     const INFO: OperationInfo = OperationInfo::new(
-        "part_pattern",
         "Part pattern",
         "Place copies of a placed part in a row along a line, or round an axis.",
         OperationGroup::Assembly,
@@ -163,44 +177,41 @@ impl PartOperation for PartPattern {
     .experimental()
     .icon(crate::icons::PART_PATTERN);
     type Args = PartPatternArgs;
+    type Input = Design;
+    type State = StateValue;
+    type Scalar = Design;
     type Session = ();
-
-    fn formulas(args: &mut PartPatternArgs) -> Vec<&mut String> {
-        expressions([&mut args.count, args.layout.spacing_mut().value_mut()])
-    }
 
     /// The newest placed part, six round an axis still to pick.
     fn new_args(context: &StepContext) -> PartPatternArgs {
         PartPatternArgs {
-            part: placed_names(context.before).pop().unwrap_or_default(),
+            part: placed_names(&context.before).pop().unwrap_or_default(),
             axis: None,
             reversed: false,
             layout: Layout::Circular {
                 angle: Spacing::step(60.0),
             },
-            count: Formula::Plain(6.0),
+            count: NumericInput::Plain(6.0),
         }
     }
 
     /// Places the copies, each where the pattern puts it after the part:
     /// the axis resolved in the part as the steps before left it.
-    fn run(step: &str, part: &mut Build, args: &PartPatternArgs) -> GeopResult<()> {
+    fn run(step: &str, part: &mut BuildPart, args: &PartPatternArgs) -> GeopResult<()> {
         let ctx = with_context!("part_pattern({step}, {args:?})");
         let axis = check(args).with_context(ctx)?;
-        if part
-            .current()
-            .retrieve_target(&instance(&args.part))
-            .is_err()
-        {
+        if read_instance(&part.current(), &args.part).is_err() {
             return Err(GeopError::new(format!(
                 "{:?} is no part placed so far: pattern one an earlier step placed",
                 args.part
             )))
             .with_context(ctx);
         }
-        let mut seen = Seen::new(part.current());
-        let axis = Aspects::axis_of(axis, &mut seen).with_context(ctx)?;
-        let motions = motions(args, &axis, &mut seen).with_context(ctx)?;
+        let motions = {
+            let reader = part.current();
+            let axis = axis.resolve(&reader).with_context(ctx)?;
+            motions(args, &axis, &reader).with_context(ctx)?
+        };
         let namer = Namer::new("part_pattern", step)?;
         for (k, motion) in (1..).zip(motions) {
             let name = namer.name(&[&k.to_string()]);
@@ -217,9 +228,10 @@ impl PartOperation for PartPattern {
         _: &FormState<()>,
     ) -> EditForm<'a, Design, PartPatternArgs> {
         let mut f = EditForm::<Design, PartPatternArgs>::default();
+        let before = &context.before;
         let options = std::iter::once(Choice::new("", "Choose a placed part…"))
             .chain(
-                placed_names(context.before)
+                placed_names(before)
                     .into_iter()
                     .map(|name| Choice::new(name.clone(), name)),
             )
@@ -232,15 +244,9 @@ impl PartOperation for PartPattern {
             true,
             |Edit { args, .. }, part| args.part = part.to_string(),
         );
-        f.reference(
-            "axis",
-            "along or round",
-            args.axis.iter().cloned().collect(),
-            &[Role::Line, Role::Round],
-            None,
-            false,
-            |e, picked| e.args.axis = picked.into_iter().next(),
-        );
+        f.pick_one("axis", "along or round", before, args.axis.as_ref(), |e, axis| {
+            e.args.axis = Some(axis)
+        });
         f.checkbox(
             "reversed",
             "reverse direction",
@@ -271,7 +277,6 @@ impl PartOperation for PartPattern {
                 };
             },
         );
-        let mut seen = Seen::new(context.before);
         let (key, labels, unit) = if circular {
             ("angle", ["angle between", "total angle"], Unit::Angle)
         } else {
@@ -281,14 +286,14 @@ impl PartOperation for PartPattern {
             &mut f,
             key,
             labels,
-            |label, value| formula_number(label, value, &mut seen, unit),
+            |label, value| value.number(label, before, unit),
             |args: &mut PartPatternArgs, spacing| *args.layout.spacing_mut() = spacing,
         );
         count_field(
             &mut f,
             "count",
             &args.count,
-            &mut seen,
+            before,
             None,
             |edit, count| edit.args.count = count,
         );

@@ -3,7 +3,7 @@
 //! `remesh` imprints the two solids' boundaries onto each other (splitting
 //! edges at coincidences, tracing face x face intersection curves) so that
 //! `boolean` can classify and keep the right faces for union, intersection,
-//! or difference. Both work on a `geop_ops::NamedModel`, and `naming`
+//! or difference. Both work on a `geop_ops_model::NamedModel`, and `naming`
 //! describes the stable names they give to everything they create.
 //! `split` cuts a solid into pieces with a sheet, imprinting it the same way.
 //! `imprint` divides one face along the curves where sheets cross it.
@@ -29,4 +29,4 @@ pub mod split;
 pub mod trim;
 
 pub use extent::Extent;
-pub use operation::{Boolean, BooleanArgs, Combine, Split, SplitArgs, Tool};
+pub use operation::{Boolean, BooleanArgs, Combine, SolidRef, Split, SplitArgs, Tool, solid};

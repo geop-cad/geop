@@ -2,41 +2,39 @@
 
 > Brief overview only — full documentation is coming later.
 
-Reference geometry as an operation (see [geop-ops](./geop-ops.md#operations)).
+A part's datums: reference geometry it is built *with*, not *of* — a point,
+an axis, a plane or a coordinate system, by name (each a `Datum` of
+[geop-core-math](../core/geop-core-math.md#primitives), carrying a
+full right-handed frame, so anything built on it has axes to be built
+along). The operation that adds one is
+[geop-ops-add-datum](./geop-ops-add-datum.md)'s; this crate is only the
+target, so every operation that builds on a datum depends on it alone.
 
-`AddDatum` builds reference geometry from a selection in one of
-the ways CAD systems commonly offer (`Construction`):
+## The target
 
-- **points:** offset point, midpoint, point on edge, center, projection onto
-  a plane or a line, line meets plane, lines meet, three planes meet;
-- **axes:** through two points, along a line, axis of an arc or cylinder,
-  two planes meet, perpendicular to a plane or a line, parallel through a
-  point, angle bisector, tangent to an edge;
-- **planes:** offset, midplane, through three points, at an angle, through a
-  line and a point, through two lines, parallel through a point, normal to a
-  line or an edge;
-- **coordinate systems:** through three points — at the first, x towards
-  the second, the xy plane through the third.
+All of a part's datums are one target, `datums()`, a `Datums` that the
+steps adding datums revise, each adding its own by its step's id. The given
+step of a run defines it (`define_datums`), so `ORIGIN` — the coordinate
+system `origin`, the world's origin and axes, which no step adds — is there
+before any step. A datum stays where it was when its step ran, whatever
+later steps do to what it was built from. `read_datums(&reader)?.get(name)`
+reads one; `Datums::draw` draws them all into a
+[`PartView`](./geop-ops-view.md), by the sizes the viewer draws them at.
 
-A coordinate system is used as a point, its origin, and by its axes, like
-the origin itself: a point offset from it goes along them.
+## Elements
 
-The step `D` defines the target `datum(D)` (`geop_ops::model::datum`), as
-an `AddSketch` step defines its sketch: built from the part before it when
-the step runs, and staying where it was whatever later steps do to what it
-was built from.
+The target is a singleton, so a reference into it is saved as the datum's
+name alone — `"origin:z"`. A datum is an element of the target as a whole
+(`AnyDatum`), and as what it is, the geometric kinds of
+[geop-ops-model](./geop-ops-model.md#elements-and-what-they-are-used-as):
+a point datum a `Point`, an axis a `Line`, a plane a `Plane`. A frame is a
+point too, its origin, and its components are elements of their own, named
+after it (`component_name`): `origin:z` its `z` axis, `origin:xy` the plane
+normal to it. So a frame's axes and planes are each usable on their own,
+and an operation that takes a plane from a face or a datum takes the
+origin's planes the same way.
 
-What a selected entity can be used as — its `Aspects` (see
-[geop-ops](./geop-ops.md#operations)): a point, a line, a plane, an arc,
-something round — is decided by its shape, not its kind, using
-`geop-core-geometry`'s shape recognition: a straight edge is a line, a
-circular one has a center and an axis, a flat face is a plane.
-
-`fitting_constructions` says which constructions fit a selection, using
-exactly the matching a step applies. `AddDatum`'s dialog is built on it:
-the selection is a reference field of several entities — anything that can
-be an input of some construction — which the editor lists with what each
-can be used as; the constructions are actions, only those that fit
-enabled, and a construction that stops fitting gives way to the first that
-does. Offsets are handles: an offset plane's
-distance along its normal, an offset point's `x`, `y`, `z` along its axes.
+`datum::<K>(name)` makes a reference; `origin_plane(axis)` and
+`origin_axis(axis)` are the origin's, typed as
+`ElementReference<Datums, Plane>` and `ElementReference<Datums, Line>` —
+what a sketch on the `xy` plane or a revolve about `z` is given.

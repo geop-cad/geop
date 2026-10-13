@@ -3,15 +3,16 @@
 
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_topology::Body;
-use geop_ops::NamedModel;
-use geop_ops::operation::apply_to_model;
 use geop_ops_extrude_revolve::shapes::{block, cylinder::revolved_cylinder};
+use geop_ops_model::NamedModel;
+use geop_ops_model::testing::apply_to_model;
 
 use super::*;
 use crate::boundary::tests::{edge_between, refused};
+use crate::test_refs::*;
 use crate::{BoundarySurface, BoundarySurfaceArgs};
-use geop_ops::testing::assert_valid_sheets;
 use geop_ops_extrude_revolve::shapes::v3;
+use geop_ops_model::testing::assert_valid_sheets;
 
 /// A unit cube's top loop filled with a boundary surface, the cube then
 /// deleted: a flat square sheet at `z = 1`, named `boundary(b)`, and
@@ -21,9 +22,7 @@ pub(crate) fn square_sheet() -> (NamedModel<S>, f64) {
     let cube = block(&mut part, "c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     let corners = [[0., 0., 1.], [1., 0., 1.], [1., 1., 1.], [0., 1., 1.]];
     let edges = (0..4)
-        .map(|k| geop_ops::EntityRef::Edge {
-            name: edge_between(&part, corners[k], corners[(k + 1) % 4]),
-        })
+        .map(|k| edge_curve(edge_between(&part, corners[k], corners[(k + 1) % 4])))
         .collect();
     let args = BoundarySurfaceArgs {
         edges,
@@ -39,7 +38,7 @@ pub(crate) fn square_sheet() -> (NamedModel<S>, f64) {
 
 fn thickened(part: NamedModel<S>, face: &str, side: ThickenSide) -> GeopResult<NamedModel<S>> {
     let args = ThickenArgs {
-        face: face.into(),
+        face: named(face),
         thickness: 0.1,
         side,
     };

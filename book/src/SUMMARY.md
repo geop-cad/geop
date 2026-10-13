@@ -9,12 +9,18 @@
 - [geop-core-topology](./core/geop-core-topology.md)
 - [geop-core-sketch](./core/geop-core-sketch.md)
 - [geop-core-program](./core/geop-core-program.md)
+- [geop-core-editor](./core/geop-core-editor.md)
 
 # Ops
 
-- [geop-ops](./ops/geop-ops.md)
-- [geop-ops-sketch](./ops/geop-ops-sketch.md)
+- [geop-ops-model](./ops/geop-ops-model.md)
+- [geop-ops-parameters](./ops/geop-ops-parameters.md)
+- [geop-ops-view](./ops/geop-ops-view.md)
+- [geop-ops-output](./ops/geop-ops-output.md)
+- [geop-ops-constraints](./ops/geop-ops-constraints.md)
 - [geop-ops-datums](./ops/geop-ops-datums.md)
+- [geop-ops-sketch](./ops/geop-ops-sketch.md)
+- [geop-ops-add-datum](./ops/geop-ops-add-datum.md)
 - [geop-ops-booleans](./ops/geop-ops-booleans.md)
 - [geop-ops-extrude-revolve](./ops/geop-ops-extrude-revolve.md)
 - [geop-ops-assembly](./ops/geop-ops-assembly.md)

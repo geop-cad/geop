@@ -5,12 +5,14 @@
 
 use geop_core_math::scalars::{Ring, ScalInF64 as S, Scalar};
 use geop_core_math::vector::Vector3;
-use geop_ops::{Namer, output::Bounded, solids::placed_solids};
+use geop_ops_assembly::solids::placed_solids;
 use geop_ops_booleans::{
     boolean::{BooleanOp, boolean},
     remesh::remesh::RemeshParams,
 };
 use geop_ops_extrude_revolve::shapes::cube::cube_solid;
+use geop_ops_model::Namer;
+use geop_ops_output::Bounded;
 use geop_ops_inspect::{
     interference::bounding_box,
     mass::{MassSummary, mass_report},
@@ -131,9 +133,9 @@ fn example_mass_properties_are_consistent() {
     let mut failures = Vec::new();
     for (example, program) in examples::all() {
         let runner = program().built().unwrap();
-        let view = runner.part.current();
-        let report = mass_report(view).unwrap();
-        for (body, placed) in report.bodies.iter().zip(placed_solids(view).unwrap()) {
+        let reader = runner.part.current();
+        let report = mass_report(&reader).unwrap();
+        for (body, placed) in report.bodies.iter().zip(placed_solids(&reader).unwrap()) {
             let name = format!("{example}/{}", body.name);
             let Some(summary) = &body.properties else {
                 failures.push(format!("{name}: {:?}", body.error));
@@ -153,7 +155,7 @@ fn example_mass_properties_are_consistent() {
             let hi = |k: usize| bounds[k].upper().to_f64() + 1.0;
             let cut = bounds[0].lower().to_f64() + 0.437_281 * bounds[0].width().to_f64();
             let halves = [BooleanOp::Intersection, BooleanOp::Difference].map(|op| {
-                let mut scratch = placed.model.clone();
+                let mut scratch = placed.model.clone().into_owned();
                 let knife = cube_solid(
                     &mut scratch,
                     "knife",

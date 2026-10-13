@@ -24,18 +24,10 @@ use std::{
 };
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::operation_registry::OperationRegistry;
+use geop_ops_assembly::{Component, Library};
+use geop_ops_parameters::{Files, ProgramFile, Registry, Runner, Settings};
 
-use super::{ProgramFile, Runner};
-use crate::{
-    model::ParamValue,
-    operation::Input,
-    parameters::Values,
-    placed::{Component, Library},
-};
-
-/// The operations the programs of a workspace are written in.
-pub type Registry = OperationRegistry<Input, ParamValue>;
+use crate::part;
 
 /// Whether the file `path` is a program, which a part can be placed from:
 /// a `.geop` file.
@@ -44,21 +36,21 @@ pub fn is_program(path: &str) -> bool {
 }
 
 /// Where a [`Workspace`] reads files from.
-pub trait Files {
+pub trait FileStore {
     /// The text of the file `path`.
     fn read(&self, path: &str) -> GeopResult<String>;
     /// Every file there is, by path: programs and the files they read.
     fn list(&self) -> Vec<String>;
 }
 
-/// [`Files`] a [`Workspace`] can change ([`Workspace::write`]).
-pub trait FilesMut: Files {
+/// [`FileStore`] a [`Workspace`] can change ([`Workspace::write`]).
+pub trait FileStoreMut: FileStore {
     /// Sets the file `path` to `text`, or — `None` — removes it.
     fn write(&mut self, path: &str, text: Option<String>);
 }
 
 /// Files held in memory, by path: what an editor is sent by its front end.
-impl Files for BTreeMap<String, String> {
+impl FileStore for BTreeMap<String, String> {
     fn read(&self, path: &str) -> GeopResult<String> {
         self.get(path)
             .cloned()
@@ -70,7 +62,7 @@ impl Files for BTreeMap<String, String> {
     }
 }
 
-impl FilesMut for BTreeMap<String, String> {
+impl FileStoreMut for BTreeMap<String, String> {
     fn write(&mut self, path: &str, text: Option<String>) {
         match text {
             Some(text) => self.insert(path.to_string(), text),
@@ -102,7 +94,7 @@ pub struct Workspace<F = BTreeMap<String, String>> {
     builds: Cell<u64>,
 }
 
-impl<F: Files + 'static> Workspace<F> {
+impl<F: FileStore + 'static> Workspace<F> {
     pub fn new(files: F, registry: fn() -> GeopResult<Registry>) -> Rc<Self> {
         Rc::new(Self {
             files: RefCell::new(files),
@@ -123,7 +115,8 @@ impl<F: Files + 'static> Workspace<F> {
         (self.registry)()
     }
 
-    /// The library the program of the file `file` is built with.
+    /// The library the program of the file `file` is built with — and the
+    /// files it reads.
     pub fn scope(self: &Rc<Self>, file: &str) -> Rc<dyn Library> {
         let file = resolve("", file);
         Rc::new(Scope {
@@ -155,7 +148,7 @@ impl<F: Files + 'static> Workspace<F> {
     }
 }
 
-impl<F: FilesMut + 'static> Workspace<F> {
+impl<F: FileStoreMut + 'static> Workspace<F> {
     /// Sets the file `path` to `text`, or — `None` — removes it, and
     /// forgets what was built from it (see [`Workspace`]). Says whether it
     /// changed anything: written as it was, nothing is forgotten.
@@ -182,7 +175,7 @@ struct Scope<F: 'static> {
     placed: RefCell<BTreeSet<String>>,
 }
 
-impl<F: Files + 'static> Scope<F> {
+impl<F: FileStore + 'static> Scope<F> {
     /// The error for placing `path`, which the files being built from
     /// `from` on already place.
     fn cycle(&self, path: &str, from: usize) -> GeopError {
@@ -199,7 +192,7 @@ impl<F: Files + 'static> Scope<F> {
 
     /// The program of `path` built with its parameters `overrides` instead
     /// of its own — a run of its own, whose part the component keeps.
-    fn build(&self, path: &str, file: &ProgramFile, overrides: &Values) -> GeopResult<Component> {
+    fn build(&self, path: &str, file: &ProgramFile, overrides: &Settings) -> GeopResult<Component> {
         if let Some(from) = self.building.iter().position(|f| f == path) {
             return Err(self.cycle(path, from));
         }
@@ -210,8 +203,8 @@ impl<F: Files + 'static> Scope<F> {
             placed: RefCell::new(BTreeSet::new()),
         });
         let mut runner = Runner::new(self.workspace.registry()?);
-        let library: Rc<dyn Library> = child.clone();
-        (file.run(&mut runner, overrides, &library))
+        runner.given = Some(part::given(file.about(path, overrides), child.clone()));
+        (file.run(&mut runner, overrides))
             .map_err(|e| e.with_context(format!("building {path}")))?;
         let mut files = child.placed.take();
         files.insert(path.to_string());
@@ -225,21 +218,18 @@ impl<F: Files + 'static> Scope<F> {
             key,
             parameters,
             runner.part,
+            part::draw,
         ))
     }
 }
 
-impl<F: Files + 'static> Library for Scope<F> {
-    fn file(&self) -> String {
-        self.file.clone()
-    }
-
-    fn component(&self, file: &str, overrides: &Values) -> GeopResult<Rc<Component>> {
+impl<F: FileStore + 'static> Library for Scope<F> {
+    fn component(&self, file: &str, overrides: &Settings) -> GeopResult<Rc<Component>> {
         let path = resolve(&self.file, file);
         let program = self.workspace.program(&path)?;
         // Kept by the values it is built with: overriding a parameter with
         // the value it has anyway builds nothing new.
-        let values = program.values(overrides);
+        let values = program.parameters.resolve(overrides).chosen;
         let key = serde_json::to_string(&values)
             .map_err(|e| GeopError::new(format!("writing parameter values: {e}")))?;
         let cached = (self.workspace.built.borrow())
@@ -261,7 +251,9 @@ impl<F: Files + 'static> Library for Scope<F> {
         (self.placed.borrow_mut()).extend(component.files.iter().cloned());
         Ok(component)
     }
+}
 
+impl<F: FileStore + 'static> Files for Scope<F> {
     fn files(&self) -> Vec<String> {
         (self.workspace.files.borrow().list().into_iter())
             .map(|f| resolve("", &f))

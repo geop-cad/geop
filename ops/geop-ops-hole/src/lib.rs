@@ -17,4 +17,6 @@ mod program_tests;
 pub mod testing;
 mod thread;
 
-pub use operation::{Hole, HoleArgs, HoleKind, Standard, Thread, ThreadArgs};
+pub use operation::{
+    FaceRef, Hole, HoleArgs, HoleCentre, HoleKind, PlaneRef, Standard, Thread, ThreadArgs,
+};

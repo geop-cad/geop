@@ -11,7 +11,7 @@ renders it for debugging.
 `RasterizedModel`, keeping each point, polyline and triangle together with
 the id of the entity it came from. This is the one place topology becomes
 sampled geometry. Drawing and picking in
-[geop-ops](./geop-ops.md#operations), STL export and debug rendering all
+[geop-ops-view](./geop-ops-view.md), STL export and debug rendering all
 read the same triangles, so a pick can never disagree with what the viewer
 drew, and an exported mesh is exactly what is on screen.
 

@@ -6,10 +6,6 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops::{
-    NamedModel, Namer,
-    testing::{assert_valid, edges_with_middle_where, has_vertex, vertex_at},
-};
 use geop_ops_booleans::boolean::BooleanOp;
 use geop_ops_extrude_revolve::shapes::{
     block,
@@ -18,6 +14,10 @@ use geop_ops_extrude_revolve::shapes::{
     cylinder::{Axis, revolved_cylinder, revolved_cylinder_along_axis},
     sphere::sphere_solid,
     v3,
+};
+use geop_ops_model::{
+    NamedModel, Namer,
+    testing::{assert_valid, edges_with_middle_where, has_vertex, vertex_at},
 };
 
 use crate::blend::{BlendShape, blend};

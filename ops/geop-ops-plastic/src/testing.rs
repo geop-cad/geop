@@ -3,15 +3,18 @@
 //! with `testing`, or in this crate's own.
 
 use geop_core_math::primitives::FrameAxis;
-use geop_ops::{EntityRef, origin_plane, program::ProgramFile};
-use geop_ops_booleans::Combine;
-use geop_ops_datums::{AddDatumArgs, Construction};
+use geop_core_program::element::ElementReference;
+use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
+use geop_ops_booleans::{Combine, solid};
+use geop_ops_datums::datums;
 use geop_ops_extrude_revolve::{
     Extents,
-    testing::{extrusion, n, rectangle, sketch},
+    testing::{extrusion, n, on_origin, rectangle, sketch},
 };
+use geop_ops_model::model;
+use geop_ops_parameters::ProgramFile;
 use geop_ops_shell::ShellArgs;
-use geop_ops_sketch::Sketch;
+use geop_ops_sketch::{Sketch, SketchPlane};
 
 /// The 2 x 2 x 1 box `box`: its walls `extrude(box,outline,c4)` (towards
 /// `-y`), `c5` (`+x`), `c6` (`+y`) and `c7` (`-x`), its bottom
@@ -19,7 +22,7 @@ use geop_ops_sketch::Sketch;
 pub fn boxed() -> ProgramFile {
     let mut program = ProgramFile::new();
     let outline = rectangle(0.0, 0.0, 2.0, 2.0);
-    program.push("outline", sketch(origin_plane(FrameAxis::Z), outline));
+    program.push("outline", sketch(on_origin(FrameAxis::Z), outline));
     program.push(
         "box",
         extrusion("outline", Extents::blind(1.0), Combine::NewBody),
@@ -40,8 +43,8 @@ pub fn enclosure() -> ProgramFile {
     program.push(
         "s",
         ShellArgs {
-            solid: "extrude(box)".into(),
-            faces: vec!["extrude(box,end)".into()],
+            solid: solid("extrude(box)"),
+            faces: vec![ElementReference::new(model(), "extrude(box,end)")],
             thickness: 0.2.into(),
         },
     );
@@ -57,7 +60,7 @@ pub fn enclosure_with_rib_sketch() -> ProgramFile {
     program.push(
         "middle",
         AddDatumArgs {
-            selection: vec![EntityRef::face(&wall("c4"))],
+            selection: vec![Selected::Face(ElementReference::new(model(), wall("c4")))],
             construction: Construction::Offset {
                 distance: (-1.0).into(),
             },
@@ -67,6 +70,12 @@ pub fn enclosure_with_rib_sketch() -> ProgramFile {
     let a = s.add_point(n(0.5), n(0.7));
     let b = s.add_point(n(1.5), n(0.7));
     s.add_line(a, b);
-    program.push("rib_sketch", sketch(EntityRef::datum("middle"), s));
+    program.push(
+        "rib_sketch",
+        sketch(
+            SketchPlane::Datum(ElementReference::new(datums(), "middle")),
+            s,
+        ),
+    );
     program
 }

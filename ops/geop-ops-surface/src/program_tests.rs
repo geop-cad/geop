@@ -2,21 +2,22 @@
 //! faces, capped with boundary surfaces, knit into solids, thickened.
 
 use crate::{BoundarySurfaceArgs, KnitArgs, ThickenArgs, ThickenSide};
+use geop_core_math::primitives::DatumComponent;
 use geop_core_math::primitives::FrameAxis;
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
+use geop_core_program::element::ElementReference;
 use geop_core_sketch::PointId;
-use geop_ops::{Design, EntityRef, NamedModel};
-use geop_ops_datums::{AddDatumArgs, Construction};
+use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
+use geop_ops_datums::{ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, LoftArgs, Output};
-use geop_ops_sketch::Sketch;
+use geop_ops_model::{Design, NamedModel, testing::assert_valid};
+use geop_ops_sketch::{Sketch, SketchPlane, whole_sketch};
 
 use geop_core_math::geop_error::GeopResult;
-use geop_ops::origin_plane;
-use geop_ops::program::{ProgramFile, Registry};
-use geop_ops::testing::{Built, assert_valid};
-use geop_ops_datums::AddDatum;
-use geop_ops_extrude_revolve::testing::{n, sketch};
+use geop_ops_extrude_revolve::testing::{Built, n, on_origin, sketch};
+use geop_ops_parameters::{ProgramFile, Registry};
 
+use crate::test_refs::{edge_curve, named};
 use crate::{BoundarySurface, Knit, Thicken};
 
 /// The operations these tests' programs are written in.
@@ -28,8 +29,8 @@ fn registry() -> GeopResult<Registry> {
         .with(Thicken)
 }
 
-fn z_plane() -> EntityRef {
-    origin_plane(FrameAxis::Z)
+fn z_plane() -> SketchPlane {
+    on_origin(FrameAxis::Z)
 }
 
 fn polygon(corners: &[[f64; 2]]) -> Sketch {
@@ -69,10 +70,7 @@ fn fill(program: &mut ProgramFile, id: &str, edges: Vec<String>) {
     program.push(
         id,
         BoundarySurfaceArgs {
-            edges: edges
-                .into_iter()
-                .map(|name| EntityRef::Edge { name })
-                .collect(),
+            edges: edges.into_iter().map(edge_curve).collect(),
             tangent: Vec::new(),
         },
     );
@@ -92,7 +90,7 @@ fn walls() -> ProgramFile {
     program.push(
         "walls",
         ExtrudeArgs {
-            sketch: "outline".into(),
+            sketch: whole_sketch("outline"),
             extent: Extents::blind(1.0),
             output: Output::Faces { up_to: None },
         },
@@ -112,7 +110,11 @@ fn extruded_faces_knit_into_a_box() {
     program.push(
         "box",
         KnitArgs {
-            faces: vec![wall, "boundary(bottom)".into(), "boundary(top)".into()],
+            faces: vec![
+                named(wall),
+                named("boundary(bottom)"),
+                named("boundary(top)"),
+            ],
             solid: true,
         },
     );
@@ -134,14 +136,14 @@ fn open_box_thickened_into_a_cover() {
     program.push(
         "cover",
         KnitArgs {
-            faces: vec![wall.clone(), "boundary(top)".into()],
+            faces: vec![named(&wall), named("boundary(top)")],
             solid: false,
         },
     );
     program.push(
         "thick",
         ThickenArgs {
-            face: wall,
+            face: named(wall),
             thickness: 0.1,
             side: ThickenSide::Against,
         },
@@ -169,7 +171,10 @@ fn lofted_faces_knit_into_a_solid() {
     program.push(
         "top_plane",
         AddDatumArgs {
-            selection: vec![z_plane()],
+            selection: vec![Selected::Datum(ElementReference::new(
+                datums(),
+                component_name(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
+            ))],
             construction: Construction::Offset {
                 distance: 2.0.into(),
             },
@@ -178,11 +183,17 @@ fn lofted_faces_knit_into_a_solid() {
     let mut circle = Sketch::new();
     let c = circle.add_point(n(0.0), n(0.0));
     circle.add_circle(c, n(0.6));
-    program.push("top", sketch(EntityRef::datum("top_plane"), circle));
+    program.push(
+        "top",
+        sketch(
+            SketchPlane::Datum(ElementReference::new(datums(), "top_plane")),
+            circle,
+        ),
+    );
     program.push(
         "transition",
         LoftArgs {
-            profiles: vec!["bottom".into(), "top".into()],
+            profiles: vec![whole_sketch("bottom"), whole_sketch("top")],
             matches: Vec::new(),
             guides: Vec::new(),
             output: Output::Faces { up_to: None },
@@ -195,7 +206,7 @@ fn lofted_faces_knit_into_a_solid() {
     program.push(
         "solid",
         KnitArgs {
-            faces: vec![wall, "boundary(base)".into(), "boundary(lid)".into()],
+            faces: vec![named(wall), named("boundary(base)"), named("boundary(lid)")],
             solid: true,
         },
     );

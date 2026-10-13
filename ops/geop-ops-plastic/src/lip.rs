@@ -31,9 +31,9 @@ use geop_core_topology::{
     EdgeId, FaceId,
     build::{BodySpec, CoedgeOn, CoedgeSpec},
 };
-use geop_ops::{NamedModel, Namer, operation::frame_along};
 use geop_ops_booleans::{Combine, Tool, boolean::Reach};
 use geop_ops_extrude_revolve::{extrude::extrude, sweep::SweepLoop};
+use geop_ops_model::{NamedModel, Namer, frame_along};
 
 use crate::{
     band::{Chain, Piece},
@@ -52,7 +52,7 @@ pub fn rim_chain<S: Scalar>(
     edges: &[EdgeId],
 ) -> GeopResult<(CoordinateSystem<S>, Chain<S>)> {
     let model = part.topology();
-    let name = |id: geop_ops::RefId| part.name_of(id).unwrap_or("?").to_string();
+    let name = |id: geop_ops_model::RefId| part.name_of(id).unwrap_or("?").to_string();
     let solid = part.solid_of_face(face, "a rim is a face of a solid")?;
     let plane = part.plane_of_face(face, "a lip or groove runs along a flat rim")?;
     let faces = model.solid_faces(solid)?;

@@ -1,5 +1,5 @@
 //! The pick tool of the [`crate::Editor`]: an inspector that picks (see
-//! [`geop_ops::output::InspectorInfo::picks`]) in hand, which picks
+//! [`geop_ops_output::InspectorInfo::picks`]) in hand, which picks
 //! entities in the viewport, and is asked about them again with every pick.
 //!
 //! It is no operation: inspecting changes no program, adds no step and is
@@ -7,20 +7,20 @@
 //! grab (see [`crate::Command::PickTool`]); what the picks are asked is the
 //! inspector's.
 
+use geop_core_editor::editing::{Dialog, Presentation, StepEditEvent};
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_ops::{
-    Design, EntityRef,
-    output::{Inspection, InspectorInfo, Picks},
-    ui::{Dialog, PartView, Presentation, StepEditEvent},
-};
+use geop_core_program::element::PickedElement;
+use geop_ops_model::Design;
+use geop_ops_output::{Inspection, InspectorInfo, Picks};
+use geop_ops_view::PartView;
 
 /// An inspector that picks, in hand: what the pointer is over, what is
 /// picked, and the inspector's answer about it.
 pub struct PickTool {
     info: &'static InspectorInfo,
     picks: Picks,
-    hover: Option<EntityRef>,
-    picked: Vec<EntityRef>,
+    hover: Option<PickedElement>,
+    picked: Vec<PickedElement>,
     /// The answer about the picks, once asked: none while it is to be
     /// asked again.
     pub(crate) answer: Option<Inspection>,
@@ -51,7 +51,7 @@ impl PickTool {
     }
 
     /// What is picked, the oldest first.
-    pub fn picked(&self) -> &[EntityRef] {
+    pub fn picked(&self) -> &[PickedElement] {
         &self.picked
     }
 
@@ -61,8 +61,8 @@ impl PickTool {
     /// a click on one picked takes it out, a click on nothing clears them;
     /// Escape clears them too. A change of the picks asks again.
     pub fn handle(&mut self, view: &PartView, event: &StepEditEvent<Design>) {
-        let roles = self.picks.roles;
-        let picked = |pointer| view.pick(pointer, roles, None).map(|hit| hit.entity);
+        let accepts = self.accepts();
+        let picked = |pointer| view.pick(pointer, &accepts).map(|hit| hit.element);
         let before = self.picked.clone();
         match event {
             StepEditEvent::Hover { pointer, .. } => self.hover = picked(pointer),
@@ -89,6 +89,11 @@ impl PickTool {
         }
     }
 
+    /// The kinds of what is drawn it picks from.
+    fn accepts(&self) -> Vec<String> {
+        self.picks.accepts.iter().map(|kind| kind.to_string()).collect()
+    }
+
     /// What it shows: the picks and what a click would pick lit, and what
     /// the answer draws.
     pub fn presentation(&self) -> Presentation<Design> {
@@ -105,7 +110,7 @@ impl PickTool {
                 .flat_map(|answer| answer.visuals.iter().cloned())
                 .collect(),
             highlights,
-            pickable: self.picks.roles.to_vec(),
+            pickable: self.accepts(),
             focus: None,
             sheet: None,
             grab: false,

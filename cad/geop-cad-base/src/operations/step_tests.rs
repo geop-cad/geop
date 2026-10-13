@@ -8,7 +8,8 @@ use geop_core_topology::{
     Model,
     validation::{ValidationParameters, validate},
 };
-use geop_ops::{Design, NamedModel, model::model};
+use geop_ops_extrude_revolve::testing::model_of;
+use geop_ops_model::{Design, NamedModel};
 use geop_ops_step::{ImportStepArgs, write_step};
 
 use crate::operations::{build, testing::Built, workspace};
@@ -35,10 +36,9 @@ fn imported(text: String) -> NamedModel<Design> {
         },
     );
     let files = BTreeMap::from([("part.step".to_string(), text)]);
-    let runner = build(&program, &workspace(files).scope("main.geop"))
+    let runner = build(&program, "main.geop", workspace(files).scope("main.geop"))
         .unwrap_or_else(|e| panic!("importing failed: {e}"));
-    let model = runner.part.current().retrieve_target(&model()).unwrap();
-    model.clone()
+    model_of(&runner)
 }
 
 /// Example parts — extruded, revolved, drilled, filleted, booleaned — come
@@ -59,10 +59,8 @@ fn examples_round_trip_through_step() {
             continue;
         }
         found += 1;
-        let runner = program().built().unwrap();
-        let built = runner.part.current();
-        let part = built.retrieve_target(&model()).unwrap();
-        let text = write_step(built, name).unwrap();
+        let part = program().build_model().unwrap();
+        let text = write_step(&part, name).unwrap();
         let back = imported(text);
         assert_eq!(
             counts(back.topology()),

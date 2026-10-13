@@ -1,34 +1,30 @@
 //! Sweeps along 3-D sketches, run as programs: the solids they build, and
 //! what they refuse.
 
-use crate::{AddSketch3dArgs, Constraint3d, Sketch3d};
+use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs, Constraint3d, Sketch3d, sketch3d_path};
 use geop_core_math::{primitives::FrameAxis, scalars::Scalar, vector::Vector3};
 use geop_core_sketch::space::End;
-use geop_ops::EntityRef;
 use geop_ops_booleans::Combine;
-use geop_ops_extrude_revolve::{Orientation, Output, SweepArgs};
-use geop_ops_sketch::AddSketchArgs;
+use crate::{Orientation, Output, PathRef, SweepArgs};
+use geop_ops_model::testing::assert_valid;
+use geop_ops_parameters::{ProgramFile, Registry};
+use geop_ops_sketch::{AddSketchArgs, whole_sketch};
 
 use geop_core_math::geop_error::GeopResult;
-use geop_ops::origin_plane;
-use geop_ops::program::{ProgramFile, Registry};
-use geop_ops::testing::{Built, assert_valid};
-use geop_ops_extrude_revolve::testing::{disc, n, sketch};
-
-use crate::AddSketch3d;
+use crate::testing::{Built, disc, n, on_origin, sketch};
 
 /// The operations these tests' programs are written in.
 fn registry() -> GeopResult<Registry> {
-    geop_ops_extrude_revolve::testing::registry()?.with(AddSketch3d)
+    crate::testing::registry()?.with(AddSketch3d)
 }
 
-fn v(p: [f64; 3]) -> Vector3<geop_ops::Design> {
+fn v(p: [f64; 3]) -> Vector3<geop_ops_model::Design> {
     Vector3::from_array(p.map(n))
 }
 
 /// A circle of radius `r` around the origin, on the origin's `x` plane.
 fn section(r: f64) -> AddSketchArgs {
-    sketch(origin_plane(FrameAxis::X), disc([0.0, 0.0], r))
+    sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], r))
 }
 
 /// The spline through `points`, leaving the first along `x`.
@@ -58,8 +54,8 @@ fn piped(r: f64, route: Sketch3d) -> ProgramFile {
     program.push(
         "pipe",
         SweepArgs {
-            profile: "section".into(),
-            path: Some(EntityRef::sketch3d("route")),
+            profile: whole_sketch("section"),
+            path: Some(PathRef::Sketch3d(sketch3d_path("route"))),
             orientation: Orientation::FollowPath,
             twist: 0.0,
             end_scale: 1.0,

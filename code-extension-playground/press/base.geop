@@ -5,11 +5,7 @@
       "operation": "add_sketch",
       "args": {
         "plane": {
-          "type": "Datum",
-          "name": "origin",
-          "component": {
-            "plane": "y"
-          }
+          "datum": "origin:zx"
         },
         "sketch": {
           "points": {
@@ -232,7 +228,9 @@
       "id": "extrude1",
       "operation": "extrude",
       "args": {
-        "sketch": "sketch1",
+        "sketch": {
+          "target": "sketch:sketch1"
+        },
         "extent": {
           "side1": {
             "blind": 150
@@ -255,11 +253,7 @@
       "operation": "add_sketch",
       "args": {
         "plane": {
-          "type": "Datum",
-          "name": "origin",
-          "component": {
-            "plane": "z"
-          }
+          "datum": "origin:xy"
         },
         "sketch": {
           "points": {
@@ -431,7 +425,9 @@
       "id": "extrude2",
       "operation": "extrude",
       "args": {
-        "sketch": "sketch2",
+        "sketch": {
+          "target": "sketch:sketch2"
+        },
         "extent": {
           "side1": "through_all",
           "symmetric": true,
@@ -451,11 +447,7 @@
       "operation": "add_sketch",
       "args": {
         "plane": {
-          "type": "Datum",
-          "name": "origin",
-          "component": {
-            "plane": "z"
-          }
+          "datum": "origin:xy"
         },
         "sketch": {
           "points": {
@@ -541,7 +533,9 @@
       "id": "extrude3",
       "operation": "extrude",
       "args": {
-        "sketch": "sketch3",
+        "sketch": {
+          "target": "sketch:sketch3"
+        },
         "extent": {
           "side1": "through_all",
           "symmetric": true,

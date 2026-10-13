@@ -5,9 +5,9 @@
 //! `end`, `face`, `base`, `top` or `mount`.
 
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
-use geop_ops::parameters::Material;
-use geop_ops::parameters::{Parameter, Parameters};
-use geop_ops::{EntityRef, origin_plane};
+use geop_ops_datums::origin_plane;
+use geop_ops_parameters::{Material, Parameter, Parameters};
+use geop_ops_sketch::{SketchPlane, whole_sketch};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::Output;
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
@@ -16,8 +16,8 @@ use super::{
     StandardPart,
     drawing::Drawing,
     steps::{
-        Around, axis_datum, col, extrude, family, offset_datum, outline_plane, plane_datum,
-        revolve, size,
+        Around, axis_datum, col, datum_plane, extrude, family, offset_datum, outline_plane,
+        plane_datum, revolve, size,
     },
     tables, titled,
 };
@@ -249,7 +249,7 @@ pub fn nema17(file: &'static str) -> GeopResult<StandardPart> {
         program.push(
             &id,
             ExtrudeArgs {
-                sketch,
+                sketch: whole_sketch(&sketch),
                 extent: Extents {
                     reversed: true,
                     ..Extents::blind(4.5)
@@ -270,8 +270,8 @@ pub fn nema17(file: &'static str) -> GeopResult<StandardPart> {
 }
 
 /// The `xz` plane: what a part running along `z` sits on, beside its axis.
-fn xz_plane() -> EntityRef {
-    origin_plane(FrameAxis::Y)
+fn xz_plane() -> String {
+    origin_plane(FrameAxis::Y).name().to_string()
 }
 
 /// A miniature linear guide rail, MGN9 or MGN12 by its size, `length`
@@ -320,8 +320,8 @@ pub fn linear_rail(file: &'static str) -> GeopResult<StandardPart> {
         Combine::NewBody,
     );
     axis_datum(&mut program);
-    offset_datum(&mut program, "base", xz_plane(), "0");
-    offset_datum(&mut program, "top", xz_plane(), &h);
+    offset_datum(&mut program, "base", &xz_plane(), "0");
+    offset_datum(&mut program, "top", &xz_plane(), &h);
     plane_datum(&mut program, "end", "0");
     Ok(StandardPart {
         file,
@@ -377,7 +377,7 @@ pub fn linear_carriage(file: &'static str) -> GeopResult<StandardPart> {
     );
     // The holes, drawn on the top — whose sketch runs along `x` and `-z` —
     // and drilled down into it.
-    offset_datum(&mut program, "top", xz_plane(), &h);
+    offset_datum(&mut program, "top", &xz_plane(), &h);
     let (b, c) = (format!("{} / 2", col("B")), format!("{} / 2", col("C")));
     let mut target = "extrude(block)".to_string();
     for (i, [x, y]) in [
@@ -397,7 +397,7 @@ pub fn linear_carriage(file: &'static str) -> GeopResult<StandardPart> {
             &mut program,
             &id,
             &format!("{id}_sketch"),
-            (hole, EntityRef::datum("top")),
+            (hole, datum_plane("top")),
             Extents {
                 reversed: true,
                 ..Extents::blind(format!("{} + 1", col("M")))
@@ -512,7 +512,7 @@ fn servo(
         &mut program,
         "body",
         "side",
-        (side, xz_plane()),
+        (side, SketchPlane::Datum(origin_plane(FrameAxis::Y))),
         Extents {
             symmetric: true,
             ..Extents::blind(width)
@@ -557,7 +557,7 @@ fn servo(
             program.push(
                 &id,
                 ExtrudeArgs {
-                    sketch: format!("{id}_sketch"),
+                    sketch: whole_sketch(&format!("{id}_sketch")),
                     extent: Extents {
                         symmetric: true,
                         ..Extents::blind(4.0 * tab)

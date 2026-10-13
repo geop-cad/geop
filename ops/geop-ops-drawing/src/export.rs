@@ -4,10 +4,9 @@
 
 use geop_core_math::geop_error::{GeopError, GeopResult, WithContext};
 use geop_core_program::target::TargetReference;
-use geop_ops::{
-    operation::{BuildReader, BuildView},
-    output::{Content, Export, Exporter, ExporterInfo, Output, sheet::Format},
-};
+use geop_core_program::element::{ElementReference, HasElements, Kind, whole};
+use geop_ops_output::{Content, Export, Exporter, ExporterInfo, Output, sheet::Format};
+use geop_ops_parameters::PartReader;
 use serde::Deserialize;
 
 use crate::{DrawingArgs, Projection, SheetSize, ViewKind, compose, parts_list};
@@ -22,16 +21,39 @@ pub fn drawing(step: &str) -> TargetReference<DrawingArgs> {
 const PREFIX: &str = "drawing:";
 
 /// The generator of [`drawing`]: the arguments it is given.
-pub(crate) fn described(_: &mut BuildReader, args: &DrawingArgs) -> GeopResult<DrawingArgs> {
+pub(crate) fn described(_: &PartReader, args: &DrawingArgs) -> GeopResult<DrawingArgs> {
     Ok(args.clone())
 }
 
-/// Every drawing the steps `view` sees describe, by the id of its step, in
-/// the order of the steps.
-pub fn drawing_steps<'a>(view: BuildView<'a>) -> Vec<(&'a str, &'a DrawingArgs)> {
-    (view.targets_of::<DrawingArgs>().into_iter())
-        .filter_map(|(target, args)| Some((target.strip_prefix(PREFIX)?, args)))
-        .collect()
+/// Read whole.
+impl Kind for DrawingArgs {
+    const NAME: &'static str = "drawing";
+}
+
+impl HasElements<DrawingArgs> for DrawingArgs {
+    type Element<'a> = &'a DrawingArgs;
+
+    fn element(&self, name: &str) -> GeopResult<&DrawingArgs> {
+        whole(self, name)
+    }
+
+    fn names_target(name: &str) -> bool {
+        name.starts_with(PREFIX)
+    }
+}
+
+/// Every drawing the steps `reader` reads describe, by the id of its step,
+/// in the order of the steps.
+pub fn drawing_steps<'a>(reader: &PartReader<'a>) -> GeopResult<Vec<(String, &'a DrawingArgs)>> {
+    let mut out = Vec::new();
+    for target in reader.targets_of::<DrawingArgs>() {
+        let Some(step) = target.name().strip_prefix(PREFIX) else {
+            continue;
+        };
+        let step = step.to_string();
+        out.push((step, reader.retrieve_element(&ElementReference::whole(target))?));
+    }
+    Ok(out)
 }
 
 /// Writes a drawing of the part as SVG or DXF.
@@ -126,19 +148,19 @@ impl Exporter for DrawingExporter {
 
     /// The drawing of the part as the steps before its step built it —
     /// the title block's name and material, where the drawing gives none,
-    /// the program's (see [`geop_ops::placed::About`]).
+    /// the program's (see [`geop_ops_parameters::About`]).
     fn export(output: &mut Output, format: &str, options: DrawingOptions) -> GeopResult<Export> {
         let format = Format::of_extension(format)
             .ok_or_else(|| GeopError::new(format!("a drawing is no .{format} file")))?;
         let current = output.part();
-        let steps = drawing_steps(current);
+        let steps = drawing_steps(&current)?;
         let found = match &options.step {
             Some(step) => Some(
                 (steps.iter().find(|(s, _)| s == step))
                     .ok_or_else(|| GeopError::new(format!("the step {step:?} is no drawing")))?,
             ),
             None => (output.editing)
-                .and_then(|editing| steps.iter().find(|(s, _)| *s == editing))
+                .and_then(|editing| steps.iter().find(|(s, _)| s == editing))
                 .or(steps.last()),
         };
         let (step, args) = match found {
@@ -146,7 +168,7 @@ impl Exporter for DrawingExporter {
             None => (None, DrawingArgs::default()),
         };
         let mut args = options.apply(args)?;
-        let about = output.about();
+        let about = output.about()?;
         if args.name.is_empty() {
             args.name = about.name().to_string();
         }
@@ -154,7 +176,7 @@ impl Exporter for DrawingExporter {
         if args.material.is_empty() && !material.assumed {
             args.material = material.name;
         }
-        let view = match &step {
+        let reader = match &step {
             Some(step) => output.part_before(step)?,
             None => output.part(),
         };
@@ -162,10 +184,10 @@ impl Exporter for DrawingExporter {
             Some(step) => e.with_context(format!("the drawing {step:?}")),
             None => e.with_context("the drawing of the whole part"),
         };
-        let parts = parts_list(view, &args).with_context(&ctx)?;
-        let sheet = compose(view, &args, output.date, &parts).with_context(&ctx)?;
+        let parts = parts_list(&reader, &args).with_context(&ctx)?;
+        let sheet = compose(&reader, &args, output.date, &parts).with_context(&ctx)?;
         Ok(Export {
-            name: format!("{}.{}", output.stem(), format.extension()),
+            name: format!("{}.{}", output.stem()?, format.extension()),
             media_type: format.media_type().into(),
             content: Content::Text(sheet.write(format)),
         })

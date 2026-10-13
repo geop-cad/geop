@@ -20,8 +20,8 @@ use geop_core_topology::{
     FaceId, Sense, SolidId,
     build::{BodySpec, CoedgeOn, EdgeSpec},
 };
-use geop_ops::{BodyNames, NamedModel, Namer};
 use geop_ops_extrude_revolve::skin::{Glue, Skinned, Strip, StripCap, StripGeometry, skin};
+use geop_ops_model::{BodyNames, NamedModel, Namer};
 
 /// One span of a tool: its control rows along it — each the four section
 /// control points (see [`ToolStation::points`]) — of `degree` on `knots`, and
