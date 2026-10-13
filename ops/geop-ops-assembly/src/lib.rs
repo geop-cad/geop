@@ -28,15 +28,15 @@ pub mod solving;
 mod stl;
 
 pub use add_part::{AddPart, AddPartArgs};
-pub use frame::{MateEntity, PlacedElement};
+pub use frame::MateEntity;
 pub use mates::{
     Anchor, CouplingKind, JointKind, Kind, Mate, MateKind, Motion, On, Resolved, Transmission,
     joint_parameter, mate, mate_name,
 };
 pub use mechanism::mates_resolved;
 pub use placed::{
-    Component, GivenLibrary, Instance, Library, Placement, define_library, draw_instances, instance,
-    instance_path, library, placed_parts, read_library, solid_meshes,
+    Component, GivenLibrary, Instance, Library, Placement, component_of, define_library,
+    draw_instances, library, placed_parts, read_library, solid_meshes,
 };
 pub use part_pattern::{Layout, PartPattern, PartPatternArgs, PatternAxis};
 pub use stl::{STL_QUALITY, Stl, StlOptions, stl_bytes};

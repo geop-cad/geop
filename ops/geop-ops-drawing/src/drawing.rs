@@ -25,10 +25,8 @@ use geop_core_sketch::dimension::Measure;
 use geop_core_topology::{FaceId, Model};
 use geop_core_editor::selectable::Selectable;
 use geop_core_math::primitives::Pose;
-use geop_ops_assembly::{
-    instance, instance_path,
-    placed::{locate, read_instance},
-};
+use geop_core_program::instance::instance_path;
+use geop_ops_assembly::placed::locate;
 use geop_ops_model::{CosmeticThread, Design, Edge, NamedModel, Vertex, element, frame_along};
 use geop_ops_view::INSTANCE_SEPARATOR;
 use geop_ops_output::sheet::{Anchor, Layer, P, Shape, Sheet, decimal, strokes_of};
@@ -1210,10 +1208,10 @@ fn owner<'a>(
     let mut part = reader.clone();
     let mut rest = name;
     while let Some((first, inner)) = rest.split_once(INSTANCE_SEPARATOR) {
-        if !part.defines(&instance(first)) {
+        let Ok(placed) = part.instance(first) else {
             break;
-        }
-        let placed = read_instance(&part, first)?.component.reader();
+        };
+        let placed = placed.reader();
         path = match path.is_empty() {
             true => first.to_string(),
             false => instance_path(&path, first),

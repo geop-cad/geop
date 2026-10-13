@@ -15,7 +15,10 @@ use std::marker::PhantomData;
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::target::TargetReference;
+use crate::{
+    instance::{instance_path, split_path},
+    target::TargetReference,
+};
 
 /// A kind of element a target holds by stable name: an edge or a face of a
 /// topology, a line of a sketch. A unit struct, defined by the crate that
@@ -101,6 +104,27 @@ impl<T, K> ElementReference<T, K> {
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    /// The path of the instance the element is of: empty for one of the
+    /// part itself (see [`crate::instance`]).
+    pub fn instance(&self) -> &str {
+        split_path(self.target.name()).0
+    }
+
+    /// The same element as its instance's own part names it: itself, for
+    /// one of the part itself.
+    pub fn local(&self) -> Self {
+        let target = split_path(self.target.name()).1;
+        Self::new(TargetReference::new(target), self.name.clone())
+    }
+
+    /// The same element of the instance `instance` of the part — of the
+    /// instance at that path, if it is already of one: what an element of
+    /// a placed part is, read from the part it is placed in.
+    pub fn behind(&self, instance: &str) -> Self {
+        let target = instance_path(instance, self.target.name());
+        Self::new(TargetReference::new(target), self.name.clone())
+    }
 }
 
 impl<T: HasElements<K>, K: Kind> ElementReference<T, K> {
@@ -124,9 +148,10 @@ impl<T: HasElements<K>, K: Kind> ElementReference<T, K> {
     }
 
     /// The reference `picked` is, if it picked an element of the kind `K`
-    /// of a target of the type `T`.
+    /// of a target of the type `T` — of the part itself, or of an instance
+    /// placed in it.
     pub fn from_picked(picked: &PickedElement) -> Option<Self> {
-        (picked.kind == K::NAME && T::names_target(&picked.target))
+        (picked.kind == K::NAME && T::names_target(split_path(&picked.target).1))
             .then(|| Self::new(TargetReference::new(picked.target.clone()), &picked.name))
     }
 
@@ -157,7 +182,8 @@ pub fn whole<'a, T>(target: &'a T, name: &str) -> GeopResult<&'a T> {
 /// reads it, so an operation never matches on it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PickedElement {
-    /// The name of the target the element is in.
+    /// The name of the target the element is in, behind the path of the
+    /// instance it is of: `bolt/model`.
     pub target: String,
     /// Its kind's [`Kind::NAME`].
     pub kind: String,
@@ -169,6 +195,27 @@ impl PickedElement {
     /// How a dialog names it: its kind and its name.
     pub fn label(&self) -> String {
         format!("{} {}", self.kind, self.name)
+    }
+
+    /// The path of the instance it is of: empty for the part itself.
+    pub fn instance(&self) -> &str {
+        split_path(&self.target).0
+    }
+
+    /// The same pick as its instance's own part names it.
+    pub fn local(&self) -> Self {
+        Self {
+            target: split_path(&self.target).1.to_string(),
+            ..self.clone()
+        }
+    }
+
+    /// The same pick of the instance `instance` of the part.
+    pub fn behind(&self, instance: &str) -> Self {
+        Self {
+            target: instance_path(instance, &self.target),
+            ..self.clone()
+        }
     }
 }
 

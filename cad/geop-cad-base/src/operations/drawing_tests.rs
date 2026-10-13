@@ -788,7 +788,7 @@ fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
     let view = built.part.current();
     let placed = geop_ops_assembly::placed_parts(&view).unwrap();
     let placed = placed.iter().find(|p| p.name == "plate").unwrap();
-    let plate = geop_ops_model::read_model(&placed.located.instance.component.reader()).unwrap();
+    let plate = geop_ops_model::read_model(&placed.located.instance.reader()).unwrap();
     let plate = &*plate;
     let model = plate.topology();
     let hole = name_where(plate, |id| match id {

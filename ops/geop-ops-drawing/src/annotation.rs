@@ -19,7 +19,7 @@ use geop_core_sketch::{
     plain::{add, cross, distance, dot, perp, scale, sub, unit},
 };
 use geop_core_topology::EdgeId;
-use geop_ops_assembly::instance_path;
+use geop_core_program::instance::instance_path;
 use geop_ops_model::{Design, RefId};
 use geop_ops_output::sheet::{Anchor, Label, Layer, P, Shape, Sheet};
 use geop_ops_parameters::PartReader;

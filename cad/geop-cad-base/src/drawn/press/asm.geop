@@ -23,15 +23,19 @@
             "type": "concentric",
             "entities": [
               {
-                "part": "part1",
                 "on": {
-                  "face": "combine(extrude3,extrude(extrude3,sketch3,c7#2),#8bd081c9b1406b0ed6790e3dc2425477)"
+                  "face": {
+                    "target": "part1/model",
+                    "name": "combine(extrude3,extrude(extrude3,sketch3,c7#2),#8bd081c9b1406b0ed6790e3dc2425477)"
+                  }
                 }
               },
               {
-                "part": "part2",
                 "on": {
-                  "face": "extrude(extrude1,sketch1,c5)"
+                  "face": {
+                    "target": "part2/model",
+                    "name": "extrude(extrude1,sketch1,c5)"
+                  }
                 }
               }
             ]
@@ -40,15 +44,19 @@
             "type": "coincident",
             "entities": [
               {
-                "part": "part1",
                 "on": {
-                  "datum": "origin:xy"
+                  "datum": {
+                    "target": "part1/datums",
+                    "name": "origin:xy"
+                  }
                 }
               },
               {
-                "part": "part2",
                 "on": {
-                  "datum": "origin:xy"
+                  "datum": {
+                    "target": "part2/datums",
+                    "name": "origin:xy"
+                  }
                 }
               }
             ]
@@ -66,15 +74,19 @@
             "type": "coincident",
             "entities": [
               {
-                "part": "part1",
                 "on": {
-                  "face": "extrude(extrude1,sketch1,c10)"
+                  "face": {
+                    "target": "part1/model",
+                    "name": "extrude(extrude1,sketch1,c10)"
+                  }
                 }
               },
               {
-                "part": "part3",
                 "on": {
-                  "face": "extrude(extrude1,sketch1,c10)"
+                  "face": {
+                    "target": "part3/model",
+                    "name": "extrude(extrude1,sketch1,c10)"
+                  }
                 }
               }
             ]
@@ -83,15 +95,19 @@
             "type": "coincident",
             "entities": [
               {
-                "part": "part1",
                 "on": {
-                  "face": "extrude(extrude1,sketch1,c12)"
+                  "face": {
+                    "target": "part1/model",
+                    "name": "extrude(extrude1,sketch1,c12)"
+                  }
                 }
               },
               {
-                "part": "part3",
                 "on": {
-                  "face": "extrude(extrude1,end)"
+                  "face": {
+                    "target": "part3/model",
+                    "name": "extrude(extrude1,end)"
+                  }
                 }
               }
             ]
@@ -109,15 +125,19 @@
             "type": "coincident",
             "entities": [
               {
-                "part": "part2",
                 "on": {
-                  "face": "extrude(extrude2,sketch3,c9)"
+                  "face": {
+                    "target": "part2/model",
+                    "name": "extrude(extrude2,sketch3,c9)"
+                  }
                 }
               },
               {
-                "part": "part4",
                 "on": {
-                  "face": "extrude(extrude1,sketch1,c26#2)"
+                  "face": {
+                    "target": "part4/model",
+                    "name": "extrude(extrude1,sketch1,c26#2)"
+                  }
                 }
               }
             ]
@@ -126,15 +146,19 @@
             "type": "coincident",
             "entities": [
               {
-                "part": "part3",
                 "on": {
-                  "face": "combine(extrude4,extrude(extrude4,sketch4,c7),#01277c18a2965eb65d5abf4ea93534dc)"
+                  "face": {
+                    "target": "part3/model",
+                    "name": "combine(extrude4,extrude(extrude4,sketch4,c7),#01277c18a2965eb65d5abf4ea93534dc)"
+                  }
                 }
               },
               {
-                "part": "part4",
                 "on": {
-                  "face": "combine(extrude2,extrude(extrude1,sketch1,c27#2),#a5a60d89de57ff595e49ac8ff7e5bb22)"
+                  "face": {
+                    "target": "part4/model",
+                    "name": "combine(extrude2,extrude(extrude1,sketch1,c27#2),#a5a60d89de57ff595e49ac8ff7e5bb22)"
+                  }
                 }
               }
             ]
@@ -143,15 +167,19 @@
             "type": "coincident",
             "entities": [
               {
-                "part": "part3",
                 "on": {
-                  "datum": "origin:xy"
+                  "datum": {
+                    "target": "part3/datums",
+                    "name": "origin:xy"
+                  }
                 }
               },
               {
-                "part": "part4",
                 "on": {
-                  "datum": "origin:xy"
+                  "datum": {
+                    "target": "part4/datums",
+                    "name": "origin:xy"
+                  }
                 }
               }
             ]

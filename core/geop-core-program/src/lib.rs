@@ -14,6 +14,7 @@
 )]
 
 pub mod element;
+pub mod instance;
 pub mod operation;
 pub mod operation_registry;
 pub mod part;

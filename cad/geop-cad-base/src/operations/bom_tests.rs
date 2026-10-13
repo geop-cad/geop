@@ -252,7 +252,7 @@ fn the_bolted_plate_is_weighed_in_bounded_work() {
     let reader = part.part.current();
     let placed = placed_parts(&reader).unwrap();
     let mut parts = vec![reader.clone()];
-    parts.extend(placed.iter().map(|p| p.located.instance.component.reader()));
+    parts.extend(placed.iter().map(|p| p.located.instance.reader()));
     let mut evaluations = Vec::new();
     for p in parts {
         // An assembly that only places parts has an empty model of its own.

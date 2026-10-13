@@ -60,9 +60,9 @@ use geop_core_math::{
     with_context,
 };
 use geop_ops_add_datum::{Selected, Shape};
-use geop_ops_assembly::{MateEntity, PlacedElement, placed::part_at};
+use geop_ops_assembly::MateEntity;
 use geop_ops_model::{Chain, Design};
-use geop_ops_parameters::PartReader;
+use geop_ops_parameters::{PartReader, located};
 
 /// Which way the route is told to run through a [`Waypoint`].
 #[derive(Clone, Debug)]
@@ -101,16 +101,24 @@ impl Waypoint<Design> {
     /// `reader` reads — where the part it is of is placed there (see the
     /// module docs): a point, just where it is; a circular edge, its
     /// centre and axis; a coordinate system, its origin and `z` axis.
-    pub fn of(reader: &PartReader, entity: &PlacedElement, index: usize) -> GeopResult<Self> {
-        let label = format!("point {} ({})", index + 1, entity.label());
+    pub fn of(reader: &PartReader, entity: &Selected, index: usize) -> GeopResult<Self> {
+        let frame_on = MateEntity::on(entity.clone());
+        let label = format!("point {} ({})", index + 1, frame_on.label());
         let ctx = with_context!("resolving the route's {label}");
         let unsupported = |what: &str| {
             GeopError::new(format!(
                 "route: {label} is {what}: a route runs through points, coordinate systems (along their z axis) and circular edges (through their centre, along their axis)"
             ))
         };
-        let (inside, pose) = part_at(reader, &entity.part).with_context(ctx)?;
-        let (point, heading) = if let Selected::Datum(datum) = &entity.on {
+        let (inside, pose) = match entity.instance() {
+            "" => (reader.clone(), None),
+            part => {
+                let inside = reader.inside(part).with_context(ctx)?;
+                (inside, Some(located(reader, part).with_context(ctx)?))
+            }
+        };
+        let local = entity.local();
+        let (point, heading) = if let Selected::Datum(datum) = &local {
             let datum = inside.retrieve_element(datum).with_context(ctx)?;
             let heading = match datum.kind {
                 DatumKind::Point => Heading::Free,
@@ -120,8 +128,8 @@ impl Waypoint<Design> {
             };
             (*datum.frame.origin(), heading)
         } else {
-            let shape = entity.on.shape(&inside).with_context(ctx)?;
-            match (&entity.on, shape) {
+            let shape = local.shape(&inside).with_context(ctx)?;
+            match (&local, shape) {
                 (
                     Selected::Vertex(_) | Selected::SketchPoint(_),
                     Shape {
@@ -133,7 +141,7 @@ impl Waypoint<Design> {
                 }
                 // In its own part, which `pose` places.
                 _ => {
-                    let frame = MateEntity::from(entity.clone()).frame(reader);
+                    let frame = frame_on.frame(reader);
                     let frame = frame.with_context(ctx)?;
                     (*frame.origin(), Heading::Exit(*frame.w()))
                 }

@@ -34,7 +34,9 @@ core/geop-core-sketch         2-D constraint sketches: entities, constraints
                                how a dimension is drawn in a plane
 core/geop-core-program        programs and the parts they build: targets a
                                step defines and revises, typed references
-                               to their elements (`ElementReference`), the
+                               to their elements (`ElementReference`),
+                               instances — parts placed in a part, run
+                               with its state behind their names — the
                                operations a program is written in, and
                                running it from the given step on
 core/geop-core-editor         what an operation is and how it is edited
@@ -60,8 +62,9 @@ ops/geop-ops-output           the exporter and inspector interfaces, and the
                                on (SVG, DXF, each layer defined by who draws
                                on it)
 ops/geop-ops-constraints      the constraints and unknowns of a part's state
-                               (mates, joints), and the solver re-running the
-                               program over them
+                               (mates, joints) — its own and its instances',
+                               behind their names — and the solver
+                               re-running the program over them
 ops/geop-ops-datums           the part's datums: the origin, and those steps
                                add, picked as points, axes and planes
 ops/geop-ops-sketch           the sketch operation: drawing and constraint

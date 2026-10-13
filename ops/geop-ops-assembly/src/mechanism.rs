@@ -44,13 +44,13 @@ use geop_ops_constraints::{
     unknown::{Unknown, declare_unknowns},
 };
 use geop_ops_model::Design;
-use geop_ops_parameters::{BuildPart, PartReader, StateValue};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, compose};
 
 use crate::{
     frame::MateEntity,
     joints::{Connector, JointKind, Motion, joint_residuals, measure},
     mates::{Mate, MateKind, On, Resolved, joint_parameter, mate, mate_name},
-    placed::{locate, locate_in, moved_by},
+    placed::{locate, moved_by},
     residuals::{D, Geometry, Kind, residuals},
     solving::{Setting, Settings, largest, scale_of, settings_of},
 };
@@ -70,7 +70,10 @@ pub fn mates_resolved() -> usize {
 /// The size of the placed parts `bodies` — at least one: what a mate
 /// between them turns a turn into a length by.
 fn size(reader: &PartReader, bodies: &[&Option<String>]) -> GeopResult<Design> {
-    largest((bodies.iter().copied().flatten()).map(|body| Ok(locate(reader, body)?.instance)))
+    let components: GeopResult<Vec<_>> = (bodies.iter().copied().flatten())
+        .map(|body| Ok(locate(reader, body)?.component))
+        .collect();
+    largest(components?.iter().map(|c| Ok(&**c)))
 }
 
 /// The geometry `entity` of `mate`, a constraint of `kind`, is to it, in its
@@ -108,7 +111,7 @@ fn on<T>(
     what: impl Fn(&MateEntity, &PartReader) -> GeopResult<T>,
 ) -> GeopResult<On<T>> {
     Ok(On {
-        body: (!entity.part.is_empty()).then(|| entity.part.clone()),
+        body: (!entity.part().is_empty()).then(|| entity.part().to_string()),
         what: what(entity, reader)?,
         entity: entity.clone(),
     })
@@ -155,7 +158,7 @@ pub(crate) fn resolve(reader: &PartReader, (name, mate): &(String, Mate)) -> Geo
             let [entity] = mate.entities.as_slice() else {
                 return Err(GeopError::new("it needs one element")).with_context(ctx);
             };
-            if entity.part.is_empty() {
+            if entity.part().is_empty() {
                 return Err(GeopError::new(format!(
                     "{} is of this part itself, which never moves: a fixed mate holds a part placed in it",
                     entity.label()
@@ -163,7 +166,7 @@ pub(crate) fn resolve(reader: &PartReader, (name, mate): &(String, Mate)) -> Geo
                 .with_context(ctx);
             }
             Resolved::Fixed {
-                body: entity.part.clone(),
+                body: entity.part().to_string(),
             }
         }
     };
@@ -200,15 +203,15 @@ impl Reading<'_> {
             return Ok(None);
         };
         let Reading { read, by, twist } = self;
-        let located = locate_in(reader, body, &mut |state, pose| {
+        let placement = reader.placement(body)?;
+        Ok(Some(compose(&placement, &mut |state, pose| {
             read.insert(state.to_string(), Read::Pose);
             let pose = pose.map(D::cst);
             match *by == Some(state) {
                 true => pose.compose(twist),
                 false => pose,
             }
-        })?;
-        Ok(Some(located.world))
+        })))
     }
 
     /// The coordinate `state`, as the state has it.
@@ -430,10 +433,24 @@ fn constraints_of_mates(
     Ok(out)
 }
 
-/// The unknowns the mates `names` declare: the part a fixed mate holds,
-/// and each joint's coordinates. The generator of a step's unknowns.
-fn unknowns_of_mates(reader: &PartReader, names: &Vec<String>) -> GeopResult<Vec<Unknown<StateValue>>> {
+/// The unknowns a step declares: the pose state `placed` of the part it
+/// places, if it places one, held where it is as far as the mates let it;
+/// and those its mates `names` declare: the part a fixed mate holds, and
+/// each joint's coordinates. The generator of a step's unknowns.
+fn unknowns_of_mates(
+    reader: &PartReader,
+    (placed, names): &(Option<String>, Vec<String>),
+) -> GeopResult<Vec<Unknown<StateValue>>> {
     let mut out = Vec::new();
+    if let Some(placed) = placed {
+        out.push(Unknown {
+            state: placed.clone(),
+            mobility: Mobility::Held,
+            // Where the run has a part whose pose the state does not give.
+            seed: Some(StateValue::Pose(Pose::identity())),
+            unless: None,
+        });
+    }
     for name in names {
         match resolved(reader, name)? {
             Resolved::Fixed { body } => out.push(fixed(reader, body)?),
@@ -452,15 +469,18 @@ fn unknowns_of_mates(reader: &PartReader, names: &Vec<String>) -> GeopResult<Vec
 /// in the part and called as `labels` says, put on the state: their
 /// constraints and limits, the parts the fixed ones hold and the joints'
 /// coordinates as values a solve moves — and, as values a user sets, each
-/// joint's coordinates.
+/// joint's coordinates. The pose state `placed` of the part the step
+/// places, if it places one, is a value a solve moves too.
 pub(crate) fn define(
     part: &mut BuildPart,
     step: &str,
+    placed: Option<&str>,
     mates: &[(String, String)],
 ) -> GeopResult<()> {
     let names: Vec<String> = mates.iter().map(|(name, _)| name.clone()).collect();
     let constrained = define_constraints(part, step, &names, constraints_of_mates);
-    let declared = declare_unknowns(part, &names, unknowns_of_mates);
+    let unknowns = (placed.map(str::to_string), names);
+    let declared = declare_unknowns(part, &unknowns, unknowns_of_mates);
     let mut set = Ok(());
     for (name, label) in mates {
         let is_joint = matches!(resolved(&part.current(), name), Ok(Resolved::Joint { .. }));

@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind},
+    instance::instance_path,
     part::{Generator, Input, Part, Reader},
     target::TargetReference,
 };
@@ -96,7 +97,40 @@ impl<S: Solvable> Constraints<S> {
     /// defined any. A step whose constraints failed fails them all: a
     /// solve must not go on without a constraint it could not make. A name
     /// two steps defined is an error naming both.
+    ///
+    /// Those of every instance placed in it come up behind the instance's
+    /// name: a constraint `c` of the instance `bolt` is `bolt/c`, on the
+    /// state `bolt/s` where the instance's is on `s` (see
+    /// [`geop_core_program::instance`]). A residual is the same wherever
+    /// the instance is: it is a length within it. A copy's are those of
+    /// what it copies, which come up already.
     pub fn of<I: Input>(reader: &Reader<I, S>) -> GeopResult<Self> {
+        let mut all = Self::own(reader)?;
+        for (name, instance) in reader.instances() {
+            if instance.is_copy() {
+                continue;
+            }
+            let inside = Self::of(&instance.reader())
+                .map_err(|e| e.with_context(format!("the constraints of the placed part `{name}`")))?;
+            for (constraint, defined) in inside.0 {
+                let jacobian = (defined.constraint.jacobian.into_iter())
+                    .map(|(state, rows)| (instance_path(name, &state), rows))
+                    .collect();
+                let defined = Defined {
+                    step: instance_path(name, &defined.step),
+                    constraint: Constraint {
+                        jacobian,
+                        ..defined.constraint
+                    },
+                };
+                all.0.insert(instance_path(name, &constraint), defined);
+            }
+        }
+        Ok(all)
+    }
+
+    /// The constraints the part's own steps defined.
+    fn own<I: Input>(reader: &Reader<I, S>) -> GeopResult<Self> {
         if let Some(failed) = reader.failed_targets_of::<StepConstraints<S>>().pop() {
             return Err(failed);
         }

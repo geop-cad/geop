@@ -20,166 +20,70 @@ use geop_core_topology::{CoedgeGeometry, FaceId};
 use geop_ops_add_datum::{Selected, Shape};
 use geop_ops_model::{Design, NamedModel, frame_along};
 use geop_ops_parameters::PartReader;
-use geop_ops_view::{FramePick, INSTANCE_SEPARATOR, drawn};
+use geop_ops_view::{FramePick, drawn};
 use serde::{Deserialize, Serialize};
 
-use crate::placed::{component_at, instance_path};
 
 /// How many points of each of a face's edges its middle is measured from.
 const SAMPLES: i64 = 8;
 
-/// An element of the part, or of a part placed in it however deep: the
-/// element `on` of the part placed at `part` — `bolt`, or `asm/bolt` for
-/// one placed in a placed part; the part itself, for none. Picked as the
-/// element itself, never a frame on it. Saved as `{"part": "bolt", "on":
-/// {"vertex": "extrude(head,p3,end)"}}`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PlacedElement {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub part: String,
-    pub on: Selected,
-}
-
-impl PlacedElement {
-    /// `on`, of the part itself.
-    pub fn own(on: Selected) -> Self {
-        Self::of("", on)
-    }
-
-    /// `on`, of the part placed at `part`.
-    pub fn of(part: impl Into<String>, on: Selected) -> Self {
-        Self {
-            part: part.into(),
-            on,
-        }
-    }
-
-    /// How it reads in a list: `bolt: face extrude(head,end)`.
-    pub fn label(&self) -> String {
-        let on = self.on.picked().label();
-        match self.part.is_empty() {
-            true => on,
-            false => format!("{}: {on}", self.part),
-        }
-    }
-
-    /// What it is in its own part, placed in the part `reader` reads — see
-    /// [`Shape`]. Reads no state: where that part is placed, [`locate`]
-    /// says.
-    pub fn shape(&self, reader: &PartReader) -> GeopResult<Shape> {
-        self.on.shape(&component_at(reader, &self.part)?)
-    }
-}
-
-/// An element is picked from what the editor draws of the part and the
-/// parts placed in it, and held as the pick names it, of the placed part
-/// behind its path.
-impl Selectable for PlacedElement {
-    fn picked_from() -> Vec<&'static str> {
-        Selected::picked_from()
-    }
-
-    fn from_picked(picked: &PickedElement) -> Option<Self> {
-        let (part, inner) = inside(picked);
-        Some(PlacedElement::of(part, Selected::from_picked(&inner)?))
-    }
-
-    fn picked(&self) -> PickedElement {
-        outside(&self.part, self.on.picked())
-    }
-
-    fn select<I: Input, S: State>(reader: &Reader<I, S>, hit: &PickedElement) -> Option<Self> {
-        let _ = reader;
-        // What a click hits is held as it is named: whether it is what is
-        // needed is said by what holds it, against the part it is of.
-        Self::from_picked(hit)
-    }
-
-    fn drawn<I: Input, S: State>(&self, reader: &Reader<I, S>) -> Vec<PickedElement> {
-        let _ = reader;
-        vec![outside(&self.part, drawn_of(&self.on))]
-    }
-}
-
-/// A frame on an element: its element's, sitting where nothing else says.
-impl From<PlacedElement> for MateEntity {
-    fn from(element: PlacedElement) -> Self {
-        MateEntity::of(element.part, element.on)
-    }
-}
-
-/// What a mate holds by: the element `on` of the part placed at `part` —
-/// `bolt`, or `asm/bolt` for one placed in a placed part; the part itself,
-/// for none — and, for a joint's frame, the element of it the frame sits
-/// at: a corner or a side of a face, an end of an edge (see
-/// [`MateEntity::frame`]). Saved as `{"part": "bolt", "on": {"face":
-/// "extrude(head,end)"}}`.
+/// What a mate holds by: the element `on`, of the part itself or of a part
+/// placed in it, however deep (see [`geop_core_program::instance`]) — and,
+/// for a joint's frame, the element of the same part the frame sits at: a
+/// corner or a side of a face, an end of an edge (see
+/// [`MateEntity::frame`]). Saved as `{"on": {"face": {"target":
+/// "bolt/model", "name": "extrude(head,end)"}}}`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MateEntity {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub part: String,
     pub on: Selected,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub at: Option<Selected>,
 }
 
 impl MateEntity {
-    /// `on`, of the part itself.
-    pub fn own(on: Selected) -> Self {
-        Self {
-            part: String::new(),
-            on,
-            at: None,
-        }
+    /// A frame on `on`, sitting where nothing else says.
+    pub fn on(on: Selected) -> Self {
+        Self { on, at: None }
     }
 
-    /// `on`, of the part placed at `part`.
-    pub fn of(part: impl Into<String>, on: Selected) -> Self {
-        Self {
-            part: part.into(),
-            on,
-            at: None,
-        }
+    /// A frame on `on`, of the part placed at `part`, as that part names it.
+    pub fn of(part: &str, on: Selected) -> Self {
+        Self::on(on.behind(part))
     }
 
-    /// It with its frame put at `at`.
+    /// It with its frame put at `at`, of the same part as what it is on.
     pub fn at(self, at: Selected) -> Self {
+        let at = at.local().behind(self.part());
         Self {
             at: Some(at),
             ..self
         }
     }
 
-    /// It of the part placed as `instance` in the part it is of now: what a
-    /// mate of a placed part is to the part placing it.
-    pub fn behind(&self, instance: &str) -> Self {
-        Self {
-            part: match self.part.is_empty() {
-                true => instance.to_string(),
-                false => instance_path(instance, &self.part),
-            },
-            ..self.clone()
-        }
-    }
-
-    /// The element it is on, of its part.
-    pub fn element(&self) -> PlacedElement {
-        PlacedElement::of(self.part.clone(), self.on.clone())
+    /// The path of the placed part it is of: empty for the part itself.
+    pub fn part(&self) -> &str {
+        self.on.instance()
     }
 
     /// How it reads in a list: `bolt: face extrude(head,end)`.
     pub fn label(&self) -> String {
-        self.element().label()
+        let on = self.on.local().picked().label();
+        match self.part() {
+            "" => on,
+            part => format!("{part}: {on}"),
+        }
     }
 
-    /// What it is in its own part, placed in the part `reader` reads — see
-    /// [`PlacedElement::shape`].
+    /// What it is in its own part — the part `reader` reads, or the one
+    /// placed in it that it is of. Reads no state: where that part is
+    /// placed, [`locate`](crate::placed::locate) says.
     pub fn shape(&self, reader: &PartReader) -> GeopResult<Shape> {
-        self.element().shape(reader)
+        Ok(self.on.shape_in_instance(reader)?.element)
     }
 
-    /// The frame it gives in its own part, placed in the part `reader`
-    /// reads. Reads no state: where that part is placed, [`locate`](crate::placed::locate) says.
+    /// The frame it gives in its own part — the part `reader` reads, or
+    /// the one placed in it that it is of. Reads no state: where that part
+    /// is placed, [`locate`](crate::placed::locate) says.
     ///
     /// Its `z` axis is the element's own, and what is turned about it, or
     /// slid along:
@@ -197,8 +101,12 @@ impl MateEntity {
     /// Where the frame sits is a free choice, so it is sharp.
     pub fn frame(&self, reader: &PartReader) -> GeopResult<CoordinateSystem<Design>> {
         let ctx = with_context!("the frame on {}", self.label());
-        let inside = component_at(reader, &self.part).with_context(ctx)?;
-        frame_on(&inside, &self.on, self.at.as_ref()).with_context(ctx)
+        let inside = match self.part() {
+            "" => reader.clone(),
+            part => reader.inside(part).with_context(ctx)?,
+        };
+        let at = self.at.as_ref().map(Selected::local);
+        frame_on(&inside, &self.on.local(), at.as_ref()).with_context(ctx)
     }
 }
 
@@ -306,34 +214,6 @@ fn face_middle<S: Scalar>(named: &NamedModel<S>, face: FaceId) -> GeopResult<Vec
     Ok(lo.add(&hi).prod_scalar(S::ONE.div(S::TWO)?).sharpen())
 }
 
-/// The part path and the target of the part placed there that `target`, a
-/// target of the part read as a pick names it, is: `("bolt", "model")` for
-/// `bolt/model`, `("", "model")` for the part's own.
-fn split_target(target: &str) -> (&str, &str) {
-    target.rsplit_once(INSTANCE_SEPARATOR).unwrap_or(("", target))
-}
-
-/// `picked` with its target as the part placed at `part` names it.
-fn inside(picked: &PickedElement) -> (String, PickedElement) {
-    let (part, target) = split_target(&picked.target);
-    let inner = PickedElement {
-        target: target.to_string(),
-        ..picked.clone()
-    };
-    (part.to_string(), inner)
-}
-
-/// `picked`, of the part placed at `part`, as the part read names it.
-fn outside(part: &str, picked: PickedElement) -> PickedElement {
-    match part.is_empty() {
-        true => picked,
-        false => PickedElement {
-            target: format!("{part}{INSTANCE_SEPARATOR}{}", picked.target),
-            ..picked
-        },
-    }
-}
-
 /// A mate's element is picked from what the editor draws of the part and
 /// the parts placed in it; a frame, with where it sits (see
 /// [`drawn::FRAME`]). Its element is held as the pick names it, of the
@@ -347,27 +227,25 @@ impl Selectable for MateEntity {
 
     fn from_picked(picked: &PickedElement) -> Option<Self> {
         if let Some(frame) = FramePick::of(picked) {
-            let (part, on) = inside(&frame.on);
             let at = match &frame.at {
-                Some(at) => Some(Selected::from_picked(&inside(at).1)?),
+                Some(at) => Some(Selected::from_picked(at)?),
                 None => None,
             };
             return Some(MateEntity {
-                part,
-                on: Selected::from_picked(&on)?,
+                on: Selected::from_picked(&frame.on)?,
                 at,
             });
         }
-        PlacedElement::from_picked(picked).map(MateEntity::from)
+        Selected::from_picked(picked).map(MateEntity::on)
     }
 
     fn picked(&self) -> PickedElement {
-        let on = self.element().picked();
+        let on = self.on.picked();
         match &self.at {
             None => on,
             Some(at) => FramePick {
                 on,
-                at: Some(outside(&self.part, at.picked())),
+                at: Some(at.picked()),
             }
             .picked(),
         }
@@ -381,8 +259,9 @@ impl Selectable for MateEntity {
     }
 
     fn drawn<I: Input, S: State>(&self, reader: &Reader<I, S>) -> Vec<PickedElement> {
-        let mut drawn = self.element().drawn(reader);
-        drawn.extend((self.at.iter()).map(|at| outside(&self.part, drawn_of(at))));
+        let _ = reader;
+        let mut drawn = vec![drawn_of(&self.on)];
+        drawn.extend(self.at.iter().map(drawn_of));
         drawn
     }
 }

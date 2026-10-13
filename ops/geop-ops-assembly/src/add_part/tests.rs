@@ -51,8 +51,9 @@ fn draw(reader: &PartReader) -> GeopResult<PartView> {
     Ok(view.finish())
 }
 
-/// Programs' parts by file name, built beforehand.
-struct Shelf(BTreeMap<String, Rc<Component>>);
+/// Programs' parts by file name: built beforehand, or — an assembly — its
+/// steps and state, built for every state it is run with.
+struct Shelf(BTreeMap<String, Rc<Component>>, BTreeMap<String, (Program, StateValues)>);
 
 impl Files for Shelf {
     fn files(&self) -> Vec<String> {
@@ -65,7 +66,19 @@ impl Files for Shelf {
 }
 
 impl Library for Shelf {
-    fn component(&self, file: &str, _: &Settings) -> GeopResult<Rc<Component>> {
+    fn component(
+        &self,
+        file: &str,
+        _: &Settings,
+        state: &StateValues,
+    ) -> GeopResult<Rc<Component>> {
+        if let Some((program, own)) = self.1.get(file) {
+            let mut given = own.clone();
+            given.extend(state.clone());
+            let built = Assembly::with(Rc::new(shelf()), program.steps.clone(), given);
+            let placed: Vec<&str> = self.0.keys().map(String::as_str).collect();
+            return Ok(component(file, &placed, built.runner.part));
+        }
         (self.0.get(file).cloned()).ok_or_else(|| GeopError::new(format!("no file {file:?}")))
     }
 }
@@ -92,10 +105,10 @@ fn shelf() -> Shelf {
     let mut part: BuildPart = given_part(&block_part("c", [0.0; 3], [1.0; 3])).unwrap();
     define_datums(&mut part).unwrap();
     part.end_run(0);
-    Shelf(BTreeMap::from([(
-        "cube.geop".into(),
-        component("cube.geop", &[], part),
-    )]))
+    Shelf(
+        BTreeMap::from([("cube.geop".into(), component("cube.geop", &[], part))]),
+        BTreeMap::new(),
+    )
 }
 
 fn args(fixed: bool, mates: &[(&str, MateKind, [MateEntity; 2])]) -> AddPartArgs {
@@ -277,9 +290,9 @@ impl Assembly {
     /// Where the entity `entity` of a placed part is, as the run placed it.
     fn point(&self, entity: &MateEntity) -> [f64; 3] {
         let p = entity.shape(&self.reader()).unwrap().point.unwrap();
-        let p = match entity.part.is_empty() {
+        let p = match entity.part().is_empty() {
             true => p,
-            false => self.world(&entity.part).apply(&p),
+            false => self.world(entity.part()).apply(&p),
         };
         [0, 1, 2].map(|k| p[k].to_f64())
     }
@@ -490,18 +503,18 @@ fn a_pattern_places_copies_after_the_part() {
     assert_eq!(placed[1].located.state, None, "no mate moves a copy");
 }
 
-/// The shelf, with `pair.geop` besides: the part `pair` built, which
-/// places cubes.
+/// The shelf, with `pair.geop` besides: the program of `pair`, which places
+/// cubes, as it was solved.
 fn with_pair(pair: Assembly) -> Shelf {
     let mut shelf = shelf();
-    let pair = component("pair.geop", &["cube.geop"], pair.runner.part);
-    shelf.0.insert("pair.geop".into(), pair);
+    shelf.1.insert("pair.geop".into(), (pair.program, pair.state));
     shelf
 }
 
 /// A part placed with mates of its own between the parts placed in it
-/// brings them along, behind its name: solving the part that places it
-/// holds them there too.
+/// brings them along, behind its name, with its constraints: solving the
+/// part that places it holds them there too. What it holds fixed stays
+/// fixed in it, which moves as a whole.
 #[test]
 fn a_placed_part_brings_its_mates() {
     let mates = args(
@@ -531,15 +544,10 @@ fn a_placed_part_brings_its_mates() {
     let off = StateValues::from([(pose_state("p/b"), StateValue::Pose(at([5.0, 4.0, 3.0])))]);
     let mut assembly = Assembly::with(Rc::new(with_pair(pair)), steps, off);
     let reader = assembly.reader();
-    let names: Vec<String> = (crate::mechanism::mates_of(&reader).into_iter())
-        .map(|(name, _)| name)
-        .collect();
-    // Its own, and the pair's — but not the pair's fixed one: where a
-    // placed part is fixed is for the part placing it to say.
-    assert_eq!(
-        names,
-        ["add_part(p,fixed)", "p/add_part(b,m1)", "p/add_part(b,m2)"]
-    );
+    let constraints = Constraints::<StateValue>::of(&reader).unwrap();
+    let names: Vec<&str> = constraints.iter().map(|(name, _)| name).collect();
+    // The pair's, behind its name; its own fixed mate is no constraint.
+    assert_eq!(names, ["p/add_part(b,m1)", "p/add_part(b,m2)"]);
     assert!(!check_mates(&reader).unwrap().converged);
     let report = assembly.solve(&[]);
     assert!(report.converged, "{report:?}");
@@ -547,8 +555,8 @@ fn a_placed_part_brings_its_mates() {
         &assembly.reader(),
         "p/add_part(b,m2)"
     ));
-    // The pair's first cube is free here — its fixed mate stayed behind —
-    // so the solve may move either; the second stands on the first's axis.
+    // The pair's first cube stays where the pair has it; the second stands
+    // on its axis.
     let (a, b) = (assembly.world("p/a"), assembly.world("p/b"));
     assert_close(
         apply(&a.inverse().compose(&b), [0.0; 3]),

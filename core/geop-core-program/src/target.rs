@@ -21,6 +21,8 @@ pub(crate) enum Dependency {
     Undefined(String),
     Input(String),
     State(String),
+    /// Every value of the state whose name starts with the prefix.
+    StatesUnder(String),
 }
 
 /// The stable name of a target, as programs and arguments refer to it, and

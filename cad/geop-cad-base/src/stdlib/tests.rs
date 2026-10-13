@@ -586,7 +586,7 @@ fn gear_drive() -> Program {
                 max: None,
             },
             vec![
-                MateEntity::own(Selected::Datum(datum(format!("{id}_shaft")))),
+                MateEntity::on(Selected::Datum(datum(format!("{id}_shaft")))),
                 MateEntity::of(id, Selected::Datum(datum("axis"))),
             ],
         )

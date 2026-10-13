@@ -10,7 +10,7 @@ use geop_core_math::{
 use geop_core_editor::editing::{StepEditEvent, Value};
 use geop_ops_add_datum::Selected;
 use geop_ops_assembly::{
-    AddPartArgs, Kind, Mate, MateEntity, PlacedElement, solids::placed_solids,
+    AddPartArgs, Kind, Mate, MateEntity, solids::placed_solids,
 };
 use geop_ops_datums::{ORIGIN, component_name, datum};
 use geop_ops_harness::{RouteArgs, Wire, WireSize, cable};
@@ -61,8 +61,8 @@ fn assembly() -> Program {
         "cable",
         RouteArgs {
             through: vec![
-                PlacedElement::of("a", Selected::Datum(datum(ORIGIN))),
-                PlacedElement::of("b", Selected::Datum(datum(ORIGIN))),
+                Selected::Datum(datum(ORIGIN)).behind("a"),
+                Selected::Datum(datum(ORIGIN)).behind("b"),
             ],
             wires: vec![Wire {
                 size: WireSize::Diameter(0.2),
@@ -162,9 +162,9 @@ fn a_route_runs_through_sketch_points() {
         "route",
         RouteArgs {
             through: vec![
-                PlacedElement::own(Selected::Vertex(element("sketch3d(corners,p0)"))),
-                PlacedElement::own(Selected::Vertex(element("sketch3d(corners,p1)"))),
-                PlacedElement::own(Selected::SketchPoint(sketch_element("floor", p))),
+                Selected::Vertex(element("sketch3d(corners,p0)")),
+                Selected::Vertex(element("sketch3d(corners,p1)")),
+                Selected::SketchPoint(sketch_element("floor", p)),
             ],
             wires: vec![Wire {
                 size: WireSize::Diameter(0.1),

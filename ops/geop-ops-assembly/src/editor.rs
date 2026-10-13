@@ -35,7 +35,7 @@ use geop_core_editor::{
 };
 use geop_ops_model::{Design, Namer};
 use geop_ops_parameters::{
-    COLOR, ParameterKind, Setting, Settings, StateValue, StepContext,
+    COLOR, ParameterKind, Setting, Settings, StateValue, StateValues, StepContext,
     about::file_choices,
     parameters::validate_color,
     pose_state, read_about,
@@ -44,7 +44,7 @@ use geop_ops_parameters::{
 use crate::{
     AddPartArgs, Anchor, CouplingKind, JointKind, Kind, Mate, MateKind, Motion, Transmission,
     mechanism::mate_holds,
-    placed::{read_instance, read_library},
+    placed::read_library,
     solving::{SettingsState, check, settings},
 };
 
@@ -481,8 +481,9 @@ fn parameters(f: &mut PartForm, context: &StepContext, args: &AddPartArgs) {
         return;
     };
     // As placed here: what a number not given reads follows what is.
-    let Ok(placed) = (library.component(&args.file, &args.parameters))
-        .or_else(|_| library.component(&args.file, &Settings::new()))
+    let none = StateValues::new();
+    let Ok(placed) = (library.component(&args.file, &args.parameters, &none))
+        .or_else(|_| library.component(&args.file, &Settings::new(), &none))
     else {
         return;
     };
@@ -567,7 +568,7 @@ pub(crate) fn form<'a>(
 ) -> PartForm<'a> {
     let mut f = PartForm::default();
     let step = context.step.to_string();
-    let built = (context.built.as_ref()).filter(|view| read_instance(view, &step).is_ok());
+    let built = (context.built.as_ref()).filter(|view| view.instance(&step).is_ok());
     let files = file_choices(&context.before, is_program, &args.file);
     if files.is_empty() {
         f.form.dialog.text(
@@ -670,7 +671,7 @@ pub(crate) fn form<'a>(
             // Two elements of one part keep where they are to each other
             // whatever moves: such a mate holds nothing together.
             let one_part = mate.pair().and_then(|[a, b]| {
-                (!a.part.is_empty() && a.part == b.part).then(|| a.part.clone())
+                (!a.part().is_empty() && a.part() == b.part()).then(|| a.part().to_string())
             });
             let what = match mate.kind {
                 MateKind::Anchor(_) => "holds this part where it is".to_string(),

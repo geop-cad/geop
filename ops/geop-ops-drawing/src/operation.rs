@@ -207,8 +207,7 @@ impl Shown {
             about: read_about(reader)?.into_owned(),
             placed: (placed_parts(reader)?.into_iter())
                 .map(|p| {
-                    let component = p.located.instance.component.clone();
-                    (p.name, component, p.located.world)
+                    (p.name, p.located.component, p.located.world)
                 })
                 .collect(),
         })

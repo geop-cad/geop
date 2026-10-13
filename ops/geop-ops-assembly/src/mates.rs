@@ -32,7 +32,6 @@ use geop_ops_model::Design;
 use serde::{Deserialize, Serialize};
 
 pub use crate::frame::MateEntity;
-use crate::placed::instance_path;
 
 /// `roles` in words: `a point, a line or a plane`.
 fn describe_roles(roles: &[Role]) -> String {
@@ -230,48 +229,7 @@ pub enum Resolved {
     Fixed { body: String },
 }
 
-impl<T: Clone> On<T> {
-    /// It as the part that places the part it is of — as `instance` — has
-    /// it: its body named behind the instance's name, or, of the part
-    /// itself, which held still there, now the instance.
-    fn behind(&self, instance: &str) -> Self {
-        On {
-            body: Some(match &self.body {
-                Some(body) => instance_path(instance, body),
-                None => instance.to_string(),
-            }),
-            what: self.what.clone(),
-            entity: self.entity.behind(instance),
-        }
-    }
-}
-
 impl Resolved {
-    /// The mate as the part that places the part it is a mate of — as
-    /// `instance` — has it: its bodies and joints named behind the
-    /// instance's name, and the part itself, which held still there, now
-    /// the instance. None for a fixed one: where a placed part is fixed is
-    /// for the part placing it to say.
-    pub fn behind(&self, instance: &str) -> Option<Resolved> {
-        Some(match self {
-            Resolved::Constraint { kind, a, b } => Resolved::Constraint {
-                kind: *kind,
-                a: a.behind(instance),
-                b: b.behind(instance),
-            },
-            Resolved::Joint { kind, a, b } => Resolved::Joint {
-                kind: *kind,
-                a: a.behind(instance),
-                b: b.behind(instance),
-            },
-            Resolved::Coupling { kind, joints } => Resolved::Coupling {
-                kind: *kind,
-                joints: joints.clone().map(|joint| instance_path(instance, &joint)),
-            },
-            Resolved::Fixed { .. } => return None,
-        })
-    }
-
     /// The entities it is between: none for a coupling, which is between
     /// joints, or for a part held where it is.
     pub fn entities(&self) -> Vec<MateEntity> {

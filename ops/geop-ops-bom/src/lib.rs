@@ -42,12 +42,9 @@ use geop_core_math::{
     scalars::{Ring, Scalar},
 };
 use geop_core_editor::editing::{Tone, Visual};
-use geop_core_program::element::{ElementReference, PickedElement};
-use geop_ops_assembly::{
-    Instance, instance_path,
-    placed::instance_name,
-    solids::{Shapes, own_solids},
-};
+use geop_core_program::element::PickedElement;
+use geop_core_program::instance::instance_path;
+use geop_ops_assembly::solids::{Shapes, own_solids};
 use geop_ops_model::{Design, notes_of};
 use geop_ops_output::{
     Answer, AnswerAction, Block, Bounded, Content, Does, Export, Exporter, ExporterInfo,
@@ -230,13 +227,9 @@ impl Group<'_> {
 /// The parts placed in the part `reader` reads itself, grouped.
 fn groups<'a>(reader: &PartReader<'a>) -> GeopResult<Vec<Group<'a>>> {
     let mut out: Vec<Group<'a>> = Vec::new();
-    for target in reader.targets_of::<Instance>() {
-        let Some(name) = instance_name(target.name()) else {
-            continue;
-        };
+    for (name, instance) in reader.instances() {
         let name = name.to_string();
-        let instance: &'a Instance = reader.retrieve_element(&ElementReference::whole(target))?;
-        let placed = instance.component.reader();
+        let placed = instance.reader();
         let key = key(&placed)?;
         match out.iter_mut().find(|g| g.key == key) {
             Some(group) => group.names.push(name),
@@ -252,7 +245,7 @@ fn groups<'a>(reader: &PartReader<'a>) -> GeopResult<Vec<Group<'a>>> {
 
 /// Whether the part `reader` reads places no part.
 fn places_nothing(reader: &PartReader) -> bool {
-    reader.targets_of::<Instance>().is_empty()
+    reader.instances().is_empty()
 }
 
 /// The paths of the parts placed as `name` in each of the parts placed at

@@ -15,7 +15,7 @@ use geop_core_program::operation::Operation;
 use geop_ops_assembly::Library;
 use geop_ops_model::Design;
 use geop_ops_output::Outputs;
-use geop_ops_parameters::{ProgramFile, Registry, Settings, StateValue};
+use geop_ops_parameters::{ProgramFile, Registry, Settings, StateValue, StateValues};
 
 pub use geop_ops_parameters::Runner;
 
@@ -214,6 +214,6 @@ pub fn build(program: &Program, file: &str, library: Rc<dyn Library>) -> GeopRes
     let mut runner = runner();
     let overrides = Settings::new();
     runner.given = Some(part::given(program.about(file, &overrides), library));
-    program.run(&mut runner, &overrides)?;
+    program.run(&mut runner, &overrides, &StateValues::new())?;
     Ok(runner)
 }

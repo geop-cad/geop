@@ -44,7 +44,7 @@ use serde::Serialize;
 
 pub use geop_ops_constraints::unknown::{Unknown, declare_unknowns};
 
-use crate::placed::{Instance, Located, locate, placed_parts};
+use crate::placed::{Component, Located, locate, placed_parts};
 
 /// A program and what it is given, on the runner that last ran it: what a
 /// solve runs again at every state it tries.
@@ -230,21 +230,21 @@ pub struct Freedom {
 
 /// The size of a placed part: what turns a turn into a length, and what a
 /// solve's size is at least. An empty part has none.
-fn size_of(instance: &Instance) -> GeopResult<Option<Design>> {
-    let drawn = instance.component.drawn()?;
+fn size_of(component: &Component) -> GeopResult<Option<Design>> {
+    let drawn = component.drawn()?;
     if drawn.vertices.is_empty() && drawn.faces.is_empty() {
         return Ok(None);
     }
     Ok(Some(drawn.extent.size))
 }
 
-/// The size of the largest of the placed parts `instances`, at least one.
+/// The size of the largest of the placed parts `components`, at least one.
 pub fn largest<'i>(
-    instances: impl IntoIterator<Item = GeopResult<&'i Instance>>,
+    components: impl IntoIterator<Item = GeopResult<&'i Component>>,
 ) -> GeopResult<Design> {
     let mut scale = Design::ONE;
-    for instance in instances {
-        if let Some(size) = size_of(instance?)?
+    for component in components {
+        if let Some(size) = size_of(component?)?
             && size.definitely_greater(scale)
         {
             scale = size;
@@ -260,7 +260,7 @@ pub fn scale_of(reader: &PartReader) -> GeopResult<Design> {
     largest(
         placed_parts(reader)?
             .iter()
-            .map(|placed| Ok(placed.located.instance)),
+            .map(|placed| Ok(&*placed.located.component)),
     )
 }
 
@@ -284,25 +284,18 @@ pub fn check(reader: &PartReader) -> GeopResult<Report> {
 }
 
 /// Every value of the state a solve may move in the part `reader` reads,
-/// and how: the pose of every placed part — only the one that is the state
-/// `only`, if given — held where it is as far as the constraints allow;
-/// and every unknown the steps declare, but those `held`. What a step holds
-/// fixed is not moved.
+/// and how: every unknown the steps declare — the parts placed in it, and
+/// in those, each held where it is as far as the constraints allow — but
+/// those `held`, and of those held where they are only the one that is the
+/// state `only`, if given. What a step holds fixed is not moved.
 fn freed(
     reader: &PartReader,
     only: Option<&str>,
     held: &BTreeSet<String>,
 ) -> GeopResult<BTreeMap<String, Mobility>> {
-    let declared = Unknowns::<StateValue>::of(reader)?;
-    let mut free = BTreeMap::new();
-    for placed in placed_parts(reader)? {
-        if let Some(state) = placed.located.state {
-            free.insert(state, Mobility::Held);
-        }
-    }
-    for unknown in declared.iter() {
-        free.insert(unknown.state.clone(), unknown.mobility);
-    }
+    let mut free: BTreeMap<String, Mobility> = (Unknowns::<StateValue>::of(reader)?.iter())
+        .map(|unknown| (unknown.state.clone(), unknown.mobility))
+        .collect();
     free.retain(|state, mobility| {
         *mobility != Mobility::Fixed
             && !held.contains(state)
@@ -321,34 +314,17 @@ fn missing(value: Option<&StateValue>, seed: &StateValue) -> bool {
     )
 }
 
-/// `state` with the pose of every placed part a solve of the values `free`
-/// may move where it has none: where the run put it. What the program
-/// builds is the same with it as without.
-fn posed(
+/// `state` with the unknowns a solve of the values `free` may move seeded:
+/// — not `all` — each held where it is ([`Mobility::Held`]) where the state
+/// has none, its seed where the run has it already, which builds the same;
+/// — `all` — every one where the state has none, or where the constraint
+/// its seed is unless does not hold: a free choice, which the solve makes
+/// exact.
+fn seeded(
     reader: &PartReader,
     state: &StateValues,
     free: &BTreeMap<String, Mobility>,
-) -> GeopResult<StateValues> {
-    let mut seeded = state.clone();
-    for placed in placed_parts(reader)? {
-        let seed = StateValue::Pose(placed.located.local);
-        if let Some(name) = placed.located.state
-            && free.contains_key(&name)
-            && missing(state.get(&name), &seed)
-        {
-            seeded.insert(name, seed);
-        }
-    }
-    Ok(seeded)
-}
-
-/// `state` with every unknown a solve of the values `free` may move seeded
-/// where it has none, or where the constraint its seed is unless does not
-/// hold — a free choice, which the solve makes exact.
-fn declared_seeds(
-    reader: &PartReader,
-    state: &StateValues,
-    free: &BTreeMap<String, Mobility>,
+    all: bool,
 ) -> GeopResult<StateValues> {
     let mut seeded = state.clone();
     let tolerance = tolerance(scale_of(reader)?)?;
@@ -357,26 +333,17 @@ fn declared_seeds(
         let Some(seed) = &unknown.seed else {
             continue;
         };
-        if !free.contains_key(&unknown.state) {
+        if !free.contains_key(&unknown.state) || !(all || unknown.mobility == Mobility::Held) {
             continue;
         }
         let holds = (unknown.unless.as_deref())
             .is_some_and(|c| constraints.get(c).is_some_and(|c| c.holds(tolerance)));
-        if missing(state.get(&unknown.state), seed) || (unknown.unless.is_some() && !holds) {
+        let unheld = all && unknown.unless.is_some() && !holds;
+        if missing(state.get(&unknown.state), seed) || unheld {
             seeded.insert(unknown.state.clone(), seed.clone());
         }
     }
     Ok(seeded)
-}
-
-/// `state` with what a solve of the values `free` starts from where it has
-/// none (see [`posed`] and [`declared_seeds`]).
-fn seeded(
-    reader: &PartReader,
-    state: &StateValues,
-    free: &BTreeMap<String, Mobility>,
-) -> GeopResult<StateValues> {
-    declared_seeds(reader, &posed(reader, state, free)?, free)
 }
 
 /// Numbers that carry their derivatives by one pose's step: six, as many
@@ -540,9 +507,10 @@ pub fn solve(
             .map(|s| s.state.clone())
             .collect();
         let free = freed(&reader, only.as_deref(), &held)?;
-        // What the run has: a pose seeded where it put its part is no change.
-        let had = posed(&reader, state, &free)?;
-        let mut start = declared_seeds(&reader, &had, &free)?;
+        // What the run has: a value seeded where the run had it is no
+        // change.
+        let had = seeded(&reader, state, &free, false)?;
+        let mut start = seeded(&reader, &had, &free, true)?;
         let scale = scale_of(&reader)?;
         let placed = placed_parts(&reader)?;
         let mut preferences: Vec<Box<dyn Preference<Design, StateValue>>> = Vec::new();
@@ -647,6 +615,7 @@ pub fn set(
             &reader,
             state,
             &freed(&reader, None, &set.keys().cloned().collect())?,
+            true,
         )?;
         for settings in all_settings(&reader) {
             for s in &settings.values {
@@ -675,7 +644,7 @@ fn every_value(
 ) -> GeopResult<(StateValues, Problem<'static, Design, StateValue>)> {
     let reader = rerun.reader();
     let free = freed(&reader, None, held)?;
-    let start = seeded(&reader, state, &free)?;
+    let start = seeded(&reader, state, &free, true)?;
     let problem = Problem {
         free,
         preferences: Vec::new(),
@@ -718,13 +687,11 @@ pub fn conflicting(rerun: &mut Rerun, state: &StateValues) -> GeopResult<Vec<Str
     solve::conflicting(rerun.run(), &start, &problem)
 }
 
-/// The values of the state a solve sets: the poses of the placed parts —
-/// and of those in the parts placed flexibly — and the unknowns the steps
-/// declare. What a program's file keeps of its state.
+/// The values of the state a solve sets: the unknowns the steps declare —
+/// the poses of the placed parts, and of those in the parts placed in them
+/// — what a program's file keeps of its state.
 pub fn solved_states(reader: &PartReader) -> GeopResult<Vec<String>> {
-    let mut names: Vec<String> = (placed_parts(reader)?.into_iter())
-        .filter_map(|b| b.located.state)
-        .collect();
-    names.extend(Unknowns::<StateValue>::of(reader)?.iter().map(|u| u.state.clone()));
-    Ok(names)
+    Ok((Unknowns::<StateValue>::of(reader)?.iter())
+        .map(|u| u.state.clone())
+        .collect())
 }

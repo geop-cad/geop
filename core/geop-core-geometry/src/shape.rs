@@ -15,6 +15,7 @@
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
+    primitives::Motion,
     scalars::Scalar,
     vector::Vector3,
 };
@@ -81,6 +82,14 @@ impl<S: Scalar> Axis<S> {
         let b = other.point.add(&other.direction.prod_scalar(t));
         Ok(Vector3::interpolate(&a, &b, S::ONE.div(S::TWO)?))
     }
+
+    /// The line moved by `motion`.
+    pub fn transform(&self, motion: &Motion<S>) -> Self {
+        Self {
+            point: motion.apply(&self.point),
+            direction: motion.rotate(&self.direction),
+        }
+    }
 }
 
 /// A circle: around `center`, in the plane normal to the unit vector
@@ -99,6 +108,15 @@ impl<S: Scalar> Circle<S> {
         Axis {
             point: self.center,
             direction: self.normal,
+        }
+    }
+
+    /// The circle moved by `motion`.
+    pub fn transform(&self, motion: &Motion<S>) -> Self {
+        Self {
+            center: motion.apply(&self.center),
+            normal: motion.rotate(&self.normal),
+            radius: self.radius,
         }
     }
 
@@ -130,6 +148,21 @@ pub struct Arc<S: Scalar> {
 }
 
 impl<S: Scalar> Arc<S> {
+    /// The arc moved by `motion`. A mirror turns counter-clockwise into
+    /// clockwise, so the mirrored arc runs from its end to its start.
+    pub fn transform(&self, motion: &Motion<S>) -> Self {
+        let (start, end) = (motion.apply(&self.start), motion.apply(&self.end));
+        let (start, end) = match motion.mirrors() {
+            true => (end, start),
+            false => (start, end),
+        };
+        Self {
+            circle: self.circle.transform(motion),
+            start,
+            end,
+        }
+    }
+
     /// Whether the arc could be the whole circle.
     pub fn could_be_closed(&self) -> bool {
         self.start.could_be_equal(&self.end)

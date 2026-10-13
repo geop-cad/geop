@@ -63,6 +63,37 @@ resolves one.
   target and a name, with no types. Only `ElementReference::from_picked`
   reads one, so an operation never matches on it.
 
+## Instances
+
+The `instance` module. A step may place a part another program built as an
+**instance** of the part, by a name of its own (`Part::define_instance`):
+an `Instance` holds that part (a `Subpart`: the part, and whatever its
+builder keeps with it) and where it goes (`Placement`): where a value of
+the state puts it, or — a copy — a fixed motion after another instance.
+
+- An instance is run with the state of the part under its name: the
+  state `bolt/b.pose` of the part is the state `b.pose` of the instance
+  `bolt`. Its generator is given those values
+  (`InstanceGenerator`, reading them with `Reader::states_under`), so it is
+  built again when one of them changes, and whatever solves the part's
+  state solves its instances' too.
+- An element of an instance is named by the instance's path before its
+  target's name: `bolt/model`, `asm/bolt/model` for a part placed in a
+  placed part (`INSTANCE_SEPARATOR`). A pick names it so, and every
+  `ElementReference` can hold one: a picker never asks where an element
+  is from. `Reader::retrieve_element` resolves elements of the part
+  itself, and refuses one of an instance by name; `Reader::retrieve_placed`
+  resolves either, as it is in its own part, with the instance's path
+  (`InInstance`).
+- Where an instance is, `Reader::placement` says: the factors placing it,
+  outermost first (`Factor`) — the values of the state it reads, named as
+  the part names them and recorded as read, and the fixed motions of
+  copies. What a placement is — a pose — is the state's own business:
+  `geop_ops_parameters::compose` composes them, and a constraint
+  differentiates through them by the states they name.
+- `Reader::instances` lists the instances of the part itself, and
+  `Reader::inside` reads the part of the instance at a path.
+
 ## Operations and programs
 
 The `operation`, `operation_registry` and `program` modules. An `Operation` is a unit struct: its `KIND` (the name its steps are stored

@@ -15,7 +15,7 @@ use geop_ops_extrude_revolve::shapes::{
 };
 use geop_ops_model::{NamedModel, Namer, read_model, testing::assert_model_valid_sheets};
 use geop_ops_parameters::{
-    ProgramFile, Registry, Runner, Settings, Shared,
+    ProgramFile, Registry, Runner, Settings, Shared, StateValues,
     about::{Files, define_files},
 };
 
@@ -886,7 +886,7 @@ fn an_import_reads_its_file_once() {
     };
     program.push("i", args);
     let run = |runner: &mut Runner| {
-        program.run(runner, &Settings::new()).unwrap();
+        program.run(runner, &Settings::new(), &StateValues::new()).unwrap();
         let model = read_model(&runner.part.current()).unwrap();
         // Where the model is kept: a model built anew is kept elsewhere.
         std::ptr::from_ref(model.as_ref())

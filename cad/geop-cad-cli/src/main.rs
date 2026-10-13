@@ -27,7 +27,7 @@ use geop_cad_base::{
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_ops_assembly::solving::{Rerun, check as check_mates, solve};
 use geop_ops_output::Output;
-use geop_ops_parameters::Settings;
+use geop_ops_parameters::{Settings, StateValues};
 
 #[derive(Parser)]
 #[command(
@@ -180,7 +180,7 @@ fn build(path: &Path) -> GeopResult<(Program, Runner, Vec<String>)> {
         };
         let (moved, _) = solve(&mut rerun, &program.state, &[], None)?;
         program.state.extend(moved);
-        program.run(&mut runner, &Settings::new())?;
+        program.run(&mut runner, &Settings::new(), &StateValues::new())?;
     }
     Ok((program, runner, report.failed))
 }

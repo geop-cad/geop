@@ -4,7 +4,6 @@
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
 use geop_core_program::element::ElementReference;
 use geop_ops_add_datum::Selected;
-use geop_ops_assembly::PlacedElement;
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{
     Extents,
@@ -21,8 +20,8 @@ fn registry() -> GeopResult<Registry> {
 }
 
 /// The vertex `name` of the part's model.
-fn vertex(name: &str) -> PlacedElement {
-    PlacedElement::own(Selected::Vertex(ElementReference::new(model(), name)))
+fn vertex(name: &str) -> Selected {
+    Selected::Vertex(ElementReference::new(model(), name))
 }
 
 /// A route along the bottom edge of a block 4 long, from one corner to the

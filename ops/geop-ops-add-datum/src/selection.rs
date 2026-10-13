@@ -11,13 +11,13 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    primitives::{CoordinateSystem, DatumKind},
+    primitives::{CoordinateSystem, DatumKind, Motion},
     vector::Vector3,
 };
-use geop_core_program::element::ElementReference;
+use geop_core_program::{element::ElementReference, instance::InInstance};
 use geop_ops_datums::{AnyDatum, Datums};
 use geop_ops_model::{Circle, Curve, Design, Edge, Face, Line, NamedModel, Point, Round, Vertex};
-use geop_ops_parameters::PartReader;
+use geop_ops_parameters::{PartReader, located};
 use geop_ops_sketch::PlacedSketch;
 
 one_of! {
@@ -122,6 +122,22 @@ impl Shape {
             .collect()
     }
 
+    /// It moved by `motion`.
+    pub fn transform(&self, motion: &Motion<Design>) -> GeopResult<Self> {
+        let frame = |frame: &Option<CoordinateSystem<Design>>| {
+            frame.as_ref().map(|f| motion.apply_frame(f)).transpose()
+        };
+        Ok(Shape {
+            point: self.point.map(|p| motion.apply(&p)),
+            line: self.line.as_ref().map(|l| l.transform(motion)),
+            plane: frame(&self.plane)?,
+            arc: self.arc.as_ref().map(|a| a.transform(motion)),
+            round: self.round.as_ref().map(|r| r.transform(motion)),
+            curve: self.curve.as_ref().map(|c| c.transform(motion)),
+            frame: frame(&self.frame)?,
+        })
+    }
+
     /// What a curve is: a line, a circle, something round, as it is one.
     fn of_curve(curve: NurbCurve3D<Design>) -> GeopResult<Self> {
         let arc = curve.as_arc()?;
@@ -136,8 +152,33 @@ impl Shape {
 }
 
 impl Selected {
-    /// What it is in the part `reader` reads.
+    /// What it is in the part `reader` reads: where the part, or the
+    /// instance placed in it that it is of, has it.
     pub fn shape(&self, reader: &PartReader) -> GeopResult<Shape> {
+        let InInstance { element, instance } = self.shape_in_instance(reader)?;
+        match instance.is_empty() {
+            true => Ok(element),
+            false => element.transform(&located(reader, &instance)?.motion()),
+        }
+    }
+
+    /// What it is in its own part — the part `reader` reads, or the
+    /// instance placed in it that it is of — and that instance's path:
+    /// where that is, [`geop_core_program::part::Reader::placement`] says.
+    pub fn shape_in_instance(&self, reader: &PartReader) -> GeopResult<InInstance<Shape>> {
+        let instance = self.instance();
+        let element = match instance.is_empty() {
+            true => self.own_shape(reader)?,
+            false => self.local().own_shape(&reader.inside(instance)?)?,
+        };
+        Ok(InInstance {
+            element,
+            instance: instance.to_string(),
+        })
+    }
+
+    /// What it is, of the part `reader` reads itself.
+    fn own_shape(&self, reader: &PartReader) -> GeopResult<Shape> {
         Ok(match self {
             Selected::Vertex(vertex) => {
                 let found = reader.retrieve_element(vertex)?;

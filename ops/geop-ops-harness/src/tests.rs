@@ -22,7 +22,6 @@ use geop_core_topology::{
     validation::{ValidationParameters, validate},
 };
 use geop_ops_add_datum::Selected;
-use geop_ops_assembly::PlacedElement;
 use geop_ops_datums::{ORIGIN, component_name, datums, define_datums};
 use geop_ops_extrude_revolve::shapes::{cylinder::revolved_cylinder, v3};
 use geop_ops_model::{
@@ -86,22 +85,22 @@ fn point(part: &mut Part, name: &str, at: Vector3<Design>) {
 }
 
 /// The connector `name`: the frame on its edge.
-fn connector(name: &str) -> PlacedElement {
-    PlacedElement::own(Selected::Edge(ElementReference::new(model(), name)))
+fn connector(name: &str) -> Selected {
+    Selected::Edge(ElementReference::new(model(), name))
 }
 
 /// The edge `name`, a circular one: what a route passes along its axis.
-fn rim(name: &str) -> PlacedElement {
-    PlacedElement::own(Selected::Edge(ElementReference::new(model(), name)))
+fn rim(name: &str) -> Selected {
+    Selected::Edge(ElementReference::new(model(), name))
 }
 
 /// The vertex `name`: a free point.
-fn vertex(name: &str) -> PlacedElement {
-    PlacedElement::own(Selected::Vertex(ElementReference::new(model(), name)))
+fn vertex(name: &str) -> Selected {
+    Selected::Vertex(ElementReference::new(model(), name))
 }
 
 /// One wire `d` across: a bundle `d / sqrt(fill)` across.
-fn args(through: Vec<PlacedElement>, d: f64, bend_factor: f64) -> RouteArgs {
+fn args(through: Vec<Selected>, d: f64, bend_factor: f64) -> RouteArgs {
     RouteArgs {
         through,
         wires: vec![Wire {
@@ -116,7 +115,7 @@ fn args(through: Vec<PlacedElement>, d: f64, bend_factor: f64) -> RouteArgs {
 
 /// The points `through` in `part`, as a part of the model and the datums
 /// resolves them, in `S`.
-fn waypoints<S: Scalar>(part: &Part, through: &[PlacedElement]) -> GeopResult<Vec<Waypoint<S>>> {
+fn waypoints<S: Scalar>(part: &Part, through: &[Selected]) -> GeopResult<Vec<Waypoint<S>>> {
     let mut built = given_part::<Design, StateValue>(part)?;
     define_datums(&mut built)?;
     let reader = built.current();
@@ -442,9 +441,9 @@ fn check_unsupported_routes_are_refused<S: Scalar>() {
     ] {
         point(&mut part, name, at);
     }
-    let refused = |through: Vec<PlacedElement>| refusal::<S>(&part, &args(through, 2.0, 5.0));
+    let refused = |through: Vec<Selected>| refusal::<S>(&part, &args(through, 2.0, 5.0));
     let axis = component_name(ORIGIN, DatumComponent::Axis(FrameAxis::Z));
-    let axis = PlacedElement::own(Selected::Datum(ElementReference::new(datums(), &axis)));
+    let axis = Selected::Datum(ElementReference::new(datums(), &axis));
     let message = refused(vec![connector("start"), axis]);
     assert!(
         message.contains("point 2 (datum origin:z) is an axis"),

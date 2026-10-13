@@ -11,7 +11,7 @@ use geop_core_program::{element::ElementReference, part::Reader};
 use geop_ops_datums::{AnyDatum, Datums, ORIGIN, component_name, datums, read_datums};
 use geop_ops_extrude_revolve::shapes::v3;
 use geop_ops_model::model;
-use geop_ops_parameters::{ProgramFile, Registry, Runner, Settings, StateValue};
+use geop_ops_parameters::{ProgramFile, Registry, Runner, Settings, StateValue, StateValues};
 use geop_ops_sketch::{PlacedSketch, sketch_element, whole_sketch};
 
 use geop_ops_extrude_revolve::testing::{Built, drilled_box as drilled};
@@ -70,7 +70,7 @@ impl Part {
             construction,
         };
         program.push(id, args);
-        program.run(&mut self.runner, &Settings::new())?;
+        program.run(&mut self.runner, &Settings::new(), &StateValues::new())?;
         Ok(program)
     }
 
@@ -102,7 +102,7 @@ impl Part {
 
     /// The part as the program — without a datum step tried since — has it.
     fn seen(&mut self) -> Reader<'_, S, StateValue> {
-        self.program.run(&mut self.runner, &Settings::new()).unwrap();
+        self.program.run(&mut self.runner, &Settings::new(), &StateValues::new()).unwrap();
         self.runner.part.current()
     }
 

@@ -17,17 +17,17 @@ use geop_core_editor::{
 use geop_core_program::element::ElementReference;
 use geop_ops_datums::Datums;
 use geop_ops_model::{Design, Line, NamedModel, Namer, Round};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, StateValues, StepContext, located};
 use geop_ops_pattern::spacing::{Spacing, count_field, whole_count};
 use geop_ops_sketch::PlacedSketch;
 use serde::{Deserialize, Serialize};
 
-use crate::placed::{Instance, Placement, instance, instance_name, read_instance};
+use crate::placed::{Instance, Placement};
 
 one_of! {
     /// The line copies of a placed part go along, or the axis they go round,
-    /// in the part itself: a straight edge, a circular edge or a round face,
-    /// a datum axis, a sketch's line.
+    /// in the part or in a part placed in it: a straight edge, a circular
+    /// edge or a round face, a datum axis, a sketch's line.
     pub enum PatternAxis -> Axis<Design> {
         Line(ElementReference<NamedModel<Design>, Line>),
         Round(ElementReference<NamedModel<Design>, Round>),
@@ -44,8 +44,8 @@ one_of! {
 ///
 /// A copy goes where the pattern puts it, relative to where the part is —
 /// no mate moves it, and when the part moves, its copies move with it. The
-/// axis is picked in the part itself: an edge, a datum axis, a sketch's
-/// line — not one of a placed part.
+/// axis is picked in the part or in a part placed in it — an edge, a datum
+/// axis, a sketch's line — where it is as the copies are placed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PartPattern;
 
@@ -134,22 +134,25 @@ fn motions(
 
 /// The placed parts the steps before have placed, by name, in order.
 fn placed_names(before: &PartReader) -> Vec<String> {
-    (before.targets_of::<Instance>().into_iter())
-        .filter_map(|target| instance_name(target.name()).map(str::to_string))
+    (before.instances().into_iter())
+        .map(|(name, _)| name.to_string())
         .collect()
 }
 
-/// The copy of the placed part `seed` going `motion` after it: the
-/// generator of a copy's instance.
-fn copy(reader: &PartReader, (seed, motion): &(String, Pose<Design>)) -> GeopResult<Instance> {
-    let placed = read_instance(reader, seed)?;
+/// The copy of the placed part `seed` going `motion` after it — the same
+/// build, so run with the state it is run with: the generator of a copy's
+/// instance.
+fn copy(
+    reader: &PartReader,
+    (seed, motion): &(String, Pose<Design>),
+    _: &StateValues,
+) -> GeopResult<Instance> {
     Ok(Instance {
-        component: placed.component.clone(),
+        component: reader.instance(seed)?.component.clone(),
         placement: Placement::After {
             of: seed.clone(),
-            motion: *motion,
+            motion: StateValue::Pose(*motion),
         },
-        fixed: false,
     })
 }
 
@@ -200,7 +203,7 @@ impl PartOperation for PartPattern {
     fn run(step: &str, part: &mut BuildPart, args: &PartPatternArgs) -> GeopResult<()> {
         let ctx = with_context!("part_pattern({step}, {args:?})");
         let axis = check(args).with_context(ctx)?;
-        if read_instance(&part.current(), &args.part).is_err() {
+        if part.current().instance(&args.part).is_err() {
             return Err(GeopError::new(format!(
                 "{:?} is no part placed so far: pattern one an earlier step placed",
                 args.part
@@ -209,13 +212,15 @@ impl PartOperation for PartPattern {
         }
         let motions = {
             let reader = part.current();
-            let axis = axis.resolve(&reader).with_context(ctx)?;
+            let axis = axis.resolve_placed(&reader).with_context(ctx)?;
+            let motion = located(&reader, &axis.instance).with_context(ctx)?.motion();
+            let axis = axis.element.transform(&motion);
             motions(args, &axis, &reader).with_context(ctx)?
         };
         let namer = Namer::new("part_pattern", step)?;
         for (k, motion) in (1..).zip(motions) {
             let name = namer.name(&[&k.to_string()]);
-            part.define_target(&instance(&name), &(args.part.clone(), motion), copy)
+            part.define_instance(&name, &(args.part.clone(), motion), copy)
                 .with_context(ctx)?;
         }
         Ok(())

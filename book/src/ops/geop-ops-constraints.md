@@ -10,26 +10,31 @@ through this crate.
 ## What the steps declare
 
 A program's steps say what they require of the state and which values of
-it a solve may move. Each of the two is one target of the part, built up by
-the steps one revision after another, so a solve of any program is set up
-from the part alone:
+it a solve may move, so a solve of any program is set up from the part
+alone:
 
-- **Constraints** (`Constraint`, gathered in the target `constraints()`, a
-  `Constraints`): residuals a step requires to vanish — or, for a limit
-  (`Bound::AtMost`), to stay at most zero — each a length, and their
-  derivatives by the steps of the states they read. A step defines its
-  constraints with `define_constraints` in two targets: its own, made by its
-  generator and rebuilt only when what that read changes, and its revision
-  of `Constraints`, which adds them to those of the steps before. A solve
-  runs the program at every state it tries; the split keeps a step's
-  generator from running again only because a constraint of an earlier
-  step moved.
+- **Constraints** (`Constraint`): residuals a step requires to vanish — or,
+  for a limit (`Bound::AtMost`), to stay at most zero — each a length, and
+  their derivatives by the steps of the states they read. A step defines
+  its constraints with `define_constraints` in a target of its own
+  (`constraints:<step>`), made by its generator and rebuilt only when what
+  that read changes; `Constraints::of` gathers every step's. A step whose
+  constraints failed fails them all, and a name two steps define is an
+  error naming both.
 - **Unknowns** (`unknown::Unknown`, gathered in `unknown::unknowns()`):
   a value of the state a step lets a solve move — how (`Mobility`), where a
   solve starts it from where the state has none (`seed`), or where a given
   constraint does not hold (`unless`: a joint's coordinate, measured from
   where its parts are unless the joint holds) — or that it holds fixed.
   Declared with `unknown::declare_unknowns`.
+
+Both come up through the instances placed in a part (see
+[geop-core-program](../core/geop-core-program.md#instances)): a constraint
+`c` of the instance `bolt` is the part's `bolt/c`, its derivatives by the
+state `bolt/s` where the instance's are by `s`, and its residuals as they
+are — a length within the instance, wherever it is. An instance's unknowns
+come up the same way, each starting where the instance has it. A copy's are
+those of what it copies.
 
 ## Solving (`solve`)
 
@@ -43,6 +48,10 @@ state tried by running the program again (`Run`) — what read no state that
 changed is reused, not built again; `Preference`s — a drag's pulls — are
 the system's preferences, and every value nothing pulls stays as near where
 it was as the constraints let it.
+
+So solving happens outside the part: the loop runs the part at a state and
+its inputs, reads its constraints, steps the state, and runs it again. No
+step writes the state.
 
 - `solve`: where the free values have to be for every constraint to hold,
   group by group, limits kept by an active set. Its `Solved` carries the

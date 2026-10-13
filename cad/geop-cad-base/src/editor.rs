@@ -36,8 +36,9 @@ use geop_core_program::{
     element::PickedElement,
     program::{Program as Steps, ProgramStep},
 };
+use geop_core_program::instance::instance_path;
 use geop_ops_assembly::{
-    Library, instance_path, placed_parts,
+    Library, placed_parts,
     solving::{self, Freedom, Report, Rerun, SettingsState},
 };
 use geop_ops_model::Design;
@@ -1516,7 +1517,7 @@ impl Editor {
         let placing = (self.open.as_ref()).is_some_and(|open| self.build.picks_built(&self.editors, open));
         if !placing && let Ok(placed) = placed_parts(&self.shown_part(steps)) {
             for part in placed {
-                if let Ok(drawn) = part.located.instance.component.drawn() {
+                if let Ok(drawn) = part.located.component.drawn() {
                     hidden
                         .extend((drawn.datums.iter()).map(|d| instance_path(&part.name, &d.name)));
                 }

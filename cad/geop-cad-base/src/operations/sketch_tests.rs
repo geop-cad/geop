@@ -206,7 +206,7 @@ fn placed_parts_take_the_parameters_given() {
     // An element of a placed part, where it is placed.
     let corner = |instance: &str| {
         let located = locate(&view, instance).unwrap();
-        let component = located.instance.component.reader();
+        let component = located.instance.reader();
         let reference = sketch_element::<Point>("outline", PointId(2));
         let p = located
             .world
@@ -225,7 +225,7 @@ fn placed_parts_take_the_parameters_given() {
         "{large:?}"
     );
     let placed = placed_parts(&view).unwrap();
-    let color = |part: &Placed| input(&part.located.instance.component.reader(), COLOR);
+    let color = |part: &Placed| input(&part.located.instance.reader(), COLOR);
     let colors: Vec<Option<Setting>> = placed.iter().map(color).collect();
     let text = |c: &str| Some(Setting::Text(c.into()));
     assert!(colors.contains(&text("#3e7bd0")), "{colors:?}");
@@ -233,7 +233,7 @@ fn placed_parts_take_the_parameters_given() {
     // The table's row and the number given are what the large plate was
     // built with.
     let large = placed.iter().find(|p| color(p) == text("#3e7bd0")).unwrap();
-    let large = large.located.instance.component.reader();
+    let large = large.located.instance.reader();
     assert_eq!(input(&large, "screw"), text("M6"));
     let clearance = match input(&large, "screw.clearance") {
         Some(Setting::Number(v)) => Some(v),

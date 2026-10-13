@@ -40,10 +40,7 @@ pub mod tree;
 mod xml;
 pub mod zip;
 
-use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
-    rc::Rc,
-};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -52,9 +49,10 @@ use geop_core_math::{
     solvers::walk::{Walked, walk},
     vector::Vector3,
 };
+use geop_core_program::instance::instance_path;
 use geop_core_topology::mass::MassProperties;
 use geop_ops_assembly::{
-    Component, CouplingKind, Instance, JointKind, Motion, Resolved, STL_QUALITY, instance_path,
+    Component, CouplingKind, Instance, JointKind, Motion, Resolved, STL_QUALITY, component_of,
     joint_parameter,
     joints::{Connector, measure},
     mechanism::mates_of,
@@ -628,14 +626,14 @@ pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<Urd
         }
         for &b in &link.bodies {
             let body = &bodies[b];
-            let component = &body.instance.component;
+            let component = component_of(body.instance).with_context(&ctx)?;
             // A part placed is a body of its own solids: the parts placed
             // in it are bodies of their own.
             let prefix = instance_path(&body.name, "");
             let placed = component.reader();
             masses(&placed, &prefix, Some(body.world), &mut shapes, &mut masses_of)
                 .with_context(&ctx)?;
-            let key = Some(Rc::as_ptr(component));
+            let key = Some(std::rc::Rc::as_ptr(&component));
             let stem = read_about(&placed)?.stem().to_string();
             if let Some(mesh) = meshes.of(key, &stem, &placed)? {
                 visuals.push(Visual {

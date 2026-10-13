@@ -48,7 +48,7 @@ fn assert_close(a: [f64; 3], b: [f64; 3]) {
 fn frame_of(runner: &Runner, on: Selected, at: Option<Selected>) -> CoordinateSystem<S> {
     let entity = MateEntity {
         at,
-        ..MateEntity::own(on)
+        ..MateEntity::on(on)
     };
     entity.frame(&runner.part.current()).unwrap()
 }
@@ -197,7 +197,7 @@ fn picked(view: &PartView, x: f64, y: f64) -> (Selected, Option<Selected>) {
         .unwrap_or_else(|| panic!("nothing to put a frame on at ({x}, {y})"));
     let entity = MateEntity::from_picked(&hit.element)
         .unwrap_or_else(|| panic!("{:?} is no frame", hit.element));
-    assert_eq!(entity.part, "", "the part itself is picked in");
+    assert_eq!(entity.part(), "", "the part itself is picked in");
     (entity.on, entity.at)
 }
 

@@ -15,7 +15,7 @@ use geop_ops_assembly::{
     solving::{self, Rerun},
 };
 use geop_ops_output::Output;
-use geop_ops_parameters::{Settings, StateValue, pose_state};
+use geop_ops_parameters::{Settings, StateValue, StateValues, pose_state};
 use geop_ops_urdf::{JointType, Mechanism, Origin, Robot, URDF_FILE, UrdfExport, export};
 
 use crate::Program;
@@ -69,7 +69,7 @@ fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Buil
     let (moved, report) = solving::solve(&mut rerun, &program.state, &[], None).unwrap();
     assert!(report.converged, "{report:?}");
     program.state.extend(moved);
-    program.run(&mut built, &Settings::new()).unwrap();
+    program.run(&mut built, &Settings::new(), &StateValues::new()).unwrap();
     Built(built, program)
 }
 

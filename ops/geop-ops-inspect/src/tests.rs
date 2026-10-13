@@ -449,7 +449,7 @@ fn measure_picks_what_it_measures() {
 /// corner at the origin of a unit cube placed 10 along `x` is at 10.
 #[test]
 fn placed_parts_are_measured_where_they_are() {
-    use geop_ops_assembly::{Component, Instance, Placement, instance};
+    use geop_ops_assembly::{Component, Instance, Placement};
     use geop_ops_parameters::{StateValue, pose_state};
     use geop_ops_view::{INSTANCE_SEPARATOR, PartView};
     use std::{collections::BTreeSet, rc::Rc};
@@ -474,9 +474,8 @@ fn placed_parts_are_measured_where_they_are() {
     let placed = Instance {
         component,
         placement: Placement::State(pose_state("p")),
-        fixed: true,
     };
-    part.define_target(&instance("p"), &placed, given).unwrap();
+    (part.define_instance("p", &placed, |_, placed, _| Ok(placed.clone()))).unwrap();
     part.end_run(0);
 
     let corner = |name: &str| PickedElement {

@@ -2,7 +2,7 @@
 //! [`Unknown`]s, and the part's one target holding them all ([`Unknowns`]),
 //! so that a solve of any program is set up from the part alone.
 
-use std::{borrow::Cow, collections::BTreeMap};
+use std::collections::BTreeMap;
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -10,6 +10,7 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind},
+    instance::instance_path,
     part::{Generator, Input, Part, Reader, State},
     target::TargetReference,
 };
@@ -41,12 +42,35 @@ pub struct Unknowns<S: State>(BTreeMap<String, Unknown<S>>);
 impl<S: State> Unknowns<S> {
     /// The unknowns of the part `reader` reads: none where no step declared
     /// any, an error where a declaration failed.
-    pub fn of<'a, I: Input>(reader: &Reader<'a, I, S>) -> GeopResult<Cow<'a, Self>> {
+    ///
+    /// Those of every instance placed in it come up behind the instance's
+    /// name, as its constraints do (see [`crate::Constraints::of`]), each
+    /// starting where the instance's part has it, if it has it at all. A
+    /// state the part holds fixed stays fixed.
+    pub fn of<I: Input>(reader: &Reader<I, S>) -> GeopResult<Self> {
         let reference = unknowns::<S>();
-        if !reader.defines(&reference) {
-            return Ok(Cow::Owned(Self::default()));
+        let mut all = match reader.defines(&reference) {
+            true => reader.retrieve_element(&ElementReference::whole(reference))?.clone(),
+            false => Self::default(),
+        };
+        for (name, instance) in reader.instances() {
+            if instance.is_copy() {
+                continue;
+            }
+            let inside = instance.reader();
+            let declared = Self::of(&inside)
+                .map_err(|e| e.with_context(format!("the unknowns of the placed part `{name}`")))?;
+            for unknown in declared.0.into_values() {
+                let seed = inside.given_state(&unknown.state).or(unknown.seed);
+                all.declare(Unknown {
+                    state: instance_path(name, &unknown.state),
+                    seed,
+                    unless: (unknown.unless).map(|unless| instance_path(name, &unless)),
+                    ..unknown
+                });
+            }
         }
-        (reader.retrieve_element(&ElementReference::whole(reference))).map(Cow::Borrowed)
+        Ok(all)
     }
 
     /// The unknown the state `state` is, if a step declared it.

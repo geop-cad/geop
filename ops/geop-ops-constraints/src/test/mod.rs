@@ -2,6 +2,7 @@
 //! operation pinning a position to a frame — and the tests of constraints
 //! and unknowns as targets of a part.
 
+mod instances;
 mod solve;
 
 use std::{cell::RefCell, collections::BTreeMap};
@@ -262,6 +263,8 @@ fn errors(output: &RunOutput) -> Vec<(String, String)> {
 fn registry() -> OperationRegistry<Sc, Pose> {
     (OperationRegistry::default().with(InputFrameOperation))
         .and_then(|o| o.with(PinFrameOperation))
+        .and_then(|o| o.with(instances::PlaceOperation))
+        .and_then(|o| o.with(instances::FreeOperation))
         .unwrap()
 }
 

@@ -775,7 +775,15 @@ on is `ElementReference<NamedModel<Design>, Plane>`, made with
 `geop_ops_model::element(name)`; a datum with `geop_ops_datums::datum`; a
 sketch with `geop_ops_sketch::whole_sketch`. A field that takes one of
 several kinds of thing is an enum made by `one_of!`, which derives how it
-is saved, picked and resolved. Each crate defines its own targets and draws
+is saved, picked and resolved. An element of a part placed in the part is
+the same reference, its target behind the instance's path (`plate/model`,
+`.behind("plate")`): pickers never ask where an element is from. An
+operation that can only use the part's own reads it with
+`retrieve_element`, which refuses the rest by name; one that can use any
+reads it with `retrieve_placed` (or `resolve_placed`, `Selected::shape`)
+and places it where `geop_ops_parameters::located` says. Instances'
+constraints and unknowns come up through `Constraints::of` and
+`Unknowns::of`; no step writes the state, a solve outside the part does. Each crate defines its own targets and draws
 them; `geop_cad_base::part` only composes them (the given step, the drawing,
 the structure). A run's inputs are numbers only: text parameters, colour,
 material and the library are targets of the given step.

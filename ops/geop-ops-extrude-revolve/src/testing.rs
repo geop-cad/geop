@@ -19,7 +19,9 @@ use geop_core_program::{element::ElementReference, program::ProgramStep};
 use geop_core_sketch::{CurveId, PointId};
 use geop_ops_datums::{define_datums, origin_plane};
 use geop_ops_model::{Design, NamedModel, model, read_model};
-use geop_ops_parameters::{ProgramFile, Registry, Runner, Settings, about::define_about};
+use geop_ops_parameters::{
+    ProgramFile, Registry, Runner, Settings, StateValues, about::define_about,
+};
 use geop_ops_booleans::Combine;
 use geop_ops_sketch::{AddSketch, AddSketchArgs, Sketch, SketchPlane, whole_sketch};
 use serde::{Serialize, de::DeserializeOwned};
@@ -197,7 +199,7 @@ pub trait Built {
 impl Built for ProgramFile {
     fn built(&self, registry: fn() -> GeopResult<Registry>) -> GeopResult<Runner> {
         let mut runner = runner_of(self, registry()?);
-        self.run(&mut runner, &Settings::new())?;
+        self.run(&mut runner, &Settings::new(), &StateValues::new())?;
         Ok(runner)
     }
 }

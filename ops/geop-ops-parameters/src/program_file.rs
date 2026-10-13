@@ -91,12 +91,20 @@ impl ProgramFile {
         self.program.steps.push(step);
     }
 
-    /// Runs it with its parameters `overrides` instead of its own on
-    /// `runner`, which keeps what earlier runs built and gives what else a
-    /// run is given ([`Runner::given`]). Fails naming the first step that
-    /// does.
-    pub fn run(&self, runner: &mut Runner, overrides: &Settings) -> GeopResult<()> {
-        let output = runner.run(&self.program, &self.inputs(overrides), &self.state);
+    /// Runs it with its parameters `overrides` instead of its own, and the
+    /// values `state` gives of its state instead of its own — as the part
+    /// placing it has them — on `runner`, which keeps what earlier runs
+    /// built and gives what else a run is given ([`Runner::given`]). Fails
+    /// naming the first step that does.
+    pub fn run(
+        &self,
+        runner: &mut Runner,
+        overrides: &Settings,
+        state: &StateValues,
+    ) -> GeopResult<()> {
+        let mut given = self.state.clone();
+        given.extend(state.iter().map(|(name, value)| (name.clone(), value.clone())));
+        let output = runner.run(&self.program, &self.inputs(overrides), &given);
         match output.step_errors.into_iter().next() {
             Some((step, error)) => Err(error.with_context(format!("step {step:?}"))),
             None => Ok(()),

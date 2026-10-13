@@ -20,18 +20,21 @@ with the parts placed in it: their solids, each of its own part's material
                 "mates": {
                   "m1": { "type": "concentric",
                           "entities": [
-                            { "part": "pin", "on": { "face": "extrude(pin,pin_sketch,c1)" } },
+                            { "on": { "face": { "target": "pin/model", "name": "extrude(pin,pin_sketch,c1)" } } },
                             { "on": { "face": "extrude(hole,hole_sketch,c1)" } } ] } } } } ],
   "state": {
     "pin.pose": { "position": [1.0, 1.0, 0.5], "rotation": [1.0, 0.0, 0.0, 0.0] } } }
 ```
 
 `file` is relative to the program's own file. A mate holds by `MateEntity`s:
-an element `on` of the part placed at `part` — `pin`, or `asm/pin` for one
-placed in a placed part — or, with no `part`, of the part itself, which is
-ground. `on` is a `Selected` of
+an element `on` — a `Selected` of
 [geop-ops-add-datum](./geop-ops-add-datum.md): a vertex, an edge, a face, a
-datum (`{"datum": "origin:xy"}`) or a sketch's point or curve. Where the
+datum (`{"datum": "origin:xy"}`) or a sketch's point or curve — of the part
+itself, which is ground, or of a part placed in it, its target behind the
+part's path: `pin/model`, or `asm/pin/model` for one placed in a placed
+part (see [geop-core-program](../core/geop-core-program.md#instances)). Any
+other step's reference takes an element of a placed part the same way: a
+datum on a placed part's face, a pattern round a placed part's hole. Where the
 part goes is not an argument but the program's state `pin.pose` — a
 position and a rotation quaternion (see
 [geop-ops-parameters](./geop-ops-parameters.md#the-state-state)) — solved
@@ -39,13 +42,14 @@ for (see [below](#solving-the-state)). The step places the part there and
 adds its mates; it solves nothing. So a later step's mates that move it
 move it for every step.
 
-The part placed is an `Instance`, a target of its own (`instance(name)`),
-of a `Component`: the part another file builds, built once by the run's
-`Library` (the given target `library()`, see
-[geop-cad-base](../cad/geop-cad-base.md#the-workspace)) for each set of
-parameter values it is placed with, and drawn once however often it is
-placed. `placed_parts` lists every placed part, however deep, and `locate`
-finds where an element of one is.
+The part placed is an instance of the part (see
+[geop-core-program](../core/geop-core-program.md#instances)) of a
+`Component`: the part another file builds, built by the run's `Library`
+(the given target `library()`, see
+[geop-cad-base](../cad/geop-cad-base.md#the-workspace)) once for each set
+of parameter values and state it is placed with, and drawn once however
+often it is placed. `placed_parts` lists every placed part, however deep,
+and `locate` where one is.
 
 ## Parameters
 
@@ -78,13 +82,11 @@ A `Mate` is what two entities must be to each other (`MateKind`):
   entity, it holds the part the step places (the first part placed gets
   one).
 
-Every parameter of the program placed becomes one of this program's, named
-behind the step's id — `hinge/pin.pose` — and the part is built with those:
-its parts are this program's to move, and its mates are solved with this
-program's, but not its `fixed` mates: what is fixed in a part placed is
-where it is placed. The file is rebuilt incrementally, only from the first
-step that reads a value that changed — for a file that only places parts,
-only its placements.
+Every value of the state of the program placed becomes one of this
+program's, named behind the step's id — `hinge/pin.pose` — and the part is
+built with those: its parts are this program's to move, and its mates come
+up with its constraints, solved with this program's. What it holds fixed
+stays fixed in it, which moves as a whole.
 
 ## Editing
 
@@ -123,8 +125,9 @@ constraint holds — pulled by a drag (`Pull::Point`), a pose typed in
 (`Pull::Pose`), a value set (`Pull::Value`, an angle driven there in
 steps) — `set` sets values a user sets, `check` says which constraints
 hold, `freedom` how free each placed part is, and `conflicting` which
-constraints cannot hold together. Each placed part moves by its pose state;
-everything else a solve may move, the steps declare. A solve's `Report`
+constraints cannot hold together. Everything a solve may move the steps
+declare: `AddPart` the pose state of the part it places, held where it is
+as far as its mates let it. A solve's `Report`
 says which values no true solution is proven for, and why.
 
 ## Solids and STL

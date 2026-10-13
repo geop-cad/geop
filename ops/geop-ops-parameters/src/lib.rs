@@ -29,7 +29,7 @@ pub use about::{About, Files, MaterialOf, Shared, about, files, read_about, read
 pub use geop_ops_model::Design;
 pub use parameters::{COLOR, Material, Parameter, ParameterKind, Parameters, Setting, Settings};
 pub use program_file::{ProgramFile, Runner, StateValues};
-pub use state::{StateValue, pose_state};
+pub use state::{PoseOf, StateValue, compose, located, pose_in, pose_state};
 
 /// A part as a program builds it: numbers its inputs, its state of
 /// [`StateValue`]s.

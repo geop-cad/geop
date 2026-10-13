@@ -4,7 +4,7 @@
 use std::{collections::BTreeSet, rc::Rc};
 
 use geop_core_math::{geop_error::GeopResult, primitives::Pose};
-use geop_ops_assembly::{Component, Instance, Placement, instance};
+use geop_ops_assembly::{Component, Instance, Placement};
 use geop_ops_model::{Design, NamedModel, model};
 use geop_ops_parameters::{BuildPart, Parameters, PartReader, StateValue, pose_state};
 use geop_ops_view::PartView;
@@ -35,11 +35,10 @@ pub(crate) fn built_with(
     for (name, component, _) in placed {
         part.begin_step();
         let placed = Instance {
-            component: Rc::clone(component),
+            component: (*component).clone(),
             placement: Placement::State(pose_state(name)),
-            fixed: true,
         };
-        part.define_target(&instance(name), &placed, given).unwrap();
+        (part.define_instance(name, &placed, |_, placed, _| Ok(placed.clone()))).unwrap();
     }
     then(&mut part);
     part.end_run(0);

@@ -8,9 +8,10 @@ use geop_core_math::{
     scalars::{Scalar, as_f64},
     solvers::{least_squares::Rows, system::Variable},
 };
+use geop_core_program::instance::Factor;
 use serde::{Deserialize, Serialize};
 
-use crate::Design;
+use crate::{Design, PartReader};
 
 /// A value of a part's state: a number or a pose. Serialized as itself —
 /// `2.5`, `{"position": [...], "rotation": [...]}`.
@@ -25,6 +26,46 @@ pub enum StateValue {
 /// `bolt.pose`.
 pub fn pose_state(instance: &str) -> String {
     format!("{instance}.pose")
+}
+
+/// The pose a value holds, if it holds one: none for a number — what a
+/// pose state reads as before anything solved for it.
+pub fn pose_in(value: &StateValue) -> Option<Pose<Design>> {
+    match value {
+        StateValue::Pose(pose) => Some(*pose),
+        StateValue::Number(_) => None,
+    }
+}
+
+/// How the pose of each state a placement reads enters it, computed in
+/// `T`: as it is, or moved by a step to differentiate by it. Given the
+/// state's name and the pose it holds.
+pub type PoseOf<'f, T> = dyn FnMut(&str, Pose<Design>) -> Pose<T> + 'f;
+
+/// The pose an instance is at whose placement is `factors` (see
+/// [`geop_core_program::part::Reader::placement`]), in `T`: theirs,
+/// composed outermost first, each state's entering as `pose_of` has it. A
+/// value that holds no pose — a state before anything solved for it —
+/// is no motion.
+pub fn compose<T: Scalar>(factors: &[Factor<StateValue>], pose_of: &mut PoseOf<'_, T>) -> Pose<T> {
+    let mut poses = factors.iter().map(|factor| match factor {
+        Factor::State { state, value } => {
+            pose_of(state, pose_in(value).unwrap_or_else(Pose::identity))
+        }
+        Factor::Fixed(value) => pose_in(value).unwrap_or_else(Pose::identity).cast(),
+    });
+    // The first as it is: composing it after no motion would round it.
+    let first = poses.next().unwrap_or_else(Pose::identity);
+    poses.fold(first, |world, pose| world.compose(&pose))
+}
+
+/// Where the instance at `path` is in the part `reader` reads: none — no
+/// motion — for the part itself, at the empty path.
+pub fn located(reader: &PartReader, path: &str) -> GeopResult<Pose<Design>> {
+    if path.is_empty() {
+        return Ok(Pose::identity());
+    }
+    Ok(compose(&reader.placement(path)?, &mut |_, pose| pose))
 }
 
 /// A value the run gives none of reads as the number zero.

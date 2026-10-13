@@ -17,10 +17,9 @@ use geop_core_math::{
 use geop_core_program::element::PickedElement;
 use geop_core_topology::distance::{Feature, PlacedFace, closest_points};
 use geop_ops_add_datum::{Selected, Shape};
-use geop_ops_assembly::placed::part_at;
 use geop_ops_model::Design;
 use geop_ops_output::{Answer, Block, Bounded, Row};
-use geop_ops_parameters::PartReader;
+use geop_ops_parameters::{PartReader, located};
 use geop_ops_view::{INSTANCE_SEPARATOR, drawn};
 use serde::Serialize;
 
@@ -167,7 +166,10 @@ impl<'a> Picked<'a> {
     /// is in the part it is of.
     fn of(reader: &PartReader<'a>, picked: &PickedElement) -> GeopResult<Self> {
         let (path, target) = split(picked);
-        let (part, pose) = part_at(reader, path)?;
+        let (part, pose) = match path {
+            "" => (reader.clone(), None),
+            path => (reader.inside(path)?, Some(located(reader, path)?)),
+        };
         let inner = PickedElement {
             target: target.to_string(),
             ..picked.clone()

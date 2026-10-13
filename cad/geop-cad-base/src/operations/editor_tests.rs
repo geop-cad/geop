@@ -13,7 +13,7 @@ use geop_core_math::{
 use geop_core_program::element::PickedElement;
 use geop_core_editor::selectable::Selectable;
 use geop_ops_add_datum::Selected;
-use geop_ops_assembly::{MateEntity, PlacedElement};
+use geop_ops_assembly::MateEntity;
 use geop_ops_booleans::Combine;
 use geop_ops_datums::datum;
 use geop_ops_extrude_revolve::{ExtrudeArgs, Output};
@@ -738,17 +738,13 @@ fn new_route_is_picked_and_its_wires_chosen() {
     };
     // The rims as edges, the corner as its vertex: a point, which leaves
     // the route free to choose its way.
-    let picked: Vec<PlacedElement> = (through.elements())
-        .map(|e| PlacedElement::from_picked(e).expect("an element of the part"))
+    let picked: Vec<Selected> = (through.elements())
+        .map(|e| Selected::from_picked(e).expect("an element of the part"))
         .collect();
     assert!(
         matches!(
             picked.as_slice(),
-            [
-                PlacedElement { on: Selected::Edge(_), .. },
-                PlacedElement { on: Selected::Edge(_), .. },
-                PlacedElement { on: Selected::Vertex(_), .. },
-            ]
+            [Selected::Edge(_), Selected::Edge(_), Selected::Vertex(_)]
         ),
         "{picked:?}"
     );

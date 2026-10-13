@@ -125,7 +125,7 @@ pub fn placed_solids<'a>(reader: &PartReader<'a>) -> GeopResult<Vec<PlacedSolid<
     let mut out = own_solids(reader)?;
     for placed in placed_parts(reader)? {
         let prefix = format!("{}{INSTANCE_SEPARATOR}", placed.name);
-        let inner = placed.located.instance.component.reader();
+        let inner = placed.located.instance.reader();
         out.extend(own_solids_at(&inner, &prefix, Some(placed.located.world))?);
     }
     Ok(out)

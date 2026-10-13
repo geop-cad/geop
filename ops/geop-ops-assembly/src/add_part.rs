@@ -18,16 +18,17 @@ use geop_core_program::element::ElementReference;
 use geop_ops_add_datum::Selected;
 use geop_ops_datums::{ORIGIN, datums};
 use geop_ops_model::{Design, Namer};
-use geop_ops_parameters::{BuildPart, PartReader, Settings, StateValue, StepContext, pose_state};
+use geop_ops_parameters::{
+    BuildPart, PartReader, Settings, StateValue, StateValues, StepContext, pose_state,
+};
 use geop_ops_view::{Listed, Listing, listing};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Mate, MateEntity, Resolved,
+    Mate, MateEntity,
     editor::{self, PartEditing, PartSession},
-    mate,
-    mechanism::{define, mates_of, resolve},
-    placed::{Instance, Placement, instance, instance_path, read_instance, read_library},
+    mechanism::{define, resolve},
+    placed::{Instance, Placement, read_library},
 };
 
 /// Places the part the program in another file builds, named by the
@@ -46,9 +47,10 @@ use crate::{
 /// and the step's editor says which.
 ///
 /// The parts placed in the part placed are this program's to move too:
-/// their poses are its state, behind the step's id, starting where the
-/// placed part's program has them (see [`crate::placed`]); and their
-/// mates hold them here as they held them there.
+/// their poses are its state, behind the step's id, which the part placed
+/// is run with — starting where its own program has them — and their mates
+/// come up with its constraints, to hold them here as they held them there
+/// (see [`geop_core_program::instance`]).
 ///
 /// A [`Mate::fixed_here`] among its mates, given no entity, holds the part this
 /// step places.
@@ -89,36 +91,25 @@ impl AddPartArgs {
             self.mates.retain(|_, mate| !mate.is_fixed());
         }
     }
-
-    /// Whether a fixed mate holds the part this step places.
-    pub(crate) fn is_fixed(&self) -> bool {
-        self.mates.values().any(Mate::is_fixed)
-    }
 }
 
 /// The part the step `step` places from `file`, its parameters as
-/// `parameters` give them, where its pose state puts it — held there if
-/// `fixed`: the generator of its instance.
+/// `parameters` give them, run with `state`, where its pose state puts it:
+/// the generator of its instance.
 fn place(
     reader: &PartReader,
-    (step, file, parameters, fixed): &(String, String, Settings, bool),
+    (step, file, parameters): &(String, String, Settings),
+    state: &StateValues,
 ) -> GeopResult<Instance> {
-    let component = read_library(reader)?.component(file, parameters)?;
+    let component = read_library(reader)?.component(file, parameters, state)?;
     Ok(Instance {
         component,
         placement: Placement::State(pose_state(step)),
-        fixed: *fixed,
     })
 }
 
 /// What a mate is listed as in the part's structure (see [`Listed::kind`]).
 const MATE: &str = "mate";
-
-/// A mate of the part placed, as this part has it already: the generator of
-/// its target.
-fn carry(_: &PartReader, resolved: &Resolved) -> GeopResult<Resolved> {
-    Ok(resolved.clone())
-}
 
 part_operation!(AddPart(AddPartArgs));
 
@@ -142,7 +133,7 @@ impl PartOperation for AddPart {
     /// not — something has to stay put for the others to mate to.
     fn new_args(context: &StepContext) -> AddPartArgs {
         let args = AddPartArgs::default();
-        match context.before.targets_of::<Instance>().is_empty() {
+        match context.before.instances().is_empty() {
             true => args.fixed(),
             false => args,
         }
@@ -154,21 +145,17 @@ impl PartOperation for AddPart {
     }
 
     /// Places the part, then defines each mate: resolved, and as
-    /// constraints on the state. A mate that cannot be resolved fails the
-    /// step, after the others are defined.
+    /// constraints on the state; and lets a solve move the part, as far as
+    /// its mates let it. A mate that cannot be resolved fails the step,
+    /// after the others are defined. The placed part's own mates come up
+    /// with its constraints (see [`geop_ops_constraints::Constraints::of`]).
     fn run(step: &str, part: &mut BuildPart, args: &AddPartArgs) -> GeopResult<()> {
         let ctx = with_context!("add_part({step}, file={:?})", args.file);
         if args.file.is_empty() {
             return Err(GeopError::new("choose a file to place")).with_context(ctx);
         }
-        let placing = (
-            step.to_string(),
-            args.file.clone(),
-            args.parameters.clone(),
-            args.is_fixed(),
-        );
-        part.define_target(&instance(step), &placing, place)
-            .with_context(ctx)?;
+        let placing = (step.to_string(), args.file.clone(), args.parameters.clone());
+        part.define_instance(step, &placing, place).with_context(ctx)?;
         let namer = Namer::new("add_part", step)?;
         let own_frame = MateEntity::of(
             step,
@@ -200,29 +187,7 @@ impl PartOperation for AddPart {
             }
             failed = failed.and(resolved);
         }
-        // The placed part's own mates, behind its name.
-        let carried: Vec<(String, Resolved)> = match read_instance(&part.current(), step) {
-            Ok(placed) => (mates_of(&placed.component.reader()).into_iter())
-                .filter_map(|(name, resolved)| {
-                    let name = instance_path(step, &name);
-                    Some((name, resolved.behind(step)?))
-                })
-                .collect(),
-            Err(_) => Vec::new(),
-        };
-        for (name, resolved) in carried {
-            listed.push(Listed {
-                kind: MATE.into(),
-                name: name.clone(),
-                elements: resolved.entities().iter().map(Selectable::picked).collect(),
-            });
-            let carried = part.define_target(&mate(&name), &resolved, carry);
-            if carried.is_ok() {
-                defined.push((name.clone(), name));
-            }
-            failed = failed.and(carried);
-        }
-        let constrained = define(part, step, &defined);
+        let constrained = define(part, step, Some(&pose_state(step)), &defined);
         let listing = part.define_target(&listing(step), &Listing(listed), |_, l| Ok(l.clone()));
         failed.and(constrained).and(listing).with_context(ctx)
     }

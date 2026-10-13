@@ -16,7 +16,7 @@ use geop_core_program::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Design, Parameter, ParameterKind, ProgramFile, Runner, Setting, Settings, StateValue,
+    Design, Parameter, ParameterKind, ProgramFile, Runner, Setting, Settings, StateValue, StateValues,
     about::{define_about, read_about},
     parameters::Row,
     pose_state,
@@ -145,7 +145,7 @@ fn file() -> ProgramFile {
 fn run(runner: &mut Runner, file: &ProgramFile, overrides: &Settings) {
     let about = file.about("parts/screw.geop", overrides);
     runner.given = Some(Rc::new(move |part| define_about(part, &about)));
-    file.run(runner, overrides).unwrap();
+    file.run(runner, overrides, &StateValues::new()).unwrap();
 }
 
 fn length(runner: &Runner, step: &str) -> f64 {

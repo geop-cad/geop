@@ -66,6 +66,9 @@ pub trait Selectable: Clone + PartialEq + 'static {
     fn drawn<I: Input, S: State>(&self, reader: &Reader<I, S>) -> Vec<PickedElement>;
 }
 
+/// An element of an instance is selected and drawn as the instance's own
+/// part selects and draws it, behind the instance's path: what the part is
+/// placed in does not discriminate where an element is from.
 impl<T: HasElements<K>, K: SelectableElement<T>> Selectable for ElementReference<T, K> {
     fn picked_from() -> Vec<&'static str> {
         K::PICKED_FROM.to_vec()
@@ -80,11 +83,25 @@ impl<T: HasElements<K>, K: SelectableElement<T>> Selectable for ElementReference
     }
 
     fn select<I: Input, S: State>(reader: &Reader<I, S>, hit: &PickedElement) -> Option<Self> {
-        K::select(reader, hit)
+        let instance = hit.instance();
+        if instance.is_empty() {
+            return K::select(reader, hit);
+        }
+        let inside = reader.inside(instance).ok()?;
+        K::select(&inside, &hit.local()).map(|selected| selected.behind(instance))
     }
 
     fn drawn<I: Input, S: State>(&self, reader: &Reader<I, S>) -> Vec<PickedElement> {
-        K::drawn(reader, self)
+        let instance = self.instance();
+        if instance.is_empty() {
+            return K::drawn(reader, self);
+        }
+        let Ok(inside) = reader.inside(instance) else {
+            return vec![self.picked()];
+        };
+        (K::drawn(&inside, &self.local()).into_iter())
+            .map(|drawn| drawn.behind(instance))
+            .collect()
     }
 }
 
@@ -166,7 +183,8 @@ macro_rules! one_of {
         }
 
         impl $name {
-            /// What it refers to, read through `reader`.
+            /// What it refers to, read through `reader`, of the part itself
+            /// (see [`geop_core_program::part::Reader::retrieve_element`]).
             pub fn resolve<I: $crate::__program::part::Input, S: $crate::__program::part::State>(
                 &self,
                 reader: &$crate::__program::part::Reader<I, S>,
@@ -174,6 +192,25 @@ macro_rules! one_of {
                 match self {
                     $(Self::$variant(reference) => {
                         reader.retrieve_element(reference).map(::std::convert::Into::into)
+                    })+
+                }
+            }
+
+            /// What it refers to, of the part itself or of an instance
+            /// placed in it, as it is in its own part (see
+            /// [`geop_core_program::part::Reader::retrieve_placed`]).
+            #[allow(dead_code)]
+            pub fn resolve_placed<I: $crate::__program::part::Input, S: $crate::__program::part::State>(
+                &self,
+                reader: &$crate::__program::part::Reader<I, S>,
+            ) -> $crate::__GeopResult<$crate::__program::instance::InInstance<$out>> {
+                match self {
+                    $(Self::$variant(reference) => {
+                        let placed = reader.retrieve_placed(reference)?;
+                        Ok($crate::__program::instance::InInstance {
+                            element: placed.element.into(),
+                            instance: placed.instance,
+                        })
                     })+
                 }
             }
@@ -191,6 +228,31 @@ macro_rules! one_of {
         $vis enum $name {
             $($(#[$variant_meta])* $variant($reference)),+
         }
+
+        #[allow(dead_code)]
+        impl $name {
+            /// The path of the instance it is of: empty for the part itself.
+            pub fn instance(&self) -> &str {
+                match self {
+                    $(Self::$variant(reference) => reference.instance(),)+
+                }
+            }
+
+            /// The same, as its instance's own part names it.
+            pub fn local(&self) -> Self {
+                match self {
+                    $(Self::$variant(reference) => Self::$variant(reference.local()),)+
+                }
+            }
+
+            /// The same, of the instance `instance` of the part.
+            pub fn behind(&self, instance: &str) -> Self {
+                match self {
+                    $(Self::$variant(reference) => Self::$variant(reference.behind(instance)),)+
+                }
+            }
+        }
+
         impl $crate::selectable::Selectable for $name {
             fn picked_from() -> ::std::vec::Vec<&'static str> {
                 let mut kinds = ::std::vec::Vec::new();

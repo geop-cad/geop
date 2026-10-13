@@ -7,6 +7,10 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 
 use crate::{
     element::{ElementReference, HasElements, Kind},
+    instance::{
+        Defining, Factor, InInstance, INSTANCE_SEPARATOR, Instance, InstanceGenerator, Placement,
+        check_name, instance_name, instance_target, place, split_path,
+    },
     revisioned_value::RevisionedValue,
     target::{Dependency, Revision, Target, TargetReference, TargetRegistry},
 };
@@ -86,11 +90,19 @@ impl<I: Input, S: State> Part<I, S> {
         (self.targets)
             .retain(|target| target.run == run || (ran..ran + later).contains(&target.step));
         let read: HashSet<&Dependency> = self.targets.dependencies().collect();
+        let prefixes: Vec<&str> = (read.iter())
+            .filter_map(|dependency| match dependency {
+                Dependency::StatesUnder(prefix) => Some(prefix.as_str()),
+                _ => None,
+            })
+            .collect();
         self.inputs.retain(|name, entry| {
             entry.value.is_some() || read.contains(&Dependency::Input(name.clone()))
         });
         self.state.retain(|name, entry| {
-            entry.value.is_some() || read.contains(&Dependency::State(name.clone()))
+            entry.value.is_some()
+                || read.contains(&Dependency::State(name.clone()))
+                || prefixes.iter().any(|prefix| name.starts_with(prefix))
         });
     }
 
@@ -169,6 +181,27 @@ impl<I: Input, S: State> Part<I, S> {
         self.make_version(reference, args, generator)
     }
 
+    /// Places the instance `name`: what `generator` makes of `args`, given
+    /// the state under its name — `b.pose` for the state `name/b.pose` —
+    /// to run its part with (see [`crate::instance`]). Fails if a step has
+    /// placed an instance of that name before in this run. A plain
+    /// function, like [`Part::define_target`]'s.
+    pub fn define_instance<Args: PartialEq + Clone + 'static>(
+        &mut self,
+        name: &str,
+        args: &Args,
+        generator: InstanceGenerator<I, S, Args>,
+    ) -> GeopResult<()> {
+        check_name(name)?;
+        let defining = Defining {
+            name: name.to_string(),
+            args: args.clone(),
+            generator,
+        };
+        let reference = TargetReference::<Instance<I, S>>::new(instance_target(name));
+        self.define_target(&reference, &defining, place)
+    }
+
     /// Makes this step's version of `reference`, reusing the last run's when
     /// nothing it read has changed, and keeps it with what it read: changed
     /// now, unless it is equal to the version it replaces.
@@ -201,6 +234,8 @@ impl<I: Input, S: State> Part<I, S> {
                 Dependency::State(read) => {
                     RevisionedValue::changed_at(&self.state, read) <= target.run
                 }
+                Dependency::StatesUnder(prefix) => (under(&self.state, prefix))
+                    .all(|(_, entry)| entry.changed_at <= target.run),
             };
             target.made_from::<Out, Args>(args) && target.dependencies.iter().all(unchanged)
         });
@@ -236,6 +271,15 @@ impl<I: Input, S: State> Part<I, S> {
         self.targets.insert(name, target);
         result
     }
+}
+
+/// The entries of `values` whose names start with `prefix`: a range of
+/// them, as they are sorted by name.
+fn under<'v, T>(
+    values: &'v BTreeMap<String, T>,
+    prefix: &str,
+) -> impl Iterator<Item = (&'v String, &'v T)> {
+    (values.range(prefix.to_string()..)).take_while(move |(name, _)| name.starts_with(prefix))
 }
 
 /// What makes a target's value from its arguments and what it reads.
@@ -345,13 +389,128 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
         self.target(&TargetReference::<T>::new(own)).cloned()
     }
 
-    /// The element `reference` names.
+    /// The element `reference` names, of the part itself. One of an
+    /// instance placed in it is an error naming the instance: it is where
+    /// that instance is, which [`Reader::retrieve_placed`] says.
     pub fn retrieve_element<T: HasElements<K>, K: Kind>(
         &self,
         reference: &ElementReference<T, K>,
     ) -> GeopResult<T::Element<'a>> {
-        (self.target(reference.target())?.element(reference.name()))
-            .map_err(|e| e.with_context(format!("resolving {reference:?}")))
+        let placed = self.retrieve_placed(reference)?;
+        match placed.instance.is_empty() {
+            true => Ok(placed.element),
+            false => Err(GeopError::new(format!(
+                "{reference:?} is of the placed part `{}`: this takes elements of the part itself",
+                placed.instance
+            ))),
+        }
+    }
+
+    /// The element `reference` names, of the part itself or of an instance
+    /// placed in it — however deep — as it is in its own part, with the
+    /// instance's path: where that is, [`Reader::placement`] says. The read
+    /// is recorded as one of the instance, which is made again whenever
+    /// its part is built again.
+    pub fn retrieve_placed<T: HasElements<K>, K: Kind>(
+        &self,
+        reference: &ElementReference<T, K>,
+    ) -> GeopResult<InInstance<T::Element<'a>>> {
+        let (path, target) = split_path(reference.target().name());
+        let resolve = |reader: &Reader<'a, I, S>| {
+            (reader.target(&TargetReference::<T>::new(target))?).element(reference.name())
+        };
+        let element = match path.is_empty() {
+            true => resolve(self),
+            false => self.inside(path).and_then(|inside| resolve(&inside)),
+        };
+        let element = element.map_err(|e| e.with_context(format!("resolving {reference:?}")))?;
+        Ok(InInstance {
+            element,
+            instance: path.to_string(),
+        })
+    }
+
+    /// The instance `name` placed in the part, the read recorded.
+    pub fn instance(&self, name: &str) -> GeopResult<&'a Instance<I, S>> {
+        self.target(&TargetReference::new(instance_target(name)))
+            .map_err(|e| e.with_context(format!("the placed part `{name}`")))
+    }
+
+    /// Every instance placed in the part — not in its instances — by name,
+    /// in the order the steps placed them, each read recorded.
+    pub fn instances(&self) -> Vec<(&'a str, &'a Instance<I, S>)> {
+        (self.versions_of::<Instance<I, S>>().into_iter())
+            .filter_map(|(target, version)| {
+                let name = instance_name(target)?;
+                Some((name, version.value::<Instance<I, S>>(target).ok()?))
+            })
+            .collect()
+    }
+
+    /// The part of the instance at `path` — `bolt`, or `asm/bolt` — as its
+    /// program left it, the read of each instance on the way recorded.
+    pub fn inside(&self, path: &str) -> GeopResult<Reader<'a, I, S>> {
+        let mut names = path.split(INSTANCE_SEPARATOR);
+        let first = names.next().unwrap_or_default();
+        let mut inside = self.instance(first)?.reader();
+        for name in names {
+            inside = inside.instance(name)?.reader();
+        }
+        Ok(inside)
+    }
+
+    /// Where the instance at `path` is in the part, as factors composed
+    /// outermost first ([`Factor`]): the values of the state that place it
+    /// and the parts it is placed in, read and recorded. A state of an
+    /// instance's own — what places a part placed in it — is named as the
+    /// part names it, behind the instance's path.
+    pub fn placement(&self, path: &str) -> GeopResult<Vec<Factor<S>>> {
+        let ctx = |e: GeopError| e.with_context(format!("where the placed part {path:?} is"));
+        let mut factors = Vec::new();
+        let mut level = self.clone();
+        let mut prefix = String::new();
+        for name in path.split(INSTANCE_SEPARATOR) {
+            let mut placed = self.placed(&level, name, &prefix, 0).map_err(ctx)?;
+            factors.append(&mut placed);
+            prefix = format!("{prefix}{name}{INSTANCE_SEPARATOR}");
+            level = level.instance(name).map_err(ctx)?.reader();
+        }
+        Ok(factors)
+    }
+
+    /// How deep a chain of copies may go before it is taken for a cycle.
+    const COPIES: usize = 1 << 16;
+
+    /// The factors placing the instance `name` of the part `level` reads —
+    /// the part at `prefix` in the part read — in that part: its state's
+    /// value, or a copy's motion after where what it copies is. A state is
+    /// read from the part read's own, behind `prefix`, and recorded as
+    /// read; where the run gives none, `level`'s own is where it is.
+    fn placed(
+        &self,
+        level: &Reader<'a, I, S>,
+        name: &str,
+        prefix: &str,
+        depth: usize,
+    ) -> GeopResult<Vec<Factor<S>>> {
+        if depth > Self::COPIES {
+            return Err(GeopError::new(format!("the copies of `{name}` form a cycle")));
+        }
+        Ok(match &level.instance(name)?.placement {
+            Placement::State(state) => {
+                let state_here = format!("{prefix}{state}");
+                vec![Factor::State {
+                    value: (self.given_state(&state_here))
+                        .unwrap_or_else(|| level.retrieve_state(state)),
+                    state: state_here,
+                }]
+            }
+            Placement::After { of, motion } => {
+                let mut factors = vec![Factor::Fixed(motion.clone())];
+                factors.append(&mut self.placed(level, of, prefix, depth + 1)?);
+                factors
+            }
+        })
     }
 
     /// The input's value, if the run gives one.
@@ -362,10 +521,26 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
 
     /// The state's value; the default if the run gives none.
     pub fn retrieve_state(&self, name: &str) -> S {
+        self.given_state(name).unwrap_or_default()
+    }
+
+    /// The state's value, if the run gives one.
+    pub fn given_state(&self, name: &str) -> Option<S> {
         self.record(Dependency::State(name.to_string()));
-        (self.part.state.get(name))
-            .and_then(|entry| entry.value.clone())
-            .unwrap_or_default()
+        (self.part.state.get(name)).and_then(|entry| entry.value.clone())
+    }
+
+    /// Every value the run gives of the state under `prefix`, by its name
+    /// after it, the read recorded: whatever of it changes, appears or
+    /// goes, what read it is made again.
+    pub fn states_under(&self, prefix: &str) -> BTreeMap<String, S> {
+        self.record(Dependency::StatesUnder(prefix.to_string()));
+        (under(&self.part.state, prefix))
+            .filter_map(|(name, entry)| {
+                let name = name.strip_prefix(prefix)?;
+                Some((name.to_string(), entry.value.clone()?))
+            })
+            .collect()
     }
 
     /// Whether it has read the state `name`: what a check of a value read

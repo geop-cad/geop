@@ -25,7 +25,7 @@ use std::{
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_ops_assembly::{Component, Library};
-use geop_ops_parameters::{Files, ProgramFile, Registry, Runner, Settings};
+use geop_ops_parameters::{Files, ProgramFile, Registry, Runner, Settings, StateValues};
 
 use crate::part;
 
@@ -76,8 +76,11 @@ impl FileStoreMut for BTreeMap<String, String> {
 /// program of one of them is built with.
 ///
 /// Every file it builds is kept, by the values its parameters were built
-/// with, and placed again as it is for as long as the files it was built
-/// from stay as they are — however many steps or runs place it. Changing a
+/// with and the state it was run with, and placed again as it is for as
+/// long as the files it was built from stay as they are — however many
+/// steps or runs place it. One run with a state of its own given — a part
+/// placed in a part, moved there — is kept while it is placed: a solve
+/// tries many. Changing a
 /// file ([`Workspace::write`]) forgets only what was built from it: the
 /// file itself, and every file placing it, however deep — each component
 /// knows the files it was built from ([`Component::files`]). A file
@@ -87,9 +90,9 @@ pub struct Workspace<F = BTreeMap<String, String>> {
     registry: fn() -> GeopResult<Registry>,
     /// Each file's program, read once: by its path.
     programs: RefCell<BTreeMap<String, Rc<ProgramFile>>>,
-    /// What each file built, by its path and the values its parameters
-    /// were built with, as their JSON.
-    built: RefCell<BTreeMap<(String, String), Rc<Component>>>,
+    /// What each file built, by its path, the values its parameters were
+    /// built with and the state it was given, as their JSON.
+    built: RefCell<BTreeMap<(String, String, String), Rc<Component>>>,
     /// How many components it has built: what tells their keys apart.
     builds: Cell<u64>,
 }
@@ -190,9 +193,16 @@ impl<F: FileStore + 'static> Scope<F> {
         ))
     }
 
-    /// The program of `path` built with its parameters `overrides` instead
-    /// of its own — a run of its own, whose part the component keeps.
-    fn build(&self, path: &str, file: &ProgramFile, overrides: &Settings) -> GeopResult<Component> {
+    /// The program of `path` built with its parameters `overrides` and the
+    /// values `state` gives of its state instead of its own — a run of its
+    /// own, whose part the component keeps.
+    fn build(
+        &self,
+        path: &str,
+        file: &ProgramFile,
+        overrides: &Settings,
+        state: &StateValues,
+    ) -> GeopResult<Component> {
         if let Some(from) = self.building.iter().position(|f| f == path) {
             return Err(self.cycle(path, from));
         }
@@ -204,7 +214,7 @@ impl<F: FileStore + 'static> Scope<F> {
         });
         let mut runner = Runner::new(self.workspace.registry()?);
         runner.given = Some(part::given(file.about(path, overrides), child.clone()));
-        (file.run(&mut runner, overrides))
+        (file.run(&mut runner, overrides, state))
             .map_err(|e| e.with_context(format!("building {path}")))?;
         let mut files = child.placed.take();
         files.insert(path.to_string());
@@ -224,22 +234,34 @@ impl<F: FileStore + 'static> Scope<F> {
 }
 
 impl<F: FileStore + 'static> Library for Scope<F> {
-    fn component(&self, file: &str, overrides: &Settings) -> GeopResult<Rc<Component>> {
+    fn component(
+        &self,
+        file: &str,
+        overrides: &Settings,
+        state: &StateValues,
+    ) -> GeopResult<Rc<Component>> {
         let path = resolve(&self.file, file);
         let program = self.workspace.program(&path)?;
         // Kept by the values it is built with: overriding a parameter with
         // the value it has anyway builds nothing new.
         let values = program.parameters.resolve(overrides).chosen;
-        let key = serde_json::to_string(&values)
-            .map_err(|e| GeopError::new(format!("writing parameter values: {e}")))?;
-        let cached = (self.workspace.built.borrow())
-            .get(&(path.clone(), key.clone()))
-            .cloned();
+        let json = |what: &str, value: serde_json::Result<String>| {
+            value.map_err(|e| GeopError::new(format!("writing {what}: {e}")))
+        };
+        let key = (
+            path.clone(),
+            json("parameter values", serde_json::to_string(&values))?,
+            json("the state", serde_json::to_string(state))?,
+        );
+        let cached = self.workspace.built.borrow().get(&key).cloned();
         let component = match cached {
             Some(component) => component,
             None => {
-                let component = Rc::new(self.build(&path, &program, overrides)?);
-                (self.workspace.built.borrow_mut()).insert((path.clone(), key), component.clone());
+                let component = Rc::new(self.build(&path, &program, overrides, state)?);
+                let mut built = self.workspace.built.borrow_mut();
+                // A run given a state no longer placed is not run again.
+                built.retain(|(_, _, given), kept| given == "{}" || Rc::strong_count(kept) > 1);
+                built.insert(key, component.clone());
                 component
             }
         };

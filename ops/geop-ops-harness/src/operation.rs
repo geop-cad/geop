@@ -13,7 +13,7 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_ops_assembly::PlacedElement;
+use geop_ops_add_datum::Selected;
 use geop_ops_extrude_revolve::{
     common::{Profile, circle_at},
     path_sweep::{Control, sweep_along},
@@ -63,7 +63,7 @@ pub struct RouteArgs {
     /// of a connector at the start, into one at the end) and circular edges
     /// (through their centre, along their axis) — see [`Waypoint::of`].
     #[serde(default)]
-    pub through: Vec<PlacedElement>,
+    pub through: Vec<Selected>,
     /// The wires bundled.
     pub wires: Vec<Wire>,
     /// The fraction of the bundle's section its wires fill (see

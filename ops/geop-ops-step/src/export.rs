@@ -19,7 +19,7 @@
 //! after the part's names for them, so a face picked as `extrude(E,end)`
 //! here is called that in the file.
 
-use std::{collections::HashMap, rc::Rc};
+use std::collections::HashMap;
 
 use geop_core_geometry::{nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D};
 use geop_core_math::{
@@ -334,8 +334,8 @@ impl Writer {
         let mut placed = Vec::new();
         let parts = placed_parts(reader).map_err(ctx)?;
         for part in parts.iter().filter(|p| p.parent.is_none()) {
-            let component = &part.located.instance.component;
-            let key = Rc::as_ptr(component);
+            let component = &part.located.component;
+            let key = std::rc::Rc::as_ptr(component);
             let child = match written.get(&key) {
                 Some(&child) => child,
                 None => {

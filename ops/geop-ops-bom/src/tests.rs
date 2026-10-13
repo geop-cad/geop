@@ -11,7 +11,7 @@ use geop_core_math::{
     primitives::Pose,
     scalars::{ScalInF64 as S, Scalar},
 };
-use geop_ops_assembly::{Component, Instance, Placement, instance};
+use geop_ops_assembly::{Component, Instance, Placement};
 use geop_ops_extrude_revolve::shapes::block;
 use geop_ops_model::{CutWire, NamedModel, SolidNotes, model, solid_notes};
 use geop_ops_parameters::{
@@ -94,11 +94,10 @@ impl Made {
         for (name, component) in &self.placed {
             part.begin_step();
             let placed = Instance {
-                component: Rc::clone(component),
+                component: component.clone(),
                 placement: Placement::State(pose_state(name)),
-                fixed: true,
             };
-            part.define_target(&instance(name), &placed, given).unwrap();
+            (part.define_instance(name, &placed, |_, placed, _| Ok(placed.clone()))).unwrap();
         }
         then(&mut part);
         part.end_run(0);

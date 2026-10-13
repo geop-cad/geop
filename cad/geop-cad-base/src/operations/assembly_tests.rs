@@ -13,11 +13,12 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_program::element::ElementReference;
+use geop_core_program::{element::ElementReference, program::ProgramStep};
 use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
 use geop_ops_assembly::{
-    AddPartArgs, Instance, Library, MateEntity, PartPatternArgs, PatternAxis, Resolved, mate_name,
-    placed::{instance_name, locate, read_instance},
+    AddPartArgs, Library, MateEntity, PartPatternArgs, PatternAxis, Resolved, component_of,
+    mate_name,
+    placed::locate,
     solving::{self, Freedom, Report, Rerun, SettingsState},
 };
 use geop_ops_datums::{ORIGIN, component_name, datum};
@@ -120,23 +121,20 @@ impl Built {
     /// Whether the part placed as `name` is held where it is.
     fn holds(&self, name: &str) -> bool {
         let reader = self.view();
-        let fixed = (reader.targets_of::<Resolved>().into_iter()).any(|target| {
+        (reader.targets_of::<Resolved>().into_iter()).any(|target| {
             matches!(
                 reader.retrieve_element(&ElementReference::whole(target)),
                 Ok(Resolved::Fixed { body }) if body == name
             )
-        });
-        fixed || read_instance(&reader, name).is_ok_and(|i| i.fixed)
+        })
     }
 
     /// The parts placed in it — not in those — by name, with their files.
     fn instances(&self) -> BTreeMap<String, String> {
         let reader = self.view();
-        (reader.targets_of::<Instance>().into_iter())
-            .filter_map(|target| {
-                let name = instance_name(target.name())?;
-                let instance = read_instance(&reader, name).ok()?;
-                Some((name.to_string(), instance.component.file.clone()))
+        (reader.instances().into_iter())
+            .filter_map(|(name, instance)| {
+                Some((name.to_string(), component_of(instance).ok()?.file.clone()))
             })
             .collect()
     }
@@ -160,9 +158,9 @@ impl Built {
     ) -> [f64; 3] {
         let reader = self.view();
         let p = of(&entity.shape(&reader).unwrap()).expect("the entity has that point");
-        let p = match entity.part.is_empty() {
-            true => p,
-            false => locate(&reader, &entity.part).unwrap().world.apply(&p),
+        let p = match entity.part() {
+            "" => p,
+            part => locate(&reader, part).unwrap().world.apply(&p),
         };
         [0, 1, 2].map(|k| p[k].to_f64())
     }
@@ -501,8 +499,9 @@ fn a_program_is_solved_where_its_mates_do_not_hold() {
 
 /// A later step's mates move a part placed earlier — here the earlier part
 /// is free and the later one fixed: the earlier part ends up where they
-/// put it. (The plate may turn about the pin's axis; where it turns to is
-/// the solve's choice.)
+/// put it, for every step — a datum made on it in between too. (The plate
+/// may turn about the pin's axis; where it turns to is the solve's
+/// choice.)
 #[test]
 fn a_later_mate_moves_an_earlier_part_for_every_step() {
     let mut program = examples::pin_in_plate_assembly();
@@ -512,6 +511,16 @@ fn a_later_mate_moves_an_earlier_part_for_every_step() {
     edit_args(&mut program.program.steps[1], |pin: &mut AddPartArgs| {
         pin.set_fixed(true)
     });
+    let mark = AddDatumArgs {
+        selection: vec![Selected::Datum(datum(ORIGIN)).behind("plate")],
+        construction: Construction::Point {
+            x: 0.0.into(),
+            y: 0.0.into(),
+            z: 0.0.into(),
+        },
+    };
+    let mark = ProgramStep::of("mark", &mark).unwrap();
+    program.program.steps.insert(1, mark);
     program
         .state
         .insert(pose_state("plate"), at([2.0, -1.0, 0.0]));
@@ -527,7 +536,7 @@ fn a_later_mate_moves_an_earlier_part_for_every_step() {
     let part = build(editor.program(), &workspace(parts()).scope("assembly.geop")).unwrap();
     assert!(part.check_mates().unwrap().converged);
     assert_close(
-        point(&part, &MateEntity::of("plate", Selected::Datum(datum(ORIGIN)))),
+        point(&part, &MateEntity::on(Selected::Datum(datum("mark")))),
         position(&plate),
         1e-12,
     );
@@ -714,7 +723,7 @@ fn hinge() -> (BTreeMap<String, Option<String>>, Program) {
                     geop_ops_assembly::Kind::Distance { value: n(3.0) },
                     vec![
                         MateEntity::of("hinge/pin", Selected::Face(element("extrude(pin,end)"))),
-                        MateEntity::own(Selected::Datum(datum(component_name(
+                        MateEntity::on(Selected::Datum(datum(component_name(
                             ORIGIN,
                             DatumComponent::Plane(FrameAxis::Z),
                         )))),
@@ -1244,10 +1253,11 @@ fn the_arm_is_dragged_up_to_its_limit() {
 }
 
 /// Six pins round the plate's hole: the pin placed at 1 from the hole's
-/// axis, and a pattern of 6, 60° apart, round it — round an axis of the
-/// assembly's own along it, as a pattern's axis is picked in the part
-/// itself. Each copy is a placed part of its own, named by the pattern, its
-/// entities behind its name; moved, the pin takes its copies with it.
+/// axis, and a pattern of 6, 60° apart, round it — the hole's face picked
+/// in the plate placed, round its axis where the plate is. Each copy is a
+/// placed part of its own, named by the pattern, its entities behind its
+/// name; moved, the pin takes its copies with it, and the plate moved
+/// takes the axis.
 #[test]
 fn six_pins_are_patterned_round_a_hole() {
     let workspace = workspace(parts());
@@ -1269,36 +1279,14 @@ fn six_pins_are_patterned_round_a_hole() {
         }
         .fixed(),
     );
-    // The hole's axis: through its centre, at (1, 1), along z.
-    program.push(
-        "hole_centre",
-        AddDatumArgs {
-            selection: vec![Selected::Datum(datum(ORIGIN))],
-            construction: Construction::Point {
-                x: 1.0.into(),
-                y: 1.0.into(),
-                z: 0.0.into(),
-            },
-        },
-    );
-    program.push(
-        "hole_axis",
-        AddDatumArgs {
-            selection: vec![
-                Selected::Datum(datum("hole_centre")),
-                Selected::Datum(datum(component_name(
-                    ORIGIN,
-                    DatumComponent::Axis(FrameAxis::Z),
-                ))),
-            ],
-            construction: Construction::Parallel {},
-        },
-    );
     program.push(
         "pins",
         PartPatternArgs {
             part: "pin".into(),
-            axis: Some(PatternAxis::Datum(datum("hole_axis"))),
+            // The plate's hole, round about (1, 1) in it.
+            axis: Some(PatternAxis::Round(
+                element("extrude(hole,hole_sketch,c1)").behind("plate"),
+            )),
             reversed: false,
             layout: geop_ops_assembly::Layout::Circular {
                 angle: Spacing::step(60.0),
@@ -1310,7 +1298,7 @@ fn six_pins_are_patterned_round_a_hole() {
         (pose_state("plate"), at([0.0; 3])),
         (pose_state("pin"), at([2.0, 1.0, 0.0])),
     ]);
-    let check = |program: &Program, radius: f64| {
+    let check = |program: &Program, centre: f64, radius: f64| {
         let part = build(program, &library).unwrap();
         part.check_names();
         let instances = part.instances();
@@ -1322,7 +1310,7 @@ fn six_pins_are_patterned_round_a_hole() {
             let a = (60.0 * k as f64).to_radians();
             assert_close(
                 point(&part, &origin),
-                [1.0 + radius * a.cos(), 1.0 + radius * a.sin(), 0.0],
+                [centre + radius * a.cos(), 1.0 + radius * a.sin(), 0.0],
                 1e-9,
             );
         }
@@ -1334,21 +1322,28 @@ fn six_pins_are_patterned_round_a_hole() {
         let plane = part.placed(&top, |shape| shape.plane.as_ref().map(|plane| *plane.origin()));
         assert!((plane[2] - 2.0).abs() < 1e-9);
     };
-    check(&program, 1.0);
+    check(&program, 1.0, 1.0);
     program
         .state
         .insert(pose_state("pin"), at([3.0, 1.0, 0.0]));
-    check(&program, 2.0);
+    check(&program, 1.0, 2.0);
+    program
+        .state
+        .insert(pose_state("plate"), at([10.0, 0.0, 0.0]));
+    program
+        .state
+        .insert(pose_state("pin"), at([12.0, 1.0, 0.0]));
+    check(&program, 11.0, 1.0);
 
     // Refused, saying why: a part no step placed, a pattern of one.
     edit_args(
-        &mut program.program.steps[4],
+        &mut program.program.steps[2],
         |pattern: &mut PartPatternArgs| pattern.part = "nut".into(),
     );
     let err = build(&program, &library).err().unwrap().to_string();
     assert!(err.contains("no part placed so far"), "{err}");
     edit_args(
-        &mut program.program.steps[4],
+        &mut program.program.steps[2],
         |pattern: &mut PartPatternArgs| {
             pattern.part = "pin".into();
             pattern.count = 1.0.into();
@@ -1452,7 +1447,7 @@ fn a_kept_build_is_placed_without_building_its_file() {
     let workspace = workspace(files);
     let placed = || {
         (workspace.scope("assembly.geop"))
-            .component("part.geop", &Settings::new())
+            .component("part.geop", &Settings::new(), &StateValues::new())
             .expect("the part is placed")
     };
     let first = placed();
@@ -1462,7 +1457,7 @@ fn a_kept_build_is_placed_without_building_its_file() {
     assert!(workspace.write("part.geop", Some("not a program".into())));
     assert!(
         (workspace.scope("assembly.geop"))
-            .component("part.geop", &Settings::new())
+            .component("part.geop", &Settings::new(), &StateValues::new())
             .is_err(),
         "written, the file is built again"
     );

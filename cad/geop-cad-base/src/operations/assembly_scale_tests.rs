@@ -77,7 +77,7 @@ fn face(instance: &str, face: &str) -> MateEntity {
         Some((inner, face)) => (format!("{instance}/{inner}"), face),
         None => (instance.to_string(), face),
     };
-    MateEntity::of(part, Selected::Face(element(face)))
+    MateEntity::of(&part, Selected::Face(element(face)))
 }
 
 /// Placed from `file`, its face `below` lying on the face `on`.
@@ -215,7 +215,7 @@ impl FileStoreMut for Counted {
 fn builds(runner: &Runner) -> BTreeMap<String, BTreeSet<String>> {
     let mut builds: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for placed in placed_parts(&runner.part.current()).unwrap() {
-        let component = &placed.located.instance.component;
+        let component = &placed.located.component;
         builds
             .entry(component.file.clone())
             .or_default()
@@ -284,7 +284,7 @@ fn editing_a_file_rebuilds_only_what_places_it() {
     for screw in ["screw0", "board1/module3/screw9"] {
         let reader = runner.part.current();
         let located = locate(&reader, screw).unwrap();
-        let heights: BTreeSet<_> = read_model(&located.instance.component.reader())
+        let heights: BTreeSet<_> = read_model(&located.instance.reader())
             .unwrap()
             .topology()
             .vertices

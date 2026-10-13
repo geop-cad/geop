@@ -11,6 +11,7 @@ geop-ops-output.workspace = true
 geop-ops-parameters.workspace = true
 # The mechanism it exports.
 geop-ops-assembly.workspace = true
+geop-core-program.workspace = true
 # Each link's meshes.
 geop-ops-rasterize.workspace = true
 serde.workspace = true

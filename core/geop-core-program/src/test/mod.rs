@@ -1,5 +1,6 @@
 mod add_two_frame;
 mod given_frame;
+mod instances;
 mod middle_frame;
 mod shift_frame;
 
@@ -103,13 +104,15 @@ pub(crate) fn take_built() -> Vec<String> {
     BUILT.with(|built| built.take())
 }
 
-fn registry() -> OperationRegistry<Sc, Pose> {
+pub(crate) fn registry() -> OperationRegistry<Sc, Pose> {
     OperationRegistry::default()
         .with(AddTwoFrameOperation)
         .and_then(|o| o.with(MiddleFrameOperation))
         .and_then(|o| o.with(InputFrameOperation))
         .and_then(|o| o.with(StateFrameOperation))
         .and_then(|o| o.with(ShiftFrameOperation))
+        .and_then(|o| o.with(instances::PlaceOperation))
+        .and_then(|o| o.with(instances::CopyOperation))
         .unwrap()
 }
 
@@ -183,7 +186,7 @@ fn errors(output: &RunOutput) -> Vec<(String, String)> {
         .collect()
 }
 
-fn ok(output: RunOutput) {
+pub(crate) fn ok(output: RunOutput) {
     assert_eq!(errors(&output), vec![]);
 }
 

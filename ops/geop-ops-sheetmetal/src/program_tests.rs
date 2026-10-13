@@ -24,7 +24,8 @@ use geop_ops_model::{
 };
 use geop_ops_output::{Exporter, Output};
 use geop_ops_parameters::{
-    BuildPart, PartReader, ProgramFile, Registry, Runner, Settings, StateValue, StepContext,
+    BuildPart, PartReader, ProgramFile, Registry, Runner, Settings, StateValue, StateValues,
+    StepContext,
 };
 use geop_ops_rasterize::rasterize;
 use geop_ops_sketch::{PlacedSketch, sketch, whole_sketch};
@@ -202,7 +203,7 @@ impl Part {
     }
 
     fn run(&mut self) -> GeopResult<()> {
-        self.program.run(&mut self.runner, &Settings::new())
+        self.program.run(&mut self.runner, &Settings::new(), &StateValues::new())
     }
 
     /// The part with the step `id` of `args` added.
