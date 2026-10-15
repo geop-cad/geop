@@ -28,6 +28,8 @@ core/geop-core-geometry       NURBS curves/surfaces and their simplest
                                containment, intersection
 core/geop-core-topology       B-rep structures, Euler operators, edit/validation;
                                wires: edges and vertices bounding no face
+core/geop-core-rasterize      turns a Model into a triangle mesh, writes it
+                               as STL, and renders it for debugging
 core/geop-core-sketch         2-D constraint sketches: entities, constraints
                                as residuals, profile extraction, geometry
                                made from geometry (mirror, patterns, offset),
@@ -59,7 +61,15 @@ core/geop-core-editor         what an operation is and how it is edited
                                drag in space goes by; picking typed
                                references (`Selectable`, `one_of!`); the
                                field of a number typed or a formula
-                               (`EditForm::numeric`, `Number::numeric`)
+                               (`EditForm::numeric`, `Number::numeric`);
+                               what an editor draws of a part (`view`:
+                               `PartView`, picking by drawn kind,
+                               annotations and the structure entries steps
+                               list); the exporter and inspector interfaces
+                               (`output`)
+lib/geop-lib-sheet            the sheets drawings and flat patterns are
+                               written on (SVG, DXF, each layer defined by
+                               who draws on it), and `xml_escape`
 ops/geop-ops-model            the model a part's steps build: topology with
                                stable names, the features their steps
                                combined, geometric kinds of its elements
@@ -76,13 +86,6 @@ ops/geop-ops-parameters       a part's parameters (numbers, tables, colour,
                                `rename_parameter`, `parameter_uses`); where
                                placed parts are (`Instance`, `placement`,
                                `located`)
-ops/geop-ops-view             what an editor draws of a part (`PartView`):
-                               picking by drawn kind, annotations and the
-                               structure entries steps list
-ops/geop-ops-output           the exporter and inspector interfaces, and the
-                               sheets drawings and flat patterns are written
-                               on (SVG, DXF, each layer defined by who draws
-                               on it)
 ops/geop-ops-constraints      the constraints and unknowns of a part's state
                                (mates, joints) — its own and its instances',
                                behind their names — and the solver
@@ -103,8 +106,6 @@ ops/geop-ops-extrude-revolve  extrude/revolve; sweeps along paths, with guide
                                rails, twist and orientation; lofts, with
                                guide curves and matched points; their
                                operations, and basic shapes for tests
-ops/geop-ops-rasterize        turns a Model into a triangle mesh, writes it
-                               as STL, and renders it for debugging
 ops/geop-ops-sketch3d         the 3-D sketch operation: points, lines, arcs
                                and splines in space, placed on the part,
                                snapped along x, y, z and onto points, and
@@ -194,10 +195,11 @@ ops/geop-ops-bom              bills of materials: placed parts grouped by
 An operation crate plugs into the editor without the editor knowing it:
 it defines its own targets and draws them, and `geop_cad_base::part`
 composes the part from every crate's (`given`, `draw`, `structure`).
-What a step draws on the part is its `geop_ops_view::annotations` target,
-what it lists in the structure tree its `geop_ops_view::listing` target; a
-file written from the part is a `geop_ops_output::Exporter`, a question
-about it a `geop_ops_output::Inspector`, registered in
+What a step draws on the part is its `geop_core_editor::view::annotations`
+target, what it lists in the structure tree its
+`geop_core_editor::view::listing` target; a file written from the part is a
+`geop_core_editor::output::Exporter`, a question about it a
+`geop_core_editor::output::Inspector`, registered in
 `geop_cad_base::outputs` beside the operations in `editors`. `geop compile` picks the exporter by the
 output's extension and passes it the options given as `-O key=value`.
 The web app builds its export menu and inspect buttons from the lists the

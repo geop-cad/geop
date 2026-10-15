@@ -19,7 +19,7 @@ system `origin`, the world's origin and axes, which no step adds — is there
 before any step. A datum stays where it was when its step ran, whatever
 later steps do to what it was built from. `read_datums(&reader)?.get(name)`
 reads one; `Datums::draw` draws them all into a
-[`PartView`](./geop-ops-view.md), by the sizes the viewer draws them at.
+[`PartView`](../core/geop-core-editor.md#the-view-view), by the sizes the viewer draws them at.
 
 ## Elements
 

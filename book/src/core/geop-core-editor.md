@@ -8,6 +8,8 @@ formulas (`EditForm::numeric`), what an operation shows and does with them
 runs without any of it (see [geop-core-program](./geop-core-program.md));
 the interaction every operation shares, driving these, is the editor's own
 (the `StepEditor` of [geop-cad-base](../cad/geop-cad-base.md#editing-one-step)).
+What an editor draws of a part and picks in it is the `view`, and what is
+made of a part rather than in it — files and answers — the `output`.
 
 ## An operation (`PartOperation`)
 
@@ -164,3 +166,131 @@ each step its arguments, form and events, and — through
 the two cannot disagree. `infos` lists them, each a `Listed` (kind and
 `OperationInfo`), which is what a front end builds its toolbar from. The
 editor's set is `editors` in [geop-cad-base](../cad/geop-cad-base.md).
+
+## The view (`view`)
+
+`PartView`: a part as the viewport draws it, and picking elements of it
+with a `Pointer`.
+
+### Drawing
+
+A part is drawn from its rasterization — sampled edges, triangulated faces,
+outlined sketches (see [geop-core-rasterize](./geop-core-rasterize.md)) —
+and a pick tests against exactly that, never re-deriving geometry of its
+own, so a pick cannot disagree with what is on screen. The same goes for
+what the viewer draws besides the part: the datums are laid out here, by
+the sizes the viewer draws them with (a frame's axes are `FRAME` reaches
+long), and picked by the same rules. Serialized, a `PartView` is what a
+viewer draws.
+
+Each crate draws its own targets into a view — the model its vertices,
+edges and faces, the sketches theirs, the datums theirs — and an editor
+composes them (`geop_cad_base::part::draw`), then `PartView::finish`
+measures the result.
+
+The parts placed in a part are drawn by reference: each placed part —
+however deep — is listed once, with where it is (`ViewInstance`), and drawn
+from its component's own view, built once and shared by every instance of
+it. Moving a placed part changes where it is, not what is drawn.
+
+### Picking
+
+`PartView::pick(pointer, accepts)` finds what the pointer is over among
+what is drawn of the kinds a field accepts (`drawn`: `vertex`, `edge`,
+`face`, `sketch`, `sketch_point`, `sketch_curve`, `datum`, `frame`). Near
+means within the pointer's reach. Frame datums are drawn on top of
+everything, so they are picked first; otherwise the smallest element
+under the pointer and not hidden behind a face wins — a vertex or a sketch
+point over an edge or a sketch curve — and else the nearest along the ray
+of the faces, sketches and other datums hit. A pick names what it hits as the crate that drew it
+named it, a `PickedElement`, which the crate defining the element turns
+into a typed reference (see
+[Picking references](#picking-references)).
+
+A pick moves the pointer into each placed part's own frame and names what
+it hits as that part names it, its target behind the instance's name
+(`in_instance`: `bolt/model`). `pick_instance` and `part_to_drag` find the
+placed part under the pointer, for dragging it. A `frame` pick (a
+`FramePick`) puts a frame on what is picked — a face, an edge, a point, a
+datum — at the corner or side of a face, or the end of an edge, that the
+pointer is near: what a joint is made between (see
+[geop-ops-assembly](../ops/geop-ops-assembly.md)).
+
+### What steps add to the drawing and the structure
+
+An editor knows no operation by name. What a step adds besides its
+topology, it adds as a target of its own, which the editor collects without
+knowing whose it is:
+
+- **Annotations** (`annotations(step)`, an `Annotations`): what a step
+  draws on the part besides its topology — a cosmetic thread's helix and
+  designation (`geop_ops_model::draw_threads` is the example).
+  `annotations_of` collects every step's.
+- **Structure entries** (`listing(step)`, a `Listing` of `Listed`): what a
+  step lists in the part's structure tree beside what every part has
+  (datums, sketches, solids, faces standing on their own, placed parts): a
+  kind (`mate`, the tree's group), a name and the elements it refers to,
+  lit while it is pointed at. `listed_by_steps` collects every step's;
+  `add_part` lists its mates this way.
+
+`icons` holds the icons operations share.
+
+## Outputs (`output`)
+
+What is made *of* a part rather than in it: files written from what a
+program built (`Exporter`), and questions answered about it (`Inspector`).
+Neither is a step: exporting and inspecting change no program and are
+nothing to undo. A crate that writes a format, or answers a question,
+implements one of the traits on a unit struct, as an operation does; an
+editor offers those registered in its `Outputs`, by their infos, and knows
+nothing more of them. The options each takes are its own, sent as JSON.
+
+### What they are given (`Output`)
+
+An `Output` is what a program built, as an exporter or an inspector is
+given it: the runner holding the part as far as the program runs, the parts
+it places included (`part()`), the part before a step (`part_before`, what a
+drawing step is of), the program file it ran (`file_name`), with its state —
+to ask how its parts can move by running it again — the step being edited
+and the date. What the program says of its part (its title, designation,
+colour and material) is read from the part like any element of it
+(`geop_ops_parameters::read_properties`, see
+[geop-ops-parameters](../ops/geop-ops-parameters.md#properties)), and a
+file written from it is named after the program's file
+(`geop_ops_parameters::stem(output.file_name())`).
+
+### Exporters
+
+An `Exporter` is a kind of file written from what a program built. Its
+`INFO` (`ExporterInfo`) gives its kind, label, a few words of what the file
+is for, and the formats it writes by extension, the default first; its own
+`Options` are deserialized from the JSON a front end sends (`Default` where
+it sends none; `NoOptions` for one that takes none); and
+`export(output, format, options)` returns an `Export` — a name, a media
+type, and text or bytes (`Content`). A step's dialog offers a file of its
+own with `Dialog::download(key, exporter, formats)`.
+
+The STL exporter (`geop_ops_assembly::Stl`) writes the mesh the editor
+draws; others write STEP files, drawings, URDF robots, flat patterns and
+bills of materials, each in its own crate.
+
+### Inspectors
+
+An `Inspector` is a question answered about what a program built. Its
+`INFO` (`InspectorInfo`) says whether it is asked of the whole part or of
+picks (`Picks`: the drawn kinds it accepts, at most how many);
+`inspect(output, picked, options)` returns its `Report` (any `Serialize`)
+and the visuals to draw of it in the viewport, and `show(report)` lays the
+report out for a front end as an `Answer` — text, lists, tables, groups,
+buttons that ask again or save a file (`Block`, `AnswerAction`), and a
+plane to cut a section with — so a front end shows every inspector's answer
+alike, knowing none. An inspector that picks becomes the editor's pick
+tool, asked again with every pick. `Bounded` is a number as a report shows
+it: the midpoint of an enclosure and its half-width.
+
+### Registering them
+
+Exporters and inspectors are registered in an `Outputs` (`exporter`,
+`inspector`; a kind twice is refused), the application's choice like the
+operation registry: the editor's is `outputs` in
+[geop-cad-base](../cad/geop-cad-base.md).

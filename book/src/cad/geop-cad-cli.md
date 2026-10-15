@@ -15,7 +15,7 @@ geop compile part.geop -o out/part.stl
 Builds a program (the JSON the web editor saves, see
 [geop-ops-parameters](../ops/geop-ops-parameters.md#the-program-file-programfile)) and writes the part with the
 exporter the editor offers for the output's extension: `.stl` (the mesh the
-editor draws, see [geop-ops-rasterize](../ops/geop-ops-rasterize.md)),
+editor draws, see [geop-core-rasterize](../core/geop-core-rasterize.md)),
 `.step`, `.svg`/`.dxf` drawings, `.zip` URDF robots, `.csv` bills of
 materials.
 

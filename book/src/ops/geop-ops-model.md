@@ -119,7 +119,7 @@ its turns from, so frames put on parallel axes line up.
 - **Cosmetic threads** (`threads`, `read_threads`): threads recorded on a
   round face rather than modelled, drawn as the annotations of the step
   that recorded them (`draw_threads`, see
-  [geop-ops-view](./geop-ops-view.md)). A step that repeats features — a
+  [geop-core-editor](../core/geop-core-editor.md#the-view-view)). A step that repeats features — a
   pattern, a mirror — copies the threads they carry.
 - **`Records<T>`**: what a part records of some of its entities by name —
   the cable a solid is swept from, the sheet a sheet-metal body is bent
@@ -127,7 +127,7 @@ its turns from, so frames put on parallel axes line up.
 
 The model draws itself into a `PartView` (`NamedModel::draw`): its
 vertices, edges and faces, each by name, from its rasterization (see
-[geop-ops-rasterize](./geop-ops-rasterize.md)).
+[geop-core-rasterize](../core/geop-core-rasterize.md)).
 
 `testing` (feature `testing`) holds what the tests of the operations share
 about the model: checking it valid (`assert_valid`, `check_valid`), finding

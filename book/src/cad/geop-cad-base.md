@@ -24,7 +24,7 @@ builds a program outside the editor, as the file `file` of the workspace
 it places parts from (`operations::workspace`, beside the standard parts).
 
 `outputs` is, the same way, the set of exporters and inspectors the editor
-offers (see [geop-ops-output](../ops/geop-ops-output.md)): STL and STEP
+offers (see [geop-core-editor](../core/geop-core-editor.md#outputs-output)): STL and STEP
 files, drawings, URDF robots, flat patterns and bills of materials;
 measuring, mass properties, interference and the bill of materials as a
 table.
@@ -39,7 +39,7 @@ defines its own targets and draws them, and `part` composes the part from
 every crate's:
 
 - `draw(reader)`: the part as the viewport draws it, a
-  [`PartView`](../ops/geop-ops-view.md) — its model, its datums, its
+  [`PartView`](../core/geop-core-editor.md#the-view-view) — its model, its datums, its
   sketches, what its steps draw on it and the parts placed in it, in its
   colour (`geop_ops_assembly::draw`, which draws placed parts the same
   way).

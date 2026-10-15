@@ -184,7 +184,7 @@ midpoint to three decimals, which hides exactly the width you are trying to
 diagnose.
 
 A frame can also carry any `DebugContext` through `with_scene`. A
-`PrimitiveScene` (from `geop-ops-rasterize`'s `debug` module) attached this
+`PrimitiveScene` (from `geop-core-rasterize`'s `debug` module) attached this
 way is rendered to an HTML file under `/tmp`
 when the error is printed, and the chain links to it, so a failure in a
 geometric search comes with a 3-D picture of what the search was looking at.

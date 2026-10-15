@@ -148,7 +148,7 @@ says which values no true solution is proven for, and why.
 and those of the parts placed in it, however deep — each of its own part's
 material, with their mass properties: what weighing a part, checking it for
 interference, ordering it and simulating it read. `Stl` is the STL exporter
-(see [geop-ops-output](./geop-ops-output.md#exporters)): the mesh the
+(see [geop-core-editor](../core/geop-core-editor.md#exporters)): the mesh the
 editor draws, the parts placed included, each where it is; its options
 choose the solids (`solids`), text or binary (`ascii`) and how finely
 curved faces are meshed (`quality`).

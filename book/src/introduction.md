@@ -22,15 +22,18 @@ core/geop-core-sketch        2-D constraint sketches: entities, constraints
 core/geop-core-program       programs and the parts they build: targets,
                               typed references to their elements, running
                               a program
+core/geop-core-rasterize     turns a Model into a triangle mesh, writes it
+                              as STL, and renders it for debugging
 core/geop-core-editor        what an operation is and how it is edited:
                               forms, dialogs, visuals, events, picks,
-                              numbers as formulas
+                              numbers as formulas; what an editor draws of
+                              a part, and picking; exporters, inspectors
+lib/geop-lib-sheet           sheets of paper (SVG, DXF) drawings and flat
+                              patterns are written on
 ops/geop-ops-model           the model a part's steps build: topology with
                               stable names, features, geometric kinds
 ops/geop-ops-parameters      a program file: parameters, state, what it
                               says of its part, running it
-ops/geop-ops-view            what an editor draws of a part, and picking
-ops/geop-ops-output          exporters, inspectors, sheets (SVG, DXF)
 ops/geop-ops-constraints     constraints and unknowns of a part's state,
                               and solving them
 ops/geop-ops-datums          the part's datums: the origin, and those steps
@@ -44,8 +47,6 @@ ops/geop-ops-extrude-revolve extrude/revolve, sweeps along paths, lofts;
                               their operations, and basic shapes for tests
 ops/geop-ops-assembly        placed parts, mates, joints, solving them; the
                               library, the solids a part shows, STL export
-ops/geop-ops-rasterize       turns a Model into a triangle mesh, writes it
-                              as STL, and renders it for debugging
 cad/geop-cad-base            the operations the editor offers, the part as
                               composed from every crate, the workspace, the
                               editor engine, examples, standard parts
