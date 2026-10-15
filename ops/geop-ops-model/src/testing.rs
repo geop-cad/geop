@@ -13,7 +13,9 @@ use geop_core_math::{
 };
 use geop_core_program::{
     operation::Operation,
+    operation_registry::OperationRegistry,
     part::{Part, Reader},
+    program_runner::ProgramRunner,
 };
 use geop_core_topology::{
     Body, Edge, FaceId, Model, SolidId,
@@ -277,7 +279,8 @@ pub fn apply<O: Operation>(
 ) -> GeopResult<Part<O::Input, O::State>> {
     let mut part = given_part(&model)?;
     part.begin_step();
-    O::run(step, &mut part, args)?;
+    let runner = ProgramRunner::new(OperationRegistry::default());
+    O::run(step, &runner, &mut part, args)?;
     part.end_run(0);
     Ok(part)
 }

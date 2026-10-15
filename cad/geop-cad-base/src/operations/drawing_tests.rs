@@ -15,20 +15,21 @@ use geop_ops_drawing::{
 use geop_ops_extrude_revolve::testing::model_of;
 use geop_ops_model::{NamedModel, RefId};
 use geop_ops_output::sheet::to_dxf;
+use geop_ops_parameters::BuildPart;
 use geop_ops_sketch::SketchPlane;
 
-use super::{Runner, testing::Built};
+use super::testing::Built;
 use crate::{Program, examples};
 
 type Part<T> = NamedModel<T>;
 
-/// `program` built on its own: the runner, holding its part.
-fn build(program: &Program) -> Runner {
+/// `program` built on its own: its part.
+fn build(program: &Program) -> BuildPart {
     program.built().unwrap()
 }
 
 /// The model of the part `built` holds.
-fn model(built: &Runner) -> Part<S> {
+fn model(built: &BuildPart) -> Part<S> {
     model_of(built)
 }
 
@@ -140,7 +141,7 @@ fn dimensions_by_name_are_drawn() {
         ],
         ..Default::default()
     };
-    let dxf = to_dxf(&compose(&built.part.current(), &args, "2026-10-04", &[]).unwrap());
+    let dxf = to_dxf(&compose(&built.current(), &args, "2026-10-04", &[]).unwrap());
     // The front view sees the diagonal of the 40 x 10 face truly.
     assert!(dxf.contains("\n41.23\n"), "the diagonal");
     assert!(dxf.contains("\n%%c6\n"), "the diameter");
@@ -155,7 +156,7 @@ fn dimensions_by_name_are_drawn() {
         }],
         ..Default::default()
     };
-    let err = compose(&built.part.current(), &skew, "", &[])
+    let err = compose(&built.current(), &skew, "", &[])
         .unwrap_err()
         .to_string();
     assert!(err.contains("round"), "{err}");
@@ -173,7 +174,7 @@ fn section_through_a_blind_hole_is_hatched() {
         section: Some(SketchPlane::Datum(datum("middle"))),
         ..Default::default()
     };
-    let dxf = to_dxf(&compose(&built.part.current(), &args, "", &[]).unwrap());
+    let dxf = to_dxf(&compose(&built.current(), &args, "", &[]).unwrap());
     let hatch = dxf.matches("\nHATCH\n").count();
     assert!(hatch > 10, "{hatch} hatch lines");
     assert!(dxf.contains("SECTION A-A"));
@@ -195,7 +196,7 @@ fn a_tapped_hole_draws_its_thread() {
         scale: Some(2.0),
         ..Default::default()
     };
-    let sheet = compose(&built.part.current(), &args, "", &[]).unwrap();
+    let sheet = compose(&built.current(), &args, "", &[]).unwrap();
     let arcs: Vec<f64> = sheet
         .strokes
         .iter()
@@ -261,7 +262,7 @@ fn a_tapped_hole_draws_its_thread() {
         hidden_lines: false,
         ..args
     };
-    let sheet = compose(&built.part.current(), &without, "", &[]).unwrap();
+    let sheet = compose(&built.current(), &without, "", &[]).unwrap();
     assert!(!sheet.strokes.iter().any(|s| s.layer == layer::HIDDEN));
     assert_eq!(
         sheet
@@ -494,7 +495,7 @@ fn every_example_draws() {
         }
         // The whole default sheet, too, of every example whose views build.
         if !KNOWN_TO_FAIL.iter().any(|(n, _)| *n == name)
-            && let Err(e) = compose(&built.part.current(), &DrawingArgs::default(), "", &[])
+            && let Err(e) = compose(&built.current(), &DrawingArgs::default(), "", &[])
         {
             failures.push(format!("{name}, the sheet: {}", named(part, &e)));
         }
@@ -504,7 +505,7 @@ fn every_example_draws() {
 
 /// The example workspace `name` built: its first file, as that file's
 /// path, and the part.
-fn example_assembly(name: &str) -> (&'static str, Runner) {
+fn example_assembly(name: &str) -> (&'static str, BuildPart) {
     let (_, files) = crate::examples::workspaces()
         .into_iter()
         .find(|(n, _)| *n == name)
@@ -517,7 +518,7 @@ fn example_assembly(name: &str) -> (&'static str, Runner) {
         .collect();
     (
         path,
-        super::build(&program, path, super::workspace(files).scope(path)).unwrap(),
+        super::build(&program, path, super::workspace(files)).unwrap().part,
     )
 }
 
@@ -542,8 +543,8 @@ fn bolted_plate_from_the_front_hides_the_screw_in_the_plate() {
     use geop_ops_drawing::layer;
     use geop_ops_drawing::scene::Scene;
     use geop_ops_output::sheet::Shape;
-    let (_, built) = example_assembly("bolted_plate");
-    let scene = Scene::of(&built.part.current()).unwrap();
+    let (path, built) = example_assembly("bolted_plate");
+    let scene = Scene::of(&built.current()).unwrap();
     let paths: Vec<&str> = scene.bodies.iter().map(|b| b.path.as_str()).collect();
     assert_eq!(paths, ["plate", "screw", "nut"]);
     let front = scene
@@ -593,8 +594,8 @@ fn bolted_plate_from_the_front_hides_the_screw_in_the_plate() {
         bom: true,
         ..Default::default()
     };
-    let parts = parts_list(&built.part.current(), &args).unwrap();
-    let sheet = compose(&built.part.current(), &args, "", &parts).unwrap();
+    let parts = parts_list(&built.current(), path, &args).unwrap();
+    let sheet = compose(&built.current(), &args, "", &parts).unwrap();
     let balloons = sheet
         .strokes
         .iter()
@@ -628,7 +629,7 @@ fn bolted_plate_from_the_front_hides_the_screw_in_the_plate() {
 fn press_handle_fillets_have_one_silhouette_each_from_the_front() {
     use geop_ops_drawing::scene::Scene;
     let (_, built) = example_assembly("press");
-    let scene = Scene::of(&built.part.current()).unwrap();
+    let scene = Scene::of(&built.current()).unwrap();
     let body = scene.bodies.iter().find(|b| b.path == "part2").unwrap();
     let back = body.pose.unwrap().inverse().motion();
     let d = back.rotate(&ViewKind::Front.frame::<S>().unwrap().direction.vector());
@@ -649,7 +650,7 @@ fn press_handle_fillets_have_one_silhouette_each_from_the_front() {
 fn press_from_the_front_draws() {
     use geop_ops_drawing::scene::Scene;
     let (_, built) = example_assembly("press");
-    let scene = Scene::of(&built.part.current()).unwrap();
+    let scene = Scene::of(&built.current()).unwrap();
     scene
         .project(&ViewKind::Front.frame().unwrap(), &ViewOptions::default())
         .unwrap();
@@ -666,7 +667,7 @@ fn press_from_the_front_draws() {
 fn press_from_the_iso_view_draws() {
     use geop_ops_drawing::scene::Scene;
     let (_, built) = example_assembly("press");
-    let scene = Scene::of(&built.part.current()).unwrap();
+    let scene = Scene::of(&built.current()).unwrap();
     scene
         .project(&ViewKind::Iso.frame().unwrap(), &ViewOptions::default())
         .unwrap();
@@ -683,14 +684,14 @@ fn every_example_assembly_draws() {
     use geop_ops_output::sheet::Shape;
     let mut failures = Vec::new();
     for (name, _) in crate::examples::workspaces() {
-        let (_, built) = example_assembly(name);
+        let (path, built) = example_assembly(name);
         let args = DrawingArgs {
             bom: true,
             ..Default::default()
         };
-        let parts = parts_list(&built.part.current(), &args).unwrap();
-        let scene = Scene::of(&built.part.current()).unwrap();
-        let sheet = match compose(&built.part.current(), &args, "", &parts) {
+        let parts = parts_list(&built.current(), path, &args).unwrap();
+        let scene = Scene::of(&built.current()).unwrap();
+        let sheet = match compose(&built.current(), &args, "", &parts) {
             Ok(sheet) => sheet,
             Err(e) => {
                 failures.push(format!("{name}: {e}"));
@@ -782,13 +783,14 @@ fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
     let built = super::build(
         &program,
         "bolted_plate.geop",
-        super::workspace(files).scope("bolted_plate.geop"),
+        super::workspace(files),
     )
-    .unwrap();
-    let view = built.part.current();
+    .unwrap()
+    .part;
+    let view = built.current();
     let placed = geop_ops_assembly::placed_parts(&view).unwrap();
     let placed = placed.iter().find(|p| p.name == "plate").unwrap();
-    let plate = geop_ops_model::read_model(&placed.located.instance.reader()).unwrap();
+    let plate = geop_ops_model::read_model(&placed.located.part.clone()).unwrap();
     let plate = &*plate;
     let model = plate.topology();
     let hole = name_where(plate, |id| match id {
@@ -806,7 +808,7 @@ fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
         }],
         ..Default::default()
     };
-    let sheet = compose(&built.part.current(), &args, "", &[]).unwrap();
+    let sheet = compose(&built.current(), &args, "", &[]).unwrap();
     let (mut rising, mut falling) = (0, 0);
     for stroke in sheet.strokes.iter().filter(|s| s.layer == layer::HATCH) {
         if let Shape::Line(a, b) = stroke.shape {
@@ -830,7 +832,7 @@ fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
 /// A plate with `n` by `n` M3x10 screws standing on it, 10 apart, and as
 /// many M3 nuts hanging under it, each placed on its own: the program
 /// `screwed.geop`, built.
-fn screwed_plate(n: usize) -> Runner {
+fn screwed_plate(n: usize) -> BuildPart {
     use geop_ops_parameters::{Setting, Settings, StateValue, pose_state};
     let mut program = Program::new();
     let mut place = |id: String, file: &str, size: Option<&str>, at: [f64; 3], turn: [f64; 3]| {
@@ -876,9 +878,10 @@ fn screwed_plate(n: usize) -> Runner {
     super::build(
         &program,
         "screwed.geop",
-        super::workspace(files).scope("screwed.geop"),
+        super::workspace(files),
     )
     .unwrap()
+    .part
 }
 
 /// The balloons of `sheet`: the item numbers on the dimension layer next
@@ -912,26 +915,27 @@ fn balloon_items(sheet: &geop_ops_output::sheet::Sheet) -> Vec<String> {
 }
 
 /// A plate held by four screws and four nuts: three lines of the bill, so
-/// three balloons — not one per part placed — and one view of each part
-/// serves every copy of it.
+/// three balloons — not one per part placed.
 #[test]
 fn repeated_parts_are_ballooned_once() {
     use geop_ops_drawing::scene::Scene;
     let built = screwed_plate(2);
-    let scene = Scene::of(&built.part.current()).unwrap();
+    let scene = Scene::of(&built.current()).unwrap();
     assert_eq!(scene.bodies.len(), 9);
-    assert_eq!(scene.groups().len(), 3, "the plate, the screw and the nut");
+    // TODO: one view of each part for every copy of it — the plate, the
+    // screw and the nut — once the parts of no state are shared between
+    // instances (see `geop_core_program::part::Part`).
     let args = DrawingArgs {
         views: vec![ViewKind::Front, ViewKind::Top],
         bom: true,
         ..Default::default()
     };
-    let parts = parts_list(&built.part.current(), &args).unwrap();
+    let parts = parts_list(&built.current(), "screwed.geop", &args).unwrap();
     assert_eq!(
         parts.iter().map(|l| l.quantity).collect::<Vec<_>>(),
         [1, 4, 4]
     );
-    let sheet = compose(&built.part.current(), &args, "", &parts).unwrap();
+    let sheet = compose(&built.current(), &args, "", &parts).unwrap();
     assert_eq!(balloon_items(&sheet), ["1", "2", "3"]);
 }
 
@@ -942,14 +946,14 @@ fn repeated_parts_are_ballooned_once() {
 fn a_hundred_screws_draw() {
     use geop_ops_drawing::scene::Scene;
     let built = screwed_plate(10);
-    let scene = Scene::of(&built.part.current()).unwrap();
+    let scene = Scene::of(&built.current()).unwrap();
     assert_eq!(scene.groups().len(), 3);
     let args = DrawingArgs {
         bom: true,
         sheet: geop_ops_drawing::SheetSize::A2,
         ..Default::default()
     };
-    let parts = parts_list(&built.part.current(), &args).unwrap();
-    let sheet = compose(&built.part.current(), &args, "", &parts).unwrap();
+    let parts = parts_list(&built.current(), "screwed.geop", &args).unwrap();
+    let sheet = compose(&built.current(), &args, "", &parts).unwrap();
     assert_eq!(balloon_items(&sheet), ["1", "2", "3"]);
 }

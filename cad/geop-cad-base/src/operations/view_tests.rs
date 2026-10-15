@@ -11,7 +11,7 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
 };
 use geop_core_program::element::{ElementReference, PickedElement};
-use geop_ops_datums::{ORIGIN, define_datums};
+use geop_ops_datums::{ORIGIN};
 use geop_ops_extrude_revolve::{
     shapes::{block_part, v3},
     testing::n,
@@ -38,7 +38,6 @@ fn given_sketch(_: &PartReader, s: &PlacedSketch<Design>) -> GeopResult<PlacedSk
 /// step would have built.
 fn built(model: &NamedModel<S>, sketches: &[(&str, PlacedSketch<S>)]) -> BuildPart {
     let mut part: BuildPart = given_part(model).unwrap();
-    define_datums(&mut part).unwrap();
     for (name, placed) in sketches {
         let placed = PlacedSketch {
             name: name.to_string(),

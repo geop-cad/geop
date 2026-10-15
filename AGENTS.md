@@ -783,10 +783,14 @@ operation that can only use the part's own reads it with
 reads it with `retrieve_placed` (or `resolve_placed`, `Selected::shape`)
 and places it where `geop_ops_parameters::located` says. Instances'
 constraints and unknowns come up through `Constraints::of` and
-`Unknowns::of`; no step writes the state, a solve outside the part does. Each crate defines its own targets and draws
-them; `geop_cad_base::part` only composes them (the given step, the drawing,
-the structure). A run's inputs are numbers only: text parameters, colour,
-material and the library are targets of the given step.
+`Unknowns::of`; no step writes the state, a solve outside the part does.
+Each crate defines its own targets and draws them; `geop_cad_base::part`
+only composes them (the drawing, the structure). A program defines what it
+needs as steps: its parameters (`DefineParameters`) and what it says of
+its part (`PartProperties`); a run's inputs only set them. A program never
+knows where it is: the runner does (`Location`), and a step reads other
+files through it (`ProgramRunner::program`, `read`), from the
+`Workspace`, passing what it read on to its targets as arguments.
 
 Shared test helpers live in `geop_ops_model::testing` (feature `testing`:
 validity, entities by where they are, applying an operation to a part) and
@@ -951,3 +955,15 @@ or none. `across` takes the first axis that no other component is
 definitely less than. A frame put on a face or an edge gives the same
 direction as the joint would have chosen for it (`frame_along`), so frames
 and the entities they are on are at a turn of zero alike.
+
+## Read a value where its read is checked
+
+A version is reused when what it read did not change, so the place a value
+is read from and the place its read is checked must be the same. A mate on
+a part of a placed sub-assembly read `hinge/pin.pose` from the top part's
+own state, which the file never gave, and got no pose; the check looked in
+the hinge's part, where the hinge file's pose was, and saw nothing change.
+The mate kept a constraint differentiated by nothing, and the solve gave up
+at once. A value behind an instance's path is now read inside that
+instance's part (`Reader::inside`), as the check does. When a read and its
+dependency take different routes to the same name, one of them is wrong.

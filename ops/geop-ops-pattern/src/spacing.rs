@@ -62,7 +62,7 @@ impl Spacing {
     /// `count` instances in a row along a line, this spacing coming to a
     /// length as `reader` reads the parameters. Refuses a spacing that puts
     /// them on top of each other.
-    pub fn along<I: Input + Scalar, St: State>(
+    pub fn along<I: Input, St: State>(
         &self,
         count: usize,
         reader: &Reader<I, St>,
@@ -89,7 +89,7 @@ impl Spacing {
     /// full turn spreading them over it, the last a step short of the
     /// first. Refuses a spacing that puts them on top of each other, or
     /// brings them round onto the first again.
-    pub fn round<I: Input + Scalar, St: State>(
+    pub fn round<I: Input, St: State>(
         &self,
         count: usize,
         reader: &Reader<I, St>,
@@ -226,7 +226,7 @@ impl Row {
 /// `reader` reads the parameters — dragged by `handle` unless it follows a
 /// formula — calling `set` with the count it is set to: a formula as
 /// typed, a number rounded to a whole one of at least one, the seed alone.
-pub fn count_field<'a, I: Input + Scalar, St: State, S: Scalar, A, T>(
+pub fn count_field<'a, I: Input, St: State, S: Scalar, A, T>(
     f: &mut EditForm<'a, S, A, T>,
     key: &str,
     count: &NumericInput,
@@ -261,7 +261,7 @@ fn count_of(value: &Value) -> Option<NumericInput> {
 /// The number of instances `count` comes to as `reader` reads the
 /// parameters: a whole number, at least one — the seed alone. Anything else
 /// is refused, saying so.
-pub fn whole_count<I: Input + Scalar, St: State>(
+pub fn whole_count<I: Input, St: State>(
     count: &NumericInput,
     reader: &Reader<I, St>,
 ) -> GeopResult<usize> {

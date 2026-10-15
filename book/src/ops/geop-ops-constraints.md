@@ -33,8 +33,8 @@ Both come up through the instances placed in a part (see
 `c` of the instance `bolt` is the part's `bolt/c`, its derivatives by the
 state `bolt/s` where the instance's are by `s`, and its residuals as they
 are — a length within the instance, wherever it is. An instance's unknowns
-come up the same way, each starting where the instance has it. A copy's are
-those of what it copies.
+come up the same way, each starting where the instance has it. A copy is
+an instance like any other: its own come up behind its name.
 
 ## Solving (`solve`)
 

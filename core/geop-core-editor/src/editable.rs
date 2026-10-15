@@ -12,7 +12,7 @@ use geop_core_math::{
 use geop_core_program::{
     operation::{ErasedOperation, Operation, args, saved},
     operation_registry::OperationRegistry,
-    part::{self, Reader},
+    part::{self, Part, Reader},
     program::{Program, ProgramStep},
     program_runner::ProgramRunner,
 };
@@ -112,6 +112,9 @@ pub struct Listed {
 /// Serialized as the group's name, as it is shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum OperationGroup {
+    /// What a part is besides its shape: its parameters, and what it is
+    /// called, made of and coloured.
+    Part,
     /// Sketches, and the reference geometry they are drawn on.
     Sketch,
     /// What makes a solid of a sketch: extrusions, revolutions, sweeps and
@@ -146,11 +149,13 @@ pub enum OperationTier {
 }
 
 /// What a step is edited against: its id — what everything it builds is
-/// named after — the part as it was before it, the part as the step
-/// built it when it last ran, if it did, and, for an event, the part as the
-/// editor draws it — what a pointer is over, without drawing it again.
+/// named after — the runner it is run by, which reads the files around its
+/// program, the part as it was before it, the part as the step built it
+/// when it last ran, if it did, and, for an event, the part as the editor
+/// draws it — what a pointer is over, without drawing it again.
 pub struct Context<'a, I, S: part::State, N: Scalar> {
     pub step: &'a str,
+    pub runner: &'a ProgramRunner<I, S>,
     pub before: Reader<'a, I, S>,
     pub built: Option<Reader<'a, I, S>>,
     /// The part as drawn for picks (see [`Scene`]): given with every event
@@ -347,22 +352,23 @@ impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
     }
 
     /// The step `step` of `program` and its operation, and what it is
-    /// edited against in the part `runner` last ran: the part before it and
-    /// after it, at its position in `program` — after the given step (see
-    /// [`ProgramRunner::position`]). A program edited since the last run is
-    /// read at its new positions until it runs again.
+    /// edited against in `part`, as `runner` last ran it: the part before
+    /// it and after it, at its position in `program`. A program edited since
+    /// the last run is read at its new positions until it runs again.
     fn step<'a>(
         &'a self,
         runner: &'a ProgramRunner<I, S>,
+        part: &'a Part<I, S>,
         program: &'a Program,
         step: &'a str,
     ) -> GeopResult<Step<'a, I, S, N>> {
         let program_step = program.step(step)?;
-        let position = ProgramRunner::<I, S>::position(position(program, step)?);
+        let position = position(program, step)?;
         let context = Context {
             step,
-            before: runner.part.reader(position),
-            built: Some(runner.part.reader(position + 1)),
+            runner,
+            before: part.reader(position),
+            built: Some(part.reader(position + 1)),
             scene: None,
         };
         Ok(Step {
@@ -377,6 +383,7 @@ impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
     pub fn new_step(
         &self,
         runner: &ProgramRunner<I, S>,
+        part: &Part<I, S>,
         program: &Program,
         kind: &str,
         id: &str,
@@ -384,13 +391,12 @@ impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
     ) -> GeopResult<ProgramStep> {
         let operation = self.get(kind)?;
         let before = match before {
-            Some(step) => {
-                (runner.part).reader(ProgramRunner::<I, S>::position(position(program, step)?))
-            }
-            None => runner.part.current(),
+            Some(step) => part.reader(position(program, step)?),
+            None => part.current(),
         };
         let context = Context {
             step: id,
+            runner,
             before,
             built: None,
             scene: None,
@@ -411,11 +417,12 @@ impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
     pub fn presentation(
         &self,
         runner: &ProgramRunner<I, S>,
+        part: &Part<I, S>,
         program: &Program,
         step: &str,
         editing: &dyn Any,
     ) -> GeopResult<Form<N>> {
-        let step = self.step(runner, program, step)?;
+        let step = self.step(runner, part, program, step)?;
         (step.operation).presentation(&step.context, step.args, editing)
     }
 
@@ -426,10 +433,11 @@ impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
     pub fn listed(
         &self,
         runner: &ProgramRunner<I, S>,
+        part: &Part<I, S>,
         program: &Program,
         step: &str,
     ) -> GeopResult<Form<N>> {
-        let mut step = self.step(runner, program, step)?;
+        let mut step = self.step(runner, part, program, step)?;
         step.context.built = None;
         let editing = step.operation.initial_editing();
         (step.operation).presentation(&step.context, step.args, &*editing)
@@ -437,16 +445,18 @@ impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
 
     /// The arguments and editing state of the step `step` after `event`,
     /// with what the pointer is over found in `scene`, if one is given.
+    #[allow(clippy::too_many_arguments)]
     pub fn process_user_event(
         &self,
         runner: &ProgramRunner<I, S>,
+        part: &Part<I, S>,
         program: &Program,
         step: &str,
         editing: &dyn Any,
         event: Event<N>,
         scene: Option<&dyn Scene<N>>,
     ) -> GeopResult<Edited> {
-        let mut step = self.step(runner, program, step)?;
+        let mut step = self.step(runner, part, program, step)?;
         step.context.scene = scene;
         (step.operation).process_user_event(&step.context, step.args, editing, event)
     }

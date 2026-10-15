@@ -1,5 +1,5 @@
 //! Assemblies: parts placed in a part ([`placed`]) — another program
-//! file's part, built once by a [`Library`] and placed by [`AddPart`] at a
+//! file's part, loaded through the runner and placed by [`AddPart`] at a
 //! pose its program's state holds — and mated to what is already there
 //! ([`mates`]). Where every placed part is, is the program's state, which
 //! the editor solves the mates for ([`mechanism`], and [`solving`], which
@@ -17,10 +17,13 @@ pub mod frame;
 #[cfg(test)]
 mod frame_tests;
 mod icons;
-mod part_pattern;
 pub mod joints;
 pub mod mates;
 pub mod mechanism;
+mod part_pattern;
+#[cfg(any(test, feature = "testing"))]
+#[allow(clippy::expect_used, reason = "tests' helpers fail where a test would")]
+pub mod testing;
 pub mod placed;
 pub mod residuals;
 pub mod solids;
@@ -34,9 +37,6 @@ pub use mates::{
     joint_parameter, mate, mate_name,
 };
 pub use mechanism::mates_resolved;
-pub use placed::{
-    Component, GivenLibrary, Instance, Library, Placement, component_of, define_library,
-    draw_instances, library, placed_parts, read_library, solid_meshes,
-};
 pub use part_pattern::{Layout, PartPattern, PartPatternArgs, PatternAxis};
+pub use placed::{Drawn, define_placed, draw, draw_instances, drawn, placed_parts, solid_meshes};
 pub use stl::{STL_QUALITY, Stl, StlOptions, stl_bytes};

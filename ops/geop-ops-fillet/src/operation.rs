@@ -12,7 +12,7 @@ use geop_core_editor::{
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::element::ElementReference;
 use geop_ops_model::{Design, Edge, ModelOperation, NamedModel, Namer, Vertex, build_model, model};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_view::icons;
 use serde::{Deserialize, Serialize};
 
@@ -122,7 +122,7 @@ impl PartOperation for Fillet {
     )
     .icon(icons::FILLET);
     type Args = FilletArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -132,7 +132,7 @@ impl PartOperation for Fillet {
         FilletArgs::constant(Vec::new(), 0.1)
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &FilletArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &FilletArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
@@ -290,7 +290,7 @@ impl PartOperation for Chamfer {
     )
     .icon(icons::CHAMFER);
     type Args = ChamferArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -300,7 +300,7 @@ impl PartOperation for Chamfer {
         ChamferArgs::even(Vec::new(), 0.1)
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &ChamferArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &ChamferArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 

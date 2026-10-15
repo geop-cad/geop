@@ -111,13 +111,45 @@ pub(crate) fn registry() -> OperationRegistry<Sc, Pose> {
         .and_then(|o| o.with(InputFrameOperation))
         .and_then(|o| o.with(StateFrameOperation))
         .and_then(|o| o.with(ShiftFrameOperation))
-        .and_then(|o| o.with(instances::PlaceOperation))
-        .and_then(|o| o.with(instances::CopyOperation))
+        .and_then(|o| o.with(instances::LoadOperation))
+        .and_then(|o| o.with(instances::CountOperation))
         .unwrap()
 }
 
-fn runner() -> ProgramRunner<Sc, Pose> {
-    ProgramRunner::new(registry())
+/// A runner of the tests' operations, and the part it runs on.
+pub(crate) struct Running {
+    pub(crate) runner: ProgramRunner<Sc, Pose>,
+    pub(crate) part: Part<Sc, Pose>,
+}
+
+impl Running {
+    pub(crate) fn run(
+        &mut self,
+        program: &Program,
+        inputs: &BTreeMap<String, Sc>,
+        state: &BTreeMap<String, Pose>,
+    ) -> RunOutput {
+        self.runner.run(&mut self.part, program, inputs, state)
+    }
+
+    pub(crate) fn run_until(
+        &mut self,
+        program: &Program,
+        end: usize,
+        inputs: &BTreeMap<String, Sc>,
+        state: &BTreeMap<String, Pose>,
+    ) -> RunOutput {
+        (self.runner).run_until(&mut self.part, program, end, inputs, state)
+    }
+}
+
+pub(crate) fn runner() -> Running {
+    let mut runner = ProgramRunner::new(registry());
+    runner.workspace = Some(std::rc::Rc::new(instances::Files));
+    Running {
+        runner,
+        part: Part::default(),
+    }
 }
 
 fn add_two_frame(id: &str, data1: [f64; 3], data2: [f64; 3]) -> ProgramStep {
@@ -128,7 +160,7 @@ fn add_two_frame(id: &str, data1: [f64; 3], data2: [f64; 3]) -> ProgramStep {
     ProgramStep::new::<AddTwoFrameOperation>(id, &args).unwrap()
 }
 
-fn middle_frame(id: &str, frame1: &str, frame2: &str) -> ProgramStep {
+pub(crate) fn middle_frame(id: &str, frame1: &str, frame2: &str) -> ProgramStep {
     let args = MiddleFrameArgs {
         frame1: whole_frame(frame1),
         frame2: whole_frame(frame2),
@@ -163,17 +195,17 @@ fn no_state() -> BTreeMap<String, Pose> {
     BTreeMap::new()
 }
 
-fn frame(runner: &ProgramRunner<Sc, Pose>, name: &str) -> Vector3<Sc> {
+fn frame(runner: &Running, name: &str) -> Vector3<Sc> {
     let view = runner.part.current();
     view.retrieve_element(&whole_frame(name)).unwrap().data
 }
 
 /// The frame `name` as it was before the step at position `step` of the
 /// program.
-fn frame_before(runner: &ProgramRunner<Sc, Pose>, step: usize, name: &str) -> Vector3<Sc> {
+fn frame_before(runner: &Running, step: usize, name: &str) -> Vector3<Sc> {
     let view = runner
         .part
-        .reader(ProgramRunner::<Sc, Pose>::position(step));
+        .reader(step);
     view.retrieve_element(&whole_frame(name)).unwrap().data
 }
 
@@ -238,7 +270,7 @@ fn failed_target_is_rebuilt_once_its_input_returns() {
             ("b".into(), "input `y` is not given".into()),
             (
                 "m".into(),
-                "target `b` failed in the step at position 2: input `y` is not given".into()
+                "target `b` failed in the step at position 1: input `y` is not given".into()
             ),
         ]
     );
@@ -258,7 +290,7 @@ fn step_reads_only_targets_defined_before_it() {
     let middle = || middle_frame("step2", "step1_1", "step1_2");
     let not_defined = vec![(
         "step2".to_string(),
-        "target `step1_1` is not defined by the step at position 1 or before".to_string(),
+        "target `step1_1` is not defined by the step at position 0 or before".to_string(),
     )];
 
     ok(runner.run(
@@ -296,7 +328,7 @@ fn target_defined_twice_is_an_error() {
             errors(&output),
             [(
                 "second".into(),
-                "target `a` is defined twice: by the steps at positions 1 and 2".into()
+                "target `a` is defined twice: by the steps at positions 0 and 1".into()
             )]
         );
         assert_encloses(frame(&runner, "a"), [1.0, 0.0, 0.0]);
@@ -339,11 +371,14 @@ fn changed_state_rebuilds_what_read_it() {
 
 #[test]
 fn unknown_operation_fails_its_step_only() {
-    let mut runner = ProgramRunner::new(
-        OperationRegistry::default()
-            .with(InputFrameOperation)
-            .unwrap(),
-    );
+    let mut runner = Running {
+        runner: ProgramRunner::new(
+            OperationRegistry::default()
+                .with(InputFrameOperation)
+                .unwrap(),
+        ),
+        part: Part::default(),
+    };
     let args = StateFrameArgs {
         state: "body".to_string(),
     };
@@ -432,7 +467,7 @@ fn step_makes_one_version_of_a_target() {
         errors(&output),
         [(
             "s".into(),
-            "target `a` is made twice by the step at position 2".into()
+            "target `a` is made twice by the step at position 1".into()
         )]
     );
     assert_encloses(frame(&runner, "a"), [2.0, 0.0, 0.0]);
@@ -649,29 +684,6 @@ fn a_revision_from_the_default_follows_a_step_inserted_before_it() {
     assert_encloses(frame(&runner, "a"), [6.0, 0.0, 0.0]);
 }
 
-/// What a run is given besides its inputs is defined by the given step,
-/// before the program's own: its steps read it like any target, and a
-/// failure of it is reported as the given step's.
-#[test]
-fn the_given_step_defines_what_a_run_is_given() {
-    let mut runner = runner();
-    runner.given = Some(std::rc::Rc::new(|part| {
-        let given = TargetReference::<Frame>::new("given");
-        part.define_target(&given, &(), |_, _| {
-            Ok(Frame {
-                data: vector([4.0, 0.0, 0.0]),
-            })
-        })
-    }));
-    let program = Program::new(vec![middle_frame("m", "given", "given")]);
-    ok(runner.run(&program, &inputs(&[]), &no_state()));
-    assert_encloses(frame(&runner, "m"), [4.0, 0.0, 0.0]);
-
-    runner.given = Some(std::rc::Rc::new(|_| Err("no files".into())));
-    let output = runner.run(&Program::new(vec![]), &inputs(&[]), &no_state());
-    assert_eq!(errors(&output), [("given".into(), "no files".into())]);
-}
-
 /// A view lists the targets of a kind it sees, in the order their steps
 /// made them: those made before it, not after.
 #[test]
@@ -688,7 +700,7 @@ fn view_lists_targets_of_a_kind() {
         frames.iter().map(|f| f.name().to_string()).collect()
     }
     assert_eq!(names(runner.part.current()), ["b", "a", "c"]);
-    let before_c = ProgramRunner::<Sc, Pose>::position(2);
+    let before_c = 2;
     assert_eq!(names(runner.part.reader(before_c)), ["b", "a"]);
     assert!(runner.part.current().targets_of::<Pose>().is_empty());
 }

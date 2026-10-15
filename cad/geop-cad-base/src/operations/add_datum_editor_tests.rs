@@ -215,8 +215,8 @@ fn datums_added_are_listed_in_the_structure() {
         },
     };
     program.push("lifted", lifted);
-    let runner = program.built().unwrap();
-    let structure = structure(&runner.part.current(), &["lifted".into()]).unwrap();
+    let part = program.built().unwrap();
+    let structure = structure(&part.current(), &["lifted".into()]).unwrap();
     let datums: Vec<(&str, Option<bool>)> = (structure.iter())
         .filter(|item| item.kind == "datum")
         .map(|item| (item.name.as_str(), item.visible))

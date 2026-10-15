@@ -1,13 +1,11 @@
 use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar, vector::Vector3};
 use geop_core_topology::FaceId;
-use std::rc::Rc;
 
-use geop_ops_assembly::Component;
 use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder, v3};
 
 use crate::{
     LineKind, ProjectedView, ViewKind, ViewOptions, project_view,
-    testing::{Part, built, built_with, component, given},
+    testing::{Part, Placeable, assembled, built, built_with, given, placeable},
 };
 
 fn all_faces(part: &Part<S>) -> Vec<FaceId> {
@@ -170,7 +168,7 @@ fn a_threaded_shaft_draws_its_thread() {
         scale: Some(1.0),
         ..Default::default()
     };
-    let build = built_with(&part, &[], |part| {
+    let build = built_with(&part, |part| {
         (part.define_target(&geop_ops_model::threads(), &threads, given)).unwrap()
     });
     let sheet = compose(&build.current(), &args, "", &[]).unwrap();
@@ -262,25 +260,19 @@ fn a_bill_of_materials_stands_on_the_title_block() {
     );
 }
 
-/// A block `size` on a side, as a part to place.
-fn block(size: f64) -> Rc<Component> {
+/// A block `size` on a side, as a part to place: the file of its size.
+fn block(size: f64) -> Placeable {
     let mut part = Part::<S>::new();
     cube_solid(&mut part, "block", v3(0.0, 0.0, 0.0), v3(size, size, size)).unwrap();
-    component("block.geop", &part)
+    placeable(&format!("block{size}.geop"), &part)
 }
 
 /// What is placed in a part: each placed part's name, its part, and where.
-type Placed = Vec<(String, Rc<Component>, geop_core_math::primitives::Pose<S>)>;
+type Placed = Vec<(String, Placeable, geop_core_math::primitives::Pose<S>)>;
 
 /// Places `block` in `placed` as `name`, at `at`, turned `degrees` about
 /// `x`, `y` and `z`.
-fn place(
-    placed: &mut Placed,
-    block: &Rc<Component>,
-    name: &str,
-    at: Vector3<S>,
-    degrees: [f64; 3],
-) {
+fn place(placed: &mut Placed, block: &Placeable, name: &str, at: Vector3<S>, degrees: [f64; 3]) {
     let pose = geop_core_math::primitives::Pose::from_euler(at, degrees.map(S::from_f64)).unwrap();
     placed.push((name.to_string(), block.clone(), pose));
 }
@@ -290,14 +282,13 @@ fn assembly(placed: &Placed) -> geop_ops_parameters::BuildPart {
     let placed: Vec<_> = (placed.iter())
         .map(|(name, component, pose)| (name.as_str(), component, *pose))
         .collect();
-    built_with(&Part::new(), &placed, |_| {})
+    assembled(&placed)
 }
 
-/// A hundred blocks of one part in a row, placed alike but for where: one
-/// view of the block serves them all, and each draws its square from the
-/// front, none hiding another.
+/// A hundred blocks of one part in a row, placed alike but for where: each
+/// draws its square from the front, none hiding another.
 #[test]
-fn repeated_parts_share_their_view() {
+fn repeated_parts_are_each_drawn_where_they_are() {
     use crate::scene::Scene;
     let mut part = Placed::new();
     let unit = block(1.0);
@@ -313,14 +304,16 @@ fn repeated_parts_share_their_view() {
     let build = assembly(&part);
     let scene = Scene::of(&build.current()).unwrap();
     assert_eq!(scene.bodies.len(), 100);
-    assert_eq!(scene.groups().len(), 1, "one view of the block for all");
+    // TODO: one view of the block for all, once the parts of no state are
+    // shared between instances (see `geop_core_program::part::Part`):
+    // each block has a part of its own now, so each is a view of its own.
     let front = scene
         .project(&ViewKind::Front.frame().unwrap(), &ViewOptions::default())
         .unwrap();
     assert_eq!((count(&front, true), count(&front, false)), (400, 0));
     assert_extents(&front, [0.0, 0.0, 199.0, 1.0]);
 
-    // Turned, a block is seen from another side: a view of its own.
+    // Turned, a block is seen from another side.
     place(
         &mut part,
         &unit,
@@ -329,7 +322,7 @@ fn repeated_parts_share_their_view() {
         [0.0, 0.0, 90.0],
     );
     let build = assembly(&part);
-    assert_eq!(Scene::of(&build.current()).unwrap().groups().len(), 2);
+    assert_eq!(Scene::of(&build.current()).unwrap().bodies.len(), 101);
 
     // A column of blocks seen from its end: the one in front hides the
     // others whole, and each of their lines lies on one of its own. Only

@@ -22,6 +22,7 @@ pub mod program;
 pub mod program_runner;
 mod revisioned_value;
 pub mod target;
+pub mod workspace;
 #[cfg(test)]
 mod test;
 #[cfg(test)]

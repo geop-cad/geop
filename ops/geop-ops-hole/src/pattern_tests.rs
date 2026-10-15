@@ -272,8 +272,8 @@ fn a_patterned_thread_is_drawn() {
     tapped.kind = HoleKind::Tapped;
     program.push("h", tapped);
     program.push("p", linear(&["h"], 3.0, 15.0));
-    let runner = program.built(registry).unwrap();
-    let drawn = geop_ops_view::annotations_of(&runner.part.current());
+    let part = program.built(registry).unwrap();
+    let drawn = geop_ops_view::annotations_of(&part.current());
     let mut names: Vec<&str> = drawn.iter().map(|a| a.name.as_str()).collect();
     names.sort();
     assert_eq!(
@@ -351,8 +351,8 @@ fn what_is_no_feature_is_refused() {
 /// and lit as every face of it; a face no feature made picks none.
 #[test]
 fn a_feature_is_picked_by_a_face_it_made() {
-    let runner = plate_with_hole().built(registry).unwrap();
-    let reader = runner.part.current();
+    let part = plate_with_hole().built(registry).unwrap();
+    let reader = part.current();
     let part = made(&plate_with_hole()).unwrap();
     let face_named = |name: &str| ElementReference::<NamedModel<S>, Face>::new(model(), name);
     let wall = faces_of(&part, "hole");

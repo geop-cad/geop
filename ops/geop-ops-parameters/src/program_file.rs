@@ -1,12 +1,16 @@
-//! [`ProgramFile`]: a program as a `.geop` file holds it — its parameters,
-//! its steps and its state.
+//! [`ProgramFile`]: a program as a `.geop` file holds it — its steps, its
+//! parameters among them, and its state.
 
 use std::collections::{BTreeMap, HashSet};
 
-use geop_core_editor::numeric_input::{formulas_in, names_in, parameter_of, rename_parameter_in};
+use geop_core_editor::numeric_input::{
+    ParameterValue, formulas_in, names_in, parameter, parameter_of, rename_parameter_in,
+};
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{
+    element::ElementReference,
     operation::StepArgs,
+    operation_registry::OperationRegistry,
     program::{Program, ProgramStep},
     program_runner::ProgramRunner,
 };
@@ -14,27 +18,98 @@ use geop_ops_model::validate_operation_id;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Design,
-    about::About,
-    parameters::{ParameterKind, Parameters, Settings, validate_name},
+    BuildPart,
+    parameters::{ParameterKind, Parameters, Setting, Settings, validate_name},
     state::StateValue,
+    steps::{DefineParameters, DefineParametersArgs, PARAMETERS, PROPERTIES, PartPropertiesArgs},
 };
 
-/// The runner programs are built with: numbers are their inputs (see
-/// [`Parameters::resolve`]), and their state is of [`StateValue`]s.
-pub type Runner = ProgramRunner<Design, StateValue>;
+/// The runner programs are built with: their inputs are what their
+/// parameters are set to ([`Setting`]s), and their state is of
+/// [`StateValue`]s.
+pub type Runner = ProgramRunner<Setting, StateValue>;
 
 /// A part's state, by name.
 pub type StateValues = BTreeMap<String, StateValue>;
 
-/// A program as a file holds it: the parameters its design is given by (see
-/// [`crate::parameters`]), its steps, and its state — where its placed parts
-/// are and how its joints are turned, what solving it changes. Serializes
-/// as `{"parameters": {...}, "steps": [...], "state": {...}}`.
+/// The parameters and properties of `program`, as its steps define them
+/// (see [`crate::steps`]): none, where it has no such step.
+pub fn parameters_of(program: &Program) -> Parameters {
+    let args = |kind: &str| program.steps.iter().find(|s| s.operation == kind);
+    let values = (args(PARAMETERS))
+        .and_then(|step| serde_json::from_value::<DefineParametersArgs>(step.args.clone()).ok())
+        .unwrap_or_default()
+        .values;
+    let properties = (args(PROPERTIES))
+        .and_then(|step| serde_json::from_value::<PartPropertiesArgs>(step.args.clone()).ok())
+        .unwrap_or_default();
+    Parameters {
+        color: properties.color,
+        material: properties.material,
+        title: properties.title,
+        designation: properties.designation,
+        values,
+    }
+}
+
+/// `program` with its parameters and properties set to `parameters`: in
+/// the steps that define them, put first where it has none yet — and none,
+/// where there is nothing to define. The steps check them as they run.
+pub fn set_parameters(program: &mut Program, parameters: Parameters) {
+    let properties = PartPropertiesArgs {
+        title: parameters.title,
+        designation: parameters.designation,
+        color: parameters.color,
+        material: parameters.material,
+    };
+    let values = DefineParametersArgs {
+        values: parameters.values,
+    };
+    let empty = properties == PartPropertiesArgs::default();
+    set_step(program, PROPERTIES, (!empty).then_some(&properties));
+    set_step(program, PARAMETERS, (!values.values.is_empty()).then_some(&values));
+}
+
+/// The step of `program` of the operation `kind` holding `args`: put first
+/// where there is none, under the kind's name; taken out, for none.
+#[allow(
+    clippy::expect_used,
+    reason = "the arguments of a parameters or properties step are plain data"
+)]
+fn set_step<A: Serialize>(program: &mut Program, kind: &str, args: Option<&A>) {
+    let steps = &mut program.steps;
+    let at = steps.iter().position(|s| s.operation == kind);
+    let Some(args) = args else {
+        if let Some(at) = at {
+            steps.remove(at);
+        }
+        return;
+    };
+    let args = serde_json::to_value(args).expect("a step's arguments are plain data");
+    match at {
+        Some(at) => steps[at].args = args,
+        None => {
+            let taken = |id: &str| steps.iter().any(|s| s.id == id);
+            let id = (std::iter::once(kind.to_string()))
+                .chain((1..).map(|n| format!("{kind}{n}")))
+                .find(|id| !taken(id))
+                .unwrap_or_else(|| kind.to_string());
+            let step = ProgramStep {
+                id,
+                operation: kind.to_string(),
+                args,
+            };
+            steps.insert(0, step);
+        }
+    }
+}
+
+/// A program as a file holds it: its steps — the parameters its design is
+/// given by and its properties among them (see [`crate::steps`]) — and its
+/// state: where its placed parts are and how its joints are turned, what
+/// solving it changes. Serializes as `{"steps": [...], "state": {...}}`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ProgramFile {
-    #[serde(default, skip_serializing_if = "Parameters::is_empty")]
-    pub parameters: Parameters,
     #[serde(flatten)]
     pub program: Program,
     #[serde(default, skip_serializing_if = "StateValues::is_empty")]
@@ -61,23 +136,54 @@ impl ProgramFile {
             .map_err(|e| GeopError::new(format!("writing a program: {e}")))
     }
 
-    /// The numbers a run of it is given: its parameters' values, with
-    /// `overrides` — what a program placing it gives them — taking the
-    /// place of their own (see [`Parameters::resolve`]). A parameter that
-    /// does not resolve is left out, so what reads it fails, saying so.
-    pub fn inputs(&self, overrides: &Settings) -> BTreeMap<String, Design> {
-        self.parameters.resolve(overrides).numbers
+    /// Its parameters and properties, as its steps define them (see
+    /// [`parameters_of`]).
+    pub fn parameters(&self) -> Parameters {
+        parameters_of(&self.program)
     }
 
-    /// What a run of it, in the file `file`, says of its part: its
-    /// parameters, and what they are set to with `overrides`. The given
-    /// step defines it (see [`crate::about::define_about`]).
-    pub fn about(&self, file: &str, overrides: &Settings) -> About {
-        About {
-            file: file.to_string(),
-            parameters: self.parameters.clone(),
-            chosen: self.parameters.resolve(overrides).chosen,
+
+    /// What its parameters come to as it defines them, by the names a
+    /// formula reads them by: a number by its name, a table's columns as
+    /// `table.column` — its step run on its own (see
+    /// [`crate::steps::DefineParameters`]). Fails naming one that does not
+    /// come to anything.
+    pub fn parameter_numbers(&self) -> GeopResult<BTreeMap<String, f64>> {
+        let steps = (self.program.steps.iter())
+            .filter(|step| step.operation == PARAMETERS)
+            .cloned()
+            .collect();
+        let runner = Runner::new(OperationRegistry::default().with(DefineParameters)?);
+        let mut part = BuildPart::default();
+        let program = Program::new(steps);
+        let output = runner.run(&mut part, &program, &Settings::new(), &StateValues::new());
+        if let Some((step, e)) = output.step_errors.into_iter().next() {
+            return Err(e.with_context(format!("step {step:?}")));
         }
+        let reader = part.current();
+        let mut numbers = BTreeMap::new();
+        for p in &self.parameters().values {
+            let reference = ElementReference::whole(parameter(&p.name));
+            let value = (reader.retrieve_element(&reference))
+                .map_err(|e| e.with_context(format!("the parameter {:?}", p.name)))?;
+            match value {
+                ParameterValue::Number(n) => {
+                    numbers.insert(p.name.clone(), *n);
+                }
+                ParameterValue::Row { columns, .. } => {
+                    for (column, value) in columns {
+                        numbers.insert(format!("{}.{column}", p.name), *value);
+                    }
+                }
+            }
+        }
+        Ok(numbers)
+    }
+
+    /// Its parameters and properties set to `parameters` (see
+    /// [`set_parameters`]).
+    pub fn set_parameters(&mut self, parameters: Parameters) {
+        set_parameters(&mut self.program, parameters);
     }
 
     /// Appends the step `id`, `args` for the operation they are for: for a
@@ -91,20 +197,20 @@ impl ProgramFile {
         self.program.steps.push(step);
     }
 
-    /// Runs it with its parameters `overrides` instead of its own, and the
-    /// values `state` gives of its state instead of its own — as the part
-    /// placing it has them — on `runner`, which keeps what earlier runs
-    /// built and gives what else a run is given ([`Runner::given`]). Fails
-    /// naming the first step that does.
+    /// Runs it on `part`, which keeps what earlier runs built, by `runner`:
+    /// its parameters set to `inputs` where they give them, and the values
+    /// `state` gives of its state instead of its own. Fails naming the
+    /// first step that does.
     pub fn run(
         &self,
-        runner: &mut Runner,
-        overrides: &Settings,
+        runner: &Runner,
+        part: &mut BuildPart,
+        inputs: &Settings,
         state: &StateValues,
     ) -> GeopResult<()> {
         let mut given = self.state.clone();
         given.extend(state.iter().map(|(name, value)| (name.clone(), value.clone())));
-        let output = runner.run(&self.program, &self.inputs(overrides), &given);
+        let output = runner.run(part, &self.program, inputs, &given);
         match output.step_errors.into_iter().next() {
             Some((step, error)) => Err(error.with_context(format!("step {step:?}"))),
             None => Ok(()),
@@ -143,7 +249,7 @@ impl ProgramFile {
                 }
             }
         };
-        for p in &self.parameters.values {
+        for p in &self.parameters().values {
             if let ParameterKind::Number { expression, .. } = &p.kind {
                 note(&p.name, expression);
             }
@@ -160,14 +266,15 @@ impl ProgramFile {
     /// the other parameters', every step's — reading `to`. Fails for a
     /// parameter there is none of, and for a name that is taken or no name.
     pub fn rename_parameter(&mut self, from: &str, to: &str) -> GeopResult<()> {
-        if self.parameters.get(from).is_none() {
+        let mut parameters = self.parameters();
+        if parameters.get(from).is_none() {
             return Err(GeopError::new(format!("there is no parameter {from:?}")));
         }
         if from == to {
             return Ok(());
         }
         validate_name(to)?;
-        if self.parameters.get(to).is_some() {
+        if parameters.get(to).is_some() {
             return Err(GeopError::new(format!(
                 "there is a parameter {to:?} already"
             )));
@@ -175,14 +282,13 @@ impl ProgramFile {
         for step in &mut self.program.steps {
             rename_parameter_in(&mut step.args, from, to);
         }
-        self.parameters.rename(from, to);
+        parameters.rename(from, to);
+        self.set_parameters(parameters);
         Ok(())
     }
 
     /// The step `id` as a program of its own, as a copy of it is kept: the
     /// step, and the state stored under its id — where a placed part is.
-    /// Not the parameters: pasted into another program, the step reads
-    /// those of that program.
     pub fn excerpt(&self, id: &str) -> GeopResult<Self> {
         let step = self.program.steps[self.index_of(id)?].clone();
         let prefix = format!("{id}.");
@@ -191,7 +297,6 @@ impl ProgramFile {
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect();
         Ok(Self {
-            parameters: Parameters::default(),
             program: Program::new(vec![step]),
             state,
         })
@@ -243,10 +348,9 @@ impl ProgramFile {
         Ok(ids)
     }
 
-    /// Checks its parameters, and that every step id is a valid operation
-    /// id and unique: every name a step creates is built from its id.
+    /// Checks that every step id is a valid operation id and unique: every
+    /// name a step creates is built from its id.
     pub fn validate(&self) -> GeopResult<()> {
-        self.parameters.validate()?;
         let mut ids = HashSet::new();
         for step in &self.program.steps {
             validate_operation_id(&step.id)?;

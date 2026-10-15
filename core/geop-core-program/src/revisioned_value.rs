@@ -15,27 +15,31 @@ pub(crate) struct RevisionedValue<T> {
 
 impl<T: PartialEq + Clone> RevisionedValue<T> {
     /// Makes `given` hold exactly `values`, marking what differs as changed
-    /// in `revision`.
+    /// in `revision`: whether anything did.
     pub(crate) fn replace_all(
         given: &mut BTreeMap<String, Self>,
         values: &BTreeMap<String, T>,
         revision: Revision,
-    ) {
+    ) -> bool {
+        let mut changed = false;
         for (name, entry) in given.iter_mut() {
             let value = values.get(name);
             if entry.value.as_ref() != value {
                 entry.value = value.cloned();
                 entry.changed_at = revision;
+                changed = true;
             }
         }
         for (name, value) in values {
-            given
-                .entry(name.clone())
-                .or_insert_with(|| RevisionedValue {
+            given.entry(name.clone()).or_insert_with(|| {
+                changed = true;
+                RevisionedValue {
                     value: Some(value.clone()),
                     changed_at: revision,
-                });
+                }
+            });
         }
+        changed
     }
 }
 

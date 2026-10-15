@@ -7,14 +7,16 @@ use geop_core_math::{
     primitives::{CoordinateSystem, Datum, DatumComponent, DatumKind, FrameAxis},
     scalars::{ScalInF64 as S, Scalar},
 };
-use geop_core_program::{element::ElementReference, part::Reader};
+use geop_core_program::element::ElementReference;
 use geop_ops_datums::{AnyDatum, Datums, ORIGIN, component_name, datums, read_datums};
 use geop_ops_extrude_revolve::shapes::v3;
 use geop_ops_model::model;
-use geop_ops_parameters::{ProgramFile, Registry, Runner, Settings, StateValue, StateValues};
+use geop_ops_parameters::{
+    BuildPart, PartReader, ProgramFile, Registry, Runner, Settings, StateValues,
+};
 use geop_ops_sketch::{PlacedSketch, sketch_element, whole_sketch};
 
-use geop_ops_extrude_revolve::testing::{Built, drilled_box as drilled};
+use geop_ops_extrude_revolve::testing::{drilled_box as drilled, runner_of};
 
 use crate::AddDatum;
 
@@ -42,18 +44,25 @@ fn registry() -> GeopResult<Registry> {
     geop_ops_extrude_revolve::testing::registry()?.with(AddDatum)
 }
 
-/// A program and the runner that built it: a datum step added to it is
-/// built on what the runner kept.
+/// A program, the runner that built it and the part it built: a datum
+/// step added to it is built on what the part kept.
 struct Part {
     program: ProgramFile,
     runner: Runner,
+    part: BuildPart,
 }
 
 impl Part {
     /// `program`, built.
     fn of(program: ProgramFile) -> Self {
-        let runner = program.built(registry).unwrap();
-        Part { program, runner }
+        let runner = runner_of(registry().unwrap());
+        let mut part = BuildPart::default();
+        (program.run(&runner, &mut part, &Settings::new(), &StateValues::new())).unwrap();
+        Part {
+            program,
+            runner,
+            part,
+        }
     }
 
     /// The program with the datum step `id` from `selection` by
@@ -70,13 +79,13 @@ impl Part {
             construction,
         };
         program.push(id, args);
-        program.run(&mut self.runner, &Settings::new(), &StateValues::new())?;
+        program.run(&self.runner, &mut self.part, &Settings::new(), &StateValues::new())?;
         Ok(program)
     }
 
     /// The datum `id`, as the program last run built it.
     fn datum_named(&self, id: &str) -> Datum<S> {
-        read_datums(&self.runner.part.current()).unwrap().get(id).unwrap()
+        read_datums(&self.part.current()).unwrap().get(id).unwrap()
     }
 
     /// The datum built from `selection` by `construction`, or why it fails.
@@ -101,9 +110,10 @@ impl Part {
     }
 
     /// The part as the program — without a datum step tried since — has it.
-    fn seen(&mut self) -> Reader<'_, S, StateValue> {
-        self.program.run(&mut self.runner, &Settings::new(), &StateValues::new()).unwrap();
-        self.runner.part.current()
+    fn seen(&mut self) -> PartReader<'_> {
+        let (runner, part) = (&self.runner, &mut self.part);
+        (self.program.run(runner, part, &Settings::new(), &StateValues::new())).unwrap();
+        self.part.current()
     }
 
     /// The constructions that fit `selection`.

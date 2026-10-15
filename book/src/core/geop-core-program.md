@@ -3,11 +3,13 @@
 The program machinery every part is built by, independent of what is built:
 a program is a list of steps, each an `Operation`; running it builds a
 `Part`, target by target, reusing every version whose arguments and reads
-did not change. The values a run is given are its **inputs** (the
-parameters, numbers) and its **state** — where its placed parts are, how
-its joints are turned — which no step changes: a solver moves the state
-until the constraints the steps define hold (see
-[geop-ops-constraints](../ops/geop-ops-constraints.md)).
+did not change. A run is a function of what it is given: its **inputs**
+— what its parameters are set to — and its **state** — where its placed
+parts are, how its joints are turned — which no step changes: a solver
+moves the state until the constraints the steps define hold (see
+[geop-ops-constraints](../ops/geop-ops-constraints.md)). The one thing it
+reads besides is its **workspace**: the programs it places and the files
+it imports.
 
 Nothing here knows a model, a sketch or a datum. Each of those is a target
 some crate defines, together with the kinds of element it holds; this crate
@@ -65,41 +67,59 @@ resolves one.
 
 ## Instances
 
-The `instance` module. A step may place a part another program built as an
-**instance** of the part, by a name of its own (`Part::define_instance`):
-an `Instance` holds that part (a `Subpart`: the part, and whatever its
-builder keeps with it) and where it goes (`Placement`): where a value of
-the state puts it, or — a copy — a fixed motion after another instance.
+The `instance` module. A step may load the part another program builds as
+the part of an **instance**, by a name of its own
+(`ProgramRunner::load_subpart(part, name, file, inputs)`, called with the
+runner the step is run by): the program in `file`, read from the runner's
+workspace, run in the runner's operations with `inputs` and the state it
+was saved with. Where the instance is
+placed is no concern of the program's: the operation that loads it defines
+a target of its own that says so, in the terms of the state that moves it
+(see `geop_ops_parameters::instance`).
 
-- An instance is run with the state of the part under its name: the
-  state `bolt/b.pose` of the part is the state `b.pose` of the instance
-  `bolt`. Its generator is given those values
-  (`InstanceGenerator`, reading them with `Reader::states_under`), so it is
-  built again when one of them changes, and whatever solves the part's
+The part keeps the part of each instance, by the instance's name, and runs
+it again in every run that loads it, as the same run: what reads what
+changed is built again, in it and in the part, and the rest is reused, as
+in any run. An instance's part given the very program it was run with
+last (the same `Rc`, or an equal program), from the same file, its inputs
+and state as they were, and no file of the workspace changed since, is
+carried over whole: none of its steps runs, however deep, since each would
+only reuse what it made. A part no step loaded in a run is
+dropped with the versions no step made, and loading one twice in a run
+defines its target twice. `Part::changed_at` is the last run that changed
+anything in a part — a version, or the part of an instance. Sharing the
+part of every instance whose run read none of the state is left for later
+(a TODO in `Part`): such a part is the same wherever it is placed.
+
+- An instance's part is run with the state of the part under its name:
+  the state `bolt/b.pose` of the part is the state `b.pose` of the
+  instance `bolt`, and its own where the part gives none. A state, or an
+  input, behind an instance's path is read inside the instance's part
+  (`Reader::inside`), as it was run with it — none before a step loaded
+  it — which is also where the read is checked. Whatever solves the part's
   state solves its instances' too.
 - An element of an instance is named by the instance's path before its
-  target's name: `bolt/model`, `asm/bolt/model` for a part placed in a
-  placed part (`INSTANCE_SEPARATOR`). A pick names it so, and every
+  target's name: `bolt/model`, `asm/bolt/model` for one of an instance's
+  instance (`INSTANCE_SEPARATOR`). A pick names it so, and every
   `ElementReference` can hold one: a picker never asks where an element
   is from. `Reader::retrieve_element` resolves elements of the part
   itself, and refuses one of an instance by name; `Reader::retrieve_placed`
   resolves either, as it is in its own part, with the instance's path
   (`InInstance`).
-- Where an instance is, `Reader::placement` says: the factors placing it,
-  outermost first (`Factor`) — the values of the state it reads, named as
-  the part names them and recorded as read, and the fixed motions of
-  copies. What a placement is — a pose — is the state's own business:
-  `geop_ops_parameters::compose` composes them, and a constraint
-  differentiates through them by the states they name.
-- `Reader::instances` lists the instances of the part itself, and
-  `Reader::inside` reads the part of the instance at a path.
+- `Reader::inside` reads the part of the instance at a path, as its
+  program left it in this run. What it reads is recorded behind the path,
+  as read by the target being made: that target is built again when what
+  it read in the instance changes. `Reader::subparts` lists the instances
+  of the part itself.
 
 ## Operations and programs
 
 The `operation`, `operation_registry` and `program` modules. An `Operation` is a unit struct: its `KIND` (the name its steps are stored
 under), its `Args` — plain, serializable design data that names targets and
-elements, never internal ids — and `run(step, part, args)`, which defines
-and revises the step's targets. `StepArgs` are arguments that say which
+elements, never internal ids — and `run(step, runner, part, args)`, which
+defines and revises the step's targets in `part`; `runner` is the runner
+running the step, which a step uses to run programs of its own — the parts
+of instances. `StepArgs` are arguments that say which
 operation they are for, so a program written in Rust pushes them without
 naming the operation again.
 
@@ -120,15 +140,27 @@ operations it edits (see
 
 ## Running a program
 
-The `program_runner` module. A `ProgramRunner` runs programs on one part with a registry. Every run
-begins with the **given step** (`Given`), at position 0 before the
-program's own: it defines what a run is given that is no number — what the
-program says of its part, the files around it, the library of parts it
-places, the origin (see `geop_cad_base::part::given`). So the step at
-position `k` of a program is at position `k + 1` of the part
-(`ProgramRunner::position`).
+The `program_runner` module. A `ProgramRunner` runs programs, with its
+registry's operations, on a part it is given; it holds no part itself. The
+step at position `k` of a program is at position `k` of the part. A step
+reads what is not given to its run — a program it places, a file it
+imports — through the runner, in its body, which runs in every run, and
+passes what it read to the targets it defines as arguments: a target is
+made again exactly when what it read changed.
 
-`run(program, inputs, state)` runs it all; `run_until(program, end, ...)`
+## The workspace
+
+The `workspace` module. A `Workspace` is where programs come from: a
+program by its file's path (`Loaded`: its steps, and the state it was
+saved with), another file's text, the list of files, and how paths name
+each other (`resolve`, `relative`). It says how often a file changed
+(`revision`). A runner holds one, and the `Location` of the program it
+runs: its file, and the files placing it. A program never knows where it
+is: the runner resolves a file the program names from its location, and
+refuses one placing the program it runs, however deep — the files would
+place themselves — naming the cycle (`ProgramRunner::program`).
+
+`run(part, program, inputs, state)` runs it all; `run_until(part, program, end, ...)`
 runs the first `end` steps, as the editor does up to its marker, keeping
 what the later steps made to reuse when they run again. A failed step does
 not stop the run: later steps that do not depend on it still build, and the

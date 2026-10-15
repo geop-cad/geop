@@ -121,7 +121,7 @@ pub fn spur_gear(file: &'static str) -> GeopResult<StandardPart> {
     // than about 35 teeth came out too wide to cut the next one. Their
     // ends, on multiples of 30°, are tooth centres or at least 0.015 of a
     // module from where any gap of up to 120 teeth crosses the rim.
-    let mut blank = Drawing::new(&program.parameters)?;
+    let mut blank = Drawing::new(&program)?;
     let tip = format!("{m} * ({z} / 2 + 1)");
     let rim = (0..RIM_ARCS)
         .map(|j| {
@@ -156,7 +156,7 @@ pub fn spur_gear(file: &'static str) -> GeopResult<StandardPart> {
     // it has to find, a gear far from the one drawn sent it off to
     // infinity. The root is so a chord of the root circle, at most
     // `r (1 - cos(π / 2z))` below it — 0.04 of a module for 12 teeth.
-    let mut gap = Drawing::new(&program.parameters)?;
+    let mut gap = Drawing::new(&program)?;
     let at = |column: &str, sign: &str| format!("{sign}{m} * {TEETH}.{column}");
     let lower =
         |d: &mut Drawing, k: &str| d.point(at(&format!("{k}x"), ""), at(&format!("{k}y"), ""));
@@ -205,7 +205,7 @@ pub fn spur_gear(file: &'static str) -> GeopResult<StandardPart> {
         },
     );
 
-    let mut pitch = Drawing::new(&program.parameters)?;
+    let mut pitch = Drawing::new(&program)?;
     let centre = pitch.origin();
     pitch.circle(centre, &format!("{m} * {z}"))?;
     program.push("pitch", pitch.on(outline_plane()));
@@ -268,7 +268,7 @@ pub fn rack(file: &'static str) -> GeopResult<StandardPart> {
     let end = format!("{} * pi * {m}", RACK_TEETH + 1);
     corners.push([root.clone(), end.clone()]);
     corners.push([format!("-{h}"), end]);
-    let mut profile = Drawing::new(&program.parameters)?;
+    let mut profile = Drawing::new(&program)?;
     profile.polygon(&corners)?;
     let across = |length: String| Extents {
         symmetric: true,
@@ -282,7 +282,7 @@ pub fn rack(file: &'static str) -> GeopResult<StandardPart> {
         across(b.clone()),
         Combine::NewBody,
     );
-    let mut length = Drawing::new(&program.parameters)?;
+    let mut length = Drawing::new(&program)?;
     length.polygon(&[
         [format!("-{h} - {m}"), format!("-{m}")],
         [format!("2 * {m}"), format!("-{m}")],
@@ -348,7 +348,7 @@ fn gt2_pulley(z: usize, file: &'static str) -> GeopResult<StandardPart> {
         format!("{lh} + {}", 2.0 * t + w),
     );
     let zero = || "0".to_string();
-    let mut profile = Drawing::new(&program.parameters)?;
+    let mut profile = Drawing::new(&program)?;
     profile.polygon(&[
         [bore.clone(), zero()],
         [hub.clone(), zero()],
@@ -378,7 +378,7 @@ fn gt2_pulley(z: usize, file: &'static str) -> GeopResult<StandardPart> {
     let centre = outside - GT2_DEPTH + GT2_GROOVE;
     let half =
         ((outside.powi(2) + centre.powi(2) - GT2_GROOVE.powi(2)) / (2.0 * outside * centre)).acos();
-    let mut ring = Drawing::new(&program.parameters)?;
+    let mut ring = Drawing::new(&program)?;
     let at = |r: f64, a: f64| [format!("{}", r * a.cos()), format!("{}", r * a.sin())];
     let mut groove_ends = Vec::new();
     for k in 0..z {
@@ -415,7 +415,7 @@ fn gt2_pulley(z: usize, file: &'static str) -> GeopResult<StandardPart> {
     axis_datum(&mut program);
     plane_datum(&mut program, "end", "0");
     plane_datum(&mut program, "belt", &format!("{lh} + {}", t + w / 2.0));
-    let mut circle = Drawing::new(&program.parameters)?;
+    let mut circle = Drawing::new(&program)?;
     let centre_point = circle.origin();
     circle.circle(centre_point, &format!("{pitch}"))?;
     program.push("pitch", circle.on(datum_plane("belt")));
@@ -451,7 +451,7 @@ pub fn shaft_collar(file: &'static str) -> GeopResult<StandardPart> {
         vec![size(tables::shaft_collars())],
     );
     let (d, big, b) = (col("d"), col("D"), col("b"));
-    let mut profile = Drawing::new(&program.parameters)?;
+    let mut profile = Drawing::new(&program)?;
     profile.polygon(&[
         [format!("{d} / 2"), "0".into()],
         [format!("{big} / 2"), "0".into()],
@@ -468,7 +468,7 @@ pub fn shaft_collar(file: &'static str) -> GeopResult<StandardPart> {
     );
     // Drawn in the profile plane, through the axis, and extruded out along
     // `+x` from inside the bore.
-    let mut hole = Drawing::new(&program.parameters)?;
+    let mut hole = Drawing::new(&program)?;
     let centre = hole.point("0", format!("{b} / 2"))?;
     hole.circle(centre, &col("ds"))?;
     extrude(
@@ -517,7 +517,7 @@ pub fn flange_coupling(file: &'static str) -> GeopResult<StandardPart> {
         format!("{l} / 2"),
         format!("({l} + {f}) / 2"),
     );
-    let mut profile = Drawing::new(&program.parameters)?;
+    let mut profile = Drawing::new(&program)?;
     profile.polygon(&[
         [format!("{d1} / 2"), "0".into()],
         [hub.clone(), "0".into()],

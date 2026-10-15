@@ -20,7 +20,7 @@ use crate::{
     edit_form::{EditForm, FormState},
     editable::{Context, Editable, Editors, OperationGroup, OperationInfo, OperationTier},
     editing::{Control, Dialog, Event, Form, Unit, Value},
-    numeric_input::NumericInput,
+    numeric_input::{NumericInput, ParameterValue, parameter},
     part_operation,
     part_operation::PartOperation,
     selectable::{Selectable, SelectableElement, selected},
@@ -31,6 +31,7 @@ type Sc = ScalInF64;
 
 /// A part of the tests, given numbers and a number as its state.
 type TestPart = Part<Sc, Sc>;
+type TestRunner = ProgramRunner<Sc, Sc>;
 
 /// What a test operation is to an editor: only its name matters.
 const INFO: OperationInfo = OperationInfo::new("", "", OperationGroup::Solid, OperationTier::Menu);
@@ -67,7 +68,7 @@ impl Operation for GivenPoint {
     type Input = Sc;
     type State = Sc;
 
-    fn run(step: &str, part: &mut TestPart, at: &Vector3<Sc>) -> GeopResult<()> {
+    fn run(step: &str, _: &TestRunner, part: &mut TestPart, at: &Vector3<Sc>) -> GeopResult<()> {
         part.define_target(&TargetReference::new(step), at, |_, at| Ok(Point(*at)))
     }
 }
@@ -110,7 +111,7 @@ impl Operation for Shift {
     type Input = Sc;
     type State = Sc;
 
-    fn run(_: &str, part: &mut TestPart, args: &ShiftArgs) -> GeopResult<()> {
+    fn run(_: &str, _: &TestRunner, part: &mut TestPart, args: &ShiftArgs) -> GeopResult<()> {
         let point = TargetReference::<Point>::new(&args.point);
         part.revise_target(&point, &args.by, |reader, by| {
             Ok(Point(reader.previous::<Point>()?.0.add(by)))
@@ -178,21 +179,23 @@ fn shift(id: &str, point: &str, x: f64) -> ProgramStep {
 }
 
 /// What a press of `origin` makes the shift `step` of `program`, as last
-/// run by `runner`.
+/// run on `part`.
 fn pressed(
     editors: &Editors<Sc, Sc, Sc>,
-    runner: &ProgramRunner<Sc, Sc>,
+    runner: &TestRunner,
+    part: &TestPart,
     program: &Program,
     step: &str,
 ) -> GeopResult<f64> {
-    press(editors, runner, program, step, "origin")
+    press(editors, runner, part, program, step, "origin")
 }
 
 /// What a press of the field `key` makes the shift `step` of `program`, as
-/// last run by `runner`.
+/// last run on `part`.
 fn press(
     editors: &Editors<Sc, Sc, Sc>,
-    runner: &ProgramRunner<Sc, Sc>,
+    runner: &TestRunner,
+    part: &TestPart,
     program: &Program,
     step: &str,
     key: &str,
@@ -202,7 +205,7 @@ fn press(
         key: key.into(),
         value: Value::Press,
     };
-    let edited = editors.process_user_event(runner, program, step, &*state, press, None)?;
+    let edited = editors.process_user_event(runner, part, program, step, &*state, press, None)?;
     let args: ShiftArgs = serde_json::from_value(edited.args).unwrap();
     Ok(args.by[0].to_f64())
 }
@@ -212,15 +215,16 @@ fn press(
 #[test]
 fn a_step_is_edited_against_the_part_before_it() {
     let editors = editors();
-    let mut runner = ProgramRunner::new(editors.operations().unwrap());
+    let runner = ProgramRunner::new(editors.operations().unwrap());
+    let mut part = TestPart::default();
     let program = Program::new(vec![
         given("a", 1.0),
         shift("s1", "a", 1.0),
         shift("s2", "a", 5.0),
     ]);
-    runner.run(&program, &Default::default(), &Default::default());
+    runner.run(&mut part, &program, &Default::default(), &Default::default());
     for (step, by) in [("s2", -2.0), ("s1", -1.0), ("s2", -2.0)] {
-        assert_eq!(pressed(&editors, &runner, &program, step).unwrap(), by);
+        assert_eq!(pressed(&editors, &runner, &part, &program, step).unwrap(), by);
     }
 }
 
@@ -229,22 +233,23 @@ fn a_step_is_edited_against_the_part_before_it() {
 #[test]
 fn a_new_step_starts_from_its_operation() {
     let editors = editors();
-    let mut runner = ProgramRunner::new(editors.operations().unwrap());
+    let runner = ProgramRunner::new(editors.operations().unwrap());
+    let mut part = TestPart::default();
     let program = Program::new(vec![given("a", 1.0)]);
-    runner.run(&program, &Default::default(), &Default::default());
+    runner.run(&mut part, &program, &Default::default(), &Default::default());
 
     let step = editors
-        .new_step(&runner, &program, "shift", "s", None)
+        .new_step(&runner, &part, &program, "shift", "s", None)
         .unwrap();
     assert_eq!(step.operation, "shift");
     let args: ShiftArgs = serde_json::from_value(step.args.clone()).unwrap();
     assert_eq!(args, ShiftArgs::default());
     assert!(
         editors
-            .new_step(&runner, &program, "shift", "s", Some("a"))
+            .new_step(&runner, &part, &program, "shift", "s", Some("a"))
             .is_ok()
     );
-    let unknown = editors.new_step(&runner, &program, "nope", "s", None);
+    let unknown = editors.new_step(&runner, &part, &program, "nope", "s", None);
     assert_eq!(
         unknown.unwrap_err().root_message(),
         "unknown operation `nope`"
@@ -252,7 +257,7 @@ fn a_new_step_starts_from_its_operation() {
 
     let editing = editors.initial_editing(&program, "a").unwrap();
     let form = editors
-        .presentation(&runner, &program, "a", &*editing)
+        .presentation(&runner, &part, &program, "a", &*editing)
         .unwrap();
     assert_eq!(form, Form::default());
 }
@@ -263,19 +268,20 @@ fn a_new_step_starts_from_its_operation() {
 #[test]
 fn a_step_sees_what_it_built() {
     let editors = editors();
-    let mut runner = ProgramRunner::new(editors.operations().unwrap());
+    let runner = ProgramRunner::new(editors.operations().unwrap());
+    let mut part = TestPart::default();
     let program = Program::new(vec![
         given("a", 1.0),
         shift("s1", "a", 1.0),
         shift("s2", "a", 5.0),
     ]);
-    runner.run(&program, &Default::default(), &Default::default());
+    runner.run(&mut part, &program, &Default::default(), &Default::default());
     assert_eq!(
-        press(&editors, &runner, &program, "s1", "built").unwrap(),
+        press(&editors, &runner, &part, &program, "s1", "built").unwrap(),
         2.0
     );
     assert_eq!(
-        press(&editors, &runner, &program, "s2", "built").unwrap(),
+        press(&editors, &runner, &part, &program, "s2", "built").unwrap(),
         7.0
     );
 
@@ -286,7 +292,7 @@ fn a_step_sees_what_it_built() {
         shift("s2", "a", 5.0),
     ]);
     assert_eq!(
-        press(&editors, &runner, &edited, "s1", "built").unwrap(),
+        press(&editors, &runner, &part, &edited, "s1", "built").unwrap(),
         2.0
     );
 }
@@ -509,7 +515,7 @@ impl PartOperation for Scale {
         ScaleArgs::default()
     }
 
-    fn run(step: &str, part: &mut TestPart, args: &ScaleArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &TestRunner, part: &mut TestPart, args: &ScaleArgs) -> GeopResult<()> {
         let scaled = TargetReference::<f64>::new(step);
         part.define_target(&scaled, &args.by, |reader, by| by.resolve(reader))
     }
@@ -543,17 +549,22 @@ part_operation!(Scale(ScaleArgs));
 #[test]
 fn a_part_operation_is_edited_through_its_form() {
     let mut part = chains();
-    let inputs = std::collections::BTreeMap::from([("width".to_string(), Sc::from_f64(6.0))]);
-    part.begin_run(&inputs, &Default::default());
+    part.begin_run(&Default::default(), &Default::default());
     part.begin_step();
     let chains = Chains(vec![("c1".into(), vec!["e1".into(), "e2".into()])]);
     (part.define_target(&TargetReference::new("chains"), &chains, |_, c| {
         Ok(c.clone())
     }))
     .unwrap();
+    (part.define_target(&parameter("width"), &6.0, |_, &width| {
+        Ok(ParameterValue::Number(width))
+    }))
+    .unwrap();
     part.end_run(0);
+    let runner = TestRunner::new(Default::default());
     let context = Context {
         step: "s",
+        runner: &runner,
         before: part.current(),
         built: None,
         scene: None,

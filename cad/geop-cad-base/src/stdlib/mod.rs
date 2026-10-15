@@ -73,10 +73,12 @@ pub struct StandardPart {
 /// size of it ordered as `designation` and the size: the norm, `ISO 4762`
 /// for `ISO 4762 M4x12`, or the catalogue name. Every consumer of a placed
 /// part reads them from its program (see
-/// [`geop_ops_parameters::Parameters::designate`]).
+/// [`geop_ops_parameters::Properties`]).
 fn titled(mut program: Program, title: &str, designation: &str) -> Program {
-    program.parameters.title = Some(title.into());
-    program.parameters.designation = Some(designation.into());
+    let mut parameters = program.parameters();
+    parameters.title = Some(title.into());
+    parameters.designation = Some(designation.into());
+    program.set_parameters(parameters);
     program
 }
 

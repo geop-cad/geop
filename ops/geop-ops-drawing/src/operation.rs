@@ -19,14 +19,6 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
-    primitives::{CoordinateSystem, Pose},
-    scalars::Scalar,
-    vector::Vector3,
-    with_context,
-};
-use geop_core_sketch::plain::{add, sub};
 use geop_core_editor::{
     edit_form::{Edit, EditForm, FormState},
     editable::{OperationGroup, OperationInfo, OperationTier},
@@ -38,13 +30,24 @@ use geop_core_editor::{
     part_operation,
     part_operation::PartOperation,
 };
-use geop_ops_assembly::{Component, placed_parts};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult, WithContext},
+    primitives::{CoordinateSystem, Pose},
+    scalars::Scalar,
+    vector::Vector3,
+    with_context,
+};
+use geop_core_program::target::Revision;
+use geop_core_sketch::plain::{add, sub};
+use geop_ops_assembly::placed_parts;
 use geop_ops_model::{Design, NamedModel, Threads, model, read_model, read_threads, threads};
 use geop_ops_output::{
     Exporter,
     sheet::{Anchor, Layer, P, Sheet},
 };
-use geop_ops_parameters::{About, BuildPart, PartReader, StateValue, StepContext, read_about};
+use geop_ops_parameters::{
+    Setting, BuildPart, PartReader, Properties, Runner, StateValue, StepContext, read_properties,
+};
 use geop_ops_view::icons;
 use serde::{Deserialize, Serialize};
 
@@ -186,8 +189,10 @@ type Kept<T> = RefCell<Option<(Shown, DrawingArgs, Rc<T>)>>;
 struct Shown {
     model: Option<NamedModel<Design>>,
     threads: Option<Threads<Design>>,
-    about: About,
-    placed: Vec<(String, Rc<Component>, Pose<Design>)>,
+    properties: Properties,
+    /// Each placed part by name, when its part last changed and where it
+    /// is.
+    placed: Vec<(String, Revision, Pose<Design>)>,
 }
 
 impl Shown {
@@ -204,26 +209,23 @@ impl Shown {
         Ok(Self {
             model,
             threads,
-            about: read_about(reader)?.into_owned(),
+            properties: read_properties(reader)?.into_owned(),
             placed: (placed_parts(reader)?.into_iter())
-                .map(|p| {
-                    (p.name, p.located.component, p.located.world)
-                })
+                .map(|p| (p.name, p.located.part.changed_at(), p.located.world))
                 .collect(),
         })
     }
 }
 
-/// The same part: its model and threads equal, and every part placed the
-/// very same build, as far, where it was.
+/// The same part: its model and threads equal, and every part placed
+/// unchanged since, where it was.
 impl PartialEq for Shown {
     fn eq(&self, other: &Self) -> bool {
         self.model == other.model
             && self.threads == other.threads
-            && self.about == other.about
+            && self.properties == other.properties
             && self.placed.len() == other.placed.len()
-            && (self.placed.iter().zip(&other.placed))
-                .all(|(a, b)| a.0 == b.0 && Rc::ptr_eq(&a.1, &b.1) && a.2 == b.2)
+            && (self.placed.iter().zip(&other.placed)).all(|(a, b)| a == b)
     }
 }
 
@@ -248,10 +250,16 @@ impl DrawingSession {
         self.tool
     }
 
-    /// `args`' sheet as drawn of the part `view` shows, with its bill of
-    /// materials if `args` asks for one — laid out once, and kept while
-    /// the part and what the views depend on are the same.
-    fn layout(&self, view: &PartReader, args: &DrawingArgs) -> Rc<Result<Layout, String>> {
+    /// `args`' sheet as drawn of the part `view` shows, the program of the
+    /// file `file`, with its bill of materials if `args` asks for one —
+    /// laid out once, and kept while the part and what the views depend on
+    /// are the same.
+    fn layout(
+        &self,
+        view: &PartReader,
+        file: &str,
+        args: &DrawingArgs,
+    ) -> Rc<Result<Layout, String>> {
         let shown = match Shown::of(view) {
             Ok(shown) => shown,
             Err(e) => return Rc::new(Err(e.root_message().to_string())),
@@ -264,7 +272,7 @@ impl DrawingSession {
         {
             return laid.clone();
         }
-        let parts = parts_list(view, args).map_err(|e| e.root_message().to_string());
+        let parts = parts_list(view, file, args).map_err(|e| e.root_message().to_string());
         let laid = Rc::new(match (parts, &*self.projected(view, &shown, args)) {
             (Ok(parts), Ok(projected)) => {
                 arrange(view, args, "", &parts, projected).map_err(|e| e.root_message().to_string())
@@ -988,7 +996,7 @@ impl PartOperation for Drawing {
     )
     .icon(crate::icons::DRAWING);
     type Args = DrawingArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = DrawingSession;
@@ -1000,7 +1008,7 @@ impl PartOperation for Drawing {
 
     /// Records the drawing (see [`drawing`]), once what it refers to is
     /// checked there in the part before it; it changes nothing else.
-    fn run(step: &str, part: &mut BuildPart, args: &DrawingArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &DrawingArgs) -> GeopResult<()> {
         check(&part.current(), step, args)?;
         part.define_target(&drawing(step), args, described)
     }
@@ -1021,7 +1029,7 @@ impl PartOperation for Drawing {
             <DrawingExporter as Exporter>::INFO.kind,
             vec![Choice::new("svg", "SVG"), Choice::new("dxf", "DXF")],
         );
-        match &*session.layout(part, args) {
+        match &*session.layout(part, &context.runner.location.file, args) {
             Ok(layout) => annotate(&mut f, part, args, session, selection, layout),
             Err(e) => {
                 f.form.dialog.text(
@@ -1163,7 +1171,7 @@ impl PartOperation for Drawing {
             session: s,
             selection,
         } = edit;
-        let laid = s.layout(part, args);
+        let laid = s.layout(part, &context.runner.location.file, args);
         let Ok(layout) = &*laid else {
             return;
         };

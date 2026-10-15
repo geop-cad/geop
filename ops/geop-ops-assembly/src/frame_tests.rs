@@ -17,7 +17,7 @@ use geop_ops_model::{
     Design, NamedModel, model,
     testing::{edge_at, vertex_at},
 };
-use geop_ops_parameters::Runner;
+use geop_ops_parameters::BuildPart;
 use geop_ops_view::{PartView, drawn};
 
 use crate::MateEntity;
@@ -25,7 +25,7 @@ use crate::MateEntity;
 /// The drilled box (see [`drilled_box`]): `[0, 2] x [0, 2] x [0, 1]`, with
 /// a hole of radius 0.4 round `(1, 1)` from its top down to `z = 0.5`, as
 /// built.
-fn plate() -> Runner {
+fn plate() -> BuildPart {
     drilled_box().built(registry).unwrap()
 }
 
@@ -44,26 +44,26 @@ fn assert_close(a: [f64; 3], b: [f64; 3]) {
     geop_ops_model::testing::assert_close(a, b, 1e-9);
 }
 
-/// The frame `on`, put at `at`, gives in the part `runner` built.
-fn frame_of(runner: &Runner, on: Selected, at: Option<Selected>) -> CoordinateSystem<S> {
+/// The frame `on`, put at `at`, gives in `part`.
+fn frame_of(part: &BuildPart, on: Selected, at: Option<Selected>) -> CoordinateSystem<S> {
     let entity = MateEntity {
         at,
         ..MateEntity::on(on)
     };
-    entity.frame(&runner.part.current()).unwrap()
+    entity.frame(&part.current()).unwrap()
 }
 
 /// The frame `on` gives at `at`, as numbers: where, and its `z`, which may
 /// point either way along an axis.
 #[track_caller]
 fn assert_frame(
-    runner: &Runner,
+    part: &BuildPart,
     on: &Selected,
     at: Option<&Selected>,
     origin: [f64; 3],
     z: [f64; 3],
 ) {
-    let frame = frame_of(runner, on.clone(), at.cloned());
+    let frame = frame_of(part, on.clone(), at.cloned());
     let (found, axis) = placed(&frame);
     assert_close(found, origin);
     let along = (0..3).map(|k| axis[k] * z[k]).sum::<f64>();
@@ -93,12 +93,12 @@ fn top() -> Selected {
 /// sits at a corner or a side, that point, with the same `z`.
 #[test]
 fn a_planar_face_gives_its_middle_or_the_corner_or_side_it_is_near() {
-    let runner = plate();
-    let part = model_of(&runner);
-    assert_frame(&runner, &top(), None, [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
+    let built = plate();
+    let part = model_of(&built);
+    assert_frame(&built, &top(), None, [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
     let corner = vertex(&vertex_at(&part, [0.0, 0.0, 1.0]));
     assert_frame(
-        &runner,
+        &built,
         &top(),
         Some(&corner),
         [0.0, 0.0, 1.0],
@@ -106,14 +106,14 @@ fn a_planar_face_gives_its_middle_or_the_corner_or_side_it_is_near() {
     );
     let side = edge(&edge_at(&part, [1.0, 0.0, 1.0]));
     assert_frame(
-        &runner,
+        &built,
         &top(),
         Some(&side),
         [1.0, 0.0, 1.0],
         [0.0, 0.0, 1.0],
     );
     // Out of the solid: up, on the top.
-    let frame = frame_of(&runner, top(), None);
+    let frame = frame_of(&built, top(), None);
     assert!(placed(&frame).1[2] > 0.99);
 }
 
@@ -122,8 +122,8 @@ fn a_planar_face_gives_its_middle_or_the_corner_or_side_it_is_near() {
 /// edge at its center, `z` along its axis.
 #[test]
 fn round_things_give_their_axis() {
-    let runner = plate();
-    let part = model_of(&runner);
+    let built = plate();
+    let part = model_of(&built);
     let wall = part
         .topology()
         .faces
@@ -133,9 +133,9 @@ fn round_things_give_their_axis() {
         .unwrap()
         .to_string();
     let wall = face(&wall);
-    assert_frame(&runner, &wall, None, [1.0, 1.0, 0.75], [0.0, 0.0, 1.0]);
+    assert_frame(&built, &wall, None, [1.0, 1.0, 0.75], [0.0, 0.0, 1.0]);
     let rim = vertex(&vertex_at(&part, [1.4, 1.0, 1.0]));
-    assert_frame(&runner, &wall, Some(&rim), [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
+    assert_frame(&built, &wall, Some(&rim), [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
     let model = part.topology();
     let rim_edge = model
         .edges
@@ -148,21 +148,21 @@ fn round_things_give_their_axis() {
         })
         .map(|(&id, _)| edge(part.name_of(id).unwrap()))
         .expect("the hole's rim");
-    assert_frame(&runner, &rim_edge, None, [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
+    assert_frame(&built, &rim_edge, None, [1.0, 1.0, 1.0], [0.0, 0.0, 1.0]);
 }
 
 /// A straight edge has its frame at its middle, `z` along it — or at the
 /// end it is near; a point's has the world's axes.
 #[test]
 fn a_straight_edge_gives_its_middle_or_its_end_and_a_point_the_world() {
-    let runner = plate();
-    let part = model_of(&runner);
+    let built = plate();
+    let part = model_of(&built);
     let side = edge(&edge_at(&part, [1.0, 0.0, 1.0]));
-    assert_frame(&runner, &side, None, [1.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+    assert_frame(&built, &side, None, [1.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
     let end = vertex(&vertex_at(&part, [0.0, 0.0, 1.0]));
-    assert_frame(&runner, &side, Some(&end), [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+    assert_frame(&built, &side, Some(&end), [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
     let corner = vertex(&vertex_at(&part, [2.0, 2.0, 0.0]));
-    let frame = frame_of(&runner, corner, None);
+    let frame = frame_of(&built, corner, None);
     let (at, z) = placed(&frame);
     assert_close(at, [2.0, 2.0, 0.0]);
     assert_close(z, [0.0, 0.0, 1.0]);
@@ -183,10 +183,10 @@ fn from_above(x: f64, y: f64) -> Pointer<Design> {
     }
 }
 
-/// The model of `runner`'s part, drawn: what a frame is picked in.
-fn drawn_model(runner: &Runner) -> PartView {
+/// The model of `part`, drawn: what a frame is picked in.
+fn drawn_model(part: &BuildPart) -> PartView {
     let mut view = PartView::new();
-    model_of(runner).draw("model", &mut view).unwrap();
+    model_of(part).draw("model", &mut view).unwrap();
     view.finish()
 }
 
@@ -206,9 +206,9 @@ fn picked(view: &PartView, x: f64, y: f64) -> (Selected, Option<Selected>) {
 /// of it, there: the corner before the side.
 #[test]
 fn a_pick_over_a_face_puts_the_frame_at_the_corner_or_side_it_is_near() {
-    let runner = plate();
-    let part: NamedModel<Design> = model_of(&runner);
-    let view = drawn_model(&runner);
+    let built = plate();
+    let part: NamedModel<Design> = model_of(&built);
+    let view = drawn_model(&built);
     let (on, at) = picked(&view, 1.0, 1.7);
     assert_eq!(on, top());
     assert_eq!(at, None);
@@ -224,9 +224,9 @@ fn a_pick_over_a_face_puts_the_frame_at_the_corner_or_side_it_is_near() {
 /// near an end of it, there; right on a corner, the face there, at it.
 #[test]
 fn a_pick_over_an_edge_puts_the_frame_at_its_middle_or_the_end_it_is_near() {
-    let runner = plate();
-    let part = model_of(&runner);
-    let view = drawn_model(&runner);
+    let built = plate();
+    let part = model_of(&built);
+    let view = drawn_model(&built);
     let side = edge(&edge_at(&part, [1.0, 0.0, 1.0]));
     assert_eq!(picked(&view, 1.0, 0.0), (side.clone(), None));
     assert_eq!(

@@ -6,6 +6,7 @@ use geop_core_math::{
     scalars::Ring,
     scalars::{Scalar, scal_in_f64::ScalInF64},
 };
+use geop_core_program::workspace::{Loaded, Workspace};
 use geop_core_topology::Model;
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
@@ -15,8 +16,7 @@ use geop_ops_extrude_revolve::shapes::{
 };
 use geop_ops_model::{NamedModel, Namer, read_model, testing::assert_model_valid_sheets};
 use geop_ops_parameters::{
-    ProgramFile, Registry, Runner, Settings, Shared, StateValues,
-    about::{Files, define_files},
+    BuildPart, ProgramFile, Registry, Runner, Settings, StateValue, StateValues,
 };
 
 use crate::{ImportStep, ImportStepArgs, add_bodies, read_step, write_step};
@@ -835,30 +835,47 @@ fn a_sheet_round_trips() {
 }
 
 /// The STEP files of a program's folder, by name, counting in `reads` how
-/// often one is read.
+/// often one is read. Each read is a text of its own, equal to the last.
 struct Folder {
     files: BTreeMap<String, String>,
     reads: Rc<Cell<usize>>,
 }
 
-impl Files for Folder {
-    fn files(&self) -> Vec<String> {
+impl Workspace<StateValue> for Folder {
+    fn program(&self, path: &str) -> GeopResult<Loaded<StateValue>> {
+        Err(GeopError::new(format!("{path:?} is no program")))
+    }
+
+    fn read(&self, path: &str) -> GeopResult<Rc<str>> {
+        self.reads.set(self.reads.get() + 1);
+        let text =
+            (self.files.get(path)).ok_or_else(|| GeopError::new(format!("no file {path:?}")))?;
+        Ok(Rc::from(text.as_str()))
+    }
+
+    fn list(&self) -> Vec<String> {
         self.files.keys().cloned().collect()
     }
 
-    fn read(&self, file: &str) -> GeopResult<(String, String)> {
-        self.reads.set(self.reads.get() + 1);
-        let text =
-            (self.files.get(file)).ok_or_else(|| GeopError::new(format!("no file {file:?}")))?;
-        Ok((file.to_string(), text.clone()))
+    fn resolve(&self, _: &str, name: &str) -> String {
+        name.to_string()
+    }
+
+    fn relative(&self, _: &str, path: &str) -> String {
+        path.to_string()
+    }
+
+    fn revision(&self) -> u64 {
+        0
     }
 }
 
-/// An import step reads its file once: run again with the same files, the
-/// program builds nothing anew; given the files anew, the file is read
-/// again — the same bodies, which nothing after them is rebuilt for.
+/// An import step reads its file through the workspace in every run, but
+/// builds from it only once: run again, or given the folder anew, it reads
+/// an equal text, and nothing — neither the bodies nor the model — is
+/// built anew.
 #[test]
-fn an_import_reads_its_file_once() {
+fn an_import_builds_an_equal_file_once() {
     let mut cylinder = Part::new();
     revolved_cylinder(
         &mut cylinder,
@@ -870,13 +887,12 @@ fn an_import_reads_its_file_once() {
     .unwrap();
     let text = written(&cylinder, "cylinder");
     let reads = Rc::new(Cell::new(0));
-    // The run given the folder anew: equal files, but another value.
+    // The runner given the folder anew: equal files, but another value.
     let given = |runner: &mut Runner| {
-        let files: Shared<dyn Files> = Shared(Rc::new(Folder {
+        runner.workspace = Some(Rc::new(Folder {
             files: BTreeMap::from([("cylinder.step".to_string(), text.clone())]),
             reads: reads.clone(),
         }));
-        runner.given = Some(Rc::new(move |part| define_files(part, &files)));
     };
     let mut runner = Runner::new(Registry::default().with(ImportStep).unwrap());
     given(&mut runner);
@@ -885,22 +901,22 @@ fn an_import_reads_its_file_once() {
         file: "cylinder.step".into(),
     };
     program.push("i", args);
-    let run = |runner: &mut Runner| {
-        program.run(runner, &Settings::new(), &StateValues::new()).unwrap();
-        let model = read_model(&runner.part.current()).unwrap();
+    let mut part = BuildPart::default();
+    let run = |runner: &Runner, part: &mut BuildPart| {
+        program.run(runner, part, &Settings::new(), &StateValues::new()).unwrap();
+        let model = read_model(&part.current()).unwrap();
         // Where the model is kept: a model built anew is kept elsewhere.
         std::ptr::from_ref(model.as_ref())
     };
-    let first = run(&mut runner);
+    let first = run(&runner, &mut part);
     assert_eq!(reads.get(), 1);
-    assert_eq!(run(&mut runner), first, "nothing built anew");
-    assert_eq!(reads.get(), 1, "the file not read again");
-    // The same files, given anew: read again, to the same bodies — and the
-    // model, which only reads them, is not built again.
+    assert_eq!(run(&runner, &mut part), first, "nothing built anew");
+    assert_eq!(reads.get(), 2, "read in every run");
+    // The same files, given anew: an equal text, to the same bodies.
     given(&mut runner);
-    assert_eq!(run(&mut runner), first, "the model not built anew");
-    assert_eq!(reads.get(), 2, "the file read again");
-    let model = read_model(&runner.part.current()).unwrap();
+    assert_eq!(run(&runner, &mut part), first, "the model not built anew");
+    assert_eq!(reads.get(), 3, "the new folder read");
+    let model = read_model(&part.current()).unwrap();
     assert_eq!(model.solid_names(), vec!["import(i,s0)".to_string()]);
     assert_model_valid_sheets(model.topology());
 }

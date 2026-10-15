@@ -24,7 +24,8 @@ use geop_ops_model::{
 };
 use geop_ops_output::{Exporter, Output};
 use geop_ops_parameters::{
-    BuildPart, PartReader, ProgramFile, Registry, Runner, Settings, StateValue, StateValues,
+    BuildPart, PartReader, ProgramFile, Registry, Runner, Setting, Settings, StateValue,
+    StateValues,
     StepContext,
 };
 use geop_ops_rasterize::rasterize;
@@ -81,7 +82,7 @@ impl PartOperation for PlaceSketch {
     const KIND: &'static str = "test_place_sketch";
     const INFO: OperationInfo = TEST_STEP;
     type Args = PlaceSketchArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -95,7 +96,7 @@ impl PartOperation for PlaceSketch {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &PlaceSketchArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &PlaceSketchArgs) -> GeopResult<()> {
         part.define_target(&sketch(step), &(step.to_string(), args.clone()), placed)
     }
 
@@ -126,7 +127,7 @@ impl PartOperation for Rename {
     const KIND: &'static str = "test_rename";
     const INFO: OperationInfo = TEST_STEP;
     type Args = RenameArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -138,7 +139,7 @@ impl PartOperation for Rename {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &RenameArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &RenameArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
@@ -181,6 +182,7 @@ fn registry() -> GeopResult<Registry> {
 struct Part {
     program: ProgramFile,
     runner: Runner,
+    part: BuildPart,
 }
 
 /// A copy builds its steps afresh.
@@ -188,7 +190,8 @@ impl Clone for Part {
     fn clone(&self) -> Self {
         let mut part = Part {
             program: self.program.clone(),
-            runner: runner_of(&self.program, registry().unwrap()),
+            runner: runner_of(registry().unwrap()),
+            part: BuildPart::default(),
         };
         part.run().expect("it built before");
         part
@@ -198,12 +201,17 @@ impl Clone for Part {
 impl Part {
     fn new() -> Self {
         let program = ProgramFile::new();
-        let runner = runner_of(&program, registry().unwrap());
-        Part { program, runner }
+        let runner = runner_of(registry().unwrap());
+        Part {
+            program,
+            runner,
+            part: BuildPart::default(),
+        }
     }
 
     fn run(&mut self) -> GeopResult<()> {
-        self.program.run(&mut self.runner, &Settings::new(), &StateValues::new())
+        let (runner, part) = (&self.runner, &mut self.part);
+        self.program.run(runner, part, &Settings::new(), &StateValues::new())
     }
 
     /// The part with the step `id` of `args` added.
@@ -215,14 +223,14 @@ impl Part {
 
     /// The sheet of the body `solid`, as it is bent.
     fn sheet(&self, solid: &str) -> Option<Sheet<Design>> {
-        sheet_body(&self.runner.part.current(), solid)?
+        sheet_body(&self.part.current(), solid)?
             .bent()
             .cloned()
     }
 
     /// What the flat pattern `solid` recorded.
     fn flat_data(&self, solid: &str) -> Option<FlatPatternData> {
-        match sheet_body(&self.runner.part.current(), solid)? {
+        match sheet_body(&self.part.current(), solid)? {
             SheetBody::Flat(data) => Some(data.clone()),
             SheetBody::Bent(_) => None,
         }
@@ -230,7 +238,7 @@ impl Part {
 
     /// Whether it has the sketch `name`.
     fn has_sketch(&self, name: &str) -> bool {
-        let reader = self.runner.part.current();
+        let reader = self.part.current();
         reader.retrieve_element(&whole_sketch(name)).is_ok()
     }
 
@@ -238,7 +246,8 @@ impl Part {
     /// none — as the DXF file its exporter writes.
     fn dxf(&mut self, solid: Option<&str>) -> GeopResult<String> {
         let mut output = Output {
-            runner: &mut self.runner,
+            runner: &self.runner,
+            part: &mut self.part,
             file: &self.program,
             editing: None,
             date: "",
@@ -255,7 +264,7 @@ impl std::ops::Deref for Part {
     type Target = NamedModel<Design>;
 
     fn deref(&self) -> &NamedModel<Design> {
-        match read_model(&self.runner.part.current()).expect("the part has a model") {
+        match read_model(&self.part.current()).expect("the part has a model") {
             Cow::Borrowed(model) => model,
             Cow::Owned(_) => panic!("no step built the part's model"),
         }

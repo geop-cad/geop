@@ -8,9 +8,9 @@
 //! what it is: a point datum a [`Point`], an axis a [`Line`], a plane a
 //! [`Plane`]. A frame's components are elements of their own, named after
 //! it: `origin:z` its `z` axis, `origin:xy` the plane normal to it (see
-//! [`component_name`]); a frame itself is a point, its origin. The given
-//! step of a run defines the target ([`define_datums`]), so the origin is
-//! there before any step adds a datum.
+//! [`component_name`]); a frame itself is a point, its origin. A part no
+//! step added a datum to has the origin all the same: the target reads as
+//! it where no step made it ([`HasElements::undefined`]).
 
 // Library code reports what goes wrong as an error, never by panicking;
 // tests may unwrap.
@@ -27,7 +27,7 @@
     )
 )]
 
-use std::{borrow::Cow, collections::BTreeMap};
+use std::{borrow::Cow, collections::BTreeMap, sync::LazyLock};
 
 use geop_core_editor::selectable::SelectableElement;
 use geop_core_geometry::shape::Axis;
@@ -38,7 +38,7 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
-    part::{Input, Part, Reader, State},
+    part::{Input, Reader, State},
     target::TargetReference,
 };
 use geop_ops_model::{Design, Line, Plane, Point};
@@ -70,18 +70,18 @@ pub fn datum<K>(name: impl Into<String>) -> ElementReference<Datums, K> {
     ElementReference::new(datums(), name)
 }
 
-/// Defines the part's datums as none but [`ORIGIN`]: in the given step
-/// (see [`geop_core_program::program_runner::Given`]), so that every part
-/// has the origin to build on before any step adds a datum.
-pub fn define_datums<I: Input, S: State>(part: &mut Part<I, S>) -> GeopResult<()> {
-    part.define_target(&datums(), &(), |_, _| Ok(Datums::default()))
+/// The datums of a part no step added any to: none but [`ORIGIN`], which
+/// every part has to build on.
+fn origin() -> &'static Datums {
+    static ORIGIN_ONLY: LazyLock<Datums> = LazyLock::new(Datums::default);
+    &ORIGIN_ONLY
 }
 
 /// The datums as `reader` reads them: none but [`ORIGIN`], before any step
 /// defines them.
 pub fn read_datums<'a, I: Input, S: State>(reader: &Reader<'a, I, S>) -> GeopResult<Cow<'a, Datums>> {
     if !reader.defines(&datums()) {
-        return Ok(Cow::Owned(Datums::default()));
+        return Ok(Cow::Borrowed(origin()));
     }
     Ok(Cow::Borrowed(reader.retrieve_element(&ElementReference::<Datums, Datums>::whole(datums()))?))
 }
@@ -226,6 +226,10 @@ impl HasElements<Datums> for Datums {
     type Element<'a> = &'a Datums;
     const SINGLETON: Option<&'static str> = Some(DATUMS);
 
+    fn undefined() -> Option<&'static Self> {
+        Some(origin())
+    }
+
     fn element(&self, name: &str) -> GeopResult<&Datums> {
         whole(self, name)
     }
@@ -234,6 +238,10 @@ impl HasElements<Datums> for Datums {
 impl HasElements<AnyDatum> for Datums {
     type Element<'a> = Datum<Design>;
     const SINGLETON: Option<&'static str> = Some(DATUMS);
+
+    fn undefined() -> Option<&'static Self> {
+        Some(origin())
+    }
 
     fn element(&self, name: &str) -> GeopResult<Datum<Design>> {
         self.get(name)
@@ -244,6 +252,10 @@ impl HasElements<AnyDatum> for Datums {
 impl HasElements<Point> for Datums {
     type Element<'a> = Vector3<Design>;
     const SINGLETON: Option<&'static str> = Some(DATUMS);
+
+    fn undefined() -> Option<&'static Self> {
+        Some(origin())
+    }
 
     fn element(&self, name: &str) -> GeopResult<Vector3<Design>> {
         let datum = self.get(name)?;
@@ -259,6 +271,10 @@ impl HasElements<Line> for Datums {
     type Element<'a> = Axis<Design>;
     const SINGLETON: Option<&'static str> = Some(DATUMS);
 
+    fn undefined() -> Option<&'static Self> {
+        Some(origin())
+    }
+
     fn element(&self, name: &str) -> GeopResult<Axis<Design>> {
         let datum = self.get(name)?;
         match datum.kind {
@@ -272,6 +288,10 @@ impl HasElements<Line> for Datums {
 impl HasElements<Plane> for Datums {
     type Element<'a> = CoordinateSystem<Design>;
     const SINGLETON: Option<&'static str> = Some(DATUMS);
+
+    fn undefined() -> Option<&'static Self> {
+        Some(origin())
+    }
 
     fn element(&self, name: &str) -> GeopResult<CoordinateSystem<Design>> {
         let datum = self.get(name)?;
@@ -321,13 +341,11 @@ mod tests {
 
     type TestPart = Part<Design, Design>;
 
-    /// A part of the given step, which defines the datums, and one that
-    /// adds the axis datum `a`, along `x`.
+    /// A part of one step, adding the axis datum `a`, along `x`, to the
+    /// origin's datums.
     fn part() -> TestPart {
         let mut part = TestPart::default();
         part.begin_run(&Default::default(), &Default::default());
-        part.begin_step();
-        define_datums(&mut part).unwrap();
         part.begin_step();
         (part.revise_target(&datums(), &(), |reader, _| {
             let mut datums: Datums = reader.previous()?;
@@ -411,7 +429,6 @@ mod tests {
         let mut given = TestPart::default();
         given.begin_run(&Default::default(), &Default::default());
         given.begin_step();
-        define_datums(&mut given).unwrap();
         let reader = given.current();
         assert!(read_datums(&reader).unwrap().names().is_empty());
         let plane = reader.retrieve_element(&origin_plane(FrameAxis::X));

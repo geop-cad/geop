@@ -6,7 +6,7 @@ use geop_core_math::{
 };
 use geop_core_program::operation::Operation;
 use geop_ops_booleans::{Combine, solid};
-use geop_ops_datums::{define_datums, origin_axis, origin_plane};
+use geop_ops_datums::{origin_axis, origin_plane};
 use geop_ops_extrude_revolve::shapes::block_part;
 use geop_ops_model::testing::{assert_valid, assert_valid_sheets, given_part, volume};
 use geop_ops_model::{BooleanOp, NamedModel, read_model};
@@ -19,15 +19,17 @@ use crate::{
 
 /// What `O`'s step `step` with `args` makes of `model`, given with the
 /// datums, as a program of two steps would build it.
-fn apply_to_model<O: Operation<Input = S, State = geop_ops_parameters::StateValue>>(
+fn apply_to_model<
+    O: Operation<Input = geop_ops_parameters::Setting, State = geop_ops_parameters::StateValue>,
+>(
     model: NamedModel<S>,
     step: &str,
     args: &O::Args,
 ) -> GeopResult<NamedModel<S>> {
     let mut part = given_part(&model)?;
-    define_datums(&mut part)?;
     part.begin_step();
-    O::run(step, &mut part, args)?;
+    let runner = geop_ops_parameters::Runner::new(Default::default());
+    O::run(step, &runner, &mut part, args)?;
     part.end_run(0);
     Ok(read_model(&part.current())?.into_owned())
 }

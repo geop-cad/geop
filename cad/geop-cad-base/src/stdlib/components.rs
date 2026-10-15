@@ -41,7 +41,7 @@ pub fn ball_bearing(file: &'static str) -> GeopResult<StandardPart> {
     let groove = format!("0.05 * {b}");
     let far_groove = format!("{b} - {groove}");
     let zero = || "0".to_string();
-    let mut drawing = Drawing::new(&program.parameters)?;
+    let mut drawing = Drawing::new(&program)?;
     drawing.polygon(&[
         [format!("{bore} + {r}"), zero()],
         [inner.clone(), zero()],
@@ -141,7 +141,7 @@ fn tslot(
             }
         }
     }
-    let mut outline = Drawing::new(&program.parameters)?;
+    let mut outline = Drawing::new(&program)?;
     outline.polygon(&corners)?;
     for y in &centres {
         let centre = outline.point("0", mm(*y))?;
@@ -190,7 +190,7 @@ pub fn tslot_2040(file: &'static str) -> GeopResult<StandardPart> {
 /// `L` down, the boss and the shaft one profile turned on its face.
 pub fn nema17(file: &'static str) -> GeopResult<StandardPart> {
     let mut program = family("Steel", Some("#3a3d42"), vec![size(tables::nema17())]);
-    let mut outline = Drawing::new(&program.parameters)?;
+    let mut outline = Drawing::new(&program)?;
     let (side, cut) = ("21.15", "17.15");
     let neg = |s: &str| format!("-{s}");
     outline.polygon(&[
@@ -214,7 +214,7 @@ pub fn nema17(file: &'static str) -> GeopResult<StandardPart> {
         },
         Combine::NewBody,
     );
-    let mut drawing = Drawing::new(&program.parameters)?;
+    let mut drawing = Drawing::new(&program)?;
     let lines = drawing.polygon(&[
         ["0".into(), "0".into()],
         ["11".into(), "0".into()],
@@ -241,7 +241,7 @@ pub fn nema17(file: &'static str) -> GeopResult<StandardPart> {
     .into_iter()
     .enumerate()
     {
-        let mut hole = Drawing::new(&program.parameters)?;
+        let mut hole = Drawing::new(&program)?;
         let centre = hole.point(x, y)?;
         hole.circle(centre, "3")?;
         let (sketch, id) = (format!("hole{}_sketch", i + 1), format!("hole{}", i + 1));
@@ -296,7 +296,7 @@ pub fn linear_rail(file: &'static str) -> GeopResult<StandardPart> {
     let (low, high) = (format!("{h} / 2"), format!("{h} / 2 + 1.2"));
     let neg = |s: &str| format!("-({s})");
     let zero = || "0".to_string();
-    let mut outline = Drawing::new(&program.parameters)?;
+    let mut outline = Drawing::new(&program)?;
     outline.polygon(&[
         [neg(&side), zero()],
         [side.clone(), zero()],
@@ -353,7 +353,7 @@ pub fn linear_carriage(file: &'static str) -> GeopResult<StandardPart> {
     let channel = format!("{wr} / 2 + 0.5");
     let roof = format!("{hr} + 0.3");
     let neg = |s: &str| format!("-({s})");
-    let mut outline = Drawing::new(&program.parameters)?;
+    let mut outline = Drawing::new(&program)?;
     outline.polygon(&[
         [neg(&side), h1.clone()],
         [neg(&channel), h1.clone()],
@@ -389,7 +389,7 @@ pub fn linear_carriage(file: &'static str) -> GeopResult<StandardPart> {
     .into_iter()
     .enumerate()
     {
-        let mut hole = Drawing::new(&program.parameters)?;
+        let mut hole = Drawing::new(&program)?;
         let centre = hole.point(x, y)?;
         hole.circle(centre, &col("M"))?;
         let id = format!("hole{}", i + 1);
@@ -476,7 +476,7 @@ fn servo(
         + (tabs - length) * width * tab
         + std::f64::consts::PI / 4.0 * (boss[0].powi(2) * boss[1] + spline[0].powi(2) * spline[1]);
     let mut program = Program::new();
-    program.parameters = Parameters {
+    program.set_parameters(Parameters {
         material: Some(Material {
             name: format!("Plastic, as heavy as the {row} ({grams} g)"),
             density: grams * 1e6 / volume,
@@ -488,12 +488,12 @@ fn servo(
             selected: row,
         })],
         ..Parameters::default()
-    };
+    });
     // Side on, in the `xz` plane — whose sketch runs along `x` and `-z`.
     let n = |v: f64| format!("{v}");
     let (x0, x1) = (-offset - length / 2.0, -offset + length / 2.0);
     let (f0, f1) = (-offset - tabs / 2.0, -offset + tabs / 2.0);
-    let mut side = Drawing::new(&program.parameters)?;
+    let mut side = Drawing::new(&program)?;
     side.polygon(&[
         [n(x0), n(below)],
         [n(x1), n(below)],
@@ -522,7 +522,7 @@ fn servo(
     // The boss starts 1 inside the body, so that none of its faces lies on
     // the body's top.
     let top = above + boss[1] + spline[1];
-    let mut shaft = Drawing::new(&program.parameters)?;
+    let mut shaft = Drawing::new(&program)?;
     let lines = shaft.polygon(&[
         ["0".into(), n(above - 1.0)],
         [n(boss[0] / 2.0), n(above - 1.0)],
@@ -549,7 +549,7 @@ fn servo(
     for x in [-offset - holes / 2.0, -offset + holes / 2.0] {
         for &y in ys {
             k += 1;
-            let mut circle = Drawing::new(&program.parameters)?;
+            let mut circle = Drawing::new(&program)?;
             let centre = circle.point(n(x), n(y))?;
             circle.circle(centre, &n(hole))?;
             let id = format!("hole{k}");

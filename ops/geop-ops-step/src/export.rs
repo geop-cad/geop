@@ -31,10 +31,10 @@ use geop_core_math::{
 use geop_core_topology::{
     CoedgeGeometry, EdgeId, FaceId, Model, Sense, ShellId, VertexId, boundary::BoundaryType,
 };
-use geop_ops_assembly::{Component, placed_parts};
+use geop_ops_assembly::placed_parts;
 use geop_ops_model::{Design, NamedModel, RefId, read_model};
 use geop_ops_output::{Content, Export, Exporter, ExporterInfo, NoOptions, Output};
-use geop_ops_parameters::{PartReader, about::read_about};
+use geop_ops_parameters::{PartReader, read_properties, stem};
 
 use crate::part21::{Exchange, Instance, Record, Value};
 
@@ -58,7 +58,7 @@ pub fn write_step<S: Scalar>(model: &NamedModel<S>, name: &str) -> GeopResult<St
 pub fn write_part(reader: &PartReader, name: &str) -> GeopResult<String> {
     let mut writer = Writer::default();
     let context = writer.context();
-    writer.assembly(reader, name, &context, &mut HashMap::new())?;
+    writer.assembly(reader, name, &context)?;
     Ok(writer.file(name))
 }
 
@@ -320,37 +320,30 @@ impl Writer {
     }
 
     /// The part `reader` reads as the product `name`, and each part placed
-    /// in it as a product of its own — once, however often it is placed:
-    /// `written` keeps those already written, by component. A product's
-    /// placements are where its own part puts them.
+    /// in it as a product of its own. A product's placements are where its
+    /// own part puts them.
+    ///
+    /// TODO: Later, with the parts of no state shared between instances
+    /// (see [`geop_core_program::part::Part`]), write each part
+    /// shared once, however often it is placed.
     fn assembly(
         &mut self,
         reader: &PartReader,
         name: &str,
         context: &Context,
-        written: &mut HashMap<*const Component, Written>,
     ) -> GeopResult<Written> {
         let ctx = |e: GeopError| e.with_context(format!("writing the part {name:?} as STEP"));
         let mut placed = Vec::new();
         let parts = placed_parts(reader).map_err(ctx)?;
         for part in parts.iter().filter(|p| p.parent.is_none()) {
-            let component = &part.located.component;
-            let key = std::rc::Rc::as_ptr(component);
-            let child = match written.get(&key) {
-                Some(&child) => child,
-                None => {
-                    // Its designation (`ISO 4762 M4x12`), else what it is
-                    // listed as: its title, else its file's stem.
-                    let inner = component.reader();
-                    let name = match component.designation() {
-                        Some(designation) => designation,
-                        None => read_about(&inner).map_err(ctx)?.name().to_string(),
-                    };
-                    let child = self.assembly(&inner, &name, context, written)?;
-                    written.insert(key, child);
-                    child
-                }
-            };
+            // Its designation (`ISO 4762 M4x12`), else what it is listed
+            // as: its title, else its file's stem.
+            let inner = part.located.part.clone();
+            let properties = read_properties(&inner).map_err(ctx)?;
+            let stem = stem(&part.located.instance.file);
+            let name = (properties.designation.clone())
+                .unwrap_or_else(|| properties.name(stem).to_string());
+            let child = self.assembly(&inner, &name, context)?;
             placed.push((part.name.clone(), child, part.located.local));
         }
         let model = read_model(reader).map_err(ctx)?;

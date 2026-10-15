@@ -148,7 +148,7 @@ impl Exporter for DrawingExporter {
 
     /// The drawing of the part as the steps before its step built it —
     /// the title block's name and material, where the drawing gives none,
-    /// the program's (see [`geop_ops_parameters::About`]).
+    /// the program's (see [`geop_ops_parameters::Properties`]).
     fn export(output: &mut Output, format: &str, options: DrawingOptions) -> GeopResult<Export> {
         let format = Format::of_extension(format)
             .ok_or_else(|| GeopError::new(format!("a drawing is no .{format} file")))?;
@@ -168,11 +168,12 @@ impl Exporter for DrawingExporter {
             None => (None, DrawingArgs::default()),
         };
         let mut args = options.apply(args)?;
-        let about = output.about()?;
+        let properties = output.properties()?;
         if args.name.is_empty() {
-            args.name = about.name().to_string();
+            let stem = output.stem()?;
+            args.name = properties.name(&stem).to_string();
         }
-        let material = about.material();
+        let material = properties.material();
         if args.material.is_empty() && !material.assumed {
             args.material = material.name;
         }
@@ -184,7 +185,7 @@ impl Exporter for DrawingExporter {
             Some(step) => e.with_context(format!("the drawing {step:?}")),
             None => e.with_context("the drawing of the whole part"),
         };
-        let parts = parts_list(&reader, &args).with_context(&ctx)?;
+        let parts = parts_list(&reader, output.file_name(), &args).with_context(&ctx)?;
         let sheet = compose(&reader, &args, output.date, &parts).with_context(&ctx)?;
         Ok(Export {
             name: format!("{}.{}", output.stem()?, format.extension()),

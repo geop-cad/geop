@@ -175,8 +175,8 @@ fn a_route_runs_through_sketch_points() {
             service_loop: 0.0,
         },
     );
-    let runner = program.built().unwrap();
-    let reader = runner.part.current();
+    let part = program.built().unwrap();
+    let reader = part.current();
     let cable = cable(&reader, "route(route)").unwrap();
     let length = cable.length.to_f64();
     // Two runs of 4 with a quarter-turn bend between them, rounded.
@@ -214,7 +214,7 @@ fn a_cable_bundle_is_no_body_to_weigh_or_check() {
     let interference = geop_ops_inspect::interference_report(view).unwrap();
     assert_eq!(interference.solids, 2, "{:?}", interference.found);
 
-    let bill = geop_ops_bom::bom(view, geop_ops_bom::Structure::Flat).unwrap();
+    let bill = geop_ops_bom::bom(view, "assembly.geop", geop_ops_bom::Structure::Flat).unwrap();
     let total = |b: Bounded| b.value;
     let weighed = mass.total.as_ref().unwrap().mass.value;
     assert!(

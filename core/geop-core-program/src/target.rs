@@ -7,7 +7,7 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 
 /// Counts the runs of a part, starting at 1. Revision 0 is before the first
 /// run: what was never set has not changed since then.
-pub(crate) type Revision = u64;
+pub type Revision = u64;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Dependency {
@@ -21,8 +21,27 @@ pub(crate) enum Dependency {
     Undefined(String),
     Input(String),
     State(String),
-    /// Every value of the state whose name starts with the prefix.
-    StatesUnder(String),
+}
+
+impl Dependency {
+    /// The same read, of the part placed at `path` — a path with a
+    /// separator after it, empty for the part itself — as the part placing
+    /// it names it.
+    pub(crate) fn behind(self, path: &str) -> Self {
+        if path.is_empty() {
+            return self;
+        }
+        let behind = |name: String| format!("{path}{name}");
+        match self {
+            Self::Target { name, step } => Self::Target {
+                name: behind(name),
+                step,
+            },
+            Self::Undefined(name) => Self::Undefined(behind(name)),
+            Self::Input(name) => Self::Input(behind(name)),
+            Self::State(name) => Self::State(behind(name)),
+        }
+    }
 }
 
 /// The stable name of a target, as programs and arguments refer to it, and
@@ -190,10 +209,15 @@ impl TargetRegistry {
         (self.0.values().flatten()).flat_map(|target| &target.dependencies)
     }
 
-    pub(crate) fn retain(&mut self, keep: impl Fn(&Target) -> bool) {
+    /// Keeps the versions `keep` keeps: whether it deleted any.
+    pub(crate) fn retain(&mut self, keep: impl Fn(&Target) -> bool) -> bool {
+        let mut deleted = false;
         self.0.retain(|_, versions| {
+            let before = versions.len();
             versions.retain(|target| keep(target));
+            deleted |= versions.len() < before;
             !versions.is_empty()
         });
+        deleted
     }
 }

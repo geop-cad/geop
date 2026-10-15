@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    rc::Rc,
-};
+use std::{collections::BTreeMap, rc::Rc};
 
 use geop_core_editor::{
     edit_form::FormState,
@@ -18,17 +15,16 @@ use geop_core_program::{
     element::ElementReference,
     program::{Program, ProgramStep},
     program_runner::RunOutput,
+    workspace::Location,
 };
 use geop_ops_add_datum::Selected;
 use geop_ops_constraints::Constraints;
-use geop_ops_datums::{ORIGIN, component_name, datums, define_datums, origin_axis, read_datums};
+use geop_ops_datums::{ORIGIN, component_name, datums, origin_axis, read_datums};
 use geop_ops_extrude_revolve::shapes::{block_part, v3};
-use geop_ops_model::{
-    Design, read_model,
-    testing::{assert_close, given_part},
-};
+use geop_ops_model::{Design, read_model, testing::assert_close};
 use geop_ops_parameters::{
-    Files, Parameters, PartReader, Runner, StateValue, StateValues, StepContext, pose_state,
+    BuildPart, PartReader, ProgramFile, Registry, Runner, StateValue, StateValues, StepContext,
+    pose_state,
 };
 use geop_ops_pattern::spacing::Spacing;
 use geop_ops_view::{PartView, drawn};
@@ -37,8 +33,9 @@ use super::*;
 use crate::{
     Kind, MateKind, PatternAxis,
     editor::PART,
-    placed::{Component, GivenLibrary, Library, define_library, locate, placed_parts},
+    placed::{locate, placed_parts},
     solving::{self, Rerun, check as check_mates, solve, solved_states},
+    testing::{Shelf, given_model},
 };
 
 /// The part `reader` reads, drawn: its model, its datums and the parts
@@ -51,64 +48,21 @@ fn draw(reader: &PartReader) -> GeopResult<PartView> {
     Ok(view.finish())
 }
 
-/// Programs' parts by file name: built beforehand, or — an assembly — its
-/// steps and state, built for every state it is run with.
-struct Shelf(BTreeMap<String, Rc<Component>>, BTreeMap<String, (Program, StateValues)>);
-
-impl Files for Shelf {
-    fn files(&self) -> Vec<String> {
-        self.0.keys().cloned().collect()
-    }
-
-    fn read(&self, file: &str) -> GeopResult<(String, String)> {
-        Err(GeopError::new(format!("no file {file:?} to read")))
-    }
+/// The operations the shelf's programs are written in: those of
+/// [`crate::testing`], placing parts and patterns of them.
+fn registry() -> Registry {
+    (crate::testing::registry().with(AddPart))
+        .and_then(|r| r.with(crate::PartPattern))
+        .unwrap()
 }
 
-impl Library for Shelf {
-    fn component(
-        &self,
-        file: &str,
-        _: &Settings,
-        state: &StateValues,
-    ) -> GeopResult<Rc<Component>> {
-        if let Some((program, own)) = self.1.get(file) {
-            let mut given = own.clone();
-            given.extend(state.clone());
-            let built = Assembly::with(Rc::new(shelf()), program.steps.clone(), given);
-            let placed: Vec<&str> = self.0.keys().map(String::as_str).collect();
-            return Ok(component(file, &placed, built.runner.part));
-        }
-        (self.0.get(file).cloned()).ok_or_else(|| GeopError::new(format!("no file {file:?}")))
-    }
-}
-
-/// `part` as the program file `file` builds it, placing the parts of
-/// `files` besides.
-fn component(file: &str, files: &[&str], part: BuildPart) -> Rc<Component> {
-    let files = (files.iter().chain([&file]))
-        .map(|f| f.to_string())
-        .collect::<BTreeSet<_>>();
-    Rc::new(Component::new(
-        file.into(),
-        files,
-        format!("{file}#1"),
-        Parameters::default(),
-        part,
-        draw,
-    ))
-}
-
-/// A shelf with `cube.geop`: the unit cube from the origin to `(1, 1, 1)`,
-/// with the origin's datums.
+/// A shelf of `cube.geop` alone: the unit cube from the origin to
+/// `(1, 1, 1)`, with the origin's datums.
 fn shelf() -> Shelf {
-    let mut part: BuildPart = given_part(&block_part("c", [0.0; 3], [1.0; 3])).unwrap();
-    define_datums(&mut part).unwrap();
-    part.end_run(0);
-    Shelf(
-        BTreeMap::from([("cube.geop".into(), component("cube.geop", &[], part))]),
-        BTreeMap::new(),
-    )
+    let mut cube = ProgramFile::new();
+    let model = block_part("c", [0.0; 3], [1.0; 3]);
+    cube.program.steps.push(given_model("model", model, None));
+    Shelf::default().with("cube.geop", cube)
 }
 
 fn args(fixed: bool, mates: &[(&str, MateKind, [MateEntity; 2])]) -> AddPartArgs {
@@ -202,26 +156,25 @@ fn moved_to(moved: &StateValues, instance: &str) -> Pose<Design> {
 /// A program of steps placing the cube, run with a state.
 struct Assembly {
     runner: Runner,
+    part: BuildPart,
     program: Program,
-    inputs: BTreeMap<String, Design>,
+    inputs: Settings,
     state: StateValues,
 }
 
 impl Assembly {
-    /// The program `steps`, placing parts from `library`, run with the
-    /// state `state`: its given step defines the library and the datums.
-    fn with(library: Rc<dyn Library>, steps: Vec<ProgramStep>, state: StateValues) -> Self {
-        let registry = (geop_ops_parameters::Registry::default().with(AddPart))
-            .and_then(|r| r.with(crate::PartPattern))
-            .unwrap();
-        let mut runner = Runner::new(registry);
-        let library = GivenLibrary(library);
-        runner.given = Some(Rc::new(move |part| {
-            define_library(part, &library)?;
-            define_datums(part)
-        }));
+    /// The program `steps` of the file `assembly.geop`, placing parts
+    /// from `shelf`, run with the state `state`.
+    fn with(shelf: Shelf, steps: Vec<ProgramStep>, state: StateValues) -> Self {
+        let mut runner = Runner::new(registry());
+        runner.workspace = Some(Rc::new(shelf));
+        runner.location = Location {
+            file: "assembly.geop".into(),
+            within: Vec::new(),
+        };
         let mut assembly = Assembly {
             runner,
+            part: BuildPart::default(),
             program: Program::new(steps),
             inputs: BTreeMap::new(),
             state,
@@ -236,7 +189,7 @@ impl Assembly {
         let steps = (steps.iter())
             .map(|(id, args)| ProgramStep::of(*id, args).unwrap())
             .collect();
-        Self::with(Rc::new(shelf()), steps, state)
+        Self::with(shelf(), steps, state)
     }
 
     /// The cube placed as `a`, fixed at the origin, then `steps`.
@@ -247,17 +200,18 @@ impl Assembly {
     }
 
     fn run(&mut self) -> RunOutput {
-        (self.runner).run(&self.program, &self.inputs, &self.state)
+        (self.runner).run(&mut self.part, &self.program, &self.inputs, &self.state)
     }
 
     fn reader(&self) -> PartReader<'_> {
-        self.runner.part.current()
+        self.part.current()
     }
 
     /// The program as a solve runs it again.
     fn rerun(&mut self) -> Rerun<'_> {
         Rerun {
-            runner: &mut self.runner,
+            runner: &self.runner,
+            part: &mut self.part,
             program: &self.program,
             inputs: &self.inputs,
         }
@@ -406,11 +360,12 @@ fn a_drag_pulls_the_point_grabbed() {
     );
     let mut assembly = Assembly::on_a(&[("b", mates.clone())], StateValues::new());
     let pulls = {
-        let position = Runner::position(1);
+        let position = 1;
         let context: StepContext = StepContext {
             step: "b",
-            before: assembly.runner.part.reader(position),
-            built: Some(assembly.runner.part.reader(position + 1)),
+            runner: &assembly.runner,
+            before: assembly.part.reader(position),
+            built: Some(assembly.part.reader(position + 1)),
             scene: None,
         };
         let drag = |editing: &PartEditing, done: bool| {
@@ -488,7 +443,7 @@ fn a_pattern_places_copies_after_the_part() {
         ProgramStep::of("row", &pattern).unwrap(),
     ];
     let state = StateValues::from([(pose_state("a"), StateValue::Pose(at([0.0, 5.0, 0.0])))]);
-    let assembly = Assembly::with(Rc::new(shelf()), steps, state);
+    let assembly = Assembly::with(shelf(), steps, state);
     let reader = assembly.reader();
     let placed = placed_parts(&reader).unwrap();
     let names: Vec<&str> = placed.iter().map(|p| p.name.as_str()).collect();
@@ -506,9 +461,11 @@ fn a_pattern_places_copies_after_the_part() {
 /// The shelf, with `pair.geop` besides: the program of `pair`, which places
 /// cubes, as it was solved.
 fn with_pair(pair: Assembly) -> Shelf {
-    let mut shelf = shelf();
-    shelf.1.insert("pair.geop".into(), (pair.program, pair.state));
-    shelf
+    let pair = ProgramFile {
+        program: pair.program,
+        state: pair.state,
+    };
+    shelf().with("pair.geop", pair)
 }
 
 /// A part placed with mates of its own between the parts placed in it
@@ -542,7 +499,7 @@ fn a_placed_part_brings_its_mates() {
     // The pair's second cube pulled off its axis, as the outer program
     // may move it: its own state does not say otherwise.
     let off = StateValues::from([(pose_state("p/b"), StateValue::Pose(at([5.0, 4.0, 3.0])))]);
-    let mut assembly = Assembly::with(Rc::new(with_pair(pair)), steps, off);
+    let mut assembly = Assembly::with(with_pair(pair), steps, off);
     let reader = assembly.reader();
     let constraints = Constraints::<StateValue>::of(&reader).unwrap();
     let names: Vec<&str> = constraints.iter().map(|(name, _)| name).collect();
@@ -654,9 +611,14 @@ fn assert_derivatives_are_true(assembly: &mut Assembly) {
                     step[k] = n(t);
                     let mut moved = state.clone();
                     moved.insert(parameter.clone(), value.retract(&step).unwrap());
-                    assembly
-                        .runner
-                        .run(&assembly.program, &assembly.inputs, &moved);
+                    let Assembly {
+                        runner,
+                        part,
+                        program,
+                        inputs,
+                        ..
+                    } = &mut *assembly;
+                    runner.run(part, program, inputs, &moved);
                     let made = self::constraint(&assembly.reader(), name).residuals;
                     made.iter().map(|r| r.to_f64()).collect::<Vec<_>>()
                 };
@@ -767,7 +729,7 @@ fn nested_mate_derivatives_are_true() {
             StateValue::Pose(pose([0.0, 1.0, 1.0], [30.0, 0.0, -20.0])),
         ),
     ]);
-    let mut assembly = Assembly::with(Rc::new(with_pair(pair)), steps, state);
+    let mut assembly = Assembly::with(with_pair(pair), steps, state);
     let constraint = constraint(&assembly.reader(), "add_part(q,m1)");
     let states: Vec<&str> = constraint.jacobian.keys().map(String::as_str).collect();
     assert_eq!(states, ["p.pose", "p/b.pose", "q.pose", "q/b.pose"]);

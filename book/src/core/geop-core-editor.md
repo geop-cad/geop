@@ -25,7 +25,8 @@ Every operation of a part implements `PartOperation` and is made an
   sketches, and references to elements by name.
 - `new_args(context)`: the arguments of a new step, from what the part
   before it holds — an extrude takes the newest sketch.
-- `run(step, part, args)`: what it builds. A step that builds into the
+- `run(step, runner, part, args)`: what it builds, and the runner running
+  it, to run programs of its own. A step that builds into the
   part's model is a `ModelOperation` of
   [geop-ops-model](../ops/geop-ops-model.md) and runs `build_model`.
 - `form(context, args, editing)`: the one form it is edited through, an
@@ -38,7 +39,9 @@ Every operation of a part implements `PartOperation` and is made an
   in hand, and those on nothing, hovers, keys, moves of its draggable
   visuals.
 
-Everything is edited against a `Context`: the step's id, the part as it was
+Everything is edited against a `Context`: the step's id, the runner it is
+run by (`runner`, which reads the files around its program — a picker of
+files, a placed program's parameters), the part as it was
 before the step (`before`, a `Reader`), the part as the step built it when
 it last ran (`built`), and, for an event, the part as the editor draws it
 (`scene`), so an operation picks in the editor's drawing rather than
@@ -150,8 +153,10 @@ parameters: numbers, `+ - * / ^`, parentheses, `pi` and the functions
 (`FUNCTION_NAMES`), angles in degrees (`evaluate`). An operation's
 arguments take one wherever they take a number, and its form shows it with
 `EditForm::numeric`. A step resolves it where it builds
-(`NumericInput::resolve`), reading each parameter the formula names as an
-input of the part, so a change to one of them rebuilds the step and a
+(`NumericInput::resolve`), reading each parameter the formula names —
+the target a step of the program defines for it (`parameter`, a
+`ParameterValue`: a number, or a table's row and its columns;
+`read_parameter`) — so a change to one of them rebuilds the step and a
 change to any other does not. Saved, a formula is told apart from every
 other value in a step's arguments (`formulas_in`, `rename_parameter_in`),
 so what reads a parameter is found, and renamed, without asking the

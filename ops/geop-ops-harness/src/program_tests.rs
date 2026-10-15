@@ -54,8 +54,8 @@ fn a_route_between_corners_of_a_block() {
             service_loop: 0.5,
         },
     );
-    let runner = program.built(registry).unwrap();
-    let part = runner.part.current();
+    let part = program.built(registry).unwrap();
+    let part = part.current();
     let laid = cable(&part, "route(cable)").expect("the cable is recorded");
     assert!(
         laid.length.could_be_equal(Design::from_f64(4.0)),

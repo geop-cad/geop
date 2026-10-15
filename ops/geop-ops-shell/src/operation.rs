@@ -17,7 +17,7 @@ use geop_core_program::element::ElementReference;
 use geop_ops_model::{
     Design, Face, ModelOperation, NamedModel, Namer, Solid, build_model, model, read_model,
 };
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use crate::shell::shell;
@@ -54,7 +54,7 @@ impl PartOperation for Shell {
     )
     .icon(crate::icons::SHELL);
     type Args = ShellArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -71,7 +71,7 @@ impl PartOperation for Shell {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &ShellArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &ShellArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 

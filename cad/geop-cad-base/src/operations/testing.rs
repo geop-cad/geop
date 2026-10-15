@@ -14,6 +14,7 @@ use geop_core_math::{
 };
 use geop_ops_extrude_revolve::testing::model_of;
 use geop_ops_model::{Design, NamedModel};
+use geop_ops_parameters::BuildPart;
 
 pub(crate) use geop_ops_datums::{origin_axis, origin_plane};
 pub(crate) use geop_ops_extrude_revolve::testing::{
@@ -22,21 +23,21 @@ pub(crate) use geop_ops_extrude_revolve::testing::{
 };
 pub(crate) use geop_ops_model::testing::{assert_valid, check_valid, solid_volume};
 
-use super::{Program, Runner, build, workspace};
+use super::{Program, build, workspace};
 use crate::{Command, Editor, Update};
 
 /// Building a program on its own, in an empty [`workspace`] (see [`build`]).
 pub(crate) trait Built {
-    /// The runner, holding the part the program builds.
-    fn built(&self) -> GeopResult<Runner>;
+    /// The part the program builds.
+    fn built(&self) -> GeopResult<BuildPart>;
 
     /// The model the program builds, or why a step fails.
     fn build_model(&self) -> GeopResult<NamedModel<Design>>;
 }
 
 impl Built for Program {
-    fn built(&self) -> GeopResult<Runner> {
-        build(self, "", workspace(BTreeMap::new()).scope(""))
+    fn built(&self) -> GeopResult<BuildPart> {
+        Ok(build(self, "", workspace(BTreeMap::new()))?.part)
     }
 
     fn build_model(&self) -> GeopResult<NamedModel<Design>> {

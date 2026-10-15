@@ -17,7 +17,7 @@ use geop_core_topology::Body;
 use geop_ops_model::{
     Design, Face, ModelOperation, NamedModel, Namer, build_model, model, read_model,
 };
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_shell::shell::{offset_faces, thicken};
 use serde::{Deserialize, Serialize};
 
@@ -92,7 +92,7 @@ impl PartOperation for Thicken {
     .experimental()
     .icon(crate::icons::THICKEN);
     type Args = ThickenArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -109,7 +109,7 @@ impl PartOperation for Thicken {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &ThickenArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &ThickenArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 

@@ -3,7 +3,7 @@
 //! the part kept up to date, and each of their elements what it is to the
 //! steps that build on them.
 
-use std::{collections::BTreeMap, rc::Rc};
+use std::collections::BTreeMap;
 
 use geop_core_editor::{
     editing::{Pointer, Reach},
@@ -15,11 +15,19 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_program::{element::ElementReference, program::Program};
+use geop_core_math::geop_error::GeopResult;
+use geop_core_program::{
+    element::ElementReference,
+    operation::Operation,
+    program::{Program, ProgramStep},
+};
 use geop_core_sketch::{Constraint, CurveId, PointId};
-use geop_ops_datums::{define_datums, origin_plane};
+use geop_ops_datums::origin_plane;
 use geop_ops_model::{Curve, Design, Line, NamedModel, Path, Plane, Point, model, testing::unit_cube};
-use geop_ops_parameters::{Registry, Runner};
+use geop_ops_parameters::{
+    BuildPart, DefineParameters, DefineParametersArgs, Parameter, Registry, Runner, Setting,
+    Settings, StateValue,
+};
 use geop_ops_view::{PartView, drawn};
 
 use crate::{
@@ -29,15 +37,27 @@ use crate::{
     sketch, whole_sketch,
 };
 
-/// A runner of sketches, whose given step defines the datums and a unit
-/// cube as the model.
-fn runner() -> Runner {
-    let mut runner = Runner::new(Registry::default().with(AddSketch).unwrap());
-    runner.given = Some(Rc::new(|part| {
-        define_datums(part)?;
+/// Defines the model as a unit cube: what the sketches are drawn on.
+struct Cube;
+
+impl Operation for Cube {
+    const KIND: &'static str = "cube";
+    type Args = ();
+    type Input = Setting;
+    type State = StateValue;
+
+    fn run(_: &str, _: &Runner, part: &mut BuildPart, _: &()) -> GeopResult<()> {
         part.define_target(&model(), &(), |_, _| Ok(unit_cube()))
-    }));
-    runner
+    }
+}
+
+/// A runner of sketches, of parameters and of the unit cube.
+fn runner() -> Runner {
+    let registry = (Registry::default().with(AddSketch))
+        .and_then(|r| r.with(DefineParameters))
+        .and_then(|r| r.with(Cube))
+        .unwrap();
+    Runner::new(registry)
 }
 
 fn n(x: f64) -> Design {
@@ -56,15 +76,23 @@ fn square(sketch: &mut Sketch) -> (Vec<PointId>, Vec<CurveId>) {
     (points, sides)
 }
 
-/// Runs a program of the sketch step `s` with `args`, and the parameters
-/// `inputs`.
-fn run(runner: &mut Runner, args: &AddSketchArgs, inputs: &[(&str, f64)]) {
+/// Runs a program of the sketch step `s` with `args` on the unit cube, its
+/// parameters `inputs` — each a number, 1 unless the run sets it — on
+/// `part`.
+fn run(part: &mut BuildPart, args: &AddSketchArgs, inputs: &[(&str, f64)]) {
+    let parameters = DefineParametersArgs {
+        values: (inputs.iter())
+            .map(|&(name, _)| Parameter::number(name, "1", 0.0, 10.0))
+            .collect(),
+    };
     let program = Program::new(vec![
-        geop_core_program::program::ProgramStep::new::<AddSketch>("s", args).unwrap(),
+        ProgramStep::new::<DefineParameters>("parameters", &parameters).unwrap(),
+        ProgramStep::new::<Cube>("cube", &()).unwrap(),
+        ProgramStep::new::<AddSketch>("s", args).unwrap(),
     ]);
-    let inputs: BTreeMap<String, Design> =
-        (inputs.iter()).map(|&(name, value)| (name.to_string(), n(value))).collect();
-    let output = runner.run(&program, &inputs, &BTreeMap::new());
+    let inputs: Settings =
+        (inputs.iter()).map(|&(name, value)| (name.to_string(), Setting::Number(value))).collect();
+    let output = runner().run(part, &program, &inputs, &BTreeMap::new());
     assert!(output.step_errors.is_empty(), "{:?}", output.step_errors);
 }
 
@@ -79,9 +107,9 @@ fn origin_xy() -> SketchPlane {
 fn a_sketch_is_its_elements() {
     let mut drawn_square = Sketch::new();
     let (points, sides) = square(&mut drawn_square);
-    let mut runner = runner();
-    run(&mut runner, &AddSketchArgs::on(origin_xy(), drawn_square), &[]);
-    let reader = runner.part.current();
+    let mut part = BuildPart::default();
+    run(&mut part, &AddSketchArgs::on(origin_xy(), drawn_square), &[]);
+    let reader = part.current();
 
     let placed: &PlacedSketch<Design> = reader.retrieve_element(&whole_sketch("s")).unwrap();
     assert_eq!(placed.name, "s");
@@ -140,15 +168,15 @@ fn a_dimension_follows_its_formula() {
     assert_eq!(saved["formulas"][distance.0.to_string()]["formula"], "width / 2");
     assert_eq!(saved["plane"], serde_json::json!({"datum": "origin:xy"}));
 
-    let mut runner = runner();
-    let end = |runner: &Runner| {
-        let reader = runner.part.current();
+    let mut part = BuildPart::default();
+    let end = |part: &BuildPart| {
+        let reader = part.current();
         reader.retrieve_element(&sketch_element::<Point>("s", b)).unwrap().to_array()[0].to_f64()
     };
-    run(&mut runner, &args, &[("width", 6.0)]);
-    assert!((end(&runner) - 3.0).abs() < 1e-9);
-    run(&mut runner, &args, &[("width", 10.0)]);
-    assert!((end(&runner) - 5.0).abs() < 1e-9);
+    run(&mut part, &args, &[("width", 6.0)]);
+    assert!((end(&part) - 3.0).abs() < 1e-9);
+    run(&mut part, &args, &[("width", 10.0)]);
+    assert!((end(&part) - 5.0).abs() < 1e-9);
 }
 
 /// A sketch on a face of the cube lies in its plane, and projects an edge
@@ -157,7 +185,7 @@ fn a_dimension_follows_its_formula() {
 #[test]
 fn a_sketch_on_a_face_projects_an_edge() {
     let cube = unit_cube();
-    let mut runner = runner();
+    let mut part = BuildPart::default();
     let edge = cube.name(cube.topology().edges.keys().next().copied().unwrap()).unwrap();
     let mut args = AddSketchArgs::on(
         SketchPlane::Face(ElementReference::new(model(), "f0")),
@@ -167,8 +195,8 @@ fn a_sketch_on_a_face_projects_an_edge() {
     args.references.push(Reference::new(Source::Projection {
         entity: Projected::Edge(ElementReference::new(model(), edge)),
     }));
-    run(&mut runner, &args, &[]);
-    let reader = runner.part.current();
+    run(&mut part, &args, &[]);
+    let reader = part.current();
     let placed: &PlacedSketch<Design> = reader.retrieve_element(&whole_sketch("s")).unwrap();
     let face = reader
         .retrieve_element(&ElementReference::<NamedModel<Design>, Plane>::new(model(), "f0"))
@@ -186,9 +214,9 @@ fn a_sketch_on_a_face_projects_an_edge() {
 fn a_sketch_curve_is_picked_as_a_line() {
     let mut drawn_square = Sketch::new();
     let (_, sides) = square(&mut drawn_square);
-    let mut runner = runner();
-    run(&mut runner, &AddSketchArgs::on(origin_xy(), drawn_square), &[]);
-    let reader = runner.part.current();
+    let mut part = BuildPart::default();
+    run(&mut part, &AddSketchArgs::on(origin_xy(), drawn_square), &[]);
+    let reader = part.current();
     let placed: &PlacedSketch<Design> = reader.retrieve_element(&whole_sketch("s")).unwrap();
     let mut view = PartView::new();
     placed.draw(sketch("s").name(), &mut view).unwrap();

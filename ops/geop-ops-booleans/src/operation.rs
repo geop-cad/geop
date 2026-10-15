@@ -23,7 +23,7 @@ use geop_ops_model::{
     Design, Face, FeatureTool, ModelOperation, NamedModel, Namer, Solid, ToolReach, build_model,
     model, read_model,
 };
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -76,7 +76,7 @@ impl PartOperation for Boolean {
     )
     .icon(crate::icons::BOOLEAN);
     type Args = BooleanArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -98,7 +98,7 @@ impl PartOperation for Boolean {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &BooleanArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &BooleanArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
@@ -512,7 +512,7 @@ impl PartOperation for Split {
     )
     .icon(crate::icons::SPLIT);
     type Args = SplitArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -526,7 +526,7 @@ impl PartOperation for Split {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &SplitArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &SplitArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 

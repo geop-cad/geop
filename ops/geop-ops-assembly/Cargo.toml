@@ -3,6 +3,11 @@ name = "geop-ops-assembly"
 version.workspace = true
 edition.workspace = true
 
+[features]
+# Parts made in Rust as the programs of a workspace, for tests (see
+# `testing`).
+testing = []
+
 [dependencies]
 geop-core-program.workspace = true
 geop-core-editor.workspace = true

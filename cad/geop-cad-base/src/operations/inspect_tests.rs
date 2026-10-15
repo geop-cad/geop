@@ -132,8 +132,8 @@ fn check_mass(name: &str, summary: &MassSummary, failures: &mut Vec<String>) {
 fn example_mass_properties_are_consistent() {
     let mut failures = Vec::new();
     for (example, program) in examples::all() {
-        let runner = program().built().unwrap();
-        let reader = runner.part.current();
+        let part = program().built().unwrap();
+        let reader = part.current();
         let report = mass_report(&reader).unwrap();
         for (body, placed) in report.bodies.iter().zip(placed_solids(&reader).unwrap()) {
             let name = format!("{example}/{}", body.name);

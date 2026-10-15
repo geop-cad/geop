@@ -10,7 +10,7 @@ use geop_core_editor::{
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::element::ElementReference;
 use geop_ops_model::{Design, Face, ModelOperation, NamedModel, Namer, build_model, model};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 /// Copies the face named `face` — of a solid, or of a sheet — into a sheet
@@ -42,7 +42,7 @@ impl PartOperation for ExtractFace {
     .experimental()
     .icon(crate::icons::EXTRACT_FACE);
     type Args = ExtractFaceArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -54,7 +54,7 @@ impl PartOperation for ExtractFace {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &ExtractFaceArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &ExtractFaceArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 

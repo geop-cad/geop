@@ -7,14 +7,18 @@ use geop_ops_bom::{LineKind, Structure, bom};
 
 use crate::{DrawingArgs, PartsListLine};
 
-/// The bill of materials of the part `reader` reads, as a drawing lists it
-/// (see [`PartsListLine`]): flat, each part and wire once with its count.
-/// Empty if `args` asks for none.
-pub fn parts_list(reader: &PartReader, args: &DrawingArgs) -> GeopResult<Vec<PartsListLine>> {
+/// The bill of materials of the part `reader` reads, the program of the
+/// file `file`, as a drawing lists it (see [`PartsListLine`]): flat, each
+/// part and wire once with its count. Empty if `args` asks for none.
+pub fn parts_list(
+    reader: &PartReader,
+    file: &str,
+    args: &DrawingArgs,
+) -> GeopResult<Vec<PartsListLine>> {
     if !args.bom {
         return Ok(Vec::new());
     }
-    let bom = bom(reader, Structure::Flat)?;
+    let bom = bom(reader, file, Structure::Flat)?;
     Ok((bom.lines.into_iter())
         .map(|line| PartsListLine {
             item: line.item,

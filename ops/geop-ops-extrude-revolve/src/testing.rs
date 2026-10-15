@@ -1,14 +1,11 @@
 //! What the tests of programs share that start from sketches: the
 //! operations they are written in, drawing outlines, the steps sketching
-//! and extruding them, and building a program as an editor does — its
-//! given step defining what it says of its part and the datums — and
+//! and extruding them, and building a program as an editor does, and
 //! reading its steps' arguments as their types. Only built for tests: with
 //! `testing`, or in this crate's own.
 
 // Helpers of tests fail as tests do: by panicking, naming what is wrong.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
-use std::rc::Rc;
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -17,10 +14,11 @@ use geop_core_math::{
 };
 use geop_core_program::{element::ElementReference, program::ProgramStep};
 use geop_core_sketch::{CurveId, PointId};
-use geop_ops_datums::{define_datums, origin_plane};
+use geop_ops_datums::origin_plane;
 use geop_ops_model::{Design, NamedModel, model, read_model};
 use geop_ops_parameters::{
-    ProgramFile, Registry, Runner, Settings, StateValues, about::define_about,
+    BuildPart, DefineParameters, PartProperties, ProgramFile, Registry, Runner, Settings,
+    StateValues,
 };
 use geop_ops_booleans::Combine;
 use geop_ops_sketch::{AddSketch, AddSketchArgs, Sketch, SketchPlane, whole_sketch};
@@ -32,6 +30,8 @@ use crate::{Extent, Extents, Extrude, ExtrudeArgs, Loft, Output, Revolve, Sweep}
 /// a test's programs are written in, besides those it tests.
 pub fn registry() -> GeopResult<Registry> {
     (Registry::default()
+        .with(DefineParameters)?
+        .with(PartProperties)?
         .with(AddSketch)?
         .with(Extrude)?
         .with(Revolve)?)
@@ -168,24 +168,19 @@ pub fn drilled_box() -> ProgramFile {
 
 // ── Programs ────────────────────────────────────────────────────────────────
 
-/// A runner of programs written in the operations `registry` makes, whose
-/// given step defines what the program `file` says of its part — as the
-/// file `part.geop` — and the datums.
-pub fn runner_of(file: &ProgramFile, registry: Registry) -> Runner {
-    let about = file.about("part.geop", &Settings::new());
+/// A runner of programs written in the operations `registry` makes, as
+/// the file `part.geop` — of a workspace of no other files.
+pub fn runner_of(registry: Registry) -> Runner {
     let mut runner = Runner::new(registry);
-    runner.given = Some(Rc::new(move |part| {
-        define_about(part, &about)?;
-        define_datums(part)
-    }));
+    runner.location.file = "part.geop".into();
     runner
 }
 
 /// Building a program on its own, written in the operations `registry`
 /// makes.
 pub trait Built {
-    /// The runner, holding the part the program builds.
-    fn built(&self, registry: fn() -> GeopResult<Registry>) -> GeopResult<Runner>;
+    /// The part the program builds.
+    fn built(&self, registry: fn() -> GeopResult<Registry>) -> GeopResult<BuildPart>;
 
     /// The model the program builds, or why a step fails.
     fn build_model(
@@ -197,16 +192,17 @@ pub trait Built {
 }
 
 impl Built for ProgramFile {
-    fn built(&self, registry: fn() -> GeopResult<Registry>) -> GeopResult<Runner> {
-        let mut runner = runner_of(self, registry()?);
-        self.run(&mut runner, &Settings::new(), &StateValues::new())?;
-        Ok(runner)
+    fn built(&self, registry: fn() -> GeopResult<Registry>) -> GeopResult<BuildPart> {
+        let runner = runner_of(registry()?);
+        let mut part = BuildPart::default();
+        self.run(&runner, &mut part, &Settings::new(), &StateValues::new())?;
+        Ok(part)
     }
 }
 
-/// The model the part `runner` built holds: empty if it built no topology.
-pub fn model_of(runner: &Runner) -> NamedModel<Design> {
-    (read_model(&runner.part.current()).map(|model| model.into_owned())).unwrap_or_default()
+/// The model `part` holds: empty if it built no topology.
+pub fn model_of(part: &BuildPart) -> NamedModel<Design> {
+    (read_model(&part.current()).map(|model| model.into_owned())).unwrap_or_default()
 }
 
 /// The arguments of `step`, as their type `A`.

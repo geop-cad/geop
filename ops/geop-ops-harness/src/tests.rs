@@ -22,13 +22,13 @@ use geop_core_topology::{
     validation::{ValidationParameters, validate},
 };
 use geop_ops_add_datum::Selected;
-use geop_ops_datums::{ORIGIN, component_name, datums, define_datums};
+use geop_ops_datums::{ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::shapes::{cylinder::revolved_cylinder, v3};
 use geop_ops_model::{
     BodyNames, Design, NamedModel, model,
     testing::{assert_valid, given_part},
 };
-use geop_ops_parameters::StateValue;
+use geop_ops_parameters::{Setting, StateValue};
 
 use crate::{
     Cable, RouteArgs, Wire, WireSize,
@@ -116,8 +116,7 @@ fn args(through: Vec<Selected>, d: f64, bend_factor: f64) -> RouteArgs {
 /// The points `through` in `part`, as a part of the model and the datums
 /// resolves them, in `S`.
 fn waypoints<S: Scalar>(part: &Part, through: &[Selected]) -> GeopResult<Vec<Waypoint<S>>> {
-    let mut built = given_part::<Design, StateValue>(part)?;
-    define_datums(&mut built)?;
+    let built = given_part::<Setting, StateValue>(part)?;
     let reader = built.current();
     let cast = |v: Vector3<Design>| v.map(|c| c.cast::<S>());
     (through.iter().enumerate())

@@ -9,7 +9,10 @@
 use std::fmt::Debug;
 
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
-use geop_core_program::part::{Input, Part, State};
+use geop_core_program::{
+    part::{Input, Part, State},
+    program_runner::ProgramRunner,
+};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
@@ -39,9 +42,11 @@ pub trait PartOperation: 'static {
     /// is inserted into into account.
     fn new_args(context: &Context<Self::Input, Self::State, Self::Scalar>) -> Self::Args;
 
-    /// Runs the step `step` on `part`.
+    /// Runs the step `step` on `part`; `runner` is what runs it, to run
+    /// programs of the step's own with.
     fn run(
         step: &str,
+        runner: &ProgramRunner<Self::Input, Self::State>,
         part: &mut Part<Self::Input, Self::State>,
         args: &Self::Args,
     ) -> GeopResult<()>;
@@ -92,10 +97,14 @@ macro_rules! part_operation {
 
             fn run(
                 step: &str,
+                runner: &$crate::__program::program_runner::ProgramRunner<
+                    Self::Input,
+                    Self::State,
+                >,
                 part: &mut $crate::__program::part::Part<Self::Input, Self::State>,
                 args: &Self::Args,
             ) -> $crate::__GeopResult<()> {
-                <$operation as $crate::part_operation::PartOperation>::run(step, part, args)
+                <$operation as $crate::part_operation::PartOperation>::run(step, runner, part, args)
             }
         }
 

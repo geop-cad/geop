@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::operation::Operation;
 use crate::part::Part;
+use crate::program_runner::ProgramRunner;
 use crate::target::TargetReference;
 use crate::test::{Frame, Pose, Sc, label, record_built};
 
@@ -23,7 +24,12 @@ impl Operation for ShiftFrameOperation {
     type Input = Sc;
     type State = Pose;
 
-    fn run(step: &str, part: &mut Part<Sc, Pose>, args: &Self::Args) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &ProgramRunner<Sc, Pose>,
+        part: &mut Part<Sc, Pose>,
+        args: &Self::Args,
+    ) -> GeopResult<()> {
         for target in &args.targets {
             let reference = TargetReference::<Frame>::new(target);
             let args = (label(target, step), args.by);

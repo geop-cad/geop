@@ -21,7 +21,10 @@ use crate::{
     program::{Program, ProgramStep},
     program_runner::ProgramRunner,
     target::TargetReference,
-    test::{Frame, Pose, Sc, assert_encloses, inputs, label, record_built, take_built, vector},
+    test::{
+        Frame, Pose, Running, Sc, assert_encloses, inputs, label, record_built, take_built,
+        vector,
+    },
 };
 
 /// The datums of a part, by name: the one target of its kind a part has,
@@ -70,7 +73,12 @@ impl Operation for AddTwoDatums {
     type Input = Sc;
     type State = Pose;
 
-    fn run(step: &str, part: &mut Part<Sc, Pose>, args: &Self::Args) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &ProgramRunner<Sc, Pose>,
+        part: &mut Part<Sc, Pose>,
+        args: &Self::Args,
+    ) -> GeopResult<()> {
         let args = (label("datums", step), step.to_string(), args.clone());
         part.revise_target(&datums(), &args, |reader, (label, step, args)| {
             record_built(label);
@@ -98,7 +106,12 @@ impl Operation for MiddleDatum {
     type Input = Sc;
     type State = Pose;
 
-    fn run(step: &str, part: &mut Part<Sc, Pose>, args: &Self::Args) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &ProgramRunner<Sc, Pose>,
+        part: &mut Part<Sc, Pose>,
+        args: &Self::Args,
+    ) -> GeopResult<()> {
         let args = (label("datums", step), step.to_string(), args.clone());
         part.revise_target(&datums(), &args, |reader, (label, step, args)| {
             record_built(label);
@@ -115,11 +128,14 @@ impl Operation for MiddleDatum {
     }
 }
 
-fn runner() -> ProgramRunner<Sc, Pose> {
+fn runner() -> Running {
     let registry = (OperationRegistry::default().with(AddTwoDatums))
         .and_then(|r| r.with(MiddleDatum))
         .unwrap();
-    ProgramRunner::new(registry)
+    Running {
+        runner: ProgramRunner::new(registry),
+        part: Part::default(),
+    }
 }
 
 fn add_two_datums(id: &str, data1: [f64; 3], data2: [f64; 3]) -> ProgramStep {
@@ -139,13 +155,13 @@ fn middle_datum(id: &str, a: &str, b: &str) -> ProgramStep {
 }
 
 /// The datum `name`, as the part is now.
-fn at(runner: &ProgramRunner<Sc, Pose>, name: &str) -> Vector3<Sc> {
+fn at(runner: &Running, name: &str) -> Vector3<Sc> {
     let current = runner.part.current();
     current.retrieve_element(&datum(name)).unwrap().data
 }
 
 /// The failed steps and what went wrong at the root.
-fn errors(runner: &mut ProgramRunner<Sc, Pose>, program: &Program) -> Vec<(String, String)> {
+fn errors(runner: &mut Running, program: &Program) -> Vec<(String, String)> {
     let output = runner.run(program, &inputs(&[]), &BTreeMap::new());
     output
         .step_errors
@@ -199,11 +215,11 @@ fn a_step_sees_only_the_datums_added_before_it() {
         [
             (
                 "m".to_string(),
-                "target `datums` is not defined by the step at position 0 or before".to_string()
+                "target `datums` is not defined before any step".to_string()
             ),
             (
                 "s1".to_string(),
-                "target `datums` failed in the step at position 1: target `datums` is not defined by the step at position 0 or before"
+                "target `datums` failed in the step at position 0: target `datums` is not defined before any step"
                     .to_string()
             ),
         ]

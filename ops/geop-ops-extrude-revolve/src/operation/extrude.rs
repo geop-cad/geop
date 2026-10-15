@@ -20,7 +20,7 @@ use geop_core_editor::{
 };
 use geop_ops_booleans::{Extent, extent::reach_past};
 use geop_ops_model::{Design, ModelOperation, NamedModel, Namer, build_model, read_model};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_sketch::{PlacedSketch, SketchRef};
 use serde::{Deserialize, Serialize};
 
@@ -108,7 +108,7 @@ impl PartOperation for Extrude {
     )
     .icon(crate::icons::EXTRUDE);
     type Args = ExtrudeArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -125,7 +125,7 @@ impl PartOperation for Extrude {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &ExtrudeArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &ExtrudeArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 

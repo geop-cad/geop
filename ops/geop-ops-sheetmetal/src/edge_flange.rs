@@ -18,7 +18,7 @@ use geop_core_math::{
 };
 use geop_core_program::element::ElementReference;
 use geop_ops_model::{Design, Line, ModelOperation, NamedModel, Namer, read_model};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -175,7 +175,7 @@ impl PartOperation for EdgeFlange {
     )
     .icon(crate::icons::EDGE_FLANGE);
     type Args = EdgeFlangeArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -195,7 +195,7 @@ impl PartOperation for EdgeFlange {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &EdgeFlangeArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &EdgeFlangeArgs) -> GeopResult<()> {
         body::run::<Self>(step, part, args)
     }
 

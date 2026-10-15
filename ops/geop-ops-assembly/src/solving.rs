@@ -39,31 +39,40 @@ use geop_ops_constraints::{
     unknown::Unknowns,
 };
 use geop_ops_model::Design;
-use geop_ops_parameters::{PartReader, Runner, StateValue, StateValues, pose_state};
+use geop_ops_parameters::{BuildPart, PartReader, Runner, StateValue, StateValues, pose_state};
+
+/// What a program's parameters are set to: its inputs.
+type Inputs = geop_ops_parameters::Settings;
+
+/// A parameter's value, as an input.
+type Input = geop_ops_parameters::Setting;
 use serde::Serialize;
 
 pub use geop_ops_constraints::unknown::{Unknown, declare_unknowns};
 
-use crate::placed::{Component, Located, locate, placed_parts};
+use crate::placed::{Drawn, Located, drawn, locate, placed_parts};
+use geop_ops_view::PartView;
 
-/// A program and what it is given, on the runner that last ran it: what a
-/// solve runs again at every state it tries.
+/// A program and what it is given, its runner and the part it last ran
+/// on: what a solve runs again at every state it tries.
 pub struct Rerun<'r> {
-    pub runner: &'r mut Runner,
+    pub runner: &'r Runner,
+    pub part: &'r mut BuildPart,
     pub program: &'r Program,
-    pub inputs: &'r BTreeMap<String, Design>,
+    pub inputs: &'r Inputs,
 }
 
 impl Rerun<'_> {
     /// The part as the program last ran.
     pub fn reader(&self) -> PartReader<'_> {
-        self.runner.part.current()
+        self.part.current()
     }
 
     /// The program, to run again by a solve.
-    fn run(&mut self) -> Run<'_, Design, StateValue> {
+    fn run(&mut self) -> Run<'_, Input, StateValue> {
         Run {
-            runner: &mut *self.runner,
+            runner: self.runner,
+            part: &mut *self.part,
             program: self.program,
             inputs: self.inputs,
         }
@@ -137,7 +146,11 @@ impl HasElements<Settings> for Settings {
 /// steps made them.
 fn all_settings<'a>(reader: &PartReader<'a>) -> Vec<&'a Settings> {
     (reader.targets_of::<Settings>().into_iter())
-        .filter_map(|target| reader.retrieve_element(&ElementReference::whole(target)).ok())
+        .filter_map(|target| {
+            reader
+                .retrieve_element(&ElementReference::whole(target))
+                .ok()
+        })
         .collect()
 }
 
@@ -228,23 +241,21 @@ pub struct Freedom {
     pub total: usize,
 }
 
-/// The size of a placed part: what turns a turn into a length, and what a
-/// solve's size is at least. An empty part has none.
-fn size_of(component: &Component) -> GeopResult<Option<Design>> {
-    let drawn = component.drawn()?;
+/// The size of a placed part, as it is drawn: what turns a turn into a
+/// length, and what a solve's size is at least. An empty part has none.
+fn size_of(drawn: &PartView) -> Option<Design> {
     if drawn.vertices.is_empty() && drawn.faces.is_empty() {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(drawn.extent.size))
+    Some(drawn.extent.size)
 }
 
-/// The size of the largest of the placed parts `components`, at least one.
-pub fn largest<'i>(
-    components: impl IntoIterator<Item = GeopResult<&'i Component>>,
-) -> GeopResult<Design> {
+/// The size of the largest of the placed parts drawn as `drawn`, at least
+/// one.
+pub fn largest<'i>(drawn: impl IntoIterator<Item = GeopResult<&'i Drawn>>) -> GeopResult<Design> {
     let mut scale = Design::ONE;
-    for component in components {
-        if let Some(size) = size_of(component?)?
+    for drawn in drawn {
+        if let Some(size) = size_of(&drawn?.view)
             && size.definitely_greater(scale)
         {
             scale = size;
@@ -260,7 +271,7 @@ pub fn scale_of(reader: &PartReader) -> GeopResult<Design> {
     largest(
         placed_parts(reader)?
             .iter()
-            .map(|placed| Ok(&*placed.located.component)),
+            .map(|placed| drawn(reader, &placed.name)),
     )
 }
 
@@ -384,7 +395,7 @@ fn preference(state: &str, rows: Rows<Design>) -> Constraint<StateValue> {
     }
 }
 
-impl Preference<Design, StateValue> for PointPull {
+impl Preference<Input, StateValue> for PointPull {
     fn evaluate(&self, reader: &PartReader<'_>) -> GeopResult<Constraint<StateValue>> {
         let at = stepped(reader, &self.path)?
             .apply(&self.local.map(D::cst))
@@ -414,7 +425,7 @@ struct PosePull {
     scale: Design,
 }
 
-impl Preference<Design, StateValue> for PosePull {
+impl Preference<Input, StateValue> for PosePull {
     /// How far it is from the pose, as [`Variable::stay`] measures it: of
     /// the pose in the world, whose step is that of the part's pose state.
     fn evaluate(&self, reader: &PartReader<'_>) -> GeopResult<Constraint<StateValue>> {
@@ -513,7 +524,7 @@ pub fn solve(
         let mut start = seeded(&reader, &had, &free, true)?;
         let scale = scale_of(&reader)?;
         let placed = placed_parts(&reader)?;
-        let mut preferences: Vec<Box<dyn Preference<Design, StateValue>>> = Vec::new();
+        let mut preferences: Vec<Box<dyn Preference<Input, StateValue>>> = Vec::new();
         for pull in pulls {
             let name = match pull {
                 Pull::Point { parameter, .. } | Pull::Pose { parameter, .. } => parameter,
@@ -560,9 +571,9 @@ pub fn solve(
     };
     fn problem<'p>(
         free: &BTreeMap<String, Mobility>,
-        preferences: Vec<&'p dyn Preference<Design, StateValue>>,
+        preferences: Vec<&'p dyn Preference<Input, StateValue>>,
         scale: Design,
-    ) -> Problem<'p, Design, StateValue> {
+    ) -> Problem<'p, Input, StateValue> {
         Problem {
             free: free.clone(),
             preferences,
@@ -641,7 +652,7 @@ fn every_value(
     rerun: &Rerun,
     state: &StateValues,
     held: &BTreeSet<String>,
-) -> GeopResult<(StateValues, Problem<'static, Design, StateValue>)> {
+) -> GeopResult<(StateValues, Problem<'static, Input, StateValue>)> {
     let reader = rerun.reader();
     let free = freed(&reader, None, held)?;
     let start = seeded(&reader, state, &free, true)?;

@@ -36,9 +36,9 @@ fn imported(text: String) -> NamedModel<Design> {
         },
     );
     let files = BTreeMap::from([("part.step".to_string(), text)]);
-    let runner = build(&program, "main.geop", workspace(files).scope("main.geop"))
+    let built = build(&program, "main.geop", workspace(files))
         .unwrap_or_else(|e| panic!("importing failed: {e}"));
-    model_of(&runner)
+    model_of(&built.part)
 }
 
 /// Example parts — extruded, revolved, drilled, filleted, booleaned — come

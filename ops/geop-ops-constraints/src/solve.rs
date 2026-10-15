@@ -48,7 +48,8 @@ use crate::{
 
 /// A program to run again at every state a solve tries, with its inputs.
 pub struct Run<'r, I, S: Solvable> {
-    pub runner: &'r mut ProgramRunner<I, S>,
+    pub runner: &'r ProgramRunner<I, S>,
+    pub part: &'r mut Part<I, S>,
     pub program: &'r Program,
     pub inputs: &'r BTreeMap<String, I>,
 }
@@ -69,8 +70,8 @@ impl<I: Input, S: Solvable> Run<'_, I, S> {
     /// The part the program builds at `state`.
     fn at(&mut self, state: &BTreeMap<String, S>) -> &Part<I, S> {
         RUNS.set(RUNS.get() + 1);
-        self.runner.run(self.program, self.inputs, state);
-        &self.runner.part
+        self.runner.run(self.part, self.program, self.inputs, state);
+        self.part
     }
 }
 

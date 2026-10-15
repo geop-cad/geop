@@ -45,6 +45,13 @@ pub trait HasElements<K: Kind>: 'static {
     /// The element `name`, or why there is none.
     fn element(&self, name: &str) -> GeopResult<Self::Element<'_>>;
 
+    /// What the target reads as where no step made it, if it reads as
+    /// anything then — the datums every part starts with. None by default:
+    /// reading it fails.
+    fn undefined() -> Option<&'static Self> {
+        None
+    }
+
     /// Whether the target named `name` could be one of this type: what
     /// tells a pick of an element of it from one of a target of another
     /// type with elements of the same kind ([`ElementReference::from_picked`]).

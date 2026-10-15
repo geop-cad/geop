@@ -28,7 +28,7 @@ use geop_core_editor::{
 };
 use geop_ops_datums::{Datums, datums};
 use geop_ops_model::{Design, frame_along};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 
 use crate::{
     editor,
@@ -629,7 +629,7 @@ impl PartOperation for AddDatum {
     )
     .icon(crate::icons::ADD_DATUM);
     type Args = AddDatumArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -643,7 +643,7 @@ impl PartOperation for AddDatum {
     }
 
     /// Adds the datum named after the step to the part's datums.
-    fn run(step: &str, part: &mut BuildPart, args: &AddDatumArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &AddDatumArgs) -> GeopResult<()> {
         part.revise_target(&datums(), &(step.to_string(), args.clone()), add)
     }
 
@@ -673,7 +673,7 @@ mod tests {
         scalars::ScalInF64 as S,
     };
     use geop_core_program::{element::ElementReference, operation::Operation};
-    use geop_ops_datums::{AnyDatum, ORIGIN, component_name, define_datums, read_datums};
+    use geop_ops_datums::{AnyDatum, ORIGIN, component_name, read_datums};
     use geop_ops_model::model;
 
     use super::*;
@@ -700,9 +700,9 @@ mod tests {
         let mut part = BuildPart::default();
         part.begin_run(&Default::default(), &Default::default());
         part.begin_step();
-        define_datums(&mut part)?;
         part.begin_step();
-        <AddDatum as Operation>::run("d", &mut part, args)?;
+        let runner = Runner::new(Default::default());
+        <AddDatum as Operation>::run("d", &runner, &mut part, args)?;
         part.end_run(0);
         let datums = read_datums(&part.current())?.into_owned();
         datums.get("d")

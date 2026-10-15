@@ -102,16 +102,14 @@ impl<S: Solvable> Constraints<S> {
     /// name: a constraint `c` of the instance `bolt` is `bolt/c`, on the
     /// state `bolt/s` where the instance's is on `s` (see
     /// [`geop_core_program::instance`]). A residual is the same wherever
-    /// the instance is: it is a length within it. A copy's are those of
-    /// what it copies, which come up already.
+    /// the instance is: it is a length within it.
     pub fn of<I: Input>(reader: &Reader<I, S>) -> GeopResult<Self> {
         let mut all = Self::own(reader)?;
-        for (name, instance) in reader.instances() {
-            if instance.is_copy() {
-                continue;
-            }
-            let inside = Self::of(&instance.reader())
-                .map_err(|e| e.with_context(format!("the constraints of the placed part `{name}`")))?;
+        for name in reader.subparts() {
+            let inside =
+                (reader.inside(name).and_then(|inside| Self::of(&inside))).map_err(|e| {
+                    e.with_context(format!("the constraints of the placed part `{name}`"))
+                })?;
             for (constraint, defined) in inside.0 {
                 let jacobian = (defined.constraint.jacobian.into_iter())
                     .map(|(state, rows)| (instance_path(name, &state), rows))
@@ -248,4 +246,3 @@ fn make<I: Input, S: Solvable, Args>(
         constraints,
     })
 }
-

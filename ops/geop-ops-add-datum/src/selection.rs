@@ -164,7 +164,7 @@ impl Selected {
 
     /// What it is in its own part — the part `reader` reads, or the
     /// instance placed in it that it is of — and that instance's path:
-    /// where that is, [`geop_core_program::part::Reader::placement`] says.
+    /// where that is, [`geop_ops_parameters::placement`] says.
     pub fn shape_in_instance(&self, reader: &PartReader) -> GeopResult<InInstance<Shape>> {
         let instance = self.instance();
         let element = match instance.is_empty() {

@@ -32,7 +32,7 @@ use geop_ops_model::{
     CosmeticThread, Design, Face, ModelOperation, NamedModel, Namer, Plane, Point, Threads,
     ToolReach, build_model, draw_threads, frame_along, read_model, threads,
 };
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_sketch::{PlacedSketch, SketchRef};
 use serde::{Deserialize, Serialize};
 
@@ -397,7 +397,7 @@ impl PartOperation for Hole {
     )
     .icon(crate::icons::HOLE);
     type Args = HoleArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -420,7 +420,7 @@ impl PartOperation for Hole {
 
     /// Drills the holes, then — tapped — records their threads, where the
     /// part before the step put them and on the walls the holes left.
-    fn run(step: &str, part: &mut BuildPart, args: &HoleArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &HoleArgs) -> GeopResult<()> {
         let tapped = args.shape().is_ok_and(|shape| shape.thread.is_some());
         let planned = tapped.then(|| {
             let before = part.current();
@@ -749,7 +749,7 @@ impl PartOperation for Thread {
     )
     .icon(crate::icons::THREAD);
     type Args = ThreadArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -767,7 +767,7 @@ impl PartOperation for Thread {
 
     /// Modelled, cut into the solid; recorded, one more of the part's
     /// threads.
-    fn run(step: &str, part: &mut BuildPart, args: &ThreadArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &ThreadArgs) -> GeopResult<()> {
         if args.modelled {
             build_model::<Self>(part, step, args)
         } else {

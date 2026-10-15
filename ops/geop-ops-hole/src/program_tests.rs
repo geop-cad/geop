@@ -95,8 +95,8 @@ impl Made {
 
 /// `program`, built: its model and threads.
 pub(super) fn made(program: &ProgramFile) -> GeopResult<Made> {
-    let runner = program.built(registry)?;
-    let view = runner.part.current();
+    let part = program.built(registry)?;
+    let view = part.current();
     Ok(Made {
         model: read_model(&view)?.into_owned(),
         threads: read_threads(&view)?.into_owned(),

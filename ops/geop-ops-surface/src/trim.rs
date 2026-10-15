@@ -27,7 +27,7 @@ use geop_core_program::element::ElementReference;
 use geop_core_topology::{Body, FaceId, contains::face::face_interior_point};
 use geop_ops_booleans::remesh::remesh::{RemeshParams, remesh};
 use geop_ops_model::{Design, Face, ModelOperation, NamedModel, Namer, build_model, model};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use geop_core_geometry::search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size};
@@ -85,7 +85,7 @@ impl PartOperation for TrimSurface {
     .experimental()
     .icon(crate::icons::TRIM_SURFACE);
     type Args = TrimSurfaceArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -99,7 +99,7 @@ impl PartOperation for TrimSurface {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &TrimSurfaceArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &TrimSurfaceArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 

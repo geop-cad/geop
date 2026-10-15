@@ -625,7 +625,7 @@ impl<'p> Scene<'p, Design> {
         let mut bodies = Vec::new();
         push(reader, String::new(), None, &mut bodies)?;
         for placed in placed_parts(reader)? {
-            let inner = placed.located.instance.reader();
+            let inner = placed.located.part.clone();
             push(&inner, placed.name, Some(placed.located.world), &mut bodies)?;
         }
         Self::new(bodies)

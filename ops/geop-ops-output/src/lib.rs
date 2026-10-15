@@ -37,7 +37,9 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_ops_parameters::{About, PartReader, ProgramFile, Runner, read_about};
+use geop_ops_parameters::{
+    BuildPart, PartReader, ProgramFile, Properties, Runner, read_properties, stem,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// `text` fit for XML: for an element's content, or an attribute's value
@@ -110,11 +112,12 @@ impl Bounded {
 }
 
 /// What a program built, as an exporter or an inspector is given it: the
-/// runner holding the part as far as the program runs, the parts it places
-/// included, and the program it ran, with its state — to ask how its parts
+/// part as far as the program runs, the parts it places included, and the
+/// runner and the program it ran, with its state — to ask how its parts
 /// can move by running it again.
 pub struct Output<'a> {
-    pub runner: &'a mut Runner,
+    pub runner: &'a Runner,
+    pub part: &'a mut BuildPart,
     pub file: &'a ProgramFile,
     /// The step being edited, if one is: what an export of one step's
     /// result (a drawing) writes unless told which.
@@ -127,26 +130,30 @@ pub struct Output<'a> {
 impl<'a> Output<'a> {
     /// The part as far as the program runs.
     pub fn part(&self) -> PartReader<'_> {
-        self.runner.part.current()
+        self.part.current()
     }
 
     /// The part as it was before the step `step`: what a step that
     /// describes an output of the part — a drawing — is of.
     pub fn part_before(&self, step: &str) -> GeopResult<PartReader<'_>> {
-        let position = Runner::position(self.file.index_of(step)?);
-        Ok(self.runner.part.reader(position))
+        Ok(self.part.reader(self.file.index_of(step)?))
     }
 
-    /// What the program says of its part: its file, its material, its
-    /// title (see [`About`]).
-    pub fn about(&self) -> GeopResult<About> {
-        Ok(read_about(&self.part())?.into_owned())
+    /// What the program says of its part: its title, designation, colour
+    /// and material (see [`Properties`]).
+    pub fn properties(&self) -> GeopResult<Properties> {
+        Ok(read_properties(&self.part())?.into_owned())
+    }
+
+    /// The program's file, as the runner ran it.
+    pub fn file_name(&self) -> &str {
+        &self.runner.location.file
     }
 
     /// The name of the program's file, without folders or `.geop`: what a
-    /// file written from it is named after (see [`About::stem`]).
+    /// file written from it is named after (see [`stem`]).
     pub fn stem(&self) -> GeopResult<String> {
-        Ok(self.about()?.stem().to_string())
+        Ok(stem(self.file_name()).to_string())
     }
 }
 

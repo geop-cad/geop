@@ -42,7 +42,7 @@ use geop_core_topology::{
     validation::{Outward, ValidationParameters, normal_points_outward},
 };
 use geop_ops_model::{BodyNames, Design, Face, ModelOperation, NamedModel, Namer, build_model};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
@@ -77,7 +77,7 @@ impl PartOperation for Knit {
     .experimental()
     .icon(crate::icons::KNIT);
     type Args = KnitArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -90,7 +90,7 @@ impl PartOperation for Knit {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &KnitArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &KnitArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 

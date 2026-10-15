@@ -2,8 +2,8 @@
 
 > Brief overview only — full documentation is coming later.
 
-Assemblies: parts placed in a part — another program file's part, built
-once by a `Library` and placed by `AddPart` at a pose its program's state
+Assemblies: parts placed in a part — another program file's part, loaded
+through the runner and placed by `AddPart` at a pose its program's state
 holds — and mated to what is already there. Where every placed part is, is
 the program's state, which the editor solves the mates for; dragging a
 placed part moves it as far as its mates let it. `PartPattern` places
@@ -43,13 +43,25 @@ adds its mates; it solves nothing. So a later step's mates that move it
 move it for every step.
 
 The part placed is an instance of the part (see
-[geop-core-program](../core/geop-core-program.md#instances)) of a
-`Component`: the part another file builds, built by the run's `Library`
-(the given target `library()`, see
-[geop-cad-base](../cad/geop-cad-base.md#the-workspace)) once for each set
-of parameter values and state it is placed with, and drawn once however
-often it is placed. `placed_parts` lists every placed part, however deep,
-and `locate` where one is.
+[geop-core-program](../core/geop-core-program.md#instances)): the part
+another file's program builds, loaded by the runner of the step from its
+workspace (see [geop-cad-base](../cad/geop-cad-base.md#the-workspace)),
+its parameters set to the step's `parameters` as its inputs, and run with
+the state under its name. The part placing it keeps its part and carries
+it over whole when nothing it is given changed. Where it is placed is a
+target of its own (`geop_ops_parameters::define_instance`: a `Placement`,
+and the file and inputs it was loaded from). `define_placed` loads it,
+places it and draws it as a part is drawn (`draw`: its model, datums,
+sketches, annotations and the parts placed in it, in its colour; a
+`Drawn`, the target `drawn:<name>`), again only when what the drawing read
+changed: moving it builds and draws nothing. A drawing's key is a hash of
+what it shows, so a viewer is sent a part drawn alike — every screw of a
+size — once. A pattern's copy loads again the file and inputs the part it
+copies was loaded from, run with its own state. `testing` (feature
+`testing`) makes parts in Rust the programs of a workspace, for the tests
+of what reads placed parts. `placed_parts` lists every
+placed part, however deep, `locate` where one is, and `drawn` how it is
+drawn.
 
 ## Parameters
 

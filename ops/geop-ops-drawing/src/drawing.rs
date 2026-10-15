@@ -1208,10 +1208,9 @@ fn owner<'a>(
     let mut part = reader.clone();
     let mut rest = name;
     while let Some((first, inner)) = rest.split_once(INSTANCE_SEPARATOR) {
-        let Ok(placed) = part.instance(first) else {
+        let Ok(placed) = part.inside(first) else {
             break;
         };
-        let placed = placed.reader();
         path = match path.is_empty() {
             true => first.to_string(),
             false => instance_path(&path, first),

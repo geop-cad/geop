@@ -20,7 +20,7 @@ use geop_core_sketch::Sketch;
 use geop_core_topology::Body;
 use geop_ops_model::{Design, ModelOperation, NamedModel, Namer, Solid, model, read_model};
 use geop_ops_output::sheet::Sheet as Paper;
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_sketch::PlacedSketch;
 use serde::{Deserialize, Serialize};
 
@@ -152,7 +152,7 @@ impl PartOperation for FlatPattern {
     )
     .icon(crate::icons::FLAT_PATTERN);
     type Args = FlatPatternArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -170,7 +170,7 @@ impl PartOperation for FlatPattern {
     }
 
     /// Unfolds the body, and draws its bend lines as a sketch.
-    fn run(step: &str, part: &mut BuildPart, args: &FlatPatternArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &FlatPatternArgs) -> GeopResult<()> {
         body::run::<Self>(step, part, args)?;
         let namer = Namer::new("flat_pattern", step)?;
         body::add_bend_lines(part, step, &namer.name(&["bend_lines"]))

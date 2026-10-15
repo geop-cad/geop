@@ -12,7 +12,7 @@ use geop_core_math::{
 };
 use geop_ops_datums::origin_plane;
 use geop_ops_model::{Design, ModelOperation, NamedModel};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_sketch::SketchPlane;
 use serde::{Deserialize, Serialize};
 
@@ -81,7 +81,7 @@ impl PartOperation for Mirror {
     )
     .icon(geop_ops_view::icons::MIRROR);
     type Args = MirrorArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -96,7 +96,7 @@ impl PartOperation for Mirror {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &MirrorArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &MirrorArgs) -> GeopResult<()> {
         run_pattern::<Self>(part, step, args)
     }
 

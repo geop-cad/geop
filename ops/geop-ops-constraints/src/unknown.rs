@@ -50,14 +50,13 @@ impl<S: State> Unknowns<S> {
     pub fn of<I: Input>(reader: &Reader<I, S>) -> GeopResult<Self> {
         let reference = unknowns::<S>();
         let mut all = match reader.defines(&reference) {
-            true => reader.retrieve_element(&ElementReference::whole(reference))?.clone(),
+            true => reader
+                .retrieve_element(&ElementReference::whole(reference))?
+                .clone(),
             false => Self::default(),
         };
-        for (name, instance) in reader.instances() {
-            if instance.is_copy() {
-                continue;
-            }
-            let inside = instance.reader();
+        for name in reader.subparts() {
+            let inside = reader.inside(name)?;
             let declared = Self::of(&inside)
                 .map_err(|e| e.with_context(format!("the unknowns of the placed part `{name}`")))?;
             for unknown in declared.0.into_values() {

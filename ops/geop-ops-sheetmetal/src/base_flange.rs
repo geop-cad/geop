@@ -18,7 +18,7 @@ use geop_core_math::{
 use geop_core_sketch::{CurveKind, ProfileLoop, Shape};
 use geop_ops_extrude_revolve::{operation::shape_loops, sweep::SweepLoop};
 use geop_ops_model::{Design, ModelOperation, NamedModel, Namer};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_sketch::{PlacedSketch, SketchRef};
 use serde::{Deserialize, Serialize};
 
@@ -105,7 +105,7 @@ impl PartOperation for BaseFlange {
     )
     .icon(crate::icons::BASE_FLANGE);
     type Args = BaseFlangeArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -121,7 +121,7 @@ impl PartOperation for BaseFlange {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &BaseFlangeArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &BaseFlangeArgs) -> GeopResult<()> {
         body::run::<Self>(step, part, args)
     }
 

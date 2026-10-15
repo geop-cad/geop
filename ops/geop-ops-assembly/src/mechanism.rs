@@ -44,13 +44,13 @@ use geop_ops_constraints::{
     unknown::{Unknown, declare_unknowns},
 };
 use geop_ops_model::Design;
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, compose};
+use geop_ops_parameters::{BuildPart, PartReader, StateValue, compose, placement};
 
 use crate::{
     frame::MateEntity,
     joints::{Connector, JointKind, Motion, joint_residuals, measure},
     mates::{Mate, MateKind, On, Resolved, joint_parameter, mate, mate_name},
-    placed::{locate, moved_by},
+    placed::{drawn, locate, moved_by},
     residuals::{D, Geometry, Kind, residuals},
     solving::{Setting, Settings, largest, scale_of, settings_of},
 };
@@ -70,10 +70,7 @@ pub fn mates_resolved() -> usize {
 /// The size of the placed parts `bodies` — at least one: what a mate
 /// between them turns a turn into a length by.
 fn size(reader: &PartReader, bodies: &[&Option<String>]) -> GeopResult<Design> {
-    let components: GeopResult<Vec<_>> = (bodies.iter().copied().flatten())
-        .map(|body| Ok(locate(reader, body)?.component))
-        .collect();
-    largest(components?.iter().map(|c| Ok(&**c)))
+    largest((bodies.iter().copied().flatten()).map(|body| drawn(reader, body)))
 }
 
 /// The geometry `entity` of `mate`, a constraint of `kind`, is to it, in its
@@ -203,7 +200,7 @@ impl Reading<'_> {
             return Ok(None);
         };
         let Reading { read, by, twist } = self;
-        let placement = reader.placement(body)?;
+        let placement = placement(reader, body)?;
         Ok(Some(compose(&placement, &mut |state, pose| {
             read.insert(state.to_string(), Read::Pose);
             let pose = pose.map(D::cst);
@@ -498,7 +495,9 @@ pub fn mates_of<'a>(reader: &PartReader<'a>) -> Vec<(String, &'a Resolved)> {
     (reader.targets_of::<Resolved>().into_iter())
         .filter_map(|target| {
             let name = mate_name(target.name())?.to_string();
-            let resolved = reader.retrieve_element(&ElementReference::whole(target)).ok()?;
+            let resolved = reader
+                .retrieve_element(&ElementReference::whole(target))
+                .ok()?;
             Some((name, resolved))
         })
         .collect()

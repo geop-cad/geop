@@ -8,10 +8,12 @@ use geop_core_math::{
     scalars::{Scalar, as_f64},
     solvers::{least_squares::Rows, system::Variable},
 };
-use geop_core_program::instance::Factor;
 use serde::{Deserialize, Serialize};
 
-use crate::{Design, PartReader};
+use crate::{
+    Design, PartReader,
+    instance::{Factor, placement},
+};
 
 /// A value of a part's state: a number or a pose. Serialized as itself —
 /// `2.5`, `{"position": [...], "rotation": [...]}`.
@@ -43,16 +45,16 @@ pub fn pose_in(value: &StateValue) -> Option<Pose<Design>> {
 pub type PoseOf<'f, T> = dyn FnMut(&str, Pose<Design>) -> Pose<T> + 'f;
 
 /// The pose an instance is at whose placement is `factors` (see
-/// [`geop_core_program::part::Reader::placement`]), in `T`: theirs,
+/// [`placement`]), in `T`: theirs,
 /// composed outermost first, each state's entering as `pose_of` has it. A
 /// value that holds no pose — a state before anything solved for it —
 /// is no motion.
-pub fn compose<T: Scalar>(factors: &[Factor<StateValue>], pose_of: &mut PoseOf<'_, T>) -> Pose<T> {
+pub fn compose<T: Scalar>(factors: &[Factor], pose_of: &mut PoseOf<'_, T>) -> Pose<T> {
     let mut poses = factors.iter().map(|factor| match factor {
         Factor::State { state, value } => {
             pose_of(state, pose_in(value).unwrap_or_else(Pose::identity))
         }
-        Factor::Fixed(value) => pose_in(value).unwrap_or_else(Pose::identity).cast(),
+        Factor::Fixed(motion) => motion.cast(),
     });
     // The first as it is: composing it after no motion would round it.
     let first = poses.next().unwrap_or_else(Pose::identity);
@@ -65,7 +67,7 @@ pub fn located(reader: &PartReader, path: &str) -> GeopResult<Pose<Design>> {
     if path.is_empty() {
         return Ok(Pose::identity());
     }
-    Ok(compose(&reader.placement(path)?, &mut |_, pose| pose))
+    Ok(compose(&placement(reader, path)?, &mut |_, pose| pose))
 }
 
 /// A value the run gives none of reads as the number zero.

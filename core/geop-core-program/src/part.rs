@@ -1,6 +1,7 @@
 use std::{
     cell::RefCell,
     collections::{BTreeMap, HashSet},
+    rc::Rc,
 };
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
@@ -8,9 +9,12 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 use crate::{
     element::{ElementReference, HasElements, Kind},
     instance::{
-        Defining, Factor, InInstance, INSTANCE_SEPARATOR, Instance, InstanceGenerator, Placement,
-        check_name, instance_name, instance_target, place, split_path,
+        INSTANCE_SEPARATOR, InInstance, Kept, check_name, split_path, subpart_name,
+        subpart_target,
     },
+    program::Program,
+    program_runner::{ProgramRunner, Same},
+    workspace::{Loaded, Location},
     revisioned_value::RevisionedValue,
     target::{Dependency, Revision, Target, TargetReference, TargetRegistry},
 };
@@ -45,23 +49,70 @@ pub struct Part<I, S> {
     /// from those only kept for later steps, and when a version was made or
     /// last changed.
     run: Revision,
+    /// The run whose versions are its current ones: the last that ran its
+    /// steps — earlier than `run` once a run carried them over.
+    built: Revision,
     inputs: BTreeMap<String, RevisionedValue<I>>,
     state: BTreeMap<String, RevisionedValue<S>>,
     /// How many steps the current or last run began. A step is told by its
     /// position, in this run and the next.
     steps: usize,
     targets: TargetRegistry,
+    /// The part of each of its instances, by the instance's name: run again
+    /// in every run that loads it ([`ProgramRunner::load_subpart`]).
+    ///
+    /// TODO: Later we should share the part of every instance whose run
+    /// read none of the state: a part of no state is the same wherever it
+    /// is placed. For now every instance runs its part on its own.
+    subparts: BTreeMap<String, Subpart<I, S>>,
+    /// Whether the current run changed anything in it so far: made a
+    /// version different from before, or changed the part of an instance.
+    changing: bool,
+    /// The last run that changed anything in it — made or deleted a
+    /// version different from before, or changed the part of an instance.
+    changed_at: Revision,
+}
+
+/// The part of an instance, as the part it is in keeps it.
+struct Subpart<I, S> {
+    part: Part<I, S>,
+    /// The position of the step that loaded it last.
+    step: usize,
+    /// What it was run with last, if that run built every step: what tells
+    /// whether a run would only reuse what it built.
+    built: Option<Built>,
+}
+
+/// The program a part ran, where it ran it, and the revision of the files
+/// it read.
+struct Built {
+    program: Rc<Program>,
+    location: Location,
+    revision: u64,
 }
 
 impl<I, S> Default for Part<I, S> {
     fn default() -> Self {
         Self {
             run: 0,
+            built: 0,
             inputs: BTreeMap::new(),
             steps: 0,
             state: BTreeMap::new(),
             targets: TargetRegistry::default(),
+            subparts: BTreeMap::new(),
+            changing: false,
+            changed_at: 0,
         }
+    }
+}
+
+impl<I, S> Part<I, S> {
+    /// The last run that changed anything in it: made or deleted a version
+    /// different from before, or changed the part of an instance — 0, before
+    /// any did.
+    pub fn changed_at(&self) -> Revision {
+        self.changed_at
     }
 }
 
@@ -71,10 +122,45 @@ impl<I: Input, S: State> Part<I, S> {
     /// drives a part through a program; these drive it by hand, as a test of
     /// one operation does.
     pub fn begin_run(&mut self, inputs: &BTreeMap<String, I>, state: &BTreeMap<String, S>) {
-        self.run += 1;
+        self.begin_run_as(self.next_run(), inputs, state);
+    }
+
+    /// The revision of the run after the last.
+    pub(crate) fn next_run(&self) -> Revision {
+        self.run + 1
+    }
+
+    /// Starts the run `revision`, later than the last (see
+    /// [`Part::begin_run`]). Whether it is given any input or value of the
+    /// state otherwise than the last run was.
+    pub(crate) fn begin_run_as(
+        &mut self,
+        revision: Revision,
+        inputs: &BTreeMap<String, I>,
+        state: &BTreeMap<String, S>,
+    ) -> bool {
+        self.run = revision;
+        self.built = revision;
         self.steps = 0;
-        RevisionedValue::replace_all(&mut self.inputs, inputs, self.run);
-        RevisionedValue::replace_all(&mut self.state, state, self.run);
+        self.changing = false;
+        let inputs = RevisionedValue::replace_all(&mut self.inputs, inputs, self.run);
+        let state = RevisionedValue::replace_all(&mut self.state, state, self.run);
+        inputs || state
+    }
+
+
+    /// Carries what the last run built over into the current one, as a run
+    /// of the same program would reuse it: its versions stay its current
+    /// ones, as the run `built` made them, its `steps` steps all run.
+    pub(crate) fn carry(&mut self, (built, steps): (Revision, usize)) {
+        self.built = built;
+        self.steps = steps;
+    }
+
+    /// The run whose versions are its current ones, and how many steps the
+    /// last run began: what a run carries over ([`Part::carry`]).
+    pub(crate) fn last_built(&self) -> (Revision, usize) {
+        (self.built, self.steps)
     }
 
     /// Starts the next step.
@@ -82,28 +168,38 @@ impl<I: Input, S: State> Part<I, S> {
         self.steps += 1;
     }
 
-    /// Deletes the versions no step made, of this run or of the `later`
-    /// steps after the ones it ran, which it stopped before, and the removed
-    /// inputs and state no version left depends on.
+    /// Deletes the versions no step made, and the parts of instances no
+    /// step loaded, of this run or of the `later` steps after the ones it
+    /// ran, which it stopped before; and the removed inputs and state no
+    /// version left depends on. A run that changed anything in it — made or
+    /// deleted a version different from before, or changed or dropped the
+    /// part of an instance — is when it last changed ([`Part::changed_at`]).
     pub fn end_run(&mut self, later: usize) {
         let (run, ran) = (self.run, self.steps);
-        (self.targets)
-            .retain(|target| target.run == run || (ran..ran + later).contains(&target.step));
+        let kept = |step: usize, made: Revision| made == run || (ran..ran + later).contains(&step);
+        let deleted = self.targets.retain(|target| kept(target.step, target.run));
+        let placed = self.subparts.len();
+        (self.subparts).retain(|_, subpart| kept(subpart.step, subpart.part.run));
+        if self.changing || deleted || self.subparts.len() < placed {
+            self.changed_at = run;
+        }
         let read: HashSet<&Dependency> = self.targets.dependencies().collect();
-        let prefixes: Vec<&str> = (read.iter())
-            .filter_map(|dependency| match dependency {
-                Dependency::StatesUnder(prefix) => Some(prefix.as_str()),
-                _ => None,
-            })
-            .collect();
         self.inputs.retain(|name, entry| {
             entry.value.is_some() || read.contains(&Dependency::Input(name.clone()))
         });
         self.state.retain(|name, entry| {
-            entry.value.is_some()
-                || read.contains(&Dependency::State(name.clone()))
-                || prefixes.iter().any(|prefix| name.starts_with(prefix))
+            entry.value.is_some() || read.contains(&Dependency::State(name.clone()))
         });
+    }
+
+    /// The part at `path` — itself, for the empty path — as it holds it:
+    /// none, if it holds no part there.
+    fn at(&self, path: &str) -> Option<&Part<I, S>> {
+        match path.is_empty() {
+            true => Some(self),
+            false => (path.split(INSTANCE_SEPARATOR))
+                .try_fold(self, |part, name| Some(&part.subparts.get(name)?.part)),
+        }
     }
 
     /// The part as it is before the step at position `before`, recording
@@ -114,6 +210,7 @@ impl<I: Input, S: State> Part<I, S> {
             part: self,
             before,
             recording: None,
+            path: String::new(),
         }
     }
 
@@ -181,25 +278,54 @@ impl<I: Input, S: State> Part<I, S> {
         self.make_version(reference, args, generator)
     }
 
-    /// Places the instance `name`: what `generator` makes of `args`, given
-    /// the state under its name — `b.pose` for the state `name/b.pose` —
-    /// to run its part with (see [`crate::instance`]). Fails if a step has
-    /// placed an instance of that name before in this run. A plain
-    /// function, like [`Part::define_target`]'s.
-    pub fn define_instance<Args: PartialEq + Clone + 'static>(
+    /// Loads the part of the instance `name`, `subprogram` run by `runner`
+    /// (see [`ProgramRunner::load_subpart`]).
+    pub(crate) fn load_subpart(
         &mut self,
+        runner: &ProgramRunner<I, S>,
         name: &str,
-        args: &Args,
-        generator: InstanceGenerator<I, S, Args>,
+        loaded: &Loaded<S>,
+        inputs: &BTreeMap<String, I>,
     ) -> GeopResult<()> {
         check_name(name)?;
-        let defining = Defining {
-            name: name.to_string(),
-            args: args.clone(),
-            generator,
+        let ctx = |e: GeopError| e.with_context(format!("loading the part of `{name}`"));
+        // Its target, first: one loaded twice in a run is defined twice.
+        let reference = TargetReference::<Kept>::new(subpart_target(name));
+        self.define_target(&reference, &(), |_, _| Ok(Kept)).map_err(ctx)?;
+        let step = self.steps - 1;
+        let prefix = format!("{name}{INSTANCE_SEPARATOR}");
+        let mut state = (*loaded.state).clone();
+        state.extend((under(&self.state, &prefix)).filter_map(|(state, entry)| {
+            let state = state.strip_prefix(&prefix)?;
+            Some((state.to_string(), entry.value.clone()?))
+        }));
+        let run = self.run;
+        let subpart = (self.subparts.entry(name.to_string())).or_insert_with(|| Subpart {
+            part: Part::default(),
+            step,
+            built: None,
+        });
+        subpart.step = step;
+        let (program, revision) = (&loaded.program, runner.revision());
+        let same = Same {
+            program: subpart.built.as_ref().is_some_and(|built| {
+                (Rc::ptr_eq(&built.program, program) || built.program == *program)
+                    && built.location == runner.location
+                    && built.revision == revision
+            }),
         };
-        let reference = TargetReference::<Instance<I, S>>::new(instance_target(name));
-        self.define_target(&reference, &defining, place)
+        let end = program.steps.len();
+        let output = runner.run_as(&mut subpart.part, run, program, end, inputs, &state, same);
+        subpart.built = (output.step_errors.is_empty()).then(|| Built {
+            program: program.clone(),
+            location: runner.location.clone(),
+            revision,
+        });
+        self.changing |= subpart.part.changed_at == run;
+        match output.step_errors.into_iter().next() {
+            Some((step, e)) => Err(ctx(e.with_context(format!("step `{step}`")))),
+            None => Ok(()),
+        }
     }
 
     /// Makes this step's version of `reference`, reusing the last run's when
@@ -219,7 +345,13 @@ impl<I: Input, S: State> Part<I, S> {
         // nothing it read changed since: a target it read is still seen
         // where it was read — its own name as of the steps before its own
         // (see `sees`) — made by the same step and no newer, and what it
-        // found undefined still is.
+        // found undefined still is. What it read of a part placed in it is
+        // read where that part is.
+        let changed_at = |read: &str, given: fn(&Part<I, S>, &str) -> Revision| {
+            let (path, read) = split_path(read);
+            self.at(path)
+                .map_or(Revision::MAX, |part| given(part, read))
+        };
         let reusable = self.targets.get(name, step).is_some_and(|target| {
             let unchanged = |dependency: &Dependency| match dependency {
                 Dependency::Target { name: read, step } => (self.reader(sees(read, name, before)))
@@ -229,13 +361,15 @@ impl<I: Input, S: State> Part<I, S> {
                     .version(read)
                     .is_err(),
                 Dependency::Input(read) => {
-                    RevisionedValue::changed_at(&self.inputs, read) <= target.run
+                    changed_at(read, |part, read| {
+                        RevisionedValue::changed_at(&part.inputs, read)
+                    }) <= target.run
                 }
                 Dependency::State(read) => {
-                    RevisionedValue::changed_at(&self.state, read) <= target.run
+                    changed_at(read, |part, read| {
+                        RevisionedValue::changed_at(&part.state, read)
+                    }) <= target.run
                 }
-                Dependency::StatesUnder(prefix) => (under(&self.state, prefix))
-                    .all(|(_, entry)| entry.changed_at <= target.run),
             };
             target.made_from::<Out, Args>(args) && target.dependencies.iter().all(unchanged)
         });
@@ -247,10 +381,11 @@ impl<I: Input, S: State> Part<I, S> {
         let reader = Reader {
             part: self,
             before,
-            recording: Some(Recording {
+            recording: Some(Rc::new(Recording {
                 own: name.to_string(),
                 dependencies: RefCell::new(Vec::new()),
-            }),
+            })),
+            path: String::new(),
         };
         let made = generator(&reader, args).map_err(|e| {
             e.with_context(format!(
@@ -258,7 +393,7 @@ impl<I: Input, S: State> Part<I, S> {
             ))
         });
         let mut dependencies = (reader.recording)
-            .map(|recording| recording.dependencies.into_inner())
+            .map(|recording| recording.dependencies.take())
             .unwrap_or_default();
         dependencies.sort();
         dependencies.dedup();
@@ -268,6 +403,7 @@ impl<I: Input, S: State> Part<I, S> {
         };
         let previous = self.targets.get(name, step);
         let target = Target::new(step, args.clone(), dependencies, data, previous, run);
+        self.changing |= target.changed_at == run;
         self.targets.insert(name, target);
         result
     }
@@ -312,11 +448,20 @@ struct Recording {
 /// A target is read by its elements ([`ElementReference`]), never as a
 /// whole: a target meant to be read whole has a kind of element that is all
 /// of it (see [`HasElements`]).
+///
+/// The part of an instance placed in it is read by a reader of its own
+/// ([`Reader::inside`]), which records what it reads, behind the
+/// instance's path, as read by the target being made.
 pub struct Reader<'a, I, S> {
     part: &'a Part<I, S>,
     /// The position of the step it reads before.
     before: usize,
-    recording: Option<Recording>,
+    /// What the target being made has read, shared by the readers of the
+    /// parts placed in its part.
+    recording: Option<Rc<Recording>>,
+    /// The path of the part it reads in the part of the target being made,
+    /// with a separator after it: empty for that part itself.
+    path: String,
 }
 
 // By hand, since a derive would ask the same of `I` and `S`.
@@ -325,41 +470,63 @@ impl<I, S> Clone for Reader<'_, I, S> {
         Self {
             part: self.part,
             before: self.before,
-            recording: (self.recording.as_ref()).map(|recording| Recording {
-                own: recording.own.clone(),
-                dependencies: recording.dependencies.clone(),
-            }),
+            recording: self.recording.clone(),
+            path: self.path.clone(),
         }
     }
 }
 
 impl<'a, I: Input, S: State> Reader<'a, I, S> {
-    /// Records `dependency`, if it records.
+    /// Records `dependency`, if it records: of the part it reads, named as
+    /// the part of the target being made names it.
     fn record(&self, dependency: Dependency) {
         if let Some(recording) = &self.recording {
-            recording.dependencies.borrow_mut().push(dependency);
+            recording
+                .dependencies
+                .borrow_mut()
+                .push(dependency.behind(&self.path));
         }
+    }
+
+    /// The last run that changed anything in the part it reads (see
+    /// [`Part::changed_at`]).
+    pub fn changed_at(&self) -> Revision {
+        self.part.changed_at
     }
 
     /// The version of `name` it sees: of the versions this run made, the
     /// one whose step came last before it — as of the step before for the
     /// target being made.
     fn version(&self, name: &str) -> GeopResult<&'a Target> {
-        let part = self.part;
-        let before = match &self.recording {
-            Some(recording) => sees(name, &recording.own, self.before),
-            None => self.before,
-        };
+        let (path, local) = split_path(name);
+        if !path.is_empty() {
+            return self.inside(path)?.version(local);
+        }
+        self.own_version(name).ok_or_else(|| {
+            let reader = match self.seen_before(name).checked_sub(1) {
+                Some(last) => format!("by the step at position {last} or before"),
+                None => "before any step".to_string(),
+            };
+            GeopError::new(format!("target `{name}` is not defined {reader}"))
+        })
+    }
+
+    /// The version of the part's own target `name` it sees (see
+    /// [`Reader::version`]), if any.
+    fn own_version(&self, name: &str) -> Option<&'a Target> {
+        let (part, before) = (self.part, self.seen_before(name));
         (part.targets.versions(name))
-            .filter(|target| target.run == part.run && target.step < before)
+            .filter(|target| target.run == part.built && target.step < before)
             .max_by_key(|target| target.step)
-            .ok_or_else(|| {
-                let reader = match before.checked_sub(1) {
-                    Some(last) => format!("by the step at position {last} or before"),
-                    None => "before any step".to_string(),
-                };
-                GeopError::new(format!("target `{name}` is not defined {reader}"))
-            })
+    }
+
+    /// Before which step position it sees the part's own target `name`: its
+    /// own position, but the step before for the target being made.
+    fn seen_before(&self, name: &str) -> usize {
+        match &self.recording {
+            Some(recording) if self.path.is_empty() => sees(name, &recording.own, self.before),
+            _ => self.before,
+        }
     }
 
     /// The target `reference`, whole, the read recorded: for the framework,
@@ -406,18 +573,25 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
         }
     }
 
-    /// The element `reference` names, of the part itself or of an instance
-    /// placed in it — however deep — as it is in its own part, with the
-    /// instance's path: where that is, [`Reader::placement`] says. The read
-    /// is recorded as one of the instance, which is made again whenever
-    /// its part is built again.
+    /// The element `reference` names, of the part itself or of the part of
+    /// an instance — however deep — as it is in its own part, with the
+    /// instance's path: where that is placed, the operation that loaded it
+    /// says. The read is recorded behind the instance's path (see
+    /// [`Reader::inside`]).
     pub fn retrieve_placed<T: HasElements<K>, K: Kind>(
         &self,
         reference: &ElementReference<T, K>,
     ) -> GeopResult<InInstance<T::Element<'a>>> {
         let (path, target) = split_path(reference.target().name());
         let resolve = |reader: &Reader<'a, I, S>| {
-            (reader.target(&TargetReference::<T>::new(target))?).element(reference.name())
+            let value = match (reader.own_version(target), T::undefined()) {
+                (None, Some(undefined)) => {
+                    reader.record(Dependency::Undefined(target.to_string()));
+                    undefined
+                }
+                _ => reader.target(&TargetReference::<T>::new(target))?,
+            };
+            value.element(reference.name())
         };
         let element = match path.is_empty() {
             true => resolve(self),
@@ -430,91 +604,43 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
         })
     }
 
-    /// The instance `name` placed in the part, the read recorded.
-    pub fn instance(&self, name: &str) -> GeopResult<&'a Instance<I, S>> {
-        self.target(&TargetReference::new(instance_target(name)))
-            .map_err(|e| e.with_context(format!("the placed part `{name}`")))
-    }
-
-    /// Every instance placed in the part — not in its instances — by name,
-    /// in the order the steps placed them, each read recorded.
-    pub fn instances(&self) -> Vec<(&'a str, &'a Instance<I, S>)> {
-        (self.versions_of::<Instance<I, S>>().into_iter())
-            .filter_map(|(target, version)| {
-                let name = instance_name(target)?;
-                Some((name, version.value::<Instance<I, S>>(target).ok()?))
-            })
+    /// The name of every instance whose part the part has loaded — not
+    /// those of its instances — in the order the steps loaded them, each
+    /// read recorded.
+    pub fn subparts(&self) -> Vec<&'a str> {
+        (self.versions_of::<Kept>().into_iter())
+            .filter_map(|(target, _)| subpart_name(target))
             .collect()
     }
 
     /// The part of the instance at `path` — `bolt`, or `asm/bolt` — as its
-    /// program left it, the read of each instance on the way recorded.
+    /// program left it in this run, the read of each instance on the way
+    /// recorded, and what it reads recorded behind the path.
     pub fn inside(&self, path: &str) -> GeopResult<Reader<'a, I, S>> {
-        let mut names = path.split(INSTANCE_SEPARATOR);
-        let first = names.next().unwrap_or_default();
-        let mut inside = self.instance(first)?.reader();
-        for name in names {
-            inside = inside.instance(name)?.reader();
-        }
-        Ok(inside)
-    }
-
-    /// Where the instance at `path` is in the part, as factors composed
-    /// outermost first ([`Factor`]): the values of the state that place it
-    /// and the parts it is placed in, read and recorded. A state of an
-    /// instance's own — what places a part placed in it — is named as the
-    /// part names it, behind the instance's path.
-    pub fn placement(&self, path: &str) -> GeopResult<Vec<Factor<S>>> {
-        let ctx = |e: GeopError| e.with_context(format!("where the placed part {path:?} is"));
-        let mut factors = Vec::new();
         let mut level = self.clone();
-        let mut prefix = String::new();
         for name in path.split(INSTANCE_SEPARATOR) {
-            let mut placed = self.placed(&level, name, &prefix, 0).map_err(ctx)?;
-            factors.append(&mut placed);
-            prefix = format!("{prefix}{name}{INSTANCE_SEPARATOR}");
-            level = level.instance(name).map_err(ctx)?.reader();
+            let kept = TargetReference::<Kept>::new(subpart_target(name));
+            (level.target(&kept))
+                .map_err(|e| e.with_context(format!("the part of `{name}`")))?;
+            let subpart = (level.part.subparts.get(name))
+                .ok_or_else(|| GeopError::new(format!("the part of `{name}` is not kept")))?;
+            level = Reader {
+                part: &subpart.part,
+                before: subpart.part.steps,
+                recording: level.recording.clone(),
+                path: format!("{}{name}{INSTANCE_SEPARATOR}", level.path),
+            };
         }
-        Ok(factors)
+        Ok(level)
     }
 
-    /// How deep a chain of copies may go before it is taken for a cycle.
-    const COPIES: usize = 1 << 16;
-
-    /// The factors placing the instance `name` of the part `level` reads —
-    /// the part at `prefix` in the part read — in that part: its state's
-    /// value, or a copy's motion after where what it copies is. A state is
-    /// read from the part read's own, behind `prefix`, and recorded as
-    /// read; where the run gives none, `level`'s own is where it is.
-    fn placed(
-        &self,
-        level: &Reader<'a, I, S>,
-        name: &str,
-        prefix: &str,
-        depth: usize,
-    ) -> GeopResult<Vec<Factor<S>>> {
-        if depth > Self::COPIES {
-            return Err(GeopError::new(format!("the copies of `{name}` form a cycle")));
-        }
-        Ok(match &level.instance(name)?.placement {
-            Placement::State(state) => {
-                let state_here = format!("{prefix}{state}");
-                vec![Factor::State {
-                    value: (self.given_state(&state_here))
-                        .unwrap_or_else(|| level.retrieve_state(state)),
-                    state: state_here,
-                }]
-            }
-            Placement::After { of, motion } => {
-                let mut factors = vec![Factor::Fixed(motion.clone())];
-                factors.append(&mut self.placed(level, of, prefix, depth + 1)?);
-                factors
-            }
-        })
-    }
-
-    /// The input's value, if the run gives one.
+    /// The input's value, if the run gives one. An input behind an
+    /// instance's path — `bolt/d` — is read inside the instance's part.
     pub fn retrieve_input(&self, name: &str) -> Option<I> {
+        let (path, local) = split_path(name);
+        if !path.is_empty() {
+            return self.inside(path).ok()?.retrieve_input(local);
+        }
         self.record(Dependency::Input(name.to_string()));
         (self.part.inputs.get(name)).and_then(|entry| entry.value.clone())
     }
@@ -524,30 +650,25 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
         self.given_state(name).unwrap_or_default()
     }
 
-    /// The state's value, if the run gives one.
+    /// The state's value, if the run gives one. A state behind an
+    /// instance's path — `bolt/b.pose` — is read inside the instance's part
+    /// ([`Reader::inside`]), as it is run with it: the part's value, else
+    /// the instance part's own — and none before a step loaded it.
     pub fn given_state(&self, name: &str) -> Option<S> {
+        let (path, local) = split_path(name);
+        if !path.is_empty() {
+            return self.inside(path).ok()?.given_state(local);
+        }
         self.record(Dependency::State(name.to_string()));
         (self.part.state.get(name)).and_then(|entry| entry.value.clone())
-    }
-
-    /// Every value the run gives of the state under `prefix`, by its name
-    /// after it, the read recorded: whatever of it changes, appears or
-    /// goes, what read it is made again.
-    pub fn states_under(&self, prefix: &str) -> BTreeMap<String, S> {
-        self.record(Dependency::StatesUnder(prefix.to_string()));
-        (under(&self.part.state, prefix))
-            .filter_map(|(name, entry)| {
-                let name = name.strip_prefix(prefix)?;
-                Some((name.to_string(), entry.value.clone()?))
-            })
-            .collect()
     }
 
     /// Whether it has read the state `name`: what a check of a value read
     /// from the state, a constraint's derivatives, asks.
     pub fn has_read_state(&self, name: &str) -> bool {
         (self.recording.as_ref()).is_some_and(|recording| {
-            (recording.dependencies.borrow()).contains(&Dependency::State(name.to_string()))
+            let read = Dependency::State(name.to_string()).behind(&self.path);
+            recording.dependencies.borrow().contains(&read)
         })
     }
 
@@ -555,10 +676,12 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
     /// failed, the read recorded: what tells a target no step made, which a
     /// collection reads as empty, from one that failed. [`Reader::targets_of`]
     /// lists only versions built, since a failed one has no value to be of
-    /// a type.
+    /// a type. Its absence is recorded too: a step making it later makes
+    /// what read it again.
     pub fn defines<T>(&self, reference: &TargetReference<T>) -> bool {
         let name = reference.name();
         let Ok(target) = self.version(name) else {
+            self.record(Dependency::Undefined(name.to_string()));
             return false;
         };
         self.record(Dependency::Target {
@@ -593,7 +716,7 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
     fn versions_of<T: 'static>(&self) -> Vec<(&'a str, &'a Target)> {
         let mut found: Vec<(usize, &'a str, &'a Target)> = (self.part.targets.names())
             .filter_map(|name| {
-                let target = self.version(name).ok().filter(|target| target.is::<T>())?;
+                let target = self.own_version(name).filter(|target| target.is::<T>())?;
                 self.record(Dependency::Target {
                     name: name.to_string(),
                     step: target.step,
@@ -602,7 +725,9 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
             })
             .collect();
         found.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
-        (found.into_iter()).map(|(_, name, target)| (name, target)).collect()
+        (found.into_iter())
+            .map(|(_, name, target)| (name, target))
+            .collect()
     }
 }
 

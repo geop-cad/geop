@@ -1,5 +1,7 @@
 //! [`ImportStep`]: add the bodies of a STEP file to the part.
 
+use std::rc::Rc;
+
 use geop_core_editor::{
     edit_form::{Edit, EditForm, FormState},
     editable::{OperationGroup, OperationInfo, OperationTier},
@@ -19,8 +21,7 @@ use geop_core_program::{
 use geop_core_topology::validation::{ValidationParameters, validate_fast};
 use geop_ops_model::{BodyNames, Design, ModelOperation, NamedModel, Namer, build_model};
 use geop_ops_parameters::{
-    BuildPart, PartReader, StateValue, StepContext,
-    about::{file_choices, read_files},
+    BuildPart, PartReader, Runner, Setting, StateValue, StepContext, file_choices,
 };
 use serde::{Deserialize, Serialize};
 
@@ -150,23 +151,23 @@ pub fn read_imported<'a>(reader: &PartReader<'a>, step: &str) -> GeopResult<&'a 
     reader.retrieve_element(&ElementReference::whole(imported(step)))
 }
 
-/// The bodies of the file the step `step` imports, read from the files the
-/// run was given.
-fn read(reader: &PartReader, (step, args): &(String, ImportStepArgs)) -> GeopResult<Imported> {
-    let ctx = with_context!("import_step({step}, {args:?})");
-    if args.file.is_empty() {
-        return Err(GeopError::new("choose a STEP file to import")).with_context(ctx);
+/// The text of a file a step read, as it passes it on: the same text the
+/// workspace kept is equal without being compared.
+#[derive(Clone, Debug)]
+struct Text(Rc<str>);
+
+impl PartialEq for Text {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0) || self.0 == other.0
     }
-    let (_, text) = read_files(reader)
-        .with_context(ctx)?
-        .read(&args.file)
-        .with_context(ctx)?;
-    let bodies = read_step::<Design>(&text).with_context(ctx)?;
+}
+
+/// The bodies of the file `text` the step `step` read.
+fn read(_: &PartReader, (step, file, text): &(String, String, Text)) -> GeopResult<Imported> {
+    let ctx = with_context!("import_step({step}, file={file:?})");
+    let bodies = read_step::<Design>(&text.0).with_context(ctx)?;
     if bodies.is_empty() {
-        return Err(GeopError::new(format!(
-            "{} has no solids or sheets",
-            args.file
-        )))
+        return Err(GeopError::new(format!("{file} has no solids or sheets")))
         .with_context(ctx);
     }
     Ok(Imported(bodies))
@@ -185,7 +186,7 @@ impl PartOperation for ImportStep {
     .reads(&STEP_EXTENSIONS)
     .icon(crate::icons::IMPORT_STEP);
     type Args = ImportStepArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -196,8 +197,20 @@ impl PartOperation for ImportStep {
     }
 
     /// Reads the file, then adds its bodies.
-    fn run(step: &str, part: &mut BuildPart, args: &ImportStepArgs) -> GeopResult<()> {
-        part.define_target(&imported(step), &(step.to_string(), args.clone()), read)?;
+    /// Reads the file, through `runner`, and the bodies of what it read.
+    fn run(
+        step: &str,
+        runner: &Runner,
+        part: &mut BuildPart,
+        args: &ImportStepArgs,
+    ) -> GeopResult<()> {
+        let ctx = with_context!("import_step({step}, {args:?})");
+        if args.file.is_empty() {
+            return Err(GeopError::new("choose a STEP file to import")).with_context(ctx);
+        }
+        let (_, text) = runner.read(&args.file).with_context(ctx)?;
+        let read_from = (step.to_string(), args.file.clone(), Text(text));
+        part.define_target(&imported(step), &read_from, read)?;
         build_model::<Self>(part, step, args)
     }
 
@@ -210,7 +223,7 @@ impl PartOperation for ImportStep {
         _: &FormState<()>,
     ) -> EditForm<'a, Design, ImportStepArgs> {
         let mut f = EditForm::<Design, ImportStepArgs>::default();
-        let files = file_choices(&context.before, is_step_file, &args.file);
+        let files = file_choices(context.runner, is_step_file, &args.file);
         f.file(
             "file",
             "file",

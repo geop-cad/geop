@@ -19,7 +19,7 @@ use geop_core_program::{
 use geop_ops_model::{
     Design, ModelOperation, NamedModel, Namer, Records, SolidNotes, build_model, solid_notes,
 };
-use geop_ops_parameters::{BuildPart, PartReader, StateValue};
+use geop_ops_parameters::{BuildPart, PartReader, Setting, StateValue};
 use geop_ops_sketch::{PlacedSketch, sketch};
 
 use crate::{edge_flange::EdgeRef, flat_pattern::FlatPatternData, sheet::Sheet};
@@ -171,7 +171,7 @@ fn made_by<'a>(reader: &PartReader<'a>, step: &str) -> GeopResult<&'a Made> {
 /// — the sketches, the sheet-metal bodies there are — and is then built
 /// alike ([`run`]).
 pub(crate) trait SheetStep:
-    PartOperation<Input = Design, State = StateValue> + ModelOperation
+    PartOperation<Input = Setting, State = StateValue> + ModelOperation
 {
     /// What the step `step` with `args` makes, as `reader` reads the part.
     fn plan(reader: &PartReader, step: &str, args: &Self::Args) -> GeopResult<Made>;

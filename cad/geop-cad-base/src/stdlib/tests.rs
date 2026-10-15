@@ -5,7 +5,10 @@ use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_topology::validation::{ValidationParameters, validate_fast};
 use geop_ops_datums::read_datums;
 use geop_ops_model::{NamedModel, RefId, read_model};
-use geop_ops_parameters::{ParameterKind, Setting, Settings};
+use geop_ops_parameters::{
+    BuildPart, ParameterKind, Setting, Settings, StateValues, read_properties,
+    steps::{PARAMETERS, PROPERTIES},
+};
 use geop_ops_pattern::{CircularPatternArgs, Spacing};
 
 use super::{StandardPart, drive::TEETH, parts, steps::SIZE};
@@ -77,11 +80,11 @@ fn expected(file: &str, value: impl Fn(&str) -> f64) -> [f64; 3] {
 /// datums and threaded faces named and reaching where its table says — or
 /// what is wrong with it.
 fn built(family: &StandardPart, program: &Program, fully: bool) -> Result<NamedModel<S>, String> {
-    let runner = program
+    let part = program
         .built()
         .map_err(|e| format!("does not build: {e}"))?;
-    let part = runner.part.current();
-    let built = read_model(&part)
+    let view = part.current();
+    let built = read_model(&view)
         .map_err(|e| format!("does not build: {e}"))?
         .into_owned();
     if fully {
@@ -94,7 +97,7 @@ fn built(family: &StandardPart, program: &Program, fully: bool) -> Result<NamedM
     if solids.len() != 1 {
         return Err(format!("is not one solid: {solids:?}"));
     }
-    let datums = read_datums(&part).map_err(|e| format!("does not build: {e}"))?;
+    let datums = read_datums(&view).map_err(|e| format!("does not build: {e}"))?;
     for name in ["axis", family.base] {
         datums
             .get(name)
@@ -115,11 +118,11 @@ fn built(family: &StandardPart, program: &Program, fully: bool) -> Result<NamedM
             format!("has no threaded face {face}: its step named the faces {named:?}")
         })?;
     }
-    let numbers = program.parameters.resolve(&Settings::new()).numbers;
+    let numbers = program.parameter_numbers().map_err(|e| e.to_string())?;
     let want = expected(family.file, |name| {
         (numbers.get(&format!("{SIZE}.{name}")))
             .or_else(|| numbers.get(name))
-            .map(|v| v.to_f64())
+            .copied()
             .unwrap_or_else(|| panic!("{} has no value {name}", family.file))
     });
     let points: Vec<[f64; 3]> = built
@@ -207,13 +210,15 @@ families_build! {
 /// picked by its name, or a number's formula.
 fn sized(program: &Program, name: &str, value: &str) -> Program {
     let mut program = program.clone();
-    let parameter = (program.parameters.values.iter_mut())
+    let mut parameters = program.parameters();
+    let parameter = (parameters.values.iter_mut())
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("there is no parameter {name}"));
     match &mut parameter.kind {
         ParameterKind::Table { selected, .. } => *selected = value.into(),
         ParameterKind::Number { expression, .. } => *expression = value.into(),
     }
+    program.set_parameters(parameters);
     program
 }
 
@@ -222,11 +227,12 @@ fn sized(program: &Program, name: &str, value: &str) -> Program {
 fn every_size(part: &StandardPart) -> Vec<(String, Program)> {
     // A gear's module and tooth count are tables of their own: every
     // module with 20 teeth, and module 1 with each of a range of counts.
+    let parameters = part.program.parameters();
     let gear = matches!(
-        part.program.parameters.get(TEETH).map(|p| &p.kind),
+        parameters.get(TEETH).map(|p| &p.kind),
         Some(ParameterKind::Table { .. })
     );
-    match part.program.parameters.get(SIZE).map(|p| &p.kind) {
+    match parameters.get(SIZE).map(|p| &p.kind) {
         Some(ParameterKind::Table { rows, .. }) if gear => {
             let geared = |module: &str, teeth: usize| {
                 let z = format!("z{teeth}");
@@ -347,7 +353,7 @@ fn the_bolted_plate_holds_together() {
     let runner = build(
         &examples::bolted_plate(),
         "bolted_plate.geop",
-        workspace(files).scope("bolted_plate.geop"),
+        workspace(files),
     )
     .unwrap();
     let view = runner.part.current();
@@ -385,6 +391,7 @@ fn a_12_tooth_spur_gear_builds() {
 /// are made of; a servo weighs what it does.
 #[test]
 fn drive_and_motion_parts_are_designated_and_made_of_something() {
+    let runner = crate::operations::runner();
     let text = |pairs: &[(&str, &str)]| -> Settings {
         pairs
             .iter()
@@ -450,21 +457,16 @@ fn drive_and_motion_parts_are_designated_and_made_of_something() {
             "Plastic",
         ),
     ] {
-        let program = &super::part(file).unwrap().program;
-        // Unset parameters are the family's own: designated as defined.
-        let values = if values.is_empty() {
-            program.parameters.resolve(&Settings::new()).chosen
-        } else {
-            values
-        };
-        let got = program.parameters.designate(&values).unwrap();
-        assert_eq!(got, want, "{file}");
-        let made_of = super::part(file)
-            .unwrap()
-            .program
-            .parameters
-            .material
-            .clone();
+        // Its properties and parameters run on their own, with `values`:
+        // what it is designated as. Unset parameters are the family's own.
+        let mut program = super::part(file).unwrap().program.clone();
+        (program.program.steps).retain(|s| [PROPERTIES, PARAMETERS].contains(&&*s.operation));
+        let mut part = BuildPart::default();
+        let output = runner.run(&mut part, &program.program, &values, &StateValues::new());
+        assert!(output.step_errors.is_empty(), "{file}: {:?}", output.step_errors);
+        let properties = read_properties(&part.current()).unwrap().into_owned();
+        assert_eq!(properties.designation.as_deref(), Some(want), "{file}");
+        let made_of = program.parameters().material;
         assert!(
             made_of
                 .as_ref()
@@ -474,7 +476,7 @@ fn drive_and_motion_parts_are_designated_and_made_of_something() {
     }
     // The SG90's envelope, weighed as its material says: 9 g.
     let sg90 = super::part("std:servo_sg90.geop").unwrap();
-    let density = sg90.program.parameters.material.as_ref().unwrap().density;
+    let density = sg90.program.parameters().material.unwrap().density;
     let volume = 22.8 * 12.2 * (15.9 + 6.8)
         + (32.2 - 22.8) * 12.2 * 2.5
         + std::f64::consts::PI / 4.0 * (11.4f64.powi(2) * 4.0 + 4.8f64.powi(2) * 3.2);
@@ -646,17 +648,18 @@ fn a_motor_drives_a_gear_pair_at_its_ratio() {
     use crate::operations::{build, workspace};
 
     let program = gear_drive();
-    let mut runner = build(
+    let mut built = build(
         &program,
         "gear_drive.geop",
-        workspace(BTreeMap::new()).scope("gear_drive.geop"),
+        workspace(BTreeMap::new()),
     )
     .unwrap();
     let driver = "add_part(pinion,m1).angle";
     let set = BTreeMap::from([(driver.to_string(), Design::from_f64(90.0))]);
-    let inputs = program.inputs(&Settings::new());
+    let inputs = Settings::new();
     let mut rerun = Rerun {
-        runner: &mut runner,
+        runner: &built.runner,
+        part: &mut built.part,
         program: &program.program,
         inputs: &inputs,
     };

@@ -17,7 +17,7 @@ use geop_ops_booleans::Combine;
 use geop_ops_model::{
     Design, ModelOperation, NamedModel, Namer, build_model, read_model, resolve_bodies,
 };
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -104,7 +104,7 @@ impl PartOperation for MoveBody {
     )
     .icon(crate::icons::MOVE_BODY);
     type Args = MoveBodyArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -125,7 +125,7 @@ impl PartOperation for MoveBody {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &MoveBodyArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &MoveBodyArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 

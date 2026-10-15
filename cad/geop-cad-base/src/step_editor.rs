@@ -18,7 +18,7 @@ use geop_core_editor::{
 };
 use geop_core_program::{
     element::PickedElement,
-    part::{Input, State},
+    part::{Input, Part, State},
     program::Program,
     program_runner::ProgramRunner,
 };
@@ -173,11 +173,13 @@ fn references<S: Scalar>(form: &Form<S>) -> Vec<String> {
 }
 
 /// The program a step editor edits, the operations it is edited with, the
-/// runner that last ran it, and the scene picks are made in — what every
+/// runner and the part it was last run on, and the scene picks are made in
+/// — what every
 /// event is handled against.
 pub struct Editing<'a, I, St: State, S: Scalar, Sc> {
     pub editors: &'a Editors<I, St, S>,
     pub runner: &'a ProgramRunner<I, St>,
+    pub part: &'a Part<I, St>,
     pub program: &'a mut Program,
     pub scene: &'a Sc,
 }
@@ -191,6 +193,7 @@ impl<S: Scalar + PartialEq> StepEditor<S> {
     pub fn new<I: Input, St: State>(
         editors: &Editors<I, St, S>,
         runner: &ProgramRunner<I, St>,
+        part: &Part<I, St>,
         program: &Program,
         step: &str,
         new: bool,
@@ -198,7 +201,7 @@ impl<S: Scalar + PartialEq> StepEditor<S> {
         let editing: Rc<dyn Any> = Rc::from(editors.initial_editing(program, step)?);
         let armed = match new {
             true => {
-                let form = editors.presentation(runner, program, step, &*editing)?;
+                let form = editors.presentation(runner, part, program, step, &*editing)?;
                 let first =
                     (form.dialog.0.iter()).find(|f| matches!(f.control, Control::Reference(_)));
                 first
@@ -249,9 +252,10 @@ impl<S: Scalar + PartialEq> StepEditor<S> {
         &self,
         editors: &Editors<I, St, S>,
         runner: &ProgramRunner<I, St>,
+        part: &Part<I, St>,
         program: &Program,
     ) -> GeopResult<Form<S>> {
-        editors.presentation(runner, program, &self.step, &*self.editing)
+        editors.presentation(runner, part, program, &self.step, &*self.editing)
     }
 
     /// Sends `event` to the operation, and keeps what it made of the step:
@@ -264,10 +268,11 @@ impl<S: Scalar + PartialEq> StepEditor<S> {
         e: &mut Editing<'_, I, St, S, Sc>,
         event: Event<S>,
     ) -> GeopResult<()> {
-        let before = references(&self.form(e.editors, e.runner, e.program)?);
+        let before = references(&self.form(e.editors, e.runner, e.part, e.program)?);
         let scene: &dyn Scene<S> = e.scene;
         let edited = (e.editors).process_user_event(
             e.runner,
+            e.part,
             e.program,
             &self.step,
             &*self.editing,
@@ -276,7 +281,7 @@ impl<S: Scalar + PartialEq> StepEditor<S> {
         )?;
         e.program.step_mut(&self.step)?.args = edited.args;
         self.editing = Rc::from(edited.editing);
-        let form = self.form(e.editors, e.runner, e.program)?;
+        let form = self.form(e.editors, e.runner, e.part, e.program)?;
         if let Some(armed) = &self.armed
             && !references(&form).contains(armed)
         {
@@ -345,7 +350,7 @@ impl<S: Scalar + PartialEq> StepEditor<S> {
         event: &StepEditEvent<S>,
     ) -> GeopResult<()> {
         let e = &mut e;
-        let form = self.form(e.editors, e.runner, e.program)?;
+        let form = self.form(e.editors, e.runner, e.part, e.program)?;
         if let StepEditEvent::Dialog { key, value } = event {
             return self.dialog(e, &form, key, value.clone());
         }
@@ -718,10 +723,11 @@ impl<S: Scalar + PartialEq> StepEditor<S> {
         &self,
         editors: &Editors<I, St, S>,
         runner: &ProgramRunner<I, St>,
+        part: &Part<I, St>,
         program: &Program,
         scene: &impl Scene<S>,
     ) -> GeopResult<Presentation<S>> {
-        let mut form = self.form(editors, runner, program)?;
+        let mut form = self.form(editors, runner, part, program)?;
         let mut pickable = Vec::new();
         for (key, reference) in form.dialog.references_mut() {
             if self.armed.as_deref() == Some(key) {

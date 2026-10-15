@@ -11,7 +11,7 @@ use geop_ops_sketch::whole_sketch;
 use crate::{
     examples,
     operations::{
-        editors, infos, registry,
+        editors, infos, registry, runner,
         testing::{Built, args, handled},
     },
 };
@@ -51,9 +51,11 @@ fn every_operation_is_offered() {
 #[test]
 fn new_steps_start_from_what_was_built() {
     let program = examples::box_with_drill_hole();
-    let runner = program.built().unwrap();
+    let part = program.built().unwrap();
     let editors = editors().unwrap();
-    let new_step = |kind: &str| editors.new_step(&runner, &program.program, kind, "new", None);
+    let runner = runner();
+    let new_step =
+        |kind: &str| editors.new_step(&runner, &part, &program.program, kind, "new", None);
     let step = new_step("extrude").unwrap();
     let extrude: ExtrudeArgs = args(&step);
     assert_eq!(extrude.sketch, whole_sketch("hole_sketch"));

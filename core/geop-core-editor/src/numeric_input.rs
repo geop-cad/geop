@@ -4,21 +4,78 @@
 //! An operation's arguments take one wherever they take a number.
 //!
 //! A step resolves it where it builds ([`NumericInput::resolve`]), reading each
-//! parameter the formula names as an input of the part: the read is
-//! recorded, so a change to one of them rebuilds the step, a change to any
-//! other does not. Saved, a formula is told apart from every other value
-//! in a step's arguments ([`formulas_in`], [`rename_parameter_in`]), so
-//! what reads a parameter is found, and renamed, without asking the
-//! operation.
+//! parameter the formula names — a target the program defines
+//! ([`parameter`]): the read is recorded, so a change to one of them
+//! rebuilds the step, a change to any other does not. Saved, a formula is
+//! told apart from every other value in a step's arguments
+//! ([`formulas_in`], [`rename_parameter_in`]), so what reads a parameter
+//! is found, and renamed, without asking the operation.
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_program::part::{Input, Reader, State};
+use std::collections::BTreeMap;
+
+use geop_core_program::{
+    element::{ElementReference, HasElements, Kind, whole},
+    part::{Input, Reader, State},
+    target::TargetReference,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::editing::{Number, Unit, Value};
+
+/// What a parameter of the program comes to, as its target holds it
+/// ([`parameter`]): a number, or a table's row — its name, and its value in
+/// each column.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ParameterValue {
+    Number(f64),
+    Row {
+        name: String,
+        columns: BTreeMap<String, f64>,
+    },
+}
+
+/// Read whole.
+impl Kind for ParameterValue {
+    const NAME: &'static str = "parameter";
+}
+
+impl HasElements<ParameterValue> for ParameterValue {
+    type Element<'a> = &'a ParameterValue;
+
+    fn element(&self, name: &str) -> GeopResult<&ParameterValue> {
+        whole(self, name)
+    }
+}
+
+/// The target of the parameter `name`.
+pub fn parameter(name: &str) -> TargetReference<ParameterValue> {
+    TargetReference::new(format!("parameter:{name}"))
+}
+
+/// The number `name` stands for in a formula, as `reader` reads it, the
+/// read recorded: a number parameter's value, and `table.column` the
+/// value in `column` of the row the table `table` is set to. None where no
+/// step defines that parameter, or it failed, or its table has no such
+/// column.
+pub fn read_parameter<I: Input, S: State>(reader: &Reader<I, S>, name: &str) -> Option<f64> {
+    let (table, column) = match name.split_once('.') {
+        Some((table, column)) => (table, Some(column)),
+        None => (name, None),
+    };
+    let reference = parameter(table);
+    if !reader.defines(&reference) {
+        return None;
+    }
+    match (reader.retrieve_element(&ElementReference::whole(reference)).ok()?, column) {
+        (ParameterValue::Number(value), None) => Some(*value),
+        (ParameterValue::Row { columns, .. }, Some(column)) => columns.get(column).copied(),
+        _ => None,
+    }
+}
 
 /// A number an operation is given: a plain value, or a formula of the
 /// program's parameters that it follows. Saved as a number when plain, and
@@ -80,15 +137,15 @@ impl NumericInput {
         }
     }
 
-    /// Its value, each parameter it names read as an input — a number —
-    /// through `reader`: in a target's generator, every one of them
+    /// Its value, each parameter it names read through `reader` (see
+    /// [`read_parameter`]): in a target's generator, every one of them
     /// recorded read.
-    pub fn resolve<I: Input + Scalar, S: State>(&self, reader: &Reader<I, S>) -> GeopResult<f64> {
+    pub fn resolve<I: Input, S: State>(&self, reader: &Reader<I, S>) -> GeopResult<f64> {
         match self {
             NumericInput::Plain(value) => Ok(*value),
-            NumericInput::Formula { formula } => evaluate(formula, |name| {
-                reader.retrieve_input(name).map(|input| input.to_f64())
-            }),
+            NumericInput::Formula { formula } => {
+                evaluate(formula, |name| read_parameter(reader, name))
+            }
         }
     }
 
@@ -100,7 +157,7 @@ impl NumericInput {
     /// reads, and neither is what a drag means. So such a field has no
     /// slider and no handle ([`Number::range`] and [`Number::handle`] keep
     /// none); to drag the value again, type a number.
-    pub fn number<I: Input + Scalar, St: State, S: Scalar>(
+    pub fn number<I: Input, St: State, S: Scalar>(
         &self,
         label: impl Into<String>,
         reader: &Reader<I, St>,
@@ -530,30 +587,30 @@ mod tests {
     /// other does not.
     #[test]
     fn a_formula_reads_the_parameters_it_names() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static MADE: AtomicUsize = AtomicUsize::new(0);
         type Sc = ScalInF64;
         let mut part = Part::<Sc, Sc>::default();
         let half = TargetReference::<f64>::new("half");
         let formula = NumericInput::from("width / 2");
         let run = |part: &mut Part<Sc, Sc>, width: f64, other: f64| {
-            let inputs = BTreeMap::from([
-                ("width".to_string(), Sc::from_f64(width)),
-                ("other".to_string(), Sc::from_f64(other)),
-            ]);
-            part.begin_run(&inputs, &BTreeMap::new());
+            part.begin_run(&BTreeMap::new(), &BTreeMap::new());
             part.begin_step();
-            (part.define_target(&half, &formula, |reader, f| f.resolve(reader))).unwrap();
+            let given = |_: &Reader<Sc, Sc>, &value: &f64| Ok(ParameterValue::Number(value));
+            (part.define_target(&parameter("width"), &width, given)).unwrap();
+            (part.define_target(&parameter("other"), &other, given)).unwrap();
+            part.begin_step();
+            (part.define_target(&half, &formula, |reader, f| {
+                MADE.fetch_add(1, Ordering::Relaxed);
+                f.resolve(reader)
+            }))
+            .unwrap();
             part.end_run(0);
+            MADE.load(Ordering::Relaxed)
         };
-        run(&mut part, 4.0, 0.0);
-        let reader = part.current();
-        assert!(reader.defines(&half));
-        run(&mut part, 4.0, 1.0);
-        assert!(part.current().defines(&half));
-        assert_eq!(
-            NumericInput::from("width / 2")
-                .resolve(&part.current())
-                .unwrap(),
-            2.0
-        );
+        assert_eq!(run(&mut part, 4.0, 0.0), 1);
+        assert_eq!(run(&mut part, 4.0, 1.0), 1, "it reads no other parameter");
+        assert_eq!(run(&mut part, 6.0, 1.0), 2);
+        assert_eq!(formula.resolve(&part.current()).unwrap(), 3.0);
     }
 }

@@ -13,7 +13,7 @@ use geop_core_editor::{
 };
 use geop_core_program::element::ElementReference;
 use geop_ops_model::{Design, ModelOperation, NamedModel, Namer, Point, build_model, read_model};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_sketch::{PlacedSketch, SketchRef, chain_of_pieces};
 use serde::{Deserialize, Serialize};
 
@@ -86,7 +86,7 @@ impl PartOperation for Loft {
     )
     .icon(crate::icons::LOFT);
     type Args = LoftArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -108,7 +108,7 @@ impl PartOperation for Loft {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &LoftArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &LoftArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
     /// The sketches, picked in order; the points matched on them, or the

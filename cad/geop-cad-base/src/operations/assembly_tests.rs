@@ -16,20 +16,20 @@ use geop_core_math::{
 use geop_core_program::{element::ElementReference, program::ProgramStep};
 use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
 use geop_ops_assembly::{
-    AddPartArgs, Library, MateEntity, PartPatternArgs, PatternAxis, Resolved, component_of,
-    mate_name,
+    AddPartArgs, MateEntity, PartPatternArgs, PatternAxis, Resolved, mate_name,
     placed::locate,
     solving::{self, Freedom, Report, Rerun, SettingsState},
 };
 use geop_ops_datums::{ORIGIN, component_name, datum};
 use geop_ops_extrude_revolve::ExtrudeArgs;
 use geop_ops_model::{Design, element, read_model, testing::assert_close};
-use geop_ops_parameters::{Settings, StateValue, StateValues, pose_state};
+use geop_ops_parameters::{BuildPart, Settings, StateValue, StateValues, instances, pose_state};
 use geop_ops_pattern::spacing::Spacing;
 
 use crate::examples::{n, pose};
+use crate::workspace::FileStore;
 use crate::{
-    Command, Editor, Program, examples,
+    Command, Editor, Program, Workspace, examples,
     operations::{
         self, Runner,
         testing::{dialog, edit_args, example_editor, from_above, handled},
@@ -41,29 +41,36 @@ use crate::{
 /// ran with, and the numbers its parameters gave: what the tests ask of it.
 struct Built {
     runner: Runner,
+    part: BuildPart,
     program: Program,
-    inputs: BTreeMap<String, Design>,
+    inputs: Settings,
 }
 
-/// `program` built with `library`, or why its first step that fails does.
-fn build(program: &Program, library: &Rc<dyn Library>) -> GeopResult<Built> {
-    let runner = operations::build(program, "", library.clone())?;
+/// `program` built in `workspace`, or why its first step that fails does.
+fn build<F: FileStore + 'static>(
+    program: &Program,
+    workspace: &Rc<Workspace<F>>,
+) -> GeopResult<Built> {
+    let operations::BuiltPart { runner, part } =
+        operations::build(program, "", workspace.clone())?;
     Ok(Built {
         runner,
+        part,
         program: program.clone(),
-        inputs: program.inputs(&Settings::new()),
+        inputs: Settings::new(),
     })
 }
 
 impl Built {
     fn view(&self) -> geop_ops_parameters::PartReader<'_> {
-        self.runner.part.current()
+        self.part.current()
     }
 
     /// The program, to run again by a solve.
     fn rerun(&mut self) -> Rerun<'_> {
         Rerun {
-            runner: &mut self.runner,
+            runner: &self.runner,
+            part: &mut self.part,
             program: &self.program.program,
             inputs: &self.inputs,
         }
@@ -131,11 +138,8 @@ impl Built {
 
     /// The parts placed in it — not in those — by name, with their files.
     fn instances(&self) -> BTreeMap<String, String> {
-        let reader = self.view();
-        (reader.instances().into_iter())
-            .filter_map(|(name, instance)| {
-                Some((name.to_string(), component_of(instance).ok()?.file.clone()))
-            })
+        (instances(&self.view()).unwrap().into_iter())
+            .map(|(name, instance)| (name.to_string(), instance.file.clone()))
             .collect()
     }
 
@@ -188,7 +192,7 @@ fn point(part: &Built, entity: &MateEntity) -> [f64; 3] {
 fn the_pin_is_mated_into_the_plate() {
     let workspace = workspace(parts());
     let program = examples::pin_in_plate_assembly();
-    let part = build(&program, &workspace.scope("assembly.geop")).unwrap();
+    let part = build(&program, &workspace).unwrap();
     part.check_names();
     assert!(part.check_mates().unwrap().converged);
     let origin = |instance: &str| MateEntity::of(instance, Selected::Datum(datum(ORIGIN)));
@@ -230,7 +234,7 @@ fn files_must_not_place_each_other_in_a_cycle() {
         ("b.geop".into(), placing("sub/../a.geop").to_json().unwrap()),
         ("c.geop".into(), placing("c.geop").to_json().unwrap()),
     ]));
-    let error = |program: Program, file: &str| match build(&program, &workspace.scope(file)) {
+    let error = |program: Program, file: &str| match build(&program, &workspace) {
         Ok(_) => panic!("{file} built"),
         Err(e) => e.to_string(),
     };
@@ -353,9 +357,7 @@ fn a_placed_part_is_dragged() {
     edit_args(&mut program.program.steps[1], |pin: &mut AddPartArgs| {
         pin.mates.clear()
     });
-    program
-        .state
-        .insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
+    program.state.insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
     handled(&mut editor, Command::Open { id: "pin".into() });
     handled(
@@ -385,9 +387,7 @@ fn a_fixed_part_follows_a_drag_of_several_events() {
         pin.mates.clear();
         pin.set_fixed(true);
     });
-    program
-        .state
-        .insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
+    program.state.insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
     handled(&mut editor, Command::Open { id: "pin".into() });
     for (to, done) in [((4.0, 1.0), false), ((4.5, 1.0), false), ((5.0, 1.0), true)] {
@@ -417,9 +417,7 @@ fn a_fixed_mate_added_in_the_dialog_holds_the_part() {
     edit_args(&mut program.program.steps[1], |pin: &mut AddPartArgs| {
         pin.mates.clear()
     });
-    program
-        .state
-        .insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
+    program.state.insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
     handled(&mut editor, Command::Open { id: "pin".into() });
     handled(
@@ -450,7 +448,7 @@ fn a_fixed_mate_added_in_the_dialog_holds_the_part() {
             .program,
         program.program
     );
-    let part = build(&program, &workspace(parts()).scope("assembly.geop")).unwrap();
+    let part = build(&program, &workspace(parts())).unwrap();
     assert!(part.holds("pin") && part.holds("plate"));
 }
 
@@ -481,9 +479,7 @@ fn at(position: [f64; 3]) -> StateValue {
 #[test]
 fn a_program_is_solved_where_its_mates_do_not_hold() {
     let mut program = examples::pin_in_plate_assembly();
-    program
-        .state
-        .insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
+    program.state.insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
     let editor = editor_on(program);
     assert_close(
         position(&pose_of(editor.program(), "pin")),
@@ -533,7 +529,7 @@ fn a_later_mate_moves_an_earlier_part_for_every_step() {
     );
     let plate = pose_of(editor.program(), "plate");
     assert!(position(&plate) != [2.0, -1.0, 0.0], "the plate moved");
-    let part = build(editor.program(), &workspace(parts()).scope("assembly.geop")).unwrap();
+    let part = build(editor.program(), &workspace(parts())).unwrap();
     assert!(part.check_mates().unwrap().converged);
     assert_close(
         point(&part, &MateEntity::on(Selected::Datum(datum("mark")))),
@@ -554,9 +550,7 @@ fn a_mate_added_moves_the_part_of_its_step() {
     edit_args(&mut program.program.steps[1], |pin: &mut AddPartArgs| {
         mates = std::mem::take(&mut pin.mates)
     });
-    program
-        .state
-        .insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
+    program.state.insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
     editor.handle(Command::Open { id: "pin".into() });
     for (id, mate) in &mates {
@@ -750,6 +744,31 @@ fn editor_with(files: BTreeMap<String, Option<String>>, program: Program, path: 
     editor
 }
 
+/// A mate on a part of a placed part's part is solved from where the files
+/// have them: the hinge's pin slides up to it.
+#[test]
+fn a_mate_on_a_part_of_a_sub_assembly_is_solved() {
+    let (files, top) = hinge();
+    let files: BTreeMap<String, String> =
+        (files.into_iter()).filter_map(|(f, t)| Some((f, t?))).collect();
+    let mut built = build(&top, &workspace(files)).unwrap();
+    let solvable = solving::solved_states(&built.view()).unwrap();
+    assert!(solvable.contains(&pose_state("hinge/pin")), "{solvable:?}");
+    let constraints = geop_ops_constraints::Constraints::<StateValue>::of(&built.view()).unwrap();
+    let mate = constraints.get("add_part(hinge,m1)").unwrap();
+    let by: Vec<&String> = mate.jacobian.keys().collect();
+    assert!(by.contains(&&pose_state("hinge/pin")), "{by:?}");
+    let report = built.check_mates().unwrap();
+    assert!(!report.converged, "the pin is not up yet");
+    let (moved, report) = solving::solve(&mut built.rerun(), &top.state, &[], None).unwrap();
+    assert!(report.converged, "{report:?}");
+    let pin = match moved.get(&pose_state("hinge/pin")) {
+        Some(StateValue::Pose(pose)) => *pose,
+        other => panic!("the pin did not move: {other:?}, {:?}", moved.keys()),
+    };
+    assert_close(position(&pin), [1.0, 1.0, 1.0], 1e-7);
+}
+
 /// The parts of a sub-assembly are the program's to move:
 /// its mate slides the hinge's pin up — the pin's pose a parameter of the
 /// program, relative to the hinge — and the hinge is drawn with it there.
@@ -757,6 +776,20 @@ fn editor_with(files: BTreeMap<String, Option<String>>, program: Program, path: 
 fn a_flexible_sub_assembly_moves_its_parts() {
     let (files, program) = hinge();
     let mut editor = editor_with(files, program, "top.geop");
+    let state = &editor.program().state;
+    assert!(
+        state.contains_key(&pose_state("hinge/pin")),
+        "the pin's pose is kept with the program: {:?}",
+        state.keys().collect::<Vec<_>>()
+    );
+    let loaded = pose_of(editor.program(), "hinge/pin");
+    let shown = editor.handle(Command::Show);
+    let errors: Vec<_> = (shown.program.iter())
+        .flat_map(|program| &program.steps)
+        .filter_map(|step| step.error.as_ref())
+        .collect();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_close(position(&loaded), [1.0, 1.0, 1.0], 1e-7);
     let pin = pose_of(editor.program(), "hinge/pin");
     assert_close(position(&pin), [1.0, 1.0, 1.0], 1e-7);
     assert_close(
@@ -787,9 +820,7 @@ fn the_drag_tool_drags_any_placed_part() {
     edit_args(&mut program.program.steps[1], |pin: &mut AddPartArgs| {
         pin.mates.clear()
     });
-    program
-        .state
-        .insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
+    program.state.insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
     let update = editor.handle(Command::DragTool { on: true });
     assert!(update.program.unwrap().drag_tool);
@@ -802,9 +833,7 @@ fn the_drag_tool_drags_any_placed_part() {
     });
     let tool = update.tool.unwrap();
     assert!(tool.grab, "a press grabs the pin");
-    assert!(
-        matches!(&tool.visuals[0].shape, Shape::Instance { name } if name == "pin")
-    );
+    assert!(matches!(&tool.visuals[0].shape, Shape::Instance { name } if name == "pin"));
 
     for (i, done) in [(1, false), (2, true)] {
         editor.handle(Command::Event {
@@ -885,7 +914,7 @@ fn drive_chain(
             .map(|(path, text)| (path, text.unwrap()))
             .collect::<BTreeMap<_, _>>(),
     );
-    let library = workspace.scope("chain.geop");
+    let library = workspace.clone();
     editor.handle(Command::DragTool { on: true });
     // Seen from in front and above — so the plane a drag moves in, facing
     // the eye, is tilted, and the pointer pulls along the pins too.
@@ -1005,7 +1034,7 @@ fn folded_path() -> Vec<[f64; 2]> {
 fn solves_along(path: &[[f64; 2]]) -> Vec<Report> {
     let files = BTreeMap::from([("link.geop".to_string(), examples::link().to_json().unwrap())]);
     let workspace = workspace(files);
-    let library = workspace.scope("chain.geop");
+    let library = workspace.clone();
     let mut program = examples::chain_assembly();
     let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
     path.iter()
@@ -1141,7 +1170,7 @@ fn linkage_examples_are_stacked_and_hold() {
         ),
     ] {
         let (files, program) = workspace_example(name);
-        let part = build(&program, &workspace(files).scope(&format!("{name}.geop"))).unwrap();
+        let part = build(&program, &workspace(files)).unwrap();
         let report = part.check_mates().unwrap();
         assert!(report.converged, "{name}: {report:?}");
         for (instance, z) in layers {
@@ -1157,7 +1186,7 @@ fn linkage_examples_are_stacked_and_hold() {
 fn the_four_bar_crank_turns_all_the_way_round() {
     let (files, mut program) = workspace_example("four_bar");
     let workspace = workspace(files);
-    let library = workspace.scope("four_bar.geop");
+    let library = workspace.clone();
     let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
     for step in 1..=36 {
         let angle = (60.0 + 10.0 * f64::from(step)).to_radians();
@@ -1184,7 +1213,7 @@ fn the_four_bar_crank_turns_all_the_way_round() {
 #[test]
 fn the_arm_lists_its_joints_and_how_free_its_links_are() {
     let (files, program) = workspace_example("arm");
-    let mut part = build(&program, &workspace(files).scope("arm.geop")).unwrap();
+    let mut part = build(&program, &workspace(files)).unwrap();
     let joints = part.joints().unwrap();
     let values: Vec<_> = joints
         .iter()
@@ -1217,7 +1246,7 @@ fn the_arm_lists_its_joints_and_how_free_its_links_are() {
 fn the_arm_is_dragged_up_to_its_limit() {
     let (files, mut program) = workspace_example("arm");
     let workspace = workspace(files);
-    let library = workspace.scope("arm.geop");
+    let library = workspace.clone();
     let mut part = build(&program, &library).unwrap();
     let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
     let a = 170.0_f64.to_radians();
@@ -1261,7 +1290,7 @@ fn the_arm_is_dragged_up_to_its_limit() {
 #[test]
 fn six_pins_are_patterned_round_a_hole() {
     let workspace = workspace(parts());
-    let library = workspace.scope("assembly.geop");
+    let library = workspace.clone();
     let mut program = Program::new();
     program.push(
         "plate",
@@ -1319,13 +1348,13 @@ fn six_pins_are_patterned_round_a_hole() {
             "part_pattern(pins,3)",
             Selected::Face(element("extrude(pin,end)")),
         );
-        let plane = part.placed(&top, |shape| shape.plane.as_ref().map(|plane| *plane.origin()));
+        let plane = part.placed(&top, |shape| {
+            shape.plane.as_ref().map(|plane| *plane.origin())
+        });
         assert!((plane[2] - 2.0).abs() < 1e-9);
     };
     check(&program, 1.0, 1.0);
-    program
-        .state
-        .insert(pose_state("pin"), at([3.0, 1.0, 0.0]));
+    program.state.insert(pose_state("pin"), at([3.0, 1.0, 0.0]));
     check(&program, 1.0, 2.0);
     program
         .state
@@ -1361,7 +1390,7 @@ fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
     use geop_ops_assembly::{CouplingKind, JointKind, Mate, Transmission};
     let (files, _) = workspace_example("arm");
     let workspace = workspace(files);
-    let library = workspace.scope("gears.geop");
+    let library = workspace.clone();
     let joint = |on_hole: usize, link: &str| {
         Mate::joint(
             JointKind::Revolute {
@@ -1436,31 +1465,21 @@ fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
     );
 }
 
-/// A file built once is placed as it was built for as long as it is the
-/// same: its build is kept, by the values its parameters were built with,
-/// and placed again rather than built again. Writing it as it was changes
-/// nothing; writing it otherwise forgets the build.
+/// A part is built from its file as the file is: written as it was,
+/// nothing changes; written otherwise, the file is read again.
 #[test]
-fn a_kept_build_is_placed_without_building_its_file() {
+fn a_part_is_built_from_its_file_as_written() {
     let text = examples::box_with_drill_hole().to_json().unwrap();
     let files = BTreeMap::from([("part.geop".to_string(), text.clone())]);
     let workspace = workspace(files);
     let placed = || {
-        (workspace.scope("assembly.geop"))
-            .component("part.geop", &Settings::new(), &StateValues::new())
-            .expect("the part is placed")
+        geop_core_program::workspace::Workspace::program(&*workspace, "part.geop").map(|_| ())
     };
-    let first = placed();
-    assert!(Rc::ptr_eq(&first, &placed()), "kept, not built again");
+    assert!(placed().is_ok(), "the part is placed");
     assert!(!workspace.write("part.geop", Some(text)));
-    assert!(Rc::ptr_eq(&first, &placed()), "written as it was");
+    assert!(placed().is_ok(), "written as it was");
     assert!(workspace.write("part.geop", Some("not a program".into())));
-    assert!(
-        (workspace.scope("assembly.geop"))
-            .component("part.geop", &Settings::new(), &StateValues::new())
-            .is_err(),
-        "written, the file is built again"
-    );
+    assert!(placed().is_err(), "written, the file is read again");
 }
 
 /// A joint is made from frames, picked on the two parts: the pin's wall
@@ -1475,13 +1494,15 @@ fn a_joint_between_frames_on_two_walls_puts_the_pin_in_the_hole() {
     edit_args(&mut program.program.steps[1], |pin: &mut AddPartArgs| {
         mates = std::mem::take(&mut pin.mates)
     });
-    program
-        .state
-        .insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
+    program.state.insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
     editor.handle(Command::Open { id: "pin".into() });
     editor.handle(dialog("add_mate", Value::Choice("revolute".into())));
-    let frames = mates["m1"].entities.iter().map(Selectable::picked).collect();
+    let frames = mates["m1"]
+        .entities
+        .iter()
+        .map(Selectable::picked)
+        .collect();
     let update = handled(
         &mut editor,
         dialog("mate:m1:entities", Value::Elements(frames)),
@@ -1566,9 +1587,7 @@ fn a_joint_is_made_by_clicking_where_its_frames_go() {
     edit_args(&mut program.program.steps[1], |pin: &mut AddPartArgs| {
         pin.mates.clear()
     });
-    program
-        .state
-        .insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
+    program.state.insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
     editor.handle(Command::Open { id: "pin".into() });
     editor.handle(dialog("add_mate", Value::Choice("revolute".into())));

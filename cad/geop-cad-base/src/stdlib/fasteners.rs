@@ -66,7 +66,7 @@ fn screw(head: Head, table: Table) -> GeopResult<(Program, Vec<String>)> {
     let mut program = family("Steel", None, vec![size(table)]);
     let (d, p, k, l) = (col("d"), col("p"), col("k"), col("l"));
     let r = format!("{d} / 2");
-    let mut drawing = Drawing::new(&program.parameters)?;
+    let mut drawing = Drawing::new(&program)?;
     let top_centre = drawing.point("0", head.top())?;
     let mut chain = Chain::from(top_centre);
     match head {
@@ -110,7 +110,7 @@ fn screw(head: Head, table: Table) -> GeopResult<(Program, Vec<String>)> {
     let threaded = swept("body", "profile", shank);
 
     if let Head::Hex = head {
-        let mut outline = Drawing::new(&program.parameters)?;
+        let mut outline = Drawing::new(&program)?;
         hexagon(&mut outline, &col("s"))?;
         cut_to(
             &mut program,
@@ -159,7 +159,7 @@ impl Chain {
 fn socket(program: &mut Program, top: &str, target: &str) -> GeopResult<()> {
     let (s, t) = (col("s"), col("t"));
     plane_datum(program, "socket_floor", &format!("{top} - {t}"));
-    let mut outline = Drawing::new(&program.parameters)?;
+    let mut outline = Drawing::new(program)?;
     hexagon(&mut outline, &s)?;
     extrude(
         program,
@@ -237,7 +237,7 @@ fn nut(table: Table, insert: bool) -> GeopResult<(Program, Vec<String>)> {
         m
     };
     corners.push([bore, top]);
-    let mut drawing = Drawing::new(&program.parameters)?;
+    let mut drawing = Drawing::new(&program)?;
     let lines = drawing.polygon(&corners)?;
     let bore_line = *lines.last().expect("a profile has lines");
     revolve(
@@ -248,7 +248,7 @@ fn nut(table: Table, insert: bool) -> GeopResult<(Program, Vec<String>)> {
         Around::ZAxis,
         Combine::NewBody,
     );
-    let mut outline = Drawing::new(&program.parameters)?;
+    let mut outline = Drawing::new(&program)?;
     hexagon(&mut outline, &s)?;
     cut_to(
         &mut program,
@@ -300,7 +300,7 @@ fn washer(table: Table, chamfered: bool) -> GeopResult<Program> {
         corners.push([outside, h.clone()]);
     }
     corners.push([hole, h]);
-    let mut drawing = Drawing::new(&program.parameters)?;
+    let mut drawing = Drawing::new(&program)?;
     drawing.polygon(&corners)?;
     revolve(
         &mut program,
@@ -345,7 +345,7 @@ pub fn iso7090(file: &'static str) -> GeopResult<StandardPart> {
 pub fn iso8734(file: &'static str) -> GeopResult<StandardPart> {
     let mut program = family("Steel", None, vec![size(tables::iso8734())]);
     let (r, c, l) = (format!("{} / 2", col("d")), col("c"), col("l"));
-    let mut drawing = Drawing::new(&program.parameters)?;
+    let mut drawing = Drawing::new(&program)?;
     let lines = drawing.polygon(&[
         ["0".into(), "0".into()],
         [format!("{r} - {c}"), "0".into()],
@@ -376,7 +376,7 @@ pub fn iso8734(file: &'static str) -> GeopResult<StandardPart> {
 /// threaded from both ends: a hexagon around the bore, extruded `l`.
 pub fn hex_standoff(file: &'static str) -> GeopResult<StandardPart> {
     let mut program = family("Steel", None, vec![size(tables::hex_standoffs())]);
-    let mut outline = Drawing::new(&program.parameters)?;
+    let mut outline = Drawing::new(&program)?;
     hexagon(&mut outline, &col("s"))?;
     let bore = outline.circle(outline.origin(), &col("d"))?;
     extrude(

@@ -21,7 +21,7 @@ use std::{
 use clap::{Parser, Subcommand};
 use geop_cad_base::{
     Editor, Program,
-    operations::{self, Runner, outputs, workspace},
+    operations::{self, BuiltPart, outputs, workspace},
     workspace::FileStore,
 };
 use geop_core_math::geop_error::{GeopError, GeopResult};
@@ -164,25 +164,26 @@ impl FileStore for Disk {
 /// the mates the program's state did not hold. A stale state — a file it
 /// places changed since it was saved — is solved for here, not in the
 /// file: that is the editor's to write.
-fn build(path: &Path) -> GeopResult<(Program, Runner, Vec<String>)> {
+fn build(path: &Path) -> GeopResult<(Program, BuiltPart, Vec<String>)> {
     let path = path.to_string_lossy();
     // A standard part — `std:iso4032_hex_nut.geop` — builds too.
     let workspace = workspace(Disk);
     let mut program = Program::from_json(&workspace.files().read(&path)?)?;
-    let mut runner = operations::build(&program, &path, workspace.scope(&path))?;
-    let report = check_mates(&runner.part.current())?;
+    let mut built = operations::build(&program, &path, workspace.clone())?;
+    let report = check_mates(&built.part.current())?;
     if !report.converged {
-        let inputs = program.inputs(&Settings::new());
+        let inputs = Settings::new();
         let mut rerun = Rerun {
-            runner: &mut runner,
+            runner: &built.runner,
+            part: &mut built.part,
             program: &program.program,
             inputs: &inputs,
         };
         let (moved, _) = solve(&mut rerun, &program.state, &[], None)?;
         program.state.extend(moved);
-        program.run(&mut runner, &Settings::new(), &StateValues::new())?;
+        program.run(&built.runner, &mut built.part, &Settings::new(), &StateValues::new())?;
     }
-    Ok((program, runner, report.failed))
+    Ok((program, built, report.failed))
 }
 
 fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
@@ -191,7 +192,7 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
         let path = path.display().to_string();
         move |e: std::io::Error| GeopError::new(format!("{what} {path}: {e}"))
     };
-    let (program, mut runner, solved_for) = build(&args.program)?;
+    let (program, mut built_part, solved_for) = build(&args.program)?;
 
     let output = match &args.output {
         Some(output) => output.clone(),
@@ -207,7 +208,8 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
     let options = options(&args.options)?;
     let today = today();
     let mut built = Output {
-        runner: &mut runner,
+        runner: &built_part.runner,
+        part: &mut built_part.part,
         file: &program,
         editing: None,
         date: &today,
@@ -696,11 +698,12 @@ mod tests {
         let dir = scratch("flat-pattern");
         let path = dir.join("sheet_metal_bracket.geop");
         std::fs::write(&path, examples::sheet_metal_bracket().to_json().unwrap()).unwrap();
-        let (program, mut runner, _) = build(&path).unwrap();
+        let (program, mut built_part, _) = build(&path).unwrap();
         let outputs = outputs().unwrap();
         let exporter = outputs.get_exporter("flat_pattern").unwrap();
         let mut built = Output {
-            runner: &mut runner,
+            runner: &built_part.runner,
+            part: &mut built_part.part,
             file: &program,
             editing: None,
             date: "",

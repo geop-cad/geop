@@ -28,6 +28,9 @@ type Sc = ScalInF64;
 /// A part of the tests, given numbers and a number as its state.
 type TestPart = Part<Sc, Sc>;
 
+/// A runner of the tests' programs.
+type TestRunner = ProgramRunner<Sc, Sc>;
+
 /// What a test operation is to an editor: only its name matters.
 const INFO: OperationInfo = OperationInfo::new("", "", OperationGroup::Solid, OperationTier::Menu);
 
@@ -59,7 +62,7 @@ impl Operation for MarkOperation {
     type Input = Sc;
     type State = Sc;
 
-    fn run(_: &str, _: &mut TestPart, _: &MarkArgs) -> GeopResult<()> {
+    fn run(_: &str, _: &TestRunner, _: &mut TestPart, _: &MarkArgs) -> GeopResult<()> {
         Ok(())
     }
 }
@@ -170,7 +173,8 @@ fn down(x: f64, y: f64) -> Pointer<Sc> {
 /// A mark step, `mark`, being edited, as an editor drives it.
 struct Editor {
     editors: Editors<Sc, Sc, Sc>,
-    runner: ProgramRunner<Sc, Sc>,
+    runner: TestRunner,
+    part: TestPart,
     program: Program,
     editor: StepEditor<Sc>,
 }
@@ -179,15 +183,17 @@ impl Editor {
     /// A mark with `args` — `new`, as just inserted, or opened again.
     fn new(args: MarkArgs, new: bool) -> Self {
         let editors = Editors::default().with(MarkOperation).unwrap();
-        let mut runner = ProgramRunner::new(editors.operations().unwrap());
+        let runner = ProgramRunner::new(editors.operations().unwrap());
+        let mut part = TestPart::default();
         let program = Program::new(vec![
             ProgramStep::new::<MarkOperation>("mark", &args).unwrap(),
         ]);
-        runner.run(&program, &Default::default(), &Default::default());
-        let editor = StepEditor::new(&editors, &runner, &program, "mark", new).unwrap();
+        runner.run(&mut part, &program, &Default::default(), &Default::default());
+        let editor = StepEditor::new(&editors, &runner, &part, &program, "mark", new).unwrap();
         Self {
             editors,
             runner,
+            part,
             program,
             editor,
         }
@@ -197,11 +203,12 @@ impl Editor {
         let editing = Editing {
             editors: &self.editors,
             runner: &self.runner,
+            part: &self.part,
             program: &mut self.program,
             scene: &OneFace,
         };
         self.editor.handle(editing, &event).unwrap();
-        (self.runner).run(&self.program, &Default::default(), &Default::default());
+        (self.runner).run(&mut self.part, &self.program, &Default::default(), &Default::default());
     }
 
     fn click(&mut self, x: f64, y: f64) {
@@ -224,7 +231,7 @@ impl Editor {
     /// Whether the field `on` waits for a click.
     fn armed(&self) -> bool {
         let presentation = (self.editor)
-            .presentation(&self.editors, &self.runner, &self.program, &OneFace)
+            .presentation(&self.editors, &self.runner, &self.part, &self.program, &OneFace)
             .unwrap();
         matches!(presentation.dialog.get("on"), Some(Control::Reference(r)) if r.armed)
     }
@@ -284,7 +291,7 @@ fn clicks_select_and_escape_clears() {
     editor.click(5.0, 0.0);
     assert_eq!(editor.editing().selection, vec!["dot".to_string()]);
     let presentation = (editor.editor)
-        .presentation(&editor.editors, &editor.runner, &editor.program, &OneFace)
+        .presentation(&editor.editors, &editor.runner, &editor.part, &editor.program, &OneFace)
         .unwrap();
     let dot = presentation
         .visuals

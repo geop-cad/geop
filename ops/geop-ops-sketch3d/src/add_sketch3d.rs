@@ -29,7 +29,7 @@ use geop_ops_datums::Datums;
 use geop_ops_model::{
     BodyNames, Chain, Curve, Design, Line, ModelOperation, NamedModel, Namer, Point, build_model,
 };
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_sketch::PlacedSketch;
 use serde::{Deserialize, Serialize};
 
@@ -365,7 +365,7 @@ impl PartOperation for AddSketch3d {
     )
     .icon(crate::icons::ADD_SKETCH3D);
     type Args = AddSketch3dArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = Sketch3dSession;
@@ -377,7 +377,7 @@ impl PartOperation for AddSketch3d {
 
     /// Defines the 3-D sketch named after the step, and builds it as a
     /// wire.
-    fn run(step: &str, part: &mut BuildPart, args: &AddSketch3dArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &AddSketch3dArgs) -> GeopResult<()> {
         part.define_target(&sketch3d(step), &(step.to_string(), args.clone()), draw)?;
         build_model::<Self>(part, step, args)
     }

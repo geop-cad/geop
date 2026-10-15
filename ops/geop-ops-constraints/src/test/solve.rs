@@ -15,10 +15,12 @@ use geop_core_program::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{Pose, Sc, constraints_now, identity, input_frame, inputs, pin, registry, vector};
+use super::{
+    Pose, Running, Sc, constraints_now, identity, input_frame, inputs, pin, registry, vector,
+};
 use crate::{
     constraint::{Bound, Constraint, define_constraints},
-    solve::{Mobility, Preference, Problem, Run, conflicting, freedom, solve},
+    solve::{Mobility, Preference, Problem, conflicting, freedom, solve},
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -37,7 +39,12 @@ impl Operation for LimitOperation {
     type Input = Sc;
     type State = Pose;
 
-    fn run(step: &str, part: &mut Part<Sc, Pose>, args: &LimitArgs) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &ProgramRunner<Sc, Pose>,
+        part: &mut Part<Sc, Pose>,
+        args: &LimitArgs,
+    ) -> GeopResult<()> {
         let args = (step.to_string(), args.clone());
         define_constraints(part, step, &args, |reader, (step, args)| {
             let x = reader.retrieve_state(&args.state).position[0];
@@ -71,8 +78,8 @@ impl Preference<Sc, Pose> for Toward {
     }
 }
 
-fn runner() -> ProgramRunner<Sc, Pose> {
-    ProgramRunner::new(registry().with(LimitOperation).unwrap())
+fn runner() -> Running {
+    Running::of(registry().with(LimitOperation).unwrap())
 }
 
 fn at(points: &[(&str, [f64; 3])]) -> BTreeMap<String, Pose> {
@@ -99,19 +106,6 @@ fn where_is(state: &BTreeMap<String, Pose>, name: &str) -> [f64; 3] {
     state[name].position.to_array().map(|c| c.to_f64())
 }
 
-/// The program `program` with `inputs`, for a solve to run.
-fn run<'r>(
-    runner: &'r mut ProgramRunner<Sc, Pose>,
-    program: &'r Program,
-    inputs: &'r BTreeMap<String, Sc>,
-) -> Run<'r, Sc, Pose> {
-    Run {
-        runner,
-        program,
-        inputs,
-    }
-}
-
 #[track_caller]
 fn assert_near(a: [f64; 3], b: [f64; 3]) {
     assert!(
@@ -129,7 +123,7 @@ fn a_pinned_body_goes_to_its_frame() {
     let x = inputs(&[("x", 1.0)]);
     let state = at(&[("body", [3.0, 2.0, 0.0])]);
     let solved = solve(
-        run(&mut runner, &program, &x),
+        runner.rerun(&program, &x),
         &state,
         &problem(&["body"], vec![]),
     )
@@ -174,14 +168,14 @@ fn a_pull_moves_what_the_constraints_leave_free() {
         },
     );
     let both = problem(&["body", "loose"], vec![&body, &loose]);
-    let solved = solve(run(&mut runner, &program, &x), &state, &both).unwrap();
+    let solved = solve(runner.rerun(&program, &x), &state, &both).unwrap();
     assert!(solved.report.converged);
     assert_near(where_is(&solved.state, "body"), [1.0, 0.0, 0.0]);
     assert_near(where_is(&solved.state, "loose"), [0.0, 2.0, 0.0]);
     assert_eq!(solved.report.moved, ["loose"]);
 
     let still = solve(
-        run(&mut runner, &program, &x),
+        runner.rerun(&program, &x),
         &state,
         &problem(&["body", "loose"], vec![]),
     )
@@ -208,7 +202,7 @@ fn a_limit_stops_a_pull() {
         to: [5.0, 1.0, 0.0],
     };
     let solved = solve(
-        run(&mut runner, &program, &none),
+        runner.rerun(&program, &none),
         &state,
         &problem(&["body"], vec![&pull]),
     )
@@ -233,7 +227,7 @@ fn conflicts_and_freedom() {
     let values = inputs(&[("x", 1.0), ("y", 2.0)]);
     let state = at(&[("body", [0.0; 3]), ("loose", [0.0; 3])]);
     let both = problem(&["body", "loose"], vec![]);
-    let solved = solve(run(&mut runner, &program, &values), &state, &both).unwrap();
+    let solved = solve(runner.rerun(&program, &values), &state, &both).unwrap();
     assert!(!solved.report.converged);
     assert_eq!(solved.report.failed, ["one", "two"]);
     // Nothing to enclose, and the enclosure says why, by name.
@@ -243,12 +237,12 @@ fn conflicts_and_freedom() {
     assert_eq!(group, &["body"]);
     assert!(why.contains("one") && why.contains("two"), "{why}");
     assert_eq!(
-        conflicting(run(&mut runner, &program, &values), &state, &both).unwrap(),
+        conflicting(runner.rerun(&program, &values), &state, &both).unwrap(),
         ["one", "two"]
     );
 
     let single = Program::new(vec![input_frame("a", "a", "x"), pin("one", "a", "body")]);
-    let free = freedom(run(&mut runner, &single, &values), &state, &both).unwrap();
+    let free = freedom(runner.rerun(&single, &values), &state, &both).unwrap();
     assert_eq!(free.states["body"], 0);
     assert_eq!(free.states["loose"], 3);
     assert_eq!(free.total, 3);

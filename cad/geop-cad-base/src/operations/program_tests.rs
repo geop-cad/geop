@@ -2,14 +2,16 @@
 
 use crate::operations::testing::extrusion;
 use geop_ops_extrude_revolve::Output;
-use std::{borrow::Cow, collections::BTreeMap, rc::Rc};
+use std::{borrow::Cow, collections::BTreeMap};
 
 use geop_core_math::scalars::Scalar;
-use geop_ops_assembly::Library;
+use geop_core_program::workspace::Location;
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
 use geop_ops_model::{Design, NamedModel, PartDescription, read_model};
-use geop_ops_parameters::{Parameter, ParameterKind, Parameters, Settings, StateValue, pose_state};
+use geop_ops_parameters::{
+    BuildPart, Parameter, ParameterKind, Parameters, Settings, StateValue, pose_state,
+};
 use geop_ops_sketch::whole_sketch;
 
 use crate::{
@@ -19,18 +21,17 @@ use crate::{
         Runner,
         testing::{Built, edit_args, step},
     },
-    part,
 };
 
 fn extrude(sketch: &str, distance: f64) -> ExtrudeArgs {
     extrusion(sketch, Extents::blind(distance), Combine::NewBody)
 }
 
-/// A runner of programs, with the one library it builds them with: a
-/// library given anew is a change, which builds everything again.
+/// A runner of programs, in an empty workspace, as the file `part.geop`.
+/// It runs them on one part, which keeps what the last run built.
 pub(super) struct Running {
-    pub(super) runner: Runner,
-    library: Rc<dyn Library>,
+    runner: Runner,
+    pub(super) part: BuildPart,
     /// What each step built when last seen, by step: to tell what a run
     /// built anew from what it took from the run before.
     seen: BTreeMap<String, usize>,
@@ -38,10 +39,15 @@ pub(super) struct Running {
 
 impl Running {
     pub(super) fn new() -> Self {
-        let workspace = super::workspace(BTreeMap::new());
+        let mut runner = super::runner();
+        runner.workspace = Some(super::workspace(BTreeMap::new()));
+        runner.location = Location {
+            file: "part.geop".into(),
+            within: Vec::new(),
+        };
         Self {
-            runner: super::runner(),
-            library: workspace.scope("part.geop"),
+            runner,
+            part: BuildPart::default(),
             seen: BTreeMap::new(),
         }
     }
@@ -51,11 +57,8 @@ impl Running {
     pub(super) fn run(&mut self, program: &Program, end: Option<usize>) -> Vec<(String, String)> {
         let steps = &program.program;
         let end = end.unwrap_or(steps.steps.len());
-        let overrides = Settings::new();
-        let about = program.about("part.geop", &overrides);
-        self.runner.given = Some(part::given(about, self.library.clone()));
-        let inputs = program.inputs(&overrides);
-        let output = self.runner.run_until(steps, end, &inputs, &program.state);
+        let inputs = Settings::new();
+        let output = (self.runner).run_until(&mut self.part, steps, end, &inputs, &program.state);
         (output.step_errors.into_iter())
             .map(|(step, error)| (step, error.to_string()))
             .collect()
@@ -63,7 +66,7 @@ impl Running {
 
     /// The model the last run built.
     pub(super) fn model(&self) -> NamedModel<Design> {
-        let built = read_model(&self.runner.part.current());
+        let built = read_model(&self.part.current());
         built.map(|model| model.into_owned()).unwrap_or_default()
     }
 
@@ -74,7 +77,7 @@ impl Running {
     pub(super) fn built_anew(&mut self, program: &Program) -> usize {
         let mut anew = 0;
         for (index, step) in program.program.steps.iter().enumerate() {
-            let view = (self.runner.part).reader(Runner::position(index) + 1);
+            let view = self.part.reader(index + 1);
             let address = match step.operation.as_str() {
                 "add_sketch" => view
                     .retrieve_element(&whole_sketch(&step.id))
@@ -151,7 +154,7 @@ fn runner_reports_the_failing_step() {
     assert_eq!(id, "hole");
     assert!(error.contains("extrude(nothing)"), "{error}");
     // The model the steps before it built is there for it to build on.
-    let before = (running.runner.part).reader(Runner::position(program.index_of("hole").unwrap()));
+    let before = (running.part).reader(program.index_of("hole").unwrap());
     let built = read_model(&before).unwrap();
     assert!(built.solid_id("extrude(box)").is_ok());
 }
@@ -169,14 +172,14 @@ fn box_by_formulas() -> Program {
             max: None,
         },
     };
-    program.parameters = Parameters {
+    program.set_parameters(Parameters {
         values: vec![
             number("height", "1"),
             number("depth", "height / 2"),
             number("unrelated", "7"),
         ],
         ..Parameters::default()
-    };
+    });
     edit_args(step(&mut program, "box"), |args: &mut ExtrudeArgs| {
         args.extent = Extents::blind("height")
     });
@@ -188,11 +191,8 @@ fn box_by_formulas() -> Program {
 
 /// Sets the number parameter `name` of `program` to `expression`.
 fn set(program: &mut Program, name: &str, expression: &str) {
-    let parameter = program
-        .parameters
-        .values
-        .iter_mut()
-        .find(|p| p.name == name);
+    let mut parameters = program.parameters();
+    let parameter = parameters.values.iter_mut().find(|p| p.name == name);
     let Some(Parameter {
         kind: ParameterKind::Number { expression: e, .. },
         ..
@@ -201,6 +201,7 @@ fn set(program: &mut Program, name: &str, expression: &str) {
         panic!("no number parameter {name}")
     };
     *e = expression.into();
+    program.set_parameters(parameters);
 }
 
 /// Checks the part's vertices lie at the heights `want`, and each of
@@ -342,16 +343,17 @@ fn a_runner_builds_what_building_from_scratch_builds() {
             edits.push((format!("drop step {index}"), dropped));
             edits.push(("restore".to_string(), original.clone()));
         }
-        for (k, parameter) in original.parameters.values.iter().enumerate() {
+        let parameters = original.parameters();
+        for (k, parameter) in parameters.values.iter().enumerate() {
             if let ParameterKind::Number { expression, .. } = &parameter.kind
                 && let Ok(value) = expression.parse::<f64>()
             {
                 let mut scaled = original.clone();
-                if let ParameterKind::Number { expression, .. } =
-                    &mut scaled.parameters.values[k].kind
-                {
+                let mut changed = parameters.clone();
+                if let ParameterKind::Number { expression, .. } = &mut changed.values[k].kind {
                     *expression = (value * 1.25).to_string();
                 }
+                scaled.set_parameters(changed);
                 edits.push((format!("scale {}", parameter.name), scaled));
                 edits.push(("restore".to_string(), original.clone()));
             }

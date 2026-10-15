@@ -52,9 +52,9 @@ use geop_core_math::{
 use geop_core_program::instance::instance_path;
 use geop_core_topology::mass::MassProperties;
 use geop_ops_assembly::{
-    Component, CouplingKind, Instance, JointKind, Motion, Resolved, STL_QUALITY, component_of,
-    joint_parameter,
+    CouplingKind, JointKind, Motion, Resolved, STL_QUALITY, joint_parameter,
     joints::{Connector, measure},
+    drawn,
     mechanism::mates_of,
     placed_parts,
     residuals::D,
@@ -64,7 +64,7 @@ use geop_ops_assembly::{
 };
 use geop_ops_model::{Design, read_model};
 use geop_ops_output::{Content, Export, Exporter, ExporterInfo, Output};
-use geop_ops_parameters::{PartReader, Settings, StateValue, read_about};
+use geop_ops_parameters::{PartReader, Settings, StateValue, stem};
 use geop_ops_rasterize::stl::StlFormat;
 use serde::Deserialize;
 
@@ -266,7 +266,10 @@ pub struct Body<'a> {
     pub free: bool,
     /// Where it is in the assembly.
     pub world: Pose<Design>,
-    pub instance: &'a Instance,
+    /// Its part, as placed.
+    pub part: PartReader<'a>,
+    /// The file its part is placed from.
+    pub file: String,
 }
 
 /// An end of a joint: the body it is on — none for the assembly itself —
@@ -324,7 +327,8 @@ impl<'a> Mechanism<'a> {
             .map(|p| Body {
                 free: p.located.state.is_some() && !fixed.contains(p.name.as_str()),
                 world: p.located.world,
-                instance: p.located.instance,
+                file: p.located.instance.file.clone(),
+                part: p.located.part,
                 name: p.name,
             })
             .collect();
@@ -456,10 +460,11 @@ fn slide(distance: Design) -> Pose<Design> {
     Pose::identity().with_position(Vector3::from_array([Design::ZERO, Design::ZERO, distance]))
 }
 
-/// The meshes of an export, each written once: per component — none for
-/// the assembly's own solids — the mesh's path, if it has any triangles.
+/// The meshes of an export, each written once: per placed part, by its
+/// part's id — none for the assembly's own solids — the mesh's path, if it
+/// has any triangles.
 struct Meshes {
-    paths: HashMap<Option<*const Component>, Option<String>>,
+    paths: HashMap<Option<String>, Option<String>>,
     files: Vec<(String, Vec<u8>)>,
     quality: usize,
 }
@@ -471,7 +476,7 @@ impl Meshes {
     /// has no solids. `key` names the part.
     fn of(
         &mut self,
-        key: Option<*const Component>,
+        key: Option<String>,
         stem: &str,
         reader: &PartReader,
     ) -> GeopResult<Option<String>> {
@@ -541,9 +546,11 @@ pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<Urd
             .collect();
         (tree::tree(&mechanism).with_context(&ctx)?, held)
     };
-    let inputs = output.file.inputs(&Settings::new());
+    // The assembly is built with its parameters as it defines them.
+    let inputs = Settings::new();
     let mut rerun = Rerun {
-        runner: &mut *output.runner,
+        runner: output.runner,
+        part: &mut *output.part,
         program: &output.file.program,
         inputs: &inputs,
     };
@@ -626,15 +633,20 @@ pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<Urd
         }
         for &b in &link.bodies {
             let body = &bodies[b];
-            let component = component_of(body.instance).with_context(&ctx)?;
             // A part placed is a body of its own solids: the parts placed
             // in it are bodies of their own.
             let prefix = instance_path(&body.name, "");
-            let placed = component.reader();
-            masses(&placed, &prefix, Some(body.world), &mut shapes, &mut masses_of)
-                .with_context(&ctx)?;
-            let key = Some(std::rc::Rc::as_ptr(&component));
-            let stem = read_about(&placed)?.stem().to_string();
+            let placed = body.part.clone();
+            masses(
+                &placed,
+                &prefix,
+                Some(body.world),
+                &mut shapes,
+                &mut masses_of,
+            )
+            .with_context(&ctx)?;
+            let key = Some(drawn(&reader, &body.name).with_context(&ctx)?.key.clone());
+            let stem = stem(&body.file).to_string();
             if let Some(mesh) = meshes.of(key, &stem, &placed)? {
                 visuals.push(Visual {
                     name: body.name.clone(),

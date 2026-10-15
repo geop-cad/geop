@@ -22,29 +22,28 @@
 
 use std::collections::BTreeMap;
 
-use geop_core_math::{
-    primitives::{Pose, Quaternion},
-    scalars::Scalar,
-};
 use geop_core_editor::{
     edit_form::{Edit, EditForm, FormState},
+    numeric_input::ParameterValue,
     editing::{
         Action, CanvasEvent, Choice, Gizmo, ListItem, Number, Pull, Shape, Style, Tone, Unit,
         Value, Visual,
     },
 };
+use geop_core_math::{
+    primitives::{Pose, Quaternion},
+    scalars::Scalar,
+};
 use geop_ops_model::{Design, Namer};
 use geop_ops_parameters::{
-    COLOR, ParameterKind, Setting, Settings, StateValue, StateValues, StepContext,
-    about::file_choices,
-    parameters::validate_color,
-    pose_state, read_about,
+    COLOR, ParameterKind, Setting, Settings, StateValue, StepContext, file_choices, instance,
+    parameters::validate_color, parameters_of, pose_state, read_parameter_values,
+    read_properties,
 };
 
 use crate::{
     AddPartArgs, Anchor, CouplingKind, JointKind, Kind, Mate, MateKind, Motion, Transmission,
     mechanism::mate_holds,
-    placed::read_library,
     solving::{SettingsState, check, settings},
 };
 
@@ -477,22 +476,28 @@ fn parameters(f: &mut PartForm, context: &StepContext, args: &AddPartArgs) {
     if args.file.is_empty() {
         return;
     }
-    let Ok(library) = read_library(&context.before) else {
+    let Ok((loaded, _)) = context.runner.program(&args.file) else {
         return;
     };
-    // As placed here: what a number not given reads follows what is.
-    let none = StateValues::new();
-    let Ok(placed) = (library.component(&args.file, &args.parameters, &none))
-        .or_else(|_| library.component(&args.file, &Settings::new(), &none))
-    else {
-        return;
-    };
-    let defined = &placed.parameters;
+    let defined = parameters_of(&loaded.program);
     if defined.is_empty() {
         return;
     }
-    let chosen = (read_about(&placed.reader()).map(|about| about.chosen.clone()))
-        .unwrap_or_default();
+    // What each comes to as the step placed it, set or not.
+    let placed = (context.built.as_ref()).and_then(|built| built.inside(context.step).ok());
+    let mut chosen = Settings::new();
+    if let Some(placed) = &placed {
+        for (name, value) in &read_parameter_values(placed).unwrap_or_default().0 {
+            let value = match value {
+                ParameterValue::Number(n) => Setting::Number(*n),
+                ParameterValue::Row { name, .. } => Setting::Text(name.clone()),
+            };
+            chosen.insert(name.clone(), value);
+        }
+        if let Some(color) = read_properties(placed).ok().and_then(|p| p.color.clone()) {
+            chosen.insert(COLOR.into(), Setting::Text(color));
+        }
+    }
     let given = |name: &str| (args.parameters.get(name)).or(chosen.get(name)).cloned();
     f.form.dialog.heading("parameters_heading", "Parameters");
     let set = |name: String| {
@@ -568,8 +573,8 @@ pub(crate) fn form<'a>(
 ) -> PartForm<'a> {
     let mut f = PartForm::default();
     let step = context.step.to_string();
-    let built = (context.built.as_ref()).filter(|view| view.instance(&step).is_ok());
-    let files = file_choices(&context.before, is_program, &args.file);
+    let built = (context.built.as_ref()).filter(|view| instance(view, &step).is_ok());
+    let files = file_choices(context.runner, is_program, &args.file);
     if files.is_empty() {
         f.form.dialog.text(
             "no_files",
@@ -677,8 +682,7 @@ pub(crate) fn form<'a>(
                 MateKind::Anchor(_) => "holds this part where it is".to_string(),
                 MateKind::Coupling(_) => mate.joints.join(" & "),
                 _ => {
-                    let entities: Vec<String> =
-                        mate.entities.iter().map(|e| e.label()).collect();
+                    let entities: Vec<String> = mate.entities.iter().map(|e| e.label()).collect();
                     entities.join(" & ")
                 }
             };

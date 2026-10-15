@@ -20,7 +20,7 @@ use geop_ops_urdf::{JointType, Mechanism, Origin, Robot, URDF_FILE, UrdfExport, 
 
 use crate::Program;
 use crate::examples::{self, n, pose};
-use crate::operations::{Runner, workspace};
+use crate::operations::{BuiltPart, workspace};
 
 /// The files of the workspace example `name`, by path, and its first
 /// program.
@@ -38,14 +38,16 @@ fn workspace_example(name: &str) -> (BTreeMap<String, String>, Program) {
     (files, program)
 }
 
-/// What a program built, and the program with the state it ran with.
-struct Built(Runner, Program);
+/// What a program built, with the runner that built it, and the program
+/// with the state it ran with.
+struct Built(BuiltPart, Program);
 
 impl Built {
     /// It exported as the robot `name`, meshed coarsely.
     fn export(&mut self, name: &str) -> geop_core_math::geop_error::GeopResult<UrdfExport> {
         let mut output = Output {
-            runner: &mut self.0,
+            runner: &self.0.runner,
+            part: &mut self.0.part,
             file: &self.1,
             editing: None,
             date: "",
@@ -59,17 +61,20 @@ impl Built {
 /// give started where the parts are, and solved for.
 fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Built {
     let mut program = program.clone();
-    let mut built = super::build(&program, path, workspace(files).scope(path)).unwrap();
-    let inputs = program.inputs(&Settings::new());
+    let mut built = super::build(&program, path, workspace(files)).unwrap();
+    let inputs = Settings::new();
     let mut rerun = Rerun {
-        runner: &mut built,
+        runner: &built.runner,
+        part: &mut built.part,
         program: &program.program,
         inputs: &inputs,
     };
     let (moved, report) = solving::solve(&mut rerun, &program.state, &[], None).unwrap();
     assert!(report.converged, "{report:?}");
     program.state.extend(moved);
-    program.run(&mut built, &Settings::new(), &StateValues::new()).unwrap();
+    program
+        .run(&built.runner, &mut built.part, &Settings::new(), &StateValues::new())
+        .unwrap();
     Built(built, program)
 }
 
@@ -318,7 +323,8 @@ fn the_arm_exports_its_joints_limits_and_masses() {
         );
     }
 
-    // One mesh, of the link the three parts are placed from.
+    // One mesh, of the link the three parts are placed from: they are
+    // drawn alike.
     let meshes: Vec<&str> = exported.meshes.iter().map(|(p, _)| p.as_str()).collect();
     assert_eq!(meshes, ["meshes/link.stl"]);
     assert!(robot.links.iter().all(|l| l.visuals.len() == 1));

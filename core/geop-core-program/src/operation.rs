@@ -1,7 +1,10 @@
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::part::{self, Part};
+use crate::{
+    part::{self, Part},
+    program_runner::ProgramRunner,
+};
 
 /// One kind of step. An operation is a unit struct: everything a step of
 /// it needs is in its arguments.
@@ -15,8 +18,11 @@ pub trait Operation: 'static {
     type Input: part::Input;
     type State: part::State;
 
+    /// Defines and revises the step's targets in `part`; `runner` is what
+    /// runs the step, to run programs of the step's own with.
     fn run(
         step: &str,
+        runner: &ProgramRunner<Self::Input, Self::State>,
         part: &mut Part<Self::Input, Self::State>,
         args: &Self::Args,
     ) -> GeopResult<()>;
@@ -35,7 +41,13 @@ pub trait StepArgs: Serialize {
 /// Every operation is one, through its value. Arguments come as saved.
 pub trait ErasedOperation<I, S: part::State> {
     fn kind(&self) -> &'static str;
-    fn run(&self, step: &str, part: &mut Part<I, S>, args: &serde_json::Value) -> GeopResult<()>;
+    fn run(
+        &self,
+        step: &str,
+        runner: &ProgramRunner<I, S>,
+        part: &mut Part<I, S>,
+        args: &serde_json::Value,
+    ) -> GeopResult<()>;
 }
 
 /// The arguments of `O` from their saved form.
@@ -58,9 +70,10 @@ impl<O: Operation> ErasedOperation<O::Input, O::State> for O {
     fn run(
         &self,
         step: &str,
+        runner: &ProgramRunner<O::Input, O::State>,
         part: &mut Part<O::Input, O::State>,
         args: &serde_json::Value,
     ) -> GeopResult<()> {
-        <O as Operation>::run(step, part, &self::args::<O>(args)?)
+        <O as Operation>::run(step, runner, part, &self::args::<O>(args)?)
     }
 }

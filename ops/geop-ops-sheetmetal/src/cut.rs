@@ -19,7 +19,7 @@ use geop_core_program::element::ElementReference;
 use geop_core_sketch::Shape;
 use geop_ops_extrude_revolve::operation::shape_loops;
 use geop_ops_model::{Design, ModelOperation, NamedModel, Namer, Plane, read_model};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_sketch::{PlacedSketch, SketchRef};
 use serde::{Deserialize, Serialize};
 
@@ -102,7 +102,7 @@ impl PartOperation for SheetCut {
     )
     .icon(crate::icons::SHEET_CUT);
     type Args = SheetCutArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -116,7 +116,7 @@ impl PartOperation for SheetCut {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &SheetCutArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &SheetCutArgs) -> GeopResult<()> {
         body::run::<Self>(step, part, args)
     }
 

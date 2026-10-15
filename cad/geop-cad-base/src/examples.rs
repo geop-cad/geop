@@ -993,7 +993,7 @@ pub fn four_bar_assembly() -> Program {
 /// everything follows.
 pub fn parametric_plate() -> Program {
     let mut program = Program::new();
-    program.parameters = Parameters {
+    program.set_parameters(Parameters {
         title: None,
         designation: None,
         color: Some("#d0893e".into()),
@@ -1021,7 +1021,7 @@ pub fn parametric_plate() -> Program {
             },
             Parameter::number("thickness", "0.5", 0.1, 2.0),
         ],
-    };
+    });
 
     let mut outline = Sketch::new();
     let lines = rectangle(&mut outline, [0.0, 0.0], 4.0, 2.0);
@@ -1061,7 +1061,7 @@ pub fn parametric_plate() -> Program {
         entity: Projected::Face(element(top)),
     });
     let built =
-        build(&program, "", workspace(BTreeMap::new()).scope("")).expect("the plate builds");
+        build(&program, "", workspace(BTreeMap::new())).expect("the plate builds");
     let reader = built.part.current();
     let plane = (on_face(top).resolve(&reader)).expect("the top is planar");
     projection
@@ -1142,7 +1142,7 @@ pub fn plates_assembly() -> Program {
 pub fn metric_plate() -> Program {
     use crate::stdlib::{drawing::Drawing, steps::outline_plane};
 
-    let none = Parameters::default();
+    let none = Program::new();
     let corner = |x: &str, y: &str| [x.to_string(), y.to_string()];
     let mut outline = Drawing::new(&none).expect("no parameters to resolve");
     let mut hole = Drawing::new(&none).expect("no parameters to resolve");
@@ -1185,7 +1185,7 @@ pub fn metric_plate() -> Program {
 /// The name of the face of [`metric_plate`]'s hole.
 pub fn metric_plate_hole() -> String {
     let built =
-        build(&metric_plate(), "", workspace(BTreeMap::new()).scope("")).expect("the plate builds");
+        build(&metric_plate(), "", workspace(BTreeMap::new())).expect("the plate builds");
     let part = read_model(&built.part.current()).expect("the plate has a model");
     PartDescription::of(&part)
         .expect("the plate describes itself")
@@ -2260,8 +2260,8 @@ mod tests {
             ["extrude(boss)"]
         );
         // The datum the boss is sketched on is one of the part's.
-        let runner = boss_on_reference_plane().built().unwrap();
-        let datums = read_datums(&runner.part.current()).unwrap();
+        let built = boss_on_reference_plane().built().unwrap();
+        let datums = read_datums(&built.current()).unwrap();
         assert_eq!(datums.names(), ["lifted"]);
         // The boss stands on the box: from the box's top up to the plane.
         assert_eq!(
@@ -2588,9 +2588,9 @@ mod tests {
     /// plane: its frame, exactly.
     #[test]
     fn sketches_go_on_datum_planes() {
-        let runner = boss_on_reference_plane().built().unwrap();
-        model_of(&runner).check_names().unwrap();
-        let built = runner.part.current();
+        let part = boss_on_reference_plane().built().unwrap();
+        model_of(&part).check_names().unwrap();
+        let built = part.current();
         let lifted = read_datums(&built).unwrap().get("lifted").unwrap();
         let placed = built
             .retrieve_element(&whole_sketch("boss_sketch"))

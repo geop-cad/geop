@@ -2,10 +2,6 @@
 
 use std::collections::BTreeMap;
 
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
-    with_context,
-};
 use geop_core_editor::{
     edit_form::{Edit, EditForm},
     editable::{OperationGroup, OperationInfo, OperationTier},
@@ -14,12 +10,17 @@ use geop_core_editor::{
     part_operation::PartOperation,
     selectable::Selectable,
 };
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult, WithContext},
+    with_context,
+};
 use geop_core_program::element::ElementReference;
 use geop_ops_add_datum::Selected;
 use geop_ops_datums::{ORIGIN, datums};
 use geop_ops_model::{Design, Namer};
 use geop_ops_parameters::{
-    BuildPart, PartReader, Settings, StateValue, StateValues, StepContext, pose_state,
+    BuildPart, Placement, Runner, Setting, Settings, StateValue, StepContext, instances,
+    pose_state,
 };
 use geop_ops_view::{Listed, Listing, listing};
 use serde::{Deserialize, Serialize};
@@ -28,7 +29,7 @@ use crate::{
     Mate, MateEntity,
     editor::{self, PartEditing, PartSession},
     mechanism::{define, resolve},
-    placed::{Instance, Placement, read_library},
+    placed::define_placed,
 };
 
 /// Places the part the program in another file builds, named by the
@@ -93,21 +94,6 @@ impl AddPartArgs {
     }
 }
 
-/// The part the step `step` places from `file`, its parameters as
-/// `parameters` give them, run with `state`, where its pose state puts it:
-/// the generator of its instance.
-fn place(
-    reader: &PartReader,
-    (step, file, parameters): &(String, String, Settings),
-    state: &StateValues,
-) -> GeopResult<Instance> {
-    let component = read_library(reader)?.component(file, parameters, state)?;
-    Ok(Instance {
-        component,
-        placement: Placement::State(pose_state(step)),
-    })
-}
-
 /// What a mate is listed as in the part's structure (see [`Listed::kind`]).
 const MATE: &str = "mate";
 
@@ -124,7 +110,7 @@ impl PartOperation for AddPart {
     .picks_built()
     .icon(crate::icons::ADD_PART);
     type Args = AddPartArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = PartSession;
@@ -133,7 +119,7 @@ impl PartOperation for AddPart {
     /// not — something has to stay put for the others to mate to.
     fn new_args(context: &StepContext) -> AddPartArgs {
         let args = AddPartArgs::default();
-        match context.before.instances().is_empty() {
+        match instances(&context.before).is_ok_and(|placed| placed.is_empty()) {
             true => args.fixed(),
             false => args,
         }
@@ -149,13 +135,19 @@ impl PartOperation for AddPart {
     /// its mates let it. A mate that cannot be resolved fails the step,
     /// after the others are defined. The placed part's own mates come up
     /// with its constraints (see [`geop_ops_constraints::Constraints::of`]).
-    fn run(step: &str, part: &mut BuildPart, args: &AddPartArgs) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        runner: &Runner,
+        part: &mut BuildPart,
+        args: &AddPartArgs,
+    ) -> GeopResult<()> {
         let ctx = with_context!("add_part({step}, file={:?})", args.file);
         if args.file.is_empty() {
             return Err(GeopError::new("choose a file to place")).with_context(ctx);
         }
-        let placing = (step.to_string(), args.file.clone(), args.parameters.clone());
-        part.define_instance(step, &placing, place).with_context(ctx)?;
+        let placement = Placement::State(pose_state(step));
+        define_placed(runner, part, step, &args.file, &args.parameters, placement)
+            .with_context(ctx)?;
         let namer = Namer::new("add_part", step)?;
         let own_frame = MateEntity::of(
             step,
@@ -180,8 +172,7 @@ impl PartOperation for AddPart {
                 name: name.clone(),
                 elements: mate.entities.iter().map(Selectable::picked).collect(),
             });
-            let resolved =
-                part.define_target(&crate::mate(&name), &(name.clone(), mate), resolve);
+            let resolved = part.define_target(&crate::mate(&name), &(name.clone(), mate), resolve);
             if resolved.is_ok() {
                 defined.push((name, format!("{step} {id}")));
             }

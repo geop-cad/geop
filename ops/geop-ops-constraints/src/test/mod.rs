@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     constraint::{Bound, Constraint, Constraints, define_constraints},
+    solve::Run,
     unknown::{Unknown, Unknowns, declare_unknowns},
 };
 
@@ -182,7 +183,12 @@ impl Operation for InputFrameOperation {
     type Input = Sc;
     type State = Pose;
 
-    fn run(_: &str, part: &mut Part<Sc, Pose>, args: &Self::Args) -> GeopResult<()> {
+    fn run(
+        _: &str,
+        _: &ProgramRunner<Sc, Pose>,
+        part: &mut Part<Sc, Pose>,
+        args: &Self::Args,
+    ) -> GeopResult<()> {
         let reference = TargetReference::<Frame>::new(&args.target);
         part.define_target(&reference, args, |reader, args| {
             let x = (reader.retrieve_input(&args.input))
@@ -210,7 +216,12 @@ impl Operation for PinFrameOperation {
     type Input = Sc;
     type State = Pose;
 
-    fn run(step: &str, part: &mut Part<Sc, Pose>, args: &Self::Args) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &ProgramRunner<Sc, Pose>,
+        part: &mut Part<Sc, Pose>,
+        args: &Self::Args,
+    ) -> GeopResult<()> {
         let args = (step.to_string(), args.clone());
         define_constraints(part, step, &args, |reader, (step, args)| {
             record_built(step);
@@ -268,8 +279,48 @@ fn registry() -> OperationRegistry<Sc, Pose> {
         .unwrap()
 }
 
-fn runner() -> ProgramRunner<Sc, Pose> {
-    ProgramRunner::new(registry())
+/// A runner of the tests' operations, and the part it runs on.
+struct Running {
+    runner: ProgramRunner<Sc, Pose>,
+    part: Part<Sc, Pose>,
+}
+
+impl Running {
+    fn of(registry: OperationRegistry<Sc, Pose>) -> Self {
+        let mut runner = ProgramRunner::new(registry);
+        runner.workspace = Some(std::rc::Rc::new(instances::Files));
+        Self {
+            runner,
+            part: Part::default(),
+        }
+    }
+
+    fn run(
+        &mut self,
+        program: &Program,
+        inputs: &BTreeMap<String, Sc>,
+        state: &BTreeMap<String, Pose>,
+    ) -> RunOutput {
+        self.runner.run(&mut self.part, program, inputs, state)
+    }
+
+    /// The program `program` with `inputs`, for a solve to run.
+    fn rerun<'r>(
+        &'r mut self,
+        program: &'r Program,
+        inputs: &'r BTreeMap<String, Sc>,
+    ) -> Run<'r, Sc, Pose> {
+        Run {
+            runner: &self.runner,
+            part: &mut self.part,
+            program,
+            inputs,
+        }
+    }
+}
+
+fn runner() -> Running {
+    Running::of(registry())
 }
 
 /// The constraints of the part as it is now.
@@ -290,7 +341,7 @@ fn constraints_on_the_state_are_reported() {
     assert!(constraints_now(&runner.part).unwrap().is_empty());
 
     let program = Program::new(vec![input_frame("a", "a", "x"), pin("pin", "a", "body")]);
-    let residuals = |runner: &ProgramRunner<_, Pose>| {
+    let residuals = |runner: &Running| {
         let constraints = constraints_now(&runner.part).unwrap();
         let residuals = &constraints.get("pin").unwrap().residuals;
         Vector3::from_array([residuals[0], residuals[1], residuals[2]])

@@ -48,12 +48,12 @@ pub fn size(table: Table) -> Parameter {
 /// own — and designed by the parameters `values`, the size among them.
 pub fn family(material: &str, color: Option<&str>, values: Vec<Parameter>) -> Program {
     let mut program = Program::new();
-    program.parameters = Parameters {
+    program.set_parameters(Parameters {
         material: Material::named(material),
         color: color.map(Into::into),
         values,
         ..Parameters::default()
-    };
+    });
     program
 }
 

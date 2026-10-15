@@ -29,9 +29,9 @@ fn bracket_example_builds_and_unfolds() {
         serde_json::from_str::<crate::Program>(&json).unwrap(),
         program
     );
-    let runner = program.built().unwrap();
-    let view = runner.part.current();
-    assert_valid(&model_of(&runner));
+    let part = program.built().unwrap();
+    let view = part.current();
+    assert_valid(&model_of(&part));
     let sheet = sheet_body(&view, "sheet_cut(mount)")
         .and_then(|b| b.bent())
         .unwrap();
@@ -46,9 +46,9 @@ fn bracket_example_builds_and_unfolds() {
             keep: false,
         },
     );
-    let runner = program.built().unwrap();
-    let view = runner.part.current();
-    let built = model_of(&runner);
+    let part = program.built().unwrap();
+    let view = part.current();
+    let built = model_of(&part);
     assert_valid(&built);
     assert_eq!(built.solid_names(), ["flat_pattern(flat)"]);
     let Some(SheetBody::Flat(data)) = sheet_body(&view, "flat_pattern(flat)") else {

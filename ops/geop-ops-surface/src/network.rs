@@ -45,7 +45,7 @@ use geop_core_topology::{
     distance::{Feature, closest_points},
 };
 use geop_ops_model::{BodyNames, Chain, Design, ModelOperation, NamedModel, Namer, build_model};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_sketch3d::CurveSource;
 use serde::{Deserialize, Serialize};
 
@@ -84,7 +84,7 @@ impl PartOperation for NetworkSurface {
     .experimental()
     .icon(crate::icons::NETWORK_SURFACE);
     type Args = NetworkSurfaceArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -94,7 +94,12 @@ impl PartOperation for NetworkSurface {
         NetworkSurfaceArgs::default()
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &NetworkSurfaceArgs) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &Runner,
+        part: &mut BuildPart,
+        args: &NetworkSurfaceArgs,
+    ) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 

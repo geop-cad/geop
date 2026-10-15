@@ -42,7 +42,7 @@ use geop_core_topology::{
 use geop_ops_model::{
     BodyNames, Design, Edge, ModelOperation, NamedModel, build_model, model, validate_operation_id,
 };
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 /// Carries the face standing on its own that the edge named `edge` bounds
@@ -73,7 +73,7 @@ impl PartOperation for ExtendSurface {
     .experimental()
     .icon(crate::icons::EXTEND_SURFACE);
     type Args = ExtendSurfaceArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -86,7 +86,12 @@ impl PartOperation for ExtendSurface {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &ExtendSurfaceArgs) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &Runner,
+        part: &mut BuildPart,
+        args: &ExtendSurfaceArgs,
+    ) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 

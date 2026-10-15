@@ -647,7 +647,7 @@ function App() {
     <section className="panel timeline">
       <h2>Parameters</h2>
       <ParametersPanel
-        parameters={program?.program.parameters ?? {}}
+        parameters={program?.parameters.defined ?? {}}
         resolved={program?.parameters ?? { values: {}, errors: {} }}
         enabled={wasmReady}
         materials={program?.materials ?? []}

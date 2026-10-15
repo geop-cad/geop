@@ -23,7 +23,7 @@ use geop_ops_model::{
     CutWire, Design, ModelOperation, NamedModel, Namer, SolidNotes, build_model, frame_along,
     solid_notes,
 };
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -484,7 +484,7 @@ impl PartOperation for Route {
     .experimental()
     .icon(crate::icons::ROUTE);
     type Args = RouteArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = RouteSession;
@@ -502,7 +502,7 @@ impl PartOperation for Route {
     }
 
     /// Sweeps the bundle, then records its cable, and notes the bundle.
-    fn run(step: &str, part: &mut BuildPart, args: &RouteArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &RouteArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)?;
         part.revise_target(&cables(), &(step.to_string(), args.clone()), record)?;
         part.revise_target(&solid_notes(), &step.to_string(), note)

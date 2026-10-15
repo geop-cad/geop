@@ -11,16 +11,17 @@ use std::{collections::BTreeMap, rc::Rc};
 
 use geop_core_editor::editable::{Editable, Listed};
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::operation::Operation;
-use geop_ops_assembly::Library;
+use geop_core_program::{operation::Operation, workspace::Location};
 use geop_ops_model::Design;
 use geop_ops_output::Outputs;
-use geop_ops_parameters::{ProgramFile, Registry, Settings, StateValue, StateValues};
+use geop_ops_parameters::{
+    BuildPart, DefineParameters, PartProperties, ProgramFile, Registry, Setting, Settings,
+    StateValue, StateValues,
+};
 
 pub use geop_ops_parameters::Runner;
 
 use crate::{
-    part,
     stdlib::WithStandardParts,
     workspace::{self, FileStore},
 };
@@ -96,7 +97,7 @@ mod urdf_tests;
 mod view_tests;
 
 /// The operations of the editor's programs, and how each is edited.
-pub type Editors = geop_core_editor::editable::Editors<Design, StateValue, Design>;
+pub type Editors = geop_core_editor::editable::Editors<Setting, StateValue, Design>;
 
 /// The operations the editor offers, in the order it offers them within a
 /// group and tier: how its programs are edited ([`editors`]), and what it
@@ -170,6 +171,8 @@ operations! {
     Route,
     ImportStep,
     Drawing,
+    DefineParameters,
+    PartProperties,
 }
 
 /// The exporters and inspectors the editor offers (see [`geop_ops_output`]),
@@ -207,13 +210,26 @@ pub fn runner() -> Runner {
     Runner::new(registry().expect("the editor's operations each have a name of their own"))
 }
 
-/// Builds `program`, the file `file`, with `library` — for a program on
-/// its own, the scope of an empty [`workspace`]: the runner, holding the
-/// part it built.
-pub fn build(program: &Program, file: &str, library: Rc<dyn Library>) -> GeopResult<Runner> {
+/// A part a program built, and the runner that built it, to run it again.
+pub struct BuiltPart {
+    pub runner: Runner,
+    pub part: BuildPart,
+}
+
+/// Builds `program`, the file `file` of `workspace` — for a program on its
+/// own, an empty [`workspace()`] — with its parameters as it defines them.
+pub fn build(
+    program: &Program,
+    file: &str,
+    workspace: Rc<dyn geop_core_program::workspace::Workspace<StateValue>>,
+) -> GeopResult<BuiltPart> {
     let mut runner = runner();
-    let overrides = Settings::new();
-    runner.given = Some(part::given(program.about(file, &overrides), library));
-    program.run(&mut runner, &overrides, &StateValues::new())?;
-    Ok(runner)
+    runner.workspace = Some(workspace);
+    runner.location = Location {
+        file: workspace::resolve("", file),
+        within: Vec::new(),
+    };
+    let mut part = BuildPart::default();
+    program.run(&runner, &mut part, &Settings::new(), &StateValues::new())?;
+    Ok(BuiltPart { runner, part })
 }

@@ -931,8 +931,8 @@ fn loft_along_a_3d_sketch_guide() {
 fn a_sketchs_chain_is_named_as_its_curves_are() {
     let mut program = ProgramFile::new();
     program.push("path", sketch(on_origin(FrameAxis::Z), bend()));
-    let runner = program.built(registry).unwrap();
-    let reader = runner.part.current();
+    let part = program.built(registry).unwrap();
+    let reader = part.current();
     let chain = sketch_path("path").resolve(&reader).unwrap();
     assert!(!chain.is_closed());
     let placed: &PlacedSketch<S> = reader.retrieve_element(&whole_sketch("path")).unwrap();

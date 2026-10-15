@@ -28,7 +28,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_ops_model::{Design, ModelOperation, NamedModel, Namer, build_model};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -584,7 +584,7 @@ impl PartOperation for Subd {
     )
     .icon(crate::icons::SUBD);
     type Args = SubdArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = SubdSession;
@@ -597,7 +597,7 @@ impl PartOperation for Subd {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &SubdArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &SubdArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 

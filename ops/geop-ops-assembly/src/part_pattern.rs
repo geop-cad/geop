@@ -1,11 +1,5 @@
 //! [`PartPattern`]: copies of a placed part, in a row or round an axis.
 
-use geop_core_geometry::shape::Axis;
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult, WithContext},
-    primitives::{Pose, Quaternion},
-    with_context,
-};
 use geop_core_editor::{
     edit_form::{Edit, EditForm, FormState},
     editable::{OperationGroup, OperationInfo, OperationTier},
@@ -14,15 +8,24 @@ use geop_core_editor::{
     one_of, part_operation,
     part_operation::PartOperation,
 };
+use geop_core_geometry::shape::Axis;
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult, WithContext},
+    primitives::{Pose, Quaternion},
+    with_context,
+};
 use geop_core_program::element::ElementReference;
 use geop_ops_datums::Datums;
 use geop_ops_model::{Design, Line, NamedModel, Namer, Round};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StateValues, StepContext, located};
+use geop_ops_parameters::{
+    BuildPart, PartReader, Placement, Runner, Setting, StateValue, StepContext, instance,
+    instances, located,
+};
 use geop_ops_pattern::spacing::{Spacing, count_field, whole_count};
 use geop_ops_sketch::PlacedSketch;
 use serde::{Deserialize, Serialize};
 
-use crate::placed::{Instance, Placement};
+use crate::placed::define_placed;
 
 one_of! {
     /// The line copies of a placed part go along, or the axis they go round,
@@ -134,26 +137,9 @@ fn motions(
 
 /// The placed parts the steps before have placed, by name, in order.
 fn placed_names(before: &PartReader) -> Vec<String> {
-    (before.instances().into_iter())
+    (instances(before).unwrap_or_default().into_iter())
         .map(|(name, _)| name.to_string())
         .collect()
-}
-
-/// The copy of the placed part `seed` going `motion` after it — the same
-/// build, so run with the state it is run with: the generator of a copy's
-/// instance.
-fn copy(
-    reader: &PartReader,
-    (seed, motion): &(String, Pose<Design>),
-    _: &StateValues,
-) -> GeopResult<Instance> {
-    Ok(Instance {
-        component: reader.instance(seed)?.component.clone(),
-        placement: Placement::After {
-            of: seed.clone(),
-            motion: StateValue::Pose(*motion),
-        },
-    })
 }
 
 /// Checks the arguments ask for a pattern at all, before anything is
@@ -180,7 +166,7 @@ impl PartOperation for PartPattern {
     .experimental()
     .icon(crate::icons::PART_PATTERN);
     type Args = PartPatternArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -200,16 +186,22 @@ impl PartOperation for PartPattern {
 
     /// Places the copies, each where the pattern puts it after the part:
     /// the axis resolved in the part as the steps before left it.
-    fn run(step: &str, part: &mut BuildPart, args: &PartPatternArgs) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        runner: &Runner,
+        part: &mut BuildPart,
+        args: &PartPatternArgs,
+    ) -> GeopResult<()> {
         let ctx = with_context!("part_pattern({step}, {args:?})");
         let axis = check(args).with_context(ctx)?;
-        if part.current().instance(&args.part).is_err() {
+        // A copy loads what the part it copies was loaded from.
+        let Ok(seed) = instance(&part.current(), &args.part).cloned() else {
             return Err(GeopError::new(format!(
                 "{:?} is no part placed so far: pattern one an earlier step placed",
                 args.part
             )))
             .with_context(ctx);
-        }
+        };
         let motions = {
             let reader = part.current();
             let axis = axis.resolve_placed(&reader).with_context(ctx)?;
@@ -220,7 +212,11 @@ impl PartOperation for PartPattern {
         let namer = Namer::new("part_pattern", step)?;
         for (k, motion) in (1..).zip(motions) {
             let name = namer.name(&[&k.to_string()]);
-            part.define_instance(&name, &(args.part.clone(), motion), copy)
+            let placement = Placement::After {
+                of: args.part.clone(),
+                motion,
+            };
+            define_placed(runner, part, &name, &seed.file, &seed.inputs, placement)
                 .with_context(ctx)?;
         }
         Ok(())
@@ -249,9 +245,13 @@ impl PartOperation for PartPattern {
             true,
             |Edit { args, .. }, part| args.part = part.to_string(),
         );
-        f.pick_one("axis", "along or round", before, args.axis.as_ref(), |e, axis| {
-            e.args.axis = Some(axis)
-        });
+        f.pick_one(
+            "axis",
+            "along or round",
+            before,
+            args.axis.as_ref(),
+            |e, axis| e.args.axis = Some(axis),
+        );
         f.checkbox(
             "reversed",
             "reverse direction",
@@ -294,14 +294,9 @@ impl PartOperation for PartPattern {
             |label, value| value.number(label, before, unit),
             |args: &mut PartPatternArgs, spacing| *args.layout.spacing_mut() = spacing,
         );
-        count_field(
-            &mut f,
-            "count",
-            &args.count,
-            before,
-            None,
-            |edit, count| edit.args.count = count,
-        );
+        count_field(&mut f, "count", &args.count, before, None, |edit, count| {
+            edit.args.count = count
+        });
         f.form.dialog.text(
             "hint",
             "Each copy is a placed part of its own, named part_pattern(step,k); it moves with the part.",

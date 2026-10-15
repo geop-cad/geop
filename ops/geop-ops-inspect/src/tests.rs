@@ -10,10 +10,7 @@ use geop_core_math::{
     scalars::{Ring, ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_program::{
-    element::PickedElement,
-    operation::Operation,
-};
+use geop_core_program::{element::PickedElement, operation::Operation};
 use geop_ops_add_datum::Selected;
 use geop_ops_extrude_revolve::shapes::{
     cube::cube_solid, cylinder::revolved_cylinder, sphere::sphere_solid, v3,
@@ -21,7 +18,7 @@ use geop_ops_extrude_revolve::shapes::{
 use geop_ops_model::{NamedModel, model};
 use geop_ops_output::Bounded;
 use geop_ops_parameters::{
-    About, BuildPart, Material, Parameters, PartReader, about::define_about,
+    BuildPart, Material, PartProperties, PartPropertiesArgs, PartReader, Registry, Runner,
 };
 use geop_ops_view::drawn;
 
@@ -50,18 +47,16 @@ fn built_with(
     material: Option<Material>,
     then: impl FnOnce(&mut BuildPart),
 ) -> BuildPart {
-    let about = About {
-        file: "part.geop".into(),
-        parameters: Parameters {
-            material,
-            ..Parameters::default()
-        },
-        ..About::default()
+    let properties = PartPropertiesArgs {
+        material,
+        ..PartPropertiesArgs::default()
     };
+    let runner = Runner::new(Registry::default());
     let mut part = BuildPart::default();
     part.begin_run(&Default::default(), &Default::default());
     part.begin_step();
-    define_about(&mut part, &about).unwrap();
+    PartProperties::run("properties", &runner, &mut part, &properties).unwrap();
+    part.begin_step();
     part.define_target(&model(), given_model, given).unwrap();
     then(&mut part);
     part.end_run(0);
@@ -394,7 +389,8 @@ fn sketch_curves_are_measured() {
             sketch: line,
             references: Vec::new(),
         };
-        geop_ops_sketch3d::AddSketch3d::run("route", part, &args).unwrap();
+        let runner = geop_ops_parameters::Runner::new(Default::default());
+        geop_ops_sketch3d::AddSketch3d::run("route", &runner, part, &args).unwrap();
     });
 
     let curve = PickedElement {
@@ -449,34 +445,21 @@ fn measure_picks_what_it_measures() {
 /// corner at the origin of a unit cube placed 10 along `x` is at 10.
 #[test]
 fn placed_parts_are_measured_where_they_are() {
-    use geop_ops_assembly::{Component, Instance, Placement};
-    use geop_ops_parameters::{StateValue, pose_state};
-    use geop_ops_view::{INSTANCE_SEPARATOR, PartView};
-    use std::{collections::BTreeSet, rc::Rc};
-    fn undrawn(_: &PartReader) -> GeopResult<PartView> {
-        Ok(PartView::default())
-    }
+    use geop_ops_assembly::testing::{Shelf, given_model, place, runner};
+    use geop_ops_parameters::{ProgramFile, Settings, StateValue, StateValues, pose_state};
+    use geop_ops_view::INSTANCE_SEPARATOR;
     let mut cube = NamedModel::<S>::new();
     cube_solid(&mut cube, "c", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap();
-    let component = Rc::new(Component::new(
-        "cube.geop".into(),
-        BTreeSet::from(["cube.geop".to_string()]),
-        "cube.geop".into(),
-        Parameters::default(),
-        built(&cube, None),
-        undrawn,
-    ));
+    let mut placed = ProgramFile::new();
+    placed.program.steps.push(given_model("model", cube, None));
     let at = Pose::identity().with_position(v3(10.0, 0.0, 0.0));
+    let mut root = ProgramFile::new();
+    root.program.steps.push(place("p", "cube.geop", &Settings::new()));
+    root.state.insert(pose_state("p"), StateValue::Pose(at));
+    let shelf = Shelf::default().with("cube.geop", placed).with("top.geop", root.clone());
+    let runner = runner(shelf, "top.geop");
     let mut part = BuildPart::default();
-    let state = [(pose_state("p"), StateValue::Pose(at))].into();
-    part.begin_run(&Default::default(), &state);
-    part.begin_step();
-    let placed = Instance {
-        component,
-        placement: Placement::State(pose_state("p")),
-    };
-    (part.define_instance("p", &placed, |_, placed, _| Ok(placed.clone()))).unwrap();
-    part.end_run(0);
+    (root.run(&runner, &mut part, &Settings::new(), &StateValues::new())).unwrap();
 
     let corner = |name: &str| PickedElement {
         target: format!("p{INSTANCE_SEPARATOR}{}", model().name()),
@@ -488,6 +471,10 @@ fn placed_parts_are_measured_where_they_are() {
     assert!(x.value.contains(10.0), "{measured:?}");
     let report = mass_report(&part.current()).unwrap();
     let body = &report.bodies[0];
-    assert!(body.drawn.iter().all(|face| face.target == format!("p{INSTANCE_SEPARATOR}model")));
+    assert!(
+        body.drawn
+            .iter()
+            .all(|face| face.target == format!("p{INSTANCE_SEPARATOR}model"))
+    );
     assert_eq!(body.drawn.len(), 6, "{body:?}");
 }

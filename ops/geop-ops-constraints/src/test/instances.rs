@@ -1,49 +1,36 @@
 //! A part placed in a part: its constraints and unknowns come up behind its
 //! name, and the part's solve solves them.
 
-use std::{any::Any, collections::BTreeMap, rc::Rc};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use geop_core_math::{
-    geop_error::GeopResult,
+    geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     solvers::system::Mobility,
 };
 use geop_core_program::{
-    instance::{Instance, Placement, Subpart},
     operation::Operation,
-    part::{Part, Reader},
+    part::Part,
     program::{Program, ProgramStep},
     program_runner::ProgramRunner,
+    workspace::{Loaded, Workspace},
 };
 use serde::{Deserialize, Serialize};
 
-use super::{Pose, Sc, errors, identity, input_frame, inputs, pin, registry};
+use super::{Pose, Running, Sc, errors, identity, input_frame, inputs, pin, registry};
 use crate::{
     constraint::Constraints,
-    solve::{Problem, Run, solve},
+    solve::{Problem, solve},
     unknown::{Unknown, Unknowns, declare_unknowns},
 };
 
-/// A part a program built, as placed.
-struct Built(Part<Sc, Pose>);
-
-impl Subpart<Sc, Pose> for Built {
-    fn part(&self) -> &Part<Sc, Pose> {
-        &self.0
-    }
-
-    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-        self
-    }
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(super) struct PlaceArgs {
-    program: Program,
+    file: String,
 }
 
-/// Places the part `program` builds, with the input `x` at 1, as the
-/// instance named by the step.
+/// Places the part the program in `file` builds, with the input `x` at 1,
+/// as the instance named by the step.
 pub(super) struct PlaceOperation;
 
 impl Operation for PlaceOperation {
@@ -52,23 +39,52 @@ impl Operation for PlaceOperation {
     type Input = Sc;
     type State = Pose;
 
-    fn run(step: &str, part: &mut Part<Sc, Pose>, args: &PlaceArgs) -> GeopResult<()> {
-        part.define_instance(step, &(step.to_string(), args.program.clone()), build)
+    fn run(
+        step: &str,
+        runner: &ProgramRunner<Sc, Pose>,
+        part: &mut Part<Sc, Pose>,
+        args: &PlaceArgs,
+    ) -> GeopResult<()> {
+        runner.load_subpart(part, step, &args.file, &inputs(&[("x", 1.0)]))
     }
 }
 
-fn build(
-    _: &Reader<Sc, Pose>,
-    (step, program): &(String, Program),
-    state: &BTreeMap<String, Pose>,
-) -> GeopResult<Instance<Sc, Pose>> {
-    let mut runner = ProgramRunner::new(registry());
-    let output = runner.run(program, &inputs(&[("x", 1.0)]), state);
-    assert_eq!(errors(&output), []);
-    Ok(Instance {
-        component: Rc::new(Built(runner.part)),
-        placement: Placement::State(format!("{step}.pose")),
-    })
+thread_local! {
+    /// The programs of the tests' workspace, by file.
+    static FILES: RefCell<BTreeMap<String, Rc<Program>>> = const { RefCell::new(BTreeMap::new()) };
+}
+
+/// The tests' programs, by the file each was written to ([`place`]).
+pub(super) struct Files;
+
+impl Workspace<Pose> for Files {
+    fn program(&self, path: &str) -> GeopResult<Loaded<Pose>> {
+        let program = FILES.with(|files| files.borrow().get(path).cloned());
+        Ok(Loaded {
+            program: program.ok_or_else(|| GeopError::new(format!("there is no file {path:?}")))?,
+            state: Rc::default(),
+        })
+    }
+
+    fn read(&self, path: &str) -> GeopResult<Rc<str>> {
+        Err(GeopError::new(format!("{path:?} is no file to read")))
+    }
+
+    fn list(&self) -> Vec<String> {
+        FILES.with(|files| files.borrow().keys().cloned().collect())
+    }
+
+    fn resolve(&self, _: &str, name: &str) -> String {
+        name.to_string()
+    }
+
+    fn relative(&self, _: &str, path: &str) -> String {
+        path.to_string()
+    }
+
+    fn revision(&self) -> u64 {
+        0
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -85,7 +101,12 @@ impl Operation for FreeOperation {
     type Input = Sc;
     type State = Pose;
 
-    fn run(_: &str, part: &mut Part<Sc, Pose>, args: &FreeArgs) -> GeopResult<()> {
+    fn run(
+        _: &str,
+        _: &ProgramRunner<Sc, Pose>,
+        part: &mut Part<Sc, Pose>,
+        args: &FreeArgs,
+    ) -> GeopResult<()> {
         declare_unknowns(part, &args.state, |_, state| {
             Ok(vec![Unknown {
                 state: state.clone(),
@@ -97,11 +118,12 @@ impl Operation for FreeOperation {
     }
 }
 
+/// The step `id` placing the program of `steps`, written to the file
+/// `<id>.geop`.
 fn place(id: &str, steps: Vec<ProgramStep>) -> ProgramStep {
-    let args = PlaceArgs {
-        program: Program::new(steps),
-    };
-    ProgramStep::new::<PlaceOperation>(id, &args).unwrap()
+    let file = format!("{id}.geop");
+    FILES.with(|files| files.borrow_mut().insert(file.clone(), Rc::new(Program::new(steps))));
+    ProgramStep::new::<PlaceOperation>(id, &PlaceArgs { file }).unwrap()
 }
 
 fn free(id: &str, state: &str) -> ProgramStep {
@@ -123,7 +145,7 @@ fn an_instance_is_solved_in_the_part_it_is_placed_in() {
         pin("pin", "a", "body"),
     ];
     let program = Program::new(vec![place("p", inner)]);
-    let mut runner = ProgramRunner::new(registry());
+    let mut runner = Running::of(registry());
     let given = BTreeMap::from([("p/body".to_string(), Pose::at([3.0, 0.0, 0.0]))]);
     assert_eq!(errors(&runner.run(&program, &inputs(&[]), &given)), []);
 
@@ -151,13 +173,12 @@ fn an_instance_is_solved_in_the_part_it_is_placed_in() {
         scale: Sc::ONE,
     };
     let x = inputs(&[]);
-    let run = Run {
-        runner: &mut runner,
-        program: &program,
-        inputs: &x,
-    };
+    let run = runner.rerun(&program, &x);
     let solved = solve(run, &given, &problem).unwrap();
     assert!(solved.report.converged, "{:?}", solved.report);
-    let at = solved.state["p/body"].position.to_array().map(|c| c.to_f64());
+    let at = solved.state["p/body"]
+        .position
+        .to_array()
+        .map(|c| c.to_f64());
     assert!((at[0] - 1.0).abs() < 1e-8 && at[1].abs() < 1e-8, "{at:?}");
 }

@@ -13,7 +13,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_ops_model::{Design, ModelOperation, NamedModel, Namer, read_model};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -142,7 +142,7 @@ impl PartOperation for Hem {
     )
     .icon(crate::icons::HEM);
     type Args = HemArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -159,7 +159,7 @@ impl PartOperation for Hem {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &HemArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &HemArgs) -> GeopResult<()> {
         body::run::<Self>(step, part, args)
     }
 

@@ -20,9 +20,9 @@ end's toolbar, and `registry` is the registry its programs run with.
 `Program` is the program file of
 [geop-ops-parameters](../ops/geop-ops-parameters.md#the-program-file-programfile),
 and `Runner` the runner of its steps — what the web editor edits and the
-command-line tool compiles. `operations::build(program, file, library)`
-builds a program outside the editor, with the library it places parts from
-(`operations::workspace`, beside the standard parts).
+command-line tool compiles. `operations::build(program, file, workspace)`
+builds a program outside the editor, as the file `file` of the workspace
+it places parts from (`operations::workspace`, beside the standard parts).
 
 `outputs` is, the same way, the set of exporters and inspectors the editor
 offers (see [geop-ops-output](../ops/geop-ops-output.md)): STL and STEP
@@ -39,17 +39,11 @@ The `part` module. An operation crate plugs into the editor without the editor k
 defines its own targets and draws them, and `part` composes the part from
 every crate's:
 
-- `given(about, library)`: the given step of every run (see
-  [geop-core-program](../core/geop-core-program.md#running-a-program)) —
-  what the program says of its part and the files around it
-  ([geop-ops-parameters](../ops/geop-ops-parameters.md#what-a-run-is-given-about)),
-  the library it places parts from
-  ([geop-ops-assembly](../ops/geop-ops-assembly.md)) and the datums with
-  the origin ([geop-ops-datums](../ops/geop-ops-datums.md)).
 - `draw(reader)`: the part as the viewport draws it, a
   [`PartView`](../ops/geop-ops-view.md) — its model, its datums, its
   sketches, what its steps draw on it and the parts placed in it, in its
-  colour.
+  colour (`geop_ops_assembly::draw`, which draws placed parts the same
+  way).
 - `structure(reader, hidden)`: what the part has beyond the faces of its
   solids — datums, sketches, solids, faces standing on their own, placed
   parts, and whatever its steps list, such as mates — each a
@@ -57,16 +51,19 @@ every crate's:
 
 ## The workspace
 
-The `workspace` module. `Workspace` is the `Library` of a set of program files (see
-[geop-ops-assembly](../ops/geop-ops-assembly.md)): the parts they build,
-by path, and the other files their steps read. Files name each other by
-`/`-separated paths relative to the file doing the naming —
-`../parts/bolt.geop` — so a folder of files can be moved as a whole
-(`resolve`, `relative`). `Workspace::scope(file)` is the library a program
-of one of them is built with. Every file it builds is kept, by the values
-its parameters were built with, until a file it was built from changes; and
-it refuses a placement that would make files place each other in a cycle,
-naming the cycle: the files must form a DAG. Where the files come from is a
+The `workspace` module. `Workspace` is the
+[workspace](../core/geop-core-program.md#the-workspace) of a set of program
+files: the parts they build, by path, and the other files their steps
+read. Files name each other by `/`-separated paths relative to the file
+doing the naming — `../parts/bolt.geop` — so a folder of files can be
+moved as a whole (`resolve`, `relative`). Each file is read once, until it
+changes: a program is the same `Rc` while its file does not change, so a
+part placed from it again carries over what it built. Every part placed is
+a part of its own, kept by the part placing it (sharing the parts that
+read no state between their instances is a TODO). A write changes its
+revision, and what read its files is read again. The runner refuses a
+placement that would make files place each other in a cycle, naming the
+cycle: the files must form a DAG. Where the files come from is a
 `FileStore`; `stdlib::WithStandardParts` adds the standard parts beside a
 workspace's own files, as read-only files named `std:…`
 (`std:iso4032_hex_nut.geop`), which mean the same file from anywhere.

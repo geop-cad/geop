@@ -22,7 +22,7 @@ use geop_ops_booleans::{
 };
 use geop_ops_extrude_revolve::{extrude::extrude, operation::shape_loops};
 use geop_ops_model::{Design, Face, ModelOperation, NamedModel, Namer, build_model, model};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_sketch::{PlacedSketch, SketchRef};
 use serde::{Deserialize, Serialize};
 
@@ -71,7 +71,7 @@ impl PartOperation for ProjectCurve {
     .experimental()
     .icon(crate::icons::PROJECT_CURVE);
     type Args = ProjectCurveArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -85,7 +85,12 @@ impl PartOperation for ProjectCurve {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &ProjectCurveArgs) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &Runner,
+        part: &mut BuildPart,
+        args: &ProjectCurveArgs,
+    ) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 

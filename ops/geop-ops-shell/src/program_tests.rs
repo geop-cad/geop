@@ -209,8 +209,8 @@ fn offset_plane_from_a_shelled_face() {
             },
         },
     );
-    let runner = program.built(registry).unwrap();
-    let datum = read_datums(&runner.part.current())
+    let part = program.built(registry).unwrap();
+    let datum = read_datums(&part.current())
         .unwrap()
         .get("d")
         .unwrap();

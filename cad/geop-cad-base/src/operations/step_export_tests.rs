@@ -94,25 +94,24 @@ fn an_assembly_is_written_as_products_and_occurrences() {
         ("parts/peg.geop".to_string(), peg.to_json().unwrap()),
         ("sub.geop".to_string(), sub.to_json().unwrap()),
     ]);
-    let runner = build(&robot, "robot.geop", workspace(files).scope("robot.geop")).unwrap();
+    let runner = build(&robot, "robot.geop", workspace(files)).unwrap();
     let text = write_part(&runner.part.current(), "robot").unwrap();
     // To check it in another CAD system: written where STEP_EXPORT_DIR says.
     if let Some(dir) = std::env::var_os("STEP_EXPORT_DIR") {
         std::fs::write(std::path::Path::new(&dir).join("robot.step"), &text).unwrap();
     }
     let count = |what: &str| text.matches(what).count();
+    // TODO: the peg written once, however often it is placed, once the
+    // parts of no state are shared between instances (see
+    // `geop_core_program::part::Part`): 3 products and 2 solids.
     assert_eq!(
         count("=PRODUCT('"),
-        3,
-        "the assembly, the subassembly, the peg"
+        5,
+        "the assembly, the subassembly, and each of the three pegs"
     );
     assert_eq!(count("NEXT_ASSEMBLY_USAGE_OCCURRENCE"), 4);
     assert_eq!(count("ITEM_DEFINED_TRANSFORMATION"), 4);
-    assert_eq!(
-        count("MANIFOLD_SOLID_BREP"),
-        2,
-        "the base and the peg, once each"
-    );
+    assert_eq!(count("MANIFOLD_SOLID_BREP"), 4, "the base and each peg");
     assert!(text.contains("PRODUCT('peg','peg'"));
 
     // Read back by a program importing it.
@@ -120,8 +119,8 @@ fn an_assembly_is_written_as_products_and_occurrences() {
     let file = "robot.step".to_string();
     program.push("imp", ImportStepArgs { file: file.clone() });
     let files = BTreeMap::from([(file, text)]);
-    let runner = build(&program, "main.geop", workspace(files).scope("main.geop")).unwrap();
-    let back = model_of(&runner);
+    let part = build(&program, "main.geop", workspace(files)).unwrap().part;
+    let back = model_of(&part);
     let model: &Model<Design> = back.topology();
     assert_eq!(model.solids.len(), 4, "the base and three pegs");
     // The pegs reach z = 2 (a), 3 (in the subassembly) and x = 11 (b).

@@ -10,7 +10,7 @@ use geop_core_editor::{
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::element::ElementReference;
 use geop_ops_model::{Body, Design, ModelOperation, NamedModel, build_model, resolve_bodies};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 /// Deletes the bodies `bodies` refers to, and everything of them: a solid
@@ -41,7 +41,7 @@ impl PartOperation for DeleteBody {
     )
     .icon(crate::icons::DELETE_BODY);
     type Args = DeleteBodyArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -51,7 +51,7 @@ impl PartOperation for DeleteBody {
         DeleteBodyArgs::default()
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &DeleteBodyArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &DeleteBodyArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 

@@ -23,7 +23,7 @@ use geop_ops_model::{
     Design, ModelOperation, NamedModel, Namer, Threads, ToolReach, build_model, draw_threads,
     read_model, resolve_bodies, threads,
 };
-use geop_ops_parameters::{BuildPart, PartReader, StateValue};
+use geop_ops_parameters::{BuildPart, PartReader, Setting, StateValue};
 use serde::{Deserialize, Serialize};
 
 use crate::features::FeatureRef;
@@ -462,7 +462,7 @@ fn copy_threads(reader: &PartReader, copies: &ThreadCopies) -> GeopResult<Thread
 /// drawn as the step's annotations.
 pub(crate) fn run_pattern<O>(part: &mut BuildPart, step: &str, args: &O::Args) -> GeopResult<()>
 where
-    O: ModelOperation + PartOperation<Input = Design, State = StateValue>,
+    O: ModelOperation + PartOperation<Input = Setting, State = StateValue>,
     O::Args: Pattern,
 {
     let features = &args.seeds().features;

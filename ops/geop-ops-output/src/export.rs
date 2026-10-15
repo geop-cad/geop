@@ -76,7 +76,7 @@ impl<E: Exporter> ErasedExporter for E {
                 })?,
         };
         let options = read_options::<E::Options>(info.kind, options)?;
-        let file = output.about()?.file;
+        let file = output.file_name().to_string();
         E::export(output, format, options).map_err(|e| {
             e.with_context(format!(
                 "export(exporter={}, format={format}, file={file:?})",

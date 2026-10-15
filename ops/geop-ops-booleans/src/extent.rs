@@ -60,7 +60,7 @@ impl Extent {
     }
 
     /// Where it ends, its length as `reader` reads the parameters.
-    pub fn end<I: Input + Scalar, St: State>(&self, reader: &Reader<I, St>) -> GeopResult<End> {
+    pub fn end<I: Input, St: State>(&self, reader: &Reader<I, St>) -> GeopResult<End> {
         Ok(match self {
             Extent::Blind(length) => End::Blind(length.resolve(reader)?),
             Extent::UpToNext => End::UpToNext,

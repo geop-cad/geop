@@ -1,24 +1,18 @@
 //! Bills of generated assemblies: repeated parts grouped, sub-assemblies
 //! flattened or indented, masses multiplied, sheet thickness and wires.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    rc::Rc,
-};
-
 use geop_core_math::{
-    geop_error::GeopResult,
     primitives::Pose,
     scalars::{ScalInF64 as S, Scalar},
 };
-use geop_ops_assembly::{Component, Instance, Placement};
+
+use geop_ops_assembly::testing::{Shelf, given_model, place, runner};
 use geop_ops_extrude_revolve::shapes::block;
-use geop_ops_model::{CutWire, NamedModel, SolidNotes, model, solid_notes};
+use geop_ops_model::{CutWire, NamedModel, SolidNotes};
 use geop_ops_parameters::{
-    About, BuildPart, Material, Parameter, ParameterKind, Parameters, PartReader, Setting,
-    Settings, StateValue, about::define_about, parameters::Row, pose_state,
+    BuildPart, Material, Parameter, ParameterKind, Parameters, ProgramFile, Setting, Settings,
+    StateValue, StateValues, parameters::Row, pose_state,
 };
-use geop_ops_view::PartView;
 
 use crate::{Bom, LineKind, Structure, bom};
 
@@ -35,100 +29,42 @@ fn steel() -> Parameters {
     }
 }
 
-/// `value`, as the generator of a target that is given it.
-fn given<T: Clone>(_: &PartReader, value: &T) -> GeopResult<T> {
-    Ok(value.clone())
-}
-
-/// A part placed, as the bill reads it: never drawn.
-fn undrawn(_: &PartReader) -> GeopResult<PartView> {
-    Ok(PartView::default())
-}
-
-/// What a part is made of, as a test builds it: its program's file and
-/// parameters, the settings it is built with, its model, and the parts it
-/// places — and what else `then` defines.
-struct Made {
-    file: &'static str,
+/// The program of a part: its parameters and properties, a step giving its
+/// model and the notes on its solids, and one placing each of `placed` —
+/// its name, its file and the settings it is built with — where its pose
+/// state, the identity, puts it.
+fn program(
     parameters: Parameters,
-    settings: Settings,
     model: NamedModel<S>,
-    placed: Vec<(&'static str, Rc<Component>)>,
+    notes: Option<SolidNotes>,
+    placed: &[(&str, &str, Settings)],
+) -> ProgramFile {
+    let mut file = ProgramFile::new();
+    file.set_parameters(parameters);
+    file.program.steps.push(given_model("model", model, notes));
+    for (name, placed, settings) in placed {
+        file.program.steps.push(place(name, placed, settings));
+        (file.state).insert(pose_state(name), StateValue::Pose(Pose::identity()));
+    }
+    file
 }
 
-impl Made {
-    fn new(file: &'static str, parameters: Parameters) -> Self {
-        Self {
-            file,
-            parameters,
-            settings: Settings::new(),
-            model: NamedModel::new(),
-            placed: Vec::new(),
-        }
-    }
-
-    /// Places `component` under `name`: where it is is no part of what it
-    /// is.
-    fn place(mut self, component: &Rc<Component>, name: &'static str) -> Self {
-        self.placed.push((name, component.clone()));
-        self
-    }
-
-    /// The part a program's run leaves, as a runner's given step and a
-    /// step per part placed define it, `then` defining more of it.
-    fn build(self, then: impl FnOnce(&mut BuildPart)) -> BuildPart {
-        let resolved = self.parameters.resolve(&self.settings);
-        let about = About {
-            file: self.file.into(),
-            parameters: self.parameters,
-            chosen: resolved.chosen,
-        };
-        let state: BTreeMap<String, StateValue> = (self.placed.iter())
-            .map(|(name, _)| (pose_state(name), StateValue::Pose(Pose::identity())))
-            .collect();
-        let mut part = BuildPart::default();
-        part.begin_run(&resolved.numbers, &state);
-        part.begin_step();
-        define_about(&mut part, &about).unwrap();
-        part.define_target(&model(), &self.model, given).unwrap();
-        for (name, component) in &self.placed {
-            part.begin_step();
-            let placed = Instance {
-                component: component.clone(),
-                placement: Placement::State(pose_state(name)),
-            };
-            (part.define_instance(name, &placed, |_, placed, _| Ok(placed.clone()))).unwrap();
-        }
-        then(&mut part);
-        part.end_run(0);
-        part
-    }
-
-    /// It as a component, to place.
-    fn component(self) -> Rc<Component> {
-        let (file, parameters) = (self.file, self.parameters.clone());
-        let part = self.build(|_| {});
-        Rc::new(Component::new(
-            file.into(),
-            BTreeSet::from([file.into()]),
-            format!("{file}#{}", fresh_key()),
-            parameters,
-            part,
-            undrawn,
-        ))
-    }
+/// The part `root`, the program of the file `file` on `shelf`, builds.
+fn build(shelf: Shelf, file: &str, root: ProgramFile) -> BuildPart {
+    let runner = runner(shelf.with(file, root.clone()), file);
+    let mut part = BuildPart::default();
+    (root.run(&runner, &mut part, &Settings::new(), &StateValues::new())).unwrap();
+    part
 }
 
-/// A key no other build has.
-fn fresh_key() -> usize {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
-    NEXT.fetch_add(1, Ordering::Relaxed)
+/// The settings that build a screw of the size `size`.
+fn size(size: &str) -> Settings {
+    Settings::from([("size".into(), Setting::Text(size.into()))])
 }
 
-/// A "standard" screw, a steel cube of side 1, built at the size `size`:
+/// A "standard" screw, a steel cube of side 1, of the sizes M4 and M5:
 /// called a test screw, and ordered as `TEST M4`.
-fn screw(size: &str) -> Rc<Component> {
+fn screw() -> ProgramFile {
     let mut parameters = steel();
     parameters.title = Some("Test screw".into());
     parameters.designation = Some("TEST".into());
@@ -149,33 +85,39 @@ fn screw(size: &str) -> Rc<Component> {
             selected: "M4".into(),
         },
     });
-    let mut made = Made::new("std:screw.geop", parameters);
-    made.settings = Settings::from([("size".into(), Setting::Text(size.into()))]);
-    block(&mut made.model, "body", [0.0; 3], [1.0; 3]);
-    made.component()
+    let mut model = NamedModel::new();
+    block(&mut model, "body", [0.0; 3], [1.0; 3]);
+    program(parameters, model, None, &[])
 }
 
 /// A bracket of side 2, with two M4 screws in it.
-fn bracket() -> Rc<Component> {
-    let mut made = Made::new("bracket.geop", steel());
-    block(&mut made.model, "body", [0.0; 3], [2.0; 3]);
-    let m4 = screw("M4");
-    made.place(&m4, "s1").place(&m4, "s2").component()
+fn bracket() -> ProgramFile {
+    let mut model = NamedModel::new();
+    block(&mut model, "body", [0.0; 3], [2.0; 3]);
+    let m4 = size("M4");
+    let placed = [
+        ("s1", "std:screw.geop", m4.clone()),
+        ("s2", "std:screw.geop", m4),
+    ];
+    program(steel(), model, None, &placed)
 }
 
-/// Two brackets, three more M4 screws — one of them a separate build of
-/// the same file and size — and one M5.
+/// Two brackets, three more M4 screws — one of them placed with its size
+/// given apart — and one M5.
 fn assembly() -> BuildPart {
-    let bracket = bracket();
-    let m4 = screw("M4");
-    Made::new("top.geop", Parameters::default())
-        .place(&bracket, "b1")
-        .place(&bracket, "b2")
-        .place(&m4, "s1")
-        .place(&m4, "s2")
-        .place(&screw("M4"), "s3")
-        .place(&screw("M5"), "s4")
-        .build(|_| {})
+    let (m4, screw_file) = (size("M4"), "std:screw.geop");
+    let placed = [
+        ("b1", "bracket.geop", Settings::new()),
+        ("b2", "bracket.geop", Settings::new()),
+        ("s1", screw_file, m4.clone()),
+        ("s2", screw_file, m4.clone()),
+        ("s3", screw_file, size("M4")),
+        ("s4", screw_file, size("M5")),
+    ];
+    let top = program(Parameters::default(), NamedModel::new(), None, &placed);
+    let shelf = (Shelf::default().with(screw_file, screw()))
+        .with("bracket.geop", bracket());
+    build(shelf, "top.geop", top)
 }
 
 /// The unit and total mass of a part line.
@@ -206,7 +148,7 @@ fn assert_close(got: f64, want: f64) {
 /// for its own body, weighed without its screws.
 #[test]
 fn a_flat_bill_groups_repeated_parts() {
-    let bom = bom(&assembly().current(), Structure::Flat).unwrap();
+    let bom = bom(&assembly().current(), "top.geop", Structure::Flat).unwrap();
     let rows: Vec<(&str, u64, Option<&str>, usize)> = bom
         .lines
         .iter()
@@ -263,7 +205,7 @@ fn a_flat_bill_groups_repeated_parts() {
 /// body and its screws.
 #[test]
 fn an_indented_bill_follows_the_sub_assemblies() {
-    let bom = bom(&assembly().current(), Structure::Indented).unwrap();
+    let bom = bom(&assembly().current(), "top.geop", Structure::Indented).unwrap();
     let rows: Vec<(&str, usize, u64, &str)> = bom
         .lines
         .iter()
@@ -290,13 +232,15 @@ fn an_indented_bill_follows_the_sub_assemblies() {
 /// thickness recorded on its sheet-metal body.
 #[test]
 fn a_plain_part_is_one_line_with_its_sheet_thickness() {
-    let mut made = Made::new("parts/cover.geop", Parameters::default());
-    block(&mut made.model, "sheet", [0.0; 3], [1.0; 3]);
+    let mut model = NamedModel::new();
+    block(&mut model, "sheet", [0.0; 3], [1.0; 3]);
     let mut noted = SolidNotes::default();
     noted.note_mut("cube(sheet)").thickness = Some(1.5);
-    let part = made.build(|part| part.define_target(&solid_notes(), &noted, given).unwrap());
+    let cover = program(Parameters::default(), model, Some(noted), &[]);
+    let file = "parts/cover.geop";
+    let part = build(Shelf::default(), file, cover);
     for structure in [Structure::Flat, Structure::Indented] {
-        let bom = bom(&part.current(), structure).unwrap();
+        let bom = bom(&part.current(), file, structure).unwrap();
         assert_eq!(bom.lines.len(), 1, "{bom:#?}");
         let line = &bom.lines[0];
         assert_eq!((line.item.as_str(), line.name.as_str()), ("1", "cover"));
@@ -317,8 +261,8 @@ fn a_plain_part_is_one_line_with_its_sheet_thickness() {
 /// the CSV with a row each and the total.
 #[test]
 fn wires_are_lines_of_their_own() {
-    let mut harness = Made::new("harness.geop", Parameters::default());
-    block(&mut harness.model, "cable", [0.0; 3], [1.0; 3]);
+    let mut model = NamedModel::new();
+    block(&mut model, "cable", [0.0; 3], [1.0; 3]);
     let wire = |name: &str, gauge| CutWire {
         name: name.into(),
         colour: "#ff0000".into(),
@@ -330,24 +274,15 @@ fn wires_are_lines_of_their_own() {
     let bundle = noted.note_mut("cube(cable)");
     bundle.drawn_only = true;
     bundle.wires = vec![wire("power", Some(22)), wire("signal, shielded", None)];
-    let harness = {
-        let (file, parameters) = (harness.file, harness.parameters.clone());
-        let part = harness.build(|part| part.define_target(&solid_notes(), &noted, given).unwrap());
-        Rc::new(Component::new(
-            file.into(),
-            BTreeSet::from([file.into()]),
-            "harness".into(),
-            parameters,
-            part,
-            undrawn,
-        ))
-    };
-    let top = Made::new("top.geop", Parameters::default())
-        .place(&harness, "h1")
-        .place(&harness, "h2")
-        .build(|_| {});
+    let harness = program(Parameters::default(), model, Some(noted), &[]);
+    let placed = [
+        ("h1", "harness.geop", Settings::new()),
+        ("h2", "harness.geop", Settings::new()),
+    ];
+    let top = program(Parameters::default(), NamedModel::new(), None, &placed);
+    let top = build(Shelf::default().with("harness.geop", harness), "top.geop", top);
 
-    let flat = bom(&top.current(), Structure::Flat).unwrap();
+    let flat = bom(&top.current(), "top.geop", Structure::Flat).unwrap();
     let rows: Vec<(&str, u64, Option<&str>)> = flat
         .lines
         .iter()
@@ -380,7 +315,7 @@ fn wires_are_lines_of_their_own() {
     );
     assert!(lines[4].contains("Total"), "{csv}");
 
-    let indented = bom(&top.current(), Structure::Indented).unwrap();
+    let indented = bom(&top.current(), "top.geop", Structure::Indented).unwrap();
     let items: Vec<(&str, usize)> = indented
         .lines
         .iter()

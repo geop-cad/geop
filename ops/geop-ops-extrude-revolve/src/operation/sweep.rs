@@ -17,7 +17,7 @@ use geop_core_editor::{
 };
 use geop_core_program::element::ElementReference;
 use geop_ops_model::{Chain, Design, ModelOperation, NamedModel, Namer, build_model, read_model};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_sketch::{PlacedSketch, SketchRef};
 use geop_ops_sketch3d::PlacedSketch3d;
 use serde::{Deserialize, Serialize};
@@ -126,7 +126,7 @@ impl PartOperation for Sweep {
     )
     .icon(crate::icons::SWEEP);
     type Args = SweepArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -154,7 +154,7 @@ impl PartOperation for Sweep {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &SweepArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &SweepArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
     /// The profile and the path, picked; the rails, if any; how the profile

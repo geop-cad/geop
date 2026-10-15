@@ -11,7 +11,7 @@ use geop_core_math::{
 use geop_core_sketch::{ConstraintId, CurveId, CurveKind, PointId, SplineShape};
 use geop_core_editor::numeric_input::{NumericInput, evaluate};
 use geop_ops_model::Design;
-use geop_ops_parameters::{Parameters, Settings};
+use geop_ops_parameters::ProgramFile as Program;
 use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch, SketchPlane};
 
 /// A sketch drawn point by point, each point placed by two formulas — its
@@ -25,31 +25,28 @@ pub struct Drawing {
     sketch: Sketch,
     origin: PointId,
     formulas: BTreeMap<ConstraintId, NumericInput>,
-    /// The numbers the parameters resolve to as defined: where to draw.
-    numbers: BTreeMap<String, Design>,
+    /// The numbers the parameters come to as defined: where to draw.
+    numbers: BTreeMap<String, f64>,
 }
 
 impl Drawing {
-    pub fn new(parameters: &Parameters) -> GeopResult<Self> {
-        let resolved = parameters.resolve(&Settings::new());
-        if let Some((name, error)) = resolved.errors.iter().next() {
-            return Err(GeopError::new(format!(
-                "the parameter {name:?} does not resolve: {error}"
-            )));
-        }
+    /// A drawing for a step of `program`, drawn with its parameters as it
+    /// defines them.
+    pub fn new(program: &Program) -> GeopResult<Self> {
+        let numbers = program.parameter_numbers()?;
         let mut sketch = Sketch::new();
         let origin = sketch.add_fixed_point(Design::ZERO, Design::ZERO);
         Ok(Self {
             sketch,
             origin,
             formulas: BTreeMap::new(),
-            numbers: resolved.numbers,
+            numbers,
         })
     }
 
     /// The value of `formula` with the parameters as defined.
     fn value(&self, formula: &str) -> GeopResult<f64> {
-        evaluate(formula, |name| self.numbers.get(name).map(|n| n.to_f64()))
+        evaluate(formula, |name| self.numbers.get(name).copied())
     }
 
     /// Adds the dimension `constraint`, given by `formula` — a plain

@@ -6,22 +6,22 @@ use std::collections::BTreeMap;
 
 use geop_ops_assembly::{AddPartArgs, placed::placed_parts};
 use geop_ops_model::read_model;
-use geop_ops_parameters::{Setting, Settings, StateValue, pose_state};
+use geop_ops_parameters::{BuildPart, Setting, Settings, StateValue, pose_state};
 use geop_ops_bom::{Bom, LineKind, Structure, bom};
 
-use super::{Runner, workspace};
+use super::workspace;
 use crate::Program;
 use crate::examples::{self, pose};
 
 /// `program`, saved as `path` among `files`, built.
-fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Runner {
-    super::build(program, path, workspace(files).scope(path)).unwrap()
+fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> BuildPart {
+    super::build(program, path, workspace(files)).unwrap().part
 }
 
-/// The bill of materials of what `runner` built, laid out as `structure`
-/// says.
-fn bill_of_materials(runner: &Runner, structure: Structure) -> Bom {
-    bom(&runner.part.current(), structure).unwrap()
+/// The bill of materials of `part`, the program of the file `file`, laid
+/// out as `structure` says.
+fn bill_of_materials(part: &BuildPart, file: &str, structure: Structure) -> Bom {
+    bom(&part.current(), file, structure).unwrap()
 }
 
 /// `(item, level, quantity, name, designation)` of every line.
@@ -80,7 +80,7 @@ fn the_bolted_plate_lists_its_screw_and_nut() {
         .map(|(path, program)| (path.to_string(), program.to_json().unwrap()))
         .collect();
     let part = build(files, "bolted_plate.geop", &program);
-    let bom = bill_of_materials(&part, Structure::Flat);
+    let bom = bill_of_materials(&part, "bolted_plate.geop", Structure::Flat);
     assert_eq!(
         rows(&bom),
         [
@@ -179,7 +179,7 @@ fn repeated_standard_parts_are_grouped() {
     ]);
     let part = build(files, "robot.geop", &robot);
 
-    let flat = bill_of_materials(&part, Structure::Flat);
+    let flat = bill_of_materials(&part, "robot.geop", Structure::Flat);
     let screw = "ISO 4762 socket head cap screw";
     let nut = "ISO 4032 hex nut";
     assert_eq!(
@@ -198,7 +198,7 @@ fn repeated_standard_parts_are_grouped() {
         "{unit} x 14 is not {total}"
     );
 
-    let indented = bill_of_materials(&part, Structure::Indented);
+    let indented = bill_of_materials(&part, "robot.geop", Structure::Indented);
     assert_eq!(
         rows(&indented),
         [
@@ -249,10 +249,10 @@ fn the_bolted_plate_is_weighed_in_bounded_work() {
         .map(|(path, program)| (path.to_string(), program.to_json().unwrap()))
         .collect();
     let part = build(files, "bolted_plate.geop", &program);
-    let reader = part.part.current();
+    let reader = part.current();
     let placed = placed_parts(&reader).unwrap();
     let mut parts = vec![reader.clone()];
-    parts.extend(placed.iter().map(|p| p.located.instance.reader()));
+    parts.extend(placed.iter().map(|p| p.located.part.clone()));
     let mut evaluations = Vec::new();
     for p in parts {
         // An assembly that only places parts has an empty model of its own.

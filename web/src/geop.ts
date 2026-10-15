@@ -231,11 +231,10 @@ export interface Material {
 export type ParamValue = number | Pose | string;
 
 /**
- * A program: its parameters, its steps — its structure — and its state — the values it is built with,
- * by name: where every placed part is (`bolt.pose`), solved by the kernel.
+ * A program: its steps — its structure, its parameters and properties among them — and its state —
+ * the values it is built with, by name: where every placed part is (`bolt.pose`), solved by the kernel.
  */
 export interface Program {
-  parameters?: Parameters;
   steps: Step[];
   state?: Record<string, ParamValue>;
 }
@@ -592,7 +591,12 @@ export interface ProgramState {
   /** The materials a part's can be picked from. */
   materials: Material[];
   /** What the parameters resolve to, by name — numbers, a table's row and columns, the colour — and why those that do not resolve fail. */
-  parameters: { values: Record<string, ParamValue>; errors: Record<string, string> };
+  parameters: {
+    /** What the program's parameters and properties steps define. */
+    defined: Parameters;
+    values: Record<string, ParamValue>;
+    errors: Record<string, string>;
+  };
   /** What reads each parameter, by name: the steps and other parameters whose formulas do — what fails if it goes. */
   parameter_uses: Record<string, string[]>;
   operations: OperationInfo[];

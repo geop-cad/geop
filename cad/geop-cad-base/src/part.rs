@@ -1,57 +1,19 @@
-//! A part as the editor composes it from what each crate gives: the run's
-//! given step ([`given`]) — what the program says of its part, the files
-//! around it, the parts it can place, the origin — the part as drawn
-//! ([`draw`]), every crate drawing its own targets, and the structure an
-//! editor lists ([`structure`]).
-
-use std::rc::Rc;
+//! A part as the editor composes it from what each crate gives: the part
+//! as drawn ([`draw`], every crate drawing its own targets — see
+//! [`geop_ops_assembly::draw`]) and the structure an editor lists
+//! ([`structure`]).
 
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::{element::ElementReference, program_runner::Given};
-use geop_ops_assembly::{GivenLibrary, Library, define_library, draw_instances, placed_parts};
-use geop_ops_datums::{ORIGIN, define_datums, read_datums};
+use geop_core_program::element::ElementReference;
+use geop_ops_assembly::placed_parts;
+pub use geop_ops_assembly::draw;
+use geop_ops_datums::{ORIGIN, read_datums};
 use geop_ops_model::{Design, read_model};
-use geop_ops_parameters::{
-    About, Files, PartReader, Shared, StateValue,
-    about::{define_about, define_files},
-    read_about,
-};
+use geop_ops_parameters::PartReader;
 use geop_ops_sketch::PlacedSketch;
-use geop_ops_view::{PartView, annotations_of, listed_by_steps};
+use geop_ops_view::listed_by_steps;
 use geop_core_program::element::PickedElement;
 use serde::Serialize;
-
-/// What a run of a program is given besides its numbers: what the program
-/// says of its part, `about`; the files around it and the parts it can
-/// place, `library`; and the origin, which every part has.
-pub fn given(about: About, library: Rc<dyn Library>) -> Given<Design, StateValue> {
-    let files: Shared<dyn Files> = Shared(library.clone());
-    let library = GivenLibrary(library);
-    Rc::new(move |part| {
-        define_about(part, &about)?;
-        define_files(part, &files)?;
-        define_library(part, &library)?;
-        define_datums(part)
-    })
-}
-
-/// The part `reader` reads, drawn: its model, its datums — the origin
-/// first — its sketches, what its steps draw on it and the parts placed in
-/// it, in its colour.
-pub fn draw(reader: &PartReader) -> GeopResult<PartView> {
-    let mut view = PartView::new();
-    read_model(reader)?.draw("model", &mut view)?;
-    read_datums(reader)?.draw(&mut view)?;
-    for target in reader.targets_of::<PlacedSketch<Design>>() {
-        let name = target.name().to_string();
-        let placed = reader.retrieve_element(&ElementReference::<_, PlacedSketch<Design>>::whole(target))?;
-        placed.draw(&name, &mut view)?;
-    }
-    view.annotations = annotations_of(reader);
-    draw_instances(reader, &mut view)?;
-    view.color = read_about(reader)?.color().map(str::to_string);
-    Ok(view.finish())
-}
 
 /// An entry of the structure of the part drawn, by name: what [`structure`]
 /// lists.

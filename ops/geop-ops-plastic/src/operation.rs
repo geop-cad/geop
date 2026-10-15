@@ -21,7 +21,7 @@ use geop_ops_extrude_revolve::operation::shape_loops;
 use geop_ops_model::{
     Design, Edge, Face, ModelOperation, NamedModel, Namer, build_model, model, read_model,
 };
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_sketch::{PlacedSketch, SketchPlane, SketchRef};
 use serde::{Deserialize, Serialize};
 
@@ -91,7 +91,7 @@ impl PartOperation for Draft {
     )
     .icon(crate::icons::DRAFT);
     type Args = DraftArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -106,7 +106,7 @@ impl PartOperation for Draft {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &DraftArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &DraftArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
@@ -257,7 +257,7 @@ impl PartOperation for Lip {
     )
     .icon(crate::icons::LIP);
     type Args = LipArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -272,7 +272,7 @@ impl PartOperation for Lip {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &LipArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &LipArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
@@ -351,7 +351,7 @@ impl PartOperation for Groove {
     )
     .icon(crate::icons::GROOVE);
     type Args = GrooveArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -367,7 +367,7 @@ impl PartOperation for Groove {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &GrooveArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &GrooveArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
@@ -492,7 +492,7 @@ impl PartOperation for Rib {
     )
     .icon(crate::icons::RIB);
     type Args = RibArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -515,7 +515,7 @@ impl PartOperation for Rib {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &RibArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &RibArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 

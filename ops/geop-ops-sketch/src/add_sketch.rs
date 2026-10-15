@@ -19,7 +19,7 @@ use geop_core_program::element::ElementReference;
 use geop_core_sketch::ConstraintId;
 use geop_ops_datums::Datums;
 use geop_ops_model::{Design, NamedModel, Plane};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -190,7 +190,7 @@ impl PartOperation for AddSketch {
     )
     .icon(crate::icons::ADD_SKETCH);
     type Args = AddSketchArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = SketchSession;
@@ -202,7 +202,7 @@ impl PartOperation for AddSketch {
     }
 
     /// Defines the sketch named after the step.
-    fn run(step: &str, part: &mut BuildPart, args: &AddSketchArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &AddSketchArgs) -> GeopResult<()> {
         part.define_target(&sketch(step), &(step.to_string(), args.clone()), draw)
     }
 

@@ -14,7 +14,7 @@ use geop_core_math::{
 };
 use geop_core_program::element::ElementReference;
 use geop_ops_model::{Design, Face, ModelOperation, NamedModel, Namer, build_model};
-use geop_ops_parameters::{BuildPart, PartReader, StateValue, StepContext};
+use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_shell::shell::offset_faces;
 use serde::{Deserialize, Serialize};
 
@@ -51,7 +51,7 @@ impl PartOperation for OffsetSurface {
     .experimental()
     .icon(crate::icons::OFFSET_SURFACE);
     type Args = OffsetSurfaceArgs;
-    type Input = Design;
+    type Input = Setting;
     type State = StateValue;
     type Scalar = Design;
     type Session = ();
@@ -64,7 +64,12 @@ impl PartOperation for OffsetSurface {
         }
     }
 
-    fn run(step: &str, part: &mut BuildPart, args: &OffsetSurfaceArgs) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &Runner,
+        part: &mut BuildPart,
+        args: &OffsetSurfaceArgs,
+    ) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 

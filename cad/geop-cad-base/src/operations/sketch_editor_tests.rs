@@ -44,7 +44,7 @@ impl Editor {
     /// or, not `new`, one on the origin's `xy` plane being edited again.
     fn on(parameters: Parameters, new: bool) -> Self {
         let mut program = Program::new();
-        program.parameters = parameters;
+        program.set_parameters(parameters);
         let step = match new {
             true => Stepping::new(program, "add_sketch"),
             false => {

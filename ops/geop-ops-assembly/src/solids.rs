@@ -18,7 +18,7 @@ use geop_core_math::{
 };
 use geop_core_topology::{SolidId, mass::MassProperties};
 use geop_ops_model::{Design, NamedModel, notes_of, read_model};
-use geop_ops_parameters::{MaterialOf, PartReader, read_about};
+use geop_ops_parameters::{MaterialOf, PartReader, read_properties};
 use geop_ops_view::INSTANCE_SEPARATOR;
 
 use crate::placed::placed_parts;
@@ -45,9 +45,8 @@ impl PlacedSolid<'_> {
 
     /// What it is made of: its part's material.
     pub fn material(&self) -> MaterialOf {
-        (read_about(&self.reader).map(|about| about.material())).unwrap_or_else(|_| {
-            geop_ops_parameters::About::default().material()
-        })
+        (read_properties(&self.reader).map(|properties| properties.material()))
+            .unwrap_or_else(|_| geop_ops_parameters::Properties::default().material())
     }
 
     /// Its mass properties, where it is, of its part's material — its
@@ -125,7 +124,7 @@ pub fn placed_solids<'a>(reader: &PartReader<'a>) -> GeopResult<Vec<PlacedSolid<
     let mut out = own_solids(reader)?;
     for placed in placed_parts(reader)? {
         let prefix = format!("{}{INSTANCE_SEPARATOR}", placed.name);
-        let inner = placed.located.instance.reader();
+        let inner = placed.located.part.clone();
         out.extend(own_solids_at(&inner, &prefix, Some(placed.located.world))?);
     }
     Ok(out)
