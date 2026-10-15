@@ -20,24 +20,27 @@
 //! they are held there while the step is edited ([`Pull::Value`]), and
 //! the parts move to them.
 
-use std::collections::BTreeMap;
-
 use geop_core_editor::{
     edit_form::{Edit, EditForm, FormState},
-    numeric_input::ParameterValue,
+    editable::Context,
     editing::{
         Action, CanvasEvent, Choice, Gizmo, ListItem, Number, Pull, Shape, Style, Tone, Unit,
         Value, Visual,
     },
 };
+use geop_core_program::{
+    numeric::{ParameterValue, read_parameter_values},
+    values::{Design, Setting, Settings, StateValue, pose_state},
+};
+use std::collections::BTreeMap;
+
 use geop_core_math::{
     primitives::{Pose, Quaternion},
     scalars::Scalar,
 };
-use geop_ops_model::{Design, Namer};
+use geop_ops_model::Namer;
 use geop_ops_parameters::{
-    COLOR, ParameterKind, Setting, Settings, StateValue, StepContext, file_choices, instance,
-    parameters::validate_color, parameters_of, pose_state, read_parameter_values,
+    COLOR, ParameterKind, file_choices, instance, parameters::validate_color, parameters_of,
     read_properties,
 };
 
@@ -195,7 +198,7 @@ pub type PartEditing = FormState<PartSession>;
 
 /// Where the part the step places is: the program's state, or — before
 /// anything was solved for it — the origin.
-fn pose_of(context: &StepContext) -> Pose<Design> {
+fn pose_of(context: &Context) -> Pose<Design> {
     match context.before.retrieve_state(&pose_state(context.step)) {
         StateValue::Pose(pose) => pose,
         StateValue::Number(_) => Pose::identity(),
@@ -240,7 +243,7 @@ fn set_value(kind: &mut MateKind, v: f64) {
 /// limits; the joints a coupling ties, and how.
 fn selected<'a>(
     f: &mut PartForm<'a>,
-    before: &geop_ops_parameters::PartReader<'a>,
+    before: &geop_core_program::part::Reader<'a>,
     id: &str,
     mate: &Mate,
     joint: Option<&SettingsState>,
@@ -472,14 +475,14 @@ fn parameter_key(name: &str) -> String {
 /// The placed part's own parameters, each as what it is given here: its
 /// colour picked, a number on a slider, a table's row chosen from a list
 /// to search.
-fn parameters(f: &mut PartForm, context: &StepContext, args: &AddPartArgs) {
+fn parameters(f: &mut PartForm, context: &Context, args: &AddPartArgs) {
     if args.file.is_empty() {
         return;
     }
-    let Ok((loaded, _)) = context.runner.program(&args.file) else {
+    let Ok((program, _)) = context.runner.program(&args.file) else {
         return;
     };
-    let defined = parameters_of(&loaded.program);
+    let defined = parameters_of(&program);
     if defined.is_empty() {
         return;
     }
@@ -567,7 +570,7 @@ fn parameters(f: &mut PartForm, context: &StepContext, args: &AddPartArgs) {
 /// one selected with its entities to pick — and the part as placed, to
 /// drag.
 pub(crate) fn form<'a>(
-    context: &'a StepContext<'a>,
+    context: &'a Context<'a>,
     args: &AddPartArgs,
     session: &PartSession,
 ) -> PartForm<'a> {
@@ -781,7 +784,7 @@ pub(crate) fn form<'a>(
 /// A pointer or key event: the part dragged (see the module docs); Delete
 /// removes the mate selected, Escape stops editing it.
 pub(crate) fn canvas(
-    context: &StepContext,
+    context: &Context,
     edit: Edit<'_, AddPartArgs, PartSession>,
     event: &CanvasEvent<Design>,
 ) {

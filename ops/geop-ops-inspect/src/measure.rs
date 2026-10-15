@@ -14,12 +14,11 @@ use geop_core_math::{
     scalars::{Ring, Scalar},
     vector::Vector3,
 };
-use geop_core_program::element::PickedElement;
+use geop_core_program::{element::PickedElement, part::Reader, values::Design};
 use geop_core_topology::distance::{Feature, PlacedFace, closest_points};
 use geop_ops_add_datum::{Selected, Shape};
-use geop_ops_model::Design;
 use geop_ops_output::{Answer, Block, Bounded, Row};
-use geop_ops_parameters::{PartReader, located};
+use geop_ops_parameters::located;
 use geop_ops_view::{INSTANCE_SEPARATOR, drawn};
 use serde::Serialize;
 
@@ -155,7 +154,7 @@ fn split(picked: &PickedElement) -> (&str, &str) {
 /// An entity picked, in the part it is of.
 struct Picked<'a> {
     /// The part it is of: the part read, or one placed in it.
-    part: PartReader<'a>,
+    part: Reader<'a>,
     /// Where that part is placed; `None` for the part read itself.
     pose: Option<Pose<Design>>,
     element: Selected,
@@ -164,7 +163,7 @@ struct Picked<'a> {
 impl<'a> Picked<'a> {
     /// What `picked`, a pick of what is drawn of the part `reader` reads,
     /// is in the part it is of.
-    fn of(reader: &PartReader<'a>, picked: &PickedElement) -> GeopResult<Self> {
+    fn of(reader: &Reader<'a>, picked: &PickedElement) -> GeopResult<Self> {
         let (path, target) = split(picked);
         let (part, pose) = match path {
             "" => (reader.clone(), None),
@@ -240,7 +239,7 @@ fn direction(shape: &Shape) -> Option<(Vector3<Design>, bool)> {
 /// What the entities `picked` of what is drawn of the part `reader` reads
 /// measure: nothing for none, one alone, or two together. More than two
 /// are refused.
-pub fn measure(reader: &PartReader, picked: &[PickedElement]) -> Measurement {
+pub fn measure(reader: &Reader, picked: &[PickedElement]) -> Measurement {
     let mut out = Measurement {
         entities: picked.to_vec(),
         values: Vec::new(),
@@ -266,7 +265,7 @@ pub fn measure(reader: &PartReader, picked: &[PickedElement]) -> Measurement {
 /// One entity alone: a point's coordinates, a curve's length — an edge's
 /// or a sketch's, and its radius, if it is circular — a face's area — and
 /// radius, if it is a cylinder.
-fn alone(reader: &PartReader, picked: &PickedElement, out: &mut Measurement) -> GeopResult<()> {
+fn alone(reader: &Reader, picked: &PickedElement, out: &mut Measurement) -> GeopResult<()> {
     let ctx = |e: GeopError| e.with_context(format!("measuring {}", label(picked)));
     let entity = Picked::of(reader, picked).with_context(&ctx)?;
     let shape = entity.shape().with_context(&ctx)?;
@@ -310,7 +309,7 @@ fn alone(reader: &PartReader, picked: &PickedElement, out: &mut Measurement) -> 
 /// points, edges or faces; the angle between them, if both have a
 /// direction; the distance between their centres, if both are circular.
 fn together(
-    reader: &PartReader,
+    reader: &Reader,
     a: &PickedElement,
     b: &PickedElement,
     out: &mut Measurement,

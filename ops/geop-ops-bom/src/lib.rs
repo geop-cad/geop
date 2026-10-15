@@ -35,6 +35,13 @@
 //! as an inspector ([`BillOfMaterials`]) and as a CSV file
 //! ([`BomCsv`]).
 
+use geop_core_program::{
+    element::PickedElement,
+    instance::instance_path,
+    numeric::{ParameterValue, read_parameter_values},
+    part::Reader,
+    values::Design,
+};
 use std::collections::HashMap;
 
 use geop_core_editor::editing::{Tone, Visual};
@@ -42,18 +49,13 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::{Ring, Scalar},
 };
-use geop_core_program::element::PickedElement;
-use geop_core_program::instance::instance_path;
 use geop_ops_assembly::solids::{Shapes, own_solids};
-use geop_ops_model::{Design, notes_of};
+use geop_ops_model::notes_of;
 use geop_ops_output::{
     Answer, AnswerAction, Block, Bounded, Content, Does, Export, Exporter, ExporterInfo, Inspector,
     InspectorInfo, Output, Row,
 };
-use geop_core_editor::numeric_input::ParameterValue;
-use geop_ops_parameters::{
-    PartReader, instances, read_parameter_values, read_properties, stem,
-};
+use geop_ops_parameters::{instances, read_properties, stem};
 use serde::{Deserialize, Serialize};
 
 mod icons;
@@ -151,13 +153,13 @@ pub struct Bom {
 
 /// What a part is, by what tells it apart from another: the file it is
 /// placed from and the values of the parameters it defines.
-fn key(reader: &PartReader, file: &str) -> GeopResult<String> {
+fn key(reader: &Reader, file: &str) -> GeopResult<String> {
     Ok(format!("{file}\n{}", parameters(reader)?))
 }
 
 /// The values of the parameters the part `reader` reads defines, as built:
 /// `size=M4x12, length=40`.
-fn parameters(reader: &PartReader) -> GeopResult<String> {
+fn parameters(reader: &Reader) -> GeopResult<String> {
     Ok((read_parameter_values(reader)?.0.iter())
         .map(|(name, value)| match value {
             ParameterValue::Row { name: row, .. } => format!("{name}={row}"),
@@ -189,7 +191,7 @@ struct Info {
 /// they are placed as.
 struct Group<'a> {
     key: String,
-    reader: PartReader<'a>,
+    reader: Reader<'a>,
     file: String,
     names: Vec<String>,
 }
@@ -202,7 +204,7 @@ impl Group<'_> {
 }
 
 /// The parts placed in the part `reader` reads itself, grouped.
-fn groups<'a>(reader: &PartReader<'a>) -> GeopResult<Vec<Group<'a>>> {
+fn groups<'a>(reader: &Reader<'a>) -> GeopResult<Vec<Group<'a>>> {
     let mut out: Vec<Group<'a>> = Vec::new();
     for (name, instance) in instances(reader)? {
         let placed = reader.inside(name)?;
@@ -222,7 +224,7 @@ fn groups<'a>(reader: &PartReader<'a>) -> GeopResult<Vec<Group<'a>>> {
 }
 
 /// Whether the part `reader` reads places no part.
-fn places_nothing(reader: &PartReader) -> bool {
+fn places_nothing(reader: &Reader) -> bool {
     reader.subparts().is_empty()
 }
 
@@ -253,7 +255,7 @@ struct Builder {
 impl Builder {
     /// What the bill needs of the part `key`, which `reader` reads, placed
     /// from `file`.
-    fn info(&mut self, key: &str, reader: &PartReader, file: &str) -> GeopResult<&Info> {
+    fn info(&mut self, key: &str, reader: &Reader, file: &str) -> GeopResult<&Info> {
         if !self.infos.contains_key(key) {
             let info = self.work_out(reader, file).with_context(&|e: GeopError| {
                 e.with_context(format!("the bill of materials line of {file:?}"))
@@ -263,7 +265,7 @@ impl Builder {
         Ok(&self.infos[key])
     }
 
-    fn work_out(&mut self, reader: &PartReader, file: &str) -> GeopResult<Info> {
+    fn work_out(&mut self, reader: &Reader, file: &str) -> GeopResult<Info> {
         let properties = read_properties(reader)?;
         let material = properties.material();
         let bodies = own_solids(reader)?;
@@ -298,7 +300,7 @@ impl Builder {
     fn whole_mass(
         &mut self,
         key: &str,
-        reader: &PartReader,
+        reader: &Reader,
         file: &str,
     ) -> GeopResult<Result<Design, String>> {
         if let Some(mass) = self.whole.get(key) {
@@ -359,7 +361,7 @@ impl Builder {
     fn flat(
         &mut self,
         key: &str,
-        reader: &PartReader,
+        reader: &Reader,
         file: &str,
         paths: &[String],
         lines: &mut Vec<(String, Line)>,
@@ -398,7 +400,7 @@ impl Builder {
     /// bill `lines`, at `level`, numbered after `item` from `after + 1` on.
     fn indented(
         &mut self,
-        reader: &PartReader,
+        reader: &Reader,
         item: &str,
         after: usize,
         level: usize,
@@ -454,7 +456,7 @@ fn add_quantity(line: &mut Line, more: u64) {
 /// The wires noted on the solids of the part `reader` reads itself, each a
 /// line at `level` of `quantity` pieces, with the name of the solid — the
 /// cable — it is noted on.
-fn wire_lines(reader: &PartReader, level: usize, quantity: u64) -> Vec<(String, Line)> {
+fn wire_lines(reader: &Reader, level: usize, quantity: u64) -> Vec<(String, Line)> {
     let mut out = Vec::new();
     let Some(notes) = notes_of(reader) else {
         return out;
@@ -498,7 +500,7 @@ fn wire_lines(reader: &PartReader, level: usize, quantity: u64) -> Vec<(String, 
 /// The part's own bodies — those it is modelled with besides what it
 /// places — are a line of their own, named after its file: for a part
 /// that places nothing, that line is the whole bill.
-pub fn bom(reader: &PartReader, file: &str, structure: Structure) -> GeopResult<Bom> {
+pub fn bom(reader: &Reader, file: &str, structure: Structure) -> GeopResult<Bom> {
     let mut builder = Builder::default();
     let root = key(reader, file)?;
     let lines = match structure {
@@ -525,7 +527,10 @@ pub fn bom(reader: &PartReader, file: &str, structure: Structure) -> GeopResult<
             lines
         }
     };
-    let total_mass = builder.whole_mass(&root, reader, file)?.ok().map(Bounded::of);
+    let total_mass = builder
+        .whole_mass(&root, reader, file)?
+        .ok()
+        .map(Bounded::of);
     Ok(Bom {
         structure,
         lines,
@@ -559,7 +564,10 @@ impl Inspector for BillOfMaterials {
         _: &[PickedElement],
         options: BomOptions,
     ) -> GeopResult<(Bom, Vec<Visual<Design>>)> {
-        Ok((bom(&output.part(), output.file_name(), options.structure)?, Vec::new()))
+        Ok((
+            bom(&output.part(), output.file_name(), options.structure)?,
+            Vec::new(),
+        ))
     }
 
     /// The structures to ask for, the file to save, and the table: per

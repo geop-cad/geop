@@ -2,34 +2,33 @@
 //! by patterning a tool body, symmetric parts mirrored from a half, names
 //! of the copies, and sweeps over counts and awkward angles.
 
+use geop_core_program::{
+    element::ElementReference, operation_registry::OperationRegistry, program::Program,
+    values::Design,
+};
 use std::f64::consts::PI;
 
 use crate::{
-    BodyRef, CircularPatternArgs, Direction, LinearPatternArgs, MirrorArgs, MoveBodyArgs,
-    PatternDirection, Seeds, Spacing, TurnAxis, body,
+    BodyRef, CircularPattern, CircularPatternArgs, Direction, LinearPattern, LinearPatternArgs,
+    Mirror, MirrorArgs, MoveBody, MoveBodyArgs, PatternDirection, Seeds, Spacing, TurnAxis, body,
 };
-use geop_core_math::primitives::FrameAxis;
-use geop_core_math::scalars::Scalar;
-use geop_core_program::element::ElementReference;
-use geop_ops_booleans::{Combine, solid};
-use geop_ops_extrude_revolve::Extents;
-use geop_ops_model::{Design, NamedModel, model};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
+use geop_ops_booleans::{Boolean, Combine, solid};
+use geop_ops_extrude_revolve::{
+    Extents,
+    testing::{Built, both_ways, disc, extrude_sketch, n, on_origin, outline, sketch},
+};
+use geop_ops_model::{
+    NamedModel, model,
+    testing::{assert_valid, assert_volume},
+};
 use geop_ops_sketch::{Sketch, SketchPlane, sketch_element};
 
-use geop_core_math::geop_error::GeopResult;
-use geop_ops_booleans::Boolean;
 use geop_ops_datums::{origin_axis, origin_plane};
-use geop_ops_extrude_revolve::testing::{
-    Built, both_ways, disc, extrude_sketch, n, on_origin, outline, sketch,
-};
-use geop_ops_model::testing::{assert_valid, assert_volume};
-use geop_ops_parameters::{ProgramFile, Registry};
 use geop_ops_sketch3d::AddSketch3d;
 
-use crate::{CircularPattern, LinearPattern, Mirror, MoveBody};
-
 /// The operations these tests' programs are written in.
-fn registry() -> GeopResult<Registry> {
+fn registry() -> GeopResult<OperationRegistry> {
     (geop_ops_extrude_revolve::testing::registry()?.with(AddSketch3d)?)
         .with(Boolean)?
         .with(LinearPattern)?
@@ -40,7 +39,7 @@ fn registry() -> GeopResult<Registry> {
 
 /// A sketch on the Z plane, and `name` its extrude, as `extent` says, a
 /// new body.
-fn extruded(program: &mut ProgramFile, name: &str, sketch: Sketch, extent: Extents) {
+fn extruded(program: &mut Program, name: &str, sketch: Sketch, extent: Extents) {
     let plane = on_origin(FrameAxis::Z);
     extrude_sketch(program, name, plane, sketch, extent, Combine::NewBody);
 }
@@ -66,8 +65,8 @@ fn origin_mirror(normal: FrameAxis) -> Option<SketchPlane> {
 
 /// A plate 8 x 2 x 0.5, and a pin of radius 0.3 at (1, 1) through it — a
 /// tool kept as a body of its own.
-fn plate_and_pin() -> ProgramFile {
-    let mut program = ProgramFile::new();
+fn plate_and_pin() -> Program {
+    let mut program = Program::new();
     extruded(
         &mut program,
         "plate",
@@ -81,9 +80,9 @@ fn plate_and_pin() -> ProgramFile {
 
 /// Builds `program`, with every step read back from its JSON first: what
 /// a program file holds builds the same part.
-fn build(program: &ProgramFile) -> NamedModel<Design> {
+fn build(program: &Program) -> NamedModel<Design> {
     let json = serde_json::to_string(program).unwrap();
-    let read: ProgramFile = serde_json::from_str(&json).unwrap();
+    let read: Program = serde_json::from_str(&json).unwrap();
     assert_eq!(&read, program);
     read.build_model(registry).unwrap()
 }
@@ -124,7 +123,7 @@ fn row_of_holes_cut_by_a_patterned_tool() {
 /// square plate: a bolt circle.
 #[test]
 fn bolt_circle_cut_by_a_patterned_tool() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     extruded(
         &mut program,
         "plate",
@@ -153,7 +152,7 @@ fn bolt_circle_cut_by_a_patterned_tool() {
 /// symmetric T, twice the L.
 #[test]
 fn half_mirrored_and_joined() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     let l = [
         [0.0, 0.0],
         [2.0, 0.0],
@@ -181,7 +180,7 @@ fn half_mirrored_and_joined() {
 /// out.
 #[test]
 fn asymmetric_body_mirrored() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     let l = [
         [1.0, 0.0],
         [3.0, 0.0],
@@ -254,7 +253,7 @@ fn circular_patterns_sweep() {
         (2, Spacing::step(13.0), true),
         (12, Spacing::extent(360.0), true),
     ] {
-        let mut program = ProgramFile::new();
+        let mut program = Program::new();
         extruded(
             &mut program,
             "b",
@@ -297,7 +296,7 @@ fn circular_patterns_sweep() {
 /// what a circular pattern joined to its seed does.
 #[test]
 fn three_turned_boxes_joined() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     for (k, name) in ["a", "b", "c"].into_iter().enumerate() {
         let (s, c) = (13.0 * k as f64).to_radians().sin_cos();
         let corners: Vec<[f64; 2]> = [[2.0, -0.4], [3.0, -0.4], [3.0, 0.4], [2.0, 0.4]]
@@ -340,7 +339,7 @@ fn three_turned_boxes_joined() {
 /// transversal crossing is now a piercing.
 #[test]
 fn three_turned_boxes_one_a_turned_copy_joined() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     for (k, name) in ["a", "b"].into_iter().enumerate() {
         let (s, c) = (13.0 * k as f64).to_radians().sin_cos();
         let corners: Vec<[f64; 2]> = [[2.0, -0.4], [3.0, -0.4], [3.0, 0.4], [2.0, 0.4]]
@@ -415,7 +414,7 @@ fn widest_pcurve(part: &NamedModel<Design>) -> (f64, String) {
 /// where they are.
 #[test]
 fn turned_copy_joined_stays_tight() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     extruded(
         &mut program,
         "b",
@@ -445,7 +444,7 @@ fn turned_copy_joined_stays_tight() {
 #[ignore = "slow: rows and grids of up to 24 holes, copies turned at awkward angles — run with `cargo test -- --ignored`"]
 fn linear_patterns_and_moves_sweep() {
     for (along, across) in [(24, 1), (6, 4), (3, 3)] {
-        let mut program = ProgramFile::new();
+        let mut program = Program::new();
         extruded(
             &mut program,
             "plate",

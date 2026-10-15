@@ -3,9 +3,8 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
-    editing::Unit,
-    numeric_input::NumericInput,
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
+    editing::{Number, Unit},
     part_operation,
     part_operation::PartOperation,
 };
@@ -13,11 +12,16 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_program::element::ElementReference;
-use geop_ops_model::{
-    Design, Face, ModelOperation, NamedModel, Namer, Solid, build_model, model, read_model,
+use geop_core_program::{
+    element::ElementReference,
+    numeric::NumericInput,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
 };
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_model::{
+    Face, ModelOperation, NamedModel, Namer, Solid, build_model, model, read_model,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::shell::shell;
@@ -54,13 +58,10 @@ impl PartOperation for Shell {
     )
     .icon(crate::icons::SHELL);
     type Args = ShellArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// The newest solid, closed all round, a tenth thick.
-    fn new_args(context: &StepContext) -> ShellArgs {
+    fn new_args(context: &Context) -> ShellArgs {
         let newest = read_model(&context.before)
             .ok()
             .and_then(|model| model.newest_solid());
@@ -71,13 +72,13 @@ impl PartOperation for Shell {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &ShellArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &ShellArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
     /// The solid and the faces to open it at, picked, and the thickness.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &ShellArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, ShellArgs> {
@@ -105,7 +106,7 @@ impl PartOperation for Shell {
             |edit, faces| edit.args.faces = faces,
         );
         f.form.dialog.optional("faces");
-        let thickness = args.thickness.number("thickness", before, Unit::Length);
+        let thickness = Number::numeric(&args.thickness, "thickness", before, Unit::Length);
         f.numeric("thickness", thickness.range(0.0, 1.0), |edit, thickness| {
             edit.args.thickness = thickness
         });
@@ -116,7 +117,7 @@ impl PartOperation for Shell {
 impl ModelOperation for Shell {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &ShellArgs,
     ) -> GeopResult<()> {

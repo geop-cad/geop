@@ -16,14 +16,17 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::element::ElementReference;
+use geop_core_program::{
+    element::ElementReference,
+    part::{Part, Reader},
+    values::Design,
+};
 use geop_core_topology::Body;
 use geop_ops_booleans::{Combine, Tool, boolean::Reach};
 use geop_ops_model::{
-    Design, ModelOperation, NamedModel, Namer, Threads, ToolReach, build_model, draw_threads,
-    read_model, resolve_bodies, threads,
+    ModelOperation, NamedModel, Namer, Threads, ToolReach, build_model, draw_threads, read_model,
+    resolve_bodies, threads,
 };
-use geop_ops_parameters::{BuildPart, PartReader, Setting, StateValue};
 use serde::{Deserialize, Serialize};
 
 use crate::features::FeatureRef;
@@ -42,7 +45,7 @@ pub fn body(name: impl Into<String>) -> BodyRef {
 /// bodies picked.
 pub(crate) fn bodies_field<'a, A>(
     f: &mut EditForm<'a, Design, A>,
-    before: &PartReader<'a>,
+    before: &Reader<'a>,
     bodies: &[BodyRef],
     set: impl Fn(Edit<'_, A, ()>, Vec<BodyRef>) + 'a,
 ) {
@@ -95,7 +98,7 @@ impl Seeds {
     pub(crate) fn fields<'a, A>(
         &self,
         f: &mut EditForm<'a, Design, A>,
-        before: &PartReader<'a>,
+        before: &Reader<'a>,
         set: impl Fn(&mut A, Seeds) + Clone + 'a,
         own: impl FnOnce(&mut EditForm<'a, Design, A>),
     ) {
@@ -158,7 +161,7 @@ impl Seeds {
     pub(crate) fn repeat(
         &self,
         part: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         names: &Names,
         operation_id: &str,
         seed_label: &str,
@@ -192,7 +195,7 @@ impl Seeds {
     /// Where the handles of a step repeating it sit, in the part `reader`
     /// reads: the middle of the corners of the bodies, or of the tools of
     /// the features. None, if it picks none.
-    pub(crate) fn center(&self, reader: &PartReader) -> Option<Vector3<Design>> {
+    pub(crate) fn center(&self, reader: &Reader) -> Option<Vector3<Design>> {
         if self.features.is_empty() {
             center(reader, &self.bodies)
         } else {
@@ -252,14 +255,14 @@ pub(crate) trait Pattern: std::fmt::Debug {
 
     /// Where its instances go, as `reader` reads the part: each a label and
     /// the motion from the seeds, the seeds themselves left out.
-    fn placements(&self, reader: &PartReader) -> GeopResult<Vec<(String, Motion<Design>)>>;
+    fn placements(&self, reader: &Reader) -> GeopResult<Vec<(String, Motion<Design>)>>;
 }
 
 /// Builds the pattern `args` as the step `step` into `model`, reading the
 /// part before it through `reader`: its [`ModelOperation::build`].
 pub(crate) fn build_pattern<A: Pattern>(
     model: &mut NamedModel<Design>,
-    reader: &PartReader,
+    reader: &Reader,
     step: &str,
     args: &A,
 ) -> GeopResult<()> {
@@ -391,7 +394,7 @@ pub(crate) fn combine_instances<S: Scalar>(
 /// Where the handles of a step acting on `bodies` sit, in the part
 /// `reader` reads: the middle of the corners of the bodies. None, if it
 /// refers to none.
-pub(crate) fn center(reader: &PartReader, bodies: &[BodyRef]) -> Option<Vector3<Design>> {
+pub(crate) fn center(reader: &Reader, bodies: &[BodyRef]) -> Option<Vector3<Design>> {
     let part = read_model(reader).ok()?;
     let model = part.topology();
     let mut corners = Vec::new();
@@ -433,7 +436,7 @@ pub(crate) struct ThreadCopies {
 
 /// The part's cosmetic threads with those each feature of `copies`
 /// recorded copied to every placement, named alike.
-fn copy_threads(reader: &PartReader, copies: &ThreadCopies) -> GeopResult<Threads<Design>> {
+fn copy_threads(reader: &Reader, copies: &ThreadCopies) -> GeopResult<Threads<Design>> {
     let mut threads: Threads<Design> = reader.previous()?;
     let names = copies.naming.of(&copies.step)?;
     for step in &copies.features {
@@ -460,9 +463,9 @@ fn copy_threads(reader: &PartReader, copies: &ThreadCopies) -> GeopResult<Thread
 /// of its seeds in the model, at its placements — of the part as it is
 /// before the step — and, of features, copies of their cosmetic threads,
 /// drawn as the step's annotations.
-pub(crate) fn run_pattern<O>(part: &mut BuildPart, step: &str, args: &O::Args) -> GeopResult<()>
+pub(crate) fn run_pattern<O>(part: &mut Part, step: &str, args: &O::Args) -> GeopResult<()>
 where
-    O: ModelOperation + PartOperation<Input = Setting, State = StateValue>,
+    O: ModelOperation + PartOperation,
     O::Args: Pattern,
 {
     let features = &args.seeds().features;

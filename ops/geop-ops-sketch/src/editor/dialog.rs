@@ -4,10 +4,9 @@
 
 use geop_core_editor::editing::{Choice, Number, Prompt, Unit};
 
-use crate::fields::constraint_status;
+use crate::{fields::constraint_status, icons, references::Source};
 
 use super::*;
-use crate::{icons, references::Source};
 
 /// What the tool in hand asks for next.
 fn tool_hint(s: &SketchSession) -> String {
@@ -195,7 +194,7 @@ fn status(sketch: &Sketch, s: &SketchSession) -> (String, Tone) {
 /// shows, lying in `frame`, with `keys` the keys of the visuals selected.
 pub(super) fn draw_dialog<'a>(
     d: &mut EditForm<'a, S, AddSketchArgs, SketchSession>,
-    view: &'a PartReader<'a>,
+    view: &'a Reader<'a>,
     args: &AddSketchArgs,
     s: &SketchSession,
     keys: &[String],

@@ -21,7 +21,7 @@ pub use placed::{
     PlacedSketch, SketchRef, chain_of_pieces, piece_names, sketch, sketch_element, whole_sketch,
 };
 
-use geop_ops_model::Design;
+use geop_core_program::values::Design;
 
 /// A sketch as a program holds it.
 pub type Sketch = geop_core_sketch::Sketch<Design>;

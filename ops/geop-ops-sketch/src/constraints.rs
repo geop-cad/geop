@@ -14,8 +14,8 @@ use geop_core_math::{
     scalars::{Field, Ring, Scalar},
     vector::Vector2,
 };
+use geop_core_program::values::Design;
 use geop_core_sketch::{CurveId, PointId, dimension::Measure, geometry::Arc};
-use geop_ops_model::Design;
 
 use crate::{
     Constraint, CurveKind, Sketch,

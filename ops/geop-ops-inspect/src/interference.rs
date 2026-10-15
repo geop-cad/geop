@@ -2,21 +2,20 @@
 //! with each other, with those of the parts placed in it, and those
 //! between each other — by how much, and which only touch.
 
+use geop_core_editor::editing::Tone;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     vector::{Vector, Vector3},
 };
+use geop_core_program::{element::PickedElement, part::Reader, values::Design};
 use geop_core_topology::{
     Body, SolidId,
     distance::{Feature, PlacedFace, closest_points},
 };
-use geop_core_editor::editing::Tone;
-use geop_core_program::element::PickedElement;
 use geop_ops_assembly::solids::{PlacedSolid, placed_solids};
-use geop_ops_model::{BodyNames, Design, NamedModel, Namer};
+use geop_ops_model::{BodyNames, NamedModel, Namer};
 use geop_ops_output::{Answer, Block, Bounded, Row};
-use geop_ops_parameters::PartReader;
 
 use crate::mass::drawn;
 use geop_ops_booleans::{
@@ -160,7 +159,7 @@ impl InterferenceReport {
 /// overlap, measured by its volume. Nothing left, the two touch if the
 /// least distance between their faces could be zero (see
 /// [`closest_points`]), and are apart otherwise.
-pub fn interference_report(reader: &PartReader) -> GeopResult<InterferenceReport> {
+pub fn interference_report(reader: &Reader) -> GeopResult<InterferenceReport> {
     let solids = placed_solids(reader)?;
     let boxes = (solids.iter())
         .map(|s| bounding_box(s, &s.model.topology().solid_faces(s.solid)?))

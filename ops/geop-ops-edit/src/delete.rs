@@ -3,14 +3,18 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     part_operation,
     part_operation::PartOperation,
 };
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::element::ElementReference;
-use geop_ops_model::{Body, Design, ModelOperation, NamedModel, build_model, resolve_bodies};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_core_program::{
+    element::ElementReference,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
+use geop_ops_model::{Body, ModelOperation, NamedModel, build_model, resolve_bodies};
 use serde::{Deserialize, Serialize};
 
 /// Deletes the bodies `bodies` refers to, and everything of them: a solid
@@ -41,23 +45,25 @@ impl PartOperation for DeleteBody {
     )
     .icon(crate::icons::DELETE_BODY);
     type Args = DeleteBodyArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// Nothing picked yet: what to delete is never a guess.
-    fn new_args(_: &StepContext) -> DeleteBodyArgs {
+    fn new_args(_: &Context) -> DeleteBodyArgs {
         DeleteBodyArgs::default()
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &DeleteBodyArgs) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &ProgramRunner,
+        part: &mut Part,
+        args: &DeleteBodyArgs,
+    ) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
     /// The bodies, picked.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &DeleteBodyArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, DeleteBodyArgs> {
@@ -79,7 +85,7 @@ impl ModelOperation for DeleteBody {
     /// which `model` is a copy of.
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         _: &str,
         args: &DeleteBodyArgs,
     ) -> GeopResult<()> {

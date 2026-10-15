@@ -2,8 +2,8 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
-    editing::Unit,
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
+    editing::{Number, Unit},
     part_operation,
     part_operation::PartOperation,
 };
@@ -13,10 +13,14 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_editor::numeric_input::NumericInput;
+use geop_core_program::{
+    numeric::NumericInput,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
 use geop_ops_datums::origin_axis;
-use geop_ops_model::{Design, ModelOperation, NamedModel};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_model::{ModelOperation, NamedModel};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -93,7 +97,7 @@ impl Pattern for LinearPatternArgs {
         if self.second.is_some() { "0.0" } else { "0" }
     }
 
-    fn placements(&self, reader: &PartReader) -> GeopResult<Vec<(String, Motion<Design>)>> {
+    fn placements(&self, reader: &Reader) -> GeopResult<Vec<(String, Motion<Design>)>> {
         let first = self.first.unit(reader)?;
         let first_row = self.first.row(reader)?;
         let second = match &self.second {
@@ -147,7 +151,7 @@ impl Direction {
     }
 
     /// The unit vector it goes along, as `reader` reads the part.
-    fn unit(&self, reader: &PartReader) -> GeopResult<Vector3<Design>> {
+    fn unit(&self, reader: &Reader) -> GeopResult<Vector3<Design>> {
         let along = (self.along.as_ref())
             .ok_or_else(|| GeopError::new("pick a direction to pattern along"))?;
         let d = along.direction(reader)?;
@@ -155,7 +159,7 @@ impl Direction {
     }
 
     /// The instances along it, as `reader` reads the parameters.
-    fn row(&self, reader: &PartReader) -> GeopResult<Row> {
+    fn row(&self, reader: &Reader) -> GeopResult<Row> {
         let count = whole_count(&self.count, reader)?;
         self.spacing.along(count, reader)
     }
@@ -166,7 +170,7 @@ impl Direction {
     fn fields<'a, A: 'a>(
         &self,
         f: &mut EditForm<'a, Design, A>,
-        before: &PartReader<'a>,
+        before: &Reader<'a>,
         at: Option<Vector3<Design>>,
         suffix: &str,
         set: impl Fn(&mut A, Direction) + Clone + 'a,
@@ -184,7 +188,9 @@ impl Direction {
             }
         }
         let key = |name: &str| format!("{name}{suffix}");
-        let set_along = with(self.clone(), set.clone(), |d, picked| d.along = Some(picked));
+        let set_along = with(self.clone(), set.clone(), |d, picked| {
+            d.along = Some(picked)
+        });
         let set_reversed = with(self.clone(), set.clone(), |d, b| d.reversed = b);
         f.pick_one(
             &key("direction"),
@@ -229,7 +235,7 @@ impl Direction {
             &key("spacing"),
             ["spacing", "total"],
             |label, value| {
-                let number = value.number(label, before, Unit::Length);
+                let number = Number::numeric(value, label, before, Unit::Length);
                 let at = handles.and_then(|(at, unit)| {
                     track(
                         at.add(&unit.prod_scalar(Design::from_f64(number.value))),
@@ -255,14 +261,11 @@ impl PartOperation for LinearPattern {
     )
     .icon(geop_ops_view::icons::LINEAR_PATTERN);
     type Args = LinearPatternArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// Three times a unit apart along the origin's `x` axis, kept as new
     /// bodies.
-    fn new_args(_: &StepContext) -> LinearPatternArgs {
+    fn new_args(_: &Context) -> LinearPatternArgs {
         LinearPatternArgs {
             // Nothing picked: what is patterned is the user's choice, a body
             // or a feature, never guessed.
@@ -274,8 +277,8 @@ impl PartOperation for LinearPattern {
 
     fn run(
         step: &str,
-        _: &Runner,
-        part: &mut BuildPart,
+        _: &ProgramRunner,
+        part: &mut Part,
         args: &LinearPatternArgs,
     ) -> GeopResult<()> {
         run_pattern::<Self>(part, step, args)
@@ -285,7 +288,7 @@ impl PartOperation for LinearPattern {
     /// turned on or off — with its count and spacing, both dragged by
     /// handles; and how to combine copies of bodies.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &LinearPatternArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, LinearPatternArgs> {
@@ -317,7 +320,7 @@ impl PartOperation for LinearPattern {
 impl ModelOperation for LinearPattern {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &LinearPatternArgs,
     ) -> GeopResult<()> {

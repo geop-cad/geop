@@ -24,10 +24,9 @@ pub use interference::{InterferenceReport, interference_report};
 pub use mass::{MassReport, mass_report};
 pub use measure::{Measurement, measure};
 
-use geop_core_math::geop_error::GeopResult;
 use geop_core_editor::editing::Visual;
-use geop_core_program::element::PickedElement;
-use geop_ops_model::Design;
+use geop_core_math::geop_error::GeopResult;
+use geop_core_program::{element::PickedElement, values::Design};
 use geop_ops_output::{Answer, Inspector, InspectorInfo, Output, Picks};
 
 /// Measures picked entities: one alone, or the two last picked together.

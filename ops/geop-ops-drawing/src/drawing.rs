@@ -6,14 +6,17 @@
 //! the parts list of the parts placed in it above the title block, each
 //! line ballooned where its part is drawn.
 
+use geop_core_editor::selectable::Selectable;
 use geop_core_geometry::{
     aabb::union_aabb,
     intersection::curve_curve_overlaps_and_crossings,
     nurb_curve::{NurbCurve2D, NurbCurve3D},
+    search::{MAX_NODES, min_subdivision_size},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     plain::{self, add, normalize, sub},
+    primitives::Pose,
     scalars::Scalar,
     solvers::{
         probe::{Probe, attempts},
@@ -21,20 +24,15 @@ use geop_core_math::{
     },
     vector::{Vector2, Vector3},
 };
+use geop_core_program::{instance::instance_path, part::Reader, values::Design};
 use geop_core_sketch::dimension::Measure;
 use geop_core_topology::{FaceId, Model};
-use geop_core_editor::selectable::Selectable;
-use geop_core_math::primitives::Pose;
-use geop_core_program::instance::instance_path;
 use geop_ops_assembly::placed::locate;
-use geop_ops_model::{CosmeticThread, Design, Edge, NamedModel, Vertex, element, frame_along};
-use geop_ops_view::INSTANCE_SEPARATOR;
+use geop_ops_model::{CosmeticThread, Edge, NamedModel, Vertex, element, frame_along};
 use geop_ops_output::sheet::{Anchor, Layer, P, Shape, Sheet, decimal, strokes_of};
-use geop_ops_parameters::PartReader;
 use geop_ops_sketch::SketchPlane;
+use geop_ops_view::INSTANCE_SEPARATOR;
 use serde::{Deserialize, Serialize};
-
-use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 
 use crate::{
     annotation::{Annotation, Candidate, Drawn, candidates},
@@ -299,7 +297,7 @@ pub fn drawn_faces<S: Scalar>(model: &Model<S>) -> Vec<FaceId> {
 /// [`layout`]), with its annotations drawn on it. One that does not resolve
 /// — its view gone, an entity it names gone — is refused, naming it.
 pub fn compose(
-    view: &PartReader,
+    view: &Reader,
     args: &DrawingArgs,
     date: &str,
     parts: &[PartsListLine],
@@ -309,7 +307,7 @@ pub fn compose(
 
 /// `layout`'s sheet, of `part`, with `args`' annotations drawn on it (see
 /// [`compose`]).
-pub fn annotated(view: &PartReader, args: &DrawingArgs, layout: &Layout) -> GeopResult<Sheet> {
+pub fn annotated(view: &Reader, args: &DrawingArgs, layout: &Layout) -> GeopResult<Sheet> {
     let mut sheet = layout.sheet.clone();
     for (index, annotation) in args.annotations.iter().enumerate() {
         annotation
@@ -385,7 +383,7 @@ impl Layout {
 /// [`arrange`]), dated `date`, with `parts` its bill of materials if `args`
 /// asks for one.
 pub fn layout(
-    view: &PartReader,
+    view: &Reader,
     args: &DrawingArgs,
     date: &str,
     parts: &[PartsListLine],
@@ -420,7 +418,7 @@ impl<S: Scalar> Projected<S> {
 /// The views of `part` that `args` ask for, projected (see [`Projected`]):
 /// its own solids and sheets, and every part placed in it, however deep,
 /// where it is placed (see [`Scene`]).
-pub fn project(view: &PartReader, args: &DrawingArgs) -> GeopResult<Projected<Design>> {
+pub fn project(view: &Reader, args: &DrawingArgs) -> GeopResult<Projected<Design>> {
     let ctx = |e: GeopError| e.with_context("project(drawing)");
     let scene = Scene::of(view).with_context(&ctx)?;
     let options = ViewOptions {
@@ -442,10 +440,9 @@ pub fn project(view: &PartReader, args: &DrawingArgs) -> GeopResult<Projected<De
         views.push((DrawnView::View(kind), view, Vec::new()));
     }
     if let Some(plane) = &args.section {
-        let (section, hatched) = section_view(view, &scene, plane, &options)
-            .map_err(|e| {
-                ctx(e.with_context(format!("the section view on {}", plane.picked().label())))
-            })?;
+        let (section, hatched) = section_view(view, &scene, plane, &options).map_err(|e| {
+            ctx(e.with_context(format!("the section view on {}", plane.picked().label())))
+        })?;
         views.push((DrawnView::Section, section, hatched));
     }
     Ok(Projected { views })
@@ -459,7 +456,7 @@ pub fn project(view: &PartReader, args: &DrawingArgs) -> GeopResult<Projected<De
 /// balloon with its item number, its leader pointing at its part in one
 /// view (see [`balloon_view`]). A bill too long for the sheet is refused.
 pub fn arrange(
-    view: &PartReader,
+    view: &Reader,
     args: &DrawingArgs,
     date: &str,
     parts: &[PartsListLine],
@@ -1201,9 +1198,9 @@ fn center_marks<S: Scalar>(sheet: &mut Sheet, p: &Placed<S>, scale: f64) -> Geop
 /// where that part is placed (`None` for the part read itself), and the
 /// entity as that part names it.
 fn owner<'a>(
-    reader: &PartReader<'a>,
+    reader: &Reader<'a>,
     name: &str,
-) -> GeopResult<(PartReader<'a>, Option<Pose<Design>>, String)> {
+) -> GeopResult<(Reader<'a>, Option<Pose<Design>>, String)> {
     let mut path = String::new();
     let mut part = reader.clone();
     let mut rest = name;
@@ -1227,7 +1224,7 @@ fn owner<'a>(
 
 /// Where the vertex `name` of the part `reader` reads — or of a part placed
 /// in it, named as that part names it — is.
-pub(crate) fn placed_vertex(reader: &PartReader, name: &str) -> GeopResult<Vector3<Design>> {
+pub(crate) fn placed_vertex(reader: &Reader, name: &str) -> GeopResult<Vector3<Design>> {
     let (part, pose, local) = owner(reader, name)?;
     let found = part.retrieve_element(&element::<Vertex>(local))?;
     let point = found.model.topology().get_vertex(found.id)?.point;
@@ -1239,7 +1236,7 @@ pub(crate) fn placed_vertex(reader: &PartReader, name: &str) -> GeopResult<Vecto
 
 /// The curve of the edge `name` of the part `reader` reads — or of a part
 /// placed in it, named as that part names it — where it is.
-pub(crate) fn placed_edge(reader: &PartReader, name: &str) -> GeopResult<NurbCurve3D<Design>> {
+pub(crate) fn placed_edge(reader: &Reader, name: &str) -> GeopResult<NurbCurve3D<Design>> {
     let (part, pose, local) = owner(reader, name)?;
     let found = part.retrieve_element(&element::<Edge>(local))?;
     let curve = &found.model.topology().get_edge(found.id)?.curve;
@@ -1329,7 +1326,7 @@ type Cut<S> = (NamedModel<S>, Vector3<S>, Vector3<S>);
 /// other side, or with no solid to cut, is drawn whole. Refused if no body
 /// has a solid to cut.
 fn section_view(
-    view: &PartReader,
+    view: &Reader,
     scene: &Scene<'_, Design>,
     plane: &SketchPlane,
     options: &ViewOptions,

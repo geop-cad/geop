@@ -3,7 +3,7 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState, choices, chosen},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::{Number, Unit},
     part_operation,
     part_operation::PartOperation,
@@ -13,15 +13,19 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_program::element::ElementReference;
+use geop_core_program::{
+    element::ElementReference,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
 use geop_core_sketch::Shape;
 use geop_core_topology::{EdgeId, FaceId};
 use geop_ops_booleans::{SolidRef, solid};
 use geop_ops_extrude_revolve::operation::shape_loops;
 use geop_ops_model::{
-    Design, Edge, Face, ModelOperation, NamedModel, Namer, build_model, model, read_model,
+    Edge, Face, ModelOperation, NamedModel, Namer, build_model, model, read_model,
 };
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_sketch::{PlacedSketch, SketchPlane, SketchRef};
 use serde::{Deserialize, Serialize};
 
@@ -91,13 +95,10 @@ impl PartOperation for Draft {
     )
     .icon(crate::icons::DRAFT);
     type Args = DraftArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// No faces yet, no neutral plane, and three degrees.
-    fn new_args(_: &StepContext) -> DraftArgs {
+    fn new_args(_: &Context) -> DraftArgs {
         DraftArgs {
             faces: Vec::new(),
             neutral: None,
@@ -106,14 +107,14 @@ impl PartOperation for Draft {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &DraftArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &DraftArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
     /// The faces and the neutral plane, picked, the angle and the pull
     /// direction.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &DraftArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, DraftArgs> {
@@ -149,7 +150,7 @@ impl PartOperation for Draft {
 impl ModelOperation for Draft {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &DraftArgs,
     ) -> GeopResult<()> {
@@ -182,7 +183,7 @@ impl ModelOperation for Draft {
 /// on.
 fn rim_fields<'a, A: 'a>(
     f: &mut EditForm<'a, Design, A>,
-    before: &PartReader<'a>,
+    before: &Reader<'a>,
     face: &FaceRef,
     edges: &[EdgeRef],
     rim: fn(&mut A) -> (&mut FaceRef, &mut Vec<EdgeRef>),
@@ -257,13 +258,10 @@ impl PartOperation for Lip {
     )
     .icon(crate::icons::LIP);
     type Args = LipArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// No rim yet, a lip 0.05 wide and 0.1 high.
-    fn new_args(_: &StepContext) -> LipArgs {
+    fn new_args(_: &Context) -> LipArgs {
         LipArgs {
             face: ElementReference::new(model(), ""),
             edges: Vec::new(),
@@ -272,13 +270,13 @@ impl PartOperation for Lip {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &LipArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &LipArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
     /// The rim and its edges, picked, the width and the height.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &LipArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, LipArgs> {
@@ -304,7 +302,7 @@ impl PartOperation for Lip {
 impl ModelOperation for Lip {
     fn build(
         model: &mut NamedModel<Design>,
-        _: &PartReader,
+        _: &Reader,
         step: &str,
         args: &LipArgs,
     ) -> GeopResult<()> {
@@ -351,13 +349,10 @@ impl PartOperation for Groove {
     )
     .icon(crate::icons::GROOVE);
     type Args = GrooveArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// No rim yet, for a lip 0.05 wide and 0.1 high, 0.01 clearance.
-    fn new_args(_: &StepContext) -> GrooveArgs {
+    fn new_args(_: &Context) -> GrooveArgs {
         GrooveArgs {
             face: ElementReference::new(model(), ""),
             edges: Vec::new(),
@@ -367,14 +362,14 @@ impl PartOperation for Groove {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &GrooveArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &GrooveArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
     /// The rim and its edges, picked, the lip's width and height, and the
     /// clearance.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &GrooveArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, GrooveArgs> {
@@ -402,7 +397,7 @@ impl PartOperation for Groove {
 impl ModelOperation for Groove {
     fn build(
         model: &mut NamedModel<Design>,
-        _: &PartReader,
+        _: &Reader,
         step: &str,
         args: &GrooveArgs,
     ) -> GeopResult<()> {
@@ -492,14 +487,11 @@ impl PartOperation for Rib {
     )
     .icon(crate::icons::RIB);
     type Args = RibArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// The newest sketch and solid, 0.05 thick, symmetric, parallel to the
     /// sketch.
-    fn new_args(context: &StepContext) -> RibArgs {
+    fn new_args(context: &Context) -> RibArgs {
         let before = &context.before;
         let newest = before.targets_of::<PlacedSketch<Design>>().pop();
         let solid_name = read_model(before)
@@ -515,14 +507,14 @@ impl PartOperation for Rib {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &RibArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &RibArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
     /// The sketch and the solid, picked, the thickness and its side, which
     /// way it grows.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &RibArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, RibArgs> {
@@ -580,7 +572,7 @@ impl PartOperation for Rib {
 impl ModelOperation for Rib {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &RibArgs,
     ) -> GeopResult<()> {

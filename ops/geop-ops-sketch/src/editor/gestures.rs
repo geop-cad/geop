@@ -2,13 +2,18 @@
 //! editor lets be dragged, dialog fields and keys — each answered with a new
 //! sketch.
 
-use geop_core_editor::{editing::hit::no_instances, numeric_input::NumericInput};
+use geop_core_editor::editing::hit::no_instances;
+use geop_core_program::numeric::NumericInput;
 
-use super::drawing::{Built, Hints, construct, curve_ending_at};
-use super::trim::Plan;
-use super::*;
-use crate::geometry::{segments_cross, swept};
-use crate::references::{Projected, Reference, Source};
+use super::{
+    drawing::{Built, Hints, construct, curve_ending_at},
+    trim::Plan,
+    *,
+};
+use crate::{
+    geometry::{segments_cross, swept},
+    references::{Projected, Reference, Source},
+};
 
 impl Editing<'_> {
     /// What a construction needs beyond its points, the pointer reaching

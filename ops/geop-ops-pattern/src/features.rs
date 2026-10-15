@@ -28,6 +28,11 @@
 //! first contact, or all the way) are not tried again for a copy: a copy
 //! that nothing stops all round is refused.
 
+use geop_core_program::{
+    element::{ElementReference, HasElements, Kind, PickedElement},
+    part::Reader,
+    values::Design,
+};
 use std::collections::BTreeSet;
 
 use geop_core_editor::selectable::SelectableElement;
@@ -38,13 +43,9 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::{
-    element::{ElementReference, HasElements, Kind, PickedElement},
-    part::{Input, Reader, State},
-};
 use geop_core_topology::Body;
 use geop_ops_booleans::{Combine, Tool, boolean::Reach, solid};
-use geop_ops_model::{Design, Face, NamedModel, ToolReach, model, read_model};
+use geop_ops_model::{Face, NamedModel, ToolReach, model, read_model};
 
 use crate::common::{Names, middle};
 
@@ -78,14 +79,14 @@ impl HasElements<Feature> for NamedModel<Design> {
 impl SelectableElement<NamedModel<Design>> for Feature {
     const PICKED_FROM: &'static [&'static str] = &[Face::NAME];
 
-    fn select<I: Input, S: State>(reader: &Reader<I, S>, hit: &PickedElement) -> Option<FeatureRef> {
+    fn select(reader: &Reader, hit: &PickedElement) -> Option<FeatureRef> {
         let face = ElementReference::<NamedModel<Design>, Face>::from_picked(hit)?;
         let part = read_model(reader).ok()?;
         part.face_id(face.name()).ok()?;
         Some(feature(part.feature_faces().of(face.name())?))
     }
 
-    fn drawn<I: Input, S: State>(reader: &Reader<I, S>, feature: &FeatureRef) -> Vec<PickedElement> {
+    fn drawn(reader: &Reader, feature: &FeatureRef) -> Vec<PickedElement> {
         let Ok(part) = read_model(reader) else {
             return Vec::new();
         };

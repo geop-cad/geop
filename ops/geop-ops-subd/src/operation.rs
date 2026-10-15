@@ -12,23 +12,27 @@
 //! smoothing them, deleting faces. An element not selected is dragged on
 //! its own, in the plane facing the eye.
 
-use std::collections::BTreeSet;
-
 use geop_core_editor::{
     edit_form::{Edit, EditForm, FormState, choices, chosen},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::{Action, CanvasEvent, DRAG_SNAP, Gizmo, Number, Shape, Style, Tone, Unit, Visual},
     part_operation,
     part_operation::PartOperation,
 };
+use geop_core_program::{
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
+use std::collections::BTreeSet;
+
 use geop_core_math::{
     geop_error::{GeopResult, WithContext},
     scalars::{Ring, Scalar},
     vector::Vector3,
     with_context,
 };
-use geop_ops_model::{Design, ModelOperation, NamedModel, Namer, build_model};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_model::{ModelOperation, NamedModel, Namer, build_model};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -584,32 +588,29 @@ impl PartOperation for Subd {
     )
     .icon(crate::icons::SUBD);
     type Args = SubdArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = SubdSession;
 
     /// A box cage, two units a side, around the origin.
-    fn new_args(_: &StepContext) -> SubdArgs {
+    fn new_args(_: &Context) -> SubdArgs {
         SubdArgs {
             cage: Cage::cuboid([2.0, 2.0, 2.0]),
             mirror: Mirror::None,
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &SubdArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &SubdArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
     fn form<'a>(
-        _: &'a StepContext<'a>,
+        _: &'a Context<'a>,
         args: &SubdArgs,
         editing: &SubdEditing,
     ) -> EditForm<'a, Design, SubdArgs, SubdSession> {
         form(args, &editing.session, &editing.selection)
     }
 
-    fn canvas(_: &StepContext, edit: Edit<'_, SubdArgs, SubdSession>, event: &CanvasEvent<Design>) {
+    fn canvas(_: &Context, edit: Edit<'_, SubdArgs, SubdSession>, event: &CanvasEvent<Design>) {
         on_canvas(edit, event)
     }
 }
@@ -617,7 +618,7 @@ impl PartOperation for Subd {
 impl ModelOperation for Subd {
     fn build(
         model: &mut NamedModel<Design>,
-        _: &PartReader,
+        _: &Reader,
         step: &str,
         args: &SubdArgs,
     ) -> GeopResult<()> {

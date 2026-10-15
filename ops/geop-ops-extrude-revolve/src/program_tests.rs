@@ -1,31 +1,31 @@
 //! Sweeps along paths and lofts through profiles, run as programs: the
 //! solids and faces they build, combined with others, and what they refuse.
 
-use crate::Output;
+use crate::{
+    Extents, LoftArgs, Orientation, Output, PathRef, SweepArgs,
+    testing::{Built, both_ways, disc, extrusion, n, on_origin, outline, polygon, sketch},
+};
+use geop_core_program::{
+    element::ElementReference, operation_registry::OperationRegistry, program::Program,
+};
 use std::f64::consts::PI;
 
-use crate::{Extents, LoftArgs, Orientation, PathRef, SweepArgs};
-use geop_core_math::primitives::{DatumComponent, FrameAxis};
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_core_program::element::ElementReference;
+use geop_core_math::{
+    geop_error::GeopResult,
+    primitives::{DatumComponent, FrameAxis},
+    scalars::{ScalInF64 as S, Scalar},
+};
 use geop_core_sketch::PointId;
 use geop_core_topology::validation::{ValidationParameters, validate};
 use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{AnyDatum, Datums, ORIGIN, component_name, datums};
 use geop_ops_model::{Curve, testing::assert_valid};
-use geop_ops_parameters::{ProgramFile, Registry};
 use geop_ops_sketch::{
     Constraint, PlacedSketch, Sketch, SketchPlane, sketch as sketch_target, sketch_element,
     whole_sketch,
 };
 use geop_ops_sketch3d::{AddSketch3d, sketch3d_path};
-
-use geop_core_math::geop_error::GeopResult;
-
-use crate::testing::{
-    Built, both_ways, disc, extrusion, n, on_origin, outline, polygon, sketch,
-};
 
 /// The sketch `name` as a path.
 fn sketch_path(name: &str) -> PathRef {
@@ -44,7 +44,7 @@ fn origin_plane(normal: FrameAxis) -> Selected {
 }
 
 /// The operations these tests' programs are written in.
-fn registry() -> GeopResult<Registry> {
+fn registry() -> GeopResult<OperationRegistry> {
     crate::testing::registry()?
         .with(AddDatum)?
         .with(AddSketch3d)
@@ -106,7 +106,7 @@ fn lofted(profiles: &[&str]) -> LoftArgs {
 }
 
 /// The plane `distance` above the `xy` plane, as the datum `name`.
-fn lifted(program: &mut ProgramFile, name: &str, distance: f64) {
+fn lifted(program: &mut Program, name: &str, distance: f64) {
     program.push(
         name,
         AddDatumArgs {
@@ -122,11 +122,12 @@ fn lifted(program: &mut ProgramFile, name: &str, distance: f64) {
 /// meet, a solid of eight walls and two caps.
 #[test]
 fn sweep_a_square_round_a_corner() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("profile", sketch(on_origin(FrameAxis::X), square(0.25)));
     program.push(
         "path",
-        sketch(on_origin(FrameAxis::Z),
+        sketch(
+            on_origin(FrameAxis::Z),
             polyline(&[[0.0, 0.0], [2.0, 0.0], [2.0, 2.0]]),
         ),
     );
@@ -143,7 +144,7 @@ fn sweep_a_square_round_a_corner() {
 /// every wall exact, the end cap square to the last line.
 #[test]
 fn sweep_a_pipe_through_a_bend() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push(
         "profile",
         sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.3)),
@@ -164,7 +165,7 @@ fn sweep_a_pipe_through_a_bend() {
 /// there, so the solid lies along it all the same.
 #[test]
 fn sweep_starts_at_the_end_of_the_path_the_profile_is_at() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     // In the plane `y = 3`, at `x = 3`: where the bend ends.
     let mut far = Sketch::new();
     polygon(
@@ -198,7 +199,7 @@ fn sweep_starts_at_the_end_of_the_path_the_profile_is_at() {
 /// A circle swept round a circle: a torus, closed on itself, no caps.
 #[test]
 fn sweep_a_circle_round_a_circle_is_a_torus() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push(
         "profile",
         sketch(on_origin(FrameAxis::Y), disc([2.0, 0.0], 0.5)),
@@ -217,7 +218,7 @@ fn sweep_a_circle_round_a_circle_is_a_torus() {
 /// A pipe through a bend, joined to a block it starts inside of.
 #[test]
 fn sweep_joins_a_block() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     let block = outline(&[[-1.0, -1.0], [0.5, -1.0], [0.5, 1.0], [-1.0, 1.0]]);
     program.push("block_sketch", sketch(on_origin(FrameAxis::Z), block));
     program.push(
@@ -248,10 +249,11 @@ fn sweep_joins_a_block() {
 /// An open profile swept into faces standing on their own.
 #[test]
 fn sweep_an_open_profile_as_faces() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push(
         "profile",
-        sketch(on_origin(FrameAxis::X),
+        sketch(
+            on_origin(FrameAxis::X),
             polyline(&[[-0.5, 0.0], [0.0, 0.5], [0.5, 0.0]]),
         ),
     );
@@ -275,7 +277,7 @@ fn sweep_an_open_profile_as_faces() {
 /// into an arc cannot be mitred.
 #[test]
 fn sweep_refuses_what_it_cannot_sweep() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push(
         "profile",
         sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.3)),
@@ -291,7 +293,7 @@ fn sweep_refuses_what_it_cannot_sweep() {
     ];
     kinked.add_line(p[0], p[1]);
     kinked.add_arc(p[1], p[2], n(PI / 2.0));
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push(
         "profile",
         sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.3)),
@@ -308,13 +310,10 @@ fn sweep_refuses_what_it_cannot_sweep() {
 /// caps.
 #[test]
 fn loft_a_square_to_a_circle() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("bottom", sketch(on_origin(FrameAxis::Z), square(1.0)));
     lifted(&mut program, "top_plane", 2.0);
-    program.push(
-        "top",
-        sketch(on_datum("top_plane"), disc([0.0, 0.0], 0.6)),
-    );
+    program.push("top", sketch(on_datum("top_plane"), disc([0.0, 0.0], 0.6)));
     program.push("transition", lofted(&["bottom", "top"]));
     let part = program.build_model(registry).unwrap();
     assert_valid(&part);
@@ -328,7 +327,7 @@ fn loft_a_square_to_a_circle() {
 /// cut out of a block: a loft as a tool.
 #[test]
 fn loft_through_three_profiles_cuts_a_block() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     let mut block = Sketch::new();
     polygon(
         &mut block,
@@ -342,10 +341,7 @@ fn loft_through_three_profiles_cuts_a_block() {
     lifted(&mut program, "low", -0.5);
     program.push("a", sketch(on_datum("low"), square(1.0)));
     lifted(&mut program, "middle", 0.75);
-    program.push(
-        "b",
-        sketch(on_datum("middle"), disc([0.0, 0.0], 0.7)),
-    );
+    program.push("b", sketch(on_datum("middle"), disc([0.0, 0.0], 0.7)));
     lifted(&mut program, "high", 2.0);
     program.push("c", sketch(on_datum("high"), square(0.5)));
     program.push(
@@ -371,10 +367,11 @@ fn loft_through_three_profiles_cuts_a_block() {
 /// Two open curves loft into the ruled face between them.
 #[test]
 fn loft_between_two_curves_as_a_face() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push(
         "low",
-        sketch(on_origin(FrameAxis::Z),
+        sketch(
+            on_origin(FrameAxis::Z),
             polyline(&[[-1.0, 0.0], [1.0, 0.0]]),
         ),
     );
@@ -406,7 +403,7 @@ fn loft_between_two_curves_as_a_face() {
 /// refused.
 #[test]
 fn loft_refuses_what_it_cannot_loft() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("only", sketch(on_origin(FrameAxis::Z), square(1.0)));
     program.push("one", lofted(&["only"]));
     assert!(program.build_model(registry).is_err());
@@ -414,7 +411,7 @@ fn loft_refuses_what_it_cannot_loft() {
     let mut holed = square(1.0);
     let c = holed.add_point(n(0.0), n(0.0));
     holed.add_circle(c, n(0.3));
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("holed", sketch(on_origin(FrameAxis::Z), holed));
     // Refused for its first profile, wherever the second lies.
     program.push("top", sketch(on_origin(FrameAxis::X), square(0.5)));
@@ -427,7 +424,7 @@ fn loft_refuses_what_it_cannot_loft() {
 
 /// A block with a slab-shaped top and bottom at `z = ±0.5`, spanning
 /// `[-1, 1.5] x [-3, 3]` — for the solids below to be cut from.
-fn slab(program: &mut ProgramFile) {
+fn slab(program: &mut Program) {
     let block = outline(&[[-1.0, -3.0], [1.5, -3.0], [1.5, 3.0], [-1.0, 3.0]]);
     program.push("slab_sketch", sketch(on_origin(FrameAxis::Z), block));
     program.push(
@@ -440,7 +437,7 @@ fn slab(program: &mut ProgramFile) {
 /// leaves a curved channel through it.
 #[test]
 fn sweep_a_ring_cuts_a_slab() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     slab(&mut program);
     program.push(
         "profile",
@@ -465,7 +462,7 @@ fn sweep_a_ring_cuts_a_slab() {
 /// A pipe along a spline, cut through a slab.
 #[test]
 fn sweep_along_a_spline_cuts_a_slab() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     slab(&mut program);
     let mut wave = Sketch::new();
     let p = [
@@ -505,7 +502,7 @@ fn sweep_along_a_spline_cuts_a_slab() {
 /// Sweep and loft steps are saved and read back like any other.
 #[test]
 fn sweep_and_loft_steps_round_trip() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push(
         "profile",
         sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.3)),
@@ -521,7 +518,7 @@ fn sweep_and_loft_steps_round_trip() {
     let json = serde_json::to_string(&program).unwrap();
     assert!(json.contains("\"operation\":\"sweep\""), "{json}");
     assert!(json.contains("\"operation\":\"loft\""), "{json}");
-    let back: ProgramFile = serde_json::from_str(&json).unwrap();
+    let back: Program = serde_json::from_str(&json).unwrap();
     assert_eq!(back, program);
 }
 
@@ -555,16 +552,10 @@ fn loft_a_d_into_a_triangle() {
             [0.7189527425188181, 0.1424512068640546],
         ],
     );
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("d", sketch(on_origin(FrameAxis::Z), d));
     lifted(&mut program, "above", 1.0);
-    program.push(
-        "triangle",
-        sketch(
-            on_datum("above"),
-            triangle,
-        ),
-    );
+    program.push("triangle", sketch(on_datum("above"), triangle));
     program.push("loft", lofted(&["d", "triangle"]));
     let part = program.build_model(registry).unwrap();
     assert_valid(&part);
@@ -582,7 +573,7 @@ fn loft_a_rectangle_through_a_triangle_into_a_circle() {
     );
     let mut triangle = Sketch::new();
     polygon(&mut triangle, &[[-0.5, -0.4], [0.5, -0.4], [0.0, 0.5]]);
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("rectangle", sketch(on_origin(FrameAxis::Z), rectangle));
     for (name, distance) in [("one", 1.0), ("two", 2.0)] {
         lifted(&mut program, name, distance);
@@ -619,16 +610,10 @@ fn loft_with_matched_points() {
         point: mark,
         curve: rim,
     });
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("square", sketch(on_origin(FrameAxis::Z), square));
     lifted(&mut program, "above", 1.0);
-    program.push(
-        "round",
-        sketch(
-            on_datum("above"),
-            round,
-        ),
-    );
+    program.push("round", sketch(on_datum("above"), round));
     let mut args = lofted(&["square", "round"]);
     args.matches = vec![
         sketch_element("square", p[2]),
@@ -691,16 +676,10 @@ fn loft_a_d_into_a_triangle_matched_at_two_points() {
     for i in 0..3 {
         triangle.add_line(q[i], q[(i + 1) % 3]);
     }
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("d", sketch(on_origin(FrameAxis::Z), d));
     lifted(&mut program, "above", 1.0);
-    program.push(
-        "triangle",
-        sketch(
-            on_datum("above"),
-            triangle,
-        ),
-    );
+    program.push("triangle", sketch(on_datum("above"), triangle));
     let point = |sketch: &str, point: PointId| sketch_element(sketch, point);
     let mut args = lofted(&["d", "triangle"]);
     args.matches = vec![
@@ -748,22 +727,18 @@ fn loft_a_d_into_a_triangle_matched_at_two_points() {
 /// far end the circle the rail's end lies on.
 #[test]
 fn sweep_along_a_rail_tapers() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push(
         "profile",
         sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.5)),
     );
     program.push(
         "path",
-        sketch(on_origin(FrameAxis::Z),
-            polyline(&[[0.0, 0.0], [2.0, 0.0]]),
-        ),
+        sketch(on_origin(FrameAxis::Z), polyline(&[[0.0, 0.0], [2.0, 0.0]])),
     );
     program.push(
         "rail",
-        sketch(on_origin(FrameAxis::Z),
-            polyline(&[[0.0, 0.5], [2.0, 1.0]]),
-        ),
+        sketch(on_origin(FrameAxis::Z), polyline(&[[0.0, 0.5], [2.0, 1.0]])),
     );
     program.push(
         "cone",
@@ -787,7 +762,7 @@ fn sweep_along_a_rail_tapers() {
 /// a bent path.
 #[test]
 fn sweep_a_twisted_tapering_bar() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("profile", sketch(on_origin(FrameAxis::X), square(0.25)));
     program.push("path", sketch(on_origin(FrameAxis::Z), bend()));
     program.push(
@@ -807,7 +782,7 @@ fn sweep_a_twisted_tapering_bar() {
 /// the middle of one side: the walls bulge with it, joined to a block.
 #[test]
 fn loft_along_a_guide() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("bottom", sketch(on_origin(FrameAxis::Z), square(1.0)));
     lifted(&mut program, "top_plane", 2.0);
     program.push("top", sketch(on_datum("top_plane"), square(1.0)));
@@ -840,22 +815,18 @@ fn loft_along_a_guide() {
 /// Rails and guides are saved and read back with their steps.
 #[test]
 fn rails_and_guides_round_trip() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push(
         "profile",
         sketch(on_origin(FrameAxis::X), disc([0.0, 0.0], 0.5)),
     );
     program.push(
         "path",
-        sketch(on_origin(FrameAxis::Z),
-            polyline(&[[0.0, 0.0], [2.0, 0.0]]),
-        ),
+        sketch(on_origin(FrameAxis::Z), polyline(&[[0.0, 0.0], [2.0, 0.0]])),
     );
     program.push(
         "rail",
-        sketch(on_origin(FrameAxis::Z),
-            polyline(&[[0.0, 0.5], [2.0, 1.0]]),
-        ),
+        sketch(on_origin(FrameAxis::Z), polyline(&[[0.0, 0.5], [2.0, 1.0]])),
     );
     program.push(
         "cone",
@@ -886,7 +857,7 @@ fn rails_and_guides_round_trip() {
         "{json}"
     );
     assert!(json.contains("\"fixed_normal\""), "{json}");
-    let back: ProgramFile = serde_json::from_str(&json).unwrap();
+    let back: Program = serde_json::from_str(&json).unwrap();
     assert_eq!(back, program);
 }
 
@@ -894,7 +865,7 @@ fn rails_and_guides_round_trip() {
 /// drawn through the same points in space: the same bulge.
 #[test]
 fn loft_along_a_3d_sketch_guide() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("bottom", sketch(on_origin(FrameAxis::Z), square(1.0)));
     lifted(&mut program, "top_plane", 2.0);
     program.push("top", sketch(on_datum("top_plane"), square(1.0)));
@@ -929,7 +900,7 @@ fn loft_along_a_3d_sketch_guide() {
 /// is spoken of in the names everything else uses.
 #[test]
 fn a_sketchs_chain_is_named_as_its_curves_are() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("path", sketch(on_origin(FrameAxis::Z), bend()));
     let part = program.built(registry).unwrap();
     let reader = part.current();
@@ -939,7 +910,9 @@ fn a_sketchs_chain_is_named_as_its_curves_are() {
     let sketch = &placed.sketch;
     assert_eq!(chain.curves.len(), sketch.curves.len());
     for (k, id) in sketch.curves.keys().enumerate() {
-        let alone = reader.retrieve_element(&sketch_element::<Curve>("path", id)).unwrap();
+        let alone = reader
+            .retrieve_element(&sketch_element::<Curve>("path", id))
+            .unwrap();
         assert_eq!(chain.curve_names[k], alone.curve_names[0]);
         let mut joints = [&chain.joint_names[k], &chain.joint_names[k + 1]];
         let mut ends = [&alone.joint_names[0], &alone.joint_names[1]];
@@ -953,7 +926,7 @@ fn a_sketchs_chain_is_named_as_its_curves_are() {
 /// block's front stands on, under a round profile at its start.
 #[test]
 fn sweep_along_an_edge() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     let footprint = outline(&[[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]]);
     program.push("footprint", sketch(on_origin(FrameAxis::Z), footprint));
     program.push(
@@ -987,7 +960,10 @@ fn sweep_along_an_edge() {
     program.push(
         "rod",
         SweepArgs {
-            path: Some(PathRef::Edge(ElementReference::new(geop_ops_model::model(), along_x))),
+            path: Some(PathRef::Edge(ElementReference::new(
+                geop_ops_model::model(),
+                along_x,
+            ))),
             ..swept("profile", "unused")
         },
     );

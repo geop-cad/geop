@@ -1,24 +1,27 @@
 //! Datums built on a solid, and sketched on.
 
-use crate::{AddDatumArgs, Construction, Role, Selected, Shape, fitting_constructions};
+use crate::{AddDatum, AddDatumArgs, Construction, Role, Selected, Shape, fitting_constructions};
 use geop_core_geometry::shape::Plane;
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::{CoordinateSystem, Datum, DatumComponent, DatumKind, FrameAxis},
     scalars::{ScalInF64 as S, Scalar},
 };
-use geop_core_program::element::ElementReference;
-use geop_ops_datums::{AnyDatum, Datums, ORIGIN, component_name, datums, read_datums};
-use geop_ops_extrude_revolve::shapes::v3;
-use geop_ops_model::model;
-use geop_ops_parameters::{
-    BuildPart, PartReader, ProgramFile, Registry, Runner, Settings, StateValues,
+use geop_core_program::{
+    element::ElementReference,
+    operation_registry::OperationRegistry,
+    part::{Part, Reader},
+    program::Program,
+    program_runner::ProgramRunner,
+    values::{Settings, StateValues},
 };
+use geop_ops_datums::{AnyDatum, Datums, ORIGIN, component_name, datums, read_datums};
+use geop_ops_extrude_revolve::{
+    shapes::v3,
+    testing::{drilled_box as drilled, runner_of},
+};
+use geop_ops_model::model;
 use geop_ops_sketch::{PlacedSketch, sketch_element, whole_sketch};
-
-use geop_ops_extrude_revolve::testing::{drilled_box as drilled, runner_of};
-
-use crate::AddDatum;
 
 fn face(name: &str) -> Selected {
     Selected::Face(ElementReference::new(model(), name))
@@ -40,25 +43,25 @@ fn axis(along: FrameAxis) -> Selected {
 }
 
 /// The operations these tests' programs are written in.
-fn registry() -> GeopResult<Registry> {
+fn registry() -> GeopResult<OperationRegistry> {
     geop_ops_extrude_revolve::testing::registry()?.with(AddDatum)
 }
 
 /// A program, the runner that built it and the part it built: a datum
 /// step added to it is built on what the part kept.
-struct Part {
-    program: ProgramFile,
-    runner: Runner,
-    part: BuildPart,
+struct Built {
+    program: Program,
+    runner: ProgramRunner,
+    part: Part,
 }
 
-impl Part {
+impl Built {
     /// `program`, built.
-    fn of(program: ProgramFile) -> Self {
+    fn of(program: Program) -> Self {
         let runner = runner_of(registry().unwrap());
-        let mut part = BuildPart::default();
+        let mut part = Part::default();
         (program.run(&runner, &mut part, &Settings::new(), &StateValues::new())).unwrap();
-        Part {
+        Built {
             program,
             runner,
             part,
@@ -72,14 +75,19 @@ impl Part {
         id: &str,
         selection: Vec<Selected>,
         construction: Construction,
-    ) -> GeopResult<ProgramFile> {
+    ) -> GeopResult<Program> {
         let mut program = self.program.clone();
         let args = AddDatumArgs {
             selection,
             construction,
         };
         program.push(id, args);
-        program.run(&self.runner, &mut self.part, &Settings::new(), &StateValues::new())?;
+        program.run(
+            &self.runner,
+            &mut self.part,
+            &Settings::new(),
+            &StateValues::new(),
+        )?;
         Ok(program)
     }
 
@@ -110,9 +118,12 @@ impl Part {
     }
 
     /// The part as the program — without a datum step tried since — has it.
-    fn seen(&mut self) -> PartReader<'_> {
+    fn seen(&mut self) -> Reader<'_> {
         let (runner, part) = (&self.runner, &mut self.part);
-        (self.program.run(runner, part, &Settings::new(), &StateValues::new())).unwrap();
+        (self
+            .program
+            .run(runner, part, &Settings::new(), &StateValues::new()))
+        .unwrap();
         self.part.current()
     }
 
@@ -129,8 +140,8 @@ impl Part {
 
 /// The 2 x 2 x 1 box with a hole of radius 0.4 drilled 0.5 deep into
 /// the middle of its top.
-fn drilled_box() -> Part {
-    Part::of(drilled())
+fn drilled_box() -> Built {
+    Built::of(drilled())
 }
 
 /// Sketch data is solved, not exact: agreeing to 1e-9 is agreeing.
@@ -191,14 +202,7 @@ fn selections_fit_by_shape() {
     for method in ["project_on_plane", "perpendicular", "parallel_plane"] {
         assert!(point_plane.contains(&method), "{method}: {point_plane:?}");
     }
-    assert!(
-        fits(vec![
-            datum(ORIGIN),
-            datum(ORIGIN),
-            datum(ORIGIN)
-        ])
-        .contains(&"three_points")
-    );
+    assert!(fits(vec![datum(ORIGIN), datum(ORIGIN), datum(ORIGIN)]).contains(&"three_points"));
     assert!(fits(Vec::new()).is_empty());
     // Nothing fits what the part does not have.
     assert!(fits(vec![face("nowhere")]).is_empty());
@@ -211,7 +215,11 @@ fn selections_fit_by_shape() {
 #[test]
 fn sketch_points_and_lines() {
     let mut part = drilled_box();
-    let placed: PlacedSketch<S> = part.seen().retrieve_element(&whole_sketch("outline")).unwrap().clone();
+    let placed: PlacedSketch<S> = part
+        .seen()
+        .retrieve_element(&whole_sketch("outline"))
+        .unwrap()
+        .clone();
     let corner = |x: f64, y: f64| {
         let (&point, _) = placed
             .sketch
@@ -290,18 +298,12 @@ fn points() {
     );
     assert_at(&d.frame, [2.0, 0.0, 0.0], [1., 0., 0.]);
     let d = part.datum(
-        vec![
-            edge("extrude(box,outline,p2)"),
-            base(FrameAxis::Z),
-        ],
+        vec![edge("extrude(box,outline,p2)"), base(FrameAxis::Z)],
         Construction::LinePlane {},
     );
     assert_at(&d.frame, [2.0, 2.0, 0.0], [0., 0., 1.]);
     let d = part.datum(
-        vec![
-            axis(FrameAxis::Z),
-            edge("extrude(box,outline,c4,start)"),
-        ],
+        vec![axis(FrameAxis::Z), edge("extrude(box,outline,c4,start)")],
         Construction::LineLine {},
     );
     assert_at(&d.frame, [0.0, 0.0, 0.0], [0., -1., 0.]);
@@ -453,10 +455,7 @@ fn planes() {
     );
     assert!(on_plane(&d.frame, [0.5, 0., 0.]) && on_plane(&d.frame, [0.5, 0., 7.]));
     let d = part.datum(
-        vec![
-            axis(FrameAxis::Z),
-            vertex("extrude(box,outline,p1,start)"),
-        ],
+        vec![axis(FrameAxis::Z), vertex("extrude(box,outline,p1,start)")],
         Construction::LinePoint {},
     );
     assert!(on_plane(&d.frame, [5., 0., 3.]));
@@ -474,10 +473,7 @@ fn planes() {
     );
     assert_at(&d.frame, [0., 0., 0.], [0., 0., 1.]);
     let d = part.datum(
-        vec![
-            axis(FrameAxis::Y),
-            vertex("extrude(box,outline,p2,end)"),
-        ],
+        vec![axis(FrameAxis::Y), vertex("extrude(box,outline,p2,end)")],
         Construction::NormalToLine {},
     );
     assert_at(&d.frame, [2., 2., 1.], [0., 1., 0.]);

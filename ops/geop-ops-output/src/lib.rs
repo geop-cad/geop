@@ -37,9 +37,12 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_ops_parameters::{
-    BuildPart, PartReader, ProgramFile, Properties, Runner, read_properties, stem,
+use geop_core_program::{
+    part::{Part, Reader},
+    program::Program,
+    program_runner::ProgramRunner,
 };
+use geop_ops_parameters::{Properties, read_properties, stem};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// `text` fit for XML: for an element's content, or an attribute's value
@@ -116,9 +119,9 @@ impl Bounded {
 /// runner and the program it ran, with its state — to ask how its parts
 /// can move by running it again.
 pub struct Output<'a> {
-    pub runner: &'a Runner,
-    pub part: &'a mut BuildPart,
-    pub file: &'a ProgramFile,
+    pub runner: &'a ProgramRunner,
+    pub part: &'a mut Part,
+    pub file: &'a Program,
     /// The step being edited, if one is: what an export of one step's
     /// result (a drawing) writes unless told which.
     pub editing: Option<&'a str>,
@@ -129,13 +132,13 @@ pub struct Output<'a> {
 
 impl<'a> Output<'a> {
     /// The part as far as the program runs.
-    pub fn part(&self) -> PartReader<'_> {
+    pub fn part(&self) -> Reader<'_> {
         self.part.current()
     }
 
     /// The part as it was before the step `step`: what a step that
     /// describes an output of the part — a drawing — is of.
-    pub fn part_before(&self, step: &str) -> GeopResult<PartReader<'_>> {
+    pub fn part_before(&self, step: &str) -> GeopResult<Reader<'_>> {
         Ok(self.part.reader(self.file.index_of(step)?))
     }
 

@@ -2,9 +2,8 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
-    editing::Unit,
-    numeric_input::NumericInput,
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
+    editing::{Number, Unit},
     part_operation,
     part_operation::PartOperation,
 };
@@ -12,9 +11,14 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::{FrameAxis, Motion},
 };
+use geop_core_program::{
+    numeric::NumericInput,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
 use geop_ops_datums::origin_axis;
-use geop_ops_model::{Design, ModelOperation, NamedModel};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_model::{ModelOperation, NamedModel};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -72,7 +76,7 @@ impl Pattern for CircularPatternArgs {
         "0"
     }
 
-    fn placements(&self, reader: &PartReader) -> GeopResult<Vec<(String, Motion<Design>)>> {
+    fn placements(&self, reader: &Reader) -> GeopResult<Vec<(String, Motion<Design>)>> {
         let Some(axis) = &self.axis else {
             return Err(GeopError::new("pick an axis to turn around"));
         };
@@ -94,7 +98,7 @@ impl Pattern for CircularPatternArgs {
 
 impl CircularPatternArgs {
     /// The instances round the axis, as `reader` reads the parameters.
-    fn row(&self, reader: &PartReader) -> GeopResult<Row> {
+    fn row(&self, reader: &Reader) -> GeopResult<Row> {
         let count = whole_count(&self.count, reader)?;
         self.angle.round(count, reader)
     }
@@ -112,13 +116,10 @@ impl PartOperation for CircularPattern {
     )
     .icon(geop_ops_view::icons::CIRCULAR_PATTERN);
     type Args = CircularPatternArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// Four times around the origin's `z` axis, kept as new bodies.
-    fn new_args(_: &StepContext) -> CircularPatternArgs {
+    fn new_args(_: &Context) -> CircularPatternArgs {
         CircularPatternArgs {
             // Nothing picked: what is patterned is the user's choice, a body
             // or a feature, never guessed.
@@ -132,8 +133,8 @@ impl PartOperation for CircularPattern {
 
     fn run(
         step: &str,
-        _: &Runner,
-        part: &mut BuildPart,
+        _: &ProgramRunner,
+        part: &mut Part,
         args: &CircularPatternArgs,
     ) -> GeopResult<()> {
         run_pattern::<Self>(part, step, args)
@@ -142,7 +143,7 @@ impl PartOperation for CircularPattern {
     /// The bodies or the features, and the axis, picked; the count and the
     /// angles; and how to combine copies of bodies.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &CircularPatternArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, CircularPatternArgs> {
@@ -150,9 +151,13 @@ impl PartOperation for CircularPattern {
         let mut f = EditForm::default();
         let set_seeds = |args: &mut CircularPatternArgs, seeds| args.seeds = seeds;
         (args.seeds).fields(&mut f, before, set_seeds, |f| {
-            f.pick_one("axis", "axis", before, args.axis.as_ref(), |edit, picked| {
-                edit.args.axis = Some(picked)
-            })
+            f.pick_one(
+                "axis",
+                "axis",
+                before,
+                args.axis.as_ref(),
+                |edit, picked| edit.args.axis = Some(picked),
+            )
             .checkbox("reversed", "reverse direction", args.reversed, |edit, b| {
                 edit.args.reversed = b
             });
@@ -163,7 +168,9 @@ impl PartOperation for CircularPattern {
                 f,
                 "angle",
                 ["angle", "total angle"],
-                |label, value| value.number(label, before, Unit::Angle).range(-360.0, 360.0),
+                |label, value| {
+                    Number::numeric(value, label, before, Unit::Angle).range(-360.0, 360.0)
+                },
                 |args, angle| args.angle = angle,
             );
         });
@@ -174,7 +181,7 @@ impl PartOperation for CircularPattern {
 impl ModelOperation for CircularPattern {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &CircularPatternArgs,
     ) -> GeopResult<()> {

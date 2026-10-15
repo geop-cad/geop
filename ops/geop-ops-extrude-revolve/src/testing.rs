@@ -12,15 +12,19 @@ use geop_core_math::{
     primitives::FrameAxis,
     scalars::Scalar,
 };
-use geop_core_program::{element::ElementReference, program::ProgramStep};
-use geop_core_sketch::{CurveId, PointId};
-use geop_ops_datums::origin_plane;
-use geop_ops_model::{Design, NamedModel, model, read_model};
-use geop_ops_parameters::{
-    BuildPart, DefineParameters, PartProperties, ProgramFile, Registry, Runner, Settings,
-    StateValues,
+use geop_core_program::{
+    element::ElementReference,
+    operation_registry::OperationRegistry,
+    part::Part,
+    program::{Program, ProgramStep},
+    program_runner::ProgramRunner,
+    values::{Design, Settings, StateValues},
 };
+use geop_core_sketch::{CurveId, PointId};
 use geop_ops_booleans::Combine;
+use geop_ops_datums::origin_plane;
+use geop_ops_model::{NamedModel, model, read_model};
+use geop_ops_parameters::{DefineParameters, PartProperties};
 use geop_ops_sketch::{AddSketch, AddSketchArgs, Sketch, SketchPlane, whole_sketch};
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -28,8 +32,8 @@ use crate::{Extent, Extents, Extrude, ExtrudeArgs, Loft, Output, Revolve, Sweep}
 
 /// Sketching, and the solids and sheets made from sketches: the operations
 /// a test's programs are written in, besides those it tests.
-pub fn registry() -> GeopResult<Registry> {
-    (Registry::default()
+pub fn registry() -> GeopResult<OperationRegistry> {
+    (OperationRegistry::default()
         .with(DefineParameters)?
         .with(PartProperties)?
         .with(AddSketch)?
@@ -136,7 +140,7 @@ pub fn extrusion(sketch: &str, extent: Extents, combine: Combine) -> ExtrudeArgs
 /// Pushes `drawn` on `on` as `{name}_sketch`, and its extrude as far as
 /// `extent` says as `name`, combined as `combine` says.
 pub fn extrude_sketch(
-    program: &mut ProgramFile,
+    program: &mut Program,
     name: &str,
     on: SketchPlane,
     drawn: Sketch,
@@ -153,15 +157,19 @@ pub fn extrude_sketch(
 /// (`outline`) and extruded up (`box`), and a circle of radius 0.4 around
 /// its middle sketched on the box's end cap (`hole_sketch`) and cut half
 /// way back into it (`hole`) — the drilled box is `extrude(hole)`.
-pub fn drilled_box() -> ProgramFile {
-    let mut program = ProgramFile::new();
+pub fn drilled_box() -> Program {
+    let mut program = Program::new();
     let outline = sketch(on_origin(FrameAxis::Z), rectangle(0.0, 0.0, 2.0, 2.0));
     program.push("outline", outline);
     let body = extrusion("outline", Extents::blind(1.0), Combine::NewBody);
     program.push("box", body);
     let hole = sketch(on_face("extrude(box,end)"), disc([1.0, 1.0], 0.4));
     program.push("hole_sketch", hole);
-    let cut = extrusion("hole_sketch", Extents::blind(-0.5), Combine::cut("extrude(box)"));
+    let cut = extrusion(
+        "hole_sketch",
+        Extents::blind(-0.5),
+        Combine::cut("extrude(box)"),
+    );
     program.push("hole", cut);
     program
 }
@@ -170,8 +178,8 @@ pub fn drilled_box() -> ProgramFile {
 
 /// A runner of programs written in the operations `registry` makes, as
 /// the file `part.geop` — of a workspace of no other files.
-pub fn runner_of(registry: Registry) -> Runner {
-    let mut runner = Runner::new(registry);
+pub fn runner_of(registry: OperationRegistry) -> ProgramRunner {
+    let mut runner = ProgramRunner::new(registry);
     runner.location.file = "part.geop".into();
     runner
 }
@@ -180,28 +188,28 @@ pub fn runner_of(registry: Registry) -> Runner {
 /// makes.
 pub trait Built {
     /// The part the program builds.
-    fn built(&self, registry: fn() -> GeopResult<Registry>) -> GeopResult<BuildPart>;
+    fn built(&self, registry: fn() -> GeopResult<OperationRegistry>) -> GeopResult<Part>;
 
     /// The model the program builds, or why a step fails.
     fn build_model(
         &self,
-        registry: fn() -> GeopResult<Registry>,
+        registry: fn() -> GeopResult<OperationRegistry>,
     ) -> GeopResult<NamedModel<Design>> {
         Ok(model_of(&self.built(registry)?))
     }
 }
 
-impl Built for ProgramFile {
-    fn built(&self, registry: fn() -> GeopResult<Registry>) -> GeopResult<BuildPart> {
+impl Built for Program {
+    fn built(&self, registry: fn() -> GeopResult<OperationRegistry>) -> GeopResult<Part> {
         let runner = runner_of(registry()?);
-        let mut part = BuildPart::default();
+        let mut part = Part::default();
         self.run(&runner, &mut part, &Settings::new(), &StateValues::new())?;
         Ok(part)
     }
 }
 
 /// The model `part` holds: empty if it built no topology.
-pub fn model_of(part: &BuildPart) -> NamedModel<Design> {
+pub fn model_of(part: &Part) -> NamedModel<Design> {
     (read_model(&part.current()).map(|model| model.into_owned())).unwrap_or_default()
 }
 
@@ -224,9 +232,9 @@ pub fn edit_args<A: Serialize + DeserializeOwned>(
 
 /// The step `id` of `program`.
 #[track_caller]
-pub fn step<'a>(program: &'a mut ProgramFile, id: &str) -> &'a mut ProgramStep {
+pub fn step<'a>(program: &'a mut Program, id: &str) -> &'a mut ProgramStep {
     let index = program.index_of(id).unwrap_or_else(|e| panic!("{e}"));
-    &mut program.program.steps[index]
+    &mut program.steps[index]
 }
 
 /// The error `result` holds, for a test that expects one.

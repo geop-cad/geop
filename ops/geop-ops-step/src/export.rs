@@ -19,6 +19,7 @@
 //! after the part's names for them, so a face picked as `extrude(E,end)`
 //! here is called that in the file.
 
+use geop_core_program::{part::Reader, values::Design};
 use std::collections::HashMap;
 
 use geop_core_geometry::{nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D};
@@ -32,9 +33,9 @@ use geop_core_topology::{
     CoedgeGeometry, EdgeId, FaceId, Model, Sense, ShellId, VertexId, boundary::BoundaryType,
 };
 use geop_ops_assembly::placed_parts;
-use geop_ops_model::{Design, NamedModel, RefId, read_model};
+use geop_ops_model::{NamedModel, RefId, read_model};
 use geop_ops_output::{Content, Export, Exporter, ExporterInfo, NoOptions, Output};
-use geop_ops_parameters::{PartReader, read_properties, stem};
+use geop_ops_parameters::{read_properties, stem};
 
 use crate::part21::{Exchange, Instance, Record, Value};
 
@@ -55,7 +56,7 @@ pub fn write_step<S: Scalar>(model: &NamedModel<S>, name: &str) -> GeopResult<St
 
 /// The part `reader` reads — its bodies and the parts placed in it, however
 /// deep — as the text of a STEP file whose product is called `name`.
-pub fn write_part(reader: &PartReader, name: &str) -> GeopResult<String> {
+pub fn write_part(reader: &Reader, name: &str) -> GeopResult<String> {
     let mut writer = Writer::default();
     let context = writer.context();
     writer.assembly(reader, name, &context)?;
@@ -326,12 +327,7 @@ impl Writer {
     /// TODO: Later, with the parts of no state shared between instances
     /// (see [`geop_core_program::part::Part`]), write each part
     /// shared once, however often it is placed.
-    fn assembly(
-        &mut self,
-        reader: &PartReader,
-        name: &str,
-        context: &Context,
-    ) -> GeopResult<Written> {
+    fn assembly(&mut self, reader: &Reader, name: &str, context: &Context) -> GeopResult<Written> {
         let ctx = |e: GeopError| e.with_context(format!("writing the part {name:?} as STEP"));
         let mut placed = Vec::new();
         let parts = placed_parts(reader).map_err(ctx)?;

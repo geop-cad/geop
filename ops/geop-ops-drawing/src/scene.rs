@@ -42,11 +42,10 @@ use geop_core_math::{
     solvers::probe::first_success,
     vector::Vector3,
 };
+use geop_core_program::{element::ElementReference, part::Reader, values::Design};
 use geop_core_topology::{FaceId, Model};
-use geop_core_program::element::ElementReference;
 use geop_ops_assembly::placed_parts;
-use geop_ops_model::{Design, NamedModel, Threads, model, threads};
-use geop_ops_parameters::PartReader;
+use geop_ops_model::{NamedModel, Threads, model, threads};
 
 use crate::{
     drawing::drawn_faces,
@@ -621,7 +620,7 @@ impl<'p> Scene<'p, Design> {
     /// it, however deep, each where it is placed: the part's own first,
     /// then those placed, in the order they were placed, each followed by
     /// those placed in it.
-    pub fn of(reader: &PartReader<'p>) -> GeopResult<Self> {
+    pub fn of(reader: &Reader<'p>) -> GeopResult<Self> {
         let mut bodies = Vec::new();
         push(reader, String::new(), None, &mut bodies)?;
         for placed in placed_parts(reader)? {
@@ -635,7 +634,7 @@ impl<'p> Scene<'p, Design> {
 /// Adds the body of the part `reader` reads itself, placed at `pose`, as
 /// `path`, to `bodies` — if it has faces to draw.
 fn push<'p>(
-    reader: &PartReader<'p>,
+    reader: &Reader<'p>,
     path: String,
     pose: Option<Pose<Design>>,
     bodies: &mut Vec<Body<'p, Design>>,

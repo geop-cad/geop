@@ -40,6 +40,11 @@ pub mod tree;
 mod xml;
 pub mod zip;
 
+use geop_core_program::{
+    instance::instance_path,
+    part::Reader,
+    values::{Design, Settings, StateValue},
+};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use geop_core_math::{
@@ -49,12 +54,10 @@ use geop_core_math::{
     solvers::walk::{Walked, walk},
     vector::Vector3,
 };
-use geop_core_program::instance::instance_path;
 use geop_core_topology::mass::MassProperties;
 use geop_ops_assembly::{
-    CouplingKind, JointKind, Motion, Resolved, STL_QUALITY, joint_parameter,
+    CouplingKind, JointKind, Motion, Resolved, STL_QUALITY, drawn, joint_parameter,
     joints::{Connector, measure},
-    drawn,
     mechanism::mates_of,
     placed_parts,
     residuals::D,
@@ -62,9 +65,9 @@ use geop_ops_assembly::{
     solving::{self, Rerun, check},
     stl_bytes,
 };
-use geop_ops_model::{Design, read_model};
+use geop_ops_model::read_model;
 use geop_ops_output::{Content, Export, Exporter, ExporterInfo, Output};
-use geop_ops_parameters::{PartReader, Settings, StateValue, stem};
+use geop_ops_parameters::stem;
 use geop_ops_rasterize::stl::StlFormat;
 use serde::Deserialize;
 
@@ -267,7 +270,7 @@ pub struct Body<'a> {
     /// Where it is in the assembly.
     pub world: Pose<Design>,
     /// Its part, as placed.
-    pub part: PartReader<'a>,
+    pub part: Reader<'a>,
     /// The file its part is placed from.
     pub file: String,
 }
@@ -314,7 +317,7 @@ impl<'a> Mechanism<'a> {
     /// The mechanism of the part `reader` reads, its joints at the
     /// coordinates the state has them — or, where it has none, where their
     /// parts are.
-    pub fn of(reader: &PartReader<'a>) -> GeopResult<Self> {
+    pub fn of(reader: &Reader<'a>) -> GeopResult<Self> {
         let placed = placed_parts(reader)?;
         let resolved = mates_of(reader);
         let fixed: BTreeSet<&str> = (resolved.iter())
@@ -478,7 +481,7 @@ impl Meshes {
         &mut self,
         key: Option<String>,
         stem: &str,
-        reader: &PartReader,
+        reader: &Reader,
     ) -> GeopResult<Option<String>> {
         if let Some(path) = self.paths.get(&key) {
             return Ok(path.clone());
@@ -511,7 +514,7 @@ impl Meshes {
 /// named behind `prefix`, where `pose` puts them, each of its part's
 /// material (see [`own_solids_at`]).
 fn masses(
-    reader: &PartReader,
+    reader: &Reader,
     prefix: &str,
     pose: Option<Pose<Design>>,
     shapes: &mut Shapes,
@@ -551,7 +554,7 @@ pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<Urd
     let mut rerun = Rerun {
         runner: output.runner,
         part: &mut *output.part,
-        program: &output.file.program,
+        program: output.file,
         inputs: &inputs,
     };
     let freedom = solving::freedom(&mut rerun, &output.file.state, &held).with_context(&ctx)?;

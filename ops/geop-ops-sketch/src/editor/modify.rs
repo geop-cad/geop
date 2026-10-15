@@ -14,9 +14,8 @@
 //!   a circle, for its center — repeats it round that point. The pattern's
 //!   construction curve is selected after, to change its count, and its
 //!   spacing asked for.
-
-use geop_core_editor::numeric_input::NumericInput;
 use geop_core_math::geop_error::GeopResult;
+use geop_core_program::numeric::NumericInput;
 use geop_core_sketch::{
     copies::{Made, Step},
     offset::Offsetted,

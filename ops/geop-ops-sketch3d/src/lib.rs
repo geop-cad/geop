@@ -19,7 +19,7 @@ pub use add_sketch3d::{
 pub use editor::{Sketch3dSession, Tool};
 pub use placed::{PlacedSketch3d, sketch3d, sketch3d_path};
 
-use geop_ops_model::Design;
+use geop_core_program::values::Design;
 
 /// A 3-D sketch as a program holds it.
 pub type Sketch3d = geop_core_sketch::space::Sketch3d<Design>;

@@ -5,14 +5,18 @@ use geop_core_math::{
     primitives::Pose,
     scalars::{ScalInF64 as S, Scalar},
 };
+use geop_core_program::{
+    part::Part,
+    program::Program,
+    values::{Setting, Settings, StateValue, StateValues, pose_state},
+};
+use geop_ops_parameters::{
+    Material, Parameter, ParameterKind, Parameters, parameters::Row, set_parameters,
+};
 
 use geop_ops_assembly::testing::{Shelf, given_model, place, runner};
 use geop_ops_extrude_revolve::shapes::block;
 use geop_ops_model::{CutWire, NamedModel, SolidNotes};
-use geop_ops_parameters::{
-    BuildPart, Material, Parameter, ParameterKind, Parameters, ProgramFile, Setting, Settings,
-    StateValue, StateValues, parameters::Row, pose_state,
-};
 
 use crate::{Bom, LineKind, Structure, bom};
 
@@ -38,21 +42,21 @@ fn program(
     model: NamedModel<S>,
     notes: Option<SolidNotes>,
     placed: &[(&str, &str, Settings)],
-) -> ProgramFile {
-    let mut file = ProgramFile::new();
-    file.set_parameters(parameters);
-    file.program.steps.push(given_model("model", model, notes));
+) -> Program {
+    let mut file = Program::new();
+    set_parameters(&mut file, parameters);
+    file.steps.push(given_model("model", model, notes));
     for (name, placed, settings) in placed {
-        file.program.steps.push(place(name, placed, settings));
+        file.steps.push(place(name, placed, settings));
         (file.state).insert(pose_state(name), StateValue::Pose(Pose::identity()));
     }
     file
 }
 
 /// The part `root`, the program of the file `file` on `shelf`, builds.
-fn build(shelf: Shelf, file: &str, root: ProgramFile) -> BuildPart {
+fn build(shelf: Shelf, file: &str, root: Program) -> Part {
     let runner = runner(shelf.with(file, root.clone()), file);
-    let mut part = BuildPart::default();
+    let mut part = Part::default();
     (root.run(&runner, &mut part, &Settings::new(), &StateValues::new())).unwrap();
     part
 }
@@ -64,7 +68,7 @@ fn size(size: &str) -> Settings {
 
 /// A "standard" screw, a steel cube of side 1, of the sizes M4 and M5:
 /// called a test screw, and ordered as `TEST M4`.
-fn screw() -> ProgramFile {
+fn screw() -> Program {
     let mut parameters = steel();
     parameters.title = Some("Test screw".into());
     parameters.designation = Some("TEST".into());
@@ -91,7 +95,7 @@ fn screw() -> ProgramFile {
 }
 
 /// A bracket of side 2, with two M4 screws in it.
-fn bracket() -> ProgramFile {
+fn bracket() -> Program {
     let mut model = NamedModel::new();
     block(&mut model, "body", [0.0; 3], [2.0; 3]);
     let m4 = size("M4");
@@ -104,7 +108,7 @@ fn bracket() -> ProgramFile {
 
 /// Two brackets, three more M4 screws — one of them placed with its size
 /// given apart — and one M5.
-fn assembly() -> BuildPart {
+fn assembly() -> Part {
     let (m4, screw_file) = (size("M4"), "std:screw.geop");
     let placed = [
         ("b1", "bracket.geop", Settings::new()),
@@ -115,8 +119,7 @@ fn assembly() -> BuildPart {
         ("s4", screw_file, size("M5")),
     ];
     let top = program(Parameters::default(), NamedModel::new(), None, &placed);
-    let shelf = (Shelf::default().with(screw_file, screw()))
-        .with("bracket.geop", bracket());
+    let shelf = (Shelf::default().with(screw_file, screw())).with("bracket.geop", bracket());
     build(shelf, "top.geop", top)
 }
 
@@ -280,7 +283,11 @@ fn wires_are_lines_of_their_own() {
         ("h2", "harness.geop", Settings::new()),
     ];
     let top = program(Parameters::default(), NamedModel::new(), None, &placed);
-    let top = build(Shelf::default().with("harness.geop", harness), "top.geop", top);
+    let top = build(
+        Shelf::default().with("harness.geop", harness),
+        "top.geop",
+        top,
+    );
 
     let flat = bom(&top.current(), "top.geop", Structure::Flat).unwrap();
     let rows: Vec<(&str, u64, Option<&str>)> = flat

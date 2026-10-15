@@ -13,6 +13,14 @@
 //! [`geop_ops_constraints::solve`] solves, encloses and measures, running the
 //! program again at every state it tries ([`Rerun`]).
 
+use geop_core_program::{
+    element::{ElementReference, HasElements, Kind, whole},
+    part::{Part, Reader},
+    program::Program,
+    program_runner::ProgramRunner,
+    target::TargetReference,
+    values::{Design, StateValue, StateValues, pose_state},
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 use geop_core_editor::editing::Pull;
@@ -28,24 +36,16 @@ use geop_core_math::{
     },
     vector::Vector3,
 };
-use geop_core_program::{
-    element::{ElementReference, HasElements, Kind, whole},
-    program::Program,
-    target::TargetReference,
-};
 use geop_ops_constraints::{
     Bound, Constraint, Constraints,
     solve::{self, Mobility, Preference, Problem, Run},
     unknown::Unknowns,
 };
-use geop_ops_model::Design;
-use geop_ops_parameters::{BuildPart, PartReader, Runner, StateValue, StateValues, pose_state};
 
 /// What a program's parameters are set to: its inputs.
-type Inputs = geop_ops_parameters::Settings;
+type Inputs = geop_core_program::values::Settings;
 
 /// A parameter's value, as an input.
-type Input = geop_ops_parameters::Setting;
 use serde::Serialize;
 
 pub use geop_ops_constraints::unknown::{Unknown, declare_unknowns};
@@ -56,20 +56,20 @@ use geop_ops_view::PartView;
 /// A program and what it is given, its runner and the part it last ran
 /// on: what a solve runs again at every state it tries.
 pub struct Rerun<'r> {
-    pub runner: &'r Runner,
-    pub part: &'r mut BuildPart,
+    pub runner: &'r ProgramRunner,
+    pub part: &'r mut Part,
     pub program: &'r Program,
     pub inputs: &'r Inputs,
 }
 
 impl Rerun<'_> {
     /// The part as the program last ran.
-    pub fn reader(&self) -> PartReader<'_> {
+    pub fn reader(&self) -> Reader<'_> {
         self.part.current()
     }
 
     /// The program, to run again by a solve.
-    fn run(&mut self) -> Run<'_, Input, StateValue> {
+    fn run(&mut self) -> Run<'_> {
         Run {
             runner: self.runner,
             part: &mut *self.part,
@@ -144,7 +144,7 @@ impl HasElements<Settings> for Settings {
 
 /// Every [`Settings`] the part `reader` reads declares, in the order the
 /// steps made them.
-fn all_settings<'a>(reader: &PartReader<'a>) -> Vec<&'a Settings> {
+fn all_settings<'a>(reader: &Reader<'a>) -> Vec<&'a Settings> {
     (reader.targets_of::<Settings>().into_iter())
         .filter_map(|target| {
             reader
@@ -180,7 +180,7 @@ pub struct SettingsState {
 /// Every value a user sets in the part `reader` reads — and in the parts
 /// placed flexibly in it — grouped as the steps declared them, in the order
 /// they made them, each where the state has it.
-pub fn settings(reader: &PartReader) -> Vec<SettingsState> {
+pub fn settings(reader: &Reader) -> Vec<SettingsState> {
     (all_settings(reader).into_iter())
         .map(|settings| SettingsState {
             name: settings.name.clone(),
@@ -267,7 +267,7 @@ pub fn largest<'i>(drawn: impl IntoIterator<Item = GeopResult<&'i Drawn>>) -> Ge
 /// The size of the part `reader` reads: of the largest part placed in it,
 /// at least one. What a constraint holds to
 /// [`geop_core_math::solvers::system::RELATIVE_TOLERANCE`] of.
-pub fn scale_of(reader: &PartReader) -> GeopResult<Design> {
+pub fn scale_of(reader: &Reader) -> GeopResult<Design> {
     largest(
         placed_parts(reader)?
             .iter()
@@ -276,9 +276,9 @@ pub fn scale_of(reader: &PartReader) -> GeopResult<Design> {
 }
 
 /// Which constraints hold where the part `reader` reads has its state.
-pub fn check(reader: &PartReader) -> GeopResult<Report> {
+pub fn check(reader: &Reader) -> GeopResult<Report> {
     let tolerance = tolerance(scale_of(reader)?)?;
-    let failed: Vec<String> = (Constraints::<StateValue>::of(reader)?.iter())
+    let failed: Vec<String> = (Constraints::of(reader)?.iter())
         .filter(|(_, constraint)| !constraint.holds(tolerance))
         .map(|(name, _)| name.to_string())
         .collect();
@@ -300,11 +300,11 @@ pub fn check(reader: &PartReader) -> GeopResult<Report> {
 /// those `held`, and of those held where they are only the one that is the
 /// state `only`, if given. What a step holds fixed is not moved.
 fn freed(
-    reader: &PartReader,
+    reader: &Reader,
     only: Option<&str>,
     held: &BTreeSet<String>,
 ) -> GeopResult<BTreeMap<String, Mobility>> {
-    let mut free: BTreeMap<String, Mobility> = (Unknowns::<StateValue>::of(reader)?.iter())
+    let mut free: BTreeMap<String, Mobility> = (Unknowns::of(reader)?.iter())
         .map(|unknown| (unknown.state.clone(), unknown.mobility))
         .collect();
     free.retain(|state, mobility| {
@@ -332,15 +332,15 @@ fn missing(value: Option<&StateValue>, seed: &StateValue) -> bool {
 /// its seed is unless does not hold: a free choice, which the solve makes
 /// exact.
 fn seeded(
-    reader: &PartReader,
+    reader: &Reader,
     state: &StateValues,
     free: &BTreeMap<String, Mobility>,
     all: bool,
 ) -> GeopResult<StateValues> {
     let mut seeded = state.clone();
     let tolerance = tolerance(scale_of(reader)?)?;
-    let constraints = Constraints::<StateValue>::of(reader)?;
-    for unknown in Unknowns::<StateValue>::of(reader)?.iter() {
+    let constraints = Constraints::of(reader)?;
+    for unknown in Unknowns::of(reader)?.iter() {
         let Some(seed) = &unknown.seed else {
             continue;
         };
@@ -380,14 +380,14 @@ const TURN_RESISTANCE: (i64, i64) = (1, 100);
 /// Where the placed part at `path` is in the world, as `reader` has the
 /// state, moved by a step of its own pose state: its pose is the innermost
 /// the placement reads, so its step moves the part in its own frame.
-fn stepped(reader: &PartReader, path: &str) -> GeopResult<Pose<D>> {
+fn stepped(reader: &Reader, path: &str) -> GeopResult<Pose<D>> {
     let world = locate(reader, path)?.world;
     let step = Pose::exp_with_derivatives(&Vector3::zero(), &Vector3::zero())?;
     Ok(world.map(D::cst).compose(&step))
 }
 
 /// The rows `values` as a constraint by `state`'s step.
-fn preference(state: &str, rows: Rows<Design>) -> Constraint<StateValue> {
+fn preference(state: &str, rows: Rows<Design>) -> Constraint {
     Constraint {
         residuals: rows.values,
         jacobian: BTreeMap::from([(state.to_string(), rows.jacobian)]),
@@ -395,8 +395,8 @@ fn preference(state: &str, rows: Rows<Design>) -> Constraint<StateValue> {
     }
 }
 
-impl Preference<Input, StateValue> for PointPull {
-    fn evaluate(&self, reader: &PartReader<'_>) -> GeopResult<Constraint<StateValue>> {
+impl Preference for PointPull {
+    fn evaluate(&self, reader: &Reader<'_>) -> GeopResult<Constraint> {
         let at = stepped(reader, &self.path)?
             .apply(&self.local.map(D::cst))
             .sub(&self.target.map(D::cst));
@@ -425,10 +425,10 @@ struct PosePull {
     scale: Design,
 }
 
-impl Preference<Input, StateValue> for PosePull {
+impl Preference for PosePull {
     /// How far it is from the pose, as [`Variable::stay`] measures it: of
     /// the pose in the world, whose step is that of the part's pose state.
-    fn evaluate(&self, reader: &PartReader<'_>) -> GeopResult<Constraint<StateValue>> {
+    fn evaluate(&self, reader: &Reader<'_>) -> GeopResult<Constraint> {
         let world = StateValue::Pose(locate(reader, &self.path)?.world);
         let rows = world.stay(&StateValue::Pose(self.target), self.scale)?;
         Ok(preference(&self.state, rows))
@@ -450,11 +450,8 @@ fn local_at(located: &Located, world: &Pose<Design>) -> Pose<Design> {
 
 /// The state the solve found, and its report: the limits by the values
 /// they read.
-fn report(
-    reader: &PartReader,
-    solved: solve::Solved<StateValue>,
-) -> GeopResult<(StateValues, Report)> {
-    let made = Constraints::<StateValue>::of(reader)?;
+fn report(reader: &Reader, solved: solve::Solved) -> GeopResult<(StateValues, Report)> {
+    let made = Constraints::of(reader)?;
     let mut at_limit: Vec<String> = (solved.report.at_limit.iter())
         .filter_map(|name| made.get(name.as_str()))
         .flat_map(|c| c.jacobian.keys().cloned())
@@ -524,7 +521,7 @@ pub fn solve(
         let mut start = seeded(&reader, &had, &free, true)?;
         let scale = scale_of(&reader)?;
         let placed = placed_parts(&reader)?;
-        let mut preferences: Vec<Box<dyn Preference<Input, StateValue>>> = Vec::new();
+        let mut preferences: Vec<Box<dyn Preference>> = Vec::new();
         for pull in pulls {
             let name = match pull {
                 Pull::Point { parameter, .. } | Pull::Pose { parameter, .. } => parameter,
@@ -571,9 +568,9 @@ pub fn solve(
     };
     fn problem<'p>(
         free: &BTreeMap<String, Mobility>,
-        preferences: Vec<&'p dyn Preference<Input, StateValue>>,
+        preferences: Vec<&'p dyn Preference>,
         scale: Design,
-    ) -> Problem<'p, Input, StateValue> {
+    ) -> Problem<'p> {
         Problem {
             free: free.clone(),
             preferences,
@@ -652,7 +649,7 @@ fn every_value(
     rerun: &Rerun,
     state: &StateValues,
     held: &BTreeSet<String>,
-) -> GeopResult<(StateValues, Problem<'static, Input, StateValue>)> {
+) -> GeopResult<(StateValues, Problem<'static>)> {
     let reader = rerun.reader();
     let free = freed(&reader, None, held)?;
     let start = seeded(&reader, state, &free, true)?;
@@ -701,8 +698,8 @@ pub fn conflicting(rerun: &mut Rerun, state: &StateValues) -> GeopResult<Vec<Str
 /// The values of the state a solve sets: the unknowns the steps declare —
 /// the poses of the placed parts, and of those in the parts placed in them
 /// — what a program's file keeps of its state.
-pub fn solved_states(reader: &PartReader) -> GeopResult<Vec<String>> {
-    Ok((Unknowns::<StateValue>::of(reader)?.iter())
+pub fn solved_states(reader: &Reader) -> GeopResult<Vec<String>> {
+    Ok((Unknowns::of(reader)?.iter())
         .map(|u| u.state.clone())
         .collect())
 }

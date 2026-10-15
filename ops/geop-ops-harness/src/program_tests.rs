@@ -2,20 +2,22 @@
 //! built, their cables recorded and their bundles noted as only drawn.
 
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
-use geop_core_program::element::ElementReference;
+use geop_core_program::{
+    element::ElementReference, operation_registry::OperationRegistry, program::Program,
+    values::Design,
+};
 use geop_ops_add_datum::Selected;
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{
     Extents,
     testing::{Built, extrude_sketch, on_origin, rectangle},
 };
-use geop_ops_model::{Design, model, notes_of};
-use geop_ops_parameters::{ProgramFile, Registry};
+use geop_ops_model::{model, notes_of};
 
 use crate::{Route, RouteArgs, Wire, WireSize, cable};
 
 /// The operations these tests' programs are written in.
-fn registry() -> GeopResult<Registry> {
+fn registry() -> GeopResult<OperationRegistry> {
     geop_ops_extrude_revolve::testing::registry()?.with(Route)
 }
 
@@ -29,7 +31,7 @@ fn vertex(name: &str) -> Selected {
 /// bundle noted as only drawn, its wire ordered in its place.
 #[test]
 fn a_route_between_corners_of_a_block() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     extrude_sketch(
         &mut program,
         "block",

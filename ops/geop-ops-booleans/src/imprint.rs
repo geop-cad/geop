@@ -213,7 +213,6 @@ mod tests {
         vector::Vector2,
     };
     use geop_core_topology::{EdgeId, SolidId};
-    use geop_ops_model::{NamedModel, Namer, testing::assert_valid};
     use geop_ops_extrude_revolve::{
         common::{Profile, polygon, polyline},
         extrude::extrude,
@@ -224,6 +223,7 @@ mod tests {
         },
         sweep::SweepLoop,
     };
+    use geop_ops_model::{NamedModel, Namer, testing::assert_valid};
 
     fn v2s(points: &[[f64; 2]]) -> Vec<Vector2<S>> {
         points

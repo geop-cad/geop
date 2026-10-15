@@ -3,7 +3,7 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     part_operation,
     part_operation::PartOperation,
 };
@@ -15,11 +15,15 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::element::ElementReference;
+use geop_core_program::{
+    element::ElementReference,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
 use geop_core_sketch::Shape;
 use geop_ops_extrude_revolve::operation::shape_loops;
-use geop_ops_model::{Design, ModelOperation, NamedModel, Namer, Plane, read_model};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_model::{ModelOperation, NamedModel, Namer, Plane, read_model};
 use geop_ops_sketch::{PlacedSketch, SketchRef};
 use serde::{Deserialize, Serialize};
 
@@ -68,7 +72,7 @@ pub struct SheetCutArgs {
 }
 
 impl SheetStep for SheetCut {
-    fn plan(reader: &PartReader, step: &str, args: &SheetCutArgs) -> GeopResult<Made> {
+    fn plan(reader: &Reader, step: &str, args: &SheetCutArgs) -> GeopResult<Made> {
         let ctx = with_context!("sheet_cut({step}, {args:?})");
         let namer = Namer::new("sheet_cut", step)?;
         let model = read_model(reader).with_context(ctx)?;
@@ -102,13 +106,10 @@ impl PartOperation for SheetCut {
     )
     .icon(crate::icons::SHEET_CUT);
     type Args = SheetCutArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// The newest sketch, on the face it lies on.
-    fn new_args(context: &StepContext) -> SheetCutArgs {
+    fn new_args(context: &Context) -> SheetCutArgs {
         let newest = context.before.targets_of::<PlacedSketch<Design>>().pop();
         SheetCutArgs {
             sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_sketch::sketch(""))),
@@ -116,13 +117,13 @@ impl PartOperation for SheetCut {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &SheetCutArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &SheetCutArgs) -> GeopResult<()> {
         body::run::<Self>(step, part, args)
     }
 
     /// The sketch, picked, and the face, if not the one the sketch lies on.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &SheetCutArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, SheetCutArgs> {
@@ -153,7 +154,7 @@ impl PartOperation for SheetCut {
 impl ModelOperation for SheetCut {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         _: &SheetCutArgs,
     ) -> GeopResult<()> {
@@ -166,7 +167,7 @@ impl ModelOperation for SheetCut {
 /// none is named, the one the plane lies on.
 fn target(
     model: &NamedModel<Design>,
-    reader: &PartReader,
+    reader: &Reader,
     face: Option<&str>,
     plane: &CoordinateSystem<Design>,
 ) -> GeopResult<(String, Sheet<Design>, usize)> {

@@ -24,10 +24,6 @@
 //! Enter — and goes on smoothly from a curve it starts at, or into one it
 //! ends at (see [`geop_core_sketch::space::Sketch3d::adopts`]).
 
-use geop_core_math::{
-    scalars::{Field, Scalar},
-    vector::Vector3,
-};
 use geop_core_editor::{
     edit_form::{Edit, EditForm},
     editing::{
@@ -37,12 +33,15 @@ use geop_core_editor::{
     },
     selectable,
 };
+use geop_core_math::{
+    scalars::{Field, Scalar},
+    vector::Vector3,
+};
+use geop_core_program::{part::Reader, values::Design};
 use geop_core_sketch::{
     ConstraintId, CurveId, PointId,
     space::{Arc3, Constraint3d, Coordinate, CurveKind3d, End, Solve3dReport},
 };
-use geop_ops_model::Design;
-use geop_ops_parameters::PartReader;
 use geop_ops_sketch::fields::constraint_status;
 use geop_ops_view::{drawn, icons};
 
@@ -159,7 +158,7 @@ fn picked(args: &AddSketch3dArgs, selection: &[String]) -> Picks {
 /// `args` with what the part `before` gives it brought up to date, and how
 /// its constraints stand — or why that cannot be said.
 fn checked(
-    before: &PartReader,
+    before: &Reader,
     args: &AddSketch3dArgs,
 ) -> Result<(AddSketch3dArgs, Solve3dReport<Design>), String> {
     let mut args = args.clone();
@@ -175,7 +174,7 @@ fn checked(
 /// Solves `args` on `before`, pulling `drags` — what the part gives
 /// brought up to date first. What cannot be solved is left as it is, and
 /// the form says why.
-fn solve(before: &PartReader, args: &mut AddSketch3dArgs, drags: &[(PointId, V3)]) {
+fn solve(before: &Reader, args: &mut AddSketch3dArgs, drags: &[(PointId, V3)]) {
     args.tidy();
     if args.resolve(before).is_ok() {
         let _ = args.sketch.solve_with_drag(drags);
@@ -237,7 +236,7 @@ fn along_axis(from: &V3, pointer: &Pointer<S>) -> Option<Located> {
 /// the tool `tool` in hand — snapped, unless `shift` is held — on the part
 /// `before` as drawn, `scene`.
 fn locate(
-    before: &PartReader,
+    before: &Reader,
     scene: Option<&dyn Scene<S>>,
     args: &AddSketch3dArgs,
     s: &Sketch3dSession,
@@ -256,13 +255,11 @@ fn locate(
             return Some(Located::Point(hit.visual.key.parse().ok()?));
         }
         if let Some(scene) = scene {
-            if let Some((point, _)) = selectable::pick::<PointSource, _, _, _>(scene, before, pointer)
-            {
+            if let Some((point, _)) = selectable::pick::<PointSource, _>(scene, before, pointer) {
                 let at = point.resolve(before).ok()?;
                 return Some(Located::Fixed(point, at));
             }
-            if let Some((curve, at)) = selectable::pick::<CurveSource, _, _, _>(scene, before, pointer)
-            {
+            if let Some((curve, at)) = selectable::pick::<CurveSource, _>(scene, before, pointer) {
                 return Some(Located::OnEdge(curve, at));
             }
         }
@@ -385,7 +382,7 @@ fn smooth_joints(args: &mut AddSketch3dArgs, curve: CurveId) {
 
 /// A click of the tool `tool` at `located`.
 fn click(
-    before: &PartReader,
+    before: &Reader,
     args: &mut AddSketch3dArgs,
     s: &mut Sketch3dSession,
     tool: Tool,
@@ -441,7 +438,7 @@ fn click(
 
 /// Ends what is being drawn: a spline is added through the points placed,
 /// and points placed for nothing go again.
-fn finish(before: &PartReader, args: &mut AddSketch3dArgs, s: &mut Sketch3dSession) {
+fn finish(before: &Reader, args: &mut AddSketch3dArgs, s: &mut Sketch3dSession) {
     if s.tool(args) == Tool::Spline && s.placed.len() >= 2 {
         let spline = args.sketch.add_spline(std::mem::take(&mut s.placed));
         smooth_joints(args, spline);
@@ -465,14 +462,14 @@ fn finish(before: &PartReader, args: &mut AddSketch3dArgs, s: &mut Sketch3dSessi
 }
 
 /// Takes up `tool`, ending what was being drawn.
-fn take_up(before: &PartReader, args: &mut AddSketch3dArgs, s: &mut Sketch3dSession, tool: Tool) {
+fn take_up(before: &Reader, args: &mut AddSketch3dArgs, s: &mut Sketch3dSession, tool: Tool) {
     finish(before, args, s);
     s.tool = Some(tool);
     s.hover = None;
 }
 
 /// Removes what is selected, and everything on it.
-fn remove_selected(before: &PartReader, args: &mut AddSketch3dArgs, selection: &mut Vec<String>) {
+fn remove_selected(before: &Reader, args: &mut AddSketch3dArgs, selection: &mut Vec<String>) {
     let picks = picked(args, selection);
     args.sketch.remove(&picks.points, &picks.curves, &[]);
     selection.clear();
@@ -483,7 +480,7 @@ fn remove_selected(before: &PartReader, args: &mut AddSketch3dArgs, selection: &
 /// pointer is over found in the part `before` as the editor draws it,
 /// `scene`.
 pub(crate) fn event(
-    before: &PartReader,
+    before: &Reader,
     scene: Option<&dyn Scene<S>>,
     edit: Edit<'_, AddSketch3dArgs, Sketch3dSession>,
     event: &CanvasEvent<S>,
@@ -900,7 +897,7 @@ fn visuals(
 /// The form of a 3-D sketch step on the part `before` reads (see the module
 /// docs).
 pub(crate) fn form<'a>(
-    before: &'a PartReader<'a>,
+    before: &'a Reader<'a>,
     args: &AddSketch3dArgs,
     s: &Sketch3dSession,
     selection: &[String],
@@ -1066,7 +1063,7 @@ pub(crate) fn form<'a>(
     (f.form.dialog).list("constraints", items, "No constraints yet");
     for &id in args.sketch.constraints.keys() {
         f.on(id.to_string(), move |edit, value| {
-                let args = edit.args;
+            let args = edit.args;
             match value {
                 Value::Remove => {
                     args.sketch.remove(&[], &[], &[id]);

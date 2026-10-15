@@ -25,14 +25,15 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
-    part::{Input, Reader, State},
+    part::Reader,
     target::TargetReference,
+    values::Design,
 };
 use geop_core_sketch::{
     CurveId, Enclosure, PointId, Shape,
     profile::{Piece, curve_nurbs, curve_polyline},
 };
-use geop_ops_model::{Chain, Circle, Curve, Design, Line, Path, Plane, Point, Round};
+use geop_ops_model::{Chain, Circle, Curve, Line, Path, Plane, Point, Round};
 use geop_ops_view::{PartView, ViewCurve, ViewSketch, ViewSketchPoint, drawn};
 
 use crate::{CurveKind, Sketch};
@@ -333,8 +334,8 @@ macro_rules! picked_from_its_drawing {
         impl SelectableElement<PlacedSketch<Design>> for $kind {
             const PICKED_FROM: &'static [&'static str] = &[$from];
 
-            fn select<I: Input, S: State>(
-                reader: &Reader<I, S>,
+            fn select(
+                reader: &Reader,
                 hit: &PickedElement,
             ) -> Option<ElementReference<PlacedSketch<Design>, Self>> {
                 let is_sketch = <PlacedSketch<Design> as HasElements<$kind>>::names_target(&hit.target);
@@ -344,8 +345,8 @@ macro_rules! picked_from_its_drawing {
                 Some(reference)
             }
 
-            fn drawn<I: Input, S: State>(
-                _: &Reader<I, S>,
+            fn drawn(
+                _: &Reader,
                 element: &ElementReference<PlacedSketch<Design>, Self>,
             ) -> Vec<PickedElement> {
                 vec![PickedElement {

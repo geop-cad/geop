@@ -2,7 +2,7 @@
 
 use geop_core_editor::{
     edit_form::{Edit, EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::{Action, Choice, ListItem, Number, Shape, Style, Tone, Unit, Value, Visual},
     part_operation,
     part_operation::PartOperation,
@@ -13,6 +13,11 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
+use geop_core_program::{
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
 use geop_ops_add_datum::Selected;
 use geop_ops_extrude_revolve::{
     common::{Profile, circle_at},
@@ -20,10 +25,8 @@ use geop_ops_extrude_revolve::{
     sweep::SweepLoop,
 };
 use geop_ops_model::{
-    CutWire, Design, ModelOperation, NamedModel, Namer, SolidNotes, build_model, frame_along,
-    solid_notes,
+    CutWire, ModelOperation, NamedModel, Namer, SolidNotes, build_model, frame_along, solid_notes,
 };
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -96,7 +99,7 @@ struct Plan<S: Scalar> {
 
 impl RouteArgs {
     /// The points it runs through, in the part `reader` reads.
-    fn waypoints(&self, reader: &PartReader) -> GeopResult<Vec<Waypoint<Design>>> {
+    fn waypoints(&self, reader: &Reader) -> GeopResult<Vec<Waypoint<Design>>> {
         (self.through.iter().enumerate())
             .map(|(i, entity)| Waypoint::of(reader, entity, i))
             .collect()
@@ -267,7 +270,7 @@ pub(crate) fn lay<S: Scalar>(
 
 /// Records the cable `route(R)` of the step `R`, through its points in the
 /// part `reader` reads.
-fn record(reader: &PartReader, (step, args): &(String, RouteArgs)) -> GeopResult<Cables<Design>> {
+fn record(reader: &Reader, (step, args): &(String, RouteArgs)) -> GeopResult<Cables<Design>> {
     let ctx = with_context!("the cable of route({step})");
     let namer = Namer::new("route", step)?;
     let mut cables: Cables<Design> = reader.previous()?;
@@ -281,7 +284,7 @@ fn record(reader: &PartReader, (step, args): &(String, RouteArgs)) -> GeopResult
 /// wires ordered in its place.
 // A generator's arguments are a type of their own: the step's id, a `String`.
 #[allow(clippy::ptr_arg)]
-fn note(reader: &PartReader, step: &String) -> GeopResult<SolidNotes> {
+fn note(reader: &Reader, step: &String) -> GeopResult<SolidNotes> {
     let bundle = Namer::new("route", step)?.root();
     let mut notes: SolidNotes = reader.previous()?;
     let cable = cable(reader, &bundle)
@@ -297,7 +300,7 @@ fn note(reader: &PartReader, step: &String) -> GeopResult<SolidNotes> {
 /// loop; what was built — and the route drawn, its points numbered and its
 /// bends too tight marked.
 fn form<'a>(
-    context: &'a StepContext<'a>,
+    context: &'a Context<'a>,
     args: &RouteArgs,
     session: &RouteSession,
 ) -> EditForm<'a, Design, RouteArgs, RouteSession> {
@@ -484,14 +487,11 @@ impl PartOperation for Route {
     .experimental()
     .icon(crate::icons::ROUTE);
     type Args = RouteArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = RouteSession;
 
     /// Nothing picked yet; one hookup wire, filling three quarters of the
     /// bundle, bent no tighter than five diameters.
-    fn new_args(_: &StepContext) -> RouteArgs {
+    fn new_args(_: &Context) -> RouteArgs {
         RouteArgs {
             through: Vec::new(),
             wires: vec![Wire::new("w1")],
@@ -502,14 +502,14 @@ impl PartOperation for Route {
     }
 
     /// Sweeps the bundle, then records its cable, and notes the bundle.
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &RouteArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &RouteArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)?;
         part.revise_target(&cables(), &(step.to_string(), args.clone()), record)?;
         part.revise_target(&solid_notes(), &step.to_string(), note)
     }
 
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &RouteArgs,
         editing: &RouteEditing,
     ) -> EditForm<'a, Design, RouteArgs, RouteSession> {
@@ -521,7 +521,7 @@ impl ModelOperation for Route {
     /// The points are resolved in the part as the steps before left it.
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &RouteArgs,
     ) -> GeopResult<()> {
@@ -532,11 +532,7 @@ impl ModelOperation for Route {
 
 /// The route drawn: its points numbered, as what it says about them counts
 /// them, and its centre line, the bends too tight marked as failed.
-fn draw(
-    f: &mut EditForm<'_, Design, RouteArgs, RouteSession>,
-    reader: &PartReader,
-    args: &RouteArgs,
-) {
+fn draw(f: &mut EditForm<'_, Design, RouteArgs, RouteSession>, reader: &Reader, args: &RouteArgs) {
     type S = Design;
     let waypoints: Vec<Option<Waypoint<S>>> = (args.through.iter().enumerate())
         .map(|(i, entity)| Waypoint::of(reader, entity, i).ok())

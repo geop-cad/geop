@@ -17,11 +17,9 @@
 //! part and what the views depend on are the same (see
 //! [`DrawingSession::show`]).
 
-use std::{cell::RefCell, rc::Rc};
-
 use geop_core_editor::{
     edit_form::{Edit, EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::{
         Action, CanvasEvent, Choice, Extent, InHand, ListItem, Pointer, Shape, Style, Tone, Value,
         Visual,
@@ -30,6 +28,14 @@ use geop_core_editor::{
     part_operation,
     part_operation::PartOperation,
 };
+use geop_core_program::{
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    target::Revision,
+    values::Design,
+};
+use std::{cell::RefCell, rc::Rc};
+
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::{CoordinateSystem, Pose},
@@ -37,17 +43,14 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::target::Revision;
 use geop_core_sketch::plain::{add, sub};
 use geop_ops_assembly::placed_parts;
-use geop_ops_model::{Design, NamedModel, Threads, model, read_model, read_threads, threads};
+use geop_ops_model::{NamedModel, Threads, model, read_model, read_threads, threads};
 use geop_ops_output::{
     Exporter,
     sheet::{Anchor, Layer, P, Sheet},
 };
-use geop_ops_parameters::{
-    Setting, BuildPart, PartReader, Properties, Runner, StateValue, StepContext, read_properties,
-};
+use geop_ops_parameters::{Properties, read_properties};
 use geop_ops_view::icons;
 use serde::{Deserialize, Serialize};
 
@@ -197,7 +200,7 @@ struct Shown {
 
 impl Shown {
     /// What the part `reader` reads is, as a drawing of it depends on.
-    fn of(reader: &PartReader) -> GeopResult<Self> {
+    fn of(reader: &Reader) -> GeopResult<Self> {
         let model = match reader.defines(&model()) {
             true => Some(read_model(reader)?.into_owned()),
             false => None,
@@ -254,12 +257,7 @@ impl DrawingSession {
     /// file `file`, with its bill of materials if `args` asks for one —
     /// laid out once, and kept while the part and what the views depend on
     /// are the same.
-    fn layout(
-        &self,
-        view: &PartReader,
-        file: &str,
-        args: &DrawingArgs,
-    ) -> Rc<Result<Layout, String>> {
+    fn layout(&self, view: &Reader, file: &str, args: &DrawingArgs) -> Rc<Result<Layout, String>> {
         let shown = match Shown::of(view) {
             Ok(shown) => shown,
             Err(e) => return Rc::new(Err(e.root_message().to_string())),
@@ -289,7 +287,7 @@ impl DrawingSession {
     /// same.
     fn projected(
         &self,
-        view: &PartReader,
+        view: &Reader,
         shown: &Shown,
         args: &DrawingArgs,
     ) -> Rc<Result<Projected<Design>, String>> {
@@ -490,7 +488,7 @@ fn build(tool: Tool, picks: &[Candidate]) -> Option<Annotation> {
 /// `part` as `layout` draws it — or why it cannot be drawn.
 fn placed_at(
     mut annotation: Annotation,
-    part: &PartReader,
+    part: &Reader,
     layout: &Layout,
     at: P,
 ) -> GeopResult<(Annotation, Drawn)> {
@@ -699,7 +697,7 @@ fn hint(s: &DrawingSession) -> String {
 /// is picked, what a click would pick, and the annotation being placed.
 fn annotate(
     f: &mut EditForm<'_, Design, DrawingArgs, DrawingSession>,
-    part: &PartReader,
+    part: &Reader,
     args: &DrawingArgs,
     s: &DrawingSession,
     selection: &[String],
@@ -836,7 +834,7 @@ impl DrawingSession {
     fn click(
         &mut self,
         args: &mut DrawingArgs,
-        part: &PartReader,
+        part: &Reader,
         layout: &Layout,
         at: P,
         hit: Option<Candidate>,
@@ -873,7 +871,7 @@ impl DrawingSession {
     }
 
     /// Adds what the tool makes of the picks, its value at `at`.
-    fn add(&mut self, args: &mut DrawingArgs, part: &PartReader, layout: &Layout, at: P) {
+    fn add(&mut self, args: &mut DrawingArgs, part: &Reader, layout: &Layout, at: P) {
         let Some(mut annotation) = build(self.tool, &self.picks) else {
             return;
         };
@@ -897,7 +895,7 @@ fn shows(args: &DrawingArgs, view: DrawnView) -> bool {
 }
 
 /// Checks that `target` names something in `part`.
-fn resolve_target(part: &PartReader, target: &Target) -> GeopResult<()> {
+fn resolve_target(part: &Reader, target: &Target) -> GeopResult<()> {
     match target {
         Target::Vertex { name } => placed_vertex(part, name).map(|_| ()),
         Target::Edge { name } => placed_edge(part, name).map(|_| ()),
@@ -906,7 +904,7 @@ fn resolve_target(part: &PartReader, target: &Target) -> GeopResult<()> {
 }
 
 /// Checks that `edge` is a circular edge of `part`.
-fn circular(part: &PartReader, edge: &str) -> GeopResult<()> {
+fn circular(part: &Reader, edge: &str) -> GeopResult<()> {
     match placed_edge(part, edge)?.as_arc()? {
         Some(_) => Ok(()),
         None => Err(GeopError::new(format!(
@@ -916,7 +914,7 @@ fn circular(part: &PartReader, edge: &str) -> GeopResult<()> {
 }
 
 /// Checks that `edge` is a straight edge of `part`.
-fn straight(part: &PartReader, edge: &str) -> GeopResult<()> {
+fn straight(part: &Reader, edge: &str) -> GeopResult<()> {
     match placed_edge(part, edge)?.as_line()? {
         Some(_) => Ok(()),
         None => Err(GeopError::new(format!(
@@ -929,7 +927,7 @@ fn straight(part: &PartReader, edge: &str) -> GeopResult<()> {
 /// part `part` shows — its section plane, and what each annotation names,
 /// in a view the drawing has. Whether each view sees what it is asked to
 /// measure is checked when the drawing is laid out.
-fn check(part: &PartReader, step: &str, args: &DrawingArgs) -> GeopResult<()> {
+fn check(part: &Reader, step: &str, args: &DrawingArgs) -> GeopResult<()> {
     let ctx = with_context!("drawing({step})");
     if args.views.is_empty() && args.section.is_none() {
         return Err(GeopError::new("a drawing needs a view")).with_context(ctx);
@@ -996,19 +994,16 @@ impl PartOperation for Drawing {
     )
     .icon(crate::icons::DRAWING);
     type Args = DrawingArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = DrawingSession;
 
     /// Front, top, right and isometric views, third angle, on A3.
-    fn new_args(_: &StepContext) -> DrawingArgs {
+    fn new_args(_: &Context) -> DrawingArgs {
         DrawingArgs::default()
     }
 
     /// Records the drawing (see [`drawing`]), once what it refers to is
     /// checked there in the part before it; it changes nothing else.
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &DrawingArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &DrawingArgs) -> GeopResult<()> {
         check(&part.current(), step, args)?;
         part.define_target(&drawing(step), args, described)
     }
@@ -1016,7 +1011,7 @@ impl PartOperation for Drawing {
     /// The form of the drawing `args` of the part `context` is edited against:
     /// its download, its sheet to annotate, its views and its title block.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &DrawingArgs,
         editing: &DrawingEditing,
     ) -> EditForm<'a, Design, DrawingArgs, DrawingSession> {
@@ -1161,7 +1156,7 @@ impl PartOperation for Drawing {
     /// dragged where it goes; Escape lets go of the picks, then of the tool;
     /// Delete removes the annotations selected.
     fn canvas(
-        context: &StepContext,
+        context: &Context,
         edit: Edit<'_, DrawingArgs, DrawingSession>,
         event: &CanvasEvent<Design>,
     ) {

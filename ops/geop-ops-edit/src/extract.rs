@@ -3,14 +3,18 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     part_operation,
     part_operation::PartOperation,
 };
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::element::ElementReference;
-use geop_ops_model::{Design, Face, ModelOperation, NamedModel, Namer, build_model, model};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_core_program::{
+    element::ElementReference,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
+use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model, model};
 use serde::{Deserialize, Serialize};
 
 /// Copies the face named `face` — of a solid, or of a sheet — into a sheet
@@ -42,25 +46,27 @@ impl PartOperation for ExtractFace {
     .experimental()
     .icon(crate::icons::EXTRACT_FACE);
     type Args = ExtractFaceArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// Nothing picked yet: no face has the empty name.
-    fn new_args(_: &StepContext) -> ExtractFaceArgs {
+    fn new_args(_: &Context) -> ExtractFaceArgs {
         ExtractFaceArgs {
             face: ElementReference::new(model(), ""),
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &ExtractFaceArgs) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &ProgramRunner,
+        part: &mut Part,
+        args: &ExtractFaceArgs,
+    ) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
     /// The face, picked.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &ExtractFaceArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, ExtractFaceArgs> {
@@ -79,7 +85,7 @@ impl PartOperation for ExtractFace {
 impl ModelOperation for ExtractFace {
     fn build(
         model: &mut NamedModel<Design>,
-        _: &PartReader,
+        _: &Reader,
         step: &str,
         args: &ExtractFaceArgs,
     ) -> GeopResult<()> {

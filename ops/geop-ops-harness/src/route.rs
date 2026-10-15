@@ -59,10 +59,11 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
+use geop_core_program::{part::Reader, values::Design};
 use geop_ops_add_datum::{Selected, Shape};
 use geop_ops_assembly::MateEntity;
-use geop_ops_model::{Chain, Design};
-use geop_ops_parameters::{PartReader, located};
+use geop_ops_model::Chain;
+use geop_ops_parameters::located;
 
 /// Which way the route is told to run through a [`Waypoint`].
 #[derive(Clone, Debug)]
@@ -101,7 +102,7 @@ impl Waypoint<Design> {
     /// `reader` reads — where the part it is of is placed there (see the
     /// module docs): a point, just where it is; a circular edge, its
     /// centre and axis; a coordinate system, its origin and `z` axis.
-    pub fn of(reader: &PartReader, entity: &Selected, index: usize) -> GeopResult<Self> {
+    pub fn of(reader: &Reader, entity: &Selected, index: usize) -> GeopResult<Self> {
         let frame_on = MateEntity::on(entity.clone());
         let label = format!("point {} ({})", index + 1, frame_on.label());
         let ctx = with_context!("resolving the route's {label}");

@@ -17,8 +17,10 @@
 //! edge projects to. All of it is reference geometry: fixed, construction,
 //! drawn as such, and never part of a profile.
 
+use geop_core_program::{element::ElementReference, part::Reader, values::Design};
 use std::collections::BTreeMap;
 
+use geop_core_editor::one_of;
 use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -27,12 +29,9 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
     with_context,
 };
-use geop_core_editor::one_of;
-use geop_core_program::element::ElementReference;
 use geop_core_sketch::{CurveId, PointId, SplineShape};
 use geop_core_topology::CoedgeGeometry;
-use geop_ops_model::{Chain, Curve, Design, Face, NamedModel, RefId, Vertex};
-use geop_ops_parameters::PartReader;
+use geop_ops_model::{Chain, Curve, Face, NamedModel, RefId, Vertex};
 use serde::{Deserialize, Serialize};
 
 use crate::{CurveKind, Sketch, geometry::of, placed::PlacedSketch};
@@ -144,7 +143,7 @@ impl Reference {
     pub fn update(
         &mut self,
         sketch: &mut Sketch,
-        reader: &PartReader,
+        reader: &Reader,
         plane: &CoordinateSystem<Design>,
     ) -> GeopResult<()> {
         let geometry = match &self.source {
@@ -262,7 +261,7 @@ fn frame_geometry() -> Geometry {
 /// normal, every key the name of the vertex or edge it comes from.
 fn project(
     entity: &Projected,
-    reader: &PartReader,
+    reader: &Reader,
     plane: &CoordinateSystem<Design>,
 ) -> GeopResult<Geometry> {
     let mut geometry = Geometry::default();
@@ -273,7 +272,10 @@ fn project(
     match entity {
         Projected::Vertex(vertex) => {
             let found = reader.retrieve_element(vertex)?;
-            point(vertex.name(), &found.model.topology().get_vertex(found.id)?.point);
+            point(
+                vertex.name(),
+                &found.model.topology().get_vertex(found.id)?.point,
+            );
         }
         Projected::Edge(edge) => curves.push(reader.retrieve_element(edge)?),
         Projected::SketchCurve(curve) => curves.push(reader.retrieve_element(curve)?),

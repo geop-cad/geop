@@ -1,31 +1,33 @@
 //! [`Extrude`]: sweep a sketch's area along its plane's normal, and how a
 //! sketch becomes the named [`Profile`](geop_ops_model::Profile)s extrude and revolve sweep.
 
-use geop_core_math::scalars::Ring;
-use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::CoordinateSystem,
-    scalars::Scalar,
-    vector::{Vector2, Vector3},
-};
-use geop_core_sketch::{Enclosure, Region, Shape, Sketch, profile::curve_polyline};
-use geop_core_topology::build::BuiltBody;
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
-    editing::{Track, Unit},
-    numeric_input::NumericInput,
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
+    editing::{Number, Track, Unit},
     part_operation,
     part_operation::PartOperation,
 };
+use geop_core_math::{
+    geop_error::GeopResult,
+    primitives::CoordinateSystem,
+    scalars::{Ring, Scalar},
+    vector::{Vector2, Vector3},
+};
+use geop_core_program::{
+    numeric::NumericInput,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
+use geop_core_sketch::{Enclosure, Region, Shape, Sketch, profile::curve_polyline};
+use geop_core_topology::build::BuiltBody;
 use geop_ops_booleans::{Extent, extent::reach_past};
-use geop_ops_model::{Design, ModelOperation, NamedModel, Namer, build_model, read_model};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
-use geop_ops_sketch::{PlacedSketch, SketchRef};
+use geop_ops_model::{ModelOperation, NamedModel, Namer, build_model, read_model};
+use geop_ops_sketch::{PlacedSketch, SketchRef, chain_of_pieces};
 use serde::{Deserialize, Serialize};
 
 use super::{Extents, Output, Sweeping, build_extents};
-use geop_ops_sketch::chain_of_pieces;
 
 use crate::{extrude::extrude, sweep::SweepLoop};
 
@@ -74,14 +76,16 @@ pub struct ExtrudeArgs {
 /// along the sketch plane's normal — backwards for the second side. None
 /// while the sketch cannot be found.
 fn distance_handle<S: Scalar>(
-    reader: &PartReader,
+    reader: &Reader,
     args: &ExtrudeArgs,
     length: f64,
     second: bool,
 ) -> Option<Track<S>> {
     let placed = reader.retrieve_element(&args.sketch).ok()?;
     let plane = &placed.plane;
-    let center = plane.uv_to_xyz(&sketch_center(&placed.sketch)?).map(|c| c.cast::<S>());
+    let center = plane
+        .uv_to_xyz(&sketch_center(&placed.sketch)?)
+        .map(|c| c.cast::<S>());
     // A symmetric extrude goes half its length either way; the second side
     // the other way.
     let scale = match (args.extent.symmetric, second) {
@@ -108,14 +112,11 @@ impl PartOperation for Extrude {
     )
     .icon(crate::icons::EXTRUDE);
     type Args = ExtrudeArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// The newest sketch, a unit up, joined to the newest solid if there is
     /// one.
-    fn new_args(context: &StepContext) -> ExtrudeArgs {
+    fn new_args(context: &Context) -> ExtrudeArgs {
         let before = &context.before;
         let newest = before.targets_of::<PlacedSketch<Design>>().pop();
         ExtrudeArgs {
@@ -125,7 +126,7 @@ impl PartOperation for Extrude {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &ExtrudeArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &ExtrudeArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
@@ -135,18 +136,22 @@ impl PartOperation for Extrude {
     /// (see [`Combine::follow_sign`](geop_ops_booleans::Combine::follow_sign));
     /// a formula is followed, not steered by.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &ExtrudeArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, ExtrudeArgs> {
         let before = &context.before;
         let mut f = EditForm::<Design, ExtrudeArgs>::default();
-        f.pick_one("sketch", "sketch", before, Some(&args.sketch), |edit, sketch| {
-            edit.args.sketch = sketch
-        });
+        f.pick_one(
+            "sketch",
+            "sketch",
+            before,
+            Some(&args.sketch),
+            |edit, sketch| edit.args.sketch = sketch,
+        );
         let amount = |length: &NumericInput, second| {
             let label = if second { "distance 2" } else { "distance" };
-            let number = length.number(label, before, Unit::Length);
+            let number = Number::numeric(length, label, before, Unit::Length);
             let at = distance_handle(before, args, number.value, second);
             number.range(-10.0, 10.0).handle(at)
         };
@@ -175,7 +180,7 @@ impl PartOperation for Extrude {
 impl ModelOperation for Extrude {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &ExtrudeArgs,
     ) -> GeopResult<()> {

@@ -6,12 +6,11 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::CoordinateSystem,
 };
+use geop_core_program::{element::PickedElement, values::Design};
 use serde::{Serialize, de::DeserializeOwned};
 
 use super::{Output, read_options};
 use geop_core_editor::editing::{Tone, Visual};
-use geop_core_program::element::PickedElement;
-use geop_ops_model::Design;
 
 /// What an inspector is to a front end: how it is asked, what it is
 /// offered as, and whether it is asked of the whole part or of picks.

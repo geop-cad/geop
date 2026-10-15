@@ -1,27 +1,29 @@
 //! [`AddPart`]: place the part another program file builds in the part.
 
-use std::collections::BTreeMap;
-
 use geop_core_editor::{
     edit_form::{Edit, EditForm},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::CanvasEvent,
     part_operation,
     part_operation::PartOperation,
     selectable::Selectable,
 };
+use geop_core_program::{
+    element::ElementReference,
+    part::Part,
+    program_runner::ProgramRunner,
+    values::{Design, Settings, pose_state},
+};
+use std::collections::BTreeMap;
+
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     with_context,
 };
-use geop_core_program::element::ElementReference;
 use geop_ops_add_datum::Selected;
 use geop_ops_datums::{ORIGIN, datums};
-use geop_ops_model::{Design, Namer};
-use geop_ops_parameters::{
-    BuildPart, Placement, Runner, Setting, Settings, StateValue, StepContext, instances,
-    pose_state,
-};
+use geop_ops_model::Namer;
+use geop_ops_parameters::{Placement, instances};
 use geop_ops_view::{Listed, Listing, listing};
 use serde::{Deserialize, Serialize};
 
@@ -110,14 +112,11 @@ impl PartOperation for AddPart {
     .picks_built()
     .icon(crate::icons::ADD_PART);
     type Args = AddPartArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = PartSession;
 
     /// No file yet; the first part placed is fixed, the ones after it are
     /// not — something has to stay put for the others to mate to.
-    fn new_args(context: &StepContext) -> AddPartArgs {
+    fn new_args(context: &Context) -> AddPartArgs {
         let args = AddPartArgs::default();
         match instances(&context.before).is_ok_and(|placed| placed.is_empty()) {
             true => args.fixed(),
@@ -137,8 +136,8 @@ impl PartOperation for AddPart {
     /// with its constraints (see [`geop_ops_constraints::Constraints::of`]).
     fn run(
         step: &str,
-        runner: &Runner,
-        part: &mut BuildPart,
+        runner: &ProgramRunner,
+        part: &mut Part,
         args: &AddPartArgs,
     ) -> GeopResult<()> {
         let ctx = with_context!("add_part({step}, file={:?})", args.file);
@@ -185,7 +184,7 @@ impl PartOperation for AddPart {
 
     /// The file, where it goes, and its mates: see [`crate::editor`].
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &AddPartArgs,
         editing: &PartEditing,
     ) -> EditForm<'a, Design, AddPartArgs, PartSession> {
@@ -195,7 +194,7 @@ impl PartOperation for AddPart {
     /// The part dragged; Delete removes the mate selected, Escape stops
     /// editing it: see [`crate::editor`].
     fn canvas(
-        context: &StepContext,
+        context: &Context,
         edit: Edit<'_, AddPartArgs, PartSession>,
         event: &CanvasEvent<Design>,
     ) {

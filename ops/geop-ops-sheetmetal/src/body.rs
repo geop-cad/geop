@@ -14,12 +14,13 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
+    part::{Part, Reader},
     target::TargetReference,
+    values::Design,
 };
 use geop_ops_model::{
-    Design, ModelOperation, NamedModel, Namer, Records, SolidNotes, build_model, solid_notes,
+    ModelOperation, NamedModel, Namer, Records, SolidNotes, build_model, solid_notes,
 };
-use geop_ops_parameters::{BuildPart, PartReader, Setting, StateValue};
 use geop_ops_sketch::{PlacedSketch, sketch};
 
 use crate::{edge_flange::EdgeRef, flat_pattern::FlatPatternData, sheet::Sheet};
@@ -80,7 +81,7 @@ impl HasElements<SheetBody> for Sheets {
 
 /// The sheet-metal body of the solid `solid` in the part `reader` reads,
 /// if it is one: none before a step built one.
-pub fn sheet_body<'a>(reader: &PartReader<'a>, solid: &str) -> Option<&'a SheetBody> {
+pub fn sheet_body<'a>(reader: &Reader<'a>, solid: &str) -> Option<&'a SheetBody> {
     reader.defines(&sheets()).then_some(())?;
     reader
         .retrieve_element(&ElementReference::new(sheets(), solid))
@@ -97,7 +98,7 @@ pub(crate) type WithEdge = (String, Sheet<Design>, (usize, usize, bool));
 /// from such an edge.
 pub(crate) fn with_edge(
     model: &NamedModel<Design>,
-    reader: &PartReader,
+    reader: &Reader,
     edge: Option<&EdgeRef>,
     what: &str,
 ) -> GeopResult<WithEdge> {
@@ -163,25 +164,20 @@ impl HasElements<Made> for Made {
 }
 
 /// What the step `step` made, as `reader` reads it.
-fn made_by<'a>(reader: &PartReader<'a>, step: &str) -> GeopResult<&'a Made> {
+fn made_by<'a>(reader: &Reader<'a>, step: &str) -> GeopResult<&'a Made> {
     reader.retrieve_element(&ElementReference::whole(made(step)))
 }
 
 /// A sheet-metal operation: it works out what it makes from the part read
 /// — the sketches, the sheet-metal bodies there are — and is then built
 /// alike ([`run`]).
-pub(crate) trait SheetStep:
-    PartOperation<Input = Setting, State = StateValue> + ModelOperation
-{
+pub(crate) trait SheetStep: PartOperation + ModelOperation {
     /// What the step `step` with `args` makes, as `reader` reads the part.
-    fn plan(reader: &PartReader, step: &str, args: &Self::Args) -> GeopResult<Made>;
+    fn plan(reader: &Reader, step: &str, args: &Self::Args) -> GeopResult<Made>;
 }
 
 /// The generator of [`made`].
-fn planned<O: SheetStep>(
-    reader: &PartReader,
-    (step, args): &(String, O::Args),
-) -> GeopResult<Made> {
+fn planned<O: SheetStep>(reader: &Reader, (step, args): &(String, O::Args)) -> GeopResult<Made> {
     O::plan(reader, step, args)
 }
 
@@ -189,7 +185,7 @@ fn planned<O: SheetStep>(
 /// consumed.
 // A generator's arguments are a type of their own: the step's id, a `String`.
 #[allow(clippy::ptr_arg)]
-fn record(reader: &PartReader, step: &String) -> GeopResult<Sheets> {
+fn record(reader: &Reader, step: &String) -> GeopResult<Sheets> {
     let mut sheets: Sheets = reader.previous()?;
     let made = made_by(reader, step)?;
     if let Some(consumed) = &made.consumes {
@@ -206,7 +202,7 @@ fn record(reader: &PartReader, step: &String) -> GeopResult<Sheets> {
 /// Notes the thickness of what the step `step` made, in place of the body
 /// it consumed (see [`geop_ops_model::solid_notes`]).
 #[allow(clippy::ptr_arg)]
-fn note(reader: &PartReader, step: &String) -> GeopResult<SolidNotes> {
+fn note(reader: &Reader, step: &String) -> GeopResult<SolidNotes> {
     let mut notes: SolidNotes = reader.previous()?;
     let made = made_by(reader, step)?;
     if let Some(consumed) = &made.consumes {
@@ -222,11 +218,7 @@ fn note(reader: &PartReader, step: &String) -> GeopResult<SolidNotes> {
 
 /// Runs the step `step` of `O`: works out what it makes, records it, and
 /// builds it into the model.
-pub(crate) fn run<O: SheetStep>(
-    step: &str,
-    part: &mut BuildPart,
-    args: &O::Args,
-) -> GeopResult<()> {
+pub(crate) fn run<O: SheetStep>(step: &str, part: &mut Part, args: &O::Args) -> GeopResult<()> {
     part.define_target(&made(step), &(step.to_string(), args.clone()), planned::<O>)?;
     part.revise_target(&sheets(), &step.to_string(), record)?;
     part.revise_target(&solid_notes(), &step.to_string(), note)?;
@@ -235,7 +227,7 @@ pub(crate) fn run<O: SheetStep>(
 
 /// The sketch of the bend lines of the flat pattern the step `step` made.
 #[allow(clippy::ptr_arg)]
-fn bend_lines(reader: &PartReader, step: &String) -> GeopResult<PlacedSketch<Design>> {
+fn bend_lines(reader: &Reader, step: &String) -> GeopResult<PlacedSketch<Design>> {
     match &made_by(reader, step)?.making {
         Making::Flat(unfolded) => Ok(unfolded.bend_lines.clone()),
         Making::Bent(_) => Err(GeopError::new(format!(
@@ -246,17 +238,13 @@ fn bend_lines(reader: &PartReader, step: &String) -> GeopResult<PlacedSketch<Des
 
 /// Adds the sketch `name` of the bend lines of the flat pattern the step
 /// `step` made.
-pub(crate) fn add_bend_lines(part: &mut BuildPart, step: &str, name: &str) -> GeopResult<()> {
+pub(crate) fn add_bend_lines(part: &mut Part, step: &str, name: &str) -> GeopResult<()> {
     part.define_target(&sketch(name), &step.to_string(), bend_lines)
 }
 
 /// Builds what the step `step` made into `model` ([`ModelOperation::build`]
 /// of every sheet-metal operation).
-pub(crate) fn build(
-    model: &mut NamedModel<Design>,
-    reader: &PartReader,
-    step: &str,
-) -> GeopResult<()> {
+pub(crate) fn build(model: &mut NamedModel<Design>, reader: &Reader, step: &str) -> GeopResult<()> {
     let ctx = with_context!("building the sheet metal of step {step}");
     let made = made_by(reader, step).with_context(ctx)?;
     match &made.making {

@@ -1,14 +1,20 @@
 //! [`AddSketch3d`]: draw a sketch in space.
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use geop_core_editor::{
     edit_form::{Edit, EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::CanvasEvent,
     one_of, part_operation,
     part_operation::PartOperation,
 };
+use geop_core_program::{
+    element::{ElementReference, PickedElement},
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
+use std::collections::{BTreeMap, BTreeSet};
+
 use geop_core_geometry::{
     nurb_curve::{NurbCurve, NurbCurve3D},
     shape::Axis,
@@ -19,7 +25,6 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::element::{ElementReference, PickedElement};
 use geop_core_sketch::{
     ConstraintId, CurveId, PointId,
     space::{Constraint3d, CurveKind3d},
@@ -27,9 +32,8 @@ use geop_core_sketch::{
 use geop_core_topology::build::{BodySpec, EdgeSpec};
 use geop_ops_datums::Datums;
 use geop_ops_model::{
-    BodyNames, Chain, Curve, Design, Line, ModelOperation, NamedModel, Namer, Point, build_model,
+    BodyNames, Chain, Curve, Line, ModelOperation, NamedModel, Namer, Point, build_model,
 };
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_sketch::PlacedSketch;
 use serde::{Deserialize, Serialize};
 
@@ -106,9 +110,18 @@ pub enum Target {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "target", rename_all = "snake_case")]
 pub enum Reference3d {
-    Point { point: PointId, from: PointSource },
-    Curve { curve: CurveId, from: CurveSource },
-    Direction { constraint: ConstraintId, from: LineSource },
+    Point {
+        point: PointId,
+        from: PointSource,
+    },
+    Curve {
+        curve: CurveId,
+        from: CurveSource,
+    },
+    Direction {
+        constraint: ConstraintId,
+        from: LineSource,
+    },
 }
 
 impl Reference3d {
@@ -174,7 +187,7 @@ impl AddSketch3dArgs {
     /// `reader` reads: moves its fixed points, hands in its reference
     /// curves' geometry, turns its directions. Forgets references whose
     /// target is gone.
-    pub fn resolve(&mut self, reader: &PartReader) -> GeopResult<()> {
+    pub fn resolve(&mut self, reader: &Reader) -> GeopResult<()> {
         self.forget_dead_references();
         for r in &self.references {
             let ctx = with_context!("the 3-D sketch's reference to {}", r.source().label());
@@ -244,7 +257,7 @@ impl AddSketch3dArgs {
     /// brought up to date, solved anew where its constraints no longer hold
     /// as drawn — a sketch as it was drawn is as it was solved — and every
     /// curve of it checked to build.
-    pub fn build(&self, reader: &PartReader) -> GeopResult<Sketch3d> {
+    pub fn build(&self, reader: &Reader) -> GeopResult<Sketch3d> {
         let mut args = self.clone();
         args.resolve(reader)?;
         let mut sketch = args.sketch;
@@ -263,7 +276,7 @@ impl AddSketch3dArgs {
 
 /// The 3-D sketch the step `step` draws with `args`, on the part before it,
 /// and the names of the edges it is built as.
-fn draw(reader: &PartReader, (step, args): &(String, AddSketch3dArgs)) -> GeopResult<PlacedSketch3d> {
+fn draw(reader: &Reader, (step, args): &(String, AddSketch3dArgs)) -> GeopResult<PlacedSketch3d> {
     let ctx = with_context!("add_sketch3d({step})");
     let sketch = args.build(reader).with_context(ctx)?;
     let namer = Namer::new("sketch3d", step).with_context(ctx)?;
@@ -365,19 +378,21 @@ impl PartOperation for AddSketch3d {
     )
     .icon(crate::icons::ADD_SKETCH3D);
     type Args = AddSketch3dArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = Sketch3dSession;
 
     /// An empty sketch: the first click starts drawing.
-    fn new_args(_: &StepContext) -> AddSketch3dArgs {
+    fn new_args(_: &Context) -> AddSketch3dArgs {
         AddSketch3dArgs::default()
     }
 
     /// Defines the 3-D sketch named after the step, and builds it as a
     /// wire.
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &AddSketch3dArgs) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &ProgramRunner,
+        part: &mut Part,
+        args: &AddSketch3dArgs,
+    ) -> GeopResult<()> {
         part.define_target(&sketch3d(step), &(step.to_string(), args.clone()), draw)?;
         build_model::<Self>(part, step, args)
     }
@@ -385,7 +400,7 @@ impl PartOperation for AddSketch3d {
     /// The tools, the coordinates of a point, the constraints: see
     /// [`crate::editor`].
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &AddSketch3dArgs,
         editing: &Sketch3dEditing,
     ) -> EditForm<'a, Design, AddSketch3dArgs, Sketch3dSession> {
@@ -393,7 +408,7 @@ impl PartOperation for AddSketch3d {
     }
 
     fn canvas(
-        context: &StepContext,
+        context: &Context,
         edit: Edit<'_, AddSketch3dArgs, Sketch3dSession>,
         event: &CanvasEvent<Design>,
     ) {
@@ -406,7 +421,7 @@ impl ModelOperation for AddSketch3d {
     /// [`AddSketch3d`]).
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         _: &AddSketch3dArgs,
     ) -> GeopResult<()> {

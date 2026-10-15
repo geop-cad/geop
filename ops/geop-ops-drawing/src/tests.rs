@@ -1,21 +1,25 @@
-use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar, vector::Vector3};
+use geop_core_math::{
+    scalars::{ScalInF64 as S, Scalar},
+    vector::Vector3,
+};
 use geop_core_topology::FaceId;
+use geop_ops_model::NamedModel;
 
 use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder, v3};
 
 use crate::{
     LineKind, ProjectedView, ViewKind, ViewOptions, project_view,
-    testing::{Part, Placeable, assembled, built, built_with, given, placeable},
+    testing::{Placeable, assembled, built, built_with, given, placeable},
 };
 
-fn all_faces(part: &Part<S>) -> Vec<FaceId> {
+fn all_faces(part: &NamedModel<S>) -> Vec<FaceId> {
     let model = part.topology();
     let mut faces: Vec<FaceId> = model.faces.keys().copied().collect();
     faces.sort_by_key(|f| f.0);
     faces
 }
 
-fn view(part: &Part<S>, kind: ViewKind, options: ViewOptions) -> ProjectedView<S> {
+fn view(part: &NamedModel<S>, kind: ViewKind, options: ViewOptions) -> ProjectedView<S> {
     project_view(
         part.topology(),
         &all_faces(part),
@@ -64,7 +68,7 @@ fn assert_extents(view: &ProjectedView<S>, expected: [f64; 4]) {
 /// lines, and the edges behind it, running along them, are not drawn.
 #[test]
 fn box_front_view_is_a_rectangle() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     cube_solid(&mut part, "box", v3(0.0, 0.0, 0.0), v3(2.0, 1.0, 3.0)).unwrap();
     let front = view(&part, ViewKind::Front, ViewOptions::default());
     assert_eq!(count(&front, true), 4, "{:#?}", summary(&front));
@@ -102,7 +106,7 @@ fn box_front_view_is_a_rectangle() {
 /// its circles edge on as lines; from above, a circle and nothing else.
 #[test]
 fn cylinder_side_view_has_silhouettes() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     revolved_cylinder(&mut part, "c", v3(0.0, 0.0, 0.0), S::ONE, S::TWO).unwrap();
     let front = view(&part, ViewKind::Front, ViewOptions::default());
     let silhouettes = front
@@ -135,7 +139,7 @@ fn a_threaded_shaft_draws_its_thread() {
     use geop_ops_model::{CosmeticThread, Threads};
     use geop_ops_output::sheet::{Shape, Stroke};
 
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     revolved_cylinder(
         &mut part,
         "shaft",
@@ -210,7 +214,7 @@ fn a_bill_of_materials_stands_on_the_title_block() {
     use crate::layer;
     use crate::{DrawingArgs, PartsListLine, SheetSize, compose};
     use geop_ops_output::sheet::Shape;
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     cube_solid(
         &mut part,
         "block",
@@ -262,7 +266,7 @@ fn a_bill_of_materials_stands_on_the_title_block() {
 
 /// A block `size` on a side, as a part to place: the file of its size.
 fn block(size: f64) -> Placeable {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     cube_solid(&mut part, "block", v3(0.0, 0.0, 0.0), v3(size, size, size)).unwrap();
     placeable(&format!("block{size}.geop"), &part)
 }
@@ -278,7 +282,7 @@ fn place(placed: &mut Placed, block: &Placeable, name: &str, at: Vector3<S>, deg
 }
 
 /// The part of nothing but `placed`.
-fn assembly(placed: &Placed) -> geop_ops_parameters::BuildPart {
+fn assembly(placed: &Placed) -> geop_core_program::part::Part {
     let placed: Vec<_> = (placed.iter())
         .map(|(name, component, pose)| (name.as_str(), component, *pose))
         .collect();

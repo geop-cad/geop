@@ -4,13 +4,15 @@
 //! and a hole say how far they go this way, and [`crate::Combine`] then
 //! stops a tool going up to the next face where [`crate::Tool`] says.
 
+use geop_core_editor::editing::Choice;
 use geop_core_math::{
-    geop_error::GeopError, geop_error::GeopResult, plain, primitives::CoordinateSystem,
+    geop_error::{GeopError, GeopResult},
+    plain,
+    primitives::CoordinateSystem,
     scalars::Scalar,
 };
+use geop_core_program::{numeric::NumericInput, part::Reader};
 use geop_core_topology::{Body, FaceId, Model};
-use geop_core_editor::{editing::Choice, numeric_input::NumericInput};
-use geop_core_program::part::{Input, Reader, State};
 use geop_ops_model::NamedModel;
 use serde::{Deserialize, Serialize};
 
@@ -60,7 +62,7 @@ impl Extent {
     }
 
     /// Where it ends, its length as `reader` reads the parameters.
-    pub fn end<I: Input, St: State>(&self, reader: &Reader<I, St>) -> GeopResult<End> {
+    pub fn end(&self, reader: &Reader) -> GeopResult<End> {
         Ok(match self {
             Extent::Blind(length) => End::Blind(length.resolve(reader)?),
             Extent::UpToNext => End::UpToNext,

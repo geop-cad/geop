@@ -21,14 +21,14 @@ pub mod joints;
 pub mod mates;
 pub mod mechanism;
 mod part_pattern;
-#[cfg(any(test, feature = "testing"))]
-#[allow(clippy::expect_used, reason = "tests' helpers fail where a test would")]
-pub mod testing;
 pub mod placed;
 pub mod residuals;
 pub mod solids;
 pub mod solving;
 mod stl;
+#[cfg(any(test, feature = "testing"))]
+#[allow(clippy::expect_used, reason = "tests' helpers fail where a test would")]
+pub mod testing;
 
 pub use add_part::{AddPart, AddPartArgs};
 pub use frame::MateEntity;

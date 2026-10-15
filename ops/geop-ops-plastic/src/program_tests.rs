@@ -2,31 +2,32 @@
 //! shelled 0.2 thick, open at its top — drafted, ribbed, given a lip or a
 //! groove.
 
-use crate::{DraftArgs, GrooveArgs, LipArgs, RibArgs, RibDirection, RibSide};
-use geop_core_math::scalars::Scalar;
-use geop_core_program::element::ElementReference;
+use crate::{
+    Draft, DraftArgs, Groove, GrooveArgs, Lip, LipArgs, Rib, RibArgs, RibDirection, RibSide,
+    testing::{boxed, enclosure, enclosure_with_rib_sketch, wall},
+};
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
+use geop_core_program::{
+    element::ElementReference, operation_registry::OperationRegistry, values::Design,
+};
 use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_booleans::{Combine, solid};
 use geop_ops_datums::datums;
-use geop_ops_extrude_revolve::Extents;
-use geop_ops_fillet::FilletArgs;
+use geop_ops_extrude_revolve::{
+    Extents,
+    testing::{Built, extrusion, n, on_face, sketch},
+};
+use geop_ops_fillet::{Fillet, FilletArgs};
 use geop_ops_model::{
-    Design, NamedModel, model,
+    NamedModel, model,
     testing::{assert_valid, check_valid},
 };
 use geop_ops_sketch::{Sketch, SketchPlane, whole_sketch};
 
-use geop_core_math::geop_error::GeopResult;
-use geop_ops_extrude_revolve::testing::{Built, extrusion, n, on_face, sketch};
-use geop_ops_fillet::Fillet;
-use geop_ops_parameters::Registry;
 use geop_ops_shell::Shell;
 
-use crate::testing::{boxed, enclosure, enclosure_with_rib_sketch, wall};
-use crate::{Draft, Groove, Lip, Rib};
-
 /// The operations these tests' programs are written in.
-fn registry() -> GeopResult<Registry> {
+fn registry() -> GeopResult<OperationRegistry> {
     (geop_ops_extrude_revolve::testing::registry()?.with(AddDatum)?)
         .with(Fillet)?
         .with(Shell)?

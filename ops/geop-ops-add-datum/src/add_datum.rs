@@ -8,6 +8,13 @@
 //! [`fitting_constructions`] tells an editor which constructions fit a
 //! selection, by exactly the matching a step applies.
 
+use geop_core_editor::{
+    edit_form::{Edit, EditForm, FormState},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
+    editing::{CanvasEvent, Unit},
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_geometry::shape::Plane;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -16,19 +23,16 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
+use geop_core_program::{
+    numeric::NumericInput,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
 use serde::{Deserialize, Serialize};
 
-use geop_core_editor::{
-    edit_form::{Edit, EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
-    editing::{CanvasEvent, Unit},
-    numeric_input::NumericInput,
-    part_operation,
-    part_operation::PartOperation,
-};
 use geop_ops_datums::{Datums, datums};
-use geop_ops_model::{Design, frame_along};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_model::frame_along;
 
 use crate::{
     editor,
@@ -236,11 +240,7 @@ pub struct AddDatumArgs {
 /// input, each able to fill its role, and of all such assignments the first
 /// in selection order. `None` if there is none.
 fn assign(inputs: &[Role], selection: &[Shape]) -> Option<Vec<usize>> {
-    fn extend(
-        inputs: &[Role],
-        selection: &[Shape],
-        chosen: &mut Vec<usize>,
-    ) -> bool {
+    fn extend(inputs: &[Role], selection: &[Shape], chosen: &mut Vec<usize>) -> bool {
         let Some(role) = inputs.get(chosen.len()) else {
             return true;
         };
@@ -262,7 +262,7 @@ fn assign(inputs: &[Role], selection: &[Shape]) -> Option<Vec<usize>> {
 /// The method of every construction that fits `selection` as `reader`
 /// reads the part — by the same matching a step applies. None, if the part
 /// lacks an element of it.
-pub fn fitting_constructions(reader: &PartReader, selection: &[Selected]) -> Vec<&'static str> {
+pub fn fitting_constructions(reader: &Reader, selection: &[Selected]) -> Vec<&'static str> {
     let Ok(resolved) = selection
         .iter()
         .map(|e| e.shape(reader))
@@ -280,7 +280,7 @@ pub fn fitting_constructions(reader: &PartReader, selection: &[Selected]) -> Vec
 impl AddDatumArgs {
     /// The selection resolved as `reader` reads the part, and ordered as
     /// the construction takes it.
-    pub(crate) fn inputs(&self, reader: &PartReader) -> GeopResult<Vec<Shape>> {
+    pub(crate) fn inputs(&self, reader: &Reader) -> GeopResult<Vec<Shape>> {
         let schema = self.construction.schema();
         let resolved = self
             .selection
@@ -602,7 +602,7 @@ impl Construction {
 
 /// The datums with the one the step `step` adds with `args`, built from its
 /// selection as the part before it has it.
-fn add(reader: &PartReader, (step, args): &(String, AddDatumArgs)) -> GeopResult<Datums> {
+fn add(reader: &Reader, (step, args): &(String, AddDatumArgs)) -> GeopResult<Datums> {
     let ctx = with_context!("add_datum({step}, {args:?})");
     let inputs = args.inputs(reader).with_context(ctx)?;
     let frame = (args.construction)
@@ -629,13 +629,10 @@ impl PartOperation for AddDatum {
     )
     .icon(crate::icons::ADD_DATUM);
     type Args = AddDatumArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// Nothing selected yet, and the first construction.
-    fn new_args(_: &StepContext) -> AddDatumArgs {
+    fn new_args(_: &Context) -> AddDatumArgs {
         AddDatumArgs {
             selection: Vec::new(),
             construction: Construction::default_of(&CONSTRUCTIONS[0]),
@@ -643,25 +640,21 @@ impl PartOperation for AddDatum {
     }
 
     /// Adds the datum named after the step to the part's datums.
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &AddDatumArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &AddDatumArgs) -> GeopResult<()> {
         part.revise_target(&datums(), &(step.to_string(), args.clone()), add)
     }
 
     /// Picking the selection, choosing among the constructions that fit
     /// it, and offsets as handles and a gizmo: see [`crate::editor`].
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &AddDatumArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, AddDatumArgs> {
         editor::form(&context.before, args)
     }
 
-    fn canvas(
-        context: &StepContext,
-        edit: Edit<'_, AddDatumArgs, ()>,
-        event: &CanvasEvent<Design>,
-    ) {
+    fn canvas(context: &Context, edit: Edit<'_, AddDatumArgs, ()>, event: &CanvasEvent<Design>) {
         editor::event(&context.before, edit.args, event);
     }
 }
@@ -697,11 +690,11 @@ mod tests {
     /// The datum step `d` with `args` adds to a part of nothing but the
     /// origin, or why it fails.
     fn added(args: &AddDatumArgs) -> GeopResult<Datum<S>> {
-        let mut part = BuildPart::default();
+        let mut part = Part::default();
         part.begin_run(&Default::default(), &Default::default());
         part.begin_step();
         part.begin_step();
-        let runner = Runner::new(Default::default());
+        let runner = ProgramRunner::new(Default::default());
         <AddDatum as Operation>::run("d", &runner, &mut part, args)?;
         part.end_run(0);
         let datums = read_datums(&part.current())?.into_owned();

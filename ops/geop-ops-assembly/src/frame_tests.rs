@@ -10,14 +10,13 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_program::element::ElementReference;
+use geop_core_program::{element::ElementReference, part::Part, values::Design};
 use geop_ops_add_datum::Selected;
 use geop_ops_extrude_revolve::testing::{Built, drilled_box, model_of, registry};
 use geop_ops_model::{
-    Design, NamedModel, model,
+    NamedModel, model,
     testing::{edge_at, vertex_at},
 };
-use geop_ops_parameters::BuildPart;
 use geop_ops_view::{PartView, drawn};
 
 use crate::MateEntity;
@@ -25,7 +24,7 @@ use crate::MateEntity;
 /// The drilled box (see [`drilled_box`]): `[0, 2] x [0, 2] x [0, 1]`, with
 /// a hole of radius 0.4 round `(1, 1)` from its top down to `z = 0.5`, as
 /// built.
-fn plate() -> BuildPart {
+fn plate() -> Part {
     drilled_box().built(registry).unwrap()
 }
 
@@ -45,7 +44,7 @@ fn assert_close(a: [f64; 3], b: [f64; 3]) {
 }
 
 /// The frame `on`, put at `at`, gives in `part`.
-fn frame_of(part: &BuildPart, on: Selected, at: Option<Selected>) -> CoordinateSystem<S> {
+fn frame_of(part: &Part, on: Selected, at: Option<Selected>) -> CoordinateSystem<S> {
     let entity = MateEntity {
         at,
         ..MateEntity::on(on)
@@ -56,13 +55,7 @@ fn frame_of(part: &BuildPart, on: Selected, at: Option<Selected>) -> CoordinateS
 /// The frame `on` gives at `at`, as numbers: where, and its `z`, which may
 /// point either way along an axis.
 #[track_caller]
-fn assert_frame(
-    part: &BuildPart,
-    on: &Selected,
-    at: Option<&Selected>,
-    origin: [f64; 3],
-    z: [f64; 3],
-) {
+fn assert_frame(part: &Part, on: &Selected, at: Option<&Selected>, origin: [f64; 3], z: [f64; 3]) {
     let frame = frame_of(part, on.clone(), at.cloned());
     let (found, axis) = placed(&frame);
     assert_close(found, origin);
@@ -184,7 +177,7 @@ fn from_above(x: f64, y: f64) -> Pointer<Design> {
 }
 
 /// The model of `part`, drawn: what a frame is picked in.
-fn drawn_model(part: &BuildPart) -> PartView {
+fn drawn_model(part: &Part) -> PartView {
     let mut view = PartView::new();
     model_of(part).draw("model", &mut view).unwrap();
     view.finish()

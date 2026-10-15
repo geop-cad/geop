@@ -23,7 +23,7 @@
 //! [`modify`]).
 
 /// Sketches are edited in the scalar their programs hold.
-type S = geop_ops_model::Design;
+type S = geop_core_program::values::Design;
 
 mod dialog;
 mod drawing;
@@ -34,15 +34,10 @@ mod trim;
 mod visuals;
 
 use dialog::draw_dialog;
+use geop_core_program::{part::Reader, values::Design};
 use snap::Snap;
 use visuals::visuals;
 
-use geop_core_math::{
-    primitives::CoordinateSystem,
-    scalars::Scalar,
-    vector::{Vector2, Vector3},
-};
-use geop_core_sketch::{ConstraintId, CurveId, PointId, offset::Corners};
 use geop_core_editor::{
     edit_form::{Edit, EditForm},
     editing::{
@@ -50,8 +45,12 @@ use geop_core_editor::{
         hit::{hit_visuals, no_instances},
     },
 };
-use geop_ops_model::Design;
-use geop_ops_parameters::PartReader;
+use geop_core_math::{
+    primitives::CoordinateSystem,
+    scalars::Scalar,
+    vector::{Vector2, Vector3},
+};
+use geop_core_sketch::{ConstraintId, CurveId, PointId, offset::Corners};
 
 use crate::{
     AddSketchArgs, Constraint, CurveKind, Sketch,
@@ -452,10 +451,8 @@ fn hit_key(
     stages: &[&dyn Fn(&str) -> bool],
 ) -> Option<String> {
     stages.iter().find_map(|accept| {
-        hit_visuals(visuals, pointer, no_instances, |v| {
-            accept(&v.key)
-        })
-        .map(|h| h.visual.key.clone())
+        hit_visuals(visuals, pointer, no_instances, |v| accept(&v.key))
+            .map(|h| h.visual.key.clone())
     })
 }
 
@@ -474,7 +471,7 @@ fn is_glyph(key: &str) -> bool {
 /// The edit in progress: what it works on, what is selected, and where the
 /// plane is.
 struct Editing<'a> {
-    before: &'a PartReader<'a>,
+    before: &'a Reader<'a>,
     args: &'a mut AddSketchArgs,
     s: &'a mut SketchSession,
     selection: &'a mut Vec<String>,
@@ -509,7 +506,7 @@ fn solve(sketch: &mut Sketch, s: &mut SketchSession, drags: &[(PointId, P2)]) {
 fn refresh(
     args: &mut AddSketchArgs,
     s: &mut SketchSession,
-    before: &PartReader,
+    before: &Reader,
     frame: &CoordinateSystem<S>,
 ) {
     let drawn = args.sketch.clone();
@@ -548,7 +545,7 @@ impl Editing<'_> {
 /// What a sketch step shows: the plane to pick and, once it is one, the
 /// sketch drawn in it with the tools, constraints and state of the drawing.
 pub(crate) fn form<'a>(
-    before: &'a PartReader<'a>,
+    before: &'a Reader<'a>,
     args: &AddSketchArgs,
     s: &SketchSession,
     selection: &[String],
@@ -599,7 +596,7 @@ pub(crate) fn form<'a>(
 
 /// A pointer or key event in the drawing.
 pub(crate) fn event(
-    before: &PartReader,
+    before: &Reader,
     edit: Edit<'_, AddSketchArgs, SketchSession>,
     event: &CanvasEvent<S>,
 ) {
@@ -609,7 +606,7 @@ pub(crate) fn event(
 /// `f` applied to the drawing, brought up to date with the part `before`
 /// reads — and so solved — first. Nothing, while the plane is none.
 fn editing(
-    before: &PartReader,
+    before: &Reader,
     edit: Edit<'_, AddSketchArgs, SketchSession>,
     f: impl FnOnce(&mut Editing),
 ) {

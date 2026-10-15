@@ -1,24 +1,26 @@
 //! Sweeps along 3-D sketches, run as programs: the solids they build, and
 //! what they refuse.
 
-use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs, Constraint3d, Sketch3d, sketch3d_path};
-use geop_core_math::{primitives::FrameAxis, scalars::Scalar, vector::Vector3};
+use crate::{
+    Orientation, Output, PathRef, SweepArgs,
+    testing::{Built, disc, n, on_origin, sketch},
+};
+use geop_core_math::{
+    geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar, vector::Vector3,
+};
+use geop_core_program::{operation_registry::OperationRegistry, program::Program};
 use geop_core_sketch::space::End;
 use geop_ops_booleans::Combine;
-use crate::{Orientation, Output, PathRef, SweepArgs};
 use geop_ops_model::testing::assert_valid;
-use geop_ops_parameters::{ProgramFile, Registry};
 use geop_ops_sketch::{AddSketchArgs, whole_sketch};
-
-use geop_core_math::geop_error::GeopResult;
-use crate::testing::{Built, disc, n, on_origin, sketch};
+use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs, Constraint3d, Sketch3d, sketch3d_path};
 
 /// The operations these tests' programs are written in.
-fn registry() -> GeopResult<Registry> {
+fn registry() -> GeopResult<OperationRegistry> {
     crate::testing::registry()?.with(AddSketch3d)
 }
 
-fn v(p: [f64; 3]) -> Vector3<geop_ops_model::Design> {
+fn v(p: [f64; 3]) -> Vector3<geop_core_program::values::Design> {
     Vector3::from_array(p.map(n))
 }
 
@@ -41,8 +43,8 @@ fn spline(points: &[[f64; 3]]) -> Sketch3d {
 }
 
 /// The circle `section(r)` swept along the 3-D sketch `route`.
-fn piped(r: f64, route: Sketch3d) -> ProgramFile {
-    let mut program = ProgramFile::new();
+fn piped(r: f64, route: Sketch3d) -> Program {
+    let mut program = Program::new();
     program.push("section", section(r));
     program.push(
         "route",

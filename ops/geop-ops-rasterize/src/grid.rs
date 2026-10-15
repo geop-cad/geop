@@ -726,8 +726,8 @@ mod tests {
     }
     use super::*;
     use geop_core_math::{for_all_scalars, vector::Vector3};
-    use geop_ops_model::NamedModel;
     use geop_ops_extrude_revolve::shapes::{cube_solid, sphere::sphere_solid};
+    use geop_ops_model::NamedModel;
 
     fn triangle_area<S: Scalar>(a: Vector2<S>, b: Vector2<S>, c: Vector2<S>) -> f64 {
         let (ax, ay) = (a[0].to_f64(), a[1].to_f64());

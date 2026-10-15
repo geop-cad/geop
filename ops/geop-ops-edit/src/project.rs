@@ -3,7 +3,7 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     part_operation,
     part_operation::PartOperation,
 };
@@ -13,7 +13,12 @@ use geop_core_math::{
     primitives::CoordinateSystem,
     scalars::Scalar,
 };
-use geop_core_program::element::ElementReference;
+use geop_core_program::{
+    element::ElementReference,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
 use geop_core_topology::FaceId;
 use geop_ops_booleans::{
     extent::{face_hull, spread_along},
@@ -21,8 +26,7 @@ use geop_ops_booleans::{
     remesh::remesh::RemeshParams,
 };
 use geop_ops_extrude_revolve::{extrude::extrude, operation::shape_loops};
-use geop_ops_model::{Design, Face, ModelOperation, NamedModel, Namer, build_model, model};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model, model};
 use geop_ops_sketch::{PlacedSketch, SketchRef};
 use serde::{Deserialize, Serialize};
 
@@ -71,13 +75,10 @@ impl PartOperation for ProjectCurve {
     .experimental()
     .icon(crate::icons::PROJECT_CURVE);
     type Args = ProjectCurveArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// The newest sketch, onto no face yet: no face has the empty name.
-    fn new_args(context: &StepContext) -> ProjectCurveArgs {
+    fn new_args(context: &Context) -> ProjectCurveArgs {
         let newest = context.before.targets_of::<PlacedSketch<Design>>().pop();
         ProjectCurveArgs {
             sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_sketch::sketch(""))),
@@ -87,8 +88,8 @@ impl PartOperation for ProjectCurve {
 
     fn run(
         step: &str,
-        _: &Runner,
-        part: &mut BuildPart,
+        _: &ProgramRunner,
+        part: &mut Part,
         args: &ProjectCurveArgs,
     ) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
@@ -96,7 +97,7 @@ impl PartOperation for ProjectCurve {
 
     /// The sketch and the face, picked.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &ProjectCurveArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, ProjectCurveArgs> {
@@ -123,7 +124,7 @@ impl PartOperation for ProjectCurve {
 impl ModelOperation for ProjectCurve {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &ProjectCurveArgs,
     ) -> GeopResult<()> {

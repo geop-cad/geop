@@ -19,7 +19,7 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::{Number, Unit},
     part_operation,
     part_operation::PartOperation,
@@ -33,16 +33,19 @@ use geop_core_math::{
     vector::Vector2,
     with_context,
 };
-use geop_core_program::element::ElementReference;
+use geop_core_program::{
+    element::ElementReference,
+    part::{Part, Reader},
+    program::validate_operation_id,
+    program_runner::ProgramRunner,
+    values::Design,
+};
 use geop_core_topology::{
     Body, CoedgeGeometry, FaceId, Sense,
     boundary::BoundaryType,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
-use geop_ops_model::{
-    BodyNames, Design, Edge, ModelOperation, NamedModel, build_model, model, validate_operation_id,
-};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_model::{BodyNames, Edge, ModelOperation, NamedModel, build_model, model};
 use serde::{Deserialize, Serialize};
 
 /// Carries the face standing on its own that the edge named `edge` bounds
@@ -73,13 +76,10 @@ impl PartOperation for ExtendSurface {
     .experimental()
     .icon(crate::icons::EXTEND_SURFACE);
     type Args = ExtendSurfaceArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// Nothing picked yet, a tenth on.
-    fn new_args(_: &StepContext) -> ExtendSurfaceArgs {
+    fn new_args(_: &Context) -> ExtendSurfaceArgs {
         ExtendSurfaceArgs {
             edge: ElementReference::new(model(), ""),
             distance: 0.1,
@@ -88,8 +88,8 @@ impl PartOperation for ExtendSurface {
 
     fn run(
         step: &str,
-        _: &Runner,
-        part: &mut BuildPart,
+        _: &ProgramRunner,
+        part: &mut Part,
         args: &ExtendSurfaceArgs,
     ) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
@@ -97,7 +97,7 @@ impl PartOperation for ExtendSurface {
 
     /// The edge, picked, and the distance.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &ExtendSurfaceArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, ExtendSurfaceArgs> {
@@ -118,7 +118,7 @@ impl PartOperation for ExtendSurface {
 impl ModelOperation for ExtendSurface {
     fn build(
         model: &mut NamedModel<Design>,
-        _: &PartReader,
+        _: &Reader,
         step: &str,
         args: &ExtendSurfaceArgs,
     ) -> GeopResult<()> {

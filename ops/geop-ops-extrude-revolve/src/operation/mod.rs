@@ -21,21 +21,23 @@ pub use loft::{Loft, LoftArgs};
 pub use revolve::{Revolve, RevolveArgs, RevolveAxis};
 pub use sweep::{Sweep, SweepArgs};
 
+use geop_core_program::{
+    element::ElementReference, numeric::NumericInput, part::Reader, values::Design,
+};
 use std::collections::HashSet;
 
-use geop_core_math::vector::Vector3;
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
-};
-use geop_core_sketch::{Shape, Sketch};
-use geop_core_topology::{SolidId, build::BuiltBody};
 use geop_core_editor::{
     edit_form::{Edit, EditForm},
     editing::Number,
-    numeric_input::NumericInput,
+    one_of,
 };
-use geop_core_program::part::{Input, Reader, State};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    scalars::Scalar,
+    vector::Vector3,
+};
+use geop_core_sketch::{Shape, Sketch};
+use geop_core_topology::{SolidId, build::BuiltBody};
 use geop_ops_booleans::{
     Combine, Extent, SolidRef, Tool,
     boolean::{BooleanOp, Reach, boolean},
@@ -45,13 +47,10 @@ use geop_ops_booleans::{
 };
 use serde::{Deserialize, Serialize};
 
-use geop_core_editor::one_of;
 use geop_core_geometry::nurb_curve::NurbCurve3D;
-use geop_core_program::element::ElementReference;
-use geop_ops_model::{Chain, Design, NamedModel, Namer, Path, ToolReach, read_model};
+use geop_ops_model::{Chain, NamedModel, Namer, Path, ToolReach, read_model};
 use geop_ops_sketch::{PlacedSketch, SketchRef};
 use geop_ops_sketch3d::PlacedSketch3d;
-use geop_ops_parameters::PartReader;
 
 use crate::sweep::SweepLoop;
 
@@ -138,10 +137,10 @@ impl Output {
     /// solid join the solid they went up to — or, if none, are combined as
     /// [`Output::new_for`] the part `reader` reads; a solid turned into
     /// faces goes up to what it was combined with.
-    pub(crate) fn fields<'a, S: Scalar, I: Input, St: State, A, T>(
+    pub(crate) fn fields<'a, S: Scalar, A, T>(
         &self,
         f: &mut EditForm<'a, S, A, T>,
-        reader: &Reader<'a, I, St>,
+        reader: &Reader<'a>,
         reaches: bool,
         set: impl Fn(&mut A, Output) + Clone + 'a,
     ) {
@@ -172,9 +171,13 @@ impl Output {
                 });
             }
             Output::Faces { up_to } if reaches => {
-                Combine::target_field(f, reader, "up to solid", up_to.as_ref(), move |edit, up_to| {
-                    set(edit.args, Output::Faces { up_to: Some(up_to) })
-                });
+                Combine::target_field(
+                    f,
+                    reader,
+                    "up to solid",
+                    up_to.as_ref(),
+                    move |edit, up_to| set(edit.args, Output::Faces { up_to: Some(up_to) }),
+                );
             }
             Output::Faces { .. } => {}
         }
@@ -238,7 +241,7 @@ impl Extents {
     /// What to build for it, see [`Plan`], its lengths' formulas reading
     /// the parameters through `reader`: `far(sign)` is how far, the way
     /// `sign` says, reaches past the solid it is combined with.
-    fn plan(&self, reader: &PartReader, far: impl Fn(f64) -> GeopResult<f64>) -> GeopResult<Plan> {
+    fn plan(&self, reader: &Reader, far: impl Fn(f64) -> GeopResult<f64>) -> GeopResult<Plan> {
         use End::*;
         let ahead = if self.reversed { -1.0 } else { 1.0 };
         let side1 = self.side1.end(reader)?;
@@ -407,7 +410,7 @@ trait Sweeping {
 /// — or combined (see [`combine_sides`]).
 fn build_extents(
     model: &mut NamedModel<Design>,
-    reader: &PartReader,
+    reader: &Reader,
     namer: &Namer,
     step: &str,
     (extents, output): (&Extents, &Output),

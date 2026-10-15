@@ -2,7 +2,7 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     part_operation,
     part_operation::PartOperation,
 };
@@ -10,9 +10,13 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::{FrameAxis, Motion},
 };
+use geop_core_program::{
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
 use geop_ops_datums::origin_plane;
-use geop_ops_model::{Design, ModelOperation, NamedModel};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_model::{ModelOperation, NamedModel};
 use geop_ops_sketch::SketchPlane;
 use serde::{Deserialize, Serialize};
 
@@ -57,7 +61,7 @@ impl Pattern for MirrorArgs {
     }
 
     /// The one image, mirrored in the plane.
-    fn placements(&self, reader: &PartReader) -> GeopResult<Vec<(String, Motion<Design>)>> {
+    fn placements(&self, reader: &Reader) -> GeopResult<Vec<(String, Motion<Design>)>> {
         let Some(plane) = &self.plane else {
             return Err(GeopError::new("pick a plane to mirror in"));
         };
@@ -81,13 +85,10 @@ impl PartOperation for Mirror {
     )
     .icon(geop_ops_view::icons::MIRROR);
     type Args = MirrorArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// Mirrored in the origin's `yz` plane, kept as a new body.
-    fn new_args(_: &StepContext) -> MirrorArgs {
+    fn new_args(_: &Context) -> MirrorArgs {
         MirrorArgs {
             // Nothing picked: what is patterned is the user's choice, a body
             // or a feature, never guessed.
@@ -96,14 +97,14 @@ impl PartOperation for Mirror {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &MirrorArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &MirrorArgs) -> GeopResult<()> {
         run_pattern::<Self>(part, step, args)
     }
 
     /// The bodies or the features, and the plane, picked, and how to
     /// combine an image of bodies.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &MirrorArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, MirrorArgs> {
@@ -111,9 +112,13 @@ impl PartOperation for Mirror {
         let mut f = EditForm::default();
         let set_seeds = |args: &mut MirrorArgs, seeds| args.seeds = seeds;
         (args.seeds).fields(&mut f, before, set_seeds, |f| {
-            f.pick_one("plane", "plane", before, args.plane.as_ref(), |edit, picked| {
-                edit.args.plane = Some(picked)
-            });
+            f.pick_one(
+                "plane",
+                "plane",
+                before,
+                args.plane.as_ref(),
+                |edit, picked| edit.args.plane = Some(picked),
+            );
         });
         f
     }
@@ -122,7 +127,7 @@ impl PartOperation for Mirror {
 impl ModelOperation for Mirror {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &MirrorArgs,
     ) -> GeopResult<()> {

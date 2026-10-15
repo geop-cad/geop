@@ -1,24 +1,27 @@
 //! The edit operations run as programs: deleting bodies, extracting faces
 //! — and splitting with them — and projecting sketches onto faces.
 
-use crate::{DeleteBodyArgs, ExtractFaceArgs, ProjectCurveArgs};
-use geop_core_math::primitives::FrameAxis;
-use geop_core_program::element::ElementReference;
-use geop_ops_booleans::{Combine, SplitArgs, solid};
-use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs};
-use geop_ops_model::{Design, NamedModel, model};
+use crate::{
+    DeleteBody, DeleteBodyArgs, ExtractFace, ExtractFaceArgs, ProjectCurve, ProjectCurveArgs,
+};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
+use geop_core_program::{
+    element::ElementReference, operation_registry::OperationRegistry, program::Program,
+    values::Design,
+};
+use geop_ops_booleans::{Combine, Split, SplitArgs, solid};
+use geop_ops_extrude_revolve::{
+    Extent, Extents, ExtrudeArgs,
+    testing::{Built, extrusion, n, on_origin, sketch},
+};
+use geop_ops_model::{
+    NamedModel, model,
+    testing::{assert_valid, error},
+};
 use geop_ops_sketch::{AddSketchArgs, Sketch, whole_sketch};
 
-use geop_core_math::geop_error::GeopResult;
-use geop_ops_booleans::Split;
-use geop_ops_extrude_revolve::testing::{Built, extrusion, n, on_origin, sketch};
-use geop_ops_model::testing::{assert_valid, error};
-use geop_ops_parameters::{ProgramFile, Registry};
-
-use crate::{DeleteBody, ExtractFace, ProjectCurve};
-
 /// The operations these tests' programs are written in.
-fn registry() -> GeopResult<Registry> {
+fn registry() -> GeopResult<OperationRegistry> {
     geop_ops_extrude_revolve::testing::registry()?
         .with(Split)?
         .with(DeleteBody)?
@@ -75,7 +78,7 @@ fn extract_a_wall_split_with_it_and_delete_the_rest() {
     let wall = format!("extrude(a,big,{})", sides[1]);
     let extracted = format!("extract(x,{wall})");
 
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("big", on_xy(big));
     program.push("a", extrude("big", -1.0, 1.0));
     program.push("small", on_xy(small));
@@ -111,10 +114,10 @@ fn extract_a_wall_split_with_it_and_delete_the_rest() {
 
 /// A block of `[-1, 1]^2 x [0, 1]` with the sketch `mark` on the plane
 /// `z = 0` projected onto its top.
-fn project_onto_top(mark: Sketch) -> ProgramFile {
+fn project_onto_top(mark: Sketch) -> Program {
     let mut block = Sketch::new();
     rectangle(&mut block, [-1.0, -1.0], [1.0, 1.0]);
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("block_sketch", on_xy(block));
     program.push("block", extrude("block_sketch", 0.0, 1.0));
     program.push("mark", on_xy(mark));

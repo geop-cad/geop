@@ -11,10 +11,11 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
-    part::{Input, Reader, State},
+    part::Reader,
     target::TargetReference,
+    values::Design,
 };
-use geop_ops_model::{Chain, Design, Path, model};
+use geop_ops_model::{Chain, Path, model};
 use geop_ops_sketch::chain_of_pieces;
 use geop_ops_view::drawn;
 
@@ -98,22 +99,26 @@ impl HasElements<Path> for PlacedSketch3d {
 impl SelectableElement<PlacedSketch3d> for Path {
     const PICKED_FROM: &'static [&'static str] = &[drawn::EDGE];
 
-    fn select<I: Input, S: State>(
-        reader: &Reader<I, S>,
+    fn select(
+        reader: &Reader,
         hit: &PickedElement,
     ) -> Option<ElementReference<PlacedSketch3d, Self>> {
         (hit.kind == drawn::EDGE && hit.target == model().name()).then_some(())?;
-        reader.targets_of::<PlacedSketch3d>().into_iter().find(|target| {
-            let whole = ElementReference::<PlacedSketch3d, PlacedSketch3d>::whole(target.clone());
-            (reader.retrieve_element(&whole)).is_ok_and(|placed| placed.edges.contains(&hit.name))
-        }).map(ElementReference::whole)
+        reader
+            .targets_of::<PlacedSketch3d>()
+            .into_iter()
+            .find(|target| {
+                let whole =
+                    ElementReference::<PlacedSketch3d, PlacedSketch3d>::whole(target.clone());
+                (reader.retrieve_element(&whole))
+                    .is_ok_and(|placed| placed.edges.contains(&hit.name))
+            })
+            .map(ElementReference::whole)
     }
 
-    fn drawn<I: Input, S: State>(
-        reader: &Reader<I, S>,
-        path: &ElementReference<PlacedSketch3d, Self>,
-    ) -> Vec<PickedElement> {
-        let whole = ElementReference::<PlacedSketch3d, PlacedSketch3d>::whole(path.target().clone());
+    fn drawn(reader: &Reader, path: &ElementReference<PlacedSketch3d, Self>) -> Vec<PickedElement> {
+        let whole =
+            ElementReference::<PlacedSketch3d, PlacedSketch3d>::whole(path.target().clone());
         let edges = (reader.retrieve_element(&whole).ok()).map(|placed| placed.edges.clone());
         (edges.unwrap_or_default().into_iter())
             .map(|edge| PickedElement {

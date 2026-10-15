@@ -1,26 +1,30 @@
 //! [`FlatPattern`]: a sheet-metal body unfolded into the flat blank it is
 //! cut from.
 
-use std::collections::BTreeSet;
-
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     part_operation,
     part_operation::PartOperation,
 };
+use geop_core_program::{
+    element::ElementReference,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
+use std::collections::BTreeSet;
+
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     vector::Vector2,
     with_context,
 };
-use geop_core_program::element::ElementReference;
 use geop_core_sketch::Sketch;
 use geop_core_topology::Body;
-use geop_ops_model::{Design, ModelOperation, NamedModel, Namer, Solid, model, read_model};
+use geop_ops_model::{ModelOperation, NamedModel, Namer, Solid, model, read_model};
 use geop_ops_output::sheet::Sheet as Paper;
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_sketch::PlacedSketch;
 use serde::{Deserialize, Serialize};
 
@@ -94,7 +98,7 @@ pub struct FlatPatternData {
 }
 
 impl SheetStep for FlatPattern {
-    fn plan(reader: &PartReader, step: &str, args: &FlatPatternArgs) -> GeopResult<Made> {
+    fn plan(reader: &Reader, step: &str, args: &FlatPatternArgs) -> GeopResult<Made> {
         let ctx = with_context!("flat_pattern({step}, {args:?})");
         let namer = Namer::new("flat_pattern", step)?;
         let solid = args.solid.name();
@@ -152,13 +156,10 @@ impl PartOperation for FlatPattern {
     )
     .icon(crate::icons::FLAT_PATTERN);
     type Args = FlatPatternArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// The newest sheet-metal body.
-    fn new_args(context: &StepContext) -> FlatPatternArgs {
+    fn new_args(context: &Context) -> FlatPatternArgs {
         let before = &context.before;
         let solids = read_model(before).map(|model| model.solid_names());
         let newest = (solids.unwrap_or_default().into_iter().rev())
@@ -170,7 +171,12 @@ impl PartOperation for FlatPattern {
     }
 
     /// Unfolds the body, and draws its bend lines as a sketch.
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &FlatPatternArgs) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &ProgramRunner,
+        part: &mut Part,
+        args: &FlatPatternArgs,
+    ) -> GeopResult<()> {
         body::run::<Self>(step, part, args)?;
         let namer = Namer::new("flat_pattern", step)?;
         body::add_bend_lines(part, step, &namer.name(&["bend_lines"]))
@@ -178,7 +184,7 @@ impl PartOperation for FlatPattern {
 
     /// The body, picked, and whether to keep it.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &FlatPatternArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, FlatPatternArgs> {
@@ -200,7 +206,7 @@ impl PartOperation for FlatPattern {
 impl ModelOperation for FlatPattern {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         _: &FlatPatternArgs,
     ) -> GeopResult<()> {

@@ -186,8 +186,8 @@ mod tests {
     use crate::debug::Color10;
     use geop_core_math::for_all_scalars;
     use geop_core_math::primitives::TriangleFace;
-    use geop_ops_model::NamedModel;
     use geop_ops_extrude_revolve::shapes::{cube_solid, sphere::sphere_solid};
+    use geop_ops_model::NamedModel;
 
     /// Rasterize `model`, sanity-check it's a non-empty mesh, and save it to
     /// `outputs/<name>.html` for visual inspection.

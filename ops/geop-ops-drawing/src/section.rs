@@ -10,7 +10,6 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::{FaceId, Model, SolidId};
-use geop_ops_model::{NamedModel, Namer, frame_along};
 use geop_ops_booleans::{
     boolean::{BooleanOp, boolean},
     remesh::remesh::RemeshParams,
@@ -20,6 +19,7 @@ use geop_ops_extrude_revolve::{
     extrude::extrude,
     sweep::SweepLoop,
 };
+use geop_ops_model::{NamedModel, Namer, frame_along};
 
 /// The box holding every face of `model`, `[lo, hi]` per axis.
 fn bounds<S: Scalar>(model: &Model<S>) -> GeopResult<[[f64; 2]; 3]> {

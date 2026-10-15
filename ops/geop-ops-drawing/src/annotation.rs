@@ -14,15 +14,14 @@ use geop_core_math::{
     scalars::{Ring, Scalar},
     vector::Vector3,
 };
+use geop_core_program::{instance::instance_path, part::Reader, values::Design};
 use geop_core_sketch::{
     dimension::Measure,
     plain::{add, cross, distance, dot, perp, scale, sub, unit},
 };
 use geop_core_topology::EdgeId;
-use geop_core_program::instance::instance_path;
-use geop_ops_model::{Design, RefId};
+use geop_ops_model::RefId;
 use geop_ops_output::sheet::{Anchor, Label, Layer, P, Shape, Sheet};
-use geop_ops_parameters::PartReader;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -289,7 +288,7 @@ impl Annotation {
     /// `part` shows — or
     /// why it cannot be: its view is gone, an entity it names is, or the
     /// view does not show what it measures.
-    pub fn drawn(&self, part: &PartReader, layout: &Layout) -> GeopResult<Drawn> {
+    pub fn drawn(&self, part: &Reader, layout: &Layout) -> GeopResult<Drawn> {
         let paper_scale = layout.scale;
         match self {
             Annotation::Distance {
@@ -476,7 +475,7 @@ fn measuring<S: Scalar>(
 
 /// Where `target` is on the paper of the view looking along `frame`, in
 /// model units.
-fn paper(part: &PartReader, frame: &ViewFrame<Design>, target: &Target) -> GeopResult<P> {
+fn paper(part: &Reader, frame: &ViewFrame<Design>, target: &Target) -> GeopResult<P> {
     let point = match target {
         Target::Vertex { name } => placed_vertex(part, name)?,
         Target::Center { edge } => {
@@ -501,7 +500,7 @@ fn paper(part: &PartReader, frame: &ViewFrame<Design>, target: &Target) -> GeopR
 /// and its radius — refused unless the view placed at `p`, looking along
 /// `frame`, sees it round.
 fn round(
-    part: &PartReader,
+    part: &Reader,
     p: &Placement,
     frame: &ViewFrame<Design>,
     edge: &str,

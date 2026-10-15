@@ -10,10 +10,11 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind},
-    part::{Input, Reader, State},
+    part::Reader,
     target::TargetReference,
+    values::Design,
 };
-use geop_ops_model::{CutWire, Design, Records};
+use geop_ops_model::{CutWire, Records};
 
 /// A bundle of wires laid along one route.
 #[derive(Clone, Debug, PartialEq)]
@@ -56,10 +57,7 @@ impl HasElements<Cable<Design>> for Cables<Design> {
 
 /// The cable `name` of the part `reader` reads, if it has one: none before
 /// a step routed one.
-pub fn cable<'a, I: Input, S: State>(
-    reader: &Reader<'a, I, S>,
-    name: &str,
-) -> Option<&'a Cable<Design>> {
+pub fn cable<'a>(reader: &Reader<'a>, name: &str) -> Option<&'a Cable<Design>> {
     reader.defines(&cables()).then_some(())?;
     reader
         .retrieve_element(&ElementReference::new(cables(), name))

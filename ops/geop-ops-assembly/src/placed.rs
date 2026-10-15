@@ -14,6 +14,14 @@
 //! nothing again, and a change in it builds and draws again only what
 //! reads it.
 
+use geop_core_program::{
+    element::{ElementReference, HasElements, Kind, whole},
+    instance::{INSTANCE_SEPARATOR, instance_path, split_path},
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    target::TargetReference,
+    values::{Design, Settings},
+};
 use std::{
     hash::{Hash, Hasher},
     rc::Rc,
@@ -23,17 +31,12 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::{Pose, TriangleFace},
 };
-use geop_core_program::{
-    element::{ElementReference, HasElements, Kind, whole},
-    instance::{INSTANCE_SEPARATOR, instance_path, split_path},
-    target::TargetReference,
-};
 use geop_ops_constraints::{solve::Mobility, unknown::Unknowns};
 use geop_ops_datums::read_datums;
-use geop_ops_model::{Design, SolidMeshes, read_model};
+use geop_ops_model::{SolidMeshes, read_model};
 use geop_ops_parameters::{
-    BuildPart, Factor, Instance, PartReader, Placement, Runner, Settings, StateValue, compose,
-    define_instance, instance, instances, placement, read_properties,
+    Factor, Instance, Placement, compose, define_instance, instance, instances, placement,
+    read_properties,
 };
 use geop_ops_sketch::PlacedSketch;
 use geop_ops_view::{PartView, annotations_of};
@@ -41,14 +44,16 @@ use geop_ops_view::{PartView, annotations_of};
 /// The part `reader` reads, drawn: its model, its datums — the origin
 /// first — its sketches, what its steps draw on it and the parts placed in
 /// it, in its colour.
-pub fn draw(reader: &PartReader) -> GeopResult<PartView> {
+pub fn draw(reader: &Reader) -> GeopResult<PartView> {
     let mut view = PartView::new();
     read_model(reader)?.draw("model", &mut view)?;
     read_datums(reader)?.draw(&mut view)?;
     for target in reader.targets_of::<PlacedSketch<Design>>() {
         let name = target.name().to_string();
         let reference = ElementReference::<_, PlacedSketch<Design>>::whole(target);
-        reader.retrieve_element(&reference)?.draw(&name, &mut view)?;
+        reader
+            .retrieve_element(&reference)?
+            .draw(&name, &mut view)?;
     }
     view.annotations = annotations_of(reader);
     draw_instances(reader, &mut view)?;
@@ -98,8 +103,8 @@ fn drawn_target(name: &str) -> TargetReference<Drawn> {
 /// when what it is drawn from changed. A step of the part placed that
 /// fails fails this, after it is placed and drawn as far as it builds.
 pub fn define_placed(
-    runner: &Runner,
-    part: &mut BuildPart,
+    runner: &ProgramRunner,
+    part: &mut Part,
     name: &str,
     file: &str,
     inputs: &Settings,
@@ -131,7 +136,7 @@ pub fn define_placed(
 }
 
 /// The drawing of the part placed at `path` in the part `reader` reads.
-pub fn drawn<'a>(reader: &PartReader<'a>, path: &str) -> GeopResult<&'a Drawn> {
+pub fn drawn<'a>(reader: &Reader<'a>, path: &str) -> GeopResult<&'a Drawn> {
     let (outer, name) = split_path(path);
     let level = match outer.is_empty() {
         true => reader.clone(),
@@ -146,7 +151,7 @@ pub fn drawn<'a>(reader: &PartReader<'a>, path: &str) -> GeopResult<&'a Drawn> {
 /// part read's to move.
 pub struct Located<'a> {
     pub instance: &'a Instance,
-    pub part: PartReader<'a>,
+    pub part: Reader<'a>,
     pub world: Pose<Design>,
     /// Where it is in the part it is placed in.
     pub local: Pose<Design>,
@@ -155,7 +160,7 @@ pub struct Located<'a> {
 
 /// The part placed at `path` — `bolt`, or `asm/bolt` for one placed in a
 /// placed part — of the part `reader` reads, where the state has it.
-pub fn locate<'a>(reader: &PartReader<'a>, path: &str) -> GeopResult<Located<'a>> {
+pub fn locate<'a>(reader: &Reader<'a>, path: &str) -> GeopResult<Located<'a>> {
     let ctx = |e: GeopError| e.with_context(format!("the placed part {path:?}"));
     let (outer, name) = split_path(path);
     let level = match outer.is_empty() {
@@ -187,7 +192,7 @@ pub fn locate<'a>(reader: &PartReader<'a>, path: &str) -> GeopResult<Located<'a>
 /// The state that moves the part placed at `path` — as [`Located::state`]
 /// has it, if the part read moves it at all. Reads no state: which state
 /// moves a part does not depend on where it is.
-pub fn moved_by(reader: &PartReader, path: &str) -> GeopResult<Option<String>> {
+pub fn moved_by(reader: &Reader, path: &str) -> GeopResult<Option<String>> {
     let mut level = reader.clone();
     let mut prefix = String::new();
     let mut state = None;
@@ -214,10 +219,10 @@ pub struct Placed<'a> {
 /// Every part placed in the part `reader` reads, and in those, however
 /// deep: each before those placed in it, in the order the steps placed
 /// them.
-pub fn placed_parts<'a>(reader: &PartReader<'a>) -> GeopResult<Vec<Placed<'a>>> {
+pub fn placed_parts<'a>(reader: &Reader<'a>) -> GeopResult<Vec<Placed<'a>>> {
     fn within<'a>(
-        outer: &PartReader<'a>,
-        level: &PartReader<'a>,
+        outer: &Reader<'a>,
+        level: &Reader<'a>,
         prefix: &str,
         parent: Option<usize>,
         out: &mut Vec<Placed<'a>>,
@@ -244,8 +249,8 @@ pub fn placed_parts<'a>(reader: &PartReader<'a>) -> GeopResult<Vec<Placed<'a>>> 
 /// Every solid of the part `reader` reads, meshed `quality` fine: its own,
 /// and those of every part placed in it, however deep — each where it is,
 /// named behind its name in the part read: `pin/extrude(pin)`.
-pub fn solid_meshes(reader: &PartReader, quality: usize) -> GeopResult<SolidMeshes<Design>> {
-    let own = |reader: &PartReader| read_model(reader)?.solid_meshes(quality);
+pub fn solid_meshes(reader: &Reader, quality: usize) -> GeopResult<SolidMeshes<Design>> {
+    let own = |reader: &Reader| read_model(reader)?.solid_meshes(quality);
     let mut out = own(reader)?;
     for placed in placed_parts(reader)? {
         let meshes = own(&placed.located.part)?;
@@ -272,8 +277,8 @@ pub fn solid_meshes(reader: &PartReader, quality: usize) -> GeopResult<SolidMesh
 ///
 /// One is drawn fixed that no solve moves: a copy, or one a step holds
 /// fixed.
-pub fn draw_instances(reader: &PartReader, view: &mut PartView) -> GeopResult<()> {
-    let unknowns = Unknowns::<StateValue>::of(reader)?;
+pub fn draw_instances(reader: &Reader, view: &mut PartView) -> GeopResult<()> {
+    let unknowns = Unknowns::of(reader)?;
     for placed in placed_parts(reader)? {
         let located = placed.located;
         let pose = located.world;

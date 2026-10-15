@@ -1,25 +1,23 @@
 //! Annotations: measured in the views they name, drawn on the sheet and
 //! written out, and refused where a view cannot show what they measure.
 
-use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar};
-use geop_ops_model::RefId;
-use geop_ops_output::sheet::to_dxf;
-use geop_ops_parameters::PartReader;
+use geop_core_math::scalars::{ScalInF64 as S, Scalar};
+use geop_core_program::part::Reader;
 use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder, v3};
+use geop_ops_model::{NamedModel, RefId};
+use geop_ops_output::sheet::to_dxf;
 
 use crate::{
     Along, Annotation, DrawingArgs, DrawnView, EdgeShape, Layout, Leader, Pickable, Target,
-    ViewKind, compose, layer, layout,
-    testing::{Part, built},
-    writer_tests::read_dxf,
+    ViewKind, compose, layer, layout, testing::built, writer_tests::read_dxf,
 };
 
 const FRONT: DrawnView = DrawnView::View(ViewKind::Front);
 const TOP: DrawnView = DrawnView::View(ViewKind::Top);
 
 /// A 20 x 10 x 30 box beside a cylinder of radius 5 standing on it.
-fn part() -> Part<S> {
-    let mut part = Part::<S>::new();
+fn part() -> NamedModel<S> {
+    let mut part = NamedModel::<S>::new();
     cube_solid(&mut part, "box", v3(0.0, 0.0, 0.0), v3(20.0, 10.0, 30.0)).unwrap();
     revolved_cylinder(
         &mut part,
@@ -73,7 +71,7 @@ fn edges(layout: &Layout, view: DrawnView, shape: fn(&EdgeShape) -> bool) -> Vec
 
 /// The text the dimension `annotation` shows on `part`'s drawing, laid out
 /// as `laid`: an annotation does not move the views.
-fn value(part: &PartReader, laid: &Layout, annotation: Annotation) -> String {
+fn value(part: &Reader, laid: &Layout, annotation: Annotation) -> String {
     annotation
         .drawn(part, laid)
         .unwrap()

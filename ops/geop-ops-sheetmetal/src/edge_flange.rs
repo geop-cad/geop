@@ -3,9 +3,8 @@
 
 use geop_core_editor::{
     edit_form::{Edit, EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::{Choice, Number, Unit},
-    numeric_input::NumericInput,
     part_operation,
     part_operation::PartOperation,
 };
@@ -16,9 +15,14 @@ use geop_core_math::{
     vector::Vector2,
     with_context,
 };
-use geop_core_program::element::ElementReference;
-use geop_ops_model::{Design, Line, ModelOperation, NamedModel, Namer, read_model};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_core_program::{
+    element::ElementReference,
+    numeric::NumericInput,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
+use geop_ops_model::{Line, ModelOperation, NamedModel, Namer, read_model};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -134,7 +138,7 @@ pub struct EdgeFlangeArgs {
 }
 
 impl SheetStep for EdgeFlange {
-    fn plan(reader: &PartReader, step: &str, args: &EdgeFlangeArgs) -> GeopResult<Made> {
+    fn plan(reader: &Reader, step: &str, args: &EdgeFlangeArgs) -> GeopResult<Made> {
         let ctx = with_context!("edge_flange({step}, {args:?})");
         let namer = Namer::new("edge_flange", step)?;
         let model = read_model(reader).with_context(ctx)?;
@@ -156,7 +160,7 @@ impl SheetStep for EdgeFlange {
 /// reads; `set` gets the edge picked.
 pub(crate) fn edge_field<'a, A>(
     f: &mut EditForm<'a, Design, A>,
-    reader: &PartReader<'a>,
+    reader: &Reader<'a>,
     edge: Option<&EdgeRef>,
     set: impl Fn(Edit<'_, A, ()>, EdgeRef) + 'a,
 ) {
@@ -175,13 +179,10 @@ impl PartOperation for EdgeFlange {
     )
     .icon(crate::icons::EDGE_FLANGE);
     type Args = EdgeFlangeArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// No edge yet: a right angle, half a unit long, material inside.
-    fn new_args(_: &StepContext) -> EdgeFlangeArgs {
+    fn new_args(_: &Context) -> EdgeFlangeArgs {
         EdgeFlangeArgs {
             edge: None,
             angle: NumericInput::Plain(90.0),
@@ -195,7 +196,12 @@ impl PartOperation for EdgeFlange {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &EdgeFlangeArgs) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &ProgramRunner,
+        part: &mut Part,
+        args: &EdgeFlangeArgs,
+    ) -> GeopResult<()> {
         body::run::<Self>(step, part, args)
     }
 
@@ -203,7 +209,7 @@ impl PartOperation for EdgeFlange {
     /// and where the bend sits; the radius, if its own; and how far in
     /// from the edge's ends.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &EdgeFlangeArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, EdgeFlangeArgs> {
@@ -212,11 +218,11 @@ impl PartOperation for EdgeFlange {
         edge_field(&mut f, before, args.edge.as_ref(), |edit, edge| {
             edit.args.edge = Some(edge)
         });
-        let angle = args.angle.number("angle", before, Unit::Angle);
+        let angle = Number::numeric(&args.angle, "angle", before, Unit::Angle);
         f.numeric("angle", angle.range(0.0, 180.0), |edit, angle| {
             edit.args.angle = angle
         });
-        let length = args.length.number("length", before, Unit::Length);
+        let length = Number::numeric(&args.length, "length", before, Unit::Length);
         f.numeric("length", length.range(0.0, 5.0), |edit, length| {
             edit.args.length = length
         });
@@ -306,7 +312,7 @@ impl PartOperation for EdgeFlange {
 impl ModelOperation for EdgeFlange {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         _: &EdgeFlangeArgs,
     ) -> GeopResult<()> {

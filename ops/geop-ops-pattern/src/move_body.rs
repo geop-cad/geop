@@ -2,7 +2,7 @@
 
 use geop_core_editor::{
     edit_form::{Edit, EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::{CanvasEvent, Change, Gizmo, Number, Unit},
     part_operation,
     part_operation::PartOperation,
@@ -13,11 +13,13 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_ops_booleans::Combine;
-use geop_ops_model::{
-    Design, ModelOperation, NamedModel, Namer, build_model, read_model, resolve_bodies,
+use geop_core_program::{
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
 };
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_booleans::Combine;
+use geop_ops_model::{ModelOperation, NamedModel, Namer, build_model, read_model, resolve_bodies};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -64,7 +66,7 @@ pub struct MoveBodyArgs {
 impl MoveBodyArgs {
     /// The motion it moves by, as `reader` reads the part: none, if it
     /// moves nothing.
-    fn motion(&self, reader: &PartReader) -> GeopResult<Option<Motion<Design>>> {
+    fn motion(&self, reader: &Reader) -> GeopResult<Option<Motion<Design>>> {
         type S = Design;
         let values = self.translation.iter().chain([&self.angle]);
         if let Some(bad) = values.clone().find(|v| !v.is_finite()) {
@@ -104,13 +106,10 @@ impl PartOperation for MoveBody {
     )
     .icon(crate::icons::MOVE_BODY);
     type Args = MoveBodyArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// The newest solid, not moved yet.
-    fn new_args(context: &StepContext) -> MoveBodyArgs {
+    fn new_args(context: &Context) -> MoveBodyArgs {
         MoveBodyArgs {
             bodies: (read_model(&context.before).ok())
                 .and_then(|model| model.newest_solid())
@@ -125,7 +124,7 @@ impl PartOperation for MoveBody {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &MoveBodyArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &MoveBodyArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
@@ -133,15 +132,14 @@ impl PartOperation for MoveBody {
     /// where the bodies' middle is moved to; the axis to turn about and the
     /// angle; whether to copy; and how to combine.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &MoveBodyArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, MoveBodyArgs> {
         let before = &context.before;
         let mut f = EditForm::<Design, MoveBodyArgs>::default();
         let shift = Vector3::from_array(args.translation.map(Design::from_f64));
-        f.form.gizmo =
-            center(before, &args.bodies).map(|c| Gizmo::new(c.add(&shift)).translate());
+        f.form.gizmo = center(before, &args.bodies).map(|c| Gizmo::new(c.add(&shift)).translate());
         bodies_field(&mut f, before, &args.bodies, |edit, picked| {
             edit.args.bodies = picked
         });
@@ -149,9 +147,13 @@ impl PartOperation for MoveBody {
             let number = Number::new(label, args.translation[k], Unit::Length);
             f.number(key, number, move |edit, v| edit.args.translation[k] = v);
         }
-        f.pick_one("axis", "turn about", before, args.axis.as_ref(), |edit, picked| {
-            edit.args.axis = Some(picked)
-        });
+        f.pick_one(
+            "axis",
+            "turn about",
+            before,
+            args.axis.as_ref(),
+            |edit, picked| edit.args.axis = Some(picked),
+        );
         f.form.dialog.optional("axis");
         if args.axis.is_some() {
             let angle = Number::new("angle", args.angle, Unit::Angle).range(-360.0, 360.0);
@@ -165,7 +167,7 @@ impl PartOperation for MoveBody {
 
     /// The gizmo dragged: the shift, as it was when the drag started, moved
     /// by as much.
-    fn canvas(_: &StepContext, edit: Edit<'_, MoveBodyArgs, ()>, event: &CanvasEvent<Design>) {
+    fn canvas(_: &Context, edit: Edit<'_, MoveBodyArgs, ()>, event: &CanvasEvent<Design>) {
         if let CanvasEvent::Gizmo { drag, .. } = event
             && let Change::Translate(by) = &drag.change
         {
@@ -179,7 +181,7 @@ impl PartOperation for MoveBody {
 impl ModelOperation for MoveBody {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &MoveBodyArgs,
     ) -> GeopResult<()> {

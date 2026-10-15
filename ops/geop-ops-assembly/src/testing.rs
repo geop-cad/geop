@@ -2,19 +2,20 @@
 //! the programs of a workspace ([`Shelf`]), each giving its model
 //! ([`GivenModel`]) and placing others ([`Place`]).
 
+use geop_core_program::{
+    operation::Operation,
+    operation_registry::OperationRegistry,
+    part::Part,
+    program::{Program, ProgramStep},
+    program_runner::ProgramRunner,
+    values::{Design, Settings, pose_state},
+    workspace::{Location, Workspace},
+};
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::{
-    operation::Operation,
-    program::ProgramStep,
-    workspace::{Loaded, Location, Workspace},
-};
-use geop_ops_model::{Design, NamedModel, SolidNotes, model, solid_notes};
-use geop_ops_parameters::{
-    BuildPart, DefineParameters, PartProperties, Placement, ProgramFile, Registry, Runner, Setting,
-    Settings, StateValue, pose_state,
-};
+use geop_ops_model::{NamedModel, SolidNotes, model, solid_notes};
+use geop_ops_parameters::{DefineParameters, PartProperties, Placement};
 use serde::{Deserialize, Serialize};
 
 use crate::placed::define_placed;
@@ -37,10 +38,8 @@ pub struct GivenModelArgs {
 impl Operation for GivenModel {
     const KIND: &'static str = "given_model";
     type Args = GivenModelArgs;
-    type Input = Setting;
-    type State = StateValue;
 
-    fn run(_: &str, _: &Runner, part: &mut BuildPart, args: &GivenModelArgs) -> GeopResult<()> {
+    fn run(_: &str, _: &ProgramRunner, part: &mut Part, args: &GivenModelArgs) -> GeopResult<()> {
         let (given, notes) = (MODELS.with(|models| models.borrow().get(args.key).cloned()))
             .ok_or_else(|| GeopError::new(format!("no model {} was given", args.key)))?;
         part.define_target(&model(), &given, |_, given| Ok(given.clone()))?;
@@ -75,10 +74,13 @@ pub struct PlaceArgs {
 impl Operation for Place {
     const KIND: &'static str = "place";
     type Args = PlaceArgs;
-    type Input = Setting;
-    type State = StateValue;
 
-    fn run(step: &str, runner: &Runner, part: &mut BuildPart, args: &PlaceArgs) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        runner: &ProgramRunner,
+        part: &mut Part,
+        args: &PlaceArgs,
+    ) -> GeopResult<()> {
         let placement = Placement::State(pose_state(step));
         define_placed(runner, part, step, &args.file, &args.inputs, placement)
     }
@@ -96,22 +98,18 @@ pub fn place(id: &str, file: &str, inputs: &Settings) -> ProgramStep {
 
 /// Programs by file, as a workspace holds them: the parts a test places.
 #[derive(Default)]
-pub struct Shelf(BTreeMap<String, Loaded<StateValue>>);
+pub struct Shelf(BTreeMap<String, Rc<Program>>);
 
 impl Shelf {
     /// It with `program` as the file `file`.
-    pub fn with(mut self, file: &str, program: ProgramFile) -> Self {
-        let loaded = Loaded {
-            program: Rc::new(program.program),
-            state: Rc::new(program.state),
-        };
-        self.0.insert(file.to_string(), loaded);
+    pub fn with(mut self, file: &str, program: Program) -> Self {
+        self.0.insert(file.to_string(), Rc::new(program));
         self
     }
 }
 
-impl Workspace<StateValue> for Shelf {
-    fn program(&self, path: &str) -> GeopResult<Loaded<StateValue>> {
+impl Workspace for Shelf {
+    fn program(&self, path: &str) -> GeopResult<Rc<Program>> {
         (self.0.get(path).cloned()).ok_or_else(|| GeopError::new(format!("there is no {path:?}")))
     }
 
@@ -138,8 +136,8 @@ impl Workspace<StateValue> for Shelf {
 
 /// The operations of the programs on a shelf: the parameters and
 /// properties steps, a model given and a part placed.
-pub fn registry() -> Registry {
-    (Registry::default().with(DefineParameters))
+pub fn registry() -> OperationRegistry {
+    (OperationRegistry::default().with(DefineParameters))
         .and_then(|r| r.with(PartProperties))
         .and_then(|r| r.with(GivenModel))
         .and_then(|r| r.with(Place))
@@ -148,8 +146,8 @@ pub fn registry() -> Registry {
 
 /// A runner of [`registry`]'s operations, reading `shelf`, running the
 /// program of the file `file`.
-pub fn runner(shelf: Shelf, file: &str) -> Runner {
-    let mut runner = Runner::new(registry());
+pub fn runner(shelf: Shelf, file: &str) -> ProgramRunner {
+    let mut runner = ProgramRunner::new(registry());
     runner.workspace = Some(Rc::new(shelf));
     runner.location = Location {
         file: file.to_string(),

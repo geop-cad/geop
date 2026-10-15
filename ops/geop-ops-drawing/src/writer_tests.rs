@@ -1,13 +1,11 @@
 //! Drawings composed and written as DXF and SVG, then read back.
 
-use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar};
-use geop_ops_output::sheet::{to_dxf, to_svg};
+use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder, v3};
+use geop_ops_model::NamedModel;
+use geop_ops_output::sheet::{to_dxf, to_svg};
 
-use crate::{
-    DrawingArgs, ViewKind, compose,
-    testing::{Part, built},
-};
+use crate::{DrawingArgs, ViewKind, compose, testing::built};
 
 /// A DXF entity read back: its type, layer and text.
 pub(crate) type Entity = (String, String, String);
@@ -60,7 +58,7 @@ fn svg_group<'a>(svg: &'a str, layer: &str) -> &'a str {
 /// four visible lines, its width and height dimensioned, and a title block.
 #[test]
 fn box_drawing_reads_back() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     cube_solid(&mut part, "box", v3(0.0, 0.0, 0.0), v3(20.0, 10.0, 30.0)).unwrap();
     let args = DrawingArgs {
         views: vec![ViewKind::Front],
@@ -101,7 +99,7 @@ fn box_drawing_reads_back() {
 /// front, a rectangle of two edges and two silhouettes.
 #[test]
 fn cylinder_drawing_has_circle_and_centre_mark() {
-    let mut part = Part::<S>::new();
+    let mut part = NamedModel::<S>::new();
     revolved_cylinder(
         &mut part,
         "c",

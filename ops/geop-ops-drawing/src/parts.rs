@@ -2,7 +2,7 @@
 //! own (see [`geop_ops_bom`]).
 
 use geop_core_math::geop_error::GeopResult;
-use geop_ops_parameters::PartReader;
+use geop_core_program::part::Reader;
 use geop_ops_bom::{LineKind, Structure, bom};
 
 use crate::{DrawingArgs, PartsListLine};
@@ -11,7 +11,7 @@ use crate::{DrawingArgs, PartsListLine};
 /// file `file`, as a drawing lists it (see [`PartsListLine`]): flat, each
 /// part and wire once with its count. Empty if `args` asks for none.
 pub fn parts_list(
-    reader: &PartReader,
+    reader: &Reader,
     file: &str,
     args: &DrawingArgs,
 ) -> GeopResult<Vec<PartsListLine>> {

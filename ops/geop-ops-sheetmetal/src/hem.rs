@@ -2,7 +2,7 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::{Choice, Number, Unit},
     part_operation,
     part_operation::PartOperation,
@@ -12,8 +12,12 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
-use geop_ops_model::{Design, ModelOperation, NamedModel, Namer, read_model};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_core_program::{
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
+use geop_ops_model::{ModelOperation, NamedModel, Namer, read_model};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -114,7 +118,7 @@ impl HemArgs {
 }
 
 impl SheetStep for Hem {
-    fn plan(reader: &PartReader, step: &str, args: &HemArgs) -> GeopResult<Made> {
+    fn plan(reader: &Reader, step: &str, args: &HemArgs) -> GeopResult<Made> {
         let ctx = with_context!("hem({step}, {args:?})");
         let namer = Namer::new("hem", step)?;
         let model = read_model(reader).with_context(ctx)?;
@@ -142,13 +146,10 @@ impl PartOperation for Hem {
     )
     .icon(crate::icons::HEM);
     type Args = HemArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// No edge yet: a closed hem, a third of a unit long.
-    fn new_args(_: &StepContext) -> HemArgs {
+    fn new_args(_: &Context) -> HemArgs {
         HemArgs {
             edge: None,
             kind: HemKind::Closed,
@@ -159,14 +160,14 @@ impl PartOperation for Hem {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &HemArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &HemArgs) -> GeopResult<()> {
         body::run::<Self>(step, part, args)
     }
 
     /// The edge, picked; how tight, and the gap if open; how long; and how
     /// far in from the edge's ends.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &HemArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, HemArgs> {
@@ -212,7 +213,7 @@ impl PartOperation for Hem {
 impl ModelOperation for Hem {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         _: &HemArgs,
     ) -> GeopResult<()> {

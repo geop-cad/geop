@@ -3,9 +3,8 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::{Choice, Number, Unit},
-    numeric_input::NumericInput,
     part_operation,
     part_operation::PartOperation,
 };
@@ -15,10 +14,15 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
     with_context,
 };
+use geop_core_program::{
+    numeric::NumericInput,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
 use geop_core_sketch::{CurveKind, ProfileLoop, Shape};
 use geop_ops_extrude_revolve::{operation::shape_loops, sweep::SweepLoop};
-use geop_ops_model::{Design, ModelOperation, NamedModel, Namer};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_model::{ModelOperation, NamedModel, Namer};
 use geop_ops_sketch::{PlacedSketch, SketchRef};
 use serde::{Deserialize, Serialize};
 
@@ -72,7 +76,7 @@ pub struct BaseFlangeArgs {
 }
 
 impl SheetStep for BaseFlange {
-    fn plan(reader: &PartReader, step: &str, args: &BaseFlangeArgs) -> GeopResult<Made> {
+    fn plan(reader: &Reader, step: &str, args: &BaseFlangeArgs) -> GeopResult<Made> {
         let ctx = with_context!("base_flange({step}, {args:?})");
         let namer = Namer::new("base_flange", step)?;
         args.rules.check().with_context(ctx)?;
@@ -105,13 +109,10 @@ impl PartOperation for BaseFlange {
     )
     .icon(crate::icons::BASE_FLANGE);
     type Args = BaseFlangeArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// The newest sketch, with the default rules, a unit deep.
-    fn new_args(context: &StepContext) -> BaseFlangeArgs {
+    fn new_args(context: &Context) -> BaseFlangeArgs {
         let newest = context.before.targets_of::<PlacedSketch<Design>>().pop();
         BaseFlangeArgs {
             sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_sketch::sketch(""))),
@@ -121,14 +122,19 @@ impl PartOperation for BaseFlange {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &BaseFlangeArgs) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &ProgramRunner,
+        part: &mut Part,
+        args: &BaseFlangeArgs,
+    ) -> GeopResult<()> {
         body::run::<Self>(step, part, args)
     }
 
     /// The sketch, picked; for a chain how deep; whether flipped; and the
     /// rules.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &BaseFlangeArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, BaseFlangeArgs> {
@@ -145,7 +151,7 @@ impl PartOperation for BaseFlange {
             .and_then(|placed| placed.sketch.shape())
             .is_ok_and(|shape| matches!(shape, Shape::Chain(_)));
         if chain {
-            let depth = args.depth.number("depth", before, Unit::Length);
+            let depth = Number::numeric(&args.depth, "depth", before, Unit::Length);
             f.numeric("depth", depth.range(0.0, 10.0), |edit, depth| {
                 edit.args.depth = depth
             });
@@ -159,7 +165,7 @@ impl PartOperation for BaseFlange {
 impl ModelOperation for BaseFlange {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         _: &BaseFlangeArgs,
     ) -> GeopResult<()> {

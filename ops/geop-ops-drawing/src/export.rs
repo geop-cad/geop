@@ -3,10 +3,12 @@
 //! by default — and the drawings a part's steps describe.
 
 use geop_core_math::geop_error::{GeopError, GeopResult, WithContext};
-use geop_core_program::target::TargetReference;
-use geop_core_program::element::{ElementReference, HasElements, Kind, whole};
+use geop_core_program::{
+    element::{ElementReference, HasElements, Kind, whole},
+    part::Reader,
+    target::TargetReference,
+};
 use geop_ops_output::{Content, Export, Exporter, ExporterInfo, Output, sheet::Format};
-use geop_ops_parameters::PartReader;
 use serde::Deserialize;
 
 use crate::{DrawingArgs, Projection, SheetSize, ViewKind, compose, parts_list};
@@ -21,7 +23,7 @@ pub fn drawing(step: &str) -> TargetReference<DrawingArgs> {
 const PREFIX: &str = "drawing:";
 
 /// The generator of [`drawing`]: the arguments it is given.
-pub(crate) fn described(_: &PartReader, args: &DrawingArgs) -> GeopResult<DrawingArgs> {
+pub(crate) fn described(_: &Reader, args: &DrawingArgs) -> GeopResult<DrawingArgs> {
     Ok(args.clone())
 }
 
@@ -44,14 +46,17 @@ impl HasElements<DrawingArgs> for DrawingArgs {
 
 /// Every drawing the steps `reader` reads describe, by the id of its step,
 /// in the order of the steps.
-pub fn drawing_steps<'a>(reader: &PartReader<'a>) -> GeopResult<Vec<(String, &'a DrawingArgs)>> {
+pub fn drawing_steps<'a>(reader: &Reader<'a>) -> GeopResult<Vec<(String, &'a DrawingArgs)>> {
     let mut out = Vec::new();
     for target in reader.targets_of::<DrawingArgs>() {
         let Some(step) = target.name().strip_prefix(PREFIX) else {
             continue;
         };
         let step = step.to_string();
-        out.push((step, reader.retrieve_element(&ElementReference::whole(target))?));
+        out.push((
+            step,
+            reader.retrieve_element(&ElementReference::whole(target))?,
+        ));
     }
     Ok(out)
 }

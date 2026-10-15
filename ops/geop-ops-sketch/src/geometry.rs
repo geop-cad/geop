@@ -7,8 +7,8 @@
 //! its solver.
 
 use geop_core_math::{geop_error::GeopResult, vector::Vector2};
+use geop_core_program::values::Design;
 use geop_core_sketch::{ProfileLoop, Sketch, profile::curve_polyline};
-use geop_ops_model::Design;
 
 pub use geop_core_sketch::plain::{
     P2, Plain, add, angle_between, bounds, cross, distance, dot, of, perp, rotate, scale,

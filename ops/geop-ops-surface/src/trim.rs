@@ -12,25 +12,30 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::Choice,
     part_operation,
     part_operation::PartOperation,
 };
-use geop_core_geometry::nurb_surface::NurbSurface3D;
+use geop_core_geometry::{
+    nurb_surface::NurbSurface3D,
+    search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size},
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_program::element::ElementReference;
+use geop_core_program::{
+    element::ElementReference,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
 use geop_core_topology::{Body, FaceId, contains::face::face_interior_point};
 use geop_ops_booleans::remesh::remesh::{RemeshParams, remesh};
-use geop_ops_model::{Design, Face, ModelOperation, NamedModel, Namer, build_model, model};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model, model};
 use serde::{Deserialize, Serialize};
-
-use geop_core_geometry::search::{MAX_NODES, PROJECT_ITERATIONS, min_subdivision_size};
 
 /// Which side of the cutting face a [`TrimSurface`] keeps, as its normal
 /// points.
@@ -85,13 +90,10 @@ impl PartOperation for TrimSurface {
     .experimental()
     .icon(crate::icons::TRIM_SURFACE);
     type Args = TrimSurfaceArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// Nothing picked yet, keeping the front.
-    fn new_args(_: &StepContext) -> TrimSurfaceArgs {
+    fn new_args(_: &Context) -> TrimSurfaceArgs {
         TrimSurfaceArgs {
             face: ElementReference::new(model(), ""),
             tool: ElementReference::new(model(), ""),
@@ -99,13 +101,18 @@ impl PartOperation for TrimSurface {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &TrimSurfaceArgs) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &ProgramRunner,
+        part: &mut Part,
+        args: &TrimSurfaceArgs,
+    ) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
     /// The sheet and the tool, picked, and the side to keep.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &TrimSurfaceArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, TrimSurfaceArgs> {
@@ -146,7 +153,7 @@ impl PartOperation for TrimSurface {
 impl ModelOperation for TrimSurface {
     fn build(
         model: &mut NamedModel<Design>,
-        _: &PartReader,
+        _: &Reader,
         step: &str,
         args: &TrimSurfaceArgs,
     ) -> GeopResult<()> {

@@ -7,36 +7,40 @@
 //! chordal error of the mesh — so the tolerance below is the mesh's, not a
 //! geometric epsilon.
 
+use geop_core_program::{
+    element::ElementReference, operation_registry::OperationRegistry, program::Program,
+    values::Design,
+};
 use std::f64::consts::PI;
 
 use crate::{
-    HoleArgs, HoleCentre, HoleKind, Standard, ThreadArgs,
+    Hole, HoleArgs, HoleCentre, HoleKind, Standard, Thread, ThreadArgs,
     iso::{Fit, SIZES, metric},
+    testing::{PLATE, plate, points_sketch},
 };
-use geop_core_math::geop_error::GeopResult;
-use geop_core_math::primitives::FrameAxis;
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_core_program::element::ElementReference;
+use geop_core_math::{
+    geop_error::GeopResult,
+    primitives::FrameAxis,
+    scalars::{ScalInF64 as S, Scalar},
+};
 use geop_ops_booleans::Combine;
-use geop_ops_extrude_revolve::{Extent, Extents};
-use geop_ops_model::{CosmeticThread, Design, NamedModel, Threads, model, read_model, read_threads};
+use geop_ops_extrude_revolve::{
+    Extent, Extents,
+    testing::{Built, extrusion, n, on_face, on_origin, outline, sketch},
+};
+use geop_ops_model::{
+    CosmeticThread, NamedModel, Threads, model, read_model, read_threads,
+    testing::{assert_valid, assert_volume, check_valid, solid_volume},
+};
 use geop_ops_sketch::{Sketch, sketch_element, whole_sketch};
 
 use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_datums::datums;
-use geop_ops_extrude_revolve::testing::{
-    Built, extrusion, n, on_face, on_origin, outline, sketch,
-};
-use geop_ops_model::testing::{assert_valid, assert_volume, check_valid, solid_volume};
-use geop_ops_parameters::{ProgramFile, Registry};
 use geop_ops_pattern::{CircularPattern, LinearPattern, Mirror};
-
-use crate::testing::{PLATE, plate, points_sketch};
-use crate::{Hole, Thread};
 
 /// The operations these tests' programs are written in, and those of
 /// [`super::pattern_tests`].
-pub(super) fn registry() -> GeopResult<Registry> {
+pub(super) fn registry() -> GeopResult<OperationRegistry> {
     (geop_ops_extrude_revolve::testing::registry()?.with(AddDatum)?)
         .with(Hole)?
         .with(Thread)?
@@ -94,7 +98,7 @@ impl Made {
 }
 
 /// `program`, built: its model and threads.
-pub(super) fn made(program: &ProgramFile) -> GeopResult<Made> {
+pub(super) fn made(program: &Program) -> GeopResult<Made> {
     let part = program.built(registry)?;
     let view = part.current();
     Ok(Made {
@@ -104,7 +108,7 @@ pub(super) fn made(program: &ProgramFile) -> GeopResult<Made> {
 }
 
 /// `program` with `args` as the step `h`, built and checked valid.
-fn drilled(mut program: ProgramFile, args: HoleArgs) -> Made {
+fn drilled(mut program: Program, args: HoleArgs) -> Made {
     program.push("h", args);
     let part = made(&program).unwrap();
     assert_valid(&part);
@@ -305,7 +309,7 @@ fn points_picked_one_by_one() {
 #[test]
 fn up_to_next_stops_in_the_gap() {
     let program = || {
-        let mut program = ProgramFile::new();
+        let mut program = Program::new();
         program.push(
             "c",
             sketch(
@@ -353,7 +357,7 @@ fn up_to_next_stops_in_the_gap() {
 /// through its round bottom.
 #[test]
 fn hole_coming_out_through_a_curved_face() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     // On the X plane: sketch `x` is world `y`, sketch `y` world `z`. A flat
     // top at `z = 10`, the bottom a half circle of radius 10 around `z =
     // 10`.
@@ -405,7 +409,7 @@ fn hole_coming_out_through_a_curved_face() {
 /// hole of a custom size.
 #[test]
 fn unsupported_holes_are_refused() {
-    let refused = |program: ProgramFile, args: HoleArgs, says: &str| {
+    let refused = |program: Program, args: HoleArgs, says: &str| {
         let mut program = program;
         program.push("h", args);
         let error = program.build_model(registry).expect_err("refused");
@@ -459,18 +463,15 @@ fn unsupported_holes_are_refused() {
 
 /// A bolt's blank, its axis `z`: a head Ø10 and 5 high, and on it a shank
 /// Ø6 and 20 long, `extrude(shank)`.
-fn shaft() -> ProgramFile {
-    let mut program = ProgramFile::new();
+fn shaft() -> Program {
+    let mut program = Program::new();
     let circle = |r: f64| {
         let mut s = Sketch::new();
         let c = s.add_point(n(0.0), n(0.0));
         s.add_circle(c, n(r));
         s
     };
-    program.push(
-        "head_circle",
-        sketch(on_origin(FrameAxis::Z), circle(5.0)),
-    );
+    program.push("head_circle", sketch(on_origin(FrameAxis::Z), circle(5.0)));
     program.push(
         "head",
         extrusion("head_circle", Extents::blind(5.0), Combine::NewBody),
@@ -660,7 +661,7 @@ fn every_iso_size_and_kind() {
                 continue;
             }
             for end in [Extent::blind(30.0), Extent::ThroughAll] {
-                let mut program = ProgramFile::new();
+                let mut program = Program::new();
                 let (w, t) = (100.0, 40.0);
                 program.push(
                     "outline",

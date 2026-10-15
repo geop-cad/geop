@@ -1,17 +1,20 @@
 //! [`mass_report`]: the mass properties of every solid a part shows, and of
 //! all of them together.
 
+use geop_core_editor::{editing::Tone, selectable::SelectableElement};
 use geop_core_math::{
     geop_error::GeopResult,
     scalars::{Ring, Scalar},
 };
+use geop_core_program::{
+    element::{ElementReference, PickedElement},
+    part::Reader,
+    values::Design,
+};
 use geop_core_topology::mass::MassProperties;
-use geop_core_editor::{editing::Tone, selectable::SelectableElement};
-use geop_core_program::element::{ElementReference, PickedElement};
 use geop_ops_assembly::solids::{PlacedSolid, Shapes, placed_solids};
-use geop_ops_model::{Design, Solid, model};
+use geop_ops_model::{Solid, model};
 use geop_ops_output::{Answer, Block, Bounded, Row};
-use geop_ops_parameters::PartReader;
 use serde::Serialize;
 
 /// Mass properties as shown, in millimetres and kilograms: the volume
@@ -172,7 +175,7 @@ impl MassReport {
 /// and those of the parts placed in it, where they are and of their own
 /// parts' materials — and of all of them together. A part placed many
 /// times is integrated once.
-pub fn mass_report(reader: &PartReader) -> GeopResult<MassReport> {
+pub fn mass_report(reader: &Reader) -> GeopResult<MassReport> {
     let mut bodies = Vec::new();
     let mut all = Vec::new();
     let mut area = (Design::ZERO, true);

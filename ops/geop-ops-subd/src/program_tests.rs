@@ -1,21 +1,19 @@
 //! SubD bodies in programs: built from their cage, and worked on further
 //! by the other operations like any solid.
 
-use crate::{Cage, Mirror, SubdArgs};
-use geop_core_math::primitives::FrameAxis;
-use geop_ops_booleans::{BooleanArgs, Combine, boolean::BooleanOp, solid};
-use geop_ops_extrude_revolve::Extents;
+use crate::{Cage, Mirror, Subd, SubdArgs};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
+use geop_core_program::{operation_registry::OperationRegistry, program::Program};
+use geop_ops_booleans::{Boolean, BooleanArgs, Combine, boolean::BooleanOp, solid};
+use geop_ops_extrude_revolve::{
+    Extents,
+    testing::{Built, extrusion, on_origin, outline, sketch},
+};
 
-use geop_core_math::geop_error::GeopResult;
-use geop_ops_booleans::Boolean;
-use geop_ops_extrude_revolve::testing::{Built, extrusion, on_origin, outline, sketch};
 use geop_ops_model::testing::assert_valid;
-use geop_ops_parameters::{ProgramFile, Registry};
-
-use crate::Subd;
 
 /// The operations these tests' programs are written in.
-fn registry() -> GeopResult<Registry> {
+fn registry() -> GeopResult<OperationRegistry> {
     geop_ops_extrude_revolve::testing::registry()?
         .with(Boolean)?
         .with(Subd)
@@ -26,7 +24,7 @@ fn registry() -> GeopResult<Registry> {
 /// valid solid.
 #[test]
 fn subd_body_united_with_a_box() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push(
         "blob",
         SubdArgs {

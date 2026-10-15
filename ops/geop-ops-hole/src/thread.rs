@@ -24,12 +24,12 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::{Body, FaceId, SolidId};
-use geop_ops_model::{CosmeticThread, NamedModel, Namer, frame_along};
 use geop_ops_extrude_revolve::{
     common::{Profile, polygon},
     revolve::screw,
     sweep::SweepLoop,
 };
+use geop_ops_model::{CosmeticThread, NamedModel, Namer, frame_along};
 
 use crate::iso::{MetricSize, TRIANGLE_HEIGHT};
 

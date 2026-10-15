@@ -1,31 +1,30 @@
-use std::{collections::BTreeMap, rc::Rc};
-
 use geop_core_editor::{
     edit_form::FormState,
-    editable::Editable,
+    editable::{Context, Editable},
     editing::{CanvasEvent, Event, Pointer, Pull, Reach},
 };
+use geop_core_program::{
+    element::ElementReference,
+    operation_registry::OperationRegistry,
+    part::{Part, Reader},
+    program::{Program, ProgramStep},
+    program_runner::{ProgramRunner, RunOutput},
+    values::{Design, StateValue, StateValues, pose_state},
+    workspace::Location,
+};
+use std::{collections::BTreeMap, rc::Rc};
+
 use geop_core_math::{
     primitives::{DatumComponent, FrameAxis, Pose, Ray},
     scalars::{ScalInF64 as S, Scalar},
     solvers::system::Variable,
     vector::Vector3,
 };
-use geop_core_program::{
-    element::ElementReference,
-    program::{Program, ProgramStep},
-    program_runner::RunOutput,
-    workspace::Location,
-};
 use geop_ops_add_datum::Selected;
 use geop_ops_constraints::Constraints;
 use geop_ops_datums::{ORIGIN, component_name, datums, origin_axis, read_datums};
 use geop_ops_extrude_revolve::shapes::{block_part, v3};
-use geop_ops_model::{Design, read_model, testing::assert_close};
-use geop_ops_parameters::{
-    BuildPart, PartReader, ProgramFile, Registry, Runner, StateValue, StateValues, StepContext,
-    pose_state,
-};
+use geop_ops_model::{read_model, testing::assert_close};
 use geop_ops_pattern::spacing::Spacing;
 use geop_ops_view::{PartView, drawn};
 
@@ -40,7 +39,7 @@ use crate::{
 
 /// The part `reader` reads, drawn: its model, its datums and the parts
 /// placed in it — what a component is drawn as where it is placed.
-fn draw(reader: &PartReader) -> GeopResult<PartView> {
+fn draw(reader: &Reader) -> GeopResult<PartView> {
     let mut view = PartView::new();
     read_model(reader)?.draw("model", &mut view)?;
     read_datums(reader)?.draw(&mut view)?;
@@ -50,7 +49,7 @@ fn draw(reader: &PartReader) -> GeopResult<PartView> {
 
 /// The operations the shelf's programs are written in: those of
 /// [`crate::testing`], placing parts and patterns of them.
-fn registry() -> Registry {
+fn registry() -> OperationRegistry {
     (crate::testing::registry().with(AddPart))
         .and_then(|r| r.with(crate::PartPattern))
         .unwrap()
@@ -59,9 +58,9 @@ fn registry() -> Registry {
 /// A shelf of `cube.geop` alone: the unit cube from the origin to
 /// `(1, 1, 1)`, with the origin's datums.
 fn shelf() -> Shelf {
-    let mut cube = ProgramFile::new();
+    let mut cube = Program::new();
     let model = block_part("c", [0.0; 3], [1.0; 3]);
-    cube.program.steps.push(given_model("model", model, None));
+    cube.steps.push(given_model("model", model, None));
     Shelf::default().with("cube.geop", cube)
 }
 
@@ -155,8 +154,8 @@ fn moved_to(moved: &StateValues, instance: &str) -> Pose<Design> {
 
 /// A program of steps placing the cube, run with a state.
 struct Assembly {
-    runner: Runner,
-    part: BuildPart,
+    runner: ProgramRunner,
+    part: Part,
     program: Program,
     inputs: Settings,
     state: StateValues,
@@ -166,7 +165,7 @@ impl Assembly {
     /// The program `steps` of the file `assembly.geop`, placing parts
     /// from `shelf`, run with the state `state`.
     fn with(shelf: Shelf, steps: Vec<ProgramStep>, state: StateValues) -> Self {
-        let mut runner = Runner::new(registry());
+        let mut runner = ProgramRunner::new(registry());
         runner.workspace = Some(Rc::new(shelf));
         runner.location = Location {
             file: "assembly.geop".into(),
@@ -174,8 +173,8 @@ impl Assembly {
         };
         let mut assembly = Assembly {
             runner,
-            part: BuildPart::default(),
-            program: Program::new(steps),
+            part: Part::default(),
+            program: Program::from_steps(steps),
             inputs: BTreeMap::new(),
             state,
         };
@@ -203,7 +202,7 @@ impl Assembly {
         (self.runner).run(&mut self.part, &self.program, &self.inputs, &self.state)
     }
 
-    fn reader(&self) -> PartReader<'_> {
+    fn reader(&self) -> Reader<'_> {
         self.part.current()
     }
 
@@ -361,7 +360,7 @@ fn a_drag_pulls_the_point_grabbed() {
     let mut assembly = Assembly::on_a(&[("b", mates.clone())], StateValues::new());
     let pulls = {
         let position = 1;
-        let context: StepContext = StepContext {
+        let context: Context = Context {
             step: "b",
             runner: &assembly.runner,
             before: assembly.part.reader(position),
@@ -461,8 +460,8 @@ fn a_pattern_places_copies_after_the_part() {
 /// The shelf, with `pair.geop` besides: the program of `pair`, which places
 /// cubes, as it was solved.
 fn with_pair(pair: Assembly) -> Shelf {
-    let pair = ProgramFile {
-        program: pair.program,
+    let pair = Program {
+        steps: pair.program.steps,
         state: pair.state,
     };
     shelf().with("pair.geop", pair)
@@ -501,7 +500,7 @@ fn a_placed_part_brings_its_mates() {
     let off = StateValues::from([(pose_state("p/b"), StateValue::Pose(at([5.0, 4.0, 3.0])))]);
     let mut assembly = Assembly::with(with_pair(pair), steps, off);
     let reader = assembly.reader();
-    let constraints = Constraints::<StateValue>::of(&reader).unwrap();
+    let constraints = Constraints::of(&reader).unwrap();
     let names: Vec<&str> = constraints.iter().map(|(name, _)| name).collect();
     // The pair's, behind its name; its own fixed mate is no constraint.
     assert_eq!(names, ["p/add_part(b,m1)", "p/add_part(b,m2)"]);
@@ -523,8 +522,8 @@ fn a_placed_part_brings_its_mates() {
 }
 
 /// The constraint `name` of the part `reader` reads.
-fn constraint(reader: &PartReader, name: &str) -> geop_ops_constraints::Constraint<StateValue> {
-    let constraints = Constraints::<StateValue>::of(reader).unwrap();
+fn constraint(reader: &Reader, name: &str) -> geop_ops_constraints::Constraint {
+    let constraints = Constraints::of(reader).unwrap();
     (constraints.get(name).cloned()).unwrap_or_else(|| panic!("no constraint {name}"))
 }
 
@@ -595,7 +594,7 @@ fn number(moved: &StateValues, state: &str) -> f64 {
 #[track_caller]
 fn assert_derivatives_are_true(assembly: &mut Assembly) {
     let state = assembly.state.clone();
-    let all = Constraints::<StateValue>::of(&assembly.reader()).unwrap();
+    let all = Constraints::of(&assembly.reader()).unwrap();
     assert!(!all.is_empty());
     let h = 1e-6;
     for (name, constraint) in all.iter() {

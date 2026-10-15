@@ -758,8 +758,8 @@ mod tests {
     };
     use geop_core_math::{scalars::ScalInF64, scalars::Scalar, vector::Vector3};
     use geop_core_topology::{contains::rng::Rng, validation::validate_fast};
-    use geop_ops_model::Namer;
     use geop_ops_extrude_revolve::shapes::{block, cylinder::Axis, v3};
+    use geop_ops_model::Namer;
 
     /// A fresh operation id, so that every solid and boolean a test builds
     /// gets names of its own.

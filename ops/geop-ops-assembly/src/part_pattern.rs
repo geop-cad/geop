@@ -2,9 +2,8 @@
 
 use geop_core_editor::{
     edit_form::{Edit, EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
-    editing::{Choice, Tone, Unit},
-    numeric_input::NumericInput,
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
+    editing::{Choice, Number, Tone, Unit},
     one_of, part_operation,
     part_operation::PartOperation,
 };
@@ -14,13 +13,16 @@ use geop_core_math::{
     primitives::{Pose, Quaternion},
     with_context,
 };
-use geop_core_program::element::ElementReference;
-use geop_ops_datums::Datums;
-use geop_ops_model::{Design, Line, NamedModel, Namer, Round};
-use geop_ops_parameters::{
-    BuildPart, PartReader, Placement, Runner, Setting, StateValue, StepContext, instance,
-    instances, located,
+use geop_core_program::{
+    element::ElementReference,
+    numeric::NumericInput,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
 };
+use geop_ops_datums::Datums;
+use geop_ops_model::{Line, NamedModel, Namer, Round};
+use geop_ops_parameters::{Placement, instance, instances, located};
 use geop_ops_pattern::spacing::{Spacing, count_field, whole_count};
 use geop_ops_sketch::PlacedSketch;
 use serde::{Deserialize, Serialize};
@@ -103,7 +105,7 @@ pub struct PartPatternArgs {
 fn motions(
     args: &PartPatternArgs,
     axis: &Axis<Design>,
-    reader: &PartReader,
+    reader: &Reader,
 ) -> GeopResult<Vec<Pose<Design>>> {
     let count = whole_count(&args.count, reader)?;
     if count < 2 {
@@ -136,7 +138,7 @@ fn motions(
 }
 
 /// The placed parts the steps before have placed, by name, in order.
-fn placed_names(before: &PartReader) -> Vec<String> {
+fn placed_names(before: &Reader) -> Vec<String> {
     (instances(before).unwrap_or_default().into_iter())
         .map(|(name, _)| name.to_string())
         .collect()
@@ -166,13 +168,10 @@ impl PartOperation for PartPattern {
     .experimental()
     .icon(crate::icons::PART_PATTERN);
     type Args = PartPatternArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// The newest placed part, six round an axis still to pick.
-    fn new_args(context: &StepContext) -> PartPatternArgs {
+    fn new_args(context: &Context) -> PartPatternArgs {
         PartPatternArgs {
             part: placed_names(&context.before).pop().unwrap_or_default(),
             axis: None,
@@ -188,8 +187,8 @@ impl PartOperation for PartPattern {
     /// the axis resolved in the part as the steps before left it.
     fn run(
         step: &str,
-        runner: &Runner,
-        part: &mut BuildPart,
+        runner: &ProgramRunner,
+        part: &mut Part,
         args: &PartPatternArgs,
     ) -> GeopResult<()> {
         let ctx = with_context!("part_pattern({step}, {args:?})");
@@ -224,7 +223,7 @@ impl PartOperation for PartPattern {
 
     /// The part to copy, the line or axis, the layout and how many.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &PartPatternArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, PartPatternArgs> {
@@ -291,7 +290,7 @@ impl PartOperation for PartPattern {
             &mut f,
             key,
             labels,
-            |label, value| value.number(label, before, unit),
+            |label, value| Number::numeric(value, label, before, unit),
             |args: &mut PartPatternArgs, spacing| *args.layout.spacing_mut() = spacing,
         );
         count_field(&mut f, "count", &args.count, before, None, |edit, count| {

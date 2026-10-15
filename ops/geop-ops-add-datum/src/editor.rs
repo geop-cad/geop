@@ -3,20 +3,18 @@
 //! takes — and dragging offsets: a plane's by a handle, a point's by a
 //! gizmo.
 
-use std::collections::BTreeMap;
-
 use geop_core_editor::{
     edit_form::{Edit, EditForm},
-    editing::{Action, CanvasEvent, Change, Control, Dialog, Gizmo, Tone, Track},
-    numeric_input::NumericInput,
+    editing::{Action, CanvasEvent, Change, Control, Dialog, Gizmo, Number, Tone, Track},
 };
+use geop_core_program::{numeric::NumericInput, part::Reader, values::Design};
+use std::collections::BTreeMap;
+
 use geop_core_math::{
     primitives::{CoordinateSystem, DatumKind},
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_ops_model::Design;
-use geop_ops_parameters::PartReader;
 
 use crate::{
     AddDatumArgs, CONSTRUCTIONS, Construction, Role, Selected,
@@ -41,7 +39,7 @@ fn needs(construction: &ConstructionSchema) -> String {
 
 /// What `args` builds as `before` reads the part, its numbers as the form
 /// shows them.
-fn built(before: &PartReader, args: &AddDatumArgs) -> Option<CoordinateSystem<Design>> {
+fn built(before: &Reader, args: &AddDatumArgs) -> Option<CoordinateSystem<Design>> {
     let inputs = args.inputs(before).ok()?;
     (args.construction)
         .build(&inputs, |f| f.resolve(before))
@@ -51,7 +49,7 @@ fn built(before: &PartReader, args: &AddDatumArgs) -> Option<CoordinateSystem<De
 /// Where the offsets of what `args` builds are dragged, by the name of
 /// their value: an offset plane's distance on the plane, along its normal.
 /// None for a step that does not build.
-fn handles(seen: &PartReader, args: &AddDatumArgs) -> BTreeMap<&'static str, Track<Design>> {
+fn handles(seen: &Reader, args: &AddDatumArgs) -> BTreeMap<&'static str, Track<Design>> {
     match (&args.construction, built(seen, args)) {
         (Construction::Offset { .. }, Some(built)) => BTreeMap::from([(
             "distance",
@@ -76,7 +74,7 @@ fn unit_axes(frame: &CoordinateSystem<Design>) -> Option<[Vector3<Design>; 3]> {
 /// The gizmo an offset point is moved by: at the point, along the axes its
 /// offsets are measured along — while they are plain numbers, not
 /// formulas, which a drag would overwrite.
-fn gizmo(seen: &PartReader, args: &AddDatumArgs) -> Option<Gizmo<Design>> {
+fn gizmo(seen: &Reader, args: &AddDatumArgs) -> Option<Gizmo<Design>> {
     let Construction::Point { x, y, z } = &args.construction else {
         return None;
     };
@@ -94,7 +92,7 @@ fn gizmo(seen: &PartReader, args: &AddDatumArgs) -> Option<Gizmo<Design>> {
 
 /// The gizmo dragged: an offset point's offsets moved by as much along
 /// their axes.
-pub(crate) fn event(seen: &PartReader, args: &mut AddDatumArgs, event: &CanvasEvent<Design>) {
+pub(crate) fn event(seen: &Reader, args: &mut AddDatumArgs, event: &CanvasEvent<Design>) {
     let CanvasEvent::Gizmo { drag, .. } = event else {
         return;
     };
@@ -114,7 +112,7 @@ pub(crate) fn event(seen: &PartReader, args: &mut AddDatumArgs, event: &CanvasEv
 
 /// Keeps the construction fitting the selection: one that no longer fits
 /// gives way to the first that does, if any does.
-fn follow_selection(before: &PartReader, args: &mut AddDatumArgs) {
+fn follow_selection(before: &Reader, args: &mut AddDatumArgs) {
     let fits = fitting_constructions(before, &args.selection);
     if !fits.contains(&args.construction.schema().method)
         && let Some(first) = CONSTRUCTIONS.iter().find(|c| fits.contains(&c.method))
@@ -126,7 +124,7 @@ fn follow_selection(before: &PartReader, args: &mut AddDatumArgs) {
 /// Says of each element the selection field of `dialog` holds,
 /// `selection`, what it can be used as — or, where the part has no such
 /// element, why it cannot be used.
-fn describe_selection(reader: &PartReader, selection: &[Selected], dialog: &mut Dialog<Design>) {
+fn describe_selection(reader: &Reader, selection: &[Selected], dialog: &mut Dialog<Design>) {
     let Some(field) = dialog.0.iter_mut().find(|f| f.key == "selection") else {
         return;
     };
@@ -152,7 +150,7 @@ fn describe_selection(reader: &PartReader, selection: &[Selected], dialog: &mut 
 /// saying what they need, and the construction's values, offsets with
 /// handles.
 pub(crate) fn form<'a>(
-    before: &'a PartReader<'a>,
+    before: &'a Reader<'a>,
     args: &AddDatumArgs,
 ) -> EditForm<'a, Design, AddDatumArgs> {
     let seen = before;
@@ -211,7 +209,7 @@ pub(crate) fn form<'a>(
                 let input = value
                     .and_then(|v| serde_json::from_value::<NumericInput>(v).ok())
                     .unwrap_or_default();
-                let number = (input.number(name, seen, unit))
+                let number = (Number::numeric(&input, name, seen, unit))
                     .range(min, max)
                     .handle(handles.remove(name));
                 f.numeric(name, number, move |Edit { args, .. }, v| {

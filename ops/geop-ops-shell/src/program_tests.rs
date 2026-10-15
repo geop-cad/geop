@@ -1,37 +1,38 @@
 //! Shelling solids built by programs: opened at faces picked by name, or
 //! closed all round.
 
+use geop_core_program::{
+    element::ElementReference, operation_registry::OperationRegistry, program::Program,
+    values::Design,
+};
 use std::f64::consts::PI;
 
-use crate::ShellArgs;
-use geop_core_math::primitives::FrameAxis;
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_core_program::element::ElementReference;
+use crate::{Shell, ShellArgs};
+use geop_core_math::{
+    geop_error::GeopResult,
+    primitives::FrameAxis,
+    scalars::{ScalInF64 as S, Scalar},
+};
 use geop_core_topology::Body;
 use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_booleans::{Combine, solid};
 use geop_ops_datums::{datums, read_datums};
-use geop_ops_extrude_revolve::Extents;
-use geop_ops_model::{Design, NamedModel, model, testing::assert_valid};
+use geop_ops_extrude_revolve::{
+    Extents,
+    testing::{Built, args, drilled_box, extrude_sketch, extrusion, n, on_origin, outline, sketch},
+};
+use geop_ops_model::{NamedModel, model, testing::assert_valid};
 use geop_ops_sketch::{Sketch, SketchPlane};
 
-use geop_core_math::geop_error::GeopResult;
-use geop_ops_extrude_revolve::testing::{
-    Built, args, drilled_box, extrude_sketch, extrusion, n, on_origin, outline, sketch,
-};
-use geop_ops_parameters::{ProgramFile, Registry};
-
-use crate::Shell;
-
 /// The operations these tests' programs are written in.
-fn registry() -> GeopResult<Registry> {
+fn registry() -> GeopResult<OperationRegistry> {
     geop_ops_extrude_revolve::testing::registry()?
         .with(AddDatum)?
         .with(Shell)
 }
 
 /// A sketch on the Z plane, and `name` its extrude `height` up, a new body.
-fn extruded(program: &mut ProgramFile, name: &str, sketch: Sketch, height: f64) {
+fn extruded(program: &mut Program, name: &str, sketch: Sketch, height: f64) {
     extrude_sketch(
         program,
         name,
@@ -83,7 +84,7 @@ fn drilled_box_opened_at_its_top() {
 /// A round cylinder, its circle extruded, opened at its top: a cup.
 #[test]
 fn cup() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     let mut s = Sketch::new();
     let c = s.add_point(n(0.0), n(0.0));
     s.add_circle(c, n(1.0));
@@ -99,7 +100,7 @@ fn cup() {
 /// where their inner sides reach past the faces they are copies of.
 #[test]
 fn l_block_opened_at_its_top() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     extruded(
         &mut program,
         "l",
@@ -130,7 +131,7 @@ fn slot_plate_closed_all_round() {
     s.add_arc(p[3], p[0], n(PI));
     let c = s.add_point(n(1.0), n(0.5));
     s.add_circle(c, n(0.25));
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     extruded(&mut program, "plate", s, 0.5);
     program.push("s", shell("extrude(plate)", &[], 0.05));
     let part = program.build_model(registry).unwrap();
@@ -143,7 +144,7 @@ fn slot_plate_closed_all_round() {
 /// in two strips.
 #[test]
 fn channel() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     extruded(
         &mut program,
         "b",
@@ -189,7 +190,7 @@ fn channel() {
 /// lifted.
 #[test]
 fn offset_plane_from_a_shelled_face() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     extruded(
         &mut program,
         "b",
@@ -210,10 +211,7 @@ fn offset_plane_from_a_shelled_face() {
         },
     );
     let part = program.built(registry).unwrap();
-    let datum = read_datums(&part.current())
-        .unwrap()
-        .get("d")
-        .unwrap();
+    let datum = read_datums(&part.current()).unwrap().get("d").unwrap();
     // The inner floor faces up, into the cup, at z = 0.25.
     let z = datum.frame.origin()[2].to_f64();
     assert!((z - 0.75).abs() < 1e-9, "{z}");
@@ -225,7 +223,7 @@ fn offset_plane_from_a_shelled_face() {
 /// it.
 #[test]
 fn hole_through_the_walls_of_a_shelled_box() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     extruded(
         &mut program,
         "b",
@@ -278,21 +276,21 @@ fn hole_through_the_walls_of_a_shelled_box() {
 #[test]
 fn shell_steps_round_trip_through_json() {
     let shell_args = shell("extrude(b)", &["extrude(b,end)"], 0.25);
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("s", shell_args.clone());
-    let json = serde_json::to_value(&program.program.steps[0]).unwrap();
+    let json = serde_json::to_value(&program.steps[0]).unwrap();
     assert_eq!(json["operation"], "shell");
     assert_eq!(json["args"]["thickness"], 0.25);
     // The solid and the faces are saved by their names.
     assert_eq!(json["args"]["solid"], "extrude(b)");
     assert_eq!(json["args"]["faces"][0], "extrude(b,end)");
-    assert_eq!(args::<ShellArgs>(&program.program.steps[0]), shell_args);
+    assert_eq!(args::<ShellArgs>(&program.steps[0]), shell_args);
 }
 
 /// Walls need a thickness, and the faces opened must be the solid's.
 #[test]
 fn shells_refuse_what_they_cannot_build() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     extruded(
         &mut program,
         "a",

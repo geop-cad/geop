@@ -1,19 +1,23 @@
 //! [`Loft`]: a body through the profiles of several sketches.
 
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     with_context,
 };
-use geop_core_sketch::{PointId, Shape};
-use geop_core_editor::{
-    edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
-    part_operation,
-    part_operation::PartOperation,
+use geop_core_program::{
+    element::ElementReference,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
 };
-use geop_core_program::element::ElementReference;
-use geop_ops_model::{Design, ModelOperation, NamedModel, Namer, Point, build_model, read_model};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_core_sketch::{PointId, Shape};
+use geop_ops_model::{ModelOperation, NamedModel, Namer, Point, build_model, read_model};
 use geop_ops_sketch::{PlacedSketch, SketchRef, chain_of_pieces};
 use serde::{Deserialize, Serialize};
 
@@ -86,49 +90,63 @@ impl PartOperation for Loft {
     )
     .icon(crate::icons::LOFT);
     type Args = LoftArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// Through the two newest sketches, joined to the newest solid if there
     /// is one.
-    fn new_args(context: &StepContext) -> LoftArgs {
+    fn new_args(context: &Context) -> LoftArgs {
         let before = &context.before;
         let sketches = before.targets_of::<PlacedSketch<Design>>();
         LoftArgs {
-            profiles: (sketches.get(sketches.len().saturating_sub(2)..).unwrap_or_default())
-                .iter()
-                .cloned()
-                .map(SketchRef::whole)
-                .collect(),
+            profiles: (sketches
+                .get(sketches.len().saturating_sub(2)..)
+                .unwrap_or_default())
+            .iter()
+            .cloned()
+            .map(SketchRef::whole)
+            .collect(),
             matches: Vec::new(),
             guides: Vec::new(),
             output: Output::new_for(&read_model(before).unwrap_or_default()),
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &LoftArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &LoftArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
     /// The sketches, picked in order; the points matched on them, or the
     /// guide curves; whether a face; and how to combine.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &LoftArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, LoftArgs> {
         let before = &context.before;
         let mut f = EditForm::<Design, LoftArgs>::default();
-        f.pick("profiles", "profiles", before, &args.profiles, true, |edit, profiles| {
-            edit.args.profiles = profiles
-        })
-        .pick("matches", "matching points", before, &args.matches, true, |edit, matches| {
-            edit.args.matches = matches
-        })
-        .pick("guides", "guide curves", before, &args.guides, true, |edit, guides| {
-            edit.args.guides = guides
-        });
+        f.pick(
+            "profiles",
+            "profiles",
+            before,
+            &args.profiles,
+            true,
+            |edit, profiles| edit.args.profiles = profiles,
+        )
+        .pick(
+            "matches",
+            "matching points",
+            before,
+            &args.matches,
+            true,
+            |edit, matches| edit.args.matches = matches,
+        )
+        .pick(
+            "guides",
+            "guide curves",
+            before,
+            &args.guides,
+            true,
+            |edit, guides| edit.args.guides = guides,
+        );
         f.form.dialog.optional("matches");
         f.form.dialog.optional("guides");
         let output = |args: &mut LoftArgs, output| args.output = output;
@@ -140,14 +158,19 @@ impl PartOperation for Loft {
 impl ModelOperation for Loft {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &LoftArgs,
     ) -> GeopResult<()> {
         let namer = Namer::new("loft", step)?;
         let sections = (args.profiles.iter())
             .map(|profile| {
-                section(reader, profile, &args.output, &matched_points(args, profile)?)
+                section(
+                    reader,
+                    profile,
+                    &args.output,
+                    &matched_points(args, profile)?,
+                )
             })
             .collect::<GeopResult<Vec<_>>>()?;
         let guides = (args.guides.iter())
@@ -190,7 +213,7 @@ fn matched_points(args: &LoftArgs, profile: &SketchRef) -> GeopResult<Vec<PointI
 /// — or, lofted into faces, its one open chain if it encloses nothing (see
 /// [`Output::shape`]) — with a joint at each of its points `matched`.
 fn section(
-    reader: &PartReader,
+    reader: &Reader,
     profile: &SketchRef,
     output: &Output,
     matched: &[PointId],

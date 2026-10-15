@@ -1,27 +1,31 @@
 //! Surfaces built by programs: the walls an extrude or a loft sweeps as
 //! faces, capped with boundary surfaces, knit into solids, thickened.
 
-use crate::{BoundarySurfaceArgs, KnitArgs, ThickenArgs, ThickenSide};
-use geop_core_math::primitives::DatumComponent;
-use geop_core_math::primitives::FrameAxis;
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_core_program::element::ElementReference;
+use crate::{
+    BoundarySurface, BoundarySurfaceArgs, Knit, KnitArgs, Thicken, ThickenArgs, ThickenSide,
+    test_refs::{edge_curve, named},
+};
+use geop_core_math::{
+    geop_error::GeopResult,
+    primitives::{DatumComponent, FrameAxis},
+    scalars::{ScalInF64 as S, Scalar},
+};
+use geop_core_program::{
+    element::ElementReference, operation_registry::OperationRegistry, program::Program,
+    values::Design,
+};
 use geop_core_sketch::PointId;
 use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_datums::{ORIGIN, component_name, datums};
-use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, LoftArgs, Output};
-use geop_ops_model::{Design, NamedModel, testing::assert_valid};
+use geop_ops_extrude_revolve::{
+    Extents, ExtrudeArgs, LoftArgs, Output,
+    testing::{Built, n, on_origin, sketch},
+};
+use geop_ops_model::{NamedModel, testing::assert_valid};
 use geop_ops_sketch::{Sketch, SketchPlane, whole_sketch};
 
-use geop_core_math::geop_error::GeopResult;
-use geop_ops_extrude_revolve::testing::{Built, n, on_origin, sketch};
-use geop_ops_parameters::{ProgramFile, Registry};
-
-use crate::test_refs::{edge_curve, named};
-use crate::{BoundarySurface, Knit, Thicken};
-
 /// The operations these tests' programs are written in.
-fn registry() -> GeopResult<Registry> {
+fn registry() -> GeopResult<OperationRegistry> {
     geop_ops_extrude_revolve::testing::registry()?
         .with(AddDatum)?
         .with(BoundarySurface)?
@@ -66,7 +70,7 @@ fn sheet_edges_at(part: &NamedModel<Design>, z: f64) -> Vec<String> {
     names
 }
 
-fn fill(program: &mut ProgramFile, id: &str, edges: Vec<String>) {
+fn fill(program: &mut Program, id: &str, edges: Vec<String>) {
     program.push(
         id,
         BoundarySurfaceArgs {
@@ -78,8 +82,8 @@ fn fill(program: &mut ProgramFile, id: &str, edges: Vec<String>) {
 
 /// A rectangle's outline extruded as faces: four walls standing on their
 /// own, open at top and bottom.
-fn walls() -> ProgramFile {
-    let mut program = ProgramFile::new();
+fn walls() -> Program {
+    let mut program = Program::new();
     program.push(
         "outline",
         sketch(
@@ -160,7 +164,7 @@ fn open_box_thickened_into_a_cover() {
 /// flat disc, knit into a closed solid.
 #[test]
 fn lofted_faces_knit_into_a_solid() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push(
         "bottom",
         sketch(

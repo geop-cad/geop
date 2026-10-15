@@ -3,7 +3,7 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::{Choice, Number, Unit},
     part_operation,
     part_operation::PartOperation,
@@ -12,12 +12,14 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::{Field, Scalar},
 };
-use geop_core_program::element::ElementReference;
-use geop_core_topology::Body;
-use geop_ops_model::{
-    Design, Face, ModelOperation, NamedModel, Namer, build_model, model, read_model,
+use geop_core_program::{
+    element::ElementReference,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
 };
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_core_topology::Body;
+use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model, model, read_model};
 use geop_ops_shell::shell::{offset_faces, thicken};
 use serde::{Deserialize, Serialize};
 
@@ -92,13 +94,10 @@ impl PartOperation for Thicken {
     .experimental()
     .icon(crate::icons::THICKEN);
     type Args = ThickenArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// The newest sheet, a tenth thick, behind its normals.
-    fn new_args(context: &StepContext) -> ThickenArgs {
+    fn new_args(context: &Context) -> ThickenArgs {
         let sheet = read_model(&context.before)
             .ok()
             .and_then(|model| model.sheet_face_names().pop());
@@ -109,13 +108,13 @@ impl PartOperation for Thicken {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &ThickenArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &ThickenArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
     /// The sheet, picked, the thickness and the side.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &ThickenArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, ThickenArgs> {
@@ -151,7 +150,7 @@ impl PartOperation for Thicken {
 impl ModelOperation for Thicken {
     fn build(
         model: &mut NamedModel<Design>,
-        _: &PartReader,
+        _: &Reader,
         step: &str,
         args: &ThickenArgs,
     ) -> GeopResult<()> {

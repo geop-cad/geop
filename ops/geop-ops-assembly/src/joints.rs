@@ -22,8 +22,8 @@ use geop_core_math::{
     scalars::{Field, Ring, Scalar, as_f64},
     vector::Vector3,
 };
+use geop_core_program::values::Design;
 use geop_ops_add_datum::Shape;
-use geop_ops_model::Design;
 use serde::{Deserialize, Serialize};
 
 use crate::residuals::{D, Placing, parallel};

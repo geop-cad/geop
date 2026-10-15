@@ -26,7 +26,7 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     part_operation,
     part_operation::PartOperation,
 };
@@ -34,23 +34,27 @@ use geop_core_geometry::{
     intersection::{Intersections, curve_curve_intersect, refine_curve_curve_crossing},
     nurb_curve::NurbCurve3D,
     nurb_surface::NurbSurface3D,
+    search::{MAX_NODES, min_subdivision_size},
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
+};
+use geop_core_program::{
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
 };
 use geop_core_topology::{
     Sense,
     build::{BodySpec, CoedgeOn, EdgeSpec, FaceSpec},
     distance::{Feature, closest_points},
 };
-use geop_ops_model::{BodyNames, Chain, Design, ModelOperation, NamedModel, Namer, build_model};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_model::{BodyNames, Chain, ModelOperation, NamedModel, Namer, build_model};
 use geop_ops_sketch3d::CurveSource;
 use serde::{Deserialize, Serialize};
 
 use crate::{NamedCurve, SheetSpec};
-use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 
 /// Spans a face standing on its own through a network of curves, `u_curves`
 /// crossing `v_curves`, for the operation `N` — see the module docs. The
@@ -84,20 +88,17 @@ impl PartOperation for NetworkSurface {
     .experimental()
     .icon(crate::icons::NETWORK_SURFACE);
     type Args = NetworkSurfaceArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// Nothing picked yet.
-    fn new_args(_: &StepContext) -> NetworkSurfaceArgs {
+    fn new_args(_: &Context) -> NetworkSurfaceArgs {
         NetworkSurfaceArgs::default()
     }
 
     fn run(
         step: &str,
-        _: &Runner,
-        part: &mut BuildPart,
+        _: &ProgramRunner,
+        part: &mut Part,
         args: &NetworkSurfaceArgs,
     ) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
@@ -105,7 +106,7 @@ impl PartOperation for NetworkSurface {
 
     /// The curves of each direction, picked.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &NetworkSurfaceArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, NetworkSurfaceArgs> {
@@ -134,7 +135,7 @@ impl PartOperation for NetworkSurface {
 impl ModelOperation for NetworkSurface {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &NetworkSurfaceArgs,
     ) -> GeopResult<()> {

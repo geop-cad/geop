@@ -3,7 +3,7 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::{Number, Unit},
     part_operation,
     part_operation::PartOperation,
@@ -12,9 +12,13 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_program::element::ElementReference;
-use geop_ops_model::{Design, Face, ModelOperation, NamedModel, Namer, build_model};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_core_program::{
+    element::ElementReference,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
+use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model};
 use geop_ops_shell::shell::offset_faces;
 use serde::{Deserialize, Serialize};
 
@@ -51,13 +55,10 @@ impl PartOperation for OffsetSurface {
     .experimental()
     .icon(crate::icons::OFFSET_SURFACE);
     type Args = OffsetSurfaceArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// Nothing picked yet, a tenth out.
-    fn new_args(_: &StepContext) -> OffsetSurfaceArgs {
+    fn new_args(_: &Context) -> OffsetSurfaceArgs {
         OffsetSurfaceArgs {
             faces: Vec::new(),
             distance: 0.1,
@@ -66,8 +67,8 @@ impl PartOperation for OffsetSurface {
 
     fn run(
         step: &str,
-        _: &Runner,
-        part: &mut BuildPart,
+        _: &ProgramRunner,
+        part: &mut Part,
         args: &OffsetSurfaceArgs,
     ) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
@@ -75,7 +76,7 @@ impl PartOperation for OffsetSurface {
 
     /// The faces, picked, and the distance.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &OffsetSurfaceArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, OffsetSurfaceArgs> {
@@ -97,7 +98,7 @@ impl PartOperation for OffsetSurface {
 impl ModelOperation for OffsetSurface {
     fn build(
         model: &mut NamedModel<Design>,
-        _: &PartReader,
+        _: &Reader,
         step: &str,
         args: &OffsetSurfaceArgs,
     ) -> GeopResult<()> {

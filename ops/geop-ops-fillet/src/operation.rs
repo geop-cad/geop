@@ -3,16 +3,20 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::{Number, Unit},
-    numeric_input::NumericInput,
     part_operation,
     part_operation::PartOperation,
 };
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::element::ElementReference;
-use geop_ops_model::{Design, Edge, ModelOperation, NamedModel, Namer, Vertex, build_model, model};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_core_program::{
+    element::ElementReference,
+    numeric::NumericInput,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
+use geop_ops_model::{Edge, ModelOperation, NamedModel, Namer, Vertex, build_model, model};
 use geop_ops_view::icons;
 use serde::{Deserialize, Serialize};
 
@@ -82,7 +86,7 @@ impl FilletArgs {
     }
 
     /// The radii, as `reader` reads the parameters.
-    fn radii(&self, reader: &PartReader) -> GeopResult<Radii> {
+    fn radii(&self, reader: &Reader) -> GeopResult<Radii> {
         Ok(Radii {
             radius: self.radius.resolve(reader)?,
             end_radius: match &self.end_radius {
@@ -122,24 +126,21 @@ impl PartOperation for Fillet {
     )
     .icon(icons::FILLET);
     type Args = FilletArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// No edges yet, and a small radius.
-    fn new_args(_: &StepContext) -> FilletArgs {
+    fn new_args(_: &Context) -> FilletArgs {
         FilletArgs::constant(Vec::new(), 0.1)
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &FilletArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &FilletArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
     /// The edges, picked, and the radius — and, varying, the radius at the
     /// end and at vertices picked, each a number of its own.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &FilletArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, FilletArgs> {
@@ -153,7 +154,7 @@ impl PartOperation for Fillet {
             true,
             |edit, edges| edit.args.edges = edges,
         );
-        let radius = args.radius.number("radius", before, Unit::Length);
+        let radius = Number::numeric(&args.radius, "radius", before, Unit::Length);
         f.numeric("radius", radius.range(0.0, 1.0), |edit, radius| {
             edit.args.radius = radius
         })
@@ -173,7 +174,7 @@ impl PartOperation for Fillet {
             return f;
         }
         let end = args.end_radius.as_ref().unwrap_or(&args.radius);
-        let end = end.number("end radius", before, Unit::Length);
+        let end = Number::numeric(end, "end radius", before, Unit::Length);
         f.numeric("end_radius", end.range(0.0, 1.0), |edit, radius| {
             edit.args.end_radius = Some(radius)
         });
@@ -221,7 +222,7 @@ impl PartOperation for Fillet {
 impl ModelOperation for Fillet {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &FilletArgs,
     ) -> GeopResult<()> {
@@ -270,7 +271,7 @@ impl ChamferArgs {
 
     /// Into the face on the left and on the right of each edge, as
     /// `reader` reads the parameters.
-    fn distances(&self, reader: &PartReader) -> GeopResult<[f64; 2]> {
+    fn distances(&self, reader: &Reader) -> GeopResult<[f64; 2]> {
         let left = self.distance.resolve(reader)?;
         let right = match &self.distance2 {
             Some(d) => d.resolve(reader)?,
@@ -290,24 +291,21 @@ impl PartOperation for Chamfer {
     )
     .icon(icons::CHAMFER);
     type Args = ChamferArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// No edges yet, and a small distance, the same into both faces.
-    fn new_args(_: &StepContext) -> ChamferArgs {
+    fn new_args(_: &Context) -> ChamferArgs {
         ChamferArgs::even(Vec::new(), 0.1)
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &ChamferArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &ChamferArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
     /// The edges, picked, the distance, and whether the second face gets a
     /// distance of its own.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &ChamferArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, ChamferArgs> {
@@ -321,7 +319,7 @@ impl PartOperation for Chamfer {
             true,
             |edit, edges| edit.args.edges = edges,
         );
-        let distance = args.distance.number("distance", before, Unit::Length);
+        let distance = Number::numeric(&args.distance, "distance", before, Unit::Length);
         f.numeric("distance", distance.range(0.0, 1.0), |edit, distance| {
             edit.args.distance = distance
         });
@@ -330,7 +328,7 @@ impl PartOperation for Chamfer {
             edit.args.distance2 = on.then(|| edit.args.distance.clone());
         });
         if let Some(distance2) = &args.distance2 {
-            let distance2 = distance2.number("distance 2", before, Unit::Length);
+            let distance2 = Number::numeric(distance2, "distance 2", before, Unit::Length);
             f.numeric("distance2", distance2.range(0.0, 1.0), |edit, distance| {
                 edit.args.distance2 = Some(distance)
             });
@@ -342,7 +340,7 @@ impl PartOperation for Chamfer {
 impl ModelOperation for Chamfer {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &ChamferArgs,
     ) -> GeopResult<()> {

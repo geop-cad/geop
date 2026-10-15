@@ -1,33 +1,35 @@
 //! Sheet-metal bodies built, flanged and unfolded: valid solids, flat
 //! patterns as long as their developed lengths, and the refusals.
 
-use std::{borrow::Cow, f64::consts::PI};
-
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     part_operation,
     part_operation::PartOperation,
 };
+use geop_core_program::{
+    element::ElementReference,
+    operation::StepArgs,
+    operation_registry::OperationRegistry,
+    part::{Part, Reader},
+    program::Program,
+    program_runner::ProgramRunner,
+    values::{Design, Settings, StateValues},
+};
+use std::{borrow::Cow, f64::consts::PI};
+
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::CoordinateSystem,
     scalars::{Field, Ring, ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_program::{element::ElementReference, operation::StepArgs};
 use geop_core_sketch::Sketch;
 use geop_ops_extrude_revolve::testing::runner_of;
 use geop_ops_model::{
-    Design, ModelOperation, NamedModel, RefId, build_model, model, read_model,
-    testing::assert_valid,
+    ModelOperation, NamedModel, RefId, build_model, model, read_model, testing::assert_valid,
 };
 use geop_ops_output::{Exporter, Output};
-use geop_ops_parameters::{
-    BuildPart, PartReader, ProgramFile, Registry, Runner, Setting, Settings, StateValue,
-    StateValues,
-    StepContext,
-};
 use geop_ops_rasterize::rasterize;
 use geop_ops_sketch::{PlacedSketch, sketch, whole_sketch};
 use serde::{Deserialize, Serialize};
@@ -82,12 +84,9 @@ impl PartOperation for PlaceSketch {
     const KIND: &'static str = "test_place_sketch";
     const INFO: OperationInfo = TEST_STEP;
     type Args = PlaceSketchArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
-    fn new_args(_: &StepContext) -> PlaceSketchArgs {
+    fn new_args(_: &Context) -> PlaceSketchArgs {
         PlaceSketchArgs {
             origin: [0.0; 3],
             u: [1.0, 0.0, 0.0],
@@ -96,12 +95,17 @@ impl PartOperation for PlaceSketch {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &PlaceSketchArgs) -> GeopResult<()> {
+    fn run(
+        step: &str,
+        _: &ProgramRunner,
+        part: &mut Part,
+        args: &PlaceSketchArgs,
+    ) -> GeopResult<()> {
         part.define_target(&sketch(step), &(step.to_string(), args.clone()), placed)
     }
 
     fn form<'a>(
-        _: &'a StepContext<'a>,
+        _: &'a Context<'a>,
         _: &PlaceSketchArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, PlaceSketchArgs> {
@@ -111,7 +115,7 @@ impl PartOperation for PlaceSketch {
 
 /// The sketch the step `step` places.
 fn placed(
-    _: &PartReader,
+    _: &Reader,
     (step, args): &(String, PlaceSketchArgs),
 ) -> GeopResult<PlacedSketch<Design>> {
     let p = |c: [f64; 3]| Vector3::from_array(c.map(S::from_f64));
@@ -127,24 +131,21 @@ impl PartOperation for Rename {
     const KIND: &'static str = "test_rename";
     const INFO: OperationInfo = TEST_STEP;
     type Args = RenameArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
-    fn new_args(_: &StepContext) -> RenameArgs {
+    fn new_args(_: &Context) -> RenameArgs {
         RenameArgs {
             from: String::new(),
             to: String::new(),
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &RenameArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &RenameArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
     fn form<'a>(
-        _: &'a StepContext<'a>,
+        _: &'a Context<'a>,
         _: &RenameArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, RenameArgs> {
@@ -155,7 +156,7 @@ impl PartOperation for Rename {
 impl ModelOperation for Rename {
     fn build(
         model: &mut NamedModel<Design>,
-        _: &PartReader,
+        _: &Reader,
         _: &str,
         args: &RenameArgs,
     ) -> GeopResult<()> {
@@ -166,7 +167,7 @@ impl ModelOperation for Rename {
 }
 
 /// The operations these tests' programs are written in.
-fn registry() -> GeopResult<Registry> {
+fn registry() -> GeopResult<OperationRegistry> {
     (geop_ops_extrude_revolve::testing::registry()?)
         .with(BaseFlange)?
         .with(EdgeFlange)?
@@ -179,39 +180,40 @@ fn registry() -> GeopResult<Registry> {
 
 /// A part built by its program's steps, in order: each new step runs them
 /// all again, reusing what did not change.
-struct Part {
-    program: ProgramFile,
-    runner: Runner,
-    part: BuildPart,
+struct Built {
+    program: Program,
+    runner: ProgramRunner,
+    part: Part,
 }
 
 /// A copy builds its steps afresh.
-impl Clone for Part {
+impl Clone for Built {
     fn clone(&self) -> Self {
-        let mut part = Part {
+        let mut part = Built {
             program: self.program.clone(),
             runner: runner_of(registry().unwrap()),
-            part: BuildPart::default(),
+            part: Part::default(),
         };
         part.run().expect("it built before");
         part
     }
 }
 
-impl Part {
+impl Built {
     fn new() -> Self {
-        let program = ProgramFile::new();
+        let program = Program::new();
         let runner = runner_of(registry().unwrap());
-        Part {
+        Built {
             program,
             runner,
-            part: BuildPart::default(),
+            part: Part::default(),
         }
     }
 
     fn run(&mut self) -> GeopResult<()> {
         let (runner, part) = (&self.runner, &mut self.part);
-        self.program.run(runner, part, &Settings::new(), &StateValues::new())
+        self.program
+            .run(runner, part, &Settings::new(), &StateValues::new())
     }
 
     /// The part with the step `id` of `args` added.
@@ -223,9 +225,7 @@ impl Part {
 
     /// The sheet of the body `solid`, as it is bent.
     fn sheet(&self, solid: &str) -> Option<Sheet<Design>> {
-        sheet_body(&self.part.current(), solid)?
-            .bent()
-            .cloned()
+        sheet_body(&self.part.current(), solid)?.bent().cloned()
     }
 
     /// What the flat pattern `solid` recorded.
@@ -260,7 +260,7 @@ impl Part {
     }
 }
 
-impl std::ops::Deref for Part {
+impl std::ops::Deref for Built {
     type Target = NamedModel<Design>;
 
     fn deref(&self) -> &NamedModel<Design> {
@@ -272,12 +272,12 @@ impl std::ops::Deref for Part {
 }
 
 /// `part` with the step `id` of `args` added.
-fn apply<A: Clone + StepArgs>(part: Part, id: &str, args: &A) -> GeopResult<Part> {
+fn apply<A: Clone + StepArgs>(part: Built, id: &str, args: &A) -> GeopResult<Built> {
     part.then(id, args.clone())
 }
 
 /// `part` with the sketch `name` placed on `plane` (see [`plane`]).
-fn with_sketch(part: Part, name: &str, plane: [[f64; 3]; 3], sketch: Sketch<Design>) -> Part {
+fn with_sketch(part: Built, name: &str, plane: [[f64; 3]; 3], sketch: Sketch<Design>) -> Built {
     let [origin, u, v] = plane;
     let args = PlaceSketchArgs {
         origin,
@@ -289,9 +289,9 @@ fn with_sketch(part: Part, name: &str, plane: [[f64; 3]; 3], sketch: Sketch<Desi
 }
 
 /// A part with the sketch `k` on the world's XY plane.
-fn sketched(sketch: Sketch<Design>) -> Part {
+fn sketched(sketch: Sketch<Design>) -> Built {
     let xy = plane([0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
-    with_sketch(Part::new(), "k", xy, sketch)
+    with_sketch(Built::new(), "k", xy, sketch)
 }
 
 /// The plane at `origin` spanned by `u` and `v`.
@@ -334,7 +334,7 @@ fn rules(thickness: f64, radius: f64, k: f64) -> SheetMetalRules {
     }
 }
 
-fn base(part: Part, rules: SheetMetalRules, depth: f64) -> Part {
+fn base(part: Built, rules: SheetMetalRules, depth: f64) -> Built {
     let args = BaseFlangeArgs {
         sketch: whole_sketch("k"),
         rules,
@@ -358,7 +358,7 @@ fn flange(name: &str) -> EdgeFlangeArgs {
     }
 }
 
-fn unfold(part: Part, solid: &str) -> Part {
+fn unfold(part: Built, solid: &str) -> Built {
     let args = FlatPatternArgs {
         solid: ElementReference::new(model(), solid),
         keep: false,
@@ -376,7 +376,7 @@ fn refused<T>(result: GeopResult<T>) -> String {
 
 /// The box around the solid's vertices: its lower and upper corner, each
 /// coordinate the hull of the vertices' enclosures.
-fn extent(part: &Part) -> [S; 3] {
+fn extent(part: &Built) -> [S; 3] {
     let points: Vec<Vector3<S>> = part.topology().vertices.values().map(|v| v.point).collect();
     [0, 1, 2].map(|k| {
         let lo = points.iter().map(|p| p[k]).reduce(S::min).unwrap();
@@ -386,7 +386,7 @@ fn extent(part: &Part) -> [S; 3] {
 }
 
 /// The area of the face named `name`, from its triangles.
-fn area(part: &Part, name: &str) -> f64 {
+fn area(part: &Built, name: &str) -> f64 {
     let raster = rasterize(part.topology(), 64).unwrap();
     let face = part.face_id(name).unwrap();
     raster.faces[&face]
@@ -798,7 +798,7 @@ fn circles(centers: &[[f64; 2]], r: f64) -> Sketch<Design> {
     s
 }
 
-fn cut(part: Part, id: &str, sketch: &str, face: &str) -> GeopResult<Part> {
+fn cut(part: Built, id: &str, sketch: &str, face: &str) -> GeopResult<Built> {
     let args = SheetCutArgs {
         sketch: whole_sketch(sketch),
         face: (!face.is_empty()).then(|| ElementReference::new(model(), face)),
@@ -808,7 +808,7 @@ fn cut(part: Part, id: &str, sketch: &str, face: &str) -> GeopResult<Part> {
 
 /// The centres of the circles whose arcs make the A-side edges named
 /// `prefix...,a))` — of a flat pattern — each once.
-fn arc_centers(part: &Part, prefix: &str) -> Vec<[f64; 2]> {
+fn arc_centers(part: &Built, prefix: &str) -> Vec<[f64; 2]> {
     let mut centers: Vec<[f64; 2]> = Vec::new();
     for (id, name) in part.names().iter() {
         let RefId::Edge(e) = id else {
@@ -836,7 +836,7 @@ fn arc_centers(part: &Part, prefix: &str) -> Vec<[f64; 2]> {
 /// The bracket of the examples, flanged first: a plate 2 by 1.2, a flange
 /// set in from both ends of its front edge and one along its whole back
 /// edge, 0.4 high.
-fn flanged_bracket() -> Part {
+fn flanged_bracket() -> Built {
     let part = base(
         sketched(polygon(&[[0.0, 0.0], [2.0, 0.0], [2.0, 1.2], [0.0, 1.2]])),
         rules(0.08, 0.08, 0.44),

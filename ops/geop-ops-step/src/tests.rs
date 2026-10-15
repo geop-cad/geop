@@ -2,27 +2,29 @@
 //! written and read back the same.
 
 use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
     plain,
-    scalars::Ring,
-    scalars::{Scalar, scal_in_f64::ScalInF64},
+    scalars::{Ring, Scalar, scal_in_f64::ScalInF64},
 };
-use geop_core_program::workspace::{Loaded, Workspace};
+use geop_core_program::{
+    operation_registry::OperationRegistry,
+    part::Part,
+    program::Program,
+    program_runner::ProgramRunner,
+    values::{Settings, StateValues},
+    workspace::Workspace,
+};
 use geop_core_topology::Model;
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
-use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_ops_extrude_revolve::shapes::{
     cube::cube_solid, cylinder::revolved_cylinder, sphere::sphere_solid, v3,
 };
 use geop_ops_model::{NamedModel, Namer, read_model, testing::assert_model_valid_sheets};
-use geop_ops_parameters::{
-    BuildPart, ProgramFile, Registry, Runner, Settings, StateValue, StateValues,
-};
 
 use crate::{ImportStep, ImportStepArgs, add_bodies, read_step, write_step};
 
 type S = ScalInF64;
-type Part<S> = NamedModel<S>;
 
 /// `model` as the text of a STEP file whose product is `name`.
 fn written(model: &NamedModel<S>, name: &str) -> String {
@@ -30,9 +32,9 @@ fn written(model: &NamedModel<S>, name: &str) -> String {
 }
 
 /// The part the STEP text `text` imports into, checked valid.
-fn import(text: &str) -> Part<S> {
+fn import(text: &str) -> NamedModel<S> {
     let bodies = read_step::<S>(text).unwrap_or_else(|e| panic!("reading failed: {e}"));
-    let mut part = Part::new();
+    let mut part = NamedModel::new();
     add_bodies(&mut part, &Namer::new("import", "i").unwrap(), &bodies)
         .unwrap_or_else(|e| panic!("adding failed: {e}"));
     assert_model_valid_sheets(part.topology());
@@ -69,7 +71,7 @@ fn assert_bounds(model: &Model<S>, lo: [f64; 3], hi: [f64; 3]) {
 }
 
 /// `part` written as STEP and read back: the same counts and bounds.
-fn round_trip(part: &Part<S>) -> Part<S> {
+fn round_trip(part: &NamedModel<S>) -> NamedModel<S> {
     let text = written(part, "part");
     let back = import(&text);
     assert_eq!(
@@ -84,7 +86,7 @@ fn round_trip(part: &Part<S>) -> Part<S> {
 
 #[test]
 fn a_cube_round_trips() {
-    let mut part = Part::new();
+    let mut part = NamedModel::new();
     cube_solid(&mut part, "c", v3(0.0, 0.0, 0.0), v3(2.0, 1.0, 3.0)).unwrap();
     let back = round_trip(&part);
     assert_eq!(back.solid_names(), vec!["import(i,s0)".to_string()]);
@@ -92,7 +94,7 @@ fn a_cube_round_trips() {
 
 #[test]
 fn a_cylinder_round_trips() {
-    let mut part = Part::new();
+    let mut part = NamedModel::new();
     revolved_cylinder(
         &mut part,
         "c",
@@ -106,7 +108,7 @@ fn a_cylinder_round_trips() {
 
 #[test]
 fn a_sphere_round_trips() {
-    let mut part = Part::new();
+    let mut part = NamedModel::new();
     sphere_solid(&mut part, "s", v3(0.0, 0.0, 1.0), S::from_f64(1.5)).unwrap();
     round_trip(&part);
 }
@@ -841,8 +843,8 @@ struct Folder {
     reads: Rc<Cell<usize>>,
 }
 
-impl Workspace<StateValue> for Folder {
-    fn program(&self, path: &str) -> GeopResult<Loaded<StateValue>> {
+impl Workspace for Folder {
+    fn program(&self, path: &str) -> GeopResult<Rc<Program>> {
         Err(GeopError::new(format!("{path:?} is no program")))
     }
 
@@ -876,7 +878,7 @@ impl Workspace<StateValue> for Folder {
 /// built anew.
 #[test]
 fn an_import_builds_an_equal_file_once() {
-    let mut cylinder = Part::new();
+    let mut cylinder = NamedModel::new();
     revolved_cylinder(
         &mut cylinder,
         "c",
@@ -888,22 +890,24 @@ fn an_import_builds_an_equal_file_once() {
     let text = written(&cylinder, "cylinder");
     let reads = Rc::new(Cell::new(0));
     // The runner given the folder anew: equal files, but another value.
-    let given = |runner: &mut Runner| {
+    let given = |runner: &mut ProgramRunner| {
         runner.workspace = Some(Rc::new(Folder {
             files: BTreeMap::from([("cylinder.step".to_string(), text.clone())]),
             reads: reads.clone(),
         }));
     };
-    let mut runner = Runner::new(Registry::default().with(ImportStep).unwrap());
+    let mut runner = ProgramRunner::new(OperationRegistry::default().with(ImportStep).unwrap());
     given(&mut runner);
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     let args = ImportStepArgs {
         file: "cylinder.step".into(),
     };
     program.push("i", args);
-    let mut part = BuildPart::default();
-    let run = |runner: &Runner, part: &mut BuildPart| {
-        program.run(runner, part, &Settings::new(), &StateValues::new()).unwrap();
+    let mut part = Part::default();
+    let run = |runner: &ProgramRunner, part: &mut Part| {
+        program
+            .run(runner, part, &Settings::new(), &StateValues::new())
+            .unwrap();
         let model = read_model(&part.current()).unwrap();
         // Where the model is kept: a model built anew is kept elsewhere.
         std::ptr::from_ref(model.as_ref())

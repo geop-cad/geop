@@ -3,44 +3,51 @@
 //! each done again at every instance of a linear or circular pattern, as
 //! the step that made it did it.
 
+use geop_core_program::{
+    element::{ElementReference, PickedElement},
+    program::Program,
+};
 use std::f64::consts::PI;
 
-use crate::{HoleArgs, HoleKind, iso::Fit};
+use crate::{
+    HoleArgs, HoleKind,
+    iso::Fit,
+    program_tests::{Made, hole, iso, made, named, registry},
+    testing::{plate, plate_with_hole, points_sketch},
+};
 use geop_core_editor::selectable::{Selectable, selected};
-use geop_core_math::primitives::FrameAxis;
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_core_math::vector::Vector3;
-use geop_core_program::element::{ElementReference, PickedElement};
+use geop_core_math::{
+    primitives::FrameAxis,
+    scalars::{ScalInF64 as S, Scalar},
+    vector::Vector3,
+};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{origin_axis, origin_plane};
-use geop_ops_extrude_revolve::{Extent, Extents};
-use geop_ops_model::{Face, NamedModel, model};
+use geop_ops_extrude_revolve::{
+    Extent, Extents,
+    testing::{Built, both_ways, disc, extrude_sketch, extrusion, on_face, on_origin, outline},
+};
+use geop_ops_model::{
+    Face, NamedModel, model,
+    testing::{assert_valid, assert_volume},
+};
 use geop_ops_pattern::{
     CircularPatternArgs, Direction, FeatureRef, LinearPatternArgs, MirrorArgs, PatternDirection,
     Seeds, Spacing, TurnAxis, body, feature,
 };
 use geop_ops_sketch::{AddSketchArgs, Sketch, SketchPlane};
 
-use geop_ops_extrude_revolve::testing::{
-    Built, both_ways, disc, extrude_sketch, extrusion, on_face, on_origin, outline,
-};
-use geop_ops_model::testing::{assert_valid, assert_volume};
-use geop_ops_parameters::ProgramFile;
-
-use crate::program_tests::{Made, hole, iso, made, named, registry};
-use crate::testing::{plate, plate_with_hole, points_sketch};
-
 /// A sketch on the Z plane, and `name` its extrude, as `extent` says, a
 /// new body.
-fn extruded(program: &mut ProgramFile, name: &str, sketch: Sketch, extent: Extents) {
+fn extruded(program: &mut Program, name: &str, sketch: Sketch, extent: Extents) {
     let plane = on_origin(FrameAxis::Z);
     extrude_sketch(program, name, plane, sketch, extent, Combine::NewBody);
 }
 
 /// `program`, read back from its JSON as saved, built.
-fn build(program: &ProgramFile) -> Made {
+fn build(program: &Program) -> Made {
     let json = serde_json::to_string(program).unwrap();
-    let read: ProgramFile = serde_json::from_str(&json).unwrap();
+    let read: Program = serde_json::from_str(&json).unwrap();
     assert_eq!(&read, program);
     made(&read).unwrap()
 }
@@ -114,7 +121,7 @@ fn extruded_hole_patterned_in_a_row() {
 /// plate's middle: a bolt circle.
 #[test]
 fn extruded_hole_patterned_around_an_axis() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     extruded(
         &mut program,
         "plate",
@@ -151,7 +158,7 @@ fn extruded_hole_patterned_around_an_axis() {
 /// The pattern is a feature like any other: its copies are its tools.
 #[test]
 fn pattern_of_holes_mirrored() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     extruded(
         &mut program,
         "plate",
@@ -185,7 +192,7 @@ fn pattern_of_holes_mirrored() {
 /// times: three bosses on one solid.
 #[test]
 fn boss_patterned_in_a_row() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     extruded(
         &mut program,
         "plate",
@@ -297,7 +304,7 @@ fn a_patterned_thread_is_drawn() {
 /// 20, as a hole drilled there would.
 #[test]
 fn hole_up_to_next_patterned_stops_at_the_next_face_where_it_is() {
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     extruded(
         &mut program,
         "low",
@@ -365,5 +372,5 @@ fn a_feature_is_picked_by_a_face_it_made() {
     lit.sort();
     assert_eq!(lit, wall);
     let top = face_named("extrude(plate,end)").picked();
-    assert!(selected::<_, _, FeatureRef>(&reader, &[top]).is_empty());
+    assert!(selected::<FeatureRef>(&reader, &[top]).is_empty());
 }

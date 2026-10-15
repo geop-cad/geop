@@ -90,8 +90,8 @@ impl<S: Scalar> NamedCurve<S> {
 /// What the tests share: the model's elements by name.
 #[cfg(test)]
 pub(crate) mod test_refs {
-    use geop_core_program::element::ElementReference;
-    use geop_ops_model::{Design, NamedModel, model};
+    use geop_core_program::{element::ElementReference, values::Design};
+    use geop_ops_model::{NamedModel, model};
     use geop_ops_sketch3d::CurveSource;
 
     /// The model's element named `name`.

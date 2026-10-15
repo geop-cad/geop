@@ -1,6 +1,13 @@
 //! [`Sweep`]: carry a sketch's area along the curves of another sketch, or
 //! of a 3-D sketch.
 
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
+    editing::{Choice, Number, Unit},
+    part_operation,
+    part_operation::PartOperation,
+};
 use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -8,16 +15,13 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_editor::{
-    edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
-    editing::{Choice, Number, Unit},
-    part_operation,
-    part_operation::PartOperation,
+use geop_core_program::{
+    element::ElementReference,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
 };
-use geop_core_program::element::ElementReference;
-use geop_ops_model::{Chain, Design, ModelOperation, NamedModel, Namer, build_model, read_model};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_model::{Chain, ModelOperation, NamedModel, Namer, build_model, read_model};
 use geop_ops_sketch::{PlacedSketch, SketchRef};
 use geop_ops_sketch3d::PlacedSketch3d;
 use serde::{Deserialize, Serialize};
@@ -126,14 +130,11 @@ impl PartOperation for Sweep {
     )
     .icon(crate::icons::SWEEP);
     type Args = SweepArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// The newest sketch along the sketch before it — joined to the newest
     /// solid if there is one.
-    fn new_args(context: &StepContext) -> SweepArgs {
+    fn new_args(context: &Context) -> SweepArgs {
         let before = &context.before;
         let mut sketches = before.targets_of::<PlacedSketch<Design>>();
         // The newest 3-D sketch, which is drawn to be swept along; else
@@ -142,7 +143,9 @@ impl PartOperation for Sweep {
             Some(sketch) => Some(PathRef::Sketch3d(ElementReference::whole(sketch))),
             None => (sketches.pop()).map(|sketch| PathRef::Sketch(ElementReference::whole(sketch))),
         };
-        let profile = sketches.pop().unwrap_or_else(|| geop_ops_sketch::sketch(""));
+        let profile = sketches
+            .pop()
+            .unwrap_or_else(|| geop_ops_sketch::sketch(""));
         SweepArgs {
             profile: SketchRef::whole(profile),
             path,
@@ -154,27 +157,36 @@ impl PartOperation for Sweep {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &SweepArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &SweepArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
     /// The profile and the path, picked; the rails, if any; how the profile
     /// turns, twists and scales; whether a face; and how to combine.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &SweepArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, SweepArgs> {
         let before = &context.before;
         let mut f = EditForm::<Design, SweepArgs>::default();
-        f.pick_one("profile", "profile", before, Some(&args.profile), |edit, profile| {
-            edit.args.profile = profile
-        })
+        f.pick_one(
+            "profile",
+            "profile",
+            before,
+            Some(&args.profile),
+            |edit, profile| edit.args.profile = profile,
+        )
         .pick_one("path", "path", before, args.path.as_ref(), |edit, path| {
             edit.args.path = Some(path)
         })
-        .pick("rails", "guide rails", before, &args.rails, true, |edit, rails| {
-            edit.args.rails = rails
-        });
+        .pick(
+            "rails",
+            "guide rails",
+            before,
+            &args.rails,
+            true,
+            |edit, rails| edit.args.rails = rails,
+        );
         f.form.dialog.optional("rails");
         let orientation =
             (ORIENTATIONS.iter().find(|o| o.0 == args.orientation)).map_or("", |o| o.1);
@@ -210,7 +222,7 @@ impl PartOperation for Sweep {
 impl ModelOperation for Sweep {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &SweepArgs,
     ) -> GeopResult<()> {

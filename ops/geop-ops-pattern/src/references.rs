@@ -7,10 +7,9 @@
 use geop_core_editor::one_of;
 use geop_core_geometry::shape::Axis;
 use geop_core_math::{geop_error::GeopResult, vector::Vector3};
-use geop_core_program::element::ElementReference;
+use geop_core_program::{element::ElementReference, part::Reader, values::Design};
 use geop_ops_datums::Datums;
-use geop_ops_model::{Design, Line, NamedModel, Plane, Round};
-use geop_ops_parameters::PartReader;
+use geop_ops_model::{Line, NamedModel, Plane, Round};
 use geop_ops_sketch::PlacedSketch;
 
 one_of! {
@@ -44,7 +43,7 @@ one_of! {
 impl PatternDirection {
     /// The unit vector it goes along, as `reader` reads the part: a line's
     /// direction, a plane's normal.
-    pub fn direction(&self, reader: &PartReader) -> GeopResult<Vector3<Design>> {
+    pub fn direction(&self, reader: &Reader) -> GeopResult<Vector3<Design>> {
         Ok(match self {
             PatternDirection::Edge(line) => reader.retrieve_element(line)?.direction,
             PatternDirection::Datum(line) => reader.retrieve_element(line)?.direction,

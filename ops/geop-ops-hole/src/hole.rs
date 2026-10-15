@@ -21,8 +21,8 @@ use geop_core_math::{
     vector::Vector2,
 };
 use geop_core_topology::SolidId;
-use geop_ops_model::{NamedModel, Namer};
 use geop_ops_extrude_revolve::{common::Profile, revolve::revolve_at_oriented};
+use geop_ops_model::{NamedModel, Namer};
 
 use crate::iso::MetricSize;
 

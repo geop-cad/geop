@@ -22,9 +22,9 @@ mod program_tests;
 pub mod revolve;
 #[cfg(any(test, feature = "testing"))]
 pub mod shapes;
-pub mod skin;
 #[cfg(test)]
 mod sketch3d_program_tests;
+pub mod skin;
 pub mod sweep;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

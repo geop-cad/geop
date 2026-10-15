@@ -27,6 +27,12 @@
     )
 )]
 
+use geop_core_program::{
+    element::{ElementReference, HasElements, Kind, PickedElement, whole},
+    part::Reader,
+    target::TargetReference,
+    values::Design,
+};
 use std::{borrow::Cow, collections::BTreeMap, sync::LazyLock};
 
 use geop_core_editor::selectable::SelectableElement;
@@ -36,12 +42,7 @@ use geop_core_math::{
     primitives::{CoordinateSystem, Datum, DatumComponent, DatumKind, FrameAxis},
     vector::Vector3,
 };
-use geop_core_program::{
-    element::{ElementReference, HasElements, Kind, PickedElement, whole},
-    part::{Input, Reader, State},
-    target::TargetReference,
-};
-use geop_ops_model::{Design, Line, Plane, Point};
+use geop_ops_model::{Line, Plane, Point};
 use geop_ops_view::{PartView, ViewDatum, drawn};
 
 /// The name of the frame datum every part has: the world's origin and
@@ -79,11 +80,13 @@ fn origin() -> &'static Datums {
 
 /// The datums as `reader` reads them: none but [`ORIGIN`], before any step
 /// defines them.
-pub fn read_datums<'a, I: Input, S: State>(reader: &Reader<'a, I, S>) -> GeopResult<Cow<'a, Datums>> {
+pub fn read_datums<'a>(reader: &Reader<'a>) -> GeopResult<Cow<'a, Datums>> {
     if !reader.defines(&datums()) {
         return Ok(Cow::Borrowed(origin()));
     }
-    Ok(Cow::Borrowed(reader.retrieve_element(&ElementReference::<Datums, Datums>::whole(datums()))?))
+    Ok(Cow::Borrowed(reader.retrieve_element(
+        &ElementReference::<Datums, Datums>::whole(datums()),
+    )?))
 }
 
 /// The name of the component `component` of the frame `frame`: `origin:z`
@@ -126,7 +129,10 @@ fn component(text: &str) -> GeopResult<DatumComponent> {
 
 /// The plane of [`ORIGIN`] normal to `normal`.
 pub fn origin_plane(normal: FrameAxis) -> ElementReference<Datums, Plane> {
-    ElementReference::new(datums(), component_name(ORIGIN, DatumComponent::Plane(normal)))
+    ElementReference::new(
+        datums(),
+        component_name(ORIGIN, DatumComponent::Plane(normal)),
+    )
 }
 
 /// The axis `axis` of [`ORIGIN`].
@@ -163,9 +169,7 @@ impl Datums {
     /// Adds `datum` as `name`: an error for a name taken.
     pub fn insert(&mut self, name: &str, datum: Datum<Design>) -> GeopResult<()> {
         if name == ORIGIN || name.contains(COMPONENT) || self.0.contains_key(name) {
-            return Err(GeopError::new(format!(
-                "there is a datum {name:?} already"
-            )));
+            return Err(GeopError::new(format!("there is a datum {name:?} already")));
         }
         self.0.insert(name.to_string(), datum);
         Ok(())
@@ -261,7 +265,9 @@ impl HasElements<Point> for Datums {
         let datum = self.get(name)?;
         match datum.kind {
             DatumKind::Point | DatumKind::Frame => Ok(*datum.frame.origin()),
-            kind => Err(GeopError::new(format!("the datum {name:?} is an {kind:?}, not a point"))),
+            kind => Err(GeopError::new(format!(
+                "the datum {name:?} is an {kind:?}, not a point"
+            ))),
         }
     }
 }
@@ -279,7 +285,9 @@ impl HasElements<Line> for Datums {
         let datum = self.get(name)?;
         match datum.kind {
             DatumKind::Axis => Axis::try_new(*datum.frame.origin(), *datum.frame.w()),
-            kind => Err(GeopError::new(format!("the datum {name:?} is a {kind:?}, not an axis"))),
+            kind => Err(GeopError::new(format!(
+                "the datum {name:?} is a {kind:?}, not an axis"
+            ))),
         }
     }
 }
@@ -297,7 +305,9 @@ impl HasElements<Plane> for Datums {
         let datum = self.get(name)?;
         match datum.kind {
             DatumKind::Plane => Ok(datum.frame),
-            kind => Err(GeopError::new(format!("the datum {name:?} is a {kind:?}, not a plane"))),
+            kind => Err(GeopError::new(format!(
+                "the datum {name:?} is a {kind:?}, not a plane"
+            ))),
         }
     }
 }
@@ -309,8 +319,8 @@ macro_rules! picked_as_drawn {
         impl SelectableElement<Datums> for $kind {
             const PICKED_FROM: &'static [&'static str] = &[AnyDatum::NAME];
 
-            fn select<I: Input, S: State>(
-                reader: &Reader<I, S>,
+            fn select(
+                reader: &Reader,
                 hit: &PickedElement,
             ) -> Option<ElementReference<Datums, Self>> {
                 (hit.target == DATUMS && hit.kind == AnyDatum::NAME).then_some(())?;
@@ -319,8 +329,8 @@ macro_rules! picked_as_drawn {
                 Some(reference)
             }
 
-            fn drawn<I: Input, S: State>(
-                _: &Reader<I, S>,
+            fn drawn(
+                _: &Reader,
                 element: &ElementReference<Datums, Self>,
             ) -> Vec<PickedElement> {
                 vec![ElementReference::<Datums, AnyDatum>::new(datums(), element.name()).picked()]
@@ -339,12 +349,10 @@ mod tests {
 
     use super::*;
 
-    type TestPart = Part<Design, Design>;
-
     /// A part of one step, adding the axis datum `a`, along `x`, to the
     /// origin's datums.
-    fn part() -> TestPart {
-        let mut part = TestPart::default();
+    fn part() -> Part {
+        let mut part = Part::default();
         part.begin_run(&Default::default(), &Default::default());
         part.begin_step();
         (part.revise_target(&datums(), &(), |reader, _| {
@@ -399,9 +407,12 @@ mod tests {
     fn datums_are_what_they_are() {
         let part = part();
         let reader = part.current();
-        let origin = reader.retrieve_element(&ElementReference::<Datums, Point>::new(datums(), ORIGIN));
+        let origin =
+            reader.retrieve_element(&ElementReference::<Datums, Point>::new(datums(), ORIGIN));
         assert_eq!(origin.unwrap(), Vector3::zero());
-        let xy = reader.retrieve_element(&origin_plane(FrameAxis::Z)).unwrap();
+        let xy = reader
+            .retrieve_element(&origin_plane(FrameAxis::Z))
+            .unwrap();
         assert!(xy.w().to_array()[2].could_be_equal(Design::ONE));
         let z = reader.retrieve_element(&origin_axis(FrameAxis::Z)).unwrap();
         assert!(z.direction.to_array()[2].could_be_equal(Design::ONE));
@@ -409,9 +420,16 @@ mod tests {
         assert!(a.unwrap().direction.to_array()[0].could_be_equal(Design::ONE));
         let not_a_plane = ElementReference::<Datums, Plane>::new(datums(), "a");
         assert!(reader.retrieve_element(&not_a_plane).is_err());
-        assert!(reader.retrieve_element(&ElementReference::<Datums, Line>::new(datums(), "b")).is_err());
+        assert!(
+            reader
+                .retrieve_element(&ElementReference::<Datums, Line>::new(datums(), "b"))
+                .is_err()
+        );
         assert_eq!(read_datums(&reader).unwrap().names(), ["a"]);
-        assert_eq!(component_name(ORIGIN, DatumComponent::Plane(FrameAxis::Y)), "origin:zx");
+        assert_eq!(
+            component_name(ORIGIN, DatumComponent::Plane(FrameAxis::Y)),
+            "origin:zx"
+        );
     }
 
     /// A click on a datum selects it as what a field asks for, if it is
@@ -425,8 +443,11 @@ mod tests {
         let names: Vec<&str> = lines.iter().map(|l| l.name()).collect();
         assert_eq!(names, ["a", "origin:z"]);
         assert_eq!(lines[1].drawn(&reader), [hit("origin:z")]);
-        assert_eq!(serde_json::to_value(&lines[0]).unwrap(), serde_json::json!("a"));
-        let mut given = TestPart::default();
+        assert_eq!(
+            serde_json::to_value(&lines[0]).unwrap(),
+            serde_json::json!("a")
+        );
+        let mut given = Part::default();
         given.begin_run(&Default::default(), &Default::default());
         given.begin_step();
         let reader = given.current();

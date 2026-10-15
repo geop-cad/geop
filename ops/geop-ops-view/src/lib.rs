@@ -45,15 +45,15 @@ use geop_core_editor::editing::{
     hit::{ElementHit, Scene, nearer},
 };
 use geop_core_math::{
+    geop_error::GeopResult,
     polygon::polygons_contain,
     primitives::{CoordinateSystem, DatumComponent, DatumKind, FrameAxis, Motion, Pose, Ray},
     scalars::{Field, Ring, ScalInF64, Scalar},
     vector::{Vector2, Vector3},
 };
-use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
-    part::{Input, Reader, State},
+    part::Reader,
     target::TargetReference,
 };
 use serde::Serialize;
@@ -134,7 +134,10 @@ impl FramePick {
             Some((on, at)) => (on, Some(element(at)?)),
             None => (picked.name.as_str(), None),
         };
-        Some(Self { on: element(on)?, at })
+        Some(Self {
+            on: element(on)?,
+            at,
+        })
     }
 }
 
@@ -271,11 +274,14 @@ pub fn annotations(step: &str) -> TargetReference<Annotations> {
 }
 
 /// Everything the steps `reader` sees draw on the part, step by step.
-pub fn annotations_of<I: Input, St: State>(reader: &Reader<I, St>) -> Vec<ViewAnnotation> {
+pub fn annotations_of(reader: &Reader) -> Vec<ViewAnnotation> {
     (reader.targets_of::<Annotations>().into_iter())
         .filter_map(|target| {
             let whole = ElementReference::<Annotations, Annotations>::whole(target);
-            reader.retrieve_element(&whole).ok().map(|drawn| drawn.0.clone())
+            reader
+                .retrieve_element(&whole)
+                .ok()
+                .map(|drawn| drawn.0.clone())
         })
         .flatten()
         .collect()
@@ -321,11 +327,14 @@ pub fn listing(step: &str) -> TargetReference<Listing> {
 }
 
 /// Every entry the steps `reader` sees add to the structure, step by step.
-pub fn listed_by_steps<I: Input, St: State>(reader: &Reader<I, St>) -> Vec<Listed> {
+pub fn listed_by_steps(reader: &Reader) -> Vec<Listed> {
     (reader.targets_of::<Listing>().into_iter())
         .filter_map(|target| {
             let whole = ElementReference::<Listing, Listing>::whole(target);
-            reader.retrieve_element(&whole).ok().map(|listing| listing.0.clone())
+            reader
+                .retrieve_element(&whole)
+                .ok()
+                .map(|listing| listing.0.clone())
         })
         .flatten()
         .collect()
@@ -869,7 +878,11 @@ impl PartView {
     /// The corner of the face `face` the pointer is near, or else the side —
     /// the vertex or the edge, by its kind and name — within [`NEAR_CORNER`]
     /// and [`NEAR_SIDE`] reaches of it, whichever is nearer its ray.
-    fn corner_or_side_near(&self, pointer: &Pointer<S>, face: &str) -> Option<(&'static str, String)> {
+    fn corner_or_side_near(
+        &self,
+        pointer: &Pointer<S>,
+        face: &str,
+    ) -> Option<(&'static str, String)> {
         let ray = &pointer.ray;
         let corner = (self.vertices.iter())
             .filter(|v| v.faces.iter().any(|f| f == face))
@@ -920,9 +933,8 @@ impl PartView {
                     })
                 })
             };
-            (in_region || on_curve()).then(|| {
-                layer.hit(&sketch.target, drawn::SKETCH, "", pointer.ray.at(t), t)
-            })
+            (in_region || on_curve())
+                .then(|| layer.hit(&sketch.target, drawn::SKETCH, "", pointer.ray.at(t), t))
         });
         nearest(hits)
     }
@@ -1007,8 +1019,8 @@ impl PartView {
                         let in_square = (FrameAxis::ALL.iter())
                             .filter(|&&other| other != normal)
                             .all(|other| {
-                                let x = (local.prod_dot(&other.of(f)).div(size))
-                                    .unwrap_or(S::INFINITY);
+                                let x =
+                                    (local.prod_dot(&other.of(f)).div(size)).unwrap_or(S::INFINITY);
                                 !x.sub(S::from_f64(0.45))
                                     .abs()
                                     .definitely_greater(S::from_f64(0.15))

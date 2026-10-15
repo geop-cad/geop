@@ -1,6 +1,15 @@
 //! Mass properties, measurements and interference of basic solids, against
 //! their closed forms — each within the bounds returned.
 
+use geop_core_program::{
+    element::PickedElement,
+    operation::Operation,
+    operation_registry::OperationRegistry,
+    part::{Part, Reader},
+    program::Program,
+    program_runner::ProgramRunner,
+    values::{Settings, StateValue, StateValues, pose_state},
+};
 use std::f64::consts::PI;
 
 use geop_core_editor::selectable::Selectable;
@@ -10,16 +19,13 @@ use geop_core_math::{
     scalars::{Ring, ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_program::{element::PickedElement, operation::Operation};
 use geop_ops_add_datum::Selected;
 use geop_ops_extrude_revolve::shapes::{
     cube::cube_solid, cylinder::revolved_cylinder, sphere::sphere_solid, v3,
 };
 use geop_ops_model::{NamedModel, model};
 use geop_ops_output::Bounded;
-use geop_ops_parameters::{
-    BuildPart, Material, PartProperties, PartPropertiesArgs, PartReader, Registry, Runner,
-};
+use geop_ops_parameters::{Material, PartProperties, PartPropertiesArgs};
 use geop_ops_view::drawn;
 
 use crate::{
@@ -36,7 +42,7 @@ fn steel() -> Option<Material> {
 }
 
 /// `value`, as the generator of a target that is given it.
-fn given<T: Clone>(_: &PartReader, value: &T) -> GeopResult<T> {
+fn given<T: Clone>(_: &Reader, value: &T) -> GeopResult<T> {
     Ok(value.clone())
 }
 
@@ -45,14 +51,14 @@ fn given<T: Clone>(_: &PartReader, value: &T) -> GeopResult<T> {
 fn built_with(
     given_model: &NamedModel<S>,
     material: Option<Material>,
-    then: impl FnOnce(&mut BuildPart),
-) -> BuildPart {
+    then: impl FnOnce(&mut Part),
+) -> Part {
     let properties = PartPropertiesArgs {
         material,
         ..PartPropertiesArgs::default()
     };
-    let runner = Runner::new(Registry::default());
-    let mut part = BuildPart::default();
+    let runner = ProgramRunner::new(OperationRegistry::default());
+    let mut part = Part::default();
     part.begin_run(&Default::default(), &Default::default());
     part.begin_step();
     PartProperties::run("properties", &runner, &mut part, &properties).unwrap();
@@ -64,7 +70,7 @@ fn built_with(
 }
 
 /// The part of `model`, made of `material`.
-fn built(model: &NamedModel<S>, material: Option<Material>) -> BuildPart {
+fn built(model: &NamedModel<S>, material: Option<Material>) -> Part {
     built_with(model, material, |_| {})
 }
 
@@ -389,7 +395,7 @@ fn sketch_curves_are_measured() {
             sketch: line,
             references: Vec::new(),
         };
-        let runner = geop_ops_parameters::Runner::new(Default::default());
+        let runner = geop_core_program::program_runner::ProgramRunner::new(Default::default());
         geop_ops_sketch3d::AddSketch3d::run("route", &runner, part, &args).unwrap();
     });
 
@@ -446,19 +452,20 @@ fn measure_picks_what_it_measures() {
 #[test]
 fn placed_parts_are_measured_where_they_are() {
     use geop_ops_assembly::testing::{Shelf, given_model, place, runner};
-    use geop_ops_parameters::{ProgramFile, Settings, StateValue, StateValues, pose_state};
     use geop_ops_view::INSTANCE_SEPARATOR;
     let mut cube = NamedModel::<S>::new();
     cube_solid(&mut cube, "c", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap();
-    let mut placed = ProgramFile::new();
-    placed.program.steps.push(given_model("model", cube, None));
+    let mut placed = Program::new();
+    placed.steps.push(given_model("model", cube, None));
     let at = Pose::identity().with_position(v3(10.0, 0.0, 0.0));
-    let mut root = ProgramFile::new();
-    root.program.steps.push(place("p", "cube.geop", &Settings::new()));
+    let mut root = Program::new();
+    root.steps.push(place("p", "cube.geop", &Settings::new()));
     root.state.insert(pose_state("p"), StateValue::Pose(at));
-    let shelf = Shelf::default().with("cube.geop", placed).with("top.geop", root.clone());
+    let shelf = Shelf::default()
+        .with("cube.geop", placed)
+        .with("top.geop", root.clone());
     let runner = runner(shelf, "top.geop");
-    let mut part = BuildPart::default();
+    let mut part = Part::default();
     (root.run(&runner, &mut part, &Settings::new(), &StateValues::new())).unwrap();
 
     let corner = |name: &str| PickedElement {

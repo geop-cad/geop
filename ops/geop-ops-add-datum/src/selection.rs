@@ -14,10 +14,12 @@ use geop_core_math::{
     primitives::{CoordinateSystem, DatumKind, Motion},
     vector::Vector3,
 };
-use geop_core_program::{element::ElementReference, instance::InInstance};
+use geop_core_program::{
+    element::ElementReference, instance::InInstance, part::Reader, values::Design,
+};
 use geop_ops_datums::{AnyDatum, Datums};
-use geop_ops_model::{Circle, Curve, Design, Edge, Face, Line, NamedModel, Point, Round, Vertex};
-use geop_ops_parameters::{PartReader, located};
+use geop_ops_model::{Circle, Curve, Edge, Face, Line, NamedModel, Point, Round, Vertex};
+use geop_ops_parameters::located;
 use geop_ops_sketch::PlacedSketch;
 
 one_of! {
@@ -154,7 +156,7 @@ impl Shape {
 impl Selected {
     /// What it is in the part `reader` reads: where the part, or the
     /// instance placed in it that it is of, has it.
-    pub fn shape(&self, reader: &PartReader) -> GeopResult<Shape> {
+    pub fn shape(&self, reader: &Reader) -> GeopResult<Shape> {
         let InInstance { element, instance } = self.shape_in_instance(reader)?;
         match instance.is_empty() {
             true => Ok(element),
@@ -165,7 +167,7 @@ impl Selected {
     /// What it is in its own part — the part `reader` reads, or the
     /// instance placed in it that it is of — and that instance's path:
     /// where that is, [`geop_ops_parameters::placement`] says.
-    pub fn shape_in_instance(&self, reader: &PartReader) -> GeopResult<InInstance<Shape>> {
+    pub fn shape_in_instance(&self, reader: &Reader) -> GeopResult<InInstance<Shape>> {
         let instance = self.instance();
         let element = match instance.is_empty() {
             true => self.own_shape(reader)?,
@@ -178,7 +180,7 @@ impl Selected {
     }
 
     /// What it is, of the part `reader` reads itself.
-    fn own_shape(&self, reader: &PartReader) -> GeopResult<Shape> {
+    fn own_shape(&self, reader: &Reader) -> GeopResult<Shape> {
         Ok(match self {
             Selected::Vertex(vertex) => {
                 let found = reader.retrieve_element(vertex)?;

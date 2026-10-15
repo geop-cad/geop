@@ -9,6 +9,7 @@
 //! Lengths are millimetres and densities kg/m³ (see
 //! [`geop_ops_parameters::Material`]), so a mass is in kilograms.
 
+use geop_core_program::{part::Reader, values::Design};
 use std::collections::HashMap;
 
 use geop_core_math::{
@@ -17,8 +18,8 @@ use geop_core_math::{
     scalars::{Field, Scalar},
 };
 use geop_core_topology::{SolidId, mass::MassProperties};
-use geop_ops_model::{Design, NamedModel, notes_of, read_model};
-use geop_ops_parameters::{MaterialOf, PartReader, read_properties};
+use geop_ops_model::{NamedModel, notes_of, read_model};
+use geop_ops_parameters::{MaterialOf, read_properties};
 use geop_ops_view::INSTANCE_SEPARATOR;
 
 use crate::placed::placed_parts;
@@ -28,7 +29,7 @@ use crate::placed::placed_parts;
 pub struct PlacedSolid<'a> {
     pub name: String,
     /// The part it is a solid of — whose material it is made of.
-    pub reader: PartReader<'a>,
+    pub reader: Reader<'a>,
     pub model: std::borrow::Cow<'a, NamedModel<Design>>,
     pub solid: SolidId,
     /// Where its part is placed; `None` for the part's own solids.
@@ -88,7 +89,7 @@ impl Shapes {
 /// first, each named behind `prefix` and placed at `pose`: as the part
 /// placed there with the name `prefix` ends in has them.
 pub fn own_solids_at<'a>(
-    reader: &PartReader<'a>,
+    reader: &Reader<'a>,
     prefix: &str,
     pose: Option<Pose<Design>>,
 ) -> GeopResult<Vec<PlacedSolid<'a>>> {
@@ -112,7 +113,7 @@ pub fn own_solids_at<'a>(
 
 /// The bodies of the part `reader` reads itself, the oldest first: not those
 /// of the parts placed in it.
-pub fn own_solids<'a>(reader: &PartReader<'a>) -> GeopResult<Vec<PlacedSolid<'a>>> {
+pub fn own_solids<'a>(reader: &Reader<'a>) -> GeopResult<Vec<PlacedSolid<'a>>> {
     own_solids_at(reader, "", None)
 }
 
@@ -120,7 +121,7 @@ pub fn own_solids<'a>(reader: &PartReader<'a>) -> GeopResult<Vec<PlacedSolid<'a>
 /// however deep — every solid but those only drawn — each where it is:
 /// the part's own first, then those of each part placed, in the order they
 /// were placed.
-pub fn placed_solids<'a>(reader: &PartReader<'a>) -> GeopResult<Vec<PlacedSolid<'a>>> {
+pub fn placed_solids<'a>(reader: &Reader<'a>) -> GeopResult<Vec<PlacedSolid<'a>>> {
     let mut out = own_solids(reader)?;
     for placed in placed_parts(reader)? {
         let prefix = format!("{}{INSTANCE_SEPARATOR}", placed.name);

@@ -1,31 +1,32 @@
 //! Fillets and chamfers in programs: edges of extruded and cut solids,
 //! picked by name, rounded and bevelled.
 
-use crate::{ChamferArgs, FilletArgs, VertexRadius};
-use geop_core_math::primitives::DatumComponent;
-use geop_core_math::primitives::FrameAxis;
-use geop_core_math::scalars::{Ring, ScalInF64 as S, Scalar};
-use geop_core_program::element::ElementReference;
+use crate::{Chamfer, ChamferArgs, Fillet, FilletArgs, VertexRadius};
+use geop_core_math::{
+    geop_error::GeopResult,
+    primitives::{DatumComponent, FrameAxis},
+    scalars::{Ring, ScalInF64 as S, Scalar},
+};
+use geop_core_program::{
+    element::ElementReference, operation_registry::OperationRegistry, program::Program,
+};
 use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{ORIGIN, component_name, datums};
-use geop_ops_extrude_revolve::{Extents, LoftArgs, Output};
+use geop_ops_extrude_revolve::{
+    Extents, LoftArgs, Output,
+    testing::{
+        Built, disc, drilled_box, extrusion, n, on_face, on_origin, outline, rectangle, sketch,
+    },
+};
 use geop_ops_model::{
     NamedModel, model,
     testing::{assert_valid, check_valid, edges_where, has_vertex, middle},
 };
 use geop_ops_sketch::{Sketch, SketchPlane, whole_sketch};
 
-use geop_core_math::geop_error::GeopResult;
-use geop_ops_extrude_revolve::testing::{
-    Built, disc, drilled_box, extrusion, n, on_face, on_origin, outline, rectangle, sketch,
-};
-use geop_ops_parameters::{ProgramFile, Registry};
-
-use crate::{Chamfer, Fillet};
-
 /// The operations these tests' programs are written in.
-fn registry() -> GeopResult<Registry> {
+fn registry() -> GeopResult<OperationRegistry> {
     geop_ops_extrude_revolve::testing::registry()?
         .with(AddDatum)?
         .with(Fillet)?
@@ -143,12 +144,12 @@ fn fillet_and_chamfer_round_trip_through_json() {
     let n = steps.len();
     assert_eq!(steps[n - 2]["operation"], "fillet");
     assert_eq!(steps[n - 1]["operation"], "chamfer");
-    let back: ProgramFile = serde_json::from_value(json).unwrap();
+    let back: Program = serde_json::from_value(json).unwrap();
     assert_eq!(back, program);
 }
 
 /// An L-shaped block, 1 high, its inner corner at `(1, 1)`.
-fn l_block() -> ProgramFile {
+fn l_block() -> Program {
     let s = outline(&[
         [0.0, 0.0],
         [2.0, 0.0],
@@ -157,7 +158,7 @@ fn l_block() -> ProgramFile {
         [1.0, 2.0],
         [0.0, 2.0],
     ]);
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("outline", sketch(on_origin(FrameAxis::Z), s));
     program.push(
         "block",
@@ -214,7 +215,7 @@ fn chamfer_l_block_inner_edge() {
 fn fillet_boss_on_block() {
     let block = rectangle(0.0, 0.0, 1.0, 1.0);
     let boss = disc([0.5, 0.5], 0.3);
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("base", sketch(on_origin(FrameAxis::Z), block));
     program.push(
         "block",
@@ -261,8 +262,8 @@ fn edges_from_to(part: &NamedModel<S>, a: [f64; 3], b: [f64; 3]) -> Vec<String> 
 /// A block of 2 x 2 x 1 with a step cut out along its corner at `x = 0`,
 /// `y = 2`: the step's ceiling at `z = 0.5`, its back wall at `y = 1.5`,
 /// its side wall at `x = 1`, open at the bottom, the front and the side.
-fn stepped_block() -> ProgramFile {
-    let mut program = ProgramFile::new();
+fn stepped_block() -> Program {
+    let mut program = Program::new();
     let ground = on_origin(FrameAxis::Z);
     program.push(
         "outline",
@@ -328,8 +329,8 @@ fn fillet_edges_ending_at_a_wall() {
 
 /// A block of 2 x 2 x 1 with a pocket 0.4 deep, `[0.5, 1.5]` square, cut
 /// into its top.
-fn pocketed_block() -> ProgramFile {
-    let mut program = ProgramFile::new();
+fn pocketed_block() -> Program {
+    let mut program = Program::new();
     let outline = rectangle(0.0, 0.0, 2.0, 2.0);
     program.push("outline", sketch(on_origin(FrameAxis::Z), outline));
     program.push(
@@ -468,7 +469,7 @@ fn circle_sketch(x: f64, y: f64, r: f64) -> Sketch {
 /// A square of side 2 around the origin lofted up into a circle of radius
 /// 0.6 at `z = 2`: its walls are ruled, neither planes nor surfaces of
 /// revolution, so its edges are free-form.
-fn square_to_circle() -> ProgramFile {
+fn square_to_circle() -> Program {
     let mut square = Sketch::new();
     let p: Vec<_> = [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]
         .iter()
@@ -482,8 +483,8 @@ fn square_to_circle() -> ProgramFile {
 
 /// `bottom`, drawn on the `xy` plane, lofted up into `top`, drawn 2 above
 /// it.
-fn lofted(bottom: Sketch, top: Sketch) -> ProgramFile {
-    let mut program = ProgramFile::new();
+fn lofted(bottom: Sketch, top: Sketch) -> Program {
+    let mut program = Program::new();
     let xy = on_origin(FrameAxis::Z);
     program.push("bottom", sketch(xy.clone(), bottom));
     program.push(
@@ -566,7 +567,7 @@ fn fillet_lofted_bottom_edge_is_refused() {
 /// A slot 1 high: two half circles of radius 0.5 around `(±1, 0)` joined
 /// by straight sides — a rim of lines and arcs running on into each other
 /// tangentially, between the flat top and walls flat and round by turns.
-fn slot() -> ProgramFile {
+fn slot() -> Program {
     let mut s = Sketch::new();
     let p = [
         s.add_point(n(-1.0), n(-0.5)),
@@ -578,7 +579,7 @@ fn slot() -> ProgramFile {
     s.add_arc(p[1], p[2], n(std::f64::consts::PI));
     s.add_line(p[2], p[3]);
     s.add_arc(p[3], p[0], n(std::f64::consts::PI));
-    let mut program = ProgramFile::new();
+    let mut program = Program::new();
     program.push("outline", sketch(on_origin(FrameAxis::Z), s));
     program.push(
         "slot",

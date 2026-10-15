@@ -6,12 +6,13 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_program::{element::ElementReference, operation::Operation};
+use geop_core_program::{
+    element::ElementReference, operation::Operation, part::Part, values::Design,
+};
 use geop_core_sketch::space::{Constraint3d, CurveKind3d};
 use geop_ops_datums::{ORIGIN, datums, origin_axis};
 use geop_ops_extrude_revolve::shapes::block_part;
-use geop_ops_model::{Design, model, testing::vertex_at};
-use geop_ops_parameters::BuildPart;
+use geop_ops_model::{model, testing::vertex_at};
 
 use crate::{
     AddSketch3d, AddSketch3dArgs, CurveSource, LineSource, PlacedSketch3d, PointSource,
@@ -57,12 +58,13 @@ fn references_follow_the_part() {
     };
     let at = |size: f64| {
         let block = block_part("b", [0.0; 3], [size; 3]);
-        let mut part = BuildPart::default();
+        let mut part = Part::default();
         part.begin_run(&Default::default(), &Default::default());
         part.begin_step();
-        part.define_target(&model(), &block, |_, block| Ok(block.clone())).unwrap();
+        part.define_target(&model(), &block, |_, block| Ok(block.clone()))
+            .unwrap();
         part.begin_step();
-        let runner = geop_ops_parameters::Runner::new(Default::default());
+        let runner = geop_core_program::program_runner::ProgramRunner::new(Default::default());
         <AddSketch3d as Operation>::run("route", &runner, &mut part, &args).unwrap();
         part.end_run(0);
         let reader = part.current();

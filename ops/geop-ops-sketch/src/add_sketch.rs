@@ -1,25 +1,29 @@
 //! [`AddSketch`]: place a sketch in the part.
 
-use std::collections::BTreeMap;
-
 use geop_core_editor::{
     edit_form::{Edit, EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::CanvasEvent,
-    numeric_input::NumericInput,
     one_of, part_operation,
     part_operation::PartOperation,
 };
+use geop_core_program::{
+    element::ElementReference,
+    numeric::NumericInput,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
+use std::collections::BTreeMap;
+
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
     with_context,
 };
-use geop_core_program::element::ElementReference;
 use geop_core_sketch::ConstraintId;
 use geop_ops_datums::Datums;
-use geop_ops_model::{Design, NamedModel, Plane};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_model::{NamedModel, Plane};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -121,7 +125,7 @@ impl AddSketchArgs {
     /// reads, the sketch lying in `plane` (see [`Reference::update`]).
     pub fn update_references(
         &mut self,
-        reader: &PartReader,
+        reader: &Reader,
         plane: &CoordinateSystem<Design>,
     ) -> GeopResult<()> {
         for reference in &mut self.references {
@@ -133,10 +137,12 @@ impl AddSketchArgs {
     /// Gives every dimension with a formula its value, the parameters read
     /// through `reader` — and forgets the formulas and labels of
     /// constraints gone.
-    pub fn apply_formulas(&mut self, reader: &PartReader) -> GeopResult<()> {
+    pub fn apply_formulas(&mut self, reader: &Reader) -> GeopResult<()> {
         let sketch = &mut self.sketch;
-        self.formulas.retain(|k, _| sketch.constraints.contains_key(k));
-        self.labels.retain(|k, _| sketch.constraints.contains_key(k));
+        self.formulas
+            .retain(|k, _| sketch.constraints.contains_key(k));
+        self.labels
+            .retain(|k, _| sketch.constraints.contains_key(k));
         for (k, formula) in &self.formulas {
             let ctx = with_context!("the formula {formula} of constraint {k}");
             let c = (sketch.constraints.get_mut(k))
@@ -155,7 +161,10 @@ pub type SketchEditing = FormState<SketchSession>;
 /// The sketch the step `step` draws with `args`: on its plane as the part
 /// before it has it, with what it projects and its formulas brought up to
 /// date, solved anew if either changed what was drawn.
-fn draw(reader: &PartReader, (step, args): &(String, AddSketchArgs)) -> GeopResult<PlacedSketch<Design>> {
+fn draw(
+    reader: &Reader,
+    (step, args): &(String, AddSketchArgs),
+) -> GeopResult<PlacedSketch<Design>> {
     let ctx = with_context!("add_sketch({step}, plane={:?})", args.plane);
     let Some(plane) = &args.plane else {
         return Err(GeopError::new("pick a plane to sketch on")).with_context(ctx);
@@ -190,26 +199,23 @@ impl PartOperation for AddSketch {
     )
     .icon(crate::icons::ADD_SKETCH);
     type Args = AddSketchArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = SketchSession;
 
     /// An empty sketch, on no plane yet: where to sketch is the first thing
     /// a new sketch asks for.
-    fn new_args(_: &StepContext) -> AddSketchArgs {
+    fn new_args(_: &Context) -> AddSketchArgs {
         AddSketchArgs::new(None)
     }
 
     /// Defines the sketch named after the step.
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &AddSketchArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &AddSketchArgs) -> GeopResult<()> {
         part.define_target(&sketch(step), &(step.to_string(), args.clone()), draw)
     }
 
     /// The plane, picked, and the sketch drawn in it: see
     /// [`crate::editor`].
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &AddSketchArgs,
         editing: &SketchEditing,
     ) -> EditForm<'a, Design, AddSketchArgs, SketchSession> {
@@ -217,7 +223,7 @@ impl PartOperation for AddSketch {
     }
 
     fn canvas(
-        context: &StepContext,
+        context: &Context,
         edit: Edit<'_, AddSketchArgs, SketchSession>,
         event: &CanvasEvent<Design>,
     ) {

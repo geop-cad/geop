@@ -1,12 +1,26 @@
 //! [`Revolve`]: sweep a sketch's area around a line in its plane.
 
+use geop_core_editor::{
+    edit_form::{EditForm, FormState},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
+    editing::{Number, Unit},
+    one_of, part_operation,
+    part_operation::PartOperation,
+};
+use geop_core_program::{
+    element::ElementReference,
+    numeric::NumericInput,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
 use std::collections::BTreeSet;
 
-use geop_core_math::scalars::Ring;
+use geop_core_geometry::shape::Axis;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
-    scalars::Scalar,
+    scalars::{Ring, Scalar},
     vector::{Vector2, Vector3},
     with_context,
 };
@@ -14,20 +28,9 @@ use geop_core_sketch::{
     CurveKind, Enclosure, PointId, ProfileJoint, ProfileLoop, Shape, profile::curve_polyline,
 };
 use geop_core_topology::build::BuiltBody;
-use geop_core_editor::{
-    edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
-    editing::Unit,
-    numeric_input::NumericInput,
-    one_of, part_operation,
-    part_operation::PartOperation,
-};
-use geop_core_geometry::shape::Axis;
-use geop_core_program::element::ElementReference;
 use geop_ops_booleans::Extent;
 use geop_ops_datums::Datums;
-use geop_ops_model::{Design, Line, ModelOperation, NamedModel, Namer, build_model, read_model};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_model::{Line, ModelOperation, NamedModel, Namer, build_model, read_model};
 use geop_ops_sketch::{PlacedSketch, SketchRef, chain_of_pieces, sketch_element};
 use serde::{Deserialize, Serialize};
 
@@ -105,7 +108,7 @@ pub struct RevolveArgs {
 /// The line of `sketch` to revolve around by default: its first
 /// construction line — what an axis is usually drawn as — else its first
 /// line; none, for a sketch with no line.
-fn default_axis(reader: &PartReader, sketch: &SketchRef) -> Option<RevolveAxis> {
+fn default_axis(reader: &Reader, sketch: &SketchRef) -> Option<RevolveAxis> {
     let placed = reader.retrieve_element(sketch).ok()?;
     let lines: Vec<_> = placed
         .sketch
@@ -140,7 +143,7 @@ impl SketchAxis<Design> {
     /// sketch's plane, and is used as it lies there.
     fn of(
         axis: &RevolveAxis,
-        reader: &PartReader,
+        reader: &Reader,
         sketch: &SketchRef,
         placed: &PlacedSketch<Design>,
         geometry: &Enclosure<Design>,
@@ -154,8 +157,7 @@ impl SketchAxis<Design> {
         {
             let curve = line.name().parse().with_context(ctx)?;
             let sketch = &placed.sketch;
-            let CurveKind::Line { start, end } = sketch.curve(curve).with_context(ctx)?.kind
-            else {
+            let CurveKind::Line { start, end } = sketch.curve(curve).with_context(ctx)?.kind else {
                 return Err(GeopError::new(format!("{curve} is not a line"))).with_context(ctx);
             };
             let drawn = |p: PointId| sketch.points[&p].xy().map(|c| c.cast::<S>());
@@ -201,14 +203,11 @@ impl PartOperation for Revolve {
     )
     .icon(crate::icons::REVOLVE);
     type Args = RevolveArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// The newest sketch a full turn around its axis line, joined to the
     /// newest solid if there is one.
-    fn new_args(context: &StepContext) -> RevolveArgs {
+    fn new_args(context: &Context) -> RevolveArgs {
         let before = &context.before;
         let newest = before.targets_of::<PlacedSketch<Design>>().pop();
         let sketch = SketchRef::whole(newest.unwrap_or_else(|| geop_ops_sketch::sketch("")));
@@ -220,7 +219,7 @@ impl PartOperation for Revolve {
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &RevolveArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &RevolveArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
@@ -228,30 +227,40 @@ impl PartOperation for Revolve {
     /// combine. Another sketch picked brings an axis that was a line of the
     /// old one back to the new one's default.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &RevolveArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, RevolveArgs> {
         let before = &context.before;
         let mut f = EditForm::<Design, RevolveArgs>::default();
-        f.pick_one("sketch", "sketch", before, Some(&args.sketch), move |edit, picked| {
-            let args = edit.args;
-            let old = std::mem::replace(&mut args.sketch, picked);
-            let of_old = match &args.axis {
-                None => true,
-                Some(RevolveAxis::Sketch(line)) => line.target() == old.target(),
-                Some(_) => false,
-            };
-            if of_old {
-                args.axis = default_axis(before, &args.sketch);
-            }
-        });
-        f.pick_one("axis", "axis", before, args.axis.as_ref(), |edit, picked| {
-            edit.args.axis = Some(picked)
-        });
+        f.pick_one(
+            "sketch",
+            "sketch",
+            before,
+            Some(&args.sketch),
+            move |edit, picked| {
+                let args = edit.args;
+                let old = std::mem::replace(&mut args.sketch, picked);
+                let of_old = match &args.axis {
+                    None => true,
+                    Some(RevolveAxis::Sketch(line)) => line.target() == old.target(),
+                    Some(_) => false,
+                };
+                if of_old {
+                    args.axis = default_axis(before, &args.sketch);
+                }
+            },
+        );
+        f.pick_one(
+            "axis",
+            "axis",
+            before,
+            args.axis.as_ref(),
+            |edit, picked| edit.args.axis = Some(picked),
+        );
         let amount = |angle: &NumericInput, second| {
             let label = if second { "angle 2" } else { "angle" };
-            angle.number(label, before, Unit::Angle).range(-360.0, 360.0)
+            Number::numeric(angle, label, before, Unit::Angle).range(-360.0, 360.0)
         };
         args.extent.fields(
             &mut f,
@@ -270,7 +279,7 @@ impl PartOperation for Revolve {
 impl ModelOperation for Revolve {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &RevolveArgs,
     ) -> GeopResult<()> {

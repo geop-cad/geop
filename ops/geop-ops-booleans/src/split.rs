@@ -249,13 +249,13 @@ mod tests {
         Body,
         contains::shell::{Classified, PointClassification, solid_contains},
     };
-    use geop_ops_model::{NamedModel, Namer, testing::assert_valid};
     use geop_ops_extrude_revolve::{
         common::{Profile, polyline},
         extrude::extrude,
         shapes::{block, v2, v3},
         sweep::SweepLoop,
     };
+    use geop_ops_model::{NamedModel, Namer, testing::assert_valid};
 
     /// A unit cube around the origin, and a sheet: the chain through
     /// `points` in the `z = -1` plane, swept up to `z = 1`.

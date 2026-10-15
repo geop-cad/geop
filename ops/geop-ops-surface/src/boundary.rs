@@ -32,7 +32,7 @@
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     part_operation,
     part_operation::PartOperation,
 };
@@ -47,16 +47,20 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector3, Vector4},
 };
-use geop_core_program::element::ElementReference;
+use geop_core_program::{
+    element::ElementReference,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
 use geop_core_topology::{
     Curve3, Sense,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
     loop_sampling::sample_pcurves_to_polygon,
 };
 use geop_ops_model::{
-    BodyNames, Chain, Design, Edge, ModelOperation, NamedModel, Namer, build_model, read_model,
+    BodyNames, Chain, Edge, ModelOperation, NamedModel, Namer, build_model, read_model,
 };
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
 use geop_ops_sketch3d::CurveSource;
 use serde::{Deserialize, Serialize};
 
@@ -107,20 +111,17 @@ impl PartOperation for BoundarySurface {
     .experimental()
     .icon(crate::icons::BOUNDARY_SURFACE);
     type Args = BoundarySurfaceArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// Nothing picked yet.
-    fn new_args(_: &StepContext) -> BoundarySurfaceArgs {
+    fn new_args(_: &Context) -> BoundarySurfaceArgs {
         BoundarySurfaceArgs::default()
     }
 
     fn run(
         step: &str,
-        _: &Runner,
-        part: &mut BuildPart,
+        _: &ProgramRunner,
+        part: &mut Part,
         args: &BoundarySurfaceArgs,
     ) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
@@ -128,7 +129,7 @@ impl PartOperation for BoundarySurface {
 
     /// The edges, picked, and those to be tangent along.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &BoundarySurfaceArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, BoundarySurfaceArgs> {
@@ -158,7 +159,7 @@ impl PartOperation for BoundarySurface {
 impl ModelOperation for BoundarySurface {
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &PartReader,
+        reader: &Reader,
         step: &str,
         args: &BoundarySurfaceArgs,
     ) -> GeopResult<()> {

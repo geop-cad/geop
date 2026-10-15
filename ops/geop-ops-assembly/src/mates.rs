@@ -20,18 +20,19 @@
 //! them, and a program sets them to place a mechanism at a pose. A joint
 //! whose coordinate the state does not give starts where its parts are.
 
-pub use crate::joints::{Connector, CouplingKind, JointKind, Motion, Transmission};
-pub use crate::residuals::{Geometry, Kind};
+pub use crate::{
+    frame::MateEntity,
+    joints::{Connector, CouplingKind, JointKind, Motion, Transmission},
+    residuals::{Geometry, Kind},
+};
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{
     element::{HasElements, Kind as ElementKind, whole},
     target::TargetReference,
+    values::Design,
 };
 use geop_ops_add_datum::Role;
-use geop_ops_model::Design;
 use serde::{Deserialize, Serialize};
-
-pub use crate::frame::MateEntity;
 
 /// `roles` in words: `a point, a line or a plane`.
 fn describe_roles(roles: &[Role]) -> String {

@@ -20,32 +20,37 @@
 //! not joined: they are open edges, and a solid asked for is refused,
 //! naming them.
 
-use std::collections::HashMap;
-
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     part_operation,
     part_operation::PartOperation,
 };
-use geop_core_geometry::contains::curve::curve_could_contain;
+use geop_core_program::{
+    element::ElementReference,
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
+    values::Design,
+};
+use std::collections::HashMap;
+
+use geop_core_geometry::{
+    contains::curve::curve_could_contain,
+    search::{MAX_NODES, min_subdivision_size},
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     solvers::walk::{Take, flood},
     union_find::UnionFind,
 };
-use geop_core_program::element::ElementReference;
 use geop_core_topology::{
     Body, ShellId,
     build::{BodySpec, CoedgeOn, EdgeSpec, FaceSpec},
     validation::{Outward, ValidationParameters, normal_points_outward},
 };
-use geop_ops_model::{BodyNames, Design, Face, ModelOperation, NamedModel, Namer, build_model};
-use geop_ops_parameters::{Setting, BuildPart, Runner, PartReader, StateValue, StepContext};
+use geop_ops_model::{BodyNames, Face, ModelOperation, NamedModel, Namer, build_model};
 use serde::{Deserialize, Serialize};
-
-use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
 
 /// Joins the sheets the faces named `faces` stand in into one, along the
 /// edges where they meet, for the operation `K` — see the module docs.
@@ -77,26 +82,23 @@ impl PartOperation for Knit {
     .experimental()
     .icon(crate::icons::KNIT);
     type Args = KnitArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
     /// Nothing picked yet; a solid wanted.
-    fn new_args(_: &StepContext) -> KnitArgs {
+    fn new_args(_: &Context) -> KnitArgs {
         KnitArgs {
             faces: Vec::new(),
             solid: true,
         }
     }
 
-    fn run(step: &str, _: &Runner, part: &mut BuildPart, args: &KnitArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &KnitArgs) -> GeopResult<()> {
         build_model::<Self>(part, step, args)
     }
 
     /// The sheets, picked by a face of each, and whether they must close.
     fn form<'a>(
-        context: &'a StepContext<'a>,
+        context: &'a Context<'a>,
         args: &KnitArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, KnitArgs> {
@@ -119,7 +121,7 @@ impl PartOperation for Knit {
 impl ModelOperation for Knit {
     fn build(
         model: &mut NamedModel<Design>,
-        _: &PartReader,
+        _: &Reader,
         step: &str,
         args: &KnitArgs,
     ) -> GeopResult<()> {
