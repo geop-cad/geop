@@ -37,8 +37,7 @@ import {
 } from "./files";
 import { InspectPanel } from "./InspectPanel";
 import { sectionPlane, type Section } from "./section";
-import { ParametersPanel } from "./ParametersPanel";
-import { JointsPanel } from "./JointsPanel";
+import { ProgramPanels } from "./ProgramPanels";
 import { SceneViewer } from "./SceneViewer";
 import { StructurePanel } from "./StructurePanel";
 import { OperationGrid, OperationRibbon, type Tool } from "./OperationRibbon";
@@ -74,7 +73,7 @@ function baseName(path: string): string {
 }
 
 /**
- * The editor: a view of the one the kernel runs (see `geop_cad_base::editor`).
+ * The editor: a view of the one the kernel runs (see `geop_core_editor::editor`).
  * Every button, click and key is a command sent to it, and what comes back
  * — the program, the part to draw, the step being edited — is shown; so
  * nothing here knows any operation, and the only state kept here is how
@@ -622,7 +621,7 @@ function App() {
     editing: s.editing,
   }));
 
-  const dragTool = program?.drag_tool ?? false;
+  const inHand = program?.tool ?? null;
   const tools: Tool[] = [
     ...infos.filter((info) => !reducedMode || !info.experimental).map((info) => ({
       ...info,
@@ -630,44 +629,29 @@ function App() {
       disabled: !wasmReady || (step != null && step.kind !== info.kind),
       onSelect: () => newStep(info),
     })),
-    {
-      kind: "drag",
-      icon: "drag",
-      label: "Drag",
-      doc: "Drag placed parts as far as their mates let them",
-      group: "Assembly",
-      tier: "Big",
-      active: dragTool,
+    ...(program?.tools ?? []).map((tool) => ({
+      kind: tool.key,
+      icon: tool.icon,
+      label: tool.label,
+      doc: tool.doc,
+      group: tool.group,
+      tier: tool.tier,
+      active: inHand === tool.key,
       disabled: !wasmReady || step != null,
-      onSelect: () => void dispatch({ command: "drag_tool", on: !dragTool }),
-    },
+      onSelect: () => void dispatch({ command: "tool", key: inHand === tool.key ? null : tool.key }),
+    })),
   ];
+  /** The key of an inspector's pick tool: `pick:measure`. */
+  const PICK = "pick:";
 
   const programPanel = (
     <section className="panel timeline">
-      <h2>Parameters</h2>
-      <ParametersPanel
-        parameters={program?.parameters.defined ?? {}}
-        resolved={program?.parameters ?? { values: {}, errors: {} }}
+      <ProgramPanels
+        panels={program?.panels ?? {}}
         enabled={wasmReady}
-        materials={program?.materials ?? []}
-        uses={program?.parameter_uses ?? {}}
-        onChange={(parameters) => dispatch({ command: "parameters", parameters })}
-        onRename={(from, to) => dispatch({ command: "rename_parameter", from, to })}
+        idle={step == null}
+        onCommand={(key, payload) => dispatch({ command: "panel", key, payload })}
       />
-      {((program?.joints.length ?? 0) > 0 ||
-        Object.keys(program?.freedom?.parts ?? {}).length > 0) && (
-        <>
-          <h2>{(program?.joints.length ?? 0) > 0 ? "Joints" : "Freedom"}</h2>
-          <JointsPanel
-            joints={program?.joints ?? []}
-            freedom={program?.freedom ?? null}
-            conflicting={program?.conflicting ?? []}
-            enabled={wasmReady && step == null}
-            onSet={(parameter, value) => dispatch({ command: "joint", parameter, value })}
-          />
-        </>
-      )}
       <h2>Program</h2>
       <Timeline
         steps={timelineSteps}
@@ -705,8 +689,8 @@ function App() {
         <InspectPanel
           enabled={wasmReady && step == null}
           inspectors={program?.inspectors ?? []}
-          pickTool={program?.pick_tool ?? null}
-          onPickTool={(inspector) => dispatch({ command: "pick_tool", inspector })}
+          pickTool={inHand?.startsWith(PICK) ? inHand.slice(PICK.length) : null}
+          onPickTool={(inspector) => dispatch({ command: "tool", key: inspector == null ? null : PICK + inspector })}
           picked={picked}
           answers={answers}
           busy={inspecting}

@@ -59,12 +59,6 @@ const ICONS: Record<string, ReactElement> = {
       <path d="M13 1.5 L13 4.8" strokeWidth="1" />
     </>
   ),
-  drag: (
-    <>
-      <path d="M10 2.5 L10 17.5 M2.5 10 L17.5 10" />
-      <path d="M8 4.5 L10 2.5 L12 4.5 M8 15.5 L10 17.5 L12 15.5 M4.5 8 L2.5 10 L4.5 12 M15.5 8 L17.5 10 L15.5 12" />
-    </>
-  ),
   edit: (
     <>
       <path d="M12.5 4.5 L15.5 7.5 L8 15 L4.5 15.5 L5 12 Z" />

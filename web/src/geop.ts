@@ -3,7 +3,7 @@
 // one place, and where the kernel runs (wasm in the browser, a native
 // process in VS Code) is invisible to it.
 //
-// The whole editor lives in the kernel (see `geop_cad_base::editor`): the
+// The whole editor lives in the kernel (see `geop_core_editor::editor`): the
 // app sends every command — a step started, a click in the viewport as a
 // ray, a slider moved, undo — through [[send]], and draws the [[Update]]
 // that comes back. Which operations exist, what their dialogs hold, what a
@@ -165,7 +165,7 @@ export interface ExporterInfo {
 
 /** A question the editor answers about the part — see `geop_ops::output::InspectorInfo`. */
 export interface InspectorInfo {
-  /** What [[Command]] `inspect` and `pick_tool` ask it by, and what its answers are: `mass_properties`. */
+  /** What [[Command]] `inspect` asks it by — and the tool `pick:<kind>` picks for — and what its answers are: `mass_properties`. */
   kind: string;
   label: string;
   doc: string;
@@ -241,7 +241,7 @@ export interface Program {
 
 // ── editing ──────────────────────────────────────────────────────────────────
 //
-// Mirrors `geop_ops::ui` and `geop_cad_base::editor`.
+// Mirrors `geop_core_editor::editing` and `geop_core_editor::editor`.
 
 /**
  * How far from its ray a pointer reaches: a cone from the eye in
@@ -505,16 +505,15 @@ export type Command =
   | { command: "redo" }
   /** Show or hide the datum, sketch, solid, face standing on its own or placed part `name`. */
   | { command: "visibility"; name: string; visible: boolean }
-  /** The program's parameters are now these. */
-  | { command: "parameters"; parameters: Parameters }
-  /** Rename the parameter `from` to `to`, and every formula reading it. */
-  | { command: "rename_parameter"; from: string; to: string }
-  /** Take the drag tool in hand, or put it down: with no step edited, drag any placed part. */
-  | { command: "drag_tool"; on: boolean }
-  /** Set a joint's coordinate — an angle in degrees, or a distance: the parts move to it. */
-  | { command: "joint"; parameter: string; value: number }
-  /** Take the tool of the inspector `inspector` (one that picks) in hand, or — `null` — put it down: with no step edited, clicks pick what it asks about. */
-  | { command: "pick_tool"; inspector: string | null }
+  /** Something the user did in the panel `key` (see [[ProgramState]] `panels`), which it reads as `payload`. */
+  | { command: "panel"; key: string; payload: unknown }
+  /**
+   * Take the tool `key` in hand — one of [[ProgramState]] `tools`, or
+   * `pick:<inspector>`, the pick tool of an inspector that picks — or,
+   * `null`, put it down: with no step edited, the viewport's events are
+   * the tool's.
+   */
+  | { command: "tool"; key: string | null }
   /** Ask the inspector `inspector` about the part as drawn, told its own `options`: answered in [[Update]] `inspection`; changes nothing. */
   | { command: "inspect"; inspector: string; options?: unknown }
   /**
@@ -535,7 +534,7 @@ export interface ExportedFile {
   bytes?: string;
 }
 
-/** A value of the state a user sets, a joint's coordinate — see `geop_ops::solving::SettingState`. */
+/** A value of the state a user sets, a joint's coordinate — see `geop_ops_assembly::solving::SettingState`. */
 export interface JointValue {
   /** The parameter of the program's state it is: `add_part(fore,m1).angle`. */
   parameter: string;
@@ -545,7 +544,7 @@ export interface JointValue {
   max: number | null;
 }
 
-/** Values a step offers to set, a joint's coordinates — see `geop_ops::solving::SettingsState`. */
+/** Values a step offers to set, a joint's coordinates — see `geop_ops_assembly::solving::SettingsState`. */
 export interface JointInfo {
   name: string;
   /** What it is called: `fore m1`, the mate `m1` of the step `fore`. */
@@ -556,7 +555,7 @@ export interface JointInfo {
   values: JointValue[];
 }
 
-/** How free each placed part is — see `geop_ops::solving::Freedom`. */
+/** How free each placed part is — see `geop_ops_assembly::solving::Freedom`. */
 export interface MateFreedom {
   parts: Record<string, number>;
   total: number;
@@ -584,51 +583,55 @@ export interface ProgramState {
   marker: number;
   can_undo: boolean;
   can_redo: boolean;
-  /** Whether the drag tool is in hand. */
-  drag_tool: boolean;
-  /** The inspector whose pick tool is in hand, if one is. */
-  pick_tool: string | null;
-  /** The materials a part's can be picked from. */
-  materials: Material[];
-  /** What the parameters resolve to, by name — numbers, a table's row and columns, the colour — and why those that do not resolve fail. */
-  parameters: {
-    /** What the program's parameters and properties steps define. */
-    defined: Parameters;
-    values: Record<string, ParamValue>;
-    errors: Record<string, string>;
-  };
-  /** What reads each parameter, by name: the steps and other parameters whose formulas do — what fails if it goes. */
-  parameter_uses: Record<string, string[]>;
+  /** The key of the tool in hand, if one is (see [[Command]] `tool`). */
+  tool: string | null;
+  /** The tools the toolbar offers to take in hand, as it offers the operations. */
+  tools: ToolInfo[];
   operations: OperationInfo[];
   /** What can be written of the part, for [[Command]] `export`. */
   exporters: ExporterInfo[];
-  /** What can be asked about it, for [[Command]] `inspect` and `pick_tool`. */
+  /** What can be asked about it, for [[Command]] `inspect` and the tool `pick:<inspector>`. */
   inspectors: InspectorInfo[];
   examples: string[];
   /** Examples of several files, for [[Command]] `load_workspace_example`. */
   workspace_examples: string[];
-  /** The joints of the part shown, for [[Command]] `joint`. */
-  joints: JointInfo[];
-  /** How free its placed parts are, if it has any. */
-  freedom: MateFreedom | null;
-  /** A smallest set of its constraints that cannot all hold together: none where they all hold. */
-  conflicting: string[];
+  /**
+   * What each panel shows of the program, by its key: the app shows each
+   * by the component its key maps to (see `ProgramPanels.tsx`), and sends
+   * it [[Command]] `panel`.
+   */
+  panels: Record<string, unknown>;
+}
+
+/** A tool the toolbar offers to take in hand — see `geop_core_editor::tools::ToolInfo`. */
+export interface ToolInfo {
+  /** What [[Command]] `tool` takes it in hand by: `drag`. */
+  key: string;
+  label: string;
+  doc: string;
+  /** The section of the toolbar it is in, as an operation's. */
+  group: string;
+  tier: OperationTier;
+  /** What it is shown as: SVG markup (see [[Icon]]). */
+  icon: string | null;
 }
 
 /**
  * What kind of thing a [[StructureItem]] is: `datum`, `sketch`, `solid`,
  * `face`, `part` — or what a step lists it as, `mate` (see
- * `geop_ops::ui::Listed`).
+ * `geop_core_editor::registry::StructureItem`).
  */
 export type StructureKind = string;
 
 /** An entry of the part drawn's structure: whether it is shown, if it is drawn at all, and what it refers to. */
 export interface StructureItem {
   kind: StructureKind;
+  /** What a list calls the things of its kind: `Datums`. */
+  kind_label: string;
   name: string;
   visible: boolean | null;
   /** The entities it is between: lit while it is pointed at. */
-  entities: EntityRef[];
+  elements: EntityRef[];
 }
 
 /**
