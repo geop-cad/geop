@@ -24,7 +24,7 @@ use geop_core_sketch::{CurveId, PointId};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::origin_plane;
 use geop_ops_model::{NamedModel, model, read_model};
-use geop_ops_parameters::{DefineParameters, PartProperties};
+use geop_ops_parameters::{DefineParameters, LookupTable, PartProperties};
 use geop_ops_sketch::{AddSketch, AddSketchArgs, Sketch, SketchPlane, whole_sketch};
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -35,6 +35,7 @@ use crate::{Extent, Extents, Extrude, ExtrudeArgs, Loft, Output, Revolve, Sweep}
 pub fn registry() -> GeopResult<OperationRegistry> {
     (OperationRegistry::default()
         .with(DefineParameters)?
+        .with(LookupTable)?
         .with(PartProperties)?
         .with(AddSketch)?
         .with(Extrude)?

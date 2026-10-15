@@ -837,6 +837,8 @@ fn a_sheet_round_trips() {
 struct Folder {
     files: BTreeMap<String, String>,
     reads: Rc<Cell<usize>>,
+    /// The revision of every file in it.
+    revision: u64,
 }
 
 impl Workspace for Folder {
@@ -863,16 +865,15 @@ impl Workspace for Folder {
         path.to_string()
     }
 
-    /// A folder of files that do not change: one revision.
     fn revision(&self, _: &str) -> u64 {
-        0
+        self.revision
     }
 }
 
-/// An import step reads its file through the workspace in every run, but
-/// builds from it only once: run again, or given the folder anew, it reads
-/// an equal text, and nothing — neither the bodies nor the model — is
-/// built anew.
+/// An import step reads its file through the workspace only when the
+/// file's revision changed, and builds from it only once: run again, it
+/// reads nothing; given a new revision of an equal text, it reads it, and
+/// nothing — neither the bodies nor the model — is built anew.
 #[test]
 fn an_import_builds_an_equal_file_once() {
     let mut cylinder = NamedModel::new();
@@ -886,15 +887,16 @@ fn an_import_builds_an_equal_file_once() {
     .unwrap();
     let text = written(&cylinder, "cylinder");
     let reads = Rc::new(Cell::new(0));
-    // The runner given the folder anew: equal files, but another value.
-    let given = |runner: &mut Runner| {
+    // The runner given the folder anew: equal files, in a revision.
+    let given = |runner: &mut Runner, revision: u64| {
         runner.workspace = Some(Rc::new(Folder {
             files: BTreeMap::from([("cylinder.step".to_string(), text.clone())]),
             reads: reads.clone(),
+            revision,
         }));
     };
     let mut runner = Runner::new(OperationRegistry::default().with(ImportStep).unwrap());
-    given(&mut runner);
+    given(&mut runner, 0);
     let mut program = Program::new();
     let args = ImportStepArgs {
         file: "cylinder.step".into(),
@@ -910,11 +912,11 @@ fn an_import_builds_an_equal_file_once() {
     let first = run(&runner, &mut part);
     assert_eq!(reads.get(), 1);
     assert_eq!(run(&runner, &mut part), first, "nothing built anew");
-    assert_eq!(reads.get(), 2, "read in every run");
-    // The same files, given anew: an equal text, to the same bodies.
-    given(&mut runner);
+    assert_eq!(reads.get(), 1, "the file did not change: nothing read");
+    // The same files, in a new revision: an equal text, to the same bodies.
+    given(&mut runner, 1);
     assert_eq!(run(&runner, &mut part), first, "the model not built anew");
-    assert_eq!(reads.get(), 3, "the new folder read");
+    assert_eq!(reads.get(), 2, "the new revision read");
     let model = read_model(&part.current()).unwrap();
     assert_eq!(model.solid_names(), vec!["import(i,s0)".to_string()]);
     assert_model_valid_sheets(model.topology());

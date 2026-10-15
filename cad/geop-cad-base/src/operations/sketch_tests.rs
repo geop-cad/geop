@@ -10,7 +10,7 @@ use geop_core_program::{
 };
 use geop_ops_parameters::{
     COLOR, ParameterKind, parameter_numbers, parameters_of, read_properties, set_parameters,
-    steps::{PARAMETERS, PROPERTIES},
+    steps::{LOOKUP, PARAMETERS, PROPERTIES},
 };
 use std::{borrow::Cow, collections::BTreeMap};
 
@@ -311,7 +311,8 @@ fn wide_plate_with_an_m6_hole() {
         panic!("width is a number")
     };
     *expression = "6".into();
-    let ParameterKind::Table { selected, .. } = &mut parameters.values[2].kind else {
+    let screw = parameters.values.iter_mut().find(|p| p.name == "screw");
+    let Some(ParameterKind::Table { selected, .. }) = screw.map(|p| &mut p.kind) else {
         panic!("screw is a table")
     };
     *selected = "M6".into();
@@ -889,7 +890,7 @@ fn parameters_no_step_reads_rebuild_nothing() {
     // Every step but those of its parameters and properties, which build
     // neither a sketch nor a model.
     let building = (program.steps.iter())
-        .filter(|s| ![PARAMETERS, PROPERTIES].contains(&&*s.operation))
+        .filter(|s| ![PARAMETERS, PROPERTIES, LOOKUP].contains(&&*s.operation))
         .count();
     assert_eq!(running.built_anew(&program), building);
     let built = running.model();

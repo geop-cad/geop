@@ -2,11 +2,10 @@
 
 The program machinery every part is built by, independent of what is built:
 a program is a list of steps, each an `Operation`; running it builds a
-`Part`, target by target, reusing every version whose arguments and reads
-did not change. A run is a function of what it is given: its **inputs**
-— what its parameters are set to — and its **state** — where its placed
-parts are, how its joints are turned — which no step changes: a solver
-moves the state until the constraints the steps define hold (see
+`Part`, a memo table of nodes. A run is a function of what it is given: its
+**inputs** — what its parameters are set to — and its **state** — where its
+placed parts are, how its joints are turned — which no step changes: a
+solver moves the state until the constraints the steps define hold (see
 [geop-ops-constraints](../ops/geop-ops-constraints.md)). The one thing it
 reads besides is its **workspace**: the programs it places and the files
 it imports.
@@ -15,26 +14,47 @@ Nothing here knows a model, a sketch or a datum. Each of those is a target
 some crate defines, together with the kinds of element it holds; this crate
 only says what a target, an element and a step are, and runs programs.
 
-## Targets and the part
+## The run model: nodes, reads, reuse
 
-The `target` and `part` modules. A `Part` is a set of **targets**, each named by a
-`TargetReference<T>` — a stable name and the type of its value: the model,
-`sketch:s1`, `datums`. A step defines a target (`Part::define_target`) or
-revises one an earlier step made (`Part::revise_target`) with a
-*generator*, a plain function `fn(&Reader, &Args) -> GeopResult<Out>` that
-captures nothing, so everything it needs is in its arguments. Every
-revision is a version of its own; a read sees the latest version made
-before it in the same run, and a generator revising a target reads what it
-revises with `Reader::previous`.
+The `target`, `part` and `reader` modules. A `Part` is a memo table with
+one kind of node: what one step produced of one target, keyed by the
+step's id and the target's name (`TargetReference<T>`: a stable name and
+the type of its value — the model, `sketch:s1`, `datums`), never by a
+position. A step only *declares* what it produces:
+`ctx.produce(&target, &args, make)` (`StepContext::produce`), where `make`
+is a plain function `fn(&Reader, &Args) -> GeopResult<T>` that captures
+nothing, so everything it needs is in its arguments. The node is computed
+at once, so a later node of the same step can read it, unless it can be
+reused. A step runs no geometry outside a make.
 
-A part is read only through a `Reader`, which records every read: a version
-is reused from the last run when its step made it from equal arguments and
-nothing it read has changed since, and a version rebuilt into a value equal
-to the last one counts as unchanged, so what read it is reused in turn. An
-editor reads through a reader too, recording nothing: the part now
-(`Part::current`), or before one step of the last run (`Part::reader`).
-`Reader::targets_of` lists the targets of one type, newest last — the
-sketches, say.
+Every read through the `Reader` a make is given is recorded on its node
+(`Read`): which producer's version of a target it saw, that no producer
+was visible, the value of an input or of the state, a file's revision,
+which targets of a type there were, and a read inside a placed part. A node
+is reused iff its arguments are equal and every recorded read holds now.
+So **a make runs when its node is new, its arguments differ, or something
+it read changed; nothing else ever runs.** A node made again into a value
+equal to the last (by `PartialEq`) keeps its version, so what read it is
+reused in turn. Versions are stamps unique across all parts, so two builds
+of a placed part share a version only where one carried the node over from
+the other.
+
+The producer a step sees of a target is the latest step before it, in the
+current program's order, that produces it. A target several steps produce
+— the model, the datums, the parameters' values — is a **chain**: its type
+says so (`Target::CHAIN`), and each producer starts from what the one
+before left (`Reader::previous`, the default where none did). A second
+producer of a target that is no chain — a sketch, a placed part — is an
+error naming both steps. Inserting, removing or reordering steps changes
+which producer a reader sees, and that is caught by the recorded reads, not
+by positions shifting: two independent steps swapped are both reused.
+
+A part is read only through a `Reader`. An editor reads through one too,
+recording nothing: the part now (`Part::current`), or before or after one
+step of the last run (`Part::before`, `Part::after`). `Reader::targets_of`
+lists the targets of one type, in the order their steps produced them; the
+listing is a read of its own. A node that failed holds why, and a node
+reading it fails with that message in context.
 
 Inputs and state values are read by name through the reader
 (`retrieve_input`, `retrieve_state`). A state value the run gives none of
@@ -76,61 +96,52 @@ resolves one.
   target and a name, with no types. Only `ElementReference::from_picked`
   reads one, so an operation never matches on it.
 
-## Instances
+## Placed parts
 
-The `instance` module. A step may load the part another program builds as
-the part of an **instance**, by a name of its own
-(`ProgramRunner::load_subpart(part, name, file, inputs)`, called with the
-runner the step is run by): the program in `file`, read from the runner's
-workspace, run in the runner's operations with `inputs` and the state it
-was saved with. Where the instance is
-placed is no concern of the program's: the operation that loads it defines
-a target of its own that says so, in the terms of the state that moves it
-(see `geop_ops_parameters::instance`).
+The `placed` module. A step places the part another program builds as a
+node of its own (`place(ctx, name, &PlacedArgs { file, inputs })`, whose
+make is `build_placed`), whose value is the built part (`PlacedPart`, an
+`Rc<Part>`). The make reads the program through its reader (a file read,
+in the workspace's revision of that file) and builds it with `inputs` and
+the slice of the placing part's state under the instance's name — the
+state `bolt/b.pose` of the part is the state `b.pose` of the part placed as
+`bolt` — the program's own where the part gives none. What a placed part is
+built from is exactly that, so equal builds are shared through the
+runner's build cache: a thousand screws of one size are one build, a
+thousand `Rc` clones. A placed part whose state changed is built again
+from a clone of the part it was, so only what reads what changed is made
+again; the result is a new build. The cache is swept at the end of every
+top-level run of what no part holds any more. Where a placed part goes is
+no concern of its build: its pose is the placing part's state (see
+`geop_ops_parameters::instance`), so dragging it builds nothing.
 
-The part keeps the part of each instance, by the instance's name, and runs
-it again in every run that loads it, as the same run: what reads what
-changed is built again, in it and in the part, and the rest is reused, as
-in any run. An instance's part given the very program it was run with
-last (the same `Rc`, or an equal program), from the same file, its inputs
-and state as they were, and no file of the workspace changed since, is
-carried over whole: none of its steps runs, however deep, since each would
-only reuse what it made. A part no step loaded in a run is
-dropped with the versions no step made, and loading one twice in a run
-defines its target twice. `Part::changed_at` is the last run that changed
-anything in a part — a version, or the part of an instance. Sharing the
-part of every instance whose run read none of the state is left for later
-(a TODO in `Part`): such a part is the same wherever it is placed.
-
-- An instance's part is run with the state of the part under its name:
-  the state `bolt/b.pose` of the part is the state `b.pose` of the
-  instance `bolt`, and its own where the part gives none. A state, or an
-  input, behind an instance's path is read inside the instance's part
-  (`Reader::inside`), as it was run with it — none before a step loaded
-  it — which is also where the read is checked. Whatever solves the part's
-  state solves its instances' too.
-- An element of an instance is named by the instance's path before its
-  target's name: `bolt/model`, `asm/bolt/model` for one of an instance's
-  instance (`INSTANCE_SEPARATOR`). A pick names it so, and every
+- An element of a placed part is named by the instance's path before its
+  target's name: `bolt/model`, `asm/bolt/model` for one of a placed part's
+  placed part (`INSTANCE_SEPARATOR`). A pick names it so, and every
   `ElementReference` can hold one: a picker never asks where an element
   is from. `Reader::retrieve_element` resolves elements of the part
-  itself, and refuses one of an instance by name; `Reader::retrieve_placed`
-  resolves either, as it is in its own part, with the instance's path
-  (`InInstance`).
-- `Reader::inside` reads the part of the instance at a path, as its
-  program left it in this run. What it reads is recorded behind the path,
-  as read by the target being made: that target is built again when what
-  it read in the instance changes. `Reader::subparts` lists the instances
-  of the part itself.
+  itself, and refuses one of a placed part by name;
+  `Reader::retrieve_placed` resolves either, as it is in its own part,
+  with the instance's path (`InInstance`).
+- `Reader::placed_part(path)` reads the part placed at a path, as it was
+  built. What it reads is recorded as read inside the placed part
+  (`Read::Inside`): a mate reading the second link of an arm is made again
+  when that link changed, not when anything in the arm did.
+  `Reader::instances` lists the parts placed in the part itself.
+- A state behind an instance's path — `bolt/b.pose` — is read as the
+  placing part gives it where it does, else inside the placed part
+  (`Reader::given_state`), so what is read is always what the placed part
+  is built with.
+- Files must not place themselves: the runner carries the stack of files
+  being built and refuses a cycle, naming it.
 
 ## Operations and programs
 
 The `operation`, `operation_registry` and `program` modules. An `Operation` is a unit struct: its `KIND` (the name its steps are stored
 under), its `Args` — plain, serializable design data that names targets and
-elements, never internal ids — and `run(step, runner, part, args)`, which
-defines and revises the step's targets in `part`; `runner` is the runner
-running the step, which a step uses to run programs of its own — the parts
-of instances. `StepArgs` are arguments that say which
+elements, never internal ids — and `run(ctx, args)`, which declares what
+the step produces through its `StepContext`: the step's id, the runner
+running it, and `produce`. `StepArgs` are arguments that say which
 operation they are for, so a program written in Rust pushes them without
 naming the operation again.
 
@@ -138,7 +149,7 @@ A `Program` is what a `.geop` file holds, `{"steps": [...], "state":
 {...}}`: an ordered list of `ProgramStep`s, each an operation's kind, its
 arguments as saved JSON and an id —
 `{"id": "box", "operation": "extrude", "args": {...}}` — and the state it
-was saved with, what it is run with where whoever runs it gives none
+was saved with: the state a run of it is at, which a solve moves
 (`Program::run`). Everything a step creates is named after its id, so ids
 are unique and spelled in an alphabet a name can be built from
 (`validate_operation_id`); steps refer to what earlier steps built only by
@@ -163,13 +174,20 @@ operations it edits (see
 
 ## Running a program
 
-The `program_runner` module. A `ProgramRunner` runs programs, with its
-registry's operations, on a part it is given; it holds no part itself. The
-step at position `k` of a program is at position `k` of the part. A step
-reads what is not given to its run — a program it places, a file it
-imports — through the runner, in its body, which runs in every run, and
-passes what it read to the targets it defines as arguments: a target is
-made again exactly when what it read changed.
+The `runner` module. A `Runner` runs programs, with its registry's
+operations, on a part it is given; it holds no part itself, only its
+workspace, its location (the file it runs and the files being built
+around it) and the build cache it shares with the runners of the parts it
+places. `run(part, program, upto)` runs the steps before the step `upto` —
+all of them for `None` — at the program's state; `run_with` gives the
+run's inputs too. The nodes of steps after `upto` are kept, to be reused
+when they run again; those of steps no longer in the program are dropped
+at the end of the run. A failed step does not stop the run: later steps
+that do not depend on it still build, and the `RunOutput` lists the
+failures in program order. `run_step(part, step, body)` runs one step by
+hand, as a test of one operation does. `counts()` says how many makes ran,
+how many of them placed parts, and how many placed parts were built rather
+than taken from the cache: what a test of what runs counts, never a time.
 
 ## The workspace
 
@@ -177,11 +195,14 @@ The `workspace` module. A `Workspace` is where programs come from: a
 program by its file's path (a `Program`, with the state it was saved
 with), another file's text, the list of files, and how paths name
 each other (`resolve`, `relative`). It says how often a file changed
-(`revision`). A runner holds one, and the `Location` of the program it
+(`revision(path)`): a node that read a file is made again once its
+revision changes. A runner holds one, and the `Location` of the program it
 runs: its file, and the files placing it. A program never knows where it
 is: the runner resolves a file the program names from its location, and
 refuses one placing the program it runs, however deep — the files would
-place themselves — naming the cycle (`ProgramRunner::program`).
+place themselves — naming the cycle (`Runner::program`). A make reads a
+file through its reader (`Reader::read_file`, `Reader::program`), which
+records the read.
 
 `Files` is the workspace of a set of files read from a `FileStore` (in
 memory, on disk, or another store decorating one, as the standard parts
@@ -199,13 +220,15 @@ parameters: numbers, `+ - * / ^`, parentheses, `pi` and the functions
 (`FUNCTION_NAMES`), angles in degrees (`evaluate`). A step resolves it
 where it builds (`NumericInput::resolve`), reading each parameter the
 formula names — the target a step of the program defines for it
-(`parameter`, a `ParameterValue`: a number, or a table's row and its
-columns; `read_parameter`) — so a change to one of them rebuilds the step
+(`parameter`, a `ParameterValue`: a number, or a text — the row a table
+looked up; a table's columns are parameters of their own, `size.d`;
+`read_parameter`) — so a change to one of them rebuilds the step
 and a change to any other does not. Saved, a formula is told apart from
 every other value in a step's arguments (`formulas_in`,
 `rename_parameter_in`), so what reads a parameter is found, and renamed,
 without asking the operation. `ParameterValues` is every parameter as it
-came to (`read_parameter_values`: none, for a part defining none). What
+came to, a chain every step defining parameters adds to
+(`read_parameter_values`: none, for a part defining none). What
 defines parameters is an operation of
 [geop-ops-parameters](../ops/geop-ops-parameters.md); how a dialog shows a
 number is [geop-core-editor](./geop-core-editor.md#numbers-as-formulas)'s.
@@ -214,16 +237,8 @@ number is [geop-core-editor](./geop-core-editor.md#numbers-as-formulas)'s.
 
 With the feature `testing`, `testing::assert_incremental(registry,
 workspace, programs)` runs a sequence of programs — one edited again and
-again — on one part, and each from scratch on a fresh one, and asserts
-that both hold equal versions of every target (`Part::differences`, by
-each target's `PartialEq`) and fail alike: what makes reusing versions
+again — on one part, and each from scratch on a fresh part by a fresh
+runner, its placed parts built anew, and asserts that both hold equal
+nodes of every target (`Part::differences`, by each target's `PartialEq`,
+inside placed parts too) and fail alike: what makes reusing nodes
 trustworthy, checked without knowing how an operation reuses anything.
-
-`run(part, program, inputs, state)` runs it all; `run_until(part, program, end, ...)`
-runs the first `end` steps, as the editor does up to its marker, keeping
-what the later steps made to reuse when they run again. A failed step does
-not stop the run: later steps that do not depend on it still build, and the
-`RunOutput` lists the failures in program order. Since every version is
-reused while nothing it read changed, a run after an edit rebuilds only
-what reads what the edit changed — after a parameter changed, only the
-steps whose formulas read it.

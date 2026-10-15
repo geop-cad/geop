@@ -36,15 +36,21 @@ core/geop-core-program        what a program is (`Program`: steps and state,
                                ids, copy and paste, checked against its
                                operations), the values it is run with
                                (`Design`, `Setting`, `StateValue`), the
-                               parts it builds: targets a step defines and
-                               revises, typed references to their elements
-                               (`ElementReference`), instances — parts
-                               placed in a part, run with its state behind
-                               their names — the operations a program is
-                               written in, running it from the given step
-                               on, the workspace of files it reads
-                               (`Files`, `FileStore`), and numbers as typed
-                               or formulas of its parameters (`NumericInput`,
+                               part it builds: a memo table of nodes, one
+                               per step and target, each made by a plain
+                               make and reused while its arguments are
+                               equal and what it read holds (`Part`,
+                               `StepContext::produce`, `Reader`, `Read`),
+                               chain targets several steps produce, typed
+                               references to their elements
+                               (`ElementReference`), placed parts — built
+                               from their program, inputs and state slice,
+                               equal builds shared (`placed`) — the
+                               operations a program is written in, running
+                               it up to a step (`Runner`), the workspace of
+                               files it reads (`Files`, `FileStore`), and
+                               numbers as typed or formulas of its
+                               parameters (`NumericInput`,
                                `ParameterValues`); feature `testing`:
                                `assert_incremental`
 core/geop-core-editor         what an operation is and how it is edited
@@ -63,7 +69,8 @@ ops/geop-ops-model            the model a part's steps build: topology with
                                the program's id alphabet
 ops/geop-ops-parameters       a part's parameters (numbers, tables, colour,
                                material) as steps defining them
-                               (`DefineParameters`, `PartProperties`), read,
+                               (`DefineParameters`, `LookupTable` for a part
+                               family's table, `PartProperties`), read,
                                set and renamed in a `Program`
                                (`parameters_of`, `set_parameters`,
                                `rename_parameter`, `parameter_uses`); where

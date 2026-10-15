@@ -19,7 +19,7 @@ each defined by the crate that builds it. `infos` lists them for a front
 end's toolbar, and `registry` is the registry its programs run with.
 A [`Program`](../core/geop-core-program.md#operations-and-programs) is
 what the web editor edits and the command-line tool compiles, run by a
-`ProgramRunner` of these operations (`runner`). `operations::build(program, file, workspace)`
+`Runner` of these operations (`runner`). `operations::build(program, file, workspace)`
 builds a program outside the editor, as the file `file` of the workspace
 it places parts from (`operations::workspace`, beside the standard parts).
 
@@ -106,10 +106,10 @@ fields in one line and whether it failed — the part to draw, and the step
 being edited with its presentation and whether it builds. What did not
 change since the last update is left out: a hover sends only the step, and
 the part is sent again only once something ran. The steps are run by one
-`ProgramRunner` — up to and including the step being edited while there is one,
-else as far as the program runs — which keeps the part after every step,
-so the part before the step being edited is always at hand, and a change
-to it replays only that step.
+`Runner` — up to and including the step being edited while there is one,
+else as far as the program runs — on one part, a memo table of every
+step's nodes, so the part before the step being edited is always at
+hand, and a change to it makes again only what reads what changed.
 
 What the shown steps built on — their reference fields' values — is hidden
 from the drawing: sketches and whole datums, since what was made from them

@@ -33,25 +33,34 @@ program.push("hole", ExtrudeArgs {
 ```
 
 `parameters_of` and `set_parameters` read and write its parameters and
-properties, as an editor lists them together (`Parameters`), in their two
-steps; `parameter_numbers` gives what its parameters come to as defined,
+properties, as an editor lists them together (`Parameters`), in their
+steps — the properties, the numbers, and a lookup step per table, before
+the numbers whose formulas read its columns; `parameter_numbers` gives
+what its parameters come to as defined,
 `parameter_uses` what reads each, and `rename_parameter` renames a
 parameter and every formula reading it.
 
 ## Parameters
 
 Parameters are the named values a program's design is given by, defined
-by a step of the program (`DefineParameters`, the step `parameters`) as a
-target each (`parameter:<name>`), and read by name wherever a number is
-typed (a [`NumericInput`](../core/geop-core-program.md#numbers-as-formulas)):
-a sketch dimension of `width / 2`.
+by steps of the program as a target each (`parameter:<name>`), and read by
+name wherever a number is typed (a
+[`NumericInput`](../core/geop-core-program.md#numbers-as-formulas)): a
+sketch dimension of `width / 2`. Every step defining parameters adds them
+to the part's `ParameterValues`, a chain.
 
-- **Numbers**, each a formula of the others, defined before it or after —
-  `4`, `width / 2`, `sqrt(a^2 + b^2)`. A `min` and `max` say what a slider
-  offers when the part is placed.
-- **Tables**: a family of variants — screw sizes, say — one row each, of
-  which one is selected. `screw` is the selected row's name, and
-  `screw.clearance` its value in the column `clearance`.
+- **Numbers** (`DefineParameters`, the step `parameters`, of
+  `NumberParameter`s), each a formula of the others, defined before it or
+  after, and of the tables' columns — `4`, `width / 2`,
+  `sqrt(a^2 + b^2)`. A `min` and `max` say what a slider offers when the
+  part is placed.
+- **Tables** (`LookupTable`, a step of its own per table): a part family —
+  screw sizes, say — one row each. The row built is the one the run's
+  text input of the table's name names (`size = "M4"`, from a program
+  placing the part), else the table's own selection; a text naming no row
+  fails, naming the input and the rows. `screw` is the row's name, and
+  `screw.clearance` its value in the column `clearance`, each a parameter
+  of its own.
 What a parameter is defined as is the program's own; what it is *built
 with* may be set by a program placing the part, by the same name: the run's
 input of that name, a `Setting` (see
@@ -83,15 +92,16 @@ the program, through the runner running it.
 
 ## Where instances are placed (`instance`)
 
-A step that loads the part of an instance (see
-[geop-core-program](../core/geop-core-program.md#instances)) says where it
-goes with a target of its own (`define_instance`, an `Instance`): a
+A step that places a part (see
+[geop-core-program](../core/geop-core-program.md#placed-parts)) says where
+it goes with a target of its own (`define_instance`, an `Instance`): a
 `Placement` — where a pose state of the part puts it, or, for a copy, a
 fixed motion after another instance — and the file and inputs its part
-was loaded from, which a copy loads again. `instance` reads one, `instances` every one of the parts
-the part has loaded (`Reader::subparts`) — each loaded part must be
-placed — and `placement`
-gives where an instance is, however deep, as `Factor`s outermost first:
-the values of the state that place it and the instances it is in, read
-and recorded, and the fixed motions of copies. `compose` composes them
-into a pose, and `located` gives the pose of the instance at a path.
+was placed from, which a copy places again. `instance` reads one,
+`instances` every one of the parts placed in the part
+(`Reader::instances`) — each must be defined — and `placement` gives
+where an instance is, however deep, as `Factor`s outermost first: the
+values of the state that place it and the instances it is in, each read
+by its path in the part asked (`bolt/nut.pose`) and recorded, and the
+fixed motions of copies. `compose` composes them into a pose, and
+`located` gives the pose of the instance at a path.

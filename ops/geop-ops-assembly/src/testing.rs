@@ -15,7 +15,7 @@ use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_ops_model::{NamedModel, SolidNotes, model, solid_notes};
-use geop_ops_parameters::{DefineParameters, PartProperties, Placement};
+use geop_ops_parameters::{DefineParameters, LookupTable, PartProperties, Placement};
 use serde::{Deserialize, Serialize};
 
 use crate::placed::define_placed;
@@ -135,6 +135,7 @@ impl Workspace for Shelf {
 /// properties steps, a model given and a part placed.
 pub fn registry() -> OperationRegistry {
     (OperationRegistry::default().with(DefineParameters))
+        .and_then(|r| r.with(LookupTable))
         .and_then(|r| r.with(PartProperties))
         .and_then(|r| r.with(GivenModel))
         .and_then(|r| r.with(Place))

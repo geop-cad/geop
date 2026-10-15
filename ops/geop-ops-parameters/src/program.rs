@@ -26,7 +26,7 @@ use crate::{
 
 /// The parameters and properties of `program`, as its steps define them
 /// (see [`crate::steps`]): its tables, as its [`LookupTable`] steps look
-/// them up, in order, then its numbers — none, where it has no such step.
+/// them up, after its numbers — none, where it has no such step.
 pub fn parameters_of(program: &Program) -> Parameters {
     let args = |kind: &str| program.steps.iter().find(|s| s.operation == kind);
     let tables = (program.steps.iter())
@@ -61,7 +61,7 @@ pub fn parameters_of(program: &Program) -> Parameters {
         material: properties.material,
         title: properties.title,
         designation: properties.designation,
-        values: tables.chain(numbers).collect(),
+        values: numbers.chain(tables).collect(),
     }
 }
 

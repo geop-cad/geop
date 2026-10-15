@@ -20,7 +20,7 @@ use std::{collections::BTreeMap, rc::Rc};
 use geop_core_editor::editable::{Editable, Editors, Listed};
 use geop_core_math::geop_error::GeopResult;
 use geop_ops_output::Outputs;
-use geop_ops_parameters::{DefineParameters, PartProperties};
+use geop_ops_parameters::{DefineParameters, LookupTable, PartProperties};
 
 use crate::stdlib::WithStandardParts;
 use geop_ops_add_datum::AddDatum;
@@ -167,6 +167,7 @@ operations! {
     ImportStep,
     Drawing,
     DefineParameters,
+    LookupTable,
     PartProperties,
 }
 
