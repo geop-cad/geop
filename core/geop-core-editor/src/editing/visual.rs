@@ -120,7 +120,7 @@ pub struct Prompt<S: Scalar> {
 /// Something an operation draws in the viewport, under a key the hit tests
 /// report (see [`super::hit::hit_visuals`]) — and what the user can do with
 /// it, which the editor handles alike for every operation (see
-/// the step editor, `geop_cad_base::step_editor`).
+/// the step editor, [`crate::step_editor`]).
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(bound = "S: Scalar")]
 pub struct Visual<S: Scalar> {

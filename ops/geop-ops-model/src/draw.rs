@@ -3,12 +3,16 @@
 
 use std::collections::HashMap;
 
-use geop_core_editor::view::{PartView, RESOLUTION, ViewEdge, ViewFace, ViewVertex};
+use geop_core_editor::{
+    registry::{Drawer, StructureItem},
+    view::{PartView, RESOLUTION, ViewEdge, ViewFace, ViewVertex},
+};
 use geop_core_math::geop_error::GeopResult;
+use geop_core_program::reader::Reader;
 use geop_core_rasterize::rasterize;
 use geop_core_topology::{EdgeId, Model, SolidId};
 
-use crate::{NamedModel, RefId};
+use crate::{NamedModel, RefId, read_model};
 use geop_core_program::values::Design;
 
 /// The solid `edge` bounds: that of a face it runs along.
@@ -89,6 +93,25 @@ impl NamedModel<Design> {
             .collect();
         view.solids = model.solids.keys().map(|&s| name(s.into())).collect();
         Ok(())
+    }
+}
+
+/// Draws a part's model, as the target `model`, and lists its solids and
+/// the faces standing on their own, of no solid.
+pub struct ModelDrawer;
+
+impl Drawer for ModelDrawer {
+    fn draw(&self, reader: &Reader, view: &mut PartView) -> GeopResult<()> {
+        read_model(reader)?.draw("model", view)
+    }
+
+    fn structure(&self, reader: &Reader) -> GeopResult<Vec<StructureItem>> {
+        let model = read_model(reader)?;
+        let solids =
+            (model.solid_names().into_iter()).map(|n| StructureItem::drawn("solid", "Solids", &n));
+        let faces = (model.sheet_face_names().into_iter())
+            .map(|n| StructureItem::drawn("face", "Faces", &n));
+        Ok(solids.chain(faces).collect())
     }
 }
 

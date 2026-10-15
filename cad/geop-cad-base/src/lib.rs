@@ -1,16 +1,14 @@
-//! The CAD engine: which operations the editor offers, and the programs
-//! written in them ([`operations`]); editing such a program, as one state
-//! machine an editor drives ([`editor`]), with its pick tool ([`inspect`]);
-//! example programs ([`examples`]); and the standard parts every workspace
-//! can place ([`stdlib`]).
+//! The CAD application, composed: everything its editor offers, one line
+//! per crate ([`registry`]), an editor of all of it ([`editor`]), the
+//! example programs ([`examples`]) and the standard parts every workspace
+//! can place ([`stdlib`]). The editor itself is
+//! [`geop_core_editor::editor`]'s; the operations are their crates'.
 
-pub mod editor;
 pub mod examples;
-pub mod inspect;
-pub mod operations;
-pub mod part;
+#[cfg(test)]
+mod operations;
+pub mod registry;
 pub mod stdlib;
-pub mod step_editor;
 
-pub use editor::{Command, Editor, Update};
-pub use operations::{Workspace, infos, outputs, registry};
+pub use geop_core_editor::editor::{Command, Editor, Update};
+pub use registry::{BuiltPart, Workspace, build, editor, outputs, registry, runner, workspace};

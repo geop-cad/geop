@@ -47,7 +47,10 @@ use geop_core_program::{
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use geop_core_editor::output::{Content, Export, Exporter, ExporterInfo, Output};
+use geop_core_editor::{
+    editor::Rerun,
+    output::{Content, Export, Exporter, ExporterInfo, Output},
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::{Pose, Quaternion},
@@ -64,7 +67,7 @@ use geop_ops_assembly::{
     placed_parts,
     residuals::D,
     solids::{Shapes, own_solids_at},
-    solving::{self, Rerun, check},
+    solving::{self, check},
     stl_bytes,
 };
 use geop_ops_model::read_model;
@@ -741,4 +744,12 @@ fn mimics(mechanism: &Mechanism, tree: &tree::Tree, joints: &mut [Joint]) -> Geo
         });
     }
     Ok(())
+}
+
+use geop_core_editor::registry::Registry;
+
+/// Adds what this crate offers an editor to `r`: a part with its placed
+/// parts written as a URDF robot.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.exporter(Urdf)
 }

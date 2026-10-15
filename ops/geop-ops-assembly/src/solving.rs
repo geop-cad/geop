@@ -15,16 +15,13 @@
 
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
-    part::Part,
-    program::Program,
     reader::Reader,
-    runner::Runner,
     target::{Target, TargetReference},
     values::{Design, StateValue, StateValues, pose_state},
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-use geop_core_editor::editing::Pull;
+use geop_core_editor::{editing::Pull, editor::Rerun};
 use geop_core_math::{
     dual::Dual,
     geop_error::{GeopError, GeopResult},
@@ -51,28 +48,13 @@ pub use geop_ops_constraints::unknown::{Unknown, declare_unknowns};
 use crate::placed::{Drawn, Located, drawn, locate, placed_parts};
 use geop_core_editor::view::PartView;
 
-/// A program, its runner and the part it last ran on: what a solve runs
-/// again at every state it tries, the program's state set to it.
-pub struct Rerun<'r> {
-    pub runner: &'r Runner,
-    pub part: &'r mut Part,
-    pub program: &'r Program,
-}
-
-impl Rerun<'_> {
-    /// The part as the program last ran.
-    pub fn reader(&self) -> Reader<'_> {
-        self.part.current()
-    }
-
-    /// The program, to run again by a solve.
-    fn run(&mut self) -> Run<'_> {
-        Run {
-            runner: self.runner,
-            part: &mut *self.part,
-            program: self.program.clone(),
-            inputs: Default::default(),
-        }
+/// The program of `rerun`, to run again by a solve.
+fn run<'r>(rerun: &'r mut Rerun) -> Run<'r> {
+    Run {
+        runner: rerun.runner,
+        part: &mut *rerun.part,
+        program: rerun.program.clone(),
+        inputs: Default::default(),
     }
 }
 
@@ -590,14 +572,14 @@ pub fn solve(
         for (name, at) in driven.iter().zip(at) {
             start.insert(name.clone(), StateValue::Number(Design::from_f64(*at)));
         }
-        start = solve::solve(rerun.run(), &start, &problem(&free, Vec::new(), scale))?.state;
+        start = solve::solve(run(rerun), &start, &problem(&free, Vec::new(), scale))?.state;
         Ok::<_, GeopError>(())
     })?;
     for (name, value) in &set {
         start.insert(name.clone(), StateValue::Number(*value));
     }
     let preferences = preferences.iter().map(|p| &**p).collect();
-    let solved = solve::solve(rerun.run(), &start, &problem(&free, preferences, scale))?;
+    let solved = solve::solve(run(rerun), &start, &problem(&free, preferences, scale))?;
     let (solved, report) = report(&rerun.reader(), solved)?;
     Ok((changes(&had, solved), report))
 }
@@ -672,7 +654,7 @@ pub fn freedom(
     held: &BTreeSet<String>,
 ) -> GeopResult<Freedom> {
     let (start, problem) = every_value(rerun, state, held)?;
-    let freedom = solve::freedom(rerun.run(), &start, &problem)?;
+    let freedom = solve::freedom(run(rerun), &start, &problem)?;
     let parts = (placed_parts(&rerun.reader())?.into_iter())
         .map(|placed| {
             let dof = (placed.located.state)
@@ -692,7 +674,7 @@ pub fn freedom(
 /// all hold after a solve (see [`solve::conflicting`]).
 pub fn conflicting(rerun: &mut Rerun, state: &StateValues) -> GeopResult<Vec<String>> {
     let (start, problem) = every_value(rerun, state, &BTreeSet::new())?;
-    solve::conflicting(rerun.run(), &start, &problem)
+    solve::conflicting(run(rerun), &start, &problem)
 }
 
 /// The values of the state a solve sets: the unknowns the steps declare —

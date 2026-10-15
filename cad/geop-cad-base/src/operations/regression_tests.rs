@@ -19,7 +19,7 @@ use geop_ops_sketch::{
 
 use crate::{
     examples::n,
-    operations::testing::{Built, args, assert_valid, extrusion, on_face, on_origin, sketch},
+    registry::testing::{Built, args, assert_valid, extrusion, on_face, on_origin, sketch},
 };
 
 /// Checks the part `program` builds is valid (see [`assert_valid`]) and is
@@ -271,7 +271,7 @@ fn spline_revolved_then_extruded_and_joined() {
     sketch.constrain(Constraint::Vertical { line: axis });
     program.push(
         "sketch1",
-        crate::operations::testing::sketch(on_origin(FrameAxis::Z), sketch),
+        crate::registry::testing::sketch(on_origin(FrameAxis::Z), sketch),
     );
     program.push(
         "revolve1",

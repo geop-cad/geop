@@ -46,3 +46,17 @@ pub use edge_flange::{
 pub use flat_pattern::{BendLine, FlatPattern, FlatPatternArgs, FlatPatternData, SolidRef};
 pub use hem::{Hem, HemArgs, HemKind};
 pub use sheet::{Relief, Sheet, SheetMetalRules};
+
+use geop_core_editor::registry::Registry;
+use geop_core_math::geop_error::GeopResult;
+
+/// Adds what this crate offers an editor to `r`: sheet metal: flanges,
+/// hems, cuts, the flat pattern and its DXF.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.operation(BaseFlange)?
+        .operation(EdgeFlange)?
+        .operation(Hem)?
+        .operation(SheetCut)?
+        .operation(FlatPattern)?
+        .exporter(FlatPatternDxf)
+}

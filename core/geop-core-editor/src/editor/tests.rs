@@ -1,0 +1,278 @@
+//! The engine is operation-free: an [`Editor`] over a registry of two test
+//! operations and a drawer — no panel, no tool, no settler — edits their
+//! programs the way a front end drives it.
+
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    primitives::{CoordinateSystem, DatumKind},
+    scalars::Scalar,
+    vector::Vector3,
+};
+use geop_core_program::{
+    element::{ElementReference, HasElements, Kind, whole},
+    operation::Operation,
+    part::StepContext,
+    reader::Reader,
+    target::{Target, TargetReference},
+    values::Design,
+};
+use serde::{Deserialize, Serialize};
+
+use super::{Command, Editor, Update};
+use crate::{
+    editable::{Context, Editable, OperationGroup, OperationInfo, OperationTier},
+    editing::{CanvasEvent, Event, Form},
+    registry::{Drawer, Registry, StructureItem},
+    testing::{click_at, editor_with, from_above, handled},
+    view::{PartView, ViewDatum},
+};
+
+/// A point a step put down: the target named after the step.
+#[derive(Clone, Debug, PartialEq)]
+struct Point(Vector3<Design>);
+
+impl Target for Point {}
+
+impl Kind for Point {
+    const NAME: &'static str = "point";
+}
+
+impl HasElements<Point> for Point {
+    type Element<'a> = &'a Point;
+
+    fn element(&self, name: &str) -> GeopResult<&Point> {
+        whole(self, name)
+    }
+}
+
+/// The point the step `step` put down.
+fn point(step: &str) -> ElementReference<Point, Point> {
+    ElementReference::whole(TargetReference::new(step))
+}
+
+/// Puts a point down where it is clicked, on the plane `z = 0`.
+struct Place;
+
+impl Operation for Place {
+    const KIND: &'static str = "place";
+    type Args = Vector3<Design>;
+
+    fn run(ctx: &mut StepContext, at: &Vector3<Design>) -> GeopResult<()> {
+        let step = ctx.step();
+        ctx.produce(&TargetReference::new(step), at, |_, at| Ok(Point(*at)))
+    }
+}
+
+impl Editable for Place {
+    const INFO: OperationInfo = OperationInfo::new(
+        "Place",
+        "Put a point down.",
+        OperationGroup::Sketch,
+        OperationTier::Big,
+    );
+    type EditingState = ();
+
+    fn new_args(_: &Context) -> Vector3<Design> {
+        Vector3::zero()
+    }
+
+    fn presentation(_: &Context, _: &Vector3<Design>, _: &()) -> Form<Design> {
+        Form::default()
+    }
+
+    fn process_user_event(
+        _: &Context,
+        at: &Vector3<Design>,
+        _: &(),
+        event: Event<Design>,
+    ) -> (Vector3<Design>, ()) {
+        let Event::Canvas(CanvasEvent::Click { pointer, .. }) = event else {
+            return (*at, ());
+        };
+        let up = Vector3::axis(2);
+        match pointer.ray.intersect_plane(&Vector3::zero(), &up) {
+            // Where it was clicked, a free choice — so sharp — and on the
+            // plane.
+            Some((_, hit)) => {
+                let [x, y, _] = hit.sharpen().to_array();
+                (Vector3::from_array([x, y, Design::ZERO]), ())
+            }
+            None => (*at, ()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+struct RaiseArgs {
+    /// The step whose point is raised.
+    from: String,
+    by: f64,
+}
+
+/// Puts a point down above the point another step put down.
+struct Raise;
+
+impl Operation for Raise {
+    const KIND: &'static str = "raise";
+    type Args = RaiseArgs;
+
+    fn run(ctx: &mut StepContext, args: &RaiseArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        ctx.produce(&TargetReference::new(step), args, |reader, args| {
+            let below = reader.retrieve_element(&point(&args.from))?;
+            let by = Vector3::from_array([0.0, 0.0, args.by].map(Design::from_f64));
+            Ok(Point(below.0.add(&by)))
+        })
+    }
+}
+
+impl Editable for Raise {
+    const INFO: OperationInfo = OperationInfo::new(
+        "Raise",
+        "Put a point down above another.",
+        OperationGroup::Sketch,
+        OperationTier::Small,
+    );
+    type EditingState = ();
+
+    /// Above the last point put down, by one.
+    fn new_args(context: &Context) -> RaiseArgs {
+        let last = context.before.targets_of::<Point>().pop();
+        RaiseArgs {
+            from: last.map(|t| t.name().to_string()).unwrap_or_default(),
+            by: 1.0,
+        }
+    }
+
+    fn presentation(_: &Context, _: &RaiseArgs, _: &()) -> Form<Design> {
+        Form::default()
+    }
+
+    fn process_user_event(
+        _: &Context,
+        args: &RaiseArgs,
+        _: &(),
+        _: Event<Design>,
+    ) -> (RaiseArgs, ()) {
+        (args.clone(), ())
+    }
+}
+
+/// Draws every point as a point datum, and lists it.
+struct Points;
+
+impl Drawer for Points {
+    fn draw(&self, reader: &Reader, view: &mut PartView) -> GeopResult<()> {
+        for target in reader.targets_of::<Point>() {
+            let Point(at) = reader.retrieve_element(&point(target.name()))?;
+            view.datums.push(ViewDatum {
+                name: target.name().to_string(),
+                kind: DatumKind::Point,
+                frame: CoordinateSystem::world_at(*at),
+                components: Vec::new(),
+            });
+        }
+        Ok(())
+    }
+
+    fn structure(&self, reader: &Reader) -> GeopResult<Vec<StructureItem>> {
+        Ok((reader.targets_of::<Point>().iter())
+            .map(|target| StructureItem::drawn("point", "Points", target.name()))
+            .collect())
+    }
+}
+
+/// What the editor draws, by name: where each point is.
+fn drawn(update: &Update) -> Vec<(String, [f64; 3])> {
+    let scene = update.scene.as_ref().expect("a scene");
+    (scene.part.datums.iter())
+        .map(|d| {
+            (
+                d.name.clone(),
+                d.frame.origin().to_array().map(|c| c.to_f64()),
+            )
+        })
+        .collect()
+}
+
+/// Puts a point down by a new step of `kind`, clicked at `(x, y)`, and
+/// commits it.
+fn put(editor: &mut Editor, kind: &str, x: f64, y: f64) -> Update {
+    handled(editor, Command::New { kind: kind.into() });
+    handled(editor, click_at(from_above(x, y)));
+    handled(editor, Command::Commit)
+}
+
+#[test]
+fn an_editor_of_a_registry_of_its_own_edits_programs() -> Result<(), GeopError> {
+    let registry = (Registry::default().operation(Place))
+        .and_then(|r| r.operation(Raise))
+        .and_then(|r| r.drawer(Points))?;
+    let mut editor = editor_with(registry, Default::default());
+
+    let shown = handled(&mut editor, Command::Show);
+    let program = shown.program.expect("the program is sent");
+    let kinds: Vec<&str> = program.operations.iter().map(|o| o.kind).collect();
+    assert_eq!(kinds, ["place", "raise"]);
+    assert!(program.panels.is_empty() && program.tool.is_none());
+    assert!(program.inspectors.is_empty() && program.examples.is_empty());
+
+    // Two points clicked down, one raised above the second.
+    put(&mut editor, "place", 2.0, 3.0);
+    put(&mut editor, "place", 5.0, 0.0);
+    let update = put(&mut editor, "raise", 0.0, 0.0);
+    let ids: Vec<&str> = editor
+        .program()
+        .steps
+        .iter()
+        .map(|s| s.id.as_str())
+        .collect();
+    assert_eq!(ids, ["place1", "place2", "raise1"]);
+    assert_eq!(
+        drawn(&update),
+        [
+            ("place1".to_string(), [2.0, 3.0, 0.0]),
+            ("place2".to_string(), [5.0, 0.0, 0.0]),
+            ("raise1".to_string(), [5.0, 0.0, 1.0]),
+        ]
+    );
+    let structure = update.scene.expect("a scene").structure;
+    assert!(
+        (structure.iter()).all(|i| i.kind_label == "Points" && i.visible == Some(true)),
+        "{structure:?}"
+    );
+
+    // Run only the first step: only its point is drawn, and new steps go
+    // after it.
+    let update = handled(&mut editor, Command::Seek { marker: Some(1) });
+    assert_eq!(
+        update.program.as_ref().expect("the program is sent").marker,
+        1
+    );
+    assert_eq!(drawn(&update), [("place1".to_string(), [2.0, 3.0, 0.0])]);
+    let update = handled(&mut editor, Command::Seek { marker: None });
+    assert_eq!(drawn(&update).len(), 3);
+
+    // What no registry offers is refused by name, and changes nothing.
+    let before = editor.program().clone();
+    let refused = |editor: &mut Editor, command| editor.handle(command).error.unwrap_or_default();
+    let panel = Command::Panel {
+        key: "joints".into(),
+        payload: serde_json::Value::Null,
+    };
+    assert!(refused(&mut editor, panel).contains("there is no panel `joints`"));
+    let tool = Command::Tool {
+        key: Some("drag".into()),
+    };
+    assert!(refused(&mut editor, tool).contains("there is no tool `drag`"));
+    let example = Command::LoadExample { name: "box".into() };
+    assert!(refused(&mut editor, example).contains("there is no example"));
+    assert_eq!(*editor.program(), before);
+
+    // Undone, the raised point goes; with no settler, the state is kept
+    // as it is.
+    let update = handled(&mut editor, Command::Undo);
+    assert_eq!(drawn(&update).len(), 2);
+    assert!(editor.program().state.is_empty());
+    Ok(())
+}

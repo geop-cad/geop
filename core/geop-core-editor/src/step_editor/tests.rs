@@ -1,7 +1,7 @@
 //! The step editor driving an operation as an editor does: picks,
 //! handles, selection and keys turned into the operation's events.
 
-use geop_core_editor::{
+use crate::{
     editable::{Context, Editable, Editors, OperationGroup, OperationInfo, OperationTier},
     editing::{
         CanvasEvent, Control, Event, Form, Number, Picked, Pointer, Reach, Shape, StepEditEvent,

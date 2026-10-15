@@ -8,3 +8,8 @@ geop-core-math.workspace = true
 geop-core-program.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[features]
+# What tests of editing share: an editor over a registry of a few
+# operations, driven as a front end drives it (see `testing`).
+testing = []

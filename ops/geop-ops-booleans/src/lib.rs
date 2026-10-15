@@ -30,3 +30,12 @@ pub mod trim;
 
 pub use extent::Extent;
 pub use operation::{Boolean, BooleanArgs, Combine, SolidRef, Split, SplitArgs, Tool, solid};
+
+use geop_core_editor::registry::Registry;
+use geop_core_math::geop_error::GeopResult;
+
+/// Adds what this crate offers an editor to `r`: combining bodies and
+/// splitting them.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.operation(Boolean)?.operation(Split)
+}

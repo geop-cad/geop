@@ -35,8 +35,11 @@ use geop_core_program::{
 };
 use std::{borrow::Cow, collections::BTreeMap, sync::LazyLock};
 
-use geop_core_editor::selectable::SelectableElement;
 use geop_core_editor::view::{PartView, ViewDatum, drawn};
+use geop_core_editor::{
+    registry::{Drawer, Registry, StructureItem},
+    selectable::SelectableElement,
+};
 use geop_core_geometry::shape::Axis;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -345,6 +348,28 @@ macro_rules! picked_as_drawn {
 }
 
 picked_as_drawn!(AnyDatum, Point, Line, Plane);
+
+/// Draws a part's datums, the origin first, and lists them.
+pub struct DatumsDrawer;
+
+impl Drawer for DatumsDrawer {
+    fn draw(&self, reader: &Reader, view: &mut PartView) -> GeopResult<()> {
+        read_datums(reader)?.draw(view)
+    }
+
+    fn structure(&self, reader: &Reader) -> GeopResult<Vec<StructureItem>> {
+        let item = |name: &str| StructureItem::drawn("datum", "Datums", name);
+        let mut items = vec![item(ORIGIN)];
+        items.extend(read_datums(reader)?.names().into_iter().map(item));
+        Ok(items)
+    }
+}
+
+/// Adds what datums offer an editor to `r`: a part's datums drawn and
+/// listed ([`DatumsDrawer`]).
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.drawer(DatumsDrawer)
+}
 
 #[cfg(test)]
 mod tests {

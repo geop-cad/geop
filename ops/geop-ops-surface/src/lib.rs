@@ -87,6 +87,20 @@ impl<S: Scalar> NamedCurve<S> {
     }
 }
 
+use geop_core_editor::registry::Registry;
+
+/// Adds what this crate offers an editor to `r`: surfaces: boundary,
+/// offset, thickened, knit, trimmed, extended and network surfaces.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.operation(BoundarySurface)?
+        .operation(OffsetSurface)?
+        .operation(Thicken)?
+        .operation(Knit)?
+        .operation(TrimSurface)?
+        .operation(ExtendSurface)?
+        .operation(NetworkSurface)
+}
+
 /// What the tests share: the model's elements by name.
 #[cfg(test)]
 pub(crate) mod test_refs {

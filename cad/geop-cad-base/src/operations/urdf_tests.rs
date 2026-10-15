@@ -2,6 +2,7 @@
 //! robots, and read back — as a tree of XML elements, and by placing every
 //! link where its joints put it.
 
+use geop_core_editor::editor::Rerun;
 use geop_core_program::{
     program::Program,
     values::{StateValue, pose_state},
@@ -17,13 +18,13 @@ use geop_core_math::{
 use geop_ops_assembly::{
     AddPartArgs, CouplingKind, JointKind, Mate, Transmission,
     solids::{Shapes, placed_solids},
-    solving::{self, Rerun},
+    solving,
 };
 use geop_ops_urdf::{JointType, Mechanism, Origin, Robot, URDF_FILE, UrdfExport, export};
 
 use crate::{
     examples::{self, n, pose},
-    operations::{BuiltPart, workspace},
+    registry::{BuiltPart, workspace},
 };
 
 /// The files of the workspace example `name`, by path, and its first
@@ -65,7 +66,7 @@ impl Built {
 /// give started where the parts are, and solved for.
 fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Built {
     let mut program = program.clone();
-    let mut built = super::build(&program, path, workspace(files)).unwrap();
+    let mut built = crate::build(&program, path, workspace(files)).unwrap();
     let mut rerun = Rerun {
         runner: &built.runner,
         part: &mut built.part,

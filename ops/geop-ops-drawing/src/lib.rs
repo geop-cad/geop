@@ -38,3 +38,12 @@ mod testing;
 mod tests;
 #[cfg(test)]
 mod writer_tests;
+
+use geop_core_editor::registry::Registry;
+use geop_core_math::geop_error::GeopResult;
+
+/// Adds what this crate offers an editor to `r`: drawings of a part, and
+/// the files they are written as.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.operation(Drawing)?.exporter(DrawingExporter)
+}

@@ -856,3 +856,11 @@ impl Bom {
         self.lines.iter().find(|l| l.item == item)
     }
 }
+
+use geop_core_editor::registry::Registry;
+
+/// Adds what this crate offers an editor to `r`: the bill of materials:
+/// asked of a part, and written as CSV.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.exporter(BomCsv)?.inspector(BillOfMaterials)
+}

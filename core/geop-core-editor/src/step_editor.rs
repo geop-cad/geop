@@ -10,7 +10,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 
-use geop_core_editor::{
+use crate::{
     editable::Editors,
     editing::{
         Action, Button, CanvasEvent, Control, DRAG_SNAP, Dialog, Event, Form, Gizmo, GizmoView,

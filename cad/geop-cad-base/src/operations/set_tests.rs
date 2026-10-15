@@ -9,8 +9,8 @@ use geop_ops_sketch::whole_sketch;
 
 use crate::{
     examples,
-    operations::{
-        editors, infos, registry, runner,
+    registry::{
+        registry, runner,
         testing::{Built, args, handled},
     },
 };
@@ -20,7 +20,8 @@ use crate::{
 #[test]
 fn every_operation_is_offered() {
     let registry = registry().unwrap();
-    let infos = infos();
+    let infos = registry.infos();
+    let operations = registry.operations();
     let kinds: Vec<&str> = infos.iter().map(|i| i.kind).collect();
     assert_eq!(kinds.iter().collect::<HashSet<_>>().len(), kinds.len());
     assert_eq!(kinds[0], "add_sketch");
@@ -33,7 +34,7 @@ fn every_operation_is_offered() {
         extrude.info.doc
     );
     for info in &infos {
-        assert_eq!(registry.get(info.kind).unwrap().kind(), info.kind);
+        assert_eq!(operations.get(info.kind).unwrap().kind(), info.kind);
     }
     for (_, program) in examples::all() {
         for step in &program().steps {
@@ -51,7 +52,8 @@ fn every_operation_is_offered() {
 fn new_steps_start_from_what_was_built() {
     let program = examples::box_with_drill_hole();
     let part = program.built().unwrap();
-    let editors = editors().unwrap();
+    let registry = registry().unwrap();
+    let editors = registry.editors();
     let runner = runner();
     let new_step = |kind: &str| editors.new_step(&runner, &part, &program, kind, "new", None);
     let step = new_step("extrude").unwrap();
@@ -61,7 +63,7 @@ fn new_steps_start_from_what_was_built() {
         extrude.output,
         Output::Solid(Combine::join("extrude(hole)"))
     );
-    for info in infos() {
+    for info in registry.infos() {
         let step = new_step(info.kind).unwrap();
         assert_eq!(step.operation, info.kind);
     }
@@ -74,9 +76,9 @@ fn new_steps_start_from_what_was_built() {
 /// editor unusable — and each answers with a step to edit or says why not.
 #[test]
 fn every_operation_opens_on_any_part() {
-    use crate::{Command, Editor};
+    use crate::Command;
     for program in [None, Some(examples::box_with_drill_hole())] {
-        let mut editor = Editor::new();
+        let mut editor = crate::editor();
         if let Some(program) = program {
             handled(
                 &mut editor,
@@ -86,7 +88,7 @@ fn every_operation_opens_on_any_part() {
                 },
             );
         }
-        for info in infos() {
+        for info in crate::registry().unwrap().infos() {
             let update = editor.handle(Command::New {
                 kind: info.kind.to_string(),
             });

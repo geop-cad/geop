@@ -113,6 +113,24 @@ impl FileStoreMut for BTreeMap<String, String> {
     }
 }
 
+/// Files of a store chosen at run time: an editor's, whose files are
+/// whatever its front end keeps, with whatever library beside them.
+impl FileStore for Box<dyn FileStoreMut> {
+    fn read(&self, path: &str) -> GeopResult<String> {
+        (**self).read(path)
+    }
+
+    fn list(&self) -> Vec<String> {
+        (**self).list()
+    }
+}
+
+impl FileStoreMut for Box<dyn FileStoreMut> {
+    fn write(&mut self, path: &str, text: Option<String>) {
+        (**self).write(path, text)
+    }
+}
+
 /// A set of files, whose programs are written in the operations of
 /// `registry`: the [`Workspace`] its programs are run with, reading the
 /// programs they place and the files they import from it. A program read

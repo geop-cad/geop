@@ -23,3 +23,12 @@ mod tests;
 #[cfg(test)]
 mod corpus;
 mod icons;
+
+use geop_core_editor::registry::Registry;
+use geop_core_math::geop_error::GeopResult;
+
+/// Adds what this crate offers an editor to `r`: importing STEP files, and
+/// writing a part as one.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.operation(ImportStep)?.exporter(Step)
+}

@@ -1,6 +1,6 @@
 //! Picking with a [`PartView`]: what a pointer is over, as drawn.
 
-use crate::operations::testing::{origin_axis, origin_plane, pointer};
+use crate::registry::testing::{origin_axis, origin_plane, pointer};
 use geop_core_editor::view::{PartView, ViewDatum, drawn};
 use geop_core_editor::{
     editing::{Pointer, Reach},
@@ -58,7 +58,7 @@ fn built(model: &NamedModel<S>, sketches: &[(&str, PlacedSketch<S>)]) -> Part {
 
 /// `part`, as drawn.
 fn drawn(part: &Part) -> PartView {
-    crate::part::draw(&part.current()).unwrap()
+    crate::registry().unwrap().draw(&part.current()).unwrap()
 }
 
 /// What `pointer` picks of the kinds `accepts` ([`drawn`]).

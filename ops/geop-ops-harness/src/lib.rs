@@ -19,3 +19,11 @@ mod icons;
 mod program_tests;
 #[cfg(test)]
 mod tests;
+
+use geop_core_editor::registry::Registry;
+use geop_core_math::geop_error::GeopResult;
+
+/// Adds what this crate offers an editor to `r`: routing cables.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.operation(Route)
+}

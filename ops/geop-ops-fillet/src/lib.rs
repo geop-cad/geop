@@ -25,3 +25,11 @@ mod program_tests;
 mod rolling_tests;
 #[cfg(test)]
 mod tests;
+
+use geop_core_editor::registry::Registry;
+use geop_core_math::geop_error::GeopResult;
+
+/// Adds what this crate offers an editor to `r`: fillets and chamfers.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.operation(Fillet)?.operation(Chamfer)
+}

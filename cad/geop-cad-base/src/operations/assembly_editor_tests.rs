@@ -25,8 +25,8 @@ use geop_ops_datums::{ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::Extents;
 use geop_ops_model::testing::assert_close;
 
-use super::testing::{Stepping, extrude_sketch, handled, on_origin, pointer, rectangle};
-use crate::{Command, Editor};
+use crate::Command;
+use crate::registry::testing::{Stepping, extrude_sketch, handled, on_origin, pointer, rectangle};
 
 /// The unit cube from the origin to `(1, 1, 1)`, as a program.
 fn cube() -> Program {
@@ -104,7 +104,7 @@ fn down_at(x: f64, y: f64, z: f64) -> Pointer<S> {
 /// `placed`, in a workspace holding `cube.geop`: the step placing `b`
 /// opened.
 fn placing(placed: AddPartArgs) -> Stepping {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let files = BTreeMap::from([("cube.geop".to_string(), Some(cube().to_json().unwrap()))]);
     handled(&mut editor, Command::Files { files });
     let mut program = Program::new();

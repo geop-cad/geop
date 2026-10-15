@@ -1,9 +1,7 @@
 //! The editor engine: a program edited by commands, and only what changed
 //! sent back.
 
-use geop_core_editor::output::{
-    Bounded, Content, Inspector, InspectorInfo, Output as Made, Outputs, Picks,
-};
+use geop_core_editor::output::{Bounded, Content, Inspector, InspectorInfo, Output as Made, Picks};
 use geop_core_editor::view::drawn;
 use geop_core_editor::{
     editing::{
@@ -12,6 +10,7 @@ use geop_core_editor::{
     },
     selectable::Selectable,
 };
+use geop_core_editor::{registry::Registry, testing::editor_with};
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::{FrameAxis, Pose, Ray},
@@ -33,9 +32,9 @@ use geop_ops_parameters::parameters_of;
 
 use crate::{
     Command, Editor, Update, examples,
-    operations::testing::{
-        Built, args, click_at, dialog, example_editor, from_above, handled, loaded, origin_axis,
-        pointer,
+    registry::testing::{
+        Built, args, click_at, dialog, example_editor, from_above, handled, joints_panel, loaded,
+        origin_axis, parameters_panel, pointer, rename_parameter, set_joint,
     },
 };
 
@@ -66,7 +65,7 @@ fn saved(value: impl serde::Serialize) -> serde_json::Value {
 }
 
 fn editor() -> (Editor, Update) {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = handled(
         &mut editor,
         Command::LoadExample {
@@ -426,7 +425,10 @@ fn the_first_parameter_given_while_a_step_is_edited() {
         values: vec![Parameter::number("depth", "3", 0.0, 100.0)],
         ..Parameters::default()
     };
-    handled(&mut editor, Command::Parameters { parameters });
+    handled(
+        &mut editor,
+        crate::registry::testing::set_parameters(parameters),
+    );
     handled(&mut editor, Command::Commit);
     let steps = &editor.program().steps;
     assert_eq!(steps[0].operation, DefineParameters::KIND);
@@ -439,7 +441,7 @@ fn the_first_parameter_given_while_a_step_is_edited() {
 /// Every example loads by name, and builds.
 #[test]
 fn examples_load_by_name() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let names = editor.handle(Command::Show).program.unwrap().examples;
     assert_eq!(names.len(), examples::all().len());
     let update = editor.handle(Command::LoadExample {
@@ -863,7 +865,7 @@ fn new_route_is_picked_and_its_wires_chosen() {
 /// tested here.
 #[test]
 fn sweep_with_rails_twist_and_orientation() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = handled(
         &mut editor,
         Command::LoadExample {
@@ -1021,7 +1023,7 @@ fn new_boundary_surface_picks_edges_then_thickens() {
     assert_eq!(boundary.edges.len(), 4, "{boundary:?}");
     let sheet = format!("boundary({})", step.id);
     let scene = update.scene.expect("the scene is sent anew");
-    let faces = |scene: &crate::editor::SceneState| -> Vec<String> {
+    let faces = |scene: &geop_core_editor::editor::SceneState| -> Vec<String> {
         scene.part.faces.iter().map(|f| f.name.clone()).collect()
     };
     assert!(faces(&scene).contains(&sheet), "{:?}", faces(&scene));
@@ -1052,7 +1054,7 @@ fn new_boundary_surface_picks_edges_then_thickens() {
 /// section drawn before into a valid solid.
 #[test]
 fn a_3d_sketch_is_drawn_and_swept_along() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let mut program = examples::pipe();
     program.steps.truncate(1);
     let update = editor.handle(Command::Load {
@@ -1150,7 +1152,7 @@ fn turn_of(editor: &Editor, instance: &str) -> f64 {
 /// hand.
 #[test]
 fn a_revolute_joint_is_dragged_up_to_its_limit() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = handled(
         &mut editor,
         Command::LoadWorkspaceExample {
@@ -1161,11 +1163,12 @@ fn a_revolute_joint_is_dragged_up_to_its_limit() {
     let elbow = "add_part(fore,m1).angle";
     assert_eq!(state_number(&editor, elbow), 30.0);
     let program = update.program.unwrap();
-    assert_eq!(program.joints.len(), 2, "{:?}", program.joints);
-    let freedom = program.freedom.unwrap();
-    assert_eq!(freedom.parts["upper"], 0);
-    assert_eq!(freedom.parts["fore"], 1);
-    assert_eq!(freedom.parts["hand"], 2);
+    let joints = joints_panel(&program);
+    assert_eq!(joints["joints"].as_array().unwrap().len(), 2, "{joints:?}");
+    let freedom = &joints["freedom"];
+    assert_eq!(freedom["parts"]["upper"], 0);
+    assert_eq!(freedom["parts"]["fore"], 1);
+    assert_eq!(freedom["parts"]["hand"], 2);
 
     handled(&mut editor, Command::Open { id: "fore".into() });
     // Grabbed halfway along, where nothing lies on it, and dragged round
@@ -1215,26 +1218,21 @@ fn a_revolute_joint_is_dragged_up_to_its_limit() {
 
     // Set in the program's panel: the hand turns, the forearm stays.
     let wrist = "add_part(hand,m1).angle";
-    let update = handled(
-        &mut editor,
-        Command::Joint {
-            parameter: wrist.into(),
-            value: 90.0,
-        },
-    );
+    let update = handled(&mut editor, set_joint(wrist, 90.0));
     assert_eq!(state_number(&editor, wrist), 90.0);
     assert!((turn_of(&editor, "fore") + 60.0).abs() < 1e-9);
     assert!((turn_of(&editor, "hand") - 30.0).abs() < 1e-9);
-    let joints = update.program.unwrap().joints;
-    assert_eq!(joints[1].values[0].value, 90.0);
-    assert_eq!(joints[1].values[0].max, Some(120.0));
+    let program = update.program.unwrap();
+    let joints = &joints_panel(&program)["joints"];
+    assert_eq!(joints[1]["values"][0]["value"], 90.0);
+    assert_eq!(joints[1]["values"][0]["max"], 120.0);
 }
 
 /// A new draft picks the faces to tilt by clicking them, then the neutral
 /// plane: the enclosure's +x wall from the side, its bottom from below.
 #[test]
 fn new_draft_picks_its_faces_and_neutral_plane() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = editor.handle(Command::Load {
         program: geop_ops_plastic::testing::enclosure(),
         path: None,
@@ -1290,7 +1288,7 @@ fn new_draft_picks_its_faces_and_neutral_plane() {
 /// parallel to its sketch, it builds.
 #[test]
 fn new_rib_grows_from_the_newest_sketch() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = editor.handle(Command::Load {
         program: geop_ops_plastic::testing::enclosure_with_rib_sketch(),
         path: None,
@@ -1324,7 +1322,7 @@ fn new_rib_grows_from_the_newest_sketch() {
 fn a_standard_screw_is_placed_in_a_plate() {
     let screw = "std:iso4762_socket_head_cap_screw.geop";
     let (plate, hole) = (examples::metric_plate(), examples::metric_plate_hole());
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let files = [("plate.geop".to_string(), Some(plate.to_json().unwrap()))].into();
     assert!(editor.handle(Command::Files { files }).error.is_none());
     let update = editor.handle(Command::Load {
@@ -1413,7 +1411,7 @@ fn a_standard_screw_is_placed_in_a_plate() {
 #[test]
 fn a_carriage_slides_on_a_standard_rail() {
     let (rail, carriage) = ("std:linear_rail.geop", "std:linear_carriage.geop");
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = editor.handle(Command::Load {
         program: Program::new(),
         path: Some("guide.geop".into()),
@@ -1492,7 +1490,9 @@ fn dragging_one_of_many_placed_parts_sends_only_it() {
     use super::assembly_scale_tests::{down_onto, robot_editor};
     let (mut editor, _) = robot_editor(2, 20);
     let before = editor.program().state.clone();
-    editor.handle(Command::DragTool { on: true });
+    editor.handle(Command::Tool {
+        key: Some("drag".into()),
+    });
     // The screws stand in a row along x at y = 0.25, from x = 0.25 on.
     let update = editor.handle(Command::Event {
         event: StepEditEvent::Hover {
@@ -1539,7 +1539,7 @@ fn dragging_one_of_many_placed_parts_sends_only_it() {
 /// step builds.
 #[test]
 fn subd_cage_is_shaped_in_the_viewport() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = editor.handle(Command::New {
         kind: "subd".into(),
     });
@@ -1559,12 +1559,15 @@ fn subd_cage_is_shaped_in_the_viewport() {
             shift: false,
         },
     };
-    let number =
-        |step: &crate::editor::StepState, key: &str| match step.presentation.dialog.get(key) {
-            Some(Control::Number(n)) => n.value,
-            other => panic!("{key}: {other:?}"),
-        };
-    let style = |step: &crate::editor::StepState, key: &str| {
+    let number = |step: &geop_core_editor::editor::StepState, key: &str| match step
+        .presentation
+        .dialog
+        .get(key)
+    {
+        Some(Control::Number(n)) => n.value,
+        other => panic!("{key}: {other:?}"),
+    };
+    let style = |step: &geop_core_editor::editor::StepState, key: &str| {
         step.presentation
             .visuals
             .iter()
@@ -1648,7 +1651,7 @@ fn subd_cage_is_shaped_in_the_viewport() {
 /// on the first, nor starts from the cage as it was before the first.
 #[test]
 fn subd_drag_without_a_release_is_not_undone_by_the_next() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = editor.handle(Command::New {
         kind: "subd".into(),
     });
@@ -1697,11 +1700,14 @@ fn subd_drag_without_a_release_is_not_undone_by_the_next() {
 fn measure_tool_measures_what_is_clicked() {
     let (mut editor, _) = editor();
     let before = editor.program().clone();
-    let update = editor.handle(Command::PickTool {
-        inspector: Some("measure".into()),
+    let update = editor.handle(Command::Tool {
+        key: Some("pick:measure".into()),
     });
     assert!(update.error.is_none(), "{:?}", update.error);
-    assert_eq!(update.program.unwrap().pick_tool, Some("measure"));
+    assert_eq!(
+        update.program.unwrap().tool.as_deref(),
+        Some("pick:measure")
+    );
     let top = face("extrude(box,end)");
     let bottom = face("extrude(box,start)");
     let from_below = pointer([0.5, 0.5, -10.0], [0.0, 0.0, 1.0]);
@@ -1765,7 +1771,7 @@ fn measure_tool_measures_what_is_clicked() {
     assert_eq!(report["solids"], 1);
     assert_eq!(report["found"], serde_json::json!([]));
 
-    let update = editor.handle(Command::PickTool { inspector: None });
+    let update = editor.handle(Command::Tool { key: None });
     assert!(update.tool.is_none() && update.inspection.is_none());
     assert_eq!(*editor.program(), before);
 }
@@ -2047,7 +2053,7 @@ fn a_drawing_is_annotated_on_its_sheet_and_downloaded() {
     assert!(!committed.scene.expect("a scene").part.faces.is_empty());
     let step = editor.program().steps.last().unwrap();
     assert_eq!(step.operation, "drawing");
-    let args: geop_ops_drawing::DrawingArgs = super::testing::args(step);
+    let args: geop_ops_drawing::DrawingArgs = crate::registry::testing::args(step);
     assert_eq!((args.views.len(), args.annotations.len()), (3, 2));
     assert_eq!(args.name, "Drilled box");
 }
@@ -2058,7 +2064,7 @@ fn a_drawing_is_annotated_on_its_sheet_and_downloaded() {
 /// the four-bar, whose bars only mates hold: the error names them.
 #[test]
 fn an_assembly_is_exported_as_urdf() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = editor.handle(Command::LoadWorkspaceExample {
         name: "arm".into(),
         folder: None,
@@ -2362,26 +2368,30 @@ impl Inspector for Solids {
 /// program, and the tool put down shows nothing.
 #[test]
 fn inspectors_are_offered_picked_with_and_asked() {
-    let (mut editor, _) = editor();
-    editor.outputs = Outputs::default()
-        .inspector(Picked)
-        .unwrap()
-        .inspector(Solids)
+    // An editor of what the box is built of, offering only these
+    // inspectors.
+    let registry = (geop_ops_model::register(Registry::default()))
+        .and_then(geop_ops_sketch::register)
+        .and_then(geop_ops_datums::register)
+        .and_then(geop_ops_extrude_revolve::register)
+        .and_then(|r| r.inspector(Picked))
+        .and_then(|r| r.inspector(Solids))
         .unwrap();
+    let mut editor = editor_with(registry, examples::box_with_drill_hole());
     let before = editor.program().clone();
     let update = handled(&mut editor, Command::Show);
     let program = update.program.unwrap();
     let kinds: Vec<&str> = program.inspectors.iter().map(|i| i.kind).collect();
     assert_eq!(kinds, ["picked", "solids"]);
-    assert_eq!(program.pick_tool, None);
+    assert_eq!(program.tool, None);
 
     let update = handled(
         &mut editor,
-        Command::PickTool {
-            inspector: Some("picked".into()),
+        Command::Tool {
+            key: Some("pick:picked".into()),
         },
     );
-    assert_eq!(update.program.unwrap().pick_tool, Some("picked"));
+    assert_eq!(update.program.unwrap().tool.as_deref(), Some("pick:picked"));
     let top = face("extrude(box,end)");
     let bottom = face("extrude(box,start)");
     let report = |update: &Update| {
@@ -2432,8 +2442,8 @@ fn inspectors_are_offered_picked_with_and_asked() {
         serde_json::json!(["bodies", 1])
     );
 
-    let update = editor.handle(Command::PickTool {
-        inspector: Some("solids".into()),
+    let update = editor.handle(Command::Tool {
+        key: Some("pick:solids".into()),
     });
     assert!(update.error.expect("refused").contains("picks nothing"));
     let update = editor.handle(Command::Inspect {
@@ -2447,7 +2457,7 @@ fn inspectors_are_offered_picked_with_and_asked() {
             .contains("there is no inspector `mass`")
     );
 
-    let update = handled(&mut editor, Command::PickTool { inspector: None });
+    let update = handled(&mut editor, Command::Tool { key: None });
     assert!(update.tool.is_none() && update.inspection.is_none());
     assert_eq!(*editor.program(), before);
 }
@@ -2457,7 +2467,7 @@ fn inspectors_are_offered_picked_with_and_asked() {
 /// they are between, and never drawn.
 #[test]
 fn an_assembly_lists_its_mates() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = handled(
         &mut editor,
         Command::LoadWorkspaceExample {
@@ -2466,7 +2476,7 @@ fn an_assembly_lists_its_mates() {
         },
     );
     let structure = update.scene.expect("a scene").structure;
-    let of = |kind: &str| -> Vec<&crate::part::StructureItem> {
+    let of = |kind: &str| -> Vec<&geop_core_editor::registry::StructureItem> {
         structure.iter().filter(|i| i.kind == kind).collect()
     };
     let parts: Vec<&str> = of("part").iter().map(|i| i.name.as_str()).collect();
@@ -2513,11 +2523,14 @@ fn variable_fillet_set_up_in_the_dialog() {
     );
     let update = editor.handle(dialog("variable", Value::Bool(true)));
     let step = update.step.expect("the fillet is edited");
-    let number =
-        |step: &crate::editor::StepState, key: &str| match step.presentation.dialog.get(key) {
-            Some(Control::Number(n)) => n.value,
-            other => panic!("{key}: {other:?}"),
-        };
+    let number = |step: &geop_core_editor::editor::StepState, key: &str| match step
+        .presentation
+        .dialog
+        .get(key)
+    {
+        Some(Control::Number(n)) => n.value,
+        other => panic!("{key}: {other:?}"),
+    };
     assert_eq!(number(&step, "end_radius"), number(&step, "radius"));
     editor.handle(dialog("end_radius", Value::Number(0.2)));
     // The corner on top of that edge, picked from above and outside.
@@ -2578,7 +2591,7 @@ fn fillet_rounds_a_corner_picked_edge_by_edge() {
         .filter(|name| name.ends_with(",corner)"))
         .collect();
     assert_eq!(corners.len(), 1, "{corners:?}");
-    assert!(super::testing::check_valid(&part).is_ok());
+    assert!(crate::registry::testing::check_valid(&part).is_ok());
 }
 
 /// The plate's thickness, typed into its extrude's dialog as a formula of
@@ -2590,11 +2603,13 @@ fn fillet_rounds_a_corner_picked_edge_by_edge() {
 #[test]
 fn formulas_are_typed_into_dialog_fields() {
     let mut editor = example_editor("parametric_plate");
-    let field = |step: &crate::editor::StepState| match step.presentation.dialog.get("distance") {
-        Some(Control::Number(n)) => n.clone(),
-        other => panic!("{other:?} is no number field"),
-    };
-    let handle = |step: &crate::editor::StepState| {
+    let field =
+        |step: &geop_core_editor::editor::StepState| match step.presentation.dialog.get("distance")
+        {
+            Some(Control::Number(n)) => n.clone(),
+            other => panic!("{other:?} is no number field"),
+        };
+    let handle = |step: &geop_core_editor::editor::StepState| {
         step.presentation
             .visuals
             .iter()
@@ -2673,7 +2688,7 @@ fn formulas_are_typed_into_dialog_fields() {
 /// the file.
 #[test]
 fn the_bill_of_materials_is_asked_for_and_exported() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = editor.handle(Command::LoadWorkspaceExample {
         name: "bolted_plate".into(),
         folder: None,
@@ -2731,7 +2746,7 @@ fn the_bill_of_materials_is_asked_for_and_exported() {
 /// the arm has them.
 #[test]
 fn an_assembly_is_exported_as_step_products() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = editor.handle(Command::LoadWorkspaceExample {
         name: "arm".into(),
         folder: None,
@@ -2763,7 +2778,7 @@ fn an_assembly_is_exported_as_step_products() {
 /// a ring by clicks. Each extrudes into a valid solid.
 #[test]
 fn sketch_tools_draw_profiles_that_extrude() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let event =
         |editor: &mut Editor, event: StepEditEvent<S>| handled(editor, Command::Event { event });
     let click = |editor: &mut Editor, x: f64, y: f64| {
@@ -2798,7 +2813,7 @@ fn sketch_tools_draw_profiles_that_extrude() {
         editor.handle(dialog("distance", Value::Number(0.3)));
         handled(editor, Command::Commit);
         let part = editor.program().build_model().unwrap();
-        if let Err(e) = super::testing::check_valid(&part) {
+        if let Err(e) = crate::registry::testing::check_valid(&part) {
             panic!("{e}");
         }
         part
@@ -2872,14 +2887,14 @@ fn sketch_tools_draw_profiles_that_extrude() {
 /// while a step is edited, are refused; undo takes a rename back.
 #[test]
 fn renaming_a_parameter_renames_what_reads_it() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = handled(
         &mut editor,
         Command::LoadExample {
             name: "parametric_plate".into(),
         },
     );
-    let uses = update.program.expect("the program is sent").parameter_uses;
+    let uses = parameters_panel(&update.program.expect("the program is sent")).parameter_uses;
     let readers = |name: &str| uses.get(name).cloned().unwrap_or_default();
     assert_eq!(readers("width"), ["depth", "outline"]);
     assert_eq!(readers("depth"), ["outline"]);
@@ -2888,7 +2903,7 @@ fn renaming_a_parameter_renames_what_reads_it() {
     let volume = |editor: &Editor| {
         let part = model(editor);
         let [name] = part.solid_names().try_into().expect("one solid");
-        super::testing::solid_volume(&part, &name)
+        crate::registry::testing::solid_volume(&part, &name)
     };
     let before = volume(&editor);
 
@@ -2897,10 +2912,7 @@ fn renaming_a_parameter_renames_what_reads_it() {
         ("screw", "bolt"),
         ("thickness", "t"),
     ] {
-        let update = editor.handle(Command::RenameParameter {
-            from: from.into(),
-            to: to.into(),
-        });
+        let update = editor.handle(rename_parameter(from, to));
         assert!(update.error.is_none(), "{from} -> {to}: {:?}", update.error);
         let program = update.program.expect("the program is sent");
         assert!(
@@ -2908,13 +2920,14 @@ fn renaming_a_parameter_renames_what_reads_it() {
             "{:?}",
             program.steps
         );
+        let panel = parameters_panel(&program);
         assert!(
-            program.parameters.errors.is_empty(),
+            panel.parameters.errors.is_empty(),
             "{:?}",
-            program.parameters.errors
+            panel.parameters.errors
         );
         assert!(
-            !program.parameter_uses.contains_key(from),
+            !panel.parameter_uses.contains_key(from),
             "{from} is still read"
         );
     }
@@ -2940,20 +2953,14 @@ fn renaming_a_parameter_renames_what_reads_it() {
     }
     assert_eq!(volume(&editor), before);
 
-    let taken = editor.handle(Command::RenameParameter {
-        from: "depth".into(),
-        to: "t".into(),
-    });
+    let taken = editor.handle(rename_parameter("depth", "t"));
     let error = taken.error.expect("a name taken is refused");
     assert!(
         error.contains(r#"there is a parameter "t" already"#),
         "{error}"
     );
     editor.handle(Command::Open { id: "plate".into() });
-    let editing = editor.handle(Command::RenameParameter {
-        from: "depth".into(),
-        to: "plate_depth".into(),
-    });
+    let editing = editor.handle(rename_parameter("depth", "plate_depth"));
     assert!(editing.error.is_some(), "renamed while a step is edited");
     editor.handle(Command::Cancel);
 
@@ -2971,7 +2978,7 @@ fn renaming_a_parameter_renames_what_reads_it() {
 /// line ballooned once with its item number.
 #[test]
 fn an_assembly_drawing_lists_its_parts() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = editor.handle(Command::LoadWorkspaceExample {
         name: "bolted_plate".into(),
         folder: None,
@@ -3044,7 +3051,7 @@ fn an_assembly_drawing_lists_its_parts() {
 /// by the designations their own programs carry, one product per size.
 #[test]
 fn an_assembly_step_file_names_its_parts() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     handled(
         &mut editor,
         Command::LoadWorkspaceExample {
@@ -3131,7 +3138,7 @@ fn new_linear_pattern_picks_a_feature_by_its_wall() {
 
 /// What the step being edited shows after `event`, as the front end sends
 /// it.
-fn event(editor: &mut Editor, event: StepEditEvent<S>) -> crate::editor::StepState {
+fn event(editor: &mut Editor, event: StepEditEvent<S>) -> geop_core_editor::editor::StepState {
     let update = handled(editor, Command::Event { event });
     update.step.expect("a step is edited")
 }
@@ -3146,7 +3153,7 @@ fn drag_gizmo(
     to: Pointer<S>,
     halfway: Pointer<S>,
     shift: bool,
-) -> crate::editor::StepState {
+) -> geop_core_editor::editor::StepState {
     let step = event(
         editor,
         StepEditEvent::Hover {
@@ -3186,7 +3193,7 @@ fn drag_gizmo(
 /// 15 degrees, to a tenth.
 #[test]
 fn subd_faces_are_moved_turned_and_scaled_by_the_gizmo() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     editor.handle(Command::New {
         kind: "subd".into(),
     });
@@ -3210,11 +3217,11 @@ fn subd_faces_are_moved_turned_and_scaled_by_the_gizmo() {
     assert!(
         step.presentation
             .dialog
-            .get(crate::step_editor::GIZMO_ORIENTATION)
+            .get(geop_core_editor::step_editor::GIZMO_ORIENTATION)
             .is_some()
     );
     editor.handle(dialog(
-        crate::step_editor::GIZMO_ORIENTATION,
+        geop_core_editor::step_editor::GIZMO_ORIENTATION,
         Value::Choice("world".into()),
     ));
     // No handles any more: the gizmo is what drags.
@@ -3299,7 +3306,7 @@ fn subd_faces_are_moved_turned_and_scaled_by_the_gizmo() {
 /// `x`, as far as the pointer went along it.
 #[test]
 fn a_3d_sketch_point_is_dragged_along_an_axis() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     editor.handle(Command::New {
         kind: "add_sketch3d".into(),
     });
@@ -3414,7 +3421,7 @@ fn a_body_is_moved_by_its_gizmo() {
 #[test]
 fn placed_parts_are_moved_and_turned_by_the_gizmo() {
     let block = examples::box_with_drill_hole().to_json().unwrap();
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let files = [("block.geop".to_string(), Some(block))].into();
     assert!(editor.handle(Command::Files { files }).error.is_none());
     editor.handle(Command::Load {
@@ -3461,7 +3468,7 @@ fn placed_parts_are_moved_and_turned_by_the_gizmo() {
     assert!(
         step.presentation
             .dialog
-            .get(crate::step_editor::GIZMO_ORIENTATION)
+            .get(geop_core_editor::step_editor::GIZMO_ORIENTATION)
             .is_some()
     );
     let side = |z: f64| pointer([start[0], start[1] - 100.0, z], [0.0, 1.0, 0.0]);
@@ -3519,7 +3526,7 @@ fn operations_are_offered_by_group() {
     use geop_core_editor::editable::OperationTier;
     let (_, update) = editor();
     let operations = update.program.expect("the program is sent").operations;
-    assert_eq!(operations.len(), super::infos().len());
+    assert_eq!(operations.len(), crate::registry().unwrap().infos().len());
     let order: Vec<_> = operations
         .iter()
         .map(|o| (o.info.group, o.info.tier))
@@ -3582,7 +3589,7 @@ fn route() -> geop_ops_sketch3d::AddSketch3dArgs {
 
 /// An editor on `program`, which builds.
 fn editing(program: Program) -> Editor {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = editor.handle(Command::Load {
         program,
         path: None,
@@ -3906,7 +3913,7 @@ fn a_3d_sketch_picks_without_drawing_the_part_again() {
 /// each drawn once where it is first placed.
 #[test]
 fn hovering_over_an_assembly_draws_no_part() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = editor.handle(Command::LoadWorkspaceExample {
         name: "arm".into(),
         folder: None,
@@ -4037,7 +4044,7 @@ fn editing_an_early_sketch_builds_only_up_to_it() {
         }
     }
     let dragged: geop_ops_sketch::AddSketchArgs =
-        crate::operations::testing::args(editor.editing().unwrap());
+        crate::registry::testing::args(editor.editing().unwrap());
     assert_ne!(dragged.sketch, args.sketch, "the drag changed nothing");
     let update = handled(&mut editor, Command::Commit);
     let program = update.program.expect("the program changed");
@@ -4068,7 +4075,7 @@ fn a_file_opened_again_is_not_built_again() {
         }
         .fixed(),
     );
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let files = [
         ("part.geop".to_string(), Some(part.to_json().unwrap())),
         (
@@ -4096,7 +4103,7 @@ fn a_file_opened_again_is_not_built_again() {
     // Its hole drilled deeper: from that step on.
     let mut deeper = part.clone();
     let last = deeper.steps.len() - 1;
-    crate::operations::testing::edit_args(&mut deeper.steps[last], |hole: &mut ExtrudeArgs| {
+    crate::registry::testing::edit_args(&mut deeper.steps[last], |hole: &mut ExtrudeArgs| {
         hole.extent = geop_ops_extrude_revolve::Extents::blind(-0.8);
     });
     assert_ne!(deeper.steps[last], part.steps[last], "the hole changed");
@@ -4156,7 +4163,7 @@ fn a_sketch_is_copied_and_pasted() {
 /// naming the step, and the program edited stays as it was.
 #[test]
 fn a_program_of_unknown_steps_is_refused() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let mut unknown = Program::new();
     unknown.steps.push(ProgramStep {
         id: "mystery".into(),
@@ -4251,7 +4258,7 @@ fn drawn_curves_3d(editor: &mut Editor) -> Vec<String> {
 fn every_drawing_tool_ends_its_chain_the_same_way() {
     for gesture in [Gesture::Enter, Gesture::SecondaryClick, Gesture::Escape] {
         // On the origin's xy plane, seen from above.
-        let mut editor = Editor::new();
+        let mut editor = crate::editor();
         editor.handle(Command::New {
             kind: "add_sketch".into(),
         });
@@ -4277,7 +4284,7 @@ fn every_drawing_tool_ends_its_chain_the_same_way() {
 fn every_3d_drawing_tool_ends_its_chain_the_same_way() {
     for gesture in [Gesture::Enter, Gesture::SecondaryClick, Gesture::Escape] {
         for key in ["l", "L"] {
-            let mut editor = Editor::new();
+            let mut editor = crate::editor();
             editor.handle(Command::New {
                 kind: "add_sketch3d".into(),
             });
@@ -4299,7 +4306,7 @@ fn every_3d_drawing_tool_ends_its_chain_the_same_way() {
 /// A second Escape puts the drawing tool down: the next click draws nothing.
 #[test]
 fn a_second_escape_puts_the_drawing_tool_down() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     editor.handle(Command::New {
         kind: "add_sketch".into(),
     });
@@ -4323,7 +4330,7 @@ fn a_second_escape_puts_the_drawing_tool_down() {
 #[test]
 fn a_tools_key_is_the_same_typed_in_capitals() {
     for key in ["a", "A"] {
-        let mut editor = Editor::new();
+        let mut editor = crate::editor();
         editor.handle(Command::New {
             kind: "add_sketch3d".into(),
         });

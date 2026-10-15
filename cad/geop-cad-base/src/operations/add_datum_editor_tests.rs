@@ -16,8 +16,7 @@ use geop_ops_datums::{AnyDatum, Datums, ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::testing::drilled_box;
 use geop_ops_model::model;
 
-use super::testing::{Built, Stepping, from_above, pointer};
-use crate::part::structure;
+use crate::registry::testing::{Built, Stepping, from_above, loaded, pointer};
 
 fn datum(name: impl Into<String>) -> Selected {
     Selected::Datum(ElementReference::<Datums, AnyDatum>::new(datums(), name))
@@ -54,8 +53,8 @@ fn edited(
     events: &[StepEditEvent<S>],
 ) -> (AddDatumArgs, Presentation<S>) {
     let mut step = match new {
-        true => Stepping::new(Program::new(), "add_datum"),
-        false => Stepping::open(program(&args), "d"),
+        true => Stepping::new(loaded(Program::new()), "add_datum"),
+        false => Stepping::open(loaded(program(&args)), "d"),
     };
     if new {
         assert_eq!(step.args::<AddDatumArgs>(), args, "a new step starts so");
@@ -134,7 +133,7 @@ fn dialogs_say_what_a_selection_fits() {
             distance: 1.0.into(),
         },
     };
-    let step = Stepping::open(program(&args), "d");
+    let step = Stepping::open(loaded(program(&args)), "d");
     assert!(step.shown.error.is_some(), "the step does not build");
     let dialog = &step.presentation().dialog;
     let Some(Control::Reference(selection)) = dialog.get("selection") else {
@@ -216,7 +215,9 @@ fn datums_added_are_listed_in_the_structure() {
     };
     program.push("lifted", lifted);
     let part = program.built().unwrap();
-    let structure = structure(&part.current(), &["lifted".into()]).unwrap();
+    let structure = (crate::registry().unwrap())
+        .structure(&part.current(), &["lifted".into()])
+        .unwrap();
     let datums: Vec<(&str, Option<bool>)> = (structure.iter())
         .filter(|item| item.kind == "datum")
         .map(|item| (item.name.as_str(), item.visible))

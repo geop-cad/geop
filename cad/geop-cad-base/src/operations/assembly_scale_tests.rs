@@ -7,7 +7,7 @@
 use crate::{
     Command, Editor, Update, Workspace,
     examples::{circle, pose, rectangle, solved},
-    operations::{
+    registry::{
         registry,
         testing::{extrusion, handled, on_origin},
     },
@@ -52,7 +52,7 @@ fn extruded(id: &str, sketch: Sketch, height: f64) -> Program {
     let sketch_id = format!("{id}_sketch");
     program.push(
         sketch_id.clone(),
-        crate::operations::testing::sketch(on_origin(FrameAxis::Z), solved(sketch)),
+        crate::registry::testing::sketch(on_origin(FrameAxis::Z), solved(sketch)),
     );
     program.push(
         id,
@@ -263,7 +263,7 @@ fn an_edited_file_is_placed_as_it_is_now_however_deep() {
             files,
             ..Default::default()
         }),
-        Rc::new(registry().unwrap()),
+        Rc::new(registry().unwrap().operations()),
     );
     let robot = robot(2, 3).remove("robot.geop").unwrap();
     // The robot itself is the program being built, not a file read.
@@ -308,10 +308,10 @@ fn moving_a_part_builds_again_only_what_reads_where_it_is() {
             files,
             ..Default::default()
         }),
-        Rc::new(registry().unwrap()),
+        Rc::new(registry().unwrap().operations()),
     );
     let resolved = geop_ops_assembly::mates_resolved();
-    let mut built = super::build(&robot, "robot.geop", workspace.clone()).unwrap();
+    let mut built = crate::build(&robot, "robot.geop", workspace.clone()).unwrap();
     assert_eq!(
         geop_ops_assembly::mates_resolved() - resolved,
         31,
@@ -346,7 +346,7 @@ fn moving_a_part_builds_again_only_what_reads_where_it_is() {
 /// `program`, the file `robot.geop` of `workspace`, built from scratch, its
 /// mates holding as its state has its parts.
 fn build_in(workspace: &Rc<Workspace<Counted>>, program: &Program) -> Part {
-    let part = super::build(program, "robot.geop", workspace.clone())
+    let part = crate::build(program, "robot.geop", workspace.clone())
         .unwrap()
         .part;
     assert!(check_mates(&part.current()).unwrap().converged);
@@ -397,7 +397,7 @@ pub(super) fn down_onto(x: f64, y: f64) -> Pointer<S> {
 pub(super) fn robot_editor(boards: usize, screws: usize) -> (Editor, Update) {
     let mut files = robot(boards, screws);
     let robot = Program::from_json(&files.remove("robot.geop").unwrap()).unwrap();
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     handled(
         &mut editor,
         Command::Files {
@@ -490,7 +490,9 @@ fn robot_timings() {
         let (top, update) = timed(|| editor.handle(Command::Remove { id: last }));
         println!("  top-level edit {top:.3} s, {}", size(&update));
 
-        editor.handle(Command::DragTool { on: true });
+        editor.handle(Command::Tool {
+            key: Some("drag".into()),
+        });
         let (hover, update) = timed(|| {
             editor.handle(Command::Event {
                 event: StepEditEvent::Hover {
@@ -559,7 +561,9 @@ fn an_edit_resolves_each_mate_a_few_times() {
                 .map(|p| p.located.part.clone().targets_of::<Resolved>().len())
                 .sum::<usize>();
         let (drag, drag_runs) = resolved(&mut || {
-            editor.handle(Command::DragTool { on: true });
+            editor.handle(Command::Tool {
+                key: Some("drag".into()),
+            });
             handled(
                 &mut editor,
                 Command::Event {

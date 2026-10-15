@@ -17,7 +17,9 @@ use geop_ops_sketch3d::{
     Sketch3dSession, Target, Tool, sketch3d,
 };
 
-use super::testing::{Stepping, extrude_sketch, on_origin, pointer as reaching, rectangle};
+use crate::registry::testing::{
+    Stepping, extrude_sketch, loaded, on_origin, pointer as reaching, rectangle,
+};
 
 fn close(a: &Vector3<S>, b: [f64; 3]) -> bool {
     (0..3).all(|k| (a[k].to_f64() - b[k]).abs() < 1e-7)
@@ -62,7 +64,7 @@ impl Editor {
                 combine,
             );
         }
-        let step = Stepping::new(program, "add_sketch3d");
+        let step = Stepping::new(loaded(program), "add_sketch3d");
         let presentation = step.presentation().clone();
         Editor { step, presentation }
     }

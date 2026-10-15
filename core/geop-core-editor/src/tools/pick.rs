@@ -1,17 +1,19 @@
-//! The pick tool of the [`crate::Editor`]: an inspector that picks (see
-//! [`geop_core_editor::output::InspectorInfo::picks`]) in hand, which picks
-//! entities in the viewport, and is asked about them again with every pick.
+//! The pick tool: an inspector that picks (see
+//! [`crate::output::InspectorInfo::picks`]) in hand, which picks entities
+//! in the viewport, and is asked about them again with every pick.
 //!
 //! It is no operation: inspecting changes no program, adds no step and is
-//! nothing to undo. The editor keeps its picks as it keeps the drag tool's
-//! grab (see [`crate::Command::PickTool`]); what the picks are asked is the
-//! inspector's.
+//! nothing to undo. What the picks are asked is the inspector's.
 
-use geop_core_editor::editing::{Dialog, Presentation, StepEditEvent};
-use geop_core_editor::output::{Inspection, InspectorInfo, Picks};
-use geop_core_editor::view::PartView;
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{element::PickedElement, values::Design};
+
+use super::Tool;
+use crate::{
+    editing::{Dialog, Presentation, StepEditEvent},
+    editor::{Changed, EditorContext},
+    output::{Inspection, InspectorInfo, Picks},
+};
 
 /// An inspector that picks, in hand: what the pointer is over, what is
 /// picked, and the inspector's answer about it.
@@ -20,12 +22,16 @@ pub struct PickTool {
     picks: Picks,
     hover: Option<PickedElement>,
     picked: Vec<PickedElement>,
-    /// The answer about the picks, once asked: none while it is to be
-    /// asked again.
-    pub(crate) answer: Option<Inspection>,
+    /// The answer about the picks, once asked, with the run of the part it
+    /// was asked of: none while it is to be asked again.
+    answer: Option<(u64, Inspection)>,
 }
 
 impl PickTool {
+    /// What the key of an inspector's pick tool starts with:
+    /// `pick:measure`.
+    pub const PREFIX: &'static str = "pick:";
+
     /// The tool of the inspector `info`. Fails for one that is asked of the
     /// whole part.
     pub fn new(info: &'static InspectorInfo) -> GeopResult<Self> {
@@ -54,12 +60,30 @@ impl PickTool {
         &self.picked
     }
 
-    /// An event in the viewport, `view` being what is drawn: a hover finds
+    /// The kinds of what is drawn it picks from.
+    fn accepts(&self) -> Vec<String> {
+        self.picks
+            .accepts
+            .iter()
+            .map(|kind| kind.to_string())
+            .collect()
+    }
+}
+
+impl Tool for PickTool {
+    /// An event in the viewport, picking in what is drawn: a hover finds
     /// what a click would pick; a click picks it — joining the picks, or
     /// replacing the oldest once there are as many as the inspector takes;
     /// a click on one picked takes it out, a click on nothing clears them;
     /// Escape clears them too. A change of the picks asks again.
-    pub fn handle(&mut self, view: &PartView, event: &StepEditEvent<Design>) {
+    fn handle(
+        &mut self,
+        ctx: &mut EditorContext,
+        event: &StepEditEvent<Design>,
+    ) -> GeopResult<Changed> {
+        let Some(view) = ctx.drawn() else {
+            return Ok(Changed::Nothing);
+        };
         let accepts = self.accepts();
         let picked = |pointer| view.pick(pointer, &accepts).map(|hit| hit.element);
         let before = self.picked.clone();
@@ -86,20 +110,12 @@ impl PickTool {
         if self.picked != before {
             self.answer = None;
         }
-    }
-
-    /// The kinds of what is drawn it picks from.
-    fn accepts(&self) -> Vec<String> {
-        self.picks
-            .accepts
-            .iter()
-            .map(|kind| kind.to_string())
-            .collect()
+        Ok(Changed::Nothing)
     }
 
     /// What it shows: the picks and what a click would pick lit, and what
     /// the answer draws.
-    pub fn presentation(&self) -> Presentation<Design> {
+    fn presentation(&self) -> Presentation<Design> {
         let mut highlights = self.picked.clone();
         highlights.extend(
             self.hover
@@ -110,7 +126,7 @@ impl PickTool {
         Presentation {
             dialog: Dialog::new(),
             visuals: (self.answer.iter())
-                .flat_map(|answer| answer.visuals.iter().cloned())
+                .flat_map(|(_, answer)| answer.visuals.iter().cloned())
                 .collect(),
             highlights,
             pickable: self.accepts(),
@@ -120,5 +136,19 @@ impl PickTool {
             prompt: None,
             gizmo: None,
         }
+    }
+
+    /// The inspector's answer about the picks, asked again only if they or
+    /// the part changed since.
+    fn inspection(&mut self, ctx: &mut EditorContext) -> GeopResult<Option<Inspection>> {
+        let runs = ctx.runs();
+        if let Some((asked, answer)) = &self.answer
+            && *asked == runs
+        {
+            return Ok(Some(answer.clone()));
+        }
+        let answer = ctx.inspect(self.info.kind, &self.picked)?;
+        self.answer = Some((runs, answer.clone()));
+        Ok(Some(answer))
     }
 }

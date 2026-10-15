@@ -25,3 +25,12 @@ use geop_core_program::values::Design;
 pub type Sketch3d = geop_core_sketch::space::Sketch3d<Design>;
 /// A 3-D sketch's constraint as a program holds it.
 pub type Constraint3d = geop_core_sketch::space::Constraint3d<Design>;
+
+use geop_core_editor::registry::Registry;
+use geop_core_math::geop_error::GeopResult;
+
+/// Adds what this crate offers an editor to `r`: the step adding a 3-D
+/// sketch.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.operation(AddSketch3d)
+}

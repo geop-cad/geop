@@ -19,8 +19,8 @@ use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extents, testing::model_of};
 use geop_ops_step::{ImportStepArgs, write_part};
 
-use super::testing::{disc, extrude_sketch, on_origin, rectangle};
-use crate::operations::{build, workspace};
+use crate::registry::testing::{disc, extrude_sketch, on_origin, rectangle};
+use crate::registry::{build, workspace};
 
 /// A step placing `file`, fixed where the program's state puts it.
 fn placing(file: &str) -> AddPartArgs {

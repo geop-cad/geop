@@ -27,7 +27,7 @@ use geop_ops_sketch::{Sketch, SketchPlane, sketch_element, whole_sketch};
 
 use crate::{
     examples::n,
-    operations::testing::{
+    registry::testing::{
         Built, both_ways, check_valid, disc, extrude_sketch, on_face, on_origin, outline,
         rectangle, sketch,
     },

@@ -20,13 +20,13 @@ use geop_ops_inspect::{
 };
 use geop_ops_model::Namer;
 
-use super::testing::Built;
+use crate::registry::testing::Built;
 use crate::{Command, Editor, examples};
 
 /// The editor with the workspace example `name` loaded, as the browser
 /// loads one.
 fn workspace(name: &str) -> Editor {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = editor.handle(Command::LoadWorkspaceExample {
         name: name.into(),
         folder: None,

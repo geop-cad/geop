@@ -15,7 +15,7 @@ use geop_ops_step::{ImportStepArgs, write_step};
 
 use crate::{
     examples,
-    operations::{build, testing::Built, workspace},
+    registry::{build, testing::Built, workspace},
 };
 
 /// `(faces, edges, vertices)`.

@@ -4,7 +4,7 @@
 //! The browser sends every command — a step started, a click in the
 //! viewport as a ray, a slider moved, undo — as JSON, and gets back what to
 //! show now: the program, the part to draw, the step being edited. Every
-//! decision is made by the editor (see `geop_cad_base::editor`); the browser
+//! decision is made by the editor (see `geop_core_editor::editor`); the browser
 //! renders and forwards input.
 
 use std::cell::RefCell;
@@ -13,7 +13,7 @@ use geop_cad_base::Editor;
 use wasm_bindgen::prelude::*;
 
 thread_local! {
-    static EDITOR: RefCell<Editor> = RefCell::new(Editor::new());
+    static EDITOR: RefCell<Editor> = RefCell::new(geop_cad_base::editor());
 }
 
 #[wasm_bindgen]
@@ -50,8 +50,8 @@ fn handle_json(command: &str) -> Result<String, String> {
     })
 }
 
-/// Apply a command (JSON `geop_cad_base::Command`) and return what to show
-/// now (JSON `geop_cad_base::Update`). A refused command says why in the
+/// Apply a command (JSON `geop_core_editor::editor::Command`) and return what to show
+/// now (JSON `geop_core_editor::editor::Update`). A refused command says why in the
 /// update's `error`, and changes nothing.
 #[wasm_bindgen]
 pub fn handle(command: &str) -> Result<String, JsValue> {

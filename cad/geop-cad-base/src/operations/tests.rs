@@ -19,7 +19,7 @@ use geop_ops_sketch::{Constraint, Sketch, sketch_element, whole_sketch};
 
 use crate::{
     examples::{n, polygon},
-    operations::testing::{
+    registry::testing::{
         Built, assert_valid, both_ways, extrusion, on_face, on_origin, one_way, origin_axis,
         sketch, two_ways,
     },

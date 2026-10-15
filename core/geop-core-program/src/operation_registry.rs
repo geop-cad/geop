@@ -5,7 +5,7 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 use crate::operation::{ErasedOperation, Operation};
 
 /// The operations a program may use, by name.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct OperationRegistry(BTreeMap<&'static str, Rc<dyn ErasedOperation>>);
 
 impl OperationRegistry {

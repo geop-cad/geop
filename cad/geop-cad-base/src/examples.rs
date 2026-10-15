@@ -45,7 +45,8 @@ use geop_ops_subd::{Cage, Mirror, SubdArgs};
 use geop_ops_surface::NetworkSurfaceArgs;
 use std::collections::BTreeMap;
 
-use crate::operations::{build, workspace};
+use crate::registry::{build, workspace};
+use geop_core_editor::registry::{Example, ExampleFiles, ExampleSet};
 
 /// `[x, y]`, as an example is written down.
 type P2 = [f64; 2];
@@ -1286,13 +1287,13 @@ fn drawn(text: &str) -> Program {
     Program::from_json(text).expect("a drawn example is a program")
 }
 
-/// The files of an example made of several: each file's path and program,
-/// the one to open first first.
-pub type ExampleFiles = Vec<(&'static str, Program)>;
-
-/// An example by name, with what makes it: a program, or the files of one
-/// made of several.
-pub type Example<T> = (&'static str, fn() -> T);
+/// Every example, as the editor offers them (see [`all`], [`workspaces`]).
+pub fn set() -> ExampleSet {
+    ExampleSet {
+        programs: all(),
+        workspaces: workspaces(),
+    }
+}
 
 /// Every example made of several files, by name, each with what makes its
 /// files: listing them builds nothing (see [`all`]).
@@ -2026,7 +2027,7 @@ mod tests {
     use geop_ops_extrude_revolve::testing::model_of;
     use geop_ops_model::{NamedModel, RefId};
 
-    use crate::operations::testing::{
+    use crate::registry::testing::{
         Built, args, assert_valid, check_valid, disc, edit_args, error, step,
     };
 

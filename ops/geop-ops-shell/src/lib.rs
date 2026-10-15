@@ -9,3 +9,11 @@ mod program_tests;
 pub mod shell;
 
 pub use operation::{Shell, ShellArgs};
+
+use geop_core_editor::registry::Registry;
+use geop_core_math::geop_error::GeopResult;
+
+/// Adds what this crate offers an editor to `r`: shelling a solid.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.operation(Shell)
+}

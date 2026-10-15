@@ -16,3 +16,11 @@ pub use add_datum::{
     fitting_constructions,
 };
 pub use selection::{Role, Selected, Shape};
+
+use geop_core_editor::registry::Registry;
+use geop_core_math::geop_error::GeopResult;
+
+/// Adds what this crate offers an editor to `r`: the step adding a datum.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.operation(AddDatum)
+}

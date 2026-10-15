@@ -21,7 +21,42 @@ pub use placed::{
     PlacedSketch, SketchRef, chain_of_pieces, piece_names, sketch, sketch_element, whole_sketch,
 };
 
-use geop_core_program::values::Design;
+use geop_core_editor::{
+    registry::{Drawer, Registry, StructureItem},
+    view::PartView,
+};
+use geop_core_math::geop_error::GeopResult;
+use geop_core_program::{element::ElementReference, reader::Reader, values::Design};
+
+/// Draws a part's sketches, each as the target it is, and lists them.
+pub struct SketchDrawer;
+
+impl Drawer for SketchDrawer {
+    fn draw(&self, reader: &Reader, view: &mut PartView) -> GeopResult<()> {
+        for target in reader.targets_of::<PlacedSketch<Design>>() {
+            let name = target.name().to_string();
+            let reference = ElementReference::<_, PlacedSketch<Design>>::whole(target);
+            reader.retrieve_element(&reference)?.draw(&name, view)?;
+        }
+        Ok(())
+    }
+
+    fn structure(&self, reader: &Reader) -> GeopResult<Vec<StructureItem>> {
+        (reader.targets_of::<PlacedSketch<Design>>().into_iter())
+            .map(|target| {
+                let reference = ElementReference::<_, PlacedSketch<Design>>::whole(target);
+                let placed = reader.retrieve_element(&reference)?;
+                Ok(StructureItem::drawn("sketch", "Sketches", &placed.name))
+            })
+            .collect()
+    }
+}
+
+/// Adds what sketches offer an editor to `r`: the step adding one, and a
+/// part's sketches drawn and listed ([`SketchDrawer`]).
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.operation(AddSketch)?.drawer(SketchDrawer)
+}
 
 /// A sketch as a program holds it.
 pub type Sketch = geop_core_sketch::Sketch<Design>;

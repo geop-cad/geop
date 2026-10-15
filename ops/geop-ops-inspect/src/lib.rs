@@ -118,3 +118,13 @@ impl Inspector for Interference {
 mod icons;
 #[cfg(test)]
 mod tests;
+
+use geop_core_editor::registry::Registry;
+
+/// Adds what this crate offers an editor to `r`: measuring a part, its mass
+/// properties and where its bodies interfere.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.inspector(Measure)?
+        .inspector(MassProperties)?
+        .inspector(Interference)
+}

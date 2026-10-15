@@ -17,7 +17,7 @@ use geop_ops_parameters::{
 use geop_ops_pattern::{CircularPatternArgs, Spacing};
 
 use super::{StandardPart, drive::TEETH, parts, steps::SIZE};
-use crate::operations::testing::{Built, check_valid, edit_args, step};
+use crate::registry::testing::{Built, check_valid, edit_args, step};
 
 /// How far out from the `z` axis, and from where to where along it, the
 /// part of `file` reaches, by the norm: `value` reads a column of the size
@@ -344,7 +344,7 @@ fn the_bolted_plate_holds_together() {
 
     use crate::{
         examples,
-        operations::{build, workspace},
+        registry::{build, workspace},
     };
 
     let files = BTreeMap::from([(
@@ -392,7 +392,7 @@ fn a_12_tooth_spur_gear_builds() {
 /// are made of; a servo weighs what it does.
 #[test]
 fn drive_and_motion_parts_are_designated_and_made_of_something() {
-    let runner = crate::operations::runner();
+    let runner = crate::registry::runner();
     let text = |pairs: &[(&str, &str)]| -> Settings {
         pairs
             .iter()
@@ -645,9 +645,10 @@ fn gear_drive() -> Program {
 fn a_motor_drives_a_gear_pair_at_its_ratio() {
     use std::collections::BTreeMap;
 
-    use geop_ops_assembly::solving::{self, Rerun};
+    use geop_core_editor::editor::Rerun;
+    use geop_ops_assembly::solving;
 
-    use crate::operations::{build, workspace};
+    use crate::registry::{build, workspace};
 
     let program = gear_drive();
     let mut built = build(&program, "gear_drive.geop", workspace(BTreeMap::new())).unwrap();

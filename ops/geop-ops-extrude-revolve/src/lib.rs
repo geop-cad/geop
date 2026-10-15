@@ -37,3 +37,15 @@ pub use operation::{
     RevolveAxis, Sweep, SweepArgs,
 };
 pub use path_sweep::Orientation;
+
+use geop_core_editor::registry::Registry;
+use geop_core_math::geop_error::GeopResult;
+
+/// Adds what this crate offers an editor to `r`: extrusions, revolutions,
+/// sweeps and lofts.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.operation(Extrude)?
+        .operation(Revolve)?
+        .operation(Sweep)?
+        .operation(Loft)
+}

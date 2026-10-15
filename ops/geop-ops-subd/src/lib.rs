@@ -29,3 +29,11 @@ mod tests;
 
 pub use cage::{Cage, CageFace, CageVertex, Mirror};
 pub use operation::{Subd, SubdArgs, SubdEditing, SubdSession, build_subd};
+
+use geop_core_editor::registry::Registry;
+use geop_core_math::geop_error::GeopResult;
+
+/// Adds what this crate offers an editor to `r`: subdivision surfaces.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.operation(Subd)
+}

@@ -25,7 +25,7 @@ use geop_ops_sketch::{
     AddSketchArgs, Constraint, CurveKind, Sketch, SketchPlane, editor::SketchSession, references,
 };
 
-use super::testing::{Stepping, origin_plane, pointer};
+use crate::registry::testing::{Stepping, loaded, origin_plane, pointer};
 
 type SolveReport = geop_core_sketch::SolveReport<geop_core_program::values::Design>;
 type SketchEditing = geop_core_editor::edit_form::FormState<SketchSession>;
@@ -45,11 +45,11 @@ impl Editor {
         let mut program = Program::new();
         set_parameters(&mut program, parameters);
         let step = match new {
-            true => Stepping::new(program, "add_sketch"),
+            true => Stepping::new(loaded(program), "add_sketch"),
             false => {
                 let plane = SketchPlane::Datum(origin_plane(FrameAxis::Z));
                 program.push("sketch", AddSketchArgs::new(Some(plane)));
-                Stepping::open(program, "sketch")
+                Stepping::open(loaded(program), "sketch")
             }
         };
         let args = step.args();

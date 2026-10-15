@@ -39,6 +39,7 @@ geop-ops-urdf.workspace = true
 geop-ops-bom.workspace = true
 
 [dev-dependencies]
+geop-core-editor = { workspace = true, features = ["testing"] }
 geop-core-program = { workspace = true, features = ["testing"] }
 geop-core-rasterize.workspace = true
 geop-ops-constraints.workspace = true

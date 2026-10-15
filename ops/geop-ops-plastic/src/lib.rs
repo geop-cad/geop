@@ -21,3 +21,15 @@ mod program_tests;
 pub mod testing;
 #[cfg(test)]
 mod tests;
+
+use geop_core_editor::registry::Registry;
+use geop_core_math::geop_error::GeopResult;
+
+/// Adds what this crate offers an editor to `r`: the features of plastic
+/// parts: ribs, drafts, lips and grooves.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.operation(Rib)?
+        .operation(Draft)?
+        .operation(Lip)?
+        .operation(Groove)
+}

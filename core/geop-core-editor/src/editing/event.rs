@@ -180,7 +180,7 @@ impl<S: Scalar> StepEditEvent<S> {
 
 /// A pointer or key event the editor passes on to an operation, having
 /// taken what is its own: picks, selecting, dragging handles (see
-/// the step editor, `geop_cad_base::step_editor`).
+/// the step editor, [`crate::step_editor`]).
 #[derive(Clone, Debug, PartialEq)]
 pub enum CanvasEvent<S: Scalar> {
     /// The pointer moved over the viewport with no button held, `shift`

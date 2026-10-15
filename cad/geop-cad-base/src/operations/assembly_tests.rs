@@ -1,6 +1,7 @@
 //! Assemblies: programs placing the parts other program files build — built
 //! from a workspace of files, and edited as a front end drives the editor.
 
+use geop_core_editor::editor::Rerun;
 use geop_core_program::{
     element::ElementReference,
     part::Part,
@@ -23,9 +24,9 @@ use geop_core_math::{
 };
 use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
 use geop_ops_assembly::{
-    AddPartArgs, MateEntity, PartPatternArgs, PatternAxis, Resolved, mate_name,
+    AddPartArgs, DragTool, MateEntity, PartPatternArgs, PatternAxis, Resolved, mate_name,
     placed::locate,
-    solving::{self, Freedom, Report, Rerun, SettingsState},
+    solving::{self, Freedom, Report, SettingsState},
 };
 use geop_ops_datums::{ORIGIN, component_name, datum};
 use geop_ops_extrude_revolve::ExtrudeArgs;
@@ -36,7 +37,7 @@ use geop_ops_pattern::spacing::Spacing;
 use crate::{
     Command, Editor, Workspace, examples,
     examples::{n, pose},
-    operations::{
+    registry::{
         self,
         testing::{dialog, edit_args, example_editor, from_above, handled},
         workspace,
@@ -56,7 +57,7 @@ fn build<F: FileStore + 'static>(
     program: &Program,
     workspace: &Rc<Workspace<F>>,
 ) -> GeopResult<Built> {
-    let operations::BuiltPart { runner, part } = operations::build(program, "", workspace.clone())?;
+    let registry::BuiltPart { runner, part } = registry::build(program, "", workspace.clone())?;
     Ok(Built {
         runner,
         part,
@@ -251,7 +252,7 @@ fn files_must_not_place_each_other_in_a_cycle() {
 }
 
 fn editor_on(program: Program) -> Editor {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let files = parts().into_iter().map(|(p, t)| (p, Some(t))).collect();
     handled(&mut editor, Command::Files { files });
     handled(
@@ -632,7 +633,7 @@ fn an_example_of_several_files_adds_its_files() {
 /// that file's: the file switched to places it as it was edited.
 #[test]
 fn a_file_left_is_placed_as_it_was_edited() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     editor.handle(Command::Load {
         program: examples::pin(),
         path: Some("pin.geop".into()),
@@ -734,7 +735,7 @@ fn hinge() -> (BTreeMap<String, Option<String>>, Program) {
 }
 
 fn editor_with(files: BTreeMap<String, Option<String>>, program: Program, path: &str) -> Editor {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     editor.handle(Command::Files { files });
     handled(
         &mut editor,
@@ -825,8 +826,10 @@ fn the_drag_tool_drags_any_placed_part() {
     });
     program.state.insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
     let mut editor = editor_on(program);
-    let update = editor.handle(Command::DragTool { on: true });
-    assert!(update.program.unwrap().drag_tool);
+    let update = editor.handle(Command::Tool {
+        key: Some("drag".into()),
+    });
+    assert_eq!(update.program.unwrap().tool.as_deref(), Some("drag"));
 
     let update = editor.handle(Command::Event {
         event: StepEditEvent::Hover {
@@ -918,7 +921,9 @@ fn drive_chain(
             .collect::<BTreeMap<_, _>>(),
     );
     let library = workspace.clone();
-    editor.handle(Command::DragTool { on: true });
+    editor.handle(Command::Tool {
+        key: Some("drag".into()),
+    });
     // Seen from in front and above — so the plane a drag moves in, facing
     // the eye, is tilted, and the pointer pulls along the pins too.
     let eye = |x: f64, y: f64| {
@@ -942,7 +947,11 @@ fn drive_chain(
                 shift: false,
             },
         });
-        times.push((started.elapsed(), i, editor.dragged().cloned()));
+        let dragged = editor
+            .tool::<DragTool>()
+            .and_then(DragTool::dragged)
+            .cloned();
+        times.push((started.elapsed(), i, dragged));
         assert!(update.error.is_none(), "{:?}", update.error);
         // Every drag leaves the mates holding — or the editor would solve
         // them all over again before it answers.
@@ -1102,7 +1111,7 @@ fn placed_datums_show_only_while_placing() {
 /// — every placed part comes with the mesh to draw it by.
 #[test]
 fn an_assembly_opened_first_sends_its_parts() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let files: BTreeMap<String, Option<String>> = examples::workspaces()
         .into_iter()
         .find(|(name, _)| *name == "pin_in_plate")
@@ -1533,7 +1542,7 @@ fn a_coupling_offers_the_joints_that_move_as_it_needs() {
         "link.geop".to_string(),
         Some(examples::link().to_json().unwrap()),
     )]);
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     editor.handle(Command::Files { files });
     handled(
         &mut editor,

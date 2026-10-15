@@ -64,6 +64,7 @@ pub mod threads;
 pub use build::{ModelOperation, build_model};
 pub use curves::{Chain, ChainCurve, Profile};
 pub use describe::{EdgeDescription, FaceDescription, PartDescription};
+pub use draw::ModelDrawer;
 pub use edit::BodyNames;
 pub use elements::{ChainElement, Edge, EdgeChain, Face, ModelElement, Solid, Vertex, read_model};
 pub use feature::{BooleanOp, Feature, FeatureFaces, FeatureTool, ToolReach};
@@ -77,3 +78,12 @@ pub use names::{LONGEST_ARGUMENT, NameRegistry, Namer, digest, operation_of, ori
 pub use notes::{CutWire, SolidNote, SolidNotes, notes_of, solid_notes};
 pub use records::Records;
 pub use threads::{CosmeticThread, Threads, draw_threads, read_threads, threads};
+
+use geop_core_editor::registry::Registry;
+use geop_core_math::geop_error::GeopResult;
+
+/// Adds what the model offers an editor to `r`: the part's model drawn, and
+/// its solids and faces listed ([`ModelDrawer`]).
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.drawer(ModelDrawer)
+}

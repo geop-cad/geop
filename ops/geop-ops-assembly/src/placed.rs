@@ -42,7 +42,7 @@ use geop_ops_sketch::PlacedSketch;
 /// The part `reader` reads, drawn: its model, its datums — the origin
 /// first — its sketches, what its steps draw on it and the parts placed in
 /// it, in its colour.
-pub fn draw(reader: &Reader) -> GeopResult<PartView> {
+pub(crate) fn draw(reader: &Reader) -> GeopResult<PartView> {
     let mut view = PartView::new();
     read_model(reader)?.draw("model", &mut view)?;
     read_datums(reader)?.draw(&mut view)?;
@@ -281,7 +281,7 @@ pub fn solid_meshes(reader: &Reader, quality: usize) -> GeopResult<SolidMeshes<D
 ///
 /// One is drawn fixed that no solve moves: a copy, or one a step holds
 /// fixed.
-pub fn draw_instances(reader: &Reader, view: &mut PartView) -> GeopResult<()> {
+pub(crate) fn draw_instances(reader: &Reader, view: &mut PartView) -> GeopResult<()> {
     let unknowns = Unknowns::of(reader)?;
     for placed in placed_parts(reader)? {
         let located = placed.located;

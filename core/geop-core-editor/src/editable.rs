@@ -275,11 +275,15 @@ impl<O: Editable> ErasedEditable for O {
     }
 }
 
-/// The operations an editor offers, by name — and, for the runner its
-/// programs run on, the same as an [`OperationRegistry`]
-/// ([`Editors::operations`]).
+/// The operations an editor offers, by name, in the order they were added:
+/// the order an editor offers them in within a group and tier. The runner
+/// its programs run on is given the same operations by the
+/// [`crate::registry::Registry`] that holds them.
 #[derive(Default)]
-pub struct Editors(BTreeMap<&'static str, Rc<dyn ErasedEditable>>);
+pub struct Editors {
+    by_kind: BTreeMap<&'static str, Rc<dyn ErasedEditable>>,
+    order: Vec<&'static str>,
+}
 
 /// The part `part` as it is before the step `step` of `program`: before
 /// that step as the last run ran it — or, for a step the last run did not
@@ -310,38 +314,51 @@ struct Step<'a> {
 impl Editors {
     /// Adds `operation`. Fails if an operation of its name is already there.
     pub fn with<O: Editable>(mut self, operation: O) -> GeopResult<Self> {
-        if self.0.contains_key(O::KIND) {
+        self.add(Rc::new(operation))?;
+        Ok(self)
+    }
+
+    /// Adds `operation`, erased. Fails if an operation of its name is
+    /// already there.
+    pub(crate) fn add(&mut self, operation: Rc<dyn ErasedEditable>) -> GeopResult<()> {
+        let kind = operation.kind();
+        if self.by_kind.contains_key(kind) {
             return Err(GeopError::new(format!(
-                "operation `{}` is registered twice",
-                O::KIND
+                "operation `{kind}` is registered twice"
             )));
         }
-        self.0.insert(O::KIND, Rc::new(operation));
-        Ok(self)
+        self.by_kind.insert(kind, operation);
+        self.order.push(kind);
+        Ok(())
     }
 
     /// The operations, as a program runner runs them.
     pub fn operations(&self) -> GeopResult<OperationRegistry> {
         let mut registry = OperationRegistry::default();
-        for operation in self.0.values() {
+        for operation in self.by_kind.values() {
             let operation: Rc<dyn ErasedOperation> = operation.clone();
             registry = registry.with_erased(operation)?;
         }
         Ok(registry)
     }
 
-    /// What each operation is, in the order of their names.
+    /// What each operation is, in the order they were added.
     pub fn infos(&self) -> Vec<Listed> {
-        (self.0.iter())
-            .map(|(&kind, operation)| Listed {
-                kind,
-                info: operation.info(),
-            })
+        (self.order.iter())
+            .filter_map(|kind| self.info(kind))
             .collect()
     }
 
+    /// What the operation `kind` is, if it is offered.
+    pub fn info(&self, kind: &str) -> Option<Listed> {
+        (self.by_kind.get_key_value(kind)).map(|(&kind, operation)| Listed {
+            kind,
+            info: operation.info(),
+        })
+    }
+
     fn get(&self, kind: &str) -> GeopResult<&dyn ErasedEditable> {
-        self.0
+        self.by_kind
             .get(kind)
             .map(Rc::as_ref)
             .ok_or_else(|| GeopError::new(format!("unknown operation `{kind}`")))

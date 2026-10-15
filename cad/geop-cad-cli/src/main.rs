@@ -13,14 +13,12 @@
 //! [`serve`]).
 
 use clap::{Parser, Subcommand};
-use geop_cad_base::{
-    Editor,
-    operations::{self, BuiltPart, outputs, workspace},
-};
+use geop_cad_base::{BuiltPart, editor, outputs, workspace};
+use geop_core_editor::editor::Rerun;
 use geop_core_editor::output::Output;
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{program::Program, workspace::FileStore};
-use geop_ops_assembly::solving::{Rerun, check as check_mates, solve};
+use geop_ops_assembly::solving::{check as check_mates, solve};
 use std::{
     io::{BufRead, Write},
     path::{Path, PathBuf},
@@ -44,7 +42,7 @@ enum Command {
     Compile(CompileArgs),
     /// Write every built-in example (see `geop_cad_base::examples`) as a program and its part, in the default format.
     Examples(ExamplesArgs),
-    /// Run the editor (see `geop_cad_base::editor`) as a host process for a
+    /// Run the editor (see `geop_core_editor::editor`) as a host process for a
     /// front end: one JSON command per line on stdin, one JSON update per
     /// line on stdout. This is how the VS Code extension drives the kernel.
     Serve(ServeArgs),
@@ -167,7 +165,7 @@ fn build(path: &Path) -> GeopResult<(Program, BuiltPart, Vec<String>)> {
     // A standard part — `std:iso4032_hex_nut.geop` — builds too.
     let workspace = workspace(Disk);
     let mut program = Program::from_json(&workspace.files().read(&path)?)?;
-    let mut built = operations::build(&program, &path, workspace.clone())?;
+    let mut built = geop_cad_base::build(&program, &path, workspace.clone())?;
     let report = check_mates(&built.part.current())?;
     if !report.converged {
         let mut rerun = Rerun {
@@ -287,7 +285,7 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
     Ok(compiled)
 }
 
-/// Run one [`Editor`] until stdin closes: every line is a command, and the
+/// Run one [`geop_core_editor::editor::Editor`] until stdin closes: every line is a command, and the
 /// answer is one line — the update as JSON, or `{"fatal": "..."}` if the
 /// command could not be read at all. A panic inside the kernel is answered
 /// `{"crashed": "<what panicked, where>"}`, and the process ends: the editor
@@ -306,7 +304,7 @@ fn serve(_: &ServeArgs) -> GeopResult<()> {
         }
         default_hook(info);
     }));
-    let mut editor = Editor::new();
+    let mut editor = editor();
     let stdin = std::io::stdin().lock();
     let mut stdout = std::io::stdout().lock();
     for line in stdin.lines() {
@@ -432,7 +430,7 @@ mod tests {
     /// is waiting for exactly one line per line it sent.
     #[test]
     fn serve_answers_every_command_with_one_line() {
-        let mut editor = Editor::new();
+        let mut editor = editor();
         let shown = editor.handle_json(r#"{"command": "show"}"#).unwrap();
         let shown: serde_json::Value = serde_json::from_str(&shown).unwrap();
         assert!(shown["error"].is_null(), "{shown}");

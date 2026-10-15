@@ -22,8 +22,8 @@ use geop_ops_extrude_revolve::testing::model_of;
 use geop_ops_model::{NamedModel, RefId};
 use geop_ops_sketch::SketchPlane;
 
-use super::testing::Built;
 use crate::examples;
+use crate::registry::testing::Built;
 
 /// `program` built on its own: its part.
 fn build(program: &Program) -> Part {
@@ -520,7 +520,7 @@ fn example_assembly(name: &str) -> (&'static str, Part) {
         .collect();
     (
         path,
-        super::build(&program, path, super::workspace(files))
+        crate::build(&program, path, crate::workspace(files))
             .unwrap()
             .part,
     )
@@ -784,7 +784,7 @@ fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
         .into_iter()
         .map(|(path, program)| (path.to_string(), program.to_json().unwrap()))
         .collect();
-    let built = super::build(&program, "bolted_plate.geop", super::workspace(files))
+    let built = crate::build(&program, "bolted_plate.geop", crate::workspace(files))
         .unwrap()
         .part;
     let view = built.current();
@@ -874,7 +874,7 @@ fn screwed_plate(n: usize) -> Part {
         "plate.geop".to_string(),
         examples::metric_plate().to_json().unwrap(),
     )]);
-    super::build(&program, "screwed.geop", super::workspace(files))
+    crate::build(&program, "screwed.geop", crate::workspace(files))
         .unwrap()
         .part
 }

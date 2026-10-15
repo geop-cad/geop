@@ -31,7 +31,7 @@ use geop_ops_sketch::{
 use super::program_tests::Running;
 use crate::{
     examples,
-    operations::testing::{Built, args, from_above, on_face, on_origin, sketch},
+    registry::testing::{Built, args, from_above, on_face, on_origin, sketch},
 };
 
 /// The sketch `name` of `part`.
@@ -206,12 +206,12 @@ fn dimensions_follow_parameters() {
 /// where nothing is given.
 #[test]
 fn placed_parts_take_the_parameters_given() {
-    let workspace = super::workspace(BTreeMap::from([(
+    let workspace = crate::workspace(BTreeMap::from([(
         "plate.geop".to_string(),
         examples::parametric_plate().to_json().unwrap(),
     )]));
     let program = examples::plates_assembly();
-    let part = super::build(&program, "plates.geop", workspace.clone())
+    let part = crate::build(&program, "plates.geop", workspace.clone())
         .unwrap()
         .part;
     let view = part.current();
@@ -327,10 +327,10 @@ fn wide_plate_with_an_m6_hole() {
 /// the plate is placed with.
 #[test]
 fn placing_a_part_offers_its_parameters() {
-    use crate::operations::testing::handled;
-    use crate::{Command, Editor};
+    use crate::Command;
+    use crate::registry::testing::handled;
     use geop_core_editor::editing::{Control, StepEditEvent, Value};
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let files = BTreeMap::from([(
         "plate.geop".to_string(),
         Some(examples::parametric_plate().to_json().unwrap()),
@@ -388,10 +388,10 @@ fn placing_a_part_offers_its_parameters() {
 /// is optional: a sketch builds without.
 #[test]
 fn the_project_field_projects_what_is_picked() {
-    use crate::operations::testing::handled;
+    use crate::registry::testing::handled;
     use crate::{Command, Editor};
     use geop_core_editor::editing::{Control, StepEditEvent, Value};
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let mut program = examples::parametric_plate();
     let after_plate = program.index_of("plate").unwrap() + 1;
     program.steps.truncate(after_plate);
@@ -452,8 +452,8 @@ fn the_project_field_projects_what_is_picked() {
 /// shown, invalid ones are refused, and the edit is undone like any other.
 #[test]
 fn parameters_are_edited_and_undone() {
-    use crate::{Command, Editor};
-    let mut editor = Editor::new();
+    use crate::Command;
+    let mut editor = crate::editor();
     let program = examples::parametric_plate();
     editor.handle(Command::Load {
         program: program.clone(),
@@ -464,12 +464,13 @@ fn parameters_are_edited_and_undone() {
         panic!("depth is a number")
     };
     *expression = "width / 4 + nothing".into();
-    let update = editor.handle(Command::Parameters {
-        parameters: parameters.clone(),
-    });
+    let update = editor.handle(crate::registry::testing::set_parameters(parameters.clone()));
     let state = update.program.unwrap();
     assert!(
-        state.parameters.errors["depth"].contains("nothing"),
+        crate::registry::testing::parameters_panel(&state)
+            .parameters
+            .errors["depth"]
+            .contains("nothing"),
         "{state:?}"
     );
     let ParameterKind::Number { expression, .. } = &mut parameters.values[1].kind else {
@@ -477,14 +478,16 @@ fn parameters_are_edited_and_undone() {
     };
     *expression = "width / 4".into();
     let state = editor
-        .handle(Command::Parameters {
-            parameters: parameters.clone(),
-        })
+        .handle(crate::registry::testing::set_parameters(parameters.clone()))
         .program
         .unwrap();
     assert_eq!(
-        state.parameters.values.get("depth"),
-        Some(&Setting::Number(1.0))
+        crate::registry::testing::parameters_panel(&state)
+            .parameters
+            .values
+            .get("depth")
+            .cloned(),
+        Some(Setting::Number(1.0))
     );
     assert!(
         state.steps.iter().all(|s| s.error.is_none()),
@@ -494,7 +497,7 @@ fn parameters_are_edited_and_undone() {
     parameters.values[1].name = "width".into();
     assert!(
         editor
-            .handle(Command::Parameters { parameters })
+            .handle(crate::registry::testing::set_parameters(parameters))
             .error
             .is_some()
     );
@@ -508,9 +511,9 @@ fn parameters_are_edited_and_undone() {
 /// otherwise; and a placed part's mates are listed too, never drawn.
 #[test]
 fn the_structure_is_listed_and_shown_as_chosen() {
-    use crate::operations::testing::handled;
+    use crate::registry::testing::handled;
     use crate::{Command, Editor};
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let update = editor.handle(Command::Load {
         program: examples::box_with_drill_hole(),
         path: None,
@@ -567,11 +570,11 @@ fn the_structure_is_listed_and_shown_as_chosen() {
 /// is read by its columns in a formula typed into a dimension.
 #[test]
 fn parameters_changed_rebuild_what_reads_them() {
-    use crate::operations::testing::handled;
-    use crate::{Command, Editor};
+    use crate::Command;
+    use crate::registry::testing::handled;
     use geop_core_editor::editing::{Control, Shape, StepEditEvent, Tone, Value};
     use geop_ops_parameters::{Parameter, Parameters, parameters::Row};
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let program = examples::parametric_plate();
     editor.handle(Command::Load {
         program: program.clone(),
@@ -595,9 +598,7 @@ fn parameters_changed_rebuild_what_reads_them() {
     set_width(&mut parameters, "5");
     let update = handled(
         &mut editor,
-        Command::Parameters {
-            parameters: parameters.clone(),
-        },
+        crate::registry::testing::set_parameters(parameters.clone()),
     );
     let widest_vertex = update
         .scene
@@ -638,9 +639,7 @@ fn parameters_changed_rebuild_what_reads_them() {
         id: "outline".into(),
     });
     set_width(&mut parameters, "7");
-    let update = editor.handle(Command::Parameters {
-        parameters: parameters.clone(),
-    });
+    let update = editor.handle(crate::registry::testing::set_parameters(parameters.clone()));
     let visuals = update.step.unwrap().presentation.visuals;
     let widest = visuals
         .iter()
@@ -680,9 +679,7 @@ fn parameters_changed_rebuild_what_reads_them() {
     });
     handled(
         &mut editor,
-        Command::Parameters {
-            parameters: parameters.clone(),
-        },
+        crate::registry::testing::set_parameters(parameters.clone()),
     );
     let sketch: AddSketchArgs = args(editor.editing().unwrap());
     let (&diameter, _) = sketch
@@ -743,7 +740,7 @@ fn runners_rebuild_when_parameters_change() {
 /// back once the sketch is put away.
 #[test]
 fn sketches_undo_their_own_edits() {
-    use crate::operations::testing::{handled, loaded};
+    use crate::registry::testing::{handled, loaded};
     use crate::{Command, Editor};
     use geop_core_editor::editing::{Button, StepEditEvent};
     let mut editor = loaded(Program::new());
@@ -919,7 +916,7 @@ fn parameters_no_step_reads_rebuild_nothing() {
 #[test]
 fn colours_are_picked_without_rebuilding() {
     use crate::{Command, Editor};
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let program = examples::parametric_plate();
     editor.handle(Command::Load {
         program: program.clone(),
@@ -933,7 +930,7 @@ fn colours_are_picked_without_rebuilding() {
     let before = model(&editor);
     let mut parameters = parameters_of(&program);
     parameters.color = Some("#123456".into());
-    let update = editor.handle(Command::Parameters { parameters });
+    let update = editor.handle(crate::registry::testing::set_parameters(parameters));
     assert_eq!(
         update
             .scene
@@ -959,7 +956,7 @@ mod tools {
 
     use super::*;
     use crate::examples::{circle, n, rectangle, solved};
-    use crate::operations::testing::{check_valid, extrusion};
+    use crate::registry::testing::{check_valid, extrusion};
 
     /// `sketch`, solved, on the origin's `xy` plane, extruded up by
     /// `height`: the part, checked to be valid.
@@ -967,7 +964,7 @@ mod tools {
         let mut program = Program::new();
         program.push(
             "outline",
-            crate::operations::testing::sketch(on_origin(FrameAxis::Z), solved(sketch)),
+            crate::registry::testing::sketch(on_origin(FrameAxis::Z), solved(sketch)),
         );
         program.push(
             "body",

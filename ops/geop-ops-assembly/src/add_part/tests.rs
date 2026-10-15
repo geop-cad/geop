@@ -2,6 +2,7 @@ use geop_core_editor::{
     edit_form::FormState,
     editable::{Context, Editable},
     editing::{CanvasEvent, Event, Pointer, Pull, Reach},
+    editor::Rerun,
 };
 use geop_core_program::{
     element::ElementReference,
@@ -34,7 +35,7 @@ use crate::{
     Kind, MateKind, PatternAxis,
     editor::PART,
     placed::{locate, placed_parts},
-    solving::{self, Rerun, check as check_mates, solve, solved_states},
+    solving::{self, check as check_mates, solve, solved_states},
     testing::{Shelf, given_model},
 };
 
@@ -44,7 +45,7 @@ fn draw(reader: &Reader) -> GeopResult<PartView> {
     let mut view = PartView::new();
     read_model(reader)?.draw("model", &mut view)?;
     read_datums(reader)?.draw(&mut view)?;
-    crate::draw_instances(reader, &mut view)?;
+    crate::placed::draw_instances(reader, &mut view)?;
     Ok(view.finish())
 }
 

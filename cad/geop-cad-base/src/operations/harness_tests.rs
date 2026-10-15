@@ -23,7 +23,7 @@ use geop_ops_sketch::sketch_element;
 use crate::{
     Command, Editor, examples,
     examples::pose,
-    operations::testing::{Built, on_origin},
+    registry::testing::{Built, on_origin},
 };
 
 /// An assembly of two plates: `a` fixed at the origin, `b` 4 along `x`,
@@ -91,7 +91,7 @@ fn cable_length(editor: &Editor) -> Design {
 /// `pi 4 / 2` to `pi 6 / 2`.
 #[test]
 fn moving_a_mated_part_reroutes_the_cable() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let files = BTreeMap::from([(
         "plate.geop".to_string(),
         Some(examples::box_with_drill_hole().to_json().unwrap()),
@@ -159,7 +159,7 @@ fn a_route_runs_through_sketch_points() {
     let p = floor.add_point(examples::n(4.0), examples::n(4.0));
     program.push(
         "floor",
-        crate::operations::testing::sketch(on_origin(FrameAxis::Z), floor),
+        crate::registry::testing::sketch(on_origin(FrameAxis::Z), floor),
     );
     program.push(
         "route",
@@ -192,7 +192,7 @@ fn a_route_runs_through_sketch_points() {
 /// inspector reports is the bill's.
 #[test]
 fn a_cable_bundle_is_no_body_to_weigh_or_check() {
-    let mut editor = Editor::new();
+    let mut editor = crate::editor();
     let files = BTreeMap::from([(
         "plate.geop".to_string(),
         Some(examples::box_with_drill_hole().to_json().unwrap()),

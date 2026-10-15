@@ -6,7 +6,8 @@
 //! ([`Setting`](geop_core_program::values::Setting)s), and read, set and
 //! renamed in a program ([`program`]); where the parts of its instances are
 //! placed by it ([`instance`](mod@instance)); and the files a field picks
-//! from ([`files`]).
+//! from ([`files`]); the parameters panel of an editor and the colour a
+//! part is drawn in ([`panel`]), which [`register`] offers.
 
 // Library code reports what goes wrong as an error, never by panicking;
 // tests may unwrap.
@@ -24,6 +25,7 @@
 
 pub mod files;
 pub mod instance;
+pub mod panel;
 pub mod parameters;
 pub mod program;
 pub mod steps;
@@ -41,6 +43,23 @@ pub use steps::{
     DefineParameters, DefineParametersArgs, LookupTable, LookupTableArgs, MaterialOf,
     PartProperties, PartPropertiesArgs, Properties, read_properties, stem,
 };
+
+use geop_core_editor::registry::Registry;
+use geop_core_math::geop_error::GeopResult;
+pub use panel::{
+    ParametersCommand, ParametersPanel, ParametersPanelState, ParametersState, PartColor,
+};
+
+/// Adds what a part's parameters and properties offer an editor to `r`:
+/// the steps defining them, the parameters panel, and the part drawn in
+/// its colour.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.operation(DefineParameters)?
+        .operation(LookupTable)?
+        .operation(PartProperties)?
+        .drawer(PartColor)?
+        .panel(ParametersPanel)
+}
 
 #[cfg(test)]
 mod tests;

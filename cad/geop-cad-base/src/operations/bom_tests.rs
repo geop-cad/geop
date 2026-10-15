@@ -13,12 +13,12 @@ use geop_ops_assembly::{AddPartArgs, placed::placed_parts};
 use geop_ops_bom::{Bom, LineKind, Structure, bom};
 use geop_ops_model::read_model;
 
-use super::workspace;
 use crate::examples::{self, pose};
+use crate::workspace;
 
 /// `program`, saved as `path` among `files`, built.
 fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Part {
-    super::build(program, path, workspace(files)).unwrap().part
+    crate::build(program, path, workspace(files)).unwrap().part
 }
 
 /// The bill of materials of `part`, the program of the file `file`, laid

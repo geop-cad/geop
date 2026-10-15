@@ -2,7 +2,7 @@
 
 use crate::{
     examples::box_with_drill_hole,
-    operations::testing::{Built, edit_args, extrusion, step},
+    registry::testing::{Built, edit_args, extrusion, step},
 };
 use geop_core_program::{
     part::Part,
@@ -39,8 +39,8 @@ pub(super) struct Running {
 
 impl Running {
     pub(super) fn new() -> Self {
-        let mut runner = super::runner();
-        runner.workspace = Some(super::workspace(BTreeMap::new()));
+        let mut runner = crate::runner();
+        runner.workspace = Some(crate::workspace(BTreeMap::new()));
         runner.location = Location {
             file: "part.geop".into(),
             within: Vec::new(),
@@ -304,7 +304,7 @@ fn a_pasted_step_takes_its_state_along() {
     assert_eq!(copied.state.len(), 1);
     let at = program.steps.len();
     let ids = program
-        .paste(copied, at, &crate::registry().unwrap(), |s| {
+        .paste(copied, at, &crate::registry().unwrap().operations(), |s| {
             s.operation.clone()
         })
         .unwrap();
@@ -313,7 +313,9 @@ fn a_pasted_step_takes_its_state_along() {
     assert_eq!(program.steps[at].id, ids[0]);
     assert_eq!(program.state.get(&pose_state(&ids[0])), Some(&pose));
     assert!(!program.state.contains_key(&format!("{}_width", ids[0])));
-    program.validate(&crate::registry().unwrap()).unwrap();
+    program
+        .validate(&crate::registry().unwrap().operations())
+        .unwrap();
 }
 
 /// A runner that takes steps from what it built before must build what
@@ -370,8 +372,8 @@ fn a_runner_builds_what_building_from_scratch_builds() {
         let programs: Vec<Program> = std::iter::once(original)
             .chain(edits.into_iter().map(|(_, program)| program))
             .collect();
-        let workspace: Rc<dyn Workspace> = crate::operations::workspace(BTreeMap::new());
-        let registry = Rc::new(crate::registry().unwrap());
+        let workspace: Rc<dyn Workspace> = crate::registry::workspace(BTreeMap::new());
+        let registry = Rc::new(crate::registry().unwrap().operations());
         assert_incremental(registry, Some((workspace, name)), &programs);
     }
 }
@@ -401,13 +403,13 @@ fn edited(original: &Program) -> Vec<Program> {
 /// [`assert_incremental`]).
 fn assert_examples_incremental(only: Option<&[&str]>) {
     use crate::examples;
-    let registry = Rc::new(crate::registry().unwrap());
+    let registry = Rc::new(crate::registry().unwrap().operations());
     let wanted = |name: &str| only.is_none_or(|only| only.contains(&name));
     for (name, make) in examples::all() {
         if !wanted(name) {
             continue;
         }
-        let workspace: Rc<dyn Workspace> = crate::operations::workspace(BTreeMap::new());
+        let workspace: Rc<dyn Workspace> = crate::registry::workspace(BTreeMap::new());
         assert_incremental(registry.clone(), Some((workspace, name)), &edited(&make()));
     }
     for (name, make) in examples::workspaces() {
@@ -418,7 +420,7 @@ fn assert_examples_incremental(only: Option<&[&str]>) {
         let texts: BTreeMap<String, String> = (files.iter())
             .map(|(file, program)| (file.to_string(), program.to_json().unwrap()))
             .collect();
-        let workspace: Rc<dyn Workspace> = crate::operations::workspace(texts);
+        let workspace: Rc<dyn Workspace> = crate::registry::workspace(texts);
         for (file, program) in &files {
             assert_incremental(
                 registry.clone(),

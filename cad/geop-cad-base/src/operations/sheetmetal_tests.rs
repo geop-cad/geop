@@ -12,7 +12,7 @@ use geop_ops_sketch::{AddSketchArgs, SketchPlane, whole_sketch};
 
 use geop_ops_extrude_revolve::testing::model_of;
 
-use super::testing::{
+use crate::registry::testing::{
     Built, args, assert_valid, click_at, dialog, disc, example_editor, from_above, handled, pointer,
 };
 use crate::{Command, examples};

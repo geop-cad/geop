@@ -57,3 +57,15 @@ pub use mirror::{Mirror, MirrorArgs};
 pub use move_body::{MoveBody, MoveBodyArgs};
 pub use references::{PatternDirection, TurnAxis};
 pub use spacing::{Row, Spacing};
+
+use geop_core_editor::registry::Registry;
+use geop_core_math::geop_error::GeopResult;
+
+/// Adds what this crate offers an editor to `r`: patterns, mirrors and
+/// moved bodies.
+pub fn register(r: Registry) -> GeopResult<Registry> {
+    r.operation(LinearPattern)?
+        .operation(CircularPattern)?
+        .operation(Mirror)?
+        .operation(MoveBody)
+}

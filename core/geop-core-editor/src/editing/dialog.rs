@@ -3,7 +3,7 @@
 //! A field says what its value *means* — a length, an angle, elements of the
 //! part of some kinds, things to do — never how to edit it:
 //! that is the editor's, the same for every operation (see
-//! the step editor, `geop_cad_base::step_editor`).
+//! the step editor, [`crate::step_editor`]).
 
 use geop_core_math::{scalars::Scalar, vector::Vector3};
 use serde::Serialize;
@@ -294,7 +294,7 @@ impl Picked {
 /// number, a pick adding or taking out one. Which of them the step can use
 /// is the operation's to say, in what it holds ([`Picked::tone`]).
 ///
-/// The editor does all of the editing (see `geop_cad_base::step_editor`): arming it
+/// The editor does all of the editing (see [`crate::step_editor`]): arming it
 /// for picks, removing and clearing elements. An operation only ever gets
 /// what it holds now, as [`super::Value::Elements`].
 #[derive(Clone, Debug, PartialEq, Serialize)]
