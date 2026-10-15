@@ -1,15 +1,19 @@
 # geop-core-editor
 
-What an operation is to an editor: the vocabulary a step's editing is said
-in — dialogs, visuals, gizmos, events, picks (`editing`) — numbers typed as
-formulas (`EditForm::numeric`), what an operation shows and does with them
+What editing is. The vocabulary a step's editing is said in — dialogs,
+visuals, gizmos, events, picks (`editing`) — numbers typed as formulas
+(`EditForm::numeric`), what an operation shows and does with them
 (`editable`, `part_operation`), how a reference field picks an element
-(`selectable`), and the operations an editor offers (`Editors`). A program
-runs without any of it (see [geop-core-program](./geop-core-program.md));
-the interaction every operation shares, driving these, is the editor's own
-(the `StepEditor` of [geop-cad-base](../cad/geop-cad-base.md#editing-one-step)).
-What an editor draws of a part and picks in it is the `view`, and what is
-made of a part rather than in it — files and answers — the `output`.
+(`selectable`), and the operations an editor offers (`Editors`). What an
+editor draws of a part and picks in it is the `view`, and what is made of a
+part rather than in it — files and answers — the `output`. The interaction
+every operation shares, driving these, is [one step edited](#editing-one-step)
+(`step_editor`), and the whole of editing a program is
+[the editor](#the-editor) (`editor`), over what a
+[registry](#the-registry-registry) offers: it names no operation, so an
+operation crate can drive an editor of three operations in its own tests.
+A program runs without any of it (see
+[geop-core-program](./geop-core-program.md)).
 
 ## An operation (`PartOperation`)
 
@@ -163,9 +167,10 @@ dragged sets it plain (`Value::numeric_input`).
 `Editors` is the operations an editor offers, by kind (`with`): what gives
 each step its arguments, form and events, and — through
 `Editors::operations` — the `OperationRegistry` its programs run with, so
-the two cannot disagree. `infos` lists them, each a `Listed` (kind and
-`OperationInfo`), which is what a front end builds its toolbar from. The
-editor's set is `editors` in [geop-cad-base](../cad/geop-cad-base.md).
+the two cannot disagree. `infos` lists them in the order they were added,
+each a `Listed` (kind and `OperationInfo`), which is what a front end
+builds its toolbar from. An editor's are its
+[registry's](#the-registry-registry).
 
 ## The view (`view`)
 
@@ -184,9 +189,10 @@ long), and picked by the same rules. Serialized, a `PartView` is what a
 viewer draws.
 
 Each crate draws its own targets into a view — the model its vertices,
-edges and faces, the sketches theirs, the datums theirs — and an editor
-composes them (`geop_cad_base::part::draw`), then `PartView::finish`
-measures the result.
+edges and faces, the sketches theirs, the datums theirs, the placed parts
+theirs — by a `Drawer` of its registry, and the registry composes them
+(`Registry::draw`: every drawer in turn, then what the steps annotate),
+then `PartView::finish` measures the result.
 
 The parts placed in a part are drawn by reference: each placed part —
 however deep — is listed once, with where it is (`ViewInstance`), and drawn
@@ -291,6 +297,164 @@ it: the midpoint of an enclosure and its half-width.
 ### Registering them
 
 Exporters and inspectors are registered in an `Outputs` (`exporter`,
-`inspector`; a kind twice is refused), the application's choice like the
-operation registry: the editor's is `outputs` in
-[geop-cad-base](../cad/geop-cad-base.md).
+`inspector`; a kind twice is refused), which a
+[registry](#the-registry-registry) holds beside its operations.
+
+## The registry (`registry`)
+
+Everything an editor offers is a `Registry`'s, one builder every operation
+crate adds to with its one `register(r: Registry) -> GeopResult<Registry>`;
+an application calls each crate's in turn (the editor's is
+[geop-cad-base](../cad/geop-cad-base.md)'s `registry`). Each way of adding
+something is a trait:
+
+- **Operations** (`operation`, an `Editable`): offered within their group
+  and tier in the order they were added; `operations()` gives the runner
+  the same set.
+- **`Drawer`**: draws the targets a crate defines into the part's view
+  (`draw`), lists them in the structure tree (`structure`, each a
+  `StructureItem` with the `kind_label` a front end groups it under, shown
+  unless hidden) and says what it draws only to be picked from (`hidden`:
+  the datums of placed parts, shown while a part is placed). A part is
+  drawn by every drawer in turn (`Registry::draw`) and listed likewise
+  (`Registry::structure`, then what the steps list).
+- **Exporters and inspectors** (`exporter`, `inspector`), as above.
+- **`Panel`**: program-level state a front end shows beside the steps,
+  under its `KEY` in `ProgramState::panels` (`state`), the commands it
+  takes as `Command::Panel { key, payload }` (`command`, its own
+  `Command` type), and what it asks once an edit (`after_edit`): the
+  parameters, the joints of an assembly.
+- **`Tool`**: a mode in hand while no step is edited, taken in hand by its
+  key (`Command::Tool`), offered as its `ToolInfo` says
+  (`ProgramState::tools`); the events of the viewport are its (`handle`),
+  it shows what it would take (`presentation`), and may answer about the
+  part with every update (`inspection`). The pick tool
+  (`tools::pick::PickTool`) is the core's, one per inspector that picks,
+  by the key `pick:<inspector>`.
+- **`Settle`** (at most one): the solve the editor runs after every edit,
+  moving the program's state so the constraints its steps declare hold
+  (`settle`, given what the step edited pulls), and naming the state it
+  solves for (`solvable`). With none, the state is kept as given.
+- **`ExampleSet`**: programs and workspaces of several files
+  `Command::LoadExample` and `LoadWorkspaceExample` load, listed by name
+  without being made.
+
+A panel, a tool or a settler sees the editor through an `EditorContext`
+(the program, the part as it last ran, the part as drawn, running it all
+again, `Rerun`, moving the state, editing the program with the marker and
+the step edited kept at their steps, one undo for a whole drag), so undo
+and the marker stay right whatever an extension does.
+
+## The editor
+
+`Editor` (`editor`) is the whole of editing a program, as one state
+machine: it holds the program, its undo and redo, how far it runs (the
+marker), and the step being edited — a `StepEditor` (below) and the part
+before the step, as drawn, for picking. An editor drives it with
+`Command`s and draws the `Update` each answers (`handle`, or `handle_json`
+on the wire), so it keeps no state of its own beyond the camera. The
+program is the one of a file, among others it may place parts from: the
+editor is told the file's path with the program (`Command::Load`), and is
+sent the other files' programs whenever they change (`Command::Files`) by
+the front end, which owns the files. It is made of a registry and a
+`FileStore` the files it is sent are kept in (`Editor::new`).
+
+- **Program commands:** `new` (a step of an operation, inserted where the
+  program runs to), `open` (a step, to edit), `remove`, `move`, `copy`,
+  `paste`, `seek`, `load`, `load_example`, `undo`, `redo`. Each is refused,
+  changing nothing, while a step is being edited, or when it would leave
+  the program invalid; an update says why.
+- **Step commands:** `event` (what the user did to the step), `preview`
+  (show the part the step builds, or the part before it), `commit` (put the
+  step into the program — only if it builds) and `cancel`.
+- **Extensions:** `panel` (a command to a panel, by key) and `tool` (take a
+  tool in hand by its key, or put it down: with no step edited, the
+  viewport's events are the tool's).
+- **Output commands**, which change nothing: `export` (write the part with
+  an exporter, by its kind, in a format, told its own options: the update's
+  `export`) and `inspect` (ask an inspector about the part: the update's
+  `inspection`, `{kind, report, shown}`: the answer as data, and as the
+  inspector lays it out). The program state lists the `exporters` and
+  `inspectors` offered, so a front end's menus are made from them.
+
+After every command that changed something the editor settles the state
+(the registry's `Settle`: while a step that pulls nothing is edited, only
+the program up to it runs; once the whole program has run, state nothing
+solves for goes), runs what is shown, and tells the panels once an edit.
+
+An update holds the program as a list of steps shows it — each step's
+fields in one line and whether it failed — the panels' states, the part to
+draw, and the step being edited with its presentation and whether it
+builds. What did not change since the last update is left out: a hover
+sends only the step, and the part is sent again only once something ran.
+The steps are run by one `Runner` — up to and including the step being
+edited while there is one, else as far as the program runs — on one part,
+a memo table of every step's nodes, so the part before the step being
+edited is always at hand, and a change to it makes again only what reads
+what changed. The builds of the last few files edited are kept, so opening
+one again builds nothing. The parts placed in the part drawn are sent as
+what changed since the last scene: their components once each, by key.
+
+What the shown steps built on — their reference fields' values — is hidden
+from the drawing: sketches and whole datums, since what was made from them
+shows them now; none that something of could be picked while a field waits
+for a pick. Every scene lists the part's structure (`Registry::structure`);
+`Command::Visibility` shows or hides one entry by name over what the editor
+would by itself, for as long as the same file is edited.
+
+`testing` (feature `testing`) drives an editor as a front end does:
+`editor_with(registry, program)`, `Stepping` (one step edited, gesture by
+gesture), pointers, clicks and dialog fields.
+
+## Editing one step
+
+How a field is edited is the same for every operation, so it is not the
+operations' but the `StepEditor`'s (`step_editor`), which edits one step.
+It turns what the user did — a `StepEditEvent` (see
+[What is shown and what reaches it](#what-is-shown-and-what-reaches-it))
+— into what the operation understands, an `Event`:
+
+- **Reference fields** hold `Selectable` values: elements of the part of
+  the kinds the field takes. A field arms on a press; the editor then finds
+  what a click would pick on hover, lights it, and picks it on a click —
+  once for a field of one element, again and again (each pick adding one
+  or taking it out) for a field of several. Taking one out, or all, is the
+  editor's too, as is saying what each element held is used as, or why it
+  cannot be. The operation is only ever sent what the field holds now. A
+  new step whose first reference field is still empty starts with it
+  armed: what it is built on is what it needs first. One that already holds
+  something — an extrude's newest sketch — waits for no click, so its
+  handles can be dragged straight away. So does a field that appears empty
+  as the step is edited — a mate just added waits for its entities — and a
+  field that goes away stops waiting. While a field waits for a pick, the
+  part is shown as it stands, not the plane the step works in. Picks test
+  against the part before the step, or — for an operation whose references
+  point into what it adds itself (`OperationInfo::picks_built`), a placed
+  part's mates — against what it builds.
+- **Handles** of number fields are drawn by the editor and dragged along
+  their direction, the value following how far the pointer has moved along
+  the handle's track, from the ray where the drag started to the ray where
+  it is now, snapped to a hundredth (`DRAG_SNAP`).
+- **Selecting** is the editor's: a click on a selectable visual selects it
+  or takes it out again, a click on nothing clears the selection unless
+  shift is held, and Escape clears it. The operation reads the selection in
+  its form and may change it as its fields are used. The editor draws what
+  is selected and what the pointer is over.
+- **Dragging** a draggable visual is the editor's too: it is grabbed where
+  the drag starts, and the operation is sent where to, in the plane worked
+  in — or, with none, in the plane through where it was grabbed, facing the
+  eye. With a tool in hand that strokes, a drag from anywhere else is the
+  tool's.
+- **The gizmo**, if the form has one, is drawn over everything and grabbed
+  first; a drag of one of its parts is followed, snapped and sent to the
+  step as it was when it was pressed, so each event applies the whole drag
+  once.
+- **Keys:** Escape, Enter, Delete and a secondary click mean the same in
+  every tool (`CanvasEvent::Cancel`, `Confirm`, `Delete`); any other key is
+  a tool's shortcut.
+
+Whatever else the pointer and the keys do goes to the operation as a
+`CanvasEvent`: clicks while it has a tool in hand, and those on nothing,
+hovers, keys. Hit tests against visuals (`hit::hit_visuals`) and against
+the part as drawn (`PartView::pick`, through the context's `Scene`) decide
+what a pointer is over, so a pick cannot disagree with what is on screen.

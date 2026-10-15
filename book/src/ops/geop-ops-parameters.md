@@ -40,6 +40,14 @@ what its parameters come to as defined,
 `parameter_uses` what reads each, and `rename_parameter` renames a
 parameter and every formula reading it.
 
+An editor shows them in the parameters panel (`ParametersPanel`, key
+`parameters`, see
+[the registry](../core/geop-core-editor.md#the-registry-registry)): what
+they are defined as and come to, why those that do not resolve fail, what
+reads each and the materials a part's can be; it takes
+`set_parameters` (allowed while a step is edited, which then sees them)
+and `rename_parameter`. `PartColor` draws the part in its colour.
+
 ## Parameters
 
 Parameters are the named values a program's design is given by, defined

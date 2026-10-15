@@ -15,8 +15,8 @@ files (`geop.js`, `geop_bg.wasm`) match what `web/src/geop.ts` imports.
 
 ## The editor's view of the kernel
 
-The browser edits a program through one `geop_cad_base::Editor` (see
-[geop-cad-base](./geop-cad-base.md#the-editor)), and only through it:
+The browser edits a program through one `Editor` (`geop_cad_base::editor()`, see
+[geop-core-editor](../core/geop-core-editor.md#the-editor)), and only through it:
 
 | Export                  | Does                                                             |
 | ----------------------- | ---------------------------------------------------------------- |

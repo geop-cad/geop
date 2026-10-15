@@ -142,6 +142,19 @@ declare: `AddPart` the pose state of the part it places, held where it is
 as far as its mates let it. A solve's `Report`
 says which values no true solution is proven for, and why.
 
+What the crate adds to an editor (`register`, see
+[the registry](../core/geop-core-editor.md#the-registry-registry)) is built
+on `solving`: the `Settler` the editor settles the state with after every
+edit (what the step edited pulls first, else the step's own part first,
+then every part not fixed); the joints panel (`JointsPanel`, key `joints`:
+the values a user sets, how free each placed part is, measured once an
+edit, and the constraints the last settle found conflicting; it takes
+`set` to set a joint's coordinate); the drag tool (`DragTool`, key `drag`:
+with no step edited, a placed part grabbed is pulled towards the pointer,
+a whole drag one edit to undo); and the `AssemblyDrawer`, which draws the
+placed parts as instances of their components and lists those placed in
+the part itself.
+
 ## Solids and STL
 
 `solids` lists the solids a part shows, wherever they are placed — its own

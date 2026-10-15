@@ -66,7 +66,18 @@ core/geop-core-editor         what an operation is and how it is edited
                                `PartView`, picking by drawn kind,
                                annotations and the structure entries steps
                                list); the exporter and inspector interfaces
-                               (`output`)
+                               (`output`); the whole editor engine — one
+                               step edited (`step_editor`), the program
+                               edited by `Command`s answered by `Update`s
+                               (`editor`), the pick tool (`tools::pick`)
+                               — over a `Registry` of what it offers
+                               (operations, `Drawer`s, exporters,
+                               inspectors, `Panel`s, `Tool`s, one `Settle`,
+                               `ExampleSet`s), none of which it names;
+                               feature `testing`: an editor over a
+                               registry of a few operations, driven as a
+                               front end drives it (`editor_with`,
+                               `Stepping`, pointers, clicks)
 lib/geop-lib-sheet            the sheets drawings and flat patterns are
                                written on (SVG, DXF, each layer defined by
                                who draws on it), and `xml_escape`
@@ -85,13 +96,15 @@ ops/geop-ops-parameters       a part's parameters (numbers, tables, colour,
                                (`parameters_of`, `set_parameters`,
                                `rename_parameter`, `parameter_uses`); where
                                placed parts are (`Instance`, `placement`,
-                               `located`)
+                               `located`); the editor's parameters panel,
+                               and the part drawn in its colour
 ops/geop-ops-constraints      the constraints and unknowns of a part's state
                                (mates, joints) — its own and its instances',
                                behind their names — and the solver
                                re-running the program over them
 ops/geop-ops-datums           the part's datums: the origin, and those steps
-                               add, picked as points, axes and planes
+                               add, picked as points, axes and planes,
+                               drawn and listed
 ops/geop-ops-sketch           the sketch operation: drawing and constraint
                                tools, snapping, reference geometry and
                                projections of the part
@@ -159,7 +172,10 @@ ops/geop-ops-assembly         the part operation: place another file's part,
                                mate it, joint it, drag it; patterns of
                                placed parts; the library parts are placed
                                from, the solids a part shows wherever they
-                               are placed, and the STL export
+                               are placed, and the STL export; placed parts
+                               drawn as instances of their components, the
+                               joints panel, the drag tool, and the settler
+                               solving the mates after every edit
 ops/geop-ops-inspect          inspecting a part without changing it: mass
                                properties of its solids and placed parts,
                                measurements of picked entities, interference;
@@ -168,9 +184,9 @@ ops/geop-ops-urdf             URDF export of an assembly: the tree of links
                                and joints, mimics, inertia, STL meshes, a
                                stored ZIP writer; an exporter (`geop compile
                                robot.geop -o robot.zip`)
-cad/geop-cad-base             the operations the editor offers, the editor engine,
-                               the part as it composes it from every crate
-                               (the given step, drawing, structure), the
+cad/geop-cad-base             composition: what the editor offers, one
+                               `register` line per crate (`registry.rs`),
+                               an editor of all of it (`editor()`), the
                                workspace of the editor (the core's `Files`
                                beside the standard parts), example
                                programs, the standard parts (below)
@@ -193,22 +209,50 @@ ops/geop-ops-bom              bills of materials: placed parts grouped by
 ```
 
 An operation crate plugs into the editor without the editor knowing it:
-it defines its own targets and draws them, and `geop_cad_base::part`
-composes the part from every crate's (`given`, `draw`, `structure`).
+it exports one `pub fn register(r: Registry) -> GeopResult<Registry>`
+that adds what it contributes to the `geop_core_editor::registry::Registry`,
+and `geop_cad_base::registry` calls every crate's in turn. What a crate
+can add:
+
+- an operation (`Editable`, usually a `PartOperation`);
+- a `Drawer`, which draws the targets it defines into the part's
+  `PartView` and lists them in the structure tree (`StructureItem`, with
+  the `kind_label` its group is shown under); placed parts are drawn as
+  `ViewInstance`s of a component sent once, never a mesh per placement;
+- a `geop_core_editor::output::Exporter` (a file written from the part)
+  or `Inspector` (a question about it);
+- a `Panel`: program-level state the editor sends under its key in
+  `ProgramState::panels`, and the commands it takes as
+  `Command::Panel { key, payload }` — the parameters (`parameters`) and
+  the joints (`joints`);
+- a `Tool`: a mode in hand while no step is edited, taken in hand by its
+  key with `Command::Tool { key }` and offered as its `ToolInfo` says in
+  `ProgramState::tools` — the drag tool (`drag`); the pick tool of an
+  inspector that picks is `pick:<inspector>`;
+- the one `Settle`: the solve the editor runs after every edit, moving
+  the program's state (placed parts) so its constraints hold — with none,
+  the state is kept as given;
+- an `ExampleSet` of programs `Command::LoadExample` loads.
+
 What a step draws on the part is its `geop_core_editor::view::annotations`
 target, what it lists in the structure tree its
-`geop_core_editor::view::listing` target; a file written from the part is a
-`geop_core_editor::output::Exporter`, a question about it a
-`geop_core_editor::output::Inspector`, registered in
-`geop_cad_base::outputs` beside the operations in `editors`. `geop compile` picks the exporter by the
-output's extension and passes it the options given as `-O key=value`.
-The web app builds its export menu and inspect buttons from the lists the
-program state sends, and shows every inspector's answer as the inspector
-lays it out (`Inspector::show`, an `output::Answer` of text, lists,
-tables, groups and buttons): no front end knows an operation, an
-exporter or an inspector by name. The files an operation reads beside
-programs — a STEP file to import — it names by extension
-(`OperationInfo::reads`), and the front ends keep those in a workspace.
+`geop_core_editor::view::listing` target. `geop compile` picks the exporter
+by the output's extension and passes it the options given as
+`-O key=value`. The web app builds its export menu, inspect buttons and
+tool buttons from the lists the program state sends, shows every
+inspector's answer as the inspector lays it out (`Inspector::show`, an
+`output::Answer` of text, lists, tables, groups and buttons), groups the
+structure by the kernel's labels, and shows each panel by the component
+its key maps to (`web/src/ProgramPanels.tsx`, the one place it names a
+panel): no front end knows an operation, an exporter or an inspector by
+name. The files an operation reads beside programs — a STEP file to
+import — it names by extension (`OperationInfo::reads`), and the front
+ends keep those in a workspace.
+
+An op crate's tests can drive the editor the way the front end does over
+a registry of only the operations they need: `geop_core_editor::testing`
+(feature `testing`) has `editor_with(registry, program)`, `Stepping` and
+the pointer and click helpers.
 
 STEP files are tested against a downloaded corpus of public files (NIST
 MBE PMI models, the FreeCAD parts library, OCCT/CadQuery/build123d
