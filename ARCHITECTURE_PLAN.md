@@ -428,6 +428,15 @@ that `ParameterValues` is a chain target several steps may add to.
   change and are reused without being looked at beyond the check.
 - *Place the 1000th screw.* `produce` with the same key as the other 999:
   cache hit, one `Rc` clone, no build.
+- *A cable follows the assembly.* A sketch in the assembly file projects a
+  vertex of `arm/link2` (resolved with `retrieve_placed`, so the sketch
+  crate must accept placed elements where it projects) and a sweep runs a
+  cable along it. The sketch node recorded `Inside { arm, link2/model }`
+  and the poses along the path; a drag changes those reads, the sketch
+  recomputes, the sweep follows. Geometry *driven* by state is just a node
+  that read state. Geometry that the solver then constrains against would
+  close a loop whose derivative the solver cannot see: a constraint whose
+  residual reads a target that itself read state is refused by name.
 - *Reorder two steps.* The nodes of both are found by id; the reads whose
   visible producer changed fail the check; everything else is reused.
 
@@ -800,6 +809,9 @@ Implements §3.2 to §3.6 on top of phase 1's concrete types:
    with one joint moved rebuilds one instance; the reorder test.
 7. The assembly solver (`geop-ops-assembly::solving`, `Rerun`) adapts to
    `runner.run(part, program, upto)` with state in the program.
+8. `geop-ops-constraints`: a constraint whose residual reads a target
+   that recorded a `Read::State` is refused, naming the constraint, the
+   target and the state (see §3.6, the cable example).
 
 Acceptance: the fast suite green; `assert_incremental` passes on every
 example; the slow `example_mass_properties_are_consistent` and the
