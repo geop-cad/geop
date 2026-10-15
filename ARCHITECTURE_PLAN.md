@@ -463,6 +463,15 @@ Moves in:
 | `geop-ops-output::{export, inspect}` (Exporter, Inspector, Answer, Block, Outputs) | `geop-core-editor::output` |
 | `geop-ops-output::sheet` (SVG/DXF sheets) | `geop-lib-sheet` (it is a writer library, not editor vocabulary) |
 
+Drawing must stay instanced: a `Drawer` sends components by key and
+instances by pose, never a mesh per placement, and `SolidMeshes` is a
+chain target with one node per solid, recorded against that solid's
+geometry, so one changed body re-meshes one body and a dragged placed part
+re-meshes nothing. (A body as `geometry + pose` inside one part, so that
+`MoveBody` and patterns also send a transform instead of a mesh, is the
+extension this makes possible; it touches every consumer of the model and
+is out of scope here.)
+
 `PartView` keeps its structure; its `drawn::*` kinds become plain strings
 supplied by whoever draws, and `ViewSketch`/`ViewDatum` are renamed to the
 neutral things they are (`ViewCurveSet` with regions, `ViewFrame` with a
@@ -629,6 +638,7 @@ reaching into an operation it should only read targets of.
 | geop-ops-output | `geop-lib-sheet`: Sheet, Layer, to_svg, to_dxf, xml_escape | (traits go to core-editor; crate disappears) |
 | geop-cad-base/stdlib | `geop-lib-stdlib`: standard part families, tables, `WithStandardParts` FileStore | — |
 | geop-ops-rasterize | `core/geop-core-rasterize` (depends on math/geometry/topology only) | — |
+| geop-ops-add-datum | — | rename to `geop-ops-reference-geometry`; `Selected` documented as its public pick vocabulary (it sits above every crate it picks from) |
 
 Lib crates take kernel and model types. Where an algorithm today takes a
 `PlacedSketch` (`extrude.rs`, `shape_loops`), the lib takes `Profile`s and
