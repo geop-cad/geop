@@ -3,7 +3,7 @@ use geop_core_math::{
     scalars::{ScalInF64, Scalar},
     vector::Vector4,
 };
-use geop_ops_rasterize::debug::{Color10, PrimitiveScene};
+use geop_core_rasterize::debug::{Color10, PrimitiveScene};
 
 fn f(v: f64) -> ScalInF64 {
     ScalInF64::from_f64(v)

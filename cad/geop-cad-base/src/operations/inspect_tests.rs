@@ -3,6 +3,7 @@
 //! between placed parts — and, ignored for their time, every example's
 //! mass properties checked against themselves.
 
+use geop_core_editor::output::Bounded;
 use geop_core_math::{
     scalars::{Ring, ScalInF64 as S, Scalar},
     vector::Vector3,
@@ -18,7 +19,6 @@ use geop_ops_inspect::{
     mass::{MassSummary, mass_report},
 };
 use geop_ops_model::Namer;
-use geop_ops_output::Bounded;
 
 use super::testing::Built;
 use crate::{Command, Editor, examples};

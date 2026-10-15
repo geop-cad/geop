@@ -11,6 +11,7 @@ use geop_core_program::{
     program::Program,
     values::{Setting, Settings, StateValue, pose_state},
 };
+use geop_lib_sheet::to_dxf;
 use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
 use geop_ops_datums::{ORIGIN, component_name, datum};
 use geop_ops_drawing::{
@@ -19,7 +20,6 @@ use geop_ops_drawing::{
 };
 use geop_ops_extrude_revolve::testing::model_of;
 use geop_ops_model::{NamedModel, RefId};
-use geop_ops_output::sheet::to_dxf;
 use geop_ops_sketch::SketchPlane;
 
 use super::testing::Built;
@@ -191,8 +191,8 @@ fn section_through_a_blind_hole_is_hatched() {
 /// as the thread runs. Without hidden lines, those go.
 #[test]
 fn a_tapped_hole_draws_its_thread() {
+    use geop_lib_sheet::Shape;
     use geop_ops_drawing::layer;
-    use geop_ops_output::sheet::Shape;
     let built = build(&examples::hole_plate());
     let args = DrawingArgs {
         scale: Some(2.0),
@@ -544,9 +544,9 @@ fn heights(line: &geop_ops_drawing::ViewLine<S>) -> (f64, f64) {
 /// nut — items 1 to 3.
 #[test]
 fn bolted_plate_from_the_front_hides_the_screw_in_the_plate() {
+    use geop_lib_sheet::Shape;
     use geop_ops_drawing::layer;
     use geop_ops_drawing::scene::Scene;
-    use geop_ops_output::sheet::Shape;
     let (path, built) = example_assembly("bolted_plate");
     let scene = Scene::of(&built.current()).unwrap();
     let paths: Vec<&str> = scene.bodies.iter().map(|b| b.path.as_str()).collect();
@@ -683,9 +683,9 @@ fn press_from_the_iso_view_draws() {
 #[test]
 #[ignore = "slow: every example assembly drawn — run with `cargo test -- --ignored`"]
 fn every_example_assembly_draws() {
+    use geop_lib_sheet::Shape;
     use geop_ops_drawing::layer;
     use geop_ops_drawing::scene::Scene;
-    use geop_ops_output::sheet::Shape;
     let mut failures = Vec::new();
     for (name, _) in crate::examples::workspaces() {
         let (path, built) = example_assembly(name);
@@ -771,8 +771,8 @@ fn every_example_assembly_draws() {
 /// plate placed in it dimensioned by its name as the assembly names it.
 #[test]
 fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
+    use geop_lib_sheet::Shape;
     use geop_ops_drawing::layer;
-    use geop_ops_output::sheet::Shape;
     let (_, files) = crate::examples::workspaces()
         .into_iter()
         .find(|(n, _)| *n == "bolted_plate")
@@ -881,9 +881,9 @@ fn screwed_plate(n: usize) -> Part {
 
 /// The balloons of `sheet`: the item numbers on the dimension layer next
 /// to a circle of a balloon's radius.
-fn balloon_items(sheet: &geop_ops_output::sheet::Sheet) -> Vec<String> {
+fn balloon_items(sheet: &geop_lib_sheet::Sheet) -> Vec<String> {
+    use geop_lib_sheet::Shape;
     use geop_ops_drawing::layer;
-    use geop_ops_output::sheet::Shape;
     let circles: Vec<[f64; 2]> = sheet
         .strokes
         .iter()

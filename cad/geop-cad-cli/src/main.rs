@@ -17,10 +17,10 @@ use geop_cad_base::{
     Editor,
     operations::{self, BuiltPart, outputs, workspace},
 };
+use geop_core_editor::output::Output;
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{program::Program, workspace::FileStore};
 use geop_ops_assembly::solving::{Rerun, check as check_mates, solve};
-use geop_ops_output::Output;
 use std::{
     io::{BufRead, Write},
     path::{Path, PathBuf},

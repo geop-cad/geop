@@ -1,6 +1,7 @@
 //! Picking with a [`PartView`]: what a pointer is over, as drawn.
 
 use crate::operations::testing::{origin_axis, origin_plane, pointer};
+use geop_core_editor::view::{PartView, ViewDatum, drawn};
 use geop_core_editor::{
     editing::{Pointer, Reach},
     selectable,
@@ -23,7 +24,6 @@ use geop_ops_extrude_revolve::{
 };
 use geop_ops_model::{NamedModel, Solid, testing::given_part};
 use geop_ops_sketch::{PlacedSketch, Sketch, sketch};
-use geop_ops_view::{PartView, ViewDatum, drawn};
 
 fn down(x: f64, y: f64) -> Pointer<S> {
     pointer([x, y, 5.0], [0.0, 0.0, -1.0])

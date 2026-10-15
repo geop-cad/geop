@@ -19,19 +19,19 @@ use geop_core_program::{
 };
 use std::{borrow::Cow, f64::consts::PI};
 
+use geop_core_editor::output::{Exporter, Output};
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::CoordinateSystem,
     scalars::{Field, Ring, ScalInF64 as S, Scalar},
     vector::Vector3,
 };
+use geop_core_rasterize::rasterize;
 use geop_core_sketch::Sketch;
 use geop_ops_extrude_revolve::testing::runner_of;
 use geop_ops_model::{
     ModelOperation, NamedModel, RefId, build_model, model, read_model, testing::assert_valid,
 };
-use geop_ops_output::{Exporter, Output};
-use geop_ops_rasterize::rasterize;
 use geop_ops_sketch::{PlacedSketch, sketch, whole_sketch};
 use serde::{Deserialize, Serialize};
 

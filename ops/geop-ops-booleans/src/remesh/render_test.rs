@@ -20,9 +20,9 @@ mod tests {
         scenes::{map_scenes_parallel, validation},
     };
     use geop_core_math::scalars::ScalInF64;
+    use geop_core_rasterize::debug::rasterize_topology;
     use geop_core_topology::validation::{validate, validate_fast};
     use geop_ops_model::Namer;
-    use geop_ops_rasterize::debug::rasterize_topology;
 
     /// Runs `remesh` over every scene and renders the result. `full_validate`
     /// additionally runs the expensive pairwise-search `validate` (not just

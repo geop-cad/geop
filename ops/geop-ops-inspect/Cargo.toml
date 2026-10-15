@@ -11,8 +11,6 @@ geop-core-program.workspace = true
 geop-core-editor.workspace = true
 geop-ops-model.workspace = true
 geop-ops-parameters.workspace = true
-geop-ops-output.workspace = true
-geop-ops-view.workspace = true
 # What is picked to be measured, and what it is.
 geop-ops-add-datum.workspace = true
 # The solids of the parts placed.

@@ -1,6 +1,7 @@
 //! [`Fillet`]: round a solid's edges. [`Chamfer`]: bevel them. Both blend
 //! the edges picked (see [`crate::blend`]).
 
+use geop_core_editor::view::icons;
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
     editable::{Context, OperationGroup, OperationInfo, OperationTier},
@@ -14,7 +15,6 @@ use geop_core_program::{
     values::Design,
 };
 use geop_ops_model::{Edge, ModelOperation, NamedModel, Namer, Vertex, build_model, model};
-use geop_ops_view::icons;
 use serde::{Deserialize, Serialize};
 
 use crate::{

@@ -49,7 +49,7 @@ use serde::Serialize;
 pub use geop_ops_constraints::unknown::{Unknown, declare_unknowns};
 
 use crate::placed::{Drawn, Located, drawn, locate, placed_parts};
-use geop_ops_view::PartView;
+use geop_core_editor::view::PartView;
 
 /// A program, its runner and the part it last ran on: what a solve runs
 /// again at every state it tries, the program's state set to it.

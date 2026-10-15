@@ -1848,7 +1848,7 @@ mod tests {
         );
 
         std::fs::create_dir_all("outputs").unwrap();
-        match geop_ops_rasterize::debug::rasterize_topology(topology, 12) {
+        match geop_core_rasterize::debug::rasterize_topology(topology, 12) {
             Ok(render) => render
                 .save_to_file("outputs/remesh_edges_x_faces_box_grid_offset_x_half.html")
                 .unwrap(),

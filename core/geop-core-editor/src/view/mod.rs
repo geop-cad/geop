@@ -12,7 +12,7 @@
 //! edges and faces, the sketches theirs, the datums theirs; an editor
 //! composes them. A pick names what it hits as the crate that drew it named
 //! it ([`PickedElement`]) and by the kind of thing drawn ([`drawn`]), which
-//! the crate defining an element turns into one ([`geop_core_editor::selectable`]).
+//! the crate defining an element turns into one ([`crate::selectable`]).
 //!
 //! The parts placed in a part are drawn by reference: each placed part —
 //! however deep — is listed once, with where it is ([`ViewInstance`]), and
@@ -22,25 +22,11 @@
 //! names what it hits as that part names it, its target behind the
 //! instance's name ([`in_instance`]).
 
-// Library code reports what goes wrong as an error, never by panicking;
-// tests may unwrap.
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::todo,
-        clippy::unimplemented,
-        clippy::unreachable
-    )
-)]
-
 pub mod icons;
 
 use std::rc::Rc;
 
-use geop_core_editor::editing::{
+use crate::editing::{
     Extent, Pointer,
     hit::{ElementHit, Scene, nearer},
 };
@@ -751,7 +737,7 @@ impl PartView {
             };
             if accepted(drawn::EDGE) {
                 for e in &l.view.edges {
-                    let mut segments = e.polyline.windows(2).map(|w| (w[0], w[1]));
+                    let mut segments = e.polyline.array_windows().map(|&[a, b]| (a, b));
                     if let Some(t) = hit_along(&mut segments, &e.faces) {
                         edges.push(l.hit(&l.view.model, drawn::EDGE, &e.name, ray.at(t), t));
                     }
@@ -761,8 +747,10 @@ impl PartView {
                 for sketch in &l.view.sketches {
                     for c in &sketch.curves {
                         let world = |p: &Vector2<S>| sketch.plane.uv_to_xyz(p);
-                        let mut segments =
-                            c.polyline.windows(2).map(|w| (world(&w[0]), world(&w[1])));
+                        let mut segments = c
+                            .polyline
+                            .array_windows()
+                            .map(|[a, b]| (world(a), world(b)));
                         if let Some(t) = hit_along(&mut segments, &[]) {
                             let at = ray.at(t);
                             let hit = l.hit(&sketch.target, drawn::SKETCH_CURVE, &c.id, at, t);
@@ -900,8 +888,8 @@ impl PartView {
             (self.edges.iter())
                 .filter(|e| e.faces.iter().any(|f| f == face))
                 .filter_map(|e| {
-                    (e.polyline.windows(2))
-                        .map(|w| ray.distance_to_segment(&w[0], &w[1]))
+                    (e.polyline.array_windows())
+                        .map(|[a, b]| ray.distance_to_segment(a, b))
                         .filter(|(dist, t)| pointer.within(*dist, *t, NEAR_SIDE))
                         .min_by(|a, b| nearer(a.0, b.0))
                         .map(|(dist, _)| (e, dist))
@@ -933,10 +921,9 @@ impl PartView {
                 .any(|loops| polygons_contain(loops, &p));
             let on_curve = || {
                 sketch.curves.iter().any(|c| {
-                    c.polyline.windows(2).any(|w| {
-                        !p.distance_to_segment(&w[0], &w[1])
-                            .definitely_greater(reach)
-                    })
+                    c.polyline
+                        .array_windows()
+                        .any(|[a, b]| !p.distance_to_segment(a, b).definitely_greater(reach))
                 })
             };
             (in_region || on_curve())

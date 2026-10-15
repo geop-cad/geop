@@ -18,8 +18,8 @@ use geop_core_program::{
 use std::{collections::BTreeMap, rc::Rc};
 
 use geop_core_editor::editable::{Editable, Editors, Listed};
+use geop_core_editor::output::Outputs;
 use geop_core_math::geop_error::GeopResult;
-use geop_ops_output::Outputs;
 use geop_ops_parameters::{DefineParameters, LookupTable, PartProperties};
 
 use crate::stdlib::WithStandardParts;
@@ -171,7 +171,7 @@ operations! {
     PartProperties,
 }
 
-/// The exporters and inspectors the editor offers (see [`geop_ops_output`]),
+/// The exporters and inspectors the editor offers (see [`geop_core_editor::output`]),
 /// in the order it offers them: the first exporter's first format is what
 /// a part is written in unless told otherwise.
 pub fn outputs() -> GeopResult<Outputs> {

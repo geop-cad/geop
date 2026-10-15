@@ -25,6 +25,7 @@ use std::{
     rc::Rc,
 };
 
+use geop_core_editor::view::{PartView, annotations_of};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::{Pose, TriangleFace},
@@ -37,7 +38,6 @@ use geop_ops_parameters::{
     read_properties,
 };
 use geop_ops_sketch::PlacedSketch;
-use geop_ops_view::{PartView, annotations_of};
 
 /// The part `reader` reads, drawn: its model, its datums — the origin
 /// first — its sketches, what its steps draw on it and the parts placed in
@@ -290,7 +290,7 @@ pub fn draw_instances(reader: &Reader, view: &mut PartView) -> GeopResult<()> {
             geop_core_math::vector::Vector3::zero(),
         );
         let drawn = drawn(reader, &placed.name)?;
-        view.instances.push(geop_ops_view::ViewInstance {
+        view.instances.push(geop_core_editor::view::ViewInstance {
             frame: pose.motion().apply_frame(&origin)?,
             name: placed.name,
             component: drawn.key.clone(),

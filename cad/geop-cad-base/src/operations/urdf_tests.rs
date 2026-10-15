@@ -8,6 +8,7 @@ use geop_core_program::{
 };
 use std::collections::{BTreeMap, HashMap};
 
+use geop_core_editor::output::Output;
 use geop_core_math::{
     primitives::Pose,
     scalars::{ScalInF64 as S, Scalar},
@@ -18,7 +19,6 @@ use geop_ops_assembly::{
     solids::{Shapes, placed_solids},
     solving::{self, Rerun},
 };
-use geop_ops_output::Output;
 use geop_ops_urdf::{JointType, Mechanism, Origin, Robot, URDF_FILE, UrdfExport, export};
 
 use crate::{

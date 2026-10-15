@@ -9,7 +9,6 @@ geop-core-program.workspace = true
 geop-core-editor.workspace = true
 geop-ops-model.workspace = true
 geop-ops-parameters.workspace = true
-geop-ops-output.workspace = true
 # The parts placed, and their solids.
 geop-ops-assembly.workspace = true
 serde.workspace = true
@@ -19,4 +18,3 @@ serde_json.workspace = true
 geop-ops-assembly = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
-geop-ops-view.workspace = true

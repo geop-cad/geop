@@ -20,8 +20,8 @@ use geop_core_math::{
 };
 use geop_core_sketch::Sketch;
 use geop_core_topology::Body;
+use geop_lib_sheet::Sheet as Paper;
 use geop_ops_model::{ModelOperation, NamedModel, Namer, Solid, model, read_model};
-use geop_ops_output::sheet::Sheet as Paper;
 use geop_ops_sketch::PlacedSketch;
 use serde::{Deserialize, Serialize};
 

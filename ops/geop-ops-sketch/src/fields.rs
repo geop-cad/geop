@@ -20,7 +20,7 @@ pub fn region<S: Scalar>(
     };
     let holes: Vec<Vec<[f64; 2]>> = holes.iter().map(|h| plain(h)).collect();
     let at = |p: [f64; 2]| plane.uv_to_xyz(&Vector2::from_array(p.map(S::from_f64)));
-    let triangles = geop_ops_rasterize::triangulate_polygon(&plain(outer), &holes)
+    let triangles = geop_core_rasterize::triangulate_polygon(&plain(outer), &holes)
         .into_iter()
         .map(|t| t.map(at))
         .collect();

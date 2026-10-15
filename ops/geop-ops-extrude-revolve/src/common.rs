@@ -57,7 +57,7 @@ pub(crate) mod testing {
     /// Draws `model`'s topology, `resolution` samples per curve, into
     /// `outputs/{file}`, checking it draws points, lines, faces and labels.
     pub fn render<S: Scalar>(model: &Model<S>, resolution: usize, file: &str) {
-        let scene = geop_ops_rasterize::debug::rasterize_topology(model, resolution).unwrap();
+        let scene = geop_core_rasterize::debug::rasterize_topology(model, resolution).unwrap();
         assert!(!scene.points.is_empty());
         assert!(!scene.lines.is_empty());
         assert!(!scene.triangles_transparent.is_empty());

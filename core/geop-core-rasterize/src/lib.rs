@@ -54,7 +54,7 @@ pub fn face_triangles_uv<S: Scalar>(
 /// kept alongside the id of the entity it came from.
 ///
 /// This is the single place the crate turns topology into sampled geometry
-/// — drawing and ray picking (`geop_ops_view::PartView`), STL, and debug
+/// — drawing and ray picking (`geop_core_editor::view::PartView`), STL, and debug
 /// rendering ([`debug`]) all build on top of it, rather than each walking
 /// `Model` and sampling curves/surfaces on their own. That matters beyond
 /// not repeating code: it guarantees a pick can never disagree with what
@@ -185,9 +185,7 @@ mod tests {
     use super::*;
     use crate::debug::Color10;
     use geop_core_math::for_all_scalars;
-    use geop_core_math::primitives::TriangleFace;
-    use geop_ops_extrude_revolve::shapes::{cube_solid, sphere::sphere_solid};
-    use geop_ops_model::NamedModel;
+    use geop_core_topology::test_fixtures::test_cube_model;
 
     /// Rasterize `model`, sanity-check it's a non-empty mesh, and save it to
     /// `outputs/<name>.html` for visual inspection.
@@ -201,140 +199,10 @@ mod tests {
     }
 
     fn check_rasterize_cube<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
-        cube_solid(
-            &mut model,
-            "t1",
-            Vector3::from_array([S::ZERO; 3]),
-            Vector3::from_array([S::ONE; 3]),
-        )
-        .unwrap();
-        let topology = model.topology();
-        rasterize_and_save(topology, "cube");
+        rasterize_and_save(&test_cube_model::<S>(), "cube");
     }
     #[test]
     fn rasterize_cube() {
         for_all_scalars!(check_rasterize_cube);
-    }
-
-    /// On a unit sphere the surface normal at a point *is* that point, so a
-    /// mesh carrying the kernel's normals can be checked exactly — and a
-    /// renderer shading with them gets the sphere, not its facets.
-    fn check_sphere_triangles_carry_surface_normals<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
-        sphere_solid(&mut model, "t3", Vector3::zero(), S::ONE).unwrap();
-        let topology = model.topology();
-        let scene = rasterize(topology, 24).unwrap().scene(|_| Color10::Blue);
-        assert!(!scene.triangles.is_empty());
-        let mut with_normals = 0;
-        for (t, _) in &scene.triangles {
-            let Some(normals) = t.vertex_normals else {
-                continue;
-            };
-            with_normals += 1;
-            for (n, p) in normals.iter().zip([t.a, t.b, t.c]) {
-                // Sign follows the winding, so compare the directions.
-                let dot = n.prod_dot(&p).to_f64().abs();
-                assert!(
-                    (dot - 1.0).abs() < 1e-6,
-                    "normal {n:?} is not the sphere's own at {p:?} (|n·p| = {dot})"
-                );
-            }
-        }
-        assert!(
-            with_normals * 20 > scene.triangles.len(),
-            "only {with_normals} of {} triangles carry surface normals",
-            scene.triangles.len()
-        );
-    }
-    #[test]
-    fn sphere_triangles_carry_surface_normals() {
-        for_all_scalars!(check_sphere_triangles_carry_surface_normals);
-    }
-
-    /// A face that curves in one direction only gets triangles only where
-    /// it needs them: a cylinder wall is refined around its circumference
-    /// and left at the coarsest grid along its (straight) axis. Without
-    /// that, a long cylinder spends as many rows up its side as it does
-    /// segments around it, for nothing.
-    fn check_cylinder_wall_is_refined_only_around<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
-        geop_ops_extrude_revolve::shapes::cylinder::revolved_cylinder(
-            &mut model,
-            "t5",
-            Vector3::zero(),
-            S::ONE,
-            S::from_f64(4.0),
-        )
-        .unwrap();
-        let topology = model.topology();
-        let rasterized = rasterize(topology, 24).unwrap();
-        // The wall quadrants are the faces whose triangles are all off-axis.
-        let walls: Vec<&Vec<TriangleFace<S>>> = rasterized
-            .faces
-            .values()
-            .filter(|tris| {
-                !tris.is_empty()
-                    && tris.iter().all(|t| {
-                        [t.a, t.b, t.c]
-                            .iter()
-                            .all(|p| p[0].mul(p[0]).add(p[1].mul(p[1])).could_be_equal(S::ONE))
-                    })
-            })
-            .collect();
-        assert_eq!(walls.len(), 4, "a revolved cylinder has 4 wall quadrants");
-        for tris in walls {
-            // 2 rows up the axis x 32 segments around x 2 triangles is the
-            // budget; a square grid would be 16 times that.
-            assert!(
-                tris.len() <= 2 * 2 * 32,
-                "a cylinder wall quadrant came out as {} triangles",
-                tris.len()
-            );
-            assert!(tris.len() >= 2 * 2 * 8, "and it still has to look round");
-        }
-    }
-    #[test]
-    fn cylinder_wall_is_refined_only_around() {
-        for_all_scalars!(check_cylinder_wall_is_refined_only_around);
-    }
-
-    /// A straight edge needs two points; a circular one needs enough to look
-    /// round. Neither is a fixed count any more.
-    fn check_edge_sampling_follows_curvature<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
-        cube_solid(
-            &mut model,
-            "t2",
-            Vector3::zero(),
-            Vector3::from_array([S::ONE; 3]),
-        )
-        .unwrap();
-        let cube_edges = rasterize(model.topology(), 24).unwrap().edges;
-        for polyline in cube_edges.values() {
-            assert_eq!(polyline.len(), 2, "a straight edge is a single segment");
-        }
-
-        let mut model = NamedModel::<S>::new();
-        sphere_solid(&mut model, "t4", Vector3::zero(), S::ONE).unwrap();
-        let topology = model.topology();
-        let sphere_edges = rasterize(topology, 24).unwrap().edges;
-        for polyline in sphere_edges.values() {
-            // A quarter circle of radius 1 within `1 / (4 * 24²)` of the arc
-            // needs 16 segments (its sagitta falls off with the square).
-            assert!(
-                polyline.len() >= 17,
-                "a quarter circle came out as {} points",
-                polyline.len()
-            );
-            for p in polyline {
-                let r = p[0].mul(p[0]).add(p[1].mul(p[1])).add(p[2].mul(p[2]));
-                assert!(r.could_be_equal(S::ONE), "sample off the sphere: {p:?}");
-            }
-        }
-    }
-    #[test]
-    fn edge_sampling_follows_curvature() {
-        for_all_scalars!(check_edge_sampling_follows_curvature);
     }
 }

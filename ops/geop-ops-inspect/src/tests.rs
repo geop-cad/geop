@@ -13,7 +13,9 @@ use geop_core_program::{
 };
 use std::f64::consts::PI;
 
+use geop_core_editor::output::Bounded;
 use geop_core_editor::selectable::Selectable;
+use geop_core_editor::view::drawn;
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::Pose,
@@ -25,9 +27,7 @@ use geop_ops_extrude_revolve::shapes::{
     cube::cube_solid, cylinder::revolved_cylinder, sphere::sphere_solid, v3,
 };
 use geop_ops_model::{NamedModel, model};
-use geop_ops_output::Bounded;
 use geop_ops_parameters::{Material, PartProperties, PartPropertiesArgs};
-use geop_ops_view::drawn;
 
 use crate::{
     interference::Contact, interference_report, mass::MassSummary, mass_report, measure,
@@ -455,8 +455,8 @@ fn measure_picks_what_it_measures() {
 /// corner at the origin of a unit cube placed 10 along `x` is at 10.
 #[test]
 fn placed_parts_are_measured_where_they_are() {
+    use geop_core_editor::view::INSTANCE_SEPARATOR;
     use geop_ops_assembly::testing::{Shelf, given_model, place, runner};
-    use geop_ops_view::INSTANCE_SEPARATOR;
     let mut cube = NamedModel::<S>::new();
     cube_solid(&mut cube, "c", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap();
     let mut placed = Program::new();

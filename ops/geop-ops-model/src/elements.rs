@@ -7,6 +7,7 @@
 //! by a face of it, an edge chain by an edge of it.
 
 use geop_core_editor::selectable::SelectableElement;
+use geop_core_editor::view::drawn;
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
@@ -14,7 +15,6 @@ use geop_core_program::{
     values::Design,
 };
 use geop_core_topology::{EdgeId, FaceId, SolidId, VertexId};
-use geop_ops_view::drawn;
 
 use crate::{
     NamedModel, RefId, model,

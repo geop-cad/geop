@@ -1,6 +1,10 @@
 //! The editor engine: a program edited by commands, and only what changed
 //! sent back.
 
+use geop_core_editor::output::{
+    Bounded, Content, Inspector, InspectorInfo, Output as Made, Outputs, Picks,
+};
+use geop_core_editor::view::drawn;
 use geop_core_editor::{
     editing::{
         Button, Control, GizmoPart, Pointer, Reach, Shape, StepEditEvent, Style, Tone, Value,
@@ -25,9 +29,7 @@ use geop_ops_booleans::Combine;
 use geop_ops_datums::datum;
 use geop_ops_extrude_revolve::{ExtrudeArgs, Output};
 use geop_ops_model::{BooleanOp, Face, NamedModel, Vertex, element, read_model};
-use geop_ops_output::{Bounded, Content, Inspector, InspectorInfo, Output as Made, Outputs, Picks};
 use geop_ops_parameters::parameters_of;
-use geop_ops_view::drawn;
 
 use crate::{
     Command, Editor, Update, examples,
@@ -3872,7 +3874,7 @@ fn a_3d_sketch_picks_without_drawing_the_part_again() {
     editor.handle(Command::New {
         kind: "add_sketch3d".into(),
     });
-    let drawn = geop_ops_view::parts_drawn();
+    let drawn = geop_core_editor::view::parts_drawn();
     for k in 0..5 {
         let at = from_above(0.2 + 0.1 * k as f64, 0.3);
         let update = editor.handle(Command::Event {
@@ -3883,10 +3885,10 @@ fn a_3d_sketch_picks_without_drawing_the_part_again() {
         });
         assert!(update.error.is_none(), "{:?}", update.error);
     }
-    assert_eq!(geop_ops_view::parts_drawn() - drawn, 0);
+    assert_eq!(geop_core_editor::view::parts_drawn() - drawn, 0);
     let update = editor.handle(click_at(from_above(0.5, 0.5)));
     assert!(update.error.is_none(), "{:?}", update.error);
-    assert_eq!(geop_ops_view::parts_drawn() - drawn, 1);
+    assert_eq!(geop_core_editor::view::parts_drawn() - drawn, 1);
     // The click was on the box's top: the point is there.
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
@@ -3911,7 +3913,7 @@ fn hovering_over_an_assembly_draws_no_part() {
     });
     assert!(update.error.is_none(), "{:?}", update.error);
     let hover = |editor: &mut Editor| {
-        let drawn = geop_ops_view::parts_drawn();
+        let drawn = geop_core_editor::view::parts_drawn();
         for k in 0..5 {
             let update = editor.handle(Command::Event {
                 event: StepEditEvent::Hover {
@@ -3921,7 +3923,7 @@ fn hovering_over_an_assembly_draws_no_part() {
             });
             assert!(update.error.is_none(), "{:?}", update.error);
         }
-        geop_ops_view::parts_drawn() - drawn
+        geop_core_editor::view::parts_drawn() - drawn
     };
     assert_eq!(hover(&mut editor), 0);
     // Nor while a part is placed, which picks in what its step builds.

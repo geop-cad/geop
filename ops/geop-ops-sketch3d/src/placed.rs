@@ -4,6 +4,7 @@
 //! as.
 
 use geop_core_editor::selectable::SelectableElement;
+use geop_core_editor::view::drawn;
 use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -17,7 +18,6 @@ use geop_core_program::{
 };
 use geop_ops_model::{Chain, Path, model};
 use geop_ops_sketch::chain_of_pieces;
-use geop_ops_view::drawn;
 
 use crate::Sketch3d;
 

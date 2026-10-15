@@ -20,9 +20,9 @@ mod tests {
         scenes::{map_scenes_parallel, validation},
     };
     use geop_core_math::scalars::ScalInF64;
+    use geop_core_rasterize::debug::rasterize_topology;
     use geop_core_topology::validation::validate_fast;
     use geop_ops_model::Namer;
-    use geop_ops_rasterize::debug::rasterize_topology;
 
     fn run_op(op: BooleanOp, dir: &str) {
         std::fs::create_dir_all(dir).unwrap();

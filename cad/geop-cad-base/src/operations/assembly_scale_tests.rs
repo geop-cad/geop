@@ -425,8 +425,9 @@ fn a_changed_leaf_is_drawn_again() {
     // The plate, the board and its 53 (its plate, 4 standoffs, 4 modules of
     // a plate and 10 screws each), and 20 screws.
     assert_eq!(scene.instances.len(), 1 + 1 + 53 + 20);
-    let sent =
-        |instance: &geop_ops_view::ViewInstance| scene.components.contains_key(&instance.component);
+    let sent = |instance: &geop_core_editor::view::ViewInstance| {
+        scene.components.contains_key(&instance.component)
+    };
     assert!(scene.instances.iter().all(sent));
     let screws: BTreeSet<&str> = (scene.instances.iter())
         .filter(|instance| instance.name.starts_with("screw"))

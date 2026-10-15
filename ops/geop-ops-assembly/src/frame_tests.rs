@@ -1,6 +1,7 @@
 //! Reference frames: what a face, an edge or a point gives where a mate puts
 //! one, and what a pick for one finds where the pointer is.
 
+use geop_core_editor::view::{PartView, drawn};
 use geop_core_editor::{
     editing::{Pointer, Reach},
     selectable::Selectable,
@@ -17,7 +18,6 @@ use geop_ops_model::{
     NamedModel, model,
     testing::{edge_at, vertex_at},
 };
-use geop_ops_view::{PartView, drawn};
 
 use crate::MateEntity;
 

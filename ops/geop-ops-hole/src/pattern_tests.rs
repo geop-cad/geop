@@ -280,7 +280,7 @@ fn a_patterned_thread_is_drawn() {
     program.push("h", tapped);
     program.push("p", linear(&["h"], 3.0, 15.0));
     let part = program.built(registry).unwrap();
-    let drawn = geop_ops_view::annotations_of(&part.current());
+    let drawn = geop_core_editor::view::annotations_of(&part.current());
     let mut names: Vec<&str> = drawn.iter().map(|a| a.name.as_str()).collect();
     names.sort();
     assert_eq!(

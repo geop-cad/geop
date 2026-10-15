@@ -15,13 +15,13 @@ use geop_core_program::{
     operation::Operation, operation_registry::OperationRegistry, part::Part, reader::Reader,
     runner::Runner, values::Design,
 };
+use geop_core_rasterize::{
+    rasterize,
+    stl::{enclosed_volume, stl_triangles},
+};
 use geop_core_topology::{
     Body, Edge, FaceId, Model, SolidId,
     validation::{ValidationParameters, validate, validate_manifold},
-};
-use geop_ops_rasterize::{
-    rasterize,
-    stl::{enclosed_volume, stl_triangles},
 };
 
 use crate::{NamedModel, read_model};

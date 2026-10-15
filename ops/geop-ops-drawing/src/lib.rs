@@ -2,7 +2,7 @@
 //! and silhouettes ([`hidden_lines`]) — of an assembly, of every part
 //! placed, where it is placed ([`scene`]) — laid out on a sheet with
 //! dimensions, centre marks, a title block and a ballooned bill of
-//! materials (see [`geop_ops_output::sheet`]); the [`Drawing`] operation
+//! materials (see [`geop_lib_sheet`]); the [`Drawing`] operation
 //! of a program, which describes one; and the [`DrawingExporter`], which
 //! writes it as SVG or DXF.
 

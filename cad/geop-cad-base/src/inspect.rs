@@ -1,5 +1,5 @@
 //! The pick tool of the [`crate::Editor`]: an inspector that picks (see
-//! [`geop_ops_output::InspectorInfo::picks`]) in hand, which picks
+//! [`geop_core_editor::output::InspectorInfo::picks`]) in hand, which picks
 //! entities in the viewport, and is asked about them again with every pick.
 //!
 //! It is no operation: inspecting changes no program, adds no step and is
@@ -8,10 +8,10 @@
 //! inspector's.
 
 use geop_core_editor::editing::{Dialog, Presentation, StepEditEvent};
+use geop_core_editor::output::{Inspection, InspectorInfo, Picks};
+use geop_core_editor::view::PartView;
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{element::PickedElement, values::Design};
-use geop_ops_output::{Inspection, InspectorInfo, Picks};
-use geop_ops_view::PartView;
 
 /// An inspector that picks, in hand: what the pointer is over, what is
 /// picked, and the inspector's answer about it.

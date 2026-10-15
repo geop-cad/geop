@@ -14,7 +14,6 @@ geop-ops-model.workspace = true
 geop-ops-datums.workspace = true
 geop-ops-parameters.workspace = true
 geop-ops-sketch.workspace = true
-geop-ops-view.workspace = true
 serde.workspace = true
 
 [dev-dependencies]

@@ -7,6 +7,7 @@
 //! line ballooned where its part is drawn.
 
 use geop_core_editor::selectable::Selectable;
+use geop_core_editor::view::INSTANCE_SEPARATOR;
 use geop_core_geometry::{
     aabb::union_aabb,
     intersection::curve_curve_overlaps_and_crossings,
@@ -27,11 +28,10 @@ use geop_core_math::{
 use geop_core_program::{placed::instance_path, reader::Reader, values::Design};
 use geop_core_sketch::dimension::Measure;
 use geop_core_topology::{FaceId, Model};
+use geop_lib_sheet::{Anchor, Layer, P, Shape, Sheet, decimal, strokes_of};
 use geop_ops_assembly::placed::locate;
 use geop_ops_model::{CosmeticThread, Edge, NamedModel, Vertex, element, frame_along};
-use geop_ops_output::sheet::{Anchor, Layer, P, Shape, Sheet, decimal, strokes_of};
 use geop_ops_sketch::SketchPlane;
-use geop_ops_view::INSTANCE_SEPARATOR;
 use serde::{Deserialize, Serialize};
 
 use crate::{

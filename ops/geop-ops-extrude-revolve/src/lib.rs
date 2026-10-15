@@ -19,6 +19,8 @@ pub mod path_sweep;
 mod plain;
 #[cfg(test)]
 mod program_tests;
+#[cfg(test)]
+mod rasterize_tests;
 pub mod revolve;
 #[cfg(any(test, feature = "testing"))]
 pub mod shapes;

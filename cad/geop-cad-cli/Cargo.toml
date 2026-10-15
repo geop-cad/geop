@@ -9,11 +9,11 @@ name = "geop"
 path = "src/main.rs"
 
 [dependencies]
+geop-core-editor.workspace = true
 geop-core-program.workspace = true
 geop-core-math.workspace = true
 geop-ops-assembly.workspace = true
 geop-ops-model.workspace = true
-geop-ops-output.workspace = true
 geop-ops-parameters.workspace = true
 geop-cad-base.workspace = true
 clap = { version = "4", features = ["derive"] }

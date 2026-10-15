@@ -24,6 +24,7 @@
 //! Enter — and goes on smoothly from a curve it starts at, or into one it
 //! ends at (see [`geop_core_sketch::space::Sketch3d::adopts`]).
 
+use geop_core_editor::view::{drawn, icons};
 use geop_core_editor::{
     edit_form::{Edit, EditForm},
     editing::{
@@ -43,7 +44,6 @@ use geop_core_sketch::{
     space::{Arc3, Constraint3d, Coordinate, CurveKind3d, End, Solve3dReport},
 };
 use geop_ops_sketch::fields::constraint_status;
-use geop_ops_view::{drawn, icons};
 
 /// How near the pointer, in its reaches, must pass the line along `x`,
 /// `y` or `z` through the point a line starts at for the line's end to

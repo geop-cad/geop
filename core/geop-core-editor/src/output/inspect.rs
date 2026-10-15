@@ -10,7 +10,7 @@ use geop_core_program::{element::PickedElement, values::Design};
 use serde::{Serialize, de::DeserializeOwned};
 
 use super::{Output, read_options};
-use geop_core_editor::editing::{Tone, Visual};
+use crate::editing::{Tone, Visual};
 
 /// What an inspector is to a front end: how it is asked, what it is
 /// offered as, and whether it is asked of the whole part or of picks.
@@ -23,7 +23,7 @@ pub struct InspectorInfo {
     /// What it answers, in a sentence.
     pub doc: &'static str,
     /// What it is shown as (see
-    /// [`geop_core_editor::editable::OperationInfo::icon`]).
+    /// [`crate::editable::OperationInfo::icon`]).
     pub icon: Option<&'static str>,
     /// What it is asked of, if not the whole part: a tool that picks these
     /// in the viewport, and answers again with every pick.
@@ -31,10 +31,10 @@ pub struct InspectorInfo {
 }
 
 /// What an inspector that picks takes: elements of what an editor draws of
-/// the kinds `accepts` (see [`geop_core_editor::editing::hit::Scene::pick`]),
+/// the kinds `accepts` (see [`crate::editing::hit::Scene::pick`]),
 /// at most `most` of them — another pick then replaces the oldest. What
 /// each is to the inspector, it selects itself (see
-/// [`geop_core_editor::selectable`]).
+/// [`crate::selectable`]).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Picks {
     pub accepts: &'static [&'static str],

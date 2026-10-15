@@ -14,8 +14,7 @@ geop-ops-sketch.workspace = true
 geop-ops-model.workspace = true
 geop-ops-parameters.workspace = true
 geop-ops-add-datum.workspace = true
-geop-ops-view.workspace = true
-geop-ops-output.workspace = true
+geop-lib-sheet.workspace = true
 geop-ops-datums.workspace = true
 geop-ops-extrude-revolve.workspace = true
 geop-ops-booleans.workspace = true
@@ -41,7 +40,7 @@ geop-ops-bom.workspace = true
 
 [dev-dependencies]
 geop-core-program = { workspace = true, features = ["testing"] }
-geop-ops-rasterize.workspace = true
+geop-core-rasterize.workspace = true
 geop-ops-constraints.workspace = true
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
 geop-ops-hole = { workspace = true, features = ["testing"] }

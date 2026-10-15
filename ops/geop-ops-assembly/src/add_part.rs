@@ -15,6 +15,7 @@ use geop_core_program::{
 };
 use std::collections::BTreeMap;
 
+use geop_core_editor::view::{Listed, Listing, listing};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     with_context,
@@ -23,7 +24,6 @@ use geop_ops_add_datum::Selected;
 use geop_ops_datums::{ORIGIN, datums};
 use geop_ops_model::Namer;
 use geop_ops_parameters::{Placement, instances};
-use geop_ops_view::{Listed, Listing, listing};
 use serde::{Deserialize, Serialize};
 
 use crate::{

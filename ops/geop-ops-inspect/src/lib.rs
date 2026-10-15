@@ -1,6 +1,6 @@
 //! Inspecting a part: what an engineer asks of a design without changing
 //! it — none of it is an operation, and none of it adds a step. Each is an
-//! [`Inspector`] an editor offers (see [`geop_ops_output`]):
+//! [`Inspector`] an editor offers (see [`geop_core_editor::output`]):
 //!
 //! - [`Measure`]: distances, angles, lengths, areas and radii of picked
 //!   entities ([`measure()`]).
@@ -25,9 +25,9 @@ pub use mass::{MassReport, mass_report};
 pub use measure::{Measurement, measure};
 
 use geop_core_editor::editing::Visual;
+use geop_core_editor::output::{Answer, Inspector, InspectorInfo, Output, Picks};
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{element::PickedElement, values::Design};
-use geop_ops_output::{Answer, Inspector, InspectorInfo, Output, Picks};
 
 /// Measures picked entities: one alone, or the two last picked together.
 pub struct Measure;

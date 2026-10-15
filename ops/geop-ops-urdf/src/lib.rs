@@ -47,6 +47,7 @@ use geop_core_program::{
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use geop_core_editor::output::{Content, Export, Exporter, ExporterInfo, Output};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::{Pose, Quaternion},
@@ -54,6 +55,7 @@ use geop_core_math::{
     solvers::walk::{Walked, walk},
     vector::Vector3,
 };
+use geop_core_rasterize::stl::StlFormat;
 use geop_core_topology::mass::MassProperties;
 use geop_ops_assembly::{
     CouplingKind, JointKind, Motion, Resolved, STL_QUALITY, drawn, joint_parameter,
@@ -66,9 +68,7 @@ use geop_ops_assembly::{
     stl_bytes,
 };
 use geop_ops_model::read_model;
-use geop_ops_output::{Content, Export, Exporter, ExporterInfo, Output};
 use geop_ops_parameters::stem;
-use geop_ops_rasterize::stl::StlFormat;
 use serde::Deserialize;
 
 /// The URDF file's path in an export.
@@ -235,7 +235,7 @@ impl Exporter for Urdf {
     type Options = UrdfOptions;
 
     fn export(output: &mut Output, _: &str, options: UrdfOptions) -> GeopResult<Export> {
-        let name = output.stem()?;
+        let name = stem(output.file_name()).to_string();
         let robot = export(output, &name, options.quality)?;
         Ok(Export {
             name: format!("{name}.zip"),
@@ -528,7 +528,7 @@ fn masses(
 
 /// The assembly `output` built — where its parts are now — as a URDF robot
 /// called `name`, meshed `quality` fine (see
-/// [`geop_ops_rasterize::rasterize`]). Refuses an assembly whose mates do
+/// [`geop_core_rasterize::rasterize`]). Refuses an assembly whose mates do
 /// not hold where its parts are — it would describe a robot that is not the
 /// one drawn — and one URDF cannot express (see [`tree`]).
 pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<UrdfExport> {

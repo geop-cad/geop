@@ -12,6 +12,7 @@
 //! [`piece_names`]).
 
 use geop_core_editor::selectable::SelectableElement;
+use geop_core_editor::view::{PartView, ViewCurve, ViewSketch, ViewSketchPoint, drawn};
 use geop_core_geometry::{
     nurb_curve::{NurbCurve, NurbCurve3D},
     shape::{Arc, Axis},
@@ -34,7 +35,6 @@ use geop_core_sketch::{
     profile::{Piece, curve_nurbs, curve_polyline},
 };
 use geop_ops_model::{Chain, Circle, Curve, Line, Path, Plane, Point, Round};
-use geop_ops_view::{PartView, ViewCurve, ViewSketch, ViewSketchPoint, drawn};
 
 use crate::{CurveKind, Sketch};
 

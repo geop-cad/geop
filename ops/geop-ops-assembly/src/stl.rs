@@ -1,5 +1,5 @@
 //! [`Stl`]: the solids of the part as an STL mesh — the mesh the editor
-//! draws (see [`geop_ops_rasterize::stl`]), so a file looks exactly like
+//! draws (see [`geop_core_rasterize::stl`]), so a file looks exactly like
 //! the part on screen, the parts it places included, each where it is.
 
 use geop_core_math::{
@@ -7,10 +7,11 @@ use geop_core_math::{
     primitives::TriangleFace,
     scalars::Scalar,
 };
-use geop_ops_rasterize::stl::{StlFormat, StlTriangle, outward, write_stl};
+use geop_core_rasterize::stl::{StlFormat, StlTriangle, outward, write_stl};
 use serde::Deserialize;
 
-use geop_ops_output::{Content, Export, Exporter, ExporterInfo, Output};
+use geop_core_editor::output::{Content, Export, Exporter, ExporterInfo, Output};
+use geop_ops_parameters::stem;
 
 use crate::placed::solid_meshes;
 
@@ -34,7 +35,7 @@ pub struct StlOptions {
 
 /// How finely an STL file's curved faces are meshed unless asked otherwise:
 /// as finely as the editor draws them.
-pub const STL_QUALITY: usize = geop_ops_view::RESOLUTION;
+pub const STL_QUALITY: usize = geop_core_editor::view::RESOLUTION;
 
 impl Default for StlOptions {
     fn default() -> Self {
@@ -73,7 +74,7 @@ impl Exporter for Stl {
             true => StlFormat::Ascii,
             false => StlFormat::Binary,
         };
-        let name = &output.stem()?;
+        let name = stem(output.file_name());
         let triangles = chosen.iter().flat_map(|(_, triangles)| triangles);
         let bytes = stl_bytes(triangles, name, format)?;
         Ok(Export {

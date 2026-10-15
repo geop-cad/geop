@@ -13,8 +13,7 @@ geop-core-topology.workspace = true
 geop-core-sketch.workspace = true
 geop-ops-model.workspace = true
 geop-ops-parameters.workspace = true
-geop-ops-output.workspace = true
-geop-ops-view.workspace = true
+geop-lib-sheet.workspace = true
 # The parts placed, drawn where they are.
 geop-ops-assembly.workspace = true
 # The plane a section cuts on.

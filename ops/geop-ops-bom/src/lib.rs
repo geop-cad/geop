@@ -45,16 +45,16 @@ use geop_core_program::{
 use std::collections::HashMap;
 
 use geop_core_editor::editing::{Tone, Visual};
+use geop_core_editor::output::{
+    Answer, AnswerAction, Block, Bounded, Content, Does, Export, Exporter, ExporterInfo, Inspector,
+    InspectorInfo, Output, Row,
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::{Ring, Scalar},
 };
 use geop_ops_assembly::solids::{Shapes, own_solids};
 use geop_ops_model::notes_of;
-use geop_ops_output::{
-    Answer, AnswerAction, Block, Bounded, Content, Does, Export, Exporter, ExporterInfo, Inspector,
-    InspectorInfo, Output, Row,
-};
 use geop_ops_parameters::{instances, read_properties, stem};
 use serde::{Deserialize, Serialize};
 
@@ -737,7 +737,7 @@ impl Exporter for BomCsv {
     fn export(output: &mut Output, _: &str, options: BomOptions) -> GeopResult<Export> {
         let bom = bom(&output.part(), output.file_name(), options.structure)?;
         Ok(Export {
-            name: format!("{}_bom.csv", output.stem()?),
+            name: format!("{}_bom.csv", stem(output.file_name())),
             media_type: "text/csv".into(),
             content: Content::Text(bom.to_csv()),
         })

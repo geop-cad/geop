@@ -2077,9 +2077,9 @@ mod tests {
             serde_json::to_string_pretty(&description).unwrap(),
         )
         .unwrap();
-        geop_ops_rasterize::rasterize(part.topology(), 16)
+        geop_core_rasterize::rasterize(part.topology(), 16)
             .unwrap()
-            .scene(|_| geop_ops_rasterize::debug::Color10::Blue)
+            .scene(|_| geop_core_rasterize::debug::Color10::Blue)
             .save_to_file(dir.join(format!("{name}.html")).to_str().unwrap())
             .unwrap();
 

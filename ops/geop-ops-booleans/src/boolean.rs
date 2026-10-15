@@ -1957,9 +1957,9 @@ mod tests {
             panic!("{} validate_fast error(s): {}", errors.len(), errors[0]);
         }
 
-        let scene = geop_ops_rasterize::rasterize(topology, 8)
+        let scene = geop_core_rasterize::rasterize(topology, 8)
             .unwrap()
-            .scene(|_| geop_ops_rasterize::debug::Color10::Blue);
+            .scene(|_| geop_core_rasterize::debug::Color10::Blue);
         std::fs::create_dir_all("outputs").unwrap();
         scene
             .save_to_file("outputs/chained_differences_block_with_two_slots_and_a_sphere.html")
@@ -2087,9 +2087,9 @@ mod tests {
             );
         }
 
-        let scene = geop_ops_rasterize::rasterize(topology, 8)
+        let scene = geop_core_rasterize::rasterize(topology, 8)
             .unwrap()
-            .scene(|_| geop_ops_rasterize::debug::Color10::Blue);
+            .scene(|_| geop_core_rasterize::debug::Color10::Blue);
         std::fs::create_dir_all("outputs").unwrap();
         scene
             .save_to_file("outputs/cube_minus_coplanar_cap_cylinder.html")
@@ -2098,7 +2098,7 @@ mod tests {
 
     /// A bore through a block must actually be empty in the rendered mesh:
     /// no triangle may cover the hole. End-to-end cover for the trimming
-    /// that `geop_ops_rasterize::clip` does per grid cell — where a
+    /// that `geop_core_rasterize::clip` does per grid cell — where a
     /// duplicated vertex in a clipped hole outline, or a concave fragment
     /// classified as a whole, used to leave a flap of surface hanging
     /// across an opening (isolated in that module's own tests).
@@ -2112,7 +2112,7 @@ mod tests {
         let bore = cylinder(&mut model, [0.0, 0.0, -0.5], 0.5, 1.5, Axis::Z);
         op(&mut model, block, bore, BooleanOp::Difference);
 
-        let rasterized = geop_ops_rasterize::rasterize(model.topology(), 24).unwrap();
+        let rasterized = geop_core_rasterize::rasterize(model.topology(), 24).unwrap();
         for triangle in rasterized.faces.values().flatten() {
             for p in [triangle.a, triangle.b, triangle.c] {
                 let (x, y, z) = (p[0].to_f64(), p[1].to_f64(), p[2].to_f64());

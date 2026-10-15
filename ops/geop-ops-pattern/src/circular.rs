@@ -109,7 +109,7 @@ impl PartOperation for CircularPattern {
         OperationGroup::Bodies,
         OperationTier::Small,
     )
-    .icon(geop_ops_view::icons::CIRCULAR_PATTERN);
+    .icon(geop_core_editor::view::icons::CIRCULAR_PATTERN);
     type Args = CircularPatternArgs;
     type Session = ();
 

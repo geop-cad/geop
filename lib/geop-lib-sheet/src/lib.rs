@@ -5,6 +5,23 @@
 //! The kernel's curves become lines, arcs and circles where they are those
 //! exactly (see [`NurbCurve3D::as_line`], [`NurbCurve3D::as_arc`]), and
 //! polylines through points of them otherwise.
+//!
+//! Text in an SVG sheet, or in any other XML a writer makes, is escaped
+//! by [`xml_escape`].
+
+// Library code reports what goes wrong as an error, never by panicking;
+// tests may unwrap.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::unreachable
+    )
+)]
 
 mod dxf;
 mod svg;
@@ -22,6 +39,23 @@ use geop_core_math::{
 
 /// A point on the paper.
 pub type P = [f64; 2];
+
+/// `text` fit for XML: for an element's content, or an attribute's value
+/// between either kind of quotes.
+pub fn xml_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
 
 /// What a stroke or label is, which decides how it is drawn: a layer of a
 /// DXF file, a class of an SVG one. The sheet knows no layer of its own:

@@ -459,7 +459,7 @@ where
 mod topology_render_test {
     use super::*;
     use geop_core_math::scalars::ScalInF64;
-    use geop_ops_rasterize::{debug::Color10, rasterize};
+    use geop_core_rasterize::{debug::Color10, rasterize};
 
     /// Render every scene's raw topology (no boolean/remesh operation at
     /// all — just the two solids as built) to `outputs/topology_tests/`,

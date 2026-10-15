@@ -4,6 +4,7 @@
 //! its `z` axis runs.
 
 use geop_core_editor::selectable::Selectable;
+use geop_core_editor::view::{FramePick, drawn};
 use geop_core_geometry::shape::Axis;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -16,7 +17,6 @@ use geop_core_program::{element::PickedElement, reader::Reader, values::Design};
 use geop_core_topology::{CoedgeGeometry, FaceId};
 use geop_ops_add_datum::{Selected, Shape};
 use geop_ops_model::{NamedModel, frame_along};
-use geop_ops_view::{FramePick, drawn};
 use serde::{Deserialize, Serialize};
 
 /// How many points of each of a face's edges its middle is measured from.

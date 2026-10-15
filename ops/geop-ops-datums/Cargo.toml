@@ -9,7 +9,6 @@ geop-core-geometry.workspace = true
 geop-core-program.workspace = true
 geop-core-editor.workspace = true
 geop-ops-model.workspace = true
-geop-ops-view.workspace = true
 
 [dev-dependencies]
 serde.workspace = true

@@ -6,13 +6,13 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_core_program::{program::Program, values::Design};
+use geop_core_rasterize::face_triangles_uv;
 use geop_core_topology::{boundary::BoundaryType, loop_sampling::sample_loop_to_polygon};
 use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
 use geop_ops_booleans::{Combine, solid};
 use geop_ops_datums::{ORIGIN, component_name, datum};
 use geop_ops_extrude_revolve::{Extents, Output, RevolveArgs, RevolveAxis};
 use geop_ops_model::{BooleanOp, NamedModel, element};
-use geop_ops_rasterize::face_triangles_uv;
 use geop_ops_sketch::{
     AddSketchArgs, Constraint, Sketch, SketchPlane, sketch_element, whole_sketch,
 };
@@ -91,7 +91,7 @@ fn assert_draws_its_trims(part: &NamedModel<Design>) {
 /// cell whole, and where it entered a cell twice, the two pieces came back
 /// as one polygon bridged along the cell's edge — triangulated, across the
 /// gap between them. It now splits a concave boundary into triangles before
-/// clipping (see `geop_ops_rasterize::grid`).
+/// clipping (see `geop_core_rasterize::grid`).
 ///
 /// The model was not valid either: the join built two pcurves — on the
 /// cylinder's side, along the short arcs where it crosses the plate's
@@ -415,7 +415,7 @@ const FULLY_STOPPED: Bracket = Bracket {
 /// meridian already lying in the face and failed to splice it ("degenerate
 /// split"); around the line, the boolean worked, but drawing the result ran
 /// out of memory (see `a_concave_hole_of_many_corners_stays_cheap` in
-/// `geop-ops-rasterize`).
+/// `geop-core-rasterize`).
 fn bracket_with_torus(
     bracket: &Bracket,
     around_x_axis: bool,

@@ -1,6 +1,6 @@
 //! Generic 2-D polygon area, containment and triangulation — no topology
 //! or rendering dependency, so it
-//! lives here rather than in `geop-ops-rasterize`: `geop-core-topology`'s
+//! lives here rather than in `geop-core-rasterize`: `geop-core-topology`'s
 //! own edit code (`splice_edge_into_face`'s loop-orientation check) needs
 //! it too, and topology sits below rasterize in the dependency order.
 

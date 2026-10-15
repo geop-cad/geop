@@ -5,17 +5,18 @@
 
 use std::collections::BTreeMap;
 
+use geop_core_editor::output::{Content, Export, Exporter, ExporterInfo, Output};
 use geop_core_geometry::{aabb::union_aabb, nurb_curve::NurbCurve2D};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     with_context,
 };
-use geop_ops_model::read_model;
-use geop_ops_output::{
-    Content, Export, Exporter, ExporterInfo, Output,
-    sheet::{Anchor, Format, Label, Layer, LineType, Shape, Sheet as Paper, decimal, strokes_of},
+use geop_lib_sheet::{
+    Anchor, Format, Label, Layer, LineType, Shape, Sheet as Paper, decimal, strokes_of,
 };
+use geop_ops_model::read_model;
+use geop_ops_parameters::stem;
 use serde::Deserialize;
 
 use crate::{
@@ -153,7 +154,7 @@ impl Exporter for FlatPatternDxf {
         };
         let format = Format::Dxf;
         Ok(Export {
-            name: format!("{}_flat.{}", output.stem()?, format.extension()),
+            name: format!("{}_flat.{}", stem(output.file_name()), format.extension()),
             media_type: format.media_type().into(),
             content: Content::Text(paper.write(format)),
         })

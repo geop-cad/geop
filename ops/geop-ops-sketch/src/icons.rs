@@ -37,7 +37,7 @@ pub(crate) const ADD_SKETCH: &str =
 /// The icon of the drawing tool or the constraint named `name` in events:
 /// its own, or one it shares with other operations.
 pub(crate) fn named(name: &str) -> Option<&'static str> {
-    use geop_ops_view::icons as shared;
+    use geop_core_editor::view::icons as shared;
     Some(match name {
         "rectangle" => RECTANGLE,
         "center_rectangle" => CENTER_RECTANGLE,

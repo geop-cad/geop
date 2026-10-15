@@ -1,7 +1,7 @@
 //! A model's solids as triangle meshes, for files that hold meshes (STL).
 
 use geop_core_math::{geop_error::GeopResult, primitives::TriangleFace, scalars::Scalar};
-use geop_ops_rasterize::rasterize;
+use geop_core_rasterize::rasterize;
 
 use super::NamedModel;
 

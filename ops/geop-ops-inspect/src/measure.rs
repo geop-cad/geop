@@ -3,6 +3,8 @@
 //! them and where it is attained, the angle between them, the distance
 //! between their centres.
 
+use geop_core_editor::output::{Answer, Block, Bounded, Row};
+use geop_core_editor::view::{INSTANCE_SEPARATOR, drawn};
 use geop_core_editor::{
     editing::{Shape as Drawn, Style, Tone, Visual},
     selectable::Selectable,
@@ -17,9 +19,7 @@ use geop_core_math::{
 use geop_core_program::{element::PickedElement, reader::Reader, values::Design};
 use geop_core_topology::distance::{Feature, PlacedFace, closest_points};
 use geop_ops_add_datum::{Selected, Shape};
-use geop_ops_output::{Answer, Block, Bounded, Row};
 use geop_ops_parameters::located;
-use geop_ops_view::{INSTANCE_SEPARATOR, drawn};
 use serde::Serialize;
 
 /// What is picked to be measured, by what is drawn of it: vertices,

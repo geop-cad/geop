@@ -133,10 +133,9 @@ fn base64<Ser: serde::Serializer>(bytes: &[u8], serializer: Ser) -> Result<Ser::
         let b = [0, 1, 2].map(|k| chunk.get(k).copied().unwrap_or(0) as u32);
         let n = (b[0] << 16) | (b[1] << 8) | b[2];
         for k in 0..4 {
-            text.push(if k <= chunk.len() {
-                ALPHABET[(n >> (18 - 6 * k) & 63) as usize] as char
-            } else {
-                '='
+            text.push(match ALPHABET.get((n >> (18 - 6 * k) & 63) as usize) {
+                Some(&digit) if k <= chunk.len() => digit as char,
+                _ => '=',
             });
         }
     }

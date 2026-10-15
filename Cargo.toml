@@ -7,10 +7,10 @@ members = [
     "core/geop-core-geometry",
     "core/geop-core-topology",
     "core/geop-core-sketch",
-    "ops/geop-ops-view",
+    "core/geop-core-rasterize",
+    "lib/geop-lib-sheet",
     "ops/geop-ops-model",
     "ops/geop-ops-parameters",
-    "ops/geop-ops-output",
     "ops/geop-ops-sketch",
     "ops/geop-ops-datums",
     "ops/geop-ops-add-datum",
@@ -20,7 +20,6 @@ members = [
     "ops/geop-ops-fillet",
     "ops/geop-ops-shell",
     "ops/geop-ops-assembly",
-    "ops/geop-ops-rasterize",
     "cad/geop-cad-base",
     "cad/geop-cad-web",
     "cad/geop-cad-cli",
@@ -51,10 +50,10 @@ geop-core-math = { path = "core/geop-core-math" }
 geop-core-geometry = { path = "core/geop-core-geometry" }
 geop-core-topology = { path = "core/geop-core-topology" }
 geop-core-sketch = { path = "core/geop-core-sketch" }
-geop-ops-view = { path = "ops/geop-ops-view" }
+geop-core-rasterize = { path = "core/geop-core-rasterize" }
+geop-lib-sheet = { path = "lib/geop-lib-sheet" }
 geop-ops-model = { path = "ops/geop-ops-model" }
 geop-ops-parameters = { path = "ops/geop-ops-parameters" }
-geop-ops-output = { path = "ops/geop-ops-output" }
 geop-ops-sketch = { path = "ops/geop-ops-sketch" }
 geop-ops-datums = { path = "ops/geop-ops-datums" }
 geop-ops-add-datum = { path = "ops/geop-ops-add-datum" }
@@ -66,7 +65,6 @@ geop-ops-shell = { path = "ops/geop-ops-shell" }
 geop-ops-drawing = { path = "ops/geop-ops-drawing" }
 geop-ops-assembly = { path = "ops/geop-ops-assembly" }
 geop-ops-inspect = { path = "ops/geop-ops-inspect" }
-geop-ops-rasterize = { path = "ops/geop-ops-rasterize" }
 geop-ops-subd = { path = "ops/geop-ops-subd" }
 serde = { version = "1", features = ["derive"] }
 geop-ops-sheetmetal = { path = "ops/geop-ops-sheetmetal" }

@@ -2,7 +2,7 @@
 
 use std::fmt::Write;
 
-use geop_ops_output::xml_escape;
+use geop_lib_sheet::xml_escape;
 
 use crate::{Inertial, JointType, Origin, Robot, Visual};
 

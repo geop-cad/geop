@@ -254,7 +254,7 @@ impl PartOperation for LinearPattern {
         OperationGroup::Bodies,
         OperationTier::Big,
     )
-    .icon(geop_ops_view::icons::LINEAR_PATTERN);
+    .icon(geop_core_editor::view::icons::LINEAR_PATTERN);
     type Args = LinearPatternArgs;
     type Session = ();
 

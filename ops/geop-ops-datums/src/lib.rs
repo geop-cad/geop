@@ -36,6 +36,7 @@ use geop_core_program::{
 use std::{borrow::Cow, collections::BTreeMap, sync::LazyLock};
 
 use geop_core_editor::selectable::SelectableElement;
+use geop_core_editor::view::{PartView, ViewDatum, drawn};
 use geop_core_geometry::shape::Axis;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -43,7 +44,6 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_ops_model::{Line, Plane, Point};
-use geop_ops_view::{PartView, ViewDatum, drawn};
 
 /// The name of the frame datum every part has: the world's origin and
 /// axes, and the three planes between them.

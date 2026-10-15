@@ -15,6 +15,7 @@ use geop_core_program::{
 };
 use std::{collections::BTreeMap, rc::Rc};
 
+use geop_core_editor::view::{PartView, drawn};
 use geop_core_math::{
     primitives::{DatumComponent, FrameAxis, Pose, Ray},
     scalars::{ScalInF64 as S, Scalar},
@@ -27,7 +28,6 @@ use geop_ops_datums::{ORIGIN, component_name, datums, origin_axis, read_datums};
 use geop_ops_extrude_revolve::shapes::{block_part, v3};
 use geop_ops_model::{read_model, testing::assert_close};
 use geop_ops_pattern::spacing::Spacing;
-use geop_ops_view::{PartView, drawn};
 
 use super::*;
 use crate::{

@@ -14,6 +14,7 @@ use geop_core_program::{
     values::{Design, Setting, Settings},
 };
 
+use geop_core_editor::view::{PartView, drawn};
 use geop_core_editor::{
     editing::{Pointer, Reach},
     selectable::selected,
@@ -28,7 +29,6 @@ use geop_core_sketch::{Constraint, CurveId, PointId};
 use geop_ops_datums::origin_plane;
 use geop_ops_model::{Curve, Line, NamedModel, Path, Plane, Point, model, testing::unit_cube};
 use geop_ops_parameters::{DefineParameters, DefineParametersArgs, NumberParameter};
-use geop_ops_view::{PartView, drawn};
 
 use crate::{
     AddSketch, AddSketchArgs, PlacedSketch, Sketch, SketchPlane,

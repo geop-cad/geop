@@ -31,6 +31,8 @@ use geop_core_editor::{
 use geop_core_program::{part::StepContext, reader::Reader, values::Design};
 use std::{cell::RefCell, rc::Rc};
 
+use geop_core_editor::output::Exporter;
+use geop_core_editor::view::icons;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::{CoordinateSystem, Pose},
@@ -39,14 +41,10 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_sketch::plain::{add, sub};
+use geop_lib_sheet::{Anchor, Layer, P, Sheet};
 use geop_ops_assembly::placed_parts;
 use geop_ops_model::{NamedModel, Threads, model, read_model, read_threads, threads};
-use geop_ops_output::{
-    Exporter,
-    sheet::{Anchor, Layer, P, Sheet},
-};
 use geop_ops_parameters::{Properties, read_properties};
-use geop_ops_view::icons;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -546,7 +544,7 @@ const CIRCLE_POINTS: usize = 48;
 
 /// The sheet's strokes and texts as visuals, under keys starting `key`.
 fn sheet_visuals<S: Scalar>(sheet: &Sheet, key: &str, out: &mut Vec<Visual<S>>) {
-    use geop_ops_output::sheet::Shape as Stroke;
+    use geop_lib_sheet::Shape as Stroke;
     let arc = |center: P, radius: f64, start: f64, sweep: f64| -> Vec<Vector3<S>> {
         let n = ((CIRCLE_POINTS as f64 * sweep / std::f64::consts::TAU).ceil() as usize).max(2);
         (0..=n)

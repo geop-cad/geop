@@ -2,13 +2,15 @@
 //! [`crate::Drawing`] step describes ([`drawing`]), or one of the whole part
 //! by default — and the drawings a part's steps describe.
 
+use geop_core_editor::output::{Content, Export, Exporter, ExporterInfo, Output};
 use geop_core_math::geop_error::{GeopError, GeopResult, WithContext};
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
     reader::Reader,
     target::{Target, TargetReference},
 };
-use geop_ops_output::{Content, Export, Exporter, ExporterInfo, Output, sheet::Format};
+use geop_lib_sheet::Format;
+use geop_ops_parameters::{read_properties, stem};
 use serde::Deserialize;
 
 use crate::{DrawingArgs, Projection, SheetSize, ViewKind, compose, parts_list};
@@ -176,10 +178,9 @@ impl Exporter for DrawingExporter {
             None => (None, DrawingArgs::default()),
         };
         let mut args = options.apply(args)?;
-        let properties = output.properties()?;
+        let properties = read_properties(&output.part())?.into_owned();
         if args.name.is_empty() {
-            let stem = output.stem()?;
-            args.name = properties.name(&stem).to_string();
+            args.name = properties.name(stem(output.file_name())).to_string();
         }
         let material = properties.material();
         if args.material.is_empty() && !material.assumed {
@@ -196,7 +197,7 @@ impl Exporter for DrawingExporter {
         let parts = parts_list(&reader, output.file_name(), &args).with_context(&ctx)?;
         let sheet = compose(&reader, &args, output.date, &parts).with_context(&ctx)?;
         Ok(Export {
-            name: format!("{}.{}", output.stem()?, format.extension()),
+            name: format!("{}.{}", stem(output.file_name()), format.extension()),
             media_type: format.media_type().into(),
             content: Content::Text(sheet.write(format)),
         })

@@ -725,9 +725,8 @@ mod tests {
         }
     }
     use super::*;
-    use geop_core_math::{for_all_scalars, vector::Vector3};
-    use geop_ops_extrude_revolve::shapes::{cube_solid, sphere::sphere_solid};
-    use geop_ops_model::NamedModel;
+    use geop_core_math::for_all_scalars;
+    use geop_core_topology::test_fixtures::test_cube_model;
 
     fn triangle_area<S: Scalar>(a: Vector2<S>, b: Vector2<S>, c: Vector2<S>) -> f64 {
         let (ax, ay) = (a[0].to_f64(), a[1].to_f64());
@@ -737,15 +736,7 @@ mod tests {
     }
 
     fn check_flat_face_stays_coarse<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
-        cube_solid(
-            &mut model,
-            "t1",
-            Vector3::from_array([S::ZERO; 3]),
-            Vector3::from_array([S::ONE; 3]),
-        )
-        .unwrap();
-        let topology = model.topology();
+        let topology = &test_cube_model::<S>();
         let face = topology.faces.values().next().unwrap();
         let tris = crate::face_triangles_uv(topology, face, 32).unwrap();
         // Zero curvature never triggers a resolution doubling, so the grid
@@ -764,69 +755,8 @@ mod tests {
         for_all_scalars!(check_flat_face_stays_coarse);
     }
 
-    fn check_curved_face_is_refined<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
-        sphere_solid(&mut model, "t3", Vector3::zero(), S::ONE).unwrap();
-        let topology = model.topology();
-        let face = topology.faces.values().next().unwrap();
-        let tris = crate::face_triangles_uv(topology, face, 8).unwrap();
-        assert!(
-            tris.len() > 8,
-            "a sphere quadrant should be refined well past a trivial fan, got {}",
-            tris.len()
-        );
-    }
-
-    /// The point of the refinement: every triangle of a curved face stays
-    /// within the curvature tolerance of the true surface, so the mesh
-    /// follows the shape instead of cutting corners off it. Checked on a
-    /// unit sphere, where the distance to the surface is exact.
-    fn check_curved_face_follows_the_surface<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
-        sphere_solid(&mut model, "t4", Vector3::zero(), S::ONE).unwrap();
-        let topology = model.topology();
-        let face = topology.faces.values().next().unwrap();
-        let tris = crate::face_triangles_uv(topology, face, 24).unwrap();
-        let mut samples = Samples::new(face);
-        let mut worst: f64 = 0.0;
-        for (a, b, c) in &tris {
-            let mid = [
-                (a[0].to_f64() + b[0].to_f64() + c[0].to_f64()) / 3.0,
-                (a[1].to_f64() + b[1].to_f64() + c[1].to_f64()) / 3.0,
-            ];
-            // The triangle's own centroid in 3-D, against the sphere it
-            // should be lying on.
-            let corners: Vec<[f64; 3]> = [a, b, c]
-                .iter()
-                .map(|uv| samples.point_f64([uv[0].to_f64(), uv[1].to_f64()]).unwrap())
-                .collect();
-            let centroid = [0, 1, 2].map(|k| corners.iter().map(|p| p[k]).sum::<f64>() / 3.0);
-            let _ = mid;
-            worst = worst.max((1.0 - distance(centroid, [0.0; 3])).abs());
-        }
-        // `n = 24` asks for a sagitta under `face_size / (4 n²)`, which for
-        // this patch (size ≈ 1.7) is about 7e-4.
-        assert!(worst < 1e-3, "worst deviation from the sphere: {worst}");
-    }
-    #[test]
-    fn curved_face_follows_the_surface() {
-        for_all_scalars!(check_curved_face_follows_the_surface);
-    }
-    #[test]
-    fn curved_face_is_refined() {
-        for_all_scalars!(check_curved_face_is_refined);
-    }
-
     fn check_triangulation_covers_exact_area<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
-        cube_solid(
-            &mut model,
-            "t2",
-            Vector3::from_array([S::ZERO; 3]),
-            Vector3::from_array([S::ONE; 3]),
-        )
-        .unwrap();
-        let topology = model.topology();
+        let topology = &test_cube_model::<S>();
         let face = topology.faces.values().next().unwrap();
         let tris = crate::face_triangles_uv(topology, face, 8).unwrap();
         let total: f64 = tris.iter().map(|(a, b, c)| triangle_area(*a, *b, *c)).sum();
@@ -835,127 +765,8 @@ mod tests {
             "total uv area={total}, expected 1.0"
         );
     }
-    /// A face with a round hole must not get a single triangle inside that
-    /// hole: the hole's area is missing from the triangulation, and no
-    /// triangle's centroid falls in it.
-    fn check_hole_is_not_triangulated<S: Scalar>() {
-        use geop_core_geometry::nurb_curve::{NurbCurve2D, sqrt2_over_2};
-        use geop_core_math::primitives::CoordinateSystem;
-        use geop_ops_extrude_revolve::common::polygon;
-
-        let mut model = NamedModel::<S>::new();
-        let v2 = |x: f64, y: f64| Vector2::from_array([S::from_f64(x), S::from_f64(y)]);
-        let cs = CoordinateSystem::try_new(
-            Vector3::from_array([S::ZERO; 3]),
-            Vector3::from_array([S::ONE, S::ZERO, S::ZERO]),
-            Vector3::from_array([S::ZERO, S::ONE, S::ZERO]),
-            Vector3::from_array([S::ZERO, S::ZERO, S::from_f64(-1.0)]),
-        )
-        .unwrap();
-        let outer = polygon(&[v2(0.0, 0.0), v2(4.0, 0.0), v2(4.0, 4.0), v2(0.0, 4.0)]).unwrap();
-        // A circle of radius 1 around (2, 2), clockwise (a hole).
-        let q = [(1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)];
-        let ccw: Vec<_> = (0..4)
-            .map(|i| {
-                let (a, b) = (q[i], q[(i + 1) % 4]);
-                NurbCurve2D::arc(
-                    v2(2.0 + a.0, 2.0 + a.1),
-                    v2(2.0 + a.0 + b.0, 2.0 + a.1 + b.1),
-                    v2(2.0 + b.0, 2.0 + b.1),
-                    sqrt2_over_2(),
-                )
-                .unwrap()
-            })
-            .collect();
-        let hole: Vec<_> = ccw.iter().rev().map(|c| c.reverse()).collect();
-        let namer = geop_ops_model::Namer::new("extrude", "e").unwrap();
-        use geop_ops_extrude_revolve::{common::Profile, sweep::SweepLoop};
-        geop_ops_extrude_revolve::extrude::extrude(
-            &mut model,
-            &namer,
-            Some(&namer.root()),
-            &cs,
-            S::ZERO,
-            S::ONE,
-            &[
-                SweepLoop::plain(Profile::closed(outer)),
-                SweepLoop::plain(Profile::closed(hole).with_prefix("h")),
-            ],
-        )
-        .unwrap();
-        let topology = model.topology();
-
-        // The two cap faces are the ones with a hole.
-        let capped: Vec<_> = topology
-            .faces
-            .values()
-            .filter(|f| !f.holes.is_empty())
-            .collect();
-        assert_eq!(capped.len(), 2);
-        for face in capped {
-            let tris = crate::face_triangles_uv(topology, face, 8).unwrap();
-            let area: f64 = tris.iter().map(|(a, b, c)| triangle_area(*a, *b, *c)).sum();
-            // The cap's uv square spans the 4x4 footprint, so the hole is
-            // π / 16 of it.
-            let expected = 1.0 - std::f64::consts::PI / 16.0;
-            assert!(
-                (area - expected).abs() < 0.02,
-                "uv area {area}, expected about {expected}"
-            );
-            for (a, b, c) in &tris {
-                if triangle_area(*a, *b, *c) < 1e-12 {
-                    continue;
-                }
-                let centroid = [
-                    (a[0].to_f64() + b[0].to_f64() + c[0].to_f64()) / 3.0,
-                    (a[1].to_f64() + b[1].to_f64() + c[1].to_f64()) / 3.0,
-                ];
-                // uv (0.5, 0.5) is the hole's center; radius 1 of 4 units.
-                let r = ((centroid[0] - 0.5).powi(2) + (centroid[1] - 0.5).powi(2)).sqrt();
-                assert!(r > 0.24, "triangle inside the hole at uv {centroid:?}");
-            }
-        }
-    }
-    #[test]
-    fn hole_is_not_triangulated() {
-        for_all_scalars!(check_hole_is_not_triangulated);
-    }
-
     #[test]
     fn triangulation_covers_exact_area() {
         for_all_scalars!(check_triangulation_covers_exact_area);
-    }
-
-    /// A genuinely non-rectangular, holed footprint (unlike a cube/sphere
-    /// face) must still triangulate cleanly: every triangle finite, and
-    /// some non-trivial mesh actually produced — a crash or an empty
-    /// result here is exactly the failure mode clipping is meant to rule
-    /// out for trims a fixed grid-without-clipping can't represent.
-    fn check_holed_footprint_triangulates_cleanly<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
-        geop_ops_extrude_revolve::shapes::figure8_profile::figure8_profile(&mut model, "f")
-            .unwrap();
-        let topology = model.topology();
-        let mut total_triangles = 0;
-        for face in topology.faces.values() {
-            let tris = crate::face_triangles_uv(topology, face, 8).unwrap();
-            for (a, b, c) in &tris {
-                for v in [a, b, c] {
-                    assert!(
-                        v[0].to_f64().is_finite() && v[1].to_f64().is_finite(),
-                        "non-finite triangle vertex"
-                    );
-                }
-            }
-            total_triangles += tris.len();
-        }
-        assert!(
-            total_triangles > 0,
-            "figure8_profile must produce some triangles"
-        );
-    }
-    #[test]
-    fn holed_footprint_triangulates_cleanly() {
-        for_all_scalars!(check_holed_footprint_triangulates_cleanly);
     }
 }

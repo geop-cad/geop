@@ -3,6 +3,7 @@
 //! [`geop_ops_assembly::draw`]) and the structure an editor lists
 //! ([`structure`]).
 
+use geop_core_editor::view::listed_by_steps;
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{
     element::{ElementReference, PickedElement},
@@ -14,7 +15,6 @@ use geop_ops_assembly::placed_parts;
 use geop_ops_datums::{ORIGIN, read_datums};
 use geop_ops_model::read_model;
 use geop_ops_sketch::PlacedSketch;
-use geop_ops_view::listed_by_steps;
 use serde::Serialize;
 
 /// An entry of the structure of the part drawn, by name: what [`structure`]

@@ -3,6 +3,7 @@
 //! between each other — by how much, and which only touch.
 
 use geop_core_editor::editing::Tone;
+use geop_core_editor::output::{Answer, Block, Bounded, Row};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
@@ -15,7 +16,6 @@ use geop_core_topology::{
 };
 use geop_ops_assembly::solids::{PlacedSolid, placed_solids};
 use geop_ops_model::{BodyNames, NamedModel, Namer};
-use geop_ops_output::{Answer, Block, Bounded, Row};
 
 use crate::mass::drawn;
 use geop_ops_booleans::{

@@ -3,10 +3,10 @@
 
 use std::collections::HashMap;
 
+use geop_core_editor::view::{PartView, RESOLUTION, ViewEdge, ViewFace, ViewVertex};
 use geop_core_math::geop_error::GeopResult;
+use geop_core_rasterize::rasterize;
 use geop_core_topology::{EdgeId, Model, SolidId};
-use geop_ops_rasterize::rasterize;
-use geop_ops_view::{PartView, RESOLUTION, ViewEdge, ViewFace, ViewVertex};
 
 use crate::{NamedModel, RefId};
 use geop_core_program::values::Design;
@@ -94,13 +94,13 @@ impl NamedModel<Design> {
 
 #[cfg(test)]
 mod tests {
+    use geop_core_editor::view::drawn;
     use geop_core_editor::{
         editing::{Pointer, Reach},
         selectable::selected,
     };
     use geop_core_math::{primitives::Ray, scalars::Scalar, vector::Vector3};
     use geop_core_program::{element::ElementReference, part::Part};
-    use geop_ops_view::drawn;
 
     use crate::{
         Body, Line, NamedModel, model,

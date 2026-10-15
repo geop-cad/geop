@@ -2,7 +2,7 @@
 //! a 3-D sketch, the dimensions of a drawing, what a pattern repeats or a
 //! blend rounds: SVG on a 20 × 20 grid, drawn in the current colour as a
 //! front end draws every icon (see
-//! [`geop_core_editor::editable::OperationInfo::icon`]).
+//! [`crate::editable::OperationInfo::icon`]).
 
 pub const POINT: &str = r#"<circle cx="10" cy="10" r="2.4" fill="currentColor" stroke="none"/>"#;
 pub const LINE: &str = r#"<path d="M4 16 L16 4"/><circle cx="4" cy="16" r="1.6" fill="currentColor" stroke="none"/><circle cx="16" cy="4" r="1.6" fill="currentColor" stroke="none"/>"#;

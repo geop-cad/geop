@@ -12,6 +12,7 @@
 use geop_core_program::{reader::Reader, values::Design};
 use std::collections::HashMap;
 
+use geop_core_editor::view::INSTANCE_SEPARATOR;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::Pose,
@@ -20,7 +21,6 @@ use geop_core_math::{
 use geop_core_topology::{SolidId, mass::MassProperties};
 use geop_ops_model::{NamedModel, notes_of, read_model};
 use geop_ops_parameters::{MaterialOf, read_properties};
-use geop_ops_view::INSTANCE_SEPARATOR;
 
 use crate::placed::placed_parts;
 

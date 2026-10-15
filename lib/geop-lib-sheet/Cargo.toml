@@ -1,10 +1,9 @@
 [package]
-name = "geop-ops-view"
+name = "geop-lib-sheet"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 geop-core-math.workspace = true
-geop-core-program.workspace = true
-geop-core-editor.workspace = true
+geop-core-geometry.workspace = true
 serde.workspace = true

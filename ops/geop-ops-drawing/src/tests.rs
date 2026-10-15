@@ -136,8 +136,8 @@ fn a_threaded_shaft_draws_its_thread() {
     use crate::layer;
     use crate::{DrawingArgs, compose};
     use geop_core_geometry::{nurb_curve::Handedness, shape::Axis};
+    use geop_lib_sheet::{Shape, Stroke};
     use geop_ops_model::{CosmeticThread, Threads};
-    use geop_ops_output::sheet::{Shape, Stroke};
 
     let mut part = NamedModel::<S>::new();
     revolved_cylinder(
@@ -213,7 +213,7 @@ fn a_threaded_shaft_draws_its_thread() {
 fn a_bill_of_materials_stands_on_the_title_block() {
     use crate::layer;
     use crate::{DrawingArgs, PartsListLine, SheetSize, compose};
-    use geop_ops_output::sheet::Shape;
+    use geop_lib_sheet::Shape;
     let mut part = NamedModel::<S>::new();
     cube_solid(
         &mut part,
@@ -415,7 +415,7 @@ fn a_part_in_front_hides_one_behind() {
 fn an_assembly_balloons_each_line_once() {
     use crate::layer;
     use crate::{DrawingArgs, PartsListLine, compose};
-    use geop_ops_output::sheet::Shape;
+    use geop_lib_sheet::Shape;
     let mut part = Placed::new();
     let (big, small) = (block(4.0), block(1.0));
     place(&mut part, &big, "base", v3(0.0, 0.0, 0.0), [0.0; 3]);

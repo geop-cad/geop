@@ -22,6 +22,7 @@
 use geop_core_program::{reader::Reader, values::Design};
 use std::collections::HashMap;
 
+use geop_core_editor::output::{Content, Export, Exporter, ExporterInfo, NoOptions, Output};
 use geop_core_geometry::{nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -34,7 +35,6 @@ use geop_core_topology::{
 };
 use geop_ops_assembly::placed_parts;
 use geop_ops_model::{NamedModel, RefId, read_model};
-use geop_ops_output::{Content, Export, Exporter, ExporterInfo, NoOptions, Output};
 use geop_ops_parameters::{read_properties, stem};
 
 use crate::part21::{Exchange, Instance, Record, Value};
@@ -811,8 +811,8 @@ impl Exporter for Step {
     type Options = NoOptions;
 
     fn export(output: &mut Output, format: &str, _: NoOptions) -> GeopResult<Export> {
-        let name = output.stem()?;
-        let text = write_part(&output.part(), &name)?;
+        let name = stem(output.file_name());
+        let text = write_part(&output.part(), name)?;
         Ok(Export {
             name: format!("{name}.{format}"),
             media_type: "model/step".into(),

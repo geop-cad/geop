@@ -1,6 +1,7 @@
 //! [`mass_report`]: the mass properties of every solid a part shows, and of
 //! all of them together.
 
+use geop_core_editor::output::{Answer, Block, Bounded, Row};
 use geop_core_editor::{editing::Tone, selectable::SelectableElement};
 use geop_core_math::{
     geop_error::GeopResult,
@@ -14,7 +15,6 @@ use geop_core_program::{
 use geop_core_topology::mass::MassProperties;
 use geop_ops_assembly::solids::{PlacedSolid, Shapes, placed_solids};
 use geop_ops_model::{Solid, model};
-use geop_ops_output::{Answer, Block, Bounded, Row};
 use serde::Serialize;
 
 /// Mass properties as shown, in millimetres and kilograms: the volume

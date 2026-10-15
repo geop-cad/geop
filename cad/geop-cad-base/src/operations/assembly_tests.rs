@@ -1606,7 +1606,7 @@ fn a_joint_is_made_by_clicking_where_its_frames_go() {
     }));
     let presentation = update.step.unwrap().presentation;
     // Lit as the frame a click there puts on the pin's top.
-    let pin_top = geop_ops_view::FramePick {
+    let pin_top = geop_core_editor::view::FramePick {
         on: MateEntity::of("pin", Selected::Face(element("extrude(pin,end)"))).picked(),
         at: None,
     }

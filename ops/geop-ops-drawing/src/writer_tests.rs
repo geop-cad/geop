@@ -1,9 +1,9 @@
 //! Drawings composed and written as DXF and SVG, then read back.
 
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
+use geop_lib_sheet::{to_dxf, to_svg};
 use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder, v3};
 use geop_ops_model::NamedModel;
-use geop_ops_output::sheet::{to_dxf, to_svg};
 
 use crate::{DrawingArgs, ViewKind, compose, testing::built};
 

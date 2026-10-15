@@ -20,8 +20,8 @@ use geop_core_sketch::{
     plain::{add, cross, distance, dot, perp, scale, sub, unit},
 };
 use geop_core_topology::EdgeId;
+use geop_lib_sheet::{Anchor, Label, Layer, P, Shape, Sheet};
 use geop_ops_model::RefId;
-use geop_ops_output::sheet::{Anchor, Label, Layer, P, Shape, Sheet};
 use serde::{Deserialize, Serialize};
 
 use crate::{

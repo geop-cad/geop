@@ -1,7 +1,6 @@
 //! What is made *of* a part rather than in it: files written from what a
 //! program built ([`Exporter`]), and questions answered about it
-//! ([`Inspector`]). Files of paper — drawings, flat patterns — are laid out
-//! on a [`sheet::Sheet`]. Neither is a step: exporting and inspecting change no
+//! ([`Inspector`]). Neither is a step: exporting and inspecting change no
 //! program and are nothing to undo.
 //!
 //! A crate that writes a format, or answers a question, implements one of
@@ -9,23 +8,8 @@
 //! those registered in its [`Outputs`], by their infos, and knows nothing
 //! more of them. The options each takes are its own, sent as JSON.
 
-// Library code reports what goes wrong as an error, never by panicking;
-// tests may unwrap.
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::panic,
-        clippy::todo,
-        clippy::unimplemented,
-        clippy::unreachable
-    )
-)]
-
 mod export;
 mod inspect;
-pub mod sheet;
 
 pub use export::{Content, ErasedExporter, Export, Exporter, ExporterInfo};
 pub use inspect::{
@@ -38,25 +22,7 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_core_program::{part::Part, program::Program, reader::Reader, runner::Runner};
-use geop_ops_parameters::{Properties, read_properties, stem};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-
-/// `text` fit for XML: for an element's content, or an attribute's value
-/// between either kind of quotes.
-pub fn xml_escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&apos;"),
-            _ => out.push(c),
-        }
-    }
-    out
-}
 
 /// A number as a report shows it — a value, and how far the truth may be
 /// from it: the midpoint of an enclosure, and its half-width.
@@ -139,21 +105,9 @@ impl<'a> Output<'a> {
         Ok(self.part.before(step))
     }
 
-    /// What the program says of its part: its title, designation, colour
-    /// and material (see [`Properties`]).
-    pub fn properties(&self) -> GeopResult<Properties> {
-        Ok(read_properties(&self.part())?.into_owned())
-    }
-
     /// The program's file, as the runner ran it.
     pub fn file_name(&self) -> &str {
         &self.runner.location.file
-    }
-
-    /// The name of the program's file, without folders or `.geop`: what a
-    /// file written from it is named after (see [`stem`]).
-    pub fn stem(&self) -> GeopResult<String> {
-        Ok(stem(self.file_name()).to_string())
     }
 }
 

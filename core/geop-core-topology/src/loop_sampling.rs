@@ -1,6 +1,6 @@
 //! Sample a loop's pcurves into a closed `(u, v)` polygon.
 //!
-//! Lives in `geop-core-topology` rather than `geop-ops-rasterize` (which
+//! Lives in `geop-core-topology` rather than `geop-core-rasterize` (which
 //! also uses it, for triangulation) because `geop-core-topology`'s own edit
 //! code (`splice_edge_into_face`'s loop-orientation check) needs it too,
 //! and topology sits below rasterize in the dependency order.

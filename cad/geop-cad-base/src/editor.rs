@@ -40,6 +40,10 @@ use std::{
     rc::Rc,
 };
 
+use geop_core_editor::output::{
+    Content, Export, ExporterInfo, Inspection, InspectorInfo, Output, Outputs,
+};
+use geop_core_editor::view::{EMPTY_EXTENT, PartView, ViewInstance, drawn};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
@@ -49,8 +53,6 @@ use geop_ops_assembly::{
     placed_parts,
     solving::{self, Freedom, Report, Rerun, SettingsState},
 };
-use geop_ops_output::{Content, Export, ExporterInfo, Inspection, InspectorInfo, Output, Outputs};
-use geop_ops_view::{EMPTY_EXTENT, PartView, ViewInstance, drawn};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -188,7 +190,7 @@ pub enum Command {
         inspector: Option<String>,
     },
     /// Ask the inspector `inspector` about the part as drawn, told
-    /// `options` (its own, see [`geop_ops_output::Inspector::Options`]):
+    /// `options` (its own, see [`geop_core_editor::output::Inspector::Options`]):
     /// answered once, in [`Update::inspection`]. Changes nothing.
     Inspect {
         inspector: String,
@@ -198,7 +200,7 @@ pub enum Command {
     /// Write what the program builds — as far as it runs, the parts it
     /// places included — with the exporter `exporter`, in `format` (its
     /// first, if not given), told `options` (its own, see
-    /// [`geop_ops_output::Exporter::Options`]) and dated `date`
+    /// [`geop_core_editor::output::Exporter::Options`]) and dated `date`
     /// (`YYYY-MM-DD`): the update's [`Update::export`]. Changes nothing.
     Export {
         exporter: String,

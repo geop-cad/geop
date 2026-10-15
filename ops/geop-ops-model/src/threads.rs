@@ -11,6 +11,7 @@
 use std::collections::BTreeMap;
 
 use crate::{frame_along, operation_of};
+use geop_core_editor::view::{Annotations, ViewAnnotation, annotations};
 use geop_core_geometry::{
     nurb_curve::{Handedness, NurbCurve3D},
     shape::Axis,
@@ -28,7 +29,6 @@ use geop_core_program::{
     target::{Target, TargetReference},
     values::Design,
 };
-use geop_ops_view::{Annotations, ViewAnnotation, annotations};
 
 /// A thread recorded on a cylindrical face, by its specification and where
 /// it lies — kept as geometry, so that it says the same whatever later
