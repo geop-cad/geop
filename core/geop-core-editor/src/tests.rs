@@ -3,46 +3,41 @@
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    scalars::{ScalInF64, Scalar},
+    scalars::Scalar,
     vector::Vector3,
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
+    numeric::{NumericInput, ParameterValue, parameter},
     operation::Operation,
-    part::{Input, Part, Reader, State},
+    operation_registry::OperationRegistry,
+    part::{Part, Reader},
     program::{Program, ProgramStep},
     program_runner::ProgramRunner,
     target::TargetReference,
+    values::Design,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     edit_form::{EditForm, FormState},
     editable::{Context, Editable, Editors, OperationGroup, OperationInfo, OperationTier},
-    editing::{Control, Dialog, Event, Form, Unit, Value},
-    numeric_input::{NumericInput, ParameterValue, parameter},
+    editing::{Control, Dialog, Event, Form, Number, Unit, Value, is_formula},
     part_operation,
     part_operation::PartOperation,
     selectable::{Selectable, SelectableElement, selected},
 };
 
-/// The tests' numbers: what a part is given, its state and its forms.
-type Sc = ScalInF64;
-
-/// A part of the tests, given numbers and a number as its state.
-type TestPart = Part<Sc, Sc>;
-type TestRunner = ProgramRunner<Sc, Sc>;
-
 /// What a test operation is to an editor: only its name matters.
 const INFO: OperationInfo = OperationInfo::new("", "", OperationGroup::Solid, OperationTier::Menu);
 
-fn v(x: f64, y: f64, z: f64) -> Vector3<Sc> {
-    Vector3::from_array([x, y, z].map(Sc::from_f64))
+fn v(x: f64, y: f64, z: f64) -> Vector3<Design> {
+    Vector3::from_array([x, y, z].map(Design::from_f64))
 }
 
 /// A point, read whole: a kind of its own.
 #[derive(Clone, Debug, Default, PartialEq)]
-struct Point(Vector3<Sc>);
+struct Point(Vector3<Design>);
 
 impl Kind for Point {
     const NAME: &'static str = "point";
@@ -64,34 +59,31 @@ struct GivenPoint;
 
 impl Operation for GivenPoint {
     const KIND: &'static str = "given_point";
-    type Args = Vector3<Sc>;
-    type Input = Sc;
-    type State = Sc;
+    type Args = Vector3<Design>;
 
-    fn run(step: &str, _: &TestRunner, part: &mut TestPart, at: &Vector3<Sc>) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, at: &Vector3<Design>) -> GeopResult<()> {
         part.define_target(&TargetReference::new(step), at, |_, at| Ok(Point(*at)))
     }
 }
 
 impl Editable for GivenPoint {
     const INFO: OperationInfo = INFO;
-    type Scalar = Sc;
     type EditingState = ();
 
-    fn new_args(_: &Context<Sc, Sc, Sc>) -> Vector3<Sc> {
+    fn new_args(_: &Context) -> Vector3<Design> {
         Vector3::zero()
     }
 
-    fn presentation(_: &Context<Sc, Sc, Sc>, _: &Vector3<Sc>, _: &()) -> Form<Sc> {
+    fn presentation(_: &Context, _: &Vector3<Design>, _: &()) -> Form<Design> {
         Form::default()
     }
 
     fn process_user_event(
-        _: &Context<Sc, Sc, Sc>,
-        at: &Vector3<Sc>,
+        _: &Context,
+        at: &Vector3<Design>,
         _: &(),
-        _: Event<Sc>,
-    ) -> (Vector3<Sc>, ()) {
+        _: Event<Design>,
+    ) -> (Vector3<Design>, ()) {
         (*at, ())
     }
 }
@@ -99,7 +91,7 @@ impl Editable for GivenPoint {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 struct ShiftArgs {
     point: String,
-    by: Vector3<Sc>,
+    by: Vector3<Design>,
 }
 
 /// Moves the point target `point` by `by`.
@@ -108,10 +100,8 @@ struct Shift;
 impl Operation for Shift {
     const KIND: &'static str = "shift";
     type Args = ShiftArgs;
-    type Input = Sc;
-    type State = Sc;
 
-    fn run(_: &str, _: &TestRunner, part: &mut TestPart, args: &ShiftArgs) -> GeopResult<()> {
+    fn run(_: &str, _: &ProgramRunner, part: &mut Part, args: &ShiftArgs) -> GeopResult<()> {
         let point = TargetReference::<Point>::new(&args.point);
         part.revise_target(&point, &args.by, |reader, by| {
             Ok(Point(reader.previous::<Point>()?.0.add(by)))
@@ -121,24 +111,23 @@ impl Operation for Shift {
 
 impl Editable for Shift {
     const INFO: OperationInfo = INFO;
-    type Scalar = Sc;
     type EditingState = ();
 
-    fn new_args(_: &Context<Sc, Sc, Sc>) -> ShiftArgs {
+    fn new_args(_: &Context) -> ShiftArgs {
         ShiftArgs::default()
     }
 
-    fn presentation(_: &Context<Sc, Sc, Sc>, _: &ShiftArgs, _: &()) -> Form<Sc> {
+    fn presentation(_: &Context, _: &ShiftArgs, _: &()) -> Form<Design> {
         Form::default()
     }
 
     /// Pressing the field `origin` moves the point to the origin, as the
     /// step sees it; pressing `built` shifts it by where the step left it.
     fn process_user_event(
-        context: &Context<Sc, Sc, Sc>,
+        context: &Context,
         args: &ShiftArgs,
         _: &(),
-        event: Event<Sc>,
+        event: Event<Design>,
     ) -> (ShiftArgs, ()) {
         let point = ElementReference::<Point, Point>::whole(TargetReference::new(&args.point));
         let mut args = args.clone();
@@ -160,7 +149,7 @@ impl Editable for Shift {
     }
 }
 
-fn editors() -> Editors<Sc, Sc, Sc> {
+fn editors() -> Editors {
     (Editors::default().with(GivenPoint))
         .and_then(|e| e.with(Shift))
         .unwrap()
@@ -181,9 +170,9 @@ fn shift(id: &str, point: &str, x: f64) -> ProgramStep {
 /// What a press of `origin` makes the shift `step` of `program`, as last
 /// run on `part`.
 fn pressed(
-    editors: &Editors<Sc, Sc, Sc>,
-    runner: &TestRunner,
-    part: &TestPart,
+    editors: &Editors,
+    runner: &ProgramRunner,
+    part: &Part,
     program: &Program,
     step: &str,
 ) -> GeopResult<f64> {
@@ -193,9 +182,9 @@ fn pressed(
 /// What a press of the field `key` makes the shift `step` of `program`, as
 /// last run on `part`.
 fn press(
-    editors: &Editors<Sc, Sc, Sc>,
-    runner: &TestRunner,
-    part: &TestPart,
+    editors: &Editors,
+    runner: &ProgramRunner,
+    part: &Part,
     program: &Program,
     step: &str,
     key: &str,
@@ -216,15 +205,23 @@ fn press(
 fn a_step_is_edited_against_the_part_before_it() {
     let editors = editors();
     let runner = ProgramRunner::new(editors.operations().unwrap());
-    let mut part = TestPart::default();
-    let program = Program::new(vec![
+    let mut part = Part::default();
+    let program = Program::from_steps(vec![
         given("a", 1.0),
         shift("s1", "a", 1.0),
         shift("s2", "a", 5.0),
     ]);
-    runner.run(&mut part, &program, &Default::default(), &Default::default());
+    runner.run(
+        &mut part,
+        &program,
+        &Default::default(),
+        &Default::default(),
+    );
     for (step, by) in [("s2", -2.0), ("s1", -1.0), ("s2", -2.0)] {
-        assert_eq!(pressed(&editors, &runner, &part, &program, step).unwrap(), by);
+        assert_eq!(
+            pressed(&editors, &runner, &part, &program, step).unwrap(),
+            by
+        );
     }
 }
 
@@ -234,9 +231,14 @@ fn a_step_is_edited_against_the_part_before_it() {
 fn a_new_step_starts_from_its_operation() {
     let editors = editors();
     let runner = ProgramRunner::new(editors.operations().unwrap());
-    let mut part = TestPart::default();
-    let program = Program::new(vec![given("a", 1.0)]);
-    runner.run(&mut part, &program, &Default::default(), &Default::default());
+    let mut part = Part::default();
+    let program = Program::from_steps(vec![given("a", 1.0)]);
+    runner.run(
+        &mut part,
+        &program,
+        &Default::default(),
+        &Default::default(),
+    );
 
     let step = editors
         .new_step(&runner, &part, &program, "shift", "s", None)
@@ -269,13 +271,18 @@ fn a_new_step_starts_from_its_operation() {
 fn a_step_sees_what_it_built() {
     let editors = editors();
     let runner = ProgramRunner::new(editors.operations().unwrap());
-    let mut part = TestPart::default();
-    let program = Program::new(vec![
+    let mut part = Part::default();
+    let program = Program::from_steps(vec![
         given("a", 1.0),
         shift("s1", "a", 1.0),
         shift("s2", "a", 5.0),
     ]);
-    runner.run(&mut part, &program, &Default::default(), &Default::default());
+    runner.run(
+        &mut part,
+        &program,
+        &Default::default(),
+        &Default::default(),
+    );
     assert_eq!(
         press(&editors, &runner, &part, &program, "s1", "built").unwrap(),
         2.0
@@ -285,7 +292,7 @@ fn a_step_sees_what_it_built() {
         7.0
     );
 
-    let edited = Program::new(vec![
+    let edited = Program::from_steps(vec![
         given("a", 1.0),
         shift("s1", "a", 1.0),
         shift("new", "a", 3.0),
@@ -352,10 +359,7 @@ impl Kind for Chains {
 impl SelectableElement<Chains> for Chain {
     const PICKED_FROM: &'static [&'static str] = &["edge"];
 
-    fn select<I: Input, S: State>(
-        reader: &Reader<I, S>,
-        hit: &PickedElement,
-    ) -> Option<ElementReference<Chains, Chain>> {
+    fn select(reader: &Reader, hit: &PickedElement) -> Option<ElementReference<Chains, Chain>> {
         let target = TargetReference::<Chains>::new(&hit.target);
         let chains = reader
             .retrieve_element(&ElementReference::<Chains, Chains>::whole(target.clone()))
@@ -364,10 +368,7 @@ impl SelectableElement<Chains> for Chain {
         Some(ElementReference::new(target, chain))
     }
 
-    fn drawn<I: Input, S: State>(
-        reader: &Reader<I, S>,
-        chain: &ElementReference<Chains, Chain>,
-    ) -> Vec<PickedElement> {
+    fn drawn(reader: &Reader, chain: &ElementReference<Chains, Chain>) -> Vec<PickedElement> {
         let edges = reader.retrieve_element(chain).unwrap_or_default();
         (edges.iter())
             .map(|edge| {
@@ -379,8 +380,8 @@ impl SelectableElement<Chains> for Chain {
 
 /// A part of one target of chains, `c1` of the edges `e1` and `e2`, `c2`
 /// of `e3`.
-fn chains() -> TestPart {
-    let mut part = TestPart::default();
+fn chains() -> Part {
+    let mut part = Part::default();
     part.begin_run(&Default::default(), &Default::default());
     part.begin_step();
     let chains = Chains(vec![
@@ -408,7 +409,7 @@ fn chain(name: &str) -> ElementReference<Chains, Chain> {
 #[test]
 fn a_field_picks_what_its_elements_are_picked_from() {
     let part = chains();
-    let mut dialog = Dialog::<Sc>::new();
+    let mut dialog = Dialog::<Design>::new();
     dialog.pick("chains", "chains", &part.current(), &[chain("c1")], true);
     let Some(Control::Reference(reference)) = dialog.get("chains") else {
         panic!("no reference field");
@@ -431,19 +432,22 @@ fn a_click_selects_the_element_it_is_on() {
     let picked: Vec<ElementReference<Chains, Chain>> = selected(&reader, &picks);
     assert_eq!(picked, [chain("c1"), chain("c2")]);
     let picks = [held, edge("e2")];
-    assert_eq!(selected::<_, _, ElementReference<Chains, Chain>>(&reader, &picks), []);
+    assert_eq!(
+        selected::<ElementReference<Chains, Chain>>(&reader, &picks),
+        []
+    );
     let picks = [edge("e9")];
-    assert_eq!(selected::<_, _, ElementReference<Chains, Chain>>(&reader, &picks), []);
+    assert_eq!(
+        selected::<ElementReference<Chains, Chain>>(&reader, &picks),
+        []
+    );
 }
 
 /// Picked whole, from a list of what the part has.
 impl SelectableElement<Chains> for Chains {
     const PICKED_FROM: &'static [&'static str] = &["chains"];
 
-    fn select<I: Input, S: State>(
-        _: &Reader<I, S>,
-        hit: &PickedElement,
-    ) -> Option<ElementReference<Chains, Chains>> {
+    fn select(_: &Reader, hit: &PickedElement) -> Option<ElementReference<Chains, Chains>> {
         ElementReference::from_picked(hit)
     }
 }
@@ -460,7 +464,11 @@ impl From<&[String]> for Names {
 
 impl From<&Chains> for Names {
     fn from(chains: &Chains) -> Self {
-        Names((chains.0.iter()).flat_map(|(_, edges)| edges.clone()).collect())
+        Names(
+            (chains.0.iter())
+                .flat_map(|(_, edges)| edges.clone())
+                .collect(),
+        )
     }
 }
 
@@ -506,26 +514,23 @@ impl PartOperation for Scale {
     const KIND: &'static str = "scale";
     const INFO: OperationInfo = INFO;
     type Args = ScaleArgs;
-    type Input = Sc;
-    type State = Sc;
-    type Scalar = Sc;
     type Session = ();
 
-    fn new_args(_: &Context<Sc, Sc, Sc>) -> ScaleArgs {
+    fn new_args(_: &Context) -> ScaleArgs {
         ScaleArgs::default()
     }
 
-    fn run(step: &str, _: &TestRunner, part: &mut TestPart, args: &ScaleArgs) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &ScaleArgs) -> GeopResult<()> {
         let scaled = TargetReference::<f64>::new(step);
         part.define_target(&scaled, &args.by, |reader, by| by.resolve(reader))
     }
 
     fn form<'a>(
-        context: &'a Context<'a, Sc, Sc, Sc>,
+        context: &'a Context<'a>,
         args: &ScaleArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Sc, ScaleArgs> {
-        let mut f = EditForm::<Sc, ScaleArgs>::default();
+    ) -> EditForm<'a, Design, ScaleArgs> {
+        let mut f = EditForm::<Design, ScaleArgs>::default();
         let reader = &context.before;
         f.pick(
             "chains",
@@ -535,7 +540,7 @@ impl PartOperation for Scale {
             true,
             |edit, chains| edit.args.chains = chains,
         );
-        let by = args.by.number("by", reader, Unit::Length);
+        let by = Number::numeric(&args.by, "by", reader, Unit::Length);
         f.numeric("by", by, |edit, by| edit.args.by = by);
         f
     }
@@ -561,7 +566,7 @@ fn a_part_operation_is_edited_through_its_form() {
     }))
     .unwrap();
     part.end_run(0);
-    let runner = TestRunner::new(Default::default());
+    let runner = ProgramRunner::new(OperationRegistry::default());
     let context = Context {
         step: "s",
         runner: &runner,
@@ -590,4 +595,10 @@ fn a_part_operation_is_edited_through_its_form() {
         panic!("no number field");
     };
     assert_eq!((by.value, by.text.as_deref()), (3.0, Some("width / 2")));
+}
+
+/// What a number field holds is a formula unless it reads as a number.
+#[test]
+fn a_number_field_holds_a_formula_unless_it_reads_as_a_number() {
+    assert!(!is_formula(" 12.5 ") && is_formula("width"));
 }

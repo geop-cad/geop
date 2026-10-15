@@ -1,17 +1,19 @@
-use geop_core_math::geop_error::GeopResult;
-use geop_core_math::vector::Vector3;
+use geop_core_math::{geop_error::GeopResult, vector::Vector3};
 use serde::{Deserialize, Serialize};
 
-use crate::operation::Operation;
-use crate::part::Part;
-use crate::program_runner::ProgramRunner;
-use crate::target::TargetReference;
-use crate::test::{Frame, Pose, Sc, label, record_built};
+use crate::{
+    operation::Operation,
+    part::Part,
+    program_runner::ProgramRunner,
+    target::TargetReference,
+    test::{Frame, label, record_built},
+    values::Design,
+};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ShiftFrameArgs {
     pub targets: Vec<String>,
-    pub by: Vector3<Sc>,
+    pub by: Vector3<Design>,
 }
 
 /// Updates each of the targets `targets` by moving its frame `by`. A click
@@ -21,15 +23,8 @@ pub struct ShiftFrameOperation;
 impl Operation for ShiftFrameOperation {
     const KIND: &'static str = "shift_frame";
     type Args = ShiftFrameArgs;
-    type Input = Sc;
-    type State = Pose;
 
-    fn run(
-        step: &str,
-        _: &ProgramRunner<Sc, Pose>,
-        part: &mut Part<Sc, Pose>,
-        args: &Self::Args,
-    ) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &Self::Args) -> GeopResult<()> {
         for target in &args.targets {
             let reference = TargetReference::<Frame>::new(target);
             let args = (label(target, step), args.by);

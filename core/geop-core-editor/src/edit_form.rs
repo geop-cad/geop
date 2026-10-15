@@ -11,13 +11,10 @@
 //! construction it fits.
 
 use geop_core_math::scalars::Scalar;
-use geop_core_program::{
-    part::{Input, Reader, State},
-};
+use geop_core_program::{numeric::NumericInput, part::Reader};
 
 use crate::{
     editing::{Action, CanvasEvent, Choice, Event, Form, Number, Value},
-    numeric_input::NumericInput,
     selectable::{Selectable, selected},
 };
 
@@ -152,7 +149,7 @@ impl<'a, S: Scalar, A, T> EditForm<'a, S, A, T> {
         self
     }
 
-    /// A number field of a [`NumericInput`] (see [`NumericInput::number`]):
+    /// A number field of a [`NumericInput`] (see [`Number::numeric`]):
     /// text typed sets it — plain if it is a number, a formula otherwise —
     /// and a number slid or dragged sets it plain. A formula that does not
     /// evaluate is kept, as typed, its field saying why: the step then fails
@@ -165,7 +162,7 @@ impl<'a, S: Scalar, A, T> EditForm<'a, S, A, T> {
     ) -> &mut Self {
         self.form.dialog.number(key, number);
         self.on(key, move |edit, value| {
-            if let Some(input) = NumericInput::from_value(&value) {
+            if let Some(input) = value.numeric_input() {
                 set(edit, input);
             }
         });
@@ -231,11 +228,11 @@ impl<'a, S: Scalar, A, T> EditForm<'a, S, A, T> {
     /// says in the part `reader` reads (see [`Selectable`]): `set` gets what
     /// the field holds after a pick — the values held, and the one a click
     /// selected, or without the one it took out.
-    pub fn pick<I: Input, St: State, P: Selectable>(
+    pub fn pick<P: Selectable>(
         &mut self,
         key: &str,
         label: impl Into<String>,
-        reader: &Reader<'a, I, St>,
+        reader: &Reader<'a>,
         value: &[P],
         multiple: bool,
         set: impl Fn(Edit<'_, A, T>, Vec<P>) + 'a,
@@ -253,11 +250,11 @@ impl<'a, S: Scalar, A, T> EditForm<'a, S, A, T> {
     /// One value picked, holding `value` if there is one (see
     /// [`EditForm::pick`]): `set` gets the value a click picks. Emptying
     /// the field sets nothing: what a step needs one of is never none.
-    pub fn pick_one<I: Input, St: State, P: Selectable>(
+    pub fn pick_one<P: Selectable>(
         &mut self,
         key: &str,
         label: impl Into<String>,
-        reader: &Reader<'a, I, St>,
+        reader: &Reader<'a>,
         value: Option<&P>,
         set: impl Fn(Edit<'_, A, T>, P) + 'a,
     ) -> &mut Self {

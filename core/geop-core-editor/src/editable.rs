@@ -5,16 +5,14 @@
 
 use std::{any::Any, collections::BTreeMap, rc::Rc};
 
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
-};
+use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{
     operation::{ErasedOperation, Operation, args, saved},
     operation_registry::OperationRegistry,
-    part::{self, Part, Reader},
+    part::{Part, Reader},
     program::{Program, ProgramStep},
     program_runner::ProgramRunner,
+    values::Design,
 };
 use serde::Serialize;
 
@@ -153,45 +151,43 @@ pub enum OperationTier {
 /// program, the part as it was before it, the part as the step built it
 /// when it last ran, if it did, and, for an event, the part as the editor
 /// draws it — what a pointer is over, without drawing it again.
-pub struct Context<'a, I, S: part::State, N: Scalar> {
+pub struct Context<'a> {
     pub step: &'a str,
-    pub runner: &'a ProgramRunner<I, S>,
-    pub before: Reader<'a, I, S>,
-    pub built: Option<Reader<'a, I, S>>,
+    pub runner: &'a ProgramRunner,
+    pub before: Reader<'a>,
+    pub built: Option<Reader<'a>>,
     /// The part as drawn for picks (see [`Scene`]): given with every event
     /// an editor passes on, and nothing else.
-    pub scene: Option<&'a dyn Scene<N>>,
+    pub scene: Option<&'a dyn Scene<Design>>,
 }
 
 /// An [`Operation`] an editor offers: everything it keeps while a step is
 /// edited is its editing state, and everything it shows the step's form.
 pub trait Editable: Operation {
     const INFO: OperationInfo;
-    /// The numbers its forms and the events it is sent measure in.
-    type Scalar: Scalar;
     /// What the editor keeps about a step while it is edited, beyond its
     /// arguments, starting from the default whenever a step is opened.
     type EditingState: Default + 'static;
 
     /// The arguments of a new step: sensible defaults, taking the part it
     /// is inserted into into account.
-    fn new_args(context: &Context<Self::Input, Self::State, Self::Scalar>) -> Self::Args;
+    fn new_args(context: &Context) -> Self::Args;
 
     /// What the editor shows while the step is edited. Never fails: an
     /// editor needs the form most exactly when the arguments do not build,
     /// so whatever is wrong is said in it.
     fn presentation(
-        context: &Context<Self::Input, Self::State, Self::Scalar>,
+        context: &Context,
         args: &Self::Args,
         editing: &Self::EditingState,
-    ) -> Form<Self::Scalar>;
+    ) -> Form<Design>;
 
     /// The step's arguments and editing state after `event`.
     fn process_user_event(
-        context: &Context<Self::Input, Self::State, Self::Scalar>,
+        context: &Context,
         args: &Self::Args,
         editing: &Self::EditingState,
-        event: Event<Self::Scalar>,
+        event: Event<Design>,
     ) -> (Self::Args, Self::EditingState);
 }
 
@@ -203,22 +199,22 @@ pub struct Edited {
 
 /// An [`Editable`] with its types erased, so that operations of all kinds
 /// can be kept in one [`Editors`]. Arguments come as saved.
-pub trait ErasedEditable<I, S: part::State, N: Scalar>: ErasedOperation<I, S> {
+pub trait ErasedEditable: ErasedOperation {
     fn info(&self) -> &'static OperationInfo;
-    fn new_args(&self, context: &Context<I, S, N>) -> GeopResult<serde_json::Value>;
+    fn new_args(&self, context: &Context) -> GeopResult<serde_json::Value>;
     fn initial_editing(&self) -> Box<dyn Any>;
     fn presentation(
         &self,
-        context: &Context<I, S, N>,
+        context: &Context,
         args: &serde_json::Value,
         editing: &dyn Any,
-    ) -> GeopResult<Form<N>>;
+    ) -> GeopResult<Form<Design>>;
     fn process_user_event(
         &self,
-        context: &Context<I, S, N>,
+        context: &Context,
         args: &serde_json::Value,
         editing: &dyn Any,
-        event: Event<N>,
+        event: Event<Design>,
     ) -> GeopResult<Edited>;
 }
 
@@ -232,15 +228,12 @@ fn editing<O: Editable>(editing: &dyn Any) -> GeopResult<&O::EditingState> {
     })
 }
 
-impl<O: Editable> ErasedEditable<O::Input, O::State, O::Scalar> for O {
+impl<O: Editable> ErasedEditable for O {
     fn info(&self) -> &'static OperationInfo {
         &O::INFO
     }
 
-    fn new_args(
-        &self,
-        context: &Context<O::Input, O::State, O::Scalar>,
-    ) -> GeopResult<serde_json::Value> {
+    fn new_args(&self, context: &Context) -> GeopResult<serde_json::Value> {
         saved::<O>(&<O as Editable>::new_args(context))
     }
 
@@ -250,10 +243,10 @@ impl<O: Editable> ErasedEditable<O::Input, O::State, O::Scalar> for O {
 
     fn presentation(
         &self,
-        context: &Context<O::Input, O::State, O::Scalar>,
+        context: &Context,
         args: &serde_json::Value,
         editing: &dyn Any,
-    ) -> GeopResult<Form<O::Scalar>> {
+    ) -> GeopResult<Form<Design>> {
         Ok(<O as Editable>::presentation(
             context,
             &self::args::<O>(args)?,
@@ -263,10 +256,10 @@ impl<O: Editable> ErasedEditable<O::Input, O::State, O::Scalar> for O {
 
     fn process_user_event(
         &self,
-        context: &Context<O::Input, O::State, O::Scalar>,
+        context: &Context,
         args: &serde_json::Value,
         editing: &dyn Any,
-        event: Event<O::Scalar>,
+        event: Event<Design>,
     ) -> GeopResult<Edited> {
         let (args, editing) = <O as Editable>::process_user_event(
             context,
@@ -284,15 +277,8 @@ impl<O: Editable> ErasedEditable<O::Input, O::State, O::Scalar> for O {
 /// The operations an editor offers, by name — and, for the runner its
 /// programs run on, the same as an [`OperationRegistry`]
 /// ([`Editors::operations`]).
-pub struct Editors<I, S: part::State, N: Scalar>(
-    BTreeMap<&'static str, Rc<dyn ErasedEditable<I, S, N>>>,
-);
-
-impl<I, S: part::State, N: Scalar> Default for Editors<I, S, N> {
-    fn default() -> Self {
-        Self(BTreeMap::new())
-    }
-}
+#[derive(Default)]
+pub struct Editors(BTreeMap<&'static str, Rc<dyn ErasedEditable>>);
 
 /// The position of the step `step` in `program`.
 fn position(program: &Program, step: &str) -> GeopResult<usize> {
@@ -302,18 +288,15 @@ fn position(program: &Program, step: &str) -> GeopResult<usize> {
 
 /// A step being edited: its arguments as saved, its operation, and what
 /// it is edited against.
-struct Step<'a, I, S: part::State, N: Scalar> {
+struct Step<'a> {
     args: &'a serde_json::Value,
-    operation: &'a dyn ErasedEditable<I, S, N>,
-    context: Context<'a, I, S, N>,
+    operation: &'a dyn ErasedEditable,
+    context: Context<'a>,
 }
 
-impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
+impl Editors {
     /// Adds `operation`. Fails if an operation of its name is already there.
-    pub fn with<O: Editable<Input = I, State = S, Scalar = N>>(
-        mut self,
-        operation: O,
-    ) -> GeopResult<Self> {
+    pub fn with<O: Editable>(mut self, operation: O) -> GeopResult<Self> {
         if self.0.contains_key(O::KIND) {
             return Err(GeopError::new(format!(
                 "operation `{}` is registered twice",
@@ -325,10 +308,10 @@ impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
     }
 
     /// The operations, as a program runner runs them.
-    pub fn operations(&self) -> GeopResult<OperationRegistry<I, S>> {
+    pub fn operations(&self) -> GeopResult<OperationRegistry> {
         let mut registry = OperationRegistry::default();
         for operation in self.0.values() {
-            let operation: Rc<dyn ErasedOperation<I, S>> = operation.clone();
+            let operation: Rc<dyn ErasedOperation> = operation.clone();
             registry = registry.with_erased(operation)?;
         }
         Ok(registry)
@@ -344,7 +327,7 @@ impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
             .collect()
     }
 
-    fn get(&self, kind: &str) -> GeopResult<&dyn ErasedEditable<I, S, N>> {
+    fn get(&self, kind: &str) -> GeopResult<&dyn ErasedEditable> {
         self.0
             .get(kind)
             .map(Rc::as_ref)
@@ -357,11 +340,11 @@ impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
     /// the last run is read at its new positions until it runs again.
     fn step<'a>(
         &'a self,
-        runner: &'a ProgramRunner<I, S>,
-        part: &'a Part<I, S>,
+        runner: &'a ProgramRunner,
+        part: &'a Part,
         program: &'a Program,
         step: &'a str,
-    ) -> GeopResult<Step<'a, I, S, N>> {
+    ) -> GeopResult<Step<'a>> {
         let program_step = program.step(step)?;
         let position = position(program, step)?;
         let context = Context {
@@ -382,8 +365,8 @@ impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
     /// before its step `before`, or after its last.
     pub fn new_step(
         &self,
-        runner: &ProgramRunner<I, S>,
-        part: &Part<I, S>,
+        runner: &ProgramRunner,
+        part: &Part,
         program: &Program,
         kind: &str,
         id: &str,
@@ -416,12 +399,12 @@ impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
     /// What the editor shows while the step `step` is edited.
     pub fn presentation(
         &self,
-        runner: &ProgramRunner<I, S>,
-        part: &Part<I, S>,
+        runner: &ProgramRunner,
+        part: &Part,
         program: &Program,
         step: &str,
         editing: &dyn Any,
-    ) -> GeopResult<Form<N>> {
+    ) -> GeopResult<Form<Design>> {
         let step = self.step(runner, part, program, step)?;
         (step.operation).presentation(&step.context, step.args, editing)
     }
@@ -432,11 +415,11 @@ impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
     /// built.
     pub fn listed(
         &self,
-        runner: &ProgramRunner<I, S>,
-        part: &Part<I, S>,
+        runner: &ProgramRunner,
+        part: &Part,
         program: &Program,
         step: &str,
-    ) -> GeopResult<Form<N>> {
+    ) -> GeopResult<Form<Design>> {
         let mut step = self.step(runner, part, program, step)?;
         step.context.built = None;
         let editing = step.operation.initial_editing();
@@ -448,13 +431,13 @@ impl<I: part::Input, S: part::State, N: Scalar> Editors<I, S, N> {
     #[allow(clippy::too_many_arguments)]
     pub fn process_user_event(
         &self,
-        runner: &ProgramRunner<I, S>,
-        part: &Part<I, S>,
+        runner: &ProgramRunner,
+        part: &Part,
         program: &Program,
         step: &str,
         editing: &dyn Any,
-        event: Event<N>,
-        scene: Option<&dyn Scene<N>>,
+        event: Event<Design>,
+        scene: Option<&dyn Scene<Design>>,
     ) -> GeopResult<Edited> {
         let mut step = self.step(runner, part, program, step)?;
         step.context.scene = scene;

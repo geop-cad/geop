@@ -11,11 +11,12 @@ use crate::{
     part::Part,
     program::{Program, ProgramStep},
     program_runner::ProgramRunner,
-    workspace::{Loaded, Workspace},
     test::{
-        Pose, Sc, StateFrameArgs, StateFrameOperation, assert_encloses, inputs, middle_frame, ok,
+        StateFrameArgs, StateFrameOperation, assert_encloses, inputs, middle_frame, ok, pose_at,
         runner, take_built, whole_frame,
     },
+    values::StateValues,
+    workspace::Workspace,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -30,13 +31,11 @@ pub struct LoadOperation;
 impl Operation for LoadOperation {
     const KIND: &'static str = "load";
     type Args = LoadArgs;
-    type Input = Sc;
-    type State = Pose;
 
     fn run(
         step: &str,
-        runner: &ProgramRunner<Sc, Pose>,
-        part: &mut Part<Sc, Pose>,
+        runner: &ProgramRunner,
+        part: &mut Part,
         args: &Self::Args,
     ) -> GeopResult<()> {
         runner.load_subpart(part, step, &args.file, &inputs(&[]))
@@ -51,13 +50,10 @@ thread_local! {
 /// The tests' programs, by the file each was written to ([`load`]).
 pub(crate) struct Files;
 
-impl Workspace<Pose> for Files {
-    fn program(&self, path: &str) -> GeopResult<Loaded<Pose>> {
+impl Workspace for Files {
+    fn program(&self, path: &str) -> GeopResult<Rc<Program>> {
         let program = FILES.with(|files| files.borrow().get(path).cloned());
-        Ok(Loaded {
-            program: program.ok_or_else(|| GeopError::new(format!("there is no file {path:?}")))?,
-            state: Rc::default(),
-        })
+        program.ok_or_else(|| GeopError::new(format!("there is no file {path:?}")))
     }
 
     fn read(&self, path: &str) -> GeopResult<Rc<str>> {
@@ -92,10 +88,8 @@ pub struct CountOperation;
 impl Operation for CountOperation {
     const KIND: &'static str = "count";
     type Args = ();
-    type Input = Sc;
-    type State = Pose;
 
-    fn run(_: &str, _: &ProgramRunner<Sc, Pose>, _: &mut Part<Sc, Pose>, _: &()) -> GeopResult<()> {
+    fn run(_: &str, _: &ProgramRunner, _: &mut Part, _: &()) -> GeopResult<()> {
         COUNTED.set(COUNTED.get() + 1);
         Ok(())
     }
@@ -109,7 +103,7 @@ fn count(id: &str) -> ProgramStep {
 /// `<id>.geop` — the same file for the same steps.
 pub(crate) fn load(id: &str, steps: Vec<ProgramStep>) -> ProgramStep {
     let file = format!("{id}.geop");
-    let program = Program::new(steps);
+    let program = Program::from_steps(steps);
     FILES.with(|files| {
         let mut files = files.borrow_mut();
         if files.get(&file).is_none_or(|kept| **kept != program) {
@@ -127,9 +121,9 @@ fn state_frame(id: &str, state: &str) -> ProgramStep {
     ProgramStep::new::<StateFrameOperation>(id, &args).unwrap()
 }
 
-fn state(values: &[(&str, [f64; 3])]) -> BTreeMap<String, Pose> {
+fn state(values: &[(&str, [f64; 3])]) -> StateValues {
     (values.iter())
-        .map(|(name, at)| (name.to_string(), Pose::at(*at)))
+        .map(|(name, at)| (name.to_string(), pose_at(*at)))
         .collect()
 }
 
@@ -139,7 +133,7 @@ fn state(values: &[(&str, [f64; 3])]) -> BTreeMap<String, Pose> {
 #[test]
 fn an_instance_is_run_with_the_state_under_its_name() {
     let mut runner = runner();
-    let program = Program::new(vec![load("p", vec![state_frame("f", "s")])]);
+    let program = Program::from_steps(vec![load("p", vec![state_frame("f", "s")])]);
 
     let at = |x, y| state(&[("p/s", [x, 0.0, 0.0]), ("p.pose", [y, 0.0, 0.0])]);
     ok(runner.run(&program, &inputs(&[]), &at(1.0, 5.0)));
@@ -168,7 +162,7 @@ fn an_instance_is_run_with_the_state_under_its_name() {
 fn a_change_in_an_instance_builds_again_only_what_reads_it() {
     let mut runner = runner();
     let frames = vec![state_frame("f", "s"), state_frame("g", "t")];
-    let program = Program::new(vec![load("p", frames), middle_frame("m", "p/f", "p/f")]);
+    let program = Program::from_steps(vec![load("p", frames), middle_frame("m", "p/f", "p/f")]);
     let mut run = |given: &[(&str, [f64; 3])]| {
         ok(runner.run(&program, &inputs(&[]), &state(given)));
         let id = runner.part.current().inside("p").unwrap().changed_at();
@@ -198,8 +192,11 @@ fn a_change_in_an_instance_builds_again_only_what_reads_it() {
 #[test]
 fn an_instance_given_nothing_new_is_carried_over() {
     let mut runner = runner();
-    let inner = vec![count("c"), load("q", vec![count("c"), state_frame("f", "s")])];
-    let program = Program::new(vec![load("p", inner), middle_frame("m", "p/q/f", "p/q/f")]);
+    let inner = vec![
+        count("c"),
+        load("q", vec![count("c"), state_frame("f", "s")]),
+    ];
+    let program = Program::from_steps(vec![load("p", inner), middle_frame("m", "p/q/f", "p/q/f")]);
     let mut run = |given: &[(&str, [f64; 3])]| {
         COUNTED.set(0);
         ok(runner.run(&program, &inputs(&[]), &state(given)));
@@ -207,7 +204,10 @@ fn an_instance_given_nothing_new_is_carried_over() {
     };
     assert_eq!(run(&[]), (2, vec!["f@f".into(), "m@m".into()]));
     assert_eq!(run(&[]), (0, vec![]));
-    assert_eq!(run(&[("p/q/s", [1.0, 0.0, 0.0])]), (2, vec!["f@f".into(), "m@m".into()]));
+    assert_eq!(
+        run(&[("p/q/s", [1.0, 0.0, 0.0])]),
+        (2, vec!["f@f".into(), "m@m".into()])
+    );
     assert_eq!(run(&[("p/q/s", [1.0, 0.0, 0.0])]), (0, vec![]));
     let reader = runner.part.current();
     let placed = reader.retrieve_placed(&whole_frame("p/q/f")).unwrap();
@@ -218,7 +218,7 @@ fn an_instance_given_nothing_new_is_carried_over() {
 #[test]
 fn an_element_of_an_instance_is_not_the_parts_own() {
     let mut runner = runner();
-    let program = Program::new(vec![load("p", vec![state_frame("f", "s")])]);
+    let program = Program::from_steps(vec![load("p", vec![state_frame("f", "s")])]);
     ok(runner.run(&program, &inputs(&[]), &state(&[])));
     let error = (runner.part.current())
         .retrieve_element(&whole_frame("p/f"))
@@ -233,7 +233,7 @@ fn an_element_of_an_instance_is_not_the_parts_own() {
 fn an_instance_of_an_instance_is_read_behind_both_names() {
     let mut runner = runner();
     let inner = || vec![load("q", vec![state_frame("f", "s")])];
-    let program = Program::new(vec![load("p", inner()), load("c", inner())]);
+    let program = Program::from_steps(vec![load("p", inner()), load("c", inner())]);
     let given = state(&[("p/q/s", [0.0, 0.0, 4.0]), ("c/q/s", [0.0, 0.0, 6.0])]);
     ok(runner.run(&program, &inputs(&[]), &given));
     let reader = runner.part.current();

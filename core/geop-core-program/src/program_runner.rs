@@ -1,16 +1,14 @@
-use std::{
-    collections::{BTreeMap, HashSet},
-    rc::Rc,
-};
+use std::{collections::HashSet, rc::Rc};
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 
 use crate::{
     operation_registry::OperationRegistry,
-    part::{Input, Part, State},
+    part::Part,
     program::Program,
     target::Revision,
-    workspace::{Loaded, Location, Workspace},
+    values::{Settings, StateValues},
+    workspace::{Location, Workspace},
 };
 
 /// Runs programs on parts, with the operations of `registry`, reading
@@ -18,9 +16,9 @@ use crate::{
 /// of `location` names it. An operation is given the runner its step is
 /// run by, to read with and to run programs of its own: the parts of
 /// instances ([`ProgramRunner::load_subpart`]).
-pub struct ProgramRunner<I, S: State> {
-    pub registry: Rc<OperationRegistry<I, S>>,
-    pub workspace: Option<Rc<dyn Workspace<S>>>,
+pub struct ProgramRunner {
+    pub registry: Rc<OperationRegistry>,
+    pub workspace: Option<Rc<dyn Workspace>>,
     pub location: Location,
 }
 
@@ -40,10 +38,10 @@ pub struct RunOutput {
     pub step_errors: Vec<(String, GeopError)>,
 }
 
-impl<I: Input, S: State> ProgramRunner<I, S> {
+impl ProgramRunner {
     /// A runner of the operations of `registry`, of programs that read and
     /// place nothing.
-    pub fn new(registry: OperationRegistry<I, S>) -> Self {
+    pub fn new(registry: OperationRegistry) -> Self {
         Self {
             registry: Rc::new(registry),
             workspace: None,
@@ -56,10 +54,10 @@ impl<I: Input, S: State> ProgramRunner<I, S> {
     /// removed.
     pub fn run(
         &self,
-        part: &mut Part<I, S>,
+        part: &mut Part,
         program: &Program,
-        inputs: &BTreeMap<String, I>,
-        state: &BTreeMap<String, S>,
+        inputs: &Settings,
+        state: &StateValues,
     ) -> RunOutput {
         self.run_until(part, program, program.steps.len(), inputs, state)
     }
@@ -69,11 +67,11 @@ impl<I: Input, S: State> ProgramRunner<I, S> {
     /// reused when they run again.
     pub fn run_until(
         &self,
-        part: &mut Part<I, S>,
+        part: &mut Part,
         program: &Program,
         end: usize,
-        inputs: &BTreeMap<String, I>,
-        state: &BTreeMap<String, S>,
+        inputs: &Settings,
+        state: &StateValues,
     ) -> RunOutput {
         let revision = part.next_run();
         self.run_as(part, revision, program, end, inputs, state, Same::default())
@@ -81,12 +79,14 @@ impl<I: Input, S: State> ProgramRunner<I, S> {
 
     /// How many times a file of its workspace changed: none, without one.
     pub(crate) fn revision(&self) -> u64 {
-        self.workspace.as_ref().map_or(0, |workspace| workspace.revision())
+        self.workspace
+            .as_ref()
+            .map_or(0, |workspace| workspace.revision())
     }
 
     /// The workspace it reads from: an error, for a runner of programs that
     /// read and place nothing.
-    fn workspace(&self) -> GeopResult<&dyn Workspace<S>> {
+    fn workspace(&self) -> GeopResult<&dyn Workspace> {
         (self.workspace.as_deref()).ok_or_else(|| {
             GeopError::new("this program is run without a workspace: there are no files to read")
         })
@@ -109,14 +109,15 @@ impl<I: Input, S: State> ProgramRunner<I, S> {
     pub fn read(&self, name: &str) -> GeopResult<(String, Rc<str>)> {
         let workspace = self.workspace()?;
         let path = workspace.resolve(&self.location.file, name);
-        let text = (workspace.read(&path)).map_err(|e| e.with_context(format!("reading {path}")))?;
+        let text =
+            (workspace.read(&path)).map_err(|e| e.with_context(format!("reading {path}")))?;
         Ok((path, text))
     }
 
     /// The program in the file the program it runs names `name`, and where
     /// it would be placed from here. Refuses a file placing the program it
     /// runs, however deep: the files would place themselves.
-    pub fn program(&self, name: &str) -> GeopResult<(Loaded<S>, Location)> {
+    pub fn program(&self, name: &str) -> GeopResult<(Rc<Program>, Location)> {
         let workspace = self.workspace()?;
         let path = workspace.resolve(&self.location.file, name);
         let Location { file, within } = &self.location;
@@ -130,8 +131,8 @@ impl<I: Input, S: State> ProgramRunner<I, S> {
                 chain.join(" -> "),
             )));
         }
-        let loaded = (workspace.program(&path))
-            .map_err(|e| e.with_context(format!("placing {path}")))?;
+        let loaded =
+            (workspace.program(&path)).map_err(|e| e.with_context(format!("placing {path}")))?;
         Ok((loaded, Location { file: path, within }))
     }
 
@@ -149,19 +150,19 @@ impl<I: Input, S: State> ProgramRunner<I, S> {
     /// far as it builds.
     pub fn load_subpart(
         &self,
-        part: &mut Part<I, S>,
+        part: &mut Part,
         name: &str,
         file: &str,
-        inputs: &BTreeMap<String, I>,
+        inputs: &Settings,
     ) -> GeopResult<()> {
         let ctx = |e: GeopError| e.with_context(format!("loading the part of `{name}`"));
-        let (loaded, location) = self.program(file).map_err(ctx)?;
+        let (program, location) = self.program(file).map_err(ctx)?;
         let runner = ProgramRunner {
             registry: self.registry.clone(),
             workspace: self.workspace.clone(),
             location,
         };
-        part.load_subpart(&runner, name, &loaded, inputs)
+        part.load_subpart(&runner, name, &program, inputs)
     }
 
     /// Runs the first `end` steps of `program` on `part` as the run
@@ -176,12 +177,12 @@ impl<I: Input, S: State> ProgramRunner<I, S> {
     )]
     pub(crate) fn run_as(
         &self,
-        part: &mut Part<I, S>,
+        part: &mut Part,
         revision: Revision,
         program: &Program,
         end: usize,
-        inputs: &BTreeMap<String, I>,
-        state: &BTreeMap<String, S>,
+        inputs: &Settings,
+        state: &StateValues,
         same: Same,
     ) -> RunOutput {
         let (run, later) = program.steps.split_at(end.min(program.steps.len()));

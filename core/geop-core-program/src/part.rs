@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     rc::Rc,
 };
 
@@ -9,30 +9,15 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 use crate::{
     element::{ElementReference, HasElements, Kind},
     instance::{
-        INSTANCE_SEPARATOR, InInstance, Kept, check_name, split_path, subpart_name,
-        subpart_target,
+        INSTANCE_SEPARATOR, InInstance, Kept, check_name, split_path, subpart_name, subpart_target,
     },
     program::Program,
     program_runner::{ProgramRunner, Same},
-    workspace::{Loaded, Location},
     revisioned_value::RevisionedValue,
     target::{Dependency, Revision, Target, TargetReference, TargetRegistry},
+    values::{Setting, Settings, StateValue, StateValues},
+    workspace::Location,
 };
-
-/// A value a run is given by name, up front, which no step changes: a
-/// parameter.
-pub trait Input: Clone + PartialEq + 'static {}
-
-impl<T: Clone + PartialEq + 'static> Input for T {}
-
-/// A value the state holds by name: what a step's targets read, like an
-/// input, but declared by reading it — a name the run gives no value reads
-/// as the default — rather than given up front. Outside the part, the state
-/// is what moves: kept with the program between edits, and changed by
-/// whatever solves it.
-pub trait State: Clone + PartialEq + Default + 'static {}
-
-impl<T: Clone + PartialEq + Default + 'static> State for T {}
 
 /// What a program builds, and what it builds from. Each run states its
 /// inputs and state in full. Its steps define targets, in order, and may
@@ -44,7 +29,8 @@ impl<T: Clone + PartialEq + Default + 'static> State for T {}
 /// arguments and nothing it read has changed since. A version rebuilt into
 /// a value equal to the last one counts as unchanged, so what read it is
 /// reused in turn.
-pub struct Part<I, S> {
+#[derive(Default)]
+pub struct Part {
     /// The current or last run, counted from 1: what tells its versions
     /// from those only kept for later steps, and when a version was made or
     /// last changed.
@@ -52,8 +38,8 @@ pub struct Part<I, S> {
     /// The run whose versions are its current ones: the last that ran its
     /// steps — earlier than `run` once a run carried them over.
     built: Revision,
-    inputs: BTreeMap<String, RevisionedValue<I>>,
-    state: BTreeMap<String, RevisionedValue<S>>,
+    inputs: BTreeMap<String, RevisionedValue<Setting>>,
+    state: BTreeMap<String, RevisionedValue<StateValue>>,
     /// How many steps the current or last run began. A step is told by its
     /// position, in this run and the next.
     steps: usize,
@@ -64,7 +50,7 @@ pub struct Part<I, S> {
     /// TODO: Later we should share the part of every instance whose run
     /// read none of the state: a part of no state is the same wherever it
     /// is placed. For now every instance runs its part on its own.
-    subparts: BTreeMap<String, Subpart<I, S>>,
+    subparts: BTreeMap<String, Subpart>,
     /// Whether the current run changed anything in it so far: made a
     /// version different from before, or changed the part of an instance.
     changing: bool,
@@ -74,8 +60,8 @@ pub struct Part<I, S> {
 }
 
 /// The part of an instance, as the part it is in keeps it.
-struct Subpart<I, S> {
-    part: Part<I, S>,
+struct Subpart {
+    part: Part,
     /// The position of the step that loaded it last.
     step: usize,
     /// What it was run with last, if that run built every step: what tells
@@ -91,23 +77,7 @@ struct Built {
     revision: u64,
 }
 
-impl<I, S> Default for Part<I, S> {
-    fn default() -> Self {
-        Self {
-            run: 0,
-            built: 0,
-            inputs: BTreeMap::new(),
-            steps: 0,
-            state: BTreeMap::new(),
-            targets: TargetRegistry::default(),
-            subparts: BTreeMap::new(),
-            changing: false,
-            changed_at: 0,
-        }
-    }
-}
-
-impl<I, S> Part<I, S> {
+impl Part {
     /// The last run that changed anything in it: made or deleted a version
     /// different from before, or changed the part of an instance — 0, before
     /// any did.
@@ -116,12 +86,12 @@ impl<I, S> Part<I, S> {
     }
 }
 
-impl<I: Input, S: State> Part<I, S> {
+impl Part {
     /// Starts a run with the given `inputs` and `state`, complete: what the
     /// last run gave and this one does not is removed. A [`crate::program_runner::ProgramRunner`]
     /// drives a part through a program; these drive it by hand, as a test of
     /// one operation does.
-    pub fn begin_run(&mut self, inputs: &BTreeMap<String, I>, state: &BTreeMap<String, S>) {
+    pub fn begin_run(&mut self, inputs: &Settings, state: &StateValues) {
         self.begin_run_as(self.next_run(), inputs, state);
     }
 
@@ -136,8 +106,8 @@ impl<I: Input, S: State> Part<I, S> {
     pub(crate) fn begin_run_as(
         &mut self,
         revision: Revision,
-        inputs: &BTreeMap<String, I>,
-        state: &BTreeMap<String, S>,
+        inputs: &Settings,
+        state: &StateValues,
     ) -> bool {
         self.run = revision;
         self.built = revision;
@@ -147,7 +117,6 @@ impl<I: Input, S: State> Part<I, S> {
         let state = RevisionedValue::replace_all(&mut self.state, state, self.run);
         inputs || state
     }
-
 
     /// Carries what the last run built over into the current one, as a run
     /// of the same program would reuse it: its versions stay its current
@@ -194,7 +163,7 @@ impl<I: Input, S: State> Part<I, S> {
 
     /// The part at `path` — itself, for the empty path — as it holds it:
     /// none, if it holds no part there.
-    fn at(&self, path: &str) -> Option<&Part<I, S>> {
+    fn at(&self, path: &str) -> Option<&Part> {
         match path.is_empty() {
             true => Some(self),
             false => (path.split(INSTANCE_SEPARATOR))
@@ -205,7 +174,7 @@ impl<I: Input, S: State> Part<I, S> {
     /// The part as it is before the step at position `before`, recording
     /// nothing: what that step is edited against, and what scrubbing the
     /// timeline shows.
-    pub fn reader(&self, before: usize) -> Reader<'_, I, S> {
+    pub fn reader(&self, before: usize) -> Reader<'_> {
         Reader {
             part: self,
             before,
@@ -216,7 +185,7 @@ impl<I: Input, S: State> Part<I, S> {
 
     /// The part as it is now: during a run, with what the steps so far made;
     /// after one, the finished part.
-    pub fn current(&self) -> Reader<'_, I, S> {
+    pub fn current(&self) -> Reader<'_> {
         self.reader(self.steps)
     }
 
@@ -229,17 +198,23 @@ impl<I: Input, S: State> Part<I, S> {
     /// the version would be reused after it changed:
     ///
     /// ```compile_fail
-    /// # use geop_core_program::{part::{Input, Part, State}, target::TargetReference};
-    /// fn define<I: Input, S: State>(part: &mut Part<I, S>, outside: u32) {
+    /// # use geop_core_program::{part::Part, target::TargetReference};
+    /// fn define(part: &mut Part, outside: u32) {
     ///     let reference = TargetReference::<u32>::new("t");
     ///     part.define_target(&reference, &(), |_, _| Ok(outside));
     /// }
     /// ```
+    ///
+    /// For the same reason `Args` and `Out` compare by value: arguments
+    /// holding an `Rc` or a closure, compared by address, would make a
+    /// version again for arguments alike, and a value compared so would
+    /// count as changed when it is not, and could never be checked against
+    /// a part built from scratch (`testing::assert_incremental`).
     pub fn define_target<Out: PartialEq + 'static, Args: PartialEq + Clone + 'static>(
         &mut self,
         reference: &TargetReference<Out>,
         args: &Args,
-        generator: Generator<I, S, Args, Out>,
+        generator: Generator<Args, Out>,
     ) -> GeopResult<()> {
         let name = reference.name();
         if let Ok(latest) = self.current().version(name) {
@@ -264,7 +239,7 @@ impl<I: Input, S: State> Part<I, S> {
         &mut self,
         reference: &TargetReference<Out>,
         args: &Args,
-        generator: Generator<I, S, Args, Out>,
+        generator: Generator<Args, Out>,
     ) -> GeopResult<()> {
         let name = reference.name();
         if let Ok(latest) = self.current().version(name)
@@ -282,19 +257,20 @@ impl<I: Input, S: State> Part<I, S> {
     /// (see [`ProgramRunner::load_subpart`]).
     pub(crate) fn load_subpart(
         &mut self,
-        runner: &ProgramRunner<I, S>,
+        runner: &ProgramRunner,
         name: &str,
-        loaded: &Loaded<S>,
-        inputs: &BTreeMap<String, I>,
+        program: &Rc<Program>,
+        inputs: &Settings,
     ) -> GeopResult<()> {
         check_name(name)?;
         let ctx = |e: GeopError| e.with_context(format!("loading the part of `{name}`"));
         // Its target, first: one loaded twice in a run is defined twice.
         let reference = TargetReference::<Kept>::new(subpart_target(name));
-        self.define_target(&reference, &(), |_, _| Ok(Kept)).map_err(ctx)?;
+        self.define_target(&reference, &(), |_, _| Ok(Kept))
+            .map_err(ctx)?;
         let step = self.steps - 1;
         let prefix = format!("{name}{INSTANCE_SEPARATOR}");
-        let mut state = (*loaded.state).clone();
+        let mut state = program.state.clone();
         state.extend((under(&self.state, &prefix)).filter_map(|(state, entry)| {
             let state = state.strip_prefix(&prefix)?;
             Some((state.to_string(), entry.value.clone()?))
@@ -306,7 +282,7 @@ impl<I: Input, S: State> Part<I, S> {
             built: None,
         });
         subpart.step = step;
-        let (program, revision) = (&loaded.program, runner.revision());
+        let revision = runner.revision();
         let same = Same {
             program: subpart.built.as_ref().is_some_and(|built| {
                 (Rc::ptr_eq(&built.program, program) || built.program == *program)
@@ -335,7 +311,7 @@ impl<I: Input, S: State> Part<I, S> {
         &mut self,
         reference: &TargetReference<Out>,
         args: &Args,
-        generator: Generator<I, S, Args, Out>,
+        generator: Generator<Args, Out>,
     ) -> GeopResult<()> {
         let name = reference.name();
         let step = (self.steps.checked_sub(1))
@@ -347,7 +323,7 @@ impl<I: Input, S: State> Part<I, S> {
         // (see `sees`) — made by the same step and no newer, and what it
         // found undefined still is. What it read of a part placed in it is
         // read where that part is.
-        let changed_at = |read: &str, given: fn(&Part<I, S>, &str) -> Revision| {
+        let changed_at = |read: &str, given: fn(&Part, &str) -> Revision| {
             let (path, read) = split_path(read);
             self.at(path)
                 .map_or(Revision::MAX, |part| given(part, read))
@@ -409,6 +385,37 @@ impl<I: Input, S: State> Part<I, S> {
     }
 }
 
+impl Part {
+    /// Where the part, as it is now, differs from `other`: the name of
+    /// every target whose current version holds a value — or a failure —
+    /// other than the other part's, by the `PartialEq` of its type, or that
+    /// only one of them has; and so in the part of every instance, behind
+    /// its name. What tells a part a run reused versions in from one built
+    /// from scratch (see `testing::assert_incremental`).
+    pub fn differences(&self, other: &Part) -> Vec<String> {
+        let (own, others) = (self.current(), other.current());
+        let names: BTreeSet<&str> = self.targets.names().chain(other.targets.names()).collect();
+        let mut differences: Vec<String> = (names.into_iter())
+            .filter(
+                |name| match (own.own_version(name), others.own_version(name)) {
+                    (Some(a), Some(b)) => !a.same_as(b),
+                    (None, None) => false,
+                    _ => true,
+                },
+            )
+            .map(str::to_string)
+            .collect();
+        for (name, subpart) in &self.subparts {
+            if let Some(other) = other.subparts.get(name) {
+                let inside = subpart.part.differences(&other.part);
+                differences
+                    .extend((inside.into_iter()).map(|d| format!("{name}{INSTANCE_SEPARATOR}{d}")));
+            }
+        }
+        differences
+    }
+}
+
 /// The entries of `values` whose names start with `prefix`: a range of
 /// them, as they are sorted by name.
 fn under<'v, T>(
@@ -419,7 +426,7 @@ fn under<'v, T>(
 }
 
 /// What makes a target's value from its arguments and what it reads.
-pub type Generator<I, S, Args, Out> = fn(&Reader<I, S>, &Args) -> GeopResult<Out>;
+pub type Generator<Args, Out> = fn(&Reader, &Args) -> GeopResult<Out>;
 
 /// Before which step position the target `own`, made before the step at
 /// position `before`, reads `name`: its own name as of the steps before
@@ -452,8 +459,8 @@ struct Recording {
 /// The part of an instance placed in it is read by a reader of its own
 /// ([`Reader::inside`]), which records what it reads, behind the
 /// instance's path, as read by the target being made.
-pub struct Reader<'a, I, S> {
-    part: &'a Part<I, S>,
+pub struct Reader<'a> {
+    part: &'a Part,
     /// The position of the step it reads before.
     before: usize,
     /// What the target being made has read, shared by the readers of the
@@ -464,8 +471,7 @@ pub struct Reader<'a, I, S> {
     path: String,
 }
 
-// By hand, since a derive would ask the same of `I` and `S`.
-impl<I, S> Clone for Reader<'_, I, S> {
+impl Clone for Reader<'_> {
     fn clone(&self) -> Self {
         Self {
             part: self.part,
@@ -476,7 +482,7 @@ impl<I, S> Clone for Reader<'_, I, S> {
     }
 }
 
-impl<'a, I: Input, S: State> Reader<'a, I, S> {
+impl<'a> Reader<'a> {
     /// Records `dependency`, if it records: of the part it reads, named as
     /// the part of the target being made names it.
     fn record(&self, dependency: Dependency) {
@@ -583,7 +589,7 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
         reference: &ElementReference<T, K>,
     ) -> GeopResult<InInstance<T::Element<'a>>> {
         let (path, target) = split_path(reference.target().name());
-        let resolve = |reader: &Reader<'a, I, S>| {
+        let resolve = |reader: &Reader<'a>| {
             let value = match (reader.own_version(target), T::undefined()) {
                 (None, Some(undefined)) => {
                     reader.record(Dependency::Undefined(target.to_string()));
@@ -616,12 +622,11 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
     /// The part of the instance at `path` — `bolt`, or `asm/bolt` — as its
     /// program left it in this run, the read of each instance on the way
     /// recorded, and what it reads recorded behind the path.
-    pub fn inside(&self, path: &str) -> GeopResult<Reader<'a, I, S>> {
+    pub fn inside(&self, path: &str) -> GeopResult<Reader<'a>> {
         let mut level = self.clone();
         for name in path.split(INSTANCE_SEPARATOR) {
             let kept = TargetReference::<Kept>::new(subpart_target(name));
-            (level.target(&kept))
-                .map_err(|e| e.with_context(format!("the part of `{name}`")))?;
+            (level.target(&kept)).map_err(|e| e.with_context(format!("the part of `{name}`")))?;
             let subpart = (level.part.subparts.get(name))
                 .ok_or_else(|| GeopError::new(format!("the part of `{name}` is not kept")))?;
             level = Reader {
@@ -636,7 +641,7 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
 
     /// The input's value, if the run gives one. An input behind an
     /// instance's path — `bolt/d` — is read inside the instance's part.
-    pub fn retrieve_input(&self, name: &str) -> Option<I> {
+    pub fn retrieve_input(&self, name: &str) -> Option<Setting> {
         let (path, local) = split_path(name);
         if !path.is_empty() {
             return self.inside(path).ok()?.retrieve_input(local);
@@ -646,7 +651,7 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
     }
 
     /// The state's value; the default if the run gives none.
-    pub fn retrieve_state(&self, name: &str) -> S {
+    pub fn retrieve_state(&self, name: &str) -> StateValue {
         self.given_state(name).unwrap_or_default()
     }
 
@@ -654,7 +659,7 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
     /// instance's path — `bolt/b.pose` — is read inside the instance's part
     /// ([`Reader::inside`]), as it is run with it: the part's value, else
     /// the instance part's own — and none before a step loaded it.
-    pub fn given_state(&self, name: &str) -> Option<S> {
+    pub fn given_state(&self, name: &str) -> Option<StateValue> {
         let (path, local) = split_path(name);
         if !path.is_empty() {
             return self.inside(path).ok()?.given_state(local);
@@ -734,32 +739,30 @@ impl<'a, I: Input, S: State> Reader<'a, I, S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::{Pose, Sc};
-    use geop_core_math::scalars::Scalar;
 
     /// A removed input is kept, as gone, while a version depends on it, and
     /// forgotten once none does.
     #[test]
     fn removed_input_is_forgotten_once_nothing_reads_it() {
-        let mut part = Part::<Sc, Pose>::default();
-        let x = BTreeMap::from([("x".to_string(), Sc::ONE)]);
-        let reads_x = |part: &mut Part<Sc, Pose>| {
+        let mut part = Part::default();
+        let x = Settings::from([("x".to_string(), Setting::Number(1.0))]);
+        let reads_x = |part: &mut Part| {
             part.begin_step();
-            let reference = TargetReference::<Option<Sc>>::new("a");
+            let reference = TargetReference::<Option<Setting>>::new("a");
             part.define_target(&reference, &(), |reader, _| Ok(reader.retrieve_input("x")))
                 .unwrap();
         };
 
-        part.begin_run(&x, &BTreeMap::new());
+        part.begin_run(&x, &StateValues::new());
         reads_x(&mut part);
         part.end_run(0);
 
-        part.begin_run(&BTreeMap::new(), &BTreeMap::new());
+        part.begin_run(&Settings::new(), &StateValues::new());
         reads_x(&mut part);
         part.end_run(0);
         assert!(part.inputs.contains_key("x"));
 
-        part.begin_run(&BTreeMap::new(), &BTreeMap::new());
+        part.begin_run(&Settings::new(), &StateValues::new());
         part.end_run(0);
         assert!(!part.inputs.contains_key("x"));
     }

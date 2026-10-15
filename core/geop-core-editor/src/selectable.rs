@@ -15,7 +15,7 @@
 use geop_core_math::{scalars::Scalar, vector::Vector3};
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement},
-    part::{Input, Reader, State},
+    part::Reader,
 };
 
 use crate::editing::{Pointer, hit::Scene};
@@ -30,17 +30,11 @@ pub trait SelectableElement<T: HasElements<Self>>: Kind + Sized {
     /// The element a click on `hit`, of one of [`Self::PICKED_FROM`],
     /// selects, read through `reader`: `hit` itself, for an element drawn
     /// as itself; none, for a hit that selects none.
-    fn select<I: Input, S: State>(
-        reader: &Reader<I, S>,
-        hit: &PickedElement,
-    ) -> Option<ElementReference<T, Self>>;
+    fn select(reader: &Reader, hit: &PickedElement) -> Option<ElementReference<T, Self>>;
 
     /// What an editor draws of `element`, to light while it is selected:
     /// the element itself, by default.
-    fn drawn<I: Input, S: State>(
-        reader: &Reader<I, S>,
-        element: &ElementReference<T, Self>,
-    ) -> Vec<PickedElement> {
+    fn drawn(reader: &Reader, element: &ElementReference<T, Self>) -> Vec<PickedElement> {
         let _ = reader;
         vec![element.picked()]
     }
@@ -60,10 +54,10 @@ pub trait Selectable: Clone + PartialEq + 'static {
 
     /// The value a click on `hit` selects, read through `reader`: none, for
     /// a hit that selects none.
-    fn select<I: Input, S: State>(reader: &Reader<I, S>, hit: &PickedElement) -> Option<Self>;
+    fn select(reader: &Reader, hit: &PickedElement) -> Option<Self>;
 
     /// What an editor draws of it, to light while it is held.
-    fn drawn<I: Input, S: State>(&self, reader: &Reader<I, S>) -> Vec<PickedElement>;
+    fn drawn(&self, reader: &Reader) -> Vec<PickedElement>;
 }
 
 /// An element of an instance is selected and drawn as the instance's own
@@ -82,7 +76,7 @@ impl<T: HasElements<K>, K: SelectableElement<T>> Selectable for ElementReference
         ElementReference::picked(self)
     }
 
-    fn select<I: Input, S: State>(reader: &Reader<I, S>, hit: &PickedElement) -> Option<Self> {
+    fn select(reader: &Reader, hit: &PickedElement) -> Option<Self> {
         let instance = hit.instance();
         if instance.is_empty() {
             return K::select(reader, hit);
@@ -91,7 +85,7 @@ impl<T: HasElements<K>, K: SelectableElement<T>> Selectable for ElementReference
         K::select(&inside, &hit.local()).map(|selected| selected.behind(instance))
     }
 
-    fn drawn<I: Input, S: State>(&self, reader: &Reader<I, S>) -> Vec<PickedElement> {
+    fn drawn(&self, reader: &Reader) -> Vec<PickedElement> {
         let instance = self.instance();
         if instance.is_empty() {
             return K::drawn(reader, self);
@@ -110,10 +104,7 @@ impl<T: HasElements<K>, K: SelectableElement<T>> Selectable for ElementReference
 /// value it selects (see [`Selectable::select`]). A click that selects a
 /// value held already takes it out again; one that selects none is
 /// dropped.
-pub fn selected<I: Input, S: State, P: Selectable>(
-    reader: &Reader<I, S>,
-    picks: &[PickedElement],
-) -> Vec<P> {
+pub fn selected<P: Selectable>(reader: &Reader, picks: &[PickedElement]) -> Vec<P> {
     let mut held: Vec<P> = Vec::new();
     for pick in picks {
         if let Some(value) = P::from_picked(pick) {
@@ -137,9 +128,9 @@ pub fn selected<I: Input, S: State, P: Selectable>(
 /// as a `P` in the part `reader` reads — for a step that picks on the
 /// canvas itself rather than through a reference field — and where it hit
 /// what is drawn.
-pub fn pick<P: Selectable, I: Input, S: State, N: Scalar>(
+pub fn pick<P: Selectable, N: Scalar>(
     scene: &dyn Scene<N>,
-    reader: &Reader<I, S>,
+    reader: &Reader,
     pointer: &Pointer<N>,
 ) -> Option<(P, Vector3<N>)> {
     let accepts: Vec<String> = (P::picked_from().into_iter()).map(String::from).collect();
@@ -185,9 +176,9 @@ macro_rules! one_of {
         impl $name {
             /// What it refers to, read through `reader`, of the part itself
             /// (see [`geop_core_program::part::Reader::retrieve_element`]).
-            pub fn resolve<I: $crate::__program::part::Input, S: $crate::__program::part::State>(
+            pub fn resolve(
                 &self,
-                reader: &$crate::__program::part::Reader<I, S>,
+                reader: &$crate::__program::part::Reader,
             ) -> $crate::__GeopResult<$out> {
                 match self {
                     $(Self::$variant(reference) => {
@@ -200,9 +191,9 @@ macro_rules! one_of {
             /// placed in it, as it is in its own part (see
             /// [`geop_core_program::part::Reader::retrieve_placed`]).
             #[allow(dead_code)]
-            pub fn resolve_placed<I: $crate::__program::part::Input, S: $crate::__program::part::State>(
+            pub fn resolve_placed(
                 &self,
-                reader: &$crate::__program::part::Reader<I, S>,
+                reader: &$crate::__program::part::Reader,
             ) -> $crate::__GeopResult<$crate::__program::instance::InInstance<$out>> {
                 match self {
                     $(Self::$variant(reference) => {
@@ -281,8 +272,8 @@ macro_rules! one_of {
                 }
             }
 
-            fn select<I: $crate::__program::part::Input, S: $crate::__program::part::State>(
-                reader: &$crate::__program::part::Reader<I, S>,
+            fn select(
+                reader: &$crate::__program::part::Reader,
                 hit: &$crate::__program::element::PickedElement,
             ) -> Option<Self> {
                 $(if let Some(reference) =
@@ -293,9 +284,9 @@ macro_rules! one_of {
                 None
             }
 
-            fn drawn<I: $crate::__program::part::Input, S: $crate::__program::part::State>(
+            fn drawn(
                 &self,
-                reader: &$crate::__program::part::Reader<I, S>,
+                reader: &$crate::__program::part::Reader,
             ) -> ::std::vec::Vec<$crate::__program::element::PickedElement> {
                 match self {
                     $(Self::$variant(reference) => {

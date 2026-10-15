@@ -8,7 +8,7 @@ use geop_core_math::{
 use serde::{Deserialize, Serialize};
 
 use super::{Gizmo, GizmoDrag};
-use geop_core_program::element::PickedElement;
+use geop_core_program::{element::PickedElement, numeric::NumericInput};
 
 /// Dragged values snap to this: a drag is for rough shaping, a dialog for
 /// exact values.
@@ -97,6 +97,21 @@ pub enum Value {
     /// What a reference field holds now: all an operation is ever sent for
     /// one (see [`super::Reference`]).
     Elements(Vec<PickedElement>),
+}
+
+impl Value {
+    /// The [`NumericInput`] a number field set to it gives: a number slid
+    /// or dragged plain, text typed plain if it is a number and a formula
+    /// otherwise. `None` for anything else, and for empty text. A formula
+    /// that does not evaluate is kept, as typed: the step then fails naming
+    /// it, and the field shows the text to correct.
+    pub fn numeric_input(&self) -> Option<NumericInput> {
+        match self {
+            Value::Number(v) => Some(NumericInput::Plain(*v)),
+            Value::Text(text) if !text.trim().is_empty() => Some(NumericInput::from(text.as_str())),
+            _ => None,
+        }
+    }
 }
 
 /// One thing the user did while editing a step.

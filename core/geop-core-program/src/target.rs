@@ -94,6 +94,9 @@ pub(crate) struct Target {
     data: Result<Box<dyn Any>, String>,
     /// The type of value it is defined to hold, whether or not it failed.
     kind: TypeId,
+    /// Whether two values of that type are equal, by its `PartialEq`: what
+    /// compares versions of two parts ([`Target::same_as`]).
+    equal: fn(&dyn Any, &dyn Any) -> bool,
     /// The run in which `data` last became different.
     pub(crate) changed_at: Revision,
     /// The run it was made or reused in last: what it read is unchanged
@@ -123,6 +126,9 @@ impl Target {
             dependencies,
             data: made.map(|data| Box::new(data) as Box<dyn Any>),
             kind: TypeId::of::<Out>(),
+            equal: |a, b| {
+                (a.downcast_ref::<Out>()).is_some_and(|a| b.downcast_ref::<Out>() == Some(a))
+            },
             changed_at,
             run,
         }
@@ -162,6 +168,18 @@ impl Target {
     pub(crate) fn made_from<Out: 'static, Args: PartialEq + 'static>(&self, args: &Args) -> bool {
         self.data.as_ref().is_ok_and(|data| data.is::<Out>())
             && self.args.downcast_ref::<Args>() == Some(args)
+    }
+
+    /// Whether it holds what `other` holds — a version of another part,
+    /// say — by the `PartialEq` of its type: equal values, or failures for
+    /// the same reason.
+    pub(crate) fn same_as(&self, other: &Target) -> bool {
+        self.kind == other.kind
+            && match (&self.data, &other.data) {
+                (Ok(a), Ok(b)) => (self.equal)(a.as_ref(), b.as_ref()),
+                (Err(a), Err(b)) => a == b,
+                _ => false,
+            }
     }
 
     /// Whether its value is `value`.

@@ -270,7 +270,7 @@ mod tests {
     use super::*;
     use crate::{
         part::Part,
-        test::{Pose, Sc},
+        values::{Settings, StateValues},
     };
 
     /// A target of named lengths, of which a part has many.
@@ -312,10 +312,10 @@ mod tests {
     /// it depend on the target it is in.
     #[test]
     fn a_step_reading_an_element_is_rebuilt_when_its_target_changes() {
-        let mut part = Part::<Sc, Pose>::default();
+        let mut part = Part::default();
         let total = TargetReference::<f64>::new("total");
-        let run = |part: &mut Part<Sc, Pose>, a: f64| {
-            part.begin_run(&BTreeMap::new(), &BTreeMap::new());
+        let run = |part: &mut Part, a: f64| {
+            part.begin_run(&Settings::new(), &StateValues::new());
             part.begin_step();
             let defined = TargetReference::<Lengths>::new("s1");
             (part.define_target(&defined, &a, |_, &a| Ok(lengths(&[("a", a)])))).unwrap();
@@ -337,8 +337,8 @@ mod tests {
 
     #[test]
     fn a_missing_element_says_which() {
-        let mut part = Part::<Sc, Pose>::default();
-        part.begin_run(&BTreeMap::new(), &BTreeMap::new());
+        let mut part = Part::default();
+        part.begin_run(&Settings::new(), &StateValues::new());
         part.begin_step();
         let defined = TargetReference::<Lengths>::new("s1");
         (part.define_target(&defined, &(), |_, _| Ok(lengths(&[("a", 1.0)])))).unwrap();

@@ -1,6 +1,11 @@
-//! [`StateValue`]: what a part's state holds — where its placed parts are,
-//! how its joints are turned — the values a solve moves (see
-//! `geop-ops-constraints`), kept with the program between runs.
+//! The values a program is run with from outside: what a program placing
+//! it sets its parameters to ([`Setting`]), and what its state holds
+//! ([`StateValue`]): where its placed parts are and how its joints are
+//! turned — what a solve moves, kept with the program between runs. Both
+//! are saved in a program file, so they are the file format's, not an
+//! operation's.
+
+use std::collections::BTreeMap;
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -10,10 +15,21 @@ use geop_core_math::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    Design, PartReader,
-    instance::{Factor, placement},
-};
+/// The scalar a program holds its design data in.
+pub type Design = geop_core_math::scalars::ScalInF64;
+
+/// What a parameter is set to where a program places the part: a number,
+/// or the name of a table's row, or a colour. Saved as itself — `2.5`,
+/// `"M5"`, `"#ff8800"`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Setting {
+    Number(f64),
+    Text(String),
+}
+
+/// Parameter settings, by name: the inputs of a run.
+pub type Settings = BTreeMap<String, Setting>;
 
 /// A value of a part's state: a number or a pose. Serialized as itself —
 /// `2.5`, `{"position": [...], "rotation": [...]}`.
@@ -22,6 +38,16 @@ use crate::{
 pub enum StateValue {
     Number(#[serde(with = "as_f64")] Design),
     Pose(Pose<Design>),
+}
+
+/// A part's state, by name.
+pub type StateValues = BTreeMap<String, StateValue>;
+
+/// A value the run gives none of reads as the number zero.
+impl Default for StateValue {
+    fn default() -> Self {
+        StateValue::Number(Design::ZERO)
+    }
 }
 
 /// The name of the state that is where the part placed as `instance` is:
@@ -36,44 +62,6 @@ pub fn pose_in(value: &StateValue) -> Option<Pose<Design>> {
     match value {
         StateValue::Pose(pose) => Some(*pose),
         StateValue::Number(_) => None,
-    }
-}
-
-/// How the pose of each state a placement reads enters it, computed in
-/// `T`: as it is, or moved by a step to differentiate by it. Given the
-/// state's name and the pose it holds.
-pub type PoseOf<'f, T> = dyn FnMut(&str, Pose<Design>) -> Pose<T> + 'f;
-
-/// The pose an instance is at whose placement is `factors` (see
-/// [`placement`]), in `T`: theirs,
-/// composed outermost first, each state's entering as `pose_of` has it. A
-/// value that holds no pose — a state before anything solved for it —
-/// is no motion.
-pub fn compose<T: Scalar>(factors: &[Factor], pose_of: &mut PoseOf<'_, T>) -> Pose<T> {
-    let mut poses = factors.iter().map(|factor| match factor {
-        Factor::State { state, value } => {
-            pose_of(state, pose_in(value).unwrap_or_else(Pose::identity))
-        }
-        Factor::Fixed(motion) => motion.cast(),
-    });
-    // The first as it is: composing it after no motion would round it.
-    let first = poses.next().unwrap_or_else(Pose::identity);
-    poses.fold(first, |world, pose| world.compose(&pose))
-}
-
-/// Where the instance at `path` is in the part `reader` reads: none — no
-/// motion — for the part itself, at the empty path.
-pub fn located(reader: &PartReader, path: &str) -> GeopResult<Pose<Design>> {
-    if path.is_empty() {
-        return Ok(Pose::identity());
-    }
-    Ok(compose(&placement(reader, path)?, &mut |_, pose| pose))
-}
-
-/// A value the run gives none of reads as the number zero.
-impl Default for StateValue {
-    fn default() -> Self {
-        StateValue::Number(Design::ZERO)
     }
 }
 

@@ -8,11 +8,8 @@
 
 use std::fmt::Debug;
 
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
-use geop_core_program::{
-    part::{Input, Part, State},
-    program_runner::ProgramRunner,
-};
+use geop_core_math::geop_error::GeopResult;
+use geop_core_program::{part::Part, program_runner::ProgramRunner, values::Design};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
@@ -29,25 +26,20 @@ pub trait PartOperation: 'static {
     /// What a step is given. It is saved with the program, so it names
     /// targets and elements, never holds their internal ids.
     type Args: Serialize + DeserializeOwned + Debug + PartialEq + Clone + 'static;
-    /// The inputs and state of the parts it builds, and the numbers its
-    /// form measures in.
-    type Input: Input;
-    type State: State;
-    type Scalar: Scalar + PartialEq;
     /// What the editor keeps while a step is edited besides its arguments
     /// and the visuals selected: `()` for most.
     type Session: Clone + Default + 'static;
 
     /// The arguments of a new step: sensible defaults, taking the part it
     /// is inserted into into account.
-    fn new_args(context: &Context<Self::Input, Self::State, Self::Scalar>) -> Self::Args;
+    fn new_args(context: &Context) -> Self::Args;
 
     /// Runs the step `step` on `part`; `runner` is what runs it, to run
     /// programs of the step's own with.
     fn run(
         step: &str,
-        runner: &ProgramRunner<Self::Input, Self::State>,
-        part: &mut Part<Self::Input, Self::State>,
+        runner: &ProgramRunner,
+        part: &mut Part,
         args: &Self::Args,
     ) -> GeopResult<()>;
 
@@ -55,10 +47,10 @@ pub trait PartOperation: 'static {
     /// each field does. Never fails: an editor needs the form most exactly
     /// when the arguments do not build, so whatever is wrong is said in it.
     fn form<'a>(
-        context: &'a Context<'a, Self::Input, Self::State, Self::Scalar>,
+        context: &'a Context<'a>,
         args: &Self::Args,
         editing: &FormState<Self::Session>,
-    ) -> EditForm<'a, Self::Scalar, Self::Args, Self::Session>;
+    ) -> EditForm<'a, Design, Self::Args, Self::Session>;
 
     /// What the session forgets at the start of every event, before the
     /// event is handled: nothing, by default.
@@ -68,9 +60,9 @@ pub trait PartOperation: 'static {
 
     /// What the pointer or a key did on the canvas: nothing, by default.
     fn canvas(
-        context: &Context<Self::Input, Self::State, Self::Scalar>,
+        context: &Context,
         edit: Edit<'_, Self::Args, Self::Session>,
-        event: &CanvasEvent<Self::Scalar>,
+        event: &CanvasEvent<Design>,
     ) {
         let _ = (context, edit, event);
     }
@@ -92,16 +84,11 @@ macro_rules! part_operation {
         impl $crate::__program::operation::Operation for $operation {
             const KIND: &'static str = <$operation as $crate::part_operation::PartOperation>::KIND;
             type Args = <$operation as $crate::part_operation::PartOperation>::Args;
-            type Input = <$operation as $crate::part_operation::PartOperation>::Input;
-            type State = <$operation as $crate::part_operation::PartOperation>::State;
 
             fn run(
                 step: &str,
-                runner: &$crate::__program::program_runner::ProgramRunner<
-                    Self::Input,
-                    Self::State,
-                >,
-                part: &mut $crate::__program::part::Part<Self::Input, Self::State>,
+                runner: &$crate::__program::program_runner::ProgramRunner,
+                part: &mut $crate::__program::part::Part,
                 args: &Self::Args,
             ) -> $crate::__GeopResult<()> {
                 <$operation as $crate::part_operation::PartOperation>::run(step, runner, part, args)
@@ -111,31 +98,30 @@ macro_rules! part_operation {
         impl $crate::editable::Editable for $operation {
             const INFO: $crate::editable::OperationInfo =
                 <$operation as $crate::part_operation::PartOperation>::INFO;
-            type Scalar = <$operation as $crate::part_operation::PartOperation>::Scalar;
             type EditingState = $crate::edit_form::FormState<
                 <$operation as $crate::part_operation::PartOperation>::Session,
             >;
 
             fn new_args(
-                context: &$crate::editable::Context<Self::Input, Self::State, Self::Scalar>,
+                context: &$crate::editable::Context,
             ) -> Self::Args {
                 <$operation as $crate::part_operation::PartOperation>::new_args(context)
             }
 
             fn presentation(
-                context: &$crate::editable::Context<Self::Input, Self::State, Self::Scalar>,
+                context: &$crate::editable::Context,
                 args: &Self::Args,
                 editing: &Self::EditingState,
-            ) -> $crate::editing::Form<Self::Scalar> {
+            ) -> $crate::editing::Form<$crate::__program::values::Design> {
                 <$operation as $crate::part_operation::PartOperation>::form(context, args, editing)
                     .into_form()
             }
 
             fn process_user_event(
-                context: &$crate::editable::Context<Self::Input, Self::State, Self::Scalar>,
+                context: &$crate::editable::Context,
                 args: &Self::Args,
                 editing: &Self::EditingState,
-                event: $crate::editing::Event<Self::Scalar>,
+                event: $crate::editing::Event<$crate::__program::values::Design>,
             ) -> (Self::Args, Self::EditingState) {
                 let mut editing = editing.clone();
                 <$operation as $crate::part_operation::PartOperation>::begin_event(

@@ -1,6 +1,8 @@
 //! What an operation is to an editor: the vocabulary a step's editing is
-//! said in — dialogs, visuals, gizmos, events, picks ([`editing`]) — and
-//! numbers typed as formulas ([`numeric_input`]), what an operation shows
+//! said in — dialogs, visuals, gizmos, events, picks ([`editing`]), number
+//! fields of numbers typed as formulas
+//! ([`geop_core_program::numeric`], [`edit_form::EditForm::numeric`]) —
+//! what an operation shows
 //! and does with them ([`editable::Editable`]), and the operations an
 //! editor offers ([`editable::Editors`]). The interaction every operation
 //! shares, driving these, is the editor's own (`geop_cad_base`). A
@@ -24,7 +26,6 @@
 pub mod edit_form;
 pub mod editable;
 pub mod editing;
-pub mod numeric_input;
 pub mod part_operation;
 pub mod selectable;
 #[cfg(test)]

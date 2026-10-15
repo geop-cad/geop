@@ -8,10 +8,7 @@
 use geop_core_math::{scalars::Scalar, vector::Vector3};
 use serde::Serialize;
 
-use geop_core_program::{
-    element::PickedElement,
-    part::{Input, Reader, State},
-};
+use geop_core_program::{element::PickedElement, numeric::NumericInput, part::Reader};
 
 use crate::selectable::Selectable;
 
@@ -213,6 +210,32 @@ impl<S: Scalar> Number<S> {
             text: None,
             error: None,
             handle: None,
+        }
+    }
+
+    /// A number field of `input`, labelled `label`, showing what it comes
+    /// to as `reader` reads the parameters — or, where it does not
+    /// evaluate, why.
+    ///
+    /// A value that follows a formula is neither slid nor dragged: moving it
+    /// would have to either break the formula or move the parameters it
+    /// reads, and neither is what a drag means. So such a field has no
+    /// slider and no handle ([`Number::range`] and [`Number::handle`] keep
+    /// none); to drag the value again, type a number.
+    pub fn numeric(
+        input: &NumericInput,
+        label: impl Into<String>,
+        reader: &Reader,
+        unit: Unit,
+    ) -> Self {
+        let (value, error) = match input.resolve(reader) {
+            Ok(value) => (value, None),
+            Err(e) => (0.0, Some(e.root_message().to_string())),
+        };
+        Self {
+            text: Some(input.to_string()),
+            error,
+            ..Self::new(label, value, unit)
         }
     }
 
@@ -519,11 +542,11 @@ impl<S: Scalar> Dialog<S> {
     /// Values picked, holding `value`, each selected by a click as `P` says
     /// (see [`Selectable`]) in the part `reader` reads. What a field so made
     /// is sent back, [`crate::selectable::selected`] turns into values. Required: see [`Dialog::optional`].
-    pub fn pick<I: Input, St: State, P: Selectable>(
+    pub fn pick<P: Selectable>(
         &mut self,
         key: &str,
         label: impl Into<String>,
-        reader: &Reader<I, St>,
+        reader: &Reader,
         value: &[P],
         multiple: bool,
     ) -> &mut Self {

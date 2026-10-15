@@ -4,11 +4,12 @@ mod instances;
 mod middle_frame;
 mod shift_frame;
 
-use std::{cell::RefCell, collections::BTreeMap};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    scalars::{ScalInF64, Scalar},
+    primitives::Pose,
+    scalars::Scalar,
     vector::{Vector, Vector3},
 };
 
@@ -19,6 +20,7 @@ use crate::{
     program::{Program, ProgramStep},
     program_runner::{ProgramRunner, RunOutput},
     target::TargetReference,
+    values::{Design, Setting, Settings, StateValue, StateValues},
 };
 pub(crate) use add_two_frame::{AddTwoFrameArgs, AddTwoFrameOperation};
 pub(crate) use given_frame::{
@@ -27,37 +29,25 @@ pub(crate) use given_frame::{
 pub(crate) use middle_frame::{MiddleFrameArgs, MiddleFrameOperation};
 pub(crate) use shift_frame::{ShiftFrameArgs, ShiftFrameOperation};
 
-/// The tests' numbers.
-pub type Sc = ScalInF64;
-
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Frame {
-    pub data: Vector3<Sc>,
+    pub data: Vector3<Design>,
 }
 
-/// Where a body is: what the tests' state holds — its position alone.
-#[derive(Debug, Default, Clone, PartialEq)]
-pub struct Pose {
-    pub position: Vector3<Sc>,
-}
-
-impl Pose {
-    pub fn at(position: [f64; 3]) -> Self {
-        Self {
-            position: vector(position),
-        }
-    }
+/// The state of a body at `position`, unturned.
+pub(crate) fn pose_at(position: [f64; 3]) -> StateValue {
+    StateValue::Pose(Pose::identity().with_position(vector(position)))
 }
 
 /// A vector of sharp scalars, from plain numbers.
-pub(crate) fn vector<const N: usize>(xs: [f64; N]) -> Vector<Sc, N> {
-    Vector::from_array(xs.map(Sc::from_f64))
+pub(crate) fn vector<const N: usize>(xs: [f64; N]) -> Vector<Design, N> {
+    Vector::from_array(xs.map(Design::from_f64))
 }
 
 /// Asserts that `actual` encloses the point `expected`: computed values are
 /// enclosures, rounded outward, so equal to no literal.
 #[track_caller]
-pub(crate) fn assert_encloses<const N: usize>(actual: Vector<Sc, N>, expected: [f64; N]) {
+pub(crate) fn assert_encloses<const N: usize>(actual: Vector<Design, N>, expected: [f64; N]) {
     assert!(
         actual.could_be_equal(&vector(expected)),
         "{actual:?} does not enclose {expected:?}"
@@ -104,7 +94,7 @@ pub(crate) fn take_built() -> Vec<String> {
     BUILT.with(|built| built.take())
 }
 
-pub(crate) fn registry() -> OperationRegistry<Sc, Pose> {
+pub(crate) fn registry() -> OperationRegistry {
     OperationRegistry::default()
         .with(AddTwoFrameOperation)
         .and_then(|o| o.with(MiddleFrameOperation))
@@ -118,16 +108,16 @@ pub(crate) fn registry() -> OperationRegistry<Sc, Pose> {
 
 /// A runner of the tests' operations, and the part it runs on.
 pub(crate) struct Running {
-    pub(crate) runner: ProgramRunner<Sc, Pose>,
-    pub(crate) part: Part<Sc, Pose>,
+    pub(crate) runner: ProgramRunner,
+    pub(crate) part: Part,
 }
 
 impl Running {
     pub(crate) fn run(
         &mut self,
         program: &Program,
-        inputs: &BTreeMap<String, Sc>,
-        state: &BTreeMap<String, Pose>,
+        inputs: &Settings,
+        state: &StateValues,
     ) -> RunOutput {
         self.runner.run(&mut self.part, program, inputs, state)
     }
@@ -136,8 +126,8 @@ impl Running {
         &mut self,
         program: &Program,
         end: usize,
-        inputs: &BTreeMap<String, Sc>,
-        state: &BTreeMap<String, Pose>,
+        inputs: &Settings,
+        state: &StateValues,
     ) -> RunOutput {
         (self.runner).run_until(&mut self.part, program, end, inputs, state)
     }
@@ -184,28 +174,26 @@ fn shift_frame(id: &str, target: &str, x: f64) -> ProgramStep {
     ProgramStep::new::<ShiftFrameOperation>(id, &args).unwrap()
 }
 
-pub(crate) fn inputs(values: &[(&str, f64)]) -> BTreeMap<String, Sc> {
+pub(crate) fn inputs(values: &[(&str, f64)]) -> Settings {
     values
         .iter()
-        .map(|(name, value)| (name.to_string(), Sc::from_f64(*value)))
+        .map(|(name, value)| (name.to_string(), Setting::Number(*value)))
         .collect()
 }
 
-fn no_state() -> BTreeMap<String, Pose> {
+fn no_state() -> StateValues {
     BTreeMap::new()
 }
 
-fn frame(runner: &Running, name: &str) -> Vector3<Sc> {
+fn frame(runner: &Running, name: &str) -> Vector3<Design> {
     let view = runner.part.current();
     view.retrieve_element(&whole_frame(name)).unwrap().data
 }
 
 /// The frame `name` as it was before the step at position `step` of the
 /// program.
-fn frame_before(runner: &Running, step: usize, name: &str) -> Vector3<Sc> {
-    let view = runner
-        .part
-        .reader(step);
+fn frame_before(runner: &Running, step: usize, name: &str) -> Vector3<Design> {
+    let view = runner.part.reader(step);
     view.retrieve_element(&whole_frame(name)).unwrap().data
 }
 
@@ -226,7 +214,7 @@ pub(crate) fn ok(output: RunOutput) {
 fn rebuilds_only_what_changed() {
     let mut runner = runner();
     let program = |frame1| {
-        Program::new(vec![
+        Program::from_steps(vec![
             add_two_frame("step1", frame1, [0.0, 0.0, 1.0]),
             middle_frame("step2", "step1_1", "step1_2"),
         ])
@@ -253,7 +241,7 @@ fn rebuilds_only_what_changed() {
 #[test]
 fn failed_target_is_rebuilt_once_its_input_returns() {
     let mut runner = runner();
-    let program = Program::new(vec![
+    let program = Program::from_steps(vec![
         input_frame("a", "a", "x"),
         input_frame("b", "b", "y"),
         middle_frame("m", "a", "b"),
@@ -294,19 +282,23 @@ fn step_reads_only_targets_defined_before_it() {
     )];
 
     ok(runner.run(
-        &Program::new(vec![add(), middle()]),
+        &Program::from_steps(vec![add(), middle()]),
         &inputs(&[]),
         &no_state(),
     ));
 
     let reordered = runner.run(
-        &Program::new(vec![middle(), add()]),
+        &Program::from_steps(vec![middle(), add()]),
         &inputs(&[]),
         &no_state(),
     );
     assert_eq!(errors(&reordered), not_defined);
 
-    let removed = runner.run(&Program::new(vec![middle()]), &inputs(&[]), &no_state());
+    let removed = runner.run(
+        &Program::from_steps(vec![middle()]),
+        &inputs(&[]),
+        &no_state(),
+    );
     assert_eq!(errors(&removed), not_defined);
     let current = runner.part.current();
     assert!(current.retrieve_element(&whole_frame("step1_1")).is_err());
@@ -317,7 +309,7 @@ fn step_reads_only_targets_defined_before_it() {
 #[test]
 fn target_defined_twice_is_an_error() {
     let mut runner = runner();
-    let program = Program::new(vec![
+    let program = Program::from_steps(vec![
         input_frame("first", "a", "x"),
         input_frame("second", "a", "y"),
     ]);
@@ -340,7 +332,7 @@ fn target_defined_twice_is_an_error() {
 #[test]
 fn removed_input_is_gone() {
     let mut runner = runner();
-    let program = Program::new(vec![input_frame("a", "a", "x")]);
+    let program = Program::from_steps(vec![input_frame("a", "a", "x")]);
 
     ok(runner.run(&program, &inputs(&[("x", 1.0)]), &no_state()));
     let output = runner.run(&program, &inputs(&[]), &no_state());
@@ -356,10 +348,10 @@ fn changed_state_rebuilds_what_read_it() {
     let args = StateFrameArgs {
         state: "body".to_string(),
     };
-    let program = Program::new(vec![
+    let program = Program::from_steps(vec![
         ProgramStep::new::<StateFrameOperation>("s", &args).unwrap(),
     ]);
-    let state = |x| BTreeMap::from([("body".to_string(), Pose::at([x, 0.0, 0.0]))]);
+    let state = |x| StateValues::from([("body".to_string(), pose_at([x, 0.0, 0.0]))]);
 
     ok(runner.run(&program, &inputs(&[]), &no_state()));
     assert_encloses(frame(&runner, "s"), [0.0; 3]);
@@ -382,7 +374,7 @@ fn unknown_operation_fails_its_step_only() {
     let args = StateFrameArgs {
         state: "body".to_string(),
     };
-    let program = Program::new(vec![
+    let program = Program::from_steps(vec![
         ProgramStep::new::<StateFrameOperation>("bad", &args).unwrap(),
         input_frame("a", "a", "x"),
     ]);
@@ -402,7 +394,7 @@ fn unknown_operation_fails_its_step_only() {
 fn revisions_are_versions() {
     let mut runner = runner();
     let program = |first_shift| {
-        Program::new(vec![
+        Program::from_steps(vec![
             input_frame("a", "a", "x"),
             shift_frame("s1", "a", first_shift),
             middle_frame("m", "a", "a"),
@@ -430,12 +422,12 @@ fn revisions_are_versions() {
 #[test]
 fn inserted_revision_rebuilds_what_follows() {
     let mut runner = runner();
-    let with_s1 = Program::new(vec![
+    let with_s1 = Program::from_steps(vec![
         input_frame("a", "a", "x"),
         shift_frame("s1", "a", 1.0),
         shift_frame("s2", "a", 10.0),
     ]);
-    let without_s1 = Program::new(vec![
+    let without_s1 = Program::from_steps(vec![
         input_frame("a", "a", "x"),
         shift_frame("s2", "a", 10.0),
     ]);
@@ -458,7 +450,7 @@ fn step_makes_one_version_of_a_target() {
         targets: vec!["a".to_string(), "a".to_string()],
         by: vector([1.0, 0.0, 0.0]),
     };
-    let program = Program::new(vec![
+    let program = Program::from_steps(vec![
         input_frame("a", "a", "x"),
         ProgramStep::new::<ShiftFrameOperation>("s", &twice).unwrap(),
     ]);
@@ -478,7 +470,7 @@ fn step_makes_one_version_of_a_target() {
 #[test]
 fn revision_without_an_earlier_version_starts_from_the_default() {
     let mut runner = runner();
-    let program = Program::new(vec![shift_frame("s", "a", 1.0)]);
+    let program = Program::from_steps(vec![shift_frame("s", "a", 1.0)]);
     ok(runner.run(&program, &inputs(&[]), &no_state()));
     assert_encloses(frame(&runner, "a"), [1.0, 0.0, 0.0]);
 }
@@ -489,7 +481,7 @@ fn revision_without_an_earlier_version_starts_from_the_default() {
 fn equal_rebuild_keeps_what_read_it() {
     let mut runner = runner();
     let program = |first, second| {
-        Program::new(vec![
+        Program::from_steps(vec![
             input_frame("a", "a", "x"),
             input_frame("b", "b", "y"),
             middle_frame("m", first, second),
@@ -508,7 +500,7 @@ fn equal_rebuild_keeps_what_read_it() {
 /// A program is plain data: it saves as it is, and a saved program runs.
 #[test]
 fn program_round_trips_through_json() {
-    let program = Program::new(vec![input_frame("a", "a", "x"), shift_frame("s", "a", 1.0)]);
+    let program = Program::from_steps(vec![input_frame("a", "a", "x"), shift_frame("s", "a", 1.0)]);
 
     let json = serde_json::to_value(&program).unwrap();
     assert_eq!(
@@ -532,7 +524,7 @@ fn malformed_arguments_fail_their_step() {
     let mut runner = runner();
     let mut step = input_frame("a", "a", "x");
     step.args = serde_json::json!({"target": 3});
-    let output = runner.run(&Program::new(vec![step]), &inputs(&[]), &no_state());
+    let output = runner.run(&Program::from_steps(vec![step]), &inputs(&[]), &no_state());
     let errors = errors(&output);
     assert_eq!(errors.len(), 1);
     assert!(
@@ -548,7 +540,7 @@ fn malformed_arguments_fail_their_step() {
 #[test]
 fn running_to_a_marker_keeps_later_steps() {
     let mut runner = runner();
-    let program = Program::new(vec![
+    let program = Program::from_steps(vec![
         input_frame("a", "a", "x"),
         shift_frame("s1", "a", 1.0),
         shift_frame("s2", "a", 10.0),
@@ -566,7 +558,7 @@ fn running_to_a_marker_keeps_later_steps() {
 
 #[test]
 fn target_is_made_by_a_step() {
-    let mut part = Part::<Sc, Pose>::default();
+    let mut part = Part::default();
     let reference = TargetReference::<Frame>::new("a");
     let e = part
         .define_target(&reference, &(), |_, _| {
@@ -578,13 +570,13 @@ fn target_is_made_by_a_step() {
     assert_eq!(e.root_message(), "target `a` is made outside of a step");
 }
 
-fn pose_at(x: f64) -> BTreeMap<String, Pose> {
-    BTreeMap::from([("body".to_string(), Pose::at([x, 0.0, 0.0]))])
+fn body_at(x: f64) -> StateValues {
+    StateValues::from([("body".to_string(), pose_at([x, 0.0, 0.0]))])
 }
 
 #[test]
 fn operation_registered_twice_is_an_error() {
-    let twice = OperationRegistry::<Sc, Pose>::default()
+    let twice = OperationRegistry::default()
         .with(InputFrameOperation)
         .and_then(|o| o.with(InputFrameOperation));
     assert_eq!(
@@ -593,12 +585,90 @@ fn operation_registered_twice_is_an_error() {
     );
 }
 
+/// A program is checked against the operations it is run in before it is
+/// run: a step of an operation there is none of, a step id outside the id
+/// alphabet or used twice, and arguments the operation does not read are
+/// each refused, naming the step.
+#[test]
+fn a_program_is_validated_against_its_operations() {
+    let registry = registry();
+    let valid = Program::from_steps(vec![input_frame("a", "a", "x")]);
+    valid.validate(&registry).unwrap();
+    let refused = |program: &Program| program.validate(&registry).unwrap_err().to_string();
+
+    let mut unknown = valid.clone();
+    unknown.steps[0].operation = "nothing".into();
+    let error = refused(&unknown);
+    assert!(
+        error.contains("step `a`") && error.contains("unknown operation `nothing`"),
+        "{error}"
+    );
+
+    let mut badly_named = valid.clone();
+    badly_named.steps[0].id = "a(b)".into();
+    assert!(refused(&badly_named).contains("not a valid operation id"));
+
+    let twice = Program::from_steps(vec![input_frame("a", "a", "x"), input_frame("a", "b", "x")]);
+    assert!(refused(&twice).contains("more than one step with id \"a\""));
+
+    let mut unreadable = valid.clone();
+    unreadable.steps[0].args = serde_json::json!({"target": 3});
+    let error = refused(&unreadable);
+    assert!(
+        error.contains("step `a`") && error.contains("arguments of operation"),
+        "{error}"
+    );
+}
+
+/// A program and its state read back from their file as they were saved:
+/// its steps as they were, its state saved again as it was (a pose read is
+/// an enclosure of the rigid motion it stands for).
+#[test]
+fn a_program_reads_back_as_saved() {
+    let mut program = Program::from_steps(vec![input_frame("a", "a", "x")]);
+    program
+        .state
+        .insert("body".into(), pose_at([1.0, 2.0, 3.0]));
+    let saved = program.to_json().unwrap();
+    let back = Program::from_json(&saved).unwrap();
+    assert_eq!(back.steps, program.steps);
+    assert_eq!(back.to_json().unwrap(), saved);
+    let file: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    assert!(
+        file.get("steps").is_some() && file.get("state").is_some(),
+        "{file}"
+    );
+}
+
+/// Runs edited one after another on one part build what each builds from
+/// scratch, failures included.
+#[test]
+fn edited_programs_build_what_they_build_from_scratch() {
+    let program = |x: f64, middle: bool| {
+        let mut steps = vec![add_two_frame("p", [x, 0.0, 0.0], [0.0, 0.0, 1.0])];
+        if middle {
+            steps.push(middle_frame("m", "p_1", "p_2"));
+        }
+        steps.push(middle_frame("n", "m", "p_1"));
+        Program::from_steps(steps)
+    };
+    let programs = [
+        program(0.0, true),
+        program(1.0, true),
+        program(1.0, false),
+        program(1.0, true),
+        program(0.0, true),
+    ];
+    let workspace: Rc<dyn crate::workspace::Workspace> = Rc::new(instances::Files);
+    crate::testing::assert_incremental(Rc::new(registry()), Some((workspace, "")), &programs);
+}
+
 /// A step's id is what tells its versions from another step's, so a
 /// program cannot use one twice.
 #[test]
 fn step_id_used_twice_is_an_error() {
     let mut runner = runner();
-    let program = Program::new(vec![
+    let program = Program::from_steps(vec![
         input_frame("a", "a", "x"),
         input_frame("a", "b", "x"),
         input_frame("c", "c", "x"),
@@ -620,15 +690,15 @@ fn step_id_used_twice_is_an_error() {
 #[test]
 fn the_first_revision_begins_from_the_default() {
     fn grow(
-        reader: &crate::part::Reader<Sc, Pose>,
-        by: &Vector3<Sc>,
+        reader: &crate::part::Reader,
+        by: &Vector3<Design>,
     ) -> geop_core_math::geop_error::GeopResult<Frame> {
         let frame: Frame = reader.previous()?;
         Ok(Frame {
             data: frame.data.add(by),
         })
     }
-    let mut part = Part::<Sc, Pose>::default();
+    let mut part = Part::default();
     let reference = TargetReference::<Frame>::new("grown");
     part.begin_run(&BTreeMap::new(), &BTreeMap::new());
     part.begin_step();
@@ -645,10 +715,7 @@ fn the_first_revision_begins_from_the_default() {
         [3.0, 0.0, 0.0],
     );
 
-    fn fail(
-        _: &crate::part::Reader<Sc, Pose>,
-        _: &(),
-    ) -> geop_core_math::geop_error::GeopResult<Frame> {
+    fn fail(_: &crate::part::Reader, _: &()) -> geop_core_math::geop_error::GeopResult<Frame> {
         Err("broken".into())
     }
     part.begin_step();
@@ -668,13 +735,13 @@ fn the_first_revision_begins_from_the_default() {
 fn a_revision_from_the_default_follows_a_step_inserted_before_it() {
     let mut runner = runner();
     ok(runner.run(
-        &Program::new(vec![shift_frame("s1", "a", 1.0)]),
+        &Program::from_steps(vec![shift_frame("s1", "a", 1.0)]),
         &inputs(&[]),
         &no_state(),
     ));
     assert_encloses(frame(&runner, "a"), [1.0, 0.0, 0.0]);
     ok(runner.run(
-        &Program::new(vec![
+        &Program::from_steps(vec![
             shift_frame("s0", "a", 5.0),
             shift_frame("s1", "a", 1.0),
         ]),
@@ -689,20 +756,26 @@ fn a_revision_from_the_default_follows_a_step_inserted_before_it() {
 #[test]
 fn view_lists_targets_of_a_kind() {
     let mut runner = runner();
-    let program = Program::new(vec![
+    let program = Program::from_steps(vec![
         input_frame("b", "b", "x"),
         input_frame("a", "a", "x"),
         input_frame("c", "c", "x"),
     ]);
     ok(runner.run(&program, &inputs(&[("x", 1.0)]), &no_state()));
-    fn names(view: crate::part::Reader<'_, Sc, Pose>) -> Vec<String> {
+    fn names(view: crate::part::Reader<'_>) -> Vec<String> {
         let frames = view.targets_of::<Frame>();
         frames.iter().map(|f| f.name().to_string()).collect()
     }
     assert_eq!(names(runner.part.current()), ["b", "a", "c"]);
     let before_c = 2;
     assert_eq!(names(runner.part.reader(before_c)), ["b", "a"]);
-    assert!(runner.part.current().targets_of::<Pose>().is_empty());
+    assert!(
+        runner
+            .part
+            .current()
+            .targets_of::<Pose<Design>>()
+            .is_empty()
+    );
 }
 
 /// A run at a new state, as a solver runs the program at each state it
@@ -714,20 +787,20 @@ fn a_new_state_rebuilds_only_what_read_it() {
     let follow = StateFrameArgs {
         state: "body".to_string(),
     };
-    let program = Program::new(vec![
+    let program = Program::from_steps(vec![
         ProgramStep::new::<StateFrameOperation>("s", &follow).unwrap(),
         add_two_frame("pair", [0.0; 3], [2.0, 0.0, 0.0]),
         middle_frame("m", "s", "pair_2"),
         input_frame("a", "a", "x"),
     ]);
     let x = inputs(&[("x", 1.0)]);
-    ok(runner.run(&program, &x, &pose_at(3.0)));
+    ok(runner.run(&program, &x, &body_at(3.0)));
     take_built();
 
-    ok(runner.run(&program, &x, &pose_at(1.0)));
+    ok(runner.run(&program, &x, &body_at(1.0)));
     assert_eq!(take_built(), ["s@s", "m@m"]);
     assert_encloses(frame(&runner, "m"), [1.5, 0.0, 0.0]);
 
-    ok(runner.run(&program, &x, &pose_at(1.0)));
+    ok(runner.run(&program, &x, &body_at(1.0)));
     assert_eq!(take_built(), Vec::<String>::new());
 }

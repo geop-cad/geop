@@ -21,10 +21,8 @@ use crate::{
     program::{Program, ProgramStep},
     program_runner::ProgramRunner,
     target::TargetReference,
-    test::{
-        Frame, Pose, Running, Sc, assert_encloses, inputs, label, record_built, take_built,
-        vector,
-    },
+    test::{Frame, Running, assert_encloses, inputs, label, record_built, take_built, vector},
+    values::Design,
 };
 
 /// The datums of a part, by name: the one target of its kind a part has,
@@ -60,8 +58,8 @@ fn datum(name: &str) -> ElementReference<Datums, Datum> {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 struct AddTwoDatumsArgs {
-    data1: Vector3<Sc>,
-    data2: Vector3<Sc>,
+    data1: Vector3<Design>,
+    data2: Vector3<Design>,
 }
 
 /// Adds the datums `<step>_1` and `<step>_2` at the two points.
@@ -70,15 +68,8 @@ struct AddTwoDatums;
 impl Operation for AddTwoDatums {
     const KIND: &'static str = "add_two_datums";
     type Args = AddTwoDatumsArgs;
-    type Input = Sc;
-    type State = Pose;
 
-    fn run(
-        step: &str,
-        _: &ProgramRunner<Sc, Pose>,
-        part: &mut Part<Sc, Pose>,
-        args: &Self::Args,
-    ) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &Self::Args) -> GeopResult<()> {
         let args = (label("datums", step), step.to_string(), args.clone());
         part.revise_target(&datums(), &args, |reader, (label, step, args)| {
             record_built(label);
@@ -103,15 +94,8 @@ struct MiddleDatum;
 impl Operation for MiddleDatum {
     const KIND: &'static str = "middle_datum";
     type Args = MiddleDatumArgs;
-    type Input = Sc;
-    type State = Pose;
 
-    fn run(
-        step: &str,
-        _: &ProgramRunner<Sc, Pose>,
-        part: &mut Part<Sc, Pose>,
-        args: &Self::Args,
-    ) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &Self::Args) -> GeopResult<()> {
         let args = (label("datums", step), step.to_string(), args.clone());
         part.revise_target(&datums(), &args, |reader, (label, step, args)| {
             record_built(label);
@@ -120,7 +104,7 @@ impl Operation for MiddleDatum {
             // this step revises.
             let a = reader.retrieve_element(&args.a)?.data;
             let b = reader.retrieve_element(&args.b)?.data;
-            let half = Sc::from_ratio(1, 2)?;
+            let half = Design::from_ratio(1, 2)?;
             let data = a.add(&b).prod_scalar(half);
             datums.0.insert(step.clone(), Frame { data });
             Ok(datums)
@@ -155,7 +139,7 @@ fn middle_datum(id: &str, a: &str, b: &str) -> ProgramStep {
 }
 
 /// The datum `name`, as the part is now.
-fn at(runner: &Running, name: &str) -> Vector3<Sc> {
+fn at(runner: &Running, name: &str) -> Vector3<Design> {
     let current = runner.part.current();
     current.retrieve_element(&datum(name)).unwrap().data
 }
@@ -177,7 +161,7 @@ fn errors(runner: &mut Running, program: &Program) -> Vec<(String, String)> {
 fn datums_are_revised_by_each_step_and_rebuilt_only_when_changed() {
     let mut runner = runner();
     let program = |first: [f64; 3]| {
-        Program::new(vec![
+        Program::from_steps(vec![
             add_two_datums("s1", first, [0.0, 0.0, 1.0]),
             middle_datum("s2", "s1_1", "s1_2"),
         ])
@@ -205,7 +189,7 @@ fn datums_are_revised_by_each_step_and_rebuilt_only_when_changed() {
 #[test]
 fn a_step_sees_only_the_datums_added_before_it() {
     let mut runner = runner();
-    let program = Program::new(vec![
+    let program = Program::from_steps(vec![
         middle_datum("m", "s1_1", "s1_2"),
         add_two_datums("s1", [0.0; 3], [1.0, 0.0, 0.0]),
     ]);
@@ -231,7 +215,7 @@ fn a_step_sees_only_the_datums_added_before_it() {
 #[test]
 fn a_missing_datum_is_named() {
     let mut runner = runner();
-    let program = Program::new(vec![
+    let program = Program::from_steps(vec![
         add_two_datums("s1", [0.0; 3], [1.0, 0.0, 0.0]),
         middle_datum("m", "s1_1", "s9_2"),
     ]);

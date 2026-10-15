@@ -1,7 +1,8 @@
 //! [`NumericInput`]: a number an operation is given — a length, an angle, a
 //! count — typed into a dialog's number field as a plain value or as a
 //! formula of the program's parameters, which it follows ([`evaluate`]).
-//! An operation's arguments take one wherever they take a number.
+//! An operation's arguments take one wherever they take a number. (How a
+//! dialog shows one, the editor says.)
 //!
 //! A step resolves it where it builds ([`NumericInput::resolve`]), reading each
 //! parameter the formula names — a target the program defines
@@ -11,20 +12,16 @@
 //! ([`formulas_in`], [`rename_parameter_in`]), so what reads a parameter
 //! is found, and renamed, without asking the operation.
 
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
-};
-use std::collections::BTreeMap;
+use std::{borrow::Cow, collections::BTreeMap};
 
-use geop_core_program::{
-    element::{ElementReference, HasElements, Kind, whole},
-    part::{Input, Reader, State},
-    target::TargetReference,
-};
+use geop_core_math::geop_error::{GeopError, GeopResult};
 use serde::{Deserialize, Serialize};
 
-use crate::editing::{Number, Unit, Value};
+use crate::{
+    element::{ElementReference, HasElements, Kind, whole},
+    part::Reader,
+    target::TargetReference,
+};
 
 /// What a parameter of the program comes to, as its target holds it
 /// ([`parameter`]): a number, or a table's row — its name, and its value in
@@ -56,12 +53,48 @@ pub fn parameter(name: &str) -> TargetReference<ParameterValue> {
     TargetReference::new(format!("parameter:{name}"))
 }
 
+/// Every parameter of the part, by name, in the order the step defining
+/// them defines them, as each comes to: what lists or designates the part
+/// reads. A parameter that failed is left out.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ParameterValues(pub Vec<(String, ParameterValue)>);
+
+/// Read whole.
+impl Kind for ParameterValues {
+    const NAME: &'static str = "parameter_values";
+}
+
+impl HasElements<ParameterValues> for ParameterValues {
+    type Element<'a> = &'a ParameterValues;
+    const SINGLETON: Option<&'static str> = Some("parameter_values");
+
+    fn element(&self, name: &str) -> GeopResult<&ParameterValues> {
+        whole(self, name)
+    }
+}
+
+/// The target of every parameter of the part, as they come to.
+pub fn parameter_values() -> TargetReference<ParameterValues> {
+    TargetReference::new("parameter_values")
+}
+
+/// Every parameter of the part `reader` reads, as they come to: none, for
+/// a part whose program defines none.
+pub fn read_parameter_values<'a>(reader: &Reader<'a>) -> GeopResult<Cow<'a, ParameterValues>> {
+    if !reader.defines(&parameter_values()) {
+        return Ok(Cow::Owned(ParameterValues::default()));
+    }
+    Ok(Cow::Borrowed(reader.retrieve_element(
+        &ElementReference::whole(parameter_values()),
+    )?))
+}
+
 /// The number `name` stands for in a formula, as `reader` reads it, the
 /// read recorded: a number parameter's value, and `table.column` the
 /// value in `column` of the row the table `table` is set to. None where no
 /// step defines that parameter, or it failed, or its table has no such
 /// column.
-pub fn read_parameter<I: Input, S: State>(reader: &Reader<I, S>, name: &str) -> Option<f64> {
+pub fn read_parameter(reader: &Reader, name: &str) -> Option<f64> {
     let (table, column) = match name.split_once('.') {
         Some((table, column)) => (table, Some(column)),
         None => (name, None),
@@ -70,7 +103,12 @@ pub fn read_parameter<I: Input, S: State>(reader: &Reader<I, S>, name: &str) -> 
     if !reader.defines(&reference) {
         return None;
     }
-    match (reader.retrieve_element(&ElementReference::whole(reference)).ok()?, column) {
+    match (
+        reader
+            .retrieve_element(&ElementReference::whole(reference))
+            .ok()?,
+        column,
+    ) {
         (ParameterValue::Number(value), None) => Some(*value),
         (ParameterValue::Row { columns, .. }, Some(column)) => columns.get(column).copied(),
         _ => None,
@@ -140,50 +178,12 @@ impl NumericInput {
     /// Its value, each parameter it names read through `reader` (see
     /// [`read_parameter`]): in a target's generator, every one of them
     /// recorded read.
-    pub fn resolve<I: Input, S: State>(&self, reader: &Reader<I, S>) -> GeopResult<f64> {
+    pub fn resolve(&self, reader: &Reader) -> GeopResult<f64> {
         match self {
             NumericInput::Plain(value) => Ok(*value),
             NumericInput::Formula { formula } => {
                 evaluate(formula, |name| read_parameter(reader, name))
             }
-        }
-    }
-
-    /// A number field of it, labelled `label`, showing what it comes to as
-    /// `reader` reads the parameters — or, where it does not evaluate, why.
-    ///
-    /// A value that follows a formula is neither slid nor dragged: moving it
-    /// would have to either break the formula or move the parameters it
-    /// reads, and neither is what a drag means. So such a field has no
-    /// slider and no handle ([`Number::range`] and [`Number::handle`] keep
-    /// none); to drag the value again, type a number.
-    pub fn number<I: Input, St: State, S: Scalar>(
-        &self,
-        label: impl Into<String>,
-        reader: &Reader<I, St>,
-        unit: Unit,
-    ) -> Number<S> {
-        let (value, error) = match self.resolve(reader) {
-            Ok(value) => (value, None),
-            Err(e) => (0.0, Some(e.root_message().to_string())),
-        };
-        Number {
-            text: Some(self.to_string()),
-            error,
-            ..Number::new(label, value, unit)
-        }
-    }
-
-    /// What a number field of it set to `value` makes it: a number slid or
-    /// dragged plain, text typed plain if it is a number and a formula
-    /// otherwise. `None` for anything else, and for empty text. A formula
-    /// that does not evaluate is kept, as typed: the step then fails naming
-    /// it, and the field shows the text to correct.
-    pub fn from_value(value: &Value) -> Option<NumericInput> {
-        match value {
-            Value::Number(v) => Some(NumericInput::Plain(*v)),
-            Value::Text(text) if !text.trim().is_empty() => Some(NumericInput::from(text.as_str())),
-            _ => None,
         }
     }
 }
@@ -494,13 +494,11 @@ impl<'t, F: FnMut(&str) -> Option<f64>> Parser<'t, F> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
-    use geop_core_math::scalars::ScalInF64;
-    use geop_core_program::{part::Part, target::TargetReference};
-
     use super::*;
-    use crate::editing::is_formula;
+    use crate::{
+        part::Part,
+        values::{Settings, StateValues},
+    };
 
     fn eval(text: &str) -> GeopResult<f64> {
         evaluate(text, |name| match name {
@@ -535,7 +533,6 @@ mod tests {
             assert!(eval(bad).is_err(), "{bad:?}");
         }
         assert_eq!(names_in("width * screw.d + width"), ["width", "screw.d"]);
-        assert!(!is_formula(" 12.5 ") && is_formula("width"));
     }
 
     /// A formula typed is plain if it is a number, and saves as one; any
@@ -589,14 +586,13 @@ mod tests {
     fn a_formula_reads_the_parameters_it_names() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         static MADE: AtomicUsize = AtomicUsize::new(0);
-        type Sc = ScalInF64;
-        let mut part = Part::<Sc, Sc>::default();
+        let mut part = Part::default();
         let half = TargetReference::<f64>::new("half");
         let formula = NumericInput::from("width / 2");
-        let run = |part: &mut Part<Sc, Sc>, width: f64, other: f64| {
-            part.begin_run(&BTreeMap::new(), &BTreeMap::new());
+        let run = |part: &mut Part, width: f64, other: f64| {
+            part.begin_run(&Settings::new(), &StateValues::new());
             part.begin_step();
-            let given = |_: &Reader<Sc, Sc>, &value: &f64| Ok(ParameterValue::Number(value));
+            let given = |_: &Reader, &value: &f64| Ok(ParameterValue::Number(value));
             (part.define_target(&parameter("width"), &width, given)).unwrap();
             (part.define_target(&parameter("other"), &other, given)).unwrap();
             part.begin_step();

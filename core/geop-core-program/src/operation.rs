@@ -1,10 +1,7 @@
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::{
-    part::{self, Part},
-    program_runner::ProgramRunner,
-};
+use crate::{part::Part, program_runner::ProgramRunner};
 
 /// One kind of step. An operation is a unit struct: everything a step of
 /// it needs is in its arguments.
@@ -14,16 +11,13 @@ pub trait Operation: 'static {
     /// What a step of the operation is given. It is saved with the program,
     /// so it names targets and elements, never holds their internal ids.
     type Args: Serialize + DeserializeOwned + 'static;
-    /// The inputs and state of the parts the operation builds.
-    type Input: part::Input;
-    type State: part::State;
 
     /// Defines and revises the step's targets in `part`; `runner` is what
     /// runs the step, to run programs of the step's own with.
     fn run(
         step: &str,
-        runner: &ProgramRunner<Self::Input, Self::State>,
-        part: &mut Part<Self::Input, Self::State>,
+        runner: &ProgramRunner,
+        part: &mut Part,
         args: &Self::Args,
     ) -> GeopResult<()>;
 }
@@ -39,13 +33,15 @@ pub trait StepArgs: Serialize {
 /// An [`Operation`] with its types erased, so that operations of all kinds
 /// can be kept in one [`crate::operation_registry::OperationRegistry`].
 /// Every operation is one, through its value. Arguments come as saved.
-pub trait ErasedOperation<I, S: part::State> {
+pub trait ErasedOperation {
     fn kind(&self) -> &'static str;
+    /// Whether `args` are arguments of the operation, as saved.
+    fn check_args(&self, args: &serde_json::Value) -> GeopResult<()>;
     fn run(
         &self,
         step: &str,
-        runner: &ProgramRunner<I, S>,
-        part: &mut Part<I, S>,
+        runner: &ProgramRunner,
+        part: &mut Part,
         args: &serde_json::Value,
     ) -> GeopResult<()>;
 }
@@ -62,16 +58,20 @@ pub fn saved<O: Operation>(args: &O::Args) -> GeopResult<serde_json::Value> {
         .map_err(|e| GeopError::new(format!("arguments of operation `{}`: {e}", O::KIND)))
 }
 
-impl<O: Operation> ErasedOperation<O::Input, O::State> for O {
+impl<O: Operation> ErasedOperation for O {
     fn kind(&self) -> &'static str {
         O::KIND
+    }
+
+    fn check_args(&self, args: &serde_json::Value) -> GeopResult<()> {
+        self::args::<O>(args).map(|_| ())
     }
 
     fn run(
         &self,
         step: &str,
-        runner: &ProgramRunner<O::Input, O::State>,
-        part: &mut Part<O::Input, O::State>,
+        runner: &ProgramRunner,
+        part: &mut Part,
         args: &serde_json::Value,
     ) -> GeopResult<()> {
         <O as Operation>::run(step, runner, part, &self::args::<O>(args)?)
