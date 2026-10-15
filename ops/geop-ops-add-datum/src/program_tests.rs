@@ -10,9 +10,10 @@ use geop_core_math::{
 use geop_core_program::{
     element::ElementReference,
     operation_registry::OperationRegistry,
-    part::{Part, Reader},
+    part::Part,
     program::Program,
-    program_runner::ProgramRunner,
+    reader::Reader,
+    runner::Runner,
     values::{Settings, StateValues},
 };
 use geop_ops_datums::{AnyDatum, Datums, ORIGIN, component_name, datums, read_datums};
@@ -51,7 +52,7 @@ fn registry() -> GeopResult<OperationRegistry> {
 /// step added to it is built on what the part kept.
 struct Built {
     program: Program,
-    runner: ProgramRunner,
+    runner: Runner,
     part: Part,
 }
 

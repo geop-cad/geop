@@ -14,10 +14,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{
-    element::ElementReference,
-    numeric::NumericInput,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
+    element::ElementReference, numeric::NumericInput, part::StepContext, reader::Reader,
     values::Design,
 };
 use geop_ops_datums::Datums;
@@ -185,28 +182,30 @@ impl PartOperation for PartPattern {
 
     /// Places the copies, each where the pattern puts it after the part:
     /// the axis resolved in the part as the steps before left it.
-    fn run(
-        step: &str,
-        runner: &ProgramRunner,
-        part: &mut Part,
-        args: &PartPatternArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("part_pattern({step}, {args:?})");
-        let axis = check(args).with_context(ctx)?;
-        // A copy loads what the part it copies was loaded from.
-        let Ok(seed) = instance(&part.current(), &args.part).cloned() else {
+    ///
+    /// Which copies there are, and where, the step asks of the part before
+    /// it as it declares them: their count and motions are what its copies
+    /// are made from.
+    fn run(ctx: &mut StepContext, args: &PartPatternArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        let context = with_context!("part_pattern({step}, {args:?})");
+        let axis = check(args).with_context(context)?;
+        // A copy places what the part it copies was placed from.
+        let reader = ctx.reader();
+        let Ok(seed) = instance(&reader, &args.part).cloned() else {
             return Err(GeopError::new(format!(
                 "{:?} is no part placed so far: pattern one an earlier step placed",
                 args.part
             )))
-            .with_context(ctx);
+            .with_context(context);
         };
         let motions = {
-            let reader = part.current();
-            let axis = axis.resolve_placed(&reader).with_context(ctx)?;
-            let motion = located(&reader, &axis.instance).with_context(ctx)?.motion();
+            let axis = axis.resolve_placed(&reader).with_context(context)?;
+            let motion = located(&reader, &axis.instance)
+                .with_context(context)?
+                .motion();
             let axis = axis.element.transform(&motion);
-            motions(args, &axis, &reader).with_context(ctx)?
+            motions(args, &axis, &reader).with_context(context)?
         };
         let namer = Namer::new("part_pattern", step)?;
         for (k, motion) in (1..).zip(motions) {
@@ -215,8 +214,7 @@ impl PartOperation for PartPattern {
                 of: args.part.clone(),
                 motion,
             };
-            define_placed(runner, part, &name, &seed.file, &seed.inputs, placement)
-                .with_context(ctx)?;
+            define_placed(ctx, &name, &seed.file, &seed.inputs, placement).with_context(context)?;
         }
         Ok(())
     }

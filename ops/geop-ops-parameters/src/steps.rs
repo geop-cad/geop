@@ -1,8 +1,9 @@
 //! The steps a program says what its part is by, besides its shape: its
-//! parameters ([`DefineParameters`]) and its properties
-//! ([`PartProperties`]). Each defines targets as any step does: a formula
-//! reads a parameter's target, and what lists the part reads its
-//! properties'.
+//! parameters ([`DefineParameters`]), the tables a part family looks its
+//! size up in ([`LookupTable`]) and its properties ([`PartProperties`]).
+//! Each produces targets as any step does: a formula reads a parameter's
+//! target, and what lists the part reads its properties'. Every step that
+//! defines parameters adds them to the part's [`ParameterValues`], a chain.
 //!
 //! What a parameter is set to where the part is built is the run's input
 //! of its name — a [`Setting`] a program placing the part gives — and its
@@ -25,14 +26,14 @@ use geop_core_program::{
         ParameterValue, ParameterValues, evaluate, names_in, parameter, parameter_values,
         read_parameter, read_parameter_values,
     },
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    target::TargetReference,
+    part::StepContext,
+    reader::Reader,
+    target::{Target, TargetReference},
     values::{Design, Setting},
 };
 use serde::{Deserialize, Serialize};
 
-use crate::parameters::{COLOR, Material, Parameter, ParameterKind, Parameters, validate_color};
+use crate::parameters::{COLOR, Material, NumberParameter, Row, validate_color, validate_name};
 
 /// The kind of the step defining a program's parameters, and its id.
 pub const PARAMETERS: &str = "parameters";
@@ -40,18 +41,21 @@ pub const PARAMETERS: &str = "parameters";
 /// The kind of the step defining a part's properties, and its id.
 pub const PROPERTIES: &str = "properties";
 
-/// Defines the program's parameters, each a target of its own
+/// The kind of the step looking a part family's size up in a table.
+pub const LOOKUP: &str = "lookup_table";
+
+/// Defines the program's number parameters, each a target of its own
 /// ([`parameter`]): what the run's input of its name sets it to, else what
-/// it is defined as. A number's formula may read any other parameter of the
-/// step, defined before it or after; one reading one that reads it back
-/// fails, saying so.
+/// it is defined as. A formula may read any other parameter of the step,
+/// defined before it or after, and those the steps before defined — a
+/// table's columns; one reading one that reads it back fails, saying so.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct DefineParameters;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct DefineParametersArgs {
     #[serde(default)]
-    pub values: Vec<Parameter>,
+    pub values: Vec<NumberParameter>,
 }
 
 part_operation!(DefineParameters(DefineParametersArgs));
@@ -60,7 +64,7 @@ impl PartOperation for DefineParameters {
     const KIND: &'static str = PARAMETERS;
     const INFO: OperationInfo = OperationInfo::new(
         "Parameters",
-        "The values the design is given by — numbers, tables of variants — which a program placing the part may set.",
+        "The numbers the design is given by, which a program placing the part may set.",
         OperationGroup::Part,
         OperationTier::Menu,
     );
@@ -72,36 +76,24 @@ impl PartOperation for DefineParameters {
     }
 
     /// Each parameter, in an order in which a formula's parameters come
-    /// before it — tables first, which read none — and then the list of
-    /// them all.
-    fn run(
-        step: &str,
-        _: &ProgramRunner,
-        part: &mut Part,
-        args: &DefineParametersArgs,
-    ) -> GeopResult<()> {
-        let parameters = Parameters {
-            values: args.values.clone(),
-            ..Parameters::default()
-        };
-        parameters
-            .validate()
-            .map_err(|e| e.with_context(format!("parameters({step})")))?;
+    /// before it, and then the step's entries of the part's parameter
+    /// values.
+    fn run(ctx: &mut StepContext, args: &DefineParametersArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        for (i, p) in args.values.iter().enumerate() {
+            validate_name(&p.name).map_err(|e| e.with_context(format!("parameters({step})")))?;
+            if args.values[..i].iter().any(|q| q.name == p.name) {
+                return Err(GeopError::new(format!(
+                    "there is more than one parameter {:?}",
+                    p.name
+                )));
+            }
+        }
         for p in in_order(&args.values) {
-            part.define_target(&parameter(&p.name), p, value_of)?;
+            ctx.produce(&parameter(&p.name), p, value_of)?;
         }
         let names: Vec<String> = args.values.iter().map(|p| p.name.clone()).collect();
-        part.define_target(&parameter_values(), &names, |reader, names| {
-            Ok(ParameterValues(
-                (names.iter())
-                    .filter_map(|name| {
-                        let value =
-                            reader.retrieve_element(&ElementReference::whole(parameter(name)));
-                        Some((name.clone(), value.ok()?.clone()))
-                    })
-                    .collect(),
-            ))
-        })
+        ctx.produce(&parameter_values(), &names, add_values)
     }
 
     /// What is defined is edited where the program's parameters are listed.
@@ -121,27 +113,29 @@ impl PartOperation for DefineParameters {
     }
 }
 
-/// `values` in an order in which a number comes after every parameter its
-/// formula names: the tables, then the numbers as their formulas' names
-/// are defined, then — reading what is not there, or reading each other —
-/// the rest, which fail.
-fn in_order(values: &[Parameter]) -> Vec<&Parameter> {
-    let mut ordered: Vec<&Parameter> = Vec::with_capacity(values.len());
-    let mut left: Vec<&Parameter> = Vec::new();
-    for p in values {
-        match &p.kind {
-            ParameterKind::Table { .. } => ordered.push(p),
-            ParameterKind::Number { .. } => left.push(p),
-        }
-    }
-    let defines = |p: &Parameter, name: &str| p.name == name.split('.').next().unwrap_or(name);
+/// The part's parameter values as the steps before left them, and the
+/// parameters `names` as they come to — a parameter that failed left out.
+/// The make of a step's entries of the [`ParameterValues`] chain.
+fn add_values(reader: &Reader, names: &Vec<String>) -> GeopResult<ParameterValues> {
+    let mut values: ParameterValues = reader.previous()?;
+    values.0.extend((names.iter()).filter_map(|name| {
+        let value = reader.retrieve_element(&ElementReference::whole(parameter(name)));
+        Some((name.clone(), value.ok()?.clone()))
+    }));
+    Ok(values)
+}
+
+/// `values` in an order in which a number comes after every parameter of
+/// the step its formula names: the numbers as their formulas' names are
+/// defined, then — reading what is not there, or reading each other — the
+/// rest, which fail.
+fn in_order(values: &[NumberParameter]) -> Vec<&NumberParameter> {
+    let mut ordered: Vec<&NumberParameter> = Vec::with_capacity(values.len());
+    let mut left: Vec<&NumberParameter> = values.iter().collect();
     loop {
         let ready = left.iter().position(|p| {
-            let ParameterKind::Number { expression, .. } = &p.kind else {
-                return true;
-            };
-            names_in(expression).iter().all(|name| {
-                ordered.iter().any(|q| defines(q, name)) || !values.iter().any(|q| defines(q, name))
+            names_in(&p.expression).iter().all(|name| {
+                ordered.iter().any(|q| q.name == *name) || !values.iter().any(|q| q.name == *name)
             })
         });
         match ready {
@@ -154,38 +148,180 @@ fn in_order(values: &[Parameter]) -> Vec<&Parameter> {
 }
 
 /// What the parameter `p` is set to: the run's input of its name if it is
-/// given one, else its definition — a number's formula of the other
-/// parameters, a table's row selected.
-fn value_of(reader: &Reader, p: &Parameter) -> GeopResult<ParameterValue> {
-    let given = reader.retrieve_input(&p.name);
-    match &p.kind {
-        ParameterKind::Number { expression, .. } => match given {
-            Some(Setting::Number(value)) => Ok(ParameterValue::Number(value)),
-            _ => Ok(ParameterValue::Number(evaluate(expression, |name| {
-                read_parameter(reader, name)
-            })?)),
-        },
-        ParameterKind::Table {
-            columns,
-            rows,
-            selected,
-        } => {
-            let wanted = match &given {
-                Some(Setting::Text(row)) if rows.iter().any(|r| &r.name == row) => row,
-                _ => selected,
-            };
-            let row = (rows.iter().find(|r| &r.name == wanted))
-                .ok_or_else(|| GeopError::new(format!("the table has no row {wanted:?}")))?;
-            Ok(ParameterValue::Row {
-                name: row.name.clone(),
-                columns: columns
-                    .iter()
-                    .cloned()
-                    .zip(row.values.iter().copied())
-                    .collect(),
-            })
+/// given a number, else its formula of the other parameters.
+fn value_of(reader: &Reader, p: &NumberParameter) -> GeopResult<ParameterValue> {
+    match reader.retrieve_input(&p.name) {
+        Some(Setting::Number(value)) => Ok(ParameterValue::Number(value)),
+        _ => Ok(ParameterValue::Number(evaluate(&p.expression, |name| {
+            read_parameter(reader, name)
+        })?)),
+    }
+}
+
+/// Looks the row a part family is built in up in a table: the row the
+/// run's text input `input` names — `size = "M4"` from a program placing
+/// the part — else the row `selected`. Defines the parameter `input` as the
+/// row's name, and `input.column` as its value in each column (`size.d`),
+/// each a target of its own ([`parameter`]), and adds them to the part's
+/// [`ParameterValues`]. A text that names no row fails, naming the input
+/// and the rows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct LookupTable;
+
+/// A table of the variants of a part family, one per row, looked up by the
+/// input `input`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct LookupTableArgs {
+    pub input: String,
+    pub columns: Vec<String>,
+    pub rows: Vec<Row>,
+    /// The row built where the run names none.
+    pub selected: String,
+}
+
+impl LookupTableArgs {
+    /// Checks the names of the input and the columns, that every row has a
+    /// value per column, and that the row `selected` is there.
+    pub fn validate(&self) -> GeopResult<()> {
+        let ctx = |e: GeopError| e.with_context(format!("the table {:?}", self.input));
+        validate_name(&self.input).map_err(ctx)?;
+        for c in &self.columns {
+            validate_name(c).map_err(|e| ctx(e.with_context("a column")))?;
+        }
+        for row in &self.rows {
+            if row.values.len() != self.columns.len() {
+                return Err(ctx(GeopError::new(format!(
+                    "row {:?} has {} values for {} columns",
+                    row.name,
+                    row.values.len(),
+                    self.columns.len()
+                ))));
+            }
+        }
+        if !self.rows.iter().any(|r| r.name == self.selected) {
+            return Err(ctx(GeopError::new(format!(
+                "there is no row {:?} to select",
+                self.selected
+            ))));
+        }
+        Ok(())
+    }
+
+    /// The name the value of `column` is read by: `size.d`.
+    pub fn column(&self, column: &str) -> String {
+        format!("{}.{column}", self.input)
+    }
+}
+
+part_operation!(LookupTable(LookupTableArgs));
+
+impl PartOperation for LookupTable {
+    const KIND: &'static str = LOOKUP;
+    const INFO: OperationInfo = OperationInfo::new(
+        "Table",
+        "A table of the variants of a part family — screw sizes, say — of which a program placing the part picks one by name.",
+        OperationGroup::Part,
+        OperationTier::Menu,
+    );
+    type Args = LookupTableArgs;
+    type Session = ();
+
+    fn new_args(_: &Context) -> LookupTableArgs {
+        LookupTableArgs {
+            input: "size".into(),
+            columns: vec!["d".into()],
+            rows: vec![Row {
+                name: "A".into(),
+                values: vec![1.0],
+            }],
+            selected: "A".into(),
         }
     }
+
+    /// The row, then each column of it, then the step's entries of the
+    /// part's parameter values.
+    fn run(ctx: &mut StepContext, args: &LookupTableArgs) -> GeopResult<()> {
+        args.validate()
+            .map_err(|e| e.with_context(format!("lookup_table({})", ctx.step())))?;
+        ctx.produce(&parameter(&args.input), args, row_of)?;
+        let mut names = vec![args.input.clone()];
+        for (k, column) in args.columns.iter().enumerate() {
+            let name = args.column(column);
+            ctx.produce(
+                &parameter(&name),
+                &(args.input.clone(), k, args.rows.clone()),
+                column_of,
+            )?;
+            names.push(name);
+        }
+        ctx.produce(&parameter_values(), &names, add_values)
+    }
+
+    /// What is defined is edited where the program's parameters are listed.
+    fn form<'a>(
+        _: &'a Context<'a>,
+        args: &LookupTableArgs,
+        _: &FormState<()>,
+    ) -> EditForm<'a, Design, LookupTableArgs> {
+        let mut f = EditForm::<Design, LookupTableArgs>::default();
+        let text = format!(
+            "The table {:?} of {} rows — edited under Parameters.",
+            args.input,
+            args.rows.len()
+        );
+        f.form.dialog.text("table", text, Tone::Hint);
+        f
+    }
+}
+
+/// The row the table `args` is set to: the one the run's input names, else
+/// its own selection. Fails for an input naming no row, or no text.
+fn row_of(reader: &Reader, args: &LookupTableArgs) -> GeopResult<ParameterValue> {
+    let wanted = match reader.retrieve_input(&args.input) {
+        None => args.selected.clone(),
+        Some(Setting::Text(row)) => row,
+        Some(Setting::Number(n)) => {
+            return Err(GeopError::new(format!(
+                "the input {:?} is the number {n}: it names a row of its table by text",
+                args.input
+            )));
+        }
+    };
+    match args.rows.iter().any(|row| row.name == wanted) {
+        true => Ok(ParameterValue::Text(wanted)),
+        false => {
+            let rows: Vec<&str> = args.rows.iter().map(|row| row.name.as_str()).collect();
+            Err(GeopError::new(format!(
+                "the input {:?} is {wanted:?}, which names no row of its table: {}",
+                args.input,
+                rows.join(", ")
+            )))
+        }
+    }
+}
+
+/// The value in the column at `k` of the row the table looked up by
+/// `input`, of `rows`, is set to.
+fn column_of(
+    reader: &Reader,
+    (input, k, rows): &(String, usize, Vec<Row>),
+) -> GeopResult<ParameterValue> {
+    let row = reader.retrieve_element(&ElementReference::whole(parameter(input)))?;
+    let ParameterValue::Text(row) = row else {
+        return Err(GeopError::new(format!(
+            "the parameter {input:?} names no row"
+        )));
+    };
+    let values = (rows.iter().find(|r| r.name == *row))
+        .map(|r| &r.values)
+        .ok_or_else(|| GeopError::new(format!("the table {input:?} has no row {row:?}")))?;
+    (values.get(*k).copied())
+        .map(ParameterValue::Number)
+        .ok_or_else(|| {
+            GeopError::new(format!(
+                "row {row:?} of the table {input:?} has no column {k}"
+            ))
+        })
 }
 
 /// Defines what the part is called and ordered as, its colour, and what
@@ -234,12 +370,8 @@ impl PartOperation for PartProperties {
         PartPropertiesArgs::default()
     }
 
-    fn run(
-        step: &str,
-        _: &ProgramRunner,
-        part: &mut Part,
-        args: &PartPropertiesArgs,
-    ) -> GeopResult<()> {
+    fn run(ctx: &mut StepContext, args: &PartPropertiesArgs) -> GeopResult<()> {
+        let step = ctx.step();
         if let Some(color) = &args.color {
             validate_color(color).map_err(|e| e.with_context(format!("properties({step})")))?;
         }
@@ -250,7 +382,7 @@ impl PartOperation for PartProperties {
                 "the material {name:?} has a density of {density} kg/m³: it must be a positive number"
             )));
         }
-        part.define_target(&properties(), args, |reader, args| {
+        ctx.produce(&properties(), args, |reader, args| {
             let color = match reader.retrieve_input(COLOR) {
                 Some(Setting::Text(color)) if validate_color(&color).is_ok() => Some(color),
                 _ => args.color.clone(),
@@ -283,13 +415,14 @@ impl PartOperation for PartProperties {
 
 /// What the part designated `designation` built with `values` is ordered
 /// as: the designation, then each parameter in order — a table's row by its
-/// name, a number after its own — `ISO 4762 M4x12`, `T-slot 2020 length
-/// 500`.
+/// name, a number after its own, a table's columns not at all —
+/// `ISO 4762 M4x12`, `T-slot 2020 length 500`.
 fn designate(designation: &str, values: &ParameterValues) -> String {
     let mut words = vec![designation.to_string()];
     for (name, value) in &values.0 {
         match value {
-            ParameterValue::Row { name: row, .. } => words.push(row.clone()),
+            ParameterValue::Text(row) => words.push(row.clone()),
+            ParameterValue::Number(_) if name.contains('.') => {}
             ParameterValue::Number(n) => words.push(format!("{name} {n}")),
         }
     }
@@ -307,6 +440,9 @@ pub struct Properties {
     pub color: Option<String>,
     pub material: Option<Material>,
 }
+
+/// Defined once, by the program's [`PartProperties`] step.
+impl Target for Properties {}
 
 /// Read whole.
 impl Kind for Properties {

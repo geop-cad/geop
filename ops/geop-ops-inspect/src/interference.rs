@@ -8,7 +8,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector, Vector3},
 };
-use geop_core_program::{element::PickedElement, part::Reader, values::Design};
+use geop_core_program::{element::PickedElement, reader::Reader, values::Design};
 use geop_core_topology::{
     Body, SolidId,
     distance::{Feature, PlacedFace, closest_points},

@@ -12,7 +12,7 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::{element::PickedElement, part::Reader, values::Design};
+use geop_core_program::{element::PickedElement, reader::Reader, values::Design};
 use geop_core_topology::{CoedgeGeometry, FaceId};
 use geop_ops_add_datum::{Selected, Shape};
 use geop_ops_model::{NamedModel, frame_along};
@@ -98,7 +98,7 @@ impl MateEntity {
         let ctx = with_context!("the frame on {}", self.label());
         let inside = match self.part() {
             "" => reader.clone(),
-            part => reader.inside(part).with_context(ctx)?,
+            part => reader.placed_part(part).with_context(ctx)?,
         };
         let at = self.at.as_ref().map(Selected::local);
         frame_on(&inside, &self.on.local(), at.as_ref()).with_context(ctx)

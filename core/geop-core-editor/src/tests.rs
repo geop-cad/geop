@@ -11,10 +11,11 @@ use geop_core_program::{
     numeric::{NumericInput, ParameterValue, parameter},
     operation::Operation,
     operation_registry::OperationRegistry,
-    part::{Part, Reader},
+    part::{Part, StepContext},
     program::{Program, ProgramStep},
-    program_runner::ProgramRunner,
-    target::TargetReference,
+    reader::Reader,
+    runner::Runner,
+    target::{Target, TargetReference},
     values::Design,
 };
 use serde::{Deserialize, Serialize};
@@ -39,6 +40,11 @@ fn v(x: f64, y: f64, z: f64) -> Vector3<Design> {
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Point(Vector3<Design>);
 
+/// Given by one step, shifted by the ones after it.
+impl Target for Point {
+    const CHAIN: bool = true;
+}
+
 impl Kind for Point {
     const NAME: &'static str = "point";
 }
@@ -61,8 +67,9 @@ impl Operation for GivenPoint {
     const KIND: &'static str = "given_point";
     type Args = Vector3<Design>;
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, at: &Vector3<Design>) -> GeopResult<()> {
-        part.define_target(&TargetReference::new(step), at, |_, at| Ok(Point(*at)))
+    fn run(ctx: &mut StepContext, at: &Vector3<Design>) -> GeopResult<()> {
+        let step = ctx.step();
+        ctx.produce(&TargetReference::new(step), at, |_, at| Ok(Point(*at)))
     }
 }
 
@@ -101,9 +108,9 @@ impl Operation for Shift {
     const KIND: &'static str = "shift";
     type Args = ShiftArgs;
 
-    fn run(_: &str, _: &ProgramRunner, part: &mut Part, args: &ShiftArgs) -> GeopResult<()> {
+    fn run(ctx: &mut StepContext, args: &ShiftArgs) -> GeopResult<()> {
         let point = TargetReference::<Point>::new(&args.point);
-        part.revise_target(&point, &args.by, |reader, by| {
+        ctx.produce(&point, &args.by, |reader, by| {
             Ok(Point(reader.previous::<Point>()?.0.add(by)))
         })
     }
@@ -171,7 +178,7 @@ fn shift(id: &str, point: &str, x: f64) -> ProgramStep {
 /// run on `part`.
 fn pressed(
     editors: &Editors,
-    runner: &ProgramRunner,
+    runner: &Runner,
     part: &Part,
     program: &Program,
     step: &str,
@@ -183,7 +190,7 @@ fn pressed(
 /// last run on `part`.
 fn press(
     editors: &Editors,
-    runner: &ProgramRunner,
+    runner: &Runner,
     part: &Part,
     program: &Program,
     step: &str,
@@ -204,19 +211,14 @@ fn press(
 #[test]
 fn a_step_is_edited_against_the_part_before_it() {
     let editors = editors();
-    let runner = ProgramRunner::new(editors.operations().unwrap());
+    let runner = Runner::new(editors.operations().unwrap());
     let mut part = Part::default();
     let program = Program::from_steps(vec![
         given("a", 1.0),
         shift("s1", "a", 1.0),
         shift("s2", "a", 5.0),
     ]);
-    runner.run(
-        &mut part,
-        &program,
-        &Default::default(),
-        &Default::default(),
-    );
+    runner.run(&mut part, &program, None);
     for (step, by) in [("s2", -2.0), ("s1", -1.0), ("s2", -2.0)] {
         assert_eq!(
             pressed(&editors, &runner, &part, &program, step).unwrap(),
@@ -230,15 +232,10 @@ fn a_step_is_edited_against_the_part_before_it() {
 #[test]
 fn a_new_step_starts_from_its_operation() {
     let editors = editors();
-    let runner = ProgramRunner::new(editors.operations().unwrap());
+    let runner = Runner::new(editors.operations().unwrap());
     let mut part = Part::default();
     let program = Program::from_steps(vec![given("a", 1.0)]);
-    runner.run(
-        &mut part,
-        &program,
-        &Default::default(),
-        &Default::default(),
-    );
+    runner.run(&mut part, &program, None);
 
     let step = editors
         .new_step(&runner, &part, &program, "shift", "s", None)
@@ -270,19 +267,14 @@ fn a_new_step_starts_from_its_operation() {
 #[test]
 fn a_step_sees_what_it_built() {
     let editors = editors();
-    let runner = ProgramRunner::new(editors.operations().unwrap());
+    let runner = Runner::new(editors.operations().unwrap());
     let mut part = Part::default();
     let program = Program::from_steps(vec![
         given("a", 1.0),
         shift("s1", "a", 1.0),
         shift("s2", "a", 5.0),
     ]);
-    runner.run(
-        &mut part,
-        &program,
-        &Default::default(),
-        &Default::default(),
-    );
+    runner.run(&mut part, &program, None);
     assert_eq!(
         press(&editors, &runner, &part, &program, "s1", "built").unwrap(),
         2.0
@@ -308,6 +300,8 @@ fn a_step_sees_what_it_built() {
 /// picked by clicking an edge of one.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Chains(Vec<(String, Vec<String>)>);
+
+impl Target for Chains {}
 
 struct Edge;
 
@@ -382,17 +376,17 @@ impl SelectableElement<Chains> for Chain {
 /// of `e3`.
 fn chains() -> Part {
     let mut part = Part::default();
-    part.begin_run(&Default::default(), &Default::default());
-    part.begin_step();
     let chains = Chains(vec![
         ("c1".into(), vec!["e1".into(), "e2".into()]),
         ("c2".into(), vec!["e3".into()]),
     ]);
-    (part.define_target(&TargetReference::new("chains"), &chains, |_, c| {
-        Ok(c.clone())
+    let runner = Runner::new(OperationRegistry::default());
+    (runner.run_step(&mut part, "given", |ctx| {
+        ctx.produce(&TargetReference::new("chains"), &chains, |_, c| {
+            Ok(c.clone())
+        })
     }))
     .unwrap();
-    part.end_run(0);
     part
 }
 
@@ -520,9 +514,10 @@ impl PartOperation for Scale {
         ScaleArgs::default()
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &ScaleArgs) -> GeopResult<()> {
+    fn run(ctx: &mut StepContext, args: &ScaleArgs) -> GeopResult<()> {
+        let step = ctx.step();
         let scaled = TargetReference::<f64>::new(step);
-        part.define_target(&scaled, &args.by, |reader, by| by.resolve(reader))
+        ctx.produce(&scaled, &args.by, |reader, by| by.resolve(reader))
     }
 
     fn form<'a>(
@@ -553,20 +548,18 @@ part_operation!(Scale(ScaleArgs));
 /// field shows what the formula comes to with the part's inputs.
 #[test]
 fn a_part_operation_is_edited_through_its_form() {
-    let mut part = chains();
-    part.begin_run(&Default::default(), &Default::default());
-    part.begin_step();
+    let mut part = Part::default();
+    let runner = Runner::new(OperationRegistry::default());
     let chains = Chains(vec![("c1".into(), vec!["e1".into(), "e2".into()])]);
-    (part.define_target(&TargetReference::new("chains"), &chains, |_, c| {
-        Ok(c.clone())
+    (runner.run_step(&mut part, "given", |ctx| {
+        ctx.produce(&TargetReference::new("chains"), &chains, |_, c| {
+            Ok(c.clone())
+        })?;
+        ctx.produce(&parameter("width"), &6.0, |_, &width| {
+            Ok(ParameterValue::Number(width))
+        })
     }))
     .unwrap();
-    (part.define_target(&parameter("width"), &6.0, |_, &width| {
-        Ok(ParameterValue::Number(width))
-    }))
-    .unwrap();
-    part.end_run(0);
-    let runner = ProgramRunner::new(OperationRegistry::default());
     let context = Context {
         step: "s",
         runner: &runner,

@@ -11,9 +11,10 @@ use geop_core_program::{
     element::ElementReference,
     operation::StepArgs,
     operation_registry::OperationRegistry,
-    part::{Part, Reader},
+    part::{Part, StepContext},
     program::Program,
-    program_runner::ProgramRunner,
+    reader::Reader,
+    runner::Runner,
     values::{Design, Settings, StateValues},
 };
 use std::{borrow::Cow, f64::consts::PI};
@@ -95,13 +96,9 @@ impl PartOperation for PlaceSketch {
         }
     }
 
-    fn run(
-        step: &str,
-        _: &ProgramRunner,
-        part: &mut Part,
-        args: &PlaceSketchArgs,
-    ) -> GeopResult<()> {
-        part.define_target(&sketch(step), &(step.to_string(), args.clone()), placed)
+    fn run(ctx: &mut StepContext, args: &PlaceSketchArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        ctx.produce(&sketch(step), &(step.to_string(), args.clone()), placed)
     }
 
     fn form<'a>(
@@ -140,8 +137,9 @@ impl PartOperation for Rename {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &RenameArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &RenameArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     fn form<'a>(
@@ -182,7 +180,7 @@ fn registry() -> GeopResult<OperationRegistry> {
 /// all again, reusing what did not change.
 struct Built {
     program: Program,
-    runner: ProgramRunner,
+    runner: Runner,
     part: Part,
 }
 

@@ -37,7 +37,7 @@ use geop_core_math::{
     scalars::{Field, Scalar},
     vector::Vector3,
 };
-use geop_core_program::{part::Reader, values::Design};
+use geop_core_program::{reader::Reader, values::Design};
 use geop_core_sketch::{
     ConstraintId, CurveId, PointId,
     space::{Arc3, Constraint3d, Coordinate, CurveKind3d, End, Solve3dReport},

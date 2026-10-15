@@ -28,7 +28,8 @@
 
 use geop_core_program::{
     element::ElementReference,
-    part::{Part, Reader},
+    part::StepContext,
+    reader::Reader,
     values::{Design, StateValue},
 };
 use std::collections::BTreeMap;
@@ -455,28 +456,27 @@ fn unknowns_of_mates(
     Ok(out)
 }
 
-/// Defines what the mates `mates` of the step `step`, each resolved already
-/// in the part and called as `labels` says, put on the state: their
+/// Defines what the mates `mates` of the step being run, each resolved
+/// already in the part and called as `labels` says, put on the state: their
 /// constraints and limits, the parts the fixed ones hold and the joints'
 /// coordinates as values a solve moves — and, as values a user sets, each
 /// joint's coordinates. The pose state `placed` of the part the step
 /// places, if it places one, is a value a solve moves too.
 pub(crate) fn define(
-    part: &mut Part,
-    step: &str,
+    ctx: &mut StepContext,
     placed: Option<&str>,
     mates: &[(String, String)],
 ) -> GeopResult<()> {
     let names: Vec<String> = mates.iter().map(|(name, _)| name.clone()).collect();
-    let constrained = define_constraints(part, step, &names, constraints_of_mates);
+    let constrained = define_constraints(ctx, &names, constraints_of_mates);
     let unknowns = (placed.map(str::to_string), names);
-    let declared = declare_unknowns(part, &unknowns, unknowns_of_mates);
+    let declared = declare_unknowns(ctx, &unknowns, unknowns_of_mates);
     let mut set = Ok(());
     for (name, label) in mates {
-        let is_joint = matches!(resolved(&part.current(), name), Ok(Resolved::Joint { .. }));
+        let is_joint = matches!(resolved(&ctx.reader(), name), Ok(Resolved::Joint { .. }));
         if is_joint {
             let named = (name.clone(), label.clone());
-            set = set.and(part.define_target(&settings_of(name), &named, settings));
+            set = set.and(ctx.produce(&settings_of(name), &named, settings));
         }
     }
     constrained.and(declared).and(set)

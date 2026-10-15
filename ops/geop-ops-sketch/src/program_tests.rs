@@ -8,9 +8,9 @@ use geop_core_program::{
     numeric::NumericInput,
     operation::Operation,
     operation_registry::OperationRegistry,
-    part::Part,
+    part::{Part, StepContext},
     program::{Program, ProgramStep},
-    program_runner::ProgramRunner,
+    runner::Runner,
     values::{Design, Setting, Settings},
 };
 use std::collections::BTreeMap;
@@ -45,18 +45,18 @@ impl Operation for Cube {
     const KIND: &'static str = "cube";
     type Args = ();
 
-    fn run(_: &str, _: &ProgramRunner, part: &mut Part, _: &()) -> GeopResult<()> {
-        part.define_target(&model(), &(), |_, _| Ok(unit_cube()))
+    fn run(ctx: &mut StepContext, _: &()) -> GeopResult<()> {
+        ctx.produce(&model(), &(), |_, _| Ok(unit_cube()))
     }
 }
 
 /// A runner of sketches, of parameters and of the unit cube.
-fn runner() -> ProgramRunner {
+fn runner() -> Runner {
     let registry = (OperationRegistry::default().with(AddSketch))
         .and_then(|r| r.with(DefineParameters))
         .and_then(|r| r.with(Cube))
         .unwrap();
-    ProgramRunner::new(registry)
+    Runner::new(registry)
 }
 
 fn n(x: f64) -> Design {

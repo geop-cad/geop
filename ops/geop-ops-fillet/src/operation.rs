@@ -10,10 +10,7 @@ use geop_core_editor::{
 };
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{
-    element::ElementReference,
-    numeric::NumericInput,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
+    element::ElementReference, numeric::NumericInput, part::StepContext, reader::Reader,
     values::Design,
 };
 use geop_ops_model::{Edge, ModelOperation, NamedModel, Namer, Vertex, build_model, model};
@@ -133,8 +130,9 @@ impl PartOperation for Fillet {
         FilletArgs::constant(Vec::new(), 0.1)
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &FilletArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &FilletArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The edges, picked, and the radius — and, varying, the radius at the
@@ -298,8 +296,9 @@ impl PartOperation for Chamfer {
         ChamferArgs::even(Vec::new(), 0.1)
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &ChamferArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &ChamferArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The edges, picked, the distance, and whether the second face gets a

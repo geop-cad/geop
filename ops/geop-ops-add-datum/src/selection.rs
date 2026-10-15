@@ -15,7 +15,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::{
-    element::ElementReference, instance::InInstance, part::Reader, values::Design,
+    element::ElementReference, placed::InInstance, reader::Reader, values::Design,
 };
 use geop_ops_datums::{AnyDatum, Datums};
 use geop_ops_model::{Circle, Curve, Edge, Face, Line, NamedModel, Point, Round, Vertex};
@@ -171,7 +171,7 @@ impl Selected {
         let instance = self.instance();
         let element = match instance.is_empty() {
             true => self.own_shape(reader)?,
-            false => self.local().own_shape(&reader.inside(instance)?)?,
+            false => self.local().own_shape(&reader.placed_part(instance)?)?,
         };
         Ok(InInstance {
             element,

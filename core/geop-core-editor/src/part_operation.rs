@@ -9,7 +9,7 @@
 use std::fmt::Debug;
 
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::{part::Part, program_runner::ProgramRunner, values::Design};
+use geop_core_program::{part::StepContext, values::Design};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
@@ -34,14 +34,9 @@ pub trait PartOperation: 'static {
     /// is inserted into into account.
     fn new_args(context: &Context) -> Self::Args;
 
-    /// Runs the step `step` on `part`; `runner` is what runs it, to run
-    /// programs of the step's own with.
-    fn run(
-        step: &str,
-        runner: &ProgramRunner,
-        part: &mut Part,
-        args: &Self::Args,
-    ) -> GeopResult<()>;
+    /// Declares what the step produces, through `ctx` (see
+    /// [`StepContext::produce`]).
+    fn run(ctx: &mut StepContext, args: &Self::Args) -> GeopResult<()>;
 
     /// What the editor shows while the step is edited, with what setting
     /// each field does. Never fails: an editor needs the form most exactly
@@ -86,12 +81,10 @@ macro_rules! part_operation {
             type Args = <$operation as $crate::part_operation::PartOperation>::Args;
 
             fn run(
-                step: &str,
-                runner: &$crate::__program::program_runner::ProgramRunner,
-                part: &mut $crate::__program::part::Part,
+                ctx: &mut $crate::__program::part::StepContext,
                 args: &Self::Args,
             ) -> $crate::__GeopResult<()> {
-                <$operation as $crate::part_operation::PartOperation>::run(step, runner, part, args)
+                <$operation as $crate::part_operation::PartOperation>::run(ctx, args)
             }
         }
 

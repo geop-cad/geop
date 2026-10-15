@@ -8,10 +8,7 @@ use geop_core_editor::{
     part_operation::PartOperation,
 };
 use geop_core_program::{
-    element::ElementReference,
-    numeric::NumericInput,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
+    element::ElementReference, numeric::NumericInput, part::StepContext, reader::Reader,
     values::Design,
 };
 use std::collections::BTreeSet;
@@ -219,8 +216,9 @@ impl PartOperation for Revolve {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &RevolveArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &RevolveArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The sketch and the axis, picked; how far; whether a face; and how to

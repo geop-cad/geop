@@ -8,7 +8,7 @@
 use geop_core_math::{scalars::Scalar, vector::Vector3};
 use serde::Serialize;
 
-use geop_core_program::{element::PickedElement, numeric::NumericInput, part::Reader};
+use geop_core_program::{element::PickedElement, numeric::NumericInput, reader::Reader};
 
 use crate::selectable::Selectable;
 

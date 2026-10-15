@@ -30,7 +30,7 @@
 
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement},
-    part::Reader,
+    reader::Reader,
     values::Design,
 };
 use std::collections::BTreeSet;

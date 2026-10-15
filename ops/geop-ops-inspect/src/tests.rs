@@ -5,9 +5,10 @@ use geop_core_program::{
     element::PickedElement,
     operation::Operation,
     operation_registry::OperationRegistry,
-    part::{Part, Reader},
+    part::Part,
     program::Program,
-    program_runner::ProgramRunner,
+    reader::Reader,
+    runner::Runner,
     values::{Settings, StateValue, StateValues, pose_state},
 };
 use std::f64::consts::PI;
@@ -57,7 +58,7 @@ fn built_with(
         material,
         ..PartPropertiesArgs::default()
     };
-    let runner = ProgramRunner::new(OperationRegistry::default());
+    let runner = Runner::new(OperationRegistry::default());
     let mut part = Part::default();
     part.begin_run(&Default::default(), &Default::default());
     part.begin_step();
@@ -395,7 +396,7 @@ fn sketch_curves_are_measured() {
             sketch: line,
             references: Vec::new(),
         };
-        let runner = geop_core_program::program_runner::ProgramRunner::new(Default::default());
+        let runner = geop_core_program::runner::Runner::new(Default::default());
         geop_ops_sketch3d::AddSketch3d::run("route", &runner, part, &args).unwrap();
     });
 

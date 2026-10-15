@@ -12,11 +12,8 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::{
-    operation::Operation,
-    operation_registry::OperationRegistry,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
+    operation::Operation, operation_registry::OperationRegistry, part::Part, reader::Reader,
+    runner::Runner, values::Design,
 };
 use geop_core_topology::{
     Body, Edge, FaceId, Model, SolidId,
@@ -263,11 +260,15 @@ fn given(_: &Reader, model: &NamedModel<Design>) -> GeopResult<NamedModel<Design
 /// an operation, an exporter or an inspector build on.
 pub fn given_part(model: &NamedModel<Design>) -> GeopResult<Part> {
     let mut part = Part::default();
-    part.begin_run(&Default::default(), &Default::default());
-    part.begin_step();
-    part.define_target(&crate::model(), model, given)?;
+    let runner = Runner::new(OperationRegistry::default());
+    runner.run_step(&mut part, GIVEN, |ctx| {
+        ctx.produce(&crate::model(), model, given)
+    })?;
     Ok(part)
 }
+
+/// The id of the step that gives a part its model, in [`given_part`].
+pub const GIVEN: &str = "given";
 
 /// What `O`'s step `step` with `args` makes of `model`, as a program of two
 /// steps would build it — the model given, then the step — together with
@@ -279,10 +280,8 @@ pub fn apply<O: Operation>(
     args: &O::Args,
 ) -> GeopResult<Part> {
     let mut part = given_part(&model)?;
-    part.begin_step();
-    let runner = ProgramRunner::new(OperationRegistry::default());
-    O::run(step, &runner, &mut part, args)?;
-    part.end_run(0);
+    let runner = Runner::new(OperationRegistry::default());
+    runner.run_step(&mut part, step, |ctx| O::run(ctx, args))?;
     Ok(part)
 }
 

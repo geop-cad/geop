@@ -10,9 +10,10 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind},
-    instance::instance_path,
-    part::{Generator, Part, Reader},
-    target::TargetReference,
+    part::{Make, StepContext},
+    placed::instance_path,
+    reader::Reader,
+    target::{Target, TargetReference},
     values::StateValue,
 };
 
@@ -56,8 +57,8 @@ impl Unknowns {
                 .clone(),
             false => Self::default(),
         };
-        for name in reader.subparts() {
-            let inside = reader.inside(name)?;
+        for name in reader.instances() {
+            let inside = reader.placed_part(name)?;
             let declared = Self::of(&inside)
                 .map_err(|e| e.with_context(format!("the unknowns of the placed part `{name}`")))?;
             for unknown in declared.0.into_values() {
@@ -96,6 +97,11 @@ impl Unknowns {
     }
 }
 
+/// Every step that declares unknowns adds to them.
+impl Target for Unknowns {
+    const CHAIN: bool = true;
+}
+
 /// The part's unknowns, read whole.
 impl Kind for Unknowns {
     const NAME: &'static str = UNKNOWNS;
@@ -122,17 +128,18 @@ pub fn unknowns() -> TargetReference<Unknowns> {
 
 /// Declares the unknowns `generator` makes of `args`, adding them to the
 /// part's [`Unknowns`]: of several declarations of one state, one that
-/// holds it fixed wins, and otherwise the first made. A plain function, like [`Part::define_target`]'s.
+/// holds it fixed wins, and otherwise the first made. A plain function,
+/// like a make ([`Make`]).
 pub fn declare_unknowns<Args: PartialEq + Clone + 'static>(
-    part: &mut Part,
+    ctx: &mut StepContext,
     args: &Args,
-    generator: Generator<Args, Vec<Unknown>>,
+    generator: Make<Args, Vec<Unknown>>,
 ) -> GeopResult<()> {
     let generated = Generated {
         args: args.clone(),
         generator,
     };
-    part.revise_target(&unknowns(), &generated, declare)
+    ctx.produce(&unknowns(), &generated, declare)
 }
 
 /// `all` with the unknowns `generated` makes added.

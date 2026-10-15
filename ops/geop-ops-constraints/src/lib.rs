@@ -29,7 +29,7 @@ pub mod unknown;
 
 pub use constraint::{Bound, Constraint, Constraints};
 
-use geop_core_program::part::Generator;
+use geop_core_program::part::Make;
 
 /// A step's arguments with the generator that makes what it contributes
 /// from them: the arguments of the target that runs it, since a generator
@@ -37,7 +37,7 @@ use geop_core_program::part::Generator;
 /// same generator from equal arguments is reused.
 struct Generated<Args, Out> {
     args: Args,
-    generator: Generator<Args, Out>,
+    generator: Make<Args, Out>,
 }
 
 // By hand, since a derive would ask the same of `Out`.

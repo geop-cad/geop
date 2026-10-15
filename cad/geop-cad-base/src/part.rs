@@ -6,7 +6,7 @@
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{
     element::{ElementReference, PickedElement},
-    part::Reader,
+    reader::Reader,
     values::Design,
 };
 pub use geop_ops_assembly::draw;

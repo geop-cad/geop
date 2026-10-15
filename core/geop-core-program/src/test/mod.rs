@@ -585,7 +585,6 @@ fn running_to_a_marker_keeps_later_steps() {
     assert_encloses(frame(&runner, "a"), [12.0, 0.0, 0.0]);
 }
 
-
 fn body_at(x: f64) -> StateValues {
     StateValues::from([("body".to_string(), pose_at([x, 0.0, 0.0]))])
 }
@@ -718,7 +717,9 @@ fn the_first_revision_begins_from_the_default() {
     let mut part = Part::default();
     let reference = TargetReference::<Frame>::new("grown");
     let mut step = |id: &str, by: [f64; 3]| {
-        runner.run_step(&mut part, id, |ctx| ctx.produce(&reference, &vector(by), grow))
+        runner.run_step(&mut part, id, |ctx| {
+            ctx.produce(&reference, &vector(by), grow)
+        })
     };
     step("s1", [1.0, 0.0, 0.0]).unwrap();
     step("s2", [2.0, 0.0, 0.0]).unwrap();

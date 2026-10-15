@@ -1,25 +1,23 @@
-//! Parts placed in a part: the part another program file builds, loaded
-//! through the runner of the step placing it (see
-//! [`geop_core_program::workspace`]) as the part of an instance of
-//! [`geop_core_program::instance`], and drawn as a part is drawn
-//! ([`draw`]).
+//! Parts placed in a part: the part another program file builds, placed
+//! as a node of the part placing it (see [`geop_core_program::placed`]),
+//! and drawn as a part is drawn ([`draw`]).
 //!
 //! Where an instance is, is the program's state: the pose state of its
 //! [`Placement`], or a fixed motion after another instance, as a pattern's
 //! copy goes. The parts placed in a placed part are the placing program's
 //! to move too: their poses are its state, behind the instance's name
-//! (`bolt/nut.pose`), and the placed part is run with them. Every instance
-//! is a part of its own, run again in every run of the part placing it, and
-//! drawn as it is built ([`define_placed`]): moving it builds and draws
-//! nothing again, and a change in it builds and draws again only what
-//! reads it.
+//! (`bolt/nut.pose`), and the placed part is built with them. A placed
+//! part is built from its program, its inputs and the state under its
+//! name, and drawn as it is built ([`define_placed`]): moving it builds and
+//! draws nothing again, and a change in it builds and draws again only
+//! what reads it. Equal builds — every screw of a size — are one.
 
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
-    instance::{INSTANCE_SEPARATOR, instance_path, split_path},
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    target::TargetReference,
+    part::StepContext,
+    placed::{INSTANCE_SEPARATOR, PlacedArgs, instance_path, place, split_path},
+    reader::Reader,
+    target::{Target, TargetReference},
     values::{Design, Settings},
 };
 use std::{
@@ -79,6 +77,9 @@ impl PartialEq for Drawn {
     }
 }
 
+/// Each placed part's own.
+impl Target for Drawn {}
+
 /// Read whole.
 impl Kind for Drawn {
     const NAME: &'static str = "drawn";
@@ -98,27 +99,30 @@ fn drawn_target(name: &str) -> TargetReference<Drawn> {
 }
 
 /// Places the part the program in `file` builds as the instance `name`,
-/// its parameters set to `inputs`, at `placement` — its part run by
-/// `runner`, the runner of the step — and draws it ([`draw`]): again only
-/// when what it is drawn from changed. A step of the part placed that
+/// its parameters set to `inputs`, at `placement` (see
+/// [`geop_core_program::placed::place`]), and draws it ([`draw`]): again
+/// only when what it is drawn from changed. A step of the part placed that
 /// fails fails this, after it is placed and drawn as far as it builds.
 pub fn define_placed(
-    runner: &ProgramRunner,
-    part: &mut Part,
+    ctx: &mut StepContext,
     name: &str,
     file: &str,
     inputs: &Settings,
     placement: Placement,
 ) -> GeopResult<()> {
-    let loaded = runner.load_subpart(part, name, file, inputs);
+    let placed = PlacedArgs {
+        file: file.to_string(),
+        inputs: inputs.clone(),
+    };
+    let loaded = place(ctx, name, &placed);
     let instance = Instance {
         placement,
         file: file.to_string(),
         inputs: inputs.clone(),
     };
-    define_instance(part, name, &instance)?;
-    let drawn = part.define_target(&drawn_target(name), &name.to_string(), |reader, name| {
-        let inside = reader.inside(name)?;
+    define_instance(ctx, name, &instance)?;
+    let drawn = ctx.produce(&drawn_target(name), &name.to_string(), |reader, name| {
+        let inside = reader.placed_part(name)?;
         let mut view = draw(&inside)?;
         view.sketches.clear();
         let shown = serde_json::to_vec(&view)
@@ -140,7 +144,7 @@ pub fn drawn<'a>(reader: &Reader<'a>, path: &str) -> GeopResult<&'a Drawn> {
     let (outer, name) = split_path(path);
     let level = match outer.is_empty() {
         true => reader.clone(),
-        false => reader.inside(outer)?,
+        false => reader.placed_part(outer)?,
     };
     (level.retrieve_element(&ElementReference::whole(drawn_target(name))))
         .map_err(|e| e.with_context(format!("the drawing of the placed part {path:?}")))
@@ -165,10 +169,10 @@ pub fn locate<'a>(reader: &Reader<'a>, path: &str) -> GeopResult<Located<'a>> {
     let (outer, name) = split_path(path);
     let level = match outer.is_empty() {
         true => reader.clone(),
-        false => reader.inside(outer).with_context(&ctx)?,
+        false => reader.placed_part(outer).with_context(&ctx)?,
     };
     let instance = instance(&level, name).with_context(&ctx)?;
-    let part = level.inside(name).with_context(&ctx)?;
+    let part = level.placed_part(name).with_context(&ctx)?;
     let factors = placement(reader, path).with_context(&ctx)?;
     let outside = match outer.is_empty() {
         true => 0,
@@ -202,7 +206,7 @@ pub fn moved_by(reader: &Reader, path: &str) -> GeopResult<Option<String>> {
             Placement::After { .. } => return Ok(None),
         }
         prefix = instance_path(&prefix, name);
-        level = level.inside(name)?;
+        level = level.placed_part(name)?;
     }
     Ok(state)
 }

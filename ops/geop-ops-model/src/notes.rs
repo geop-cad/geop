@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 use geop_core_math::scalars::Scalar;
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
-    part::Reader,
-    target::TargetReference,
+    reader::Reader,
+    target::{Target, TargetReference},
     values::Design,
 };
 
@@ -74,6 +74,11 @@ impl SolidNotes {
     pub fn iter(&self) -> impl Iterator<Item = (&str, &SolidNote)> {
         self.0.iter().map(|(name, note)| (name.as_str(), note))
     }
+}
+
+/// Every step that says something of a solid adds to them.
+impl Target for SolidNotes {
+    const CHAIN: bool = true;
 }
 
 /// Read whole.

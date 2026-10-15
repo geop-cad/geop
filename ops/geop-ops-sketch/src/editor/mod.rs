@@ -34,7 +34,7 @@ mod trim;
 mod visuals;
 
 use dialog::draw_dialog;
-use geop_core_program::{part::Reader, values::Design};
+use geop_core_program::{reader::Reader, values::Design};
 use snap::Snap;
 use visuals::visuals;
 

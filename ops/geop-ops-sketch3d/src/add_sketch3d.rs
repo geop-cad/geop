@@ -9,8 +9,8 @@ use geop_core_editor::{
 };
 use geop_core_program::{
     element::{ElementReference, PickedElement},
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
+    part::StepContext,
+    reader::Reader,
     values::Design,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -387,14 +387,10 @@ impl PartOperation for AddSketch3d {
 
     /// Defines the 3-D sketch named after the step, and builds it as a
     /// wire.
-    fn run(
-        step: &str,
-        _: &ProgramRunner,
-        part: &mut Part,
-        args: &AddSketch3dArgs,
-    ) -> GeopResult<()> {
-        part.define_target(&sketch3d(step), &(step.to_string(), args.clone()), draw)?;
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &AddSketch3dArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        ctx.produce(&sketch3d(step), &(step.to_string(), args.clone()), draw)?;
+        build_model::<Self>(ctx, args)
     }
 
     /// The tools, the coordinates of a point, the constraints: see

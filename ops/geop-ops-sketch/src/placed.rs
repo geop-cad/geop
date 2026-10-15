@@ -25,8 +25,8 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
-    part::Reader,
-    target::TargetReference,
+    reader::Reader,
+    target::{Target, TargetReference},
     values::Design,
 };
 use geop_core_sketch::{
@@ -264,6 +264,9 @@ impl PlacedSketch<Design> {
             .ok_or_else(|| GeopError::new(format!("curve {id} is not circular")))
     }
 }
+
+/// Produced once, by the step that draws it.
+impl Target for PlacedSketch<Design> {}
 
 /// Read whole: what is swept, as its regions or its curves.
 impl Kind for PlacedSketch<Design> {

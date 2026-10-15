@@ -13,11 +13,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_program::{
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
-};
+use geop_core_program::{part::StepContext, reader::Reader, values::Design};
 use geop_ops_booleans::Combine;
 use geop_ops_model::{ModelOperation, NamedModel, Namer, build_model, read_model, resolve_bodies};
 use serde::{Deserialize, Serialize};
@@ -124,8 +120,9 @@ impl PartOperation for MoveBody {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &MoveBodyArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &MoveBodyArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The bodies, picked; the shift along each axis, dragged by a gizmo

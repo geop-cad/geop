@@ -12,8 +12,7 @@ use geop_core_program::{
     operation_registry::OperationRegistry,
     part::Part,
     program::Program,
-    program_runner::ProgramRunner,
-    values::{Settings, StateValues},
+    runner::Runner,
     workspace::{self, FileStore, Files, Location},
 };
 use std::{collections::BTreeMap, rc::Rc};
@@ -200,13 +199,13 @@ pub fn workspace<F: FileStore + 'static>(files: F) -> Rc<Workspace<F>> {
 }
 
 /// A runner of the editor's operations, that has run nothing yet.
-pub fn runner() -> ProgramRunner {
-    ProgramRunner::new(registry().expect("the editor's operations each have a name of their own"))
+pub fn runner() -> Runner {
+    Runner::new(registry().expect("the editor's operations each have a name of their own"))
 }
 
 /// A part a program built, and the runner that built it, to run it again.
 pub struct BuiltPart {
-    pub runner: ProgramRunner,
+    pub runner: Runner,
     pub part: Part,
 }
 
@@ -224,6 +223,6 @@ pub fn build(
         within: Vec::new(),
     };
     let mut part = Part::default();
-    program.run(&runner, &mut part, &Settings::new(), &StateValues::new())?;
+    program.run(&runner, &mut part)?;
     Ok(BuiltPart { runner, part })
 }

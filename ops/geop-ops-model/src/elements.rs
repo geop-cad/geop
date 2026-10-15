@@ -10,7 +10,7 @@ use geop_core_editor::selectable::SelectableElement;
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
-    part::Reader,
+    reader::Reader,
     values::Design,
 };
 use geop_core_topology::{EdgeId, FaceId, SolidId, VertexId};
@@ -242,7 +242,7 @@ impl SelectableElement<NamedModel<Design>> for EdgeChain {
 mod tests {
     use geop_core_editor::selectable::selected;
     use geop_core_math::{scalars::Scalar, vector::Vector3};
-    use geop_core_program::part::Part;
+    use geop_core_program::{operation_registry::OperationRegistry, part::Part, runner::Runner};
 
     use super::*;
 
@@ -250,15 +250,15 @@ mod tests {
     /// `v0`, the face `f0` and the solid `s0`.
     fn part() -> Part {
         let mut part = Part::default();
-        part.begin_run(&Default::default(), &Default::default());
-        part.begin_step();
-        (part.revise_target(&model(), &(), |reader, _| {
-            let mut model: NamedModel<Design> = reader.previous()?;
-            model.mvfs(Vector3::from_array([Design::ZERO; 3]), "v0", "f0", "s0")?;
-            Ok(model)
+        let runner = Runner::new(OperationRegistry::default());
+        (runner.run_step(&mut part, "s", |ctx| {
+            ctx.produce(&model(), &(), |reader, _| {
+                let mut model: NamedModel<Design> = reader.previous()?;
+                model.mvfs(Vector3::from_array([Design::ZERO; 3]), "v0", "f0", "s0")?;
+                Ok(model)
+            })
         }))
         .unwrap();
-        part.end_run(0);
         part
     }
 

@@ -18,11 +18,7 @@ use geop_cad_base::{
     operations::{self, BuiltPart, outputs, workspace},
 };
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::{
-    program::Program,
-    values::{Settings, StateValues},
-    workspace::FileStore,
-};
+use geop_core_program::{program::Program, workspace::FileStore};
 use geop_ops_assembly::solving::{Rerun, check as check_mates, solve};
 use geop_ops_output::Output;
 use std::{
@@ -174,21 +170,14 @@ fn build(path: &Path) -> GeopResult<(Program, BuiltPart, Vec<String>)> {
     let mut built = operations::build(&program, &path, workspace.clone())?;
     let report = check_mates(&built.part.current())?;
     if !report.converged {
-        let inputs = Settings::new();
         let mut rerun = Rerun {
             runner: &built.runner,
             part: &mut built.part,
             program: &program,
-            inputs: &inputs,
         };
         let (moved, _) = solve(&mut rerun, &program.state, &[], None)?;
         program.state.extend(moved);
-        program.run(
-            &built.runner,
-            &mut built.part,
-            &Settings::new(),
-            &StateValues::new(),
-        )?;
+        program.run(&built.runner, &mut built.part)?;
     }
     Ok((program, built, report.failed))
 }

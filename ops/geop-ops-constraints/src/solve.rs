@@ -36,20 +36,21 @@ use geop_core_math::{
 pub use geop_core_math::solvers::system::Mobility;
 
 use geop_core_program::{
-    part::{Part, Reader},
+    part::Part,
     program::Program,
-    program_runner::ProgramRunner,
-    values::{Design, Settings, StateValue, StateValues},
+    reader::Reader,
+    runner::Runner,
+    values::{Design, StateValue, StateValues},
 };
 
 use crate::constraint::{Constraint, Constraints};
 
-/// A program to run again at every state a solve tries, with its inputs.
+/// A program to run again at every state a solve tries: its state is the
+/// state tried.
 pub struct Run<'r> {
-    pub runner: &'r ProgramRunner,
+    pub runner: &'r Runner,
     pub part: &'r mut Part,
-    pub program: &'r Program,
-    pub inputs: &'r Settings,
+    pub program: Program,
 }
 
 thread_local! {
@@ -68,7 +69,8 @@ impl Run<'_> {
     /// The part the program builds at `state`.
     fn at(&mut self, state: &StateValues) -> &Part {
         RUNS.set(RUNS.get() + 1);
-        self.runner.run(self.part, self.program, self.inputs, state);
+        self.program.state.clone_from(state);
+        self.runner.run(self.part, &self.program, None);
         self.part
     }
 }

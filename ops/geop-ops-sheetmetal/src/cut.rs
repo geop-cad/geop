@@ -16,10 +16,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{
-    element::ElementReference,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
+    element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_core_sketch::Shape;
 use geop_ops_extrude_revolve::operation::shape_loops;
@@ -117,8 +114,9 @@ impl PartOperation for SheetCut {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &SheetCutArgs) -> GeopResult<()> {
-        body::run::<Self>(step, part, args)
+    fn run(ctx: &mut StepContext, args: &SheetCutArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        body::run::<Self>(ctx, args)
     }
 
     /// The sketch, picked, and the face, if not the one the sketch lies on.

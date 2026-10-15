@@ -12,7 +12,8 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, PickedElement},
-    part::{Part, Reader},
+    part::Part,
+    reader::Reader,
     values::Design,
 };
 use geop_ops_datums::ORIGIN;

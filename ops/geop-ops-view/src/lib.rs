@@ -53,8 +53,8 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
-    part::Reader,
-    target::TargetReference,
+    reader::Reader,
+    target::{Target, TargetReference},
 };
 use serde::Serialize;
 
@@ -287,6 +287,9 @@ pub fn annotations_of(reader: &Reader) -> Vec<ViewAnnotation> {
         .collect()
 }
 
+/// Each step's own.
+impl Target for Annotations {}
+
 /// Read whole.
 impl Kind for Annotations {
     const NAME: &'static str = "annotations";
@@ -339,6 +342,9 @@ pub fn listed_by_steps(reader: &Reader) -> Vec<Listed> {
         .flatten()
         .collect()
 }
+
+/// Each step's own.
+impl Target for Listing {}
 
 /// Read whole.
 impl Kind for Listing {

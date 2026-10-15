@@ -287,8 +287,7 @@ fn a_thousand_equal_placed_parts_build_once() {
 fn moving_a_joint_of_one_of_two_placed_parts_builds_only_that_one() {
     let mut runner = runner();
     let file = write("arm", vec![state_frame("f", "j"), state_frame("g", "k")]);
-    let program =
-        Program::from_steps(vec![place_file("left", &file), place_file("right", &file)]);
+    let program = Program::from_steps(vec![place_file("left", &file), place_file("right", &file)]);
     let at = |left: f64, right: f64| {
         state(&[("left/j", [left, 0.0, 0.0]), ("right/j", [right, 0.0, 0.0])])
     };
@@ -299,8 +298,16 @@ fn moving_a_joint_of_one_of_two_placed_parts_builds_only_that_one() {
     ok(runner.run(&program, &inputs(&[]), &at(3.0, 2.0)));
     let after = runner.runner.counts();
     assert_eq!(after.builds - before.builds, 1, "one part is built again");
-    assert_eq!(after.placed - before.placed, 1, "the other's node is reused");
-    assert_eq!(take_built(), ["f@f"], "only what reads the joint is made again");
+    assert_eq!(
+        after.placed - before.placed,
+        1,
+        "the other's node is reused"
+    );
+    assert_eq!(
+        take_built(),
+        ["f@f"],
+        "only what reads the joint is made again"
+    );
     let reader = runner.part.current();
     let left = reader.retrieve_placed(&whole_frame("left/f")).unwrap();
     assert_encloses(left.element.data, [3.0, 0.0, 0.0]);
@@ -318,7 +325,11 @@ fn dragging_a_placed_part_by_its_pose_builds_nothing() {
     ok(runner.run(&program, &inputs(&[]), &state(&[("b.pose", [0.0; 3])])));
     take_built();
     let before = runner.runner.counts();
-    ok(runner.run(&program, &inputs(&[]), &state(&[("b.pose", [5.0, 0.0, 0.0])])));
+    ok(runner.run(
+        &program,
+        &inputs(&[]),
+        &state(&[("b.pose", [5.0, 0.0, 0.0])]),
+    ));
     assert_eq!(runner.runner.counts(), before);
     assert_eq!(take_built(), Vec::<String>::new());
 }
@@ -332,5 +343,8 @@ fn a_file_placing_itself_is_refused() {
     let program = Program::from_steps(vec![place_file("a", "loop_a.geop")]);
     let output = runner.run(&program, &inputs(&[]), &state(&[]));
     let error = output.step_errors[0].1.to_string();
-    assert!(error.contains("loop_a.geop -> loop_b.geop -> loop_a.geop"), "{error}");
+    assert!(
+        error.contains("loop_a.geop -> loop_b.geop -> loop_a.geop"),
+        "{error}"
+    );
 }

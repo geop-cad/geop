@@ -10,8 +10,7 @@ use geop_core_editor::{
 };
 use geop_core_program::{
     element::ElementReference,
-    part::Part,
-    program_runner::ProgramRunner,
+    part::StepContext,
     values::{Design, Settings, pose_state},
 };
 use std::collections::BTreeMap;
@@ -134,19 +133,14 @@ impl PartOperation for AddPart {
     /// its mates let it. A mate that cannot be resolved fails the step,
     /// after the others are defined. The placed part's own mates come up
     /// with its constraints (see [`geop_ops_constraints::Constraints::of`]).
-    fn run(
-        step: &str,
-        runner: &ProgramRunner,
-        part: &mut Part,
-        args: &AddPartArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("add_part({step}, file={:?})", args.file);
+    fn run(ctx: &mut StepContext, args: &AddPartArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        let context = with_context!("add_part({step}, file={:?})", args.file);
         if args.file.is_empty() {
-            return Err(GeopError::new("choose a file to place")).with_context(ctx);
+            return Err(GeopError::new("choose a file to place")).with_context(context);
         }
         let placement = Placement::State(pose_state(step));
-        define_placed(runner, part, step, &args.file, &args.parameters, placement)
-            .with_context(ctx)?;
+        define_placed(ctx, step, &args.file, &args.parameters, placement).with_context(context)?;
         let namer = Namer::new("add_part", step)?;
         let own_frame = MateEntity::of(
             step,
@@ -171,15 +165,15 @@ impl PartOperation for AddPart {
                 name: name.clone(),
                 elements: mate.entities.iter().map(Selectable::picked).collect(),
             });
-            let resolved = part.define_target(&crate::mate(&name), &(name.clone(), mate), resolve);
+            let resolved = ctx.produce(&crate::mate(&name), &(name.clone(), mate), resolve);
             if resolved.is_ok() {
                 defined.push((name, format!("{step} {id}")));
             }
             failed = failed.and(resolved);
         }
-        let constrained = define(part, step, Some(&pose_state(step)), &defined);
-        let listing = part.define_target(&listing(step), &Listing(listed), |_, l| Ok(l.clone()));
-        failed.and(constrained).and(listing).with_context(ctx)
+        let constrained = define(ctx, Some(&pose_state(step)), &defined);
+        let listing = ctx.produce(&listing(step), &Listing(listed), |_, l| Ok(l.clone()));
+        failed.and(constrained).and(listing).with_context(context)
     }
 
     /// The file, where it goes, and its mates: see [`crate::editor`].

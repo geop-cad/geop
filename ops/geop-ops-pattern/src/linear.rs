@@ -13,12 +13,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_program::{
-    numeric::NumericInput,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
-};
+use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
 use geop_ops_datums::origin_axis;
 use geop_ops_model::{ModelOperation, NamedModel};
 use serde::{Deserialize, Serialize};
@@ -275,13 +270,9 @@ impl PartOperation for LinearPattern {
         }
     }
 
-    fn run(
-        step: &str,
-        _: &ProgramRunner,
-        part: &mut Part,
-        args: &LinearPatternArgs,
-    ) -> GeopResult<()> {
-        run_pattern::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &LinearPatternArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        run_pattern::<Self>(ctx, args)
     }
 
     /// The bodies or the features, picked; each direction — the second

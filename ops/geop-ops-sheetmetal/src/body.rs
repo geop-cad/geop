@@ -14,8 +14,9 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
-    part::{Part, Reader},
-    target::TargetReference,
+    part::StepContext,
+    reader::Reader,
+    target::{Target, TargetReference},
     values::Design,
 };
 use geop_ops_model::{
@@ -150,6 +151,9 @@ pub fn made(step: &str) -> TargetReference<Made> {
     TargetReference::new(format!("sheet_metal:{step}"))
 }
 
+/// Each step's own.
+impl Target for Made {}
+
 /// Read whole.
 impl Kind for Made {
     const NAME: &'static str = "sheet_metal";
@@ -216,13 +220,14 @@ fn note(reader: &Reader, step: &String) -> GeopResult<SolidNotes> {
     Ok(notes)
 }
 
-/// Runs the step `step` of `O`: works out what it makes, records it, and
-/// builds it into the model.
-pub(crate) fn run<O: SheetStep>(step: &str, part: &mut Part, args: &O::Args) -> GeopResult<()> {
-    part.define_target(&made(step), &(step.to_string(), args.clone()), planned::<O>)?;
-    part.revise_target(&sheets(), &step.to_string(), record)?;
-    part.revise_target(&solid_notes(), &step.to_string(), note)?;
-    build_model::<O>(part, step, args)
+/// Runs the step of `O`: works out what it makes, records it, and builds
+/// it into the model.
+pub(crate) fn run<O: SheetStep>(ctx: &mut StepContext, args: &O::Args) -> GeopResult<()> {
+    let step = ctx.step();
+    ctx.produce(&made(step), &(step.to_string(), args.clone()), planned::<O>)?;
+    ctx.produce(&sheets(), &step.to_string(), record)?;
+    ctx.produce(&solid_notes(), &step.to_string(), note)?;
+    build_model::<O>(ctx, args)
 }
 
 /// The sketch of the bend lines of the flat pattern the step `step` made.
@@ -237,9 +242,10 @@ fn bend_lines(reader: &Reader, step: &String) -> GeopResult<PlacedSketch<Design>
 }
 
 /// Adds the sketch `name` of the bend lines of the flat pattern the step
-/// `step` made.
-pub(crate) fn add_bend_lines(part: &mut Part, step: &str, name: &str) -> GeopResult<()> {
-    part.define_target(&sketch(name), &step.to_string(), bend_lines)
+/// made.
+pub(crate) fn add_bend_lines(ctx: &mut StepContext, name: &str) -> GeopResult<()> {
+    let step = ctx.step();
+    ctx.produce(&sketch(name), &step.to_string(), bend_lines)
 }
 
 /// Builds what the step `step` made into `model` ([`ModelOperation::build`]

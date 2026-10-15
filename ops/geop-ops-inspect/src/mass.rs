@@ -8,7 +8,7 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, PickedElement},
-    part::Reader,
+    reader::Reader,
     values::Design,
 };
 use geop_core_topology::mass::MassProperties;

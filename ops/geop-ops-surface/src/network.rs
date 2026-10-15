@@ -40,11 +40,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_program::{
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
-};
+use geop_core_program::{part::StepContext, reader::Reader, values::Design};
 use geop_core_topology::{
     Sense,
     build::{BodySpec, CoedgeOn, EdgeSpec, FaceSpec},
@@ -95,13 +91,9 @@ impl PartOperation for NetworkSurface {
         NetworkSurfaceArgs::default()
     }
 
-    fn run(
-        step: &str,
-        _: &ProgramRunner,
-        part: &mut Part,
-        args: &NetworkSurfaceArgs,
-    ) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &NetworkSurfaceArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The curves of each direction, picked.

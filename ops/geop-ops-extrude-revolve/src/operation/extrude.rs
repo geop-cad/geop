@@ -14,12 +14,7 @@ use geop_core_math::{
     scalars::{Ring, Scalar},
     vector::{Vector2, Vector3},
 };
-use geop_core_program::{
-    numeric::NumericInput,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
-};
+use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
 use geop_core_sketch::{Enclosure, Region, Shape, Sketch, profile::curve_polyline};
 use geop_core_topology::build::BuiltBody;
 use geop_ops_booleans::{Extent, extent::reach_past};
@@ -126,8 +121,9 @@ impl PartOperation for Extrude {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &ExtrudeArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &ExtrudeArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The sketch, picked; how far, each length typed or dragged as a

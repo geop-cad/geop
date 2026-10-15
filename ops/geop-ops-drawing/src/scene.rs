@@ -42,7 +42,7 @@ use geop_core_math::{
     solvers::probe::first_success,
     vector::Vector3,
 };
-use geop_core_program::{element::ElementReference, part::Reader, values::Design};
+use geop_core_program::{element::ElementReference, reader::Reader, values::Design};
 use geop_core_topology::{FaceId, Model};
 use geop_ops_assembly::placed_parts;
 use geop_ops_model::{NamedModel, Threads, model, threads};

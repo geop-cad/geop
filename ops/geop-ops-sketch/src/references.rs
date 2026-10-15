@@ -17,7 +17,7 @@
 //! edge projects to. All of it is reference geometry: fixed, construction,
 //! drawn as such, and never part of a profile.
 
-use geop_core_program::{element::ElementReference, part::Reader, values::Design};
+use geop_core_program::{element::ElementReference, reader::Reader, values::Design};
 use std::collections::BTreeMap;
 
 use geop_core_editor::one_of;

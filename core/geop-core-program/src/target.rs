@@ -173,9 +173,8 @@ impl Node {
         state_read: Option<String>,
     ) -> Self {
         let value = made.map(|value| Rc::new(value) as Rc<dyn Any>);
-        let equal: fn(&dyn Any, &dyn Any) -> bool = |a, b| {
-            (a.downcast_ref::<Out>()).is_some_and(|a| b.downcast_ref::<Out>() == Some(a))
-        };
+        let equal: fn(&dyn Any, &dyn Any) -> bool =
+            |a, b| (a.downcast_ref::<Out>()).is_some_and(|a| b.downcast_ref::<Out>() == Some(a));
         let same = previous.is_some_and(|old| {
             old.kind == TypeId::of::<Out>()
                 && match (&old.value, &value) {

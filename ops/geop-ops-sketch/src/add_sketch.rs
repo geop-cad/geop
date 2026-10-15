@@ -8,10 +8,7 @@ use geop_core_editor::{
     part_operation::PartOperation,
 };
 use geop_core_program::{
-    element::ElementReference,
-    numeric::NumericInput,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
+    element::ElementReference, numeric::NumericInput, part::StepContext, reader::Reader,
     values::Design,
 };
 use std::collections::BTreeMap;
@@ -208,8 +205,9 @@ impl PartOperation for AddSketch {
     }
 
     /// Defines the sketch named after the step.
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &AddSketchArgs) -> GeopResult<()> {
-        part.define_target(&sketch(step), &(step.to_string(), args.clone()), draw)
+    fn run(ctx: &mut StepContext, args: &AddSketchArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        ctx.produce(&sketch(step), &(step.to_string(), args.clone()), draw)
     }
 
     /// The plane, picked, and the sketch drawn in it: see

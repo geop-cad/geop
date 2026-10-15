@@ -11,8 +11,8 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
-    part::Reader,
-    target::TargetReference,
+    reader::Reader,
+    target::{Target, TargetReference},
     values::Design,
 };
 use geop_ops_model::{Chain, Path, model};
@@ -64,6 +64,9 @@ impl PlacedSketch3d {
         Ok(chain_of_pieces(&self.name, pieces, chain.closed))
     }
 }
+
+/// Produced once, by the step that draws it.
+impl Target for PlacedSketch3d {}
 
 /// Read whole.
 impl Kind for PlacedSketch3d {

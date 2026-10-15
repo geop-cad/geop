@@ -5,8 +5,8 @@
 use geop_core_math::geop_error::{GeopError, GeopResult, WithContext};
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
-    part::Reader,
-    target::TargetReference,
+    reader::Reader,
+    target::{Target, TargetReference},
 };
 use geop_ops_output::{Content, Export, Exporter, ExporterInfo, Output, sheet::Format};
 use serde::Deserialize;
@@ -26,6 +26,9 @@ const PREFIX: &str = "drawing:";
 pub(crate) fn described(_: &Reader, args: &DrawingArgs) -> GeopResult<DrawingArgs> {
     Ok(args.clone())
 }
+
+/// Each drawing step's own.
+impl Target for DrawingArgs {}
 
 /// Read whole.
 impl Kind for DrawingArgs {

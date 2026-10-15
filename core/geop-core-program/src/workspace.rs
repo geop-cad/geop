@@ -218,7 +218,11 @@ impl<F: FileStore + 'static> Workspace for Files<F> {
     }
 
     fn revision(&self, path: &str) -> u64 {
-        self.revisions.borrow().get(path).copied().unwrap_or_default()
+        self.revisions
+            .borrow()
+            .get(path)
+            .copied()
+            .unwrap_or_default()
     }
 }
 

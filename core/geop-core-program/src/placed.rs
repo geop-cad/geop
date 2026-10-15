@@ -116,10 +116,9 @@ pub fn place(ctx: &mut StepContext, instance: &str, args: &PlacedArgs) -> GeopRe
     let reader = ctx.reader();
     let part = reader.part().placed_at(instance, reader.position(), None)?;
     match part.failures().first() {
-        Some((step, e)) => Err(ctx_error(GeopError::new(e.clone()).with_context(format!(
-            "step `{step}` of {:?}",
-            args.file
-        )))),
+        Some((step, e)) => Err(ctx_error(
+            GeopError::new(e.clone()).with_context(format!("step `{step}` of {:?}", args.file)),
+        )),
         None => Ok(()),
     }
 }
@@ -134,7 +133,9 @@ pub fn place(ctx: &mut StepContext, instance: &str, args: &PlacedArgs) -> GeopRe
 pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart> {
     let own = reader.own().unwrap_or_default();
     let instance = own.strip_prefix(PLACED).ok_or_else(|| {
-        GeopError::new(format!("target `{own}` is no placed part's: name it by `placed`"))
+        GeopError::new(format!(
+            "target `{own}` is no placed part's: name it by `placed`"
+        ))
     })?;
     check_name(instance)?;
     let runner = reader.runner()?;
@@ -169,6 +170,13 @@ pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart
             part
         }
     };
+    // The slice it is given, and what it read besides: a value of the slice
+    // that changes or goes, or one it read that comes, builds it again, so
+    // its state is always the one it is placed with.
+    let slice = (given.range(prefix.clone()..)).take_while(|(name, _)| name.starts_with(&prefix));
+    for (name, value) in slice {
+        reader.record_raw(Read::State(name.clone(), Some(value.clone())));
+    }
     for name in &part.states_read {
         let name = format!("{prefix}{name}");
         let value = given.get(&name).cloned();
@@ -220,8 +228,7 @@ impl BuildCache {
         let builds = self.0.get(&key.hash())?;
         (builds.iter())
             .find(|(built, part)| {
-                built == key
-                    && (part.files_read.iter()).all(|(path, read)| revision(path) == *read)
+                built == key && (part.files_read.iter()).all(|(path, read)| revision(path) == *read)
             })
             .map(|(_, part)| part.clone())
     }

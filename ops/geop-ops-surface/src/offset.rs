@@ -13,10 +13,7 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_core_program::{
-    element::ElementReference,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
+    element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model};
 use geop_ops_shell::shell::offset_faces;
@@ -65,13 +62,9 @@ impl PartOperation for OffsetSurface {
         }
     }
 
-    fn run(
-        step: &str,
-        _: &ProgramRunner,
-        part: &mut Part,
-        args: &OffsetSurfaceArgs,
-    ) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &OffsetSurfaceArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The faces, picked, and the distance.

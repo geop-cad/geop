@@ -184,7 +184,9 @@ impl Part {
             })
             .collect();
         found.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
-        (found.into_iter()).map(|(_, name, node)| (name, node)).collect()
+        (found.into_iter())
+            .map(|(_, name, node)| (name, node))
+            .collect()
     }
 
     /// The part placed as `instance` that a reader before `before` sees.
@@ -230,7 +232,12 @@ impl Part {
 
     /// A state `read`, made before `before` for the node `own`, made its
     /// reader read — itself, or through the target it read — if any.
-    pub(crate) fn state_read(&self, read: &Read, before: usize, own: Option<&str>) -> Option<String> {
+    pub(crate) fn state_read(
+        &self,
+        read: &Read,
+        before: usize,
+        own: Option<&str>,
+    ) -> Option<String> {
         match read {
             Read::State(name, _) => Some(name.clone()),
             Read::Target { name, producer, .. } => self.node(name, producer)?.state_read.clone(),
@@ -367,7 +374,12 @@ impl Part {
                 (Some(a), Some(b)) => {
                     let placed = (a.value.as_ref().ok())
                         .and_then(|a| a.downcast_ref::<PlacedPart>())
-                        .zip(b.value.as_ref().ok().and_then(|b| b.downcast_ref::<PlacedPart>()));
+                        .zip(
+                            b.value
+                                .as_ref()
+                                .ok()
+                                .and_then(|b| b.downcast_ref::<PlacedPart>()),
+                        );
                     match placed {
                         Some((a, b)) => differences.extend(
                             (a.part.differences(&b.part).into_iter())
@@ -403,7 +415,12 @@ pub struct StepContext<'a> {
 }
 
 impl<'a> StepContext<'a> {
-    pub(crate) fn new(runner: &'a Runner, part: &'a mut Part, step: &'a str, position: usize) -> Self {
+    pub(crate) fn new(
+        runner: &'a Runner,
+        part: &'a mut Part,
+        step: &'a str,
+        position: usize,
+    ) -> Self {
         Self {
             runner,
             part,
@@ -418,7 +435,7 @@ impl<'a> StepContext<'a> {
     }
 
     /// The runner running the step: the files around its program.
-    pub fn runner(&self) -> &Runner {
+    pub fn runner(&self) -> &'a Runner {
         self.runner
     }
 
@@ -473,9 +490,8 @@ impl<'a> StepContext<'a> {
         self.runner.count_make();
         let recording = Recording::default();
         let reader = Reader::making(part, at, name, old, self.runner, &recording);
-        let made = make(&reader, args).map_err(|e| {
-            e.with_context(format!("making target `{name}` in step `{step}`"))
-        });
+        let made = make(&reader, args)
+            .map_err(|e| e.with_context(format!("making target `{name}` in step `{step}`")));
         let reads = recording.take();
         let state_read = (reads.iter()).find_map(|read| part.state_read(read, at, Some(name)));
         let (value, result) = match made {

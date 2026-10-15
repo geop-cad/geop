@@ -11,12 +11,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::{FrameAxis, Motion},
 };
-use geop_core_program::{
-    numeric::NumericInput,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
-};
+use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
 use geop_ops_datums::origin_axis;
 use geop_ops_model::{ModelOperation, NamedModel};
 use serde::{Deserialize, Serialize};
@@ -131,13 +126,9 @@ impl PartOperation for CircularPattern {
         }
     }
 
-    fn run(
-        step: &str,
-        _: &ProgramRunner,
-        part: &mut Part,
-        args: &CircularPatternArgs,
-    ) -> GeopResult<()> {
-        run_pattern::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &CircularPatternArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        run_pattern::<Self>(ctx, args)
     }
 
     /// The bodies or the features, and the axis, picked; the count and the

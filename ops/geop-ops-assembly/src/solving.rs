@@ -15,10 +15,11 @@
 
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
-    part::{Part, Reader},
+    part::Part,
     program::Program,
-    program_runner::ProgramRunner,
-    target::TargetReference,
+    reader::Reader,
+    runner::Runner,
+    target::{Target, TargetReference},
     values::{Design, StateValue, StateValues, pose_state},
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -42,9 +43,6 @@ use geop_ops_constraints::{
     unknown::Unknowns,
 };
 
-/// What a program's parameters are set to: its inputs.
-type Inputs = geop_core_program::values::Settings;
-
 /// A parameter's value, as an input.
 use serde::Serialize;
 
@@ -53,13 +51,12 @@ pub use geop_ops_constraints::unknown::{Unknown, declare_unknowns};
 use crate::placed::{Drawn, Located, drawn, locate, placed_parts};
 use geop_ops_view::PartView;
 
-/// A program and what it is given, its runner and the part it last ran
-/// on: what a solve runs again at every state it tries.
+/// A program, its runner and the part it last ran on: what a solve runs
+/// again at every state it tries, the program's state set to it.
 pub struct Rerun<'r> {
-    pub runner: &'r ProgramRunner,
+    pub runner: &'r Runner,
     pub part: &'r mut Part,
     pub program: &'r Program,
-    pub inputs: &'r Inputs,
 }
 
 impl Rerun<'_> {
@@ -73,8 +70,7 @@ impl Rerun<'_> {
         Run {
             runner: self.runner,
             part: &mut *self.part,
-            program: self.program,
-            inputs: self.inputs,
+            program: self.program.clone(),
         }
     }
 }
@@ -124,6 +120,9 @@ const SETTINGS: &str = "settings:";
 pub fn settings_of(of: &str) -> TargetReference<Settings> {
     TargetReference::new(format!("{SETTINGS}{of}"))
 }
+
+/// Each joint's own.
+impl Target for Settings {}
 
 /// Read whole.
 impl Kind for Settings {

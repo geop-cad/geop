@@ -243,7 +243,7 @@ fn set_value(kind: &mut MateKind, v: f64) {
 /// limits; the joints a coupling ties, and how.
 fn selected<'a>(
     f: &mut PartForm<'a>,
-    before: &geop_core_program::part::Reader<'a>,
+    before: &geop_core_program::reader::Reader<'a>,
     id: &str,
     mate: &Mate,
     joint: Option<&SettingsState>,
@@ -487,13 +487,13 @@ fn parameters(f: &mut PartForm, context: &Context, args: &AddPartArgs) {
         return;
     }
     // What each comes to as the step placed it, set or not.
-    let placed = (context.built.as_ref()).and_then(|built| built.inside(context.step).ok());
+    let placed = (context.built.as_ref()).and_then(|built| built.placed_part(context.step).ok());
     let mut chosen = Settings::new();
     if let Some(placed) = &placed {
         for (name, value) in &read_parameter_values(placed).unwrap_or_default().0 {
             let value = match value {
                 ParameterValue::Number(n) => Setting::Number(*n),
-                ParameterValue::Row { name, .. } => Setting::Text(name.clone()),
+                ParameterValue::Text(name) => Setting::Text(name.clone()),
             };
             chosen.insert(name.clone(), value);
         }

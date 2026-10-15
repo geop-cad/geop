@@ -324,7 +324,11 @@ mod tests {
             .unwrap();
             let a = ElementReference::<Lengths, Length>::new(defined, "a");
             (runner.run_step(part, "s2", |ctx| {
-                ctx.produce(&total, &a, |reader, a| Ok(2.0 * reader.retrieve_element(a)?))
+                ctx.produce(
+                    &total,
+                    &a,
+                    |reader, a| Ok(2.0 * reader.retrieve_element(a)?),
+                )
             }))
             .unwrap();
         };

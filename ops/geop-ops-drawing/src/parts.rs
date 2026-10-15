@@ -2,7 +2,7 @@
 //! own (see [`geop_ops_bom`]).
 
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::part::Reader;
+use geop_core_program::reader::Reader;
 use geop_ops_bom::{LineKind, Structure, bom};
 
 use crate::{DrawingArgs, PartsListLine};

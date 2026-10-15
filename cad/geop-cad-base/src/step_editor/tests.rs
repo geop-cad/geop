@@ -14,9 +14,9 @@ use geop_core_program::{
     element::PickedElement,
     numeric::NumericInput,
     operation::Operation,
-    part::Part,
+    part::{Part, StepContext},
     program::{Program, ProgramStep},
-    program_runner::ProgramRunner,
+    runner::Runner,
     values::Design,
 };
 use serde::{Deserialize, Serialize};
@@ -52,7 +52,7 @@ impl Operation for MarkOperation {
     const KIND: &'static str = "mark";
     type Args = MarkArgs;
 
-    fn run(_: &str, _: &ProgramRunner, _: &mut Part, _: &MarkArgs) -> GeopResult<()> {
+    fn run(_: &mut StepContext, _: &MarkArgs) -> GeopResult<()> {
         Ok(())
     }
 }
@@ -160,7 +160,7 @@ fn down(x: f64, y: f64) -> Pointer<Design> {
 /// A mark step, `mark`, being edited, as an editor drives it.
 struct Editor {
     editors: Editors,
-    runner: ProgramRunner,
+    runner: Runner,
     part: Part,
     program: Program,
     editor: StepEditor,
@@ -170,7 +170,7 @@ impl Editor {
     /// A mark with `args` — `new`, as just inserted, or opened again.
     fn new(args: MarkArgs, new: bool) -> Self {
         let editors = Editors::default().with(MarkOperation).unwrap();
-        let runner = ProgramRunner::new(editors.operations().unwrap());
+        let runner = Runner::new(editors.operations().unwrap());
         let mut part = Part::default();
         let program = Program::from_steps(vec![
             ProgramStep::new::<MarkOperation>("mark", &args).unwrap(),

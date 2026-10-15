@@ -6,9 +6,10 @@ use geop_core_editor::{
 use geop_core_program::{
     element::ElementReference,
     operation_registry::OperationRegistry,
-    part::{Part, Reader},
+    part::Part,
     program::{Program, ProgramStep},
-    program_runner::{ProgramRunner, RunOutput},
+    program_runner::{RunOutput, Runner},
+    reader::Reader,
     values::{Design, StateValue, StateValues, pose_state},
     workspace::Location,
 };
@@ -154,7 +155,7 @@ fn moved_to(moved: &StateValues, instance: &str) -> Pose<Design> {
 
 /// A program of steps placing the cube, run with a state.
 struct Assembly {
-    runner: ProgramRunner,
+    runner: Runner,
     part: Part,
     program: Program,
     inputs: Settings,
@@ -165,7 +166,7 @@ impl Assembly {
     /// The program `steps` of the file `assembly.geop`, placing parts
     /// from `shelf`, run with the state `state`.
     fn with(shelf: Shelf, steps: Vec<ProgramStep>, state: StateValues) -> Self {
-        let mut runner = ProgramRunner::new(registry());
+        let mut runner = Runner::new(registry());
         runner.workspace = Some(Rc::new(shelf));
         runner.location = Location {
             file: "assembly.geop".into(),

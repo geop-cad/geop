@@ -14,12 +14,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
     with_context,
 };
-use geop_core_program::{
-    numeric::NumericInput,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
-};
+use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
 use geop_core_sketch::{CurveKind, ProfileLoop, Shape};
 use geop_ops_extrude_revolve::{operation::shape_loops, sweep::SweepLoop};
 use geop_ops_model::{ModelOperation, NamedModel, Namer};
@@ -122,13 +117,9 @@ impl PartOperation for BaseFlange {
         }
     }
 
-    fn run(
-        step: &str,
-        _: &ProgramRunner,
-        part: &mut Part,
-        args: &BaseFlangeArgs,
-    ) -> GeopResult<()> {
-        body::run::<Self>(step, part, args)
+    fn run(ctx: &mut StepContext, args: &BaseFlangeArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        body::run::<Self>(ctx, args)
     }
 
     /// The sketch, picked; for a chain how deep; whether flipped; and the

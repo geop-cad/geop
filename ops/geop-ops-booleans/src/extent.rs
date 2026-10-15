@@ -11,7 +11,7 @@ use geop_core_math::{
     primitives::CoordinateSystem,
     scalars::Scalar,
 };
-use geop_core_program::{numeric::NumericInput, part::Reader};
+use geop_core_program::{numeric::NumericInput, reader::Reader};
 use geop_core_topology::{Body, FaceId, Model};
 use geop_ops_model::NamedModel;
 use serde::{Deserialize, Serialize};

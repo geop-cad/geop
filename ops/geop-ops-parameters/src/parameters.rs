@@ -8,8 +8,9 @@
 //! selected: `screw.diameter` is that row's value in the column
 //! `diameter`.
 //!
-//! What a parameter is defined as is the program's own, in a step of it
-//! ([`crate::steps::DefineParameters`]); what it is *built with* may be set
+//! What a parameter is defined as is the program's own, in a step of it —
+//! a number in [`crate::steps::DefineParameters`], a table in a
+//! [`crate::steps::LookupTable`] of its own; what it is *built with* may be set
 //! by a program placing the part, by the same name: the run's input of
 //! that name (see [`geop_core_program::values::Settings`]). So a placed screw is made M5 by the
 //! program placing it, without touching the screw's own file.
@@ -61,15 +62,18 @@ impl Material {
     }
 }
 
-/// One row of a [`ParameterKind::Table`]: a variant, by name, with a value
-/// per column.
+/// One row of a table ([`ParameterKind::Table`],
+/// [`crate::steps::LookupTableArgs`]): a variant, by name, with a value per
+/// column.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Row {
     pub name: String,
     pub values: Vec<f64>,
 }
 
-/// What a parameter is.
+/// What a parameter of a program is, as an editor lists them all: a number
+/// its [`crate::steps::DefineParameters`] step defines, or a table a
+/// [`crate::steps::LookupTable`] step of its own looks up.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ParameterKind {
@@ -99,6 +103,20 @@ pub struct Parameter {
     pub name: String,
     #[serde(flatten)]
     pub kind: ParameterKind,
+}
+
+/// A number parameter, as its [`crate::steps::DefineParameters`] step holds
+/// it: a formula of the parameters defined before it — `12`, `width / 2`.
+/// `min` and `max` are what a slider offers when the part is placed, not
+/// what is valid.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NumberParameter {
+    pub name: String,
+    pub expression: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
 }
 
 /// A program's parameters and properties, as an editor lists and edits them

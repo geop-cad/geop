@@ -29,8 +29,8 @@
 
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
-    part::Reader,
-    target::TargetReference,
+    reader::Reader,
+    target::{Target, TargetReference},
     values::Design,
 };
 use std::{borrow::Cow, collections::BTreeMap, sync::LazyLock};
@@ -219,6 +219,11 @@ pub struct AnyDatum;
 
 impl Kind for AnyDatum {
     const NAME: &'static str = drawn::DATUM;
+}
+
+/// Every step that adds a datum adds to them.
+impl Target for Datums {
+    const CHAIN: bool = true;
 }
 
 /// Read whole.

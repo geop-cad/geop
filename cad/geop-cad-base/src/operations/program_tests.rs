@@ -7,7 +7,7 @@ use crate::{
 use geop_core_program::{
     part::Part,
     program::Program,
-    program_runner::ProgramRunner,
+    runner::Runner,
     testing::assert_incremental,
     values::{Design, Settings, StateValue, pose_state},
     workspace::{Location, Workspace},
@@ -30,7 +30,7 @@ fn extrude(sketch: &str, distance: f64) -> ExtrudeArgs {
 /// A runner of programs, in an empty workspace, as the file `part.geop`.
 /// It runs them on one part, which keeps what the last run built.
 pub(super) struct Running {
-    runner: ProgramRunner,
+    runner: Runner,
     pub(super) part: Part,
     /// What each step built when last seen, by step: to tell what a run
     /// built anew from what it took from the run before.

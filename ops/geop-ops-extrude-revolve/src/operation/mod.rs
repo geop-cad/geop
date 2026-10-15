@@ -22,7 +22,7 @@ pub use revolve::{Revolve, RevolveArgs, RevolveAxis};
 pub use sweep::{Sweep, SweepArgs};
 
 use geop_core_program::{
-    element::ElementReference, numeric::NumericInput, part::Reader, values::Design,
+    element::ElementReference, numeric::NumericInput, reader::Reader, values::Design,
 };
 use std::collections::HashSet;
 

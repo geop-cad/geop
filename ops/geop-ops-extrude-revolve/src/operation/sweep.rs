@@ -16,10 +16,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::{
-    element::ElementReference,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
+    element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_ops_model::{Chain, ModelOperation, NamedModel, Namer, build_model, read_model};
 use geop_ops_sketch::{PlacedSketch, SketchRef};
@@ -157,8 +154,9 @@ impl PartOperation for Sweep {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &SweepArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &SweepArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
     /// The profile and the path, picked; the rails, if any; how the profile
     /// turns, twists and scales; whether a face; and how to combine.

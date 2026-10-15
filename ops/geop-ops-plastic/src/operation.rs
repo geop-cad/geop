@@ -14,10 +14,7 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_core_program::{
-    element::ElementReference,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
+    element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_core_sketch::Shape;
 use geop_core_topology::{EdgeId, FaceId};
@@ -107,8 +104,9 @@ impl PartOperation for Draft {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &DraftArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &DraftArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The faces and the neutral plane, picked, the angle and the pull
@@ -270,8 +268,9 @@ impl PartOperation for Lip {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &LipArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &LipArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The rim and its edges, picked, the width and the height.
@@ -362,8 +361,9 @@ impl PartOperation for Groove {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &GrooveArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &GrooveArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The rim and its edges, picked, the lip's width and height, and the
@@ -507,8 +507,9 @@ impl PartOperation for Rib {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &RibArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &RibArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The sketch and the solid, picked, the thickness and its side, which

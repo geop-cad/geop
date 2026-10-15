@@ -10,23 +10,25 @@ use geop_core_program::{
     numeric::NumericInput,
     operation::{Operation, StepArgs},
     operation_registry::OperationRegistry,
-    part::Part,
+    part::{Part, StepContext},
     program::Program,
-    program_runner::ProgramRunner,
-    target::TargetReference,
-    values::{Design, Setting, Settings, StateValue, StateValues, pose_state},
+    runner::Runner,
+    target::{Target, TargetReference},
+    values::{Design, Setting, Settings, StateValue, pose_state},
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    COLOR, DefineParameters, Parameter, ParameterKind, Parameters, PartProperties,
-    parameter_numbers, parameter_uses, parameters::Row, read_properties, rename_parameter,
-    set_parameters,
+    COLOR, DefineParameters, LookupTable, LookupTableArgs, Parameter, ParameterKind, Parameters,
+    PartProperties, parameter_numbers, parameter_uses, parameters::Row, read_properties,
+    rename_parameter, set_parameters,
 };
 
 /// What a test step makes, read whole.
 #[derive(Clone, Debug, PartialEq)]
 struct Made<T>(T);
+
+impl<T: PartialEq + 'static> Target for Made<T> {}
 
 impl<T: 'static> Kind for Made<T> {
     const NAME: &'static str = "made";
@@ -67,8 +69,9 @@ impl Operation for Length {
     const KIND: &'static str = "length";
     type Args = LengthArgs;
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &LengthArgs) -> GeopResult<()> {
-        part.define_target(
+    fn run(ctx: &mut StepContext, args: &LengthArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        ctx.produce(
             &TargetReference::new(step),
             &args.length,
             |reader, length| {
@@ -93,8 +96,9 @@ impl Operation for Colour {
     const KIND: &'static str = "colour";
     type Args = ColourArgs;
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, _: &ColourArgs) -> GeopResult<()> {
-        part.define_target(&TargetReference::new(step), &(), |reader, _| {
+    fn run(ctx: &mut StepContext, _: &ColourArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        ctx.produce(&TargetReference::new(step), &(), |reader, _| {
             RUNS.set(RUNS.get() + 1);
             Ok(Made(
                 read_properties(reader)?
@@ -110,12 +114,13 @@ fn registry() -> OperationRegistry {
     (OperationRegistry::default().with(Length))
         .and_then(|r| r.with(Colour))
         .and_then(|r| r.with(DefineParameters))
+        .and_then(|r| r.with(LookupTable))
         .and_then(|r| r.with(PartProperties))
         .unwrap()
 }
 
-fn runner() -> ProgramRunner {
-    ProgramRunner::new(registry())
+fn runner() -> Runner {
+    Runner::new(registry())
 }
 
 fn file() -> Program {
@@ -159,8 +164,11 @@ fn file() -> Program {
 }
 
 /// Runs `file` with its parameters set to `inputs`.
-fn run(runner: &ProgramRunner, part: &mut Part, file: &Program, inputs: &Settings) {
-    file.run(runner, part, inputs, &StateValues::new()).unwrap();
+fn run(runner: &Runner, part: &mut Part, file: &Program, inputs: &Settings) {
+    let output = runner.run_with(part, file, inputs, None);
+    if let Some((step, e)) = output.step_errors.into_iter().next() {
+        panic!("step {step:?}: {e}");
+    }
 }
 
 fn length(part: &Part, step: &str) -> f64 {
@@ -260,4 +268,47 @@ fn the_parameters_come_to_numbers_as_defined() {
     let numbers = parameter_numbers(&file()).unwrap();
     assert_eq!(numbers["screw.d"], 3.0);
     assert_eq!(numbers["width"], 6.0);
+}
+
+/// A table is a step of its own, looking the row its input names up: its
+/// row's name is the parameter, its columns `screw.d`. Read back, the
+/// program's parameters list it as the table it is.
+#[test]
+fn a_table_is_a_lookup_step_of_its_own() {
+    let file = file();
+    let table = file.step("table_screw").unwrap();
+    assert_eq!(table.operation, "lookup_table");
+    let args: LookupTableArgs = serde_json::from_value(table.args.clone()).unwrap();
+    assert_eq!(
+        (args.input.as_str(), args.selected.as_str()),
+        ("screw", "M3")
+    );
+    assert_eq!(
+        file.steps.iter().position(|s| s.id == "table_screw"),
+        Some(0)
+    );
+    let defined = crate::parameters_of(&file);
+    assert!(matches!(
+        defined.get("screw").map(|p| &p.kind),
+        Some(ParameterKind::Table { rows, .. }) if rows.len() == 2
+    ));
+}
+
+/// A text naming no row of the table fails, naming the input and the rows;
+/// the steps reading the table fail with it.
+#[test]
+fn a_table_given_no_row_of_it_fails_by_name() {
+    let file = file();
+    let runner = runner();
+    let mut part = Part::default();
+    let m9 = Settings::from([("screw".to_string(), Setting::Text("M9".into()))]);
+    let output = runner.run_with(&mut part, &file, &m9, None);
+    let (step, error) = &output.step_errors[0];
+    assert_eq!(step, "table_screw");
+    let error = error.to_string();
+    assert!(
+        error.contains("\"screw\" is \"M9\", which names no row of its table: M3, M5"),
+        "{error}"
+    );
+    assert!(output.step_errors.iter().any(|(step, _)| step == "half"));
 }

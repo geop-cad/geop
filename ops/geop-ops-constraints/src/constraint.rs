@@ -2,7 +2,7 @@
 //! all of a part's together ([`Constraints`]).
 //!
 //! A step defines its constraints with [`define_constraints`] in a target
-//! of its own, made by its generator and made again only when what that
+//! of its own, made by its make and made again only when what that
 //! read changes. A solve runs the program at every state it tries, and
 //! gathers them all once per run ([`Constraints::of`]): no step builds on
 //! the constraints of the steps before it, so a constraint that moves makes
@@ -17,9 +17,10 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind},
-    instance::instance_path,
-    part::{Generator, Part, Reader},
-    target::TargetReference,
+    part::{Make, StepContext},
+    placed::instance_path,
+    reader::Reader,
+    target::{Target, TargetReference},
     values::Design,
 };
 
@@ -109,11 +110,11 @@ impl Constraints {
     /// the instance is: it is a length within it.
     pub fn of(reader: &Reader) -> GeopResult<Self> {
         let mut all = Self::own(reader)?;
-        for name in reader.subparts() {
-            let inside =
-                (reader.inside(name).and_then(|inside| Self::of(&inside))).map_err(|e| {
-                    e.with_context(format!("the constraints of the placed part `{name}`"))
-                })?;
+        for name in reader.instances() {
+            let inside = (reader
+                .placed_part(name)
+                .and_then(|inside| Self::of(&inside)))
+            .map_err(|e| e.with_context(format!("the constraints of the placed part `{name}`")))?;
             for (constraint, defined) in inside.0 {
                 let jacobian = (defined.constraint.jacobian.into_iter())
                     .map(|(state, rows)| (instance_path(name, &state), rows))
@@ -182,6 +183,9 @@ struct StepConstraints {
     constraints: BTreeMap<String, Constraint>,
 }
 
+/// Each step's own.
+impl Target for StepConstraints {}
+
 /// One step's constraints, read whole.
 impl Kind for StepConstraints {
     const NAME: &'static str = "step constraints";
@@ -201,30 +205,36 @@ impl HasElements<StepConstraints> for StepConstraints {
     }
 }
 
-/// What a step's generator of constraints makes: its constraints, by name.
-pub type ConstraintGenerator<Args> = Generator<Args, BTreeMap<String, Constraint>>;
+/// What makes a step's constraints: its constraints, by name.
+pub type ConstraintGenerator<Args> = Make<Args, BTreeMap<String, Constraint>>;
 
-/// Defines the constraints `generator` makes of `args` in the step `step`,
-/// one of the part's [`Constraints`]. Each is checked: its derivatives are
-/// by states its generator read, a row per residual, as many numbers as a
-/// step of the state takes. A plain function, like
-/// [`Part::define_target`]'s.
+/// Defines the constraints `generator` makes of `args` in the step being
+/// run, one of the part's [`Constraints`]. Each is checked: its
+/// derivatives are by states its generator read, a row per residual, as
+/// many numbers as a step of the state takes. A plain function, like a
+/// make ([`Make`]).
+///
+/// A constraint whose residual reads a target that itself read the state —
+/// geometry the state drives, a sketch following a placed part — is
+/// refused, naming the constraint, the target and the state: a solve
+/// differentiates a constraint by the states it reads, and could not see
+/// how such a target moves with them.
 ///
 /// A step that fails here leaves a failed target, which fails
 /// [`Constraints::of`]: a solve must not go on without a constraint it
 /// could not make.
 pub fn define_constraints<Args: PartialEq + Clone + 'static>(
-    part: &mut Part,
-    step: &str,
+    ctx: &mut StepContext,
     args: &Args,
     generator: ConstraintGenerator<Args>,
 ) -> GeopResult<()> {
+    let step = ctx.step();
     let own = TargetReference::<StepConstraints>::new(format!("{CONSTRAINTS}:{step}"));
     let generated = Generated {
         args: args.clone(),
         generator,
     };
-    part.define_target(&own, &(step.to_string(), generated), make)
+    ctx.produce(&own, &(step.to_string(), generated), make)
 }
 
 /// The arguments of a step's own constraints: the step, and its generator
@@ -234,6 +244,15 @@ type Defining<Args> = (String, Generated<Args, BTreeMap<String, Constraint>>);
 /// The constraints of the step `step` its generator makes, checked.
 fn make<Args>(reader: &Reader, (step, generated): &Defining<Args>) -> GeopResult<StepConstraints> {
     let constraints = (generated.generator)(reader, &generated.args)?;
+    if let Some((target, state)) = reader.targets_reading_state().into_iter().next() {
+        let names: Vec<&str> = constraints.keys().map(String::as_str).collect();
+        return Err(GeopError::new(format!(
+            "constraint `{}` reads target `{target}`, which itself reads the state `{state}`: a \
+             solve could not see how it moves with the state — a constraint may read the state \
+             only itself",
+            names.join("`, `")
+        )));
+    }
     for (name, constraint) in &constraints {
         constraint.check(name, |state| {
             (reader.has_read_state(state)).then(|| reader.retrieve_state(state).dimension())

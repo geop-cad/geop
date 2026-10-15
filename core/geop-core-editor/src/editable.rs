@@ -9,9 +9,10 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{
     operation::{ErasedOperation, Operation, args, saved},
     operation_registry::OperationRegistry,
-    part::{Part, Reader},
+    part::Part,
     program::{Program, ProgramStep},
-    program_runner::ProgramRunner,
+    reader::Reader,
+    runner::Runner,
     values::Design,
 };
 use serde::Serialize;
@@ -153,7 +154,7 @@ pub enum OperationTier {
 /// draws it — what a pointer is over, without drawing it again.
 pub struct Context<'a> {
     pub step: &'a str,
-    pub runner: &'a ProgramRunner,
+    pub runner: &'a Runner,
     pub before: Reader<'a>,
     pub built: Option<Reader<'a>>,
     /// The part as drawn for picks (see [`Scene`]): given with every event
@@ -280,10 +281,22 @@ impl<O: Editable> ErasedEditable for O {
 #[derive(Default)]
 pub struct Editors(BTreeMap<&'static str, Rc<dyn ErasedEditable>>);
 
-/// The position of the step `step` in `program`.
-fn position(program: &Program, step: &str) -> GeopResult<usize> {
-    (program.steps.iter().position(|s| s.id == step))
-        .ok_or_else(|| GeopError::new(format!("step `{step}` is not in the program")))
+/// The part `part` as it is before the step `step` of `program`: before
+/// that step as the last run ran it — or, for a step the last run did not
+/// run, after the last step before it in `program` that it did.
+fn before<'a>(part: &'a Part, program: &Program, step: &str) -> GeopResult<Reader<'a>> {
+    let position = (program.steps.iter().position(|s| s.id == step))
+        .ok_or_else(|| GeopError::new(format!("step `{step}` is not in the program")))?;
+    let ran = |id: &str| part.order().iter().any(|ran| ran == id);
+    if ran(step) {
+        return Ok(part.before(step));
+    }
+    let earlier = (program.steps.iter().take(position).rev()).find(|s| ran(&s.id));
+    Ok(match (earlier, program.steps.first()) {
+        (Some(earlier), _) => part.after(&earlier.id),
+        (None, Some(first)) if ran(&first.id) || position == 0 => part.before(&first.id),
+        _ => part.current(),
+    })
 }
 
 /// A step being edited: its arguments as saved, its operation, and what
@@ -336,22 +349,20 @@ impl Editors {
 
     /// The step `step` of `program` and its operation, and what it is
     /// edited against in `part`, as `runner` last ran it: the part before
-    /// it and after it, at its position in `program`. A program edited since
-    /// the last run is read at its new positions until it runs again.
+    /// it and after it.
     fn step<'a>(
         &'a self,
-        runner: &'a ProgramRunner,
+        runner: &'a Runner,
         part: &'a Part,
         program: &'a Program,
         step: &'a str,
     ) -> GeopResult<Step<'a>> {
         let program_step = program.step(step)?;
-        let position = position(program, step)?;
         let context = Context {
             step,
             runner,
-            before: part.reader(position),
-            built: Some(part.reader(position + 1)),
+            before: before(part, program, step)?,
+            built: Some(part.after(step)),
             scene: None,
         };
         Ok(Step {
@@ -365,7 +376,7 @@ impl Editors {
     /// before its step `before`, or after its last.
     pub fn new_step(
         &self,
-        runner: &ProgramRunner,
+        runner: &Runner,
         part: &Part,
         program: &Program,
         kind: &str,
@@ -374,7 +385,7 @@ impl Editors {
     ) -> GeopResult<ProgramStep> {
         let operation = self.get(kind)?;
         let before = match before {
-            Some(step) => part.reader(position(program, step)?),
+            Some(step) => self::before(part, program, step)?,
             None => part.current(),
         };
         let context = Context {
@@ -399,7 +410,7 @@ impl Editors {
     /// What the editor shows while the step `step` is edited.
     pub fn presentation(
         &self,
-        runner: &ProgramRunner,
+        runner: &Runner,
         part: &Part,
         program: &Program,
         step: &str,
@@ -415,7 +426,7 @@ impl Editors {
     /// built.
     pub fn listed(
         &self,
-        runner: &ProgramRunner,
+        runner: &Runner,
         part: &Part,
         program: &Program,
         step: &str,
@@ -431,7 +442,7 @@ impl Editors {
     #[allow(clippy::too_many_arguments)]
     pub fn process_user_event(
         &self,
-        runner: &ProgramRunner,
+        runner: &Runner,
         part: &Part,
         program: &Program,
         step: &str,

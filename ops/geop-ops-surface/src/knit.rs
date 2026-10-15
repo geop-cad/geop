@@ -27,10 +27,7 @@ use geop_core_editor::{
     part_operation::PartOperation,
 };
 use geop_core_program::{
-    element::ElementReference,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
+    element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use std::collections::HashMap;
 
@@ -92,8 +89,9 @@ impl PartOperation for Knit {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &KnitArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &KnitArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The sheets, picked by a face of each, and whether they must close.

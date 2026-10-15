@@ -14,10 +14,7 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_core_program::{
-    element::ElementReference,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
+    element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_core_topology::FaceId;
 use geop_ops_booleans::{
@@ -86,13 +83,9 @@ impl PartOperation for ProjectCurve {
         }
     }
 
-    fn run(
-        step: &str,
-        _: &ProgramRunner,
-        part: &mut Part,
-        args: &ProjectCurveArgs,
-    ) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &ProjectCurveArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The sketch and the face, picked.

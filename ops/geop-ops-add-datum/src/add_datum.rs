@@ -23,12 +23,7 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::{
-    numeric::NumericInput,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
-};
+use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
 use serde::{Deserialize, Serialize};
 
 use geop_ops_datums::{Datums, datums};
@@ -640,8 +635,9 @@ impl PartOperation for AddDatum {
     }
 
     /// Adds the datum named after the step to the part's datums.
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &AddDatumArgs) -> GeopResult<()> {
-        part.revise_target(&datums(), &(step.to_string(), args.clone()), add)
+    fn run(ctx: &mut StepContext, args: &AddDatumArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        ctx.produce(&datums(), &(step.to_string(), args.clone()), add)
     }
 
     /// Picking the selection, choosing among the constructions that fit
@@ -694,7 +690,7 @@ mod tests {
         part.begin_run(&Default::default(), &Default::default());
         part.begin_step();
         part.begin_step();
-        let runner = ProgramRunner::new(Default::default());
+        let runner = Runner::new(Default::default());
         <AddDatum as Operation>::run("d", &runner, &mut part, args)?;
         part.end_run(0);
         let datums = read_datums(&part.current())?.into_owned();

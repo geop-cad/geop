@@ -5,31 +5,54 @@ use std::collections::BTreeMap;
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{
-    element::ElementReference,
     numeric::{
-        ParameterValue, formulas_in, names_in, parameter, parameter_of, rename_parameter_in,
+        ParameterValue, formulas_in, names_in, parameter_of, read_parameter_values,
+        rename_parameter_in,
     },
     operation_registry::OperationRegistry,
     part::Part,
     program::{Program, ProgramStep},
-    program_runner::ProgramRunner,
-    values::{Settings, StateValues},
+    runner::Runner,
 };
 use serde::Serialize;
 
 use crate::{
-    parameters::{ParameterKind, Parameters, validate_name},
-    steps::{DefineParameters, DefineParametersArgs, PARAMETERS, PROPERTIES, PartPropertiesArgs},
+    parameters::{NumberParameter, Parameter, ParameterKind, Parameters, validate_name},
+    steps::{
+        DefineParameters, DefineParametersArgs, LOOKUP, LookupTable, LookupTableArgs, PARAMETERS,
+        PROPERTIES, PartPropertiesArgs,
+    },
 };
 
 /// The parameters and properties of `program`, as its steps define them
-/// (see [`crate::steps`]): none, where it has no such step.
+/// (see [`crate::steps`]): its tables, as its [`LookupTable`] steps look
+/// them up, in order, then its numbers — none, where it has no such step.
 pub fn parameters_of(program: &Program) -> Parameters {
     let args = |kind: &str| program.steps.iter().find(|s| s.operation == kind);
-    let values = (args(PARAMETERS))
+    let tables = (program.steps.iter())
+        .filter(|s| s.operation == LOOKUP)
+        .filter_map(|step| serde_json::from_value::<LookupTableArgs>(step.args.clone()).ok())
+        .map(|table| Parameter {
+            name: table.input,
+            kind: ParameterKind::Table {
+                columns: table.columns,
+                rows: table.rows,
+                selected: table.selected,
+            },
+        });
+    let numbers = (args(PARAMETERS))
         .and_then(|step| serde_json::from_value::<DefineParametersArgs>(step.args.clone()).ok())
         .unwrap_or_default()
-        .values;
+        .values
+        .into_iter()
+        .map(|p| Parameter {
+            name: p.name,
+            kind: ParameterKind::Number {
+                expression: p.expression,
+                min: p.min,
+                max: p.max,
+            },
+        });
     let properties = (args(PROPERTIES))
         .and_then(|step| serde_json::from_value::<PartPropertiesArgs>(step.args.clone()).ok())
         .unwrap_or_default();
@@ -38,13 +61,15 @@ pub fn parameters_of(program: &Program) -> Parameters {
         material: properties.material,
         title: properties.title,
         designation: properties.designation,
-        values,
+        values: tables.chain(numbers).collect(),
     }
 }
 
 /// `program` with its parameters and properties set to `parameters`: in
 /// the steps that define them, put first where it has none yet — and none,
-/// where there is nothing to define. The steps check them as they run.
+/// where there is nothing to define. Each table is a [`LookupTable`] step
+/// of its own, `table_<name>`, before the numbers, whose formulas may read
+/// its columns. The steps check them as they run.
 pub fn set_parameters(program: &mut Program, parameters: Parameters) {
     let properties = PartPropertiesArgs {
         title: parameters.title,
@@ -52,9 +77,33 @@ pub fn set_parameters(program: &mut Program, parameters: Parameters) {
         color: parameters.color,
         material: parameters.material,
     };
-    let values = DefineParametersArgs {
-        values: parameters.values,
-    };
+    let mut numbers = Vec::new();
+    let mut tables = Vec::new();
+    for p in parameters.values {
+        match p.kind {
+            ParameterKind::Number {
+                expression,
+                min,
+                max,
+            } => numbers.push(NumberParameter {
+                name: p.name,
+                expression,
+                min,
+                max,
+            }),
+            ParameterKind::Table {
+                columns,
+                rows,
+                selected,
+            } => tables.push(LookupTableArgs {
+                input: p.name,
+                columns,
+                rows,
+                selected,
+            }),
+        }
+    }
+    let values = DefineParametersArgs { values: numbers };
     let empty = properties == PartPropertiesArgs::default();
     set_step(program, PROPERTIES, (!empty).then_some(&properties));
     set_step(
@@ -62,6 +111,23 @@ pub fn set_parameters(program: &mut Program, parameters: Parameters) {
         PARAMETERS,
         (!values.values.is_empty()).then_some(&values),
     );
+    program.steps.retain(|step| step.operation != LOOKUP);
+    for (k, table) in tables.iter().enumerate() {
+        program.steps.insert(k, lookup_step(table));
+    }
+}
+
+/// The step looking `table` up.
+#[allow(
+    clippy::expect_used,
+    reason = "the arguments of a lookup step are plain data"
+)]
+fn lookup_step(table: &LookupTableArgs) -> ProgramStep {
+    ProgramStep {
+        id: format!("table_{}", table.input),
+        operation: LOOKUP.to_string(),
+        args: serde_json::to_value(table).expect("a step's arguments are plain data"),
+    }
 }
 
 /// The step of `program` of the operation `kind` holding `args`: put first
@@ -100,39 +166,39 @@ fn set_step<A: Serialize>(program: &mut Program, kind: &str, args: Option<&A>) {
 
 /// What the parameters of `program` come to as it defines them, by the names a
 /// formula reads them by: a number by its name, a table's columns as
-/// `table.column` — its step run on its own (see
-/// [`crate::steps::DefineParameters`]). Fails naming one that does not
-/// come to anything.
+/// `table.column` — its steps defining them run on their own (see
+/// [`crate::steps::DefineParameters`], [`LookupTable`]). Fails naming one
+/// that does not come to anything.
 pub fn parameter_numbers(program: &Program) -> GeopResult<BTreeMap<String, f64>> {
     let steps = (program.steps.iter())
-        .filter(|step| step.operation == PARAMETERS)
+        .filter(|step| step.operation == PARAMETERS || step.operation == LOOKUP)
         .cloned()
         .collect();
-    let runner = ProgramRunner::new(OperationRegistry::default().with(DefineParameters)?);
+    let registry = (OperationRegistry::default().with(DefineParameters))
+        .and_then(|registry| registry.with(LookupTable))?;
+    let runner = Runner::new(registry);
     let mut part = Part::default();
     let defining = Program::from_steps(steps);
-    let output = runner.run(&mut part, &defining, &Settings::new(), &StateValues::new());
+    let output = runner.run(&mut part, &defining, None);
     if let Some((step, e)) = output.step_errors.into_iter().next() {
         return Err(e.with_context(format!("step {step:?}")));
     }
     let reader = part.current();
-    let mut numbers = BTreeMap::new();
+    let values = read_parameter_values(&reader)?;
     for p in &parameters_of(program).values {
-        let reference = ElementReference::whole(parameter(&p.name));
-        let value = (reader.retrieve_element(&reference))
-            .map_err(|e| e.with_context(format!("the parameter {:?}", p.name)))?;
-        match value {
-            ParameterValue::Number(n) => {
-                numbers.insert(p.name.clone(), *n);
-            }
-            ParameterValue::Row { columns, .. } => {
-                for (column, value) in columns {
-                    numbers.insert(format!("{}.{column}", p.name), *value);
-                }
-            }
+        if !values.0.iter().any(|(name, _)| *name == p.name) {
+            return Err(GeopError::new(format!(
+                "the parameter {:?} comes to nothing",
+                p.name
+            )));
         }
     }
-    Ok(numbers)
+    Ok((values.0.iter())
+        .filter_map(|(name, value)| match value {
+            ParameterValue::Number(n) => Some((name.clone(), *n)),
+            ParameterValue::Text(_) => None,
+        })
+        .collect())
 }
 
 /// What reads each parameter of `program`, by its name: the ids of the steps, and

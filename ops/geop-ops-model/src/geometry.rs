@@ -27,7 +27,7 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement},
-    part::Reader,
+    reader::Reader,
     values::Design,
 };
 use geop_core_topology::{Body as TopologyBody, EdgeId, FaceId};

@@ -17,9 +17,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{
-    element::ElementReference,
-    part::{Part, Reader},
-    values::Design,
+    element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_core_topology::Body;
 use geop_ops_booleans::{Combine, Tool, boolean::Reach};
@@ -424,26 +422,24 @@ pub(crate) fn track<S: Scalar>(at: Vector3<S>, direction: Vector3<S>) -> Option<
         .then_some(Track { at, direction })
 }
 
-/// What a pattern of features copies of their cosmetic threads: the copies'
-/// step and how it names them, the features' steps, and the placements.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ThreadCopies {
-    pub step: String,
-    pub naming: Naming,
-    pub features: Vec<String>,
-    pub placements: Vec<(String, Motion<Design>)>,
-}
-
-/// The part's cosmetic threads with those each feature of `copies`
-/// recorded copied to every placement, named alike.
-fn copy_threads(reader: &Reader, copies: &ThreadCopies) -> GeopResult<Threads<Design>> {
+/// The part's cosmetic threads with those each feature the pattern `O`'s
+/// step `step` copies recorded copied to every placement of it, named
+/// alike — the features and the placements as the part is before the
+/// step, which is produced before the step's model.
+fn copy_threads<O>(reader: &Reader, (step, args): &(String, O::Args)) -> GeopResult<Threads<Design>>
+where
+    O: ModelOperation + PartOperation,
+    O::Args: Pattern,
+{
     let mut threads: Threads<Design> = reader.previous()?;
-    let names = copies.naming.of(&copies.step)?;
-    for step in &copies.features {
+    let features = crate::features::feature_steps(&*read_model(reader)?, &args.seeds().features)?;
+    let placements = args.placements(reader)?;
+    let names = O::Args::NAMING.of(step)?;
+    for step in &features {
         let ctx = with_context!("copying the threads of feature {step:?}");
         for name in threads.of_step(step) {
             let thread = threads.get(&name)?.clone();
-            for (label, motion) in &copies.placements {
+            for (label, motion) in &placements {
                 let mut copy = thread.clone();
                 copy.axis = Axis {
                     point: motion.apply(&thread.axis.point),
@@ -459,31 +455,23 @@ fn copy_threads(reader: &Reader, copies: &ThreadCopies) -> GeopResult<Threads<De
     Ok(threads)
 }
 
-/// Runs the pattern `O` of features or bodies as the step `step`: copies
-/// of its seeds in the model, at its placements — of the part as it is
-/// before the step — and, of features, copies of their cosmetic threads,
-/// drawn as the step's annotations.
-pub(crate) fn run_pattern<O>(part: &mut Part, step: &str, args: &O::Args) -> GeopResult<()>
+/// Runs the pattern `O` of features or bodies as the step being run:
+/// copies of its seeds in the model, at its placements — of the part as it
+/// is before the step — and, of features, copies of their cosmetic
+/// threads, drawn as the step's annotations.
+pub(crate) fn run_pattern<O>(ctx: &mut StepContext, args: &O::Args) -> GeopResult<()>
 where
     O: ModelOperation + PartOperation,
     O::Args: Pattern,
 {
-    let features = &args.seeds().features;
-    let copies = (!features.is_empty()).then(|| {
-        let before = part.current();
-        Ok::<_, GeopError>(ThreadCopies {
-            step: step.to_string(),
-            naming: O::Args::NAMING,
-            features: crate::features::feature_steps(&*read_model(&before)?, features)?,
-            placements: args.placements(&before)?,
-        })
-    });
-    build_model::<O>(part, step, args)?;
-    match copies {
-        Some(copies) => {
-            part.revise_target(&threads(), &copies?, copy_threads)?;
-            draw_threads(part, step)
-        }
-        None => Ok(()),
+    let features = !args.seeds().features.is_empty();
+    if features {
+        let copies = (ctx.step().to_string(), args.clone());
+        ctx.produce(&threads(), &copies, copy_threads::<O>)?;
+    }
+    build_model::<O>(ctx, args)?;
+    match features {
+        true => draw_threads(ctx),
+        false => Ok(()),
     }
 }

@@ -5,7 +5,7 @@ use geop_core_program::{
     element::ElementReference,
     part::Part,
     program::{Program, ProgramStep},
-    program_runner::ProgramRunner,
+    runner::Runner,
     values::{Design, Settings, StateValue, StateValues, pose_state},
     workspace::FileStore,
 };
@@ -46,7 +46,7 @@ use crate::{
 /// What a program built, as a run left it, the program with the state it
 /// ran with, and the numbers its parameters gave: what the tests ask of it.
 struct Built {
-    runner: ProgramRunner,
+    runner: Runner,
     part: Part,
     program: Program,
     inputs: Settings,
@@ -67,7 +67,7 @@ fn build<F: FileStore + 'static>(
 }
 
 impl Built {
-    fn view(&self) -> geop_core_program::part::Reader<'_> {
+    fn view(&self) -> geop_core_program::reader::Reader<'_> {
         self.part.current()
     }
 

@@ -19,7 +19,7 @@
 //! after the part's names for them, so a face picked as `extrude(E,end)`
 //! here is called that in the file.
 
-use geop_core_program::{part::Reader, values::Design};
+use geop_core_program::{reader::Reader, values::Design};
 use std::collections::HashMap;
 
 use geop_core_geometry::{nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D};

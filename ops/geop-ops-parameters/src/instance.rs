@@ -1,9 +1,9 @@
-//! Where the parts of instances are placed: what the step that loads a
-//! part as an instance (see [`geop_core_program::instance`]) says of it,
-//! as a target of its own ([`define_instance`]). The program only runs the
-//! instance's part; where it goes is a value of the state, or a fixed
-//! motion after another instance, composed outermost first
-//! ([`placement`]), and where that puts it ([`compose`], [`located`]).
+//! Where placed parts are: what the step that places a part (see
+//! [`geop_core_program::placed`]) says of it, as a target of its own
+//! ([`define_instance`]). The program only builds the placed part; where
+//! it goes is a value of the state, or a fixed motion after another
+//! instance, composed outermost first ([`placement`]), and where that puts
+//! it ([`compose`], [`located`]).
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -12,9 +12,10 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
-    instance::INSTANCE_SEPARATOR,
-    part::{Part, Reader},
-    target::TargetReference,
+    part::StepContext,
+    placed::INSTANCE_SEPARATOR,
+    reader::Reader,
+    target::{Target, TargetReference},
     values::{Design, Settings, StateValue, pose_in},
 };
 
@@ -31,10 +32,9 @@ pub enum Placement {
 }
 
 /// An instance placed, as its target holds it: where it is, and the file
-/// and the inputs its part was loaded from — what a copy of it loads
+/// and the inputs its part was placed from — what a copy of it places
 /// again, and what a list of the parts tells them apart by. What is in it
-/// is its part, which the part keeps (see
-/// [`geop_core_program::program_runner::ProgramRunner::load_subpart`]).
+/// is its placed part (see [`geop_core_program::placed::PlacedPart`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Instance {
     pub placement: Placement,
@@ -42,6 +42,9 @@ pub struct Instance {
     pub file: String,
     pub inputs: Settings,
 }
+
+/// Defined once, by the step placing it.
+impl Target for Instance {}
 
 /// Read whole.
 impl Kind for Instance {
@@ -64,10 +67,10 @@ fn instance_target(name: &str) -> TargetReference<Instance> {
     TargetReference::new(format!("{PREFIX}{name}"))
 }
 
-/// Defines the instance `name` as `instance`. Its part is loaded on its
-/// own.
-pub fn define_instance(part: &mut Part, name: &str, instance: &Instance) -> GeopResult<()> {
-    part.define_target(&instance_target(name), instance, |_, instance| {
+/// Defines the instance `name` as `instance`. Its part is placed on its
+/// own ([`geop_core_program::placed::place`]).
+pub fn define_instance(ctx: &mut StepContext, name: &str, instance: &Instance) -> GeopResult<()> {
+    ctx.produce(&instance_target(name), instance, |_, instance| {
         Ok(instance.clone())
     })
 }
@@ -80,12 +83,12 @@ pub fn instance<'a>(reader: &Reader<'a>, name: &str) -> GeopResult<&'a Instance>
 }
 
 /// Every instance placed in the part `reader` reads — not in its
-/// instances' parts — by name, in the order the steps loaded their parts
-/// ([`geop_core_program::part::Reader::subparts`]), each read recorded. An
-/// instance whose part is loaded must be placed: it is an error if it is
-/// not.
+/// instances' parts — by name, in the order the steps placed their parts
+/// ([`geop_core_program::reader::Reader::instances`]), each read recorded.
+/// An instance whose part is placed must be defined: it is an error if it
+/// is not.
 pub fn instances<'a>(reader: &Reader<'a>) -> GeopResult<Vec<(&'a str, &'a Instance)>> {
-    (reader.subparts().into_iter())
+    (reader.instances().into_iter())
         .map(|name| Ok((name, instance(reader, name)?)))
         .collect()
 }
@@ -110,38 +113,48 @@ const COPIES: usize = 1 << 16;
 /// `reader` reads, as factors composed outermost first: the values of the
 /// state that place it and the parts it is in, read and recorded. A state
 /// of an instance's own — what places a part in it — is named as the part
-/// names it, behind the instance's path.
+/// names it, behind the instance's path, and read so ([`Reader::given_state`]):
+/// the part's value where it gives one.
 pub fn placement(reader: &Reader, path: &str) -> GeopResult<Vec<Factor>> {
     let ctx = |e: GeopError| e.with_context(format!("where the placed part {path:?} is"));
     let mut factors = Vec::new();
     let mut level = reader.clone();
     let mut prefix = String::new();
     for name in path.split(INSTANCE_SEPARATOR) {
-        factors.append(&mut placed(&level, name, &prefix, 0).map_err(ctx)?);
+        factors.append(&mut placed(reader, &level, name, &prefix, 0).map_err(ctx)?);
         prefix = format!("{prefix}{name}{INSTANCE_SEPARATOR}");
-        level = level.inside(name).map_err(ctx)?;
+        level = level.placed_part(name).map_err(ctx)?;
     }
     Ok(factors)
 }
 
 /// The factors placing the instance `name` of the part `level` reads — the
-/// part at `prefix` in the part asked — in that part: its state's value,
-/// named behind `prefix`, or a copy's motion after where what it copies
-/// is.
-fn placed(level: &Reader, name: &str, prefix: &str, depth: usize) -> GeopResult<Vec<Factor>> {
+/// part at `prefix` in the part `outer` reads — in that part: its state's
+/// value, named behind `prefix` and read so in `outer`, or a copy's motion
+/// after where what it copies is.
+fn placed(
+    outer: &Reader,
+    level: &Reader,
+    name: &str,
+    prefix: &str,
+    depth: usize,
+) -> GeopResult<Vec<Factor>> {
     if depth > COPIES {
         return Err(GeopError::new(format!(
             "the copies of `{name}` form a cycle"
         )));
     }
     Ok(match &instance(level, name)?.placement {
-        Placement::State(state) => vec![Factor::State {
-            value: level.retrieve_state(state),
-            state: format!("{prefix}{state}"),
-        }],
+        Placement::State(state) => {
+            let state = format!("{prefix}{state}");
+            vec![Factor::State {
+                value: outer.retrieve_state(&state),
+                state,
+            }]
+        }
         Placement::After { of, motion } => {
             let mut factors = vec![Factor::Fixed(*motion)];
-            factors.append(&mut placed(level, of, prefix, depth + 1)?);
+            factors.append(&mut placed(outer, level, of, prefix, depth + 1)?);
             factors
         }
     })

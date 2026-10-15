@@ -10,9 +10,9 @@ use geop_core_math::{
 };
 use geop_core_program::{
     operation::Operation,
-    part::Part,
+    part::{Part, StepContext},
     program::{Program, ProgramStep},
-    program_runner::ProgramRunner,
+    runner::Runner,
     values::{Design, StateValues},
     workspace::Workspace,
 };
@@ -40,13 +40,10 @@ impl Operation for PlaceOperation {
     const KIND: &'static str = "place";
     type Args = PlaceArgs;
 
-    fn run(
-        step: &str,
-        runner: &ProgramRunner,
-        part: &mut Part,
-        args: &PlaceArgs,
-    ) -> GeopResult<()> {
-        runner.load_subpart(part, step, &args.file, &inputs(&[("x", 1.0)]))
+    fn run(ctx: &mut StepContext, args: &PlaceArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        let runner = ctx.runner();
+        runner.load_subpart(ctx, step, &args.file, &inputs(&[("x", 1.0)]))
     }
 }
 
@@ -97,8 +94,8 @@ impl Operation for FreeOperation {
     const KIND: &'static str = "free";
     type Args = FreeArgs;
 
-    fn run(_: &str, _: &ProgramRunner, part: &mut Part, args: &FreeArgs) -> GeopResult<()> {
-        declare_unknowns(part, &args.state, |_, state| {
+    fn run(ctx: &mut StepContext, args: &FreeArgs) -> GeopResult<()> {
+        declare_unknowns(ctx, &args.state, |_, state| {
             Ok(vec![Unknown {
                 state: state.clone(),
                 mobility: Mobility::Held,

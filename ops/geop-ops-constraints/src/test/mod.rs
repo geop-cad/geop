@@ -19,9 +19,10 @@ use geop_core_program::{
     element::{ElementReference, HasElements, Kind},
     operation::Operation,
     operation_registry::OperationRegistry,
-    part::{Part, Reader},
+    part::{Part, StepContext},
     program::{Program, ProgramStep},
-    program_runner::{ProgramRunner, RunOutput},
+    program_runner::{RunOutput, Runner},
+    reader::Reader,
     target::TargetReference,
     values::{Design, Setting, Settings, StateValue, StateValues, pose_in},
 };
@@ -140,9 +141,9 @@ impl Operation for InputFrameOperation {
     const KIND: &'static str = "input_frame";
     type Args = InputFrameArgs;
 
-    fn run(_: &str, _: &ProgramRunner, part: &mut Part, args: &Self::Args) -> GeopResult<()> {
+    fn run(ctx: &mut StepContext, args: &Self::Args) -> GeopResult<()> {
         let reference = TargetReference::<Frame>::new(&args.target);
-        part.define_target(&reference, args, |reader, args| {
+        ctx.produce(&reference, args, |reader, args| {
             let x = match reader.retrieve_input(&args.input) {
                 Some(Setting::Number(x)) => Design::from_f64(x),
                 _ => {
@@ -173,9 +174,10 @@ impl Operation for PinFrameOperation {
     const KIND: &'static str = "pin_frame";
     type Args = PinFrameArgs;
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &Self::Args) -> GeopResult<()> {
+    fn run(ctx: &mut StepContext, args: &Self::Args) -> GeopResult<()> {
+        let step = ctx.step();
         let args = (step.to_string(), args.clone());
-        define_constraints(part, step, &args, |reader, (step, args)| {
+        define_constraints(ctx, step, &args, |reader, (step, args)| {
             record_built(step);
             let frame = reader.retrieve_element(&whole_frame(&args.frame))?;
             let (at, rows) = position(&reader.retrieve_state(&args.state))?;
@@ -233,13 +235,13 @@ fn registry() -> OperationRegistry {
 
 /// A runner of the tests' operations, and the part it runs on.
 struct Running {
-    runner: ProgramRunner,
+    runner: Runner,
     part: Part,
 }
 
 impl Running {
     fn of(registry: OperationRegistry) -> Self {
-        let mut runner = ProgramRunner::new(registry);
+        let mut runner = Runner::new(registry);
         runner.workspace = Some(std::rc::Rc::new(instances::Files));
         Self {
             runner,

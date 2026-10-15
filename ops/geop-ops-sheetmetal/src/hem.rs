@@ -12,11 +12,7 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
-use geop_core_program::{
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
-};
+use geop_core_program::{part::StepContext, reader::Reader, values::Design};
 use geop_ops_model::{ModelOperation, NamedModel, Namer, read_model};
 use serde::{Deserialize, Serialize};
 
@@ -160,8 +156,9 @@ impl PartOperation for Hem {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &HemArgs) -> GeopResult<()> {
-        body::run::<Self>(step, part, args)
+    fn run(ctx: &mut StepContext, args: &HemArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        body::run::<Self>(ctx, args)
     }
 
     /// The edge, picked; how tight, and the gap if open; how long; and how

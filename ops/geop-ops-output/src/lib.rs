@@ -37,11 +37,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_program::{
-    part::{Part, Reader},
-    program::Program,
-    program_runner::ProgramRunner,
-};
+use geop_core_program::{part::Part, program::Program, reader::Reader, runner::Runner};
 use geop_ops_parameters::{Properties, read_properties, stem};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -119,7 +115,7 @@ impl Bounded {
 /// runner and the program it ran, with its state — to ask how its parts
 /// can move by running it again.
 pub struct Output<'a> {
-    pub runner: &'a ProgramRunner,
+    pub runner: &'a Runner,
     pub part: &'a mut Part,
     pub file: &'a Program,
     /// The step being edited, if one is: what an export of one step's
@@ -139,7 +135,8 @@ impl<'a> Output<'a> {
     /// The part as it was before the step `step`: what a step that
     /// describes an output of the part — a drawing — is of.
     pub fn part_before(&self, step: &str) -> GeopResult<Reader<'_>> {
-        Ok(self.part.reader(self.file.index_of(step)?))
+        self.file.index_of(step)?;
+        Ok(self.part.before(step))
     }
 
     /// What the program says of its part: its title, designation, colour

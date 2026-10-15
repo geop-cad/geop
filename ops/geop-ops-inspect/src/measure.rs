@@ -14,7 +14,7 @@ use geop_core_math::{
     scalars::{Ring, Scalar},
     vector::Vector3,
 };
-use geop_core_program::{element::PickedElement, part::Reader, values::Design};
+use geop_core_program::{element::PickedElement, reader::Reader, values::Design};
 use geop_core_topology::distance::{Feature, PlacedFace, closest_points};
 use geop_ops_add_datum::{Selected, Shape};
 use geop_ops_output::{Answer, Block, Bounded, Row};
@@ -167,7 +167,7 @@ impl<'a> Picked<'a> {
         let (path, target) = split(picked);
         let (part, pose) = match path {
             "" => (reader.clone(), None),
-            path => (reader.inside(path)?, Some(located(reader, path)?)),
+            path => (reader.placed_part(path)?, Some(located(reader, path)?)),
         };
         let inner = PickedElement {
             target: target.to_string(),

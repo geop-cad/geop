@@ -15,7 +15,7 @@
 use geop_core_math::{scalars::Scalar, vector::Vector3};
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement},
-    part::Reader,
+    reader::Reader,
 };
 
 use crate::editing::{Pointer, hit::Scene};
@@ -81,7 +81,7 @@ impl<T: HasElements<K>, K: SelectableElement<T>> Selectable for ElementReference
         if instance.is_empty() {
             return K::select(reader, hit);
         }
-        let inside = reader.inside(instance).ok()?;
+        let inside = reader.placed_part(instance).ok()?;
         K::select(&inside, &hit.local()).map(|selected| selected.behind(instance))
     }
 
@@ -90,7 +90,7 @@ impl<T: HasElements<K>, K: SelectableElement<T>> Selectable for ElementReference
         if instance.is_empty() {
             return K::drawn(reader, self);
         }
-        let Ok(inside) = reader.inside(instance) else {
+        let Ok(inside) = reader.placed_part(instance) else {
             return vec![self.picked()];
         };
         (K::drawn(&inside, &self.local()).into_iter())
@@ -175,10 +175,10 @@ macro_rules! one_of {
 
         impl $name {
             /// What it refers to, read through `reader`, of the part itself
-            /// (see [`geop_core_program::part::Reader::retrieve_element`]).
+            /// (see [`geop_core_program::reader::Reader::retrieve_element`]).
             pub fn resolve(
                 &self,
-                reader: &$crate::__program::part::Reader,
+                reader: &$crate::__program::reader::Reader,
             ) -> $crate::__GeopResult<$out> {
                 match self {
                     $(Self::$variant(reference) => {
@@ -189,16 +189,16 @@ macro_rules! one_of {
 
             /// What it refers to, of the part itself or of an instance
             /// placed in it, as it is in its own part (see
-            /// [`geop_core_program::part::Reader::retrieve_placed`]).
+            /// [`geop_core_program::reader::Reader::retrieve_placed`]).
             #[allow(dead_code)]
             pub fn resolve_placed(
                 &self,
-                reader: &$crate::__program::part::Reader,
-            ) -> $crate::__GeopResult<$crate::__program::instance::InInstance<$out>> {
+                reader: &$crate::__program::reader::Reader,
+            ) -> $crate::__GeopResult<$crate::__program::placed::InInstance<$out>> {
                 match self {
                     $(Self::$variant(reference) => {
                         let placed = reader.retrieve_placed(reference)?;
-                        Ok($crate::__program::instance::InInstance {
+                        Ok($crate::__program::placed::InInstance {
                             element: placed.element.into(),
                             instance: placed.instance,
                         })
@@ -273,7 +273,7 @@ macro_rules! one_of {
             }
 
             fn select(
-                reader: &$crate::__program::part::Reader,
+                reader: &$crate::__program::reader::Reader,
                 hit: &$crate::__program::element::PickedElement,
             ) -> Option<Self> {
                 $(if let Some(reference) =
@@ -286,7 +286,7 @@ macro_rules! one_of {
 
             fn drawn(
                 &self,
-                reader: &$crate::__program::part::Reader,
+                reader: &$crate::__program::reader::Reader,
             ) -> ::std::vec::Vec<$crate::__program::element::PickedElement> {
                 match self {
                     $(Self::$variant(reference) => {

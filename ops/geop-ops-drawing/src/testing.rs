@@ -3,8 +3,9 @@
 
 use geop_core_math::{geop_error::GeopResult, primitives::Pose};
 use geop_core_program::{
-    part::{Part, Reader},
+    part::Part,
     program::Program,
+    reader::Reader,
     values::{Design, Settings, StateValue, StateValues, pose_state},
 };
 use geop_ops_assembly::testing::{Shelf, given_model, place, runner};

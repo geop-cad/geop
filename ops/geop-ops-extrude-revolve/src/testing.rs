@@ -17,7 +17,7 @@ use geop_core_program::{
     operation_registry::OperationRegistry,
     part::Part,
     program::{Program, ProgramStep},
-    program_runner::ProgramRunner,
+    runner::Runner,
     values::{Design, Settings, StateValues},
 };
 use geop_core_sketch::{CurveId, PointId};
@@ -178,8 +178,8 @@ pub fn drilled_box() -> Program {
 
 /// A runner of programs written in the operations `registry` makes, as
 /// the file `part.geop` — of a workspace of no other files.
-pub fn runner_of(registry: OperationRegistry) -> ProgramRunner {
-    let mut runner = ProgramRunner::new(registry);
+pub fn runner_of(registry: OperationRegistry) -> Runner {
+    let mut runner = Runner::new(registry);
     runner.location.file = "part.geop".into();
     runner
 }

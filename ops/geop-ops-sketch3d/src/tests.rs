@@ -64,7 +64,7 @@ fn references_follow_the_part() {
         part.define_target(&model(), &block, |_, block| Ok(block.clone()))
             .unwrap();
         part.begin_step();
-        let runner = geop_core_program::program_runner::ProgramRunner::new(Default::default());
+        let runner = geop_core_program::runner::Runner::new(Default::default());
         <AddSketch3d as Operation>::run("route", &runner, &mut part, &args).unwrap();
         part.end_run(0);
         let reader = part.current();

@@ -17,7 +17,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_program::{numeric::NumericInput, part::Reader};
+use geop_core_program::{numeric::NumericInput, reader::Reader};
 use serde::{Deserialize, Serialize};
 
 /// How far apart the instances of a pattern are: each `Step` from the

@@ -11,7 +11,7 @@
 //! construction it fits.
 
 use geop_core_math::scalars::Scalar;
-use geop_core_program::{numeric::NumericInput, part::Reader};
+use geop_core_program::{numeric::NumericInput, reader::Reader};
 
 use crate::{
     editing::{Action, CanvasEvent, Choice, Event, Form, Number, Value},

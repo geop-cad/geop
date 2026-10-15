@@ -21,8 +21,7 @@ use geop_core_editor::{
     },
 };
 use geop_core_program::{
-    element::PickedElement, part::Part, program::Program, program_runner::ProgramRunner,
-    values::Design,
+    element::PickedElement, part::Part, program::Program, runner::Runner, values::Design,
 };
 
 /// The key of the field the editor adds to a dialog whose gizmo has an
@@ -180,7 +179,7 @@ fn references(form: &Form<Design>) -> Vec<String> {
 /// event is handled against.
 pub struct Editing<'a, Sc> {
     pub editors: &'a Editors,
-    pub runner: &'a ProgramRunner,
+    pub runner: &'a Runner,
     pub part: &'a Part,
     pub program: &'a mut Program,
     pub scene: &'a Sc,
@@ -194,7 +193,7 @@ impl StepEditor {
     /// the rest of the step: its handles, its drawing.
     pub fn new(
         editors: &Editors,
-        runner: &ProgramRunner,
+        runner: &Runner,
         part: &Part,
         program: &Program,
         step: &str,
@@ -249,7 +248,7 @@ impl StepEditor {
     pub fn form(
         &self,
         editors: &Editors,
-        runner: &ProgramRunner,
+        runner: &Runner,
         part: &Part,
         program: &Program,
     ) -> GeopResult<Form<Design>> {
@@ -718,7 +717,7 @@ impl StepEditor {
     pub fn presentation(
         &self,
         editors: &Editors,
-        runner: &ProgramRunner,
+        runner: &Runner,
         part: &Part,
         program: &Program,
         scene: &impl Scene<Design>,

@@ -24,7 +24,7 @@ use geop_core_math::{
     },
     vector::{Vector2, Vector3},
 };
-use geop_core_program::{instance::instance_path, part::Reader, values::Design};
+use geop_core_program::{placed::instance_path, reader::Reader, values::Design};
 use geop_core_sketch::dimension::Measure;
 use geop_core_topology::{FaceId, Model};
 use geop_ops_assembly::placed::locate;
@@ -1205,7 +1205,7 @@ fn owner<'a>(
     let mut part = reader.clone();
     let mut rest = name;
     while let Some((first, inner)) = rest.split_once(INSTANCE_SEPARATOR) {
-        let Ok(placed) = part.inside(first) else {
+        let Ok(placed) = part.placed_part(first) else {
             break;
         };
         path = match path.is_empty() {

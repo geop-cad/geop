@@ -8,7 +8,11 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_program::{element::ElementReference, target::TargetReference, values::Design};
+use geop_core_program::{
+    element::ElementReference,
+    target::{Target, TargetReference},
+    values::Design,
+};
 use geop_core_topology::Model;
 
 use crate::{Feature, ids::RefId, names::NameRegistry};
@@ -35,6 +39,11 @@ pub struct NamedModel<S: Scalar> {
     /// What each step that combined tools with a solid did, in the order
     /// the steps ran (see [`Feature`]).
     pub(crate) features: Vec<(String, Arc<Feature<S>>)>,
+}
+
+/// Every step that builds into the model produces it from the last.
+impl Target for NamedModel<Design> {
+    const CHAIN: bool = true;
 }
 
 /// Equal when the topology, the names and the features are: a model built

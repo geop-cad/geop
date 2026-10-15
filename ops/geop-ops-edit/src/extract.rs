@@ -9,10 +9,7 @@ use geop_core_editor::{
 };
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{
-    element::ElementReference,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
+    element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model, model};
 use serde::{Deserialize, Serialize};
@@ -55,13 +52,9 @@ impl PartOperation for ExtractFace {
         }
     }
 
-    fn run(
-        step: &str,
-        _: &ProgramRunner,
-        part: &mut Part,
-        args: &ExtractFaceArgs,
-    ) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &ExtractFaceArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The face, picked.

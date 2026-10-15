@@ -10,7 +10,7 @@ use geop_core_program::{
     operation_registry::OperationRegistry,
     part::Part,
     program::Program,
-    program_runner::ProgramRunner,
+    runner::Runner,
     values::{Settings, StateValues},
     workspace::Workspace,
 };
@@ -890,13 +890,13 @@ fn an_import_builds_an_equal_file_once() {
     let text = written(&cylinder, "cylinder");
     let reads = Rc::new(Cell::new(0));
     // The runner given the folder anew: equal files, but another value.
-    let given = |runner: &mut ProgramRunner| {
+    let given = |runner: &mut Runner| {
         runner.workspace = Some(Rc::new(Folder {
             files: BTreeMap::from([("cylinder.step".to_string(), text.clone())]),
             reads: reads.clone(),
         }));
     };
-    let mut runner = ProgramRunner::new(OperationRegistry::default().with(ImportStep).unwrap());
+    let mut runner = Runner::new(OperationRegistry::default().with(ImportStep).unwrap());
     given(&mut runner);
     let mut program = Program::new();
     let args = ImportStepArgs {
@@ -904,7 +904,7 @@ fn an_import_builds_an_equal_file_once() {
     };
     program.push("i", args);
     let mut part = Part::default();
-    let run = |runner: &ProgramRunner, part: &mut Part| {
+    let run = |runner: &Runner, part: &mut Part| {
         program
             .run(runner, part, &Settings::new(), &StateValues::new())
             .unwrap();

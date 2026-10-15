@@ -41,9 +41,9 @@ mod xml;
 pub mod zip;
 
 use geop_core_program::{
-    instance::instance_path,
-    part::Reader,
-    values::{Design, Settings, StateValue},
+    placed::instance_path,
+    reader::Reader,
+    values::{Design, StateValue},
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -549,13 +549,10 @@ pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<Urd
             .collect();
         (tree::tree(&mechanism).with_context(&ctx)?, held)
     };
-    // The assembly is built with its parameters as it defines them.
-    let inputs = Settings::new();
     let mut rerun = Rerun {
         runner: output.runner,
         part: &mut *output.part,
         program: output.file,
-        inputs: &inputs,
     };
     let freedom = solving::freedom(&mut rerun, &output.file.state, &held).with_context(&ctx)?;
     let reader = output.part();

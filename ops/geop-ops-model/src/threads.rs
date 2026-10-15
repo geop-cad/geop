@@ -23,8 +23,9 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
-    part::{Part, Reader},
-    target::TargetReference,
+    part::StepContext,
+    reader::Reader,
+    target::{Target, TargetReference},
     values::Design,
 };
 use geop_ops_view::{Annotations, ViewAnnotation, annotations};
@@ -153,6 +154,11 @@ impl Threads<Design> {
     }
 }
 
+/// Every step that records threads adds to them.
+impl Target for Threads<Design> {
+    const CHAIN: bool = true;
+}
+
 /// Read whole.
 impl Kind for Threads<Design> {
     const NAME: &'static str = "threads";
@@ -177,14 +183,15 @@ pub fn read_threads<'a>(reader: &Reader<'a>) -> GeopResult<std::borrow::Cow<'a, 
     Ok(std::borrow::Cow::Borrowed(reader.retrieve_element(&whole)?))
 }
 
-/// Draws the threads the step `step` recorded on the part, as its
+/// Draws the threads the step recorded on the part, as its
 /// [`annotations`]: what a step that records threads does after.
-pub fn draw_threads(part: &mut Part, step: &str) -> GeopResult<()> {
-    part.define_target(&annotations(step), &step.to_string(), draw)
+pub fn draw_threads(ctx: &mut StepContext) -> GeopResult<()> {
+    let step = ctx.step();
+    ctx.produce(&annotations(step), &step.to_string(), draw)
 }
 
-/// The generator of [`draw_threads`]: its arguments, the step, are what a
-/// target is defined from, so owned.
+/// The make of [`draw_threads`]: its arguments, the step, are what a
+/// node is made from, so owned.
 #[allow(clippy::ptr_arg)]
 fn draw(reader: &Reader, step: &String) -> GeopResult<Annotations> {
     Ok(Annotations(read_threads(reader)?.drawn(step)?))

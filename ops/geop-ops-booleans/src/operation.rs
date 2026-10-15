@@ -15,10 +15,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{
-    element::ElementReference,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
+    element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_core_topology::{Body, SolidId};
 use geop_ops_model::{
@@ -96,8 +93,9 @@ impl PartOperation for Boolean {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &BooleanArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &BooleanArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The two solids, picked, and how to combine them.
@@ -529,8 +527,9 @@ impl PartOperation for Split {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &SplitArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &SplitArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The solid and the face, picked.

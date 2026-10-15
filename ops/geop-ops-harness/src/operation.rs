@@ -13,11 +13,7 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::{
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
-};
+use geop_core_program::{part::StepContext, reader::Reader, values::Design};
 use geop_ops_add_datum::Selected;
 use geop_ops_extrude_revolve::{
     common::{Profile, circle_at},
@@ -502,10 +498,11 @@ impl PartOperation for Route {
     }
 
     /// Sweeps the bundle, then records its cable, and notes the bundle.
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &RouteArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)?;
-        part.revise_target(&cables(), &(step.to_string(), args.clone()), record)?;
-        part.revise_target(&solid_notes(), &step.to_string(), note)
+    fn run(ctx: &mut StepContext, args: &RouteArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        build_model::<Self>(ctx, args)?;
+        ctx.produce(&cables(), &(step.to_string(), args.clone()), record)?;
+        ctx.produce(&solid_notes(), &step.to_string(), note)
     }
 
     fn form<'a>(

@@ -9,7 +9,7 @@
 //! Lengths are millimetres and densities kg/m³ (see
 //! [`geop_ops_parameters::Material`]), so a mass is in kilograms.
 
-use geop_core_program::{part::Reader, values::Design};
+use geop_core_program::{reader::Reader, values::Design};
 use std::collections::HashMap;
 
 use geop_core_math::{

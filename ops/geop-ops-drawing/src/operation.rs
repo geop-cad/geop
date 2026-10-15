@@ -28,12 +28,7 @@ use geop_core_editor::{
     part_operation,
     part_operation::PartOperation,
 };
-use geop_core_program::{
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    target::Revision,
-    values::Design,
-};
+use geop_core_program::{part::StepContext, reader::Reader, values::Design};
 use std::{cell::RefCell, rc::Rc};
 
 use geop_core_math::{
@@ -193,9 +188,9 @@ struct Shown {
     model: Option<NamedModel<Design>>,
     threads: Option<Threads<Design>>,
     properties: Properties,
-    /// Each placed part by name, when its part last changed and where it
+    /// Each placed part by name, the revision of its part and where it
     /// is.
-    placed: Vec<(String, Revision, Pose<Design>)>,
+    placed: Vec<(String, u64, Pose<Design>)>,
 }
 
 impl Shown {
@@ -214,7 +209,7 @@ impl Shown {
             threads,
             properties: read_properties(reader)?.into_owned(),
             placed: (placed_parts(reader)?.into_iter())
-                .map(|p| (p.name, p.located.part.changed_at(), p.located.world))
+                .map(|p| (p.name, p.located.part.revision(), p.located.world))
                 .collect(),
         })
     }
@@ -1003,9 +998,10 @@ impl PartOperation for Drawing {
 
     /// Records the drawing (see [`drawing`]), once what it refers to is
     /// checked there in the part before it; it changes nothing else.
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &DrawingArgs) -> GeopResult<()> {
-        check(&part.current(), step, args)?;
-        part.define_target(&drawing(step), args, described)
+    fn run(ctx: &mut StepContext, args: &DrawingArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        check(&ctx.reader(), step, args)?;
+        ctx.produce(&drawing(step), args, described)
     }
 
     /// The form of the drawing `args` of the part `context` is edited against:

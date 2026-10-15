@@ -6,10 +6,16 @@
 use std::collections::BTreeMap;
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_program::target::Target;
 
 /// Records of `T`, by the name of what each is of.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Records<T>(BTreeMap<String, T>);
+
+/// Every step that makes such an entity adds to them.
+impl<T: PartialEq + 'static> Target for Records<T> {
+    const CHAIN: bool = true;
+}
 
 impl<T> Default for Records<T> {
     fn default() -> Self {

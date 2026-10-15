@@ -13,10 +13,7 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_core_program::{
-    element::ElementReference,
-    numeric::NumericInput,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
+    element::ElementReference, numeric::NumericInput, part::StepContext, reader::Reader,
     values::Design,
 };
 use geop_ops_model::{
@@ -72,8 +69,9 @@ impl PartOperation for Shell {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &ShellArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &ShellArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
 
     /// The solid and the faces to open it at, picked, and the thickness.

@@ -11,10 +11,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{
-    element::ElementReference,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
+    element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_core_sketch::{PointId, Shape};
 use geop_ops_model::{ModelOperation, NamedModel, Namer, Point, build_model, read_model};
@@ -111,8 +108,9 @@ impl PartOperation for Loft {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &LoftArgs) -> GeopResult<()> {
-        build_model::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &LoftArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        build_model::<Self>(ctx, args)
     }
     /// The sketches, picked in order; the points matched on them, or the
     /// guide curves; whether a face; and how to combine.

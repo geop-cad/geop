@@ -7,7 +7,7 @@ use geop_core_editor::{
     edit_form::{Edit, EditForm},
     editing::{Action, CanvasEvent, Change, Control, Dialog, Gizmo, Number, Tone, Track},
 };
-use geop_core_program::{numeric::NumericInput, part::Reader, values::Design};
+use geop_core_program::{numeric::NumericInput, reader::Reader, values::Design};
 use std::collections::BTreeMap;
 
 use geop_core_math::{

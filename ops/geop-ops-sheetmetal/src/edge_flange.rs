@@ -16,10 +16,7 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{
-    element::ElementReference,
-    numeric::NumericInput,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
+    element::ElementReference, numeric::NumericInput, part::StepContext, reader::Reader,
     values::Design,
 };
 use geop_ops_model::{Line, ModelOperation, NamedModel, Namer, read_model};
@@ -196,13 +193,9 @@ impl PartOperation for EdgeFlange {
         }
     }
 
-    fn run(
-        step: &str,
-        _: &ProgramRunner,
-        part: &mut Part,
-        args: &EdgeFlangeArgs,
-    ) -> GeopResult<()> {
-        body::run::<Self>(step, part, args)
+    fn run(ctx: &mut StepContext, args: &EdgeFlangeArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        body::run::<Self>(ctx, args)
     }
 
     /// The edge, picked; angle and length; what the length is measured from

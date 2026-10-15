@@ -9,12 +9,11 @@ use geop_core_editor::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    target::TargetReference,
+    part::StepContext,
+    reader::Reader,
+    target::{Target, TargetReference},
     values::Design,
 };
-use std::rc::Rc;
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
@@ -128,6 +127,9 @@ pub fn add_bodies<S: Scalar>(
 #[derive(Clone, Debug, PartialEq)]
 pub struct Imported(pub Vec<ImportedBody<Design>>);
 
+/// Each import step's own.
+impl Target for Imported {}
+
 /// Read whole.
 impl Kind for Imported {
     const NAME: &'static str = "imported";
@@ -152,21 +154,12 @@ pub fn read_imported<'a>(reader: &Reader<'a>, step: &str) -> GeopResult<&'a Impo
     reader.retrieve_element(&ElementReference::whole(imported(step)))
 }
 
-/// The text of a file a step read, as it passes it on: the same text the
-/// workspace kept is equal without being compared.
-#[derive(Clone, Debug)]
-struct Text(Rc<str>);
-
-impl PartialEq for Text {
-    fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0) || self.0 == other.0
-    }
-}
-
-/// The bodies of the file `text` the step `step` read.
-fn read(_: &Reader, (step, file, text): &(String, String, Text)) -> GeopResult<Imported> {
+/// The bodies of the file `file` the step `step` reads, the read recorded:
+/// read again once the file changes.
+fn read(reader: &Reader, (step, file): &(String, String)) -> GeopResult<Imported> {
     let ctx = with_context!("import_step({step}, file={file:?})");
-    let bodies = read_step::<Design>(&text.0).with_context(ctx)?;
+    let (_, text) = reader.read_file(file).with_context(ctx)?;
+    let bodies = read_step::<Design>(&text).with_context(ctx)?;
     if bodies.is_empty() {
         return Err(GeopError::new(format!("{file} has no solids or sheets"))).with_context(ctx);
     }
@@ -194,21 +187,15 @@ impl PartOperation for ImportStep {
     }
 
     /// Reads the file, then adds its bodies.
-    /// Reads the file, through `runner`, and the bodies of what it read.
-    fn run(
-        step: &str,
-        runner: &ProgramRunner,
-        part: &mut Part,
-        args: &ImportStepArgs,
-    ) -> GeopResult<()> {
-        let ctx = with_context!("import_step({step}, {args:?})");
+    fn run(ctx: &mut StepContext, args: &ImportStepArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        let context = with_context!("import_step({step}, {args:?})");
         if args.file.is_empty() {
-            return Err(GeopError::new("choose a STEP file to import")).with_context(ctx);
+            return Err(GeopError::new("choose a STEP file to import")).with_context(context);
         }
-        let (_, text) = runner.read(&args.file).with_context(ctx)?;
-        let read_from = (step.to_string(), args.file.clone(), Text(text));
-        part.define_target(&imported(step), &read_from, read)?;
-        build_model::<Self>(part, step, args)
+        let read_from = (step.to_string(), args.file.clone());
+        ctx.produce(&imported(step), &read_from, read)?;
+        build_model::<Self>(ctx, args)
     }
 
     /// The file: one of the STEP files next to the program, or one the user

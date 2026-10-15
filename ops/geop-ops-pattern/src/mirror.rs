@@ -10,11 +10,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::{FrameAxis, Motion},
 };
-use geop_core_program::{
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
-};
+use geop_core_program::{part::StepContext, reader::Reader, values::Design};
 use geop_ops_datums::origin_plane;
 use geop_ops_model::{ModelOperation, NamedModel};
 use geop_ops_sketch::SketchPlane;
@@ -97,8 +93,9 @@ impl PartOperation for Mirror {
         }
     }
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &MirrorArgs) -> GeopResult<()> {
-        run_pattern::<Self>(part, step, args)
+    fn run(ctx: &mut StepContext, args: &MirrorArgs) -> GeopResult<()> {
+        let _step = ctx.step();
+        run_pattern::<Self>(ctx, args)
     }
 
     /// The bodies or the features, and the plane, picked, and how to

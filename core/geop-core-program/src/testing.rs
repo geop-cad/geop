@@ -21,7 +21,11 @@ pub fn runner(
         file: (workspace.as_ref()).map_or_else(String::new, |(_, file)| file.to_string()),
         within: Vec::new(),
     };
-    Runner::of(registry, workspace.map(|(workspace, _)| workspace), location)
+    Runner::of(
+        registry,
+        workspace.map(|(workspace, _)| workspace),
+        location,
+    )
 }
 
 /// The failed steps of `output`, and why.
@@ -52,7 +56,8 @@ pub fn assert_incremental(
     for (k, program) in programs.iter().enumerate() {
         let ran = errors(incremental.run(&mut part, program, None));
         let mut scratch = Part::default();
-        let built = errors(runner(registry.clone(), workspace.clone()).run(&mut scratch, program, None));
+        let built =
+            errors(runner(registry.clone(), workspace.clone()).run(&mut scratch, program, None));
         assert_eq!(
             ran, built,
             "{file:?}, program {k}: its steps fail otherwise when run again"

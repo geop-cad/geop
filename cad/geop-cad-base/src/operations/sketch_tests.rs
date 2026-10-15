@@ -3,8 +3,9 @@
 
 use geop_core_program::{
     numeric::{ParameterValue, read_parameter_values},
-    part::{Part, Reader},
+    part::Part,
     program::Program,
+    reader::Reader,
     values::{Design, Setting},
 };
 use geop_ops_parameters::{

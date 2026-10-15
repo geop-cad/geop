@@ -4,10 +4,7 @@
 
 use geop_core_editor::part_operation::PartOperation;
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::{
-    part::{Part, Reader},
-    values::Design,
-};
+use geop_core_program::{part::StepContext, reader::Reader, values::Design};
 
 use crate::{NamedModel, model};
 
@@ -25,20 +22,20 @@ pub trait ModelOperation: PartOperation {
     ) -> GeopResult<()>;
 }
 
-/// Makes the step `step`'s revision of the model: `O` building `args` into
+/// Produces the step's node of the model, a chain: `O` building `args` into
 /// the model as the steps before left it, or into an empty one, before the
 /// first step that builds any. What fails is said in the context of the
 /// step and its arguments.
-pub fn build_model<O: ModelOperation>(
-    part: &mut Part,
-    step: &str,
-    args: &O::Args,
-) -> GeopResult<()> {
-    part.revise_target(&model(), &(step.to_string(), args.clone()), generate::<O>)
+pub fn build_model<O: ModelOperation>(ctx: &mut StepContext, args: &O::Args) -> GeopResult<()> {
+    ctx.produce(
+        &model(),
+        &(ctx.step().to_string(), args.clone()),
+        generate::<O>,
+    )
 }
 
-/// The generator of [`build_model`]: a function of `O` alone, so it
-/// captures nothing — the step comes with the arguments.
+/// The make of [`build_model`]: a function of `O` alone, so it captures
+/// nothing — the step comes with the arguments.
 fn generate<O: ModelOperation>(
     reader: &Reader,
     (step, args): &(String, O::Args),

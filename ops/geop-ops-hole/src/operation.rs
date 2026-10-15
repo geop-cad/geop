@@ -12,8 +12,9 @@ use geop_core_editor::{
 };
 use geop_core_program::{
     element::ElementReference,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
+    part::StepContext,
+    reader::Reader,
+    target::{Target, TargetReference},
     values::Design,
 };
 use std::collections::BTreeSet;
@@ -357,20 +358,51 @@ fn sites(reader: &Reader, args: &HoleArgs) -> GeopResult<Sites<Design>> {
     Ok(Sites { target, holes })
 }
 
-/// What a tapped hole's threads are recorded from: the step, its
-/// arguments, where each hole was drilled and how far it is threaded.
-type Tapped = (
-    String,
-    HoleArgs,
-    Vec<(String, CoordinateSystem<Design>)>,
-    Option<f64>,
-);
+/// Where a tapped hole drilled each of its holes, as the part before it
+/// put them, and how far they are threaded: what their threads are
+/// recorded from, on the walls the holes left.
+#[derive(Clone, Debug, PartialEq)]
+struct Tapped {
+    holes: Vec<(String, CoordinateSystem<Design>)>,
+    length: Option<f64>,
+}
 
-/// Records the cosmetic thread of every hole a tapped hole drilled, on its
-/// wall in the model the hole left.
-fn tap(reader: &Reader, (step, args, holes, length): &Tapped) -> GeopResult<Threads<Design>> {
+/// Each tapped hole's own, made before its model.
+impl Target for Tapped {}
+
+/// Read whole.
+impl geop_core_program::element::Kind for Tapped {
+    const NAME: &'static str = "tapped";
+}
+
+impl geop_core_program::element::HasElements<Tapped> for Tapped {
+    type Element<'a> = &'a Tapped;
+
+    fn element(&self, name: &str) -> GeopResult<&Tapped> {
+        geop_core_program::element::whole(self, name)
+    }
+}
+
+/// Where the tapped hole `step` drills its holes.
+fn tapped(step: &str) -> TargetReference<Tapped> {
+    TargetReference::new(format!("tapped:{step}"))
+}
+
+/// Where the hole `args` drills its holes, as the part before it is.
+fn plan(reader: &Reader, args: &HoleArgs) -> GeopResult<Tapped> {
+    Ok(Tapped {
+        holes: sites(reader, args)?.holes,
+        length: args.thread_length.or(args.end.end(reader)?.length()),
+    })
+}
+
+/// Records the cosmetic thread of every hole the tapped hole `step`
+/// drilled, on its wall in the model the hole left.
+fn tap(reader: &Reader, (step, args): &(String, HoleArgs)) -> GeopResult<Threads<Design>> {
     let mut threads: Threads<Design> = reader.previous()?;
     let ctx = with_context!("the threads of hole({step})");
+    let Tapped { holes, length } =
+        reader.retrieve_element(&ElementReference::whole(tapped(step)))?;
     let namer = Namer::new("hole", step)?;
     let shape = args.shape().with_context(ctx)?;
     let Some(size) = shape.thread else {
@@ -418,21 +450,19 @@ impl PartOperation for Hole {
 
     /// Drills the holes, then — tapped — records their threads, where the
     /// part before the step put them and on the walls the holes left.
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &HoleArgs) -> GeopResult<()> {
-        let tapped = args.shape().is_ok_and(|shape| shape.thread.is_some());
-        let planned = tapped.then(|| {
-            let before = part.current();
-            let holes = sites(&before, args)?.holes;
-            let length = args.thread_length.or(args.end.end(&before)?.length());
-            Ok::<_, GeopError>((step.to_string(), args.clone(), holes, length))
-        });
-        build_model::<Self>(part, step, args)?;
-        match planned {
-            Some(planned) => {
-                part.revise_target(&threads(), &planned?, tap)?;
-                draw_threads(part, step)
+    fn run(ctx: &mut StepContext, args: &HoleArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        let threaded = args.shape().is_ok_and(|shape| shape.thread.is_some());
+        if threaded {
+            ctx.produce(&tapped(step), args, plan)?;
+        }
+        build_model::<Self>(ctx, args)?;
+        match threaded {
+            true => {
+                ctx.produce(&threads(), &(step.to_string(), args.clone()), tap)?;
+                draw_threads(ctx)
             }
-            None => Ok(()),
+            false => Ok(()),
         }
     }
 
@@ -767,12 +797,13 @@ impl PartOperation for Thread {
 
     /// Modelled, cut into the solid; recorded, one more of the part's
     /// threads.
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &ThreadArgs) -> GeopResult<()> {
+    fn run(ctx: &mut StepContext, args: &ThreadArgs) -> GeopResult<()> {
+        let step = ctx.step();
         if args.modelled {
-            build_model::<Self>(part, step, args)
+            build_model::<Self>(ctx, args)
         } else {
-            part.revise_target(&threads(), &(step.to_string(), args.clone()), record)?;
-            draw_threads(part, step)
+            ctx.produce(&threads(), &(step.to_string(), args.clone()), record)?;
+            draw_threads(ctx)
         }
     }
 

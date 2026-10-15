@@ -28,7 +28,7 @@ pub use crate::{
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{
     element::{HasElements, Kind as ElementKind, whole},
-    target::TargetReference,
+    target::{Target, TargetReference},
     values::Design,
 };
 use geop_ops_add_datum::Role;
@@ -254,6 +254,9 @@ pub fn mate(name: &str) -> TargetReference<Resolved> {
 pub fn mate_name(target: &str) -> Option<&str> {
     target.strip_prefix(PREFIX)
 }
+
+/// Each mate's own.
+impl Target for Resolved {}
 
 /// Read whole.
 impl ElementKind for Resolved {

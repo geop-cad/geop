@@ -10,7 +10,7 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind},
-    part::Reader,
+    reader::Reader,
     target::TargetReference,
     values::Design,
 };

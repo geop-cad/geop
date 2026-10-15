@@ -22,11 +22,12 @@ use geop_core_editor::{
 };
 use geop_core_program::{
     element::{ElementReference, PickedElement},
-    instance::instance_path,
-    numeric::{ParameterValue, parameter},
-    part::{Part, Reader},
+    numeric::{ParameterValue, parameter, read_parameter_values},
+    part::Part,
+    placed::instance_path,
     program::{Program, ProgramStep},
-    program_runner::ProgramRunner,
+    reader::Reader,
+    runner::Runner,
     values::{Design, Setting, Settings, StateValues},
     workspace::Location,
 };
@@ -595,12 +596,6 @@ impl Editor {
         self.dragged.as_ref()
     }
 
-    /// What the program's parameters are set to as it runs: as it defines
-    /// them — none is set from outside.
-    fn inputs(&self) -> Settings {
-        Settings::new()
-    }
-
     /// Tells the runner the workspace the program reads from, and the file
     /// it is in there.
     fn give(&mut self) {
@@ -616,10 +611,9 @@ impl Editor {
     /// with their state (see [`Self::current`]), keeping how far it ran and
     /// why steps failed.
     fn run_to(&mut self, end: Option<usize>) {
-        let (steps, state) = self.current();
-        let inputs = self.inputs();
+        let (steps, _) = self.current();
         self.give();
-        self.build.run(&steps, end, &inputs, &state);
+        self.build.run(&steps, end);
     }
 
     /// The steps run now, and the state they run with: the step being
@@ -865,12 +859,10 @@ impl Editor {
                         target: target.sharpen(),
                     };
                     let (steps, state) = self.current();
-                    let inputs = self.inputs();
                     let mut rerun = Rerun {
                         runner: &self.build.runner,
                         part: &mut self.build.part,
                         program: &steps,
-                        inputs: &inputs,
                     };
                     if let Ok((moved, report)) = solving::solve(&mut rerun, &state, &[pull], None) {
                         self.file.state.extend(moved);
@@ -897,10 +889,8 @@ impl Editor {
     fn open(&mut self, program: Program, index: usize, id: String, new: bool) -> GeopResult<()> {
         // It runs once before it is edited: an editor edits a step against
         // the part before it, as the last run left it.
-        let inputs = self.inputs();
         self.give();
-        self.build
-            .run(&program, Some(index + 1), &inputs, &program.state);
+        self.build.run(&program, Some(index + 1));
         let Build { runner, part, .. } = &self.build;
         let editor = StepEditor::new(&self.editors, runner, part, &program, &id, new)?;
         let view = part::draw(&self.build.view_at(&program, index))?;
@@ -1046,12 +1036,10 @@ impl Editor {
                 }
                 let set = BTreeMap::from([(parameter, Design::from_f64(value))]);
                 let (steps, state) = self.current();
-                let inputs = self.inputs();
                 let mut rerun = Rerun {
                     runner: &self.build.runner,
                     part: &mut self.build.part,
                     program: &steps,
-                    inputs: &inputs,
                 };
                 let (moved, _) = solving::set(&mut rerun, &state, &set)?;
                 self.file.state.extend(moved);
@@ -1352,12 +1340,10 @@ impl Editor {
         let complete = whole && self.build.ran == steps.steps.len() && self.build.errors.is_empty();
         let holds = solving::check(&self.part()).is_ok_and(|report| report.converged);
         let own = (self.open.as_ref()).map(|open| open.id.clone());
-        let inputs = self.inputs();
         let mut rerun = Rerun {
             runner: &self.build.runner,
             part: &mut self.build.part,
             program: &steps,
-            inputs: &inputs,
         };
         let solved = if !pulls.is_empty() {
             solving::solve(&mut rerun, &state, &pulls, None).ok()
@@ -1397,12 +1383,10 @@ impl Editor {
     fn measure_freedom(&mut self) {
         let (steps, state) = self.current();
         let placed = placed_parts(&self.part()).is_ok_and(|placed| !placed.is_empty());
-        let inputs = self.inputs();
         let mut rerun = Rerun {
             runner: &self.build.runner,
             part: &mut self.build.part,
             program: &steps,
-            inputs: &inputs,
         };
         self.freedom = placed
             .then(|| solving::freedom(&mut rerun, &state, &BTreeSet::new()).ok())
@@ -1643,7 +1627,7 @@ impl Editor {
 /// What the editor built: the runner, holding every step's part, and how
 /// its last run went.
 pub(crate) struct Build {
-    pub(crate) runner: ProgramRunner,
+    pub(crate) runner: Runner,
     /// The part, as the last run left it.
     pub(crate) part: Part,
     /// How many steps the last run ran.
@@ -1663,11 +1647,12 @@ impl Build {
     }
 
     /// Runs the first `end` of `steps` — all of them, if `None` — with
-    /// `inputs` and the state `state`, keeping how far it ran and why steps
-    /// failed.
-    fn run(&mut self, steps: &Program, end: Option<usize>, inputs: &Settings, state: &StateValues) {
+    /// their state, keeping how far it ran and why steps failed. The nodes
+    /// of the steps after are kept, to be reused when they run again.
+    fn run(&mut self, steps: &Program, end: Option<usize>) {
         let end = end.unwrap_or(steps.steps.len()).min(steps.steps.len());
-        let output = (self.runner).run_until(&mut self.part, steps, end, inputs, state);
+        let upto = steps.steps.get(end).map(|step| step.id.as_str());
+        let output = (self.runner).run(&mut self.part, steps, upto);
         self.ran = end;
         self.errors = (output.step_errors.into_iter())
             .map(|(step, error)| (step, error.to_string()))
@@ -1678,9 +1663,9 @@ impl Build {
     /// it — or, at or past how far it ran, the part it built.
     fn view_at(&self, steps: &Program, index: usize) -> Reader<'_> {
         let part = &self.part;
-        match index < self.ran.min(steps.steps.len()) {
-            true => part.reader(index),
-            false => part.current(),
+        match steps.steps.get(index).filter(|_| index < self.ran) {
+            Some(step) => part.before(&step.id),
+            None => part.current(),
         }
     }
 
@@ -1715,9 +1700,10 @@ impl Build {
 }
 
 /// A program's parameters as an editor shows them: what its steps define
-/// them as (see [`geop_ops_parameters::steps`]), what each comes to — a
-/// number, a table's row and its columns as `table.column`, the colour —
-/// and why those that do not fail.
+/// them as (see [`geop_ops_parameters::steps`]) — numbers, and the tables
+/// its lookup steps look up — what each comes to — a number, a table's
+/// row and its columns as `table.column`, the colour — and why those that
+/// do not fail.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ParametersState {
     pub defined: Parameters,
@@ -1738,15 +1724,21 @@ impl ParametersState {
                 Ok(ParameterValue::Number(n)) => {
                     values.insert(p.name.clone(), Setting::Number(*n));
                 }
-                Ok(ParameterValue::Row { name, columns }) => {
-                    values.insert(p.name.clone(), Setting::Text(name.clone()));
-                    for (column, value) in columns {
-                        values.insert(format!("{}.{column}", p.name), Setting::Number(*value));
-                    }
+                Ok(ParameterValue::Text(row)) => {
+                    values.insert(p.name.clone(), Setting::Text(row.clone()));
                 }
                 Err(e) => {
                     errors.insert(p.name.clone(), e.root_message().to_string());
                 }
+            }
+        }
+        // A table's columns, as its lookup step defines them.
+        let columns = read_parameter_values(reader).unwrap_or_default();
+        for (name, value) in &columns.0 {
+            if let (Some((table, _)), ParameterValue::Number(n)) = (name.split_once('.'), value)
+                && defined.get(table).is_some()
+            {
+                values.insert(name.clone(), Setting::Number(*n));
             }
         }
         if let Some(color) = read_properties(reader).ok().and_then(|p| p.color.clone()) {

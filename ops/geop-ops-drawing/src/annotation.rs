@@ -14,7 +14,7 @@ use geop_core_math::{
     scalars::{Ring, Scalar},
     vector::Vector3,
 };
-use geop_core_program::{instance::instance_path, part::Reader, values::Design};
+use geop_core_program::{placed::instance_path, reader::Reader, values::Design};
 use geop_core_sketch::{
     dimension::Measure,
     plain::{add, cross, distance, dot, perp, scale, sub, unit},

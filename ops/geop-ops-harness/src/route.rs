@@ -59,7 +59,7 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::{part::Reader, values::Design};
+use geop_core_program::{reader::Reader, values::Design};
 use geop_ops_add_datum::{Selected, Shape};
 use geop_ops_assembly::MateEntity;
 use geop_ops_model::Chain;
@@ -114,7 +114,7 @@ impl Waypoint<Design> {
         let (inside, pose) = match entity.instance() {
             "" => (reader.clone(), None),
             part => {
-                let inside = reader.inside(part).with_context(ctx)?;
+                let inside = reader.placed_part(part).with_context(ctx)?;
                 (inside, Some(located(reader, part).with_context(ctx)?))
             }
         };

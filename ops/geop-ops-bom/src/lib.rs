@@ -37,9 +37,9 @@
 
 use geop_core_program::{
     element::PickedElement,
-    instance::instance_path,
     numeric::{ParameterValue, read_parameter_values},
-    part::Reader,
+    placed::instance_path,
+    reader::Reader,
     values::Design,
 };
 use std::collections::HashMap;
@@ -161,8 +161,10 @@ fn key(reader: &Reader, file: &str) -> GeopResult<String> {
 /// `size=M4x12, length=40`.
 fn parameters(reader: &Reader) -> GeopResult<String> {
     Ok((read_parameter_values(reader)?.0.iter())
+        // A table's columns follow from its row.
+        .filter(|(name, _)| !name.contains('.'))
         .map(|(name, value)| match value {
-            ParameterValue::Row { name: row, .. } => format!("{name}={row}"),
+            ParameterValue::Text(row) => format!("{name}={row}"),
             ParameterValue::Number(n) => format!("{name}={n}"),
         })
         .collect::<Vec<_>>()
@@ -207,7 +209,7 @@ impl Group<'_> {
 fn groups<'a>(reader: &Reader<'a>) -> GeopResult<Vec<Group<'a>>> {
     let mut out: Vec<Group<'a>> = Vec::new();
     for (name, instance) in instances(reader)? {
-        let placed = reader.inside(name)?;
+        let placed = reader.placed_part(name)?;
         let name = name.to_string();
         let key = key(&placed, &instance.file)?;
         match out.iter_mut().find(|g| g.key == key) {
@@ -225,7 +227,7 @@ fn groups<'a>(reader: &Reader<'a>) -> GeopResult<Vec<Group<'a>>> {
 
 /// Whether the part `reader` reads places no part.
 fn places_nothing(reader: &Reader) -> bool {
-    reader.subparts().is_empty()
+    reader.instances().is_empty()
 }
 
 /// The paths of the parts placed as `name` in each of the parts placed at

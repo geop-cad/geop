@@ -2,12 +2,7 @@
 //! read ([`Read`]) on the node it makes, or by an editor, recording
 //! nothing.
 
-use std::{
-    any::TypeId,
-    cell::RefCell,
-    collections::HashSet,
-    rc::Rc,
-};
+use std::{any::TypeId, cell::RefCell, collections::HashSet, rc::Rc};
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 
@@ -227,8 +222,10 @@ impl<'a> Reader<'a> {
     ) -> GeopResult<InInstance<T::Element<'a>>> {
         let (path, target) = split_path(reference.target().name());
         let resolve = |reader: &Reader<'a>| {
-            let value = match (reader.part.visible(target, reader.before, reader.own), T::undefined())
-            {
+            let value = match (
+                reader.part.visible(target, reader.before, reader.own),
+                T::undefined(),
+            ) {
                 (None, Some(undefined)) => {
                     reader.record(Read::Absent(target.to_string()));
                     undefined
@@ -293,17 +290,18 @@ impl<'a> Reader<'a> {
     }
 
     /// The state's value, if the run gives one, the read recorded. A state
-    /// behind an instance's path — `bolt/b.pose` — is read inside the
-    /// placed part, as it is built with it: the part's value, else the
-    /// placed program's own — and none before a step placed it.
+    /// behind an instance's path — `bolt/b.pose` — is the part's own value
+    /// of that name where it gives one: the value the placed part is built
+    /// with. Else it is read inside the placed part — the placed program's
+    /// own, or none before a step placed it.
     pub fn given_state(&self, name: &str) -> Option<StateValue> {
-        let (path, local) = split_path(name);
-        if !path.is_empty() {
-            return self.placed_part(path).ok()?.given_state(local);
-        }
         let value = self.part.state.get(name).cloned();
         self.record(Read::State(name.to_string(), value.clone()));
-        value
+        match (value, name.split_once(crate::placed::INSTANCE_SEPARATOR)) {
+            (Some(value), _) => Some(value),
+            (None, None) => None,
+            (None, Some((instance, rest))) => self.placed_part(instance).ok()?.given_state(rest),
+        }
     }
 
     /// Whether it has read the state `name`: what a check of a value read
@@ -311,9 +309,8 @@ impl<'a> Reader<'a> {
     pub fn has_read_state(&self, name: &str) -> bool {
         (self.recording).is_some_and(|recording| {
             let read = Read::State(name.to_string(), None);
-            let key = (self.path.iter().rev()).fold(read.key(), |key, instance| {
-                format!("{instance}/{key}")
-            });
+            let key = (self.path.iter().rev())
+                .fold(read.key(), |key, instance| format!("{instance}/{key}"));
             recording.has(&key)
         })
     }
@@ -327,7 +324,7 @@ impl<'a> Reader<'a> {
         };
         let reads = recording.reads.borrow();
         (reads.iter())
-            .filter(|read| !matches!(read, Read::State(..)))
+            .filter(|read| !matches!(innermost(read), Read::State(..)))
             .filter_map(|read| {
                 let state = self.part.state_read(read, self.before, self.own)?;
                 Some((target_of(read), state))
@@ -395,8 +392,19 @@ impl<'a> Reader<'a> {
     pub fn program(&self, name: &str) -> GeopResult<(Rc<Program>, Location)> {
         let runner = self.runner()?;
         let (program, location) = runner.program(name)?;
-        self.record(Read::File(location.file.clone(), runner.revision(&location.file)));
+        self.record(Read::File(
+            location.file.clone(),
+            runner.revision(&location.file),
+        ));
         Ok((program, location))
+    }
+}
+
+/// What `read` read, inside the placed parts it went into.
+fn innermost(read: &Read) -> &Read {
+    match read {
+        Read::Inside { read, .. } => innermost(read),
+        read => read,
     }
 }
 

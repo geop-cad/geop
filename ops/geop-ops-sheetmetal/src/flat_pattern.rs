@@ -8,10 +8,7 @@ use geop_core_editor::{
     part_operation::PartOperation,
 };
 use geop_core_program::{
-    element::ElementReference,
-    part::{Part, Reader},
-    program_runner::ProgramRunner,
-    values::Design,
+    element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use std::collections::BTreeSet;
 
@@ -171,15 +168,11 @@ impl PartOperation for FlatPattern {
     }
 
     /// Unfolds the body, and draws its bend lines as a sketch.
-    fn run(
-        step: &str,
-        _: &ProgramRunner,
-        part: &mut Part,
-        args: &FlatPatternArgs,
-    ) -> GeopResult<()> {
-        body::run::<Self>(step, part, args)?;
+    fn run(ctx: &mut StepContext, args: &FlatPatternArgs) -> GeopResult<()> {
+        let step = ctx.step();
+        body::run::<Self>(ctx, args)?;
         let namer = Namer::new("flat_pattern", step)?;
-        body::add_bend_lines(part, step, &namer.name(&["bend_lines"]))
+        body::add_bend_lines(ctx, &namer.name(&["bend_lines"]))
     }
 
     /// The body, picked, and whether to keep it.
