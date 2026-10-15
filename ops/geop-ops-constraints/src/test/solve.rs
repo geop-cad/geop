@@ -1,5 +1,5 @@
 //! Solving the state a program's constraints are on: pins, pulls, limits,
-//! conflicts and freedom, on positions.
+//! conflicts and freedom, on poses.
 
 use std::collections::BTreeMap;
 
@@ -12,11 +12,13 @@ use geop_core_program::{
     part::{Part, Reader},
     program::{Program, ProgramStep},
     program_runner::ProgramRunner,
+    values::{Design, StateValues},
 };
 use serde::{Deserialize, Serialize};
 
 use super::{
-    Pose, Running, Sc, constraints_now, identity, input_frame, inputs, pin, registry, vector,
+    Running, body_at, constraints_now, input_frame, inputs, pin, pose_of, position, registry,
+    vector,
 };
 use crate::{
     constraint::{Bound, Constraint, define_constraints},
@@ -29,31 +31,21 @@ struct LimitArgs {
     most: f64,
 }
 
-/// Keeps the `x` of the position `state` at most `most`: a limit, named
+/// Keeps the `x` of the origin of the pose `state` at most `most`: a limit, named
 /// after its step.
 struct LimitOperation;
 
 impl Operation for LimitOperation {
     const KIND: &'static str = "limit";
     type Args = LimitArgs;
-    type Input = Sc;
-    type State = Pose;
 
-    fn run(
-        step: &str,
-        _: &ProgramRunner<Sc, Pose>,
-        part: &mut Part<Sc, Pose>,
-        args: &LimitArgs,
-    ) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &LimitArgs) -> GeopResult<()> {
         let args = (step.to_string(), args.clone());
         define_constraints(part, step, &args, |reader, (step, args)| {
-            let x = reader.retrieve_state(&args.state).position[0];
+            let (at, rows) = position(&reader.retrieve_state(&args.state))?;
             let limit = Constraint {
-                residuals: vec![x.sub(Sc::from_f64(args.most))],
-                jacobian: BTreeMap::from([(
-                    args.state.clone(),
-                    vec![vec![Sc::ONE, Sc::ZERO, Sc::ZERO]],
-                )]),
+                residuals: vec![at[0].sub(Design::from_f64(args.most))],
+                jacobian: BTreeMap::from([(args.state.clone(), rows[..1].to_vec())]),
                 bound: Bound::AtMost,
             };
             Ok(BTreeMap::from([(step.clone(), limit)]))
@@ -61,18 +53,18 @@ impl Operation for LimitOperation {
     }
 }
 
-/// The position `state` pulled towards `to`.
+/// The origin of the pose `state` pulled towards `to`.
 struct Toward {
     state: String,
     to: [f64; 3],
 }
 
-impl Preference<Sc, Pose> for Toward {
-    fn evaluate(&self, reader: &Reader<'_, Sc, Pose>) -> GeopResult<Constraint<Pose>> {
-        let at = reader.retrieve_state(&self.state).position;
+impl Preference for Toward {
+    fn evaluate(&self, reader: &Reader<'_>) -> GeopResult<Constraint> {
+        let (at, rows) = position(&reader.retrieve_state(&self.state))?;
         Ok(Constraint {
             residuals: at.sub(&vector(self.to)).to_array().to_vec(),
-            jacobian: BTreeMap::from([(self.state.clone(), identity(3))]),
+            jacobian: BTreeMap::from([(self.state.clone(), rows)]),
             bound: Bound::Zero,
         })
     }
@@ -82,28 +74,28 @@ fn runner() -> Running {
     Running::of(registry().with(LimitOperation).unwrap())
 }
 
-fn at(points: &[(&str, [f64; 3])]) -> BTreeMap<String, Pose> {
+fn at(points: &[(&str, [f64; 3])]) -> StateValues {
     (points.iter())
-        .map(|(name, p)| (name.to_string(), Pose::at(*p)))
+        .map(|(name, p)| (name.to_string(), body_at(*p)))
         .collect()
 }
 
-fn problem<'p>(
-    names: &[&str],
-    preferences: Vec<&'p dyn Preference<Sc, Pose>>,
-) -> Problem<'p, Sc, Pose> {
+fn problem<'p>(names: &[&str], preferences: Vec<&'p dyn Preference>) -> Problem<'p> {
     Problem {
         free: (names.iter())
             .map(|n| (n.to_string(), Mobility::Held))
             .collect(),
         preferences,
-        scale: Sc::ONE,
+        scale: Design::ONE,
     }
 }
 
 /// Where `state` puts `name`, as plain numbers.
-fn where_is(state: &BTreeMap<String, Pose>, name: &str) -> [f64; 3] {
-    state[name].position.to_array().map(|c| c.to_f64())
+fn where_is(state: &StateValues, name: &str) -> [f64; 3] {
+    pose_of(&state[name])
+        .position()
+        .to_array()
+        .map(|c| c.to_f64())
 }
 
 #[track_caller]
@@ -119,7 +111,7 @@ fn assert_near(a: [f64; 3], b: [f64; 3]) {
 #[test]
 fn a_pinned_body_goes_to_its_frame() {
     let mut runner = runner();
-    let program = Program::new(vec![input_frame("a", "a", "x"), pin("pin", "a", "body")]);
+    let program = Program::from_steps(vec![input_frame("a", "a", "x"), pin("pin", "a", "body")]);
     let x = inputs(&[("x", 1.0)]);
     let state = at(&[("body", [3.0, 2.0, 0.0])]);
     let solved = solve(
@@ -136,16 +128,21 @@ fn a_pinned_body_goes_to_its_frame() {
         "{:?}",
         solved.enclosure
     );
-    let enclosed = solved.enclosure.state["body"].position;
+    let enclosed = pose_of(&solved.enclosure.state["body"]).position();
     for (k, exact) in [1.0, 0.0, 0.0].into_iter().enumerate() {
         assert!(
-            Sc::from_f64(exact).is_subset_of(enclosed[k]),
+            Design::from_f64(exact).is_subset_of(enclosed[k]),
             "{enclosed:?}"
         );
     }
     // The part is left at the state found.
     let constraints = constraints_now(&runner.part).unwrap();
-    assert!(constraints.get("pin").unwrap().holds(Sc::from_f64(1e-9)));
+    assert!(
+        constraints
+            .get("pin")
+            .unwrap()
+            .holds(Design::from_f64(1e-9))
+    );
 }
 
 /// A pull moves only as far as the constraints let it: a pinned body
@@ -154,7 +151,7 @@ fn a_pinned_body_goes_to_its_frame() {
 #[test]
 fn a_pull_moves_what_the_constraints_leave_free() {
     let mut runner = runner();
-    let program = Program::new(vec![input_frame("a", "a", "x"), pin("pin", "a", "body")]);
+    let program = Program::from_steps(vec![input_frame("a", "a", "x"), pin("pin", "a", "body")]);
     let x = inputs(&[("x", 1.0)]);
     let state = at(&[("body", [1.0, 0.0, 0.0]), ("loose", [0.0; 3])]);
     let (body, loose) = (
@@ -192,7 +189,7 @@ fn a_limit_stops_a_pull() {
         state: "body".into(),
         most: 2.0,
     };
-    let program = Program::new(vec![
+    let program = Program::from_steps(vec![
         ProgramStep::new::<LimitOperation>("limit", &limit).unwrap(),
     ]);
     let state = at(&[("body", [0.0; 3])]);
@@ -214,11 +211,12 @@ fn a_limit_stops_a_pull() {
 
 /// Two pins of one body to different frames cannot both hold: the solve
 /// says which fail, the conflict names both, and a body pinned is held
-/// fast where a body nothing holds is free in every way.
+/// fast where it is — free only to turn about it — where a body nothing
+/// holds is free in every way.
 #[test]
 fn conflicts_and_freedom() {
     let mut runner = runner();
-    let program = Program::new(vec![
+    let program = Program::from_steps(vec![
         input_frame("a", "a", "x"),
         input_frame("b", "b", "y"),
         pin("one", "a", "body"),
@@ -241,9 +239,9 @@ fn conflicts_and_freedom() {
         ["one", "two"]
     );
 
-    let single = Program::new(vec![input_frame("a", "a", "x"), pin("one", "a", "body")]);
+    let single = Program::from_steps(vec![input_frame("a", "a", "x"), pin("one", "a", "body")]);
     let free = freedom(runner.rerun(&single, &values), &state, &both).unwrap();
-    assert_eq!(free.states["body"], 0);
-    assert_eq!(free.states["loose"], 3);
-    assert_eq!(free.total, 3);
+    assert_eq!(free.states["body"], 3);
+    assert_eq!(free.states["loose"], 6);
+    assert_eq!(free.total, 9);
 }

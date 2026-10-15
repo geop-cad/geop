@@ -13,11 +13,14 @@ use geop_core_program::{
     part::Part,
     program::{Program, ProgramStep},
     program_runner::ProgramRunner,
-    workspace::{Loaded, Workspace},
+    values::{Design, StateValues},
+    workspace::Workspace,
 };
 use serde::{Deserialize, Serialize};
 
-use super::{Pose, Running, Sc, errors, identity, input_frame, inputs, pin, registry};
+use super::{
+    Running, assert_translation, body_at, errors, input_frame, inputs, pin, pose_of, registry,
+};
 use crate::{
     constraint::Constraints,
     solve::{Problem, solve},
@@ -36,13 +39,11 @@ pub(super) struct PlaceOperation;
 impl Operation for PlaceOperation {
     const KIND: &'static str = "place";
     type Args = PlaceArgs;
-    type Input = Sc;
-    type State = Pose;
 
     fn run(
         step: &str,
-        runner: &ProgramRunner<Sc, Pose>,
-        part: &mut Part<Sc, Pose>,
+        runner: &ProgramRunner,
+        part: &mut Part,
         args: &PlaceArgs,
     ) -> GeopResult<()> {
         runner.load_subpart(part, step, &args.file, &inputs(&[("x", 1.0)]))
@@ -57,13 +58,10 @@ thread_local! {
 /// The tests' programs, by the file each was written to ([`place`]).
 pub(super) struct Files;
 
-impl Workspace<Pose> for Files {
-    fn program(&self, path: &str) -> GeopResult<Loaded<Pose>> {
+impl Workspace for Files {
+    fn program(&self, path: &str) -> GeopResult<Rc<Program>> {
         let program = FILES.with(|files| files.borrow().get(path).cloned());
-        Ok(Loaded {
-            program: program.ok_or_else(|| GeopError::new(format!("there is no file {path:?}")))?,
-            state: Rc::default(),
-        })
+        program.ok_or_else(|| GeopError::new(format!("there is no file {path:?}")))
     }
 
     fn read(&self, path: &str) -> GeopResult<Rc<str>> {
@@ -92,21 +90,14 @@ pub(super) struct FreeArgs {
     state: String,
 }
 
-/// Lets a solve move the position `state`.
+/// Lets a solve move the pose `state`.
 pub(super) struct FreeOperation;
 
 impl Operation for FreeOperation {
     const KIND: &'static str = "free";
     type Args = FreeArgs;
-    type Input = Sc;
-    type State = Pose;
 
-    fn run(
-        _: &str,
-        _: &ProgramRunner<Sc, Pose>,
-        part: &mut Part<Sc, Pose>,
-        args: &FreeArgs,
-    ) -> GeopResult<()> {
+    fn run(_: &str, _: &ProgramRunner, part: &mut Part, args: &FreeArgs) -> GeopResult<()> {
         declare_unknowns(part, &args.state, |_, state| {
             Ok(vec![Unknown {
                 state: state.clone(),
@@ -122,7 +113,11 @@ impl Operation for FreeOperation {
 /// `<id>.geop`.
 fn place(id: &str, steps: Vec<ProgramStep>) -> ProgramStep {
     let file = format!("{id}.geop");
-    FILES.with(|files| files.borrow_mut().insert(file.clone(), Rc::new(Program::new(steps))));
+    FILES.with(|files| {
+        files
+            .borrow_mut()
+            .insert(file.clone(), Rc::new(Program::from_steps(steps)))
+    });
     ProgramStep::new::<PlaceOperation>(id, &PlaceArgs { file }).unwrap()
 }
 
@@ -144,9 +139,9 @@ fn an_instance_is_solved_in_the_part_it_is_placed_in() {
         free("free", "body"),
         pin("pin", "a", "body"),
     ];
-    let program = Program::new(vec![place("p", inner)]);
+    let program = Program::from_steps(vec![place("p", inner)]);
     let mut runner = Running::of(registry());
-    let given = BTreeMap::from([("p/body".to_string(), Pose::at([3.0, 0.0, 0.0]))]);
+    let given = StateValues::from([("p/body".to_string(), body_at([3.0, 0.0, 0.0]))]);
     assert_eq!(errors(&runner.run(&program, &inputs(&[]), &given)), []);
 
     let reader = runner.part.current();
@@ -154,30 +149,28 @@ fn an_instance_is_solved_in_the_part_it_is_placed_in() {
     let names: Vec<&str> = constraints.iter().map(|(name, _)| name).collect();
     assert_eq!(names, ["p/pin"]);
     let pinned = constraints.get("p/pin").unwrap();
-    assert_eq!(
-        pinned.jacobian,
-        BTreeMap::from([("p/body".to_string(), identity(3))])
-    );
+    assert_eq!(pinned.jacobian.keys().collect::<Vec<_>>(), ["p/body"]);
+    assert_translation(&pinned.jacobian["p/body"]);
     let unknowns = Unknowns::of(&reader).unwrap();
     let declared: Vec<&str> = unknowns.iter().map(|u| u.state.as_str()).collect();
     assert_eq!(declared, ["p/body"]);
     // It starts where the instance has it.
     assert_eq!(
         unknowns.get("p/body").unwrap().seed,
-        Some(Pose::at([3.0, 0.0, 0.0]))
+        Some(body_at([3.0, 0.0, 0.0]))
     );
 
     let problem = Problem {
         free: BTreeMap::from([("p/body".to_string(), Mobility::Held)]),
         preferences: Vec::new(),
-        scale: Sc::ONE,
+        scale: Design::ONE,
     };
     let x = inputs(&[]);
     let run = runner.rerun(&program, &x);
     let solved = solve(run, &given, &problem).unwrap();
     assert!(solved.report.converged, "{:?}", solved.report);
-    let at = solved.state["p/body"]
-        .position
+    let at = pose_of(&solved.state["p/body"])
+        .position()
         .to_array()
         .map(|c| c.to_f64());
     assert!((at[0] - 1.0).abs() < 1e-8 && at[1].abs() < 1e-8, "{at:?}");

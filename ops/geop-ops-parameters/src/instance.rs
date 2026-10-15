@@ -3,19 +3,20 @@
 //! as a target of its own ([`define_instance`]). The program only runs the
 //! instance's part; where it goes is a value of the state, or a fixed
 //! motion after another instance, composed outermost first
-//! ([`placement`]).
+//! ([`placement`]), and where that puts it ([`compose`], [`located`]).
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::Pose,
+    scalars::Scalar,
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
     instance::INSTANCE_SEPARATOR,
+    part::{Part, Reader},
     target::TargetReference,
+    values::{Design, Settings, StateValue, pose_in},
 };
-
-use crate::{BuildPart, Design, PartReader, Settings, StateValue};
 
 /// Where an instance is in the part it is in.
 #[derive(Clone, Debug, PartialEq)]
@@ -65,13 +66,15 @@ fn instance_target(name: &str) -> TargetReference<Instance> {
 
 /// Defines the instance `name` as `instance`. Its part is loaded on its
 /// own.
-pub fn define_instance(part: &mut BuildPart, name: &str, instance: &Instance) -> GeopResult<()> {
-    part.define_target(&instance_target(name), instance, |_, instance| Ok(instance.clone()))
+pub fn define_instance(part: &mut Part, name: &str, instance: &Instance) -> GeopResult<()> {
+    part.define_target(&instance_target(name), instance, |_, instance| {
+        Ok(instance.clone())
+    })
 }
 
 /// The instance `name` placed in the part `reader` reads, the read
 /// recorded.
-pub fn instance<'a>(reader: &PartReader<'a>, name: &str) -> GeopResult<&'a Instance> {
+pub fn instance<'a>(reader: &Reader<'a>, name: &str) -> GeopResult<&'a Instance> {
     (reader.retrieve_element(&ElementReference::whole(instance_target(name))))
         .map_err(|e| e.with_context(format!("the placed part `{name}`")))
 }
@@ -81,7 +84,7 @@ pub fn instance<'a>(reader: &PartReader<'a>, name: &str) -> GeopResult<&'a Insta
 /// ([`geop_core_program::part::Reader::subparts`]), each read recorded. An
 /// instance whose part is loaded must be placed: it is an error if it is
 /// not.
-pub fn instances<'a>(reader: &PartReader<'a>) -> GeopResult<Vec<(&'a str, &'a Instance)>> {
+pub fn instances<'a>(reader: &Reader<'a>) -> GeopResult<Vec<(&'a str, &'a Instance)>> {
     (reader.subparts().into_iter())
         .map(|name| Ok((name, instance(reader, name)?)))
         .collect()
@@ -108,7 +111,7 @@ const COPIES: usize = 1 << 16;
 /// state that place it and the parts it is in, read and recorded. A state
 /// of an instance's own — what places a part in it — is named as the part
 /// names it, behind the instance's path.
-pub fn placement(reader: &PartReader, path: &str) -> GeopResult<Vec<Factor>> {
+pub fn placement(reader: &Reader, path: &str) -> GeopResult<Vec<Factor>> {
     let ctx = |e: GeopError| e.with_context(format!("where the placed part {path:?} is"));
     let mut factors = Vec::new();
     let mut level = reader.clone();
@@ -125,7 +128,7 @@ pub fn placement(reader: &PartReader, path: &str) -> GeopResult<Vec<Factor>> {
 /// part at `prefix` in the part asked — in that part: its state's value,
 /// named behind `prefix`, or a copy's motion after where what it copies
 /// is.
-fn placed(level: &PartReader, name: &str, prefix: &str, depth: usize) -> GeopResult<Vec<Factor>> {
+fn placed(level: &Reader, name: &str, prefix: &str, depth: usize) -> GeopResult<Vec<Factor>> {
     if depth > COPIES {
         return Err(GeopError::new(format!(
             "the copies of `{name}` form a cycle"
@@ -142,4 +145,35 @@ fn placed(level: &PartReader, name: &str, prefix: &str, depth: usize) -> GeopRes
             factors
         }
     })
+}
+
+/// How the pose of each state a placement reads enters it, computed in
+/// `T`: as it is, or moved by a step to differentiate by it. Given the
+/// state's name and the pose it holds.
+pub type PoseOf<'f, T> = dyn FnMut(&str, Pose<Design>) -> Pose<T> + 'f;
+
+/// The pose an instance is at whose placement is `factors` (see
+/// [`placement`]), in `T`: theirs,
+/// composed outermost first, each state's entering as `pose_of` has it. A
+/// value that holds no pose — a state before anything solved for it —
+/// is no motion.
+pub fn compose<T: Scalar>(factors: &[Factor], pose_of: &mut PoseOf<'_, T>) -> Pose<T> {
+    let mut poses = factors.iter().map(|factor| match factor {
+        Factor::State { state, value } => {
+            pose_of(state, pose_in(value).unwrap_or_else(Pose::identity))
+        }
+        Factor::Fixed(motion) => motion.cast(),
+    });
+    // The first as it is: composing it after no motion would round it.
+    let first = poses.next().unwrap_or_else(Pose::identity);
+    poses.fold(first, |world, pose| world.compose(&pose))
+}
+
+/// Where the instance at `path` is in the part `reader` reads: none — no
+/// motion — for the part itself, at the empty path.
+pub fn located(reader: &Reader, path: &str) -> GeopResult<Pose<Design>> {
+    if path.is_empty() {
+        return Ok(Pose::identity());
+    }
+    Ok(compose(&placement(reader, path)?, &mut |_, pose| pose))
 }

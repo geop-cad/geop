@@ -29,31 +29,19 @@ pub mod unknown;
 
 pub use constraint::{Bound, Constraint, Constraints};
 
-use geop_core_math::{scalars::Scalar, solvers::system::Variable};
-use geop_core_program::part::{Generator, State};
-
-/// A state a solver moves until the [`Constraint`]s hold: a pose, say.
-/// It moves by steps along it ([`Variable::retract`]): a number by adding
-/// to it, a pose by the exponential map of a twist, and a constraint's
-/// derivatives are by such a step from where the value is. Its numbers
-/// ([`Variable::Scalar`]) are what the constraints on it are made of; `==`
-/// on them asks whether two enclosures are the same, as a check for change
-/// does, never whether two values could be equal.
-pub trait Solvable: State + Variable<Scalar: Scalar + PartialEq> {}
-
-impl<T: State + Variable<Scalar: Scalar + PartialEq>> Solvable for T {}
+use geop_core_program::part::Generator;
 
 /// A step's arguments with the generator that makes what it contributes
 /// from them: the arguments of the target that runs it, since a generator
 /// captures nothing. Two are equal where both are, so a version made by the
 /// same generator from equal arguments is reused.
-struct Generated<I, S, Args, Out> {
+struct Generated<Args, Out> {
     args: Args,
-    generator: Generator<I, S, Args, Out>,
+    generator: Generator<Args, Out>,
 }
 
-// By hand, since a derive would ask the same of `I`, `S` and `Out`.
-impl<I, S, Args: Clone, Out> Clone for Generated<I, S, Args, Out> {
+// By hand, since a derive would ask the same of `Out`.
+impl<Args: Clone, Out> Clone for Generated<Args, Out> {
     fn clone(&self) -> Self {
         Self {
             args: self.args.clone(),
@@ -62,7 +50,7 @@ impl<I, S, Args: Clone, Out> Clone for Generated<I, S, Args, Out> {
     }
 }
 
-impl<I, S, Args: PartialEq, Out> PartialEq for Generated<I, S, Args, Out> {
+impl<Args: PartialEq, Out> PartialEq for Generated<Args, Out> {
     fn eq(&self, other: &Self) -> bool {
         self.args == other.args && std::ptr::fn_addr_eq(self.generator, other.generator)
     }

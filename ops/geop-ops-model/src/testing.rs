@@ -16,6 +16,7 @@ use geop_core_program::{
     operation_registry::OperationRegistry,
     part::{Part, Reader},
     program_runner::ProgramRunner,
+    values::Design,
 };
 use geop_core_topology::{
     Body, Edge, FaceId, Model, SolidId,
@@ -26,7 +27,7 @@ use geop_ops_rasterize::{
     stl::{enclosed_volume, stl_triangles},
 };
 
-use crate::{Design, NamedModel, read_model};
+use crate::{NamedModel, read_model};
 
 // ── Validity ────────────────────────────────────────────────────────────────
 
@@ -228,7 +229,9 @@ pub fn unit_cube() -> NamedModel<Design> {
     let topology = geop_core_topology::test_fixtures::test_cube_model::<Design>();
     let mut names = crate::NameRegistry::default();
     let mut name = |id: crate::RefId, kind: &str, k: usize| {
-        names.insert(id, format!("{kind}{k}")).map_err(|e| e.with_context("unit_cube"))
+        names
+            .insert(id, format!("{kind}{k}"))
+            .map_err(|e| e.with_context("unit_cube"))
     };
     for (k, &id) in topology.vertices.keys().enumerate() {
         name(id.into(), "v", k).expect("names are fresh");
@@ -252,15 +255,13 @@ pub fn unit_cube() -> NamedModel<Design> {
 // ── Parts of a model given and one step ─────────────────────────────────────
 
 /// The generator of a model given: `model` itself.
-fn given<I, S>(_: &Reader<I, S>, model: &NamedModel<Design>) -> GeopResult<NamedModel<Design>> {
+fn given(_: &Reader, model: &NamedModel<Design>) -> GeopResult<NamedModel<Design>> {
     Ok(model.clone())
 }
 
 /// A part of one step that defines its model as `model`: what the tests of
 /// an operation, an exporter or an inspector build on.
-pub fn given_part<I: geop_core_program::part::Input, S: geop_core_program::part::State>(
-    model: &NamedModel<Design>,
-) -> GeopResult<Part<I, S>> {
+pub fn given_part(model: &NamedModel<Design>) -> GeopResult<Part> {
     let mut part = Part::default();
     part.begin_run(&Default::default(), &Default::default());
     part.begin_step();
@@ -276,7 +277,7 @@ pub fn apply<O: Operation>(
     model: NamedModel<Design>,
     step: &str,
     args: &O::Args,
-) -> GeopResult<Part<O::Input, O::State>> {
+) -> GeopResult<Part> {
     let mut part = given_part(&model)?;
     part.begin_step();
     let runner = ProgramRunner::new(OperationRegistry::default());
@@ -304,4 +305,3 @@ pub fn error<T>(result: GeopResult<T>) -> GeopError {
         Err(e) => e,
     }
 }
-

@@ -8,10 +8,10 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_program::{element::ElementReference, target::TargetReference};
+use geop_core_program::{element::ElementReference, target::TargetReference, values::Design};
 use geop_core_topology::Model;
 
-use crate::{Design, Feature, ids::RefId, names::NameRegistry};
+use crate::{Feature, ids::RefId, names::NameRegistry};
 
 /// A part's boundary-representation topology and the name of every vertex,
 /// edge, face and solid in it: what the steps of a program build, one
@@ -37,15 +37,17 @@ pub struct NamedModel<S: Scalar> {
     pub(crate) features: Vec<(String, Arc<Feature<S>>)>,
 }
 
-/// Equal when the topology and the names are, and the features are the very
-/// ones recorded: a feature recorded again counts as changed, however alike.
+/// Equal when the topology, the names and the features are: a model built
+/// again into the same value is the same model, however it was built — what
+/// a version rebuilt unchanged, and a part built from scratch, are compared
+/// by. A feature shared with the other model is equal without a look.
 impl<S: Scalar + PartialEq> PartialEq for NamedModel<S> {
     fn eq(&self, other: &Self) -> bool {
         self.topology == other.topology
             && self.names == other.names
             && self.features.len() == other.features.len()
             && (self.features.iter().zip(&other.features))
-                .all(|((a, f), (b, g))| a == b && Arc::ptr_eq(f, g))
+                .all(|((a, f), (b, g))| a == b && (Arc::ptr_eq(f, g) || f == g))
     }
 }
 

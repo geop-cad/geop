@@ -2,7 +2,7 @@
 //! numbers, tables of variants, the part's colour and what it is made of.
 //!
 //! A parameter is defined once, in the program, and read by name wherever
-//! a number is typed ([`NumericInput`](geop_core_editor::numeric_input::NumericInput)):
+//! a number is typed ([`NumericInput`](geop_core_program::numeric::NumericInput)):
 //! a sketch dimension of `width / 2`, a number parameter of `2 * wall`. A
 //! table is a family of variants — screw sizes, say — of which one row is
 //! selected: `screw.diameter` is that row's value in the column
@@ -11,27 +11,12 @@
 //! What a parameter is defined as is the program's own, in a step of it
 //! ([`crate::steps::DefineParameters`]); what it is *built with* may be set
 //! by a program placing the part, by the same name: the run's input of
-//! that name (see [`Settings`]). So a placed screw is made M5 by the
+//! that name (see [`geop_core_program::values::Settings`]). So a placed screw is made M5 by the
 //! program placing it, without touching the screw's own file.
 
-use std::collections::BTreeMap;
-
-use geop_core_editor::numeric_input::{FUNCTION_NAMES, rename_in};
 use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_program::numeric::{FUNCTION_NAMES, rename_in};
 use serde::{Deserialize, Serialize};
-
-/// What a parameter is set to where a program places the part: a number,
-/// or the name of a table's row, or a colour. Saved as itself — `2.5`,
-/// `"M5"`, `"#ff8800"`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum Setting {
-    Number(f64),
-    Text(String),
-}
-
-/// Parameter settings, by name.
-pub type Settings = BTreeMap<String, Setting>;
 
 /// The name the part's colour is set by.
 pub const COLOR: &str = "color";

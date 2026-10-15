@@ -8,7 +8,8 @@ use geop_core_topology::{EdgeId, Model, SolidId};
 use geop_ops_rasterize::rasterize;
 use geop_ops_view::{PartView, RESOLUTION, ViewEdge, ViewFace, ViewVertex};
 
-use crate::{Design, NamedModel, RefId};
+use crate::{NamedModel, RefId};
+use geop_core_program::values::Design;
 
 /// The solid `edge` bounds: that of a face it runs along.
 fn solid_of_edge(model: &Model<Design>, edge: EdgeId) -> Option<SolidId> {
@@ -131,13 +132,19 @@ mod tests {
         let mut view = PartView::new();
         unit_cube().draw("model", &mut view).unwrap();
         let view = view.finish();
-        assert_eq!((view.vertices.len(), view.edges.len(), view.faces.len()), (8, 12, 6));
+        assert_eq!(
+            (view.vertices.len(), view.edges.len(), view.faces.len()),
+            (8, 12, 6)
+        );
         let all = accepts(&[drawn::VERTEX, drawn::EDGE, drawn::FACE]);
         let hit = |x, y, accepts: &[String]| view.pick(&from_above(x, y), accepts).unwrap().element;
         assert_eq!(hit(1.0, 1.0, &all).kind, drawn::VERTEX);
         assert_eq!(hit(0.5, 1.0, &all).kind, drawn::EDGE);
         let top = hit(0.5, 0.5, &all);
-        assert_eq!((top.kind.as_str(), top.target.as_str()), (drawn::FACE, "model"));
+        assert_eq!(
+            (top.kind.as_str(), top.target.as_str()),
+            (drawn::FACE, "model")
+        );
         assert_eq!(hit(1.0, 1.0, &accepts(&[drawn::FACE])).kind, drawn::FACE);
         assert!(view.pick(&from_above(5.0, 5.0), &all).is_none());
     }
@@ -149,13 +156,17 @@ mod tests {
         let mut view = PartView::new();
         unit_cube().draw("model", &mut view).unwrap();
         let view = view.finish();
-        let part: Part<Design, Design> = given_part(&unit_cube()).unwrap();
+        let part: Part = given_part(&unit_cube()).unwrap();
         let reader = part.current();
-        let edge = view.pick(&from_above(0.5, 1.0), &accepts(&[drawn::EDGE])).unwrap();
+        let edge = view
+            .pick(&from_above(0.5, 1.0), &accepts(&[drawn::EDGE]))
+            .unwrap();
         let lines: Vec<ElementReference<NamedModel<Design>, Line>> =
             selected(&reader, &[edge.element.clone()]);
         assert_eq!(lines[0].name(), edge.element.name);
-        let face = view.pick(&from_above(0.5, 0.5), &accepts(&[drawn::FACE])).unwrap();
+        let face = view
+            .pick(&from_above(0.5, 0.5), &accepts(&[drawn::FACE]))
+            .unwrap();
         let bodies: Vec<ElementReference<NamedModel<Design>, Body>> =
             selected(&reader, &[face.element]);
         assert_eq!(bodies, [ElementReference::new(model(), "s0")]);

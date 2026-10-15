@@ -22,7 +22,8 @@
 //! `kind` is the operation that created the entity, `operation` the id of
 //! the program step that ran it, and the arguments identify the entity
 //! within that step. Operation ids are restricted to
-//! [`validate_operation_id`]'s alphabet, so the arguments of a name — which
+//! [`validate_operation_id`](geop_core_program::program::validate_operation_id)'s
+//! alphabet, so the arguments of a name — which
 //! may themselves be names — can always be told apart.
 
 // Library code reports what goes wrong as an error, never by panicking;
@@ -46,8 +47,8 @@ mod draw;
 mod edit;
 pub mod elements;
 mod euler;
-pub mod geometry;
 mod feature;
+pub mod geometry;
 mod ids;
 mod mesh;
 mod named_model;
@@ -56,9 +57,9 @@ pub mod notes;
 pub mod records;
 mod resolve;
 pub mod tangent;
-pub mod threads;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
+pub mod threads;
 
 pub use build::{ModelOperation, build_model};
 pub use curves::{Chain, ChainCurve, Profile};
@@ -70,17 +71,9 @@ pub use geometry::{
     Body, Circle, Curve, Line, Path, Plane, Point, Round, frame_along, resolve_bodies,
 };
 pub use ids::RefId;
+pub use mesh::SolidMeshes;
+pub use named_model::{NamedModel, element, model};
+pub use names::{LONGEST_ARGUMENT, NameRegistry, Namer, digest, operation_of, origin_of};
 pub use notes::{CutWire, SolidNote, SolidNotes, notes_of, solid_notes};
 pub use records::Records;
 pub use threads::{CosmeticThread, Threads, draw_threads, read_threads, threads};
-pub use mesh::SolidMeshes;
-pub use named_model::{NamedModel, element, model};
-pub use names::{
-    LONGEST_ARGUMENT, NameRegistry, Namer, digest, operation_of, origin_of, validate_operation_id,
-};
-
-/// The scalar a program holds its design data in — a sketch's points, the
-/// poses of the parts it places, the values of its mates: what a file
-/// holds, read as sharp values and written as their midpoints. A part is
-/// built in it; algorithms take any scalar.
-pub type Design = geop_core_math::scalars::ScalInF64;

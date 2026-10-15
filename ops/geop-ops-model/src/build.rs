@@ -4,9 +4,12 @@
 
 use geop_core_editor::part_operation::PartOperation;
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::part::{Part, Reader};
+use geop_core_program::{
+    part::{Part, Reader},
+    values::Design,
+};
 
-use crate::{Design, NamedModel, model};
+use crate::{NamedModel, model};
 
 /// A kind of step that builds into the part's model: an extrude, a
 /// boolean, a fillet. Its run is [`build_model`].
@@ -16,7 +19,7 @@ pub trait ModelOperation: PartOperation {
     /// so the step is rebuilt when that changes.
     fn build(
         model: &mut NamedModel<Design>,
-        reader: &Reader<Self::Input, Self::State>,
+        reader: &Reader,
         step: &str,
         args: &Self::Args,
     ) -> GeopResult<()>;
@@ -27,7 +30,7 @@ pub trait ModelOperation: PartOperation {
 /// first step that builds any. What fails is said in the context of the
 /// step and its arguments.
 pub fn build_model<O: ModelOperation>(
-    part: &mut Part<O::Input, O::State>,
+    part: &mut Part,
     step: &str,
     args: &O::Args,
 ) -> GeopResult<()> {
@@ -37,7 +40,7 @@ pub fn build_model<O: ModelOperation>(
 /// The generator of [`build_model`]: a function of `O` alone, so it
 /// captures nothing — the step comes with the arguments.
 fn generate<O: ModelOperation>(
-    reader: &Reader<O::Input, O::State>,
+    reader: &Reader,
     (step, args): &(String, O::Args),
 ) -> GeopResult<NamedModel<Design>> {
     let mut model: NamedModel<Design> = reader.previous()?;

@@ -44,7 +44,7 @@ pub enum BooleanOp {
 
 /// What one step did by combining tools with a solid: each tool, in the
 /// order it was combined.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Feature<S: Scalar> {
     pub tools: Vec<FeatureTool<S>>,
 }
@@ -52,7 +52,7 @@ pub struct Feature<S: Scalar> {
 /// One tool of a [`Feature`]: the solid as its step built it, before it was
 /// combined — its geometry and the names of its entities — and how it was
 /// combined with the solid it was combined with.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FeatureTool<S: Scalar> {
     pub spec: BodySpec<S>,
     pub names: BodyNames,

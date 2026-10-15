@@ -10,15 +10,15 @@ use geop_core_editor::selectable::SelectableElement;
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
-    part::{Input, Reader, State},
+    part::Reader,
+    values::Design,
 };
 use geop_core_topology::{EdgeId, FaceId, SolidId, VertexId};
 use geop_ops_view::drawn;
 
 use crate::{
-    Design, NamedModel, RefId,
+    NamedModel, RefId, model,
     tangent::{TangentChain, tangent_chain},
-    model,
 };
 
 /// The name the part's model is a target by: there is one.
@@ -136,9 +136,7 @@ named_elements! {
 
 /// The model as `reader` reads it: empty, before the first step that
 /// builds any topology.
-pub fn read_model<'a, I: Input, S: State>(
-    reader: &Reader<'a, I, S>,
-) -> GeopResult<std::borrow::Cow<'a, NamedModel<Design>>> {
+pub fn read_model<'a>(reader: &Reader<'a>) -> GeopResult<std::borrow::Cow<'a, NamedModel<Design>>> {
     if !reader.defines(&model()) {
         return Ok(std::borrow::Cow::Owned(NamedModel::new()));
     }
@@ -174,8 +172,8 @@ macro_rules! drawn_as_itself {
         impl SelectableElement<NamedModel<Design>> for $kind {
             const PICKED_FROM: &'static [&'static str] = &[<$kind as Kind>::NAME];
 
-            fn select<I: Input, S: State>(
-                _: &Reader<I, S>,
+            fn select(
+                _: &Reader,
                 hit: &PickedElement,
             ) -> Option<ElementReference<NamedModel<Design>, Self>> {
                 ElementReference::from_picked(hit)
@@ -190,8 +188,8 @@ drawn_as_itself!(Vertex, Edge, Face);
 impl SelectableElement<NamedModel<Design>> for Solid {
     const PICKED_FROM: &'static [&'static str] = &[Face::NAME];
 
-    fn select<I: Input, S: State>(
-        reader: &Reader<I, S>,
+    fn select(
+        reader: &Reader,
         hit: &PickedElement,
     ) -> Option<ElementReference<NamedModel<Design>, Self>> {
         let face = ElementReference::<NamedModel<Design>, Face>::from_picked(hit)?;
@@ -201,8 +199,8 @@ impl SelectableElement<NamedModel<Design>> for Solid {
         Some(ElementReference::new(model(), name))
     }
 
-    fn drawn<I: Input, S: State>(
-        reader: &Reader<I, S>,
+    fn drawn(
+        reader: &Reader,
         solid: &ElementReference<NamedModel<Design>, Self>,
     ) -> Vec<PickedElement> {
         (read_model(reader).ok())
@@ -216,8 +214,8 @@ impl SelectableElement<NamedModel<Design>> for Solid {
 impl SelectableElement<NamedModel<Design>> for EdgeChain {
     const PICKED_FROM: &'static [&'static str] = &[Edge::NAME];
 
-    fn select<I: Input, S: State>(
-        reader: &Reader<I, S>,
+    fn select(
+        reader: &Reader,
         hit: &PickedElement,
     ) -> Option<ElementReference<NamedModel<Design>, Self>> {
         let through = ElementReference::<NamedModel<Design>, Self>::new(model(), &hit.name);
@@ -227,8 +225,8 @@ impl SelectableElement<NamedModel<Design>> for EdgeChain {
         Some(ElementReference::new(model(), first))
     }
 
-    fn drawn<I: Input, S: State>(
-        reader: &Reader<I, S>,
+    fn drawn(
+        reader: &Reader,
         chain: &ElementReference<NamedModel<Design>, Self>,
     ) -> Vec<PickedElement> {
         let Ok(chain) = reader.retrieve_element(chain) else {
@@ -248,12 +246,10 @@ mod tests {
 
     use super::*;
 
-    type TestPart = Part<Design, Design>;
-
     /// A part of one step that builds a model of one solid: the vertex
     /// `v0`, the face `f0` and the solid `s0`.
-    fn part() -> TestPart {
-        let mut part = TestPart::default();
+    fn part() -> Part {
+        let mut part = Part::default();
         part.begin_run(&Default::default(), &Default::default());
         part.begin_step();
         (part.revise_target(&model(), &(), |reader, _| {
@@ -268,7 +264,7 @@ mod tests {
 
     /// A part of one step whose model is a unit cube, every entity named
     /// by its kind and its position among those: `e0` … `e11`.
-    fn cube() -> TestPart {
+    fn cube() -> Part {
         crate::testing::given_part(&crate::testing::unit_cube()).unwrap()
     }
 
@@ -290,9 +286,11 @@ mod tests {
             selected(&reader, &[edge("e3")]);
         assert_eq!(picked, [chain("e3")]);
         assert_eq!(EdgeChain::drawn(&reader, &chain("e3")), [edge("e3")]);
-        let both: Vec<ElementReference<NamedModel<Design>, EdgeChain>> = selected(&reader, &[chain("e3").picked(), edge("e5")]);
+        let both: Vec<ElementReference<NamedModel<Design>, EdgeChain>> =
+            selected(&reader, &[chain("e3").picked(), edge("e5")]);
         assert_eq!(both, [chain("e3"), chain("e5")]);
-        let again: Vec<ElementReference<NamedModel<Design>, EdgeChain>> = selected(&reader, &[chain("e3").picked(), edge("e3")]);
+        let again: Vec<ElementReference<NamedModel<Design>, EdgeChain>> =
+            selected(&reader, &[chain("e3").picked(), edge("e3")]);
         assert_eq!(
             again,
             Vec::<ElementReference<NamedModel<Design>, EdgeChain>>::new()
@@ -318,7 +316,7 @@ mod tests {
             serde_json::json!("f0")
         );
         assert_eq!(read_model(&reader).unwrap().solid_names(), ["s0"]);
-        let empty = TestPart::default();
+        let empty = Part::default();
         assert!(
             read_model(&empty.current())
                 .unwrap()

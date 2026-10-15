@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::{Design, frame_along, operation_of};
+use crate::{frame_along, operation_of};
 use geop_core_geometry::{
     nurb_curve::{Handedness, NurbCurve3D},
     shape::Axis,
@@ -23,8 +23,9 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
-    part::{Input, Part, Reader, State},
+    part::{Part, Reader},
     target::TargetReference,
+    values::Design,
 };
 use geop_ops_view::{Annotations, ViewAnnotation, annotations};
 
@@ -168,9 +169,7 @@ impl HasElements<Threads<Design>> for Threads<Design> {
 
 /// The part's cosmetic threads as `reader` reads them: none, before the
 /// first step that records one.
-pub fn read_threads<'a, I: Input, St: State>(
-    reader: &Reader<'a, I, St>,
-) -> GeopResult<std::borrow::Cow<'a, Threads<Design>>> {
+pub fn read_threads<'a>(reader: &Reader<'a>) -> GeopResult<std::borrow::Cow<'a, Threads<Design>>> {
     if !reader.defines(&threads()) {
         return Ok(std::borrow::Cow::Owned(Threads::default()));
     }
@@ -180,13 +179,13 @@ pub fn read_threads<'a, I: Input, St: State>(
 
 /// Draws the threads the step `step` recorded on the part, as its
 /// [`annotations`]: what a step that records threads does after.
-pub fn draw_threads<I: Input, St: State>(part: &mut Part<I, St>, step: &str) -> GeopResult<()> {
+pub fn draw_threads(part: &mut Part, step: &str) -> GeopResult<()> {
     part.define_target(&annotations(step), &step.to_string(), draw)
 }
 
 /// The generator of [`draw_threads`]: its arguments, the step, are what a
 /// target is defined from, so owned.
 #[allow(clippy::ptr_arg)]
-fn draw<I: Input, St: State>(reader: &Reader<I, St>, step: &String) -> GeopResult<Annotations> {
+fn draw(reader: &Reader, step: &String) -> GeopResult<Annotations> {
     Ok(Annotations(read_threads(reader)?.drawn(step)?))
 }

@@ -27,12 +27,13 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement},
-    part::{Input, Reader, State},
+    part::Reader,
+    values::Design,
 };
 use geop_core_topology::{Body as TopologyBody, EdgeId, FaceId};
 
 use crate::{
-    Design, NamedModel, RefId,
+    NamedModel, RefId,
     curves::Chain,
     elements::{Edge, Face, Vertex, drawn_entity},
     model, read_model,
@@ -264,8 +265,8 @@ macro_rules! picked_where_it_has_the_shape {
         impl SelectableElement<NamedModel<Design>> for $kind {
             const PICKED_FROM: &'static [&'static str] = &[$(<$from as Kind>::NAME),+];
 
-            fn select<I: Input, S: State>(
-                reader: &Reader<I, S>,
+            fn select(
+                reader: &Reader,
                 hit: &PickedElement,
             ) -> Option<ElementReference<NamedModel<Design>, Self>> {
                 (hit.target == MODEL && Self::PICKED_FROM.contains(&hit.kind.as_str()))
@@ -275,8 +276,8 @@ macro_rules! picked_where_it_has_the_shape {
                 Some(reference)
             }
 
-            fn drawn<I: Input, S: State>(
-                reader: &Reader<I, S>,
+            fn drawn(
+                reader: &Reader,
                 element: &ElementReference<NamedModel<Design>, Self>,
             ) -> Vec<PickedElement> {
                 (read_model(reader).ok())
@@ -302,8 +303,8 @@ picked_where_it_has_the_shape! {
 impl SelectableElement<NamedModel<Design>> for Body {
     const PICKED_FROM: &'static [&'static str] = &[Face::NAME];
 
-    fn select<I: Input, S: State>(
-        reader: &Reader<I, S>,
+    fn select(
+        reader: &Reader,
         hit: &PickedElement,
     ) -> Option<ElementReference<NamedModel<Design>, Self>> {
         let face = ElementReference::<NamedModel<Design>, Face>::from_picked(hit)?;
@@ -315,8 +316,8 @@ impl SelectableElement<NamedModel<Design>> for Body {
         Some(ElementReference::new(model(), name))
     }
 
-    fn drawn<I: Input, S: State>(
-        reader: &Reader<I, S>,
+    fn drawn(
+        reader: &Reader,
         body: &ElementReference<NamedModel<Design>, Self>,
     ) -> Vec<PickedElement> {
         (read_model(reader).ok())
@@ -327,8 +328,8 @@ impl SelectableElement<NamedModel<Design>> for Body {
 
 /// The bodies `bodies` refer to, each once, in the order picked. None
 /// picked is refused.
-pub fn resolve_bodies<I: Input, S: State>(
-    reader: &Reader<I, S>,
+pub fn resolve_bodies(
+    reader: &Reader,
     bodies: &[ElementReference<NamedModel<Design>, Body>],
 ) -> GeopResult<Vec<TopologyBody>> {
     if bodies.is_empty() {
@@ -353,8 +354,6 @@ mod tests {
     use super::*;
     use crate::testing::{given_part, unit_cube};
 
-    type TestPart = Part<Design, Design>;
-
     fn hit(kind: &str, name: &str) -> PickedElement {
         PickedElement {
             target: MODEL.to_string(),
@@ -367,11 +366,15 @@ mod tests {
     /// lines and curves, its faces planes; nothing of it is round.
     #[test]
     fn a_cube_has_points_lines_and_planes() {
-        let part: TestPart = given_part(&unit_cube()).unwrap();
+        let part: Part = given_part(&unit_cube()).unwrap();
         let reader = part.current();
         let point = ElementReference::<NamedModel<Design>, Point>::new(model(), "v0");
         let at = reader.retrieve_element(&point).unwrap();
-        assert!(at.to_array().iter().all(|c| c.to_f64() == 0.0 || c.to_f64() == 1.0));
+        assert!(
+            at.to_array()
+                .iter()
+                .all(|c| c.to_f64() == 0.0 || c.to_f64() == 1.0)
+        );
 
         let line = ElementReference::<NamedModel<Design>, Line>::new(model(), "e0");
         let axis = reader.retrieve_element(&line).unwrap();
@@ -394,7 +397,7 @@ mod tests {
     /// as the edge; a click on what has not the shape selects nothing.
     #[test]
     fn a_geometric_kind_is_picked_where_the_model_has_its_shape() {
-        let part: TestPart = given_part(&unit_cube()).unwrap();
+        let part: Part = given_part(&unit_cube()).unwrap();
         let reader = part.current();
         let lines: Vec<ElementReference<NamedModel<Design>, Line>> =
             selected(&reader, &[hit("edge", "e3"), hit("face", "f0")]);
@@ -414,7 +417,7 @@ mod tests {
     /// bodies picked resolve each once.
     #[test]
     fn a_body_is_picked_by_a_face_of_it() {
-        let part: TestPart = given_part(&unit_cube()).unwrap();
+        let part: Part = given_part(&unit_cube()).unwrap();
         let reader = part.current();
         let bodies: Vec<ElementReference<NamedModel<Design>, Body>> =
             selected(&reader, &[hit("face", "f2")]);

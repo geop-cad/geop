@@ -36,22 +36,20 @@ use geop_core_math::{
 pub use geop_core_math::solvers::system::Mobility;
 
 use geop_core_program::{
-    part::{Input, Part, Reader},
+    part::{Part, Reader},
     program::Program,
     program_runner::ProgramRunner,
+    values::{Design, Settings, StateValue, StateValues},
 };
 
-use crate::{
-    Solvable,
-    constraint::{Constraint, Constraints},
-};
+use crate::constraint::{Constraint, Constraints};
 
 /// A program to run again at every state a solve tries, with its inputs.
-pub struct Run<'r, I, S: Solvable> {
-    pub runner: &'r ProgramRunner<I, S>,
-    pub part: &'r mut Part<I, S>,
+pub struct Run<'r> {
+    pub runner: &'r ProgramRunner,
+    pub part: &'r mut Part,
     pub program: &'r Program,
-    pub inputs: &'r BTreeMap<String, I>,
+    pub inputs: &'r Settings,
 }
 
 thread_local! {
@@ -66,9 +64,9 @@ pub fn runs() -> usize {
     RUNS.get()
 }
 
-impl<I: Input, S: Solvable> Run<'_, I, S> {
+impl Run<'_> {
     /// The part the program builds at `state`.
-    fn at(&mut self, state: &BTreeMap<String, S>) -> &Part<I, S> {
+    fn at(&mut self, state: &StateValues) -> &Part {
         RUNS.set(RUNS.get() + 1);
         self.runner.run(self.part, self.program, self.inputs, state);
         self.part
@@ -79,21 +77,21 @@ impl<I: Input, S: Solvable> Run<'_, I, S> {
 /// hold: residuals it wants small — not zero at any price — where the part
 /// is as `reader` reads it, each a length, and their derivatives by the
 /// state. A drag, pulling a point of a placed part towards the pointer.
-pub trait Preference<I, S: Solvable> {
-    fn evaluate(&self, reader: &Reader<'_, I, S>) -> GeopResult<Constraint<S>>;
+pub trait Preference {
+    fn evaluate(&self, reader: &Reader<'_>) -> GeopResult<Constraint>;
 }
 
 /// What a [`solve`] may move, and towards what.
-pub struct Problem<'p, I, S: Solvable> {
+pub struct Problem<'p> {
     /// The values the solve may move, by name, and how; it leaves every
     /// other value — and every one [`Mobility::Fixed`] — as it is.
     pub free: BTreeMap<String, Mobility>,
-    pub preferences: Vec<&'p dyn Preference<I, S>>,
+    pub preferences: Vec<&'p dyn Preference>,
     /// The part's size: what a constraint holds to a part in
     /// [`geop_core_math::solvers::system::RELATIVE_TOLERANCE`] of, how
     /// far one step may go, and what a turn is measured against when a
     /// value stays where it was.
-    pub scale: S::Scalar,
+    pub scale: Design,
 }
 
 /// How a solve went.
@@ -121,9 +119,9 @@ pub struct Report<T: geop_core_math::scalars::Scalar> {
 /// could have, by name — or, for the values whose groups none is proven
 /// for, why not.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Enclosure<S: Solvable> {
+pub struct Enclosure {
     /// Per value enclosed, the box its true value is in.
-    pub state: BTreeMap<String, S>,
+    pub state: StateValues,
     /// Per group of values not proven, its values and why: the constraints
     /// that conflict there, by name, or what is singular.
     pub unproven: Vec<(Vec<String>, String)>,
@@ -131,10 +129,10 @@ pub struct Enclosure<S: Solvable> {
 
 /// Where a solve put the state, how it went, and the enclosure of a true
 /// solution near there of every group it solved.
-pub struct Solved<S: Solvable> {
-    pub state: BTreeMap<String, S>,
-    pub report: Report<S::Scalar>,
-    pub enclosure: Enclosure<S>,
+pub struct Solved {
+    pub state: StateValues,
+    pub report: Report<Design>,
+    pub enclosure: Enclosure,
 }
 
 /// How free the values of the state are, where they are now (see
@@ -151,28 +149,28 @@ pub struct Freedom {
 /// A part's constraints and preferences, on the values a problem frees: the
 /// [`Equations`] of its system. Each value a solve may move is a block, in
 /// order of their names; each constraint is one by its name, in order.
-struct Solving<'r, 'p, I, S: Solvable> {
-    run: RefCell<Run<'r, I, S>>,
+struct Solving<'r, 'p> {
+    run: RefCell<Run<'r>>,
     /// The whole state, as the program was last run with: the blocks'
     /// values written into it.
-    working: RefCell<BTreeMap<String, S>>,
+    working: RefCell<StateValues>,
     /// Per block, the value it is.
     blocks: Vec<String>,
     index: BTreeMap<String, usize>,
     /// Per constraint, its name and what it asks.
     constraints: Vec<(String, Bound)>,
-    preferences: &'p [&'p dyn Preference<I, S>],
+    preferences: &'p [&'p dyn Preference],
 }
 
-impl<'r, 'p, I: Input, S: Solvable> Solving<'r, 'p, I, S> {
+impl<'r, 'p> Solving<'r, 'p> {
     /// The system of the program `run` runs, its state at `state`, the
     /// values `problem` frees as its blocks: and their values where `state`
     /// has them.
     fn new(
-        mut run: Run<'r, I, S>,
-        state: &BTreeMap<String, S>,
-        problem: &'p Problem<'p, I, S>,
-    ) -> GeopResult<(Self, Vec<S>)> {
+        mut run: Run<'r>,
+        state: &StateValues,
+        problem: &'p Problem<'p>,
+    ) -> GeopResult<(Self, Vec<StateValue>)> {
         let constraints = (Constraints::of(&run.at(state).current())?.iter())
             .map(|(name, constraint)| (name.to_string(), constraint.bound))
             .collect();
@@ -198,7 +196,7 @@ impl<'r, 'p, I: Input, S: Solvable> Solving<'r, 'p, I, S> {
     }
 
     /// The system: how each block may move, and its size.
-    fn system<'s>(&'s self, problem: &Problem<I, S>) -> System<'s, Self> {
+    fn system<'s>(&'s self, problem: &Problem) -> System<'s, Self> {
         System {
             equations: self,
             mobility: (self.blocks.iter())
@@ -216,13 +214,13 @@ impl<'r, 'p, I: Input, S: Solvable> Solving<'r, 'p, I, S> {
     }
 
     /// The part, left as the program builds it at `state`.
-    fn finish(self, state: &BTreeMap<String, S>) {
+    fn finish(self, state: &StateValues) {
         self.run.into_inner().at(state);
     }
 
     /// `constraint` as a term of the system: its derivatives by the
     /// blocks it reads.
-    fn linearized(&self, constraint: &Constraint<S>) -> Linearized<S::Scalar> {
+    fn linearized(&self, constraint: &Constraint) -> Linearized<Design> {
         Linearized {
             values: constraint.residuals.clone(),
             jacobian: (constraint.jacobian.iter())
@@ -232,8 +230,8 @@ impl<'r, 'p, I: Input, S: Solvable> Solving<'r, 'p, I, S> {
     }
 }
 
-impl<I: Input, S: Solvable> Equations for Solving<'_, '_, I, S> {
-    type Value = S;
+impl Equations for Solving<'_, '_> {
+    type Value = StateValue;
 
     fn count(&self) -> (usize, usize) {
         (self.constraints.len(), self.preferences.len())
@@ -245,7 +243,7 @@ impl<I: Input, S: Solvable> Equations for Solving<'_, '_, I, S> {
             .map_or(Bound::Zero, |c| c.1)
     }
 
-    fn evaluate(&self, values: &[S], which: &[Term]) -> Vec<Option<Linearized<S::Scalar>>> {
+    fn evaluate(&self, values: &[StateValue], which: &[Term]) -> Vec<Option<Linearized<Design>>> {
         {
             let mut working = self.working.borrow_mut();
             for (name, value) in self.blocks.iter().zip(values) {
@@ -273,10 +271,7 @@ impl<I: Input, S: Solvable> Equations for Solving<'_, '_, I, S> {
 }
 
 /// The enclosure `enclosure` of `program`'s system, by name.
-fn named<I: Input, S: Solvable>(
-    program: &Solving<I, S>,
-    enclosure: system::Enclosure<S>,
-) -> Enclosure<S> {
+fn named(program: &Solving, enclosure: system::Enclosure<StateValue>) -> Enclosure {
     let state = (program.blocks.iter().zip(enclosure.boxes))
         .filter_map(|(name, boxed)| Some((name.clone(), boxed?)))
         .collect();
@@ -302,11 +297,7 @@ fn named<I: Input, S: Solvable>(
 ///
 /// The state is moved even where the constraints cannot all hold, to where
 /// they come closest; the report says which do not.
-pub fn solve<I: Input, S: Solvable>(
-    run: Run<'_, I, S>,
-    state: &BTreeMap<String, S>,
-    problem: &Problem<I, S>,
-) -> GeopResult<Solved<S>> {
+pub fn solve(run: Run<'_>, state: &StateValues, problem: &Problem) -> GeopResult<Solved> {
     let (program, start) = Solving::new(run, state, problem)?;
     let system = program.system(problem);
     let solution = system.solve(&start)?;
@@ -341,11 +332,7 @@ pub fn solve<I: Input, S: Solvable>(
 /// runs near where
 /// `state` has the values `problem` frees — a solution to the solver's
 /// tolerance (see [`System::enclose`]).
-pub fn enclose<I: Input, S: Solvable>(
-    run: Run<'_, I, S>,
-    state: &BTreeMap<String, S>,
-    problem: &Problem<I, S>,
-) -> GeopResult<Enclosure<S>> {
+pub fn enclose(run: Run<'_>, state: &StateValues, problem: &Problem) -> GeopResult<Enclosure> {
     let (program, start) = Solving::new(run, state, problem)?;
     let enclosure = program.system(problem).enclose(&start)?;
     let enclosure = named(&program, enclosure);
@@ -358,11 +345,7 @@ pub fn enclose<I: Input, S: Solvable>(
 /// first order, and of those, how many move each value — decided over the
 /// box an enclosure of the solution proves (see
 /// [`System::freedom`]). A limit leaves free the motion away from it.
-pub fn freedom<I: Input, S: Solvable>(
-    run: Run<'_, I, S>,
-    state: &BTreeMap<String, S>,
-    problem: &Problem<I, S>,
-) -> GeopResult<Freedom> {
+pub fn freedom(run: Run<'_>, state: &StateValues, problem: &Problem) -> GeopResult<Freedom> {
     let (program, start) = Solving::new(run, state, problem)?;
     let freedom = program.system(problem).freedom(&start)?;
     let states = (program.blocks.iter().cloned())
@@ -379,10 +362,10 @@ pub fn freedom<I: Input, S: Solvable>(
 /// all hold together —
 /// none, where they all hold after a solve from `state` (see
 /// [`System::conflicting`]), by name.
-pub fn conflicting<I: Input, S: Solvable>(
-    run: Run<'_, I, S>,
-    state: &BTreeMap<String, S>,
-    problem: &Problem<I, S>,
+pub fn conflicting(
+    run: Run<'_>,
+    state: &StateValues,
+    problem: &Problem,
 ) -> GeopResult<Vec<String>> {
     let (program, start) = Solving::new(run, state, problem)?;
     let conflicting = program.system(problem).conflicting(&start)?;

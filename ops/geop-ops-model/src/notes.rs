@@ -9,11 +9,10 @@ use std::collections::BTreeMap;
 use geop_core_math::scalars::Scalar;
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
-    part::{Input, Reader, State},
+    part::Reader,
     target::TargetReference,
+    values::Design,
 };
-
-use crate::Design;
 
 /// What a step says of a solid it built beyond its shape (see
 /// [`solid_notes`]).
@@ -93,7 +92,11 @@ impl HasElements<SolidNotes> for SolidNotes {
 
 /// What the steps of the part `reader` reads said of its solids: nothing,
 /// if none said anything.
-pub fn notes_of<'a, I: Input, S: State>(reader: &Reader<'a, I, S>) -> Option<&'a SolidNotes> {
+pub fn notes_of<'a>(reader: &Reader<'a>) -> Option<&'a SolidNotes> {
     reader.defines(&solid_notes()).then_some(())?;
-    reader.retrieve_element(&ElementReference::<SolidNotes, SolidNotes>::whole(solid_notes())).ok()
+    reader
+        .retrieve_element(&ElementReference::<SolidNotes, SolidNotes>::whole(
+            solid_notes(),
+        ))
+        .ok()
 }

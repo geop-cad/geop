@@ -4,21 +4,24 @@
 
 use std::cell::Cell;
 
-use geop_core_editor::numeric_input::NumericInput;
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
+    numeric::NumericInput,
     operation::{Operation, StepArgs},
     operation_registry::OperationRegistry,
+    part::Part,
+    program::Program,
+    program_runner::ProgramRunner,
     target::TargetReference,
+    values::{Design, Setting, Settings, StateValue, StateValues, pose_state},
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BuildPart, COLOR, DefineParameters, Design, PartProperties, Parameter, ParameterKind,
-    Parameters, ProgramFile, Runner, Setting, Settings, StateValue, StateValues,
-    parameters::Row,
-    pose_state, read_properties,
+    COLOR, DefineParameters, Parameter, ParameterKind, Parameters, PartProperties,
+    parameter_numbers, parameter_uses, parameters::Row, read_properties, rename_parameter,
+    set_parameters,
 };
 
 /// What a test step makes, read whole.
@@ -37,7 +40,7 @@ impl<T: 'static> HasElements<Made<T>> for Made<T> {
     }
 }
 
-fn made<T: Clone + 'static>(part: &BuildPart, step: &str) -> T {
+fn made<T: Clone + 'static>(part: &Part, step: &str) -> T {
     let reader = part.current();
     let reference = ElementReference::whole(TargetReference::<Made<T>>::new(step));
     reader.retrieve_element(&reference).unwrap().clone()
@@ -63,15 +66,8 @@ impl StepArgs for LengthArgs {
 impl Operation for Length {
     const KIND: &'static str = "length";
     type Args = LengthArgs;
-    type Input = Setting;
-    type State = StateValue;
 
-    fn run(
-        step: &str,
-        _: &Runner,
-        part: &mut BuildPart,
-        args: &LengthArgs,
-    ) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &LengthArgs) -> GeopResult<()> {
         part.define_target(
             &TargetReference::new(step),
             &args.length,
@@ -96,33 +92,34 @@ impl StepArgs for ColourArgs {
 impl Operation for Colour {
     const KIND: &'static str = "colour";
     type Args = ColourArgs;
-    type Input = Setting;
-    type State = StateValue;
 
-    fn run(
-        step: &str,
-        _: &Runner,
-        part: &mut BuildPart,
-        _: &ColourArgs,
-    ) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, _: &ColourArgs) -> GeopResult<()> {
         part.define_target(&TargetReference::new(step), &(), |reader, _| {
             RUNS.set(RUNS.get() + 1);
-            Ok(Made(read_properties(reader)?.color().unwrap_or("none").to_string()))
+            Ok(Made(
+                read_properties(reader)?
+                    .color()
+                    .unwrap_or("none")
+                    .to_string(),
+            ))
         })
     }
 }
 
-fn runner() -> Runner {
-    let registry = (OperationRegistry::default().with(Length))
+fn registry() -> OperationRegistry {
+    (OperationRegistry::default().with(Length))
         .and_then(|r| r.with(Colour))
         .and_then(|r| r.with(DefineParameters))
         .and_then(|r| r.with(PartProperties))
-        .unwrap();
-    Runner::new(registry)
+        .unwrap()
 }
 
-fn file() -> ProgramFile {
-    let mut file = ProgramFile::new();
+fn runner() -> ProgramRunner {
+    ProgramRunner::new(registry())
+}
+
+fn file() -> Program {
+    let mut file = Program::new();
     let values = vec![
         Parameter {
             name: "screw".into(),
@@ -143,12 +140,15 @@ fn file() -> ProgramFile {
         },
         Parameter::number("width", "2 * screw.d", 0.0, 100.0),
     ];
-    file.set_parameters(Parameters {
-        color: Some("#ff8800".into()),
-        designation: Some("TEST".into()),
-        values,
-        ..Parameters::default()
-    });
+    set_parameters(
+        &mut file,
+        Parameters {
+            color: Some("#ff8800".into()),
+            designation: Some("TEST".into()),
+            values,
+            ..Parameters::default()
+        },
+    );
     let length = |formula: &str| LengthArgs {
         length: NumericInput::from(formula),
     };
@@ -159,11 +159,11 @@ fn file() -> ProgramFile {
 }
 
 /// Runs `file` with its parameters set to `inputs`.
-fn run(runner: &Runner, part: &mut BuildPart, file: &ProgramFile, inputs: &Settings) {
+fn run(runner: &ProgramRunner, part: &mut Part, file: &Program, inputs: &Settings) {
     file.run(runner, part, inputs, &StateValues::new()).unwrap();
 }
 
-fn length(part: &BuildPart, step: &str) -> f64 {
+fn length(part: &Part, step: &str) -> f64 {
     made(part, step)
 }
 
@@ -174,19 +174,25 @@ fn length(part: &BuildPart, step: &str) -> f64 {
 fn a_run_reads_the_parameters_and_properties_its_steps_define() {
     let file = file();
     let runner = runner();
-    let mut part = BuildPart::default();
+    let mut part = Part::default();
     run(&runner, &mut part, &file, &Settings::new());
     assert_eq!(length(&part, "half"), 3.0);
     assert_eq!(length(&part, "plain"), 7.0);
     assert_eq!(made::<String>(&part, "colour"), "#ff8800");
-    let designation = read_properties(&part.current()).unwrap().designation.clone();
+    let designation = read_properties(&part.current())
+        .unwrap()
+        .designation
+        .clone();
     assert_eq!(designation.as_deref(), Some("TEST M3 width 6"));
 
     RUNS.set(0);
     let m5 = Settings::from([("screw".to_string(), Setting::Text("M5".into()))]);
     run(&runner, &mut part, &file, &m5);
     assert_eq!(length(&part, "half"), 5.0);
-    let designation = read_properties(&part.current()).unwrap().designation.clone();
+    let designation = read_properties(&part.current())
+        .unwrap()
+        .designation
+        .clone();
     assert_eq!(designation.as_deref(), Some("TEST M5 width 10"));
     // The length the row changed, and the colour, which reads the
     // properties — whose designation names the row: not the plain length.
@@ -208,17 +214,22 @@ fn a_pasted_step_takes_its_state_along() {
     let mut file = file();
     let pose = StateValue::Pose(geop_core_math::primitives::Pose::identity());
     file.state.insert(pose_state("half"), pose.clone());
-    (file.state).insert("half_width".into(), StateValue::Number(Design::from_f64(2.0)));
+    (file.state).insert(
+        "half_width".into(),
+        StateValue::Number(Design::from_f64(2.0)),
+    );
 
     let copied = file.excerpt("half").unwrap();
     assert_eq!(copied.state.len(), 1);
-    let at = file.program.steps.len();
-    let ids = file.paste(copied, at, |s| s.operation.clone()).unwrap();
+    let at = file.steps.len();
+    let ids = file
+        .paste(copied, at, &registry(), |s| s.operation.clone())
+        .unwrap();
     assert_eq!(ids, ["length1"]);
-    assert_eq!(file.program.steps[at].id, "length1");
+    assert_eq!(file.steps[at].id, "length1");
     assert_eq!(file.state.get(&pose_state("length1")), Some(&pose));
     assert!(!file.state.contains_key("length1_width"));
-    file.validate().unwrap();
+    file.validate(&registry()).unwrap();
 }
 
 /// What reads a parameter is found in the formulas of the steps' saved
@@ -226,27 +237,27 @@ fn a_pasted_step_takes_its_state_along() {
 #[test]
 fn a_parameter_is_renamed_wherever_it_is_read() {
     let mut file = file();
-    let uses = file.parameter_uses();
+    let uses = parameter_uses(&file);
     assert_eq!(uses["width"], ["half"]);
     assert_eq!(uses["screw"], ["width"]);
 
-    file.rename_parameter("width", "span").unwrap();
-    assert_eq!(file.parameter_uses()["span"], ["half"]);
-    let mut part = BuildPart::default();
+    rename_parameter(&mut file, "width", "span").unwrap();
+    assert_eq!(parameter_uses(&file)["span"], ["half"]);
+    let mut part = Part::default();
     run(&runner(), &mut part, &file, &Settings::new());
     assert_eq!(length(&part, "half"), 3.0);
-    assert!(file.rename_parameter("span", "screw").is_err());
-    assert!(file.rename_parameter("nothing", "x").is_err());
+    assert!(rename_parameter(&mut file, "span", "screw").is_err());
+    assert!(rename_parameter(&mut file, "nothing", "x").is_err());
 
     let saved = file.to_json().unwrap();
-    assert_eq!(ProgramFile::from_json(&saved).unwrap(), file);
+    assert_eq!(Program::from_json(&saved).unwrap(), file);
 }
 
 /// What the parameters come to as defined, by the names a formula reads
 /// them by.
 #[test]
 fn the_parameters_come_to_numbers_as_defined() {
-    let numbers = file().parameter_numbers().unwrap();
+    let numbers = parameter_numbers(&file()).unwrap();
     assert_eq!(numbers["screw.d"], 3.0);
     assert_eq!(numbers["width"], 6.0);
 }

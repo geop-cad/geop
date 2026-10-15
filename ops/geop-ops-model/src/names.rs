@@ -5,6 +5,7 @@
 use imbl::HashMap;
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_program::program::validate_operation_id;
 
 use super::ids::RefId;
 
@@ -95,24 +96,6 @@ impl NameRegistry {
         self.id_to_name
             .iter()
             .map(|(&id, name)| (id, name.as_str()))
-    }
-}
-
-/// Checks that `id` can be an operation id: non-empty, and only ASCII
-/// letters, digits, `_`, `-` and `.`. Nothing that could be mistaken for the
-/// `(`, `)` and `,` that structure a name, so the names built from it stay
-/// unambiguous.
-pub fn validate_operation_id(id: &str) -> GeopResult<()> {
-    if !id.is_empty()
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
-    {
-        Ok(())
-    } else {
-        Err(GeopError::new(format!(
-            "{id:?} is not a valid operation id: use only ASCII letters, digits, '_', '-' and '.'"
-        )))
     }
 }
 

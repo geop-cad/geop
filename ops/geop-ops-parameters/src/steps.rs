@@ -13,26 +13,26 @@ use std::borrow::Cow;
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
-    editable::{OperationGroup, OperationInfo, OperationTier},
+    editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::Tone,
-    numeric_input::{ParameterValue, evaluate, names_in, parameter, read_parameter},
     part_operation,
     part_operation::PartOperation,
 };
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
-    part::{Input, Reader, State},
+    numeric::{
+        ParameterValue, ParameterValues, evaluate, names_in, parameter, parameter_values,
+        read_parameter, read_parameter_values,
+    },
+    part::{Part, Reader},
+    program_runner::ProgramRunner,
     target::TargetReference,
+    values::{Design, Setting},
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    BuildPart, Design, PartReader, Runner, StateValue, StepContext,
-    parameters::{
-        COLOR, Material, Parameter, ParameterKind, Parameters, Setting, validate_color,
-    },
-};
+use crate::parameters::{COLOR, Material, Parameter, ParameterKind, Parameters, validate_color};
 
 /// The kind of the step defining a program's parameters, and its id.
 pub const PARAMETERS: &str = "parameters";
@@ -65,12 +65,9 @@ impl PartOperation for DefineParameters {
         OperationTier::Menu,
     );
     type Args = DefineParametersArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
-    fn new_args(_: &StepContext) -> DefineParametersArgs {
+    fn new_args(_: &Context) -> DefineParametersArgs {
         DefineParametersArgs::default()
     }
 
@@ -79,8 +76,8 @@ impl PartOperation for DefineParameters {
     /// them all.
     fn run(
         step: &str,
-        _: &Runner,
-        part: &mut BuildPart,
+        _: &ProgramRunner,
+        part: &mut Part,
         args: &DefineParametersArgs,
     ) -> GeopResult<()> {
         let parameters = Parameters {
@@ -98,9 +95,8 @@ impl PartOperation for DefineParameters {
             Ok(ParameterValues(
                 (names.iter())
                     .filter_map(|name| {
-                        let value = reader.retrieve_element(&ElementReference::whole(
-                            parameter(name),
-                        ));
+                        let value =
+                            reader.retrieve_element(&ElementReference::whole(parameter(name)));
                         Some((name.clone(), value.ok()?.clone()))
                     })
                     .collect(),
@@ -110,7 +106,7 @@ impl PartOperation for DefineParameters {
 
     /// What is defined is edited where the program's parameters are listed.
     fn form<'a>(
-        _: &'a StepContext<'a>,
+        _: &'a Context<'a>,
         args: &DefineParametersArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, DefineParametersArgs> {
@@ -145,8 +141,7 @@ fn in_order(values: &[Parameter]) -> Vec<&Parameter> {
                 return true;
             };
             names_in(expression).iter().all(|name| {
-                ordered.iter().any(|q| defines(q, name))
-                    || !values.iter().any(|q| defines(q, name))
+                ordered.iter().any(|q| defines(q, name)) || !values.iter().any(|q| defines(q, name))
             })
         });
         match ready {
@@ -161,7 +156,7 @@ fn in_order(values: &[Parameter]) -> Vec<&Parameter> {
 /// What the parameter `p` is set to: the run's input of its name if it is
 /// given one, else its definition — a number's formula of the other
 /// parameters, a table's row selected.
-fn value_of(reader: &PartReader, p: &Parameter) -> GeopResult<ParameterValue> {
+fn value_of(reader: &Reader, p: &Parameter) -> GeopResult<ParameterValue> {
     let given = reader.retrieve_input(&p.name);
     match &p.kind {
         ParameterKind::Number { expression, .. } => match given {
@@ -183,48 +178,14 @@ fn value_of(reader: &PartReader, p: &Parameter) -> GeopResult<ParameterValue> {
                 .ok_or_else(|| GeopError::new(format!("the table has no row {wanted:?}")))?;
             Ok(ParameterValue::Row {
                 name: row.name.clone(),
-                columns: columns.iter().cloned().zip(row.values.iter().copied()).collect(),
+                columns: columns
+                    .iter()
+                    .cloned()
+                    .zip(row.values.iter().copied())
+                    .collect(),
             })
         }
     }
-}
-
-/// Every parameter of the part, by name, in the order the step defines
-/// them, as each comes to: what lists or designates the part reads. A
-/// parameter that failed is left out.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct ParameterValues(pub Vec<(String, ParameterValue)>);
-
-/// Read whole.
-impl Kind for ParameterValues {
-    const NAME: &'static str = "parameter_values";
-}
-
-impl HasElements<ParameterValues> for ParameterValues {
-    type Element<'a> = &'a ParameterValues;
-    const SINGLETON: Option<&'static str> = Some("parameter_values");
-
-    fn element(&self, name: &str) -> GeopResult<&ParameterValues> {
-        whole(self, name)
-    }
-}
-
-/// The target of every parameter of the part, as they come to.
-pub fn parameter_values() -> TargetReference<ParameterValues> {
-    TargetReference::new("parameter_values")
-}
-
-/// Every parameter of the part `reader` reads, as they come to: none, for
-/// a part whose program defines none.
-pub fn read_parameter_values<'a, I: Input, S: State>(
-    reader: &Reader<'a, I, S>,
-) -> GeopResult<Cow<'a, ParameterValues>> {
-    if !reader.defines(&parameter_values()) {
-        return Ok(Cow::Owned(ParameterValues::default()));
-    }
-    Ok(Cow::Borrowed(
-        reader.retrieve_element(&ElementReference::whole(parameter_values()))?,
-    ))
 }
 
 /// Defines what the part is called and ordered as, its colour, and what
@@ -267,19 +228,16 @@ impl PartOperation for PartProperties {
         OperationTier::Menu,
     );
     type Args = PartPropertiesArgs;
-    type Input = Setting;
-    type State = StateValue;
-    type Scalar = Design;
     type Session = ();
 
-    fn new_args(_: &StepContext) -> PartPropertiesArgs {
+    fn new_args(_: &Context) -> PartPropertiesArgs {
         PartPropertiesArgs::default()
     }
 
     fn run(
         step: &str,
-        _: &Runner,
-        part: &mut BuildPart,
+        _: &ProgramRunner,
+        part: &mut Part,
         args: &PartPropertiesArgs,
     ) -> GeopResult<()> {
         if let Some(color) = &args.color {
@@ -312,7 +270,7 @@ impl PartOperation for PartProperties {
 
     /// What is set is edited where the program's parameters are listed.
     fn form<'a>(
-        _: &'a StepContext<'a>,
+        _: &'a Context<'a>,
         _: &PartPropertiesArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, PartPropertiesArgs> {
@@ -371,15 +329,13 @@ pub fn properties() -> TargetReference<Properties> {
 
 /// The properties of the part `reader` reads: none set, for a part whose
 /// program says nothing of them.
-pub fn read_properties<'a, I: Input, S: State>(
-    reader: &Reader<'a, I, S>,
-) -> GeopResult<Cow<'a, Properties>> {
+pub fn read_properties<'a>(reader: &Reader<'a>) -> GeopResult<Cow<'a, Properties>> {
     if !reader.defines(&properties()) {
         return Ok(Cow::Owned(Properties::default()));
     }
-    Ok(Cow::Borrowed(
-        reader.retrieve_element(&ElementReference::whole(properties()))?,
-    ))
+    Ok(Cow::Borrowed(reader.retrieve_element(
+        &ElementReference::whole(properties()),
+    )?))
 }
 
 /// What a part is weighed as when its material is not given: water, 1000

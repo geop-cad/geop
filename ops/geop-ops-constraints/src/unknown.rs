@@ -11,8 +11,9 @@ use geop_core_math::{
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind},
     instance::instance_path,
-    part::{Generator, Input, Part, Reader, State},
+    part::{Generator, Part, Reader},
     target::TargetReference,
+    values::StateValue,
 };
 
 use crate::Generated;
@@ -23,10 +24,10 @@ use crate::Generated;
 /// `unless` — where that constraint does not hold either: a joint's
 /// coordinate, measured from where its parts are unless the joint holds.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Unknown<S: State> {
+pub struct Unknown {
     pub state: String,
     pub mobility: Mobility,
-    pub seed: Option<S>,
+    pub seed: Option<StateValue>,
     pub unless: Option<String>,
 }
 
@@ -37,9 +38,9 @@ const UNKNOWNS: &str = "unknowns";
 /// one, the target [`unknowns`], read whole: it is a kind of element of its
 /// own (see [`HasElements`]).
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Unknowns<S: State>(BTreeMap<String, Unknown<S>>);
+pub struct Unknowns(BTreeMap<String, Unknown>);
 
-impl<S: State> Unknowns<S> {
+impl Unknowns {
     /// The unknowns of the part `reader` reads: none where no step declared
     /// any, an error where a declaration failed.
     ///
@@ -47,8 +48,8 @@ impl<S: State> Unknowns<S> {
     /// name, as its constraints do (see [`crate::Constraints::of`]), each
     /// starting where the instance's part has it, if it has it at all. A
     /// state the part holds fixed stays fixed.
-    pub fn of<I: Input>(reader: &Reader<I, S>) -> GeopResult<Self> {
-        let reference = unknowns::<S>();
+    pub fn of(reader: &Reader) -> GeopResult<Self> {
+        let reference = unknowns();
         let mut all = match reader.defines(&reference) {
             true => reader
                 .retrieve_element(&ElementReference::whole(reference))?
@@ -73,18 +74,18 @@ impl<S: State> Unknowns<S> {
     }
 
     /// The unknown the state `state` is, if a step declared it.
-    pub fn get(&self, state: &str) -> Option<&Unknown<S>> {
+    pub fn get(&self, state: &str) -> Option<&Unknown> {
         self.0.get(state)
     }
 
     /// Every unknown, in order of their states' names.
-    pub fn iter(&self) -> impl Iterator<Item = &Unknown<S>> {
+    pub fn iter(&self) -> impl Iterator<Item = &Unknown> {
         self.0.values()
     }
 
     /// Adds `declared`. Of several declarations of one state, one that
     /// holds it fixed wins, and otherwise the first made.
-    fn declare(&mut self, declared: Unknown<S>) {
+    fn declare(&mut self, declared: Unknown) {
         match self.0.get_mut(&declared.state) {
             None => {
                 self.0.insert(declared.state.clone(), declared);
@@ -96,12 +97,12 @@ impl<S: State> Unknowns<S> {
 }
 
 /// The part's unknowns, read whole.
-impl<S: State> Kind for Unknowns<S> {
+impl Kind for Unknowns {
     const NAME: &'static str = UNKNOWNS;
 }
 
-impl<S: State> HasElements<Unknowns<S>> for Unknowns<S> {
-    type Element<'a> = &'a Unknowns<S>;
+impl HasElements<Unknowns> for Unknowns {
+    type Element<'a> = &'a Unknowns;
     const SINGLETON: Option<&'static str> = Some(UNKNOWNS);
 
     fn element(&self, name: &str) -> GeopResult<&Self> {
@@ -115,17 +116,17 @@ impl<S: State> HasElements<Unknowns<S>> for Unknowns<S> {
 }
 
 /// The target holding the part's unknowns.
-pub fn unknowns<S: State>() -> TargetReference<Unknowns<S>> {
+pub fn unknowns() -> TargetReference<Unknowns> {
     TargetReference::new(UNKNOWNS)
 }
 
 /// Declares the unknowns `generator` makes of `args`, adding them to the
 /// part's [`Unknowns`]: of several declarations of one state, one that
 /// holds it fixed wins, and otherwise the first made. A plain function, like [`Part::define_target`]'s.
-pub fn declare_unknowns<I: Input, S: State, Args: PartialEq + Clone + 'static>(
-    part: &mut Part<I, S>,
+pub fn declare_unknowns<Args: PartialEq + Clone + 'static>(
+    part: &mut Part,
     args: &Args,
-    generator: Generator<I, S, Args, Vec<Unknown<S>>>,
+    generator: Generator<Args, Vec<Unknown>>,
 ) -> GeopResult<()> {
     let generated = Generated {
         args: args.clone(),
@@ -135,11 +136,11 @@ pub fn declare_unknowns<I: Input, S: State, Args: PartialEq + Clone + 'static>(
 }
 
 /// `all` with the unknowns `generated` makes added.
-fn declare<I: Input, S: State, Args>(
-    reader: &Reader<I, S>,
-    generated: &Generated<I, S, Args, Vec<Unknown<S>>>,
-) -> GeopResult<Unknowns<S>> {
-    let mut all: Unknowns<S> = reader.previous()?;
+fn declare<Args>(
+    reader: &Reader,
+    generated: &Generated<Args, Vec<Unknown>>,
+) -> GeopResult<Unknowns> {
+    let mut all: Unknowns = reader.previous()?;
     for declared in (generated.generator)(reader, &generated.args)? {
         all.declare(declared);
     }

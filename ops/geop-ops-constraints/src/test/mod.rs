@@ -1,4 +1,4 @@
-//! Fixtures — a state of positions, frames defined from inputs, an
+//! Fixtures — a state of poses, frames defined from inputs, an
 //! operation pinning a position to a frame — and the tests of constraints
 //! and unknowns as targets of a part.
 
@@ -8,12 +8,11 @@ mod solve;
 use std::{cell::RefCell, collections::BTreeMap};
 
 use geop_core_math::{
+    dual::Dual,
     geop_error::{GeopError, GeopResult},
-    scalars::{Ring, ScalInF64, Scalar},
-    solvers::{
-        least_squares::Rows,
-        system::{Mobility, Variable},
-    },
+    primitives::Pose,
+    scalars::Scalar,
+    solvers::system::Mobility,
     vector::{Vector, Vector3},
 };
 use geop_core_program::{
@@ -24,6 +23,7 @@ use geop_core_program::{
     program::{Program, ProgramStep},
     program_runner::{ProgramRunner, RunOutput},
     target::TargetReference,
+    values::{Design, Setting, Settings, StateValue, StateValues, pose_in},
 };
 use serde::{Deserialize, Serialize};
 
@@ -33,95 +33,54 @@ use crate::{
     unknown::{Unknown, Unknowns, declare_unknowns},
 };
 
-/// The tests' numbers.
-type Sc = ScalInF64;
-
-/// Where a body is: what the tests' state holds — its position alone.
-#[derive(Debug, Default, Clone, PartialEq)]
-struct Pose {
-    position: Vector3<Sc>,
+/// The pose a body's state holds: unturned at the origin before anything
+/// set it.
+fn pose_of(value: &StateValue) -> Pose<Design> {
+    pose_in(value).unwrap_or_else(Pose::identity)
 }
 
-impl Pose {
-    fn at(position: [f64; 3]) -> Self {
-        Self {
-            position: vector(position),
-        }
-    }
+/// The state of a body unturned at `position`.
+fn body_at(position: [f64; 3]) -> StateValue {
+    StateValue::Pose(Pose::identity().with_position(vector(position)))
 }
 
-/// A position moves by a step added to it.
-impl Variable for Pose {
-    type Scalar = Sc;
-
-    fn dimension(&self) -> usize {
-        3
-    }
-
-    fn retract(&self, step: &[Sc]) -> GeopResult<Self> {
-        let by = three(step)?;
-        Ok(Self {
-            position: self.position.add(&by).map(Scalar::sharpen),
-        })
-    }
-
-    fn retract_over(&self, step: &[Sc]) -> GeopResult<Self> {
-        let by = three(step)?;
-        Ok(Self {
-            position: self.position.add(&by),
-        })
-    }
-
-    fn differential(&self, step: &[Sc]) -> GeopResult<Option<Vec<Vec<Sc>>>> {
-        three(step)?;
-        Ok(None)
-    }
-
-    fn stay(&self, at: &Self, _: Sc) -> GeopResult<Rows<Sc>> {
-        let mut rows = Rows::default();
-        for (k, row) in identity(3).into_iter().enumerate() {
-            rows.push(self.position[k].sub(at.position[k]), row);
-        }
-        Ok(rows)
-    }
-
-    fn same(&self, other: &Self) -> bool {
-        self == other
-    }
+/// Where the body whose state is `value` has its origin, and the derivatives
+/// of that by the body's step: one row of six per coordinate.
+fn position(value: &StateValue) -> GeopResult<(Vector3<Design>, Vec<Vec<Design>>)> {
+    type D = Dual<Design, 6>;
+    let step = Pose::exp_with_derivatives(&Vector3::zero(), &Vector3::zero())?;
+    let moved = pose_of(value).map(D::cst).compose(&step).position();
+    let at = Vector3::from_array(moved.to_array().map(|c| c.v));
+    Ok((at, moved.to_array().iter().map(|c| c.d.to_vec()).collect()))
 }
 
-/// A step of a position: three numbers.
-fn three(step: &[Sc]) -> GeopResult<Vector3<Sc>> {
-    let [x, y, z] = step else {
-        return Err(GeopError::new(format!(
-            "a step of a position is three numbers, not {}",
-            step.len()
-        )));
-    };
-    Ok(Vector3::from_array([*x, *y, *z]))
-}
-
-/// The rows of the identity of size `n`: a derivative by a step that is
-/// the change itself.
-fn identity(n: usize) -> Vec<Vec<Sc>> {
-    (0..n)
-        .map(|i| {
-            (0..n)
-                .map(|j| if i == j { Sc::ONE } else { Sc::ZERO })
-                .collect()
-        })
-        .collect()
+/// Asserts that `rows` are the derivatives of an unturned body's origin by
+/// its step: moved along by the step's translation, not by its turn.
+#[track_caller]
+fn assert_translation(rows: &[Vec<Design>]) {
+    let expected: Vec<Vec<f64>> = (0..3)
+        .map(|i| (0..6).map(|j| if j == i + 3 { 1.0 } else { 0.0 }).collect())
+        .collect();
+    let encloses = rows.len() == 3
+        && (rows.iter().zip(&expected)).all(|(row, expected)| {
+            row.len() == 6
+                && (row.iter().zip(expected)).all(|(d, e)| d.could_be_equal(Design::from_f64(*e)))
+        });
+    assert!(
+        encloses,
+        "{rows:?} are not the derivatives of a translation"
+    );
 }
 
 /// A vector of sharp scalars, from plain numbers.
-fn vector<const N: usize>(xs: [f64; N]) -> Vector<Sc, N> {
-    Vector::from_array(xs.map(Sc::from_f64))
+fn vector<const N: usize>(xs: [f64; N]) -> Vector<Design, N> {
+    Vector::from_array(xs.map(Design::from_f64))
 }
 
 /// Asserts that `actual` encloses the point `expected`: computed values are
 /// enclosures, rounded outward, so equal to no literal.
 #[track_caller]
-fn assert_encloses<const N: usize>(actual: Vector<Sc, N>, expected: [f64; N]) {
+fn assert_encloses<const N: usize>(actual: Vector<Design, N>, expected: [f64; N]) {
     assert!(
         actual.could_be_equal(&vector(expected)),
         "{actual:?} does not enclose {expected:?}"
@@ -131,7 +90,7 @@ fn assert_encloses<const N: usize>(actual: Vector<Sc, N>, expected: [f64; N]) {
 /// A point a step defines, which a pin holds a body to.
 #[derive(Debug, Clone, Default, PartialEq)]
 struct Frame {
-    data: Vector3<Sc>,
+    data: Vector3<Design>,
 }
 
 /// A frame is read whole: a kind of its own.
@@ -180,21 +139,21 @@ struct InputFrameOperation;
 impl Operation for InputFrameOperation {
     const KIND: &'static str = "input_frame";
     type Args = InputFrameArgs;
-    type Input = Sc;
-    type State = Pose;
 
-    fn run(
-        _: &str,
-        _: &ProgramRunner<Sc, Pose>,
-        part: &mut Part<Sc, Pose>,
-        args: &Self::Args,
-    ) -> GeopResult<()> {
+    fn run(_: &str, _: &ProgramRunner, part: &mut Part, args: &Self::Args) -> GeopResult<()> {
         let reference = TargetReference::<Frame>::new(&args.target);
         part.define_target(&reference, args, |reader, args| {
-            let x = (reader.retrieve_input(&args.input))
-                .ok_or_else(|| GeopError::new(format!("input `{}` is not given", args.input)))?;
+            let x = match reader.retrieve_input(&args.input) {
+                Some(Setting::Number(x)) => Design::from_f64(x),
+                _ => {
+                    return Err(GeopError::new(format!(
+                        "input `{}` is not given",
+                        args.input
+                    )));
+                }
+            };
             Ok(Frame {
-                data: Vector3::from_array([x, Sc::ZERO, Sc::ZERO]),
+                data: Vector3::from_array([x, Design::ZERO, Design::ZERO]),
             })
         })
     }
@@ -206,30 +165,23 @@ struct PinFrameArgs {
     state: String,
 }
 
-/// Constrains the position `state` to the frame `frame`: a constraint
+/// Constrains the origin of the pose `state` to the frame `frame`: a constraint
 /// named after its step.
 struct PinFrameOperation;
 
 impl Operation for PinFrameOperation {
     const KIND: &'static str = "pin_frame";
     type Args = PinFrameArgs;
-    type Input = Sc;
-    type State = Pose;
 
-    fn run(
-        step: &str,
-        _: &ProgramRunner<Sc, Pose>,
-        part: &mut Part<Sc, Pose>,
-        args: &Self::Args,
-    ) -> GeopResult<()> {
+    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &Self::Args) -> GeopResult<()> {
         let args = (step.to_string(), args.clone());
         define_constraints(part, step, &args, |reader, (step, args)| {
             record_built(step);
             let frame = reader.retrieve_element(&whole_frame(&args.frame))?;
-            let pose = reader.retrieve_state(&args.state);
+            let (at, rows) = position(&reader.retrieve_state(&args.state))?;
             let pin = Constraint {
-                residuals: pose.position.sub(&frame.data).to_array().to_vec(),
-                jacobian: BTreeMap::from([(args.state.clone(), identity(3))]),
+                residuals: at.sub(&frame.data).to_array().to_vec(),
+                jacobian: BTreeMap::from([(args.state.clone(), rows)]),
                 bound: Bound::Zero,
             };
             Ok(BTreeMap::from([(step.clone(), pin)]))
@@ -253,14 +205,14 @@ fn pin(id: &str, frame: &str, state: &str) -> ProgramStep {
     ProgramStep::new::<PinFrameOperation>(id, &args).unwrap()
 }
 
-fn inputs(values: &[(&str, f64)]) -> BTreeMap<String, Sc> {
+fn inputs(values: &[(&str, f64)]) -> Settings {
     (values.iter())
-        .map(|(name, value)| (name.to_string(), Sc::from_f64(*value)))
+        .map(|(name, value)| (name.to_string(), Setting::Number(*value)))
         .collect()
 }
 
-fn pose_at(x: f64) -> BTreeMap<String, Pose> {
-    BTreeMap::from([("body".to_string(), Pose::at([x, 0.0, 0.0]))])
+fn pose_at(x: f64) -> StateValues {
+    StateValues::from([("body".to_string(), body_at([x, 0.0, 0.0]))])
 }
 
 /// The failed steps and what went wrong at the root.
@@ -271,7 +223,7 @@ fn errors(output: &RunOutput) -> Vec<(String, String)> {
 }
 
 /// The operations of the fixtures.
-fn registry() -> OperationRegistry<Sc, Pose> {
+fn registry() -> OperationRegistry {
     (OperationRegistry::default().with(InputFrameOperation))
         .and_then(|o| o.with(PinFrameOperation))
         .and_then(|o| o.with(instances::PlaceOperation))
@@ -281,12 +233,12 @@ fn registry() -> OperationRegistry<Sc, Pose> {
 
 /// A runner of the tests' operations, and the part it runs on.
 struct Running {
-    runner: ProgramRunner<Sc, Pose>,
-    part: Part<Sc, Pose>,
+    runner: ProgramRunner,
+    part: Part,
 }
 
 impl Running {
-    fn of(registry: OperationRegistry<Sc, Pose>) -> Self {
+    fn of(registry: OperationRegistry) -> Self {
         let mut runner = ProgramRunner::new(registry);
         runner.workspace = Some(std::rc::Rc::new(instances::Files));
         Self {
@@ -295,21 +247,12 @@ impl Running {
         }
     }
 
-    fn run(
-        &mut self,
-        program: &Program,
-        inputs: &BTreeMap<String, Sc>,
-        state: &BTreeMap<String, Pose>,
-    ) -> RunOutput {
+    fn run(&mut self, program: &Program, inputs: &Settings, state: &StateValues) -> RunOutput {
         self.runner.run(&mut self.part, program, inputs, state)
     }
 
     /// The program `program` with `inputs`, for a solve to run.
-    fn rerun<'r>(
-        &'r mut self,
-        program: &'r Program,
-        inputs: &'r BTreeMap<String, Sc>,
-    ) -> Run<'r, Sc, Pose> {
+    fn rerun<'r>(&'r mut self, program: &'r Program, inputs: &'r Settings) -> Run<'r> {
         Run {
             runner: &self.runner,
             part: &mut self.part,
@@ -324,7 +267,7 @@ fn runner() -> Running {
 }
 
 /// The constraints of the part as it is now.
-fn constraints_now(part: &Part<Sc, Pose>) -> GeopResult<Constraints<Pose>> {
+fn constraints_now(part: &Part) -> GeopResult<Constraints> {
     Constraints::of(&part.current())
 }
 
@@ -336,11 +279,11 @@ fn constraints_now(part: &Part<Sc, Pose>) -> GeopResult<Constraints<Pose>> {
 fn constraints_on_the_state_are_reported() {
     let mut runner = runner();
     let x = inputs(&[("x", 1.0)]);
-    let frame_only = Program::new(vec![input_frame("a", "a", "x")]);
+    let frame_only = Program::from_steps(vec![input_frame("a", "a", "x")]);
     assert_eq!(errors(&runner.run(&frame_only, &x, &pose_at(3.0))), []);
     assert!(constraints_now(&runner.part).unwrap().is_empty());
 
-    let program = Program::new(vec![input_frame("a", "a", "x"), pin("pin", "a", "body")]);
+    let program = Program::from_steps(vec![input_frame("a", "a", "x"), pin("pin", "a", "body")]);
     let residuals = |runner: &Running| {
         let constraints = constraints_now(&runner.part).unwrap();
         let residuals = &constraints.get("pin").unwrap().residuals;
@@ -353,10 +296,9 @@ fn constraints_on_the_state_are_reported() {
         constraints.iter().map(|(name, _)| name).collect::<Vec<_>>(),
         ["pin"]
     );
-    assert_eq!(
-        constraints.get("pin").unwrap().jacobian,
-        BTreeMap::from([("body".to_string(), identity(3))])
-    );
+    let jacobian = &constraints.get("pin").unwrap().jacobian;
+    assert_eq!(jacobian.keys().collect::<Vec<_>>(), ["body"]);
+    assert_translation(&jacobian["body"]);
     assert_encloses(residuals(&runner), [2.0, 0.0, 0.0]);
     assert_eq!(take_built(), ["pin"]);
 
@@ -371,10 +313,10 @@ fn constraints_on_the_state_are_reported() {
 
 /// A constraint of `residuals` residuals and one row of derivatives by
 /// `body`.
-fn by_body(residuals: usize) -> Constraint<Pose> {
+fn by_body(residuals: usize) -> Constraint {
     Constraint {
-        residuals: vec![Sc::ZERO; residuals],
-        jacobian: BTreeMap::from([("body".to_string(), vec![vec![Sc::ZERO; 3]])]),
+        residuals: vec![Design::ZERO; residuals],
+        jacobian: BTreeMap::from([("body".to_string(), vec![vec![Design::ZERO; 6]])]),
         bound: Bound::Zero,
     }
 }
@@ -384,8 +326,8 @@ fn by_body(residuals: usize) -> Constraint<Pose> {
 /// part's constraints.
 #[test]
 fn inconsistent_constraint_is_an_error() {
-    let mut part = Part::<Sc, Pose>::default();
-    part.begin_run(&BTreeMap::new(), &pose_at(0.0));
+    let mut part = Part::default();
+    part.begin_run(&Settings::new(), &pose_at(0.0));
     part.begin_step();
     let unread = define_constraints(&mut part, "s1", &(), |_, _| {
         Ok(BTreeMap::from([("unread".to_string(), by_body(1))]))
@@ -413,7 +355,7 @@ fn inconsistent_constraint_is_an_error() {
 #[test]
 fn a_failed_constraint_step_fails_the_constraints() {
     let mut runner = runner();
-    let program = Program::new(vec![
+    let program = Program::from_steps(vec![
         input_frame("a", "a", "x"),
         pin("broken", "missing", "body"),
         pin("pin", "a", "body"),
@@ -429,23 +371,26 @@ fn a_failed_constraint_step_fails_the_constraints() {
         "{why_broken}"
     );
     let error = constraints_now(&runner.part).unwrap_err();
-    assert!(error.root_message().contains("`constraints:broken` failed"), "{error}");
+    assert!(
+        error.root_message().contains("`constraints:broken` failed"),
+        "{error}"
+    );
 }
 
 /// A constraint's name is the part's to resolve by: a second step defining
 /// it makes the part's constraints an error naming both.
 #[test]
 fn constraint_defined_twice_is_an_error() {
-    fn define(_: &Reader<Sc, Pose>, _: &()) -> GeopResult<BTreeMap<String, Constraint<Pose>>> {
+    fn define(_: &Reader, _: &()) -> GeopResult<BTreeMap<String, Constraint>> {
         let free = Constraint {
-            residuals: vec![Sc::ZERO],
+            residuals: vec![Design::ZERO],
             jacobian: BTreeMap::new(),
             bound: Bound::Zero,
         };
         Ok(BTreeMap::from([("pin".to_string(), free)]))
     }
-    let mut part = Part::<Sc, Pose>::default();
-    part.begin_run(&BTreeMap::new(), &BTreeMap::new());
+    let mut part = Part::default();
+    part.begin_run(&Settings::new(), &StateValues::new());
     part.begin_step();
     define_constraints(&mut part, "one", &(), define).unwrap();
     part.begin_step();
@@ -461,10 +406,7 @@ fn constraint_defined_twice_is_an_error() {
 /// of a state, one that holds it fixed wins, and otherwise the first.
 #[test]
 fn unknowns_merge_by_state() {
-    fn declare(
-        _: &Reader<Sc, Pose>,
-        declared: &[(String, Mobility); 2],
-    ) -> GeopResult<Vec<Unknown<Pose>>> {
+    fn declare(_: &Reader, declared: &[(String, Mobility); 2]) -> GeopResult<Vec<Unknown>> {
         Ok((declared.iter())
             .map(|(state, mobility)| Unknown {
                 state: state.clone(),
@@ -475,13 +417,13 @@ fn unknowns_merge_by_state() {
             .collect())
     }
     let declared = |state: &str, mobility| (state.to_string(), mobility);
-    let mobility = |part: &Part<Sc, Pose>, state: &str| {
+    let mobility = |part: &Part, state: &str| {
         let unknowns = Unknowns::of(&part.current()).unwrap();
         unknowns.get(state).map(|unknown| unknown.mobility)
     };
 
-    let mut part = Part::<Sc, Pose>::default();
-    part.begin_run(&BTreeMap::new(), &BTreeMap::new());
+    let mut part = Part::default();
+    part.begin_run(&Settings::new(), &StateValues::new());
     assert!(
         Unknowns::of(&part.current())
             .unwrap()

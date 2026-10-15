@@ -11,15 +11,19 @@
 
 use std::collections::BTreeMap;
 
-use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    solvers::system::Variable,
+};
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind},
     instance::instance_path,
-    part::{Generator, Input, Part, Reader},
+    part::{Generator, Part, Reader},
     target::TargetReference,
+    values::Design,
 };
 
-use crate::{Generated, Solvable};
+use crate::Generated;
 
 pub use geop_core_math::solvers::system::Bound;
 
@@ -27,17 +31,17 @@ pub use geop_core_math::solvers::system::Bound;
 /// for a limit, at most zero — where it holds, each a length, and how they
 /// change as the values of the state they depend on move.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Constraint<S: Solvable> {
-    pub residuals: Vec<S::Scalar>,
+pub struct Constraint {
+    pub residuals: Vec<Design>,
     /// For each state the residuals depend on, one row per residual: its
     /// derivative by that state's step (see
     /// [`geop_core_math::solvers::system::Variable::retract`]), as many
     /// numbers as the state's dimension.
-    pub jacobian: BTreeMap<String, Vec<Vec<S::Scalar>>>,
+    pub jacobian: BTreeMap<String, Vec<Vec<Design>>>,
     pub bound: Bound,
 }
 
-impl<S: Solvable> Constraint<S> {
+impl Constraint {
     /// Checks that the jacobian has a row per residual, of as many numbers
     /// as a step of the state takes, for states the constraint read —
     /// `dimension` saying how many, `None` for one it did not read: a
@@ -72,7 +76,7 @@ impl<S: Solvable> Constraint<S> {
 
     /// Whether it holds: every residual within `tolerance` of zero — or,
     /// for a limit, not definitely above `tolerance`.
-    pub fn holds(&self, tolerance: S::Scalar) -> bool {
+    pub fn holds(&self, tolerance: Design) -> bool {
         (self.residuals.iter()).all(|&r| self.bound.holds(r, tolerance))
     }
 }
@@ -83,16 +87,16 @@ const CONSTRAINTS: &str = "constraints";
 /// Every constraint the steps so far defined, by name, each with the step
 /// that defined it: gathered from their targets ([`Constraints::of`]).
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Constraints<S: Solvable>(BTreeMap<String, Defined<S>>);
+pub struct Constraints(BTreeMap<String, Defined>);
 
 /// A constraint, and the step that defined it.
 #[derive(Debug, Clone, PartialEq)]
-struct Defined<S: Solvable> {
+struct Defined {
     step: String,
-    constraint: Constraint<S>,
+    constraint: Constraint,
 }
 
-impl<S: Solvable> Constraints<S> {
+impl Constraints {
     /// The constraints of the part `reader` reads: none where no step
     /// defined any. A step whose constraints failed fails them all: a
     /// solve must not go on without a constraint it could not make. A name
@@ -103,7 +107,7 @@ impl<S: Solvable> Constraints<S> {
     /// state `bolt/s` where the instance's is on `s` (see
     /// [`geop_core_program::instance`]). A residual is the same wherever
     /// the instance is: it is a length within it.
-    pub fn of<I: Input>(reader: &Reader<I, S>) -> GeopResult<Self> {
+    pub fn of(reader: &Reader) -> GeopResult<Self> {
         let mut all = Self::own(reader)?;
         for name in reader.subparts() {
             let inside =
@@ -128,12 +132,12 @@ impl<S: Solvable> Constraints<S> {
     }
 
     /// The constraints the part's own steps defined.
-    fn own<I: Input>(reader: &Reader<I, S>) -> GeopResult<Self> {
-        if let Some(failed) = reader.failed_targets_of::<StepConstraints<S>>().pop() {
+    fn own(reader: &Reader) -> GeopResult<Self> {
+        if let Some(failed) = reader.failed_targets_of::<StepConstraints>().pop() {
             return Err(failed);
         }
         let mut all = Self::default();
-        for own in reader.targets_of::<StepConstraints<S>>() {
+        for own in reader.targets_of::<StepConstraints>() {
             let own = reader.retrieve_element(&ElementReference::whole(own))?;
             for (name, constraint) in &own.constraints {
                 if let Some(earlier) = all.0.get(name) {
@@ -153,12 +157,12 @@ impl<S: Solvable> Constraints<S> {
     }
 
     /// The constraint `name`, if a step defined it.
-    pub fn get(&self, name: &str) -> Option<&Constraint<S>> {
+    pub fn get(&self, name: &str) -> Option<&Constraint> {
         self.0.get(name).map(|defined| &defined.constraint)
     }
 
     /// Every constraint, in order of their names.
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &Constraint<S>)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &Constraint)> {
         (self.0.iter()).map(|(name, defined)| (name.as_str(), &defined.constraint))
     }
 
@@ -173,18 +177,18 @@ impl<S: Solvable> Constraints<S> {
 
 /// The constraints one step defined, by name: its target.
 #[derive(Clone, PartialEq)]
-struct StepConstraints<S: Solvable> {
+struct StepConstraints {
     step: String,
-    constraints: BTreeMap<String, Constraint<S>>,
+    constraints: BTreeMap<String, Constraint>,
 }
 
 /// One step's constraints, read whole.
-impl<S: Solvable> Kind for StepConstraints<S> {
+impl Kind for StepConstraints {
     const NAME: &'static str = "step constraints";
 }
 
-impl<S: Solvable> HasElements<StepConstraints<S>> for StepConstraints<S> {
-    type Element<'a> = &'a StepConstraints<S>;
+impl HasElements<StepConstraints> for StepConstraints {
+    type Element<'a> = &'a StepConstraints;
 
     fn element(&self, name: &str) -> GeopResult<&Self> {
         match name.is_empty() {
@@ -198,7 +202,7 @@ impl<S: Solvable> HasElements<StepConstraints<S>> for StepConstraints<S> {
 }
 
 /// What a step's generator of constraints makes: its constraints, by name.
-pub type ConstraintGenerator<I, S, Args> = Generator<I, S, Args, BTreeMap<String, Constraint<S>>>;
+pub type ConstraintGenerator<Args> = Generator<Args, BTreeMap<String, Constraint>>;
 
 /// Defines the constraints `generator` makes of `args` in the step `step`,
 /// one of the part's [`Constraints`]. Each is checked: its derivatives are
@@ -209,13 +213,13 @@ pub type ConstraintGenerator<I, S, Args> = Generator<I, S, Args, BTreeMap<String
 /// A step that fails here leaves a failed target, which fails
 /// [`Constraints::of`]: a solve must not go on without a constraint it
 /// could not make.
-pub fn define_constraints<I: Input, S: Solvable, Args: PartialEq + Clone + 'static>(
-    part: &mut Part<I, S>,
+pub fn define_constraints<Args: PartialEq + Clone + 'static>(
+    part: &mut Part,
     step: &str,
     args: &Args,
-    generator: ConstraintGenerator<I, S, Args>,
+    generator: ConstraintGenerator<Args>,
 ) -> GeopResult<()> {
-    let own = TargetReference::<StepConstraints<S>>::new(format!("{CONSTRAINTS}:{step}"));
+    let own = TargetReference::<StepConstraints>::new(format!("{CONSTRAINTS}:{step}"));
     let generated = Generated {
         args: args.clone(),
         generator,
@@ -225,16 +229,10 @@ pub fn define_constraints<I: Input, S: Solvable, Args: PartialEq + Clone + 'stat
 
 /// The arguments of a step's own constraints: the step, and its generator
 /// with the step's arguments.
-type Defining<I, S, Args> = (
-    String,
-    Generated<I, S, Args, BTreeMap<String, Constraint<S>>>,
-);
+type Defining<Args> = (String, Generated<Args, BTreeMap<String, Constraint>>);
 
 /// The constraints of the step `step` its generator makes, checked.
-fn make<I: Input, S: Solvable, Args>(
-    reader: &Reader<I, S>,
-    (step, generated): &Defining<I, S, Args>,
-) -> GeopResult<StepConstraints<S>> {
+fn make<Args>(reader: &Reader, (step, generated): &Defining<Args>) -> GeopResult<StepConstraints> {
     let constraints = (generated.generator)(reader, &generated.args)?;
     for (name, constraint) in &constraints {
         constraint.check(name, |state| {
