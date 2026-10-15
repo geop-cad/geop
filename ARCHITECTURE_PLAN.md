@@ -242,67 +242,202 @@ number as typed, or a formula of the part's parameters") and the
 the same pattern as the datums' origin: the core knows the target type and
 its default when no step defines it; an op defines it.
 
-### 3.2 Module layout
+### 3.2 The run model (D6 to D10): one kind of node, one rule for reuse
+
+The current runtime has more concepts than it needs: step *positions* as
+identity, two revisions per part (`run` and `built`) plus `carry`, a
+`Same` flag, `RevisionedValue` for inputs and state, `define_target`
+versus `revise_target`, the `sees` rule, a `Kept` marker target per
+instance, `load_subpart` with its own run-revision coupling, and
+`Reader::inside`. It is hard to say when something runs. The replacement
+is a memo table, in the style of a build system, with one kind of node.
+
+**D6. A run is cheap declarations plus memoized computations.** A run
+walks the program's steps in order and calls each operation's `run`. That
+body must be cheap and pure in the sense that it only *declares* what the
+step produces:
+
+```rust
+ctx.produce(&target_ref, args, make)   // make: fn(&Reader, &Args) -> GeopResult<Out>
+```
+
+`produce` computes the node at once (so a later node of the same step can
+read it) unless it can be reused. A step runs no geometry outside a
+`make`. The runner records nothing else. So the answer to "when does this
+run?" is always: a `make` runs when its node is new, its arguments
+differ, or something it read changed; nothing else ever runs.
+
+**D7. Nodes are keyed by step id and target name, not by position.** A
+node is `(StepId, TargetName)`. The producer a reader sees for target `T`
+is the latest step *in the current program's order* before the reading
+step that produces `T`. A step that produces a target an earlier step
+already produces revises it: its `make` gets the earlier version through
+`reader.previous::<T>()` (or `T::default()` if there is none). There is
+one `produce`; "define" versus "revise" is not a distinction the API
+makes. Whether a target type may have several producers is a property of
+the type (`trait Target { const CHAIN: bool; }`, true for the model and
+other accumulated targets, false for a sketch): a second producer of a
+non-chain target is a validation error naming both steps. Inserting,
+removing or reordering steps changes which producer a reader sees, and
+that is caught by the dependency check, not by positions shifting.
+
+**D8. Reuse is a check of recorded reads against the present.** Every
+read through a `Reader` is recorded on the node being made:
+
+```rust
+enum Read {
+    Target { name, producer: StepId, version: u64 },  // which version of which producer
+    Absent(name),                                     // that no producer was visible
+    Input(name, Option<Setting>),                     // the value read, itself
+    State(name, Option<StateValue>),                  // the value read, itself
+    File(path, revision: u64),                        // a workspace file
+    Inside { instance: StepId, read: Box<Read> },     // a read inside a placed part
+}
+```
+
+A node is reused iff its arguments are equal (`PartialEq`) and every
+recorded read resolves to the same thing now: the same producer is
+visible and its node has the same `version`; the name is still absent;
+the input or state value is equal; the file revision is equal; the inner
+read holds inside the placed part. Otherwise `make` runs again. A node's
+`version` is bumped only when the new value differs from the old by
+`PartialEq`, so an unchanged rebuild leaves dependents reusable. Inputs
+and state carry no revisions: recording the value read is simpler and
+exact.
+
+Values are stored as `Rc<dyn Any>`, so a node's value, a reader's borrow
+and a cache entry share one allocation.
+
+**D9. A placed part is an ordinary node whose value is a built `Part`,
+and equal builds are shared.** `AddPart` does
+`ctx.produce(&placed("bolt"), PlacedArgs { file, inputs }, build_placed)`
+where `build_placed` is a core-provided `make`. It reads the program file
+through the reader (`Read::File`), the state slice under the instance's
+path (`bolt/…` as `Read::State`), and asks the workspace's **build
+cache** for the part:
+
+```
+key = (program: Rc<Program> identity + content hash, inputs, state slice)
+cache: HashMap<key, Rc<Part>>   kept on the Workspace, swept at the end of each run
+```
+
+- A thousand screws of size M4 with no state have one key: one build,
+  a thousand `Rc` clones. Nothing per instance.
+- A sub-assembly with internal state (a jointed arm placed twice at
+  different angles) has a key per distinct state slice. When the solver
+  moves one arm's joint, the new key misses the cache; the build starts
+  from a clone of that instance's previous `Part` (its memo table, cheap
+  because values are `Rc`) and recomputes only the nodes that read the
+  moved state. The result is a new immutable `Rc<Part>` under the new
+  key; the old one is dropped at the sweep unless another instance still
+  uses it.
+- A part's state behind an instance path lives in the parent's state map
+  (`bolt/b.pose`) as today; the placed node reads exactly the slice it
+  passes down, so a change anywhere else in the parent's state touches no
+  placed node.
+
+Reading an element of a placed part (`bolt/model`) goes through the
+placed node's value and records `Inside { instance, Target{...} }`, so a
+mate that reads the arm's second link is stale only when that link's
+model version changed, not when anything in the arm changed.
+
+Cycle detection stays: the build context carries the stack of files being
+built, and a file placing one on the stack is refused with the chain.
+
+This removes `Kept`, `subpart_target`, `load_subpart`, `Subpart`,
+`Built`, `Same`, `carry`, `last_built`, `begin_run_as`, `run_as`, the
+`built` revision, `Reader::inside`, and `Dependency::behind`. The
+TODO in `part.rs` about sharing equal instances is the design, not a
+future optimization.
+
+**D10. The editor's part is one memo table, run to a marker.**
+`runner.run(part, program, upto: Option<StepId>)` runs the steps before
+the marker; nodes of steps after it are kept for when they run again;
+nodes of steps no longer in the program are dropped at the end of the
+run. `part.before(step_id)` gives the reader a step is edited against,
+`part.current()` the finished part. Failed nodes hold `Err(message)`;
+a node reading one fails with that message in context. The solver moves
+state values and re-runs: only nodes whose recorded `Read::State` differ
+recompute, inside placed parts too.
+
+### 3.3 Module layout
 
 ```
 geop-core-program/src
   lib.rs
   values.rs        Design, Setting, StateValue, Settings, StateValues
-  program.rs       Program { steps, state }, Step, ids (alphabet, uniqueness, fresh_id),
-                   excerpt/paste, validate(&registry)
-  operation.rs     Operation, StepArgs, ErasedOperation, args/saved; OperationRegistry
-  part.rs          Part, Reader, Generator, dependency recording   (unchanged)
-  target.rs        Target versions, TargetRegistry, Dependency, Revision (unchanged)
+  program.rs       Program { steps, state }, Step, StepId, ids (alphabet, uniqueness, fresh_id),
+                   excerpt/paste, validate(&registry): unknown op, bad id, args, chain rule
+  operation.rs     Operation, StepArgs, ErasedOperation; OperationRegistry
+  target.rs        Target trait (CHAIN), TargetReference, Node, Read
+  part.rs          Part (memo table), produce, reuse check, sweep, before()/current()
+  reader.rs        Reader: get, previous, retrieve_element, retrieve_placed, input, state,
+                   file, program, targets_of, failed_targets_of; recording
   element.rs       ElementReference, HasElements, Kind, PickedElement (unchanged)
-  instance.rs      instance paths, sub-parts                        (unchanged)
-  runner.rs        ProgramRunner, RunOutput                         (unchanged)
+  placed.rs        placed node: PlacedArgs, build_placed, instance paths, build cache key
+  runner.rs        Runner: registry, workspace, file stack; run(part, program, upto)
   workspace.rs     Workspace trait, Files (file-backed impl), FileStore, Location,
-                   resolve/relative/is_shared
+                   resolve/relative/is_shared, the build cache
   numeric.rs       NumericInput, ParameterValues target, formula evaluation
-  testing.rs       feature `testing`: run a list of steps on a part by hand,
-                   assert_incremental (see 3.4)
+  testing.rs       feature `testing`: run steps by hand, assert_incremental
 ```
 
-### 3.3 Invariants the core enforces
+### 3.4 Invariants the core enforces
 
-Already enforced, to keep:
+- A node is produced once per run; a non-chain target has one producer;
+  a chain target's producers are visible in program order.
+- `make` is a plain `fn`: a node depends only on its arguments and its
+  recorded reads. A read not through the `Reader` cannot happen because
+  the `Reader` is the only access to the part.
+- Reuse iff arguments equal and every recorded read holds (D8).
+- Step ids unique and in the id alphabet; files never place themselves.
+- A placed part is built from exactly (program, inputs, state slice):
+  equal keys share one build.
+- `Program::validate(&registry)` at load, paste and commit.
+- `testing::assert_incremental(registry, workspace, programs)`: runs an
+  edit sequence incrementally on one part and each program from scratch,
+  and asserts every visible node value equal. Every op crate runs it on
+  its examples. This is what lets caching be trusted across crates that
+  never see each other.
 
-- a target is defined once per run; a step revises a target at most once;
-  a version is reused only if made by the same step from equal arguments
-  and nothing it read changed (`Target::made_from`, `Dependency`);
-- generators are plain `fn` pointers, so a version can depend only on its
-  arguments and what it reads through the `Reader`;
-- a read sees the latest version made before its step; a target being made
-  sees its own previous version only;
-- removed inputs and state stay as `None` while a version depends on them;
-- step ids are unique in a program; files may not place themselves;
-- instances are run as the run of the part placing them, their state read
-  behind their path where its read is checked.
+### 3.5 Inputs, strings and part families
 
-To add:
+Inputs are `Setting::Number` or `Setting::Text`. A part family is a
+program whose sketches read `size.d`, `size.p` and the like, and whose
+placer passes `size = "M4"`. Today that is `ParameterKind::Table` inside
+`DefineParameters`. It becomes an operation of its own in
+`geop-ops-parameters`: `LookupTable { input: "size", columns, rows }`
+produces entries of the `ParameterValues` target (`size`, `size.d`,
+`size.p`, …) from the row the input names, and fails naming the input and
+the rows if the text matches none. `DefineParameters` keeps numbers as
+formulas. The core knows only that an input is a number or a text and
+that `ParameterValues` is a chain target several steps may add to.
 
-- `Program::validate(&OperationRegistry)` at load and before every commit:
-  unknown operation, bad id, undeserializable args are refused with the
-  step named. Today an unknown operation is found when it runs.
-- `Part::audit` / `testing::assert_incremental(program, edits)`: runs a
-  sequence of edited programs incrementally on one `Part` and from scratch
-  on a fresh one, and asserts every target's value is equal. This is the
-  test every op crate runs on its own programs, and it is what makes the
-  caching trustworthy without any op knowing how it works. Generalizes
-  `program_tests::a_runner_builds_what_building_from_scratch_builds`.
-- A target made with a generator whose `Args` do not implement
-  `PartialEq` by value (contain `Rc`, closures) cannot be expressed; keep
-  it that way. Document the rule in the `define_target` doc.
+### 3.6 Worked examples of what runs
 
-### 3.4 What the core deliberately does not do
+- *Edit a fillet radius in a 30-step part.* The fillet node's arguments
+  differ: its `make` runs. Every later node that read `model` sees the
+  same producer with a new version: their `make`s run. Sketches, datums
+  and nodes before the fillet are reused. Placed parts are untouched.
+- *Drag a joint of a sub-assembly placed in a robot with 2000 parts.* The
+  solver changes `arm/j1.angle` in the parent's state. The `arm` placed
+  node's `Read::State` differs: its build cache key misses; the arm's
+  part is cloned and only its nodes reading `j1.angle` recompute. Mates
+  in the robot that read `arm/link2/model` see a new inner version and
+  recompute; the other 1999 placed nodes read state slices that did not
+  change and are reused without being looked at beyond the check.
+- *Place the 1000th screw.* `produce` with the same key as the other 999:
+  cache hit, one `Rc` clone, no build.
+- *Reorder two steps.* The nodes of both are found by id; the reads whose
+  visible producer changed fail the check; everything else is reused.
+
+### 3.7 What the core deliberately does not do
 
 - It does not know the model, sketches, datums, or any target type. Those
   are ops.
 - It does not solve state. It offers a hook (§4.4) and the `StateValue`
   type.
 - It does not draw. Drawing vocabulary is the editor's (§4).
-
----
 
 ## 4. `geop-core-editor`: what editing is
 
@@ -588,8 +723,8 @@ inspect, STEP export).
 
 ## 7. Migration phases
 
-Phases 1 and 2 are serial and touch every crate; run them one agent at a
-time on `main`. Phases 3 and 4 are per crate and run in parallel
+Phases 1, 1b and 2 are serial and touch every crate; run them one agent
+at a time on `refactor`. Phases 3 and 4 are per crate and run in parallel
 worktrees. Phase 5 closes.
 
 Every phase ends with: `timeout 1800 prlimit --as=16000000000 cargo test
@@ -629,6 +764,38 @@ tests has to say which and why.
 Acceptance: `geop-core-program` depends on `geop-core-math` only; no crate
 outside core defines a state or input type; `rg 'ProgramFile|BuildPart|
 PartReader'` finds nothing.
+
+### Phase 1b: the run model (1 agent, serial, after phase 1 lands)
+
+Implements §3.2 to §3.6 on top of phase 1's concrete types:
+
+1. `target.rs`/`part.rs`/`reader.rs`: `Node`, `Read`, `produce`, the
+   reuse check, versions, `before()`/`current()`, sweep. Delete
+   `revise_target`, `define_target`, `RevisionedValue`, `Same`, `carry`,
+   `run_as`, `begin_run_as`, the `built` revision, `sees`.
+2. `placed.rs`: `PlacedArgs`, `build_placed`, the build cache on the
+   workspace, `Inside` reads. Delete `Kept`, `subpart_*`, `load_subpart`,
+   `Subpart`, `Reader::inside`, `Dependency::behind`.
+3. `Target` trait with `CHAIN`; `Program::validate` checks the chain rule.
+4. Sweep: every `define_target`/`revise_target` call becomes `produce`;
+   `build_model` in `geop-ops-model` becomes a one-line `produce` of the
+   `model` chain; `AddPart` produces a placed node; every
+   `reader.inside(path)` becomes `retrieve_placed`.
+5. `geop-ops-parameters`: `LookupTable` operation; `ParameterKind::Table`
+   removed; the standard parts and examples that used tables rewritten
+   (they are Rust, not files).
+6. Tests: `assert_incremental` over every example; a test that a thousand
+   placed equal parts build once (count `make` runs through a test hook on
+   the registry, not a timer); a test that a two-instance sub-assembly
+   with one joint moved rebuilds one instance; the reorder test.
+7. The assembly solver (`geop-ops-assembly::solving`, `Rerun`) adapts to
+   `runner.run(part, program, upto)` with state in the program.
+
+Acceptance: the fast suite green; `assert_incremental` passes on every
+example; the slow `example_mass_properties_are_consistent` and the
+assembly scale tests (`assembly_scale_tests.rs`, a drag in 2000 parts)
+are not slower in CPU time than the baseline; `rg 'revise_target|
+define_target|load_subpart|Kept|inside\(' --type rust` finds nothing.
 
 ### Phase 2: the core owns the editor (1 agent, then 1 agent, serial)
 
@@ -804,6 +971,8 @@ listing 40 crates.
 | decision | alternative | why this one |
 |---|---|---|
 | D1 concrete `Setting`/`StateValue`/`Design` in core, generics dropped | keep `<I, S>` generics | the file format is the core's; 30 crates stop aliasing |
+| D6–D9 one node kind keyed by step id, reads recorded by value, placed parts as nodes shared through a build cache | keep positions, revisions, `load_subpart` | fewer concepts, "what runs" answerable in one sentence, 1000 equal screws build once |
+| tables become a `LookupTable` operation | keep `ParameterKind::Table` | a lookup is a step like any other; the core knows only numbers and text |
 | booleans/sweep/shell split into lib + op crates | keep one crate each | directly serves "test only what depends on the change" |
 | `geop-core-sketch` stays in core | move under ops | it is geometry with no program notion, used by five ops |
 | rasterize moves to core | stays an ops lib | it is an algorithm over `Model` only |
