@@ -3,8 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     operation::Operation,
-    part::Part,
-    program_runner::ProgramRunner,
+    part::StepContext,
     target::TargetReference,
     test::{Frame, label, record_built},
     values::Design,
@@ -23,11 +22,12 @@ impl Operation for AddTwoFrameOperation {
     const KIND: &'static str = "add_two_frame";
     type Args = AddTwoFrameArgs;
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &Self::Args) -> GeopResult<()> {
+    fn run(ctx: &mut StepContext, args: &Self::Args) -> GeopResult<()> {
+        let step = ctx.step();
         for (suffix, data) in [("_1", &args.data1), ("_2", &args.data2)] {
             let reference = TargetReference::<Frame>::new(step.to_string() + suffix);
             let args = (label(reference.name(), step), *data);
-            part.define_target(&reference, &args, |_, (label, data)| {
+            ctx.produce(&reference, &args, |_, (label, data)| {
                 record_built(label);
                 Ok(Frame { data: *data })
             })?;

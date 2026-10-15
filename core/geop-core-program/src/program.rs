@@ -16,8 +16,8 @@ use crate::{
     operation::{Operation, StepArgs, saved},
     operation_registry::OperationRegistry,
     part::Part,
-    program_runner::ProgramRunner,
-    values::{Settings, StateValues},
+    runner::Runner,
+    values::StateValues,
 };
 
 /// One step of a program: which operation, with which arguments, as saved.
@@ -58,7 +58,7 @@ impl ProgramStep {
 }
 
 /// A program: its steps, and the state it was saved with — what it is run
-/// with where whoever runs it gives none (see [`Program::run`]).
+/// with: what a solve moves (see [`Program::run`]).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Program {
     #[serde(default)]
@@ -150,24 +150,11 @@ impl Program {
             .unwrap_or(base)
     }
 
-    /// Runs it on `part`, which keeps what earlier runs built, by `runner`:
-    /// its parameters set to `inputs` where they give them, and the values
-    /// `state` gives of its state instead of its own. Fails naming the
-    /// first step that does.
-    pub fn run(
-        &self,
-        runner: &ProgramRunner,
-        part: &mut Part,
-        inputs: &Settings,
-        state: &StateValues,
-    ) -> GeopResult<()> {
-        let mut given = self.state.clone();
-        given.extend(
-            state
-                .iter()
-                .map(|(name, value)| (name.clone(), value.clone())),
-        );
-        let output = runner.run(part, self, inputs, &given);
+    /// Runs it all on `part`, which keeps what earlier runs built, by
+    /// `runner` (see [`Runner::run`]). Fails naming the first step that
+    /// does.
+    pub fn run(&self, runner: &Runner, part: &mut Part) -> GeopResult<()> {
+        let output = runner.run(part, self, None);
         match output.step_errors.into_iter().next() {
             Some((step, error)) => Err(error.with_context(format!("step {step:?}"))),
             None => Ok(()),

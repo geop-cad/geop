@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     element::ElementReference,
     operation::Operation,
-    part::Part,
-    program_runner::ProgramRunner,
+    part::StepContext,
     target::TargetReference,
     test::{Frame, label, record_built},
     values::Design,
@@ -25,9 +24,10 @@ impl Operation for MiddleFrameOperation {
     const KIND: &'static str = "middle_frame";
     type Args = MiddleFrameArgs;
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &Self::Args) -> GeopResult<()> {
+    fn run(ctx: &mut StepContext, args: &Self::Args) -> GeopResult<()> {
+        let step = ctx.step();
         let args = (label(step, step), args.clone());
-        part.define_target(
+        ctx.produce(
             &TargetReference::<Frame>::new(step),
             &args,
             |part, (label, args)| {

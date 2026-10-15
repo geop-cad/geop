@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     operation::Operation,
-    part::Part,
-    program_runner::ProgramRunner,
+    part::StepContext,
     target::TargetReference,
     test::{Frame, label, record_built},
     values::{Design, Setting, StateValue},
@@ -27,10 +26,11 @@ impl Operation for InputFrameOperation {
     const KIND: &'static str = "input_frame";
     type Args = InputFrameArgs;
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &Self::Args) -> GeopResult<()> {
+    fn run(ctx: &mut StepContext, args: &Self::Args) -> GeopResult<()> {
+        let step = ctx.step();
         let reference = TargetReference::<Frame>::new(&args.target);
         let args = (label(&args.target, step), args.clone());
-        part.define_target(&reference, &args, |part, (label, args)| {
+        ctx.produce(&reference, &args, |part, (label, args)| {
             record_built(label);
             let x = match part.retrieve_input(&args.input) {
                 Some(Setting::Number(x)) => Design::from_f64(x),
@@ -61,9 +61,10 @@ impl Operation for StateFrameOperation {
     const KIND: &'static str = "state_frame";
     type Args = StateFrameArgs;
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &Self::Args) -> GeopResult<()> {
+    fn run(ctx: &mut StepContext, args: &Self::Args) -> GeopResult<()> {
+        let step = ctx.step();
         let args = (label(step, step), args.clone());
-        part.define_target(
+        ctx.produce(
             &TargetReference::<Frame>::new(step),
             &args,
             |part, (label, args)| {

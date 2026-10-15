@@ -4,11 +4,11 @@
 //! workspace of files read from a [`FileStore`].
 //!
 //! A program never knows where it is. The runner running it does
-//! ([`Location`]): the file it is in, and the files placing it. A step
-//! reads through the runner ([`crate::program_runner::ProgramRunner`]), in
-//! its body, which runs in every run, and passes what it read to the
-//! targets it defines as arguments: a target is made again exactly when
-//! what it read changed.
+//! ([`Location`]): the file it is in, and the files placing it. A make
+//! reads a file through its reader ([`crate::reader::Reader::read_file`],
+//! [`crate::reader::Reader::program`]), which records the file's revision
+//! ([`Workspace::revision`]): its node is made again exactly when the file
+//! changed.
 //!
 //! Placing a part runs the program of another file, which may place parts
 //! of its own. So the files of a workspace form a graph, and it has to be
@@ -56,9 +56,9 @@ pub trait Workspace {
     /// How the file at `from` names the file at `path`.
     fn relative(&self, from: &str, path: &str) -> String;
 
-    /// How many times a file changed: what a part reading files, carried
-    /// over from its last run, would read otherwise once this does.
-    fn revision(&self) -> u64;
+    /// The revision of the file at `path`: changes whenever the file
+    /// does, so a node that read it is made again.
+    fn revision(&self, path: &str) -> u64;
 }
 
 /// Where the program a runner runs is: the file it is in, and the files
@@ -119,10 +119,7 @@ impl FileStoreMut for BTreeMap<String, String> {
 /// is checked against the operations (see [`Program::validate`]).
 ///
 /// Each file is read once, and read again once it changes
-/// ([`Files::write`]): a program is the same `Rc` while its file does
-/// not change, so a part placed from it again is carried over. Every part
-/// placed is a part of its own, kept by the part placing it (see
-/// [`crate::instance`]).
+/// ([`Files::write`]), when its revision changes too.
 pub struct Files<F: 'static = BTreeMap<String, String>> {
     files: RefCell<F>,
     registry: Rc<OperationRegistry>,
@@ -132,6 +129,8 @@ pub struct Files<F: 'static = BTreeMap<String, String>> {
     texts: RefCell<BTreeMap<String, Rc<str>>>,
     /// How many times a file changed ([`Files::write`]).
     revision: Cell<u64>,
+    /// The revision of each file that changed: the count when it last did.
+    revisions: RefCell<BTreeMap<String, u64>>,
 }
 
 impl<F: FileStore + 'static> Files<F> {
@@ -142,6 +141,7 @@ impl<F: FileStore + 'static> Files<F> {
             programs: RefCell::new(BTreeMap::new()),
             texts: RefCell::new(BTreeMap::new()),
             revision: Cell::new(0),
+            revisions: RefCell::new(BTreeMap::new()),
         })
     }
 
@@ -172,8 +172,10 @@ impl<F: FileStoreMut + 'static> Files<F> {
             return false;
         }
         self.files.borrow_mut().write(path, text);
-        self.forget(&BTreeSet::from([resolve("", path)]));
+        let path = resolve("", path);
+        self.forget(&BTreeSet::from([path.clone()]));
         self.revision.set(self.revision.get() + 1);
+        (self.revisions.borrow_mut()).insert(path, self.revision.get());
         true
     }
 }
@@ -215,8 +217,8 @@ impl<F: FileStore + 'static> Workspace for Files<F> {
         relative(from, path)
     }
 
-    fn revision(&self) -> u64 {
-        self.revision.get()
+    fn revision(&self, path: &str) -> u64 {
+        self.revisions.borrow().get(path).copied().unwrap_or_default()
     }
 }
 

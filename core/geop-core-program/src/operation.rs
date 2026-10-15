@@ -1,7 +1,7 @@
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::{part::Part, program_runner::ProgramRunner};
+use crate::part::StepContext;
 
 /// One kind of step. An operation is a unit struct: everything a step of
 /// it needs is in its arguments.
@@ -12,14 +12,11 @@ pub trait Operation: 'static {
     /// so it names targets and elements, never holds their internal ids.
     type Args: Serialize + DeserializeOwned + 'static;
 
-    /// Defines and revises the step's targets in `part`; `runner` is what
-    /// runs the step, to run programs of the step's own with.
-    fn run(
-        step: &str,
-        runner: &ProgramRunner,
-        part: &mut Part,
-        args: &Self::Args,
-    ) -> GeopResult<()>;
+    /// Declares what the step produces, through `ctx` (see
+    /// [`StepContext::produce`]): cheap, since it runs in every run. What
+    /// takes work is done in the makes, which run only when what they read
+    /// changed.
+    fn run(ctx: &mut StepContext, args: &Self::Args) -> GeopResult<()>;
 }
 
 /// Arguments that say which operation they are for: what a program written
@@ -37,13 +34,7 @@ pub trait ErasedOperation {
     fn kind(&self) -> &'static str;
     /// Whether `args` are arguments of the operation, as saved.
     fn check_args(&self, args: &serde_json::Value) -> GeopResult<()>;
-    fn run(
-        &self,
-        step: &str,
-        runner: &ProgramRunner,
-        part: &mut Part,
-        args: &serde_json::Value,
-    ) -> GeopResult<()>;
+    fn run(&self, ctx: &mut StepContext, args: &serde_json::Value) -> GeopResult<()>;
 }
 
 /// The arguments of `O` from their saved form.
@@ -67,13 +58,7 @@ impl<O: Operation> ErasedOperation for O {
         self::args::<O>(args).map(|_| ())
     }
 
-    fn run(
-        &self,
-        step: &str,
-        runner: &ProgramRunner,
-        part: &mut Part,
-        args: &serde_json::Value,
-    ) -> GeopResult<()> {
-        <O as Operation>::run(step, runner, part, &self::args::<O>(args)?)
+    fn run(&self, ctx: &mut StepContext, args: &serde_json::Value) -> GeopResult<()> {
+        <O as Operation>::run(ctx, &self::args::<O>(args)?)
     }
 }

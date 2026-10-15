@@ -16,7 +16,7 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    instance::{instance_path, split_path},
+    placed::{instance_path, split_path},
     target::TargetReference,
 };
 
@@ -269,13 +269,14 @@ mod tests {
 
     use super::*;
     use crate::{
-        part::Part,
-        values::{Settings, StateValues},
+        operation_registry::OperationRegistry, part::Part, runner::Runner, target::Target,
     };
 
     /// A target of named lengths, of which a part has many.
     #[derive(Clone, PartialEq)]
     struct Lengths(BTreeMap<String, f64>);
+
+    impl Target for Lengths {}
 
     /// A target of named lengths, of which a part has one.
     #[derive(Clone, PartialEq)]
@@ -312,22 +313,20 @@ mod tests {
     /// it depend on the target it is in.
     #[test]
     fn a_step_reading_an_element_is_rebuilt_when_its_target_changes() {
+        let runner = Runner::new(OperationRegistry::default());
         let mut part = Part::default();
         let total = TargetReference::<f64>::new("total");
         let run = |part: &mut Part, a: f64| {
-            part.begin_run(&Settings::new(), &StateValues::new());
-            part.begin_step();
             let defined = TargetReference::<Lengths>::new("s1");
-            (part.define_target(&defined, &a, |_, &a| Ok(lengths(&[("a", a)])))).unwrap();
-            part.begin_step();
-            let a = ElementReference::<Lengths, Length>::new(defined, "a");
-            (part.define_target(
-                &total,
-                &a,
-                |reader, a| Ok(2.0 * reader.retrieve_element(a)?),
-            ))
+            (runner.run_step(part, "s1", |ctx| {
+                ctx.produce(&defined, &a, |_, &a| Ok(lengths(&[("a", a)])))
+            }))
             .unwrap();
-            part.end_run(0);
+            let a = ElementReference::<Lengths, Length>::new(defined, "a");
+            (runner.run_step(part, "s2", |ctx| {
+                ctx.produce(&total, &a, |reader, a| Ok(2.0 * reader.retrieve_element(a)?))
+            }))
+            .unwrap();
         };
         run(&mut part, 1.0);
         assert_eq!(part.current().target(&total).unwrap(), &2.0);
@@ -337,12 +336,13 @@ mod tests {
 
     #[test]
     fn a_missing_element_says_which() {
+        let runner = Runner::new(OperationRegistry::default());
         let mut part = Part::default();
-        part.begin_run(&Settings::new(), &StateValues::new());
-        part.begin_step();
         let defined = TargetReference::<Lengths>::new("s1");
-        (part.define_target(&defined, &(), |_, _| Ok(lengths(&[("a", 1.0)])))).unwrap();
-        part.end_run(0);
+        (runner.run_step(&mut part, "s1", |ctx| {
+            ctx.produce(&defined, &(), |_, _| Ok(lengths(&[("a", 1.0)])))
+        }))
+        .unwrap();
         let b = ElementReference::<Lengths, Length>::new(defined, "b");
         let error = part.current().retrieve_element(&b).unwrap_err().to_string();
         assert!(error.contains("no length b"), "{error}");

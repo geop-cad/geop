@@ -17,10 +17,10 @@ use crate::{
     element::{ElementReference, HasElements, Kind},
     operation::Operation,
     operation_registry::OperationRegistry,
-    part::Part,
+    part::{Part, StepContext},
     program::{Program, ProgramStep},
-    program_runner::ProgramRunner,
-    target::TargetReference,
+    runner::Runner,
+    target::{Target, TargetReference},
     test::{Frame, Running, assert_encloses, inputs, label, record_built, take_built, vector},
     values::Design,
 };
@@ -29,6 +29,10 @@ use crate::{
 /// revised by every step that adds one.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Datums(BTreeMap<String, Frame>);
+
+impl Target for Datums {
+    const CHAIN: bool = true;
+}
 
 /// The part's datums.
 fn datums() -> TargetReference<Datums> {
@@ -69,9 +73,10 @@ impl Operation for AddTwoDatums {
     const KIND: &'static str = "add_two_datums";
     type Args = AddTwoDatumsArgs;
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &Self::Args) -> GeopResult<()> {
+    fn run(ctx: &mut StepContext, args: &Self::Args) -> GeopResult<()> {
+        let step = ctx.step();
         let args = (label("datums", step), step.to_string(), args.clone());
-        part.revise_target(&datums(), &args, |reader, (label, step, args)| {
+        ctx.produce(&datums(), &args, |reader, (label, step, args)| {
             record_built(label);
             let mut datums: Datums = reader.previous()?;
             for (suffix, data) in [("_1", args.data1), ("_2", args.data2)] {
@@ -95,9 +100,10 @@ impl Operation for MiddleDatum {
     const KIND: &'static str = "middle_datum";
     type Args = MiddleDatumArgs;
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &Self::Args) -> GeopResult<()> {
+    fn run(ctx: &mut StepContext, args: &Self::Args) -> GeopResult<()> {
+        let step = ctx.step();
         let args = (label("datums", step), step.to_string(), args.clone());
-        part.revise_target(&datums(), &args, |reader, (label, step, args)| {
+        ctx.produce(&datums(), &args, |reader, (label, step, args)| {
             record_built(label);
             let mut datums: Datums = reader.previous()?;
             // Read through the reader, as of the steps before: the datums
@@ -117,7 +123,7 @@ fn runner() -> Running {
         .and_then(|r| r.with(MiddleDatum))
         .unwrap();
     Running {
-        runner: ProgramRunner::new(registry),
+        runner: Runner::new(registry),
         part: Part::default(),
     }
 }
@@ -199,11 +205,11 @@ fn a_step_sees_only_the_datums_added_before_it() {
         [
             (
                 "m".to_string(),
-                "target `datums` is not defined before any step".to_string()
+                "no step before here produces target `datums`".to_string()
             ),
             (
                 "s1".to_string(),
-                "target `datums` failed in the step at position 0: target `datums` is not defined before any step"
+                "target `datums` failed in step `m`: no step before here produces target `datums`"
                     .to_string()
             ),
         ]

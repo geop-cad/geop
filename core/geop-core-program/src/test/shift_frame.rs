@@ -3,8 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     operation::Operation,
-    part::Part,
-    program_runner::ProgramRunner,
+    part::StepContext,
     target::TargetReference,
     test::{Frame, label, record_built},
     values::Design,
@@ -24,11 +23,12 @@ impl Operation for ShiftFrameOperation {
     const KIND: &'static str = "shift_frame";
     type Args = ShiftFrameArgs;
 
-    fn run(step: &str, _: &ProgramRunner, part: &mut Part, args: &Self::Args) -> GeopResult<()> {
+    fn run(ctx: &mut StepContext, args: &Self::Args) -> GeopResult<()> {
+        let step = ctx.step();
         for target in &args.targets {
             let reference = TargetReference::<Frame>::new(target);
             let args = (label(target, step), args.by);
-            part.revise_target(&reference, &args, |reader, (label, by)| {
+            ctx.produce(&reference, &args, |reader, (label, by)| {
                 record_built(label);
                 let frame: Frame = reader.previous()?;
                 Ok(Frame {

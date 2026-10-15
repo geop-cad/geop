@@ -1,48 +1,42 @@
+//! What a part holds: targets, by name ([`TargetReference`]), each the value
+//! of a [`Target`] type, made by the steps that produce it — one node per
+//! step and target ([`Node`]) — and what a node read while it was made
+//! ([`Read`]), which says when it can be reused.
+
 use std::{
     any::{Any, TypeId},
-    collections::HashMap,
+    cell::Cell,
+    rc::Rc,
 };
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 
-/// Counts the runs of a part, starting at 1. Revision 0 is before the first
-/// run: what was never set has not changed since then.
-pub type Revision = u64;
+use crate::values::{Setting, StateValue};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum Dependency {
-    /// The version of target `name` that the step at position `step` made.
-    Target {
-        name: String,
-        step: usize,
-    },
-    /// That no version of target `name` was made before: what a revision
-    /// starting from the default read.
-    Undefined(String),
-    Input(String),
-    State(String),
+/// A type a part holds targets of. A plain value: compared by `PartialEq`,
+/// to tell a node made again into an equal value — whose readers are then
+/// reused — from one that changed.
+pub trait Target: PartialEq + 'static {
+    /// Whether several steps may produce a target of this type, each from
+    /// what the steps before left (see [`crate::reader::Reader::previous`]):
+    /// the model, the datums, the parameters' values, the listings — what
+    /// a program accumulates. A target that is not a chain — a sketch, a
+    /// placed part — has one producer, and a second is an error naming
+    /// both.
+    const CHAIN: bool = false;
 }
 
-impl Dependency {
-    /// The same read, of the part placed at `path` — a path with a
-    /// separator after it, empty for the part itself — as the part placing
-    /// it names it.
-    pub(crate) fn behind(self, path: &str) -> Self {
-        if path.is_empty() {
-            return self;
-        }
-        let behind = |name: String| format!("{path}{name}");
-        match self {
-            Self::Target { name, step } => Self::Target {
-                name: behind(name),
-                step,
-            },
-            Self::Undefined(name) => Self::Undefined(behind(name)),
-            Self::Input(name) => Self::Input(behind(name)),
-            Self::State(name) => Self::State(behind(name)),
-        }
-    }
+/// Plain values a target may hold: what a test produces, or a step that
+/// produces a number or a text of its own.
+macro_rules! plain_targets {
+    ($($t:ty),*) => {$(impl Target for $t {})*};
 }
+
+plain_targets!(bool, u32, u64, usize, i32, i64, f64, String);
+
+impl<T: PartialEq + 'static> Target for Vec<T> {}
+
+impl<T: PartialEq + 'static> Target for Option<T> {}
 
 /// The stable name of a target, as programs and arguments refer to it, and
 /// the type of its value.
@@ -80,65 +74,145 @@ impl<T> TargetReference<T> {
     }
 }
 
-/// One version of a target: what one step made it. A target is defined by
-/// one step, or revised by one step after another
-/// ([`crate::part::Part::revise_target`]), each revision a version of its
-/// own.
-pub(crate) struct Target {
-    /// The position of the step that made this version.
-    pub(crate) step: usize,
-    /// The arguments it was made from: what a reuse compares.
-    args: Box<dyn Any>,
-    pub(crate) dependencies: Vec<Dependency>,
-    /// The value, or what made building it fail.
-    data: Result<Box<dyn Any>, String>,
-    /// The type of value it is defined to hold, whether or not it failed.
-    kind: TypeId,
-    /// Whether two values of that type are equal, by its `PartialEq`: what
-    /// compares versions of two parts ([`Target::same_as`]).
-    equal: fn(&dyn Any, &dyn Any) -> bool,
-    /// The run in which `data` last became different.
-    pub(crate) changed_at: Revision,
-    /// The run it was made or reused in last: what it read is unchanged
-    /// since then, or it is made again.
-    pub(crate) run: Revision,
+/// What a node read while it was made: what has to hold now for it to be
+/// reused.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Read {
+    /// The target `name` as the step `producer` produced it, in `version`.
+    Target {
+        name: String,
+        producer: String,
+        version: u64,
+    },
+    /// That no step before produced the target `name`.
+    Absent(String),
+    /// The value of the run's input `name`, itself: none if none is given.
+    Input(String, Option<Setting>),
+    /// The value of the state `name`, itself: none if none is given.
+    State(String, Option<StateValue>),
+    /// The file at `path` of the workspace, in `revision`.
+    File(String, u64),
+    /// Which targets of one type there are, in order, and who produced
+    /// each: what listing them read ([`crate::reader::Reader::targets_of`]).
+    /// A target that is added or removed changes it.
+    Listed {
+        kind: TypeId,
+        targets: Vec<(String, String)>,
+    },
+    /// `read`, in the part placed as `instance`.
+    Inside { instance: String, read: Box<Read> },
 }
 
-impl Target {
-    /// The version the step at position `step` made of `args` in the run
-    /// `run`: `made`, having read `dependencies`, and changed then unless
-    /// it is equal to `previous`, the version that step made before.
-    pub(crate) fn new<Out: PartialEq + 'static, Args: 'static>(
-        step: usize,
-        args: Args,
-        dependencies: Vec<Dependency>,
-        made: Result<Out, String>,
-        previous: Option<&Target>,
-        run: Revision,
-    ) -> Self {
-        let changed_at = match (previous, &made) {
-            (Some(old), Ok(new)) if old.holds(new) => old.changed_at,
-            _ => run,
-        };
-        Self {
-            step,
-            args: Box::new(args),
-            dependencies,
-            data: made.map(|data| Box::new(data) as Box<dyn Any>),
-            kind: TypeId::of::<Out>(),
-            equal: |a, b| {
-                (a.downcast_ref::<Out>()).is_some_and(|a| b.downcast_ref::<Out>() == Some(a))
-            },
-            changed_at,
-            run,
+impl Read {
+    /// What tells two reads of one make apart: within one make the part
+    /// does not change, so two reads of the same thing read the same value.
+    pub(crate) fn key(&self) -> String {
+        match self {
+            Read::Target { name, .. } | Read::Absent(name) => format!("t:{name}"),
+            Read::Input(name, _) => format!("i:{name}"),
+            Read::State(name, _) => format!("s:{name}"),
+            Read::File(path, _) => format!("f:{path}"),
+            Read::Listed { kind, .. } => format!("l:{kind:?}"),
+            Read::Inside { instance, read } => format!("{instance}/{}", read.key()),
         }
+    }
+}
+
+thread_local! {
+    /// The last version stamp given out.
+    static VERSIONS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// A version no node has had: what a node gets when its value changes. One
+/// counter for every part, so that two parts' versions of one target — the
+/// previous and the next build of a placed part — are equal only where one
+/// carried the value over from the other.
+pub(crate) fn next_version() -> u64 {
+    VERSIONS.with(|versions| {
+        let next = versions.get() + 1;
+        versions.set(next);
+        next
+    })
+}
+
+/// What one step produced of one target: its value, the arguments it was
+/// made from and what it read.
+#[derive(Clone)]
+pub(crate) struct Node {
+    /// The step that produced it.
+    pub(crate) step: String,
+    /// The arguments it was made from: what a reuse compares.
+    args: Rc<dyn Any>,
+    pub(crate) reads: Rc<[Read]>,
+    /// The value, or what made making it fail.
+    pub(crate) value: Result<Rc<dyn Any>, String>,
+    /// The type of value it is produced to hold, whether or not it failed.
+    pub(crate) kind: TypeId,
+    /// Whether two values of that type are equal, by its `PartialEq`.
+    equal: fn(&dyn Any, &dyn Any) -> bool,
+    /// Changes exactly when its value does (see [`next_version`]).
+    pub(crate) version: u64,
+    /// The run of its part that produced it last, made or reused: what
+    /// tells a node of the step being run from one of an earlier run.
+    pub(crate) produced_in: u64,
+    /// A state it read, directly or through what it read, if it read any:
+    /// what makes it move with the state.
+    pub(crate) state_read: Option<String>,
+}
+
+impl Node {
+    /// The node `step` made of `args`, having read `reads`: `made`, in a
+    /// new version unless it equals `previous`'s value.
+    pub(crate) fn new<Out: Target, Args: PartialEq + 'static>(
+        step: &str,
+        args: Args,
+        reads: Vec<Read>,
+        made: Result<Out, String>,
+        previous: Option<&Node>,
+        produced_in: u64,
+        state_read: Option<String>,
+    ) -> Self {
+        let value = made.map(|value| Rc::new(value) as Rc<dyn Any>);
+        let equal: fn(&dyn Any, &dyn Any) -> bool = |a, b| {
+            (a.downcast_ref::<Out>()).is_some_and(|a| b.downcast_ref::<Out>() == Some(a))
+        };
+        let same = previous.is_some_and(|old| {
+            old.kind == TypeId::of::<Out>()
+                && match (&old.value, &value) {
+                    (Ok(a), Ok(b)) => equal(a.as_ref(), b.as_ref()),
+                    (Err(a), Err(b)) => a == b,
+                    _ => false,
+                }
+        });
+        Self {
+            step: step.to_string(),
+            args: Rc::new(args),
+            reads: reads.into(),
+            value,
+            kind: TypeId::of::<Out>(),
+            equal,
+            version: match (same, previous) {
+                (true, Some(old)) => old.version,
+                _ => next_version(),
+            },
+            produced_in,
+            state_read,
+        }
+    }
+
+    /// Whether it was made, as an `Out`, from `args`, and holds a value: a
+    /// failed node is made again.
+    pub(crate) fn made_from<Out: 'static, Args: PartialEq + 'static>(&self, args: &Args) -> bool {
+        self.value.is_ok()
+            && self.kind == TypeId::of::<Out>()
+            && self.args.downcast_ref::<Args>() == Some(args)
     }
 
     /// Its value, a `T` — or why there is none: it failed, or it is no `T`.
     /// `name` is the target's, for the error.
-    pub(crate) fn value<T: 'static>(&self, name: &str) -> GeopResult<&T> {
-        let data = self.data.as_ref().map_err(|e| self.failed(name, e))?;
-        data.downcast_ref::<T>().ok_or_else(|| {
+    pub(crate) fn get<T: 'static>(&self, name: &str) -> GeopResult<&T> {
+        let value = self.value.as_ref().map_err(|e| self.failed(name, e))?;
+        value.downcast_ref::<T>().ok_or_else(|| {
             GeopError::new(format!(
                 "target `{name}` is not a `{}`",
                 std::any::type_name::<T>()
@@ -146,96 +220,28 @@ impl Target {
         })
     }
 
-    /// Whether it is defined to hold a `T`, made or failed.
-    pub(crate) fn is<T: 'static>(&self) -> bool {
-        self.kind == TypeId::of::<T>()
-    }
-
     /// Why it failed, if it did. `name` is the target's, for the error.
     pub(crate) fn failure(&self, name: &str) -> Option<GeopError> {
-        self.data.as_ref().err().map(|e| self.failed(name, e))
+        self.value.as_ref().err().map(|e| self.failed(name, e))
     }
 
     /// That it failed, for `e`.
     fn failed(&self, name: &str, e: &str) -> GeopError {
         GeopError::new(format!(
-            "target `{name}` failed in the step at position {}: {e}",
+            "target `{name}` failed in step `{}`: {e}",
             self.step
         ))
     }
 
-    /// Whether it was made, as an `Out`, from `args`: what a reuse asks.
-    pub(crate) fn made_from<Out: 'static, Args: PartialEq + 'static>(&self, args: &Args) -> bool {
-        self.data.as_ref().is_ok_and(|data| data.is::<Out>())
-            && self.args.downcast_ref::<Args>() == Some(args)
-    }
-
-    /// Whether it holds what `other` holds — a version of another part,
-    /// say — by the `PartialEq` of its type: equal values, or failures for
-    /// the same reason.
-    pub(crate) fn same_as(&self, other: &Target) -> bool {
+    /// Whether it holds what `other` holds — a node of another part, say
+    /// — by the `PartialEq` of its type: equal values, or failures for the
+    /// same reason.
+    pub(crate) fn same_as(&self, other: &Node) -> bool {
         self.kind == other.kind
-            && match (&self.data, &other.data) {
-                (Ok(a), Ok(b)) => (self.equal)(a.as_ref(), b.as_ref()),
+            && match (&self.value, &other.value) {
+                (Ok(a), Ok(b)) => Rc::ptr_eq(a, b) || (self.equal)(a.as_ref(), b.as_ref()),
                 (Err(a), Err(b)) => a == b,
                 _ => false,
             }
-    }
-
-    /// Whether its value is `value`.
-    fn holds<Out: PartialEq + 'static>(&self, value: &Out) -> bool {
-        (self.data.as_ref().ok()).and_then(|data| data.downcast_ref::<Out>()) == Some(value)
-    }
-}
-
-/// The versions of every target: by its name, then by the position of the
-/// step that made each. A step makes at most one version of a target, so
-/// the two identify a version, in this run and the next.
-#[derive(Default)]
-pub(crate) struct TargetRegistry(HashMap<String, Vec<Target>>);
-
-impl TargetRegistry {
-    pub(crate) fn versions(&self, name: &str) -> impl Iterator<Item = &Target> {
-        self.0.get(name).into_iter().flatten()
-    }
-
-    /// The name of every target that has a version.
-    pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
-        self.0.keys().map(String::as_str)
-    }
-
-    /// The version of `name` that the step at position `step` made.
-    pub(crate) fn get(&self, name: &str, step: usize) -> Option<&Target> {
-        self.versions(name).find(|target| target.step == step)
-    }
-
-    pub(crate) fn get_mut(&mut self, name: &str, step: usize) -> Option<&mut Target> {
-        (self.0.get_mut(name)?.iter_mut()).find(|target| target.step == step)
-    }
-
-    /// Stores `target` as the version of `name` its step made, in place of
-    /// the one it made before.
-    pub(crate) fn insert(&mut self, name: &str, target: Target) {
-        match self.get_mut(name, target.step) {
-            Some(old) => *old = target,
-            None => self.0.entry(name.to_string()).or_default().push(target),
-        }
-    }
-
-    /// What the versions read, all of them.
-    pub(crate) fn dependencies(&self) -> impl Iterator<Item = &Dependency> {
-        (self.0.values().flatten()).flat_map(|target| &target.dependencies)
-    }
-
-    /// Keeps the versions `keep` keeps: whether it deleted any.
-    pub(crate) fn retain(&mut self, keep: impl Fn(&Target) -> bool) -> bool {
-        let mut deleted = false;
-        self.0.retain(|_, versions| {
-            let before = versions.len();
-            versions.retain(|target| keep(target));
-            deleted |= versions.len() < before;
-            !versions.is_empty()
-        });
-        deleted
     }
 }

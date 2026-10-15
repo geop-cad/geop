@@ -18,8 +18,8 @@ use crate::{
     operation_registry::OperationRegistry,
     part::Part,
     program::{Program, ProgramStep},
-    program_runner::{ProgramRunner, RunOutput},
-    target::TargetReference,
+    runner::{RunOutput, Runner},
+    target::{Target, TargetReference},
     values::{Design, Setting, Settings, StateValue, StateValues},
 };
 pub(crate) use add_two_frame::{AddTwoFrameArgs, AddTwoFrameOperation};
@@ -32,6 +32,11 @@ pub(crate) use shift_frame::{ShiftFrameArgs, ShiftFrameOperation};
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Frame {
     pub data: Vector3<Design>,
+}
+
+/// Defined by one step, shifted by the ones after it.
+impl Target for Frame {
+    const CHAIN: bool = true;
 }
 
 /// The state of a body at `position`, unturned.
@@ -108,20 +113,22 @@ pub(crate) fn registry() -> OperationRegistry {
 
 /// A runner of the tests' operations, and the part it runs on.
 pub(crate) struct Running {
-    pub(crate) runner: ProgramRunner,
+    pub(crate) runner: Runner,
     pub(crate) part: Part,
 }
 
 impl Running {
+    /// Runs `program` with `inputs`, at `state`.
     pub(crate) fn run(
         &mut self,
         program: &Program,
         inputs: &Settings,
         state: &StateValues,
     ) -> RunOutput {
-        self.runner.run(&mut self.part, program, inputs, state)
+        self.run_until(program, program.steps.len(), inputs, state)
     }
 
+    /// Runs the first `end` steps of `program` with `inputs`, at `state`.
     pub(crate) fn run_until(
         &mut self,
         program: &Program,
@@ -129,12 +136,17 @@ impl Running {
         inputs: &Settings,
         state: &StateValues,
     ) -> RunOutput {
-        (self.runner).run_until(&mut self.part, program, end, inputs, state)
+        let program = Program {
+            steps: program.steps.clone(),
+            state: state.clone(),
+        };
+        let upto = program.steps.get(end).map(|step| step.id.clone());
+        (self.runner).run_with(&mut self.part, &program, inputs, upto.as_deref())
     }
 }
 
 pub(crate) fn runner() -> Running {
-    let mut runner = ProgramRunner::new(registry());
+    let mut runner = Runner::new(registry());
     runner.workspace = Some(std::rc::Rc::new(instances::Files));
     Running {
         runner,
@@ -190,10 +202,9 @@ fn frame(runner: &Running, name: &str) -> Vector3<Design> {
     view.retrieve_element(&whole_frame(name)).unwrap().data
 }
 
-/// The frame `name` as it was before the step at position `step` of the
-/// program.
-fn frame_before(runner: &Running, step: usize, name: &str) -> Vector3<Design> {
-    let view = runner.part.reader(step);
+/// The frame `name` as it was before the step `step`.
+fn frame_before(runner: &Running, step: &str, name: &str) -> Vector3<Design> {
+    let view = runner.part.before(step);
     view.retrieve_element(&whole_frame(name)).unwrap().data
 }
 
@@ -258,7 +269,7 @@ fn failed_target_is_rebuilt_once_its_input_returns() {
             ("b".into(), "input `y` is not given".into()),
             (
                 "m".into(),
-                "target `b` failed in the step at position 1: input `y` is not given".into()
+                "target `b` failed in step `b`: input `y` is not given".into()
             ),
         ]
     );
@@ -267,6 +278,31 @@ fn failed_target_is_rebuilt_once_its_input_returns() {
     ok(runner.run(&program, &inputs(&[("x", 2.0), ("y", 3.0)]), &no_state()));
     assert_eq!(take_built(), ["b@b", "m@m"]);
     assert_encloses(frame(&runner, "m"), [2.5, 0.0, 0.0]);
+}
+
+/// Nodes are found by their step's id, not its position: swapping two
+/// steps that do not read each other makes nothing again, and what reads
+/// both still sees the same producers.
+#[test]
+fn reordered_independent_steps_are_reused() {
+    let mut runner = runner();
+    let (a, b) = (input_frame("a", "a", "x"), input_frame("b", "b", "y"));
+    let program = |first: &ProgramStep, second: &ProgramStep| {
+        Program::from_steps(vec![
+            first.clone(),
+            second.clone(),
+            middle_frame("m", "a", "b"),
+        ])
+    };
+    let xy = inputs(&[("x", 1.0), ("y", 3.0)]);
+    ok(runner.run(&program(&a, &b), &xy, &no_state()));
+    assert_eq!(take_built(), ["a@a", "b@b", "m@m"]);
+    let makes = runner.runner.counts().makes;
+
+    ok(runner.run(&program(&b, &a), &xy, &no_state()));
+    assert_eq!(take_built(), Vec::<String>::new());
+    assert_eq!(runner.runner.counts().makes, makes);
+    assert_encloses(frame(&runner, "m"), [2.0, 0.0, 0.0]);
 }
 
 /// A step reads only targets defined before it in the same run, never what
@@ -278,7 +314,7 @@ fn step_reads_only_targets_defined_before_it() {
     let middle = || middle_frame("step2", "step1_1", "step1_2");
     let not_defined = vec![(
         "step2".to_string(),
-        "target `step1_1` is not defined by the step at position 0 or before".to_string(),
+        "no step before here produces target `step1_1`".to_string(),
     )];
 
     ok(runner.run(
@@ -304,28 +340,21 @@ fn step_reads_only_targets_defined_before_it() {
     assert!(current.retrieve_element(&whole_frame("step1_1")).is_err());
 }
 
-/// Every target is defined by one step, and a second definition fails
-/// rather than replacing the first.
+/// A target that is no chain is produced by one step, and a second
+/// producer fails, naming both, rather than replacing the first.
 #[test]
-fn target_defined_twice_is_an_error() {
-    let mut runner = runner();
-    let program = Program::from_steps(vec![
-        input_frame("first", "a", "x"),
-        input_frame("second", "a", "y"),
-    ]);
-
-    for _ in 0..2 {
-        let output = runner.run(&program, &inputs(&[("x", 1.0), ("y", 2.0)]), &no_state());
-        assert_eq!(
-            errors(&output),
-            [(
-                "second".into(),
-                "target `a` is defined twice: by the steps at positions 0 and 1".into()
-            )]
-        );
-        assert_encloses(frame(&runner, "a"), [1.0, 0.0, 0.0]);
-    }
-    assert_eq!(take_built(), ["a@first"]);
+fn target_that_is_no_chain_produced_twice_is_an_error() {
+    let runner = Runner::new(registry());
+    let mut part = Part::default();
+    let a = TargetReference::<f64>::new("a");
+    let given = |_: &crate::reader::Reader, &x: &f64| Ok(x);
+    (runner.run_step(&mut part, "first", |ctx| ctx.produce(&a, &1.0, given))).unwrap();
+    let second = runner.run_step(&mut part, "second", |ctx| ctx.produce(&a, &2.0, given));
+    assert_eq!(
+        second.unwrap_err().root_message(),
+        "target `a` is produced by step `first` and again by step `second`: only a chain \
+         target may be produced by several steps"
+    );
 }
 
 /// A run's inputs are complete: one it no longer gives is gone.
@@ -364,7 +393,7 @@ fn changed_state_rebuilds_what_read_it() {
 #[test]
 fn unknown_operation_fails_its_step_only() {
     let mut runner = Running {
-        runner: ProgramRunner::new(
+        runner: Runner::new(
             OperationRegistry::default()
                 .with(InputFrameOperation)
                 .unwrap(),
@@ -406,9 +435,9 @@ fn revisions_are_versions() {
     assert_eq!(take_built(), ["a@a", "a@s1", "m@m", "a@s2"]);
     assert_encloses(frame(&runner, "m"), [2.0, 0.0, 0.0]);
     assert_encloses(frame(&runner, "a"), [12.0, 0.0, 0.0]);
-    assert_encloses(frame_before(&runner, 1, "a"), [1.0, 0.0, 0.0]);
-    assert_encloses(frame_before(&runner, 2, "a"), [2.0, 0.0, 0.0]);
-    assert_encloses(frame_before(&runner, 3, "a"), [2.0, 0.0, 0.0]);
+    assert_encloses(frame_before(&runner, "s1", "a"), [1.0, 0.0, 0.0]);
+    assert_encloses(frame_before(&runner, "m", "a"), [2.0, 0.0, 0.0]);
+    assert_encloses(frame_before(&runner, "s2", "a"), [2.0, 0.0, 0.0]);
 
     ok(runner.run(&program(2.0), &inputs(&[("x", 1.0)]), &no_state()));
     assert_eq!(take_built(), ["a@s1", "m@m", "a@s2"]);
@@ -459,7 +488,7 @@ fn step_makes_one_version_of_a_target() {
         errors(&output),
         [(
             "s".into(),
-            "target `a` is made twice by the step at position 1".into()
+            "target `a` is produced twice by step `s`".into()
         )]
     );
     assert_encloses(frame(&runner, "a"), [2.0, 0.0, 0.0]);
@@ -556,19 +585,6 @@ fn running_to_a_marker_keeps_later_steps() {
     assert_encloses(frame(&runner, "a"), [12.0, 0.0, 0.0]);
 }
 
-#[test]
-fn target_is_made_by_a_step() {
-    let mut part = Part::default();
-    let reference = TargetReference::<Frame>::new("a");
-    let e = part
-        .define_target(&reference, &(), |_, _| {
-            Ok(Frame {
-                data: Vector::zero(),
-            })
-        })
-        .unwrap_err();
-    assert_eq!(e.root_message(), "target `a` is made outside of a step");
-}
 
 fn body_at(x: f64) -> StateValues {
     StateValues::from([("body".to_string(), pose_at([x, 0.0, 0.0]))])
@@ -690,7 +706,7 @@ fn step_id_used_twice_is_an_error() {
 #[test]
 fn the_first_revision_begins_from_the_default() {
     fn grow(
-        reader: &crate::part::Reader,
+        reader: &crate::reader::Reader,
         by: &Vector3<Design>,
     ) -> geop_core_math::geop_error::GeopResult<Frame> {
         let frame: Frame = reader.previous()?;
@@ -698,15 +714,14 @@ fn the_first_revision_begins_from_the_default() {
             data: frame.data.add(by),
         })
     }
+    let runner = Runner::new(registry());
     let mut part = Part::default();
     let reference = TargetReference::<Frame>::new("grown");
-    part.begin_run(&BTreeMap::new(), &BTreeMap::new());
-    part.begin_step();
-    part.revise_target(&reference, &vector([1.0, 0.0, 0.0]), grow)
-        .unwrap();
-    part.begin_step();
-    part.revise_target(&reference, &vector([2.0, 0.0, 0.0]), grow)
-        .unwrap();
+    let mut step = |id: &str, by: [f64; 3]| {
+        runner.run_step(&mut part, id, |ctx| ctx.produce(&reference, &vector(by), grow))
+    };
+    step("s1", [1.0, 0.0, 0.0]).unwrap();
+    step("s2", [2.0, 0.0, 0.0]).unwrap();
     assert_encloses(
         (part.current())
             .retrieve_element(&ElementReference::whole(reference.clone()))
@@ -715,16 +730,17 @@ fn the_first_revision_begins_from_the_default() {
         [3.0, 0.0, 0.0],
     );
 
-    fn fail(_: &crate::part::Reader, _: &()) -> geop_core_math::geop_error::GeopResult<Frame> {
+    fn fail(_: &crate::reader::Reader, _: &()) -> geop_core_math::geop_error::GeopResult<Frame> {
         Err("broken".into())
     }
-    part.begin_step();
-    assert!(part.revise_target(&reference, &(), fail).is_err());
-    part.begin_step();
-    let after = part.revise_target(&reference, &vector([1.0, 0.0, 0.0]), grow);
+    let failed = runner.run_step(&mut part, "s3", |ctx| ctx.produce(&reference, &(), fail));
+    assert!(failed.is_err());
+    let after = runner.run_step(&mut part, "s4", |ctx| {
+        ctx.produce(&reference, &vector([1.0, 0.0, 0.0]), grow)
+    });
     assert_eq!(
         after.unwrap_err().root_message(),
-        "target `grown` failed in the step at position 2: broken"
+        "target `grown` failed in step `s3`: broken"
     );
 }
 
@@ -762,13 +778,12 @@ fn view_lists_targets_of_a_kind() {
         input_frame("c", "c", "x"),
     ]);
     ok(runner.run(&program, &inputs(&[("x", 1.0)]), &no_state()));
-    fn names(view: crate::part::Reader<'_>) -> Vec<String> {
+    fn names(view: crate::reader::Reader<'_>) -> Vec<String> {
         let frames = view.targets_of::<Frame>();
         frames.iter().map(|f| f.name().to_string()).collect()
     }
     assert_eq!(names(runner.part.current()), ["b", "a", "c"]);
-    let before_c = 2;
-    assert_eq!(names(runner.part.reader(before_c)), ["b", "a"]);
+    assert_eq!(names(runner.part.before("c")), ["b", "a"]);
     assert!(
         runner
             .part

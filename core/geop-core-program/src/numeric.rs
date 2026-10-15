@@ -12,28 +12,28 @@
 //! ([`formulas_in`], [`rename_parameter_in`]), so what reads a parameter
 //! is found, and renamed, without asking the operation.
 
-use std::{borrow::Cow, collections::BTreeMap};
+use std::borrow::Cow;
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     element::{ElementReference, HasElements, Kind, whole},
-    part::Reader,
-    target::TargetReference,
+    reader::Reader,
+    target::{Target, TargetReference},
 };
 
 /// What a parameter of the program comes to, as its target holds it
-/// ([`parameter`]): a number, or a table's row — its name, and its value in
-/// each column.
+/// ([`parameter`]): a number, or a text — the row of a table a part family
+/// is looked up in, by name.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ParameterValue {
     Number(f64),
-    Row {
-        name: String,
-        columns: BTreeMap<String, f64>,
-    },
+    Text(String),
 }
+
+/// Defined once, by the step that defines the parameter.
+impl Target for ParameterValue {}
 
 /// Read whole.
 impl Kind for ParameterValue {
@@ -48,16 +48,22 @@ impl HasElements<ParameterValue> for ParameterValue {
     }
 }
 
-/// The target of the parameter `name`.
+/// The target of the parameter `name`: `width`, or `size.d` for the column
+/// `d` of the row a table looks up by the parameter `size`.
 pub fn parameter(name: &str) -> TargetReference<ParameterValue> {
     TargetReference::new(format!("parameter:{name}"))
 }
 
-/// Every parameter of the part, by name, in the order the step defining
-/// them defines them, as each comes to: what lists or designates the part
+/// Every parameter of the part, by name, in the order the steps defining
+/// them define them, as each comes to: what lists or designates the part
 /// reads. A parameter that failed is left out.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ParameterValues(pub Vec<(String, ParameterValue)>);
+
+/// Each step defining parameters adds its own.
+impl Target for ParameterValues {
+    const CHAIN: bool = true;
+}
 
 /// Read whole.
 impl Kind for ParameterValues {
@@ -90,27 +96,16 @@ pub fn read_parameter_values<'a>(reader: &Reader<'a>) -> GeopResult<Cow<'a, Para
 }
 
 /// The number `name` stands for in a formula, as `reader` reads it, the
-/// read recorded: a number parameter's value, and `table.column` the
-/// value in `column` of the row the table `table` is set to. None where no
-/// step defines that parameter, or it failed, or its table has no such
-/// column.
+/// read recorded: a number parameter's value — `width`, or `size.d`, a
+/// column of the row a table looked up. None where no step defines that
+/// parameter, or it failed, or it is no number.
 pub fn read_parameter(reader: &Reader, name: &str) -> Option<f64> {
-    let (table, column) = match name.split_once('.') {
-        Some((table, column)) => (table, Some(column)),
-        None => (name, None),
-    };
-    let reference = parameter(table);
+    let reference = parameter(name);
     if !reader.defines(&reference) {
         return None;
     }
-    match (
-        reader
-            .retrieve_element(&ElementReference::whole(reference))
-            .ok()?,
-        column,
-    ) {
-        (ParameterValue::Number(value), None) => Some(*value),
-        (ParameterValue::Row { columns, .. }, Some(column)) => columns.get(column).copied(),
+    match reader.retrieve_element(&ElementReference::whole(reference)) {
+        Ok(ParameterValue::Number(value)) => Some(*value),
         _ => None,
     }
 }
@@ -495,10 +490,7 @@ impl<'t, F: FnMut(&str) -> Option<f64>> Parser<'t, F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        part::Part,
-        values::{Settings, StateValues},
-    };
+    use crate::{operation_registry::OperationRegistry, part::Part, runner::Runner};
 
     fn eval(text: &str) -> GeopResult<f64> {
         evaluate(text, |name| match name {
@@ -586,22 +578,24 @@ mod tests {
     fn a_formula_reads_the_parameters_it_names() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         static MADE: AtomicUsize = AtomicUsize::new(0);
+        let runner = Runner::new(OperationRegistry::default());
         let mut part = Part::default();
         let half = TargetReference::<f64>::new("half");
         let formula = NumericInput::from("width / 2");
         let run = |part: &mut Part, width: f64, other: f64| {
-            part.begin_run(&Settings::new(), &StateValues::new());
-            part.begin_step();
             let given = |_: &Reader, &value: &f64| Ok(ParameterValue::Number(value));
-            (part.define_target(&parameter("width"), &width, given)).unwrap();
-            (part.define_target(&parameter("other"), &other, given)).unwrap();
-            part.begin_step();
-            (part.define_target(&half, &formula, |reader, f| {
-                MADE.fetch_add(1, Ordering::Relaxed);
-                f.resolve(reader)
+            (runner.run_step(part, "parameters", |ctx| {
+                ctx.produce(&parameter("width"), &width, given)?;
+                ctx.produce(&parameter("other"), &other, given)
             }))
             .unwrap();
-            part.end_run(0);
+            (runner.run_step(part, "half", |ctx| {
+                ctx.produce(&half, &formula, |reader, f| {
+                    MADE.fetch_add(1, Ordering::Relaxed);
+                    f.resolve(reader)
+                })
+            }))
+            .unwrap();
             MADE.load(Ordering::Relaxed)
         };
         assert_eq!(run(&mut part, 4.0, 0.0), 1);

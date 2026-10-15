@@ -1,5 +1,5 @@
-//! Instances: a step places the part a program of its own builds, and the
-//! part reads its elements behind the instance's name.
+//! Placed parts: a step places the part a program of its own builds, and
+//! the part reads its elements behind the instance's name.
 
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     operation::Operation,
-    part::Part,
+    part::StepContext,
+    placed::{PlacedArgs, place},
     program::{Program, ProgramStep},
-    program_runner::ProgramRunner,
     test::{
         StateFrameArgs, StateFrameOperation, assert_encloses, inputs, middle_frame, ok, pose_at,
         runner, take_built, whole_frame,
@@ -24,7 +24,7 @@ pub struct LoadArgs {
     pub file: String,
 }
 
-/// Loads the part the program in `file` builds as the instance named by
+/// Places the part the program in `file` builds as the instance named by
 /// the step.
 pub struct LoadOperation;
 
@@ -32,13 +32,13 @@ impl Operation for LoadOperation {
     const KIND: &'static str = "load";
     type Args = LoadArgs;
 
-    fn run(
-        step: &str,
-        runner: &ProgramRunner,
-        part: &mut Part,
-        args: &Self::Args,
-    ) -> GeopResult<()> {
-        runner.load_subpart(part, step, &args.file, &inputs(&[]))
+    fn run(ctx: &mut StepContext, args: &Self::Args) -> GeopResult<()> {
+        let placed = PlacedArgs {
+            file: args.file.clone(),
+            inputs: inputs(&[]),
+        };
+        let step = ctx.step();
+        place(ctx, step, &placed)
     }
 }
 
@@ -72,7 +72,8 @@ impl Workspace for Files {
         path.to_string()
     }
 
-    fn revision(&self) -> u64 {
+    /// Every file is written once per test: one revision.
+    fn revision(&self, _: &str) -> u64 {
         0
     }
 }
@@ -82,14 +83,14 @@ thread_local! {
     static COUNTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// Counts that it ran, and builds nothing.
+/// Counts that it ran, and produces nothing.
 pub struct CountOperation;
 
 impl Operation for CountOperation {
     const KIND: &'static str = "count";
     type Args = ();
 
-    fn run(_: &str, _: &ProgramRunner, _: &mut Part, _: &()) -> GeopResult<()> {
+    fn run(_: &mut StepContext, _: &()) -> GeopResult<()> {
         COUNTED.set(COUNTED.get() + 1);
         Ok(())
     }
@@ -99,10 +100,9 @@ fn count(id: &str) -> ProgramStep {
     ProgramStep::new::<CountOperation>(id, &()).unwrap()
 }
 
-/// The step `id` loading the program of `steps`, written to the file
-/// `<id>.geop` — the same file for the same steps.
-pub(crate) fn load(id: &str, steps: Vec<ProgramStep>) -> ProgramStep {
-    let file = format!("{id}.geop");
+/// The program of `steps`, written to the file `<name>.geop`.
+fn write(name: &str, steps: Vec<ProgramStep>) -> String {
+    let file = format!("{name}.geop");
     let program = Program::from_steps(steps);
     FILES.with(|files| {
         let mut files = files.borrow_mut();
@@ -110,7 +110,21 @@ pub(crate) fn load(id: &str, steps: Vec<ProgramStep>) -> ProgramStep {
             files.insert(file.clone(), Rc::new(program));
         }
     });
-    ProgramStep::new::<LoadOperation>(id, &LoadArgs { file }).unwrap()
+    file
+}
+
+/// The step `id` placing the part the program in `file` builds.
+fn place_file(id: &str, file: &str) -> ProgramStep {
+    let args = LoadArgs {
+        file: file.to_string(),
+    };
+    ProgramStep::new::<LoadOperation>(id, &args).unwrap()
+}
+
+/// The step `id` placing the program of `steps`, written to the file
+/// `<id>.geop` — the same file for the same steps.
+pub(crate) fn load(id: &str, steps: Vec<ProgramStep>) -> ProgramStep {
+    place_file(id, &write(id, steps))
 }
 
 /// A frame at the state `state`.
@@ -127,11 +141,11 @@ fn state(values: &[(&str, [f64; 3])]) -> StateValues {
         .collect()
 }
 
-/// An element of an instance is read behind its name, as its own part has
-/// it, and the instance is run with the part's state under its name. A
-/// value of the state its part does not read builds nothing.
+/// An element of a placed part is read behind its name, as its own part
+/// has it, and the placed part is built with the part's state under its
+/// name. A value of the state it does not read builds nothing.
 #[test]
-fn an_instance_is_run_with_the_state_under_its_name() {
+fn a_placed_part_is_built_with_the_state_under_its_name() {
     let mut runner = runner();
     let program = Program::from_steps(vec![load("p", vec![state_frame("f", "s")])]);
 
@@ -153,25 +167,25 @@ fn an_instance_is_run_with_the_state_under_its_name() {
     assert_encloses(placed.element.data, [2.0, 0.0, 0.0]);
 }
 
-/// The part of an instance is run again in every run, from what it built
-/// last: what reads what changed is built again, in it and in the part
-/// placing it, the rest is reused. A value given under its name that it
-/// does not read builds nothing. Its part has changed only once a run
-/// changed something in it.
+/// A placed part whose state changed is built again from the part it was:
+/// what reads what changed is made again, in it and in the part placing
+/// it, the rest is reused. A value given under its name that it does not
+/// read builds nothing. Its part has changed only once a build changed
+/// something in it.
 #[test]
-fn a_change_in_an_instance_builds_again_only_what_reads_it() {
+fn a_change_in_a_placed_part_makes_again_only_what_reads_it() {
     let mut runner = runner();
     let frames = vec![state_frame("f", "s"), state_frame("g", "t")];
     let program = Program::from_steps(vec![load("p", frames), middle_frame("m", "p/f", "p/f")]);
     let mut run = |given: &[(&str, [f64; 3])]| {
         ok(runner.run(&program, &inputs(&[]), &state(given)));
-        let id = runner.part.current().inside("p").unwrap().changed_at();
-        (take_built(), id)
+        let revision = runner.part.current().placed_part("p").unwrap().revision();
+        (take_built(), revision)
     };
     let (built, first) = run(&[]);
     assert_eq!(built, ["f@f", "g@g", "m@m"]);
     assert_eq!(run(&[("p/other", [1.0, 0.0, 0.0])]), (vec![], first));
-    // Given as the default it read, `f` is built again, alike: nothing
+    // Given as the default it read, `f` is made again, alike: nothing
     // reading it is.
     assert_eq!(run(&[("p/s", [0.0; 3])]), (vec!["f@f".to_string()], first));
 
@@ -186,11 +200,11 @@ fn a_change_in_an_instance_builds_again_only_what_reads_it() {
     assert_eq!(built, ["f@f", "g@g", "m@m"]);
 }
 
-/// The part of an instance given everything as the last run gave it is
-/// carried over: its steps do not run again, however deep, and what reads
-/// it is reused. Given anything otherwise, its steps run again.
+/// A placed part given everything as the last run gave it is reused: its
+/// steps do not run again, however deep, and what reads it is reused.
+/// Given anything otherwise, its steps run again.
 #[test]
-fn an_instance_given_nothing_new_is_carried_over() {
+fn a_placed_part_given_nothing_new_is_reused() {
     let mut runner = runner();
     let inner = vec![
         count("c"),
@@ -214,9 +228,9 @@ fn an_instance_given_nothing_new_is_carried_over() {
     assert_encloses(placed.element.data, [1.0, 0.0, 0.0]);
 }
 
-/// An element of an instance is no element of the part itself.
+/// An element of a placed part is no element of the part itself.
 #[test]
-fn an_element_of_an_instance_is_not_the_parts_own() {
+fn an_element_of_a_placed_part_is_not_the_parts_own() {
     let mut runner = runner();
     let program = Program::from_steps(vec![load("p", vec![state_frame("f", "s")])]);
     ok(runner.run(&program, &inputs(&[]), &state(&[])));
@@ -227,10 +241,10 @@ fn an_element_of_an_instance_is_not_the_parts_own() {
     assert!(error.contains("placed part `p`"), "{error}");
 }
 
-/// The part of an instance has instances of its own, each run with the
-/// state under both names; only the part's own are listed as its.
+/// A placed part places parts of its own, each built with the state under
+/// both names; only the part's own are listed as its.
 #[test]
-fn an_instance_of_an_instance_is_read_behind_both_names() {
+fn a_part_placed_in_a_placed_part_is_read_behind_both_names() {
     let mut runner = runner();
     let inner = || vec![load("q", vec![state_frame("f", "s")])];
     let program = Program::from_steps(vec![load("p", inner()), load("c", inner())]);
@@ -242,6 +256,81 @@ fn an_instance_of_an_instance_is_read_behind_both_names() {
     assert_encloses(placed.element.data, [0.0, 0.0, 4.0]);
     let other = reader.retrieve_placed(&whole_frame("c/q/f")).unwrap();
     assert_encloses(other.element.data, [0.0, 0.0, 6.0]);
-    assert_eq!(reader.subparts(), ["p", "c"]);
-    assert_eq!(reader.inside("p").unwrap().subparts(), ["q"]);
+    assert_eq!(reader.instances(), ["p", "c"]);
+    assert_eq!(reader.placed_part("p").unwrap().instances(), ["q"]);
+}
+
+/// A thousand parts placed from one program, with the same inputs and no
+/// state of their own, are one build: the rest share it.
+#[test]
+fn a_thousand_equal_placed_parts_build_once() {
+    let mut runner = runner();
+    let file = write("screw", vec![count("c"), state_frame("f", "s")]);
+    let steps = (0..1000)
+        .map(|k| place_file(&format!("screw{k}"), &file))
+        .collect();
+    let program = Program::from_steps(steps);
+    COUNTED.set(0);
+    ok(runner.run(&program, &inputs(&[]), &state(&[])));
+    let counts = runner.runner.counts();
+    assert_eq!(counts.builds, 1);
+    assert_eq!(counts.placed, 1000);
+    assert_eq!(COUNTED.get(), 1, "the screw's steps run once");
+    assert_eq!(take_built(), ["f@f"]);
+    assert_eq!(runner.runner.cached_builds(), 1);
+}
+
+/// Two parts placed from one program, each with a joint of its own: moving
+/// one's builds that one again, from what it was, and reuses the other —
+/// whose placed node is not even made again.
+#[test]
+fn moving_a_joint_of_one_of_two_placed_parts_builds_only_that_one() {
+    let mut runner = runner();
+    let file = write("arm", vec![state_frame("f", "j"), state_frame("g", "k")]);
+    let program =
+        Program::from_steps(vec![place_file("left", &file), place_file("right", &file)]);
+    let at = |left: f64, right: f64| {
+        state(&[("left/j", [left, 0.0, 0.0]), ("right/j", [right, 0.0, 0.0])])
+    };
+    ok(runner.run(&program, &inputs(&[]), &at(1.0, 2.0)));
+    assert_eq!(take_built(), ["f@f", "g@g", "f@f", "g@g"]);
+    let before = runner.runner.counts();
+
+    ok(runner.run(&program, &inputs(&[]), &at(3.0, 2.0)));
+    let after = runner.runner.counts();
+    assert_eq!(after.builds - before.builds, 1, "one part is built again");
+    assert_eq!(after.placed - before.placed, 1, "the other's node is reused");
+    assert_eq!(take_built(), ["f@f"], "only what reads the joint is made again");
+    let reader = runner.part.current();
+    let left = reader.retrieve_placed(&whole_frame("left/f")).unwrap();
+    assert_encloses(left.element.data, [3.0, 0.0, 0.0]);
+    let right = reader.retrieve_placed(&whole_frame("right/f")).unwrap();
+    assert_encloses(right.element.data, [2.0, 0.0, 0.0]);
+}
+
+/// Dragging a placed part moves its pose, the placing part's state: no
+/// placed node is made again, and nothing is built.
+#[test]
+fn dragging_a_placed_part_by_its_pose_builds_nothing() {
+    let mut runner = runner();
+    let file = write("block", vec![state_frame("f", "s")]);
+    let program = Program::from_steps(vec![place_file("b", &file), place_file("c", &file)]);
+    ok(runner.run(&program, &inputs(&[]), &state(&[("b.pose", [0.0; 3])])));
+    take_built();
+    let before = runner.runner.counts();
+    ok(runner.run(&program, &inputs(&[]), &state(&[("b.pose", [5.0, 0.0, 0.0])])));
+    assert_eq!(runner.runner.counts(), before);
+    assert_eq!(take_built(), Vec::<String>::new());
+}
+
+/// A file placing itself, however deep, is refused with the chain.
+#[test]
+fn a_file_placing_itself_is_refused() {
+    let mut runner = runner();
+    write("loop_b", vec![place_file("a", "loop_a.geop")]);
+    write("loop_a", vec![place_file("b", "loop_b.geop")]);
+    let program = Program::from_steps(vec![place_file("a", "loop_a.geop")]);
+    let output = runner.run(&program, &inputs(&[]), &state(&[]));
+    let error = output.step_errors[0].1.to_string();
+    assert!(error.contains("loop_a.geop -> loop_b.geop -> loop_a.geop"), "{error}");
 }
