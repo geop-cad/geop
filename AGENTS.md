@@ -789,7 +789,7 @@ only composes them (the drawing, the structure). A program defines what it
 needs as steps: its parameters (`DefineParameters`) and what it says of
 its part (`PartProperties`); a run's inputs only set them. A program never
 knows where it is: the runner does (`Location`), and a step reads other
-files through it (`ProgramRunner::program`, `read`), from the
+files through it (`Runner::program`, `read`), from the
 `Workspace`, passing what it read on to its targets as arguments.
 
 Shared test helpers live in `geop_ops_model::testing` (feature `testing`:
@@ -965,5 +965,5 @@ own state, which the file never gave, and got no pose; the check looked in
 the hinge's part, where the hinge file's pose was, and saw nothing change.
 The mate kept a constraint differentiated by nothing, and the solve gave up
 at once. A value behind an instance's path is now read inside that
-instance's part (`Reader::inside`), as the check does. When a read and its
+instance's part (`Reader::placed_part`), as the check does. When a read and its
 dependency take different routes to the same name, one of them is wrong.
