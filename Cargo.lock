@@ -762,6 +762,7 @@ dependencies = [
  "geop-core-editor",
  "geop-core-geometry",
  "geop-core-math",
+ "geop-core-program",
  "geop-core-topology",
  "geop-ops-booleans",
  "geop-ops-extrude-revolve",

@@ -17,7 +17,7 @@ only says what a target, an element and a step are, and runs programs.
 
 ## Targets and the part
 
-The `target` and `part` modules. A `Part<I, S>` is a set of **targets**, each named by a
+The `target` and `part` modules. A `Part` is a set of **targets**, each named by a
 `TargetReference<T>` — a stable name and the type of its value: the model,
 `sketch:s1`, `datums`. A step defines a target (`Part::define_target`) or
 revises one an earlier step made (`Part::revise_target`) with a
@@ -36,10 +36,21 @@ editor reads through a reader too, recording nothing: the part now
 `Reader::targets_of` lists the targets of one type, newest last — the
 sketches, say.
 
-Inputs (`Input`) and state values (`State`) are read by name through the
-reader (`retrieve_input`, `retrieve_state`). A state value the run gives
-none of reads as its default: the state is declared by reading it, not
-given up front.
+Inputs and state values are read by name through the reader
+(`retrieve_input`, `retrieve_state`). A state value the run gives none of
+reads as its default, the number zero: the state is declared by reading
+it, not given up front.
+
+## Values
+
+The `values` module. What a run is given is the program's, and its file
+format's: `Design`, the scalar design data is held in (`ScalInF64`); a
+`Setting` — what a parameter is set to where a program places the part, a
+number or a text (a table's row, a colour), saved as itself; and a
+`StateValue` — a number or a `Pose` — which steps by what is added to it,
+a pose by a twist in its own frame through the exponential map.
+`Settings` and `StateValues` are them by name; `pose_state` names the
+state where an instance is (`bolt.pose`).
 
 ## Elements
 
@@ -123,13 +134,25 @@ of instances. `StepArgs` are arguments that say which
 operation they are for, so a program written in Rust pushes them without
 naming the operation again.
 
-A `Program` is an ordered list of `ProgramStep`s, each an operation's kind,
-its arguments as saved JSON and an id —
-`{"id": "box", "operation": "extrude", "args": {...}}`. Everything a step
-creates is named after its id, and steps refer to what earlier steps built
-only by name. A program is plain data: it is copied for undo, compared for
-change and saved as it is, and it means the same thing every time it runs,
-including after a round trip through JSON.
+A `Program` is what a `.geop` file holds, `{"steps": [...], "state":
+{...}}`: an ordered list of `ProgramStep`s, each an operation's kind, its
+arguments as saved JSON and an id —
+`{"id": "box", "operation": "extrude", "args": {...}}` — and the state it
+was saved with, what it is run with where whoever runs it gives none
+(`Program::run`). Everything a step creates is named after its id, so ids
+are unique and spelled in an alphabet a name can be built from
+(`validate_operation_id`); steps refer to what earlier steps built only by
+name. A program is plain data: it is copied for undo, compared for change
+and saved as it is, and it means the same thing every time it runs,
+including after a round trip through JSON (`from_json`, `to_json`).
+`push(id, args)` appends a step for a program written in Rust, whose
+arguments name their operation; `fresh_id` gives an id no step has;
+`excerpt` and `paste` copy steps between programs with the state stored
+under their ids. `validate(&registry)` checks a program against the
+operations it is run in — every step of an operation there is, its
+arguments read by it, its id valid and unique — naming the step: the
+editor checks what it loads, pastes and commits, the workspace every
+program it reads.
 
 An `OperationRegistry` holds the operations a program may use, by kind
 (`with`; a kind twice is refused). Which operations an application offers
@@ -151,14 +174,50 @@ made again exactly when what it read changed.
 ## The workspace
 
 The `workspace` module. A `Workspace` is where programs come from: a
-program by its file's path (`Loaded`: its steps, and the state it was
-saved with), another file's text, the list of files, and how paths name
+program by its file's path (a `Program`, with the state it was saved
+with), another file's text, the list of files, and how paths name
 each other (`resolve`, `relative`). It says how often a file changed
 (`revision`). A runner holds one, and the `Location` of the program it
 runs: its file, and the files placing it. A program never knows where it
 is: the runner resolves a file the program names from its location, and
 refuses one placing the program it runs, however deep — the files would
 place themselves — naming the cycle (`ProgramRunner::program`).
+
+`Files` is the workspace of a set of files read from a `FileStore` (in
+memory, on disk, or another store decorating one, as the standard parts
+are): each file read once, read again once it changes (`Files::write`,
+counted by the revision), each program checked against the operations it
+is written in. A file of a library every workspace shares is named by a
+scheme, `std:hex_nut.geop` (`is_shared`), the same from anywhere.
+
+## Numbers as formulas
+
+The `numeric` module. A `NumericInput` is a number an operation is given —
+a length, an angle, a count — a plain value or a formula of the program's
+parameters: numbers, `+ - * / ^`, parentheses, `pi` and the functions
+`sqrt abs sin cos tan asin acos atan round floor ceil min max`
+(`FUNCTION_NAMES`), angles in degrees (`evaluate`). A step resolves it
+where it builds (`NumericInput::resolve`), reading each parameter the
+formula names — the target a step of the program defines for it
+(`parameter`, a `ParameterValue`: a number, or a table's row and its
+columns; `read_parameter`) — so a change to one of them rebuilds the step
+and a change to any other does not. Saved, a formula is told apart from
+every other value in a step's arguments (`formulas_in`,
+`rename_parameter_in`), so what reads a parameter is found, and renamed,
+without asking the operation. `ParameterValues` is every parameter as it
+came to (`read_parameter_values`: none, for a part defining none). What
+defines parameters is an operation of
+[geop-ops-parameters](../ops/geop-ops-parameters.md); how a dialog shows a
+number is [geop-core-editor](./geop-core-editor.md#numbers-as-formulas)'s.
+
+## Testing
+
+With the feature `testing`, `testing::assert_incremental(registry,
+workspace, programs)` runs a sequence of programs — one edited again and
+again — on one part, and each from scratch on a fresh one, and asserts
+that both hold equal versions of every target (`Part::differences`, by
+each target's `PartialEq`) and fail alike: what makes reusing versions
+trustworthy, checked without knowing how an operation reuses anything.
 
 `run(part, program, inputs, state)` runs it all; `run_until(part, program, end, ...)`
 runs the first `end` steps, as the editor does up to its marker, keeping

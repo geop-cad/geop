@@ -5,23 +5,19 @@
 What a part says of itself besides its shape: the parameters its design
 is given by and its properties — title, designation, colour, material —
 as steps of its program defining targets, which a program placing the part
-sets through the run's inputs; its state; where the parts of its
-instances are placed; and the program as a file holds all of that. It also
-names the types every operation of a part is written against: `BuildPart`
-and `PartReader` (the [geop-core-program](../core/geop-core-program.md)
-part and reader of a part's inputs — `Setting`s — and state),
-`StepContext` (what a step is edited against) and `Registry`.
+sets through the run's inputs; and where the parts of its instances are
+placed. A program, its file, its state and the values it is run with are
+[geop-core-program](../core/geop-core-program.md)'s.
 
-## The program file (`ProgramFile`)
+## A program's parameters
 
-A `ProgramFile` is a program as a `.geop` file holds it:
-`{"steps": [...], "state": {...}}` — its steps (a
-[`Program`](../core/geop-core-program.md#operations-and-programs)), its
-parameters and properties among them, and its state. `push(id, args)` appends a step for a program written in
-Rust, whose arguments name their operation:
+A [`Program`](../core/geop-core-program.md#operations-and-programs) holds
+its parameters and properties in two of its steps. `push(id, args)`
+appends a step for a program written in Rust, whose arguments name their
+operation:
 
 ```rust,ignore
-let mut program = ProgramFile::new();
+let mut program = Program::new();
 program.push("outline", AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)));
 program.push("box", ExtrudeArgs {
     sketch: whole_sketch("outline"),
@@ -36,24 +32,18 @@ program.push("hole", ExtrudeArgs {
 });
 ```
 
-`run(runner, part, inputs, state)` runs it on `part` by a `Runner` (the
-[`ProgramRunner`](../core/geop-core-program.md#running-a-program) of a
-part's inputs and state), its parameters set to `inputs` where they give
-them, and fails naming the first step that does. `parameters()` and
-`set_parameters` read and write its parameters and properties, as an
-editor lists them together (`Parameters`), in their two steps;
-`parameter_numbers` gives what its parameters come to as defined.
-`to_json` pretty-prints it, so edits show up as small line diffs.
-`excerpt` and `paste` copy steps between programs, `rename_parameter`
-renames a parameter and every formula reading it, and `validate` checks a
-program read from a file.
+`parameters_of` and `set_parameters` read and write its parameters and
+properties, as an editor lists them together (`Parameters`), in their two
+steps; `parameter_numbers` gives what its parameters come to as defined,
+`parameter_uses` what reads each, and `rename_parameter` renames a
+parameter and every formula reading it.
 
 ## Parameters
 
 Parameters are the named values a program's design is given by, defined
 by a step of the program (`DefineParameters`, the step `parameters`) as a
 target each (`parameter:<name>`), and read by name wherever a number is
-typed (a [`NumericInput`](../core/geop-core-editor.md#numbers-as-formulas)):
+typed (a [`NumericInput`](../core/geop-core-program.md#numbers-as-formulas)):
 a sketch dimension of `width / 2`.
 
 - **Numbers**, each a formula of the others, defined before it or after —
@@ -68,8 +58,9 @@ input of that name, a `Setting` (see
 [geop-ops-assembly](./geop-ops-assembly.md#parameters)). So a placed screw
 is made M5 by the program placing it, without touching the screw's file. A
 parameter that does not come to anything fails — what reads it fails,
-saying so — and the editor shows why. `read_parameter_values` lists what
-they all came to, in order.
+saying so — and the editor shows why. `read_parameter_values` (of
+geop-core-program, which knows the target) lists what they all came to,
+in order.
 
 Since each formula is resolved where a step builds, and that read is
 recorded, a run after a parameter changed rebuilds only from the steps that
@@ -89,16 +80,6 @@ placed from (`stem`).
 
 `file_choices` lists what a field picking a file offers: the files around
 the program, through the runner running it.
-
-## The state (`state`)
-
-A part's state holds `StateValue`s, by name: a number — a joint's
-coordinate — or a `Pose` — where a placed part is, `<instance>.pose`
-(`pose_state`). It is kept with the program (`ProgramFile::state`) between
-runs, read by the steps like an input, and moved by a solve (see
-[geop-ops-constraints](./geop-ops-constraints.md)): a number steps by what
-is added to it, a pose by a twist in its own frame through the exponential
-map. A value the run gives none of reads as the number zero.
 
 ## Where instances are placed (`instance`)
 

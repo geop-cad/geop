@@ -2,7 +2,7 @@
 
 What an operation is to an editor: the vocabulary a step's editing is said
 in — dialogs, visuals, gizmos, events, picks (`editing`) — numbers typed as
-formulas (`numeric_input`), what an operation shows and does with them
+formulas (`EditForm::numeric`), what an operation shows and does with them
 (`editable`, `part_operation`), how a reference field picks an element
 (`selectable`), and the operations an editor offers (`Editors`). A program
 runs without any of it (see [geop-core-program](./geop-core-program.md));
@@ -146,22 +146,15 @@ directly on the canvas, for a step that picks without a reference field.
 
 ## Numbers as formulas
 
-The `numeric_input` module. A `NumericInput` is a number an operation is given — a length, an angle, a
-count — typed as a plain value or as a formula of the program's
-parameters: numbers, `+ - * / ^`, parentheses, `pi` and the functions
-`sqrt abs sin cos tan asin acos atan round floor ceil min max`
-(`FUNCTION_NAMES`), angles in degrees (`evaluate`). An operation's
-arguments take one wherever they take a number, and its form shows it with
-`EditForm::numeric`. A step resolves it where it builds
-(`NumericInput::resolve`), reading each parameter the formula names —
-the target a step of the program defines for it (`parameter`, a
-`ParameterValue`: a number, or a table's row and its columns;
-`read_parameter`) — so a change to one of them rebuilds the step and a
-change to any other does not. Saved, a formula is told apart from every
-other value in a step's arguments (`formulas_in`, `rename_parameter_in`),
-so what reads a parameter is found, and renamed, without asking the
-operation. What the parameters are is
-[geop-ops-parameters](../ops/geop-ops-parameters.md)'.
+A `NumericInput` ([geop-core-program](./geop-core-program.md#numbers-as-formulas))
+is a number an operation is given, typed as a plain value or as a formula
+of the program's parameters. An operation's arguments take one wherever
+they take a number, and its form shows it with `EditForm::numeric`: a
+field of `Number::numeric`, showing what it comes to as the part before
+the step reads the parameters — or, where it does not evaluate, why —
+with no slider and no handle while it follows a formula. Text typed sets
+it, plain if it is a number and a formula otherwise, and a number slid or
+dragged sets it plain (`Value::numeric_input`).
 
 ## Operation sets
 

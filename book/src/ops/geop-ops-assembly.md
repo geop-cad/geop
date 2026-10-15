@@ -68,7 +68,7 @@ drawn.
 `parameters` gives the placed part's own parameters (see
 [geop-ops-parameters](./geop-ops-parameters.md#parameters)) other values,
 by name: a number, a table's row, the colour (a
-`geop_ops_parameters::Settings`). The part is built with them, and its
+`geop_core_program::values::Settings`). The part is built with them, and its
 dialog offers each as what it is: the colour to pick, a number on a slider
 over its range, a table's row from a list to search, each showing the value
 the part is built with here.

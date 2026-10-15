@@ -17,10 +17,9 @@ splits, patterns, mirrors and moves of bodies, surfaces, subdivision
 surfaces, sheet metal, harnesses, STEP import, drawings and placed parts,
 each defined by the crate that builds it. `infos` lists them for a front
 end's toolbar, and `registry` is the registry its programs run with.
-`Program` is the program file of
-[geop-ops-parameters](../ops/geop-ops-parameters.md#the-program-file-programfile),
-and `Runner` the runner of its steps — what the web editor edits and the
-command-line tool compiles. `operations::build(program, file, workspace)`
+A [`Program`](../core/geop-core-program.md#operations-and-programs) is
+what the web editor edits and the command-line tool compiles, run by a
+`ProgramRunner` of these operations (`runner`). `operations::build(program, file, workspace)`
 builds a program outside the editor, as the file `file` of the workspace
 it places parts from (`operations::workspace`, beside the standard parts).
 
@@ -51,21 +50,21 @@ every crate's:
 
 ## The workspace
 
-The `workspace` module. `Workspace` is the
-[workspace](../core/geop-core-program.md#the-workspace) of a set of program
-files: the parts they build, by path, and the other files their steps
-read. Files name each other by `/`-separated paths relative to the file
-doing the naming — `../parts/bolt.geop` — so a folder of files can be
-moved as a whole (`resolve`, `relative`). Each file is read once, until it
-changes: a program is the same `Rc` while its file does not change, so a
-part placed from it again carries over what it built. Every part placed is
-a part of its own, kept by the part placing it (sharing the parts that
-read no state between their instances is a TODO). A write changes its
-revision, and what read its files is read again. The runner refuses a
-placement that would make files place each other in a cycle, naming the
-cycle: the files must form a DAG. Where the files come from is a
-`FileStore`; `stdlib::WithStandardParts` adds the standard parts beside a
-workspace's own files, as read-only files named `std:…`
+`Workspace` is the editor's workspace: the core's file-backed
+[`Files`](../core/geop-core-program.md#the-workspace) of a set of program
+files, the parts they build, by path, and the other files their steps
+read, with the standard parts beside them. Files name each other by
+`/`-separated paths relative to the file doing the naming —
+`../parts/bolt.geop` — so a folder of files can be moved as a whole. Each
+file is read once, until it changes: a program is the same `Rc` while its
+file does not change, so a part placed from it again carries over what it
+built. Every part placed is a part of its own, kept by the part placing it
+(sharing the parts that read no state between their instances is a TODO).
+A write changes its revision, and what read its files is read again. The
+runner refuses a placement that would make files place each other in a
+cycle, naming the cycle: the files must form a DAG.
+`stdlib::WithStandardParts` is a `FileStore` that adds the standard parts
+beside a workspace's own files, as read-only files named `std:…`
 (`std:iso4032_hex_nut.geop`), which mean the same file from anywhere.
 
 ## The editor
@@ -107,7 +106,7 @@ fields in one line and whether it failed — the part to draw, and the step
 being edited with its presentation and whether it builds. What did not
 change since the last update is left out: a hover sends only the step, and
 the part is sent again only once something ran. The steps are run by one
-`Runner` — up to and including the step being edited while there is one,
+`ProgramRunner` — up to and including the step being edited while there is one,
 else as far as the program runs — which keeps the part after every step,
 so the part before the step being edited is always at hand, and a change
 to it replays only that step.

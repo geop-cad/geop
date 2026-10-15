@@ -32,28 +32,43 @@ core/geop-core-sketch         2-D constraint sketches: entities, constraints
                                as residuals, profile extraction, geometry
                                made from geometry (mirror, patterns, offset),
                                how a dimension is drawn in a plane
-core/geop-core-program        programs and the parts they build: targets a
-                               step defines and revises, typed references
-                               to their elements (`ElementReference`),
-                               instances — parts placed in a part, run
-                               with its state behind their names — the
-                               operations a program is written in, and
-                               running it from the given step on
+core/geop-core-program        what a program is (`Program`: steps and state,
+                               ids, copy and paste, checked against its
+                               operations), the values it is run with
+                               (`Design`, `Setting`, `StateValue`), the
+                               parts it builds: targets a step defines and
+                               revises, typed references to their elements
+                               (`ElementReference`), instances — parts
+                               placed in a part, run with its state behind
+                               their names — the operations a program is
+                               written in, running it from the given step
+                               on, the workspace of files it reads
+                               (`Files`, `FileStore`), and numbers as typed
+                               or formulas of its parameters (`NumericInput`,
+                               `ParameterValues`); feature `testing`:
+                               `assert_incremental`
 core/geop-core-editor         what an operation is and how it is edited
                                (`PartOperation`, `EditForm`): events,
                                dialogs, visuals, hit tests, the gizmo every
                                drag in space goes by; picking typed
-                               references (`Selectable`, `one_of!`); numbers
-                               as typed or formulas (`NumericInput`)
+                               references (`Selectable`, `one_of!`); the
+                               field of a number typed or a formula
+                               (`EditForm::numeric`, `Number::numeric`)
 ops/geop-ops-model            the model a part's steps build: topology with
                                stable names, the features their steps
                                combined, geometric kinds of its elements
                                (point, line, plane, round, curve, body),
-                               cosmetic threads, solid notes; how it is drawn
-ops/geop-ops-parameters       a program file: its parameters (numbers,
-                               tables, colour, material) and the formulas
-                               reading them, its state, what it says of its
-                               part (`About`), and running it
+                               cosmetic threads, solid notes; how it is
+                               drawn. Its names are built from step ids in
+                               the program's id alphabet
+ops/geop-ops-parameters       a part's parameters (numbers, tables, colour,
+                               material) as steps defining them
+                               (`DefineParameters`, `PartProperties`), read,
+                               set and renamed in a `Program`
+                               (`parameters_of`, `set_parameters`,
+                               `rename_parameter`, `parameter_uses`); where
+                               placed parts are (`Instance`, `placement`,
+                               `located`)
 ops/geop-ops-view             what an editor draws of a part (`PartView`):
                                picking by drawn kind, annotations and the
                                structure entries steps list
@@ -148,7 +163,8 @@ ops/geop-ops-urdf             URDF export of an assembly: the tree of links
 cad/geop-cad-base             the operations the editor offers, the editor engine,
                                the part as it composes it from every crate
                                (the given step, drawing, structure), the
-                               workspace programs place parts from, example
+                               workspace of the editor (the core's `Files`
+                               beside the standard parts), example
                                programs, the standard parts (below)
 cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)
 cad/geop-cad-cli              the `geop` command-line tool; `compile` meshes
