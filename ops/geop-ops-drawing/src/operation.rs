@@ -165,10 +165,10 @@ pub struct DrawingSession {
     refused: Option<String>,
     /// The views as last projected, for the part as it then was, and what
     /// of the arguments they depend on (see [`Projected::depends_on`]).
-    projected: Kept<Result<Projected<Design>, String>>,
+    projected: Remembered<Result<Projected<Design>, String>>,
     /// The sheet as last laid out — with its bill of materials — for the
     /// part as it then was, and the arguments without their annotations.
-    laid_out: Kept<Result<Layout, String>>,
+    laid_out: Remembered<Result<Layout, String>>,
 }
 
 /// What editing a drawing keeps: its session, and the annotations selected.
@@ -176,7 +176,7 @@ pub type DrawingEditing = FormState<DrawingSession>;
 
 /// What a session keeps of what it worked out: for the part as it then
 /// was, from which arguments, and what.
-type Kept<T> = RefCell<Option<(Shown, DrawingArgs, Rc<T>)>>;
+type Remembered<T> = RefCell<Option<(Shown, DrawingArgs, Rc<T>)>>;
 
 /// What a drawing of the part a reader reads depends on: its model and its
 /// cosmetic threads, what its program says of it — its name and material,

@@ -366,7 +366,7 @@ fn revolve_axes_are_picked() {
         axis.value.is_empty(),
         "the newest sketch, a circle, has no line to default to"
     );
-    // Kept apart from the box: joining the two is a boolean of its own.
+    // Left apart from the box: joining the two is a boolean of its own.
     editor.handle(dialog("combine", Value::Choice("new_body".into())));
     // From below: the outline's square, under the box.
     let below = |x: f64, y: f64| pointer([x, y, -10.0], [0.0, 0.0, 1.0]);

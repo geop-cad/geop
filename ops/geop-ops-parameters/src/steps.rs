@@ -116,6 +116,7 @@ impl PartOperation for DefineParameters {
 /// The part's parameter values as the steps before left them, and the
 /// parameters `names` as they come to — a parameter that failed left out.
 /// The make of a step's entries of the [`ParameterValues`] chain.
+#[allow(clippy::ptr_arg, reason = "a make takes its arguments as produced")]
 fn add_values(reader: &Reader, names: &Vec<String>) -> GeopResult<ParameterValues> {
     let mut values: ParameterValues = reader.previous()?;
     values.0.extend((names.iter()).filter_map(|name| {

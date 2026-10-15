@@ -258,7 +258,7 @@ impl<T: Scalar> Quaternion<T> {
 
 /// A rigid motion — where a body sits: a point `p` of it is at
 /// `R p + position`, with `R` the rotation of a unit quaternion — in the
-/// scalar type `S`. Kept as the two themselves, so that what is stored is
+/// scalar type `S`. Held as the two themselves, so that what is stored is
 /// exactly what was set, and a pose read and written again is written
 /// exactly as it was read.
 ///

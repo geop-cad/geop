@@ -1,6 +1,6 @@
 //! Cosmetic threads: threads recorded on a round face rather than modelled
 //! — what a drawing, a bill of materials or a fastener check reads, and
-//! what the viewer draws as a helix on the face. Kept as the part's target
+//! what the viewer draws as a helix on the face. Held as the part's target
 //! [`threads`], and drawn as the [`annotations`] of the step that recorded
 //! them ([`draw_threads`]).
 //!

@@ -464,6 +464,7 @@ fn unknowns_merge_by_state() {
 
 /// Defines the target `<step>` as the frame at the origin of the pose
 /// `state`: geometry the state drives.
+#[allow(clippy::ptr_arg, reason = "a make takes its arguments as produced")]
 fn follow(reader: &Reader, state: &String) -> GeopResult<Frame> {
     Ok(Frame {
         data: pose_of(&reader.retrieve_state(state)).position(),

@@ -33,7 +33,7 @@ use crate::{
 /// The axis is a line — a straight edge, an axis, a sketch line — or what
 /// a round entity turns around: a circular edge, a cylindrical face.
 ///
-/// Kept, combined — a feature as it combined — and named as
+/// Copies are held apart or combined — a feature as it combined — and named as
 /// [`crate::LinearPattern`] does, as
 /// `circular_pattern(P)` and `circular_pattern(P,i,X)`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]

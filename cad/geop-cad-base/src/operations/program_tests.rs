@@ -375,3 +375,74 @@ fn a_runner_builds_what_building_from_scratch_builds() {
         assert_incremental(registry, Some((workspace, name)), &programs);
     }
 }
+
+/// The edits [`assert_incremental`] runs an example through: as it is,
+/// its last step dropped, put back, its first two steps swapped — a
+/// failure, where the second reads the first, the same from scratch — and
+/// put back.
+fn edited(original: &Program) -> Vec<Program> {
+    let mut programs = vec![original.clone()];
+    if let Some(last) = original.steps.len().checked_sub(1) {
+        let mut dropped = original.clone();
+        dropped.steps.remove(last);
+        programs.extend([dropped, original.clone()]);
+    }
+    if original.steps.len() >= 2 {
+        let mut swapped = original.clone();
+        swapped.steps.swap(0, 1);
+        programs.extend([swapped, original.clone()]);
+    }
+    programs
+}
+
+/// Every example program named in `only` — all, for none — and every file
+/// of every example made of several, run through [`edited`],
+/// incrementally builds what it builds from scratch (see
+/// [`assert_incremental`]).
+fn assert_examples_incremental(only: Option<&[&str]>) {
+    use crate::examples;
+    let registry = Rc::new(crate::registry().unwrap());
+    let wanted = |name: &str| only.is_none_or(|only| only.contains(&name));
+    for (name, make) in examples::all() {
+        if !wanted(name) {
+            continue;
+        }
+        let workspace: Rc<dyn Workspace> = crate::operations::workspace(BTreeMap::new());
+        assert_incremental(registry.clone(), Some((workspace, name)), &edited(&make()));
+    }
+    for (name, make) in examples::workspaces() {
+        if !wanted(name) {
+            continue;
+        }
+        let files = make();
+        let texts: BTreeMap<String, String> = (files.iter())
+            .map(|(file, program)| (file.to_string(), program.to_json().unwrap()))
+            .collect();
+        let workspace: Rc<dyn Workspace> = crate::operations::workspace(texts);
+        for (file, program) in &files {
+            assert_incremental(
+                registry.clone(),
+                Some((workspace.clone(), file)),
+                &edited(program),
+            );
+        }
+    }
+}
+
+/// [`assert_examples_incremental`] on a few cheap examples: a part with a
+/// table, an assembly placing parts.
+#[test]
+fn examples_build_incrementally_what_they_build_from_scratch() {
+    assert_examples_incremental(Some(&[
+        "box_with_drill_hole",
+        "parametric_plate",
+        "pin_in_plate",
+    ]));
+}
+
+/// [`assert_examples_incremental`] on every example.
+#[test]
+#[ignore = "slow: every example built several times over — run with `cargo test -- --ignored`"]
+fn every_example_builds_incrementally_what_it_builds_from_scratch() {
+    assert_examples_incremental(None);
+}
