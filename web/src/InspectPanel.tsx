@@ -7,9 +7,9 @@ interface Props {
   /** The inspectors the kernel offers: a button each. */
   inspectors: InspectorInfo[];
   /** The inspector whose pick tool is in hand, if one is. */
-  pickTool: string | null;
+  picking: string | null;
   /** Take the pick tool of `inspector` in hand, or put it down. */
-  onPickTool: (inspector: string | null) => void;
+  onPicking: (inspector: string | null) => void;
   /** The pick tool's answer about its picks, while it is in hand. */
   picked: Inspection | null;
   /** The last answers of the inspectors asked of the whole part, by kind — until the part changes. */
@@ -157,8 +157,8 @@ function AnswerView({ inspection, h }: { inspection: Inspection; h: Omit<Handler
 export function InspectPanel({
   enabled,
   inspectors,
-  pickTool,
-  onPickTool,
+  picking,
+  onPicking,
   picked,
   answers,
   busy,
@@ -176,7 +176,7 @@ export function InspectPanel({
       <div className="inspect-tools">
         {inspectors.map((inspector) => {
           const picks = inspector.picks != null;
-          const active = picks && pickTool === inspector.kind;
+          const active = picks && picking === inspector.kind;
           return (
             <button
               key={inspector.kind}
@@ -184,7 +184,7 @@ export function InspectPanel({
               disabled={!enabled || (!picks && busy)}
               title={inspector.doc}
               onClick={() =>
-                (picks ? onPickTool(active ? null : inspector.kind) : onInspect(inspector.kind))
+                (picks ? onPicking(active ? null : inspector.kind) : onInspect(inspector.kind))
               }
             >
               {inspector.icon && <Icon name={inspector.icon} />}

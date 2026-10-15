@@ -689,8 +689,8 @@ function App() {
         <InspectPanel
           enabled={wasmReady && step == null}
           inspectors={program?.inspectors ?? []}
-          pickTool={inHand?.startsWith(PICK) ? inHand.slice(PICK.length) : null}
-          onPickTool={(inspector) => dispatch({ command: "tool", key: inspector == null ? null : PICK + inspector })}
+          picking={inHand?.startsWith(PICK) ? inHand.slice(PICK.length) : null}
+          onPicking={(inspector) => dispatch({ command: "tool", key: inspector == null ? null : PICK + inspector })}
           picked={picked}
           answers={answers}
           busy={inspecting}
