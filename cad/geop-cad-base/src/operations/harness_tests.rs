@@ -1,27 +1,30 @@
 //! Wire harnesses in assemblies: routes between connectors on placed
 //! parts follow those parts wherever their mates let them be moved.
 
+use geop_core_program::{
+    program::Program,
+    values::{Design, StateValue, StateValues, pose_state},
+};
 use std::collections::BTreeMap;
 
+use geop_core_editor::editing::{StepEditEvent, Value};
 use geop_core_math::{
     primitives::{DatumComponent, FrameAxis},
     scalars::{Ring, ScalInF64 as S, Scalar},
 };
-use geop_core_editor::editing::{StepEditEvent, Value};
 use geop_ops_add_datum::Selected;
-use geop_ops_assembly::{
-    AddPartArgs, Kind, Mate, MateEntity, solids::placed_solids,
-};
+use geop_ops_assembly::{AddPartArgs, Kind, Mate, MateEntity, solids::placed_solids};
 use geop_ops_datums::{ORIGIN, component_name, datum};
 use geop_ops_harness::{RouteArgs, Wire, WireSize, cable};
-use geop_ops_model::{Design, element, read_model};
+use geop_ops_model::{element, read_model};
 use geop_ops_output::Bounded;
-use geop_ops_parameters::{StateValue, StateValues, pose_state};
 use geop_ops_sketch::sketch_element;
 
-use crate::examples::pose;
-use crate::operations::testing::{Built, on_origin};
-use crate::{Command, Editor, Program, examples};
+use crate::{
+    Command, Editor, examples,
+    examples::pose,
+    operations::testing::{Built, on_origin},
+};
 
 /// An assembly of two plates: `a` fixed at the origin, `b` 4 along `x`,
 /// its `xy` plane mated onto `a`'s, so it slides in that plane — and a

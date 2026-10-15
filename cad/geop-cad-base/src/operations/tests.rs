@@ -1,24 +1,28 @@
 //! The operations run as programs: sketches extruded and revolved into
 //! solids, and what they refuse.
 
-use geop_ops_extrude_revolve::Output;
+use geop_core_program::{
+    operation::StepArgs,
+    program::{Program, ProgramStep},
+};
+use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, Output, RevolveArgs, RevolveAxis};
 use std::f64::consts::PI;
 
-use geop_core_math::primitives::FrameAxis;
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_core_program::operation::StepArgs;
-use geop_core_program::program::ProgramStep;
+use geop_core_math::{
+    primitives::FrameAxis,
+    scalars::{ScalInF64 as S, Scalar},
+};
 use geop_core_topology::validation::{ValidationParameters, validate};
 use geop_ops_booleans::{BooleanArgs, Combine, SplitArgs, solid};
-use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, RevolveArgs, RevolveAxis};
 use geop_ops_model::{BooleanOp, NamedModel, element};
 use geop_ops_sketch::{Constraint, Sketch, sketch_element, whole_sketch};
 
-use crate::Program;
-use crate::examples::{n, polygon};
-use crate::operations::testing::{
-    Built, assert_valid, both_ways, extrusion, on_face, on_origin, one_way, origin_axis, sketch,
-    two_ways,
+use crate::{
+    examples::{n, polygon},
+    operations::testing::{
+        Built, assert_valid, both_ways, extrusion, on_face, on_origin, one_way, origin_axis,
+        sketch, two_ways,
+    },
 };
 
 fn extrude(sketch: &str, distance: f64, symmetric: bool) -> ExtrudeArgs {
@@ -174,7 +178,7 @@ fn revolve_across_axis_fails() {
 fn revolved_on_zx(
     s: Sketch,
     axis: RevolveAxis,
-) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_ops_model::Design>> {
+) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_core_program::values::Design>> {
     let mut program = Program::new();
     program.push("profile", sketch(on_origin(FrameAxis::Y), s));
     program.push(
@@ -295,7 +299,7 @@ fn extrude_combines_with_its_target() {
 fn revolved_rectangle(
     extent: Extents,
     face: bool,
-) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_ops_model::Design>> {
+) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_core_program::values::Design>> {
     let mut s = Sketch::new();
     let a0 = s.add_point(n(0.0), n(-1.0));
     let a1 = s.add_point(n(0.0), n(2.0));
@@ -395,7 +399,7 @@ fn a_sketch_of_two_areas_is_refused() {
 /// A unit square on the Z plane, and `step` built on it.
 fn on_unit_square(
     step: ExtrudeArgs,
-) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_ops_model::Design>> {
+) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_core_program::values::Design>> {
     let mut s = Sketch::new();
     polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
     let mut program = Program::new();
@@ -478,7 +482,7 @@ fn sweep_a_line_as_a_face() {
 fn as_step<A: StepArgs>(id: &str, args: A) -> ProgramStep {
     let mut program = Program::new();
     program.push(id, args);
-    program.program.steps.remove(0)
+    program.steps.remove(0)
 }
 
 /// A block, from `z0` to `z1` over `[0, 2]^2`, sketched on the Z plane
@@ -487,7 +491,7 @@ fn on_block(
     z0: f64,
     z1: f64,
     steps: Vec<ProgramStep>,
-) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_ops_model::Design>> {
+) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_core_program::values::Design>> {
     let mut base = Sketch::new();
     polygon(&mut base, &[[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0]]);
     let mut post = Sketch::new();
@@ -502,7 +506,7 @@ fn on_block(
         },
     );
     program.push("post_sketch", sketch(on_origin(FrameAxis::Z), post));
-    program.program.steps.extend(steps);
+    program.steps.extend(steps);
     program.build_model()
 }
 
@@ -570,7 +574,7 @@ fn extrude_up_to_next() {
 /// `2` — united into one solid.
 fn turned_up_to_walls(
     walls: &[[[f64; 2]; 4]],
-) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_ops_model::Design>> {
+) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_core_program::values::Design>> {
     let mut program = Program::new();
     let mut solids = Vec::new();
     for (k, corners) in walls.iter().enumerate() {
@@ -768,7 +772,7 @@ fn post_to_block(
     side1: Extent,
     reversed: bool,
     op: BooleanOp,
-) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_ops_model::Design>> {
+) -> geop_core_math::geop_error::GeopResult<NamedModel<geop_core_program::values::Design>> {
     let post = ExtrudeArgs {
         extent: Extents {
             side1,
@@ -786,7 +790,7 @@ fn post_to_block(
 }
 
 /// The heights of `part`'s vertices, in thousandths.
-fn heights(part: &NamedModel<geop_ops_model::Design>) -> Vec<i64> {
+fn heights(part: &NamedModel<geop_core_program::values::Design>) -> Vec<i64> {
     let mut z: Vec<i64> = part
         .topology()
         .vertices
@@ -906,7 +910,7 @@ fn join_up_to_next_partly_under_a_wedge_goes_through_all() {
     polygon(&mut post, &[[0.5, 0.5], [1.5, 0.5], [1.5, 1.5], [0.5, 1.5]]);
     let z_plane = on_origin(FrameAxis::Z);
     program.push("post_sketch", sketch(z_plane, post));
-    program.program.steps.extend(wedge_steps);
+    program.steps.extend(wedge_steps);
     let part = program.build_model().unwrap();
     assert_valid(&part);
     assert_eq!(part.solid_names(), ["extrude(post)"]);

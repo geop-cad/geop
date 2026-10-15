@@ -8,28 +8,20 @@ use geop_core_editor::{
         Style, Track, Unit, Value, Visual,
         hit::{ElementHit, Scene},
     },
-    numeric_input::NumericInput,
 };
-use geop_core_math::{geop_error::GeopResult, primitives::Ray, scalars::{ScalInF64, Scalar}, vector::Vector3};
+use geop_core_math::{geop_error::GeopResult, primitives::Ray, scalars::Scalar, vector::Vector3};
 use geop_core_program::{
     element::PickedElement,
+    numeric::NumericInput,
     operation::Operation,
     part::Part,
     program::{Program, ProgramStep},
     program_runner::ProgramRunner,
+    values::Design,
 };
 use serde::{Deserialize, Serialize};
 
 use super::{Editing, StepEditor};
-
-/// The tests' numbers: what a part is given, its state and its forms.
-type Sc = ScalInF64;
-
-/// A part of the tests, given numbers and a number as its state.
-type TestPart = Part<Sc, Sc>;
-
-/// A runner of the tests' programs.
-type TestRunner = ProgramRunner<Sc, Sc>;
 
 /// What a test operation is to an editor: only its name matters.
 const INFO: OperationInfo = OperationInfo::new("", "", OperationGroup::Solid, OperationTier::Menu);
@@ -52,31 +44,28 @@ struct MarkEditing {
 /// along `x`, and a selectable dot at `(5, 0, 0)`. Builds nothing.
 struct MarkOperation;
 
-fn v(x: f64, y: f64, z: f64) -> Vector3<Sc> {
-    Vector3::from_array([x, y, z].map(Sc::from_f64))
+fn v(x: f64, y: f64, z: f64) -> Vector3<Design> {
+    Vector3::from_array([x, y, z].map(Design::from_f64))
 }
 
 impl Operation for MarkOperation {
     const KIND: &'static str = "mark";
     type Args = MarkArgs;
-    type Input = Sc;
-    type State = Sc;
 
-    fn run(_: &str, _: &TestRunner, _: &mut TestPart, _: &MarkArgs) -> GeopResult<()> {
+    fn run(_: &str, _: &ProgramRunner, _: &mut Part, _: &MarkArgs) -> GeopResult<()> {
         Ok(())
     }
 }
 
 impl Editable for MarkOperation {
     const INFO: OperationInfo = INFO;
-    type Scalar = Sc;
     type EditingState = MarkEditing;
 
-    fn new_args(_: &Context<Sc, Sc, Sc>) -> MarkArgs {
+    fn new_args(_: &Context) -> MarkArgs {
         MarkArgs::default()
     }
 
-    fn presentation(_: &Context<Sc, Sc, Sc>, args: &MarkArgs, editing: &MarkEditing) -> Form<Sc> {
+    fn presentation(_: &Context, args: &MarkArgs, editing: &MarkEditing) -> Form<Design> {
         let mut form = Form::default();
         let handle = Track {
             at: v(0.0, 0.0, 0.0),
@@ -96,10 +85,10 @@ impl Editable for MarkOperation {
     }
 
     fn process_user_event(
-        _: &Context<Sc, Sc, Sc>,
+        _: &Context,
         args: &MarkArgs,
         editing: &MarkEditing,
-        event: Event<Sc>,
+        event: Event<Design>,
     ) -> (MarkArgs, MarkEditing) {
         let mut args = args.clone();
         let mut selection = editing.selection.clone();
@@ -110,7 +99,7 @@ impl Editable for MarkOperation {
                 value: Value::Elements(on),
             } if key == "on" => args.on = on,
             Event::Field { key, value } if key == "distance" => {
-                if let Some(distance) = NumericInput::from_value(&value) {
+                if let Some(distance) = value.numeric_input() {
                     args.distance = distance;
                 }
             }
@@ -130,16 +119,16 @@ impl Editable for MarkOperation {
 /// A part with one face, `top`, under every pointer.
 struct OneFace;
 
-impl Scene<Sc> for OneFace {
-    fn pick(&self, p: &Pointer<Sc>, accepts: &[String]) -> Option<ElementHit<Sc>> {
+impl Scene<Design> for OneFace {
+    fn pick(&self, p: &Pointer<Design>, accepts: &[String]) -> Option<ElementHit<Design>> {
         accepts.iter().any(|k| k == "face").then(|| ElementHit {
             element: face("top"),
             point: *p.ray.origin(),
-            t: Sc::from_f64(0.0),
+            t: Design::from_f64(0.0),
         })
     }
 
-    fn hit_instance(&self, _: &str, _: &Pointer<Sc>) -> Option<Sc> {
+    fn hit_instance(&self, _: &str, _: &Pointer<Design>) -> Option<Design> {
         None
     }
 }
@@ -155,28 +144,26 @@ fn face(name: &str) -> PickedElement {
 
 /// `elements`, as a reference field holds them.
 fn picked(elements: &[PickedElement]) -> Vec<Picked> {
-    (elements.iter().cloned())
-        .map(Picked::new)
-        .collect()
+    (elements.iter().cloned()).map(Picked::new).collect()
 }
 
 /// Looking straight down `-z` at `(x, y)`, reaching a tenth of a unit.
-fn down(x: f64, y: f64) -> Pointer<Sc> {
+fn down(x: f64, y: f64) -> Pointer<Design> {
     Pointer {
         ray: Ray::try_new(v(x, y, 10.0), v(0.0, 0.0, -1.0)).unwrap(),
         reach: Reach::Tube {
-            radius: Sc::from_f64(0.1),
+            radius: Design::from_f64(0.1),
         },
     }
 }
 
 /// A mark step, `mark`, being edited, as an editor drives it.
 struct Editor {
-    editors: Editors<Sc, Sc, Sc>,
-    runner: TestRunner,
-    part: TestPart,
+    editors: Editors,
+    runner: ProgramRunner,
+    part: Part,
     program: Program,
-    editor: StepEditor<Sc>,
+    editor: StepEditor,
 }
 
 impl Editor {
@@ -184,11 +171,16 @@ impl Editor {
     fn new(args: MarkArgs, new: bool) -> Self {
         let editors = Editors::default().with(MarkOperation).unwrap();
         let runner = ProgramRunner::new(editors.operations().unwrap());
-        let mut part = TestPart::default();
-        let program = Program::new(vec![
+        let mut part = Part::default();
+        let program = Program::from_steps(vec![
             ProgramStep::new::<MarkOperation>("mark", &args).unwrap(),
         ]);
-        runner.run(&mut part, &program, &Default::default(), &Default::default());
+        runner.run(
+            &mut part,
+            &program,
+            &Default::default(),
+            &Default::default(),
+        );
         let editor = StepEditor::new(&editors, &runner, &part, &program, "mark", new).unwrap();
         Self {
             editors,
@@ -199,7 +191,7 @@ impl Editor {
         }
     }
 
-    fn send(&mut self, event: StepEditEvent<Sc>) {
+    fn send(&mut self, event: StepEditEvent<Design>) {
         let editing = Editing {
             editors: &self.editors,
             runner: &self.runner,
@@ -208,7 +200,12 @@ impl Editor {
             scene: &OneFace,
         };
         self.editor.handle(editing, &event).unwrap();
-        (self.runner).run(&mut self.part, &self.program, &Default::default(), &Default::default());
+        (self.runner).run(
+            &mut self.part,
+            &self.program,
+            &Default::default(),
+            &Default::default(),
+        );
     }
 
     fn click(&mut self, x: f64, y: f64) {
@@ -231,7 +228,13 @@ impl Editor {
     /// Whether the field `on` waits for a click.
     fn armed(&self) -> bool {
         let presentation = (self.editor)
-            .presentation(&self.editors, &self.runner, &self.part, &self.program, &OneFace)
+            .presentation(
+                &self.editors,
+                &self.runner,
+                &self.part,
+                &self.program,
+                &OneFace,
+            )
             .unwrap();
         matches!(presentation.dialog.get("on"), Some(Control::Reference(r)) if r.armed)
     }
@@ -291,7 +294,13 @@ fn clicks_select_and_escape_clears() {
     editor.click(5.0, 0.0);
     assert_eq!(editor.editing().selection, vec!["dot".to_string()]);
     let presentation = (editor.editor)
-        .presentation(&editor.editors, &editor.runner, &editor.part, &editor.program, &OneFace)
+        .presentation(
+            &editor.editors,
+            &editor.runner,
+            &editor.part,
+            &editor.program,
+            &OneFace,
+        )
         .unwrap();
     let dot = presentation
         .visuals
@@ -307,4 +316,3 @@ fn clicks_select_and_escape_clears() {
     editor.click(20.0, 20.0);
     assert_eq!(editor.editing().events, vec!["cancel", "click"]);
 }
-

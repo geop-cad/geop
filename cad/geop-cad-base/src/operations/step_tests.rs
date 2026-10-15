@@ -1,6 +1,7 @@
 //! STEP: example parts written as STEP files and read back the same, and
 //! the import step reading a file next to its program.
 
+use geop_core_program::{program::Program, values::Design};
 use std::collections::BTreeMap;
 
 use geop_core_math::{plain, scalars::ScalInF64 as S};
@@ -9,11 +10,13 @@ use geop_core_topology::{
     validation::{ValidationParameters, validate},
 };
 use geop_ops_extrude_revolve::testing::model_of;
-use geop_ops_model::{Design, NamedModel};
+use geop_ops_model::NamedModel;
 use geop_ops_step::{ImportStepArgs, write_step};
 
-use crate::operations::{build, testing::Built, workspace};
-use crate::{Program, examples};
+use crate::{
+    examples,
+    operations::{build, testing::Built, workspace},
+};
 
 /// `(faces, edges, vertices)`.
 fn counts(model: &Model<S>) -> (usize, usize, usize) {

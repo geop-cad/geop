@@ -3,20 +3,22 @@
 //! between placed parts — and, ignored for their time, every example's
 //! mass properties checked against themselves.
 
-use geop_core_math::scalars::{Ring, ScalInF64 as S, Scalar};
-use geop_core_math::vector::Vector3;
+use geop_core_math::{
+    scalars::{Ring, ScalInF64 as S, Scalar},
+    vector::Vector3,
+};
 use geop_ops_assembly::solids::placed_solids;
 use geop_ops_booleans::{
     boolean::{BooleanOp, boolean},
     remesh::remesh::RemeshParams,
 };
 use geop_ops_extrude_revolve::shapes::cube::cube_solid;
-use geop_ops_model::Namer;
-use geop_ops_output::Bounded;
 use geop_ops_inspect::{
     interference::bounding_box,
     mass::{MassSummary, mass_report},
 };
+use geop_ops_model::Namer;
+use geop_ops_output::Bounded;
 
 use super::testing::Built;
 use crate::{Command, Editor, examples};

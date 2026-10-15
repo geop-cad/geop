@@ -2,25 +2,31 @@
 //! through the [`crate::Editor`], which solves the mates after every edit
 //! with what the step pulls.
 
+use geop_core_program::{
+    element::{ElementReference, PickedElement},
+    program::Program,
+    values::Design,
+};
 use std::collections::BTreeMap;
 
-use geop_core_editor::editing::{Control, Pointer, StepEditEvent, Tone, Value};
-use geop_core_editor::selectable::Selectable;
+use geop_core_editor::{
+    editing::{Control, Pointer, StepEditEvent, Tone, Value},
+    selectable::Selectable,
+};
 use geop_core_math::{
     primitives::{DatumComponent, FrameAxis, Pose},
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_program::element::{ElementReference, PickedElement};
 use geop_ops_add_datum::Selected;
 use geop_ops_assembly::{AddPartArgs, Kind, Mate, MateEntity, MateKind, placed_parts};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::Extents;
-use geop_ops_model::{Design, testing::assert_close};
+use geop_ops_model::testing::assert_close;
 
 use super::testing::{Stepping, extrude_sketch, handled, on_origin, pointer, rectangle};
-use crate::{Command, Editor, Program};
+use crate::{Command, Editor};
 
 /// The unit cube from the origin to `(1, 1, 1)`, as a program.
 fn cube() -> Program {

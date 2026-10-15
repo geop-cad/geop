@@ -6,6 +6,11 @@ use geop_core_math::{
     primitives::{DatumComponent, FrameAxis},
     scalars::{Ring, ScalInF64 as S, Scalar},
 };
+use geop_core_program::{
+    part::Part,
+    program::Program,
+    values::{Setting, Settings, StateValue, pose_state},
+};
 use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
 use geop_ops_datums::{ORIGIN, component_name, datum};
 use geop_ops_drawing::{
@@ -15,21 +20,18 @@ use geop_ops_drawing::{
 use geop_ops_extrude_revolve::testing::model_of;
 use geop_ops_model::{NamedModel, RefId};
 use geop_ops_output::sheet::to_dxf;
-use geop_ops_parameters::BuildPart;
 use geop_ops_sketch::SketchPlane;
 
 use super::testing::Built;
-use crate::{Program, examples};
-
-type Part<T> = NamedModel<T>;
+use crate::examples;
 
 /// `program` built on its own: its part.
-fn build(program: &Program) -> BuildPart {
+fn build(program: &Program) -> Part {
     program.built().unwrap()
 }
 
 /// The model of the part `built` holds.
-fn model(built: &BuildPart) -> Part<S> {
+fn model(built: &Part) -> NamedModel<S> {
     model_of(built)
 }
 
@@ -46,7 +48,7 @@ fn offset_from_xz(distance: f64) -> AddDatumArgs {
     }
 }
 
-fn view(part: &Part<S>, kind: ViewKind) -> geop_ops_drawing::ProjectedView<S> {
+fn view(part: &NamedModel<S>, kind: ViewKind) -> geop_ops_drawing::ProjectedView<S> {
     let model = part.topology();
     project_view(
         model,
@@ -58,7 +60,7 @@ fn view(part: &Part<S>, kind: ViewKind) -> geop_ops_drawing::ProjectedView<S> {
 }
 
 /// The name of an entity of `part` matching `pick`.
-fn name_where(part: &Part<S>, pick: impl Fn(RefId) -> bool) -> String {
+fn name_where(part: &NamedModel<S>, pick: impl Fn(RefId) -> bool) -> String {
     let mut names: Vec<(RefId, &str)> = part.names().iter().filter(|(id, _)| pick(*id)).collect();
     names.sort_by_key(|(_, n)| n.to_string());
     names.first().expect("an entity matches").1.to_string()
@@ -275,7 +277,7 @@ fn a_tapped_hole_draws_its_thread() {
 }
 
 /// `error` with every edge and face id it mentions followed by its name.
-fn named(part: &Part<S>, error: &impl std::fmt::Display) -> String {
+fn named(part: &NamedModel<S>, error: &impl std::fmt::Display) -> String {
     let mut text = error.to_string();
     for (id, name) in part.names().iter() {
         let tag = match id {
@@ -505,7 +507,7 @@ fn every_example_draws() {
 
 /// The example workspace `name` built: its first file, as that file's
 /// path, and the part.
-fn example_assembly(name: &str) -> (&'static str, BuildPart) {
+fn example_assembly(name: &str) -> (&'static str, Part) {
     let (_, files) = crate::examples::workspaces()
         .into_iter()
         .find(|(n, _)| *n == name)
@@ -518,7 +520,9 @@ fn example_assembly(name: &str) -> (&'static str, BuildPart) {
         .collect();
     (
         path,
-        super::build(&program, path, super::workspace(files)).unwrap().part,
+        super::build(&program, path, super::workspace(files))
+            .unwrap()
+            .part,
     )
 }
 
@@ -780,13 +784,9 @@ fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
         .into_iter()
         .map(|(path, program)| (path.to_string(), program.to_json().unwrap()))
         .collect();
-    let built = super::build(
-        &program,
-        "bolted_plate.geop",
-        super::workspace(files),
-    )
-    .unwrap()
-    .part;
+    let built = super::build(&program, "bolted_plate.geop", super::workspace(files))
+        .unwrap()
+        .part;
     let view = built.current();
     let placed = geop_ops_assembly::placed_parts(&view).unwrap();
     let placed = placed.iter().find(|p| p.name == "plate").unwrap();
@@ -832,8 +832,7 @@ fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
 /// A plate with `n` by `n` M3x10 screws standing on it, 10 apart, and as
 /// many M3 nuts hanging under it, each placed on its own: the program
 /// `screwed.geop`, built.
-fn screwed_plate(n: usize) -> BuildPart {
-    use geop_ops_parameters::{Setting, Settings, StateValue, pose_state};
+fn screwed_plate(n: usize) -> Part {
     let mut program = Program::new();
     let mut place = |id: String, file: &str, size: Option<&str>, at: [f64; 3], turn: [f64; 3]| {
         let parameters = size
@@ -875,13 +874,9 @@ fn screwed_plate(n: usize) -> BuildPart {
         "plate.geop".to_string(),
         examples::metric_plate().to_json().unwrap(),
     )]);
-    super::build(
-        &program,
-        "screwed.geop",
-        super::workspace(files),
-    )
-    .unwrap()
-    .part
+    super::build(&program, "screwed.geop", super::workspace(files))
+        .unwrap()
+        .part
 }
 
 /// The balloons of `sheet`: the item numbers on the dimension layer next

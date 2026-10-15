@@ -4,7 +4,21 @@
 //! is drawn once however often it is placed, and the timings of the whole
 //! (an ignored test) are printed.
 
-use crate::operations::testing::{extrusion, handled, on_origin};
+use crate::{
+    Command, Editor, Update, Workspace,
+    examples::{circle, pose, rectangle, solved},
+    operations::{
+        registry,
+        testing::{extrusion, handled, on_origin},
+    },
+    stdlib::WithStandardParts,
+};
+use geop_core_program::{
+    part::Part,
+    program::Program,
+    values::{Design, Settings, StateValue, StateValues, pose_state},
+    workspace::{FileStore, FileStoreMut},
+};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -27,17 +41,8 @@ use geop_ops_assembly::{
 };
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::Extents;
-use geop_ops_model::{Design, element, read_model};
-use geop_ops_parameters::{BuildPart, Settings, StateValue, StateValues, pose_state};
+use geop_ops_model::{element, read_model};
 use geop_ops_sketch::Sketch;
-
-use crate::examples::{circle, pose, rectangle, solved};
-use crate::stdlib::WithStandardParts;
-use crate::workspace::{FileStore, FileStoreMut};
-use crate::{
-    Command, Editor, Program, Update, Workspace,
-    operations::registry,
-};
 
 /// A part of one extrusion `height` tall, of a sketch on the origin's Z
 /// plane: its faces are `extrude(<id>,start)` below and `extrude(<id>,end)`
@@ -211,7 +216,7 @@ impl FileStoreMut for Counted {
 }
 
 /// The files the robot places, however deep.
-fn files_placed(part: &BuildPart) -> BTreeSet<String> {
+fn files_placed(part: &Part) -> BTreeSet<String> {
     (placed_parts(&part.current()).unwrap().into_iter())
         .map(|placed| placed.located.instance.file.clone())
         .collect()
@@ -224,7 +229,7 @@ fn files_placed(part: &BuildPart) -> BTreeSet<String> {
 fn removing_a_screw_sends_no_other_part_again() {
     let (mut editor, _) = robot_editor(1, 20);
     let before = editor.program().state.clone();
-    let last = editor.program().program.steps.last().unwrap().id.clone();
+    let last = editor.program().steps.last().unwrap().id.clone();
     let update = handled(&mut editor, Command::Remove { id: last });
     let scene = update.scene.expect("the screw is gone");
     let after = &editor.program().state;
@@ -258,7 +263,7 @@ fn an_edited_file_is_placed_as_it_is_now_however_deep() {
             files,
             ..Default::default()
         }),
-        registry,
+        Rc::new(registry().unwrap()),
     );
     let robot = robot(2, 3).remove("robot.geop").unwrap();
     // The robot itself is the program being built, not a file read.
@@ -303,7 +308,7 @@ fn moving_a_part_builds_again_only_what_reads_where_it_is() {
             files,
             ..Default::default()
         }),
-        registry,
+        Rc::new(registry().unwrap()),
     );
     let inputs = Settings::new();
     let resolved = geop_ops_assembly::mates_resolved();
@@ -321,7 +326,9 @@ fn moving_a_part_builds_again_only_what_reads_where_it_is() {
         StateValue::Pose(pose([4.0, 3.0, 0.2], [0.0; 3])),
     );
     let resolved = geop_ops_assembly::mates_resolved();
-    let output = built.runner.run(&mut built.part, &moved.program, &inputs, &moved.state);
+    let output = built
+        .runner
+        .run(&mut built.part, &moved, &inputs, &moved.state);
     assert!(output.step_errors.is_empty(), "{:?}", output.step_errors);
     assert_eq!(
         geop_ops_assembly::mates_resolved() - resolved,
@@ -335,16 +342,16 @@ fn moving_a_part_builds_again_only_what_reads_where_it_is() {
     );
 
     let scratch = build_in(&workspace, &moved);
-    let at = |part: &BuildPart| -> Pose<Design> {
-        locate(&part.current(), "screw7").unwrap().world
-    };
+    let at = |part: &Part| -> Pose<Design> { locate(&part.current(), "screw7").unwrap().world };
     assert_eq!(at(&built.part), at(&scratch));
 }
 
 /// `program`, the file `robot.geop` of `workspace`, built from scratch, its
 /// mates holding as its state has its parts.
-fn build_in(workspace: &Rc<Workspace<Counted>>, program: &Program) -> BuildPart {
-    let part = super::build(program, "robot.geop", workspace.clone()).unwrap().part;
+fn build_in(workspace: &Rc<Workspace<Counted>>, program: &Program) -> Part {
+    let part = super::build(program, "robot.geop", workspace.clone())
+        .unwrap()
+        .part;
     assert!(check_mates(&part.current()).unwrap().converged);
     part
 }
@@ -421,9 +428,8 @@ fn a_changed_leaf_is_drawn_again() {
     // The plate, the board and its 53 (its plate, 4 standoffs, 4 modules of
     // a plate and 10 screws each), and 20 screws.
     assert_eq!(scene.instances.len(), 1 + 1 + 53 + 20);
-    let sent = |instance: &geop_ops_view::ViewInstance| {
-        scene.components.contains_key(&instance.component)
-    };
+    let sent =
+        |instance: &geop_ops_view::ViewInstance| scene.components.contains_key(&instance.component);
     assert!(scene.instances.iter().all(sent));
     let screws: BTreeSet<&str> = (scene.instances.iter())
         .filter(|instance| instance.name.starts_with("screw"))
@@ -482,7 +488,7 @@ fn robot_timings() {
         });
         println!("  unchanged save {same:.3} s, {}", size(&update));
 
-        let last = editor.program().program.steps.last().unwrap().id.clone();
+        let last = editor.program().steps.last().unwrap().id.clone();
         let (top, update) = timed(|| editor.handle(Command::Remove { id: last }));
         println!("  top-level edit {top:.3} s, {}", size(&update));
 
@@ -568,7 +574,7 @@ fn an_edit_resolves_each_mate_a_few_times() {
                 },
             );
         });
-        let last = editor.program().program.steps.last().unwrap().id.clone();
+        let last = editor.program().steps.last().unwrap().id.clone();
         let (remove, remove_runs) = resolved(&mut || {
             handled(&mut editor, Command::Remove { id: last.clone() });
         });

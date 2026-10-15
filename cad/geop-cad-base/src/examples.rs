@@ -4,15 +4,17 @@
 //! the recipe it is: `extrude(box,end)` is the end cap of the step `box`,
 //! whatever internal id it happens to get.
 
-use std::collections::BTreeMap;
-
-use geop_core_editor::numeric_input::NumericInput;
 use geop_core_math::{
     primitives::{DatumComponent, FrameAxis, Pose},
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_program::element::ElementReference;
+use geop_core_program::{
+    element::ElementReference,
+    numeric::NumericInput,
+    program::Program,
+    values::{Design, Setting, Settings, StateValue, StateValues, pose_state},
+};
 use geop_core_sketch::{CurveId, PointId};
 use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
 use geop_ops_assembly::{AddPartArgs, JointKind, Kind, Mate, MateEntity, Motion, joint_parameter};
@@ -24,10 +26,9 @@ use geop_ops_extrude_revolve::{
 };
 use geop_ops_fillet::FilletArgs;
 use geop_ops_hole::{HoleArgs, HoleCentre, HoleKind, Standard, iso::Fit};
-use geop_ops_model::{Design, PartDescription, element, read_model};
+use geop_ops_model::{PartDescription, element, read_model};
 use geop_ops_parameters::{
-    Material, Parameter, ParameterKind, Parameters, Setting, Settings, StateValue, StateValues,
-    parameters::Row, pose_state,
+    Material, Parameter, ParameterKind, Parameters, parameters::Row, set_parameters,
 };
 use geop_ops_pattern::{Direction, LinearPatternArgs, PatternDirection, Seeds, Spacing, feature};
 use geop_ops_sheetmetal::{
@@ -42,11 +43,9 @@ use geop_ops_sketch::{
 use geop_ops_sketch3d::{AddSketch3dArgs, Constraint3d, CurveSource, Sketch3d, sketch3d_path};
 use geop_ops_subd::{Cage, Mirror, SubdArgs};
 use geop_ops_surface::NetworkSurfaceArgs;
+use std::collections::BTreeMap;
 
-use crate::{
-    Program,
-    operations::{build, workspace},
-};
+use crate::operations::{build, workspace};
 
 /// `[x, y]`, as an example is written down.
 type P2 = [f64; 2];
@@ -993,35 +992,38 @@ pub fn four_bar_assembly() -> Program {
 /// everything follows.
 pub fn parametric_plate() -> Program {
     let mut program = Program::new();
-    program.set_parameters(Parameters {
-        title: None,
-        designation: None,
-        color: Some("#d0893e".into()),
-        material: Material::named("Aluminium 6061"),
-        values: vec![
-            Parameter::number("width", "4", 1.0, 10.0),
-            Parameter::number("depth", "width / 2", 0.5, 10.0),
-            Parameter {
-                name: "screw".into(),
-                kind: ParameterKind::Table {
-                    columns: vec!["clearance".into(), "head".into()],
-                    rows: [
-                        ("M3", 0.34, 0.6),
-                        ("M4", 0.45, 0.8),
-                        ("M5", 0.55, 1.0),
-                        ("M6", 0.66, 1.2),
-                    ]
-                    .map(|(name, clearance, head)| Row {
-                        name: name.into(),
-                        values: vec![clearance, head],
-                    })
-                    .to_vec(),
-                    selected: "M4".into(),
+    set_parameters(
+        &mut program,
+        Parameters {
+            title: None,
+            designation: None,
+            color: Some("#d0893e".into()),
+            material: Material::named("Aluminium 6061"),
+            values: vec![
+                Parameter::number("width", "4", 1.0, 10.0),
+                Parameter::number("depth", "width / 2", 0.5, 10.0),
+                Parameter {
+                    name: "screw".into(),
+                    kind: ParameterKind::Table {
+                        columns: vec!["clearance".into(), "head".into()],
+                        rows: [
+                            ("M3", 0.34, 0.6),
+                            ("M4", 0.45, 0.8),
+                            ("M5", 0.55, 1.0),
+                            ("M6", 0.66, 1.2),
+                        ]
+                        .map(|(name, clearance, head)| Row {
+                            name: name.into(),
+                            values: vec![clearance, head],
+                        })
+                        .to_vec(),
+                        selected: "M4".into(),
+                    },
                 },
-            },
-            Parameter::number("thickness", "0.5", 0.1, 2.0),
-        ],
-    });
+                Parameter::number("thickness", "0.5", 0.1, 2.0),
+            ],
+        },
+    );
 
     let mut outline = Sketch::new();
     let lines = rectangle(&mut outline, [0.0, 0.0], 4.0, 2.0);
@@ -1060,8 +1062,7 @@ pub fn parametric_plate() -> Program {
     let mut projection = Reference::new(Source::Projection {
         entity: Projected::Face(element(top)),
     });
-    let built =
-        build(&program, "", workspace(BTreeMap::new())).expect("the plate builds");
+    let built = build(&program, "", workspace(BTreeMap::new())).expect("the plate builds");
     let reader = built.part.current();
     let plane = (on_face(top).resolve(&reader)).expect("the top is planar");
     projection
@@ -1184,8 +1185,7 @@ pub fn metric_plate() -> Program {
 
 /// The name of the face of [`metric_plate`]'s hole.
 pub fn metric_plate_hole() -> String {
-    let built =
-        build(&metric_plate(), "", workspace(BTreeMap::new())).expect("the plate builds");
+    let built = build(&metric_plate(), "", workspace(BTreeMap::new())).expect("the plate builds");
     let part = read_model(&built.part.current()).expect("the plate has a model");
     PartDescription::of(&part)
         .expect("the plate describes itself")
@@ -2185,7 +2185,7 @@ mod tests {
         // The hole's bottom is the hole tool's end cap; its wall is the
         // four quarters swept by the circle.
         assert!(description.faces.contains_key("extrude(hole,end)"));
-        let args: AddSketchArgs = args(&box_with_drill_hole().program.steps[2]);
+        let args: AddSketchArgs = args(&box_with_drill_hole().steps[2]);
         let circle_id = *args.sketch.curves.keys().next().unwrap();
         for piece in ["", "#1", "#2", "#3"] {
             let wall = format!("extrude(hole,hole_sketch,{circle_id}{piece})");
@@ -2327,7 +2327,7 @@ mod tests {
         };
         let original = box_with_drill_hole();
         let mut edited = original.clone();
-        for step in &mut edited.program.steps {
+        for step in &mut edited.steps {
             match step.id.as_str() {
                 "box" => edit_args::<ExtrudeArgs>(step, |args| args.extent = Extents::blind(1.5)),
                 "hole_sketch" => edit_args::<AddSketchArgs>(step, |args| {
@@ -2349,7 +2349,7 @@ mod tests {
     #[test]
     fn referring_to_a_missing_entity_fails() {
         let mut program = box_with_drill_hole();
-        edit_args::<AddSketchArgs>(&mut program.program.steps[2], |args| {
+        edit_args::<AddSketchArgs>(&mut program.steps[2], |args| {
             args.plane = Some(on_face("extrude(box,side)"));
         });
         let err = error(program.build_model());
@@ -2361,8 +2361,8 @@ mod tests {
     #[test]
     fn duplicate_step_ids_are_rejected() {
         let mut program = box_with_drill_hole();
-        program.program.steps[3].id = "box".into();
-        assert!(program.validate().is_err());
+        program.steps[3].id = "box".into();
+        assert!(program.validate_ids().is_err());
         assert!(program.build_model().is_err());
     }
 

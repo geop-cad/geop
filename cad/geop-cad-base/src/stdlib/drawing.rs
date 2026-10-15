@@ -1,6 +1,12 @@
 //! [`Drawing`]: a sketch whose every point is placed by formulas of the
 //! program's parameters — what makes one file draw every size of a part.
 
+use geop_core_program::{
+    numeric::{NumericInput, evaluate},
+    program::Program,
+    values::Design,
+};
+use geop_ops_parameters::parameter_numbers;
 use std::collections::BTreeMap;
 
 use geop_core_geometry::nurb_curve::bezier_knots;
@@ -9,9 +15,6 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_core_sketch::{ConstraintId, CurveId, CurveKind, PointId, SplineShape};
-use geop_core_editor::numeric_input::{NumericInput, evaluate};
-use geop_ops_model::Design;
-use geop_ops_parameters::ProgramFile as Program;
 use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch, SketchPlane};
 
 /// A sketch drawn point by point, each point placed by two formulas — its
@@ -33,7 +36,7 @@ impl Drawing {
     /// A drawing for a step of `program`, drawn with its parameters as it
     /// defines them.
     pub fn new(program: &Program) -> GeopResult<Self> {
-        let numbers = program.parameter_numbers()?;
+        let numbers = parameter_numbers(program)?;
         let mut sketch = Sketch::new();
         let origin = sketch.add_fixed_point(Design::ZERO, Design::ZERO);
         Ok(Self {

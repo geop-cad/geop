@@ -8,7 +8,7 @@
 //! what the user did.
 //!
 //! The program is the one of a file, among others it may place parts from
-//! (see [`crate::workspace`]): the editor is told the file's path
+//! (see [`geop_core_program::workspace`]): the editor is told the file's path
 //! with the program ([`Command::Load`]), and is sent the other files'
 //! programs whenever they change ([`Command::Files`]) — by the front end,
 //! which owns the files, be they a VS Code workspace's or the browser's.
@@ -16,44 +16,46 @@
 //! program it leaves as that file's. What each step shows and does is the operation's; see
 //! [`crate::step_editor::StepEditor`].
 
+use geop_core_editor::{
+    editable::{Editors, Listed},
+    editing::{Dialog, Extent, Presentation, Pull, Shape, StepEditEvent, Style, Visual},
+};
+use geop_core_program::{
+    element::{ElementReference, PickedElement},
+    instance::instance_path,
+    numeric::{ParameterValue, parameter},
+    part::{Part, Reader},
+    program::{Program, ProgramStep},
+    program_runner::ProgramRunner,
+    values::{Design, Setting, Settings, StateValues},
+    workspace::Location,
+};
+use geop_ops_parameters::{
+    COLOR, Material, Parameters, parameter_uses, parameters_of, read_properties, rename_parameter,
+    set_parameters,
+};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     rc::Rc,
 };
 
-use geop_core_editor::{
-    editable::Listed,
-    numeric_input::{ParameterValue, parameter},
-    editing::{Dialog, Extent, Presentation, Pull, Shape, StepEditEvent, Style, Visual},
-};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_program::instance::instance_path;
-use geop_core_program::{
-    element::{ElementReference, PickedElement},
-    program::{Program as Steps, ProgramStep},
-    workspace::Location,
-};
 use geop_ops_assembly::{
     placed_parts,
     solving::{self, Freedom, Report, Rerun, SettingsState},
 };
-use geop_ops_model::Design;
 use geop_ops_output::{Content, Export, ExporterInfo, Inspection, InspectorInfo, Output, Outputs};
-use geop_ops_parameters::{
-    BuildPart, COLOR, Material, Parameters, PartReader, Setting, Settings, StateValues,
-    read_properties, set_parameters,
-};
 use geop_ops_view::{EMPTY_EXTENT, PartView, ViewInstance, drawn};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Program, Workspace, examples,
+    Workspace, examples,
     inspect::PickTool,
-    operations::{Editors, Runner, editors, outputs, workspace},
+    operations::{editors, outputs, workspace},
     part::{self, StructureItem, structure},
     step_editor::{Editing, StepEditor},
 };
@@ -149,7 +151,7 @@ pub enum Command {
         parameters: Parameters,
     },
     /// Name the parameter `from` `to`, and every formula reading it read
-    /// `to` (see [`geop_ops_parameters::ProgramFile::rename_parameter`]): the other
+    /// `to` (see [`geop_ops_parameters::rename_parameter`]): the other
     /// parameters', the steps'. Refused while a step is edited.
     RenameParameter {
         from: String,
@@ -252,7 +254,7 @@ pub struct ProgramState {
     pub parameters: ParametersState,
     /// What reads each parameter, by name: the steps and the other
     /// parameters whose formulas do, which fail if it goes (see
-    /// [`geop_ops_parameters::ProgramFile::parameter_uses`]).
+    /// [`geop_ops_parameters::parameter_uses`]).
     pub parameter_uses: BTreeMap<String, Vec<String>>,
     /// Every operation a step can be, as the toolbar offers them: group by
     /// group, in [`geop_core_program::operation::OperationGroup`]'s order, and
@@ -403,13 +405,11 @@ struct Open {
     /// Whether it is a new step, inserted at `index`, rather than the one
     /// already there.
     new: bool,
-    /// The program's steps with the step in them, as its edits leave it:
-    /// what the step editor writes the step's arguments to.
-    steps: Steps,
-    /// The program's state, as the step's edits and the solves after them
-    /// leave it.
-    state: StateValues,
-    editor: StepEditor<Design>,
+    /// The program with the step in it, as its edits leave it: what the
+    /// step editor writes the step's arguments to — and its state, as the
+    /// step's edits and the solves after them leave it.
+    program: Program,
+    editor: StepEditor,
     /// What picks test against, as drawn: the part before it, or what it
     /// builds (see [`OperationInfo::picks_built`]).
     view: PartView,
@@ -425,13 +425,13 @@ struct Open {
 impl Open {
     /// The step, as its edits leave it.
     fn step(&self) -> &ProgramStep {
-        &self.steps.steps[self.index]
+        &self.program.steps[self.index]
     }
 
     /// The step, and the program's state, as they are now: what an undo
     /// comes back to.
     fn edited(&self) -> Edited {
-        (self.step().args.clone(), self.state.clone())
+        (self.step().args.clone(), self.program.state.clone())
     }
 }
 
@@ -562,7 +562,7 @@ impl Editor {
     }
 
     /// The part the program builds, as far as it runs now.
-    pub fn part(&self) -> PartReader<'_> {
+    pub fn part(&self) -> Reader<'_> {
         self.build.part.current()
     }
 
@@ -573,7 +573,7 @@ impl Editor {
 
     /// The step editor of the step being edited: its operation's editing
     /// state among what it keeps.
-    pub fn step_editor(&self) -> Option<&StepEditor<Design>> {
+    pub fn step_editor(&self) -> Option<&StepEditor> {
         self.open.as_ref().map(|open| &open.editor)
     }
 
@@ -607,7 +607,7 @@ impl Editor {
         let path = self.path.clone().unwrap_or_default();
         self.build.runner.workspace = Some(self.workspace.clone());
         self.build.runner.location = Location {
-            file: crate::workspace::resolve("", &path),
+            file: geop_core_program::workspace::resolve("", &path),
             within: Vec::new(),
         };
     }
@@ -624,11 +624,12 @@ impl Editor {
 
     /// The steps run now, and the state they run with: the step being
     /// edited's, or the program's.
-    fn current(&self) -> (Steps, StateValues) {
-        match &self.open {
-            Some(open) => (open.steps.clone(), open.state.clone()),
-            None => (self.file.program.clone(), self.file.state.clone()),
-        }
+    fn current(&self) -> (Program, StateValues) {
+        let program = match &self.open {
+            Some(open) => &open.program,
+            None => &self.file,
+        };
+        (program.clone(), program.state.clone())
     }
 
     /// Applies `command`, and says what to show now.
@@ -753,12 +754,8 @@ impl Editor {
         date: &str,
         ask: impl FnOnce(&Outputs, &mut Output) -> GeopResult<T>,
     ) -> GeopResult<T> {
-        let (steps, state) = self.current();
+        let (file, _) = self.current();
         let editing = self.open.as_ref().map(|open| open.id.clone());
-        let file = Program {
-            program: steps,
-            state,
-        };
         let mut output = Output {
             runner: &self.build.runner,
             part: &mut self.build.part,
@@ -897,22 +894,21 @@ impl Editor {
 
     /// Opens the step `id` of `steps`, at `index` — `new`, inserted there,
     /// or one already there — to edit.
-    fn open(&mut self, steps: Steps, index: usize, id: String, new: bool) -> GeopResult<()> {
-        let state = self.file.state.clone();
+    fn open(&mut self, program: Program, index: usize, id: String, new: bool) -> GeopResult<()> {
         // It runs once before it is edited: an editor edits a step against
         // the part before it, as the last run left it.
         let inputs = self.inputs();
         self.give();
-        self.build.run(&steps, Some(index + 1), &inputs, &state);
+        self.build
+            .run(&program, Some(index + 1), &inputs, &program.state);
         let Build { runner, part, .. } = &self.build;
-        let editor = StepEditor::new(&self.editors, runner, part, &steps, &id, new)?;
-        let view = part::draw(&self.build.view_at(&steps, index))?;
+        let editor = StepEditor::new(&self.editors, runner, part, &program, &id, new)?;
+        let view = part::draw(&self.build.view_at(&program, index))?;
         self.open = Some(Open {
             index,
             id,
             new,
-            steps,
-            state,
+            program,
             editor,
             view,
             undo: Vec::new(),
@@ -939,17 +935,16 @@ impl Editor {
                 idle(self)?;
                 self.drag_tool = None;
                 self.pick_tool = None;
-                let index = self.marker.unwrap_or(self.file.program.steps.len());
+                let index = self.marker.unwrap_or(self.file.steps.len());
                 self.run_to(Some(index));
                 let label = self.label_of(&kind)?;
                 let id = self.file.fresh_id(label);
                 // The part as just run: the part before where the step goes.
-                let program = self.file.program.clone();
                 let Build { runner, part, .. } = &self.build;
-                let step = (self.editors).new_step(runner, part, &program, &kind, &id, None)?;
-                let mut steps = self.file.program.clone();
-                steps.steps.insert(index, step);
-                self.open(steps, index, id, true)?;
+                let step = (self.editors).new_step(runner, part, &self.file, &kind, &id, None)?;
+                let mut program = self.file.clone();
+                program.steps.insert(index, step);
+                self.open(program, index, id, true)?;
                 Changed::Run
             }
             Command::Open { id } => {
@@ -957,7 +952,7 @@ impl Editor {
                 self.drag_tool = None;
                 self.pick_tool = None;
                 let index = self.file.index_of(&id)?;
-                self.open(self.file.program.clone(), index, id, false)?;
+                self.open(self.file.clone(), index, id, false)?;
                 Changed::Run
             }
             Command::Event { event } => {
@@ -975,7 +970,7 @@ impl Editor {
                     editors: &self.editors,
                     runner: &self.build.runner,
                     part: &self.build.part,
-                    program: &mut open.steps,
+                    program: &mut open.program,
                     scene: &open.view,
                 };
                 open.editor.handle(editing, &event)?;
@@ -992,7 +987,12 @@ impl Editor {
                 // A drag changes neither, but what it pulls moves the parts.
                 let pulls = !(open
                     .editor
-                    .form(&self.editors, &self.build.runner, &self.build.part, &open.steps)?
+                    .form(
+                        &self.editors,
+                        &self.build.runner,
+                        &self.build.part,
+                        &open.program,
+                    )?
                     .pulls
                     .is_empty());
                 match before == after && !pulls {
@@ -1015,8 +1015,9 @@ impl Editor {
                 if let Some(error) = self.build.step_error(open) {
                     return Err(GeopError::new(format!("the step does not build: {error}")));
                 }
-                self.file.program = open.steps.clone();
-                self.file.state = open.state.clone();
+                let committed = open.program.clone();
+                committed.validate(&self.build.runner.registry)?;
+                self.file = committed;
                 if open.new
                     && let Some(marker) = &mut self.marker
                 {
@@ -1060,28 +1061,28 @@ impl Editor {
                 parameters.validate()?;
                 // A step put first moves the others along: the marker and
                 // the step open stay at their steps, found again by id.
-                let steps = &self.file.program.steps;
+                let steps = &self.file.steps;
                 let marked = self.marker.and_then(|m| steps.get(m)).map(|s| s.id.clone());
-                set_parameters(&mut self.file.program, parameters.clone());
+                set_parameters(&mut self.file, parameters.clone());
                 if let Some(marked) = marked {
                     self.marker = Some(self.file.index_of(&marked)?);
                 }
                 if let Some(open) = &mut self.open {
-                    set_parameters(&mut open.steps, parameters);
-                    open.index = (open.steps.steps.iter().position(|s| s.id == open.id))
+                    set_parameters(&mut open.program, parameters);
+                    open.index = (open.program.steps.iter().position(|s| s.id == open.id))
                         .ok_or_else(|| GeopError::new(format!("no step {:?}", open.id)))?;
                 }
                 Changed::Program
             }
             Command::RenameParameter { from, to } => {
                 idle(self)?;
-                self.file.rename_parameter(&from, &to)?;
+                rename_parameter(&mut self.file, &from, &to)?;
                 Changed::Program
             }
             Command::Remove { id } => {
                 idle(self)?;
                 let index = self.file.index_of(&id)?;
-                self.file.program.steps.remove(index);
+                self.file.steps.remove(index);
                 if let Some(marker) = &mut self.marker
                     && index < *marker
                 {
@@ -1092,7 +1093,7 @@ impl Editor {
             Command::Move { id, index } => {
                 idle(self)?;
                 let from = self.file.index_of(&id)?;
-                let steps = &mut self.file.program.steps;
+                let steps = &mut self.file.steps;
                 if index >= steps.len() {
                     return Err(GeopError::new(format!(
                         "cannot move step {id:?} to {index}: the program has {} steps",
@@ -1116,14 +1117,16 @@ impl Editor {
                 let pasted = Program::from_json(&text).map_err(|e| {
                     e.with_context("pasting: what is pasted is not steps copied from geop")
                 })?;
-                let index = self.marker.unwrap_or(self.file.program.steps.len());
+                let index = self.marker.unwrap_or(self.file.steps.len());
                 let infos = self.editors.infos();
                 let label =
                     |step: &ProgramStep| match infos.iter().find(|l| l.kind == step.operation) {
                         Some(listed) => listed.info.label.to_string(),
                         None => step.operation.clone(),
                     };
-                let ids = self.file.paste(pasted, index, label)?;
+                let ids = self
+                    .file
+                    .paste(pasted, index, &self.build.runner.registry, label)?;
                 if let Some(marker) = &mut self.marker {
                     *marker += ids.len();
                 }
@@ -1131,12 +1134,12 @@ impl Editor {
             }
             Command::Seek { marker } => {
                 idle(self)?;
-                self.marker = marker.filter(|&m| m < self.file.program.steps.len());
+                self.marker = marker.filter(|&m| m < self.file.steps.len());
                 Changed::Run
             }
             Command::Load { program, path } => {
                 idle(self)?;
-                program.validate()?;
+                program.validate(&self.build.runner.registry)?;
                 if let Some(path) = path
                     && Some(&path) != self.path.as_ref()
                 {
@@ -1181,7 +1184,7 @@ impl Editor {
                 if let Some(index) = self.open.as_ref().map(|open| open.index) {
                     self.run_to(Some(index));
                     if let Some(open) = &mut self.open {
-                        open.view = part::draw(&self.build.view_at(&open.steps, index))?;
+                        open.view = part::draw(&self.build.view_at(&open.program, index))?;
                     }
                 }
                 Changed::Run
@@ -1281,9 +1284,9 @@ impl Editor {
                     return Ok(Changed::Nothing);
                 };
                 to.push(now);
-                open.steps.steps[open.index].args = args;
-                open.state = state;
-                open.editor.restart(&self.editors, &open.steps)?;
+                open.program.steps[open.index].args = args;
+                open.program.state = state;
+                open.editor.restart(&self.editors, &open.program)?;
                 Changed::Step
             }
             Command::Undo | Command::Redo => {
@@ -1326,9 +1329,12 @@ impl Editor {
         // it is applied to.
         self.run_to(self.open.as_ref().map(|open| open.index + 1));
         let pulls = match &self.open {
-            Some(open) => (open
-                .editor
-                .form(&self.editors, &self.build.runner, &self.build.part, &open.steps))
+            Some(open) => (open.editor.form(
+                &self.editors,
+                &self.build.runner,
+                &self.build.part,
+                &open.program,
+            ))
             .map(|form| form.pulls)
             .unwrap_or_default(),
             None => Vec::new(),
@@ -1380,7 +1386,7 @@ impl Editor {
             return;
         }
         match &mut self.open {
-            Some(open) => open.state = next,
+            Some(open) => open.program.state = next,
             None => self.file.state = next,
         }
     }
@@ -1440,7 +1446,7 @@ impl Editor {
     /// What the step being edited shows.
     fn presentation(&self, open: &Open) -> GeopResult<Presentation<Design>> {
         let Build { runner, part, .. } = &self.build;
-        (open.editor).presentation(&self.editors, runner, part, &open.steps, &open.view)
+        (open.editor).presentation(&self.editors, runner, part, &open.program, &open.view)
     }
 
     /// What the operation `kind` is called.
@@ -1494,7 +1500,7 @@ impl Editor {
     }
 
     /// The part `steps` steps build, as it is shown to be.
-    fn shown_part(&self, steps: usize) -> PartReader<'_> {
+    fn shown_part(&self, steps: usize) -> Reader<'_> {
         let (program, _) = self.current();
         self.build.view_at(&program, steps)
     }
@@ -1571,20 +1577,22 @@ impl Editor {
             .map(|o| o.id.as_str());
         let runs_to = match &self.open {
             Some(open) => open.index,
-            None => self.marker.unwrap_or(self.file.program.steps.len()),
+            None => self.marker.unwrap_or(self.file.steps.len()),
         };
         let infos = self.editors.infos();
-        let steps = (self.file.program.steps.iter().enumerate())
+        let steps = (self.file.steps.iter().enumerate())
             .map(|(i, step)| {
                 let listed = infos.iter().find(|l| l.kind == step.operation);
                 // A summary is of the step's arguments, not of what it
                 // built (see [`Editors::listed`]).
-                let summary =
-                    (self
-                        .editors
-                        .listed(&self.build.runner, &self.build.part, &self.file.program, &step.id))
-                    .map(|form| form.dialog.summary())
-                    .unwrap_or_default();
+                let summary = (self.editors.listed(
+                    &self.build.runner,
+                    &self.build.part,
+                    &self.file,
+                    &step.id,
+                ))
+                .map(|form| form.dialog.summary())
+                .unwrap_or_default();
                 StepInfo {
                     id: step.id.clone(),
                     kind: listed.map_or("", |l| l.kind),
@@ -1606,7 +1614,7 @@ impl Editor {
             program: self.file.clone(),
             path: self.path.clone(),
             steps,
-            marker: self.marker.unwrap_or(self.file.program.steps.len()),
+            marker: self.marker.unwrap_or(self.file.steps.len()),
             can_undo: match &self.open {
                 Some(open) => !open.undo.is_empty(),
                 None => !self.undo.is_empty(),
@@ -1619,7 +1627,7 @@ impl Editor {
             pick_tool: self.pick_tool.as_ref().map(PickTool::kind),
             materials: Material::listed().collect(),
             parameters: ParametersState::of(&self.file, &self.build.part.current()),
-            parameter_uses: self.file.parameter_uses(),
+            parameter_uses: parameter_uses(&self.file),
             operations,
             exporters: self.outputs.exporters(),
             inspectors: self.outputs.inspectors(),
@@ -1635,9 +1643,9 @@ impl Editor {
 /// What the editor built: the runner, holding every step's part, and how
 /// its last run went.
 pub(crate) struct Build {
-    pub(crate) runner: Runner,
+    pub(crate) runner: ProgramRunner,
     /// The part, as the last run left it.
-    pub(crate) part: BuildPart,
+    pub(crate) part: Part,
     /// How many steps the last run ran.
     ran: usize,
     /// Why each step of the last run that failed did, by its id.
@@ -1648,7 +1656,7 @@ impl Build {
     fn new() -> Self {
         Self {
             runner: crate::operations::runner(),
-            part: BuildPart::default(),
+            part: Part::default(),
             ran: 0,
             errors: BTreeMap::new(),
         }
@@ -1657,13 +1665,7 @@ impl Build {
     /// Runs the first `end` of `steps` — all of them, if `None` — with
     /// `inputs` and the state `state`, keeping how far it ran and why steps
     /// failed.
-    fn run(
-        &mut self,
-        steps: &Steps,
-        end: Option<usize>,
-        inputs: &Settings,
-        state: &StateValues,
-    ) {
+    fn run(&mut self, steps: &Program, end: Option<usize>, inputs: &Settings, state: &StateValues) {
         let end = end.unwrap_or(steps.steps.len()).min(steps.steps.len());
         let output = (self.runner).run_until(&mut self.part, steps, end, inputs, state);
         self.ran = end;
@@ -1674,7 +1676,7 @@ impl Build {
 
     /// The part before the step at `index` of `steps`, as the last run left
     /// it — or, at or past how far it ran, the part it built.
-    fn view_at(&self, steps: &Steps, index: usize) -> PartReader<'_> {
+    fn view_at(&self, steps: &Program, index: usize) -> Reader<'_> {
         let part = &self.part;
         match index < self.ran.min(steps.steps.len()) {
             true => part.reader(index),
@@ -1706,9 +1708,9 @@ impl Build {
 
     /// The part the step `open` picks from: the part before it — or, for
     /// one that picks from what it builds, that, once it builds.
-    fn picks_in(&self, editors: &Editors, open: &Open) -> PartReader<'_> {
+    fn picks_in(&self, editors: &Editors, open: &Open) -> Reader<'_> {
         let index = open.index + usize::from(self.picks_built(editors, open));
-        self.view_at(&open.steps, index)
+        self.view_at(&open.program, index)
     }
 }
 
@@ -1726,8 +1728,8 @@ pub struct ParametersState {
 impl ParametersState {
     /// The parameters `program` defines, as the part `reader` reads came to
     /// with them.
-    fn of(program: &Program, reader: &PartReader) -> Self {
-        let defined = program.parameters();
+    fn of(program: &Program, reader: &Reader) -> Self {
+        let defined = parameters_of(program);
         let mut values = Settings::new();
         let mut errors = BTreeMap::new();
         for p in &defined.values {

@@ -9,8 +9,7 @@
 
 use geop_core_editor::editing::{Dialog, Presentation, StepEditEvent};
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::element::PickedElement;
-use geop_ops_model::Design;
+use geop_core_program::{element::PickedElement, values::Design};
 use geop_ops_output::{Inspection, InspectorInfo, Picks};
 use geop_ops_view::PartView;
 
@@ -91,7 +90,11 @@ impl PickTool {
 
     /// The kinds of what is drawn it picks from.
     fn accepts(&self) -> Vec<String> {
-        self.picks.accepts.iter().map(|kind| kind.to_string()).collect()
+        self.picks
+            .accepts
+            .iter()
+            .map(|kind| kind.to_string())
+            .collect()
     }
 
     /// What it shows: the picks and what a click would pick lit, and what

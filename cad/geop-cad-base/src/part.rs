@@ -4,15 +4,17 @@
 //! ([`structure`]).
 
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::element::ElementReference;
-use geop_ops_assembly::placed_parts;
+use geop_core_program::{
+    element::{ElementReference, PickedElement},
+    part::Reader,
+    values::Design,
+};
 pub use geop_ops_assembly::draw;
+use geop_ops_assembly::placed_parts;
 use geop_ops_datums::{ORIGIN, read_datums};
-use geop_ops_model::{Design, read_model};
-use geop_ops_parameters::PartReader;
+use geop_ops_model::read_model;
 use geop_ops_sketch::PlacedSketch;
 use geop_ops_view::listed_by_steps;
-use geop_core_program::element::PickedElement;
 use serde::Serialize;
 
 /// An entry of the structure of the part drawn, by name: what [`structure`]
@@ -35,7 +37,7 @@ pub struct StructureItem {
 /// shown or not as `hidden` says: its datums, sketches, solids, faces
 /// standing on their own and the parts placed in it — and whatever its
 /// steps list.
-pub fn structure(reader: &PartReader, hidden: &[String]) -> GeopResult<Vec<StructureItem>> {
+pub fn structure(reader: &Reader, hidden: &[String]) -> GeopResult<Vec<StructureItem>> {
     let item = |kind: &str, name: &str| StructureItem {
         kind: kind.to_string(),
         name: name.to_string(),
@@ -46,7 +48,8 @@ pub fn structure(reader: &PartReader, hidden: &[String]) -> GeopResult<Vec<Struc
     let mut items = vec![item("datum", ORIGIN)];
     items.extend((read_datums(reader)?.names().into_iter()).map(|n| item("datum", n)));
     for sketch in reader.targets_of::<PlacedSketch<Design>>() {
-        let placed = reader.retrieve_element(&ElementReference::<_, PlacedSketch<Design>>::whole(sketch))?;
+        let placed =
+            reader.retrieve_element(&ElementReference::<_, PlacedSketch<Design>>::whole(sketch))?;
         items.push(item("sketch", &placed.name));
     }
     items.extend((model.solid_names().iter()).map(|n| item("solid", n)));
@@ -57,11 +60,15 @@ pub fn structure(reader: &PartReader, hidden: &[String]) -> GeopResult<Vec<Struc
             .filter(|p| p.parent.is_none())
             .map(|p| item("part", &p.name)),
     );
-    items.extend(listed_by_steps(reader).into_iter().map(|listed| StructureItem {
-        kind: listed.kind,
-        name: listed.name,
-        visible: None,
-        elements: listed.elements,
-    }));
+    items.extend(
+        listed_by_steps(reader)
+            .into_iter()
+            .map(|listed| StructureItem {
+                kind: listed.kind,
+                name: listed.name,
+                visible: None,
+                elements: listed.elements,
+            }),
+    );
     Ok(items)
 }

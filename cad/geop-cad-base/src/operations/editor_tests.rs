@@ -1,32 +1,41 @@
 //! The editor engine: a program edited by commands, and only what changed
 //! sent back.
 
-use geop_core_editor::editing::{
-    Button, Control, GizmoPart, Pointer, Reach, Shape, StepEditEvent, Style, Tone, Value, Visual,
+use geop_core_editor::{
+    editing::{
+        Button, Control, GizmoPart, Pointer, Reach, Shape, StepEditEvent, Style, Tone, Value,
+        Visual,
+    },
+    selectable::Selectable,
 };
-use geop_core_editor::selectable::Selectable;
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::{FrameAxis, Pose, Ray},
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_program::element::PickedElement;
+use geop_core_program::{
+    element::PickedElement,
+    program::{Program, ProgramStep},
+    values::{Design, Setting, StateValue, pose_state},
+};
 use geop_ops_add_datum::Selected;
 use geop_ops_assembly::MateEntity;
 use geop_ops_booleans::Combine;
 use geop_ops_datums::datum;
 use geop_ops_extrude_revolve::{ExtrudeArgs, Output};
-use geop_ops_model::{BooleanOp, Design, Face, NamedModel, Vertex, element, read_model};
+use geop_ops_model::{BooleanOp, Face, NamedModel, Vertex, element, read_model};
 use geop_ops_output::{Bounded, Content, Inspector, InspectorInfo, Output as Made, Outputs, Picks};
-use geop_ops_parameters::{Setting, StateValue, pose_state};
+use geop_ops_parameters::parameters_of;
 use geop_ops_view::drawn;
 
-use crate::operations::testing::{
-    Built, args, click_at, dialog, example_editor, from_above, handled, loaded, origin_axis,
-    pointer,
+use crate::{
+    Command, Editor, Update, examples,
+    operations::testing::{
+        Built, args, click_at, dialog, example_editor, from_above, handled, loaded, origin_axis,
+        pointer,
+    },
 };
-use crate::{Command, Editor, Program, Update, examples};
 
 /// The model the program builds as far as the editor runs it.
 fn model(editor: &Editor) -> NamedModel<Design> {
@@ -67,7 +76,7 @@ fn editor() -> (Editor, Update) {
 
 fn distance(editor: &Editor, id: &str) -> f64 {
     let program = editor.program();
-    let args: ExtrudeArgs = args(&program.program.steps[program.index_of(id).unwrap()]);
+    let args: ExtrudeArgs = args(&program.steps[program.index_of(id).unwrap()]);
     match &args.extent.side1 {
         geop_ops_extrude_revolve::Extent::Blind(d) => d.plain().expect("a plain distance"),
         other => panic!("{other:?} is no distance"),
@@ -106,7 +115,7 @@ fn commands_edit_the_program() {
         id: "extrude1".into(),
         index: 0,
     });
-    assert_eq!(editor.program().program.steps[0].id, "extrude1");
+    assert_eq!(editor.program().steps[0].id, "extrude1");
     editor.handle(Command::Remove {
         id: "extrude1".into(),
     });
@@ -128,12 +137,12 @@ fn bad_commands_are_refused() {
     let (mut editor, _) = editor();
     let before = editor.program().clone();
     let mut twice = before.clone();
-    twice.program.steps.push(twice.program.steps[0].clone());
+    twice.steps.push(twice.steps[0].clone());
     for bad in [
         Command::Remove { id: "nope".into() },
         Command::Move {
             id: "box".into(),
-            index: before.program.steps.len(),
+            index: before.steps.len(),
         },
         Command::Load {
             program: twice,
@@ -210,7 +219,7 @@ fn handles_are_dragged() {
     handled(&mut editor, Command::Commit);
     assert!((distance(&editor, "hole") - 0.25).abs() < 1e-9);
     let program = editor.program();
-    let hole: ExtrudeArgs = args(&program.program.steps[program.index_of("hole").unwrap()]);
+    let hole: ExtrudeArgs = args(&program.steps[program.index_of("hole").unwrap()]);
     assert!(matches!(
         hole.output,
         Output::Solid(Combine::With {
@@ -262,7 +271,7 @@ fn new_steps_handles_are_dragged_in_steps() {
     }
     handled(&mut editor, Command::Commit);
     let program = editor.program();
-    let extrude: ExtrudeArgs = args(program.program.steps.last().unwrap());
+    let extrude: ExtrudeArgs = args(program.steps.last().unwrap());
     assert_eq!(
         extrude.extent.side1,
         geop_ops_extrude_revolve::Extent::blind(1.3)
@@ -323,7 +332,7 @@ fn a_chosen_cut_stays_a_cut() {
     let combine = |editor: &mut Editor| {
         editor.handle(Command::Commit);
         let program = editor.program();
-        let extrude: ExtrudeArgs = args(program.program.steps.last().unwrap());
+        let extrude: ExtrudeArgs = args(program.steps.last().unwrap());
         let Output::Solid(combine) = extrude.output else {
             panic!("a solid");
         };
@@ -389,7 +398,7 @@ fn new_steps_go_where_the_program_runs_to() {
         kind: "extrude".into(),
     });
     editor.handle(Command::Commit);
-    assert_eq!(editor.program().program.steps[2].id, "extrude1");
+    assert_eq!(editor.program().steps[2].id, "extrude1");
     let update = editor.handle(Command::Show);
     assert_eq!(update.program.unwrap().marker, 3);
 }
@@ -399,12 +408,17 @@ fn new_steps_go_where_the_program_runs_to() {
 /// were at, and the commit keeps both the parameters and the step's edit.
 #[test]
 fn the_first_parameter_given_while_a_step_is_edited() {
-    use geop_ops_parameters::{DefineParameters, Parameter, Parameters};
     use geop_core_program::operation::Operation;
+    use geop_ops_parameters::{DefineParameters, Parameter, Parameters};
     let (mut editor, _) = editor();
-    assert!(editor.program().parameters().is_empty());
+    assert!(parameters_of(editor.program()).is_empty());
     editor.handle(Command::Seek { marker: Some(2) });
-    handled(&mut editor, Command::New { kind: "extrude".into() });
+    handled(
+        &mut editor,
+        Command::New {
+            kind: "extrude".into(),
+        },
+    );
     editor.handle(dialog("distance", Value::Number(2.0)));
     let parameters = Parameters {
         values: vec![Parameter::number("depth", "3", 0.0, 100.0)],
@@ -412,7 +426,7 @@ fn the_first_parameter_given_while_a_step_is_edited() {
     };
     handled(&mut editor, Command::Parameters { parameters });
     handled(&mut editor, Command::Commit);
-    let steps = &editor.program().program.steps;
+    let steps = &editor.program().steps;
     assert_eq!(steps[0].operation, DefineParameters::KIND);
     assert_eq!(steps[3].id, "extrude1");
     assert_eq!(distance(&editor, "extrude1"), 2.0);
@@ -452,7 +466,7 @@ fn seeking_back_before_a_fillet() {
         "round",
         geop_ops_fillet::FilletArgs::constant(vec![rim], 0.1),
     );
-    let steps = program.program.steps.len();
+    let steps = program.steps.len();
     handled(
         &mut editor,
         Command::Load {
@@ -511,7 +525,7 @@ fn new_shell_picks_its_faces_on_the_solid() {
     assert!(step.missing.is_empty(), "{:?}", step.missing);
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let args: geop_ops_shell::ShellArgs = args(editor.program().program.steps.last().unwrap());
+    let args: geop_ops_shell::ShellArgs = args(editor.program().steps.last().unwrap());
     assert_eq!(saved(&args.faces), saved(["extrude(box,end)"]), "{args:?}");
 }
 
@@ -572,8 +586,7 @@ fn offset_plane_dragged_by_its_handle() {
     if let Some(e) = &editor.handle(Command::Commit).error {
         panic!("{e}")
     }
-    let args: geop_ops_add_datum::AddDatumArgs =
-        args(editor.program().program.steps.last().unwrap());
+    let args: geop_ops_add_datum::AddDatumArgs = args(editor.program().steps.last().unwrap());
     assert_eq!(
         args.construction,
         geop_ops_add_datum::Construction::Offset {
@@ -689,8 +702,7 @@ fn new_linear_pattern_dragged_by_its_spacing_handle() {
     });
     handled(&mut editor, dialog("count", Value::Number(4.0)));
     let update = handled(&mut editor, Command::Commit);
-    let args =
-        args::<geop_ops_pattern::LinearPatternArgs>(editor.program().program.steps.last().unwrap());
+    let args = args::<geop_ops_pattern::LinearPatternArgs>(editor.program().steps.last().unwrap());
     assert_eq!(args.first.count, 4.0.into());
     match &args.first.spacing {
         geop_ops_pattern::Spacing::Step(step) => {
@@ -708,7 +720,7 @@ fn new_linear_pattern_dragged_by_its_spacing_handle() {
         .map(|item| item.name)
         .collect();
     assert_eq!(solids.len(), 4, "{solids:?}");
-    let id = editor.program().program.steps.last().unwrap().id.clone();
+    let id = editor.program().steps.last().unwrap().id.clone();
     assert!(
         solids.contains(&format!("linear_pattern({id},3,extrude(hole))")),
         "{solids:?}"
@@ -894,7 +906,7 @@ fn sweep_with_rails_twist_and_orientation() {
     let update = handled(&mut editor, Command::Commit);
     assert_eq!(solids(&update), 2);
     let program = editor.program();
-    let args: geop_ops_extrude_revolve::SweepArgs = args(program.program.steps.last().unwrap());
+    let args: geop_ops_extrude_revolve::SweepArgs = args(program.steps.last().unwrap());
     assert_eq!(
         (
             args.twist,
@@ -947,7 +959,7 @@ fn new_hole_from_the_dialog() {
         .count();
     assert_eq!(circles, 2);
     let update = handled(&mut editor, Command::Commit);
-    let args = args::<geop_ops_hole::HoleArgs>(editor.program().program.steps.last().unwrap());
+    let args = args::<geop_ops_hole::HoleArgs>(editor.program().steps.last().unwrap());
     assert_eq!(args.face, Some(element("extrude(plate,end)")));
     assert_eq!(
         args.points,
@@ -1002,7 +1014,7 @@ fn new_boundary_surface_picks_edges_then_thickens() {
     }
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let step = editor.program().program.steps.last().unwrap().clone();
+    let step = editor.program().steps.last().unwrap().clone();
     let boundary: geop_ops_surface::BoundarySurfaceArgs = args(&step);
     assert_eq!(boundary.edges.len(), 4, "{boundary:?}");
     let sheet = format!("boundary({})", step.id);
@@ -1022,7 +1034,7 @@ fn new_boundary_surface_picks_edges_then_thickens() {
     assert!(update.error.is_none(), "{:?}", update.error);
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let step = editor.program().program.steps.last().unwrap().clone();
+    let step = editor.program().steps.last().unwrap().clone();
     let thicken: geop_ops_surface::ThickenArgs = args(&step);
     assert_eq!(thicken.face.name(), sheet);
     assert_eq!(thicken.thickness, 0.2);
@@ -1040,7 +1052,7 @@ fn new_boundary_surface_picks_edges_then_thickens() {
 fn a_3d_sketch_is_drawn_and_swept_along() {
     let mut editor = Editor::new();
     let mut program = examples::pipe();
-    program.program.steps.truncate(1);
+    program.steps.truncate(1);
     let update = editor.handle(Command::Load {
         program,
         path: None,
@@ -1086,7 +1098,7 @@ fn a_3d_sketch_is_drawn_and_swept_along() {
     }
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let route = editor.program().program.steps.last().unwrap().clone();
+    let route = editor.program().steps.last().unwrap().clone();
     let drawn: geop_ops_sketch3d::AddSketch3dArgs = args(&route);
     assert_eq!(drawn.sketch.curves.len(), 3);
     assert_eq!(drawn.references.len(), 1, "the origin, as a fixed point");
@@ -1096,8 +1108,7 @@ fn a_3d_sketch_is_drawn_and_swept_along() {
     });
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let sweep: geop_ops_extrude_revolve::SweepArgs =
-        args(editor.program().program.steps.last().unwrap());
+    let sweep: geop_ops_extrude_revolve::SweepArgs = args(editor.program().steps.last().unwrap());
     assert_eq!(
         (sweep.profile, sweep.path),
         (
@@ -1249,7 +1260,7 @@ fn new_draft_picks_its_faces_and_neutral_plane() {
         .program
         .expect("the program changed");
     assert!(step.steps.iter().all(|s| s.error.is_none()));
-    let args: geop_ops_plastic::DraftArgs = args(editor.program().program.steps.last().unwrap());
+    let args: geop_ops_plastic::DraftArgs = args(editor.program().steps.last().unwrap());
     assert_eq!(
         args.faces,
         [element(geop_ops_plastic::testing::wall("c5"))],
@@ -1292,7 +1303,7 @@ fn new_rib_grows_from_the_newest_sketch() {
     assert_eq!(step.error, None);
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let args: geop_ops_plastic::RibArgs = args(editor.program().program.steps.last().unwrap());
+    let args: geop_ops_plastic::RibArgs = args(editor.program().steps.last().unwrap());
     assert_eq!(args.sketch, geop_ops_sketch::whole_sketch("rib_sketch"));
     assert_eq!(args.solid.name(), "shell(s)");
     assert!(args.flipped);
@@ -1365,7 +1376,7 @@ fn a_standard_screw_is_placed_in_a_plate() {
     assert!(update.error.is_none(), "{:?}", update.error);
 
     let program = editor.program();
-    let args: geop_ops_assembly::AddPartArgs = args(&program.program.steps[1]);
+    let args: geop_ops_assembly::AddPartArgs = args(&program.steps[1]);
     assert_eq!(
         args.parameters.get("size"),
         Some(&Setting::Text("M4x12".into()))
@@ -1446,7 +1457,7 @@ fn a_carriage_slides_on_a_standard_rail() {
     assert!(update.error.is_none(), "{:?}", update.error);
 
     let program = editor.program();
-    let args: geop_ops_assembly::AddPartArgs = args(&program.program.steps[0]);
+    let args: geop_ops_assembly::AddPartArgs = args(&program.steps[0]);
     assert_eq!(args.parameters.get("length"), Some(&Setting::Number(300.0)));
     let part = editor.part();
     assert!(geop_ops_assembly::solving::check(&part).unwrap().converged);
@@ -1617,7 +1628,7 @@ fn subd_cage_is_shaped_in_the_viewport() {
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
     let program = editor.program();
-    let last = program.program.steps.last().unwrap();
+    let last = program.steps.last().unwrap();
     let args: geop_ops_subd::SubdArgs = args(last);
     let top = args.cage.face(9).unwrap();
     for &v in &top.vertices {
@@ -1667,7 +1678,7 @@ fn subd_drag_without_a_release_is_not_undone_by_the_next() {
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
     let program = editor.program();
-    let args: geop_ops_subd::SubdArgs = args(program.program.steps.last().unwrap());
+    let args: geop_ops_subd::SubdArgs = args(program.steps.last().unwrap());
     let top = args.cage.face(9).unwrap();
     for &v in &top.vertices {
         let at = args.cage.vertex(v).unwrap().at;
@@ -2032,7 +2043,7 @@ fn a_drawing_is_annotated_on_its_sheet_and_downloaded() {
     assert!(committed.error.is_none(), "{:?}", committed.error);
     // Back to the part: the scene draws its faces again.
     assert!(!committed.scene.expect("a scene").part.faces.is_empty());
-    let step = editor.program().program.steps.last().unwrap();
+    let step = editor.program().steps.last().unwrap();
     assert_eq!(step.operation, "drawing");
     let args: geop_ops_drawing::DrawingArgs = super::testing::args(step);
     assert_eq!((args.views.len(), args.annotations.len()), (3, 2));
@@ -2141,7 +2152,7 @@ fn a_part_exported_as_step_is_imported_back() {
     assert!(update.step.unwrap().error.is_none());
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let id = editor.program().program.steps.last().unwrap().id.clone();
+    let id = editor.program().steps.last().unwrap().id.clone();
     let solids: Vec<String> = update
         .scene
         .expect("the scene changed")
@@ -2518,7 +2529,7 @@ fn variable_fillet_set_up_in_the_dialog() {
     handled(&mut editor, dialog("vertex_radius_0", Value::Number(0.15)));
     handled(&mut editor, Command::Commit);
     let program = editor.program();
-    let last = program.program.steps.last().unwrap();
+    let last = program.steps.last().unwrap();
     let args = args::<geop_ops_fillet::FilletArgs>(last);
     assert_eq!(args.edges.len(), 1, "{args:?}");
     assert_eq!(args.end_radius, Some(0.2.into()), "{args:?}");
@@ -2554,7 +2565,7 @@ fn fillet_rounds_a_corner_picked_edge_by_edge() {
     handled(&mut editor, dialog("radius", Value::Number(0.2)));
     handled(&mut editor, Command::Commit);
     let program = editor.program();
-    let args: geop_ops_fillet::FilletArgs = args(program.program.steps.last().unwrap());
+    let args: geop_ops_fillet::FilletArgs = args(program.steps.last().unwrap());
     assert_eq!(args.edges.len(), 3, "{args:?}");
     let part = program.build_model().unwrap();
     let corners: Vec<&str> = part
@@ -2589,7 +2600,7 @@ fn formulas_are_typed_into_dialog_fields() {
     };
     let thickness = |editor: &Editor| {
         let program = editor.program();
-        let args: ExtrudeArgs = args(&program.program.steps[program.index_of("plate").unwrap()]);
+        let args: ExtrudeArgs = args(&program.steps[program.index_of("plate").unwrap()]);
         args.extent.side1.clone()
     };
     let top = |editor: &Editor| {
@@ -2842,11 +2853,11 @@ fn sketch_tools_draw_profiles_that_extrude() {
     click(&mut editor, 4.5, 0.05);
     editor.handle(dialog("prompt", Value::Text("0.1".into())));
     handled(&mut editor, Command::Commit);
-    let rim: geop_ops_sketch::AddSketchArgs = args(editor.program().program.steps.last().unwrap());
+    let rim: geop_ops_sketch::AddSketchArgs = args(editor.program().steps.last().unwrap());
     let regions = rim.sketch.regions().unwrap();
     assert_eq!(regions.len(), 1, "a ring");
     assert_eq!(regions[0].holes.len(), 1, "round the square");
-    let id = editor.program().program.steps.last().unwrap().id.clone();
+    let id = editor.program().steps.last().unwrap().id.clone();
     editor.handle(Command::Open { id });
     extruded(&mut editor);
 }
@@ -2945,8 +2956,8 @@ fn renaming_a_parameter_renames_what_reads_it() {
     editor.handle(Command::Cancel);
 
     editor.handle(Command::Undo);
-    assert!(editor.program().parameters().get("thickness").is_some());
-    assert!(editor.program().parameters().get("t").is_none());
+    assert!(parameters_of(editor.program()).get("thickness").is_some());
+    assert!(parameters_of(editor.program()).get("t").is_none());
 }
 
 /// The bolted plate's drawing with its bill of materials, as the front end
@@ -3098,15 +3109,14 @@ fn new_linear_pattern_picks_a_feature_by_its_wall() {
     editor.handle(dialog("count", Value::Number(4.0)));
     editor.handle(dialog("spacing", Value::Number(2.0)));
     handled(&mut editor, Command::Commit);
-    let args =
-        args::<geop_ops_pattern::LinearPatternArgs>(editor.program().program.steps.last().unwrap());
+    let args = args::<geop_ops_pattern::LinearPatternArgs>(editor.program().steps.last().unwrap());
     assert_eq!(args.seeds.features, [geop_ops_pattern::feature("hole")]);
     assert!(args.seeds.bodies.is_empty());
     let scene = editor
         .handle(Command::Seek { marker: None })
         .scene
         .expect("the scene is sent");
-    let id = editor.program().program.steps.last().unwrap().id.clone();
+    let id = editor.program().steps.last().unwrap().id.clone();
     assert_eq!(scene.part.solids, [format!("linear_pattern({id})")]);
     let copied = scene
         .part
@@ -3254,7 +3264,7 @@ fn subd_faces_are_moved_turned_and_scaled_by_the_gizmo() {
 
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let last = editor.program().program.steps.last().unwrap().clone();
+    let last = editor.program().steps.last().unwrap().clone();
     let args: geop_ops_subd::SubdArgs = args(&last);
     // The top's corners `(±1, ±1)`, turned by 45 degrees, lie on the axes
     // √2 out; stretched along `x`, twice that along it.
@@ -3334,8 +3344,7 @@ fn a_3d_sketch_point_is_dragged_along_an_axis() {
     assert_eq!(step.error, None);
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let args: geop_ops_sketch3d::AddSketch3dArgs =
-        args(editor.program().program.steps.last().unwrap());
+    let args: geop_ops_sketch3d::AddSketch3dArgs = args(editor.program().steps.last().unwrap());
     let mut points: Vec<[f64; 3]> = args
         .sketch
         .points
@@ -3387,7 +3396,7 @@ fn a_body_is_moved_by_its_gizmo() {
         false,
     );
     handled(&mut editor, Command::Commit);
-    let args: geop_ops_pattern::MoveBodyArgs = args(editor.program().program.steps.last().unwrap());
+    let args: geop_ops_pattern::MoveBodyArgs = args(editor.program().steps.last().unwrap());
     let want = [0.2, 0.3, -0.4];
     assert!(
         (0..3).all(|k| (args.translation[k] - want[k]).abs() < 1e-9),
@@ -3617,8 +3626,7 @@ fn a_3d_sketch_snaps_along_axes_and_onto_points() {
     });
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let args: geop_ops_sketch3d::AddSketch3dArgs =
-        args(editor.program().program.steps.last().unwrap());
+    let args: geop_ops_sketch3d::AddSketch3dArgs = args(editor.program().steps.last().unwrap());
     let sketch = &args.sketch;
     assert_eq!(sketch.points.len(), 3);
     let parallel: Vec<usize> = sketch
@@ -3662,8 +3670,7 @@ fn a_3d_sketch_point_and_line_are_picked() {
     editor.handle(dialog("construction", Value::Choice("parallel".into())));
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let datum: geop_ops_add_datum::AddDatumArgs =
-        args(editor.program().program.steps.last().unwrap());
+    let datum: geop_ops_add_datum::AddDatumArgs = args(editor.program().steps.last().unwrap());
     assert_eq!(
         datum.selection,
         [
@@ -3711,8 +3718,7 @@ fn a_boundary_surface_spans_sketch_lines() {
     editor.handle(click_at(from_above(2.0, 1.004)));
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let args: geop_ops_surface::BoundarySurfaceArgs =
-        args(editor.program().program.steps.last().unwrap());
+    let args: geop_ops_surface::BoundarySurfaceArgs = args(editor.program().steps.last().unwrap());
     assert_eq!(
         args.edges,
         [
@@ -3732,7 +3738,7 @@ fn a_boundary_surface_spans_sketch_lines() {
 #[test]
 fn a_sweep_takes_a_3d_sketch_as_its_rail() {
     let mut program = examples::horn();
-    program.program.steps.truncate(2);
+    program.steps.truncate(2);
     let mut flare = geop_ops_sketch3d::Sketch3d::new();
     let points = [
         [0.0, 0.5, 0.0],
@@ -3765,8 +3771,7 @@ fn a_sweep_takes_a_3d_sketch_as_its_rail() {
     editor.handle(click_at(from_above(1.5, 0.4)));
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let args: geop_ops_extrude_revolve::SweepArgs =
-        args(editor.program().program.steps.last().unwrap());
+    let args: geop_ops_extrude_revolve::SweepArgs = args(editor.program().steps.last().unwrap());
     assert_eq!(
         args.rails,
         [geop_ops_extrude_revolve::PathRef::Sketch3d(
@@ -3833,8 +3838,7 @@ fn a_uv_surface_picks_its_curves_by_clicks() {
     }
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let args: geop_ops_surface::NetworkSurfaceArgs =
-        args(editor.program().program.steps.last().unwrap());
+    let args: geop_ops_surface::NetworkSurfaceArgs = args(editor.program().steps.last().unwrap());
     let edge = |name: &str| geop_ops_sketch3d::CurveSource::Edge(element(name));
     assert_eq!(
         args.u_curves,
@@ -3886,7 +3890,7 @@ fn a_3d_sketch_picks_without_drawing_the_part_again() {
     // The click was on the box's top: the point is there.
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let steps = &editor.program().program.steps;
+    let steps = &editor.program().steps;
     let step = steps.iter().find(|s| s.operation == "add_sketch3d");
     let args: geop_ops_sketch3d::AddSketch3dArgs = args(step.unwrap());
     let points: Vec<[f64; 3]> = (args.sketch.points.values())
@@ -3978,8 +3982,7 @@ fn a_3d_line_is_drawn_from_the_origin_in_the_default_view() {
     }
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let args: geop_ops_sketch3d::AddSketch3dArgs =
-        args(editor.program().program.steps.last().unwrap());
+    let args: geop_ops_sketch3d::AddSketch3dArgs = args(editor.program().steps.last().unwrap());
     assert_eq!(args.sketch.curves.len(), 1, "{:?}", args.sketch);
 }
 
@@ -3990,7 +3993,7 @@ fn a_3d_line_is_drawn_from_the_origin_in_the_default_view() {
 #[test]
 fn editing_an_early_sketch_builds_only_up_to_it() {
     let mut editor = example_editor("handle_with_hole");
-    let steps = editor.program().program.steps.len();
+    let steps = editor.program().steps.len();
     assert!(steps >= 3, "{steps}");
     handled(
         &mut editor,
@@ -4090,17 +4093,11 @@ fn a_file_opened_again_is_not_built_again() {
 
     // Its hole drilled deeper: from that step on.
     let mut deeper = part.clone();
-    let last = deeper.program.steps.len() - 1;
-    crate::operations::testing::edit_args(
-        &mut deeper.program.steps[last],
-        |hole: &mut ExtrudeArgs| {
-            hole.extent = geop_ops_extrude_revolve::Extents::blind(-0.8);
-        },
-    );
-    assert_ne!(
-        deeper.program.steps[last], part.program.steps[last],
-        "the hole changed"
-    );
+    let last = deeper.steps.len() - 1;
+    crate::operations::testing::edit_args(&mut deeper.steps[last], |hole: &mut ExtrudeArgs| {
+        hole.extent = geop_ops_extrude_revolve::Extents::blind(-0.8);
+    });
+    assert_ne!(deeper.steps[last], part.steps[last], "the hole changed");
     load(&mut editor, &deeper, "part.geop");
 }
 
@@ -4113,7 +4110,6 @@ fn a_sketch_is_copied_and_pasted() {
     let (mut editor, _) = editor();
     let sketch = editor
         .program()
-        .program
         .steps
         .iter()
         .find(|s| s.operation == "add_sketch")
@@ -4130,7 +4126,7 @@ fn a_sketch_is_copied_and_pasted() {
     let update = handled(&mut editor, Command::Paste { text: text.clone() });
     let state = update.program.unwrap();
     assert_eq!(state.marker, 2, "the program runs to the pasted step");
-    let pasted = &editor.program().program.steps[1];
+    let pasted = &editor.program().steps[1];
     assert_ne!(pasted.id, sketch.id);
     assert_eq!(pasted.operation, sketch.operation);
     editor.handle(Command::Seek { marker: None });
@@ -4144,12 +4140,53 @@ fn a_sketch_is_copied_and_pasted() {
         path: Some("other.geop".into()),
     });
     handled(&mut editor, Command::Paste { text });
-    assert_eq!(editor.program().program.steps[0].id, sketch.id);
+    assert_eq!(editor.program().steps[0].id, sketch.id);
 
     let refused = editor.handle(Command::Paste {
         text: "not steps".into(),
     });
     assert!(refused.error.unwrap().contains("pasting"));
+}
+
+/// A program the editor is given is checked against its operations before
+/// it is taken: one loaded or pasted with a step of an operation there is
+/// none of, or with arguments its operation does not read, is refused,
+/// naming the step, and the program edited stays as it was.
+#[test]
+fn a_program_of_unknown_steps_is_refused() {
+    let mut editor = Editor::new();
+    let mut unknown = Program::new();
+    unknown.steps.push(ProgramStep {
+        id: "mystery".into(),
+        operation: "no_such_operation".into(),
+        args: serde_json::json!({}),
+    });
+    let refused = editor.handle(Command::Load {
+        program: unknown.clone(),
+        path: None,
+    });
+    let error = refused.error.unwrap();
+    assert!(
+        error.contains("step `mystery`") && error.contains("no_such_operation"),
+        "{error}"
+    );
+    assert!(editor.program().steps.is_empty());
+
+    let refused = editor.handle(Command::Paste {
+        text: unknown.to_json().unwrap(),
+    });
+    assert!(refused.error.unwrap().contains("no_such_operation"));
+    assert!(editor.program().steps.is_empty());
+
+    let mut unreadable = examples::box_with_drill_hole();
+    unreadable.steps[0].args = serde_json::json!("not arguments");
+    let refused = editor.handle(Command::Load {
+        program: unreadable,
+        path: None,
+    });
+    let error = refused.error.unwrap();
+    assert!(error.contains("arguments of operation"), "{error}");
+    assert!(editor.program().steps.is_empty());
 }
 
 /// A gesture of the key and pointer grammar every tool shares.
@@ -4186,8 +4223,7 @@ impl Gesture {
 /// sketch starts with.
 fn drawn_curves(editor: &mut Editor) -> Vec<String> {
     handled(editor, Command::Commit);
-    let sketch: geop_ops_sketch::AddSketchArgs =
-        args(editor.program().program.steps.last().unwrap());
+    let sketch: geop_ops_sketch::AddSketchArgs = args(editor.program().steps.last().unwrap());
     sketch
         .sketch
         .curves
@@ -4200,8 +4236,7 @@ fn drawn_curves(editor: &mut Editor) -> Vec<String> {
 /// The curves of the 3-D sketch drawn, committed, each as it reads.
 fn drawn_curves_3d(editor: &mut Editor) -> Vec<String> {
     handled(editor, Command::Commit);
-    let sketch: geop_ops_sketch3d::AddSketch3dArgs =
-        args(editor.program().program.steps.last().unwrap());
+    let sketch: geop_ops_sketch3d::AddSketch3dArgs = args(editor.program().steps.last().unwrap());
     (sketch.sketch.curves.values())
         .filter(|c| c.is_drawn() && !c.construction)
         .map(|c| format!("{c:?}"))

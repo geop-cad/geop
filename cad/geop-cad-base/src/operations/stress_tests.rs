@@ -16,21 +16,21 @@
 //! the booleans under them.
 
 use geop_core_math::primitives::FrameAxis;
-use geop_core_program::operation::Operation;
+use geop_core_program::{operation::Operation, program::Program, values::Design};
 use geop_core_topology::EdgeId;
 use geop_ops_booleans::{Combine, solid};
-use geop_ops_extrude_revolve::Output;
-use geop_ops_extrude_revolve::{Extents, RevolveArgs, RevolveAxis};
+use geop_ops_extrude_revolve::{Extents, Output, RevolveArgs, RevolveAxis};
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
-use geop_ops_model::{Design, NamedModel, element, testing::apply_to_model};
+use geop_ops_model::{NamedModel, element, testing::apply_to_model};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{Sketch, SketchPlane, sketch_element, whole_sketch};
 
-use crate::Program;
-use crate::examples::n;
-use crate::operations::testing::{
-    Built, both_ways, check_valid, disc, extrude_sketch, on_face, on_origin, outline, rectangle,
-    sketch,
+use crate::{
+    examples::n,
+    operations::testing::{
+        Built, both_ways, check_valid, disc, extrude_sketch, on_face, on_origin, outline,
+        rectangle, sketch,
+    },
 };
 
 /// What one blend or shell came to.

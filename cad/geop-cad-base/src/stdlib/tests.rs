@@ -2,20 +2,22 @@
 //! its table says, with the datums it is mated by.
 
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
+use geop_core_program::{
+    part::Part,
+    program::Program,
+    values::{Design, Setting, Settings, StateValue, StateValues, pose_state},
+};
 use geop_core_topology::validation::{ValidationParameters, validate_fast};
 use geop_ops_datums::read_datums;
 use geop_ops_model::{NamedModel, RefId, read_model};
 use geop_ops_parameters::{
-    BuildPart, ParameterKind, Setting, Settings, StateValues, read_properties,
+    ParameterKind, parameter_numbers, parameters_of, read_properties, set_parameters,
     steps::{PARAMETERS, PROPERTIES},
 };
 use geop_ops_pattern::{CircularPatternArgs, Spacing};
 
 use super::{StandardPart, drive::TEETH, parts, steps::SIZE};
-use crate::{
-    Program,
-    operations::testing::{Built, check_valid, edit_args, step},
-};
+use crate::operations::testing::{Built, check_valid, edit_args, step};
 
 /// How far out from the `z` axis, and from where to where along it, the
 /// part of `file` reaches, by the norm: `value` reads a column of the size
@@ -118,7 +120,7 @@ fn built(family: &StandardPart, program: &Program, fully: bool) -> Result<NamedM
             format!("has no threaded face {face}: its step named the faces {named:?}")
         })?;
     }
-    let numbers = program.parameter_numbers().map_err(|e| e.to_string())?;
+    let numbers = parameter_numbers(program).map_err(|e| e.to_string())?;
     let want = expected(family.file, |name| {
         (numbers.get(&format!("{SIZE}.{name}")))
             .or_else(|| numbers.get(name))
@@ -210,7 +212,7 @@ families_build! {
 /// picked by its name, or a number's formula.
 fn sized(program: &Program, name: &str, value: &str) -> Program {
     let mut program = program.clone();
-    let mut parameters = program.parameters();
+    let mut parameters = parameters_of(&program);
     let parameter = (parameters.values.iter_mut())
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("there is no parameter {name}"));
@@ -218,7 +220,7 @@ fn sized(program: &Program, name: &str, value: &str) -> Program {
         ParameterKind::Table { selected, .. } => *selected = value.into(),
         ParameterKind::Number { expression, .. } => *expression = value.into(),
     }
-    program.set_parameters(parameters);
+    set_parameters(&mut program, parameters);
     program
 }
 
@@ -227,7 +229,7 @@ fn sized(program: &Program, name: &str, value: &str) -> Program {
 fn every_size(part: &StandardPart) -> Vec<(String, Program)> {
     // A gear's module and tooth count are tables of their own: every
     // module with 20 teeth, and module 1 with each of a range of counts.
-    let parameters = part.program.parameters();
+    let parameters = parameters_of(&part.program);
     let gear = matches!(
         parameters.get(TEETH).map(|p| &p.kind),
         Some(ParameterKind::Table { .. })
@@ -339,7 +341,6 @@ fn the_bolted_plate_holds_together() {
 
     use geop_core_math::vector::Vector3;
     use geop_ops_assembly::{placed::locate, solving};
-    use geop_ops_model::Design;
 
     use crate::{
         examples,
@@ -460,13 +461,17 @@ fn drive_and_motion_parts_are_designated_and_made_of_something() {
         // Its properties and parameters run on their own, with `values`:
         // what it is designated as. Unset parameters are the family's own.
         let mut program = super::part(file).unwrap().program.clone();
-        (program.program.steps).retain(|s| [PROPERTIES, PARAMETERS].contains(&&*s.operation));
-        let mut part = BuildPart::default();
-        let output = runner.run(&mut part, &program.program, &values, &StateValues::new());
-        assert!(output.step_errors.is_empty(), "{file}: {:?}", output.step_errors);
+        (program.steps).retain(|s| [PROPERTIES, PARAMETERS].contains(&&*s.operation));
+        let mut part = Part::default();
+        let output = runner.run(&mut part, &program, &values, &StateValues::new());
+        assert!(
+            output.step_errors.is_empty(),
+            "{file}: {:?}",
+            output.step_errors
+        );
         let properties = read_properties(&part.current()).unwrap().into_owned();
         assert_eq!(properties.designation.as_deref(), Some(want), "{file}");
-        let made_of = program.parameters().material;
+        let made_of = parameters_of(&program).material;
         assert!(
             made_of
                 .as_ref()
@@ -476,7 +481,7 @@ fn drive_and_motion_parts_are_designated_and_made_of_something() {
     }
     // The SG90's envelope, weighed as its material says: 9 g.
     let sg90 = super::part("std:servo_sg90.geop").unwrap();
-    let density = sg90.program.parameters().material.unwrap().density;
+    let density = parameters_of(&sg90.program).material.unwrap().density;
     let volume = 22.8 * 12.2 * (15.9 + 6.8)
         + (32.2 - 22.8) * 12.2 * 2.5
         + std::f64::consts::PI / 4.0 * (11.4f64.powi(2) * 4.0 + 4.8f64.powi(2) * 3.2);
@@ -533,7 +538,6 @@ fn gear_drive() -> Program {
     use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
     use geop_ops_assembly::{AddPartArgs, CouplingKind, JointKind, Mate, MateEntity, Transmission};
     use geop_ops_datums::{ORIGIN, component_name, datum};
-    use geop_ops_parameters::{StateValue, StateValues, pose_state};
 
     use crate::examples::{n, pose};
 
@@ -642,25 +646,18 @@ fn a_motor_drives_a_gear_pair_at_its_ratio() {
     use std::collections::BTreeMap;
 
     use geop_ops_assembly::solving::{self, Rerun};
-    use geop_ops_model::Design;
-    use geop_ops_parameters::StateValue;
 
     use crate::operations::{build, workspace};
 
     let program = gear_drive();
-    let mut built = build(
-        &program,
-        "gear_drive.geop",
-        workspace(BTreeMap::new()),
-    )
-    .unwrap();
+    let mut built = build(&program, "gear_drive.geop", workspace(BTreeMap::new())).unwrap();
     let driver = "add_part(pinion,m1).angle";
     let set = BTreeMap::from([(driver.to_string(), Design::from_f64(90.0))]);
     let inputs = Settings::new();
     let mut rerun = Rerun {
         runner: &built.runner,
         part: &mut built.part,
-        program: &program.program,
+        program: &program,
         inputs: &inputs,
     };
     let (moved, report) = solving::set(&mut rerun, &program.state, &set).unwrap();

@@ -194,10 +194,7 @@ pub fn spur_gear(file: &'static str) -> GeopResult<StandardPart> {
     program.push(
         "teeth",
         CircularPatternArgs {
-            seeds: Seeds::bodies(
-                vec![body("extrude(gap)")],
-                Combine::cut("extrude(blank)"),
-            ),
+            seeds: Seeds::bodies(vec![body("extrude(gap)")], Combine::cut("extrude(blank)")),
             axis: Some(TurnAxis::Datum(origin_axis(FrameAxis::Z))),
             reversed: false,
             count: z.as_str().into(),

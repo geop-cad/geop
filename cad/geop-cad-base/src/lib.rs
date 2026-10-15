@@ -11,7 +11,6 @@ pub mod operations;
 pub mod part;
 pub mod stdlib;
 pub mod step_editor;
-pub mod workspace;
 
 pub use editor::{Command, Editor, Update};
-pub use operations::{Program, Workspace, infos, outputs, registry};
+pub use operations::{Workspace, infos, outputs, registry};

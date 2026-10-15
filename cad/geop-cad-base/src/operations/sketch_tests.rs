@@ -1,6 +1,16 @@
 //! Sketches built on the part: what they project of it, and the
 //! parameters their dimensions follow.
 
+use geop_core_program::{
+    numeric::{ParameterValue, read_parameter_values},
+    part::{Part, Reader},
+    program::Program,
+    values::{Design, Setting},
+};
+use geop_ops_parameters::{
+    COLOR, ParameterKind, parameter_numbers, parameters_of, read_properties, set_parameters,
+    steps::{PARAMETERS, PROPERTIES},
+};
 use std::{borrow::Cow, collections::BTreeMap};
 
 use geop_core_editor::selectable::Selectable;
@@ -10,13 +20,7 @@ use geop_core_math::{
 };
 use geop_core_sketch::PointId;
 use geop_ops_assembly::placed::{Placed, locate, placed_parts};
-use geop_ops_model::{Design, Point, element, read_model};
-use geop_ops_parameters::{
-    BuildPart, COLOR, ParameterKind, PartReader, Setting, read_parameter_values,
-    read_properties,
-    steps::{PARAMETERS, PROPERTIES},
-};
-use geop_core_editor::numeric_input::ParameterValue;
+use geop_ops_model::{Point, element, read_model};
 use geop_ops_sketch::{
     AddSketchArgs, CurveKind, PlacedSketch, Sketch, SketchPlane,
     references::{Projected, Reference, Source},
@@ -25,14 +29,12 @@ use geop_ops_sketch::{
 
 use super::program_tests::Running;
 use crate::{
-    Program, examples,
-    operations::{
-        testing::{Built, args, from_above, on_face, on_origin, sketch},
-    },
+    examples,
+    operations::testing::{Built, args, from_above, on_face, on_origin, sketch},
 };
 
 /// The sketch `name` of `part`.
-fn placed_sketch(part: &BuildPart, name: &str) -> PlacedSketch<Design> {
+fn placed_sketch(part: &Part, name: &str) -> PlacedSketch<Design> {
     let reader = part.current();
     reader
         .retrieve_element(&whole_sketch(name))
@@ -43,7 +45,7 @@ fn placed_sketch(part: &BuildPart, name: &str) -> PlacedSketch<Design> {
 /// The value of the parameter `name` the part `view` shows was built with:
 /// a table's row, a number, a table's column (`table.column`) — or, for
 /// [`COLOR`], its colour.
-fn input(view: &PartReader, name: &str) -> Option<Setting> {
+fn input(view: &Reader, name: &str) -> Option<Setting> {
     if name == COLOR {
         return read_properties(view).ok()?.color.clone().map(Setting::Text);
     }
@@ -64,7 +66,7 @@ fn input(view: &PartReader, name: &str) -> Option<Setting> {
 }
 
 /// The point `p2` of the sketch `outline` of the part `view`, in space.
-fn outline_corner(view: &PartReader) -> [f64; 3] {
+fn outline_corner(view: &Reader) -> [f64; 3] {
     let corner = view.retrieve_element(&sketch_element::<Point>("outline", PointId(2)));
     let p = corner.unwrap();
     [0, 1, 2].map(|k| p[k].to_f64())
@@ -77,7 +79,7 @@ fn box_top() -> Projected {
 
 /// `entity` of `part` projected into a new sketch on `plane`: the sketch,
 /// and the reference that gave it.
-fn projected(part: &BuildPart, plane: &SketchPlane, entity: Projected) -> (Sketch, Reference) {
+fn projected(part: &Part, plane: &SketchPlane, entity: Projected) -> (Sketch, Reference) {
     let reader = part.current();
     let frame = plane.resolve(&reader).unwrap();
     let mut sketch = Sketch::new();
@@ -162,10 +164,7 @@ fn projections_follow_the_part() {
     let mut floor = Program::new();
     floor.push("floor", on_floor);
     let after_plate = program.index_of("plate").unwrap() + 1;
-    program
-        .program
-        .steps
-        .insert(after_plate, floor.program.steps.remove(0));
+    program.steps.insert(after_plate, floor.steps.remove(0));
 
     let widest = |program: &Program| {
         let placed = placed_sketch(&program.built().unwrap(), "floor");
@@ -180,12 +179,12 @@ fn projections_follow_the_part() {
     };
     let (before, ids) = widest(&program);
     assert!((before - 4.0).abs() < 1e-9, "{before}");
-    let mut parameters = program.parameters();
+    let mut parameters = parameters_of(&program);
     let ParameterKind::Number { expression, .. } = &mut parameters.values[0].kind else {
         panic!("width is a number")
     };
     *expression = "5.5".into();
-    program.set_parameters(parameters);
+    set_parameters(&mut program, parameters);
     let (after, ids_after) = widest(&program);
     assert!((after - 5.5).abs() < 1e-9, "{after}");
     assert_eq!(ids, ids_after);
@@ -219,7 +218,9 @@ fn placed_parts_take_the_parameters_given() {
         examples::parametric_plate().to_json().unwrap(),
     )]));
     let program = examples::plates_assembly();
-    let part = super::build(&program, "plates.geop", workspace.clone()).unwrap().part;
+    let part = super::build(&program, "plates.geop", workspace.clone())
+        .unwrap()
+        .part;
     let view = part.current();
     // An element of a placed part, where it is placed.
     let corner = |instance: &str| {
@@ -312,7 +313,7 @@ fn the_parametric_plate_is_a_plate_with_a_hole() {
 #[test]
 fn wide_plate_with_an_m6_hole() {
     let mut plate = examples::parametric_plate();
-    let mut parameters = plate.parameters();
+    let mut parameters = parameters_of(&plate);
     let ParameterKind::Number { expression, .. } = &mut parameters.values[0].kind else {
         panic!("width is a number")
     };
@@ -321,7 +322,7 @@ fn wide_plate_with_an_m6_hole() {
         panic!("screw is a table")
     };
     *selected = "M6".into();
-    plate.set_parameters(parameters);
+    set_parameters(&mut plate, parameters);
     plate.build_model().unwrap();
 }
 
@@ -383,7 +384,7 @@ fn placing_a_part_offers_its_parameters() {
         },
     );
     handled(&mut editor, Command::Commit);
-    let args: geop_ops_assembly::AddPartArgs = args(&editor.program().program.steps[1]);
+    let args: geop_ops_assembly::AddPartArgs = args(&editor.program().steps[1]);
     assert_eq!(args.parameters["screw"], Setting::Text("M3".into()));
 }
 
@@ -399,7 +400,7 @@ fn the_project_field_projects_what_is_picked() {
     let mut editor = Editor::new();
     let mut program = examples::parametric_plate();
     let after_plate = program.index_of("plate").unwrap() + 1;
-    program.program.steps.truncate(after_plate);
+    program.steps.truncate(after_plate);
     assert!(
         editor
             .handle(Command::Load {
@@ -464,7 +465,7 @@ fn parameters_are_edited_and_undone() {
         program: program.clone(),
         path: None,
     });
-    let mut parameters = program.parameters();
+    let mut parameters = parameters_of(&program);
     let ParameterKind::Number { expression, .. } = &mut parameters.values[1].kind else {
         panic!("depth is a number")
     };
@@ -505,7 +506,7 @@ fn parameters_are_edited_and_undone() {
     );
     editor.handle(Command::Undo);
     editor.handle(Command::Undo);
-    assert_eq!(editor.program().parameters(), program.parameters());
+    assert_eq!(parameters_of(editor.program()), parameters_of(&program));
 }
 
 /// The part drawn is listed beyond its faces — its datums, sketches,
@@ -582,7 +583,7 @@ fn parameters_changed_rebuild_what_reads_them() {
         program: program.clone(),
         path: None,
     });
-    let corner_x = |view: PartReader| outline_corner(&view)[0];
+    let corner_x = |view: Reader| outline_corner(&view)[0];
     assert!((corner_x(editor.part()) - 4.0).abs() < 1e-9);
     // Its state is where its parts are — it places none.
     assert!(
@@ -590,7 +591,7 @@ fn parameters_changed_rebuild_what_reads_them() {
         "{:?}",
         editor.program().state
     );
-    let mut parameters = program.parameters();
+    let mut parameters = parameters_of(&program);
     let set_width = |parameters: &mut Parameters, w: &str| {
         let ParameterKind::Number { expression, .. } = &mut parameters.values[0].kind else {
             panic!("width is a number")
@@ -626,7 +627,7 @@ fn parameters_changed_rebuild_what_reads_them() {
         (corner_built - 5.0).abs() < 1e-9,
         "the program itself: {corner_built}"
     );
-    let sketch_of = |view: PartReader| {
+    let sketch_of = |view: Reader| {
         let placed = view.retrieve_element(&whole_sketch("outline"));
         placed.unwrap().sketch.clone()
     };
@@ -727,13 +728,13 @@ fn runners_rebuild_when_parameters_change() {
     let corner = |running: &Running| outline_corner(&running.part.current())[0];
     assert_eq!(running.run(&program, None), []);
     assert!((corner(&running) - 4.0).abs() < 1e-9);
-    let mut parameters = program.parameters();
+    let mut parameters = parameters_of(&program);
     let ParameterKind::Number { expression, .. } = &mut parameters.values[0].kind else {
         panic!("width is a number")
     };
     *expression = "5".into();
-    program.set_parameters(parameters);
-    let numbers = program.parameter_numbers().unwrap();
+    set_parameters(&mut program, parameters);
+    let numbers = parameter_numbers(&program).unwrap();
     assert_eq!(numbers.get("width").copied(), Some(5.0));
     assert_eq!(running.run(&program, None), []);
     assert!(
@@ -842,7 +843,7 @@ fn sketches_undo_their_own_edits() {
     let update = editor.handle(Command::Commit);
     assert!(update.program.unwrap().can_undo);
     editor.handle(Command::Undo);
-    assert!(editor.program().program.steps.is_empty());
+    assert!(editor.program().steps.is_empty());
 }
 
 /// The box's top, with its hole, projected onto a plane seen from the side
@@ -894,14 +895,14 @@ fn parameters_no_step_reads_rebuild_nothing() {
     assert_eq!(running.run(&program, None), []);
     // Every step but those of its parameters and properties, which build
     // neither a sketch nor a model.
-    let building = (program.program.steps.iter())
+    let building = (program.steps.iter())
         .filter(|s| ![PARAMETERS, PROPERTIES].contains(&&*s.operation))
         .count();
     assert_eq!(running.built_anew(&program), building);
     let built = running.model();
-    let mut parameters = program.parameters();
+    let mut parameters = parameters_of(&program);
     parameters.color = Some("#123456".into());
-    program.set_parameters(parameters);
+    set_parameters(&mut program, parameters);
     assert_eq!(running.run(&program, None), []);
     assert_eq!(
         input(&running.part.current(), COLOR),
@@ -936,7 +937,7 @@ fn colours_are_picked_without_rebuilding() {
         other => panic!("no model built: {:?}", other.err()),
     };
     let before = model(&editor);
-    let mut parameters = program.parameters();
+    let mut parameters = parameters_of(&program);
     parameters.color = Some("#123456".into());
     let update = editor.handle(Command::Parameters { parameters });
     assert_eq!(

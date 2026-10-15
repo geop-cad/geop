@@ -9,26 +9,25 @@
 use geop_core_editor::editing::{
     Button, Control, Pointer, Presentation, Shape, StepEditEvent, Style, Tone, Value,
 };
-use geop_core_editor::numeric_input::NumericInput;
 use geop_core_math::{
     primitives::FrameAxis,
     scalars::{ScalInF64 as S, Scalar},
     vector::{Vector2, Vector3},
 };
+use geop_core_program::{numeric::NumericInput, program::Program};
 use geop_core_sketch::{
     CurveId, PointId,
     geometry::Arc,
     plain::{P2, add, bounds as point_bounds, cross, distance, scale, sub, xy},
 };
-use geop_ops_parameters::{Parameter, Parameters};
+use geop_ops_parameters::{Parameter, Parameters, set_parameters};
 use geop_ops_sketch::{
     AddSketchArgs, Constraint, CurveKind, Sketch, SketchPlane, editor::SketchSession, references,
 };
 
 use super::testing::{Stepping, origin_plane, pointer};
-use crate::Program;
 
-type SolveReport = geop_core_sketch::SolveReport<geop_ops_model::Design>;
+type SolveReport = geop_core_sketch::SolveReport<geop_core_program::values::Design>;
 type SketchEditing = geop_core_editor::edit_form::FormState<SketchSession>;
 
 /// A sketch step being drawn as a front end draws it, with the step's
@@ -44,7 +43,7 @@ impl Editor {
     /// or, not `new`, one on the origin's `xy` plane being edited again.
     fn on(parameters: Parameters, new: bool) -> Self {
         let mut program = Program::new();
-        program.set_parameters(parameters);
+        set_parameters(&mut program, parameters);
         let step = match new {
             true => Stepping::new(program, "add_sketch"),
             false => {

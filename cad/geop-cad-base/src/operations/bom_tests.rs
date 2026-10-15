@@ -2,25 +2,28 @@
 //! their norms and weighed of their own material, repeated parts grouped
 //! across sub-assemblies, flat and indented.
 
+use geop_core_program::{
+    part::Part,
+    program::Program,
+    values::{Setting, Settings, StateValue, pose_state},
+};
 use std::collections::BTreeMap;
 
 use geop_ops_assembly::{AddPartArgs, placed::placed_parts};
-use geop_ops_model::read_model;
-use geop_ops_parameters::{BuildPart, Setting, Settings, StateValue, pose_state};
 use geop_ops_bom::{Bom, LineKind, Structure, bom};
+use geop_ops_model::read_model;
 
 use super::workspace;
-use crate::Program;
 use crate::examples::{self, pose};
 
 /// `program`, saved as `path` among `files`, built.
-fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> BuildPart {
+fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Part {
     super::build(program, path, workspace(files)).unwrap().part
 }
 
 /// The bill of materials of `part`, the program of the file `file`, laid
 /// out as `structure` says.
-fn bill_of_materials(part: &BuildPart, file: &str, structure: Structure) -> Bom {
+fn bill_of_materials(part: &Part, file: &str, structure: Structure) -> Bom {
     bom(&part.current(), file, structure).unwrap()
 }
 

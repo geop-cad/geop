@@ -3,6 +3,7 @@
 //! building one beside the standard parts, and editing it as a front end
 //! does.
 
+use geop_core_program::{part::Part, values::Design};
 use std::collections::BTreeMap;
 
 use geop_core_editor::editing::{Button, Pointer, Reach, StepEditEvent, Value};
@@ -13,8 +14,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_ops_extrude_revolve::testing::model_of;
-use geop_ops_model::{Design, NamedModel};
-use geop_ops_parameters::BuildPart;
+use geop_ops_model::NamedModel;
 
 pub(crate) use geop_ops_datums::{origin_axis, origin_plane};
 pub(crate) use geop_ops_extrude_revolve::testing::{
@@ -29,14 +29,14 @@ use crate::{Command, Editor, Update};
 /// Building a program on its own, in an empty [`workspace`] (see [`build`]).
 pub(crate) trait Built {
     /// The part the program builds.
-    fn built(&self) -> GeopResult<BuildPart>;
+    fn built(&self) -> GeopResult<Part>;
 
     /// The model the program builds, or why a step fails.
     fn build_model(&self) -> GeopResult<NamedModel<Design>>;
 }
 
 impl Built for Program {
-    fn built(&self) -> GeopResult<BuildPart> {
+    fn built(&self) -> GeopResult<Part> {
         Ok(build(self, "", workspace(BTreeMap::new()))?.part)
     }
 

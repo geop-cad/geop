@@ -10,14 +10,17 @@ use geop_core_math::{
     primitives::{CoordinateSystem, DatumKind, FrameAxis, Ray},
     scalars::{ScalInF64 as S, Scalar},
 };
-use geop_core_program::element::{ElementReference, PickedElement};
-use geop_ops_datums::{ORIGIN};
+use geop_core_program::{
+    element::{ElementReference, PickedElement},
+    part::{Part, Reader},
+    values::Design,
+};
+use geop_ops_datums::ORIGIN;
 use geop_ops_extrude_revolve::{
     shapes::{block_part, v3},
     testing::n,
 };
-use geop_ops_model::{Design, NamedModel, Solid, testing::given_part};
-use geop_ops_parameters::{BuildPart, PartReader};
+use geop_ops_model::{NamedModel, Solid, testing::given_part};
 use geop_ops_sketch::{PlacedSketch, Sketch, sketch};
 use geop_ops_view::{PartView, ViewDatum, drawn};
 
@@ -30,14 +33,14 @@ fn cube() -> NamedModel<S> {
     block_part("c", [0.0; 3], [1.0; 3])
 }
 
-fn given_sketch(_: &PartReader, s: &PlacedSketch<Design>) -> GeopResult<PlacedSketch<Design>> {
+fn given_sketch(_: &Reader, s: &PlacedSketch<Design>) -> GeopResult<PlacedSketch<Design>> {
     Ok(s.clone())
 }
 
 /// `model`, with the datums and `sketches` by name: a part a program of one
 /// step would have built.
-fn built(model: &NamedModel<S>, sketches: &[(&str, PlacedSketch<S>)]) -> BuildPart {
-    let mut part: BuildPart = given_part(model).unwrap();
+fn built(model: &NamedModel<S>, sketches: &[(&str, PlacedSketch<S>)]) -> Part {
+    let mut part: Part = given_part(model).unwrap();
     for (name, placed) in sketches {
         let placed = PlacedSketch {
             name: name.to_string(),
@@ -50,7 +53,7 @@ fn built(model: &NamedModel<S>, sketches: &[(&str, PlacedSketch<S>)]) -> BuildPa
 }
 
 /// `part`, as drawn.
-fn drawn(part: &BuildPart) -> PartView {
+fn drawn(part: &Part) -> PartView {
     crate::part::draw(&part.current()).unwrap()
 }
 
@@ -78,7 +81,7 @@ fn faces_and_solids() {
     let hit = view.pick(&down(0.5, 0.5), &accepts).unwrap();
     assert_eq!(hit.element.kind, drawn::FACE);
     assert!(hit.point[2].could_be_equal(S::ONE), "{hit:?}");
-    let solid = selectable::pick::<ElementReference<NamedModel<Design>, Solid>, _, _, _>(
+    let solid = selectable::pick::<ElementReference<NamedModel<Design>, Solid>, _>(
         &view,
         &part.current(),
         &down(0.5, 0.5),
@@ -219,7 +222,7 @@ fn frames() {
         Some(origin_plane(FrameAxis::Z).name().to_string())
     );
     // Looking for what no part of a frame can be, the cube under it.
-    let solid = selectable::pick::<ElementReference<NamedModel<Design>, Solid>, _, _, _>(
+    let solid = selectable::pick::<ElementReference<NamedModel<Design>, Solid>, _>(
         &view,
         &part.current(),
         &down(0.04, 0.04),

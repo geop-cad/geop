@@ -1,11 +1,10 @@
 //! The editor's operations as one set: offered, and started from what the
 //! steps before built.
 
-use geop_ops_extrude_revolve::Output;
+use geop_ops_extrude_revolve::{ExtrudeArgs, Output};
 use std::collections::HashSet;
 
 use geop_ops_booleans::Combine;
-use geop_ops_extrude_revolve::ExtrudeArgs;
 use geop_ops_sketch::whole_sketch;
 
 use crate::{
@@ -37,7 +36,7 @@ fn every_operation_is_offered() {
         assert_eq!(registry.get(info.kind).unwrap().kind(), info.kind);
     }
     for (_, program) in examples::all() {
-        for step in &program().program.steps {
+        for step in &program().steps {
             assert!(
                 kinds.contains(&step.operation.as_str()),
                 "{}",
@@ -54,8 +53,7 @@ fn new_steps_start_from_what_was_built() {
     let part = program.built().unwrap();
     let editors = editors().unwrap();
     let runner = runner();
-    let new_step =
-        |kind: &str| editors.new_step(&runner, &part, &program.program, kind, "new", None);
+    let new_step = |kind: &str| editors.new_step(&runner, &part, &program, kind, "new", None);
     let step = new_step("extrude").unwrap();
     let extrude: ExtrudeArgs = args(&step);
     assert_eq!(extrude.sketch, whole_sketch("hole_sketch"));

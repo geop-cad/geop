@@ -1,27 +1,27 @@
 //! Programs of the editor's operations, run.
 
-use crate::operations::testing::extrusion;
-use geop_ops_extrude_revolve::Output;
-use std::{borrow::Cow, collections::BTreeMap};
+use crate::{
+    examples::box_with_drill_hole,
+    operations::testing::{Built, edit_args, extrusion, step},
+};
+use geop_core_program::{
+    part::Part,
+    program::Program,
+    program_runner::ProgramRunner,
+    testing::assert_incremental,
+    values::{Design, Settings, StateValue, pose_state},
+    workspace::{Location, Workspace},
+};
+use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, Output};
+use geop_ops_parameters::{
+    Parameter, ParameterKind, Parameters, parameter_uses, parameters_of, set_parameters,
+};
+use std::{borrow::Cow, collections::BTreeMap, rc::Rc};
 
 use geop_core_math::scalars::Scalar;
-use geop_core_program::workspace::Location;
 use geop_ops_booleans::Combine;
-use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
-use geop_ops_model::{Design, NamedModel, PartDescription, read_model};
-use geop_ops_parameters::{
-    BuildPart, Parameter, ParameterKind, Parameters, Settings, StateValue, pose_state,
-};
+use geop_ops_model::{NamedModel, PartDescription, read_model};
 use geop_ops_sketch::whole_sketch;
-
-use crate::{
-    Program,
-    examples::box_with_drill_hole,
-    operations::{
-        Runner,
-        testing::{Built, edit_args, step},
-    },
-};
 
 fn extrude(sketch: &str, distance: f64) -> ExtrudeArgs {
     extrusion(sketch, Extents::blind(distance), Combine::NewBody)
@@ -30,8 +30,8 @@ fn extrude(sketch: &str, distance: f64) -> ExtrudeArgs {
 /// A runner of programs, in an empty workspace, as the file `part.geop`.
 /// It runs them on one part, which keeps what the last run built.
 pub(super) struct Running {
-    runner: Runner,
-    pub(super) part: BuildPart,
+    runner: ProgramRunner,
+    pub(super) part: Part,
     /// What each step built when last seen, by step: to tell what a run
     /// built anew from what it took from the run before.
     seen: BTreeMap<String, usize>,
@@ -47,7 +47,7 @@ impl Running {
         };
         Self {
             runner,
-            part: BuildPart::default(),
+            part: Part::default(),
             seen: BTreeMap::new(),
         }
     }
@@ -55,7 +55,7 @@ impl Running {
     /// Runs the first `end` steps of `program` — all, if `None` — and says
     /// which failed, and why.
     pub(super) fn run(&mut self, program: &Program, end: Option<usize>) -> Vec<(String, String)> {
-        let steps = &program.program;
+        let steps = program;
         let end = end.unwrap_or(steps.steps.len());
         let inputs = Settings::new();
         let output = (self.runner).run_until(&mut self.part, steps, end, &inputs, &program.state);
@@ -76,7 +76,7 @@ impl Running {
     /// while the old one still is, so elsewhere.
     pub(super) fn built_anew(&mut self, program: &Program) -> usize {
         let mut anew = 0;
-        for (index, step) in program.program.steps.iter().enumerate() {
+        for (index, step) in program.steps.iter().enumerate() {
             let view = self.part.reader(index + 1);
             let address = match step.operation.as_str() {
                 "add_sketch" => view
@@ -172,14 +172,17 @@ fn box_by_formulas() -> Program {
             max: None,
         },
     };
-    program.set_parameters(Parameters {
-        values: vec![
-            number("height", "1"),
-            number("depth", "height / 2"),
-            number("unrelated", "7"),
-        ],
-        ..Parameters::default()
-    });
+    set_parameters(
+        &mut program,
+        Parameters {
+            values: vec![
+                number("height", "1"),
+                number("depth", "height / 2"),
+                number("unrelated", "7"),
+            ],
+            ..Parameters::default()
+        },
+    );
     edit_args(step(&mut program, "box"), |args: &mut ExtrudeArgs| {
         args.extent = Extents::blind("height")
     });
@@ -191,7 +194,7 @@ fn box_by_formulas() -> Program {
 
 /// Sets the number parameter `name` of `program` to `expression`.
 fn set(program: &mut Program, name: &str, expression: &str) {
-    let mut parameters = program.parameters();
+    let mut parameters = parameters_of(program);
     let parameter = parameters.values.iter_mut().find(|p| p.name == name);
     let Some(Parameter {
         kind: ParameterKind::Number { expression: e, .. },
@@ -201,7 +204,7 @@ fn set(program: &mut Program, name: &str, expression: &str) {
         panic!("no number parameter {name}")
     };
     *e = expression.into();
-    program.set_parameters(parameters);
+    set_parameters(program, parameters);
 }
 
 /// Checks the part's vertices lie at the heights `want`, and each of
@@ -235,7 +238,7 @@ fn extrudes_follow_the_parameters_they_read() {
     assert_eq!(running.built_anew(&program), 4);
     // The bottom, the hole's floor and the top.
     assert_heights(&running.model(), &[0.0, 0.5, 1.0]);
-    let uses = program.parameter_uses();
+    let uses = parameter_uses(&program);
     let read: Vec<&String> = uses.keys().collect();
     assert_eq!(read, ["depth", "height"]);
 
@@ -289,7 +292,7 @@ fn formula_errors_name_the_step_and_the_formula() {
 #[test]
 fn a_pasted_step_takes_its_state_along() {
     let mut program = box_with_drill_hole();
-    let id = program.program.steps[0].id.clone();
+    let id = program.steps[0].id.clone();
     let pose = StateValue::Pose(crate::examples::pose([1.0, 2.0, 3.0], [0.0; 3]));
     program.state.insert(pose_state(&id), pose.clone());
     program.state.insert(
@@ -299,21 +302,26 @@ fn a_pasted_step_takes_its_state_along() {
 
     let copied = program.excerpt(&id).unwrap();
     assert_eq!(copied.state.len(), 1);
-    let at = program.program.steps.len();
-    let ids = program.paste(copied, at, |s| s.operation.clone()).unwrap();
+    let at = program.steps.len();
+    let ids = program
+        .paste(copied, at, &crate::registry().unwrap(), |s| {
+            s.operation.clone()
+        })
+        .unwrap();
     assert_eq!(ids.len(), 1);
     assert_ne!(ids[0], id);
-    assert_eq!(program.program.steps[at].id, ids[0]);
+    assert_eq!(program.steps[at].id, ids[0]);
     assert_eq!(program.state.get(&pose_state(&ids[0])), Some(&pose));
     assert!(!program.state.contains_key(&format!("{}_width", ids[0])));
-    program.validate().unwrap();
+    program.validate(&crate::registry().unwrap()).unwrap();
 }
 
 /// A runner that takes steps from what it built before must build what
 /// building from scratch builds: after a step is dropped from the middle of
 /// a program and put back, and after a number a step reads is changed. A
 /// step skipped for reading what did not change would otherwise show here
-/// as a part that differs, or an error that is missing.
+/// as a target that differs, or an error that is missing (see
+/// [`assert_incremental`]).
 #[test]
 #[ignore = "slow: 10 s — run with `cargo test -- --ignored`"]
 fn a_runner_builds_what_building_from_scratch_builds() {
@@ -335,15 +343,15 @@ fn a_runner_builds_what_building_from_scratch_builds() {
             continue;
         }
         let original = make();
-        let steps = original.program.steps.len();
+        let steps = original.steps.len();
         let mut edits = Vec::new();
         for index in [0, steps / 2, steps - 1] {
             let mut dropped = original.clone();
-            dropped.program.steps.remove(index);
+            dropped.steps.remove(index);
             edits.push((format!("drop step {index}"), dropped));
             edits.push(("restore".to_string(), original.clone()));
         }
-        let parameters = original.parameters();
+        let parameters = parameters_of(&original);
         for (k, parameter) in parameters.values.iter().enumerate() {
             if let ParameterKind::Number { expression, .. } = &parameter.kind
                 && let Ok(value) = expression.parse::<f64>()
@@ -353,24 +361,17 @@ fn a_runner_builds_what_building_from_scratch_builds() {
                 if let ParameterKind::Number { expression, .. } = &mut changed.values[k].kind {
                     *expression = (value * 1.25).to_string();
                 }
-                scaled.set_parameters(changed);
+                set_parameters(&mut scaled, changed);
                 edits.push((format!("scale {}", parameter.name), scaled));
                 edits.push(("restore".to_string(), original.clone()));
             }
         }
 
-        let mut running = Running::new();
-        running.run(&original, None);
-        for (edit, program) in edits {
-            let context = format!("{name}, {edit}");
-            let errors = running.run(&program, None);
-            match program.build_model() {
-                Ok(scratch) => {
-                    assert_eq!(errors, [], "{context}");
-                    assert_eq!(describe(&running.model()), describe(&scratch), "{context}");
-                }
-                Err(_) => assert!(!errors.is_empty(), "{context}: building from scratch fails"),
-            }
-        }
+        let programs: Vec<Program> = std::iter::once(original)
+            .chain(edits.into_iter().map(|(_, program)| program))
+            .collect();
+        let workspace: Rc<dyn Workspace> = crate::operations::workspace(BTreeMap::new());
+        let registry = Rc::new(crate::registry().unwrap());
+        assert_incremental(registry, Some((workspace, name)), &programs);
     }
 }

@@ -1,23 +1,25 @@
 //! Programs from bug reports, with the coordinates they were reported with:
 //! a "clean" equivalent may not carry the same numerical case at all.
 
-use geop_core_math::primitives::{DatumComponent, FrameAxis};
-use geop_core_math::scalars::Scalar;
+use geop_core_math::{
+    primitives::{DatumComponent, FrameAxis},
+    scalars::Scalar,
+};
+use geop_core_program::{program::Program, values::Design};
 use geop_core_topology::{boundary::BoundaryType, loop_sampling::sample_loop_to_polygon};
 use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
 use geop_ops_booleans::{Combine, solid};
 use geop_ops_datums::{ORIGIN, component_name, datum};
-use geop_ops_extrude_revolve::Output;
-use geop_ops_extrude_revolve::{Extents, RevolveArgs, RevolveAxis};
-use geop_ops_model::{BooleanOp, Design, NamedModel, element};
+use geop_ops_extrude_revolve::{Extents, Output, RevolveArgs, RevolveAxis};
+use geop_ops_model::{BooleanOp, NamedModel, element};
 use geop_ops_rasterize::face_triangles_uv;
-use geop_ops_sketch::{AddSketchArgs, SketchPlane, sketch_element, whole_sketch};
-use geop_ops_sketch::{Constraint, Sketch};
+use geop_ops_sketch::{
+    AddSketchArgs, Constraint, Sketch, SketchPlane, sketch_element, whole_sketch,
+};
 
-use crate::Program;
-use crate::examples::n;
-use crate::operations::testing::{
-    Built, args, assert_valid, extrusion, on_face, on_origin, sketch,
+use crate::{
+    examples::n,
+    operations::testing::{Built, args, assert_valid, extrusion, on_face, on_origin, sketch},
 };
 
 /// Checks the part `program` builds is valid (see [`assert_valid`]) and is
@@ -195,7 +197,7 @@ fn cylinder_joined_over_a_hole() {
 #[test]
 fn outline_revolved_around_its_edge_joined_to_its_box() {
     let mut program = crate::examples::box_with_drill_hole();
-    let outline: AddSketchArgs = args(&program.program.steps[0]);
+    let outline: AddSketchArgs = args(&program.steps[0]);
     let sketch = &outline.sketch;
     let right = sketch
         .curves

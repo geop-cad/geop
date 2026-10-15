@@ -5,12 +5,12 @@
 //! `end`, `face`, `base`, `top` or `mount`.
 
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
-use geop_ops_datums::origin_plane;
-use geop_ops_parameters::{Material, Parameter, Parameters};
-use geop_ops_sketch::{SketchPlane, whole_sketch};
+use geop_core_program::program::Program;
 use geop_ops_booleans::Combine;
-use geop_ops_extrude_revolve::Output;
-use geop_ops_extrude_revolve::{Extents, ExtrudeArgs};
+use geop_ops_datums::origin_plane;
+use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, Output};
+use geop_ops_parameters::{Material, Parameter, Parameters, set_parameters};
+use geop_ops_sketch::{SketchPlane, whole_sketch};
 
 use super::{
     StandardPart,
@@ -21,7 +21,6 @@ use super::{
     },
     tables, titled,
 };
-use crate::Program;
 
 /// A deep-groove ball bearing as one solid: rings `d` bore and `D`
 /// outside, `B` wide, their edges chamfered by `r`, with the gap between
@@ -476,19 +475,22 @@ fn servo(
         + (tabs - length) * width * tab
         + std::f64::consts::PI / 4.0 * (boss[0].powi(2) * boss[1] + spline[0].powi(2) * spline[1]);
     let mut program = Program::new();
-    program.set_parameters(Parameters {
-        material: Some(Material {
-            name: format!("Plastic, as heavy as the {row} ({grams} g)"),
-            density: grams * 1e6 / volume,
-        }),
-        color: Some("#2b5fa8".into()),
-        values: vec![size(tables::Table {
-            columns: &[],
-            rows: vec![(row.to_string(), Vec::new())],
-            selected: row,
-        })],
-        ..Parameters::default()
-    });
+    set_parameters(
+        &mut program,
+        Parameters {
+            material: Some(Material {
+                name: format!("Plastic, as heavy as the {row} ({grams} g)"),
+                density: grams * 1e6 / volume,
+            }),
+            color: Some("#2b5fa8".into()),
+            values: vec![size(tables::Table {
+                columns: &[],
+                rows: vec![(row.to_string(), Vec::new())],
+                selected: row,
+            })],
+            ..Parameters::default()
+        },
+    );
     // Side on, in the `xz` plane — whose sketch runs along `x` and `-z`.
     let n = |v: f64| format!("{v}");
     let (x0, x1) = (-offset - length / 2.0, -offset + length / 2.0);

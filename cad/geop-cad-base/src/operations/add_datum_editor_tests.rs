@@ -10,14 +10,14 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_program::element::ElementReference;
+use geop_core_program::{element::ElementReference, program::Program};
 use geop_ops_add_datum::{AddDatumArgs, CONSTRUCTIONS, Construction, Selected};
 use geop_ops_datums::{AnyDatum, Datums, ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::testing::drilled_box;
 use geop_ops_model::model;
 
 use super::testing::{Built, Stepping, from_above, pointer};
-use crate::{Program, part::structure};
+use crate::part::structure;
 
 fn datum(name: impl Into<String>) -> Selected {
     Selected::Datum(ElementReference::<Datums, AnyDatum>::new(datums(), name))

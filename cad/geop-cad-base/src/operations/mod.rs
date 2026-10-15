@@ -7,24 +7,23 @@
 //! editor offers is the editor's choice, made here (the `operations!` list) — and so
 //! are the exporters and inspectors ([`outputs`]).
 
+use geop_core_program::{
+    operation::Operation,
+    operation_registry::OperationRegistry,
+    part::Part,
+    program::Program,
+    program_runner::ProgramRunner,
+    values::{Settings, StateValues},
+    workspace::{self, FileStore, Files, Location},
+};
 use std::{collections::BTreeMap, rc::Rc};
 
-use geop_core_editor::editable::{Editable, Listed};
+use geop_core_editor::editable::{Editable, Editors, Listed};
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::{operation::Operation, workspace::Location};
-use geop_ops_model::Design;
 use geop_ops_output::Outputs;
-use geop_ops_parameters::{
-    BuildPart, DefineParameters, PartProperties, ProgramFile, Registry, Setting, Settings,
-    StateValue, StateValues,
-};
+use geop_ops_parameters::{DefineParameters, PartProperties};
 
-pub use geop_ops_parameters::Runner;
-
-use crate::{
-    stdlib::WithStandardParts,
-    workspace::{self, FileStore},
-};
+use crate::stdlib::WithStandardParts;
 use geop_ops_add_datum::AddDatum;
 use geop_ops_assembly::{AddPart, PartPattern, Stl};
 use geop_ops_bom::{BillOfMaterials, BomCsv};
@@ -54,12 +53,6 @@ mod add_datum_editor_tests;
 #[cfg(test)]
 mod assembly_editor_tests;
 #[cfg(test)]
-mod sketch3d_editor_tests;
-#[cfg(test)]
-mod sketch_editor_tests;
-#[cfg(test)]
-mod step_export_tests;
-#[cfg(test)]
 mod assembly_scale_tests;
 #[cfg(test)]
 mod assembly_tests;
@@ -82,7 +75,13 @@ mod set_tests;
 #[cfg(test)]
 mod sheetmetal_tests;
 #[cfg(test)]
+mod sketch3d_editor_tests;
+#[cfg(test)]
+mod sketch_editor_tests;
+#[cfg(test)]
 mod sketch_tests;
+#[cfg(test)]
+mod step_export_tests;
 #[cfg(test)]
 mod step_tests;
 #[cfg(test)]
@@ -95,9 +94,6 @@ mod tests;
 mod urdf_tests;
 #[cfg(test)]
 mod view_tests;
-
-/// The operations of the editor's programs, and how each is edited.
-pub type Editors = geop_core_editor::editable::Editors<Setting, StateValue, Design>;
 
 /// The operations the editor offers, in the order it offers them within a
 /// group and tier: how its programs are edited ([`editors`]), and what it
@@ -123,7 +119,7 @@ macro_rules! operations {
 }
 
 /// The operations the editor offers, as its programs are run with.
-pub fn registry() -> GeopResult<Registry> {
+pub fn registry() -> GeopResult<OperationRegistry> {
     editors()?.operations()
 }
 
@@ -192,28 +188,26 @@ pub fn outputs() -> GeopResult<Outputs> {
         .inspector(BillOfMaterials)
 }
 
-/// A program as the editor edits it and a file holds it.
-pub type Program = ProgramFile;
-
 /// The workspace the editor builds programs in: a set of program files, and
 /// the standard parts beside them.
-pub type Workspace<F = BTreeMap<String, String>> = workspace::Workspace<WithStandardParts<F>>;
+pub type Workspace<F = BTreeMap<String, String>> = Files<WithStandardParts<F>>;
 
 /// The workspace of `files`, beside the standard parts, whose programs are
 /// written in the editor's operations.
 pub fn workspace<F: FileStore + 'static>(files: F) -> Rc<Workspace<F>> {
-    Workspace::new(WithStandardParts(files), registry)
+    let registry = registry().expect("the editor's operations each have a name of their own");
+    Workspace::new(WithStandardParts(files), Rc::new(registry))
 }
 
 /// A runner of the editor's operations, that has run nothing yet.
-pub fn runner() -> Runner {
-    Runner::new(registry().expect("the editor's operations each have a name of their own"))
+pub fn runner() -> ProgramRunner {
+    ProgramRunner::new(registry().expect("the editor's operations each have a name of their own"))
 }
 
 /// A part a program built, and the runner that built it, to run it again.
 pub struct BuiltPart {
-    pub runner: Runner,
-    pub part: BuildPart,
+    pub runner: ProgramRunner,
+    pub part: Part,
 }
 
 /// Builds `program`, the file `file` of `workspace` — for a program on its
@@ -221,7 +215,7 @@ pub struct BuiltPart {
 pub fn build(
     program: &Program,
     file: &str,
-    workspace: Rc<dyn geop_core_program::workspace::Workspace<StateValue>>,
+    workspace: Rc<dyn workspace::Workspace>,
 ) -> GeopResult<BuiltPart> {
     let mut runner = runner();
     runner.workspace = Some(workspace);
@@ -229,7 +223,7 @@ pub fn build(
         file: workspace::resolve("", file),
         within: Vec::new(),
     };
-    let mut part = BuildPart::default();
+    let mut part = Part::default();
     program.run(&runner, &mut part, &Settings::new(), &StateValues::new())?;
     Ok(BuiltPart { runner, part })
 }

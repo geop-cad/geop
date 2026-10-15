@@ -1,6 +1,6 @@
 //! The standard parts library: fasteners and purchased components every
 //! workspace can place, as read-only files named `std:…` (see
-//! [`crate::workspace::is_shared`]) — `std:iso4032_hex_nut.geop`.
+//! [`geop_core_program::workspace::is_shared`]) — `std:iso4032_hex_nut.geop`.
 //!
 //! Each family is one program, generated here in Rust and never saved:
 //! its sizes are the rows of its table parameter `size` — `M5`,
@@ -40,15 +40,17 @@ pub mod tables;
 #[cfg(test)]
 mod tests;
 
+use geop_core_program::{
+    program::Program,
+    workspace::{FileStore, FileStoreMut},
+};
+use geop_ops_parameters::{parameters_of, set_parameters};
 use std::{
     ops::{Deref, DerefMut},
     sync::OnceLock,
 };
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use crate::workspace::{FileStore, FileStoreMut};
-
-use crate::Program;
 
 /// What the standard parts' file names start with.
 pub const PREFIX: &str = "std:";
@@ -75,10 +77,10 @@ pub struct StandardPart {
 /// part reads them from its program (see
 /// [`geop_ops_parameters::Properties`]).
 fn titled(mut program: Program, title: &str, designation: &str) -> Program {
-    let mut parameters = program.parameters();
+    let mut parameters = parameters_of(&program);
     parameters.title = Some(title.into());
     parameters.designation = Some(designation.into());
-    program.set_parameters(parameters);
+    set_parameters(&mut program, parameters);
     program
 }
 

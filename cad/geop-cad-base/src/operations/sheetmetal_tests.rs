@@ -26,7 +26,7 @@ fn bracket_example_builds_and_unfolds() {
     let mut program = examples::sheet_metal_bracket();
     let json = serde_json::to_string(&program).unwrap();
     assert_eq!(
-        serde_json::from_str::<crate::Program>(&json).unwrap(),
+        serde_json::from_str::<geop_core_program::program::Program>(&json).unwrap(),
         program
     );
     let part = program.built().unwrap();
@@ -87,7 +87,7 @@ fn new_edge_flange_picks_its_edge_and_unfolds() {
         dialog("position", Value::Choice("bend_outside".into())),
     );
     handled(&mut editor, Command::Commit);
-    let step = editor.program().program.steps.last().unwrap().clone();
+    let step = editor.program().steps.last().unwrap().clone();
     assert_eq!(step.operation, "edge_flange");
     let flange: EdgeFlangeArgs = args(&step);
     assert_eq!(
@@ -105,7 +105,7 @@ fn new_edge_flange_picks_its_edge_and_unfolds() {
         },
     );
     let update = handled(&mut editor, Command::Commit);
-    let step = editor.program().program.steps.last().unwrap();
+    let step = editor.program().steps.last().unwrap();
     assert_eq!(step.operation, "flat_pattern");
     assert_eq!(args::<FlatPatternArgs>(step).solid, solid(flanged));
     let scene = update.scene.expect("the scene is sent anew");
@@ -169,7 +169,7 @@ fn sheet_metal_cut_hem_and_cutting_export() {
         },
     );
     let update = handled(&mut editor, Command::Commit);
-    let step = editor.program().program.steps.last().unwrap().clone();
+    let step = editor.program().steps.last().unwrap().clone();
     assert_eq!(step.operation, "sheet_cut");
     let cut: SheetCutArgs = args(&step);
     assert_eq!(cut.sketch, whole_sketch("flange_hole"));
@@ -182,7 +182,7 @@ fn sheet_metal_cut_hem_and_cutting_export() {
     handled(&mut editor, dialog("kind", Value::Choice("open".into())));
     handled(&mut editor, dialog("gap", Value::Number(0.06)));
     let update = handled(&mut editor, Command::Commit);
-    let step = editor.program().program.steps.last().unwrap().clone();
+    let step = editor.program().steps.last().unwrap().clone();
     assert_eq!(step.operation, "hem");
     let hem: HemArgs = args(&step);
     assert_eq!(hem.edge, Some(edge("base_flange(plate,outline,c5,b)")));

@@ -7,18 +7,17 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_program::element::ElementReference;
+use geop_core_program::{element::ElementReference, program::Program, values::Design};
 use geop_core_sketch::space::{Constraint3d, CurveKind3d};
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::Extents;
-use geop_ops_model::{Design, NamedModel, read_model};
+use geop_ops_model::{NamedModel, read_model};
 use geop_ops_sketch3d::{
     AddSketch3dArgs, PlacedSketch3d, PointSource, Reference3d, Sketch3d, Sketch3dEditing,
     Sketch3dSession, Target, Tool, sketch3d,
 };
 
 use super::testing::{Stepping, extrude_sketch, on_origin, pointer as reaching, rectangle};
-use crate::Program;
 
 fn close(a: &Vector3<S>, b: [f64; 3]) -> bool {
     (0..3).all(|k| (a[k].to_f64() - b[k]).abs() < 1e-7)

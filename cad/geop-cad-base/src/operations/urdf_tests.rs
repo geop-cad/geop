@@ -2,6 +2,10 @@
 //! robots, and read back — as a tree of XML elements, and by placing every
 //! link where its joints put it.
 
+use geop_core_program::{
+    program::Program,
+    values::{Settings, StateValue, StateValues, pose_state},
+};
 use std::collections::{BTreeMap, HashMap};
 
 use geop_core_math::{
@@ -15,12 +19,12 @@ use geop_ops_assembly::{
     solving::{self, Rerun},
 };
 use geop_ops_output::Output;
-use geop_ops_parameters::{Settings, StateValue, StateValues, pose_state};
 use geop_ops_urdf::{JointType, Mechanism, Origin, Robot, URDF_FILE, UrdfExport, export};
 
-use crate::Program;
-use crate::examples::{self, n, pose};
-use crate::operations::{BuiltPart, workspace};
+use crate::{
+    examples::{self, n, pose},
+    operations::{BuiltPart, workspace},
+};
 
 /// The files of the workspace example `name`, by path, and its first
 /// program.
@@ -66,14 +70,19 @@ fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Buil
     let mut rerun = Rerun {
         runner: &built.runner,
         part: &mut built.part,
-        program: &program.program,
+        program: &program,
         inputs: &inputs,
     };
     let (moved, report) = solving::solve(&mut rerun, &program.state, &[], None).unwrap();
     assert!(report.converged, "{report:?}");
     program.state.extend(moved);
     program
-        .run(&built.runner, &mut built.part, &Settings::new(), &StateValues::new())
+        .run(
+            &built.runner,
+            &mut built.part,
+            &Settings::new(),
+            &StateValues::new(),
+        )
         .unwrap();
     Built(built, program)
 }

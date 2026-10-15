@@ -10,20 +10,18 @@
 //! double cone.
 
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
+use geop_core_program::{element::ElementReference, program::Program};
 use geop_core_sketch::CurveId;
-use geop_core_program::element::ElementReference;
 use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
 use geop_ops_booleans::Combine;
 use geop_ops_datums::{Datums, datums, origin_axis, origin_plane};
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, Output, RevolveArgs, RevolveAxis};
 use geop_ops_parameters::{
-    Material, Parameter, ParameterKind, Parameters,
-    parameters::Row,
+    Material, Parameter, ParameterKind, Parameters, parameters::Row, set_parameters,
 };
 use geop_ops_sketch::{SketchPlane, sketch_element, whole_sketch};
 
 use super::{drawing::Drawing, tables::Table};
-use crate::Program;
 
 /// The name of the table parameter every family's size is chosen by.
 pub const SIZE: &str = "size";
@@ -48,12 +46,15 @@ pub fn size(table: Table) -> Parameter {
 /// own — and designed by the parameters `values`, the size among them.
 pub fn family(material: &str, color: Option<&str>, values: Vec<Parameter>) -> Program {
     let mut program = Program::new();
-    program.set_parameters(Parameters {
-        material: Material::named(material),
-        color: color.map(Into::into),
-        values,
-        ..Parameters::default()
-    });
+    set_parameters(
+        &mut program,
+        Parameters {
+            material: Material::named(material),
+            color: color.map(Into::into),
+            values,
+            ..Parameters::default()
+        },
+    );
     program
 }
 

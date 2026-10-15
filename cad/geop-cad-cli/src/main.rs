@@ -1,7 +1,7 @@
 //! `geop`: the kernel on the command line.
 //!
 //! `geop compile part.geop` builds a program — the JSON the web
-//! editor saves (see `geop_cad_base::Program`) — and writes the part it
+//! editor saves (see `Program`) — and writes the part it
 //! makes with the exporter the editor offers for the output's extension
 //! (see `geop_cad_base::outputs`), told the options given as `-O key=value`
 //! — by default in the first format the editor offers, its STL mesh — the
@@ -12,22 +12,24 @@
 //! process a front end spawns and talks to over stdin/stdout (see
 //! [`serve`]).
 
+use clap::{Parser, Subcommand};
+use geop_cad_base::{
+    Editor,
+    operations::{self, BuiltPart, outputs, workspace},
+};
+use geop_core_math::geop_error::{GeopError, GeopResult};
+use geop_core_program::{
+    program::Program,
+    values::{Settings, StateValues},
+    workspace::FileStore,
+};
+use geop_ops_assembly::solving::{Rerun, check as check_mates, solve};
+use geop_ops_output::Output;
 use std::{
     io::{BufRead, Write},
     path::{Path, PathBuf},
     process::ExitCode,
 };
-
-use clap::{Parser, Subcommand};
-use geop_cad_base::{
-    Editor, Program,
-    operations::{self, BuiltPart, outputs, workspace},
-    workspace::FileStore,
-};
-use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_ops_assembly::solving::{Rerun, check as check_mates, solve};
-use geop_ops_output::Output;
-use geop_ops_parameters::{Settings, StateValues};
 
 #[derive(Parser)]
 #[command(
@@ -176,12 +178,17 @@ fn build(path: &Path) -> GeopResult<(Program, BuiltPart, Vec<String>)> {
         let mut rerun = Rerun {
             runner: &built.runner,
             part: &mut built.part,
-            program: &program.program,
+            program: &program,
             inputs: &inputs,
         };
         let (moved, _) = solve(&mut rerun, &program.state, &[], None)?;
         program.state.extend(moved);
-        program.run(&built.runner, &mut built.part, &Settings::new(), &StateValues::new())?;
+        program.run(
+            &built.runner,
+            &mut built.part,
+            &Settings::new(),
+            &StateValues::new(),
+        )?;
     }
     Ok((program, built, report.failed))
 }
@@ -219,7 +226,7 @@ fn compile(args: &CompileArgs) -> GeopResult<Compiled> {
 
     Ok(Compiled {
         output,
-        steps: program.program.steps.len(),
+        steps: program.steps.len(),
         bytes: export.bytes().len(),
         solved_for,
     })
@@ -252,7 +259,7 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
         )));
     }
     let chosen = |name: &str| args.only.is_empty() || args.only.iter().any(|n| n == name);
-    let write = |path: &Path, program: &geop_cad_base::Program| {
+    let write = |path: &Path, program: &Program| {
         std::fs::write(path, program.to_json()?)
             .map_err(|e| GeopError::new(format!("writing {}: {e}", path.display())))
     };
@@ -381,7 +388,7 @@ mod tests {
     use geop_cad_base::examples;
 
     use geop_core_math::{primitives::Pose, scalars::Scalar};
-    use geop_ops_model::Design;
+    use geop_core_program::values::Design;
 
     use super::*;
 
@@ -617,8 +624,8 @@ mod tests {
         // Its state stale, it is solved for before it is written.
         let mut stale = examples::pin_in_plate_assembly();
         stale.state.insert(
-            geop_ops_parameters::pose_state("pin"),
-            geop_ops_parameters::StateValue::Pose(
+            geop_core_program::values::pose_state("pin"),
+            geop_core_program::values::StateValue::Pose(
                 Pose::from_euler(
                     geop_core_math::vector::Vector3::from_array(
                         [3.5, 1.0, 0.0].map(Design::from_f64),

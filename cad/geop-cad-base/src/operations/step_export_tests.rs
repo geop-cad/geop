@@ -1,6 +1,10 @@
 //! STEP export of an assembly: the parts a program places, written as
 //! products and occurrences, and read back where they are placed.
 
+use geop_core_program::{
+    program::Program,
+    values::{Design, StateValue, pose_state},
+};
 use std::collections::BTreeMap;
 
 use geop_core_math::{
@@ -13,15 +17,10 @@ use geop_core_topology::Model;
 use geop_ops_assembly::AddPartArgs;
 use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extents, testing::model_of};
-use geop_ops_model::Design;
-use geop_ops_parameters::{StateValue, pose_state};
 use geop_ops_step::{ImportStepArgs, write_part};
 
 use super::testing::{disc, extrude_sketch, on_origin, rectangle};
-use crate::{
-    Program,
-    operations::{build, workspace},
-};
+use crate::operations::{build, workspace};
 
 /// A step placing `file`, fixed where the program's state puts it.
 fn placing(file: &str) -> AddPartArgs {
