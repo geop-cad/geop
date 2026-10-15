@@ -222,3 +222,27 @@ module of its own and is unit tested with `npm test` in `web/` (Node's
 own runner, `web/test/`), as the click and double-click rules are
 (`web/src/gestures.ts`). A bug they find in Rust gets a Rust test as well
 (see `set_tests.rs`, `editor_tests.rs`).
+
+### Scripts
+
+- `scripts/test-affected.sh [--dry-run] [base-ref] [-- args]` tests only
+  what a change can affect: the files changed against `base-ref` (default
+  `origin/main` when that ref exists, otherwise `HEAD~1`; uncommitted and
+  untracked files count too) map to their crates, and those crates, every
+  crate building on them, and every crate whose tests use them run
+  `cargo test -p …` under `timeout 1800 prlimit --as=16000000000`. A change
+  under `core/` or to the workspace's `Cargo.toml`/`Cargo.lock` runs the
+  whole workspace; files in no crate (scripts, docs, `web/`) run nothing.
+  `--dry-run` prints the crates; arguments after `--` go to `cargo test`.
+- `scripts/check-layering.sh` checks the dependency rules between the
+  tiers (`ARCHITECTURE_PLAN.md` §2.1): core depends on core only, and
+  `geop-core-program` on `geop-core-math` only; a `geop-lib-*` on core,
+  `geop-ops-model` and libs; no ops or lib crate on `geop-cad-*`; no source
+  under `core/` names an ops, lib or cad crate; `geop-cad-base` uses ops
+  crates only in `src/registry.rs`. Violations known today are listed in
+  `scripts/layering-allowed.txt`; a new one fails the check, and one that
+  is gone is reported so its line can be deleted. Nothing adds lines to
+  that list.
+- `scripts/baseline-2026-10.txt` records the lines and tests per crate and
+  the test results before the refactor; a phase that loses tests says
+  which and why.
