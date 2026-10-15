@@ -71,6 +71,7 @@ impl Rerun<'_> {
             runner: self.runner,
             part: &mut *self.part,
             program: self.program.clone(),
+            inputs: Default::default(),
         }
     }
 }

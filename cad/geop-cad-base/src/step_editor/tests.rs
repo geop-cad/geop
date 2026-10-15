@@ -175,12 +175,7 @@ impl Editor {
         let program = Program::from_steps(vec![
             ProgramStep::new::<MarkOperation>("mark", &args).unwrap(),
         ]);
-        runner.run(
-            &mut part,
-            &program,
-            &Default::default(),
-            &Default::default(),
-        );
+        runner.run(&mut part, &program, None);
         let editor = StepEditor::new(&editors, &runner, &part, &program, "mark", new).unwrap();
         Self {
             editors,
@@ -200,12 +195,7 @@ impl Editor {
             scene: &OneFace,
         };
         self.editor.handle(editing, &event).unwrap();
-        (self.runner).run(
-            &mut self.part,
-            &self.program,
-            &Default::default(),
-            &Default::default(),
-        );
+        (self.runner).run(&mut self.part, &self.program, None);
     }
 
     fn click(&mut self, x: f64, y: f64) {

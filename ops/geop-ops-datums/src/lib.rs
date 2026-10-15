@@ -350,7 +350,7 @@ picked_as_drawn!(AnyDatum, Point, Line, Plane);
 mod tests {
     use geop_core_editor::selectable::{Selectable, selected};
     use geop_core_math::scalars::Scalar;
-    use geop_core_program::part::Part;
+    use geop_core_program::{operation_registry::OperationRegistry, part::Part, runner::Runner};
 
     use super::*;
 
@@ -358,21 +358,21 @@ mod tests {
     /// origin's datums.
     fn part() -> Part {
         let mut part = Part::default();
-        part.begin_run(&Default::default(), &Default::default());
-        part.begin_step();
-        (part.revise_target(&datums(), &(), |reader, _| {
-            let mut datums: Datums = reader.previous()?;
-            let world = CoordinateSystem::world_at(Vector3::zero());
-            let axis = Datum {
-                kind: DatumKind::Frame,
-                frame: world,
-            }
-            .component(DatumComponent::Axis(FrameAxis::X))?;
-            datums.insert("a", axis)?;
-            Ok(datums)
+        let runner = Runner::new(OperationRegistry::default());
+        (runner.run_step(&mut part, "a", |ctx| {
+            ctx.produce(&datums(), &(), |reader, _| {
+                let mut datums: Datums = reader.previous()?;
+                let world = CoordinateSystem::world_at(Vector3::zero());
+                let axis = Datum {
+                    kind: DatumKind::Frame,
+                    frame: world,
+                }
+                .component(DatumComponent::Axis(FrameAxis::X))?;
+                datums.insert("a", axis)?;
+                Ok(datums)
+            })
         }))
         .unwrap();
-        part.end_run(0);
         part
     }
 
@@ -452,9 +452,7 @@ mod tests {
             serde_json::to_value(&lines[0]).unwrap(),
             serde_json::json!("a")
         );
-        let mut given = Part::default();
-        given.begin_run(&Default::default(), &Default::default());
-        given.begin_step();
+        let given = Part::default();
         let reader = given.current();
         assert!(read_datums(&reader).unwrap().names().is_empty());
         let plane = reader.retrieve_element(&origin_plane(FrameAxis::X));

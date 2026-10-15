@@ -6,7 +6,7 @@ use geop_core_program::{
     part::Part,
     program::{Program, ProgramStep},
     runner::Runner,
-    values::{Design, Settings, StateValue, StateValues, pose_state},
+    values::{Design, StateValue, StateValues, pose_state},
     workspace::FileStore,
 };
 use std::{collections::BTreeMap, rc::Rc};
@@ -49,7 +49,6 @@ struct Built {
     runner: Runner,
     part: Part,
     program: Program,
-    inputs: Settings,
 }
 
 /// `program` built in `workspace`, or why its first step that fails does.
@@ -62,7 +61,6 @@ fn build<F: FileStore + 'static>(
         runner,
         part,
         program: program.clone(),
-        inputs: Settings::new(),
     })
 }
 
@@ -77,7 +75,6 @@ impl Built {
             runner: &self.runner,
             part: &mut self.part,
             program: &self.program,
-            inputs: &self.inputs,
         }
     }
 

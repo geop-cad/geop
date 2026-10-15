@@ -12,7 +12,7 @@ use geop_ops_datums::read_datums;
 use geop_ops_model::{NamedModel, RefId, read_model};
 use geop_ops_parameters::{
     ParameterKind, parameter_numbers, parameters_of, read_properties, set_parameters,
-    steps::{PARAMETERS, PROPERTIES},
+    steps::{LOOKUP, PARAMETERS, PROPERTIES},
 };
 use geop_ops_pattern::{CircularPatternArgs, Spacing};
 
@@ -461,9 +461,9 @@ fn drive_and_motion_parts_are_designated_and_made_of_something() {
         // Its properties and parameters run on their own, with `values`:
         // what it is designated as. Unset parameters are the family's own.
         let mut program = super::part(file).unwrap().program.clone();
-        (program.steps).retain(|s| [PROPERTIES, PARAMETERS].contains(&&*s.operation));
+        (program.steps).retain(|s| [PROPERTIES, PARAMETERS, LOOKUP].contains(&&*s.operation));
         let mut part = Part::default();
-        let output = runner.run(&mut part, &program, &values, &StateValues::new());
+        let output = runner.run_with(&mut part, &program, &values, None);
         assert!(
             output.step_errors.is_empty(),
             "{file}: {:?}",
@@ -653,12 +653,10 @@ fn a_motor_drives_a_gear_pair_at_its_ratio() {
     let mut built = build(&program, "gear_drive.geop", workspace(BTreeMap::new())).unwrap();
     let driver = "add_part(pinion,m1).angle";
     let set = BTreeMap::from([(driver.to_string(), Design::from_f64(90.0))]);
-    let inputs = Settings::new();
     let mut rerun = Rerun {
         runner: &built.runner,
         part: &mut built.part,
         program: &program,
-        inputs: &inputs,
     };
     let (moved, report) = solving::set(&mut rerun, &program.state, &set).unwrap();
     assert!(report.converged, "{report:?}");

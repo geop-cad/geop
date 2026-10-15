@@ -9,7 +9,7 @@ use geop_core_program::{
     program::Program,
     reader::Reader,
     runner::Runner,
-    values::{Settings, StateValue, StateValues, pose_state},
+    values::{Settings, StateValue, pose_state},
 };
 use std::f64::consts::PI;
 
@@ -52,7 +52,7 @@ fn given<T: Clone>(_: &Reader, value: &T) -> GeopResult<T> {
 fn built_with(
     given_model: &NamedModel<S>,
     material: Option<Material>,
-    then: impl FnOnce(&mut Part),
+    then: impl FnOnce(&Runner, &mut Part),
 ) -> Part {
     let properties = PartPropertiesArgs {
         material,
@@ -60,19 +60,21 @@ fn built_with(
     };
     let runner = Runner::new(OperationRegistry::default());
     let mut part = Part::default();
-    part.begin_run(&Default::default(), &Default::default());
-    part.begin_step();
-    PartProperties::run("properties", &runner, &mut part, &properties).unwrap();
-    part.begin_step();
-    part.define_target(&model(), given_model, given).unwrap();
-    then(&mut part);
-    part.end_run(0);
+    (runner.run_step(&mut part, "properties", |ctx| {
+        PartProperties::run(ctx, &properties)
+    }))
+    .unwrap();
+    (runner.run_step(&mut part, "model", |ctx| {
+        ctx.produce(&model(), given_model, given)
+    }))
+    .unwrap();
+    then(&runner, &mut part);
     part
 }
 
 /// The part of `model`, made of `material`.
 fn built(model: &NamedModel<S>, material: Option<Material>) -> Part {
-    built_with(model, material, |_| {})
+    built_with(model, material, |_, _| {})
 }
 
 /// A pick of the element of the model named `name`, of what is drawn as
@@ -389,15 +391,16 @@ fn sketch_curves_are_measured() {
         line.add_point(at([2.0, 2.0, 0.0])),
     );
     line.add_line(a, b);
-    let part = built_with(&NamedModel::new(), None, |part| {
-        part.define_target(&sketch("arc"), &arc, given).unwrap();
-        part.begin_step();
+    let part = built_with(&NamedModel::new(), None, |runner, part| {
+        (runner.run_step(part, "arc", |ctx| ctx.produce(&sketch("arc"), &arc, given))).unwrap();
         let args = geop_ops_sketch3d::AddSketch3dArgs {
             sketch: line,
             references: Vec::new(),
         };
-        let runner = geop_core_program::runner::Runner::new(Default::default());
-        geop_ops_sketch3d::AddSketch3d::run("route", &runner, part, &args).unwrap();
+        (runner.run_step(part, "route", |ctx| {
+            geop_ops_sketch3d::AddSketch3d::run(ctx, &args)
+        }))
+        .unwrap();
     });
 
     let curve = PickedElement {
@@ -467,7 +470,7 @@ fn placed_parts_are_measured_where_they_are() {
         .with("top.geop", root.clone());
     let runner = runner(shelf, "top.geop");
     let mut part = Part::default();
-    (root.run(&runner, &mut part, &Settings::new(), &StateValues::new())).unwrap();
+    (root.run(&runner, &mut part)).unwrap();
 
     let corner = |name: &str| PickedElement {
         target: format!("p{INSTANCE_SEPARATOR}{}", model().name()),

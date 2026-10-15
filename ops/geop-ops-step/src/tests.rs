@@ -7,11 +7,7 @@ use geop_core_math::{
     scalars::{Ring, Scalar, scal_in_f64::ScalInF64},
 };
 use geop_core_program::{
-    operation_registry::OperationRegistry,
-    part::Part,
-    program::Program,
-    runner::Runner,
-    values::{Settings, StateValues},
+    operation_registry::OperationRegistry, part::Part, program::Program, runner::Runner,
     workspace::Workspace,
 };
 use geop_core_topology::Model;
@@ -867,7 +863,8 @@ impl Workspace for Folder {
         path.to_string()
     }
 
-    fn revision(&self) -> u64 {
+    /// A folder of files that do not change: one revision.
+    fn revision(&self, _: &str) -> u64 {
         0
     }
 }
@@ -905,9 +902,7 @@ fn an_import_builds_an_equal_file_once() {
     program.push("i", args);
     let mut part = Part::default();
     let run = |runner: &Runner, part: &mut Part| {
-        program
-            .run(runner, part, &Settings::new(), &StateValues::new())
-            .unwrap();
+        program.run(runner, part).unwrap();
         let model = read_model(&part.current()).unwrap();
         // Where the model is kept: a model built anew is kept elsewhere.
         std::ptr::from_ref(model.as_ref())

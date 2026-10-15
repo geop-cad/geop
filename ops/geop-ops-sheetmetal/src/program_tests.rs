@@ -15,7 +15,7 @@ use geop_core_program::{
     program::Program,
     reader::Reader,
     runner::Runner,
-    values::{Design, Settings, StateValues},
+    values::Design,
 };
 use std::{borrow::Cow, f64::consts::PI};
 
@@ -138,7 +138,6 @@ impl PartOperation for Rename {
     }
 
     fn run(ctx: &mut StepContext, args: &RenameArgs) -> GeopResult<()> {
-        let step = ctx.step();
         build_model::<Self>(ctx, args)
     }
 
@@ -210,8 +209,7 @@ impl Built {
 
     fn run(&mut self) -> GeopResult<()> {
         let (runner, part) = (&self.runner, &mut self.part);
-        self.program
-            .run(runner, part, &Settings::new(), &StateValues::new())
+        self.program.run(runner, part)
     }
 
     /// The part with the step `id` of `args` added.

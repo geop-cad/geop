@@ -172,8 +172,8 @@ fn a_threaded_shaft_draws_its_thread() {
         scale: Some(1.0),
         ..Default::default()
     };
-    let build = built_with(&part, |part| {
-        (part.define_target(&geop_ops_model::threads(), &threads, given)).unwrap()
+    let build = built_with(&part, |ctx| {
+        ctx.produce(&geop_ops_model::threads(), &threads, given)
     });
     let sheet = compose(&build.current(), &args, "", &[]).unwrap();
     let thread = |s: &&Stroke| s.layer == layer::THREAD;

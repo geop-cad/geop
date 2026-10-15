@@ -4,7 +4,7 @@
 
 use geop_core_program::{
     program::Program,
-    values::{Settings, StateValue, StateValues, pose_state},
+    values::{StateValue, pose_state},
 };
 use std::collections::{BTreeMap, HashMap};
 
@@ -66,24 +66,15 @@ impl Built {
 fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Built {
     let mut program = program.clone();
     let mut built = super::build(&program, path, workspace(files)).unwrap();
-    let inputs = Settings::new();
     let mut rerun = Rerun {
         runner: &built.runner,
         part: &mut built.part,
         program: &program,
-        inputs: &inputs,
     };
     let (moved, report) = solving::solve(&mut rerun, &program.state, &[], None).unwrap();
     assert!(report.converged, "{report:?}");
     program.state.extend(moved);
-    program
-        .run(
-            &built.runner,
-            &mut built.part,
-            &Settings::new(),
-            &StateValues::new(),
-        )
-        .unwrap();
+    program.run(&built.runner, &mut built.part).unwrap();
     Built(built, program)
 }
 

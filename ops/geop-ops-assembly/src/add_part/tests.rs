@@ -8,8 +8,8 @@ use geop_core_program::{
     operation_registry::OperationRegistry,
     part::Part,
     program::{Program, ProgramStep},
-    program_runner::{RunOutput, Runner},
     reader::Reader,
+    runner::{RunOutput, Runner},
     values::{Design, StateValue, StateValues, pose_state},
     workspace::Location,
 };
@@ -200,7 +200,8 @@ impl Assembly {
     }
 
     fn run(&mut self) -> RunOutput {
-        (self.runner).run(&mut self.part, &self.program, &self.inputs, &self.state)
+        self.program.state = self.state.clone();
+        (self.runner).run_with(&mut self.part, &self.program, &self.inputs, None)
     }
 
     fn reader(&self) -> Reader<'_> {
@@ -213,7 +214,6 @@ impl Assembly {
             runner: &self.runner,
             part: &mut self.part,
             program: &self.program,
-            inputs: &self.inputs,
         }
     }
 
@@ -360,12 +360,11 @@ fn a_drag_pulls_the_point_grabbed() {
     );
     let mut assembly = Assembly::on_a(&[("b", mates.clone())], StateValues::new());
     let pulls = {
-        let position = 1;
         let context: Context = Context {
             step: "b",
             runner: &assembly.runner,
-            before: assembly.part.reader(position),
-            built: Some(assembly.part.reader(position + 1)),
+            before: assembly.part.before("b"),
+            built: Some(assembly.part.after("b")),
             scene: None,
         };
         let drag = |editing: &PartEditing, done: bool| {
@@ -618,7 +617,8 @@ fn assert_derivatives_are_true(assembly: &mut Assembly) {
                         inputs,
                         ..
                     } = &mut *assembly;
-                    runner.run(part, program, inputs, &moved);
+                    program.state = moved;
+                    runner.run_with(part, program, inputs, None);
                     let made = self::constraint(&assembly.reader(), name).residuals;
                     made.iter().map(|r| r.to_f64()).collect::<Vec<_>>()
                 };

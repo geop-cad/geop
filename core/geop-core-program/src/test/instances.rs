@@ -43,8 +43,9 @@ impl Operation for LoadOperation {
 }
 
 thread_local! {
-    /// The programs of the tests' workspace, by file.
-    static FILES: RefCell<BTreeMap<String, Rc<Program>>> = const { RefCell::new(BTreeMap::new()) };
+    /// The programs of the tests' workspace, by file, each with the
+    /// revision it was written in.
+    static FILES: RefCell<BTreeMap<String, (Rc<Program>, u64)>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 /// The tests' programs, by the file each was written to ([`load`]).
@@ -52,7 +53,7 @@ pub(crate) struct Files;
 
 impl Workspace for Files {
     fn program(&self, path: &str) -> GeopResult<Rc<Program>> {
-        let program = FILES.with(|files| files.borrow().get(path).cloned());
+        let program = FILES.with(|files| files.borrow().get(path).map(|(p, _)| p.clone()));
         program.ok_or_else(|| GeopError::new(format!("there is no file {path:?}")))
     }
 
@@ -72,9 +73,13 @@ impl Workspace for Files {
         path.to_string()
     }
 
-    /// Every file is written once per test: one revision.
-    fn revision(&self, _: &str) -> u64 {
-        0
+    fn revision(&self, path: &str) -> u64 {
+        FILES.with(|files| {
+            files
+                .borrow()
+                .get(path)
+                .map_or(0, |(_, revision)| *revision)
+        })
     }
 }
 
@@ -106,8 +111,9 @@ fn write(name: &str, steps: Vec<ProgramStep>) -> String {
     let program = Program::from_steps(steps);
     FILES.with(|files| {
         let mut files = files.borrow_mut();
-        if files.get(&file).is_none_or(|kept| **kept != program) {
-            files.insert(file.clone(), Rc::new(program));
+        if files.get(&file).is_none_or(|(kept, _)| **kept != program) {
+            let revision = files.values().map(|(_, r)| *r).max().unwrap_or_default() + 1;
+            files.insert(file.clone(), (Rc::new(program), revision));
         }
     });
     file

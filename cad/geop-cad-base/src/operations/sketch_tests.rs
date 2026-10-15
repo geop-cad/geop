@@ -51,18 +51,10 @@ fn input(view: &Reader, name: &str) -> Option<Setting> {
         return read_properties(view).ok()?.color.clone().map(Setting::Text);
     }
     let values = read_parameter_values(view).ok()?;
-    let (parameter, column) = match name.split_once('.') {
-        Some((table, column)) => (table, Some(column)),
-        None => (name, None),
-    };
-    let (_, value) = values.0.iter().find(|(n, _)| n == parameter)?;
-    match (value, column) {
-        (ParameterValue::Number(n), None) => Some(Setting::Number(*n)),
-        (ParameterValue::Row { name, .. }, None) => Some(Setting::Text(name.clone())),
-        (ParameterValue::Row { columns, .. }, Some(column)) => {
-            columns.get(column).map(|v| Setting::Number(*v))
-        }
-        (ParameterValue::Number(_), Some(_)) => None,
+    let (_, value) = values.0.iter().find(|(n, _)| n == name)?;
+    match value {
+        ParameterValue::Number(n) => Some(Setting::Number(*n)),
+        ParameterValue::Text(row) => Some(Setting::Text(row.clone())),
     }
 }
 

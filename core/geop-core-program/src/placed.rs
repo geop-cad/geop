@@ -28,6 +28,7 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 
 use crate::{
     part::{Part, StepContext},
+    program::Program,
     reader::Reader,
     target::{Read, Target, TargetReference},
     values::{Settings, StateValues},
@@ -153,6 +154,7 @@ pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart
     let key = BuildKey {
         revision: runner.revision(&location.file),
         path: location.file.clone(),
+        program: program.clone(),
         inputs: args.inputs.clone(),
         state,
     };
@@ -188,14 +190,28 @@ pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart
     Ok(PlacedPart { part })
 }
 
-/// What a placed part is built from, exactly: the program, by its file and
-/// that file's revision, its inputs and its state.
-#[derive(Clone, Debug, PartialEq)]
+/// What a placed part is built from, exactly: the program — its file, that
+/// file's revision, and the program itself, the same `Rc` while the file
+/// does not change — its inputs and its state.
+#[derive(Clone, Debug)]
 pub(crate) struct BuildKey {
     path: String,
     revision: u64,
+    program: Rc<Program>,
     inputs: Settings,
     state: StateValues,
+}
+
+/// The same file in the same revision, the same program — the very one, or
+/// one equal to it — and equal inputs and state.
+impl PartialEq for BuildKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path
+            && self.revision == other.revision
+            && (Rc::ptr_eq(&self.program, &other.program) || self.program == other.program)
+            && self.inputs == other.inputs
+            && self.state == other.state
+    }
 }
 
 impl BuildKey {

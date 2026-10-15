@@ -5,7 +5,7 @@
 use geop_core_program::{
     operation::Operation,
     operation_registry::OperationRegistry,
-    part::{Part, StepContext},
+    part::StepContext,
     program::{Program, ProgramStep},
     runner::Runner,
     values::{Design, Settings, pose_state},
@@ -77,9 +77,8 @@ impl Operation for Place {
 
     fn run(ctx: &mut StepContext, args: &PlaceArgs) -> GeopResult<()> {
         let step = ctx.step();
-        let runner = ctx.runner();
         let placement = Placement::State(pose_state(step));
-        define_placed(runner, ctx, step, &args.file, &args.inputs, placement)
+        define_placed(ctx, step, &args.file, &args.inputs, placement)
     }
 }
 
@@ -126,7 +125,8 @@ impl Workspace for Shelf {
         path.to_string()
     }
 
-    fn revision(&self) -> u64 {
+    /// A shelf does not change: one revision.
+    fn revision(&self, _: &str) -> u64 {
         0
     }
 }

@@ -21,9 +21,9 @@ use geop_core_program::{
     operation_registry::OperationRegistry,
     part::{Part, StepContext},
     program::{Program, ProgramStep},
-    program_runner::{RunOutput, Runner},
     reader::Reader,
-    target::TargetReference,
+    runner::{RunOutput, Runner},
+    target::{Target, TargetReference},
     values::{Design, Setting, Settings, StateValue, StateValues, pose_in},
 };
 use serde::{Deserialize, Serialize};
@@ -93,6 +93,9 @@ fn assert_encloses<const N: usize>(actual: Vector<Design, N>, expected: [f64; N]
 struct Frame {
     data: Vector3<Design>,
 }
+
+/// Defined by one step.
+impl Target for Frame {}
 
 /// A frame is read whole: a kind of its own.
 impl Kind for Frame {
@@ -177,7 +180,7 @@ impl Operation for PinFrameOperation {
     fn run(ctx: &mut StepContext, args: &Self::Args) -> GeopResult<()> {
         let step = ctx.step();
         let args = (step.to_string(), args.clone());
-        define_constraints(ctx, step, &args, |reader, (step, args)| {
+        define_constraints(ctx, &args, |reader, (step, args)| {
             record_built(step);
             let frame = reader.retrieve_element(&whole_frame(&args.frame))?;
             let (at, rows) = position(&reader.retrieve_state(&args.state))?;
@@ -249,8 +252,13 @@ impl Running {
         }
     }
 
+    /// Runs `program` with `inputs`, at `state`.
     fn run(&mut self, program: &Program, inputs: &Settings, state: &StateValues) -> RunOutput {
-        self.runner.run(&mut self.part, program, inputs, state)
+        let program = Program {
+            steps: program.steps.clone(),
+            state: state.clone(),
+        };
+        (self.runner).run_with(&mut self.part, &program, inputs, None)
     }
 
     /// The program `program` with `inputs`, for a solve to run.
@@ -258,8 +266,8 @@ impl Running {
         Run {
             runner: &self.runner,
             part: &mut self.part,
-            program,
-            inputs,
+            program: program.clone(),
+            inputs: inputs.clone(),
         }
     }
 }
@@ -328,21 +336,23 @@ fn by_body(residuals: usize) -> Constraint {
 /// part's constraints.
 #[test]
 fn inconsistent_constraint_is_an_error() {
-    let mut part = Part::default();
-    part.begin_run(&Settings::new(), &pose_at(0.0));
-    part.begin_step();
-    let unread = define_constraints(&mut part, "s1", &(), |_, _| {
-        Ok(BTreeMap::from([("unread".to_string(), by_body(1))]))
+    let runner = Runner::new(registry());
+    let mut part = Part::given(Settings::new(), pose_at(0.0));
+    let unread = runner.run_step(&mut part, "s1", |ctx| {
+        define_constraints(ctx, &(), |_, _| {
+            Ok(BTreeMap::from([("unread".to_string(), by_body(1))]))
+        })
     });
     assert_eq!(
         unread.unwrap_err().root_message(),
         "constraint `unread` gives a derivative by state `body`, which it does not read"
     );
 
-    part.begin_step();
-    let rows = define_constraints(&mut part, "s2", &(), |reader, _| {
-        reader.retrieve_state("body");
-        Ok(BTreeMap::from([("rows".to_string(), by_body(2))]))
+    let rows = runner.run_step(&mut part, "s2", |ctx| {
+        define_constraints(ctx, &(), |reader, _| {
+            reader.retrieve_state("body");
+            Ok(BTreeMap::from([("rows".to_string(), by_body(2))]))
+        })
     });
     assert_eq!(
         rows.unwrap_err().root_message(),
@@ -369,7 +379,7 @@ fn a_failed_constraint_step_fails_the_constraints() {
     };
     assert_eq!(broken, "broken");
     assert!(
-        why_broken.contains("target `missing` is not defined"),
+        why_broken.contains("no step before here produces target `missing`"),
         "{why_broken}"
     );
     let error = constraints_now(&runner.part).unwrap_err();
@@ -391,13 +401,10 @@ fn constraint_defined_twice_is_an_error() {
         };
         Ok(BTreeMap::from([("pin".to_string(), free)]))
     }
+    let runner = Runner::new(registry());
     let mut part = Part::default();
-    part.begin_run(&Settings::new(), &StateValues::new());
-    part.begin_step();
-    define_constraints(&mut part, "one", &(), define).unwrap();
-    part.begin_step();
-    define_constraints(&mut part, "two", &(), define).unwrap();
-    part.end_run(0);
+    (runner.run_step(&mut part, "one", |ctx| define_constraints(ctx, &(), define))).unwrap();
+    (runner.run_step(&mut part, "two", |ctx| define_constraints(ctx, &(), define))).unwrap();
     assert_eq!(
         constraints_now(&part).unwrap_err().root_message(),
         "constraint `pin` is defined twice: by step `one` and by step `two`"
@@ -424,8 +431,8 @@ fn unknowns_merge_by_state() {
         unknowns.get(state).map(|unknown| unknown.mobility)
     };
 
+    let runner = Runner::new(registry());
     let mut part = Part::default();
-    part.begin_run(&Settings::new(), &StateValues::new());
     assert!(
         Unknowns::of(&part.current())
             .unwrap()
@@ -433,21 +440,58 @@ fn unknowns_merge_by_state() {
             .next()
             .is_none()
     );
-    part.begin_step();
     let first = [
         declared("body", Mobility::Held),
         declared("loose", Mobility::Held),
     ];
-    declare_unknowns(&mut part, &first, declare).unwrap();
-    part.begin_step();
+    (runner.run_step(&mut part, "first", |ctx| {
+        declare_unknowns(ctx, &first, declare)
+    }))
+    .unwrap();
     let second = [
         declared("body", Mobility::Fixed),
         declared("loose", Mobility::Follows),
     ];
-    declare_unknowns(&mut part, &second, declare).unwrap();
-    part.end_run(0);
+    (runner.run_step(&mut part, "second", |ctx| {
+        declare_unknowns(ctx, &second, declare)
+    }))
+    .unwrap();
 
     assert_eq!(mobility(&part, "body"), Some(Mobility::Fixed));
     assert_eq!(mobility(&part, "loose"), Some(Mobility::Held));
     assert_eq!(mobility(&part, "other"), None);
+}
+
+/// Defines the target `<step>` as the frame at the origin of the pose
+/// `state`: geometry the state drives.
+fn follow(reader: &Reader, state: &String) -> GeopResult<Frame> {
+    Ok(Frame {
+        data: pose_of(&reader.retrieve_state(state)).position(),
+    })
+}
+
+/// A constraint reading a target that read the state itself would close a
+/// loop the solve's derivatives do not see: it is refused, naming the
+/// constraint, the target and the state.
+#[test]
+fn a_constraint_on_geometry_the_state_drives_is_refused() {
+    let runner = Runner::new(registry());
+    let mut part = Part::given(Settings::new(), pose_at(1.0));
+    let followed = TargetReference::<Frame>::new("followed");
+    (runner.run_step(&mut part, "followed", |ctx| {
+        ctx.produce(&followed, &"body".to_string(), follow)
+    }))
+    .unwrap();
+    let pinned = runner.run_step(&mut part, "pin", |ctx| {
+        let args = PinFrameArgs {
+            frame: "followed".into(),
+            state: "other".into(),
+        };
+        PinFrameOperation::run(ctx, &args)
+    });
+    assert_eq!(
+        pinned.unwrap_err().root_message(),
+        "constraint `pin` reads target `followed`, which itself reads the state `body`: a solve \
+         could not see how it moves with the state — a constraint may read the state only itself"
+    );
 }

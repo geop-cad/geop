@@ -8,13 +8,8 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
 };
 use geop_core_program::{
-    element::ElementReference,
-    operation_registry::OperationRegistry,
-    part::Part,
-    program::Program,
-    reader::Reader,
-    runner::Runner,
-    values::{Settings, StateValues},
+    element::ElementReference, operation_registry::OperationRegistry, part::Part, program::Program,
+    reader::Reader, runner::Runner,
 };
 use geop_ops_datums::{AnyDatum, Datums, ORIGIN, component_name, datums, read_datums};
 use geop_ops_extrude_revolve::{
@@ -61,7 +56,7 @@ impl Built {
     fn of(program: Program) -> Self {
         let runner = runner_of(registry().unwrap());
         let mut part = Part::default();
-        (program.run(&runner, &mut part, &Settings::new(), &StateValues::new())).unwrap();
+        (program.run(&runner, &mut part)).unwrap();
         Built {
             program,
             runner,
@@ -83,12 +78,7 @@ impl Built {
             construction,
         };
         program.push(id, args);
-        program.run(
-            &self.runner,
-            &mut self.part,
-            &Settings::new(),
-            &StateValues::new(),
-        )?;
+        program.run(&self.runner, &mut self.part)?;
         Ok(program)
     }
 
@@ -121,10 +111,7 @@ impl Built {
     /// The part as the program — without a datum step tried since — has it.
     fn seen(&mut self) -> Reader<'_> {
         let (runner, part) = (&self.runner, &mut self.part);
-        (self
-            .program
-            .run(runner, part, &Settings::new(), &StateValues::new()))
-        .unwrap();
+        (self.program.run(runner, part)).unwrap();
         self.part.current()
     }
 

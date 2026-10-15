@@ -178,6 +178,19 @@ pub fn validate_color(color: &str) -> GeopResult<()> {
     Ok(())
 }
 
+impl NumberParameter {
+    /// The number parameter `name`, `expression` by default — a formula of
+    /// those before it, or a value — offered from `min` to `max`.
+    pub fn new(name: &str, expression: &str, min: f64, max: f64) -> Self {
+        Self {
+            name: name.into(),
+            expression: expression.into(),
+            min: Some(min),
+            max: Some(max),
+        }
+    }
+}
+
 impl Parameter {
     /// The number parameter `name`, `expression` by default — a formula of
     /// those before it, or a value — offered from `min` to `max`.

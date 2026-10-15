@@ -9,7 +9,7 @@ use geop_core_program::{
     program::Program,
     runner::Runner,
     testing::assert_incremental,
-    values::{Design, Settings, StateValue, pose_state},
+    values::{Design, StateValue, pose_state},
     workspace::{Location, Workspace},
 };
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, Output};
@@ -55,10 +55,10 @@ impl Running {
     /// Runs the first `end` steps of `program` — all, if `None` — and says
     /// which failed, and why.
     pub(super) fn run(&mut self, program: &Program, end: Option<usize>) -> Vec<(String, String)> {
-        let steps = program;
-        let end = end.unwrap_or(steps.steps.len());
-        let inputs = Settings::new();
-        let output = (self.runner).run_until(&mut self.part, steps, end, &inputs, &program.state);
+        let upto = end
+            .and_then(|end| program.steps.get(end))
+            .map(|step| step.id.as_str());
+        let output = (self.runner).run(&mut self.part, program, upto);
         (output.step_errors.into_iter())
             .map(|(step, error)| (step, error.to_string()))
             .collect()
@@ -76,8 +76,8 @@ impl Running {
     /// while the old one still is, so elsewhere.
     pub(super) fn built_anew(&mut self, program: &Program) -> usize {
         let mut anew = 0;
-        for (index, step) in program.steps.iter().enumerate() {
-            let view = self.part.reader(index + 1);
+        for step in &program.steps {
+            let view = self.part.after(&step.id);
             let address = match step.operation.as_str() {
                 "add_sketch" => view
                     .retrieve_element(&whole_sketch(&step.id))
@@ -154,7 +154,7 @@ fn runner_reports_the_failing_step() {
     assert_eq!(id, "hole");
     assert!(error.contains("extrude(nothing)"), "{error}");
     // The model the steps before it built is there for it to build on.
-    let before = (running.part).reader(program.index_of("hole").unwrap());
+    let before = (running.part).before("hole");
     let built = read_model(&before).unwrap();
     assert!(built.solid_id("extrude(box)").is_ok());
 }

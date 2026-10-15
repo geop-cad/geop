@@ -18,7 +18,7 @@ use geop_core_program::{
     part::Part,
     program::{Program, ProgramStep},
     runner::Runner,
-    values::{Design, Settings, StateValues},
+    values::Design,
 };
 use geop_core_sketch::{CurveId, PointId};
 use geop_ops_booleans::Combine;
@@ -203,7 +203,7 @@ impl Built for Program {
     fn built(&self, registry: fn() -> GeopResult<OperationRegistry>) -> GeopResult<Part> {
         let runner = runner_of(registry()?);
         let mut part = Part::default();
-        self.run(&runner, &mut part, &Settings::new(), &StateValues::new())?;
+        self.run(&runner, &mut part)?;
         Ok(part)
     }
 }

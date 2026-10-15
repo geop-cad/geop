@@ -8,7 +8,7 @@ use geop_core_math::{
 use geop_core_program::{
     part::Part,
     program::Program,
-    values::{Setting, Settings, StateValue, StateValues, pose_state},
+    values::{Setting, Settings, StateValue, pose_state},
 };
 use geop_ops_parameters::{
     Material, Parameter, ParameterKind, Parameters, parameters::Row, set_parameters,
@@ -57,7 +57,7 @@ fn program(
 fn build(shelf: Shelf, file: &str, root: Program) -> Part {
     let runner = runner(shelf.with(file, root.clone()), file);
     let mut part = Part::default();
-    (root.run(&runner, &mut part, &Settings::new(), &StateValues::new())).unwrap();
+    (root.run(&runner, &mut part)).unwrap();
     part
 }
 

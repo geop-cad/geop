@@ -9,10 +9,9 @@ use geop_core_math::{
 };
 use geop_core_program::{
     operation::Operation,
-    part::{Part, StepContext},
+    part::StepContext,
     program::{Program, ProgramStep},
     reader::Reader,
-    runner::Runner,
     values::{Design, StateValues},
 };
 use serde::{Deserialize, Serialize};
@@ -43,7 +42,7 @@ impl Operation for LimitOperation {
     fn run(ctx: &mut StepContext, args: &LimitArgs) -> GeopResult<()> {
         let step = ctx.step();
         let args = (step.to_string(), args.clone());
-        define_constraints(ctx, step, &args, |reader, (step, args)| {
+        define_constraints(ctx, &args, |reader, (step, args)| {
             let (at, rows) = position(&reader.retrieve_state(&args.state))?;
             let limit = Constraint {
                 residuals: vec![at[0].sub(Design::from_f64(args.most))],

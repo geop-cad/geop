@@ -42,13 +42,16 @@ fn given_sketch(_: &Reader, s: &PlacedSketch<Design>) -> GeopResult<PlacedSketch
 /// step would have built.
 fn built(model: &NamedModel<S>, sketches: &[(&str, PlacedSketch<S>)]) -> Part {
     let mut part: Part = given_part(model).unwrap();
+    let runner = geop_core_program::runner::Runner::new(Default::default());
     for (name, placed) in sketches {
         let placed = PlacedSketch {
             name: name.to_string(),
             ..placed.clone()
         };
-        part.define_target(&sketch(name), &placed, given_sketch)
-            .unwrap();
+        (runner.run_step(&mut part, name, |ctx| {
+            ctx.produce(&sketch(name), &placed, given_sketch)
+        }))
+        .unwrap();
     }
     part
 }

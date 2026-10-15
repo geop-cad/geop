@@ -40,17 +40,18 @@ use geop_core_program::{
     program::Program,
     reader::Reader,
     runner::Runner,
-    values::{Design, StateValue, StateValues},
+    values::{Design, Settings, StateValue, StateValues},
 };
 
 use crate::constraint::{Constraint, Constraints};
 
-/// A program to run again at every state a solve tries: its state is the
-/// state tried.
+/// A program to run again at every state a solve tries, with its inputs:
+/// its state is the state tried.
 pub struct Run<'r> {
     pub runner: &'r Runner,
     pub part: &'r mut Part,
     pub program: Program,
+    pub inputs: Settings,
 }
 
 thread_local! {
@@ -70,7 +71,7 @@ impl Run<'_> {
     fn at(&mut self, state: &StateValues) -> &Part {
         RUNS.set(RUNS.get() + 1);
         self.program.state.clone_from(state);
-        self.runner.run(self.part, &self.program, None);
+        (self.runner).run_with(self.part, &self.program, &self.inputs, None);
         self.part
     }
 }

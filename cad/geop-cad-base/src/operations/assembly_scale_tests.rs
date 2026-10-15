@@ -16,7 +16,7 @@ use crate::{
 use geop_core_program::{
     part::Part,
     program::Program,
-    values::{Design, Settings, StateValue, StateValues, pose_state},
+    values::{Design, StateValue, StateValues, pose_state},
     workspace::{FileStore, FileStoreMut},
 };
 use std::{
@@ -310,7 +310,6 @@ fn moving_a_part_builds_again_only_what_reads_where_it_is() {
         }),
         Rc::new(registry().unwrap()),
     );
-    let inputs = Settings::new();
     let resolved = geop_ops_assembly::mates_resolved();
     let mut built = super::build(&robot, "robot.geop", workspace.clone()).unwrap();
     assert_eq!(
@@ -326,9 +325,7 @@ fn moving_a_part_builds_again_only_what_reads_where_it_is() {
         StateValue::Pose(pose([4.0, 3.0, 0.2], [0.0; 3])),
     );
     let resolved = geop_ops_assembly::mates_resolved();
-    let output = built
-        .runner
-        .run(&mut built.part, &moved, &inputs, &moved.state);
+    let output = built.runner.run(&mut built.part, &moved, None);
     assert!(output.step_errors.is_empty(), "{:?}", output.step_errors);
     assert_eq!(
         geop_ops_assembly::mates_resolved() - resolved,

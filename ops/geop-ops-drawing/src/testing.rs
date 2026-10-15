@@ -3,10 +3,10 @@
 
 use geop_core_math::{geop_error::GeopResult, primitives::Pose};
 use geop_core_program::{
-    part::Part,
+    part::{Part, StepContext},
     program::Program,
     reader::Reader,
-    values::{Design, Settings, StateValue, StateValues, pose_state},
+    values::{Design, Settings, StateValue, pose_state},
 };
 use geop_ops_assembly::testing::{Shelf, given_model, place, runner};
 use geop_ops_model::{NamedModel, model};
@@ -38,20 +38,24 @@ pub(crate) fn placeable(file: &str, bodies: &NamedModel<Design>) -> Placeable {
 
 /// The part a program builds that gives `bodies` as its model, and last
 /// runs `then`.
-pub(crate) fn built_with(bodies: &NamedModel<Design>, then: impl FnOnce(&mut Part)) -> Part {
+pub(crate) fn built_with(
+    bodies: &NamedModel<Design>,
+    then: impl FnOnce(&mut StepContext) -> GeopResult<()>,
+) -> Part {
     let mut part = Part::default();
-    part.begin_run(&Default::default(), &Default::default());
-    part.begin_step();
-    part.define_target(&model(), bodies, given).unwrap();
-    then(&mut part);
-    part.end_run(0);
+    let runner = geop_core_program::runner::Runner::new(Default::default());
+    (runner.run_step(&mut part, "given", |ctx| {
+        ctx.produce(&model(), bodies, given)?;
+        then(ctx)
+    }))
+    .unwrap();
     part
 }
 
 /// The part a program builds that gives `bodies` as its model and nothing
 /// else (see [`built_with`]).
 pub(crate) fn built(bodies: &NamedModel<Design>) -> Part {
-    built_with(bodies, |_| {})
+    built_with(bodies, |_| Ok(()))
 }
 
 /// The part the program of the file `assembly.geop` builds that places
@@ -69,6 +73,6 @@ pub(crate) fn assembled(placed: &[(&str, &Placeable, Pose<Design>)]) -> Part {
     let file = "assembly.geop";
     let runner = runner(shelf.with(file, root.clone()), file);
     let mut part = Part::default();
-    (root.run(&runner, &mut part, &Settings::new(), &StateValues::new())).unwrap();
+    (root.run(&runner, &mut part)).unwrap();
     part
 }

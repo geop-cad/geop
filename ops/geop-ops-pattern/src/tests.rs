@@ -27,10 +27,8 @@ fn apply_to_model<O: Operation>(
     args: &O::Args,
 ) -> GeopResult<NamedModel<S>> {
     let mut part = given_part(&model)?;
-    part.begin_step();
     let runner = geop_core_program::runner::Runner::new(Default::default());
-    O::run(step, &runner, &mut part, args)?;
-    part.end_run(0);
+    runner.run_step(&mut part, step, |ctx| O::run(ctx, args))?;
     Ok(read_model(&part.current())?.into_owned())
 }
 

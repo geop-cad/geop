@@ -686,13 +686,11 @@ mod tests {
     /// The datum step `d` with `args` adds to a part of nothing but the
     /// origin, or why it fails.
     fn added(args: &AddDatumArgs) -> GeopResult<Datum<S>> {
-        let mut part = Part::default();
-        part.begin_run(&Default::default(), &Default::default());
-        part.begin_step();
-        part.begin_step();
-        let runner = Runner::new(Default::default());
-        <AddDatum as Operation>::run("d", &runner, &mut part, args)?;
-        part.end_run(0);
+        let mut part = geop_core_program::part::Part::default();
+        let runner = geop_core_program::runner::Runner::new(Default::default());
+        runner.run_step(&mut part, "d", |ctx| {
+            <AddDatum as Operation>::run(ctx, args)
+        })?;
         let datums = read_datums(&part.current())?.into_owned();
         datums.get("d")
     }

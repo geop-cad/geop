@@ -13,7 +13,6 @@ use geop_core_program::{
     runner::Runner,
     values::{Design, Setting, Settings},
 };
-use std::collections::BTreeMap;
 
 use geop_core_editor::{
     editing::{Pointer, Reach},
@@ -28,7 +27,7 @@ use geop_core_math::{
 use geop_core_sketch::{Constraint, CurveId, PointId};
 use geop_ops_datums::origin_plane;
 use geop_ops_model::{Curve, Line, NamedModel, Path, Plane, Point, model, testing::unit_cube};
-use geop_ops_parameters::{DefineParameters, DefineParametersArgs, Parameter};
+use geop_ops_parameters::{DefineParameters, DefineParametersArgs, NumberParameter};
 use geop_ops_view::{PartView, drawn};
 
 use crate::{
@@ -81,7 +80,7 @@ fn square(sketch: &mut Sketch) -> (Vec<PointId>, Vec<CurveId>) {
 fn run(part: &mut Part, args: &AddSketchArgs, inputs: &[(&str, f64)]) {
     let parameters = DefineParametersArgs {
         values: (inputs.iter())
-            .map(|&(name, _)| Parameter::number(name, "1", 0.0, 10.0))
+            .map(|&(name, _)| NumberParameter::new(name, "1", 0.0, 10.0))
             .collect(),
     };
     let program = Program::from_steps(vec![
@@ -92,7 +91,7 @@ fn run(part: &mut Part, args: &AddSketchArgs, inputs: &[(&str, f64)]) {
     let inputs: Settings = (inputs.iter())
         .map(|&(name, value)| (name.to_string(), Setting::Number(value)))
         .collect();
-    let output = runner().run(part, &program, &inputs, &BTreeMap::new());
+    let output = runner().run_with(part, &program, &inputs, None);
     assert!(output.step_errors.is_empty(), "{:?}", output.step_errors);
 }
 
