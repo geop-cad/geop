@@ -8,10 +8,12 @@ use geop_core_editor::{
 };
 use geop_core_program::{
     element::ElementReference,
+    numeric::{ParameterValue, read_parameter_values},
     part::Part,
     program::{Program, ProgramStep},
+    reader::Reader,
     runner::Runner,
-    values::{Design, StateValue, StateValues, pose_state},
+    values::{Design, Setting, StateValue, StateValues, pose_state},
     workspace::{self, FileStore, Files, Location},
 };
 use geop_lib_stdlib::WithStandardParts;
@@ -28,23 +30,24 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::testing::{assert_incremental, assert_round_trips, edit_sequence};
+use geop_core_sketch::PointId;
 use geop_ops_datums::{ORIGIN, component_name, datum};
 use geop_ops_extrude_revolve::{
     ExtrudeArgs,
-    examples::box_with_drill_hole,
+    examples::{box_with_drill_hole, parametric_plate},
     testing::{edit_args, model_of},
 };
-use geop_ops_model::{element, read_model, testing::assert_close};
-use geop_ops_parameters::instances;
+use geop_ops_model::{Point, element, read_model, testing::assert_close};
+use geop_ops_parameters::{COLOR, instances, read_properties};
 use geop_ops_pattern::spacing::Spacing;
 use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
-use geop_ops_sketch::figures::n;
+use geop_ops_sketch::{figures::n, sketch_element};
 
 use crate::{
     AddPartArgs, DragTool, MateEntity, PartPatternArgs, PatternAxis, Resolved, examples,
     examples::pose,
     mate_name,
-    placed::locate,
+    placed::{Placed, locate, placed_parts},
     solving::{self, Freedom, Report, SettingsState},
 };
 
@@ -1884,4 +1887,70 @@ fn press_handle_rim_fillet_is_narrow() {
         .flat_map(|p| (0..4).map(move |k| p[k].width().to_f64()))
         .fold(0.0, f64::max);
     assert!(widest < 3e-9, "{widest:e}: {:?}", surface.control_points);
+}
+
+/// The value of the parameter `name` the part `view` shows was built with:
+/// a table's row, a number, a table's column (`table.column`) — or, for
+/// [`COLOR`], its colour.
+fn input(view: &Reader, name: &str) -> Option<Setting> {
+    if name == COLOR {
+        return read_properties(view).ok()?.color.clone().map(Setting::Text);
+    }
+    let values = read_parameter_values(view).ok()?;
+    let (_, value) = values.0.iter().find(|(n, _)| n == name)?;
+    match value {
+        ParameterValue::Number(n) => Some(Setting::Number(*n)),
+        ParameterValue::Text(row) => Some(Setting::Text(row.clone())),
+    }
+}
+
+/// Placed by another program, the plate is built with the values given
+/// there: wider, with a larger hole, in another colour — and as it is
+/// where nothing is given.
+#[test]
+fn placed_parts_take_the_parameters_given() {
+    let workspace = workspace(BTreeMap::from([(
+        "plate.geop".to_string(),
+        parametric_plate().to_json().unwrap(),
+    )]));
+    let program = examples::plates_assembly();
+    let part = build_file(&program, "plates.geop", workspace).unwrap().part;
+    let view = part.current();
+    // An element of a placed part, where it is placed.
+    let corner = |instance: &str| {
+        let located = locate(&view, instance).unwrap();
+        let component = located.part.clone();
+        let reference = sketch_element::<Point>("outline", PointId(2));
+        let p = located
+            .world
+            .apply(&component.retrieve_element(&reference).unwrap());
+        [p[0].to_f64(), p[1].to_f64()]
+    };
+    let small = corner("small");
+    let large = corner("large");
+    assert!(
+        (small[0] - 4.0).abs() < 1e-9 && (small[1] - 2.0).abs() < 1e-9,
+        "{small:?}"
+    );
+    // 5 wide, and so 2.5 deep; placed 3 along y.
+    assert!(
+        (large[0] - 5.0).abs() < 1e-9 && (large[1] - 5.5).abs() < 1e-9,
+        "{large:?}"
+    );
+    let placed = placed_parts(&view).unwrap();
+    let color = |part: &Placed| input(&part.located.part.clone(), COLOR);
+    let colors: Vec<Option<Setting>> = placed.iter().map(color).collect();
+    let text = |c: &str| Some(Setting::Text(c.into()));
+    assert!(colors.contains(&text("#3e7bd0")), "{colors:?}");
+    assert!(colors.contains(&text("#d0893e")), "{colors:?}");
+    // The table's row and the number given are what the large plate was
+    // built with.
+    let large = placed.iter().find(|p| color(p) == text("#3e7bd0")).unwrap();
+    let large = large.located.part.clone();
+    assert_eq!(input(&large, "screw"), text("M6"));
+    let clearance = match input(&large, "screw.clearance") {
+        Some(Setting::Number(v)) => Some(v),
+        _ => None,
+    };
+    assert_eq!(clearance, Some(0.66));
 }

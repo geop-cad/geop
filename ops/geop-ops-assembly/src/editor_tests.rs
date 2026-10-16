@@ -5,7 +5,7 @@
 use geop_core_program::{
     element::{ElementReference, PickedElement},
     program::Program,
-    values::Design,
+    values::{Design, Setting},
 };
 use std::collections::BTreeMap;
 
@@ -206,4 +206,61 @@ fn mates_that_cannot_hold_are_said_so() {
         panic!("the mates are a list");
     };
     assert!(items.iter().any(|i| i.tone == Tone::Error), "{items:?}");
+}
+
+/// Placing the plate, its parameters are offered as what they are: its
+/// colour to pick, its numbers on sliders over their ranges, its screw
+/// from a table to search — showing what the plate is built with here,
+/// the depth following the width given — and what is set there is what
+/// the plate is placed with.
+#[test]
+fn placing_a_part_offers_its_parameters() {
+    let mut editor = editor();
+    let plate = geop_ops_extrude_revolve::examples::parametric_plate();
+    let files = BTreeMap::from([("plate.geop".to_string(), Some(plate.to_json().unwrap()))]);
+    assert!(editor.handle(Command::Files { files }).error.is_none());
+    handled(
+        &mut editor,
+        Command::Load {
+            program: crate::examples::plates_assembly(),
+            path: Some("plates.geop".into()),
+        },
+    );
+    let update = editor.handle(Command::Open { id: "large".into() });
+    let dialog = update.step.unwrap().presentation.dialog;
+    assert!(matches!(
+        dialog.get("parameter:color"),
+        Some(Control::Color { value, .. }) if value == "#3e7bd0"
+    ));
+    let Some(Control::Number(width)) = dialog.get("parameter:width") else {
+        panic!("width on a slider")
+    };
+    assert_eq!((width.value, width.range), (5.0, Some([1.0, 10.0])));
+    let Some(Control::Number(depth)) = dialog.get("parameter:depth") else {
+        panic!("depth on a slider")
+    };
+    assert!((depth.value - 2.5).abs() < 1e-9, "{}", depth.value);
+    let Some(Control::Select {
+        options,
+        searchable,
+        value,
+        ..
+    }) = dialog.get("parameter:screw")
+    else {
+        panic!("the screw from its table")
+    };
+    assert!(*searchable && value == "M6" && options.len() == 4);
+
+    handled(
+        &mut editor,
+        Command::Event {
+            event: StepEditEvent::Dialog {
+                key: "parameter:screw".into(),
+                value: Value::Choice("M3".into()),
+            },
+        },
+    );
+    handled(&mut editor, Command::Commit);
+    let args: AddPartArgs = geop_ops_extrude_revolve::testing::args(&editor.program().steps[1]);
+    assert_eq!(args.parameters["screw"], Setting::Text("M3".into()));
 }
