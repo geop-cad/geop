@@ -26,16 +26,36 @@
 //! thread goes on, for it to be recorded on them.
 //!
 //! Where the files come from is [`WithStandardParts`]: a workspace's own
-//! files with the standard parts beside them, which is what
-//! [`crate::Workspace`] reads.
+//! files with the standard parts beside them, which is what the editor's
+//! workspace reads.
+//!
+//! A part of a program of its own drawn by formulas, as the families are,
+//! is a [`Drawing`] on the [`outline_plane`].
+
+// Library code reports what goes wrong as an error, never by panicking;
+// tests may unwrap.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::todo,
+        clippy::unimplemented,
+        clippy::unreachable
+    )
+)]
 
 mod components;
-pub mod drawing;
-pub mod drive;
+mod drawing;
+mod drive;
 mod fasteners;
-pub mod involute;
-pub mod steps;
-pub mod tables;
+mod involute;
+mod steps;
+mod tables;
+
+pub use drawing::Drawing;
+pub use steps::outline_plane;
 
 #[cfg(test)]
 mod tests;

@@ -15,21 +15,18 @@
 //!
 //! Gears of one module mesh with their pitch circles touching: centres
 //! `m · (z1 + z2) / 2` apart. Each gear's datum `axis` is a joint's
-//! connector; a revolute joint on each, and a [`Transmission::Gear`]
+//! connector; a revolute joint on each, and a `Transmission::Gear`
 //! coupling of the two joints with `value = z2 / z1`, the ratio — the
 //! first joint's gear turns that many times per turn of the second's — and
 //! `reverse`, since external gears turn opposite ways, keeps them in mesh.
 //! A rack slides by the arc its pinion's pitch circle rolls off: a
-//! [`Transmission::RackPinion`] coupling of `value = m · z / 2`, the
+//! `Transmission::RackPinion` coupling of `value = m · z / 2`, the
 //! pinion's pitch radius, which its sketch `pitch` draws. Two GT2 pulleys on one belt turn the same way, at the
 //! ratio of their tooth counts: a gear coupling without `reverse`.
 //!
 //! A gear has a tooth centred on `+x`. Two gears whose centres lie along
 //! `x` mesh when the second has a gap facing the first: turned half a
 //! tooth, `180° / z2`, if `z2` is even, and not at all if it is odd.
-//!
-//! [`Transmission::Gear`]: geop_ops_assembly::Transmission::Gear
-//! [`Transmission::RackPinion`]: geop_ops_assembly::Transmission::RackPinion
 
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
 use geop_ops_datums::{origin_axis, origin_plane};

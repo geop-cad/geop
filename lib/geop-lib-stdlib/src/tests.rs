@@ -1,23 +1,97 @@
 //! The standard parts: every family builds one valid solid of the size
 //! its table says, with the datums it is mated by.
 
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
+use std::{collections::BTreeMap, rc::Rc};
+
+use geop_core_editor::registry::Registry;
+use geop_core_math::{
+    geop_error::GeopResult,
+    scalars::{ScalInF64 as S, Scalar},
+};
 use geop_core_program::{
     part::Part,
     program::Program,
+    runner::Runner,
     values::{Design, Setting, Settings, StateValue, StateValues, pose_state},
+    workspace::{self, Files, Location},
 };
 use geop_core_topology::validation::{ValidationParameters, validate_fast};
 use geop_ops_datums::read_datums;
-use geop_ops_model::{NamedModel, RefId, read_model};
+use geop_ops_extrude_revolve::testing::{edit_args, model_of, step};
+use geop_ops_model::{NamedModel, RefId, read_model, testing::check_valid};
 use geop_ops_parameters::{
     ParameterKind, parameter_numbers, parameters_of, read_properties, set_parameters,
     steps::{LOOKUP, PARAMETERS, PROPERTIES},
 };
 use geop_ops_pattern::{CircularPatternArgs, Spacing};
 
-use super::{StandardPart, drive::TEETH, parts, steps::SIZE};
-use crate::registry::testing::{Built, check_valid, edit_args, step};
+use super::{StandardPart, WithStandardParts, drive::TEETH, parts, steps::SIZE};
+
+/// The operations the standard parts are written in, and those placing
+/// them: each crate's `register`, as the editor's registry has them.
+fn registry() -> Registry {
+    let registry = (|| -> GeopResult<Registry> {
+        let r = Registry::default();
+        let r = geop_ops_model::register(r)?;
+        let r = geop_ops_sketch::register(r)?;
+        let r = geop_ops_datums::register(r)?;
+        let r = geop_ops_add_datum::register(r)?;
+        let r = geop_ops_extrude_revolve::register(r)?;
+        let r = geop_ops_pattern::register(r)?;
+        let r = geop_ops_assembly::register(r)?;
+        geop_ops_parameters::register(r)
+    })();
+    registry.expect("the operations each have a name of their own")
+}
+
+/// The files `files`, beside the standard parts, whose programs are
+/// written in the operations of [`registry`].
+fn workspace(
+    files: BTreeMap<String, String>,
+) -> Rc<Files<WithStandardParts<BTreeMap<String, String>>>> {
+    Files::new(WithStandardParts(files), Rc::new(registry().operations()))
+}
+
+/// A part a program built, and the runner that built it, to run it again.
+struct BuiltPart {
+    runner: Runner,
+    part: Part,
+}
+
+/// Builds `program`, the file `file` of `workspace`, with its parameters
+/// as it defines them.
+fn build(
+    program: &Program,
+    file: &str,
+    workspace: Rc<dyn workspace::Workspace>,
+) -> GeopResult<BuiltPart> {
+    let mut runner = Runner::new(registry().operations());
+    runner.workspace = Some(workspace);
+    runner.location = Location {
+        file: workspace::resolve("", file),
+        within: Vec::new(),
+    };
+    let mut part = Part::default();
+    program.run(&runner, &mut part)?;
+    Ok(BuiltPart { runner, part })
+}
+
+/// Building a program on its own, in an empty [`workspace`].
+trait Built {
+    /// The part the program builds.
+    fn built(&self) -> GeopResult<Part>;
+
+    /// The model the program builds, or why a step fails.
+    fn build_model(&self) -> GeopResult<NamedModel<Design>> {
+        Ok(model_of(&self.built()?))
+    }
+}
+
+impl Built for Program {
+    fn built(&self) -> GeopResult<Part> {
+        Ok(build(self, "", workspace(BTreeMap::new()))?.part)
+    }
+}
 
 /// How far out from the `z` axis, and from where to where along it, the
 /// part of `file` reaches, by the norm: `value` reads a column of the size
@@ -333,47 +407,6 @@ fn every_spur_gear_builds_to_its_table() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
-/// The `bolted_plate` example holds together: the screw down the hole, the
-/// nut under the plate, upside down — its base on the plate's bottom.
-#[test]
-fn the_bolted_plate_holds_together() {
-    use std::collections::BTreeMap;
-
-    use geop_core_math::vector::Vector3;
-    use geop_ops_assembly::{placed::locate, solving};
-
-    use crate::{
-        examples,
-        registry::{build, workspace},
-    };
-
-    let files = BTreeMap::from([(
-        "plate.geop".to_string(),
-        examples::metric_plate().to_json().unwrap(),
-    )]);
-    let runner = build(
-        &examples::bolted_plate(),
-        "bolted_plate.geop",
-        workspace(files),
-    )
-    .unwrap();
-    let view = runner.part.current();
-    assert!(solving::check(&view).unwrap().converged);
-    let v = |p: [f64; 3]| Vector3::from_array(p.map(Design::from_f64));
-    for (instance, local, want) in [
-        ("screw", [0.0, 0.0, -12.0], [20.0, 20.0, -7.0]),
-        ("nut", [0.0, 0.0, 3.2], [20.0, 20.0, -3.2]),
-    ] {
-        let located = locate(&view, instance).unwrap();
-        let got = located.world.apply(&v(local));
-        let got = [0, 1, 2].map(|k| got[k].to_f64());
-        assert!(
-            (0..3).all(|k| (got[k] - want[k]).abs() < 1e-6),
-            "{instance} {local:?} is at {got:?}, not {want:?}"
-        );
-    }
-}
-
 /// The fewest teeth a gear has build into a valid gear, twelve booleans.
 /// The default suite checks the family by two gaps cut valid instead (see
 /// `a_gear_gap_turned_234_degrees_is_cut_valid`).
@@ -392,7 +425,7 @@ fn a_12_tooth_spur_gear_builds() {
 /// are made of; a servo weighs what it does.
 #[test]
 fn drive_and_motion_parts_are_designated_and_made_of_something() {
-    let runner = crate::registry::runner();
+    let runner = Runner::new(registry().operations());
     let text = |pairs: &[(&str, &str)]| -> Settings {
         pairs
             .iter()
@@ -532,14 +565,18 @@ fn twelve_gaps_of_a_42_tooth_gear_are_cut_valid() {
 /// With an odd count, the wheel has a gap facing the pinion's tooth on
 /// `+x` unturned, and the coupling keeps them in mesh.
 fn gear_drive() -> Program {
-    use std::collections::BTreeMap;
-
-    use geop_core_math::primitives::{DatumComponent, FrameAxis};
+    use geop_core_math::{
+        primitives::{DatumComponent, FrameAxis, Pose},
+        vector::Vector3,
+    };
     use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
     use geop_ops_assembly::{AddPartArgs, CouplingKind, JointKind, Mate, MateEntity, Transmission};
     use geop_ops_datums::{ORIGIN, component_name, datum};
 
-    use crate::examples::{n, pose};
+    let n = Design::from_f64;
+    let pose = |position: [f64; 3], degrees: [f64; 3]| {
+        Pose::from_euler(Vector3::from_array(position.map(n)), degrees.map(n)).unwrap()
+    };
 
     let mut program = Program::new();
     program.push(
@@ -643,12 +680,8 @@ fn gear_drive() -> Program {
 #[test]
 #[ignore = "slow: builds a 12- and a 15-tooth gear — run with `cargo test -- --ignored`"]
 fn a_motor_drives_a_gear_pair_at_its_ratio() {
-    use std::collections::BTreeMap;
-
     use geop_core_editor::editor::Rerun;
     use geop_ops_assembly::solving;
-
-    use crate::registry::{build, workspace};
 
     let program = gear_drive();
     let mut built = build(&program, "gear_drive.geop", workspace(BTreeMap::new())).unwrap();

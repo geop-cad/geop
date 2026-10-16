@@ -11,7 +11,6 @@ use crate::{
         registry,
         testing::{extrusion, handled, on_origin},
     },
-    stdlib::WithStandardParts,
 };
 use geop_core_program::{
     part::Part,
@@ -33,6 +32,7 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
+use geop_lib_stdlib::WithStandardParts;
 use geop_ops_add_datum::Selected;
 use geop_ops_assembly::{
     AddPartArgs, Kind, Mate, MateEntity, Resolved,

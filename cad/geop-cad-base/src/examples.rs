@@ -1143,7 +1143,7 @@ pub fn plates_assembly() -> Program {
 /// A plate 40 x 40 x 5 with a 4.5 hole through it at `(20, 20)` — in
 /// millimetres, as the standard parts are: clearance for an M4 screw.
 pub fn metric_plate() -> Program {
-    use crate::stdlib::{drawing::Drawing, steps::outline_plane};
+    use geop_lib_stdlib::{Drawing, outline_plane};
 
     let none = Program::new();
     let corner = |x: &str, y: &str| [x.to_string(), y.to_string()];

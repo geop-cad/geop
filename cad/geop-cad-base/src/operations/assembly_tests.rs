@@ -1656,3 +1656,44 @@ fn a_joint_is_made_by_clicking_where_its_frames_go() {
     );
     assert!((triad.1[2][2].to_f64().abs() - 1.0).abs() < 1e-9, "z up");
 }
+
+/// The `bolted_plate` example holds together: the screw down the hole, the
+/// nut under the plate, upside down — its base on the plate's bottom.
+#[test]
+fn the_bolted_plate_holds_together() {
+    use std::collections::BTreeMap;
+
+    use geop_core_math::vector::Vector3;
+    use geop_ops_assembly::{placed::locate, solving};
+
+    use crate::{
+        examples,
+        registry::{build, workspace},
+    };
+
+    let files = BTreeMap::from([(
+        "plate.geop".to_string(),
+        examples::metric_plate().to_json().unwrap(),
+    )]);
+    let runner = build(
+        &examples::bolted_plate(),
+        "bolted_plate.geop",
+        workspace(files),
+    )
+    .unwrap();
+    let view = runner.part.current();
+    assert!(solving::check(&view).unwrap().converged);
+    let v = |p: [f64; 3]| Vector3::from_array(p.map(Design::from_f64));
+    for (instance, local, want) in [
+        ("screw", [0.0, 0.0, -12.0], [20.0, 20.0, -7.0]),
+        ("nut", [0.0, 0.0, 3.2], [20.0, 20.0, -3.2]),
+    ] {
+        let located = locate(&view, instance).unwrap();
+        let got = located.world.apply(&v(local));
+        let got = [0, 1, 2].map(|k| got[k].to_f64());
+        assert!(
+            (0..3).all(|k| (got[k] - want[k]).abs() < 1e-6),
+            "{instance} {local:?} is at {got:?}, not {want:?}"
+        );
+    }
+}

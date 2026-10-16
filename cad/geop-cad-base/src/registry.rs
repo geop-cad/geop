@@ -14,8 +14,9 @@ use geop_core_program::{
     runner::Runner,
     workspace::{self, FileStore, Files, Location},
 };
+use geop_lib_stdlib::WithStandardParts;
 
-use crate::{examples, stdlib::WithStandardParts};
+use crate::examples;
 
 /// Everything the editor offers. Operations are offered group by group,
 /// and within a group and tier in the order they are registered here; the

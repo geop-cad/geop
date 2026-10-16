@@ -9,6 +9,7 @@ members = [
     "core/geop-core-sketch",
     "core/geop-core-rasterize",
     "lib/geop-lib-sheet",
+    "lib/geop-lib-stdlib",
     "ops/geop-ops-model",
     "ops/geop-ops-parameters",
     "ops/geop-ops-sketch",
@@ -54,6 +55,7 @@ geop-core-topology = { path = "core/geop-core-topology" }
 geop-core-sketch = { path = "core/geop-core-sketch" }
 geop-core-rasterize = { path = "core/geop-core-rasterize" }
 geop-lib-sheet = { path = "lib/geop-lib-sheet" }
+geop-lib-stdlib = { path = "lib/geop-lib-stdlib" }
 geop-ops-model = { path = "ops/geop-ops-model" }
 geop-ops-parameters = { path = "ops/geop-ops-parameters" }
 geop-ops-sketch = { path = "ops/geop-ops-sketch" }

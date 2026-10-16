@@ -218,6 +218,7 @@ dependencies = [
  "geop-core-topology",
  "geop-lib-booleans",
  "geop-lib-sheet",
+ "geop-lib-stdlib",
  "geop-lib-sweep",
  "geop-ops-add-datum",
  "geop-ops-assembly",
@@ -346,6 +347,26 @@ dependencies = [
  "geop-core-geometry",
  "geop-core-math",
  "serde",
+]
+
+[[package]]
+name = "geop-lib-stdlib"
+version = "0.1.0"
+dependencies = [
+ "geop-core-editor",
+ "geop-core-geometry",
+ "geop-core-math",
+ "geop-core-program",
+ "geop-core-sketch",
+ "geop-core-topology",
+ "geop-ops-add-datum",
+ "geop-ops-assembly",
+ "geop-ops-datums",
+ "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "geop-ops-parameters",
+ "geop-ops-pattern",
+ "geop-ops-sketch",
 ]
 
 [[package]]

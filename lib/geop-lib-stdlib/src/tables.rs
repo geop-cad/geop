@@ -61,6 +61,7 @@ impl Table {
     }
 
     /// The value of `column` in the row `row`.
+    #[cfg(test)]
     pub fn value(&self, row: &str, column: &str) -> Option<f64> {
         let k = self.columns.iter().position(|c| *c == column)?;
         let (_, values) = self.rows.iter().find(|(name, _)| name == row)?;

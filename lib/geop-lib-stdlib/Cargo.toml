@@ -1,0 +1,26 @@
+[package]
+name = "geop-lib-stdlib"
+version.workspace = true
+edition.workspace = true
+
+# The standard parts are programs written in the arguments of the
+# operations that build them (ARCHITECTURE_PLAN.md §5.4).
+[dependencies]
+geop-core-math.workspace = true
+geop-core-geometry.workspace = true
+geop-core-sketch.workspace = true
+geop-core-program.workspace = true
+geop-ops-model.workspace = true
+geop-ops-parameters.workspace = true
+geop-ops-sketch.workspace = true
+geop-ops-datums.workspace = true
+geop-ops-add-datum.workspace = true
+geop-ops-extrude-revolve.workspace = true
+geop-ops-pattern.workspace = true
+
+[dev-dependencies]
+geop-core-editor.workspace = true
+geop-core-topology.workspace = true
+geop-ops-model = { workspace = true, features = ["testing"] }
+geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-ops-assembly.workspace = true

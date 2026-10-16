@@ -15,6 +15,7 @@ geop-ops-model.workspace = true
 geop-ops-parameters.workspace = true
 geop-ops-add-datum.workspace = true
 geop-lib-sheet.workspace = true
+geop-lib-stdlib.workspace = true
 geop-ops-datums.workspace = true
 geop-ops-extrude-revolve.workspace = true
 geop-ops-boolean.workspace = true

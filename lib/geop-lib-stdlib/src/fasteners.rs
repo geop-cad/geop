@@ -7,7 +7,7 @@
 //! flush. A nut, washer, pin or standoff stands on the `xy` plane, its
 //! datum `base`, and rises up `z`.
 
-use geop_core_math::geop_error::GeopResult;
+use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::program::Program;
 use geop_core_sketch::{CurveId, PointId};
 use geop_ops_extrude_revolve::Extents;
@@ -239,7 +239,8 @@ fn nut(table: Table, insert: bool) -> GeopResult<(Program, Vec<String>)> {
     corners.push([bore, top]);
     let mut drawing = Drawing::new(&program)?;
     let lines = drawing.polygon(&corners)?;
-    let bore_line = *lines.last().expect("a profile has lines");
+    let bore_line =
+        *(lines.last()).ok_or_else(|| GeopError::new("a nut's profile has no lines"))?;
     revolve(
         &mut program,
         "body",

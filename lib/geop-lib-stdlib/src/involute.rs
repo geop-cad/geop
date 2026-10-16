@@ -60,6 +60,10 @@ pub struct Gap {
     pub flank: [[f64; 2]; DEGREE + 1],
     /// How far, at most, the flank is from the involute: the tail of the
     /// Taylor series and how far its ends moved, in modules.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the tests check every flank keeps within it")
+    )]
     pub deviation: f64,
 }
 
