@@ -151,9 +151,9 @@ the values a user sets, how free each placed part is, measured once an
 edit, and the constraints the last settle found conflicting; it takes
 `set` to set a joint's coordinate); the drag tool (`DragTool`, key `drag`:
 with no step edited, a placed part grabbed is pulled towards the pointer,
-a whole drag one edit to undo); and the `AssemblyDrawer`, which draws the
+a whole drag one edit to undo); the `AssemblyDrawer`, which draws the
 placed parts as instances of their components and lists those placed in
-the part itself.
+the part itself; and the examples of assemblies (`examples::set`).
 
 ## Solids and STL
 
@@ -165,3 +165,21 @@ interference, ordering it and simulating it read. `Stl` is the STL exporter
 editor draws, the parts placed included, each where it is; its options
 choose the solids (`solids`), text or binary (`ascii`) and how finely
 curved faces are meshed (`quality`).
+
+## Examples and tests
+
+`examples` holds the examples of assemblies: the parts they place (`pin`,
+`link`, `bar`, `metric_plate`) and the examples made of several files
+(`workspaces`: `press`, `pin_in_plate`, `chain`, `parametric_plates`,
+`four_bar`, `arm`, `bolted_plate`), with the mates and frames they are
+written with (`link_rim`, `link_holes`), public for other crates' tests.
+An example's state is written as a file holds it (`examples::pose`, see
+`Pose::saved`), so it saves and loads as it is.
+
+The tests build programs in a registry of the operations they are written
+in (`program_tests::registry`: sketches, extrusions, fillets, patterns,
+parameters and this crate), beside the standard parts: `program_tests`
+places, mates, solves and drags parts, and round-trips and incrementally
+builds every example; `editor_tests` edits the step placing a part as a
+front end does; `scale_tests` is a robot of hundreds of placed parts, what
+an edit costs counted, its timings an ignored test (`robot_timings`).
