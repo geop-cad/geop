@@ -1,5 +1,6 @@
 //! The examples of patterns an editor offers: a plate drilled with a row
-//! of holes, one hole patterned.
+//! of holes, one hole patterned; and two drawn in the editor, a turbine
+//! and a flange, each patterned round its axis.
 
 use geop_core_editor::registry::ExampleSet;
 use geop_core_math::primitives::FrameAxis;
@@ -18,7 +19,11 @@ use crate::{Direction, LinearPatternArgs, PatternDirection, Seeds, Spacing, feat
 /// The examples of this crate, by name.
 pub fn set() -> ExampleSet {
     ExampleSet {
-        programs: vec![("patterned_plate", patterned_plate)],
+        programs: vec![
+            ("patterned_plate", patterned_plate),
+            ("turbine_blade", turbine_blade),
+            ("cool_flange", cool_flange),
+        ],
         workspaces: Vec::new(),
     }
 }
@@ -68,4 +73,24 @@ pub fn patterned_plate() -> Program {
         },
     );
     program
+}
+
+/// A turbine: a blade lofted through sections on three offset datum
+/// planes, patterned six times round a revolved hub and joined to it, as
+/// drawn in the editor.
+///
+/// An example drawn in the editor and kept as the program it saved (in
+/// `src/drawn/`): its sketches as they were drawn, which no code says
+/// better. Its tests build it like every other example, so a change to the
+/// format that breaks it is found there: save it again from the editor.
+pub fn turbine_blade() -> Program {
+    Program::from_json(include_str!("drawn/turbine_blade.geop"))
+        .expect("a drawn example is a program")
+}
+
+/// A revolved flange with a slot cut through it, the cut patterned sixteen
+/// times round its axis, as drawn in the editor (see [`turbine_blade`]).
+pub fn cool_flange() -> Program {
+    Program::from_json(include_str!("drawn/cool_flange.geop"))
+        .expect("a drawn example is a program")
 }

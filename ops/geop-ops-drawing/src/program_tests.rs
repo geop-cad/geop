@@ -26,7 +26,8 @@ use geop_ops_extrude_revolve::{
 };
 use geop_ops_hole::examples::hole_plate;
 use geop_ops_model::{NamedModel, RefId};
-use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
+use geop_ops_pattern::examples::cool_flange;
+use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected, examples::conebox};
 use geop_ops_sketch::SketchPlane;
 use geop_ops_subd::examples::subd_mouse;
 
@@ -95,6 +96,8 @@ fn offset_from_xz(distance: f64) -> AddDatumArgs {
     }
 }
 
+/// The view `kind` of `part`; failing, it panics with every edge and face
+/// id its error mentions followed by that entity's name.
 fn view(part: &NamedModel<S>, kind: ViewKind) -> ProjectedView<S> {
     let model = part.topology();
     project_view(
@@ -103,7 +106,18 @@ fn view(part: &NamedModel<S>, kind: ViewKind) -> ProjectedView<S> {
         &kind.frame().unwrap(),
         &ViewOptions::default(),
     )
-    .unwrap()
+    .unwrap_or_else(|error| {
+        let mut text = error.to_string();
+        for (id, name) in part.names().iter() {
+            let tag = match id {
+                RefId::Edge(e) => format!("{e:?}"),
+                RefId::Face(f) => format!("{f:?}"),
+                _ => continue,
+            };
+            text = text.replace(&tag, &format!("{tag} [{name}]"));
+        }
+        panic!("{} view: {text}", kind.name())
+    })
 }
 
 /// The name of an entity of `part` matching `pick`.
@@ -368,6 +382,71 @@ fn subd_mouse_from_the_front_and_back_draws() {
     let part = &model(&build(&subd_mouse()));
     view(part, ViewKind::Front);
     view(part, ViewKind::Back);
+}
+
+/// The flange turned about `y`, seen from the back along that axis: the
+/// waist of its curved side, where the profile runs parallel to the axis,
+/// is its silhouette, a circle of radius 13.04 under the 13.14 rim of its
+/// top, so hidden. Its quarter faces meet on the paper's axes, and the
+/// silhouette's pieces end there.
+#[test]
+fn cool_flange_from_the_back_draws() {
+    let back = view(&model(&build(&cool_flange())), ViewKind::Back);
+    let silhouettes: Vec<_> = back
+        .lines
+        .iter()
+        .filter(|l| l.kind == LineKind::Silhouette)
+        .map(|l| {
+            let (a, b) = l.curve.domain();
+            let at = |t: S| {
+                let p = l.curve.evaluate(t).unwrap();
+                (p[0].to_f64(), p[1].to_f64())
+            };
+            (at(a), at(b), l.visible)
+        })
+        .collect();
+    assert!(!silhouettes.is_empty());
+    for &(p, q, visible) in &silhouettes {
+        let r = |(x, y): (f64, f64)| (x * x + y * y).sqrt();
+        assert!(
+            !visible && (r(p) - 13.04).abs() < 0.01 && (r(q) - 13.04).abs() < 0.01,
+            "{silhouettes:?}"
+        );
+    }
+}
+
+/// The conebox's double cone turns about the box's top edge `c12`, its
+/// apexes on that edge. Seen from the top, across its axis, each cone's
+/// silhouette is two generators in the box's top plane, running from the
+/// apex to the base circle, about 13.7 long: no face of either cone has a
+/// silhouette piece shorter than that, as one sitting at the apex would be.
+#[test]
+fn conebox_cone_from_the_top_shows_whole_generators() {
+    let part = &model(&build(&conebox()));
+    let d = ViewKind::Top.frame::<S>().unwrap().direction.vector();
+    for curve in ["c9", "c10"] {
+        for quarter in ["q0", "q1", "q2", "q3"] {
+            let name = format!("revolve(revolve1,sketch2,{curve},{quarter})");
+            let Some(RefId::Face(face)) = part.names().id_of(&name) else {
+                panic!("no face {name}");
+            };
+            let pieces = crate::silhouette::face_silhouettes(part.topology(), face, &d).unwrap();
+            for piece in &pieces {
+                let (a, b) = piece.curve.domain();
+                let (p, q) = (
+                    piece.curve.evaluate(a).unwrap(),
+                    piece.curve.evaluate(b).unwrap(),
+                );
+                let length = p.sub(&q).norm().to_f64();
+                assert!(length > 13.0, "{name}: a piece from {p:?} to {q:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn conebox_from_the_top_draws() {
+    view(&model(&build(&conebox())), ViewKind::Top);
 }
 
 /// The example workspace `name` built: its first file, as that file's

@@ -1,6 +1,6 @@
 //! What the editor offers ([`registry`]): every crate's operations,
-//! drawers, exporters, inspectors, panels, tools and settler, one
-//! `register` line per crate, and the examples — and the one way a program
+//! drawers, exporters, inspectors, panels, tools, settler and examples,
+//! one `register` line per crate — and the one way a program
 //! is built outside the editor ([`build`]), in a workspace beside the
 //! standard parts ([`workspace`]).
 
@@ -15,8 +15,6 @@ use geop_core_program::{
     workspace::{self, FileStore, Files, Location},
 };
 use geop_lib_stdlib::WithStandardParts;
-
-use crate::examples;
 
 /// Everything the editor offers. Operations are offered group by group,
 /// and within a group and tier in the order they are registered here; the
@@ -48,8 +46,7 @@ pub fn registry() -> GeopResult<Registry> {
     let r = geop_ops_sheetmetal::register(r)?;
     let r = geop_ops_inspect::register(r)?;
     let r = geop_ops_bom::register(r)?;
-    let r = geop_ops_parameters::register(r)?;
-    r.examples(examples::set())
+    geop_ops_parameters::register(r)
 }
 
 /// An editor of everything [`registry`] offers, the standard parts beside
@@ -104,43 +101,4 @@ pub fn build(
     let mut part = Part::default();
     program.run(&runner, &mut part)?;
     Ok(BuiltPart { runner, part })
-}
-
-/// What the tests of programs share beyond what every operation's tests
-/// do (`geop_ops_model::testing`, `geop_ops_extrude_revolve::testing`,
-/// `geop_core_editor::testing`): building one beside the standard parts.
-#[cfg(test)]
-pub(crate) mod testing {
-    use std::collections::BTreeMap;
-
-    use geop_core_math::geop_error::GeopResult;
-    use geop_core_program::{part::Part, program::Program, values::Design};
-    use geop_ops_extrude_revolve::testing::model_of;
-    use geop_ops_model::NamedModel;
-
-    pub(crate) use geop_core_editor::testing::{dialog, handled, pointer};
-    pub(crate) use geop_ops_extrude_revolve::testing::args;
-    pub(crate) use geop_ops_model::testing::check_valid;
-
-    pub(crate) use super::{build, workspace};
-
-    /// Building a program on its own, in an empty [`workspace`] (see
-    /// [`build`]).
-    pub(crate) trait Built {
-        /// The part the program builds.
-        fn built(&self) -> GeopResult<Part>;
-
-        /// The model the program builds, or why a step fails.
-        fn build_model(&self) -> GeopResult<NamedModel<Design>>;
-    }
-
-    impl Built for Program {
-        fn built(&self) -> GeopResult<Part> {
-            Ok(build(self, "", workspace(BTreeMap::new()))?.part)
-        }
-
-        fn build_model(&self) -> GeopResult<NamedModel<Design>> {
-            Ok(model_of(&self.built()?))
-        }
-    }
 }

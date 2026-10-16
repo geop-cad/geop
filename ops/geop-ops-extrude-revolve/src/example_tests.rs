@@ -29,8 +29,8 @@ use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
 use crate::{
     Extents, ExtrudeArgs,
     examples::{
-        box_with_drill_hole, bracket, cross_drilled_shaft, handle_with_hole, horn, luggage_tag,
-        motor_flange, parametric_plate, pipe, pipe_route, revolved_cone_on_box,
+        box_with_drill_hole, bracket, cross_drilled_shaft, edge_part, handle_with_hole, horn,
+        luggage_tag, motor_flange, parametric_plate, pipe, pipe_route, revolved_cone_on_box,
     },
     testing::{Built, args, disc, edit_args, error, model_of, n, on_face, step},
 };
@@ -179,6 +179,18 @@ fn handle_with_hole_round_trips() {
 #[test]
 fn handle_with_hole_builds_incrementally() {
     assert_edits_incremental(&handle_with_hole());
+}
+
+/// The example drawn in the editor builds a valid part and round-trips, as
+/// the ones written in Rust do.
+#[test]
+fn edge_part_round_trips() {
+    build_and_round_trip("edge_part", &edge_part());
+}
+
+#[test]
+fn edge_part_builds_incrementally() {
+    assert_edits_incremental(&edge_part());
 }
 
 #[test]

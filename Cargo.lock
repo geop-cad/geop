@@ -213,9 +213,6 @@ dependencies = [
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
- "geop-core-rasterize",
- "geop-core-sketch",
- "geop-core-topology",
  "geop-lib-booleans",
  "geop-lib-sheet",
  "geop-lib-stdlib",
@@ -223,7 +220,6 @@ dependencies = [
  "geop-ops-assembly",
  "geop-ops-bom",
  "geop-ops-boolean",
- "geop-ops-constraints",
  "geop-ops-datums",
  "geop-ops-drawing",
  "geop-ops-edit",
@@ -245,7 +241,6 @@ dependencies = [
  "geop-ops-subd",
  "geop-ops-surface",
  "geop-ops-urdf",
- "serde",
  "serde_json",
 ]
 
@@ -686,6 +681,7 @@ dependencies = [
  "geop-ops-hole",
  "geop-ops-model",
  "geop-ops-parameters",
+ "geop-ops-reference-geometry",
  "geop-ops-sketch",
  "geop-ops-sketch3d",
  "serde",

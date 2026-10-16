@@ -48,6 +48,7 @@ pub fn set() -> ExampleSet {
             ("pipe", pipe),
             ("horn", horn),
             ("motor_flange", motor_flange),
+            ("edge_part", edge_part),
         ],
         workspaces: Vec::new(),
     }
@@ -784,4 +785,15 @@ pub fn motor_flange() -> Program {
         },
     );
     program
+}
+
+/// Three outlines sketched on the origin's three planes, each extruded and
+/// joined to the one before, as drawn in the editor.
+///
+/// An example drawn in the editor and kept as the program it saved (in
+/// `src/drawn/`): its sketches as they were drawn, which no code says
+/// better. Its tests build it like every other example, so a change to the
+/// format that breaks it is found there: save it again from the editor.
+pub fn edge_part() -> Program {
+    Program::from_json(include_str!("drawn/edge_part.geop")).expect("a drawn example is a program")
 }

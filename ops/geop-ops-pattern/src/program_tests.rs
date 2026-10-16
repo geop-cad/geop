@@ -26,6 +26,7 @@ use geop_ops_model::{
 use geop_ops_sketch::{Sketch, SketchPlane, sketch_element};
 
 use geop_ops_datums::{origin_axis, origin_plane};
+use geop_ops_reference_geometry::AddDatum;
 use geop_ops_sketch3d::AddSketch3d;
 
 /// The operations these tests' programs are written in.
@@ -35,7 +36,8 @@ fn registry() -> GeopResult<OperationRegistry> {
         .with(LinearPattern)?
         .with(CircularPattern)?
         .with(Mirror)?
-        .with(MoveBody)
+        .with(MoveBody)?
+        .with(AddDatum)
 }
 
 /// A sketch on the Z plane, and `name` its extrude, as `extent` says, a
@@ -594,4 +596,37 @@ fn patterned_plate_builds_incrementally() {
     let registry = std::rc::Rc::new(registry().unwrap());
     let programs = geop_core_program::testing::edit_sequence(&crate::examples::patterned_plate());
     geop_core_program::testing::assert_incremental(registry, None, &programs);
+}
+
+/// The examples drawn in the editor build valid parts and round-trip, as
+/// the ones written in Rust do: the turbine's blades joined to its hub in
+/// one solid, the flange cut sixteen times.
+#[test]
+fn drawn_examples_round_trip() {
+    use crate::examples::{cool_flange, turbine_blade};
+
+    for (program, solids) in [
+        (turbine_blade(), vec!["circular_pattern(circular_pattern1)"]),
+        (cool_flange(), vec!["circular_pattern(circular_pattern1)"]),
+    ] {
+        let registry = std::rc::Rc::new(registry().unwrap());
+        let built = geop_core_program::testing::assert_round_trips(registry, None, &program);
+        let part = geop_ops_extrude_revolve::testing::model_of(&built);
+        assert_valid(&part);
+        assert_eq!(part.solid_names(), solids);
+    }
+}
+
+/// The examples drawn in the editor, edited as a user edits them, build
+/// incrementally what they build from scratch.
+#[test]
+#[ignore = "slow: 20 s, two patterns built a dozen times over — run with `cargo test -- --ignored`"]
+fn drawn_examples_build_incrementally() {
+    use crate::examples::{cool_flange, turbine_blade};
+
+    for program in [turbine_blade(), cool_flange()] {
+        let registry = std::rc::Rc::new(registry().unwrap());
+        let programs = geop_core_program::testing::edit_sequence(&program);
+        geop_core_program::testing::assert_incremental(registry, None, &programs);
+    }
 }

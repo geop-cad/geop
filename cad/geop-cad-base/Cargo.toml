@@ -7,46 +7,42 @@ edition.workspace = true
 geop-core-program.workspace = true
 geop-core-editor.workspace = true
 geop-core-math.workspace = true
-geop-core-geometry.workspace = true
-geop-core-topology.workspace = true
-geop-core-sketch.workspace = true
-geop-ops-sketch.workspace = true
-geop-ops-model.workspace = true
-geop-ops-parameters.workspace = true
-geop-ops-reference-geometry.workspace = true
-geop-lib-sheet.workspace = true
+# The standard parts every workspace can place, beside its files.
 geop-lib-stdlib.workspace = true
+# Every operation crate, registered in `registry.rs`, one line each.
+geop-ops-model.workspace = true
+geop-ops-sketch.workspace = true
 geop-ops-datums.workspace = true
-geop-ops-extrude-revolve.workspace = true
-geop-ops-boolean.workspace = true
-geop-lib-sweep.workspace = true
-geop-ops-edit.workspace = true
-geop-ops-fillet.workspace = true
-geop-ops-assembly.workspace = true
-geop-ops-shell.workspace = true
-geop-ops-drawing.workspace = true
-geop-ops-subd.workspace = true
-geop-ops-sheetmetal.workspace = true
-geop-ops-inspect.workspace = true
+geop-ops-reference-geometry.workspace = true
 geop-ops-sketch3d.workspace = true
-geop-ops-pattern.workspace = true
+geop-ops-extrude-revolve.workspace = true
+geop-ops-hole.workspace = true
+geop-ops-fillet.workspace = true
+geop-ops-shell.workspace = true
 geop-ops-plastic.workspace = true
+geop-ops-boolean.workspace = true
+geop-ops-pattern.workspace = true
+geop-ops-subd.workspace = true
+geop-ops-surface.workspace = true
+geop-ops-edit.workspace = true
+geop-ops-assembly.workspace = true
 geop-ops-harness.workspace = true
 geop-ops-step.workspace = true
-geop-ops-surface.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-geop-ops-hole.workspace = true
+geop-ops-drawing.workspace = true
 geop-ops-urdf.workspace = true
+geop-ops-sheetmetal.workspace = true
+geop-ops-inspect.workspace = true
 geop-ops-bom.workspace = true
+geop-ops-parameters.workspace = true
 
 [dev-dependencies]
-geop-lib-booleans.workspace = true
+# The composition's tests (`tests.rs`): every example drawn, weighed and
+# halved, edited incrementally, and the editor driven over all of it.
 geop-core-editor = { workspace = true, features = ["testing"] }
 geop-core-program = { workspace = true, features = ["testing"] }
-geop-core-rasterize.workspace = true
-geop-ops-constraints.workspace = true
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-core-geometry.workspace = true
+geop-lib-booleans.workspace = true
+geop-lib-sheet.workspace = true
 geop-lib-sweep = { workspace = true, features = ["testing"] }
-geop-ops-hole = { workspace = true, features = ["testing"] }
-geop-ops-plastic = { workspace = true, features = ["testing"] }
+geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+serde_json.workspace = true

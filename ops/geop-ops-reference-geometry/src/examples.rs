@@ -23,6 +23,7 @@ pub fn set() -> ExampleSet {
         programs: vec![
             ("boss_on_reference_plane", boss_on_reference_plane),
             ("airfoil_wing", airfoil_wing),
+            ("conebox", conebox),
         ],
         workspaces: Vec::new(),
     }
@@ -191,4 +192,16 @@ pub fn airfoil_wing() -> Program {
         },
     );
     program
+}
+
+/// A box, and a double cone revolved beside it from a sketch on a datum
+/// plane turned 45 degrees about the box's top edge, as drawn in the
+/// editor.
+///
+/// An example drawn in the editor and kept as the program it saved (in
+/// `src/drawn/`): its sketches as they were drawn, which no code says
+/// better. Its tests build it like every other example, so a change to the
+/// format that breaks it is found there: save it again from the editor.
+pub fn conebox() -> Program {
+    Program::from_json(include_str!("drawn/conebox.geop")).expect("a drawn example is a program")
 }

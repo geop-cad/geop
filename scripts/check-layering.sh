@@ -11,7 +11,9 @@
 #                            written in (ARCHITECTURE_PLAN.md §5.4)
 #   geop-ops-*, geop-lib-*   no deps on geop-cad-*
 #   core/                    no source names geop_ops_*, geop_lib_*, geop_cad_*
-#   cad/geop-cad-base/src    no `use geop_ops_*` outside src/registry.rs
+#   cad/geop-cad-base/src    names geop_ops_* only in src/registry.rs (one
+#                            `register` line per crate) and src/tests.rs
+#                            (the composition's tests)
 #
 # Every violation is printed as one line. Lines listed in
 # scripts/layering-allowed.txt are known violations that later phases burn
@@ -91,10 +93,11 @@ done < <(grep -rEo --exclude-dir=target 'geop_(ops|lib|cad)_[A-Za-z0-9_]*' core/
 
 while IFS=: read -r file name; do
     [[ -n "$file" ]] || continue
-    [[ "$file" == cad/geop-cad-base/src/registry.rs ]] && continue
-    violations+=("source $file: cad-base uses ${name#use } outside registry.rs")
-done < <(grep -rEo 'use[[:space:]]+geop_ops_[A-Za-z0-9_]*' cad/geop-cad-base/src/ \
-    | sed -E 's/use[[:space:]]+/use /' | sort -u)
+    case "$file" in
+        cad/geop-cad-base/src/registry.rs | cad/geop-cad-base/src/tests.rs) continue ;;
+    esac
+    violations+=("source $file: cad-base names $name outside registry.rs and tests.rs")
+done < <(grep -rEo 'geop_ops_[A-Za-z0-9_]*' cad/geop-cad-base/src/ | sort -u)
 
 if [[ "${1:-}" == --write-allowed ]]; then
     {

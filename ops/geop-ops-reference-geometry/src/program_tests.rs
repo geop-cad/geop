@@ -566,13 +566,21 @@ fn airfoil_wing_round_trips() {
     assert_eq!(part.solid_names(), ["loft(wing)"]);
 }
 
+/// The cone box drawn in the editor builds a valid part and round-trips,
+/// as the examples written in Rust do: a box and the cone beside it.
+#[test]
+fn conebox_round_trips() {
+    let part = example_round_trips(&crate::examples::conebox());
+    assert_eq!(part.solid_names().len(), 2, "{:?}", part.solid_names());
+}
+
 /// The examples, edited as a user edits them, build incrementally what
 /// they build from scratch.
 #[test]
 fn examples_build_incrementally() {
-    use crate::examples::{airfoil_wing, boss_on_reference_plane};
+    use crate::examples::{airfoil_wing, boss_on_reference_plane, conebox};
 
-    for example in [boss_on_reference_plane(), airfoil_wing()] {
+    for example in [boss_on_reference_plane(), airfoil_wing(), conebox()] {
         let registry = std::rc::Rc::new(registry().unwrap());
         let programs = geop_core_program::testing::edit_sequence(&example);
         geop_core_program::testing::assert_incremental(registry, None, &programs);
