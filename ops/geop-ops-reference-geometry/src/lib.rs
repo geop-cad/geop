@@ -13,6 +13,8 @@
 
 mod add_datum;
 mod editor;
+#[cfg(test)]
+mod editor_tests;
 pub mod examples;
 mod icons;
 #[cfg(test)]
