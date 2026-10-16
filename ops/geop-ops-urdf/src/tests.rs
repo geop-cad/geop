@@ -2,39 +2,58 @@
 //! robots, and read back — as a tree of XML elements, and by placing every
 //! link where its joints put it.
 
-use geop_core_editor::editor::Rerun;
+use geop_core_editor::{editor::Rerun, registry::Registry};
 use geop_core_program::{
+    part::Part,
     program::Program,
-    values::{StateValue, pose_state},
+    runner::Runner,
+    values::{Design, StateValue, pose_state},
+    workspace::{self, Files, Location},
 };
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    rc::Rc,
+};
 
 use geop_core_editor::output::Output;
 use geop_core_math::{
+    geop_error::GeopResult,
     primitives::Pose,
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
 use geop_ops_assembly::{
     AddPartArgs, CouplingKind, JointKind, Mate, Transmission,
+    examples::{self, pose},
     solids::{Shapes, placed_solids},
     solving,
 };
-use geop_ops_urdf::{JointType, Mechanism, Origin, Robot, URDF_FILE, UrdfExport, export};
 
-use crate::{
-    examples::{n, pose},
-    registry::{BuiltPart, workspace},
-};
+use crate::{JointType, Mechanism, Origin, Robot, URDF_FILE, UrdfExport, export};
+
+/// A number of a test, as design data.
+fn n(x: f64) -> Design {
+    Design::from_f64(x)
+}
+
+/// What these tests' assemblies are made of: links sketched and extruded,
+/// placed and joined — and exported as robots.
+fn registry() -> GeopResult<Registry> {
+    let r = Registry::default();
+    let r = geop_ops_model::register(r)?;
+    let r = geop_ops_sketch::register(r)?;
+    let r = geop_ops_datums::register(r)?;
+    let r = geop_ops_reference_geometry::register(r)?;
+    let r = geop_ops_extrude_revolve::register(r)?;
+    let r = geop_ops_assembly::register(r)?;
+    let r = crate::register(r)?;
+    geop_ops_parameters::register(r)
+}
 
 /// The files of the workspace example `name`, by path, and its first
 /// program.
 fn workspace_example(name: &str) -> (BTreeMap<String, String>, Program) {
-    let files = geop_ops_assembly::examples::workspaces()
-        .into_iter()
-        .find(|(n, _)| *n == name)
-        .unwrap()
-        .1();
+    let files = registry().unwrap().workspace_example(name).unwrap();
     let program = files[0].1.clone();
     let files = files
         .into_iter()
@@ -45,15 +64,19 @@ fn workspace_example(name: &str) -> (BTreeMap<String, String>, Program) {
 
 /// What a program built, with the runner that built it, and the program
 /// with the state it ran with.
-struct Built(BuiltPart, Program);
+struct Built {
+    runner: Runner,
+    part: Part,
+    program: Program,
+}
 
 impl Built {
     /// It exported as the robot `name`, meshed coarsely.
-    fn export(&mut self, name: &str) -> geop_core_math::geop_error::GeopResult<UrdfExport> {
+    fn export(&mut self, name: &str) -> GeopResult<UrdfExport> {
         let mut output = Output {
-            runner: &self.0.runner,
-            part: &mut self.0.part,
-            file: &self.1,
+            runner: &self.runner,
+            part: &mut self.part,
+            file: &self.program,
             editing: None,
             date: "",
         };
@@ -66,17 +89,29 @@ impl Built {
 /// give started where the parts are, and solved for.
 fn build(files: BTreeMap<String, String>, path: &str, program: &Program) -> Built {
     let mut program = program.clone();
-    let mut built = crate::build(&program, path, workspace(files)).unwrap();
+    let operations = Rc::new(registry().unwrap().operations());
+    let location = Location {
+        file: workspace::resolve("", path),
+        within: Vec::new(),
+    };
+    let workspace = Files::new(files, operations.clone());
+    let runner = Runner::of(operations, Some(workspace), location);
+    let mut part = Part::default();
+    program.run(&runner, &mut part).unwrap();
     let mut rerun = Rerun {
-        runner: &built.runner,
-        part: &mut built.part,
+        runner: &runner,
+        part: &mut part,
         program: &program,
     };
     let (moved, report) = solving::solve(&mut rerun, &program.state, &[], None).unwrap();
     assert!(report.converged, "{report:?}");
     program.state.extend(moved);
-    program.run(&built.runner, &mut built.part).unwrap();
-    Built(built, program)
+    program.run(&runner, &mut part).unwrap();
+    Built {
+        runner,
+        part,
+        program,
+    }
 }
 
 /// The arm, exported.
@@ -233,7 +268,7 @@ fn assert_same_pose(a: &Pose<S>, b: &Pose<S>, what: &str) {
 /// Placed by its joints at the coordinates the assembly is at, every part
 /// of `robot` is where `part` has it.
 fn assert_links_where_drawn(part: &Built, robot: &Robot) {
-    let mechanism = Mechanism::of(&part.0.part.current()).unwrap();
+    let mechanism = Mechanism::of(&part.part.current()).unwrap();
     let mut coordinates = HashMap::new();
     for joint in &mechanism.joints {
         let q = match joint.kind {
@@ -285,7 +320,7 @@ fn the_arm_exports_its_joints_limits_and_masses() {
         assert!(joint.mimic.is_none());
     }
 
-    let reader = part.0.part.current();
+    let reader = part.part.current();
     let solids = placed_solids(&reader).unwrap();
     let mut shapes = Shapes::default();
     let weighed = |prefix: &str, shapes: &mut Shapes| {
@@ -410,8 +445,8 @@ fn pin_joint(on: &str, hole: usize, link: &str, link_hole: usize) -> Mate {
             max: None,
         },
         vec![
-            geop_ops_assembly::examples::link_rim(on, hole, "end"),
-            geop_ops_assembly::examples::link_rim(link, link_hole, "start"),
+            examples::link_rim(on, hole, "end"),
+            examples::link_rim(link, link_hole, "start"),
         ],
     )
 }
@@ -627,16 +662,16 @@ fn sliders_fastened_parts_and_reversed_joints() {
             max: Some(n(2.0)),
         },
         vec![
-            geop_ops_assembly::examples::link_rim("base", 0, "end"),
-            geop_ops_assembly::examples::link_rim("lift", 0, "start"),
+            examples::link_rim("base", 0, "end"),
+            examples::link_rim("lift", 0, "start"),
         ],
     );
     program.push("lift", placed("link.geop", false, vec![slider]));
     let fastened = Mate::joint(
         JointKind::Fastened,
         vec![
-            geop_ops_assembly::examples::link_rim("lift", 1, "end"),
-            geop_ops_assembly::examples::link_rim("tool", 0, "start"),
+            examples::link_rim("lift", 1, "end"),
+            examples::link_rim("tool", 0, "start"),
         ],
     );
     program.push("tool", placed("link.geop", false, vec![fastened]));
@@ -646,8 +681,8 @@ fn sliders_fastened_parts_and_reversed_joints() {
             max: Some(n(90.0)),
         },
         vec![
-            geop_ops_assembly::examples::link_rim("swing", 0, "start"),
-            geop_ops_assembly::examples::link_rim("base", 1, "end"),
+            examples::link_rim("swing", 0, "start"),
+            examples::link_rim("base", 1, "end"),
         ],
     );
     program.push("swing", placed("link.geop", false, vec![hinge]));
@@ -716,8 +751,8 @@ fn what_urdf_cannot_express_is_refused_by_name() {
                 Mate::joint(
                     kind,
                     vec![
-                        geop_ops_assembly::examples::link_rim("base", 1, "end"),
-                        geop_ops_assembly::examples::link_rim("arm", 0, "start"),
+                        examples::link_rim("base", 1, "end"),
+                        examples::link_rim("arm", 0, "start"),
                     ],
                 )
             })

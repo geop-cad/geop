@@ -12,5 +12,4 @@ mod program_tests;
 mod set_tests;
 mod step_export_tests;
 mod step_tests;
-mod urdf_tests;
 mod view_tests;

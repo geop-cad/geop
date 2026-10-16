@@ -16,3 +16,9 @@ geop-core-program.workspace = true
 # Each link's meshes.
 geop-core-rasterize.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+geop-ops-sketch.workspace = true
+geop-ops-datums.workspace = true
+geop-ops-reference-geometry.workspace = true
+geop-ops-extrude-revolve.workspace = true

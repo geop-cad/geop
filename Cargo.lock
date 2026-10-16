@@ -865,8 +865,12 @@ dependencies = [
  "geop-core-topology",
  "geop-lib-sheet",
  "geop-ops-assembly",
+ "geop-ops-datums",
+ "geop-ops-extrude-revolve",
  "geop-ops-model",
  "geop-ops-parameters",
+ "geop-ops-reference-geometry",
+ "geop-ops-sketch",
  "serde",
 ]
 

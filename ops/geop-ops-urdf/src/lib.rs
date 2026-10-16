@@ -36,6 +36,8 @@
 //! parts that mates leave free to move but no joint names, cylindrical
 //! joints, limits one way only.
 
+#[cfg(test)]
+mod tests;
 pub mod tree;
 mod xml;
 pub mod zip;
