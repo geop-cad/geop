@@ -843,6 +843,7 @@ dependencies = [
  "geop-lib-booleans",
  "geop-lib-shell",
  "geop-lib-sweep",
+ "geop-ops-boolean",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-model",

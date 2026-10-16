@@ -10,16 +10,12 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::{element::ElementReference, program::Program, values::Design};
-use geop_core_sketch::{CurveId, PointId};
+use geop_core_sketch::CurveId;
 use geop_lib_sweep::Orientation;
-use geop_ops_boolean::SplitArgs;
 use geop_ops_datums::origin_plane;
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, Output, PathRef, SweepArgs};
-use geop_ops_model::element;
-use geop_ops_model::{Combine, solid};
+use geop_ops_model::Combine;
 use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch, SketchPlane, sketch, whole_sketch};
-use geop_ops_sketch3d::{AddSketch3dArgs, CurveSource, Sketch3d};
-use geop_ops_surface::NetworkSurfaceArgs;
 
 use geop_core_editor::registry::{Example, ExampleSet};
 
@@ -47,19 +43,6 @@ pub(crate) fn pose(position: [f64; 3], degrees: [f64; 3]) -> Pose<Design> {
         .expect("an example's rotation is one")
 }
 
-/// A closed polygon through `corners`, one line per side: its points and
-/// lines.
-pub(crate) fn polygon(sketch: &mut Sketch, corners: &[P2]) -> (Vec<PointId>, Vec<CurveId>) {
-    let points: Vec<PointId> = corners
-        .iter()
-        .map(|c| sketch.add_point(n(c[0]), n(c[1])))
-        .collect();
-    let lines = (0..points.len())
-        .map(|i| sketch.add_line(points[i], points[(i + 1) % points.len()]))
-        .collect();
-    (points, lines)
-}
-
 /// Solves `sketch`, which the examples all constrain fully.
 pub(crate) fn solved(mut sketch: Sketch) -> Sketch {
     let report = sketch.solve().expect("example sketches are valid");
@@ -68,40 +51,6 @@ pub(crate) fn solved(mut sketch: Sketch) -> Sketch {
         "example sketch does not solve: {report:?}"
     );
     sketch
-}
-
-/// A `width` x `depth` rectangle with its first corner at `origin`, drawn
-/// roughly and fully constrained.
-pub(crate) fn rectangle(sketch: &mut Sketch, origin: P2, width: f64, depth: f64) -> Vec<CurveId> {
-    let [x, y] = origin;
-    // Deliberately a little off: the constraints decide the shape.
-    let (p, l) = polygon(
-        sketch,
-        &[
-            [x + 0.05, y - 0.02],
-            [x + width, y + 0.03],
-            [x + width - 0.04, y + depth],
-            [x, y + depth + 0.01],
-        ],
-    );
-    sketch.constrain(Constraint::Fix {
-        point: p[0],
-        x: n(x),
-        y: n(y),
-    });
-    sketch.constrain(Constraint::Horizontal { line: l[0] });
-    sketch.constrain(Constraint::Horizontal { line: l[2] });
-    sketch.constrain(Constraint::Vertical { line: l[1] });
-    sketch.constrain(Constraint::Vertical { line: l[3] });
-    sketch.constrain(Constraint::Length {
-        curve: l[0],
-        value: n(width),
-    });
-    sketch.constrain(Constraint::Length {
-        curve: l[1],
-        value: n(depth),
-    });
-    l
 }
 
 /// A circle of `radius` around `center`, fully constrained.
@@ -241,91 +190,6 @@ pub fn motor_flange() -> Program {
     program
 }
 
-/// A doubly curved panel, a saddle: a UV surface (`panel`) through three
-/// ribs along `x` and three spines along `z`, each a spline of a 3-D
-/// sketch through points of the saddle — the ribs' and the spines' meeting
-/// where they cross; and a block under it (`block`, up along `y`) split
-/// along it (`shaped`) into a piece with the saddle for its top and one
-/// with it for its bottom. Drawn in tens of millimetres: the panel is 40 by
-/// 30.
-pub fn curved_panel() -> Program {
-    let height = |x: f64, z: f64| 0.6 + 0.08 * (x - 2.0).powi(2) - 0.12 * (z - 1.5).powi(2);
-    let mut program = Program::new();
-    let mut splines = |name: &str, lines: Vec<Vec<[f64; 2]>>| -> Vec<CurveSource> {
-        let mut sketch = Sketch3d::new();
-        let mut curves = Vec::new();
-        for line in lines {
-            let points = line
-                .iter()
-                .map(|&[x, z]| {
-                    let at = [x, height(x, z), z].map(|c| n(10.0 * c));
-                    sketch.add_point(Vector3::from_array(at))
-                })
-                .collect();
-            let curve = sketch.add_spline(points);
-            curves.push(CurveSource::Edge(element(format!(
-                "sketch3d({name},{curve})"
-            ))));
-        }
-        program.push(
-            name,
-            AddSketch3dArgs {
-                sketch,
-                references: Vec::new(),
-            },
-        );
-        curves
-    };
-    let ribs = splines(
-        "ribs",
-        [0.0, 1.5, 3.0]
-            .iter()
-            .map(|&y| [0.0, 1.0, 2.0, 3.0, 4.0].map(|x| [x, y]).to_vec())
-            .collect(),
-    );
-    let spines = splines(
-        "spines",
-        [0.0, 2.0, 4.0]
-            .iter()
-            .map(|&x| [0.0, 0.75, 1.5, 2.25, 3.0].map(|y| [x, y]).to_vec())
-            .collect(),
-    );
-    program.push(
-        "panel",
-        NetworkSurfaceArgs {
-            u_curves: ribs,
-            v_curves: spines,
-        },
-    );
-    let mut outline = Sketch::new();
-    // Sketch `y` runs along world `-z`.
-    rectangle(&mut outline, [5.0, -25.0], 30.0, 20.0);
-    program.push(
-        "block_sketch",
-        AddSketchArgs {
-            plane: Some(on_origin(FrameAxis::Y)),
-            sketch: solved(outline),
-            ..Default::default()
-        },
-    );
-    program.push(
-        "block",
-        ExtrudeArgs {
-            sketch: whole_sketch("block_sketch"),
-            extent: Extents::blind(15.0),
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-    program.push(
-        "shaped",
-        SplitArgs {
-            solid: solid("extrude(block)"),
-            face: element("network(panel)"),
-        },
-    );
-    program
-}
-
 /// Every example, by name, each with what makes its program: listing them
 /// builds nothing — an editor lists them when it starts, and making one
 /// may solve sketches, or build a part to name its faces.
@@ -341,7 +205,6 @@ pub fn all() -> Vec<Example<Program>> {
         ("conebox", || drawn(include_str!("drawn/conebox.geop"))),
         ("horn", horn),
         ("motor_flange", motor_flange),
-        ("curved_panel", curved_panel),
     ]
 }
 
@@ -455,45 +318,6 @@ mod tests {
         for (name, program) in all().into_iter().filter(|(n, _)| drawn.contains(n)) {
             build_and_round_trip(name, &program());
         }
-    }
-
-    /// The curved panel is a valid face, through the middle of its middle
-    /// rib and spine, where they cross; it splits the block under it in
-    /// two, a point above the saddle in one and one below it in the other.
-    #[test]
-    fn curved_panel_round_trips() {
-        let part = build_and_round_trip("curved_panel", &curved_panel());
-        let description = PartDescription::of(&part).unwrap();
-        assert_eq!(
-            description.solids.len(),
-            2,
-            "{:?}",
-            description.solids.keys()
-        );
-        for (p, expected) in [
-            ([20.0, 10.0, 15.0], [true, false]),
-            ([20.0, 2.0, 15.0], [false, true]),
-        ] {
-            let inside = ["split(shaped,0)", "split(shaped,1)"]
-                .map(|solid| inside(&part, solid, p) == PointClassification::Inside);
-            assert!(
-                inside == expected || inside == [expected[1], expected[0]],
-                "at {p:?}: {inside:?}"
-            );
-        }
-        let face = part.face_id("network(panel)").unwrap();
-        let surface = &part.topology().get_face(face).unwrap().surface;
-        let middle = Vector3::from_array([20.0, 6.0, 15.0].map(S::from_f64));
-        assert!(
-            geop_core_geometry::contains::surface::surface_could_contain(
-                surface,
-                &middle,
-                10_000,
-                S::from_f64(1e-7)
-            )
-            .unwrap()
-            .is_some()
-        );
     }
 
     /// The motor flange is a ring with six bolt holes through it: solid in

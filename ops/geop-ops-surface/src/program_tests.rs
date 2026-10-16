@@ -219,3 +219,62 @@ fn lofted_faces_knit_into_a_solid() {
     let solid = part.solid_id("knit(solid)").unwrap();
     assert_eq!(part.topology().solid_faces(solid).unwrap().len(), 4 + 2);
 }
+
+/// What the examples are written in: sketches, 3-D sketches, a network
+/// surface, a block extruded and split along it.
+fn example_registry() -> GeopResult<OperationRegistry> {
+    (geop_ops_extrude_revolve::testing::registry()?)
+        .with(geop_ops_sketch3d::AddSketch3d)?
+        .with(crate::NetworkSurface)?
+        .with(geop_ops_boolean::Split)
+}
+
+/// The curved panel is a valid face, through the middle of its middle
+/// rib and spine, where they cross; it splits the block under it in
+/// two, a point above the saddle in one and one below it in the other.
+/// Saved and loaded, the example builds what it built.
+#[test]
+fn curved_panel_round_trips() {
+    use geop_core_topology::contains::shell::PointClassification::Inside;
+    use geop_ops_model::testing::classify;
+
+    let registry = std::rc::Rc::new(example_registry().unwrap());
+    let program = crate::examples::curved_panel();
+    let built = geop_core_program::testing::assert_round_trips(registry, None, &program);
+    let part = geop_ops_extrude_revolve::testing::model_of(&built);
+    assert_valid(&part);
+    assert_eq!(part.solid_names().len(), 2, "{:?}", part.solid_names());
+    for (p, expected) in [
+        ([20.0, 10.0, 15.0], [true, false]),
+        ([20.0, 2.0, 15.0], [false, true]),
+    ] {
+        let inside =
+            ["split(shaped,0)", "split(shaped,1)"].map(|solid| classify(&part, solid, p) == Inside);
+        assert!(
+            inside == expected || inside == [expected[1], expected[0]],
+            "at {p:?}: {inside:?}"
+        );
+    }
+    let face = part.face_id("network(panel)").unwrap();
+    let surface = &part.topology().get_face(face).unwrap().surface;
+    let middle = geop_core_math::vector::Vector3::from_array([20.0, 6.0, 15.0].map(S::from_f64));
+    assert!(
+        geop_core_geometry::contains::surface::surface_could_contain(
+            surface,
+            &middle,
+            10_000,
+            S::from_f64(1e-7)
+        )
+        .unwrap()
+        .is_some()
+    );
+}
+
+/// The example `curved_panel`, edited as a user edits it, builds
+/// incrementally what it builds from scratch.
+#[test]
+fn curved_panel_builds_incrementally() {
+    let registry = std::rc::Rc::new(example_registry().unwrap());
+    let programs = geop_core_program::testing::edit_sequence(&crate::examples::curved_panel());
+    geop_core_program::testing::assert_incremental(registry, None, &programs);
+}

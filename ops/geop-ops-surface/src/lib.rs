@@ -21,6 +21,7 @@
 //! ([`geop_lib_shell::shell()`]): a sheet thickened is a sheet shelled.
 
 pub mod boundary;
+pub mod examples;
 pub mod extend;
 mod icons;
 pub mod knit;
@@ -98,7 +99,8 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
         .operation(Knit)?
         .operation(TrimSurface)?
         .operation(ExtendSurface)?
-        .operation(NetworkSurface)
+        .operation(NetworkSurface)?
+        .examples(examples::set())
 }
 
 /// What the tests share: the model's elements by name.
