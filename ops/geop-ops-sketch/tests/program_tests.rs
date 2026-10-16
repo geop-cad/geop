@@ -32,13 +32,17 @@ use geop_core_math::{
 };
 use geop_core_sketch::{Constraint, CurveId, PointId};
 use geop_ops_datums::origin_plane;
+use geop_ops_extrude_revolve::examples::parametric_plate;
 use geop_ops_extrude_revolve::testing::{
     Built, drilled_box, on_face, on_origin, registry, sketch as sketch_step,
 };
 use geop_ops_model::{
     Curve, Line, NamedModel, Path, Plane, Point, element, model, testing::unit_cube,
 };
-use geop_ops_parameters::{DefineParameters, DefineParametersArgs, NumberParameter};
+use geop_ops_parameters::{
+    DefineParameters, DefineParametersArgs, NumberParameter, ParameterKind, parameters_of,
+    set_parameters,
+};
 use geop_ops_sketch::{
     AddSketch, AddSketchArgs, CurveKind, PlacedSketch, Sketch, SketchPlane,
     figures::n,
@@ -231,6 +235,47 @@ fn a_sketch_on_a_face_projects_an_edge() {
     // Its own two axes, and the edge — unless the face's normal runs along
     // it, when it projects to a point.
     assert!(projected.count() >= 2);
+}
+
+/// A projection follows what it projects: change the parameter the box's
+/// width is a formula of, and the top's edges projected into a sketch
+/// built after it move with it — the sketch's ids for them unchanged.
+#[test]
+fn projections_follow_the_part() {
+    let mut program = parametric_plate();
+    let mut on_floor = AddSketchArgs::new(Some(on_origin(FrameAxis::Z)));
+    // What it projects is put into the sketch when it is built.
+    on_floor.references.push(Reference::new(Source::Projection {
+        entity: Projected::Face(element("extrude(plate,end)")),
+    }));
+    // Right after the plate: the hole renames the faces it cuts.
+    let mut floor = Program::new();
+    floor.push("floor", on_floor);
+    let after_plate = program.index_of("plate").unwrap() + 1;
+    program.steps.insert(after_plate, floor.steps.remove(0));
+
+    let widest = |program: &Program| {
+        let part = program.built(registry).unwrap();
+        let reader = part.current();
+        let placed: &PlacedSketch<Design> =
+            reader.retrieve_element(&whole_sketch("floor")).unwrap();
+        let ids: Vec<_> = placed.sketch.points.keys().copied().collect();
+        let x = (placed.sketch.points.values())
+            .map(|p| p.x.to_f64())
+            .fold(f64::MIN, f64::max);
+        (x, ids)
+    };
+    let (before, ids) = widest(&program);
+    assert!((before - 4.0).abs() < 1e-9, "{before}");
+    let mut parameters = parameters_of(&program);
+    let ParameterKind::Number { expression, .. } = &mut parameters.values[0].kind else {
+        panic!("width is a number")
+    };
+    *expression = "5.5".into();
+    set_parameters(&mut program, parameters);
+    let (after, ids_after) = widest(&program);
+    assert!((after - 5.5).abs() < 1e-9, "{after}");
+    assert_eq!(ids, ids_after);
 }
 
 /// Drawn, a sketch's curve is picked as what a field asks for: a line, for
