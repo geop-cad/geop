@@ -263,7 +263,10 @@ impl<T: Scalar> Quaternion<T> {
 /// exactly as it was read.
 ///
 /// Serialized as `{"position": [x, y, z], "rotation": [w, x, y, z]}`, each
-/// number its value's midpoint; a rotation read is normalized. Angles are
+/// number its value's midpoint; a rotation read is kept as read, sharp —
+/// a hair off unit as a midpoint is, as a solver's step leaves one too —
+/// so that reading what was written gives back what was read before
+/// (see [`Pose::saved`]). Angles are
 /// for showing a pose to people only ([`Pose::euler_degrees`],
 /// [`Pose::from_euler`]).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -293,12 +296,20 @@ impl<S: Scalar> From<Pose<S>> for PoseFile {
 impl<S: Scalar> TryFrom<PoseFile> for Pose<S> {
     type Error = GeopError;
 
+    /// The pose as read: normalizing the rotation would make it an
+    /// interval no file holds, written as another midpoint, read as another
+    /// interval — a pose that changes every time it is saved. The zero
+    /// quaternion, which stands for no rotation, is refused.
     fn try_from(file: PoseFile) -> GeopResult<Self> {
         let [w, x, y, z] = file.rotation.map(S::from_f64);
-        Pose::new(
-            Vector3::from_array(file.position.map(S::from_f64)),
-            Quaternion::new(w, x, y, z),
-        )
+        let rotation = Quaternion::new(w, x, y, z);
+        if !rotation.norm_sq().definitely_greater(S::ZERO) {
+            return Err(GeopError::new("a rotation cannot be the zero quaternion"));
+        }
+        Ok(Pose {
+            rotation,
+            position: Vector3::from_array(file.position.map(S::from_f64)),
+        })
     }
 }
 
@@ -329,6 +340,13 @@ impl<S: Scalar> Pose<S> {
     /// `z` — the world's axes — as a dialog shows a pose.
     pub fn from_euler(position: Vector3<S>, degrees: [S; 3]) -> GeopResult<Self> {
         Pose::new(position, Quaternion::from_euler(degrees)?)
+    }
+
+    /// The pose a file holds of this one: written, and read back (see
+    /// [`Pose`]'s serialization). Reading it and writing it again gives it
+    /// back exactly.
+    pub fn saved(&self) -> GeopResult<Self> {
+        Pose::try_from(PoseFile::from(*self))
     }
 
     /// Where its body's origin is.
@@ -859,8 +877,8 @@ mod tests {
         assert!((0..3).all(|k| composed[k].could_be_equal(each[k])));
     }
 
-    /// Files hold a position and a quaternion; a rotation read is
-    /// normalized, and the zero quaternion is refused.
+    /// Files hold a position and a quaternion; the zero quaternion is
+    /// refused.
     #[test]
     fn poses_read_and_write_position_and_quaternion() {
         let written = Pose::new(
@@ -878,6 +896,37 @@ mod tests {
         let zero =
             serde_json::json!({"position": [0.0, 0.0, 0.0], "rotation": [0.0, 0.0, 0.0, 0.0]});
         assert!(serde_json::from_value::<Pose<S>>(zero).is_err());
+    }
+
+    /// A pose read from a file is written back as it was, and read again
+    /// is the same pose: saving a pose twice changes nothing.
+    #[test]
+    fn a_pose_read_is_written_back_as_it_was() {
+        let file = serde_json::json!({
+            "position": [34.18148346551969, 62.89507987346716, 5.871850811598488e-15],
+            "rotation": [0.9731912888550477, -5.175907578430137e-17, 4.296936517018427e-17,
+                         -0.22999720714967709],
+        });
+        let read: Pose<S> = serde_json::from_value(file.clone()).unwrap();
+        let written = serde_json::to_value(read).unwrap();
+        assert_eq!(written, file);
+        assert_eq!(serde_json::from_value::<Pose<S>>(written).unwrap(), read);
+        let turned = pose([1.0, -2.0, 0.5], [10.0, 20.0, 30.0]);
+        let saved = turned.saved().unwrap();
+        assert_eq!(saved.saved().unwrap(), saved);
+    }
+
+    /// A quaternion read sharp, a hair off unit, turns a point where the
+    /// unit quaternion it stands for does: the two enclosures of where it
+    /// goes overlap.
+    #[test]
+    fn a_rotation_read_off_unit_turns_as_its_unit_one() {
+        let turned = pose([0.0; 3], [10.0, 20.0, 30.0]);
+        let saved = turned.saved().unwrap();
+        let unit = Pose::new(saved.position(), saved.rotation()).unwrap();
+        let p = v([3.0, -1.0, 2.0]);
+        let (a, b) = (saved.apply(&p), unit.apply(&p));
+        assert!((0..3).all(|k| a[k].could_be_equal(b[k])), "{a:?} {b:?}");
     }
 
     /// A quarter turn about the line through (1, 1, 0) along `z` keeps that
