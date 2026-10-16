@@ -1464,6 +1464,82 @@ fn six_pins_are_patterned_round_a_hole() {
     assert!(err.contains("needs 2 or more"), "{err}");
 }
 
+/// What a part pattern reads is recorded: moving the plate whose hole it
+/// turns the pins round makes its copies again, moving the pin it copies —
+/// which the copies follow by their placement, not by what the pattern
+/// read — makes nothing, and running it again unchanged makes nothing.
+#[test]
+fn a_part_pattern_is_made_again_only_when_what_it_reads_changes() {
+    let workspace = workspace(parts());
+    let mut program = Program::new();
+    program.push(
+        "plate",
+        AddPartArgs {
+            file: "plate.geop".into(),
+            ..Default::default()
+        }
+        .fixed(),
+    );
+    program.push(
+        "pin",
+        AddPartArgs {
+            file: "pin.geop".into(),
+            ..Default::default()
+        }
+        .fixed(),
+    );
+    program.push(
+        "pins",
+        PartPatternArgs {
+            part: "pin".into(),
+            axis: Some(PatternAxis::Round(
+                element("extrude(hole,hole_sketch,c1)").behind("plate"),
+            )),
+            reversed: false,
+            layout: crate::Layout::Circular {
+                angle: Spacing::step(60.0),
+            },
+            count: 6.0.into(),
+        },
+    );
+    program.state = BTreeMap::from([
+        (pose_state("plate"), at([0.0; 3])),
+        (pose_state("pin"), at([2.0, 1.0, 0.0])),
+    ]);
+    let mut built = build(&program, &workspace).unwrap();
+    let mut run = |program: &Program| {
+        let before = built.runner.counts().makes;
+        program.run(&built.runner, &mut built.part).unwrap();
+        built.runner.counts().makes - before
+    };
+    assert_eq!(run(&program), 0, "nothing changed");
+
+    program.state.insert(pose_state("pin"), at([3.0, 1.0, 0.0]));
+    assert_eq!(
+        run(&program),
+        0,
+        "the pin moved, which the pattern does not read"
+    );
+
+    program
+        .state
+        .insert(pose_state("plate"), at([1.0, 0.0, 0.0]));
+    assert!(
+        run(&program) > 0,
+        "the plate moved, round whose hole the pins turn"
+    );
+    let rebuilt = build(&program, &workspace).unwrap();
+    let (reader, anew) = (built.part.current(), rebuilt.view());
+    for k in 1..6 {
+        let name = format!("part_pattern(pins,{k})");
+        assert_eq!(
+            geop_ops_parameters::located(&reader, &name).unwrap(),
+            geop_ops_parameters::located(&anew, &name).unwrap(),
+            "{name} is where building anew puts it"
+        );
+    }
+}
+
 /// Two links on revolute joints at the ends of a fixed one, coupled as a
 /// pair of gears 2:1 turning opposite ways: setting the first to 90° turns
 /// the second to -45°.
