@@ -1954,3 +1954,91 @@ fn placed_parts_take_the_parameters_given() {
     };
     assert_eq!(clearance, Some(0.66));
 }
+
+/// The triangles of the STL mesh of `part`, which `runner` built from
+/// `program`: of the solids named `solids`, of all if none are.
+fn stl_triangles(
+    runner: &Runner,
+    part: &mut Part,
+    program: &Program,
+    solids: &[&str],
+) -> GeopResult<usize> {
+    use geop_core_editor::output::{Exporter, Output};
+
+    let mut output = Output {
+        runner,
+        part,
+        file: program,
+        editing: None,
+        date: "",
+    };
+    let options = crate::stl::StlOptions {
+        solids: solids.iter().map(|s| s.to_string()).collect(),
+        ..Default::default()
+    };
+    let export = crate::stl::Stl::export(&mut output, "stl", options)?;
+    let bytes = export.bytes();
+    let count = u32::from_le_bytes(bytes[80..84].try_into().unwrap()) as usize;
+    assert_eq!(bytes.len(), 84 + 50 * count);
+    Ok(count)
+}
+
+/// An assembly is meshed with the parts it places, read from the files
+/// beside it, each where it is placed, as `geop compile assembly.geop`
+/// writes it: its triangles are the plate's and the pin's; one solid of a
+/// placed part is chosen by its name behind the instance's. Its state stale,
+/// the pin's mates are reported as not holding, and solved for, it is
+/// meshed as before.
+#[test]
+fn an_assembly_is_meshed_from_its_files() {
+    let mut files = parts();
+    let assembly = examples::pin_in_plate_assembly();
+    files.insert("assembly.geop".into(), assembly.to_json().unwrap());
+    let workspace = workspace(files.clone());
+    let mut sizes = BTreeMap::new();
+    for (file, text) in &files {
+        let program = Program::from_json(text).unwrap();
+        let BuiltPart { runner, mut part } = build_file(&program, file, workspace.clone()).unwrap();
+        let triangles = stl_triangles(&runner, &mut part, &program, &[]).unwrap();
+        sizes.insert(file.as_str(), triangles);
+    }
+    assert_eq!(
+        sizes["assembly.geop"],
+        sizes["plate.geop"] + sizes["pin.geop"]
+    );
+    let BuiltPart { runner, mut part } =
+        build_file(&assembly, "assembly.geop", workspace.clone()).unwrap();
+    let pin = stl_triangles(&runner, &mut part, &assembly, &["pin/extrude(pin)"]).unwrap();
+    assert_eq!(pin, sizes["pin.geop"]);
+
+    let mut stale = assembly;
+    stale.state.insert(pose_state("pin"), at([3.5, 1.0, 0.0]));
+    let BuiltPart { runner, mut part } =
+        build_file(&stale, "assembly.geop", workspace.clone()).unwrap();
+    let report = solving::check(&part.current()).unwrap();
+    assert!(!report.converged);
+    assert_eq!(report.failed, ["add_part(pin,m1)", "add_part(pin,m2)"]);
+    let mut rerun = Rerun {
+        runner: &runner,
+        part: &mut part,
+        program: &stale,
+    };
+    let (moved, report) = solving::solve(&mut rerun, &stale.state, &[], None).unwrap();
+    assert!(report.converged, "{report:?}");
+    stale.state.extend(moved);
+    stale.run(&runner, &mut part).unwrap();
+    assert!(solving::check(&part.current()).unwrap().converged);
+    let triangles = stl_triangles(&runner, &mut part, &stale, &[]).unwrap();
+    assert_eq!(triangles, sizes["assembly.geop"]);
+}
+
+/// A solid asked for by a name no solid of the part has is refused, naming
+/// those there are.
+#[test]
+fn an_unknown_solid_names_the_known_ones() {
+    let program = box_with_drill_hole();
+    let BuiltPart { runner, mut part } =
+        build_file(&program, "box.geop", workspace(BTreeMap::new())).unwrap();
+    let err = stl_triangles(&runner, &mut part, &program, &["nothing"]).unwrap_err();
+    assert!(err.to_string().contains("extrude(hole)"), "{err}");
+}

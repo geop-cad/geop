@@ -393,3 +393,32 @@ fn an_assembly_drawing_lists_its_parts() {
         );
     }
 }
+
+/// A program with no drawing of its own, downloaded as a drawing, as
+/// `geop compile bracket.geop -o bracket.dxf` writes it: the whole part
+/// drawn, named after its file in the title block, in the format asked for
+/// — DXF or SVG, and no other.
+#[test]
+fn a_program_is_drawn_whole() {
+    let mut editor = editor();
+    let update = editor.handle(Command::Load {
+        program: geop_ops_extrude_revolve::examples::bracket(),
+        path: Some("bracket.geop".into()),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let text = |update: Update| -> String {
+        assert!(update.error.is_none(), "{:?}", update.error);
+        let export = update.export.expect("a file is written");
+        export.text().expect("a drawing is text").to_string()
+    };
+    let dxf = text(drawing_file(&mut editor, "dxf", ""));
+    assert!(dxf.contains("\nAC1009\n") && dxf.ends_with("EOF\n"));
+    for name in ["bracket", "THIRD ANGLE"] {
+        assert!(dxf.contains(&format!("\n{name}\n")), "{name}");
+    }
+    let svg = text(drawing_file(&mut editor, "svg", ""));
+    assert!(svg.starts_with("<svg"));
+    let refused = drawing_file(&mut editor, "png", "");
+    let error = refused.error.expect("no drawing is written as PNG");
+    assert!(error.contains("svg, dxf"), "{error}");
+}

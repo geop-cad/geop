@@ -367,10 +367,6 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-
-    use geop_core_math::{primitives::Pose, scalars::Scalar};
-    use geop_core_program::values::Design;
-
     use super::*;
 
     /// A fresh directory for one test's files.
@@ -436,51 +432,6 @@ mod tests {
         assert!(editor.handle_json("not json").is_err());
     }
 
-    /// An output ending in `.step` is a STEP file of the part, which a
-    /// program next to it imports back to as many solids.
-    #[test]
-    fn compiles_to_step_and_imports_it_back() {
-        let dir = scratch("step");
-        let program = geop_cad_base::registry()
-            .unwrap()
-            .example_programs()
-            .into_iter()
-            .find(|(name, _)| *name == "box_with_drill_hole")
-            .unwrap()
-            .1();
-        let path = dir.join("box.geop");
-        std::fs::write(&path, program.to_json().unwrap()).unwrap();
-        let compiled = compile(&CompileArgs {
-            output: Some(dir.join("box.step")),
-            ..args(path.clone())
-        })
-        .unwrap();
-        let text = std::fs::read_to_string(&compiled.output).unwrap();
-        assert!(text.starts_with("ISO-10303-21;"), "{}", &text[..40]);
-        assert!(text.contains("MANIFOLD_SOLID_BREP"));
-
-        let mut import = Program::default();
-        import.push(
-            "imp",
-            geop_ops_step::ImportStepArgs {
-                file: "box.step".into(),
-            },
-        );
-        let imported = dir.join("import.geop");
-        std::fs::write(&imported, import.to_json().unwrap()).unwrap();
-        let solids = |path: &Path| {
-            let (_, runner, _) = build(path).unwrap();
-            let part = runner.part.current();
-            geop_ops_model::read_model(&part)
-                .unwrap()
-                .solid_names()
-                .len()
-        };
-        assert_eq!(solids(&imported), solids(&path));
-        let back = compile(&args(imported)).unwrap();
-        assert!(triangles(&back) > 0);
-    }
-
     #[test]
     #[ignore = "slow: 7 s — run with `cargo test -- --ignored`"]
     fn compiles_every_example() {
@@ -523,114 +474,6 @@ mod tests {
         }
     }
 
-    /// The arm, compiled to a `.zip`: its URDF robot — `robot.urdf` and
-    /// the mesh of its link — in one ZIP archive.
-    #[test]
-    fn compiles_the_arm_as_urdf() {
-        let dir = scratch("urdf");
-        let (_, files) = geop_ops_assembly::examples::workspaces()
-            .into_iter()
-            .find(|(name, _)| *name == "arm")
-            .unwrap();
-        for (file, program) in &files() {
-            std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
-        }
-        let compiled = compile(&CompileArgs {
-            output: Some(dir.join("arm.zip")),
-            options: vec!["quality=8".into()],
-            ..args(dir.join("arm.geop"))
-        })
-        .unwrap();
-        let bytes = std::fs::read(compiled.output).unwrap();
-        assert!(bytes.starts_with(b"PK\x03\x04"));
-        let text = String::from_utf8_lossy(&bytes);
-        assert!(text.contains("robot.urdf") && text.contains("meshes/link.stl"));
-        assert!(text.contains(r#"<robot name="arm">"#), "{text}");
-    }
-
-    /// The bolted plate's bill of materials, compiled to a `.csv`: its
-    /// plate, screw and nut, the standard parts by their norms.
-    #[test]
-    fn writes_the_bill_of_materials_of_the_bolted_plate() {
-        let dir = scratch("bom");
-        let (_, files) = geop_ops_assembly::examples::workspaces()
-            .into_iter()
-            .find(|(name, _)| *name == "bolted_plate")
-            .unwrap();
-        for (file, program) in &files() {
-            std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
-        }
-        let output = dir.join("bom.csv");
-        compile(&CompileArgs {
-            output: Some(output.clone()),
-            ..args(dir.join("bolted_plate.geop"))
-        })
-        .unwrap();
-        let csv = std::fs::read_to_string(&output).unwrap();
-        let rows: Vec<&str> = csv.lines().collect();
-        assert_eq!(rows.len(), 5, "{csv}");
-        assert!(rows[0].starts_with("Item,Level,Quantity,Name,Designation,File"));
-        assert!(rows[1].starts_with("1,0,1,plate,,"), "{csv}");
-        let screw = ",ISO 4762 M4x12,std:iso4762_socket_head_cap_screw.geop,size=M4x12,Steel,";
-        assert!(rows[2].contains(screw), "{csv}");
-        assert!(rows[3].contains(",ISO 4032 M4,"), "{csv}");
-    }
-
-    /// An assembly compiles with the parts it places, each where it is
-    /// placed, read from the files beside it; one solid of a placed part is
-    /// chosen by its name behind the instance's.
-    #[test]
-    fn compiles_an_assembly_from_its_files() {
-        let dir = scratch("assembly");
-        let mut sizes = std::collections::BTreeMap::new();
-        let (_, files) = geop_ops_assembly::examples::workspaces()
-            .into_iter()
-            .find(|(name, _)| *name == "pin_in_plate")
-            .unwrap();
-        let files = files();
-        {
-            for (file, program) in &files {
-                std::fs::write(dir.join(file), program.to_json().unwrap()).unwrap();
-            }
-            for (file, _) in files {
-                sizes.insert(file, triangles(&compile(&args(dir.join(file))).unwrap()));
-            }
-        }
-        assert_eq!(
-            sizes["assembly.geop"],
-            sizes["plate.geop"] + sizes["pin.geop"]
-        );
-        let pin = compile(&CompileArgs {
-            options: vec![r#"solids=["pin/extrude(pin)"]"#.into()],
-            ..args(dir.join("assembly.geop"))
-        })
-        .unwrap();
-        assert_eq!(triangles(&pin), sizes["pin.geop"]);
-
-        // Its state stale, it is solved for before it is written.
-        let mut stale = geop_ops_assembly::examples::pin_in_plate_assembly();
-        stale.state.insert(
-            geop_core_program::values::pose_state("pin"),
-            geop_core_program::values::StateValue::Pose(
-                Pose::from_euler(
-                    geop_core_math::vector::Vector3::from_array(
-                        [3.5, 1.0, 0.0].map(Design::from_f64),
-                    ),
-                    [Design::ZERO; 3],
-                )
-                .unwrap(),
-            ),
-        );
-        let path = dir.join("stale.geop");
-        std::fs::write(&path, stale.to_json().unwrap()).unwrap();
-        let compiled = compile(&args(path)).unwrap();
-        assert_eq!(
-            compiled.solved_for,
-            ["add_part(pin,m1)", "add_part(pin,m2)"]
-        );
-        assert_eq!(triangles(&compiled), sizes["assembly.geop"]);
-    }
-
     #[test]
     fn export_examples_only_writes_the_named_ones() {
         let dir = scratch("export-examples-only");
@@ -658,106 +501,10 @@ mod tests {
         assert!(err.to_string().contains("luggage_tag"), "{err}");
     }
 
-    /// `geop compile bracket.geop -o bracket.dxf`: a drawing of the whole
-    /// part, written in the format its name says, by the drawing exporter;
-    /// named after its file in the title block.
-    #[test]
-    fn draws_a_program() {
-        let dir = scratch("drawing");
-        let path = dir.join("bracket.geop");
-        std::fs::write(
-            &path,
-            geop_cad_base::registry()
-                .unwrap()
-                .example("bracket")
-                .unwrap()
-                .to_json()
-                .unwrap(),
-        )
-        .unwrap();
-        let to = |output: &str| CompileArgs {
-            output: Some(dir.join(output)),
-            ..args(path.clone())
-        };
-        let written = compile(&to("bracket.dxf")).unwrap();
-        let dxf = std::fs::read_to_string(written.output).unwrap();
-        assert!(dxf.contains("\nAC1009\n") && dxf.ends_with("EOF\n"));
-        for text in ["bracket", "THIRD ANGLE"] {
-            assert!(dxf.contains(&format!("\n{text}\n")), "{text}");
-        }
-        let svg = std::fs::read_to_string(compile(&to("bracket.svg")).unwrap().output).unwrap();
-        assert!(svg.starts_with("<svg"));
-        let err = compile(&to("bracket.png")).unwrap_err();
-        assert!(err.to_string().contains("svg, dxf"), "{err}");
-    }
-
-    /// The bracket's flat pattern for laser cutting, written by the
-    /// exporter the editor offers for it, from the program built as
-    /// `compile` builds it: its outline and holes on the CUT layer, its two
-    /// bends on the BEND layer.
-    #[test]
-    fn writes_a_flat_pattern_for_cutting() {
-        let dir = scratch("flat-pattern");
-        let path = dir.join("sheet_metal_bracket.geop");
-        std::fs::write(
-            &path,
-            geop_cad_base::registry()
-                .unwrap()
-                .example("sheet_metal_bracket")
-                .unwrap()
-                .to_json()
-                .unwrap(),
-        )
-        .unwrap();
-        let (program, mut built_part, _) = build(&path).unwrap();
-        let outputs = outputs().unwrap();
-        let exporter = outputs.get_exporter("flat_pattern").unwrap();
-        let mut built = Output {
-            runner: &built_part.runner,
-            part: &mut built_part.part,
-            file: &program,
-            editing: None,
-            date: "",
-        };
-        let export = exporter
-            .export(&mut built, None, &serde_json::Value::Null)
-            .unwrap();
-        assert_eq!(export.name, "sheet_metal_bracket_flat.dxf");
-        let dxf = export.text().unwrap();
-        assert_eq!(dxf.matches("\nCIRCLE\n8\nCUT\n").count(), 2, "{dxf}");
-        assert_eq!(dxf.matches("\nLINE\n8\nBEND\n").count(), 2, "{dxf}");
-        let err = exporter
-            .export(&mut built, Some("svg"), &serde_json::Value::Null)
-            .unwrap_err();
-        assert!(err.to_string().contains("dxf"), "{err}");
-    }
-
     #[test]
     fn today_is_a_date() {
         let today = today();
         assert_eq!(today.len(), 10, "{today}");
         assert_eq!(today.matches('-').count(), 2, "{today}");
-    }
-
-    #[test]
-    fn an_unknown_solid_names_the_known_ones() {
-        let dir = scratch("unknown-solid");
-        let path = dir.join("box.geop");
-        std::fs::write(
-            &path,
-            geop_cad_base::registry()
-                .unwrap()
-                .example("box_with_drill_hole")
-                .unwrap()
-                .to_json()
-                .unwrap(),
-        )
-        .unwrap();
-        let err = compile(&CompileArgs {
-            options: vec![r#"solids=["nothing"]"#.into()],
-            ..args(path)
-        })
-        .unwrap_err();
-        assert!(err.to_string().contains("extrude(hole)"), "{err}");
     }
 }

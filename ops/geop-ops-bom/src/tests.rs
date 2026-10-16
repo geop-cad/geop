@@ -694,3 +694,33 @@ fn the_bill_of_materials_is_asked_for_and_exported() {
     );
     assert!(rows[4].contains("Total"), "{csv}");
 }
+
+/// The bolted plate's bill of materials written with the exporter's
+/// default options, as `geop compile bolted_plate.geop -o bom.csv` writes
+/// it: flat, its plate, screw and nut, the standard parts by their norms,
+/// files and sizes.
+#[test]
+fn the_bolted_plate_bill_is_written_flat_by_default() {
+    let mut editor = Editor::new(registry(), WithStandardParts(BTreeMap::new()));
+    let update = editor.handle(Command::LoadWorkspaceExample {
+        name: "bolted_plate".into(),
+        folder: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::Export {
+        exporter: "bom".into(),
+        format: Some("csv".into()),
+        options: serde_json::Value::Null,
+        date: String::new(),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let export = update.export.expect("a file is written");
+    let csv = export.text().expect("CSV is text");
+    let rows: Vec<&str> = csv.lines().collect();
+    assert_eq!(rows.len(), 5, "{csv}");
+    assert!(rows[0].starts_with("Item,Level,Quantity,Name,Designation,File"));
+    assert!(rows[1].starts_with("1,0,1,plate,,"), "{csv}");
+    let screw = ",ISO 4762 M4x12,std:iso4762_socket_head_cap_screw.geop,size=M4x12,Steel,";
+    assert!(rows[2].contains(screw), "{csv}");
+    assert!(rows[3].contains(",ISO 4032 M4,"), "{csv}");
+}

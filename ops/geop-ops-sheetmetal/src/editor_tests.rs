@@ -167,3 +167,34 @@ fn sheet_metal_cut_hem_and_cutting_export() {
     // Three holes, each one circle.
     assert_eq!(dxf.matches("\nCIRCLE\n8\nCUT\n").count(), 3, "{dxf}");
 }
+
+/// The bracket's flat pattern for laser cutting, downloaded by the exporter
+/// the editor offers for it, as `geop compile` writes it: named after the
+/// program's file, its outline and holes on the CUT layer, its two bends on
+/// the BEND layer — and in DXF only.
+#[test]
+fn the_flat_pattern_is_exported_for_cutting() {
+    let mut editor = Editor::new(registry().unwrap(), std::collections::BTreeMap::new());
+    handled(
+        &mut editor,
+        Command::Load {
+            program: crate::examples::sheet_metal_bracket(),
+            path: Some("sheet_metal_bracket.geop".into()),
+        },
+    );
+    let flat_pattern = |format: Option<&str>| Command::Export {
+        exporter: "flat_pattern".into(),
+        format: format.map(str::to_string),
+        options: serde_json::Value::Null,
+        date: String::new(),
+    };
+    let update = handled(&mut editor, flat_pattern(None));
+    let export = update.export.expect("a file is written");
+    assert_eq!(export.name, "sheet_metal_bracket_flat.dxf");
+    let dxf = export.text().expect("DXF is text");
+    assert_eq!(dxf.matches("\nCIRCLE\n8\nCUT\n").count(), 2, "{dxf}");
+    assert_eq!(dxf.matches("\nLINE\n8\nBEND\n").count(), 2, "{dxf}");
+    let refused = editor.handle(flat_pattern(Some("svg")));
+    let error = refused.error.expect("no flat pattern is written as SVG");
+    assert!(error.contains("dxf"), "{error}");
+}

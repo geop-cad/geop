@@ -254,9 +254,6 @@ dependencies = [
  "geop-core-math",
  "geop-core-program",
  "geop-ops-assembly",
- "geop-ops-model",
- "geop-ops-parameters",
- "geop-ops-step",
  "serde_json",
 ]
 

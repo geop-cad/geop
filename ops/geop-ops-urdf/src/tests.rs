@@ -846,3 +846,29 @@ fn an_assembly_is_exported_as_urdf() {
         "{error}"
     );
 }
+
+/// The arm written with the exporter's options of the command line, as
+/// `geop compile arm.geop -o arm.zip -O quality=8` writes it: one ZIP
+/// archive holding `robot.urdf`, the robot named after the file, and the
+/// mesh of its link.
+#[test]
+fn the_arm_is_exported_with_the_options_given() {
+    let mut editor = Editor::new(registry().unwrap(), BTreeMap::new());
+    let update = editor.handle(Command::LoadWorkspaceExample {
+        name: "arm".into(),
+        folder: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::Export {
+        exporter: "urdf".into(),
+        format: Some("zip".into()),
+        options: serde_json::json!({ "quality": 8 }),
+        date: String::new(),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let bytes = update.export.expect("a file is written").bytes().to_vec();
+    assert!(bytes.starts_with(b"PK\x03\x04"));
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("robot.urdf") && text.contains("meshes/link.stl"));
+    assert!(text.contains(r#"<robot name="arm">"#), "{text}");
+}

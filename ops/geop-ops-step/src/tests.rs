@@ -1318,3 +1318,51 @@ fn an_assembly_step_file_names_its_parts() {
     );
     assert!(text.contains("PRODUCT('plate'"), "the plate's product");
 }
+
+/// The drilled box written as STEP, as `geop compile box.geop -o box.step`
+/// writes it: a Part 21 file, which a program beside it imports back to as
+/// many solids as the box has, and which is meshed again as STL.
+#[test]
+fn a_part_written_as_step_imports_back_to_as_many_solids() {
+    let program = box_with_drill_hole();
+    let mut editor = loaded(editor(), program.clone());
+    let text = step_file(&mut editor);
+    assert!(text.starts_with("ISO-10303-21;"), "{}", &text[..40]);
+
+    let mut import = Program::new();
+    import.push(
+        "imp",
+        ImportStepArgs {
+            file: "box.step".into(),
+        },
+    );
+    let solids = |part: &Part| read_model(&part.current()).unwrap().solid_names().len();
+    let files = BTreeMap::from([("box.step".to_string(), text.clone())]);
+    assert_eq!(
+        solids(&build(&import, "import.geop", files)),
+        solids(&build(&program, "box.geop", BTreeMap::new())),
+    );
+
+    let files = BTreeMap::from([("box.step".to_string(), Some(text))]);
+    handled(&mut editor, Command::Files { files });
+    handled(
+        &mut editor,
+        Command::Load {
+            program: import,
+            path: Some("import.geop".into()),
+        },
+    );
+    let update = handled(
+        &mut editor,
+        Command::Export {
+            exporter: "stl".into(),
+            format: None,
+            options: serde_json::Value::Null,
+            date: String::new(),
+        },
+    );
+    let bytes = update.export.expect("a file is written").bytes().to_vec();
+    let triangles = u32::from_le_bytes(bytes[80..84].try_into().unwrap()) as usize;
+    assert_eq!(bytes.len(), 84 + 50 * triangles);
+    assert!(triangles > 0);
+}
