@@ -181,5 +181,7 @@ in (`program_tests::registry`: sketches, extrusions, fillets, patterns,
 parameters and this crate), beside the standard parts: `program_tests`
 places, mates, solves and drags parts, and round-trips and incrementally
 builds every example; `editor_tests` edits the step placing a part as a
-front end does; `scale_tests` is a robot of hundreds of placed parts, what
+front end does — standard parts from the files, joints dragged to their
+limits and set in the joints panel, placed parts moved by the gizmo,
+mates listed in the structure, the part written as STL; `scale_tests` is a robot of hundreds of placed parts, what
 an edit costs counted, its timings an ignored test (`robot_timings`).
