@@ -1,6 +1,8 @@
 //! The [`Shell`] operation: a solid of a program hollowed out to walls of
 //! one thickness, open where faces are picked, by [`geop_lib_shell::shell()`].
 
+#[cfg(test)]
+mod editor_tests;
 mod icons;
 mod operation;
 #[cfg(test)]

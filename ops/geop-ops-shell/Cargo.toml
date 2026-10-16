@@ -20,3 +20,4 @@ geop-ops-datums.workspace = true
 geop-ops-reference-geometry.workspace = true
 geop-ops-sketch.workspace = true
 serde_json.workspace = true
+geop-core-editor = { workspace = true, features = ["testing"] }
