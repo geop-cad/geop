@@ -13,15 +13,16 @@ use geop_core_editor::{
 };
 use geop_core_math::{
     geop_error::GeopResult,
-    primitives::{DatumComponent, FrameAxis, Pose},
+    primitives::{DatumComponent, FrameAxis},
     scalars::{Ring, ScalInF64 as S, Scalar},
-    vector::Vector3,
 };
 use geop_core_program::{
     program::Program,
     values::{Design, StateValue, StateValues, pose_state},
 };
-use geop_ops_assembly::{AddPartArgs, Kind, Mate, MateEntity, solids::placed_solids};
+use geop_ops_assembly::{
+    AddPartArgs, Kind, Mate, MateEntity, examples::pose, solids::placed_solids,
+};
 use geop_ops_datums::{ORIGIN, component_name, datum};
 use geop_ops_model::read_model;
 use geop_ops_reference_geometry::Selected;
@@ -111,11 +112,7 @@ fn assembly() -> Program {
             service_loop: 0.0,
         },
     );
-    let at = |x: f64| {
-        let position = Vector3::from_array([x, 0.0, 0.0].map(Design::from_f64));
-        let turn = [0.0; 3].map(Design::from_f64);
-        StateValue::Pose(Pose::from_euler(position, turn).unwrap())
-    };
+    let at = |x: f64| StateValue::Pose(pose([x, 0.0, 0.0], [0.0; 3]));
     program.state = StateValues::from([(pose_state("a"), at(0.0)), (pose_state("b"), at(4.0))]);
     program
 }

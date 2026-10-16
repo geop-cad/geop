@@ -80,3 +80,12 @@ fn subd_mouse_round_trips() {
         .unwrap();
     assert!(p[2].could_be_equal(Design::from_f64(-0.4)), "{p:?}");
 }
+
+/// The example `subd_mouse`, edited as a user edits it, builds incrementally
+/// what it builds from scratch.
+#[test]
+fn subd_mouse_builds_incrementally() {
+    let registry = std::rc::Rc::new(registry().unwrap());
+    let programs = geop_core_program::testing::edit_sequence(&crate::examples::subd_mouse());
+    geop_core_program::testing::assert_incremental(registry, None, &programs);
+}
