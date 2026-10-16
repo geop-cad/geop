@@ -51,8 +51,11 @@ formulas: an offset plane's distance along its normal, an offset point's
 
 ## Examples
 
-`examples` offers two parts sketched on datum planes, registered with the
-operation: `boss_on_reference_plane`, a boss extruded down from a plane
-above a box, and `airfoil_wing`, a wing lofted between NACA 2412 sections
-on planes apart. They extrude and loft, so this crate depends on
+`examples` offers three parts sketched on datum planes, registered with
+the operation: `boss_on_reference_plane`, a boss extruded down from a plane
+above a box, `airfoil_wing`, a wing lofted between NACA 2412 sections on
+planes apart, and `conebox`, a double cone revolved from a plane turned
+about a box's edge, drawn in the editor and kept as the `.geop` text it
+saved (`src/drawn/`). They extrude, revolve and loft, so this crate
+depends on
 [geop-ops-extrude-revolve](./geop-ops-extrude-revolve.md).

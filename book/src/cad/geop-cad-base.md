@@ -3,11 +3,11 @@
 > Brief overview only — full documentation is coming later.
 
 The CAD application, composed: what its editor offers, one line per crate,
-an editor of all of it, the workspace its programs place parts from
-beside the [standard parts](../lib/geop-lib-stdlib.md), and the example
-programs. The editor itself is
+an editor of all of it, and the workspace its programs place parts from
+beside the [standard parts](../lib/geop-lib-stdlib.md). The editor itself is
 [geop-core-editor](../core/geop-core-editor.md#the-editor)'s; the operations
-are their crates'.
+and their examples are their crates'. It is three files: `lib.rs`,
+`registry.rs` and `tests.rs`.
 
 ## The registry
 
@@ -18,15 +18,16 @@ extrude, revolve, sweep and loft, holes and threads, fillets and chamfers,
 shells and plastic features, booleans and splits, patterns, mirrors and
 moves of bodies, surfaces, subdivision surfaces, placed parts, harnesses,
 STEP import, drawings, URDF robots, sheet metal, inspecting, bills of
-materials and the part's parameters — and the examples. Within a group and
+materials and the part's parameters — each with its examples. Within a group and
 tier the toolbar offers operations in the order they are registered;
 exporters and inspectors come in that order too, and the first exporter's
 first format, STL, is what a part is written in unless told otherwise. A
 part is drawn and listed by the drawers in that order: solids and faces,
 sketches, datums, placed parts.
 
-This is the only place the crate names an operation crate, besides the
-examples and the standard parts. `editor()` is an editor of all of it,
+This and the composition's tests are the only places the crate names an
+operation crate (`scripts/check-layering.sh` checks it). `editor()` is an
+editor of all of it,
 the standard parts beside the files it is sent; `outputs()` the exporters
 and inspectors alone, as the command line picks them by name.
 
@@ -58,17 +59,18 @@ parts beside them as read-only files named `std:…`
 
 ## Tests
 
-Only what needs every operation registered is tested here
-(`operations/*tests*.rs`, their helpers in `registry::testing`): the
-editor of everything driven as a front end drives it — commands that edit
-the program and only what changed sent back, every operation offered group
-by group, every example loaded by name, a program of unknown steps refused
-(`editor_tests.rs`) — every example built, drawn and round-tripped
-(`example_tests.rs`, `program_tests.rs`), and sets (`set_tests.rs`). An
-operation's editor tests drive an editor over a registry of what they need
-in that operation's crate (`editor_tests.rs`, or `tests/editor_tests.rs`
-where they need a crate that depends on it), with the helpers of
-`geop_core_editor::testing`.
+Only what needs every operation registered is tested here, in
+`tests.rs`: every operation offered once, started from what the steps
+before built and opened on any part (`set`); the editor of everything
+driven as a front end drives it — commands that edit the program and only
+what changed sent back, every operation offered group by group, every
+example loaded by name, a program of unknown steps refused (`editor`);
+every example built incrementally (`incremental`); and every example and
+example assembly drawn in every view, weighed and halved (`examples`,
+the slow ones ignored). A test of one operation or one example lives in
+that operation's crate: its `program_tests.rs` and `editor_tests.rs` over
+a registry of what they need (or `tests/` where they need a crate that
+depends on it), with the helpers of `geop_core_editor::testing`.
 
 ## Examples
 
@@ -84,9 +86,11 @@ and revolve too; the datum planes' `boss_on_reference_plane` and
 `sheet_metal_bracket` of `geop-ops-sheetmetal`, `subd_mouse` of
 `geop-ops-subd`, `curved_panel` of `geop-ops-surface`; the assemblies and
 every example made of several files of
-[geop-ops-assembly](../ops/geop-ops-assembly.md)). `examples` holds only
-the examples drawn in the editor (`src/drawn/`), offered as one
-`ExampleSet` (`examples::set`). An editor lists them all through the registry
+[geop-ops-assembly](../ops/geop-ops-assembly.md)). The examples drawn in
+the editor are kept as the `.geop` text they saved, in the `src/drawn/` of
+the crate whose operations they use (`edge_part` of extrude and revolve,
+`conebox` of reference geometry, `turbine_blade` and `cool_flange` of
+patterns). An editor lists them all through the registry
 (`Registry::example_programs`); they serve as a reference for writing new
 programs.
 

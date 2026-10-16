@@ -13,7 +13,7 @@ geop compile part.geop -o out/part.stl
 ## `geop compile`
 
 Builds a program (the JSON the web editor saves, see
-[geop-ops-parameters](../ops/geop-ops-parameters.md#the-program-file-programfile)) and writes the part with the
+[geop-core-program](../core/geop-core-program.md#operations-and-programs)) and writes the part with the
 exporter the editor offers for the output's extension: `.stl` (the mesh the
 editor draws, see [geop-core-rasterize](../core/geop-core-rasterize.md)),
 `.step`, `.svg`/`.dxf` drawings, `.zip` URDF robots, `.csv` bills of
@@ -30,3 +30,12 @@ materials.
 Writes every built-in example program as `<name>.geop` together with
 its `<name>.stl`, into `--out-dir` (default `examples`). `--only NAME`
 restricts it to the named examples, and `--option` works as for `compile`.
+
+## Tests
+
+The command line's tests are of its own: its arguments, `serve`'s one
+line per command, and `examples` over every example the registry offers.
+What a part compiles to is tested in the crate of its exporter (STEP in
+`geop-ops-step`, URDF in `geop-ops-urdf`, a bill in `geop-ops-bom`, a
+drawing in `geop-ops-drawing`, a flat pattern in `geop-ops-sheetmetal`, an
+assembly's mesh in `geop-ops-assembly`).

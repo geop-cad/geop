@@ -186,7 +186,9 @@ own, so a pick cannot disagree with what is on screen. The same goes for
 what the viewer draws besides the part: the datums are laid out here, by
 the sizes the viewer draws them with (a frame's axes are `FRAME` reaches
 long), and picked by the same rules. Serialized, a `PartView` is what a
-viewer draws.
+viewer draws, with the targets its model, datums and sketches are of: a
+viewer lights an element the editor names (a `PickedElement`) by the
+target, kind and name it carries, as a pick names it.
 
 Each crate draws its own targets into a view — the model its vertices,
 edges and faces, the sketches theirs, the datums theirs, the placed parts

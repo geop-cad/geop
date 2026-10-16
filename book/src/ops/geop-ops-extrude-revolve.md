@@ -13,7 +13,9 @@ stress sweeps of `geop-ops-fillet` and `geop-ops-shell` blend and shell.
 
 Its `examples` — `box_with_drill_hole`, `bracket`, `cross_drilled_shaft`,
 `handle_with_hole`, `luggage_tag`, `revolved_cone_on_box`,
-`parametric_plate`, `pipe` — are registered with its operations; each is
+`parametric_plate`, `pipe`, and `edge_part`, drawn in the editor and kept
+as the `.geop` text it saved (`src/drawn/`) — are registered with its
+operations; each is
 tested to round-trip and to build incrementally (`example_tests.rs`). The
 programs from bug reports, rebuilt in Rust, are `regression_tests.rs`.
 

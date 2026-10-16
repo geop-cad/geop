@@ -8,252 +8,104 @@ Things I tried that didn't work:
 
 ### Development
 
-The kernel is a Cargo workspace of small crates, each depending only on the
-ones before it; `web/` is a React front end that loads the top of that chain
-compiled to WebAssembly and renders its output with `three.js`, and
-`geop-cad-cli` puts the same chain on the command line.
+The kernel is a Cargo workspace in four tiers: `core/` defines what things
+are (math, geometry, topology; a program, a part, an editor), `lib/` holds
+algorithms two operations share, `ops/` has one crate per family of
+operations, and `cad/` composes them and carries them to the web app and
+the command line. `web/` is a React front end that loads `cad/geop-cad-web`
+compiled to WebAssembly and renders its output with `three.js`.
 `cloudflare-functions/` holds the Cloudflare Pages Functions deployed with
-the web app (bug reports).
+the web app (bug reports). `scripts/check-layering.sh` keeps the tiers
+apart (see Scripts).
 
-```
-core/geop-core-math          scalars, interval arithmetic, linear algebra,
-                              error type, frames, rays, datums, poses (a
-                              unit quaternion and a position), constrained
-                              least squares and dual numbers for the solvers,
-                              plain-`f64` vectors for free choices (`plain`)
-core/geop-core-geometry       NURBS curves/surfaces and their simplest
-                               constructors (lines, arcs, bilinear and ruled
-                               patches), helices, compatible
-                               curves for lofts, Coons and Gordon patches,
-                               containment, intersection
-core/geop-core-topology       B-rep structures, Euler operators, edit/validation;
-                               wires: edges and vertices bounding no face
-core/geop-core-rasterize      turns a Model into a triangle mesh, writes it
-                               as STL, and renders it for debugging
-core/geop-core-sketch         2-D constraint sketches: entities, constraints
-                               as residuals, profile extraction, geometry
-                               made from geometry (mirror, patterns, offset),
-                               how a dimension is drawn in a plane
-core/geop-core-program        what a program is (`Program`: steps and state,
-                               ids, copy and paste, checked against its
-                               operations), the values it is run with
-                               (`Design`, `Setting`, `StateValue`), the
-                               part it builds: a memo table of nodes, one
-                               per step and target, each made by a plain
-                               make and reused while its arguments are
-                               equal and what it read holds (`Part`,
-                               `StepContext::produce`, `Reader`, `Read`),
-                               chain targets several steps produce, typed
-                               references to their elements
-                               (`ElementReference`), placed parts — built
-                               from their program, inputs and state slice,
-                               equal builds shared (`placed`) — the
-                               operations a program is written in, running
-                               it up to a step (`Runner`), the workspace of
-                               files it reads (`Files`, `FileStore`), and
-                               numbers as typed or formulas of its
-                               parameters (`NumericInput`,
-                               `ParameterValues`); feature `testing`:
-                               `assert_incremental`
-core/geop-core-editor         what an operation is and how it is edited
-                               (`PartOperation`, `EditForm`): events,
-                               dialogs, visuals, hit tests, the gizmo every
-                               drag in space goes by; picking typed
-                               references (`Selectable`, `one_of!`); the
-                               field of a number typed or a formula
-                               (`EditForm::numeric`, `Number::numeric`);
-                               what an editor draws of a part (`view`:
-                               `PartView`, picking by drawn kind,
-                               annotations and the structure entries steps
-                               list); the exporter and inspector interfaces
-                               (`output`); the whole editor engine — one
-                               step edited (`step_editor`), the program
-                               edited by `Command`s answered by `Update`s
-                               (`editor`), the pick tool (`tools::pick`)
-                               — over a `Registry` of what it offers
-                               (operations, `Drawer`s, exporters,
-                               inspectors, `Panel`s, `Tool`s, one `Settle`,
-                               `ExampleSet`s), none of which it names;
-                               feature `testing`: an editor over a
-                               registry of a few operations, driven as a
-                               front end drives it (`editor_with`,
-                               `Stepping`, pointers, clicks)
-lib/geop-lib-sheet            the sheets drawings and flat patterns are
-                               written on (SVG, DXF, each layer defined by
-                               who draws on it), and `xml_escape`
-lib/geop-lib-booleans         3-D booleans (union/intersection/diff) and the
-                               remesh under them, splitting with a sheet,
-                               imprinting, trimming up to the next face, and
-                               combining a step's tools as its `Combine` says
-lib/geop-lib-sweep            the sweep algorithms over profiles and models:
-                               extrude, revolve, screw, sweeps along paths
-                               (guide rails, twist, orientation), lofts
-                               (guide curves, matched points), the skinned
-                               grid they and blend tools share; feature
-                               `testing`: basic shapes for tests
-lib/geop-lib-stdlib           the standard parts: one program per family,
-                               written in the operations' `Args`
-                               (`StandardPart`, `parts`, `part`), and
-                               `WithStandardParts`, the `FileStore` that
-                               puts them beside a workspace's files
-lib/geop-lib-shell            shelling: a solid hollowed to walls of one
-                               thickness, open at given faces; a sheet
-                               thickened or offset; room around a surface
-                               and pcurves on it, for rebuilding a solid
-                               face by face
-ops/geop-ops-model            the model a part's steps build: topology with
-                               stable names, the features their steps
-                               combined, geometric kinds of its elements
-                               (point, line, plane, round, curve, body),
-                               cosmetic threads, solid notes; how a step
-                               meets the solid it builds a tool for
-                               (`Combine`, `Extent`); how it is
-                               drawn. Its names are built from step ids in
-                               the program's id alphabet
-ops/geop-ops-parameters       a part's parameters (numbers, tables, colour,
-                               material) as steps defining them
-                               (`DefineParameters`, `LookupTable` for a part
-                               family's table, `PartProperties`), read,
-                               set and renamed in a `Program`
-                               (`parameters_of`, `set_parameters`,
-                               `rename_parameter`, `parameter_uses`); where
-                               placed parts are (`Instance`, `placement`,
-                               `located`); the editor's parameters panel,
-                               and the part drawn in its colour
-ops/geop-ops-constraints      the constraints and unknowns of a part's state
-                               (mates, joints) — its own and its instances',
-                               behind their names — and the solver
-                               re-running the program over them
-ops/geop-ops-datums           the part's datums: the origin, and those steps
-                               add, picked as points, axes and planes,
-                               drawn and listed
-ops/geop-ops-sketch           the sketch operation: drawing and constraint
-                               tools, snapping, reference geometry and
-                               projections of the part
-ops/geop-ops-reference-geometry        the datum operation: reference points, axes,
-                               planes and coordinate systems built from what
-                               is picked
-ops/geop-ops-boolean          the boolean and split operations
-ops/geop-ops-edit             edits of existing bodies: delete a body,
-                               extract a face, project a sketch onto a face
-ops/geop-ops-extrude-revolve  the extrude, revolve, sweep and loft
-                               operations: sketches and references resolved,
-                               swept by geop-lib-sweep; feature `testing`:
-                               the sketches and extrusions program tests
-                               start from
-ops/geop-ops-sketch3d         the 3-D sketch operation: points, lines, arcs
-                               and splines in space, placed on the part,
-                               snapped along x, y, z and onto points, and
-                               constrained — built as a wire whose edges and
-                               vertices are picked like any; paths and rails
-ops/geop-ops-fillet           fillets and chamfers on straight and circular
-                               edges, rolling-ball fillets of any other edge
-                               and tangent chain, radius varying along them,
-                               cut or filled in with a boolean
-ops/geop-ops-shell            the shell operation: a solid hollowed to walls
-                               of one thickness, open at picked faces
-ops/geop-ops-pattern          linear and circular patterns, mirrors and
-                               moves of bodies, copied as new bodies or
-                               combined with a solid; patterns and mirrors
-                               of features (a cut, a boss, a hole and its
-                               thread) from the tools their steps recorded;
-                               their operations
-ops/geop-ops-hole             holes from ISO tables (simple, counterbore,
-                               countersink, tapped) and threads, cosmetic or
-                               modelled along a helix; the hole and thread
-                               operations
-ops/geop-ops-plastic          housings: ribs grown up to the walls, lips and
-                               grooves along a rim, drafts on planar faces
-ops/geop-ops-surface          surfacing: boundary (ruled, Coons, filled)
-                               and UV (Gordon, through a network of
-                               curves) surfaces, offset, thicken, knit,
-                               trim and extend of faces standing on their
-                               own
-ops/geop-ops-drawing          2-D drawings: projected views with hidden
-                               lines and silhouettes, sections, title block,
-                               bill of materials, SVG and DXF; dimensions,
-                               notes and centre marks picked on the sheet
-                               (drawn like a sketch's, `geop_core_sketch::
-                               dimension`); the drawing step
-ops/geop-ops-subd             subdivision surfaces: a control cage shaped in
-                               the editor, built as its Catmull-Clark limit
-                               surface, a solid of B-spline faces; the subd
-                               operation
-ops/geop-ops-sheetmetal       sheet metal: base and edge flanges with bends,
-                               reliefs and open or closed corners, hems, cuts
-                               across bends unrolled, the flat pattern and its
-                               DXF for cutting (an exporter); the sheet model
-                               recorded as a target of the part, laid out
-                               flat and folded into it
-ops/geop-ops-harness          wire harnesses: wires routed through connectors
-                               and clips as lines and arcs, bend radius
-                               checked, the bundle swept, cut lengths; the
-                               route operation
-ops/geop-ops-assembly         the part operation: place another file's part,
-                               mate it, joint it, drag it; patterns of
-                               placed parts; the library parts are placed
-                               from, the solids a part shows wherever they
-                               are placed, and the STL export; placed parts
-                               drawn as instances of their components, the
-                               joints panel, the drag tool, and the settler
-                               solving the mates after every edit
-ops/geop-ops-inspect          inspecting a part without changing it: mass
-                               properties of its solids and placed parts,
-                               measurements of picked entities, interference;
-                               inspectors
-ops/geop-ops-urdf             URDF export of an assembly: the tree of links
-                               and joints, mimics, inertia, STL meshes, a
-                               stored ZIP writer; an exporter (`geop compile
-                               robot.geop -o robot.zip`)
-cad/geop-cad-base             composition: what the editor offers, one
-                               `register` line per crate (`registry.rs`),
-                               an editor of all of it (`editor()`), the
-                               workspace of the editor (the core's `Files`
-                               beside the standard parts), example
-                               programs, the standard parts (below)
-cad/geop-cad-web              the wasm bindings the web app loads (crate `geop`)
-cad/geop-cad-cli              the `geop` command-line tool; `compile` meshes
-                               each placed component once
-ops/geop-ops-step             STEP (ISO 10303-21) exchange: reading the
-                               B-rep solids and sheets of a file into exact
-                               NURBS bodies (an assembly flattened), healed
-                               where the file disagrees with itself, writing
-                               a part as one — an assembly as products and
-                               occurrences; the import operation
-ops/geop-ops-bom              bills of materials: placed parts grouped by
-                               file and parameter values, flat or indented,
-                               with designations (a part's own, see
-                               `Parameters::designation`), materials, masses, sheet
-                               thickness and wires cut to length, as the
-                               steps noted them on their solids;
-                               an inspector, and a CSV exporter
-```
+| crate | what it is |
+|---|---|
+| `core/geop-core-math` | scalars and interval arithmetic, linear algebra, the error type, frames, rays, datums, poses, solvers and dual numbers |
+| `core/geop-core-geometry` | NURBS curves and surfaces, their constructors, compatible curves, Coons and Gordon patches, containment and intersection |
+| `core/geop-core-topology` | the B-rep, Euler operators, editing and validation, wires |
+| `core/geop-core-rasterize` | a model as a triangle mesh, STL, debug renderings |
+| `core/geop-core-sketch` | 2-D constraint sketches: entities, constraints as residuals, profiles, dimensions in a plane |
+| `core/geop-core-program` | a program, its values and the part it builds: a memo table of nodes made by `StepContext::produce`, placed parts, the runner, the workspace of files; feature `testing`: `assert_incremental`, `assert_round_trips` |
+| `core/geop-core-editor` | what an operation is and how it is edited (`PartOperation`, `EditForm`), what an editor draws (`view`), exporters and inspectors (`output`), the editor engine over a `Registry`; feature `testing`: an editor driven as a front end drives it |
+| `lib/geop-lib-sheet` | the sheets drawings and flat patterns are written on: SVG, DXF |
+| `lib/geop-lib-booleans` | booleans and the remesh under them, split, imprint, trim up to the next face, a step's `Combine` |
+| `lib/geop-lib-sweep` | extrude, revolve, screw, sweeps along paths, lofts, the skinned grid blends share; feature `testing`: basic shapes |
+| `lib/geop-lib-shell` | shelling, thickening and offsetting faces, rebuilding a solid face by face |
+| `lib/geop-lib-stdlib` | the standard parts, one program per family, and `WithStandardParts`, the `FileStore` that puts them beside a workspace's files |
+| `ops/geop-ops-model` | the model target: topology with stable names, features, element kinds, threads, solid notes, `Combine` and `Extent`, its drawer |
+| `ops/geop-ops-parameters` | a part's parameters, tables and properties as steps, read and renamed in a program; where placed parts are; the parameters panel |
+| `ops/geop-ops-constraints` | the constraints and unknowns of a part's state, and the solver over them |
+| `ops/geop-ops-datums` | the part's datums: the origin and those steps add |
+| `ops/geop-ops-sketch` | the sketch operation, its tools, snapping and references |
+| `ops/geop-ops-sketch3d` | the 3-D sketch operation: wires in space, paths and rails |
+| `ops/geop-ops-reference-geometry` | the datum operation: points, axes, planes and frames from what is picked |
+| `ops/geop-ops-extrude-revolve` | extrude, revolve, sweep and loft; feature `testing`: the sketches and extrusions other crates' tests start from |
+| `ops/geop-ops-hole` | holes from ISO tables, threads cosmetic or modelled |
+| `ops/geop-ops-fillet` | fillets and chamfers, rolling-ball blends of tangent chains |
+| `ops/geop-ops-shell` | the shell operation |
+| `ops/geop-ops-plastic` | ribs, lips and grooves, drafts |
+| `ops/geop-ops-boolean` | the boolean and split operations |
+| `ops/geop-ops-pattern` | patterns, mirrors and moves of bodies and features |
+| `ops/geop-ops-subd` | subdivision surfaces: a cage built as its limit surface |
+| `ops/geop-ops-surface` | boundary and UV surfaces, offset, thicken, knit, trim and extend |
+| `ops/geop-ops-edit` | delete a body, extract a face, project a sketch onto a face |
+| `ops/geop-ops-assembly` | placing parts, mates and joints, part patterns, the joints panel, the drag tool, the settler, STL export |
+| `ops/geop-ops-harness` | wire harnesses routed through connectors and clips |
+| `ops/geop-ops-step` | STEP import and export, assemblies as products and occurrences |
+| `ops/geop-ops-drawing` | 2-D drawings: views, hidden lines, sections, dimensions, title block, parts list |
+| `ops/geop-ops-urdf` | URDF export of an assembly |
+| `ops/geop-ops-sheetmetal` | flanges, bends, hems, cuts, the flat pattern and its DXF |
+| `ops/geop-ops-inspect` | mass properties, measurements, interference |
+| `ops/geop-ops-bom` | bills of materials, an inspector and a CSV exporter |
+| `cad/geop-cad-base` | composition: `registry()`, one `register` line per crate, the editor of all of it beside the standard parts, and the composition's tests |
+| `cad/geop-cad-web` | the wasm bindings the web app loads (package `geop`), and the check of `web/src/geop.ts` against the protocol |
+| `cad/geop-cad-cli` | the `geop` command line: `compile`, `examples`, `serve` |
 
-An operation crate plugs into the editor without the editor knowing it:
-it exports one `pub fn register(r: Registry) -> GeopResult<Registry>`
-that adds what it contributes to the `geop_core_editor::registry::Registry`,
-and `geop_cad_base::registry` calls every crate's in turn. What a crate
-can add:
+#### How an operation plugs in
 
-- an operation (`Editable`, usually a `PartOperation`);
-- a `Drawer`, which draws the targets it defines into the part's
+An op crate plugs into the editor without the editor knowing it. It
+exports one `pub fn register(r: Registry) -> GeopResult<Registry>` that
+adds what it contributes to the `geop_core_editor::registry::Registry`,
+and `cad/geop-cad-base/src/registry.rs` calls every crate's in turn, one
+line each, in ribbon order. What a crate can add:
+
+- an operation (`Registry::operation`): a `PartOperation` made an
+  `Editable` by `part_operation!`, edited through its one `form`, its
+  icon the SVG of `OperationInfo::icon`;
+- a `Drawer`, which draws the targets the crate defines into the part's
   `PartView` and lists them in the structure tree (`StructureItem`, with
   the `kind_label` its group is shown under); placed parts are drawn as
   `ViewInstance`s of a component sent once, never a mesh per placement;
-- a `geop_core_editor::output::Exporter` (a file written from the part)
-  or `Inspector` (a question about it);
-- a `Panel`: program-level state the editor sends under its key in
-  `ProgramState::panels`, and the commands it takes as
-  `Command::Panel { key, payload }` — the parameters (`parameters`) and
-  the joints (`joints`);
-- a `Tool`: a mode in hand while no step is edited, taken in hand by its
-  key with `Command::Tool { key }` and offered as its `ToolInfo` says in
-  `ProgramState::tools` — the drag tool (`drag`); the pick tool of an
+- an `Exporter` (a file written from the part) or an `Inspector` (a
+  question about it, answered as an `output::Answer`);
+- a `Panel`: program-level state sent under its key in
+  `ProgramState::panels`, taking `Command::Panel { key, payload }` — the
+  parameters (`parameters`) and the joints (`joints`);
+- a `Tool`: a mode in hand while no step is edited, taken by its key with
+  `Command::Tool { key }` — the drag tool (`drag`); the pick tool of an
   inspector that picks is `pick:<inspector>`;
-- the one `Settle`: the solve the editor runs after every edit, moving
-  the program's state (placed parts) so its constraints hold — with none,
-  the state is kept as given;
-- an `ExampleSet` of programs `Command::LoadExample` loads.
+- the one `Settle`: the solve the editor runs after every edit, moving the
+  program's state so its constraints hold — with none, state is kept as
+  given;
+- an `ExampleSet`: programs `Command::LoadExample` loads and workspaces of
+  several files `Command::LoadWorkspaceExample` loads.
+
+An op crate keeps all of itself: `src/lib.rs` is its public surface
+(`register`, target types, reference constructors, `read_*`, `*Args`);
+`src/examples.rs` its examples, Rust programs written against its `Args`
+(or a program drawn in the editor, kept as its `.geop` text in
+`src/drawn/` and read with `include_str!`); `src/program_tests.rs` builds
+programs in a registry of the operations they need, each example with a
+round trip (`assert_round_trips`) and an incremental build
+(`assert_incremental`); `src/editor_tests.rs` drives
+`geop_core_editor::editor::Editor` as the front end does
+(`geop_core_editor::testing`: `editor_with`, `Stepping`, pointers and
+clicks); `src/regression_tests.rs` rebuilds the user reproducers of its
+bugs; `src/stress_tests.rs` holds ignored sweeps; feature `testing` what
+other crates' tests need of it. An op crate whose tests need a crate that
+depends on it puts those tests in `tests/` (as `geop-ops-sketch` does):
+in `src/` Cargo would link two copies of it. `cargo test -p <crate>` must
+pass on its own.
 
 What a step draws on the part is its `geop_core_editor::view::annotations`
 target, what it lists in the structure tree its
@@ -261,19 +113,24 @@ target, what it lists in the structure tree its
 by the output's extension and passes it the options given as
 `-O key=value`. The web app builds its export menu, inspect buttons and
 tool buttons from the lists the program state sends, shows every
-inspector's answer as the inspector lays it out (`Inspector::show`, an
-`output::Answer` of text, lists, tables, groups and buttons), groups the
-structure by the kernel's labels, and shows each panel by the component
-its key maps to (`web/src/ProgramPanels.tsx`, the one place it names a
-panel): no front end knows an operation, an exporter or an inspector by
-name. The files an operation reads beside programs — a STEP file to
-import — it names by extension (`OperationInfo::reads`), and the front
-ends keep those in a workspace.
+inspector's answer as the inspector lays it out, groups the structure by
+the kernel's labels, lights what the kernel names by the target, kind and
+name of each element, and shows each panel by the component its key maps
+to (`web/src/ProgramPanels.tsx`, the one place it names a panel): no front
+end knows an operation, an exporter or an inspector by name. The files an
+operation reads beside programs — a STEP file to import — it names by
+extension (`OperationInfo::reads`), and the front ends keep those in a
+workspace.
 
-An op crate's tests can drive the editor the way the front end does over
-a registry of only the operations they need: `geop_core_editor::testing`
-(feature `testing`) has `editor_with(registry, program)`, `Stepping` and
-the pointer and click helpers.
+The protocol types of the web app (`web/src/geop.ts`) are checked against
+the kernel's: `cargo test -p geop protocol`
+(`cad/geop-cad-web/src/protocol_tests.rs`) drives the editor by JSON,
+requires the kernel to read every command sampled, and keeps what it
+answers, reduced to its shapes, in `web/test/protocol.samples.ts`, which
+`tsc -b` checks against `geop.ts`. A change to what the editor sends — a
+field, a dialog's shape — fails that test until the samples are written
+again (`GEOP_WRITE_PROTOCOL_SAMPLES=1 cargo test -p geop protocol`), and
+the web build until `geop.ts` agrees.
 
 STEP files are tested against a downloaded corpus of public files (NIST
 MBE PMI models, the FreeCAD parts library, OCCT/CadQuery/build123d
@@ -293,14 +150,14 @@ stencil counters drawn with them.
 Standard parts (ISO screws, nuts, washers, dowel pins, standoffs, ball
 bearings, T-slot extrusions, a NEMA 17 motor, involute spur gears and
 their rack, GT2 pulleys, shaft collars, flange couplings, MGN linear
-guides, hobby servos) live in
-`geop-lib-stdlib`: one program per family, generated in Rust,
-its sizes the rows of a table parameter `size`. Every workspace reads them
-as read-only files named `std:…` (`std:iso4032_hex_nut.geop`) through
-`WithStandardParts`, the one place they come from; the editor's
-part picker lists them, and `geop compile std:…` meshes one. Listing them
-builds nothing: a family's program is generated the first time its file
-is read (`FAMILIES`).
+guides, hobby servos) live in `geop-lib-stdlib`: one program per family,
+generated in Rust, its sizes the rows of a `LookupTable` step looked up by
+`size`. Every workspace reads them as read-only files named `std:…`
+(`std:iso4032_hex_nut.geop`) through `WithStandardParts`, the one place
+they come from; the editor's part picker lists them, and
+`geop compile std:…` meshes one. Listing them builds nothing: a family's
+program is generated the first time its file is read (`FAMILIES`).
+
 End-to-end checks drive the real app in headless Chrome (`web/e2e/`, see
 `web/README.md`): `npm run e2e` in `web/` loads every example from the
 File menu, opens and cancels every operation, sketches and extrudes a
@@ -310,8 +167,17 @@ extension's page against a real `geop serve` and checks that edits are
 written back. Logic of the front end that needs no browser lives in a
 module of its own and is unit tested with `npm test` in `web/` (Node's
 own runner, `web/test/`), as the click and double-click rules are
-(`web/src/gestures.ts`). A bug they find in Rust gets a Rust test as well
-(see `set_tests.rs`, `editor_tests.rs`).
+(`web/src/gestures.ts`). A bug they find in Rust gets a Rust test as well,
+in the crate of what failed.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every pull request the layering check,
+`cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D
+warnings`, `scripts/test-affected.sh` against `main`, and the web build and
+tests; on a push to `main` the whole suite; and every night the whole
+suite with the ignored sweeps (`cargo test --workspace -- --ignored`).
+Every run is capped with `timeout` and `prlimit`, as `AGENTS.md` asks.
 
 ### Scripts
 
@@ -328,11 +194,9 @@ own runner, `web/test/`), as the click and double-click rules are
   tiers (`ARCHITECTURE_PLAN.md` §2.1): core depends on core only, and
   `geop-core-program` on `geop-core-math` only; a `geop-lib-*` on core,
   `geop-ops-model` and libs; no ops or lib crate on `geop-cad-*`; no source
-  under `core/` names an ops, lib or cad crate; `geop-cad-base` uses ops
-  crates only in `src/registry.rs`. Violations known today are listed in
-  `scripts/layering-allowed.txt`; a new one fails the check, and one that
-  is gone is reported so its line can be deleted. Nothing adds lines to
-  that list.
-- `scripts/baseline-2026-10.txt` records the lines and tests per crate and
-  the test results before the refactor; a phase that loses tests says
-  which and why.
+  under `core/` names an ops, lib or cad crate; `geop-cad-base` names ops
+  crates only in `src/registry.rs` and `src/tests.rs`. The allow-list
+  `scripts/layering-allowed.txt` is empty: a violation fails the check.
+- `scripts/baseline-<date>.txt` records the lines and tests per crate and
+  the results of the fast suite, as its header says how; a change that
+  loses tests says which and why.

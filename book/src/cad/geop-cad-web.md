@@ -23,7 +23,14 @@ The browser edits a program through one `Editor` (`geop_cad_base::editor()`, see
 | `init_panic_hook`       | forwards Rust panics to the JS console with a stack trace        |
 | `handle(command)`       | applies a `Command`, and returns the `Update` to show            |
 
-Everything crosses the boundary as JSON, entities by name, never by number.
+Everything crosses the boundary as JSON, elements by the target, kind and
+name a pick gives them (`{"target": "bolt/model", "kind": "face", "name":
+"extrude(head,end)"}`), never by number. The types `web/src/geop.ts` gives
+that JSON are checked against what the kernel reads and sends:
+`cargo test -p geop protocol` keeps samples of every command and of every
+shape of update in `web/test/protocol.samples.ts`, typed as `geop.ts`
+types them, and the web build (`tsc -b`) checks them. A field renamed on
+either side fails one of the two.
 `web/src/App.tsx` keeps the last update and nothing else of the program:
 
 - **Dialog fields** send `{type: "dialog", key, value}` events with the key
