@@ -1,5 +1,5 @@
 //! Parts placed as an editor places them: the step placing one edited
-//! through the [`crate::Editor`], which solves the mates after every edit
+//! through the [`geop_core_editor::editor::Editor`], which solves the mates after every edit
 //! with what the step pulls.
 
 use geop_core_program::{
@@ -9,6 +9,7 @@ use geop_core_program::{
 };
 use std::collections::BTreeMap;
 
+use crate::{AddPartArgs, Kind, Mate, MateEntity, MateKind, placed_parts, program_tests::editor};
 use geop_core_editor::{
     editing::{Control, Pointer, StepEditEvent, Tone, Value},
     selectable::Selectable,
@@ -18,15 +19,17 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops_assembly::{AddPartArgs, Kind, Mate, MateEntity, MateKind, placed_parts};
 use geop_ops_datums::{ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::Extents;
 use geop_ops_model::Combine;
 use geop_ops_model::testing::assert_close;
 use geop_ops_reference_geometry::Selected;
 
-use crate::Command;
-use crate::registry::testing::{Stepping, extrude_sketch, handled, on_origin, pointer, rectangle};
+use geop_core_editor::{
+    editor::Command,
+    testing::{Stepping, handled, pointer},
+};
+use geop_ops_extrude_revolve::testing::{extrude_sketch, on_origin, rectangle};
 
 /// The unit cube from the origin to `(1, 1, 1)`, as a program.
 fn cube() -> Program {
@@ -104,7 +107,7 @@ fn down_at(x: f64, y: f64, z: f64) -> Pointer<S> {
 /// `placed`, in a workspace holding `cube.geop`: the step placing `b`
 /// opened.
 fn placing(placed: AddPartArgs) -> Stepping {
-    let mut editor = crate::editor();
+    let mut editor = editor();
     let files = BTreeMap::from([("cube.geop".to_string(), Some(cube().to_json().unwrap()))]);
     handled(&mut editor, Command::Files { files });
     let mut program = Program::new();

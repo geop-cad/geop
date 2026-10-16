@@ -1320,7 +1320,10 @@ fn new_rib_grows_from_the_newest_sketch() {
 #[test]
 fn a_standard_screw_is_placed_in_a_plate() {
     let screw = "std:iso4762_socket_head_cap_screw.geop";
-    let (plate, hole) = (examples::metric_plate(), examples::metric_plate_hole());
+    let (plate, hole) = (
+        geop_ops_assembly::examples::metric_plate(),
+        geop_ops_assembly::examples::metric_plate_hole(),
+    );
     let mut editor = crate::editor();
     let files = [("plate.geop".to_string(), Some(plate.to_json().unwrap()))].into();
     assert!(editor.handle(Command::Files { files }).error.is_none());
@@ -1478,56 +1481,6 @@ fn a_carriage_slides_on_a_standard_rail() {
         origin[0].abs() < 1e-6 && origin[1].abs() < 1e-6,
         "{origin:?}"
     );
-}
-
-/// A robot of two boards and 20 screws, driven as the front end does: the
-/// drag tool takes the screw under the pointer, and dragging it sends where
-/// that screw went — not the hundred other placed parts, which stay where
-/// they are, nor any part's looks again.
-#[test]
-fn dragging_one_of_many_placed_parts_sends_only_it() {
-    use super::assembly_scale_tests::{down_onto, robot_editor};
-    let (mut editor, _) = robot_editor(2, 20);
-    let before = editor.program().state.clone();
-    editor.handle(Command::Tool {
-        key: Some("drag".into()),
-    });
-    // The screws stand in a row along x at y = 0.25, from x = 0.25 on.
-    let update = editor.handle(Command::Event {
-        event: StepEditEvent::Hover {
-            pointer: down_onto(5.25, 0.25),
-            shift: false,
-        },
-    });
-    let tool = update.tool.expect("the drag tool is in hand");
-    assert!(tool.grab, "a press over a screw grabs it");
-    let update = handled(
-        &mut editor,
-        Command::Event {
-            event: StepEditEvent::Drag {
-                from: down_onto(5.25, 0.25),
-                to: down_onto(5.35, 0.3),
-                done: true,
-                shift: false,
-            },
-        },
-    );
-    let scene = update.scene.expect("the screw moved");
-    assert!(
-        scene.components.is_empty() && scene.removed.is_empty() && !scene.all,
-        "sent again: {:?}, removed: {:?}, all: {}",
-        scene.components.keys().collect::<Vec<_>>(),
-        scene.removed,
-        scene.all
-    );
-    let after = &editor.program().state;
-    let moved: Vec<&String> = after
-        .keys()
-        .filter(|name| before.get(*name) != after.get(*name))
-        .collect();
-    assert_eq!(moved, ["screw10.pose"]);
-    let sent: Vec<&str> = scene.instances.iter().map(|i| i.name.as_str()).collect();
-    assert_eq!(sent, ["screw10"]);
 }
 
 /// A new SubD step starts from a box cage, its vertices, edges and faces

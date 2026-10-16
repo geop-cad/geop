@@ -5,12 +5,12 @@
 //! (an ignored test) are printed.
 
 use crate::{
-    Command, Editor, Update, Workspace,
-    examples::{circle, pose, rectangle, solved},
-    registry::{
-        registry,
-        testing::{extrusion, handled, on_origin},
-    },
+    examples::pose,
+    program_tests::{Workspace, build_file, editor, registry},
+};
+use geop_core_editor::{
+    editor::{Command, Editor, Update},
+    testing::handled,
 };
 use geop_core_program::{
     part::Part,
@@ -18,6 +18,8 @@ use geop_core_program::{
     values::{Design, StateValue, StateValues, pose_state},
     workspace::{FileStore, FileStoreMut},
 };
+use geop_ops_extrude_revolve::testing::{extrusion, on_origin, sketch};
+use geop_ops_sketch::figures::{circle, rectangle, solved};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -25,6 +27,11 @@ use std::{
     time::Instant,
 };
 
+use crate::{
+    AddPartArgs, Kind, Mate, MateEntity, Resolved,
+    placed::{locate, placed_parts},
+    solving::check as check_mates,
+};
 use geop_core_editor::editing::{Pointer, Reach, StepEditEvent};
 use geop_core_math::{
     geop_error::GeopResult,
@@ -33,11 +40,6 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_lib_stdlib::WithStandardParts;
-use geop_ops_assembly::{
-    AddPartArgs, Kind, Mate, MateEntity, Resolved,
-    placed::{locate, placed_parts},
-    solving::check as check_mates,
-};
 use geop_ops_extrude_revolve::Extents;
 use geop_ops_model::Combine;
 use geop_ops_model::{element, read_model};
@@ -47,12 +49,12 @@ use geop_ops_sketch::Sketch;
 /// A part of one extrusion `height` tall, of a sketch on the origin's Z
 /// plane: its faces are `extrude(<id>,start)` below and `extrude(<id>,end)`
 /// above.
-fn extruded(id: &str, sketch: Sketch, height: f64) -> Program {
+fn extruded(id: &str, drawn: Sketch, height: f64) -> Program {
     let mut program = Program::new();
     let sketch_id = format!("{id}_sketch");
     program.push(
         sketch_id.clone(),
-        crate::registry::testing::sketch(on_origin(FrameAxis::Z), solved(sketch)),
+        sketch(on_origin(FrameAxis::Z), solved(drawn)),
     );
     program.push(
         id,
@@ -263,7 +265,7 @@ fn an_edited_file_is_placed_as_it_is_now_however_deep() {
             files,
             ..Default::default()
         }),
-        Rc::new(registry().unwrap().operations()),
+        Rc::new(registry().operations()),
     );
     let robot = robot(2, 3).remove("robot.geop").unwrap();
     // The robot itself is the program being built, not a file read.
@@ -308,12 +310,12 @@ fn moving_a_part_builds_again_only_what_reads_where_it_is() {
             files,
             ..Default::default()
         }),
-        Rc::new(registry().unwrap().operations()),
+        Rc::new(registry().operations()),
     );
-    let resolved = geop_ops_assembly::mates_resolved();
-    let mut built = crate::build(&robot, "robot.geop", workspace.clone()).unwrap();
+    let resolved = crate::mates_resolved();
+    let mut built = build_file(&robot, "robot.geop", workspace.clone()).unwrap();
     assert_eq!(
-        geop_ops_assembly::mates_resolved() - resolved,
+        crate::mates_resolved() - resolved,
         31,
         "the plate's fixed mate, and each of the 30 screws' mates"
     );
@@ -324,11 +326,11 @@ fn moving_a_part_builds_again_only_what_reads_where_it_is() {
         pose_state("screw7"),
         StateValue::Pose(pose([4.0, 3.0, 0.2], [0.0; 3])),
     );
-    let resolved = geop_ops_assembly::mates_resolved();
+    let resolved = crate::mates_resolved();
     let output = built.runner.run(&mut built.part, &moved, None);
     assert!(output.step_errors.is_empty(), "{:?}", output.step_errors);
     assert_eq!(
-        geop_ops_assembly::mates_resolved() - resolved,
+        crate::mates_resolved() - resolved,
         0,
         "a part moved resolves no mate again: only screw7's constraint reads where it is"
     );
@@ -346,7 +348,7 @@ fn moving_a_part_builds_again_only_what_reads_where_it_is() {
 /// `program`, the file `robot.geop` of `workspace`, built from scratch, its
 /// mates holding as its state has its parts.
 fn build_in(workspace: &Rc<Workspace<Counted>>, program: &Program) -> Part {
-    let part = crate::build(program, "robot.geop", workspace.clone())
+    let part = build_file(program, "robot.geop", workspace.clone())
         .unwrap()
         .part;
     assert!(check_mates(&part.current()).unwrap().converged);
@@ -382,7 +384,7 @@ fn size(update: &Update) -> String {
 }
 
 /// A pointer straight down onto `(x, y)`.
-pub(super) fn down_onto(x: f64, y: f64) -> Pointer<S> {
+fn down_onto(x: f64, y: f64) -> Pointer<S> {
     let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
     Pointer {
         ray: Ray::try_new(v([x, y, 50.0]), v([0.0, 0.0, -1.0])).unwrap(),
@@ -394,10 +396,10 @@ pub(super) fn down_onto(x: f64, y: f64) -> Pointer<S> {
 
 /// The editor editing the robot of `boards` boards and `screws` screws,
 /// with every file sent.
-pub(super) fn robot_editor(boards: usize, screws: usize) -> (Editor, Update) {
+fn robot_editor(boards: usize, screws: usize) -> (Editor, Update) {
     let mut files = robot(boards, screws);
     let robot = Program::from_json(&files.remove("robot.geop").unwrap()).unwrap();
-    let mut editor = crate::editor();
+    let mut editor = editor();
     handled(
         &mut editor,
         Command::Files {
@@ -521,7 +523,7 @@ fn robot_timings() {
 /// edit — to solve its mates, to check them — and never once per step: a
 /// step list of every placed part, each asking the whole assembly how
 /// free its part is, made a drag of a 2000-part robot take minutes. Counted
-/// in mates resolved (see [`geop_ops_assembly::mates_resolved`]), not
+/// in mates resolved (see [`crate::mates_resolved`]), not
 /// timed, so it shows at a modest size: per mate of the assembly — those
 /// of the parts placed in it included — an edit resolves a few, however
 /// many there are.
@@ -539,13 +541,10 @@ fn an_edit_resolves_each_mate_a_few_times() {
     let mut runs = Vec::new();
     for screws in [20, 80] {
         let resolved = |f: &mut dyn FnMut()| {
-            let before = (
-                geop_ops_assembly::mates_resolved(),
-                geop_ops_constraints::solve::runs(),
-            );
+            let before = (crate::mates_resolved(), geop_ops_constraints::solve::runs());
             f();
             (
-                geop_ops_assembly::mates_resolved() - before.0,
+                crate::mates_resolved() - before.0,
                 geop_ops_constraints::solve::runs() - before.1,
             )
         };
@@ -597,4 +596,53 @@ fn an_edit_resolves_each_mate_a_few_times() {
         (0..3).all(|k| many[k] <= few[k]),
         "the program runs of a load, a drag and a remove grow with the screws: {runs:?}"
     );
+}
+
+/// A robot of two boards and 20 screws, driven as the front end does: the
+/// drag tool takes the screw under the pointer, and dragging it sends where
+/// that screw went — not the hundred other placed parts, which stay where
+/// they are, nor any part's looks again.
+#[test]
+fn dragging_one_of_many_placed_parts_sends_only_it() {
+    let (mut editor, _) = robot_editor(2, 20);
+    let before = editor.program().state.clone();
+    editor.handle(Command::Tool {
+        key: Some("drag".into()),
+    });
+    // The screws stand in a row along x at y = 0.25, from x = 0.25 on.
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Hover {
+            pointer: down_onto(5.25, 0.25),
+            shift: false,
+        },
+    });
+    let tool = update.tool.expect("the drag tool is in hand");
+    assert!(tool.grab, "a press over a screw grabs it");
+    let update = handled(
+        &mut editor,
+        Command::Event {
+            event: StepEditEvent::Drag {
+                from: down_onto(5.25, 0.25),
+                to: down_onto(5.35, 0.3),
+                done: true,
+                shift: false,
+            },
+        },
+    );
+    let scene = update.scene.expect("the screw moved");
+    assert!(
+        scene.components.is_empty() && scene.removed.is_empty() && !scene.all,
+        "sent again: {:?}, removed: {:?}, all: {}",
+        scene.components.keys().collect::<Vec<_>>(),
+        scene.removed,
+        scene.all
+    );
+    let after = &editor.program().state;
+    let moved: Vec<&String> = after
+        .keys()
+        .filter(|name| before.get(*name) != after.get(*name))
+        .collect();
+    assert_eq!(moved, ["screw10.pose"]);
+    let sent: Vec<&str> = scene.instances.iter().map(|i| i.name.as_str()).collect();
+    assert_eq!(sent, ["screw10"]);
 }

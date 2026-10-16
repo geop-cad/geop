@@ -398,21 +398,21 @@ fn edited(original: &Program) -> Vec<Program> {
 /// incrementally builds what it builds from scratch (see
 /// [`assert_incremental`]).
 fn assert_examples_incremental(only: Option<&[&str]>) {
-    use crate::examples;
-    let registry = Rc::new(crate::registry().unwrap().operations());
+    let offered = crate::registry().unwrap();
+    let registry = Rc::new(offered.operations());
     let wanted = |name: &str| only.is_none_or(|only| only.contains(&name));
-    for (name, make) in crate::registry().unwrap().example_programs() {
+    for (name, make) in offered.example_programs() {
         if !wanted(name) {
             continue;
         }
         let workspace: Rc<dyn Workspace> = crate::registry::workspace(BTreeMap::new());
         assert_incremental(registry.clone(), Some((workspace, name)), &edited(&make()));
     }
-    for (name, make) in examples::workspaces() {
-        if !wanted(name) {
-            continue;
-        }
-        let files = make();
+    for name in offered
+        .workspace_example_names()
+        .filter(|name| wanted(name))
+    {
+        let files = offered.workspace_example(name).unwrap();
         let texts: BTreeMap<String, String> = (files.iter())
             .map(|(file, program)| (file.to_string(), program.to_json().unwrap()))
             .collect();

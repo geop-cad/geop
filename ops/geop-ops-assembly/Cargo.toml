@@ -22,6 +22,10 @@ geop-ops-reference-geometry.workspace = true
 geop-core-rasterize.workspace = true
 geop-ops-pattern.workspace = true
 geop-ops-sketch.workspace = true
+# The examples: parts sketched and extruded, standard parts placed.
+geop-core-sketch.workspace = true
+geop-ops-extrude-revolve.workspace = true
+geop-lib-stdlib.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
@@ -29,3 +33,7 @@ serde_json.workspace = true
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
+geop-core-editor = { workspace = true, features = ["testing"] }
+geop-core-program = { workspace = true, features = ["testing"] }
+# The press example rounds and mirrors.
+geop-ops-fillet.workspace = true

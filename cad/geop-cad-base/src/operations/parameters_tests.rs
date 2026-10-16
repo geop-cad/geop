@@ -28,11 +28,10 @@ use geop_ops_sketch::{
     sketch_element, whole_sketch,
 };
 
+use geop_ops_assembly::examples;
+
 use super::program_tests::Running;
-use crate::{
-    examples,
-    registry::testing::{Built, args, on_origin},
-};
+use crate::registry::testing::{Built, args, on_origin};
 
 /// The sketch `name` of `part`.
 fn placed_sketch(part: &Part, name: &str) -> PlacedSketch<Design> {

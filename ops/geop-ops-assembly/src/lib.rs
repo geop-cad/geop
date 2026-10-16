@@ -19,6 +19,9 @@ mod add_part;
 mod drag_tool;
 mod draw;
 pub mod editor;
+#[cfg(test)]
+mod editor_tests;
+pub mod examples;
 pub mod frame;
 #[cfg(test)]
 mod frame_tests;
@@ -29,7 +32,11 @@ pub mod mechanism;
 mod panel;
 mod part_pattern;
 pub mod placed;
+#[cfg(test)]
+mod program_tests;
 pub mod residuals;
+#[cfg(test)]
+mod scale_tests;
 mod settle;
 pub mod solids;
 pub mod solving;
@@ -60,8 +67,8 @@ pub use stl::{STL_QUALITY, Stl, StlOptions, stl_bytes};
 
 /// Adds what assemblies offer an editor to `r`: placing parts and patterns
 /// of them, the STL of a part with its placed parts, how placed parts are
-/// drawn, the joints panel, the drag tool, and what settles the program's
-/// state after every edit.
+/// drawn, the joints panel, the drag tool, what settles the program's
+/// state after every edit, and the examples of assemblies.
 pub fn register(r: Registry) -> GeopResult<Registry> {
     let settled = Rc::new(settle::Settled::default());
     r.operation(AddPart)?
@@ -70,5 +77,6 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
         .drawer(AssemblyDrawer)?
         .panel(JointsPanel::new(settled.clone()))?
         .tool(DragTool::INFO, DragTool::default())?
-        .settler(Settler { settled })
+        .settler(Settler { settled })?
+        .examples(examples::set())
 }

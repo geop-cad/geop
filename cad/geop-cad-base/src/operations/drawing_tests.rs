@@ -512,7 +512,7 @@ fn every_example_draws() {
 /// The example workspace `name` built: its first file, as that file's
 /// path, and the part.
 fn example_assembly(name: &str) -> (&'static str, Part) {
-    let (_, files) = crate::examples::workspaces()
+    let (_, files) = geop_ops_assembly::examples::workspaces()
         .into_iter()
         .find(|(n, _)| *n == name)
         .expect("the example is there");
@@ -691,7 +691,7 @@ fn every_example_assembly_draws() {
     use geop_ops_drawing::layer;
     use geop_ops_drawing::scene::Scene;
     let mut failures = Vec::new();
-    for (name, _) in crate::examples::workspaces() {
+    for (name, _) in geop_ops_assembly::examples::workspaces() {
         let (path, built) = example_assembly(name);
         let args = DrawingArgs {
             bom: true,
@@ -777,7 +777,7 @@ fn every_example_assembly_draws() {
 fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
     use geop_lib_sheet::Shape;
     use geop_ops_drawing::layer;
-    let (_, files) = crate::examples::workspaces()
+    let (_, files) = geop_ops_assembly::examples::workspaces()
         .into_iter()
         .find(|(n, _)| *n == "bolted_plate")
         .unwrap();
@@ -876,7 +876,9 @@ fn screwed_plate(n: usize) -> Part {
     }
     let files = std::collections::BTreeMap::from([(
         "plate.geop".to_string(),
-        examples::metric_plate().to_json().unwrap(),
+        geop_ops_assembly::examples::metric_plate()
+            .to_json()
+            .unwrap(),
     )]);
     crate::build(&program, "screwed.geop", crate::workspace(files))
         .unwrap()

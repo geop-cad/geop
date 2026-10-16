@@ -1,15 +1,20 @@
 //! Assemblies: programs placing the parts other program files build — built
 //! from a workspace of files, and edited as a front end drives the editor.
 
-use geop_core_editor::editor::Rerun;
+use geop_core_editor::{
+    editor::{Command, Editor, Rerun, Update},
+    registry::Registry,
+    testing::{dialog, from_above, handled},
+};
 use geop_core_program::{
     element::ElementReference,
     part::Part,
     program::{Program, ProgramStep},
     runner::Runner,
     values::{Design, StateValue, StateValues, pose_state},
-    workspace::FileStore,
+    workspace::{self, FileStore, Files, Location},
 };
+use geop_lib_stdlib::WithStandardParts;
 use std::{collections::BTreeMap, rc::Rc};
 
 use geop_core_editor::{
@@ -22,27 +27,93 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops_assembly::{
-    AddPartArgs, DragTool, MateEntity, PartPatternArgs, PatternAxis, Resolved, mate_name,
-    placed::locate,
-    solving::{self, Freedom, Report, SettingsState},
-};
+use geop_core_program::testing::{assert_incremental, assert_round_trips, edit_sequence};
 use geop_ops_datums::{ORIGIN, component_name, datum};
-use geop_ops_extrude_revolve::ExtrudeArgs;
+use geop_ops_extrude_revolve::{
+    ExtrudeArgs,
+    examples::box_with_drill_hole,
+    testing::{edit_args, model_of},
+};
 use geop_ops_model::{element, read_model, testing::assert_close};
 use geop_ops_parameters::instances;
 use geop_ops_pattern::spacing::Spacing;
 use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
+use geop_ops_sketch::figures::n;
 
 use crate::{
-    Command, Editor, Workspace, examples,
-    examples::{n, pose},
-    registry::{
-        self,
-        testing::{dialog, edit_args, example_editor, from_above, handled},
-        workspace,
-    },
+    AddPartArgs, DragTool, MateEntity, PartPatternArgs, PatternAxis, Resolved, examples,
+    examples::pose,
+    mate_name,
+    placed::locate,
+    solving::{self, Freedom, Report, SettingsState},
 };
+
+/// The operations the tests of assemblies write their programs in — the
+/// parts sketched, extruded, rounded and mirrored, the standard parts'
+/// patterns and parameters — with everything assemblies offer an editor,
+/// their examples among it.
+pub(crate) fn registry() -> Registry {
+    let registry = (|| -> GeopResult<Registry> {
+        let r = Registry::default();
+        let r = geop_ops_model::register(r)?;
+        let r = geop_ops_sketch::register(r)?;
+        let r = geop_ops_datums::register(r)?;
+        let r = geop_ops_reference_geometry::register(r)?;
+        let r = geop_ops_extrude_revolve::register(r)?;
+        let r = geop_ops_fillet::register(r)?;
+        let r = geop_ops_pattern::register(r)?;
+        let r = crate::register(r)?;
+        geop_ops_parameters::register(r)
+    })();
+    registry.expect("the operations each have a name of their own")
+}
+
+/// An editor of [`registry`], the standard parts beside the files it is
+/// sent.
+pub(crate) fn editor() -> Editor {
+    Editor::new(registry(), WithStandardParts(BTreeMap::new()))
+}
+
+/// A workspace of `files` beside the standard parts, whose programs are
+/// written in the operations of [`registry`].
+pub(crate) type Workspace<F = BTreeMap<String, String>> = Files<WithStandardParts<F>>;
+
+/// The workspace of `files`, beside the standard parts (see
+/// [`Workspace`]).
+pub(crate) fn workspace<F: FileStore + 'static>(files: F) -> Rc<Workspace<F>> {
+    Workspace::new(WithStandardParts(files), Rc::new(registry().operations()))
+}
+
+/// A part a program built, and the runner that built it, to run it again.
+pub(crate) struct BuiltPart {
+    pub(crate) runner: Runner,
+    pub(crate) part: Part,
+}
+
+/// Builds `program`, the file `file` of `workspace`, with its parameters
+/// as it defines them.
+pub(crate) fn build_file(
+    program: &Program,
+    file: &str,
+    workspace: Rc<dyn workspace::Workspace>,
+) -> GeopResult<BuiltPart> {
+    let mut runner = Runner::new(registry().operations());
+    runner.workspace = Some(workspace);
+    runner.location = Location {
+        file: workspace::resolve("", file),
+        within: Vec::new(),
+    };
+    let mut part = Part::default();
+    program.run(&runner, &mut part)?;
+    Ok(BuiltPart { runner, part })
+}
+
+/// An editor of [`registry`] on the example `name`.
+fn example_editor(name: &str) -> Editor {
+    let mut editor = editor();
+    handled(&mut editor, Command::LoadExample { name: name.into() });
+    editor
+}
 
 /// What a program built, as a run left it, the program with the state it
 /// ran with, and the numbers its parameters gave: what the tests ask of it.
@@ -57,7 +128,7 @@ fn build<F: FileStore + 'static>(
     program: &Program,
     workspace: &Rc<Workspace<F>>,
 ) -> GeopResult<Built> {
-    let registry::BuiltPart { runner, part } = registry::build(program, "", workspace.clone())?;
+    let BuiltPart { runner, part } = build_file(program, "", workspace.clone())?;
     Ok(Built {
         runner,
         part,
@@ -178,9 +249,7 @@ fn parts() -> BTreeMap<String, String> {
     BTreeMap::from([
         (
             "plate.geop".into(),
-            geop_ops_extrude_revolve::examples::box_with_drill_hole()
-                .to_json()
-                .unwrap(),
+            box_with_drill_hole().to_json().unwrap(),
         ),
         ("pin.geop".into(), examples::pin().to_json().unwrap()),
     ])
@@ -254,7 +323,7 @@ fn files_must_not_place_each_other_in_a_cycle() {
 }
 
 fn editor_on(program: Program) -> Editor {
-    let mut editor = crate::editor();
+    let mut editor = editor();
     let files = parts().into_iter().map(|(p, t)| (p, Some(t))).collect();
     handled(&mut editor, Command::Files { files });
     handled(
@@ -287,7 +356,7 @@ fn the_editor_places_parts_from_its_files() {
 
     // What a viewer keeps: every component it was sent.
     let mut known = BTreeMap::new();
-    let mut keep = |update: &crate::Update| {
+    let mut keep = |update: &Update| {
         if let Some(scene) = &update.scene {
             known.extend(scene.components.clone());
         }
@@ -589,7 +658,7 @@ fn a_mate_added_moves_the_part_of_its_step() {
 /// one's to undo.
 #[test]
 fn an_example_of_several_files_adds_its_files() {
-    let mut editor = example_editor("box_with_drill_hole");
+    let mut editor = example_editor("pin");
     let update = handled(
         &mut editor,
         Command::LoadWorkspaceExample {
@@ -635,7 +704,7 @@ fn an_example_of_several_files_adds_its_files() {
 /// that file's: the file switched to places it as it was edited.
 #[test]
 fn a_file_left_is_placed_as_it_was_edited() {
-    let mut editor = crate::editor();
+    let mut editor = editor();
     editor.handle(Command::Load {
         program: examples::pin(),
         path: Some("pin.geop".into()),
@@ -718,8 +787,8 @@ fn hinge() -> (BTreeMap<String, Option<String>>, Program) {
             file: "hinge.geop".into(),
             mates: BTreeMap::from([(
                 "m1".into(),
-                geop_ops_assembly::Mate::constraint(
-                    geop_ops_assembly::Kind::Distance { value: n(3.0) },
+                crate::Mate::constraint(
+                    crate::Kind::Distance { value: n(3.0) },
                     vec![
                         MateEntity::of("hinge/pin", Selected::Face(element("extrude(pin,end)"))),
                         MateEntity::on(Selected::Datum(datum(component_name(
@@ -737,7 +806,7 @@ fn hinge() -> (BTreeMap<String, Option<String>>, Program) {
 }
 
 fn editor_with(files: BTreeMap<String, Option<String>>, program: Program, path: &str) -> Editor {
-    let mut editor = crate::editor();
+    let mut editor = editor();
     editor.handle(Command::Files { files });
     handled(
         &mut editor,
@@ -1098,7 +1167,7 @@ fn drags_around_the_fold_take_few_steps() {
 #[test]
 fn placed_datums_show_only_while_placing() {
     let mut editor = editor_on(examples::pin_in_plate_assembly());
-    let hidden = |update: crate::Update| update.scene.unwrap().hidden;
+    let hidden = |update: Update| update.scene.unwrap().hidden;
     let shown = hidden(editor.handle(Command::Show));
     assert!(shown.contains(&"pin/origin".to_string()), "{shown:?}");
     assert!(shown.contains(&"plate/origin".to_string()), "{shown:?}");
@@ -1113,7 +1182,7 @@ fn placed_datums_show_only_while_placing() {
 /// — every placed part comes with the mesh to draw it by.
 #[test]
 fn an_assembly_opened_first_sends_its_parts() {
-    let mut editor = crate::editor();
+    let mut editor = editor();
     let files: BTreeMap<String, Option<String>> = examples::workspaces()
         .into_iter()
         .find(|(name, _)| *name == "pin_in_plate")
@@ -1123,7 +1192,7 @@ fn an_assembly_opened_first_sends_its_parts() {
     .map(|(path, program)| (path.to_string(), Some(program.to_json().unwrap())))
     .collect();
     let mut known = BTreeMap::new();
-    let mut keep = |update: crate::Update| {
+    let mut keep = |update: Update| {
         assert!(update.error.is_none(), "{:?}", update.error);
         if let Some(scene) = update.scene {
             known.extend(scene.components);
@@ -1331,7 +1400,7 @@ fn six_pins_are_patterned_round_a_hole() {
                 element("extrude(hole,hole_sketch,c1)").behind("plate"),
             )),
             reversed: false,
-            layout: geop_ops_assembly::Layout::Circular {
+            layout: crate::Layout::Circular {
                 angle: Spacing::step(60.0),
             },
             count: 6.0.into(),
@@ -1397,7 +1466,7 @@ fn six_pins_are_patterned_round_a_hole() {
 /// the second to -45°.
 #[test]
 fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
-    use geop_ops_assembly::{CouplingKind, JointKind, Mate, Transmission};
+    use crate::{CouplingKind, JointKind, Mate, Transmission};
     let (files, _) = workspace_example("arm");
     let workspace = workspace(files);
     let library = workspace.clone();
@@ -1479,9 +1548,7 @@ fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
 /// nothing changes; written otherwise, the file is read again.
 #[test]
 fn a_part_is_built_from_its_file_as_written() {
-    let text = geop_ops_extrude_revolve::examples::box_with_drill_hole()
-        .to_json()
-        .unwrap();
+    let text = box_with_drill_hole().to_json().unwrap();
     let files = BTreeMap::from([("part.geop".to_string(), text.clone())]);
     let workspace = workspace(files);
     let placed =
@@ -1546,7 +1613,7 @@ fn a_coupling_offers_the_joints_that_move_as_it_needs() {
         "link.geop".to_string(),
         Some(examples::link().to_json().unwrap()),
     )]);
-    let mut editor = crate::editor();
+    let mut editor = editor();
     editor.handle(Command::Files { files });
     handled(
         &mut editor,
@@ -1665,21 +1732,11 @@ fn a_joint_is_made_by_clicking_where_its_frames_go() {
 /// nut under the plate, upside down — its base on the plate's bottom.
 #[test]
 fn the_bolted_plate_holds_together() {
-    use std::collections::BTreeMap;
-
-    use geop_core_math::vector::Vector3;
-    use geop_ops_assembly::{placed::locate, solving};
-
-    use crate::{
-        examples,
-        registry::{build, workspace},
-    };
-
     let files = BTreeMap::from([(
         "plate.geop".to_string(),
         examples::metric_plate().to_json().unwrap(),
     )]);
-    let runner = build(
+    let runner = build_file(
         &examples::bolted_plate(),
         "bolted_plate.geop",
         workspace(files),
@@ -1700,4 +1757,131 @@ fn the_bolted_plate_holds_together() {
             "{instance} {local:?} is at {got:?}, not {want:?}"
         );
     }
+}
+
+/// The examples whose files take long to build: the press, rounded, and
+/// the bolted plate, of standard parts.
+const SLOW_EXAMPLES: [&str; 2] = ["press", "bolted_plate"];
+
+/// Every file of the examples of assemblies, `slow` or not (see
+/// [`SLOW_EXAMPLES`]) — of one made of several files, and an example
+/// program as the one file `part.geop` — with the workspace of its
+/// example's files, saved: what `check` is asked of in turn.
+fn for_every_example_file(
+    slow: bool,
+    check: impl Fn(Rc<dyn workspace::Workspace>, &str, &Program),
+) {
+    let set = examples::set();
+    let programs = (set.programs.iter()).map(|(name, make)| (*name, vec![("part.geop", make())]));
+    let workspaces = (set.workspaces.iter()).map(|(name, make)| (*name, make()));
+    for (name, files) in workspaces.chain(programs) {
+        if SLOW_EXAMPLES.contains(&name) != slow {
+            continue;
+        }
+        let saved: BTreeMap<String, String> = (files.iter())
+            .map(|(path, program)| (path.to_string(), program.to_json().unwrap()))
+            .collect();
+        let workspace: Rc<dyn workspace::Workspace> = workspace(saved);
+        for (file, program) in &files {
+            check(workspace.clone(), file, program);
+        }
+    }
+}
+
+/// Every file of the examples of assemblies `slow` or not is saved and
+/// read back as the same program, which builds — beside the other files of
+/// its example — the very same part (see [`assert_round_trips`]).
+fn assert_examples_round_trip(slow: bool) {
+    let operations = Rc::new(registry().operations());
+    for_every_example_file(slow, |workspace, file, program| {
+        assert_round_trips(operations.clone(), Some((workspace, file)), program);
+    });
+}
+
+/// [`assert_examples_round_trip`] on the examples quick to build.
+#[test]
+fn examples_round_trip() {
+    assert_examples_round_trip(false);
+}
+
+/// [`assert_examples_round_trip`] on the [`SLOW_EXAMPLES`].
+#[test]
+#[ignore = "slow: the press and the bolted plate, built twice — run with `cargo test -- --ignored`"]
+fn slow_examples_round_trip() {
+    assert_examples_round_trip(true);
+}
+
+/// The edits [`assert_examples_incremental`] runs a file of an example
+/// through: those of every example ([`edit_sequence`]), and each part it
+/// places moved half a unit along `x` and put back.
+fn edited(original: &Program) -> Vec<Program> {
+    let mut programs = edit_sequence(original);
+    for (name, value) in &original.state {
+        if let StateValue::Pose(placed) = value {
+            let [x, y, z] = position(placed);
+            let turn = placed.euler_degrees();
+            let mut moved = original.clone();
+            let to = pose([x + 0.5, y, z], turn);
+            moved.state.insert(name.clone(), StateValue::Pose(to));
+            programs.extend([moved, original.clone()]);
+        }
+    }
+    programs
+}
+
+/// Every file of the examples of assemblies `slow` or not, edited as
+/// [`edited`] says, builds incrementally what it builds from scratch (see
+/// [`assert_incremental`]).
+fn assert_examples_incremental(slow: bool) {
+    let operations = Rc::new(registry().operations());
+    for_every_example_file(slow, |workspace, file, program| {
+        assert_incremental(
+            operations.clone(),
+            Some((workspace, file)),
+            &edited(program),
+        );
+    });
+}
+
+/// [`assert_examples_incremental`] on the examples quick to build.
+#[test]
+fn examples_build_incrementally() {
+    assert_examples_incremental(false);
+}
+
+/// [`assert_examples_incremental`] on the [`SLOW_EXAMPLES`].
+#[test]
+#[ignore = "slow: the press and the bolted plate, built several times over — run with `cargo test -- --ignored`"]
+fn slow_examples_build_incrementally() {
+    assert_examples_incremental(true);
+}
+
+/// The press handle's rim rounded: a bar 236 long whose rim lies 225 from
+/// the origin. The blend face's control points were 8e-8 wide, and a ray
+/// grazing it at its silhouette could not be resolved (see
+/// `drawing_tests::press_from_the_iso_view_draws`): the cylinder's normal
+/// was taken at the bar's far end and turned around an axis known to
+/// 1e-12, and the weight was `r / |E - C|`, with the corner `E`'s width in
+/// it twice. What is left is the weight's width, from the faces'
+/// directions, times the distance from the origin.
+#[test]
+fn press_handle_rim_fillet_is_narrow() {
+    let (_, files) = (examples::workspaces().into_iter())
+        .find(|(n, _)| *n == "press")
+        .unwrap();
+    let (_, handle) = (files().into_iter())
+        .find(|(path, _)| *path == "handle.geop")
+        .unwrap();
+    let built = build_file(&handle, "handle.geop", workspace(BTreeMap::new())).unwrap();
+    let part = model_of(&built.part);
+    let face = part
+        .face_id("fillet(fillet1,revolve(revolve1,sketch2,p5,q3),fillet,q3)")
+        .unwrap();
+    let surface = &part.topology().get_face(face).unwrap().surface;
+    let widest = surface
+        .control_points
+        .iter()
+        .flat_map(|p| (0..4).map(move |k| p[k].width().to_f64()))
+        .fold(0.0, f64::max);
+    assert!(widest < 3e-9, "{widest:e}: {:?}", surface.control_points);
 }

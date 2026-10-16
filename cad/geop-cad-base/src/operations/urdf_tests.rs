@@ -23,14 +23,14 @@ use geop_ops_assembly::{
 use geop_ops_urdf::{JointType, Mechanism, Origin, Robot, URDF_FILE, UrdfExport, export};
 
 use crate::{
-    examples::{self, n, pose},
+    examples::{n, pose},
     registry::{BuiltPart, workspace},
 };
 
 /// The files of the workspace example `name`, by path, and its first
 /// program.
 fn workspace_example(name: &str) -> (BTreeMap<String, String>, Program) {
-    let files = examples::workspaces()
+    let files = geop_ops_assembly::examples::workspaces()
         .into_iter()
         .find(|(n, _)| *n == name)
         .unwrap()
@@ -410,8 +410,8 @@ fn pin_joint(on: &str, hole: usize, link: &str, link_hole: usize) -> Mate {
             max: None,
         },
         vec![
-            examples::link_rim(on, hole, "end"),
-            examples::link_rim(link, link_hole, "start"),
+            geop_ops_assembly::examples::link_rim(on, hole, "end"),
+            geop_ops_assembly::examples::link_rim(link, link_hole, "start"),
         ],
     )
 }
@@ -627,16 +627,16 @@ fn sliders_fastened_parts_and_reversed_joints() {
             max: Some(n(2.0)),
         },
         vec![
-            examples::link_rim("base", 0, "end"),
-            examples::link_rim("lift", 0, "start"),
+            geop_ops_assembly::examples::link_rim("base", 0, "end"),
+            geop_ops_assembly::examples::link_rim("lift", 0, "start"),
         ],
     );
     program.push("lift", placed("link.geop", false, vec![slider]));
     let fastened = Mate::joint(
         JointKind::Fastened,
         vec![
-            examples::link_rim("lift", 1, "end"),
-            examples::link_rim("tool", 0, "start"),
+            geop_ops_assembly::examples::link_rim("lift", 1, "end"),
+            geop_ops_assembly::examples::link_rim("tool", 0, "start"),
         ],
     );
     program.push("tool", placed("link.geop", false, vec![fastened]));
@@ -646,8 +646,8 @@ fn sliders_fastened_parts_and_reversed_joints() {
             max: Some(n(90.0)),
         },
         vec![
-            examples::link_rim("swing", 0, "start"),
-            examples::link_rim("base", 1, "end"),
+            geop_ops_assembly::examples::link_rim("swing", 0, "start"),
+            geop_ops_assembly::examples::link_rim("base", 1, "end"),
         ],
     );
     program.push("swing", placed("link.geop", false, vec![hinge]));
@@ -716,8 +716,8 @@ fn what_urdf_cannot_express_is_refused_by_name() {
                 Mate::joint(
                     kind,
                     vec![
-                        examples::link_rim("base", 1, "end"),
-                        examples::link_rim("arm", 0, "start"),
+                        geop_ops_assembly::examples::link_rim("base", 1, "end"),
+                        geop_ops_assembly::examples::link_rim("arm", 0, "start"),
                     ],
                 )
             })

@@ -40,7 +40,7 @@ struct Cli {
 enum Command {
     /// Build a program (the JSON the web editor saves) and write its part, in the format the output's extension names.
     Compile(CompileArgs),
-    /// Write every built-in example (see `geop_cad_base::examples`) as a program and its part, in the default format.
+    /// Write every built-in example (see `geop_cad_base::registry`) as a program and its part, in the default format.
     Examples(ExamplesArgs),
     /// Run the editor (see `geop_core_editor::editor`) as a host process for a
     /// front end: one JSON command per line on stdin, one JSON update per
@@ -230,15 +230,10 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
         move |e: std::io::Error| GeopError::new(format!("creating {dir}: {e}"))
     };
     std::fs::create_dir_all(&args.out_dir).map_err(dir_err(&args.out_dir))?;
-    let singles = geop_cad_base::registry()?.example_programs();
-    let workspaces = geop_cad_base::examples::workspaces();
-    let known = || -> Vec<&str> {
-        singles
-            .iter()
-            .map(|(n, _)| *n)
-            .chain(workspaces.iter().map(|(n, _)| *n))
-            .collect()
-    };
+    let offered = geop_cad_base::registry()?;
+    let singles: Vec<&str> = offered.example_names().collect();
+    let workspaces: Vec<&str> = offered.workspace_example_names().collect();
+    let known = || -> Vec<&str> { singles.iter().chain(&workspaces).copied().collect() };
     if let Some(unknown) = args.only.iter().find(|n| !known().contains(&n.as_str())) {
         return Err(GeopError::new(format!(
             "no example named {unknown:?}; the built-in examples are: {}",
@@ -259,19 +254,19 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
         })
     };
     let mut compiled = Vec::new();
-    for (name, program) in singles.iter().filter(|(n, _)| chosen(n)) {
+    for name in singles.iter().filter(|n| chosen(n)) {
         let path = args.out_dir.join(format!("{name}.geop"));
-        write(&path, &program())?;
+        write(&path, &offered.example(name)?)?;
         let output = args.out_dir.join(name);
         compiled.push(
             compile_to(path, output)
                 .map_err(|e| e.with_context(format!("export_examples(name={name})")))?,
         );
     }
-    for (name, files) in workspaces.iter().filter(|(n, _)| chosen(n)) {
+    for name in workspaces.iter().filter(|n| chosen(n)) {
         let dir = args.out_dir.join(name);
         std::fs::create_dir_all(&dir).map_err(dir_err(&dir))?;
-        let files = files();
+        let files = offered.workspace_example(name)?;
         for (file, program) in &files {
             write(&dir.join(file), program)?;
         }
@@ -491,9 +486,11 @@ mod tests {
     #[ignore = "slow: 7 s — run with `cargo test -- --ignored`"]
     fn compiles_every_example() {
         let dir = scratch("examples");
-        for (name, program) in geop_cad_base::registry().unwrap().example_programs() {
+        let offered = geop_cad_base::registry().unwrap();
+        for name in offered.example_names() {
             let path = dir.join(format!("{name}.geop"));
-            std::fs::write(&path, program().to_json().unwrap()).unwrap();
+            let program = offered.example(name).unwrap();
+            std::fs::write(&path, program.to_json().unwrap()).unwrap();
             let compiled = compile(&args(path)).unwrap();
             assert_eq!(compiled.output, dir.join(format!("{name}.stl")));
             assert!(triangles(&compiled) > 0, "{name}: no triangles");
@@ -510,17 +507,17 @@ mod tests {
             options: Vec::new(),
         })
         .unwrap();
+        let offered = geop_cad_base::registry().unwrap();
         assert_eq!(
             compiled.len(),
-            geop_cad_base::registry().unwrap().example_programs().len()
-                + examples::workspaces().len()
+            offered.example_names().count() + offered.workspace_example_names().count()
         );
-        for (name, _) in geop_cad_base::registry().unwrap().example_programs() {
+        for name in offered.example_names() {
             assert!(dir.join(format!("{name}.geop")).is_file(), "{name}");
             assert!(dir.join(format!("{name}.stl")).is_file(), "{name}");
         }
-        for (name, files) in examples::workspaces() {
-            for (file, _) in files() {
+        for name in offered.workspace_example_names() {
+            for (file, _) in offered.workspace_example(name).unwrap() {
                 assert!(dir.join(name).join(file).is_file(), "{name}/{file}");
             }
             assert!(dir.join(format!("{name}.stl")).is_file(), "{name}");
@@ -532,7 +529,7 @@ mod tests {
     #[test]
     fn compiles_the_arm_as_urdf() {
         let dir = scratch("urdf");
-        let (_, files) = examples::workspaces()
+        let (_, files) = geop_ops_assembly::examples::workspaces()
             .into_iter()
             .find(|(name, _)| *name == "arm")
             .unwrap();
@@ -557,7 +554,7 @@ mod tests {
     #[test]
     fn writes_the_bill_of_materials_of_the_bolted_plate() {
         let dir = scratch("bom");
-        let (_, files) = examples::workspaces()
+        let (_, files) = geop_ops_assembly::examples::workspaces()
             .into_iter()
             .find(|(name, _)| *name == "bolted_plate")
             .unwrap();
@@ -587,7 +584,7 @@ mod tests {
     fn compiles_an_assembly_from_its_files() {
         let dir = scratch("assembly");
         let mut sizes = std::collections::BTreeMap::new();
-        let (_, files) = examples::workspaces()
+        let (_, files) = geop_ops_assembly::examples::workspaces()
             .into_iter()
             .find(|(name, _)| *name == "pin_in_plate")
             .unwrap();
@@ -612,7 +609,7 @@ mod tests {
         assert_eq!(triangles(&pin), sizes["pin.geop"]);
 
         // Its state stale, it is solved for before it is written.
-        let mut stale = examples::pin_in_plate_assembly();
+        let mut stale = geop_ops_assembly::examples::pin_in_plate_assembly();
         stale.state.insert(
             geop_core_program::values::pose_state("pin"),
             geop_core_program::values::StateValue::Pose(

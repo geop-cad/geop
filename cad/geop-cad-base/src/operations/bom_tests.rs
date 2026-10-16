@@ -13,7 +13,7 @@ use geop_ops_assembly::{AddPartArgs, placed::placed_parts};
 use geop_ops_bom::{Bom, LineKind, Structure, bom};
 use geop_ops_model::read_model;
 
-use crate::examples::{self, pose};
+use crate::examples::pose;
 use crate::workspace;
 
 /// `program`, saved as `path` among `files`, built.
@@ -72,7 +72,7 @@ fn weighed(bom: &Bom, item: &str) -> (String, bool, f64, f64) {
 /// what steel of their volume does.
 #[test]
 fn the_bolted_plate_lists_its_screw_and_nut() {
-    let (_, files) = examples::workspaces()
+    let (_, files) = geop_ops_assembly::examples::workspaces()
         .into_iter()
         .find(|(name, _)| *name == "bolted_plate")
         .unwrap();
@@ -177,7 +177,9 @@ fn repeated_standard_parts_are_grouped() {
         ("module.geop".to_string(), module.to_json().unwrap()),
         (
             "plate.geop".to_string(),
-            examples::metric_plate().to_json().unwrap(),
+            geop_ops_assembly::examples::metric_plate()
+                .to_json()
+                .unwrap(),
         ),
     ]);
     let part = build(files, "robot.geop", &robot);
@@ -241,7 +243,7 @@ fn repeated_standard_parts_are_grouped() {
 /// bodies 745 000 points.
 #[test]
 fn the_bolted_plate_is_weighed_in_bounded_work() {
-    let (_, files) = examples::workspaces()
+    let (_, files) = geop_ops_assembly::examples::workspaces()
         .into_iter()
         .find(|(name, _)| *name == "bolted_plate")
         .unwrap();
