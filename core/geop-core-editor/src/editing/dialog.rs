@@ -713,7 +713,7 @@ mod tests {
                 label: "sketch".into(),
                 accepts: vec!["sketch".into()],
                 value: vec![Picked::new(PickedElement {
-                    target: "k".into(),
+                    target: geop_core_program::placed::Located::new("k"),
                     kind: "sketch".into(),
                     name: String::new(),
                 })],
@@ -742,7 +742,7 @@ mod tests {
                     "label": "sketch",
                     "accepts": ["sketch"],
                     "value": [{
-                        "element": {"target": "k", "kind": "sketch", "name": ""},
+                        "element": {"target": "/:k", "kind": "sketch", "name": ""},
                         "detail": null,
                         "tone": "normal",
                     }],

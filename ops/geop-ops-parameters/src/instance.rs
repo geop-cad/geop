@@ -13,7 +13,7 @@ use geop_core_math::{
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
     part::StepContext,
-    placed::INSTANCE_SEPARATOR,
+    placed::{INSTANCE_SEPARATOR, Located, instance_path},
     reader::Reader,
     target::{Target, TargetReference},
     values::{Design, Settings, StateValue, pose_in},
@@ -98,7 +98,7 @@ pub fn instances<'a>(reader: &Reader<'a>) -> GeopResult<Vec<(&'a str, &'a Instan
 #[derive(Clone, Debug, PartialEq)]
 pub enum Factor {
     /// The value of the state `state` of the part read — named as the part
-    /// read names it, `asm/b.pose` — which a solve moves, and by which a
+    /// read names it, `/asm:b.pose` — which a solve moves, and by which a
     /// constraint is differentiated.
     State { state: String, value: StateValue },
     /// A motion nothing in the part read moves: a copy's after what it
@@ -119,24 +119,24 @@ pub fn placement(reader: &Reader, path: &str) -> GeopResult<Vec<Factor>> {
     let ctx = |e: GeopError| e.with_context(format!("where the placed part {path:?} is"));
     let mut factors = Vec::new();
     let mut level = reader.clone();
-    let mut prefix = String::new();
+    let mut outer = String::new();
     for name in path.split(INSTANCE_SEPARATOR) {
-        factors.append(&mut placed(reader, &level, name, &prefix, 0).map_err(ctx)?);
-        prefix = format!("{prefix}{name}{INSTANCE_SEPARATOR}");
+        factors.append(&mut placed(reader, &level, name, &outer, 0).map_err(ctx)?);
+        outer = instance_path(&outer, name);
         level = level.placed_part(name).map_err(ctx)?;
     }
     Ok(factors)
 }
 
 /// The factors placing the instance `name` of the part `level` reads — the
-/// part at `prefix` in the part `outer` reads — in that part: its state's
-/// value, named behind `prefix` and read so in `outer`, or a copy's motion
+/// part at `path` in the part `outer` reads — in that part: its state's
+/// value, named behind `path` and read so in `outer`, or a copy's motion
 /// after where what it copies is.
 fn placed(
     outer: &Reader,
     level: &Reader,
     name: &str,
-    prefix: &str,
+    path: &str,
     depth: usize,
 ) -> GeopResult<Vec<Factor>> {
     if depth > COPIES {
@@ -146,7 +146,7 @@ fn placed(
     }
     Ok(match &instance(level, name)?.placement {
         Placement::State(state) => {
-            let state = format!("{prefix}{state}");
+            let state = Located::in_instance(path, state.as_str()).key();
             vec![Factor::State {
                 value: outer.retrieve_state(&state),
                 state,
@@ -154,7 +154,7 @@ fn placed(
         }
         Placement::After { of, motion } => {
             let mut factors = vec![Factor::Fixed(*motion)];
-            factors.append(&mut placed(outer, level, of, prefix, depth + 1)?);
+            factors.append(&mut placed(outer, level, of, path, depth + 1)?);
             factors
         }
     })

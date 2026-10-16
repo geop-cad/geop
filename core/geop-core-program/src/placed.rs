@@ -4,15 +4,16 @@
 //!
 //! A placed part is built from exactly its program, its inputs and the
 //! slice of the placing part's state under its name — the state
-//! `bolt/b.pose` of the part is the state `b.pose` of the part placed as
-//! `bolt`. Equal builds are shared through the runner's build cache: a
+//! `/bolt:b.pose` of the part is the state `b.pose` of the part placed as
+//! `bolt` ([`key_behind`]). Equal builds are shared through the runner's build cache: a
 //! thousand screws of one size are one build. Where the part goes is no
 //! concern of the build: the pose that places it is the placing part's
 //! state, read by whatever draws or mates it.
 //!
 //! An element of a placed part is named by the instance's path before its
-//! target's name — `bolt/model`, or `asm/bolt/model` for a part placed in a
-//! placed part ([`INSTANCE_SEPARATOR`]) — and read through the placing
+//! target's name — `/bolt:model`, or `/asm/bolt:model` for a part placed in
+//! a placed part, and `/:model` for one of the part itself ([`Located`]) —
+//! and read through the placing
 //! part's reader ([`crate::reader::Reader::retrieve_placed`],
 //! [`crate::reader::Reader::placed_part`]), which records it as read inside
 //! the placed part: a node reading the second link of an arm is made again
@@ -34,12 +35,18 @@ use crate::{
     values::{Settings, StateValues},
 };
 
-/// What separates the names of a path of instances, and an instance's path
-/// from the name of a target in it: `asm/bolt/model`.
+/// What separates the names of a path of instances, and begins a located
+/// name: `/asm/bolt:model`.
 pub const INSTANCE_SEPARATOR: char = '/';
 
+/// What separates a located name's instance path from the name in that
+/// instance: `/asm/bolt:model`. A name is split at the first one after the
+/// path, so the name itself may hold more: `/asm:placed:bolt`.
+pub const TARGET_SEPARATOR: char = ':';
+
 /// The path of the instance `name` of the instance at `outer`: `asm/bolt`
-/// — `name` itself, for none.
+/// — `name` itself, for none. A path is held without the leading
+/// [`INSTANCE_SEPARATOR`] its located names are spelled with.
 pub fn instance_path(outer: &str, name: &str) -> String {
     match outer.is_empty() {
         true => name.to_string(),
@@ -47,20 +54,181 @@ pub fn instance_path(outer: &str, name: &str) -> String {
     }
 }
 
-/// The instance path a target's name begins with, and the name of the
-/// target in that instance: `("asm/bolt", "model")` for
-/// `asm/bolt/model`; an empty path for a target of the part itself.
-pub fn split_path(target: &str) -> (&str, &str) {
-    target
-        .rsplit_once(INSTANCE_SEPARATOR)
-        .unwrap_or(("", target))
+/// The path of the instance the instance at `path` is placed in, and its
+/// name there: `("asm", "bolt")` for `asm/bolt`, an empty path for an
+/// instance of the part itself — [`instance_path`] undone.
+pub fn split_instance_path(path: &str) -> (&str, &str) {
+    path.rsplit_once(INSTANCE_SEPARATOR).unwrap_or(("", path))
 }
 
-/// Checks that `name` can name an instance: not empty, and no path.
+/// A name behind the path of the instance it is in: a target of a part
+/// placed in the part — however deep — or of the part itself, its path
+/// empty. Spelled `/asm/bolt:model`, and `/:model` for the part itself
+/// ([`Located::parse`], its `Display`), and saved and sent to a front end
+/// so.
+///
+/// The tables of one part — its state, its inputs — name what is its own
+/// bare, `b.pose`, and what is of a part placed in it located,
+/// `/bolt:b.pose` ([`Located::key`], [`key_behind`]).
+#[derive(Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Located {
+    path: String,
+    name: String,
+}
+
+impl Located {
+    /// The name `name` of the part itself.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self::in_instance("", name)
+    }
+
+    /// The name `name` of the instance at `path`: `asm/bolt`, empty for the
+    /// part itself.
+    pub fn in_instance(path: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            name: name.into(),
+        }
+    }
+
+    /// The path of the instance it is in, without the leading separator:
+    /// `asm/bolt`, empty for the part itself.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// The name in that instance.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The same name as its instance's own part names it.
+    pub fn local(&self) -> Self {
+        Self::new(self.name.clone())
+    }
+
+    /// The same name of the instance `instance` of the part — of the
+    /// instance at that path, if it is already of one: what a name of a
+    /// placed part is, read from the part it is placed in.
+    pub fn behind(&self, instance: &str) -> Self {
+        let path = match self.path.is_empty() {
+            true => instance.to_string(),
+            false => instance_path(instance, &self.path),
+        };
+        Self::in_instance(path, self.name.clone())
+    }
+
+    /// The name `text` spells: `/asm/bolt:model`, or `/:model` for the
+    /// part itself. Anything else is an error, a bare `model` too: a name
+    /// that does not say where it is would be read in the wrong part.
+    pub fn parse(text: &str) -> GeopResult<Self> {
+        let error = |why: &str| {
+            GeopError::new(format!(
+                "{text:?} names nothing: {why}; a name is spelled \
+                 `/asm/bolt:model`, or `/:model` for the part itself"
+            ))
+        };
+        let rest = (text.strip_prefix(INSTANCE_SEPARATOR))
+            .ok_or_else(|| error("it does not begin with `/`"))?;
+        let (path, name) = (rest.split_once(TARGET_SEPARATOR))
+            .ok_or_else(|| error("it has no `:` before the name"))?;
+        if name.is_empty() {
+            return Err(error("the name is empty"));
+        }
+        if !path.is_empty() && path.split(INSTANCE_SEPARATOR).any(str::is_empty) {
+            return Err(error("an instance of its path is empty"));
+        }
+        Ok(Self::in_instance(path, name))
+    }
+
+    /// It as a key of a part's own table: its bare name for one of the
+    /// part itself, else as it is spelled.
+    pub fn key(&self) -> String {
+        match self.path.is_empty() {
+            true => self.name.clone(),
+            false => self.to_string(),
+        }
+    }
+
+    /// The name a key of a part's own table names ([`Located::key`]).
+    pub fn of_key(key: &str) -> GeopResult<Self> {
+        match key.starts_with(INSTANCE_SEPARATOR) {
+            true => Self::parse(key),
+            false => Ok(Self::new(key)),
+        }
+    }
+}
+
+impl std::fmt::Display for Located {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let (path, name) = (&self.path, &self.name);
+        write!(f, "{INSTANCE_SEPARATOR}{path}{TARGET_SEPARATOR}{name}")
+    }
+}
+
+impl std::fmt::Debug for Located {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self.to_string())
+    }
+}
+
+impl std::str::FromStr for Located {
+    type Err = GeopError;
+
+    fn from_str(text: &str) -> GeopResult<Self> {
+        Self::parse(text)
+    }
+}
+
+impl serde::Serialize for Located {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Located {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::parse(&text).map_err(serde::de::Error::custom)
+    }
+}
+
+/// The key `key` of the part placed as `instance` — its own, `b.pose`, or
+/// one of a part placed in it, `/bolt:b.pose` — as a key of the part it is
+/// placed in: `/asm:b.pose`, `/asm/bolt:b.pose` (see [`Located::key`]).
+pub fn key_behind(instance: &str, key: &str) -> String {
+    match key.starts_with(INSTANCE_SEPARATOR) {
+        true => format!("{INSTANCE_SEPARATOR}{instance}{key}"),
+        false => format!("{INSTANCE_SEPARATOR}{instance}{TARGET_SEPARATOR}{key}"),
+    }
+}
+
+/// The key of the part placed as `instance` that `key`, a key of the part
+/// it is placed in, is, if it is one of that part: [`key_behind`] undone.
+pub fn key_inside<'k>(instance: &str, key: &'k str) -> Option<&'k str> {
+    let rest = (key.strip_prefix(INSTANCE_SEPARATOR))?.strip_prefix(instance)?;
+    match rest.strip_prefix(TARGET_SEPARATOR) {
+        Some(own) => Some(own),
+        None => rest.starts_with(INSTANCE_SEPARATOR).then_some(rest),
+    }
+}
+
+/// The outermost instance a key of a part's own table is of, and the key
+/// as that instance's part names it: none for a key of the part's own.
+pub fn outermost_instance(key: &str) -> Option<(&str, &str)> {
+    let rest = key.strip_prefix(INSTANCE_SEPARATOR)?;
+    let end = rest.find([INSTANCE_SEPARATOR, TARGET_SEPARATOR])?;
+    let instance = rest.get(..end)?;
+    Some((instance, key_inside(instance, key)?))
+}
+
+/// Checks that `name` can name an instance: not empty, and neither a path
+/// nor a located name.
 fn check_name(name: &str) -> GeopResult<()> {
-    match name.is_empty() || name.contains(INSTANCE_SEPARATOR) {
+    match name.is_empty() || name.contains([INSTANCE_SEPARATOR, TARGET_SEPARATOR]) {
         true => Err(GeopError::new(format!(
-            "{name:?} cannot name an instance: it is empty or contains {INSTANCE_SEPARATOR:?}"
+            "{name:?} cannot name an instance: it is empty or contains \
+             {INSTANCE_SEPARATOR:?} or {TARGET_SEPARATOR:?}"
         ))),
         false => Ok(()),
     }
@@ -141,16 +309,17 @@ pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart
     check_name(instance)?;
     let runner = reader.runner()?;
     let (program, location) = reader.program(&args.file)?;
-    let prefix = format!("{instance}{INSTANCE_SEPARATOR}");
     let given = &reader.part().state;
-    let mut state = program.state.clone();
-    state.extend(
+    // The values the part gives under the instance's name, each with its
+    // name in the placed part: `/bolt:b.pose` is its `b.pose`.
+    let prefix = format!("{INSTANCE_SEPARATOR}{instance}");
+    let slice = || {
         (given.range(prefix.clone()..))
             .take_while(|(name, _)| name.starts_with(&prefix))
-            .filter_map(|(name, value)| {
-                Some((name.strip_prefix(&prefix)?.to_string(), value.clone()))
-            }),
-    );
+            .filter_map(|(name, value)| Some((name, key_inside(instance, name)?, value)))
+    };
+    let mut state = program.state.clone();
+    state.extend(slice().map(|(_, inside, value)| (inside.to_string(), value.clone())));
     let key = BuildKey {
         revision: runner.revision(&location.file),
         path: location.file.clone(),
@@ -175,12 +344,11 @@ pub fn build_placed(reader: &Reader, args: &PlacedArgs) -> GeopResult<PlacedPart
     // The slice it is given, and what it read besides: a value of the slice
     // that changes or goes, or one it read that comes, builds it again, so
     // its state is always the one it is placed with.
-    let slice = (given.range(prefix.clone()..)).take_while(|(name, _)| name.starts_with(&prefix));
-    for (name, value) in slice {
+    for (name, _, value) in slice() {
         reader.record_raw(Read::State(name.clone(), Some(value.clone())));
     }
     for name in &part.states_read {
-        let name = format!("{prefix}{name}");
+        let name = key_behind(instance, name);
         let value = given.get(&name).cloned();
         reader.record_raw(Read::State(name, value));
     }
@@ -275,5 +443,92 @@ impl BuildCache {
     /// How many builds it holds.
     pub(crate) fn len(&self) -> usize {
         self.0.values().map(Vec::len).sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A located name reads back as it is written: of the part itself, and
+    /// behind a path of instances.
+    #[test]
+    fn located_names_read_back_as_written() {
+        for text in ["/:model", "/a/b:model", "/bolt:b.pose"] {
+            let located = Located::parse(text).unwrap();
+            assert_eq!(located.to_string(), text);
+            let read: Located = serde_json::from_value(serde_json::json!(text)).unwrap();
+            assert_eq!(read, located);
+            assert_eq!(
+                serde_json::to_value(&located).unwrap(),
+                serde_json::json!(text)
+            );
+        }
+        let own = Located::parse("/:model").unwrap();
+        assert_eq!((own.path(), own.name()), ("", "model"));
+        let deep = Located::parse("/a/b:model").unwrap();
+        assert_eq!((deep.path(), deep.name()), ("a/b", "model"));
+        assert_eq!(deep, own.behind("b").behind("a"));
+        assert_eq!(deep.local(), own);
+    }
+
+    /// A name is split at the first `:` after the path: what follows is the
+    /// name, `:` and all.
+    #[test]
+    fn a_located_name_may_hold_a_colon() {
+        let located = Located::parse("/a:b:c").unwrap();
+        assert_eq!((located.path(), located.name()), ("a", "b:c"));
+        assert_eq!(located.to_string(), "/a:b:c");
+        let own = Located::parse("/:placed:bolt").unwrap();
+        assert_eq!((own.path(), own.name()), ("", "placed:bolt"));
+    }
+
+    /// What does not say where it is names nothing.
+    #[test]
+    fn a_name_that_does_not_say_where_it_is_is_refused() {
+        for text in [
+            "model",
+            "a/b:model",
+            "/model",
+            "/a:",
+            "/a//b:model",
+            "/a/:model",
+            "",
+        ] {
+            assert!(Located::parse(text).is_err(), "{text:?}");
+            assert!(serde_json::from_value::<Located>(serde_json::json!(text)).is_err());
+        }
+    }
+
+    /// A key of a part's own table is bare for its own, located for a
+    /// placed part's, and moves behind and back out of an instance.
+    #[test]
+    fn keys_move_behind_an_instance_and_back() {
+        assert_eq!(Located::new("b.pose").key(), "b.pose");
+        assert_eq!(Located::of_key("b.pose").unwrap(), Located::new("b.pose"));
+        assert_eq!(key_behind("bolt", "b.pose"), "/bolt:b.pose");
+        assert_eq!(key_behind("asm", "/bolt:b.pose"), "/asm/bolt:b.pose");
+        assert_eq!(key_inside("asm", "/asm/bolt:b.pose"), Some("/bolt:b.pose"));
+        assert_eq!(key_inside("bolt", "/bolt:b.pose"), Some("b.pose"));
+        assert_eq!(key_inside("bolt", "/bolt2:b.pose"), None);
+        assert_eq!(key_inside("bolt", "b.pose"), None);
+        assert_eq!(
+            outermost_instance("/asm/bolt:b.pose"),
+            Some(("asm", "/bolt:b.pose"))
+        );
+        assert_eq!(outermost_instance("/bolt:x:y"), Some(("bolt", "x:y")));
+        assert_eq!(outermost_instance("b.pose"), None);
+        let located = Located::of_key("/asm/bolt:b.pose").unwrap();
+        assert_eq!(located.key(), "/asm/bolt:b.pose");
+        assert_eq!((located.path(), located.name()), ("asm/bolt", "b.pose"));
+    }
+
+    /// An instance is named by one name: no path, nothing located.
+    #[test]
+    fn an_instance_name_holds_no_separator() {
+        assert!(check_name("bolt").is_ok());
+        for name in ["", "a/b", "a:b"] {
+            assert!(check_name(name).is_err(), "{name:?}");
+        }
     }
 }

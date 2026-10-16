@@ -4,7 +4,7 @@
 //! between their centres.
 
 use geop_core_editor::output::{Answer, Block, Bounded, Row};
-use geop_core_editor::view::{INSTANCE_SEPARATOR, drawn};
+use geop_core_editor::view::drawn;
 use geop_core_editor::{
     editing::{Shape as Drawn, Style, Tone, Visual},
     selectable::Selectable,
@@ -138,17 +138,10 @@ fn measured<S: Scalar>(label: &str, value: S, unit: &'static str) -> Measured {
 /// How the inspect panel names `picked`: `bolt: face extrude(head,end)`
 /// for one of the part placed as `bolt`.
 fn label(picked: &PickedElement) -> String {
-    let (path, _) = split(picked);
-    match path {
+    match picked.instance() {
         "" => picked.label(),
         path => format!("{path}: {}", picked.label()),
     }
-}
-
-/// The path of the part placed that `picked` is of — empty for the part
-/// read itself — and the target it is in, as that part names it.
-fn split(picked: &PickedElement) -> (&str, &str) {
-    (picked.target.rsplit_once(INSTANCE_SEPARATOR)).unwrap_or(("", &picked.target))
 }
 
 /// An entity picked, in the part it is of.
@@ -164,15 +157,11 @@ impl<'a> Picked<'a> {
     /// What `picked`, a pick of what is drawn of the part `reader` reads,
     /// is in the part it is of.
     fn of(reader: &Reader<'a>, picked: &PickedElement) -> GeopResult<Self> {
-        let (path, target) = split(picked);
-        let (part, pose) = match path {
+        let (part, pose) = match picked.instance() {
             "" => (reader.clone(), None),
             path => (reader.placed_part(path)?, Some(located(reader, path)?)),
         };
-        let inner = PickedElement {
-            target: target.to_string(),
-            ..picked.clone()
-        };
+        let inner = picked.local();
         let element = (Selected::from_picked(&inner))
             .or_else(|| Selected::select(&part, &inner))
             .ok_or_else(|| {

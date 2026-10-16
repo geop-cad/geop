@@ -25,7 +25,7 @@
               {
                 "on": {
                   "face": {
-                    "target": "part1/model",
+                    "target": "/part1:model",
                     "name": "combine(extrude3,extrude(extrude3,sketch3,c7#2),#8bd081c9b1406b0ed6790e3dc2425477)"
                   }
                 }
@@ -33,7 +33,7 @@
               {
                 "on": {
                   "face": {
-                    "target": "part2/model",
+                    "target": "/part2:model",
                     "name": "extrude(extrude1,sketch1,c5)"
                   }
                 }
@@ -46,7 +46,7 @@
               {
                 "on": {
                   "datum": {
-                    "target": "part1/datums",
+                    "target": "/part1:datums",
                     "name": "origin:xy"
                   }
                 }
@@ -54,7 +54,7 @@
               {
                 "on": {
                   "datum": {
-                    "target": "part2/datums",
+                    "target": "/part2:datums",
                     "name": "origin:xy"
                   }
                 }
@@ -76,7 +76,7 @@
               {
                 "on": {
                   "face": {
-                    "target": "part1/model",
+                    "target": "/part1:model",
                     "name": "extrude(extrude1,sketch1,c10)"
                   }
                 }
@@ -84,7 +84,7 @@
               {
                 "on": {
                   "face": {
-                    "target": "part3/model",
+                    "target": "/part3:model",
                     "name": "extrude(extrude1,sketch1,c10)"
                   }
                 }
@@ -97,7 +97,7 @@
               {
                 "on": {
                   "face": {
-                    "target": "part1/model",
+                    "target": "/part1:model",
                     "name": "extrude(extrude1,sketch1,c12)"
                   }
                 }
@@ -105,7 +105,7 @@
               {
                 "on": {
                   "face": {
-                    "target": "part3/model",
+                    "target": "/part3:model",
                     "name": "extrude(extrude1,end)"
                   }
                 }
@@ -127,7 +127,7 @@
               {
                 "on": {
                   "face": {
-                    "target": "part2/model",
+                    "target": "/part2:model",
                     "name": "extrude(extrude2,sketch3,c9)"
                   }
                 }
@@ -135,7 +135,7 @@
               {
                 "on": {
                   "face": {
-                    "target": "part4/model",
+                    "target": "/part4:model",
                     "name": "extrude(extrude1,sketch1,c26#2)"
                   }
                 }
@@ -148,7 +148,7 @@
               {
                 "on": {
                   "face": {
-                    "target": "part3/model",
+                    "target": "/part3:model",
                     "name": "combine(extrude4,extrude(extrude4,sketch4,c7),#01277c18a2965eb65d5abf4ea93534dc)"
                   }
                 }
@@ -156,7 +156,7 @@
               {
                 "on": {
                   "face": {
-                    "target": "part4/model",
+                    "target": "/part4:model",
                     "name": "combine(extrude2,extrude(extrude1,sketch1,c27#2),#a5a60d89de57ff595e49ac8ff7e5bb22)"
                   }
                 }
@@ -169,7 +169,7 @@
               {
                 "on": {
                   "datum": {
-                    "target": "part3/datums",
+                    "target": "/part3:datums",
                     "name": "origin:xy"
                   }
                 }
@@ -177,7 +177,7 @@
               {
                 "on": {
                   "datum": {
-                    "target": "part4/datums",
+                    "target": "/part4:datums",
                     "name": "origin:xy"
                   }
                 }

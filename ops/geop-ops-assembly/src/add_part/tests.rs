@@ -8,6 +8,7 @@ use geop_core_program::{
     element::ElementReference,
     operation_registry::OperationRegistry,
     part::Part,
+    placed::key_behind,
     program::{Program, ProgramStep},
     reader::Reader,
     runner::{RunOutput, Runner},
@@ -293,7 +294,7 @@ fn a_placed_part_is_where_its_pose_puts_it() {
     let hit = view
         .pick(&down_at(v3(1.5, 0.5, 0.0)), &[drawn::FACE.to_string()])
         .unwrap();
-    assert_eq!(hit.element.target, "p/model", "{hit:?}");
+    assert_eq!(hit.element.target.to_string(), "/p:model", "{hit:?}");
     assert!((hit.point[2].to_f64() - 1.0).abs() < 1e-9, "{hit:?}");
 }
 
@@ -498,19 +499,22 @@ fn a_placed_part_brings_its_mates() {
     let steps = vec![ProgramStep::of("p", &placing.fixed()).unwrap()];
     // The pair's second cube pulled off its axis, as the outer program
     // may move it: its own state does not say otherwise.
-    let off = StateValues::from([(pose_state("p/b"), StateValue::Pose(at([5.0, 4.0, 3.0])))]);
+    let off = StateValues::from([(
+        key_behind("p", &pose_state("b")),
+        StateValue::Pose(at([5.0, 4.0, 3.0])),
+    )]);
     let mut assembly = Assembly::with(with_pair(pair), steps, off);
     let reader = assembly.reader();
     let constraints = Constraints::of(&reader).unwrap();
     let names: Vec<&str> = constraints.iter().map(|(name, _)| name).collect();
     // The pair's, behind its name; its own fixed mate is no constraint.
-    assert_eq!(names, ["p/add_part(b,m1)", "p/add_part(b,m2)"]);
+    assert_eq!(names, ["/p:add_part(b,m1)", "/p:add_part(b,m2)"]);
     assert!(!check_mates(&reader).unwrap().converged);
     let report = assembly.solve(&[]);
     assert!(report.converged, "{report:?}");
     assert!(crate::mechanism::mate_holds(
         &assembly.reader(),
-        "p/add_part(b,m2)"
+        "/p:add_part(b,m2)"
     ));
     // The pair's first cube stays where the pair has it; the second stands
     // on its axis.
@@ -722,18 +726,18 @@ fn nested_mate_derivatives_are_true() {
             StateValue::Pose(pose([-2.0, 1.0, 0.5], [-40.0, 5.0, 60.0])),
         ),
         (
-            pose_state("p/b"),
+            key_behind("p", &pose_state("b")),
             StateValue::Pose(pose([0.5, 0.0, 2.0], [0.0, 45.0, 0.0])),
         ),
         (
-            pose_state("q/b"),
+            key_behind("q", &pose_state("b")),
             StateValue::Pose(pose([0.0, 1.0, 1.0], [30.0, 0.0, -20.0])),
         ),
     ]);
     let mut assembly = Assembly::with(with_pair(pair), steps, state);
     let constraint = constraint(&assembly.reader(), "add_part(q,m1)");
     let states: Vec<&str> = constraint.jacobian.keys().map(String::as_str).collect();
-    assert_eq!(states, ["p.pose", "p/b.pose", "q.pose", "q/b.pose"]);
+    assert_eq!(states, ["/p:b.pose", "/q:b.pose", "p.pose", "q.pose"]);
     assert_derivatives_are_true(&mut assembly);
 }
 

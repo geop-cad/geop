@@ -6,7 +6,7 @@
 //! [`Placement`], or a fixed motion after another instance, as a pattern's
 //! copy goes. The parts placed in a placed part are the placing program's
 //! to move too: their poses are its state, behind the instance's name
-//! (`bolt/nut.pose`), and the placed part is built with them. A placed
+//! (`/bolt:nut.pose`), and the placed part is built with them. A placed
 //! part is built from its program, its inputs and the state under its
 //! name, and drawn as it is built ([`define_placed`]): moving it builds and
 //! draws nothing again, and a change in it builds and draws again only
@@ -15,7 +15,10 @@
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
     part::StepContext,
-    placed::{INSTANCE_SEPARATOR, PlacedArgs, instance_path, place, split_path},
+    placed::{
+        INSTANCE_SEPARATOR, Located as LocatedName, PlacedArgs, instance_path, place,
+        split_instance_path,
+    },
     reader::Reader,
     target::{Target, TargetReference},
     values::{Design, Settings},
@@ -141,7 +144,7 @@ pub fn define_placed(
 
 /// The drawing of the part placed at `path` in the part `reader` reads.
 pub fn drawn<'a>(reader: &Reader<'a>, path: &str) -> GeopResult<&'a Drawn> {
-    let (outer, name) = split_path(path);
+    let (outer, name) = split_instance_path(path);
     let level = match outer.is_empty() {
         true => reader.clone(),
         false => reader.placed_part(outer)?,
@@ -166,7 +169,7 @@ pub struct Located<'a> {
 /// placed part — of the part `reader` reads, where the state has it.
 pub fn locate<'a>(reader: &Reader<'a>, path: &str) -> GeopResult<Located<'a>> {
     let ctx = |e: GeopError| e.with_context(format!("the placed part {path:?}"));
-    let (outer, name) = split_path(path);
+    let (outer, name) = split_instance_path(path);
     let level = match outer.is_empty() {
         true => reader.clone(),
         false => reader.placed_part(outer).with_context(&ctx)?,
@@ -202,7 +205,7 @@ pub fn moved_by(reader: &Reader, path: &str) -> GeopResult<Option<String>> {
     let mut state = None;
     for name in path.split(INSTANCE_SEPARATOR) {
         match &instance(&level, name)?.placement {
-            Placement::State(own) => state = Some(instance_path(&prefix, own)),
+            Placement::State(own) => state = Some(LocatedName::in_instance(&prefix, own).key()),
             Placement::After { .. } => return Ok(None),
         }
         prefix = instance_path(&prefix, name);
@@ -252,7 +255,7 @@ pub fn placed_parts<'a>(reader: &Reader<'a>) -> GeopResult<Vec<Placed<'a>>> {
 
 /// Every solid of the part `reader` reads, meshed `quality` fine: its own,
 /// and those of every part placed in it, however deep — each where it is,
-/// named behind its name in the part read: `pin/extrude(pin)`.
+/// named behind its name in the part read: `/pin:extrude(pin)`.
 pub fn solid_meshes(reader: &Reader, quality: usize) -> GeopResult<SolidMeshes<Design>> {
     let own = |reader: &Reader| read_model(reader)?.solid_meshes(quality);
     let mut out = own(reader)?;
@@ -269,7 +272,7 @@ pub fn solid_meshes(reader: &Reader, quality: usize) -> GeopResult<SolidMeshes<D
                     vertex_normals: t.vertex_normals.map(|n| n.map(|v| motion.rotate(&v))),
                 })
                 .collect();
-            out.push((instance_path(&placed.name, name), moved));
+            out.push((LocatedName::in_instance(&placed.name, name).key(), moved));
         }
     }
     Ok(out)

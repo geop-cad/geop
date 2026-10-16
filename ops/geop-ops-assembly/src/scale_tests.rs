@@ -14,6 +14,7 @@ use geop_core_editor::{
 };
 use geop_core_program::{
     part::Part,
+    placed::Located,
     program::Program,
     values::{Design, StateValue, StateValues, pose_state},
     workspace::{FileStore, FileStoreMut},
@@ -77,14 +78,12 @@ fn plate() -> Program {
     extruded("plate", sketch, 0.2)
 }
 
-/// The face `face` of the part placed as `instance` — `plate/extrude(…)`,
-/// of a part placed in it.
+/// The face `face` of the part placed as `instance` — `/plate:extrude(…)`,
+/// of a part placed in it (see [`Located::key`]).
 fn face(instance: &str, face: &str) -> MateEntity {
-    let (part, face) = match face.split_once('/') {
-        Some((inner, face)) => (format!("{instance}/{inner}"), face),
-        None => (instance.to_string(), face),
-    };
-    MateEntity::of(&part, Selected::Face(element(face)))
+    let face = Located::of_key(face).unwrap();
+    let selected = Selected::Face(element(face.name())).behind(face.path());
+    MateEntity::of(instance, selected)
 }
 
 /// Placed from `file`, its face `below` lying on the face `on`.
@@ -150,7 +149,7 @@ fn robot(boards: usize, screws: usize) -> BTreeMap<String, String> {
         .collect();
     board_parts.extend((0..4).map(|i| {
         let id = format!("module{i}");
-        let below = face(&id, "plate/extrude(plate,start)");
+        let below = face(&id, "/plate:extrude(plate,start)");
         let on = face("standoff0", "extrude(standoff,end)");
         (id, "module.geop", below, on, [0.0, i as f64 * 2.5, 2.2])
     }));
@@ -158,7 +157,7 @@ fn robot(boards: usize, screws: usize) -> BTreeMap<String, String> {
     let mut robot_parts: Vec<_> = (0..boards)
         .map(|i| {
             let id = format!("board{i}");
-            let below = face(&id, "plate/extrude(plate,start)");
+            let below = face(&id, "/plate:extrude(plate,start)");
             (
                 id,
                 "board.geop",

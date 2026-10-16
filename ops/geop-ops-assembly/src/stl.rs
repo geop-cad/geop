@@ -22,7 +22,7 @@ pub struct Stl;
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct StlOptions {
-    /// Only the solids of these names (`pin/extrude(pin)`), if any are
+    /// Only the solids of these names (`/pin:extrude(pin)`), if any are
     /// named; a name no solid has fails, listing the names there are.
     pub solids: Vec<String>,
     /// Plain text rather than binary.

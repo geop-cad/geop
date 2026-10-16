@@ -1027,7 +1027,8 @@ impl Editor {
         // A sketch built on is hidden by its name, as is a datum built on as
         // a whole.
         let built_on = |picked: &PickedElement| {
-            if let Some(sketch) = picked.target.strip_prefix("sketch:") {
+            let own = Some(&picked.target).filter(|t| t.path().is_empty());
+            if let Some(sketch) = own.and_then(|t| t.name().strip_prefix("sketch:")) {
                 return Some(sketch.to_string());
             }
             (picked.kind == drawn::DATUM && !picked.name.contains(':')).then(|| picked.name.clone())

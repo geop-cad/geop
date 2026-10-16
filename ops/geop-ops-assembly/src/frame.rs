@@ -27,7 +27,7 @@ const SAMPLES: i64 = 8;
 /// for a joint's frame, the element of the same part the frame sits at: a
 /// corner or a side of a face, an end of an edge (see
 /// [`MateEntity::frame`]). Saved as `{"on": {"face": {"target":
-/// "bolt/model", "name": "extrude(head,end)"}}}`.
+/// "/bolt:model", "name": "extrude(head,end)"}}}`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MateEntity {
     pub on: Selected,

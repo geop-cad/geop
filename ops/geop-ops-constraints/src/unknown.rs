@@ -11,7 +11,7 @@ use geop_core_math::{
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind},
     part::{Make, StepContext},
-    placed::instance_path,
+    placed::key_behind,
     reader::Reader,
     target::{Target, TargetReference},
     values::StateValue,
@@ -64,9 +64,9 @@ impl Unknowns {
             for unknown in declared.0.into_values() {
                 let seed = inside.given_state(&unknown.state).or(unknown.seed);
                 all.declare(Unknown {
-                    state: instance_path(name, &unknown.state),
+                    state: key_behind(name, &unknown.state),
                     seed,
-                    unless: (unknown.unless).map(|unless| instance_path(name, &unless)),
+                    unless: (unknown.unless).map(|unless| key_behind(name, &unless)),
                     ..unknown
                 });
             }

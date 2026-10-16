@@ -6,7 +6,7 @@ use geop_core_editor::{
     view::PartView,
 };
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::{placed::instance_path, reader::Reader};
+use geop_core_program::{placed::Located, reader::Reader};
 
 use crate::placed::{draw_instances, drawn, placed_parts};
 
@@ -37,7 +37,8 @@ impl Drawer for AssemblyDrawer {
         (placed.iter())
             .filter_map(|part| Some((part, drawn(reader, &part.name).ok()?)))
             .flat_map(|(part, drawn)| {
-                (drawn.view.datums.iter()).map(|d| instance_path(&part.name, &d.name))
+                (drawn.view.datums.iter())
+                    .map(|d| Located::in_instance(part.name.as_str(), d.name.as_str()).key())
             })
             .collect()
     }

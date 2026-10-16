@@ -224,12 +224,8 @@ pub(crate) fn drawn(solid: &PlacedSolid) -> Vec<PickedElement> {
     let Some(own) = solid.model.name_of(solid.solid) else {
         return Vec::new();
     };
-    let path = solid.name.strip_suffix(own).unwrap_or_default();
     let reference = ElementReference::new(model(), own);
     (Solid::drawn(&solid.reader, &reference).into_iter())
-        .map(|face| PickedElement {
-            target: format!("{path}{}", face.target),
-            ..face
-        })
+        .map(|face| face.behind(&solid.instance))
         .collect()
 }

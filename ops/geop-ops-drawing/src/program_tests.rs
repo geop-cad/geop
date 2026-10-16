@@ -650,7 +650,7 @@ fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
         section: Some(SketchPlane::Datum(datum("middle"))),
         annotations: vec![Annotation::Radius {
             view: DrawnView::View(ViewKind::Top),
-            edge: format!("plate/{hole}"),
+            edge: format!("/plate:{hole}"),
             diameter: true,
             label: [12.0, 12.0],
         }],

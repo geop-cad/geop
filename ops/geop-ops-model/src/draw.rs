@@ -165,8 +165,8 @@ mod tests {
         assert_eq!(hit(0.5, 1.0, &all).kind, drawn::EDGE);
         let top = hit(0.5, 0.5, &all);
         assert_eq!(
-            (top.kind.as_str(), top.target.as_str()),
-            (drawn::FACE, "model")
+            (top.kind.as_str(), top.target.to_string().as_str()),
+            (drawn::FACE, "/:model")
         );
         assert_eq!(hit(1.0, 1.0, &accepts(&[drawn::FACE])).kind, drawn::FACE);
         assert!(view.pick(&from_above(5.0, 5.0), &all).is_none());

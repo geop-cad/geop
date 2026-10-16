@@ -79,7 +79,7 @@ fn built(model: &NamedModel<S>, material: Option<Material>) -> Part {
 /// `kind`.
 fn pick(kind: &str, name: &str) -> PickedElement {
     PickedElement {
-        target: model().name().to_string(),
+        target: model().location().clone(),
         kind: kind.to_string(),
         name: name.to_string(),
     }
@@ -402,7 +402,7 @@ fn sketch_curves_are_measured() {
     });
 
     let curve = PickedElement {
-        target: sketch("arc").name().to_string(),
+        target: sketch("arc").location().clone(),
         kind: drawn::SKETCH_CURVE.to_string(),
         name: half.to_string(),
     };
@@ -453,7 +453,6 @@ fn measure_picks_what_it_measures() {
 /// corner at the origin of a unit cube placed 10 along `x` is at 10.
 #[test]
 fn placed_parts_are_measured_where_they_are() {
-    use geop_core_editor::view::INSTANCE_SEPARATOR;
     use geop_ops_assembly::testing::{Shelf, given_model, place, runner};
     let mut cube = NamedModel::<S>::new();
     cube_solid(&mut cube, "c", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap();
@@ -471,7 +470,7 @@ fn placed_parts_are_measured_where_they_are() {
     (root.run(&runner, &mut part)).unwrap();
 
     let corner = |name: &str| PickedElement {
-        target: format!("p{INSTANCE_SEPARATOR}{}", model().name()),
+        target: model().location().behind("p"),
         ..pick(drawn::VERTEX, name)
     };
     let measured = measure(&part.current(), &[corner("cube(c,p0,end)")]);
@@ -483,7 +482,7 @@ fn placed_parts_are_measured_where_they_are() {
     assert!(
         body.drawn
             .iter()
-            .all(|face| face.target == format!("p{INSTANCE_SEPARATOR}model"))
+            .all(|face| face.target.to_string() == "/p:model")
     );
     assert_eq!(body.drawn.len(), 6, "{body:?}");
 }

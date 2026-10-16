@@ -106,7 +106,7 @@ impl SelectableElement<PlacedSketch3d> for Path {
         reader: &Reader,
         hit: &PickedElement,
     ) -> Option<ElementReference<PlacedSketch3d, Self>> {
-        (hit.kind == drawn::EDGE && hit.target == model().name()).then_some(())?;
+        (hit.kind == drawn::EDGE && hit.target == *model().location()).then_some(())?;
         reader
             .targets_of::<PlacedSketch3d>()
             .into_iter()
@@ -125,7 +125,7 @@ impl SelectableElement<PlacedSketch3d> for Path {
         let edges = (reader.retrieve_element(&whole).ok()).map(|placed| placed.edges.clone());
         (edges.unwrap_or_default().into_iter())
             .map(|edge| PickedElement {
-                target: model().name().to_string(),
+                target: model().location().clone(),
                 kind: drawn::EDGE.to_string(),
                 name: edge,
             })

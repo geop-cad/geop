@@ -11,7 +11,10 @@ use std::{
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 
-use crate::values::{Setting, StateValue};
+use crate::{
+    placed::{Located, key_behind},
+    values::{Setting, StateValue},
+};
 
 /// A type a part holds targets of. A plain value: compared by `PartialEq`,
 /// to tell a node made again into an equal value — whose readers are then
@@ -38,15 +41,16 @@ impl<T: PartialEq + 'static> Target for Vec<T> {}
 
 impl<T: PartialEq + 'static> Target for Option<T> {}
 
-/// The stable name of a target, as programs and arguments refer to it, and
-/// the type of its value.
-pub struct TargetReference<T>(String, std::marker::PhantomData<fn() -> T>);
+/// The stable name of a target, as programs and arguments refer to it — of
+/// the part itself, or of a part placed in it, behind the instance's path
+/// ([`Located`]): `/:model`, `/bolt:model` — and the type of its value.
+pub struct TargetReference<T>(Located, std::marker::PhantomData<fn() -> T>);
 
 // By hand, since a derive would ask the same of `T`, and a reference is only
 // a name.
 impl<T> Clone for TargetReference<T> {
     fn clone(&self) -> Self {
-        Self::new(self.0.clone())
+        Self::located(self.0.clone())
     }
 }
 
@@ -64,13 +68,52 @@ impl<T> std::fmt::Debug for TargetReference<T> {
     }
 }
 
+impl<T> std::fmt::Display for TargetReference<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 impl<T> TargetReference<T> {
+    /// The target `name` of the part itself.
     pub fn new(name: impl Into<String>) -> Self {
-        Self(name.into(), std::marker::PhantomData)
+        Self::located(Located::new(name))
     }
 
+    /// The target `located` names.
+    pub fn located(located: Located) -> Self {
+        Self(located, std::marker::PhantomData)
+    }
+
+    /// The target `text` spells ([`Located::parse`]).
+    pub fn parse(text: &str) -> GeopResult<Self> {
+        Located::parse(text).map(Self::located)
+    }
+
+    /// Its name in the part it is of.
     pub fn name(&self) -> &str {
+        self.0.name()
+    }
+
+    /// Its name, behind the path of the instance it is of.
+    pub fn location(&self) -> &Located {
         &self.0
+    }
+
+    /// The path of the instance it is of: empty for the part itself.
+    pub fn instance(&self) -> &str {
+        self.0.path()
+    }
+
+    /// The same target as its instance's own part names it.
+    pub fn local(&self) -> Self {
+        Self::located(self.0.local())
+    }
+
+    /// The same target of the instance `instance` of the part (see
+    /// [`Located::behind`]).
+    pub fn behind(&self, instance: &str) -> Self {
+        Self::located(self.0.behind(instance))
     }
 }
 
@@ -113,7 +156,7 @@ impl Read {
             Read::State(name, _) => format!("s:{name}"),
             Read::File(path, _) => format!("f:{path}"),
             Read::Listed { kind, .. } => format!("l:{kind:?}"),
-            Read::Inside { instance, read } => format!("{instance}/{}", read.key()),
+            Read::Inside { instance, read } => key_behind(instance, &read.key()),
         }
     }
 }
@@ -242,5 +285,31 @@ impl Node {
                 (Err(a), Err(b)) => a == b,
                 _ => false,
             }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A target of the part itself is `/:name`, one of a placed part
+    /// `/path:name`; it reads back as it is written, and moves behind an
+    /// instance and back.
+    #[test]
+    fn a_target_says_which_part_it_is_of() {
+        let model = TargetReference::<f64>::new("model");
+        assert_eq!(model.to_string(), "/:model");
+        assert_eq!(TargetReference::parse("/:model").unwrap(), model);
+        let deep = TargetReference::<f64>::parse("/a/b:model").unwrap();
+        assert_eq!((deep.instance(), deep.name()), ("a/b", "model"));
+        assert_eq!(deep.to_string(), "/a/b:model");
+        assert_eq!(model.behind("b").behind("a"), deep);
+        assert_eq!(deep.local(), model);
+        // Equal by where and what, not by spelling alone.
+        assert_ne!(model.behind("a"), model);
+        assert!(TargetReference::<f64>::parse("model").is_err());
+        assert!(TargetReference::<f64>::parse("a/b:model").is_err());
+        let colon = TargetReference::<f64>::parse("/a:b:c").unwrap();
+        assert_eq!((colon.instance(), colon.name()), ("a", "b:c"));
     }
 }

@@ -15,10 +15,7 @@ use std::marker::PhantomData;
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{
-    placed::{instance_path, split_path},
-    target::TargetReference,
-};
+use crate::{placed::Located, target::TargetReference};
 
 /// A kind of element a target holds by stable name: an edge or a face of a
 /// topology, a line of a sketch. A unit struct, defined by the crate that
@@ -62,9 +59,11 @@ pub trait HasElements<K: Kind>: 'static {
 }
 
 /// The element of the kind `K` named `name` in the target `target`. Saved
-/// as `{"target": "s1", "name": "c3"}`; in a target that is a part's only
-/// one of its type ([`HasElements::SINGLETON`]) as `"c3"`; the whole target
-/// ([`ElementReference::whole`]) as `{"target": "s1"}`.
+/// as `{"target": "/:s1", "name": "c3"}`, its target spelled as a
+/// [`Located`] — `/bolt:s1` in the part placed as `bolt`; in a target of
+/// the part itself that is its only one of its type
+/// ([`HasElements::SINGLETON`]) as `"c3"`; the whole target
+/// ([`ElementReference::whole`]) as `{"target": "/:s1"}`.
 pub struct ElementReference<T, K> {
     target: TargetReference<T>,
     name: String,
@@ -89,7 +88,13 @@ impl<T, K> Eq for ElementReference<T, K> {}
 
 impl<T, K: Kind> std::fmt::Debug for ElementReference<T, K> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}({:?}, {:?})", K::NAME, self.target.name(), self.name)
+        write!(
+            f,
+            "{}({:?}, {:?})",
+            K::NAME,
+            self.target.location(),
+            self.name
+        )
     }
 }
 
@@ -115,22 +120,20 @@ impl<T, K> ElementReference<T, K> {
     /// The path of the instance the element is of: empty for one of the
     /// part itself (see [`crate::instance`]).
     pub fn instance(&self) -> &str {
-        split_path(self.target.name()).0
+        self.target.instance()
     }
 
     /// The same element as its instance's own part names it: itself, for
     /// one of the part itself.
     pub fn local(&self) -> Self {
-        let target = split_path(self.target.name()).1;
-        Self::new(TargetReference::new(target), self.name.clone())
+        Self::new(self.target.local(), self.name.clone())
     }
 
     /// The same element of the instance `instance` of the part — of the
     /// instance at that path, if it is already of one: what an element of
     /// a placed part is, read from the part it is placed in.
     pub fn behind(&self, instance: &str) -> Self {
-        let target = instance_path(instance, self.target.name());
-        Self::new(TargetReference::new(target), self.name.clone())
+        Self::new(self.target.behind(instance), self.name.clone())
     }
 }
 
@@ -158,14 +161,18 @@ impl<T: HasElements<K>, K: Kind> ElementReference<T, K> {
     /// of a target of the type `T` — of the part itself, or of an instance
     /// placed in it.
     pub fn from_picked(picked: &PickedElement) -> Option<Self> {
-        (picked.kind == K::NAME && T::names_target(split_path(&picked.target).1))
-            .then(|| Self::new(TargetReference::new(picked.target.clone()), &picked.name))
+        (picked.kind == K::NAME && T::names_target(picked.target.name())).then(|| {
+            Self::new(
+                TargetReference::located(picked.target.clone()),
+                &picked.name,
+            )
+        })
     }
 
     /// The reference as a pick names it: what the front end shows selected.
     pub fn picked(&self) -> PickedElement {
         PickedElement {
-            target: self.target.name().to_string(),
+            target: self.target.location().clone(),
             kind: K::NAME.to_string(),
             name: self.name.clone(),
         }
@@ -189,9 +196,9 @@ pub fn whole<'a, T>(target: &'a T, name: &str) -> GeopResult<&'a T> {
 /// reads it, so an operation never matches on it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PickedElement {
-    /// The name of the target the element is in, behind the path of the
-    /// instance it is of: `bolt/model`.
-    pub target: String,
+    /// The target the element is in, behind the path of the instance it
+    /// is of: `/bolt:model`, `/:model` for one of the part itself.
+    pub target: Located,
     /// Its kind's [`Kind::NAME`].
     pub kind: String,
     /// Its stable name in the target.
@@ -206,13 +213,13 @@ impl PickedElement {
 
     /// The path of the instance it is of: empty for the part itself.
     pub fn instance(&self) -> &str {
-        split_path(&self.target).0
+        self.target.path()
     }
 
     /// The same pick as its instance's own part names it.
     pub fn local(&self) -> Self {
         Self {
-            target: split_path(&self.target).1.to_string(),
+            target: self.target.local(),
             ..self.clone()
         }
     }
@@ -220,26 +227,26 @@ impl PickedElement {
     /// The same pick of the instance `instance` of the part.
     pub fn behind(&self, instance: &str) -> Self {
         Self {
-            target: instance_path(instance, &self.target),
+            target: self.target.behind(instance),
             ..self.clone()
         }
     }
 }
 
-/// The saved form of an [`ElementReference`]: its name alone in a
-/// singleton target, else the target's name too.
+/// The saved form of an [`ElementReference`]: its name alone in the
+/// singleton target of the part itself, else the target too.
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 enum Saved {
     Name(String),
-    InTarget { target: String, name: String },
-    Whole { target: String },
+    InTarget { target: Located, name: String },
+    Whole { target: Located },
 }
 
 impl<T: HasElements<K>, K: Kind> Serialize for ElementReference<T, K> {
     fn serialize<Se: Serializer>(&self, serializer: Se) -> Result<Se::Ok, Se::Error> {
-        let target = self.target.name().to_string();
-        let saved = if T::SINGLETON == Some(&target) {
+        let target = self.target.location().clone();
+        let saved = if target.path().is_empty() && T::SINGLETON == Some(target.name()) {
             Saved::Name(self.name.clone())
         } else if self.name.is_empty() {
             Saved::Whole { target }
@@ -257,8 +264,10 @@ impl<'de, T: HasElements<K>, K: Kind> Deserialize<'de> for ElementReference<T, K
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         match Saved::deserialize(deserializer)? {
             Saved::Name(name) => Self::in_singleton(name).map_err(serde::de::Error::custom),
-            Saved::InTarget { target, name } => Ok(Self::new(TargetReference::new(target), name)),
-            Saved::Whole { target } => Ok(Self::whole(TargetReference::new(target))),
+            Saved::InTarget { target, name } => {
+                Ok(Self::new(TargetReference::located(target), name))
+            }
+            Saved::Whole { target } => Ok(Self::whole(TargetReference::located(target))),
         }
     }
 }
@@ -350,7 +359,7 @@ mod tests {
         let b = ElementReference::<Lengths, Length>::new(defined, "b");
         let error = part.current().retrieve_element(&b).unwrap_err().to_string();
         assert!(error.contains("no length b"), "{error}");
-        assert!(error.contains("length(\"s1\", \"b\")"), "{error}");
+        assert!(error.contains("length(\"/:s1\", \"b\")"), "{error}");
     }
 
     /// In a singleton target an element is saved by its name alone; in any
@@ -365,19 +374,33 @@ mod tests {
 
         let in_s1 = ElementReference::<Lengths, Length>::new(TargetReference::new("s1"), "a");
         let saved = serde_json::to_value(&in_s1).unwrap();
-        assert_eq!(saved, serde_json::json!({"target": "s1", "name": "a"}));
+        assert_eq!(saved, serde_json::json!({"target": "/:s1", "name": "a"}));
         let read: ElementReference<Lengths, Length> = serde_json::from_value(saved).unwrap();
         assert_eq!(read, in_s1);
 
-        // A bare name needs a singleton target to be in.
+        // Of a placed part, the target says which: the singleton too.
+        let behind = in_stock.behind("p");
+        let saved = serde_json::to_value(&behind).unwrap();
+        assert_eq!(
+            saved,
+            serde_json::json!({"target": "/p:stock", "name": "a"})
+        );
+        let read: ElementReference<Stock, Length> = serde_json::from_value(saved).unwrap();
+        assert_eq!(read, behind);
+        assert_eq!(read.local(), in_stock);
+
+        // A bare name needs a singleton target to be in, and a target that
+        // does not say where it is names nothing.
         assert!(serde_json::from_value::<ElementReference<Lengths, Length>>("a".into()).is_err());
+        let bare = serde_json::json!({"target": "s1", "name": "a"});
+        assert!(serde_json::from_value::<ElementReference<Lengths, Length>>(bare).is_err());
     }
 
     /// A pick becomes a reference only of its own kind.
     #[test]
     fn a_pick_becomes_a_reference_of_its_kind() {
         let picked = PickedElement {
-            target: "s1".into(),
+            target: Located::new("s1"),
             kind: "length".into(),
             name: "a".into(),
         };

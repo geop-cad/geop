@@ -18,7 +18,7 @@ use geop_core_math::{
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind},
     part::{Make, StepContext},
-    placed::instance_path,
+    placed::key_behind,
     reader::Reader,
     target::{Target, TargetReference},
     values::Design,
@@ -104,8 +104,8 @@ impl Constraints {
     /// two steps defined is an error naming both.
     ///
     /// Those of every instance placed in it come up behind the instance's
-    /// name: a constraint `c` of the instance `bolt` is `bolt/c`, on the
-    /// state `bolt/s` where the instance's is on `s` (see
+    /// name: a constraint `c` of the instance `bolt` is `/bolt:c`, on the
+    /// state `/bolt:s` where the instance's is on `s` (see
     /// [`geop_core_program::instance`]). A residual is the same wherever
     /// the instance is: it is a length within it.
     pub fn of(reader: &Reader) -> GeopResult<Self> {
@@ -117,16 +117,16 @@ impl Constraints {
             .map_err(|e| e.with_context(format!("the constraints of the placed part `{name}`")))?;
             for (constraint, defined) in inside.0 {
                 let jacobian = (defined.constraint.jacobian.into_iter())
-                    .map(|(state, rows)| (instance_path(name, &state), rows))
+                    .map(|(state, rows)| (key_behind(name, &state), rows))
                     .collect();
                 let defined = Defined {
-                    step: instance_path(name, &defined.step),
+                    step: key_behind(name, &defined.step),
                     constraint: Constraint {
                         jacobian,
                         ..defined.constraint
                     },
                 };
-                all.0.insert(instance_path(name, &constraint), defined);
+                all.0.insert(key_behind(name, &constraint), defined);
             }
         }
         Ok(all)

@@ -198,7 +198,7 @@
       "operation": "extrude",
       "args": {
         "sketch": {
-          "target": "sketch:sketch1"
+          "target": "/:sketch:sketch1"
         },
         "extent": {
           "side1": {
@@ -536,7 +536,7 @@
       "operation": "extrude",
       "args": {
         "sketch": {
-          "target": "sketch:sketch2"
+          "target": "/:sketch:sketch2"
         },
         "extent": {
           "side1": "through_all",

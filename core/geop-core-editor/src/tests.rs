@@ -354,7 +354,7 @@ impl SelectableElement<Chains> for Chain {
     const PICKED_FROM: &'static [&'static str] = &["edge"];
 
     fn select(reader: &Reader, hit: &PickedElement) -> Option<ElementReference<Chains, Chain>> {
-        let target = TargetReference::<Chains>::new(&hit.target);
+        let target = TargetReference::<Chains>::located(hit.target.clone());
         let chains = reader
             .retrieve_element(&ElementReference::<Chains, Chains>::whole(target.clone()))
             .ok()?;
@@ -487,7 +487,7 @@ fn one_of_several_sources_is_picked_by_the_first_that_selects_it() {
     assert_eq!(picked, [Edges::Chain(chain("c2")), all.clone()]);
     assert_eq!(
         serde_json::to_value(&picked).unwrap(),
-        serde_json::json!([{"chain": {"target": "chains", "name": "c2"}}, {"all": {"target": "chains"}}])
+        serde_json::json!([{"chain": {"target": "/:chains", "name": "c2"}}, {"all": {"target": "/:chains"}}])
     );
     assert_eq!(picked[0].resolve(&reader).unwrap().0, ["e3"]);
     assert_eq!(all.resolve(&reader).unwrap().0, ["e1", "e2", "e3"]);

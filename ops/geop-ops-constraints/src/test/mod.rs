@@ -492,7 +492,7 @@ fn a_constraint_on_geometry_the_state_drives_is_refused() {
     });
     assert_eq!(
         pinned.unwrap_err().root_message(),
-        "constraint `pin` reads target `followed`, which itself reads the state `body`: a solve \
+        "constraint `pin` reads target `/:followed`, which itself reads the state `body`: a solve \
          could not see how it moves with the state — a constraint may read the state only itself"
     );
 }

@@ -83,7 +83,7 @@ fn an_assembly_weighs_its_placed_parts() {
     let mut moment = 0.0;
     for body in bodies {
         let name = body["name"].as_str().unwrap();
-        assert!(name.contains('/'), "{name} is of a placed part");
+        assert!(name.starts_with('/'), "{name} is of a placed part");
         assert_eq!(body["material"], "Aluminium 6061");
         assert_eq!(body["assumed"], false);
         let properties = &body["properties"];

@@ -20,7 +20,7 @@
 //! instance of it. Moving a placed part changes where it is, not what is
 //! drawn. A pick moves the pointer into each placed part's own frame and
 //! names what it hits as that part names it, its target behind the
-//! instance's name ([`in_instance`]).
+//! instance's path ([`Located`]): `/bolt:model`.
 
 pub mod icons;
 #[cfg(test)]
@@ -41,6 +41,7 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
+    placed::{INSTANCE_SEPARATOR, Located},
     reader::Reader,
     target::{Target, TargetReference},
 };
@@ -127,16 +128,6 @@ impl FramePick {
             at,
         })
     }
-}
-
-/// What separates a placed part's instance from the name of a target of
-/// its own, in a pick of the part it is placed in: `bolt/model`.
-pub const INSTANCE_SEPARATOR: char = '/';
-
-/// The target `target` of the part placed as `instance`, as the part it is
-/// placed in names it: `bolt/model`.
-pub fn in_instance(instance: &str, target: &str) -> String {
-    format!("{instance}{INSTANCE_SEPARATOR}{target}")
 }
 
 /// Samples per edge and per parametric direction of a face. A face's grid
@@ -439,10 +430,7 @@ impl Layer<'_> {
     /// the part drawn names it.
     fn element(&self, target: &str, kind: &str, name: &str) -> PickedElement {
         PickedElement {
-            target: match self.instance {
-                Some(instance) => in_instance(instance, target),
-                None => target.to_string(),
-            },
+            target: Located::in_instance(self.instance.unwrap_or_default(), target),
             kind: kind.to_string(),
             name: name.to_string(),
         }
@@ -577,7 +565,9 @@ impl PartView {
             .iter()
             .filter(|i| i.state.is_some())
             .filter(|i| {
-                i.name == hit || hit.starts_with(&format!("{}{INSTANCE_SEPARATOR}", i.name))
+                i.name == hit
+                    || (hit.strip_prefix(&i.name))
+                        .is_some_and(|r| r.starts_with(INSTANCE_SEPARATOR))
             })
             .max_by_key(|i| i.name.len())?;
         (!moved.fixed).then_some((moved, t))
@@ -817,7 +807,7 @@ impl PartView {
         let accepts: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
         let hit = self.pick(pointer, &accepts)?;
         let layers = self.layers(pointer);
-        let instance = (hit.element.target.rsplit_once(INSTANCE_SEPARATOR)).map(|(i, _)| i);
+        let instance = Some(hit.element.target.path()).filter(|path| !path.is_empty());
         let layer = layers.iter().find(|l| l.instance == instance)?;
         let view = layer.view;
         let element = |kind: &str, name: &str| PickedElement {

@@ -363,9 +363,9 @@ macro_rules! picked_from_its_drawing {
                 reader: &Reader,
                 hit: &PickedElement,
             ) -> Option<ElementReference<PlacedSketch<Design>, Self>> {
-                let is_sketch = <PlacedSketch<Design> as HasElements<$kind>>::names_target(&hit.target);
+                let is_sketch = <PlacedSketch<Design> as HasElements<$kind>>::names_target(hit.target.name());
                 (is_sketch && hit.kind == $from).then_some(())?;
-                let reference = ElementReference::new(TargetReference::new(&hit.target), &hit.name);
+                let reference = ElementReference::new(TargetReference::located(hit.target.clone()), &hit.name);
                 reader.retrieve_element(&reference).ok()?;
                 Some(reference)
             }
@@ -375,7 +375,7 @@ macro_rules! picked_from_its_drawing {
                 element: &ElementReference<PlacedSketch<Design>, Self>,
             ) -> Vec<PickedElement> {
                 vec![PickedElement {
-                    target: element.target().name().to_string(),
+                    target: element.target().location().clone(),
                     kind: $from.to_string(),
                     name: element.name().to_string(),
                 }]

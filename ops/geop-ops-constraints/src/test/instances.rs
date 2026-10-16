@@ -150,27 +150,27 @@ fn an_instance_is_solved_in_the_part_it_is_placed_in() {
     ];
     let program = Program::from_steps(vec![place("p", inner)]);
     let mut runner = Running::of(registry());
-    let given = StateValues::from([("p/body".to_string(), body_at([3.0, 0.0, 0.0]))]);
+    let given = StateValues::from([("/p:body".to_string(), body_at([3.0, 0.0, 0.0]))]);
     assert_eq!(errors(&runner.run(&program, &inputs(&[]), &given)), []);
 
     let reader = runner.part.current();
     let constraints = Constraints::of(&reader).unwrap();
     let names: Vec<&str> = constraints.iter().map(|(name, _)| name).collect();
-    assert_eq!(names, ["p/pin"]);
-    let pinned = constraints.get("p/pin").unwrap();
-    assert_eq!(pinned.jacobian.keys().collect::<Vec<_>>(), ["p/body"]);
-    assert_translation(&pinned.jacobian["p/body"]);
+    assert_eq!(names, ["/p:pin"]);
+    let pinned = constraints.get("/p:pin").unwrap();
+    assert_eq!(pinned.jacobian.keys().collect::<Vec<_>>(), ["/p:body"]);
+    assert_translation(&pinned.jacobian["/p:body"]);
     let unknowns = Unknowns::of(&reader).unwrap();
     let declared: Vec<&str> = unknowns.iter().map(|u| u.state.as_str()).collect();
-    assert_eq!(declared, ["p/body"]);
+    assert_eq!(declared, ["/p:body"]);
     // It starts where the instance has it.
     assert_eq!(
-        unknowns.get("p/body").unwrap().seed,
+        unknowns.get("/p:body").unwrap().seed,
         Some(body_at([3.0, 0.0, 0.0]))
     );
 
     let problem = Problem {
-        free: BTreeMap::from([("p/body".to_string(), Mobility::Held)]),
+        free: BTreeMap::from([("/p:body".to_string(), Mobility::Held)]),
         preferences: Vec::new(),
         scale: Design::ONE,
     };
@@ -178,7 +178,7 @@ fn an_instance_is_solved_in_the_part_it_is_placed_in() {
     let run = runner.rerun(&program, &x);
     let solved = solve(run, &given, &problem).unwrap();
     assert!(solved.report.converged, "{:?}", solved.report);
-    let at = pose_of(&solved.state["p/body"])
+    let at = pose_of(&solved.state["/p:body"])
         .position()
         .to_array()
         .map(|c| c.to_f64());

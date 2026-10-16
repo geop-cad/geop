@@ -43,7 +43,6 @@ mod xml;
 pub mod zip;
 
 use geop_core_program::{
-    placed::instance_path,
     reader::Reader,
     values::{Design, StateValue},
 };
@@ -516,16 +515,16 @@ impl Meshes {
 }
 
 /// The mass properties of the solids of the part `reader` reads itself,
-/// named behind `prefix`, where `pose` puts them, each of its part's
+/// of the part placed at `instance`, where `pose` puts them, each of its part's
 /// material (see [`own_solids_at`]).
 fn masses(
     reader: &Reader,
-    prefix: &str,
+    instance: &str,
     pose: Option<Pose<Design>>,
     shapes: &mut Shapes,
     out: &mut Vec<MassProperties<Design>>,
 ) -> GeopResult<()> {
-    for solid in own_solids_at(reader, prefix, pose)? {
+    for solid in own_solids_at(reader, instance, pose)? {
         out.push(solid.mass_properties(shapes)?);
     }
     Ok(())
@@ -640,11 +639,10 @@ pub fn export(output: &mut Output, name: &str, quality: usize) -> GeopResult<Urd
             let body = &bodies[b];
             // A part placed is a body of its own solids: the parts placed
             // in it are bodies of their own.
-            let prefix = instance_path(&body.name, "");
             let placed = body.part.clone();
             masses(
                 &placed,
-                &prefix,
+                &body.name,
                 Some(body.world),
                 &mut shapes,
                 &mut masses_of,

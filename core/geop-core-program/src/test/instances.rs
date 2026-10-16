@@ -155,10 +155,10 @@ fn a_placed_part_is_built_with_the_state_under_its_name() {
     let mut runner = runner();
     let program = Program::from_steps(vec![load("p", vec![state_frame("f", "s")])]);
 
-    let at = |x, y| state(&[("p/s", [x, 0.0, 0.0]), ("p.pose", [y, 0.0, 0.0])]);
+    let at = |x, y| state(&[("/p:s", [x, 0.0, 0.0]), ("p.pose", [y, 0.0, 0.0])]);
     ok(runner.run(&program, &inputs(&[]), &at(1.0, 5.0)));
     let reader = runner.part.current();
-    let placed = reader.retrieve_placed(&whole_frame("p/f")).unwrap();
+    let placed = reader.retrieve_placed(&whole_frame("/p:f")).unwrap();
     assert_eq!(placed.instance, "p");
     assert_encloses(placed.element.data, [1.0, 0.0, 0.0]);
     assert_eq!(take_built(), ["f@f"]);
@@ -169,7 +169,7 @@ fn a_placed_part_is_built_with_the_state_under_its_name() {
     ok(runner.run(&program, &inputs(&[]), &at(2.0, 6.0)));
     assert_eq!(take_built(), ["f@f"]);
     let reader = runner.part.current();
-    let placed = reader.retrieve_placed(&whole_frame("p/f")).unwrap();
+    let placed = reader.retrieve_placed(&whole_frame("/p:f")).unwrap();
     assert_encloses(placed.element.data, [2.0, 0.0, 0.0]);
 }
 
@@ -182,7 +182,7 @@ fn a_placed_part_is_built_with_the_state_under_its_name() {
 fn a_change_in_a_placed_part_makes_again_only_what_reads_it() {
     let mut runner = runner();
     let frames = vec![state_frame("f", "s"), state_frame("g", "t")];
-    let program = Program::from_steps(vec![load("p", frames), middle_frame("m", "p/f", "p/f")]);
+    let program = Program::from_steps(vec![load("p", frames), middle_frame("m", "/p:f", "/p:f")]);
     let mut run = |given: &[(&str, [f64; 3])]| {
         ok(runner.run(&program, &inputs(&[]), &state(given)));
         let revision = runner.part.current().placed_part("p").unwrap().revision();
@@ -190,15 +190,15 @@ fn a_change_in_a_placed_part_makes_again_only_what_reads_it() {
     };
     let (built, first) = run(&[]);
     assert_eq!(built, ["f@f", "g@g", "m@m"]);
-    assert_eq!(run(&[("p/other", [1.0, 0.0, 0.0])]), (vec![], first));
+    assert_eq!(run(&[("/p:other", [1.0, 0.0, 0.0])]), (vec![], first));
     // Given as the default it read, `f` is made again, alike: nothing
     // reading it is.
-    assert_eq!(run(&[("p/s", [0.0; 3])]), (vec!["f@f".to_string()], first));
+    assert_eq!(run(&[("/p:s", [0.0; 3])]), (vec!["f@f".to_string()], first));
 
-    let (built, moved) = run(&[("p/s", [1.0, 0.0, 0.0])]);
+    let (built, moved) = run(&[("/p:s", [1.0, 0.0, 0.0])]);
     assert_eq!(built, ["f@f", "m@m"]);
     assert_ne!(moved, first);
-    let (built, turned) = run(&[("p/s", [1.0, 0.0, 0.0]), ("p/t", [1.0, 0.0, 0.0])]);
+    let (built, turned) = run(&[("/p:s", [1.0, 0.0, 0.0]), ("/p:t", [1.0, 0.0, 0.0])]);
     assert_eq!(built, ["g@g"]);
     assert_ne!(turned, moved);
 
@@ -216,7 +216,10 @@ fn a_placed_part_given_nothing_new_is_reused() {
         count("c"),
         load("q", vec![count("c"), state_frame("f", "s")]),
     ];
-    let program = Program::from_steps(vec![load("p", inner), middle_frame("m", "p/q/f", "p/q/f")]);
+    let program = Program::from_steps(vec![
+        load("p", inner),
+        middle_frame("m", "/p/q:f", "/p/q:f"),
+    ]);
     let mut run = |given: &[(&str, [f64; 3])]| {
         COUNTED.set(0);
         ok(runner.run(&program, &inputs(&[]), &state(given)));
@@ -225,12 +228,12 @@ fn a_placed_part_given_nothing_new_is_reused() {
     assert_eq!(run(&[]), (2, vec!["f@f".into(), "m@m".into()]));
     assert_eq!(run(&[]), (0, vec![]));
     assert_eq!(
-        run(&[("p/q/s", [1.0, 0.0, 0.0])]),
+        run(&[("/p/q:s", [1.0, 0.0, 0.0])]),
         (2, vec!["f@f".into(), "m@m".into()])
     );
-    assert_eq!(run(&[("p/q/s", [1.0, 0.0, 0.0])]), (0, vec![]));
+    assert_eq!(run(&[("/p/q:s", [1.0, 0.0, 0.0])]), (0, vec![]));
     let reader = runner.part.current();
-    let placed = reader.retrieve_placed(&whole_frame("p/q/f")).unwrap();
+    let placed = reader.retrieve_placed(&whole_frame("/p/q:f")).unwrap();
     assert_encloses(placed.element.data, [1.0, 0.0, 0.0]);
 }
 
@@ -241,7 +244,7 @@ fn an_element_of_a_placed_part_is_not_the_parts_own() {
     let program = Program::from_steps(vec![load("p", vec![state_frame("f", "s")])]);
     ok(runner.run(&program, &inputs(&[]), &state(&[])));
     let error = (runner.part.current())
-        .retrieve_element(&whole_frame("p/f"))
+        .retrieve_element(&whole_frame("/p:f"))
         .unwrap_err()
         .to_string();
     assert!(error.contains("placed part `p`"), "{error}");
@@ -254,13 +257,13 @@ fn a_part_placed_in_a_placed_part_is_read_behind_both_names() {
     let mut runner = runner();
     let inner = || vec![load("q", vec![state_frame("f", "s")])];
     let program = Program::from_steps(vec![load("p", inner()), load("c", inner())]);
-    let given = state(&[("p/q/s", [0.0, 0.0, 4.0]), ("c/q/s", [0.0, 0.0, 6.0])]);
+    let given = state(&[("/p/q:s", [0.0, 0.0, 4.0]), ("/c/q:s", [0.0, 0.0, 6.0])]);
     ok(runner.run(&program, &inputs(&[]), &given));
     let reader = runner.part.current();
-    let placed = reader.retrieve_placed(&whole_frame("p/q/f")).unwrap();
+    let placed = reader.retrieve_placed(&whole_frame("/p/q:f")).unwrap();
     assert_eq!(placed.instance, "p/q");
     assert_encloses(placed.element.data, [0.0, 0.0, 4.0]);
-    let other = reader.retrieve_placed(&whole_frame("c/q/f")).unwrap();
+    let other = reader.retrieve_placed(&whole_frame("/c/q:f")).unwrap();
     assert_encloses(other.element.data, [0.0, 0.0, 6.0]);
     assert_eq!(reader.instances(), ["p", "c"]);
     assert_eq!(reader.placed_part("p").unwrap().instances(), ["q"]);
@@ -295,7 +298,10 @@ fn moving_a_joint_of_one_of_two_placed_parts_builds_only_that_one() {
     let file = write("arm", vec![state_frame("f", "j"), state_frame("g", "k")]);
     let program = Program::from_steps(vec![place_file("left", &file), place_file("right", &file)]);
     let at = |left: f64, right: f64| {
-        state(&[("left/j", [left, 0.0, 0.0]), ("right/j", [right, 0.0, 0.0])])
+        state(&[
+            ("/left:j", [left, 0.0, 0.0]),
+            ("/right:j", [right, 0.0, 0.0]),
+        ])
     };
     ok(runner.run(&program, &inputs(&[]), &at(1.0, 2.0)));
     assert_eq!(take_built(), ["f@f", "g@g", "f@f", "g@g"]);
@@ -315,9 +321,9 @@ fn moving_a_joint_of_one_of_two_placed_parts_builds_only_that_one() {
         "only what reads the joint is made again"
     );
     let reader = runner.part.current();
-    let left = reader.retrieve_placed(&whole_frame("left/f")).unwrap();
+    let left = reader.retrieve_placed(&whole_frame("/left:f")).unwrap();
     assert_encloses(left.element.data, [3.0, 0.0, 0.0]);
-    let right = reader.retrieve_placed(&whole_frame("right/f")).unwrap();
+    let right = reader.retrieve_placed(&whole_frame("/right:f")).unwrap();
     assert_encloses(right.element.data, [2.0, 0.0, 0.0]);
 }
 

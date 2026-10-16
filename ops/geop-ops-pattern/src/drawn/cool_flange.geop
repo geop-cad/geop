@@ -187,11 +187,11 @@
       "operation": "revolve",
       "args": {
         "sketch": {
-          "target": "sketch:sketch1"
+          "target": "/:sketch:sketch1"
         },
         "axis": {
           "sketch": {
-            "target": "sketch:sketch1",
+            "target": "/:sketch:sketch1",
             "name": "c6"
           }
         },
@@ -291,7 +291,7 @@
       "operation": "extrude",
       "args": {
         "sketch": {
-          "target": "sketch:sketch2"
+          "target": "/:sketch:sketch2"
         },
         "extent": {
           "side1": "through_all",

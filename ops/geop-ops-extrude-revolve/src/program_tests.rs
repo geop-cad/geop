@@ -864,7 +864,7 @@ fn rails_and_guides_round_trip() {
     );
     let json = serde_json::to_string(&program).unwrap();
     assert!(
-        json.contains("\"rails\":[{\"sketch\":{\"target\":\"sketch:rail\"}}]"),
+        json.contains("\"rails\":[{\"sketch\":{\"target\":\"/:sketch:rail\"}}]"),
         "{json}"
     );
     assert!(json.contains("\"fixed_normal\""), "{json}");

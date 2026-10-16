@@ -17,6 +17,7 @@ use crate::{
     element::{ElementReference, HasElements, Kind},
     operation_registry::OperationRegistry,
     part::Part,
+    placed::Located,
     program::{Program, ProgramStep},
     runner::{RunOutput, Runner},
     target::{Target, TargetReference},
@@ -77,7 +78,7 @@ impl HasElements<Frame> for Frame {
 
 /// The frame target `name`, whole.
 pub(crate) fn whole_frame(name: &str) -> ElementReference<Frame, Frame> {
-    ElementReference::whole(TargetReference::new(name))
+    ElementReference::whole(TargetReference::located(Located::of_key(name).unwrap()))
 }
 
 thread_local! {

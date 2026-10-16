@@ -628,7 +628,7 @@ fn a_part_is_exported_as_stl_with_its_placed_parts() {
         "{assembly} triangles, the plate alone {plate}"
     );
     // Only the pin, as the exporter's own options say.
-    let options = serde_json::json!({ "solids": ["pin/extrude(pin)"] });
+    let options = serde_json::json!({ "solids": ["/pin:extrude(pin)"] });
     let pin = triangles(editor.handle(export("stl", None, options)));
     assert!(pin < assembly, "{pin} of {assembly}");
 

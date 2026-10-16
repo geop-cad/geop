@@ -331,7 +331,7 @@ macro_rules! picked_as_drawn {
                 reader: &Reader,
                 hit: &PickedElement,
             ) -> Option<ElementReference<Datums, Self>> {
-                (hit.target == DATUMS && hit.kind == AnyDatum::NAME).then_some(())?;
+                (hit.target == *datums().location() && hit.kind == AnyDatum::NAME).then_some(())?;
                 let reference = ElementReference::new(datums(), &hit.name);
                 reader.retrieve_element(&reference).ok()?;
                 Some(reference)

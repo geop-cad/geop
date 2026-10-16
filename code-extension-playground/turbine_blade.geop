@@ -122,7 +122,7 @@
       "operation": "revolve",
       "args": {
         "sketch": {
-          "target": "sketch:sketch4"
+          "target": "/:sketch:sketch4"
         },
         "axis": {
           "datum": "origin:y"
@@ -591,13 +591,13 @@
       "args": {
         "profiles": [
           {
-            "target": "sketch:sketch1"
+            "target": "/:sketch:sketch1"
           },
           {
-            "target": "sketch:sketch2"
+            "target": "/:sketch:sketch2"
           },
           {
-            "target": "sketch:sketch3"
+            "target": "/:sketch:sketch3"
           }
         ],
         "output": {

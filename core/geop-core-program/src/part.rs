@@ -244,7 +244,7 @@ impl Part {
             Read::Inside { instance, read } => {
                 let inner = self.placed_at(instance, before, own).ok()?;
                 let state = inner.state_read(read, inner.ran, None)?;
-                Some(crate::placed::instance_path(instance, &state))
+                Some(crate::placed::key_behind(instance, &state))
             }
             Read::Absent(_) | Read::Input(..) | Read::File(..) | Read::Listed { .. } => None,
         }

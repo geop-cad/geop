@@ -136,7 +136,7 @@ impl Scene<Design> for OneFace {
 /// The face `name` of the part, as a pick names it.
 fn face(name: &str) -> PickedElement {
     PickedElement {
-        target: "model".into(),
+        target: geop_core_program::placed::Located::new("model"),
         kind: "face".into(),
         name: name.into(),
     }

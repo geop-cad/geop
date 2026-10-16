@@ -205,14 +205,20 @@ fn a_view_placed_three_times_is_picked_where_each_is() {
     let view = view.finish();
     let hit = |x: f64, y: f64, accepts: &[&str]| picked(&view, &down(x, y), accepts).unwrap();
     let top_of_b = hit(3.5, 0.5, &[drawn::FACE]);
-    assert_eq!(top_of_b.target, in_instance("b", "model"));
+    assert_eq!(top_of_b.target, Located::in_instance("b", "model"));
     assert_eq!(top_of_b.name, face(2, 1));
     // `c` stands above `a`: its top is hit, and its corner, not `a`'s.
-    assert_eq!(hit(0.5, 0.5, &[drawn::FACE]).target, "c/model");
+    assert_eq!(
+        hit(0.5, 0.5, &[drawn::FACE]).target,
+        Located::in_instance("c", "model")
+    );
     let corner_hit = hit(1.005, 1.005, ANY);
     assert_eq!(
-        (corner_hit.target.as_str(), corner_hit.name.as_str()),
-        ("c/model", "v111")
+        (
+            corner_hit.target.to_string().as_str(),
+            corner_hit.name.as_str()
+        ),
+        ("/c:model", "v111")
     );
     assert_eq!(picked(&view, &down(2.0, 0.5), ANY), None);
 }

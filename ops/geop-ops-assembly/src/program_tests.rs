@@ -10,6 +10,7 @@ use geop_core_program::{
     element::ElementReference,
     numeric::{ParameterValue, read_parameter_values},
     part::Part,
+    placed::{Located, key_behind, split_instance_path},
     program::{Program, ProgramStep},
     reader::Reader,
     runner::Runner,
@@ -538,7 +539,11 @@ fn position(pose: &Pose<Design>) -> [f64; 3] {
 /// Where `program`'s state puts the part placed as `instance`: with no
 /// pose there — nothing ever moved it — at the origin.
 fn pose_of(program: &Program, instance: &str) -> Pose<Design> {
-    match program.state.get(&pose_state(instance)) {
+    let (outer, name) = split_instance_path(instance);
+    match program
+        .state
+        .get(&Located::in_instance(outer, pose_state(name)).key())
+    {
         Some(StateValue::Pose(pose)) => *pose,
         None => Pose::identity(),
         other => panic!("{instance} has no pose: {other:?}"),
@@ -831,16 +836,22 @@ fn a_mate_on_a_part_of_a_sub_assembly_is_solved() {
         .collect();
     let mut built = build(&top, &workspace(files)).unwrap();
     let solvable = solving::solved_states(&built.view()).unwrap();
-    assert!(solvable.contains(&pose_state("hinge/pin")), "{solvable:?}");
+    assert!(
+        solvable.contains(&key_behind("hinge", &pose_state("pin"))),
+        "{solvable:?}"
+    );
     let constraints = geop_ops_constraints::Constraints::of(&built.view()).unwrap();
     let mate = constraints.get("add_part(hinge,m1)").unwrap();
     let by: Vec<&String> = mate.jacobian.keys().collect();
-    assert!(by.contains(&&pose_state("hinge/pin")), "{by:?}");
+    assert!(
+        by.contains(&&key_behind("hinge", &pose_state("pin"))),
+        "{by:?}"
+    );
     let report = built.check_mates().unwrap();
     assert!(!report.converged, "the pin is not up yet");
     let (moved, report) = solving::solve(&mut built.rerun(), &top.state, &[], None).unwrap();
     assert!(report.converged, "{report:?}");
-    let pin = match moved.get(&pose_state("hinge/pin")) {
+    let pin = match moved.get(&key_behind("hinge", &pose_state("pin"))) {
         Some(StateValue::Pose(pose)) => *pose,
         other => panic!("the pin did not move: {other:?}, {:?}", moved.keys()),
     };
@@ -856,7 +867,7 @@ fn a_flexible_sub_assembly_moves_its_parts() {
     let mut editor = editor_with(files, program, "top.geop");
     let state = &editor.program().state;
     assert!(
-        state.contains_key(&pose_state("hinge/pin")),
+        state.contains_key(&key_behind("hinge", &pose_state("pin"))),
         "the pin's pose is kept with the program: {:?}",
         state.keys().collect::<Vec<_>>()
     );
@@ -1172,11 +1183,11 @@ fn placed_datums_show_only_while_placing() {
     let mut editor = editor_on(examples::pin_in_plate_assembly());
     let hidden = |update: Update| update.scene.unwrap().hidden;
     let shown = hidden(editor.handle(Command::Show));
-    assert!(shown.contains(&"pin/origin".to_string()), "{shown:?}");
-    assert!(shown.contains(&"plate/origin".to_string()), "{shown:?}");
+    assert!(shown.contains(&"/pin:origin".to_string()), "{shown:?}");
+    assert!(shown.contains(&"/plate:origin".to_string()), "{shown:?}");
     let placing = hidden(editor.handle(Command::Open { id: "pin".into() }));
     assert!(
-        !placing.iter().any(|name| name.contains('/')),
+        !placing.iter().any(|name| name.starts_with('/')),
         "{placing:?}"
     );
 }
@@ -2084,7 +2095,7 @@ fn an_assembly_is_meshed_from_its_files() {
     );
     let BuiltPart { runner, mut part } =
         build_file(&assembly, "assembly.geop", workspace.clone()).unwrap();
-    let pin = stl_triangles(&runner, &mut part, &assembly, &["pin/extrude(pin)"]).unwrap();
+    let pin = stl_triangles(&runner, &mut part, &assembly, &["/pin:extrude(pin)"]).unwrap();
     assert_eq!(pin, sizes["pin.geop"]);
 
     let mut stale = assembly;

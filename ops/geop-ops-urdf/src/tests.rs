@@ -327,14 +327,14 @@ fn the_arm_exports_its_joints_limits_and_masses() {
     let reader = part.part.current();
     let solids = placed_solids(&reader).unwrap();
     let mut shapes = Shapes::default();
-    let weighed = |prefix: &str, shapes: &mut Shapes| {
+    let weighed = |instance: &str, shapes: &mut Shapes| {
         (solids.iter())
-            .filter(|s| s.name.starts_with(prefix))
+            .filter(|s| s.instance == instance)
             .map(|s| s.mass_properties(shapes).unwrap())
             .collect::<Vec<_>>()
     };
     for link in &robot.links {
-        let weighed: f64 = (weighed(&format!("{}/", link.name), &mut shapes).iter())
+        let weighed: f64 = (weighed(&link.name, &mut shapes).iter())
             .map(|m| m.mass.to_f64())
             .sum();
         let inertial = link.inertial.unwrap();
@@ -352,7 +352,7 @@ fn the_arm_exports_its_joints_limits_and_masses() {
     }
     // The root's frame is the assembly's: its centre of mass is where the
     // upper arm's is, in metres.
-    let upper = weighed("upper/", &mut shapes);
+    let upper = weighed("upper", &mut shapes);
     assert_eq!(upper.len(), 1);
     let center = upper[0].center;
     let root = robot.links[0].inertial.unwrap().center;

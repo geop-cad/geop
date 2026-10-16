@@ -9,7 +9,9 @@ use geop_core_math::geop_error::{GeopError, GeopResult};
 use crate::{
     element::{ElementReference, HasElements, Kind},
     part::Part,
-    placed::{InInstance, PLACED, PlacedPart, instance_path, split_path},
+    placed::{
+        INSTANCE_SEPARATOR, InInstance, Located, PLACED, PlacedPart, key_behind, outermost_instance,
+    },
     program::Program,
     runner::Runner,
     target::{Node, Read, TargetReference},
@@ -220,7 +222,7 @@ impl<'a> Reader<'a> {
         &self,
         reference: &ElementReference<T, K>,
     ) -> GeopResult<InInstance<T::Element<'a>>> {
-        let (path, target) = split_path(reference.target().name());
+        let (path, target) = (reference.instance(), reference.target().name());
         let resolve = |reader: &Reader<'a>| {
             let value = match (
                 reader.part.visible(target, reader.before, reader.own),
@@ -249,7 +251,7 @@ impl<'a> Reader<'a> {
     /// every read of it recorded as read inside it.
     pub fn placed_part(&self, path: &str) -> GeopResult<Reader<'a>> {
         let mut level = self.clone();
-        for name in path.split(crate::placed::INSTANCE_SEPARATOR) {
+        for name in path.split(INSTANCE_SEPARATOR) {
             let inner = (level.part.placed_at(name, level.before, level.own))
                 .map_err(|e| e.with_context(format!("the placed part {path:?}")))?;
             let mut inside = Reader::new(inner, inner.ran());
@@ -272,12 +274,11 @@ impl<'a> Reader<'a> {
     }
 
     /// The input's value, if the run gives one, the read recorded. An input
-    /// behind an instance's path — `bolt/d` — is read inside the placed
+    /// behind an instance's path — `/bolt:d` — is read inside the placed
     /// part.
     pub fn retrieve_input(&self, name: &str) -> Option<Setting> {
-        let (path, local) = split_path(name);
-        if !path.is_empty() {
-            return self.placed_part(path).ok()?.retrieve_input(local);
+        if let Some((instance, inside)) = outermost_instance(name) {
+            return self.placed_part(instance).ok()?.retrieve_input(inside);
         }
         let value = self.part.inputs.get(name).cloned();
         self.record(Read::Input(name.to_string(), value.clone()));
@@ -290,17 +291,19 @@ impl<'a> Reader<'a> {
     }
 
     /// The state's value, if the run gives one, the read recorded. A state
-    /// behind an instance's path — `bolt/b.pose` — is the part's own value
+    /// behind an instance's path — `/bolt:b.pose` — is the part's own value
     /// of that name where it gives one: the value the placed part is built
     /// with. Else it is read inside the placed part — the placed program's
     /// own, or none before a step placed it.
     pub fn given_state(&self, name: &str) -> Option<StateValue> {
         let value = self.part.state.get(name).cloned();
         self.record(Read::State(name.to_string(), value.clone()));
-        match (value, name.split_once(crate::placed::INSTANCE_SEPARATOR)) {
+        match (value, outermost_instance(name)) {
             (Some(value), _) => Some(value),
             (None, None) => None,
-            (None, Some((instance, rest))) => self.placed_part(instance).ok()?.given_state(rest),
+            (None, Some((instance, inside))) => {
+                self.placed_part(instance).ok()?.given_state(inside)
+            }
         }
     }
 
@@ -310,7 +313,7 @@ impl<'a> Reader<'a> {
         (self.recording).is_some_and(|recording| {
             let read = Read::State(name.to_string(), None);
             let key = (self.path.iter().rev())
-                .fold(read.key(), |key, instance| format!("{instance}/{key}"));
+                .fold(read.key(), |key, instance| key_behind(instance, &key));
             recording.has(&key)
         })
     }
@@ -318,7 +321,7 @@ impl<'a> Reader<'a> {
     /// Every target the make it reads for read so far that itself read a
     /// state, directly or through what it read, with that state: what
     /// moves with the state without the make's derivatives seeing it.
-    pub fn targets_reading_state(&self) -> Vec<(String, String)> {
+    pub fn targets_reading_state(&self) -> Vec<(Located, String)> {
         let Some(recording) = self.recording else {
             return Vec::new();
         };
@@ -410,12 +413,12 @@ fn innermost(read: &Read) -> &Read {
 
 /// The name of the target `read` read, behind the path of the placed part
 /// it is in.
-fn target_of(read: &Read) -> String {
+fn target_of(read: &Read) -> Located {
     match read {
-        Read::Target { name, .. } | Read::Absent(name) | Read::Input(name, _) => name.clone(),
-        Read::State(name, _) | Read::File(name, _) => name.clone(),
-        Read::Listed { .. } => String::new(),
-        Read::Inside { instance, read } => instance_path(instance, &target_of(read)),
+        Read::Target { name, .. } | Read::Absent(name) | Read::Input(name, _) => Located::new(name),
+        Read::State(name, _) | Read::File(name, _) => Located::new(name),
+        Read::Listed { .. } => Located::default(),
+        Read::Inside { instance, read } => target_of(read).behind(instance),
     }
 }
 

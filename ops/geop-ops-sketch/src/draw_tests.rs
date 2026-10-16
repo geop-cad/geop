@@ -88,7 +88,7 @@ fn sketches() {
     ]);
     let sketch_of =
         |pointer: Pointer<S>| picked(&view, &pointer, &[drawn::SKETCH]).map(|p| p.target);
-    let named = |name: &str| Some(sketch(name).name().to_string());
+    let named = |name: &str| Some(sketch(name).location().clone());
     assert_eq!(sketch_of(down(0.5, 0.5)), named("high"));
     assert_eq!(sketch_of(down(1.005, 0.5)), named("high"));
     assert_eq!(sketch_of(down(1.5, 0.5)), None);
@@ -108,7 +108,7 @@ fn sketch_lines() {
         ("high", placed(&square, 1.0)),
     ]);
     let element = |sketch_name: &str, kind: &str, name: String| PickedElement {
-        target: sketch(sketch_name).name().to_string(),
+        target: sketch(sketch_name).location().clone(),
         kind: kind.to_string(),
         name,
     };

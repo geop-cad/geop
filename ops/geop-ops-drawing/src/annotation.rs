@@ -14,7 +14,7 @@ use geop_core_math::{
     scalars::{Ring, Scalar},
     vector::Vector3,
 };
-use geop_core_program::{placed::instance_path, reader::Reader, values::Design};
+use geop_core_program::{placed::Located, reader::Reader, values::Design};
 use geop_core_sketch::{
     dimension::Measure,
     plain::{add, cross, distance, dot, perp, scale, sub, unit},
@@ -664,10 +664,7 @@ pub(crate) fn candidates<S: Scalar>(
             let b = &scene.bodies[body];
             let model = b.model();
             let named = |id: RefId| {
-                b.named.name_of(id).map(|n| match b.path.as_str() {
-                    "" => n.to_string(),
-                    path => instance_path(path, n),
-                })
+                (b.named.name_of(id)).map(|n| Located::in_instance(b.path.as_str(), n).key())
             };
             let Some(name) = named(edge.into()) else {
                 continue;

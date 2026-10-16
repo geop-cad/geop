@@ -9,10 +9,9 @@
 //! Lengths are millimetres and densities kg/m³ (see
 //! [`geop_ops_parameters::Material`]), so a mass is in kilograms.
 
-use geop_core_program::{reader::Reader, values::Design};
+use geop_core_program::{placed::Located, reader::Reader, values::Design};
 use std::collections::HashMap;
 
-use geop_core_editor::view::INSTANCE_SEPARATOR;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::Pose,
@@ -25,9 +24,12 @@ use geop_ops_parameters::{MaterialOf, read_properties};
 use crate::placed::placed_parts;
 
 /// A solid of a part, or of a part placed in it: named as the part names it
-/// (`pin/extrude(pin)` for one of the part placed as `pin`), where it is.
+/// (`/pin:extrude(pin)` for one of the part placed as `pin`, see
+/// [`Located::key`]), where it is.
 pub struct PlacedSolid<'a> {
     pub name: String,
+    /// The path of the part placed it is of: empty for the part's own.
+    pub instance: String,
     /// The part it is a solid of — whose material it is made of.
     pub reader: Reader<'a>,
     pub model: std::borrow::Cow<'a, NamedModel<Design>>,
@@ -87,10 +89,10 @@ impl Shapes {
 /// The solids of the part `reader` reads itself — not of the parts placed in
 /// it, and none only drawn (see [`SolidNote::drawn_only`]) — the oldest
 /// first, each named behind `prefix` and placed at `pose`: as the part
-/// placed there with the name `prefix` ends in has them.
+/// placed there at the path `instance` has them.
 pub fn own_solids_at<'a>(
     reader: &Reader<'a>,
-    prefix: &str,
+    instance: &str,
     pose: Option<Pose<Design>>,
 ) -> GeopResult<Vec<PlacedSolid<'a>>> {
     let model = read_model(reader)?;
@@ -102,7 +104,8 @@ pub fn own_solids_at<'a>(
         .map(|name| {
             Ok(PlacedSolid {
                 solid: model.solid_id(&name)?,
-                name: format!("{prefix}{name}"),
+                name: Located::in_instance(instance, name.as_str()).key(),
+                instance: instance.to_string(),
                 reader: reader.clone(),
                 model: model.clone(),
                 pose,
@@ -124,9 +127,12 @@ pub fn own_solids<'a>(reader: &Reader<'a>) -> GeopResult<Vec<PlacedSolid<'a>>> {
 pub fn placed_solids<'a>(reader: &Reader<'a>) -> GeopResult<Vec<PlacedSolid<'a>>> {
     let mut out = own_solids(reader)?;
     for placed in placed_parts(reader)? {
-        let prefix = format!("{}{INSTANCE_SEPARATOR}", placed.name);
         let inner = placed.located.part.clone();
-        out.extend(own_solids_at(&inner, &prefix, Some(placed.located.world))?);
+        out.extend(own_solids_at(
+            &inner,
+            &placed.name,
+            Some(placed.located.world),
+        )?);
     }
     Ok(out)
 }

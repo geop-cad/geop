@@ -7,7 +7,6 @@
 //! line ballooned where its part is drawn.
 
 use geop_core_editor::selectable::Selectable;
-use geop_core_editor::view::INSTANCE_SEPARATOR;
 use geop_core_geometry::{
     aabb::union_aabb,
     intersection::curve_curve_overlaps_and_crossings,
@@ -25,7 +24,7 @@ use geop_core_math::{
     },
     vector::{Vector2, Vector3},
 };
-use geop_core_program::{placed::instance_path, reader::Reader, values::Design};
+use geop_core_program::{placed::Located, reader::Reader, values::Design};
 use geop_core_sketch::dimension::Measure;
 use geop_core_topology::{FaceId, Model};
 use geop_lib_sheet::{Anchor, Layer, P, Shape, Sheet, decimal, strokes_of};
@@ -1194,32 +1193,19 @@ fn center_marks<S: Scalar>(sheet: &mut Sheet, p: &Placed<S>, scale: f64) -> Geop
 }
 
 /// The part the entity `name` is of — the part `reader` reads, or one
-/// placed in it, however deep, the name behind its path: `arm/screw/…` —
-/// where that part is placed (`None` for the part read itself), and the
-/// entity as that part names it.
+/// placed in it, however deep, the name behind its path: `/arm/screw:…`
+/// (see [`Located::key`]) — where that part is placed (`None` for the part
+/// read itself), and the entity as that part names it.
 fn owner<'a>(
     reader: &Reader<'a>,
     name: &str,
 ) -> GeopResult<(Reader<'a>, Option<Pose<Design>>, String)> {
-    let mut path = String::new();
-    let mut part = reader.clone();
-    let mut rest = name;
-    while let Some((first, inner)) = rest.split_once(INSTANCE_SEPARATOR) {
-        let Ok(placed) = part.placed_part(first) else {
-            break;
-        };
-        path = match path.is_empty() {
-            true => first.to_string(),
-            false => instance_path(&path, first),
-        };
-        part = placed;
-        rest = inner;
-    }
-    let pose = match path.is_empty() {
-        true => None,
-        false => Some(locate(reader, &path)?.world),
+    let located = Located::of_key(name)?;
+    let (part, pose) = match located.path() {
+        "" => (reader.clone(), None),
+        path => (reader.placed_part(path)?, Some(locate(reader, path)?.world)),
     };
-    Ok((part, pose, rest.to_string()))
+    Ok((part, pose, located.name().to_string()))
 }
 
 /// Where the vertex `name` of the part `reader` reads — or of a part placed

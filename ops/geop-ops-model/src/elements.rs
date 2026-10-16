@@ -11,6 +11,7 @@ use geop_core_editor::view::drawn;
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
+    placed::Located,
     reader::Reader,
     values::Design,
 };
@@ -148,7 +149,7 @@ pub fn read_model<'a>(reader: &Reader<'a>) -> GeopResult<std::borrow::Cow<'a, Na
 /// a vertex, an edge or a face — or, for a solid, its faces.
 pub(crate) fn drawn_entity(model: &NamedModel<Design>, name: &str) -> Vec<PickedElement> {
     let picked = |kind: &str, name: &str| PickedElement {
-        target: MODEL.to_string(),
+        target: Located::new(MODEL),
         kind: kind.to_string(),
         name: name.to_string(),
     };
