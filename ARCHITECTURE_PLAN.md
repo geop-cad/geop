@@ -336,7 +336,7 @@ cache: HashMap<key, Rc<Part>>   kept on the Workspace, swept at the end of each 
   passes down, so a change anywhere else in the parent's state touches no
   placed node.
 
-Reading an element of a placed part (`bolt/model`) goes through the
+Reading an element of a placed part (`/bolt:model`) goes through the
 placed node's value and records `Inside { instance, Target{...} }`, so a
 mate that reads the arm's second link is stale only when that link's
 model version changed, not when anything in the arm changed.
