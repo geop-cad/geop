@@ -1,0 +1,121 @@
+name: CI
+
+# Pull requests test what they can affect; main is tested whole on every
+# push; every night the whole suite runs again with the ignored sweeps.
+# Every run is capped in memory and time, as AGENTS.md asks: a search that
+# runs away fails fast instead of taking the runner down.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  checks:
+    name: Layering, format, clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Layering
+        run: scripts/check-layering.sh
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: timeout 1800 prlimit --as=16000000000 cargo clippy --workspace --all-targets -- -D warnings
+
+  affected:
+    name: Tests of what the change affects
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The whole history: the change is measured against main.
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # Capped by the script itself (timeout 1800, prlimit 16 GB).
+      - name: Test affected crates
+        run: scripts/test-affected.sh origin/main
+
+  suite:
+    name: Whole suite
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test the workspace
+        run: timeout 3600 prlimit --as=16000000000 cargo test --workspace --no-fail-fast
+
+  sweeps:
+    name: Ignored sweeps
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test the ignored sweeps
+        run: timeout 18000 prlimit --as=16000000000 cargo test --workspace --no-fail-fast -- --ignored
+
+  web:
+    name: Web build and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install JS dependencies
+        working-directory: web
+        run: npm ci
+
+      # The build type-checks the protocol samples against src/geop.ts.
+      - name: Build (wasm + vite)
+        working-directory: web
+        run: timeout 1800 prlimit --as=16000000000 npm run build
+
+      - name: Test
+        working-directory: web
+        run: timeout 600 npm test
