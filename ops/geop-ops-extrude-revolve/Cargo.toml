@@ -29,7 +29,7 @@ testing = ["dep:serde_json", "geop-ops-model/testing"]
 [dev-dependencies]
 # The examples' round trips and incremental builds.
 geop-core-program = { workspace = true, features = ["testing"] }
-# The parametric plate edited as a front end edits it.
+# Its operations and the parameters panel edited as a front end edits them.
 geop-core-editor = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-ops-reference-geometry.workspace = true
