@@ -81,11 +81,17 @@ core/geop-core-editor         what an operation is and how it is edited
 lib/geop-lib-sheet            the sheets drawings and flat patterns are
                                written on (SVG, DXF, each layer defined by
                                who draws on it), and `xml_escape`
+lib/geop-lib-booleans         3-D booleans (union/intersection/diff) and the
+                               remesh under them, splitting with a sheet,
+                               imprinting, trimming up to the next face, and
+                               combining a step's tools as its `Combine` says
 ops/geop-ops-model            the model a part's steps build: topology with
                                stable names, the features their steps
                                combined, geometric kinds of its elements
                                (point, line, plane, round, curve, body),
-                               cosmetic threads, solid notes; how it is
+                               cosmetic threads, solid notes; how a step
+                               meets the solid it builds a tool for
+                               (`Combine`, `Extent`); how it is
                                drawn. Its names are built from step ids in
                                the program's id alphabet
 ops/geop-ops-parameters       a part's parameters (numbers, tables, colour,
@@ -111,8 +117,7 @@ ops/geop-ops-sketch           the sketch operation: drawing and constraint
 ops/geop-ops-add-datum        the datum operation: reference points, axes,
                                planes and coordinate systems built from what
                                is picked
-ops/geop-ops-booleans         3-D boolean operations (union/intersection/diff),
-                               the boolean operation
+ops/geop-ops-boolean          the boolean and split operations
 ops/geop-ops-edit             edits of existing bodies: delete a body,
                                extract a face, project a sketch onto a face
 ops/geop-ops-extrude-revolve  extrude/revolve; sweeps along paths, with guide

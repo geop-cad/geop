@@ -146,7 +146,7 @@ reaching past all of it, so sides without up to next build one sweep between
 their ends. A side going up to the next face is built on its own from the
 sketch's plane, long enough to reach past the target — for a revolve, short
 of a full turn, which needs the target clear of the axis — and combined
-with `boolean_up_to_next` (see [geop-ops-booleans](./geop-ops-booleans.md)):
+with `boolean_up_to_next` (see [geop-lib-booleans](../lib/geop-lib-booleans.md)):
 a join grows up to the target, a cut or an intersection takes the first
 stretch of the target the profile passes through, and a new body — which
 goes up to the next face of any solid of the part — is that piece alone,
@@ -170,7 +170,7 @@ constraints put it on it, which needs the axis to be a line of the sketch
 itself. Dragging or typing the first length across the sketch plane turns a
 join into a cut and back; on either side, how to combine stays what was
 chosen — an extrude may cut upwards into a solid above its sketch. Both
-take a `Combine` from [geop-ops-booleans](./geop-ops-booleans.md): keep the
+take a `Combine` from [geop-ops-model](./geop-ops-model.md): keep the
 result as a `NewBody`, or immediately unite, intersect or subtract it with a
 `target` solid — which is why this crate depends on the booleans, not the
 other way round.

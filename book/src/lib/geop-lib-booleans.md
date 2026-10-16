@@ -1,4 +1,4 @@
-# geop-ops-booleans
+# geop-lib-booleans
 
 > Brief overview only — full documentation is coming later.
 
@@ -156,14 +156,16 @@ and every operator over all of them and write each result to `outputs/`.
 One failing scene is logged and rendered as far as it got, so it never hides
 the others.
 
-## The operations
+## Combining a step's tools
 
-`Split` cuts a solid with a face standing on its own — and the rest of its
-sheet — into pieces named `split(S,0)`, `split(S,1)`, ..., leaving the face
-as it was.
+`combine_tools` is what an extrude, a revolve, a hole, a rib or a pattern
+does with the tools it built, as the `Combine` of its step says (see
+[geop-ops-model](../ops/geop-ops-model.md)): keep them as a new body, or
+unite, intersect or subtract each in turn with the `target` solid. A tool
+whose reach goes up to the next face is combined by `boolean_up_to_next`;
+one that nothing stops all round reports `Reach::RunsOn`, so the step can
+go another way. Combined with a target, each tool is recorded as the
+step's feature, for a pattern of the feature to do again.
 
-`Boolean` is the operation a program uses (see
-[geop-core-editor](../core/geop-core-editor.md#an-operation-partoperation))
-to unite, intersect or subtract two solids of the part by name. `Combine` is the same done by another
-operation with the solid it builds — an extrude cutting a pocket, say — and
-is what extrude and revolve take for it.
+The operations a program uses to combine or split solids by name are in
+[geop-ops-boolean](../ops/geop-ops-boolean.md).

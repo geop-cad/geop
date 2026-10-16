@@ -30,8 +30,11 @@ core/geop-core-editor        what an operation is and how it is edited:
                               a part, and picking; exporters, inspectors
 lib/geop-lib-sheet           sheets of paper (SVG, DXF) drawings and flat
                               patterns are written on
+lib/geop-lib-booleans        3-D booleans (union/intersection/diff), split,
+                              imprint, combining a step's tools
 ops/geop-ops-model           the model a part's steps build: topology with
-                              stable names, features, geometric kinds
+                              stable names, features, geometric kinds, how
+                              a step combines (`Combine`, `Extent`)
 ops/geop-ops-parameters      a program file: parameters, state, what it
                               says of its part, running it
 ops/geop-ops-constraints     constraints and unknowns of a part's state,
@@ -41,8 +44,7 @@ ops/geop-ops-datums          the part's datums: the origin, and those steps
 ops/geop-ops-sketch          the sketch operation
 ops/geop-ops-add-datum       the datum operation: reference points, axes,
                               planes and coordinate systems
-ops/geop-ops-booleans        3-D boolean operations (union/intersection/diff),
-                              the boolean operation
+ops/geop-ops-boolean         the boolean and split operations
 ops/geop-ops-extrude-revolve extrude/revolve, sweeps along paths, lofts;
                               their operations, and basic shapes for tests
 ops/geop-ops-assembly        placed parts, mates, joints, solving them; the

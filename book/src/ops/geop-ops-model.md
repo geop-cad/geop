@@ -33,6 +33,12 @@ by construction, not by the diligence of each caller.
   combined a tool with a solid did — a cut, a boss, a hole — kept as its
   tools and how each was combined, so a later step can do it again
   elsewhere (a pattern of features).
+- **How a step meets a solid** (`Combine`, `SolidRef`, `Tool`, `Extent`):
+  the vocabulary every feature that combines shares — a new body, or a
+  join, cut or intersection with a solid of the part, each side going a
+  length, up to the next face or through all — and its fields in a form.
+  Applying it is the boolean's: `combine_tools` in
+  [geop-lib-booleans](../lib/geop-lib-booleans.md).
 
 The model is the part's target `model()`, a singleton: a reference into it
 is saved as the element's name alone. A step reads it with

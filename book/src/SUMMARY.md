@@ -15,6 +15,7 @@
 # Libraries
 
 - [geop-lib-sheet](./lib/geop-lib-sheet.md)
+- [geop-lib-booleans](./lib/geop-lib-booleans.md)
 
 # Ops
 
@@ -24,7 +25,7 @@
 - [geop-ops-datums](./ops/geop-ops-datums.md)
 - [geop-ops-sketch](./ops/geop-ops-sketch.md)
 - [geop-ops-add-datum](./ops/geop-ops-add-datum.md)
-- [geop-ops-booleans](./ops/geop-ops-booleans.md)
+- [geop-ops-boolean](./ops/geop-ops-boolean.md)
 - [geop-ops-extrude-revolve](./ops/geop-ops-extrude-revolve.md)
 - [geop-ops-assembly](./ops/geop-ops-assembly.md)
 
