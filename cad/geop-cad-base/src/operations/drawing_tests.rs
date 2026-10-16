@@ -390,7 +390,7 @@ fn conebox_cone_from_the_top_shows_whole_generators() {
 /// came down to the last bit of the face's measured size.
 #[test]
 fn subd_mouse_face_f11_silhouette_is_traced_once() {
-    let built = build(&examples::subd_mouse());
+    let built = build(&geop_ops_subd::examples::subd_mouse());
     let part = &model(&built);
     let Some(RefId::Face(face)) = part.names().id_of("subd(mouse,f11)") else {
         panic!("no face f11");

@@ -56,3 +56,27 @@ fn subd_body_united_with_a_box() {
     assert_valid(&part);
     assert_eq!(part.solid_names().len(), 1, "{:?}", part.solid_names());
 }
+
+/// A mouse's sole is flat: the crease around its bottom keeps the
+/// bottom face in the cage's bottom plane. Saved and loaded, the example
+/// builds what it built.
+#[test]
+fn subd_mouse_round_trips() {
+    use geop_core_math::scalars::Scalar;
+    use geop_core_program::values::Design;
+    use geop_ops_model::read_model;
+
+    let registry = std::rc::Rc::new(registry().unwrap());
+    let program = crate::examples::subd_mouse();
+    let built = geop_core_program::testing::assert_round_trips(registry, None, &program);
+    let reader = built.current();
+    let part = read_model(&reader).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.solid_names(), ["subd(mouse)"]);
+    let sole = part.face_id("subd(mouse,f8)").unwrap();
+    let surface = &part.topology().get_face(sole).unwrap().surface;
+    let p = surface
+        .evaluate(Design::from_f64(0.7), Design::from_f64(1.2))
+        .unwrap();
+    assert!(p[2].could_be_equal(Design::from_f64(-0.4)), "{p:?}");
+}
