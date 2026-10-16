@@ -14,6 +14,8 @@ pub use operation::{
     Draft, DraftArgs, Groove, GrooveArgs, Lip, LipArgs, Rib, RibArgs, RibDirection, RibSide,
 };
 
+#[cfg(test)]
+mod editor_tests;
 mod icons;
 #[cfg(test)]
 mod program_tests;

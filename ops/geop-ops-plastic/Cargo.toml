@@ -43,3 +43,5 @@ geop-ops-datums.workspace = true
 geop-ops-reference-geometry.workspace = true
 geop-ops-fillet.workspace = true
 geop-ops-shell.workspace = true
+geop-core-editor = { workspace = true, features = ["testing"] }
+geop-lib-sweep = { workspace = true, features = ["testing"] }
