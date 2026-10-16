@@ -15,10 +15,11 @@ export type Vec3 = [number, number, number];
 
 /**
  * An element of the part as a pick names it (see
- * `geop_core_program::element::PickedElement`): the target it is in — of
- * a part placed in this one, behind the path of its instance, `bolt/model`
+ * `geop_core_program::element::PickedElement`): the target it is in,
+ * behind the path of the instance it is of (see [[parseLocated]]) —
+ * `/bolt:model` in the part placed as `bolt`, `/:model` of the part's own
  * — its kind, and its name there. A whole sketch is its target,
- * `sketch:outline`, with no name; a component of a frame datum is named
+ * `/:sketch:outline`, with no name; a component of a frame datum is named
  * after it, `origin:x` its x axis, `origin:yz` its yz plane.
  */
 export interface PickedElement {
@@ -27,18 +28,50 @@ export interface PickedElement {
   name: string;
 }
 
-/** Where an element is: the path of the placed part it is in — `""` for the part's own — and its target there. */
-export function located(e: PickedElement): { instance: string; target: string } {
-  const at = e.target.lastIndexOf("/");
-  return at < 0 ? { instance: "", target: e.target } : { instance: e.target.slice(0, at), target: e.target.slice(at + 1) };
+/**
+ * A name behind the path of the instance it is of, as the kernel spells it
+ * (see `geop_core_program::placed::Located`): `/asm/bolt:model`, and
+ * `/:model` for the part's own — split at the first `:` after the path, so
+ * the name may hold more. Anything else names nothing.
+ */
+export function parseLocated(text: string): { instance: string; name: string } {
+  const at = text.indexOf(":");
+  if (!text.startsWith("/") || at < 0) throw new Error(`${JSON.stringify(text)} is no located name: /path:name`);
+  return { instance: text.slice(1, at), name: text.slice(at + 1) };
 }
 
-/** The datums `elements` light of `view`, the view of the placed part `instance` (`""` for the part's own): by name as drawn — `origin:x` an axis — behind the instance's path. */
+/** The name `name` behind the path `instance` (`""` for the part's own), as the kernel spells it: `/bolt:model`, `/:model`. */
+export function locate(instance: string, name: string): string {
+  return `/${instance}:${name}`;
+}
+
+/**
+ * The name `name` of the instance at `instance` as a key of the part's own
+ * lists — what is hidden, the datums drawn (see
+ * `geop_core_program::placed::Located::key`): bare for the part's own,
+ * located behind an instance's path, `/bolt:origin`.
+ */
+export function locatedKey(instance: string, name: string): string {
+  return instance ? locate(instance, name) : name;
+}
+
+/** The instance path and the name a key of the part's own lists names (see [[locatedKey]]). */
+export function parseKey(key: string): { instance: string; name: string } {
+  return key.startsWith("/") ? parseLocated(key) : { instance: "", name: key };
+}
+
+/** Where an element is: the path of the placed part it is in — `""` for the part's own — and its target there. */
+export function located(e: PickedElement): { instance: string; target: string } {
+  const { instance, name } = parseLocated(e.target);
+  return { instance, target: name };
+}
+
+/** The datums `elements` light of `view`, the view of the placed part `instance` (`""` for the part's own): by name as drawn — `origin:x` an axis — behind the instance's path (see [[locatedKey]]). */
 export function litDatums(view: PartView, instance: string, elements: PickedElement[]): string[] {
   return elements.flatMap((e) => {
     const at = located(e);
     if (at.instance !== instance || at.target !== view.datum_target) return [];
-    return [instance ? `${instance}/${e.name}` : e.name];
+    return [locatedKey(instance, e.name)];
   });
 }
 
@@ -47,11 +80,10 @@ export function sameElement(a: PickedElement, b: PickedElement): boolean {
   return a.target === b.target && a.kind === b.kind && a.name === b.name;
 }
 
-/** How an element is shown: its name — a whole sketch's, its sketch's — behind its instance's path. */
+/** How an element is shown: its name — a whole sketch's, its sketch's — behind its instance's path (see [[locatedKey]]). */
 export function elementLabel(e: PickedElement): string {
   const { instance, target } = located(e);
-  const name = e.name || target;
-  return instance ? `${instance}/${name}` : name;
+  return locatedKey(instance, e.name || target);
 }
 
 /** What a datum stands for. */

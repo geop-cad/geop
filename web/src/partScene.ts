@@ -4,7 +4,7 @@
 // shared by the part drawn and the parts placed in it (see `placed3d.ts`).
 
 import * as THREE from "three";
-import { located, type Frame, type PartView, type PickedElement, type Vec3 } from "./geop";
+import { locate, located, type Frame, type PartView, type PickedElement, type Vec3 } from "./geop";
 
 const vec = (v: [number, number, number]) => new THREE.Vector3(v[0], v[1], v[2]);
 
@@ -388,7 +388,7 @@ export function frameMatrix(frame: Frame): THREE.Matrix4 {
 export function localTo(instance: string, elements: PickedElement[]): PickedElement[] {
   return elements.flatMap((e) => {
     const at = located(e);
-    return at.instance === instance ? [{ ...e, target: at.target }] : [];
+    return at.instance === instance ? [{ ...e, target: locate("", at.target) }] : [];
   });
 }
 

@@ -6,6 +6,9 @@ import { CAMERA_FOV, DEFAULT_POSE, REACH_PX, fitPose, worldPerPixel, type Camera
 import { DatumLayer } from "./datums3d";
 import {
   litDatums,
+  locate,
+  locatedKey,
+  parseKey,
   type DatumInfo,
   type DatumKind,
   type PickedElement,
@@ -117,7 +120,7 @@ function placedDatums(instance: ViewInstance, view: PartView | undefined): Datum
   const point = (p: Vec3) => arr(vec(p).applyMatrix4(m));
   const direction = (d: Vec3) => arr(vec(d).transformDirection(m));
   return view.datums.map((d) => ({
-    name: `${instance.name}/${d.name}`,
+    name: locatedKey(instance.name, d.name),
     kind: d.kind,
     frame: { origin: point(d.frame.origin), u: direction(d.frame.u), v: direction(d.frame.v), w: direction(d.frame.w) },
   }));
@@ -745,11 +748,11 @@ export function SceneViewer({
     // name — of the sketches it draws, the only thing of it a name hides.
     const hiddenIn = new Map<string, string[]>();
     for (const h of hiddenRef.current) {
-      const at = h.lastIndexOf("/");
-      if (at < 0) continue;
-      const list = hiddenIn.get(h.slice(0, at)) ?? [];
-      list.push(h.slice(at + 1));
-      hiddenIn.set(h.slice(0, at), list);
+      const { instance, name } = parseKey(h);
+      if (!instance) continue;
+      const list = hiddenIn.get(instance) ?? [];
+      list.push(name);
+      hiddenIn.set(instance, list);
     }
     const component = new Map(instancesRef.current.map((i) => [i.name, components[i.component]]));
     const highlighted = highlightsRef.current;
@@ -757,7 +760,7 @@ export function SceneViewer({
       const view = component.get(name);
       const highlights = highlighted.length > 0 ? localTo(name, highlighted) : [];
       if (lit.has(name)) {
-        highlights.push(...(view?.solids ?? []).map((name) => ({ target: view?.model ?? "", kind: "solid", name })));
+        highlights.push(...(view?.solids ?? []).map((name) => ({ target: locate("", view?.model ?? ""), kind: "solid", name })));
       }
       const sketches = new Set(view?.sketches.map((sketch) => sketch.name));
       return {
