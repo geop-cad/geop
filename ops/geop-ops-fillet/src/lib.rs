@@ -14,6 +14,8 @@
 mod blend;
 mod corner;
 #[cfg(test)]
+mod editor_tests;
+#[cfg(test)]
 mod example_tests;
 pub mod examples;
 pub mod operation;
