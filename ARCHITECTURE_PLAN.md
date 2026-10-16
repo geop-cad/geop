@@ -1001,3 +1001,52 @@ listing 40 crates.
 | view and output traits move into `geop-core-editor` | separate `geop-core-view` crate | one editor crate under 10k lines is easier to hold than two |
 | examples per op crate | one examples crate | an example is a test of its operations; it moves with them |
 | panels keep bespoke TSX components, looked up by key | express panels as `Answer` blocks | the parameters panel is a real editor (tables, rename); UI code is allowed in the UI, logic is not |
+
+---
+
+## Status (2026-10-16)
+
+Phases 0 to 5 have landed on `refactor`.
+
+- `geop-cad-base/src` is `lib.rs`, `registry.rs` (117 lines together) and
+  `tests.rs`, the composition's tests. The examples drawn in the editor
+  live, as `.geop` text, in the crates whose operations they use.
+- `scripts/check-layering.sh` passes with an empty allow-list; cad-base
+  names op crates only in `registry.rs` and `tests.rs`.
+- The CLI keeps only tests of its own; what it compiles is tested in the
+  crate of each exporter.
+- `web/src/geop.ts` is checked against the kernel: `cargo test -p geop
+  protocol` keeps typed samples in `web/test/protocol.samples.ts`, which
+  `tsc -b` checks. It found the viewer behind the protocol since elements
+  became `PickedElement`s; `PartView` now sends the targets of its model,
+  datums and sketches so the viewer lights elements by target.
+- `LookupTable` has a form and an icon; `PartPattern` decides its copies in
+  a node (`part_pattern:<step>`), every read recorded.
+- Clippy passes with `-D warnings`; CI (`.github/workflows/ci.yml`) runs
+  the checks and `scripts/test-affected.sh` on pull requests, the suite on
+  `main`, and the ignored sweeps nightly.
+- AGENTS.md has the rules of §10 (as "Where things go") and the lessons
+  of the migration; DEVELOPERS.md and the book describe the new layout.
+- The fast suite: 1455 passed, 0 failed, 87 ignored
+  (`scripts/baseline-2026-10-16.txt`).
+
+Open follow-ups:
+
+- Placed copies of one component each build their own `PartView`,
+  although they share its key (see
+  `geop-ops-assembly`'s `draw_tests.rs`): equal components should be
+  drawn once.
+- `geop-ops-assembly` depends on `geop-lib-stdlib` for its
+  `metric_plate` and `bolted_plate` examples, while `geop-lib-stdlib`
+  dev-depends on `geop-ops-assembly`: a dev-dependency cycle of the kind
+  AGENTS.md warns of. The examples that place standard parts belong in a
+  crate above both, or the standard parts' tests in `tests/`.
+- The protocol samples change whenever a dialog changes shape, so a change
+  to an operation's form means writing them again; the check covers the
+  shapes a session reaches, not every field an operation could show.
+- `geop.ts` is still written by hand, only checked. Generating it (as
+  `ts-rs` would) would remove the duplication, at the cost of deriving
+  type information across every protocol type in core.
+- Web e2e tests (`web/e2e/`) were not run here; the viewer's lighting by
+  `PickedElement` is covered by the type check and the build, not yet by
+  a browser test.
