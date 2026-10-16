@@ -48,3 +48,11 @@ those that fit enabled, and a construction that stops fitting gives way to
 the first that does. Offsets are handles and their values numbers or
 formulas: an offset plane's distance along its normal, an offset point's
 `x`, `y`, `z` along its axes.
+
+## Examples
+
+`examples` offers two parts sketched on datum planes, registered with the
+operation: `boss_on_reference_plane`, a boss extruded down from a plane
+above a box, and `airfoil_wing`, a wing lofted between NACA 2412 sections
+on planes apart. They extrude and loft, so this crate depends on
+[geop-ops-extrude-revolve](./geop-ops-extrude-revolve.md).

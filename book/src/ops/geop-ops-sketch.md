@@ -115,3 +115,10 @@ edit — and back to the program's own once it is put away.
 Every change is solved before it is returned, and one line of the dialog
 says how that went: degrees of freedom left, or how many constraints
 conflict, and how many closed regions the sketch has.
+
+## Figures
+
+`figures` draws what examples and tests write down by numbers: a closed
+`polygon`, a fully constrained `rectangle` and `circle`, every number
+design data (`n`), and a sketch `solved` once it is drawn. Every crate's
+examples draw with it, rather than each keeping its own copy.
