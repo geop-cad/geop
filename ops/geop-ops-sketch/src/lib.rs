@@ -9,6 +9,7 @@ mod add_sketch;
 mod constraints;
 pub mod editor;
 pub mod fields;
+pub mod figures;
 mod geometry;
 mod icons;
 pub mod placed;
