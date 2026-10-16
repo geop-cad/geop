@@ -13,7 +13,7 @@ impl<S: Scalar> Model<S> {
     // coedge1/coedge2 currently belong to. Useful for e.g. growing a hole's
     // boundary directly on a real, already-built face while its own mirror
     // ring is grown as scratch topology on a placeholder, then moved onto
-    // that placeholder for further work (see `geop_ops_extrude_revolve::extrude`).
+    // that placeholder for further work.
     // Curve and pcurve (validated against `existing_face_id`'s current
     // surface) must go from coedge1's end vertex to coedge2's start vertex.
     // PCurve reversed (on the original face) must go from coedge2's start

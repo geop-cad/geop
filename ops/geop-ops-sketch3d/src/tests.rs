@@ -10,8 +10,8 @@ use geop_core_program::{
     element::ElementReference, operation::Operation, part::Part, values::Design,
 };
 use geop_core_sketch::space::{Constraint3d, CurveKind3d};
+use geop_lib_sweep::shapes::block_part;
 use geop_ops_datums::{ORIGIN, datums, origin_axis};
-use geop_ops_extrude_revolve::shapes::block_part;
 use geop_ops_model::{model, testing::vertex_at};
 
 use crate::{

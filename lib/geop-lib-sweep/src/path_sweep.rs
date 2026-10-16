@@ -52,6 +52,7 @@ use geop_ops_model::{Chain, NamedModel, Namer};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    loft::centre,
     plain::Plain,
     sweep::{Frame, Path, Span, SweepLoop, sweep_drawn},
 };
@@ -1350,6 +1351,46 @@ fn clear_of_bends<S: Scalar>(
     Ok(())
 }
 
+/// Where the profile `loops`, drawn in `plane`, is: the centre of its outer
+/// loop's joints — a point to find the nearest end of the path from.
+pub fn profile_centre<S: Scalar>(
+    plane: &CoordinateSystem<S>,
+    loops: &[SweepLoop<S>],
+) -> GeopResult<[f64; 3]> {
+    let outer = &loops
+        .first()
+        .ok_or_else(|| GeopError::new("sweep: the profile has no curves"))?
+        .profile;
+    let starts = outer
+        .curves
+        .iter()
+        .map(|curve| Ok(plane.uv_to_xyz(&curve.start()?).to_f64_array()))
+        .collect::<GeopResult<Vec<_>>>()?;
+    Ok(centre(&starts))
+}
+
+/// `chain` starting where it comes nearest to `centre`: an open one at its
+/// nearer end, a closed one at its nearest joint. Which is a free choice of
+/// where to start; the nearest is what the profile is drawn at.
+pub fn starting_near<S: Scalar>(
+    chain: Chain<NurbCurve3D<S>>,
+    centre: &[f64; 3],
+) -> GeopResult<Chain<NurbCurve3D<S>>> {
+    let distance =
+        |p: &Vector3<S>| -> f64 { (0..3).map(|k| (p[k].to_f64() - centre[k]).powi(2)).sum() };
+    let joints = chain.joints()?;
+    Ok(if chain.is_closed() {
+        let nearest = (0..joints.len())
+            .min_by(|&a, &b| distance(&joints[a]).total_cmp(&distance(&joints[b])))
+            .expect("a chain has joints");
+        chain.starting_at(nearest)
+    } else if distance(&joints[joints.len() - 1]) < distance(&joints[0]) {
+        chain.reversed()
+    } else {
+        chain
+    })
+}
+
 /// Sweeps `loops` — the first the outer loop, counter-clockwise in
 /// `plane`'s `(u, v)`, the rest holes in it, clockwise — along `chain`,
 /// changing as `control` says (see [`along_chain`]): into a solid named
@@ -1384,10 +1425,11 @@ pub fn sweep_along<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{Profile, polyline};
+    use crate::common::polyline;
     use crate::shapes::{circle, plane, square, v2, v3};
     use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve2D, sqrt2_over_2};
     use geop_core_math::for_all_scalars;
+    use geop_ops_model::Profile;
     use geop_ops_model::testing::{assert_model_valid, assert_model_valid_sheets};
 
     /// The `yz` plane through `origin`: square to a path along `x`.

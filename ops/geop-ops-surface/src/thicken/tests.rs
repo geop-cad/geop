@@ -3,7 +3,7 @@
 
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_topology::Body;
-use geop_ops_extrude_revolve::shapes::{block, cylinder::revolved_cylinder};
+use geop_lib_sweep::shapes::{block, revolved_cylinder};
 use geop_ops_model::NamedModel;
 use geop_ops_model::testing::apply_to_model;
 
@@ -11,7 +11,7 @@ use super::*;
 use crate::boundary::tests::{edge_between, refused};
 use crate::test_refs::*;
 use crate::{BoundarySurface, BoundarySurfaceArgs};
-use geop_ops_extrude_revolve::shapes::v3;
+use geop_lib_sweep::shapes::v3;
 use geop_ops_model::testing::assert_valid_sheets;
 
 /// A unit cube's top loop filled with a boundary surface, the cube then

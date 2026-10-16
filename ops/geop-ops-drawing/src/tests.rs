@@ -5,7 +5,7 @@ use geop_core_math::{
 use geop_core_topology::FaceId;
 use geop_ops_model::NamedModel;
 
-use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder, v3};
+use geop_lib_sweep::shapes::{cube_solid, revolved_cylinder, v3};
 
 use crate::{
     LineKind, ProjectedView, ViewKind, ViewOptions, project_view,

@@ -38,8 +38,8 @@ use geop_core_topology::{
     },
 };
 use geop_lib_booleans::{Reach, combine_tools};
-use geop_ops_extrude_revolve::{common::Profile, extrude::extrude, sweep::SweepLoop};
-use geop_ops_model::{Combine, Tool, face_hull};
+use geop_lib_sweep::{SweepLoop, extrude};
+use geop_ops_model::{Combine, Profile, Tool, face_hull};
 use geop_ops_model::{NamedModel, Namer, ToolReach};
 
 use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};

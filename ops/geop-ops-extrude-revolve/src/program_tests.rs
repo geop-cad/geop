@@ -2,12 +2,13 @@
 //! solids and faces they build, combined with others, and what they refuse.
 
 use crate::{
-    Extents, LoftArgs, Orientation, Output, PathRef, SweepArgs,
+    Extents, LoftArgs, Output, PathRef, SweepArgs,
     testing::{Built, both_ways, disc, extrusion, n, on_origin, outline, polygon, sketch},
 };
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
 };
+use geop_lib_sweep::Orientation;
 use std::f64::consts::PI;
 
 use geop_core_math::{

@@ -19,8 +19,8 @@ use geop_core_program::{
     element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_core_sketch::Shape;
-use geop_ops_extrude_revolve::operation::shape_loops;
 use geop_ops_model::{ModelOperation, NamedModel, Namer, Plane, read_model};
+use geop_ops_sketch::shape_profiles;
 use geop_ops_sketch::{PlacedSketch, SketchRef};
 use serde::{Deserialize, Serialize};
 
@@ -265,12 +265,11 @@ fn cut_loops<S: Scalar>(
                 "an area of sketch {name} has a hole in it: cut out, the island inside would fall out — draw the area without it"
             )));
         }
-        for lp in shape_loops(name, sketch, &geometry, Shape::Region(region))? {
+        for lp in shape_profiles(name, sketch, &geometry, Shape::Region(region))? {
             let mut edges = lp
-                .profile
                 .curves
                 .iter()
-                .zip(&lp.profile.curve_names)
+                .zip(&lp.curve_names)
                 .map(|(curve, piece)| {
                     Ok(FlatEdge {
                         curve: map(curve)?,

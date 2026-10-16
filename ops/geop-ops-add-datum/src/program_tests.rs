@@ -11,11 +11,9 @@ use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, part::Part, program::Program,
     reader::Reader, runner::Runner,
 };
+use geop_lib_sweep::shapes::v3;
 use geop_ops_datums::{AnyDatum, Datums, ORIGIN, component_name, datums, read_datums};
-use geop_ops_extrude_revolve::{
-    shapes::v3,
-    testing::{drilled_box as drilled, runner_of},
-};
+use geop_ops_extrude_revolve::testing::{drilled_box as drilled, runner_of};
 use geop_ops_model::model;
 use geop_ops_sketch::{PlacedSketch, sketch_element, whole_sketch};
 

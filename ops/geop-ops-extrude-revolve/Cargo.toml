@@ -16,17 +16,17 @@ geop-ops-parameters.workspace = true
 geop-ops-sketch.workspace = true
 geop-ops-sketch3d.workspace = true
 geop-lib-booleans.workspace = true
+geop-lib-sweep.workspace = true
 serde.workspace = true
 # Only for `testing`: reading and writing the arguments of steps.
 serde_json = { workspace = true, optional = true }
 
 [features]
-# For other crates' tests: the basic solids of `shapes`, and the sketches,
-# extrusions and programs of `testing` that their programs are written with.
+# For other crates' tests: the sketches, extrusions and programs of
+# `testing` that their programs are written with.
 testing = ["dep:serde_json", "geop-ops-model/testing"]
 
 [dev-dependencies]
 geop-ops-model = { workspace = true, features = ["testing"] }
-geop-core-rasterize.workspace = true
 geop-ops-add-datum.workspace = true
 serde_json.workspace = true

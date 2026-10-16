@@ -213,16 +213,11 @@ mod tests {
         vector::Vector2,
     };
     use geop_core_topology::{EdgeId, SolidId};
-    use geop_ops_extrude_revolve::{
-        common::{Profile, polygon, polyline},
-        extrude::extrude,
-        shapes::{
-            block,
-            cylinder::{Axis, revolved_cylinder_along_axis},
-            v3,
-        },
-        sweep::SweepLoop,
+    use geop_lib_sweep::{
+        SweepLoop, extrude, polygon, polyline,
+        shapes::{Axis, block, revolved_cylinder_along_axis, v3},
     };
+    use geop_ops_model::Profile;
     use geop_ops_model::{NamedModel, Namer, testing::assert_valid};
 
     fn v2s(points: &[[f64; 2]]) -> Vec<Vector2<S>> {

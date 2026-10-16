@@ -94,10 +94,8 @@ use geop_core_topology::{
     contains::face::{PointClassification, face_contains},
 };
 use geop_lib_booleans::{RemeshParams, boolean};
-use geop_ops_extrude_revolve::{
-    common::Profile, extrude::extrude, revolve::revolve, sweep::SweepLoop,
-};
-use geop_ops_model::BooleanOp;
+use geop_lib_sweep::{SweepLoop, extrude, revolve};
+use geop_ops_model::{BooleanOp, Profile};
 use geop_ops_model::{NamedModel, Namer};
 
 use crate::corner;

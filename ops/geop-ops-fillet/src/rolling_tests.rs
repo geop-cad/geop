@@ -6,13 +6,9 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops_extrude_revolve::shapes::{
-    block,
-    cube::cube_solid,
-    cylinder,
-    cylinder::{Axis, revolved_cylinder, revolved_cylinder_along_axis},
-    sphere::sphere_solid,
-    v3,
+use geop_lib_sweep::shapes::{
+    Axis, block, cube_solid, cylinder, revolved_cylinder, revolved_cylinder_along_axis,
+    sphere_solid, v3,
 };
 use geop_ops_model::BooleanOp;
 use geop_ops_model::{

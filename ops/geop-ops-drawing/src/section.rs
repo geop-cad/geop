@@ -11,12 +11,8 @@ use geop_core_math::{
 };
 use geop_core_topology::{FaceId, Model, SolidId};
 use geop_lib_booleans::{RemeshParams, boolean};
-use geop_ops_extrude_revolve::{
-    common::{Profile, polygon},
-    extrude::extrude,
-    sweep::SweepLoop,
-};
-use geop_ops_model::BooleanOp;
+use geop_lib_sweep::{SweepLoop, extrude, polygon};
+use geop_ops_model::{BooleanOp, Profile};
 use geop_ops_model::{NamedModel, Namer, frame_along};
 
 /// The box holding every face of `model`, `[lo, hi]` per axis.

@@ -1,6 +1,6 @@
 //! Reusable named test scenes for the booleans test suite: pairs of solids,
 //! each built in their own fresh [`NamedModel`] purely from
-//! `geop_ops_extrude_revolve::shapes`.
+//! `geop_lib_sweep::shapes`.
 //!
 //! Two families: a systematic offset *grid* (every relative position of two
 //! identical solids, on axis-aligned steps) and a set of hand-picked
@@ -12,9 +12,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_topology::{SolidId, validation::ValidationParameters};
-use geop_ops_extrude_revolve::shapes::{
-    block, cylinder, figure8_profile::figure8_profile, sphere::sphere_solid,
-};
+use geop_lib_sweep::shapes::{block, cylinder, figure8_profile, sphere_solid};
 use geop_ops_model::{NamedModel, Namer};
 use rayon::prelude::*;
 

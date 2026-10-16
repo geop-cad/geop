@@ -14,12 +14,9 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{part::StepContext, reader::Reader, values::Design};
+use geop_lib_sweep::{Control, SweepLoop, circle_at, sweep_along};
 use geop_ops_add_datum::Selected;
-use geop_ops_extrude_revolve::{
-    common::{Profile, circle_at},
-    path_sweep::{Control, sweep_along},
-    sweep::SweepLoop,
-};
+use geop_ops_model::Profile;
 use geop_ops_model::{
     CutWire, ModelOperation, NamedModel, Namer, SolidNotes, build_model, frame_along, solid_notes,
 };
@@ -47,7 +44,7 @@ use crate::{
 /// wherever their mates put them, rerouted whenever the program runs.
 ///
 /// The solid is named like any path sweep (see
-/// [`geop_ops_extrude_revolve::path_sweep::sweep_along`]): the profile is a
+/// [`geop_lib_sweep::sweep_along`]): the profile is a
 /// circle of four arcs `c0`–`c3` meeting at `p0`–`p3`, the path's curves
 /// and joints are named as [`RoutePath`] says — `route(R,c0,a1)` is a
 /// quarter of the bundle's skin along the first arc after the second

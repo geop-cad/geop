@@ -13,14 +13,15 @@ geop-core-sketch.workspace = true
 geop-ops-model.workspace = true
 geop-ops-parameters.workspace = true
 geop-ops-sketch.workspace = true
-geop-ops-extrude-revolve.workspace = true
+geop-lib-sweep.workspace = true
 geop-lib-booleans.workspace = true
 # For rebuilding a solid face by face: moving vertices onto new surfaces,
 # room around a surface, pcurves on it.
 geop-ops-shell.workspace = true
 serde.workspace = true
 # Only for `testing`: the datums the enclosure's reference plane is built
-# among, and the step building it.
+# among, and the steps building it.
+geop-ops-extrude-revolve = { workspace = true, optional = true }
 geop-ops-datums = { workspace = true, optional = true }
 geop-ops-add-datum = { workspace = true, optional = true }
 
@@ -29,6 +30,7 @@ geop-ops-add-datum = { workspace = true, optional = true }
 testing = [
     "dep:geop-ops-datums",
     "dep:geop-ops-add-datum",
+    "dep:geop-ops-extrude-revolve",
     "geop-ops-extrude-revolve/testing",
 ]
 

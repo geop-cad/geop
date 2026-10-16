@@ -14,8 +14,6 @@ geop-ops-model.workspace = true
 geop-ops-parameters.workspace = true
 geop-ops-sketch.workspace = true
 geop-lib-sheet.workspace = true
-# For the profiles a sketch's area becomes (`shape_loops`).
-geop-ops-extrude-revolve.workspace = true
 serde.workspace = true
 
 [dev-dependencies]

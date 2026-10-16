@@ -15,12 +15,14 @@ geop-ops-datums.workspace = true
 geop-ops-parameters.workspace = true
 geop-ops-sketch.workspace = true
 geop-lib-booleans.workspace = true
-geop-ops-extrude-revolve.workspace = true
+geop-lib-sweep.workspace = true
+# Only for `testing`: the plates' steps.
+geop-ops-extrude-revolve = { workspace = true, optional = true }
 serde.workspace = true
 
 [features]
 # The plates of `testing`, for other crates' tests.
-testing = ["geop-ops-extrude-revolve/testing"]
+testing = ["dep:geop-ops-extrude-revolve", "geop-ops-extrude-revolve/testing"]
 
 [dev-dependencies]
 geop-ops-model = { workspace = true, features = ["testing"] }

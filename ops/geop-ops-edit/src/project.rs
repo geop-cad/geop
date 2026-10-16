@@ -18,10 +18,10 @@ use geop_core_program::{
 };
 use geop_core_topology::FaceId;
 use geop_lib_booleans::{RemeshParams, imprint_on_face};
-use geop_ops_extrude_revolve::{extrude::extrude, operation::shape_loops};
+use geop_lib_sweep::{SweepLoop, extrude};
 use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model, model};
 use geop_ops_model::{face_hull, spread_along};
-use geop_ops_sketch::{PlacedSketch, SketchRef};
+use geop_ops_sketch::{PlacedSketch, SketchRef, shape_profiles};
 use serde::{Deserialize, Serialize};
 
 /// Projects the curves of the sketch named `sketch` along its plane's
@@ -124,7 +124,9 @@ impl ModelOperation for ProjectCurve {
         let sketch = &placed.sketch;
         let geometry = sketch.enclose::<Design>()?;
         let shape = sketch.shape()?;
-        let loops = shape_loops(&placed.name, sketch, &geometry, shape)?;
+        let loops: Vec<_> = (shape_profiles(&placed.name, sketch, &geometry, shape)?.into_iter())
+            .map(SweepLoop::plain)
+            .collect();
         let (from, to) = reach_across(model, face, &placed.plane)?;
         let (from, to) = (Design::from_f64(from), Design::from_f64(to));
         let swept = extrude(model, &namer, None, &placed.plane, from, to, &loops)?;

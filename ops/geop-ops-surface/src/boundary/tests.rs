@@ -7,7 +7,7 @@ use geop_core_math::{
     vector::{Vector3, Vector4},
 };
 use geop_core_topology::{Body, Curve3};
-use geop_ops_extrude_revolve::shapes::{block_part, v3};
+use geop_lib_sweep::shapes::{block_part, v3};
 use geop_ops_model::NamedModel;
 use geop_ops_model::testing::apply_to_model;
 use geop_ops_model::testing::assert_valid_sheets;
@@ -319,7 +319,7 @@ fn open_chain_is_refused() {
 #[test]
 fn circle_is_filled_flat() {
     let mut part = NamedModel::<S>::new();
-    geop_ops_extrude_revolve::shapes::cylinder::revolved_cylinder(
+    geop_lib_sweep::shapes::revolved_cylinder(
         &mut part,
         "cyl",
         v3(0., 0., 0.),

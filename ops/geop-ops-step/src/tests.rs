@@ -13,9 +13,7 @@ use geop_core_program::{
 use geop_core_topology::Model;
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
-use geop_ops_extrude_revolve::shapes::{
-    cube::cube_solid, cylinder::revolved_cylinder, sphere::sphere_solid, v3,
-};
+use geop_lib_sweep::shapes::{cube_solid, revolved_cylinder, sphere_solid, v3};
 use geop_ops_model::{NamedModel, Namer, read_model, testing::assert_model_valid_sheets};
 
 use crate::{ImportStep, ImportStepArgs, add_bodies, read_step, write_step};

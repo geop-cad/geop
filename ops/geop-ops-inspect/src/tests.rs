@@ -22,10 +22,8 @@ use geop_core_math::{
     scalars::{Ring, ScalInF64 as S, Scalar},
     vector::Vector3,
 };
+use geop_lib_sweep::shapes::{cube_solid, revolved_cylinder, sphere_solid, v3};
 use geop_ops_add_datum::Selected;
-use geop_ops_extrude_revolve::shapes::{
-    cube::cube_solid, cylinder::revolved_cylinder, sphere::sphere_solid, v3,
-};
 use geop_ops_model::{NamedModel, model};
 use geop_ops_parameters::{Material, PartProperties, PartPropertiesArgs};
 

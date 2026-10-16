@@ -2,7 +2,7 @@
 //! what they refuse.
 
 use crate::{
-    Orientation, Output, PathRef, SweepArgs,
+    Output, PathRef, SweepArgs,
     testing::{Built, disc, n, on_origin, sketch},
 };
 use geop_core_math::{
@@ -10,6 +10,7 @@ use geop_core_math::{
 };
 use geop_core_program::{operation_registry::OperationRegistry, program::Program};
 use geop_core_sketch::space::End;
+use geop_lib_sweep::Orientation;
 use geop_ops_model::Combine;
 use geop_ops_model::testing::assert_valid;
 use geop_ops_sketch::{AddSketchArgs, whole_sketch};

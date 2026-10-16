@@ -17,4 +17,4 @@ serde_json.workspace = true
 [dev-dependencies]
 geop-ops-assembly = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-lib-sweep = { workspace = true, features = ["testing"] }

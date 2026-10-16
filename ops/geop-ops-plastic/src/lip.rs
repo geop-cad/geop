@@ -32,7 +32,7 @@ use geop_core_topology::{
     build::{BodySpec, CoedgeOn, CoedgeSpec},
 };
 use geop_lib_booleans::{Reach, combine_tools};
-use geop_ops_extrude_revolve::{extrude::extrude, sweep::SweepLoop};
+use geop_lib_sweep::{SweepLoop, extrude};
 use geop_ops_model::{Combine, Tool};
 use geop_ops_model::{NamedModel, Namer, frame_along};
 

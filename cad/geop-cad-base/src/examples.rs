@@ -16,13 +16,13 @@ use geop_core_program::{
     values::{Design, Setting, Settings, StateValue, StateValues, pose_state},
 };
 use geop_core_sketch::{CurveId, PointId};
+use geop_lib_sweep::Orientation;
 use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
 use geop_ops_assembly::{AddPartArgs, JointKind, Kind, Mate, MateEntity, Motion, joint_parameter};
 use geop_ops_boolean::SplitArgs;
 use geop_ops_datums::{ORIGIN, component_name, datum, origin_axis, origin_plane};
 use geop_ops_extrude_revolve::{
-    Extent, Extents, ExtrudeArgs, LoftArgs, Orientation, Output, PathRef, RevolveArgs, RevolveAxis,
-    SweepArgs,
+    Extent, Extents, ExtrudeArgs, LoftArgs, Output, PathRef, RevolveArgs, RevolveAxis, SweepArgs,
 };
 use geop_ops_fillet::FilletArgs;
 use geop_ops_hole::{HoleArgs, HoleCentre, HoleKind, Standard, iso::Fit};

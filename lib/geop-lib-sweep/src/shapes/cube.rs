@@ -3,11 +3,7 @@
 //! every side wall's edges with its top/bottom caps by construction (see its
 //! own module docs).
 
-use crate::{
-    common::{Profile, polygon},
-    extrude::extrude,
-    sweep::SweepLoop,
-};
+use crate::{common::polygon, extrude::extrude, sweep::SweepLoop};
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::CoordinateSystem,
@@ -15,7 +11,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::SolidId;
-use geop_ops_model::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer, Profile};
 
 /// A box solid spanning `[min, max]`, built as `extrude`'s start cap (the
 /// unit square in `(u, v)`, at `z = max.z`) swept down to `min.z`.

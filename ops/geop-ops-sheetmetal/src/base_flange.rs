@@ -16,9 +16,8 @@ use geop_core_math::{
 };
 use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
 use geop_core_sketch::{CurveKind, ProfileLoop, Shape};
-use geop_ops_extrude_revolve::{operation::shape_loops, sweep::SweepLoop};
-use geop_ops_model::{ModelOperation, NamedModel, Namer};
-use geop_ops_sketch::{PlacedSketch, SketchRef};
+use geop_ops_model::{ModelOperation, NamedModel, Namer, Profile};
+use geop_ops_sketch::{PlacedSketch, SketchRef, shape_profiles};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -216,7 +215,7 @@ fn plate<S: Scalar>(
 ) -> GeopResult<Sheet<S>> {
     let sketch = &placed.sketch;
     let geometry = sketch.enclose::<S>()?;
-    let loops = shape_loops(&placed.name, sketch, &geometry, region)?;
+    let loops = shape_profiles(&placed.name, sketch, &geometry, region)?;
     let plane = &placed.plane;
     let n = *plane.w();
     let origin = if args.flip {
@@ -232,11 +231,10 @@ fn plate<S: Scalar>(
         e2: *plane.v(),
         n,
     };
-    let edges = |lp: &SweepLoop<S>| -> Vec<FlatEdge<S>> {
-        lp.profile
-            .curves
+    let edges = |lp: &Profile<S>| -> Vec<FlatEdge<S>> {
+        lp.curves
             .iter()
-            .zip(&lp.profile.curve_names)
+            .zip(&lp.curve_names)
             .map(|(curve, name)| FlatEdge {
                 curve: curve.clone(),
                 name: namer.scoped(name),

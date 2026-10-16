@@ -23,10 +23,10 @@ use geop_core_math::{
     solvers::system::Variable,
     vector::Vector3,
 };
+use geop_lib_sweep::shapes::{block_part, v3};
 use geop_ops_add_datum::Selected;
 use geop_ops_constraints::Constraints;
 use geop_ops_datums::{ORIGIN, component_name, datums, origin_axis, read_datums};
-use geop_ops_extrude_revolve::shapes::{block_part, v3};
 use geop_ops_model::{read_model, testing::assert_close};
 use geop_ops_pattern::spacing::Spacing;
 

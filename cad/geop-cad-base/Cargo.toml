@@ -18,6 +18,7 @@ geop-lib-sheet.workspace = true
 geop-ops-datums.workspace = true
 geop-ops-extrude-revolve.workspace = true
 geop-ops-boolean.workspace = true
+geop-lib-sweep.workspace = true
 geop-ops-edit.workspace = true
 geop-ops-fillet.workspace = true
 geop-ops-assembly.workspace = true
@@ -45,5 +46,6 @@ geop-core-program = { workspace = true, features = ["testing"] }
 geop-core-rasterize.workspace = true
 geop-ops-constraints.workspace = true
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-lib-sweep = { workspace = true, features = ["testing"] }
 geop-ops-hole = { workspace = true, features = ["testing"] }
 geop-ops-plastic = { workspace = true, features = ["testing"] }

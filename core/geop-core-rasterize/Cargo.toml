@@ -10,5 +10,5 @@ geop-core-topology.workspace = true
 
 [dev-dependencies]
 # Its tests rasterize the topology crate's unit cube; those of curved and
-# swept solids are with the shapes, in `geop-ops-extrude-revolve`.
+# swept solids are with the shapes, in `geop-lib-sweep`.
 geop-core-topology = { workspace = true, features = ["testing"] }

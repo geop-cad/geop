@@ -5,8 +5,8 @@ use geop_core_math::{
     geop_error::GeopResult, plain, primitives::FrameAxis, scalars::ScalInF64 as S,
 };
 use geop_core_program::operation::Operation;
+use geop_lib_sweep::shapes::block_part;
 use geop_ops_datums::{origin_axis, origin_plane};
-use geop_ops_extrude_revolve::shapes::block_part;
 use geop_ops_model::{
     BooleanOp, NamedModel, read_model,
     testing::{assert_valid, assert_valid_sheets, given_part, volume},

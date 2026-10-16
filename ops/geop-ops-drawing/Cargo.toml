@@ -21,11 +21,11 @@ geop-ops-sketch.workspace = true
 geop-lib-booleans.workspace = true
 # The parts list it puts on the sheet.
 geop-ops-bom.workspace = true
-geop-ops-extrude-revolve.workspace = true
+geop-lib-sweep.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
 geop-ops-assembly = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-lib-sweep = { workspace = true, features = ["testing"] }
 serde_json.workspace = true

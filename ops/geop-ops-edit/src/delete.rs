@@ -91,7 +91,7 @@ impl ModelOperation for DeleteBody {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geop_ops_extrude_revolve::shapes::{block, block_part};
+    use geop_lib_sweep::shapes::{block, block_part};
     use geop_ops_model::{model, testing::apply_to_model};
 
     fn body(name: impl Into<String>) -> ElementReference<NamedModel<Design>, Body> {

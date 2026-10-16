@@ -38,6 +38,7 @@ members = [
     "ops/geop-ops-bom",
     "ops/geop-ops-constraints",
     "lib/geop-lib-booleans",
+    "lib/geop-lib-sweep",
 ]
 
 [workspace.package]
@@ -90,6 +91,7 @@ geop-ops-urdf = { path = "ops/geop-ops-urdf" }
 geop-ops-bom = { path = "ops/geop-ops-bom" }
 geop-ops-constraints = { path = "ops/geop-ops-constraints" }
 geop-lib-booleans = { path = "lib/geop-lib-booleans" }
+geop-lib-sweep = { path = "lib/geop-lib-sweep" }
 
 # `cargo test` otherwise builds these crates unoptimized, which is fine for
 # cheap unit tests but disastrous for the render-test suites in

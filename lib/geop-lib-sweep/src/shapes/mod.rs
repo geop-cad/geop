@@ -4,12 +4,15 @@
 //! own. Besides the solids, what tests describe them with: points, plain
 //! profiles and planes, from plain numbers.
 
-pub mod cube;
-pub mod cylinder;
-pub mod figure8_profile;
-pub mod sphere;
+mod cube;
+mod cylinder;
+mod figure8_profile;
+mod sphere;
 
 pub use cube::cube_solid;
+pub use cylinder::{Axis, extruded_cylinder, revolved_cylinder, revolved_cylinder_along_axis};
+pub use figure8_profile::figure8_profile;
+pub use sphere::sphere_solid;
 
 use geop_core_geometry::nurb_curve::NurbCurve2D;
 use geop_core_math::{
@@ -55,7 +58,7 @@ pub fn block_part<S: Scalar>(name: &str, min: [f64; 3], max: [f64; 3]) -> NamedM
 
 /// The cylinder of `radius` and `height` in `model`, standing on
 /// `base_center` along `z`, named `cylinder(name)` (see
-/// [`cylinder::revolved_cylinder`]).
+/// [`revolved_cylinder`]).
 pub fn cylinder<S: Scalar>(
     model: &mut NamedModel<S>,
     name: &str,
@@ -65,7 +68,7 @@ pub fn cylinder<S: Scalar>(
 ) -> SolidId {
     let [x, y, z] = base_center;
     let (radius, height) = (S::from_f64(radius), S::from_f64(height));
-    cylinder::revolved_cylinder(model, name, v3(x, y, z), radius, height).unwrap()
+    revolved_cylinder(model, name, v3(x, y, z), radius, height).unwrap()
 }
 
 /// A circle of radius `r` around `(cx, cy)` as four quarter arcs,

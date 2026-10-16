@@ -2,12 +2,12 @@
 //! feature: a plain axis-aligned unit-cube-shaped solid, described whole
 //! and built at once (see [`crate::build`]).
 //!
-//! This crate sits *below* `geop-ops-extrude-revolve` in the workspace's
+//! This crate sits *below* `geop-lib-sweep` in the workspace's
 //! dependency order (that crate is what actually builds shapes like a real
 //! `cube_solid` via `extrude`), so validation/euler/edit tests here that
 //! just need "some realistic populated `Model`" to run structural or
 //! numerical checks against can't reach for it — a dev-dependency back on
-//! `geop-ops-extrude-revolve` would make Cargo compile this crate twice
+//! `geop-lib-sweep` would make Cargo compile this crate twice
 //! (once under `#[cfg(test)]`, once as that crate's plain library
 //! dependency), and the two copies' `Model<S>` types don't unify, which
 //! surfaces as `expected Model, found Model` at every call site. This is a

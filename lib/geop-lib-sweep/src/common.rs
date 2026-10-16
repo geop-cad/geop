@@ -6,11 +6,6 @@
 use geop_core_geometry::nurb_curve::{NurbCurve2D, sqrt2_over_2};
 use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector2};
 
-// ── Profiles ────────────────────────────────────────────────────────────────
-
-/// The named curve chain extrude and revolve sweep.
-pub use geop_ops_model::Profile;
-
 // ── Profile shapes ───────────────────────────────────────────────────────────
 
 /// The closed polygon through `points` (and back to the first), one line

@@ -1,25 +1,7 @@
-//! Extrude, revolve, sweep and loft as operations of a program: a sketch's
-//! one area swept into a solid — along
-//! its plane's normal, around an axis, along another sketch's curves, or
-//! through other sketches' profiles — kept as a new body or combined with
-//! one the model has; or its curves swept into a sheet, faces standing on
-//! their own. Which of these, each says by an [`Output`].
-//!
-//! Extrude and revolve say how far they go the same way, by an [`Extents`]:
-//! one side, both sides alike, or each side its own way — a length (an
-//! angle), up to the next face of the solid they are combined with, or
-//! through all of it — and are built the same way by `build_extents`,
-//! each sweeping its own way (see `Sweeping`).
-
-mod extrude;
-mod loft;
-mod revolve;
-mod sweep;
-
-pub use extrude::{Extrude, ExtrudeArgs, shape_loops};
-pub use loft::{Loft, LoftArgs};
-pub use revolve::{Revolve, RevolveArgs, RevolveAxis};
-pub use sweep::{Sweep, SweepArgs};
+//! What extrude, revolve, sweep and loft share: what each makes of the
+//! profile, an [`Output`]; how far extrude and revolve go, by [`Extents`],
+//! and how both are built from them by `build_extents`, each sweeping its
+//! own way (see `Sweeping`); and the curves a sweep runs along, [`PathRef`].
 
 use geop_core_program::{
     element::ElementReference, numeric::NumericInput, reader::Reader, values::Design,
@@ -47,7 +29,7 @@ use geop_ops_model::{Chain, NamedModel, Namer, Path, ToolReach, read_model};
 use geop_ops_sketch::{PlacedSketch, SketchRef};
 use geop_ops_sketch3d::PlacedSketch3d;
 
-use crate::sweep::SweepLoop;
+use geop_lib_sweep::SweepLoop;
 
 one_of! {
     /// Curves a sweep runs along, or a rail or a guide follows: a sketch's
@@ -181,7 +163,7 @@ impl Output {
     /// Builds what a step sweeps whole, named by `namer`, as the step `step`:
     /// `sweep(model, name)` sweeps a solid named `name`, or faces if none —
     /// the solid then combined as its [`Combine`] says.
-    fn build_whole(
+    pub(crate) fn build_whole(
         &self,
         model: &mut NamedModel<Design>,
         namer: &Namer,
@@ -362,7 +344,7 @@ fn side_namer(namer: &Namer, k: usize) -> Namer {
 /// [`build_extents`]: sweep their loops between two stations of their
 /// measure — a distance along the sketch plane's normal, an angle around
 /// the axis — and say how far along it things lie.
-trait Sweeping {
+pub(crate) trait Sweeping {
     /// The loops it sweeps.
     fn loops(&self) -> &[SweepLoop<Design>];
 
@@ -403,7 +385,7 @@ trait Sweeping {
 /// goes as far as the solids [`Output::stops`] names, and one going up to
 /// the next face is built on its own (see [`Plan`]) and then trimmed — faces
 /// — or combined (see [`combine_sides`]).
-fn build_extents(
+pub(crate) fn build_extents(
     model: &mut NamedModel<Design>,
     reader: &Reader,
     namer: &Namer,

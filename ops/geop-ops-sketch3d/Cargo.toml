@@ -21,4 +21,4 @@ geop-ops-model = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
 # A block to fix points to: shapes are built without the extrude
 # operation, which depends on this crate.
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-lib-sweep = { workspace = true, features = ["testing"] }

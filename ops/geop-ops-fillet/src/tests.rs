@@ -3,7 +3,7 @@
 use geop_core_math::scalars::{Ring, ScalInF64 as S, Scalar};
 use geop_core_topology::SolidId;
 use geop_lib_booleans::{RemeshParams, boolean};
-use geop_ops_extrude_revolve::shapes::{self, block, block_part, v3};
+use geop_lib_sweep::shapes::{self, block, block_part, v3};
 use geop_ops_model::BooleanOp;
 use geop_ops_model::{
     NamedModel, Namer,
@@ -413,7 +413,7 @@ fn fillet_up_to_a_wall_two_faces_make() {
 /// and the curve-surface test `blended_spoke_touching_cap_quadrant_at_its_pole`).
 #[test]
 fn far_bar_rim_fillet() {
-    use geop_ops_extrude_revolve::shapes::cylinder::{Axis, revolved_cylinder_along_axis};
+    use geop_lib_sweep::shapes::{Axis, revolved_cylinder_along_axis};
     for (axis, base) in [
         (Axis::X, v3(225.0, 0.0, 0.0)),
         (Axis::Z, v3(0.0, 0.0, 225.0)),

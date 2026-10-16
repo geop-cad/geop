@@ -16,7 +16,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector2,
 };
-use geop_ops_extrude_revolve::common::Profile;
+use geop_ops_model::Profile;
 
 /// A straight or circular curve of a chain, from where the previous one
 /// ends, named for what it was made from.

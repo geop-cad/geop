@@ -1,7 +1,7 @@
 //! Trimming a flat square with a face of a box standing across it.
 
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_ops_extrude_revolve::shapes::block;
+use geop_lib_sweep::shapes::block;
 use geop_ops_model::NamedModel;
 use geop_ops_model::testing::apply_to_model;
 
@@ -9,7 +9,7 @@ use super::*;
 use crate::boundary::tests::refused;
 use crate::test_refs::*;
 use crate::thicken::tests::square_sheet;
-use geop_ops_extrude_revolve::shapes::v3;
+use geop_lib_sweep::shapes::v3;
 use geop_ops_model::testing::assert_valid_sheets;
 
 /// The flat square at `z = 1` and a box beside it from `x = 0.5`, whose

@@ -9,8 +9,8 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_lib_booleans::{RemeshParams, boolean};
+use geop_lib_sweep::shapes::cube_solid;
 use geop_ops_assembly::solids::placed_solids;
-use geop_ops_extrude_revolve::shapes::cube::cube_solid;
 use geop_ops_inspect::{
     interference::bounding_box,
     mass::{MassSummary, mass_report},

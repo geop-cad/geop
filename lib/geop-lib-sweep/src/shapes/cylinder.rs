@@ -3,7 +3,7 @@
 //! [`extruded_cylinder`] (via [`extrude`], an `n`-gon approximating one).
 
 use crate::{
-    common::{Profile, polygon, polyline},
+    common::{polygon, polyline},
     extrude::extrude,
     revolve::revolve_at_oriented,
     sweep::SweepLoop,
@@ -15,7 +15,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::SolidId;
-use geop_ops_model::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer, Profile};
 
 /// Which axis a cylinder's own axis runs parallel to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

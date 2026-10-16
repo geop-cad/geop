@@ -501,7 +501,7 @@ fn faces_are_coplanar<S: Scalar>(
 /// `edge_id` is a purely internal seam between two mutually-flush patches
 /// of that one solid, not a genuine outer boundary edge.
 ///
-/// The motivating case: [`geop_ops_extrude_revolve::revolve::revolve_at_oriented`]
+/// The motivating case: [`geop_lib_sweep::revolve_at_oriented`]
 /// builds any flat cap (e.g. a cylinder's) as a fan of pie-wedge faces
 /// meeting at a center pole, the same technique its doubly-curved callers
 /// (spheres) genuinely need — but a flat cap doesn't, and when that cap

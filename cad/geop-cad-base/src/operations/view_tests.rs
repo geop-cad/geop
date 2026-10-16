@@ -17,11 +17,9 @@ use geop_core_program::{
     reader::Reader,
     values::Design,
 };
+use geop_lib_sweep::shapes::{block_part, v3};
 use geop_ops_datums::ORIGIN;
-use geop_ops_extrude_revolve::{
-    shapes::{block_part, v3},
-    testing::n,
-};
+use geop_ops_extrude_revolve::testing::n;
 use geop_ops_model::{NamedModel, Solid, testing::given_part};
 use geop_ops_sketch::{PlacedSketch, Sketch, sketch};
 

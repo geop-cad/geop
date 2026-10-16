@@ -7,11 +7,7 @@
 //! (including the holes, all the way through both caps and their own side
 //! walls).
 
-use crate::{
-    common::{Profile, polygon},
-    extrude::extrude,
-    sweep::SweepLoop,
-};
+use crate::{common::polygon, extrude::extrude, sweep::SweepLoop};
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::CoordinateSystem,
@@ -19,7 +15,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
 };
 use geop_core_topology::SolidId;
-use geop_ops_model::{NamedModel, Namer};
+use geop_ops_model::{NamedModel, Namer, Profile};
 
 /// The outer boundary of the figure-8 profile, as a CCW polygon in `(u, v) ∈
 /// [0, 1]^2` parameter space.

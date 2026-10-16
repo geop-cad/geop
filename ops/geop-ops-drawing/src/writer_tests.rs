@@ -2,7 +2,7 @@
 
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_lib_sheet::{to_dxf, to_svg};
-use geop_ops_extrude_revolve::shapes::{cube::cube_solid, cylinder::revolved_cylinder, v3};
+use geop_lib_sweep::shapes::{cube_solid, revolved_cylinder, v3};
 use geop_ops_model::NamedModel;
 
 use crate::{DrawingArgs, ViewKind, compose, testing::built};

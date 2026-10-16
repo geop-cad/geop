@@ -918,12 +918,7 @@ fn sweep_with_rails_twist_and_orientation() {
             args.orientation,
             args.rails.len()
         ),
-        (
-            90.0,
-            0.5,
-            geop_ops_extrude_revolve::Orientation::FixedNormal,
-            0
-        )
+        (90.0, 0.5, geop_lib_sweep::Orientation::FixedNormal, 0)
     );
 }
 

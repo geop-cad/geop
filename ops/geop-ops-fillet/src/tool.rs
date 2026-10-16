@@ -4,7 +4,7 @@
 //! spans, capped where a tool ends on its own, and joined to the other
 //! tools at a corner every edge of which is blended (see
 //! [`crate::corner`]) by the corner's own faces. The tools are strips of a
-//! skinned body (see [`geop_ops_extrude_revolve::skin`]), each span given by
+//! skinned body (see [`geop_lib_sweep::skin`]), each span given by
 //! its control rows outright.
 
 use geop_core_geometry::{
@@ -20,7 +20,7 @@ use geop_core_topology::{
     FaceId, Sense, SolidId,
     build::{BodySpec, CoedgeOn, EdgeSpec},
 };
-use geop_ops_extrude_revolve::skin::{Glue, Skinned, Strip, StripCap, StripGeometry, skin};
+use geop_lib_sweep::{Glue, Skinned, Strip, StripCap, StripGeometry, skin};
 use geop_ops_model::{BodyNames, NamedModel, Namer};
 
 /// One span of a tool: its control rows along it — each the four section

@@ -490,10 +490,10 @@ mod interior_point_tests {
 
     // `sphere_faces_all_have_interior_points` (exercising seam curves and
     // degenerate poles, unlike the plain cube above) needs a real
-    // `sphere_solid` — that lives in `geop-ops-extrude-revolve`, which
+    // `sphere_solid` — that lives in `geop-lib-sweep`, which
     // depends on this crate, so it can't be reached from here without
     // Cargo compiling this crate twice (see `test_fixtures`'s doc
-    // comment). Covered instead by `geop-ops-extrude-revolve::sphere`'s
+    // comment). Covered instead by `geop-lib-sweep`'s `sphere_solid`'s
     // own tests, which build the same solid `face_interior_point` runs on
     // here.
 }

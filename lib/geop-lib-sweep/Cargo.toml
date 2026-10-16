@@ -1,0 +1,19 @@
+[package]
+name = "geop-lib-sweep"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-geometry.workspace = true
+geop-core-topology.workspace = true
+geop-ops-model.workspace = true
+serde.workspace = true
+
+[features]
+# For other crates' tests: the basic solids of `shapes`.
+testing = []
+
+[dev-dependencies]
+geop-ops-model = { workspace = true, features = ["testing"] }
+geop-core-rasterize.workspace = true

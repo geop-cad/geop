@@ -92,7 +92,7 @@ impl ModelOperation for ExtractFace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geop_ops_extrude_revolve::shapes::block;
+    use geop_lib_sweep::shapes::block;
     use geop_ops_model::testing::{apply_to_model, assert_valid_sheets};
 
     /// A face of a cube, extracted, stands on its own beside the cube,

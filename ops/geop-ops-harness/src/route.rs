@@ -18,7 +18,7 @@
 //!   the arc lies between;
 //! - the **bundle** swept along it is made of cylinders and pieces of tori,
 //!   which the path sweep builds exactly (see
-//!   [`geop_ops_extrude_revolve::path_sweep`]).
+//!   [`geop_lib_sweep::sweep_along`]).
 //!
 //! # The biarc
 //!

@@ -754,7 +754,7 @@ mod tests {
     };
     use geop_core_math::{scalars::ScalInF64, scalars::Scalar, vector::Vector3};
     use geop_core_topology::{contains::rng::Rng, validation::validate_fast};
-    use geop_ops_extrude_revolve::shapes::{block, cylinder::Axis, v3};
+    use geop_lib_sweep::shapes::{Axis, block, v3};
     use geop_ops_model::Namer;
 
     /// A fresh operation id, so that every solid and boolean a test builds
@@ -1132,8 +1132,7 @@ mod tests {
     fn sphere(model: &mut M, center: [f64; 3], r: f64) -> geop_core_topology::SolidId {
         let [x, y, z] = center;
         let r = ScalInF64::from_f64(r);
-        geop_ops_extrude_revolve::shapes::sphere::sphere_solid(model, &fresh_id(), v3(x, y, z), r)
-            .unwrap()
+        geop_lib_sweep::shapes::sphere_solid(model, &fresh_id(), v3(x, y, z), r).unwrap()
     }
 
     /// `CreateCylinder(offset, r, h, axis)`: `offset` is the bottom cap's centre.
@@ -1145,7 +1144,7 @@ mod tests {
         axis: Axis,
     ) -> geop_core_topology::SolidId {
         let [x, y, z] = base;
-        geop_ops_extrude_revolve::shapes::cylinder::revolved_cylinder_along_axis(
+        geop_lib_sweep::shapes::revolved_cylinder_along_axis(
             model,
             &fresh_id(),
             v3(x, y, z),
@@ -1928,13 +1927,9 @@ mod tests {
             .unwrap()
             .expect("minus the second slot must be non-empty");
 
-        let sphere = geop_ops_extrude_revolve::shapes::sphere::sphere_solid(
-            &mut model,
-            "s",
-            Vector3::zero(),
-            f(0.45),
-        )
-        .unwrap();
+        let sphere =
+            geop_lib_sweep::shapes::sphere_solid(&mut model, "s", Vector3::zero(), f(0.45))
+                .unwrap();
         let result = boolean(
             &mut model,
             &namer(),
@@ -2141,7 +2136,7 @@ mod tests {
         let corner = |p: [f64; 3]| Vector3::from_array(p.map(wide));
         let mut model = M::new();
         let block = cube(&mut model, [0.0, 0.0, 0.0], [2.0, 2.0, 1.0]);
-        let tool = geop_ops_extrude_revolve::shapes::cube_solid(
+        let tool = geop_lib_sweep::shapes::cube_solid(
             &mut model,
             &fresh_id(),
             corner([1.72, 0.1, 0.88]),

@@ -1,42 +1,41 @@
-//! Extruding, revolving and sweeping profiles along paths into B-rep solids
-//! and sheets — all sweeps (see [`sweep`], [`path_sweep`]) — lofting
-//! through several profiles by skinning them (see [`loft`]), and the
-//! [`Extrude`], [`Revolve`], [`Sweep`] and [`Loft`] operations built on
-//! them.
+//! Extrude, revolve, sweep and loft as operations of a program: a sketch's
+//! one area swept into a solid — along its plane's normal, around an axis,
+//! along another sketch's curves, or through other sketches' profiles —
+//! kept as a new body or combined with one the model has; or its curves
+//! swept into a sheet, faces standing on their own. Which of these, each
+//! says by an [`Output`].
+//!
+//! Extrude and revolve say how far they go the same way, by an [`Extents`]:
+//! one side, both sides alike, or each side its own way — a length (an
+//! angle), up to the next face of the solid they are combined with, or
+//! through all of it.
+//!
+//! The operations resolve what their arguments refer to — the sketch, the
+//! axis, the path — into geometry, and sweep it with `geop_lib_sweep`.
 //!
 //! With the `testing` feature — which only other crates' tests turn on —
-//! `shapes` also builds basic solids directly: cubes, cylinders, spheres,
-//! the fixtures those tests are written against; and `testing` draws the
-//! sketches and pushes the steps their programs start from.
+//! `testing` draws the sketches and pushes the steps their programs start
+//! from.
 
-pub mod common;
-
-pub mod extrude;
+mod extrude;
 mod icons;
-pub mod loft;
-pub mod operation;
-pub mod path_sweep;
-mod plain;
+mod loft;
 #[cfg(test)]
 mod program_tests;
-#[cfg(test)]
-mod rasterize_tests;
-pub mod revolve;
-#[cfg(any(test, feature = "testing"))]
-pub mod shapes;
+mod revolve;
 #[cfg(test)]
 mod sketch3d_program_tests;
-pub mod skin;
-pub mod sweep;
+mod sweep;
+mod sweeping;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
+pub use extrude::{Extrude, ExtrudeArgs};
 pub use geop_ops_model::Extent;
-pub use operation::{
-    Extents, Extrude, ExtrudeArgs, Loft, LoftArgs, Output, PathRef, Revolve, RevolveArgs,
-    RevolveAxis, Sweep, SweepArgs,
-};
-pub use path_sweep::Orientation;
+pub use loft::{Loft, LoftArgs};
+pub use revolve::{Revolve, RevolveArgs, RevolveAxis};
+pub use sweep::{Sweep, SweepArgs};
+pub use sweeping::{Extents, Output, PathRef};
 
 use geop_core_editor::registry::Registry;
 use geop_core_math::geop_error::GeopResult;

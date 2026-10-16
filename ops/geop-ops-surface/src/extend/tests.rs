@@ -1,7 +1,7 @@
 //! Extending a flat square and a Coons patch past their edges.
 
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
-use geop_ops_extrude_revolve::shapes::block_part;
+use geop_lib_sweep::shapes::block_part;
 use geop_ops_model::NamedModel;
 use geop_ops_model::testing::apply_to_model;
 

@@ -14,8 +14,8 @@ use geop_ops_parameters::{
     Material, Parameter, ParameterKind, Parameters, parameters::Row, set_parameters,
 };
 
+use geop_lib_sweep::shapes::block;
 use geop_ops_assembly::testing::{Shelf, given_model, place, runner};
-use geop_ops_extrude_revolve::shapes::block;
 use geop_ops_model::{CutWire, NamedModel, SolidNotes};
 
 use crate::{Bom, LineKind, Structure, bom};

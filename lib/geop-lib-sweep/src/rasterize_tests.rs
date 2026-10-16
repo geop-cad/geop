@@ -12,7 +12,7 @@ use geop_core_math::{
 use geop_core_rasterize::{debug::Color10, face_triangles_uv, rasterize};
 use geop_ops_model::NamedModel;
 
-use crate::shapes::{cube_solid, sphere::sphere_solid};
+use crate::shapes::{cube_solid, sphere_solid};
 
 fn triangle_area<S: Scalar>(a: Vector2<S>, b: Vector2<S>, c: Vector2<S>) -> f64 {
     let (ax, ay) = (a[0].to_f64(), a[1].to_f64());
@@ -63,14 +63,8 @@ fn sphere_triangles_carry_surface_normals() {
 /// segments around it, for nothing.
 fn check_cylinder_wall_is_refined_only_around<S: Scalar>() {
     let mut model = NamedModel::<S>::new();
-    crate::shapes::cylinder::revolved_cylinder(
-        &mut model,
-        "t5",
-        Vector3::zero(),
-        S::ONE,
-        S::from_f64(4.0),
-    )
-    .unwrap();
+    crate::shapes::revolved_cylinder(&mut model, "t5", Vector3::zero(), S::ONE, S::from_f64(4.0))
+        .unwrap();
     let topology = model.topology();
     let rasterized = rasterize(topology, 24).unwrap();
     // The wall quadrants are the faces whose triangles are all off-axis.
@@ -228,7 +222,8 @@ fn check_hole_is_not_triangulated<S: Scalar>() {
         .collect();
     let hole: Vec<_> = ccw.iter().rev().map(|c| c.reverse()).collect();
     let namer = geop_ops_model::Namer::new("extrude", "e").unwrap();
-    use crate::{common::Profile, sweep::SweepLoop};
+    use crate::sweep::SweepLoop;
+    use geop_ops_model::Profile;
     crate::extrude::extrude(
         &mut model,
         &namer,
@@ -287,7 +282,7 @@ fn hole_is_not_triangulated() {
 /// out for trims a fixed grid-without-clipping can't represent.
 fn check_holed_footprint_triangulates_cleanly<S: Scalar>() {
     let mut model = NamedModel::<S>::new();
-    crate::shapes::figure8_profile::figure8_profile(&mut model, "f").unwrap();
+    crate::shapes::figure8_profile(&mut model, "f").unwrap();
     let topology = model.topology();
     let mut total_triangles = 0;
     for face in topology.faces.values() {
@@ -325,7 +320,7 @@ mod stl {
     use geop_core_topology::FaceId;
     use geop_ops_model::NamedModel;
 
-    use crate::shapes::{cube_solid, sphere::sphere_solid};
+    use crate::shapes::{cube_solid, sphere_solid};
 
     type S = ScalInF64;
 

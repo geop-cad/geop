@@ -3,7 +3,7 @@
 
 use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_topology::Body;
-use geop_ops_extrude_revolve::shapes::block;
+use geop_lib_sweep::shapes::block;
 use geop_ops_model::NamedModel;
 use geop_ops_model::testing::apply_to_model;
 
