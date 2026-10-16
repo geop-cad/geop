@@ -1,9 +1,12 @@
 //! 3-D sketches drawn as an editor draws them — every gesture a command
 //! to the [`geop_core_editor::editor::Editor`], as rays and keys — and
 //! built on a part: an extruded box, so an integration test, as the
-//! extrusion depends on this crate.
+//! extrusion depends on this crate. Its points are dragged by the gizmo,
+//! and its tools taken and put down by the keys every tool shares.
 
-use geop_core_editor::editing::{Button, Pointer, Reach, Shape, StepEditEvent, Style, Value};
+use geop_core_editor::editing::{
+    Axis, Button, GizmoPart, Pointer, Reach, Shape, StepEditEvent, Style, Value,
+};
 use geop_core_math::{
     primitives::FrameAxis,
     scalars::{ScalInF64 as S, Scalar},
@@ -20,10 +23,19 @@ use geop_ops_sketch3d::{
 };
 
 use geop_core_editor::{
+    editor::Command,
     registry::Registry,
-    testing::{Stepping, editor_with, pointer as reaching},
+    testing::{
+        Gesture, Stepping, click_at, drag_gizmo, editor_with, event, from_above, handled,
+        pointer as reaching,
+    },
 };
-use geop_ops_extrude_revolve::testing::{extrude_sketch, on_origin, rectangle};
+use geop_core_math::primitives::Ray;
+use geop_ops_extrude_revolve::{
+    examples::box_with_drill_hole,
+    testing::{args, extrude_sketch, on_origin, rectangle},
+};
+use std::collections::BTreeMap;
 
 /// What a 3-D sketch is drawn among: the model's, the sketches', the
 /// datums' and the extrusions' operations and drawers.
@@ -34,6 +46,11 @@ fn registry() -> Registry {
         .and_then(geop_ops_sketch3d::register)
         .and_then(geop_ops_extrude_revolve::register)
         .unwrap()
+}
+
+/// An editor of [`registry`], with no other files and nothing loaded.
+fn editor() -> geop_core_editor::editor::Editor {
+    geop_core_editor::editor::Editor::new(registry(), BTreeMap::new())
 }
 
 /// An editor of [`registry`] on `program`, which loads without an error.
@@ -418,4 +435,277 @@ fn lines_snap_along_axes_and_onto_points() {
     assert_eq!(sketch.points.len(), 3);
     let chains = sketch.chains().unwrap();
     assert!(chains.len() == 1 && chains[0].closed, "{chains:?}");
+}
+
+/// A point of a 3-D sketch, selected, is moved by its gizmo along `x`
+/// only: the `x` arrow dragged up and off to the side moves it along
+/// `x`, as far as the pointer went along it.
+#[test]
+fn a_3d_sketch_point_is_dragged_along_an_axis() {
+    let mut editor = editor();
+    editor.handle(Command::New {
+        kind: "add_sketch3d".into(),
+    });
+    let click = |editor: &mut geop_core_editor::editor::Editor, origin: [f64; 3], dir: [f64; 3]| {
+        event(
+            editor,
+            StepEditEvent::Click {
+                pointer: reaching(origin, dir),
+                button: Button::Primary,
+                double: false,
+                shift: false,
+            },
+        )
+    };
+    // A line from the origin to (2, 0, 2), seen from the front.
+    click(&mut editor, [0.0, -10.0, 0.0], [0.0, 1.0, 0.0]);
+    click(&mut editor, [2.0, -10.0, 2.0], [0.0, 1.0, 0.0]);
+    let key = |editor: &mut geop_core_editor::editor::Editor| {
+        event(
+            editor,
+            StepEditEvent::Key {
+                key: "Escape".into(),
+            },
+        )
+    };
+    key(&mut editor);
+    let step = key(&mut editor);
+    assert!(step.presentation.gizmo.is_none(), "nothing selected");
+    let step = click(&mut editor, [2.0, -10.0, 2.0], [0.0, 1.0, 0.0]);
+    let gizmo = step.presentation.gizmo.expect("the point has a gizmo");
+    assert!(gizmo.modes.translate && !gizmo.modes.rotate && !gizmo.modes.scale);
+
+    // Its `x` arrow, grabbed from the front, dragged by 0.7 along `x` —
+    // and up, which an arrow does not follow.
+    let front = |x: f64, z: f64| reaching([x, -10.0, z], [0.0, 1.0, 0.0]);
+    let step = drag_gizmo(
+        &mut editor,
+        GizmoPart::Move(Axis::X),
+        front(2.05, 2.0),
+        front(2.75, 2.4),
+        front(2.4, 2.2),
+        false,
+    );
+    assert_eq!(step.error, None);
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let args: AddSketch3dArgs = args(editor.program().steps.last().unwrap());
+    let mut points: Vec<[f64; 3]> = args
+        .sketch
+        .points
+        .values()
+        .map(|p| [0, 1, 2].map(|k| p.at[k].to_f64()))
+        .collect();
+    points.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    let moved = points.last().unwrap();
+    assert!(
+        (moved[0] - 2.7).abs() < 1e-9 && moved[1].abs() < 1e-9 && (moved[2] - 2.0).abs() < 1e-9,
+        "{points:?}"
+    );
+    assert!(points[0].iter().all(|c| c.abs() < 1e-9), "{points:?}");
+}
+
+/// A 3-D sketch drawn by clicks from the side: the second point, clicked
+/// near the line along `x` through the first, snaps onto it; the third,
+/// near the line along `z` through the second, onto that; the fourth, near
+/// the first point, is the first point. Committed, the sketch is one loop
+/// with two lines parallel to the axes they snapped to.
+#[test]
+fn a_3d_sketch_snaps_along_axes_and_onto_points() {
+    let mut editor = loaded(Program::new());
+    editor.handle(Command::New {
+        kind: "add_sketch3d".into(),
+    });
+    let side = |x: f64, z: f64| reaching([x, -10.0, z], [0.0, 1.0, 0.0]);
+    editor.handle(click_at(side(1.0, 1.0)));
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Hover {
+            pointer: side(4.0, 1.006),
+            shift: false,
+        },
+    });
+    let visuals = update.step.unwrap().presentation.visuals;
+    assert!(
+        visuals.iter().any(|v| matches!(
+            &v.shape,
+            Shape::Label { text, .. } if text == "x"
+        )),
+        "the snap to x is shown: {visuals:?}"
+    );
+    editor.handle(click_at(side(4.0, 1.006)));
+    editor.handle(click_at(side(4.007, 3.0)));
+    editor.handle(click_at(side(1.005, 1.0)));
+    editor.handle(Command::Event {
+        event: StepEditEvent::Key {
+            key: "Escape".into(),
+        },
+    });
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let args: AddSketch3dArgs = args(editor.program().steps.last().unwrap());
+    let sketch = &args.sketch;
+    assert_eq!(sketch.points.len(), 3);
+    let parallel: Vec<usize> = sketch
+        .constraints
+        .values()
+        .filter_map(|c| match c {
+            Constraint3d::ParallelTo { direction, .. } => {
+                (0..3).find(|&k| direction[k].to_f64() == 1.0)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(parallel, [0, 2]);
+    let chains = sketch.chains().unwrap();
+    assert!(chains.len() == 1 && chains[0].closed, "{chains:?}");
+}
+
+/// Drawing a 3-D sketch on a part picks what the pointer is over in the
+/// part as the editor drew it when the step was opened: no hover draws
+/// the part again, however many there are, and a click only as the editor
+/// shows the sketch it changed — once.
+#[test]
+fn a_3d_sketch_picks_without_drawing_the_part_again() {
+    let mut editor = loaded(box_with_drill_hole());
+    editor.handle(Command::New {
+        kind: "add_sketch3d".into(),
+    });
+    let drawn = geop_core_editor::view::parts_drawn();
+    for k in 0..5 {
+        let at = from_above(0.2 + 0.1 * k as f64, 0.3);
+        let update = editor.handle(Command::Event {
+            event: StepEditEvent::Hover {
+                pointer: at,
+                shift: false,
+            },
+        });
+        assert!(update.error.is_none(), "{:?}", update.error);
+    }
+    assert_eq!(geop_core_editor::view::parts_drawn() - drawn, 0);
+    let update = editor.handle(click_at(from_above(0.5, 0.5)));
+    assert!(update.error.is_none(), "{:?}", update.error);
+    assert_eq!(geop_core_editor::view::parts_drawn() - drawn, 1);
+    // The click was on the box's top: the point is there.
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let steps = &editor.program().steps;
+    let step = steps.iter().find(|s| s.operation == "add_sketch3d");
+    let args: AddSketch3dArgs = args(step.unwrap());
+    let points: Vec<[f64; 3]> = (args.sketch.points.values())
+        .map(|p| p.at.to_array().map(|c| c.to_f64()))
+        .collect();
+    assert_eq!(points, [[0.5, 0.5, 1.0]]);
+}
+
+/// The default view of an empty part, as the browser sends it — 1920 x
+/// 1080, the camera at `(66, 44, 88)` looking at the origin: a line's
+/// first click on the origin, its second 160 px right of and 90 px above
+/// it. Both place a point, and the line between them is drawn. (Reported
+/// as placing nothing: in a 1400 x 900 window that spot lies under the
+/// step's dialog, and the viewer sends no click there at all.)
+#[test]
+fn a_3d_line_is_drawn_from_the_origin_in_the_default_view() {
+    let mut editor = loaded(Program::new());
+    editor.handle(Command::New {
+        kind: "add_sketch3d".into(),
+    });
+    let eye = |dir: [f64; 3]| {
+        let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+        Pointer {
+            ray: Ray::try_new(
+                v([65.90889047678681, 43.93926031785788, 87.87852063571576]),
+                v(dir),
+            )
+            .unwrap(),
+            reach: Reach::Cone {
+                slope: S::from_f64(0.00838515269409588),
+            },
+        }
+    };
+    for dir in [
+        [
+            -0.5570860145310995,
+            -0.3713906763541206,
+            -0.7427813527082412,
+        ],
+        [
+            -0.4499813577124772,
+            -0.2893350678973743,
+            -0.8448680347817981,
+        ],
+    ] {
+        let hover = editor.handle(Command::Event {
+            event: StepEditEvent::Hover {
+                pointer: eye(dir),
+                shift: false,
+            },
+        });
+        let visuals = hover.step.unwrap().presentation.visuals;
+        assert!(
+            visuals.iter().any(|v| v.key == "snap"),
+            "where the click goes is shown: {visuals:?}"
+        );
+        editor.handle(click_at(eye(dir)));
+    }
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let args: AddSketch3dArgs = args(editor.program().steps.last().unwrap());
+    assert_eq!(args.sketch.curves.len(), 1, "{:?}", args.sketch);
+}
+
+/// The curves of the 3-D sketch drawn, committed, each as it reads.
+fn drawn_curves_3d(editor: &mut geop_core_editor::editor::Editor) -> Vec<String> {
+    handled(editor, Command::Commit);
+    let sketch: AddSketch3dArgs = args(editor.program().steps.last().unwrap());
+    (sketch.sketch.curves.values())
+        .filter(|c| c.is_drawn() && !c.construction)
+        .map(|c| format!("{c:?}"))
+        .collect()
+}
+
+/// The 3-D sketch ends its chain as the planar one does
+/// ([`every_drawing_tool_ends_its_chain_the_same_way`]), its line tool
+/// taken by its key in either case.
+#[test]
+fn every_3d_drawing_tool_ends_its_chain_the_same_way() {
+    for gesture in [Gesture::Enter, Gesture::SecondaryClick, Gesture::Escape] {
+        for key in ["l", "L"] {
+            let mut editor = editor();
+            editor.handle(Command::New {
+                kind: "add_sketch3d".into(),
+            });
+            event(&mut editor, StepEditEvent::Key { key: key.into() });
+            let click = |editor: &mut geop_core_editor::editor::Editor, x: f64, y: f64| {
+                editor.handle(click_at(from_above(x, y)));
+            };
+            click(&mut editor, 0.0, 0.0);
+            click(&mut editor, 1.0, 0.0);
+            gesture.send(&mut editor);
+            click(&mut editor, 0.0, 1.0);
+            click(&mut editor, 1.0, 1.0);
+            let curves = drawn_curves_3d(&mut editor);
+            assert_eq!(curves.len(), 2, "3-D, {gesture:?}, {key:?}: {curves:#?}");
+        }
+    }
+}
+
+/// A tool's key is the same typed with shift or caps lock: in the 3-D
+/// sketch, `A` takes the arc tool as `a` does.
+#[test]
+fn a_tools_key_is_the_same_typed_in_capitals() {
+    for key in ["a", "A"] {
+        let mut editor = editor();
+        editor.handle(Command::New {
+            kind: "add_sketch3d".into(),
+        });
+        event(&mut editor, StepEditEvent::Key { key: key.into() });
+        for (x, y) in [(0.0, 0.0), (1.0, 1.0), (2.0, 0.0)] {
+            editor.handle(click_at(from_above(x, y)));
+        }
+        let curves = drawn_curves_3d(&mut editor);
+        assert!(
+            curves.len() == 1 && curves[0].contains("Arc"),
+            "{key:?}: {curves:#?}"
+        );
+    }
 }

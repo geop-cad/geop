@@ -7,7 +7,9 @@
 //! What the sketch tool keeps while it is edited is its own; these tests
 //! read what the editor shows of it instead — the tool active among the
 //! dialog's actions, the hint, the snap marker, the constraints' status —
-//! and how the sketch the step holds solves.
+//! and how the sketch the step holds solves. The tools are also used as
+//! the front end uses them, one command at a time, down to the profiles
+//! they draw extruded, and a sketch is copied and pasted as a step.
 
 use geop_core_editor::editing::{
     Button, Control, Pointer, Presentation, Shape, StepEditEvent, Style, Tone, Value,
@@ -29,13 +31,19 @@ use geop_ops_sketch::{
 };
 
 use geop_core_editor::{
+    editor::Command,
     registry::Registry,
     selectable::Selectable,
-    testing::{Stepping, editor_with, from_above, pointer},
+    testing::{
+        Gesture, Stepping, built, click_at, dialog, editor_with, from_above, handled, pointer,
+    },
 };
 use geop_ops_datums::origin_plane;
-use geop_ops_extrude_revolve::testing::{args, drilled_box, on_face};
-use geop_ops_model::element;
+use geop_ops_extrude_revolve::{
+    examples::box_with_drill_hole,
+    testing::{args, drilled_box, model_of, on_face},
+};
+use geop_ops_model::{element, testing::check_valid};
 use geop_ops_sketch::references::{Projected, Source};
 use std::collections::BTreeMap;
 
@@ -2073,4 +2081,223 @@ fn sketches_undo_their_own_edits() {
     assert!(update.program.unwrap().can_undo);
     editor.handle(Command::Undo);
     assert!(editor.program().steps.is_empty());
+}
+
+/// The sketch tools the way the front end uses them: a plate drawn as a
+/// rectangle with a chamfered corner, an arc slot and a circumscribed hex
+/// hole in it, and round it all an offset rim — a second sketch offset into
+/// a ring by clicks. Each extrudes into a valid solid.
+#[test]
+fn sketch_tools_draw_profiles_that_extrude() {
+    let mut editor = editor();
+    let event = |editor: &mut geop_core_editor::editor::Editor, event: StepEditEvent<S>| {
+        handled(editor, Command::Event { event })
+    };
+    let click = |editor: &mut geop_core_editor::editor::Editor, x: f64, y: f64| {
+        event(
+            editor,
+            StepEditEvent::Click {
+                pointer: from_above(x, y),
+                button: Button::Primary,
+                double: false,
+                shift: false,
+            },
+        )
+    };
+    let hover = |editor: &mut geop_core_editor::editor::Editor, x: f64, y: f64| {
+        event(
+            editor,
+            StepEditEvent::Hover {
+                pointer: from_above(x, y),
+                shift: false,
+            },
+        )
+    };
+    let key = |editor: &mut geop_core_editor::editor::Editor, key: &str| {
+        event(editor, StepEditEvent::Key { key: key.into() })
+    };
+    let tool = |editor: &mut geop_core_editor::editor::Editor, name: &str| {
+        editor.handle(dialog("tool", Value::Choice(name.into())))
+    };
+    let extruded = |editor: &mut geop_core_editor::editor::Editor| {
+        handled(editor, Command::Commit);
+        editor.handle(Command::New {
+            kind: "extrude".into(),
+        });
+        editor.handle(dialog("distance", Value::Number(0.3)));
+        handled(editor, Command::Commit);
+        let part = model_of(&built(editor).unwrap());
+        if let Err(e) = check_valid(&part) {
+            panic!("{e}");
+        }
+        part
+    };
+    // A new sketch on the origin's xy plane, seen from above.
+    let new_sketch = |editor: &mut geop_core_editor::editor::Editor| {
+        editor.handle(Command::New {
+            kind: "add_sketch".into(),
+        });
+        click(editor, 0.04, 0.04);
+    };
+
+    new_sketch(&mut editor);
+    tool(&mut editor, "rectangle");
+    click(&mut editor, 0.2, 0.2);
+    click(&mut editor, 2.6, 1.8);
+    tool(&mut editor, "chamfer");
+    let update = click(&mut editor, 2.6, 1.8);
+    let prompt = update.step.unwrap().presentation.prompt;
+    assert!(prompt.is_some(), "the chamfer's size is asked for");
+    editor.handle(dialog("prompt", Value::Text("0.2".into())));
+    // An arc slot about (1.2, 0.6), its arc from (1.6, 0.6) half round.
+    tool(&mut editor, "arc_slot");
+    click(&mut editor, 1.2, 0.6);
+    click(&mut editor, 1.6, 0.6);
+    hover(&mut editor, 1.2, 1.0);
+    click(&mut editor, 0.8, 0.6);
+    click(&mut editor, 1.7, 0.6);
+    // A hexagon 0.3 across its flats.
+    tool(&mut editor, "polygon");
+    editor.handle(dialog("circumscribed", Value::Bool(true)));
+    click(&mut editor, 2.1, 0.7);
+    let update = click(&mut editor, 2.25, 0.7);
+    let step = update.step.unwrap();
+    match step.presentation.dialog.get("status") {
+        Some(Control::Text { text, tone }) => {
+            assert!(text.contains("1 region"), "{text}");
+            assert_ne!(*tone, Tone::Error, "{text}");
+        }
+        other => panic!("{other:?}"),
+    }
+    key(&mut editor, "Escape");
+    let part = extruded(&mut editor);
+    assert_eq!(part.solid_names().len(), 1);
+
+    // A rim round a 1 x 1 square, offset outwards by clicks.
+    new_sketch(&mut editor);
+    tool(&mut editor, "rectangle");
+    click(&mut editor, 4.0, 0.2);
+    click(&mut editor, 5.0, 1.2);
+    key(&mut editor, "o");
+    click(&mut editor, 4.5, 0.2);
+    hover(&mut editor, 4.5, 0.05);
+    click(&mut editor, 4.5, 0.05);
+    editor.handle(dialog("prompt", Value::Text("0.1".into())));
+    handled(&mut editor, Command::Commit);
+    let rim: geop_ops_sketch::AddSketchArgs = args(editor.program().steps.last().unwrap());
+    let regions = rim.sketch.regions().unwrap();
+    assert_eq!(regions.len(), 1, "a ring");
+    assert_eq!(regions[0].holes.len(), 1, "round the square");
+    let id = editor.program().steps.last().unwrap().id.clone();
+    editor.handle(Command::Open { id });
+    extruded(&mut editor);
+}
+
+/// The curves of the sketch the step being edited is, once committed, as
+/// text: what was drawn, for a failed count to say — not the axes a new
+/// sketch starts with.
+fn drawn_curves(editor: &mut geop_core_editor::editor::Editor) -> Vec<String> {
+    handled(editor, Command::Commit);
+    let sketch: geop_ops_sketch::AddSketchArgs = args(editor.program().steps.last().unwrap());
+    sketch
+        .sketch
+        .curves
+        .values()
+        .filter(|c| !c.construction)
+        .map(|c| format!("{c:?}"))
+        .collect()
+}
+
+/// Enter, a secondary click and Escape all end the chain being drawn: two
+/// lines drawn after one, not a chain of three.
+#[test]
+fn every_drawing_tool_ends_its_chain_the_same_way() {
+    for gesture in [Gesture::Enter, Gesture::SecondaryClick, Gesture::Escape] {
+        // On the origin's xy plane, seen from above.
+        let mut editor = editor();
+        editor.handle(Command::New {
+            kind: "add_sketch".into(),
+        });
+        let click = |editor: &mut geop_core_editor::editor::Editor, x: f64, y: f64| {
+            editor.handle(click_at(from_above(x, y)));
+        };
+        click(&mut editor, 0.04, 0.04);
+        editor.handle(dialog("tool", Value::Choice("line".into())));
+        click(&mut editor, 0.0, 0.0);
+        click(&mut editor, 1.0, 0.0);
+        gesture.send(&mut editor);
+        click(&mut editor, 0.0, 1.0);
+        click(&mut editor, 1.0, 1.0);
+        let curves = drawn_curves(&mut editor);
+        assert_eq!(curves.len(), 2, "planar, {gesture:?}: {curves:#?}");
+    }
+}
+
+/// A second Escape puts the drawing tool down: the next click draws nothing.
+#[test]
+fn a_second_escape_puts_the_drawing_tool_down() {
+    let mut editor = editor();
+    editor.handle(Command::New {
+        kind: "add_sketch".into(),
+    });
+    let click = |editor: &mut geop_core_editor::editor::Editor, x: f64, y: f64| {
+        editor.handle(click_at(from_above(x, y)));
+    };
+    click(&mut editor, 0.04, 0.04);
+    editor.handle(dialog("tool", Value::Choice("line".into())));
+    click(&mut editor, 0.0, 0.0);
+    click(&mut editor, 1.0, 0.0);
+    Gesture::Escape.send(&mut editor);
+    Gesture::Escape.send(&mut editor);
+    click(&mut editor, 0.0, 1.0);
+    click(&mut editor, 1.0, 1.0);
+    let curves = drawn_curves(&mut editor);
+    assert_eq!(curves.len(), 1, "{curves:#?}");
+}
+
+/// A sketch is copied as the front end copies it — the update's export —
+/// and pasted where the program runs to, under a fresh id, building as the
+/// original does; pasted into a program without one of its id, it keeps
+/// its own.
+#[test]
+fn a_sketch_is_copied_and_pasted() {
+    let mut editor = loaded(box_with_drill_hole());
+    let sketch = editor
+        .program()
+        .steps
+        .iter()
+        .find(|s| s.operation == "add_sketch")
+        .expect("the example has a sketch")
+        .clone();
+
+    let copied = editor.handle(Command::Copy {
+        id: sketch.id.clone(),
+    });
+    assert!(copied.error.is_none(), "{:?}", copied.error);
+    let text = copied.export.unwrap().text().unwrap().to_string();
+
+    editor.handle(Command::Seek { marker: Some(1) });
+    let update = handled(&mut editor, Command::Paste { text: text.clone() });
+    let state = update.program.unwrap();
+    assert_eq!(state.marker, 2, "the program runs to the pasted step");
+    let pasted = &editor.program().steps[1];
+    assert_ne!(pasted.id, sketch.id);
+    assert_eq!(pasted.operation, sketch.operation);
+    editor.handle(Command::Seek { marker: None });
+    let update = editor.handle(Command::Show);
+    let steps = update.program.unwrap().steps;
+    assert!(steps.iter().all(|s| s.error.is_none()), "{steps:?}");
+
+    // Another file: its own id is free there.
+    editor.handle(Command::Load {
+        program: Program::new(),
+        path: Some("other.geop".into()),
+    });
+    handled(&mut editor, Command::Paste { text });
+    assert_eq!(editor.program().steps[0].id, sketch.id);
+
+    let refused = editor.handle(Command::Paste {
+        text: "not steps".into(),
+    });
+    assert!(refused.error.unwrap().contains("pasting"));
 }
