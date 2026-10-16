@@ -483,4 +483,42 @@ mod tests {
         let plane = reader.retrieve_element(&origin_plane(FrameAxis::X));
         assert!(plane.unwrap().w().to_array()[0].could_be_equal(Design::ONE));
     }
+
+    /// A frame datum — here the origin every part has — is hit before
+    /// anything else: its ball, as the whole frame, else an axis, else a
+    /// plane's square. Drawn over the unit cube, as an editor draws a part.
+    #[test]
+    fn frames() {
+        use geop_core_editor::{registry::Registry, selectable, testing::pointer};
+        use geop_ops_model::{
+            NamedModel, Solid,
+            testing::{given_part, unit_cube},
+        };
+
+        let part = given_part(&unit_cube()).unwrap();
+        let registry = (geop_ops_model::register(Registry::default()))
+            .and_then(register)
+            .unwrap();
+        let view = registry.draw(&part.current()).unwrap();
+        let down = |x: f64, y: f64| pointer([x, y, 5.0], [0.0, 0.0, -1.0]);
+        let frame = [drawn::DATUM, drawn::VERTEX, drawn::EDGE, drawn::FACE].map(String::from);
+        let name = |x: f64, y: f64| view.pick(&down(x, y), &frame).map(|h| h.element.name);
+        // Ten reaches of 0.009 each: the axes reach 0.09 out.
+        assert_eq!(name(0.0, 0.0), Some(ORIGIN.to_string()));
+        assert_eq!(
+            name(0.06, 0.0),
+            Some(origin_axis(FrameAxis::X).name().to_string())
+        );
+        assert_eq!(
+            name(0.04, 0.04),
+            Some(origin_plane(FrameAxis::Z).name().to_string())
+        );
+        // Looking for what no part of a frame can be, the cube under it.
+        let solid = selectable::pick::<ElementReference<NamedModel<Design>, Solid>, _>(
+            &view,
+            &part.current(),
+            &down(0.04, 0.04),
+        );
+        assert!(solid.is_some());
+    }
 }

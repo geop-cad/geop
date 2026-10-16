@@ -7,6 +7,8 @@
 
 mod add_sketch;
 mod constraints;
+#[cfg(test)]
+mod draw_tests;
 pub mod editor;
 pub mod fields;
 pub mod figures;

@@ -18,6 +18,8 @@
 mod add_part;
 mod drag_tool;
 mod draw;
+#[cfg(test)]
+mod draw_tests;
 pub mod editor;
 #[cfg(test)]
 mod editor_tests;

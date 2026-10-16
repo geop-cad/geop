@@ -194,4 +194,28 @@ mod tests {
             selected(&reader, &[face.element]);
         assert_eq!(bodies, [ElementReference::new(model(), "s0")]);
     }
+
+    /// A face is hit where the ray enters the part; a solid on any of its
+    /// faces; and nothing where the ray misses. Drawn as an editor draws a
+    /// part, by the drawers `register` adds.
+    #[test]
+    fn faces_and_solids() {
+        use geop_core_editor::{registry::Registry, selectable};
+
+        use crate::Solid;
+        let part: Part = given_part(&unit_cube()).unwrap();
+        let registry = crate::register(Registry::default()).unwrap();
+        let view = registry.draw(&part.current()).unwrap();
+        let faces = accepts(&[drawn::FACE]);
+        let hit = view.pick(&from_above(0.5, 0.5), &faces).unwrap();
+        assert_eq!(hit.element.kind, drawn::FACE);
+        assert!(hit.point[2].could_be_equal(Design::ONE), "{hit:?}");
+        let solid = selectable::pick::<ElementReference<NamedModel<Design>, Solid>, _>(
+            &view,
+            &part.current(),
+            &from_above(0.5, 0.5),
+        );
+        assert!(solid.is_some());
+        assert!(view.pick(&from_above(5.0, 5.0), &faces).is_none());
+    }
 }

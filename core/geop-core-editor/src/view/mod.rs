@@ -23,6 +23,8 @@
 //! instance's name ([`in_instance`]).
 
 pub mod icons;
+#[cfg(test)]
+mod tests;
 
 use std::rc::Rc;
 
