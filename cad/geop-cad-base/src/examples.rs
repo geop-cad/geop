@@ -4,32 +4,14 @@
 //! the recipe it is: `extrude(box,end)` is the end cap of the step `box`,
 //! whatever internal id it happens to get.
 
-use geop_core_math::{
-    primitives::{FrameAxis, Pose},
-    scalars::Scalar,
-    vector::Vector3,
-};
-use geop_core_program::{element::ElementReference, program::Program, values::Design};
-use geop_core_sketch::CurveId;
-use geop_lib_sweep::Orientation;
-use geop_ops_datums::origin_plane;
-use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, Output, PathRef, SweepArgs};
-use geop_ops_model::Combine;
-use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch, SketchPlane, sketch, whole_sketch};
+use geop_core_math::{primitives::Pose, scalars::Scalar, vector::Vector3};
+use geop_core_program::{program::Program, values::Design};
 
 use geop_core_editor::registry::{Example, ExampleSet};
-
-/// `[x, y]`, as an example is written down.
-type P2 = [f64; 2];
 
 /// A number of an example, as design data.
 pub(crate) fn n(x: f64) -> Design {
     Design::from_f64(x)
-}
-
-/// The plane of the origin normal to `normal`, as a plane to sketch on.
-fn on_origin(normal: FrameAxis) -> SketchPlane {
-    SketchPlane::Datum(origin_plane(normal))
 }
 
 /// A pose of an example: at `position`, turned by `degrees` (see
@@ -41,32 +23,6 @@ fn on_origin(normal: FrameAxis) -> SketchPlane {
 pub(crate) fn pose(position: [f64; 3], degrees: [f64; 3]) -> Pose<Design> {
     Pose::from_euler(Vector3::from_array(position.map(n)), degrees.map(n))
         .expect("an example's rotation is one")
-}
-
-/// Solves `sketch`, which the examples all constrain fully.
-pub(crate) fn solved(mut sketch: Sketch) -> Sketch {
-    let report = sketch.solve().expect("example sketches are valid");
-    assert!(
-        report.converged,
-        "example sketch does not solve: {report:?}"
-    );
-    sketch
-}
-
-/// A circle of `radius` around `center`, fully constrained.
-pub(crate) fn circle(sketch: &mut Sketch, center: P2, radius: f64) -> CurveId {
-    let c = sketch.add_point(n(center[0]), n(center[1]));
-    let circle = sketch.add_circle(c, n(radius * 1.1));
-    sketch.constrain(Constraint::Fix {
-        point: c,
-        x: n(center[0]),
-        y: n(center[1]),
-    });
-    sketch.constrain(Constraint::Radius {
-        curve: circle,
-        value: n(radius),
-    });
-    circle
 }
 
 /// An example drawn in the editor, kept as the program it saved (in
@@ -85,111 +41,6 @@ pub fn set() -> ExampleSet {
     }
 }
 
-/// A horn: a circle swept along a straight path, its size set by a rail —
-/// a spline flaring out beside the path, which the circle's point on it
-/// follows.
-pub fn horn() -> Program {
-    let base = |axis| Some(on_origin(axis));
-    let mut program = Program::new();
-    let mut mouth = Sketch::new();
-    let c = mouth.add_point(n(0.0), n(0.0));
-    mouth.add_circle(c, n(0.5));
-    program.push(
-        "mouth",
-        AddSketchArgs {
-            plane: base(FrameAxis::X),
-            sketch: mouth,
-            ..Default::default()
-        },
-    );
-    let mut axis = Sketch::new();
-    let (a, b) = (
-        axis.add_point(n(0.0), n(0.0)),
-        axis.add_point(n(4.0), n(0.0)),
-    );
-    axis.add_line(a, b);
-    program.push(
-        "axis",
-        AddSketchArgs {
-            plane: base(FrameAxis::Z),
-            sketch: axis,
-            ..Default::default()
-        },
-    );
-    let mut flare = Sketch::new();
-    let points =
-        [[0.0, 0.5], [1.5, 0.4], [3.0, 0.9], [4.0, 1.6]].map(|[x, y]| flare.add_point(n(x), n(y)));
-    flare.add_spline(points.to_vec());
-    program.push(
-        "flare",
-        AddSketchArgs {
-            plane: base(FrameAxis::Z),
-            sketch: flare,
-            ..Default::default()
-        },
-    );
-    program.push(
-        "horn",
-        SweepArgs {
-            profile: whole_sketch("mouth"),
-            path: Some(PathRef::Sketch(ElementReference::whole(sketch("axis")))),
-            orientation: Orientation::FollowPath,
-            twist: 0.0,
-            end_scale: 1.0,
-            rails: vec![PathRef::Sketch(ElementReference::whole(sketch("flare")))],
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-    program
-}
-
-/// A motor flange 30 across and 2.5 thick, drawn the way the sketch tools
-/// draw it: its bore an offset of its rim, 10 in, so the wall follows the
-/// rim; and its bolt circle one hole patterned six times round its middle,
-/// so the copies follow the first hole.
-pub fn motor_flange() -> Program {
-    let mut program = Program::new();
-    let mut outline = Sketch::new();
-    let middle = outline.add_point(n(0.0), n(0.0));
-    outline.constrain(Constraint::Fix {
-        point: middle,
-        x: n(0.0),
-        y: n(0.0),
-    });
-    let rim = outline.add_circle(middle, n(16.0));
-    outline.constrain(Constraint::Radius {
-        curve: rim,
-        value: n(15.0),
-    });
-    outline
-        .offset(&[rim], n(10.0), geop_core_sketch::offset::Corners::Round)
-        .expect("a circle offsets inwards by less than its radius");
-    let bolt = circle(&mut outline, [11.0, 0.0], 1.2);
-    outline
-        .pattern(
-            &[bolt],
-            &geop_core_sketch::copies::Step::Round {
-                center: middle,
-                angle: n(std::f64::consts::PI / 3.0),
-            },
-            6,
-        )
-        .expect("a hole off the middle turns round it");
-    program.push(
-        "outline",
-        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)),
-    );
-    program.push(
-        "flange",
-        ExtrudeArgs {
-            sketch: whole_sketch("outline"),
-            extent: Extents::blind(2.5),
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-    program
-}
-
 /// Every example, by name, each with what makes its program: listing them
 /// builds nothing — an editor lists them when it starts, and making one
 /// may solve sketches, or build a part to name its faces.
@@ -203,15 +54,12 @@ pub fn all() -> Vec<Example<Program>> {
         }),
         ("edge_part", || drawn(include_str!("drawn/edge_part.geop"))),
         ("conebox", || drawn(include_str!("drawn/conebox.geop"))),
-        ("horn", horn),
-        ("motor_flange", motor_flange),
     ]
 }
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar, vector::Vector3};
-    use geop_core_topology::contains::shell::{PointClassification, shell_contains};
+    use geop_core_math::scalars::ScalInF64 as S;
 
     use geop_ops_model::{NamedModel, PartDescription, RefId};
     use std::collections::BTreeMap;
@@ -296,20 +144,6 @@ mod tests {
         part
     }
 
-    fn inside(part: &NamedModel<S>, solid: &str, p: [f64; 3]) -> PointClassification {
-        let model = part.topology();
-        let solid = part.solid_id(solid).unwrap();
-        let point = Vector3::from_array(p.map(S::from_f64));
-        let mut result = PointClassification::Outside;
-        for &shell in &model.get_solid(solid).unwrap().shells {
-            match shell_contains(model, shell, point, 2000, S::from_f64(1e-6), 7).unwrap() {
-                PointClassification::Outside => {}
-                other => result = other,
-            }
-        }
-        result
-    }
-
     /// The examples drawn in the editor build valid parts and round-trip,
     /// as the ones written here do.
     #[test]
@@ -317,30 +151,6 @@ mod tests {
         let drawn = ["turbine_blade", "cool_flange", "edge_part", "conebox"];
         for (name, program) in all().into_iter().filter(|(n, _)| drawn.contains(n)) {
             build_and_round_trip(name, &program());
-        }
-    }
-
-    /// The motor flange is a ring with six bolt holes through it: solid in
-    /// its wall, open in its bore and in every hole, the copies round the
-    /// bolt circle as much as the first.
-    #[test]
-    fn motor_flange_round_trips() {
-        let part = build_and_round_trip("motor_flange", &motor_flange());
-        let solid = "extrude(flange)";
-        let at = |angle: f64, r: f64| {
-            let a = angle.to_radians();
-            [r * a.cos(), r * a.sin(), 1.25]
-        };
-        for (p, expected) in [
-            (at(30.0, 11.0), PointClassification::Inside),
-            (at(0.0, 7.0), PointClassification::Inside),
-            (at(0.0, 0.0), PointClassification::Outside),
-            (at(0.0, 11.0), PointClassification::Outside),
-            (at(120.0, 11.0), PointClassification::Outside),
-            (at(300.0, 11.0), PointClassification::Outside),
-            (at(0.0, 16.0), PointClassification::Outside),
-        ] {
-            assert_eq!(inside(&part, solid, p), expected, "at {p:?}");
         }
     }
 }

@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 use geop_core_editor::registry::ExampleSet;
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, vector::Vector3};
 use geop_core_program::{
-    numeric::NumericInput, operation_registry::OperationRegistry, part::Part, program::Program,
-    runner::Runner,
+    element::ElementReference, numeric::NumericInput, operation_registry::OperationRegistry,
+    part::Part, program::Program, runner::Runner,
 };
 use geop_core_sketch::CurveId;
 use geop_lib_sweep::Orientation;
@@ -26,7 +26,7 @@ use geop_ops_sketch::{
     AddSketch, AddSketchArgs, Constraint, Sketch, SketchPlane,
     figures::{circle, n, polygon, rectangle, solved},
     references::{Projected, Reference, Source},
-    sketch_element, whole_sketch,
+    sketch, sketch_element, whole_sketch,
 };
 use geop_ops_sketch3d::{AddSketch3dArgs, Constraint3d, Sketch3d, sketch3d_path};
 
@@ -46,6 +46,8 @@ pub fn set() -> ExampleSet {
             ("revolved_cone_on_box", revolved_cone_on_box),
             ("parametric_plate", parametric_plate),
             ("pipe", pipe),
+            ("horn", horn),
+            ("motor_flange", motor_flange),
         ],
         workspaces: Vec::new(),
     }
@@ -673,6 +675,111 @@ pub fn pipe() -> Program {
             twist: 0.0,
             end_scale: 1.0,
             rails: Vec::new(),
+            output: Output::Solid(Combine::NewBody),
+        },
+    );
+    program
+}
+
+/// A horn: a circle swept along a straight path, its size set by a rail —
+/// a spline flaring out beside the path, which the circle's point on it
+/// follows.
+pub fn horn() -> Program {
+    let base = |axis| Some(on_origin(axis));
+    let mut program = Program::new();
+    let mut mouth = Sketch::new();
+    let c = mouth.add_point(n(0.0), n(0.0));
+    mouth.add_circle(c, n(0.5));
+    program.push(
+        "mouth",
+        AddSketchArgs {
+            plane: base(FrameAxis::X),
+            sketch: mouth,
+            ..Default::default()
+        },
+    );
+    let mut axis = Sketch::new();
+    let (a, b) = (
+        axis.add_point(n(0.0), n(0.0)),
+        axis.add_point(n(4.0), n(0.0)),
+    );
+    axis.add_line(a, b);
+    program.push(
+        "axis",
+        AddSketchArgs {
+            plane: base(FrameAxis::Z),
+            sketch: axis,
+            ..Default::default()
+        },
+    );
+    let mut flare = Sketch::new();
+    let points =
+        [[0.0, 0.5], [1.5, 0.4], [3.0, 0.9], [4.0, 1.6]].map(|[x, y]| flare.add_point(n(x), n(y)));
+    flare.add_spline(points.to_vec());
+    program.push(
+        "flare",
+        AddSketchArgs {
+            plane: base(FrameAxis::Z),
+            sketch: flare,
+            ..Default::default()
+        },
+    );
+    program.push(
+        "horn",
+        SweepArgs {
+            profile: whole_sketch("mouth"),
+            path: Some(PathRef::Sketch(ElementReference::whole(sketch("axis")))),
+            orientation: Orientation::FollowPath,
+            twist: 0.0,
+            end_scale: 1.0,
+            rails: vec![PathRef::Sketch(ElementReference::whole(sketch("flare")))],
+            output: Output::Solid(Combine::NewBody),
+        },
+    );
+    program
+}
+
+/// A motor flange 30 across and 2.5 thick, drawn the way the sketch tools
+/// draw it: its bore an offset of its rim, 10 in, so the wall follows the
+/// rim; and its bolt circle one hole patterned six times round its middle,
+/// so the copies follow the first hole.
+pub fn motor_flange() -> Program {
+    let mut program = Program::new();
+    let mut outline = Sketch::new();
+    let middle = outline.add_point(n(0.0), n(0.0));
+    outline.constrain(Constraint::Fix {
+        point: middle,
+        x: n(0.0),
+        y: n(0.0),
+    });
+    let rim = outline.add_circle(middle, n(16.0));
+    outline.constrain(Constraint::Radius {
+        curve: rim,
+        value: n(15.0),
+    });
+    outline
+        .offset(&[rim], n(10.0), geop_core_sketch::offset::Corners::Round)
+        .expect("a circle offsets inwards by less than its radius");
+    let bolt = circle(&mut outline, [11.0, 0.0], 1.2);
+    outline
+        .pattern(
+            &[bolt],
+            &geop_core_sketch::copies::Step::Round {
+                center: middle,
+                angle: n(std::f64::consts::PI / 3.0),
+            },
+            6,
+        )
+        .expect("a hole off the middle turns round it");
+    program.push(
+        "outline",
+        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)),
+    );
+    program.push(
+        "flange",
+        ExtrudeArgs {
+            sketch: whole_sketch("outline"),
+            extent: Extents::blind(2.5),
             output: Output::Solid(Combine::NewBody),
         },
     );

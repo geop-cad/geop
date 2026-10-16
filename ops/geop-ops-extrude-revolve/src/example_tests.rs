@@ -29,8 +29,8 @@ use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
 use crate::{
     Extents, ExtrudeArgs,
     examples::{
-        box_with_drill_hole, bracket, cross_drilled_shaft, handle_with_hole, luggage_tag,
-        parametric_plate, pipe, pipe_route, revolved_cone_on_box,
+        box_with_drill_hole, bracket, cross_drilled_shaft, handle_with_hole, horn, luggage_tag,
+        motor_flange, parametric_plate, pipe, pipe_route, revolved_cone_on_box,
     },
     testing::{Built, args, disc, edit_args, error, model_of, n, on_face, step},
 };
@@ -395,4 +395,54 @@ fn duplicate_step_ids_are_rejected() {
     program.steps[3].id = "box".into();
     assert!(program.validate_ids().is_err());
     assert!(program.build_model(registry).is_err());
+}
+
+/// The horn is one solid, swept along its axis, flaring as its rail does:
+/// as wide as the mouth at its start, and as the rail at its end.
+#[test]
+fn horn_round_trips() {
+    let part = build_and_round_trip("horn", &horn());
+    assert_eq!(part.solid_names(), ["sweep(horn)"]);
+    for (p, expected) in [
+        ([0.1, 0.0, 0.0], PointClassification::Inside),
+        ([0.1, 0.0, 0.6], PointClassification::Outside),
+        ([3.9, 0.0, 1.4], PointClassification::Inside),
+        ([3.9, 0.0, 1.8], PointClassification::Outside),
+    ] {
+        assert_eq!(classify(&part, "sweep(horn)", p), expected, "at {p:?}");
+    }
+}
+
+#[test]
+fn horn_builds_incrementally() {
+    assert_edits_incremental(&horn());
+}
+
+/// The motor flange is a ring with six bolt holes through it: solid in
+/// its wall, open in its bore and in every hole, the copies round the
+/// bolt circle as much as the first.
+#[test]
+fn motor_flange_round_trips() {
+    let part = build_and_round_trip("motor_flange", &motor_flange());
+    let solid = "extrude(flange)";
+    let at = |angle: f64, r: f64| {
+        let a = angle.to_radians();
+        [r * a.cos(), r * a.sin(), 1.25]
+    };
+    for (p, expected) in [
+        (at(30.0, 11.0), PointClassification::Inside),
+        (at(0.0, 7.0), PointClassification::Inside),
+        (at(0.0, 0.0), PointClassification::Outside),
+        (at(0.0, 11.0), PointClassification::Outside),
+        (at(120.0, 11.0), PointClassification::Outside),
+        (at(300.0, 11.0), PointClassification::Outside),
+        (at(0.0, 16.0), PointClassification::Outside),
+    ] {
+        assert_eq!(classify(&part, solid, p), expected, "at {p:?}");
+    }
+}
+
+#[test]
+fn motor_flange_builds_incrementally() {
+    assert_edits_incremental(&motor_flange());
 }

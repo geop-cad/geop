@@ -31,7 +31,7 @@ use geop_ops_parameters::parameters_of;
 use geop_ops_reference_geometry::Selected;
 
 use crate::{
-    Command, Editor, Update, examples,
+    Command, Editor, Update,
     registry::testing::{
         Built, args, click_at, dialog, example_editor, from_above, handled, joints_panel, loaded,
         origin_axis, parameters_panel, pointer, rename_parameter, set_joint,
@@ -3704,7 +3704,7 @@ fn a_boundary_surface_spans_sketch_lines() {
 /// one.
 #[test]
 fn a_sweep_takes_a_3d_sketch_as_its_rail() {
-    let mut program = examples::horn();
+    let mut program = geop_ops_extrude_revolve::examples::horn();
     program.steps.truncate(2);
     let mut flare = geop_ops_sketch3d::Sketch3d::new();
     let points = [
