@@ -39,7 +39,7 @@ use crate::{
 /// in — sketched, extruded, drilled, rounded, subdivided, placed, the
 /// standard parts' patterns and parameters — each crate's `register`, as
 /// the editor's registry has them.
-fn registry() -> Registry {
+pub(crate) fn registry() -> Registry {
     let registry = (|| -> GeopResult<Registry> {
         let r = Registry::default();
         let r = geop_ops_model::register(r)?;
