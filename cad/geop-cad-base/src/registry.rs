@@ -108,27 +108,19 @@ pub fn build(
 
 /// What the tests of programs share beyond what every operation's tests
 /// do (`geop_ops_model::testing`, `geop_ops_extrude_revolve::testing`,
-/// `geop_core_editor::testing`): building one beside the standard parts,
-/// and setting its parameters as the parameters panel does.
+/// `geop_core_editor::testing`): building one beside the standard parts.
 #[cfg(test)]
 pub(crate) mod testing {
     use std::collections::BTreeMap;
 
-    use geop_core_editor::{
-        editor::{Command, ProgramState},
-        registry::Panel,
-    };
     use geop_core_math::geop_error::GeopResult;
     use geop_core_program::{part::Part, program::Program, values::Design};
     use geop_ops_extrude_revolve::testing::model_of;
     use geop_ops_model::NamedModel;
-    use geop_ops_parameters::{
-        Parameters, ParametersCommand, ParametersPanel, ParametersPanelState,
-    };
 
     pub(crate) use geop_core_editor::testing::{click_at, dialog, from_above, handled, pointer};
     pub(crate) use geop_ops_datums::origin_axis;
-    pub(crate) use geop_ops_extrude_revolve::testing::{args, edit_args};
+    pub(crate) use geop_ops_extrude_revolve::testing::args;
     pub(crate) use geop_ops_model::testing::check_valid;
 
     pub(crate) use super::{build, workspace};
@@ -151,18 +143,5 @@ pub(crate) mod testing {
         fn build_model(&self) -> GeopResult<NamedModel<Design>> {
             Ok(model_of(&self.built()?))
         }
-    }
-
-    /// The command setting the program's parameters to `parameters`, as
-    /// the parameters panel sends it.
-    pub(crate) fn set_parameters(parameters: Parameters) -> Command {
-        Command::panel::<ParametersPanel>(&ParametersCommand::SetParameters { parameters })
-            .expect("parameters are plain data")
-    }
-
-    /// What the parameters panel shows of `program`.
-    pub(crate) fn parameters_panel(program: &ProgramState) -> ParametersPanelState {
-        serde_json::from_value(program.panels[ParametersPanel::KEY].clone())
-            .expect("the parameters panel shows its state")
     }
 }

@@ -17,8 +17,8 @@ use serde::de::DeserializeOwned;
 
 use crate::{
     editing::{Button, GizmoPart, Pointer, Presentation, Reach, StepEditEvent, Value},
-    editor::{Command, Editor, ProgramState, StepState, Update},
-    registry::{Panel, Registry},
+    editor::{Command, Editor, StepState, Update},
+    registry::Registry,
 };
 
 /// An editor of what `registry` offers, with no other files, on `program`,
@@ -46,16 +46,6 @@ pub fn built(editor: &Editor) -> GeopResult<Part> {
     let mut part = Part::default();
     editor.program().run(&runner, &mut part)?;
     Ok(part)
-}
-
-/// What the panel `P` shows of `program`.
-pub fn panel_state<P: Panel>(program: &ProgramState) -> P::State
-where
-    P::State: DeserializeOwned,
-{
-    let shown = program.panels.get(P::KEY).cloned();
-    let shown = shown.unwrap_or_else(|| panic!("there is no panel `{}`", P::KEY));
-    serde_json::from_value(shown).unwrap_or_else(|e| panic!("the panel `{}`: {e}", P::KEY))
 }
 
 /// A pointer from `origin` along `dir`, reaching 0.009 units.

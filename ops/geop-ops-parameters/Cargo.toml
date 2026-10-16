@@ -10,12 +10,3 @@ geop-core-editor.workspace = true
 geop-ops-model.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-
-[dev-dependencies]
-geop-core-editor = { workspace = true, features = ["testing"] }
-geop-ops-model = { workspace = true, features = ["testing"] }
-# The steps reading the parameters, edited beside them: an integration
-# test, as they depend on this crate.
-geop-ops-sketch.workspace = true
-geop-ops-datums.workspace = true
-geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
