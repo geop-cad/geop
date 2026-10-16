@@ -1,8 +1,14 @@
 //! Fast tests: STEP texts written here, read into valid bodies; parts
 //! written and read back the same — example parts among them; an assembly
-//! written as products and occurrences.
+//! written as products and occurrences; and the editor's STEP export
+//! downloaded and imported back by a step, as the front end does it.
 
-use geop_core_editor::registry::Example;
+use geop_core_editor::{
+    editing::{Control, Value},
+    editor::{Command, Editor},
+    registry::{Example, Registry},
+    testing::{dialog, handled, loaded},
+};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     plain,
@@ -24,6 +30,7 @@ use geop_core_topology::{
 };
 use std::{cell::Cell, collections::BTreeMap, rc::Rc};
 
+use geop_lib_stdlib::WithStandardParts;
 use geop_lib_sweep::shapes::{cube_solid, revolved_cylinder, sphere_solid, v3};
 use geop_ops_assembly::{AddPart, AddPartArgs, examples::pin};
 use geop_ops_extrude_revolve::{
@@ -1116,4 +1123,198 @@ fn examples_round_trip_through_step() {
         }
         assert_eq!(back.solid_names().len(), part.solid_names().len(), "{name}");
     }
+}
+
+/// What an editor of STEP files offers: the parts and assemblies written
+/// and read — sketched, extruded, placed, the standard parts' patterns
+/// and parameters — and STEP itself.
+fn registry() -> Registry {
+    let registry = (|| -> GeopResult<Registry> {
+        let r = Registry::default();
+        let r = geop_ops_model::register(r)?;
+        let r = geop_ops_sketch::register(r)?;
+        let r = geop_ops_datums::register(r)?;
+        let r = geop_ops_reference_geometry::register(r)?;
+        let r = geop_ops_extrude_revolve::register(r)?;
+        let r = geop_ops_pattern::register(r)?;
+        let r = geop_ops_assembly::register(r)?;
+        let r = crate::register(r)?;
+        geop_ops_parameters::register(r)
+    })();
+    registry.expect("the operations each have a name of their own")
+}
+
+/// An editor of [`registry`], the standard parts beside the files it is
+/// sent.
+fn editor() -> Editor {
+    Editor::new(registry(), WithStandardParts(BTreeMap::new()))
+}
+
+/// The part shown, downloaded as STEP the way the front end asks for it.
+fn step_file(editor: &mut Editor) -> String {
+    let update = editor.handle(Command::Export {
+        exporter: "step".into(),
+        format: None,
+        options: serde_json::Value::Null,
+        date: String::new(),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let export = update.export.expect("a file is written");
+    assert!(export.name.ends_with(".step"), "{}", export.name);
+    let text = export.text().expect("STEP is text").to_string();
+    assert!(text.contains("MANIFOLD_SOLID_BREP"), "no solid in {text}");
+    text
+}
+
+/// The part shown written as STEP, stored next to a new program in a
+/// folder — as the front end stores a file the user chooses in the file
+/// field — is offered by a new "Import STEP" step by its path relative to
+/// the program, and brings its solid back, named after the step.
+#[test]
+fn a_part_exported_as_step_is_imported_back() {
+    let mut editor = loaded(editor(), box_with_drill_hole());
+    let files = std::collections::BTreeMap::from([(
+        "parts/box.step".to_string(),
+        Some(step_file(&mut editor)),
+    )]);
+    assert!(editor.handle(Command::Files { files }).error.is_none());
+    let update = editor.handle(Command::Load {
+        program: Program::new(),
+        path: Some("parts/imported.geop".into()),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let update = editor.handle(Command::New {
+        kind: "import_step".into(),
+    });
+    let step = update.step.expect("a step is edited");
+    assert_eq!(step.label, "Import STEP");
+    let Some(Control::File {
+        options, accept, ..
+    }) = step.presentation.dialog.get("file")
+    else {
+        panic!("the file is a file field");
+    };
+    assert!(options.iter().any(|o| o.value == "box.step"), "{options:?}");
+    assert_eq!(accept, &["step", "stp"]);
+    let update = editor.handle(dialog("file", Value::Choice("box.step".into())));
+    assert!(update.step.unwrap().error.is_none());
+    let update = editor.handle(Command::Commit);
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let id = editor.program().steps.last().unwrap().id.clone();
+    let solids: Vec<String> = update
+        .scene
+        .expect("the scene changed")
+        .structure
+        .into_iter()
+        .filter(|item| item.kind == "solid")
+        .map(|item| item.name)
+        .collect();
+    assert_eq!(solids, vec![format!("import({id},s0)")]);
+}
+
+/// A STEP file whose corner lies 3e-4 above where its three faces meet —
+/// further than the kernel can carry as one point — imports with the corner
+/// put back where they meet, and the dialog says what was rebuilt, and how
+/// far it moved.
+#[test]
+fn an_import_that_heals_the_file_says_what_it_rebuilt() {
+    let mut editor = loaded(editor(), box_with_drill_hole());
+    let text = step_file(&mut editor);
+    // The first vertex's point, raised.
+    let at = text.find("=VERTEX_POINT(").expect("a vertex");
+    let id = &text[at..];
+    let id = &id[id.find("',#").unwrap() + 3..id.find(");").unwrap()];
+    let line = format!("#{id}=CARTESIAN_POINT('',(");
+    let start = text.find(&line).expect("its point") + line.len();
+    let end = start + text[start..].find("))").unwrap();
+    let mut xyz: Vec<f64> = text[start..end]
+        .split(',')
+        .map(|c| c.parse().unwrap())
+        .collect();
+    xyz[2] += 3e-4;
+    let raised = format!(
+        "{}{:?},{:?},{:?}{}",
+        &text[..start],
+        xyz[0],
+        xyz[1],
+        xyz[2],
+        &text[end..]
+    );
+
+    let files = std::collections::BTreeMap::from([("box.step".to_string(), Some(raised))]);
+    assert!(editor.handle(Command::Files { files }).error.is_none());
+    let update = editor.handle(Command::Load {
+        program: Program::new(),
+        path: Some("imported.geop".into()),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    editor.handle(Command::New {
+        kind: "import_step".into(),
+    });
+    let update = editor.handle(dialog("file", Value::Choice("box.step".into())));
+    let step = update.step.expect("a step is edited");
+    assert!(step.error.is_none(), "{:?}", step.error);
+    let Some(Control::Text { text, .. }) = step.presentation.dialog.get("healed_0") else {
+        panic!(
+            "the dialog does not say what was rebuilt: {:?}",
+            step.presentation.dialog
+        );
+    };
+    assert!(
+        text.contains("by up to 3.0e-4 mm") && text.contains("1 vertices and"),
+        "{text}"
+    );
+    assert!(editor.handle(Command::Commit).error.is_none());
+}
+
+/// The arm, exported as STEP the way the front end asks: one product for
+/// the arm and one for each of the three links it places, each placement an
+/// occurrence named after its step — and read back, the three links where
+/// the arm has them.
+#[test]
+fn an_assembly_is_exported_as_step_products() {
+    let mut editor = editor();
+    let update = editor.handle(Command::LoadWorkspaceExample {
+        name: "arm".into(),
+        folder: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let text = step_file(&mut editor);
+    // TODO: one product of the link for all three, once the parts of no
+    // state are shared between instances (see
+    // `geop_core_program::part::Part`).
+    assert_eq!(
+        text.matches("=PRODUCT('").count(),
+        4,
+        "the arm and each link"
+    );
+    assert!(text.contains("PRODUCT('link','link'"));
+    for occurrence in ["upper", "fore", "hand"] {
+        assert!(
+            text.contains(&format!("NEXT_ASSEMBLY_USAGE_OCCURRENCE('{occurrence}'")),
+            "{occurrence} is placed"
+        );
+    }
+    let bodies = read_step::<S>(&text).unwrap();
+    assert_eq!(bodies.len(), 3, "the link, once where each step places it");
+}
+
+/// The bolted plate written as STEP: the standard screw and nut are named
+/// by the designations their own programs carry, one product per size.
+#[test]
+fn an_assembly_step_file_names_its_parts() {
+    let mut editor = editor();
+    handled(
+        &mut editor,
+        Command::LoadWorkspaceExample {
+            name: "bolted_plate".into(),
+            folder: None,
+        },
+    );
+    let text = step_file(&mut editor);
+    assert!(
+        text.contains("PRODUCT('ISO 4762 M4x12'"),
+        "the screw's product"
+    );
+    assert!(text.contains("PRODUCT('plate'"), "the plate's product");
 }
