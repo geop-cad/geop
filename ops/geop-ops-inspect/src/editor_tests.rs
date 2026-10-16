@@ -1,17 +1,22 @@
 //! The inspect tools asked through the editor, as the inspect panel asks:
 //! the mass properties of the example assemblies, each placed part of its
 //! own material where it is placed, and the interference between placed
-//! parts.
+//! parts; and the measure tool used as the viewer uses it, on the drilled
+//! box.
 
 use std::collections::BTreeMap;
 
 use geop_core_editor::{
-    editor::{Command, Editor},
+    editing::StepEditEvent,
+    editor::{Command, Editor, Update},
     output::Bounded,
     registry::Registry,
+    testing::{click_at, editor_with, from_above, pointer},
 };
 use geop_core_math::geop_error::GeopResult;
 use geop_lib_stdlib::WithStandardParts;
+use geop_ops_extrude_revolve::examples::box_with_drill_hole;
+use geop_ops_model::{Face, element};
 
 /// The operations the example assemblies are written in, with everything
 /// assemblies offer an editor — their examples among it — and the
@@ -123,4 +128,89 @@ fn assembly_examples_do_not_overlap() {
         let overlaps: Vec<_> = found.iter().filter(|f| f["contact"] == "overlap").collect();
         assert!(overlaps.is_empty(), "{name}: {overlaps:#?}");
     }
+}
+
+/// The measure tool, used as the viewer uses it: taken in hand, the box's
+/// top hovered and clicked — its area, its plane — then its bottom clicked
+/// from below: one unit apart, parallel, the least distance drawn between
+/// them. Then the mass properties and the interference of the part asked
+/// for. None of it changes the program, and the tool put down shows nothing.
+#[test]
+fn measure_tool_measures_what_is_clicked() {
+    let mut editor = editor_with(registry(), box_with_drill_hole());
+    let before = editor.program().clone();
+    let update = editor.handle(Command::Tool {
+        key: Some("pick:measure".into()),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    assert_eq!(
+        update.program.unwrap().tool.as_deref(),
+        Some("pick:measure")
+    );
+    let top = element::<Face>("extrude(box,end)").picked();
+    let bottom = element::<Face>("extrude(box,start)").picked();
+    let from_below = pointer([0.5, 0.5, -10.0], [0.0, 0.0, 1.0]);
+    let measured = |update: &Update| match &update.inspection {
+        Some(inspection) if inspection.kind == "measure" => inspection.report.clone(),
+        other => panic!("no measurement: {other:?}"),
+    };
+    let value = |m: &serde_json::Value, label: &str| {
+        let found = (m["values"].as_array().unwrap().iter())
+            .find(|v| v["label"] == label)
+            .unwrap_or_else(|| panic!("no {label}: {m}"));
+        Bounded {
+            value: found["value"].as_f64().unwrap(),
+            error: found["error"].as_f64().unwrap(),
+        }
+    };
+
+    let update = editor.handle(Command::Event {
+        event: StepEditEvent::Hover {
+            pointer: from_above(0.5, 0.5),
+            shift: false,
+        },
+    });
+    assert_eq!(update.tool.unwrap().highlights, vec![top.clone()]);
+
+    let update = editor.handle(click_at(from_above(0.5, 0.5)));
+    assert!(update.program.is_none(), "measuring changes no program");
+    let m = measured(&update);
+    assert_eq!(m["entities"], serde_json::json!([top]));
+    let hole = std::f64::consts::PI * 0.4 * 0.4;
+    assert!(value(&m, "Area").contains(4.0 - hole), "{m}");
+    assert!(!m["plane"].is_null());
+
+    let update = editor.handle(click_at(from_below));
+    let m = measured(&update);
+    assert_eq!(m["entities"], serde_json::json!([top, bottom]));
+    assert!(value(&m, "Distance").contains(1.0), "{m}");
+    assert!(value(&m, "Angle").contains(0.0), "{m}");
+    let tool = update.tool.unwrap();
+    assert!(tool.visuals.iter().any(|v| v.key == "distance"));
+
+    let update = editor.handle(Command::Inspect {
+        inspector: "mass_properties".into(),
+        options: serde_json::Value::Null,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let report = update.inspection.unwrap().report;
+    assert_eq!(report["bodies"].as_array().unwrap().len(), 1);
+    let volume = &report["total"]["volume"];
+    let volume = Bounded {
+        value: volume["value"].as_f64().unwrap(),
+        error: volume["error"].as_f64().unwrap(),
+    };
+    assert!(volume.contains(4.0 - hole * 0.5), "{volume:?}");
+
+    let update = editor.handle(Command::Inspect {
+        inspector: "interference".into(),
+        options: serde_json::Value::Null,
+    });
+    let report = update.inspection.unwrap().report;
+    assert_eq!(report["solids"], 1);
+    assert_eq!(report["found"], serde_json::json!([]));
+
+    let update = editor.handle(Command::Tool { key: None });
+    assert!(update.tool.is_none() && update.inspection.is_none());
+    assert_eq!(*editor.program(), before);
 }
