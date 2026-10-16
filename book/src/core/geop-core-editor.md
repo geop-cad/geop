@@ -217,7 +217,7 @@ into a typed reference (see
 
 A pick moves the pointer into each placed part's own frame and names what
 it hits as that part names it, its target behind the instance's name
-(`in_instance`: `bolt/model`). `pick_instance` and `part_to_drag` find the
+(`Located`: `/bolt:model`). `pick_instance` and `part_to_drag` find the
 placed part under the pointer, for dragging it. A `frame` pick (a
 `FramePick`) puts a frame on what is picked — a face, an edge, a point, a
 datum — at the corner or side of a face, or the end of an edge, that the

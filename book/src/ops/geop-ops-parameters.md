@@ -110,6 +110,6 @@ was placed from, which a copy places again. `instance` reads one,
 (`Reader::instances`) — each must be defined — and `placement` gives
 where an instance is, however deep, as `Factor`s outermost first: the
 values of the state that place it and the instances it is in, each read
-by its path in the part asked (`bolt/nut.pose`) and recorded, and the
+by its path in the part asked (`/bolt:nut.pose`) and recorded, and the
 fixed motions of copies. `compose` composes them into a pose, and
 `located` gives the pose of the instance at a path.

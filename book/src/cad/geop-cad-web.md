@@ -24,7 +24,7 @@ The browser edits a program through one `Editor` (`geop_cad_base::editor()`, see
 | `handle(command)`       | applies a `Command`, and returns the `Update` to show            |
 
 Everything crosses the boundary as JSON, elements by the target, kind and
-name a pick gives them (`{"target": "bolt/model", "kind": "face", "name":
+name a pick gives them (`{"target": "/bolt:model", "kind": "face", "name":
 "extrude(head,end)"}`), never by number. The types `web/src/geop.ts` gives
 that JSON are checked against what the kernel reads and sends:
 `cargo test -p geop protocol` keeps samples of every command and of every

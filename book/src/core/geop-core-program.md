@@ -104,7 +104,7 @@ make is `build_placed`), whose value is the built part (`PlacedPart`, an
 `Rc<Part>`). The make reads the program through its reader (a file read,
 in the workspace's revision of that file) and builds it with `inputs` and
 the slice of the placing part's state under the instance's name — the
-state `bolt/b.pose` of the part is the state `b.pose` of the part placed as
+state `/bolt:b.pose` of the part is the state `b.pose` of the part placed as
 `bolt` — the program's own where the part gives none. What a placed part is
 built from is exactly that, so equal builds are shared through the
 runner's build cache: a thousand screws of one size are one build, a
@@ -116,8 +116,11 @@ no concern of its build: its pose is the placing part's state (see
 `geop_ops_parameters::instance`), so dragging it builds nothing.
 
 - An element of a placed part is named by the instance's path before its
-  target's name: `bolt/model`, `asm/bolt/model` for one of a placed part's
-  placed part (`INSTANCE_SEPARATOR`). A pick names it so, and every
+  target's name: `/bolt:model`, `/asm/bolt:model` for one of a placed
+  part's placed part, `/:model` for one of the part itself (`Located`:
+  `INSTANCE_SEPARATOR` between instances, `TARGET_SEPARATOR` before the
+  name, which may hold `:` itself). A name not of that form is refused,
+  and an instance's name may hold neither. A pick names it so, and every
   `ElementReference` can hold one: a picker never asks where an element
   is from. `Reader::retrieve_element` resolves elements of the part
   itself, and refuses one of a placed part by name;
@@ -128,7 +131,7 @@ no concern of its build: its pose is the placing part's state (see
   (`Read::Inside`): a mate reading the second link of an arm is made again
   when that link changed, not when anything in the arm did.
   `Reader::instances` lists the parts placed in the part itself.
-- A state behind an instance's path — `bolt/b.pose` — is read as the
+- A state behind an instance's path — `/bolt:b.pose` — is read as the
   placing part gives it where it does, else inside the placed part
   (`Reader::given_state`), so what is read is always what the placed part
   is built with.

@@ -793,8 +793,13 @@ on is `ElementReference<NamedModel<Design>, Plane>`, made with
 sketch with `geop_ops_sketch::whole_sketch`. A field that takes one of
 several kinds of thing is an enum made by `one_of!`, which derives how it
 is saved, picked and resolved. An element of a part placed in the part is
-the same reference, its target behind the instance's path (`plate/model`,
-`.behind("plate")`): pickers never ask where an element is from. An
+the same reference, its target behind the instance's path (`/plate:model`,
+`.behind("plate")`): pickers never ask where an element is from. A name
+behind an instance's path is spelled one way, by
+`geop_core_program::placed::Located` alone: `/` between instances, `:`
+before the name, `/asm/bolt:model`, and `/:model` for the part itself;
+keys of one part's own tables (its state, its inputs) stay bare for its
+own, `b.pose`, and are located for a placed part's, `/bolt:b.pose`. An
 operation that can only use the part's own reads it with
 `retrieve_element`, which refuses the rest by name; one that can use any
 reads it with `retrieve_placed` (or `resolve_placed`, `Selected::shape`)
@@ -1068,7 +1073,7 @@ and the entities they are on are at a turn of zero alike.
 
 A version is reused when what it read did not change, so the place a value
 is read from and the place its read is checked must be the same. A mate on
-a part of a placed sub-assembly read `hinge/pin.pose` from the top part's
+a part of a placed sub-assembly read `/hinge:pin.pose` from the top part's
 own state, which the file never gave, and got no pose; the check looked in
 the hinge's part, where the hinge file's pose was, and saw nothing change.
 The mate kept a constraint differentiated by nothing, and the solve gave up
