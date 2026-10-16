@@ -705,6 +705,8 @@ dependencies = [
  "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
+ "geop-core-sketch",
+ "geop-core-topology",
  "geop-lib-sweep",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",

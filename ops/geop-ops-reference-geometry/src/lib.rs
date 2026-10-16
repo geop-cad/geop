@@ -13,6 +13,7 @@
 
 mod add_datum;
 mod editor;
+pub mod examples;
 mod icons;
 #[cfg(test)]
 mod program_tests;
@@ -29,5 +30,5 @@ use geop_core_math::geop_error::GeopResult;
 
 /// Adds what this crate offers an editor to `r`: the step adding a datum.
 pub fn register(r: Registry) -> GeopResult<Registry> {
-    r.operation(AddDatum)
+    r.operation(AddDatum)?.examples(examples::set())
 }

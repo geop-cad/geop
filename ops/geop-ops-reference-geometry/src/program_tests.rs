@@ -519,3 +519,95 @@ fn frames() {
     };
     assert!(e.to_string().contains("one line"), "{e}");
 }
+
+// ── The examples ────────────────────────────────────────────────────────────
+
+/// The example `program`, saved and loaded, builds what it built, and that
+/// is a valid model with names that hold.
+fn example_round_trips(
+    program: &Program,
+) -> geop_ops_model::NamedModel<geop_core_program::values::Design> {
+    let registry = std::rc::Rc::new(registry().unwrap());
+    let built = geop_core_program::testing::assert_round_trips(registry, None, program);
+    let part = geop_ops_extrude_revolve::testing::model_of(&built);
+    geop_ops_model::testing::assert_valid(&part);
+    part.check_names().unwrap();
+    part
+}
+
+/// The boss stands on the box, from the box's top up to the datum plane
+/// it is sketched on — one of the part's datums — and joined to it: one
+/// solid.
+#[test]
+fn boss_on_reference_plane_round_trips() {
+    use geop_core_topology::contains::shell::PointClassification::{Inside, Outside};
+    use geop_ops_model::testing::classify;
+
+    let program = crate::examples::boss_on_reference_plane();
+    let part = example_round_trips(&program);
+    assert_eq!(part.solid_names(), ["extrude(boss)"]);
+    let built = Built::of(program);
+    let datums = read_datums(&built.part.current()).unwrap();
+    assert_eq!(datums.names(), ["lifted"]);
+    for (p, expected) in [
+        ([1.0, 1.0, 1.3], Inside),
+        ([1.0, 1.0, 1.6], Outside),
+        ([0.2, 0.2, 1.3], Outside),
+        ([0.2, 0.2, 0.5], Inside),
+    ] {
+        assert_eq!(classify(&part, "extrude(boss)", p), expected, "at {p:?}");
+    }
+}
+
+/// The wing is one solid, lofted between its two sections.
+#[test]
+fn airfoil_wing_round_trips() {
+    let part = example_round_trips(&crate::examples::airfoil_wing());
+    assert_eq!(part.solid_names(), ["loft(wing)"]);
+}
+
+/// The examples, edited as a user edits them, build incrementally what
+/// they build from scratch.
+#[test]
+fn examples_build_incrementally() {
+    use crate::examples::{airfoil_wing, boss_on_reference_plane};
+
+    for example in [boss_on_reference_plane(), airfoil_wing()] {
+        let registry = std::rc::Rc::new(registry().unwrap());
+        let programs = geop_core_program::testing::edit_sequence(&example);
+        geop_core_program::testing::assert_incremental(registry, None, &programs);
+    }
+}
+
+/// A datum is a named entity, and a sketch can be placed on a datum
+/// plane: its frame, exactly.
+#[test]
+fn sketches_go_on_datum_planes() {
+    use geop_core_math::vector::Vector3;
+    use geop_core_program::values::Design;
+
+    let built = Built::of(crate::examples::boss_on_reference_plane());
+    let built = built.part.current();
+    let lifted = read_datums(&built).unwrap().get("lifted").unwrap();
+    let placed = built
+        .retrieve_element(&whole_sketch("boss_sketch"))
+        .unwrap();
+    assert!(placed.plane.origin().could_be_equal(lifted.frame.origin()));
+    assert!(placed.plane.u().could_be_equal(lifted.frame.u()));
+    // Sketch data is solved, not exact: agreeing to 1e-9 is agreeing.
+    let off = |a: &Vector3<Design>, b: [f64; 3]| {
+        a.sub(&Vector3::from_array(b.map(Design::from_f64)))
+            .norm()
+            .to_f64()
+    };
+    assert!(
+        off(placed.plane.origin(), [0.0, 0.0, 1.5]) < 1e-9,
+        "{}",
+        placed.plane
+    );
+    assert!(
+        off(placed.plane.w(), [0.0, 0.0, 1.0]) < 1e-9,
+        "{}",
+        placed.plane
+    );
+}

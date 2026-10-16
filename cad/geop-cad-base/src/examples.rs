@@ -5,7 +5,7 @@
 //! whatever internal id it happens to get.
 
 use geop_core_math::{
-    primitives::{DatumComponent, FrameAxis, Pose},
+    primitives::{FrameAxis, Pose},
     scalars::Scalar,
     vector::Vector3,
 };
@@ -13,12 +13,11 @@ use geop_core_program::{element::ElementReference, program::Program, values::Des
 use geop_core_sketch::{CurveId, PointId};
 use geop_lib_sweep::Orientation;
 use geop_ops_boolean::SplitArgs;
-use geop_ops_datums::{ORIGIN, component_name, datum, origin_axis, origin_plane};
-use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, LoftArgs, Output, PathRef, SweepArgs};
+use geop_ops_datums::{origin_axis, origin_plane};
+use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, Output, PathRef, SweepArgs};
 use geop_ops_model::element;
 use geop_ops_model::{Combine, solid};
 use geop_ops_pattern::{Direction, LinearPatternArgs, PatternDirection, Seeds, Spacing, feature};
-use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
 use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch, SketchPlane, sketch, whole_sketch};
 use geop_ops_sketch3d::{AddSketch3dArgs, CurveSource, Sketch3d};
 use geop_ops_surface::NetworkSurfaceArgs;
@@ -122,61 +121,6 @@ pub(crate) fn circle(sketch: &mut Sketch, center: P2, radius: f64) -> CurveId {
     circle
 }
 
-/// A box with a round boss standing on it, sketched on a reference plane:
-/// the plane half a unit above the box's top (`lifted`, offset from
-/// `extrude(box,end)`), a circle sketched on it, and extruded back down
-/// through the gap and into the box, joined to it (`boss`) — the part is
-/// `extrude(boss)`.
-pub fn boss_on_reference_plane() -> Program {
-    let mut program = Program::new();
-    let mut outline = Sketch::new();
-    rectangle(&mut outline, [0.0, 0.0], 2.0, 2.0);
-    program.push(
-        "outline",
-        AddSketchArgs {
-            plane: Some(on_origin(FrameAxis::Z)),
-            sketch: solved(outline),
-            ..Default::default()
-        },
-    );
-    program.push(
-        "box",
-        ExtrudeArgs {
-            sketch: whole_sketch("outline"),
-            extent: Extents::blind(1.0),
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-    program.push(
-        "lifted",
-        AddDatumArgs {
-            selection: vec![Selected::Face(element("extrude(box,end)"))],
-            construction: Construction::Offset {
-                distance: 0.5.into(),
-            },
-        },
-    );
-    let mut boss = Sketch::new();
-    circle(&mut boss, [1.0, 1.0], 0.5);
-    program.push(
-        "boss_sketch",
-        AddSketchArgs {
-            plane: Some(SketchPlane::Datum(datum("lifted"))),
-            sketch: solved(boss),
-            ..Default::default()
-        },
-    );
-    program.push(
-        "boss",
-        ExtrudeArgs {
-            sketch: whole_sketch("boss_sketch"),
-            extent: Extents::blind(-0.75),
-            output: Output::Solid(Combine::join("extrude(box)")),
-        },
-    );
-    program
-}
-
 /// An example drawn in the editor, kept as the program it saved (in
 /// `src/drawn/`): its sketches as they were drawn, which no code here says
 /// better. Its tests build it like every other example, so a change to the
@@ -191,111 +135,6 @@ pub fn set() -> ExampleSet {
         programs: all(),
         workspaces: Vec::new(),
     }
-}
-
-/// The NACA 2412 section, chord 1 from its leading edge at the origin to
-/// its trailing edge at `(1, 0)`: the upper side from the trailing edge to
-/// the leading edge, then the lower side back — points of the four-digit
-/// formula, cosine spaced, used as the control points of a spline each.
-const NACA_2412_UPPER: [P2; 15] = [
-    [1.0, 0.0],
-    [0.9876, 0.0026],
-    [0.9509, 0.0101],
-    [0.8917, 0.0214],
-    [0.8129, 0.0349],
-    [0.7182, 0.049],
-    [0.6123, 0.062],
-    [0.5006, 0.0723],
-    [0.3886, 0.0784],
-    [0.2813, 0.0782],
-    [0.1853, 0.071],
-    [0.1056, 0.0576],
-    [0.0464, 0.0399],
-    [0.0107, 0.0201],
-    [0.0, 0.0],
-];
-const NACA_2412_LOWER: [P2; 15] = [
-    [0.0, 0.0],
-    [0.0144, -0.0176],
-    [0.0526, -0.0306],
-    [0.1126, -0.0387],
-    [0.1912, -0.0422],
-    [0.2848, -0.0416],
-    [0.3889, -0.0384],
-    [0.4994, -0.0334],
-    [0.6102, -0.027],
-    [0.7157, -0.0202],
-    [0.8106, -0.0138],
-    [0.8901, -0.0082],
-    [0.9501, -0.0038],
-    [0.9873, -0.001],
-    [1.0, 0.0],
-];
-
-/// The NACA 2412 section of chord `chord`, its leading edge at `(x, 0)`,
-/// drawn in a plane of the origin's `y` axis — which draws in `(x, -z)`,
-/// so the section is drawn upside down to stand the right way up.
-fn naca_2412(chord: f64, x: f64) -> Sketch {
-    let mut s = Sketch::new();
-    let point = |s: &mut Sketch, p: P2| s.add_point(n(x + chord * p[0]), n(-chord * p[1]));
-    let trailing = point(&mut s, NACA_2412_UPPER[0]);
-    let leading = point(&mut s, NACA_2412_LOWER[0]);
-    let side = |s: &mut Sketch, points: &[P2], first: PointId, last: PointId| {
-        let mut control = vec![first];
-        for &p in &points[1..points.len() - 1] {
-            control.push(point(s, p));
-        }
-        control.push(last);
-        s.add_spline(control);
-    };
-    side(&mut s, &NACA_2412_UPPER, trailing, leading);
-    side(&mut s, &NACA_2412_LOWER, leading, trailing);
-    s
-}
-
-/// A wing: the NACA 2412 section, chord 1 at the root, lofted into the
-/// same section of chord 0.6 at the tip, 3 out along `y` and swept back
-/// 0.3.
-pub fn airfoil_wing() -> Program {
-    let mut program = Program::new();
-    program.push(
-        "root",
-        AddSketchArgs {
-            plane: Some(on_origin(FrameAxis::Y)),
-            sketch: naca_2412(1.0, 0.0),
-            ..Default::default()
-        },
-    );
-    program.push(
-        "span",
-        AddDatumArgs {
-            selection: vec![Selected::Datum(datum(component_name(
-                ORIGIN,
-                DatumComponent::Plane(FrameAxis::Y),
-            )))],
-            construction: Construction::Offset {
-                distance: 3.0.into(),
-            },
-        },
-    );
-    program.push(
-        "tip",
-        AddSketchArgs {
-            plane: Some(SketchPlane::Datum(datum("span"))),
-            sketch: naca_2412(0.6, 0.3),
-            ..Default::default()
-        },
-    );
-    program.push(
-        "wing",
-        LoftArgs {
-            profiles: vec![whole_sketch("root"), whole_sketch("tip")],
-            matches: Vec::new(),
-            guides: Vec::new(),
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-    program
 }
 
 /// A horn: a circle swept along a straight path, its size set by a rail —
@@ -548,8 +387,6 @@ pub fn all() -> Vec<Example<Program>> {
         }),
         ("edge_part", || drawn(include_str!("drawn/edge_part.geop"))),
         ("conebox", || drawn(include_str!("drawn/conebox.geop"))),
-        ("boss_on_reference_plane", boss_on_reference_plane),
-        ("airfoil_wing", airfoil_wing),
         ("patterned_plate", patterned_plate),
         ("horn", horn),
         ("motor_flange", motor_flange),
@@ -561,8 +398,7 @@ pub fn all() -> Vec<Example<Program>> {
 mod tests {
     use geop_core_math::{scalars::ScalInF64 as S, scalars::Scalar, vector::Vector3};
     use geop_core_topology::contains::shell::{PointClassification, shell_contains};
-    use geop_ops_datums::read_datums;
-    use geop_ops_extrude_revolve::testing::model_of;
+
     use geop_ops_model::{NamedModel, PartDescription, RefId};
     use std::collections::BTreeMap;
 
@@ -670,37 +506,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn boss_on_reference_plane_round_trips() {
-        let part = build_and_round_trip("boss_on_reference_plane", &boss_on_reference_plane());
-        let description = PartDescription::of(&part).unwrap();
-        assert_eq!(
-            description.solids.keys().collect::<Vec<_>>(),
-            ["extrude(boss)"]
-        );
-        // The datum the boss is sketched on is one of the part's.
-        let built = boss_on_reference_plane().built().unwrap();
-        let datums = read_datums(&built.current()).unwrap();
-        assert_eq!(datums.names(), ["lifted"]);
-        // The boss stands on the box: from the box's top up to the plane.
-        assert_eq!(
-            inside(&part, "extrude(boss)", [1.0, 1.0, 1.3]),
-            PointClassification::Inside
-        );
-        assert_eq!(
-            inside(&part, "extrude(boss)", [1.0, 1.0, 1.6]),
-            PointClassification::Outside
-        );
-        assert_eq!(
-            inside(&part, "extrude(boss)", [0.2, 0.2, 1.3]),
-            PointClassification::Outside
-        );
-        assert_eq!(
-            inside(&part, "extrude(boss)", [0.2, 0.2, 0.5]),
-            PointClassification::Inside
-        );
-    }
-
     /// The curved panel is a valid face, through the middle of its middle
     /// rib and spine, where they cross; it splits the block under it in
     /// two, a point above the saddle in one and one below it in the other.
@@ -764,13 +569,6 @@ mod tests {
         }
     }
 
-    /// Reproduces the real bug report described on `revolved_cone_on_box`.
-    #[test]
-    fn airfoil_wing_round_trips() {
-        let part = build_and_round_trip("airfoil_wing", &airfoil_wing());
-        assert_eq!(part.solid_names(), ["loft(wing)"]);
-    }
-
     #[test]
     fn patterned_plate_round_trips() {
         let part = build_and_round_trip("patterned_plate", &patterned_plate());
@@ -783,33 +581,5 @@ mod tests {
         ] {
             assert_eq!(inside(&part, "linear_pattern(holes)", p), expected, "{p:?}");
         }
-    }
-
-    /// A datum is a named entity, and a sketch can be placed on a datum
-    /// plane: its frame, exactly.
-    #[test]
-    fn sketches_go_on_datum_planes() {
-        let part = boss_on_reference_plane().built().unwrap();
-        model_of(&part).check_names().unwrap();
-        let built = part.current();
-        let lifted = read_datums(&built).unwrap().get("lifted").unwrap();
-        let placed = built
-            .retrieve_element(&whole_sketch("boss_sketch"))
-            .unwrap();
-        assert!(placed.plane.origin().could_be_equal(lifted.frame.origin()));
-        assert!(placed.plane.u().could_be_equal(lifted.frame.u()));
-        // Sketch data is solved, not exact: agreeing to 1e-9 is agreeing.
-        let off =
-            |a: &Vector3<S>, b: [f64; 3]| a.sub(&Vector3::from_array(b.map(n))).norm().to_f64();
-        assert!(
-            off(placed.plane.origin(), [0.0, 0.0, 1.5]) < 1e-9,
-            "{}",
-            placed.plane
-        );
-        assert!(
-            off(placed.plane.w(), [0.0, 0.0, 1.0]) < 1e-9,
-            "{}",
-            placed.plane
-        );
     }
 }
