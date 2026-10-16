@@ -9,6 +9,8 @@ mod add_sketch3d;
 mod editor;
 mod icons;
 pub mod placed;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 #[cfg(test)]
 mod tests;
 

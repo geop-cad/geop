@@ -16,6 +16,10 @@ geop-ops-parameters.workspace = true
 geop-ops-sketch.workspace = true
 serde.workspace = true
 
+[features]
+# The 3-D sketches of `testing`, for other crates' tests.
+testing = []
+
 [dev-dependencies]
 geop-ops-model = { workspace = true, features = ["testing"] }
 serde_json.workspace = true

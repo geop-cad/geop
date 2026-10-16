@@ -1,11 +1,13 @@
 //! What the tests of the operations share about the model: checking it
 //! valid and drawn as its trims say, finding its entities by where they
-//! are, and building a part of a model given and one step. Only built for
-//! tests: with `testing`, or in this crate's own.
+//! are, the model an editor shows, and building a part of a model given
+//! and one step. Only built for tests: with `testing`, or in this crate's
+//! own.
 
 // Helpers of tests fail as tests do: by panicking, naming what is wrong.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use geop_core_editor::editor::Editor;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
@@ -315,6 +317,14 @@ pub fn unit_cube() -> NamedModel<Design> {
         names,
         features: Vec::new(),
     }
+}
+
+// ── What an editor shows ────────────────────────────────────────────────────
+
+/// The model the editor `editor` shows: what the program it edits builds,
+/// as far as it runs it.
+pub fn model_shown(editor: &Editor) -> NamedModel<Design> {
+    read_model(&editor.part()).unwrap().into_owned()
 }
 
 // ── Parts of a model given and one step ─────────────────────────────────────

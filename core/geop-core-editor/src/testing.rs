@@ -1,22 +1,24 @@
 //! What tests of editing share (feature `testing`): an [`Editor`] over a
 //! [`Registry`] of the operations a test needs ([`editor_with`]), driven
-//! as a front end drives it — pointers, clicks, dialog fields — and one
-//! step edited that way ([`Stepping`]).
+//! as a front end drives it — pointers, clicks, keys, dialog fields, the
+//! gizmo — one step edited that way ([`Stepping`]), and the part its
+//! program builds anew ([`built`]).
 
 use std::collections::BTreeMap;
 
 use geop_core_math::{
+    geop_error::GeopResult,
     primitives::ray::Ray,
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_core_program::program::Program;
+use geop_core_program::{part::Part, program::Program, runner::Runner};
 use serde::de::DeserializeOwned;
 
 use crate::{
-    editing::{Button, Pointer, Presentation, Reach, StepEditEvent, Value},
-    editor::{Command, Editor, StepState, Update},
-    registry::Registry,
+    editing::{Button, GizmoPart, Pointer, Presentation, Reach, StepEditEvent, Value},
+    editor::{Command, Editor, ProgramState, StepState, Update},
+    registry::{Panel, Registry},
 };
 
 /// An editor of what `registry` offers, with no other files, on `program`,
@@ -35,6 +37,25 @@ pub fn loaded(mut editor: Editor, program: Program) -> Editor {
         },
     );
     editor
+}
+
+/// The part the program `editor` edits builds anew, on its own, in the
+/// operations `editor` offers — not the part the editor keeps.
+pub fn built(editor: &Editor) -> GeopResult<Part> {
+    let runner = Runner::new(editor.registry().operations());
+    let mut part = Part::default();
+    editor.program().run(&runner, &mut part)?;
+    Ok(part)
+}
+
+/// What the panel `P` shows of `program`.
+pub fn panel_state<P: Panel>(program: &ProgramState) -> P::State
+where
+    P::State: DeserializeOwned,
+{
+    let shown = program.panels.get(P::KEY).cloned();
+    let shown = shown.unwrap_or_else(|| panic!("there is no panel `{}`", P::KEY));
+    serde_json::from_value(shown).unwrap_or_else(|e| panic!("the panel `{}`: {e}", P::KEY))
 }
 
 /// A pointer from `origin` along `dir`, reaching 0.009 units.
@@ -82,6 +103,89 @@ pub fn dialog(key: &str, value: Value) -> Command {
             key: key.into(),
             value,
         },
+    }
+}
+
+/// What the step being edited shows after `event`, as the front end sends
+/// it; the editor has to take it without an error.
+#[track_caller]
+pub fn event(editor: &mut Editor, event: StepEditEvent<S>) -> StepState {
+    let update = handled(editor, Command::Event { event });
+    update.step.expect("a step is edited")
+}
+
+/// Hovers `at`, which must be over `part` of the gizmo — a press there
+/// grabs — and drags it to `to`: once on the way, half way, saying what
+/// the drag has done so far, then released there.
+#[track_caller]
+pub fn drag_gizmo(
+    editor: &mut Editor,
+    part: GizmoPart,
+    at: Pointer<S>,
+    to: Pointer<S>,
+    halfway: Pointer<S>,
+    shift: bool,
+) -> StepState {
+    let step = event(
+        editor,
+        StepEditEvent::Hover {
+            pointer: at,
+            shift: false,
+        },
+    );
+    let gizmo = step.presentation.gizmo.expect("a gizmo");
+    assert_eq!(gizmo.hover, Some(part), "{gizmo:?}");
+    assert!(step.presentation.grab, "a press on the gizmo grabs");
+    let step = event(
+        editor,
+        StepEditEvent::Drag {
+            from: at,
+            to: halfway,
+            done: false,
+            shift,
+        },
+    );
+    let gizmo = step.presentation.gizmo.expect("a gizmo while dragged");
+    assert_eq!(gizmo.active, Some(part));
+    assert!(gizmo.readout.is_some(), "{gizmo:?}");
+    event(
+        editor,
+        StepEditEvent::Drag {
+            from: at,
+            to,
+            done: true,
+            shift,
+        },
+    )
+}
+
+/// A gesture of the key and pointer grammar every tool shares.
+#[derive(Clone, Copy, Debug)]
+pub enum Gesture {
+    Enter,
+    SecondaryClick,
+    Escape,
+}
+
+impl Gesture {
+    /// Sends the gesture to the step `editor` edits, a secondary click
+    /// looking down at the origin.
+    pub fn send(self, editor: &mut Editor) {
+        let sent = match self {
+            Gesture::Enter => StepEditEvent::Key {
+                key: "Enter".into(),
+            },
+            Gesture::Escape => StepEditEvent::Key {
+                key: "Escape".into(),
+            },
+            Gesture::SecondaryClick => StepEditEvent::Click {
+                pointer: from_above(0.0, 0.0),
+                button: Button::Secondary,
+                double: false,
+                shift: false,
+            },
+        };
+        event(editor, sent);
     }
 }
 
