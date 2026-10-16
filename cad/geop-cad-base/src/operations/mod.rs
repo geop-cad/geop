@@ -2,7 +2,6 @@
 //! driven over all of them as a front end drives it. Their helpers are
 //! [`crate::registry::testing`]'s.
 
-mod add_datum_editor_tests;
 mod editor_tests;
 mod example_tests;
 mod program_tests;

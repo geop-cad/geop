@@ -109,31 +109,27 @@ pub fn build(
 /// What the tests of programs share beyond what every operation's tests
 /// do (`geop_ops_model::testing`, `geop_ops_extrude_revolve::testing`,
 /// `geop_core_editor::testing`): building one beside the standard parts,
-/// and editing it in an editor of everything.
+/// and setting its parameters as the parameters panel does.
 #[cfg(test)]
 pub(crate) mod testing {
     use std::collections::BTreeMap;
 
     use geop_core_editor::{
-        editor::{Command, Editor, ProgramState},
+        editor::{Command, ProgramState},
         registry::Panel,
-        testing::loaded as loaded_in,
     };
     use geop_core_math::geop_error::GeopResult;
     use geop_core_program::{part::Part, program::Program, values::Design};
-    use geop_ops_assembly::{JointsCommand, JointsPanel};
     use geop_ops_extrude_revolve::testing::model_of;
     use geop_ops_model::NamedModel;
     use geop_ops_parameters::{
         Parameters, ParametersCommand, ParametersPanel, ParametersPanelState,
     };
 
-    pub(crate) use geop_core_editor::testing::{
-        Stepping, click_at, dialog, from_above, handled, pointer,
-    };
+    pub(crate) use geop_core_editor::testing::{click_at, dialog, from_above, handled, pointer};
     pub(crate) use geop_ops_datums::origin_axis;
     pub(crate) use geop_ops_extrude_revolve::testing::{args, edit_args};
-    pub(crate) use geop_ops_model::testing::{check_valid, solid_volume};
+    pub(crate) use geop_ops_model::testing::check_valid;
 
     pub(crate) use super::{build, workspace};
 
@@ -157,11 +153,6 @@ pub(crate) mod testing {
         }
     }
 
-    /// An editor of everything on `program`, which loads without an error.
-    pub(crate) fn loaded(program: Program) -> Editor {
-        loaded_in(super::editor(), program)
-    }
-
     /// The command setting the program's parameters to `parameters`, as
     /// the parameters panel sends it.
     pub(crate) fn set_parameters(parameters: Parameters) -> Command {
@@ -169,37 +160,9 @@ pub(crate) mod testing {
             .expect("parameters are plain data")
     }
 
-    /// The command renaming the parameter `from` `to`, as the parameters
-    /// panel sends it.
-    pub(crate) fn rename_parameter(from: &str, to: &str) -> Command {
-        let (from, to) = (from.into(), to.into());
-        Command::panel::<ParametersPanel>(&ParametersCommand::RenameParameter { from, to })
-            .expect("names are plain data")
-    }
-
-    /// The command setting the value `parameter` a step offers a user to
-    /// set to `value`, as the joints panel sends it.
-    pub(crate) fn set_joint(parameter: &str, value: f64) -> Command {
-        let parameter = parameter.into();
-        Command::panel::<JointsPanel>(&JointsCommand::Set { parameter, value })
-            .expect("a joint's value is plain data")
-    }
-
     /// What the parameters panel shows of `program`.
     pub(crate) fn parameters_panel(program: &ProgramState) -> ParametersPanelState {
         serde_json::from_value(program.panels[ParametersPanel::KEY].clone())
             .expect("the parameters panel shows its state")
-    }
-
-    /// What the joints panel shows of `program`.
-    pub(crate) fn joints_panel(program: &ProgramState) -> &serde_json::Value {
-        &program.panels[JointsPanel::KEY]
-    }
-
-    /// An editor of everything on the example `name`.
-    pub(crate) fn example_editor(name: &str) -> Editor {
-        let mut editor = super::editor();
-        handled(&mut editor, Command::LoadExample { name: name.into() });
-        editor
     }
 }
