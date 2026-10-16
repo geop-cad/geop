@@ -1,5 +1,5 @@
 # Baseline after the refactor of ARCHITECTURE_PLAN.md (phase 5), 2026-10-16,
-# at e8df7d2 (Clippy is clean with -D warnings, branch refactor).
+# at f66d559 (Clippy is clean with -D warnings, branch refactor).
 # lines: find <crate>/src <crate>/tests -name '*.rs' | xargs cat | wc -l
 # tests: occurrences of #[test] in <crate>/src and <crate>/tests; ignored: of #[ignore
 
