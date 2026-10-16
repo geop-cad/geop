@@ -33,6 +33,8 @@ pub use view::{DrawnView, ViewFrame, ViewKind};
 mod annotation_tests;
 mod icons;
 #[cfg(test)]
+mod program_tests;
+#[cfg(test)]
 mod testing;
 #[cfg(test)]
 mod tests;

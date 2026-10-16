@@ -1,33 +1,80 @@
-//! Drawings of the example parts: hidden lines, sections, dimensions, and
-//! every view of every example (ignored, slow).
+//! Drawings of the example parts and assemblies, as programs build them:
+//! hidden lines, sections, dimensions, threads, balloons.
 
-use geop_core_geometry::contains::curve::curve_could_contain;
+use std::{collections::BTreeMap, rc::Rc};
+
+use geop_core_editor::registry::Registry;
 use geop_core_math::{
+    geop_error::GeopResult,
     primitives::{DatumComponent, FrameAxis},
     scalars::{Ring, ScalInF64 as S, Scalar},
 };
 use geop_core_program::{
     part::Part,
     program::Program,
+    runner::Runner,
     values::{Setting, Settings, StateValue, pose_state},
+    workspace::{self, Files, Location},
 };
 use geop_lib_sheet::to_dxf;
+use geop_lib_stdlib::WithStandardParts;
+use geop_ops_assembly::examples::{metric_plate, pose, workspaces};
 use geop_ops_datums::{ORIGIN, component_name, datum};
-use geop_ops_drawing::{
-    Along, Annotation, DrawingArgs, DrawnView, LineKind, Target, ViewKind, ViewOptions, compose,
-    drawing::drawn_faces, parts_list, project_view,
+use geop_ops_extrude_revolve::{
+    examples::{box_with_drill_hole, bracket},
+    testing::model_of,
 };
-use geop_ops_extrude_revolve::testing::model_of;
+use geop_ops_hole::examples::hole_plate;
 use geop_ops_model::{NamedModel, RefId};
 use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
 use geop_ops_sketch::SketchPlane;
+use geop_ops_subd::examples::subd_mouse;
 
-use crate::examples;
-use crate::registry::testing::Built;
+use crate::{
+    Along, Annotation, DrawingArgs, DrawnView, LineKind, ProjectedView, Target, ViewKind, ViewLine,
+    ViewOptions, compose, drawing::drawn_faces, parts_list, project_view,
+};
+
+/// The operations the example parts and assemblies drawn here are written
+/// in — sketched, extruded, drilled, rounded, subdivided, placed, the
+/// standard parts' patterns and parameters — each crate's `register`, as
+/// the editor's registry has them.
+fn registry() -> Registry {
+    let registry = (|| -> GeopResult<Registry> {
+        let r = Registry::default();
+        let r = geop_ops_model::register(r)?;
+        let r = geop_ops_sketch::register(r)?;
+        let r = geop_ops_datums::register(r)?;
+        let r = geop_ops_reference_geometry::register(r)?;
+        let r = geop_ops_extrude_revolve::register(r)?;
+        let r = geop_ops_hole::register(r)?;
+        let r = geop_ops_fillet::register(r)?;
+        let r = geop_ops_subd::register(r)?;
+        let r = geop_ops_pattern::register(r)?;
+        let r = geop_ops_assembly::register(r)?;
+        geop_ops_parameters::register(r)
+    })();
+    registry.expect("the operations each have a name of their own")
+}
+
+/// `program`, the file `file` among `files` beside the standard parts,
+/// built.
+fn build_file(program: &Program, file: &str, files: BTreeMap<String, String>) -> Part {
+    let operations = registry().operations();
+    let mut runner = Runner::new(operations.clone());
+    runner.workspace = Some(Files::new(WithStandardParts(files), Rc::new(operations)));
+    runner.location = Location {
+        file: workspace::resolve("", file),
+        within: Vec::new(),
+    };
+    let mut part = Part::default();
+    program.run(&runner, &mut part).unwrap();
+    part
+}
 
 /// `program` built on its own: its part.
 fn build(program: &Program) -> Part {
-    program.built().unwrap()
+    build_file(program, "", BTreeMap::new())
 }
 
 /// The model of the part `built` holds.
@@ -48,7 +95,7 @@ fn offset_from_xz(distance: f64) -> AddDatumArgs {
     }
 }
 
-fn view(part: &NamedModel<S>, kind: ViewKind) -> geop_ops_drawing::ProjectedView<S> {
+fn view(part: &NamedModel<S>, kind: ViewKind) -> ProjectedView<S> {
     let model = part.topology();
     project_view(
         model,
@@ -71,7 +118,7 @@ fn name_where(part: &NamedModel<S>, pick: impl Fn(RefId) -> bool) -> String {
 /// it is a visible circle.
 #[test]
 fn drilled_plate_shows_its_hole_hidden() {
-    let built = build(&geop_ops_extrude_revolve::examples::bracket());
+    let built = build(&bracket());
     let part = &model(&built);
     let front = view(part, ViewKind::Front);
     let hidden: Vec<_> = front.lines.iter().filter(|l| !l.visible).collect();
@@ -103,7 +150,7 @@ fn drilled_plate_shows_its_hole_hidden() {
 /// is refused, naming it.
 #[test]
 fn dimensions_by_name_are_drawn() {
-    let built = build(&geop_ops_extrude_revolve::examples::bracket());
+    let built = build(&bracket());
     let part = &model(&built);
     let model = part.topology();
     let circle = name_where(part, |id| match id {
@@ -168,7 +215,7 @@ fn dimensions_by_name_are_drawn() {
 /// shows the cut hatched, and no hidden lines.
 #[test]
 fn section_through_a_blind_hole_is_hatched() {
-    let mut program = geop_ops_extrude_revolve::examples::box_with_drill_hole();
+    let mut program = box_with_drill_hole();
     program.push("middle", offset_from_xz(1.0));
     let built = build(&program);
     let args = DrawingArgs {
@@ -191,9 +238,9 @@ fn section_through_a_blind_hole_is_hatched() {
 /// as the thread runs. Without hidden lines, those go.
 #[test]
 fn a_tapped_hole_draws_its_thread() {
+    use crate::layer;
     use geop_lib_sheet::Shape;
-    use geop_ops_drawing::layer;
-    let built = build(&geop_ops_hole::examples::hole_plate());
+    let built = build(&hole_plate());
     let args = DrawingArgs {
         scale: Some(2.0),
         ..Default::default()
@@ -276,109 +323,6 @@ fn a_tapped_hole_draws_its_thread() {
     );
 }
 
-/// `error` with every edge and face id it mentions followed by its name.
-fn named(part: &NamedModel<S>, error: &impl std::fmt::Display) -> String {
-    let mut text = error.to_string();
-    for (id, name) in part.names().iter() {
-        let tag = match id {
-            RefId::Edge(e) => format!("{e:?}"),
-            RefId::Face(f) => format!("{f:?}"),
-            _ => continue,
-        };
-        text = text.replace(&tag, &format!("{tag} [{name}]"));
-    }
-    text
-}
-
-/// The view `kind` of the example `name`, or its error with the entities
-/// it mentions named.
-fn example_view(name: &str, kind: ViewKind) -> Result<geop_ops_drawing::ProjectedView<S>, String> {
-    let (_, program) = crate::registry()
-        .unwrap()
-        .example_programs()
-        .into_iter()
-        .find(|(n, _)| *n == name)
-        .expect("the example is there");
-    let built = build(&program());
-    let part = &model(&built);
-    let model = part.topology();
-    project_view(
-        model,
-        &drawn_faces(model),
-        &kind.frame().unwrap(),
-        &ViewOptions::default(),
-    )
-    .map_err(|e| named(part, &e))
-}
-
-/// The flange turned about `y`, seen from the back along that axis: the
-/// waist of its curved side, where the profile runs parallel to the axis,
-/// is its silhouette, a circle of radius 13.04 under the 13.14 rim of its
-/// top, so hidden. Its quarter faces meet on the paper's axes, and the
-/// silhouette's pieces end there.
-#[test]
-fn cool_flange_from_the_back_draws() {
-    let back = example_view("cool_flange", ViewKind::Back).unwrap();
-    let silhouettes: Vec<_> = back
-        .lines
-        .iter()
-        .filter(|l| l.kind == LineKind::Silhouette)
-        .map(|l| {
-            let (a, b) = l.curve.domain();
-            let at = |t: S| {
-                let p = l.curve.evaluate(t).unwrap();
-                (p[0].to_f64(), p[1].to_f64())
-            };
-            (at(a), at(b), l.visible)
-        })
-        .collect();
-    assert!(!silhouettes.is_empty());
-    for &(p, q, visible) in &silhouettes {
-        let r = |(x, y): (f64, f64)| (x * x + y * y).sqrt();
-        assert!(
-            !visible && (r(p) - 13.04).abs() < 0.01 && (r(q) - 13.04).abs() < 0.01,
-            "{silhouettes:?}"
-        );
-    }
-}
-
-/// The conebox's double cone turns about the box's top edge `c12`, its
-/// apexes on that edge. Seen from the top, across its axis, each cone's
-/// silhouette is two generators in the box's top plane, running from the
-/// apex to the base circle, about 13.7 long: no face of either cone has a
-/// silhouette piece shorter than that, as one sitting at the apex would be.
-#[test]
-fn conebox_cone_from_the_top_shows_whole_generators() {
-    let (_, program) = crate::registry()
-        .unwrap()
-        .example_programs()
-        .into_iter()
-        .find(|(n, _)| *n == "conebox")
-        .unwrap();
-    let built = build(&program());
-    let part = &model(&built);
-    let d = ViewKind::Top.frame::<S>().unwrap().direction.vector();
-    for curve in ["c9", "c10"] {
-        for quarter in ["q0", "q1", "q2", "q3"] {
-            let name = format!("revolve(revolve1,sketch2,{curve},{quarter})");
-            let Some(RefId::Face(face)) = part.names().id_of(&name) else {
-                panic!("no face {name}");
-            };
-            let pieces =
-                geop_ops_drawing::silhouette::face_silhouettes(part.topology(), face, &d).unwrap();
-            for piece in &pieces {
-                let (a, b) = piece.curve.domain();
-                let (p, q) = (
-                    piece.curve.evaluate(a).unwrap(),
-                    piece.curve.evaluate(b).unwrap(),
-                );
-                let length = p.sub(&q).norm().to_f64();
-                assert!(length > 13.0, "{name}: a piece from {p:?} to {q:?}");
-            }
-        }
-    }
-}
-
 /// The mouse's face `f11` seen from the front: every piece of its
 /// silhouette traced once — no two pieces between the same two points.
 ///
@@ -390,13 +334,13 @@ fn conebox_cone_from_the_top_shows_whole_generators() {
 /// came down to the last bit of the face's measured size.
 #[test]
 fn subd_mouse_face_f11_silhouette_is_traced_once() {
-    let built = build(&geop_ops_subd::examples::subd_mouse());
+    let built = build(&subd_mouse());
     let part = &model(&built);
     let Some(RefId::Face(face)) = part.names().id_of("subd(mouse,f11)") else {
         panic!("no face f11");
     };
     let d = ViewKind::Front.frame::<S>().unwrap().direction.vector();
-    let pieces = geop_ops_drawing::silhouette::face_silhouettes(part.topology(), face, &d).unwrap();
+    let pieces = crate::silhouette::face_silhouettes(part.topology(), face, &d).unwrap();
     let ends: Vec<_> = pieces
         .iter()
         .map(|piece| {
@@ -421,117 +365,29 @@ fn subd_mouse_face_f11_silhouette_is_traced_once() {
 /// `subd_mouse_face_f11_silhouette_is_traced_once`).
 #[test]
 fn subd_mouse_from_the_front_and_back_draws() {
-    example_view("subd_mouse", ViewKind::Front).unwrap();
-    example_view("subd_mouse", ViewKind::Back).unwrap();
-}
-
-#[test]
-fn conebox_from_the_top_draws() {
-    example_view("conebox", ViewKind::Top).unwrap();
-}
-
-/// Views known not to build, and why.
-///
-/// `revolved_cone_on_box` from the front and back: the boolean's vertex
-/// where the cone's intersection with the box's face `y = 1.18`
-/// (`combine(revolve1,extrude(extrude1,sketch1,c4),...)`, edge `a`) meets the
-/// box's right face lies at `x = 2.2456168`, 3.1e-5 off that face
-/// (`x = 2.2456482`). On the paper, `a` then ends 3e-5 short of where the
-/// cone's base circle (`combine(revolve1,revolve(revolve1,sketch2,p3,q0),...)`)
-/// ends, running into it tangentially, and the search for where the two
-/// cross cannot isolate a near-touch that close. The defect is the vertex's
-/// accuracy in the boolean, not the drawing.
-const KNOWN_TO_FAIL: [(&str, ViewKind); 2] = [
-    ("revolved_cone_on_box", ViewKind::Front),
-    ("revolved_cone_on_box", ViewKind::Back),
-];
-
-/// Every view of every example builds, and no piece of a line is drawn
-/// both visible and hidden.
-#[test]
-#[ignore = "slow: every view of every example — run with `cargo test -- --ignored`"]
-fn every_example_draws() {
-    let mut failures = Vec::new();
-    for (name, program) in crate::registry().unwrap().example_programs() {
-        let built = build(&program());
-        let part = &model(&built);
-        for kind in ViewKind::ALL {
-            let model = part.topology();
-            let v = match project_view(
-                model,
-                &drawn_faces(model),
-                &kind.frame().unwrap(),
-                &ViewOptions::default(),
-            ) {
-                Ok(v) => v,
-                Err(_) if KNOWN_TO_FAIL.contains(&(name, kind)) => continue,
-                Err(e) => {
-                    failures.push(format!("{name}, {} view: {}", kind.name(), named(part, &e)));
-                    continue;
-                }
-            };
-            // A hidden line may cross or touch a visible one, never run
-            // along it: no hidden piece has the points a third and two
-            // thirds along it both on one visible line.
-            for hidden in v.lines.iter().filter(|l| !l.visible) {
-                let (a, b) = hidden.curve.domain();
-                let at = |f: f64| {
-                    let t = a.add(b.sub(a).mul(S::from_f64(f))).sharpen();
-                    hidden.curve.evaluate(t).unwrap()
-                };
-                let (p, q) = (at(1.0 / 3.0), at(2.0 / 3.0));
-                for visible in v.lines.iter().filter(|l| l.visible) {
-                    let on = |x: &geop_core_math::vector::Vector2<S>| {
-                        curve_could_contain(&visible.curve, x, 20_000, S::from_f64(1e-7))
-                            .unwrap()
-                            .is_some()
-                    };
-                    assert!(
-                        !(on(&p) && on(&q)),
-                        "{name}, {} view: the hidden {:?} of edge {:?} runs along the visible \
-                         {:?} of edge {:?}",
-                        kind.name(),
-                        hidden.kind,
-                        hidden.edge.and_then(|e| part.name_of(e)),
-                        visible.kind,
-                        visible.edge.and_then(|e| part.name_of(e)),
-                    );
-                }
-            }
-        }
-        // The whole default sheet, too, of every example whose views build.
-        if !KNOWN_TO_FAIL.iter().any(|(n, _)| *n == name)
-            && let Err(e) = compose(&built.current(), &DrawingArgs::default(), "", &[])
-        {
-            failures.push(format!("{name}, the sheet: {}", named(part, &e)));
-        }
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    let part = &model(&build(&subd_mouse()));
+    view(part, ViewKind::Front);
+    view(part, ViewKind::Back);
 }
 
 /// The example workspace `name` built: its first file, as that file's
 /// path, and the part.
 fn example_assembly(name: &str) -> (&'static str, Part) {
-    let (_, files) = geop_ops_assembly::examples::workspaces()
+    let (_, files) = workspaces()
         .into_iter()
         .find(|(n, _)| *n == name)
         .expect("the example is there");
     let files = files();
     let (path, program) = files[0].clone();
-    let files: std::collections::BTreeMap<String, String> = files
+    let files: BTreeMap<String, String> = files
         .into_iter()
         .map(|(path, program)| (path.to_string(), program.to_json().unwrap()))
         .collect();
-    (
-        path,
-        crate::build(&program, path, crate::workspace(files))
-            .unwrap()
-            .part,
-    )
+    (path, build_file(&program, path, files))
 }
 
 /// The paper's `y` range a line spans: its heights in the front view.
-fn heights(line: &geop_ops_drawing::ViewLine<S>) -> (f64, f64) {
+fn heights(line: &ViewLine<S>) -> (f64, f64) {
     let (a, b) = line.curve.domain();
     let (p, q) = (
         line.curve.evaluate(a).unwrap(),
@@ -548,9 +404,9 @@ fn heights(line: &geop_ops_drawing::ViewLine<S>) -> (f64, f64) {
 /// nut — items 1 to 3.
 #[test]
 fn bolted_plate_from_the_front_hides_the_screw_in_the_plate() {
+    use crate::layer;
+    use crate::scene::Scene;
     use geop_lib_sheet::Shape;
-    use geop_ops_drawing::layer;
-    use geop_ops_drawing::scene::Scene;
     let (path, built) = example_assembly("bolted_plate");
     let scene = Scene::of(&built.current()).unwrap();
     let paths: Vec<&str> = scene.bodies.iter().map(|b| b.path.as_str()).collect();
@@ -635,7 +491,7 @@ fn bolted_plate_from_the_front_hides_the_screw_in_the_plate() {
 /// seeds there were once left untraced and the silhouette traced again.
 #[test]
 fn press_handle_fillets_have_one_silhouette_each_from_the_front() {
-    use geop_ops_drawing::scene::Scene;
+    use crate::scene::Scene;
     let (_, built) = example_assembly("press");
     let scene = Scene::of(&built.current()).unwrap();
     let body = scene.bodies.iter().find(|b| b.path == "part2").unwrap();
@@ -648,15 +504,14 @@ fn press_handle_fillets_have_one_silhouette_each_from_the_front() {
         let Some(RefId::Face(face)) = body.named.id_of(name) else {
             panic!("no face {name}");
         };
-        let pieces =
-            geop_ops_drawing::silhouette::face_silhouettes(body.model(), face, &d).unwrap();
+        let pieces = crate::silhouette::face_silhouettes(body.model(), face, &d).unwrap();
         assert_eq!(pieces.len(), 1, "{name}: {pieces:?}");
     }
 }
 
 #[test]
 fn press_from_the_front_draws() {
-    use geop_ops_drawing::scene::Scene;
+    use crate::scene::Scene;
     let (_, built) = example_assembly("press");
     let scene = Scene::of(&built.current()).unwrap();
     scene
@@ -673,100 +528,12 @@ fn press_from_the_front_draws() {
 #[test]
 #[ignore = "slow: the whole press drawn from the iso view — run with `cargo test -- --ignored`"]
 fn press_from_the_iso_view_draws() {
-    use geop_ops_drawing::scene::Scene;
+    use crate::scene::Scene;
     let (_, built) = example_assembly("press");
     let scene = Scene::of(&built.current()).unwrap();
     scene
         .project(&ViewKind::Iso.frame().unwrap(), &ViewOptions::default())
         .unwrap();
-}
-
-/// Every example assembly draws: its default sheet with the bill of
-/// materials builds, with a balloon per line of the bill whose part has
-/// faces drawn, and in no view does a hidden piece run along a visible one.
-#[test]
-#[ignore = "slow: every example assembly drawn — run with `cargo test -- --ignored`"]
-fn every_example_assembly_draws() {
-    use geop_lib_sheet::Shape;
-    use geop_ops_drawing::layer;
-    use geop_ops_drawing::scene::Scene;
-    let mut failures = Vec::new();
-    for (name, _) in geop_ops_assembly::examples::workspaces() {
-        let (path, built) = example_assembly(name);
-        let args = DrawingArgs {
-            bom: true,
-            ..Default::default()
-        };
-        let parts = parts_list(&built.current(), path, &args).unwrap();
-        let scene = Scene::of(&built.current()).unwrap();
-        let sheet = match compose(&built.current(), &args, "", &parts) {
-            Ok(sheet) => sheet,
-            Err(e) => {
-                failures.push(format!("{name}: {e}"));
-                continue;
-            }
-        };
-        let drawn = parts
-            .iter()
-            .filter(|line| {
-                scene
-                    .bodies
-                    .iter()
-                    .any(|b| line.placements.contains(&b.path))
-            })
-            .count();
-        let balloons = sheet
-            .strokes
-            .iter()
-            .filter(|s| {
-                s.layer == layer::DIMENSION
-                    && matches!(s.shape, Shape::Circle { radius, .. } if radius == 4.0)
-            })
-            .count();
-        if balloons != drawn {
-            failures.push(format!(
-                "{name}: {balloons} balloons for {drawn} lines of the bill drawn"
-            ));
-        }
-        for kind in ViewKind::ALL {
-            let v = match scene.project(&kind.frame().unwrap(), &ViewOptions::default()) {
-                Ok(v) => v,
-                Err(e) => {
-                    failures.push(format!("{name}, {} view: {e}", kind.name()));
-                    continue;
-                }
-            };
-            for hidden in v.lines.iter().filter(|l| !l.visible) {
-                let (a, b) = hidden.curve.domain();
-                let at = |f: f64| {
-                    let t = a.add(b.sub(a).mul(S::from_f64(f))).sharpen();
-                    hidden.curve.evaluate(t).unwrap()
-                };
-                let (p, q) = (at(1.0 / 3.0), at(2.0 / 3.0));
-                let on = |line: &geop_ops_drawing::ViewLine<S>, x| {
-                    curve_could_contain(&line.curve, x, 20_000, S::from_f64(1e-7))
-                        .unwrap()
-                        .is_some()
-                };
-                if let Some(visible) = v
-                    .lines
-                    .iter()
-                    .filter(|l| l.visible)
-                    .find(|l| on(l, &p) && on(l, &q))
-                {
-                    failures.push(format!(
-                        "{name}, {} view: the hidden {:?} of {} runs along the visible {:?} of {}",
-                        kind.name(),
-                        hidden.kind,
-                        scene.bodies[hidden.body].path,
-                        visible.kind,
-                        scene.bodies[visible.body].path,
-                    ));
-                }
-            }
-        }
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
 /// The bolted plate cut through the screw's axis: each part cut in its own
@@ -775,22 +542,20 @@ fn every_example_assembly_draws() {
 /// plate placed in it dimensioned by its name as the assembly names it.
 #[test]
 fn an_assembly_is_cut_and_dimensioned_through_its_parts() {
+    use crate::layer;
     use geop_lib_sheet::Shape;
-    use geop_ops_drawing::layer;
-    let (_, files) = geop_ops_assembly::examples::workspaces()
+    let (_, files) = workspaces()
         .into_iter()
         .find(|(n, _)| *n == "bolted_plate")
         .unwrap();
     let files = files();
     let mut program = files[0].1.clone();
     program.push("middle", offset_from_xz(20.0));
-    let files: std::collections::BTreeMap<String, String> = files
+    let files: BTreeMap<String, String> = files
         .into_iter()
         .map(|(path, program)| (path.to_string(), program.to_json().unwrap()))
         .collect();
-    let built = crate::build(&program, "bolted_plate.geop", crate::workspace(files))
-        .unwrap()
-        .part;
+    let built = build_file(&program, "bolted_plate.geop", files);
     let view = built.current();
     let placed = geop_ops_assembly::placed_parts(&view).unwrap();
     let placed = placed.iter().find(|p| p.name == "plate").unwrap();
@@ -852,7 +617,7 @@ fn screwed_plate(n: usize) -> Part {
         );
         program
             .state
-            .insert(pose_state(&id), StateValue::Pose(examples::pose(at, turn)));
+            .insert(pose_state(&id), StateValue::Pose(pose(at, turn)));
     };
     place("plate".into(), "plate.geop", None, [0.0; 3], [0.0; 3]);
     for i in 0..n {
@@ -874,22 +639,15 @@ fn screwed_plate(n: usize) -> Part {
             );
         }
     }
-    let files = std::collections::BTreeMap::from([(
-        "plate.geop".to_string(),
-        geop_ops_assembly::examples::metric_plate()
-            .to_json()
-            .unwrap(),
-    )]);
-    crate::build(&program, "screwed.geop", crate::workspace(files))
-        .unwrap()
-        .part
+    let files = BTreeMap::from([("plate.geop".to_string(), metric_plate().to_json().unwrap())]);
+    build_file(&program, "screwed.geop", files)
 }
 
 /// The balloons of `sheet`: the item numbers on the dimension layer next
 /// to a circle of a balloon's radius.
 fn balloon_items(sheet: &geop_lib_sheet::Sheet) -> Vec<String> {
+    use crate::layer;
     use geop_lib_sheet::Shape;
-    use geop_ops_drawing::layer;
     let circles: Vec<[f64; 2]> = sheet
         .strokes
         .iter()
@@ -919,7 +677,7 @@ fn balloon_items(sheet: &geop_lib_sheet::Sheet) -> Vec<String> {
 /// three balloons — not one per part placed.
 #[test]
 fn repeated_parts_are_ballooned_once() {
-    use geop_ops_drawing::scene::Scene;
+    use crate::scene::Scene;
     let built = screwed_plate(2);
     let scene = Scene::of(&built.current()).unwrap();
     assert_eq!(scene.bodies.len(), 9);
@@ -945,13 +703,13 @@ fn repeated_parts_are_ballooned_once() {
 #[test]
 #[ignore = "slow: a hundred screws drawn — run with `cargo test -- --ignored`"]
 fn a_hundred_screws_draw() {
-    use geop_ops_drawing::scene::Scene;
+    use crate::scene::Scene;
     let built = screwed_plate(10);
     let scene = Scene::of(&built.current()).unwrap();
     assert_eq!(scene.groups().len(), 3);
     let args = DrawingArgs {
         bom: true,
-        sheet: geop_ops_drawing::SheetSize::A2,
+        sheet: crate::SheetSize::A2,
         ..Default::default()
     };
     let parts = parts_list(&built.current(), "screwed.geop", &args).unwrap();

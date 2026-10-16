@@ -1862,7 +1862,7 @@ fn slow_examples_build_incrementally() {
 /// The press handle's rim rounded: a bar 236 long whose rim lies 225 from
 /// the origin. The blend face's control points were 8e-8 wide, and a ray
 /// grazing it at its silhouette could not be resolved (see
-/// `drawing_tests::press_from_the_iso_view_draws`): the cylinder's normal
+/// `geop_ops_drawing`'s `press_from_the_iso_view_draws`): the cylinder's normal
 /// was taken at the bar's far end and turned around an axis known to
 /// 1e-12, and the weight was `r / |E - C|`, with the corner `E`'s width in
 /// it twice. What is left is the weight's width, from the faces'

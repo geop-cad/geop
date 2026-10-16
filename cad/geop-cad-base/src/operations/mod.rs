@@ -3,9 +3,7 @@
 //! [`crate::registry::testing`]'s.
 
 mod add_datum_editor_tests;
-mod bom_tests;
-mod drawing_tests;
 mod editor_tests;
-mod inspect_tests;
+mod example_tests;
 mod program_tests;
 mod set_tests;

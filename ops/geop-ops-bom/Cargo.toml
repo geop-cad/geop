@@ -18,3 +18,12 @@ serde_json.workspace = true
 geop-ops-assembly = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
+# The example assemblies weighed, the operations they are written in, and
+# the standard parts they place.
+geop-core-editor.workspace = true
+geop-ops-sketch.workspace = true
+geop-ops-datums.workspace = true
+geop-ops-reference-geometry.workspace = true
+geop-ops-extrude-revolve.workspace = true
+geop-ops-pattern.workspace = true
+geop-lib-stdlib.workspace = true

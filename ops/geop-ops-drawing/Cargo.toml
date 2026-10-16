@@ -29,3 +29,13 @@ geop-ops-assembly = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
+# The example parts and assemblies drawn, the operations they are written
+# in, and the standard parts they place.
+geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-ops-hole.workspace = true
+geop-ops-subd.workspace = true
+geop-ops-fillet.workspace = true
+geop-ops-pattern.workspace = true
+geop-ops-datums.workspace = true
+geop-ops-reference-geometry.workspace = true
+geop-lib-stdlib.workspace = true

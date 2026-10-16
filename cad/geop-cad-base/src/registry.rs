@@ -131,10 +131,8 @@ pub(crate) mod testing {
     pub(crate) use geop_core_editor::testing::{
         Stepping, click_at, dialog, from_above, handled, pointer,
     };
-    pub(crate) use geop_ops_datums::{origin_axis, origin_plane};
-    pub(crate) use geop_ops_extrude_revolve::testing::{
-        args, disc, edit_args, extrude_sketch, on_origin, rectangle,
-    };
+    pub(crate) use geop_ops_datums::origin_axis;
+    pub(crate) use geop_ops_extrude_revolve::testing::{args, edit_args};
     pub(crate) use geop_ops_model::testing::{check_valid, solid_volume};
 
     pub(crate) use super::{build, workspace};

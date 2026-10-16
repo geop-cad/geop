@@ -115,6 +115,8 @@ impl Inspector for Interference {
     }
 }
 
+#[cfg(test)]
+mod editor_tests;
 mod icons;
 #[cfg(test)]
 mod tests;
