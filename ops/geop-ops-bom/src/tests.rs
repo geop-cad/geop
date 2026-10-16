@@ -1,11 +1,15 @@
 //! Bills of generated assemblies: repeated parts grouped, sub-assemblies
 //! flattened or indented, masses multiplied, sheet thickness and wires —
 //! and of the example assemblies, whose standard parts are designated by
-//! their norms and weighed of their own material.
+//! their norms and weighed of their own material; asked for and exported
+//! through the editor, as the inspect panel and the File menu do.
 
 use std::{collections::BTreeMap, rc::Rc};
 
-use geop_core_editor::registry::Registry;
+use geop_core_editor::{
+    editor::{Command, Editor},
+    registry::Registry,
+};
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::Pose,
@@ -350,7 +354,8 @@ fn wires_are_lines_of_their_own() {
 
 /// The operations the example assemblies are written in — sketched,
 /// extruded, placed, the standard parts' patterns and parameters — each
-/// crate's `register`, as the editor's registry has them.
+/// crate's `register`, as the editor's registry has them, and the bill of
+/// materials.
 fn registry() -> Registry {
     let registry = (|| -> GeopResult<Registry> {
         let r = Registry::default();
@@ -361,6 +366,7 @@ fn registry() -> Registry {
         let r = geop_ops_extrude_revolve::register(r)?;
         let r = geop_ops_pattern::register(r)?;
         let r = geop_ops_assembly::register(r)?;
+        let r = crate::register(r)?;
         geop_ops_parameters::register(r)
     })();
     registry.expect("the operations each have a name of their own")
@@ -628,4 +634,63 @@ fn the_bolted_plate_is_weighed_in_bounded_work() {
     }
     let total: usize = evaluations.iter().map(|(_, n)| n).sum();
     assert!(total < 170_000, "{evaluations:?}");
+}
+
+/// The bill of materials, asked for the way the inspect panel asks — the
+/// command and the update as JSON: the bolted plate's three parts, the
+/// screw and nut designated by their norms. Of the part shown: seeking
+/// back before the nut drops it. Exported as CSV, indented, named after
+/// the file.
+#[test]
+fn the_bill_of_materials_is_asked_for_and_exported() {
+    let mut editor = Editor::new(registry(), WithStandardParts(BTreeMap::new()));
+    let update = editor.handle(Command::LoadWorkspaceExample {
+        name: "bolted_plate".into(),
+        folder: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let ask = r#"{"command": "inspect", "inspector": "bom", "options": {"structure": "flat"}}"#;
+    let json = editor.handle_json(ask).unwrap();
+    let update: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(update["error"].is_null(), "{}", update["error"]);
+    assert_eq!(update["inspection"]["kind"], "bom");
+    let bom = &update["inspection"]["report"];
+    assert_eq!(bom["structure"], "flat");
+    let designations: Vec<&str> = (bom["lines"].as_array().unwrap().iter())
+        .map(|l| l["designation"].as_str().unwrap_or("-"))
+        .collect();
+    assert_eq!(designations, ["-", "ISO 4762 M4x12", "ISO 4032 M4"]);
+    let screw = &bom["lines"][1];
+    assert_eq!(
+        (&screw["kind"], &screw["quantity"]),
+        (&"part".into(), &1.into())
+    );
+    assert_eq!(screw["material"], "Steel");
+    assert!(screw["unit_mass"]["value"].as_f64().unwrap() > 0.0);
+    assert!(bom["total_mass"]["value"].as_f64().unwrap() > 0.0);
+
+    // Up to the screw: no nut yet.
+    editor.handle(Command::Seek { marker: Some(2) });
+    let json = editor.handle_json(ask).unwrap();
+    let update: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let lines = update["inspection"]["report"]["lines"].as_array().unwrap();
+    assert_eq!(lines.len(), 2);
+    editor.handle(Command::Seek { marker: None });
+
+    let json = editor
+        .handle_json(
+            r#"{"command": "export", "exporter": "bom", "options": {"structure": "indented"}}"#,
+        )
+        .unwrap();
+    let update: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(update["error"].is_null(), "{}", update["error"]);
+    assert_eq!(update["export"]["name"], "bolted_plate_bom.csv");
+    let csv = update["export"]["text"].as_str().unwrap();
+    let rows: Vec<&str> = csv.lines().collect();
+    assert_eq!(rows.len(), 1 + 3 + 1, "{csv}");
+    assert!(
+        rows[2].starts_with("2,1,1,ISO 4762 socket head cap screw,ISO 4762 M4x12,"),
+        "{csv}"
+    );
+    assert!(rows[4].contains("Total"), "{csv}");
 }
