@@ -1,30 +1,65 @@
-//! Wire harnesses in assemblies: routes between connectors on placed
-//! parts follow those parts wherever their mates let them be moved.
+//! Wire harnesses in assemblies, edited as a front end edits them: routes
+//! between connectors on placed parts follow those parts wherever their
+//! mates let them be moved, and the bundles they sweep are drawn, never
+//! weighed.
 
+use std::collections::BTreeMap;
+
+use geop_core_editor::{
+    editing::{StepEditEvent, Value},
+    editor::{Command, Editor},
+    output::Bounded,
+    registry::Registry,
+};
+use geop_core_math::{
+    geop_error::GeopResult,
+    primitives::{DatumComponent, FrameAxis, Pose},
+    scalars::{Ring, ScalInF64 as S, Scalar},
+    vector::Vector3,
+};
 use geop_core_program::{
     program::Program,
     values::{Design, StateValue, StateValues, pose_state},
 };
-use std::collections::BTreeMap;
-
-use geop_core_editor::editing::{StepEditEvent, Value};
-use geop_core_editor::output::Bounded;
-use geop_core_math::{
-    primitives::{DatumComponent, FrameAxis},
-    scalars::{Ring, ScalInF64 as S, Scalar},
-};
 use geop_ops_assembly::{AddPartArgs, Kind, Mate, MateEntity, solids::placed_solids};
 use geop_ops_datums::{ORIGIN, component_name, datum};
-use geop_ops_harness::{RouteArgs, Wire, WireSize, cable};
-use geop_ops_model::{element, read_model};
+use geop_ops_model::read_model;
 use geop_ops_reference_geometry::Selected;
-use geop_ops_sketch::sketch_element;
 
-use crate::{
-    Command, Editor, examples,
-    examples::pose,
-    registry::testing::{Built, on_origin},
-};
+use crate::{RouteArgs, Wire, WireSize, cable};
+
+/// What these tests edit: plates drawn and extruded, placed and mated in
+/// an assembly, routed between, weighed and listed.
+fn registry() -> GeopResult<Registry> {
+    let r = Registry::default();
+    let r = geop_ops_model::register(r)?;
+    let r = geop_ops_sketch::register(r)?;
+    let r = geop_ops_datums::register(r)?;
+    let r = geop_ops_reference_geometry::register(r)?;
+    let r = geop_ops_extrude_revolve::register(r)?;
+    let r = geop_ops_assembly::register(r)?;
+    let r = crate::register(r)?;
+    let r = geop_ops_inspect::register(r)?;
+    let r = geop_ops_bom::register(r)?;
+    geop_ops_parameters::register(r)
+}
+
+/// An editor of [`registry`] on [`assembly`], saved as `assembly.geop`,
+/// with the plate it places beside it as `plate.geop` — the example box with a hole
+/// drilled into it — which loads with every step built.
+fn editor() -> Editor {
+    let plate = geop_ops_extrude_revolve::examples::box_with_drill_hole();
+    let files = BTreeMap::from([("plate.geop".to_string(), plate.to_json().unwrap())]);
+    let mut editor = Editor::new(registry().unwrap(), files);
+    let update = editor.handle(Command::Load {
+        program: assembly(),
+        path: Some("assembly.geop".into()),
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let steps = update.program.unwrap().steps;
+    assert!(steps.iter().all(|s| s.error.is_none()), "{steps:?}");
+    editor
+}
 
 /// An assembly of two plates: `a` fixed at the origin, `b` 4 along `x`,
 /// its `xy` plane mated onto `a`'s, so it slides in that plane — and a
@@ -76,7 +111,11 @@ fn assembly() -> Program {
             service_loop: 0.0,
         },
     );
-    let at = |x: f64| StateValue::Pose(pose([x, 0.0, 0.0], [0.0; 3]));
+    let at = |x: f64| {
+        let position = Vector3::from_array([x, 0.0, 0.0].map(Design::from_f64));
+        let turn = [0.0; 3].map(Design::from_f64);
+        StateValue::Pose(Pose::from_euler(position, turn).unwrap())
+    };
     program.state = StateValues::from([(pose_state("a"), at(0.0)), (pose_state("b"), at(4.0))]);
     program
 }
@@ -91,27 +130,7 @@ fn cable_length(editor: &Editor) -> Design {
 /// `pi 4 / 2` to `pi 6 / 2`.
 #[test]
 fn moving_a_mated_part_reroutes_the_cable() {
-    let mut editor = crate::editor();
-    let files = BTreeMap::from([(
-        "plate.geop".to_string(),
-        Some(
-            crate::registry()
-                .unwrap()
-                .example("box_with_drill_hole")
-                .unwrap()
-                .to_json()
-                .unwrap(),
-        ),
-    )]);
-    let update = editor.handle(Command::Files { files });
-    assert!(update.error.is_none(), "{:?}", update.error);
-    let update = editor.handle(Command::Load {
-        program: assembly(),
-        path: Some("assembly.geop".into()),
-    });
-    assert!(update.error.is_none(), "{:?}", update.error);
-    let steps = update.program.unwrap().steps;
-    assert!(steps.iter().all(|s| s.error.is_none()), "{steps:?}");
+    let mut editor = editor();
     let half_circle = |gap: f64| S::PI.mul(S::from_f64(gap / 2.0));
     let before = cable_length(&editor);
     assert!(before.could_be_equal(half_circle(4.0)), "{before:?}");
@@ -142,83 +161,13 @@ fn moving_a_mated_part_reroutes_the_cable() {
     assert!((centre - 6.0).abs() < 1e-9, "{centre}");
 }
 
-/// A route through the corners of a 3-D sketch — vertices like any other —
-/// and a planar sketch's point: routed through them, at least as long as
-/// the straight runs between them.
-#[test]
-fn a_route_runs_through_sketch_points() {
-    let mut program = Program::new();
-    let mut corners = geop_ops_sketch3d::Sketch3d::new();
-    let at = |p: [f64; 3]| geop_core_math::vector::Vector3::from_array(p.map(examples::n));
-    let (a, b) = (
-        corners.add_point(at([0.0, 0.0, 0.0])),
-        corners.add_point(at([4.0, 0.0, 0.0])),
-    );
-    corners.add_line(a, b);
-    program.push(
-        "corners",
-        geop_ops_sketch3d::AddSketch3dArgs {
-            sketch: corners,
-            references: Vec::new(),
-        },
-    );
-    let mut floor = geop_ops_sketch::Sketch::new();
-    let p = floor.add_point(examples::n(4.0), examples::n(4.0));
-    program.push(
-        "floor",
-        crate::registry::testing::sketch(on_origin(FrameAxis::Z), floor),
-    );
-    program.push(
-        "route",
-        RouteArgs {
-            through: vec![
-                Selected::Vertex(element("sketch3d(corners,p0)")),
-                Selected::Vertex(element("sketch3d(corners,p1)")),
-                Selected::SketchPoint(sketch_element("floor", p)),
-            ],
-            wires: vec![Wire {
-                size: WireSize::Diameter(0.1),
-                ..Wire::new("signal")
-            }],
-            fill: 1.0,
-            bend_factor: 5.0,
-            service_loop: 0.0,
-        },
-    );
-    let part = program.built().unwrap();
-    let reader = part.current();
-    let cable = cable(&reader, "route(route)").unwrap();
-    let length = cable.length.to_f64();
-    // Two runs of 4 with a quarter-turn bend between them, rounded.
-    assert!(length > 7.5 && length < 10.0, "{:?}", cable.length);
-}
-
 /// A route's swept bundle is how its cable is drawn, not a body: weighing
 /// the part, checking it for interference and its bill of materials all
 /// leave it out — the bill orders its wires instead — so the mass the
 /// inspector reports is the bill's.
 #[test]
 fn a_cable_bundle_is_no_body_to_weigh_or_check() {
-    let mut editor = crate::editor();
-    let files = BTreeMap::from([(
-        "plate.geop".to_string(),
-        Some(
-            crate::registry()
-                .unwrap()
-                .example("box_with_drill_hole")
-                .unwrap()
-                .to_json()
-                .unwrap(),
-        ),
-    )]);
-    editor.handle(Command::Files { files });
-    let update = editor.handle(Command::Load {
-        program: assembly(),
-        path: Some("assembly.geop".into()),
-    });
-    assert!(update.error.is_none(), "{:?}", update.error);
-    let steps = update.program.unwrap().steps;
-    assert!(steps.iter().all(|s| s.error.is_none()), "{steps:?}");
+    let editor = editor();
     let view = &editor.part();
     let solids: Vec<String> = (placed_solids(view).unwrap().into_iter())
         .map(|s| s.name)

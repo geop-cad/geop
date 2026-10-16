@@ -8,17 +8,21 @@ use geop_core_program::{
 };
 use geop_ops_extrude_revolve::{
     Extents,
-    testing::{Built, extrude_sketch, on_origin, rectangle},
+    testing::{Built, extrude_sketch, n, on_origin, rectangle, sketch},
 };
 use geop_ops_model::Combine;
 use geop_ops_model::{model, notes_of};
 use geop_ops_reference_geometry::Selected;
+use geop_ops_sketch::sketch_element;
+use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs, Sketch3d};
 
 use crate::{Route, RouteArgs, Wire, WireSize, cable};
 
 /// The operations these tests' programs are written in.
 fn registry() -> GeopResult<OperationRegistry> {
-    geop_ops_extrude_revolve::testing::registry()?.with(Route)
+    (geop_ops_extrude_revolve::testing::registry()?)
+        .with(AddSketch3d)?
+        .with(Route)
 }
 
 /// The vertex `name` of the part's model.
@@ -76,4 +80,52 @@ fn a_route_between_corners_of_a_block() {
     assert_eq!(note.wires, laid.wires);
     let built = program.build_model(registry).unwrap();
     assert!(built.solid_id("route(cable)").is_ok());
+}
+
+/// A route through the corners of a 3-D sketch — vertices like any other —
+/// and a planar sketch's point: routed through them, at least as long as
+/// the straight runs between them.
+#[test]
+fn a_route_runs_through_sketch_points() {
+    let mut program = Program::new();
+    let mut corners = Sketch3d::new();
+    let at = |p: [f64; 3]| geop_core_math::vector::Vector3::from_array(p.map(n));
+    let (a, b) = (
+        corners.add_point(at([0.0, 0.0, 0.0])),
+        corners.add_point(at([4.0, 0.0, 0.0])),
+    );
+    corners.add_line(a, b);
+    program.push(
+        "corners",
+        AddSketch3dArgs {
+            sketch: corners,
+            references: Vec::new(),
+        },
+    );
+    let mut floor = geop_ops_sketch::Sketch::new();
+    let p = floor.add_point(n(4.0), n(4.0));
+    program.push("floor", sketch(on_origin(FrameAxis::Z), floor));
+    program.push(
+        "route",
+        RouteArgs {
+            through: vec![
+                vertex("sketch3d(corners,p0)"),
+                vertex("sketch3d(corners,p1)"),
+                Selected::SketchPoint(sketch_element("floor", p)),
+            ],
+            wires: vec![Wire {
+                size: WireSize::Diameter(0.1),
+                ..Wire::new("signal")
+            }],
+            fill: 1.0,
+            bend_factor: 5.0,
+            service_loop: 0.0,
+        },
+    );
+    let part = program.built(registry).unwrap();
+    let reader = part.current();
+    let cable = cable(&reader, "route(route)").unwrap();
+    let length = cable.length.to_f64();
+    // Two runs of 4 with a quarter-turn bend between them, rounded.
+    assert!(length > 7.5 && length < 10.0, "{:?}", cable.length);
 }

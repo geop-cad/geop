@@ -6,7 +6,6 @@ mod add_datum_editor_tests;
 mod bom_tests;
 mod drawing_tests;
 mod editor_tests;
-mod harness_tests;
 mod inspect_tests;
 mod parameters_tests;
 mod program_tests;

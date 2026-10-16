@@ -14,6 +14,8 @@ pub use cable::{Cable, Cables, cable, cables};
 pub use operation::{Route, RouteArgs, RouteEditing, RouteSession};
 pub use wire::{Wire, WireSize};
 
+#[cfg(test)]
+mod editor_tests;
 mod icons;
 #[cfg(test)]
 mod program_tests;
