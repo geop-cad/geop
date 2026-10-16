@@ -21,6 +21,8 @@
 //! ([`geop_lib_shell::shell()`]): a sheet thickened is a sheet shelled.
 
 pub mod boundary;
+#[cfg(test)]
+mod editor_tests;
 pub mod examples;
 pub mod extend;
 mod icons;
