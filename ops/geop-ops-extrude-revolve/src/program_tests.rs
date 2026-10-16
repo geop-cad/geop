@@ -5,14 +5,16 @@
 
 use crate::{
     Extent, Extents, ExtrudeArgs, LoftArgs, Output, PathRef, RevolveArgs, RevolveAxis, SweepArgs,
+    examples::box_with_drill_hole,
     testing::{
-        Built, as_step, block_and_post, both_ways, disc, extrude, extrusion, n, on_face, on_origin,
-        one_way, outline, polygon, sketch, two_ways,
+        Built, as_step, block_and_post, both_ways, disc, edit_args, extrude, extrusion, n, on_face,
+        on_origin, one_way, outline, polygon, runner_of, sketch, step, two_ways,
     },
 };
 use geop_core_program::{
     element::ElementReference,
     operation_registry::OperationRegistry,
+    part::Part,
     program::{Program, ProgramStep},
     values::Design,
 };
@@ -27,7 +29,7 @@ use geop_core_math::{
 use geop_core_sketch::PointId;
 use geop_core_topology::validation::{ValidationParameters, validate};
 use geop_ops_datums::{AnyDatum, Datums, ORIGIN, component_name, datums, origin_axis};
-use geop_ops_model::{BooleanOp, Combine, NamedModel, solid};
+use geop_ops_model::{BooleanOp, Combine, NamedModel, read_model, solid};
 use geop_ops_model::{Curve, testing::assert_valid};
 use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_sketch::{
@@ -1600,4 +1602,28 @@ fn join_up_to_next_partly_under_a_wedge_goes_through_all() {
         "{:?}",
         heights(&part)
     );
+}
+
+/// A step that fails is reported by id, and does not stop the run; the
+/// part before it is what the steps before it built.
+#[test]
+fn runner_reports_the_failing_step() {
+    let mut program = box_with_drill_hole();
+    edit_args(step(&mut program, "hole"), |args: &mut ExtrudeArgs| {
+        args.output = Output::Solid(Combine::cut("extrude(nothing)"))
+    });
+    let mut part = Part::default();
+    let output = runner_of(registry().unwrap()).run(&mut part, &program, None);
+    let errors: Vec<(String, String)> = (output.step_errors.into_iter())
+        .map(|(step, error)| (step, error.to_string()))
+        .collect();
+    let [(id, error)] = errors.as_slice() else {
+        panic!("one step fails: {errors:?}");
+    };
+    assert_eq!(id, "hole");
+    assert!(error.contains("extrude(nothing)"), "{error}");
+    // The model the steps before it built is there for it to build on.
+    let before = part.before("hole");
+    let built = read_model(&before).unwrap();
+    assert!(built.solid_id("extrude(box)").is_ok());
 }

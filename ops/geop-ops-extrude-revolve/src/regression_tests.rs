@@ -12,6 +12,7 @@ use geop_ops_model::{
     BooleanOp, Combine, element, solid,
     testing::{assert_draws_its_trims, assert_valid},
 };
+use geop_ops_parameters::{ParameterKind, parameters_of, set_parameters};
 use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_sketch::{
     AddSketchArgs, Constraint, Sketch, SketchPlane, sketch_element, whole_sketch,
@@ -720,4 +721,27 @@ fn spindle_revolved_about_an_axis_through_the_middle_of_a_box_edge_as_a_new_body
 #[test]
 fn spindle_revolved_about_an_axis_through_the_middle_of_a_box_edge_and_joined() {
     assert_builds_valid(&conebox(Combine::join("extrude(extrude1)")));
+}
+
+/// The parametric plate made 6 wide with an M6 hole. Its cut once left the
+/// result open around the hole's rim: the disc cut from the top was taken
+/// for outside the hole, because the point classifying it, beside the rim,
+/// was found inside the disc by a ray grazing the rim — cast from a box
+/// around the point, it was a strip, and touching the rim counted as one
+/// crossing. Reduced to a plate and a cylinder in the booleans' tests.
+#[test]
+fn wide_plate_with_an_m6_hole() {
+    let mut plate = examples::parametric_plate();
+    let mut parameters = parameters_of(&plate);
+    let ParameterKind::Number { expression, .. } = &mut parameters.values[0].kind else {
+        panic!("width is a number")
+    };
+    *expression = "6".into();
+    let screw = parameters.values.iter_mut().find(|p| p.name == "screw");
+    let Some(ParameterKind::Table { selected, .. }) = screw.map(|p| &mut p.kind) else {
+        panic!("screw is a table")
+    };
+    *selected = "M6".into();
+    set_parameters(&mut plate, parameters);
+    assert_builds_valid(&plate);
 }

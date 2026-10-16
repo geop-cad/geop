@@ -20,11 +20,15 @@
 //! from.
 
 #[cfg(test)]
+mod editor_tests;
+#[cfg(test)]
 mod example_tests;
 pub mod examples;
 mod extrude;
 mod icons;
 mod loft;
+#[cfg(test)]
+mod parameters_tests;
 #[cfg(test)]
 mod program_tests;
 #[cfg(test)]
