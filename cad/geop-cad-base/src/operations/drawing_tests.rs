@@ -193,7 +193,7 @@ fn section_through_a_blind_hole_is_hatched() {
 fn a_tapped_hole_draws_its_thread() {
     use geop_lib_sheet::Shape;
     use geop_ops_drawing::layer;
-    let built = build(&examples::hole_plate());
+    let built = build(&geop_ops_hole::examples::hole_plate());
     let args = DrawingArgs {
         scale: Some(2.0),
         ..Default::default()

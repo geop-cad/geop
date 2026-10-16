@@ -14,10 +14,7 @@ use geop_core_sketch::{CurveId, PointId};
 use geop_lib_sweep::Orientation;
 use geop_ops_boolean::SplitArgs;
 use geop_ops_datums::{ORIGIN, component_name, datum, origin_axis, origin_plane};
-use geop_ops_extrude_revolve::{
-    Extent, Extents, ExtrudeArgs, LoftArgs, Output, PathRef, SweepArgs,
-};
-use geop_ops_hole::{HoleArgs, HoleCentre, HoleKind, Standard, iso::Fit};
+use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, LoftArgs, Output, PathRef, SweepArgs};
 use geop_ops_model::element;
 use geop_ops_model::{Combine, solid};
 use geop_ops_pattern::{Direction, LinearPatternArgs, PatternDirection, Seeds, Spacing, feature};
@@ -34,11 +31,6 @@ type P2 = [f64; 2];
 /// A number of an example, as design data.
 pub(crate) fn n(x: f64) -> Design {
     Design::from_f64(x)
-}
-
-/// The flat face `name` of the part, as a plane to sketch on.
-fn on_face(name: impl Into<String>) -> SketchPlane {
-    SketchPlane::Face(element(name))
 }
 
 /// The plane of the origin normal to `normal`, as a plane to sketch on.
@@ -411,83 +403,6 @@ pub fn patterned_plate() -> Program {
     program
 }
 
-/// A 60 x 40 x 10 mm mounting plate: four counterbored M5 holes through
-/// its corners, at the points of one sketch on its top (`bolts`), and a
-/// tapped M6 hole 8 deep in its middle (`tapped`), which carries the
-/// cosmetic thread M6x1 — the result is `hole(tapped)`.
-pub fn hole_plate() -> Program {
-    let mut program = Program::new();
-    let mut outline = Sketch::new();
-    rectangle(&mut outline, [0.0, 0.0], 60.0, 40.0);
-    program.push(
-        "outline",
-        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)),
-    );
-    program.push(
-        "plate",
-        ExtrudeArgs {
-            sketch: whole_sketch("outline"),
-            extent: Extents::blind(10.0),
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-    let points = |at: &[P2]| {
-        let mut sketch = Sketch::new();
-        let ids: Vec<PointId> = at
-            .iter()
-            .map(|p| sketch.add_point(n(p[0]), n(p[1])))
-            .collect();
-        for (id, p) in ids.into_iter().zip(at) {
-            sketch.constrain(Constraint::Fix {
-                point: id,
-                x: n(p[0]),
-                y: n(p[1]),
-            });
-        }
-        solved(sketch)
-    };
-    let top = || on_face("extrude(plate,end)");
-    program.push(
-        "corners",
-        AddSketchArgs::on(
-            top(),
-            points(&[[8.0, 8.0], [52.0, 8.0], [52.0, 32.0], [8.0, 32.0]]),
-        ),
-    );
-    program.push(
-        "bolts",
-        HoleArgs {
-            face: Some(element("extrude(plate,end)")),
-            points: vec![HoleCentre::Sketch(whole_sketch("corners"))],
-            kind: HoleKind::Counterbore,
-            standard: Standard::Iso {
-                size: "M5".into(),
-                fit: Fit::Normal,
-            },
-            end: Extent::ThroughAll,
-            drill_point: false,
-            thread_length: None,
-        },
-    );
-    program.push("middle", AddSketchArgs::on(top(), points(&[[30.0, 20.0]])));
-    program.push(
-        "tapped",
-        HoleArgs {
-            face: Some(element("extrude(plate,end)")),
-            points: vec![HoleCentre::Sketch(whole_sketch("middle"))],
-            kind: HoleKind::Tapped,
-            standard: Standard::Iso {
-                size: "M6".into(),
-                fit: Fit::Normal,
-            },
-            end: Extent::blind(8.0),
-            drill_point: true,
-            thread_length: None,
-        },
-    );
-    program
-}
-
 /// A motor flange 30 across and 2.5 thick, drawn the way the sketch tools
 /// draw it: its bore an offset of its rim, 10 in, so the wall follows the
 /// rim; and its bolt circle one hole patterned six times round its middle,
@@ -637,7 +552,6 @@ pub fn all() -> Vec<Example<Program>> {
         ("airfoil_wing", airfoil_wing),
         ("patterned_plate", patterned_plate),
         ("horn", horn),
-        ("hole_plate", hole_plate),
         ("motor_flange", motor_flange),
         ("curved_panel", curved_panel),
     ]

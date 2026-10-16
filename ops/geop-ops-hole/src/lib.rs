@@ -5,6 +5,7 @@
 //! metric thread on a cylindrical face, recorded as a cosmetic thread or
 //! modelled by sweeping its profile along a helix (`thread`).
 
+pub mod examples;
 mod hole;
 mod icons;
 pub mod iso;
@@ -26,5 +27,5 @@ use geop_core_math::geop_error::GeopResult;
 
 /// Adds what this crate offers an editor to `r`: holes and threads.
 pub fn register(r: Registry) -> GeopResult<Registry> {
-    r.operation(Hole)?.operation(Thread)
+    (r.operation(Hole)?.operation(Thread))?.examples(examples::set())
 }

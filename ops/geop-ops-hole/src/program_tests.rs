@@ -697,3 +697,24 @@ fn every_iso_size_and_kind() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
+
+/// The mounting plate example is one valid solid, the tapped hole's, and,
+/// saved and loaded, builds what it built.
+#[test]
+fn hole_plate_round_trips() {
+    let registry = std::rc::Rc::new(registry().unwrap());
+    let program = crate::examples::hole_plate();
+    let built = geop_core_program::testing::assert_round_trips(registry, None, &program);
+    let part = geop_ops_extrude_revolve::testing::model_of(&built);
+    geop_ops_model::testing::assert_valid(&part);
+    assert_eq!(part.solid_names(), ["hole(tapped)"]);
+}
+
+/// The example `hole_plate`, edited as a user edits it, builds incrementally
+/// what it builds from scratch.
+#[test]
+fn hole_plate_builds_incrementally() {
+    let registry = std::rc::Rc::new(registry().unwrap());
+    let programs = geop_core_program::testing::edit_sequence(&crate::examples::hole_plate());
+    geop_core_program::testing::assert_incremental(registry, None, &programs);
+}
