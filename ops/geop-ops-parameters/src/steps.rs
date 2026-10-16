@@ -15,7 +15,7 @@ use std::borrow::Cow;
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
     editable::{Context, OperationGroup, OperationInfo, OperationTier},
-    editing::Tone,
+    editing::{Action, ListItem, Tone, Value},
     part_operation,
     part_operation::PartOperation,
 };
@@ -223,7 +223,8 @@ impl PartOperation for LookupTable {
         "A table of the variants of a part family — screw sizes, say — of which a program placing the part picks one by name.",
         OperationGroup::Part,
         OperationTier::Menu,
-    );
+    )
+    .icon(crate::icons::LOOKUP_TABLE);
     type Args = LookupTableArgs;
     type Session = ();
 
@@ -258,21 +259,139 @@ impl PartOperation for LookupTable {
         ctx.produce(&parameter_values(), &names, add_values)
     }
 
-    /// What is defined is edited where the program's parameters are listed.
+    /// The table as the Parameters panel edits it: the input it is looked
+    /// up by, its columns, its rows — each named, the one built where the
+    /// run names none selected — and each row's value in each column. A
+    /// column or a row added is named afresh and its values are 0; the last
+    /// row is not taken out, and taking out the row selected selects the
+    /// first left.
     fn form<'a>(
         _: &'a Context<'a>,
         args: &LookupTableArgs,
         _: &FormState<()>,
     ) -> EditForm<'a, Design, LookupTableArgs> {
         let mut f = EditForm::<Design, LookupTableArgs>::default();
-        let text = format!(
-            "The table {:?} of {} rows — edited under Parameters.",
-            args.input,
-            args.rows.len()
-        );
-        f.form.dialog.text("table", text, Tone::Hint);
+        let input = ListItem {
+            text: Some(args.input.clone()),
+            ..ListItem::new("input", "Looked up by")
+        };
+        f.form.dialog.list("input", vec![input], "");
+        f.on("input", |edit, value| {
+            if let Value::Text(name) = value {
+                edit.args.input = name;
+            }
+        });
+
+        let columns = (args.columns.iter().enumerate())
+            .map(|(k, column)| ListItem {
+                text: Some(column.clone()),
+                removable: true,
+                ..ListItem::new(format!("column:{k}"), "Column")
+            })
+            .collect();
+        f.form.dialog.list("columns", columns, "No columns");
+        for k in 0..args.columns.len() {
+            f.on(format!("column:{k}"), move |edit, value| match value {
+                Value::Text(name) => edit.args.columns[k] = name,
+                Value::Remove => {
+                    edit.args.columns.remove(k);
+                    for row in &mut edit.args.rows {
+                        row.values.remove(k);
+                    }
+                }
+                _ => {}
+            });
+        }
+
+        let rows = (args.rows.iter().enumerate())
+            .map(|(i, row)| ListItem {
+                text: Some(row.name.clone()),
+                selected: row.name == args.selected,
+                removable: args.rows.len() > 1,
+                ..ListItem::new(format!("row:{i}"), "Row")
+            })
+            .collect();
+        f.form.dialog.list("rows", rows, "No rows");
+        for i in 0..args.rows.len() {
+            f.on(format!("row:{i}"), move |edit, value| {
+                let args = &mut *edit.args;
+                match value {
+                    Value::Press => args.selected = args.rows[i].name.clone(),
+                    Value::Text(name) => {
+                        if args.selected == args.rows[i].name {
+                            args.selected = name.clone();
+                        }
+                        args.rows[i].name = name;
+                    }
+                    Value::Remove if args.rows.len() > 1 => {
+                        let row = args.rows.remove(i);
+                        if row.name == args.selected {
+                            args.selected = args.rows[0].name.clone();
+                        }
+                    }
+                    _ => {}
+                }
+            });
+        }
+
+        let cells = (args.rows.iter().enumerate())
+            .flat_map(|(i, row)| {
+                (args.columns.iter().enumerate()).map(move |(k, column)| ListItem {
+                    value: row.values.get(k).copied(),
+                    ..ListItem::new(format!("cell:{i}:{k}"), format!("{}: {column}", row.name))
+                })
+            })
+            .collect();
+        f.form.dialog.list("values", cells, "No values");
+        for i in 0..args.rows.len() {
+            for k in 0..args.columns.len() {
+                f.on(format!("cell:{i}:{k}"), move |edit, value| {
+                    if let (Value::Number(n), Some(cell)) =
+                        (value, edit.args.rows[i].values.get_mut(k))
+                    {
+                        *cell = n;
+                    }
+                });
+            }
+        }
+
+        let add = vec![
+            Action::new("column", "Add a column"),
+            Action::new("row", "Add a row"),
+        ];
+        f.actions("add", add, |edit, what| {
+            let args = &mut *edit.args;
+            match what {
+                "column" => {
+                    args.columns.push(fresh_name(&args.columns, "value"));
+                    for row in &mut args.rows {
+                        row.values.push(0.0);
+                    }
+                }
+                "row" => {
+                    let names: Vec<String> = args.rows.iter().map(|r| r.name.clone()).collect();
+                    args.rows.push(Row {
+                        name: fresh_name(&names, "row"),
+                        values: vec![0.0; args.columns.len()],
+                    });
+                }
+                _ => {}
+            }
+        });
         f
     }
+}
+
+/// `base`, or `base2`, `base3`, ... — the first not among `names`.
+fn fresh_name(names: &[String], base: &str) -> String {
+    let taken = |name: &str| names.iter().any(|n| n == name);
+    let mut name = base.to_string();
+    let mut n = 1;
+    while taken(&name) {
+        n += 1;
+        name = format!("{base}{n}");
+    }
+    name
 }
 
 /// The row the table `args` is set to: the one the run's input names, else

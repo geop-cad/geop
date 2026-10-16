@@ -24,6 +24,7 @@
 )]
 
 pub mod files;
+mod icons;
 pub mod instance;
 pub mod panel;
 pub mod parameters;
@@ -61,5 +62,7 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
         .panel(ParametersPanel)
 }
 
+#[cfg(test)]
+mod editor_tests;
 #[cfg(test)]
 mod tests;

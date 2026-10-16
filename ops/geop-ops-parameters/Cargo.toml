@@ -10,3 +10,7 @@ geop-core-editor.workspace = true
 geop-ops-model.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+# A table edited in its dialog, as a front end edits it.
+geop-core-editor = { workspace = true, features = ["testing"] }
