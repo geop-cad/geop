@@ -34,7 +34,7 @@ use geop_core_sketch::{
     CurveId, Enclosure, PointId, Shape,
     profile::{Piece, curve_nurbs, curve_polyline},
 };
-use geop_ops_model::{Chain, Circle, Curve, Line, Path, Plane, Point, Round};
+use geop_ops_model::{Chain, Circle, Curve, Line, Path, Plane, Point, Profile, Round};
 
 use crate::{CurveKind, Sketch};
 
@@ -116,6 +116,28 @@ pub fn chain_of_pieces<S: Scalar, const D: usize>(
         curves: pieces.into_iter().map(|p| p.curve).collect(),
         curve_names,
         joint_names,
+    }
+}
+
+/// The profiles of `shape`, one of the sketch `name`'s, its points at
+/// `geometry`: a region's loops, outer loop first, or the one open chain —
+/// each named after the sketch and its elements (see [`chain_of_pieces`]).
+pub fn shape_profiles<S: Scalar>(
+    name: &str,
+    sketch: &Sketch,
+    geometry: &Enclosure<S>,
+    shape: Shape,
+) -> GeopResult<Vec<Profile<S>>> {
+    match shape {
+        Shape::Region(region) => std::iter::once(&region.outer)
+            .chain(&region.holes)
+            .map(|lp| Ok(chain_of_pieces(name, lp.to_nurbs(sketch, geometry)?, true)))
+            .collect(),
+        Shape::Chain(chain) => Ok(vec![chain_of_pieces(
+            name,
+            chain.to_nurbs(sketch, geometry)?,
+            false,
+        )]),
     }
 }
 

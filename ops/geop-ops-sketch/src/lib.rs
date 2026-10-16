@@ -18,7 +18,8 @@ pub mod references;
 
 pub use add_sketch::{AddSketch, AddSketchArgs, SketchPlane};
 pub use placed::{
-    PlacedSketch, SketchRef, chain_of_pieces, piece_names, sketch, sketch_element, whole_sketch,
+    PlacedSketch, SketchRef, chain_of_pieces, piece_names, shape_profiles, sketch, sketch_element,
+    whole_sketch,
 };
 
 use geop_core_editor::{
