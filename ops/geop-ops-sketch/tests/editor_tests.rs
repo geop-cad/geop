@@ -1,5 +1,8 @@
 //! Sketches drawn as an editor draws them: every gesture a command to the
-//! [`crate::Editor`], as rays and keys.
+//! [`geop_core_editor::editor::Editor`], as rays and keys — over the
+//! operations a sketch is drawn among: the datums, the parameters, and the
+//! extrusions of the parts it is drawn on (an integration test, as the
+//! extrusion depends on this crate).
 //!
 //! What the sketch tool keeps while it is edited is its own; these tests
 //! read what the editor shows of it instead — the tool active among the
@@ -25,7 +28,37 @@ use geop_ops_sketch::{
     AddSketchArgs, Constraint, CurveKind, Sketch, SketchPlane, editor::SketchSession, references,
 };
 
-use crate::registry::testing::{Stepping, loaded, origin_plane, pointer};
+use geop_core_editor::{
+    registry::Registry,
+    selectable::Selectable,
+    testing::{Stepping, editor_with, from_above, pointer},
+};
+use geop_ops_datums::origin_plane;
+use geop_ops_extrude_revolve::testing::{args, drilled_box, on_face};
+use geop_ops_model::element;
+use geop_ops_sketch::references::{Projected, Source};
+use std::collections::BTreeMap;
+
+/// What a sketch is drawn among: the model's, the sketches', the datums',
+/// the extrusions' and the parameters' operations, drawers and panels.
+fn registry() -> Registry {
+    (geop_ops_model::register(Registry::default()))
+        .and_then(geop_ops_sketch::register)
+        .and_then(geop_ops_datums::register)
+        .and_then(geop_ops_extrude_revolve::register)
+        .and_then(geop_ops_parameters::register)
+        .unwrap()
+}
+
+/// An editor of [`registry`], with no other files and nothing loaded.
+fn editor() -> geop_core_editor::editor::Editor {
+    geop_core_editor::editor::Editor::new(registry(), BTreeMap::new())
+}
+
+/// An editor of [`registry`] on `program`, which loads without an error.
+fn loaded(program: Program) -> geop_core_editor::editor::Editor {
+    editor_with(registry(), program)
+}
 
 type SolveReport = geop_core_sketch::SolveReport<geop_core_program::values::Design>;
 type SketchEditing = geop_core_editor::edit_form::FormState<SketchSession>;
@@ -1815,4 +1848,229 @@ fn trimming_a_mirror_image_frees_its_sweep() {
     assert!(!e.has(|c| matches!(c, Constraint::EqualSweep { .. })));
     assert_eq!(e.curves_of("arc").len(), 2, "{:?}", e.sketch());
     assert!(e.report().converged, "{:?}", e.report());
+}
+
+/// The project field of a sketch takes edges, vertices and faces of the
+/// part: each picked is projected into the sketch, fixed, and taken out
+/// again with its geometry when it is taken out of the field. Projecting
+/// is optional: a sketch builds without.
+#[test]
+fn the_project_field_projects_what_is_picked() {
+    use geop_core_editor::editing::{Control, StepEditEvent, Value};
+    use geop_core_editor::editor::{Command, Editor};
+    use geop_core_editor::testing::handled;
+    let mut editor = editor();
+    let mut program = drilled_box();
+    let after_box = program.index_of("box").unwrap() + 1;
+    program.steps.truncate(after_box);
+    assert!(
+        editor
+            .handle(Command::Load {
+                program,
+                path: None
+            })
+            .error
+            .is_none()
+    );
+    editor.handle(Command::New {
+        kind: "add_sketch".into(),
+    });
+    let top = on_face("extrude(box,end)");
+    let dialog = |key: &str, value: Value| Command::Event {
+        event: StepEditEvent::Dialog {
+            key: key.into(),
+            value,
+        },
+    };
+    editor.handle(dialog("plane", Value::Elements(vec![top.picked()])));
+    let update = editor.handle(Command::Show);
+    let step = update.step.unwrap();
+    assert!(
+        step.missing.is_empty(),
+        "projecting is optional: {:?}",
+        step.missing
+    );
+    assert!(matches!(
+        step.presentation.dialog.get("project"),
+        Some(Control::Reference(r)) if !r.armed && !r.required
+    ));
+    let edge = Projected::Edge(element("extrude(box,outline,c4,end)"));
+    handled(
+        &mut editor,
+        dialog("project", Value::Elements(vec![edge.picked()])),
+    );
+    let projected = |editor: &Editor| {
+        let args: AddSketchArgs = args(editor.editing().unwrap());
+        let curves: Vec<_> = args
+            .references
+            .iter()
+            .filter(|r| matches!(r.source, Source::Projection { .. }))
+            .flat_map(|r| r.curves.values())
+            .collect();
+        assert!(curves.iter().all(|c| args.sketch.curves[c].construction));
+        curves.len()
+    };
+    assert_eq!(projected(&editor), 1);
+    editor.handle(dialog("project", Value::Elements(vec![])));
+    assert_eq!(projected(&editor), 0);
+}
+
+/// The part drawn is listed beyond its faces — its datums, sketches,
+/// solids — each shown or hidden as the editor would, until the user says
+/// otherwise; and a placed part's mates are listed too, never drawn.
+#[test]
+fn the_structure_is_listed_and_shown_as_chosen() {
+    use geop_core_editor::editor::{Command, Editor};
+    use geop_core_editor::testing::handled;
+    let mut editor = editor();
+    let update = editor.handle(Command::Load {
+        program: drilled_box(),
+        path: None,
+    });
+    let scene = update.scene.unwrap();
+    let listed = |kind: &str| -> Vec<(String, Option<bool>)> {
+        scene
+            .structure
+            .iter()
+            .filter(|i| i.kind == kind)
+            .map(|i| (i.name.clone(), i.visible))
+            .collect()
+    };
+    assert!(listed("datum").contains(&("origin".into(), Some(true))));
+    // The sketches were extruded: hidden by themselves.
+    assert_eq!(
+        listed("sketch"),
+        [
+            ("outline".into(), Some(false)),
+            ("hole_sketch".into(), Some(false))
+        ]
+    );
+    let solid = listed("solid")[0].0.clone();
+    assert_eq!(listed("solid"), [(solid.clone(), Some(true))]);
+
+    let shown = |editor: &mut Editor, name: &str, visible: bool| {
+        let update = handled(
+            editor,
+            Command::Visibility {
+                name: name.into(),
+                visible,
+            },
+        );
+        let scene = update.scene.expect("what is hidden changed");
+        assert!(
+            scene
+                .structure
+                .iter()
+                .any(|i| i.name == name && i.visible == Some(visible))
+        );
+        scene.hidden
+    };
+    let hidden = shown(&mut editor, "outline", true);
+    assert!(!hidden.contains(&"outline".to_string()));
+    let hidden = shown(&mut editor, &solid, false);
+    assert!(hidden.contains(&solid));
+    let hidden = shown(&mut editor, "origin", false);
+    assert!(hidden.contains(&"origin".to_string()));
+}
+
+/// Undo and redo work while a sketch is edited, edit by edit — a drag one
+/// edit however many events it takes — and the program's own undo comes
+/// back once the sketch is put away.
+#[test]
+fn sketches_undo_their_own_edits() {
+    use geop_core_editor::editing::{Button, StepEditEvent};
+    use geop_core_editor::editor::{Command, Editor};
+    use geop_core_editor::testing::handled;
+    let mut editor = loaded(Program::new());
+    editor.handle(Command::New {
+        kind: "add_sketch".into(),
+    });
+    let event = |editor: &mut Editor, event| editor.handle(Command::Event { event });
+    let down = from_above;
+    let click = |editor: &mut Editor, x, y| {
+        event(
+            editor,
+            StepEditEvent::Click {
+                pointer: down(x, y),
+                button: Button::Primary,
+                double: false,
+                shift: false,
+            },
+        )
+    };
+    // The origin's xy plane's square, picked from above.
+    click(&mut editor, 0.04, 0.04);
+    event(&mut editor, StepEditEvent::Key { key: "l".into() });
+    click(&mut editor, 0.5, 0.5);
+    click(&mut editor, 1.5, 0.9);
+    click(&mut editor, 1.2, 1.8);
+    event(
+        &mut editor,
+        StepEditEvent::Key {
+            key: "Escape".into(),
+        },
+    );
+    event(
+        &mut editor,
+        StepEditEvent::Key {
+            key: "Escape".into(),
+        },
+    );
+    let drawn = |editor: &Editor| {
+        let args: AddSketchArgs = args(editor.editing().unwrap());
+        args.sketch.curves.values().filter(|c| !c.fixed).count()
+    };
+    let end = |editor: &Editor| {
+        let args: AddSketchArgs = args(editor.editing().unwrap());
+        let p = args
+            .sketch
+            .points
+            .values()
+            .rfind(|p| !p.fixed)
+            .unwrap()
+            .xy();
+        [p[0].to_f64(), p[1].to_f64()]
+    };
+    assert_eq!(drawn(&editor), 2);
+    // A drag, of three events: one edit.
+    let before = end(&editor);
+    event(
+        &mut editor,
+        StepEditEvent::Hover {
+            pointer: down(before[0], before[1]),
+            shift: false,
+        },
+    );
+    for (to, done) in [([1.3, 1.9], false), ([1.4, 2.0], false), ([1.5, 2.1], true)] {
+        event(
+            &mut editor,
+            StepEditEvent::Drag {
+                from: down(before[0], before[1]),
+                to: down(to[0], to[1]),
+                done,
+                shift: true,
+            },
+        );
+    }
+    assert!((end(&editor)[0] - 1.5).abs() < 1e-6, "{:?}", end(&editor));
+    handled(&mut editor, Command::Undo);
+    assert!(
+        (end(&editor)[0] - before[0]).abs() < 1e-9,
+        "{:?} vs {before:?}",
+        end(&editor)
+    );
+    assert_eq!(drawn(&editor), 2);
+    editor.handle(Command::Undo);
+    assert_eq!(drawn(&editor), 1);
+    let update = editor.handle(Command::Redo);
+    let step = update.step.unwrap();
+    assert!(step.can_undo && step.can_redo);
+    assert_eq!(drawn(&editor), 2);
+    editor.handle(Command::Redo);
+    assert!((end(&editor)[0] - 1.5).abs() < 1e-6);
+    // Put away, the program's own undo is back: the sketch added.
+    let update = editor.handle(Command::Commit);
+    assert!(update.program.unwrap().can_undo);
+    editor.handle(Command::Undo);
+    assert!(editor.program().steps.is_empty());
 }

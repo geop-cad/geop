@@ -13,8 +13,6 @@ pub mod figures;
 mod geometry;
 mod icons;
 pub mod placed;
-#[cfg(test)]
-mod program_tests;
 pub mod references;
 
 pub use add_sketch::{AddSketch, AddSketchArgs, SketchPlane};

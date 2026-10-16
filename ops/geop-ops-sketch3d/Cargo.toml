@@ -22,3 +22,7 @@ serde_json.workspace = true
 # A block to fix points to: shapes are built without the extrude
 # operation, which depends on this crate.
 geop-lib-sweep = { workspace = true, features = ["testing"] }
+geop-core-editor = { workspace = true, features = ["testing"] }
+# The box the editor's tests draw on: an integration test's programs (a
+# unit test would hold a second copy of this crate's targets).
+geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }

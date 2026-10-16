@@ -756,8 +756,10 @@ dependencies = [
  "geop-core-sketch",
  "geop-core-topology",
  "geop-ops-datums",
+ "geop-ops-extrude-revolve",
  "geop-ops-model",
  "geop-ops-parameters",
+ "geop-ops-sketch3d",
  "serde",
  "serde_json",
 ]
@@ -774,6 +776,7 @@ dependencies = [
  "geop-core-topology",
  "geop-lib-sweep",
  "geop-ops-datums",
+ "geop-ops-extrude-revolve",
  "geop-ops-model",
  "geop-ops-parameters",
  "geop-ops-sketch",

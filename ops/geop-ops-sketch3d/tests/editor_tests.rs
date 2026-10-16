@@ -1,5 +1,7 @@
 //! 3-D sketches drawn as an editor draws them — every gesture a command
-//! to the [`crate::Editor`], as rays and keys — and built on a part.
+//! to the [`geop_core_editor::editor::Editor`], as rays and keys — and
+//! built on a part: an extruded box, so an integration test, as the
+//! extrusion depends on this crate.
 
 use geop_core_editor::editing::{Button, Pointer, Reach, Shape, StepEditEvent, Style, Value};
 use geop_core_math::{
@@ -17,9 +19,27 @@ use geop_ops_sketch3d::{
     Sketch3dSession, Target, Tool, sketch3d,
 };
 
-use crate::registry::testing::{
-    Stepping, extrude_sketch, loaded, on_origin, pointer as reaching, rectangle,
+use geop_core_editor::{
+    registry::Registry,
+    testing::{Stepping, editor_with, pointer as reaching},
 };
+use geop_ops_extrude_revolve::testing::{extrude_sketch, on_origin, rectangle};
+
+/// What a 3-D sketch is drawn among: the model's, the sketches', the
+/// datums' and the extrusions' operations and drawers.
+fn registry() -> Registry {
+    (geop_ops_model::register(Registry::default()))
+        .and_then(geop_ops_sketch::register)
+        .and_then(geop_ops_datums::register)
+        .and_then(geop_ops_sketch3d::register)
+        .and_then(geop_ops_extrude_revolve::register)
+        .unwrap()
+}
+
+/// An editor of [`registry`] on `program`, which loads without an error.
+fn loaded(program: Program) -> geop_core_editor::editor::Editor {
+    editor_with(registry(), program)
+}
 
 fn close(a: &Vector3<S>, b: [f64; 3]) -> bool {
     (0..3).all(|k| (a[k].to_f64() - b[k]).abs() < 1e-7)
