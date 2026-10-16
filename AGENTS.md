@@ -1,6 +1,6 @@
 # Agent rules for this repo
 
-This project is a new CAD kernel. It's self contained, and backwards compatibility is not important. The code is written in Rust, and the goal is to be correct, robust, simple, and maintainable. For every change, ask how this fits nicely into the overall design, and whether it makes the code easier to understand and maintain. If it doesn't, consider a different approach. New helper functions need to be added in the correct place. If it makes sense to rename a method, unify some arguments, or change a type, do so, even if it break backwards compatibility. The goal is to have a clean, simple, and correct codebase, not to maintain a stable API. The same holds for saved files: when a format change breaks old `.geop` files, delete them rather than adding a compatibility reader, and keep the schema simple and consistent. For the same reason, never commit `.geop` files as test fixtures — rebuild a user's reproducing file in Rust instead (see `cad/geop-cad-base/src/operations/regression_tests.rs`), and confirm the Rust version still fails without the fix.
+This project is a new CAD kernel. It's self contained, and backwards compatibility is not important. The code is written in Rust, and the goal is to be correct, robust, simple, and maintainable. For every change, ask how this fits nicely into the overall design, and whether it makes the code easier to understand and maintain. If it doesn't, consider a different approach. New helper functions need to be added in the correct place. If it makes sense to rename a method, unify some arguments, or change a type, do so, even if it break backwards compatibility. The goal is to have a clean, simple, and correct codebase, not to maintain a stable API. The same holds for saved files: when a format change breaks old `.geop` files, delete them rather than adding a compatibility reader, and keep the schema simple and consistent. For the same reason, never commit `.geop` files as test fixtures — rebuild a user's reproducing file in Rust instead, in the `regression_tests.rs` of the crate whose operation failed (see `ops/geop-ops-extrude-revolve/src/regression_tests.rs`), and confirm the Rust version still fails without the fix.
 
 Do not introduce new helper function for a single use case or because another function is violating its abstraction or intention. Instead, fix the existing function to work as expected.
 
@@ -636,6 +636,21 @@ steps. Wherever a representation has more numbers than the thing it stands
 for (a quaternion for a rotation, homogeneous coordinates for a point), ask
 whether an enclosure covers the thing, not just the numbers.
 
+### A value read from a file is kept as read
+
+`Pose`'s reader normalized the quaternion it read. Normalizing a sharp
+quaternion gives an interval; a file holds its midpoint, which reads back
+as another interval and is written as another midpoint. A program with a
+placed part's pose in its state was never the same program once saved and
+loaded, and the press example failed its round trip. Nothing needed the
+normalization: a quaternion need not be unit to stand for a rotation,
+since the rotation it makes divides by its norm squared; and where an
+enclosure needs a unit one, the editor's solver normalizes honestly before
+it encloses (`retract_over`, above). So the reader keeps the pose exactly
+as read and refuses only what stands for nothing (the zero quaternion).
+Reading what was written must give back what was read; a reader that
+"cleans up" a value makes a file that changes every time it is saved.
+
 ## Refuse what you do not support: early, by name, and say why
 
 An operation that only handles some configurations must recognise the rest
@@ -672,17 +687,19 @@ directly:
   edges met at a corner.
 
 For anything a user reaches through the editor, write at least one test in
-`editor_tests.rs` that drives it the way the front end does: `New`, `Click`,
-`Hover`, `Drag`, `Seek`. Assert on what the editor sends back (the
+the `editor_tests.rs` of the crate that offers it, driving it the way the
+front end does (`geop_core_editor::testing`): `New`, `Click`, `Hover`,
+`Drag`, `Seek`. Assert on what the editor sends back (the
 presentation's `grab`, the scene's solids, the dialog's values). Be wary of
 catch-all `_ =>` arms that answer a question: they give confident answers
 for cases nobody thought about.
 
 ## Sweep the space, but keep the everyday suite fast
 
-`stress_tests.rs` blends every edge, and shells every face, of boxes,
-cylinders and spheres: whole, drilled, pocketed, stepped, cut off and with a
-boss. Its first run found five shell bugs that no hand-written test had
+The `stress_tests.rs` of `geop-ops-fillet` and of `geop-ops-shell` blend
+every edge, and shell every face, of boxes, cylinders and spheres: whole,
+drilled, pocketed, stepped, cut off and with a boss. Their first run found
+five shell bugs that no hand-written test had
 reached. Sweeps like this tell a refusal apart from a failure, and require
 that whatever is built is valid.
 
@@ -758,8 +775,8 @@ not in slow arithmetic:
 
 Every operation of a part implements
 `geop_core_editor::part_operation::PartOperation` and is made an
-`Operation` by `part_operation!(Op(Args))`: its info, arguments,
-`new_args`, a `run` that defines and revises targets (or, for one that
+`Operation` and an `Editable` by `part_operation!(Op(Args))`: its info,
+arguments, `new_args`, a `run` that produces its targets (or, for one that
 only changes the model, `geop_ops_model::ModelOperation` through
 `build_model`) and one `form`, whose fields each carry their setter
 (`EditForm`). A field's key is written once; a hand-written `match` over
@@ -784,32 +801,123 @@ reads it with `retrieve_placed` (or `resolve_placed`, `Selected::shape`)
 and places it where `geop_ops_parameters::located` says. Instances'
 constraints and unknowns come up through `Constraints::of` and
 `Unknowns::of`; no step writes the state, a solve outside the part does.
-Each crate defines its own targets and draws them; `geop_cad_base::part`
-only composes them (the drawing, the structure). A program defines what it
+Each crate defines its own targets and draws them (its `Drawer`); the
+registry only composes them (the drawing, the structure). A program defines what it
 needs as steps: its parameters (`DefineParameters`) and what it says of
 its part (`PartProperties`); a run's inputs only set them. A program never
 knows where it is: the runner does (`Location`), and a step reads other
 files through it (`Runner::program`, `read`), from the
 `Workspace`, passing what it read on to its targets as arguments.
 
-Shared test helpers live in `geop_ops_model::testing` (feature `testing`:
-validity, entities by where they are, applying an operation to a part) and
-`geop_ops_extrude_revolve`'s `shapes` and `testing` (feature `testing`:
-basic solids, sketches, the steps extruding them, building a program in the
-operations of a registry): look there before writing an `assert_valid`, a
-cube or a `v3` of your own. An operation's program tests live in its own
-crate (`program_tests.rs`), with a registry of the operations they use; only
-tests that drive the editor, the examples or the standard parts stay in
-`geop-cad-base`.
+An op crate is whole in itself. Its `register` (in `lib.rs`) adds
+everything it offers the editor to the `Registry`: its operations, the
+`Drawer` of the targets it defines, its exporters and inspectors, its
+`Panel`s and `Tool`s, the `Settle` (only `geop-ops-assembly` has one) and
+its `ExampleSet`; `cad/geop-cad-base/src/registry.rs` calls it, one line.
+Its examples are in its `examples.rs`; its program tests, with a round trip
+and an incremental build of each example, in `program_tests.rs`; its
+editor-driven tests in `editor_tests.rs`; its rebuilt reproducers in
+`regression_tests.rs`; its ignored sweeps in `stress_tests.rs`. Each test
+builds a registry of only the crates it needs, each crate's `register`, as
+the editor's is built. `geop-cad-base` keeps only what needs every crate:
+every operation offered and opened, every example drawn, weighed and built
+incrementally (its `tests.rs`).
+
+Shared test helpers live in `geop_core_editor::testing` (feature `testing`:
+an editor driven as a front end drives it), `geop_core_program::testing`
+(`assert_round_trips`, `assert_incremental`), `geop_ops_model::testing`
+(feature `testing`: validity, entities by where they are, applying an
+operation to a part), `geop_lib_sweep::shapes` (basic solids) and
+`geop_ops_extrude_revolve::testing` (feature `testing`: sketches, the steps
+extruding them, building a program in the operations of a registry): look
+there before writing an `assert_valid`, a cube or a `v3` of your own.
+
+## Where things go
+
+A crate's place follows from what it knows, and the tiers are checked
+(`scripts/check-layering.sh`, its allow-list empty). Each rule names what
+broke before it was one.
+
+- **Geometry with no notion of a program goes in `core/`.** What a
+  program, a part, an operation, a workspace and an editor *are* is
+  `geop-core-program` and `geop-core-editor`; nothing in `core/` names an
+  operation. A target type, its element kinds, how it is drawn and listed,
+  the operations that produce it, their forms, tests, examples and
+  regressions belong to that operation's crate. An algorithm two
+  operations share goes in a `geop-lib-*` crate. Composition is one line
+  in `cad/geop-cad-base/src/registry.rs`. `geop-cad-base` once held 26 000
+  lines of every operation's tests and examples: changing a dialog meant
+  building and testing everything.
+- **A lib takes geometry; an op resolves references.** A `geop-lib-*`
+  function takes profiles, models, named models and poses, never an
+  `ElementReference`, a `PlacedSketch` or a `Reader`. The extrusion's
+  algorithm took a placed sketch and lived with the extrude operation, so
+  the fillet, which sweeps its blend tools, depended on the extrude
+  operation to reach it. Resolving the reference is the operation's job;
+  the algorithm then serves any caller.
+- **An op crate's public surface is its `lib.rs`.** Another crate may use
+  only what it re-exports: `register`, target types, reference
+  constructors, `read_*`, `*Args`. Wanting more means something is in the
+  wrong crate — a helper that belongs in a lib, or an operation reached
+  into where only its target should be read.
+- **Every op crate tests itself.** Program tests, editor-driven tests,
+  regression tests, and each example with a round trip and an incremental
+  build. `cargo test -p <crate>` must pass on its own, not only when the
+  workspace's feature unification happens to switch on a `testing` feature
+  it forgot to ask for; `scripts/test-affected.sh` is the check before a
+  merge, and it only works if each crate's tests are its own.
+- **The front end knows keys, not operations.** Panels, tools, structure
+  groups and inspectors reach the web app by key and by the kernel's
+  labels; the elements it lights, by the target, kind and name the kernel
+  gives them. An operation name in `web/src` outside the key map is a bug:
+  it is a branch the next operation silently falls through. Operation
+  icons are the kernel's too (`OperationInfo::icon`).
+- **No fixed fields for one operation in the protocol.** What one
+  operation family needs to show at program level is a `Panel`; what it
+  needs the pointer for while no step is open is a `Tool`; what it needs
+  after every edit is the `Settle` hook. `ProgramState` once had
+  `parameters`, `joints`, `freedom` and `conflicting`: every front end
+  carried the assembly's concepts, whether it placed parts or not.
+
+### An op crate's tests that need its dependents go in `tests/`
+
+The sketch crate's program tests extrude what they sketch, and
+`geop-ops-extrude-revolve` depends on `geop-ops-sketch`. As a unit test,
+`src/` with extrude-revolve as a dev-dependency, Cargo linked two copies of
+the sketch crate: the one under test, and the one extrude-revolve was built
+against. Their target types are different types, so the extrusion could
+not read the sketch the test had built, and every typed target failed to
+match. An op crate whose tests need a crate that depends on it puts those
+tests in `tests/` (an integration test links one copy), as
+`ops/geop-ops-sketch/tests/` and `ops/geop-ops-sketch3d/tests/` do. A
+dependency cycle through a dev-dependency is that copy waiting to happen:
+check for one before adding a dev-dependency on a crate above you.
+
+### Examples are code, and their crate depends on what they are written in
+
+An example is a Rust program written against the operations' `Args`
+types, so it compiles only where every `Args` it writes is a dependency,
+and the crate that hosts it must depend on each of them — a normal
+dependency, since `register` offers the example to the editor. Put an
+example in the highest crate whose operations it uses (the reference
+geometry's examples extrude and loft, so that crate depends on
+extrude-revolve), never in a crate that would need a new dependency
+upward. An example drawn in the editor is kept as the `.geop` text it
+saved, in its crate's `src/drawn/`, and read with `include_str!`: it needs
+no `Args` at compile time, but its tests build it, so its crate's tests
+need every operation it uses (a dev-dependency suffices).
 
 ## Working in parallel worktrees
 
 Features developed side by side in separate worktrees (one agent each)
-conflicted only in the shared lists every feature appends to:
-the `operations!` list in `geop-cad-base`'s `operations/mod.rs` and its
-imports, the workspace and `geop-cad-base` `Cargo.toml`,
-`web/src/icons.tsx` and `DEVELOPERS.md`. Keep both sides, then read the merged result: a doc comment
-listing crates, or a JSX entry cut mid-element, needs a hand edit. The merge
+conflicted only in the shared lists every feature appends to: the
+workspace `Cargo.toml`, the `register` lines of
+`cad/geop-cad-base/src/registry.rs` (and its `Cargo.toml`), the crate
+table of `DEVELOPERS.md`, `web/src/icons.tsx`, the protocol samples
+(`web/test/protocol.samples.ts`: write them again on the merged branch,
+never merge them by hand) and `scripts/layering-allowed.txt`. Keep both
+sides, then read the merged result: a doc comment listing crates, or a JSX
+entry cut mid-element, needs a hand edit. The merge
 is not done until the full workspace suite and the web build pass on the
 merged branch. Each branch passing its own tests says nothing about the
 combination, or about paths that only the editor exercises (see above).
