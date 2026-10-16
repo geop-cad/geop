@@ -70,3 +70,41 @@ pub fn assert_incremental(
         );
     }
 }
+
+/// Builds `program`, every step without an error, saves it, loads it back
+/// — the same program, saved the same again — and builds what it loaded,
+/// by a fresh runner: asserts that the two parts hold equal nodes of every
+/// target (see [`Part::differences`]), and returns the first. The program
+/// is run in the operations of `registry`, as the file `file` of
+/// `workspace`, if one is given.
+#[track_caller]
+pub fn assert_round_trips(
+    registry: Rc<OperationRegistry>,
+    workspace: Option<(Rc<dyn Workspace>, &str)>,
+    program: &Program,
+) -> Part {
+    let file = workspace.as_ref().map(|(_, file)| file.to_string());
+    let build = |program: &Program| {
+        let mut part = Part::default();
+        let failed =
+            errors(runner(registry.clone(), workspace.clone()).run(&mut part, program, None));
+        assert!(failed.is_empty(), "{file:?}: steps fail: {failed:?}");
+        part
+    };
+    let built = build(program);
+    let json = program
+        .to_json()
+        .unwrap_or_else(|e| panic!("{file:?}: not saved: {e}"));
+    let loaded = Program::from_json(&json).unwrap_or_else(|e| panic!("{file:?}: not loaded: {e}"));
+    assert_eq!(&loaded, program, "{file:?}: loaded, it is another program");
+    let again = loaded
+        .to_json()
+        .unwrap_or_else(|e| panic!("{file:?}: not saved again: {e}"));
+    assert_eq!(again, json, "{file:?}: saved again, it reads otherwise");
+    let differences = built.differences(&build(&loaded));
+    assert!(
+        differences.is_empty(),
+        "{file:?}: loaded, it builds otherwise: {differences:?}"
+    );
+    built
+}
