@@ -96,6 +96,11 @@ lib/geop-lib-stdlib           the standard parts: one program per family,
                                (`StandardPart`, `parts`, `part`), and
                                `WithStandardParts`, the `FileStore` that
                                puts them beside a workspace's files
+lib/geop-lib-shell            shelling: a solid hollowed to walls of one
+                               thickness, open at given faces; a sheet
+                               thickened or offset; room around a surface
+                               and pcurves on it, for rebuilding a solid
+                               face by face
 ops/geop-ops-model            the model a part's steps build: topology with
                                stable names, the features their steps
                                combined, geometric kinds of its elements
@@ -145,9 +150,8 @@ ops/geop-ops-fillet           fillets and chamfers on straight and circular
                                edges, rolling-ball fillets of any other edge
                                and tangent chain, radius varying along them,
                                cut or filled in with a boolean
-ops/geop-ops-shell            shelling: a solid hollowed to walls of one
-                               thickness, open at picked faces, the shell
-                               operation
+ops/geop-ops-shell            the shell operation: a solid hollowed to walls
+                               of one thickness, open at picked faces
 ops/geop-ops-pattern          linear and circular patterns, mirrors and
                                moves of bodies, copied as new bodies or
                                combined with a solid; patterns and mirrors
