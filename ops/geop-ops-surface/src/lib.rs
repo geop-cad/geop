@@ -18,7 +18,7 @@
 //!   its edges.
 //!
 //! What a sheet is offset and thickened with is the shell's machinery
-//! ([`geop_ops_shell::shell`]): a sheet thickened is a sheet shelled.
+//! ([`geop_lib_shell::shell()`]): a sheet thickened is a sheet shelled.
 
 pub mod boundary;
 pub mod extend;

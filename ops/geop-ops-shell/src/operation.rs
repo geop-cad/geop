@@ -16,18 +16,17 @@ use geop_core_program::{
     element::ElementReference, numeric::NumericInput, part::StepContext, reader::Reader,
     values::Design,
 };
+use geop_lib_shell::shell;
 use geop_ops_model::{
     Face, ModelOperation, NamedModel, Namer, Solid, build_model, model, read_model,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::shell::shell;
-
 /// Hollows the solid named `solid` out to walls `thickness` thick, open
 /// where its faces `faces` were — closed all round, with a void inside, if
 /// none is picked. The result replaces the solid and is named `shell(S)`
 /// for the operation `S`; what it is made of is named as
-/// [`crate::shell::shell`] says.
+/// [`geop_lib_shell::shell()`] says.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Shell;
 

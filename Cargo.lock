@@ -350,6 +350,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "geop-lib-shell"
+version = "0.1.0"
+dependencies = [
+ "geop-core-geometry",
+ "geop-core-math",
+ "geop-core-topology",
+ "geop-lib-sweep",
+ "geop-ops-model",
+]
+
+[[package]]
 name = "geop-lib-stdlib"
 version = "0.1.0"
 dependencies = [
@@ -682,6 +693,7 @@ dependencies = [
  "geop-core-sketch",
  "geop-core-topology",
  "geop-lib-booleans",
+ "geop-lib-shell",
  "geop-lib-sweep",
  "geop-ops-add-datum",
  "geop-ops-datums",
@@ -718,16 +730,15 @@ name = "geop-ops-shell"
 version = "0.1.0"
 dependencies = [
  "geop-core-editor",
- "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
  "geop-core-topology",
+ "geop-lib-shell",
  "geop-lib-sweep",
  "geop-ops-add-datum",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-model",
- "geop-ops-parameters",
  "geop-ops-sketch",
  "serde",
  "serde_json",
@@ -814,13 +825,13 @@ dependencies = [
  "geop-core-sketch",
  "geop-core-topology",
  "geop-lib-booleans",
+ "geop-lib-shell",
  "geop-lib-sweep",
  "geop-ops-add-datum",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-model",
  "geop-ops-parameters",
- "geop-ops-shell",
  "geop-ops-sketch",
  "geop-ops-sketch3d",
  "serde",

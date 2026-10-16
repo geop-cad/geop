@@ -1,12 +1,10 @@
-//! Shelling: hollowing a solid out to walls of one thickness, open where
-//! faces are taken away ([`shell::shell`]), and the [`Shell`] operation of a
-//! program built on it.
+//! The [`Shell`] operation: a solid of a program hollowed out to walls of
+//! one thickness, open where faces are picked, by [`geop_lib_shell::shell()`].
 
 mod icons;
-pub mod operation;
+mod operation;
 #[cfg(test)]
 mod program_tests;
-pub mod shell;
 
 pub use operation::{Shell, ShellArgs};
 

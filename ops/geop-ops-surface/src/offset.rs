@@ -1,5 +1,5 @@
 //! [`OffsetSurface`]: faces copied a distance along their normals — the
-//! inner side of a shell (see [`geop_ops_shell::shell::offset_faces`]).
+//! inner side of a shell (see [`geop_lib_shell::offset_faces`]).
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
@@ -15,8 +15,8 @@ use geop_core_math::{
 use geop_core_program::{
     element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
+use geop_lib_shell::offset_faces;
 use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model};
-use geop_ops_shell::shell::offset_faces;
 use serde::{Deserialize, Serialize};
 
 /// Copies the faces named `faces` — of a solid or standing on their own —

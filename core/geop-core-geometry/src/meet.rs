@@ -241,7 +241,7 @@ mod tests {
     /// the parametrization is singular and only the pole itself has a
     /// normal — and the foot points left behind seed the same answer again.
     /// (A pole at the start of a domain, where a seed a hair off it would
-    /// underflow, is `geop_ops_shell`'s `a_closed_revolved_cylinder`.)
+    /// underflow, is the shell's test `a_closed_revolved_cylinder`.)
     fn check_stays_over_a_pole<S: Scalar>() {
         let sphere = sphere_octant::<S>();
         let half = S::from_f64(0.5);

@@ -248,7 +248,7 @@ fn inward_corner<S: Scalar>(
         };
         let (n_f, n_g) = (normal(f, f_pcurve)?, normal(g, g_pcurve)?);
         // Running into `f`, square to the edge: in front of `g` at an
-        // inward corner (see `geop_ops_fillet`'s bend).
+        // inward corner (see the fillet's bend).
         if n_f
             .prod_cross(&along)
             .prod_dot(&n_g)

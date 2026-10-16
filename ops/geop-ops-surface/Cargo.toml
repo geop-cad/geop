@@ -13,7 +13,7 @@ geop-ops-model.workspace = true
 geop-ops-parameters.workspace = true
 geop-ops-sketch3d.workspace = true
 geop-lib-booleans.workspace = true
-geop-ops-shell.workspace = true
+geop-lib-shell.workspace = true
 serde.workspace = true
 
 [dev-dependencies]

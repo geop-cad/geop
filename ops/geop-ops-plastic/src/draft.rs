@@ -5,7 +5,7 @@
 //! planes some faces lie in; the solid keeps its topology — every face,
 //! edge and vertex is still there, still between the same neighbours. So
 //! the drafted solid is built directly, the way a shell builds its walls'
-//! inner side ([`geop_ops_shell::shell`]): each drafted face gets its
+//! inner side ([`geop_lib_shell::shell()`]): each drafted face gets its
 //! tilted plane, each vertex of one moves to where the surfaces around it
 //! now meet, each edge to where its two faces do. The alternative, a
 //! boolean with a wedge per face, would have to put the wedge's tilted face
@@ -47,8 +47,8 @@ use geop_core_topology::{
     Curve3, FaceId, SolidId,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
 };
+use geop_lib_shell::{extended, pcurve, surface_missed};
 use geop_ops_model::{BodyNames, NamedModel, Namer};
-use geop_ops_shell::shell::{extended, pcurve, surface_missed};
 
 use crate::common::halfway;
 

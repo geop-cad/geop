@@ -1,5 +1,5 @@
 //! [`Thicken`]: a sheet made a solid of one thickness — the sheet shelled
-//! (see [`geop_ops_shell::shell::thicken`]).
+//! (see [`geop_lib_shell::thicken`]).
 
 use geop_core_editor::{
     edit_form::{EditForm, FormState},
@@ -16,8 +16,8 @@ use geop_core_program::{
     element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_core_topology::Body;
+use geop_lib_shell::{offset_faces, thicken};
 use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model, model, read_model};
-use geop_ops_shell::shell::{offset_faces, thicken};
 use serde::{Deserialize, Serialize};
 
 /// Which side of a sheet a [`Thicken`] adds its material on, as the sheet's

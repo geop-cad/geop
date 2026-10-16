@@ -1,0 +1,15 @@
+[package]
+name = "geop-lib-shell"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-math.workspace = true
+geop-core-geometry.workspace = true
+geop-core-topology.workspace = true
+geop-ops-model.workspace = true
+
+[dev-dependencies]
+geop-ops-model = { workspace = true, features = ["testing"] }
+# The basic solids the tests shell.
+geop-lib-sweep = { workspace = true, features = ["testing"] }
