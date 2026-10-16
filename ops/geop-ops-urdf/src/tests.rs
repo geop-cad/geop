@@ -1,8 +1,12 @@
 //! URDF export: assemblies built from the examples' parts, exported as
 //! robots, and read back — as a tree of XML elements, and by placing every
-//! link where its joints put it.
+//! link where its joints put it; and exported through the editor, as the
+//! front end asks.
 
-use geop_core_editor::{editor::Rerun, registry::Registry};
+use geop_core_editor::{
+    editor::{Command, Editor, Rerun},
+    registry::Registry,
+};
 use geop_core_program::{
     part::Part,
     program::Program,
@@ -789,4 +793,56 @@ fn what_urdf_cannot_express_is_refused_by_name() {
     );
     let err = refusal(None, false);
     assert!(err.contains("no part is fixed"), "{err}");
+}
+
+/// The arm, exported as a URDF robot the way the front end asks — the
+/// command and the update as JSON: a ZIP archive named after the file, its
+/// bytes in base64, holding `robot.urdf` with the arm's joints. Refused for
+/// the four-bar, whose bars only mates hold: the error names them.
+#[test]
+fn an_assembly_is_exported_as_urdf() {
+    let mut editor = Editor::new(registry().unwrap(), BTreeMap::new());
+    let update = editor.handle(Command::LoadWorkspaceExample {
+        name: "arm".into(),
+        folder: None,
+    });
+    assert!(update.error.is_none(), "{:?}", update.error);
+    let json = editor
+        .handle_json(r#"{"command": "export", "exporter": "urdf"}"#)
+        .unwrap();
+    let update: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(update["error"].is_null(), "{}", update["error"]);
+    let export = &update["export"];
+    assert_eq!(export["name"], "arm.zip");
+    assert!(export["text"].is_null());
+    // "PK\x03\x04", a ZIP archive's first local header, in base64.
+    let bytes = export["bytes"].as_str().unwrap();
+    assert!(bytes.starts_with("UEsDBA"), "{}", &bytes[..16]);
+    assert_eq!(bytes.len() % 4, 0);
+
+    let urdf = |editor: &mut Editor| {
+        editor.handle(Command::Export {
+            exporter: "urdf".into(),
+            format: None,
+            options: serde_json::Value::Null,
+            date: String::new(),
+        })
+    };
+    let zip = urdf(&mut editor).export.unwrap();
+    let text = String::from_utf8_lossy(zip.bytes());
+    assert!(text.contains("robot.urdf") && text.contains("meshes/link.stl"));
+    assert!(text.contains(r#"<joint name="add_part(fore,m1)" type="revolute">"#));
+    assert!(text.contains(r#"<joint name="add_part(hand,m1)" type="revolute">"#));
+
+    editor.handle(Command::LoadWorkspaceExample {
+        name: "four_bar".into(),
+        folder: None,
+    });
+    let refused = urdf(&mut editor);
+    assert!(refused.export.is_none());
+    let error = refused.error.unwrap();
+    assert!(
+        error.contains("free to move") && error.contains("coupler"),
+        "{error}"
+    );
 }
