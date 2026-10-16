@@ -17,6 +17,7 @@
 - [geop-lib-sheet](./lib/geop-lib-sheet.md)
 - [geop-lib-booleans](./lib/geop-lib-booleans.md)
 - [geop-lib-sweep](./lib/geop-lib-sweep.md)
+- [geop-lib-stdlib](./lib/geop-lib-stdlib.md)
 
 # Ops
 

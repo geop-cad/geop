@@ -91,6 +91,11 @@ lib/geop-lib-sweep            the sweep algorithms over profiles and models:
                                (guide curves, matched points), the skinned
                                grid they and blend tools share; feature
                                `testing`: basic shapes for tests
+lib/geop-lib-stdlib           the standard parts: one program per family,
+                               written in the operations' `Args`
+                               (`StandardPart`, `parts`, `part`), and
+                               `WithStandardParts`, the `FileStore` that
+                               puts them beside a workspace's files
 ops/geop-ops-model            the model a part's steps build: topology with
                                stable names, the features their steps
                                combined, geometric kinds of its elements
@@ -285,13 +290,13 @@ Standard parts (ISO screws, nuts, washers, dowel pins, standoffs, ball
 bearings, T-slot extrusions, a NEMA 17 motor, involute spur gears and
 their rack, GT2 pulleys, shaft collars, flange couplings, MGN linear
 guides, hobby servos) live in
-`geop-cad-base/src/stdlib`: one program per family, generated in Rust,
+`geop-lib-stdlib`: one program per family, generated in Rust,
 its sizes the rows of a table parameter `size`. Every workspace reads them
 as read-only files named `std:…` (`std:iso4032_hex_nut.geop`) through
-`stdlib::WithStandardParts`, the one place they come from; the editor's
+`WithStandardParts`, the one place they come from; the editor's
 part picker lists them, and `geop compile std:…` meshes one. Listing them
 builds nothing: a family's program is generated the first time its file
-is read (`stdlib::FAMILIES`).
+is read (`FAMILIES`).
 End-to-end checks drive the real app in headless Chrome (`web/e2e/`, see
 `web/README.md`): `npm run e2e` in `web/` loads every example from the
 File menu, opens and cancels every operation, sketches and extrudes a

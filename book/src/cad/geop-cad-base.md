@@ -3,8 +3,9 @@
 > Brief overview only — full documentation is coming later.
 
 The CAD application, composed: what its editor offers, one line per crate,
-an editor of all of it, the workspace its programs place parts from, the
-example programs, and the standard parts. The editor itself is
+an editor of all of it, the workspace its programs place parts from
+beside the [standard parts](../lib/geop-lib-stdlib.md), and the example
+programs. The editor itself is
 [geop-core-editor](../core/geop-core-editor.md#the-editor)'s; the operations
 are their crates'.
 
@@ -50,8 +51,9 @@ built. Every part placed is a part of its own, kept by the part placing it
 A write changes its revision, and what read its files is read again. The
 runner refuses a placement that would make files place each other in a
 cycle, naming the cycle: the files must form a DAG.
-`stdlib::WithStandardParts` is a `FileStore` that adds the standard parts
-beside a workspace's own files, as read-only files named `std:…`
+Its files are wrapped in
+[`WithStandardParts`](../lib/geop-lib-stdlib.md), which adds the standard
+parts beside them as read-only files named `std:…`
 (`std:iso4032_hex_nut.geop`), which mean the same file from anywhere.
 
 ## Tests
@@ -61,7 +63,7 @@ over all of them as a front end drives it, are here for now
 (`operations/*tests*.rs`, their helpers in `registry::testing`); each moves
 to the crate it tests.
 
-## Examples and standard parts
+## Examples
 
 `examples` holds programs written in Rust (`box_with_drill_hole`,
 `bracket`, `cross_drilled_shaft`, `split_plate`, `handle_with_hole`,
@@ -69,11 +71,3 @@ to the crate it tests.
 several files (`workspaces`), offered as one `ExampleSet` (`examples::set`).
 The tests use them, and they serve as a reference for writing new programs.
 
-`stdlib` holds the standard parts — ISO screws, nuts, washers, dowel pins,
-standoffs, ball bearings, T-slot extrusions, a NEMA 17 motor, gears and
-their rack, pulleys, shaft collars, couplings, linear guides, hobby
-servos — one program per family, generated in Rust, its sizes the rows of
-a table parameter `size`. Every part turns around, or runs along, the `z`
-axis, and carries named datums to mate it by (`axis`, and a plane for the
-face it sits on). Listing them builds nothing: a family's program is
-generated the first time its file is read.

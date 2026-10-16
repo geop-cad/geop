@@ -7,6 +7,8 @@
 #                            geop-core-program (editing a step is editing a
 #                            step of a program)
 #   geop-lib-*               deps only on geop-core-*, geop-ops-model, geop-lib-*
+#   geop-lib-stdlib          also on the geop-ops-* whose Args its programs are
+#                            written in (ARCHITECTURE_PLAN.md §5.4)
 #   geop-ops-*, geop-lib-*   no deps on geop-cad-*
 #   core/                    no source names geop_ops_*, geop_lib_*, geop_cad_*
 #   cad/geop-cad-base/src    no `use geop_ops_*` outside src/registry.rs
@@ -52,6 +54,10 @@ rule_broken() {
             ;;
         geop-core-*)
             [[ "$to" == geop-core-* ]] || echo "core depends on core only"
+            ;;
+        geop-lib-stdlib)
+            [[ "$to" == geop-core-* || "$to" == geop-ops-* || "$to" == geop-lib-* ]] \
+                || echo "geop-lib-stdlib depends on core, ops and lib only"
             ;;
         geop-lib-*)
             [[ "$to" == geop-core-* || "$to" == geop-ops-model || "$to" == geop-lib-* ]] \
