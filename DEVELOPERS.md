@@ -85,6 +85,12 @@ lib/geop-lib-booleans         3-D booleans (union/intersection/diff) and the
                                remesh under them, splitting with a sheet,
                                imprinting, trimming up to the next face, and
                                combining a step's tools as its `Combine` says
+lib/geop-lib-sweep            the sweep algorithms over profiles and models:
+                               extrude, revolve, screw, sweeps along paths
+                               (guide rails, twist, orientation), lofts
+                               (guide curves, matched points), the skinned
+                               grid they and blend tools share; feature
+                               `testing`: basic shapes for tests
 ops/geop-ops-model            the model a part's steps build: topology with
                                stable names, the features their steps
                                combined, geometric kinds of its elements
@@ -120,10 +126,11 @@ ops/geop-ops-add-datum        the datum operation: reference points, axes,
 ops/geop-ops-boolean          the boolean and split operations
 ops/geop-ops-edit             edits of existing bodies: delete a body,
                                extract a face, project a sketch onto a face
-ops/geop-ops-extrude-revolve  extrude/revolve; sweeps along paths, with guide
-                               rails, twist and orientation; lofts, with
-                               guide curves and matched points; their
-                               operations, and basic shapes for tests
+ops/geop-ops-extrude-revolve  the extrude, revolve, sweep and loft
+                               operations: sketches and references resolved,
+                               swept by geop-lib-sweep; feature `testing`:
+                               the sketches and extrusions program tests
+                               start from
 ops/geop-ops-sketch3d         the 3-D sketch operation: points, lines, arcs
                                and splines in space, placed on the part,
                                snapped along x, y, z and onto points, and

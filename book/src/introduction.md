@@ -32,6 +32,8 @@ lib/geop-lib-sheet           sheets of paper (SVG, DXF) drawings and flat
                               patterns are written on
 lib/geop-lib-booleans        3-D booleans (union/intersection/diff), split,
                               imprint, combining a step's tools
+lib/geop-lib-sweep           extrude, revolve, sweeps along paths, lofts as
+                              algorithms; basic shapes for tests
 ops/geop-ops-model           the model a part's steps build: topology with
                               stable names, features, geometric kinds, how
                               a step combines (`Combine`, `Extent`)
@@ -45,8 +47,8 @@ ops/geop-ops-sketch          the sketch operation
 ops/geop-ops-add-datum       the datum operation: reference points, axes,
                               planes and coordinate systems
 ops/geop-ops-boolean         the boolean and split operations
-ops/geop-ops-extrude-revolve extrude/revolve, sweeps along paths, lofts;
-                              their operations, and basic shapes for tests
+ops/geop-ops-extrude-revolve the extrude, revolve, sweep and loft
+                              operations
 ops/geop-ops-assembly        placed parts, mates, joints, solving them; the
                               library, the solids a part shows, STL export
 cad/geop-cad-base            the operations the editor offers, the part as
