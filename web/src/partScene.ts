@@ -4,7 +4,7 @@
 // shared by the part drawn and the parts placed in it (see `placed3d.ts`).
 
 import * as THREE from "three";
-import type { EntityRef, Frame, PartView, Vec3 } from "./geop";
+import { located, type Frame, type PartView, type PickedElement, type Vec3 } from "./geop";
 
 const vec = (v: [number, number, number]) => new THREE.Vector3(v[0], v[1], v[2]);
 
@@ -23,6 +23,9 @@ const ANNOTATION_COLOR = 0x2a2a2a;
  * what it draws — what three.js takes, and what highlighting by name needs.
  */
 export interface Scene {
+  /** The target the part's vertices, edges and faces are of, and each sketch's name by its target: what lit elements name (see [[applyHighlight]]). */
+  model: string;
+  sketch_targets: Record<string, string>;
   /** `[x, y, z, colorHex]` per point, and the name of the vertex each draws. */
   points: [number, number, number, number][];
   point_names: string[];
@@ -30,10 +33,10 @@ export interface Scene {
   lines: [number, number, number, number, number, number, number][];
   /** Per line: the sketch it belongs to and the id of its curve there, or the edge it draws. */
   line_sketches: (string | null)[];
-  line_curves: (number | null)[];
+  line_curves: (string | null)[];
   line_edges: (string | null)[];
   /** Every sketch's points, by the sketch and their id in it. */
-  sketch_points: { sketch: string; id: number; at: Vec3 }[];
+  sketch_points: { sketch: string; id: string; at: Vec3 }[];
   /** Per triangle: its corners, its color, its corners' normals, and the index in `faces` of its face. */
   triangles: [Vec3, Vec3, Vec3, number][];
   normals: [Vec3, Vec3, Vec3][];
@@ -64,6 +67,8 @@ export function flatten(part: PartView, hidden: string[] = []): Scene {
     (solid == null || !hidden.includes(solid)) &&
     (solid != null || faces.length === 0 || faces.some((f) => !hidden.includes(f)));
   const scene: Scene = {
+    model: part.model,
+    sketch_targets: Object.fromEntries(part.sketches.map((s) => [s.target, s.name])),
     points: [],
     point_names: [],
     lines: [],
@@ -81,7 +86,7 @@ export function flatten(part: PartView, hidden: string[] = []): Scene {
     scene.points.push([...v.at, VERTEX_COLOR]);
     scene.point_names.push(v.name);
   }
-  const line = (a: Vec3, b: Vec3, color: number, sketch: string | null, curve: number | null, edge: string | null) => {
+  const line = (a: Vec3, b: Vec3, color: number, sketch: string | null, curve: string | null, edge: string | null) => {
     scene.lines.push([...a, ...b, color]);
     scene.line_sketches.push(sketch);
     scene.line_curves.push(curve);
@@ -282,19 +287,31 @@ export function tint(colors: Float32Array, k: number) {
  * everything else as built. Lit edges and vertices are drawn again on top,
  * so they can be seen wherever they are.
  */
-export function applyHighlight(group: THREE.Group, scene: Scene, highlights: EntityRef[], hidden: string[]) {
-  const named = (type: EntityRef["type"]) =>
-    new Set(highlights.flatMap((h) => (h.type === type && "name" in h ? [h.name] : [])));
-  const [faces, solids, planar, edges, vertices, spatial, features] = (
-    ["Face", "Solid", "Sketch", "Edge", "Vertex", "Sketch3d", "Feature"] as const
-  ).map(named);
-  const sketches = new Set([...planar, ...spatial]);
+export function applyHighlight(group: THREE.Group, scene: Scene, highlights: PickedElement[], hidden: string[]) {
   /** A curve's or a point's key: its sketch and its id there. */
-  const curveKey = (sketch: string, id: number) => `${sketch}\u0000${id}`;
-  const curves = new Set(highlights.flatMap((h) => (h.type === "SketchCurve" ? [curveKey(h.sketch, h.curve)] : [])));
-  const sketchPoints = new Set(
-    highlights.flatMap((h) => (h.type === "SketchPoint" ? [curveKey(h.sketch, h.point)] : [])),
+  const curveKey = (sketch: string, id: string) => `${sketch}\u0000${id}`;
+  const [faces, solids, sketches, edges, vertices, features, curves, sketchPoints] = Array.from(
+    { length: 8 },
+    () => new Set<string>(),
   );
+  // What each element lights, by the target it is of and its kind: of the
+  // model, its faces, edges, vertices and solids — the faces a plane or a
+  // round is of, the edges a line or a curve is — of a sketch, it or its
+  // curves and points; a feature, the faces it made, wherever it is.
+  for (const h of highlights) {
+    const { instance, target } = located(h);
+    if (instance) continue;
+    const sketch = scene.sketch_targets[target];
+    if (h.kind === "feature") features.add(h.name);
+    else if (sketch != null && h.kind === "sketch_curve") curves.add(curveKey(sketch, h.name));
+    else if (sketch != null && h.kind === "sketch_point") sketchPoints.add(curveKey(sketch, h.name));
+    else if (sketch != null) sketches.add(sketch);
+    else if (target !== scene.model) continue;
+    else if (["face", "plane", "round"].includes(h.kind)) faces.add(h.name);
+    else if (["edge", "line", "curve", "circle", "path"].includes(h.kind)) edges.add(h.name);
+    else if (["vertex", "point"].includes(h.kind)) vertices.add(h.name);
+    else if (["solid", "body"].includes(h.kind)) solids.add(h.name);
+  }
   const tags = group.userData.triangles as TriangleTags | undefined;
   if (tags) {
     const attribute = tags.mesh.geometry.getAttribute("color") as THREE.BufferAttribute;
@@ -367,16 +384,11 @@ export function frameMatrix(frame: Frame): THREE.Matrix4 {
   return new THREE.Matrix4().makeBasis(vec(frame.u), vec(frame.v), vec(frame.w)).setPosition(vec(frame.origin));
 }
 
-/** The entities of `refs` that lie in the placed part `instance`, as it names them. */
-export function localTo(instance: string, refs: EntityRef[]): EntityRef[] {
-  const prefix = `${instance}/`;
-  return refs.flatMap((r): EntityRef[] => {
-    if (r.type === "SketchCurve" || r.type === "SketchPoint") {
-      return r.sketch.startsWith(prefix) ? [{ ...r, sketch: r.sketch.slice(prefix.length) }] : [];
-    }
-    // Lit as what it is on and where it sits, which the kernel sends: never as a frame.
-    if (r.type === "Frame") return [];
-    return r.name.startsWith(prefix) ? [{ ...r, name: r.name.slice(prefix.length) }] : [];
+/** The elements of `elements` that lie in the placed part `instance`, as it names them. */
+export function localTo(instance: string, elements: PickedElement[]): PickedElement[] {
+  return elements.flatMap((e) => {
+    const at = located(e);
+    return at.instance === instance ? [{ ...e, target: at.target }] : [];
   });
 }
 

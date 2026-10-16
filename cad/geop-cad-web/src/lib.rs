@@ -125,3 +125,6 @@ mod tests {
         assert_eq!(committed["program"]["steps"][0]["id"], "sketch1");
     }
 }
+
+#[cfg(test)]
+mod protocol_tests;

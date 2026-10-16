@@ -1,4 +1,4 @@
-import type { EntityRef, StructureItem } from "./geop";
+import type { PickedElement, StructureItem } from "./geop";
 
 interface Props {
   items: StructureItem[];
@@ -6,7 +6,7 @@ interface Props {
   /** Show or hide `name`. */
   onVisibility: (name: string, visible: boolean) => void;
   /** Light these entities in the view, or nothing. */
-  onLight: (entities: EntityRef[]) => void;
+  onLight: (entities: PickedElement[]) => void;
 }
 
 /** The items of each group, by what the kernel calls their kind, the groups in the order their first items come in. */

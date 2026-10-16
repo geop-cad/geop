@@ -13,45 +13,45 @@ import { call, loadBackend } from "./backend";
 
 export type Vec3 = [number, number, number];
 
-/** One of a frame's own axes: `x` is its `u`, `y` its `v`, `z` its `w`. */
-export type FrameAxis = "x" | "y" | "z";
-
 /**
- * A part of a frame datum used on its own (see
- * `geop_core_math::primitives::DatumComponent`): one of its axes, or the
- * plane normal to one — `{plane: "z"}` is its xy plane.
+ * An element of the part as a pick names it (see
+ * `geop_core_program::element::PickedElement`): the target it is in — of
+ * a part placed in this one, behind the path of its instance, `bolt/model`
+ * — its kind, and its name there. A whole sketch is its target,
+ * `sketch:outline`, with no name; a component of a frame datum is named
+ * after it, `origin:x` its x axis, `origin:yz` its yz plane.
  */
-export type DatumComponent = { axis: FrameAxis } | { plane: FrameAxis };
-
-/**
- * Something picked in the viewport (see `geop_ops::EntityRef`): an entity
- * of the part by name — for a frame datum, perhaps one of its axes or
- * planes; for a sketch, perhaps one of its curves, by id. Every part has the
- * frame datum `origin`. An entity of a part placed in this one is named
- * behind the placing step's id: `bolt/extrude(head,end)`.
- */
-export type EntityRef =
-  | { type: "Vertex" | "Edge" | "Face" | "Solid" | "Sketch" | "Sketch3d" | "Feature"; name: string }
-  | { type: "Datum"; name: string; component?: DatumComponent }
-  | { type: "SketchCurve"; sketch: string; curve: number }
-  | { type: "SketchPoint"; sketch: string; point: number }
-  /** A reference frame on `on`, put at `at` — a vertex of it, or an edge of it — if it says where. */
-  | { type: "Frame"; on: EntityRef; at?: EntityRef };
-
-/** Whether two entities are the same one. */
-export function sameEntity(a: EntityRef, b: EntityRef): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+export interface PickedElement {
+  target: string;
+  kind: string;
+  name: string;
 }
 
-/** How an entity is shown: its name, and which component of a frame. */
-export function entityLabel(e: EntityRef): string {
-  if (e.type === "SketchCurve") return `${e.sketch} c${e.curve}`;
-  if (e.type === "SketchPoint") return `${e.sketch} p${e.point}`;
-  if (e.type === "Frame") return e.at ? `frame on ${entityLabel(e.on)} at ${entityLabel(e.at)}` : `frame on ${entityLabel(e.on)}`;
-  if (e.type !== "Datum" || !e.component) return e.name;
-  if ("axis" in e.component) return `${e.name} ${e.component.axis} axis`;
-  const plane = { x: "yz", y: "zx", z: "xy" }[e.component.plane];
-  return `${e.name} ${plane} plane`;
+/** Where an element is: the path of the placed part it is in — `""` for the part's own — and its target there. */
+export function located(e: PickedElement): { instance: string; target: string } {
+  const at = e.target.lastIndexOf("/");
+  return at < 0 ? { instance: "", target: e.target } : { instance: e.target.slice(0, at), target: e.target.slice(at + 1) };
+}
+
+/** The datums `elements` light of `view`, the view of the placed part `instance` (`""` for the part's own): by name as drawn — `origin:x` an axis — behind the instance's path. */
+export function litDatums(view: PartView, instance: string, elements: PickedElement[]): string[] {
+  return elements.flatMap((e) => {
+    const at = located(e);
+    if (at.instance !== instance || at.target !== view.datum_target) return [];
+    return [instance ? `${instance}/${e.name}` : e.name];
+  });
+}
+
+/** Whether two elements are the same one. */
+export function sameElement(a: PickedElement, b: PickedElement): boolean {
+  return a.target === b.target && a.kind === b.kind && a.name === b.name;
+}
+
+/** How an element is shown: its name — a whole sketch's, its sketch's — behind its instance's path. */
+export function elementLabel(e: PickedElement): string {
+  const { instance, target } = located(e);
+  const name = e.name || target;
+  return instance ? `${instance}/${name}` : name;
 }
 
 /** What a datum stands for. */
@@ -99,6 +99,10 @@ export interface ViewInstance {
 
 /** A part as the viewport draws it, every entity by name. */
 export interface PartView {
+  /** The target its vertices, edges and faces are of: what an element lit in them names (see [[PickedElement]]). */
+  model: string;
+  /** The target its datums are of. */
+  datum_target: string;
   /**
    * Each with the solid it belongs to, if any — else the faces standing on their own it bounds, hidden with all of
    * them.
@@ -117,9 +121,11 @@ export interface PartView {
   /** Curves in their plane's `u`/`v` coordinates. */
   sketches: {
     name: string;
+    /** The target it is, which an element of it names: `sketch:outline`. */
+    target: string;
     plane: Frame;
-    curves: { id: number; construction: boolean; polyline: [number, number][] }[];
-    points: { id: number; at: [number, number] }[];
+    curves: { id: string; construction: boolean; polyline: [number, number][] }[];
+    points: { id: string; at: [number, number] }[];
   }[];
   datums: DatumInfo[];
   /** What the part's extensions draw besides its topology — a cosmetic thread as the helix it runs along on its face — and what each is called (`M6x1`). */
@@ -145,6 +151,8 @@ export interface OperationInfo {
   tier: OperationTier;
   /** Not yet robust enough to offer by default: reduced mode leaves it out. */
   experimental: boolean;
+  /** Whether its reference fields pick in the part as its step builds it — a placed part's mates, in the part it places. */
+  picks_built: boolean;
   /** The extensions of the files its steps read that are no programs: `step` — data kept beside the programs. */
   reads: string[];
   /** What it is shown as: SVG markup on a 20 x 20 grid (see [[Icon]]); none to show its label. */
@@ -169,8 +177,8 @@ export interface InspectorInfo {
   kind: string;
   label: string;
   doc: string;
-  /** For one asked about entities picked: what it picks, and how many at most. */
-  picks: { roles: string[]; most: number } | null;
+  /** For one asked about elements picked: the kinds it picks, and how many at most. */
+  picks: { accepts: string[]; most: number } | null;
   /** What it is shown as: SVG markup (see [[Icon]]). */
   icon: string | null;
 }
@@ -315,29 +323,12 @@ export interface ListItem {
   text: string | null;
 }
 
-/** What an entity can be used as, and what a pick looks for — see `geop_ops::operation::Role`. */
-export type Role =
-  | "point"
-  | "line"
-  | "plane"
-  | "edge"
-  | "curve"
-  | "circle"
-  | "round"
-  | "face"
-  | "solid"
-  | "sheet"
-  | "sketch"
-  | "path"
-  | "feature"
-  | "frame";
-
 /** What a number measures. */
 export type Unit = "length" | "angle" | "fraction" | "count";
 
-/** An entity a reference field holds, and what the kernel found it to be. */
+/** An element a reference field holds, and what the step says of it. */
 export interface Picked {
-  entity: EntityRef;
+  element: PickedElement;
   detail: string | null;
   tone: Tone;
 }
@@ -379,14 +370,13 @@ export type Control =
   /** A colour, `#rrggbb`, sent back as `text`. */
   | { type: "color"; label: string; value: string }
   /**
-   * Entities picked in the viewport that can fill one of `roles`: pressing
-   * it arms it; an entity is taken out by `remove_at`, all by `clear`.
+   * Elements picked in the viewport of the kinds `accepts`: pressing it
+   * arms it; an element is taken out by `remove_at`, all by `clear`.
    */
   | {
       type: "reference";
       label: string;
-      roles: Role[];
-      scope: EntityRef | null;
+      accepts: string[];
       value: Picked[];
       multiple: boolean;
       /** Whether the step needs it before it builds; one that is not is picked for only when pressed. */
@@ -454,10 +444,10 @@ export interface GizmoView {
 export interface Presentation {
   dialog: Field[];
   visuals: Visual[];
-  /** Entities of the part to draw lit. */
-  highlights: EntityRef[];
-  /** What a click picks right now: entities that can fill one of these. */
-  pickable: Role[];
+  /** Elements of the part to draw lit. */
+  highlights: PickedElement[];
+  /** What a click picks right now: elements of these kinds as drawn (`face`, `datum`, `sketch_curve`). */
+  pickable: string[];
   /** A plane to work in, head on. */
   focus: Frame | null;
   /** A sheet of its own the step is edited on, in `focus`, and how far it reaches: no part is drawn, and the view frames it. */
@@ -576,8 +566,8 @@ export interface StepInfo {
 
 export interface ProgramState {
   program: Program;
-  /** The file it is in. */
-  path: string;
+  /** The file it is in, if it is in one. */
+  path: string | null;
   steps: StepInfo[];
   /** How many steps run: new steps go there. */
   marker: number;
@@ -631,7 +621,7 @@ export interface StructureItem {
   name: string;
   visible: boolean | null;
   /** The entities it is between: lit while it is pointed at. */
-  elements: EntityRef[];
+  elements: PickedElement[];
 }
 
 /**
@@ -725,7 +715,7 @@ export interface AnswerRow {
   /** Said in full while it is pointed at. */
   detail: string | null;
   /** What to light while it is pointed at. */
-  light: EntityRef[];
+  light: PickedElement[];
   tone: Tone;
 }
 
@@ -747,7 +737,7 @@ export type Block =
   | { type: "text"; text: string; tone: Tone }
   | { type: "list"; items: AnswerRow[] }
   | { type: "table"; head: string[]; rows: AnswerRow[]; foot: AnswerRow[] }
-  | { type: "group"; title: string; detail: string | null; open: boolean; light: EntityRef[]; blocks: Block[] }
+  | { type: "group"; title: string; detail: string | null; open: boolean; light: PickedElement[]; blocks: Block[] }
   | { type: "actions"; actions: AnswerAction[] };
 
 /** An inspector's answer as it is shown, whatever the inspector. */

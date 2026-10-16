@@ -9,7 +9,7 @@
 // others stay in the batch.
 
 import * as THREE from "three";
-import type { EntityRef, PartView, ViewInstance } from "./geop";
+import type { PickedElement, PartView, ViewInstance } from "./geop";
 import {
   applyHighlight,
   buildSceneGroup,
@@ -23,7 +23,7 @@ import {
 /** How a placed part is to be drawn: what of it is lit, and hidden. */
 export interface PlacedLook {
   /** Its entities to light, as it names them. */
-  highlights: EntityRef[];
+  highlights: PickedElement[];
   /** Its sketches, solids and faces not to draw, as it names them. */
   hidden: string[];
   /** Whether it is drawn at all. */

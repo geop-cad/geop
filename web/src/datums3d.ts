@@ -17,14 +17,13 @@
 
 import * as THREE from "three";
 import { REACH_PX, worldPerPixel } from "./camera";
-import {
-  sameEntity,
-  type DatumInfo,
-  type DatumKind,
-  type EntityRef,
-  type FrameAxis,
-  type Vec3,
-} from "./geop";
+import type { DatumInfo, DatumKind, Vec3 } from "./geop";
+
+/** One of a frame's own axes: `x` is its `u`, `y` its `v`, `z` its `w`. */
+type FrameAxis = "x" | "y" | "z";
+
+/** The plane normal to each axis of a frame, as its datum's component is named after it: `origin:yz`. */
+const PLANE_NORMAL_TO: Record<FrameAxis, string> = { x: "yz", y: "zx", z: "xy" };
 
 const COLOR = new THREE.Color(0xb58cff);
 const LIT = new THREE.Color(0xffc94a);
@@ -59,11 +58,11 @@ function basis(datum: DatumInfo): THREE.Quaternion {
   return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(vec(u), vec(v), vec(w)));
 }
 
-/** A part of a datum that is picked on its own: what is drawn, what a click on it selects, and as which kind. */
-function pickablePart(children: THREE.Object3D[], entity: EntityRef, kinds: DatumKind[]): THREE.Group {
+/** A part of a datum that is picked on its own: what is drawn, the name of the element it is — the datum's, or its component's — and as which kind. */
+function pickablePart(children: THREE.Object3D[], element: string, kinds: DatumKind[]): THREE.Group {
   const group = new THREE.Group();
   group.add(...children);
-  group.userData.entity = entity;
+  group.userData.element = element;
   group.userData.kinds = kinds;
   return group;
 }
@@ -82,7 +81,7 @@ function buildFrame(name: string): THREE.Group {
     object.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
 
   const ball = new THREE.Mesh(new THREE.SphereGeometry(0.07, 16, 12), overlay(0xffffff, 1));
-  frame.add(pickablePart([ball], { type: "Datum", name }, ["point", "frame"]));
+  frame.add(pickablePart([ball], name, ["point", "frame"]));
   for (const { name: axis, dir, color } of FRAME_AXES) {
     const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.85, 8), overlay(color, 1));
     shaft.position.copy(dir).multiplyScalar(0.5);
@@ -90,7 +89,7 @@ function buildFrame(name: string): THREE.Group {
     const tip = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.15, 12), overlay(color, 1));
     tip.position.copy(dir).multiplyScalar(0.925);
     alongAxis(tip, dir);
-    frame.add(pickablePart([shaft, tip], { type: "Datum", name, component: { axis } }, ["axis"]));
+    frame.add(pickablePart([shaft, tip], `${name}:${axis}`, ["axis"]));
 
     const square = new THREE.PlaneGeometry(0.3, 0.3);
     const edges = new THREE.LineSegments(
@@ -104,7 +103,7 @@ function buildFrame(name: string): THREE.Group {
     plane.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
     const [a, b] = FRAME_AXES.filter((other) => other.name !== axis).map((other) => other.dir);
     plane.position.copy(a).add(b).multiplyScalar(0.45);
-    frame.add(pickablePart([plane], { type: "Datum", name, component: { plane: axis } }, ["plane"]));
+    frame.add(pickablePart([plane], `${name}:${PLANE_NORMAL_TO[axis]}`, ["plane"]));
   }
   frame.userData.screenPx = FRAME_PX;
   return frame;
@@ -170,7 +169,7 @@ function buildDatum(datum: DatumInfo, size: number, center: THREE.Vector3): THRE
     });
   }
   if (datum.kind !== "frame") {
-    group.userData.entity = { type: "Datum", name: datum.name } satisfies EntityRef;
+    group.userData.element = datum.name;
     group.userData.kinds = [datum.kind];
   }
   return group;
@@ -200,9 +199,9 @@ export class DatumLayer {
    * Keep points and coordinate systems at a constant size on screen for
    * `camera` in a viewport `height` pixels tall, and show what can be
    * picked: parts of `pickable` kinds stand out, the rest fade, and those
-   * in `lit` light up.
+   * named in `lit` (see `litDatums`) light up.
    */
-  update(camera: THREE.Camera, height: number, pickable: DatumKind[], lit: EntityRef[]) {
+  update(camera: THREE.Camera, height: number, pickable: DatumKind[], lit: string[]) {
     for (const datum of this.group.children) {
       for (const sized of datum.children.filter((c) => c.userData.screenPx)) {
         sized.scale.setScalar(worldPerPixel(camera, datum.position, height) * (sized.userData.screenPx as number));
@@ -210,10 +209,10 @@ export class DatumLayer {
     }
     const parts: THREE.Object3D[] = [];
     this.group.traverse((o) => {
-      if (o.userData.entity) parts.push(o);
+      if (o.userData.element != null) parts.push(o);
     });
     for (const part of parts) {
-      const isLit = lit.some((l) => sameEntity(l, part.userData.entity as EntityRef));
+      const isLit = lit.includes(part.userData.element as string);
       const kinds = part.userData.kinds as DatumKind[];
       const factor = isLit ? 2.5 : pickable.length === 0 || kinds.some((k) => pickable.includes(k)) ? 1 : 0.3;
       part.traverse((o) => {

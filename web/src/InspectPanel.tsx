@@ -1,4 +1,4 @@
-import type { AnswerRow, Block, EntityRef, Inspection, InspectorInfo } from "./geop";
+import type { AnswerRow, Block, PickedElement, Inspection, InspectorInfo } from "./geop";
 import { Icon } from "./icons";
 import type { Section } from "./section";
 
@@ -25,7 +25,7 @@ interface Props {
   /** How big the part is: how far a section can move. */
   size: number;
   /** Light these entities in the view, or nothing. */
-  onLight: (entities: EntityRef[]) => void;
+  onLight: (entities: PickedElement[]) => void;
 }
 
 /** What an answer's parts are given: what to do on a button, and what to light. */
@@ -36,11 +36,11 @@ interface Handlers {
   busy: boolean;
   onInspect: (inspector: string, options?: unknown) => void;
   onExport: (exporter: string, options?: unknown) => void;
-  onLight: (entities: EntityRef[]) => void;
+  onLight: (entities: PickedElement[]) => void;
 }
 
 /** What a row does while pointed at: says all it says, and lights what it is of. */
-function pointing(row: { detail?: string | null; light: EntityRef[] }, onLight: (entities: EntityRef[]) => void) {
+function pointing(row: { detail?: string | null; light: PickedElement[] }, onLight: (entities: PickedElement[]) => void) {
   return {
     title: row.detail ?? undefined,
     onMouseEnter: row.light.length > 0 ? () => onLight(row.light) : undefined,
@@ -48,7 +48,7 @@ function pointing(row: { detail?: string | null; light: EntityRef[] }, onLight: 
   };
 }
 
-function TableRow({ row, onLight }: { row: AnswerRow; onLight: (entities: EntityRef[]) => void }) {
+function TableRow({ row, onLight }: { row: AnswerRow; onLight: (entities: PickedElement[]) => void }) {
   return (
     <tr className={row.tone} {...pointing(row, onLight)}>
       {row.label != null && <th>{row.label}</th>}

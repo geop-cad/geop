@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import { ColorInput, Dropdown, SearchSelect } from "./controls";
 import { Icon } from "./icons";
-import { entityLabel, type Action, type Control, type StepState, type Tone, type Unit, type Value } from "./geop";
+import { elementLabel, type Action, type Control, type StepState, type Tone, type Unit, type Value } from "./geop";
 
 interface Props {
   /** The step being edited, as the kernel shows it. */
@@ -127,7 +127,7 @@ const UNITS: Record<Unit, string> = { length: "", angle: "°", fraction: "", cou
 function referenced(c: Extract<Control, { type: "reference" }>): string {
   if (c.value.length === 0) return c.armed ? "click in the viewport…" : "pick…";
   if (c.multiple) return c.armed ? "click to add or take out…" : "pick more…";
-  return entityLabel(c.value[0].entity);
+  return elementLabel(c.value[0].element);
 }
 
 /**
@@ -201,8 +201,8 @@ export function DialogView({ step, onDialog, onChooseFile, setPreview, error, on
               <ol className="dialog-list">
                 {c.value.map((p, i) => (
                   <li key={i} className={p.tone === "error" ? "failed" : ""}>
-                    <span className="item-label" title={entityLabel(p.entity)}>
-                      {entityLabel(p.entity)}
+                    <span className="item-label" title={elementLabel(p.element)}>
+                      {elementLabel(p.element)}
                     </span>
                     {p.detail && <span className="item-detail">{p.detail}</span>}
                     <button className="item-remove" title="Take out" onClick={() => send({ type: "remove_at", value: i })}>

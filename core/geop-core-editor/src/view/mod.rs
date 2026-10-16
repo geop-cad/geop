@@ -220,7 +220,6 @@ pub struct ViewSketchPoint {
 pub struct ViewSketch {
     pub name: String,
     /// The target it is, which a pick of it or its elements names.
-    #[serde(skip)]
     pub target: String,
     pub plane: CoordinateSystem<S>,
     #[serde(skip)]
@@ -392,15 +391,14 @@ impl std::fmt::Debug for ViewInstance {
 /// [`PartView::finish`] measures it.
 #[derive(Clone, Debug, Serialize)]
 pub struct PartView {
-    /// The target its vertices, edges and faces are of.
-    #[serde(skip)]
+    /// The target its vertices, edges and faces are of: what a viewer
+    /// matches an element's target with to light it.
     pub model: String,
     pub vertices: Vec<ViewVertex>,
     pub edges: Vec<ViewEdge>,
     pub faces: Vec<ViewFace>,
     pub sketches: Vec<ViewSketch>,
     /// The target its datums are of.
-    #[serde(skip)]
     pub datum_target: String,
     pub datums: Vec<ViewDatum>,
     /// What its steps draw on it besides its topology: cosmetic threads.

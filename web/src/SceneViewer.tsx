@@ -5,17 +5,16 @@ import { CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { CAMERA_FOV, DEFAULT_POSE, REACH_PX, fitPose, worldPerPixel, type CameraPose, type Projection } from "./camera";
 import { DatumLayer } from "./datums3d";
 import {
-  sameEntity,
+  litDatums,
   type DatumInfo,
   type DatumKind,
-  type EntityRef,
+  type PickedElement,
   type Frame,
   type PartView,
   type Pointer,
   type PointerEvent_,
   type Prompt,
   type Reach,
-  type Role,
   type Vec3,
   type ViewInstance,
   type Visual,
@@ -29,14 +28,9 @@ import { VisualLayer } from "./visuals3d";
 import { GizmoLayer } from "./gizmo3d";
 import { isDoubleClick, movedFromPress } from "./gestures";
 
-/** The kinds of datum a click can pick something of, looking for `roles`: a frame's origin, axes and planes are points, lines and planes too. */
-function datumKinds(roles: Role[]): DatumKind[] {
-  const kinds: DatumKind[] = [];
-  if (roles.includes("point") || roles.includes("frame")) kinds.push("point");
-  if (roles.includes("line") || roles.includes("frame")) kinds.push("axis");
-  if (roles.includes("plane") || roles.includes("frame")) kinds.push("plane");
-  if (kinds.length) kinds.push("frame");
-  return kinds;
+/** The kinds of datum a click can pick something of, picking elements of the kinds `pickable`: every kind, if it picks datums or frames on them. */
+function datumKinds(pickable: string[]): DatumKind[] {
+  return pickable.includes("datum") || pickable.includes("frame") ? ["point", "axis", "plane", "frame"] : [];
 }
 
 /** How long a [[Props.focus]] move takes, in milliseconds. */
@@ -54,9 +48,9 @@ interface Props {
   /** A gizmo to move, turn or scale by, drawn over everything. */
   gizmo?: GizmoView | null;
   /** What to draw highlighted — what is picked, what a click would pick. */
-  highlights?: EntityRef[];
+  highlights?: PickedElement[];
   /** What a click picks right now: reference geometry of these kinds stands out, the rest fades. */
-  pickable?: Role[];
+  pickable?: string[];
   /** Sketches and datums, by name, not to draw. */
   hidden?: string[];
   /**
@@ -182,6 +176,8 @@ export function SceneViewer({
   partRef.current = part;
   const instancesRef = useRef(instances);
   instancesRef.current = instances;
+  const componentsRef = useRef(components);
+  componentsRef.current = components;
   // Every datum drawn: the part's own, and those of the parts placed in it,
   // where they are.
   const datums = useMemo(
@@ -624,8 +620,15 @@ export function SceneViewer({
       }
       renderer.domElement.style.cursor = press?.grabbed ? "grabbing" : grabRef.current ? "grab" : "";
 
-      const lit = highlightsRef.current;
-      const hidden = hiddenRef.current.filter((name) => !lit.some((l) => sameEntity(l, { type: "Datum", name })));
+      const highlighted = highlightsRef.current;
+      const lit = [
+        ...litDatums(partRef.current, "", highlighted),
+        ...instancesRef.current.flatMap((i) => {
+          const view = componentsRef.current[i.component];
+          return view ? litDatums(view, i.name, highlighted) : [];
+        }),
+      ];
+      const hidden = hiddenRef.current.filter((name) => !lit.includes(name));
       const { extent } = partRef.current;
       datumLayer.sync(datumsRef.current, hidden, extent.size, vec(extent.center));
       datumLayer.update(camera, height, datumKinds(pickableRef.current), lit);
@@ -754,7 +757,7 @@ export function SceneViewer({
       const view = component.get(name);
       const highlights = highlighted.length > 0 ? localTo(name, highlighted) : [];
       if (lit.has(name)) {
-        highlights.push(...(view?.solids ?? []).map((solid): EntityRef => ({ type: "Solid", name: solid })));
+        highlights.push(...(view?.solids ?? []).map((name) => ({ target: view?.model ?? "", kind: "solid", name })));
       }
       const sketches = new Set(view?.sketches.map((sketch) => sketch.name));
       return {

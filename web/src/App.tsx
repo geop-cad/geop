@@ -7,7 +7,7 @@ import {
   type Command,
   type EditEvent,
   type Placed,
-  type EntityRef,
+  type PickedElement,
   type Inspection,
   type OperationInfo,
   type PartView,
@@ -108,7 +108,7 @@ function App() {
   /** The section view, if one is on: the view only, never the model. */
   const [section, setSection] = useState<Section | null>(null);
   /** What the inspect panel lights, beyond what the kernel does. */
-  const [lights, setLights] = useState<EntityRef[]>([]);
+  const [lights, setLights] = useState<PickedElement[]>([]);
 
   // A drag selects text only within the dialog or panel it starts in (see selection.ts).
   const appRef = useRef<HTMLDivElement>(null);
