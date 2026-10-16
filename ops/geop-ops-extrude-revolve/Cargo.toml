@@ -27,6 +27,8 @@ serde_json = { workspace = true, optional = true }
 testing = ["dep:serde_json", "geop-ops-model/testing"]
 
 [dev-dependencies]
+# The examples' round trips and incremental builds.
+geop-core-program = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-ops-reference-geometry.workspace = true
 serde_json.workspace = true

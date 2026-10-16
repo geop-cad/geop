@@ -3,6 +3,9 @@
 //! its own. The algorithms are `geop_lib_booleans`'; this crate resolves
 //! the solids and faces a step names and offers the forms that pick them.
 
+#[cfg(test)]
+mod example_tests;
+pub mod examples;
 mod icons;
 mod operation;
 #[cfg(test)]
@@ -14,7 +17,9 @@ use geop_core_editor::registry::Registry;
 use geop_core_math::geop_error::GeopResult;
 
 /// Adds what this crate offers an editor to `r`: combining bodies and
-/// splitting them.
+/// splitting them, and the examples of them.
 pub fn register(r: Registry) -> GeopResult<Registry> {
-    r.operation(Boolean)?.operation(Split)
+    r.operation(Boolean)?
+        .operation(Split)?
+        .examples(examples::set())
 }

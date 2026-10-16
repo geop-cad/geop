@@ -13,10 +13,7 @@ use geop_ops_extrude_revolve::testing::model_of;
 use geop_ops_model::NamedModel;
 use geop_ops_step::{ImportStepArgs, write_step};
 
-use crate::{
-    examples,
-    registry::{build, testing::Built, workspace},
-};
+use crate::registry::{build, testing::Built, workspace};
 
 /// `(faces, edges, vertices)`.
 fn counts(model: &Model<S>) -> (usize, usize, usize) {
@@ -57,7 +54,7 @@ fn examples_round_trip_through_step() {
         "pin",
     ];
     let mut found = 0;
-    for (name, program) in examples::all() {
+    for (name, program) in crate::registry().unwrap().example_programs() {
         if !chosen.contains(&name) {
             continue;
         }

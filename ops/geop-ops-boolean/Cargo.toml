@@ -9,11 +9,17 @@ geop-core-editor.workspace = true
 geop-core-math.workspace = true
 geop-lib-booleans.workspace = true
 geop-ops-model.workspace = true
+# The examples: solids extruded from sketches, then split.
+geop-ops-datums.workspace = true
+geop-ops-extrude-revolve.workspace = true
+geop-ops-sketch.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+# The examples' round trips and incremental builds.
+geop-core-program = { workspace = true, features = ["testing"] }
+geop-core-topology.workspace = true
 # The tests split solids extruded from sketches with faces extracted from them.
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
 geop-ops-edit.workspace = true
-geop-ops-sketch.workspace = true

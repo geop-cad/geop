@@ -178,7 +178,9 @@ fn parts() -> BTreeMap<String, String> {
     BTreeMap::from([
         (
             "plate.geop".into(),
-            examples::box_with_drill_hole().to_json().unwrap(),
+            geop_ops_extrude_revolve::examples::box_with_drill_hole()
+                .to_json()
+                .unwrap(),
         ),
         ("pin.geop".into(), examples::pin().to_json().unwrap()),
     ])
@@ -1477,7 +1479,9 @@ fn a_gear_coupling_turns_the_driven_link_by_its_ratio() {
 /// nothing changes; written otherwise, the file is read again.
 #[test]
 fn a_part_is_built_from_its_file_as_written() {
-    let text = examples::box_with_drill_hole().to_json().unwrap();
+    let text = geop_ops_extrude_revolve::examples::box_with_drill_hole()
+        .to_json()
+        .unwrap();
     let files = BTreeMap::from([("part.geop".to_string(), text.clone())]);
     let workspace = workspace(files);
     let placed =

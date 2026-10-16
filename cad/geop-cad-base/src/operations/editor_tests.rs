@@ -443,7 +443,10 @@ fn the_first_parameter_given_while_a_step_is_edited() {
 fn examples_load_by_name() {
     let mut editor = crate::editor();
     let names = editor.handle(Command::Show).program.unwrap().examples;
-    assert_eq!(names.len(), examples::all().len());
+    assert_eq!(
+        names.len(),
+        crate::registry().unwrap().example_programs().len()
+    );
     let update = editor.handle(Command::LoadExample {
         name: names[0].into(),
     });
@@ -1051,7 +1054,7 @@ fn new_boundary_surface_picks_edges_then_thickens() {
 #[test]
 fn a_3d_sketch_is_drawn_and_swept_along() {
     let mut editor = crate::editor();
-    let mut program = examples::pipe();
+    let mut program = geop_ops_extrude_revolve::examples::pipe();
     program.steps.truncate(1);
     let update = editor.handle(Command::Load {
         program,
@@ -2373,7 +2376,10 @@ fn inspectors_are_offered_picked_with_and_asked() {
         .and_then(|r| r.inspector(Picked))
         .and_then(|r| r.inspector(Solids))
         .unwrap();
-    let mut editor = editor_with(registry, examples::box_with_drill_hole());
+    let mut editor = editor_with(
+        registry,
+        geop_ops_extrude_revolve::examples::box_with_drill_hole(),
+    );
     let before = editor.program().clone();
     let update = handled(&mut editor, Command::Show);
     let program = update.program.unwrap();
@@ -3416,7 +3422,9 @@ fn a_body_is_moved_by_its_gizmo() {
 /// it is dragged.
 #[test]
 fn placed_parts_are_moved_and_turned_by_the_gizmo() {
-    let block = examples::box_with_drill_hole().to_json().unwrap();
+    let block = geop_ops_extrude_revolve::examples::box_with_drill_hole()
+        .to_json()
+        .unwrap();
     let mut editor = crate::editor();
     let files = [("block.geop".to_string(), Some(block))].into();
     assert!(editor.handle(Command::Files { files }).error.is_none());
@@ -4062,7 +4070,7 @@ fn editing_an_early_sketch_builds_only_up_to_it() {
 /// was counted by `Part::built`, which geop-core-program no longer has.
 #[test]
 fn a_file_opened_again_is_not_built_again() {
-    let part = examples::box_with_drill_hole();
+    let part = geop_ops_extrude_revolve::examples::box_with_drill_hole();
     let mut assembly = Program::new();
     assembly.push(
         "box",
@@ -4184,7 +4192,7 @@ fn a_program_of_unknown_steps_is_refused() {
     assert!(refused.error.unwrap().contains("no_such_operation"));
     assert!(editor.program().steps.is_empty());
 
-    let mut unreadable = examples::box_with_drill_hole();
+    let mut unreadable = geop_ops_extrude_revolve::examples::box_with_drill_hole();
     unreadable.steps[0].args = serde_json::json!("not arguments");
     let refused = editor.handle(Command::Load {
         program: unreadable,

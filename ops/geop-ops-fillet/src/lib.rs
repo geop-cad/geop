@@ -13,6 +13,9 @@
 
 mod blend;
 mod corner;
+#[cfg(test)]
+mod example_tests;
+pub mod examples;
 pub mod operation;
 mod rolling;
 mod tool;
@@ -24,12 +27,17 @@ mod program_tests;
 #[cfg(test)]
 mod rolling_tests;
 #[cfg(test)]
+mod stress_tests;
+#[cfg(test)]
 mod tests;
 
 use geop_core_editor::registry::Registry;
 use geop_core_math::geop_error::GeopResult;
 
-/// Adds what this crate offers an editor to `r`: fillets and chamfers.
+/// Adds what this crate offers an editor to `r`: fillets and chamfers, and
+/// the examples of them.
 pub fn register(r: Registry) -> GeopResult<Registry> {
-    r.operation(Fillet)?.operation(Chamfer)
+    r.operation(Fillet)?
+        .operation(Chamfer)?
+        .examples(examples::set())
 }

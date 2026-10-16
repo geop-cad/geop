@@ -2,80 +2,37 @@
 //! a "clean" equivalent may not carry the same numerical case at all.
 
 use geop_core_math::{
+    geop_error::GeopResult,
     primitives::{DatumComponent, FrameAxis},
     scalars::Scalar,
 };
-use geop_core_program::{program::Program, values::Design};
-use geop_core_rasterize::face_triangles_uv;
-use geop_core_topology::{boundary::BoundaryType, loop_sampling::sample_loop_to_polygon};
+use geop_core_program::{operation_registry::OperationRegistry, program::Program};
 use geop_ops_datums::{ORIGIN, component_name, datum};
-use geop_ops_extrude_revolve::{Extents, Output, RevolveArgs, RevolveAxis};
-use geop_ops_model::{BooleanOp, NamedModel, element};
-use geop_ops_model::{Combine, solid};
-use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
+use geop_ops_model::{
+    BooleanOp, Combine, element, solid,
+    testing::{assert_draws_its_trims, assert_valid},
+};
+use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_sketch::{
     AddSketchArgs, Constraint, Sketch, SketchPlane, sketch_element, whole_sketch,
 };
 
 use crate::{
-    examples::n,
-    registry::testing::{Built, args, assert_valid, extrusion, on_face, on_origin, sketch},
+    Extents, Output, RevolveArgs, RevolveAxis, examples,
+    testing::{Built, args, extrusion, n, on_face, on_origin, sketch},
 };
+
+/// The operations these programs are written in.
+fn registry() -> GeopResult<OperationRegistry> {
+    crate::testing::registry()?.with(AddDatum)
+}
 
 /// Checks the part `program` builds is valid (see [`assert_valid`]) and is
 /// drawn as it is (see [`assert_draws_its_trims`]).
 fn assert_builds_valid(program: &Program) {
-    let part = program.build_model().unwrap();
+    let part = program.build_model(registry).unwrap();
     assert_valid(&part);
     assert_draws_its_trims(&part);
-}
-
-/// Twice the signed area of a closed polygon.
-fn area2(polygon: &[[f64; 2]]) -> f64 {
-    (0..polygon.len())
-        .map(|i| {
-            let (a, b) = (polygon[i], polygon[(i + 1) % polygon.len()]);
-            a[0] * b[1] - b[0] * a[1]
-        })
-        .sum()
-}
-
-/// Checks every face of `part` is drawn exactly where its trims say: the
-/// triangles the rasterizer draws it with cover, in `(u, v)`, the area its
-/// outer boundary encloses less its holes' — as the rasterizer samples
-/// them. A face drawn over a hole it goes around, or leaving a gap, covers
-/// more or less. Plain `f64`, like the rasterizer.
-fn assert_draws_its_trims(part: &NamedModel<Design>) {
-    const N: usize = 24;
-    let model = part.topology();
-    for (&id, face) in &model.faces {
-        let enclosed: f64 = face
-            .boundaries()
-            .filter_map(|b| match b {
-                BoundaryType::Loop(anchor) => Some(anchor),
-                BoundaryType::Vertex(_) => None,
-            })
-            .map(|anchor| {
-                let polygon: Vec<[f64; 2]> = sample_loop_to_polygon(model, anchor, N)
-                    .unwrap()
-                    .iter()
-                    .map(|p| [p[0].to_f64(), p[1].to_f64()])
-                    .collect();
-                area2(&polygon) / 2.0
-            })
-            .sum::<f64>()
-            .abs();
-        let covered: f64 = face_triangles_uv(model, face, N)
-            .unwrap()
-            .iter()
-            .map(|(a, b, c)| area2(&[a, b, c].map(|p| [p[0].to_f64(), p[1].to_f64()])).abs() / 2.0)
-            .sum();
-        assert!(
-            (covered - enclosed).abs() <= 1e-9 * enclosed.max(1e-9),
-            "face {:?} is drawn covering {covered} of its (u, v), where its trims enclose {enclosed}",
-            part.name_of(id),
-        );
-    }
 }
 
 /// A 5.6 x 3.7 x 1 plate with a round hole through it, and a cylinder
@@ -196,7 +153,7 @@ fn cylinder_joined_over_a_hole() {
 /// the crossing could be the corner — which the corner then is.
 #[test]
 fn outline_revolved_around_its_edge_joined_to_its_box() {
-    let mut program = crate::examples::box_with_drill_hole();
+    let mut program = examples::box_with_drill_hole();
     let outline: AddSketchArgs = args(&program.steps[0]);
     let sketch = &outline.sketch;
     let right = sketch
@@ -271,7 +228,7 @@ fn spline_revolved_then_extruded_and_joined() {
     sketch.constrain(Constraint::Vertical { line: axis });
     program.push(
         "sketch1",
-        crate::registry::testing::sketch(on_origin(FrameAxis::Z), sketch),
+        crate::testing::sketch(on_origin(FrameAxis::Z), sketch),
     );
     program.push(
         "revolve1",
@@ -460,7 +417,7 @@ fn bracket_with_torus(
         extrusion(
             "sketch1",
             Extents {
-                side2: Some(geop_ops_extrude_revolve::Extent::blind(1.0)),
+                side2: Some(crate::Extent::blind(1.0)),
                 ..Extents::blind(1.0)
             },
             Combine::NewBody,
@@ -492,7 +449,7 @@ fn bracket_with_torus(
         extrusion(
             "sketch2",
             Extents {
-                side1: geop_ops_extrude_revolve::Extent::UpToNext,
+                side1: crate::Extent::UpToNext,
                 ..Extents::blind(1.0)
             },
             Combine::cut("extrude(extrude1)"),
@@ -563,7 +520,7 @@ fn torus_turned_up_to_next(
     combine: Combine,
 ) -> Program {
     let extent = Extents {
-        side1: geop_ops_extrude_revolve::Extent::UpToNext,
+        side1: crate::Extent::UpToNext,
         reversed,
         ..Extents::blind(1.0)
     };
@@ -592,7 +549,7 @@ fn torus_up_to_next(bracket: &Bracket, around_x_axis: bool, stopped_all_round: b
                 torus_turned_up_to_next(bracket, around_x_axis, reversed, combine.clone());
             let case = format!("around_x_axis={around_x_axis}, reversed={reversed}, {combine:?}");
             if combine == Combine::NewBody && !stopped_all_round {
-                match program.build_model() {
+                match program.build_model(registry) {
                     Err(e) if e.root_message().contains("nothing stops the profile") => {}
                     other => failures.push(format!("{case}: not refused: {:?}", other.err())),
                 }

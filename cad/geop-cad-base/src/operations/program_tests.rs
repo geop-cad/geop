@@ -1,9 +1,6 @@
 //! Programs of the editor's operations, run.
 
-use crate::{
-    examples::box_with_drill_hole,
-    registry::testing::{Built, edit_args, extrusion, step},
-};
+use crate::registry::testing::{Built, edit_args, extrusion, step};
 use geop_core_program::{
     part::Part,
     program::Program,
@@ -12,6 +9,7 @@ use geop_core_program::{
     values::{Design, StateValue, pose_state},
     workspace::{Location, Workspace},
 };
+use geop_ops_extrude_revolve::examples::box_with_drill_hole;
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, Output};
 use geop_ops_parameters::{
     Parameter, ParameterKind, Parameters, parameter_uses, parameters_of, set_parameters,
@@ -327,8 +325,6 @@ fn a_pasted_step_takes_its_state_along() {
 #[test]
 #[ignore = "slow: 10 s — run with `cargo test -- --ignored`"]
 fn a_runner_builds_what_building_from_scratch_builds() {
-    use crate::examples;
-
     let examples = [
         "box_with_drill_hole",
         "bracket",
@@ -340,7 +336,7 @@ fn a_runner_builds_what_building_from_scratch_builds() {
         "rounded_box",
         "hole_plate",
     ];
-    for (name, make) in examples::all() {
+    for (name, make) in crate::registry().unwrap().example_programs() {
         if !examples.contains(&name) {
             continue;
         }
@@ -405,7 +401,7 @@ fn assert_examples_incremental(only: Option<&[&str]>) {
     use crate::examples;
     let registry = Rc::new(crate::registry().unwrap().operations());
     let wanted = |name: &str| only.is_none_or(|only| only.contains(&name));
-    for (name, make) in examples::all() {
+    for (name, make) in crate::registry().unwrap().example_programs() {
         if !wanted(name) {
             continue;
         }

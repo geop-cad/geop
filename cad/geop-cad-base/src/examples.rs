@@ -11,7 +11,6 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::ElementReference,
-    numeric::NumericInput,
     program::Program,
     values::{Design, Setting, Settings, StateValue, StateValues, pose_state},
 };
@@ -21,27 +20,19 @@ use geop_ops_assembly::{AddPartArgs, JointKind, Kind, Mate, MateEntity, Motion, 
 use geop_ops_boolean::SplitArgs;
 use geop_ops_datums::{ORIGIN, component_name, datum, origin_axis, origin_plane};
 use geop_ops_extrude_revolve::{
-    Extent, Extents, ExtrudeArgs, LoftArgs, Output, PathRef, RevolveArgs, RevolveAxis, SweepArgs,
+    Extent, Extents, ExtrudeArgs, LoftArgs, Output, PathRef, SweepArgs, examples,
 };
-use geop_ops_fillet::FilletArgs;
 use geop_ops_hole::{HoleArgs, HoleCentre, HoleKind, Standard, iso::Fit};
 use geop_ops_model::{Combine, solid};
 use geop_ops_model::{PartDescription, element, read_model};
-use geop_ops_parameters::{
-    Material, Parameter, ParameterKind, Parameters, parameters::Row, set_parameters,
-};
 use geop_ops_pattern::{Direction, LinearPatternArgs, PatternDirection, Seeds, Spacing, feature};
 use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
 use geop_ops_sheetmetal::{
     BaseFlangeArgs, Corner, EdgeFlangeArgs, FlangePosition, LengthReference, SheetCutArgs,
     SheetMetalRules, edge,
 };
-use geop_ops_sketch::{
-    AddSketchArgs, Constraint, Sketch, SketchPlane,
-    references::{Projected, Reference, Source},
-    sketch, sketch_element, whole_sketch,
-};
-use geop_ops_sketch3d::{AddSketch3dArgs, Constraint3d, CurveSource, Sketch3d, sketch3d_path};
+use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch, SketchPlane, sketch, whole_sketch};
+use geop_ops_sketch3d::{AddSketch3dArgs, CurveSource, Sketch3d};
 use geop_ops_subd::{Cage, Mirror, SubdArgs};
 use geop_ops_surface::NetworkSurfaceArgs;
 use std::collections::BTreeMap;
@@ -147,252 +138,6 @@ pub(crate) fn circle(sketch: &mut Sketch, center: P2, radius: f64) -> CurveId {
     circle
 }
 
-/// A 2 x 2 x 1 box with a blind hole drilled into its top: a rectangle
-/// sketched on the Z plane and extruded up (`box`), and a circle sketched on
-/// the box's end cap `extrude(box,end)` and extruded back into it, cutting
-/// it out of the box (`hole`) — the drilled box is `extrude(hole)`.
-pub fn box_with_drill_hole() -> Program {
-    let mut program = Program::new();
-
-    let mut outline = Sketch::new();
-    rectangle(&mut outline, [0.0, 0.0], 2.0, 2.0);
-    program.push(
-        "outline",
-        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)),
-    );
-    program.push(
-        "box",
-        ExtrudeArgs {
-            sketch: whole_sketch("outline"),
-            extent: Extents::blind(1.0),
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-
-    let mut hole = Sketch::new();
-    circle(&mut hole, [1.0, 1.0], 0.4);
-    program.push(
-        "hole_sketch",
-        AddSketchArgs::on(on_face("extrude(box,end)"), solved(hole)),
-    );
-    program.push(
-        "hole",
-        ExtrudeArgs {
-            sketch: whole_sketch("hole_sketch"),
-            extent: Extents::blind(-0.5),
-            output: Output::Solid(Combine::cut("extrude(box)")),
-        },
-    );
-    program
-}
-
-/// A 40 x 40 x 10 mm bracket with a 6 mm hole through its middle: a
-/// rectangle sketched on the Z plane and extruded up (`block`), and a
-/// circle sketched on the block's end cap and extruded back through its
-/// full thickness, cutting it out of the block (`hole`). Unlike
-/// `box_with_drill_hole`, the cut ends exactly on the bottom face, so the
-/// hole goes all the way through. The program the landing page's agent demo
-/// transcript writes, step for step.
-pub fn bracket() -> Program {
-    let mut program = Program::new();
-
-    let mut outline = Sketch::new();
-    rectangle(&mut outline, [0.0, 0.0], 40.0, 40.0);
-    program.push(
-        "outline",
-        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)),
-    );
-    program.push(
-        "block",
-        ExtrudeArgs {
-            sketch: whole_sketch("outline"),
-            extent: Extents::blind(10.0),
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-
-    let mut hole = Sketch::new();
-    circle(&mut hole, [20.0, 20.0], 3.0);
-    program.push(
-        "hole_sketch",
-        AddSketchArgs::on(on_face("extrude(block,end)"), solved(hole)),
-    );
-    program.push(
-        "hole",
-        ExtrudeArgs {
-            sketch: whole_sketch("hole_sketch"),
-            extent: Extents::blind(-10.0),
-            output: Output::Solid(Combine::cut("extrude(block)")),
-        },
-    );
-    program
-}
-
-/// A stepped shaft revolved around the world z-axis, cross-drilled through
-/// its thinner end: a half section sketched on the X plane, closed by the
-/// axis itself (`shaft`), and a circle on the Y plane extruded through both
-/// sides of it and cut out of it (`bore`) — the drilled shaft is
-/// `extrude(bore)`.
-pub fn cross_drilled_shaft() -> Program {
-    let mut program = Program::new();
-
-    // Sketch x runs along world y, sketch y along world z.
-    let mut section = Sketch::new();
-    let (p, l) = polygon(
-        &mut section,
-        &[
-            [0.0, 0.0],
-            [1.0, 0.0],
-            [1.0, 1.0],
-            [0.6, 1.0],
-            [0.6, 3.0],
-            [0.0, 3.0],
-        ],
-    );
-    let axis = l[5];
-    section.constrain(Constraint::Fix {
-        point: p[0],
-        x: n(0.0),
-        y: n(0.0),
-    });
-    section.constrain(Constraint::Vertical { line: axis });
-    for (line, horizontal) in [
-        (l[0], true),
-        (l[1], false),
-        (l[2], true),
-        (l[3], false),
-        (l[4], true),
-    ] {
-        section.constrain(if horizontal {
-            Constraint::Horizontal { line }
-        } else {
-            Constraint::Vertical { line }
-        });
-    }
-    section.constrain(Constraint::Length {
-        curve: l[0],
-        value: n(1.0),
-    });
-    section.constrain(Constraint::Length {
-        curve: l[1],
-        value: n(1.0),
-    });
-    section.constrain(Constraint::Length {
-        curve: l[3],
-        value: n(2.0),
-    });
-    section.constrain(Constraint::Length {
-        curve: l[4],
-        value: n(0.6),
-    });
-    program.push(
-        "section",
-        AddSketchArgs::on(on_origin(FrameAxis::X), solved(section)),
-    );
-    program.push(
-        "shaft",
-        RevolveArgs {
-            sketch: whole_sketch("section"),
-            axis: Some(RevolveAxis::Sketch(sketch_element("section", axis))),
-            extent: Extents::blind(360.0),
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-
-    // Sketch x runs along world x, sketch y along world -z: a bore across
-    // the thin end, at z = 2.2.
-    let mut bore = Sketch::new();
-    circle(&mut bore, [0.0, -2.2], 0.25);
-    program.push(
-        "bore_sketch",
-        AddSketchArgs::on(on_origin(FrameAxis::Y), solved(bore)),
-    );
-    program.push(
-        "bore",
-        ExtrudeArgs {
-            sketch: whole_sketch("bore_sketch"),
-            extent: Extents {
-                side1: Extent::blind(3.0),
-                symmetric: true,
-                side2: None,
-                reversed: false,
-            },
-            output: Output::Solid(Combine::cut("revolve(shaft)")),
-        },
-    );
-    program
-}
-
-/// A plate with a round hole, cut in two: the plate (`plate`) extruded both
-/// ways from its sketch, a line across it sketched on the plane through its
-/// middle and extruded into a face standing on its own (`cut`), and the
-/// plate split along that face (`halves`) into `split(halves,0)` and
-/// `split(halves,1)`, one of them with the hole.
-pub fn split_plate() -> Program {
-    let mut program = Program::new();
-    let mut plate = Sketch::new();
-    rectangle(&mut plate, [0.0, 0.0], 3.0, 1.0);
-    circle(&mut plate, [0.75, 0.5], 0.3);
-    program.push(
-        "plate_sketch",
-        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(plate)),
-    );
-    program.push(
-        "plate",
-        ExtrudeArgs {
-            sketch: whole_sketch("plate_sketch"),
-            extent: Extents {
-                side1: Extent::blind(0.5),
-                symmetric: true,
-                side2: None,
-                reversed: false,
-            },
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-
-    // Sketch x runs along world x, sketch y along world -z: a line across
-    // the plate's thickness at x = 2.
-    let mut cut = Sketch::new();
-    let (a, b) = (
-        cut.add_point(n(2.0), n(-1.0)),
-        cut.add_point(n(2.0), n(1.0)),
-    );
-    let line = cut.add_line(a, b);
-    for (point, y) in [(a, -1.0), (b, 1.0)] {
-        cut.constrain(Constraint::Fix {
-            point,
-            x: n(2.0),
-            y: n(y),
-        });
-    }
-    program.push(
-        "cut_sketch",
-        AddSketchArgs::on(on_origin(FrameAxis::Y), solved(cut)),
-    );
-    program.push(
-        "cut",
-        ExtrudeArgs {
-            sketch: whole_sketch("cut_sketch"),
-            extent: Extents {
-                side1: Extent::blind(3.0),
-                symmetric: true,
-                side2: None,
-                reversed: false,
-            },
-            output: Output::Faces { up_to: None },
-        },
-    );
-    program.push(
-        "halves",
-        SplitArgs {
-            solid: solid("extrude(plate)"),
-            face: element(format!("extrude(cut,cut_sketch,{line})")),
-        },
-    );
-    program
-}
-
 /// A box with a round boss standing on it, sketched on a reference plane:
 /// the plane half a unit above the box's top (`lifted`, offset from
 /// `extrude(box,end)`), a circle sketched on it, and extruded back down
@@ -448,235 +193,8 @@ pub fn boss_on_reference_plane() -> Program {
     program
 }
 
-/// A hand-drawn handle-shaped outline (an irregular blob, splined, with a
-/// smaller splined region inside it — as a free-hand sketch in the web
-/// editor draws, unconstrained) extruded, then cross-drilled with a
-/// circular hole near one end.
-///
-/// Reproduces a real user bug report (2026-09-27) with the exact reported
-/// coordinates, unconstrained, rather than a re-derived "clean" equivalent
-/// that might not carry the same numerical case at all: the hole's boolean
-/// difference failed with a degenerate-face error from
-/// `face_interior_point`. (A second report, of the same outline with a
-/// slightly different hole center, left a non-watertight hole instead; its
-/// coordinates were not recorded.)
-pub fn handle_with_hole() -> Program {
-    let mut program = Program::new();
-
-    let mut outline = Sketch::new();
-    let outer_points = [
-        (0.01007682018456503, 0.8939399106232252),
-        (-0.9693901017551558, 0.8213868052943569),
-        (-1.00566665441959, 0.3175457960661055),
-        (-0.9452057333121998, -0.3555857922628385),
-        (0.09472210973491128, -0.9481028191152622),
-        (0.695300592734987, -0.3878316168534466),
-        (1.384555093359235, -0.4523232660346628),
-        (1.6233271012047248, -0.9224957048864859),
-        (1.9214381194506664, 0.15401630544608172),
-        (1.2092840203075834, 0.8578895429712221),
-    ]
-    .map(|(x, y)| outline.add_point(n(x), n(y)));
-    let mut outer_loop = outer_points.to_vec();
-    outer_loop.push(outer_points[0]);
-    outline.add_spline(outer_loop);
-
-    let inner_points = [
-        (0.27854547786607586, 0.568500810276078),
-        (-0.3241022513094386, 0.561767316095346),
-        (-0.3645032163938306, 0.00962079327532167),
-        (0.03950643445008967, -0.4246895813818926),
-        (0.507484280010964, -0.11831559615858644),
-        (0.8643594715897602, 0.12072344725739975),
-        (1.1202322504575766, -0.1452495728815144),
-        (1.2919363520662426, 0.18805838906471978),
-        (1.0427970673791584, 0.470865144655464),
-    ]
-    .map(|(x, y)| outline.add_point(n(x), n(y)));
-    let mut inner_loop = inner_points.to_vec();
-    inner_loop.push(inner_points[0]);
-    outline.add_spline(inner_loop);
-
-    program.push(
-        "outline",
-        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)),
-    );
-    program.push(
-        "handle",
-        ExtrudeArgs {
-            sketch: whole_sketch("outline"),
-            extent: Extents::blind(1.0),
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-
-    let mut hole = Sketch::new();
-    let center = hole.add_point(n(0.32989396295411244), n(-0.5632891678453777));
-    hole.add_circle(center, n(0.31727744879927977));
-    program.push(
-        "hole_sketch",
-        AddSketchArgs::on(on_origin(FrameAxis::Y), solved(hole)),
-    );
-    program.push(
-        "hole",
-        ExtrudeArgs {
-            sketch: whole_sketch("hole_sketch"),
-            extent: Extents {
-                side1: Extent::blind(2.44),
-                symmetric: true,
-                side2: None,
-                reversed: false,
-            },
-            output: Output::Solid(Combine::cut("extrude(handle)")),
-        },
-    );
-    program
-}
-
-/// A rounded-top luggage tag: two vertical sides and a horizontal bottom,
-/// closed by a semicircular top tangent to both sides, with a hang-hole
-/// through the top (concentric with it) and a rectangular window in the
-/// body, inset 0.15 from each of the two sides and the bottom.
-pub fn luggage_tag() -> Program {
-    let mut program = Program::new();
-
-    let mut outline = Sketch::new();
-    let p0 = outline.add_point(n(-0.7051397478635735), n(0.7809633733011653));
-    let p1 = outline.add_point(n(-0.7051397478646341), n(-0.6729821470985564));
-    let p4 = outline.add_point(n(0.695311597099524), n(-0.6729821470973941));
-    let p7 = outline.add_point(n(0.695311597101934), n(0.7809633732995341));
-    let left = outline.add_line(p0, p1);
-    let bottom = outline.add_line(p1, p4);
-    let right = outline.add_line(p4, p7);
-    let top = outline.add_arc(p7, p0, n(std::f64::consts::PI));
-    outline.constrain(Constraint::Vertical { line: left });
-    outline.constrain(Constraint::Horizontal { line: bottom });
-    outline.constrain(Constraint::Vertical { line: right });
-    outline.constrain(Constraint::Tangent { a: top, b: right });
-    outline.constrain(Constraint::Tangent { a: top, b: left });
-
-    let hole_center = outline.add_point(n(-0.004914075380876311), n(0.7809633733016882));
-    let hole = outline.add_circle(hole_center, n(0.30711303824557856));
-    outline.constrain(Constraint::Concentric { a: hole, b: top });
-
-    let w_tl = outline.add_point(n(-0.5551397478558091), n(0.08482972707824256));
-    let w_tr = outline.add_point(n(0.5453115971039223), n(0.08482972707824256));
-    let w_br = outline.add_point(n(0.5453115971014348), n(-0.5229821471055477));
-    let w_bl = outline.add_point(n(-0.5551397478598076), n(-0.5229821471049918));
-    let w_top = outline.add_line(w_tl, w_tr);
-    let w_right = outline.add_line(w_tr, w_br);
-    let w_bottom = outline.add_line(w_br, w_bl);
-    let w_left = outline.add_line(w_bl, w_tl);
-    outline.constrain(Constraint::Horizontal { line: w_top });
-    outline.constrain(Constraint::Vertical { line: w_right });
-    outline.constrain(Constraint::Horizontal { line: w_bottom });
-    outline.constrain(Constraint::Vertical { line: w_left });
-    outline.constrain(Constraint::PointLineDistance {
-        point: w_br,
-        line: right,
-        value: n(0.15),
-    });
-    outline.constrain(Constraint::PointLineDistance {
-        point: w_bl,
-        line: left,
-        value: n(0.15),
-    });
-    outline.constrain(Constraint::PointLineDistance {
-        point: w_br,
-        line: bottom,
-        value: n(0.15),
-    });
-
-    program.push(
-        "outline",
-        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)),
-    );
-    program.push(
-        "tag",
-        ExtrudeArgs {
-            sketch: whole_sketch("outline"),
-            extent: Extents {
-                side1: Extent::blind(1.0 / 3.0),
-                symmetric: true,
-                side2: None,
-                reversed: false,
-            },
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-    program
-}
-
-/// A box with a round hole through it, and a triangle sketched on its side
-/// face, revolved around one of its own edges and joined to the box: a double
-/// cone whose axis lies in the side face, so that both apexes sit on it and
-/// half the cone stands out of the box.
-///
-/// Reproduces a real user bug report (2026-09-30) with the exact reported
-/// coordinates and sketch ids: the `revolve1` union failed in
-/// `remesh_edges_x_faces` with "the spokes ... are not coplanar: an apex has
-/// no single normal" from `NurbSurface::pole_normal`: `trace_one_side` asked
-/// for the cone's normal at its apex, to find which way a curve leaves it.
-pub fn revolved_cone_on_box() -> Program {
-    let mut program = Program::new();
-
-    let mut outline = Sketch::new();
-    let p0 = outline.add_point(n(-2.046526714311965), n(1.182776884816516));
-    let p1 = outline.add_point(n(2.2456482324612383), n(-1.2774916901086213));
-    let p2 = outline.add_point(n(2.2456482324612383), n(1.182776884816516));
-    let p3 = outline.add_point(n(-2.046526714311965), n(-1.2774916901086213));
-    let top = outline.add_line(p0, p2);
-    outline.constrain(Constraint::Horizontal { line: top });
-    let right = outline.add_line(p2, p1);
-    outline.constrain(Constraint::Vertical { line: right });
-    let bottom = outline.add_line(p1, p3);
-    outline.constrain(Constraint::Horizontal { line: bottom });
-    let left = outline.add_line(p3, p0);
-    outline.constrain(Constraint::Vertical { line: left });
-    let center = outline.add_point(n(-0.6692695471128323), n(0.04905776553659026));
-    outline.add_circle(center, n(0.771466957205246));
-    program.push(
-        "sketch1",
-        AddSketchArgs::on(on_origin(FrameAxis::Z), outline),
-    );
-    program.push(
-        "extrude1",
-        ExtrudeArgs {
-            sketch: whole_sketch("sketch1"),
-            extent: Extents::blind(1.8900000000000001),
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-
-    let mut triangle = Sketch::new();
-    let q0 = triangle.add_point(n(-0.2654953575323612), n(1.4039697276195047));
-    let q1 = triangle.add_point(n(-0.8683910652620968), n(0.8073854454124275));
-    let axis = triangle.add_line(q0, q1);
-    let q3 = triangle.add_point(n(1.9210929721682684), n(0.8073854454124275));
-    let base = triangle.add_line(q1, q3);
-    triangle.constrain(Constraint::Horizontal { line: base });
-    triangle.add_line(q3, q0);
-    program.push(
-        "sketch2",
-        AddSketchArgs::on(
-            on_face(format!("extrude(extrude1,sketch1,{right})")),
-            triangle,
-        ),
-    );
-    program.push(
-        "revolve1",
-        RevolveArgs {
-            sketch: whole_sketch("sketch2"),
-            axis: Some(RevolveAxis::Sketch(sketch_element("sketch2", axis))),
-            extent: Extents::blind(360.0),
-            output: Output::Solid(Combine::join("extrude(extrude1)")),
-        },
-    );
-    program
-}
-
 /// A pin: a circle of radius 0.4 around the origin, extruded 2 up — made to
-/// fit the hole of [`box_with_drill_hole`].
+/// fit the hole of [`examples::box_with_drill_hole`].
 pub fn pin() -> Program {
     let mut program = Program::new();
     let mut sketch = Sketch::new();
@@ -697,7 +215,7 @@ pub fn pin() -> Program {
 }
 
 /// The assembly of `pin_in_plate`: the plate (`plate.geop`, the box of
-/// [`box_with_drill_hole`]) placed fixed, and the pin (`pin.geop`, [`pin`])
+/// [`examples::box_with_drill_hole`]) placed fixed, and the pin (`pin.geop`, [`pin`])
 /// mated into its hole — its side on the hole's axis, its bottom on the
 /// hole's. Its state puts both where those mates hold them.
 pub fn pin_in_plate_assembly() -> Program {
@@ -985,124 +503,7 @@ pub fn four_bar_assembly() -> Program {
     program
 }
 
-/// A plate designed by its parameters: `width` and `depth` — half the
-/// width, unless placed otherwise — extruded `thickness` thick, and a blind
-/// hole in its middle sized for the screw chosen from a table of sizes,
-/// and its colour. The hole's sketch,
-/// on the plate's top, projects the top, and puts the hole in the middle
-/// of it. The plate is meant to be placed with other values, and
-/// everything follows.
-pub fn parametric_plate() -> Program {
-    let mut program = Program::new();
-    set_parameters(
-        &mut program,
-        Parameters {
-            title: None,
-            designation: None,
-            color: Some("#d0893e".into()),
-            material: Material::named("Aluminium 6061"),
-            values: vec![
-                Parameter::number("width", "4", 1.0, 10.0),
-                Parameter::number("depth", "width / 2", 0.5, 10.0),
-                Parameter {
-                    name: "screw".into(),
-                    kind: ParameterKind::Table {
-                        columns: vec!["clearance".into(), "head".into()],
-                        rows: [
-                            ("M3", 0.34, 0.6),
-                            ("M4", 0.45, 0.8),
-                            ("M5", 0.55, 1.0),
-                            ("M6", 0.66, 1.2),
-                        ]
-                        .map(|(name, clearance, head)| Row {
-                            name: name.into(),
-                            values: vec![clearance, head],
-                        })
-                        .to_vec(),
-                        selected: "M4".into(),
-                    },
-                },
-                Parameter::number("thickness", "0.5", 0.1, 2.0),
-            ],
-        },
-    );
-
-    let mut outline = Sketch::new();
-    let lines = rectangle(&mut outline, [0.0, 0.0], 4.0, 2.0);
-    let length = |line: CurveId| {
-        outline
-            .constraints
-            .iter()
-            .find(|(_, c)| matches!(c, Constraint::Length { curve, .. } if *curve == line))
-            .map(|(&id, _)| id)
-            .expect("the rectangle's lengths")
-    };
-    let formulas = BTreeMap::from([
-        (length(lines[0]), NumericInput::from("width")),
-        (length(lines[1]), NumericInput::from("depth")),
-    ]);
-    program.push(
-        "outline",
-        AddSketchArgs {
-            formulas,
-            ..AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline))
-        },
-    );
-    program.push(
-        "plate",
-        ExtrudeArgs {
-            sketch: whole_sketch("outline"),
-            extent: Extents::blind("thickness"),
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-
-    // The hole's center is the middle of the top's diagonal, between two
-    // of its corners as projected: wherever the parameters put them.
-    let mut hole = Sketch::new();
-    let top = "extrude(plate,end)";
-    let mut projection = Reference::new(Source::Projection {
-        entity: Projected::Face(element(top)),
-    });
-    let built = build(&program, "", workspace(BTreeMap::new())).expect("the plate builds");
-    let reader = built.part.current();
-    let plane = (on_face(top).resolve(&reader)).expect("the top is planar");
-    projection
-        .update(&mut hole, &reader, &plane)
-        .expect("the top projects");
-    let corner = |p: &str| projection.points[&format!("extrude(plate,outline,{p},end)")];
-    let diagonal = hole.add_line(corner("p0"), corner("p2"));
-    hole.set_construction(diagonal, true);
-    let center = hole.add_point(n(2.0), n(1.0));
-    let circle = hole.add_circle(center, n(0.2));
-    hole.constrain(Constraint::Midpoint {
-        point: center,
-        curve: diagonal,
-    });
-    let diameter = hole.constrain(Constraint::Diameter {
-        curve: circle,
-        value: n(0.45),
-    });
-    program.push(
-        "hole_sketch",
-        AddSketchArgs {
-            references: vec![projection],
-            formulas: BTreeMap::from([(diameter, NumericInput::from("screw.clearance"))]),
-            ..AddSketchArgs::on(on_face(top), solved(hole))
-        },
-    );
-    program.push(
-        "hole",
-        ExtrudeArgs {
-            sketch: whole_sketch("hole_sketch"),
-            extent: Extents::blind(-0.3),
-            output: Output::Solid(Combine::cut("extrude(plate)")),
-        },
-    );
-    program
-}
-
-/// Two of [`parametric_plate`], placed with other values: one as it is,
+/// Two of [`examples::parametric_plate`], placed with other values: one as it is,
 /// one 5 wide with an M6 hole, in blue.
 pub fn plates_assembly() -> Program {
     let mut program = Program::new();
@@ -1318,7 +719,7 @@ pub fn workspaces() -> Vec<Example<ExampleFiles>> {
         ("pin_in_plate", || {
             vec![
                 ("assembly.geop", pin_in_plate_assembly()),
-                ("plate.geop", box_with_drill_hole()),
+                ("plate.geop", examples::box_with_drill_hole()),
                 ("pin.geop", pin()),
             ]
         }),
@@ -1328,7 +729,7 @@ pub fn workspaces() -> Vec<Example<ExampleFiles>> {
         ("parametric_plates", || {
             vec![
                 ("plates.geop", plates_assembly()),
-                ("plate.geop", parametric_plate()),
+                ("plate.geop", examples::parametric_plate()),
             ]
         }),
         ("four_bar", || {
@@ -1639,90 +1040,6 @@ pub fn hole_plate() -> Program {
     program
 }
 
-/// The route of [`pipe`], its bends of radius `bend`: from the origin
-/// along `x`, a bend turning to `y` at `(4, 0, 0)`, a bend turning up to
-/// `z` at `(4, 4, 0)`, and up to `(4, 4, 4)` — every bend tangent to the
-/// lines it joins.
-pub fn pipe_route(bend: f64) -> Sketch3d {
-    let mut s = Sketch3d::new();
-    let (r, h) = (bend, std::f64::consts::FRAC_1_SQRT_2);
-    let v = |x: f64, y: f64, z: f64| Vector3::from_array([x, y, z].map(n));
-    let p = [
-        s.add_point(v(0.0, 0.0, 0.0)),
-        s.add_point(v(4.0 - r, 0.0, 0.0)),
-        s.add_point(v(4.0 - r + r * h, r - r * h, 0.0)),
-        s.add_point(v(4.0, r, 0.0)),
-        s.add_point(v(4.0, 4.0 - r, 0.0)),
-        s.add_point(v(4.0, 4.0 - r + r * h, r - r * h)),
-        s.add_point(v(4.0, 4.0, r)),
-        s.add_point(v(4.0, 4.0, 4.0)),
-    ];
-    let curves = [
-        s.add_line(p[0], p[1]),
-        s.add_arc(p[1], p[2], p[3]),
-        s.add_line(p[3], p[4]),
-        s.add_arc(p[4], p[5], p[6]),
-        s.add_line(p[6], p[7]),
-    ];
-    for axis in geop_core_sketch::space::Coordinate::ALL {
-        s.constrain(Constraint3d::Coordinate {
-            point: p[0],
-            axis,
-            value: n(0.0),
-        });
-    }
-    s.constrain(Constraint3d::ParallelTo {
-        line: curves[0],
-        direction: v(1.0, 0.0, 0.0),
-    });
-    s.constrain(Constraint3d::Length {
-        line: curves[0],
-        value: n(4.0 - r),
-    });
-    for w in curves.windows(2) {
-        s.constrain(Constraint3d::Tangent { a: w[0], b: w[1] });
-    }
-    for arc in [curves[1], curves[3]] {
-        s.constrain(Constraint3d::Radius { arc, value: n(r) });
-    }
-    let report = s.solve().expect("the route is valid");
-    assert!(report.converged, "the route does not solve: {report:?}");
-    s
-}
-
-/// A pipe bent through space — a cable conduit, say: a circle of radius
-/// 0.3 on the `x` plane (`section`), swept along a 3-D sketch of lines and
-/// bends (`route`, see [`pipe_route`]) into the solid `sweep(pipe)`.
-pub fn pipe() -> Program {
-    let mut program = Program::new();
-    let mut section = Sketch::new();
-    circle(&mut section, [0.0, 0.0], 0.3);
-    program.push(
-        "section",
-        AddSketchArgs::on(on_origin(FrameAxis::X), solved(section)),
-    );
-    program.push(
-        "route",
-        AddSketch3dArgs {
-            sketch: pipe_route(1.0),
-            references: Vec::new(),
-        },
-    );
-    program.push(
-        "pipe",
-        SweepArgs {
-            profile: whole_sketch("section"),
-            path: Some(PathRef::Sketch3d(sketch3d_path("route"))),
-            orientation: Orientation::FollowPath,
-            twist: 0.0,
-            end_scale: 1.0,
-            rails: Vec::new(),
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-    program
-}
-
 /// A sheet-metal mounting bracket: a 2 x 1.2 plate 0.08 thick (`plate`),
 /// a flange bent up along part of its front edge with reliefs beside it
 /// (`front`), one along all of its back edge (`back`), and two mounting
@@ -1816,38 +1133,6 @@ pub fn subd_mouse() -> Program {
             mirror: Mirror::X,
         },
     );
-    program
-}
-
-/// A 2 x 1.5 x 1 box with every edge rounded by 0.2, at once: where three
-/// fillets meet, at each corner, the ball touching its three faces rounds
-/// it — the solid `fillet(round)`.
-pub fn rounded_box() -> Program {
-    let mut program = Program::new();
-    let mut outline = Sketch::new();
-    let lines = rectangle(&mut outline, [0.0, 0.0], 2.0, 1.5);
-    program.push(
-        "outline",
-        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(outline)),
-    );
-    program.push(
-        "box",
-        ExtrudeArgs {
-            sketch: whole_sketch("outline"),
-            extent: Extents::blind(1.0),
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-    let mut edges = Vec::new();
-    for line in &lines {
-        for cap in ["start", "end"] {
-            edges.push(format!("extrude(box,outline,{line},{cap})"));
-        }
-    }
-    for corner in 0..4 {
-        edges.push(format!("extrude(box,outline,p{corner})"));
-    }
-    program.push("round", FilletArgs::constant(edges, 0.2));
     program
 }
 
@@ -1996,25 +1281,15 @@ pub fn all() -> Vec<Example<Program>> {
         }),
         ("edge_part", || drawn(include_str!("drawn/edge_part.geop"))),
         ("conebox", || drawn(include_str!("drawn/conebox.geop"))),
-        ("box_with_drill_hole", box_with_drill_hole),
-        ("bracket", bracket),
-        ("cross_drilled_shaft", cross_drilled_shaft),
-        ("split_plate", split_plate),
         ("boss_on_reference_plane", boss_on_reference_plane),
-        ("handle_with_hole", handle_with_hole),
-        ("luggage_tag", luggage_tag),
-        ("revolved_cone_on_box", revolved_cone_on_box),
         ("pin", pin),
         ("link", link),
-        ("parametric_plate", parametric_plate),
         ("airfoil_wing", airfoil_wing),
         ("subd_mouse", subd_mouse),
         ("sheet_metal_bracket", sheet_metal_bracket),
-        ("pipe", pipe),
         ("patterned_plate", patterned_plate),
         ("horn", horn),
         ("hole_plate", hole_plate),
-        ("rounded_box", rounded_box),
         ("motor_flange", motor_flange),
         ("curved_panel", curved_panel),
     ]
@@ -2028,9 +1303,7 @@ mod tests {
     use geop_ops_extrude_revolve::testing::model_of;
     use geop_ops_model::{NamedModel, RefId};
 
-    use crate::registry::testing::{
-        Built, args, assert_valid, check_valid, disc, edit_args, error, step,
-    };
+    use crate::registry::testing::{Built, check_valid};
 
     use super::*;
 
@@ -2124,43 +1397,6 @@ mod tests {
         result
     }
 
-    /// The pipe through space is one valid closed solid: four quarters of
-    /// wall along each of its five curves and two caps — the far one square
-    /// to its last line, at `z = 4` — hollow nowhere and solid all along.
-    #[test]
-    fn pipe_round_trips() {
-        let part = build_and_round_trip("pipe", &pipe());
-        let validation = geop_core_topology::validation::ValidationParameters::default();
-        if let Err(errors) =
-            geop_core_topology::validation::validate_manifold(&validation, part.topology())
-        {
-            panic!("{errors:?}");
-        }
-        let description = PartDescription::of(&part).unwrap();
-        assert_eq!(
-            description.solids.keys().collect::<Vec<_>>(),
-            ["sweep(pipe)"]
-        );
-        assert_eq!(description.faces.len(), 5 * 4 + 2);
-        let model = part.topology();
-        let end = part.face_id("sweep(pipe,end)").unwrap();
-        assert!(model.iterate_face_coedges(end).all(|c| {
-            model.coedge_start_vertex(c).unwrap().point[2].could_be_equal(S::from_f64(4.0))
-        }));
-        let half = std::f64::consts::FRAC_1_SQRT_2;
-        for (p, expected) in [
-            ([1.5, 0.0, 0.0], PointClassification::Inside),
-            ([1.5, 0.4, 0.0], PointClassification::Outside),
-            ([3.0 + half, 1.0 - half, 0.0], PointClassification::Inside),
-            ([4.0, 2.0, 0.2], PointClassification::Inside),
-            ([4.0, 3.0 + half, 1.0 - half], PointClassification::Inside),
-            ([4.0, 4.0, 3.0], PointClassification::Inside),
-            ([4.0, 4.0, 4.2], PointClassification::Outside),
-        ] {
-            assert_eq!(inside(&part, "sweep(pipe)", p), expected, "at {p:?}");
-        }
-    }
-
     /// The examples drawn in the editor build valid parts and round-trip,
     /// as the ones written here do.
     #[test]
@@ -2169,88 +1405,6 @@ mod tests {
         for (name, program) in all().into_iter().filter(|(n, _)| drawn.contains(n)) {
             build_and_round_trip(name, &program());
         }
-    }
-
-    #[test]
-    fn box_with_drill_hole_round_trips() {
-        let part = build_and_round_trip("box_with_drill_hole", &box_with_drill_hole());
-        let description = PartDescription::of(&part).unwrap();
-
-        // One solid, named after the step that cut the hole.
-        assert_eq!(
-            description.solids.keys().collect::<Vec<_>>(),
-            ["extrude(hole)"]
-        );
-        // The box's top keeps its name, and now has the hole in it.
-        let top = &description.faces["extrude(box,end)"];
-        assert_eq!(top.holes.len(), 1, "{top:?}");
-        // The hole's bottom is the hole tool's end cap; its wall is the
-        // four quarters swept by the circle.
-        assert!(description.faces.contains_key("extrude(hole,end)"));
-        let args: AddSketchArgs = args(&box_with_drill_hole().steps[2]);
-        let circle_id = *args.sketch.curves.keys().next().unwrap();
-        for piece in ["", "#1", "#2", "#3"] {
-            let wall = format!("extrude(hole,hole_sketch,{circle_id}{piece})");
-            assert!(description.faces.contains_key(&wall), "no face {wall}");
-        }
-
-        assert_eq!(
-            inside(&part, "extrude(hole)", [0.3, 0.3, 0.5]),
-            PointClassification::Inside
-        );
-        assert_eq!(
-            inside(&part, "extrude(hole)", [1.0, 1.0, 0.8]),
-            PointClassification::Outside
-        );
-        assert_eq!(
-            inside(&part, "extrude(hole)", [1.0, 1.0, 0.3]),
-            PointClassification::Inside
-        );
-    }
-
-    #[test]
-    fn cross_drilled_shaft_round_trips() {
-        let part = build_and_round_trip("cross_drilled_shaft", &cross_drilled_shaft());
-        let description = PartDescription::of(&part).unwrap();
-        assert_eq!(
-            description.solids.keys().collect::<Vec<_>>(),
-            ["extrude(bore)"]
-        );
-        assert_eq!(
-            inside(&part, "extrude(bore)", [0.0, 0.8, 0.5]),
-            PointClassification::Inside
-        );
-        assert_eq!(
-            inside(&part, "extrude(bore)", [0.0, 0.0, 2.2]),
-            PointClassification::Outside
-        );
-        assert_eq!(
-            inside(&part, "extrude(bore)", [0.0, 0.0, 2.7]),
-            PointClassification::Inside
-        );
-    }
-
-    #[test]
-    fn split_plate_round_trips() {
-        let part = build_and_round_trip("split_plate", &split_plate());
-        let description = PartDescription::of(&part).unwrap();
-        assert_eq!(
-            description.solids.keys().collect::<Vec<_>>(),
-            ["split(halves,0)", "split(halves,1)"]
-        );
-        // The face it was cut with stays, standing on its own.
-        assert_eq!(part.sheet_face_names(), ["extrude(cut,cut_sketch,c2)"]);
-        // One half each side of the cut at x = 2, neither in the hole.
-        let at = |p: [f64; 3]| {
-            ["split(halves,0)", "split(halves,1)"]
-                .map(|half| inside(&part, half, p) == PointClassification::Inside)
-        };
-        let (left, right) = (at([0.2, 0.2, 0.0]), at([2.5, 0.5, 0.1]));
-        assert!(
-            left[0] != left[1] && right == [left[1], left[0]],
-            "{left:?} {right:?}"
-        );
-        assert_eq!(at([0.75, 0.5, 0.0]), [false, false]);
     }
 
     #[test]
@@ -2282,124 +1436,6 @@ mod tests {
             inside(&part, "extrude(boss)", [0.2, 0.2, 0.5]),
             PointClassification::Inside
         );
-    }
-
-    /// The hole goes all the way through: both the top and the bottom face
-    /// carry it as a hole, it has no bottom of its own, and its axis is
-    /// outside the solid at every height.
-    #[test]
-    fn bracket_round_trips() {
-        let part = build_and_round_trip("bracket", &bracket());
-        let description = PartDescription::of(&part).unwrap();
-
-        assert_eq!(
-            description.solids.keys().collect::<Vec<_>>(),
-            ["extrude(hole)"]
-        );
-        for cap in ["extrude(block,start)", "extrude(block,end)"] {
-            let face = &description.faces[cap];
-            assert_eq!(face.holes.len(), 1, "{cap}: {face:?}");
-        }
-        assert!(!description.faces.contains_key("extrude(hole,end)"));
-        for z in [1.0, 5.0, 9.0] {
-            assert_eq!(
-                inside(&part, "extrude(hole)", [20.0, 20.0, z]),
-                PointClassification::Outside,
-                "z = {z}"
-            );
-        }
-        assert_eq!(
-            inside(&part, "extrude(hole)", [5.0, 5.0, 5.0]),
-            PointClassification::Inside
-        );
-    }
-
-    /// The names of a program's entities don't depend on its numbers: a
-    /// taller box with a wider hole has the very same names.
-    #[test]
-    fn names_survive_a_change_of_dimensions() {
-        let names = |program: &Program| {
-            let part = program.build_model().unwrap();
-            let description = PartDescription::of(&part).unwrap();
-            (
-                description.faces.keys().cloned().collect::<Vec<_>>(),
-                description.edges.keys().cloned().collect::<Vec<_>>(),
-                description.vertices.keys().cloned().collect::<Vec<_>>(),
-            )
-        };
-        let original = box_with_drill_hole();
-        let mut edited = original.clone();
-        for step in &mut edited.steps {
-            match step.id.as_str() {
-                "box" => edit_args::<ExtrudeArgs>(step, |args| args.extent = Extents::blind(1.5)),
-                "hole_sketch" => edit_args::<AddSketchArgs>(step, |args| {
-                    for c in args.sketch.constraints.values_mut() {
-                        if let Constraint::Radius { value, .. } = c {
-                            *value = n(0.6);
-                        }
-                    }
-                    args.sketch.solve().unwrap();
-                }),
-                _ => {}
-            }
-        }
-        assert_ne!(original, edited);
-        assert_eq!(names(&edited), names(&original));
-    }
-
-    /// An unknown name is reported, not guessed at.
-    #[test]
-    fn referring_to_a_missing_entity_fails() {
-        let mut program = box_with_drill_hole();
-        edit_args::<AddSketchArgs>(&mut program.steps[2], |args| {
-            args.plane = Some(on_face("extrude(box,side)"));
-        });
-        let err = error(program.build_model());
-        assert!(format!("{err:?}").contains("extrude(box,side)"), "{err:?}");
-    }
-
-    /// Step ids have to be unique: every name a step creates is built from
-    /// its id.
-    #[test]
-    fn duplicate_step_ids_are_rejected() {
-        let mut program = box_with_drill_hole();
-        program.steps[3].id = "box".into();
-        assert!(program.validate_ids().is_err());
-        assert!(program.build_model().is_err());
-    }
-
-    /// Reproduces the real bug report described on `handle_with_hole`.
-    ///
-    /// Used to fail in the "hole" step's `Difference`, with
-    /// `face_interior_point` finding no interior point on a side wall of the
-    /// inner spline. The wall's loop carried a spur whose pcurve ran across
-    /// the whole face: `fit_pcurve` seeded its first Newton projection from
-    /// the patch's parametric middle, and on this strongly curved wall that
-    /// converged to a foot point clamped against the far domain bound. The
-    /// walk is now seeded where the curve actually starts on the surface.
-    #[test]
-    fn handle_with_hole_round_trips() {
-        build_and_round_trip("handle_with_hole", &handle_with_hole());
-    }
-
-    #[test]
-    fn luggage_tag_round_trips() {
-        build_and_round_trip("luggage_tag", &luggage_tag());
-    }
-
-    /// Every edge rounded, and a ball's piece at each of the eight corners.
-    #[test]
-    fn rounded_box_round_trips() {
-        let part = build_and_round_trip("rounded_box", &rounded_box());
-        assert_eq!(part.solid_names(), ["fillet(round)"]);
-        let corners = part
-            .topology()
-            .faces
-            .keys()
-            .filter_map(|&f| part.name_of(f))
-            .filter(|name| name.ends_with(",corner)"))
-            .count();
-        assert_eq!(corners, 8);
     }
 
     /// The curved panel is a valid face, through the middle of its middle
@@ -2486,23 +1522,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn revolved_cone_on_box_round_trips() {
-        let part = build_and_round_trip("revolved_cone_on_box", &revolved_cone_on_box());
-        // The side face is the plane x = 2.2456, with sketch x along world y
-        // and sketch y along world z. The triangle's centroid, turned a
-        // quarter around the axis, lies 0.654 off that plane on either side.
-        for (p, expected) in [
-            ([2.9, -0.198, 1.471], PointClassification::Inside),
-            ([1.59, -0.198, 1.471], PointClassification::Inside),
-            ([2.9, 1.0, 0.3], PointClassification::Outside),
-            ([-0.669, 0.049, 1.0], PointClassification::Outside),
-            ([1.5, -1.0, 1.0], PointClassification::Inside),
-        ] {
-            assert_eq!(inside(&part, "revolve(revolve1)", p), expected, "{p:?}");
-        }
-    }
-
     /// A mouse's sole is flat: the crease around its bottom keeps the
     /// bottom face in the cage's bottom plane.
     #[test]
@@ -2546,44 +1565,6 @@ mod tests {
             .flat_map(|p| (0..4).map(move |k| p[k].width().to_f64()))
             .fold(0.0, f64::max);
         assert!(widest < 3e-9, "{widest:e}: {:?}", surface.control_points);
-    }
-
-    /// The example `pipe`, of radius `r`, along its route bent at radius
-    /// `bend`.
-    fn pipe_of(r: f64, bend: f64) -> Program {
-        let mut program = pipe();
-        edit_args(step(&mut program, "section"), |args: &mut AddSketchArgs| {
-            args.sketch = disc([0.0, 0.0], r);
-        });
-        edit_args(step(&mut program, "route"), |args: &mut AddSketch3dArgs| {
-            args.sketch = pipe_route(bend);
-        });
-        program
-    }
-
-    /// A pipe bent tighter than it is thick is refused, naming the bend —
-    /// rather than built crossing itself.
-    #[test]
-    fn a_bend_tighter_than_the_pipe_is_refused() {
-        let error = pipe_of(0.3, 0.25).build_model().expect_err("refused");
-        assert!(error.root_message().contains("bend"), "{error:?}");
-    }
-
-    /// Pipes along routes of lines and bends of several radii, from thin to
-    /// as thick as the tightest bend allows, and beyond: every one builds a
-    /// valid solid, or is refused for a bend tighter than the pipe.
-    #[test]
-    #[ignore = "slow: sweeps along paths of varied curvature — run with `cargo test -- --ignored`"]
-    fn pipes_bent_at_varied_radii() {
-        for bend in [0.4, 1.0, 1.5] {
-            for r in [0.1, 0.3, 0.39, 0.5] {
-                match pipe_of(r, bend).build_model() {
-                    Ok(part) => assert_valid(&part),
-                    Err(e) if r >= bend && e.root_message().contains("bend") => {}
-                    Err(e) => panic!("bend {bend}, radius {r}: {e:?}"),
-                }
-            }
-        }
     }
 
     /// A datum is a named entity, and a sketch can be placed on a datum

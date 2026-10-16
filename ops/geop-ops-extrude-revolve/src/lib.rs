@@ -13,15 +13,22 @@
 //! The operations resolve what their arguments refer to — the sketch, the
 //! axis, the path — into geometry, and sweep it with `geop_lib_sweep`.
 //!
+//! [`examples`] are the programs an editor offers that exercise them.
+//!
 //! With the `testing` feature — which only other crates' tests turn on —
 //! `testing` draws the sketches and pushes the steps their programs start
 //! from.
 
+#[cfg(test)]
+mod example_tests;
+pub mod examples;
 mod extrude;
 mod icons;
 mod loft;
 #[cfg(test)]
 mod program_tests;
+#[cfg(test)]
+mod regression_tests;
 mod revolve;
 #[cfg(test)]
 mod sketch3d_program_tests;
@@ -41,10 +48,11 @@ use geop_core_editor::registry::Registry;
 use geop_core_math::geop_error::GeopResult;
 
 /// Adds what this crate offers an editor to `r`: extrusions, revolutions,
-/// sweeps and lofts.
+/// sweeps and lofts, and the examples of them.
 pub fn register(r: Registry) -> GeopResult<Registry> {
     r.operation(Extrude)?
         .operation(Revolve)?
         .operation(Sweep)?
-        .operation(Loft)
+        .operation(Loft)?
+        .examples(examples::set())
 }

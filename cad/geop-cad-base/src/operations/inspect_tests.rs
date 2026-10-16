@@ -19,7 +19,7 @@ use geop_ops_model::BooleanOp;
 use geop_ops_model::Namer;
 
 use crate::registry::testing::Built;
-use crate::{Command, Editor, examples};
+use crate::{Command, Editor};
 
 /// The editor with the workspace example `name` loaded, as the browser
 /// loads one.
@@ -131,7 +131,7 @@ fn check_mass(name: &str, summary: &MassSummary, failures: &mut Vec<String>) {
 #[ignore = "slow: every example's mass properties, and booleans halving each solid — run with `cargo test -- --ignored`"]
 fn example_mass_properties_are_consistent() {
     let mut failures = Vec::new();
-    for (example, program) in examples::all() {
+    for (example, program) in crate::registry().unwrap().example_programs() {
         let part = program().built().unwrap();
         let reader = part.current();
         let report = mass_report(&reader).unwrap();

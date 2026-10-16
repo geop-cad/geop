@@ -5,6 +5,8 @@ mod icons;
 mod operation;
 #[cfg(test)]
 mod program_tests;
+#[cfg(test)]
+mod stress_tests;
 
 pub use operation::{Shell, ShellArgs};
 

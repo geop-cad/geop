@@ -71,7 +71,7 @@ fn name_where(part: &NamedModel<S>, pick: impl Fn(RefId) -> bool) -> String {
 /// it is a visible circle.
 #[test]
 fn drilled_plate_shows_its_hole_hidden() {
-    let built = build(&examples::bracket());
+    let built = build(&geop_ops_extrude_revolve::examples::bracket());
     let part = &model(&built);
     let front = view(part, ViewKind::Front);
     let hidden: Vec<_> = front.lines.iter().filter(|l| !l.visible).collect();
@@ -103,7 +103,7 @@ fn drilled_plate_shows_its_hole_hidden() {
 /// is refused, naming it.
 #[test]
 fn dimensions_by_name_are_drawn() {
-    let built = build(&examples::bracket());
+    let built = build(&geop_ops_extrude_revolve::examples::bracket());
     let part = &model(&built);
     let model = part.topology();
     let circle = name_where(part, |id| match id {
@@ -168,7 +168,7 @@ fn dimensions_by_name_are_drawn() {
 /// shows the cut hatched, and no hidden lines.
 #[test]
 fn section_through_a_blind_hole_is_hatched() {
-    let mut program = examples::box_with_drill_hole();
+    let mut program = geop_ops_extrude_revolve::examples::box_with_drill_hole();
     program.push("middle", offset_from_xz(1.0));
     let built = build(&program);
     let args = DrawingArgs {
@@ -293,7 +293,9 @@ fn named(part: &NamedModel<S>, error: &impl std::fmt::Display) -> String {
 /// The view `kind` of the example `name`, or its error with the entities
 /// it mentions named.
 fn example_view(name: &str, kind: ViewKind) -> Result<geop_ops_drawing::ProjectedView<S>, String> {
-    let (_, program) = examples::all()
+    let (_, program) = crate::registry()
+        .unwrap()
+        .example_programs()
         .into_iter()
         .find(|(n, _)| *n == name)
         .expect("the example is there");
@@ -347,7 +349,9 @@ fn cool_flange_from_the_back_draws() {
 /// silhouette piece shorter than that, as one sitting at the apex would be.
 #[test]
 fn conebox_cone_from_the_top_shows_whole_generators() {
-    let (_, program) = examples::all()
+    let (_, program) = crate::registry()
+        .unwrap()
+        .example_programs()
         .into_iter()
         .find(|(n, _)| *n == "conebox")
         .unwrap();
@@ -448,7 +452,7 @@ const KNOWN_TO_FAIL: [(&str, ViewKind); 2] = [
 #[ignore = "slow: every view of every example — run with `cargo test -- --ignored`"]
 fn every_example_draws() {
     let mut failures = Vec::new();
-    for (name, program) in examples::all() {
+    for (name, program) in crate::registry().unwrap().example_programs() {
         let built = build(&program());
         let part = &model(&built);
         for kind in ViewKind::ALL {

@@ -7,12 +7,9 @@ use std::collections::HashSet;
 use geop_ops_model::Combine;
 use geop_ops_sketch::whole_sketch;
 
-use crate::{
-    examples,
-    registry::{
-        registry, runner,
-        testing::{Built, args, handled},
-    },
+use crate::registry::{
+    registry, runner,
+    testing::{Built, args, handled},
 };
 
 /// Every operation is offered once, registered under the kind its steps
@@ -36,7 +33,7 @@ fn every_operation_is_offered() {
     for info in &infos {
         assert_eq!(operations.get(info.kind).unwrap().kind(), info.kind);
     }
-    for (_, program) in examples::all() {
+    for (_, program) in crate::registry().unwrap().example_programs() {
         for step in &program().steps {
             assert!(
                 kinds.contains(&step.operation.as_str()),
@@ -50,7 +47,7 @@ fn every_operation_is_offered() {
 /// A new step starts from what the steps before it built.
 #[test]
 fn new_steps_start_from_what_was_built() {
-    let program = examples::box_with_drill_hole();
+    let program = geop_ops_extrude_revolve::examples::box_with_drill_hole();
     let part = program.built().unwrap();
     let registry = registry().unwrap();
     let editors = registry.editors();
@@ -77,7 +74,10 @@ fn new_steps_start_from_what_was_built() {
 #[test]
 fn every_operation_opens_on_any_part() {
     use crate::Command;
-    for program in [None, Some(examples::box_with_drill_hole())] {
+    for program in [
+        None,
+        Some(geop_ops_extrude_revolve::examples::box_with_drill_hole()),
+    ] {
         let mut editor = crate::editor();
         if let Some(program) = program {
             handled(

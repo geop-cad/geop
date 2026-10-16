@@ -230,7 +230,7 @@ fn export_examples(args: &ExamplesArgs) -> GeopResult<Vec<Compiled>> {
         move |e: std::io::Error| GeopError::new(format!("creating {dir}: {e}"))
     };
     std::fs::create_dir_all(&args.out_dir).map_err(dir_err(&args.out_dir))?;
-    let singles = geop_cad_base::examples::all();
+    let singles = geop_cad_base::registry()?.example_programs();
     let workspaces = geop_cad_base::examples::workspaces();
     let known = || -> Vec<&str> {
         singles
@@ -447,7 +447,9 @@ mod tests {
     #[test]
     fn compiles_to_step_and_imports_it_back() {
         let dir = scratch("step");
-        let program = examples::all()
+        let program = geop_cad_base::registry()
+            .unwrap()
+            .example_programs()
             .into_iter()
             .find(|(name, _)| *name == "box_with_drill_hole")
             .unwrap()
@@ -489,7 +491,7 @@ mod tests {
     #[ignore = "slow: 7 s — run with `cargo test -- --ignored`"]
     fn compiles_every_example() {
         let dir = scratch("examples");
-        for (name, program) in examples::all() {
+        for (name, program) in geop_cad_base::registry().unwrap().example_programs() {
             let path = dir.join(format!("{name}.geop"));
             std::fs::write(&path, program().to_json().unwrap()).unwrap();
             let compiled = compile(&args(path)).unwrap();
@@ -510,9 +512,10 @@ mod tests {
         .unwrap();
         assert_eq!(
             compiled.len(),
-            examples::all().len() + examples::workspaces().len()
+            geop_cad_base::registry().unwrap().example_programs().len()
+                + examples::workspaces().len()
         );
-        for (name, _) in examples::all() {
+        for (name, _) in geop_cad_base::registry().unwrap().example_programs() {
             assert!(dir.join(format!("{name}.geop")).is_file(), "{name}");
             assert!(dir.join(format!("{name}.stl")).is_file(), "{name}");
         }
@@ -666,7 +669,16 @@ mod tests {
     fn draws_a_program() {
         let dir = scratch("drawing");
         let path = dir.join("bracket.geop");
-        std::fs::write(&path, examples::bracket().to_json().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            geop_cad_base::registry()
+                .unwrap()
+                .example("bracket")
+                .unwrap()
+                .to_json()
+                .unwrap(),
+        )
+        .unwrap();
         let to = |output: &str| CompileArgs {
             output: Some(dir.join(output)),
             ..args(path.clone())
@@ -726,7 +738,16 @@ mod tests {
     fn an_unknown_solid_names_the_known_ones() {
         let dir = scratch("unknown-solid");
         let path = dir.join("box.geop");
-        std::fs::write(&path, examples::box_with_drill_hole().to_json().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            geop_cad_base::registry()
+                .unwrap()
+                .example("box_with_drill_hole")
+                .unwrap()
+                .to_json()
+                .unwrap(),
+        )
+        .unwrap();
         let err = compile(&CompileArgs {
             options: vec![r#"solids=["nothing"]"#.into()],
             ..args(path)

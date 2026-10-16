@@ -94,7 +94,14 @@ fn moving_a_mated_part_reroutes_the_cable() {
     let mut editor = crate::editor();
     let files = BTreeMap::from([(
         "plate.geop".to_string(),
-        Some(examples::box_with_drill_hole().to_json().unwrap()),
+        Some(
+            crate::registry()
+                .unwrap()
+                .example("box_with_drill_hole")
+                .unwrap()
+                .to_json()
+                .unwrap(),
+        ),
     )]);
     let update = editor.handle(Command::Files { files });
     assert!(update.error.is_none(), "{:?}", update.error);
@@ -195,7 +202,14 @@ fn a_cable_bundle_is_no_body_to_weigh_or_check() {
     let mut editor = crate::editor();
     let files = BTreeMap::from([(
         "plate.geop".to_string(),
-        Some(examples::box_with_drill_hole().to_json().unwrap()),
+        Some(
+            crate::registry()
+                .unwrap()
+                .example("box_with_drill_hole")
+                .unwrap()
+                .to_json()
+                .unwrap(),
+        ),
     )]);
     editor.handle(Command::Files { files });
     let update = editor.handle(Command::Load {
