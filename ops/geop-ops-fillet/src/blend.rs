@@ -93,13 +93,11 @@ use geop_core_topology::{
     EdgeId, FaceId, Model, SolidId, VertexId,
     contains::face::{PointClassification, face_contains},
 };
-use geop_ops_booleans::{
-    boolean::{BooleanOp, boolean},
-    remesh::remesh::RemeshParams,
-};
+use geop_lib_booleans::{RemeshParams, boolean};
 use geop_ops_extrude_revolve::{
     common::Profile, extrude::extrude, revolve::revolve, sweep::SweepLoop,
 };
+use geop_ops_model::BooleanOp;
 use geop_ops_model::{NamedModel, Namer};
 
 use crate::corner;
@@ -1124,7 +1122,7 @@ fn plan_edge<S: Scalar>(
 
 /// Gives the one face of `solid` left of each of the tool's faces named
 /// `tool_faces` that face's name back. The boolean `namer` names (see
-/// [`geop_ops_booleans::naming`]) names a piece split off a face `F` along
+/// the naming of `geop_lib_booleans`) names a piece split off a face `F` along
 /// an edge `X` `N(F,X)` ([`Namer::piece`]) — and a piece of that piece
 /// alike — while the piece keeping `F` may well be the one it drops. A
 /// blend keeps one piece of its tool, the blend face, which is better known

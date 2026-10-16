@@ -31,8 +31,9 @@ use geop_core_topology::{
     EdgeId, FaceId,
     build::{BodySpec, CoedgeOn, CoedgeSpec},
 };
-use geop_ops_booleans::{Combine, Tool, boolean::Reach};
+use geop_lib_booleans::{Reach, combine_tools};
 use geop_ops_extrude_revolve::{extrude::extrude, sweep::SweepLoop};
+use geop_ops_model::{Combine, Tool};
 use geop_ops_model::{NamedModel, Namer, frame_along};
 
 use crate::{
@@ -323,7 +324,7 @@ pub fn lip<S: Scalar>(
     .with_context(ctx)?;
     let tool = Tool::whole(built.solid.expect("extruded as a solid"));
     let combine = Combine::join(target);
-    (combine.apply(part, namer, operation_id, &[tool]))
+    combine_tools(part, namer, operation_id, &[tool], &combine)
         .and_then(Reach::stopped)
         .with_context(ctx)
 }
@@ -378,7 +379,7 @@ pub fn groove<S: Scalar>(
     .with_context(ctx)?;
     let tool = Tool::whole(built.solid.expect("extruded as a solid"));
     let combine = Combine::cut(target);
-    (combine.apply(part, namer, operation_id, &[tool]))
+    combine_tools(part, namer, operation_id, &[tool], &combine)
         .and_then(Reach::stopped)
         .with_context(ctx)
 }

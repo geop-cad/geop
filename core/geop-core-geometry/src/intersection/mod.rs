@@ -22,7 +22,7 @@ pub use curve_surface::{
 /// overlaps' ends, the isolated crossings and points spread evenly over the
 /// overlaps — some callers detect coincidence some other way and just want
 /// every point regardless (see
-/// `geop-ops-booleans::remesh::remesh_edges_x_edges`); others want to reuse
+/// `geop-lib-booleans`'s `remesh_edges_x_edges`); others want to reuse
 /// them for a follow-up geometric test instead of re-deriving them (see
 /// `remesh_edges_x_faces::find_coincident_pair`). Use [`Intersections::into_vec`]
 /// to get the solutions either way, or match to tell the two cases apart.

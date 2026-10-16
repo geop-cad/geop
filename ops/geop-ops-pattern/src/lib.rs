@@ -11,7 +11,7 @@
 //!
 //! Each acts on solids, and on sheets — faces standing on their own — and
 //! keeps what it makes as new bodies, or combines it with a solid as an
-//! extrude does ([`geop_ops_booleans::Combine`]): joined to the bodies
+//! extrude does ([`geop_ops_model::Combine`]): joined to the bodies
 //! themselves, or cut from another solid. The copies are moved exactly as
 //! the bodies are (see `geop_core_topology::Model::transform_body`): every
 //! surface and curve by the same motion, each pcurve as it was.

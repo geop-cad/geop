@@ -1,18 +1,14 @@
 [package]
-name = "geop-ops-booleans"
+name = "geop-lib-booleans"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-geop-core-program.workspace = true
-geop-core-editor.workspace = true
 geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
 geop-ops-model.workspace = true
-geop-ops-parameters.workspace = true
 rayon.workspace = true
-serde.workspace = true
 
 [dev-dependencies]
 # Only the tests' scenes are built from basic shapes. The extrude and revolve

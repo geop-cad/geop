@@ -15,8 +15,8 @@ use geop_core_math::{
 };
 use geop_core_topology::Model;
 use geop_ops_assembly::AddPartArgs;
-use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{Extents, testing::model_of};
+use geop_ops_model::Combine;
 use geop_ops_step::{ImportStepArgs, write_part};
 
 use crate::registry::testing::{disc, extrude_sketch, on_origin, rectangle};

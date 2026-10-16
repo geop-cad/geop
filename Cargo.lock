@@ -216,11 +216,12 @@ dependencies = [
  "geop-core-rasterize",
  "geop-core-sketch",
  "geop-core-topology",
+ "geop-lib-booleans",
  "geop-lib-sheet",
  "geop-ops-add-datum",
  "geop-ops-assembly",
  "geop-ops-bom",
- "geop-ops-booleans",
+ "geop-ops-boolean",
  "geop-ops-constraints",
  "geop-ops-datums",
  "geop-ops-drawing",
@@ -325,6 +326,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "geop-lib-booleans"
+version = "0.1.0"
+dependencies = [
+ "geop-core-geometry",
+ "geop-core-math",
+ "geop-core-rasterize",
+ "geop-core-topology",
+ "geop-ops-extrude-revolve",
+ "geop-ops-model",
+ "rayon",
+]
+
+[[package]]
 name = "geop-lib-sheet"
 version = "0.1.0"
 dependencies = [
@@ -388,19 +402,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "geop-ops-booleans"
+name = "geop-ops-boolean"
 version = "0.1.0"
 dependencies = [
  "geop-core-editor",
- "geop-core-geometry",
  "geop-core-math",
  "geop-core-program",
- "geop-core-rasterize",
- "geop-core-topology",
+ "geop-lib-booleans",
+ "geop-ops-edit",
  "geop-ops-extrude-revolve",
  "geop-ops-model",
- "geop-ops-parameters",
- "rayon",
+ "geop-ops-sketch",
  "serde",
 ]
 
@@ -436,10 +448,10 @@ dependencies = [
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
+ "geop-lib-booleans",
  "geop-lib-sheet",
  "geop-ops-assembly",
  "geop-ops-bom",
- "geop-ops-booleans",
  "geop-ops-extrude-revolve",
  "geop-ops-model",
  "geop-ops-parameters",
@@ -457,7 +469,7 @@ dependencies = [
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
- "geop-ops-booleans",
+ "geop-lib-booleans",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-model",
@@ -477,8 +489,8 @@ dependencies = [
  "geop-core-rasterize",
  "geop-core-sketch",
  "geop-core-topology",
+ "geop-lib-booleans",
  "geop-ops-add-datum",
- "geop-ops-booleans",
  "geop-ops-datums",
  "geop-ops-model",
  "geop-ops-parameters",
@@ -497,8 +509,8 @@ dependencies = [
  "geop-core-math",
  "geop-core-program",
  "geop-core-topology",
+ "geop-lib-booleans",
  "geop-ops-add-datum",
- "geop-ops-booleans",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-model",
@@ -519,7 +531,6 @@ dependencies = [
  "geop-core-topology",
  "geop-ops-add-datum",
  "geop-ops-assembly",
- "geop-ops-booleans",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-model",
@@ -537,8 +548,8 @@ dependencies = [
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
+ "geop-lib-booleans",
  "geop-ops-add-datum",
- "geop-ops-booleans",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-model",
@@ -559,9 +570,9 @@ dependencies = [
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
+ "geop-lib-booleans",
  "geop-ops-add-datum",
  "geop-ops-assembly",
- "geop-ops-booleans",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-model",
@@ -607,7 +618,8 @@ dependencies = [
  "geop-core-math",
  "geop-core-program",
  "geop-core-topology",
- "geop-ops-booleans",
+ "geop-lib-booleans",
+ "geop-ops-boolean",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-model",
@@ -628,8 +640,8 @@ dependencies = [
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
+ "geop-lib-booleans",
  "geop-ops-add-datum",
- "geop-ops-booleans",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-fillet",
@@ -669,7 +681,6 @@ dependencies = [
  "geop-core-program",
  "geop-core-topology",
  "geop-ops-add-datum",
- "geop-ops-booleans",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-model",
@@ -741,7 +752,7 @@ dependencies = [
  "geop-core-math",
  "geop-core-program",
  "geop-core-topology",
- "geop-ops-booleans",
+ "geop-ops-boolean",
  "geop-ops-extrude-revolve",
  "geop-ops-model",
  "geop-ops-parameters",
@@ -759,8 +770,8 @@ dependencies = [
  "geop-core-program",
  "geop-core-sketch",
  "geop-core-topology",
+ "geop-lib-booleans",
  "geop-ops-add-datum",
- "geop-ops-booleans",
  "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-model",

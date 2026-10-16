@@ -39,8 +39,8 @@ use geop_ops_assembly::{
     placed::{locate, placed_parts},
     solving::check as check_mates,
 };
-use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::Extents;
+use geop_ops_model::Combine;
 use geop_ops_model::{element, read_model};
 use geop_ops_sketch::Sketch;
 

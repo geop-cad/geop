@@ -9,8 +9,8 @@ use geop_core_math::{
 };
 use geop_core_program::{element::ElementReference, program::Program, values::Design};
 use geop_core_sketch::space::{Constraint3d, CurveKind3d};
-use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::Extents;
+use geop_ops_model::Combine;
 use geop_ops_model::{NamedModel, read_model};
 use geop_ops_sketch3d::{
     AddSketch3dArgs, PlacedSketch3d, PointSource, Reference3d, Sketch3d, Sketch3dEditing,

@@ -21,6 +21,5 @@ serde.workspace = true
 [dev-dependencies]
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-ops-datums.workspace = true
-geop-ops-booleans.workspace = true
 geop-core-topology.workspace = true
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }

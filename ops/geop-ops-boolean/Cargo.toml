@@ -1,0 +1,19 @@
+[package]
+name = "geop-ops-boolean"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+geop-core-program.workspace = true
+geop-core-editor.workspace = true
+geop-core-math.workspace = true
+geop-lib-booleans.workspace = true
+geop-ops-model.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+# The tests split solids extruded from sketches with faces extracted from them.
+geop-ops-model = { workspace = true, features = ["testing"] }
+geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-ops-edit.workspace = true
+geop-ops-sketch.workspace = true

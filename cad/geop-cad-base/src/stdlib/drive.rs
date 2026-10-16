@@ -32,9 +32,9 @@
 //! [`Transmission::RackPinion`]: geop_ops_assembly::Transmission::RackPinion
 
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
-use geop_ops_booleans::Combine;
 use geop_ops_datums::{origin_axis, origin_plane};
 use geop_ops_extrude_revolve::{Extent, Extents};
+use geop_ops_model::Combine;
 use geop_ops_parameters::{Parameter, ParameterKind, parameters::Row};
 use geop_ops_pattern::{CircularPatternArgs, Seeds, Spacing, TurnAxis, body};
 

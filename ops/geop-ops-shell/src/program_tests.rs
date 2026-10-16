@@ -15,12 +15,12 @@ use geop_core_math::{
 };
 use geop_core_topology::Body;
 use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
-use geop_ops_booleans::{Combine, solid};
 use geop_ops_datums::{datums, read_datums};
 use geop_ops_extrude_revolve::{
     Extents,
     testing::{Built, args, drilled_box, extrude_sketch, extrusion, n, on_origin, outline, sketch},
 };
+use geop_ops_model::{Combine, solid};
 use geop_ops_model::{NamedModel, model, testing::assert_valid};
 use geop_ops_sketch::{Sketch, SketchPlane};
 

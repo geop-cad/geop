@@ -11,7 +11,7 @@ geop-core-topology.workspace = true
 geop-ops-model.workspace = true
 geop-ops-parameters.workspace = true
 geop-ops-sketch.workspace = true
-geop-ops-booleans.workspace = true
+geop-lib-booleans.workspace = true
 geop-ops-extrude-revolve.workspace = true
 serde.workspace = true
 

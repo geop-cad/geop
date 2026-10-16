@@ -24,9 +24,9 @@ use geop_core_program::{
 };
 use geop_ops_add_datum::Selected;
 use geop_ops_assembly::MateEntity;
-use geop_ops_booleans::Combine;
 use geop_ops_datums::datum;
 use geop_ops_extrude_revolve::{ExtrudeArgs, Output};
+use geop_ops_model::Combine;
 use geop_ops_model::{BooleanOp, Face, NamedModel, Vertex, element, read_model};
 use geop_ops_parameters::parameters_of;
 

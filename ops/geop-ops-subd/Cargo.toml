@@ -17,4 +17,4 @@ serde.workspace = true
 geop-ops-model = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
-geop-ops-booleans.workspace = true
+geop-ops-boolean.workspace = true

@@ -18,7 +18,7 @@ use geop_core_program::{
 use geop_core_sketch::{CurveId, PointId};
 use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
 use geop_ops_assembly::{AddPartArgs, JointKind, Kind, Mate, MateEntity, Motion, joint_parameter};
-use geop_ops_booleans::{Combine, SplitArgs, solid};
+use geop_ops_boolean::SplitArgs;
 use geop_ops_datums::{ORIGIN, component_name, datum, origin_axis, origin_plane};
 use geop_ops_extrude_revolve::{
     Extent, Extents, ExtrudeArgs, LoftArgs, Orientation, Output, PathRef, RevolveArgs, RevolveAxis,
@@ -26,6 +26,7 @@ use geop_ops_extrude_revolve::{
 };
 use geop_ops_fillet::FilletArgs;
 use geop_ops_hole::{HoleArgs, HoleCentre, HoleKind, Standard, iso::Fit};
+use geop_ops_model::{Combine, solid};
 use geop_ops_model::{PartDescription, element, read_model};
 use geop_ops_parameters::{
     Material, Parameter, ParameterKind, Parameters, parameters::Row, set_parameters,

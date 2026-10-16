@@ -950,8 +950,8 @@ mod tools {
     use std::f64::consts::PI;
 
     use geop_core_sketch::{copies::Step, offset::Corners};
-    use geop_ops_booleans::Combine;
     use geop_ops_extrude_revolve::Extents;
+    use geop_ops_model::Combine;
     use geop_ops_sketch::Constraint;
 
     use super::*;

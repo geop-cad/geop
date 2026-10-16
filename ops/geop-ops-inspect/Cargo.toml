@@ -16,7 +16,7 @@ geop-ops-add-datum.workspace = true
 # The solids of the parts placed.
 geop-ops-assembly.workspace = true
 # The overlap of two solids is their intersection.
-geop-ops-booleans.workspace = true
+geop-lib-booleans.workspace = true
 serde.workspace = true
 
 [dev-dependencies]

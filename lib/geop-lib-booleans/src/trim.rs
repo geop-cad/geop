@@ -31,7 +31,7 @@ use crate::{
 /// meets their boundary — and drops the rest. `targets` are not changed.
 ///
 /// What the trimming creates is named by `namer` as a boolean names what it
-/// creates (see [`crate::naming`]). Fails if the piece also reaches an edge
+/// creates (see `naming`). Fails if the piece also reaches an edge
 /// named in `end`: nothing stopped the sheet.
 pub fn trim_up_to_next<S: Scalar>(
     model: &mut NamedModel<S>,

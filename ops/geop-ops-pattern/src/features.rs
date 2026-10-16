@@ -20,7 +20,7 @@
 //! What that gives up is an end chosen where the copy is. A tool going up
 //! to the next face is recorded as reaching far, with its start and end
 //! faces named: its copy is cut back to the next face *where it is*, as
-//! the step did it (see `geop_ops_booleans::Combine::apply`). A tool going
+//! the step did it (see `geop_lib_booleans::combine_tools`). A tool going
 //! through all reaches as far past the solid as it did where it was built,
 //! and a blind one is as deep: a copy where the solid is thicker in the
 //! direction of the tool goes as far as the original went, not further.
@@ -44,7 +44,8 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::Body;
-use geop_ops_booleans::{Combine, Tool, boolean::Reach, solid};
+use geop_lib_booleans::{Reach, combine_tools};
+use geop_ops_model::{Combine, Tool, solid};
 use geop_ops_model::{Face, NamedModel, ToolReach, model, read_model};
 
 use crate::common::{Names, middle};
@@ -227,8 +228,7 @@ pub(crate) fn repeat_features<S: Scalar>(
                 op: group[0].op,
                 target: solid(&target),
             };
-            combine
-                .apply(part, namer, operation_id, &tools)
+            combine_tools(part, namer, operation_id, &tools, &combine)
                 .and_then(Reach::stopped)
                 .with_context(ctx)?;
             target = namer.root();

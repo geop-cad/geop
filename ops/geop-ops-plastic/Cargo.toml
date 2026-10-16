@@ -14,7 +14,7 @@ geop-ops-model.workspace = true
 geop-ops-parameters.workspace = true
 geop-ops-sketch.workspace = true
 geop-ops-extrude-revolve.workspace = true
-geop-ops-booleans.workspace = true
+geop-lib-booleans.workspace = true
 # For rebuilding a solid face by face: moving vertices onto new surfaces,
 # room around a surface, pcurves on it.
 geop-ops-shell.workspace = true

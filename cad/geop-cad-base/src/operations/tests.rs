@@ -13,8 +13,9 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
 };
 use geop_core_topology::validation::{ValidationParameters, validate};
-use geop_ops_booleans::{BooleanArgs, Combine, SplitArgs, solid};
+use geop_ops_boolean::{BooleanArgs, SplitArgs};
 use geop_ops_model::{BooleanOp, NamedModel, element};
+use geop_ops_model::{Combine, solid};
 use geop_ops_sketch::{Constraint, Sketch, sketch_element, whole_sketch};
 
 use crate::{

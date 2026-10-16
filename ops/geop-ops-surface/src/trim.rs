@@ -30,7 +30,7 @@ use geop_core_program::{
     element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_core_topology::{Body, FaceId, contains::face::face_interior_point};
-use geop_ops_booleans::remesh::remesh::{RemeshParams, remesh};
+use geop_lib_booleans::{RemeshParams, remesh};
 use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model, model};
 use serde::{Deserialize, Serialize};
 

@@ -46,7 +46,7 @@ use crate::{
 /// it is part of; a piece sharing it with an earlier one — the cut, on its
 /// other side, and the edges and vertices around it — names its own copy
 /// `N(name,k)` for piece `k`. What the cutting creates is named as a
-/// boolean names what it creates (see [`crate::naming`]), the copy of the
+/// boolean names what it creates (see `naming`), the copy of the
 /// sheet's face `F` being `N(F)`.
 ///
 /// Fails, leaving the solid in pieces of no use, unless the sheet cuts the

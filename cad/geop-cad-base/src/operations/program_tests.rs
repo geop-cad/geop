@@ -19,7 +19,7 @@ use geop_ops_parameters::{
 use std::{borrow::Cow, collections::BTreeMap, rc::Rc};
 
 use geop_core_math::scalars::Scalar;
-use geop_ops_booleans::Combine;
+use geop_ops_model::Combine;
 use geop_ops_model::{NamedModel, PartDescription, read_model};
 use geop_ops_sketch::whole_sketch;
 

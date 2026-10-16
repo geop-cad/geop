@@ -10,7 +10,7 @@ use geop_core_math::{
 };
 use geop_core_program::{operation_registry::OperationRegistry, program::Program};
 use geop_core_sketch::space::End;
-use geop_ops_booleans::Combine;
+use geop_ops_model::Combine;
 use geop_ops_model::testing::assert_valid;
 use geop_ops_sketch::{AddSketchArgs, whole_sketch};
 use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs, Constraint3d, Sketch3d, sketch3d_path};

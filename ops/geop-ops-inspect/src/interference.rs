@@ -18,10 +18,8 @@ use geop_ops_assembly::solids::{PlacedSolid, placed_solids};
 use geop_ops_model::{BodyNames, NamedModel, Namer};
 
 use crate::mass::drawn;
-use geop_ops_booleans::{
-    boolean::{BooleanOp, boolean},
-    remesh::remesh::RemeshParams,
-};
+use geop_lib_booleans::{RemeshParams, boolean};
+use geop_ops_model::BooleanOp;
 use serde::Serialize;
 
 /// An axis-aligned box: each coordinate the interval it spans.

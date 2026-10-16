@@ -8,7 +8,7 @@
 //! which a part never sees. Doing a feature again is copying its tools,
 //! moving them, and combining them the same way — one boolean each, with
 //! a tool going up to the next face stopping at the next face *where the
-//! copy is* (see `geop_ops_booleans::Combine`).
+//! copy is* (see `geop_ops_model::Combine`).
 //!
 //! How a tool is combined — [`BooleanOp`] and [`ToolReach`] — is defined
 //! here rather than with the booleans: it is the vocabulary a feature is

@@ -23,11 +23,11 @@ use geop_core_math::{
     primitives::FrameAxis,
     scalars::{ScalInF64 as S, Scalar},
 };
-use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{
     Extent, Extents,
     testing::{Built, extrusion, n, on_face, on_origin, outline, sketch},
 };
+use geop_ops_model::Combine;
 use geop_ops_model::{
     CosmeticThread, NamedModel, Threads, model, read_model, read_threads,
     testing::{assert_valid, assert_volume, check_valid, solid_volume},

@@ -13,10 +13,11 @@ geop-ops-model.workspace = true
 geop-ops-datums.workspace = true
 geop-ops-parameters.workspace = true
 geop-ops-sketch.workspace = true
-geop-ops-booleans.workspace = true
+geop-lib-booleans.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+geop-ops-boolean.workspace = true
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
 geop-ops-sketch3d.workspace = true

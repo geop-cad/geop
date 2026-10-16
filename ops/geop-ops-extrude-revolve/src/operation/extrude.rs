@@ -17,7 +17,7 @@ use geop_core_math::{
 use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
 use geop_core_sketch::{Enclosure, Region, Shape, Sketch, profile::curve_polyline};
 use geop_core_topology::build::BuiltBody;
-use geop_ops_booleans::{Extent, extent::reach_past};
+use geop_ops_model::{Extent, reach_past};
 use geop_ops_model::{ModelOperation, NamedModel, Namer, build_model, read_model};
 use geop_ops_sketch::{PlacedSketch, SketchRef, chain_of_pieces};
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,7 @@ use crate::{extrude::extrude, sweep::SweepLoop};
 
 /// Extrudes the one area of a sketch along the sketch plane's normal, into
 /// a solid named `extrude(E)` for the operation `E` — kept as a new body,
-/// or combined with another solid, see [`Combine`](geop_ops_booleans::Combine); the result is
+/// or combined with another solid, see [`Combine`](geop_ops_model::Combine); the result is
 /// `extrude(E)` either way. Or, as faces ([`Output::Faces`]), sweeps the
 /// sketch's curves into faces standing on their own — the area's outline,
 /// or a chain of curves enclosing nothing.
@@ -129,7 +129,7 @@ impl PartOperation for Extrude {
     /// The sketch, picked; how far, each length typed or dragged as a
     /// handle; whether a face; and how to combine. A length typed or
     /// dragged across the sketch plane turns a join into a cut, and back
-    /// (see [`Combine::follow_sign`](geop_ops_booleans::Combine::follow_sign));
+    /// (see [`Combine::follow_sign`](geop_ops_model::Combine::follow_sign));
     /// a formula is followed, not steered by.
     fn form<'a>(
         context: &'a Context<'a>,

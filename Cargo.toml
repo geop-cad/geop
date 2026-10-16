@@ -15,7 +15,7 @@ members = [
     "ops/geop-ops-datums",
     "ops/geop-ops-add-datum",
     "ops/geop-ops-extrude-revolve",
-    "ops/geop-ops-booleans",
+    "ops/geop-ops-boolean",
     "ops/geop-ops-edit",
     "ops/geop-ops-fillet",
     "ops/geop-ops-shell",
@@ -37,6 +37,7 @@ members = [
     "ops/geop-ops-urdf",
     "ops/geop-ops-bom",
     "ops/geop-ops-constraints",
+    "lib/geop-lib-booleans",
 ]
 
 [workspace.package]
@@ -58,7 +59,7 @@ geop-ops-sketch = { path = "ops/geop-ops-sketch" }
 geop-ops-datums = { path = "ops/geop-ops-datums" }
 geop-ops-add-datum = { path = "ops/geop-ops-add-datum" }
 geop-ops-extrude-revolve = { path = "ops/geop-ops-extrude-revolve" }
-geop-ops-booleans = { path = "ops/geop-ops-booleans" }
+geop-ops-boolean = { path = "ops/geop-ops-boolean" }
 geop-ops-edit = { path = "ops/geop-ops-edit" }
 geop-ops-fillet = { path = "ops/geop-ops-fillet" }
 geop-ops-shell = { path = "ops/geop-ops-shell" }
@@ -88,10 +89,11 @@ geop-ops-hole = { path = "ops/geop-ops-hole" }
 geop-ops-urdf = { path = "ops/geop-ops-urdf" }
 geop-ops-bom = { path = "ops/geop-ops-bom" }
 geop-ops-constraints = { path = "ops/geop-ops-constraints" }
+geop-lib-booleans = { path = "lib/geop-lib-booleans" }
 
 # `cargo test` otherwise builds these crates unoptimized, which is fine for
 # cheap unit tests but disastrous for the render-test suites in
-# geop-ops-booleans: they run a full remesh/boolean/rasterize per scene,
+# geop-lib-booleans: they run a full remesh/boolean/rasterize per scene,
 # ~175 scenes per test, and that numeric geometry code is 10-20x slower
 # without optimizations. Only `cargo test` picks this up — `cargo build`/
 # `cargo run` still use the unoptimized `dev` profile, so the normal

@@ -18,7 +18,7 @@ geop-lib-sheet.workspace = true
 geop-ops-assembly.workspace = true
 # The plane a section cuts on.
 geop-ops-sketch.workspace = true
-geop-ops-booleans.workspace = true
+geop-lib-booleans.workspace = true
 # The parts list it puts on the sheet.
 geop-ops-bom.workspace = true
 geop-ops-extrude-revolve.workspace = true

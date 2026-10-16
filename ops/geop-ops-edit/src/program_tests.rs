@@ -1,32 +1,26 @@
-//! The edit operations run as programs: deleting bodies, extracting faces
-//! — and splitting with them — and projecting sketches onto faces.
+//! The edit operations run as programs: projecting sketches onto faces.
+//! Deleting bodies and extracting faces, and splitting with those, are run
+//! by `geop-ops-boolean`'s tests.
 
-use crate::{
-    DeleteBody, DeleteBodyArgs, ExtractFace, ExtractFaceArgs, ProjectCurve, ProjectCurveArgs,
-};
+use crate::{ProjectCurve, ProjectCurveArgs};
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
     values::Design,
 };
-use geop_ops_booleans::{Combine, Split, SplitArgs, solid};
 use geop_ops_extrude_revolve::{
     Extent, Extents, ExtrudeArgs,
     testing::{Built, extrusion, n, on_origin, sketch},
 };
 use geop_ops_model::{
-    NamedModel, model,
+    Combine, NamedModel, model,
     testing::{assert_valid, error},
 };
 use geop_ops_sketch::{AddSketchArgs, Sketch, whole_sketch};
 
 /// The operations these tests' programs are written in.
 fn registry() -> GeopResult<OperationRegistry> {
-    geop_ops_extrude_revolve::testing::registry()?
-        .with(Split)?
-        .with(DeleteBody)?
-        .with(ExtractFace)?
-        .with(ProjectCurve)
+    geop_ops_extrude_revolve::testing::registry()?.with(ProjectCurve)
 }
 
 fn on_xy(drawn: Sketch) -> AddSketchArgs {
@@ -64,52 +58,6 @@ fn rectangle(s: &mut Sketch, lo: [f64; 2], hi: [f64; 2]) -> Vec<geop_core_sketch
         .map(|c| s.add_point(n(c[0]), n(c[1])))
         .collect();
     (0..4).map(|i| s.add_line(p[i], p[(i + 1) % 4])).collect()
-}
-
-/// A block's side wall, extracted, cuts a smaller block standing through
-/// it in two; deleting the first block and the extracted face leaves
-/// only the halves.
-#[test]
-fn extract_a_wall_split_with_it_and_delete_the_rest() {
-    let mut big = Sketch::new();
-    let sides = rectangle(&mut big, [0.0, 0.0], [1.0, 1.0]);
-    let mut small = Sketch::new();
-    rectangle(&mut small, [0.5, 0.2], [1.5, 0.8]);
-    let wall = format!("extrude(a,big,{})", sides[1]);
-    let extracted = format!("extract(x,{wall})");
-
-    let mut program = Program::new();
-    program.push("big", on_xy(big));
-    program.push("a", extrude("big", -1.0, 1.0));
-    program.push("small", on_xy(small));
-    program.push("b", extrude("small", -0.5, 0.5));
-    program.push("x", ExtractFaceArgs { face: named(&wall) });
-    program.push(
-        "halves",
-        SplitArgs {
-            solid: solid("extrude(b)"),
-            face: named(&extracted),
-        },
-    );
-    let part = program.build_model(registry).unwrap();
-    assert_valid(&part);
-    assert_eq!(part.sheet_face_names(), [extracted.as_str()]);
-    assert_eq!(
-        part.solid_names(),
-        ["extrude(a)", "split(halves,0)", "split(halves,1)"]
-    );
-    assert!(part.face_id(&wall).is_ok(), "the wall itself stays");
-
-    program.push(
-        "clean",
-        DeleteBodyArgs {
-            bodies: vec![named("extrude(a)"), named(extracted)],
-        },
-    );
-    let part = program.build_model(registry).unwrap();
-    assert_valid(&part);
-    assert!(part.sheet_face_names().is_empty());
-    assert_eq!(part.solid_names(), ["split(halves,0)", "split(halves,1)"]);
 }
 
 /// A block of `[-1, 1]^2 x [0, 1]` with the sketch `mark` on the plane

@@ -34,7 +34,7 @@ use crate::{
 /// its tools copied and combined with the solid it lies on as it combined
 /// them (see [`crate::features`]), its cosmetic threads copied with it.
 ///
-/// The copies are kept as new bodies, or combined as [`geop_ops_booleans::Combine`] says:
+/// The copies are kept as new bodies, or combined as [`geop_ops_model::Combine`] says:
 /// joined to, cut from or intersected with the target, the bodies
 /// themselves too unless they are the target — so a tool built as a new
 /// body, patterned and cut from a plate, drills a row of holes. Combined,

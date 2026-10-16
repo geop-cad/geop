@@ -2,11 +2,9 @@
 
 use geop_core_math::scalars::{Ring, ScalInF64 as S, Scalar};
 use geop_core_topology::SolidId;
-use geop_ops_booleans::{
-    boolean::{BooleanOp, boolean},
-    remesh::remesh::RemeshParams,
-};
+use geop_lib_booleans::{RemeshParams, boolean};
 use geop_ops_extrude_revolve::shapes::{self, block, block_part, v3};
+use geop_ops_model::BooleanOp;
 use geop_ops_model::{
     NamedModel, Namer,
     testing::{assert_valid, edges_where, edges_with_middle_where, has_vertex},

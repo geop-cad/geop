@@ -4,11 +4,11 @@
 
 use geop_core_math::primitives::FrameAxis;
 use geop_core_program::program::Program;
-use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{
     Extents,
     testing::{both_ways, disc, extrude_sketch, extrusion, n, on_face, on_origin, outline, sketch},
 };
+use geop_ops_model::Combine;
 use geop_ops_sketch::{Constraint, Sketch};
 
 /// The plate's size: 60 x 40, 10 thick, its top at `z = 10`.

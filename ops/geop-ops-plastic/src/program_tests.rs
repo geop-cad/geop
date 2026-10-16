@@ -11,13 +11,13 @@ use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, values::Design,
 };
 use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
-use geop_ops_booleans::{Combine, solid};
 use geop_ops_datums::datums;
 use geop_ops_extrude_revolve::{
     Extents,
     testing::{Built, extrusion, n, on_face, sketch},
 };
 use geop_ops_fillet::{Fillet, FilletArgs};
+use geop_ops_model::{Combine, solid};
 use geop_ops_model::{
     NamedModel, model,
     testing::{assert_valid, check_valid},

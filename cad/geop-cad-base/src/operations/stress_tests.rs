@@ -18,9 +18,9 @@
 use geop_core_math::primitives::FrameAxis;
 use geop_core_program::{operation::Operation, program::Program, values::Design};
 use geop_core_topology::EdgeId;
-use geop_ops_booleans::{Combine, solid};
 use geop_ops_extrude_revolve::{Extents, Output, RevolveArgs, RevolveAxis};
 use geop_ops_fillet::{Chamfer, ChamferArgs, Fillet, FilletArgs};
+use geop_ops_model::{Combine, solid};
 use geop_ops_model::{NamedModel, element, testing::apply_to_model};
 use geop_ops_shell::{Shell, ShellArgs};
 use geop_ops_sketch::{Sketch, SketchPlane, sketch_element, whole_sketch};

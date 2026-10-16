@@ -38,13 +38,8 @@ use geop_core_math::{
 };
 use geop_core_sketch::{Shape, Sketch};
 use geop_core_topology::{SolidId, build::BuiltBody};
-use geop_ops_booleans::{
-    Combine, Extent, SolidRef, Tool,
-    boolean::{BooleanOp, Reach, boolean},
-    extent::{End, hull},
-    remesh::remesh::RemeshParams,
-    trim::trim_up_to_next,
-};
+use geop_lib_booleans::{Reach, RemeshParams, boolean, combine_tools, trim_up_to_next};
+use geop_ops_model::{BooleanOp, Combine, End, Extent, SolidRef, Tool, hull};
 use serde::{Deserialize, Serialize};
 
 use geop_core_geometry::nurb_curve::NurbCurve3D;
@@ -198,7 +193,7 @@ impl Output {
             Output::Solid(combine) => {
                 let built = sweep(model, Some(&combine.built_name(namer)))?;
                 let tool = Tool::whole(built.solid.expect("swept as a solid"));
-                combine.apply(model, namer, step, &[tool])?.stopped()
+                combine_tools(model, namer, step, &[tool], combine)?.stopped()
             }
         }
     }
@@ -543,7 +538,7 @@ fn combine_sides(
     sweeping: &impl Sweeping,
 ) -> GeopResult<()> {
     let mut trial = model.clone();
-    let runs_on = match combine.apply(&mut trial, namer, step, &tools)? {
+    let runs_on = match combine_tools(&mut trial, namer, step, &tools, combine)? {
         Reach::Stopped(()) => {
             *model = trial;
             return Ok(());
@@ -596,7 +591,8 @@ fn combine_sides(
                 };
                 let mut trial = model.clone();
                 let alone = std::slice::from_ref(&rest);
-                if let Reach::Stopped(()) = combine.apply(&mut trial, namer, step, alone)? {
+                if let Reach::Stopped(()) = combine_tools(&mut trial, namer, step, alone, combine)?
+                {
                     tools[k] = rest;
                     continue;
                 }
@@ -605,7 +601,7 @@ fn combine_sides(
         }
         tools[k].solid = rebuild(model, k, 0.0, sweeping.all_the_way(far))?;
     }
-    combine.apply(model, namer, step, &tools)?.stopped()
+    combine_tools(model, namer, step, &tools, combine)?.stopped()
 }
 
 /// Where `tool` and the solid `stop` overlap, worked out on a copy of

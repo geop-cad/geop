@@ -18,11 +18,11 @@ use geop_core_program::{
 };
 use geop_core_sketch::Shape;
 use geop_core_topology::{EdgeId, FaceId};
-use geop_ops_booleans::{SolidRef, solid};
 use geop_ops_extrude_revolve::operation::shape_loops;
 use geop_ops_model::{
     Edge, Face, ModelOperation, NamedModel, Namer, build_model, model, read_model,
 };
+use geop_ops_model::{SolidRef, solid};
 use geop_ops_sketch::{PlacedSketch, SketchPlane, SketchRef};
 use serde::{Deserialize, Serialize};
 

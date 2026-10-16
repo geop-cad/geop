@@ -20,9 +20,9 @@ use geop_core_math::{
 };
 use geop_ops_add_datum::Selected;
 use geop_ops_assembly::{AddPartArgs, Kind, Mate, MateEntity, MateKind, placed_parts};
-use geop_ops_booleans::Combine;
 use geop_ops_datums::{ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::Extents;
+use geop_ops_model::Combine;
 use geop_ops_model::testing::assert_close;
 
 use crate::Command;

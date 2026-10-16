@@ -17,13 +17,10 @@ use geop_core_program::{
     element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_core_topology::FaceId;
-use geop_ops_booleans::{
-    extent::{face_hull, spread_along},
-    imprint::imprint_on_face,
-    remesh::remesh::RemeshParams,
-};
+use geop_lib_booleans::{RemeshParams, imprint_on_face};
 use geop_ops_extrude_revolve::{extrude::extrude, operation::shape_loops};
 use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model, model};
+use geop_ops_model::{face_hull, spread_along};
 use geop_ops_sketch::{PlacedSketch, SketchRef};
 use serde::{Deserialize, Serialize};
 

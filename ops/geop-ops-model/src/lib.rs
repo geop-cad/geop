@@ -5,7 +5,8 @@
 //! edges, faces, solids, each picked as a dialog asks for it — and what
 //! they are used as ([`geometry`]): points, lines, planes, circles,
 //! curves, bodies. A step that builds into the model is a
-//! [`ModelOperation`].
+//! [`ModelOperation`]; one that builds a tool says how it meets the solid
+//! it is for with a [`Combine`], and how far it goes with an [`Extent`].
 //!
 //! # Topological naming
 //!
@@ -41,12 +42,14 @@
 )]
 
 mod build;
+mod combine;
 pub mod curves;
 mod describe;
 mod draw;
 mod edit;
 pub mod elements;
 mod euler;
+mod extent;
 mod feature;
 pub mod geometry;
 mod ids;
@@ -62,11 +65,13 @@ pub mod testing;
 pub mod threads;
 
 pub use build::{ModelOperation, build_model};
+pub use combine::{Combine, SolidRef, Tool, solid};
 pub use curves::{Chain, ChainCurve, Profile};
 pub use describe::{EdgeDescription, FaceDescription, PartDescription};
 pub use draw::ModelDrawer;
 pub use edit::BodyNames;
 pub use elements::{ChainElement, Edge, EdgeChain, Face, ModelElement, Solid, Vertex, read_model};
+pub use extent::{End, Extent, face_hull, hull, reach_past, spread_along};
 pub use feature::{BooleanOp, Feature, FeatureFaces, FeatureTool, ToolReach};
 pub use geometry::{
     Body, Circle, Curve, Line, Path, Plane, Point, Round, frame_along, resolve_bodies,

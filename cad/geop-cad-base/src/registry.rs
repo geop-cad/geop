@@ -34,7 +34,7 @@ pub fn registry() -> GeopResult<Registry> {
     let r = geop_ops_fillet::register(r)?;
     let r = geop_ops_shell::register(r)?;
     let r = geop_ops_plastic::register(r)?;
-    let r = geop_ops_booleans::register(r)?;
+    let r = geop_ops_boolean::register(r)?;
     let r = geop_ops_pattern::register(r)?;
     let r = geop_ops_subd::register(r)?;
     let r = geop_ops_surface::register(r)?;

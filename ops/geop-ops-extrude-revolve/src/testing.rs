@@ -21,8 +21,8 @@ use geop_core_program::{
     values::Design,
 };
 use geop_core_sketch::{CurveId, PointId};
-use geop_ops_booleans::Combine;
 use geop_ops_datums::origin_plane;
+use geop_ops_model::Combine;
 use geop_ops_model::{NamedModel, model, read_model};
 use geop_ops_parameters::{DefineParameters, LookupTable, PartProperties};
 use geop_ops_sketch::{AddSketch, AddSketchArgs, Sketch, SketchPlane, whole_sketch};

@@ -31,7 +31,7 @@ pub mod sweep;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
-pub use geop_ops_booleans::Extent;
+pub use geop_ops_model::Extent;
 pub use operation::{
     Extents, Extrude, ExtrudeArgs, Loft, LoftArgs, Output, PathRef, Revolve, RevolveArgs,
     RevolveAxis, Sweep, SweepArgs,

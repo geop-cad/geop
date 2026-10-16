@@ -35,13 +35,9 @@ use geop_core_topology::{
         shell::{Classified, PointClassification as ShellPoint, solid_contains, solid_face_at},
     },
 };
-use geop_ops_model::{NamedModel, Namer};
+use geop_ops_model::{BooleanOp, NamedModel, Namer};
 
 use crate::remesh::remesh::{RemeshParams, remesh};
-
-/// Which boolean to perform — defined with the features that record it
-/// (see [`geop_ops_model::Feature`]).
-pub use geop_ops_model::BooleanOp;
 
 /// Where one solid's face sits relative to the *other* solid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,7 +121,7 @@ const SEED: u64 = 0xB001_EA47_0000_0001;
 /// the result or deleted, so neither id is valid afterwards.
 ///
 /// The result is named `namer`'s root name, and everything the boolean
-/// creates on the way is named as [`crate::naming`] describes; every face,
+/// creates on the way is named as `naming` describes; every face,
 /// edge and vertex it keeps keeps its name.
 pub fn boolean<S: Scalar>(
     model: &mut NamedModel<S>,
@@ -139,7 +135,7 @@ pub fn boolean<S: Scalar>(
 }
 
 /// A tool going up to the next face — the second operand of a boolean — by
-/// the names its start and end faces had before it (see [`crate::naming`]),
+/// the names its start and end faces had before it (see `naming`),
 /// and whether only the piece of it taken is kept, `alone`, as a solid of
 /// its own, rather than combined with the first operand.
 #[derive(Clone, Copy, Debug)]
@@ -180,7 +176,7 @@ impl<T> Reach<T> {
 /// target until it comes out of it again. The tool has to be long enough to
 /// reach past whatever stops it: if the piece also reaches its face `end`,
 /// nothing stopped it, and it [`Reach::RunsOn`]. `start` and `end` are the
-/// names those faces had before the boolean (see [`crate::naming`]).
+/// names those faces had before the boolean (see `naming`).
 pub fn boolean_up_to_next<S: Scalar>(
     model: &mut NamedModel<S>,
     namer: &Namer,

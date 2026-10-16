@@ -25,8 +25,8 @@ use geop_core_sketch::{
     CurveKind, Enclosure, PointId, ProfileJoint, ProfileLoop, Shape, profile::curve_polyline,
 };
 use geop_core_topology::build::BuiltBody;
-use geop_ops_booleans::Extent;
 use geop_ops_datums::Datums;
+use geop_ops_model::Extent;
 use geop_ops_model::{Line, ModelOperation, NamedModel, Namer, build_model, read_model};
 use geop_ops_sketch::{PlacedSketch, SketchRef, chain_of_pieces, sketch_element};
 use serde::{Deserialize, Serialize};
@@ -49,7 +49,7 @@ one_of! {
 
 /// Revolves the one area of a sketch around a line in its plane, into a
 /// solid named `revolve(R)` for the operation `R` — or combines that with
-/// another solid (see [`Combine`](geop_ops_booleans::Combine)), the result named `revolve(R)` all the
+/// another solid (see [`Combine`](geop_ops_model::Combine)), the result named `revolve(R)` all the
 /// same. Or, as faces ([`Output::Faces`]), sweeps the sketch's curves into
 /// faces standing on their own — the area's outline, or a chain of curves
 /// enclosing nothing.

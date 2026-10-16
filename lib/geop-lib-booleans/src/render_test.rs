@@ -15,13 +15,14 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        boolean::{BooleanOp, boolean},
+        boolean::boolean,
         remesh::remesh::RemeshParams,
         scenes::{map_scenes_parallel, validation},
     };
     use geop_core_math::scalars::ScalInF64;
     use geop_core_rasterize::debug::rasterize_topology;
     use geop_core_topology::validation::validate_fast;
+    use geop_ops_model::BooleanOp;
     use geop_ops_model::Namer;
 
     fn run_op(op: BooleanOp, dir: &str) {

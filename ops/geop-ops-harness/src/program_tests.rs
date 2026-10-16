@@ -7,11 +7,11 @@ use geop_core_program::{
     values::Design,
 };
 use geop_ops_add_datum::Selected;
-use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::{
     Extents,
     testing::{Built, extrude_sketch, on_origin, rectangle},
 };
+use geop_ops_model::Combine;
 use geop_ops_model::{model, notes_of};
 
 use crate::{Route, RouteArgs, Wire, WireSize, cable};

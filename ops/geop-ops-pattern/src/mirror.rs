@@ -23,7 +23,7 @@ use crate::common::{Naming, Pattern, Seeds, build_pattern, run_pattern};
 /// image is a valid body of its own, its faces turned around so that they
 /// face out again; the bodies themselves stay.
 ///
-/// The image is kept as new bodies, or combined as [`geop_ops_booleans::Combine`] says —
+/// The image is kept as new bodies, or combined as [`geop_ops_model::Combine`] says —
 /// joined to the bodies themselves, it makes a symmetric part of a half
 /// built against the plane. Combined, the result is named `mirror(M)` for
 /// the operation `M`; the image of each entity named `X` is named

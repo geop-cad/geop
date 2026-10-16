@@ -24,7 +24,7 @@ use crate::loft::{Section, loft, mark};
 /// Lofts through the profiles of two or more sketches, in order, into a
 /// solid named `loft(L)` for the operation `L` — each sketch's one area, a
 /// single loop — kept as a new body or combined with another solid (see
-/// [`Combine`](geop_ops_booleans::Combine)). Or, as faces ([`Output::Faces`]), into faces standing on
+/// [`Combine`](geop_ops_model::Combine)). Or, as faces ([`Output::Faces`]), into faces standing on
 /// their own: through the sketches' loops, or through open chains of curves
 /// — between two curves, the ruled surface joining them.
 ///

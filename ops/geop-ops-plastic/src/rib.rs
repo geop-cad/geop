@@ -15,7 +15,7 @@
 //! thickened along the plane's normal. Either way the sweep reaches well
 //! past the solid, and only what grows from the profile until it runs into
 //! the solid is joined: the same "up to next" an extrude goes by
-//! ([`geop_ops_booleans::Combine`] with a [`Tool`] going up to the next
+//! ([`geop_ops_model::Combine`] with a [`Tool`] going up to the next
 //! face). A profile that is not stopped by the solid all along is refused.
 
 use geop_core_geometry::{
@@ -37,8 +37,9 @@ use geop_core_topology::{
         shell::{Classified, PointClassification, solid_contains},
     },
 };
-use geop_ops_booleans::{Combine, Tool, boolean::Reach, extent::face_hull};
+use geop_lib_booleans::{Reach, combine_tools};
 use geop_ops_extrude_revolve::{common::Profile, extrude::extrude, sweep::SweepLoop};
+use geop_ops_model::{Combine, Tool, face_hull};
 use geop_ops_model::{NamedModel, Namer, ToolReach};
 
 use geop_core_geometry::search::{MAX_NODES, min_subdivision_size};
@@ -136,7 +137,7 @@ pub fn rib<S: Scalar>(
         },
     };
     let combine = Combine::join(target_name);
-    match combine.apply(part, namer, operation_id, &[tool]).with_context(ctx)? {
+    match combine_tools(part, namer, operation_id, &[tool], &combine).with_context(ctx)? {
         Reach::Stopped(()) => Ok(()),
         Reach::RunsOn(e) => Err(e.with_context(
             "the rib's profile grows past the solid without meeting it all along: it has to run between faces that close it in",

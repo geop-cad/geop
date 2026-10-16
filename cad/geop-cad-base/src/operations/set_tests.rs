@@ -4,7 +4,7 @@
 use geop_ops_extrude_revolve::{ExtrudeArgs, Output};
 use std::collections::HashSet;
 
-use geop_ops_booleans::Combine;
+use geop_ops_model::Combine;
 use geop_ops_sketch::whole_sketch;
 
 use crate::{

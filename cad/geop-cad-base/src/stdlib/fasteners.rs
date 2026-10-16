@@ -10,8 +10,8 @@
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::program::Program;
 use geop_core_sketch::{CurveId, PointId};
-use geop_ops_booleans::Combine;
 use geop_ops_extrude_revolve::Extents;
+use geop_ops_model::Combine;
 
 use super::{
     StandardPart,

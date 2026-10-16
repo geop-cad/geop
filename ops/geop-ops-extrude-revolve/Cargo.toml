@@ -15,7 +15,7 @@ geop-ops-datums.workspace = true
 geop-ops-parameters.workspace = true
 geop-ops-sketch.workspace = true
 geop-ops-sketch3d.workspace = true
-geop-ops-booleans.workspace = true
+geop-lib-booleans.workspace = true
 serde.workspace = true
 # Only for `testing`: reading and writing the arguments of steps.
 serde_json = { workspace = true, optional = true }

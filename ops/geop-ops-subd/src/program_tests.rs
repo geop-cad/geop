@@ -4,11 +4,12 @@
 use crate::{Cage, Mirror, Subd, SubdArgs};
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
 use geop_core_program::{operation_registry::OperationRegistry, program::Program};
-use geop_ops_booleans::{Boolean, BooleanArgs, Combine, boolean::BooleanOp, solid};
+use geop_ops_boolean::{Boolean, BooleanArgs};
 use geop_ops_extrude_revolve::{
     Extents,
     testing::{Built, extrusion, on_origin, outline, sketch},
 };
+use geop_ops_model::{BooleanOp, Combine, solid};
 
 use geop_ops_model::testing::assert_valid;
 

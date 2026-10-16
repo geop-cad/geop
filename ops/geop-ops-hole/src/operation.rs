@@ -28,12 +28,9 @@ use geop_core_math::{
 };
 use geop_core_sketch::CurveKind;
 use geop_core_topology::SolidId;
-use geop_ops_booleans::{
-    Combine, Extent, Tool,
-    boolean::Reach,
-    extent::{hull, reach_past},
-};
+use geop_lib_booleans::{Reach, combine_tools};
 use geop_ops_datums::Datums;
+use geop_ops_model::{Combine, Extent, Tool, hull, reach_past};
 use geop_ops_model::{
     CosmeticThread, Face, ModelOperation, NamedModel, Namer, Plane, Point, Threads, ToolReach,
     build_model, draw_threads, frame_along, read_model, threads,
@@ -923,7 +920,7 @@ impl ModelOperation for Hole {
             });
         }
         let combine = Combine::cut(target);
-        match combine.apply(model, &namer, step, &tools)? {
+        match combine_tools(model, &namer, step, &tools, &combine)? {
             Reach::Stopped(()) => Ok(()),
             Reach::RunsOn(e) => Err(e.with_context(
                 "up to next: a hole does not come out of the solid all round — part of it runs on; drill it blind or through all",
@@ -956,6 +953,6 @@ impl ModelOperation for Thread {
             &wall,
         )?;
         let combine = Combine::cut(target);
-        (combine.apply(model, &namer, step, &[Tool::whole(tool)])).and_then(Reach::stopped)
+        combine_tools(model, &namer, step, &[Tool::whole(tool)], &combine).and_then(Reach::stopped)
     }
 }

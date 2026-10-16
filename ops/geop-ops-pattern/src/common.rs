@@ -20,7 +20,8 @@ use geop_core_program::{
     element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_core_topology::Body;
-use geop_ops_booleans::{Combine, Tool, boolean::Reach};
+use geop_lib_booleans::{Reach, combine_tools};
+use geop_ops_model::{Combine, Tool};
 use geop_ops_model::{
     ModelOperation, NamedModel, Namer, Threads, ToolReach, build_model, draw_threads, read_model,
     resolve_bodies, threads,
@@ -383,8 +384,7 @@ pub(crate) fn combine_instances<S: Scalar>(
         part.rename(target, namer.root()).with_context(ctx)?;
         return Ok(());
     }
-    combine
-        .apply(part, namer, operation_id, &tools)
+    combine_tools(part, namer, operation_id, &tools, combine)
         .and_then(Reach::stopped)
         .with_context(ctx)
 }

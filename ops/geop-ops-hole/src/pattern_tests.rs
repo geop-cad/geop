@@ -21,12 +21,12 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops_booleans::Combine;
 use geop_ops_datums::{origin_axis, origin_plane};
 use geop_ops_extrude_revolve::{
     Extent, Extents,
     testing::{Built, both_ways, disc, extrude_sketch, extrusion, on_face, on_origin, outline},
 };
+use geop_ops_model::Combine;
 use geop_ops_model::{
     Face, NamedModel, model,
     testing::{assert_valid, assert_volume},

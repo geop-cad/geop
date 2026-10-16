@@ -4,6 +4,7 @@
 //! and a hole say how far they go this way, and [`crate::Combine`] then
 //! stops a tool going up to the next face where [`crate::Tool`] says.
 
+use crate::NamedModel;
 use geop_core_editor::editing::Choice;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
@@ -13,7 +14,6 @@ use geop_core_math::{
 };
 use geop_core_program::{numeric::NumericInput, reader::Reader};
 use geop_core_topology::{Body, FaceId, Model};
-use geop_ops_model::NamedModel;
 use serde::{Deserialize, Serialize};
 
 /// How far one side of a tool goes: a length — an angle, in degrees, for a

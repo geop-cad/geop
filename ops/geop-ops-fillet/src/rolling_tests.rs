@@ -6,7 +6,6 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops_booleans::boolean::BooleanOp;
 use geop_ops_extrude_revolve::shapes::{
     block,
     cube::cube_solid,
@@ -15,6 +14,7 @@ use geop_ops_extrude_revolve::shapes::{
     sphere::sphere_solid,
     v3,
 };
+use geop_ops_model::BooleanOp;
 use geop_ops_model::{
     NamedModel, Namer,
     testing::{assert_valid, edges_with_middle_where, has_vertex, vertex_at},

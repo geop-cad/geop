@@ -14,7 +14,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::{part::StepContext, reader::Reader, values::Design};
-use geop_ops_booleans::Combine;
+use geop_ops_model::Combine;
 use geop_ops_model::{ModelOperation, NamedModel, Namer, build_model, read_model, resolve_bodies};
 use serde::{Deserialize, Serialize};
 

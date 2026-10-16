@@ -3,7 +3,7 @@
 //! it, and its flat pattern exported for cutting.
 
 use geop_core_editor::editing::{Button, StepEditEvent, Value};
-use geop_ops_booleans::solid;
+use geop_ops_model::solid;
 use geop_ops_model::{element, notes_of};
 use geop_ops_sheetmetal::{
     EdgeFlangeArgs, FlatPatternArgs, HemArgs, HemKind, SheetBody, SheetCutArgs, edge, sheet_body,

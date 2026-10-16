@@ -13,11 +13,12 @@ use crate::{
     Mirror, MirrorArgs, MoveBody, MoveBodyArgs, PatternDirection, Seeds, Spacing, TurnAxis, body,
 };
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
-use geop_ops_booleans::{Boolean, Combine, solid};
+use geop_ops_boolean::Boolean;
 use geop_ops_extrude_revolve::{
     Extents,
     testing::{Built, both_ways, disc, extrude_sketch, n, on_origin, outline, sketch},
 };
+use geop_ops_model::{Combine, solid};
 use geop_ops_model::{
     NamedModel, model,
     testing::{assert_valid, assert_volume},
@@ -307,7 +308,7 @@ fn three_turned_boxes_joined() {
     }
     program.push(
         "ab",
-        geop_ops_booleans::BooleanArgs {
+        geop_ops_boolean::BooleanArgs {
             a: solid("extrude(a)"),
             b: solid("extrude(b)"),
             op: geop_ops_model::BooleanOp::Union,
@@ -315,7 +316,7 @@ fn three_turned_boxes_joined() {
     );
     program.push(
         "abc",
-        geop_ops_booleans::BooleanArgs {
+        geop_ops_boolean::BooleanArgs {
             a: solid("boolean(ab)"),
             b: solid("extrude(c)"),
             op: geop_ops_model::BooleanOp::Union,
@@ -361,7 +362,7 @@ fn three_turned_boxes_one_a_turned_copy_joined() {
     );
     program.push(
         "ab",
-        geop_ops_booleans::BooleanArgs {
+        geop_ops_boolean::BooleanArgs {
             a: solid("extrude(a)"),
             b: solid("extrude(b)"),
             op: geop_ops_model::BooleanOp::Union,
@@ -369,7 +370,7 @@ fn three_turned_boxes_one_a_turned_copy_joined() {
     );
     program.push(
         "abc",
-        geop_ops_booleans::BooleanArgs {
+        geop_ops_boolean::BooleanArgs {
             a: solid("boolean(ab)"),
             b: solid("move(c,extrude(a))"),
             op: geop_ops_model::BooleanOp::Union,

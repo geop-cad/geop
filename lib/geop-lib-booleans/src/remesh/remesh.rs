@@ -127,7 +127,7 @@ pub(crate) fn split_at_crossing<S: Scalar>(
 /// already have merged them).
 ///
 /// Everything it creates is named by `namer`, following
-/// [`crate::naming`]'s scheme.
+/// `naming`'s scheme.
 ///
 /// Returns what every face and edge of either body came from (see
 /// [`Origins`]).
@@ -188,7 +188,7 @@ pub fn remesh<S: Scalar>(
 
 /// What the faces and edges of two remeshed bodies came from: the name each
 /// had before, or, for a piece split off one, the name that one had — its
-/// *origin* (see [`crate::naming`]). Entities created otherwise, and since
+/// *origin* (see `naming`). Entities created otherwise, and since
 /// deleted, may be missing or left over.
 #[derive(Clone, Debug, Default)]
 pub struct Origins {

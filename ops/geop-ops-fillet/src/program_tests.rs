@@ -11,7 +11,6 @@ use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
 };
 use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
-use geop_ops_booleans::Combine;
 use geop_ops_datums::{ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::{
     Extents, LoftArgs, Output,
@@ -19,6 +18,7 @@ use geop_ops_extrude_revolve::{
         Built, disc, drilled_box, extrusion, n, on_face, on_origin, outline, rectangle, sketch,
     },
 };
+use geop_ops_model::Combine;
 use geop_ops_model::{
     NamedModel, model,
     testing::{assert_valid, check_valid, edges_where, has_vertex, middle},

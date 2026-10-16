@@ -53,7 +53,7 @@ fn body_edges<S: Scalar>(model: &Model<S>, body: Body) -> GeopResult<HashSet<Edg
 /// split where a curve ends on them.
 ///
 /// Named by `namer` as a boolean names what it creates (see
-/// [`crate::naming`]): the copy of the face's entity `X` is `N(copy,X)`, a
+/// `naming`): the copy of the face's entity `X` is `N(copy,X)`, a
 /// curve is named after the copy's face and the sheet's face it is traced
 /// along, and the face's pieces and its boundary edges' pieces after the
 /// face, the edge and the curves.
