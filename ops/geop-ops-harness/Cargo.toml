@@ -28,3 +28,4 @@ geop-ops-sketch.workspace = true
 geop-ops-sketch3d.workspace = true
 geop-ops-inspect.workspace = true
 geop-ops-bom.workspace = true
+geop-core-editor = { workspace = true, features = ["testing"] }
