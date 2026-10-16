@@ -820,3 +820,30 @@ fn a_new_state_rebuilds_only_what_read_it() {
     ok(runner.run(&program, &x, &body_at(1.0)));
     assert_eq!(take_built(), Vec::<String>::new());
 }
+
+/// A step copied takes the state stored under its id along (where a placed
+/// part is), and pasted under a fresh id stores it under that one; state
+/// merely named like it stays behind.
+#[test]
+fn a_pasted_step_takes_its_state_along() {
+    let mut program = Program::from_steps(vec![input_frame("a", "a", "x")]);
+    let id = program.steps[0].id.clone();
+    let pose = pose_at([1.0, 2.0, 3.0]);
+    (program.state).insert(crate::values::pose_state(&id), pose.clone());
+    program.state.insert(
+        format!("{id}_width"),
+        StateValue::Number(Design::from_f64(2.0)),
+    );
+
+    let copied = program.excerpt(&id).unwrap();
+    assert_eq!(copied.state.len(), 1);
+    let at = program.steps.len();
+    let ids = (program.paste(copied, at, &registry(), |s| s.operation.clone())).unwrap();
+    assert_eq!(ids.len(), 1);
+    assert_ne!(ids[0], id);
+    assert_eq!(program.steps[at].id, ids[0]);
+    let pasted_pose = crate::values::pose_state(&ids[0]);
+    assert_eq!(program.state.get(&pasted_pose), Some(&pose));
+    assert!(!program.state.contains_key(&format!("{}_width", ids[0])));
+    program.validate(&registry()).unwrap();
+}
