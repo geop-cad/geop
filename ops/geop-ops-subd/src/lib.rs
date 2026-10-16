@@ -21,6 +21,8 @@ pub mod limit;
 pub mod operation;
 pub mod subdivide;
 
+#[cfg(test)]
+mod editor_tests;
 pub mod examples;
 mod icons;
 #[cfg(test)]
