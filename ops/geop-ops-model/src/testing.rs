@@ -1,7 +1,7 @@
 //! What the tests of the operations share about the model: checking it
-//! valid, finding its entities by where they are, and building a part of
-//! a model given and one step. Only built for tests: with `testing`, or in
-//! this crate's own.
+//! valid and drawn as its trims say, finding its entities by where they
+//! are, and building a part of a model given and one step. Only built for
+//! tests: with `testing`, or in this crate's own.
 
 // Helpers of tests fail as tests do: by panicking, naming what is wrong.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -16,11 +16,14 @@ use geop_core_program::{
     runner::Runner, values::Design,
 };
 use geop_core_rasterize::{
-    rasterize,
+    face_triangles_uv, rasterize,
     stl::{enclosed_volume, stl_triangles},
 };
 use geop_core_topology::{
     Body, Edge, FaceId, Model, SolidId,
+    boundary::BoundaryType,
+    contains::shell::{PointClassification, shell_contains},
+    loop_sampling::sample_loop_to_polygon,
     validation::{ValidationParameters, validate, validate_manifold},
 };
 
@@ -100,6 +103,55 @@ pub fn assert_valid_sheets(part: &NamedModel<impl Scalar>) {
         panic!("{}", named_report(part, &errors));
     }
     part.check_names().unwrap();
+}
+
+/// Twice the signed area of a closed polygon.
+fn area2(polygon: &[[f64; 2]]) -> f64 {
+    (0..polygon.len())
+        .map(|i| {
+            let (a, b) = (polygon[i], polygon[(i + 1) % polygon.len()]);
+            a[0] * b[1] - b[0] * a[1]
+        })
+        .sum()
+}
+
+/// Checks every face of `part` is drawn exactly where its trims say: the
+/// triangles the rasterizer draws it with cover, in `(u, v)`, the area its
+/// outer boundary encloses less its holes' — as the rasterizer samples
+/// them. A face drawn over a hole it goes around, or leaving a gap, covers
+/// more or less. Plain `f64`, like the rasterizer.
+#[track_caller]
+pub fn assert_draws_its_trims(part: &NamedModel<impl Scalar>) {
+    const N: usize = 24;
+    let model = part.topology();
+    for (&id, face) in &model.faces {
+        let enclosed: f64 = face
+            .boundaries()
+            .filter_map(|b| match b {
+                BoundaryType::Loop(anchor) => Some(anchor),
+                BoundaryType::Vertex(_) => None,
+            })
+            .map(|anchor| {
+                let polygon: Vec<[f64; 2]> = sample_loop_to_polygon(model, anchor, N)
+                    .unwrap()
+                    .iter()
+                    .map(|p| [p[0].to_f64(), p[1].to_f64()])
+                    .collect();
+                area2(&polygon) / 2.0
+            })
+            .sum::<f64>()
+            .abs();
+        let covered: f64 = face_triangles_uv(model, face, N)
+            .unwrap()
+            .iter()
+            .map(|(a, b, c)| area2(&[a, b, c].map(|p| [p[0].to_f64(), p[1].to_f64()])).abs() / 2.0)
+            .sum();
+        assert!(
+            (covered - enclosed).abs() <= 1e-9 * enclosed.max(1e-9),
+            "face {:?} is drawn covering {covered} of its (u, v), where its trims enclose {enclosed}",
+            part.name_of(id),
+        );
+    }
 }
 
 // ── Entities by where they are ──────────────────────────────────────────────
@@ -202,6 +254,22 @@ pub fn assert_close(a: [f64; 3], b: [f64; 3], tol: f64) {
     );
 }
 
+/// Where the point `p` lies relative to the solid `solid` of `part`:
+/// inside it, outside it, or on its boundary — inside, if inside any of
+/// its shells.
+pub fn classify(part: &NamedModel<impl Scalar>, solid: &str, p: [f64; 3]) -> PointClassification {
+    let model = part.topology();
+    let solid = part.solid_id(solid).unwrap();
+    let mut result = PointClassification::Outside;
+    for &shell in &model.get_solid(solid).unwrap().shells {
+        match shell_contains(model, shell, point(p), 2000, Scalar::from_f64(1e-6), 7).unwrap() {
+            PointClassification::Outside => {}
+            other => result = other,
+        }
+    }
+    result
+}
+
 /// The volume the solid named `solid` of `part` encloses, from its mesh as
 /// drawn (see [`volume`]).
 #[track_caller]
@@ -302,5 +370,85 @@ pub fn error<T>(result: GeopResult<T>) -> GeopError {
     match result {
         Ok(_) => panic!("expected an error"),
         Err(e) => e,
+    }
+}
+
+// ── Sweeps ──────────────────────────────────────────────────────────────────
+
+/// What one case of a sweep came to.
+pub enum Outcome {
+    /// A valid solid.
+    Built,
+    /// Refused as unsupported, saying why.
+    Refused,
+    /// Anything else: an error that is not a refusal, an invalid result, a
+    /// panic — what the case is listed for.
+    Wrong(String),
+}
+
+/// Applies a step of `O` with `args` to a copy of `part` and says how it
+/// went: refused, where the error's root message is one `is_refusal`
+/// accepts — the operation refusing what it does not support, rather than
+/// failing at what it does.
+pub fn outcome<O: Operation>(
+    part: &NamedModel<Design>,
+    args: &O::Args,
+    is_refusal: fn(&str) -> bool,
+) -> Outcome {
+    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        apply_to_model::<O>(part.clone(), "op", args)
+    }));
+    match run {
+        Err(panic) => Outcome::Wrong(format!(
+            "panicked: {}",
+            panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_default()
+        )),
+        Ok(Err(e)) if is_refusal(e.root_message()) => Outcome::Refused,
+        Ok(Err(e)) => Outcome::Wrong(format!("failed: {e:?}")),
+        Ok(Ok(built)) => match check_valid(&built) {
+            Ok(()) => Outcome::Built,
+            Err(e) => Outcome::Wrong(format!("invalid: {e}")),
+        },
+    }
+}
+
+/// The cases of a sweep, as they come: how many built, how many were
+/// refused, and every one that went wrong.
+#[derive(Default)]
+pub struct Cases {
+    built: usize,
+    refused: usize,
+    wrong: Vec<String>,
+}
+
+impl Cases {
+    /// Records that the case `case` came to `outcome`.
+    pub fn record(&mut self, case: String, outcome: Outcome) {
+        match outcome {
+            Outcome::Built => self.built += 1,
+            Outcome::Refused => self.refused += 1,
+            Outcome::Wrong(why) => self.wrong.push(format!("{case}: {why}")),
+        }
+    }
+
+    /// Checks no case went wrong, listing every one that did.
+    #[track_caller]
+    pub fn assert_none_wrong(&self) {
+        let Cases {
+            built,
+            refused,
+            wrong,
+        } = self;
+        assert!(
+            wrong.is_empty(),
+            "{} of {} cases went wrong ({built} built, {refused} refused):\n\n{}",
+            wrong.len(),
+            wrong.len() + built + refused,
+            wrong.join("\n\n")
+        );
     }
 }

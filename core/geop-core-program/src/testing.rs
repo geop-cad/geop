@@ -108,3 +108,22 @@ pub fn assert_round_trips(
     );
     built
 }
+
+/// Edits of `original` to run [`assert_incremental`] through, as a user
+/// makes them: as it is, its last step dropped, put back, its first two
+/// steps swapped — a failure, where the second reads the first — and put
+/// back.
+pub fn edit_sequence(original: &Program) -> Vec<Program> {
+    let mut programs = vec![original.clone()];
+    if let Some(last) = original.steps.len().checked_sub(1) {
+        let mut dropped = original.clone();
+        dropped.steps.remove(last);
+        programs.extend([dropped, original.clone()]);
+    }
+    if original.steps.len() >= 2 {
+        let mut swapped = original.clone();
+        swapped.steps.swap(0, 1);
+        programs.extend([swapped, original.clone()]);
+    }
+    programs
+}

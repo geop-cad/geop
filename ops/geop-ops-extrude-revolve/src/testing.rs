@@ -1,8 +1,9 @@
 //! What the tests of programs share that start from sketches: the
 //! operations they are written in, drawing outlines, the steps sketching
 //! and extruding them, and building a program as an editor does, and
-//! reading its steps' arguments as their types. Only built for tests: with
-//! `testing`, or in this crate's own.
+//! reading its steps' arguments as their types; and the [`bodies`] the
+//! stress sweeps run over. Only built for tests: with `testing`, or in
+//! this crate's own.
 
 // Helpers of tests fail as tests do: by panicking, naming what is wrong.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -14,6 +15,7 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::ElementReference,
+    operation::StepArgs,
     operation_registry::OperationRegistry,
     part::Part,
     program::{Program, ProgramStep},
@@ -27,6 +29,8 @@ use geop_ops_model::{NamedModel, model, read_model};
 use geop_ops_parameters::{DefineParameters, LookupTable, PartProperties};
 use geop_ops_sketch::{AddSketch, AddSketchArgs, Sketch, SketchPlane, whole_sketch};
 use serde::{Serialize, de::DeserializeOwned};
+
+pub mod bodies;
 
 use crate::{Extent, Extents, Extrude, ExtrudeArgs, Loft, Output, Revolve, Sweep};
 
@@ -136,6 +140,51 @@ pub fn extrusion(sketch: &str, extent: Extents, combine: Combine) -> ExtrudeArgs
         extent,
         output: Output::Solid(combine),
     }
+}
+
+/// The step extruding the sketch `sketch` by `distance` into a new body:
+/// one way, or both ways alike if `symmetric`.
+pub fn extrude(sketch: &str, distance: f64, symmetric: bool) -> ExtrudeArgs {
+    extrusion(
+        sketch,
+        Extents {
+            side1: Extent::blind(distance),
+            symmetric,
+            side2: None,
+            reversed: false,
+        },
+        Combine::NewBody,
+    )
+}
+
+/// The step `id`, `args` for the operation they are for.
+pub fn as_step<A: StepArgs>(id: &str, args: A) -> ProgramStep {
+    let mut program = Program::new();
+    program.push(id, args);
+    program.steps.remove(0)
+}
+
+/// A block, from `z0` to `z1` over `[0, 2]^2`, sketched on the Z plane
+/// (`base`) and extruded both ways from it (`block`), the square
+/// `post_sketch` drawn on the Z plane under its middle, and `steps` after
+/// them.
+pub fn block_and_post(z0: f64, z1: f64, steps: Vec<ProgramStep>) -> Program {
+    let mut base = Sketch::new();
+    polygon(&mut base, &[[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0]]);
+    let mut post = Sketch::new();
+    polygon(&mut post, &[[0.5, 0.5], [1.5, 0.5], [1.5, 1.5], [0.5, 1.5]]);
+    let mut program = Program::new();
+    program.push("base", sketch(on_origin(FrameAxis::Z), base));
+    program.push(
+        "block",
+        ExtrudeArgs {
+            extent: two_ways(z1, -z0),
+            ..extrude("base", 1.0, false)
+        },
+    );
+    program.push("post_sketch", sketch(on_origin(FrameAxis::Z), post));
+    program.steps.extend(steps);
+    program
 }
 
 /// Pushes `drawn` on `on` as `{name}_sketch`, and its extrude as far as

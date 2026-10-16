@@ -388,6 +388,14 @@ impl Registry {
         (self.examples.iter()).flat_map(|set| set.programs.iter().map(|(name, _)| *name))
     }
 
+    /// The example programs, each by name with what makes it: listing them
+    /// builds none.
+    pub fn example_programs(&self) -> Vec<Example<Program>> {
+        (self.examples.iter())
+            .flat_map(|set| set.programs.iter().copied())
+            .collect()
+    }
+
     /// The names of the examples made of several files.
     pub fn workspace_example_names(&self) -> impl Iterator<Item = &'static str> + '_ {
         (self.examples.iter()).flat_map(|set| set.workspaces.iter().map(|(name, _)| *name))
