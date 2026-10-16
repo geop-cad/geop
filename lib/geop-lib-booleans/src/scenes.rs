@@ -16,7 +16,7 @@ use geop_lib_sweep::shapes::{block, cylinder, figure8_profile, sphere_solid};
 use geop_ops_model::{NamedModel, Namer};
 use rayon::prelude::*;
 
-use crate::remesh::remesh::{RemeshParams, remesh};
+use crate::remesh::{RemeshParams, remesh};
 
 /// A named pair of solids, built together in one [`NamedModel`] as the
 /// operations `a` and `b`, for a boolean sweep to combine.

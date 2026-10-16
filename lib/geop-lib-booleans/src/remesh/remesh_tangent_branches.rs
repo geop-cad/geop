@@ -43,10 +43,7 @@ use geop_core_topology::{Body, EdgeId, FaceId, Model, Sense, VertexId};
 use geop_ops_model::NamedModel;
 
 use crate::naming::BooleanNaming;
-use crate::remesh::{
-    remesh::{RemeshParams, split_at_crossing},
-    remesh_edges_x_edges::find_vertex_at_point,
-};
+use crate::remesh::{RemeshParams, remesh_edges_x_edges::find_vertex_at_point, split_at_crossing};
 
 /// How finely the edge's parameter is subdivided before each remaining
 /// stretch is handed to bisection: `2^-ISOLATION_LEVELS` of its domain.

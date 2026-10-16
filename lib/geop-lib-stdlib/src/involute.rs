@@ -190,8 +190,9 @@ fn bezier(control: &[[f64; 2]], s: f64) -> [f64; 2] {
     let mut points = control.to_vec();
     for level in 1..points.len() {
         for i in 0..points.len() - level {
-            for k in 0..2 {
-                points[i][k] = (1.0 - s) * points[i][k] + s * points[i + 1][k];
+            let next = points[i + 1];
+            for (p, q) in points[i].iter_mut().zip(next) {
+                *p = (1.0 - s) * *p + s * q;
             }
         }
     }

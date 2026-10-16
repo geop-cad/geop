@@ -37,7 +37,7 @@ use geop_core_topology::{
 };
 use geop_ops_model::{BooleanOp, NamedModel, Namer};
 
-use crate::remesh::remesh::{RemeshParams, remesh};
+use crate::remesh::{RemeshParams, remesh};
 
 /// Where one solid's face sits relative to the *other* solid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -749,7 +749,7 @@ fn solid_normal_at<S: Scalar>(
 mod tests {
     use super::{BooleanOp, Classified, FaceClassification, boolean, classify_face};
     use crate::{
-        remesh::remesh::RemeshParams,
+        remesh::RemeshParams,
         scenes::{scene, validation},
     };
     use geop_core_math::{scalars::ScalInF64, scalars::Scalar, vector::Vector3};
@@ -777,8 +777,7 @@ mod tests {
     fn classify_face_separates_inside_from_outside() {
         let mut s = scene("box_cylinder_drilled_hole_through");
         let params = RemeshParams::<ScalInF64>::default();
-        crate::remesh::remesh::remesh(&mut s.model, &namer(), s.solid_a, s.solid_b, params)
-            .unwrap();
+        crate::remesh::remesh(&mut s.model, &namer(), s.solid_a, s.solid_b, params).unwrap();
 
         let mut inside = 0;
         let mut outside = 0;
@@ -810,8 +809,7 @@ mod tests {
     fn every_remeshed_face_has_an_interior_point() {
         let mut s = scene("box_cylinder_drilled_hole_through");
         let params = RemeshParams::<ScalInF64>::default();
-        crate::remesh::remesh::remesh(&mut s.model, &namer(), s.solid_a, s.solid_b, params)
-            .unwrap();
+        crate::remesh::remesh(&mut s.model, &namer(), s.solid_a, s.solid_b, params).unwrap();
 
         for solid in [s.solid_a, s.solid_b] {
             for face_id in s.model.topology().solid_faces(solid).unwrap() {
@@ -1410,8 +1408,7 @@ mod tests {
         model: &mut M,
     ) -> (geop_core_topology::SolidId, geop_core_topology::FaceId) {
         let (plate, hole) = plate_and_blind_hole(model);
-        crate::remesh::remesh::remesh(model, &namer(), plate, hole, RemeshParams::default())
-            .unwrap();
+        crate::remesh::remesh(model, &namer(), plate, hole, RemeshParams::default()).unwrap();
         let topology = model.topology();
         if let Err(errors) = validate_fast(&validation(), topology) {
             panic!("{} validate_fast error(s): {}", errors.len(), errors[0]);
@@ -1699,7 +1696,7 @@ mod tests {
         b: geop_core_topology::SolidId,
         arcs: &[[[f64; 3]; 2]],
     ) {
-        crate::remesh::remesh::remesh(model, &namer(), a, b, RemeshParams::default())
+        crate::remesh::remesh(model, &namer(), a, b, RemeshParams::default())
             .unwrap_or_else(|e| panic!("remesh failed: {e}"));
         let topology = model.topology();
         let faces_a = topology.solid_faces(a).unwrap();
@@ -1892,7 +1889,7 @@ mod tests {
         let b = cube(&mut model, [-1.13, -0.30, -0.33], [2.25, 0.60, 0.65]);
         let c = op(&mut model, a, b, BooleanOp::Difference);
         let d = cube(&mut model, [-0.33, -0.28, -1.15], [0.65, 0.55, 2.30]);
-        crate::remesh::remesh::remesh(&mut model, &namer(), c, d, RemeshParams::default()).unwrap();
+        crate::remesh::remesh(&mut model, &namer(), c, d, RemeshParams::default()).unwrap();
 
         let params = RemeshParams::<ScalInF64>::default();
         let shell = model.topology().get_solid(c).unwrap().shells[0];

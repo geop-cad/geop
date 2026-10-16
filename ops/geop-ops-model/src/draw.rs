@@ -185,7 +185,7 @@ mod tests {
             .pick(&from_above(0.5, 1.0), &accepts(&[drawn::EDGE]))
             .unwrap();
         let lines: Vec<ElementReference<NamedModel<Design>, Line>> =
-            selected(&reader, &[edge.element.clone()]);
+            selected(&reader, std::slice::from_ref(&edge.element));
         assert_eq!(lines[0].name(), edge.element.name);
         let face = view
             .pick(&from_above(0.5, 0.5), &accepts(&[drawn::FACE]))

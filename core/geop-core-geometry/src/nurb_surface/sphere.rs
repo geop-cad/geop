@@ -21,10 +21,11 @@ fn product<S: Scalar>(a: &[S], b: &[Vector4<S>]) -> GeopResult<Vec<Vector4<S>>> 
     (0..=m + n)
         .map(|k| {
             let mut sum: Option<Vector4<S>> = None;
-            for i in k.saturating_sub(n)..=k.min(m) {
+            let first = k.saturating_sub(n);
+            for (i, &ai) in a.iter().enumerate().take(k.min(m) + 1).skip(first) {
                 let j = k - i;
                 let factor =
-                    S::from_ratio(binomial(m, i) * binomial(n, j), binomial(m + n, k))?.mul(a[i]);
+                    S::from_ratio(binomial(m, i) * binomial(n, j), binomial(m + n, k))?.mul(ai);
                 let term = b[j].prod_scalar(factor);
                 sum = Some(match sum {
                     None => term,
@@ -49,10 +50,11 @@ fn elevate<S: Scalar>(a: &[Vector4<S>], by: usize) -> GeopResult<Vec<Vector4<S>>
                 return Ok(a[m]);
             }
             let mut sum: Option<Vector4<S>> = None;
-            for i in k.saturating_sub(by)..=k.min(m) {
+            let first = k.saturating_sub(by);
+            for (i, ai) in a.iter().enumerate().take(k.min(m) + 1).skip(first) {
                 let factor =
                     S::from_ratio(binomial(m, i) * binomial(by, k - i), binomial(m + by, k))?;
-                let term = a[i].prod_scalar(factor);
+                let term = ai.prod_scalar(factor);
                 sum = Some(match sum {
                     None => term,
                     Some(s) => s.add(&term),

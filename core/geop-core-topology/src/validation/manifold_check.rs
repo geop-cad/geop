@@ -5,7 +5,7 @@ use crate::{
     Model, Sense,
     contains::{
         rng::Rng,
-        shell::{PointClassification, cast_ray, ray_length_for, shell_vertices_and_edges},
+        shell::{PointClassification, ShellBoundary, cast_ray},
     },
 };
 
@@ -76,12 +76,10 @@ fn check_ray_direction_consistency<S: Scalar>(
 ) {
     // Only a solid's shells enclose anything to be inside of.
     for (&shell_id, _) in model.shells.iter().filter(|(_, s)| s.solid.is_some()) {
-        let (vertex_ids, edge_ids) = shell_vertices_and_edges(model, shell_id);
+        let boundary = ShellBoundary::of(model, shell_id);
         // The box around the shell's vertices, as plain `f64`s: it only
         // places random sample points, so exactness does not matter here.
-        let points = vertex_ids
-            .iter()
-            .map(|v| model.vertices[v].point.to_f64_array());
+        let points = (boundary.vertices.iter()).map(|v| model.vertices[v].point.to_f64_array());
         let Some((lo, hi)) = plain::bounds(points) else {
             continue;
         };
@@ -100,7 +98,7 @@ fn check_ray_direction_consistency<S: Scalar>(
                 S::from_f64(rng.next_range(lo[2] - margin[2], hi[2] + margin[2])),
             ]);
 
-            let Ok(ray_length) = ray_length_for(model, &vertex_ids, &point) else {
+            let Ok(ray_length) = boundary.ray_length(&point) else {
                 continue;
             };
 
@@ -112,12 +110,9 @@ fn check_ray_direction_consistency<S: Scalar>(
                     ^ (point_sample as u64).wrapping_mul(0x9E3779B97F4A7C15)
                     ^ (dir_sample as u64).wrapping_mul(0x2545_F491_4F6C_DD1D);
                 match cast_ray(
-                    model,
-                    shell_id,
+                    &boundary,
                     point,
                     direction,
-                    &vertex_ids,
-                    &edge_ids,
                     ray_length,
                     params.max_nodes,
                     params.min_subdivision_size,

@@ -16,7 +16,7 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        remesh::remesh::{RemeshParams, remesh},
+        remesh::{RemeshParams, remesh},
         scenes::{map_scenes_parallel, validation},
     };
     use geop_core_math::scalars::ScalInF64;

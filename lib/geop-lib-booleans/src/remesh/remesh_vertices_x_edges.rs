@@ -9,7 +9,7 @@ use geop_core_topology::{Body, EdgeId, Model, VertexId};
 use geop_ops_model::NamedModel;
 
 use crate::naming::BooleanNaming;
-use crate::remesh::remesh::RemeshParams;
+use crate::remesh::RemeshParams;
 
 /// The first `(edge_a, t, vertex_b)` split — `edge_a` from `solid_a`,
 /// `vertex_b` a `solid_b` vertex lying on it at parameter `t` — if any.

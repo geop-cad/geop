@@ -28,8 +28,7 @@ use geop_ops_model::{NamedModel, Namer};
 use crate::{
     naming::BooleanNaming,
     remesh::{
-        remesh::{RemeshParams, remesh},
-        remesh_vertices::remesh_vertices,
+        RemeshParams, remesh, remesh_vertices::remesh_vertices,
         remesh_vertices_x_edges::remesh_vertices_x_edges,
     },
 };
@@ -205,7 +204,7 @@ pub fn imprint_on_face<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::imprint_on_face;
-    use crate::remesh::remesh::RemeshParams;
+    use crate::remesh::RemeshParams;
     use geop_core_math::{
         geop_error::GeopResult,
         primitives::CoordinateSystem,

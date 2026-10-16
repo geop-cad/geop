@@ -376,8 +376,8 @@ fn ball<S: Scalar>(
     }
     let center = at.add(&solve(normals, [sr; 3])?).sharpen();
     let mut offsets = Vec::new();
-    for k in 0..3 {
-        offsets.push(Offset::new(surfaces[k], seed_on(surfaces[k], at)?, sr));
+    for surface in surfaces {
+        offsets.push(Offset::new(surface, seed_on(surface, at)?, sr));
     }
     // A construction aid, sharp: the contacts are evaluated on the faces.
     let center = meet(center, &mut offsets, &[])?.sharpen();

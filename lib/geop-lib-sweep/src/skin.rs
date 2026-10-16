@@ -182,8 +182,12 @@ pub struct StripCap<S: Scalar> {
 /// none for a curve on the axis that no cap bounds.
 pub struct Skinned {
     pub vertices: Vec<Vec<Vec<usize>>>,
-    pub edges: Vec<Vec<Vec<Option<(usize, bool)>>>>,
+    pub edges: Vec<Vec<Vec<CurveEdge>>>,
 }
+
+/// The edge of a curve at a station: its index, and whether it runs
+/// against the curve; none for a curve on the axis that no cap bounds.
+pub type CurveEdge = Option<(usize, bool)>;
 
 /// A wall's sides in its own parameters (see the module docs).
 fn wall_pcurves<S: Scalar>() -> GeopResult<[NurbCurve2D<S>; 4]> {
@@ -335,7 +339,7 @@ pub fn skin<S: Scalar>(
 
         let spans = strip.span_names.len();
         let mut paths = Vec::with_capacity(strip.joints());
-        for i in 0..strip.joints() {
+        for (i, joint) in strip.joint_names.iter().enumerate() {
             let mut path = Vec::with_capacity(spans);
             for j in 0..spans {
                 let (from, to) = (vertex[j][i], vertex[strip.station_after(j)][i]);
@@ -348,7 +352,7 @@ pub fn skin<S: Scalar>(
                     start: from,
                     end: to,
                 });
-                names.edges.push(strip.qualified(&strip.joint_names[i], j));
+                names.edges.push(strip.qualified(joint, j));
                 path.push(Ok(spec.edges.len() - 1));
             }
             paths.push(path);
@@ -365,6 +369,11 @@ pub fn skin<S: Scalar>(
                 continue;
             }
             let next = strip.next(i);
+            #[expect(
+                clippy::needless_range_loop,
+                reason = "`j` is a span: it picks the paths of two joints, a wall and the stations \
+                          either side, not the items of one sequence"
+            )]
             for j in 0..strip.span_names.len() {
                 // Along a joint's path, or at its vertex where it has none.
                 let side = |joint: usize, sense: Sense, pcurve: &NurbCurve2D<S>| CoedgeSpec {

@@ -52,8 +52,37 @@ pub enum PointClassification {
 
 const MAX_RAY_ATTEMPTS: usize = 64;
 
+/// A shell of a model as rays are cast against it: the distinct vertices
+/// and edges its faces reference, found once for every ray from a point.
+pub(crate) struct ShellBoundary<'m, S: Scalar> {
+    pub(crate) model: &'m Model<S>,
+    pub(crate) shell_id: ShellId,
+    pub(crate) vertices: Vec<VertexId>,
+    pub(crate) edges: Vec<EdgeId>,
+}
+
+impl<'m, S: Scalar> ShellBoundary<'m, S> {
+    /// The boundary of `shell_id`: the distinct vertices and edges its
+    /// faces reference.
+    pub(crate) fn of(model: &'m Model<S>, shell_id: ShellId) -> Self {
+        let (vertices, edges) = shell_vertices_and_edges(model, shell_id);
+        Self {
+            model,
+            shell_id,
+            vertices,
+            edges,
+        }
+    }
+
+    /// A ray length that clears the shell from `point` (see
+    /// [`ray_length_for`]).
+    pub(crate) fn ray_length(&self, point: &Vector3<S>) -> GeopResult<S> {
+        ray_length_for(self.model, &self.vertices, point)
+    }
+}
+
 /// The distinct vertices and edges referenced by `shell_id`'s faces.
-pub(crate) fn shell_vertices_and_edges<S: Scalar>(
+fn shell_vertices_and_edges<S: Scalar>(
     model: &Model<S>,
     shell_id: ShellId,
 ) -> (Vec<VertexId>, Vec<EdgeId>) {
@@ -93,7 +122,7 @@ pub(crate) fn shell_vertices_and_edges<S: Scalar>(
 /// from `point` — long enough that a ray this long finding zero crossings
 /// unambiguously means "missed the shell entirely" (i.e. outside), not
 /// "wasn't cast far enough".
-pub(crate) fn ray_length_for<S: Scalar>(
+fn ray_length_for<S: Scalar>(
     model: &Model<S>,
     vertex_ids: &[VertexId],
     point: &Vector3<S>,
@@ -108,9 +137,9 @@ pub(crate) fn ray_length_for<S: Scalar>(
     Ok(max_dist_sq.sqrt()?.mul(S::from_f64(3.0)).add(S::ONE))
 }
 
-/// Casts a single ray from `point` in `direction` against `shell_id`'s
-/// vertices/edges/faces (`vertex_ids`/`edge_ids` as returned by
-/// [`shell_vertices_and_edges`], `ray_length` by [`ray_length_for`]) and
+/// Casts a single ray from `point` in `direction` against `boundary`'s
+/// vertices/edges/faces (`ray_length` as [`ShellBoundary::ray_length`]
+/// gives it) and
 /// returns its even/odd crossing-parity classification — or `Ok(Err(why))` if
 /// this particular direction is degenerate (grazes a vertex or edge, or
 /// hits a face right on its own trim boundary) and the caller should retry
@@ -123,17 +152,21 @@ pub(crate) fn ray_length_for<S: Scalar>(
 /// per ray (e.g. by direction or attempt index) so those sub-calls don't all
 /// retry along the identical degenerate path.
 pub(crate) fn cast_ray<S: Scalar>(
-    model: &Model<S>,
-    shell_id: ShellId,
+    boundary: &ShellBoundary<S>,
     point: Vector3<S>,
     direction: Vector3<S>,
-    vertex_ids: &[VertexId],
-    edge_ids: &[EdgeId],
     ray_length: S,
     max_nodes: usize,
     epsilon: S,
     seed: u64,
 ) -> GeopResult<Result<PointClassification, String>> {
+    let ShellBoundary {
+        model,
+        shell_id,
+        vertices: vertex_ids,
+        edges: edge_ids,
+    } = boundary;
+    let (model, shell_id) = (*model, *shell_id);
     let shell = &model.shells[&shell_id];
     let far = point.add(&direction.prod_scalar(ray_length));
     let ray = NurbCurve3D::line(point, far)?;
@@ -340,17 +373,18 @@ fn classify<S: Scalar>(
     epsilon: S,
     seed: u64,
 ) -> GeopResult<PointClassification> {
-    let (vertex_ids, edge_ids) = shell_vertices_and_edges(model, shell_id);
+    let boundary = ShellBoundary::of(model, shell_id);
+    let (vertex_ids, edge_ids) = (&boundary.vertices, &boundary.edges);
 
     // Coincidence pre-check: vertex, then edge, then face — each a full
     // pass, so higher-priority coincidences are deterministic regardless of
     // iteration order.
-    for &vertex_id in &vertex_ids {
+    for &vertex_id in vertex_ids {
         if model.vertices[&vertex_id].point.could_be_equal(&point) {
             return Ok(PointClassification::OnVertex);
         }
     }
-    for &edge_id in &edge_ids {
+    for &edge_id in edge_ids {
         if curve_could_contain(&model.edges[&edge_id].curve, &point, max_nodes, epsilon)?.is_some()
         {
             return Ok(PointClassification::OnEdge);
@@ -389,12 +423,9 @@ fn classify<S: Scalar>(
             .sharpen();
         let leg = |start: Vector3<S>| {
             cast_ray(
-                model,
-                shell_id,
+                &boundary,
                 start,
                 via.sub(&start),
-                &vertex_ids,
-                &edge_ids,
                 S::ONE,
                 max_nodes,
                 epsilon,
@@ -432,7 +463,7 @@ fn classify<S: Scalar>(
         }
     }
 
-    let ray_length = ray_length_for(model, &vertex_ids, &point)?;
+    let ray_length = boundary.ray_length(&point)?;
 
     let mut rng = Rng::new(seed);
     // Directions tried in turn until one is clear.
@@ -440,12 +471,9 @@ fn classify<S: Scalar>(
         let direction = rng.next_direction3::<S>();
         let attempt_seed = seed ^ (attempt as u64).wrapping_mul(0x9E3779B97F4A7C15);
         match cast_ray(
-            model,
-            shell_id,
+            &boundary,
             point,
             direction,
-            &vertex_ids,
-            &edge_ids,
             ray_length,
             max_nodes,
             epsilon,

@@ -12,7 +12,7 @@ use geop_ops_model::{BooleanOp, Combine, FeatureTool, NamedModel, Namer, Tool};
 
 use crate::{
     boolean::{Reach, boolean, boolean_up_to_next, piece_up_to_next},
-    remesh::remesh::RemeshParams,
+    remesh::RemeshParams,
 };
 
 /// Combines the `tools` built, one after the other, as `how` says, as the

@@ -33,7 +33,7 @@ use geop_ops_model::{BodyNames, NamedModel, Namer, RefId};
 
 use crate::{
     boolean::{FaceClassification, classify_face},
-    remesh::remesh::{RemeshParams, remesh},
+    remesh::{RemeshParams, remesh},
 };
 
 /// Splits `solid` along the sheet `sheet` into the pieces it cuts the solid
@@ -239,7 +239,7 @@ pub fn split<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::split;
-    use crate::remesh::remesh::RemeshParams;
+    use crate::remesh::RemeshParams;
     use geop_core_math::{
         primitives::CoordinateSystem,
         scalars::{ScalInF64 as S, Scalar},

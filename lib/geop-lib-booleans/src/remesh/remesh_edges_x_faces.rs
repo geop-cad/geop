@@ -54,10 +54,11 @@ use geop_core_topology::{
 use geop_ops_model::NamedModel;
 
 use crate::naming::BooleanNaming;
-use crate::remesh::{
-    remesh::{RemeshParams, split_at_crossing},
-    remesh_edges_x_edges::find_vertex_at_point,
-};
+use crate::remesh::{RemeshParams, remesh_edges_x_edges::find_vertex_at_point, split_at_crossing};
+
+/// Where a point of an intersection branch is on both surfaces:
+/// `(u_a, v_a, u_b, v_b)`.
+type OnBoth<S> = (S, S, S, S);
 
 /// A vertex where an edge of one solid meets a face of the other without
 /// running along it — where the edge pierces the face, or ends on it —
@@ -1059,8 +1060,8 @@ fn predictor_corrector_step<S: Scalar>(
             for r in 0..4 {
                 for c in 0..4 {
                     let mut sum = S::ZERO;
-                    for k in 0..4 {
-                        sum = sum.add(j[k][r].mul(j[k][c]));
+                    for row in &j {
+                        sum = sum.add(row[r].mul(row[c]));
                     }
                     ata[r][c] = if r == c { sum.add(lambda) } else { sum }.sharpen();
                 }
@@ -1622,10 +1623,10 @@ fn trace_one_side<S: Scalar>(
             // `frac` of the way along the leg from `from` (whose surface
             // parameters are `(u_a, v_a, u_b, v_b)`) to `to`.
             let on_branch = |from: Vector3<S>,
-                             (u_a, v_a, u_b, v_b): (S, S, S, S),
+                             (u_a, v_a, u_b, v_b): OnBoth<S>,
                              to: Vector3<S>,
                              frac: S|
-             -> GeopResult<(Vector3<S>, (S, S, S, S))> {
+             -> GeopResult<(Vector3<S>, OnBoth<S>)> {
                 let leg_ctx = with_context!("on_branch(from={from:?}, to={to:?}, frac={frac:?})");
                 let chord = to.sub(&from);
                 let step = chord.norm().mul(frac);

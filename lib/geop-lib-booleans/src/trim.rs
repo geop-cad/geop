@@ -23,7 +23,7 @@ use geop_ops_model::{NamedModel, Namer};
 
 use crate::{
     boolean::{classify_face, copy_of},
-    remesh::remesh::{RemeshParams, remesh},
+    remesh::{RemeshParams, remesh},
 };
 
 /// Trims the sheet `sheet` up to the next face of any of `targets`: keeps

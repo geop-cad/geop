@@ -10,7 +10,7 @@ use geop_core_topology::{Body, EdgeId, Model, VertexId};
 use geop_ops_model::NamedModel;
 
 use crate::naming::BooleanNaming;
-use crate::remesh::remesh::RemeshParams;
+use crate::remesh::RemeshParams;
 
 /// What to do next for a `solid_a` edge x `solid_b` edge pair — see
 /// `find_edge_edge_action`'s own doc comment.

@@ -279,11 +279,11 @@ pub(crate) fn build_tools<S: Scalar>(
             ));
         }
         let mut which = vec![0; 3];
-        for k in 0..2 {
-            which[k] = lead
+        for (slot, &contact) in which.iter_mut().zip(&follow.contacts) {
+            *slot = lead
                 .contacts
                 .iter()
-                .position(|&c| c == follow.contacts[k])
+                .position(|&c| c == contact)
                 .ok_or_else(|| GeopError::new("a mitre's tools meet in different contacts"))?;
         }
         which[2] = 2;
@@ -506,7 +506,7 @@ fn corner_faces<S: Scalar>(
 
     // Round each contact, from it along both tools' lines to the apex,
     // facing away from the corner of the solid.
-    for k in 0..corner.contacts.len() {
+    for (k, (&at, &contact)) in corner.contacts.iter().zip(contacts).enumerate() {
         let touching: Vec<usize> = (0..corner.ends.len())
             .filter(|&i| corner.ends[i].contacts.contains(&k))
             .collect();
@@ -524,7 +524,7 @@ fn corner_faces<S: Scalar>(
         };
         let quad = |i: usize, j: usize| {
             NurbSurface3D::bilinear(
-                corner.contacts[k],
+                at,
                 built.apex(&corner.ends[i]).1,
                 corner.apex,
                 built.apex(&corner.ends[j]).1,
@@ -548,7 +548,7 @@ fn corner_faces<S: Scalar>(
         let (qj, _) = built.apex(&corner.ends[j]);
         let face = spec.square_face(
             surface,
-            [contacts[k], qi, apex, qj],
+            [contact, qi, apex, qj],
             [
                 CoedgeOn::Edge(line(i), Sense::Forward),
                 CoedgeOn::Edge(to_apex[i], Sense::Forward),

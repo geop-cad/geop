@@ -174,7 +174,7 @@ pub fn newton_1d<T: Newton1d, E: From<GeopError>>(
             let (step, size) = T::step(value, slope)?;
             if arrive == Arrive::StepsStopShrinking {
                 // A NaN step is no shorter either.
-                if !(size < last) {
+                if size.partial_cmp(&last) != Some(std::cmp::Ordering::Less) {
                     return Ok(Step::Done);
                 }
                 last = size;

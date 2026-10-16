@@ -342,6 +342,15 @@ impl RadiusLaw {
     }
 }
 
+/// Where a point is on a link's two faces, the left and the right: its
+/// `(u, v)` on each.
+type Feet<S> = [(S, S); 2];
+
+/// A chamfer's section, as [`chamfer_frame`] finds it: the chain's point,
+/// the direction the chain runs there, and the feet of the point on the
+/// link's faces.
+type ChamferSection<S> = (Vector3<S>, Vector3<S>, Feet<S>);
+
 /// The ball at one station: its center, where it touches each face — the
 /// faces on the chain's left and right — the faces' outward normals there
 /// and the contacts' `(u, v)` on them (sharp, seeds), and the section's
@@ -358,7 +367,7 @@ struct Station<S: Scalar> {
     contact: [Vector3<S>; 2],
     faces: [FaceId; 2],
     normals: [Vector3<S>; 2],
-    uv: [(S, S); 2],
+    uv: Feet<S>,
     corner: Vector3<S>,
     weight: S,
     apex: Vector3<S>,
@@ -373,11 +382,11 @@ struct Station<S: Scalar> {
 /// center was found — and the foot points' `(u, v)`, sharp seeds.
 fn roll<S: Scalar>(
     surfaces: [&NurbSurface3D<S>; 2],
-    seeds: [(S, S); 2],
+    seeds: Feet<S>,
     p: &Vector3<S>,
     tangent: &Vector3<S>,
     sr: S,
-) -> GeopResult<(Vector3<S>, [(S, S); 2])> {
+) -> GeopResult<(Vector3<S>, Feet<S>)> {
     let normal = |k: usize, (u, v): (S, S)| surfaces[k].normal(u, v)?.normalize();
     let (n0, n1) = (normal(0, seeds[0])?, normal(1, seeds[1])?);
     // Exact for two planes through `p`: `r` from both.
@@ -405,9 +414,9 @@ fn off_foot<S: Scalar>(center: &Vector3<S>, foot: &Vector3<S>, n: &Vector3<S>) -
 fn sides(chain: &Chain) -> [Vec<FaceId>; 2] {
     let mut sides = [Vec::new(), Vec::new()];
     for link in &chain.links {
-        for k in 0..2 {
-            if !sides[k].contains(&link.faces[k]) {
-                sides[k].push(link.faces[k]);
+        for (side, &face) in sides.iter_mut().zip(&link.faces) {
+            if !side.contains(&face) {
+                side.push(face);
             }
         }
     }
@@ -437,14 +446,14 @@ fn place<S: Scalar>(
     // intersection, say — only encloses its points. At a vertex where the
     // faces change, that is what puts the ball's section through it.
     let mut normals = [Vector3::zero(); 2];
-    for k in 0..2 {
+    for (k, normal) in normals.iter_mut().enumerate() {
         let surface = &model.get_face(own.faces[k])?.surface;
         let seed = match previous {
             Some(prev) if prev.faces[k] == own.faces[k] => prev.uv[k],
             _ => seed_on(surface, &p)?,
         };
         let (u, v) = foot(surface, &p, seed)?;
-        normals[k] = surface.normal(u, v)?;
+        *normal = surface.normal(u, v)?;
     }
     let tangent = own.tangent(normals, &along, &p)?;
     let sides = sides(chain);
@@ -541,7 +550,7 @@ fn section<S: Scalar>(
     contact: [Vector3<S>; 2],
     normals: [Vector3<S>; 2],
     faces: [FaceId; 2],
-    uv: [(S, S); 2],
+    uv: Feet<S>,
     tilt: bool,
 ) -> GeopResult<Station<S>> {
     let [ta, tb] = contact;
@@ -627,13 +636,13 @@ fn chamfer_frame<S: Scalar>(
     link: usize,
     fraction: S,
     previous: Option<&Station<S>>,
-) -> GeopResult<(Vector3<S>, Vector3<S>, [(S, S); 2])> {
+) -> GeopResult<ChamferSection<S>> {
     let own = &chain.links[link];
     let (p, along) = own.at(model, fraction)?;
     let p = p.sharpen();
     let mut normals = Vec::new();
     let mut feet = [(S::ZERO, S::ZERO); 2];
-    for k in 0..2 {
+    for (k, at) in feet.iter_mut().enumerate() {
         let surface = &model.get_face(own.faces[k])?.surface;
         let seed = match previous {
             Some(prev) if prev.faces[k] == own.faces[k] => prev.uv[k],
@@ -641,7 +650,7 @@ fn chamfer_frame<S: Scalar>(
         };
         let (u, v) = foot(surface, &p, seed)?;
         normals.extend(surface.normal(u, v));
-        feet[k] = sharp_in(surface, (u, v));
+        *at = sharp_in(surface, (u, v));
     }
     // Where a face's coordinates cannot state its normal at the edge — a
     // hair off a pole, where the face's own `(u, v)` collapse — the edge's
@@ -730,7 +739,7 @@ fn chord<S: Scalar>(
     contact: [Vector3<S>; 2],
     normals: [Vector3<S>; 2],
     faces: [FaceId; 2],
-    uv: [(S, S); 2],
+    uv: Feet<S>,
 ) -> GeopResult<Station<S>> {
     let middle = Vector3::interpolate(&contact[0], &contact[1], S::ONE.div(S::TWO)?).sharpen();
     Ok(Station {
@@ -814,7 +823,7 @@ fn chamfer_crossing<S: Scalar>(
     // square to the chain there it is. The edge runs across the chain's
     // side, so it meets that sphere once, near where the chamfer meets it.
     let d2 = S::from_f64(distances[k] * distances[k]);
-    let at = |c: f64, seed: S| -> GeopResult<(f64, S, Vector3<S>, Vector3<S>, [(S, S); 2])> {
+    let at = |c: f64, seed: S| -> GeopResult<(f64, S, ChamferSection<S>)> {
         let (link, x) = locate(chain, c);
         let (p, tangent, feet) = chamfer_frame(model, chain, link, S::from_f64(x), Some(before))
             .with_context(with_context!(
@@ -833,7 +842,7 @@ fn chamfer_crossing<S: Scalar>(
         )?
         .0;
         let ahead = curve.evaluate(t)?.sub(&p).prod_dot(&tangent);
-        Ok((ahead.midpoint().to_f64(), t, p, tangent, feet))
+        Ok((ahead.midpoint().to_f64(), t, (p, tangent, feet)))
     };
     let (lo_c, hi_c) = (from, to);
     let (g_lo, mut t) = {
@@ -854,7 +863,7 @@ fn chamfer_crossing<S: Scalar>(
         Ok(Some(g.signum() == g_lo.signum()))
     })?;
     let c = 0.5 * (bracket.lo + bracket.hi);
-    let (_, t, p, tangent, feet) = at(c, t)?;
+    let (_, t, (p, tangent, feet)) = at(c, t)?;
     let (link, _) = locate(chain, c);
     let own = &chain.links[link];
     let mut faces = own.faces;
@@ -901,15 +910,23 @@ fn chamfer_crossing<S: Scalar>(
 /// one place, if two such are one; and the positions that need a section
 /// of their own, where the blend changes its rate.
 struct Placing<'a, S: Scalar> {
-    place: Box<dyn Fn(f64, Option<&Station<S>>) -> GeopResult<Station<S>> + 'a>,
-    #[allow(clippy::type_complexity)]
-    cross: Box<
-        dyn Fn(usize, &Station<S>, &Station<S>, (f64, f64)) -> GeopResult<(f64, Station<S>)> + 'a,
-    >,
-    #[allow(clippy::type_complexity)]
-    merge: Box<dyn Fn(&Station<S>, &Station<S>) -> GeopResult<Option<Station<S>>> + 'a>,
+    place: Place<'a, S>,
+    cross: Cross<'a, S>,
+    merge: Merge<'a, S>,
     kinks: Vec<f64>,
 }
+
+/// The section at a position, from the one before (see [`Placing`]).
+type Place<'a, S> = Box<dyn Fn(f64, Option<&Station<S>>) -> GeopResult<Station<S>> + 'a>;
+
+/// Where side `k` moves from face to face between two sections, between
+/// two positions: the position, and the section there (see [`Placing`]).
+type Cross<'a, S> =
+    Box<dyn Fn(usize, &Station<S>, &Station<S>, (f64, f64)) -> GeopResult<(f64, Station<S>)> + 'a>;
+
+/// The one section where both sides move at one place, if two such are one
+/// (see [`Placing`]).
+type Merge<'a, S> = Box<dyn Fn(&Station<S>, &Station<S>) -> GeopResult<Option<Station<S>>> + 'a>;
 
 /// The balls rolled along a chain: at the stations, by their positions
 /// along it — link index plus fraction of its edge — and between each two
@@ -1070,31 +1087,26 @@ fn crossing<S: Scalar>(
     // The ball through the edge's point at `t`, square to the face there:
     // how far it is from touching the other side, and its makings.
     #[allow(clippy::type_complexity)]
-    let ball = |t: f64| -> GeopResult<(
-        f64,
-        Vector3<S>,
-        [Vector3<S>; 2],
-        [Vector3<S>; 2],
-        [(S, S); 2],
-    )> {
-        let sr = radius;
-        let ts = S::from_f64(t);
-        let x = curve.evaluate(ts)?;
-        let (u, v) = foot(surface, &x, before.uv[k])?;
-        let n = surface.normal(u, v)?.normalize()?;
-        let center = x.add(&n.prod_scalar(sr)).sharpen();
-        let (uo, vo) = foot(other, &center, before.uv[o])?;
-        let xo = other.evaluate(uo, vo)?;
-        let no = other.normal(uo, vo)?.normalize()?;
-        let gap = center.sub(&xo).prod_dot(&no).sub(sr);
-        let mut contact = [x; 2];
-        let mut normals = [n; 2];
-        let mut uv = [sharp_in(surface, (u, v)); 2];
-        contact[o] = xo;
-        normals[o] = no;
-        uv[o] = sharp_in(other, (uo, vo));
-        Ok((gap.midpoint().to_f64(), center, contact, normals, uv))
-    };
+    let ball =
+        |t: f64| -> GeopResult<(f64, Vector3<S>, [Vector3<S>; 2], [Vector3<S>; 2], Feet<S>)> {
+            let sr = radius;
+            let ts = S::from_f64(t);
+            let x = curve.evaluate(ts)?;
+            let (u, v) = foot(surface, &x, before.uv[k])?;
+            let n = surface.normal(u, v)?.normalize()?;
+            let center = x.add(&n.prod_scalar(sr)).sharpen();
+            let (uo, vo) = foot(other, &center, before.uv[o])?;
+            let xo = other.evaluate(uo, vo)?;
+            let no = other.normal(uo, vo)?.normalize()?;
+            let gap = center.sub(&xo).prod_dot(&no).sub(sr);
+            let mut contact = [x; 2];
+            let mut normals = [n; 2];
+            let mut uv = [sharp_in(surface, (u, v)); 2];
+            contact[o] = xo;
+            normals[o] = no;
+            uv[o] = sharp_in(other, (uo, vo));
+            Ok((gap.midpoint().to_f64(), center, contact, normals, uv))
+        };
     // A bracket: from between where the contacts lie along the edge,
     // widened until the ball goes from one side of touching to the other —
     // along an edge running across the chain, both contacts lie at about
