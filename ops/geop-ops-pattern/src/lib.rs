@@ -37,6 +37,7 @@
 
 mod circular;
 mod common;
+pub mod examples;
 mod features;
 mod icons;
 mod linear;
@@ -67,5 +68,6 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
     r.operation(LinearPattern)?
         .operation(CircularPattern)?
         .operation(Mirror)?
-        .operation(MoveBody)
+        .operation(MoveBody)?
+        .examples(examples::set())
 }

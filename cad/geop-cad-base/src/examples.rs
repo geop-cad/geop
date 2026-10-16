@@ -13,11 +13,10 @@ use geop_core_program::{element::ElementReference, program::Program, values::Des
 use geop_core_sketch::{CurveId, PointId};
 use geop_lib_sweep::Orientation;
 use geop_ops_boolean::SplitArgs;
-use geop_ops_datums::{origin_axis, origin_plane};
+use geop_ops_datums::origin_plane;
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, Output, PathRef, SweepArgs};
 use geop_ops_model::element;
 use geop_ops_model::{Combine, solid};
-use geop_ops_pattern::{Direction, LinearPatternArgs, PatternDirection, Seeds, Spacing, feature};
 use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch, SketchPlane, sketch, whole_sketch};
 use geop_ops_sketch3d::{AddSketch3dArgs, CurveSource, Sketch3d};
 use geop_ops_surface::NetworkSurfaceArgs;
@@ -195,53 +194,6 @@ pub fn horn() -> Program {
     program
 }
 
-/// An 8 x 3 x 0.5 plate with a row of four holes: a circle sketched on the
-/// Z plane and cut through the plate (`hole`), and that feature done again
-/// three more times 2 apart along `x` (`holes`) — the drilled plate is
-/// `linear_pattern(holes)`, and the holes follow the hole when it changes.
-pub fn patterned_plate() -> Program {
-    let mut program = Program::new();
-    let z_plane = || on_origin(FrameAxis::Z);
-    let mut outline = Sketch::new();
-    rectangle(&mut outline, [0.0, 0.0], 8.0, 3.0);
-    program.push("outline", AddSketchArgs::on(z_plane(), solved(outline)));
-    program.push(
-        "plate",
-        ExtrudeArgs {
-            sketch: whole_sketch("outline"),
-            extent: Extents::blind(0.5),
-            output: Output::Solid(Combine::NewBody),
-        },
-    );
-    let mut hole = Sketch::new();
-    circle(&mut hole, [1.0, 1.5], 0.3);
-    program.push("hole_sketch", AddSketchArgs::on(z_plane(), solved(hole)));
-    let mut through = Extents::blind(2.0);
-    through.symmetric = true;
-    program.push(
-        "hole",
-        ExtrudeArgs {
-            sketch: whole_sketch("hole_sketch"),
-            extent: through,
-            output: Output::Solid(Combine::cut("extrude(plate)")),
-        },
-    );
-    program.push(
-        "holes",
-        LinearPatternArgs {
-            seeds: Seeds::features(vec![feature("hole")]),
-            first: Direction {
-                along: Some(PatternDirection::Datum(origin_axis(FrameAxis::X))),
-                reversed: false,
-                count: 4.0.into(),
-                spacing: Spacing::step(2.0),
-            },
-            second: None,
-        },
-    );
-    program
-}
-
 /// A motor flange 30 across and 2.5 thick, drawn the way the sketch tools
 /// draw it: its bore an offset of its rim, 10 in, so the wall follows the
 /// rim; and its bolt circle one hole patterned six times round its middle,
@@ -387,7 +339,6 @@ pub fn all() -> Vec<Example<Program>> {
         }),
         ("edge_part", || drawn(include_str!("drawn/edge_part.geop"))),
         ("conebox", || drawn(include_str!("drawn/conebox.geop"))),
-        ("patterned_plate", patterned_plate),
         ("horn", horn),
         ("motor_flange", motor_flange),
         ("curved_panel", curved_panel),
@@ -566,20 +517,6 @@ mod tests {
             (at(0.0, 16.0), PointClassification::Outside),
         ] {
             assert_eq!(inside(&part, solid, p), expected, "at {p:?}");
-        }
-    }
-
-    #[test]
-    fn patterned_plate_round_trips() {
-        let part = build_and_round_trip("patterned_plate", &patterned_plate());
-        assert_eq!(part.solid_names(), ["linear_pattern(holes)"]);
-        for (p, expected) in [
-            ([5.0, 1.5, 0.25], PointClassification::Outside),
-            ([5.0, 1.9, 0.25], PointClassification::Inside),
-            ([7.0, 1.5, 0.25], PointClassification::Outside),
-            ([6.0, 1.5, 0.25], PointClassification::Inside),
-        ] {
-            assert_eq!(inside(&part, "linear_pattern(holes)", p), expected, "{p:?}");
         }
     }
 }

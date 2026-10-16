@@ -558,3 +558,40 @@ fn holes_patterned_along_sketch_lines() {
     let expected = 8.0 * 2.0 * 0.5 - 8.0 * PI * 0.3 * 0.3 * 0.5;
     assert_volume(&part, "linear_pattern(holes)", expected, 1e-3);
 }
+
+/// The patterned plate example is one solid with four holes in a row, 2
+/// apart — solid between them — and, saved and loaded, builds what it
+/// built.
+#[test]
+fn patterned_plate_round_trips() {
+    use geop_core_topology::contains::shell::PointClassification::{Inside, Outside};
+    use geop_ops_model::testing::classify;
+
+    let registry = std::rc::Rc::new(registry().unwrap());
+    let program = crate::examples::patterned_plate();
+    let built = geop_core_program::testing::assert_round_trips(registry, None, &program);
+    let part = geop_ops_extrude_revolve::testing::model_of(&built);
+    assert_valid(&part);
+    assert_eq!(part.solid_names(), ["linear_pattern(holes)"]);
+    for (p, expected) in [
+        ([5.0, 1.5, 0.25], Outside),
+        ([5.0, 1.9, 0.25], Inside),
+        ([7.0, 1.5, 0.25], Outside),
+        ([6.0, 1.5, 0.25], Inside),
+    ] {
+        assert_eq!(
+            classify(&part, "linear_pattern(holes)", p),
+            expected,
+            "{p:?}"
+        );
+    }
+}
+
+/// The example `patterned_plate`, edited as a user edits it, builds
+/// incrementally what it builds from scratch.
+#[test]
+fn patterned_plate_builds_incrementally() {
+    let registry = std::rc::Rc::new(registry().unwrap());
+    let programs = geop_core_program::testing::edit_sequence(&crate::examples::patterned_plate());
+    geop_core_program::testing::assert_incremental(registry, None, &programs);
+}
