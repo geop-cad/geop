@@ -1047,6 +1047,11 @@ Open follow-ups:
 - `geop.ts` is still written by hand, only checked. Generating it (as
   `ts-rs` would) would remove the duplication, at the cost of deriving
   type information across every protocol type in core.
+- The ignored sweeps pass but for `geop-ops-assembly`'s
+  `a_joint_is_made_by_clicking_where_its_frames_go`, ignored as a known
+  failure (a hovered frame pick is lit but not drawn as a triad), and the
+  STEP corpus, which needs `fetch_corpus.sh`; the nightly CI skips both by
+  name.
 - Web e2e tests (`web/e2e/`) were not run here; the viewer's lighting by
   `PickedElement` is covered by the type check and the build, not yet by
   a browser test.

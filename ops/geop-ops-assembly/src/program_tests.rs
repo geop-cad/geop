@@ -1737,7 +1737,7 @@ fn a_coupling_offers_the_joints_that_move_as_it_needs() {
 #[test]
 #[ignore = "the step editor lights a hovered frame pick but no longer draws it as a triad: \
             `geop_ops::ui::step` drew one for every `EntityRef::Frame` hovered or picked, and \
-            neither `cad/geop-cad-base/src/step_editor.rs` nor `Selectable` has a way to draw \
+            neither `geop_core_editor::step_editor` nor `Selectable` has a way to draw \
             what a pick is (the highlight and the joint the clicks make pass)"]
 fn a_joint_is_made_by_clicking_where_its_frames_go() {
     let mut program = examples::pin_in_plate_assembly();
