@@ -24,14 +24,7 @@ source cad/geop-cad-base/src/operations/editor_tests.rs: cad-base uses geop_ops_
 source cad/geop-cad-base/src/operations/inspect_tests.rs: cad-base uses geop_ops_assembly outside registry.rs
 source cad/geop-cad-base/src/operations/inspect_tests.rs: cad-base uses geop_ops_inspect outside registry.rs
 source cad/geop-cad-base/src/operations/inspect_tests.rs: cad-base uses geop_ops_model outside registry.rs
-source cad/geop-cad-base/src/operations/parameters_tests.rs: cad-base uses geop_ops_assembly outside registry.rs
-source cad/geop-cad-base/src/operations/parameters_tests.rs: cad-base uses geop_ops_model outside registry.rs
-source cad/geop-cad-base/src/operations/parameters_tests.rs: cad-base uses geop_ops_parameters outside registry.rs
-source cad/geop-cad-base/src/operations/parameters_tests.rs: cad-base uses geop_ops_sketch outside registry.rs
-source cad/geop-cad-base/src/operations/program_tests.rs: cad-base uses geop_ops_extrude_revolve outside registry.rs
-source cad/geop-cad-base/src/operations/program_tests.rs: cad-base uses geop_ops_model outside registry.rs
 source cad/geop-cad-base/src/operations/program_tests.rs: cad-base uses geop_ops_parameters outside registry.rs
-source cad/geop-cad-base/src/operations/program_tests.rs: cad-base uses geop_ops_sketch outside registry.rs
 source cad/geop-cad-base/src/operations/set_tests.rs: cad-base uses geop_ops_extrude_revolve outside registry.rs
 source cad/geop-cad-base/src/operations/set_tests.rs: cad-base uses geop_ops_model outside registry.rs
 source cad/geop-cad-base/src/operations/set_tests.rs: cad-base uses geop_ops_sketch outside registry.rs

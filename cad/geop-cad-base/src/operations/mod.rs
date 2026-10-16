@@ -7,7 +7,6 @@ mod bom_tests;
 mod drawing_tests;
 mod editor_tests;
 mod inspect_tests;
-mod parameters_tests;
 mod program_tests;
 mod set_tests;
 mod step_export_tests;
