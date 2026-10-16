@@ -826,12 +826,18 @@ dependencies = [
  "geop-core-math",
  "geop-core-program",
  "geop-core-topology",
+ "geop-lib-stdlib",
  "geop-lib-sweep",
  "geop-ops-assembly",
+ "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-model",
  "geop-ops-parameters",
+ "geop-ops-pattern",
+ "geop-ops-reference-geometry",
+ "geop-ops-sketch",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -894,6 +900,7 @@ dependencies = [
  "geop-ops-reference-geometry",
  "geop-ops-sketch",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

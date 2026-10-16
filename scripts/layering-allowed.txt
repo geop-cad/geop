@@ -1,9 +1,7 @@
 # Known layering violations, one per line as scripts/check-layering.sh prints
 # them. Phases of ARCHITECTURE_PLAN.md remove lines; nothing adds them.
 source cad/geop-cad-base/src/examples.rs: cad-base uses geop_ops_model outside registry.rs
-source cad/geop-cad-base/src/operations/editor_tests.rs: cad-base uses geop_ops_drawing outside registry.rs
 source cad/geop-cad-base/src/operations/editor_tests.rs: cad-base uses geop_ops_extrude_revolve outside registry.rs
-source cad/geop-cad-base/src/operations/editor_tests.rs: cad-base uses geop_ops_model outside registry.rs
 source cad/geop-cad-base/src/operations/example_tests.rs: cad-base uses geop_ops_assembly outside registry.rs
 source cad/geop-cad-base/src/operations/example_tests.rs: cad-base uses geop_ops_drawing outside registry.rs
 source cad/geop-cad-base/src/operations/example_tests.rs: cad-base uses geop_ops_inspect outside registry.rs

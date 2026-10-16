@@ -118,8 +118,7 @@ pub(crate) mod testing {
     use geop_ops_extrude_revolve::testing::model_of;
     use geop_ops_model::NamedModel;
 
-    pub(crate) use geop_core_editor::testing::{click_at, dialog, from_above, handled, pointer};
-    pub(crate) use geop_ops_datums::origin_axis;
+    pub(crate) use geop_core_editor::testing::{dialog, handled, pointer};
     pub(crate) use geop_ops_extrude_revolve::testing::args;
     pub(crate) use geop_ops_model::testing::check_valid;
 

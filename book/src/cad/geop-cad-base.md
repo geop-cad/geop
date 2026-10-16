@@ -58,10 +58,17 @@ parts beside them as read-only files named `std:…`
 
 ## Tests
 
-The tests of programs written in many operations, and of the editor driven
-over all of them as a front end drives it, are here for now
-(`operations/*tests*.rs`, their helpers in `registry::testing`); each moves
-to the crate it tests.
+Only what needs every operation registered is tested here
+(`operations/*tests*.rs`, their helpers in `registry::testing`): the
+editor of everything driven as a front end drives it — commands that edit
+the program and only what changed sent back, every operation offered group
+by group, every example loaded by name, a program of unknown steps refused
+(`editor_tests.rs`) — every example built, drawn and round-tripped
+(`example_tests.rs`, `program_tests.rs`), and sets (`set_tests.rs`). An
+operation's editor tests drive an editor over a registry of what they need
+in that operation's crate (`editor_tests.rs`, or `tests/editor_tests.rs`
+where they need a crate that depends on it), with the helpers of
+`geop_core_editor::testing`.
 
 ## Examples
 
