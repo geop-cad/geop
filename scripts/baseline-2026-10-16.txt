@@ -1,0 +1,98 @@
+# Baseline after the refactor of ARCHITECTURE_PLAN.md (phase 5), 2026-10-16,
+# at e8df7d2 (Clippy is clean with -D warnings, branch refactor).
+# lines: find <crate>/src <crate>/tests -name '*.rs' | xargs cat | wc -l
+# tests: occurrences of #[test] in <crate>/src and <crate>/tests; ignored: of #[ignore
+
+crate                        directory                            lines  tests  ignored
+geop                         cad/geop-cad-web                       443      2        0
+geop-cad-base                cad/geop-cad-base                      965     15        5
+geop-cad-cli                 cad/geop-cad-cli                       510      8        2
+geop-core-editor             core/geop-core-editor                10092     29        0
+geop-core-geometry           core/geop-core-geometry              14781    185        0
+geop-core-math               core/geop-core-math                  12319    152        0
+geop-core-program            core/geop-core-program                5409     50        0
+geop-core-rasterize          core/geop-core-rasterize              2562     17        0
+geop-core-sketch             core/geop-core-sketch                 8686     61        0
+geop-core-topology           core/geop-core-topology              11572     79        0
+geop-lib-booleans            lib/geop-lib-booleans                 7476     83       15
+geop-lib-sheet               lib/geop-lib-sheet                     755      0        0
+geop-lib-shell               lib/geop-lib-shell                    1468     10        0
+geop-lib-stdlib              lib/geop-lib-stdlib                   3829     12        8
+geop-lib-sweep               lib/geop-lib-sweep                    7749     81        2
+geop-ops-assembly            ops/geop-ops-assembly                10666     81        4
+geop-ops-bom                 ops/geop-ops-bom                      1597      9        0
+geop-ops-boolean             ops/geop-ops-boolean                   720      7        0
+geop-ops-constraints         ops/geop-ops-constraints              1790     11        0
+geop-ops-datums              ops/geop-ops-datums                    524      4        0
+geop-ops-drawing             ops/geop-ops-drawing                  8743     34        2
+geop-ops-edit                ops/geop-ops-edit                      602      7        0
+geop-ops-extrude-revolve     ops/geop-ops-extrude-revolve          7966    115        4
+geop-ops-fillet              ops/geop-ops-fillet                   7500     72       19
+geop-ops-harness             ops/geop-ops-harness                  2342     15        1
+geop-ops-hole                ops/geop-ops-hole                     3218     28        3
+geop-ops-inspect             ops/geop-ops-inspect                  1760     15        1
+geop-ops-model               ops/geop-ops-model                    4506     16        0
+geop-ops-parameters          ops/geop-ops-parameters               2052      7        0
+geop-ops-pattern             ops/geop-ops-pattern                  3203     29        3
+geop-ops-plastic             ops/geop-ops-plastic                  3330     25        1
+geop-ops-reference-geometry  ops/geop-ops-reference-geometry       2554     23        0
+geop-ops-sheetmetal          ops/geop-ops-sheetmetal               6735     21        1
+geop-ops-shell               ops/geop-ops-shell                     699     28       12
+geop-ops-sketch              ops/geop-ops-sketch                   9433     68        0
+geop-ops-sketch3d            ops/geop-ops-sketch3d                 2573     13        0
+geop-ops-step                ops/geop-ops-step                     9630     34        1
+geop-ops-subd                ops/geop-ops-subd                     3403     18        1
+geop-ops-surface             ops/geop-ops-surface                  4696     41        2
+geop-ops-urdf                ops/geop-ops-urdf                     2261     12        1
+total                                                             191119   1517       88
+
+# timeout 3000 prlimit --as=16000000000 cargo test --workspace --no-fail-fast (fast suite; compiled in 1m 53s)
+# one line per test binary (geop src/main.rs is geop-cad-cli; doc-tests that ran nothing omitted)
+
+geop (src/lib.rs)                          ok. 2 passed; 0 failed; 0 ignored, in 2.59s
+geop_cad_base (src/lib.rs)                 ok. 10 passed; 0 failed; 5 ignored, in 1.74s
+geop (src/main.rs)                         ok. 6 passed; 0 failed; 2 ignored, in 0.18s
+geop_core_editor (src/lib.rs)              ok. 29 passed; 0 failed; 0 ignored, in 0.00s
+geop_core_geometry (src/lib.rs)            ok. 185 passed; 0 failed; 0 ignored, in 0.03s
+geop_core_math (src/lib.rs)                ok. 150 passed; 0 failed; 0 ignored, in 1.09s
+geop_core_program (src/lib.rs)             ok. 50 passed; 0 failed; 0 ignored, in 0.01s
+geop_core_rasterize (src/lib.rs)           ok. 17 passed; 0 failed; 0 ignored, in 0.02s
+geop_core_sketch (src/lib.rs)              ok. 61 passed; 0 failed; 0 ignored, in 0.33s
+geop_core_topology (src/lib.rs)            ok. 79 passed; 0 failed; 0 ignored, in 0.06s
+geop_lib_booleans (src/lib.rs)             ok. 69 passed; 0 failed; 14 ignored, in 2.07s
+geop_lib_sheet (src/lib.rs)                ok. 0 passed; 0 failed; 0 ignored, in 0.00s
+geop_lib_shell (src/lib.rs)                ok. 10 passed; 0 failed; 0 ignored, in 1.08s
+geop_lib_stdlib (src/lib.rs)               ok. 28 passed; 0 failed; 8 ignored, in 3.61s
+geop_lib_sweep (src/lib.rs)                ok. 79 passed; 0 failed; 2 ignored, in 1.64s
+geop_ops_assembly (src/lib.rs)             ok. 77 passed; 0 failed; 4 ignored, in 11.05s
+geop_ops_bom (src/lib.rs)                  ok. 9 passed; 0 failed; 0 ignored, in 2.33s
+geop_ops_boolean (src/lib.rs)              ok. 7 passed; 0 failed; 0 ignored, in 0.29s
+geop_ops_constraints (src/lib.rs)          ok. 11 passed; 0 failed; 0 ignored, in 0.00s
+geop_ops_datums (src/lib.rs)               ok. 4 passed; 0 failed; 0 ignored, in 0.00s
+geop_ops_drawing (src/lib.rs)              ok. 32 passed; 0 failed; 2 ignored, in 14.82s
+geop_ops_edit (src/lib.rs)                 ok. 7 passed; 0 failed; 0 ignored, in 0.06s
+geop_ops_extrude_revolve (src/lib.rs)      ok. 111 passed; 0 failed; 4 ignored, in 3.22s
+geop_ops_fillet (src/lib.rs)               ok. 54 passed; 0 failed; 18 ignored, in 41.55s
+geop_ops_harness (src/lib.rs)              ok. 14 passed; 0 failed; 1 ignored, in 0.46s
+geop_ops_hole (src/lib.rs)                 ok. 25 passed; 0 failed; 3 ignored, in 3.68s
+geop_ops_inspect (src/lib.rs)              ok. 14 passed; 0 failed; 1 ignored, in 0.61s
+geop_ops_model (src/lib.rs)                ok. 16 passed; 0 failed; 0 ignored, in 0.00s
+geop_ops_parameters (src/lib.rs)           ok. 7 passed; 0 failed; 0 ignored, in 0.00s
+geop_ops_pattern (src/lib.rs)              ok. 26 passed; 0 failed; 3 ignored, in 14.26s
+geop_ops_plastic (src/lib.rs)              ok. 24 passed; 0 failed; 1 ignored, in 0.44s
+geop_ops_reference_geometry (src/lib.rs)   ok. 23 passed; 0 failed; 0 ignored, in 0.24s
+geop_ops_sheetmetal (src/lib.rs)           ok. 20 passed; 0 failed; 1 ignored, in 0.57s
+geop_ops_shell (src/lib.rs)                ok. 17 passed; 0 failed; 11 ignored, in 1.40s
+geop_ops_sketch (src/lib.rs)               ok. 6 passed; 0 failed; 0 ignored, in 0.00s
+geop_ops_sketch (tests/editor_tests.rs)    ok. 50 passed; 0 failed; 0 ignored, in 1.90s
+geop_ops_sketch (tests/program_tests.rs)   ok. 12 passed; 0 failed; 0 ignored, in 0.59s
+geop_ops_sketch3d (src/lib.rs)             ok. 2 passed; 0 failed; 0 ignored, in 0.00s
+geop_ops_sketch3d (tests/editor_tests.rs)  ok. 11 passed; 0 failed; 0 ignored, in 0.05s
+geop_ops_step (src/lib.rs)                 ok. 33 passed; 0 failed; 1 ignored, in 2.51s
+geop_ops_subd (src/lib.rs)                 ok. 17 passed; 0 failed; 1 ignored, in 1.18s
+geop_ops_surface (src/lib.rs)              ok. 39 passed; 0 failed; 2 ignored, in 0.78s
+geop_ops_urdf (src/lib.rs)                 ok. 11 passed; 0 failed; 1 ignored, in 0.15s
+geop_core_editor (doc-tests)               ok. 0 passed; 0 failed; 1 ignored, in 0.00s
+geop_core_math (doc-tests)                 ok. 0 passed; 0 failed; 1 ignored, in 0.00s
+geop_core_program (doc-tests)              ok. 1 passed; 0 failed; 0 ignored, in 0.04s
+total: 1455 passed; 0 failed; 87 ignored
