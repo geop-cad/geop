@@ -37,6 +37,8 @@
 
 mod circular;
 mod common;
+#[cfg(test)]
+mod editor_tests;
 pub mod examples;
 mod features;
 mod icons;
