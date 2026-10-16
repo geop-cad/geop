@@ -32,7 +32,11 @@ pub mod layout;
 pub mod sheet;
 pub mod thicken;
 
+pub mod examples;
 mod icons;
+
+#[cfg(test)]
+mod editor_tests;
 #[cfg(test)]
 mod program_tests;
 
@@ -51,12 +55,13 @@ use geop_core_editor::registry::Registry;
 use geop_core_math::geop_error::GeopResult;
 
 /// Adds what this crate offers an editor to `r`: sheet metal: flanges,
-/// hems, cuts, the flat pattern and its DXF.
+/// hems, cuts, the flat pattern and its DXF, and the examples of them.
 pub fn register(r: Registry) -> GeopResult<Registry> {
     r.operation(BaseFlange)?
         .operation(EdgeFlange)?
         .operation(Hem)?
         .operation(SheetCut)?
         .operation(FlatPattern)?
-        .exporter(FlatPatternDxf)
+        .exporter(FlatPatternDxf)?
+        .examples(examples::set())
 }

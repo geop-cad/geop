@@ -1,69 +1,34 @@
-//! Sheet metal in programs and in the editor: the bracket example built,
-//! flanged, cut, hemmed and unfolded by steps, the way the front end does
-//! it, and its flat pattern exported for cutting.
+//! Sheet metal in the editor, the way the front end does it: the bracket
+//! example flanged, cut, hemmed and unfolded by steps picked with clicks
+//! and set in their dialogs, and its flat pattern exported for cutting.
 
-use geop_core_editor::editing::{Button, StepEditEvent, Value};
-use geop_ops_model::solid;
-use geop_ops_model::{element, notes_of};
-use geop_ops_sheetmetal::{
-    EdgeFlangeArgs, FlatPatternArgs, HemArgs, HemKind, SheetBody, SheetCutArgs, edge, sheet_body,
+use geop_core_editor::{
+    editing::{Button, StepEditEvent, Value},
+    editor::{Command, Editor},
+    registry::Registry,
+    testing::{click_at, dialog, editor_with, from_above, handled, pointer},
 };
+use geop_core_math::geop_error::GeopResult;
+use geop_ops_extrude_revolve::testing::{args, disc};
+use geop_ops_model::{element, solid};
 use geop_ops_sketch::{AddSketchArgs, SketchPlane, whole_sketch};
 
-use geop_ops_extrude_revolve::testing::model_of;
+use crate::{EdgeFlangeArgs, FlatPatternArgs, HemArgs, HemKind, SheetCutArgs, edge};
 
-use crate::registry::testing::{
-    Built, args, assert_valid, click_at, dialog, disc, example_editor, from_above, handled, pointer,
-};
-use crate::{Command, examples};
+/// What these tests edit: sketches on the origin's planes, and sheet
+/// metal, with the examples.
+fn registry() -> GeopResult<Registry> {
+    let r = Registry::default();
+    let r = geop_ops_model::register(r)?;
+    let r = geop_ops_sketch::register(r)?;
+    let r = geop_ops_datums::register(r)?;
+    let r = crate::register(r)?;
+    geop_ops_parameters::register(r)
+}
 
-/// The bracket example builds a valid sheet-metal body of three flats, two
-/// bends and the holes cut through it after flanging, survives a trip
-/// through JSON, and its flat pattern — a step like any other — is a valid
-/// flat body with its bend lines.
-#[test]
-fn bracket_example_builds_and_unfolds() {
-    let mut program = examples::sheet_metal_bracket();
-    let json = serde_json::to_string(&program).unwrap();
-    assert_eq!(
-        serde_json::from_str::<geop_core_program::program::Program>(&json).unwrap(),
-        program
-    );
-    let part = program.built().unwrap();
-    let view = part.current();
-    assert_valid(&model_of(&part));
-    let sheet = sheet_body(&view, "sheet_cut(mount)")
-        .and_then(|b| b.bent())
-        .unwrap();
-    assert_eq!((sheet.flats.len(), sheet.bends.len()), (3, 2));
-    assert_eq!(sheet.cuts.len(), 1);
-    assert_eq!(sheet.cuts[0].loops.len(), 2);
-
-    program.push(
-        "flat",
-        FlatPatternArgs {
-            solid: solid("sheet_cut(mount)"),
-            keep: false,
-        },
-    );
-    let part = program.built().unwrap();
-    let view = part.current();
-    let built = model_of(&part);
-    assert_valid(&built);
-    assert_eq!(built.solid_names(), ["flat_pattern(flat)"]);
-    let Some(SheetBody::Flat(data)) = sheet_body(&view, "flat_pattern(flat)") else {
-        panic!("no flat pattern recorded");
-    };
-    assert_eq!(data.bends.len(), 2);
-    assert!(
-        (view.retrieve_element(&whole_sketch("flat_pattern(flat,bend_lines)"))).is_ok(),
-        "no bend lines"
-    );
-    let notes = notes_of(&view).unwrap();
-    assert_eq!(
-        notes.get("flat_pattern(flat)").unwrap().thickness,
-        Some(0.08)
-    );
+/// An editor of [`registry`] on the bracket example.
+fn bracket_editor() -> Editor {
+    editor_with(registry().unwrap(), crate::examples::sheet_metal_bracket())
 }
 
 /// A new edge flange picks its edge by a click onto the bracket's right
@@ -71,7 +36,7 @@ fn bracket_example_builds_and_unfolds() {
 /// sets it, and a new flat pattern starts from the flanged body.
 #[test]
 fn new_edge_flange_picks_its_edge_and_unfolds() {
-    let mut editor = example_editor("sheet_metal_bracket");
+    let mut editor = bracket_editor();
     handled(
         &mut editor,
         Command::New {
@@ -127,7 +92,7 @@ fn new_edge_flange_picks_its_edge_and_unfolds() {
 /// exported for laser cutting, as the File menu asks for it.
 #[test]
 fn sheet_metal_cut_hem_and_cutting_export() {
-    let mut editor = example_editor("sheet_metal_bracket");
+    let mut editor = bracket_editor();
     // A hole drawn on the back flange's outside, 0.3 up: the face's sketch
     // `x` runs along the world's, its `y` down.
     let mut program = editor.program().clone();

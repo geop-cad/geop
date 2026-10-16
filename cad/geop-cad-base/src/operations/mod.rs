@@ -10,7 +10,6 @@ mod inspect_tests;
 mod parameters_tests;
 mod program_tests;
 mod set_tests;
-mod sheetmetal_tests;
 mod step_export_tests;
 mod step_tests;
 mod urdf_tests;

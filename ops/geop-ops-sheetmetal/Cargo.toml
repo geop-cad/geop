@@ -13,10 +13,15 @@ geop-core-editor.workspace = true
 geop-ops-model.workspace = true
 geop-ops-parameters.workspace = true
 geop-ops-sketch.workspace = true
+# What the examples sketch on: the origin's planes.
+geop-ops-datums.workspace = true
 geop-lib-sheet.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+geop-core-program = { workspace = true, features = ["testing"] }
+geop-core-editor = { workspace = true, features = ["testing"] }
+serde_json.workspace = true
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
 geop-core-rasterize.workspace = true

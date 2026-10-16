@@ -1165,3 +1165,93 @@ fn flat_pattern_dxf_reads_back_by_layer() {
     let recorded = flat.dxf(Some("flat_pattern(fp)")).unwrap();
     assert_eq!(recorded, dxf);
 }
+
+// ── The bracket example ─────────────────────────────────────────────────────
+
+/// What the example's programs are written in: sketches, and sheet metal.
+fn example_registry() -> GeopResult<OperationRegistry> {
+    (geop_ops_extrude_revolve::testing::registry()?)
+        .with(BaseFlange)?
+        .with(EdgeFlange)?
+        .with(Hem)?
+        .with(SheetCut)?
+        .with(FlatPattern)
+}
+
+/// The bracket example builds a valid sheet-metal body of three flats, two
+/// bends and the holes cut through it after flanging, survives a trip
+/// through JSON, and its flat pattern — a step like any other — is a valid
+/// flat body with its bend lines.
+#[test]
+fn bracket_example_builds_and_unfolds() {
+    use geop_ops_extrude_revolve::testing::{Built, model_of};
+
+    let mut program = crate::examples::sheet_metal_bracket();
+    let json = serde_json::to_string(&program).unwrap();
+    assert_eq!(serde_json::from_str::<Program>(&json).unwrap(), program);
+    let part = program.built(example_registry).unwrap();
+    let view = part.current();
+    assert_valid(&model_of(&part));
+    let sheet = sheet_body(&view, "sheet_cut(mount)")
+        .and_then(|b| b.bent())
+        .unwrap();
+    assert_eq!((sheet.flats.len(), sheet.bends.len()), (3, 2));
+    assert_eq!(sheet.cuts.len(), 1);
+    assert_eq!(sheet.cuts[0].loops.len(), 2);
+
+    program.push(
+        "flat",
+        FlatPatternArgs {
+            solid: geop_ops_model::solid("sheet_cut(mount)"),
+            keep: false,
+        },
+    );
+    let part = program.built(example_registry).unwrap();
+    let view = part.current();
+    let built = model_of(&part);
+    assert_valid(&built);
+    assert_eq!(built.solid_names(), ["flat_pattern(flat)"]);
+    let Some(SheetBody::Flat(data)) = sheet_body(&view, "flat_pattern(flat)") else {
+        panic!("no flat pattern recorded");
+    };
+    assert_eq!(data.bends.len(), 2);
+    assert!(
+        (view.retrieve_element(&whole_sketch("flat_pattern(flat,bend_lines)"))).is_ok(),
+        "no bend lines"
+    );
+    let notes = geop_ops_model::notes_of(&view).unwrap();
+    assert_eq!(
+        notes.get("flat_pattern(flat)").unwrap().thickness,
+        Some(0.08)
+    );
+}
+
+/// The bracket example, saved and loaded, builds what it built.
+#[test]
+fn bracket_example_round_trips() {
+    let registry = std::rc::Rc::new(example_registry().unwrap());
+    let program = crate::examples::sheet_metal_bracket();
+    geop_core_program::testing::assert_round_trips(registry, None, &program);
+}
+
+/// The bracket example, edited — its back flange made longer, its holes
+/// dropped and put back — builds incrementally what it builds from
+/// scratch.
+#[test]
+fn bracket_example_builds_incrementally() {
+    use geop_ops_extrude_revolve::testing::{edit_args, step};
+
+    let original = crate::examples::sheet_metal_bracket();
+    let mut longer = original.clone();
+    edit_args(step(&mut longer, "back"), |args: &mut EdgeFlangeArgs| {
+        args.length = 0.5.into();
+    });
+    let mut uncut = original.clone();
+    uncut.steps.pop();
+    let registry = std::rc::Rc::new(example_registry().unwrap());
+    geop_core_program::testing::assert_incremental(
+        registry,
+        None,
+        &[original.clone(), longer, original.clone(), uncut, original],
+    );
+}

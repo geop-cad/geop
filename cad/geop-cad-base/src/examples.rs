@@ -22,10 +22,6 @@ use geop_ops_model::element;
 use geop_ops_model::{Combine, solid};
 use geop_ops_pattern::{Direction, LinearPatternArgs, PatternDirection, Seeds, Spacing, feature};
 use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
-use geop_ops_sheetmetal::{
-    BaseFlangeArgs, Corner, EdgeFlangeArgs, FlangePosition, LengthReference, SheetCutArgs,
-    SheetMetalRules, edge,
-};
 use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch, SketchPlane, sketch, whole_sketch};
 use geop_ops_sketch3d::{AddSketch3dArgs, CurveSource, Sketch3d};
 use geop_ops_subd::{Cage, Mirror, SubdArgs};
@@ -493,70 +489,6 @@ pub fn hole_plate() -> Program {
     program
 }
 
-/// A sheet-metal mounting bracket: a 2 x 1.2 plate 0.08 thick (`plate`),
-/// a flange bent up along part of its front edge with reliefs beside it
-/// (`front`), one along all of its back edge (`back`), and two mounting
-/// holes cut through the plate after flanging (`mount`, drawn in `holes`)
-/// — the body is `sheet_cut(mount)`.
-pub fn sheet_metal_bracket() -> Program {
-    let mut program = Program::new();
-    let mut outline = Sketch::new();
-    let lines = rectangle(&mut outline, [0.0, 0.0], 2.0, 1.2);
-    program.push(
-        "outline",
-        AddSketchArgs {
-            plane: Some(on_origin(FrameAxis::Z)),
-            sketch: solved(outline),
-            ..Default::default()
-        },
-    );
-    program.push(
-        "plate",
-        BaseFlangeArgs {
-            sketch: whole_sketch("outline"),
-            rules: SheetMetalRules {
-                thickness: 0.08,
-                bend_radius: 0.08,
-                ..SheetMetalRules::default()
-            },
-            depth: 1.0.into(),
-            flip: false,
-        },
-    );
-    let flange = |line: CurveId, length: f64, offset: f64| EdgeFlangeArgs {
-        edge: Some(edge(format!("base_flange(plate,outline,{line},b)"))),
-        angle: 90.0.into(),
-        length: length.into(),
-        reference: LengthReference::OuterSharp,
-        position: FlangePosition::MaterialInside,
-        radius: None,
-        offset_start: offset,
-        offset_end: offset,
-        corner: Corner::Open,
-    };
-    program.push("front", flange(lines[0], 0.6, 0.3));
-    program.push("back", flange(lines[2], 0.4, 0.0));
-    let mut holes = Sketch::new();
-    circle(&mut holes, [0.5, 0.6], 0.15);
-    circle(&mut holes, [1.5, 0.6], 0.15);
-    program.push(
-        "holes",
-        AddSketchArgs {
-            plane: Some(on_origin(FrameAxis::Z)),
-            sketch: solved(holes),
-            ..Default::default()
-        },
-    );
-    program.push(
-        "mount",
-        SheetCutArgs {
-            sketch: whole_sketch("holes"),
-            face: None,
-        },
-    );
-    program
-}
-
 /// A computer mouse, shaped as a subdivision surface: half a 1.2 x 2 x 0.8
 /// box cage, mirrored in `x = 0`, its back raised into a hump and the rim
 /// of its bottom creased, so that it stands on a flat sole with a sharp
@@ -737,7 +669,6 @@ pub fn all() -> Vec<Example<Program>> {
         ("boss_on_reference_plane", boss_on_reference_plane),
         ("airfoil_wing", airfoil_wing),
         ("subd_mouse", subd_mouse),
-        ("sheet_metal_bracket", sheet_metal_bracket),
         ("patterned_plate", patterned_plate),
         ("horn", horn),
         ("hole_plate", hole_plate),

@@ -367,7 +367,6 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use geop_cad_base::examples;
 
     use geop_core_math::{primitives::Pose, scalars::Scalar};
     use geop_core_program::values::Design;
@@ -700,7 +699,16 @@ mod tests {
     fn writes_a_flat_pattern_for_cutting() {
         let dir = scratch("flat-pattern");
         let path = dir.join("sheet_metal_bracket.geop");
-        std::fs::write(&path, examples::sheet_metal_bracket().to_json().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            geop_cad_base::registry()
+                .unwrap()
+                .example("sheet_metal_bracket")
+                .unwrap()
+                .to_json()
+                .unwrap(),
+        )
+        .unwrap();
         let (program, mut built_part, _) = build(&path).unwrap();
         let outputs = outputs().unwrap();
         let exporter = outputs.get_exporter("flat_pattern").unwrap();

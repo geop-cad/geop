@@ -727,11 +727,13 @@ dependencies = [
  "geop-core-sketch",
  "geop-core-topology",
  "geop-lib-sheet",
+ "geop-ops-datums",
  "geop-ops-extrude-revolve",
  "geop-ops-model",
  "geop-ops-parameters",
  "geop-ops-sketch",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

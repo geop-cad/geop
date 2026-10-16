@@ -133,9 +133,9 @@ pub(crate) mod testing {
     };
     pub(crate) use geop_ops_datums::{origin_axis, origin_plane};
     pub(crate) use geop_ops_extrude_revolve::testing::{
-        args, disc, edit_args, extrude_sketch, extrusion, on_origin, rectangle, sketch, step,
+        args, disc, edit_args, extrude_sketch, extrusion, on_origin, rectangle, step,
     };
-    pub(crate) use geop_ops_model::testing::{assert_valid, check_valid, solid_volume};
+    pub(crate) use geop_ops_model::testing::{check_valid, solid_volume};
 
     pub(crate) use super::{build, workspace};
 
