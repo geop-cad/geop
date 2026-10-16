@@ -34,9 +34,9 @@ use geop_ops_model::{
 };
 use geop_ops_sketch::{Sketch, sketch_element, whole_sketch};
 
-use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_datums::datums;
 use geop_ops_pattern::{CircularPattern, LinearPattern, Mirror};
+use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
 
 /// The operations these tests' programs are written in, and those of
 /// [`super::pattern_tests`].

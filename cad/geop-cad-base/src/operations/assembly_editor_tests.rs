@@ -18,12 +18,12 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops_add_datum::Selected;
 use geop_ops_assembly::{AddPartArgs, Kind, Mate, MateEntity, MateKind, placed_parts};
 use geop_ops_datums::{ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::Extents;
 use geop_ops_model::Combine;
 use geop_ops_model::testing::assert_close;
+use geop_ops_reference_geometry::Selected;
 
 use crate::Command;
 use crate::registry::testing::{Stepping, extrude_sketch, handled, on_origin, pointer, rectangle};

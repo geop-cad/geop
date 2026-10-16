@@ -7,7 +7,7 @@ an axis, a plane or a coordinate system, by name (each a `Datum` of
 [geop-core-math](../core/geop-core-math.md#primitives), carrying a
 full right-handed frame, so anything built on it has axes to be built
 along). The operation that adds one is
-[geop-ops-add-datum](./geop-ops-add-datum.md)'s; this crate is only the
+[geop-ops-reference-geometry](./geop-ops-reference-geometry.md)'s; this crate is only the
 target, so every operation that builds on a datum depends on it alone.
 
 ## The target

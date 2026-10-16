@@ -22,7 +22,6 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
 use geop_ops_assembly::{
     AddPartArgs, DragTool, MateEntity, PartPatternArgs, PatternAxis, Resolved, mate_name,
     placed::locate,
@@ -33,6 +32,7 @@ use geop_ops_extrude_revolve::ExtrudeArgs;
 use geop_ops_model::{element, read_model, testing::assert_close};
 use geop_ops_parameters::instances;
 use geop_ops_pattern::spacing::Spacing;
+use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
 
 use crate::{
     Command, Editor, Workspace, examples,
@@ -156,12 +156,12 @@ impl Built {
     }
 
     /// The point `of` takes of what `entity` is — see
-    /// [`geop_ops_add_datum::Shape`] — where the part has it: of a placed
+    /// [`geop_ops_reference_geometry::Shape`] — where the part has it: of a placed
     /// part, where it is placed.
     fn placed(
         &self,
         entity: &MateEntity,
-        of: impl Fn(&geop_ops_add_datum::Shape) -> Option<Vector3<Design>>,
+        of: impl Fn(&geop_ops_reference_geometry::Shape) -> Option<Vector3<Design>>,
     ) -> [f64; 3] {
         let reader = self.view();
         let p = of(&entity.shape(&reader).unwrap()).expect("the entity has that point");

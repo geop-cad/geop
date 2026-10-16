@@ -27,7 +27,7 @@
 - [geop-ops-constraints](./ops/geop-ops-constraints.md)
 - [geop-ops-datums](./ops/geop-ops-datums.md)
 - [geop-ops-sketch](./ops/geop-ops-sketch.md)
-- [geop-ops-add-datum](./ops/geop-ops-add-datum.md)
+- [geop-ops-reference-geometry](./ops/geop-ops-reference-geometry.md)
 - [geop-ops-boolean](./ops/geop-ops-boolean.md)
 - [geop-ops-extrude-revolve](./ops/geop-ops-extrude-revolve.md)
 - [geop-ops-assembly](./ops/geop-ops-assembly.md)

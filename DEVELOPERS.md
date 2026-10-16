@@ -130,7 +130,7 @@ ops/geop-ops-datums           the part's datums: the origin, and those steps
 ops/geop-ops-sketch           the sketch operation: drawing and constraint
                                tools, snapping, reference geometry and
                                projections of the part
-ops/geop-ops-add-datum        the datum operation: reference points, axes,
+ops/geop-ops-reference-geometry        the datum operation: reference points, axes,
                                planes and coordinate systems built from what
                                is picked
 ops/geop-ops-boolean          the boolean and split operations

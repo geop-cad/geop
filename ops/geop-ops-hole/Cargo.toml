@@ -27,6 +27,6 @@ testing = ["dep:geop-ops-extrude-revolve", "geop-ops-extrude-revolve/testing"]
 [dev-dependencies]
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
-geop-ops-add-datum.workspace = true
+geop-ops-reference-geometry.workspace = true
 geop-ops-pattern.workspace = true
 serde_json.workspace = true

@@ -13,11 +13,11 @@ use geop_core_math::{
     primitives::{DatumComponent, FrameAxis},
     scalars::{Ring, ScalInF64 as S, Scalar},
 };
-use geop_ops_add_datum::Selected;
 use geop_ops_assembly::{AddPartArgs, Kind, Mate, MateEntity, solids::placed_solids};
 use geop_ops_datums::{ORIGIN, component_name, datum};
 use geop_ops_harness::{RouteArgs, Wire, WireSize, cable};
 use geop_ops_model::{element, read_model};
+use geop_ops_reference_geometry::Selected;
 use geop_ops_sketch::sketch_element;
 
 use crate::{

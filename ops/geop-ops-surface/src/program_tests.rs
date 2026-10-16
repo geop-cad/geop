@@ -15,13 +15,13 @@ use geop_core_program::{
     values::Design,
 };
 use geop_core_sketch::PointId;
-use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_datums::{ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::{
     Extents, ExtrudeArgs, LoftArgs, Output,
     testing::{Built, n, on_origin, sketch},
 };
 use geop_ops_model::{NamedModel, testing::assert_valid};
+use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_sketch::{Sketch, SketchPlane, whole_sketch};
 
 /// The operations these tests' programs are written in.

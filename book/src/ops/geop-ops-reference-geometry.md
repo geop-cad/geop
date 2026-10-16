@@ -1,4 +1,4 @@
-# geop-ops-add-datum
+# geop-ops-reference-geometry
 
 > Brief overview only — full documentation is coming later.
 

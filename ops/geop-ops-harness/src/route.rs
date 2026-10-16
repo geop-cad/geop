@@ -60,10 +60,10 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_program::{reader::Reader, values::Design};
-use geop_ops_add_datum::{Selected, Shape};
 use geop_ops_assembly::MateEntity;
 use geop_ops_model::Chain;
 use geop_ops_parameters::located;
+use geop_ops_reference_geometry::{Selected, Shape};
 
 /// Which way the route is told to run through a [`Waypoint`].
 #[derive(Clone, Debug)]

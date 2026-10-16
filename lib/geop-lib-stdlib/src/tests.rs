@@ -35,7 +35,7 @@ fn registry() -> Registry {
         let r = geop_ops_model::register(r)?;
         let r = geop_ops_sketch::register(r)?;
         let r = geop_ops_datums::register(r)?;
-        let r = geop_ops_add_datum::register(r)?;
+        let r = geop_ops_reference_geometry::register(r)?;
         let r = geop_ops_extrude_revolve::register(r)?;
         let r = geop_ops_pattern::register(r)?;
         let r = geop_ops_assembly::register(r)?;
@@ -569,9 +569,9 @@ fn gear_drive() -> Program {
         primitives::{DatumComponent, FrameAxis, Pose},
         vector::Vector3,
     };
-    use geop_ops_add_datum::{AddDatumArgs, Construction, Selected};
     use geop_ops_assembly::{AddPartArgs, CouplingKind, JointKind, Mate, MateEntity, Transmission};
     use geop_ops_datums::{ORIGIN, component_name, datum};
+    use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
 
     let n = Design::from_f64;
     let pose = |position: [f64; 3], degrees: [f64; 3]| {

@@ -14,7 +14,6 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
 };
 use geop_core_topology::Body;
-use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_datums::{datums, read_datums};
 use geop_ops_extrude_revolve::{
     Extents,
@@ -22,6 +21,7 @@ use geop_ops_extrude_revolve::{
 };
 use geop_ops_model::{Combine, solid};
 use geop_ops_model::{NamedModel, model, testing::assert_valid};
+use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_sketch::{Sketch, SketchPlane};
 
 /// The operations these tests' programs are written in.

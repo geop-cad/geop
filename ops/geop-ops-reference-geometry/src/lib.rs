@@ -3,6 +3,13 @@
 //! the part ([`Selected`]), in one of the ways CAD systems commonly offer
 //! (see [`Construction`]), and adds it to the part's datums (see
 //! [`geop_ops_datums`]).
+//!
+//! [`Selected`] is this crate's public pick vocabulary: one element of a
+//! part, picked in the viewport, with the [`Role`] it plays and the
+//! [`Shape`] it has. The crate sits above every crate it picks from (the
+//! model, the sketches, the datums), so a crate that lets the user pick
+//! any element of a part, the assembly's mates for one, reads the pick
+//! through `Selected` rather than naming each kind of element itself.
 
 mod add_datum;
 mod editor;

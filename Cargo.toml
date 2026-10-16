@@ -14,7 +14,7 @@ members = [
     "ops/geop-ops-parameters",
     "ops/geop-ops-sketch",
     "ops/geop-ops-datums",
-    "ops/geop-ops-add-datum",
+    "ops/geop-ops-reference-geometry",
     "ops/geop-ops-extrude-revolve",
     "ops/geop-ops-boolean",
     "ops/geop-ops-edit",
@@ -61,7 +61,7 @@ geop-ops-model = { path = "ops/geop-ops-model" }
 geop-ops-parameters = { path = "ops/geop-ops-parameters" }
 geop-ops-sketch = { path = "ops/geop-ops-sketch" }
 geop-ops-datums = { path = "ops/geop-ops-datums" }
-geop-ops-add-datum = { path = "ops/geop-ops-add-datum" }
+geop-ops-reference-geometry = { path = "ops/geop-ops-reference-geometry" }
 geop-ops-extrude-revolve = { path = "ops/geop-ops-extrude-revolve" }
 geop-ops-boolean = { path = "ops/geop-ops-boolean" }
 geop-ops-edit = { path = "ops/geop-ops-edit" }

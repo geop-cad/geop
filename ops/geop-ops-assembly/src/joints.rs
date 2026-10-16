@@ -23,7 +23,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::values::Design;
-use geop_ops_add_datum::Shape;
+use geop_ops_reference_geometry::Shape;
 use serde::{Deserialize, Serialize};
 
 use crate::residuals::{D, Placing, parallel};

@@ -18,8 +18,8 @@ use geop_core_math::{
 };
 use geop_core_program::{element::PickedElement, reader::Reader, values::Design};
 use geop_core_topology::distance::{Feature, PlacedFace, closest_points};
-use geop_ops_add_datum::{Selected, Shape};
 use geop_ops_parameters::located;
+use geop_ops_reference_geometry::{Selected, Shape};
 use serde::Serialize;
 
 /// What is picked to be measured, by what is drawn of it: vertices,

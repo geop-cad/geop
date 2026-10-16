@@ -44,7 +44,7 @@ ops/geop-ops-constraints     constraints and unknowns of a part's state,
 ops/geop-ops-datums          the part's datums: the origin, and those steps
                               add
 ops/geop-ops-sketch          the sketch operation
-ops/geop-ops-add-datum       the datum operation: reference points, axes,
+ops/geop-ops-reference-geometry       the datum operation: reference points, axes,
                               planes and coordinate systems
 ops/geop-ops-boolean         the boolean and split operations
 ops/geop-ops-extrude-revolve the extrude, revolve, sweep and loft

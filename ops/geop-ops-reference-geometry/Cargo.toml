@@ -1,5 +1,5 @@
 [package]
-name = "geop-ops-add-datum"
+name = "geop-ops-reference-geometry"
 version.workspace = true
 edition.workspace = true
 

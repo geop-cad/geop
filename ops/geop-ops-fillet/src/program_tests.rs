@@ -10,7 +10,6 @@ use geop_core_math::{
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
 };
-use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_datums::{ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::{
     Extents, LoftArgs, Output,
@@ -23,6 +22,7 @@ use geop_ops_model::{
     NamedModel, model,
     testing::{assert_valid, check_valid, edges_where, has_vertex, middle},
 };
+use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_sketch::{Sketch, SketchPlane, whole_sketch};
 
 /// The operations these tests' programs are written in.

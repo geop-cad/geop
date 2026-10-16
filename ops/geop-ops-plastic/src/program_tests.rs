@@ -10,7 +10,6 @@ use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, values::Design,
 };
-use geop_ops_add_datum::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_datums::datums;
 use geop_ops_extrude_revolve::{
     Extents,
@@ -22,6 +21,7 @@ use geop_ops_model::{
     NamedModel, model,
     testing::{assert_valid, check_valid},
 };
+use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
 use geop_ops_sketch::{Sketch, SketchPlane, whole_sketch};
 
 use geop_ops_shell::Shell;

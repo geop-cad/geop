@@ -28,7 +28,7 @@ with the parts placed in it: their solids, each of its own part's material
 
 `file` is relative to the program's own file. A mate holds by `MateEntity`s:
 an element `on` — a `Selected` of
-[geop-ops-add-datum](./geop-ops-add-datum.md): a vertex, an edge, a face, a
+[geop-ops-reference-geometry](./geop-ops-reference-geometry.md): a vertex, an edge, a face, a
 datum (`{"datum": "origin:xy"}`) or a sketch's point or curve — of the part
 itself, which is ground, or of a part placed in it, its target behind the
 part's path: `pin/model`, or `asm/pin/model` for one placed in a placed

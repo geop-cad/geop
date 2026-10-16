@@ -42,13 +42,13 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_ops_add_datum::Selected;
 use geop_ops_constraints::{
     Bound, Constraint, Constraints,
     constraint::define_constraints,
     unknown::{Unknown, declare_unknowns},
 };
 use geop_ops_parameters::{compose, placement};
+use geop_ops_reference_geometry::Selected;
 
 use crate::{
     frame::MateEntity,

@@ -33,7 +33,6 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_lib_stdlib::WithStandardParts;
-use geop_ops_add_datum::Selected;
 use geop_ops_assembly::{
     AddPartArgs, Kind, Mate, MateEntity, Resolved,
     placed::{locate, placed_parts},
@@ -42,6 +41,7 @@ use geop_ops_assembly::{
 use geop_ops_extrude_revolve::Extents;
 use geop_ops_model::Combine;
 use geop_ops_model::{element, read_model};
+use geop_ops_reference_geometry::Selected;
 use geop_ops_sketch::Sketch;
 
 /// A part of one extrusion `height` tall, of a sketch on the origin's Z

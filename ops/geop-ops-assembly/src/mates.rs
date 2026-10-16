@@ -31,7 +31,7 @@ use geop_core_program::{
     target::{Target, TargetReference},
     values::Design,
 };
-use geop_ops_add_datum::Role;
+use geop_ops_reference_geometry::Role;
 use serde::{Deserialize, Serialize};
 
 /// `roles` in words: `a point, a line or a plane`.

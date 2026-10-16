@@ -22,13 +22,13 @@ use geop_core_program::{
     program::{Program, ProgramStep},
     values::{Design, Setting, StateValue, pose_state},
 };
-use geop_ops_add_datum::Selected;
 use geop_ops_assembly::MateEntity;
 use geop_ops_datums::datum;
 use geop_ops_extrude_revolve::{ExtrudeArgs, Output};
 use geop_ops_model::Combine;
 use geop_ops_model::{BooleanOp, Face, NamedModel, Vertex, element, read_model};
 use geop_ops_parameters::parameters_of;
+use geop_ops_reference_geometry::Selected;
 
 use crate::{
     Command, Editor, Update, examples,
@@ -542,9 +542,9 @@ fn offset_plane_dragged_by_its_handle() {
     let mut program = editor.program().clone();
     program.push(
         "plane",
-        geop_ops_add_datum::AddDatumArgs {
+        geop_ops_reference_geometry::AddDatumArgs {
             selection: vec![Selected::Face(element("extrude(box,end)"))],
-            construction: geop_ops_add_datum::Construction::Offset {
+            construction: geop_ops_reference_geometry::Construction::Offset {
                 distance: 0.5.into(),
             },
         },
@@ -590,10 +590,11 @@ fn offset_plane_dragged_by_its_handle() {
     if let Some(e) = &editor.handle(Command::Commit).error {
         panic!("{e}")
     }
-    let args: geop_ops_add_datum::AddDatumArgs = args(editor.program().steps.last().unwrap());
+    let args: geop_ops_reference_geometry::AddDatumArgs =
+        args(editor.program().steps.last().unwrap());
     assert_eq!(
         args.construction,
-        geop_ops_add_datum::Construction::Offset {
+        geop_ops_reference_geometry::Construction::Offset {
             distance: 0.8.into()
         }
     );
@@ -3674,7 +3675,8 @@ fn a_3d_sketch_point_and_line_are_picked() {
     editor.handle(dialog("construction", Value::Choice("parallel".into())));
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
-    let datum: geop_ops_add_datum::AddDatumArgs = args(editor.program().steps.last().unwrap());
+    let datum: geop_ops_reference_geometry::AddDatumArgs =
+        args(editor.program().steps.last().unwrap());
     assert_eq!(
         datum.selection,
         [

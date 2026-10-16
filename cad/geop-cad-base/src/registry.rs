@@ -28,7 +28,7 @@ pub fn registry() -> GeopResult<Registry> {
     let r = geop_ops_model::register(r)?;
     let r = geop_ops_sketch::register(r)?;
     let r = geop_ops_datums::register(r)?;
-    let r = geop_ops_add_datum::register(r)?;
+    let r = geop_ops_reference_geometry::register(r)?;
     let r = geop_ops_sketch3d::register(r)?;
     let r = geop_ops_extrude_revolve::register(r)?;
     let r = geop_ops_hole::register(r)?;
