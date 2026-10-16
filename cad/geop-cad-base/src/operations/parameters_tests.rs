@@ -70,7 +70,10 @@ fn outline_corner(view: &Reader) -> [f64; 3] {
 /// built after it move with it — the sketch's ids for them unchanged.
 #[test]
 fn projections_follow_the_part() {
-    let mut program = examples::parametric_plate();
+    let mut program = crate::registry()
+        .unwrap()
+        .example("parametric_plate")
+        .unwrap();
     let mut on_floor = AddSketchArgs::new(Some(on_origin(FrameAxis::Z)));
     // What it projects is put into the sketch when it is built.
     on_floor.references.push(Reference::new(Source::Projection {
@@ -111,7 +114,10 @@ fn projections_follow_the_part() {
 /// of them too.
 #[test]
 fn dimensions_follow_parameters() {
-    let program = examples::parametric_plate();
+    let program = crate::registry()
+        .unwrap()
+        .example("parametric_plate")
+        .unwrap();
     let part = program.built().unwrap();
     let view = part.current();
     assert_eq!(input(&view, COLOR), Some(Setting::Text("#d0893e".into())));
@@ -131,7 +137,12 @@ fn dimensions_follow_parameters() {
 fn placed_parts_take_the_parameters_given() {
     let workspace = crate::workspace(BTreeMap::from([(
         "plate.geop".to_string(),
-        examples::parametric_plate().to_json().unwrap(),
+        crate::registry()
+            .unwrap()
+            .example("parametric_plate")
+            .unwrap()
+            .to_json()
+            .unwrap(),
     )]));
     let program = examples::plates_assembly();
     let part = crate::build(&program, "plates.geop", workspace.clone())
@@ -182,8 +193,18 @@ fn placed_parts_take_the_parameters_given() {
 /// plate's top is.
 #[test]
 fn the_parametric_plate_is_a_plate_with_a_hole() {
-    let built = examples::parametric_plate().built().unwrap();
-    let part = examples::parametric_plate().build_model().unwrap();
+    let built = crate::registry()
+        .unwrap()
+        .example("parametric_plate")
+        .unwrap()
+        .built()
+        .unwrap();
+    let part = crate::registry()
+        .unwrap()
+        .example("parametric_plate")
+        .unwrap()
+        .build_model()
+        .unwrap();
     let points: Vec<[f64; 3]> = part
         .topology()
         .vertices
@@ -228,7 +249,10 @@ fn the_parametric_plate_is_a_plate_with_a_hole() {
 /// crossing. Reduced to a plate and a cylinder in the booleans' tests.
 #[test]
 fn wide_plate_with_an_m6_hole() {
-    let mut plate = examples::parametric_plate();
+    let mut plate = crate::registry()
+        .unwrap()
+        .example("parametric_plate")
+        .unwrap();
     let mut parameters = parameters_of(&plate);
     let ParameterKind::Number { expression, .. } = &mut parameters.values[0].kind else {
         panic!("width is a number")
@@ -256,7 +280,14 @@ fn placing_a_part_offers_its_parameters() {
     let mut editor = crate::editor();
     let files = BTreeMap::from([(
         "plate.geop".to_string(),
-        Some(examples::parametric_plate().to_json().unwrap()),
+        Some(
+            crate::registry()
+                .unwrap()
+                .example("parametric_plate")
+                .unwrap()
+                .to_json()
+                .unwrap(),
+        ),
     )]);
     assert!(editor.handle(Command::Files { files }).error.is_none());
     handled(
@@ -312,7 +343,10 @@ fn placing_a_part_offers_its_parameters() {
 fn parameters_are_edited_and_undone() {
     use crate::Command;
     let mut editor = crate::editor();
-    let program = examples::parametric_plate();
+    let program = crate::registry()
+        .unwrap()
+        .example("parametric_plate")
+        .unwrap();
     editor.handle(Command::Load {
         program: program.clone(),
         path: None,
@@ -375,7 +409,10 @@ fn parameters_changed_rebuild_what_reads_them() {
     use geop_core_editor::editing::{Control, Shape, StepEditEvent, Tone, Value};
     use geop_ops_parameters::{Parameter, Parameters, parameters::Row};
     let mut editor = crate::editor();
-    let program = examples::parametric_plate();
+    let program = crate::registry()
+        .unwrap()
+        .example("parametric_plate")
+        .unwrap();
     editor.handle(Command::Load {
         program: program.clone(),
         path: None,
@@ -514,7 +551,10 @@ fn parameters_changed_rebuild_what_reads_them() {
 /// A runner rebuilds from scratch what a parameter changed reaches.
 #[test]
 fn runners_rebuild_when_parameters_change() {
-    let mut program = examples::parametric_plate();
+    let mut program = crate::registry()
+        .unwrap()
+        .example("parametric_plate")
+        .unwrap();
     let mut running = Running::new();
     let corner = |running: &Running| outline_corner(&running.part.current())[0];
     assert_eq!(running.run(&program, None), []);
@@ -540,7 +580,10 @@ fn runners_rebuild_when_parameters_change() {
 /// part is the one already built.
 #[test]
 fn parameters_no_step_reads_rebuild_nothing() {
-    let mut program = examples::parametric_plate();
+    let mut program = crate::registry()
+        .unwrap()
+        .example("parametric_plate")
+        .unwrap();
     let mut running = Running::new();
     assert_eq!(running.run(&program, None), []);
     // Every step but those of its parameters and properties, which build
@@ -576,7 +619,10 @@ fn parameters_no_step_reads_rebuild_nothing() {
 fn colours_are_picked_without_rebuilding() {
     use crate::{Command, Editor};
     let mut editor = crate::editor();
-    let program = examples::parametric_plate();
+    let program = crate::registry()
+        .unwrap()
+        .example("parametric_plate")
+        .unwrap();
     editor.handle(Command::Load {
         program: program.clone(),
         path: None,
