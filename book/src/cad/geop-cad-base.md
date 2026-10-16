@@ -69,11 +69,17 @@ Each operation crate ships the examples that exercise it in its own
 `examples.rs`, registered by its `register` (extrude and revolve's
 `box_with_drill_hole`, `bracket`, `pipe`, `parametric_plate`, ...;
 `split_plate` of [geop-ops-boolean](../ops/geop-ops-boolean.md);
-`rounded_box` of `geop-ops-fillet`; the assemblies and every example made
-of several files of [geop-ops-assembly](../ops/geop-ops-assembly.md)).
-`examples` holds the rest for now: programs written in Rust
-(`patterned_plate`, `hole_plate`, ...), offered as one `ExampleSet`
-(`examples::set`). An editor lists them all through the registry
+`rounded_box` of `geop-ops-fillet`; `horn` and `motor_flange` of extrude
+and revolve too; the datum planes' `boss_on_reference_plane` and
+`airfoil_wing` of
+[geop-ops-reference-geometry](../ops/geop-ops-reference-geometry.md);
+`patterned_plate` of `geop-ops-pattern`, `hole_plate` of `geop-ops-hole`,
+`sheet_metal_bracket` of `geop-ops-sheetmetal`, `subd_mouse` of
+`geop-ops-subd`, `curved_panel` of `geop-ops-surface`; the assemblies and
+every example made of several files of
+[geop-ops-assembly](../ops/geop-ops-assembly.md)). `examples` holds only
+the examples drawn in the editor (`src/drawn/`), offered as one
+`ExampleSet` (`examples::set`). An editor lists them all through the registry
 (`Registry::example_programs`); they serve as a reference for writing new
 programs.
 
