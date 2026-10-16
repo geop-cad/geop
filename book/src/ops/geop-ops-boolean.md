@@ -17,3 +17,9 @@ as it was.
 The same combination done by another operation with the solid it builds —
 an extrude cutting a pocket, say — is that operation's `Combine`, defined in
 [geop-ops-model](./geop-ops-model.md) and applied by `combine_tools`.
+
+Its example, `split_plate`, is a plate cut in two by a face extruded from a
+line (`examples`). The tests of programs uniting extruded and revolved
+solids — and extruding or revolving up to the next face of solids so
+united — are here (`program_tests.rs`): this crate depends on
+extrude and revolve for its example, not the other way round.

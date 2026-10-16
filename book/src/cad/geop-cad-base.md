@@ -65,9 +65,14 @@ to the crate it tests.
 
 ## Examples
 
-`examples` holds programs written in Rust (`box_with_drill_hole`,
-`bracket`, `cross_drilled_shaft`, `split_plate`, `handle_with_hole`,
-`luggage_tag`, `patterned_plate`, `hole_plate`, ...) and workspaces of
-several files (`workspaces`), offered as one `ExampleSet` (`examples::set`).
-The tests use them, and they serve as a reference for writing new programs.
+Each operation crate ships the examples that exercise it in its own
+`examples.rs`, registered by its `register` (extrude and revolve's
+`box_with_drill_hole`, `bracket`, `pipe`, `parametric_plate`, ...;
+`split_plate` of [geop-ops-boolean](../ops/geop-ops-boolean.md);
+`rounded_box` of `geop-ops-fillet`). `examples` holds the rest for now:
+programs written in Rust (`patterned_plate`, `hole_plate`, ...) and
+workspaces of several files (`workspaces`), offered as one `ExampleSet`
+(`examples::set`). An editor lists them all through the registry
+(`Registry::example_programs`); they serve as a reference for writing new
+programs.
 

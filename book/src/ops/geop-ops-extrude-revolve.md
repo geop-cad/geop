@@ -8,7 +8,14 @@ arguments refer to — the sketch's areas as profiles
 with [geop-lib-sweep](../lib/geop-lib-sweep.md), which describes the sweeps
 and how what they build is named. With the `testing` feature, `testing`
 draws the sketches and pushes the extrusions other crates' program tests
-start from.
+start from, and `testing::bodies` the boxes, cylinders and spheres the
+stress sweeps of `geop-ops-fillet` and `geop-ops-shell` blend and shell.
+
+Its `examples` — `box_with_drill_hole`, `bracket`, `cross_drilled_shaft`,
+`handle_with_hole`, `luggage_tag`, `revolved_cone_on_box`,
+`parametric_plate`, `pipe` — are registered with its operations; each is
+tested to round-trip and to build incrementally (`example_tests.rs`). The
+programs from bug reports, rebuilt in Rust, are `regression_tests.rs`.
 
 ## The operations
 

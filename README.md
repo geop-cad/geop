@@ -134,5 +134,5 @@ reads the placed files next to it.
 
 The web app keeps its program files in the browser, in an explorer sidebar
 like VS Code's: new, rename, delete, upload and download them there. The VS Code extension in `vscode-extension/` opens any
-`.geop` file as the editor, with the kernel running natively (`geop serve`). `outputs/parts/` has the examples of
-`cad/geop-cad-base/src/examples.rs` as program files.
+`.geop` file as the editor, with the kernel running natively (`geop serve`). `geop examples --out-dir <dir>` writes every
+built-in example (each operation crate's `examples.rs`) as a program file and its part.
