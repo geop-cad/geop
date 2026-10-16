@@ -5,6 +5,8 @@
 //! metric thread on a cylindrical face, recorded as a cosmetic thread or
 //! modelled by sweeping its profile along a helix (`thread`).
 
+#[cfg(test)]
+mod editor_tests;
 pub mod examples;
 mod hole;
 mod icons;
