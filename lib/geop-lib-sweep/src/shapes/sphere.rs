@@ -3,119 +3,22 @@
 //! hemisphere. No approximation — the surfaces *are* spheres, so a point
 //! sampled anywhere on one is exactly `radius` from the centre.
 //!
-//! Built quadrant-column by quadrant-column rather than row by row, which is
-//! what makes the count come out at exactly 8. `mef` always leaves something
-//! behind on the face it split from, so a row-by-row construction ends with
-//! the starting placeholder still holding an extra, invisible zero-area cap
-//! at one pole. Going column-wise makes the *last* quadrant's own closing
-//! land back on the placeholder itself, consuming it.
-//!
-//! That matters beyond tidiness. A leftover placeholder carries
-//! [`NurbSurface::everything`], whose every coordinate is `ENTIRE`, so it
-//! `could_be_equal`s any point and silently swallows every containment and
-//! intersection query aimed at it; and a zero-area face has no interior
-//! point to classify, which is precisely what a boolean needs from every
-//! face. Both are asserted against in this module's own tests.
+//! Each quadrant is a face over the unit square of its parameters, one side
+//! of which is collapsed to its pole. A degenerate coedge at the pole vertex
+//! runs along that side, so that the loop closes in `(u, v)` too:
+//! `contains::face::face_contains` relies on the pcurves alone tracing a
+//! closed polygon.
 
 use geop_core_geometry::{
-    nurb_curve::{NurbCurve2D, NurbCurve3D, sqrt2_over_2},
+    nurb_curve::{NurbCurve3D, sqrt2_over_2},
     nurb_surface::NurbSurface,
 };
-use geop_core_math::{
-    geop_error::{GeopResult, WithContext},
-    scalars::Scalar,
-    vector::{Vector2, Vector3},
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
+use geop_core_topology::{
+    Sense, SolidId,
+    build::{BodySpec, CoedgeOn, EdgeSpec},
 };
-use geop_core_topology::{CoedgeId, SolidId};
-use geop_ops_model::{NamedModel, Namer};
-
-/// Bridges a quadrant face's own `(u, v)` boundary-loop gap at a pole it
-/// touches on its `v = 0` side: the face's two meridian edges meet at the
-/// shared pole vertex, but nothing represents the pole's zero-length
-/// angular span in *parameter* space, so the loop would jump from `u = 0`
-/// to `u = 1` without a pcurve covering the gap — fatal to
-/// `contains::face::face_contains`, which relies on the pcurves alone
-/// tracing a closed polygon. `at` is the coedge right after the gap; the
-/// bridge, a degenerate coedge sitting at the pole, goes right before it.
-fn close_top_pole_gap<S: Scalar>(model: &mut NamedModel<S>, at: CoedgeId) -> GeopResult<()> {
-    let before = model.topology().get_coedge(at)?.prev;
-    let pole = model.topology().coedge_end_vertex_id(before)?;
-    let pcurve = NurbCurve2D::line(
-        Vector2::from_array([S::ZERO, S::ZERO]),
-        Vector2::from_array([S::ONE, S::ZERO]),
-    )?;
-    model
-        .add_vertex_coedge(before, pole, pcurve)
-        .with_context("sphere: closing top-pole pcurve gap failed")?;
-    Ok(())
-}
-
-/// Like [`close_top_pole_gap`], for a pole on a quadrant's `v = 1` side:
-/// the gap sits right *after* `at`, so the bridge grows from `at` itself.
-fn close_bottom_pole_gap<S: Scalar>(model: &mut NamedModel<S>, at: CoedgeId) -> GeopResult<()> {
-    let pole = model.topology().coedge_end_vertex_id(at)?;
-    let pcurve = NurbCurve2D::line(
-        Vector2::from_array([S::ONE, S::ONE]),
-        Vector2::from_array([S::ZERO, S::ONE]),
-    )?;
-    model
-        .add_vertex_coedge(at, pole, pcurve)
-        .with_context("sphere: closing bottom-pole pcurve gap failed")?;
-    Ok(())
-}
-
-// `sphere_quadrant_surface`'s own `u` (equator direction) runs `eq1 -> eq0`
-// (`u = 0` at `eq1`, `u = 1` at `eq0`) — backwards from the naive "eq0 is
-// u = 0" reading — so that its normal comes out pointing outward, not
-// inward; `v` (meridian direction) is unaffected. Every pcurve below whose
-// `u` isn't fixed at a single value (or whose fixed value depends on which
-// meridian it's on) has that `u` component flipped (`u -> 1 - u`) from
-// what the naive reading would suggest, to match.
-
-/// The pcurve a meridian (pole `->` equator) coedge carries, on *whichever*
-/// quadrant it ends up on: `u = 1` (its own quadrant's "eq0 side" edge —
-/// swapped from the naive "u = 0"), `v: 0 -> 1` (pole to equator). Every
-/// meridian coedge here plays this exact role, so one constant works for
-/// all of them — including a fresh one's `pcurve_reversed`, since it stays
-/// behind on the placeholder face as *next* quadrant's own anchor, needing
-/// this same role there too.
-fn meridian_pcurve<S: Scalar>() -> GeopResult<geop_core_geometry::nurb_curve::NurbCurve2D<S>> {
-    NurbCurve2D::line(
-        Vector2::from_array([S::ONE, S::ZERO]),
-        Vector2::from_array([S::ONE, S::ONE]),
-    )
-}
-/// The pcurve an equator beam carries as a north quadrant's own `v = 1`
-/// edge (`u: 1 -> 0`, quadrant `k` to quadrant `k + 1`, swapped from the
-/// naive `u: 0 -> 1`).
-fn beam_pcurve_north<S: Scalar>() -> GeopResult<geop_core_geometry::nurb_curve::NurbCurve2D<S>> {
-    NurbCurve2D::line(
-        Vector2::from_array([S::ONE, S::ONE]),
-        Vector2::from_array([S::ZERO, S::ONE]),
-    )
-}
-/// The pcurve the same beam carries (reversed) as a south quadrant's own
-/// `v = 0` edge (`u: 0 -> 1`, quadrant `k + 1` back to quadrant `k`,
-/// swapped from the naive `u: 1 -> 0`).
-fn beam_pcurve_south<S: Scalar>() -> GeopResult<geop_core_geometry::nurb_curve::NurbCurve2D<S>> {
-    NurbCurve2D::line(
-        Vector2::from_array([S::ZERO, S::ZERO]),
-        Vector2::from_array([S::ONE, S::ZERO]),
-    )
-}
-/// The pcurve the meridian `mef` itself closes off with carries, on the new
-/// quadrant it belongs to: `u = 0` (its own quadrant's "eq1 side" edge —
-/// swapped from the naive `u = 1`), `v: 1 -> 0` (equator back to
-/// pole — the boundary loop runs the opposite way around this side, same
-/// reason a plain rectangle's own right edge runs top-to-bottom
-/// even though its top edge ran left-to-right.
-fn meridian_closing_pcurve<S: Scalar>() -> GeopResult<geop_core_geometry::nurb_curve::NurbCurve2D<S>>
-{
-    NurbCurve2D::line(
-        Vector2::from_array([S::ZERO, S::ONE]),
-        Vector2::from_array([S::ZERO, S::ZERO]),
-    )
-}
+use geop_ops_model::{BodyNames, NamedModel, Namer};
 
 /// A degree-(2, 2) patch spanning from `pole` (a degenerate row, `v = 0` if
 /// `pole_at_v0` else `v = 1`) to the exact 90-degree equator arc `eq0 ->
@@ -179,10 +82,9 @@ fn sphere_quadrant_surface<S: Scalar>(
     // direction, in that natural order) pointed inward, not outward, and
     // reversing which end of the equator arc is "u = 0" negates the cross
     // product without changing the surface's own shape or touching `v`
-    // (the already-verified pole placement above). Every pcurve that
-    // depends on `u` is written in this same reversed convention (`u: 0 ->
-    // 1` swapped for `u: 1 -> 0` from what "eq0 is u = 0" would naively
-    // suggest) to match.
+    // (the already-verified pole placement above). `sphere_solid` bounds
+    // each face in this same convention: `u = 0` at `eq1`, `u = 1` at
+    // `eq0`.
     let knots = vec![S::ZERO, S::ZERO, S::ZERO, S::ONE, S::ONE, S::ONE];
     let cps = vec![
         u2[0], u2[1], u2[2], u1[0], u1[1], u1[2], u0[0], u0[1], u0[2],
@@ -190,24 +92,14 @@ fn sphere_quadrant_surface<S: Scalar>(
     NurbSurface::try_new(2, 2, cps, knots.clone(), knots)
 }
 
-/// A sphere of `radius` centered at `center`, built as exactly 8 real
-/// degree-(2, 2) quadrant faces (no leftover degenerate one) — one column
-/// (a north + a south quadrant) at a time, around 4 meridians: `mvfs` plus
-/// two `mve`s bootstrap the very first meridian (pole `->` equator `->`
-/// pole, i.e. the profile, each half an exact 90-degree arc), then per
-/// remaining meridian, one `mve` grows the equator "beam" (also an exact
-/// arc) to it and two `mef`s close off that column's north and south
-/// quadrant. The very last meridian is the first one again (its own
-/// closing `mef`'s new edge *is* the last beam) closing the loop, so its
-/// own closing needs only a single `mef` (the north quadrant) — the south
-/// one is already exactly the boundary still left on the placeholder face,
-/// which just needs `replace_face` to become real.
+/// A sphere of `radius` centered at `center`, as exactly 8 degree-(2, 2)
+/// quadrant faces between its poles and 4 points of its equator.
 ///
 /// Named as the operation `sphere(name)`: the poles `N(north)`/`N(south)`,
 /// the equator's vertices `N(equator,a0..a3)` at angles `a0` (`+x`), `a1`
 /// (`+y`), ..., its quarter arcs `N(equator,q0..q3)` (`q0` from `a0` to
-/// `a1`, ...), the meridian arcs `N(north,a0..)`/`N(south,a0..)` from the
-/// equator to each pole, and the eight quadrant faces
+/// `a1`, ...), the meridian arcs `N(north,a0..)`/`N(south,a0..)` between
+/// the equator and each pole, and the eight quadrant faces
 /// `N(north,q0..)`/`N(south,q0..)`.
 pub fn sphere_solid<S: Scalar>(
     model: &mut NamedModel<S>,
@@ -230,8 +122,8 @@ pub fn sphere_solid<S: Scalar>(
     let sin_t = [zero, one, zero, zero.sub(one)];
     let equator = |k: usize| {
         center.add(&Vector3::from_array([
-            radius.mul(cos_t[k]),
-            radius.mul(sin_t[k]),
+            radius.mul(cos_t[k % 4]),
+            radius.mul(sin_t[k % 4]),
             zero,
         ]))
     };
@@ -240,111 +132,80 @@ pub fn sphere_solid<S: Scalar>(
         let mid = p0.add(&p1).sub(&center);
         NurbCurve3D::arc(p0, mid, p1, w)
     };
-    let arc_beam = |k: usize, k1: usize| arc(equator(k), equator(k1));
-    let north_quadrant = |k: usize, k1: usize| {
-        sphere_quadrant_surface(north, equator(k), equator(k1), center, w, true)
+
+    // The vertices: the poles, then the equator's points. The edges, three
+    // per quarter `k`: the equator's arc `eq(k) -> eq(k + 1)`, and the
+    // meridians `north -> eq(k)` and `eq(k) -> south`.
+    const NORTH: usize = 0;
+    const SOUTH: usize = 1;
+    let eq = |k: usize| 2 + k % 4;
+    let equator_arc = |k: usize| 3 * (k % 4);
+    let north_meridian = |k: usize| 3 * (k % 4) + 1;
+    let south_meridian = |k: usize| 3 * (k % 4) + 2;
+
+    let mut spec = BodySpec::new(true);
+    let mut names = BodyNames {
+        vertices: vec![n(&["north"]), n(&["south"])],
+        edges: Vec::new(),
+        faces: Vec::new(),
+        solid: Some(namer.root()),
     };
-    let south_quadrant = |k: usize, k1: usize| {
-        sphere_quadrant_surface(south, equator(k), equator(k1), center, w, false)
-    };
-
-    // The placeholder face ends up as the last south quadrant.
-    let (v_north, face0, solid_id) =
-        model.mvfs(north, n(&["north"]), n(&["south", "q3"]), namer.root())?;
-
-    // The profile: north -> equator(0) -> south, meridian 0's own two
-    // halves (each an exact 90-degree arc) — `north_anchor`/`south_anchor`
-    // always end at the equator point the *next* beam should grow from.
-    // `mirror_north0`/`mirror_south0` (meridian 0's *other* two coedges)
-    // stay unused until the very last quadrant, which closes back onto
-    // them instead of minting a new meridian 4 (= meridian 0).
-    let (_, north_anchor0, mirror_north0, _) = model.mve_from_vertex(
-        face0,
-        v_north,
-        arc(north, equator(0))?,
-        meridian_pcurve()?,
-        meridian_closing_pcurve()?,
-        equator(0),
-        n(&["equator", "a0"]),
-        n(&["north", "a0"]),
-    )?;
-    let (_, south_anchor0, mirror_south0, _) = model.mve(
-        north_anchor0,
-        arc(equator(0), south)?,
-        meridian_pcurve()?,
-        meridian_closing_pcurve()?,
-        south,
-        n(&["south"]),
-        n(&["south", "a0"]),
-    )?;
-
-    let mut north_anchor = north_anchor0;
-    let mut south_anchor = south_anchor0;
-    for k in 0..3 {
-        let k1 = k + 1;
-        let (q, a1) = (format!("q{k}"), format!("a{k1}"));
-        let (_, beam_fwd, beam_rev, _) = model.mve(
-            north_anchor,
-            arc_beam(k, k1)?,
-            beam_pcurve_north()?,
-            beam_pcurve_south()?,
-            equator(k1),
-            n(&["equator", &a1]),
-            n(&["equator", &q]),
-        )?;
-
-        let (_, _, _, next_north_anchor) = model.mef(
-            beam_fwd,
-            north_anchor,
-            arc(equator(k1), north)?,
-            meridian_closing_pcurve()?,
-            meridian_pcurve()?,
-            north_quadrant(k, k1)?,
-            n(&["north", &a1]),
-            n(&["north", &q]),
-        )?;
-        close_top_pole_gap(model, north_anchor)?;
-        let (_, _, _, next_south_anchor) = model.mef(
-            south_anchor,
-            beam_rev,
-            arc(south, equator(k1))?,
-            meridian_closing_pcurve()?,
-            meridian_pcurve()?,
-            south_quadrant(k, k1)?,
-            n(&["south", &a1]),
-            n(&["south", &q]),
-        )?;
-        close_bottom_pole_gap(model, south_anchor)?;
-
-        north_anchor = next_north_anchor;
-        south_anchor = next_south_anchor;
+    spec.vertices = vec![north, south];
+    for k in 0..4 {
+        let (a, q) = (format!("a{k}"), format!("q{k}"));
+        spec.vertices.push(equator(k));
+        names.vertices.push(n(&["equator", &a]));
+        let edges = [
+            (
+                arc(equator(k), equator(k + 1))?,
+                eq(k),
+                eq(k + 1),
+                ["equator", &q],
+            ),
+            (arc(north, equator(k))?, NORTH, eq(k), ["north", &a]),
+            (arc(equator(k), south)?, eq(k), SOUTH, ["south", &a]),
+        ];
+        for (curve, start, end, edge_name) in edges {
+            spec.edges.push(EdgeSpec { curve, start, end });
+            names.edges.push(n(&edge_name));
+        }
     }
-
-    // The last quadrant's own closing edge *is* the last beam (equator(3)
-    // -> equator(0)) — no separate `mve` needed, since `mirror_north0`
-    // (meridian 0's own reversed coedge) already reaches back to
-    // `equator(0)` on its own. Only the north quadrant needs this `mef` —
-    // the south one (`south_anchor`, `mirror_south0`, and this same beam,
-    // reversed) is already exactly what's left on the placeholder face.
-    model.mef(
-        north_anchor,
-        mirror_north0,
-        arc_beam(3, 0)?,
-        beam_pcurve_north()?,
-        beam_pcurve_south()?,
-        north_quadrant(3, 0)?,
-        n(&["equator", "q3"]),
-        n(&["north", "q3"]),
-    )?;
-    close_top_pole_gap(model, north_anchor)?;
-    let _ = mirror_south0;
-
-    // The placeholder's own remaining ring is now exactly the south
-    // quadrant's boundary — give it the real surface to match.
-    close_bottom_pole_gap(model, south_anchor)?;
-    model.replace_face(face0, south_quadrant(3, 0)?)?;
-
-    Ok(solid_id)
+    // A quadrant's `u` runs from `eq(k + 1)` to `eq(k)` (see
+    // `sphere_quadrant_surface`), its `v` from the pole to the equator in
+    // the north, from the equator to the pole in the south.
+    for k in 0..4 {
+        let q = format!("q{k}");
+        let quadrant = |pole, pole_at_v0| {
+            sphere_quadrant_surface(pole, equator(k), equator(k + 1), center, w, pole_at_v0)
+        };
+        // `square_face` gives each edge the sense it runs along its side in.
+        let side = |e| CoedgeOn::Edge(e, Sense::Forward);
+        let north_face = spec.square_face(
+            quadrant(north, true)?,
+            [NORTH, NORTH, eq(k), eq(k + 1)],
+            [
+                CoedgeOn::Vertex(NORTH),
+                side(north_meridian(k)),
+                side(equator_arc(k)),
+                side(north_meridian(k + 1)),
+            ],
+        )?;
+        let south_face = spec.square_face(
+            quadrant(south, false)?,
+            [eq(k + 1), eq(k), SOUTH, SOUTH],
+            [
+                side(equator_arc(k)),
+                side(south_meridian(k)),
+                CoedgeOn::Vertex(SOUTH),
+                side(south_meridian(k + 1)),
+            ],
+        )?;
+        spec.faces.extend([north_face, south_face]);
+        names.faces.extend([n(&["north", &q]), n(&["south", &q])]);
+    }
+    spec.shells = vec![(0..spec.faces.len()).collect()];
+    let built = model.build_body(spec, names)?;
+    Ok(built.solid.expect("built as a solid"))
 }
 
 #[cfg(test)]

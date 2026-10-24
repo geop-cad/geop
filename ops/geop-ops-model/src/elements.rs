@@ -242,26 +242,9 @@ impl SelectableElement<NamedModel<Design>> for EdgeChain {
 #[cfg(test)]
 mod tests {
     use geop_core_editor::selectable::selected;
-    use geop_core_math::{scalars::Scalar, vector::Vector3};
-    use geop_core_program::{operation_registry::OperationRegistry, part::Part, runner::Runner};
+    use geop_core_program::part::Part;
 
     use super::*;
-
-    /// A part of one step that builds a model of one solid: the vertex
-    /// `v0`, the face `f0` and the solid `s0`.
-    fn part() -> Part {
-        let mut part = Part::default();
-        let runner = Runner::new(OperationRegistry::default());
-        (runner.run_step(&mut part, "s", |ctx| {
-            ctx.produce(&model(), &(), |reader, _| {
-                let mut model: NamedModel<Design> = reader.previous()?;
-                model.mvfs(Vector3::from_array([Design::ZERO; 3]), "v0", "f0", "s0")?;
-                Ok(model)
-            })
-        }))
-        .unwrap();
-        part
-    }
 
     /// A part of one step whose model is a unit cube, every entity named
     /// by its kind and its position among those: `e0` … `e11`.
@@ -306,12 +289,12 @@ mod tests {
     /// name alone.
     #[test]
     fn elements_resolve_by_name() {
-        let part = part();
+        let part = cube();
         let reader = part.current();
         let vertex = ElementReference::<NamedModel<Design>, Vertex>::in_singleton("v0").unwrap();
         let found = reader.retrieve_element(&vertex).unwrap();
         assert_eq!(found.model.name_of(found.id), Some("v0"));
-        assert!(reader.retrieve_element(&face("f9")).is_err());
+        assert!(reader.retrieve_element(&face("f6")).is_err());
         assert_eq!(
             serde_json::to_value(face("f0")).unwrap(),
             serde_json::json!("f0")
@@ -329,13 +312,16 @@ mod tests {
     /// A solid is picked by a face of it, and lit as its faces.
     #[test]
     fn a_solid_is_picked_by_its_faces() {
-        let part = part();
+        let part = cube();
         let reader = part.current();
         let solid = ElementReference::<NamedModel<Design>, Solid>::new(model(), "s0");
         let picked: Vec<ElementReference<NamedModel<Design>, Solid>> =
             selected(&reader, &[face("f0").picked()]);
         assert_eq!(picked, std::slice::from_ref(&solid));
-        assert_eq!(Solid::drawn(&reader, &solid), [face("f0").picked()]);
+        let faces: Vec<PickedElement> = (0..6).map(|k| face(&format!("f{k}")).picked()).collect();
+        let drawn = Solid::drawn(&reader, &solid);
+        assert_eq!(drawn.len(), faces.len());
+        assert!(faces.iter().all(|f| drawn.contains(f)));
         assert_eq!(Solid::PICKED_FROM, ["face"]);
     }
 }

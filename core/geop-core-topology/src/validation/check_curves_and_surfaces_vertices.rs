@@ -1,11 +1,15 @@
-use geop_core_geometry::contains::surface::surface_could_contain;
-use geop_core_math::{geop_error::GeopError, scalars::Scalar};
-
-use crate::{
-    Model,
-    argument_validation::{validate_curve_start_and_end, validate_pcurve_start_and_end},
-    validation::ValidationParameters,
+use geop_core_geometry::{
+    contains::surface::surface_could_contain,
+    nurb_curve::{NurbCurve2D, NurbCurve3D},
+    nurb_surface::NurbSurface3D,
 };
+use geop_core_math::{
+    geop_error::{GeopError, GeopResult},
+    scalars::Scalar,
+    vector::Vector3,
+};
+
+use crate::{Model, validation::ValidationParameters};
 
 /// Checks that every edge's 3-D curve, and every coedge's pcurve, actually
 /// land on the vertices they're supposed to: an edge's curve must start/end
@@ -81,6 +85,54 @@ pub fn check_curves_and_surfaces_vertices<S: Scalar>(
             )));
         }
     }
+}
+
+/// Whether `curve` starts at `start` and ends at `end`.
+fn validate_curve_start_and_end<S: Scalar>(
+    curve: &NurbCurve3D<S>,
+    start: &Vector3<S>,
+    end: &Vector3<S>,
+) -> GeopResult<()> {
+    let (t0, t1) = curve.domain();
+    let curve_start = curve.evaluate(t0)?;
+    if !curve_start.could_be_equal(start) {
+        return Err(GeopError::new(format!(
+            "curve {curve} start point {curve_start:?} does not match the given 3D point {start:?}"
+        )));
+    }
+    let curve_end = curve.evaluate(t1)?;
+    if !curve_end.could_be_equal(end) {
+        return Err(GeopError::new(format!(
+            "curve {curve} end point {curve_end:?} does not match the given 3D point {end:?}"
+        )));
+    }
+    Ok(())
+}
+
+/// Whether `pcurve`, evaluated through `surface`, starts at `start` and
+/// ends at `end`.
+fn validate_pcurve_start_and_end<S: Scalar>(
+    surface: &NurbSurface3D<S>,
+    pcurve: &NurbCurve2D<S>,
+    start: &Vector3<S>,
+    end: &Vector3<S>,
+) -> GeopResult<()> {
+    let (t0, t1) = pcurve.domain();
+    let pcurve_start = pcurve.evaluate(t0)?;
+    let pcurve_start_3d = surface.evaluate(pcurve_start[0], pcurve_start[1])?;
+    if !pcurve_start_3d.could_be_equal(start) {
+        return Err(GeopError::new(format!(
+            "pcurve {pcurve} start point {pcurve_start_3d:?} does not match the given 3D point {start:?} (pcurve start uv {pcurve_start:?})"
+        )));
+    }
+    let pcurve_end = pcurve.evaluate(t1)?;
+    let pcurve_end_3d = surface.evaluate(pcurve_end[0], pcurve_end[1])?;
+    if !pcurve_end_3d.could_be_equal(end) {
+        return Err(GeopError::new(format!(
+            "pcurve {pcurve} end point {pcurve_end_3d:?} does not match the given 3D point {end:?} (pcurve end uv {pcurve_end:?})"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

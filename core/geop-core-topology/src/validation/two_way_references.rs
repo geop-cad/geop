@@ -218,7 +218,7 @@ mod tests {
     use super::check_two_way_references;
     use crate::Model;
     use crate::test_fixtures::{check_errors, test_cube_model, test_cube_solid};
-    use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
+    use geop_core_math::{for_all_scalars, scalars::Scalar};
 
     fn check_valid_cube_passes<S: Scalar>() {
         assert!(check_errors(check_two_way_references, &test_cube_model::<S>()).is_empty());
@@ -250,7 +250,7 @@ mod tests {
 
     fn check_mismatched_shell_backref_fails<S: Scalar>() {
         let mut model = Model::<S>::new();
-        let (_v, _f, solid_id) = model.mvfs(Vector3::from_array([S::ZERO; 3]));
+        let solid_id = test_cube_solid(&mut model);
         let shell_id = model.get_solid(solid_id).unwrap().shells[0];
         model.shells.get_mut(&shell_id).unwrap().faces = vec![];
         assert!(!check_errors(check_two_way_references, &model).is_empty());
@@ -262,7 +262,7 @@ mod tests {
 
     fn check_mismatched_solid_backref_fails<S: Scalar>() {
         let mut model = Model::<S>::new();
-        let (_v, _f, solid_id) = model.mvfs(Vector3::from_array([S::ZERO; 3]));
+        let solid_id = test_cube_solid(&mut model);
         // The shell still (validly) names `solid_id`, but the solid no
         // longer lists it back — a mismatch, not a dangling reference.
         model.solids.get_mut(&solid_id).unwrap().shells = vec![];

@@ -1,7 +1,5 @@
-//! Whole-model consistency checks — as opposed to
-//! [`super::argument_validation`], which checks a single euler operator
-//! call's own arguments. Each check lives in its own file, one check per
-//! file. Every check function takes `(params, errors, model)` and pushes
+//! Whole-model consistency checks. Each check lives in its own file, one
+//! check per file. Every check function takes `(params, errors, model)` and pushes
 //! its own violations onto `errors` rather than returning on the first one,
 //! so [`validate`] always runs every check and reports everything wrong in
 //! one pass.

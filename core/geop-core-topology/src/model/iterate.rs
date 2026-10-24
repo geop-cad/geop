@@ -203,8 +203,8 @@ impl<S: Scalar> Model<S> {
     ///
     /// Errors on [`BoundaryIndex::Outer`]: a face without an outer boundary
     /// is not a face. An operation that genuinely consumes a face's outer
-    /// loop is deleting the face, and must say so (see `kef`) rather than
-    /// leaving one behind with nothing bounding it.
+    /// loop is deleting the face, and must say so rather than leaving one
+    /// behind with nothing bounding it.
     pub fn remove_boundary(&mut self, face_id: FaceId, index: BoundaryIndex) -> GeopResult<()> {
         let BoundaryIndex::Hole(i) = index else {
             return Err(GeopError::new(format!(

@@ -73,6 +73,6 @@ curve-curve and curve-surface intersections.
 Every vertex, edge, coedge and face is labelled with its id, edges and
 coedges get direction arrows, faces are semi-transparent with a normal
 arrow, and coedges on an outer loop and on a hole are drawn in different
-colours. This helps when debugging the Euler operators, where *which*
+colours. This helps when debugging topological edits, where *which*
 coedge is which matters and an outer loop and a hole look the same as
 geometry.

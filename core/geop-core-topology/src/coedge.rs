@@ -54,8 +54,7 @@ pub enum CoedgeGeometry {
     /// (e.g. a pole) — the loop still needs *some* pcurve tracing that
     /// row's full parameter range even though there's no 3-D geometry
     /// there to back a real edge. Adds neither a new vertex nor a new
-    /// edge, so it never needs to satisfy (or risk violating) the
-    /// Euler–Poincaré invariant euler operators preserve — it isn't one.
+    /// edge, so it leaves the Euler–Poincaré count as it is.
     Vertex(VertexId),
 }
 
@@ -72,9 +71,8 @@ pub struct Coedge<S: Scalar> {
 
 impl<S: Scalar> Coedge<S> {
     /// This coedge's own edge — an error for a `Vertex`-backed coedge
-    /// (there's no edge to kill/compare/collect there). Convenience for
-    /// the (common) operators that only ever apply to edge-backed
-    /// coedges, e.g. `kve`/`kemr`/`ker`.
+    /// (there's no edge to compare or collect there). Convenience for
+    /// code that only ever applies to edge-backed coedges.
     pub fn edge(&self) -> GeopResult<EdgeId> {
         match self.geometry {
             CoedgeGeometry::Edge(id) => Ok(id),

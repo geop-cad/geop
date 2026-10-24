@@ -48,7 +48,6 @@ mod describe;
 mod draw;
 mod edit;
 pub mod elements;
-mod euler;
 mod extent;
 mod feature;
 pub mod geometry;

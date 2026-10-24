@@ -36,7 +36,7 @@ call stack** instead of writing throwaway debug code:
 
 - Wrap fallible calls with `.with_context(&ctx)?`, where `ctx` is a small
   `|e: GeopError| e.with_context(format!("fn_name(arg={arg}, ...)"))`
-  closure — see `Model::ker`, `Model::mve`, `Model::split_edge_at_vertex`,
+  closure — see `Model::split_edge_at_vertex`, `Model::splice_edge_into_face`,
   `remesh_vertices::find_coincident_vertex_pair` for the established style.
 - When an error's root cause needs the actual numeric state (control points,
   knot vectors, domains, intervals), print it via `{:?}` (`Debug`), not `{}`
@@ -481,9 +481,7 @@ two cases, which silently produced faces carrying several disjoint patches.
 Two consequences worth remembering:
 
 - **A face always has exactly one outer boundary, so "no boundary" is not a
-  state.** A face with no edges yet is bounded by a bare *vertex* — the state
-  `mvfs` produces. That makes `mer` promote a bare-vertex boundary to the ring
-  that arrives on it, and `ker` demote it back when the last loop leaves.
+  state.** A face with no edges yet is bounded by a bare *vertex*.
   `remove_boundary` refuses to delete an outer loop outright: an operation
   that genuinely consumes one is deleting the face and must say so.
 - **Splitting a face invalidates "on this surface" as a membership test.**

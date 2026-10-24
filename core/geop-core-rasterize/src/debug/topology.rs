@@ -6,13 +6,13 @@
 //! coedges' trim curves don't overlap at the shared corner, with its own
 //! `0.1..0.9` direction-arrow markers and one at its midpoint) and face
 //! (semi-transparent, so everything behind it stays visible, plus a normal
-//! arrow), each labelled with its id — useful for debugging the euler
-//! operators themselves, where *which* coedge/edge is which matters.
+//! arrow), each labelled with its id — useful for debugging topological
+//! edits, where *which* coedge/edge is which matters.
 //!
 //! Coedges are drawn in two colours: orange (with cyan direction markers) for
 //! those on a face's outer loop, purple (with olive markers) for those on a
 //! hole. Which of the two a loop is drives every restructuring in
-//! `splice_edge_into_face` and the Euler operators, and is invisible from
+//! `splice_edge_into_face`, and is invisible from
 //! geometry alone — an outer loop and a hole are both just rings.
 
 use geop_core_geometry::nurb_surface::NurbSurface3D;

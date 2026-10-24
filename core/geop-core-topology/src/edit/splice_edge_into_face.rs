@@ -18,10 +18,9 @@ impl<S: Scalar> Model<S> {
     /// structure, as a forward/reversed coedge pair whose pcurves it fits onto
     /// the face's own surface.
     ///
-    /// Unlike the `mer`/`mekr` Euler operators — which mint their own brand-new
-    /// edge, and so can't be used for an edge that already exists because two
-    /// faces are meant to *share* it (the whole point of imprinting an
-    /// intersection curve) — this rewires loops around an edge it's handed.
+    /// The edge already exists because two faces are meant to *share* it
+    /// (the whole point of imprinting an intersection curve), so this
+    /// rewires loops around the edge it's handed rather than making one.
     ///
     /// What it does depends on how much of the edge's own topology the face
     /// already knows about, which is the only thing that determines what a
@@ -40,8 +39,7 @@ impl<S: Scalar> Model<S> {
     /// a face of its own), are the cases that create a face; its id is
     /// returned, `None` otherwise. The face split is the only one that has to
     /// reclassify the old face's holes — each now lies inside exactly one of
-    /// the two halves (see [`split_face`]). The middle cases are the same
-    /// restructurings `mer`/`mekr` perform; a spur changes no connectivity at
+    /// the two halves (see [`split_face`]). A spur changes no connectivity at
     /// all, being "wire" topology rather than a real trim boundary.
     pub fn splice_edge_into_face(
         &mut self,

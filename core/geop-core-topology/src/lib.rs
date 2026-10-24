@@ -1,4 +1,3 @@
-pub mod argument_validation;
 pub mod body;
 pub mod boundary;
 pub mod build;
@@ -7,7 +6,6 @@ pub mod contains;
 pub mod distance;
 pub mod edge;
 pub mod edit;
-pub mod euler;
 pub mod face;
 pub mod ids;
 pub mod loop_sampling;

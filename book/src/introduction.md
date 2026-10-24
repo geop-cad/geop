@@ -20,7 +20,7 @@ core/geop-core-math          scalars, intervals, linear algebra, errors,
                               frames, poses, solvers
 core/geop-core-geometry      NURBS curves and surfaces, containment,
                               intersection
-core/geop-core-topology      the B-rep, Euler operators, validation
+core/geop-core-topology      the B-rep, building, editing, validation
 core/geop-core-rasterize     a model as triangles, STL
 core/geop-core-sketch        2-D constraint sketches
 core/geop-core-program       a program, its values, the part it builds as a

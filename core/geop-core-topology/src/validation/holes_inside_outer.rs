@@ -44,8 +44,7 @@ pub fn check_holes_inside_outer<S: Scalar>(
             continue;
         }
         // A face still bounded by a bare vertex has no interior for anything
-        // to be inside of; that it also carries holes is `mvr`'s business and
-        // not a containment failure.
+        // to be inside of, so there is no containment to check.
         let BoundaryType::Loop(outer_anchor) = face.outer else {
             continue;
         };

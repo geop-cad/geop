@@ -1,5 +1,5 @@
-//! Forwarding wrappers for every `Model` edit operator, exactly like
-//! `euler.rs`: each registers what it creates under the caller's name and
+//! Forwarding wrappers for every `Model` operation that creates or deletes
+//! entities: each registers what it creates under the caller's name and
 //! forgets what it deletes.
 
 use std::collections::HashSet;

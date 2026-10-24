@@ -209,47 +209,62 @@ impl<S: Scalar> NamedModel<S> {
 #[cfg(test)]
 mod tests {
     use geop_core_math::{scalars::ScalInF64, vector::Vector3};
+    use geop_core_topology::{Body, VertexId, build::BodySpec};
 
     use super::*;
+    use crate::{BodyNames, testing::unit_cube};
 
-    fn origin() -> Vector3<ScalInF64> {
-        Vector3::zero()
+    /// A free point named `name` at the origin: a wire of the vertex alone.
+    fn point(model: &mut NamedModel<ScalInF64>, name: &str) -> GeopResult<VertexId> {
+        let mut spec = BodySpec::new(false);
+        spec.vertices.push(Vector3::zero());
+        let names = BodyNames {
+            vertices: vec![name.to_string()],
+            edges: Vec::new(),
+            faces: Vec::new(),
+            solid: None,
+        };
+        Ok(model.build_body(spec, names)?.vertices[0])
     }
 
-    /// `mvfs` creates a vertex, a face and a solid; each must be given a
-    /// name, and `kvfs` undoing it erases all three names again.
+    /// Building names every entity it builds, and deleting a body forgets
+    /// the names of all of its entities again.
     #[test]
-    fn mvfs_and_kvfs_keep_names_in_sync() {
+    fn building_and_deleting_keep_names_in_sync() {
         let mut model = NamedModel::<ScalInF64>::new();
-        let (vertex, face, solid) = model.mvfs(origin(), "v0", "f0", "s0").unwrap();
+        let vertex = point(&mut model, "v0").unwrap();
         assert_eq!(model.name_of(vertex), Some("v0"));
-        assert_eq!(model.name_of(face), Some("f0"));
-        assert_eq!(model.name_of(solid), Some("s0"));
         assert_eq!(model.id_of("v0"), Some(RefId::Vertex(vertex)));
         model.check_names().unwrap();
 
-        model.kvfs(solid).unwrap();
-        assert_eq!(model.name_of(vertex), None);
-        assert_eq!(model.name_of(face), None);
-        assert_eq!(model.name_of(solid), None);
-        assert!(model.topology().vertices.is_empty());
-        model.check_names().unwrap();
+        let mut cube = unit_cube();
+        cube.check_names().unwrap();
+        let RefId::Solid(solid) = cube.id_of("s0").unwrap() else {
+            panic!("s0 names a solid");
+        };
+        cube.delete_bodies(&[Body::Solid(solid)]).unwrap();
+        assert_eq!(cube.id_of("v0"), None);
+        assert_eq!(cube.id_of("f0"), None);
+        assert_eq!(cube.id_of("s0"), None);
+        assert!(cube.topology().vertices.is_empty());
+        cube.check_names().unwrap();
     }
 
     /// Reusing a name that's already taken is rejected.
     #[test]
     fn duplicate_name_is_rejected() {
         let mut model = NamedModel::<ScalInF64>::new();
-        model.mvfs(origin(), "v0", "f0", "s0").unwrap();
-        assert!(model.mvfs(origin(), "v1", "f1", "s0").is_err());
+        point(&mut model, "v0").unwrap();
+        assert!(point(&mut model, "v0").is_err());
     }
 
     /// A provisional name can be settled, but not onto a name in use.
     #[test]
     fn rename_settles_a_provisional_name() {
         let mut model = NamedModel::<ScalInF64>::new();
-        let (vertex, _, _) = model.mvfs(origin(), "v~0", "f0", "s0").unwrap();
-        assert!(model.rename(vertex, "f0").is_err());
+        let vertex = point(&mut model, "v~0").unwrap();
+        point(&mut model, "v1").unwrap();
+        assert!(model.rename(vertex, "v1").is_err());
         model.rename(vertex, "v0").unwrap();
         assert_eq!(model.name_of(vertex), Some("v0"));
         assert_eq!(model.id_of("v~0"), None);
@@ -260,10 +275,10 @@ mod tests {
     #[test]
     fn a_revision_is_equal_until_changed() {
         let mut model = NamedModel::<ScalInF64>::new();
-        model.mvfs(origin(), "v0", "f0", "s0").unwrap();
+        point(&mut model, "v0").unwrap();
         let mut revision = model.clone();
         assert_eq!(revision, model);
-        revision.mvfs(origin(), "v1", "f1", "s1").unwrap();
+        point(&mut revision, "v1").unwrap();
         assert_ne!(revision, model);
     }
 }

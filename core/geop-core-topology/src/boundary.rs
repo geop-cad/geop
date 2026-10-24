@@ -2,8 +2,7 @@ use crate::{CoedgeId, VertexId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BoundaryType {
-    /// A boundary defined by a single vertex — no edge exists yet (e.g. a
-    /// face fresh out of `mvfs`).
+    /// A boundary defined by a single vertex — no edge exists yet.
     Vertex(VertexId),
     /// A boundary defined by a starting edge loop.
     Loop(CoedgeId),

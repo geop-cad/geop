@@ -134,7 +134,7 @@ sub-parts with state behind their path, and the testing feature pattern
 ```
 core/   geop-core-math        scalars, intervals, linear algebra, error type, frames, poses
         geop-core-geometry    NURBS curves/surfaces, intersection, containment
-        geop-core-topology    B-rep, Euler operators, validation
+        geop-core-topology    B-rep, building, editing, validation
         geop-core-sketch      2-D constraint sketches (pure geometry, no program notion)
         geop-core-rasterize   Model -> triangles, STL bytes             (moved from ops)
         geop-core-program     what a program, operation, part, workspace is (§3)

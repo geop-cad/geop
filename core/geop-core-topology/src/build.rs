@@ -1,15 +1,14 @@
 //! Building a whole body at once from a description of it ([`BodySpec`]),
 //! and describing part of a model the same way ([`Model::body_spec`]).
 //!
-//! The euler operators grow a model one entity at a time, each step keeping
-//! the model a valid solid. That suits constructions with one fixed shape —
-//! but a sweep comes in many shapes (one or several spans, closed around an
-//! axis or not, with poles, holes, caps or none), each of which would need
-//! its own sequence of euler steps. A sweep is far simpler said whole: these
-//! vertices, these edges between them, these faces, each bounded by these
-//! coedges. [`Model::build_body`] takes exactly that, checks it is
-//! topologically consistent, and only then inserts it. A description
-//! without faces is a [`Wire`]: edges and vertices standing on their own.
+//! A sweep comes in many shapes (one or several spans, closed around an
+//! axis or not, with poles, holes, caps or none). Grown one entity at a
+//! time, each would need its own sequence of steps, each keeping the model
+//! valid. A sweep is far simpler said whole: these vertices, these edges
+//! between them, these faces, each bounded by these coedges.
+//! [`Model::build_body`] takes exactly that, checks it is topologically
+//! consistent, and only then inserts it. A description without faces is a
+//! [`Wire`]: edges and vertices standing on their own.
 
 use std::collections::HashMap;
 

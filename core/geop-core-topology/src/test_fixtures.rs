@@ -4,7 +4,7 @@
 //!
 //! This crate sits *below* `geop-lib-sweep` in the workspace's
 //! dependency order (that crate is what actually builds shapes like a real
-//! `cube_solid` via `extrude`), so validation/euler/edit tests here that
+//! `cube_solid` via `extrude`), so validation/edit tests here that
 //! just need "some realistic populated `Model`" to run structural or
 //! numerical checks against can't reach for it — a dev-dependency back on
 //! `geop-lib-sweep` would make Cargo compile this crate twice

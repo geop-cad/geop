@@ -148,8 +148,8 @@ pub fn check_pointers<S: Scalar>(
 mod tests {
     use super::check_pointers;
     use crate::Model;
-    use crate::test_fixtures::{check_errors, test_cube_model};
-    use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
+    use crate::test_fixtures::{check_errors, test_cube_model, test_cube_solid};
+    use geop_core_math::{for_all_scalars, scalars::Scalar};
 
     fn check_valid_cube_passes<S: Scalar>() {
         assert!(check_errors(check_pointers, &test_cube_model::<S>()).is_empty());
@@ -161,7 +161,7 @@ mod tests {
 
     fn check_dangling_vertex_reference_fails<S: Scalar>() {
         let mut model = Model::<S>::new();
-        let (_v, _f, solid_id) = model.mvfs(Vector3::from_array([S::ZERO; 3]));
+        let solid_id = test_cube_solid(&mut model);
         let shell_id = model.get_solid(solid_id).unwrap().shells[0];
         let face_id = model.get_shell(shell_id).unwrap().faces[0];
         model.faces.get_mut(&face_id).unwrap().shell = crate::ShellId(9999);
@@ -175,7 +175,7 @@ mod tests {
 
     fn check_multiple_dangling_references_are_all_reported<S: Scalar>() {
         let mut model = Model::<S>::new();
-        let (_v, _f, solid_id) = model.mvfs(Vector3::from_array([S::ZERO; 3]));
+        let solid_id = test_cube_solid(&mut model);
         let shell_id = model.get_solid(solid_id).unwrap().shells[0];
         let face_id = model.get_shell(shell_id).unwrap().faces[0];
         model.faces.get_mut(&face_id).unwrap().shell = crate::ShellId(9999);

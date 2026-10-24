@@ -22,7 +22,7 @@ apart (see Scripts).
 |---|---|
 | `core/geop-core-math` | scalars and interval arithmetic, linear algebra, the error type, frames, rays, datums, poses, solvers and dual numbers |
 | `core/geop-core-geometry` | NURBS curves and surfaces, their constructors, compatible curves, Coons and Gordon patches, containment and intersection |
-| `core/geop-core-topology` | the B-rep, Euler operators, editing and validation, wires |
+| `core/geop-core-topology` | the B-rep, building, editing and validation, wires |
 | `core/geop-core-rasterize` | a model as a triangle mesh, STL, debug renderings |
 | `core/geop-core-sketch` | 2-D constraint sketches: entities, constraints as residuals, profiles, dimensions in a plane |
 | `core/geop-core-program` | a program, its values and the part it builds: a memo table of nodes made by `StepContext::produce`, placed parts, the runner, the workspace of files; feature `testing`: `assert_incremental`, `assert_round_trips` |

@@ -2,8 +2,8 @@
 
 > Brief overview only — full documentation is coming later.
 
-B-rep (boundary representation) data structures, Euler operators, and
-edit/validation logic for solids built from
+B-rep (boundary representation) data structures, building, editing and
+validation for solids built from
 [geop-core-geometry](../core/geop-core-geometry.md) primitives.
 
 ## The model
@@ -44,7 +44,7 @@ Some choices here encode invariants in the types:
   holes merge into one, a hole bridged to the outer loop stops being a hole,
   and only two points of the outer loop cut the face in two.
 - "No boundary" is not a state. A face without edges is bounded by a bare
-  vertex, which is what `mvfs` creates.
+  vertex.
 - A coedge is backed either by an `Edge` (shared with exactly one opposite
   coedge on the neighbouring face) or by a `Vertex`. The latter is a
   degenerate segment that lets a loop run along a surface row collapsed to a
@@ -53,30 +53,20 @@ Some choices here encode invariants in the types:
   `reverse_face` mirrors the surface in `u` and applies the same mirror to
   the face's pcurves.
 
-## Euler operators
+## Building a body
 
-Every structural change goes through an Euler operator, which keeps the
-Euler–Poincaré formula `V − E + F − L = 2(S − G)` true. Each checks its own
-arguments (`argument_validation`: pcurves and curves start and end where
-claimed, coedges lie on the same or on different loops as required) before
-mutating anything.
+`build_body` builds a whole body at once from a `BodySpec`: vertices, edges,
+and faces bounded by loops of coedges, all referring to each other by
+index. It inserts nothing until `BodySpec::check` finds the description
+consistent: every loop closes, every face is in exactly one shell, every
+edge is used at most twice and then in opposite senses (exactly twice for a
+solid). A description without faces is a wire. `body_spec` describes faces
+of a model the same way, as a copy, and says where each entity came from.
 
-| Make   | Kill   | Effect                                                              |
-| ------ | ------ | ------------------------------------------------------------------- |
-| `mvfs` | `kvfs` | a new solid with one face and one vertex                            |
-| `mve`, `mve_from_vertex` | `kve` | a new vertex and an edge to it                      |
-| `mef`  | `kef`  | an edge across a loop, splitting off a new face                     |
-| `mer`  | `ker`  | like `mef`, but the split-off ring becomes a new boundary of an existing face |
-| `mekr` | `kemr` | an edge joining two loops of one face into one                      |
-| `mvr`  | `kvr`  | a bare vertex as a new boundary of a face                           |
-
-`add_vertex_coedge` / `kill_vertex_coedge` splice a vertex-backed coedge in
-and out of a loop. They are not Euler operators, since they touch neither
-`V`, `E` nor `F`. `replace_face` and `replace_pcurve` swap geometry in
-place; typically a face is built on the `everything()` placeholder surface
-and gets its real surface once its boundary is complete. Both check that
-every pcurve still lands on its edge's 3-D end points before changing
-anything, so a rejected swap leaves the model untouched.
+Sweeps, the basic shapes and the operations that copy or rebuild faces
+build this way: a sweep comes in many shapes (one span or several, closed around
+an axis or not, with poles, holes or caps), and each is far simpler said
+whole than grown one entity at a time.
 
 ## Edit operations
 
@@ -97,11 +87,6 @@ are built from:
   neighbouring faces.
 - `assemble_solid` builds the result of a boolean: one new solid made of the
   faces to keep, deleting everything no longer reachable from them.
-- `build_body` builds a whole body at once from a `BodySpec` — vertices,
-  edges, and faces bounded by loops of coedges, all by index — once
-  `BodySpec::check` finds it consistent: every loop closes, every edge is
-  used at most twice and then in opposite senses (exactly twice for a
-  solid). `body_spec` describes faces of a model the same way, as a copy.
 
 ## Containment
 

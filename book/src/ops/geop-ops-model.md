@@ -15,9 +15,9 @@ A `NamedModel<S>` holds a topology `Model` of
 mapping every vertex, edge, face and solid to exactly one name, and every
 name to exactly one entity.
 
-Its fields are private. Every Euler and edit operator of the topology —
-`mvfs`, `mef`, `kef`, ..., `split_edge_at_vertex`,
-`splice_edge_into_face`, `build_body` — has an identically named method on
+Its fields are private. Every operation of the topology that creates or
+deletes entities — `build_body`, `split_edge_at_vertex`,
+`splice_edge_into_face`, `merge_vertex`, ... — has an identically named method on
 `NamedModel` that forwards to it, registers each entity it creates under
 the name the caller supplies, and forgets the name of each entity it
 deletes. The invariant checked by `NamedModel::check_names` therefore holds
