@@ -8,8 +8,8 @@ use crate::geop_error::GeopResult;
 /// A number a residual computes with: a [`Scalar`], giving the residual's
 /// value, or a [`crate::dual::Dual`] of one, giving its value and its
 /// derivatives by the variables it depends on. Every residual is written
-/// once, over `T: Number`, and evaluated with either. The comparisons and
-/// set operations act on the value alone.
+/// once, over `T: Number`, and evaluated with either. The comparisons act
+/// on the value alone.
 pub trait Number: Copy + Clone + Debug + Display + Default + Send + Sync + 'static {
     const ZERO: Self;
     const ONE: Self;
