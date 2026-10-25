@@ -11,7 +11,7 @@ use geop_core_editor::{
     registry::Registry,
 };
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::{element::PickedElement, values::Design};
+use geop_core_program::element::PickedElement;
 use geop_ops_model::{
     parameters::stem,
     placed::bom::{Bom, Line, LineKind, Structure, bom},
@@ -47,7 +47,7 @@ impl Inspector for BillOfMaterials {
         output: &mut Output,
         _: &[PickedElement],
         options: BomOptions,
-    ) -> GeopResult<(Bom, Vec<Visual<Design>>)> {
+    ) -> GeopResult<(Bom, Vec<Visual>)> {
         Ok((
             bom(&output.part(), output.file_name(), options.structure)?,
             Vec::new(),

@@ -1,7 +1,7 @@
 //! Annotations: measured in the views they name, drawn on the sheet and
 //! written out, and refused where a view cannot show what they measure.
 
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
+use geop_core_math::scalars::Scalar;
 use geop_core_program::reader::Reader;
 use geop_lib_sheet::to_dxf;
 use geop_lib_sweep::shapes::{cube_solid, revolved_cylinder, v3};
@@ -16,15 +16,15 @@ const FRONT: DrawnView = DrawnView::View(ViewKind::Front);
 const TOP: DrawnView = DrawnView::View(ViewKind::Top);
 
 /// A 20 x 10 x 30 box beside a cylinder of radius 5 standing on it.
-fn part() -> NamedModel<S> {
-    let mut part = NamedModel::<S>::new();
+fn part() -> NamedModel {
+    let mut part = NamedModel::new();
     cube_solid(&mut part, "box", v3(0.0, 0.0, 0.0), v3(20.0, 10.0, 30.0)).unwrap();
     revolved_cylinder(
         &mut part,
         "pin",
         v3(40.0, 5.0, 0.0),
-        S::from_f64(5.0),
-        S::from_f64(10.0),
+        Scalar::from_f64(5.0),
+        Scalar::from_f64(10.0),
     )
     .unwrap();
     part
@@ -103,7 +103,7 @@ fn every_annotation_measures_its_view() {
                     [x, y, z]
                         .iter()
                         .zip(p.to_array())
-                        .all(|(&c, q)| q.could_be_equal(S::from_f64(c)))
+                        .all(|(&c, q)| q.could_be_equal(Scalar::from_f64(c)))
                 }
                 _ => false,
             })

@@ -16,20 +16,20 @@ pub mod midpoints;
 pub mod reader;
 pub mod structure;
 
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
+use geop_core_math::geop_error::GeopResult;
 
 pub use body::{Healing, ImportedBody};
 
 use crate::part21::Exchange;
 
 /// Every body of the STEP file `text`, in the order the file has them.
-pub fn read_step<S: Scalar>(text: &str) -> GeopResult<Vec<ImportedBody<S>>> {
+pub fn read_step(text: &str) -> GeopResult<Vec<ImportedBody>> {
     let exchange = Exchange::parse(text)?;
     read_exchange(&exchange)
 }
 
 /// Every body of the exchange file `exchange`.
-pub fn read_exchange<S: Scalar>(exchange: &Exchange) -> GeopResult<Vec<ImportedBody<S>>> {
+pub fn read_exchange(exchange: &Exchange) -> GeopResult<Vec<ImportedBody>> {
     let reader = reader::Reader { exchange };
     let items = reader.bodies()?;
     items

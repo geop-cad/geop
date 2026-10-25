@@ -11,7 +11,6 @@ pub mod pick;
 use std::any::Any;
 
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::values::Design;
 use serde::Serialize;
 
 use crate::{
@@ -40,14 +39,10 @@ pub struct ToolInfo {
 /// [`crate::registry::Registry::tool`]).
 pub trait Tool: Any {
     /// Something the user did in the viewport.
-    fn handle(
-        &mut self,
-        ctx: &mut EditorContext,
-        event: &StepEditEvent<Design>,
-    ) -> GeopResult<Changed>;
+    fn handle(&mut self, ctx: &mut EditorContext, event: &StepEditEvent) -> GeopResult<Changed>;
 
     /// What it shows: what it would take lit, and whether a press grabs.
-    fn presentation(&self) -> Presentation<Design>;
+    fn presentation(&self) -> Presentation;
 
     /// What it answers about the part, with every update while it is in
     /// hand: nothing, unless it says otherwise.

@@ -19,7 +19,7 @@ use geop_core_editor::{
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::{FrameAxis, Ray},
-    scalars::{ScalInF64 as S, Scalar},
+    scalars::Scalar,
     vector::Vector3,
 };
 use geop_core_program::{
@@ -353,11 +353,11 @@ fn new_steps_handles_are_dragged_in_steps() {
     // From the side, in perspective: the hole sketch's extrude ends a unit
     // above the box's top, at (1, 1, 2).
     let side = |z: f64| {
-        let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+        let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
         Pointer {
             ray: Ray::try_new(v([1.0, -10.0, 2.0]), v([0.0, 11.0, z - 2.0])).unwrap(),
             reach: Reach::Cone {
-                slope: S::from_f64(0.002),
+                slope: Scalar::from_f64(0.002),
             },
         }
     };
@@ -877,9 +877,9 @@ impl Inspector for Picked {
         _: &mut Made,
         picked: &[PickedElement],
         _: (),
-    ) -> GeopResult<(Vec<String>, Vec<Visual<S>>)> {
+    ) -> GeopResult<(Vec<String>, Vec<Visual>)> {
         let names = picked.iter().map(|p| format!("{p:?}")).collect();
-        let at = Vector3::from_array([0.5, 0.5, 1.0].map(S::from_f64));
+        let at = Vector3::from_array([0.5, 0.5, 1.0].map(Scalar::from_f64));
         let visuals = (picked.first())
             .map(|_| Visual::new("first", Shape::Point { at }, Style::Selected))
             .into_iter()
@@ -912,7 +912,7 @@ impl Inspector for Solids {
         output: &mut Made,
         _: &[PickedElement],
         options: SolidsOptions,
-    ) -> GeopResult<((String, usize), Vec<Visual<S>>)> {
+    ) -> GeopResult<((String, usize), Vec<Visual>)> {
         let model = read_model(&output.part())?;
         Ok(((options.label, model.solid_names().len()), Vec::new()))
     }

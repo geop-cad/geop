@@ -8,9 +8,7 @@ use geop_core_editor::{
     part_operation::PartOperation,
 };
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_ops_model::{Body, ModelOperation, NamedModel, build_model, resolve_bodies};
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +25,7 @@ pub struct DeleteBody;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct DeleteBodyArgs {
     /// The bodies to delete: solids, or a face of each sheet.
-    pub bodies: Vec<ElementReference<NamedModel<Design>, Body>>,
+    pub bodies: Vec<ElementReference<NamedModel, Body>>,
 }
 
 part_operation!(DeleteBody(DeleteBodyArgs));
@@ -59,8 +57,8 @@ impl PartOperation for DeleteBody {
         context: &'a Context<'a>,
         args: &DeleteBodyArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, DeleteBodyArgs> {
-        let mut f = EditForm::<Design, DeleteBodyArgs>::default();
+    ) -> EditForm<'a, DeleteBodyArgs> {
+        let mut f = EditForm::<DeleteBodyArgs>::default();
         f.pick(
             "bodies",
             "bodies",
@@ -77,7 +75,7 @@ impl ModelOperation for DeleteBody {
     /// The bodies are resolved in the model as the steps before left it,
     /// which `model` is a copy of.
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         _: &str,
         args: &DeleteBodyArgs,
@@ -94,11 +92,11 @@ mod tests {
     use geop_lib_sweep::shapes::{block, block_part};
     use geop_ops_model::{model, testing::apply_to_model};
 
-    fn body(name: impl Into<String>) -> ElementReference<NamedModel<Design>, Body> {
+    fn body(name: impl Into<String>) -> ElementReference<NamedModel, Body> {
         ElementReference::new(model(), name)
     }
 
-    fn two_cubes() -> NamedModel<Design> {
+    fn two_cubes() -> NamedModel {
         let mut part = block_part("a", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
         block(&mut part, "b", [2.0, 0.0, 0.0], [3.0, 1.0, 1.0]);
         part

@@ -9,6 +9,7 @@
 //! no other step's again — which a target revised by every step would, at a
 //! cost growing with the square of the steps.
 
+use geop_core_math::scalars::Scalar;
 use std::collections::BTreeMap;
 
 use geop_core_math::{
@@ -21,7 +22,6 @@ use geop_core_program::{
     placed::key_behind,
     reader::Reader,
     target::{Target, TargetReference},
-    values::Design,
 };
 
 use crate::Generated;
@@ -33,12 +33,12 @@ pub use geop_core_math::solvers::system::Bound;
 /// change as the values of the state they depend on move.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Constraint {
-    pub residuals: Vec<Design>,
+    pub residuals: Vec<Scalar>,
     /// For each state the residuals depend on, one row per residual: its
     /// derivative by that state's step (see
     /// [`geop_core_math::solvers::system::Variable::retract`]), as many
     /// numbers as the state's dimension.
-    pub jacobian: BTreeMap<String, Vec<Vec<Design>>>,
+    pub jacobian: BTreeMap<String, Vec<Vec<Scalar>>>,
     pub bound: Bound,
 }
 
@@ -77,7 +77,7 @@ impl Constraint {
 
     /// Whether it holds: every residual within `tolerance` of zero — or,
     /// for a limit, not definitely above `tolerance`.
-    pub fn holds(&self, tolerance: Design) -> bool {
+    pub fn holds(&self, tolerance: Scalar) -> bool {
         (self.residuals.iter()).all(|&r| self.bound.holds(r, tolerance))
     }
 }

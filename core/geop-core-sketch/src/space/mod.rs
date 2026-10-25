@@ -61,9 +61,8 @@ use crate::{
 
 /// A point of a 3-D sketch.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Point3d<S: Scalar> {
-    pub at: Vector3<S>,
+pub struct Point3d {
+    pub at: Vector3,
     /// Given rather than solved for: a vertex of the part, a datum point.
     #[serde(default, skip_serializing_if = "is_false")]
     pub fixed: bool,
@@ -180,8 +179,8 @@ impl Coordinate {
 
 /// The constraints of a 3-D sketch. Lengths are in sketch units.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", bound = "S: Scalar")]
-pub enum Constraint3d<S: Scalar> {
+#[serde(tag = "type")]
+pub enum Constraint3d {
     /// `a` and `b` are the same point.
     Coincident { a: PointId, b: PointId },
     /// The coordinate `axis` of `point` is `value`.
@@ -189,39 +188,36 @@ pub enum Constraint3d<S: Scalar> {
         point: PointId,
         axis: Coordinate,
         #[serde(with = "as_f64")]
-        value: S,
+        value: Scalar,
     },
     Distance {
         a: PointId,
         b: PointId,
         #[serde(with = "as_f64")]
-        value: S,
+        value: Scalar,
     },
     /// The length of a line.
     Length {
         line: CurveId,
         #[serde(with = "as_f64")]
-        value: S,
+        value: Scalar,
     },
     /// The radius of an arc.
     Radius {
         arc: CurveId,
         #[serde(with = "as_f64")]
-        value: S,
+        value: Scalar,
     },
     /// Two lines are parallel.
     Parallel { a: CurveId, b: CurveId },
     /// A line runs along `direction`: an axis, a straight edge.
-    ParallelTo {
-        line: CurveId,
-        direction: Vector3<S>,
-    },
+    ParallelTo { line: CurveId, direction: Vector3 },
     /// An arc or a spline leaves (`end` its start) or arrives (its end)
     /// along `direction`, either way along it.
     TangentTo {
         curve: CurveId,
         end: End,
-        direction: Vector3<S>,
+        direction: Vector3,
     },
     /// `point` lies on `curve`: within a line or an arc's full circle, or
     /// on a reference curve.
@@ -230,7 +226,7 @@ pub enum Constraint3d<S: Scalar> {
     Tangent { a: CurveId, b: CurveId },
 }
 
-impl<S: Scalar> Uses for Constraint3d<S> {
+impl Uses for Constraint3d {
     fn points(&self) -> Vec<PointId> {
         Constraint3d::points(self)
     }
@@ -247,7 +243,7 @@ impl<S: Scalar> Uses for Constraint3d<S> {
     }
 }
 
-impl<S: Scalar> Constraint3d<S> {
+impl Constraint3d {
     /// The points it refers to directly, curves aside.
     pub fn points(&self) -> Vec<PointId> {
         use Constraint3d::*;
@@ -273,7 +269,7 @@ impl<S: Scalar> Constraint3d<S> {
     }
 
     /// The dimension it holds, if it holds one: what a dialog edits.
-    pub fn value(&self) -> Option<S> {
+    pub fn value(&self) -> Option<Scalar> {
         use Constraint3d::*;
         match *self {
             Coordinate { value, .. }
@@ -285,7 +281,7 @@ impl<S: Scalar> Constraint3d<S> {
     }
 
     /// Gives its dimension the value `v`; nothing for one without.
-    pub fn set_value(&mut self, v: S) {
+    pub fn set_value(&mut self, v: Scalar) {
         use Constraint3d::*;
         match self {
             Coordinate { value, .. }
@@ -300,43 +296,38 @@ impl<S: Scalar> Constraint3d<S> {
 /// A 3-D sketch's geometry as the kernel builds on it: every point, solved
 /// (see [`Sketch3d::enclose`]) or as drawn ([`Enclosure3d::as_drawn`]).
 #[derive(Clone, Debug, PartialEq)]
-pub struct Enclosure3d<S: Scalar> {
-    pub points: BTreeMap<PointId, Vector3<S>>,
+pub struct Enclosure3d {
+    pub points: BTreeMap<PointId, Vector3>,
 }
 
-impl<S: Scalar> Enclosure3d<S> {
-    /// `sketch`'s points exactly as drawn, as enclosures in `S`.
-    pub fn as_drawn<D: Scalar>(sketch: &Sketch3d<D>) -> Self {
+impl Enclosure3d {
+    /// `sketch`'s points exactly as drawn.
+    pub fn as_drawn(sketch: &Sketch3d) -> Self {
         Enclosure3d {
-            points: sketch
-                .points
-                .iter()
-                .map(|(&id, p)| (id, p.at.map(|c| c.cast())))
-                .collect(),
+            points: sketch.points.iter().map(|(&id, p)| (id, p.at)).collect(),
         }
     }
 }
 
 /// A 3-D constraint sketch (see the module docs). Ids are handed out once
 /// and never reused, as in a planar [`crate::Sketch`].
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Sketch3d<S: Scalar> {
-    pub points: BTreeMap<PointId, Point3d<S>>,
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Sketch3d {
+    pub points: BTreeMap<PointId, Point3d>,
     pub curves: BTreeMap<CurveId, Curve3d>,
-    pub constraints: BTreeMap<ConstraintId, Constraint3d<S>>,
+    pub constraints: BTreeMap<ConstraintId, Constraint3d>,
     /// The id the next added entity gets: one counter for all three kinds.
     pub next_id: u64,
     /// The geometry of every [`CurveKind3d::Reference`] curve: given from
     /// outside, so not saved with the sketch — its owner hands it in before
     /// solving or building.
     #[serde(skip)]
-    pub references: BTreeMap<CurveId, NurbCurve3D<S>>,
+    pub references: BTreeMap<CurveId, NurbCurve3D>,
 }
 
 /// Two sketches are the same design: the same points, curves and
 /// constraints — whatever geometry was handed in for their references.
-impl<S: Scalar + PartialEq> PartialEq for Sketch3d<S> {
+impl PartialEq for Sketch3d {
     fn eq(&self, other: &Self) -> bool {
         self.points == other.points
             && self.curves == other.curves
@@ -345,24 +336,12 @@ impl<S: Scalar + PartialEq> PartialEq for Sketch3d<S> {
     }
 }
 
-impl<S: Scalar> Default for Sketch3d<S> {
-    fn default() -> Self {
-        Sketch3d {
-            points: BTreeMap::new(),
-            curves: BTreeMap::new(),
-            constraints: BTreeMap::new(),
-            next_id: 0,
-            references: BTreeMap::new(),
-        }
-    }
-}
-
-impl<S: Scalar> Sketch3d<S> {
+impl Sketch3d {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn point(&self, id: PointId) -> GeopResult<&Point3d<S>> {
+    pub fn point(&self, id: PointId) -> GeopResult<&Point3d> {
         self.points
             .get(&id)
             .ok_or_else(|| GeopError::new(format!("3-D sketch has no point {id}")))
@@ -380,14 +359,14 @@ impl<S: Scalar> Sketch3d<S> {
         id
     }
 
-    pub fn add_point(&mut self, at: Vector3<S>) -> PointId {
+    pub fn add_point(&mut self, at: Vector3) -> PointId {
         let id = PointId(self.fresh_id());
         self.points.insert(id, Point3d { at, fixed: false });
         id
     }
 
     /// A point given from outside the sketch, at `at`.
-    pub fn add_fixed_point(&mut self, at: Vector3<S>) -> PointId {
+    pub fn add_fixed_point(&mut self, at: Vector3) -> PointId {
         let id = PointId(self.fresh_id());
         self.points.insert(id, Point3d { at, fixed: true });
         id
@@ -422,13 +401,13 @@ impl<S: Scalar> Sketch3d<S> {
     }
 
     /// A curve given from outside, `curve`, to constrain points onto.
-    pub fn add_reference(&mut self, curve: NurbCurve3D<S>) -> CurveId {
+    pub fn add_reference(&mut self, curve: NurbCurve3D) -> CurveId {
         let id = self.add_curve(CurveKind3d::Reference);
         self.references.insert(id, curve);
         id
     }
 
-    pub fn constrain(&mut self, constraint: Constraint3d<S>) -> ConstraintId {
+    pub fn constrain(&mut self, constraint: Constraint3d) -> ConstraintId {
         let id = ConstraintId(self.fresh_id());
         self.constraints.insert(id, constraint);
         id
@@ -544,7 +523,7 @@ impl<S: Scalar> Sketch3d<S> {
         Ok(())
     }
 
-    fn validate_constraint(&self, c: &Constraint3d<S>) -> GeopResult<()> {
+    fn validate_constraint(&self, c: &Constraint3d) -> GeopResult<()> {
         use Constraint3d::*;
         for p in c.points() {
             self.point(p)?;
@@ -599,7 +578,7 @@ impl<S: Scalar> Sketch3d<S> {
     /// The spline ends `c` gives a direction to: a [`Constraint3d::TangentTo`]
     /// its curve's end, a [`Constraint3d::Tangent`] the end of the spline that
     /// follows the other curve's direction (see [`Sketch3d::adopts`]).
-    fn spline_ends_directed(&self, c: &Constraint3d<S>) -> GeopResult<Vec<(CurveId, End)>> {
+    fn spline_ends_directed(&self, c: &Constraint3d) -> GeopResult<Vec<(CurveId, End)>> {
         Ok(match *c {
             Constraint3d::TangentTo { curve, end, .. }
                 if matches!(self.curve(curve)?.kind, CurveKind3d::Spline { .. }) =>

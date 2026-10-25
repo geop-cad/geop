@@ -14,7 +14,7 @@ use geop_core_editor::{
 };
 use geop_core_math::{
     primitives::{DatumComponent, FrameAxis},
-    scalars::{ScalInF64 as S, Scalar},
+    scalars::Scalar,
     vector::Vector3,
 };
 use geop_core_program::{element::ElementReference, program::Program, testing::args};
@@ -53,8 +53,8 @@ fn axis(along: FrameAxis) -> Selected {
     datum(component_name(ORIGIN, DatumComponent::Axis(along)))
 }
 
-fn v(p: [f64; 3]) -> Vector3<S> {
-    Vector3::from_array(p.map(S::from_f64))
+fn v(p: [f64; 3]) -> Vector3 {
+    Vector3::from_array(p.map(Scalar::from_f64))
 }
 
 /// A program of the datum step `d` alone, made by `args`.
@@ -66,11 +66,7 @@ fn program(args: &AddDatumArgs) -> Program {
 
 /// The datum step `d` of `args` edited by `events` — a new one, starting
 /// with a pick, if `new` — and what is shown after them.
-fn edited(
-    args: AddDatumArgs,
-    new: bool,
-    events: &[StepEditEvent<S>],
-) -> (AddDatumArgs, Presentation<S>) {
+fn edited(args: AddDatumArgs, new: bool, events: &[StepEditEvent]) -> (AddDatumArgs, Presentation) {
     let mut step = match new {
         true => Stepping::new(editor_with(registry(), Program::new()), "add_datum"),
         false => Stepping::open(editor_with(registry(), program(&args)), "d"),
@@ -109,7 +105,7 @@ fn offset_points_are_dragged_by_a_gizmo() {
     // the pointer's reach snaps to being a tenth.
     let side = |z: f64| Pointer {
         reach: Reach::Tube {
-            radius: S::from_f64(0.01),
+            radius: Scalar::from_f64(0.01),
         },
         ..pointer([1.0, -10.0, z], [0.0, 1.0, 0.0])
     };
@@ -276,8 +272,11 @@ fn offset_plane_dragged_by_its_handle() {
             _ => None,
         })
         .expect("the distance has a handle");
-    assert!(direction[2].abs().could_be_equal(S::ONE), "{direction:?}");
-    assert!(at[2].could_be_equal(S::from_f64(1.5)), "{at:?}");
+    assert!(
+        direction[2].abs().could_be_equal(Scalar::ONE),
+        "{direction:?}"
+    );
+    assert!(at[2].could_be_equal(Scalar::from_f64(1.5)), "{at:?}");
     // From the side, square to the track, through the handle.
     let [x, y, z] = [0, 1, 2].map(|k| at[k].to_f64());
     let side = |dz: f64| pointer([x, y - 10.0, z + dz], [0.0, 1.0, 0.0]);

@@ -389,12 +389,12 @@ impl<'a> Plan<'a> {
                     CurveKind::Arc { sweep, .. } => CurveKind::Arc {
                         start,
                         end,
-                        sweep: Design::from_f64(sweep.to_f64() * span),
+                        sweep: Scalar::from_f64(sweep.to_f64() * span),
                     },
                     CurveKind::Circle { .. } => CurveKind::Arc {
                         start,
                         end,
-                        sweep: Design::from_f64(TAU * span),
+                        sweep: Scalar::from_f64(TAU * span),
                     },
                     CurveKind::Spline { .. } => unreachable!("a spline is never cut"),
                 };

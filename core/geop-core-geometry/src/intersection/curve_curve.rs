@@ -51,10 +51,10 @@ use geop_core_math::{
 /// space, so a pair satisfying all of them is a solution. If they don't —
 /// a closed segment without a chord, or two collinear curves — the
 /// coordinate axes are added.
-fn clip<S: Scalar, const D: usize, const C: usize>(
-    a: &NurbCurve<S, D>,
-    b: &NurbCurve<S, D>,
-) -> GeopResult<Option<[S; 2]>> {
+fn clip<const D: usize, const C: usize>(
+    a: &NurbCurve<D>,
+    b: &NurbCurve<D>,
+) -> GeopResult<Option<[Scalar; 2]>> {
     let mut hats = [a.domain_as_scalar(), b.domain_as_scalar()];
     let (na, nb) = (a.control_points.len(), b.control_points.len());
     let greville = [
@@ -62,11 +62,11 @@ fn clip<S: Scalar, const D: usize, const C: usize>(
         greville_abscissae(&b.knot_vector, b.degree, nb)?,
     ];
 
-    let mut dirs = chord::<S, D, C>(&b.control_points)
+    let mut dirs = chord::<D, C>(&b.control_points)
         .orthonormal_complement()
         .unwrap_or_default();
     dirs.extend(
-        chord::<S, D, C>(&a.control_points)
+        chord::<D, C>(&a.control_points)
             .orthonormal_complement()
             .unwrap_or_default(),
     );
@@ -74,7 +74,7 @@ fn clip<S: Scalar, const D: usize, const C: usize>(
     let w = D - 1;
     let mut d = Vec::with_capacity(na * nb);
     for n in spanning(dirs) {
-        let nb_pts: Vec<S> = b
+        let nb_pts: Vec<Scalar> = b
             .control_points
             .iter()
             .map(|q| n.prod_dot(&q.head()))
@@ -119,16 +119,16 @@ fn clip<S: Scalar, const D: usize, const C: usize>(
 /// (`DisjointSet`), never averaged. Exhausting `max_nodes` is an error —
 /// the result would be incomplete, and neither "empty" nor "coincident" may
 /// be read into it.
-pub fn curve_curve_crossings<S: Scalar, const D: usize, const C: usize>(
-    curve_a: &NurbCurve<S, D>,
-    curve_b: &NurbCurve<S, D>,
+pub fn curve_curve_crossings<const D: usize, const C: usize>(
+    curve_a: &NurbCurve<D>,
+    curve_b: &NurbCurve<D>,
     max_nodes: usize,
-    min_subdivision_size: S,
-) -> GeopResult<Vec<(S, S)>>
+    min_subdivision_size: Scalar,
+) -> GeopResult<Vec<(Scalar, Scalar)>>
 where
-    NurbCurve<S, D>: ParameterRefinable<S, C>,
+    NurbCurve<D>: ParameterRefinable<C>,
 {
-    let mut solutions: DisjointSet<(S, S)> = DisjointSet::new();
+    let mut solutions: DisjointSet<(Scalar, Scalar)> = DisjointSet::new();
     let root = (curve_a.clone(), curve_b.clone());
     let searched = subdivide(
         [root],
@@ -138,7 +138,7 @@ where
             if !aabb_could_overlap(&a.aabb, &b.aabb, C) {
                 return Ok(Split::Done);
             }
-            let Some(hats) = clip::<S, D, C>(&a, &b)? else {
+            let Some(hats) = clip::<D, C>(&a, &b)? else {
                 return Ok(Split::Done);
             };
 
@@ -221,15 +221,15 @@ where
 }
 
 /// Where `other(t)` lies on `curve`, if it does: its parameter there.
-fn point_on<S: Scalar, const D: usize, const C: usize>(
-    curve: &NurbCurve<S, D>,
-    other: &NurbCurve<S, D>,
-    t: S,
+fn point_on<const D: usize, const C: usize>(
+    curve: &NurbCurve<D>,
+    other: &NurbCurve<D>,
+    t: Scalar,
     max_nodes: usize,
-    min_subdivision_size: S,
-) -> GeopResult<Option<S>>
+    min_subdivision_size: Scalar,
+) -> GeopResult<Option<Scalar>>
 where
-    NurbCurve<S, D>: ParameterRefinable<S, C>,
+    NurbCurve<D>: ParameterRefinable<C>,
 {
     let point = other.evaluate_cartesian(t)?;
     curve_could_contain(curve, &point, max_nodes, min_subdivision_size)
@@ -238,16 +238,16 @@ where
 /// Every stretch of `a` lying on `b` (see [`coincidence`]), with
 /// `b`'s parameter as the partner: candidates are `a`'s ends found on `b`
 /// and `b`'s ends found on `a`.
-pub(crate) fn curve_curve_overlaps<S: Scalar, const D: usize, const C: usize>(
-    a: &NurbCurve<S, D>,
-    b: &NurbCurve<S, D>,
+pub(crate) fn curve_curve_overlaps<const D: usize, const C: usize>(
+    a: &NurbCurve<D>,
+    b: &NurbCurve<D>,
     max_nodes: usize,
-    min_subdivision_size: S,
-) -> GeopResult<Vec<Overlap<S, S>>>
+    min_subdivision_size: Scalar,
+) -> GeopResult<Vec<Overlap<Scalar>>>
 where
-    NurbCurve<S, D>: ParameterRefinable<S, C>,
+    NurbCurve<D>: ParameterRefinable<C>,
 {
-    let on = |curve: &NurbCurve<S, D>, other: &NurbCurve<S, D>, t: S| {
+    let on = |curve: &NurbCurve<D>, other: &NurbCurve<D>, t: Scalar| {
         point_on(curve, other, t, max_nodes, min_subdivision_size)
     };
     let (a0, a1) = a.domain();
@@ -268,18 +268,18 @@ where
 
 /// What [`curve_curve_overlaps_and_crossings`] finds: the overlaps, and the
 /// parameter pairs of the isolated crossings.
-pub type OverlapsAndCrossings<S> = (Vec<Overlap<S, S>>, Vec<(S, S)>);
+pub type OverlapsAndCrossings = (Vec<Overlap<Scalar>>, Vec<(Scalar, Scalar)>);
 
 /// Overlaps of `a` with `b`, and the isolated crossings away from them (the
 /// clipping search run on each stretch of `a` between overlaps).
-pub fn curve_curve_overlaps_and_crossings<S: Scalar, const D: usize, const C: usize>(
-    a: &NurbCurve<S, D>,
-    b: &NurbCurve<S, D>,
+pub fn curve_curve_overlaps_and_crossings<const D: usize, const C: usize>(
+    a: &NurbCurve<D>,
+    b: &NurbCurve<D>,
     max_nodes: usize,
-    min_subdivision_size: S,
-) -> GeopResult<OverlapsAndCrossings<S>>
+    min_subdivision_size: Scalar,
+) -> GeopResult<OverlapsAndCrossings>
 where
-    NurbCurve<S, D>: ParameterRefinable<S, C>,
+    NurbCurve<D>: ParameterRefinable<C>,
 {
     let overlaps = curve_curve_overlaps(a, b, max_nodes, min_subdivision_size)?;
     let crossings = coincidence::crossings_between(a, &overlaps, |piece| {
@@ -303,15 +303,15 @@ where
 ///   overlaps.
 ///
 /// Exhausting `max_nodes` in any sub-search is an error.
-pub fn curve_curve_intersect<S: Scalar, const D: usize, const C: usize>(
-    curve_a: &NurbCurve<S, D>,
-    curve_b: &NurbCurve<S, D>,
+pub fn curve_curve_intersect<const D: usize, const C: usize>(
+    curve_a: &NurbCurve<D>,
+    curve_b: &NurbCurve<D>,
     max_solutions: usize,
     max_nodes: usize,
-    min_subdivision_size: S,
-) -> GeopResult<Intersections<(S, S)>>
+    min_subdivision_size: Scalar,
+) -> GeopResult<Intersections<(Scalar, Scalar)>>
 where
-    NurbCurve<S, D>: ParameterRefinable<S, C>,
+    NurbCurve<D>: ParameterRefinable<C>,
 {
     // Disjoint bounding boxes rule out crossings and overlaps alike, before
     // any candidate probe runs — a straight segment's own extent, not its
@@ -350,14 +350,14 @@ where
 /// tangents make `JᵀJ` singular, and leave the box as it is. So does a
 /// refined box that provably holds no crossing — see
 /// `curve_surface::refine_crossing`.
-pub fn refine_crossing<S: Scalar, const D: usize, const C: usize>(
-    curve_a: &NurbCurve<S, D>,
-    curve_b: &NurbCurve<S, D>,
-    t_a: S,
-    t_b: S,
-) -> (S, S)
+pub fn refine_crossing<const D: usize, const C: usize>(
+    curve_a: &NurbCurve<D>,
+    curve_b: &NurbCurve<D>,
+    t_a: Scalar,
+    t_b: Scalar,
+) -> (Scalar, Scalar)
 where
-    NurbCurve<S, D>: ParameterRefinable<S, C>,
+    NurbCurve<D>: ParameterRefinable<C>,
 {
     let refined = newton::refine(
         [t_a, t_b],
@@ -396,14 +396,13 @@ mod tests {
     use super::curve_curve_crossings;
     use crate::nurb_curve::NurbCurve;
     use crate::test_fixtures::{knots, line, weighted};
-    use geop_core_math::for_all_scalars;
     use geop_core_math::scalars::Scalar;
 
     const MAX: usize = 5000;
     const MIN_SUBDIVISION_SIZE: f64 = 1e-6;
 
     /// Exact rational quarter circle of radius 1 in the xy-plane.
-    fn quarter_circle<S: Scalar>() -> NurbCurve<S, 4> {
+    fn quarter_circle() -> NurbCurve<4> {
         let w = std::f64::consts::FRAC_1_SQRT_2;
         NurbCurve::try_new(
             2,
@@ -417,99 +416,74 @@ mod tests {
         .unwrap()
     }
 
-    fn solve<S: Scalar>(a: &NurbCurve<S, 4>, b: &NurbCurve<S, 4>) -> Vec<(S, S)> {
-        curve_curve_crossings::<S, 4, 3>(a, b, MAX, S::from_f64(MIN_SUBDIVISION_SIZE)).unwrap()
+    fn solve(a: &NurbCurve<4>, b: &NurbCurve<4>) -> Vec<(Scalar, Scalar)> {
+        curve_curve_crossings::<4, 3>(a, b, MAX, Scalar::from_f64(MIN_SUBDIVISION_SIZE)).unwrap()
     }
 
     /// Every returned pair's two points agree, and there are `n` of them.
-    fn assert_solutions<S: Scalar>(
-        a: &NurbCurve<S, 4>,
-        b: &NurbCurve<S, 4>,
-        n: usize,
-    ) -> Vec<(S, S)> {
+    fn assert_solutions(a: &NurbCurve<4>, b: &NurbCurve<4>, n: usize) -> Vec<(Scalar, Scalar)> {
         let sols = solve(a, b);
         assert_eq!(sols.len(), n, "{sols:?}");
         sols
     }
 
     /// `curve_curve.md` §3: projections alone can't contract this pair.
-    fn check_crossing_diagonals<S: Scalar>() {
-        let a = line::<S>([0., 0., 0.], [1., 1., 0.]);
-        let b = line::<S>([0., 1., 0.], [1., 0., 0.]);
+    #[test]
+    fn crossing_diagonals() {
+        let a = line([0., 0., 0.], [1., 1., 0.]);
+        let b = line([0., 1., 0.], [1., 0., 0.]);
         let sols = assert_solutions(&a, &b, 1);
-        let half = S::from_f64(0.5);
+        let half = Scalar::from_f64(0.5);
         assert!(
             sols[0].0.could_be_equal(half) && sols[0].1.could_be_equal(half),
             "{sols:?}"
         );
     }
-    #[test]
-    fn crossing_diagonals() {
-        for_all_scalars!(check_crossing_diagonals);
-    }
 
-    fn check_circle_meets_line_once<S: Scalar>() {
-        // x = y meets the arc at (√½, √½), parameter ½ by symmetry.
-        let sols = assert_solutions(&quarter_circle::<S>(), &line([0., 0., 0.], [1., 1., 0.]), 1);
-        assert!(sols[0].0.could_be_equal(S::from_f64(0.5)), "{sols:?}");
-    }
     #[test]
     fn circle_meets_line_once() {
-        for_all_scalars!(check_circle_meets_line_once);
+        // x = y meets the arc at (√½, √½), parameter ½ by symmetry.
+        let sols = assert_solutions(&quarter_circle(), &line([0., 0., 0.], [1., 1., 0.]), 1);
+        assert!(sols[0].0.could_be_equal(Scalar::from_f64(0.5)), "{sols:?}");
     }
 
-    fn check_circle_meets_chord_twice<S: Scalar>() {
-        // x + y = 1.15 meets the arc at x = (1.15 ± √0.6775) / 2 ≈ 0.987 and
-        // 0.163; the chord spans x ∈ [0.15, 1], so both.
-        let chord = line::<S>([1., 0.15, 0.], [0.15, 1., 0.]);
-        assert_solutions(&quarter_circle::<S>(), &chord, 2);
-    }
     #[test]
     fn circle_meets_chord_twice() {
-        for_all_scalars!(check_circle_meets_chord_twice);
+        // x + y = 1.15 meets the arc at x = (1.15 ± √0.6775) / 2 ≈ 0.987 and
+        // 0.163; the chord spans x ∈ [0.15, 1], so both.
+        let chord = line([1., 0.15, 0.], [0.15, 1., 0.]);
+        assert_solutions(&quarter_circle(), &chord, 2);
     }
 
     /// Shared endpoint: the kernel's most common case (edges meeting at a
     /// vertex).
-    fn check_shared_endpoint<S: Scalar>() {
-        let a = line::<S>([0., 0., 0.], [1., 0., 0.]);
-        let b = line::<S>([1., 0., 0.], [1., 1., 1.]);
+    #[test]
+    fn shared_endpoint() {
+        let a = line([0., 0., 0.], [1., 0., 0.]);
+        let b = line([1., 0., 0.], [1., 1., 1.]);
         let sols = assert_solutions(&a, &b, 1);
         assert!(
-            sols[0].0.could_be_equal(S::ONE) && sols[0].1.could_be_equal(S::ZERO),
+            sols[0].0.could_be_equal(Scalar::ONE) && sols[0].1.could_be_equal(Scalar::ZERO),
             "{sols:?}"
         );
     }
-    #[test]
-    fn shared_endpoint() {
-        for_all_scalars!(check_shared_endpoint);
-    }
 
-    fn check_skew_lines_miss<S: Scalar>() {
-        let a = line::<S>([0., 0., 0.], [1., 1., 0.]);
-        let b = line::<S>([0., 1., 0.01], [1., 0., 0.01]);
-        assert_solutions(&a, &b, 0);
-        assert_solutions(
-            &quarter_circle::<S>(),
-            &line([0., 0., 0.], [0.5, 0.5, 0.]),
-            0,
-        );
-    }
     #[test]
     fn skew_lines_miss() {
-        for_all_scalars!(check_skew_lines_miss);
+        let a = line([0., 0., 0.], [1., 1., 0.]);
+        let b = line([0., 1., 0.01], [1., 0., 0.01]);
+        assert_solutions(&a, &b, 0);
+        assert_solutions(&quarter_circle(), &line([0., 0., 0.], [0.5, 0.5, 0.]), 0);
     }
 
-    fn check_budget_exhaustion_is_an_error<S: Scalar>() {
-        let a = line::<S>([0., 0., 0.], [1., 1., 0.]);
-        let b = line::<S>([0., 1., 0.], [1., 0., 0.]);
-        assert!(
-            curve_curve_crossings::<S, 4, 3>(&a, &b, 1, S::from_f64(MIN_SUBDIVISION_SIZE)).is_err()
-        );
-    }
     #[test]
     fn budget_exhaustion_is_an_error() {
-        for_all_scalars!(check_budget_exhaustion_is_an_error);
+        let a = line([0., 0., 0.], [1., 1., 0.]);
+        let b = line([0., 1., 0.], [1., 0., 0.]);
+        assert!(
+            curve_curve_crossings::<4, 3>(&a, &b, 1, Scalar::from_f64(MIN_SUBDIVISION_SIZE))
+                .is_err()
+        );
     }
 
     // ── The coincidence-handling wrapper ─────────────────────────────────────
@@ -517,74 +491,62 @@ mod tests {
     use super::curve_curve_intersect;
     use crate::intersection::Intersections;
 
-    fn wrap<S: Scalar>(a: &NurbCurve<S, 4>, b: &NurbCurve<S, 4>) -> Intersections<(S, S)> {
-        curve_curve_intersect::<S, 4, 3>(a, b, 5, MAX, S::from_f64(MIN_SUBDIVISION_SIZE)).unwrap()
+    fn wrap(a: &NurbCurve<4>, b: &NurbCurve<4>) -> Intersections<(Scalar, Scalar)> {
+        curve_curve_intersect::<4, 3>(a, b, 5, MAX, Scalar::from_f64(MIN_SUBDIVISION_SIZE)).unwrap()
     }
 
     /// Both ends of the arc lie on its chord, but the arc leaves it: the
     /// midpoint probe rules the candidate stretch out.
-    fn check_arc_with_ends_on_chord_is_not_coincident<S: Scalar>() {
-        let r = wrap(&quarter_circle::<S>(), &line([1., 0., 0.], [0., 1., 0.]));
+    #[test]
+    fn arc_with_ends_on_chord_is_not_coincident() {
+        let r = wrap(&quarter_circle(), &line([1., 0., 0.], [0., 1., 0.]));
         assert!(!r.is_coincident(), "{r:?}");
         assert_eq!(r.len(), 2, "{r:?}");
     }
-    #[test]
-    fn arc_with_ends_on_chord_is_not_coincident() {
-        for_all_scalars!(check_arc_with_ends_on_chord_is_not_coincident);
-    }
 
-    fn check_shared_vertex_is_not_coincident<S: Scalar>() {
+    #[test]
+    fn shared_vertex_is_not_coincident() {
         let r = wrap(
-            &line::<S>([0., 0., 0.], [1., 0., 0.]),
+            &line([0., 0., 0.], [1., 0., 0.]),
             &line([1., 0., 0.], [1., 1., 1.]),
         );
         assert!(!r.is_coincident() && r.len() == 1, "{r:?}");
     }
-    #[test]
-    fn shared_vertex_is_not_coincident() {
-        for_all_scalars!(check_shared_vertex_is_not_coincident);
-    }
 
     /// The overlap's ends come first: `a` at s = ½ (where `b` starts) and
     /// s = 1 (`a`'s end, `b` at t = ½).
-    fn check_partial_overlap_reports_its_ends<S: Scalar>() {
-        let a = line::<S>([0., 0., 0.], [1., 0., 0.]);
-        let b = line::<S>([0.5, 0., 0.], [1.5, 0., 0.]);
+    #[test]
+    fn partial_overlap_reports_its_ends() {
+        let a = line([0., 0., 0.], [1., 0., 0.]);
+        let b = line([0.5, 0., 0.], [1.5, 0., 0.]);
         let r = wrap(&a, &b);
         assert!(r.is_coincident(), "{r:?}");
         let v = r.as_slice();
-        let half = S::from_f64(0.5);
+        let half = Scalar::from_f64(0.5);
         assert!(
-            v[0].0.could_be_equal(half) && v[0].1.could_be_equal(S::ZERO),
+            v[0].0.could_be_equal(half) && v[0].1.could_be_equal(Scalar::ZERO),
             "{v:?}"
         );
         assert!(
-            v[1].0.could_be_equal(S::ONE) && v[1].1.could_be_equal(half),
+            v[1].0.could_be_equal(Scalar::ONE) && v[1].1.could_be_equal(half),
             "{v:?}"
         );
         for (s, _) in v {
             assert!(!s.definitely_less(half), "{v:?}");
         }
     }
-    #[test]
-    fn partial_overlap_reports_its_ends() {
-        for_all_scalars!(check_partial_overlap_reports_its_ends);
-    }
 
     /// Same arc, split differently: coincident over the shared quarter.
-    fn check_arc_pieces_overlap<S: Scalar>() {
-        let arc = quarter_circle::<S>();
-        let (left, _) = arc.split(S::from_f64(0.75)).unwrap();
-        let (_, right) = arc.split(S::from_f64(0.25)).unwrap();
+    #[test]
+    fn arc_pieces_overlap() {
+        let arc = quarter_circle();
+        let (left, _) = arc.split(Scalar::from_f64(0.75)).unwrap();
+        let (_, right) = arc.split(Scalar::from_f64(0.25)).unwrap();
         let r = wrap(&left, &right);
         assert!(r.is_coincident(), "{r:?}");
         for (s, t) in r.as_slice() {
             assert!(s.could_be_equal(*t), "same curve, same parameter: {r:?}");
         }
-    }
-    #[test]
-    fn arc_pieces_overlap() {
-        for_all_scalars!(check_arc_pieces_overlap);
     }
 
     /// The test suite of the old `curve_curve` search, run unchanged against the
@@ -593,7 +555,6 @@ mod tests {
         use super::super::curve_curve_intersect;
         use crate::intersection::curve_curve::refine_crossing;
         use crate::nurb_curve::NurbCurve;
-        use geop_core_math::for_all_scalars;
         use geop_core_math::{
             scalars::Scalar,
             vector::{Vector3, Vector4},
@@ -601,18 +562,18 @@ mod tests {
 
         const MAX_NODES: usize = 2000;
 
-        fn ptc<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
+        fn ptc(x: f64, y: f64, z: f64, w: f64) -> Vector4 {
             Vector4::from_array([
-                S::from_f64(x),
-                S::from_f64(y),
-                S::from_f64(z),
-                S::from_f64(w),
+                Scalar::from_f64(x),
+                Scalar::from_f64(y),
+                Scalar::from_f64(z),
+                Scalar::from_f64(w),
             ])
         }
 
         /// Horizontal line along the x axis, y=0.3, x ∈ [0,1].
-        fn horizontal_line<S: Scalar>() -> NurbCurve<S, 4> {
-            let f = S::from_f64;
+        fn horizontal_line() -> NurbCurve<4> {
+            let f = Scalar::from_f64;
             NurbCurve::try_new(
                 1,
                 vec![ptc(0., 0.3, 0., 1.), ptc(1., 0.3, 0., 1.)],
@@ -623,8 +584,8 @@ mod tests {
 
         /// Vertical line along the y axis at x=0.5, y ∈ [-1,1] -- crosses
         /// `horizontal_line` once at (0.5, 0.3, 0).
-        fn vertical_crossing_line<S: Scalar>() -> NurbCurve<S, 4> {
-            let f = S::from_f64;
+        fn vertical_crossing_line() -> NurbCurve<4> {
+            let f = Scalar::from_f64;
             NurbCurve::try_new(
                 1,
                 vec![ptc(0.5, -1., 0., 1.), ptc(0.5, 1., 0., 1.)],
@@ -635,8 +596,8 @@ mod tests {
 
         /// Vertical line along the y axis at x=2.0, y ∈ [-1,1] -- never crosses
         /// `horizontal_line` (x ∈ [0,1]).
-        fn vertical_missing_line<S: Scalar>() -> NurbCurve<S, 4> {
-            let f = S::from_f64;
+        fn vertical_missing_line() -> NurbCurve<4> {
+            let f = Scalar::from_f64;
             NurbCurve::try_new(
                 1,
                 vec![ptc(2.0, -1., 0., 1.), ptc(2.0, 1., 0., 1.)],
@@ -649,8 +610,8 @@ mod tests {
         /// `horizontal_line` twice. x=0.3 is deliberately not the midpoint of
         /// `horizontal_line`'s x range [0,1], avoiding the "both halves always
         /// survive" tie pathology that exact midpoints trigger.
-        fn double_dip_curve<S: Scalar>() -> NurbCurve<S, 4> {
-            let f = S::from_f64;
+        fn double_dip_curve() -> NurbCurve<4> {
+            let f = Scalar::from_f64;
             NurbCurve::try_new(
                 2,
                 vec![
@@ -666,8 +627,8 @@ mod tests {
         /// Straight line lying *on* `horizontal_line` (same y=0.3, z=0), spanning
         /// only part of its x range: from (0.5, 0.3, 0) to (1.5, 0.3, 0). The
         /// overlap with `horizontal_line` (x ∈ [0,1]) is x ∈ [0.5, 1].
-        fn coincident_overlap_line<S: Scalar>() -> NurbCurve<S, 4> {
-            let f = S::from_f64;
+        fn coincident_overlap_line() -> NurbCurve<4> {
+            let f = Scalar::from_f64;
             NurbCurve::try_new(
                 1,
                 vec![ptc(0.5, 0.3, 0., 1.), ptc(1.5, 0.3, 0., 1.)],
@@ -678,8 +639,8 @@ mod tests {
 
         /// Straight line lying *on* `horizontal_line` exactly (same domain,
         /// x ∈ [0,1], y=0.3, z=0) — fully coincident, not just partially.
-        fn full_coincident_line<S: Scalar>() -> NurbCurve<S, 4> {
-            let f = S::from_f64;
+        fn full_coincident_line() -> NurbCurve<4> {
+            let f = Scalar::from_f64;
             NurbCurve::try_new(
                 1,
                 vec![ptc(0., 0.3, 0., 1.), ptc(1., 0.3, 0., 1.)],
@@ -692,70 +653,60 @@ mod tests {
 
         // ── Single crossing ───────────────────────────────────────────────────────
 
-        fn check_single_crossing_curves_have_one_solution<S: Scalar>() {
-            let a = horizontal_line::<S>();
-            let b = vertical_crossing_line::<S>();
-            let result =
-                curve_curve_intersect(&a, &b, 5, MAX_NODES, S::from_f64(MIN_SUBDIVISION_SIZE))
-                    .unwrap();
-            assert_eq!(result.len(), 1);
-        }
         #[test]
         fn single_crossing_curves_have_one_solution() {
-            for_all_scalars!(check_single_crossing_curves_have_one_solution);
+            let a = horizontal_line();
+            let b = vertical_crossing_line();
+            let result =
+                curve_curve_intersect(&a, &b, 5, MAX_NODES, Scalar::from_f64(MIN_SUBDIVISION_SIZE))
+                    .unwrap();
+            assert_eq!(result.len(), 1);
         }
 
         // ── No crossing ───────────────────────────────────────────────────────────
 
-        fn check_curves_missing_each_other_have_no_solution<S: Scalar>() {
-            let a = horizontal_line::<S>();
-            let b = vertical_missing_line::<S>();
-            let result =
-                curve_curve_intersect(&a, &b, 5, MAX_NODES, S::from_f64(MIN_SUBDIVISION_SIZE))
-                    .unwrap();
-            assert!(result.is_empty());
-        }
         #[test]
         fn curves_missing_each_other_have_no_solution() {
-            for_all_scalars!(check_curves_missing_each_other_have_no_solution);
+            let a = horizontal_line();
+            let b = vertical_missing_line();
+            let result =
+                curve_curve_intersect(&a, &b, 5, MAX_NODES, Scalar::from_f64(MIN_SUBDIVISION_SIZE))
+                    .unwrap();
+            assert!(result.is_empty());
         }
 
         // ── Budget ────────────────────────────────────────────────────────────────
 
-        fn check_max_solutions_zero_returns_empty<S: Scalar>() {
-            let a = horizontal_line::<S>();
-            let b = vertical_crossing_line::<S>();
+        #[test]
+        fn max_solutions_zero_returns_empty() {
+            let a = horizontal_line();
+            let b = vertical_crossing_line();
             let result =
-                curve_curve_intersect(&a, &b, 0, MAX_NODES, S::from_f64(MIN_SUBDIVISION_SIZE))
+                curve_curve_intersect(&a, &b, 0, MAX_NODES, Scalar::from_f64(MIN_SUBDIVISION_SIZE))
                     .unwrap();
             assert!(result.is_empty());
         }
-        #[test]
-        fn max_solutions_zero_returns_empty() {
-            for_all_scalars!(check_max_solutions_zero_returns_empty);
-        }
 
-        fn check_max_nodes_exhausted_errors<S: Scalar>() {
+        #[test]
+        fn max_nodes_exhausted_errors() {
             // Adapted: see the same test in `curve_surface`'s copy — the
             // coincident pair no longer overruns a tiny budget, so a pair
             // with two crossings that genuinely needs more nodes stands in.
-            let a = horizontal_line::<S>();
-            let b = double_dip_curve::<S>();
-            let result = curve_curve_intersect(&a, &b, 1000, 1, S::from_f64(MIN_SUBDIVISION_SIZE));
+            let a = horizontal_line();
+            let b = double_dip_curve();
+            let result =
+                curve_curve_intersect(&a, &b, 1000, 1, Scalar::from_f64(MIN_SUBDIVISION_SIZE));
             assert!(result.is_err());
-        }
-        #[test]
-        fn max_nodes_exhausted_errors() {
-            for_all_scalars!(check_max_nodes_exhausted_errors);
         }
 
         // ── Two crossings ─────────────────────────────────────────────────────────
 
-        fn check_two_crossings_found_when_budget_allows<S: Scalar>() {
-            let a = horizontal_line::<S>();
-            let b = double_dip_curve::<S>();
+        #[test]
+        fn two_crossings_found_when_budget_allows() {
+            let a = horizontal_line();
+            let b = double_dip_curve();
             let result =
-                curve_curve_intersect(&a, &b, 2, MAX_NODES, S::from_f64(MIN_SUBDIVISION_SIZE))
+                curve_curve_intersect(&a, &b, 2, MAX_NODES, Scalar::from_f64(MIN_SUBDIVISION_SIZE))
                     .unwrap()
                     .into_vec();
             assert_eq!(result.len(), 2);
@@ -764,55 +715,46 @@ mod tests {
                 "the two crossings should remain distinct"
             );
         }
-        #[test]
-        fn two_crossings_found_when_budget_allows() {
-            for_all_scalars!(check_two_crossings_found_when_budget_allows);
-        }
 
-        fn check_max_solutions_one_caps_at_one_even_with_two_crossings<S: Scalar>() {
-            let a = horizontal_line::<S>();
-            let b = double_dip_curve::<S>();
-            let result =
-                curve_curve_intersect(&a, &b, 1, MAX_NODES, S::from_f64(MIN_SUBDIVISION_SIZE))
-                    .unwrap();
-            assert_eq!(result.len(), 1);
-        }
         #[test]
         fn max_solutions_one_caps_at_one_even_with_two_crossings() {
-            for_all_scalars!(check_max_solutions_one_caps_at_one_even_with_two_crossings);
+            let a = horizontal_line();
+            let b = double_dip_curve();
+            let result =
+                curve_curve_intersect(&a, &b, 1, MAX_NODES, Scalar::from_f64(MIN_SUBDIVISION_SIZE))
+                    .unwrap();
+            assert_eq!(result.len(), 1);
         }
 
         // ── min_subdivision_size controls precision ────────────────────────────
 
-        fn check_min_subdivision_size_controls_precision<S: Scalar>() {
-            let a = horizontal_line::<S>();
-            let b = vertical_crossing_line::<S>();
-            let result = curve_curve_intersect(&a, &b, 5, MAX_NODES, S::from_f64(1e-3))
+        #[test]
+        fn min_subdivision_size_controls_precision() {
+            let a = horizontal_line();
+            let b = vertical_crossing_line();
+            let result = curve_curve_intersect(&a, &b, 5, MAX_NODES, Scalar::from_f64(1e-3))
                 .unwrap()
                 .into_vec();
             assert_eq!(result.len(), 1);
 
             let (t_a, _) = result[0];
             assert!(
-                t_a.sub(S::from_f64(0.5))
+                t_a.sub(Scalar::from_f64(0.5))
                     .abs()
-                    .could_be_less(S::from_f64(1e-2))
+                    .could_be_less(Scalar::from_f64(1e-2))
             );
-        }
-        #[test]
-        fn min_subdivision_size_controls_precision() {
-            for_all_scalars!(check_min_subdivision_size_controls_precision);
         }
 
         // ── Coincident overlap: must terminate ───────────────────────────────────
 
-        fn check_coincident_overlap_terminates<S: Scalar + 'static>() {
-            let a = horizontal_line::<S>();
-            let b = coincident_overlap_line::<S>();
+        #[test]
+        fn coincident_overlap_terminates() {
+            let a = horizontal_line();
+            let b = coincident_overlap_line();
 
             // A single dive must converge to exactly one result.
             let result_one =
-                curve_curve_intersect(&a, &b, 1, MAX_NODES, S::from_f64(MIN_SUBDIVISION_SIZE))
+                curve_curve_intersect(&a, &b, 1, MAX_NODES, Scalar::from_f64(MIN_SUBDIVISION_SIZE))
                     .unwrap();
             assert_eq!(result_one.len(), 1);
 
@@ -820,49 +762,42 @@ mod tests {
             // (possibly fewer after merging) segments along the overlap, and
             // each solution lying within the overlapping x ∈ [0.5, 1] range.
             let result_many =
-                curve_curve_intersect(&a, &b, 5, MAX_NODES, S::from_f64(MIN_SUBDIVISION_SIZE))
+                curve_curve_intersect(&a, &b, 5, MAX_NODES, Scalar::from_f64(MIN_SUBDIVISION_SIZE))
                     .unwrap();
             assert!(!result_many.is_empty());
             assert!(result_many.len() <= 5);
 
-            let lower_bound = S::from_f64(0.5 - MIN_SUBDIVISION_SIZE);
+            let lower_bound = Scalar::from_f64(0.5 - MIN_SUBDIVISION_SIZE);
             for &(t_a, _) in result_many.as_slice() {
                 assert!(t_a.could_be_greater(lower_bound));
             }
         }
-        #[test]
-        fn coincident_overlap_terminates() {
-            for_all_scalars!(check_coincident_overlap_terminates);
-        }
 
         // ── Coincident: an evenly-spread solution count, not just 1-or-cap ──────
 
-        fn check_full_coincidence_reaches_max_solutions<S: Scalar>() {
-            let a = horizontal_line::<S>();
-            let b = full_coincident_line::<S>();
+        #[test]
+        fn full_coincidence_reaches_max_solutions() {
+            let a = horizontal_line();
+            let b = full_coincident_line();
             // Two curves coincident over their *entire* shared domain, with a
             // generous node budget, should reliably reach the requested
             // solution count via the evenly-spread search -- and be reported
             // via the explicit `Coincident` variant, not just inferred from
             // hitting the length cap.
-            let result = curve_curve_intersect(&a, &b, 5, 5000, S::from_f64(1e-3)).unwrap();
+            let result = curve_curve_intersect(&a, &b, 5, 5000, Scalar::from_f64(1e-3)).unwrap();
             assert!(result.is_coincident());
             assert_eq!(result.len(), 5);
-        }
-        #[test]
-        fn full_coincidence_reaches_max_solutions() {
-            for_all_scalars!(check_full_coincidence_reaches_max_solutions);
         }
 
         // ── 2-D (D=3) pcurve intersection — the motivating use case ──────────────
 
-        fn pt2<S: Scalar>(x: f64, y: f64) -> Vector3<S> {
-            Vector3::from_array([S::from_f64(x), S::from_f64(y), S::ONE])
+        fn pt2(x: f64, y: f64) -> Vector3 {
+            Vector3::from_array([Scalar::from_f64(x), Scalar::from_f64(y), Scalar::ONE])
         }
 
         /// Horizontal 2-D segment y=0.3, x ∈ [0,1].
-        fn horizontal_line_2d<S: Scalar>() -> crate::nurb_curve::NurbCurve2D<S> {
-            let f = S::from_f64;
+        fn horizontal_line_2d() -> crate::nurb_curve::NurbCurve2D {
+            let f = Scalar::from_f64;
             NurbCurve::try_new(
                 1,
                 vec![pt2(0., 0.3), pt2(1., 0.3)],
@@ -873,8 +808,8 @@ mod tests {
 
         /// Vertical 2-D segment x=0.5, y ∈ [-1,1] — crosses the horizontal line
         /// once at (0.5, 0.3).
-        fn vertical_crossing_line_2d<S: Scalar>() -> crate::nurb_curve::NurbCurve2D<S> {
-            let f = S::from_f64;
+        fn vertical_crossing_line_2d() -> crate::nurb_curve::NurbCurve2D {
+            let f = Scalar::from_f64;
             NurbCurve::try_new(
                 1,
                 vec![pt2(0.5, -1.), pt2(0.5, 1.)],
@@ -883,11 +818,12 @@ mod tests {
             .unwrap()
         }
 
-        fn check_single_crossing_2d<S: Scalar>() {
-            let a = horizontal_line_2d::<S>();
-            let b = vertical_crossing_line_2d::<S>();
+        #[test]
+        fn single_crossing_2d() {
+            let a = horizontal_line_2d();
+            let b = vertical_crossing_line_2d();
             let result =
-                curve_curve_intersect(&a, &b, 5, MAX_NODES, S::from_f64(MIN_SUBDIVISION_SIZE))
+                curve_curve_intersect(&a, &b, 5, MAX_NODES, Scalar::from_f64(MIN_SUBDIVISION_SIZE))
                     .unwrap()
                     .into_vec();
             assert_eq!(result.len(), 1);
@@ -895,20 +831,16 @@ mod tests {
             let hit = a.evaluate(t_a).unwrap();
             assert!(
                 hit[0]
-                    .sub(S::from_f64(0.5))
+                    .sub(Scalar::from_f64(0.5))
                     .abs()
-                    .could_be_less(S::from_f64(1e-3))
+                    .could_be_less(Scalar::from_f64(1e-3))
             );
             assert!(
                 hit[1]
-                    .sub(S::from_f64(0.3))
+                    .sub(Scalar::from_f64(0.3))
                     .abs()
-                    .could_be_less(S::from_f64(1e-3))
+                    .could_be_less(Scalar::from_f64(1e-3))
             );
-        }
-        #[test]
-        fn single_crossing_2d() {
-            for_all_scalars!(check_single_crossing_2d);
         }
 
         // ── Hard-to-intersect curves: quartic tangencies ─────────────────────────
@@ -923,8 +855,8 @@ mod tests {
         /// touching `y = 0` at `t = 0.5` with **order-2** contact (an ordinary
         /// parabola-tangent-to-a-line case) — the case one level of
         /// cross-product deflation is built to resolve.
-        fn quadratic_tangent_to_x_axis<S: Scalar>() -> NurbCurve<S, 4> {
-            let f = S::from_f64;
+        fn quadratic_tangent_to_x_axis() -> NurbCurve<4> {
+            let f = Scalar::from_f64;
             NurbCurve::try_new(
                 2,
                 vec![
@@ -945,8 +877,8 @@ mod tests {
         /// `y'' = 192s^2 = 0` at `s = 0` too). The deliberately hard case: does
         /// refinement stay *sound* (never claims a narrower, wrong answer) when
         /// it cannot fully converge, rather than just being tight when it can.
-        fn quartic_tangent_to_x_axis<S: Scalar>() -> NurbCurve<S, 4> {
-            let f = S::from_f64;
+        fn quartic_tangent_to_x_axis() -> NurbCurve<4> {
+            let f = Scalar::from_f64;
             NurbCurve::try_new(
                 4,
                 vec![
@@ -974,8 +906,8 @@ mod tests {
 
         /// The x axis, x ∈ [-1,1] — the common tangent line for both curves
         /// above, touched at (0,0,0).
-        fn x_axis_line<S: Scalar>() -> NurbCurve<S, 4> {
-            let f = S::from_f64;
+        fn x_axis_line() -> NurbCurve<4> {
+            let f = Scalar::from_f64;
             NurbCurve::try_new(
                 1,
                 vec![ptc(-1., 0., 0., 1.), ptc(1., 0., 0., 1.)],
@@ -988,11 +920,12 @@ mod tests {
         /// Jacobian is singular right at a tangential contact — so this is a
         /// soundness check, same shape as the order-4 case below, not a
         /// tightness one.
-        fn check_refine_crossing_stays_sound_for_order_2_tangency<S: Scalar>() {
-            let a = quadratic_tangent_to_x_axis::<S>();
-            let b = x_axis_line::<S>();
+        #[test]
+        fn refine_crossing_stays_sound_for_order_2_tangency() {
+            let a = quadratic_tangent_to_x_axis();
+            let b = x_axis_line();
 
-            let found = curve_curve_intersect(&a, &b, 5, MAX_NODES, S::from_f64(1e-3))
+            let found = curve_curve_intersect(&a, &b, 5, MAX_NODES, Scalar::from_f64(1e-3))
                 .unwrap()
                 .into_vec();
             assert_eq!(
@@ -1004,23 +937,19 @@ mod tests {
 
             // Soundness: the search's own (loose) box must already bracket the
             // true touch point.
-            assert!(t_a.could_be_equal(S::from_f64(0.5)));
-            assert!(t_b.could_be_equal(S::from_f64(0.5)));
+            assert!(t_a.could_be_equal(Scalar::from_f64(0.5)));
+            assert!(t_b.could_be_equal(Scalar::from_f64(0.5)));
 
             let (ra, rb) = refine_crossing(&a, &b, t_a, t_b);
 
             // Soundness: refinement must still contain the true parameter.
-            assert!(ra.could_be_equal(S::from_f64(0.5)));
-            assert!(rb.could_be_equal(S::from_f64(0.5)));
+            assert!(ra.could_be_equal(Scalar::from_f64(0.5)));
+            assert!(rb.could_be_equal(Scalar::from_f64(0.5)));
             // Never worse than the input: refinement can only tighten (or leave
             // it unchanged, which is what happens here since plain Newton's own
             // Jacobian is singular at this tangency too).
             assert!(ra.is_subset_of(t_a));
             assert!(rb.is_subset_of(t_b));
-        }
-        #[test]
-        fn refine_crossing_stays_sound_for_order_2_tangency() {
-            for_all_scalars!(check_refine_crossing_stays_sound_for_order_2_tangency);
         }
 
         /// Order-4 tangency: deflation's own Jacobian is *also* singular right
@@ -1028,19 +957,20 @@ mod tests {
         /// requirement under test is that it stays sound (still encloses the
         /// true parameter, never claims a narrower box than it actually proved)
         /// rather than that it achieves full precision.
-        fn check_refine_crossing_stays_sound_for_order_4_tangency<S: Scalar>() {
-            let a = quartic_tangent_to_x_axis::<S>();
-            let b = x_axis_line::<S>();
+        #[test]
+        fn refine_crossing_stays_sound_for_order_4_tangency() {
+            let a = quartic_tangent_to_x_axis();
+            let b = x_axis_line();
 
-            let found = curve_curve_intersect(&a, &b, 5, MAX_NODES, S::from_f64(1e-3))
+            let found = curve_curve_intersect(&a, &b, 5, MAX_NODES, Scalar::from_f64(1e-3))
                 .unwrap()
                 .into_vec();
             assert!(!found.is_empty(), "the touch point must still be found");
 
             for (t_a, t_b) in found {
                 // Soundness of the search itself.
-                assert!(t_a.could_be_equal(S::from_f64(0.5)));
-                assert!(t_b.could_be_equal(S::from_f64(0.5)));
+                assert!(t_a.could_be_equal(Scalar::from_f64(0.5)));
+                assert!(t_b.could_be_equal(Scalar::from_f64(0.5)));
 
                 let (ra, rb) = refine_crossing(&a, &b, t_a, t_b);
 
@@ -1050,18 +980,14 @@ mod tests {
                 // pass, not a failure, per `refine_crossing`'s own "can only
                 // tighten, never fail" contract).
                 assert!(
-                    ra.could_be_equal(S::from_f64(0.5)),
+                    ra.could_be_equal(Scalar::from_f64(0.5)),
                     "refine_crossing must never lose the true root: got {ra:?}"
                 );
-                assert!(rb.could_be_equal(S::from_f64(0.5)));
+                assert!(rb.could_be_equal(Scalar::from_f64(0.5)));
                 // And never claim a box the search didn't already prove.
                 assert!(ra.is_subset_of(t_a));
                 assert!(rb.is_subset_of(t_b));
             }
-        }
-        #[test]
-        fn refine_crossing_stays_sound_for_order_4_tangency() {
-            for_all_scalars!(check_refine_crossing_stays_sound_for_order_4_tangency);
         }
 
         /// A transversal crossing very close to a quartic's flat spot (two
@@ -1070,8 +996,8 @@ mod tests {
         /// but numerically adversarial: checks the search still separates and
         /// soundly encloses both nearby crossings instead of merging or losing
         /// one.
-        fn quartic_minus_epsilon<S: Scalar>() -> NurbCurve<S, 4> {
-            let f = S::from_f64;
+        fn quartic_minus_epsilon() -> NurbCurve<4> {
+            let f = Scalar::from_f64;
             // y = x^4 - 0.0001, same control-point construction as
             // `quartic_tangent_to_x_axis` with every y-coordinate shifted down
             // by the constant 0.0001 (Bezier control points are affine in the
@@ -1103,11 +1029,12 @@ mod tests {
             .unwrap()
         }
 
-        fn check_close_transversal_crossings_near_quartic_flat_spot<S: Scalar>() {
-            let a = quartic_minus_epsilon::<S>();
-            let b = x_axis_line::<S>();
+        #[test]
+        fn close_transversal_crossings_near_quartic_flat_spot() {
+            let a = quartic_minus_epsilon();
+            let b = x_axis_line();
 
-            let found = curve_curve_intersect(&a, &b, 4, MAX_NODES, S::from_f64(1e-4))
+            let found = curve_curve_intersect(&a, &b, 4, MAX_NODES, Scalar::from_f64(1e-4))
                 .unwrap()
                 .into_vec();
             assert_eq!(
@@ -1123,22 +1050,18 @@ mod tests {
             // x = 2t-1 = ±0.1 -> t = 0.45 or t = 0.55.
             for &(t_a, t_b) in &found {
                 let near_left = t_a
-                    .sub(S::from_f64(0.45))
+                    .sub(Scalar::from_f64(0.45))
                     .abs()
-                    .could_be_less(S::from_f64(1e-2));
+                    .could_be_less(Scalar::from_f64(1e-2));
                 let near_right = t_a
-                    .sub(S::from_f64(0.55))
+                    .sub(Scalar::from_f64(0.55))
                     .abs()
-                    .could_be_less(S::from_f64(1e-2));
+                    .could_be_less(Scalar::from_f64(1e-2));
                 assert!(near_left || near_right, "crossing at unexpected t={t_a:?}");
 
                 let (ra, _) = refine_crossing(&a, &b, t_a, t_b);
                 assert!(ra.is_subset_of(t_a), "refinement must only ever tighten");
             }
-        }
-        #[test]
-        fn close_transversal_crossings_near_quartic_flat_spot() {
-            for_all_scalars!(check_close_transversal_crossings_near_quartic_flat_spot);
         }
     }
 }

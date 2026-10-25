@@ -17,7 +17,6 @@ use geop_core_program::{
     part::StepContext,
     reader::Reader,
     target::{Target, TargetReference},
-    values::Design,
 };
 use geop_ops_model::sketch::{PlacedSketch, sketch};
 use geop_ops_model::{
@@ -30,14 +29,14 @@ use crate::{edge_flange::EdgeRef, flat_pattern::FlatPatternData, sheet::Sheet};
 #[derive(Clone, Debug, PartialEq)]
 pub enum SheetBody {
     /// A body as it is bent: its sheet.
-    Bent(Sheet<Design>),
+    Bent(Sheet),
     /// The flat pattern of one: what a drawing and cutting read of it.
     Flat(FlatPatternData),
 }
 
 impl SheetBody {
     /// Its sheet, if it is a body as it is bent.
-    pub fn bent(&self) -> Option<&Sheet<Design>> {
+    pub fn bent(&self) -> Option<&Sheet> {
         match self {
             SheetBody::Bent(sheet) => Some(sheet),
             SheetBody::Flat(_) => None,
@@ -91,14 +90,14 @@ pub fn sheet_body<'a>(reader: &Reader<'a>, solid: &str) -> Option<&'a SheetBody>
 
 /// A sheet-metal body found by an edge: its solid, its sheet, and the
 /// edge as [`Sheet::edge_named`] finds it.
-pub(crate) type WithEdge = (String, Sheet<Design>, (usize, usize, bool));
+pub(crate) type WithEdge = (String, Sheet, (usize, usize, bool));
 
 /// The sheet-metal body of `model`, in the part `reader` reads, with the
 /// edge `edge` on a flat's outline: its solid, its sheet, and the edge as
 /// [`Sheet::edge_named`] finds it. `what` is for the error: what is bent
 /// from such an edge.
 pub(crate) fn with_edge(
-    model: &NamedModel<Design>,
+    model: &NamedModel,
     reader: &Reader,
     edge: Option<&EdgeRef>,
     what: &str,
@@ -123,7 +122,7 @@ pub(crate) fn with_edge(
 #[derive(Clone, Debug, PartialEq)]
 pub enum Making {
     /// A body as it is bent, from its sheet.
-    Bent(Sheet<Design>),
+    Bent(Sheet),
     /// The flat pattern of a body.
     Flat(Box<Unfolded>),
 }
@@ -132,8 +131,8 @@ pub enum Making {
 /// of its bend lines, and what it records.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Unfolded {
-    pub sheet: Sheet<Design>,
-    pub bend_lines: PlacedSketch<Design>,
+    pub sheet: Sheet,
+    pub bend_lines: PlacedSketch,
     pub data: FlatPatternData,
 }
 
@@ -232,7 +231,7 @@ pub(crate) fn run<O: SheetStep>(ctx: &mut StepContext, args: &O::Args) -> GeopRe
 
 /// The sketch of the bend lines of the flat pattern the step `step` made.
 #[allow(clippy::ptr_arg)]
-fn bend_lines(reader: &Reader, step: &String) -> GeopResult<PlacedSketch<Design>> {
+fn bend_lines(reader: &Reader, step: &String) -> GeopResult<PlacedSketch> {
     match &made_by(reader, step)?.making {
         Making::Flat(unfolded) => Ok(unfolded.bend_lines.clone()),
         Making::Bent(_) => Err(GeopError::new(format!(
@@ -250,7 +249,7 @@ pub(crate) fn add_bend_lines(ctx: &mut StepContext, name: &str) -> GeopResult<()
 
 /// Builds what the step `step` made into `model` ([`ModelOperation::build`]
 /// of every sheet-metal operation).
-pub(crate) fn build(model: &mut NamedModel<Design>, reader: &Reader, step: &str) -> GeopResult<()> {
+pub(crate) fn build(model: &mut NamedModel, reader: &Reader, step: &str) -> GeopResult<()> {
     let ctx = with_context!("building the sheet metal of step {step}");
     let made = made_by(reader, step).with_context(ctx)?;
     match &made.making {

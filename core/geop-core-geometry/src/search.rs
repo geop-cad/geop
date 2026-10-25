@@ -23,6 +23,6 @@ pub const NEAREST_HANDOFF: f64 = 1e-3;
 pub const PROJECT_ITERATIONS: usize = 20;
 
 /// [`MIN_SUBDIVISION_SIZE`] as a scalar.
-pub fn min_subdivision_size<S: Scalar>() -> S {
-    S::from_f64(MIN_SUBDIVISION_SIZE)
+pub fn min_subdivision_size() -> Scalar {
+    Scalar::from_f64(MIN_SUBDIVISION_SIZE)
 }

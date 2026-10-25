@@ -14,7 +14,7 @@ use geop_core_math::{
     vector::{Vector2, Vector3},
     with_context,
 };
-use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
+use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader};
 use geop_core_sketch::{CurveKind, ProfileLoop, Shape};
 use geop_ops_model::sketch::{PlacedSketch, SketchRef, shape_profiles};
 use geop_ops_model::{ModelOperation, NamedModel, Namer, Profile};
@@ -107,7 +107,7 @@ impl PartOperation for BaseFlange {
 
     /// The newest sketch, with the default rules, a unit deep.
     fn new_args(context: &Context) -> BaseFlangeArgs {
-        let newest = context.before.targets_of::<PlacedSketch<Design>>().pop();
+        let newest = context.before.targets_of::<PlacedSketch>().pop();
         BaseFlangeArgs {
             sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_model::sketch::sketch(""))),
             rules: SheetMetalRules::default(),
@@ -127,9 +127,9 @@ impl PartOperation for BaseFlange {
         context: &'a Context<'a>,
         args: &BaseFlangeArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, BaseFlangeArgs> {
+    ) -> EditForm<'a, BaseFlangeArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, BaseFlangeArgs>::default();
+        let mut f = EditForm::<BaseFlangeArgs>::default();
         f.pick_one(
             "sketch",
             "sketch",
@@ -154,7 +154,7 @@ impl PartOperation for BaseFlange {
 
 impl ModelOperation for BaseFlange {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         _: &BaseFlangeArgs,
@@ -164,7 +164,7 @@ impl ModelOperation for BaseFlange {
 }
 
 /// The fields of the sheet-metal rules.
-fn rules_fields(f: &mut EditForm<'_, Design, BaseFlangeArgs>, rules: &SheetMetalRules) {
+fn rules_fields(f: &mut EditForm<'_, BaseFlangeArgs>, rules: &SheetMetalRules) {
     let thickness = Number::new("thickness", rules.thickness, Unit::Length).range(0.0, 1.0);
     f.number("thickness", thickness, |edit, t| {
         edit.args.rules.thickness = t
@@ -207,21 +207,21 @@ fn rules_fields(f: &mut EditForm<'_, Design, BaseFlangeArgs>, rules: &SheetMetal
 /// The sketch's area as one flat plate: on the sketch's plane, its B side
 /// along the plane's normal — or, flipped, its B side on the plane and its
 /// A side behind it.
-fn plate<S: Scalar>(
+fn plate(
     namer: &Namer,
-    placed: &PlacedSketch<S>,
+    placed: &PlacedSketch,
     region: Shape,
     args: &BaseFlangeArgs,
-) -> GeopResult<Sheet<S>> {
+) -> GeopResult<Sheet> {
     let sketch = &placed.sketch;
-    let geometry = sketch.enclose::<S>()?;
+    let geometry = sketch.enclose()?;
     let loops = shape_profiles(&placed.name, sketch, &geometry, region)?;
     let plane = &placed.plane;
     let n = *plane.w();
     let origin = if args.flip {
         plane
             .origin()
-            .sub(&n.prod_scalar(S::from_f64(args.rules.thickness)))
+            .sub(&n.prod_scalar(Scalar::from_f64(args.rules.thickness)))
     } else {
         *plane.origin()
     };
@@ -231,7 +231,7 @@ fn plate<S: Scalar>(
         e2: *plane.v(),
         n,
     };
-    let edges = |lp: &Profile<S>| -> Vec<FlatEdge<S>> {
+    let edges = |lp: &Profile| -> Vec<FlatEdge> {
         lp.curves
             .iter()
             .zip(&lp.curve_names)
@@ -261,21 +261,21 @@ fn plate<S: Scalar>(
 /// A piece of a chain, from `a` to `b` in sketch coordinates: a line, or
 /// an arc turning by `sweep` (counter-clockwise if positive); named after
 /// its curve, and its ends after their points.
-struct Piece<S: Scalar> {
-    a: Vector2<S>,
-    b: Vector2<S>,
-    sweep: Option<S>,
+struct Piece {
+    a: Vector2,
+    b: Vector2,
+    sweep: Option<Scalar>,
     name: String,
     start: String,
     end: String,
 }
 
-impl<S: Scalar> Piece<S> {
+impl Piece {
     fn reversed(self) -> Self {
         Self {
             a: self.b,
             b: self.a,
-            sweep: self.sweep.map(S::neg),
+            sweep: self.sweep.map(Scalar::neg),
             name: self.name,
             start: self.end,
             end: self.start,
@@ -285,26 +285,26 @@ impl<S: Scalar> Piece<S> {
 
 /// How a strip turns from one line to the next: through a sharp corner
 /// at a point, bent at the default radius, or along an arc.
-struct Turn<S: Scalar> {
+struct Turn {
     name: String,
-    angle: S,
-    radius: S,
+    angle: Scalar,
+    radius: Scalar,
     toward_b: bool,
     /// How far each line's flat stops short of the corner.
-    setback: S,
+    setback: Scalar,
 }
 
 /// The sketch's chain of lines and arcs as a bent strip, `depth` deep (see
 /// [`BaseFlange`]).
-fn strip<S: Scalar>(
+fn strip(
     namer: &Namer,
-    placed: &PlacedSketch<S>,
+    placed: &PlacedSketch,
     chain: &ProfileLoop,
     depth: f64,
     args: &BaseFlangeArgs,
-) -> GeopResult<Sheet<S>> {
+) -> GeopResult<Sheet> {
     let sketch = &placed.sketch;
-    let geometry = sketch.enclose::<S>()?;
+    let geometry = sketch.enclose()?;
     let mut pieces = Vec::new();
     for edge in &chain.edges {
         let curve = &sketch.curves[&edge.curve];
@@ -356,13 +356,13 @@ fn strip<S: Scalar>(
 
     let plane = &placed.plane;
     let w = *plane.w();
-    let t = S::from_f64(args.rules.thickness);
+    let t = Scalar::from_f64(args.rules.thickness);
     let direction =
-        |p: &Piece<S>| -> GeopResult<Vector3<S>> { plane.uv_direction(&p.b.sub(&p.a)).normalize() };
+        |p: &Piece| -> GeopResult<Vector3> { plane.uv_direction(&p.b.sub(&p.a)).normalize() };
     // The lines, and the turn from each to the next.
-    let mut lines: Vec<&Piece<S>> = Vec::new();
-    let mut turns: Vec<Turn<S>> = Vec::new();
-    let mut arc: Option<&Piece<S>> = None;
+    let mut lines: Vec<&Piece> = Vec::new();
+    let mut turns: Vec<Turn> = Vec::new();
+    let mut arc: Option<&Piece> = None;
     for piece in &pieces {
         if piece.sweep.is_none() {
             if let Some(&last) = lines.last() {
@@ -394,11 +394,11 @@ fn strip<S: Scalar>(
         )));
     }
 
-    let depth = S::from_f64(depth);
+    let depth = Scalar::from_f64(depth);
     let sketch_namer = namer.scoped(&placed.name);
-    let mut flats: Vec<Flat<S>> = Vec::new();
-    let mut bends: Vec<Bend<S>> = Vec::new();
-    let mut x0 = S::ZERO;
+    let mut flats: Vec<Flat> = Vec::new();
+    let mut bends: Vec<Bend> = Vec::new();
+    let mut x0 = Scalar::ZERO;
     let mut place = {
         let e1 = direction(lines[0])?;
         Placement {
@@ -409,23 +409,27 @@ fn strip<S: Scalar>(
         }
     };
     for (i, line) in lines.iter().enumerate() {
-        let before = i.checked_sub(1).map_or(S::ZERO, |j| turns[j].setback);
-        let after = turns.get(i).map_or(S::ZERO, |turn| turn.setback);
+        let before = i.checked_sub(1).map_or(Scalar::ZERO, |j| turns[j].setback);
+        let after = turns.get(i).map_or(Scalar::ZERO, |turn| turn.setback);
         let length = line.b.sub(&line.a).norm().sub(before).sub(after);
-        if !length.definitely_greater(S::ZERO) {
+        if !length.definitely_greater(Scalar::ZERO) {
             return Err(GeopError::new(format!(
                 "line {} is too short for its bends: {:?} of it is left flat",
                 line.name, length
             )));
         }
         let x1 = x0.add(length);
-        let p = |x: S, y: S| Vector2::from_array([x, y]);
+        let p = |x: Scalar, y: Scalar| Vector2::from_array([x, y]);
         let flat = sketch_namer.scoped(&line.name);
         let outer = vec![
-            straight(p(x0, S::ZERO), p(x1, S::ZERO), flat.scoped("start"))?,
-            straight(p(x1, S::ZERO), p(x1, depth), flat.scoped(&line.end))?,
+            straight(
+                p(x0, Scalar::ZERO),
+                p(x1, Scalar::ZERO),
+                flat.scoped("start"),
+            )?,
+            straight(p(x1, Scalar::ZERO), p(x1, depth), flat.scoped(&line.end))?,
             straight(p(x1, depth), p(x0, depth), flat.scoped("end"))?,
-            straight(p(x0, depth), p(x0, S::ZERO), flat.scoped(&line.start))?,
+            straight(p(x0, depth), p(x0, Scalar::ZERO), flat.scoped(&line.start))?,
         ];
         flats.push(Flat {
             place: place.clone(),
@@ -436,7 +440,7 @@ fn strip<S: Scalar>(
         if let Some(turn) = turns.get(i) {
             let frame = BendFrame::new(
                 &place,
-                [p(x1, S::ZERO), p(x1, depth)],
+                [p(x1, Scalar::ZERO), p(x1, depth)],
                 turn.angle,
                 turn.radius,
                 t,
@@ -468,21 +472,21 @@ fn strip<S: Scalar>(
 /// How the strip turns from line `from` to line `to`: along `arc`, which
 /// must be tangent to both, or else through the sharp corner between them,
 /// bent at the default radius.
-fn turn<S: Scalar>(
-    from: &Piece<S>,
-    to: &Piece<S>,
-    arc: Option<&Piece<S>>,
-    direction: &dyn Fn(&Piece<S>) -> GeopResult<Vector3<S>>,
-    w: &Vector3<S>,
-    t: S,
+fn turn(
+    from: &Piece,
+    to: &Piece,
+    arc: Option<&Piece>,
+    direction: &dyn Fn(&Piece) -> GeopResult<Vector3>,
+    w: &Vector3,
+    t: Scalar,
     rules: &SheetMetalRules,
-) -> GeopResult<Turn<S>> {
+) -> GeopResult<Turn> {
     let (d0, d1) = (direction(from)?, direction(to)?);
     let n = d0.prod_cross(w);
     let side = d1.prod_dot(&n);
-    let toward_b = if side.definitely_greater(S::ZERO) {
+    let toward_b = if side.definitely_greater(Scalar::ZERO) {
         true
-    } else if side.definitely_less(S::ZERO) {
+    } else if side.definitely_less(Scalar::ZERO) {
         false
     } else {
         return Err(GeopError::new(format!(
@@ -491,7 +495,7 @@ fn turn<S: Scalar>(
         )));
     };
     let cos = d0.prod_dot(&d1);
-    if !cos.definitely_greater(S::ONE.neg()) {
+    if !cos.definitely_greater(Scalar::ONE.neg()) {
         return Err(GeopError::new(format!(
             "line {} could fold straight back onto line {}: a bend turns by less than 180 degrees",
             to.name, from.name
@@ -499,9 +503,9 @@ fn turn<S: Scalar>(
     }
     let Some(arc) = arc else {
         let angle = cos.acos()?;
-        let radius = S::from_f64(rules.bend_radius);
+        let radius = Scalar::from_f64(rules.bend_radius);
         let outer = if toward_b { radius.add(t) } else { radius };
-        let half = angle.div(S::TWO)?;
+        let half = angle.div(Scalar::TWO)?;
         return Ok(Turn {
             name: from.end.clone(),
             angle,
@@ -514,20 +518,21 @@ fn turn<S: Scalar>(
     // it, and ends where the next starts, along that.
     let sweep = arc.sweep.expect("an arc has a sweep");
     let angle = sweep.abs();
-    let half = sweep.div(S::TWO)?;
+    let half = sweep.div(Scalar::TWO)?;
     let chord = arc.b.sub(&arc.a);
-    let r_a = chord.norm().div(S::TWO.mul(half.sin().abs()))?;
+    let r_a = chord.norm().div(Scalar::TWO.mul(half.sin().abs()))?;
     let chord = chord.normalize()?;
-    let turned = |by: S| {
+    let turned = |by: Scalar| {
         let (c, s) = (by.cos(), by.sin());
         Vector2::from_array([
             chord[0].mul(c).sub(chord[1].mul(s)),
             chord[0].mul(s).add(chord[1].mul(c)),
         ])
     };
-    let along = |d: Vector2<S>, line: &Piece<S>| -> GeopResult<bool> {
+    let along = |d: Vector2, line: &Piece| -> GeopResult<bool> {
         let l = line.b.sub(&line.a).normalize()?;
-        Ok(d.prod_cross(&l).could_be_equal(S::ZERO) && d.prod_dot(&l).definitely_greater(S::ZERO))
+        Ok(d.prod_cross(&l).could_be_equal(Scalar::ZERO)
+            && d.prod_dot(&l).definitely_greater(Scalar::ZERO))
     };
     if !(from.b.could_be_equal(&arc.a) && arc.b.could_be_equal(&to.a)) {
         return Err(GeopError::new(format!(
@@ -542,7 +547,7 @@ fn turn<S: Scalar>(
         )));
     }
     let radius = if toward_b { r_a.sub(t) } else { r_a };
-    if !radius.definitely_greater(S::ZERO) {
+    if !radius.definitely_greater(Scalar::ZERO) {
         return Err(GeopError::new(format!(
             "arc {} has a radius of {:?}, no more than the thickness on the inside of its bend",
             arc.name, r_a
@@ -553,6 +558,6 @@ fn turn<S: Scalar>(
         angle,
         radius,
         toward_b,
-        setback: S::ZERO,
+        setback: Scalar::ZERO,
     })
 }

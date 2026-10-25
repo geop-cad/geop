@@ -28,7 +28,7 @@ use geop_core_editor::{
     part_operation,
     part_operation::PartOperation,
 };
-use geop_core_program::{part::StepContext, reader::Reader, values::Design};
+use geop_core_program::{part::StepContext, reader::Reader};
 use std::{cell::RefCell, rc::Rc};
 
 use geop_core_editor::output::Exporter;
@@ -163,7 +163,7 @@ pub struct DrawingSession {
     refused: Option<String>,
     /// The views as last projected, for the part as it then was, and what
     /// of the arguments they depend on (see [`Projected::depends_on`]).
-    projected: Remembered<Result<Projected<Design>, String>>,
+    projected: Remembered<Result<Projected, String>>,
     /// The sheet as last laid out — with its bill of materials — for the
     /// part as it then was, and the arguments without their annotations.
     laid_out: Remembered<Result<Layout, String>>,
@@ -183,12 +183,12 @@ type Remembered<T> = RefCell<Option<(Shown, DrawingArgs, Rc<T>)>>;
 /// comparing two costs what tells them apart.
 #[derive(Clone)]
 struct Shown {
-    model: Option<NamedModel<Design>>,
-    threads: Option<Threads<Design>>,
+    model: Option<NamedModel>,
+    threads: Option<Threads>,
     properties: Properties,
     /// Each placed part by name, the revision of its part and where it
     /// is.
-    placed: Vec<(String, u64, Pose<Design>)>,
+    placed: Vec<(String, u64, Pose)>,
 }
 
 impl Shown {
@@ -283,8 +283,8 @@ impl DrawingSession {
         view: &Reader,
         shown: &Shown,
         args: &DrawingArgs,
-    ) -> Rc<Result<Projected<Design>, String>> {
-        let key = Projected::<Design>::depends_on(args);
+    ) -> Rc<Result<Projected, String>> {
+        let key = Projected::depends_on(args);
         if let Some((s, a, projected)) = &*self.projected.borrow()
             && s == shown
             && *a == key
@@ -311,18 +311,18 @@ fn label(kind: ViewKind) -> &'static str {
 
 /// The plane the sheet lies in: the world's `xy` plane, a millimetre of
 /// paper to a unit.
-fn paper<S: Scalar>() -> CoordinateSystem<S> {
+fn paper() -> CoordinateSystem {
     CoordinateSystem::world_at(Vector3::zero())
 }
 
 /// A point of the sheet where the viewport has it.
-fn world<S: Scalar>(p: P) -> Vector3<S> {
-    Vector3::from_array([S::from_f64(p[0]), S::from_f64(p[1]), S::ZERO])
+fn world(p: P) -> Vector3 {
+    Vector3::from_array([Scalar::from_f64(p[0]), Scalar::from_f64(p[1]), Scalar::ZERO])
 }
 
 /// Where `pointer` points on the sheet.
-fn on_sheet<S: Scalar>(pointer: &Pointer<S>) -> Option<P> {
-    let plane = paper::<S>();
+fn on_sheet(pointer: &Pointer) -> Option<P> {
+    let plane = paper();
     let (_, at) = pointer.ray.intersect_plane(plane.origin(), plane.w())?;
     Some([at[0].to_f64(), at[1].to_f64()])
 }
@@ -494,7 +494,7 @@ fn placed_at(
 }
 
 /// How a candidate is drawn, and hit.
-fn candidate_shape<S: Scalar>(c: &Candidate) -> Shape<S> {
+fn candidate_shape(c: &Candidate) -> Shape {
     match &c.what {
         Pickable::Point { at, .. } => Shape::Point { at: world(*at) },
         Pickable::Edge { points, .. } => Shape::Polyline {
@@ -505,9 +505,9 @@ fn candidate_shape<S: Scalar>(c: &Candidate) -> Shape<S> {
 
 /// The candidate of `layout` under `pointer` that `tool` can take next,
 /// with `picks` picked: one that adds to them, or starts afresh.
-fn under<'l, S: Scalar>(
+fn under<'l>(
     layout: &'l Layout,
-    pointer: &Pointer<S>,
+    pointer: &Pointer,
     tool: Tool,
     picks: &[Candidate],
 ) -> Option<&'l Candidate> {
@@ -517,7 +517,7 @@ fn under<'l, S: Scalar>(
         fits(tool, &more) || fits(tool, &[c])
     };
     let usable: Vec<&Candidate> = layout.candidates.iter().filter(|c| takes(c)).collect();
-    let visuals: Vec<Visual<S>> = usable
+    let visuals: Vec<Visual> = usable
         .iter()
         .enumerate()
         .map(|(i, c)| Visual::new(i.to_string(), candidate_shape(c), Style::Free))
@@ -543,9 +543,9 @@ fn style(on: Layer) -> Style {
 const CIRCLE_POINTS: usize = 48;
 
 /// The sheet's strokes and texts as visuals, under keys starting `key`.
-fn sheet_visuals<S: Scalar>(sheet: &Sheet, key: &str, out: &mut Vec<Visual<S>>) {
+fn sheet_visuals(sheet: &Sheet, key: &str, out: &mut Vec<Visual>) {
     use geop_lib_sheet::Shape as Stroke;
-    let arc = |center: P, radius: f64, start: f64, sweep: f64| -> Vec<Vector3<S>> {
+    let arc = |center: P, radius: f64, start: f64, sweep: f64| -> Vec<Vector3> {
         let n = ((CIRCLE_POINTS as f64 * sweep / std::f64::consts::TAU).ceil() as usize).max(2);
         (0..=n)
             .map(|k| {
@@ -628,12 +628,7 @@ fn sheet_visuals<S: Scalar>(sheet: &Sheet, key: &str, out: &mut Vec<Visual<S>>) 
 /// `style`, and its value under `key`, in `value` — or, for a centre mark,
 /// which has none, its first line. What is under `key` is what selects it
 /// and drags it.
-fn annotation_visuals<S: Scalar>(
-    drawn: &Drawn,
-    key: &str,
-    style: Style,
-    value: Style,
-) -> Vec<Visual<S>> {
+fn annotation_visuals(drawn: &Drawn, key: &str, style: Style, value: Style) -> Vec<Visual> {
     let mut out = Vec::new();
     for (i, (_, line)) in drawn.lines.iter().enumerate() {
         let shape = Shape::Polyline {
@@ -689,7 +684,7 @@ fn hint(s: &DrawingSession) -> String {
 /// it cannot be drawn — and the sheet itself in the viewport, with what
 /// is picked, what a click would pick, and the annotation being placed.
 fn annotate(
-    f: &mut EditForm<'_, Design, DrawingArgs, DrawingSession>,
+    f: &mut EditForm<'_, DrawingArgs, DrawingSession>,
     part: &Reader,
     args: &DrawingArgs,
     s: &DrawingSession,
@@ -700,7 +695,7 @@ fn annotate(
     f.form.focus = Some(paper());
     f.form.sheet = Some(Extent {
         center: world([sheet.width / 2.0, sheet.height / 2.0]),
-        size: Design::from_f64(sheet.width.hypot(sheet.height)),
+        size: Scalar::from_f64(sheet.width.hypot(sheet.height)),
     });
     f.form.tool = match s.tool {
         Tool::Select => InHand::Nothing,
@@ -1008,10 +1003,10 @@ impl PartOperation for Drawing {
         context: &'a Context<'a>,
         args: &DrawingArgs,
         editing: &DrawingEditing,
-    ) -> EditForm<'a, Design, DrawingArgs, DrawingSession> {
+    ) -> EditForm<'a, DrawingArgs, DrawingSession> {
         let (session, selection) = (&editing.session, &editing.selection[..]);
         let part = &context.before;
-        let mut f = EditForm::<Design, DrawingArgs, DrawingSession>::default();
+        let mut f = EditForm::<DrawingArgs, DrawingSession>::default();
         f.form.selection = selection.to_vec();
         f.form.dialog.download(
             "download",
@@ -1149,11 +1144,7 @@ impl PartOperation for Drawing {
     /// tool picks what the views show and puts down what it makes; a value is
     /// dragged where it goes; Escape lets go of the picks, then of the tool;
     /// Delete removes the annotations selected.
-    fn canvas(
-        context: &Context,
-        edit: Edit<'_, DrawingArgs, DrawingSession>,
-        event: &CanvasEvent<Design>,
-    ) {
+    fn canvas(context: &Context, edit: Edit<'_, DrawingArgs, DrawingSession>, event: &CanvasEvent) {
         let part = &context.before;
         let Edit {
             args,

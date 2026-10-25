@@ -23,8 +23,6 @@
 //! [`modify`]).
 
 /// Sketches are edited in the scalar their programs hold.
-type S = geop_core_program::values::Design;
-
 mod dialog;
 mod drawing;
 mod gestures;
@@ -34,7 +32,7 @@ mod trim;
 mod visuals;
 
 use dialog::draw_dialog;
-use geop_core_program::{reader::Reader, values::Design};
+use geop_core_program::reader::Reader;
 use snap::Snap;
 use visuals::visuals;
 
@@ -59,7 +57,7 @@ use crate::{
 };
 use geop_ops_model::sketch::{Constraint, CurveKind, Sketch};
 
-type SolveReport = geop_core_sketch::SolveReport<Design>;
+type SolveReport = geop_core_sketch::SolveReport;
 
 /// A drawing tool: what clicks in the plane make.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -447,8 +445,8 @@ fn selected_curves(sketch: &Sketch, keys: &[String]) -> Vec<CurveId> {
 /// kinds `stages` accept in order: a point drawn on a curve is that point,
 /// not the curve.
 fn hit_key(
-    visuals: &[Visual<S>],
-    pointer: &Pointer<S>,
+    visuals: &[Visual],
+    pointer: &Pointer,
     stages: &[&dyn Fn(&str) -> bool],
 ) -> Option<String> {
     stages.iter().find_map(|accept| {
@@ -476,12 +474,12 @@ struct Editing<'a> {
     args: &'a mut AddSketchArgs,
     s: &'a mut SketchSession,
     selection: &'a mut Vec<String>,
-    frame: CoordinateSystem<S>,
+    frame: CoordinateSystem,
 }
 
 /// `p` of the sketch, in `frame`'s plane.
-fn to_world(frame: &CoordinateSystem<S>, p: P2) -> Vector3<S> {
-    frame.uv_to_xyz(&Vector2::from_array(p.map(S::from_f64)))
+fn to_world(frame: &CoordinateSystem, p: P2) -> Vector3 {
+    frame.uv_to_xyz(&Vector2::from_array(p.map(Scalar::from_f64)))
 }
 
 /// Solves `sketch`, pulling `drags` towards their targets, and records how
@@ -489,7 +487,7 @@ fn to_world(frame: &CoordinateSystem<S>, p: P2) -> Vector3<S> {
 fn solve(sketch: &mut Sketch, s: &mut SketchSession, drags: &[(PointId, P2)]) {
     let drags: Vec<_> = drags
         .iter()
-        .map(|&(p, at)| (p, Vector2::from_array(at.map(Design::from_f64))))
+        .map(|&(p, at)| (p, Vector2::from_array(at.map(Scalar::from_f64))))
         .collect();
     s.solved = Some(match sketch.solve_with_drag(&drags) {
         Ok(report) => Solved::Solved { report },
@@ -508,7 +506,7 @@ fn refresh(
     args: &mut AddSketchArgs,
     s: &mut SketchSession,
     before: &Reader,
-    frame: &CoordinateSystem<S>,
+    frame: &CoordinateSystem,
 ) {
     let drawn = args.sketch.clone();
     args.ensure_frame();
@@ -526,7 +524,7 @@ impl Editing<'_> {
 
     /// Where `pointer`'s ray meets the plane, in the sketch's coordinates,
     /// and how far along the ray.
-    fn in_plane(&self, pointer: &Pointer<S>) -> Option<(P2, S)> {
+    fn in_plane(&self, pointer: &Pointer) -> Option<(P2, Scalar)> {
         let (t, p) = pointer.ray.intersect_uv_plane(&self.frame)?;
         Some((of(&p), t))
     }
@@ -538,7 +536,7 @@ impl Editing<'_> {
     }
 
     /// `p`, a point of the plane, in the sketch's coordinates.
-    fn to_sketch(&self, p: &Vector3<S>) -> P2 {
+    fn to_sketch(&self, p: &Vector3) -> P2 {
         of(&self.frame.to_uv(p))
     }
 }
@@ -550,8 +548,8 @@ pub(crate) fn form<'a>(
     args: &AddSketchArgs,
     s: &SketchSession,
     selection: &[String],
-) -> EditForm<'a, S, AddSketchArgs, SketchSession> {
-    let mut f = EditForm::<S, AddSketchArgs, SketchSession>::default();
+) -> EditForm<'a, AddSketchArgs, SketchSession> {
+    let mut f = EditForm::<AddSketchArgs, SketchSession>::default();
     // Only a plane is taken; another one moves the drawing onto it.
     f.pick(
         "plane",
@@ -599,7 +597,7 @@ pub(crate) fn form<'a>(
 pub(crate) fn event(
     before: &Reader,
     edit: Edit<'_, AddSketchArgs, SketchSession>,
-    event: &CanvasEvent<S>,
+    event: &CanvasEvent,
 ) {
     editing(before, edit, |e| e.event(event));
 }

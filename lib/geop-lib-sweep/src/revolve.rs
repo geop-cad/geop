@@ -34,11 +34,7 @@ use geop_ops_model::{NamedModel, Namer, Profile};
 /// `to` a whole turn from `from`, either way — closes on itself, and always
 /// runs backwards: `q3` from `a0` back to `a3`, then `q2`, `q1`, `q0`, so
 /// that `a1` lies a quarter turn on from `a0`.
-pub fn revolution<S: Scalar>(
-    axes: &CoordinateSystem<S>,
-    from: f64,
-    to: f64,
-) -> GeopResult<Path<S>> {
+pub fn revolution(axes: &CoordinateSystem, from: f64, to: f64) -> GeopResult<Path> {
     let sweep = to - from;
     if !(sweep != 0.0 && sweep.abs() <= 360.0) {
         return Err(GeopError::new(format!(
@@ -49,9 +45,12 @@ pub fn revolution<S: Scalar>(
     let (u, v, w) = (axes.u(), axes.v(), axes.w());
     let direction = |degrees: f64| {
         let (c, s) = cos_sin(degrees);
-        axes.uv_direction(&Vector2::from_array([S::from_f64(c), S::from_f64(s)]))
+        axes.uv_direction(&Vector2::from_array([
+            Scalar::from_f64(c),
+            Scalar::from_f64(s),
+        ]))
     };
-    let frame = |e1: Vector3<S>| Frame {
+    let frame = |e1: Vector3| Frame {
         origin: *axes.origin(),
         e1,
         e2: *w,
@@ -67,7 +66,7 @@ pub fn revolution<S: Scalar>(
     let angles: Vec<f64> = (0..spans + usize::from(!full))
         .map(|k| from + k as f64 * step)
         .collect();
-    let stations: Vec<Frame<S>> = angles.iter().map(|&a| frame(direction(a))).collect();
+    let stations: Vec<Frame> = angles.iter().map(|&a| frame(direction(a))).collect();
     let (weight, outwards) = arc_span(step);
     let spans_of = (0..spans)
         .map(|j| {
@@ -79,13 +78,13 @@ pub fn revolution<S: Scalar>(
     // tangent at the first station, turning the way the angles do.
     let (c, s) = cos_sin(from);
     let tangent = v
-        .prod_scalar(S::from_f64(c))
-        .sub(&u.prod_scalar(S::from_f64(s)));
+        .prod_scalar(Scalar::from_f64(c))
+        .sub(&u.prod_scalar(Scalar::from_f64(s)));
     let along = stations[0]
         .e1
         .prod_cross(w)
         .prod_dot(&tangent)
-        .mul(S::from_f64(step));
+        .mul(Scalar::from_f64(step));
     let along_normal = along
         .definite_sign()
         .ok_or_else(|| GeopError::new(format!("revolution: the axes {axes} are degenerate")))?;
@@ -123,14 +122,14 @@ pub fn revolution<S: Scalar>(
 /// the edge `X` is at station `a`, `N(P,q)` the arc `P` sweeps through `q`,
 /// `N(P,a)` the vertex of `P` at `a` — `N(P)` for a pole — and for a partial
 /// turn, the caps `N(start)` and `N(end)`.
-pub fn revolve<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn revolve(
+    model: &mut NamedModel,
     namer: &Namer,
     solid: Option<&str>,
-    axes: &CoordinateSystem<S>,
+    axes: &CoordinateSystem,
     from: f64,
     to: f64,
-    loops: &[SweepLoop<S>],
+    loops: &[SweepLoop],
 ) -> GeopResult<BuiltBody> {
     let path = revolution(axes, from, to)?;
     sweep_drawn(model, namer, &path, loops, solid)
@@ -149,21 +148,21 @@ pub fn revolve<S: Scalar>(
 /// and `end`.
 ///
 /// [`NurbCurve3D::helix`]: geop_core_geometry::nurb_curve::NurbCurve3D::helix
-pub fn screw_path<S: Scalar>(
-    axes: &CoordinateSystem<S>,
-    pitch: S,
+pub fn screw_path(
+    axes: &CoordinateSystem,
+    pitch: Scalar,
     turns: f64,
     handedness: Handedness,
-) -> GeopResult<Path<S>> {
+) -> GeopResult<Path> {
     let rows = helix_rows(axes, pitch, turns, handedness)?;
     let (origin, w) = (axes.origin(), axes.w());
-    let frame = |row: &HelixRow<S>| Frame {
+    let frame = |row: &HelixRow| Frame {
         origin: origin.add(&w.prod_scalar(row.rise)),
         e1: row.radial,
         e2: *w,
     };
-    let stations: Vec<Frame<S>> = rows.iter().step_by(2).map(frame).collect();
-    let spans: Vec<Span<S>> = rows
+    let stations: Vec<Frame> = rows.iter().step_by(2).map(frame).collect();
+    let spans: Vec<Span> = rows
         .iter()
         .skip(1)
         .step_by(2)
@@ -194,15 +193,15 @@ pub fn screw_path<S: Scalar>(
 /// `N(P,q)` the helical edge `P` sweeps through `q`, and the caps
 /// `N(start)` and `N(end)`.
 #[allow(clippy::too_many_arguments)]
-pub fn screw<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn screw(
+    model: &mut NamedModel,
     namer: &Namer,
     solid: &str,
-    axes: &CoordinateSystem<S>,
-    pitch: S,
+    axes: &CoordinateSystem,
+    pitch: Scalar,
     turns: f64,
     handedness: Handedness,
-    loops: &[SweepLoop<S>],
+    loops: &[SweepLoop],
 ) -> GeopResult<SolidId> {
     let path = screw_path(axes, pitch, turns, handedness)?;
     sweep_drawn(model, namer, &path, loops, Some(solid))?
@@ -217,17 +216,17 @@ pub fn screw<S: Scalar>(
 /// 0)` for a cylinder). An open chain starts and ends on the axis, and every
 /// point of it there is a pole; a closed loop stays clear of the axis and
 /// sweeps a ring.
-pub fn revolve_at_oriented<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn revolve_at_oriented(
+    model: &mut NamedModel,
     namer: &Namer,
     solid: &str,
-    profile: &Profile<S>,
-    axes: &CoordinateSystem<S>,
+    profile: &Profile,
+    axes: &CoordinateSystem,
 ) -> GeopResult<SolidId> {
     profile.check_names()?;
     let lp = if profile.is_closed() {
         for (i, curve) in profile.curves.iter().enumerate() {
-            if curve.start()?[0].could_be_equal(S::ZERO) {
+            if curve.start()?[0].could_be_equal(Scalar::ZERO) {
                 return Err(GeopError::new(format!(
                     "revolve: a closed profile must stay off the axis, but its point {i} could be on it"
                 )));
@@ -252,7 +251,7 @@ pub fn revolve_at_oriented<S: Scalar>(
         let poles = closed
             .curves
             .iter()
-            .map(|c| Ok(c.start()?[0].could_be_equal(S::ZERO)))
+            .map(|c| Ok(c.start()?[0].could_be_equal(Scalar::ZERO)))
             .collect::<GeopResult<Vec<bool>>>()?;
         if !(poles[0] && poles[profile.curves.len()]) {
             return Err(GeopError::new(
@@ -287,23 +286,22 @@ mod tests {
     use crate::common::polyline;
     use crate::shapes::v2;
     use geop_core_geometry::nurb_curve::sqrt2_over_2;
-    use geop_core_math::for_all_scalars;
     use geop_core_math::vector::Vector2;
     use geop_ops_model::testing::{assert_model_valid, assert_model_valid_sheets};
 
     /// Revolves `profile` a full turn around the z-axis, `a0` along `x`.
-    fn revolved_about_z<S: Scalar>(
-        model: &mut NamedModel<S>,
+    fn revolved_about_z(
+        model: &mut NamedModel,
         namer: &Namer,
-        profile: &Profile<S>,
+        profile: &Profile,
     ) -> GeopResult<SolidId> {
         let axes = CoordinateSystem::world_at(Vector3::zero());
         revolve_at_oriented(model, namer, &namer.root(), profile, &axes)
     }
 
     /// Revolve `curves` around the z-axis into a fresh part, as operation `r`.
-    fn revolved<S: Scalar>(curves: Vec<NurbCurve2D<S>>) -> NamedModel<S> {
-        let mut model = NamedModel::<S>::new();
+    fn revolved(curves: Vec<NurbCurve2D>) -> NamedModel {
+        let mut model = NamedModel::new();
         let namer = Namer::new("revolve", "r").unwrap();
         revolved_about_z(&mut model, &namer, &Profile::open(curves)).unwrap();
         model.check_names().unwrap();
@@ -312,8 +310,9 @@ mod tests {
 
     /// An exact sphere from two quarter arcs: curved profile edges become
     /// doubly curved quadrant patches.
-    fn check_sphere_from_arcs_is_valid<S: Scalar>() {
-        let w = sqrt2_over_2::<S>();
+    #[test]
+    fn sphere_from_arcs_is_valid() {
+        let w = sqrt2_over_2();
         let profile = vec![
             NurbCurve2D::arc(v2(0.0, 1.0), v2(1.0, 1.0), v2(1.0, 0.0), w).unwrap(),
             NurbCurve2D::arc(v2(1.0, 0.0), v2(1.0, -1.0), v2(0.0, -1.0), w).unwrap(),
@@ -337,29 +336,30 @@ mod tests {
         }
         model.face_id("revolve(r,c1,q3)").unwrap();
     }
-    #[test]
-    fn sphere_from_arcs_is_valid() {
-        for_all_scalars!(check_sphere_from_arcs_is_valid);
-    }
 
     /// A vase: a line up the side and a cubic spline bulging out, capped by
     /// lines back to the axis.
-    fn check_vase_with_spline_is_valid<S: Scalar>() {
+    #[test]
+    fn vase_with_spline_is_valid() {
         let hom = |x: f64, y: f64| {
-            geop_core_math::vector::Vector3::from_array([S::from_f64(x), S::from_f64(y), S::ONE])
+            geop_core_math::vector::Vector3::from_array([
+                Scalar::from_f64(x),
+                Scalar::from_f64(y),
+                Scalar::ONE,
+            ])
         };
         let spline = geop_core_geometry::nurb_curve::NurbCurve::try_new(
             3,
             vec![hom(0.5, 2.0), hom(1.5, 1.5), hom(0.2, 0.7), hom(1.0, 0.0)],
             vec![
-                S::ZERO,
-                S::ZERO,
-                S::ZERO,
-                S::ZERO,
-                S::ONE,
-                S::ONE,
-                S::ONE,
-                S::ONE,
+                Scalar::ZERO,
+                Scalar::ZERO,
+                Scalar::ZERO,
+                Scalar::ZERO,
+                Scalar::ONE,
+                Scalar::ONE,
+                Scalar::ONE,
+                Scalar::ONE,
             ],
         )
         .unwrap();
@@ -371,23 +371,17 @@ mod tests {
         assert_model_valid(topology);
         assert_eq!(topology.faces.len(), 12);
     }
-    #[test]
-    fn vase_with_spline_is_valid() {
-        for_all_scalars!(check_vase_with_spline_is_valid);
-    }
 
-    fn check_cone_is_valid<S: Scalar>() {
-        let profile = polyline(&[v2::<S>(0.0, 1.0), v2(1.0, 0.0), v2(0.0, 0.0)]).unwrap();
-        assert_model_valid(revolved(profile).topology());
-    }
     #[test]
     fn cone_is_valid() {
-        for_all_scalars!(check_cone_is_valid);
+        let profile = polyline(&[v2(0.0, 1.0), v2(1.0, 0.0), v2(0.0, 0.0)]).unwrap();
+        assert_model_valid(revolved(profile).topology());
     }
 
-    fn check_sphere_is_valid<S: Scalar>() {
+    #[test]
+    fn sphere_is_valid() {
         let n = 6;
-        let points: Vec<Vector2<S>> = (0..=n)
+        let points: Vec<Vector2> = (0..=n)
             .map(|k| {
                 if k == 0 || k == n {
                     return v2(0.0, if k == 0 { 1.0 } else { -1.0 });
@@ -398,14 +392,10 @@ mod tests {
             .collect();
         assert_model_valid(revolved(polyline(&points).unwrap()).topology());
     }
-    #[test]
-    fn sphere_is_valid() {
-        for_all_scalars!(check_sphere_is_valid);
-    }
 
     /// Revolve the closed loop `curves` around the z-axis into a fresh part.
-    fn revolved_ring<S: Scalar>(curves: Vec<NurbCurve2D<S>>) -> NamedModel<S> {
-        let mut model = NamedModel::<S>::new();
+    fn revolved_ring(curves: Vec<NurbCurve2D>) -> NamedModel {
+        let mut model = NamedModel::new();
         let namer = Namer::new("revolve", "r").unwrap();
         revolved_about_z(&mut model, &namer, &Profile::closed(curves)).unwrap();
         model.check_names().unwrap();
@@ -414,10 +404,11 @@ mod tests {
 
     /// A square off the axis revolves into a ring with a square cross
     /// section: genus one, four quadrant faces per side, no poles.
-    fn check_square_ring_is_valid<S: Scalar>() {
+    #[test]
+    fn square_ring_is_valid() {
         // Clockwise, so the square lies on the right of it walked along.
         let profile = polyline(&[
-            v2::<S>(1.0, 1.0),
+            v2(1.0, 1.0),
             v2(2.0, 1.0),
             v2(2.0, 0.0),
             v2(1.0, 0.0),
@@ -439,15 +430,12 @@ mod tests {
         model.edge_id("revolve(r,p0,q3)").unwrap();
         model.edge_id("revolve(r,c3,a0)").unwrap();
     }
-    #[test]
-    fn square_ring_is_valid() {
-        for_all_scalars!(check_square_ring_is_valid);
-    }
 
     /// A circle off the axis revolves into an exact torus: two half arcs,
     /// clockwise, swept into doubly curved quadrant patches.
-    fn check_torus_is_valid<S: Scalar>() {
-        let w = sqrt2_over_2::<S>();
+    #[test]
+    fn torus_is_valid() {
+        let w = sqrt2_over_2();
         let profile = vec![
             NurbCurve2D::arc(v2(2.0, 1.0), v2(3.0, 1.0), v2(3.0, 0.0), w).unwrap(),
             NurbCurve2D::arc(v2(3.0, 0.0), v2(3.0, -1.0), v2(2.0, -1.0), w).unwrap(),
@@ -459,25 +447,19 @@ mod tests {
         assert_model_valid(topology);
         assert_eq!(topology.faces.len(), 16);
     }
-    #[test]
-    fn torus_is_valid() {
-        for_all_scalars!(check_torus_is_valid);
-    }
 
     /// A loop touching the axis cannot sweep a ring.
     #[test]
     fn rings_stay_off_the_axis() {
-        type S = geop_core_math::scalars::ScalInF64;
-        let profile =
-            polyline(&[v2::<S>(0.0, 1.0), v2(1.0, 1.0), v2(1.0, 0.0), v2(0.0, 1.0)]).unwrap();
-        let mut model = NamedModel::<S>::new();
+        let profile = polyline(&[v2(0.0, 1.0), v2(1.0, 1.0), v2(1.0, 0.0), v2(0.0, 1.0)]).unwrap();
+        let mut model = NamedModel::new();
         let namer = Namer::new("revolve", "r").unwrap();
         assert!(revolved_about_z(&mut model, &namer, &Profile::closed(profile)).is_err());
     }
 
     /// The `(r, z)` square `[r0, r0 + 1] x [0, 1]`, counter-clockwise; with
     /// `r0 = 0` its side on the axis is a curve along it, between two poles.
-    fn square_loop<S: Scalar>(r0: f64) -> SweepLoop<S> {
+    fn square_loop(r0: f64) -> SweepLoop {
         let profile = Profile::closed(
             polyline(&[
                 v2(r0, 0.0),
@@ -496,14 +478,14 @@ mod tests {
         }
     }
 
-    fn z_axes<S: Scalar>() -> CoordinateSystem<S> {
+    fn z_axes() -> CoordinateSystem {
         CoordinateSystem::world_at(Vector3::zero())
     }
 
     /// Revolves `loops` from `from` to `to` degrees around the z-axis into a
     /// solid of a fresh part, as operation `r`.
-    fn revolved_by<S: Scalar>(loops: &[SweepLoop<S>], from: f64, to: f64) -> NamedModel<S> {
-        let mut model = NamedModel::<S>::new();
+    fn revolved_by(loops: &[SweepLoop], from: f64, to: f64) -> NamedModel {
+        let mut model = NamedModel::new();
         let namer = Namer::new("revolve", "r").unwrap();
         revolve(
             &mut model,
@@ -521,14 +503,15 @@ mod tests {
 
     /// A partial turn of a region on the axis: walls for the three sides
     /// off it, one per span, and two caps sharing the side on the axis.
-    fn check_partial_turns_are_capped<S: Scalar>() {
+    #[test]
+    fn partial_turns_are_capped() {
         for (from, to, spans) in [
             (0.0, 90.0, 1),
             (0.0, 270.0, 3),
             (0.0, -120.0, 2),
             (-30.0, 45.0, 1),
         ] {
-            let model = revolved_by(&[square_loop::<S>(0.0)], from, to);
+            let model = revolved_by(&[square_loop(0.0)], from, to);
             let topology = model.topology();
             assert_model_valid(topology);
             assert_eq!(topology.faces.len(), 3 * spans + 2, "{from} to {to}");
@@ -552,22 +535,21 @@ mod tests {
                 .unwrap()
                 .point;
             let (c, s) = cos_sin(to);
-            let expected = Vector3::from_array([S::from_f64(c), S::from_f64(s), S::ONE]);
+            let expected =
+                Vector3::from_array([Scalar::from_f64(c), Scalar::from_f64(s), Scalar::ONE]);
             assert!(corner.could_be_equal(&expected), "{corner:?}");
         }
-    }
-    #[test]
-    fn partial_turns_are_capped() {
-        for_all_scalars!(check_partial_turns_are_capped);
     }
 
     /// A turn of a region clear of the axis, with a hole: a full one sweeps
     /// the hole into a void, a shell of its own; a partial one cuts a
     /// tunnel through the caps.
-    fn check_holes_sweep_voids_and_tunnels<S: Scalar>() {
+    #[test]
+    #[ignore = "slow: 4 s — run with `cargo test -- --ignored`"]
+    fn holes_sweep_voids_and_tunnels() {
         let outer = SweepLoop::plain(Profile::closed(
             polyline(&[
-                v2::<S>(1.0, 0.0),
+                v2(1.0, 0.0),
                 v2(4.0, 0.0),
                 v2(4.0, 3.0),
                 v2(1.0, 3.0),
@@ -578,7 +560,7 @@ mod tests {
         let hole = SweepLoop::plain(
             Profile::closed(
                 polyline(&[
-                    v2::<S>(2.0, 1.0),
+                    v2(2.0, 1.0),
                     v2(2.0, 2.0),
                     v2(3.0, 2.0),
                     v2(3.0, 1.0),
@@ -601,29 +583,25 @@ mod tests {
         let cap = quarter.face_id("revolve(r,start)").unwrap();
         assert_eq!(quarter.topology().get_face(cap).unwrap().holes.len(), 1);
     }
-    #[test]
-    #[ignore = "slow: 4 s — run with `cargo test -- --ignored`"]
-    fn holes_sweep_voids_and_tunnels() {
-        for_all_scalars!(check_holes_sweep_voids_and_tunnels);
-    }
 
     /// Without a solid, a sweep builds a sheet of walls: an open chain off
     /// the axis turned fully is a tube with two free rims, one ending on
     /// the axis a disc closing over its pole.
-    fn check_sheets_are_walls_alone<S: Scalar>() {
+    #[test]
+    fn sheets_are_walls_alone() {
         let namer = Namer::new("revolve", "r").unwrap();
         for (chain, faces, free) in [
-            (polyline(&[v2::<S>(1.0, 0.0), v2(1.0, 1.0)]).unwrap(), 4, 8),
+            (polyline(&[v2(1.0, 0.0), v2(1.0, 1.0)]).unwrap(), 4, 8),
             (polyline(&[v2(0.0, 0.0), v2(1.0, 0.0)]).unwrap(), 4, 4),
         ] {
-            let mut model = NamedModel::<S>::new();
+            let mut model = NamedModel::new();
             let profile = Profile::open(chain);
             let poles = profile
                 .joint_names
                 .iter()
                 .enumerate()
                 .map(|(i, _)| {
-                    i == 0 && profile.curves[0].start().unwrap()[0].could_be_equal(S::ZERO)
+                    i == 0 && profile.curves[0].start().unwrap()[0].could_be_equal(Scalar::ZERO)
                 })
                 .collect();
             let lp = SweepLoop {
@@ -646,19 +624,16 @@ mod tests {
             assert_eq!(one_sided, free);
         }
     }
-    #[test]
-    fn sheets_are_walls_alone() {
-        for_all_scalars!(check_sheets_are_walls_alone);
-    }
 
     /// A rectangular thread, a turn and a quarter of it either way round:
     /// a valid solid, its helical edges exactly the helices
     /// `NurbCurve3D::helix` builds — on the cylinder of their radius, rising
     /// by the pitch per turn.
-    fn check_a_screw_sweeps_a_thread<S: Scalar>() {
+    #[test]
+    fn a_screw_sweeps_a_thread() {
         use geop_core_geometry::nurb_curve::NurbCurve3D;
         for handedness in [Handedness::Right, Handedness::Left] {
-            let mut model = NamedModel::<S>::new();
+            let mut model = NamedModel::new();
             let namer = Namer::new("screw", "t").unwrap();
             // Counter-clockwise in `(r, z)`.
             let corners = [
@@ -668,10 +643,10 @@ mod tests {
                 (1.0, 0.2),
                 (1.0, -0.2),
             ];
-            let points: Vec<Vector2<S>> = corners.iter().map(|&(r, z)| v2(r, z)).collect();
+            let points: Vec<Vector2> = corners.iter().map(|&(r, z)| v2(r, z)).collect();
             let profile = Profile::closed(crate::common::polyline(&points).unwrap());
             let axes = CoordinateSystem::world_at(Vector3::zero());
-            let pitch = S::ONE;
+            let pitch = Scalar::ONE;
             screw(
                 &mut model,
                 &namer,
@@ -691,28 +666,24 @@ mod tests {
             let edge = model.edge_id("screw(t,p0,q2)").unwrap();
             let curve = &model.topology().get_edge(edge).unwrap().curve;
             let lowered = CoordinateSystem::world_at(Vector3::from_array([
-                S::ZERO,
-                S::ZERO,
-                S::from_f64(-0.2),
+                Scalar::ZERO,
+                Scalar::ZERO,
+                Scalar::from_f64(-0.2),
             ]));
-            let helix = NurbCurve3D::helix(&lowered, S::ONE, pitch, 1.25, handedness).unwrap();
+            let helix = NurbCurve3D::helix(&lowered, Scalar::ONE, pitch, 1.25, handedness).unwrap();
             for k in 0..=4 {
-                let along = S::from_ratio(k, 4).unwrap();
+                let along = Scalar::from_ratio(k, 4).unwrap();
                 let (t0, t1) = curve.domain();
                 let p = curve.evaluate(t0.add(t1.sub(t0).mul(along))).unwrap();
                 let h = helix
                     .evaluate(
-                        S::from_ratio(2, 5)
+                        Scalar::from_ratio(2, 5)
                             .unwrap()
-                            .add(along.div(S::from_f64(5.0)).unwrap()),
+                            .add(along.div(Scalar::from_f64(5.0)).unwrap()),
                     )
                     .unwrap();
                 assert!(p.could_be_equal(&h), "{handedness:?} {k}: {p:?} vs {h:?}");
             }
         }
-    }
-    #[test]
-    fn a_screw_sweeps_a_thread() {
-        for_all_scalars!(check_a_screw_sweeps_a_thread);
     }
 }

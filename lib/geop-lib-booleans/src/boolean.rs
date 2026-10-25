@@ -123,13 +123,13 @@ const SEED: u64 = 0xB001_EA47_0000_0001;
 /// The result is named `namer`'s root name, and everything the boolean
 /// creates on the way is named as `naming` describes; every face,
 /// edge and vertex it keeps keeps its name.
-pub fn boolean<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn boolean(
+    model: &mut NamedModel,
     namer: &Namer,
     solid_a: SolidId,
     solid_b: SolidId,
     op: BooleanOp,
-    params: RemeshParams<S>,
+    params: RemeshParams,
 ) -> GeopResult<Option<SolidId>> {
     combine(model, namer, solid_a, solid_b, op, None, params)?.stopped()
 }
@@ -177,14 +177,14 @@ impl<T> Reach<T> {
 /// reach past whatever stops it: if the piece also reaches its face `end`,
 /// nothing stopped it, and it [`Reach::RunsOn`]. `start` and `end` are the
 /// names those faces had before the boolean (see `naming`).
-pub fn boolean_up_to_next<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn boolean_up_to_next(
+    model: &mut NamedModel,
     namer: &Namer,
     target: SolidId,
     tool: SolidId,
     op: BooleanOp,
     (start, end): (&str, &str),
-    params: RemeshParams<S>,
+    params: RemeshParams,
 ) -> GeopResult<Reach<Option<SolidId>>> {
     let up_to_next = ToolEnds {
         start,
@@ -202,13 +202,13 @@ pub fn boolean_up_to_next<S: Scalar>(
 ///
 /// The tool is cut by a copy of the solids it stops at, so that only the
 /// copy is imprinted and consumed.
-pub fn piece_up_to_next<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn piece_up_to_next(
+    model: &mut NamedModel,
     namer: &Namer,
     tool: SolidId,
     stops: &[SolidId],
     (start, end): (&str, &str),
-    params: RemeshParams<S>,
+    params: RemeshParams,
 ) -> GeopResult<Reach<SolidId>> {
     let ctx = with_context!(
         "piece_up_to_next(name={}, tool={tool}, stops={stops:?})",
@@ -243,8 +243,8 @@ pub fn piece_up_to_next<S: Scalar>(
 /// A copy of the solids `solids` as one solid that shares nothing with
 /// them, named by `namer` as a copy: what an operation that leaves them as
 /// they are imprints and consumes instead.
-pub(crate) fn copy_of<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub(crate) fn copy_of(
+    model: &mut NamedModel,
     namer: &Namer,
     solids: &[SolidId],
 ) -> GeopResult<SolidId> {
@@ -260,14 +260,14 @@ pub(crate) fn copy_of<S: Scalar>(
 
 /// [`boolean`], or with `up_to_next` [`boolean_up_to_next`] — or, with the
 /// tool kept alone, [`piece_up_to_next`].
-fn combine<S: Scalar>(
-    model: &mut NamedModel<S>,
+fn combine(
+    model: &mut NamedModel,
     namer: &Namer,
     solid_a: SolidId,
     solid_b: SolidId,
     op: BooleanOp,
     up_to_next: Option<ToolEnds>,
-    params: RemeshParams<S>,
+    params: RemeshParams,
 ) -> GeopResult<Reach<Option<SolidId>>> {
     let ctx = with_context!(
         "boolean(name={}, solid_a={solid_a}, solid_b={solid_b}, op={op:?}, up_to_next={up_to_next:?})",
@@ -364,8 +364,8 @@ fn combine<S: Scalar>(
 /// kind, or else the pieces next to it. The tool's other pieces are
 /// dropped, and the target's faces between them kept if `keep_untouched`,
 /// as if the tool had not been there, or else dropped too.
-fn reach_up_to_next<S: Scalar>(
-    model: &Model<S>,
+fn reach_up_to_next(
+    model: &Model,
     tool: &HashSet<FaceId>,
     (wanted_inside, keep_untouched): (bool, bool),
     origins: &HashMap<FaceId, String>,
@@ -565,8 +565,8 @@ fn keep_alone(reached: &Reached, decisions: &mut HashMap<FaceId, (FaceClassifica
 /// the result, so a face was kept or dropped wrongly, or remesh left a face
 /// straddling the other solid; the error lists every face along that edge
 /// with its name and classification, which tells the two apart.
-fn check_closed<S: Scalar>(
-    model: &NamedModel<S>,
+fn check_closed(
+    model: &NamedModel,
     decisions: &HashMap<FaceId, (FaceClassification, Keep)>,
 ) -> GeopResult<()> {
     let topology = model.topology();
@@ -639,15 +639,15 @@ fn check_closed<S: Scalar>(
 /// between them (see `shell_contains_from`), and added to it: one ray
 /// across the whole solid for the first point of a boolean, and short ones
 /// after it, instead of one across the solid for every point.
-pub(crate) fn classify_face<S: Scalar>(
-    model: &Model<S>,
+pub(crate) fn classify_face(
+    model: &Model,
     face_id: FaceId,
     other_solid: SolidId,
-    params: RemeshParams<S>,
-    classified: &mut Classified<S>,
+    params: RemeshParams,
+    classified: &mut Classified,
 ) -> GeopResult<FaceClassification> {
     let face = model.get_face(face_id)?;
-    let mut decided: Vec<(FaceClassification, Vector3<S>)> = Vec::new();
+    let mut decided: Vec<(FaceClassification, Vector3)> = Vec::new();
     let mut on_boundary = Vec::new();
     let (max_nodes, epsilon) = (params.max_nodes, params.curve_curve_min_subdivision_size);
     face_interior_point_where(model, face_id, max_nodes, epsilon, SEED, |u, v| {
@@ -701,9 +701,9 @@ pub(crate) fn classify_face<S: Scalar>(
             }
         };
         let alignment = this_normal.prod_dot(&other_normal);
-        return if alignment.definitely_greater(S::ZERO) {
+        return if alignment.definitely_greater(Scalar::ZERO) {
             Ok(FaceClassification::OnSameNormal)
-        } else if alignment.definitely_less(S::ZERO) {
+        } else if alignment.definitely_less(Scalar::ZERO) {
             Ok(FaceClassification::OnOppositeNormal)
         } else {
             Err(GeopError::new(format!(
@@ -723,12 +723,12 @@ pub(crate) fn classify_face<S: Scalar>(
 }
 
 /// The normal of whichever face of `solid_id` contains `point`.
-fn solid_normal_at<S: Scalar>(
-    model: &Model<S>,
+fn solid_normal_at(
+    model: &Model,
     solid_id: SolidId,
-    point: &Vector3<S>,
-    params: RemeshParams<S>,
-) -> GeopResult<Vector3<S>> {
+    point: &Vector3,
+    params: RemeshParams,
+) -> GeopResult<Vector3> {
     let at = solid_face_at(
         model,
         solid_id,
@@ -752,7 +752,7 @@ mod tests {
         remesh::RemeshParams,
         scenes::{scene, validation},
     };
-    use geop_core_math::{scalars::ScalInF64, scalars::Scalar, vector::Vector3};
+    use geop_core_math::{scalars::Scalar, vector::Vector3};
     use geop_core_topology::{contains::rng::Rng, validation::validate_fast};
     use geop_lib_sweep::shapes::{Axis, block, v3};
     use geop_ops_model::Namer;
@@ -776,7 +776,7 @@ mod tests {
     #[test]
     fn classify_face_separates_inside_from_outside() {
         let mut s = scene("box_cylinder_drilled_hole_through");
-        let params = RemeshParams::<ScalInF64>::default();
+        let params = RemeshParams::default();
         crate::remesh::remesh(&mut s.model, &namer(), s.solid_a, s.solid_b, params).unwrap();
 
         let mut inside = 0;
@@ -808,7 +808,7 @@ mod tests {
     #[test]
     fn every_remeshed_face_has_an_interior_point() {
         let mut s = scene("box_cylinder_drilled_hole_through");
-        let params = RemeshParams::<ScalInF64>::default();
+        let params = RemeshParams::default();
         crate::remesh::remesh(&mut s.model, &namer(), s.solid_a, s.solid_b, params).unwrap();
 
         for solid in [s.solid_a, s.solid_b] {
@@ -835,7 +835,7 @@ mod tests {
 
     fn check_op(name: &str, op: BooleanOp) {
         let mut s = scene(name);
-        let params = RemeshParams::<ScalInF64>::default();
+        let params = RemeshParams::default();
         let result = boolean(&mut s.model, &namer(), s.solid_a, s.solid_b, op, params)
             .unwrap_or_else(|e| panic!("{name} {op:?}: {e}"))
             .unwrap_or_else(|| panic!("{name} {op:?}: result is empty"));
@@ -855,15 +855,15 @@ mod tests {
 
     /// Where a probe point lands relative to the result solid.
     fn contains(
-        model: &geop_core_topology::Model<ScalInF64>,
+        model: &geop_core_topology::Model,
         solid: geop_core_topology::SolidId,
         p: (f64, f64, f64),
     ) -> bool {
-        let params = RemeshParams::<ScalInF64>::default();
+        let params = RemeshParams::default();
         let point = geop_core_math::vector::Vector3::from_array([
-            ScalInF64::from_f64(p.0),
-            ScalInF64::from_f64(p.1),
-            ScalInF64::from_f64(p.2),
+            Scalar::from_f64(p.0),
+            Scalar::from_f64(p.1),
+            Scalar::from_f64(p.2),
         ]);
         let shell = model.get_solid(solid).unwrap().shells[0];
         matches!(
@@ -889,14 +889,9 @@ mod tests {
     const IN_CYLINDER_ONLY: (f64, f64, f64) = (0.0, 0.0, 0.8);
     const IN_BOTH: (f64, f64, f64) = (0.0, 0.0, 0.0);
 
-    fn run(
-        op: BooleanOp,
-    ) -> (
-        geop_core_topology::Model<ScalInF64>,
-        geop_core_topology::SolidId,
-    ) {
+    fn run(op: BooleanOp) -> (geop_core_topology::Model, geop_core_topology::SolidId) {
         let mut s = scene("box_cylinder_drilled_hole_through");
-        let params = RemeshParams::<ScalInF64>::default();
+        let params = RemeshParams::default();
         let result = boolean(&mut s.model, &namer(), s.solid_a, s.solid_b, op, params)
             .unwrap()
             .expect("this scene's operands overlap, so no operator is empty");
@@ -913,7 +908,7 @@ mod tests {
     #[test]
     fn box_grid_n1p00_n0p50_n1p00_difference_succeeds() {
         let mut s = scene("box_grid_n1p00_n0p50_n1p00");
-        let params = RemeshParams::<ScalInF64>::default();
+        let params = RemeshParams::default();
         boolean(
             &mut s.model,
             &namer(),
@@ -941,7 +936,7 @@ mod tests {
     /// result may legitimately disagree about a surface they share.
     fn check_boolean_matches_point_membership(name: &str, op: BooleanOp, seed: u64) {
         let mut s = scene(name);
-        let params = RemeshParams::<ScalInF64>::default();
+        let params = RemeshParams::default();
         let (solid_a, solid_b) = (s.solid_a, s.solid_b);
 
         // Sampled against the operands *before* the boolean consumes them.
@@ -949,9 +944,9 @@ mod tests {
         let mut samples = Vec::new();
         while samples.len() < SAMPLE_COUNT {
             let p = Vector3::from_array([
-                ScalInF64::from_f64(rng.next_f64() * 4.0 - 2.0),
-                ScalInF64::from_f64(rng.next_f64() * 4.0 - 2.0),
-                ScalInF64::from_f64(rng.next_f64() * 4.0 - 2.0),
+                Scalar::from_f64(rng.next_f64() * 4.0 - 2.0),
+                Scalar::from_f64(rng.next_f64() * 4.0 - 2.0),
+                Scalar::from_f64(rng.next_f64() * 4.0 - 2.0),
             ]);
             let (Some(in_a), Some(in_b)) = (
                 strictly_inside(s.model.topology(), solid_a, p),
@@ -998,11 +993,11 @@ mod tests {
     /// shell of `solid`; `None` if it lands on a boundary, where membership is
     /// not a yes/no question.
     fn strictly_inside(
-        model: &geop_core_topology::Model<ScalInF64>,
+        model: &geop_core_topology::Model,
         solid: geop_core_topology::SolidId,
-        p: Vector3<ScalInF64>,
+        p: Vector3,
     ) -> Option<bool> {
-        let params = RemeshParams::<ScalInF64>::default();
+        let params = RemeshParams::default();
         let mut inside = false;
         for shell in model.get_solid(solid).ok()?.shells.clone() {
             match geop_core_topology::contains::shell::shell_contains(
@@ -1117,7 +1112,7 @@ mod tests {
     // legitimately overlaps the others in space — which the validation would
     // report as edges crossing faces.
 
-    type M = geop_ops_model::NamedModel<ScalInF64>;
+    type M = geop_ops_model::NamedModel;
 
     /// `CreateCube(offset, dims)`: the axis-aligned box from `offset` to
     /// `offset + dims`.
@@ -1129,7 +1124,7 @@ mod tests {
     /// `CreateSphere(offset, r)`.
     fn sphere(model: &mut M, center: [f64; 3], r: f64) -> geop_core_topology::SolidId {
         let [x, y, z] = center;
-        let r = ScalInF64::from_f64(r);
+        let r = Scalar::from_f64(r);
         geop_lib_sweep::shapes::sphere_solid(model, &fresh_id(), v3(x, y, z), r).unwrap()
     }
 
@@ -1146,8 +1141,8 @@ mod tests {
             model,
             &fresh_id(),
             v3(x, y, z),
-            ScalInF64::from_f64(r),
-            ScalInF64::from_f64(h),
+            Scalar::from_f64(r),
+            Scalar::from_f64(h),
             axis,
         )
         .unwrap()
@@ -1488,14 +1483,13 @@ mod tests {
     /// rim; cast from the box itself, it counted that as one crossing.
     #[test]
     fn point_beside_the_disc_cut_from_the_top_is_outside_it() {
-        use geop_core_math::scalars::Ring;
         use geop_core_topology::contains::face::{PointClassification, face_contains};
         let mut model = M::new();
         let (_, disc) = plate_and_blind_hole_remeshed(&mut model);
         let topology = model.topology();
         let (u, v) = (
-            ScalInF64::from_f64(0.42698015887332674),
-            ScalInF64::from_f64(0.5220523370528238),
+            Scalar::from_f64(0.42698015887332674),
+            Scalar::from_f64(0.5220523370528238),
         );
         let point = topology
             .get_face(disc)
@@ -1509,7 +1503,7 @@ mod tests {
         );
         let params = RemeshParams::default();
         let epsilon = params.curve_curve_min_subdivision_size;
-        let neighbourhood = |t: ScalInF64| t.sub(epsilon).union(t.add(epsilon));
+        let neighbourhood = |t: Scalar| t.sub(epsilon).union(t.add(epsilon));
         let mut wrong = Vec::new();
         for (u, v) in [(u, v), (neighbourhood(u), neighbourhood(v))] {
             for seed in (0..64).chain([super::SEED]) {
@@ -1891,7 +1885,7 @@ mod tests {
         let d = cube(&mut model, [-0.33, -0.28, -1.15], [0.65, 0.55, 2.30]);
         crate::remesh::remesh(&mut model, &namer(), c, d, RemeshParams::default()).unwrap();
 
-        let params = RemeshParams::<ScalInF64>::default();
+        let params = RemeshParams::default();
         let shell = model.topology().get_solid(c).unwrap().shells[0];
         let classification = geop_core_topology::contains::shell::shell_contains(
             model.topology(),
@@ -1910,11 +1904,11 @@ mod tests {
 
     #[test]
     fn chained_differences_block_with_two_slots_and_a_sphere() {
-        let f = ScalInF64::from_f64;
+        let f = Scalar::from_f64;
         let mut model = M::new();
         let a = cube(&mut model, [-0.50, -0.50, -0.50], [1.00, 1.00, 1.00]);
         let b = cube(&mut model, [-1.13, -0.30, -0.33], [2.25, 0.60, 0.65]);
-        let params = RemeshParams::<ScalInF64>::default();
+        let params = RemeshParams::default();
         let c = boolean(&mut model, &namer(), a, b, BooleanOp::Difference, params)
             .unwrap()
             .expect("block minus the first slot must be non-empty");
@@ -2030,7 +2024,7 @@ mod tests {
         let mut model = M::new();
         let a = cube(&mut model, [-0.5, -0.5, -0.5], [1.0, 1.0, 1.0]);
         let b = cylinder(&mut model, [0.0, 0.0, -0.5], 0.3, 1.0, Axis::Z);
-        let params = RemeshParams::<ScalInF64>::default();
+        let params = RemeshParams::default();
 
         let t0 = std::time::Instant::now();
         let result = boolean(&mut model, &namer(), a, b, BooleanOp::Difference, params)
@@ -2129,7 +2123,7 @@ mod tests {
     /// `predictor_corrector_step`).
     #[test]
     fn cube_minus_box_with_wide_corners() {
-        let wide = |x: f64| ScalInF64::new(x - 1e-12, x + 1e-12);
+        let wide = |x: f64| Scalar::new(x - 1e-12, x + 1e-12);
         let corner = |p: [f64; 3]| Vector3::from_array(p.map(wide));
         let mut model = M::new();
         let block = cube(&mut model, [0.0, 0.0, 0.0], [2.0, 2.0, 1.0]);

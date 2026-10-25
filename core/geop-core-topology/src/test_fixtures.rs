@@ -9,7 +9,7 @@
 //! numerical checks against can't reach for it — a dev-dependency back on
 //! `geop-lib-sweep` would make Cargo compile this crate twice
 //! (once under `#[cfg(test)]`, once as that crate's plain library
-//! dependency), and the two copies' `Model<S>` types don't unify, which
+//! dependency), and the two copies' `Model` types don't unify, which
 //! surfaces as `expected Model, found Model` at every call site. This is a
 //! small, self-contained stand-in scoped to exactly what these tests need:
 //! six planar faces, twelve shared edges, eight shared vertices — no
@@ -35,7 +35,7 @@ use crate::{
 /// its `SolidId`. Every face is a flat, degree-`1` bilinear patch; every
 /// edge a straight degree-`1` line — plenty for the structural/numerical
 /// checks these tests actually exercise.
-pub fn test_cube_solid<S: Scalar>(model: &mut Model<S>) -> SolidId {
+pub fn test_cube_solid(model: &mut Model) -> SolidId {
     let mut spec = BodySpec::new(true);
     // 0..3 the bottom (z=0) ring, 4..7 the matching top (z=1) ring.
     for [x, y, z] in [
@@ -49,7 +49,7 @@ pub fn test_cube_solid<S: Scalar>(model: &mut Model<S>) -> SolidId {
         [0.0, 1.0, 1.0],
     ] {
         spec.vertices
-            .push(Vector3::from_array([x, y, z].map(S::from_f64)));
+            .push(Vector3::from_array([x, y, z].map(Scalar::from_f64)));
     }
     // Each ring, and the edges rising from the bottom one to the top.
     let pairs = (0..4)
@@ -94,7 +94,7 @@ pub fn test_cube_solid<S: Scalar>(model: &mut Model<S>) -> SolidId {
 }
 
 /// A new model holding only [`test_cube_solid`].
-pub fn test_cube_model<S: Scalar>() -> Model<S> {
+pub fn test_cube_model() -> Model {
     let mut model = Model::new();
     test_cube_solid(&mut model);
     model
@@ -102,23 +102,23 @@ pub fn test_cube_model<S: Scalar>() -> Model<S> {
 
 /// One check of [`crate::validation`]: it adds what it finds wrong with a
 /// model to the errors.
-pub type Check<S> = fn(&ValidationParameters<S>, &mut Vec<GeopError>, &Model<S>);
+pub type Check = fn(&ValidationParameters, &mut Vec<GeopError>, &Model);
 
 /// The errors `check` finds in `model`, under the default parameters.
-pub fn check_errors<S: Scalar>(check: Check<S>, model: &Model<S>) -> Vec<GeopError> {
+pub fn check_errors(check: Check, model: &Model) -> Vec<GeopError> {
     let mut errors = Vec::new();
     check(&ValidationParameters::default(), &mut errors, model);
     errors
 }
 
 /// The straight line from `a` to `b`, over `[0, 1]`.
-pub fn line3<S: Scalar>(a: (f64, f64, f64), b: (f64, f64, f64)) -> NurbCurve3D<S> {
-    let p = |(x, y, z): (f64, f64, f64)| Vector3::from_array([x, y, z].map(S::from_f64));
+pub fn line3(a: (f64, f64, f64), b: (f64, f64, f64)) -> NurbCurve3D {
+    let p = |(x, y, z): (f64, f64, f64)| Vector3::from_array([x, y, z].map(Scalar::from_f64));
     NurbCurve3D::line(p(a), p(b)).unwrap()
 }
 
 /// The straight pcurve from `(u, v)` `a` to `b`, over `[0, 1]`.
-pub fn line2<S: Scalar>(a: (f64, f64), b: (f64, f64)) -> NurbCurve2D<S> {
-    let p = |(u, v): (f64, f64)| Vector2::from_array([u, v].map(S::from_f64));
+pub fn line2(a: (f64, f64), b: (f64, f64)) -> NurbCurve2D {
+    let p = |(u, v): (f64, f64)| Vector2::from_array([u, v].map(Scalar::from_f64));
     NurbCurve2D::line(p(a), p(b)).unwrap()
 }

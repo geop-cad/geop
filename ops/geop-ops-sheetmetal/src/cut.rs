@@ -15,9 +15,7 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_core_sketch::Shape;
 use geop_ops_model::sketch::shape_profiles;
 use geop_ops_model::sketch::{PlacedSketch, SketchRef};
@@ -56,7 +54,7 @@ use crate::{
 pub struct SheetCut;
 
 /// A flat face of the part, by name.
-pub type FlatFaceRef = ElementReference<NamedModel<Design>, Plane>;
+pub type FlatFaceRef = ElementReference<NamedModel, Plane>;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SheetCutArgs {
@@ -107,7 +105,7 @@ impl PartOperation for SheetCut {
 
     /// The newest sketch, on the face it lies on.
     fn new_args(context: &Context) -> SheetCutArgs {
-        let newest = context.before.targets_of::<PlacedSketch<Design>>().pop();
+        let newest = context.before.targets_of::<PlacedSketch>().pop();
         SheetCutArgs {
             sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_model::sketch::sketch(""))),
             face: None,
@@ -124,9 +122,9 @@ impl PartOperation for SheetCut {
         context: &'a Context<'a>,
         args: &SheetCutArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, SheetCutArgs> {
+    ) -> EditForm<'a, SheetCutArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, SheetCutArgs>::default();
+        let mut f = EditForm::<SheetCutArgs>::default();
         f.pick_one(
             "sketch",
             "sketch",
@@ -151,7 +149,7 @@ impl PartOperation for SheetCut {
 
 impl ModelOperation for SheetCut {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         _: &SheetCutArgs,
@@ -164,18 +162,17 @@ impl ModelOperation for SheetCut {
 /// plane `plane` is projected onto: the one with the face `face`, or, if
 /// none is named, the one the plane lies on.
 fn target(
-    model: &NamedModel<Design>,
+    model: &NamedModel,
     reader: &Reader,
     face: Option<&str>,
-    plane: &CoordinateSystem<Design>,
-) -> GeopResult<(String, Sheet<Design>, usize)> {
-    type S = Design;
-    let parallel = |place: &Placement<S>| {
+    plane: &CoordinateSystem,
+) -> GeopResult<(String, Sheet, usize)> {
+    let parallel = |place: &Placement| {
         plane
             .w()
             .prod_cross(&place.n)
             .norm()
-            .could_be_equal(S::ZERO)
+            .could_be_equal(Scalar::ZERO)
     };
     let mut found = Vec::new();
     for solid in model.solid_names() {
@@ -185,14 +182,14 @@ fn target(
         for (f, flat) in sheet.flats.iter().enumerate() {
             let Some(face) = face else {
                 // On the A side's plane or the B side's.
-                let t = S::from_f64(sheet.rules.thickness);
-                let on = |place: &Placement<S>| {
+                let t = Scalar::from_f64(sheet.rules.thickness);
+                let on = |place: &Placement| {
                     parallel(place)
                         && plane
                             .origin()
                             .sub(&place.origin)
                             .prod_dot(&place.n)
-                            .could_be_equal(S::ZERO)
+                            .could_be_equal(Scalar::ZERO)
                 };
                 if on(&flat.place) || on(&flat.place.offset(t)) {
                     found.push((solid.clone(), sheet.clone(), f));
@@ -229,29 +226,30 @@ fn target(
 /// The areas of the sketch `placed` projected into the sheet coordinates of
 /// the flat at `place`: each a loop counter-clockwise there, its curves
 /// named `C,K,X`.
-fn cut_loops<S: Scalar>(
+fn cut_loops(
     namer: &Namer,
-    placed: &PlacedSketch<S>,
-    place: &Placement<S>,
-) -> GeopResult<Vec<Vec<FlatEdge<S>>>> {
+    placed: &PlacedSketch,
+    place: &Placement,
+) -> GeopResult<Vec<Vec<FlatEdge>>> {
     let (name, sketch) = (&placed.name, &placed.sketch);
-    let geometry = sketch.enclose::<S>()?;
+    let geometry = sketch.enclose()?;
     let plane = &placed.plane;
     // Sketch coordinates to sheet coordinates: affine, so exact on the
     // homogeneous control points.
     let d = plane.origin().sub(&place.origin);
-    let row = |e: &Vector3<S>| [plane.u().prod_dot(e), plane.v().prod_dot(e), d.prod_dot(e)];
+    let row = |e: &Vector3| [plane.u().prod_dot(e), plane.v().prod_dot(e), d.prod_dot(e)];
     let m = [row(&place.e1), row(&place.e2)];
     let flips = m[0][0]
         .mul(m[1][1])
         .sub(m[0][1].mul(m[1][0]))
-        .definitely_less(S::ZERO);
-    let map = |curve: &NurbCurve2D<S>| -> GeopResult<NurbCurve2D<S>> {
+        .definitely_less(Scalar::ZERO);
+    let map = |curve: &NurbCurve2D| -> GeopResult<NurbCurve2D> {
         let control_points = curve
             .control_points
             .iter()
             .map(|cp| {
-                let image = |r: &[S; 3]| r[0].mul(cp[0]).add(r[1].mul(cp[1])).add(r[2].mul(cp[2]));
+                let image =
+                    |r: &[Scalar; 3]| r[0].mul(cp[0]).add(r[1].mul(cp[1])).add(r[2].mul(cp[2]));
                 Vector3::from_array([image(&m[0]), image(&m[1]), cp[2]])
             })
             .collect();

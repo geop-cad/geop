@@ -9,8 +9,7 @@
 //! into one), so the result never contains two entries describing the same
 //! physical solution.
 
-use crate::scalars::Scalar;
-use crate::vector::Vector;
+use crate::{scalars::Scalar, vector::Vector};
 
 /// A value that can be tested for approximate equality against another of
 /// the same type and combined into the smallest value definitely
@@ -20,7 +19,7 @@ pub trait Mergeable: Copy {
     fn union(&self, other: &Self) -> Self;
 }
 
-impl<S: Scalar> Mergeable for S {
+impl Mergeable for Scalar {
     fn could_be_equal(&self, other: &Self) -> bool {
         Scalar::could_be_equal(*self, *other)
     }
@@ -29,7 +28,7 @@ impl<S: Scalar> Mergeable for S {
     }
 }
 
-impl<S: Scalar, const N: usize> Mergeable for Vector<S, N> {
+impl<const N: usize> Mergeable for Vector<N> {
     fn could_be_equal(&self, other: &Self) -> bool {
         Vector::could_be_equal(self, other)
     }
@@ -111,51 +110,42 @@ impl<T: Mergeable> Default for DisjointSet<T> {
 #[cfg(test)]
 mod tests {
     use super::DisjointSet;
-    use crate::{for_all_scalars, scalars::Scalar};
+    use crate::scalars::Scalar;
 
-    fn check_disjoint_scalars_stay_separate<S: Scalar>() {
-        let mut set = DisjointSet::new();
-        set.insert(S::from_f64(0.1));
-        set.insert(S::from_f64(0.9));
-        assert_eq!(set.len(), 2);
-    }
     #[test]
     fn disjoint_scalars_stay_separate() {
-        for_all_scalars!(check_disjoint_scalars_stay_separate);
+        let mut set = DisjointSet::new();
+        set.insert(Scalar::from_f64(0.1));
+        set.insert(Scalar::from_f64(0.9));
+        assert_eq!(set.len(), 2);
     }
 
-    fn check_overlapping_scalars_merge<S: Scalar>() {
-        let mut set = DisjointSet::new();
-        set.insert(S::from_f64(0.5));
-        set.insert(S::from_f64(0.5));
-        assert_eq!(set.len(), 1);
-    }
     #[test]
     fn overlapping_scalars_merge() {
-        for_all_scalars!(check_overlapping_scalars_merge);
+        let mut set = DisjointSet::new();
+        set.insert(Scalar::from_f64(0.5));
+        set.insert(Scalar::from_f64(0.5));
+        assert_eq!(set.len(), 1);
     }
 
     /// A third candidate bridging two previously-separate entries must
     /// merge all three into one, not just absorb into whichever entry it
     /// happened to match first.
-    fn check_bridging_candidate_joins_two_solutions<S: Scalar>() {
+    #[test]
+    fn bridging_candidate_joins_two_solutions() {
         let mut set = DisjointSet::new();
-        set.insert(S::from_f64(0.0));
-        set.insert(S::from_f64(1.0));
+        set.insert(Scalar::from_f64(0.0));
+        set.insert(Scalar::from_f64(1.0));
         assert_eq!(set.len(), 2);
 
         // A very wide candidate spanning both — built as the union of two
         // points straddling each existing entry — should absorb both.
-        let bridge = S::from_f64(-0.5).union(S::from_f64(1.5));
+        let bridge = Scalar::from_f64(-0.5).union(Scalar::from_f64(1.5));
         set.insert(bridge);
         assert_eq!(
             set.len(),
             1,
             "a candidate overlapping both existing entries should merge them into one"
         );
-    }
-    #[test]
-    fn bridging_candidate_joins_two_solutions() {
-        for_all_scalars!(check_bridging_candidate_joins_two_solutions);
     }
 }

@@ -11,14 +11,12 @@ use geop_core_program::{
     element::{ElementReference, PickedElement},
     part::StepContext,
     reader::Reader,
-    values::Design,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve3D};
+use geop_core_geometry::nurb_curve::NurbCurve;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    scalars::Scalar,
     vector::Vector3,
     with_context,
 };
@@ -117,19 +115,6 @@ pub struct AddSketch3dArgs {
     pub references: Vec<Reference3d>,
 }
 
-/// `curve` in the program's scalar.
-fn to_design<S: Scalar>(curve: &NurbCurve3D<S>) -> GeopResult<NurbCurve3D<Design>> {
-    NurbCurve::try_new(
-        curve.degree,
-        curve
-            .control_points
-            .iter()
-            .map(|p| p.map(|c| c.cast()))
-            .collect(),
-        curve.knot_vector.iter().map(|k| k.cast()).collect(),
-    )
-}
-
 impl AddSketch3dArgs {
     /// The reference that gives `target`, if any.
     pub fn reference_of(&self, target: Target) -> Option<&Reference3d> {
@@ -168,9 +153,7 @@ impl AddSketch3dArgs {
                     let [edge] = chain.curves.as_slice() else {
                         return Err(GeopError::new("it is more than one curve")).with_context(ctx);
                     };
-                    self.sketch
-                        .references
-                        .insert(*curve, to_design(edge).with_context(ctx)?);
+                    self.sketch.references.insert(*curve, edge.clone());
                 }
                 &Reference3d::Direction {
                     constraint,
@@ -227,7 +210,7 @@ impl AddSketch3dArgs {
         if !sketch.check()?.converged {
             sketch.solve()?;
         }
-        let geometry = sketch.enclose::<Design>()?;
+        let geometry = sketch.enclose()?;
         for (&id, curve) in &sketch.curves {
             if curve.is_drawn() {
                 sketch.curve_nurbs(id, &geometry)?;
@@ -267,12 +250,9 @@ fn drawn(sketch: &Sketch3d) -> GeopResult<Vec<(CurveId, (PointId, PointId))>> {
 
 /// The wire `sketch` is built as, and the names of its vertices and edges
 /// (see [`AddSketch3d`]): `None` for a sketch with no point to build.
-fn wire_of<S: Scalar>(
-    sketch: &Sketch3d,
-    namer: &Namer,
-) -> GeopResult<Option<(BodySpec<S>, BodyNames)>> {
+fn wire_of(sketch: &Sketch3d, namer: &Namer) -> GeopResult<Option<(BodySpec, BodyNames)>> {
     let class = sketch.point_classes();
-    let geometry = sketch.enclose::<S>()?;
+    let geometry = sketch.enclose()?;
     let drawn = drawn(sketch)?;
     let used = |p: &PointId| {
         (sketch.curves.values()).any(|c| c.points().iter().any(|q| class[q] == class[p]))
@@ -284,7 +264,7 @@ fn wire_of<S: Scalar>(
         return Ok(None);
     }
     // A vertex encloses every point of its class.
-    let vertices: BTreeMap<PointId, Vector3<S>> = (points.into_iter())
+    let vertices: BTreeMap<PointId, Vector3> = (points.into_iter())
         .map(|rep| {
             let at = (sketch.points.keys())
                 .filter(|p| class[*p] == rep)
@@ -362,14 +342,14 @@ impl PartOperation for AddSketch3d {
         context: &'a Context<'a>,
         args: &AddSketch3dArgs,
         editing: &Sketch3dEditing,
-    ) -> EditForm<'a, Design, AddSketch3dArgs, Sketch3dSession> {
+    ) -> EditForm<'a, AddSketch3dArgs, Sketch3dSession> {
         editor::form(&context.before, args, &editing.session, &editing.selection)
     }
 
     fn canvas(
         context: &Context,
         edit: Edit<'_, AddSketch3dArgs, Sketch3dSession>,
-        event: &CanvasEvent<Design>,
+        event: &CanvasEvent,
     ) {
         editor::event(&context.before, context.scene, edit, event)
     }
@@ -379,7 +359,7 @@ impl ModelOperation for AddSketch3d {
     /// Builds the 3-D sketch the step defined as a wire (see
     /// [`AddSketch3d`]).
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         _: &AddSketch3dArgs,

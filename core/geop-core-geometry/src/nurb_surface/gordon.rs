@@ -31,13 +31,13 @@ const SKIN_DEGREE: usize = 3;
 /// choice — any increasing ones make the same surface pass through the
 /// same curves — and the average keeps each curve's own speed nearly as it
 /// was, so the parameters are sharpened, and the ends are exactly 0 and 1.
-fn common_parameters<S: Scalar>(crossings: &[Vec<S>]) -> GeopResult<Vec<S>> {
+fn common_parameters(crossings: &[Vec<Scalar>]) -> GeopResult<Vec<Scalar>> {
     let n = crossings[0].len();
-    let count = S::from_i64(crossings.len() as i64);
-    let mut params = vec![S::ZERO; n];
-    params[n - 1] = S::ONE;
+    let count = Scalar::from_i64(crossings.len() as i64);
+    let mut params = vec![Scalar::ZERO; n];
+    params[n - 1] = Scalar::ONE;
     for (i, param) in params.iter_mut().enumerate().take(n - 1).skip(1) {
-        let mut sum = S::ZERO;
+        let mut sum = Scalar::ZERO;
         for c in crossings {
             sum = sum.add(c[i].sub(c[0]).div(c[n - 1].sub(c[0]))?);
         }
@@ -58,12 +58,12 @@ fn common_parameters<S: Scalar>(crossings: &[Vec<S>]) -> GeopResult<Vec<S>> {
 /// first and last curves' control points: that is what the interpolation
 /// gives there exactly, and taking them as they are leaves out its
 /// rounding.
-fn skin<S: Scalar>(rows: &[NurbCurve3D<S>], params: &[S]) -> GeopResult<NurbSurface3D<S>> {
+fn skin(rows: &[NurbCurve3D], params: &[Scalar]) -> GeopResult<NurbSurface3D> {
     let first = &rows[0];
     let nu = first.control_points.len();
     let mut columns = Vec::with_capacity(nu);
     for k in 0..nu {
-        let values: Vec<Vector4<S>> = rows.iter().map(|r| r.control_points[k]).collect();
+        let values: Vec<Vector4> = rows.iter().map(|r| r.control_points[k]).collect();
         let mut column = NurbCurve::interpolate_homogeneous(&values, params, SKIN_DEGREE)?;
         let last = column.control_points.len() - 1;
         column.control_points[0] = values[0];
@@ -84,7 +84,7 @@ fn skin<S: Scalar>(rows: &[NurbCurve3D<S>], params: &[S]) -> GeopResult<NurbSurf
     )
 }
 
-impl<S: Scalar> NurbSurface3D<S> {
+impl NurbSurface3D {
     /// The same surface with `u` and `v` swapped.
     fn transposed(&self) -> Self {
         let (nu, nv) = (self.num_u, self.num_v);
@@ -105,7 +105,7 @@ impl<S: Scalar> NurbSurface3D<S> {
     }
 
     /// Its rows of control points along `u`, as curves, one per `v` index.
-    fn rows_along_u(&self) -> GeopResult<Vec<NurbCurve3D<S>>> {
+    fn rows_along_u(&self) -> GeopResult<Vec<NurbCurve3D>> {
         (0..self.num_v)
             .map(|j| {
                 let points = (0..self.num_u)
@@ -170,13 +170,13 @@ impl<S: Scalar> NurbSurface3D<S> {
     /// fraction of its length, smooth; otherwise each curve's speed changes
     /// there, and the surface may bend across it.
     pub fn gordon(
-        u_curves: &[NurbCurve3D<S>],
-        v_curves: &[NurbCurve3D<S>],
-        u_crossings: &[Vec<S>],
-        v_crossings: &[Vec<S>],
+        u_curves: &[NurbCurve3D],
+        v_curves: &[NurbCurve3D],
+        u_crossings: &[Vec<Scalar>],
+        v_crossings: &[Vec<Scalar>],
     ) -> GeopResult<Self> {
         let (m, n) = (u_curves.len(), v_curves.len());
-        let shaped = |crossings: &[Vec<S>], curves: usize, each: usize| {
+        let shaped = |crossings: &[Vec<Scalar>], curves: usize, each: usize| {
             crossings.len() == curves && crossings.iter().all(|c| c.len() == each)
         };
         if m < 2 || n < 2 || !shaped(u_crossings, m, n) || !shaped(v_crossings, n, m) {
@@ -186,13 +186,14 @@ impl<S: Scalar> NurbSurface3D<S> {
         }
         let u_params = common_parameters(u_crossings)?;
         let v_params = common_parameters(v_crossings)?;
-        let reparametrized = |curves: &[NurbCurve3D<S>], crossings: &[Vec<S>], params: &[S]| {
-            curves
-                .iter()
-                .zip(crossings)
-                .map(|(c, x)| c.reparametrized(x, params))
-                .collect::<GeopResult<Vec<_>>>()
-        };
+        let reparametrized =
+            |curves: &[NurbCurve3D], crossings: &[Vec<Scalar>], params: &[Scalar]| {
+                curves
+                    .iter()
+                    .zip(crossings)
+                    .map(|(c, x)| c.reparametrized(x, params))
+                    .collect::<GeopResult<Vec<_>>>()
+            };
         let u = reparametrized(u_curves, u_crossings, &u_params)?;
         let v = reparametrized(v_curves, v_crossings, &v_params)?;
 
@@ -209,15 +210,16 @@ impl<S: Scalar> NurbSurface3D<S> {
                         "NurbSurface::gordon: u curve {j} is at {a:?} where it crosses v curve {i}, which is at {b:?}"
                     )));
                 }
-                let p: Vector3<S> = a.union(&b);
-                row.push(p.homogeneous(S::ONE));
+                let p: Vector3 = a.union(&b);
+                row.push(p.homogeneous(Scalar::ONE));
             }
             points.push(row);
         }
-        let rational = u
-            .iter()
-            .chain(&v)
-            .any(|c| c.control_points.iter().any(|p| !p[3].is_exactly(S::ONE)));
+        let rational = u.iter().chain(&v).any(|c| {
+            c.control_points
+                .iter()
+                .any(|p| !p[3].is_exactly(Scalar::ONE))
+        });
 
         let along_u = skin(&NurbCurve::compatible(&u)?, &v_params)?;
         let along_v = skin(&NurbCurve::compatible(&v)?, &u_params)?.transposed();
@@ -255,7 +257,7 @@ impl<S: Scalar> NurbSurface3D<S> {
                 if !rational {
                     // Every weight is one, and so is every blend of them:
                     // the arithmetic above would only round it.
-                    p[3] = S::ONE;
+                    p[3] = Scalar::ONE;
                 }
                 control_points.push(p);
             }

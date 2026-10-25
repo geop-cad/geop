@@ -7,9 +7,7 @@ use geop_core_editor::{
     part_operation,
     part_operation::PartOperation,
 };
-use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use std::collections::BTreeSet;
 
 use geop_core_math::{
@@ -57,7 +55,7 @@ use crate::{
 pub struct FlatPattern;
 
 /// A solid of the part, by name.
-pub type SolidRef = ElementReference<NamedModel<Design>, Solid>;
+pub type SolidRef = ElementReference<NamedModel, Solid>;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FlatPatternArgs {
@@ -127,8 +125,8 @@ impl SheetStep for FlatPattern {
 /// Builds the flat pattern of `sheet` into `model`, named by `namer`, in
 /// place of the solid `consumes`, if any.
 pub(crate) fn build(
-    model: &mut NamedModel<Design>,
-    sheet: &Sheet<Design>,
+    model: &mut NamedModel,
+    sheet: &Sheet,
     consumes: Option<&str>,
     namer: &Namer,
 ) -> GeopResult<()> {
@@ -180,8 +178,8 @@ impl PartOperation for FlatPattern {
         context: &'a Context<'a>,
         args: &FlatPatternArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, FlatPatternArgs> {
-        let mut f = EditForm::<Design, FlatPatternArgs>::default();
+    ) -> EditForm<'a, FlatPatternArgs> {
+        let mut f = EditForm::<FlatPatternArgs>::default();
         f.pick_one(
             "solid",
             "body",
@@ -198,7 +196,7 @@ impl PartOperation for FlatPattern {
 
 impl ModelOperation for FlatPattern {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         _: &FlatPatternArgs,
@@ -210,11 +208,7 @@ impl ModelOperation for FlatPattern {
 /// Checks that the solid `solid` is still made of exactly the faces
 /// `sheet` built: refuses, naming them, faces it does not know — another
 /// step's — and faces it built that are gone.
-fn check_unchanged<S: Scalar>(
-    model: &NamedModel<S>,
-    solid: &str,
-    sheet: &Sheet<S>,
-) -> GeopResult<()> {
+fn check_unchanged(model: &NamedModel, solid: &str, sheet: &Sheet) -> GeopResult<()> {
     let built: BTreeSet<String> = sheet.folded()?.face_names()?.into_iter().collect();
     let faces = model.topology().solid_faces(model.solid_id(solid)?)?;
     let present: BTreeSet<String> = faces
@@ -234,19 +228,16 @@ fn check_unchanged<S: Scalar>(
 /// The bend lines of the flat pattern of `sheet`: the sketch `name` of
 /// them, on its A side, and what each bend is, with the pattern laid out
 /// for cutting.
-fn bend_lines<S: Scalar>(
-    sheet: &Sheet<S>,
-    name: &str,
-) -> GeopResult<(PlacedSketch<S>, FlatPatternData)> {
+fn bend_lines(sheet: &Sheet, name: &str) -> GeopResult<(PlacedSketch, FlatPatternData)> {
     let place = &sheet.flats[0].place;
-    let mut sketch = Sketch::<Design>::new();
+    let mut sketch = Sketch::new();
     let mut bends = Vec::new();
     for (bend, [a, b]) in sheet.bends.iter().zip(sheet.bend_lines()?) {
-        let design = |x: S| Design::from_f64(x.to_f64());
+        let design = |x: Scalar| Scalar::from_f64(x.to_f64());
         let p = sketch.add_point(design(a[0]), design(a[1]));
         let q = sketch.add_point(design(b[0]), design(b[1]));
         sketch.add_line(p, q);
-        let at = |v: Vector2<S>| place.point(&v).to_array().map(|c| c.to_f64());
+        let at = |v: Vector2| place.point(&v).to_array().map(|c| c.to_f64());
         bends.push(BendLine {
             bend: bend.name.root(),
             start: at(a),

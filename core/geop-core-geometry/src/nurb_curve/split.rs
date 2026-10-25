@@ -3,7 +3,7 @@ use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use super::NurbCurve;
 use crate::{aabb::compute_aabb, knot_insertion};
 
-impl<S: Scalar, const D: usize> NurbCurve<S, D> {
+impl<const D: usize> NurbCurve<D> {
     /// Split at parameter `t` (must be strictly inside the domain).
     /// Returns `(left, right)` sharing the junction value.
     ///
@@ -30,7 +30,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     /// job. No caller on the split path sharpens any more.
     ///
     /// See "Sharpen only where the value is a free choice" in `AGENTS.md`.
-    pub fn split(&self, t: S) -> GeopResult<(NurbCurve<S, D>, NurbCurve<S, D>)> {
+    pub fn split(&self, t: Scalar) -> GeopResult<(NurbCurve<D>, NurbCurve<D>)> {
         let p = self.degree;
         let mut knots = self.knot_vector.clone();
         let mut rows = [self.control_points.clone()];
@@ -61,7 +61,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     /// [`Self::split`]s: no discarded piece or intermediate curve is built.
     ///
     /// Like `split`, the bounds are used exactly as given and must be narrow.
-    pub fn sub_curve(&self, t0: S, t1: S) -> GeopResult<NurbCurve<S, D>> {
+    pub fn sub_curve(&self, t0: Scalar, t1: Scalar) -> GeopResult<NurbCurve<D>> {
         let p = self.degree;
         let mut knots = self.knot_vector.clone();
         let mut rows = [self.control_points.clone()];
@@ -94,7 +94,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     }
 
     /// Split at the midpoint of the parameter domain.
-    pub fn split_mid(&self) -> GeopResult<(NurbCurve<S, D>, NurbCurve<S, D>)> {
+    pub fn split_mid(&self) -> GeopResult<(NurbCurve<D>, NurbCurve<D>)> {
         // A self-chosen subdivision point, sharp, so repeated splits do not
         // compound width.
         self.split(self.mid_parameter()?)
@@ -105,59 +105,50 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
 mod tests {
     use crate::nurb_curve::NurbCurve;
     use crate::test_fixtures::{hom, line};
-    use geop_core_math::for_all_scalars;
     use geop_core_math::scalars::Scalar;
 
-    fn check_split_line_halves_domain<S: Scalar>() {
-        let (left, right) = line::<S>([0.; 3], [1., 0., 0.])
-            .split(S::from_f64(0.5))
-            .unwrap();
-
-        let l0 = left.evaluate(S::ZERO).unwrap();
-        assert!(l0[0].could_be_equal(S::ZERO));
-
-        let l1 = left.evaluate(S::from_f64(0.5)).unwrap();
-        let r0 = right.evaluate(S::from_f64(0.5)).unwrap();
-        assert!(l1[0].could_be_equal(r0[0]));
-        assert!(l1[0].could_be_equal(S::from_f64(0.5)));
-
-        let r1 = right.evaluate(S::ONE).unwrap();
-        assert!(r1[0].could_be_equal(S::ONE));
-    }
     #[test]
     fn split_line_halves_domain() {
-        for_all_scalars!(check_split_line_halves_domain);
+        let (left, right) = line([0.; 3], [1., 0., 0.])
+            .split(Scalar::from_f64(0.5))
+            .unwrap();
+
+        let l0 = left.evaluate(Scalar::ZERO).unwrap();
+        assert!(l0[0].could_be_equal(Scalar::ZERO));
+
+        let l1 = left.evaluate(Scalar::from_f64(0.5)).unwrap();
+        let r0 = right.evaluate(Scalar::from_f64(0.5)).unwrap();
+        assert!(l1[0].could_be_equal(r0[0]));
+        assert!(l1[0].could_be_equal(Scalar::from_f64(0.5)));
+
+        let r1 = right.evaluate(Scalar::ONE).unwrap();
+        assert!(r1[0].could_be_equal(Scalar::ONE));
     }
 
-    fn check_split_preserves_points_on_curve<S: Scalar>() {
-        let curve = line::<S>([0.; 3], [1., 0., 0.]);
-        let (left, right) = curve.split(S::from_f64(0.25)).unwrap();
-
-        let orig = curve.evaluate(S::from_f64(0.1)).unwrap();
-        let from_left = left.evaluate(S::from_f64(0.1)).unwrap();
-        assert!(orig[0].could_be_equal(from_left[0]));
-
-        let orig2 = curve.evaluate(S::from_f64(0.75)).unwrap();
-        let from_right = right.evaluate(S::from_f64(0.75)).unwrap();
-        assert!(orig2[0].could_be_equal(from_right[0]));
-    }
     #[test]
     fn split_preserves_points_on_curve() {
-        for_all_scalars!(check_split_preserves_points_on_curve);
+        let curve = line([0.; 3], [1., 0., 0.]);
+        let (left, right) = curve.split(Scalar::from_f64(0.25)).unwrap();
+
+        let orig = curve.evaluate(Scalar::from_f64(0.1)).unwrap();
+        let from_left = left.evaluate(Scalar::from_f64(0.1)).unwrap();
+        assert!(orig[0].could_be_equal(from_left[0]));
+
+        let orig2 = curve.evaluate(Scalar::from_f64(0.75)).unwrap();
+        let from_right = right.evaluate(Scalar::from_f64(0.75)).unwrap();
+        assert!(orig2[0].could_be_equal(from_right[0]));
     }
 
-    fn check_split_at_boundary_returns_err<S: Scalar>() {
-        let c = line::<S>([0.; 3], [1., 0., 0.]);
-        assert!(c.split(S::ZERO).is_err());
-        assert!(c.split(S::ONE).is_err());
-    }
     #[test]
     fn split_at_boundary_returns_err() {
-        for_all_scalars!(check_split_at_boundary_returns_err);
+        let c = line([0.; 3], [1., 0., 0.]);
+        assert!(c.split(Scalar::ZERO).is_err());
+        assert!(c.split(Scalar::ONE).is_err());
     }
 
-    fn check_split_cubic_at_existing_knot<S: Scalar>() {
-        let f = S::from_f64;
+    #[test]
+    fn split_cubic_at_existing_knot() {
+        let f = Scalar::from_f64;
         let curve = NurbCurve::try_new(
             3,
             vec![
@@ -198,9 +189,5 @@ mod tests {
                 "right junction mismatch at coord {c}"
             );
         }
-    }
-    #[test]
-    fn split_cubic_at_existing_knot() {
-        for_all_scalars!(check_split_cubic_at_existing_knot);
     }
 }

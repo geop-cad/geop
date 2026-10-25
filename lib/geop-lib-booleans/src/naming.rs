@@ -38,14 +38,14 @@ use geop_ops_model::{NamedModel, Namer, RefId};
 
 /// What a created entity was made from — everything its final name derives
 /// from (see the module docs).
-enum Recipe<S: Scalar> {
+enum Recipe {
     /// A vertex where `along` (an edge's origin) meets `other` (an edge's or
     /// a face's origin), at parameter `t` of `along`.
     Crossing {
         vertex: VertexId,
         along: String,
         other: String,
-        t: S,
+        t: Scalar,
     },
     /// A piece of an edge with origin `origin`, starting at `start`.
     EdgePiece {
@@ -68,17 +68,17 @@ enum Recipe<S: Scalar> {
 }
 
 /// The naming bookkeeping of one boolean, see the module docs.
-pub struct BooleanNaming<S: Scalar> {
+pub struct BooleanNaming {
     namer: Namer,
     edge_origin: HashMap<EdgeId, String>,
     face_origin: HashMap<FaceId, String>,
-    recipes: Vec<Recipe<S>>,
+    recipes: Vec<Recipe>,
 }
 
-impl<S: Scalar> BooleanNaming<S> {
+impl BooleanNaming {
     /// Starts naming a boolean of `bodies`, remembering the names their
     /// edges and faces have now as those entities' origins.
-    pub fn new(model: &NamedModel<S>, namer: &Namer, bodies: &[Body]) -> GeopResult<Self> {
+    pub fn new(model: &NamedModel, namer: &Namer, bodies: &[Body]) -> GeopResult<Self> {
         let topology = model.topology();
         let name = |id: RefId| model.name(id).map(str::to_string);
         let mut edge_origin = HashMap::new();
@@ -138,8 +138,8 @@ impl<S: Scalar> BooleanNaming<S> {
     pub fn edge_crossing(
         &mut self,
         vertex: VertexId,
-        (edge_a, t_a): (EdgeId, S),
-        (edge_b, t_b): (EdgeId, S),
+        (edge_a, t_a): (EdgeId, Scalar),
+        (edge_b, t_b): (EdgeId, Scalar),
     ) -> GeopResult<()> {
         let a = self.edge_origin(edge_a)?.to_string();
         let b = self.edge_origin(edge_b)?.to_string();
@@ -160,7 +160,7 @@ impl<S: Scalar> BooleanNaming<S> {
         &mut self,
         vertex: VertexId,
         edge: EdgeId,
-        t: S,
+        t: Scalar,
         face: FaceId,
     ) -> GeopResult<()> {
         let along = self.edge_origin(edge)?.to_string();
@@ -233,11 +233,11 @@ impl<S: Scalar> BooleanNaming<S> {
     /// Gives every entity created so far its final name, see the module
     /// docs. Entities that were created and have since been deleted again
     /// (an edge piece merged into a coincident edge, say) are skipped.
-    pub fn finish(self, model: &mut NamedModel<S>) -> GeopResult<()> {
+    pub fn finish(self, model: &mut NamedModel) -> GeopResult<()> {
         let n = &self.namer;
         let ctx = with_context!("naming the entities of {}", n.root());
-        let alive = |model: &NamedModel<S>, id: RefId| model.name_of(id).is_some();
-        let name_of = |model: &NamedModel<S>, id: RefId| -> GeopResult<String> {
+        let alive = |model: &NamedModel, id: RefId| model.name_of(id).is_some();
+        let name_of = |model: &NamedModel, id: RefId| -> GeopResult<String> {
             model.name_of(id).map(str::to_string).ok_or_else(|| {
                 ctx(GeopError::new(format!(
                     "{id} is referred to by a name being built, but no longer exists"
@@ -246,7 +246,7 @@ impl<S: Scalar> BooleanNaming<S> {
         };
 
         // Vertices first: every other name is built from vertex names.
-        let mut crossings: BTreeMap<(&str, &str), Vec<(VertexId, S)>> = BTreeMap::new();
+        let mut crossings: BTreeMap<(&str, &str), Vec<(VertexId, Scalar)>> = BTreeMap::new();
         for recipe in &self.recipes {
             if let Recipe::Crossing {
                 vertex,

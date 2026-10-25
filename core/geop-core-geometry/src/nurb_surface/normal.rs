@@ -11,7 +11,7 @@ use crate::{
     spline::{centered, find_span, homogeneous_derivatives, rational_derivatives},
 };
 
-impl<S: Scalar> NurbSurface<S, 4> {
+impl NurbSurface<4> {
     /// The homogeneous partial derivatives at `(u, v)`: the pure ones up to
     /// order `n`, `([A, A_u, A_uu, …], [A, A_v, A_vv, …])`, and the mixed
     /// `A_uv` where that order takes it in (`n >= 2`). A pure partial only differentiates along its own direction, so
@@ -23,10 +23,10 @@ impl<S: Scalar> NurbSurface<S, 4> {
     #[allow(clippy::type_complexity)]
     fn homogeneous_partials(
         &self,
-        u: S,
-        v: S,
+        u: Scalar,
+        v: Scalar,
         n: usize,
-    ) -> GeopResult<(Vec<Vector<S, 4>>, Vec<Vector<S, 4>>, Option<Vector<S, 4>>)> {
+    ) -> GeopResult<(Vec<Vector<4>>, Vec<Vector<4>>, Option<Vector<4>>)> {
         let (p, q) = (self.degree_u, self.degree_v);
         let (ku, kv) = (&self.knot_vector_u, &self.knot_vector_v);
         let nv = self.num_v;
@@ -35,7 +35,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
         // Relative to a control point of the span (see [`centered`]): the
         // derivatives do not depend on where the patch lies, and that way
         // neither does their width.
-        let local: Vec<Vector<S, 4>> = (span_u - p..=span_u)
+        let local: Vec<Vector<4>> = (span_u - p..=span_u)
             .flat_map(|i| (span_v - q..=span_v).map(move |j| i * nv + j))
             .map(|k| self.control_points[k])
             .collect();
@@ -43,14 +43,14 @@ impl<S: Scalar> NurbSurface<S, 4> {
         let at = |i: usize, j: usize| cp[i * (q + 1) + j];
         let mixed = n >= 2;
         // Each row at `v`, and along `v` where the mixed partial is asked.
-        let (rows, rows_v): (Vec<Vector<S, 4>>, Vec<Vector<S, 4>>) = (0..=p)
+        let (rows, rows_v): (Vec<Vector<4>>, Vec<Vector<4>>) = (0..=p)
             .map(|i| {
                 let local: Vec<_> = (0..=q).map(|j| at(i, j)).collect();
                 let d = homogeneous_derivatives(q, kv, &local, span_v, v, usize::from(mixed));
                 (d[0], d.get(1).copied().unwrap_or_else(Vector::zero))
             })
             .unzip();
-        let cols: Vec<Vector<S, 4>> = (0..=q)
+        let cols: Vec<Vector<4>> = (0..=q)
             .map(|j| {
                 let local: Vec<_> = (0..=p).map(|i| at(i, j)).collect();
                 homogeneous_derivatives(p, ku, &local, span_u, u, 0)[0]
@@ -63,8 +63,8 @@ impl<S: Scalar> NurbSurface<S, 4> {
         ))
     }
 
-    /// Partial derivatives `(∂S/∂u, ∂S/∂v)` at `(u, v)`.
-    pub fn derivatives(&self, u: S, v: S) -> GeopResult<(Vector3<S>, Vector3<S>)> {
+    /// Partial derivatives `(∂Scalar/∂u, ∂Scalar/∂v)` at `(u, v)`.
+    pub fn derivatives(&self, u: Scalar, v: Scalar) -> GeopResult<(Vector3, Vector3)> {
         let (du, dv, _) = self.homogeneous_partials(u, v, 1)?;
         Ok((rational_derivatives(&du)?[1], rational_derivatives(&dv)?[1]))
     }
@@ -72,9 +72,9 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// Second partial derivatives `[∂²S/∂u², ∂²S/∂u∂v, ∂²S/∂v²]` at
     /// `(u, v)`. The pure ones by the rational quotient rule along their own
     /// direction ([`rational_derivatives`]); the mixed one by differentiating
-    /// `A = w S` once along each: `A_uv = w_uv S + w_u S_v + w_v S_u + w
+    /// `A = w Scalar` once along each: `A_uv = w_uv Scalar + w_u S_v + w_v S_u + w
     /// S_uv`.
-    pub fn second_derivatives(&self, u: S, v: S) -> GeopResult<[Vector3<S>; 3]> {
+    pub fn second_derivatives(&self, u: Scalar, v: Scalar) -> GeopResult<[Vector3; 3]> {
         let (du, dv, a_uv) = self.homogeneous_partials(u, v, 2)?;
         let a_uv = a_uv.expect("the second order takes in the mixed partial");
         let (cu, cv) = (rational_derivatives(&du)?, rational_derivatives(&dv)?);
@@ -94,7 +94,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// (`u_fixed`) or `v` domain, and the row next to it — `None` unless the
     /// knot vector is clamped there, so that the boundary row *is* the
     /// surface.
-    fn boundary_rows(&self, u_fixed: bool, first: bool) -> Option<[Vec<Vector<S, 4>>; 2]> {
+    fn boundary_rows(&self, u_fixed: bool, first: bool) -> Option<[Vec<Vector<4>>; 2]> {
         let (nu, nv) = (self.num_u, self.num_v);
         let (knots, degree, len) = if u_fixed {
             (&self.knot_vector_u, self.degree_u, nu)
@@ -123,26 +123,24 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// `S_u × S_v` next to it by the spokes' turning `T = Σ E_i × E_{i+1}`.
     /// Spokes that are not coplanar — an apex, like a cone's — leave no
     /// single normal: an error, not an arbitrary pick among them.
-    fn pole_normal(&self, u_fixed: bool, first: bool) -> Option<GeopResult<Vector3<S>>> {
+    fn pole_normal(&self, u_fixed: bool, first: bool) -> Option<GeopResult<Vector3>> {
         let [edge, next] = self.boundary_rows(u_fixed, first)?;
-        let edge = dehomogenize::<S, 4, 3>(&edge);
+        let edge = dehomogenize::<4, 3>(&edge);
         if !edge.iter().all(|p| p.could_be_equal(&edge[0])) {
             return None;
         }
         let pole = edge[0];
-        let spokes: Vec<Vector3<S>> = dehomogenize::<S, 4, 3>(&next)
+        let spokes: Vec<Vector3> = dehomogenize::<4, 3>(&next)
             .iter()
             .map(|x| x.sub(&pole))
             .collect();
-        let turning = spokes
-            .windows(2)
-            .fold(Vector3::zero(), |acc: Vector3<S>, e| {
-                acc.add(&e[0].prod_cross(&e[1]))
-            });
+        let turning = spokes.windows(2).fold(Vector3::zero(), |acc: Vector3, e| {
+            acc.add(&e[0].prod_cross(&e[1]))
+        });
         let result = turning.normalize().and_then(|t| {
             if !spokes
                 .iter()
-                .all(|e| e.prod_dot(&t).could_be_equal(S::ZERO))
+                .all(|e| e.prod_dot(&t).could_be_equal(Scalar::ZERO))
             {
                 return Err(GeopError::new(format!(
                     "the spokes {spokes:?} are not coplanar: an apex has no single normal"
@@ -163,7 +161,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
         }))
     }
 
-    /// Unit surface normal at `(u, v)`, `normalize(∂S/∂u × ∂S/∂v)`.
+    /// Unit surface normal at `(u, v)`, `normalize(∂Scalar/∂u × ∂Scalar/∂v)`.
     ///
     /// Whether this points outward or inward for a given face depends on
     /// that surface's own `u`/`v` parametrization convention — it is each
@@ -180,7 +178,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// itself ([`Self::pole_normal`]), the same for every `u` (`v`) along
     /// the row. Anything else where the cross product vanishes has no
     /// normal and is an error.
-    pub fn normal(&self, u: S, v: S) -> GeopResult<Vector3<S>> {
+    pub fn normal(&self, u: Scalar, v: Scalar) -> GeopResult<Vector3> {
         let (du, dv) = self.derivatives(u, v)?;
         let regular = du.prod_cross(&dv).normalize();
         if regular.is_ok() {
@@ -205,10 +203,10 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// on the surface.
     pub fn normal_at(
         &self,
-        point: &Vector3<S>,
+        point: &Vector3,
         max_nodes: usize,
-        min_subdivision_size: S,
-    ) -> GeopResult<Vector3<S>> {
+        min_subdivision_size: Scalar,
+    ) -> GeopResult<Vector3> {
         let (u, v) = self
             .locate(point, max_nodes, min_subdivision_size)?
             .ok_or_else(|| GeopError::new(format!("{point:?} is not on the surface")))?;
@@ -220,12 +218,11 @@ impl<S: Scalar> NurbSurface<S, 4> {
 mod tests {
     use crate::nurb_surface::NurbSurface;
     use crate::test_fixtures::hom;
-    use geop_core_math::for_all_scalars;
     use geop_core_math::scalars::Scalar;
 
     /// Flat unit patch in the xy-plane: normal should be constant +z everywhere.
-    fn flat_xy<S: Scalar>() -> NurbSurface<S, 4> {
-        let f = S::from_f64;
+    fn flat_xy() -> NurbSurface<4> {
+        let f = Scalar::from_f64;
         NurbSurface::try_new(
             1,
             1,
@@ -241,25 +238,22 @@ mod tests {
         .unwrap()
     }
 
-    fn check_flat_surface_normal_is_constant_z<S: Scalar>() {
-        let s = flat_xy::<S>();
-        for &(u, v) in &[(0.0, 0.0), (0.5, 0.5), (1.0, 0.0), (0.2, 0.8)] {
-            let n = s.normal(S::from_f64(u), S::from_f64(v)).unwrap();
-            assert!(n[0].could_be_equal(S::ZERO));
-            assert!(n[1].could_be_equal(S::ZERO));
-            assert!(n[2].could_be_equal(S::ONE));
-        }
-    }
     #[test]
     fn flat_surface_normal_is_constant_z() {
-        for_all_scalars!(check_flat_surface_normal_is_constant_z);
+        let s = flat_xy();
+        for &(u, v) in &[(0.0, 0.0), (0.5, 0.5), (1.0, 0.0), (0.2, 0.8)] {
+            let n = s.normal(Scalar::from_f64(u), Scalar::from_f64(v)).unwrap();
+            assert!(n[0].could_be_equal(Scalar::ZERO));
+            assert!(n[1].could_be_equal(Scalar::ZERO));
+            assert!(n[2].could_be_equal(Scalar::ONE));
+        }
     }
 
     /// Non-planar bilinear "saddle" patch: corner heights 0,1,1,0 over
     /// x,y ∈ [0,2]. At the center (u=v=0.5) the surface is tangent to the
     /// z=0.5 plane, so the normal there should be purely +z.
-    fn bent_surface<S: Scalar>() -> NurbSurface<S, 4> {
-        let f = S::from_f64;
+    fn bent_surface() -> NurbSurface<4> {
+        let f = Scalar::from_f64;
         NurbSurface::try_new(
             1,
             1,
@@ -275,16 +269,15 @@ mod tests {
         .unwrap()
     }
 
-    fn check_bent_surface_center_normal_is_z<S: Scalar>() {
-        let s = bent_surface::<S>();
-        let n = s.normal(S::from_f64(0.5), S::from_f64(0.5)).unwrap();
-        assert!(n[0].could_be_equal(S::ZERO));
-        assert!(n[1].could_be_equal(S::ZERO));
-        assert!(n[2].definitely_greater(S::ZERO));
-    }
     #[test]
     fn bent_surface_center_normal_is_z() {
-        for_all_scalars!(check_bent_surface_center_normal_is_z);
+        let s = bent_surface();
+        let n = s
+            .normal(Scalar::from_f64(0.5), Scalar::from_f64(0.5))
+            .unwrap();
+        assert!(n[0].could_be_equal(Scalar::ZERO));
+        assert!(n[1].could_be_equal(Scalar::ZERO));
+        assert!(n[2].definitely_greater(Scalar::ZERO));
     }
 
     // ── Poles ──────────────────────────────────────────────────────────────
@@ -293,8 +286,8 @@ mod tests {
     /// height `rim_z`, `v` runs linearly from the collapsed `v = 0` row at
     /// `(0, 0, apex_z)` out to the arc. `apex_z = rim_z` is a flat disc, any
     /// other a cone.
-    fn revolved<S: Scalar>(apex_z: f64, rim_z: f64) -> NurbSurface<S, 4> {
-        let f = S::from_f64;
+    fn revolved(apex_z: f64, rim_z: f64) -> NurbSurface<4> {
+        let f = Scalar::from_f64;
         let w = std::f64::consts::FRAC_1_SQRT_2;
         let rim = [(1., 0., 1.), (1., 1., w), (0., 1., 1.)];
         let mut cps = Vec::new();
@@ -314,40 +307,35 @@ mod tests {
 
     /// A disc's centre has the disc's normal — for every `u` at once, and
     /// the same as just off the pole.
-    fn check_disc_centre_normal<S: Scalar>() {
-        let f = S::from_f64;
-        let disc = revolved::<S>(0., 0.);
+    #[test]
+    fn disc_centre_normal() {
+        let f = Scalar::from_f64;
+        let disc = revolved(0., 0.);
         let every_u = f(0.).union(f(1.));
         let n = disc.normal(every_u, f(0.)).unwrap();
         let off = disc.normal(f(0.5), f(0.5)).unwrap();
         assert!(n.could_be_equal(&off), "{n:?} vs {off:?}");
         assert!(
-            n[2].abs().could_be_equal(S::ONE) && n[0].could_be_equal(S::ZERO),
+            n[2].abs().could_be_equal(Scalar::ONE) && n[0].could_be_equal(Scalar::ZERO),
             "{n:?}"
         );
     }
-    #[test]
-    fn disc_centre_normal() {
-        for_all_scalars!(check_disc_centre_normal);
-    }
 
     /// A cone's apex has no single normal: its spokes are not coplanar.
-    fn check_cone_apex_has_no_normal<S: Scalar>() {
-        let f = S::from_f64;
-        let cone = revolved::<S>(1., 0.);
-        assert!(cone.normal(f(0.).union(f(1.)), f(0.)).is_err());
-        assert!(cone.normal(f(0.5), f(0.5)).is_ok());
-    }
     #[test]
     fn cone_apex_has_no_normal() {
-        for_all_scalars!(check_cone_apex_has_no_normal);
+        let f = Scalar::from_f64;
+        let cone = revolved(1., 0.);
+        assert!(cone.normal(f(0.).union(f(1.)), f(0.)).is_err());
+        assert!(cone.normal(f(0.5), f(0.5)).is_ok());
     }
 
     /// Exact rational sphere octant; `v = 1` is the pole (0, 0, 1) — a
     /// collapsed row at the *end* of the domain, where the limit's sign
     /// flips.
-    fn check_sphere_pole_normal<S: Scalar>() {
-        let f = S::from_f64;
+    #[test]
+    fn sphere_pole_normal() {
+        let f = Scalar::from_f64;
         let w = std::f64::consts::FRAC_1_SQRT_2;
         let sphere = NurbSurface::try_new(
             2,
@@ -369,18 +357,14 @@ mod tests {
         .unwrap();
         let n = sphere.normal(f(0.).union(f(1.)), f(1.)).unwrap();
         assert!(
-            n[0].could_be_equal(S::ZERO) && n[1].could_be_equal(S::ZERO),
+            n[0].could_be_equal(Scalar::ZERO) && n[1].could_be_equal(Scalar::ZERO),
             "{n:?}"
         );
         // Same orientation as the regular normal just below the pole.
         let below = sphere.normal(f(0.5), f(0.9)).unwrap();
         assert!(
-            n[2].mul(below[2]).definitely_greater(S::ZERO),
+            n[2].mul(below[2]).definitely_greater(Scalar::ZERO),
             "{n:?} vs {below:?}"
         );
-    }
-    #[test]
-    fn sphere_pole_normal() {
-        for_all_scalars!(check_sphere_pole_normal);
     }
 }

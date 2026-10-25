@@ -55,14 +55,14 @@ use crate::common::halfway;
 
 /// The surface a face lies on, as far as a draft cares.
 #[derive(Clone, Debug)]
-enum Kind<S: Scalar> {
-    Plane(Plane<S>),
-    Cylinder(Axis<S>),
+enum Kind {
+    Plane(Plane),
+    Cylinder(Axis),
     Other,
 }
 
-impl<S: Scalar> Kind<S> {
-    fn of(surface: &NurbSurface3D<S>) -> GeopResult<Self> {
+impl Kind {
+    fn of(surface: &NurbSurface3D) -> GeopResult<Self> {
         if let Some(plane) = surface.as_plane()? {
             return Ok(Kind::Plane(plane));
         }
@@ -78,19 +78,19 @@ impl<S: Scalar> Kind<S> {
 /// `neutral`, whose normal is the pull direction — see the module docs —
 /// and returns the drafted solid, which replaces it and is named
 /// `namer`'s root. Every face, edge and vertex keeps its name.
-pub fn draft<S: Scalar>(
-    part: &mut NamedModel<S>,
+pub fn draft(
+    part: &mut NamedModel,
     namer: &Namer,
     faces: &[FaceId],
-    neutral: &Plane<S>,
-    angle: S,
+    neutral: &Plane,
+    angle: Scalar,
 ) -> GeopResult<SolidId> {
     let ctx = with_context!(
         "draft({}, faces={faces:?}, neutral={neutral:?}, angle={angle:?})",
         namer.root()
     );
-    let quarter = S::from_f64(std::f64::consts::FRAC_PI_2);
-    if !(angle.abs().definitely_greater(S::ZERO) && angle.abs().definitely_less(quarter)) {
+    let quarter = Scalar::from_f64(std::f64::consts::FRAC_PI_2);
+    if !(angle.abs().definitely_greater(Scalar::ZERO) && angle.abs().definitely_less(quarter)) {
         return Err(GeopError::new(format!(
             "a draft angle is more than zero and less than a quarter turn, not {:?} degrees",
             angle.to_f64().to_degrees()
@@ -134,22 +134,22 @@ pub fn draft<S: Scalar>(
 
 /// How a drafted face turns: about where its plane meets `neutral`, by the
 /// angle whose cosine and sine these are.
-struct Tilt<'a, S: Scalar> {
-    neutral: &'a Plane<S>,
-    cos: S,
-    sin: S,
+struct Tilt<'a> {
+    neutral: &'a Plane,
+    cos: Scalar,
+    sin: Scalar,
 }
 
-impl<S: Scalar> Tilt<'_, S> {
+impl Tilt<'_> {
     /// The line the face in `plane` turns about, along `n x p` — turning
     /// about it by a positive angle leans `n` towards `p`.
-    fn hinge(&self, plane: &Plane<S>) -> GeopResult<Axis<S>> {
+    fn hinge(&self, plane: &Plane) -> GeopResult<Axis> {
         plane.intersect_plane(self.neutral)
     }
 
     /// `p` turned about `hinge`, homogeneous: `(w x, w)` to `(w R(x - c) +
     /// w c, w)`, which needs no division by the weight.
-    fn turn(&self, hinge: &Axis<S>, p: &Vector4<S>) -> Vector4<S> {
+    fn turn(&self, hinge: &Axis, p: &Vector4) -> Vector4 {
         let w = p[3];
         let c = hinge.point.prod_scalar(w);
         let v = Vector3::from_array([p[0], p[1], p[2]]).sub(&c);
@@ -161,28 +161,28 @@ impl<S: Scalar> Tilt<'_, S> {
 }
 
 /// The solid described as a [`BodySpec`], and where drafting moves what.
-struct Drafted<'a, S: Scalar> {
-    spec: &'a BodySpec<S>,
+struct Drafted<'a> {
+    spec: &'a BodySpec,
     names: &'a BodyNames,
     drafted: &'a [bool],
     /// Per face: the surface it lies on afterwards, with room around it
     /// wherever its boundary may move.
-    surfaces: Vec<NurbSurface3D<S>>,
+    surfaces: Vec<NurbSurface3D>,
     /// Per face: what that surface is.
-    kinds: Vec<Kind<S>>,
+    kinds: Vec<Kind>,
     /// Per vertex: whether a drafted face meets it, and where it goes.
     moved: Vec<bool>,
-    points: Vec<Vector3<S>>,
+    points: Vec<Vector3>,
     /// Per edge: its new curve, if it changes.
-    curves: Vec<Option<Curve3<S>>>,
+    curves: Vec<Option<Curve3>>,
 }
 
-impl<'a, S: Scalar> Drafted<'a, S> {
+impl<'a> Drafted<'a> {
     fn new(
-        spec: &'a BodySpec<S>,
+        spec: &'a BodySpec,
         names: &'a BodyNames,
         drafted: &'a [bool],
-        tilt: &Tilt<S>,
+        tilt: &Tilt,
     ) -> GeopResult<Self> {
         let n_faces = spec.faces.len();
         for (f, face) in spec.faces.iter().enumerate() {
@@ -324,7 +324,7 @@ impl<'a, S: Scalar> Drafted<'a, S> {
 
     /// The new curve of edge `e`, between the faces `faces`, if it changes:
     /// where those faces' surfaces now meet, between its moved vertices.
-    fn curve(&self, e: usize, faces: &[usize]) -> GeopResult<Option<Curve3<S>>> {
+    fn curve(&self, e: usize, faces: &[usize]) -> GeopResult<Option<Curve3>> {
         let edge = &self.spec.edges[e];
         let changed = self.moved[edge.start]
             || self.moved[edge.end]
@@ -353,7 +353,7 @@ impl<'a, S: Scalar> Drafted<'a, S> {
                 if plane
                     .normal
                     .prod_dot(&axis.direction)
-                    .could_be_equal(S::ZERO)
+                    .could_be_equal(Scalar::ZERO)
                 {
                     // The plane holds the axis' direction: it meets the
                     // cylinder along a ruling.
@@ -377,7 +377,7 @@ impl<'a, S: Scalar> Drafted<'a, S> {
             && !end
                 .sub(&start)
                 .prod_dot(&axis.direction)
-                .definitely_greater(S::ZERO)
+                .definitely_greater(Scalar::ZERO)
         {
             return Err(GeopError::new(format!(
                 "the draft is too steep: the edge turns around (from {start:?} to {end:?})"
@@ -396,7 +396,7 @@ impl<'a, S: Scalar> Drafted<'a, S> {
     }
 
     /// The drafted solid, described whole.
-    fn result(&self) -> GeopResult<BodySpec<S>> {
+    fn result(&self) -> GeopResult<BodySpec> {
         let spec = self.spec;
         let edges = spec
             .edges
@@ -413,7 +413,7 @@ impl<'a, S: Scalar> Drafted<'a, S> {
             .iter()
             .enumerate()
             .map(|(f, face)| {
-                let lp = |coedges: &Vec<CoedgeSpec<S>>| self.face_loop(f, coedges);
+                let lp = |coedges: &Vec<CoedgeSpec>| self.face_loop(f, coedges);
                 let drafted_face = FaceSpec {
                     surface: self.surfaces[f].clone(),
                     outer: lp(&face.outer)?,
@@ -446,7 +446,7 @@ impl<'a, S: Scalar> Drafted<'a, S> {
     /// A loop of face `f`, its pcurves on the face's new surface: each
     /// coedge that changed fitted anew between `(u, v)` worked out once
     /// per junction, so the coedges meeting there agree on it exactly.
-    fn face_loop(&self, f: usize, coedges: &[CoedgeSpec<S>]) -> GeopResult<Vec<CoedgeSpec<S>>> {
+    fn face_loop(&self, f: usize, coedges: &[CoedgeSpec]) -> GeopResult<Vec<CoedgeSpec>> {
         let surface = &self.surfaces[f];
         // Where each coedge ends.
         let mut junctions = Vec::with_capacity(coedges.len());
@@ -494,7 +494,7 @@ impl<'a, S: Scalar> Drafted<'a, S> {
 
 /// Whether the faces `f` and `g` could meet tangentially along edge `e`:
 /// their normals, halfway along it, could be parallel.
-fn tangent_along<S: Scalar>(spec: &BodySpec<S>, e: usize, f: usize, g: usize) -> GeopResult<bool> {
+fn tangent_along(spec: &BodySpec, e: usize, f: usize, g: usize) -> GeopResult<bool> {
     let (point, _) = halfway(&spec.edges[e].curve)?;
     let n_f = spec.faces[f]
         .surface
@@ -502,7 +502,7 @@ fn tangent_along<S: Scalar>(spec: &BodySpec<S>, e: usize, f: usize, g: usize) ->
     let n_g = spec.faces[g]
         .surface
         .normal_at(&point, MAX_NODES, min_subdivision_size())?;
-    Ok(n_f.prod_cross(&n_g).norm_sq().could_be_equal(S::ZERO))
+    Ok(n_f.prod_cross(&n_g).norm_sq().could_be_equal(Scalar::ZERO))
 }
 
 /// Where a vertex at `point` goes: where the surfaces of the faces around
@@ -515,21 +515,21 @@ fn tangent_along<S: Scalar>(spec: &BodySpec<S>, e: usize, f: usize, g: usize) ->
 /// their intersection. It is the end of the cylinder's seam or ruling
 /// there, so it stays on that: the plane through the cylinder's axis and
 /// the vertex is the third condition.
-fn move_vertex<S: Scalar>(
-    point: Vector3<S>,
-    faces: &[(usize, Vector2<S>)],
-    surfaces: &[NurbSurface3D<S>],
-    kinds: &[Kind<S>],
-) -> GeopResult<Vector3<S>> {
+fn move_vertex(
+    point: Vector3,
+    faces: &[(usize, Vector2)],
+    surfaces: &[NurbSurface3D],
+    kinds: &[Kind],
+) -> GeopResult<Vector3> {
     let pieces: Vec<_> = faces
         .iter()
         .map(|&(f, at)| (&surfaces[f], (at[0], at[1])))
         .collect();
-    let mut offsets: Vec<Offset<S>> = tangent_groups(&pieces)?
+    let mut offsets: Vec<Offset> = tangent_groups(&pieces)?
         .into_iter()
         .map(|group| Offset {
             pieces: group.into_iter().map(|i| pieces[i]).collect(),
-            offset: S::ZERO,
+            offset: Scalar::ZERO,
         })
         .collect();
     let mut planes = Vec::new();
@@ -561,25 +561,25 @@ fn move_vertex<S: Scalar>(
 /// onto the plane — an affine map, so the rational quadratic arc lifts to
 /// an exact NURBS of the section, an ellipse for a plane at a slant. Which
 /// way round the arc runs is what `old`, seen along the axis, says.
-fn section<S: Scalar>(
-    axis: &Axis<S>,
-    plane: &Plane<S>,
-    old: &Curve3<S>,
-    start: Vector3<S>,
-    end: Vector3<S>,
+fn section(
+    axis: &Axis,
+    plane: &Plane,
+    old: &Curve3,
+    start: Vector3,
+    end: Vector3,
     closed: bool,
-) -> GeopResult<Curve3<S>> {
+) -> GeopResult<Curve3> {
     let a = axis.direction;
     let c = axis.point;
     // Along the axis onto the cross-section through `c`: `x - a (a . (x -
     // c))`, homogeneous.
-    let flatten_h = |p: &Vector4<S>| {
+    let flatten_h = |p: &Vector4| {
         let x = Vector3::from_array([p[0], p[1], p[2]]);
         let off = a.prod_dot(&x).sub(a.prod_dot(&c).mul(p[3]));
         let y = x.sub(&a.prod_scalar(off));
         Vector4::from_array([y[0], y[1], y[2], p[3]])
     };
-    let flatten = |x: &Vector3<S>| x.sub(&a.prod_scalar(a.prod_dot(&x.sub(&c))));
+    let flatten = |x: &Vector3| x.sub(&a.prod_scalar(a.prod_dot(&x.sub(&c))));
     let mut seen = old.clone();
     for cp in &mut seen.control_points {
         *cp = flatten_h(cp);
@@ -621,10 +621,10 @@ const SEED: u64 = 0xD4AF_0000_0000_0001;
 /// Whether the loop `hole` lies inside the loop `outer` on `surface`: no
 /// pcurve of the one meets one of the other, and a point of the hole is
 /// inside the outer loop.
-fn hole_inside<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    outer: &[CoedgeSpec<S>],
-    hole: &[CoedgeSpec<S>],
+fn hole_inside(
+    surface: &NurbSurface3D,
+    outer: &[CoedgeSpec],
+    hole: &[CoedgeSpec],
 ) -> GeopResult<bool> {
     for h in hole {
         for o in outer {

@@ -38,7 +38,7 @@ pub(super) fn curve_mid(sketch: &Sketch, curve: CurveId) -> Option<P2> {
             let arc = Arc {
                 s: sketch.points[&start].xy(),
                 e: sketch.points[&end].xy(),
-                half: Design::from_f64(sweep.to_f64() / 2.0),
+                half: Scalar::from_f64(sweep.to_f64() / 2.0),
             };
             let m = arc.arc_mid().ok()?;
             Some(of(&m))
@@ -85,7 +85,7 @@ impl Editing<'_> {
     /// nothing snaps onto itself. Nothing with `shift` held.
     pub(super) fn snap(
         &self,
-        pointer: &Pointer<S>,
+        pointer: &Pointer,
         p: P2,
         shift: bool,
         exclude: &[PointId],

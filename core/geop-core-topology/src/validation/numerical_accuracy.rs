@@ -42,16 +42,16 @@ const MAX_WIDTH: f64 = 1e-4;
 /// (`NurbSurface::everything`, every coordinate `ENTIRE`) is deliberately not
 /// exempted: a finished model must not contain one, and reporting it here as
 /// an unbounded width is exactly right.
-pub fn check_numerical_accuracy<S: Scalar>(
-    _params: &ValidationParameters<S>,
+pub fn check_numerical_accuracy(
+    _params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
 ) {
-    let limit = S::from_f64(MAX_WIDTH);
+    let limit = Scalar::from_f64(MAX_WIDTH);
     // `width` is sharp by construction, and so is `limit`, so this comparison
     // is always decidable — which is the whole reason the bound is expressed
     // as a width rather than as a comparison between two uncertain values.
-    let too_wide = |x: S| x.width().definitely_greater(limit);
+    let too_wide = |x: Scalar| x.width().definitely_greater(limit);
 
     for (&vertex_id, vertex) in &model.vertices {
         for c in 0..3 {

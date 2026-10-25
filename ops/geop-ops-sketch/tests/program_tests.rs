@@ -16,7 +16,7 @@ use geop_core_program::{
     part::{Part, StepContext},
     program::{Program, ProgramStep},
     runner::Runner,
-    values::{Design, Setting, Settings},
+    values::{Setting, Settings},
 };
 
 use geop_core_editor::view::{PartView, drawn};
@@ -27,7 +27,7 @@ use geop_core_editor::{
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::{FrameAxis, Ray},
-    scalars::{ScalInF64 as S, Scalar},
+    scalars::Scalar,
     vector::Vector3,
 };
 use geop_core_sketch::{Constraint, CurveId, PointId};
@@ -127,7 +127,7 @@ fn a_sketch_is_its_elements() {
     );
     let reader = part.current();
 
-    let placed: &PlacedSketch<Design> = reader.retrieve_element(&whole_sketch("s")).unwrap();
+    let placed: &PlacedSketch = reader.retrieve_element(&whole_sketch("s")).unwrap();
     assert_eq!(placed.name, "s");
     let path = reader
         .retrieve_element(&ElementReference::<_, Path>::whole(sketch("s")))
@@ -138,11 +138,11 @@ fn a_sketch_is_its_elements() {
     let plane = reader
         .retrieve_element(&ElementReference::<_, Plane>::whole(sketch("s")))
         .unwrap();
-    assert!(plane.w().to_array()[2].could_be_equal(Design::ONE));
+    assert!(plane.w().to_array()[2].could_be_equal(Scalar::ONE));
     let side = reader
         .retrieve_element(&sketch_element::<Line>("s", sides[0]))
         .unwrap();
-    assert!(side.direction.to_array()[1].could_be_equal(Design::ZERO));
+    assert!(side.direction.to_array()[1].could_be_equal(Scalar::ZERO));
     let corner = reader
         .retrieve_element(&sketch_element::<Point>("s", points[2]))
         .unwrap();
@@ -222,12 +222,9 @@ fn a_sketch_on_a_face_projects_an_edge() {
     }));
     run(&mut part, &args, &[]);
     let reader = part.current();
-    let placed: &PlacedSketch<Design> = reader.retrieve_element(&whole_sketch("s")).unwrap();
+    let placed: &PlacedSketch = reader.retrieve_element(&whole_sketch("s")).unwrap();
     let face = reader
-        .retrieve_element(&ElementReference::<NamedModel<Design>, Plane>::new(
-            model(),
-            "f0",
-        ))
+        .retrieve_element(&ElementReference::<NamedModel, Plane>::new(model(), "f0"))
         .unwrap();
     assert_eq!(placed.plane, face);
     let projected = placed
@@ -260,8 +257,7 @@ fn projections_follow_the_part() {
     let widest = |program: &Program| {
         let part = program.built(registry).unwrap();
         let reader = part.current();
-        let placed: &PlacedSketch<Design> =
-            reader.retrieve_element(&whole_sketch("floor")).unwrap();
+        let placed: &PlacedSketch = reader.retrieve_element(&whole_sketch("floor")).unwrap();
         let ids: Vec<_> = placed.sketch.points.keys().copied().collect();
         let x = (placed.sketch.points.values())
             .map(|p| p.x.to_f64())
@@ -294,7 +290,7 @@ fn a_sketch_curve_is_picked_as_a_line() {
         &[],
     );
     let reader = part.current();
-    let placed: &PlacedSketch<Design> = reader.retrieve_element(&whole_sketch("s")).unwrap();
+    let placed: &PlacedSketch = reader.retrieve_element(&whole_sketch("s")).unwrap();
     let mut view = PartView::new();
     placed.draw(sketch("s").name(), &mut view).unwrap();
     let view = view.finish();
@@ -306,12 +302,10 @@ fn a_sketch_curve_is_picked_as_a_line() {
     let hit = view
         .pick(&pointer, &[drawn::SKETCH_CURVE.to_string()])
         .unwrap();
-    let lines: Vec<ElementReference<PlacedSketch<Design>, Line>> =
-        selected(&reader, &[hit.element]);
+    let lines: Vec<ElementReference<PlacedSketch, Line>> = selected(&reader, &[hit.element]);
     assert_eq!(lines, [sketch_element::<Line>("s", sides[0])]);
     // Not of the model, though both have lines.
-    let edges: Vec<ElementReference<NamedModel<Design>, Line>> =
-        selected(&reader, &[lines[0].picked()]);
+    let edges: Vec<ElementReference<NamedModel, Line>> = selected(&reader, &[lines[0].picked()]);
     assert!(edges.is_empty());
 }
 
@@ -419,7 +413,7 @@ fn drawing_on_an_edge_on_projection() {
     );
     let below = |p: geop_core_sketch::PointId, s: &mut Sketch| {
         let q = s.points[&p];
-        s.add_point(q.x, S::from_f64(q.y.to_f64() - 1.0))
+        s.add_point(q.x, Scalar::from_f64(q.y.to_f64() - 1.0))
     };
     let (lo2, hi2) = (below(lo, &mut sketch), below(hi, &mut sketch));
     for (a, b) in [(lo, hi), (hi, hi2), (hi2, lo2), (lo2, lo)] {
@@ -448,7 +442,7 @@ mod tools {
 
     /// `sketch`, solved, on the origin's `xy` plane, extruded up by
     /// `height`: the part, checked to be valid.
-    fn extruded(sketch: Sketch, height: f64) -> geop_ops_model::NamedModel<S> {
+    fn extruded(sketch: Sketch, height: f64) -> geop_ops_model::NamedModel {
         let mut program = Program::new();
         program.push(
             "outline",
@@ -555,7 +549,7 @@ mod tools {
         assert!(chain.closed);
         // Outwards: the slot's bottom runs to the right, so to its right.
         let ring = sketch
-            .offset(&slot, Design::from_f64(-0.2), Corners::Round)
+            .offset(&slot, Scalar::from_f64(-0.2), Corners::Round)
             .unwrap();
         assert_eq!(ring.curves.len(), 6, "a curve round each of the slot's");
         let part = extruded(sketch, 0.3);
@@ -603,7 +597,7 @@ mod tools {
         let middle =
             [0, 1].map(|k| corners.iter().map(|q| q[k]).sum::<f64>() / corners.len() as f64);
         let inside = sketch.chain_side(&chain, middle).unwrap();
-        let toward = Design::from_f64(0.1 * inside.signum());
+        let toward = Scalar::from_f64(0.1 * inside.signum());
         sketch.offset(&outline, toward, Corners::Round).unwrap();
         let report = sketch.solve().unwrap();
         assert!(report.converged && report.dof == 0, "{report:?}");

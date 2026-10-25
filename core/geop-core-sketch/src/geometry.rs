@@ -1,4 +1,4 @@
-//! The geometry of sketch entities, generic over [`Scalar`] so every formula
+//! The geometry of sketch entities, generic over [`Number`] so every formula
 //! serves both the residuals (differentiated with [`geop_core_math::dual::Dual`])
 //! and plain evaluation (profiles, rendering).
 //!
@@ -11,13 +11,13 @@
 //! divide by `sin θ` where avoidable, so a nearly straight arc stays
 //! well-conditioned.
 //!
-//! Every division and square root here is fallible — [`Field::div`](geop_core_math::scalars::Field::div) and
-//! [`Scalar::sqrt`] refuse a divisor or radicand that could be zero/negative
+//! Every division and square root here is fallible — [`Number::div`] and
+//! [`Number::sqrt`] refuse a divisor or radicand that could be zero/negative
 //! — so a degenerate configuration (a zero-length chord, a collapsed arc)
 //! surfaces as a [`GeopResult`] error instead of silently producing an
 //! `inf`/`nan` that would then have to be caught downstream.
 
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector2};
+use geop_core_math::{geop_error::GeopResult, scalars::Number, vector::Vector2};
 
 /// A circular arc from `s` to `e`, turning counter-clockwise by `2 * half`
 /// (clockwise if negative).
@@ -28,7 +28,7 @@ pub struct Arc<T> {
     pub half: T,
 }
 
-impl<T: Scalar> Arc<T> {
+impl<T: Number> Arc<T> {
     pub fn chord(&self) -> Vector2<T> {
         self.e.sub(&self.s)
     }
@@ -126,13 +126,13 @@ impl<T: Scalar> Arc<T> {
 }
 
 /// `1/2`.
-fn half<T: Scalar>() -> T {
+fn half<T: Number>() -> T {
     T::ONE.div(T::TWO).expect("2 is not zero")
 }
 
 /// Signed distance of `p` from the line through `a` and `b`, positive on its
 /// left.
-pub fn line_distance<T: Scalar>(a: Vector2<T>, b: Vector2<T>, p: Vector2<T>) -> GeopResult<T> {
+pub fn line_distance<T: Number>(a: Vector2<T>, b: Vector2<T>, p: Vector2<T>) -> GeopResult<T> {
     let d = b.sub(&a);
     d.prod_cross(&p.sub(&a)).div(d.try_norm()?)
 }
@@ -140,21 +140,21 @@ pub fn line_distance<T: Scalar>(a: Vector2<T>, b: Vector2<T>, p: Vector2<T>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geop_core_math::scalars::scal_in_f64::ScalInF64;
+    use geop_core_math::scalars::Scalar;
 
-    fn vec2(x: ScalInF64, y: ScalInF64) -> Vector2<ScalInF64> {
+    fn vec2(x: Scalar, y: Scalar) -> Vector2 {
         Vector2::from_array([x, y])
     }
 
-    fn quarter() -> Arc<ScalInF64> {
+    fn quarter() -> Arc<Scalar> {
         Arc {
-            s: vec2(ScalInF64::from_f64(1.0), ScalInF64::from_f64(0.0)),
-            e: vec2(ScalInF64::from_f64(0.0), ScalInF64::from_f64(1.0)),
-            half: ScalInF64::from_f64(std::f64::consts::FRAC_PI_4),
+            s: vec2(Scalar::from_f64(1.0), Scalar::from_f64(0.0)),
+            e: vec2(Scalar::from_f64(0.0), Scalar::from_f64(1.0)),
+            half: Scalar::from_f64(std::f64::consts::FRAC_PI_4),
         }
     }
 
-    fn close(a: Vector2<ScalInF64>, b: [f64; 2]) -> bool {
+    fn close(a: Vector2, b: [f64; 2]) -> bool {
         (a[0].to_f64() - b[0]).abs() < 1e-12 && (a[1].to_f64() - b[1]).abs() < 1e-12
     }
 
@@ -170,7 +170,7 @@ mod tests {
         assert!(close(a.tangent_end().unwrap(), [-1.0, 0.0]));
         assert!((a.length().unwrap().to_f64() - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
         assert!(
-            a.circle_residual(vec2(ScalInF64::from_f64(-s), ScalInF64::from_f64(-s)))
+            a.circle_residual(vec2(Scalar::from_f64(-s), Scalar::from_f64(-s)))
                 .unwrap()
                 .to_f64()
                 .abs()
@@ -178,7 +178,7 @@ mod tests {
         );
         // Outside the circle by 1: residual ≈ distance (exactly `(ρ² - 1)/2`).
         assert!(
-            (a.circle_residual(vec2(ScalInF64::from_f64(2.0), ScalInF64::from_f64(0.0)))
+            (a.circle_residual(vec2(Scalar::from_f64(2.0), Scalar::from_f64(0.0)))
                 .unwrap()
                 .to_f64()
                 - 1.5)
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn major_arc_center_is_right_of_chord() {
         let a = Arc {
-            half: ScalInF64::from_f64(3.0 * std::f64::consts::FRAC_PI_4),
+            half: Scalar::from_f64(3.0 * std::f64::consts::FRAC_PI_4),
             ..quarter()
         };
         assert!(close(a.center().unwrap(), [1.0, 1.0]));
@@ -200,13 +200,13 @@ mod tests {
     #[test]
     fn straight_arc_is_its_chord() {
         let a = Arc {
-            half: ScalInF64::from_f64(0.0),
+            half: Scalar::from_f64(0.0),
             ..quarter()
         };
         assert!((a.length().unwrap().to_f64() - 2f64.sqrt()).abs() < 1e-12);
         // On the chord's line: zero; to its left by `h`: `-h` (G ≈ -2 left·q).
         assert!(
-            a.circle_residual(vec2(ScalInF64::from_f64(0.5), ScalInF64::from_f64(0.5)))
+            a.circle_residual(vec2(Scalar::from_f64(0.5), Scalar::from_f64(0.5)))
                 .unwrap()
                 .to_f64()
                 .abs()

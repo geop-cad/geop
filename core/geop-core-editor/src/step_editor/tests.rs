@@ -17,7 +17,6 @@ use geop_core_program::{
     part::{Part, StepContext},
     program::{Program, ProgramStep},
     runner::Runner,
-    values::Design,
 };
 use serde::{Deserialize, Serialize};
 
@@ -44,8 +43,8 @@ struct MarkEditing {
 /// along `x`, and a selectable dot at `(5, 0, 0)`. Builds nothing.
 struct MarkOperation;
 
-fn v(x: f64, y: f64, z: f64) -> Vector3<Design> {
-    Vector3::from_array([x, y, z].map(Design::from_f64))
+fn v(x: f64, y: f64, z: f64) -> Vector3 {
+    Vector3::from_array([x, y, z].map(Scalar::from_f64))
 }
 
 impl Operation for MarkOperation {
@@ -65,7 +64,7 @@ impl Editable for MarkOperation {
         MarkArgs::default()
     }
 
-    fn presentation(_: &Context, args: &MarkArgs, editing: &MarkEditing) -> Form<Design> {
+    fn presentation(_: &Context, args: &MarkArgs, editing: &MarkEditing) -> Form {
         let mut form = Form::default();
         let handle = Track {
             at: v(0.0, 0.0, 0.0),
@@ -88,7 +87,7 @@ impl Editable for MarkOperation {
         _: &Context,
         args: &MarkArgs,
         editing: &MarkEditing,
-        event: Event<Design>,
+        event: Event,
     ) -> (MarkArgs, MarkEditing) {
         let mut args = args.clone();
         let mut selection = editing.selection.clone();
@@ -119,16 +118,16 @@ impl Editable for MarkOperation {
 /// A part with one face, `top`, under every pointer.
 struct OneFace;
 
-impl Scene<Design> for OneFace {
-    fn pick(&self, p: &Pointer<Design>, accepts: &[String]) -> Option<ElementHit<Design>> {
+impl Scene for OneFace {
+    fn pick(&self, p: &Pointer, accepts: &[String]) -> Option<ElementHit> {
         accepts.iter().any(|k| k == "face").then(|| ElementHit {
             element: face("top"),
             point: *p.ray.origin(),
-            t: Design::from_f64(0.0),
+            t: Scalar::from_f64(0.0),
         })
     }
 
-    fn hit_instance(&self, _: &str, _: &Pointer<Design>) -> Option<Design> {
+    fn hit_instance(&self, _: &str, _: &Pointer) -> Option<Scalar> {
         None
     }
 }
@@ -148,11 +147,11 @@ fn picked(elements: &[PickedElement]) -> Vec<Picked> {
 }
 
 /// Looking straight down `-z` at `(x, y)`, reaching a tenth of a unit.
-fn down(x: f64, y: f64) -> Pointer<Design> {
+fn down(x: f64, y: f64) -> Pointer {
     Pointer {
         ray: Ray::try_new(v(x, y, 10.0), v(0.0, 0.0, -1.0)).unwrap(),
         reach: Reach::Tube {
-            radius: Design::from_f64(0.1),
+            radius: Scalar::from_f64(0.1),
         },
     }
 }
@@ -186,7 +185,7 @@ impl Editor {
         }
     }
 
-    fn send(&mut self, event: StepEditEvent<Design>) {
+    fn send(&mut self, event: StepEditEvent) {
         let editing = Editing {
             editors: &self.editors,
             runner: &self.runner,

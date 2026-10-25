@@ -47,13 +47,13 @@ const MAX_RAY_ATTEMPTS: usize = 64;
 /// `max_nodes` bounds both the `curve_could_contain` BFS subdivision search
 /// (on-vertex/on-coedge tests) and the `curve_curve_intersect` DFS search
 /// (edge-interior hits). `seed` seeds the direction PRNG.
-pub fn face_contains<S: Scalar>(
-    model: &Model<S>,
+pub fn face_contains(
+    model: &Model,
     face_id: FaceId,
-    u: S,
-    v: S,
+    u: Scalar,
+    v: Scalar,
     max_nodes: usize,
-    epsilon: S,
+    epsilon: Scalar,
     seed: u64,
 ) -> GeopResult<PointClassification> {
     let face = &model.faces[&face_id];
@@ -78,16 +78,16 @@ pub fn face_contains<S: Scalar>(
 /// ever answer `OnCoedge` for a point taken from the hole itself. Splitting
 /// the ray casting out here keeps one implementation of it rather than a
 /// second copy that could drift.
-pub fn loops_contain<S: Scalar>(
-    model: &Model<S>,
-    surface: &NurbSurface3D<S>,
+pub fn loops_contain(
+    model: &Model,
+    surface: &NurbSurface3D,
     coedges: &[CoedgeId],
-    query: Vector2<S>,
+    query: Vector2,
     max_nodes: usize,
-    epsilon: S,
+    epsilon: Scalar,
     seed: u64,
 ) -> GeopResult<PointClassification> {
-    let pcurves: Vec<&NurbCurve2D<S>> = coedges
+    let pcurves: Vec<&NurbCurve2D> = coedges
         .iter()
         .map(|c| Ok(&model.get_coedge(*c)?.pcurve))
         .collect::<GeopResult<_>>()?;
@@ -103,12 +103,12 @@ pub fn loops_contain<S: Scalar>(
 /// The classification of [`loops_contain`], against the closed loops that
 /// `pcurves` run around on `surface` — for loops not in a model yet, being
 /// built. `pcurve k` in an error is `pcurves[k]`.
-pub fn pcurves_contain<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    pcurves: &[&NurbCurve2D<S>],
-    query: Vector2<S>,
+pub fn pcurves_contain(
+    surface: &NurbSurface3D,
+    pcurves: &[&NurbCurve2D],
+    query: Vector2,
     max_nodes: usize,
-    epsilon: S,
+    epsilon: Scalar,
     seed: u64,
 ) -> GeopResult<PointClassification> {
     // Is the query point itself a vertex, or on some coedge's pcurve?
@@ -140,7 +140,7 @@ pub fn pcurves_contain<S: Scalar>(
     let du = u_hi.sub(u_lo);
     let dv = v_hi.sub(v_lo);
     let diag = du.mul(du).add(dv.mul(dv)).sqrt()?;
-    let ray_length = diag.mul(S::from_f64(3.0)).add(S::ONE);
+    let ray_length = diag.mul(Scalar::from_f64(3.0)).add(Scalar::ONE);
 
     let mut rng = Rng::new(seed);
     // Why the most recent direction was given up on — reported if every one
@@ -148,15 +148,15 @@ pub fn pcurves_contain<S: Scalar>(
     let mut last_rejection = String::new();
     // Directions tried in turn until one is clear.
     let found = attempts(MAX_RAY_ATTEMPTS, |_| -> GeopResult<_> {
-        let dir = rng.next_direction2::<S>();
+        let dir = rng.next_direction2();
         let far = origin.add(&dir.prod_scalar(ray_length));
-        let ray: NurbCurve2D<S> = NurbCurve::try_new(
+        let ray: NurbCurve2D = NurbCurve::try_new(
             1,
             vec![
-                Vector3::from_array([origin[0], origin[1], S::ONE]),
-                Vector3::from_array([far[0], far[1], S::ONE]),
+                Vector3::from_array([origin[0], origin[1], Scalar::ONE]),
+                Vector3::from_array([far[0], far[1], Scalar::ONE]),
             ],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
         )?;
 
         for (k, pcurve) in pcurves.iter().enumerate() {
@@ -192,7 +192,7 @@ pub fn pcurves_contain<S: Scalar>(
                 // counted. Dropping every hit within `epsilon` of the query,
                 // as this once did, turned a point 6e-5 outside a face into
                 // one inside it.
-                let (t, mid, refined) = if t.definitely_greater(S::ZERO) {
+                let (t, mid, refined) = if t.definitely_greater(Scalar::ZERO) {
                     (t, mid, false)
                 } else {
                     let (rt, rmid) = refine_curve_curve_crossing(&ray, pcurve, t, mid);
@@ -202,7 +202,7 @@ pub fn pcurves_contain<S: Scalar>(
                     let same = rt.is_subset_of(t) && t.is_subset_of(rt);
                     (rt, rmid, !same && rt.width().definitely_less(epsilon))
                 };
-                if !t.definitely_greater(S::ZERO) {
+                if !t.definitely_greater(Scalar::ZERO) {
                     // Still not beyond it. Either the query is on this
                     // pcurve to within what the numbers can tell — the
                     // check above asks about the sharp query, and a point
@@ -281,13 +281,13 @@ const MAX_HALVINGS: usize = 40;
 /// does not.
 ///
 /// `max_nodes`/`epsilon`/`seed` are passed straight to [`face_contains`].
-pub fn face_interior_point<S: Scalar>(
-    model: &Model<S>,
+pub fn face_interior_point(
+    model: &Model,
     face_id: FaceId,
     max_nodes: usize,
-    epsilon: S,
+    epsilon: Scalar,
     seed: u64,
-) -> GeopResult<(S, S)> {
+) -> GeopResult<(Scalar, Scalar)> {
     let found =
         face_interior_point_where(model, face_id, max_nodes, epsilon, seed, |_, _| Ok(true))?;
     Ok(found.expect("the first interior point found is always accepted"))
@@ -298,14 +298,14 @@ pub fn face_interior_point<S: Scalar>(
 /// in from it, in loop order) is handed to `accept`, and the first it accepts
 /// is returned. `Ok(None)` means interior points were found but none was
 /// accepted; an error, as for `face_interior_point`, that none was found.
-pub fn face_interior_point_where<S: Scalar>(
-    model: &Model<S>,
+pub fn face_interior_point_where(
+    model: &Model,
     face_id: FaceId,
     max_nodes: usize,
-    epsilon: S,
+    epsilon: Scalar,
     seed: u64,
-    mut accept: impl FnMut(S, S) -> GeopResult<bool>,
-) -> GeopResult<Option<(S, S)>> {
+    mut accept: impl FnMut(Scalar, Scalar) -> GeopResult<bool>,
+) -> GeopResult<Option<(Scalar, Scalar)>> {
     let face = &model.faces[&face_id];
     let BoundaryType::Loop(anchor) = face.outer else {
         return Err(GeopError::new(format!(
@@ -353,7 +353,7 @@ pub fn face_interior_point_where<S: Scalar>(
 
         let mut offered = 0;
         let found = halve(
-            diagonal.div(S::TWO)?,
+            diagonal.div(Scalar::TWO)?,
             MAX_HALVINGS,
             |&step| -> GeopResult<_> {
                 for inward in normals {
@@ -377,7 +377,7 @@ pub fn face_interior_point_where<S: Scalar>(
                     // resolution. A point merely strictly inside can sit 5e-16
                     // off the boundary — one inward step exactly the face's width
                     // lands there — and at `epsilon` it *is* on the boundary.
-                    let neighbourhood = |t: S| t.sub(epsilon).union(t.add(epsilon));
+                    let neighbourhood = |t: Scalar| t.sub(epsilon).union(t.add(epsilon));
                     if matches!(
                         face_contains(
                             model,
@@ -443,7 +443,7 @@ pub fn face_interior_point_where<S: Scalar>(
         };
         let (t0, t1) = coedge.pcurve.domain();
         for i in 0..=4 {
-            let Ok(frac) = S::from_ratio(i, 4) else {
+            let Ok(frac) = Scalar::from_ratio(i, 4) else {
                 continue;
             };
             let Ok(uv) = coedge.pcurve.evaluate(t0.add(t1.sub(t0).mul(frac))) else {
@@ -451,11 +451,11 @@ pub fn face_interior_point_where<S: Scalar>(
             };
             u_extent = Some(match u_extent {
                 None => uv[0],
-                Some(e) => S::union(e, uv[0]),
+                Some(e) => Scalar::union(e, uv[0]),
             });
             v_extent = Some(match v_extent {
                 None => uv[1],
-                Some(e) => S::union(e, uv[1]),
+                Some(e) => Scalar::union(e, uv[1]),
             });
         }
     }
@@ -486,19 +486,19 @@ pub fn face_interior_point_where<S: Scalar>(
 mod interior_point_tests {
     use super::face_interior_point;
     use crate::{Model, test_fixtures::test_cube_solid};
-    use geop_core_math::scalars::{ScalInF64, Scalar};
+    use geop_core_math::scalars::Scalar;
 
     const MAX: usize = 20000;
     const SEED: u64 = 99;
 
-    fn eps() -> ScalInF64 {
-        <ScalInF64 as Scalar>::from_f64(1e-4)
+    fn eps() -> Scalar {
+        Scalar::from_f64(1e-4)
     }
 
     /// Every face of a plain cube must yield an interior point.
     #[test]
     fn cube_faces_all_have_interior_points() {
-        let mut model = Model::<ScalInF64>::new();
+        let mut model = Model::new();
         let solid = test_cube_solid(&mut model);
         for face_id in model.solid_faces(solid).unwrap() {
             face_interior_point(&model, face_id, MAX, eps(), SEED)
@@ -526,7 +526,6 @@ mod tests {
     };
     use geop_core_geometry::nurb_surface::NurbSurface3D;
     use geop_core_math::{
-        for_all_scalars,
         scalars::Scalar,
         vector::{Vector3, Vector4},
     };
@@ -537,15 +536,21 @@ mod tests {
 
     /// A polygon face on the unit-square `[0,1]^2` parameter surface, built
     /// from `points` (CCW, `(u, v) == (x, y)`).
-    fn polygon_face<S: Scalar>(model: &mut Model<S>, points: &[(f64, f64)]) -> FaceId {
-        let p =
-            |x: f64, y: f64| Vector4::from_array([S::from_f64(x), S::from_f64(y), S::ZERO, S::ONE]);
+    fn polygon_face(model: &mut Model, points: &[(f64, f64)]) -> FaceId {
+        let p = |x: f64, y: f64| {
+            Vector4::from_array([
+                Scalar::from_f64(x),
+                Scalar::from_f64(y),
+                Scalar::ZERO,
+                Scalar::ONE,
+            ])
+        };
         let surface = NurbSurface3D::try_new(
             1,
             1,
             vec![p(0.0, 0.0), p(0.0, 1.0), p(1.0, 0.0), p(1.0, 1.0)],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
+            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
         )
         .unwrap();
 
@@ -561,7 +566,11 @@ mod tests {
             .iter()
             .map(|&(x, y)| {
                 model.insert_vertex(Vertex {
-                    point: Vector3::from_array([S::from_f64(x), S::from_f64(y), S::ZERO]),
+                    point: Vector3::from_array([
+                        Scalar::from_f64(x),
+                        Scalar::from_f64(y),
+                        Scalar::ZERO,
+                    ]),
                 })
             })
             .collect();
@@ -572,19 +581,19 @@ mod tests {
                         1,
                         vec![
                             Vector4::from_array([
-                                S::from_f64(points[i].0),
-                                S::from_f64(points[i].1),
-                                S::ZERO,
-                                S::ONE,
+                                Scalar::from_f64(points[i].0),
+                                Scalar::from_f64(points[i].1),
+                                Scalar::ZERO,
+                                Scalar::ONE,
                             ]),
                             Vector4::from_array([
-                                S::from_f64(points[(i + 1) % n].0),
-                                S::from_f64(points[(i + 1) % n].1),
-                                S::ZERO,
-                                S::ONE,
+                                Scalar::from_f64(points[(i + 1) % n].0),
+                                Scalar::from_f64(points[(i + 1) % n].1),
+                                Scalar::ZERO,
+                                Scalar::ONE,
                             ]),
                         ],
-                        vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+                        vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
                     )
                     .unwrap(),
                     start_vertex: verts[i],
@@ -615,117 +624,102 @@ mod tests {
 
     /// Diamond with corners at (1,.5) right, (.5,1) top, (0,.5) left,
     /// (.5,0) bottom, traversed CCW.
-    fn diamond_face<S: Scalar>(model: &mut Model<S>) -> FaceId {
+    fn diamond_face(model: &mut Model) -> FaceId {
         polygon_face(model, &[(1., 0.5), (0.5, 1.), (0., 0.5), (0.5, 0.)])
     }
 
-    fn check_diamond_interior_point_is_contained<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn diamond_interior_point_is_contained() {
+        let mut model = Model::new();
         let face_id = diamond_face(&mut model);
         assert_eq!(
             face_contains(
                 &model,
                 face_id,
-                S::from_f64(0.5),
-                S::from_f64(0.3),
+                Scalar::from_f64(0.5),
+                Scalar::from_f64(0.3),
                 MAX,
-                S::from_f64(MIN_SUBDIVISION_SIZE),
+                Scalar::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),
             PointClassification::Inside
         );
     }
-    #[test]
-    fn diamond_interior_point_is_contained() {
-        for_all_scalars!(check_diamond_interior_point_is_contained);
-    }
 
-    fn check_diamond_exterior_point_is_not_contained<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn diamond_exterior_point_is_not_contained() {
+        let mut model = Model::new();
         let face_id = diamond_face(&mut model);
         assert_eq!(
             face_contains(
                 &model,
                 face_id,
-                S::from_f64(0.1),
-                S::from_f64(0.3),
+                Scalar::from_f64(0.1),
+                Scalar::from_f64(0.3),
                 MAX,
-                S::from_f64(MIN_SUBDIVISION_SIZE),
+                Scalar::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),
             PointClassification::Outside
         );
     }
-    #[test]
-    fn diamond_exterior_point_is_not_contained() {
-        for_all_scalars!(check_diamond_exterior_point_is_not_contained);
-    }
 
-    fn check_diamond_center_hits_convex_vertex_from_inside<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn diamond_center_hits_convex_vertex_from_inside() {
+        let mut model = Model::new();
         let face_id = diamond_face(&mut model);
         assert_eq!(
             face_contains(
                 &model,
                 face_id,
-                S::from_f64(0.5),
-                S::from_f64(0.5),
+                Scalar::from_f64(0.5),
+                Scalar::from_f64(0.5),
                 MAX,
-                S::from_f64(MIN_SUBDIVISION_SIZE),
+                Scalar::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),
             PointClassification::Inside
         );
     }
-    #[test]
-    fn diamond_center_hits_convex_vertex_from_inside() {
-        for_all_scalars!(check_diamond_center_hits_convex_vertex_from_inside);
-    }
 
-    fn check_diamond_vertex_query_is_on_vertex<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn diamond_vertex_query_is_on_vertex() {
+        let mut model = Model::new();
         let face_id = diamond_face(&mut model);
         assert_eq!(
             face_contains(
                 &model,
                 face_id,
-                S::ONE,
-                S::from_f64(0.5),
+                Scalar::ONE,
+                Scalar::from_f64(0.5),
                 MAX,
-                S::from_f64(MIN_SUBDIVISION_SIZE),
+                Scalar::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),
             PointClassification::OnVertex
         );
     }
-    #[test]
-    fn diamond_vertex_query_is_on_vertex() {
-        for_all_scalars!(check_diamond_vertex_query_is_on_vertex);
-    }
 
-    fn check_diamond_edge_query_is_on_coedge<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn diamond_edge_query_is_on_coedge() {
+        let mut model = Model::new();
         let face_id = diamond_face(&mut model);
         assert_eq!(
             face_contains(
                 &model,
                 face_id,
-                S::from_f64(0.75),
-                S::from_f64(0.75),
+                Scalar::from_f64(0.75),
+                Scalar::from_f64(0.75),
                 MAX,
-                S::from_f64(MIN_SUBDIVISION_SIZE),
+                Scalar::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),
             PointClassification::OnCoedge
         );
-    }
-    #[test]
-    fn diamond_edge_query_is_on_coedge() {
-        for_all_scalars!(check_diamond_edge_query_is_on_coedge);
     }
 }

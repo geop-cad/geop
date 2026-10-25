@@ -5,7 +5,7 @@ use geop_core_geometry::shape::Plane;
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::{CoordinateSystem, Datum, DatumComponent, DatumKind, FrameAxis},
-    scalars::{ScalInF64 as S, Scalar},
+    scalars::Scalar,
 };
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, part::Part, program::Program,
@@ -82,7 +82,7 @@ impl Built {
     }
 
     /// The datum `id`, as the program last run built it.
-    fn datum_named(&self, id: &str) -> Datum<S> {
+    fn datum_named(&self, id: &str) -> Datum {
         read_datums(&self.part.current()).unwrap().get(id).unwrap()
     }
 
@@ -91,13 +91,13 @@ impl Built {
         &mut self,
         selection: Vec<Selected>,
         construction: Construction,
-    ) -> GeopResult<Datum<S>> {
+    ) -> GeopResult<Datum> {
         self.try_with("d", selection, construction)?;
         Ok(self.datum_named("d"))
     }
 
     /// The datum built from `selection` by `construction`.
-    fn datum(&mut self, selection: Vec<Selected>, construction: Construction) -> Datum<S> {
+    fn datum(&mut self, selection: Vec<Selected>, construction: Construction) -> Datum {
         self.try_datum(selection, construction).unwrap()
     }
 
@@ -132,7 +132,7 @@ fn drilled_box() -> Built {
 }
 
 /// Sketch data is solved, not exact: agreeing to 1e-9 is agreeing.
-fn assert_at(frame: &CoordinateSystem<S>, origin: [f64; 3], w: [f64; 3]) {
+fn assert_at(frame: &CoordinateSystem, origin: [f64; 3], w: [f64; 3]) {
     let [x, y, z] = origin;
     let off = frame.origin().sub(&v3(x, y, z)).norm().to_f64();
     assert!(off < 1e-9, "origin of {frame} is {off} off {origin:?}");
@@ -144,7 +144,7 @@ fn assert_at(frame: &CoordinateSystem<S>, origin: [f64; 3], w: [f64; 3]) {
 
 /// Whether `p` lies on the plane (a frame whose `w` is its normal) —
 /// to within what solved sketch data is.
-fn on_plane(frame: &CoordinateSystem<S>, p: [f64; 3]) -> bool {
+fn on_plane(frame: &CoordinateSystem, p: [f64; 3]) -> bool {
     let [x, y, z] = p;
     Plane {
         point: *frame.origin(),
@@ -202,7 +202,7 @@ fn selections_fit_by_shape() {
 #[test]
 fn sketch_points_and_lines() {
     let mut part = drilled_box();
-    let placed: PlacedSketch<S> = part
+    let placed: PlacedSketch = part
         .seen()
         .retrieve_element(&whole_sketch("outline"))
         .unwrap()
@@ -376,7 +376,7 @@ fn axes() {
     assert_at(&d.frame, [1.4, 1.0, 1.0], [0., 1., 0.]);
 }
 
-fn datum_line(d: &Datum<S>) -> geop_core_geometry::shape::Axis<S> {
+fn datum_line(d: &Datum) -> geop_core_geometry::shape::Axis {
     geop_core_geometry::shape::Axis::try_new(*d.frame.origin(), *d.frame.w()).unwrap()
 }
 
@@ -525,9 +525,7 @@ fn frames() {
 
 /// The example `program`, saved and loaded, builds what it built, and that
 /// is a valid model with names that hold.
-fn example_round_trips(
-    program: &Program,
-) -> geop_ops_model::NamedModel<geop_core_program::values::Design> {
+fn example_round_trips(program: &Program) -> geop_ops_model::NamedModel {
     let registry = std::rc::Rc::new(registry().unwrap());
     let built = geop_core_program::testing::assert_round_trips(registry, None, program);
     let part = geop_ops_model::testing::model_of(&built);
@@ -593,7 +591,6 @@ fn examples_build_incrementally() {
 #[test]
 fn sketches_go_on_datum_planes() {
     use geop_core_math::vector::Vector3;
-    use geop_core_program::values::Design;
 
     let built = Built::of(crate::examples::boss_on_reference_plane());
     let built = built.part.current();
@@ -604,8 +601,8 @@ fn sketches_go_on_datum_planes() {
     assert!(placed.plane.origin().could_be_equal(lifted.frame.origin()));
     assert!(placed.plane.u().could_be_equal(lifted.frame.u()));
     // Sketch data is solved, not exact: agreeing to 1e-9 is agreeing.
-    let off = |a: &Vector3<Design>, b: [f64; 3]| {
-        a.sub(&Vector3::from_array(b.map(Design::from_f64)))
+    let off = |a: &Vector3, b: [f64; 3]| {
+        a.sub(&Vector3::from_array(b.map(Scalar::from_f64)))
             .norm()
             .to_f64()
     };

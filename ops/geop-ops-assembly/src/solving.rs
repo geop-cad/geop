@@ -17,7 +17,7 @@ use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
     reader::Reader,
     target::{Target, TargetReference},
-    values::{Design, StateValue, StateValues, pose_state},
+    values::{StateValue, StateValues, pose_state},
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -26,7 +26,7 @@ use geop_core_math::{
     dual::Dual,
     geop_error::{GeopError, GeopResult},
     primitives::Pose,
-    scalars::{Ring, Scalar},
+    scalars::Scalar,
     solvers::{
         least_squares::{Rows, Stop},
         system::{Phase, Variable, tolerance},
@@ -74,8 +74,8 @@ pub enum Measure {
 pub struct Setting {
     pub state: String,
     pub measure: Measure,
-    pub min: Option<Design>,
-    pub max: Option<Design>,
+    pub min: Option<Scalar>,
+    pub max: Option<Scalar>,
 }
 
 /// Values of the state a user sets directly, as a step declares them for an
@@ -224,7 +224,7 @@ pub struct Freedom {
 
 /// The size of a placed part, as it is drawn: what turns a turn into a
 /// length, and what a solve's size is at least. An empty part has none.
-fn size_of(drawn: &PartView) -> Option<Design> {
+fn size_of(drawn: &PartView) -> Option<Scalar> {
     if drawn.vertices.is_empty() && drawn.faces.is_empty() {
         return None;
     }
@@ -233,8 +233,8 @@ fn size_of(drawn: &PartView) -> Option<Design> {
 
 /// The size of the largest of the placed parts drawn as `drawn`, at least
 /// one.
-pub fn largest<'i>(drawn: impl IntoIterator<Item = GeopResult<&'i Drawn>>) -> GeopResult<Design> {
-    let mut scale = Design::ONE;
+pub fn largest<'i>(drawn: impl IntoIterator<Item = GeopResult<&'i Drawn>>) -> GeopResult<Scalar> {
+    let mut scale = Scalar::ONE;
     for drawn in drawn {
         if let Some(size) = size_of(&drawn?.view)
             && size.definitely_greater(scale)
@@ -248,7 +248,7 @@ pub fn largest<'i>(drawn: impl IntoIterator<Item = GeopResult<&'i Drawn>>) -> Ge
 /// The size of the part `reader` reads: of the largest part placed in it,
 /// at least one. What a constraint holds to
 /// [`geop_core_math::solvers::system::RELATIVE_TOLERANCE`] of.
-pub fn scale_of(reader: &Reader) -> GeopResult<Design> {
+pub fn scale_of(reader: &Reader) -> GeopResult<Scalar> {
     largest(
         placed_parts(reader)?
             .iter()
@@ -340,7 +340,7 @@ fn seeded(
 
 /// Numbers that carry their derivatives by one pose's step: six, as many
 /// as a pose's variables.
-pub type D = Dual<Design, 6>;
+pub type D = Dual<6>;
 
 /// A point of a placed part pulled towards a point in the world: a drag.
 /// The part resists turning — a hundredth as strongly — so that a point
@@ -348,11 +348,11 @@ pub type D = Dual<Design, 6>;
 struct PointPull {
     path: String,
     state: String,
-    local: Vector3<Design>,
-    target: Vector3<Design>,
+    local: Vector3,
+    target: Vector3,
     /// Where the part was, which it resists turning from.
     start: StateValue,
-    scale: Design,
+    scale: Scalar,
 }
 
 /// How strongly a part pulled by a point resists turning, against the pull.
@@ -368,7 +368,7 @@ fn stepped(reader: &Reader, path: &str) -> GeopResult<Pose<D>> {
 }
 
 /// The rows `values` as a constraint by `state`'s step.
-fn preference(state: &str, rows: Rows<Design>) -> Constraint {
+fn preference(state: &str, rows: Rows) -> Constraint {
     Constraint {
         residuals: rows.values,
         jacobian: BTreeMap::from([(state.to_string(), rows.jacobian)]),
@@ -385,7 +385,7 @@ impl Preference for PointPull {
         for r in at.to_array() {
             rows.push(r.v, r.d.to_vec());
         }
-        let resist = Design::from_ratio(TURN_RESISTANCE.0, TURN_RESISTANCE.1)?;
+        let resist = Scalar::from_ratio(TURN_RESISTANCE.0, TURN_RESISTANCE.1)?;
         let stay = (reader.retrieve_state(&self.state)).stay(&self.start, self.scale)?;
         // Its turn only: the rows after the position's.
         for (value, row) in stay.values.into_iter().zip(stay.jacobian).skip(3) {
@@ -402,8 +402,8 @@ impl Preference for PointPull {
 struct PosePull {
     path: String,
     state: String,
-    target: Pose<Design>,
-    scale: Design,
+    target: Pose,
+    scale: Scalar,
 }
 
 impl Preference for PosePull {
@@ -424,7 +424,7 @@ const TURN_STEP: f64 = 30.0;
 
 /// The pose state that puts the placed part `located` at `world`: relative
 /// to the part it is placed in.
-fn local_at(located: &Located, world: &Pose<Design>) -> Pose<Design> {
+fn local_at(located: &Located, world: &Pose) -> Pose {
     let parent = located.world.compose(&located.local.inverse());
     parent.inverse().compose(world).map(Scalar::sharpen)
 }
@@ -445,7 +445,7 @@ fn report(reader: &Reader, solved: solve::Solved) -> GeopResult<(StateValues, Re
         at_limit,
         iterations: solved.report.iterations,
         phases: (solved.report.phases.iter())
-            .map(|p: &Phase<Design>| (p.stop, p.iterations, p.max_residual.to_f64()))
+            .map(|p: &Phase| (p.stop, p.iterations, p.max_residual.to_f64()))
             .collect(),
         enclosed: solved.enclosure.state,
         unproven: solved.enclosure.unproven,
@@ -477,10 +477,10 @@ fn changes(state: &StateValues, solved: StateValues) -> StateValues {
 pub fn solve(
     rerun: &mut Rerun,
     state: &StateValues,
-    pulls: &[Pull<Design>],
+    pulls: &[Pull],
     only: Option<&str>,
 ) -> GeopResult<(StateValues, Report)> {
-    let set: BTreeMap<String, Design> = (pulls.iter())
+    let set: BTreeMap<String, Scalar> = (pulls.iter())
         .filter_map(|pull| match pull {
             Pull::Value { parameter, value } => Some((parameter.clone(), *value)),
             Pull::Point { .. } | Pull::Pose { .. } => None,
@@ -550,7 +550,7 @@ pub fn solve(
     fn problem<'p>(
         free: &BTreeMap<String, Mobility>,
         preferences: Vec<&'p dyn Preference>,
-        scale: Design,
+        scale: Scalar,
     ) -> Problem<'p> {
         Problem {
             free: free.clone(),
@@ -577,7 +577,7 @@ pub fn solve(
     for k in 1..stages {
         for (name, (from, to)) in driven.iter().zip(&ranges) {
             let at = from + (to - from) * k as f64 / stages as f64;
-            start.insert(name.clone(), StateValue::Number(Design::from_f64(at)));
+            start.insert(name.clone(), StateValue::Number(Scalar::from_f64(at)));
         }
         start = solve::solve(run(rerun), &start, &problem(&free, Vec::new(), scale))?.state;
     }
@@ -598,13 +598,13 @@ pub fn solve(
 pub fn set(
     rerun: &mut Rerun,
     state: &StateValues,
-    set: &BTreeMap<String, Design>,
+    set: &BTreeMap<String, Scalar>,
 ) -> GeopResult<(StateValues, Report)> {
-    let value = |(name, value): (&String, &Design)| Pull::Value {
+    let value = |(name, value): (&String, &Scalar)| Pull::Value {
         parameter: name.clone(),
         value: *value,
     };
-    let mut every: BTreeMap<String, Design> = BTreeMap::new();
+    let mut every: BTreeMap<String, Scalar> = BTreeMap::new();
     {
         let reader = rerun.reader();
         let start = seeded(
@@ -622,12 +622,12 @@ pub fn set(
         }
     }
     every.extend(set.iter().map(|(p, v)| (p.clone(), *v)));
-    let pulls: Vec<Pull<Design>> = every.iter().map(value).collect();
+    let pulls: Vec<Pull> = every.iter().map(value).collect();
     let (moved, report) = solve(rerun, state, &pulls, None)?;
     if report.converged {
         return Ok((moved, report));
     }
-    let pulls: Vec<Pull<Design>> = set.iter().map(value).collect();
+    let pulls: Vec<Pull> = set.iter().map(value).collect();
     solve(rerun, state, &pulls, None)
 }
 

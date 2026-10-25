@@ -119,12 +119,12 @@ impl Spacing {
     /// keyed `key`, made by `number(label, value)` (see
     /// [`NumericInput::number`]). Switching the kind keeps the number. `set`
     /// puts the spacing set where the arguments keep it.
-    pub fn fields<'a, S: Scalar, A, T>(
+    pub fn fields<'a, A, T>(
         &self,
-        f: &mut EditForm<'a, S, A, T>,
+        f: &mut EditForm<'a, A, T>,
         key: &str,
         labels: [&str; 2],
-        number: impl FnOnce(&str, &NumericInput) -> Number<S>,
+        number: impl FnOnce(&str, &NumericInput) -> Number,
         set: impl Fn(&mut A, Spacing) + Clone + 'a,
     ) {
         let (mode, label) = match self {
@@ -178,18 +178,18 @@ impl Row {
 
     /// How far instance `k` is from the first, `value * k / divisor`
     /// enclosed in one go rather than accumulated step by step.
-    fn distance<S: Scalar>(&self, k: usize) -> GeopResult<S> {
-        let distance = S::from_f64(self.value).mul(S::from_i64(k as i64));
+    fn distance(&self, k: usize) -> GeopResult<Scalar> {
+        let distance = Scalar::from_f64(self.value).mul(Scalar::from_i64(k as i64));
         if self.divisor == 1 {
             Ok(distance)
         } else {
-            distance.div(S::from_i64(self.divisor as i64))
+            distance.div(Scalar::from_i64(self.divisor as i64))
         }
     }
 
     /// Where instance `k` is relative to the first, along the unit vector
     /// `unit`: none for the first itself.
-    pub fn offset<S: Scalar>(&self, unit: &Vector3<S>, k: usize) -> GeopResult<Option<Vector3<S>>> {
+    pub fn offset(&self, unit: &Vector3, k: usize) -> GeopResult<Option<Vector3>> {
         if k == 0 {
             return Ok(None);
         }
@@ -198,17 +198,12 @@ impl Row {
 
     /// The motion turning the first instance to instance `k`, round the
     /// axis through `point` along the unit vector `direction`.
-    pub fn turn<S: Scalar>(
-        &self,
-        point: &Vector3<S>,
-        direction: &Vector3<S>,
-        k: usize,
-    ) -> GeopResult<Pose<S>> {
+    pub fn turn(&self, point: &Vector3, direction: &Vector3, k: usize) -> GeopResult<Pose> {
         // In radians, enclosed in one go.
-        let radians = S::from_f64(self.value)
-            .mul(S::from_i64(k as i64))
-            .mul(S::PI)
-            .div(S::from_i64(180 * self.divisor as i64))?;
+        let radians = Scalar::from_f64(self.value)
+            .mul(Scalar::from_i64(k as i64))
+            .mul(Scalar::PI)
+            .div(Scalar::from_i64(180 * self.divisor as i64))?;
         Pose::rotation_about(point, direction, radians)
     }
 }
@@ -217,12 +212,12 @@ impl Row {
 /// `reader` reads the parameters — dragged by `handle` unless it follows a
 /// formula — calling `set` with the count it is set to: a formula as
 /// typed, a number rounded to a whole one of at least one, the seed alone.
-pub fn count_field<'a, S: Scalar, A, T>(
-    f: &mut EditForm<'a, S, A, T>,
+pub fn count_field<'a, A, T>(
+    f: &mut EditForm<'a, A, T>,
     key: &str,
     count: &NumericInput,
     reader: &Reader,
-    handle: Option<Track<S>>,
+    handle: Option<Track>,
     set: impl Fn(Edit<'_, A, T>, NumericInput) + 'a,
 ) {
     let mut number = Number::numeric(count, "count", reader, Unit::Count)

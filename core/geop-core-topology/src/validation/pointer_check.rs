@@ -1,4 +1,4 @@
-use geop_core_math::{geop_error::GeopError, scalars::Scalar};
+use geop_core_math::geop_error::GeopError;
 
 use crate::{CoedgeGeometry, Model, boundary::BoundaryType, validation::ValidationParameters};
 
@@ -6,11 +6,7 @@ use crate::{CoedgeGeometry, Model, boundary::BoundaryType, validation::Validatio
 /// an entry that actually exists in the corresponding arena — the most
 /// basic sanity check. Pushes every violation it finds onto `errors` rather
 /// than stopping at the first.
-pub fn check_pointers<S: Scalar>(
-    _params: &ValidationParameters<S>,
-    errors: &mut Vec<GeopError>,
-    model: &Model<S>,
-) {
+pub fn check_pointers(_params: &ValidationParameters, errors: &mut Vec<GeopError>, model: &Model) {
     for edge in model.edges.values() {
         if !model.vertices.contains_key(&edge.start_vertex) {
             errors.push(GeopError::new(format!(
@@ -149,18 +145,15 @@ mod tests {
     use super::check_pointers;
     use crate::Model;
     use crate::test_fixtures::{check_errors, test_cube_model, test_cube_solid};
-    use geop_core_math::{for_all_scalars, scalars::Scalar};
 
-    fn check_valid_cube_passes<S: Scalar>() {
-        assert!(check_errors(check_pointers, &test_cube_model::<S>()).is_empty());
-    }
     #[test]
     fn valid_cube_passes() {
-        for_all_scalars!(check_valid_cube_passes);
+        assert!(check_errors(check_pointers, &test_cube_model()).is_empty());
     }
 
-    fn check_dangling_vertex_reference_fails<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn dangling_vertex_reference_fails() {
+        let mut model = Model::new();
         let solid_id = test_cube_solid(&mut model);
         let shell_id = model.get_solid(solid_id).unwrap().shells[0];
         let face_id = model.get_shell(shell_id).unwrap().faces[0];
@@ -168,13 +161,10 @@ mod tests {
         let errors = check_errors(check_pointers, &model);
         assert!(!errors.is_empty());
     }
-    #[test]
-    fn dangling_vertex_reference_fails() {
-        for_all_scalars!(check_dangling_vertex_reference_fails);
-    }
 
-    fn check_multiple_dangling_references_are_all_reported<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn multiple_dangling_references_are_all_reported() {
+        let mut model = Model::new();
         let solid_id = test_cube_solid(&mut model);
         let shell_id = model.get_solid(solid_id).unwrap().shells[0];
         let face_id = model.get_shell(shell_id).unwrap().faces[0];
@@ -182,9 +172,5 @@ mod tests {
         model.shells.get_mut(&shell_id).unwrap().solid = Some(crate::SolidId(9999));
         let errors = check_errors(check_pointers, &model);
         assert_eq!(errors.len(), 2);
-    }
-    #[test]
-    fn multiple_dangling_references_are_all_reported() {
-        for_all_scalars!(check_multiple_dangling_references_are_all_reported);
     }
 }

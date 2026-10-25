@@ -34,17 +34,17 @@ use crate::{
 
 /// How a pattern moves each copy on from the one before.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Step<S: Scalar> {
+pub enum Step {
     /// Along the line `along` — towards its end, or its start if
     /// `backwards` — by `spacing`.
     Along {
         along: CurveId,
         backwards: bool,
-        spacing: S,
+        spacing: Scalar,
     },
     /// Round the point `center`, counter-clockwise by `angle` radians
     /// (clockwise if negative).
-    Round { center: PointId, angle: S },
+    Round { center: PointId, angle: Scalar },
 }
 
 /// A pattern made: its construction curve, and the dimension of its
@@ -69,7 +69,7 @@ impl Motion {
     }
 
     /// The motion `by` stands for, as drawn: see [`Constraint::Moved`].
-    fn of<S: Scalar>(sketch: &Sketch<S>, by: CurveId) -> GeopResult<Motion> {
+    fn of(sketch: &Sketch, by: CurveId) -> GeopResult<Motion> {
         let (start, end, turn) = match sketch.curve(by)?.kind {
             CurveKind::Line { start, end } => (start, end, 0.0),
             CurveKind::Arc { start, end, sweep } => (start, end, sweep.to_f64()),
@@ -87,7 +87,7 @@ impl Motion {
     }
 }
 
-impl<S: Scalar> Sketch<S> {
+impl Sketch {
     /// A copy of the curve `source`, its points mapped by `point`, tied to
     /// it where its points cannot say it all: an arc's sweep, a circle's
     /// radius. As construction geometry if the source is; never fixed.
@@ -217,19 +217,14 @@ impl<S: Scalar> Sketch<S> {
     /// The construction curve runs from a point of the original — for a
     /// circular pattern the one furthest from the center — to that point's
     /// first copy. A point at a circular pattern's center is its own copy.
-    pub fn pattern(
-        &mut self,
-        curves: &[CurveId],
-        step: &Step<S>,
-        count: usize,
-    ) -> GeopResult<Made> {
+    pub fn pattern(&mut self, curves: &[CurveId], step: &Step, count: usize) -> GeopResult<Made> {
         if count < 2 {
             return Err(GeopError::new(format!(
                 "a pattern of {count} is no pattern: it takes 2 or more"
             )));
         }
         match *step {
-            Step::Along { spacing, .. } if !spacing.definitely_greater(S::ZERO) => {
+            Step::Along { spacing, .. } if !spacing.definitely_greater(Scalar::ZERO) => {
                 return Err(GeopError::new(format!(
                     "a linear pattern's spacing must be more than 0, not {spacing:?}"
                 )));
@@ -541,9 +536,9 @@ impl<S: Scalar> Sketch<S> {
 
 /// Checks that `count` copies `angle` apart turn — they do not stay put —
 /// and go round once at most, the last short of the first.
-fn once_round<S: Scalar>(angle: S, count: usize) -> GeopResult<()> {
-    let turned = angle.abs().mul(S::from_f64((count - 1) as f64));
-    if angle.could_be_equal(S::ZERO) || !turned.definitely_less(S::TWO.mul(S::PI)) {
+fn once_round(angle: Scalar, count: usize) -> GeopResult<()> {
+    let turned = angle.abs().mul(Scalar::from_f64((count - 1) as f64));
+    if angle.could_be_equal(Scalar::ZERO) || !turned.definitely_less(Scalar::TWO.mul(Scalar::PI)) {
         return Err(GeopError::new(format!(
             "{count} copies {:.3}° apart do not go round once short of the first: a circular pattern turns, once at most",
             angle.to_f64().to_degrees()
@@ -562,13 +557,10 @@ struct Generation {
 mod tests {
     use super::*;
     use crate::plain::Plain;
-    use geop_core_math::scalars::ScalInF64;
     use std::f64::consts::PI;
 
-    type T = ScalInF64;
-
-    fn n(x: f64) -> T {
-        T::from_f64(x)
+    fn n(x: f64) -> Scalar {
+        Scalar::from_f64(x)
     }
 
     fn close(a: P2, b: P2) -> bool {
@@ -577,7 +569,7 @@ mod tests {
 
     /// A unit square at `(x, y)`, its corner fixed and its sides
     /// dimensioned: fully constrained.
-    fn square(s: &mut Sketch<T>, x: f64, y: f64) -> Vec<CurveId> {
+    fn square(s: &mut Sketch, x: f64, y: f64) -> Vec<CurveId> {
         let p = [[x, y], [x + 1.0, y], [x + 1.0, y + 1.0], [x, y + 1.0]]
             .map(|q| s.add_point(n(q[0]), n(q[1])));
         let l: Vec<CurveId> = (0..4).map(|i| s.add_line(p[i], p[(i + 1) % 4])).collect();
@@ -601,7 +593,7 @@ mod tests {
         l
     }
 
-    fn y_axis(s: &mut Sketch<T>) -> CurveId {
+    fn y_axis(s: &mut Sketch) -> CurveId {
         let o = s.add_fixed_point(n(0.0), n(0.0));
         let up = s.add_fixed_point(n(0.0), n(1.0));
         s.add_line(o, up)
@@ -611,7 +603,7 @@ mod tests {
     /// one closed slot whose mirrored half follows the original's radius.
     #[test]
     fn a_mirrored_half_closes_on_the_line() {
-        let mut s = Sketch::<T>::new();
+        let mut s = Sketch::new();
         let axis = y_axis(&mut s);
         let p =
             [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]].map(|q| s.add_point(n(q[0]), n(q[1])));
@@ -657,7 +649,7 @@ mod tests {
             close(center, [-original[0], original[1]]),
             "{center:?} {original:?}"
         );
-        s.enclose::<T>().unwrap();
+        s.enclose().unwrap();
     }
 
     /// Mirroring a semicircle's arc — where equal radii say nothing about
@@ -665,7 +657,7 @@ mod tests {
     /// is proven.
     #[test]
     fn mirrored_half_circles_keep_their_sweep() {
-        let mut s = Sketch::<T>::new();
+        let mut s = Sketch::new();
         let axis = y_axis(&mut s);
         let a = s.add_point(n(1.0), n(0.0));
         let b = s.add_point(n(3.0), n(0.0));
@@ -687,7 +679,7 @@ mod tests {
         assert!(
             matches!(s.curves[&made[0]].kind, CurveKind::Arc { sweep, .. } if (sweep.to_f64() + PI).abs() < 1e-9)
         );
-        s.enclose::<T>().unwrap();
+        s.enclose().unwrap();
     }
 
     /// Three squares along the x axis, 2 apart: the copies follow the
@@ -695,7 +687,7 @@ mod tests {
     /// removed at the end of the row.
     #[test]
     fn linear_patterns_follow_their_spacing_and_count() {
-        let mut s = Sketch::<T>::new();
+        let mut s = Sketch::new();
         let o = s.add_fixed_point(n(0.0), n(0.0));
         let x = s.add_fixed_point(n(1.0), n(0.0));
         let x_axis = s.add_line(o, x);
@@ -716,7 +708,7 @@ mod tests {
         let report = s.solve().unwrap();
         assert!(report.converged && report.dof == 0, "{report:?}");
         assert_eq!(s.regions().unwrap().len(), 3);
-        let corners = |s: &Sketch<T>| -> Vec<P2> {
+        let corners = |s: &Sketch| -> Vec<P2> {
             let mut c: Vec<P2> = s.points.keys().map(|&p| xy(s, p)).collect();
             c.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
             c
@@ -739,14 +731,14 @@ mod tests {
         assert_eq!(s.regions().unwrap().len(), 2);
         assert!(s.solve().unwrap().converged);
         s.validate().unwrap();
-        s.enclose::<T>().unwrap();
+        s.enclose().unwrap();
     }
 
     /// Six holes round a bolt circle: a circle and a slot copied round the
     /// origin, the center its own copy where a line ends on it.
     #[test]
     fn circular_patterns_turn_round_their_center() {
-        let mut s = Sketch::<T>::new();
+        let mut s = Sketch::new();
         let o = s.add_fixed_point(n(0.0), n(0.0));
         let c = s.add_point(n(2.0), n(0.0));
         let hole = s.add_circle(c, n(0.25));
@@ -814,12 +806,12 @@ mod tests {
         s.set_pattern_count(made.by, 8).unwrap();
         assert_eq!(s.pattern_count(made.by), Some(8));
         assert!(s.solve().unwrap().converged);
-        s.enclose::<T>().unwrap();
+        s.enclose().unwrap();
     }
 
     #[test]
     fn copies_refuse_what_they_cannot_copy_by() {
-        let mut s = Sketch::<T>::new();
+        let mut s = Sketch::new();
         let c = s.add_point(n(0.0), n(0.0));
         let circle = s.add_circle(c, n(1.0));
         let e = s.mirror(&[circle], circle).unwrap_err();

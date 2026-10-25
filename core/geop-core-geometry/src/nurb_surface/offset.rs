@@ -26,10 +26,10 @@ use crate::{
 
 /// Whether the surface's normal points along a direction, from `along`,
 /// the two dotted: it must be definitely positive or definitely negative.
-fn points_along<S: Scalar>(along: S) -> GeopResult<bool> {
-    if along.definitely_greater(S::ZERO) {
+fn points_along(along: Scalar) -> GeopResult<bool> {
+    if along.definitely_greater(Scalar::ZERO) {
         Ok(true)
-    } else if along.definitely_less(S::ZERO) {
+    } else if along.definitely_less(Scalar::ZERO) {
         Ok(false)
     } else {
         Err(GeopError::new(format!(
@@ -39,11 +39,11 @@ fn points_along<S: Scalar>(along: S) -> GeopResult<bool> {
 }
 
 /// `distance` if `along`, else its opposite.
-fn signed<S: Scalar>(distance: S, along: bool) -> S {
+fn signed(distance: Scalar, along: bool) -> Scalar {
     if along { distance } else { distance.neg() }
 }
 
-impl<S: Scalar> NurbSurface3D<S> {
+impl NurbSurface3D {
     /// The surface `distance` along its normal — against it for a negative
     /// distance — with the same parametrization: the offset of the point at
     /// `(u, v)` is at `(u, v)` of the result, so a trim loop's `(u, v)` stay
@@ -53,7 +53,7 @@ impl<S: Scalar> NurbSurface3D<S> {
     /// line or a circular arc (see the module docs). Fails for any other
     /// surface, and where the offset would pass through itself: a cylinder
     /// shrunk past its axis, a sphere past its center.
-    pub fn offset(&self, distance: S) -> GeopResult<Self> {
+    pub fn offset(&self, distance: Scalar) -> GeopResult<Self> {
         if let Some(plane) = self.as_plane()? {
             return Ok(self.translate(plane.normal.prod_scalar(distance)));
         }
@@ -78,7 +78,7 @@ impl<S: Scalar> NurbSurface3D<S> {
     /// is affine in `(h, r)` for each `i`, so turning the offset meridian's
     /// control points gives the offset surface. The net is checked to be
     /// exactly that, point for point, before anything is built from it.
-    fn offset_revolution(&self, axis: &Axis<S>, along_u: bool, distance: S) -> GeopResult<Self> {
+    fn offset_revolution(&self, axis: &Axis, along_u: bool, distance: Scalar) -> GeopResult<Self> {
         let (rows, len) = if along_u {
             (self.num_v, self.num_u)
         } else {
@@ -93,27 +93,27 @@ impl<S: Scalar> NurbSurface3D<S> {
         };
         let (o, a) = (axis.point, axis.direction);
         // A point's height along the axis, and the way from the axis to it.
-        let meridian = |p: &Vector3<S>| {
+        let meridian = |p: &Vector3| {
             let d = p.sub(&o);
             let h = d.prod_dot(&a);
             (h, d.sub(&a.prod_scalar(h)))
         };
-        let points = dehomogenize::<S, 4, 3>(&self.control_points);
+        let points = dehomogenize::<4, 3>(&self.control_points);
 
         let mut h = Vec::with_capacity(rows);
         let mut r = Vec::with_capacity(rows);
-        let mut circle: Option<Vec<Vector3<S>>> = None;
+        let mut circle: Option<Vec<Vector3>> = None;
         for j in 0..rows {
             // A row's first control point is on its circle: the row is a
             // clamped arc.
             let (hj, radial) = meridian(&points[index(0, j)]);
             let r2 = radial.norm_sq();
-            let rj = if r2.could_be_equal(S::ZERO) {
-                S::ZERO
+            let rj = if r2.could_be_equal(Scalar::ZERO) {
+                Scalar::ZERO
             } else {
                 let rj = r2.sqrt()?;
                 if circle.is_none() {
-                    let inv = S::ONE.div(rj)?;
+                    let inv = Scalar::ONE.div(rj)?;
                     circle = Some(
                         (0..len)
                             .map(|i| meridian(&points[index(i, j)]).1.prod_scalar(inv))
@@ -128,8 +128,9 @@ impl<S: Scalar> NurbSurface3D<S> {
         let circle = circle.ok_or_else(|| {
             GeopError::new("NurbSurface::offset: every row of the surface is a pole")
         })?;
-        let turned =
-            |hj: S, rj: S, i: usize| o.add(&a.prod_scalar(hj)).add(&circle[i].prod_scalar(rj));
+        let turned = |hj: Scalar, rj: Scalar, i: usize| {
+            o.add(&a.prod_scalar(hj)).add(&circle[i].prod_scalar(rj))
+        };
         for j in 0..rows {
             for i in 0..len {
                 if !turned(h[j], r[j], i).could_be_equal(&points[index(i, j)]) {
@@ -151,7 +152,7 @@ impl<S: Scalar> NurbSurface3D<S> {
         let profile = NurbCurve::try_new(
             degree,
             (0..rows)
-                .map(|j| Vector3::from_array([h[j], r[j], S::ZERO]).homogeneous(weight(j)))
+                .map(|j| Vector3::from_array([h[j], r[j], Scalar::ZERO]).homogeneous(weight(j)))
                 .collect(),
             knots,
         )?;
@@ -159,15 +160,15 @@ impl<S: Scalar> NurbSurface3D<S> {
         // Which way the surface's own normal points, in the meridian plane
         // through the middle of the patch.
         let ((u0, u1), (v0, v1)) = (self.domain_u(), self.domain_v());
-        let (um, vm) = (u0.add(u1).div(S::TWO)?, v0.add(v1).div(S::TWO)?);
+        let (um, vm) = (u0.add(u1).div(Scalar::TWO)?, v0.add(v1).div(Scalar::TWO)?);
         let x = self.evaluate(um, vm)?;
         let normal = self.normal(um, vm)?;
         let (hx, radial) = meridian(&x);
         let rx = radial.norm();
         let er = radial.normalize()?;
-        let in_space = |dh: S, dr: S| a.prod_scalar(dh).add(&er.prod_scalar(dr));
+        let in_space = |dh: Scalar, dr: Scalar| a.prod_scalar(dh).add(&er.prod_scalar(dr));
 
-        let offset: Vec<(S, S)> = if let Some(line) = profile.as_line()? {
+        let offset: Vec<(Scalar, Scalar)> = if let Some(line) = profile.as_line()? {
             // The meridian's normal, turned to point the way the surface's
             // does: every control point moves `distance` along it.
             let (nh, nr) = (line.direction[1].neg(), line.direction[0]);
@@ -181,7 +182,7 @@ impl<S: Scalar> NurbSurface3D<S> {
             let radius = arc.circle.radius;
             let outward = in_space(hx.sub(hc), rx.sub(rc));
             let scaled = radius.add(signed(distance, points_along(normal.prod_dot(&outward))?));
-            if !scaled.definitely_greater(S::ZERO) {
+            if !scaled.definitely_greater(Scalar::ZERO) {
                 return Err(GeopError::new(format!(
                     "NurbSurface::offset: offsetting by {distance:?} shrinks the meridian's arc of radius {radius:?} past its center"
                 )));
@@ -195,7 +196,10 @@ impl<S: Scalar> NurbSurface3D<S> {
                 "NurbSurface::offset: the surface of revolution's meridian is neither a line nor a circular arc",
             ));
         };
-        if offset.iter().any(|(_, rj)| rj.definitely_less(S::ZERO)) {
+        if offset
+            .iter()
+            .any(|(_, rj)| rj.definitely_less(Scalar::ZERO))
+        {
             return Err(GeopError::new(format!(
                 "NurbSurface::offset: offsetting by {distance:?} takes the surface of revolution across its axis"
             )));
@@ -221,33 +225,29 @@ impl<S: Scalar> NurbSurface3D<S> {
 #[cfg(test)]
 mod tests {
     use crate::test_fixtures::knots;
-    use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector4};
+    use geop_core_math::{scalars::Scalar, vector::Vector4};
 
     use super::*;
 
     const R2: f64 = std::f64::consts::FRAC_1_SQRT_2;
 
-    fn h<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
-        Vector4::from_array([x * w, y * w, z * w, w].map(S::from_f64))
+    fn h(x: f64, y: f64, z: f64, w: f64) -> Vector4 {
+        Vector4::from_array([x * w, y * w, z * w, w].map(Scalar::from_f64))
     }
 
     /// Whether `offset` is `surface` moved `distance` along its normal, at
     /// a grid of samples.
-    fn assert_offset<S: Scalar>(
-        surface: &NurbSurface3D<S>,
-        offset: &NurbSurface3D<S>,
-        distance: f64,
-    ) {
+    fn assert_offset(surface: &NurbSurface3D, offset: &NurbSurface3D, distance: f64) {
         let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
         for a in 0..=4 {
             for b in 0..=4 {
-                let u = S::interpolate(u0, u1, S::from_f64(a as f64 / 4.0));
-                let v = S::interpolate(v0, v1, S::from_f64(b as f64 / 4.0));
+                let u = Scalar::interpolate(u0, u1, Scalar::from_f64(a as f64 / 4.0));
+                let v = Scalar::interpolate(v0, v1, Scalar::from_f64(b as f64 / 4.0));
                 let expected = surface.evaluate(u, v).unwrap().add(
                     &surface
                         .normal(u, v)
                         .unwrap()
-                        .prod_scalar(S::from_f64(distance)),
+                        .prod_scalar(Scalar::from_f64(distance)),
                 );
                 let got = offset.evaluate(u, v).unwrap();
                 assert!(
@@ -258,8 +258,9 @@ mod tests {
         }
     }
 
-    fn check_plane<S: Scalar>() {
-        let flat = NurbSurface3D::<S>::try_new(
+    #[test]
+    fn planes_move_along_their_normal() {
+        let flat = NurbSurface3D::try_new(
             1,
             1,
             vec![
@@ -272,17 +273,13 @@ mod tests {
             knots(&[0., 0., 1., 1.]),
         )
         .unwrap();
-        assert_offset(&flat, &flat.offset(S::from_f64(0.3)).unwrap(), 0.3);
-        assert_offset(&flat, &flat.offset(S::from_f64(-0.3)).unwrap(), -0.3);
-    }
-    #[test]
-    fn planes_move_along_their_normal() {
-        for_all_scalars!(check_plane);
+        assert_offset(&flat, &flat.offset(Scalar::from_f64(0.3)).unwrap(), 0.3);
+        assert_offset(&flat, &flat.offset(Scalar::from_f64(-0.3)).unwrap(), -0.3);
     }
 
     /// A quarter of a cylinder of radius 2 around the z axis, `u` around it
     /// and `v` along it, 3 high; its normal points away from the axis.
-    fn quarter_cylinder<S: Scalar>() -> NurbSurface3D<S> {
+    fn quarter_cylinder() -> NurbSurface3D {
         let ring = [(2., 0., 1.), (2., 2., R2), (0., 2., 1.)];
         let cps = ring
             .iter()
@@ -298,27 +295,25 @@ mod tests {
         .unwrap()
     }
 
-    fn check_cylinder<S: Scalar>() {
-        let cylinder = quarter_cylinder::<S>();
-        for d in [0.5, -0.5, -1.5] {
-            assert_offset(&cylinder, &cylinder.offset(S::from_f64(d)).unwrap(), d);
-        }
-        assert!(cylinder.offset(S::from_f64(-2.5)).is_err());
-    }
     #[test]
     fn cylinders_change_radius() {
-        for_all_scalars!(check_cylinder);
+        let cylinder = quarter_cylinder();
+        for d in [0.5, -0.5, -1.5] {
+            assert_offset(&cylinder, &cylinder.offset(Scalar::from_f64(d)).unwrap(), d);
+        }
+        assert!(cylinder.offset(Scalar::from_f64(-2.5)).is_err());
     }
 
     /// A quarter of a cone around the z axis, from radius 2 at z = 0 to
     /// radius 1 at z = 1.
-    fn check_cone<S: Scalar>() {
+    #[test]
+    fn cones_move_along_their_normal() {
         let ring = [(1., 0., 1.), (1., 1., R2), (0., 1., 1.)];
         let cps = ring
             .iter()
             .flat_map(|&(x, y, w)| [h(2. * x, 2. * y, 0., w), h(x, y, 1., w)])
             .collect();
-        let cone = NurbSurface3D::<S>::try_new(
+        let cone = NurbSurface3D::try_new(
             2,
             1,
             cps,
@@ -326,16 +321,13 @@ mod tests {
             knots(&[0., 0., 1., 1.]),
         )
         .unwrap();
-        assert_offset(&cone, &cone.offset(S::from_f64(-0.25)).unwrap(), -0.25);
-    }
-    #[test]
-    fn cones_move_along_their_normal() {
-        for_all_scalars!(check_cone);
+        assert_offset(&cone, &cone.offset(Scalar::from_f64(-0.25)).unwrap(), -0.25);
     }
 
     /// An eighth of the sphere of radius 2 around the origin: `u` around
     /// the z axis, `v` from the equator up to the pole.
-    fn check_sphere<S: Scalar>() {
+    #[test]
+    fn spheres_change_radius() {
         let meridian = [(2., 0., 1.), (2., 2., R2), (0., 2., 1.)];
         let ring = [(1., 0., 1.), (1., 1., R2), (0., 1., 1.)];
         let cps = ring
@@ -346,7 +338,7 @@ mod tests {
                     .map(move |&(r, z, wm)| h(r * x, r * y, z, wr * wm))
             })
             .collect();
-        let sphere = NurbSurface3D::<S>::try_new(
+        let sphere = NurbSurface3D::try_new(
             2,
             2,
             cps,
@@ -355,17 +347,18 @@ mod tests {
         )
         .unwrap();
         // Its natural normal: whichever way, the offset follows it.
-        assert_offset(&sphere, &sphere.offset(S::from_f64(0.5)).unwrap(), 0.5);
-        assert_offset(&sphere, &sphere.offset(S::from_f64(-0.5)).unwrap(), -0.5);
-    }
-    #[test]
-    fn spheres_change_radius() {
-        for_all_scalars!(check_sphere);
+        assert_offset(&sphere, &sphere.offset(Scalar::from_f64(0.5)).unwrap(), 0.5);
+        assert_offset(
+            &sphere,
+            &sphere.offset(Scalar::from_f64(-0.5)).unwrap(),
+            -0.5,
+        );
     }
 
     /// A quarter of a torus around the z axis, tube radius 1 around the
     /// circle of radius 3, the outer half of the tube.
-    fn check_torus<S: Scalar>() {
+    #[test]
+    fn tori_change_tube_radius() {
         let tube = [(4., 0., 1.), (4., 1., R2), (3., 1., 1.)];
         let ring = [(1., 0., 1.), (1., 1., R2), (0., 1., 1.)];
         let cps = ring
@@ -375,7 +368,7 @@ mod tests {
                     .map(move |&(r, z, wt)| h(r * x, r * y, z, wr * wt))
             })
             .collect();
-        let torus = NurbSurface3D::<S>::try_new(
+        let torus = NurbSurface3D::try_new(
             2,
             2,
             cps,
@@ -383,21 +376,18 @@ mod tests {
             knots(&[0., 0., 0., 1., 1., 1.]),
         )
         .unwrap();
-        assert_offset(&torus, &torus.offset(S::from_f64(0.25)).unwrap(), 0.25);
-        assert_offset(&torus, &torus.offset(S::from_f64(-0.25)).unwrap(), -0.25);
-    }
-    #[test]
-    fn tori_change_tube_radius() {
-        for_all_scalars!(check_torus);
+        assert_offset(&torus, &torus.offset(Scalar::from_f64(0.25)).unwrap(), 0.25);
+        assert_offset(
+            &torus,
+            &torus.offset(Scalar::from_f64(-0.25)).unwrap(),
+            -0.25,
+        );
     }
 
-    fn check_freeform<S: Scalar>() {
-        let mut bent = quarter_cylinder::<S>();
-        bent.control_points[2] = h(2.5, 2., 0., R2);
-        assert!(bent.offset(S::from_f64(0.1)).is_err());
-    }
     #[test]
     fn freeform_surfaces_are_refused() {
-        for_all_scalars!(check_freeform);
+        let mut bent = quarter_cylinder();
+        bent.control_points[2] = h(2.5, 2., 0., R2);
+        assert!(bent.offset(Scalar::from_f64(0.1)).is_err());
     }
 }

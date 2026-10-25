@@ -16,7 +16,7 @@
 //! runs with `cargo test -- --ignored`, before changing a blend or the
 //! booleans under it.
 
-use geop_core_program::{operation::Operation, program::Program, values::Design};
+use geop_core_program::{operation::Operation, program::Program};
 use geop_core_topology::EdgeId;
 use geop_ops_extrude_revolve::testing::{
     bodies::block, bodies::block_corner_cut_off, bodies::block_drilled, bodies::block_pocketed,
@@ -70,7 +70,7 @@ fn stress(program: Program, size: f64) {
 /// Each of `groups` — what a case is called, and its edges — blended
 /// together, by fillet and by chamfer; panics listing every case gone
 /// wrong. `size` is the fillet's radius and the chamfer's distance.
-fn blend_cases(part: &NamedModel<Design>, groups: Vec<(String, Vec<String>)>, size: f64) {
+fn blend_cases(part: &NamedModel, groups: Vec<(String, Vec<String>)>, size: f64) {
     let mut cases = Cases::default();
     for (what, edges) in groups {
         let args = FilletArgs::constant(edges.clone(), size);

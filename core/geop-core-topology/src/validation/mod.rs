@@ -25,7 +25,7 @@ pub use parameters::ValidationParameters;
 use std::collections::{BTreeMap, HashMap};
 
 use crate::{Body, CoedgeGeometry, EdgeId, FaceId, Model, VertexId};
-use geop_core_math::{geop_error::GeopError, scalars::Scalar};
+use geop_core_math::geop_error::GeopError;
 
 /// The vertices, edges and faces of one body (see [`body_groups`]).
 #[derive(Default)]
@@ -42,9 +42,9 @@ pub(crate) struct BodyGroup {
 /// too. An entity of no body — of a face whose shell is not there, as in a
 /// model still being put together — is in a group of its own with all
 /// others like it.
-pub(crate) fn body_groups<S: Scalar>(model: &Model<S>) -> Vec<BodyGroup> {
+pub(crate) fn body_groups(model: &Model) -> Vec<BodyGroup> {
     let body_of_face = |face: FaceId| model.body_of_face(face).ok();
-    let body_of_coedge = |c: &crate::Coedge<S>| body_of_face(c.face);
+    let body_of_coedge = |c: &crate::Coedge| body_of_face(c.face);
     let mut edge_body: HashMap<EdgeId, Option<Body>> = HashMap::new();
     let mut vertex_body: HashMap<VertexId, Option<Body>> = HashMap::new();
     for coedge in model.coedges.values() {
@@ -100,10 +100,7 @@ pub(crate) fn body_groups<S: Scalar>(model: &Model<S>) -> Vec<BodyGroup> {
     groups.into_values().collect()
 }
 
-pub fn validate<S: Scalar>(
-    params: &ValidationParameters<S>,
-    model: &Model<S>,
-) -> Result<(), Vec<GeopError>> {
+pub fn validate(params: &ValidationParameters, model: &Model) -> Result<(), Vec<GeopError>> {
     let mut errors = Vec::new();
 
     // First, because it explains the rest — see `check_numerical_accuracy`.
@@ -146,10 +143,7 @@ pub fn validate<S: Scalar>(
 /// quick "is this model still well-formed" check after every mutating step
 /// (e.g. a test sweeping many scenes) without paying for the searches that
 /// dominate `validate`'s cost.
-pub fn validate_fast<S: Scalar>(
-    params: &ValidationParameters<S>,
-    model: &Model<S>,
-) -> Result<(), Vec<GeopError>> {
+pub fn validate_fast(params: &ValidationParameters, model: &Model) -> Result<(), Vec<GeopError>> {
     let mut errors = Vec::new();
 
     // First, because it explains the rest: an entity carrying more
@@ -177,20 +171,18 @@ mod tests {
     use super::{ValidationParameters, validate};
     use crate::Model;
     use crate::test_fixtures::test_cube_solid;
-    use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
+    use geop_core_math::{scalars::Scalar, vector::Vector3};
 
-    fn check_cube_passes_full_validate<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn cube_passes_full_validate() {
+        let mut model = Model::new();
         test_cube_solid(&mut model);
         validate(&ValidationParameters::default(), &model).unwrap();
     }
-    #[test]
-    fn cube_passes_full_validate() {
-        for_all_scalars!(check_cube_passes_full_validate);
-    }
 
-    fn check_independent_failures_are_all_reported<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn independent_failures_are_all_reported() {
+        let mut model = Model::new();
         test_cube_solid(&mut model);
 
         // Break two independent checks at once: a shell/face backref
@@ -207,16 +199,12 @@ mod tests {
 
         let vertex_id = *model.vertices.keys().next().unwrap();
         model.vertices.get_mut(&vertex_id).unwrap().point =
-            Vector3::from_array([S::from_f64(42.0); 3]);
+            Vector3::from_array([Scalar::from_f64(42.0); 3]);
 
         // Both the shell backref break and the moved vertex (which affects
         // every edge/coedge touching it) show up; the exact count isn't the
         // point, only that more than one independent failure got reported.
         let errors = validate(&ValidationParameters::default(), &model).unwrap_err();
         assert!(errors.len() >= 2);
-    }
-    #[test]
-    fn independent_failures_are_all_reported() {
-        for_all_scalars!(check_independent_failures_are_all_reported);
     }
 }

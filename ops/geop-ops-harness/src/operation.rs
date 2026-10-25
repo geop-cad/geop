@@ -13,7 +13,7 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::{part::StepContext, reader::Reader, values::Design};
+use geop_core_program::{part::StepContext, reader::Reader};
 use geop_lib_sweep::{Control, SweepLoop, circle_at, sweep_along};
 use geop_ops_model::Profile;
 use geop_ops_model::selection::Selected;
@@ -83,23 +83,23 @@ pub type RouteEditing = FormState<RouteSession>;
 
 /// What a step of `args` routes: the bundle's diameter, the smallest
 /// radius it may bend with, and the path through the points it picked.
-struct Plan<S: Scalar> {
+struct Plan {
     diameter: f64,
     min_bend_radius: f64,
-    path: RoutePath<S>,
-    measure: Measure<S>,
+    path: RoutePath,
+    measure: Measure,
 }
 
 impl RouteArgs {
     /// The points it runs through, in the part `reader` reads.
-    fn waypoints(&self, reader: &Reader) -> GeopResult<Vec<Waypoint<Design>>> {
+    fn waypoints(&self, reader: &Reader) -> GeopResult<Vec<Waypoint>> {
         (self.through.iter().enumerate())
             .map(|(i, entity)| Waypoint::of(reader, entity, i))
             .collect()
     }
 
     /// The route through `waypoints`, the points it runs through.
-    fn plan<S: Scalar>(&self, waypoints: &[Waypoint<S>]) -> GeopResult<Plan<S>> {
+    fn plan(&self, waypoints: &[Waypoint]) -> GeopResult<Plan> {
         let diameter = bundle_diameter(&self.wires, self.fill)?;
         // Any tighter, and the bundle would fold into itself.
         if !(self.bend_factor > 0.5 && self.bend_factor.is_finite()) {
@@ -125,7 +125,7 @@ impl RouteArgs {
     }
 }
 
-impl<S: Scalar> Plan<S> {
+impl Plan {
     /// Refuses a route bending tighter than the bundle may, saying where.
     fn check_bends(&self, bend_factor: f64) -> GeopResult<()> {
         let tight = self.measure.too_tight(self.min_bend_radius);
@@ -194,11 +194,11 @@ const SAMPLES_PER_CURVE: usize = 16;
 
 /// The step `R`'s bundle swept along its route through `waypoints`, the
 /// points it picked, into the solid `route(R)` (see [`Route`]).
-fn sweep<S: Scalar>(
-    model: &mut NamedModel<S>,
+fn sweep(
+    model: &mut NamedModel,
     step: &str,
     args: &RouteArgs,
-    waypoints: &[Waypoint<S>],
+    waypoints: &[Waypoint],
 ) -> GeopResult<()> {
     let namer = Namer::new("route", step)?;
     let plan = args.plan(waypoints)?;
@@ -206,7 +206,7 @@ fn sweep<S: Scalar>(
     // The bundle's section, square to the route where it starts.
     let chain = &plan.path.chain;
     let start = chain.joints()?[0];
-    let plane = frame_along(start, &chain.curves[0].tangent(S::ZERO)?)?;
+    let plane = frame_along(start, &chain.curves[0].tangent(Scalar::ZERO)?)?;
     let section = SweepLoop::plain(Profile::closed(circle_at(0.0, 0.0, plan.diameter / 2.0)?));
     let name = namer.root();
     sweep_along(
@@ -223,10 +223,10 @@ fn sweep<S: Scalar>(
 
 /// The cable the step `R` lays, `route(R)` (see [`Route`]), through
 /// `waypoints`, the points it picked.
-fn cable_through<S: Scalar>(args: &RouteArgs, waypoints: &[Waypoint<S>]) -> GeopResult<Cable<S>> {
+fn cable_through(args: &RouteArgs, waypoints: &[Waypoint]) -> GeopResult<Cable> {
     let plan = args.plan(waypoints)?;
     let length = plan.measure.length;
-    let extra = S::from_f64(2.0 * args.service_loop);
+    let extra = Scalar::from_f64(2.0 * args.service_loop);
     let wires = (args.wires.iter())
         .map(|wire| {
             Ok(CutWire {
@@ -251,22 +251,22 @@ fn cable_through<S: Scalar>(args: &RouteArgs, waypoints: &[Waypoint<S>]) -> Geop
 /// `model`, and the cable it lays: a route in a model on its own, in any
 /// scalar, as a test lays one.
 #[cfg(test)]
-pub(crate) fn lay<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub(crate) fn lay(
+    model: &mut NamedModel,
     step: &str,
     args: &RouteArgs,
-    waypoints: &[Waypoint<S>],
-) -> GeopResult<Cable<S>> {
+    waypoints: &[Waypoint],
+) -> GeopResult<Cable> {
     sweep(model, step, args, waypoints)?;
     cable_through(args, waypoints)
 }
 
 /// Records the cable `route(R)` of the step `R`, through its points in the
 /// part `reader` reads.
-fn record(reader: &Reader, (step, args): &(String, RouteArgs)) -> GeopResult<Cables<Design>> {
+fn record(reader: &Reader, (step, args): &(String, RouteArgs)) -> GeopResult<Cables> {
     let ctx = with_context!("the cable of route({step})");
     let namer = Namer::new("route", step)?;
-    let mut cables: Cables<Design> = reader.previous()?;
+    let mut cables: Cables = reader.previous()?;
     let waypoints = args.waypoints(reader).with_context(ctx)?;
     let cable = cable_through(args, &waypoints).with_context(ctx)?;
     cables.add(namer.root(), cable).with_context(ctx)?;
@@ -296,9 +296,9 @@ fn form<'a>(
     context: &'a Context<'a>,
     args: &RouteArgs,
     session: &RouteSession,
-) -> EditForm<'a, Design, RouteArgs, RouteSession> {
+) -> EditForm<'a, RouteArgs, RouteSession> {
     let before = &context.before;
-    let mut f = EditForm::<Design, RouteArgs, RouteSession>::default();
+    let mut f = EditForm::<RouteArgs, RouteSession>::default();
     f.pick(
         "through",
         "through",
@@ -506,7 +506,7 @@ impl PartOperation for Route {
         context: &'a Context<'a>,
         args: &RouteArgs,
         editing: &RouteEditing,
-    ) -> EditForm<'a, Design, RouteArgs, RouteSession> {
+    ) -> EditForm<'a, RouteArgs, RouteSession> {
         form(context, args, &editing.session)
     }
 }
@@ -514,7 +514,7 @@ impl PartOperation for Route {
 impl ModelOperation for Route {
     /// The points are resolved in the part as the steps before left it.
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &RouteArgs,
@@ -526,9 +526,8 @@ impl ModelOperation for Route {
 
 /// The route drawn: its points numbered, as what it says about them counts
 /// them, and its centre line, the bends too tight marked as failed.
-fn draw(f: &mut EditForm<'_, Design, RouteArgs, RouteSession>, reader: &Reader, args: &RouteArgs) {
-    type S = Design;
-    let waypoints: Vec<Option<Waypoint<S>>> = (args.through.iter().enumerate())
+fn draw(f: &mut EditForm<'_, RouteArgs, RouteSession>, reader: &Reader, args: &RouteArgs) {
+    let waypoints: Vec<Option<Waypoint>> = (args.through.iter().enumerate())
         .map(|(i, entity)| Waypoint::of(reader, entity, i).ok())
         .collect();
     for (i, waypoint) in waypoints.iter().enumerate() {
@@ -538,7 +537,7 @@ fn draw(f: &mut EditForm<'_, Design, RouteArgs, RouteSession>, reader: &Reader, 
             Shape::Label {
                 at: waypoint.point,
                 text: (i + 1).to_string(),
-                offset: Vector3::from_array([S::ZERO, S::ZERO, S::from_f64(2.0)]),
+                offset: Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::from_f64(2.0)]),
             },
             Style::Reference,
         ));
@@ -557,7 +556,7 @@ fn draw(f: &mut EditForm<'_, Design, RouteArgs, RouteSession>, reader: &Reader, 
         .collect();
     for (k, curve) in plan.path.chain.curves.iter().enumerate() {
         let points = (0..=SAMPLES_PER_CURVE)
-            .map(|j| curve.evaluate(S::from_ratio(j as i64, SAMPLES_PER_CURVE as i64)?))
+            .map(|j| curve.evaluate(Scalar::from_ratio(j as i64, SAMPLES_PER_CURVE as i64)?))
             .collect::<GeopResult<Vec<_>>>();
         let Ok(points) = points else { continue };
         let style = if tight.contains(&k) {

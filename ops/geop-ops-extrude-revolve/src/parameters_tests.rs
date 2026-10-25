@@ -7,7 +7,6 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
 use geop_core_program::{
     numeric::{ParameterValue, read_parameter_values},
     part::Part,
@@ -15,7 +14,7 @@ use geop_core_program::{
     reader::Reader,
     runner::Runner,
     testing::{edit_args, step},
-    values::{Design, Setting},
+    values::Setting,
 };
 use geop_core_sketch::PointId;
 use geop_ops_model::parameters::{
@@ -64,7 +63,7 @@ impl Running {
     }
 
     /// The model the last run built.
-    fn model(&self) -> NamedModel<Design> {
+    fn model(&self) -> NamedModel {
         let built = read_model(&self.part.current());
         built.map(|model| model.into_owned()).unwrap_or_default()
     }
@@ -148,7 +147,7 @@ fn set(program: &mut Program, name: &str, expression: &str) {
 
 /// Checks the part's vertices lie at the heights `want`, and each of
 /// those has some.
-fn assert_heights(part: &NamedModel<Design>, want: &[f64]) {
+fn assert_heights(part: &NamedModel, want: &[f64]) {
     let z: Vec<f64> = part
         .topology()
         .vertices
@@ -226,7 +225,7 @@ fn formula_errors_name_the_step_and_the_formula() {
 }
 
 /// The sketch `name` of `part`.
-fn placed_sketch(part: &Part, name: &str) -> PlacedSketch<Design> {
+fn placed_sketch(part: &Part, name: &str) -> PlacedSketch {
     let reader = part.current();
     reader
         .retrieve_element(&whole_sketch(name))
@@ -300,7 +299,7 @@ fn the_parametric_plate_is_a_plate_with_a_hole() {
     assert!((span(1)[1] - 2.0).abs() < 1e-9, "{:?}", span(1));
     assert!((span(2)[1] - 0.5).abs() < 1e-9, "{:?}", span(2));
     let hole = placed_sketch(&built, "hole_sketch");
-    let geometry = hole.sketch.enclose::<S>().unwrap();
+    let geometry = hole.sketch.enclose().unwrap();
     let centers: Vec<_> = hole
         .sketch
         .curves

@@ -35,11 +35,11 @@ use crate::{
 const SAMPLES: usize = 32;
 
 /// A vertex's two points, on the A side and the B side.
-type Pair<S> = (Vector3<S>, Vector3<S>);
+type Pair = (Vector3, Vector3);
 
-impl<S: Scalar> Sheet<S> {
+impl Sheet {
     /// The A side of the sheet as it is bent, with its B side.
-    pub fn folded(&self) -> GeopResult<SheetSurface<S>> {
+    pub fn folded(&self) -> GeopResult<SheetSurface> {
         self.surface(&self.layout()?, true)
     }
 
@@ -47,13 +47,13 @@ impl<S: Scalar> Sheet<S> {
     /// the first flat's plane where the layout has it (see
     /// [`crate::layout`]), every bend a flat strip as wide as its
     /// developed length.
-    pub fn unfolded(&self) -> GeopResult<SheetSurface<S>> {
+    pub fn unfolded(&self) -> GeopResult<SheetSurface> {
         self.surface(&self.layout()?, false)
     }
 
     /// The faces of `layout` folded into place, or laid flat.
-    fn surface(&self, layout: &Layout<S>, folded: bool) -> GeopResult<SheetSurface<S>> {
-        let t = S::from_f64(self.rules.thickness);
+    fn surface(&self, layout: &Layout, folded: bool) -> GeopResult<SheetSurface> {
+        let t = Scalar::from_f64(self.rules.thickness);
         let shifts = self.flat_shifts()?;
         let used = layout.used_edges();
         let mut vertex_ids: Vec<usize> = used
@@ -70,7 +70,7 @@ impl<S: Scalar> Sheet<S> {
         let eindex: BTreeMap<usize, usize> =
             used.iter().enumerate().map(|(i, &e)| (e, i)).collect();
         let root = &self.flats[0].place;
-        let wraps: Vec<Wrap<S>> = if folded {
+        let wraps: Vec<Wrap> = if folded {
             (0..self.bends.len())
                 .map(|b| Wrap::new(self, b, layout))
                 .collect::<GeopResult<_>>()?
@@ -89,7 +89,7 @@ impl<S: Scalar> Sheet<S> {
                 }
             }
         }
-        let mut points: BTreeMap<usize, Pair<S>> = BTreeMap::new();
+        let mut points: BTreeMap<usize, Pair> = BTreeMap::new();
         let mut sheet = SheetSurface::default();
         for &v in &vertex_ids {
             let vertex = &layout.vertices[v];
@@ -122,7 +122,7 @@ impl<S: Scalar> Sheet<S> {
         }
 
         // An edge in its flat's own coordinates.
-        let own = |edge: &LayoutEdge<S>, f: usize| -> GeopResult<NurbCurve2D<S>> {
+        let own = |edge: &LayoutEdge, f: usize| -> GeopResult<NurbCurve2D> {
             match &edge.own {
                 Some(curve) => Ok(curve.clone()),
                 None => Ok(edge.curve.translate(shifts[f].neg())),
@@ -160,7 +160,7 @@ impl<S: Scalar> Sheet<S> {
                 (true, Home::Bend(b)) => {
                     let wrap = &wraps[b];
                     let uv = wrap.vertex_uv(face, layout).with_context(ctx)?;
-                    let coedges = |lp: &Vec<(usize, Sense)>| -> GeopResult<Vec<SheetCoedge<S>>> {
+                    let coedges = |lp: &Vec<(usize, Sense)>| -> GeopResult<Vec<SheetCoedge>> {
                         lp.iter()
                             .map(|&(e, sense)| {
                                 Ok(SheetCoedge {
@@ -191,17 +191,17 @@ impl<S: Scalar> Sheet<S> {
                 (false, _) => None,
             };
             // A plane, parametrized by the coordinates its curves are in.
-            let place: &Placement<S> = match surfaces {
+            let place: &Placement = match surfaces {
                 Some(f) => &self.flats[f].place,
                 None => root,
             };
-            let curve = |e: usize| -> GeopResult<NurbCurve2D<S>> {
+            let curve = |e: usize| -> GeopResult<NurbCurve2D> {
                 match surfaces {
                     Some(f) => own(&layout.edges[e], f),
                     None => Ok(layout.edges[e].curve.clone()),
                 }
             };
-            let coedges = |lp: &Vec<(usize, Sense)>| -> GeopResult<Vec<SheetCoedge<S>>> {
+            let coedges = |lp: &Vec<(usize, Sense)>| -> GeopResult<Vec<SheetCoedge>> {
                 lp.iter()
                     .map(|&(e, sense)| {
                         let c = curve(e)?;
@@ -217,13 +217,13 @@ impl<S: Scalar> Sheet<S> {
                     .collect()
             };
             let outer = coedges(&face.outer).with_context(ctx)?;
-            let holes: Vec<Vec<SheetCoedge<S>>> = face
+            let holes: Vec<Vec<SheetCoedge>> = face
                 .holes
                 .iter()
                 .map(coedges)
                 .collect::<GeopResult<_>>()
                 .with_context(ctx)?;
-            let refs: Vec<&NurbCurve2D<S>> = std::iter::once(&outer)
+            let refs: Vec<&NurbCurve2D> = std::iter::once(&outer)
                 .chain(&holes)
                 .flatten()
                 .map(|c| &c.pcurve)
@@ -250,38 +250,38 @@ impl<S: Scalar> Sheet<S> {
 /// the child, swept along the axis — that is `v = along / length` and the
 /// `u` where the arc's parameter reaches `θ`: for an arc turning `α`,
 /// `tan((θ - α/2) / 2) = (2u - 1) tan(α/4)`.
-struct Wrap<S: Scalar> {
-    frame: BendFrame<S>,
+struct Wrap {
+    frame: BendFrame,
     /// Where its parent edge starts and runs, and out of the parent, in the
     /// layout.
-    origin: Vector2<S>,
-    along: Vector2<S>,
-    out: Vector2<S>,
-    length: S,
-    neutral: S,
+    origin: Vector2,
+    along: Vector2,
+    out: Vector2,
+    length: Scalar,
+    neutral: Scalar,
     /// How many rational quadratic spans its arcs are built of (see
     /// [`spans`]), and the angle each turns.
     spans: usize,
-    step: S,
+    step: Scalar,
     /// `tan(step / 4)`.
-    quarter_tan: S,
+    quarter_tan: Scalar,
     /// Its faces, A side and B side.
-    strips: (NurbSurface3D<S>, NurbSurface3D<S>),
+    strips: (NurbSurface3D, NurbSurface3D),
     /// Its edges across, where its parent edge starts and ends, on both
     /// sides — as built, before any cut.
-    sides: [(NurbCurve3D<S>, NurbCurve3D<S>); 2],
+    sides: [(NurbCurve3D, NurbCurve3D); 2],
     /// The keys of its parent edge, its child edge and its sides.
     keys: [String; 4],
 }
 
-impl<S: Scalar> Wrap<S> {
-    fn new(sheet: &Sheet<S>, b: usize, layout: &Layout<S>) -> GeopResult<Self> {
+impl Wrap {
+    fn new(sheet: &Sheet, b: usize, layout: &Layout) -> GeopResult<Self> {
         let bend = &sheet.bends[b];
         let ctx = with_context!("bend {}", bend.name.root());
-        let t = S::from_f64(sheet.rules.thickness);
+        let t = Scalar::from_f64(sheet.rules.thickness);
         let frame = sheet.bend_frame(bend).with_context(ctx)?;
         let [pa, pb, ca, cb] = layout.corners[b];
-        let corner = |v: usize| -> GeopResult<Pair<S>> {
+        let corner = |v: usize| -> GeopResult<Pair> {
             let (f, own) = layout.vertices[v].own.as_ref().ok_or_else(|| {
                 GeopError::new(format!(
                     "bend {}'s corner is no vertex of the sheet as built",
@@ -292,10 +292,10 @@ impl<S: Scalar> Wrap<S> {
             Ok((place.point(own), place.offset(t).point(own)))
         };
         let (s0, s1) = {
-            let turn = |p: Pair<S>, c: Pair<S>| -> GeopResult<(NurbCurve3D<S>, NurbCurve3D<S>)> {
+            let turn = |p: Pair, c: Pair| -> GeopResult<(NurbCurve3D, NurbCurve3D)> {
                 Ok((
-                    turn(&frame, p.0, c.0, S::ZERO, bend.angle, frame.r_a)?,
-                    turn(&frame, p.1, c.1, S::ZERO, bend.angle, frame.r_b)?,
+                    turn(&frame, p.0, c.0, Scalar::ZERO, bend.angle, frame.r_a)?,
+                    turn(&frame, p.1, c.1, Scalar::ZERO, bend.angle, frame.r_b)?,
                 ))
             };
             (
@@ -312,13 +312,15 @@ impl<S: Scalar> Wrap<S> {
         let origin = layout.vertices[pa].at;
         let run = layout.vertices[pb].at.sub(&origin);
         let along = run.normalize().with_context(ctx)?;
-        let neutral = bend.radius.add(S::from_f64(sheet.rules.k_factor).mul(t));
+        let neutral = bend
+            .radius
+            .add(Scalar::from_f64(sheet.rules.k_factor).mul(t));
         let spans = spans(bend.angle);
         let step = match spans {
             1 => bend.angle,
-            n => bend.angle.div(S::from_i64(n as i64))?,
+            n => bend.angle.div(Scalar::from_i64(n as i64))?,
         };
-        let quarter = step.div(S::from_f64(4.0))?;
+        let quarter = step.div(Scalar::from_f64(4.0))?;
         Ok(Self {
             origin,
             out: Vector2::from_array([along[1], along[0].neg()]),
@@ -342,7 +344,7 @@ impl<S: Scalar> Wrap<S> {
 
     /// The layout point `x` as how far along the parent edge it is, and
     /// at what angle round the axis.
-    fn coords(&self, x: &Vector2<S>) -> GeopResult<(S, S)> {
+    fn coords(&self, x: &Vector2) -> GeopResult<(Scalar, Scalar)> {
         let d = x.sub(&self.origin);
         Ok((
             d.prod_dot(&self.along),
@@ -352,7 +354,7 @@ impl<S: Scalar> Wrap<S> {
 
     /// The point `along` the axis, at angle `theta` round it, `radius`
     /// from it.
-    fn point(&self, along: S, theta: S, radius: S) -> Vector3<S> {
+    fn point(&self, along: Scalar, theta: Scalar, radius: Scalar) -> Vector3 {
         let f = &self.frame;
         let radial =
             f.m.prod_scalar(theta.sin())
@@ -363,7 +365,7 @@ impl<S: Scalar> Wrap<S> {
     }
 
     /// The layout point `x` wrapped onto the A side and the B side.
-    fn pair(&self, x: &Vector2<S>) -> GeopResult<Pair<S>> {
+    fn pair(&self, x: &Vector2) -> GeopResult<Pair> {
         let (along, theta) = self.coords(x)?;
         Ok((
             self.point(along, theta, self.frame.r_a),
@@ -374,19 +376,23 @@ impl<S: Scalar> Wrap<S> {
     /// The parameters on the bend's faces of a point `along` the axis at
     /// angle `theta`: in the span the angle falls in — at a joint between
     /// two, either gives the same point, so which is a free choice.
-    fn uv(&self, along: S, theta: S) -> GeopResult<Vector2<S>> {
+    fn uv(&self, along: Scalar, theta: Scalar) -> GeopResult<Vector2> {
         let span =
             ((theta.to_f64() / self.step.to_f64()).floor().max(0.0) as usize).min(self.spans - 1);
         let local = match span {
             0 => theta,
-            j => theta.sub(self.step.mul(S::from_i64(j as i64))),
+            j => theta.sub(self.step.mul(Scalar::from_i64(j as i64))),
         };
-        let half = local.sub(self.step.div(S::TWO)?).div(S::TWO)?;
+        let half = local.sub(self.step.div(Scalar::TWO)?).div(Scalar::TWO)?;
         let tan = half.sin().div(half.cos())?;
-        let t = S::ONE.add(tan.div(self.quarter_tan)?).div(S::TWO)?;
+        let t = Scalar::ONE
+            .add(tan.div(self.quarter_tan)?)
+            .div(Scalar::TWO)?;
         let u = match self.spans {
             1 => t,
-            n => t.add(S::from_i64(span as i64)).div(S::from_i64(n as i64))?,
+            n => t
+                .add(Scalar::from_i64(span as i64))
+                .div(Scalar::from_i64(n as i64))?,
         };
         Ok(Vector2::from_array([u, along.div(self.length)?]))
     }
@@ -397,16 +403,16 @@ impl<S: Scalar> Wrap<S> {
     fn vertex_uv(
         &self,
         face: &crate::layout::LayoutFace,
-        layout: &Layout<S>,
-    ) -> GeopResult<BTreeMap<usize, Vector2<S>>> {
-        let mut fixed: BTreeMap<usize, [Option<S>; 2]> = BTreeMap::new();
+        layout: &Layout,
+    ) -> GeopResult<BTreeMap<usize, Vector2>> {
+        let mut fixed: BTreeMap<usize, [Option<Scalar>; 2]> = BTreeMap::new();
         for &(e, _) in face.loops().flatten() {
             let edge = &layout.edges[e];
             let set = match edge.origin.as_deref() {
-                Some(k) if k == self.keys[0] => Some((0, S::ZERO)),
-                Some(k) if k == self.keys[1] => Some((0, S::ONE)),
-                Some(k) if k == self.keys[2] => Some((1, S::ZERO)),
-                Some(k) if k == self.keys[3] => Some((1, S::ONE)),
+                Some(k) if k == self.keys[0] => Some((0, Scalar::ZERO)),
+                Some(k) if k == self.keys[1] => Some((0, Scalar::ONE)),
+                Some(k) if k == self.keys[2] => Some((1, Scalar::ZERO)),
+                Some(k) if k == self.keys[3] => Some((1, Scalar::ONE)),
                 _ => None,
             };
             for v in [edge.start, edge.end] {
@@ -431,7 +437,7 @@ impl<S: Scalar> Wrap<S> {
 
     /// How a curve of the strip runs: along the axis, across it, or
     /// neither.
-    fn kind(&self, edge: &LayoutEdge<S>) -> GeopResult<Run> {
+    fn kind(&self, edge: &LayoutEdge) -> GeopResult<Run> {
         if let Some(origin) = &edge.origin {
             return Ok(if *origin == self.keys[2] || *origin == self.keys[3] {
                 Run::Across
@@ -442,9 +448,9 @@ impl<S: Scalar> Wrap<S> {
         Ok(match Seg::of(&edge.curve)? {
             Seg::Line { a, b } => {
                 let d = b.sub(&a);
-                if d.prod_cross(&self.along).could_be_equal(S::ZERO) {
+                if d.prod_cross(&self.along).could_be_equal(Scalar::ZERO) {
                     Run::Along
-                } else if d.prod_dot(&self.along).could_be_equal(S::ZERO) {
+                } else if d.prod_dot(&self.along).could_be_equal(Scalar::ZERO) {
                     Run::Across
                 } else {
                     Run::Wrapped
@@ -457,10 +463,10 @@ impl<S: Scalar> Wrap<S> {
     /// The edge `edge` of the strip, from `start` to `end`, on both sides.
     fn edge(
         &self,
-        edge: &LayoutEdge<S>,
-        start: &Pair<S>,
-        end: &Pair<S>,
-    ) -> GeopResult<(NurbCurve3D<S>, NurbCurve3D<S>)> {
+        edge: &LayoutEdge,
+        start: &Pair,
+        end: &Pair,
+    ) -> GeopResult<(NurbCurve3D, NurbCurve3D)> {
         // A side as built, uncut.
         for (k, side) in self.sides.iter().enumerate() {
             let key = &self.keys[2 + k];
@@ -490,14 +496,14 @@ impl<S: Scalar> Wrap<S> {
     /// so that the wall between them is ruled — each widened to enclose it.
     fn wrapped(
         &self,
-        curve: &NurbCurve2D<S>,
-        start: &Pair<S>,
-        end: &Pair<S>,
-    ) -> GeopResult<(NurbCurve3D<S>, NurbCurve3D<S>)> {
+        curve: &NurbCurve2D,
+        start: &Pair,
+        end: &Pair,
+    ) -> GeopResult<(NurbCurve3D, NurbCurve3D)> {
         let (params, samples, between) = sample(curve)?;
         let mut sides = Vec::new();
         for (k, radius) in [self.frame.r_a, self.frame.r_b].into_iter().enumerate() {
-            let at = |x: &Vector2<S>| -> GeopResult<Vector3<S>> {
+            let at = |x: &Vector2| -> GeopResult<Vector3> {
                 let (along, theta) = self.coords(x)?;
                 Ok(self.point(along, theta, radius))
             };
@@ -507,15 +513,15 @@ impl<S: Scalar> Wrap<S> {
             points[last] = if k == 0 { end.0 } else { end.1 };
             // Through the points' centres — which points it passes through
             // is a free choice — and widened to enclose them whole.
-            let values: Vec<Vector4<S>> = points
+            let values: Vec<Vector4> = points
                 .iter()
                 .map(|p| {
                     let c = p.sharpen();
-                    Vector4::from_array([c[0], c[1], c[2], S::ONE])
+                    Vector4::from_array([c[0], c[1], c[2], Scalar::ONE])
                 })
                 .collect();
             let mut fit = NurbCurve::interpolate_homogeneous(&values, &params, 3)?;
-            let mut checks: Vec<(S, Vector3<S>)> =
+            let mut checks: Vec<(Scalar, Vector3)> =
                 params.iter().copied().zip(points.iter().copied()).collect();
             for (param, x) in between.iter().flatten() {
                 checks.push((*param, at(x)?));
@@ -533,10 +539,10 @@ impl<S: Scalar> Wrap<S> {
     /// at the parameters `uv` gives its vertices.
     fn pcurve(
         &self,
-        edge: &LayoutEdge<S>,
+        edge: &LayoutEdge,
         sense: Sense,
-        uv: &BTreeMap<usize, Vector2<S>>,
-    ) -> GeopResult<NurbCurve2D<S>> {
+        uv: &BTreeMap<usize, Vector2>,
+    ) -> GeopResult<NurbCurve2D> {
         let (from, to) = match sense {
             Sense::Forward => (edge.start, edge.end),
             Sense::Reversed => (edge.end, edge.start),
@@ -549,7 +555,7 @@ impl<S: Scalar> Wrap<S> {
             Sense::Reversed => edge.curve.reverse(),
         };
         let (_, samples, between) = sample(&curve)?;
-        let at = |x: &Vector2<S>| -> GeopResult<Vector2<S>> {
+        let at = |x: &Vector2| -> GeopResult<Vector2> {
             let (along, theta) = self.coords(x)?;
             self.uv(along, theta)
         };
@@ -568,7 +574,7 @@ impl<S: Scalar> Wrap<S> {
 /// How many rational quadratic spans an arc turning `angle` is built of:
 /// one up to 120°, its middle weight `cos(angle / 2)` then at least a half,
 /// two beyond — up to the half turn of a hem, which one span cannot take.
-fn spans<S: Scalar>(angle: S) -> usize {
+fn spans(angle: Scalar) -> usize {
     if angle.abs().to_f64() <= 2.0 * std::f64::consts::PI / 3.0 {
         1
     } else {
@@ -579,24 +585,24 @@ fn spans<S: Scalar>(angle: S) -> usize {
 /// The arc round the axis of the bend `frame` from `p`, at angle `from`,
 /// to `q`, at angle `to`, `radius` from the axis: of [`spans`] rational
 /// quadratic spans, each through the point where its end tangents meet.
-fn turn<S: Scalar>(
-    frame: &BendFrame<S>,
-    p: Vector3<S>,
-    q: Vector3<S>,
-    from: S,
-    to: S,
-    radius: S,
-) -> GeopResult<NurbCurve3D<S>> {
-    let starts_flat = from.is_sharp() && from.could_be_equal(S::ZERO);
+fn turn(
+    frame: &BendFrame,
+    p: Vector3,
+    q: Vector3,
+    from: Scalar,
+    to: Scalar,
+    radius: Scalar,
+) -> GeopResult<NurbCurve3D> {
+    let starts_flat = from.is_sharp() && from.could_be_equal(Scalar::ZERO);
     let delta = if starts_flat { to } else { to.sub(from) };
     let n = spans(delta);
     let step = match n {
         1 => delta,
-        n => delta.div(S::from_i64(n as i64))?,
+        n => delta.div(Scalar::from_i64(n as i64))?,
     };
-    let half = step.div(S::TWO)?;
+    let half = step.div(Scalar::TWO)?;
     let (tan, weight) = (half.sin().div(half.cos())?, half.cos());
-    let direction = |theta: S, flat: bool| {
+    let direction = |theta: Scalar, flat: bool| {
         // Along the arc, and out from the axis, at `theta`.
         if flat {
             (frame.m, frame.n.prod_scalar(frame.sigma.neg()))
@@ -618,32 +624,32 @@ fn turn<S: Scalar>(
         let (tangent, _) = direction(from, starts_flat);
         return NurbCurve3D::arc(p, p.add(&tangent.prod_scalar(radius.mul(tan))), q, weight);
     }
-    let mut control_points = vec![p.homogeneous(S::ONE)];
-    let mut knots = vec![S::ZERO; 3];
+    let mut control_points = vec![p.homogeneous(Scalar::ONE)];
+    let mut knots = vec![Scalar::ZERO; 3];
     let mut at = p;
     for j in 0..n {
         let theta = if j == 0 {
             from
         } else {
-            from.add(step.mul(S::from_i64(j as i64)))
+            from.add(step.mul(Scalar::from_i64(j as i64)))
         };
         let (tangent, radial) = direction(theta, j == 0 && starts_flat);
         let apex = at.add(&tangent.prod_scalar(radius.mul(tan)));
         let next = if j + 1 == n {
             q
         } else {
-            let (_, out) = direction(from.add(step.mul(S::from_i64(j as i64 + 1))), false);
+            let (_, out) = direction(from.add(step.mul(Scalar::from_i64(j as i64 + 1))), false);
             at.add(&out.sub(&radial).prod_scalar(radius))
         };
         control_points.push(apex.homogeneous(weight));
-        control_points.push(next.homogeneous(S::ONE));
+        control_points.push(next.homogeneous(Scalar::ONE));
         if j + 1 < n {
-            let knot = S::from_f64((j + 1) as f64 / n as f64);
+            let knot = Scalar::from_f64((j + 1) as f64 / n as f64);
             knots.extend([knot, knot]);
         }
         at = next;
     }
-    knots.extend([S::ONE; 3]);
+    knots.extend([Scalar::ONE; 3]);
     NurbCurve::try_new(2, control_points, knots)
 }
 
@@ -662,24 +668,25 @@ enum Run {
 /// points inside it, at their own parameters (see
 /// [`true_point_fractions`]).
 #[allow(clippy::type_complexity)]
-fn sample<S: Scalar>(
-    curve: &NurbCurve2D<S>,
-) -> GeopResult<(Vec<S>, Vec<Vector2<S>>, Vec<Vec<(S, Vector2<S>)>>)> {
+fn sample(
+    curve: &NurbCurve2D,
+) -> GeopResult<(Vec<Scalar>, Vec<Vector2>, Vec<Vec<(Scalar, Vector2)>>)> {
     let (t0, t1) = curve.domain();
     // Where to sample is a free choice, so sharp.
-    let at = |f: S| -> GeopResult<Vector2<S>> { curve.evaluate(S::fraction(t0, t1, f)) };
+    let at = |f: Scalar| -> GeopResult<Vector2> { curve.evaluate(Scalar::fraction(t0, t1, f)) };
     let mut params = Vec::new();
     let mut samples = Vec::new();
     let mut between = Vec::new();
     for i in 0..=SAMPLES {
         // Sharp: the parameters a fit passes through are a free choice.
-        let f = S::from_f64(i as f64 / SAMPLES as f64);
+        let f = Scalar::from_f64(i as f64 / SAMPLES as f64);
         params.push(f);
         samples.push(at(f)?);
         if i < SAMPLES {
             let mut inside = Vec::new();
             for &(num, den) in true_point_fractions(i, SAMPLES) {
-                let g = S::from_f64((i as i64 * den + num) as f64 / (SAMPLES as i64 * den) as f64);
+                let g =
+                    Scalar::from_f64((i as i64 * den + num) as f64 / (SAMPLES as i64 * den) as f64);
                 inside.push((g, at(g)?));
             }
             between.push(inside);

@@ -3,11 +3,7 @@
 //! B-spline Catmull–Clark converges to; creases stay sharp; and every
 //! edit leaves a cage whose limit is valid.
 
-use geop_core_math::{
-    for_all_scalars,
-    scalars::{Field, Ring, ScalInF64, Scalar},
-    vector::Vector3,
-};
+use geop_core_math::{scalars::Scalar, vector::Vector3};
 use geop_core_topology::{
     Body,
     validation::{ValidationParameters, validate},
@@ -17,29 +13,30 @@ use geop_ops_model::{NamedModel, testing::assert_valid};
 use crate::{Cage, Mirror, SubdArgs, build_subd};
 
 /// The model one subd step `s` of `args` builds.
-fn subd<S: Scalar>(args: &SubdArgs) -> geop_core_math::geop_error::GeopResult<NamedModel<S>> {
+fn subd(args: &SubdArgs) -> geop_core_math::geop_error::GeopResult<NamedModel> {
     let mut model = NamedModel::new();
     build_subd(&mut model, "s", args)?;
     Ok(model)
 }
 
 /// The limit of `cage`, mirrored in `mirror`, built as step `s`.
-fn built<S: Scalar>(cage: Cage, mirror: Mirror) -> NamedModel<S> {
+fn built(cage: Cage, mirror: Mirror) -> NamedModel {
     subd(&SubdArgs { cage, mirror }).unwrap_or_else(|e| panic!("{e}"))
 }
 
-fn faces<S: Scalar>(part: &NamedModel<S>) -> usize {
+fn faces(part: &NamedModel) -> usize {
     part.topology().faces.len()
 }
 
-fn v<S: Scalar>(p: [f64; 3]) -> Vector3<S> {
-    Vector3::from_array(p.map(S::from_f64))
+fn v(p: [f64; 3]) -> Vector3 {
+    Vector3::from_array(p.map(Scalar::from_f64))
 }
 
 /// A box cage: one face per cage face, one edge per cage edge, one vertex
 /// per cage vertex, closed into a valid solid.
-fn check_box_cage_is_a_valid_solid<S: Scalar>() {
-    let part = built::<S>(Cage::cuboid([2.0, 2.0, 2.0]), Mirror::None);
+#[test]
+fn box_cage_is_a_valid_solid() {
+    let part = built(Cage::cuboid([2.0, 2.0, 2.0]), Mirror::None);
     assert_valid(&part);
     let solid = part.solid_id("subd(s)").unwrap();
     assert_eq!(
@@ -57,10 +54,6 @@ fn check_box_cage_is_a_valid_solid<S: Scalar>() {
     part.vertex_id("subd(s,v6)").unwrap();
     part.edge_id("subd(s,e2-6)").unwrap();
 }
-#[test]
-fn box_cage_is_a_valid_solid() {
-    for_all_scalars!(check_box_cage_is_a_valid_solid);
-}
 
 /// A wavy 5 x 5 plane: around its middle face every vertex is regular, so
 /// the limit there is the uniform bicubic B-spline of the cage — at the
@@ -69,7 +62,6 @@ fn box_cage_is_a_valid_solid() {
 /// it; at a vertex, `(16 v + 4 Σ edge neighbours + Σ diagonal ones) / 36`.
 #[test]
 fn regular_patch_matches_the_limit() {
-    type S = ScalInF64;
     let mut cage = Cage::plane(5.0, 5);
     for vertex in &mut cage.vertices {
         let [x, y, _] = vertex.at;
@@ -77,20 +69,20 @@ fn regular_patch_matches_the_limit() {
     }
     // Vertex (i, j) of the 6 x 6 grid is id `6 j + i`; the face at (i, j)
     // is id `36 + 5 j + i`.
-    let at = |i: usize, j: usize| v::<S>(cage.vertices[6 * j + i].at);
-    let part = built::<S>(cage.clone(), Mirror::None);
+    let at = |i: usize, j: usize| v(cage.vertices[6 * j + i].at);
+    let part = built(cage.clone(), Mirror::None);
 
     let face = part.face_id("subd(s,f48)").unwrap();
     let surface = &part.topology().faces[&face].surface;
     let w = [1.0, 23.0, 23.0, 1.0].map(|x| x / 48.0);
-    let mut expected = Vector3::<S>::zero();
+    let mut expected = Vector3::zero();
     for a in 0..4 {
         for b in 0..4 {
             let p = at(1 + a, 1 + b);
-            expected = expected.add(&p.prod_scalar(S::from_f64(w[a] * w[b])));
+            expected = expected.add(&p.prod_scalar(Scalar::from_f64(w[a] * w[b])));
         }
     }
-    let centre = surface.evaluate(S::ONE, S::ONE).unwrap();
+    let centre = surface.evaluate(Scalar::ONE, Scalar::ONE).unwrap();
     assert!(
         centre.could_be_equal(&expected),
         "{centre:?} vs {expected:?}"
@@ -99,22 +91,21 @@ fn regular_patch_matches_the_limit() {
     let vertex = part.vertex_id("subd(s,v14)").unwrap();
     let limit = part.topology().vertices[&vertex].point;
     let (i, j) = (2, 2);
-    let mut sum = at(i, j).prod_scalar(S::from_i64(16));
+    let mut sum = at(i, j).prod_scalar(Scalar::from_i64(16));
     for (di, dj) in [(1, 0), (0, 1), (-1, 0), (0, -1)] {
         let p = at((i as i64 + di) as usize, (j as i64 + dj) as usize);
-        sum = sum.add(&p.prod_scalar(S::from_i64(4)));
+        sum = sum.add(&p.prod_scalar(Scalar::from_i64(4)));
     }
     for (di, dj) in [(1, 1), (-1, 1), (-1, -1), (1, -1)] {
         sum = sum.add(&at((i as i64 + di) as usize, (j as i64 + dj) as usize));
     }
-    let expected = sum.map(|c| c.div(S::from_i64(36)).unwrap());
+    let expected = sum.map(|c| c.div(Scalar::from_i64(36)).unwrap());
     assert!(limit.could_be_equal(&expected), "{limit:?} vs {expected:?}");
 }
 
 /// The largest angles, in degrees, between the normals of the two faces of
 /// any edge of `part`: sampled along every edge, and at its ends only.
-fn largest_kink(part: &NamedModel<ScalInF64>) -> (f64, f64) {
-    type S = ScalInF64;
+fn largest_kink(part: &NamedModel) -> (f64, f64) {
     let model = part.topology();
     let (mut largest, mut at_ends): (f64, f64) = (0.0, 0.0);
     for &edge in model.edges.keys() {
@@ -124,11 +115,11 @@ fn largest_kink(part: &NamedModel<ScalInF64>) -> (f64, f64) {
             .filter(|c| c.geometry == geop_core_topology::CoedgeGeometry::Edge(edge))
             .collect();
         for k in 0..=8 {
-            let normals: Vec<Vector3<S>> = coedges
+            let normals: Vec<Vector3> = coedges
                 .iter()
                 .map(|c| {
                     let (t0, t1) = c.pcurve.domain();
-                    let t = t0.add(t1.sub(t0).mul(S::from_f64(k as f64 / 8.0)));
+                    let t = t0.add(t1.sub(t0).mul(Scalar::from_f64(k as f64 / 8.0)));
                     let t = match c.sense {
                         geop_core_topology::Sense::Forward => t,
                         geop_core_topology::Sense::Reversed => t0.add(t1).sub(t),
@@ -156,7 +147,7 @@ fn largest_kink(part: &NamedModel<ScalInF64>) -> (f64, f64) {
 /// there at all, but for rounding.
 #[test]
 fn normals_turn_little_at_extraordinary_vertices() {
-    let part = built::<ScalInF64>(Cage::cuboid([2.0, 2.0, 2.0]), Mirror::None);
+    let part = built(Cage::cuboid([2.0, 2.0, 2.0]), Mirror::None);
     let (kink, at_vertices) = largest_kink(&part);
     assert!(kink < 3.0, "the normal turns by {kink} degrees");
     // `acos` near one turns a rounding of 1e-16 in the cosine into 1e-6
@@ -170,11 +161,12 @@ fn normals_turn_little_at_extraordinary_vertices() {
 /// A box with every edge creased is the box itself; one with only its top
 /// edges creased keeps those sharp — the top face and a side meet at an
 /// angle along them — while the rest rounds off.
-fn check_creases_stay_sharp<S: Scalar>() {
+#[test]
+fn creases_stay_sharp() {
     let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
     let edges: Vec<[u32; 2]> = cage.edges().into_iter().collect();
     cage.set_crease(&edges, true);
-    let part = built::<S>(cage, Mirror::None);
+    let part = built(cage, Mirror::None);
     assert_valid(&part);
     let corner = part.vertex_id("subd(s,v6)").unwrap();
     assert!(
@@ -185,20 +177,20 @@ fn check_creases_stay_sharp<S: Scalar>() {
     let top = part.face_id("subd(s,f9)").unwrap();
     let surface = &part.topology().faces[&top].surface;
     let p = surface
-        .evaluate(S::from_f64(0.3), S::from_f64(1.7))
+        .evaluate(Scalar::from_f64(0.3), Scalar::from_f64(1.7))
         .unwrap();
-    assert!(p[2].could_be_equal(S::ONE), "{p:?}");
+    assert!(p[2].could_be_equal(Scalar::ONE), "{p:?}");
 
     let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
     cage.set_crease(&[[4, 5], [5, 6], [6, 7], [4, 7]], true);
-    let part = built::<S>(cage, Mirror::None);
+    let part = built(cage, Mirror::None);
     assert_valid(&part);
     // Along the crease between the top (f9, u along v4 -> v5) and the
     // front (f10, its last side running from v4 to v5's ... v5 -> v4).
     let normal = |face: &str, u: f64, w: f64| {
         let id = part.face_id(face).unwrap();
         let s = &part.topology().faces[&id].surface;
-        s.normal(S::from_f64(u), S::from_f64(w)).unwrap()
+        s.normal(Scalar::from_f64(u), Scalar::from_f64(w)).unwrap()
     };
     let top = normal("subd(s,f9)", 1.0, 0.0);
     let front = normal("subd(s,f10)", 1.0, 2.0);
@@ -208,26 +200,21 @@ fn check_creases_stay_sharp<S: Scalar>() {
         .unwrap();
     assert!(cos.to_f64() < 0.5, "the crease is not sharp: cos = {cos:?}");
 }
-#[test]
-fn creases_stay_sharp() {
-    for_all_scalars!(check_creases_stay_sharp);
-}
 
 /// A box with its top extruded, a loop inserted around it, and its sides
 /// pulled in: still one valid solid.
 #[test]
 fn extruded_face_cage_is_valid() {
-    type S = ScalInF64;
     let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
     cage.extrude(&[9].into(), 0.8, Mirror::None).unwrap();
     assert_eq!(cage.faces.len(), 10);
-    let part = built::<S>(cage.clone(), Mirror::None);
+    let part = built(cage.clone(), Mirror::None);
     assert_valid(&part);
     assert_eq!(faces(&part), 10);
 
     cage.insert_loop(0, 4).unwrap();
     assert_eq!(cage.faces.len(), 14);
-    let part = built::<S>(cage, Mirror::None);
+    let part = built(cage, Mirror::None);
     assert_valid(&part);
 }
 
@@ -235,13 +222,12 @@ fn extruded_face_cage_is_valid() {
 /// triangles, each split into a face per corner around its centre.
 #[test]
 fn plane_and_prism_build() {
-    type S = ScalInF64;
-    let part = built::<S>(Cage::plane(2.0, 3), Mirror::None);
+    let part = built(Cage::plane(2.0, 3), Mirror::None);
     assert_valid(&part);
     assert!(part.solid_names().is_empty());
     assert_eq!(faces(&part), 9);
 
-    let part = built::<S>(Cage::cylinder(1.0, 1.0, 3), Mirror::None);
+    let part = built(Cage::cylinder(1.0, 1.0, 3), Mirror::None);
     assert_valid(&part);
     assert_eq!(faces(&part), 6 + 2 * 3);
     part.face_id("subd(s,f9,v1)").unwrap();
@@ -255,13 +241,12 @@ fn plane_and_prism_build() {
 /// vertices of three faces: both build valid solids.
 #[test]
 fn round_primitives_build() {
-    type S = ScalInF64;
-    let part = built::<S>(Cage::cylinder(1.0, 2.0, 8), Mirror::None);
+    let part = built(Cage::cylinder(1.0, 2.0, 8), Mirror::None);
     assert_valid(&part);
     assert_eq!(faces(&part), 16 + 2 * 8);
     part.face_id("subd(s,f24,v3)").unwrap();
 
-    let part = built::<S>(Cage::sphere(1.0), Mirror::None);
+    let part = built(Cage::sphere(1.0), Mirror::None);
     assert_valid(&part);
     assert_eq!(faces(&part), 24);
 }
@@ -270,11 +255,10 @@ fn round_primitives_build() {
 /// plane into one solid, symmetric about it.
 #[test]
 fn mirrored_cage_is_one_symmetric_solid() {
-    type S = ScalInF64;
     let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
     cage.halve(0).unwrap();
     assert_eq!(cage.faces.len(), 5);
-    let part = built::<S>(cage.clone(), Mirror::X);
+    let part = built(cage.clone(), Mirror::X);
     assert_valid(&part);
     assert_eq!(faces(&part), 10);
     let left = part.vertex_id("subd(s,v6m)").unwrap();
@@ -287,7 +271,7 @@ fn mirrored_cage_is_one_symmetric_solid() {
 
     let whole = cage.unmirrored(Mirror::X).unwrap();
     assert_eq!(whole.faces.len(), 10);
-    assert_valid(&built::<S>(whole, Mirror::None));
+    assert_valid(&built(whole, Mirror::None));
 }
 
 /// What no limit surface can be built from is refused, naming the
@@ -295,9 +279,8 @@ fn mirrored_cage_is_one_symmetric_solid() {
 /// vertex across the mirror plane.
 #[test]
 fn bad_cages_are_refused() {
-    type S = ScalInF64;
     let refused = |cage: Cage, mirror: Mirror| {
-        subd::<S>(&SubdArgs { cage, mirror })
+        subd(&SubdArgs { cage, mirror })
             .expect_err("refused")
             .to_string()
     };
@@ -421,7 +404,6 @@ fn random_edit(cage: &mut Cage, mirror: Mirror, random: &mut Random) -> String {
 #[test]
 #[ignore = "slow: builds and validates dozens of edited cages — run with `cargo test -- --ignored`"]
 fn random_cage_edits_build_valid_solids() {
-    type S = ScalInF64;
     for seed in 1..=24u64 {
         let mirror = if seed % 2 == 0 {
             Mirror::X
@@ -437,7 +419,7 @@ fn random_cage_edits_build_valid_solids() {
         for _ in 0..6 {
             done.push(random_edit(&mut cage, mirror, &mut random));
         }
-        let part = subd::<S>(&SubdArgs {
+        let part = subd(&SubdArgs {
             cage: cage.clone(),
             mirror,
         })

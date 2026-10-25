@@ -12,7 +12,7 @@ use crate::{
     uv_loop::loop_signed_area,
 };
 
-impl<S: Scalar> Model<S> {
+impl Model {
     /// Splice an **already-existing** `edge_id` into `face_id`'s boundary
     /// structure, as a forward/reversed coedge pair whose pcurves it fits onto
     /// the face's own surface.
@@ -45,7 +45,7 @@ impl<S: Scalar> Model<S> {
         edge_id: EdgeId,
         face_id: FaceId,
         max_nodes: usize,
-        min_subdivision_size: S,
+        min_subdivision_size: Scalar,
     ) -> GeopResult<Option<FaceId>> {
         let model = self;
         let ctx = |e: GeopError| {
@@ -63,7 +63,7 @@ impl<S: Scalar> Model<S> {
         // its pcurve end is the authoritative `(u, v)` there — the new pcurve
         // is pinned to it so the loop stays exactly continuous.
         let surface = model.get_face(face_id).with_context(&ctx)?.surface.clone();
-        let fit = |model: &Model<S>, at_start: Option<CoedgeId>, at_end: Option<CoedgeId>| {
+        let fit = |model: &Model, at_start: Option<CoedgeId>, at_end: Option<CoedgeId>| {
             surface
                 .fit_pcurve(
                     &curve,
@@ -82,7 +82,7 @@ impl<S: Scalar> Model<S> {
         // of the loop is where an edge arrives at it, so the first fit pins
         // neither end there, and the end's own `(u, v)` says where along the
         // row it is (see [`split_pole_row`]).
-        let pole = |model: &Model<S>, vertex: VertexId, arriving: &[CoedgeId]| {
+        let pole = |model: &Model, vertex: VertexId, arriving: &[CoedgeId]| {
             arriving.iter().any(|&c| {
                 model
                     .get_coedge(c)
@@ -255,7 +255,7 @@ impl<S: Scalar> Model<S> {
                         // classified against.
                         for ring in [fwd, rev] {
                             let area = loop_signed_area(model, ring).with_context(&ctx)?;
-                            if !area.abs().definitely_greater(S::ZERO) {
+                            if !area.abs().definitely_greater(Scalar::ZERO) {
                                 let widest = widest_pcurve(model, ring).with_context(&ctx)?;
                                 return Err(ctx(GeopError::new(format!(
                                     "{DEGENERATE_SPLIT}: splicing edge {edge_id} into face {face_id} would split its outer loop into a ring of signed area {area:?} — the edge runs along the boundary it is being spliced into, so one side encloses nothing (the ring's widest pcurve: {widest})"
@@ -283,9 +283,9 @@ impl<S: Scalar> Model<S> {
                     // them apart.
                     (BoundaryIndex::Hole(i), BoundaryIndex::Hole(j)) if i == j => {
                         let area = loop_signed_area(model, fwd).with_context(&ctx)?;
-                        let (material, void) = if area.definitely_greater(S::ZERO) {
+                        let (material, void) = if area.definitely_greater(Scalar::ZERO) {
                             (fwd, rev)
-                        } else if area.definitely_less(S::ZERO) {
+                        } else if area.definitely_less(Scalar::ZERO) {
                             (rev, fwd)
                         } else {
                             return Err(ctx(GeopError::new(format!(
@@ -348,11 +348,11 @@ impl<S: Scalar> Model<S> {
 /// Which `u` the edge arrives at, along a row that is all one point, is the
 /// edge's own: taken from where its pcurve was fitted to end — sharp, since
 /// the row is cut there, and the edge is then pinned to that cut.
-fn split_pole_row<S: Scalar>(
-    model: &mut Model<S>,
+fn split_pole_row(
+    model: &mut Model,
     vertex: VertexId,
     arriving: &[CoedgeId],
-    uv: Vector2<S>,
+    uv: Vector2,
 ) -> GeopResult<Option<CoedgeId>> {
     for &row in arriving {
         let coedge = model.get_coedge(row)?;
@@ -392,10 +392,7 @@ fn split_pole_row<S: Scalar>(
 }
 
 /// The `(u, v)` a coedge's pcurve ends at, if there is such a coedge.
-fn pcurve_end_uv<S: Scalar>(
-    model: &Model<S>,
-    coedge: Option<CoedgeId>,
-) -> GeopResult<Option<Vector2<S>>> {
+fn pcurve_end_uv(model: &Model, coedge: Option<CoedgeId>) -> GeopResult<Option<Vector2>> {
     let Some(coedge) = coedge else {
         return Ok(None);
     };
@@ -414,12 +411,12 @@ fn pcurve_end_uv<S: Scalar>(
 /// (see `NurbCurve2D::interpolate_enclosing`), so a wide pin is a wide
 /// pcurve. A projection that fails, or misses the end altogether, leaves
 /// the end as it is.
-fn pin<S: Scalar>(
-    model: &Model<S>,
-    surface: &geop_core_geometry::nurb_surface::NurbSurface3D<S>,
+fn pin(
+    model: &Model,
+    surface: &geop_core_geometry::nurb_surface::NurbSurface3D,
     coedge: Option<CoedgeId>,
     vertex: VertexId,
-) -> GeopResult<Option<Vector2<S>>> {
+) -> GeopResult<Option<Vector2>> {
     let Some(end) = pcurve_end_uv(model, coedge)? else {
         return Ok(None);
     };
@@ -443,8 +440,8 @@ const PIN_ITERATIONS: usize = 8;
 /// Every coedge of `face_id` that *arrives* at `vertex`: one per time its
 /// boundary passes through it. A new edge leaving `vertex` has to be spliced
 /// in after one of them — see [`choose_corner`].
-fn coedges_ending_at<S: Scalar>(
-    model: &Model<S>,
+fn coedges_ending_at(
+    model: &Model,
     face_id: FaceId,
     vertex: VertexId,
 ) -> GeopResult<Vec<CoedgeId>> {
@@ -474,10 +471,10 @@ fn coedges_ending_at<S: Scalar>(
 ///
 /// The curves are ordered around the vertex by where they first leave a
 /// small circle around it, not by their tangents: see [`Leg`].
-fn choose_corner<S: Scalar>(
-    model: &Model<S>,
+fn choose_corner(
+    model: &Model,
     arriving: &[CoedgeId],
-    leaving: Leg<'_, S>,
+    leaving: Leg<'_>,
 ) -> GeopResult<Option<CoedgeId>> {
     if arriving.len() <= 1 {
         return Ok(arriving.first().copied());
@@ -507,8 +504,8 @@ fn choose_corner<S: Scalar>(
             }
         }
     }
-    let radius = radius.div(S::TWO)?.sharpen();
-    if !radius.definitely_greater(S::ZERO) {
+    let radius = radius.div(Scalar::TWO)?.sharpen();
+    if !radius.definitely_greater(Scalar::ZERO) {
         return Err(GeopError::new(format!(
             "splice_edge_into_face: a curve at the vertex returns to it at once, so no circle around the vertex orders the corners after coedges {arriving:?}"
         )));
@@ -553,17 +550,17 @@ fn choose_corner<S: Scalar>(
 /// leave a vertex tangent to each other, and then only curvature separates
 /// them — which, differentiated twice off a pcurve that encloses a traced
 /// curve, comes out too wide to decide anything.
-struct Leg<'a, S: Scalar> {
-    pcurve: &'a Curve2<S>,
+struct Leg<'a> {
+    pcurve: &'a Curve2,
     /// Whether the vertex is at the pcurve's end (and it is run backwards).
     from_end: bool,
 }
 
-impl<S: Scalar> Leg<'_, S> {
+impl Leg<'_> {
     /// The parameters of the vertex end and of the pcurve's midpoint.
-    fn ends(&self) -> GeopResult<(S, S)> {
+    fn ends(&self) -> GeopResult<(Scalar, Scalar)> {
         let (t0, t1) = self.pcurve.domain();
-        let mid = t0.add(t1).div(S::TWO)?;
+        let mid = t0.add(t1).div(Scalar::TWO)?;
         Ok((if self.from_end { t1 } else { t0 }, mid))
     }
 
@@ -571,7 +568,7 @@ impl<S: Scalar> Leg<'_, S> {
     /// one it leaves: its distance to its midpoint, or to its far end where
     /// that is nearer. A curve returning to the vertex it leaves has no far
     /// end to meet.
-    fn reach(&self) -> GeopResult<S> {
+    fn reach(&self) -> GeopResult<Scalar> {
         let (t0, t1) = self.pcurve.domain();
         let (t_vertex, t_mid) = self.ends()?;
         let t_far = if self.from_end { t0 } else { t1 };
@@ -579,7 +576,7 @@ impl<S: Scalar> Leg<'_, S> {
         let mid = self.pcurve.evaluate(t_mid)?.sub(&origin).norm();
         let far = self.pcurve.evaluate(t_far)?.sub(&origin).norm();
         Ok(
-            if far.definitely_greater(S::ZERO) && far.definitely_less(mid) {
+            if far.definitely_greater(Scalar::ZERO) && far.definitely_less(mid) {
                 far
             } else {
                 mid
@@ -596,7 +593,7 @@ impl<S: Scalar> Leg<'_, S> {
     /// the ordering argument needs as long as the leg does not leave the disk
     /// and come back before its midpoint — true of the short, smooth trim
     /// curves at half their reach, and an assumption for anything else.
-    fn exit(&self, radius: S) -> GeopResult<Vector2<S>> {
+    fn exit(&self, radius: Scalar) -> GeopResult<Vector2> {
         let (t_vertex, t_mid) = self.ends()?;
         let origin = self.pcurve.evaluate(t_vertex)?;
         let radius_sq = radius.mul(radius);
@@ -629,11 +626,11 @@ const EXIT_BISECTIONS: usize = 60;
 /// `from` to `to`; `None` where the intervals cannot decide it. `from` and
 /// `to` pointing the same way sweep the full turn — the tip of a spur, whose
 /// corner is everything around it.
-fn within_corner<S: Scalar>(from: Vector2<S>, to: Vector2<S>, d: Vector2<S>) -> Option<bool> {
-    let sign = |x: S| {
-        if x.definitely_greater(S::ZERO) {
+fn within_corner(from: Vector2, to: Vector2, d: Vector2) -> Option<bool> {
+    let sign = |x: Scalar| {
+        if x.definitely_greater(Scalar::ZERO) {
             Some(true)
-        } else if x.definitely_less(S::ZERO) {
+        } else if x.definitely_less(Scalar::ZERO) {
             Some(false)
         } else {
             None
@@ -642,21 +639,21 @@ fn within_corner<S: Scalar>(from: Vector2<S>, to: Vector2<S>, d: Vector2<S>) -> 
     let after_from = sign(from.prod_cross(&d));
     let before_to = sign(d.prod_cross(&to));
     let turn = from.prod_cross(&to);
-    if turn.definitely_greater(S::ZERO) {
+    if turn.definitely_greater(Scalar::ZERO) {
         // Less than half a turn: inside means past `from` and short of `to`.
         match (after_from, before_to) {
             (Some(false), _) | (_, Some(false)) => Some(false),
             (Some(true), Some(true)) => Some(true),
             _ => None,
         }
-    } else if turn.definitely_less(S::ZERO) {
+    } else if turn.definitely_less(Scalar::ZERO) {
         // More than half a turn: everything but the complementary angle.
         match (after_from, before_to) {
             (Some(true), _) | (_, Some(true)) => Some(true),
             (Some(false), Some(false)) => Some(false),
             _ => None,
         }
-    } else if from.prod_dot(&to).definitely_greater(S::ZERO) {
+    } else if from.prod_dot(&to).definitely_greater(Scalar::ZERO) {
         // The full turn, unless `d` leaves along it.
         after_from.map(|_| true)
     } else {
@@ -665,7 +662,7 @@ fn within_corner<S: Scalar>(from: Vector2<S>, to: Vector2<S>, d: Vector2<S>) -> 
 }
 
 /// Make `to` follow `from` in loop order, keeping `prev` consistent.
-fn link<S: Scalar>(model: &mut Model<S>, from: CoedgeId, to: CoedgeId) -> GeopResult<()> {
+fn link(model: &mut Model, from: CoedgeId, to: CoedgeId) -> GeopResult<()> {
     model.get_coedge_mut(from)?.next = to;
     model.get_coedge_mut(to)?.prev = from;
     Ok(())
@@ -673,8 +670,8 @@ fn link<S: Scalar>(model: &mut Model<S>, from: CoedgeId, to: CoedgeId) -> GeopRe
 
 /// Insert `out`/`back` (an out-and-return pair on the same edge) into the
 /// loop right after `after`, leaving the rest of the loop untouched.
-fn splice_spur<S: Scalar>(
-    model: &mut Model<S>,
+fn splice_spur(
+    model: &mut Model,
     after: CoedgeId,
     out: CoedgeId,
     back: CoedgeId,
@@ -702,13 +699,13 @@ pub const DEGENERATE_SPLIT: &str = "degenerate split";
 /// ([`new_face_from_ring`]). Both rings bound material — that is what
 /// distinguishes this from every other case in `splice_edge_into_face` — so
 /// neither can become a hole of the other.
-fn split_face<S: Scalar>(
-    model: &mut Model<S>,
+fn split_face(
+    model: &mut Model,
     face_id: FaceId,
     keep: CoedgeId,
     moved: CoedgeId,
     max_nodes: usize,
-    min_subdivision_size: S,
+    min_subdivision_size: Scalar,
 ) -> GeopResult<FaceId> {
     model
         .get_face_mut(face_id)?
@@ -726,12 +723,12 @@ fn split_face<S: Scalar>(
 /// usable point (a bare `Vertex` boundary, or a loop whose `(u, v)` cannot be
 /// read) stays put rather than being dropped: leaving it on the wrong face is
 /// a recoverable error, losing it silently fills in a hole that should exist.
-fn new_face_from_ring<S: Scalar>(
-    model: &mut Model<S>,
+fn new_face_from_ring(
+    model: &mut Model,
     face_id: FaceId,
     ring: CoedgeId,
     max_nodes: usize,
-    min_subdivision_size: S,
+    min_subdivision_size: Scalar,
 ) -> GeopResult<FaceId> {
     let old = model.get_face(face_id)?.clone();
     let new_face_id = model.insert_face(Face {
@@ -792,11 +789,10 @@ fn new_face_from_ring<S: Scalar>(
 /// uncertain to be told from zero comes from — a ring that really encloses
 /// nothing, or a pcurve carrying too much uncertainty to say. Only for the
 /// error message, never for a decision.
-fn widest_pcurve<S: Scalar>(model: &Model<S>, anchor: CoedgeId) -> GeopResult<String> {
+fn widest_pcurve(model: &Model, anchor: CoedgeId) -> GeopResult<String> {
     const WIDTH_SAMPLES: usize = 8;
-    let width = |uv: &geop_core_math::vector::Vector2<S>| {
-        uv[0].width().to_f64().max(uv[1].width().to_f64())
-    };
+    let width =
+        |uv: &geop_core_math::vector::Vector2| uv[0].width().to_f64().max(uv[1].width().to_f64());
     let mut widest = (0.0, None);
     let mut each = Vec::new();
     for coedge_id in ring_coedges(model, anchor)? {
@@ -804,7 +800,7 @@ fn widest_pcurve<S: Scalar>(model: &Model<S>, anchor: CoedgeId) -> GeopResult<St
         let (t0, t1) = coedge.pcurve.domain();
         let mut samples = Vec::with_capacity(WIDTH_SAMPLES);
         for i in 0..WIDTH_SAMPLES {
-            let frac = S::from_ratio(i as i64, (WIDTH_SAMPLES - 1) as i64)?;
+            let frac = Scalar::from_ratio(i as i64, (WIDTH_SAMPLES - 1) as i64)?;
             let uv = coedge.pcurve.evaluate(t0.add(t1.sub(t0).mul(frac)))?;
             if width(&uv) > widest.0 {
                 widest = (width(&uv), Some((coedge_id, coedge.geometry, uv)));
@@ -886,7 +882,7 @@ fn widest_pcurve<S: Scalar>(model: &Model<S>, anchor: CoedgeId) -> GeopResult<St
 
 /// Every coedge of the ring anchored at `anchor`, erroring rather than
 /// spinning if the `next` chain never returns to it.
-fn ring_coedges<S: Scalar>(model: &Model<S>, anchor: CoedgeId) -> GeopResult<Vec<CoedgeId>> {
+fn ring_coedges(model: &Model, anchor: CoedgeId) -> GeopResult<Vec<CoedgeId>> {
     let cap = model.coedges.len() + 1;
     let ring: Vec<CoedgeId> = model.iterate_loop_coedges(anchor).take(cap).collect();
     if ring.len() >= cap {
@@ -905,10 +901,10 @@ const HOLE_CLASSIFY_SEED: u64 = 0x1234_5678_9ABC_DEF0;
 /// A `(u, v)` on `boundary`, for classifying which side of a split it falls
 /// on. `None` for a bare `Vertex` boundary, which has no pcurve to read one
 /// from.
-fn boundary_uv<S: Scalar>(
-    model: &Model<S>,
+fn boundary_uv(
+    model: &Model,
     boundary: BoundaryType,
-) -> GeopResult<Option<geop_core_math::vector::Vector2<S>>> {
+) -> GeopResult<Option<geop_core_math::vector::Vector2>> {
     let BoundaryType::Loop(anchor) = boundary else {
         return Ok(None);
     };

@@ -16,11 +16,11 @@ use crate::{
     testing::pointer,
 };
 
-fn v3(x: f64, y: f64, z: f64) -> Vector3<S> {
-    Vector3::from_array([x, y, z].map(S::from_f64))
+fn v3(x: f64, y: f64, z: f64) -> Vector3 {
+    Vector3::from_array([x, y, z].map(Scalar::from_f64))
 }
 
-fn down(x: f64, y: f64) -> Pointer<S> {
+fn down(x: f64, y: f64) -> Pointer {
     pointer([x, y, 5.0], [0.0, 0.0, -1.0])
 }
 
@@ -34,7 +34,7 @@ fn face(axis: usize, side: usize) -> String {
     format!("{}{side}", ["x", "y", "z"][axis])
 }
 
-fn point(c: [usize; 3]) -> Vector3<S> {
+fn point(c: [usize; 3]) -> Vector3 {
     v3(c[0] as f64, c[1] as f64, c[2] as f64)
 }
 
@@ -92,13 +92,13 @@ fn cube() -> PartView {
 }
 
 /// What `pointer` picks of the kinds `accepts`.
-fn picked(view: &PartView, pointer: &Pointer<S>, accepts: &[&str]) -> Option<PickedElement> {
+fn picked(view: &PartView, pointer: &Pointer, accepts: &[&str]) -> Option<PickedElement> {
     let accepts: Vec<String> = accepts.iter().map(|k| k.to_string()).collect();
     view.pick(pointer, &accepts).map(|h| h.element)
 }
 
 /// The kind of what `pointer` picks of the kinds `accepts`.
-fn kind(view: &PartView, pointer: &Pointer<S>, accepts: &[&str]) -> Option<String> {
+fn kind(view: &PartView, pointer: &Pointer, accepts: &[&str]) -> Option<String> {
     picked(view, pointer, accepts).map(|p| p.kind)
 }
 
@@ -110,7 +110,7 @@ const ANY: &[&str] = &[drawn::VERTEX, drawn::EDGE, drawn::FACE];
 #[test]
 fn the_smallest_visible_entity_wins() {
     let view = cube();
-    let kind = |pointer: Pointer<S>| kind(&view, &pointer, ANY).unwrap();
+    let kind = |pointer: Pointer| kind(&view, &pointer, ANY).unwrap();
     assert_eq!(kind(down(1.005, 1.005)), drawn::VERTEX);
     assert_eq!(kind(down(0.5, 0.995)), drawn::EDGE);
     assert_eq!(kind(down(0.5, 0.5)), drawn::FACE);
@@ -139,7 +139,7 @@ fn datums() {
     });
     let datum = Some("above".to_string());
     let name =
-        |pointer: Pointer<S>, accepts: &[&str]| picked(&view, &pointer, accepts).map(|p| p.name);
+        |pointer: Pointer, accepts: &[&str]| picked(&view, &pointer, accepts).map(|p| p.name);
     // Beside the cube, but within the square drawn around its center: √3
     // across, the cube's diagonal.
     assert_eq!(name(down(1.2, 0.5), &[drawn::DATUM]), datum);
@@ -167,14 +167,14 @@ fn edge_of_the_face_hit_at_a_glancing_angle() {
         )
         .unwrap(),
         reach: Reach::Cone {
-            slope: S::from_f64(0.0005),
+            slope: Scalar::from_f64(0.0005),
         },
     };
     let edge = picked(&view, &glancing, &[drawn::EDGE]).expect("no edge picked");
     let edge = view.edges.iter().find(|e| e.name == edge.name).unwrap();
     for p in &edge.polyline {
         assert!(
-            p[1].could_be_equal(S::ONE) && p[2].could_be_equal(S::ONE),
+            p[1].could_be_equal(Scalar::ONE) && p[2].could_be_equal(Scalar::ONE),
             "{} is not the far top edge",
             edge.name
         );
@@ -187,7 +187,7 @@ fn edge_of_the_face_hit_at_a_glancing_angle() {
 #[test]
 fn a_view_placed_three_times_is_picked_where_each_is() {
     let component = Rc::new(cube());
-    let place = |name: &str, at: Vector3<S>| ViewInstance {
+    let place = |name: &str, at: Vector3| ViewInstance {
         name: name.into(),
         component: "cube".into(),
         frame: CoordinateSystem::world_at(at),

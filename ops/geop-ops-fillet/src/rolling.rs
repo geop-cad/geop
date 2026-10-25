@@ -134,10 +134,7 @@ const MOST_WIDENINGS: usize = 64;
 /// The `(u, v)` of `point` on `surface`, sharp — a seed: where the point
 /// lies on the surface ([`NurbSurface3D::locate`]), else that of the point
 /// of the surface nearest it — on a cylinder, not the one across its axis.
-pub(crate) fn seed_on<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    point: &Vector3<S>,
-) -> GeopResult<(S, S)> {
+pub(crate) fn seed_on(surface: &NurbSurface3D, point: &Vector3) -> GeopResult<(Scalar, Scalar)> {
     let (u, v) = match surface.locate(point, MAX_NODES, min_subdivision_size())? {
         Some(uv) => uv,
         None => {
@@ -151,16 +148,16 @@ pub(crate) fn seed_on<S: Scalar>(
 /// The foot point of `target` on `surface`, Newton from `seed`: its
 /// enclosure, within the surface's domain — the foot point lies in it, so
 /// that holds too, and the surface is only evaluated there.
-pub(crate) fn foot<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    target: &Vector3<S>,
-    seed: (S, S),
-) -> GeopResult<(S, S)> {
+pub(crate) fn foot(
+    surface: &NurbSurface3D,
+    target: &Vector3,
+    seed: (Scalar, Scalar),
+) -> GeopResult<(Scalar, Scalar)> {
     surface.project_in_domain(*target, seed.0, seed.1, PROJECT_ITERATIONS)
 }
 
 /// `(u, v)` sharpened, within the domain of `surface`: a seed.
-pub(crate) fn sharp_in<S: Scalar>(surface: &NurbSurface3D<S>, (u, v): (S, S)) -> (S, S) {
+pub(crate) fn sharp_in(surface: &NurbSurface3D, (u, v): (Scalar, Scalar)) -> (Scalar, Scalar) {
     let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
     (u.sharpen().clamped(u0, u1), v.sharpen().clamped(v0, v1))
 }
@@ -228,11 +225,7 @@ pub(crate) struct RadiusLaw {
 }
 
 impl RadiusLaw {
-    pub(crate) fn new<S: Scalar>(
-        model: &NamedModel<S>,
-        chain: &Chain,
-        radii: &Radii,
-    ) -> GeopResult<Self> {
+    pub(crate) fn new(model: &NamedModel, chain: &Chain, radii: &Radii) -> GeopResult<Self> {
         let topology = model.topology();
         // The length along the chain to each of its vertices: each edge's
         // integrated, which way it runs makes no difference.
@@ -300,7 +293,7 @@ impl RadiusLaw {
 
     /// The radius `fraction` of the way along link `link`, sharp: the law is
     /// a choice, and this is it.
-    fn radius<S: Scalar>(&self, link: usize, fraction: f64) -> S {
+    fn radius(&self, link: usize, fraction: f64) -> Scalar {
         let (r0, r1) = (self.at_vertices[link], self.at_vertices[link + 1]);
         let last = self.at_vertices.len() - 2;
         let mut f = fraction;
@@ -315,7 +308,7 @@ impl RadiusLaw {
             };
             f = ((fraction - start) / (to - start)).min(1.0);
         }
-        S::from_f64(r0 + f * (r1 - r0))
+        Scalar::from_f64(r0 + f * (r1 - r0))
     }
 
     /// Whether the radius changes along the chain.
@@ -334,12 +327,12 @@ impl RadiusLaw {
 
 /// Where a point is on a link's two faces, the left and the right: its
 /// `(u, v)` on each.
-type Feet<S> = [(S, S); 2];
+type Feet = [(Scalar, Scalar); 2];
 
 /// A chamfer's section, as [`chamfer_frame`] finds it: the chain's point,
 /// the direction the chain runs there, and the feet of the point on the
 /// link's faces.
-type ChamferSection<S> = (Vector3<S>, Vector3<S>, Feet<S>);
+type ChamferSection = (Vector3, Vector3, Feet);
 
 /// The ball at one station: its center, where it touches each face — the
 /// faces on the chain's left and right — the faces' outward normals there
@@ -352,15 +345,15 @@ type ChamferSection<S> = (Vector3<S>, Vector3<S>, Feet<S>);
 /// middle, of weight one, and its center as far beyond the chord as the
 /// edge is before it.
 #[derive(Clone, Debug)]
-struct Station<S: Scalar> {
-    center: Vector3<S>,
-    contact: [Vector3<S>; 2],
+struct Station {
+    center: Vector3,
+    contact: [Vector3; 2],
     faces: [FaceId; 2],
-    normals: [Vector3<S>; 2],
-    uv: Feet<S>,
-    corner: Vector3<S>,
-    weight: S,
-    apex: Vector3<S>,
+    normals: [Vector3; 2],
+    uv: Feet,
+    corner: Vector3,
+    weight: Scalar,
+    apex: Vector3,
     chord: bool,
 }
 
@@ -370,17 +363,17 @@ struct Station<S: Scalar> {
 /// docs): its center, sharp — a construction aid: the contacts are
 /// evaluated on the surfaces, so they lie on them however exactly the
 /// center was found — and the foot points' `(u, v)`, sharp seeds.
-fn roll<S: Scalar>(
-    surfaces: [&NurbSurface3D<S>; 2],
-    seeds: Feet<S>,
-    p: &Vector3<S>,
-    tangent: &Vector3<S>,
-    sr: S,
-) -> GeopResult<(Vector3<S>, Feet<S>)> {
-    let normal = |k: usize, (u, v): (S, S)| surfaces[k].normal(u, v)?.normalize();
+fn roll(
+    surfaces: [&NurbSurface3D; 2],
+    seeds: Feet,
+    p: &Vector3,
+    tangent: &Vector3,
+    sr: Scalar,
+) -> GeopResult<(Vector3, Feet)> {
+    let normal = |k: usize, (u, v): (Scalar, Scalar)| surfaces[k].normal(u, v)?.normalize();
     let (n0, n1) = (normal(0, seeds[0])?, normal(1, seeds[1])?);
     // Exact for two planes through `p`: `r` from both.
-    let spread = S::ONE.add(n0.prod_dot(&n1));
+    let spread = Scalar::ONE.add(n0.prod_dot(&n1));
     let center = p.add(&n0.add(&n1).prod_scalar(sr.div(spread)?)).sharpen();
     let mut offsets = [0, 1].map(|k| Offset::new(surfaces[k], seeds[k], sr));
     let center = meet(center, &mut offsets, &[(*tangent, *p)])?.sharpen();
@@ -392,7 +385,7 @@ fn roll<S: Scalar>(
 /// `center - foot` along the surface. Zero, but for rounding, for a true
 /// foot point; a foot point clamped to the edge of the surface's domain —
 /// where the ball would touch another face — leaves the rest.
-fn off_foot<S: Scalar>(center: &Vector3<S>, foot: &Vector3<S>, n: &Vector3<S>) -> f64 {
+fn off_foot(center: &Vector3, foot: &Vector3, n: &Vector3) -> f64 {
     let d = center.sub(foot);
     d.sub(&n.prod_scalar(d.prod_dot(n)))
         .norm()
@@ -421,14 +414,14 @@ fn sides(chain: &Chain) -> [Vec<FaceId>; 2] {
 /// beyond its edge — its foot point clamped to the face's domain — it is
 /// tried against the other faces along that side, and touches whichever it
 /// meets truly; an error if none.
-fn place<S: Scalar>(
-    model: &Model<S>,
+fn place(
+    model: &Model,
     chain: &Chain,
     link: usize,
-    fraction: S,
-    sr: S,
-    previous: Option<&Station<S>>,
-) -> GeopResult<Station<S>> {
+    fraction: Scalar,
+    sr: Scalar,
+    previous: Option<&Station>,
+) -> GeopResult<Station> {
     let own = &chain.links[link];
     let (p, along) = own.at(model, fraction)?;
     // The edge runs along both faces' tangent planes: their normals there
@@ -457,15 +450,15 @@ fn place<S: Scalar>(
         }
     }
     let scale = sr.abs().upper().to_f64();
-    let mut best: Option<(f64, Station<S>)> = None;
+    let mut best: Option<(f64, Station)> = None;
     let mut tried: Vec<([FaceId; 2], String)> = Vec::new();
     for pair in pairs {
-        let attempt = || -> GeopResult<(f64, Station<S>)> {
+        let attempt = || -> GeopResult<(f64, Station)> {
             let surfaces = [
                 &model.get_face(pair[0])?.surface,
                 &model.get_face(pair[1])?.surface,
             ];
-            let mut seeds = [(S::ZERO, S::ZERO); 2];
+            let mut seeds = [(Scalar::ZERO, Scalar::ZERO); 2];
             for k in 0..2 {
                 seeds[k] = match previous {
                     Some(prev) if prev.faces[k] == pair[k] => prev.uv[k],
@@ -535,14 +528,14 @@ fn place<S: Scalar>(
 /// faces turned by [`TILT`] towards the ball; without, it is the ball's
 /// great arc exactly — where the blend meets a corner's ball (see
 /// [`crate::corner`]), whose piece shares the arc.
-fn section<S: Scalar>(
-    center: Vector3<S>,
-    contact: [Vector3<S>; 2],
-    normals: [Vector3<S>; 2],
+fn section(
+    center: Vector3,
+    contact: [Vector3; 2],
+    normals: [Vector3; 2],
     faces: [FaceId; 2],
-    uv: Feet<S>,
+    uv: Feet,
     tilt: bool,
-) -> GeopResult<Station<S>> {
+) -> GeopResult<Station> {
     let [ta, tb] = contact;
     let m = normals[0].prod_cross(&normals[1]);
     // The arc's tangent at each contact: along the face, in the section's
@@ -552,12 +545,15 @@ fn section<S: Scalar>(
     for k in 0..2 {
         let (at, other) = (contact[k], contact[1 - k]);
         let mut along = m.prod_cross(&normals[k]).normalize()?;
-        if along.prod_dot(&other.sub(&at)).definitely_less(S::ZERO) {
+        if along
+            .prod_dot(&other.sub(&at))
+            .definitely_less(Scalar::ZERO)
+        {
             along = along.neg();
         }
         if tilt {
             let toward = center.sub(&at).normalize()?;
-            along = along.add(&toward.prod_scalar(S::from_f64(TILT)));
+            along = along.add(&toward.prod_scalar(Scalar::from_f64(TILT)));
         }
         tilted[k] = along.prod_cross(&m);
     }
@@ -577,12 +573,12 @@ fn section<S: Scalar>(
         .prod_dot(&along)
         .div(chord.norm().mul(along.norm()))?
         .sharpen();
-    if !weight.definitely_greater(S::ZERO) {
+    if !weight.definitely_greater(Scalar::ZERO) {
         return Err(GeopError::new(format!(
             "the blend's section turns by half a turn or more there: weight {weight:?}"
         )));
     }
-    let apex = corner.prod_scalar(S::TWO).sub(&center).sharpen();
+    let apex = corner.prod_scalar(Scalar::TWO).sub(&center).sharpen();
     Ok(Station {
         center,
         contact,
@@ -599,18 +595,18 @@ fn section<S: Scalar>(
 /// The section's control points, homogeneous: the contact on the left,
 /// the middle (weighted — a chord's of weight one, taken as it is), the
 /// contact on the right, the apex.
-fn section_points<S: Scalar>(station: &Station<S>) -> [Vector4<S>; 4] {
+fn section_points(station: &Station) -> [Vector4; 4] {
     let w = station.weight;
     let e = station.corner;
     [
-        station.contact[0].sharpen().homogeneous(S::ONE),
+        station.contact[0].sharpen().homogeneous(Scalar::ONE),
         if station.chord {
-            e.homogeneous(S::ONE)
+            e.homogeneous(Scalar::ONE)
         } else {
             e.homogeneous(w)
         },
-        station.contact[1].sharpen().homogeneous(S::ONE),
-        station.apex.homogeneous(S::ONE),
+        station.contact[1].sharpen().homogeneous(Scalar::ONE),
+        station.apex.homogeneous(Scalar::ONE),
     ]
 }
 
@@ -620,18 +616,18 @@ fn section_points<S: Scalar>(station: &Station<S>) -> [Vector4<S>; 4] {
 /// section is — and the unit tangent, stated by the faces' normals there as
 /// in [`place`]; and the foot points' `(u, v)` on the link's faces, from the
 /// section before, `previous`.
-fn chamfer_frame<S: Scalar>(
-    model: &Model<S>,
+fn chamfer_frame(
+    model: &Model,
     chain: &Chain,
     link: usize,
-    fraction: S,
-    previous: Option<&Station<S>>,
-) -> GeopResult<ChamferSection<S>> {
+    fraction: Scalar,
+    previous: Option<&Station>,
+) -> GeopResult<ChamferSection> {
     let own = &chain.links[link];
     let (p, along) = own.at(model, fraction)?;
     let p = p.sharpen();
     let mut normals = Vec::new();
-    let mut feet = [(S::ZERO, S::ZERO); 2];
+    let mut feet = [(Scalar::ZERO, Scalar::ZERO); 2];
     for (k, at) in feet.iter_mut().enumerate() {
         let surface = &model.get_face(own.faces[k])?.surface;
         let seed = match previous {
@@ -657,21 +653,21 @@ fn chamfer_frame<S: Scalar>(
 /// Every iterate is sharpened — where a chamfer meets a face is its shape,
 /// chosen — and the answer checked against both conditions, to within how
 /// far the chamfer may stray from them anywhere.
-fn chamfer_point<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    p: &Vector3<S>,
-    tangent: &Vector3<S>,
+fn chamfer_point(
+    surface: &NurbSurface3D,
+    p: &Vector3,
+    tangent: &Vector3,
     d: f64,
-    seed: (S, S),
-) -> GeopResult<(S, S)> {
-    let dd = S::from_f64(d);
+    seed: (Scalar, Scalar),
+) -> GeopResult<(Scalar, Scalar)> {
+    let dd = Scalar::from_f64(d);
     let at = iterate(
         seed,
         seed,
         PROJECT_ITERATIONS,
         Repeat::FixedPoint,
         |&next| (sharp_in(surface, next), next),
-        |&at| -> GeopResult<Step<(S, S)>> {
+        |&at| -> GeopResult<Step<(Scalar, Scalar)>> {
             let x = surface.evaluate(at.0, at.1)?;
             let (su, sv) = surface.derivatives(at.0, at.1)?;
             let off = x.sub(p);
@@ -679,7 +675,10 @@ fn chamfer_point<S: Scalar>(
                 Vector2::from_array([off.prod_dot(tangent), off.prod_dot(&off).sub(dd.mul(dd))]);
             let jacobian = Matrix::from_rows([
                 [su.prod_dot(tangent), sv.prod_dot(tangent)],
-                [S::TWO.mul(off.prod_dot(&su)), S::TWO.mul(off.prod_dot(&sv))],
+                [
+                    Scalar::TWO.mul(off.prod_dot(&su)),
+                    Scalar::TWO.mul(off.prod_dot(&sv)),
+                ],
             ]);
             let step = solve_linear_system(&jacobian, &residual)?;
             Ok(Step::Next((at.0.sub(step[0]), at.1.sub(step[1]))))
@@ -702,14 +701,14 @@ fn chamfer_point<S: Scalar>(
 /// chain, `d` from the edge's point `p` with unit tangent `tangent`: the
 /// foot of the point `d` into the face — square to the edge, along the
 /// plane tangent to the face at the foot of `p`, `foot`.
-fn seed_into<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    p: &Vector3<S>,
-    tangent: &Vector3<S>,
-    foot_of_p: (S, S),
+fn seed_into(
+    surface: &NurbSurface3D,
+    p: &Vector3,
+    tangent: &Vector3,
+    foot_of_p: (Scalar, Scalar),
     k: usize,
     d: f64,
-) -> GeopResult<(S, S)> {
+) -> GeopResult<(Scalar, Scalar)> {
     let n = surface.normal(foot_of_p.0, foot_of_p.1)?.normalize()?;
     let into = if k == 0 {
         n.prod_cross(tangent)
@@ -717,54 +716,55 @@ fn seed_into<S: Scalar>(
         tangent.prod_cross(&n)
     }
     .normalize()?;
-    let guess = p.add(&into.prod_scalar(S::from_f64(d)));
+    let guess = p.add(&into.prod_scalar(Scalar::from_f64(d)));
     Ok(sharp_in(surface, foot(surface, &guess, foot_of_p)?))
 }
 
 /// The chamfer's section from the edge's point `p` — the station as
 /// [`Station`] holds a chord — meeting `faces` at `contact`, where their
 /// outward unit normals are `normals` and their `(u, v)` are `uv`.
-fn chord<S: Scalar>(
-    p: &Vector3<S>,
-    contact: [Vector3<S>; 2],
-    normals: [Vector3<S>; 2],
+fn chord(
+    p: &Vector3,
+    contact: [Vector3; 2],
+    normals: [Vector3; 2],
     faces: [FaceId; 2],
-    uv: Feet<S>,
-) -> GeopResult<Station<S>> {
-    let middle = Vector3::interpolate(&contact[0], &contact[1], S::ONE.div(S::TWO)?).sharpen();
+    uv: Feet,
+) -> GeopResult<Station> {
+    let middle =
+        Vector3::interpolate(&contact[0], &contact[1], Scalar::ONE.div(Scalar::TWO)?).sharpen();
     Ok(Station {
-        center: middle.prod_scalar(S::TWO).sub(p).sharpen(),
+        center: middle.prod_scalar(Scalar::TWO).sub(p).sharpen(),
         contact,
         faces,
         normals,
         uv,
         corner: middle,
-        weight: S::ONE,
-        apex: p.prod_scalar(S::TWO).sub(&middle).sharpen(),
+        weight: Scalar::ONE,
+        apex: p.prod_scalar(Scalar::TWO).sub(&middle).sharpen(),
         chord: true,
     })
 }
 
 /// The edge's point a chord's section `station` was taken from.
-fn chord_edge_point<S: Scalar>(station: &Station<S>) -> GeopResult<Vector3<S>> {
+fn chord_edge_point(station: &Station) -> GeopResult<Vector3> {
     Ok(Vector3::interpolate(
         &station.corner,
         &station.apex,
-        S::ONE.div(S::TWO)?,
+        Scalar::ONE.div(Scalar::TWO)?,
     ))
 }
 
 /// The chamfer's section at the point `fraction` of the way along link
 /// `link` of `chain` (see [`plan_chamfer`]), `distances` into the faces on
 /// its left and right, from the points of the section before, `previous`.
-fn chamfer_station<S: Scalar>(
-    model: &Model<S>,
+fn chamfer_station(
+    model: &Model,
     chain: &Chain,
     link: usize,
-    fraction: S,
+    fraction: Scalar,
     distances: [f64; 2],
-    previous: Option<&Station<S>>,
-) -> GeopResult<Station<S>> {
+    previous: Option<&Station>,
+) -> GeopResult<Station> {
     let own = &chain.links[link];
     let (p, tangent, feet) = chamfer_frame(model, chain, link, fraction, previous)?;
     let mut contact = [Vector3::zero(); 2];
@@ -791,15 +791,15 @@ fn chamfer_station<S: Scalar>(
 /// lies on both faces, and the tool's spline breaks there. Its position as
 /// a fraction of the way from `from` to `to`, and the section.
 #[allow(clippy::too_many_arguments)]
-fn chamfer_crossing<S: Scalar>(
-    model: &Model<S>,
+fn chamfer_crossing(
+    model: &Model,
     chain: &Chain,
     k: usize,
-    before: &Station<S>,
-    after: &Station<S>,
+    before: &Station,
+    after: &Station,
     (from, to): (f64, f64),
     distances: [f64; 2],
-) -> GeopResult<(f64, Station<S>)> {
+) -> GeopResult<(f64, Station)> {
     let (face, onto) = (before.faces[k], after.faces[k]);
     let Some((edge, seed, _)) = crossed_edge(model, (face, onto), before, after, k)? else {
         return Err(GeopError::new(format!(
@@ -812,13 +812,13 @@ fn chamfer_crossing<S: Scalar>(
     // chain's — Newton's method along it — and how far ahead of the plane
     // square to the chain there it is. The edge runs across the chain's
     // side, so it meets that sphere once, near where the chamfer meets it.
-    let d2 = S::from_f64(distances[k] * distances[k]);
-    let at = |c: f64, seed: S| -> GeopResult<(f64, S, ChamferSection<S>)> {
+    let d2 = Scalar::from_f64(distances[k] * distances[k]);
+    let at = |c: f64, seed: Scalar| -> GeopResult<(f64, Scalar, ChamferSection)> {
         let (link, x) = locate(chain, c);
-        let (p, tangent, feet) = chamfer_frame(model, chain, link, S::from_f64(x), Some(before))
-            .with_context(with_context!(
-                "the chamfer's section {x} of the way along link {link}"
-            ))?;
+        let (p, tangent, feet) =
+            chamfer_frame(model, chain, link, Scalar::from_f64(x), Some(before)).with_context(
+                with_context!("the chamfer's section {x} of the way along link {link}"),
+            )?;
         let t = newton_1d(
             seed,
             (lo, hi),
@@ -826,7 +826,7 @@ fn chamfer_crossing<S: Scalar>(
             Arrive::Exhausted,
             |t| -> GeopResult<_> {
                 let off = curve.evaluate(t)?.sub(&p);
-                let rate = S::TWO.mul(off.prod_dot(&curve.tangent(t)?));
+                let rate = Scalar::TWO.mul(off.prod_dot(&curve.tangent(t)?));
                 Ok((off.prod_dot(&off).sub(d2), rate))
             },
         )?
@@ -899,38 +899,38 @@ fn chamfer_crossing<S: Scalar>(
 /// way, and the section there; the one section where both sides move at
 /// one place, if two such are one; and the positions that need a section
 /// of their own, where the blend changes its rate.
-struct Placing<'a, S: Scalar> {
-    place: Place<'a, S>,
-    cross: Cross<'a, S>,
-    merge: Merge<'a, S>,
+struct Placing<'a> {
+    place: Place<'a>,
+    cross: Cross<'a>,
+    merge: Merge<'a>,
     kinks: Vec<f64>,
 }
 
 /// The section at a position, from the one before (see [`Placing`]).
-type Place<'a, S> = Box<dyn Fn(f64, Option<&Station<S>>) -> GeopResult<Station<S>> + 'a>;
+type Place<'a> = Box<dyn Fn(f64, Option<&Station>) -> GeopResult<Station> + 'a>;
 
 /// Where side `k` moves from face to face between two sections, between
 /// two positions: the position, and the section there (see [`Placing`]).
-type Cross<'a, S> =
-    Box<dyn Fn(usize, &Station<S>, &Station<S>, (f64, f64)) -> GeopResult<(f64, Station<S>)> + 'a>;
+type Cross<'a> =
+    Box<dyn Fn(usize, &Station, &Station, (f64, f64)) -> GeopResult<(f64, Station)> + 'a>;
 
 /// The one section where both sides move at one place, if two such are one
 /// (see [`Placing`]).
-type Merge<'a, S> = Box<dyn Fn(&Station<S>, &Station<S>) -> GeopResult<Option<Station<S>>> + 'a>;
+type Merge<'a> = Box<dyn Fn(&Station, &Station) -> GeopResult<Option<Station>> + 'a>;
 
 /// The balls rolled along a chain: at the stations, by their positions
 /// along it — link index plus fraction of its edge — and between each two
 /// where `true_point_fractions` says, by the fraction of the way; and where
 /// the tool's spans start and end, as indices of stations: at both ends,
 /// and wherever the ball rolls from one face onto the next.
-struct Rolling<S: Scalar> {
-    stations: Vec<Station<S>>,
+struct Rolling {
+    stations: Vec<Station>,
     positions: Vec<f64>,
     breaks: Vec<usize>,
-    between: Vec<Vec<(f64, Station<S>)>>,
+    between: Vec<Vec<(f64, Station)>>,
 }
 
-impl<S: Scalar> Rolling<S> {
+impl Rolling {
     /// The spans, as their first and last station.
     fn spans(&self) -> Vec<(usize, usize)> {
         self.breaks.windows(2).map(|w| (w[0], w[1])).collect()
@@ -938,26 +938,26 @@ impl<S: Scalar> Rolling<S> {
 
     /// The parameter along the span from station `a` to `b` of the
     /// position `c`: evenly by position, exactly 0 and 1 at its ends.
-    fn param(&self, (a, b): (usize, usize), c: f64) -> S {
+    fn param(&self, (a, b): (usize, usize), c: f64) -> Scalar {
         let (ca, cb) = (self.positions[a], self.positions[b]);
         if c == ca {
-            S::ZERO
+            Scalar::ZERO
         } else if c == cb {
-            S::ONE
+            Scalar::ONE
         } else {
-            S::from_f64((c - ca) / (cb - ca))
+            Scalar::from_f64((c - ca) / (cb - ca))
         }
     }
 
     /// The stations' parameters along `span`.
-    fn params(&self, span: (usize, usize)) -> Vec<S> {
+    fn params(&self, span: (usize, usize)) -> Vec<Scalar> {
         (span.0..=span.1)
             .map(|i| self.param(span, self.positions[i]))
             .collect()
     }
 
     /// The balls between the stations of `span`, by their parameters.
-    fn between(&self, span: (usize, usize)) -> Vec<Vec<(S, Station<S>)>> {
+    fn between(&self, span: (usize, usize)) -> Vec<Vec<(Scalar, Station)>> {
         (span.0..span.1)
             .map(|i| {
                 let (c, next) = (self.positions[i], self.positions[i + 1]);
@@ -1005,7 +1005,7 @@ fn locate(chain: &Chain, c: f64) -> (usize, f64) {
 }
 
 /// The edges joining faces `a` and `b`.
-fn edges_between<S: Scalar>(model: &Model<S>, a: FaceId, b: FaceId) -> GeopResult<Vec<EdgeId>> {
+fn edges_between(model: &Model, a: FaceId, b: FaceId) -> GeopResult<Vec<EdgeId>> {
     let mut found = Vec::new();
     for &edge in model.edges.keys() {
         let mut on = Vec::new();
@@ -1023,14 +1023,14 @@ fn edges_between<S: Scalar>(model: &Model<S>, a: FaceId, b: FaceId) -> GeopResul
 /// blend crosses going from the station `before` to `after`: of the edges
 /// between them, the one their contacts there lie nearest, with where along
 /// it each lies nearest. None if the faces meet in no edge.
-fn crossed_edge<S: Scalar>(
-    model: &Model<S>,
+fn crossed_edge(
+    model: &Model,
     (from, onto): (FaceId, FaceId),
-    before: &Station<S>,
-    after: &Station<S>,
+    before: &Station,
+    after: &Station,
     k: usize,
-) -> GeopResult<Option<(EdgeId, S, S)>> {
-    let mut best: Option<(f64, EdgeId, S, S)> = None;
+) -> GeopResult<Option<(EdgeId, Scalar, Scalar)>> {
+    let mut best: Option<(f64, EdgeId, Scalar, Scalar)> = None;
     for edge in edges_between(model, from, onto)? {
         let curve = &model.get_edge(edge)?.curve;
         let middle = curve.mid_parameter()?;
@@ -1056,13 +1056,13 @@ fn crossed_edge<S: Scalar>(
 /// Refused where the two faces meet at a crease rather than tangentially:
 /// a ball rolling over it touches both at once, which no rolling-ball
 /// blend of two faces is.
-fn crossing<S: Scalar>(
-    model: &Model<S>,
+fn crossing(
+    model: &Model,
     k: usize,
-    before: &Station<S>,
-    after: &Station<S>,
-    radius: S,
-) -> GeopResult<Station<S>> {
+    before: &Station,
+    after: &Station,
+    radius: Scalar,
+) -> GeopResult<Station> {
     let (from, onto) = (before.faces[k], after.faces[k]);
     let Some((edge, t0, t1)) = crossed_edge(model, (from, onto), before, after, k)? else {
         return Err(GeopError::new(format!(
@@ -1077,26 +1077,25 @@ fn crossing<S: Scalar>(
     // The ball through the edge's point at `t`, square to the face there:
     // how far it is from touching the other side, and its makings.
     #[allow(clippy::type_complexity)]
-    let ball =
-        |t: f64| -> GeopResult<(f64, Vector3<S>, [Vector3<S>; 2], [Vector3<S>; 2], Feet<S>)> {
-            let sr = radius;
-            let ts = S::from_f64(t);
-            let x = curve.evaluate(ts)?;
-            let (u, v) = foot(surface, &x, before.uv[k])?;
-            let n = surface.normal(u, v)?.normalize()?;
-            let center = x.add(&n.prod_scalar(sr)).sharpen();
-            let (uo, vo) = foot(other, &center, before.uv[o])?;
-            let xo = other.evaluate(uo, vo)?;
-            let no = other.normal(uo, vo)?.normalize()?;
-            let gap = center.sub(&xo).prod_dot(&no).sub(sr);
-            let mut contact = [x; 2];
-            let mut normals = [n; 2];
-            let mut uv = [sharp_in(surface, (u, v)); 2];
-            contact[o] = xo;
-            normals[o] = no;
-            uv[o] = sharp_in(other, (uo, vo));
-            Ok((gap.midpoint().to_f64(), center, contact, normals, uv))
-        };
+    let ball = |t: f64| -> GeopResult<(f64, Vector3, [Vector3; 2], [Vector3; 2], Feet)> {
+        let sr = radius;
+        let ts = Scalar::from_f64(t);
+        let x = curve.evaluate(ts)?;
+        let (u, v) = foot(surface, &x, before.uv[k])?;
+        let n = surface.normal(u, v)?.normalize()?;
+        let center = x.add(&n.prod_scalar(sr)).sharpen();
+        let (uo, vo) = foot(other, &center, before.uv[o])?;
+        let xo = other.evaluate(uo, vo)?;
+        let no = other.normal(uo, vo)?.normalize()?;
+        let gap = center.sub(&xo).prod_dot(&no).sub(sr);
+        let mut contact = [x; 2];
+        let mut normals = [n; 2];
+        let mut uv = [sharp_in(surface, (u, v)); 2];
+        contact[o] = xo;
+        normals[o] = no;
+        uv[o] = sharp_in(other, (uo, vo));
+        Ok((gap.midpoint().to_f64(), center, contact, normals, uv))
+    };
     // A bracket: from between where the contacts lie along the edge,
     // widened until the ball goes from one side of touching to the other —
     // along an edge running across the chain, both contacts lie at about
@@ -1158,12 +1157,12 @@ fn crossing<S: Scalar>(
 /// fillet, the chords of a chamfer — between the sections `corners` where
 /// it ends at a corner's ball; where a side moves from one face onto the
 /// next, and where the blend changes its rate, a section too.
-fn roll_chain<S: Scalar>(
+fn roll_chain(
     chain: &Chain,
     n: usize,
-    corners: &[Option<(f64, Station<S>)>; 2],
-    placing: &Placing<S>,
-) -> GeopResult<Rolling<S>> {
+    corners: &[Option<(f64, Station)>; 2],
+    placing: &Placing,
+) -> GeopResult<Rolling> {
     let links = chain.links.len() as f64;
     let place_at = &placing.place;
 
@@ -1174,7 +1173,7 @@ fn roll_chain<S: Scalar>(
         corners[1].as_ref().map_or(links, |(c, _)| *c),
     );
     let positions = station_positions(chain, n, range);
-    let mut regular: Vec<Station<S>> = Vec::with_capacity(positions.len());
+    let mut regular: Vec<Station> = Vec::with_capacity(positions.len());
     for (i, &c) in positions.iter().enumerate() {
         let at_corner = match i {
             0 => corners[0].as_ref(),
@@ -1193,7 +1192,7 @@ fn roll_chain<S: Scalar>(
     let m = regular.len();
     let intervals = if chain.closed { m } else { m - 1 };
     let mut keep = vec![true; m];
-    let mut crossings: Vec<(f64, Station<S>)> = Vec::new();
+    let mut crossings: Vec<(f64, Station)> = Vec::new();
     for i in 0..intervals {
         let j = (i + 1) % m;
         let (ca, mut cb) = (positions[i], positions[j]);
@@ -1201,7 +1200,7 @@ fn roll_chain<S: Scalar>(
             cb += links;
         }
         let (a, b) = (&regular[i], &regular[j]);
-        let mut found: Vec<(f64, Station<S>)> = Vec::new();
+        let mut found: Vec<(f64, Station)> = Vec::new();
         for k in 0..2 {
             if a.faces[k] != b.faces[k] {
                 let ctx = with_context!("moving from face {} onto face {}", a.faces[k], b.faces[k]);
@@ -1248,7 +1247,7 @@ fn roll_chain<S: Scalar>(
             .unwrap_or(positions.len() - 1);
         crossings.push((c, place_at(c, Some(&regular[before]))?));
     }
-    let mut all: Vec<(f64, Station<S>, bool)> = positions
+    let mut all: Vec<(f64, Station, bool)> = positions
         .iter()
         .zip(regular)
         .zip(&keep)
@@ -1334,18 +1333,18 @@ fn roll_chain<S: Scalar>(
 /// faces: rolled ([`place`]), rolling from face to face ([`crossing`]),
 /// and where a varying radius changes its rate — at the chain's vertices —
 /// a ball of its own.
-fn fillet_placing<'a, S: Scalar>(
-    model: &'a NamedModel<S>,
+fn fillet_placing<'a>(
+    model: &'a NamedModel,
     chain: &'a Chain,
     law: &'a RadiusLaw,
-    side: S,
-) -> Placing<'a, S> {
+    side: Scalar,
+) -> Placing<'a> {
     let topology = model.topology();
     let radius_at = move |c: f64| {
         let (link, x) = locate(chain, c);
         side.mul(law.radius(link, x))
     };
-    let place_at = move |c: f64, previous: Option<&Station<S>>| -> GeopResult<Station<S>> {
+    let place_at = move |c: f64, previous: Option<&Station>| -> GeopResult<Station> {
         let (link, x) = locate(chain, c);
         let ctx = with_context!(
             "placing the ball {x} of the way along edge {}",
@@ -1355,24 +1354,24 @@ fn fillet_placing<'a, S: Scalar>(
             topology,
             chain,
             link,
-            S::from_f64(x),
+            Scalar::from_f64(x),
             radius_at(c),
             previous,
         )
         .with_context(ctx)
     };
     let cross = move |k: usize,
-                      a: &Station<S>,
-                      b: &Station<S>,
+                      a: &Station,
+                      b: &Station,
                       (ca, cb): (f64, f64)|
-          -> GeopResult<(f64, Station<S>)> {
+          -> GeopResult<(f64, Station)> {
         // How far along it is: where the plane square to the chain through
         // its center crosses the chain, as every station's does — then the
         // radius there, and the ball again with it.
-        let along = |x: &Station<S>| -> GeopResult<f64> {
+        let along = |x: &Station| -> GeopResult<f64> {
             let off = |c: f64| -> GeopResult<f64> {
                 let (link, f) = locate(chain, c);
-                let (p, t) = chain.links[link].at(topology, S::from_f64(f))?;
+                let (p, t) = chain.links[link].at(topology, Scalar::from_f64(f))?;
                 Ok(x.center.sub(&p).prod_dot(&t).midpoint().to_f64())
             };
             let side = |c| -> GeopResult<_> { Ok(Some(off(c)?.is_sign_positive())) };
@@ -1390,7 +1389,7 @@ fn fillet_placing<'a, S: Scalar>(
         let station = crossing(topology, k, a, b, radius_at(ca + f * (cb - ca)))?;
         Ok((along(&station)?, station))
     };
-    let merge = move |s0: &Station<S>, s1: &Station<S>| -> GeopResult<Option<Station<S>>> {
+    let merge = move |s0: &Station, s1: &Station| -> GeopResult<Option<Station>> {
         let scale = s0.center.sub(&s0.contact[0]).norm().upper().to_f64();
         if distance(&s0.center, &s1.center) > DEVIATION * scale {
             return Ok(None);
@@ -1420,25 +1419,32 @@ fn fillet_placing<'a, S: Scalar>(
 
 /// How a chamfer's chords are placed along `chain` of `model`, `distances`
 /// into the faces on its left and right (see [`Placing`], [`plan_chamfer`]).
-fn chamfer_placing<'a, S: Scalar>(
-    model: &'a NamedModel<S>,
+fn chamfer_placing<'a>(
+    model: &'a NamedModel,
     chain: &'a Chain,
     distances: [f64; 2],
-) -> Placing<'a, S> {
+) -> Placing<'a> {
     let topology = model.topology();
-    let place_at = move |c: f64, previous: Option<&Station<S>>| -> GeopResult<Station<S>> {
+    let place_at = move |c: f64, previous: Option<&Station>| -> GeopResult<Station> {
         let (link, x) = locate(chain, c);
         let ctx = with_context!(
             "chamfering {x} of the way along edge {}",
             chain.links[link].edge
         );
-        chamfer_station(topology, chain, link, S::from_f64(x), distances, previous)
-            .with_context(ctx)
+        chamfer_station(
+            topology,
+            chain,
+            link,
+            Scalar::from_f64(x),
+            distances,
+            previous,
+        )
+        .with_context(ctx)
     };
-    let cross = move |k: usize, a: &Station<S>, b: &Station<S>, range: (f64, f64)| {
+    let cross = move |k: usize, a: &Station, b: &Station, range: (f64, f64)| {
         chamfer_crossing(topology, chain, k, a, b, range, distances)
     };
-    let merge = move |s0: &Station<S>, s1: &Station<S>| -> GeopResult<Option<Station<S>>> {
+    let merge = move |s0: &Station, s1: &Station| -> GeopResult<Option<Station>> {
         let (p0, p1) = (chord_edge_point(s0)?, chord_edge_point(s1)?);
         if distance(&p0, &p1) > DEVIATION * distances[0].min(distances[1]) {
             return Ok(None);
@@ -1463,16 +1469,16 @@ fn chamfer_placing<'a, S: Scalar>(
 /// it bends, its tool, and the contact points to check against the faces
 /// (see [`check_touches`]).
 #[derive(Clone, Debug)]
-pub(crate) struct Rolled<S: Scalar> {
+pub(crate) struct Rolled {
     pub chain: Chain,
     pub bend: Bend,
-    pub tool: Tool<S>,
+    pub tool: Tool,
     /// Per link, the ball at its middle: where it must touch its faces
     /// inside them.
-    middles: Vec<Station<S>>,
+    middles: Vec<Station>,
 }
 
-impl<S: Scalar> Rolled<S> {
+impl Rolled {
     /// The faces the tool's section touches first and second at its last
     /// station, `at_end`, or its first.
     pub fn contact_faces(&self, at_end: bool) -> [FaceId; 2] {
@@ -1490,24 +1496,21 @@ impl<S: Scalar> Rolled<S> {
 }
 
 /// The plain distance between two points.
-fn distance<S: Scalar>(a: &Vector3<S>, b: &Vector3<S>) -> f64 {
+fn distance(a: &Vector3, b: &Vector3) -> f64 {
     a.sub(b).norm().midpoint().to_f64()
 }
 
 /// The control rows of the tool's span `span` through the stations of
 /// `rolling`, interpolated at their parameters (see the module docs); the
 /// contact rows not yet widened.
-fn span_curves<S: Scalar>(
-    rolling: &Rolling<S>,
-    span: (usize, usize),
-) -> GeopResult<[NurbCurve3D<S>; 4]> {
+fn span_curves(rolling: &Rolling, span: (usize, usize)) -> GeopResult<[NurbCurve3D; 4]> {
     let params = rolling.params(span);
-    let points: Vec<[Vector4<S>; 4]> = rolling.stations[span.0..=span.1]
+    let points: Vec<[Vector4; 4]> = rolling.stations[span.0..=span.1]
         .iter()
         .map(section_points)
         .collect();
     let curve = |k: usize| {
-        let values: Vec<Vector4<S>> = points.iter().map(|p| p[k]).collect();
+        let values: Vec<Vector4> = points.iter().map(|p| p[k]).collect();
         NurbCurve::interpolate_homogeneous(&values, &params, 3)
     };
     Ok([curve(0)?, curve(1)?, curve(2)?, curve(3)?])
@@ -1516,9 +1519,9 @@ fn span_curves<S: Scalar>(
 /// How far the span `curves` strays from the balls `between` at their
 /// parameters: from either contact, and from the middle of the section —
 /// or, for a chamfer's chords, from each of their control points.
-fn span_deviation<S: Scalar>(
-    curves: &[NurbCurve3D<S>; 4],
-    between: &[Vec<(S, Station<S>)>],
+fn span_deviation(
+    curves: &[NurbCurve3D; 4],
+    between: &[Vec<(Scalar, Station)>],
 ) -> GeopResult<(f64, String)> {
     if between.iter().flatten().any(|(_, station)| station.chord) {
         let mut worst = (0.0f64, String::new());
@@ -1540,9 +1543,9 @@ fn span_deviation<S: Scalar>(
         return Ok(worst);
     }
     let blend = wall_surface(&span_of(curves, None), 0)?;
-    let half = S::ONE.div(S::TWO)?;
+    let half = Scalar::ONE.div(Scalar::TWO)?;
     let mut worst = (0.0f64, String::new());
-    let mut note = |d: f64, what: &str, s: &S, got: &Vector3<S>, truth: &Vector3<S>| {
+    let mut note = |d: f64, what: &str, s: &Scalar, got: &Vector3, truth: &Vector3| {
         if d > worst.0 {
             worst = (
                 d,
@@ -1565,11 +1568,12 @@ fn span_deviation<S: Scalar>(
             // The blend has to leave the face towards the ball, never dip
             // through it: where it is tangent only approximately, that is
             // what keeps its one meeting with the face its contact curve.
-            let (_, across) = blend.derivatives(t, if k == 0 { S::ZERO } else { S::ONE })?;
+            let (_, across) =
+                blend.derivatives(t, if k == 0 { Scalar::ZERO } else { Scalar::ONE })?;
             let leaving = if k == 0 { across } else { across.neg() };
             if !leaving
                 .prod_dot(&station.center.sub(&truth))
-                .definitely_greater(S::ZERO)
+                .definitely_greater(Scalar::ZERO)
             {
                 return Ok((
                     f64::INFINITY,
@@ -1583,7 +1587,7 @@ fn span_deviation<S: Scalar>(
         }
         let truth = section_points(station);
         let middle = truth[0]
-            .add(&truth[1].prod_scalar(S::TWO))
+            .add(&truth[1].prod_scalar(Scalar::TWO))
             .add(&truth[2])
             .dehomogenized()?;
         let (u, v) = foot(&blend, &middle, (*s, half))?;
@@ -1601,7 +1605,7 @@ fn span_deviation<S: Scalar>(
 
 /// The span whose rows are the control points of `curves` — compatible,
 /// one per section control point (see [`section_points`]) — named `name`.
-fn span_of<S: Scalar>(curves: &[NurbCurve3D<S>; 4], name: Option<String>) -> ToolSpan<S> {
+fn span_of(curves: &[NurbCurve3D; 4], name: Option<String>) -> ToolSpan {
     ToolSpan {
         degree: curves[0].degree,
         knots: curves[0].knot_vector.clone(),
@@ -1614,11 +1618,7 @@ fn span_of<S: Scalar>(curves: &[NurbCurve3D<S>; 4], name: Option<String>) -> Too
 
 /// The contact checks of the span `span`: every station's contact point at
 /// its parameter, and every ball between, for the contact row `k` (0 or 2).
-fn contact_checks<S: Scalar>(
-    rolling: &Rolling<S>,
-    span: (usize, usize),
-    k: usize,
-) -> Vec<(S, Vector3<S>)> {
+fn contact_checks(rolling: &Rolling, span: (usize, usize), k: usize) -> Vec<(Scalar, Vector3)> {
     let params = rolling.params(span);
     let stations = params.into_iter().zip(&rolling.stations[span.0..=span.1]);
     let between = rolling.between(span);
@@ -1635,18 +1635,18 @@ fn contact_checks<S: Scalar>(
 
 /// How an open chain's tool ends at a vertex: the vertex, the end, the
 /// third face there and the way out of the chain.
-type ChainEnd<S> = (VertexId, End<S>, Option<FaceId>, Vector3<S>);
+type ChainEnd = (VertexId, End, Option<FaceId>, Vector3);
 
 /// How the tool of `chain`, bending `bend`, ends at the start and the end
 /// of it, if it is open (see [`tool_end`]) — as `meeting` says where it is
 /// joined to a corner's ball or mitred: decided before anything is rolled,
 /// so that an end that is not supported is refused by name.
-fn chain_ends<S: Scalar>(
-    model: &Model<S>,
+fn chain_ends(
+    model: &Model,
     chain: &Chain,
     bend: Bend,
-    meeting: [Option<End<S>>; 2],
-) -> GeopResult<Option<[ChainEnd<S>; 2]>> {
+    meeting: [Option<End>; 2],
+) -> GeopResult<Option<[ChainEnd; 2]>> {
     if chain.closed {
         return Ok(None);
     }
@@ -1663,7 +1663,7 @@ fn chain_ends<S: Scalar>(
         }
         ends.push((vertex, kind, Some(face), out));
     }
-    let [a, b]: [ChainEnd<S>; 2] = ends
+    let [a, b]: [ChainEnd; 2] = ends
         .try_into()
         .map_err(|_| GeopError::new("an open chain has two ends"))?;
     Ok(Some([a, b]))
@@ -1673,9 +1673,9 @@ fn chain_ends<S: Scalar>(
 /// the ball's center, and where it touches the faces on the chain's left
 /// and right there.
 #[derive(Clone, Debug)]
-pub(crate) struct ChainCorner<S: Scalar> {
-    pub center: Vector3<S>,
-    pub contacts: [Vector3<S>; 2],
+pub(crate) struct ChainCorner {
+    pub center: Vector3,
+    pub contacts: [Vector3; 2],
 }
 
 /// Where the open `chain`'s blend runs into a wall at its start and its end
@@ -1683,10 +1683,10 @@ pub(crate) struct ChainCorner<S: Scalar> {
 /// the chain, and the faces either side there — for the mitres where two
 /// do at one vertex (see [`crate::blend`]).
 #[allow(clippy::type_complexity)]
-pub(crate) fn chain_walls<S: Scalar>(
-    model: &Model<S>,
+pub(crate) fn chain_walls(
+    model: &Model,
     chain: &Chain,
-) -> GeopResult<[Option<(VertexId, Vector3<S>, [FaceId; 2])>; 2]> {
+) -> GeopResult<[Option<(VertexId, Vector3, [FaceId; 2])>; 2]> {
     let mut walls = [None, None];
     if chain.closed {
         return Ok(walls);
@@ -1703,12 +1703,12 @@ pub(crate) fn chain_walls<S: Scalar>(
 
 /// Which way the faces either side of `chain` bend: the same all along, or
 /// an error.
-pub(crate) fn chain_bend<S: Scalar>(model: &Model<S>, chain: &Chain) -> GeopResult<Bend> {
+pub(crate) fn chain_bend(model: &Model, chain: &Chain) -> GeopResult<Bend> {
     // Which way it bends, where the chain starts.
     let first = &chain.links[0];
     // The way into the face on the left — its normal crossed with the way
     // its coedge runs, the chain's — against the right one's normal.
-    let bend_at = |link: &Link, fraction: S| -> GeopResult<Bend> {
+    let bend_at = |link: &Link, fraction: Scalar| -> GeopResult<Bend> {
         let (p, t) = link.at(model, fraction)?;
         let normal = |face| {
             let surface = &model.get_face(face)?.surface;
@@ -1723,9 +1723,9 @@ pub(crate) fn chain_bend<S: Scalar>(model: &Model<S>, chain: &Chain) -> GeopResu
         }
         bend(n_l.prod_cross(&t).prod_dot(&n_r))
     };
-    let bend = bend_at(first, S::from_f64(0.5))?;
+    let bend = bend_at(first, Scalar::from_f64(0.5))?;
     for (i, link) in chain.links.iter().enumerate().skip(1) {
-        if bend_at(link, S::from_f64(0.5))? != bend {
+        if bend_at(link, Scalar::from_f64(0.5))? != bend {
             return Err(GeopError::new(format!(
                 "the edge's tangent chain turns from {bend:?} to the other way along edge {} (link {i}): blend its parts separately",
                 link.edge
@@ -1741,18 +1741,13 @@ pub(crate) fn chain_bend<S: Scalar>(model: &Model<S>, chain: &Chain) -> GeopResu
 /// first such place from the end, in plain numbers: where along it is a
 /// free choice up to where the ball's center is, and the station there is
 /// built from the ball exactly.
-fn corner_position<S: Scalar>(
-    model: &Model<S>,
-    chain: &Chain,
-    k: usize,
-    center: &Vector3<S>,
-) -> GeopResult<f64> {
+fn corner_position(model: &Model, chain: &Chain, k: usize, center: &Vector3) -> GeopResult<f64> {
     let links = chain.links.len() as f64;
     // How far further into the chain than the plane square to it at `c`
     // the center is.
     let ahead = |c: f64| -> GeopResult<f64> {
         let (link, f) = locate(chain, c);
-        let (p, t) = chain.links[link].at(model, S::from_f64(f))?;
+        let (p, t) = chain.links[link].at(model, Scalar::from_f64(f))?;
         let off = center.sub(&p).prod_dot(&t).midpoint().to_f64();
         Ok(if k == 0 { off } else { -off })
     };
@@ -1796,20 +1791,20 @@ fn corner_position<S: Scalar>(
 ///
 /// Where it meets a corner's ball, its last station is that ball's great
 /// arc exactly, untilted, as the corner's piece of it is.
-pub(crate) fn plan_rolled<S: Scalar>(
-    model: &NamedModel<S>,
+pub(crate) fn plan_rolled(
+    model: &NamedModel,
     chain: Chain,
     radii: &Radii,
-    corners: [Option<ChainCorner<S>>; 2],
-) -> GeopResult<Rolled<S>> {
+    corners: [Option<ChainCorner>; 2],
+) -> GeopResult<Rolled> {
     let topology = model.topology();
     let mut law = RadiusLaw::new(model, &chain, radii)?;
     let bend = chain_bend(topology, &chain)?;
-    let side = bend.side::<S>();
+    let side = bend.side();
     // The stations where the chain meets a corner's ball, exactly, and how
     // its tool ends there.
-    let mut at_corners: [Option<(f64, Station<S>)>; 2] = [None, None];
-    let mut meeting_ends: [Option<End<S>>; 2] = [None, None];
+    let mut at_corners: [Option<(f64, Station)>; 2] = [None, None];
+    let mut meeting_ends: [Option<End>; 2] = [None, None];
     for (k, corner) in corners.iter().enumerate() {
         let link = if k == 0 {
             &chain.links[0]
@@ -1820,7 +1815,7 @@ pub(crate) fn plan_rolled<S: Scalar>(
             continue;
         };
         let ctx = with_context!("the blend's end at the corner ball at {:?}", corner.center);
-        let mut uv = [(S::ZERO, S::ZERO); 2];
+        let mut uv = [(Scalar::ZERO, Scalar::ZERO); 2];
         let mut normals = [Vector3::zero(); 2];
         for side in 0..2 {
             let surface = &topology.get_face(link.faces[side])?.surface;
@@ -1844,7 +1839,7 @@ pub(crate) fn plan_rolled<S: Scalar>(
         }
         at_corners[k] = Some((position, station));
         meeting_ends[k] = Some(End::Corner {
-            setback: S::from_f64(position),
+            setback: Scalar::from_f64(position),
         });
     }
     let decided_ends = chain_ends(topology, &chain, bend, meeting_ends)?;
@@ -1865,11 +1860,11 @@ pub(crate) fn plan_rolled<S: Scalar>(
 /// as far beyond the edge as the chord's middle is before it. Its contact
 /// rows are widened to enclose the true contacts as a fillet's are; unlike
 /// a fillet's, the chamfer crosses the faces there, so needs no tilt.
-pub(crate) fn plan_chamfer<S: Scalar>(
-    model: &NamedModel<S>,
+pub(crate) fn plan_chamfer(
+    model: &NamedModel,
     chain: Chain,
     distances: [f64; 2],
-) -> GeopResult<Rolled<S>> {
+) -> GeopResult<Rolled> {
     if !distances.iter().all(|&d| d > 0.0) {
         return Err(GeopError::new(format!(
             "a chamfer's distances have to be positive, not {distances:?}"
@@ -1891,10 +1886,10 @@ pub(crate) fn plan_chamfer<S: Scalar>(
 /// between to within [`DEVIATION`] of `size`, and those spans' control
 /// rows — or an error saying how far they got.
 #[allow(clippy::type_complexity)]
-fn refined<S: Scalar>(
+fn refined(
     size: f64,
-    roll: impl Fn(usize) -> GeopResult<Rolling<S>>,
-) -> GeopResult<(Rolling<S>, Vec<[NurbCurve3D<S>; 4]>)> {
+    roll: impl Fn(usize) -> GeopResult<Rolling>,
+) -> GeopResult<(Rolling, Vec<[NurbCurve3D; 4]>)> {
     let smallest = size;
     let mut before = f64::INFINITY;
     // The cap ends it, with an error: `n` doubles each step, so it passes
@@ -1944,26 +1939,26 @@ fn refined<S: Scalar>(
 /// stand square to it where the ball touches them — so that the tool, cut
 /// off there or run straight on out of the solid, crosses it exactly there.
 /// The plane, oriented along `out`, as the cap's `(origin, e1, e2)`.
-fn end_plane<S: Scalar>(
-    model: &Model<S>,
-    station: &Station<S>,
+fn end_plane(
+    model: &Model,
+    station: &Station,
     face: FaceId,
-    out: &Vector3<S>,
-) -> GeopResult<[Vector3<S>; 3]> {
+    out: &Vector3,
+) -> GeopResult<[Vector3; 3]> {
     let Some(plane) = model.get_face(face)?.surface.as_plane()? else {
         return Err(GeopError::new(format!("face {face} is not planar")));
     };
     let mut m = plane.normal.normalize()?;
     let along = m.prod_dot(out);
-    if along.definitely_less(S::ZERO) {
+    if along.definitely_less(Scalar::ZERO) {
         m = m.neg();
-    } else if !along.definitely_greater(S::ZERO) {
+    } else if !along.definitely_greater(Scalar::ZERO) {
         return Err(GeopError::new(format!(
             "face {face} could run along the edge at its end"
         )));
     }
     for (k, n) in station.normals.iter().enumerate() {
-        if !n.prod_dot(&m).could_be_equal(S::ZERO) {
+        if !n.prod_dot(&m).could_be_equal(Scalar::ZERO) {
             return Err(GeopError::new(format!(
                 "face {} does not stand square to face {face} where the ball touches it ({:?}): a rolling-ball blend only ends at a plane its section lies in",
                 station.faces[k], station.contact[k]
@@ -1981,18 +1976,18 @@ fn end_plane<S: Scalar>(
 
 /// The tool of a chain from its stations and their span curves: widened to
 /// enclose the contact curves, oriented, and its ends decided and built.
-fn assemble<S: Scalar>(
-    model: &Model<S>,
+fn assemble(
+    model: &Model,
     chain: Chain,
     bend: Bend,
-    rolling: Rolling<S>,
-    mut curves: Vec<[NurbCurve3D<S>; 4]>,
-    decided_ends: Option<[ChainEnd<S>; 2]>,
-) -> GeopResult<Rolled<S>> {
+    rolling: Rolling,
+    mut curves: Vec<[NurbCurve3D; 4]>,
+    decided_ends: Option<[ChainEnd; 2]>,
+) -> GeopResult<Rolled> {
     // One pad for every contact row, so that spans meeting at a station
     // meet in the same control points there.
     let chord = rolling.stations[0].chord;
-    let mut pad = [S::ZERO; 3];
+    let mut pad = [Scalar::ZERO; 3];
     for (span, c) in rolling.spans().into_iter().zip(&curves) {
         for k in [0, 2] {
             let p = c[k].enclosing_pad(&contact_checks(&rolling, span, k))?;
@@ -2014,17 +2009,17 @@ fn assemble<S: Scalar>(
     let facing = along
         .prod_cross(&first.contact[1].sub(&first.contact[0]))
         .prod_dot(&first.center.sub(&first.corner));
-    let swap = if facing.definitely_greater(S::ZERO) {
+    let swap = if facing.definitely_greater(Scalar::ZERO) {
         false
-    } else if facing.definitely_less(S::ZERO) {
+    } else if facing.definitely_less(Scalar::ZERO) {
         true
     } else {
         return Err(GeopError::new(
             "cannot tell which way the blend faces at the start of the chain",
         ));
     };
-    let order = |p: [Vector4<S>; 4]| if swap { [p[2], p[1], p[0], p[3]] } else { p };
-    let vertices_of = |s: &Station<S>| {
+    let order = |p: [Vector4; 4]| if swap { [p[2], p[1], p[0], p[3]] } else { p };
+    let vertices_of = |s: &Station| {
         if swap {
             [s.contact[1], s.contact[0], s.apex]
         } else {
@@ -2107,7 +2102,11 @@ fn assemble<S: Scalar>(
                         .fold(0.0, f64::max);
                     let [o, e1, e2] = plane;
                     let normal = e1.prod_cross(&e2);
-                    let shifted = [o.add(&normal.prod_scalar(S::from_f64(2.0 * width))), e1, e2];
+                    let shifted = [
+                        o.add(&normal.prod_scalar(Scalar::from_f64(2.0 * width))),
+                        e1,
+                        e2,
+                    ];
                     let far = ToolStation {
                         points: flat.map(|p| embed(&p, &shifted)),
                         vertices: flat_vertices.map(|p| embed(&p, &shifted).head::<3>()),
@@ -2117,7 +2116,7 @@ fn assemble<S: Scalar>(
                             flat,
                         }),
                     };
-                    let line = |a: [Vector4<S>; 4], b: [Vector4<S>; 4]| ToolSpan {
+                    let line = |a: [Vector4; 4], b: [Vector4; 4]| ToolSpan {
                         degree: 1,
                         knots: bezier_knots(1),
                         rows: vec![a, b],
@@ -2191,11 +2190,11 @@ fn assemble<S: Scalar>(
 /// the span's knot there repeated as often as its degree, so that the span
 /// passes through its old end row and bends there. The old span keeps the
 /// first three quarters of its parameters, the run-on the last.
-fn run_on<S: Scalar>(span: &mut ToolSpan<S>, to: [Vector4<S>; 4], at_end: bool) -> GeopResult<()> {
+fn run_on(span: &mut ToolSpan, to: [Vector4; 4], at_end: bool) -> GeopResult<()> {
     let p = span.degree;
-    let share = S::from_ratio(3, 4)?;
-    let line = |from: &[Vector4<S>; 4], i: usize| -> GeopResult<[Vector4<S>; 4]> {
-        let f = S::from_ratio(i as i64, p as i64)?;
+    let share = Scalar::from_ratio(3, 4)?;
+    let line = |from: &[Vector4; 4], i: usize| -> GeopResult<[Vector4; 4]> {
+        let f = Scalar::from_ratio(i as i64, p as i64)?;
         let mut row = *from;
         for k in 0..4 {
             row[k] = Vector4::interpolate(&from[k], &to[k], f);
@@ -2204,11 +2203,11 @@ fn run_on<S: Scalar>(span: &mut ToolSpan<S>, to: [Vector4<S>; 4], at_end: bool) 
     };
     if at_end {
         let from = *span.rows.last().expect("rows");
-        let mut knots: Vec<S> = span.knots[..span.knots.len() - 1]
+        let mut knots: Vec<Scalar> = span.knots[..span.knots.len() - 1]
             .iter()
             .map(|k| k.mul(share))
             .collect();
-        knots.extend(vec![S::ONE; p + 1]);
+        knots.extend(vec![Scalar::ONE; p + 1]);
         for i in 1..p {
             span.rows.push(line(&from, i)?);
         }
@@ -2216,8 +2215,8 @@ fn run_on<S: Scalar>(span: &mut ToolSpan<S>, to: [Vector4<S>; 4], at_end: bool) 
         span.knots = knots;
     } else {
         let from = span.rows[0];
-        let start = S::ONE.sub(share);
-        let mut knots = vec![S::ZERO; p + 1];
+        let start = Scalar::ONE.sub(share);
+        let mut knots = vec![Scalar::ZERO; p + 1];
         knots.extend(span.knots[1..].iter().map(|k| start.add(k.mul(share))));
         let mut rows = vec![to];
         for i in (1..p).rev() {
@@ -2234,7 +2233,7 @@ fn run_on<S: Scalar>(span: &mut ToolSpan<S>, to: [Vector4<S>; 4], at_end: bool) 
 /// along each edge of the chain touches its faces inside them. A blend too
 /// large for a face runs past its boundary, and one ending exactly on
 /// another of its edges asks the boolean to cut along that edge.
-pub(crate) fn check_touches<S: Scalar>(model: &Model<S>, rolled: &Rolled<S>) -> GeopResult<()> {
+pub(crate) fn check_touches(model: &Model, rolled: &Rolled) -> GeopResult<()> {
     for station in &rolled.middles {
         for k in 0..2 {
             let face = station.faces[k];

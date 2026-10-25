@@ -5,7 +5,7 @@ use crate::{
     validation::ValidationParameters,
 };
 use geop_core_geometry::contains::surface::surface_could_contain;
-use geop_core_math::{geop_error::GeopError, scalars::Scalar, vector::Vector2};
+use geop_core_math::{geop_error::GeopError, vector::Vector2};
 
 /// Fixed seed for the ray casting. `loops_contain` retries until it finds a
 /// ray grazing no vertex, so the classification is seed-independent and a
@@ -34,10 +34,10 @@ const SEED: u64 = 0x00C0_FFEE_0BAD_F00D;
 /// runs a pairwise curve intersection against every coedge of the outer loop,
 /// which is the same cost class as the other geometric checks in the full
 /// `validate` rather than the structural ones.
-pub fn check_holes_inside_outer<S: Scalar>(
-    params: &ValidationParameters<S>,
+pub fn check_holes_inside_outer(
+    params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
 ) {
     for (&face_id, face) in &model.faces {
         if face.holes.is_empty() {
@@ -100,12 +100,12 @@ pub fn check_holes_inside_outer<S: Scalar>(
 /// reads one straight off that pcurve;
 /// a bare `Vertex` boundary has no pcurve, so its 3-D point is located on the
 /// face's surface instead.
-fn hole_point<S: Scalar>(
-    model: &Model<S>,
-    params: &ValidationParameters<S>,
+fn hole_point(
+    model: &Model,
+    params: &ValidationParameters,
     face_id: crate::FaceId,
     hole: BoundaryType,
-) -> Result<Option<Vector2<S>>, GeopError> {
+) -> Result<Option<Vector2>, GeopError> {
     match hole {
         BoundaryType::Loop(anchor) => {
             // The *midpoint* of the anchor's pcurve, not its start. A loop's
@@ -141,22 +141,27 @@ mod tests {
     };
     use geop_core_geometry::{nurb_curve::NurbCurve, nurb_surface::NurbSurface3D};
     use geop_core_math::{
-        for_all_scalars,
         scalars::Scalar,
         vector::{Vector3, Vector4},
     };
 
     /// A flat unit patch in the xy-plane, big enough to hold every fixture
     /// below inside its own `(u, v)` domain.
-    fn flat_face<S: Scalar>(model: &mut Model<S>) -> FaceId {
-        let p =
-            |x: f64, y: f64| Vector4::from_array([S::from_f64(x), S::from_f64(y), S::ZERO, S::ONE]);
+    fn flat_face(model: &mut Model) -> FaceId {
+        let p = |x: f64, y: f64| {
+            Vector4::from_array([
+                Scalar::from_f64(x),
+                Scalar::from_f64(y),
+                Scalar::ZERO,
+                Scalar::ONE,
+            ])
+        };
         let surface = NurbSurface3D::try_new(
             1,
             1,
             vec![p(0.0, 0.0), p(0.0, 4.0), p(4.0, 0.0), p(4.0, 4.0)],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
+            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
         )
         .unwrap();
         model.insert_face(Face {
@@ -169,16 +174,16 @@ mod tests {
 
     /// A closed ring of coedges through `points` (in `(u, v)`, which this
     /// surface maps affinely to `(x, y)`), returning its anchor.
-    fn ring<S: Scalar>(model: &mut Model<S>, face_id: FaceId, points: &[(f64, f64)]) -> CoedgeId {
+    fn ring(model: &mut Model, face_id: FaceId, points: &[(f64, f64)]) -> CoedgeId {
         let n = points.len();
         let verts: Vec<VertexId> = points
             .iter()
             .map(|&(u, v)| {
                 model.insert_vertex(Vertex {
                     point: Vector3::from_array([
-                        S::from_f64(u * 4.0),
-                        S::from_f64(v * 4.0),
-                        S::ZERO,
+                        Scalar::from_f64(u * 4.0),
+                        Scalar::from_f64(v * 4.0),
+                        Scalar::ZERO,
                     ]),
                 })
             })
@@ -192,19 +197,19 @@ mod tests {
                         1,
                         vec![
                             Vector4::from_array([
-                                S::from_f64(a.0 * 4.0),
-                                S::from_f64(a.1 * 4.0),
-                                S::ZERO,
-                                S::ONE,
+                                Scalar::from_f64(a.0 * 4.0),
+                                Scalar::from_f64(a.1 * 4.0),
+                                Scalar::ZERO,
+                                Scalar::ONE,
                             ]),
                             Vector4::from_array([
-                                S::from_f64(b.0 * 4.0),
-                                S::from_f64(b.1 * 4.0),
-                                S::ZERO,
-                                S::ONE,
+                                Scalar::from_f64(b.0 * 4.0),
+                                Scalar::from_f64(b.1 * 4.0),
+                                Scalar::ZERO,
+                                Scalar::ONE,
                             ]),
                         ],
-                        vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+                        vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
                     )
                     .unwrap(),
                     start_vertex: verts[i],
@@ -227,20 +232,21 @@ mod tests {
         coedges[0]
     }
 
-    fn params<S: Scalar>() -> ValidationParameters<S> {
+    fn params() -> ValidationParameters {
         ValidationParameters {
-            min_subdivision_size: S::from_f64(1e-3),
+            min_subdivision_size: Scalar::from_f64(1e-3),
             ..ValidationParameters::default()
         }
     }
 
     const OUTER: [(f64, f64); 4] = [(0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9)];
 
-    fn check_hole_inside_outer_passes<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn hole_inside_outer_passes() {
+        let mut model = Model::new();
         let face = flat_face(&mut model);
-        let outer = ring::<S>(&mut model, face, &OUTER);
-        let hole = ring::<S>(
+        let outer = ring(&mut model, face, &OUTER);
+        let hole = ring(
             &mut model,
             face,
             &[(0.4, 0.4), (0.6, 0.4), (0.6, 0.6), (0.4, 0.6)],
@@ -253,20 +259,17 @@ mod tests {
         check_holes_inside_outer(&params(), &mut errors, &model);
         assert!(errors.is_empty(), "{errors:?}");
     }
-    #[test]
-    fn hole_inside_outer_passes() {
-        for_all_scalars!(check_hole_inside_outer_passes);
-    }
 
     /// The failure this check exists for: a hole sitting entirely outside the
     /// loop that bounds the face. Every structural invariant still holds —
     /// both rings are well-formed and closed — so nothing else in `validate`
     /// notices.
-    fn check_hole_outside_outer_fails<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn hole_outside_outer_fails() {
+        let mut model = Model::new();
         let face = flat_face(&mut model);
-        let outer = ring::<S>(&mut model, face, &OUTER);
-        let hole = ring::<S>(
+        let outer = ring(&mut model, face, &OUTER);
+        let hole = ring(
             &mut model,
             face,
             &[(0.02, 0.02), (0.06, 0.02), (0.06, 0.06), (0.02, 0.06)],
@@ -279,25 +282,18 @@ mod tests {
         check_holes_inside_outer(&params(), &mut errors, &model);
         assert_eq!(errors.len(), 1, "{errors:?}");
     }
-    #[test]
-    fn hole_outside_outer_fails() {
-        for_all_scalars!(check_hole_outside_outer_fails);
-    }
 
     /// A face with no holes has nothing to check, including one still bounded
     /// by a bare vertex.
-    fn check_face_without_holes_passes<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn face_without_holes_passes() {
+        let mut model = Model::new();
         let face = flat_face(&mut model);
-        let outer = ring::<S>(&mut model, face, &OUTER);
+        let outer = ring(&mut model, face, &OUTER);
         model.faces.get_mut(&face).unwrap().outer = BoundaryType::Loop(outer);
 
         let mut errors = Vec::new();
         check_holes_inside_outer(&params(), &mut errors, &model);
         assert!(errors.is_empty(), "{errors:?}");
-    }
-    #[test]
-    fn face_without_holes_passes() {
-        for_all_scalars!(check_face_without_holes_passes);
     }
 }

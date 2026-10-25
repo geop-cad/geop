@@ -27,23 +27,22 @@ use geop_core_program::{
     part::StepContext,
     reader::Reader,
     target::{Target, TargetReference},
-    values::Design,
 };
 
 /// A thread recorded on a cylindrical face, by its specification and where
 /// it lies — kept as geometry, so that it says the same whatever later
 /// steps do to the face it was put on.
 #[derive(Clone, Debug, PartialEq)]
-pub struct CosmeticThread<S: Scalar> {
+pub struct CosmeticThread {
     /// How it is called: `M6x1`.
     pub designation: String,
     /// The face it was put on, by its name then.
     pub face: String,
     /// Where it starts, on the axis of its face, and the way it runs from
     /// there (a unit vector).
-    pub axis: Axis<S>,
+    pub axis: Axis,
     /// The radius of the face it lies on: where it is drawn.
-    pub radius: S,
+    pub radius: Scalar,
     /// The thread's nominal (major) diameter, its minor diameter and its
     /// pitch, as its standard gives them.
     pub major_diameter: f64,
@@ -56,28 +55,28 @@ pub struct CosmeticThread<S: Scalar> {
     pub handedness: Handedness,
 }
 
-impl<S: Scalar> CosmeticThread<S> {
+impl CosmeticThread {
     /// The helix it is drawn as: on its face, from where it starts, one
     /// turn per pitch, as far as it runs.
-    pub fn helix(&self) -> GeopResult<NurbCurve3D<S>> {
-        let frame: CoordinateSystem<S> = frame_along(self.axis.point, &self.axis.direction)?;
+    pub fn helix(&self) -> GeopResult<NurbCurve3D> {
+        let frame: CoordinateSystem = frame_along(self.axis.point, &self.axis.direction)?;
         NurbCurve3D::helix(
             &frame,
             self.radius,
-            S::from_f64(self.pitch),
+            Scalar::from_f64(self.pitch),
             self.length / self.pitch,
             self.handedness,
         )
     }
 
     /// The helix as a polyline, `SEGMENTS_PER_SPAN` segments to a quarter turn.
-    pub fn polyline(&self) -> GeopResult<Vec<Vector3<S>>> {
+    pub fn polyline(&self) -> GeopResult<Vec<Vector3>> {
         let helix = self.helix()?;
         // A span between every pair of the double interior knots.
         let spans = (helix.control_points.len() - 1) / 2;
         let n = (spans * SEGMENTS_PER_SPAN) as i64;
         (0..=n)
-            .map(|i| helix.evaluate(S::from_ratio(i, n)?))
+            .map(|i| helix.evaluate(Scalar::from_ratio(i, n)?))
             .collect()
     }
 }
@@ -88,24 +87,18 @@ const SEGMENTS_PER_SPAN: usize = 8;
 
 /// A part's cosmetic threads, by name: the value of its target [`threads`],
 /// which every step that records one revises.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Threads<S: Scalar>(BTreeMap<String, CosmeticThread<S>>);
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Threads(BTreeMap<String, CosmeticThread>);
 
 /// The part's cosmetic threads.
-pub fn threads() -> TargetReference<Threads<Design>> {
+pub fn threads() -> TargetReference<Threads> {
     TargetReference::new("threads")
 }
 
-impl<S: Scalar> Default for Threads<S> {
-    fn default() -> Self {
-        Self(BTreeMap::new())
-    }
-}
-
-impl<S: Scalar> Threads<S> {
+impl Threads {
     /// Records `thread` under `name`. Fails, leaving the threads as they
     /// are, if there is a thread of that name already.
-    pub fn add(&mut self, name: impl Into<String>, thread: CosmeticThread<S>) -> GeopResult<()> {
+    pub fn add(&mut self, name: impl Into<String>, thread: CosmeticThread) -> GeopResult<()> {
         let name = name.into();
         if self.0.contains_key(&name) {
             return Err(GeopError::new(format!(
@@ -117,12 +110,12 @@ impl<S: Scalar> Threads<S> {
     }
 
     /// Every cosmetic thread, by name.
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &CosmeticThread<S>)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &CosmeticThread)> {
         self.0.iter().map(|(name, thread)| (name.as_str(), thread))
     }
 
     /// The cosmetic thread `name`.
-    pub fn get(&self, name: &str) -> GeopResult<&CosmeticThread<S>> {
+    pub fn get(&self, name: &str) -> GeopResult<&CosmeticThread> {
         (self.0.get(name))
             .ok_or_else(|| GeopError::new(format!("the part has no thread named {name:?}")))
     }
@@ -137,7 +130,7 @@ impl<S: Scalar> Threads<S> {
     }
 }
 
-impl Threads<Design> {
+impl Threads {
     /// What a viewer draws of each thread the step `step` recorded: its
     /// name, its designation and its helix as a polyline.
     pub fn drawn(&self, step: &str) -> GeopResult<Vec<ViewAnnotation>> {
@@ -155,31 +148,31 @@ impl Threads<Design> {
 }
 
 /// Every step that records threads adds to them.
-impl Target for Threads<Design> {
+impl Target for Threads {
     const CHAIN: bool = true;
 }
 
 /// Read whole.
-impl Kind for Threads<Design> {
+impl Kind for Threads {
     const NAME: &'static str = "threads";
 }
 
-impl HasElements<Threads<Design>> for Threads<Design> {
-    type Element<'a> = &'a Threads<Design>;
+impl HasElements<Threads> for Threads {
+    type Element<'a> = &'a Threads;
     const SINGLETON: Option<&'static str> = Some("threads");
 
-    fn element(&self, name: &str) -> GeopResult<&Threads<Design>> {
+    fn element(&self, name: &str) -> GeopResult<&Threads> {
         whole(self, name)
     }
 }
 
 /// The part's cosmetic threads as `reader` reads them: none, before the
 /// first step that records one.
-pub fn read_threads<'a>(reader: &Reader<'a>) -> GeopResult<std::borrow::Cow<'a, Threads<Design>>> {
+pub fn read_threads<'a>(reader: &Reader<'a>) -> GeopResult<std::borrow::Cow<'a, Threads>> {
     if !reader.defines(&threads()) {
         return Ok(std::borrow::Cow::Owned(Threads::default()));
     }
-    let whole = ElementReference::<Threads<Design>, Threads<Design>>::whole(threads());
+    let whole = ElementReference::<Threads, Threads>::whole(threads());
     Ok(std::borrow::Cow::Borrowed(reader.retrieve_element(&whole)?))
 }
 

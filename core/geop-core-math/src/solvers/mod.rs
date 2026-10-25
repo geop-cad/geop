@@ -22,7 +22,7 @@
 //!   into itself, and a graph flooded from some nodes to all it reaches.
 //! - [`newton`]: Newton refinement of a root a subdivision search has
 //!   isolated, and Newton's method on one unknown from a seed.
-//! - [`least_squares`]: constrained Levenberg–Marquardt over any scalar.
+//! - [`least_squares`]: constrained Levenberg–Marquardt.
 //! - [`system`]: constraint systems on blocks of variables — numbers,
 //!   poses — solved by the driver, checked, measured for freedom and
 //!   conflicts, and their solution enclosed: the engine behind sketches and

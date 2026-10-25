@@ -5,7 +5,7 @@ use geop_core_math::{
 
 use crate::{Curve2, FaceId, Model, Sense};
 
-impl<S: Scalar> Model<S> {
+impl Model {
     /// Turn `face_id`'s material side around, so its normal points the other
     /// way.
     ///
@@ -72,7 +72,7 @@ impl<S: Scalar> Model<S> {
 /// rather than to evaluated points keeps the curve exact: a mirror is
 /// affine, and an affine map of a NURBS curve is the same map applied to its
 /// control net.
-pub(crate) fn mirror_u<S: Scalar>(pcurve: &mut Curve2<S>, span: S) {
+pub(crate) fn mirror_u(pcurve: &mut Curve2, span: Scalar) {
     for point in &mut pcurve.control_points {
         point[0] = span.mul(point[2]).sub(point[0]);
     }
@@ -91,7 +91,6 @@ mod tests {
         nurb_surface::NurbSurface3D,
     };
     use geop_core_math::{
-        for_all_scalars,
         scalars::Scalar,
         vector::{Vector3, Vector4},
     };
@@ -103,16 +102,21 @@ mod tests {
 
     /// A face whose surface is a saddle (so the normal genuinely varies) with
     /// one triangular trim loop.
-    fn saddle_face<S: Scalar>(model: &mut Model<S>) -> crate::FaceId {
+    fn saddle_face(model: &mut Model) -> crate::FaceId {
         let p = |x: f64, y: f64, z: f64| {
-            Vector4::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z), S::ONE])
+            Vector4::from_array([
+                Scalar::from_f64(x),
+                Scalar::from_f64(y),
+                Scalar::from_f64(z),
+                Scalar::ONE,
+            ])
         };
         let surface = NurbSurface3D::try_new(
             1,
             1,
             vec![p(0., 0., 0.), p(0., 2., 1.), p(2., 0., 1.), p(2., 2., 0.)],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
+            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
         )
         .unwrap();
         let face_id = model.insert_face(Face {
@@ -123,14 +127,22 @@ mod tests {
         });
 
         let corners = [(0.2, 0.2), (0.8, 0.2), (0.5, 0.8)];
-        let line2 = |a: (f64, f64), b: (f64, f64)| -> NurbCurve2D<S> {
+        let line2 = |a: (f64, f64), b: (f64, f64)| -> NurbCurve2D {
             NurbCurve::try_new(
                 1,
                 vec![
-                    Vector3::from_array([S::from_f64(a.0), S::from_f64(a.1), S::ONE]),
-                    Vector3::from_array([S::from_f64(b.0), S::from_f64(b.1), S::ONE]),
+                    Vector3::from_array([
+                        Scalar::from_f64(a.0),
+                        Scalar::from_f64(a.1),
+                        Scalar::ONE,
+                    ]),
+                    Vector3::from_array([
+                        Scalar::from_f64(b.0),
+                        Scalar::from_f64(b.1),
+                        Scalar::ONE,
+                    ]),
                 ],
-                vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+                vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
             )
             .unwrap()
         };
@@ -139,29 +151,37 @@ mod tests {
                 let a = corners[i];
                 let b = corners[(i + 1) % 3];
                 let v0 = model.insert_vertex(Vertex {
-                    point: Vector3::from_array([S::from_f64(a.0), S::from_f64(a.1), S::ZERO]),
+                    point: Vector3::from_array([
+                        Scalar::from_f64(a.0),
+                        Scalar::from_f64(a.1),
+                        Scalar::ZERO,
+                    ]),
                 });
                 let v1 = model.insert_vertex(Vertex {
-                    point: Vector3::from_array([S::from_f64(b.0), S::from_f64(b.1), S::ZERO]),
+                    point: Vector3::from_array([
+                        Scalar::from_f64(b.0),
+                        Scalar::from_f64(b.1),
+                        Scalar::ZERO,
+                    ]),
                 });
                 let edge = model.insert_edge(Edge {
                     curve: NurbCurve::try_new(
                         1,
                         vec![
                             Vector4::from_array([
-                                S::from_f64(a.0),
-                                S::from_f64(a.1),
-                                S::ZERO,
-                                S::ONE,
+                                Scalar::from_f64(a.0),
+                                Scalar::from_f64(a.1),
+                                Scalar::ZERO,
+                                Scalar::ONE,
                             ]),
                             Vector4::from_array([
-                                S::from_f64(b.0),
-                                S::from_f64(b.1),
-                                S::ZERO,
-                                S::ONE,
+                                Scalar::from_f64(b.0),
+                                Scalar::from_f64(b.1),
+                                Scalar::ZERO,
+                                Scalar::ONE,
                             ]),
                         ],
-                        vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+                        vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
                     )
                     .unwrap(),
                     start_vertex: v0,
@@ -187,15 +207,16 @@ mod tests {
 
     /// Reversing flips the normal while every trim loop still lands on the
     /// same 3-D points — the face covers the same patch, facing the other way.
-    fn check_reverse_face_flips_normal_and_keeps_the_patch<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn reverse_face_flips_normal_and_keeps_the_patch() {
+        let mut model = Model::new();
         let face_id = saddle_face(&mut model);
 
         let anchor = match model.get_face(face_id).unwrap().outer {
             BoundaryType::Loop(a) => a,
             BoundaryType::Vertex(_) => unreachable!(),
         };
-        let sample_t = S::from_f64(0.3);
+        let sample_t = Scalar::from_f64(0.3);
         let before_uv = model
             .get_coedge(anchor)
             .unwrap()
@@ -232,10 +253,6 @@ mod tests {
             );
         }
     }
-    #[test]
-    fn reverse_face_flips_normal_and_keeps_the_patch() {
-        for_all_scalars!(check_reverse_face_flips_normal_and_keeps_the_patch);
-    }
 
     /// Reversing a face must not change which side of its loops the material
     /// is on. The kernel's convention is that an outer loop runs
@@ -247,11 +264,12 @@ mod tests {
     /// that by also reversing each loop's traversal. Without it the outer loop
     /// comes back clockwise: still continuous, still structurally valid, but
     /// with every coedge now running with the material on its right.
-    fn check_reverse_face_preserves_loop_winding<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn reverse_face_preserves_loop_winding() {
+        let mut model = Model::new();
         let face_id = saddle_face(&mut model);
 
-        let area = |model: &Model<S>| {
+        let area = |model: &Model| {
             let BoundaryType::Loop(anchor) = model.get_face(face_id).unwrap().outer else {
                 unreachable!()
             };
@@ -263,25 +281,22 @@ mod tests {
         let after = area(&model);
 
         assert!(
-            before.definitely_greater(S::ZERO) == after.definitely_greater(S::ZERO)
-                && before.definitely_less(S::ZERO) == after.definitely_less(S::ZERO),
+            before.definitely_greater(Scalar::ZERO) == after.definitely_greater(Scalar::ZERO)
+                && before.definitely_less(Scalar::ZERO) == after.definitely_less(Scalar::ZERO),
             "winding flipped: signed area went from {before:?} to {after:?}"
         );
     }
-    #[test]
-    fn reverse_face_preserves_loop_winding() {
-        for_all_scalars!(check_reverse_face_preserves_loop_winding);
-    }
 
     /// Reversing twice is the identity.
-    fn check_reverse_face_twice_is_identity<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn reverse_face_twice_is_identity() {
+        let mut model = Model::new();
         let face_id = saddle_face(&mut model);
         let anchor = match model.get_face(face_id).unwrap().outer {
             BoundaryType::Loop(a) => a,
             BoundaryType::Vertex(_) => unreachable!(),
         };
-        let t = S::from_f64(0.4);
+        let t = Scalar::from_f64(0.4);
         let before = model
             .get_coedge(anchor)
             .unwrap()
@@ -307,9 +322,5 @@ mod tests {
             model.get_coedge(anchor).unwrap().sense,
             "sense must come back to where it started"
         );
-    }
-    #[test]
-    fn reverse_face_twice_is_identity() {
-        for_all_scalars!(check_reverse_face_twice_is_identity);
     }
 }

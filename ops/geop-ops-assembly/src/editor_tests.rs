@@ -8,7 +8,7 @@ use geop_core_program::{
     element::{ElementReference, PickedElement},
     program::Program,
     testing::{args as step_args, edit_args},
-    values::{Design, Setting, StateValue, pose_state},
+    values::{Setting, StateValue, pose_state},
 };
 use std::collections::BTreeMap;
 
@@ -22,7 +22,7 @@ use geop_core_editor::{
 };
 use geop_core_math::{
     primitives::{DatumComponent, FrameAxis, Pose},
-    scalars::{ScalInF64 as S, Scalar},
+    scalars::Scalar,
     vector::Vector3,
 };
 use geop_ops_extrude_revolve::{
@@ -120,18 +120,18 @@ fn joints_panel(program: &ProgramState) -> &serde_json::Value {
     &program.panels[JointsPanel::KEY]
 }
 
-fn n(x: f64) -> Design {
-    Design::from_f64(x)
+fn n(x: f64) -> Scalar {
+    Scalar::from_f64(x)
 }
 
 /// Where `pose` puts the point `p`.
-fn apply(pose: &Pose<Design>, p: [f64; 3]) -> [f64; 3] {
+fn apply(pose: &Pose, p: [f64; 3]) -> [f64; 3] {
     let q = pose.apply(&Vector3::from_array(p.map(n)));
     [0, 1, 2].map(|k| q[k].to_f64())
 }
 
 /// Looking straight down at `(x, y, z)`.
-fn down_at(x: f64, y: f64, z: f64) -> Pointer<S> {
+fn down_at(x: f64, y: f64, z: f64) -> Pointer {
     pointer([x, y, z + 10.0], [0.0, 0.0, -1.0])
 }
 
@@ -160,7 +160,7 @@ fn placing(placed: AddPartArgs) -> Stepping {
 
 /// Where the part placed as `instance` is, as the editor last ran the
 /// program.
-fn moved_to(step: &Stepping, instance: &str) -> Pose<Design> {
+fn moved_to(step: &Stepping, instance: &str) -> Pose {
     let reader = step.editor.part();
     let placed = placed_parts(&reader).unwrap();
     let placed = (placed.iter()).find(|p| p.name == instance);
@@ -471,7 +471,7 @@ fn a_standard_screw_is_placed_in_a_plate() {
         panic!("the screw has a pose");
     };
     // Its head on the plate's top, its tip 12 below, down the hole.
-    let v = |p: [f64; 3]| Vector3::from_array(p.map(Design::from_f64));
+    let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
     for (local, want) in [
         ([0.0, 0.0, 0.0], [20.0, 20.0, 5.0]),
         ([0.0, 0.0, -12.0], [20.0, 20.0, -7.0]),
@@ -720,8 +720,8 @@ fn placed_parts_are_moved_and_turned_by_the_gizmo() {
         None => Pose::identity(),
         other => panic!("{id}: {other:?}"),
     };
-    let apply = |pose: &Pose<Design>, p: [f64; 3]| {
-        let at = pose.apply(&Vector3::from_array(p.map(Design::from_f64)));
+    let apply = |pose: &Pose, p: [f64; 3]| {
+        let at = pose.apply(&Vector3::from_array(p.map(Scalar::from_f64)));
         [0, 1, 2].map(|k| at[k].to_f64())
     };
     let close = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-6);

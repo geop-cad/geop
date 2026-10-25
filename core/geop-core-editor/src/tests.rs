@@ -16,7 +16,6 @@ use geop_core_program::{
     reader::Reader,
     runner::Runner,
     target::{Target, TargetReference},
-    values::Design,
 };
 use serde::{Deserialize, Serialize};
 
@@ -32,13 +31,13 @@ use crate::{
 /// What a test operation is to an editor: only its name matters.
 const INFO: OperationInfo = OperationInfo::new("", "", OperationGroup::Solid, OperationTier::Menu);
 
-fn v(x: f64, y: f64, z: f64) -> Vector3<Design> {
-    Vector3::from_array([x, y, z].map(Design::from_f64))
+fn v(x: f64, y: f64, z: f64) -> Vector3 {
+    Vector3::from_array([x, y, z].map(Scalar::from_f64))
 }
 
 /// A point, read whole: a kind of its own.
 #[derive(Clone, Debug, Default, PartialEq)]
-struct Point(Vector3<Design>);
+struct Point(Vector3);
 
 /// Given by one step, shifted by the ones after it.
 impl Target for Point {
@@ -65,9 +64,9 @@ struct GivenPoint;
 
 impl Operation for GivenPoint {
     const KIND: &'static str = "given_point";
-    type Args = Vector3<Design>;
+    type Args = Vector3;
 
-    fn run(ctx: &mut StepContext, at: &Vector3<Design>) -> GeopResult<()> {
+    fn run(ctx: &mut StepContext, at: &Vector3) -> GeopResult<()> {
         let step = ctx.step();
         ctx.produce(&TargetReference::new(step), at, |_, at| Ok(Point(*at)))
     }
@@ -77,20 +76,15 @@ impl Editable for GivenPoint {
     const INFO: OperationInfo = INFO;
     type EditingState = ();
 
-    fn new_args(_: &Context) -> Vector3<Design> {
+    fn new_args(_: &Context) -> Vector3 {
         Vector3::zero()
     }
 
-    fn presentation(_: &Context, _: &Vector3<Design>, _: &()) -> Form<Design> {
+    fn presentation(_: &Context, _: &Vector3, _: &()) -> Form {
         Form::default()
     }
 
-    fn process_user_event(
-        _: &Context,
-        at: &Vector3<Design>,
-        _: &(),
-        _: Event<Design>,
-    ) -> (Vector3<Design>, ()) {
+    fn process_user_event(_: &Context, at: &Vector3, _: &(), _: Event) -> (Vector3, ()) {
         (*at, ())
     }
 }
@@ -98,7 +92,7 @@ impl Editable for GivenPoint {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 struct ShiftArgs {
     point: String,
-    by: Vector3<Design>,
+    by: Vector3,
 }
 
 /// Moves the point target `point` by `by`.
@@ -124,7 +118,7 @@ impl Editable for Shift {
         ShiftArgs::default()
     }
 
-    fn presentation(_: &Context, _: &ShiftArgs, _: &()) -> Form<Design> {
+    fn presentation(_: &Context, _: &ShiftArgs, _: &()) -> Form {
         Form::default()
     }
 
@@ -134,7 +128,7 @@ impl Editable for Shift {
         context: &Context,
         args: &ShiftArgs,
         _: &(),
-        event: Event<Design>,
+        event: Event,
     ) -> (ShiftArgs, ()) {
         let point = ElementReference::<Point, Point>::whole(TargetReference::new(&args.point));
         let mut args = args.clone();
@@ -403,7 +397,7 @@ fn chain(name: &str) -> ElementReference<Chains, Chain> {
 #[test]
 fn a_field_picks_what_its_elements_are_picked_from() {
     let part = chains();
-    let mut dialog = Dialog::<Design>::new();
+    let mut dialog = Dialog::new();
     dialog.pick("chains", "chains", &part.current(), &[chain("c1")], true);
     let Some(Control::Reference(reference)) = dialog.get("chains") else {
         panic!("no reference field");
@@ -524,8 +518,8 @@ impl PartOperation for Scale {
         context: &'a Context<'a>,
         args: &ScaleArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, ScaleArgs> {
-        let mut f = EditForm::<Design, ScaleArgs>::default();
+    ) -> EditForm<'a, ScaleArgs> {
+        let mut f = EditForm::<ScaleArgs>::default();
         let reader = &context.before;
         f.pick(
             "chains",

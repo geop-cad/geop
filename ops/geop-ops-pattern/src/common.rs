@@ -16,9 +16,7 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_core_topology::Body;
 use geop_lib_booleans::{Reach, combine_tools};
 use geop_ops_model::{Combine, Tool};
@@ -32,7 +30,7 @@ use crate::features::FeatureRef;
 
 /// A body of the part: a solid by its name, or a sheet by one of its
 /// faces'.
-pub type BodyRef = ElementReference<NamedModel<Design>, geop_ops_model::Body>;
+pub type BodyRef = ElementReference<NamedModel, geop_ops_model::Body>;
 
 /// The body named `name`: a solid, or the sheet of the face of that name.
 pub fn body(name: impl Into<String>) -> BodyRef {
@@ -43,7 +41,7 @@ pub fn body(name: impl Into<String>) -> BodyRef {
 /// `before` reads: solids, and sheets by one of their faces. `set` gets the
 /// bodies picked.
 pub(crate) fn bodies_field<'a, A>(
-    f: &mut EditForm<'a, Design, A>,
+    f: &mut EditForm<'a, A>,
     before: &Reader<'a>,
     bodies: &[BodyRef],
     set: impl Fn(Edit<'_, A, ()>, Vec<BodyRef>) + 'a,
@@ -96,10 +94,10 @@ impl Seeds {
     /// keep them.
     pub(crate) fn fields<'a, A>(
         &self,
-        f: &mut EditForm<'a, Design, A>,
+        f: &mut EditForm<'a, A>,
         before: &Reader<'a>,
         set: impl Fn(&mut A, Seeds) + Clone + 'a,
-        own: impl FnOnce(&mut EditForm<'a, Design, A>),
+        own: impl FnOnce(&mut EditForm<'a, A>),
     ) {
         let (seeds, set_bodies) = (self.clone(), set.clone());
         bodies_field(f, before, &self.bodies, move |edit, picked| {
@@ -159,12 +157,12 @@ impl Seeds {
     /// cosmetic threads are copied by [`copy_threads`].
     pub(crate) fn repeat(
         &self,
-        part: &mut NamedModel<Design>,
+        part: &mut NamedModel,
         reader: &Reader,
         names: &Names,
         operation_id: &str,
         seed_label: &str,
-        placements: &[(String, Motion<Design>)],
+        placements: &[(String, Motion)],
     ) -> GeopResult<()> {
         match (self.bodies.is_empty(), self.features.is_empty()) {
             (false, false) => Err(GeopError::new(
@@ -194,7 +192,7 @@ impl Seeds {
     /// Where the handles of a step repeating it sit, in the part `reader`
     /// reads: the middle of the corners of the bodies, or of the tools of
     /// the features. None, if it picks none.
-    pub(crate) fn center(&self, reader: &Reader) -> Option<Vector3<Design>> {
+    pub(crate) fn center(&self, reader: &Reader) -> Option<Vector3> {
         if self.features.is_empty() {
             center(reader, &self.bodies)
         } else {
@@ -254,13 +252,13 @@ pub(crate) trait Pattern: std::fmt::Debug {
 
     /// Where its instances go, as `reader` reads the part: each a label and
     /// the motion from the seeds, the seeds themselves left out.
-    fn placements(&self, reader: &Reader) -> GeopResult<Vec<(String, Motion<Design>)>>;
+    fn placements(&self, reader: &Reader) -> GeopResult<Vec<(String, Motion)>>;
 }
 
 /// Builds the pattern `args` as the step `step` into `model`, reading the
 /// part before it through `reader`: its [`ModelOperation::build`].
 pub(crate) fn build_pattern<A: Pattern>(
-    model: &mut NamedModel<Design>,
+    model: &mut NamedModel,
     reader: &Reader,
     step: &str,
     args: &A,
@@ -303,10 +301,10 @@ pub(crate) fn seed_instances(seeds: &[Body], label: &str) -> Vec<Instance> {
 /// Copies every seed and moves the copy by `motion`, as the instance
 /// labelled `label`: the copy of each entity named `X` — the solid
 /// included — named `rename(X)`.
-pub(crate) fn copy_seeds<S: Scalar>(
-    part: &mut NamedModel<S>,
+pub(crate) fn copy_seeds(
+    part: &mut NamedModel,
     seeds: &[Body],
-    motion: &Motion<S>,
+    motion: &Motion,
     label: &str,
     rename: impl Fn(&str) -> String,
 ) -> GeopResult<Vec<Instance>> {
@@ -324,7 +322,7 @@ pub(crate) fn copy_seeds<S: Scalar>(
 
 /// A body as an error names it: a solid by its name, a sheet by one of its
 /// faces'.
-fn describe<S: Scalar>(part: &NamedModel<S>, body: Body) -> String {
+fn describe(part: &NamedModel, body: Body) -> String {
     let name = match body {
         Body::Solid(solid) => part.name_of(solid),
         Body::Sheet(_) => part
@@ -344,12 +342,12 @@ fn describe<S: Scalar>(part: &NamedModel<S>, body: Body) -> String {
 /// bodies, each as it is; or each joined to, cut from or intersected with
 /// the target, one after the other — the target itself, if it is one of
 /// them, excepted. Combined, the result is named `namer`'s root, and what
-/// each combination creates `combine(S,scope,...)` for the step `S` (see
+/// each combination creates `combine(Scalar,scope,...)` for the step `Scalar` (see
 /// [`Combine::apply`]).
 ///
 /// Only solids are combined: a sheet among the instances is refused.
-pub(crate) fn combine_instances<S: Scalar>(
-    part: &mut NamedModel<S>,
+pub(crate) fn combine_instances(
+    part: &mut NamedModel,
     namer: &Namer,
     operation_id: &str,
     combine: &Combine,
@@ -392,7 +390,7 @@ pub(crate) fn combine_instances<S: Scalar>(
 /// Where the handles of a step acting on `bodies` sit, in the part
 /// `reader` reads: the middle of the corners of the bodies. None, if it
 /// refers to none.
-pub(crate) fn center(reader: &Reader, bodies: &[BodyRef]) -> Option<Vector3<Design>> {
+pub(crate) fn center(reader: &Reader, bodies: &[BodyRef]) -> Option<Vector3> {
     let part = read_model(reader).ok()?;
     let model = part.topology();
     let mut corners = Vec::new();
@@ -406,19 +404,17 @@ pub(crate) fn center(reader: &Reader, bodies: &[BodyRef]) -> Option<Vector3<Desi
 
 /// The middle of `points`, where a handle sits: their average, read off
 /// midpoints — a free choice. None, of none.
-pub(crate) fn middle<S: Scalar>(
-    points: impl IntoIterator<Item = Vector3<S>>,
-) -> Option<Vector3<S>> {
+pub(crate) fn middle(points: impl IntoIterator<Item = Vector3>) -> Option<Vector3> {
     let c = plain::centroid(points.into_iter().map(|p| p.to_f64_array()))?;
-    Some(Vector3::from_array(c.map(S::from_f64)))
+    Some(Vector3::from_array(c.map(Scalar::from_f64)))
 }
 
 /// A handle at `at`, dragged along `direction`; none for a direction that
 /// could be zero, which nothing could be dragged along.
-pub(crate) fn track<S: Scalar>(at: Vector3<S>, direction: Vector3<S>) -> Option<Track<S>> {
+pub(crate) fn track(at: Vector3, direction: Vector3) -> Option<Track> {
     let length = direction.norm_sq();
     length
-        .definitely_greater(S::ZERO)
+        .definitely_greater(Scalar::ZERO)
         .then_some(Track { at, direction })
 }
 
@@ -426,12 +422,12 @@ pub(crate) fn track<S: Scalar>(at: Vector3<S>, direction: Vector3<S>) -> Option<
 /// step `step` copies recorded copied to every placement of it, named
 /// alike — the features and the placements as the part is before the
 /// step, which is produced before the step's model.
-fn copy_threads<O>(reader: &Reader, (step, args): &(String, O::Args)) -> GeopResult<Threads<Design>>
+fn copy_threads<O>(reader: &Reader, (step, args): &(String, O::Args)) -> GeopResult<Threads>
 where
     O: ModelOperation + PartOperation,
     O::Args: Pattern,
 {
-    let mut threads: Threads<Design> = reader.previous()?;
+    let mut threads: Threads = reader.previous()?;
     let features = crate::features::feature_steps(&*read_model(reader)?, &args.seeds().features)?;
     let placements = args.placements(reader)?;
     let names = O::Args::NAMING.of(step)?;

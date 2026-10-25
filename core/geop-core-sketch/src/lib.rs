@@ -3,7 +3,7 @@
 //! conversion of the solved sketch into closed profiles for extrude and
 //! revolve — and 3-D ones, the paths and rails sweeps run along.
 //!
-//! - [`sketch`]: the entities and constraints: design data, in any scalar.
+//! - [`sketch`]: the entities and constraints: design data.
 //! - [`solve`]: [`Sketch::solve`] / [`Sketch::solve_with_drag`], and
 //!   [`Sketch::enclose`]: the solution as the kernel builds on it.
 //! - [`profile`]: [`Sketch::regions`] and [`ProfileLoop::to_nurbs`].
@@ -38,30 +38,24 @@ pub use solve::SolveReport;
 mod tests {
     use super::*;
     use crate::plain::xy;
-    use geop_core_math::{
-        for_all_scalars,
-        scalars::{Scalar, scal_in_f64::ScalInF64},
-        vector::Vector2,
-    };
+    use geop_core_math::{scalars::Scalar, vector::Vector2};
     use std::f64::consts::{FRAC_PI_2, PI};
 
     fn close(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-7
     }
 
-    type T = ScalInF64;
-
-    fn n(x: f64) -> T {
-        T::from_f64(x)
+    fn n(x: f64) -> Scalar {
+        Scalar::from_f64(x)
     }
 
-    fn v2(p: [f64; 2]) -> Vector2<T> {
-        Vector2::from_array(p.map(T::from_f64))
+    fn v2(p: [f64; 2]) -> Vector2 {
+        Vector2::from_array(p.map(Scalar::from_f64))
     }
 
     /// A sloppily drawn quadrilateral, its corners, constrained to the
     /// 2 x 1 rectangle anchored at the origin, from there counter-clockwise.
-    fn sloppy_rectangle() -> (Sketch<T>, [PointId; 4]) {
+    fn sloppy_rectangle() -> (Sketch, [PointId; 4]) {
         let mut s = Sketch::new();
         let p = [
             s.add_point(n(0.1), n(-0.1)),
@@ -317,7 +311,8 @@ mod tests {
     /// A slot: two lines joined by two half circles, around a circular hole.
     /// One region, with the circle as its hole, and NURBS loops that close
     /// up exactly.
-    fn check_slot_with_hole_regions<S: Scalar>() {
+    #[test]
+    fn slot_with_hole_regions() {
         let mut s = Sketch::new();
         let p = [
             s.add_point(n(0.0), n(0.0)),
@@ -340,9 +335,9 @@ mod tests {
         assert_eq!(regions[0].outer.edges.len(), 4);
         assert_eq!(regions[0].holes.len(), 1);
 
-        let geometry = s.enclose::<S>().unwrap();
+        let geometry = s.enclose().unwrap();
         for (lp, count) in [(&regions[0].outer, 6), (&regions[0].holes[0], 4)] {
-            let pieces = lp.to_nurbs::<T, S>(&s, &geometry).unwrap();
+            let pieces = lp.to_nurbs(&s, &geometry).unwrap();
             let curves: Vec<_> = pieces.iter().map(|p| &p.curve).collect();
             assert_eq!(curves.len(), count);
             // The joints chain up exactly like the curves do.
@@ -351,30 +346,26 @@ mod tests {
             }
             for (i, c) in curves.iter().enumerate() {
                 let (t0, t1) = c.domain();
-                assert!(t0.could_be_equal(S::ZERO) && t1.could_be_equal(S::ONE));
+                assert!(t0.could_be_equal(Scalar::ZERO) && t1.could_be_equal(Scalar::ONE));
                 let next = curves[(i + 1) % curves.len()];
-                let end = c.evaluate(S::ONE).unwrap();
-                let start = next.evaluate(S::ZERO).unwrap();
+                let end = c.evaluate(Scalar::ONE).unwrap();
+                let start = next.evaluate(Scalar::ZERO).unwrap();
                 assert!(end.could_be_equal(&start), "{end:?} vs {start:?}");
             }
         }
         // The half circle on the right passes through (2.5, 0.5).
-        let outer = regions[0].outer.to_nurbs::<T, S>(&s, &geometry).unwrap();
-        let far = Vector2::from_array([S::from_f64(2.5), S::from_f64(0.5)]);
+        let outer = regions[0].outer.to_nurbs(&s, &geometry).unwrap();
+        let far = Vector2::from_array([Scalar::from_f64(2.5), Scalar::from_f64(0.5)]);
         assert!(
             outer
                 .iter()
-                .any(|p| p.curve.evaluate(S::ONE).unwrap().could_be_equal(&far)),
+                .any(|p| p.curve.evaluate(Scalar::ONE).unwrap().could_be_equal(&far)),
             "no quarter piece ends at the right apex: {:?}",
             outer
                 .iter()
-                .map(|p| p.curve.evaluate(S::ONE).unwrap())
+                .map(|p| p.curve.evaluate(Scalar::ONE).unwrap())
                 .collect::<Vec<_>>()
         );
-    }
-    #[test]
-    fn slot_with_hole_regions() {
-        for_all_scalars!(check_slot_with_hole_regions);
     }
 
     /// Nested loops alternate between outer boundaries and holes, and outer
@@ -531,11 +522,8 @@ mod tests {
         let lines: Vec<CurveId> = (0..4).map(|i| s.add_line(p[i], p[(i + 1) % 4])).collect();
 
         let regions = s.regions().unwrap();
-        let geometry = s.enclose::<ScalInF64>().unwrap();
-        let outer = regions[0]
-            .outer
-            .to_nurbs::<T, ScalInF64>(&s, &geometry)
-            .unwrap();
+        let geometry = s.enclose().unwrap();
+        let outer = regions[0].outer.to_nurbs(&s, &geometry).unwrap();
         let names: Vec<String> = outer.iter().map(|p| p.name()).collect();
         assert_eq!(names.len(), 4);
         for l in &lines {
@@ -548,9 +536,7 @@ mod tests {
         );
 
         // The hole runs clockwise, against the circle's own direction.
-        let hole = regions[0].holes[0]
-            .to_nurbs::<T, ScalInF64>(&s, &geometry)
-            .unwrap();
+        let hole = regions[0].holes[0].to_nurbs(&s, &geometry).unwrap();
         let joints: Vec<String> = hole.iter().map(|p| p.start.to_string()).collect();
         assert_eq!(
             joints,
@@ -584,7 +570,7 @@ mod tests {
         s.constrain(Constraint::Horizontal { line: l });
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains(&format!("\"{}\":", l.0)), "{json}");
-        let back: Sketch<T> = serde_json::from_str(&json).unwrap();
+        let back: Sketch = serde_json::from_str(&json).unwrap();
         assert_eq!(back, s);
         back.validate().unwrap();
     }
@@ -630,13 +616,13 @@ mod tests {
     fn solutions_are_enclosed() {
         let (mut s, p) = sloppy_rectangle();
         assert!(s.solve().unwrap().converged);
-        let enclosed = s.enclose::<ScalInF64>().unwrap();
+        let enclosed = s.enclose().unwrap();
         let exact = [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]];
         for (pi, e) in p.iter().zip(exact) {
             let q = enclosed.points[pi];
             for k in 0..2 {
                 assert!(
-                    q[k].could_be_equal(ScalInF64::from_f64(e[k])),
+                    q[k].could_be_equal(Scalar::from_f64(e[k])),
                     "{q:?} vs {e:?}"
                 );
                 assert!(q[k].width().to_f64() < 1e-12, "{q:?}");
@@ -666,7 +652,7 @@ mod tests {
         s.constrain(Constraint::Tangent { a: end, b: bottom });
         s.constrain(Constraint::Vertical { line: side });
         assert!(s.solve().unwrap().converged);
-        s.enclose::<ScalInF64>().unwrap();
+        s.enclose().unwrap();
     }
 
     /// What the constraints leave free is the designer's choice, kept
@@ -679,7 +665,7 @@ mod tests {
         let line = s.add_line(a, b);
         s.constrain(Constraint::Horizontal { line });
         assert!(s.solve().unwrap().converged);
-        let enclosed = s.enclose::<ScalInF64>().unwrap();
+        let enclosed = s.enclose().unwrap();
         // Three of the four coordinates are free; one is set by the others.
         let sharp = [enclosed.points[&a], enclosed.points[&b]]
             .iter()
@@ -702,7 +688,7 @@ mod tests {
         });
         let report = s.solve().unwrap();
         assert!(!report.converged);
-        assert_eq!(s.enclose::<ScalInF64>().unwrap(), Enclosure::as_drawn(&s));
+        assert_eq!(s.enclose().unwrap(), Enclosure::as_drawn(&s));
     }
 
     /// A fixed point is given, not solved for: a line hanging off it with
@@ -730,7 +716,7 @@ mod tests {
         // Only the free end's angle is left.
         assert_eq!(report.dof, 1, "{report:?}");
         assert!(!report.free_points[&anchor] && report.free_points[&end]);
-        let enclosed = s.enclose::<ScalInF64>().unwrap();
+        let enclosed = s.enclose().unwrap();
         assert!(enclosed.points[&anchor][0].is_sharp());
     }
 

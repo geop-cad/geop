@@ -8,7 +8,7 @@ use geop_core_program::{
     part::StepContext,
     program::{Program, ProgramStep},
     runner::Runner,
-    values::{Design, Settings, pose_state},
+    values::{Settings, pose_state},
     workspace::{Location, Workspace},
 };
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
@@ -22,7 +22,7 @@ use crate::placed::define_placed;
 
 thread_local! {
     /// The models [`given_model`] keeps, with the notes on their solids.
-    static MODELS: RefCell<Vec<(NamedModel<Design>, Option<SolidNotes>)>> =
+    static MODELS: RefCell<Vec<(NamedModel, Option<SolidNotes>)>> =
         const { RefCell::new(Vec::new()) };
 }
 
@@ -51,7 +51,7 @@ impl Operation for GivenModel {
 }
 
 /// The step `id` giving the part `model`, and `notes` on its solids.
-pub fn given_model(id: &str, model: NamedModel<Design>, notes: Option<SolidNotes>) -> ProgramStep {
+pub fn given_model(id: &str, model: NamedModel, notes: Option<SolidNotes>) -> ProgramStep {
     let key = MODELS.with(|models| {
         let mut models = models.borrow_mut();
         models.push((model, notes));

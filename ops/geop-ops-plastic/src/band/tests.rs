@@ -1,14 +1,14 @@
 //! Offsetting chains of lines and arcs, and the bands between offsets.
 
 use super::*;
-use geop_core_math::scalars::ScalInF64 as S;
+use geop_core_math::scalars::Scalar;
 
-fn p(x: f64, y: f64) -> Vector2<S> {
-    Vector2::from_array([S::from_f64(x), S::from_f64(y)])
+fn p(x: f64, y: f64) -> Vector2 {
+    Vector2::from_array([Scalar::from_f64(x), Scalar::from_f64(y)])
 }
 
 /// The closed chain of lines through `corners`.
-fn polygon(corners: &[[f64; 2]]) -> Chain<S> {
+fn polygon(corners: &[[f64; 2]]) -> Chain {
     let n = corners.len();
     Chain {
         pieces: (0..n)
@@ -27,7 +27,7 @@ fn polygon(corners: &[[f64; 2]]) -> Chain<S> {
 }
 
 /// Where each curve starts.
-fn corners(curves: &[NurbCurve2D<S>]) -> Vec<[f64; 2]> {
+fn corners(curves: &[NurbCurve2D]) -> Vec<[f64; 2]> {
     curves
         .iter()
         .map(|c| {
@@ -49,13 +49,13 @@ fn close(a: &[[f64; 2]], b: &[[f64; 2]]) -> bool {
 #[test]
 fn squares_offset_to_their_left() {
     let ccw = polygon(&[[0., 0.], [1., 0.], [1., 1.], [0., 1.]]);
-    let inner = corners(&ccw.offset(S::from_f64(0.1)).unwrap());
+    let inner = corners(&ccw.offset(Scalar::from_f64(0.1)).unwrap());
     assert!(
         close(&inner, &[[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]]),
         "{inner:?}"
     );
     let cw = polygon(&[[0., 0.], [0., 1.], [1., 1.], [1., 0.]]);
-    let outer = corners(&cw.offset(S::from_f64(0.1)).unwrap());
+    let outer = corners(&cw.offset(Scalar::from_f64(0.1)).unwrap());
     assert!(
         close(
             &outer,
@@ -63,7 +63,7 @@ fn squares_offset_to_their_left() {
         ),
         "{outer:?}"
     );
-    let inner = corners(&cw.offset(S::from_f64(-0.1)).unwrap());
+    let inner = corners(&cw.offset(Scalar::from_f64(-0.1)).unwrap());
     assert!(
         close(&inner, &[[0.1, 0.1], [0.1, 0.9], [0.9, 0.9], [0.9, 0.1]]),
         "{inner:?}"
@@ -75,7 +75,9 @@ fn squares_offset_to_their_left() {
 #[test]
 fn band_around_a_hole() {
     let cw = polygon(&[[0., 0.], [0., 1.], [1., 1.], [1., 0.]]);
-    let band = cw.band(S::from_f64(-0.1), S::from_f64(0.2)).unwrap();
+    let band = cw
+        .band(Scalar::from_f64(-0.1), Scalar::from_f64(0.2))
+        .unwrap();
     assert_eq!(band.len(), 2);
     let outer = corners(&band[0].curves);
     assert!(
@@ -105,7 +107,8 @@ fn line_into_arc() {
                 name: "line".into(),
             },
             Piece {
-                curve: NurbCurve2D::arc(p(1., 0.), p(2., 0.), p(2., 1.), S::from_f64(r)).unwrap(),
+                curve: NurbCurve2D::arc(p(1., 0.), p(2., 0.), p(2., 1.), Scalar::from_f64(r))
+                    .unwrap(),
                 center: Some(p(1., 1.)),
                 name: "arc".into(),
             },
@@ -113,9 +116,9 @@ fn line_into_arc() {
         joints: vec!["a".into(), "b".into(), "c".into()],
         closed: false,
     };
-    let moved = chain.offset(S::from_f64(0.25)).unwrap();
-    let at = |c: &NurbCurve2D<S>, t: f64| {
-        let q = c.evaluate(S::from_f64(t)).unwrap();
+    let moved = chain.offset(Scalar::from_f64(0.25)).unwrap();
+    let at = |c: &NurbCurve2D, t: f64| {
+        let q = c.evaluate(Scalar::from_f64(t)).unwrap();
         [q[0].to_f64(), q[1].to_f64()]
     };
     assert!(close(&[at(&moved[0], 1.0)], &[[1.0, 0.25]]));
@@ -124,5 +127,5 @@ fn line_into_arc() {
     let mid = at(&moved[1], 0.5);
     let radius = ((mid[0] - 1.0).powi(2) + (mid[1] - 1.0).powi(2)).sqrt();
     assert!((radius - 0.75).abs() < 1e-12, "{radius}");
-    assert!(chain.offset(S::from_f64(1.5)).is_err());
+    assert!(chain.offset(Scalar::from_f64(1.5)).is_err());
 }

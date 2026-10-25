@@ -58,7 +58,7 @@ use crate::remesh::{RemeshParams, remesh_edges_x_edges::find_vertex_at_point, sp
 
 /// Where a point of an intersection branch is on both surfaces:
 /// `(u_a, v_a, u_b, v_b)`.
-type OnBoth<S> = (S, S, S, S);
+type OnBoth = (Scalar, Scalar, Scalar, Scalar);
 
 /// A vertex where an edge of one solid meets a face of the other without
 /// running along it — where the edge pierces the face, or ends on it —
@@ -146,33 +146,34 @@ const STEPS_ACROSS_PATCH: usize = 16;
 /// still limits the step, not the bend along the curve here: a curve that
 /// bends a little here may bend sharply a stride on (the blades of
 /// `turbine_blade`, whose pattern's trace left its patch).
-fn adaptive_step_size<S: Scalar>(
-    surf_a: &NurbSurface3D<S>,
-    surf_b: &NurbSurface3D<S>,
-    u_a: S,
-    v_a: S,
-    u_b: S,
-    v_b: S,
-    dir: &Vector3<S>,
-) -> GeopResult<S> {
-    let arc = S::TWO
-        .mul(S::PI)
-        .div(S::from_i64(STEPS_PER_REVOLUTION as i64))?;
+fn adaptive_step_size(
+    surf_a: &NurbSurface3D,
+    surf_b: &NurbSurface3D,
+    u_a: Scalar,
+    v_a: Scalar,
+    u_b: Scalar,
+    v_b: Scalar,
+    dir: &Vector3,
+) -> GeopResult<Scalar> {
+    let arc = Scalar::TWO
+        .mul(Scalar::PI)
+        .div(Scalar::from_i64(STEPS_PER_REVOLUTION as i64))?;
     let mut step = surf_a
         .size()?
         .min(surf_b.size()?)
-        .div(S::from_i64(STEPS_ACROSS_PATCH as i64))?
+        .div(Scalar::from_i64(STEPS_ACROSS_PATCH as i64))?
         .sharpen();
     // A surface that runs straight the way the curve does bends it by
     // nothing, however it bends the other way; any other bends it, and is
     // limited by its tightest bend, as ever: a curve whose surfaces bend it
     // a little here may bend sharply a stride on.
-    let radius_along = |surface: &NurbSurface3D<S>, u: S, v: S| -> GeopResult<Option<S>> {
-        match surface.curvature_radius_along(u, v, dir) {
-            Ok(None) => Ok(None),
-            _ => surface.curvature_radius(u, v),
-        }
-    };
+    let radius_along =
+        |surface: &NurbSurface3D, u: Scalar, v: Scalar| -> GeopResult<Option<Scalar>> {
+            match surface.curvature_radius_along(u, v, dir) {
+                Ok(None) => Ok(None),
+                _ => surface.curvature_radius(u, v),
+            }
+        };
     for radius in [
         radius_along(surf_a, u_a, v_a)?,
         radius_along(surf_b, u_b, v_b)?,
@@ -196,12 +197,12 @@ fn adaptive_step_size<S: Scalar>(
 /// marching steps a single trace may take before it's considered to have
 /// failed to find a terminating vertex (see [`adaptive_step_size`] for how
 /// long each is).
-pub fn remesh_edges_x_faces<S: Scalar>(
-    model: &mut NamedModel<S>,
-    naming: &mut BooleanNaming<S>,
+pub fn remesh_edges_x_faces(
+    model: &mut NamedModel,
+    naming: &mut BooleanNaming,
     solid_a: Body,
     solid_b: Body,
-    params: &RemeshParams<S>,
+    params: &RemeshParams,
 ) -> GeopResult<()> {
     let ctx = with_context!(
         "remesh_edges_x_faces(solid_a={solid_a}, solid_b={solid_b}, params={params:?})"
@@ -269,7 +270,7 @@ pub fn remesh_edges_x_faces<S: Scalar>(
 /// Whether `edge_id` already has a boundary coedge on `face_id` — if so,
 /// it's already been imprinted or traced there; nothing more to do for
 /// this pair.
-fn edge_is_boundary_of_face<S: Scalar>(model: &Model<S>, edge_id: EdgeId, face_id: FaceId) -> bool {
+fn edge_is_boundary_of_face(model: &Model, edge_id: EdgeId, face_id: FaceId) -> bool {
     model.iterate_face_coedges(face_id).any(|coedge_id| {
         model.coedges.get(&coedge_id).map(|c| c.geometry) == Some(CoedgeGeometry::Edge(edge_id))
     })
@@ -293,13 +294,13 @@ fn edge_is_boundary_of_face<S: Scalar>(model: &Model<S>, edge_id: EdgeId, face_i
 /// after every split, which made a boolean of many crossings, a gear's
 /// teeth or a pulley's grooves, quadratic in them.
 #[allow(clippy::type_complexity)]
-fn find_piercing_crossing<S: Scalar>(
-    model: &Model<S>,
+fn find_piercing_crossing(
+    model: &Model,
     settled: &mut std::collections::HashSet<(EdgeId, FaceId)>,
     edge_solid: Body,
     face_solid: Body,
-    params: &RemeshParams<S>,
-) -> GeopResult<Option<(EdgeId, S, Option<VertexId>, Vector3<S>, FaceId)>> {
+    params: &RemeshParams,
+) -> GeopResult<Option<(EdgeId, Scalar, Option<VertexId>, Vector3, FaceId)>> {
     let ctx = with_context!(
         "find_piercing_crossing(edge_solid={edge_solid}, face_solid={face_solid}, params={params:?})"
     );
@@ -376,7 +377,7 @@ fn find_piercing_crossing<S: Scalar>(
                 if let (Ok(tangent), Ok(normal)) = (
                     edge.curve.tangent(box_t),
                     face.surface.normal(box_uv[0], box_uv[1]),
-                ) && tangent.prod_dot(&normal).could_be_equal(S::ZERO)
+                ) && tangent.prod_dot(&normal).could_be_equal(Scalar::ZERO)
                 {
                     continue;
                 }
@@ -411,12 +412,12 @@ fn find_piercing_crossing<S: Scalar>(
     Ok(None)
 }
 
-fn split_piercing_crossings<S: Scalar>(
-    model: &mut NamedModel<S>,
-    naming: &mut BooleanNaming<S>,
+fn split_piercing_crossings(
+    model: &mut NamedModel,
+    naming: &mut BooleanNaming,
     edge_solid: Body,
     face_solid: Body,
-    params: &RemeshParams<S>,
+    params: &RemeshParams,
 ) -> GeopResult<()> {
     let ctx = with_context!(
         "split_piercing_crossings(edge_solid={edge_solid}, face_solid={face_solid}, params={params:?})"
@@ -455,11 +456,11 @@ fn split_piercing_crossings<S: Scalar>(
 /// ever used to *skip* a candidate as redundant (see
 /// [`is_internal_seam_edge`]); answering `false` just falls back to the
 /// pre-existing, already-correct (if slower) full check.
-fn faces_are_coplanar<S: Scalar>(
-    model: &Model<S>,
+fn faces_are_coplanar(
+    model: &Model,
     face_a: FaceId,
     face_b: FaceId,
-    params: &RemeshParams<S>,
+    params: &RemeshParams,
 ) -> GeopResult<bool> {
     let Ok((ua, va)) = face_interior_point(
         model,
@@ -487,14 +488,14 @@ fn faces_are_coplanar<S: Scalar>(
     let nb = fb.surface.normal(ub, vb)?;
 
     let cross = na.prod_cross(&nb);
-    let normals_parallel = cross[0].could_be_equal(S::ZERO)
-        && cross[1].could_be_equal(S::ZERO)
-        && cross[2].could_be_equal(S::ZERO);
+    let normals_parallel = cross[0].could_be_equal(Scalar::ZERO)
+        && cross[1].could_be_equal(Scalar::ZERO)
+        && cross[2].could_be_equal(Scalar::ZERO);
     if !normals_parallel {
         return Ok(false);
     }
     let offset = pb.sub(&pa).prod_dot(&na);
-    Ok(offset.could_be_equal(S::ZERO))
+    Ok(offset.could_be_equal(Scalar::ZERO))
 }
 
 /// One of `edge_id`'s two neighboring faces — *within the solid `edge_id`
@@ -526,11 +527,7 @@ fn faces_are_coplanar<S: Scalar>(
 /// either, since every step along it lands on the seam itself. A revolved
 /// flat ring cut by a plate's face along its seam is the case that showed
 /// it: `ring_revolved_onto_plate`.
-fn seam_plane<S: Scalar>(
-    model: &Model<S>,
-    edge_id: EdgeId,
-    params: &RemeshParams<S>,
-) -> GeopResult<Option<FaceId>> {
+fn seam_plane(model: &Model, edge_id: EdgeId, params: &RemeshParams) -> GeopResult<Option<FaceId>> {
     let coedges = model.coedges_of_edge(edge_id);
     let [c1, c2] = coedges[..] else {
         return Ok(None);
@@ -547,11 +544,11 @@ fn seam_plane<S: Scalar>(
 /// `face`'s surface (`curve_surface_intersect` finds an overlap:
 /// [`Intersections::Coincident`]) and enters the face's interior, and `edge`
 /// isn't already a boundary coedge of `face`.
-fn find_coincident_pair<S: Scalar>(
-    model: &Model<S>,
+fn find_coincident_pair(
+    model: &Model,
     edge_solid: Body,
     face_solid: Body,
-    params: &RemeshParams<S>,
+    params: &RemeshParams,
 ) -> GeopResult<Option<(EdgeId, FaceId)>> {
     let ctx = with_context!(
         "find_coincident_pair(edge_solid={edge_solid}, face_solid={face_solid}, params={params:?})"
@@ -639,12 +636,12 @@ fn find_coincident_pair<S: Scalar>(
     Ok(None)
 }
 
-fn imprint_coincident_edge<S: Scalar>(
-    model: &mut NamedModel<S>,
-    naming: &mut BooleanNaming<S>,
+fn imprint_coincident_edge(
+    model: &mut NamedModel,
+    naming: &mut BooleanNaming,
     edge_id: EdgeId,
     face_id: FaceId,
-    params: &RemeshParams<S>,
+    params: &RemeshParams,
 ) -> GeopResult<()> {
     let new_face = model
         .splice_edge_into_face(
@@ -660,12 +657,12 @@ fn imprint_coincident_edge<S: Scalar>(
     naming.face_split(face_id, edge_id, new_face)
 }
 
-fn imprint_coincident_pairs<S: Scalar>(
-    model: &mut NamedModel<S>,
-    naming: &mut BooleanNaming<S>,
+fn imprint_coincident_pairs(
+    model: &mut NamedModel,
+    naming: &mut BooleanNaming,
     edge_solid: Body,
     face_solid: Body,
-    params: &RemeshParams<S>,
+    params: &RemeshParams,
 ) -> GeopResult<()> {
     let ctx = with_context!(
         "imprint_coincident_pairs(edge_solid={edge_solid}, face_solid={face_solid}, params={params:?})"
@@ -703,11 +700,11 @@ fn imprint_coincident_pairs<S: Scalar>(
 /// too. Accepted as a pre-existing, codebase-wide limitation (the same one
 /// `disjointness_check::check_edges_and_faces_consistent` already lives
 /// with), not something this module solves fresh.
-fn find_tracing_start_points<S: Scalar>(
-    model: &Model<S>,
+fn find_tracing_start_points(
+    model: &Model,
     edge_solid: Body,
     face_solid: Body,
-    params: &RemeshParams<S>,
+    params: &RemeshParams,
 ) -> GeopResult<Vec<TracingStartPoint>> {
     let ctx = with_context!(
         "find_tracing_start_points(edge_solid={edge_solid}, face_solid={face_solid}, params={params:?})"
@@ -796,19 +793,19 @@ fn find_tracing_start_points<S: Scalar>(
 /// and spliced a spur out of the wall to it. One definitely past the plane
 /// is the next stride's to reach.
 #[allow(clippy::too_many_arguments)]
-fn candidate_within<S: Scalar>(
-    model: &Model<S>,
+fn candidate_within(
+    model: &Model,
     candidates: &[VertexId],
     origin: VertexId,
-    point: &Vector3<S>,
-    radius: S,
-    stride: Option<(&Vector3<S>, S)>,
-    surf_a: &NurbSurface3D<S>,
-    surf_b: &NurbSurface3D<S>,
-    params: &RemeshParams<S>,
+    point: &Vector3,
+    radius: Scalar,
+    stride: Option<(&Vector3, Scalar)>,
+    surf_a: &NurbSurface3D,
+    surf_b: &NurbSurface3D,
+    params: &RemeshParams,
 ) -> GeopResult<Option<VertexId>> {
     let radius_sq = radius.mul(radius);
-    let mut best: Option<(VertexId, S)> = None;
+    let mut best: Option<(VertexId, Scalar)> = None;
     for &candidate in candidates {
         if candidate == origin {
             continue;
@@ -821,7 +818,7 @@ fn candidate_within<S: Scalar>(
         }
         if let Some((heading, length)) = stride {
             let along = offset.prod_dot(heading);
-            if along.definitely_less(S::ZERO) || along.definitely_greater(length) {
+            if along.definitely_less(Scalar::ZERO) || along.definitely_greater(length) {
                 continue;
             }
         }
@@ -901,17 +898,17 @@ const CORRECTOR_DAMPING: f64 = 1e-12;
 /// is `face_contains`' job on the first step (see `trace_one_side`), not
 /// something for every step to re-litigate via raw domain bounds.
 #[allow(clippy::too_many_arguments)]
-fn predictor_corrector_step<S: Scalar>(
-    surf_a: &NurbSurface3D<S>,
-    surf_b: &NurbSurface3D<S>,
-    point: Vector3<S>,
-    dir: Vector3<S>,
-    u_a: S,
-    v_a: S,
-    u_b: S,
-    v_b: S,
-    step_size: S,
-) -> GeopResult<(Vector3<S>, S, S, S, S)> {
+fn predictor_corrector_step(
+    surf_a: &NurbSurface3D,
+    surf_b: &NurbSurface3D,
+    point: Vector3,
+    dir: Vector3,
+    u_a: Scalar,
+    v_a: Scalar,
+    u_b: Scalar,
+    v_b: Scalar,
+    step_size: Scalar,
+) -> GeopResult<(Vector3, Scalar, Scalar, Scalar, Scalar)> {
     let ctx = with_context!(
         "predictor_corrector_step(point={point:?}, dir={dir:?}, u_a={u_a:?}, v_a={v_a:?}, u_b={u_b:?}, v_b={v_b:?}, step_size={step_size:?})"
     );
@@ -933,7 +930,7 @@ fn predictor_corrector_step<S: Scalar>(
     let (v_a_lo, v_a_hi) = surf_a.domain_v();
     let (u_b_lo, u_b_hi) = surf_b.domain_u();
     let (v_b_lo, v_b_hi) = surf_b.domain_v();
-    let lambda = S::from_f64(CORRECTOR_DAMPING);
+    let lambda = Scalar::from_f64(CORRECTOR_DAMPING);
 
     // Two copies of the iterate ([`iterate`]): the sharp *seed* the next
     // Newton step starts from, and the *answer*, that same value with the
@@ -960,7 +957,7 @@ fn predictor_corrector_step<S: Scalar>(
     // it step after step. On a tool whose corners are only known to 1e-12 —
     // computed from a solid's own vertices — that reached a whole patch's
     // width within a dozen steps (`cube_minus_box_with_wide_corners`).
-    let clamp = |[u_a, v_a, u_b, v_b]: [S; 4]| {
+    let clamp = |[u_a, v_a, u_b, v_b]: [Scalar; 4]| {
         [
             u_a.clamped(u_a_lo, u_a_hi),
             v_a.clamped(v_a_lo, v_a_hi),
@@ -968,7 +965,7 @@ fn predictor_corrector_step<S: Scalar>(
             v_b.clamped(v_b_lo, v_b_hi),
         ]
     };
-    let sharp = |x: [S; 4]| x.map(|s| s.sharpen());
+    let sharp = |x: [Scalar; 4]| x.map(|s| s.sharpen());
     let given = [u_a, v_a, u_b, v_b];
     // Where the two surfaces were found to meet.
     let mut met = None;
@@ -988,7 +985,7 @@ fn predictor_corrector_step<S: Scalar>(
             let honest = clamp(next);
             (clamp(sharp(honest)), honest)
         },
-        |&[u_a1, v_a1, u_b1, v_b1]| -> GeopResult<Step<[S; 4]>> {
+        |&[u_a1, v_a1, u_b1, v_b1]| -> GeopResult<Step<[Scalar; 4]>> {
             let p_a = surf_a
                 .evaluate(u_a1, v_a1)
                 .with_context(&|e: GeopError| e.with_context("evaluate surf_a"))
@@ -1005,7 +1002,7 @@ fn predictor_corrector_step<S: Scalar>(
             // step forever. The fourth residual is what says the point has
             // actually advanced to the plane the predictor stepped to.
             let on_plane = dir.prod_dot(&p_a.sub(&target));
-            if p_a.could_be_equal(&p_b) && on_plane.could_be_equal(S::ZERO) {
+            if p_a.could_be_equal(&p_b) && on_plane.could_be_equal(Scalar::ZERO) {
                 // The union of the two surfaces' enclosures, not their
                 // average: both enclose the *same* point on the
                 // intersection curve, so the smallest interval containing
@@ -1031,14 +1028,19 @@ fn predictor_corrector_step<S: Scalar>(
             // meeting point must sit on the plane the predictor stepped to
             // (row 3).
             let delta = p_a.sub(&p_b);
-            let mut f = [S::ZERO; 4];
-            let mut j = [[S::ZERO; 4]; 4];
+            let mut f = [Scalar::ZERO; 4];
+            let mut j = [[Scalar::ZERO; 4]; 4];
             for k in 0..3 {
                 f[k] = delta[k];
                 j[k] = [sau[k], sav[k], sbu[k].neg(), sbv[k].neg()];
             }
             f[3] = on_plane;
-            j[3] = [dir.prod_dot(&sau), dir.prod_dot(&sav), S::ZERO, S::ZERO];
+            j[3] = [
+                dir.prod_dot(&sau),
+                dir.prod_dot(&sav),
+                Scalar::ZERO,
+                Scalar::ZERO,
+            ];
 
             // Damped normal equations `(J^T J + lambda I) d = -J^T f`. Going
             // through `J^T J` rather than solving `J d = -f` directly is
@@ -1055,17 +1057,17 @@ fn predictor_corrector_step<S: Scalar>(
             // the system's condition, which `J^T J` squares: where the
             // surfaces meet at a shallow angle, that put zero inside the last
             // pivot of a solvable system.
-            let mut ata = [[S::ZERO; 4]; 4];
-            let mut atf = [S::ZERO; 4];
+            let mut ata = [[Scalar::ZERO; 4]; 4];
+            let mut atf = [Scalar::ZERO; 4];
             for r in 0..4 {
                 for c in 0..4 {
-                    let mut sum = S::ZERO;
+                    let mut sum = Scalar::ZERO;
                     for row in &j {
                         sum = sum.add(row[r].mul(row[c]));
                     }
                     ata[r][c] = if r == c { sum.add(lambda) } else { sum }.sharpen();
                 }
-                let mut sum = S::ZERO;
+                let mut sum = Scalar::ZERO;
                 for k in 0..4 {
                     sum = sum.add(j[k][r].mul(f[k]));
                 }
@@ -1115,12 +1117,12 @@ fn predictor_corrector_step<S: Scalar>(
 /// where the second bore leaves the cube, splitting its wall there, and the
 /// Steinmetz arc leaving into the inner half was tried against the outer one,
 /// rejected, and never traced.
-fn trace_from_start_point<S: Scalar>(
-    model: &mut NamedModel<S>,
-    naming: &mut BooleanNaming<S>,
+fn trace_from_start_point(
+    model: &mut NamedModel,
+    naming: &mut BooleanNaming,
     start: &TracingStartPoint,
     candidates: &[VertexId],
-    params: &RemeshParams<S>,
+    params: &RemeshParams,
 ) -> GeopResult<()> {
     let ctx = with_context!(
         "trace_from_start_point(vertex={}, edge_solid={}, face={})",
@@ -1177,12 +1179,12 @@ fn trace_from_start_point<S: Scalar>(
 /// boundary needs geometry, and it is then interior to exactly one face: the
 /// recorded one unless a split moved it into the other half, so that is
 /// tested first and the rest only if it no longer holds the vertex.
-fn faces_at_vertex<S: Scalar>(
-    model: &Model<S>,
+fn faces_at_vertex(
+    model: &Model,
     solid: Body,
     vertex: VertexId,
     recorded: Option<FaceId>,
-    params: &RemeshParams<S>,
+    params: &RemeshParams,
 ) -> GeopResult<Vec<FaceId>> {
     let faces = model.body_faces(solid)?;
     let on_boundary: Vec<FaceId> = faces
@@ -1251,14 +1253,14 @@ fn faces_at_vertex<S: Scalar>(
 /// viable (see the per-direction rejection rules below) — that's a
 /// legitimate outcome (e.g. a glancing touch), not an error.
 #[allow(clippy::too_many_arguments)]
-fn trace_one_side<S: Scalar>(
-    model: &mut NamedModel<S>,
-    naming: &mut BooleanNaming<S>,
+fn trace_one_side(
+    model: &mut NamedModel,
+    naming: &mut BooleanNaming,
     v: VertexId,
     face_a: FaceId,
     face_b: FaceId,
     candidates: &[VertexId],
-    params: &RemeshParams<S>,
+    params: &RemeshParams,
 ) -> GeopResult<()> {
     let ctx = with_context!("trace_one_side(v={v}, face_a={face_a}, face_b={face_b})");
 
@@ -1360,11 +1362,11 @@ fn trace_one_side<S: Scalar>(
     let mut toward_near = None;
     if let Some(w) = near {
         let offset = topology.get_vertex(w).with_context(&ctx)?.point.sub(&point);
-        trials.push((offset.norm().div(S::TWO).with_context(&ctx)?, None));
+        trials.push((offset.norm().div(Scalar::TWO).with_context(&ctx)?, None));
         let along = offset.prod_dot(&axis);
-        toward_near = if along.definitely_greater(S::ZERO) {
+        toward_near = if along.definitely_greater(Scalar::ZERO) {
             Some(true)
-        } else if along.definitely_less(S::ZERO) {
+        } else if along.definitely_less(Scalar::ZERO) {
             Some(false)
         } else {
             None
@@ -1373,9 +1375,9 @@ fn trace_one_side<S: Scalar>(
     trials.push((first_step, toward_near));
     // Every trial step, each way it may go, in turn: the first that lands
     // inside both faces decides the direction.
-    let tries: Vec<(S, S)> = (trials.iter())
+    let tries: Vec<(Scalar, Scalar)> = (trials.iter())
         .flat_map(|&(trial, not_toward)| {
-            [(true, S::ONE), (false, S::ONE.neg())]
+            [(true, Scalar::ONE), (false, Scalar::ONE.neg())]
                 .into_iter()
                 .filter(move |&(forward, _)| not_toward != Some(forward))
                 .map(move |(_, sign)| (trial, sign))
@@ -1473,7 +1475,7 @@ fn trace_one_side<S: Scalar>(
     let marched = repeat(params.max_trace_steps, || -> GeopResult<_> {
         let step =
             adaptive_step_size(&surf_a, &surf_b, u_a, v_a, u_b, v_b, &dir).with_context(&ctx)?;
-        let reached = |radius: S| {
+        let reached = |radius: Scalar| {
             candidate_within(
                 topology,
                 candidates,
@@ -1519,7 +1521,7 @@ fn trace_one_side<S: Scalar>(
         if let (Ok(na), Ok(nb)) = (surf_a.normal(u_a, v_a), surf_b.normal(u_b, v_b))
             && let Ok(new_axis) = na.prod_cross(&nb).normalize()
         {
-            dir = if new_axis.prod_dot(&dir).could_be_greater(S::ZERO) {
+            dir = if new_axis.prod_dot(&dir).could_be_greater(Scalar::ZERO) {
                 new_axis
             } else {
                 new_axis.neg()
@@ -1608,7 +1610,7 @@ fn trace_one_side<S: Scalar>(
     // leg, fraction, point, width — of the last attempt to fit it: the curve
     // is widened to hold it, so one that is wide makes the whole curve wide,
     // and this says which.
-    let mut widest_between: Option<(usize, usize, Vector3<S>, f64)> = None;
+    let mut widest_between: Option<(usize, usize, Vector3, f64)> = None;
     let mut fitted = String::new();
     let edge_id = match duplicate {
         Some(id) => id,
@@ -1622,11 +1624,11 @@ fn trace_one_side<S: Scalar>(
             // Located with the same corrector the march uses, at a fraction
             // `frac` of the way along the leg from `from` (whose surface
             // parameters are `(u_a, v_a, u_b, v_b)`) to `to`.
-            let on_branch = |from: Vector3<S>,
-                             (u_a, v_a, u_b, v_b): OnBoth<S>,
-                             to: Vector3<S>,
-                             frac: S|
-             -> GeopResult<(Vector3<S>, OnBoth<S>)> {
+            let on_branch = |from: Vector3,
+                             (u_a, v_a, u_b, v_b): OnBoth,
+                             to: Vector3,
+                             frac: Scalar|
+             -> GeopResult<(Vector3, OnBoth)> {
                 let leg_ctx = with_context!("on_branch(from={from:?}, to={to:?}, frac={frac:?})");
                 let chord = to.sub(&from);
                 let step = chord.norm().mul(frac);
@@ -1671,7 +1673,7 @@ fn trace_one_side<S: Scalar>(
             // to tell whether halving them still halved its width. The cap
             // ends it: `pieces` doubles each step, so it passes any cap
             // within as many steps as it has bits.
-            let first: (usize, Option<(NurbCurve<S, 4>, S)>) = (first, None);
+            let first: (usize, Option<(NurbCurve<4>, Scalar)>) = (first, None);
             let refined = refine(
                 first,
                 usize::BITS as usize,
@@ -1681,7 +1683,8 @@ fn trace_one_side<S: Scalar>(
                     let mut dense_params = vec![uvs[0]];
                     for i in 0..strides {
                         for k in 1..pieces {
-                            let frac = S::from_ratio(k as i64, pieces as i64).with_context(&ctx)?;
+                            let frac =
+                                Scalar::from_ratio(k as i64, pieces as i64).with_context(&ctx)?;
                             let (p, p_params) = on_branch(points[i], uvs[i], points[i + 1], frac)
                                 .with_context(&ctx)?;
                             dense.push(p);
@@ -1699,7 +1702,7 @@ fn trace_one_side<S: Scalar>(
                         let fractions = true_point_fractions(i, legs);
                         let mut inside = Vec::with_capacity(fractions.len());
                         for (k, &(a, b)) in fractions.iter().enumerate() {
-                            let frac = S::from_ratio(a, b).with_context(&ctx)?;
+                            let frac = Scalar::from_ratio(a, b).with_context(&ctx)?;
                             let (p, _) = on_branch(points[i], uvs[i], points[i + 1], frac)
                                 .with_context(&ctx)?;
                             let width = (0..3).map(|c| p[c].width().to_f64()).fold(0.0, f64::max);
@@ -1710,24 +1713,27 @@ fn trace_one_side<S: Scalar>(
                         }
                         between.push(inside);
                     }
-                    let curve = NurbCurve::<S, 4>::interpolate_enclosing(&points, &between, 3)
+                    let curve = NurbCurve::<4>::interpolate_enclosing(&points, &between, 3)
                         .with_context(&ctx)?;
                     let width = curve
                         .control_points
                         .iter()
                         .flat_map(|p| (0..3).map(move |k| p[k].width()))
-                        .fold(S::ZERO, |a, w| if w.definitely_greater(a) { w } else { a });
+                        .fold(
+                            Scalar::ZERO,
+                            |a, w| if w.definitely_greater(a) { w } else { a },
+                        );
                     // Finer legs only help while the drift is what makes the
                     // curve wide: once halving them no longer halves the width,
                     // the width is the points' own, and the coarser fit is kept.
-                    let halved = best
-                        .as_ref()
-                        .is_none_or(|(_, before)| before.definitely_greater(width.mul(S::TWO)));
+                    let halved = best.as_ref().is_none_or(|(_, before)| {
+                        before.definitely_greater(width.mul(Scalar::TWO))
+                    });
                     if !halved {
                         return Ok(Refine::Done(best.expect("a fit to compare with").0));
                     }
                     if 2 * legs > MAX_REFINED_LEGS
-                        || !width.definitely_greater(S::from_f64(TRACE_DRIFT))
+                        || !width.definitely_greater(Scalar::from_f64(TRACE_DRIFT))
                     {
                         return Ok(Refine::Done(curve));
                     }
@@ -1807,7 +1813,6 @@ mod tests {
         remesh_vertices_x_edges::remesh_vertices_x_edges,
     };
     use crate::scenes::unit_cube_at;
-    use geop_core_math::scalars::ScalInF64;
     use geop_ops_model::Namer;
 
     /// Two unit cubes offset by half a cube-width along x: a simple, fully
@@ -1816,7 +1821,7 @@ mod tests {
     /// (where one cube's edge pierces the other's face) get traced.
     #[test]
     fn box_grid_offset_x_half_edges_x_faces() {
-        let mut model = NamedModel::<ScalInF64>::new();
+        let mut model = NamedModel::new();
         let solid_a = unit_cube_at(&mut model, "a", 0.0, 0.0, 0.0).into();
         let solid_b = unit_cube_at(&mut model, "b", 0.5, 0.0, 0.0).into();
         let namer = Namer::new("boolean", "ab").unwrap();

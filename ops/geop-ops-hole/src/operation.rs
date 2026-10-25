@@ -15,7 +15,6 @@ use geop_core_program::{
     part::StepContext,
     reader::Reader,
     target::{Target, TargetReference},
-    values::Design,
 };
 use std::collections::BTreeSet;
 
@@ -49,18 +48,18 @@ one_of! {
     /// sketch's point — or a sketch, standing for its points that no line,
     /// arc or spline runs through.
     pub enum HoleCentre {
-        Vertex(ElementReference<NamedModel<Design>, Point>),
+        Vertex(ElementReference<NamedModel, Point>),
         Datum(ElementReference<Datums, Point>),
-        SketchPoint(ElementReference<PlacedSketch<Design>, Point>),
+        SketchPoint(ElementReference<PlacedSketch, Point>),
         Sketch(SketchRef),
     }
 }
 
 /// A flat face of the part, by name.
-pub type PlaneRef = ElementReference<NamedModel<Design>, Plane>;
+pub type PlaneRef = ElementReference<NamedModel, Plane>;
 
 /// A face of the part, by name.
-pub type FaceRef = ElementReference<NamedModel<Design>, Face>;
+pub type FaceRef = ElementReference<NamedModel, Face>;
 
 /// What a hole is for.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -245,7 +244,7 @@ impl HoleArgs {
 /// The hole centres `points` stand for, as `reader` reads them: each by the
 /// name its hole's entities are scoped by, and where it is. A sketch stands
 /// for its points no line, arc or spline runs through.
-fn centres(reader: &Reader, points: &[HoleCentre]) -> GeopResult<Vec<(String, Vector3<Design>)>> {
+fn centres(reader: &Reader, points: &[HoleCentre]) -> GeopResult<Vec<(String, Vector3)>> {
     let mut found = Vec::new();
     for point in points {
         let ctx = with_context!("the hole centre {point:?}");
@@ -259,7 +258,7 @@ fn centres(reader: &Reader, points: &[HoleCentre]) -> GeopResult<Vec<(String, Ve
                     .filter(|c| !matches!(c.kind, CurveKind::Circle { .. }))
                     .flat_map(|c| c.points())
                     .collect();
-                let geometry = sketch.enclose::<Design>().with_context(ctx)?;
+                let geometry = sketch.enclose().with_context(ctx)?;
                 let before = found.len();
                 for (&id, p) in &sketch.points {
                     if !p.fixed && !on_curves.contains(&id) {
@@ -302,7 +301,7 @@ fn centres(reader: &Reader, points: &[HoleCentre]) -> GeopResult<Vec<(String, Ve
 
 /// The circle of `diameter` around `centre` in the plane normal to
 /// `normal`, as a polyline: what a hole looks like on its face.
-fn circle<S: Scalar>(centre: Vector3<S>, normal: &Vector3<S>, diameter: f64) -> Option<Shape<S>> {
+fn circle(centre: Vector3, normal: &Vector3, diameter: f64) -> Option<Shape> {
     let frame = frame_along(centre, normal).ok()?;
     let r = diameter / 2.0;
     let points = (0..=48)
@@ -310,8 +309,8 @@ fn circle<S: Scalar>(centre: Vector3<S>, normal: &Vector3<S>, diameter: f64) -> 
             let a = k as f64 / 48.0 * std::f64::consts::TAU;
             frame
                 .origin()
-                .add(&frame.u().prod_scalar(S::from_f64(r * a.cos())))
-                .add(&frame.v().prod_scalar(S::from_f64(r * a.sin())))
+                .add(&frame.u().prod_scalar(Scalar::from_f64(r * a.cos())))
+                .add(&frame.v().prod_scalar(Scalar::from_f64(r * a.sin())))
         })
         .collect();
     Some(Shape::Polyline { points })
@@ -325,13 +324,13 @@ fn size_choices() -> Vec<Choice> {
 /// Where the holes go: the solid they are drilled into, by name, and each
 /// hole's scope and frame — at its centre on the face, `z` the face's
 /// normal, out of the solid — as `reader` reads them.
-struct Sites<S: Scalar> {
+struct Sites {
     target: String,
-    holes: Vec<(String, CoordinateSystem<S>)>,
+    holes: Vec<(String, CoordinateSystem)>,
 }
 
 /// The [`Sites`] of the holes `args` drills, in the part `reader` reads.
-fn sites(reader: &Reader, args: &HoleArgs) -> GeopResult<Sites<Design>> {
+fn sites(reader: &Reader, args: &HoleArgs) -> GeopResult<Sites> {
     let Some(face) = &args.face else {
         return Err(GeopError::new("pick the planar face to drill into"));
     };
@@ -345,7 +344,7 @@ fn sites(reader: &Reader, args: &HoleArgs) -> GeopResult<Sites<Design>> {
     }
     let mut holes = Vec::new();
     for (scope, at) in centres(reader, &args.points)? {
-        if !plane.signed_distance(&at).could_be_equal(Design::ZERO) {
+        if !plane.signed_distance(&at).could_be_equal(Scalar::ZERO) {
             return Err(GeopError::new(format!(
                 "the point {scope} does not lie on face {face_name:?}: holes are drilled at points on the face"
             )));
@@ -360,7 +359,7 @@ fn sites(reader: &Reader, args: &HoleArgs) -> GeopResult<Sites<Design>> {
 /// recorded from, on the walls the holes left.
 #[derive(Clone, Debug, PartialEq)]
 struct Tapped {
-    holes: Vec<(String, CoordinateSystem<Design>)>,
+    holes: Vec<(String, CoordinateSystem)>,
     length: Option<f64>,
 }
 
@@ -395,8 +394,8 @@ fn plan(reader: &Reader, args: &HoleArgs) -> GeopResult<Tapped> {
 
 /// Records the cosmetic thread of every hole the tapped hole `step`
 /// drilled, on its wall in the model the hole left.
-fn tap(reader: &Reader, (step, args): &(String, HoleArgs)) -> GeopResult<Threads<Design>> {
-    let mut threads: Threads<Design> = reader.previous()?;
+fn tap(reader: &Reader, (step, args): &(String, HoleArgs)) -> GeopResult<Threads> {
+    let mut threads: Threads = reader.previous()?;
     let ctx = with_context!("the threads of hole({step})");
     let Tapped { holes, length } =
         reader.retrieve_element(&ElementReference::whole(tapped(step)))?;
@@ -470,9 +469,9 @@ impl PartOperation for Hole {
         context: &'a Context<'a>,
         args: &HoleArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, HoleArgs> {
+    ) -> EditForm<'a, HoleArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, HoleArgs>::default();
+        let mut f = EditForm::<HoleArgs>::default();
         f.pick_one("face", "face", before, args.face.as_ref(), |edit, face| {
             edit.args.face = Some(face)
         });
@@ -671,17 +670,17 @@ impl PartOperation for Hole {
 /// for the hole's scope `X`: from the face down, `length` far — a blind
 /// hole as deep as it was drilled, unless told otherwise — or, if none, all
 /// the way.
-fn tapped_thread<S: Scalar>(
-    model: &NamedModel<S>,
+fn tapped_thread(
+    model: &NamedModel,
     solid: SolidId,
-    (scope, axes): &(String, CoordinateSystem<S>),
+    (scope, axes): &(String, CoordinateSystem),
     radius: f64,
     size: &MetricSize,
     length: Option<f64>,
-) -> GeopResult<CosmeticThread<S>> {
+) -> GeopResult<CosmeticThread> {
     let ctx = with_context!("the thread of the hole at {scope}");
     let into = axes.w().neg();
-    let radius = S::from_f64(radius);
+    let radius = Scalar::from_f64(radius);
     let cylinder = geop_core_geometry::shape::Cylinder {
         axis: geop_core_geometry::shape::Axis::try_new(*axes.origin(), into)?,
         radius,
@@ -735,10 +734,7 @@ pub struct ThreadArgs {
 
 impl ThreadArgs {
     /// Where the thread runs in `model`, on the wall of its face.
-    fn placement<S: Scalar>(
-        &self,
-        model: &NamedModel<S>,
-    ) -> GeopResult<(Wall<S>, ThreadPlacement<S>)> {
+    fn placement(&self, model: &NamedModel) -> GeopResult<(Wall, ThreadPlacement)> {
         let wall = Wall::of(model, model.face_id(self.face_name()?)?)?;
         let start = wall.start(self.reversed);
         let placement = wall.placement(start, wall.cylinder.radius, self.length)?;
@@ -755,8 +751,8 @@ impl ThreadArgs {
 
 /// Records the cosmetic thread `thread(T)` of the step `T`, on the wall of
 /// its face in the model as it is.
-fn record(reader: &Reader, (step, args): &(String, ThreadArgs)) -> GeopResult<Threads<Design>> {
-    let mut threads: Threads<Design> = reader.previous()?;
+fn record(reader: &Reader, (step, args): &(String, ThreadArgs)) -> GeopResult<Threads> {
+    let mut threads: Threads = reader.previous()?;
     let ctx = with_context!("thread({step}, {args:?})");
     let namer = Namer::new("thread", step)?;
     let size = metric(&args.size).with_context(ctx)?;
@@ -810,10 +806,10 @@ impl PartOperation for Thread {
         context: &'a Context<'a>,
         args: &ThreadArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, ThreadArgs> {
+    ) -> EditForm<'a, ThreadArgs> {
         let before = &context.before;
         let model = read_model(before).unwrap_or_default();
-        let mut f = EditForm::<Design, ThreadArgs>::default();
+        let mut f = EditForm::<ThreadArgs>::default();
         f.pick_one("face", "face", before, args.face.as_ref(), |edit, face| {
             edit.args.face = Some(face)
         });
@@ -878,7 +874,7 @@ impl PartOperation for Thread {
 
 impl ModelOperation for Hole {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &HoleArgs,
@@ -931,12 +927,7 @@ impl ModelOperation for Hole {
 
 impl ModelOperation for Thread {
     /// Cuts the thread's profile into the solid: a modelled thread.
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &Reader,
-        step: &str,
-        args: &ThreadArgs,
-    ) -> GeopResult<()> {
+    fn build(model: &mut NamedModel, _: &Reader, step: &str, args: &ThreadArgs) -> GeopResult<()> {
         let namer = Namer::new("thread", step)?;
         let size = metric(&args.size)?;
         let (wall, placement) = args.placement(model)?;

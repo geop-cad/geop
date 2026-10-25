@@ -8,9 +8,7 @@ use geop_core_editor::{
     part_operation::PartOperation,
 };
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_lib_booleans::{RemeshParams, boolean, split};
 use geop_ops_model::{
     BooleanOp, Face, ModelOperation, NamedModel, Namer, SolidRef, build_model, model, read_model,
@@ -83,8 +81,8 @@ impl PartOperation for Boolean {
         context: &'a Context<'a>,
         args: &BooleanArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, BooleanArgs> {
-        let mut f = EditForm::<Design, BooleanArgs>::default();
+    ) -> EditForm<'a, BooleanArgs> {
+        let mut f = EditForm::<BooleanArgs>::default();
         let before = &context.before;
         f.pick_one("a", "a", before, Some(&args.a), |edit, a| edit.args.a = a)
             .pick_one("b", "b", before, Some(&args.b), |edit, b| edit.args.b = b)
@@ -105,12 +103,7 @@ impl PartOperation for Boolean {
 }
 
 impl ModelOperation for Boolean {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &Reader,
-        step: &str,
-        args: &BooleanArgs,
-    ) -> GeopResult<()> {
+    fn build(model: &mut NamedModel, _: &Reader, step: &str, args: &BooleanArgs) -> GeopResult<()> {
         let namer = Namer::new("boolean", step)?;
         let a = model.solid_id(args.a.name())?;
         let b = model.solid_id(args.b.name())?;
@@ -122,7 +115,7 @@ impl ModelOperation for Boolean {
 /// Cuts the solid named `solid` into pieces with the face named `face` —
 /// a face standing on its own, such as an extrude or revolve builds as a
 /// face, and with it every face of its sheet. The pieces are named
-/// `split(S,0)`, `split(S,1)`, ... for the operation `S`, the solid is
+/// `split(Scalar,0)`, `split(Scalar,1)`, ... for the operation `Scalar`, the solid is
 /// consumed, and the face is left as it is (see [`geop_lib_booleans::split`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Split;
@@ -132,7 +125,7 @@ pub struct SplitArgs {
     /// The solid to cut.
     pub solid: SolidRef,
     /// A face of the sheet to cut it with.
-    pub face: ElementReference<NamedModel<Design>, Face>,
+    pub face: ElementReference<NamedModel, Face>,
 }
 
 impl PartOperation for Split {
@@ -169,8 +162,8 @@ impl PartOperation for Split {
         context: &'a Context<'a>,
         args: &SplitArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, SplitArgs> {
-        let mut f = EditForm::<Design, SplitArgs>::default();
+    ) -> EditForm<'a, SplitArgs> {
+        let mut f = EditForm::<SplitArgs>::default();
         let before = &context.before;
         f.pick_one(
             "solid",
@@ -187,12 +180,7 @@ impl PartOperation for Split {
 }
 
 impl ModelOperation for Split {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &Reader,
-        step: &str,
-        args: &SplitArgs,
-    ) -> GeopResult<()> {
+    fn build(model: &mut NamedModel, _: &Reader, step: &str, args: &SplitArgs) -> GeopResult<()> {
         let namer = Namer::new("split", step)?;
         let solid = model.solid_id(args.solid.name())?;
         let face = model.face_id(args.face.name())?;

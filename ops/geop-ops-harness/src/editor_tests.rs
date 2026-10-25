@@ -18,11 +18,11 @@ use geop_core_editor::{
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::{DatumComponent, FrameAxis},
-    scalars::{Ring, ScalInF64 as S, Scalar},
+    scalars::Scalar,
 };
 use geop_core_program::{
     program::Program,
-    values::{Design, StateValue, StateValues, pose_state},
+    values::{StateValue, StateValues, pose_state},
 };
 use geop_ops_assembly::{AddPartArgs, Kind, Mate, examples::pose};
 use geop_ops_model::datums::{ORIGIN, component_name, datum};
@@ -121,7 +121,7 @@ fn assembly() -> Program {
 }
 
 /// The cable's length in what `editor` built.
-fn cable_length(editor: &Editor) -> Design {
+fn cable_length(editor: &Editor) -> Scalar {
     cable(&editor.part(), "route(cable)").unwrap().length
 }
 
@@ -131,7 +131,7 @@ fn cable_length(editor: &Editor) -> Design {
 #[test]
 fn moving_a_mated_part_reroutes_the_cable() {
     let mut editor = editor();
-    let half_circle = |gap: f64| S::PI.mul(S::from_f64(gap / 2.0));
+    let half_circle = |gap: f64| Scalar::PI.mul(Scalar::from_f64(gap / 2.0));
     let before = cable_length(&editor);
     assert!(before.could_be_equal(half_circle(4.0)), "{before:?}");
 

@@ -26,21 +26,21 @@ use crate::{
 };
 
 /// Whether `v` could be the zero vector.
-fn could_be_zero<S: Scalar>(v: &Vector3<S>) -> bool {
-    v.norm_sq().could_be_equal(S::ZERO)
+fn could_be_zero(v: &Vector3) -> bool {
+    v.norm_sq().could_be_equal(Scalar::ZERO)
 }
 
 /// A straight line: through `point`, along the unit vector `direction`.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Axis<S: Scalar> {
-    pub point: Vector3<S>,
-    pub direction: Vector3<S>,
+pub struct Axis {
+    pub point: Vector3,
+    pub direction: Vector3,
 }
 
-impl<S: Scalar> Axis<S> {
+impl Axis {
     /// The line through `point` along `direction`, which need not be unit
     /// length but must not be zero.
-    pub fn try_new(point: Vector3<S>, direction: Vector3<S>) -> GeopResult<Self> {
+    pub fn try_new(point: Vector3, direction: Vector3) -> GeopResult<Self> {
         Ok(Self {
             point,
             direction: direction.normalize()?,
@@ -49,28 +49,28 @@ impl<S: Scalar> Axis<S> {
 
     /// The point of the line closest to `p`: the foot of the perpendicular
     /// from `p`.
-    pub fn project(&self, p: &Vector3<S>) -> Vector3<S> {
+    pub fn project(&self, p: &Vector3) -> Vector3 {
         let along = p.sub(&self.point).prod_dot(&self.direction);
         self.point.add(&self.direction.prod_scalar(along))
     }
 
     /// Whether `p` could lie on the line.
-    pub fn could_contain(&self, p: &Vector3<S>) -> bool {
+    pub fn could_contain(&self, p: &Vector3) -> bool {
         could_be_zero(&p.sub(&self.point).prod_cross(&self.direction))
     }
 
     /// Whether `other` could run parallel to this line, either way.
-    pub fn could_be_parallel(&self, other: &Axis<S>) -> bool {
+    pub fn could_be_parallel(&self, other: &Axis) -> bool {
         self.direction.could_be_parallel(&other.direction)
     }
 
     /// Where the two lines come closest: halfway between the point of each
     /// nearest the other — where they cross, if they do. Fails if they could
     /// be parallel: then every point is as near as any other.
-    pub fn nearest(&self, other: &Axis<S>) -> GeopResult<Vector3<S>> {
+    pub fn nearest(&self, other: &Axis) -> GeopResult<Vector3> {
         let n = self.direction.prod_cross(&other.direction);
         let n2 = n.norm_sq();
-        if n2.could_be_equal(S::ZERO) {
+        if n2.could_be_equal(Scalar::ZERO) {
             return Err(GeopError::new(
                 "the lines are parallel, so no point of them is nearer the other than any other",
             ));
@@ -80,11 +80,11 @@ impl<S: Scalar> Axis<S> {
         let t = r.prod_cross(&self.direction).prod_dot(&n).div(n2)?;
         let a = self.point.add(&self.direction.prod_scalar(s));
         let b = other.point.add(&other.direction.prod_scalar(t));
-        Ok(Vector3::interpolate(&a, &b, S::ONE.div(S::TWO)?))
+        Ok(Vector3::interpolate(&a, &b, Scalar::ONE.div(Scalar::TWO)?))
     }
 
     /// The line moved by `motion`.
-    pub fn transform(&self, motion: &Motion<S>) -> Self {
+    pub fn transform(&self, motion: &Motion) -> Self {
         Self {
             point: motion.apply(&self.point),
             direction: motion.rotate(&self.direction),
@@ -95,16 +95,16 @@ impl<S: Scalar> Axis<S> {
 /// A circle: around `center`, in the plane normal to the unit vector
 /// `normal`, of `radius`.
 #[derive(Clone, Debug)]
-pub struct Circle<S: Scalar> {
-    pub center: Vector3<S>,
-    pub normal: Vector3<S>,
-    pub radius: S,
+pub struct Circle {
+    pub center: Vector3,
+    pub normal: Vector3,
+    pub radius: Scalar,
 }
 
-impl<S: Scalar> Circle<S> {
+impl Circle {
     /// The line through the center along the normal: what the circle turns
     /// around.
-    pub fn axis(&self) -> Axis<S> {
+    pub fn axis(&self) -> Axis {
         Axis {
             point: self.center,
             direction: self.normal,
@@ -112,7 +112,7 @@ impl<S: Scalar> Circle<S> {
     }
 
     /// The circle moved by `motion`.
-    pub fn transform(&self, motion: &Motion<S>) -> Self {
+    pub fn transform(&self, motion: &Motion) -> Self {
         Self {
             center: motion.apply(&self.center),
             normal: motion.rotate(&self.normal),
@@ -120,7 +120,7 @@ impl<S: Scalar> Circle<S> {
         }
     }
 
-    fn could_be_equal(&self, other: &Circle<S>) -> bool {
+    fn could_be_equal(&self, other: &Circle) -> bool {
         self.center.could_be_equal(&other.center)
             && self.normal.could_be_equal(&other.normal)
             && self.radius.could_be_equal(other.radius)
@@ -128,7 +128,7 @@ impl<S: Scalar> Circle<S> {
 
     /// The smallest circle description enclosing both — two enclosures of
     /// one circle, combined (see `AGENTS.md` on `union`).
-    fn union(&self, other: &Circle<S>) -> Circle<S> {
+    fn union(&self, other: &Circle) -> Circle {
         Circle {
             center: self.center.union(&other.center),
             normal: self.normal.union(&other.normal),
@@ -141,16 +141,16 @@ impl<S: Scalar> Circle<S> {
 /// (seen with `circle.normal` towards the viewer) to `end` — all of it when
 /// `start` and `end` coincide.
 #[derive(Clone, Debug)]
-pub struct Arc<S: Scalar> {
-    pub circle: Circle<S>,
-    pub start: Vector3<S>,
-    pub end: Vector3<S>,
+pub struct Arc {
+    pub circle: Circle,
+    pub start: Vector3,
+    pub end: Vector3,
 }
 
-impl<S: Scalar> Arc<S> {
+impl Arc {
     /// The arc moved by `motion`. A mirror turns counter-clockwise into
     /// clockwise, so the mirrored arc runs from its end to its start.
-    pub fn transform(&self, motion: &Motion<S>) -> Self {
+    pub fn transform(&self, motion: &Motion) -> Self {
         let (start, end) = (motion.apply(&self.start), motion.apply(&self.end));
         let (start, end) = match motion.mirrors() {
             true => (end, start),
@@ -172,18 +172,18 @@ impl<S: Scalar> Arc<S> {
     /// enclosure, for what is measured — its length ([`Arc::length`]).
     /// The whole turn for an arc that could be closed, as [`Arc::sweep`]
     /// takes it.
-    pub fn angle(&self) -> GeopResult<S> {
+    pub fn angle(&self) -> GeopResult<Scalar> {
         if self.could_be_closed() {
-            return Ok(S::TWO.mul(S::PI));
+            return Ok(Scalar::TWO.mul(Scalar::PI));
         }
         let c = &self.circle;
         let x = self.start.sub(&c.center);
         let e = self.end.sub(&c.center);
         let angle = c.normal.prod_dot(&x.prod_cross(&e)).atan2(x.prod_dot(&e));
-        if angle.definitely_greater(S::ZERO) {
+        if angle.definitely_greater(Scalar::ZERO) {
             Ok(angle)
-        } else if angle.definitely_less(S::ZERO) {
-            Ok(angle.add(S::TWO.mul(S::PI)))
+        } else if angle.definitely_less(Scalar::ZERO) {
+            Ok(angle.add(Scalar::TWO.mul(Scalar::PI)))
         } else {
             Err(GeopError::new(format!(
                 "Arc::angle: the arc could turn by nothing or all round, from {:?} to {:?} about {:?}",
@@ -193,7 +193,7 @@ impl<S: Scalar> Arc<S> {
     }
 
     /// How long the arc is: its radius times the angle it turns through.
-    pub fn length(&self) -> GeopResult<S> {
+    pub fn length(&self) -> GeopResult<Scalar> {
         Ok(self.circle.radius.mul(self.angle()?))
     }
 
@@ -225,11 +225,11 @@ impl<S: Scalar> Arc<S> {
     /// the caller makes, and any angle within rounding of it serves that
     /// choice equally well. What the result has to be *honestly* is a point
     /// on the circle, and it is, since it is built from the circle itself.
-    pub fn point_at(&self, fraction: f64) -> GeopResult<Vector3<S>> {
+    pub fn point_at(&self, fraction: f64) -> GeopResult<Vector3> {
         let c = &self.circle;
         let x = self.start.sub(&c.center);
         let y = c.normal.prod_cross(&x);
-        let angle = S::from_f64(fraction * self.sweep());
+        let angle = Scalar::from_f64(fraction * self.sweep());
         Ok(c.center
             .add(&x.prod_scalar(angle.cos()))
             .add(&y.prod_scalar(angle.sin())))
@@ -237,7 +237,7 @@ impl<S: Scalar> Arc<S> {
 
     /// The unit tangent at `p`, a point of the arc, pointing the way the arc
     /// runs.
-    pub fn tangent_at(&self, p: &Vector3<S>) -> GeopResult<Vector3<S>> {
+    pub fn tangent_at(&self, p: &Vector3) -> GeopResult<Vector3> {
         self.circle
             .normal
             .prod_cross(&p.sub(&self.circle.center))
@@ -254,7 +254,7 @@ impl<S: Scalar> Arc<S> {
     /// where the tangents at its ends meet, `C + (P0 - C + P2 - C) / (1 +
     /// cos phi)`, weighted `cos(phi / 2) = sqrt((1 + cos phi) / 2)` — both
     /// read off the ends, so no angle is taken.
-    pub fn to_curve(&self) -> GeopResult<NurbCurve3D<S>> {
+    pub fn to_curve(&self) -> GeopResult<NurbCurve3D> {
         let quarter = std::f64::consts::FRAC_PI_2;
         let pieces = ((self.sweep() / quarter).ceil() as usize).max(1);
         let mut points = vec![self.start];
@@ -264,36 +264,36 @@ impl<S: Scalar> Arc<S> {
         points.push(self.end);
         let c = &self.circle.center;
         let r2 = self.circle.radius.mul(self.circle.radius);
-        let mut control_points = vec![points[0].homogeneous(S::ONE)];
-        let mut knots = vec![S::ZERO; 3];
+        let mut control_points = vec![points[0].homogeneous(Scalar::ONE)];
+        let mut knots = vec![Scalar::ZERO; 3];
         for k in 0..pieces {
             let (a, b) = (points[k].sub(c), points[k + 1].sub(c));
-            let one_plus_cos = S::ONE.add(a.prod_dot(&b).div(r2)?);
-            let middle = c.add(&a.add(&b).prod_scalar(S::ONE.div(one_plus_cos)?));
-            let weight = one_plus_cos.div(S::TWO)?.sqrt()?;
+            let one_plus_cos = Scalar::ONE.add(a.prod_dot(&b).div(r2)?);
+            let middle = c.add(&a.add(&b).prod_scalar(Scalar::ONE.div(one_plus_cos)?));
+            let weight = one_plus_cos.div(Scalar::TWO)?.sqrt()?;
             control_points.push(middle.homogeneous(weight));
-            control_points.push(points[k + 1].homogeneous(S::ONE));
+            control_points.push(points[k + 1].homogeneous(Scalar::ONE));
             if k + 1 < pieces {
-                let knot = S::from_ratio(k as i64 + 1, pieces as i64)?;
+                let knot = Scalar::from_ratio(k as i64 + 1, pieces as i64)?;
                 knots.extend([knot, knot]);
             }
         }
-        knots.extend([S::ONE; 3]);
+        knots.extend([Scalar::ONE; 3]);
         NurbCurve::try_new(2, control_points, knots)
     }
 }
 
 /// A plane: through `point`, normal to the unit vector `normal`.
 #[derive(Clone, Debug)]
-pub struct Plane<S: Scalar> {
-    pub point: Vector3<S>,
-    pub normal: Vector3<S>,
+pub struct Plane {
+    pub point: Vector3,
+    pub normal: Vector3,
 }
 
-impl<S: Scalar> Plane<S> {
+impl Plane {
     /// The plane through `point` normal to `normal`, which need not be unit
     /// length but must not be zero.
-    pub fn try_new(point: Vector3<S>, normal: Vector3<S>) -> GeopResult<Self> {
+    pub fn try_new(point: Vector3, normal: Vector3) -> GeopResult<Self> {
         Ok(Self {
             point,
             normal: normal.normalize()?,
@@ -302,20 +302,20 @@ impl<S: Scalar> Plane<S> {
 
     /// How far `p` lies in front of the plane (along the normal); negative
     /// behind it.
-    pub fn signed_distance(&self, p: &Vector3<S>) -> S {
+    pub fn signed_distance(&self, p: &Vector3) -> Scalar {
         p.sub(&self.point).prod_dot(&self.normal)
     }
 
     /// The point of the plane closest to `p`: the foot of the perpendicular
     /// from `p`.
-    pub fn project(&self, p: &Vector3<S>) -> Vector3<S> {
+    pub fn project(&self, p: &Vector3) -> Vector3 {
         p.sub(&self.normal.prod_scalar(self.signed_distance(p)))
     }
 
     /// Where `axis` pierces the plane. Fails if it could run parallel to it.
-    pub fn intersect_axis(&self, axis: &Axis<S>) -> GeopResult<Vector3<S>> {
+    pub fn intersect_axis(&self, axis: &Axis) -> GeopResult<Vector3> {
         let along = axis.direction.prod_dot(&self.normal);
-        if along.could_be_equal(S::ZERO) {
+        if along.could_be_equal(Scalar::ZERO) {
             return Err(GeopError::new(
                 "the line runs parallel to the plane, so it does not pierce it",
             ));
@@ -326,10 +326,10 @@ impl<S: Scalar> Plane<S> {
 
     /// The line the two planes meet in, running along `self.normal x
     /// other.normal`. Fails if they could be parallel.
-    pub fn intersect_plane(&self, other: &Plane<S>) -> GeopResult<Axis<S>> {
+    pub fn intersect_plane(&self, other: &Plane) -> GeopResult<Axis> {
         let direction = self.normal.prod_cross(&other.normal);
         let n2 = direction.norm_sq();
-        if n2.could_be_equal(S::ZERO) {
+        if n2.could_be_equal(Scalar::ZERO) {
             return Err(GeopError::new(
                 "the planes are parallel, so they do not meet",
             ));
@@ -345,19 +345,19 @@ impl<S: Scalar> Plane<S> {
             .prod_cross(&direction)
             .prod_scalar(d1)
             .add(&direction.prod_cross(&self.normal).prod_scalar(d2))
-            .prod_scalar(S::ONE.div(n2)?);
+            .prod_scalar(Scalar::ONE.div(n2)?);
         Axis::try_new(point, direction)
     }
 }
 
 // ── curves ────────────────────────────────────────────────────────────────────
 
-impl<S: Scalar> NurbCurve3D<S> {
+impl NurbCurve3D {
     /// The line the curve runs along, if it is straight: every control point
     /// on the line from the first to the last, which is then the curve's
     /// direction. `None` for a curve that bends, or whose ends coincide.
-    pub fn as_line(&self) -> GeopResult<Option<Axis<S>>> {
-        let points = dehomogenize::<S, 4, 3>(&self.control_points);
+    pub fn as_line(&self) -> GeopResult<Option<Axis>> {
+        let points = dehomogenize::<4, 3>(&self.control_points);
         let (first, last) = (points[0], points[points.len() - 1]);
         let d = last.sub(&first);
         if could_be_zero(&d) {
@@ -371,11 +371,11 @@ impl<S: Scalar> NurbCurve3D<S> {
     /// pieces, each an exact arc, all of one circle — how the kernel builds
     /// every arc and circle, and what splitting one leaves. `None` for any
     /// other curve.
-    pub fn as_arc(&self) -> GeopResult<Option<Arc<S>>> {
+    pub fn as_arc(&self) -> GeopResult<Option<Arc>> {
         if self.degree != 2 {
             return Ok(None);
         }
-        let mut circle: Option<Circle<S>> = None;
+        let mut circle: Option<Circle> = None;
         for piece in self.bezier_pieces()? {
             let Some(c) = bezier_circle(&piece)? else {
                 return Ok(None);
@@ -407,12 +407,12 @@ impl<S: Scalar> NurbCurve3D<S> {
 /// the weight normalized to `w0 = w2 = 1`, `w1 / sqrt(w0 w2)`, is the cosine
 /// of the angle `theta` between the chord and those tangents:
 /// `cos theta = |P2 - P0| / (2 |P1 - P0|)`. Squared, so no root is taken.
-fn bezier_circle<S: Scalar>(piece: &NurbCurve3D<S>) -> GeopResult<Option<Circle<S>>> {
+fn bezier_circle(piece: &NurbCurve3D) -> GeopResult<Option<Circle>> {
     let [h0, h1, h2] = match piece.control_points.as_slice() {
         [a, b, c] => [*a, *b, *c],
         _ => return Ok(None),
     };
-    let points = dehomogenize::<S, 4, 3>(&[h0, h1, h2]);
+    let points = dehomogenize::<4, 3>(&[h0, h1, h2]);
     let (p0, p1, p2) = (points[0], points[1], points[2]);
     let (w0, w1, w2) = (h0[3], h1[3], h2[3]);
     let tangent = p1.sub(&p0).norm_sq();
@@ -420,7 +420,7 @@ fn bezier_circle<S: Scalar>(piece: &NurbCurve3D<S>) -> GeopResult<Option<Circle<
         return Ok(None);
     }
     let chord = p2.sub(&p0).norm_sq();
-    let four = S::TWO.add(S::TWO);
+    let four = Scalar::TWO.add(Scalar::TWO);
     if !four
         .mul(w1)
         .mul(w1)
@@ -432,9 +432,9 @@ fn bezier_circle<S: Scalar>(piece: &NurbCurve3D<S>) -> GeopResult<Option<Circle<
     // The center lies on the line from `P1` through the chord's midpoint
     // `M`, `|P1 - P0|^2 / |P1 - M|^2` times as far from `P1` as `M` is: the
     // triangle `P0 P1 center` has its right angle at `P0`.
-    let m = p0.add(&p2).prod_scalar(S::ONE.div(S::TWO)?);
+    let m = p0.add(&p2).prod_scalar(Scalar::ONE.div(Scalar::TWO)?);
     let h = m.sub(&p1).norm_sq();
-    if h.could_be_equal(S::ZERO) {
+    if h.could_be_equal(Scalar::ZERO) {
         return Ok(None);
     }
     let center = p1.add(&m.sub(&p1).prod_scalar(tangent.div(h)?));
@@ -451,21 +451,21 @@ fn bezier_circle<S: Scalar>(piece: &NurbCurve3D<S>) -> GeopResult<Option<Circle<
 
 // ── surfaces ──────────────────────────────────────────────────────────────────
 
-impl<S: Scalar> NurbSurface3D<S> {
+impl NurbSurface3D {
     /// The plane the surface lies in, if it is flat: every control point on
     /// the plane through its middle, normal to it there — the normal pointing
     /// the way the surface's own does. `None` for a surface that bends.
-    pub fn as_plane(&self) -> GeopResult<Option<Plane<S>>> {
+    pub fn as_plane(&self) -> GeopResult<Option<Plane>> {
         let ((u0, u1), (v0, v1)) = (self.domain_u(), self.domain_v());
-        let (u, v) = (u0.add(u1).div(S::TWO)?, v0.add(v1).div(S::TWO)?);
+        let (u, v) = (u0.add(u1).div(Scalar::TWO)?, v0.add(v1).div(Scalar::TWO)?);
         let plane = Plane {
             point: self.evaluate(u, v)?,
             normal: self.normal(u, v)?,
         };
-        let points = dehomogenize::<S, 4, 3>(&self.control_points);
+        let points = dehomogenize::<4, 3>(&self.control_points);
         Ok(points
             .iter()
-            .all(|p| plane.signed_distance(p).could_be_equal(S::ZERO))
+            .all(|p| plane.signed_distance(p).could_be_equal(Scalar::ZERO))
             .then_some(plane))
     }
 
@@ -481,7 +481,7 @@ impl<S: Scalar> NurbSurface3D<S> {
     /// Then every row turns through the same angles at the same parameters,
     /// and a blend of them across the other direction is the blended
     /// profile, turned: a surface of revolution.
-    pub fn axis_of_revolution(&self) -> GeopResult<Option<Axis<S>>> {
+    pub fn axis_of_revolution(&self) -> GeopResult<Option<Axis>> {
         for along_u in [true, false] {
             if let Some(axis) = self.revolution_along(along_u)? {
                 return Ok(Some(axis));
@@ -495,7 +495,7 @@ impl<S: Scalar> NurbSurface3D<S> {
     /// whose every row of control points is an arc of one radius — the same
     /// arc, then, moved along the axis — with no row collapsed to a pole.
     /// `None` for a cone, a sphere, a disc or any other surface.
-    pub fn as_cylinder(&self) -> GeopResult<Option<Cylinder<S>>> {
+    pub fn as_cylinder(&self) -> GeopResult<Option<Cylinder>> {
         for along_u in [true, false] {
             let Some(revolution) = self.revolution_rows(along_u)? else {
                 continue;
@@ -516,13 +516,13 @@ impl<S: Scalar> NurbSurface3D<S> {
     }
 
     /// [`NurbSurface3D::axis_of_revolution`], for rows along `u` or along `v`.
-    pub(crate) fn revolution_along(&self, along_u: bool) -> GeopResult<Option<Axis<S>>> {
+    pub(crate) fn revolution_along(&self, along_u: bool) -> GeopResult<Option<Axis>> {
         Ok(self.revolution_rows(along_u)?.map(|r| r.axis))
     }
 
     /// [`NurbSurface3D::revolution_along`], with the radius of every row
     /// that is an arc and the point of every row that is a pole.
-    fn revolution_rows(&self, along_u: bool) -> GeopResult<Option<Revolution<S>>> {
+    fn revolution_rows(&self, along_u: bool) -> GeopResult<Option<Revolution>> {
         let (rows, len, degree, knots) = if along_u {
             (self.num_v, self.num_u, self.degree_u, &self.knot_vector_u)
         } else {
@@ -542,12 +542,12 @@ impl<S: Scalar> NurbSurface3D<S> {
         };
         // The first row that is an arc sets the axis, the angle every row
         // starts at, and the weights every row is proportional to.
-        let mut reference: Option<(Arc<S>, Vec<S>)> = None;
+        let mut reference: Option<(Arc, Vec<Scalar>)> = None;
         let mut poles = Vec::new();
         let mut radii = Vec::new();
         for j in 0..rows {
             let cps = row(j);
-            let weights: Vec<S> = cps.iter().map(|p| p[3]).collect();
+            let weights: Vec<Scalar> = cps.iter().map(|p| p[3]).collect();
             if let Some((_, reference_weights)) = &reference {
                 let proportional = (0..len).all(|i| {
                     weights[i]
@@ -558,7 +558,7 @@ impl<S: Scalar> NurbSurface3D<S> {
                     return Ok(None);
                 }
             }
-            let points = dehomogenize::<S, 4, 3>(&cps);
+            let points = dehomogenize::<4, 3>(&cps);
             if points.iter().all(|p| p.could_be_equal(&points[0])) {
                 poles.push(points[0]);
                 continue;
@@ -598,24 +598,23 @@ impl<S: Scalar> NurbSurface3D<S> {
 
 /// What [`NurbSurface3D::revolution_rows`] finds a surface of revolution's
 /// control rows to be: arcs around `axis` of `radii`, and `poles` on it.
-struct Revolution<S: Scalar> {
-    axis: Axis<S>,
-    radii: Vec<S>,
-    poles: Vec<Vector3<S>>,
+struct Revolution {
+    axis: Axis,
+    radii: Vec<Scalar>,
+    poles: Vec<Vector3>,
 }
 
 /// A cylinder: the points `radius` away from `axis`.
 #[derive(Clone, Debug)]
-pub struct Cylinder<S: Scalar> {
-    pub axis: Axis<S>,
-    pub radius: S,
+pub struct Cylinder {
+    pub axis: Axis,
+    pub radius: Scalar,
 }
 
 #[cfg(test)]
 mod tests {
     use crate::test_fixtures::knots;
     use geop_core_math::{
-        for_all_scalars,
         scalars::Scalar,
         vector::{Vector3, Vector4},
     };
@@ -623,20 +622,20 @@ mod tests {
     use super::*;
     use crate::nurb_surface::NurbSurface;
 
-    fn v<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
-        Vector3::from_array([x, y, z].map(S::from_f64))
+    fn v(x: f64, y: f64, z: f64) -> Vector3 {
+        Vector3::from_array([x, y, z].map(Scalar::from_f64))
     }
 
     /// `(x, y, z)` with weight `w`, homogeneous.
-    fn h<S: Scalar>(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
-        Vector4::from_array([x * w, y * w, z * w, w].map(S::from_f64))
+    fn h(x: f64, y: f64, z: f64, w: f64) -> Vector4 {
+        Vector4::from_array([x * w, y * w, z * w, w].map(Scalar::from_f64))
     }
 
     const R2: f64 = std::f64::consts::FRAC_1_SQRT_2;
 
     /// The unit circle around the origin in the xy plane, counter-clockwise
     /// from `(1, 0, 0)`: four quarter arcs, the kernel's usual form.
-    fn unit_circle<S: Scalar>() -> NurbCurve3D<S> {
+    fn unit_circle() -> NurbCurve3D {
         let corners = [
             (1., 0.),
             (1., 1.),
@@ -661,8 +660,9 @@ mod tests {
         .unwrap()
     }
 
-    fn check_line<S: Scalar>() {
-        let line = NurbCurve::<S, 4>::try_new(
+    #[test]
+    fn straight_curves_are_lines() {
+        let line = NurbCurve::<4>::try_new(
             2,
             vec![h(0., 0., 0., 1.), h(1., 2., 2., 0.5), h(3., 6., 6., 1.)],
             knots(&[0., 0., 0., 1., 1., 1.]),
@@ -670,18 +670,15 @@ mod tests {
         .unwrap();
         let axis = line.as_line().unwrap().expect("collinear control points");
         assert!(axis.direction.could_be_equal(&v(1. / 3., 2. / 3., 2. / 3.)));
-        assert!(unit_circle::<S>().as_line().unwrap().is_none());
-    }
-    #[test]
-    fn straight_curves_are_lines() {
-        for_all_scalars!(check_line);
+        assert!(unit_circle().as_line().unwrap().is_none());
     }
 
-    fn check_circle<S: Scalar>() {
-        let arc = unit_circle::<S>().as_arc().unwrap().expect("a circle");
+    #[test]
+    fn a_circle_is_recognized_with_its_turning_sense() {
+        let arc = unit_circle().as_arc().unwrap().expect("a circle");
         assert!(arc.circle.center.could_be_equal(&v(0., 0., 0.)));
         assert!(arc.circle.normal.could_be_equal(&v(0., 0., 1.)));
-        assert!(arc.circle.radius.could_be_equal(S::ONE));
+        assert!(arc.circle.radius.could_be_equal(Scalar::ONE));
         assert!(arc.could_be_closed());
         assert!(arc.point_at(0.5).unwrap().could_be_equal(&v(-1., 0., 0.)));
         let ninety = arc.point_at(0.25).unwrap();
@@ -692,23 +689,23 @@ mod tests {
                 .could_be_equal(&v(-1., 0., 0.))
         );
     }
-    #[test]
-    fn a_circle_is_recognized_with_its_turning_sense() {
-        for_all_scalars!(check_circle);
-    }
 
     /// A piece split off an arc — as a boolean leaves one — is still that
     /// arc's circle, with its own ends.
-    fn check_split_arc<S: Scalar>() {
-        let (left, _) = unit_circle::<S>().split(S::from_f64(1.3)).unwrap();
+    #[test]
+    fn a_split_arc_is_still_an_arc() {
+        let (left, _) = unit_circle().split(Scalar::from_f64(1.3)).unwrap();
         let arc = left.as_arc().unwrap().expect("still circular");
-        assert!(arc.circle.radius.could_be_equal(S::ONE));
+        assert!(arc.circle.radius.could_be_equal(Scalar::ONE));
         assert!(!arc.could_be_closed());
         assert!(arc.sweep() > std::f64::consts::FRAC_PI_2);
         assert!(arc.sweep() < std::f64::consts::PI);
         // Measured, the angle and the length are enclosures of the turn.
         let angle = arc.angle().unwrap();
-        assert!(angle.could_be_equal(S::from_f64(arc.sweep())), "{angle:?}");
+        assert!(
+            angle.could_be_equal(Scalar::from_f64(arc.sweep())),
+            "{angle:?}"
+        );
         let length = arc.length().unwrap();
         assert!(length.could_be_equal(angle), "{length:?}");
         assert!(length.width().to_f64() < 1e-5, "{length:?}");
@@ -716,21 +713,18 @@ mod tests {
         let reversed = left.reverse().as_arc().unwrap().expect("still circular");
         assert!(reversed.circle.normal.could_be_equal(&v(0., 0., -1.)));
     }
-    #[test]
-    fn a_split_arc_is_still_an_arc() {
-        for_all_scalars!(check_split_arc);
-    }
 
     /// A conic that is not a circle: the right corner, weighted wrong.
-    fn check_not_circle<S: Scalar>() {
-        let conic = NurbCurve::<S, 4>::try_new(
+    #[test]
+    fn other_conics_are_not_arcs() {
+        let conic = NurbCurve::<4>::try_new(
             2,
             vec![h(1., 0., 0., 1.), h(1., 1., 0., 0.5), h(0., 1., 0., 1.)],
             knots(&[0., 0., 0., 1., 1., 1.]),
         )
         .unwrap();
         assert!(conic.as_arc().unwrap().is_none());
-        let lopsided = NurbCurve::<S, 4>::try_new(
+        let lopsided = NurbCurve::<4>::try_new(
             2,
             vec![h(1., 0., 0., 1.), h(1., 2., 0., R2), h(0., 1., 0., 1.)],
             knots(&[0., 0., 0., 1., 1., 1.]),
@@ -738,17 +732,14 @@ mod tests {
         .unwrap();
         assert!(lopsided.as_arc().unwrap().is_none());
     }
-    #[test]
-    fn other_conics_are_not_arcs() {
-        for_all_scalars!(check_not_circle);
-    }
 
-    fn check_arc_curve<S: Scalar>() {
+    #[test]
+    fn arcs_become_curves() {
         // Around (1, 1, 2), radius 2, turning about -z.
         let circle = Circle {
             center: v(1., 1., 2.),
             normal: v(0., 0., -1.),
-            radius: S::from_f64(2.),
+            radius: Scalar::from_f64(2.),
         };
         let at = |angle: f64| v(1. + 2. * angle.cos(), 1. - 2. * angle.sin(), 2.);
         for (from, to) in [(0.3, 1.2), (0.3, 3.0), (-2.0, 3.5), (0.5, 0.5)] {
@@ -769,7 +760,7 @@ mod tests {
             } else {
                 to - from
             };
-            let mid = curve.evaluate(S::from_f64(0.5)).unwrap();
+            let mid = curve.evaluate(Scalar::from_f64(0.5)).unwrap();
             let expected = at(from + sweep / 2.);
             let off = (0..3)
                 .map(|k| mid[k].sub(expected[k]).abs().to_f64())
@@ -777,14 +768,10 @@ mod tests {
             assert!(off < 1e-7, "{mid:?} vs {expected:?}");
         }
     }
-    #[test]
-    fn arcs_become_curves() {
-        for_all_scalars!(check_arc_curve);
-    }
 
     /// A quarter of a cylinder of radius 2 around the z axis, `u` around it
     /// and `v` along it, 3 high.
-    fn quarter_cylinder<S: Scalar>() -> NurbSurface3D<S> {
+    fn quarter_cylinder() -> NurbSurface3D {
         let ring = [(2., 0., 1.), (2., 2., R2), (0., 2., 1.)];
         let cps = ring
             .iter()
@@ -800,8 +787,9 @@ mod tests {
         .unwrap()
     }
 
-    fn check_revolution<S: Scalar>() {
-        let cylinder = quarter_cylinder::<S>();
+    #[test]
+    fn a_cylinder_turns_around_its_axis() {
+        let cylinder = quarter_cylinder();
         let axis = cylinder.axis_of_revolution().unwrap().expect("a cylinder");
         assert!(axis.could_contain(&v(0., 0., 7.)));
         assert!(axis.direction.could_be_parallel(&v(0., 0., 1.)));
@@ -813,7 +801,7 @@ mod tests {
         assert!(twisted.axis_of_revolution().unwrap().is_none());
 
         let found = cylinder.as_cylinder().unwrap().expect("a cylinder");
-        assert!(found.radius.could_be_equal(S::from_f64(2.0)));
+        assert!(found.radius.could_be_equal(Scalar::from_f64(2.0)));
         assert!(found.axis.could_contain(&v(0., 0., -1.)));
         // Narrowing towards the top: a cone, which turns around the same
         // axis but is no cylinder.
@@ -827,13 +815,10 @@ mod tests {
         assert!(cone.axis_of_revolution().unwrap().is_some());
         assert!(cone.as_cylinder().unwrap().is_none());
     }
-    #[test]
-    fn a_cylinder_turns_around_its_axis() {
-        for_all_scalars!(check_revolution);
-    }
 
-    fn check_plane<S: Scalar>() {
-        let flat = NurbSurface::<S, 4>::try_new(
+    #[test]
+    fn flat_surfaces_are_planes() {
+        let flat = NurbSurface::<4>::try_new(
             1,
             1,
             vec![
@@ -851,19 +836,16 @@ mod tests {
         assert!(
             plane
                 .signed_distance(&v(5., 5., 1.))
-                .could_be_equal(S::ZERO)
+                .could_be_equal(Scalar::ZERO)
         );
         let mut bent = flat.clone();
         bent.control_points[3] = h(1., 1., 1.2, 1.);
         assert!(bent.as_plane().unwrap().is_none());
     }
-    #[test]
-    fn flat_surfaces_are_planes() {
-        for_all_scalars!(check_plane);
-    }
 
-    fn check_constructions<S: Scalar>() {
-        let z = Plane::<S>::try_new(v(0., 0., 2.), v(0., 0., 3.)).unwrap();
+    #[test]
+    fn planes_and_axes_meet_where_they_should() {
+        let z = Plane::try_new(v(0., 0., 2.), v(0., 0., 3.)).unwrap();
         let x = Plane::try_new(v(1., 0., 0.), v(1., 0., 0.)).unwrap();
         assert!(z.project(&v(4., 5., 6.)).could_be_equal(&v(4., 5., 2.)));
         let line = z.intersect_plane(&x).unwrap();
@@ -898,9 +880,5 @@ mod tests {
         );
         assert!(slanted.nearest(&slanted).is_err());
         assert!(z.intersect_plane(&z).is_err());
-    }
-    #[test]
-    fn planes_and_axes_meet_where_they_should() {
-        for_all_scalars!(check_constructions);
     }
 }

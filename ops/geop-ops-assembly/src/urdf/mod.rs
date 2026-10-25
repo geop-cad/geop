@@ -42,10 +42,7 @@ pub mod tree;
 mod xml;
 pub mod zip;
 
-use geop_core_program::{
-    reader::Reader,
-    values::{Design, StateValue},
-};
+use geop_core_program::{reader::Reader, values::StateValue};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::{
@@ -91,7 +88,7 @@ pub struct Origin {
 
 impl Origin {
     /// `pose`, a geop pose in millimetres.
-    fn of<S: Scalar>(pose: &Pose<S>) -> Self {
+    fn of(pose: &Pose) -> Self {
         let p = pose.position();
         Origin {
             xyz: [0, 1, 2].map(|k| p[k].to_f64() / 1000.0),
@@ -274,7 +271,7 @@ pub struct Body<'a> {
     /// pattern puts it, and is held to the ground like a fixed part.
     pub free: bool,
     /// Where it is in the assembly.
-    pub world: Pose<Design>,
+    pub world: Pose,
     /// Its part, as placed.
     pub part: Reader<'a>,
     /// The file its part is placed from.
@@ -285,7 +282,7 @@ pub struct Body<'a> {
 /// and its connector, in that body's frame.
 pub struct End {
     pub body: Option<usize>,
-    pub connector: Connector<Design>,
+    pub connector: Connector,
 }
 
 /// A joint of the mechanism, at the coordinates the state has: the angle in
@@ -295,8 +292,8 @@ pub struct MechanismJoint {
     pub kind: JointKind,
     pub a: End,
     pub b: End,
-    pub angle: Design,
-    pub distance: Design,
+    pub angle: Scalar,
+    pub distance: Scalar,
 }
 
 /// A coupling of the mechanism: its second joint's coordinate following
@@ -381,7 +378,7 @@ impl<'a> Mechanism<'a> {
                         &end_world(&a.connector, world(&a).as_ref()),
                         &end_world(&b.connector, world(&b).as_ref()),
                     );
-                    let mut coordinates = [Design::ZERO; 2];
+                    let mut coordinates = [Scalar::ZERO; 2];
                     for (k, motion) in Motion::ALL.into_iter().enumerate() {
                         if kind.moves(motion) {
                             coordinates[k] =
@@ -389,7 +386,7 @@ impl<'a> Mechanism<'a> {
                                     StateValue::Number(value) => value,
                                     // Where its parts are: what a solve
                                     // would start it from.
-                                    _ => Design::from_f64(measured[k]),
+                                    _ => Scalar::from_f64(measured[k]),
                                 };
                         }
                     }
@@ -438,14 +435,14 @@ impl<'a> Mechanism<'a> {
 
 /// `connector` where `pose` puts it — or, with none, where it is — in
 /// dual numbers, as [`measure`] takes it.
-fn end_world(connector: &Connector<Design>, pose: Option<&Pose<Design>>) -> Connector<D> {
+fn end_world(connector: &Connector, pose: Option<&Pose>) -> Connector<D> {
     let pose = pose.map(|p| p.map(D::cst));
     connector.placed(pose.as_ref())
 }
 
 /// The frame of a joint's end `end`, where its body is: origin on the
 /// axis, `z` along it, `x` the reference turns are measured from.
-fn frame(end: &End, bodies: &[Body]) -> GeopResult<Pose<Design>> {
+fn frame(end: &End, bodies: &[Body]) -> GeopResult<Pose> {
     let c = &end.connector;
     let y = c.axis.prod_cross(&c.reference);
     let local = Pose::new(
@@ -459,14 +456,14 @@ fn frame(end: &End, bodies: &[Body]) -> GeopResult<Pose<Design>> {
 }
 
 /// A turn by `degrees` about `z`.
-fn turn(degrees: Design) -> GeopResult<Pose<Design>> {
+fn turn(degrees: Scalar) -> GeopResult<Pose> {
     let radians = degrees.degrees_to_radians()?;
     Pose::rotation_about(&Vector3::zero(), &Vector3::axis(2), radians)
 }
 
 /// A slide by `distance` along `z`.
-fn slide(distance: Design) -> Pose<Design> {
-    Pose::identity().with_position(Vector3::from_array([Design::ZERO, Design::ZERO, distance]))
+fn slide(distance: Scalar) -> Pose {
+    Pose::identity().with_position(Vector3::from_array([Scalar::ZERO, Scalar::ZERO, distance]))
 }
 
 /// The meshes of an export, each written once: per placed part, by its
@@ -522,9 +519,9 @@ impl Meshes {
 fn masses(
     reader: &Reader,
     instance: &str,
-    pose: Option<Pose<Design>>,
+    pose: Option<Pose>,
     shapes: &mut Shapes,
-    out: &mut Vec<MassProperties<Design>>,
+    out: &mut Vec<MassProperties>,
 ) -> GeopResult<()> {
     for solid in own_solids_at(reader, instance, pose)? {
         out.push(solid.mass_properties(shapes)?);

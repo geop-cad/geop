@@ -15,7 +15,7 @@ use geop_core_program::{
     part::StepContext,
     placed::{PlacedArgs, place},
     reader::Reader,
-    values::{Design, Settings},
+    values::Settings,
 };
 use std::{
     hash::{Hash, Hasher},
@@ -40,9 +40,9 @@ pub(crate) fn draw(reader: &Reader) -> GeopResult<PartView> {
     let mut view = PartView::new();
     read_model(reader)?.draw("model", &mut view)?;
     read_datums(reader)?.draw(&mut view)?;
-    for target in reader.targets_of::<PlacedSketch<Design>>() {
+    for target in reader.targets_of::<PlacedSketch>() {
         let name = target.name().to_string();
-        let reference = ElementReference::<_, PlacedSketch<Design>>::whole(target);
+        let reference = ElementReference::<_, PlacedSketch>::whole(target);
         reader
             .retrieve_element(&reference)?
             .draw(&name, &mut view)?;

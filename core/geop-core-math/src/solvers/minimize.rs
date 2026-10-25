@@ -15,7 +15,7 @@ use crate::{
 /// first of `1, 1/2, 1/4, …` (`halvings` of them) at which it definitely
 /// lowers `merit`, and the descent stops where none does. What is
 /// returned is never worse than `start`.
-pub fn descend<S: Scalar, X: Clone, E: From<GeopError>, D: Fn(S) -> X>(
+pub fn descend<X: Clone, E: From<GeopError>, D: Fn(Scalar) -> X>(
     start: X,
     steps: usize,
     halvings: usize,
@@ -28,7 +28,7 @@ pub fn descend<S: Scalar, X: Clone, E: From<GeopError>, D: Fn(S) -> X>(
         let Some(to) = direction(&x)? else {
             break;
         };
-        let lower = halve::<S, _, E>(S::ONE, halvings, |&scale| {
+        let lower = halve::<_, E>(Scalar::ONE, halvings, |&scale| {
             let next = to(scale);
             let m = merit(&next)?;
             Ok(if m < current {

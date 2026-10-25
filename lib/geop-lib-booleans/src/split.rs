@@ -20,7 +20,6 @@ use std::collections::{HashMap, HashSet};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    scalars::Scalar,
     union_find::UnionFind,
     with_context,
 };
@@ -52,12 +51,12 @@ use crate::{
 /// Fails, leaving the solid in pieces of no use, unless the sheet cuts the
 /// solid clean through: a sheet ending inside the solid, or one along which
 /// the solid stays connected, splits nothing.
-pub fn split<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn split(
+    model: &mut NamedModel,
     namer: &Namer,
     solid: SolidId,
     sheet: ShellId,
-    params: RemeshParams<S>,
+    params: RemeshParams,
 ) -> GeopResult<Vec<SolidId>> {
     let ctx = with_context!("split(name={}, solid={solid}, sheet={sheet})", namer.root());
 
@@ -173,7 +172,7 @@ pub fn split<S: Scalar>(
         .chain(&cuts)
         .copied()
         .collect();
-    let mut described: Vec<(String, BodySpec<S>, Vec<RefId>)> = Vec::new();
+    let mut described: Vec<(String, BodySpec, Vec<RefId>)> = Vec::new();
     for members in &groups {
         let faces: Vec<FaceId> = members.iter().map(|&m| sides[m]).collect();
         let (mut spec, sources) = topology.body_spec(&faces, true).with_context(&ctx)?;
@@ -203,7 +202,7 @@ pub fn split<S: Scalar>(
 
     // Names, before the originals and their names are gone.
     let mut taken: HashSet<RefId> = HashSet::new();
-    let mut named: Vec<(BodySpec<S>, BodyNames)> = Vec::new();
+    let mut named: Vec<(BodySpec, BodyNames)> = Vec::new();
     for (index, (_, spec, entities)) in described.into_iter().enumerate() {
         let mut all = Vec::with_capacity(entities.len());
         for id in &entities {
@@ -240,11 +239,7 @@ pub fn split<S: Scalar>(
 mod tests {
     use super::split;
     use crate::remesh::RemeshParams;
-    use geop_core_math::{
-        primitives::CoordinateSystem,
-        scalars::{ScalInF64 as S, Scalar},
-        vector::Vector3,
-    };
+    use geop_core_math::{primitives::CoordinateSystem, scalars::Scalar, vector::Vector3};
     use geop_core_topology::{
         Body,
         contains::shell::{Classified, PointClassification, solid_contains},
@@ -258,8 +253,8 @@ mod tests {
 
     /// A unit cube around the origin, and a sheet: the chain through
     /// `points` in the `z = -1` plane, swept up to `z = 1`.
-    fn cube_and_sheet(points: &[[f64; 2]]) -> (NamedModel<S>, geop_core_topology::SolidId, Body) {
-        let mut model = NamedModel::<S>::new();
+    fn cube_and_sheet(points: &[[f64; 2]]) -> (NamedModel, geop_core_topology::SolidId, Body) {
+        let mut model = NamedModel::new();
         let cube = block(&mut model, "c", [-0.5; 3], [0.5; 3]);
         let chain = polyline(&points.iter().map(|p| v2(p[0], p[1])).collect::<Vec<_>>()).unwrap();
         let plane = CoordinateSystem::world_at(v3(0.0, 0.0, -1.0));
@@ -269,8 +264,8 @@ mod tests {
             &namer,
             None,
             &plane,
-            S::ZERO,
-            S::from_f64(2.0),
+            Scalar::ZERO,
+            Scalar::from_f64(2.0),
             &[SweepLoop::plain(Profile::open(chain))],
         )
         .unwrap();
@@ -279,9 +274,9 @@ mod tests {
 
     /// Which of `pieces` holds `p`.
     fn holding(
-        model: &NamedModel<S>,
+        model: &NamedModel,
         pieces: &[geop_core_topology::SolidId],
-        p: Vector3<S>,
+        p: Vector3,
     ) -> Vec<usize> {
         (0..pieces.len())
             .filter(|&k| {
@@ -290,7 +285,7 @@ mod tests {
                     pieces[k],
                     p,
                     2000,
-                    S::from_f64(1e-7),
+                    Scalar::from_f64(1e-7),
                     7,
                     &mut Classified::default(),
                 )

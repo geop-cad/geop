@@ -54,17 +54,17 @@ const MAX_RAY_ATTEMPTS: usize = 64;
 
 /// A shell of a model as rays are cast against it: the distinct vertices
 /// and edges its faces reference, found once for every ray from a point.
-pub(crate) struct ShellBoundary<'m, S: Scalar> {
-    pub(crate) model: &'m Model<S>,
+pub(crate) struct ShellBoundary<'m> {
+    pub(crate) model: &'m Model,
     pub(crate) shell_id: ShellId,
     pub(crate) vertices: Vec<VertexId>,
     pub(crate) edges: Vec<EdgeId>,
 }
 
-impl<'m, S: Scalar> ShellBoundary<'m, S> {
+impl<'m> ShellBoundary<'m> {
     /// The boundary of `shell_id`: the distinct vertices and edges its
     /// faces reference.
-    pub(crate) fn of(model: &'m Model<S>, shell_id: ShellId) -> Self {
+    pub(crate) fn of(model: &'m Model, shell_id: ShellId) -> Self {
         let (vertices, edges) = shell_vertices_and_edges(model, shell_id);
         Self {
             model,
@@ -76,16 +76,13 @@ impl<'m, S: Scalar> ShellBoundary<'m, S> {
 
     /// A ray length that clears the shell from `point` (see
     /// [`ray_length_for`]).
-    pub(crate) fn ray_length(&self, point: &Vector3<S>) -> GeopResult<S> {
+    pub(crate) fn ray_length(&self, point: &Vector3) -> GeopResult<Scalar> {
         ray_length_for(self.model, &self.vertices, point)
     }
 }
 
 /// The distinct vertices and edges referenced by `shell_id`'s faces.
-fn shell_vertices_and_edges<S: Scalar>(
-    model: &Model<S>,
-    shell_id: ShellId,
-) -> (Vec<VertexId>, Vec<EdgeId>) {
+fn shell_vertices_and_edges(model: &Model, shell_id: ShellId) -> (Vec<VertexId>, Vec<EdgeId>) {
     let shell = &model.shells[&shell_id];
     let mut vertex_ids = Vec::new();
     let mut edge_ids = Vec::new();
@@ -122,19 +119,18 @@ fn shell_vertices_and_edges<S: Scalar>(
 /// from `point` — long enough that a ray this long finding zero crossings
 /// unambiguously means "missed the shell entirely" (i.e. outside), not
 /// "wasn't cast far enough".
-fn ray_length_for<S: Scalar>(
-    model: &Model<S>,
-    vertex_ids: &[VertexId],
-    point: &Vector3<S>,
-) -> GeopResult<S> {
-    let mut max_dist_sq = S::ONE;
+fn ray_length_for(model: &Model, vertex_ids: &[VertexId], point: &Vector3) -> GeopResult<Scalar> {
+    let mut max_dist_sq = Scalar::ONE;
     for &vertex_id in vertex_ids {
         let d = model.vertices[&vertex_id].point.sub(point).norm_sq();
         if d.could_be_greater(max_dist_sq) {
             max_dist_sq = d;
         }
     }
-    Ok(max_dist_sq.sqrt()?.mul(S::from_f64(3.0)).add(S::ONE))
+    Ok(max_dist_sq
+        .sqrt()?
+        .mul(Scalar::from_f64(3.0))
+        .add(Scalar::ONE))
 }
 
 /// Casts a single ray from `point` in `direction` against `boundary`'s
@@ -151,13 +147,13 @@ fn ray_length_for<S: Scalar>(
 /// hits; callers casting multiple rays from one call site should vary it
 /// per ray (e.g. by direction or attempt index) so those sub-calls don't all
 /// retry along the identical degenerate path.
-pub(crate) fn cast_ray<S: Scalar>(
-    boundary: &ShellBoundary<S>,
-    point: Vector3<S>,
-    direction: Vector3<S>,
-    ray_length: S,
+pub(crate) fn cast_ray(
+    boundary: &ShellBoundary,
+    point: Vector3,
+    direction: Vector3,
+    ray_length: Scalar,
     max_nodes: usize,
-    epsilon: S,
+    epsilon: Scalar,
     seed: u64,
 ) -> GeopResult<Result<PointClassification, String>> {
     let ShellBoundary {
@@ -206,12 +202,12 @@ pub(crate) fn cast_ray<S: Scalar>(
             // close — is its own resolution around the query, not a crossing;
             // and were it one, the faces meeting along the edge would be hit
             // right on their trim, which they reject below.
-            let (t_hit, _) = if t_hit.definitely_greater(S::ZERO) {
+            let (t_hit, _) = if t_hit.definitely_greater(Scalar::ZERO) {
                 (t_hit, s_hit)
             } else {
                 refine_curve_curve_crossing(&ray, full_curve, t_hit, s_hit)
             };
-            if t_hit.definitely_greater(S::ZERO) {
+            if t_hit.definitely_greater(Scalar::ZERO) {
                 return Ok(Err(format!("it could cross edge {edge_id} at t={t_hit:?}")));
             }
         }
@@ -247,7 +243,7 @@ pub(crate) fn cast_ray<S: Scalar>(
             // As in `face::loops_contain`: a crossing next to the query point
             // is still a crossing, so one the search cannot place beyond it
             // is refined, not dropped.
-            let (t_hit, uv) = if t_hit.definitely_greater(S::ZERO) {
+            let (t_hit, uv) = if t_hit.definitely_greater(Scalar::ZERO) {
                 (t_hit, uv)
             } else {
                 refine_crossing(&ray, surface, t_hit, uv)
@@ -262,13 +258,15 @@ pub(crate) fn cast_ray<S: Scalar>(
             // there; one ending at a point already classified (see
             // `shell_contains_from`) meets one only if that point is all but
             // on the boundary.
-            if !t_hit.definitely_less(S::ONE) {
+            if !t_hit.definitely_less(Scalar::ONE) {
                 return Ok(Err(format!(
                     "its hit on face {face_id} at t={t_hit:?} could be at its far end"
                 )));
             }
             match face_contains(model, face_id, u, v, max_nodes, epsilon, face_seed) {
-                Ok(FaceClassification::Inside) if t_hit.definitely_greater(S::ZERO) => count += 1,
+                Ok(FaceClassification::Inside) if t_hit.definitely_greater(Scalar::ZERO) => {
+                    count += 1
+                }
                 // A hit inside the trim that still cannot be told from the
                 // query point: the query is on this face to within what the
                 // numbers can tell, though the sharp query passed the caller's
@@ -316,12 +314,12 @@ pub(crate) fn cast_ray<S: Scalar>(
 /// `max_nodes` bounds both the BFS containment searches and the DFS
 /// intersection searches; `epsilon` is the shared geometric tolerance;
 /// `seed` seeds the direction PRNG.
-pub fn shell_contains<S: Scalar>(
-    model: &Model<S>,
+pub fn shell_contains(
+    model: &Model,
     shell_id: ShellId,
-    point: Vector3<S>,
+    point: Vector3,
     max_nodes: usize,
-    epsilon: S,
+    epsilon: Scalar,
     seed: u64,
 ) -> GeopResult<PointClassification> {
     classify(model, shell_id, point, None, max_nodes, epsilon, seed)
@@ -341,14 +339,14 @@ pub fn shell_contains<S: Scalar>(
 /// or an edge, hitting a face at its trim or at an end of the path) falls
 /// back to the rays of [`shell_contains`].
 #[allow(clippy::too_many_arguments)]
-pub fn shell_contains_from<S: Scalar>(
-    model: &Model<S>,
+pub fn shell_contains_from(
+    model: &Model,
     shell_id: ShellId,
-    point: Vector3<S>,
-    from: Vector3<S>,
+    point: Vector3,
+    from: Vector3,
     from_inside: bool,
     max_nodes: usize,
-    epsilon: S,
+    epsilon: Scalar,
     seed: u64,
 ) -> GeopResult<PointClassification> {
     classify(
@@ -364,13 +362,13 @@ pub fn shell_contains_from<S: Scalar>(
 
 /// [`shell_contains`] and [`shell_contains_from`]: the coincidence checks,
 /// then the ray to `from` if there is one, then random rays.
-fn classify<S: Scalar>(
-    model: &Model<S>,
+fn classify(
+    model: &Model,
     shell_id: ShellId,
-    point: Vector3<S>,
-    from: Option<(Vector3<S>, bool)>,
+    point: Vector3,
+    from: Option<(Vector3, bool)>,
     max_nodes: usize,
-    epsilon: S,
+    epsilon: Scalar,
     seed: u64,
 ) -> GeopResult<PointClassification> {
     let boundary = ShellBoundary::of(model, shell_id);
@@ -415,18 +413,18 @@ fn classify<S: Scalar>(
         // as well graze a cylinder, a crossing that counts once and is
         // none. A random detour is as clear of these as a random ray is.
         let mut rng = Rng::new(seed);
-        let gap = from.sub(&point).norm().div(S::TWO)?;
+        let gap = from.sub(&point).norm().div(Scalar::TWO)?;
         let via = point
             .add(&from)
-            .prod_scalar(S::ONE.div(S::TWO)?)
-            .add(&rng.next_direction3::<S>().prod_scalar(gap))
+            .prod_scalar(Scalar::ONE.div(Scalar::TWO)?)
+            .add(&rng.next_direction3().prod_scalar(gap))
             .sharpen();
-        let leg = |start: Vector3<S>| {
+        let leg = |start: Vector3| {
             cast_ray(
                 &boundary,
                 start,
                 via.sub(&start),
-                S::ONE,
+                Scalar::ONE,
                 max_nodes,
                 epsilon,
                 seed,
@@ -468,7 +466,7 @@ fn classify<S: Scalar>(
     let mut rng = Rng::new(seed);
     // Directions tried in turn until one is clear.
     let found = attempts(MAX_RAY_ATTEMPTS, |&attempt| -> GeopResult<_> {
-        let direction = rng.next_direction3::<S>();
+        let direction = rng.next_direction3();
         let attempt_seed = seed ^ (attempt as u64).wrapping_mul(0x9E3779B97F4A7C15);
         match cast_ray(
             &boundary,
@@ -503,14 +501,14 @@ fn classify<S: Scalar>(
 /// loop (two faces split from one larger one still share that surface), so
 /// a point can sit squarely on the surface nowhere near the face. The face
 /// has to contain the point within its trim, or on it.
-pub fn shell_face_at<S: Scalar>(
-    model: &Model<S>,
+pub fn shell_face_at(
+    model: &Model,
     shell_id: ShellId,
-    point: &Vector3<S>,
+    point: &Vector3,
     max_nodes: usize,
-    epsilon: S,
+    epsilon: Scalar,
     seed: u64,
-) -> GeopResult<Option<(FaceId, S, S)>> {
+) -> GeopResult<Option<(FaceId, Scalar, Scalar)>> {
     for &face_id in &model.get_shell(shell_id)?.faces {
         let Some((u, v)) =
             surface_could_contain(&model.faces[&face_id].surface, point, max_nodes, epsilon)?
@@ -531,23 +529,17 @@ pub fn shell_face_at<S: Scalar>(
 /// outside: what [`solid_contains`] classifies later points from, along a
 /// short path from the nearest (see [`shell_contains_from`]) instead of a
 /// ray across the whole shell.
-#[derive(Clone, Debug)]
-pub struct Classified<S: Scalar> {
-    points: Vec<(ShellId, Vector3<S>, bool)>,
+#[derive(Clone, Debug, Default)]
+pub struct Classified {
+    points: Vec<(ShellId, Vector3, bool)>,
 }
 
-impl<S: Scalar> Default for Classified<S> {
-    fn default() -> Self {
-        Self { points: Vec::new() }
-    }
-}
-
-impl<S: Scalar> Classified<S> {
+impl Classified {
     /// The point classified against `shell` nearest to `point`, and whether
     /// it is inside: which one is a free choice, so it is chosen by the
     /// midpoints.
-    fn nearest(&self, shell: ShellId, point: &Vector3<S>) -> Option<(Vector3<S>, bool)> {
-        let distance = |p: &Vector3<S>| p.sub(point).norm_sq().to_f64();
+    fn nearest(&self, shell: ShellId, point: &Vector3) -> Option<(Vector3, bool)> {
+        let distance = |p: &Vector3| p.sub(point).norm_sq().to_f64();
         self.points
             .iter()
             .filter(|(s, _, _)| *s == shell)
@@ -564,14 +556,14 @@ impl<S: Scalar> Classified<S> {
 /// already holds for it, if any (see [`shell_contains_from`]), and a point
 /// found strictly inside or outside a shell is added to it. Other arguments
 /// as for [`shell_contains`].
-pub fn solid_contains<S: Scalar>(
-    model: &Model<S>,
+pub fn solid_contains(
+    model: &Model,
     solid_id: SolidId,
-    point: Vector3<S>,
+    point: Vector3,
     max_nodes: usize,
-    epsilon: S,
+    epsilon: Scalar,
     seed: u64,
-    classified: &mut Classified<S>,
+    classified: &mut Classified,
 ) -> GeopResult<PointClassification> {
     let mut inside = false;
     for &shell_id in &model.get_solid(solid_id)?.shells {
@@ -595,14 +587,14 @@ pub fn solid_contains<S: Scalar>(
 
 /// The face of the solid `solid_id` that `point` lies on, if any, and where
 /// on its surface (see [`shell_face_at`]).
-pub fn solid_face_at<S: Scalar>(
-    model: &Model<S>,
+pub fn solid_face_at(
+    model: &Model,
     solid_id: SolidId,
-    point: &Vector3<S>,
+    point: &Vector3,
     max_nodes: usize,
-    epsilon: S,
+    epsilon: Scalar,
     seed: u64,
-) -> GeopResult<Option<(FaceId, S, S)>> {
+) -> GeopResult<Option<(FaceId, Scalar, Scalar)>> {
     for &shell_id in &model.get_solid(solid_id)?.shells {
         if let Some(at) = shell_face_at(model, shell_id, point, max_nodes, epsilon, seed)? {
             return Ok(Some(at));
@@ -623,7 +615,6 @@ mod tests {
         nurb_surface::NurbSurface3D,
     };
     use geop_core_math::{
-        for_all_scalars,
         scalars::Scalar,
         vector::{Vector3, Vector4},
     };
@@ -638,23 +629,21 @@ mod tests {
     /// (`p00 -> p10 -> p11 -> p01`), each face independently vertexed/edged
     /// (geometrically watertight, topologically not shared — fine for pure
     /// containment testing).
-    fn quad_face<S: Scalar>(
-        model: &mut Model<S>,
-        shell: ShellId,
-        p00: P3,
-        p10: P3,
-        p11: P3,
-        p01: P3,
-    ) -> FaceId {
+    fn quad_face(model: &mut Model, shell: ShellId, p00: P3, p10: P3, p11: P3, p01: P3) -> FaceId {
         let p4 = |p: P3| {
-            Vector4::from_array([S::from_f64(p.0), S::from_f64(p.1), S::from_f64(p.2), S::ONE])
+            Vector4::from_array([
+                Scalar::from_f64(p.0),
+                Scalar::from_f64(p.1),
+                Scalar::from_f64(p.2),
+                Scalar::ONE,
+            ])
         };
         let surface = NurbSurface3D::try_new(
             1,
             1,
             vec![p4(p00), p4(p01), p4(p10), p4(p11)],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
+            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
         )
         .unwrap();
         let face_id = model.insert_face(Face {
@@ -669,7 +658,11 @@ mod tests {
             .iter()
             .map(|&(x, y, z)| {
                 model.insert_vertex(Vertex {
-                    point: Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)]),
+                    point: Vector3::from_array([
+                        Scalar::from_f64(x),
+                        Scalar::from_f64(y),
+                        Scalar::from_f64(z),
+                    ]),
                 })
             })
             .collect();
@@ -679,7 +672,7 @@ mod tests {
                     curve: NurbCurve3D::try_new(
                         1,
                         vec![p4(corners[i]), p4(corners[(i + 1) % 4])],
-                        vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+                        vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
                     )
                     .unwrap(),
                     start_vertex: verts[i],
@@ -688,14 +681,22 @@ mod tests {
             })
             .collect();
         let uv = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
-        let pc = |a: (f64, f64), b: (f64, f64)| -> NurbCurve2D<S> {
+        let pc = |a: (f64, f64), b: (f64, f64)| -> NurbCurve2D {
             NurbCurve::try_new(
                 1,
                 vec![
-                    Vector3::from_array([S::from_f64(a.0), S::from_f64(a.1), S::ONE]),
-                    Vector3::from_array([S::from_f64(b.0), S::from_f64(b.1), S::ONE]),
+                    Vector3::from_array([
+                        Scalar::from_f64(a.0),
+                        Scalar::from_f64(a.1),
+                        Scalar::ONE,
+                    ]),
+                    Vector3::from_array([
+                        Scalar::from_f64(b.0),
+                        Scalar::from_f64(b.1),
+                        Scalar::ONE,
+                    ]),
                 ],
-                vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+                vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
             )
             .unwrap()
         };
@@ -723,7 +724,7 @@ mod tests {
     /// The unit cube `[0,1]^3`, as six independently-vertexed quad faces
     /// (mixed winding across faces on purpose — containment must not depend
     /// on consistent orientation).
-    fn unit_cube<S: Scalar>(model: &mut Model<S>) -> ShellId {
+    fn unit_cube(model: &mut Model) -> ShellId {
         let shell_id = model.insert_shell(Shell {
             faces: vec![],
             solid: None,
@@ -782,136 +783,126 @@ mod tests {
         shell_id
     }
 
-    fn check_center_is_inside<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn center_is_inside() {
+        let mut model = Model::new();
         let shell_id = unit_cube(&mut model);
-        let p = Vector3::from_array([S::from_f64(0.5); 3]);
+        let p = Vector3::from_array([Scalar::from_f64(0.5); 3]);
         assert_eq!(
             shell_contains(
                 &model,
                 shell_id,
                 p,
                 MAX,
-                S::from_f64(MIN_SUBDIVISION_SIZE),
+                Scalar::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),
             PointClassification::Inside
         );
     }
-    #[test]
-    fn center_is_inside() {
-        for_all_scalars!(check_center_is_inside);
-    }
 
-    fn check_far_point_is_outside<S: Scalar>() {
-        let mut model = Model::<S>::new();
-        let shell_id = unit_cube(&mut model);
-        let p = Vector3::from_array([S::from_f64(-5.0), S::from_f64(0.5), S::from_f64(0.5)]);
-        assert_eq!(
-            shell_contains(
-                &model,
-                shell_id,
-                p,
-                MAX,
-                S::from_f64(MIN_SUBDIVISION_SIZE),
-                SEED
-            )
-            .unwrap(),
-            PointClassification::Outside
-        );
-    }
     #[test]
     fn far_point_is_outside() {
-        for_all_scalars!(check_far_point_is_outside);
-    }
-
-    fn check_point_just_outside_face_is_outside<S: Scalar>() {
-        let mut model = Model::<S>::new();
+        let mut model = Model::new();
         let shell_id = unit_cube(&mut model);
-        let p = Vector3::from_array([S::from_f64(-0.1), S::from_f64(0.5), S::from_f64(0.5)]);
+        let p = Vector3::from_array([
+            Scalar::from_f64(-5.0),
+            Scalar::from_f64(0.5),
+            Scalar::from_f64(0.5),
+        ]);
         assert_eq!(
             shell_contains(
                 &model,
                 shell_id,
                 p,
                 MAX,
-                S::from_f64(MIN_SUBDIVISION_SIZE),
+                Scalar::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),
             PointClassification::Outside
         );
     }
+
     #[test]
     fn point_just_outside_face_is_outside() {
-        for_all_scalars!(check_point_just_outside_face_is_outside);
-    }
-
-    fn check_face_point_is_on_face<S: Scalar>() {
-        let mut model = Model::<S>::new();
+        let mut model = Model::new();
         let shell_id = unit_cube(&mut model);
-        let p = Vector3::from_array([S::ZERO, S::from_f64(0.5), S::from_f64(0.5)]);
+        let p = Vector3::from_array([
+            Scalar::from_f64(-0.1),
+            Scalar::from_f64(0.5),
+            Scalar::from_f64(0.5),
+        ]);
         assert_eq!(
             shell_contains(
                 &model,
                 shell_id,
                 p,
                 MAX,
-                S::from_f64(MIN_SUBDIVISION_SIZE),
+                Scalar::from_f64(MIN_SUBDIVISION_SIZE),
+                SEED
+            )
+            .unwrap(),
+            PointClassification::Outside
+        );
+    }
+
+    #[test]
+    fn face_point_is_on_face() {
+        let mut model = Model::new();
+        let shell_id = unit_cube(&mut model);
+        let p = Vector3::from_array([Scalar::ZERO, Scalar::from_f64(0.5), Scalar::from_f64(0.5)]);
+        assert_eq!(
+            shell_contains(
+                &model,
+                shell_id,
+                p,
+                MAX,
+                Scalar::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),
             PointClassification::OnFace
         );
     }
-    #[test]
-    fn face_point_is_on_face() {
-        for_all_scalars!(check_face_point_is_on_face);
-    }
 
-    fn check_edge_point_is_on_edge<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn edge_point_is_on_edge() {
+        let mut model = Model::new();
         let shell_id = unit_cube(&mut model);
-        let p = Vector3::from_array([S::ZERO, S::ZERO, S::from_f64(0.5)]);
+        let p = Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::from_f64(0.5)]);
         assert_eq!(
             shell_contains(
                 &model,
                 shell_id,
                 p,
                 MAX,
-                S::from_f64(MIN_SUBDIVISION_SIZE),
+                Scalar::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),
             PointClassification::OnEdge
         );
     }
-    #[test]
-    fn edge_point_is_on_edge() {
-        for_all_scalars!(check_edge_point_is_on_edge);
-    }
 
-    fn check_vertex_point_is_on_vertex<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn vertex_point_is_on_vertex() {
+        let mut model = Model::new();
         let shell_id = unit_cube(&mut model);
-        let p = Vector3::from_array([S::ZERO, S::ZERO, S::ZERO]);
+        let p = Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::ZERO]);
         assert_eq!(
             shell_contains(
                 &model,
                 shell_id,
                 p,
                 MAX,
-                S::from_f64(MIN_SUBDIVISION_SIZE),
+                Scalar::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),
             PointClassification::OnVertex
         );
-    }
-    #[test]
-    fn vertex_point_is_on_vertex() {
-        for_all_scalars!(check_vertex_point_is_on_vertex);
     }
 
     /// Classified from a point already classified, inside or out, every
@@ -919,10 +910,11 @@ mod tests {
     /// plane of symmetry and on its faces' planes among them, whose
     /// straight segments to each other lie in a face's plane or run
     /// through an edge.
-    fn check_classified_from_a_known_point<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn classified_from_a_known_point() {
+        let mut model = Model::new();
         let shell_id = unit_cube(&mut model);
-        let p = |x: f64, y: f64, z: f64| Vector3::from_array([x, y, z].map(S::from_f64));
+        let p = |x: f64, y: f64, z: f64| Vector3::from_array([x, y, z].map(Scalar::from_f64));
         let points = [
             p(0.5, 0.5, 0.5),
             p(0.25, 0.5, 0.5),
@@ -935,7 +927,7 @@ mod tests {
             p(0.0, 0.0, 0.0),
             p(0.0, 0.5, 0.5),
         ];
-        let eps = S::from_f64(MIN_SUBDIVISION_SIZE);
+        let eps = Scalar::from_f64(MIN_SUBDIVISION_SIZE);
         for from in &points[..6] {
             let from_class = shell_contains(&model, shell_id, *from, MAX, eps, SEED).unwrap();
             let from_inside = from_class == PointClassification::Inside;
@@ -955,9 +947,5 @@ mod tests {
                 assert_eq!(got, want, "{point:?} from {from:?}");
             }
         }
-    }
-    #[test]
-    fn classified_from_a_known_point() {
-        for_all_scalars!(check_classified_from_a_known_point);
     }
 }

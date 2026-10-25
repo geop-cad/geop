@@ -35,11 +35,11 @@ use geop_core_math::{
 /// the homogeneous control points, with no division: since
 /// `NurbCurve::try_new` guarantees positive weights, `W(t) > 0` and
 /// `C_k(t) = p_k ⇔ X_k(t) - p_k W(t) = 0`.
-fn clip<S: Scalar, const D: usize, const C: usize>(
-    seg: &NurbCurve<S, D>,
-    xi: &[S],
-    point: &Vector<S, C>,
-) -> Option<S> {
+fn clip<const D: usize, const C: usize>(
+    seg: &NurbCurve<D>,
+    xi: &[Scalar],
+    point: &Vector<C>,
+) -> Option<Scalar> {
     let mut t_hat = seg.domain_as_scalar();
     let mut d = Vec::with_capacity(seg.control_points.len());
     for k in 0..C {
@@ -82,14 +82,14 @@ fn clip<S: Scalar, const D: usize, const C: usize>(
 /// [`Scalar::upper`]), which are free choices only on the outside: any cut
 /// outside the enclosure loses nothing, a cut through it would. Bisection
 /// uses the sharpened midpoint as always.
-pub fn curve_could_contain<S: Scalar, const D: usize, const C: usize>(
-    curve: &NurbCurve<S, D>,
-    point: &Vector<S, C>,
+pub fn curve_could_contain<const D: usize, const C: usize>(
+    curve: &NurbCurve<D>,
+    point: &Vector<C>,
     max_nodes: usize,
-    min_subdivision_size: S,
-) -> GeopResult<Option<S>>
+    min_subdivision_size: Scalar,
+) -> GeopResult<Option<Scalar>>
 where
-    NurbCurve<S, D>: ParameterRefinable<S, C>,
+    NurbCurve<D>: ParameterRefinable<C>,
 {
     debug_assert_eq!(
         C + 1,
@@ -98,13 +98,13 @@ where
     );
     // A straight segment is tested as itself, not its box, before anything
     // is cloned (see `curve_could_meet_aabb`).
-    let mut point_box = [S::ENTIRE; 3];
+    let mut point_box = [Scalar::ENTIRE; 3];
     point_box[..C].copy_from_slice(&point.to_array());
     if !curve_could_meet_aabb(curve, &point_box, C) {
         return Ok(None);
     }
-    let mut solution: Option<S> = None;
-    let mut report = |t: S| {
+    let mut solution: Option<Scalar> = None;
+    let mut report = |t: Scalar| {
         solution = Some(match solution {
             Some(existing) => existing.union(t),
             None => t,
@@ -176,15 +176,14 @@ mod tests {
     use super::curve_could_contain;
     use crate::nurb_curve::NurbCurve;
     use crate::test_fixtures::{hom, line};
-    use geop_core_math::for_all_scalars;
     use geop_core_math::{scalars::Scalar, vector::Vector3};
 
     const MAX: usize = 500;
     const MIN_SUBDIVISION_SIZE: f64 = 1e-3;
 
     /// Exact rational quarter circle of radius 1 in the xy-plane.
-    fn quarter_circle<S: Scalar>() -> NurbCurve<S, 4> {
-        let f = S::from_f64;
+    fn quarter_circle() -> NurbCurve<4> {
+        let f = Scalar::from_f64;
         let w = std::f64::consts::FRAC_1_SQRT_2;
         NurbCurve::try_new(
             2,
@@ -195,8 +194,8 @@ mod tests {
     }
 
     /// Cubic B-spline with two interior knots, wiggling through 3-D.
-    fn wiggle<S: Scalar>() -> NurbCurve<S, 4> {
-        let f = S::from_f64;
+    fn wiggle() -> NurbCurve<4> {
+        let f = Scalar::from_f64;
         NurbCurve::try_new(
             3,
             vec![
@@ -224,10 +223,10 @@ mod tests {
     }
 
     /// Point at `t` must be found, and the returned enclosure must contain `t`.
-    fn assert_contains_at<S: Scalar>(c: &NurbCurve<S, 4>, t: f64) {
-        let t = S::from_f64(t);
+    fn assert_contains_at(c: &NurbCurve<4>, t: f64) {
+        let t = Scalar::from_f64(t);
         let p = c.evaluate(t).unwrap();
-        let found = curve_could_contain(c, &p, MAX, S::from_f64(MIN_SUBDIVISION_SIZE))
+        let found = curve_could_contain(c, &p, MAX, Scalar::from_f64(MIN_SUBDIVISION_SIZE))
             .unwrap()
             .unwrap_or_else(|| panic!("point at t={t:?} not found"));
         assert!(
@@ -236,64 +235,53 @@ mod tests {
         );
     }
 
-    fn check_line_contains<S: Scalar>() {
-        for t in [0., 0.25, 0.5, 1.] {
-            assert_contains_at(&line::<S>([0.; 3], [1., 0., 0.]), t);
-        }
-    }
     #[test]
     fn line_contains() {
-        for_all_scalars!(check_line_contains);
-    }
-
-    fn check_quarter_circle_contains<S: Scalar>() {
-        for t in [0., 0.1, 0.5, 0.77, 1.] {
-            assert_contains_at(&quarter_circle::<S>(), t);
+        for t in [0., 0.25, 0.5, 1.] {
+            assert_contains_at(&line([0.; 3], [1., 0., 0.]), t);
         }
     }
+
     #[test]
     fn quarter_circle_contains() {
-        for_all_scalars!(check_quarter_circle_contains);
-    }
-
-    fn check_wiggle_contains<S: Scalar>() {
-        for t in [0., 0.05, 0.3, 0.42, 0.6, 0.9, 1.] {
-            assert_contains_at(&wiggle::<S>(), t);
+        for t in [0., 0.1, 0.5, 0.77, 1.] {
+            assert_contains_at(&quarter_circle(), t);
         }
     }
+
     #[test]
     fn wiggle_contains() {
-        for_all_scalars!(check_wiggle_contains);
+        for t in [0., 0.05, 0.3, 0.42, 0.6, 0.9, 1.] {
+            assert_contains_at(&wiggle(), t);
+        }
     }
 
     /// Clipping narrows a transversal hit well below `min_subdivision_size`
     /// instead of stopping at a bisection leaf.
-    fn check_result_is_tight<S: Scalar>() {
-        let c = wiggle::<S>();
-        let t = S::from_f64(0.42);
+    #[test]
+    fn result_is_tight() {
+        let c = wiggle();
+        let t = Scalar::from_f64(0.42);
         let p = c.evaluate(t).unwrap();
-        let found = curve_could_contain(&c, &p, MAX, S::from_f64(MIN_SUBDIVISION_SIZE))
+        let found = curve_could_contain(&c, &p, MAX, Scalar::from_f64(MIN_SUBDIVISION_SIZE))
             .unwrap()
             .unwrap();
         assert!(
             found
                 .width()
-                .definitely_less(S::from_f64(MIN_SUBDIVISION_SIZE)),
+                .definitely_less(Scalar::from_f64(MIN_SUBDIVISION_SIZE)),
             "{found:?}"
         );
     }
-    #[test]
-    fn result_is_tight() {
-        for_all_scalars!(check_result_is_tight);
-    }
 
-    fn check_misses_off_curve_points<S: Scalar>() {
-        let f = S::from_f64;
+    #[test]
+    fn misses_off_curve_points() {
+        let f = Scalar::from_f64;
         let off = |x, y, z| Vector3::from_array([f(x), f(y), f(z)]);
         // Inside the circle's bounding box and control polygon, off the arc.
         assert!(
             curve_could_contain(
-                &quarter_circle::<S>(),
+                &quarter_circle(),
                 &off(0.6, 0.6, 0.),
                 MAX,
                 f(MIN_SUBDIVISION_SIZE)
@@ -304,7 +292,7 @@ mod tests {
         // Beside the line, beyond its end.
         assert!(
             curve_could_contain(
-                &line::<S>([0.; 3], [1., 0., 0.]),
+                &line([0.; 3], [1., 0., 0.]),
                 &off(1.5, 0., 0.),
                 MAX,
                 f(MIN_SUBDIVISION_SIZE)
@@ -314,7 +302,7 @@ mod tests {
         );
         assert!(
             curve_could_contain(
-                &line::<S>([0.; 3], [1., 0., 0.]),
+                &line([0.; 3], [1., 0., 0.]),
                 &off(0.5, 0.1, 0.),
                 MAX,
                 f(MIN_SUBDIVISION_SIZE)
@@ -323,35 +311,23 @@ mod tests {
             .is_none()
         );
         assert!(
-            curve_could_contain(
-                &wiggle::<S>(),
-                &off(2.5, 0.5, 0.5),
-                MAX,
-                f(MIN_SUBDIVISION_SIZE)
-            )
-            .unwrap()
-            .is_none()
+            curve_could_contain(&wiggle(), &off(2.5, 0.5, 0.5), MAX, f(MIN_SUBDIVISION_SIZE))
+                .unwrap()
+                .is_none()
         );
-    }
-    #[test]
-    fn misses_off_curve_points() {
-        for_all_scalars!(check_misses_off_curve_points);
     }
 
     /// `min_subdivision_size` bounds bisection, not accuracy: a point off the
     /// arc by far less than it is still rejected, because clipping keeps
     /// shrinking the segment until it proves the miss.
-    fn check_misses_points_closer_than_min_subdivision_size<S: Scalar>() {
-        let f = S::from_f64;
+    #[test]
+    fn misses_points_closer_than_min_subdivision_size() {
+        let f = Scalar::from_f64;
         let r = 1. + 1e-7;
         let (x, y) = (r * 0.6, r * 0.8);
         let p = Vector3::from_array([f(x), f(y), f(0.)]);
         let found =
-            curve_could_contain(&quarter_circle::<S>(), &p, MAX, f(MIN_SUBDIVISION_SIZE)).unwrap();
+            curve_could_contain(&quarter_circle(), &p, MAX, f(MIN_SUBDIVISION_SIZE)).unwrap();
         assert!(found.is_none(), "{found:?}");
-    }
-    #[test]
-    fn misses_points_closer_than_min_subdivision_size() {
-        for_all_scalars!(check_misses_points_closer_than_min_subdivision_size);
     }
 }

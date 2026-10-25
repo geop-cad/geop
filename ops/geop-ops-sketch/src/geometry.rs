@@ -2,12 +2,11 @@
 //! pointer is, the arc a tool draws through it, where a curve's label goes.
 //! This is the editor's side of the browser boundary — pointer positions,
 //! previews and UI tolerances, never results the kernel reasons about.
-//! What the sketch *is* is its design data, in [`Design`] scalars, read here
+//! What the sketch *is* is its design data, in [`Scalar`] scalars, read here
 //! with [`xy`] and written back as sharp values; what it means comes from
 //! its solver.
 
 use geop_core_math::{geop_error::GeopResult, vector::Vector2};
-use geop_core_program::values::Design;
 use geop_core_sketch::{ProfileLoop, Sketch, profile::curve_polyline};
 
 pub use geop_core_sketch::plain::{
@@ -16,19 +15,19 @@ pub use geop_core_sketch::plain::{
 };
 
 /// Points as drawn.
-fn plain(points: GeopResult<Vec<Vector2<Design>>>) -> Vec<P2> {
+fn plain(points: GeopResult<Vec<Vector2>>) -> Vec<P2> {
     points
         .map(|points| points.iter().map(of).collect())
         .unwrap_or_default()
 }
 
 /// The polyline a curve is drawn as (empty where it cannot be drawn).
-pub fn polyline(sketch: &Sketch<Design>, curve: geop_core_sketch::CurveId) -> Vec<P2> {
+pub fn polyline(sketch: &Sketch, curve: geop_core_sketch::CurveId) -> Vec<P2> {
     plain(curve_polyline(sketch, curve))
 }
 
 /// The polyline a loop is drawn as (empty where it cannot be drawn).
-pub fn loop_polyline(sketch: &Sketch<Design>, lp: &ProfileLoop) -> Vec<P2> {
+pub fn loop_polyline(sketch: &Sketch, lp: &ProfileLoop) -> Vec<P2> {
     plain(lp.polyline(sketch))
 }
 

@@ -67,11 +67,11 @@
 
 use crate::{
     geop_error::{GeopError, GeopResult},
-    scalars::{Ring, Scalar},
+    scalars::Scalar,
     solvers::linear::{augmented, eliminate, inverse, null_space, rank},
 };
 
-use super::{Batch, Bound, Equations, Group, ScalarOf, Solving, System, Term, Variable, tolerance};
+use super::{Batch, Bound, Equations, Group, Solving, System, Term, Variable, tolerance};
 
 /// Newton steps polishing a solution before it is enclosed: each squares the
 /// error, so a handful take [`super::RELATIVE_TOLERANCE`]
@@ -96,7 +96,7 @@ pub struct Enclosure<V: Variable> {
     /// How many independent ways the blocks can move together.
     pub total: usize,
     /// Why the groups not proven were not, each with its blocks.
-    pub failures: Vec<(Vec<usize>, EncloseError<V::Scalar>)>,
+    pub failures: Vec<(Vec<usize>, EncloseError)>,
     /// How many times the equations were made to enclose it — every
     /// group's at once: the work it took, which a test can bound.
     pub evaluations: usize,
@@ -117,7 +117,7 @@ impl<V: Variable> Enclosure<V> {
 
 /// Why no enclosure of a solution is proven.
 #[derive(Debug)]
-pub enum EncloseError<S: Scalar> {
+pub enum EncloseError {
     /// Constraints that cannot all hold anywhere within `within` — in
     /// each block's steps — of where the solve ended: a combination of the
     /// rows, which vanishes wherever they all do, is definitely not zero
@@ -125,21 +125,21 @@ pub enum EncloseError<S: Scalar> {
     /// combination reducing it is there; `with` are the constraints it was
     /// reduced by, by index: what it conflicts with.
     Conflict {
-        conflicting: Vec<(usize, S)>,
+        conflicting: Vec<(usize, Scalar)>,
         with: Vec<usize>,
-        within: S,
+        within: Scalar,
     },
     /// No solution was proven (see [`System::enclose`]).
     Unproven(GeopError),
 }
 
-impl<S: Scalar> From<GeopError> for EncloseError<S> {
+impl From<GeopError> for EncloseError {
     fn from(e: GeopError) -> Self {
         EncloseError::Unproven(e)
     }
 }
 
-impl<S: Scalar> EncloseError<S> {
+impl EncloseError {
     /// As an error, each constraint named by `name`.
     pub fn named(self, name: impl Fn(usize) -> String) -> GeopError {
         match self {
@@ -157,7 +157,7 @@ impl<S: Scalar> EncloseError<S> {
                 } else {
                     names(&with)
                 };
-                let off: Vec<S> = conflicting.iter().map(|&(_, v)| v).collect();
+                let off: Vec<Scalar> = conflicting.iter().map(|&(_, v)| v).collect();
                 GeopError::new(format!(
                     "the constraints conflict: {} cannot hold where {others} do within {within:?} of here (off by {off:?} there)",
                     names(&constraints),
@@ -171,14 +171,14 @@ impl<S: Scalar> EncloseError<S> {
 /// Why a proof of the rows chosen is not taken: rows that do not vanish
 /// where the chosen ones do, by index among the rows — which may be a
 /// conflict ([`Solving::conflict`]) — or why it failed.
-enum Rejected<S: Scalar> {
+enum Rejected {
     Off(Vec<usize>),
-    Failed(EncloseError<S>),
+    Failed(EncloseError),
 }
 
 use Rejected::{Failed, Off};
 
-impl<S: Scalar> From<GeopError> for Rejected<S> {
+impl From<GeopError> for Rejected {
     fn from(e: GeopError) -> Self {
         Failed(EncloseError::Unproven(e))
     }
@@ -186,18 +186,18 @@ impl<S: Scalar> From<GeopError> for Rejected<S> {
 
 /// One row of a constraint over a box (see [`Solving::rows_over`]).
 #[derive(Clone)]
-struct Row<S: Scalar> {
+struct Row {
     /// The constraint it is one of, by index.
     constraint: usize,
-    value: S,
+    value: Scalar,
     /// Its derivative by every variable of the group.
-    slope: Vec<S>,
+    slope: Vec<Scalar>,
 }
 
 /// A group enclosed: the box of steps around `center` its true solution
 /// is in — or why there is none — and how free its blocks are.
 pub(super) struct Enclosed<V: Variable> {
-    pub boxes: Result<Vec<V>, EncloseError<V::Scalar>>,
+    pub boxes: Result<Vec<V>, EncloseError>,
     /// Per block of the group.
     pub freedom: Vec<usize>,
     pub total: usize,
@@ -271,12 +271,12 @@ impl<E: Equations> System<'_, E> {
                 false => equalities.push(c),
             }
         }
-        let zero = vec![ScalarOf::<E>::ZERO; n];
-        let mut radius = ScalarOf::<E>::ZERO;
+        let zero = vec![Scalar::ZERO; n];
+        let mut radius = Scalar::ZERO;
         let mut tried: Vec<Vec<(usize, usize)>> = Vec::new();
-        let mut failure: Option<EncloseError<ScalarOf<E>>> = None;
+        let mut failure: Option<EncloseError> = None;
         // A limit leaves free the motion away from it.
-        let vanishing = |rows: &[Row<ScalarOf<E>>]| -> Vec<Vec<ScalarOf<E>>> {
+        let vanishing = |rows: &[Row]| -> Vec<Vec<Scalar>> {
             (rows.iter())
                 .filter(|r| self.equations.bound(r.constraint) == Bound::Zero)
                 .map(|r| r.slope.clone())
@@ -289,9 +289,9 @@ impl<E: Equations> System<'_, E> {
             if attempt == 1 {
                 radius = tolerance;
             } else if attempt > 1 {
-                radius = ScalarOf::<E>::TWO.mul(radius);
+                radius = Scalar::TWO.mul(radius);
             }
-            let around: Vec<ScalarOf<E>> = match attempt {
+            let around: Vec<Scalar> = match attempt {
                 0 => zero.clone(),
                 _ => vec![radius.neg().union(radius); n],
             };
@@ -303,7 +303,7 @@ impl<E: Equations> System<'_, E> {
                     break;
                 }
             };
-            let slopes: Vec<Vec<ScalarOf<E>>> = rows.iter().map(|r| r.slope.clone()).collect();
+            let slopes: Vec<Vec<Scalar>> = rows.iter().map(|r| r.slope.clone()).collect();
             if freedom.is_none() {
                 freedom = Some(solving.freedom(vanishing(&rows)));
             }
@@ -389,9 +389,9 @@ impl<E: Equations> Solving<'_, '_, E> {
     async fn rows_over(
         &self,
         x: &[E::Value],
-        steps: &[ScalarOf<E>],
+        steps: &[Scalar],
         which: &[usize],
-    ) -> GeopResult<Vec<Row<ScalarOf<E>>>> {
+    ) -> GeopResult<Vec<Row>> {
         let mut values = Vec::with_capacity(x.len());
         let mut differentials = Vec::with_capacity(x.len());
         for (k, value) in x.iter().enumerate() {
@@ -427,13 +427,13 @@ impl<E: Equations> Solving<'_, '_, E> {
 
     /// How free the group's blocks are, by the rows `slopes`: per block,
     /// the rank of their null space's part along it, and its dimension.
-    fn freedom(&self, slopes: Vec<Vec<ScalarOf<E>>>) -> (Vec<usize>, usize) {
+    fn freedom(&self, slopes: Vec<Vec<Scalar>>) -> (Vec<usize>, usize) {
         let basis = null_space(slopes, self.n);
         let per_block = (self.group.blocks.iter().enumerate())
             .map(|(k, &block)| {
                 let column = self.columns[k];
                 let dimension = self.base[block].dimension();
-                let along: Vec<Vec<ScalarOf<E>>> = (basis.iter())
+                let along: Vec<Vec<Scalar>> = (basis.iter())
                     .map(|v| v[column..column + dimension].to_vec())
                     .collect();
                 rank(along, dimension)
@@ -452,34 +452,32 @@ impl<E: Equations> Solving<'_, '_, E> {
     async fn prove(
         &self,
         x: Vec<E::Value>,
-        at: Option<Vec<Row<ScalarOf<E>>>>,
+        at: Option<Vec<Row>>,
         which: &[usize],
         pivots: &[(usize, usize)],
-    ) -> Result<(Vec<E::Value>, Vec<ScalarOf<E>>), Rejected<ScalarOf<E>>> {
+    ) -> Result<(Vec<E::Value>, Vec<Scalar>), Rejected> {
         let n = self.n;
-        let zero = vec![ScalarOf::<E>::ZERO; n];
+        let zero = vec![Scalar::ZERO; n];
         if pivots.is_empty() {
             return Ok((x, zero));
         }
         let (cols, picked): (Vec<usize>, Vec<usize>) = pivots.iter().copied().unzip();
         let m = cols.len();
-        let square = |rows: &[Row<ScalarOf<E>>]| -> Vec<Vec<ScalarOf<E>>> {
+        let square = |rows: &[Row]| -> Vec<Vec<Scalar>> {
             picked
                 .iter()
                 .map(|&r| cols.iter().map(|&c| rows[r].slope[c]).collect())
                 .collect()
         };
-        let singular = |rows: &[Row<ScalarOf<E>>]| {
-            let rows: Vec<(ScalarOf<E>, &Vec<ScalarOf<E>>)> =
+        let singular = |rows: &[Row]| {
+            let rows: Vec<(Scalar, &Vec<Scalar>)> =
                 rows.iter().map(|r| (r.value, &r.slope)).collect();
             GeopError::new(format!(
                 "the constraints are singular at their solution: rows {picked:?} over variables {cols:?} of {rows:?}"
             ))
         };
-        let product = |y: &[Vec<ScalarOf<E>>], k: usize, column: &dyn Fn(usize) -> ScalarOf<E>| {
-            (0..m).fold(ScalarOf::<E>::ZERO, |sum, j| {
-                sum.add(y[k][j].mul(column(j)))
-            })
+        let product = |y: &[Vec<Scalar>], k: usize, column: &dyn Fn(usize) -> Scalar| {
+            (0..m).fold(Scalar::ZERO, |sum, j| sum.add(y[k][j].mul(column(j))))
         };
         // Which blocks a pivot moves: only those are stepped.
         let moved: Vec<bool> = (0..x.len())
@@ -514,7 +512,7 @@ impl<E: Equations> Solving<'_, '_, E> {
             for (k, &c) in cols.iter().enumerate() {
                 step[c] = product(&y, k, &|j| rows[picked[j]].value).neg();
             }
-            if step.iter().all(|d| d.could_be_equal(ScalarOf::<E>::ZERO)) {
+            if step.iter().all(|d| d.could_be_equal(Scalar::ZERO)) {
                 break (rows, y);
             }
             for (k, value) in xt.iter_mut().enumerate() {
@@ -524,16 +522,16 @@ impl<E: Equations> Solving<'_, '_, E> {
                 }
             }
         };
-        let yf: Vec<ScalarOf<E>> = (0..m)
+        let yf: Vec<Scalar> = (0..m)
             .map(|k| product(&y, k, &|j| rows[picked[j]].value))
             .collect();
         // Half-widths of the candidate box: at least what the Newton step
         // from `x̃` still reaches.
-        let mut radius: Vec<ScalarOf<E>> = yf.iter().map(|v| v.abs().upper()).collect();
+        let mut radius: Vec<Scalar> = yf.iter().map(|v| v.abs().upper()).collect();
         for _ in 0..ENCLOSE_ATTEMPTS {
-            let candidate: Vec<ScalarOf<E>> = (0..m)
+            let candidate: Vec<Scalar> = (0..m)
                 .map(|k| {
-                    let r = ScalarOf::<E>::TWO.mul(radius[k]);
+                    let r = Scalar::TWO.mul(radius[k]);
                     r.neg().union(r)
                 })
                 .collect();
@@ -543,23 +541,23 @@ impl<E: Equations> Solving<'_, '_, E> {
             }
             let over = self.rows_over(&xt, &boxed, which).await?;
             // `I - Y J(Δ)`.
-            let slack: Vec<Vec<ScalarOf<E>>> = (0..m)
+            let slack: Vec<Vec<Scalar>> = (0..m)
                 .map(|k| {
                     (0..m)
                         .map(|l| {
                             let yj = product(&y, k, &|j| over[picked[j]].slope[cols[l]]);
                             let identity = match k == l {
-                                true => ScalarOf::<E>::ONE,
-                                false => ScalarOf::<E>::ZERO,
+                                true => Scalar::ONE,
+                                false => Scalar::ZERO,
                             };
                             identity.sub(yj)
                         })
                         .collect()
                 })
                 .collect();
-            let krawczyk: Vec<ScalarOf<E>> = (0..m)
+            let krawczyk: Vec<Scalar> = (0..m)
                 .map(|k| {
-                    let spread = (0..m).fold(ScalarOf::<E>::ZERO, |sum, l| {
+                    let spread = (0..m).fold(Scalar::ZERO, |sum, l| {
                         sum.add(slack[k][l].mul(candidate[l]))
                     });
                     yf[k].neg().add(spread)
@@ -573,12 +571,9 @@ impl<E: Equations> Solving<'_, '_, E> {
                 // differ by `(I - Y J)` times that difference.
                 let norm = slack
                     .iter()
-                    .map(|row| {
-                        row.iter()
-                            .fold(ScalarOf::<E>::ZERO, |sum, e| sum.add(e.abs()))
-                    })
-                    .fold(ScalarOf::<E>::ZERO, |most, row| most.max(row));
-                if !norm.definitely_less(ScalarOf::<E>::ONE) {
+                    .map(|row| row.iter().fold(Scalar::ZERO, |sum, e| sum.add(e.abs())))
+                    .fold(Scalar::ZERO, |most, row| most.max(row));
+                if !norm.definitely_less(Scalar::ONE) {
                     return Err(GeopError::new(format!(
                         "the constraints are not proven independent over the box around the solution: ‖I - Y J(Δ)‖∞ is {norm:?}, not below one, for rows {picked:?} over variables {cols:?}"
                     ))
@@ -623,17 +618,17 @@ impl<E: Equations> Solving<'_, '_, E> {
     async fn verify(
         &self,
         center: &[E::Value],
-        steps: &[ScalarOf<E>],
+        steps: &[Scalar],
         which: &[usize],
         inactive: &[usize],
         pivots: &[(usize, usize)],
-    ) -> Result<Vec<Row<ScalarOf<E>>>, Rejected<ScalarOf<E>>> {
+    ) -> Result<Vec<Row>, Rejected> {
         let limits = match inactive.is_empty() {
             true => Vec::new(),
             false => self.rows_over(center, steps, inactive).await?,
         };
         for row in limits {
-            if row.value.could_be_greater(ScalarOf::<E>::ZERO) {
+            if row.value.could_be_greater(Scalar::ZERO) {
                 return Err(GeopError::new(format!(
                     "the limit {} is not proven to hold over the box around the solution: it is {:?} there",
                     row.constraint, row.value
@@ -644,7 +639,7 @@ impl<E: Equations> Solving<'_, '_, E> {
         let picked: Vec<usize> = pivots.iter().map(|&(_, r)| r).collect();
         let rows = self.rows_over(center, steps, which).await?;
         let off: Vec<usize> = (0..rows.len())
-            .filter(|i| !picked.contains(i) && !rows[*i].value.could_be_equal(ScalarOf::<E>::ZERO))
+            .filter(|i| !picked.contains(i) && !rows[*i].value.could_be_equal(Scalar::ZERO))
             .collect();
         if !off.is_empty() {
             return Err(Rejected::Off(off));
@@ -684,15 +679,15 @@ impl<E: Equations> Solving<'_, '_, E> {
     async fn conflict(
         &self,
         x: &[E::Value],
-        radius: ScalarOf<E>,
+        radius: Scalar,
         which: &[usize],
-        selection: &[Row<ScalarOf<E>>],
+        selection: &[Row],
         off: &[usize],
-    ) -> EncloseError<ScalarOf<E>> {
+    ) -> EncloseError {
         let n = self.n;
-        let proven = async || -> GeopResult<Option<EncloseError<ScalarOf<E>>>> {
+        let proven = async || -> GeopResult<Option<EncloseError>> {
             let within = radius.max(tolerance(self.system.scale)?);
-            let at = (self.rows_over(x, &vec![ScalarOf::<E>::ZERO; n], which)).await?;
+            let at = (self.rows_over(x, &vec![Scalar::ZERO; n], which)).await?;
             let around = vec![within.neg().union(within); n];
             let over = self.rows_over(x, &around, which).await?;
             let reduced = eliminate(augmented(selection.iter().map(|r| r.slope.clone())), n);
@@ -703,15 +698,15 @@ impl<E: Equations> Solving<'_, '_, E> {
                 }
                 // Zero where it could be: a free choice, which keeps the
                 // rows the elimination never combined out of `g`.
-                let combination: Vec<ScalarOf<E>> = (0..selection.len())
+                let combination: Vec<Scalar> = (0..selection.len())
                     .map(|j| reduced.rows[k][n + j])
-                    .map(|a| match a.could_be_equal(ScalarOf::<E>::ZERO) {
-                        true => ScalarOf::<E>::ZERO,
+                    .map(|a| match a.could_be_equal(Scalar::ZERO) {
+                        true => Scalar::ZERO,
                         false => a.midpoint(),
                     })
                     .collect();
-                let mut g = ScalarOf::<E>::ZERO;
-                let mut gradient = vec![ScalarOf::<E>::ZERO; n];
+                let mut g = Scalar::ZERO;
+                let mut gradient = vec![Scalar::ZERO; n];
                 for (j, a) in combination.iter().enumerate().filter(|(_, a)| !a.is_zero()) {
                     g = g.add(a.mul(at[j].value));
                     for (slot, s) in gradient.iter_mut().zip(&over[j].slope) {
@@ -719,7 +714,7 @@ impl<E: Equations> Solving<'_, '_, E> {
                     }
                 }
                 let reach = (gradient.iter()).fold(g, |sum, d| sum.add(d.mul(around[0])));
-                if reach.could_be_equal(ScalarOf::<E>::ZERO) {
+                if reach.could_be_equal(Scalar::ZERO) {
                     continue;
                 }
                 conflicting.push((selection[o].constraint, reach));

@@ -14,11 +14,11 @@
 
 use crate::{
     geop_error::GeopResult,
-    scalars::{Ring, Scalar},
+    scalars::Scalar,
     solvers::least_squares::{self, Evaluation, Rows, Space, Stop},
 };
 
-use super::{Bound, Equations, ScalarOf, Solving, Term, Variable};
+use super::{Bound, Equations, Solving, Term, Variable};
 
 /// A residual holds once it is within this fraction of the system's size:
 /// one part in `RELATIVE_TOLERANCE`.
@@ -26,8 +26,8 @@ pub const RELATIVE_TOLERANCE: i64 = 1_000_000_000;
 
 /// How near zero a residual of a system of size `scale` must be to hold:
 /// one part in [`RELATIVE_TOLERANCE`] of it.
-pub fn tolerance<S: Scalar>(scale: S) -> GeopResult<S> {
-    scale.div(S::from_i64(RELATIVE_TOLERANCE))
+pub fn tolerance(scale: Scalar) -> GeopResult<Scalar> {
+    scale.div(Scalar::from_i64(RELATIVE_TOLERANCE))
 }
 
 /// How strongly every value a solve may move and nothing pulls is held
@@ -71,20 +71,19 @@ impl Mobility {
 /// One minimization of a solve: why it stopped, after how many steps, and
 /// the largest residual it left — an upper bound.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Phase<S: Scalar> {
+pub struct Phase {
     pub stop: Stop,
     pub iterations: usize,
     /// Steps proposed and turned down on the way (see
     /// [`least_squares::Outcome::turned_down`]).
     pub turned_down: usize,
     #[serde(with = "crate::scalars::as_f64")]
-    pub max_residual: S,
+    pub max_residual: Scalar,
 }
 
 /// The largest size of `residuals`: an upper bound.
-pub(super) fn largest<S: Scalar>(residuals: impl IntoIterator<Item = S>) -> S {
-    residuals.into_iter().fold(S::ZERO, |largest, r| {
+pub(super) fn largest(residuals: impl IntoIterator<Item = Scalar>) -> Scalar {
+    residuals.into_iter().fold(Scalar::ZERO, |largest, r| {
         let size = r.abs().upper();
         if size.could_be_greater(largest) {
             size
@@ -95,24 +94,24 @@ pub(super) fn largest<S: Scalar>(residuals: impl IntoIterator<Item = S>) -> S {
 }
 
 /// Where a solve of a group ended, and the phases that put it there.
-pub(super) type Phased<E> = (Vec<<E as Equations>::Value>, Vec<Phase<ScalarOf<E>>>);
+pub(super) type Phased<E> = (Vec<<E as Equations>::Value>, Vec<Phase>);
 
 /// Where one minimization ended, how, and whether the constraints hold
 /// there.
-type Minimized<E> = (Vec<<E as Equations>::Value>, Phase<ScalarOf<E>>, bool);
+type Minimized<E> = (Vec<<E as Equations>::Value>, Phase, bool);
 
 /// The values of a group of blocks, as the points a minimization moves:
 /// each stepped along its own steps ([`Variable::retract`]).
 pub(super) struct Values<V>(pub(super) std::marker::PhantomData<V>);
 
-impl<V: Variable> Space<V::Scalar> for Values<V> {
+impl<V: Variable> Space for Values<V> {
     type Point = Vec<V>;
 
     fn dimension(&self, at: &Vec<V>) -> usize {
         at.iter().map(Variable::dimension).sum()
     }
 
-    fn step(&self, at: &Vec<V>, step: &[V::Scalar]) -> Option<Vec<V>> {
+    fn step(&self, at: &Vec<V>, step: &[Scalar]) -> Option<Vec<V>> {
         let mut rest = step;
         let mut next = Vec::with_capacity(at.len());
         for value in at {
@@ -162,10 +161,10 @@ struct Asked<'a, 's, 'e, E: Equations> {
 /// by steps from it: the constraints' — zero where they hold — the pulls'
 /// — each the distance from where a value is pulled to — and those of every
 /// value [`Mobility::Held`] and not pulled, from where it was.
-struct Terms<S: Scalar> {
-    constraints: Rows<S>,
-    pulls: Rows<S>,
-    stays: Rows<S>,
+struct Terms {
+    constraints: Rows,
+    pulls: Rows,
+    stays: Rows,
 }
 
 impl<E: Equations> Asked<'_, '_, '_, E> {
@@ -178,7 +177,7 @@ impl<E: Equations> Asked<'_, '_, '_, E> {
         values: &[E::Value],
         anchor: &[E::Value],
         pulling: bool,
-    ) -> Option<Terms<ScalarOf<E>>> {
+    ) -> Option<Terms> {
         let solving = self.solving;
         let identity = |_: usize| None;
         let mut which: Vec<Term> = self.hard.iter().map(|&c| Term::Constraint(c)).collect();
@@ -217,7 +216,7 @@ impl<E: Equations> Asked<'_, '_, '_, E> {
             let stay = value.stay(at, solving.system.scale).ok()?;
             let column = solving.columns[k];
             for (value, own) in stay.values.into_iter().zip(stay.jacobian) {
-                let mut row = vec![ScalarOf::<E>::ZERO; solving.n];
+                let mut row = vec![Scalar::ZERO; solving.n];
                 for (slot, v) in row.iter_mut().skip(column).zip(own) {
                     *slot = v;
                 }
@@ -234,7 +233,7 @@ impl<E: Equations> Asked<'_, '_, '_, E> {
     /// The largest residual of the constraints at `values` — an upper
     /// bound, infinite where one is undecidable (see [`largest`]) — and
     /// whether they all hold there.
-    async fn check(&self, values: &[E::Value]) -> GeopResult<(ScalarOf<E>, bool)> {
+    async fn check(&self, values: &[E::Value]) -> GeopResult<(Scalar, bool)> {
         let tolerance = tolerance(self.solving.system.scale)?;
         Ok(self.solving.check(values, &self.hard, tolerance).await)
     }
@@ -271,7 +270,7 @@ impl<E: Equations> Asked<'_, '_, '_, E> {
             };
             return Ok((from, phase, holds));
         }
-        let damping = ScalarOf::<E>::from_ratio(DAMPING.0, DAMPING.1)?;
+        let damping = Scalar::from_ratio(DAMPING.0, DAMPING.1)?;
         let anchor = from.clone();
         let evaluate = async |at: &Vec<E::Value>| {
             let Terms {
@@ -294,7 +293,7 @@ impl<E: Equations> Asked<'_, '_, '_, E> {
                 );
             }
             // An unbounded residual or slope is no number either.
-            let finite = |rows: &Rows<ScalarOf<E>>| {
+            let finite = |rows: &Rows| {
                 (rows.values.iter())
                     .chain(rows.jacobian.iter().flatten())
                     .all(|v| v.is_finite())

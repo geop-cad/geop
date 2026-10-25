@@ -58,12 +58,12 @@ use crate::{
 
 /// How long [`minimize`] may try, and how far a step may go.
 #[derive(Clone, Copy, Debug)]
-pub struct Options<S: Scalar> {
+pub struct Options {
     /// Steps taken at most: how hard it tries, never what an answer means.
     pub max_iterations: usize,
     /// The longest step: where the variables have a natural size, no step
     /// longer than it is sensible.
-    pub max_step: S,
+    pub max_step: Scalar,
 }
 
 /// Where [`minimize`] ended, and how it got there.
@@ -122,7 +122,7 @@ pub enum Rejection {
 /// a step is taken from a point along its tangent space (a pose by the
 /// exponential map of a twist, say), and the Jacobians evaluated at a
 /// point are by steps from that point.
-pub trait Space<S: Scalar> {
+pub trait Space {
     type Point: Clone;
 
     /// How many numbers a step from `at` takes.
@@ -130,7 +130,7 @@ pub trait Space<S: Scalar> {
 
     /// Where `step` takes `at`; `None` where it cannot. The point a step
     /// leads to is a free choice: sharp.
-    fn step(&self, at: &Self::Point, step: &[S]) -> Option<Self::Point>;
+    fn step(&self, at: &Self::Point, step: &[Scalar]) -> Option<Self::Point>;
 
     /// Whether `b`, where a step from `a` led, is no different from `a`:
     /// the step changed nothing.
@@ -140,14 +140,14 @@ pub trait Space<S: Scalar> {
 /// The variables themselves, as points: a step is added to them.
 pub struct Euclidean;
 
-impl<S: Scalar> Space<S> for Euclidean {
-    type Point = Vec<S>;
+impl Space for Euclidean {
+    type Point = Vec<Scalar>;
 
-    fn dimension(&self, at: &Vec<S>) -> usize {
+    fn dimension(&self, at: &Vec<Scalar>) -> usize {
         at.len()
     }
 
-    fn step(&self, at: &Vec<S>, step: &[S]) -> Option<Vec<S>> {
+    fn step(&self, at: &Vec<Scalar>, step: &[Scalar]) -> Option<Vec<Scalar>> {
         Some(
             at.iter()
                 .zip(step)
@@ -156,47 +156,47 @@ impl<S: Scalar> Space<S> for Euclidean {
         )
     }
 
-    fn same(&self, a: &Vec<S>, b: &Vec<S>) -> bool {
+    fn same(&self, a: &Vec<Scalar>, b: &Vec<Scalar>) -> bool {
         a.iter().zip(b).all(|(a, b)| a.could_be_equal(*b))
     }
 }
 
 /// Residuals, and their Jacobian row by row.
 #[derive(Clone, Debug, Default)]
-pub struct Rows<S: Scalar> {
-    pub values: Vec<S>,
-    pub jacobian: Vec<Vec<S>>,
+pub struct Rows {
+    pub values: Vec<Scalar>,
+    pub jacobian: Vec<Vec<Scalar>>,
 }
 
-impl<S: Scalar> Rows<S> {
-    pub fn push(&mut self, value: S, row: Vec<S>) {
+impl Rows {
+    pub fn push(&mut self, value: Scalar, row: Vec<Scalar>) {
         self.values.push(value);
         self.jacobian.push(row);
     }
 
     /// `other`'s rows, after its own.
-    pub fn append(&mut self, other: Rows<S>) {
+    pub fn append(&mut self, other: Rows) {
         self.values.extend(other.values);
         self.jacobian.extend(other.jacobian);
     }
 
     /// `values + jacobian δ`: the residuals a step `δ` leads to, to first
     /// order.
-    fn linearized(&self, delta: &[S]) -> Vec<S> {
+    fn linearized(&self, delta: &[Scalar]) -> Vec<Scalar> {
         (self.values.iter().zip(&self.jacobian))
             .map(|(&v, row)| v.add(dot(row, delta)))
             .collect()
     }
 
     /// `|values + jacobian δ|²`: at `δ = 0`, the sum of squares.
-    fn squared(&self, delta: &[S]) -> S {
+    fn squared(&self, delta: &[Scalar]) -> Scalar {
         let r = self.linearized(delta);
         dot(&r, &r)
     }
 
     /// `jacobianᵀ w`.
-    fn transposed(&self, w: &[S], n: usize) -> Vec<S> {
-        let mut g = vec![S::ZERO; n];
+    fn transposed(&self, w: &[Scalar], n: usize) -> Vec<Scalar> {
+        let mut g = vec![Scalar::ZERO; n];
         for (&wi, row) in w.iter().zip(&self.jacobian) {
             for (gi, &ri) in g.iter_mut().zip(row) {
                 *gi = gi.add(ri.mul(wi));
@@ -209,19 +209,19 @@ impl<S: Scalar> Rows<S> {
 /// The residuals at a point: those that must vanish, and those whose
 /// squares are minimized.
 #[derive(Clone, Debug, Default)]
-pub struct Evaluation<S: Scalar> {
-    pub constraints: Rows<S>,
-    pub sum: Rows<S>,
+pub struct Evaluation {
+    pub constraints: Rows,
+    pub sum: Rows,
 }
 
 /// By how much `λ` shrinks after a step taken, and grows after one not.
 const SHRINK: i64 = 3;
 const GROW: i64 = 4;
 
-fn dot<S: Scalar>(a: &[S], b: &[S]) -> S {
+fn dot(a: &[Scalar], b: &[Scalar]) -> Scalar {
     a.iter()
         .zip(b)
-        .fold(S::ZERO, |sum, (&x, &y)| sum.add(x.mul(y)))
+        .fold(Scalar::ZERO, |sum, (&x, &y)| sum.add(x.mul(y)))
 }
 
 /// `|v|`, scaled by the largest size among `v` — a free choice, sharp —
@@ -230,12 +230,12 @@ fn dot<S: Scalar>(a: &[S], b: &[S]) -> S {
 /// residuals of a mate off by `1e-6` had a norm of `[0, 4.6e-5]` in fixed
 /// point, which no step could definitely lower: a body pinned a half turn
 /// away stopped `1e-6` off, ten times the tolerance.
-fn norm<S: Scalar>(v: &[S]) -> GeopResult<S> {
-    let largest = v.iter().fold(S::ZERO, |m, x| m.max(x.abs().upper()));
-    if !largest.definitely_greater(S::ZERO) {
+fn norm(v: &[Scalar]) -> GeopResult<Scalar> {
+    let largest = v.iter().fold(Scalar::ZERO, |m, x| m.max(x.abs().upper()));
+    if !largest.definitely_greater(Scalar::ZERO) {
         return dot(v, v).sqrt();
     }
-    let scaled = (v.iter().map(|x| x.div(largest))).collect::<GeopResult<Vec<S>>>()?;
+    let scaled = (v.iter().map(|x| x.div(largest))).collect::<GeopResult<Vec<Scalar>>>()?;
     Ok(largest.mul(dot(&scaled, &scaled).sqrt()?))
 }
 
@@ -246,29 +246,29 @@ fn norm<S: Scalar>(v: &[S]) -> GeopResult<S> {
 /// zero, and turned into a small number it would couple what does not
 /// depend on each other — a coupling a weakly held variable then follows
 /// arbitrarily far.
-fn choose<S: Scalar>(v: S) -> S {
-    if v.could_be_equal(S::ZERO) {
-        S::ZERO
+fn choose(v: Scalar) -> Scalar {
+    if v.could_be_equal(Scalar::ZERO) {
+        Scalar::ZERO
     } else {
         v.sharpen()
     }
 }
 
-fn sharp<S: Scalar>(v: &[S]) -> Vec<S> {
+fn sharp(v: &[Scalar]) -> Vec<Scalar> {
     v.iter().map(|&x| choose(x)).collect()
 }
 
 /// A step of the linearized problem (see [`step`]).
-struct Step<S: Scalar> {
-    delta: Vec<S>,
+struct Step {
+    delta: Vec<Scalar>,
     /// The constraints' multipliers.
-    lambda: Vec<S>,
+    lambda: Vec<Scalar>,
     /// How many of the constraints' rows say something the others do not.
     independent: usize,
 }
 
 /// `v - a w`, chosen (see [`choose`]).
-fn minus_scaled<S: Scalar>(v: &[S], a: S, w: &[S]) -> Vec<S> {
+fn minus_scaled(v: &[Scalar], a: Scalar, w: &[Scalar]) -> Vec<Scalar> {
     v.iter()
         .zip(w)
         .map(|(&x, &y)| choose(x.sub(a.mul(y))))
@@ -295,24 +295,24 @@ fn minus_scaled<S: Scalar>(v: &[S], a: S, w: &[S]) -> Vec<S> {
 /// after taking out its component along their basis, could be zero — asked
 /// of the row's honest enclosure: a question about the constraints, not a
 /// choice. Everything else is the model's own choice, so sharp.
-fn step<S: Scalar>(
-    e: &Evaluation<S>,
-    b: &[Vec<S>],
+fn step(
+    e: &Evaluation,
+    b: &[Vec<Scalar>],
     moving: &[bool],
-    mu: S,
-) -> GeopResult<Option<Step<S>>> {
+    mu: Scalar,
+) -> GeopResult<Option<Step>> {
     let n = moving.len();
     let keep: Vec<usize> = (0..n).filter(|&i| moving[i]).collect();
     let k = keep.len();
-    let squeeze = |v: &[S]| -> Vec<S> { keep.iter().map(|&i| v[i]).collect() };
-    let jr: Vec<Vec<S>> = e.sum.jacobian.iter().map(|r| sharp(&squeeze(r))).collect();
-    let jc_wide: Vec<Vec<S>> = e.constraints.jacobian.iter().map(|r| squeeze(r)).collect();
-    let jc: Vec<Vec<S>> = jc_wide.iter().map(|r| sharp(r)).collect();
+    let squeeze = |v: &[Scalar]| -> Vec<Scalar> { keep.iter().map(|&i| v[i]).collect() };
+    let jr: Vec<Vec<Scalar>> = e.sum.jacobian.iter().map(|r| sharp(&squeeze(r))).collect();
+    let jc_wide: Vec<Vec<Scalar>> = e.constraints.jacobian.iter().map(|r| squeeze(r)).collect();
+    let jc: Vec<Vec<Scalar>> = jc_wide.iter().map(|r| sharp(r)).collect();
     let c = sharp(&e.constraints.values);
     let m = jc.len();
 
     // H = J_rᵀJ_r + B + λ D, over the variables that move.
-    let mut h: Vec<Vec<S>> = keep.iter().map(|&i| squeeze(&b[i])).collect();
+    let mut h: Vec<Vec<Scalar>> = keep.iter().map(|&i| squeeze(&b[i])).collect();
     for row in &jr {
         for i in 0..k {
             for j in 0..k {
@@ -324,7 +324,7 @@ fn step<S: Scalar>(
         let d = jr
             .iter()
             .chain(&jc)
-            .fold(S::ZERO, |d, r| d.add(r[i].mul(r[i])));
+            .fold(Scalar::ZERO, |d, r| d.add(r[i].mul(r[i])));
         row[i] = row[i].add(mu.mul(d));
         row.iter_mut().for_each(|v| *v = choose(*v));
     }
@@ -342,19 +342,19 @@ fn step<S: Scalar>(
     // (enclosed, and close to the identity, so the projection stays tight).
     // What a sharp basis leaves of a row that depends on the others is
     // rounding, not zero; what this leaves of it could be zero.
-    let mut q: Vec<Vec<S>> = Vec::new();
+    let mut q: Vec<Vec<Scalar>> = Vec::new();
     // The Cholesky factor of the Gram matrix, row by row.
-    let mut gram: Vec<Vec<S>> = Vec::new();
-    let mut rows: Vec<(usize, Vec<S>)> = Vec::new();
-    let mut dependent: Vec<(usize, Vec<S>)> = Vec::new();
+    let mut gram: Vec<Vec<Scalar>> = Vec::new();
+    let mut rows: Vec<(usize, Vec<Scalar>)> = Vec::new();
+    let mut dependent: Vec<(usize, Vec<Scalar>)> = Vec::new();
     for i in 0..m {
         let r = q.len();
-        let b: Vec<S> = q.iter().map(|qj| dot(&jc_wide[i], qj)).collect();
+        let b: Vec<Scalar> = q.iter().map(|qj| dot(&jc_wide[i], qj)).collect();
         let a = solve_cholesky(&gram, &vec![false; r], &b)?;
-        let outside: Vec<S> = (0..k)
+        let outside: Vec<Scalar> = (0..k)
             .map(|p| (0..r).fold(jc_wide[i][p], |sum, j| sum.sub(a[j].mul(q[j][p]))))
             .collect();
-        if !norm(&outside)?.definitely_greater(S::ZERO) {
+        if !norm(&outside)?.definitely_greater(Scalar::ZERO) {
             // Its coefficients in the basis, for the least-squares
             // correction below.
             dependent.push((i, sharp(&a)));
@@ -369,11 +369,11 @@ fn step<S: Scalar>(
         }
         let length = norm(&v)?.sharpen();
         coefficients.push(length);
-        let q_new: Vec<S> = v
+        let q_new: Vec<Scalar> = v
             .iter()
-            .map(|&x| choose(x.div(length).unwrap_or(S::ZERO)))
+            .map(|&x| choose(x.div(length).unwrap_or(Scalar::ZERO)))
             .collect();
-        let mut row = vec![S::ZERO; r + 1];
+        let mut row = vec![Scalar::ZERO; r + 1];
         for j in 0..r {
             row[j] = (0..j)
                 .fold(dot(&q_new, &q[j]), |sum, k| sum.sub(row[k].mul(gram[j][k])))
@@ -392,39 +392,39 @@ fn step<S: Scalar>(
     // y|` least — by the normal equations of the rows' coefficients in Q:
     // exactly `R y = -c` where the dependent rows agree with the others, and
     // as near as first order gets where they do not.
-    let coefficients_of = |coefficients: &[S]| -> Vec<S> {
+    let coefficients_of = |coefficients: &[Scalar]| -> Vec<Scalar> {
         (0..r)
-            .map(|j| coefficients.get(j).copied().unwrap_or(S::ZERO))
+            .map(|j| coefficients.get(j).copied().unwrap_or(Scalar::ZERO))
             .collect()
     };
-    let all: Vec<(usize, Vec<S>)> = rows
+    let all: Vec<(usize, Vec<Scalar>)> = rows
         .iter()
         .chain(&dependent)
         .map(|(i, coefficients)| (*i, coefficients_of(coefficients)))
         .collect();
-    let normal: Vec<Vec<S>> = (0..r)
+    let normal: Vec<Vec<Scalar>> = (0..r)
         .map(|a| {
             (0..r)
                 .map(|b| {
                     choose(
                         all.iter()
-                            .fold(S::ZERO, |sum, (_, row)| sum.add(row[a].mul(row[b]))),
+                            .fold(Scalar::ZERO, |sum, (_, row)| sum.add(row[a].mul(row[b]))),
                     )
                 })
                 .collect()
         })
         .collect();
-    let rhs_c: Vec<S> = (0..r)
+    let rhs_c: Vec<Scalar> = (0..r)
         .map(|a| {
             choose(
                 all.iter()
-                    .fold(S::ZERO, |sum, (i, row)| sum.sub(row[a].mul(c[*i]))),
+                    .fold(Scalar::ZERO, |sum, (i, row)| sum.sub(row[a].mul(c[*i]))),
             )
         })
         .collect();
     let (ln, singular) = cholesky(&normal)?;
     let y = sharp(&solve_cholesky(&ln, &singular, &rhs_c)?);
-    let mut delta_c = vec![S::ZERO; k];
+    let mut delta_c = vec![Scalar::ZERO; k];
     for (t, qt) in q.iter().enumerate() {
         delta_c = minus_scaled(&delta_c, y[t].neg(), qt);
     }
@@ -432,19 +432,19 @@ fn step<S: Scalar>(
     // Z: the unit directions with what is left of them after Q, taken one
     // at a time by the largest remainder — orthonormalized against Q and
     // each other.
-    let mut left: Vec<Vec<S>> = (0..k)
+    let mut left: Vec<Vec<Scalar>> = (0..k)
         .map(|p| {
-            let mut v = vec![S::ZERO; k];
-            v[p] = S::ONE;
+            let mut v = vec![Scalar::ZERO; k];
+            v[p] = Scalar::ONE;
             for qt in &q {
                 v = minus_scaled(&v, choose(dot(&v, qt)), qt);
             }
             v
         })
         .collect();
-    let mut z: Vec<Vec<S>> = Vec::new();
+    let mut z: Vec<Vec<Scalar>> = Vec::new();
     while z.len() < k - r {
-        let lengths: Vec<S> = left.iter().map(|v| dot(v, v)).collect();
+        let lengths: Vec<Scalar> = left.iter().map(|v| dot(v, v)).collect();
         let Some(best) = (0..k).reduce(|a, b| {
             if lengths[b].definitely_greater(lengths[a]) {
                 b
@@ -455,12 +455,12 @@ fn step<S: Scalar>(
             break;
         };
         let length = lengths[best].sqrt()?.sharpen();
-        if !length.definitely_greater(S::ZERO) {
+        if !length.definitely_greater(Scalar::ZERO) {
             break;
         }
-        let zt: Vec<S> = left[best]
+        let zt: Vec<Scalar> = left[best]
             .iter()
-            .map(|&x| choose(x.div(length).unwrap_or(S::ZERO)))
+            .map(|&x| choose(x.div(length).unwrap_or(Scalar::ZERO)))
             .collect();
         for v in &mut left {
             *v = minus_scaled(v, choose(dot(v, &zt)), &zt);
@@ -470,14 +470,15 @@ fn step<S: Scalar>(
 
     // Along Z: (Zᵀ H Z) w = -Zᵀ (g + H δ_c).
     let g = sharp(&squeeze(&e.sum.transposed(&sharp(&e.sum.values), n)));
-    let h_times = |v: &[S]| -> Vec<S> { h.iter().map(|row| choose(dot(row, v))).collect() };
-    let force: Vec<S> = g
+    let h_times =
+        |v: &[Scalar]| -> Vec<Scalar> { h.iter().map(|row| choose(dot(row, v))).collect() };
+    let force: Vec<Scalar> = g
         .iter()
         .zip(h_times(&delta_c))
         .map(|(&a, b)| choose(a.add(b)))
         .collect();
-    let hz: Vec<Vec<S>> = z.iter().map(|zt| h_times(zt)).collect();
-    let reduced: Vec<Vec<S>> = z
+    let hz: Vec<Vec<Scalar>> = z.iter().map(|zt| h_times(zt)).collect();
+    let reduced: Vec<Vec<Scalar>> = z
         .iter()
         .map(|zi| hz.iter().map(|hzj| choose(dot(zi, hzj))).collect())
         .collect();
@@ -485,7 +486,7 @@ fn step<S: Scalar>(
     if not_positive.contains(&true) {
         return Ok(None);
     }
-    let rhs: Vec<S> = z.iter().map(|zt| choose(dot(zt, &force).neg())).collect();
+    let rhs: Vec<Scalar> = z.iter().map(|zt| choose(dot(zt, &force).neg())).collect();
     let w = sharp(&solve_cholesky(&l, &not_positive, &rhs)?);
     let mut kept = delta_c;
     for (t, zt) in z.iter().enumerate() {
@@ -493,7 +494,7 @@ fn step<S: Scalar>(
     }
 
     // The multipliers: J_cᵀ λ = -(g + H δ), R ᵀ λ = Qᵀ (-(g + H δ)).
-    let pull: Vec<S> = g
+    let pull: Vec<Scalar> = g
         .iter()
         .zip(h_times(&kept))
         .map(|(&a, b)| choose(a.add(b).neg()))
@@ -503,18 +504,18 @@ fn step<S: Scalar>(
     if !kept.iter().chain(&pull).all(|v| v.is_finite()) {
         return Ok(None);
     }
-    let mut lambda_rows = vec![S::ZERO; r];
+    let mut lambda_rows = vec![Scalar::ZERO; r];
     for t in (0..r).rev() {
         let known = (t + 1..r).fold(dot(&q[t], &pull), |sum, s| {
             sum.sub(rows[s].1[t].mul(lambda_rows[s]))
         });
         lambda_rows[t] = choose(known.div(rows[t].1[t])?);
     }
-    let mut lambda = vec![S::ZERO; m];
+    let mut lambda = vec![Scalar::ZERO; m];
     for (t, (i, _)) in rows.iter().enumerate() {
         lambda[*i] = lambda_rows[t];
     }
-    let mut delta = vec![S::ZERO; n];
+    let mut delta = vec![Scalar::ZERO; n];
     for (p, &i) in keep.iter().enumerate() {
         delta[i] = kept[p];
     }
@@ -535,11 +536,11 @@ fn step<S: Scalar>(
 /// `evaluate` is awaited: a caller running many minimizations side by side
 /// answers all their evaluations at once (see
 /// [`crate::solvers::system`]'s groups).
-pub async fn minimize<S: Scalar, P: Space<S>>(
+pub async fn minimize<P: Space>(
     space: &P,
-    evaluate: impl AsyncFn(&P::Point) -> Option<Evaluation<S>>,
+    evaluate: impl AsyncFn(&P::Point) -> Option<Evaluation>,
     x0: P::Point,
-    options: Options<S>,
+    options: Options,
 ) -> GeopResult<Outcome<P::Point>> {
     let n = space.dimension(&x0);
     let mut x = x0;
@@ -561,17 +562,17 @@ pub async fn minimize<S: Scalar, P: Space<S>>(
                 .jacobian
                 .iter()
                 .chain(&e.constraints.jacobian)
-                .any(|row| row[i].definitely_not_equal(S::ZERO))
+                .any(|row| row[i].definitely_not_equal(Scalar::ZERO))
         })
         .collect();
     // The sum and the violation at every point taken: a step must
     // definitely improve on each in one of the two.
-    let mut filter: Vec<(S, S)> = Vec::new();
-    let mut mu = S::from_ratio(1, 1000)?;
+    let mut filter: Vec<(Scalar, Scalar)> = Vec::new();
+    let mut mu = Scalar::from_ratio(1, 1000)?;
     let mut turned_down = 0;
-    let mut b = vec![vec![S::ZERO; n]; n];
+    let mut b = vec![vec![Scalar::ZERO; n]; n];
     // The length of the last step taken.
-    let mut last: Option<S> = None;
+    let mut last: Option<Scalar> = None;
     // How far a step may go: what bounds a step along the constraints, which
     // `λ` does not damp — their linearization holds only so far.
     let mut radius = options.max_step;
@@ -582,7 +583,7 @@ pub async fn minimize<S: Scalar, P: Space<S>>(
         // Whether this iteration's steps leave out the curvature learned
         // (see below).
         let mut plain = false;
-        let no_curvature = vec![vec![S::ZERO; n]; n];
+        let no_curvature = vec![vec![Scalar::ZERO; n]; n];
         let accepted = loop {
             let curvature = if plain { &no_curvature } else { &b };
             if let Some(Step {
@@ -602,16 +603,16 @@ pub async fn minimize<S: Scalar, P: Space<S>>(
                 // `B` lengthened where the constraints curve the sum down
                 // looked to the rows alone like no drop at all: a gear pair
                 // dragged a quarter turn stopped, flat, at 36°.
-                let expects = |delta: &[S]| -> GeopResult<bool> {
-                    let bent = (0..n).fold(S::ZERO, |sum, i| {
+                let expects = |delta: &[Scalar]| -> GeopResult<bool> {
+                    let bent = (0..n).fold(Scalar::ZERO, |sum, i| {
                         sum.add(delta[i].mul(dot(&curvature[i], delta)))
                     });
                     Ok(f.sub(e.sum.squared(delta))
                         .sub(bent)
-                        .definitely_greater(S::ZERO)
+                        .definitely_greater(Scalar::ZERO)
                         || theta
                             .sub(norm(&e.constraints.linearized(delta))?)
-                            .definitely_greater(S::ZERO))
+                            .definitely_greater(Scalar::ZERO))
                 };
                 if !expects(&delta)? {
                     return Ok(Outcome {
@@ -675,8 +676,7 @@ pub async fn minimize<S: Scalar, P: Space<S>>(
                                 turned_down,
                             });
                         }
-                        let taken =
-                            |j: &Judged<S>| j.lower || (first && j.undecided && j.contracting);
+                        let taken = |j: &Judged| j.lower || (first && j.undecided && j.contracting);
                         if taken(&judged) {
                             let (next, e_next, _) = landed;
                             let length = judged.length;
@@ -684,11 +684,11 @@ pub async fn minimize<S: Scalar, P: Space<S>>(
                             // rounds a small one to in fixed point: no
                             // growth brings it back, and a step turned down
                             // is then tried again as it was, forever.
-                            let shrunk = mu.div(S::from_i64(SHRINK))?.sharpen();
-                            if shrunk.definitely_greater(S::ZERO) {
+                            let shrunk = mu.div(Scalar::from_i64(SHRINK))?.sharpen();
+                            if shrunk.definitely_greater(Scalar::ZERO) {
                                 mu = shrunk;
                             }
-                            let reach = S::TWO.mul(length);
+                            let reach = Scalar::TWO.mul(length);
                             if reach.definitely_greater(radius) {
                                 radius = if reach.definitely_less(options.max_step) {
                                     reach.upper()
@@ -699,7 +699,7 @@ pub async fn minimize<S: Scalar, P: Space<S>>(
                             // Without the curvature learned, where that did better:
                             // it is learned afresh from here.
                             if plain {
-                                b.iter_mut().flatten().for_each(|v| *v = S::ZERO);
+                                b.iter_mut().flatten().for_each(|v| *v = Scalar::ZERO);
                             }
                             update_curvature(&mut b, &judged.s, &e, &e_next, &lambda)?;
                             filter.push((f, theta));
@@ -720,14 +720,14 @@ pub async fn minimize<S: Scalar, P: Space<S>>(
                     } else {
                         rejected = Some(Rejection::Infeasible);
                     }
-                    radius = tried.div(S::from_i64(GROW))?.sharpen();
+                    radius = tried.div(Scalar::from_i64(GROW))?.sharpen();
                 }
             } else {
                 rejected = Some(Rejection::NotPositive);
             }
             first = false;
             turned_down += 1;
-            mu = mu.mul(S::from_i64(GROW)).sharpen();
+            mu = mu.mul(Scalar::from_i64(GROW)).sharpen();
             if !mu.is_finite() {
                 break None;
             }
@@ -753,10 +753,10 @@ pub async fn minimize<S: Scalar, P: Space<S>>(
 /// How the step `s` from a point (evaluated as `e`) to the next (as
 /// `e_next`) fares — see [`minimize`], where it is taken or turned down on
 /// this.
-struct Judged<S: Scalar> {
+struct Judged {
     /// The step, and its length.
-    s: Vec<S>,
-    length: S,
+    s: Vec<Scalar>,
+    length: Scalar,
     /// It definitely improves on `x`, and is not worse in both than any
     /// point taken before.
     lower: bool,
@@ -767,14 +767,14 @@ struct Judged<S: Scalar> {
     contracting: bool,
 }
 
-fn judge<S: Scalar>(
-    e: &Evaluation<S>,
-    e_next: &Evaluation<S>,
-    theta: S,
-    filter: &[(S, S)],
-    last: Option<S>,
-    s: Vec<S>,
-) -> GeopResult<Judged<S>> {
+fn judge(
+    e: &Evaluation,
+    e_next: &Evaluation,
+    theta: Scalar,
+    filter: &[(Scalar, Scalar)],
+    last: Option<Scalar>,
+    s: Vec<Scalar>,
+) -> GeopResult<Judged> {
     let length = norm(&s)?;
     // `Σ r² - Σ r'²` summed as `Σ (r - r')(r + r')`: near the minimum of a
     // sum that stays large, the difference of the two sums is lost to their
@@ -784,7 +784,7 @@ fn judge<S: Scalar>(
         .values
         .iter()
         .zip(&e_next.sum.values)
-        .fold(S::ZERO, |sum, (&r, &r_next)| {
+        .fold(Scalar::ZERO, |sum, (&r, &r_next)| {
             sum.add(r.sub(r_next).mul(r.add(r_next)))
         });
     let theta_next = norm(&e_next.constraints.values)?;
@@ -797,16 +797,16 @@ fn judge<S: Scalar>(
     // a solution — until rounding stops it shrinking, which is where it
     // ends. Shrinking any less is no contraction: steps that only barely
     // shrink add up to any distance at all.
-    let improves =
-        lower_sum.definitely_greater(S::ZERO) || lower_violation.definitely_greater(S::ZERO);
+    let improves = lower_sum.definitely_greater(Scalar::ZERO)
+        || lower_violation.definitely_greater(Scalar::ZERO);
     let lower = improves
         && filter.iter().all(|&(f_taken, theta_taken)| {
             f_next.definitely_less(f_taken) || theta_next.definitely_less(theta_taken)
         });
-    let undecided = [lower_sum, lower_violation]
-        .iter()
-        .all(|change| !change.definitely_greater(S::ZERO) && !change.definitely_less(S::ZERO));
-    let contracting = last.is_some_and(|last| S::TWO.mul(length).definitely_less(last));
+    let undecided = [lower_sum, lower_violation].iter().all(|change| {
+        !change.definitely_greater(Scalar::ZERO) && !change.definitely_less(Scalar::ZERO)
+    });
+    let contracting = last.is_some_and(|last| Scalar::TWO.mul(length).definitely_less(last));
     Ok(Judged {
         s,
         length,
@@ -838,15 +838,15 @@ const CORRECTIONS: usize = 4;
 /// A step that brought the constraints nearer is left as it is: the
 /// shortest moves are not the ones the sum prefers, and correcting every
 /// step drifted a sketch's line off where it was.
-async fn corrected<S: Scalar, P: Space<S>>(
+async fn corrected<P: Space>(
     space: &P,
-    evaluate: &impl AsyncFn(&P::Point) -> Option<Evaluation<S>>,
+    evaluate: &impl AsyncFn(&P::Point) -> Option<Evaluation>,
     moving: &[bool],
-    before: S,
+    before: Scalar,
     mut x: P::Point,
-    mut e: Evaluation<S>,
-    mut taken: Vec<S>,
-) -> GeopResult<(P::Point, Evaluation<S>, Vec<S>)> {
+    mut e: Evaluation,
+    mut taken: Vec<Scalar>,
+) -> GeopResult<(P::Point, Evaluation, Vec<Scalar>)> {
     if !norm(&e.constraints.values)?.definitely_greater(before) {
         return Ok((x, e, taken));
     }
@@ -854,19 +854,19 @@ async fn corrected<S: Scalar, P: Space<S>>(
         let theta = norm(&e.constraints.values)?;
         // δ = -J_cᵀ k with J_c J_cᵀ k = c: the shortest step meeting the
         // linearized constraints, rows that say nothing new left out.
-        let jc: Vec<Vec<S>> = e
+        let jc: Vec<Vec<Scalar>> = e
             .constraints
             .jacobian
             .iter()
             .map(|row| {
                 row.iter()
                     .zip(moving)
-                    .map(|(&v, &m)| if m { choose(v) } else { S::ZERO })
+                    .map(|(&v, &m)| if m { choose(v) } else { Scalar::ZERO })
                     .collect()
             })
             .collect();
-        let zero = vec![S::ZERO; taken.len()];
-        let d: Vec<S> = (minus_solved(&jc, &sharp(&e.constraints.values), &zero)?.into_iter())
+        let zero = vec![Scalar::ZERO; taken.len()];
+        let d: Vec<Scalar> = (minus_solved(&jc, &sharp(&e.constraints.values), &zero)?.into_iter())
             .map(Scalar::sharpen)
             .collect();
         if !d.iter().all(|v| v.is_finite()) {
@@ -897,25 +897,25 @@ async fn corrected<S: Scalar, P: Space<S>>(
 }
 
 /// Whether any curvature has been learned into `b`.
-fn learned<S: Scalar>(b: &[Vec<S>]) -> bool {
+fn learned(b: &[Vec<Scalar>]) -> bool {
     b.iter()
         .flatten()
-        .any(|v| !v.is_sharp() || v.definitely_not_equal(S::ZERO))
+        .any(|v| !v.is_sharp() || v.definitely_not_equal(Scalar::ZERO))
 }
 
 /// The part of `v` along the constraints — orthogonal to the rows of their
 /// Jacobian, `v - J_cᵀ (J_c J_cᵀ)⁻¹ J_c v` — chosen (see [`choose`]); rows
 /// that say nothing the others do not left out.
-fn along<S: Scalar>(constraints: &Rows<S>, v: &[S]) -> GeopResult<Vec<S>> {
-    let jc: Vec<Vec<S>> = constraints.jacobian.iter().map(|r| sharp(r)).collect();
-    let rhs: Vec<S> = jc.iter().map(|row| dot(row, v)).collect();
+fn along(constraints: &Rows, v: &[Scalar]) -> GeopResult<Vec<Scalar>> {
+    let jc: Vec<Vec<Scalar>> = constraints.jacobian.iter().map(|r| sharp(r)).collect();
+    let rhs: Vec<Scalar> = jc.iter().map(|row| dot(row, v)).collect();
     minus_solved(&jc, &rhs, v)
 }
 
 /// `from - J_cᵀ k` with `J_c J_cᵀ k = rhs`, chosen (see [`choose`]); rows
 /// of `jc` that say nothing the others do not left out.
-fn minus_solved<S: Scalar>(jc: &[Vec<S>], rhs: &[S], from: &[S]) -> GeopResult<Vec<S>> {
-    let gram: Vec<Vec<S>> = jc
+fn minus_solved(jc: &[Vec<Scalar>], rhs: &[Scalar], from: &[Scalar]) -> GeopResult<Vec<Scalar>> {
+    let gram: Vec<Vec<Scalar>> = jc
         .iter()
         .map(|a| jc.iter().map(|b| dot(a, b)).collect())
         .collect();
@@ -932,12 +932,12 @@ fn minus_solved<S: Scalar>(jc: &[Vec<S>], rhs: &[S], from: &[S]) -> GeopResult<V
 /// structured symmetric rank-one update): `b` then turns the gradient along
 /// `s` exactly as it did, curving up or down. Skipped where the correction
 /// could be square to `s`, which leaves its size undetermined.
-fn update_curvature<S: Scalar>(
-    b: &mut [Vec<S>],
-    s: &[S],
-    e: &Evaluation<S>,
-    e_next: &Evaluation<S>,
-    lambda: &[S],
+fn update_curvature(
+    b: &mut [Vec<Scalar>],
+    s: &[Scalar],
+    e: &Evaluation,
+    e_next: &Evaluation,
+    lambda: &[Scalar],
 ) -> GeopResult<()> {
     let n = s.len();
     let r_next = sharp(&e_next.sum.values);
@@ -945,7 +945,7 @@ fn update_curvature<S: Scalar>(
     let constraints_before = e.constraints.transposed(lambda, n);
     let sum_next = e_next.sum.transposed(&r_next, n);
     let sum_before = e.sum.transposed(&r_next, n);
-    let y: Vec<S> = (0..n)
+    let y: Vec<Scalar> = (0..n)
         .map(|i| {
             constraints_next[i]
                 .sub(constraints_before[i])
@@ -957,19 +957,22 @@ fn update_curvature<S: Scalar>(
     // step goes, so a curvature there means nothing — and a large one, along
     // a variable they hold outright, would only skew their solve.
     let s = along(&e.constraints, s)?;
-    let bs: Vec<S> = (0..n).map(|i| dot(&b[i], &s)).collect();
+    let bs: Vec<Scalar> = (0..n).map(|i| dot(&b[i], &s)).collect();
     // `(y - B s)·s`, asked of `y`'s honest enclosure — the same along the
     // constraints as off them, `s` being along them. Where it could be
     // zero, the correction is square to the step as far as the gradients
     // tell, and dividing by it would make the curvature whatever their
     // rounding says.
-    if !dot(&y, &s).sub(dot(&bs, &s)).definitely_not_equal(S::ZERO) {
+    if !dot(&y, &s)
+        .sub(dot(&bs, &s))
+        .definitely_not_equal(Scalar::ZERO)
+    {
         return Ok(());
     }
     let y = along(&e.constraints, &y)?;
-    let v: Vec<S> = (0..n).map(|i| choose(y[i].sub(bs[i]))).collect();
+    let v: Vec<Scalar> = (0..n).map(|i| choose(y[i].sub(bs[i]))).collect();
     let vs = choose(dot(&v, &s));
-    if !vs.definitely_not_equal(S::ZERO) {
+    if !vs.definitely_not_equal(Scalar::ZERO) {
         return Ok(());
     }
     for i in 0..n {
@@ -985,11 +988,11 @@ mod tests {
     use super::*;
 
     /// [`super::minimize`], every evaluation answered as it is asked.
-    fn minimize<P: Space<S>>(
+    fn minimize<P: Space>(
         space: &P,
-        evaluate: impl Fn(&P::Point) -> Option<Evaluation<S>>,
+        evaluate: impl Fn(&P::Point) -> Option<Evaluation>,
         x0: P::Point,
-        options: Options<S>,
+        options: Options,
     ) -> GeopResult<Outcome<P::Point>> {
         let work = std::pin::pin!(super::minimize(
             space,
@@ -1003,26 +1006,23 @@ mod tests {
             std::task::Poll::Pending => panic!("nothing awaited is pending"),
         }
     }
-    use crate::scalars::{Field, Ring, ScalInF64};
 
-    type S = ScalInF64;
-
-    fn s(v: f64) -> S {
-        S::from_f64(v)
+    fn s(v: f64) -> Scalar {
+        Scalar::from_f64(v)
     }
 
-    fn options() -> Options<S> {
+    fn options() -> Options {
         Options {
             max_iterations: 500,
             max_step: s(10.0),
         }
     }
 
-    fn rows(values: Vec<S>, jacobian: Vec<Vec<S>>) -> Rows<S> {
+    fn rows(values: Vec<Scalar>, jacobian: Vec<Vec<Scalar>>) -> Rows {
         Rows { values, jacobian }
     }
 
-    fn at(outcome: &Outcome<Vec<S>>) -> Vec<f64> {
+    fn at(outcome: &Outcome<Vec<Scalar>>) -> Vec<f64> {
         outcome.x.iter().map(|v| v.to_f64()).collect()
     }
 
@@ -1031,13 +1031,13 @@ mod tests {
     fn minimizes_rosenbrock() {
         let outcome = minimize(
             &Euclidean,
-            |x: &Vec<S>| {
+            |x: &Vec<Scalar>| {
                 let (a, b) = (x[0], x[1]);
                 Some(Evaluation {
                     constraints: Rows::default(),
                     sum: rows(
-                        vec![S::ONE.sub(a), s(10.0).mul(b.sub(a.mul(a)))],
-                        vec![vec![s(-1.0), S::ZERO], vec![s(-20.0).mul(a), s(10.0)]],
+                        vec![Scalar::ONE.sub(a), s(10.0).mul(b.sub(a.mul(a)))],
+                        vec![vec![s(-1.0), Scalar::ZERO], vec![s(-20.0).mul(a), s(10.0)]],
                     ),
                 })
             },
@@ -1057,9 +1057,12 @@ mod tests {
     fn free_variables_stay_put() {
         let outcome = minimize(
             &Euclidean,
-            |x: &Vec<S>| {
+            |x: &Vec<Scalar>| {
                 Some(Evaluation {
-                    constraints: rows(vec![x[0].sub(s(2.0))], vec![vec![S::ONE, S::ZERO]]),
+                    constraints: rows(
+                        vec![x[0].sub(s(2.0))],
+                        vec![vec![Scalar::ONE, Scalar::ZERO]],
+                    ),
                     sum: Rows::default(),
                 })
             },
@@ -1083,16 +1086,19 @@ mod tests {
     fn minimizes_on_a_circle() {
         let outcome = minimize(
             &Euclidean,
-            |x: &Vec<S>| {
+            |x: &Vec<Scalar>| {
                 let (a, b) = (x[0], x[1]);
                 Some(Evaluation {
                     constraints: rows(
-                        vec![a.mul(a).add(b.mul(b)).sub(S::ONE)],
-                        vec![vec![S::TWO.mul(a), S::TWO.mul(b)]],
+                        vec![a.mul(a).add(b.mul(b)).sub(Scalar::ONE)],
+                        vec![vec![Scalar::TWO.mul(a), Scalar::TWO.mul(b)]],
                     ),
                     sum: rows(
                         vec![a.sub(s(3.0)), b.sub(s(4.0))],
-                        vec![vec![S::ONE, S::ZERO], vec![S::ZERO, S::ONE]],
+                        vec![
+                            vec![Scalar::ONE, Scalar::ZERO],
+                            vec![Scalar::ZERO, Scalar::ONE],
+                        ],
                     ),
                 })
             },
@@ -1113,11 +1119,11 @@ mod tests {
     fn repeated_constraints_are_met() {
         let outcome = minimize(
             &Euclidean,
-            |x: &Vec<S>| {
-                let c = x[0].add(x[1]).sub(S::ONE);
+            |x: &Vec<Scalar>| {
+                let c = x[0].add(x[1]).sub(Scalar::ONE);
                 Some(Evaluation {
-                    constraints: rows(vec![c, c], vec![vec![S::ONE, S::ONE]; 2]),
-                    sum: rows(vec![x[0]], vec![vec![S::ONE, S::ZERO]]),
+                    constraints: rows(vec![c, c], vec![vec![Scalar::ONE, Scalar::ONE]; 2]),
+                    sum: rows(vec![x[0]], vec![vec![Scalar::ONE, Scalar::ZERO]]),
                 })
             },
             vec![s(0.3), s(0.3)],
@@ -1137,14 +1143,14 @@ mod tests {
     fn a_free_variable_between_others_stays_put() {
         let outcome = minimize(
             &Euclidean,
-            |x: &Vec<S>| {
+            |x: &Vec<Scalar>| {
                 Some(Evaluation {
                     constraints: Rows::default(),
                     sum: rows(
-                        vec![x[0].sub(S::ONE), x[2].sub(S::TWO)],
+                        vec![x[0].sub(Scalar::ONE), x[2].sub(Scalar::TWO)],
                         vec![
-                            vec![S::ONE, S::ZERO, S::ZERO],
-                            vec![S::ZERO, S::ZERO, S::ONE],
+                            vec![Scalar::ONE, Scalar::ZERO, Scalar::ZERO],
+                            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE],
                         ],
                     ),
                 })
@@ -1160,29 +1166,29 @@ mod tests {
     /// `(1, 0)`: it turns about the fixed point until it is straight below
     /// the pull — a pull it can never meet, against a constraint that curves.
     /// The residuals of [`a_held_point_follows_a_pull_round`] at `x`.
-    fn held_point(x: &[S]) -> Option<Evaluation<S>> {
+    fn held_point(x: &[Scalar]) -> Option<Evaluation> {
         {
             {
                 let (ax, ay, bx, by) = (x[0], x[1], x[2], x[3]);
                 let (dx, dy) = (bx.sub(ax), by.sub(ay));
                 let l = dx.mul(dx).add(dy.mul(dy)).sqrt().ok()?;
                 let (ux, uy) = (dx.div(l).ok()?, dy.div(l).ok()?);
-                let z = S::ZERO;
+                let z = Scalar::ZERO;
                 let w = s(1e-4);
                 Some(Evaluation {
                     constraints: rows(
-                        vec![ax, ay, l.sub(S::ONE)],
+                        vec![ax, ay, l.sub(Scalar::ONE)],
                         vec![
-                            vec![S::ONE, z, z, z],
-                            vec![z, S::ONE, z, z],
+                            vec![Scalar::ONE, z, z, z],
+                            vec![z, Scalar::ONE, z, z],
                             vec![ux.neg(), uy.neg(), ux, uy],
                         ],
                     ),
                     sum: rows(
                         vec![bx, by.sub(s(3.0)), w.mul(ax), w.mul(ay)],
                         vec![
-                            vec![z, z, S::ONE, z],
-                            vec![z, z, z, S::ONE],
+                            vec![z, z, Scalar::ONE, z],
+                            vec![z, z, z, Scalar::ONE],
                             vec![w, z, z, z],
                             vec![z, w, z, z],
                         ],
@@ -1196,10 +1202,10 @@ mod tests {
     fn a_held_point_follows_a_pull_round() {
         let outcome = minimize(
             &Euclidean,
-            |x: &Vec<S>| held_point(x),
+            |x: &Vec<Scalar>| held_point(x),
             vec![s(0.0), s(0.0), s(1.0), s(0.0)],
             Options {
-                max_step: S::ONE,
+                max_step: Scalar::ONE,
                 ..options()
             },
         )
@@ -1220,27 +1226,27 @@ mod tests {
         let (bx, by) = (s(0.0004572033706418954), s(1.0003621608700888));
         let l = bx.mul(bx).add(by.mul(by)).sqrt().unwrap();
         let (ux, uy) = (bx.div(l).unwrap(), by.div(l).unwrap());
-        let (z, w) = (S::ZERO, s(1e-4));
+        let (z, w) = (Scalar::ZERO, s(1e-4));
         let e = Evaluation {
             constraints: rows(
-                vec![z, z, l.sub(S::ONE)],
+                vec![z, z, l.sub(Scalar::ONE)],
                 vec![
-                    vec![S::ONE, z, z, z],
-                    vec![z, S::ONE, z, z],
+                    vec![Scalar::ONE, z, z, z],
+                    vec![z, Scalar::ONE, z, z],
                     vec![ux.neg(), uy.neg(), ux, uy],
                 ],
             ),
             sum: rows(
                 vec![bx, by.sub(s(3.0)), z, z],
                 vec![
-                    vec![z, z, S::ONE, z],
-                    vec![z, z, z, S::ONE],
+                    vec![z, z, Scalar::ONE, z],
+                    vec![z, z, z, Scalar::ONE],
                     vec![w, z, z, z],
                     vec![z, w, z, z],
                 ],
             ),
         };
-        let b = vec![vec![S::ZERO; 4]; 4];
+        let b = vec![vec![Scalar::ZERO; 4]; 4];
         for mu in [
             1e-30,
             1e-12,
@@ -1254,7 +1260,7 @@ mod tests {
             let Step { delta, lambda, .. } = step(&e, &b, &[true; 4], s(mu)).unwrap().unwrap();
             let after = e.constraints.squared(&delta).sqrt().unwrap();
             assert!(
-                after.definitely_less(l.sub(S::ONE)),
+                after.definitely_less(l.sub(Scalar::ONE)),
                 "damped {mu}: {delta:?}, {lambda:?}, violation after {after:?}"
             );
         }
@@ -1272,10 +1278,10 @@ mod tests {
             s(1.0000000001445193),
         ];
         let e = held_point(&x).unwrap();
-        let b = vec![vec![S::ZERO; 4]; 4];
+        let b = vec![vec![Scalar::ZERO; 4]; 4];
         for mu in [4.572473708276175e-7, 1e-3, 1.0] {
             let Step { delta, lambda, .. } = step(&e, &b, &[true; 4], s(mu)).unwrap().unwrap();
-            let after: Vec<S> = e
+            let after: Vec<Scalar> = e
                 .constraints
                 .values
                 .iter()
@@ -1293,14 +1299,15 @@ mod tests {
     /// that counts.
     #[test]
     fn a_step_meets_repeated_constraints() {
-        let c = s(0.3).add(s(0.3)).sub(S::ONE);
+        let c = s(0.3).add(s(0.3)).sub(Scalar::ONE);
         let e = Evaluation {
-            constraints: rows(vec![c, c], vec![vec![S::ONE, S::ONE]; 2]),
-            sum: rows(vec![s(0.3)], vec![vec![S::ONE, S::ZERO]]),
+            constraints: rows(vec![c, c], vec![vec![Scalar::ONE, Scalar::ONE]; 2]),
+            sum: rows(vec![s(0.3)], vec![vec![Scalar::ONE, Scalar::ZERO]]),
         };
-        let Step { delta, lambda, .. } = step(&e, &vec![vec![S::ZERO; 2]; 2], &[true; 2], s(1e-3))
-            .unwrap()
-            .unwrap();
+        let Step { delta, lambda, .. } =
+            step(&e, &vec![vec![Scalar::ZERO; 2]; 2], &[true; 2], s(1e-3))
+                .unwrap()
+                .unwrap();
         let after: Vec<f64> = e
             .constraints
             .values

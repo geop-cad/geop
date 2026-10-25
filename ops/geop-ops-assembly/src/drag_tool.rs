@@ -8,7 +8,7 @@ use geop_core_editor::{
     tools::{Tool, ToolInfo},
 };
 use geop_core_math::{geop_error::GeopResult, vector::Vector3};
-use geop_core_program::{program::Program, values::Design};
+use geop_core_program::program::Program;
 
 use crate::{
     icons,
@@ -34,10 +34,10 @@ struct Grabbed {
     parameter: String,
     /// The point grabbed, in its own frame: where the pointer was, a free
     /// choice, so sharp.
-    local: Vector3<Design>,
+    local: Vector3,
     /// The plane it is dragged in: through the point grabbed, facing the
     /// eye — `(point, normal)`.
-    plane: (Vector3<Design>, Vector3<Design>),
+    plane: (Vector3, Vector3),
     /// The program when it was grabbed: what undoing the drag goes back to.
     before: Program,
 }
@@ -66,11 +66,7 @@ impl Tool for DragTool {
     /// the plane through it facing the eye — and solves the program's mates
     /// with that pull, every part that is not fixed free to give way. A
     /// drag, once released, is one edit to undo.
-    fn handle(
-        &mut self,
-        ctx: &mut EditorContext,
-        event: &StepEditEvent<Design>,
-    ) -> GeopResult<Changed> {
+    fn handle(&mut self, ctx: &mut EditorContext, event: &StepEditEvent) -> GeopResult<Changed> {
         let part_at = |ctx: &EditorContext, pointer| {
             let view = ctx.drawn()?;
             let (instance, t) = view.part_to_drag(pointer)?;
@@ -128,7 +124,7 @@ impl Tool for DragTool {
 
     /// What it shows: the part it would drag, or drags, lit — and that a
     /// press grabs it.
-    fn presentation(&self) -> Presentation<Design> {
+    fn presentation(&self) -> Presentation {
         let lit = (self.grab.as_ref().map(|g| &g.name)).or(self.hover.as_ref());
         Presentation {
             dialog: Dialog::new(),

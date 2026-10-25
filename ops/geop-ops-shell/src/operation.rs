@@ -14,7 +14,6 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::ElementReference, numeric::NumericInput, part::StepContext, reader::Reader,
-    values::Design,
 };
 use geop_lib_shell::shell;
 use geop_ops_model::{
@@ -24,8 +23,8 @@ use serde::{Deserialize, Serialize};
 
 /// Hollows the solid named `solid` out to walls `thickness` thick, open
 /// where its faces `faces` were — closed all round, with a void inside, if
-/// none is picked. The result replaces the solid and is named `shell(S)`
-/// for the operation `S`; what it is made of is named as
+/// none is picked. The result replaces the solid and is named `shell(Scalar)`
+/// for the operation `Scalar`; what it is made of is named as
 /// [`geop_lib_shell::shell()`] says.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Shell;
@@ -33,10 +32,10 @@ pub struct Shell;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ShellArgs {
     /// The solid to hollow.
-    pub solid: ElementReference<NamedModel<Design>, Solid>,
+    pub solid: ElementReference<NamedModel, Solid>,
     /// The faces of it to take away, leaving openings.
     #[serde(default)]
-    pub faces: Vec<ElementReference<NamedModel<Design>, Face>>,
+    pub faces: Vec<ElementReference<NamedModel, Face>>,
     /// How thick the walls are, measured inward from the solid's faces: a
     /// number, or a formula of the part's parameters.
     pub thickness: NumericInput,
@@ -78,9 +77,9 @@ impl PartOperation for Shell {
         context: &'a Context<'a>,
         args: &ShellArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, ShellArgs> {
+    ) -> EditForm<'a, ShellArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, ShellArgs>::default();
+        let mut f = EditForm::<ShellArgs>::default();
         f.pick_one(
             "solid",
             "solid",
@@ -113,7 +112,7 @@ impl PartOperation for Shell {
 
 impl ModelOperation for Shell {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &ShellArgs,
@@ -127,7 +126,7 @@ impl ModelOperation for Shell {
         let faces = (args.faces.iter())
             .map(|face| model.face_id(face.name()))
             .collect::<GeopResult<Vec<_>>>()?;
-        shell(model, &namer, solid, &faces, Design::from_f64(thickness))?;
+        shell(model, &namer, solid, &faces, Scalar::from_f64(thickness))?;
         Ok(())
     }
 }

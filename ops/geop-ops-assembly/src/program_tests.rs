@@ -15,7 +15,7 @@ use geop_core_program::{
     reader::Reader,
     runner::Runner,
     testing::{assert_incremental, assert_round_trips, edit_args, edit_sequence},
-    values::{Design, Setting, StateValue, StateValues, pose_state},
+    values::{Setting, StateValue, StateValues, pose_state},
     workspace::{self, FileStore, Files, Location},
 };
 use geop_lib_stdlib::WithStandardParts;
@@ -28,7 +28,7 @@ use geop_core_editor::{
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::{DatumComponent, FrameAxis, Pose, Ray},
-    scalars::{ScalInF64 as S, Scalar},
+    scalars::Scalar,
     vector::Vector3,
 };
 use geop_core_sketch::PointId;
@@ -169,7 +169,7 @@ impl Built {
     /// The mates solved with `pull`: where they hold, a true solution near
     /// there is enclosed — every value moved — at no more than the solve's
     /// cost.
-    fn solve_mates(&mut self, pull: Pull<Design>) -> GeopResult<(StateValues, Report)> {
+    fn solve_mates(&mut self, pull: Pull) -> GeopResult<(StateValues, Report)> {
         let state = self.program.state.clone();
         let (moved, report) = solving::solve(&mut self.rerun(), &state, &[pull], None)?;
         if report.converged {
@@ -192,7 +192,7 @@ impl Built {
     }
 
     fn solve_joints(&mut self, set: &[(&str, f64)]) -> GeopResult<(StateValues, Report)> {
-        let set: BTreeMap<String, Design> =
+        let set: BTreeMap<String, Scalar> =
             (set.iter()).map(|(p, v)| (p.to_string(), n(*v))).collect();
         let state = self.program.state.clone();
         solving::set(&mut self.rerun(), &state, &set)
@@ -240,7 +240,7 @@ impl Built {
     fn placed(
         &self,
         entity: &MateEntity,
-        of: impl Fn(&geop_ops_model::selection::Shape) -> Option<Vector3<Design>>,
+        of: impl Fn(&geop_ops_model::selection::Shape) -> Option<Vector3>,
     ) -> [f64; 3] {
         let reader = self.view();
         let p = of(&entity.shape(&reader).unwrap()).expect("the entity has that point");
@@ -535,14 +535,14 @@ fn a_fixed_mate_added_in_the_dialog_holds_the_part() {
 }
 
 /// Where `pose` puts its body's origin.
-fn position(pose: &Pose<Design>) -> [f64; 3] {
+fn position(pose: &Pose) -> [f64; 3] {
     let p = pose.position();
     [0, 1, 2].map(|k| p[k].to_f64())
 }
 
 /// Where `program`'s state puts the part placed as `instance`: with no
 /// pose there — nothing ever moved it — at the origin.
-fn pose_of(program: &Program, instance: &str) -> Pose<Design> {
+fn pose_of(program: &Program, instance: &str) -> Pose {
     let (outer, name) = split_instance_path(instance);
     match program
         .state
@@ -974,7 +974,7 @@ fn the_drag_tool_drags_any_placed_part() {
 }
 
 /// Where `program`'s state puts every placed part, by parameter.
-fn poses(program: &Program) -> Vec<(String, Pose<Design>)> {
+fn poses(program: &Program) -> Vec<(String, Pose)> {
     program
         .state
         .iter()
@@ -1016,11 +1016,11 @@ fn drive_chain(
     // Seen from in front and above — so the plane a drag moves in, facing
     // the eye, is tilted, and the pointer pulls along the pins too.
     let eye = |x: f64, y: f64| {
-        let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+        let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
         Pointer {
             ray: Ray::try_new(v([x, y - 8.0, 8.2]), v([0.0, 8.0, -8.0])).unwrap(),
             reach: Reach::Tube {
-                radius: S::from_f64(0.009),
+                radius: Scalar::from_f64(0.009),
             },
         }
     };
@@ -1137,7 +1137,7 @@ fn solves_along(path: &[[f64; 2]]) -> Vec<Report> {
     let workspace = workspace(files);
     let library = workspace.clone();
     let mut program = examples::chain_assembly();
-    let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+    let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
     path.iter()
         .map(|to| {
             let mut part = build(&program, &library).unwrap();
@@ -1288,7 +1288,7 @@ fn the_four_bar_crank_turns_all_the_way_round() {
     let (files, mut program) = workspace_example("four_bar");
     let workspace = workspace(files);
     let library = workspace.clone();
-    let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+    let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
     for step in 1..=36 {
         let angle = (60.0 + 10.0 * f64::from(step)).to_radians();
         let mut part = build(&program, &library).unwrap();
@@ -1349,7 +1349,7 @@ fn the_arm_is_dragged_up_to_its_limit() {
     let workspace = workspace(files);
     let library = workspace.clone();
     let mut part = build(&program, &library).unwrap();
-    let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+    let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
     let a = 170.0_f64.to_radians();
     let drag = Pull::Point {
         parameter: "fore.pose".into(),
@@ -1838,7 +1838,7 @@ fn the_bolted_plate_holds_together() {
     .unwrap();
     let view = runner.part.current();
     assert!(solving::check(&view).unwrap().converged);
-    let v = |p: [f64; 3]| Vector3::from_array(p.map(Design::from_f64));
+    let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
     for (instance, local, want) in [
         ("screw", [0.0, 0.0, -12.0], [20.0, 20.0, -7.0]),
         ("nut", [0.0, 0.0, 3.2], [20.0, 20.0, -3.2]),

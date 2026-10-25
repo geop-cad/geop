@@ -1,24 +1,21 @@
 use geop_core_geometry::{
     intersection::curve_surface_intersect, nurb_curve::NurbCurve, nurb_surface::NurbSurface,
 };
-use geop_core_math::{
-    scalars::{ScalInF64, Scalar},
-    vector::Vector4,
-};
+use geop_core_math::{scalars::Scalar, vector::Vector4};
 use geop_core_rasterize::debug::{Color10, PrimitiveScene};
 
-fn f(v: f64) -> ScalInF64 {
-    ScalInF64::from_f64(v)
+fn f(v: f64) -> Scalar {
+    Scalar::from_f64(v)
 }
 
 /// Homogeneous control point with unit weight.
-fn pt(x: f64, y: f64, z: f64) -> Vector4<ScalInF64> {
-    Vector4::from_array([f(x), f(y), f(z), ScalInF64::ONE])
+fn pt(x: f64, y: f64, z: f64) -> Vector4 {
+    Vector4::from_array([f(x), f(y), f(z), Scalar::ONE])
 }
 
 /// Homogeneous control point with weight `w`, given its Cartesian position
 /// `(x, y, z)` (used for rational curves/surfaces such as circles/spheres).
-fn pt_w(x: f64, y: f64, z: f64, w: f64) -> Vector4<ScalInF64> {
+fn pt_w(x: f64, y: f64, z: f64, w: f64) -> Vector4 {
     Vector4::from_array([f(x * w), f(y * w), f(z * w), f(w)])
 }
 
@@ -38,10 +35,10 @@ const SOLUTION_COLORS: [Color10; 8] = [
 /// `out_path`.
 fn run_case(
     label: &str,
-    curve: &NurbCurve<ScalInF64, 4>,
-    surface: &NurbSurface<ScalInF64, 4>,
+    curve: &NurbCurve<4>,
+    surface: &NurbSurface<4>,
     max_solutions: usize,
-    epsilon: ScalInF64,
+    epsilon: Scalar,
     out_path: &str,
 ) {
     let result = curve_surface_intersect(curve, surface, max_solutions, 2000, epsilon)
@@ -64,7 +61,7 @@ fn run_case(
         );
     }
 
-    let mut scene = PrimitiveScene::<ScalInF64>::new();
+    let mut scene = PrimitiveScene::new();
 
     let (u_min, u_max) = surface.domain_u();
     let (v_min, v_max) = surface.domain_v();

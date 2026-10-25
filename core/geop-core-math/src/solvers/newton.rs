@@ -53,12 +53,12 @@ const ITERATIONS: usize = 12;
 /// Plain, unverified Newton: it does not itself certify existence or
 /// uniqueness, so callers check that the refined box can still hold what
 /// they are looking for.
-pub fn refine<S: Scalar, const N: usize>(
-    start: [S; N],
-    domain: [(S, S); N],
-    step: impl Fn([S; N]) -> Option<[S; N]>,
-) -> [S; N] {
-    let clamp = |x: [S; N]| std::array::from_fn(|i| x[i].clamped(domain[i].0, domain[i].1));
+pub fn refine<const N: usize>(
+    start: [Scalar; N],
+    domain: [(Scalar, Scalar); N],
+    step: impl Fn([Scalar; N]) -> Option<[Scalar; N]>,
+) -> [Scalar; N] {
+    let clamp = |x: [Scalar; N]| std::array::from_fn(|i| x[i].clamped(domain[i].0, domain[i].1));
     let sharp = start.map(|s| s.sharpen());
     let Ok(Iterated {
         answer: x,
@@ -112,9 +112,9 @@ impl Newton1d for f64 {
 
 /// Sharpened *before* clamping: `clamped`'s comparisons are exact on a
 /// sharp value, so the seed stays in the domain.
-impl<S: Scalar> Newton1d for S {
+impl Newton1d for Scalar {
     fn could_be_zero(self) -> bool {
-        self.could_be_equal(S::ZERO)
+        self.could_be_equal(Scalar::ZERO)
     }
     fn step(value: Self, slope: Self) -> GeopResult<(Self, f64)> {
         let step = value.div(slope)?;

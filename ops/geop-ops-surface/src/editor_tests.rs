@@ -9,11 +9,7 @@ use geop_core_editor::{
     testing::{built, click_at, dialog, editor_with, from_above, pointer},
     view::drawn,
 };
-use geop_core_math::{
-    primitives::FrameAxis,
-    scalars::{ScalInF64 as S, Scalar},
-    vector::Vector3,
-};
+use geop_core_math::{primitives::FrameAxis, scalars::Scalar, vector::Vector3};
 use geop_core_program::{program::Program, testing::args};
 use geop_ops_extrude_revolve::examples::box_with_drill_hole;
 use geop_ops_model::{element, testing::model_of};
@@ -220,5 +216,5 @@ fn a_uv_surface_picks_its_curves_by_clicks() {
         .vertex_id("network(uv_surface1,sketch3d(along,c5),sketch3d(across,c5))")
         .unwrap();
     let p = part.topology().get_vertex(corner).unwrap().point;
-    assert!(p.could_be_equal(&Vector3::from_array([2.0, 1.5, 1.0].map(S::from_f64))));
+    assert!(p.could_be_equal(&Vector3::from_array([2.0, 1.5, 1.0].map(Scalar::from_f64))));
 }

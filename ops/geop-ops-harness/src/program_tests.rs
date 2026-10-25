@@ -4,7 +4,6 @@
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
-    values::Design,
 };
 use geop_ops_extrude_revolve::{Extents, testing::extrude_sketch};
 use geop_ops_model::selection::Selected;
@@ -65,13 +64,13 @@ fn a_route_between_corners_of_a_block() {
     let part = part.current();
     let laid = cable(&part, "route(cable)").expect("the cable is recorded");
     assert!(
-        laid.length.could_be_equal(Design::from_f64(4.0)),
+        laid.length.could_be_equal(Scalar::from_f64(4.0)),
         "{laid:?}"
     );
     assert!(laid.tightest_bend.is_none());
     let wire = &laid.wires[0];
     assert!(
-        wire.cut_length.could_be_equal(Design::from_f64(5.0)),
+        wire.cut_length.could_be_equal(Scalar::from_f64(5.0)),
         "{wire:?}"
     );
     let note = notes_of(&part)

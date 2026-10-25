@@ -30,7 +30,6 @@ use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{
     element::{HasElements, Kind as ElementKind, whole},
     target::{Target, TargetReference},
-    values::Design,
 };
 use geop_ops_model::selection::Role;
 use serde::{Deserialize, Serialize};
@@ -219,8 +218,8 @@ pub enum Resolved {
     },
     Joint {
         kind: JointKind,
-        a: On<Connector<Design>>,
-        b: On<Connector<Design>>,
+        a: On<Connector>,
+        b: On<Connector>,
     },
     /// The joints it ties, by their names.
     Coupling {

@@ -8,7 +8,7 @@
 //! theorem — `∫ div F dV = ∮ F · n dA` — with `F` chosen per quantity:
 //! `p / 3` for the volume, `(x²/2, 0, 0)` for `∫ x dV`, `(x³/3, 0, 0)` for
 //! `∫ x² dV`, `(x² y / 2, 0, 0)` for `∫ x y dV`, and so on. Each face is a
-//! surface `S(u, v)` over a trimmed region `D` of its parameter plane, with
+//! surface `Scalar(u, v)` over a trimmed region `D` of its parameter plane, with
 //! `n dA = S_u × S_v du dv` pointing out of the solid. A double integral over
 //! `D` is turned into a line integral around it by Green's theorem:
 //!
@@ -90,16 +90,16 @@ const INNER: Quadrature = Quadrature {
 /// estimate of its truncation error — `converged` says whether that
 /// estimate came within the tolerance asked.
 #[derive(Clone, Copy, Debug)]
-pub struct MassProperties<S: Scalar> {
-    pub volume: S,
+pub struct MassProperties {
+    pub volume: Scalar,
     /// The volume times the density: the volume itself, until a density
     /// is given (see [`MassProperties::with_density`]).
-    pub mass: S,
-    pub center: Vector3<S>,
+    pub mass: Scalar,
+    pub center: Vector3,
     /// The inertia tensor about `center`, along the world's axes:
     /// `I_ij = ∫ ρ (|r|² δ_ij - r_i r_j) dV`, `r` measured from `center` —
     /// with `ρ = 1` until a density is given.
-    pub inertia: [[S; 3]; 3],
+    pub inertia: [[Scalar; 3]; 3],
     pub converged: bool,
     /// How many surface points the integration took: the work it did.
     pub evaluations: usize,
@@ -109,9 +109,9 @@ pub struct MassProperties<S: Scalar> {
 /// each is about (see [`symmetric_eigen3`]: where moments coincide, any axis
 /// of their plane is one).
 #[derive(Clone, Copy, Debug)]
-pub struct PrincipalAxes<S: Scalar> {
-    pub moments: [S; 3],
-    pub axes: [Vector3<S>; 3],
+pub struct PrincipalAxes {
+    pub moments: [Scalar; 3],
+    pub axes: [Vector3; 3],
 }
 
 /// The components a solid's integrand has, in this order: volume, the
@@ -120,24 +120,24 @@ pub struct PrincipalAxes<S: Scalar> {
 /// a reference point near the solid, so that the integrands do not cancel.
 const SOLID_COMPONENTS: usize = 10;
 
-/// A function of the point `S(u, v)` and of `S_u × S_v`, of several
+/// A function of the point `Scalar(u, v)` and of `S_u × S_v`, of several
 /// components.
-type PointAndNormal<'a, S> = dyn Fn(&Vector3<S>, &Vector3<S>) -> GeopResult<Vec<S>> + 'a;
+type PointAndNormal<'a> = dyn Fn(&Vector3, &Vector3) -> GeopResult<Vec<Scalar>> + 'a;
 
 /// What is integrated over a face: `g`, of `components` components.
 #[derive(Clone, Copy)]
-struct FaceIntegrand<'a, S: Scalar> {
+struct FaceIntegrand<'a> {
     components: usize,
-    g: &'a PointAndNormal<'a, S>,
+    g: &'a PointAndNormal<'a>,
     /// The degree of `g` along a direction in which the surface is a
     /// polynomial of degree `p`, as a function of `p` — `None` where it is
     /// no polynomial there (see the module docs).
     degree: Option<fn(usize) -> usize>,
 }
 
-impl<S: Scalar> Model<S> {
+impl Model {
     /// The area of the face `face`, and whether its quadrature converged.
-    pub fn face_area(&self, face: FaceId) -> GeopResult<(S, bool)> {
+    pub fn face_area(&self, face: FaceId) -> GeopResult<(Scalar, bool)> {
         let ctx = |e: GeopError| e.with_context(format!("Model::face_area(face={face})"));
         let area = FaceIntegrand {
             components: 1,
@@ -150,9 +150,9 @@ impl<S: Scalar> Model<S> {
 
     /// The area of the boundary of `solid`: the sum of its faces' areas,
     /// and whether every face's quadrature converged.
-    pub fn solid_area(&self, solid: SolidId) -> GeopResult<(S, bool)> {
+    pub fn solid_area(&self, solid: SolidId) -> GeopResult<(Scalar, bool)> {
         let ctx = |e: GeopError| e.with_context(format!("Model::solid_area(solid={solid})"));
-        let mut total = (S::ZERO, true);
+        let mut total = (Scalar::ZERO, true);
         for face in self.solid_faces(solid).with_context(&ctx)? {
             let (area, converged) = self.face_area(face).with_context(&ctx)?;
             total = (total.0.add(area), total.1 && converged);
@@ -168,18 +168,18 @@ impl<S: Scalar> Model<S> {
     /// Fails for a solid whose faces do not enclose a volume definitely
     /// greater than zero — its faces pointing into the material, or its
     /// volume not resolved by the quadrature — naming it.
-    pub fn mass_properties(&self, solid: SolidId) -> GeopResult<MassProperties<S>> {
+    pub fn mass_properties(&self, solid: SolidId) -> GeopResult<MassProperties> {
         let ctx = |e: GeopError| e.with_context(format!("Model::mass_properties(solid={solid})"));
         let faces = self.solid_faces(solid).with_context(&ctx)?;
         let reference = self.reference_point(&faces).with_context(&ctx)?;
-        let mut total = [S::ZERO; SOLID_COMPONENTS];
+        let mut total = [Scalar::ZERO; SOLID_COMPONENTS];
         let mut converged = true;
         let mut evaluations = 0;
-        let g = |p: &Vector3<S>, n: &Vector3<S>| {
+        let g = |p: &Vector3, n: &Vector3| {
             let r = p.sub(&reference);
             let (x, y, z) = (r[0], r[1], r[2]);
-            let half = |a: S| a.div(S::TWO);
-            let third = |a: S| a.div(S::from_f64(3.0));
+            let half = |a: Scalar| a.div(Scalar::TWO);
+            let third = |a: Scalar| a.div(Scalar::from_f64(3.0));
             Ok(vec![
                 third(r.prod_dot(n))?,
                 half(x.mul(x).mul(n[0]))?,
@@ -211,7 +211,7 @@ impl<S: Scalar> Model<S> {
         let [volume, hx, hy, hz, jxx, jyy, jzz, jxy, jyz, jzx] = total[..] else {
             unreachable!("{SOLID_COMPONENTS} components");
         };
-        if !volume.definitely_greater(S::ZERO) {
+        if !volume.definitely_greater(Scalar::ZERO) {
             return Err(ctx(GeopError::new(format!(
                 "its faces enclose a volume of {volume:?}, not one definitely greater than zero: \
                  they point into the material, or the solid is not closed"
@@ -219,19 +219,19 @@ impl<S: Scalar> Model<S> {
         }
         // About the centre: `J_c = J - h hᵀ / V`, then `I = tr(J_c) E - J_c`.
         let h = Vector3::from_array([hx, hy, hz]);
-        let offset = h.prod_scalar(S::ONE.div(volume).with_context(&ctx)?);
+        let offset = h.prod_scalar(Scalar::ONE.div(volume).with_context(&ctx)?);
         let j = [[jxx, jxy, jzx], [jxy, jyy, jyz], [jzx, jyz, jzz]];
-        let mut jc = [[S::ZERO; 3]; 3];
+        let mut jc = [[Scalar::ZERO; 3]; 3];
         for a in 0..3 {
             for b in 0..3 {
                 jc[a][b] = j[a][b].sub(h[a].mul(offset[b]));
             }
         }
         let trace = jc[0][0].add(jc[1][1]).add(jc[2][2]);
-        let mut inertia = [[S::ZERO; 3]; 3];
+        let mut inertia = [[Scalar::ZERO; 3]; 3];
         for a in 0..3 {
             for b in 0..3 {
-                let delta = if a == b { trace } else { S::ZERO };
+                let delta = if a == b { trace } else { Scalar::ZERO };
                 inertia[a][b] = delta.sub(jc[a][b]);
             }
         }
@@ -247,30 +247,30 @@ impl<S: Scalar> Model<S> {
 
     /// A point near the faces, sharp — where the moments are measured from
     /// is a free choice — the mean of their surfaces' middles.
-    fn reference_point(&self, faces: &[FaceId]) -> GeopResult<Vector3<S>> {
+    fn reference_point(&self, faces: &[FaceId]) -> GeopResult<Vector3> {
         let mut sum = Vector3::zero();
         for &face in faces {
             let surface = &self.get_face(face)?.surface;
             let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
             let middle = surface.evaluate(
-                u0.add(u1).div(S::TWO)?.sharpen(),
-                v0.add(v1).div(S::TWO)?.sharpen(),
+                u0.add(u1).div(Scalar::TWO)?.sharpen(),
+                v0.add(v1).div(Scalar::TWO)?.sharpen(),
             )?;
             sum = sum.add(&middle);
         }
-        let count = S::from_i64(faces.len().max(1) as i64);
-        Ok(sum.prod_scalar(S::ONE.div(count)?).sharpen())
+        let count = Scalar::from_i64(faces.len().max(1) as i64);
+        Ok(sum.prod_scalar(Scalar::ONE.div(count)?).sharpen())
     }
 
-    /// `∬ g(S, S_u × S_v) du dv` over the trimmed region of `face` — by
+    /// `∬ g(Scalar, S_u × S_v) du dv` over the trimmed region of `face` — by
     /// Green's theorem, along the face's pcurves, the inner integral along
     /// the direction it is exact in where there is one (see the module
     /// docs).
     fn integrate_over_face(
         &self,
         face_id: FaceId,
-        integrand: FaceIntegrand<'_, S>,
-    ) -> GeopResult<Integral<S>> {
+        integrand: FaceIntegrand<'_>,
+    ) -> GeopResult<Integral> {
         let FaceIntegrand {
             components,
             g,
@@ -301,16 +301,16 @@ impl<S: Scalar> Model<S> {
         let evaluations = Cell::new(0);
         // From the start of the domain to `a` along the inner direction, at
         // `b` along the other, split at every knot passed on the way.
-        let inner = |a: S, b: S| -> GeopResult<Vec<S>> {
+        let inner = |a: Scalar, b: Scalar| -> GeopResult<Vec<Scalar>> {
             // On the domain's own start — along a seam or a boundary of the
             // untrimmed surface there — the integral is over nothing.
             if a.is_sharp() && a.could_be_equal(start) {
-                return Ok(vec![S::ZERO; components]);
+                return Ok(vec![Scalar::ZERO; components]);
             }
             let mut cuts = vec![start];
             cuts.extend(breaks[1..].iter().filter(|k| k.definitely_less(a)));
             cuts.push(a);
-            let along = |s: S| -> GeopResult<Vec<S>> {
+            let along = |s: Scalar| -> GeopResult<Vec<Scalar>> {
                 let (u, v) = if along_u { (s, b) } else { (b, s) };
                 let point = surface.evaluate(u, v)?;
                 let (su, sv) = surface.derivatives(u, v)?;
@@ -326,7 +326,7 @@ impl<S: Scalar> Model<S> {
             evaluations.set(evaluations.get() + integral.evaluations);
             Ok(integral.value)
         };
-        let mut total = vec![S::ZERO; components];
+        let mut total = vec![Scalar::ZERO; components];
         for boundary in face.boundaries() {
             let BoundaryType::Loop(anchor) = boundary else {
                 // A bare vertex bounds nothing.
@@ -334,7 +334,7 @@ impl<S: Scalar> Model<S> {
             };
             for coedge_id in self.iterate_loop_coedges(anchor) {
                 let pcurve = &self.get_coedge(coedge_id)?.pcurve;
-                let around = |t: S| -> GeopResult<Vec<S>> {
+                let around = |t: Scalar| -> GeopResult<Vec<Scalar>> {
                     let uv = pcurve.evaluate(t)?;
                     let tangent = pcurve.tangent(t)?;
                     // `∮ G dv`, or `-∮ H du`.
@@ -345,8 +345,8 @@ impl<S: Scalar> Model<S> {
                     };
                     // Along an iso-line of the other direction nothing is
                     // added.
-                    if db.is_sharp() && db.could_be_equal(S::ZERO) {
-                        return Ok(vec![S::ZERO; components]);
+                    if db.is_sharp() && db.could_be_equal(Scalar::ZERO) {
+                        return Ok(vec![Scalar::ZERO; components]);
                     }
                     Ok(inner(a, b)?
                         .into_iter()
@@ -375,10 +375,10 @@ impl<S: Scalar> Model<S> {
 /// the weights of every row of control points along it are the same — the
 /// same enclosure, not merely overlapping ones, so the same number — so
 /// that for a fixed other parameter its denominator is constant.
-fn polynomial_along<S: Scalar>(surface: &NurbSurface3D<S>, along_u: bool) -> bool {
+fn polynomial_along(surface: &NurbSurface3D, along_u: bool) -> bool {
     let (nu, nv) = (surface.num_u, surface.num_v);
     let weight = |i: usize, j: usize| surface.control_points[i * nv + j][3];
-    let same = |a: S, b: S| a.is_subset_of(b) && b.is_subset_of(a);
+    let same = |a: Scalar, b: Scalar| a.is_subset_of(b) && b.is_subset_of(a);
     if along_u {
         (0..nv).all(|j| (1..nu).all(|i| same(weight(i, j), weight(0, j))))
     } else {
@@ -386,10 +386,10 @@ fn polynomial_along<S: Scalar>(surface: &NurbSurface3D<S>, along_u: bool) -> boo
     }
 }
 
-impl<S: Scalar> MassProperties<S> {
+impl MassProperties {
     /// The body of density one (see [`Model::mass_properties`]) made of a
     /// uniform `density`: its mass and inertia that many times.
-    pub fn with_density(&self, density: S) -> Self {
+    pub fn with_density(&self, density: Scalar) -> Self {
         Self {
             mass: self.volume.mul(density),
             inertia: self.inertia.map(|row| row.map(|i| i.mul(density))),
@@ -399,14 +399,14 @@ impl<S: Scalar> MassProperties<S> {
 
     /// The body moved by `pose`: its centre moved, its inertia turned with
     /// it (`R I Rᵀ`).
-    pub fn placed(&self, pose: &Pose<S>) -> GeopResult<Self> {
+    pub fn placed(&self, pose: &Pose) -> GeopResult<Self> {
         let motion = pose.motion();
         let axes = [0, 1, 2].map(|k| motion.rotate(&Vector3::axis(k)));
         // `R` has the turned axes as its columns.
-        let r = Matrix::<S, 3, 3>::from_columns(axes);
+        let r = Matrix::<3, 3>::from_columns(axes);
         let i = Matrix::from_rows(self.inertia);
         let turned = r.mul_mat(&i).mul_mat(&r.transpose());
-        let mut inertia = [[S::ZERO; 3]; 3];
+        let mut inertia = [[Scalar::ZERO; 3]; 3];
         for (a, row) in inertia.iter_mut().enumerate() {
             for (b, value) in row.iter_mut().enumerate() {
                 *value = turned[(a, b)];
@@ -426,24 +426,25 @@ impl<S: Scalar> MassProperties<S> {
         let Some(first) = parts.first() else {
             return Ok(None);
         };
-        let sum = |f: &dyn Fn(&Self) -> S| parts.iter().skip(1).fold(f(first), |a, p| a.add(f(p)));
+        let sum =
+            |f: &dyn Fn(&Self) -> Scalar| parts.iter().skip(1).fold(f(first), |a, p| a.add(f(p)));
         let mass = sum(&|p| p.mass);
         let mut weighted = Vector3::zero();
         for p in parts {
             weighted = weighted.add(&p.center.prod_scalar(p.mass));
         }
-        let center = weighted.prod_scalar(S::ONE.div(mass).map_err(|e| {
+        let center = weighted.prod_scalar(Scalar::ONE.div(mass).map_err(|e| {
             e.with_context(format!(
                 "MassProperties::combine: a total mass of {mass:?} is not definitely positive"
             ))
         })?);
-        let mut inertia = [[S::ZERO; 3]; 3];
+        let mut inertia = [[Scalar::ZERO; 3]; 3];
         for p in parts {
             let d = p.center.sub(&center);
             let d2 = d.norm_sq();
             for a in 0..3 {
                 for b in 0..3 {
-                    let delta = if a == b { d2 } else { S::ZERO };
+                    let delta = if a == b { d2 } else { Scalar::ZERO };
                     let shift = delta.sub(d[a].mul(d[b])).mul(p.mass);
                     inertia[a][b] = inertia[a][b].add(p.inertia[a][b]).add(shift);
                 }
@@ -460,7 +461,7 @@ impl<S: Scalar> MassProperties<S> {
     }
 
     /// The principal moments of inertia and their axes.
-    pub fn principal(&self) -> GeopResult<PrincipalAxes<S>> {
+    pub fn principal(&self) -> GeopResult<PrincipalAxes> {
         let (moments, axes) = symmetric_eigen3(&Matrix::from_rows(self.inertia))?;
         Ok(PrincipalAxes { moments, axes })
     }
@@ -468,31 +469,35 @@ impl<S: Scalar> MassProperties<S> {
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::{for_all_scalars, scalars::Scalar};
+    use geop_core_math::scalars::Scalar;
 
     use crate::{Model, test_fixtures::test_cube_solid};
 
     /// The unit cube: volume 1, area 6, centre `(0.5, 0.5, 0.5)`, inertia
     /// `1/6` about every axis through it, no products — each within its
     /// enclosure.
-    fn check_unit_cube<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn unit_cube() {
+        let mut model = Model::new();
         let solid = test_cube_solid(&mut model);
-        let mass = model.mass_properties(solid).unwrap().with_density(S::TWO);
+        let mass = model
+            .mass_properties(solid)
+            .unwrap()
+            .with_density(Scalar::TWO);
         assert!(mass.converged);
-        assert!(mass.volume.could_be_equal(S::ONE), "{:?}", mass.volume);
+        assert!(mass.volume.could_be_equal(Scalar::ONE), "{:?}", mass.volume);
         let (area, converged) = model.solid_area(solid).unwrap();
         assert!(converged);
-        assert!(area.could_be_equal(S::from_f64(6.0)), "{area:?}");
-        assert!(mass.mass.could_be_equal(S::TWO));
-        let half = S::from_f64(0.5);
+        assert!(area.could_be_equal(Scalar::from_f64(6.0)), "{area:?}");
+        assert!(mass.mass.could_be_equal(Scalar::TWO));
+        let half = Scalar::from_f64(0.5);
         for k in 0..3 {
             assert!(mass.center[k].could_be_equal(half), "{:?}", mass.center);
             for j in 0..3 {
                 let want = if j == k {
-                    S::from_ratio(1, 3).unwrap()
+                    Scalar::from_ratio(1, 3).unwrap()
                 } else {
-                    S::ZERO
+                    Scalar::ZERO
                 };
                 assert!(
                     mass.inertia[k][j].could_be_equal(want),
@@ -505,10 +510,6 @@ mod tests {
             .face_area(*model.faces.keys().next().unwrap())
             .unwrap();
         assert!(converged);
-        assert!(area.could_be_equal(S::ONE));
-    }
-    #[test]
-    fn unit_cube() {
-        for_all_scalars!(check_unit_cube);
+        assert!(area.could_be_equal(Scalar::ONE));
     }
 }

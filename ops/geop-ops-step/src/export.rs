@@ -19,7 +19,7 @@
 //! after the part's names for them, so a face picked as `extrude(E,end)`
 //! here is called that in the file.
 
-use geop_core_program::{reader::Reader, values::Design};
+use geop_core_program::reader::Reader;
 use std::collections::HashMap;
 
 use geop_core_editor::output::{Content, Export, Exporter, ExporterInfo, NoOptions, Output};
@@ -47,7 +47,7 @@ const UNCERTAINTY: f64 = 1e-7;
 
 /// The bodies of `model` as the text of a STEP file whose product is
 /// called `name`.
-pub fn write_step<S: Scalar>(model: &NamedModel<S>, name: &str) -> GeopResult<String> {
+pub fn write_step(model: &NamedModel, name: &str) -> GeopResult<String> {
     let mut writer = Writer::default();
     let context = writer.context();
     writer.part(model, &[], name, &context)?;
@@ -129,7 +129,7 @@ fn refs(ids: impl IntoIterator<Item = u64>) -> Value {
 /// The distinct knots of `knots` and how often each is repeated, as STEP
 /// writes a knot vector. Knots are repeated when the kernel built them as
 /// the same value, so they are grouped by equal midpoints.
-fn knots_and_multiplicities<S: Scalar>(knots: &[S]) -> (Value, Value) {
+fn knots_and_multiplicities(knots: &[Scalar]) -> (Value, Value) {
     let mut distinct: Vec<f64> = Vec::new();
     let mut counts: Vec<i64> = Vec::new();
     for k in knots {
@@ -313,8 +313,8 @@ impl Writer {
     }
 
     /// The placement the pose `pose` moves the frame of what it places to.
-    fn pose(&mut self, pose: &Pose<Design>) -> GeopResult<u64> {
-        let plain = |q: Vector3<Design>| q.to_f64_array();
+    fn pose(&mut self, pose: &Pose) -> GeopResult<u64> {
+        let plain = |q: Vector3| q.to_f64_array();
         // Where its `x` and `z` turn to.
         let [x, _, z] = pose.rotation().rotation_columns()?;
         Ok(self.placement(plain(pose.position()), plain(z), plain(x)))
@@ -350,10 +350,10 @@ impl Writer {
     /// instance's name, where its pose puts it — as the product `name`:
     /// its shape the representation of its solids if it places nothing,
     /// else of the placements, its bodies related to it.
-    fn part<S: Scalar>(
+    fn part(
         &mut self,
-        model: &NamedModel<S>,
-        placed: &[(String, Written, Pose<Design>)],
+        model: &NamedModel,
+        placed: &[(String, Written, Pose)],
         name: &str,
         context: &Context,
     ) -> GeopResult<Written> {
@@ -466,9 +466,9 @@ impl Writer {
 
     /// Every body of `named`, in its own frame: solids onto `solids`,
     /// sheets onto `sheets`. Entities are named as `named` names them.
-    fn bodies<S: Scalar>(
+    fn bodies(
         &mut self,
-        named: &NamedModel<S>,
+        named: &NamedModel,
         solids: &mut Vec<u64>,
         sheets: &mut Vec<u64>,
     ) -> GeopResult<()> {
@@ -537,22 +537,22 @@ impl Writer {
 
 /// Writes the bodies of one model, sharing each vertex and edge between
 /// the faces that use it.
-struct BodyWriter<'w, 'm, S: Scalar, N> {
+struct BodyWriter<'w, 'm, N> {
     writer: &'w mut Writer,
-    model: &'m Model<S>,
+    model: &'m Model,
     name: N,
     vertices: HashMap<VertexId, u64>,
     edges: HashMap<EdgeId, u64>,
 }
 
-impl<S: Scalar, N: Fn(RefId) -> String> BodyWriter<'_, '_, S, N> {
-    fn coordinates(p: &Vector3<S>) -> [f64; 3] {
+impl<N: Fn(RefId) -> String> BodyWriter<'_, '_, N> {
+    fn coordinates(p: &Vector3) -> [f64; 3] {
         p.to_f64_array()
     }
 
     /// The homogeneous control point `cp` as STEP writes it: the point,
     /// and its weight.
-    fn control_point(&mut self, cp: &geop_core_math::vector::Vector4<S>) -> GeopResult<(u64, f64)> {
+    fn control_point(&mut self, cp: &geop_core_math::vector::Vector4) -> GeopResult<(u64, f64)> {
         let p = Self::coordinates(&cp.dehomogenized()?);
         Ok((self.writer.point(p), cp[3].to_f64()))
     }
@@ -571,7 +571,7 @@ impl<S: Scalar, N: Fn(RefId) -> String> BodyWriter<'_, '_, S, N> {
         Ok(step)
     }
 
-    fn curve(&mut self, curve: &NurbCurve3D<S>) -> GeopResult<u64> {
+    fn curve(&mut self, curve: &NurbCurve3D) -> GeopResult<u64> {
         let mut points = Vec::new();
         let mut weights = Vec::new();
         for cp in &curve.control_points {
@@ -625,7 +625,7 @@ impl<S: Scalar, N: Fn(RefId) -> String> BodyWriter<'_, '_, S, N> {
         ]))
     }
 
-    fn surface(&mut self, surface: &NurbSurface3D<S>) -> GeopResult<u64> {
+    fn surface(&mut self, surface: &NurbSurface3D) -> GeopResult<u64> {
         let mut rows = Vec::new();
         let mut weight_rows = Vec::new();
         for i in 0..surface.num_u {

@@ -23,6 +23,7 @@
 //! around the state found — or with why none is proven: a configuration
 //! singular there, or constraints that conflict, by name.
 
+use geop_core_math::scalars::Scalar;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -40,7 +41,7 @@ use geop_core_program::{
     program::Program,
     reader::Reader,
     runner::Runner,
-    values::{Design, Settings, StateValue, StateValues},
+    values::{Settings, StateValue, StateValues},
 };
 
 use crate::constraint::{Constraint, Constraints};
@@ -94,12 +95,12 @@ pub struct Problem<'p> {
     /// [`geop_core_math::solvers::system::RELATIVE_TOLERANCE`] of, how
     /// far one step may go, and what a turn is measured against when a
     /// value stays where it was.
-    pub scale: Design,
+    pub scale: Scalar,
 }
 
 /// How a solve went.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Report<T: geop_core_math::scalars::Scalar> {
+pub struct Report {
     /// Every constraint holds.
     pub converged: bool,
     /// The constraints that do not, by name.
@@ -112,7 +113,7 @@ pub struct Report<T: geop_core_math::scalars::Scalar> {
     /// groups: why it stopped, after how many steps, the largest residual
     /// left.
     pub iterations: usize,
-    pub phases: Vec<Phase<T>>,
+    pub phases: Vec<Phase>,
     /// How many times the constraints were made: by the solve, and to
     /// enclose its solution — the work, which a test can bound.
     pub evaluations: [usize; 2],
@@ -134,7 +135,7 @@ pub struct Enclosure {
 /// solution near there of every group it solved.
 pub struct Solved {
     pub state: StateValues,
-    pub report: Report<Design>,
+    pub report: Report,
     pub enclosure: Enclosure,
 }
 
@@ -223,7 +224,7 @@ impl<'r, 'p> Solving<'r, 'p> {
 
     /// `constraint` as a term of the system: its derivatives by the
     /// blocks it reads.
-    fn linearized(&self, constraint: &Constraint) -> Linearized<Design> {
+    fn linearized(&self, constraint: &Constraint) -> Linearized {
         Linearized {
             values: constraint.residuals.clone(),
             jacobian: (constraint.jacobian.iter())
@@ -246,7 +247,7 @@ impl Equations for Solving<'_, '_> {
             .map_or(Bound::Zero, |c| c.1)
     }
 
-    fn evaluate(&self, values: &[StateValue], which: &[Term]) -> Vec<Option<Linearized<Design>>> {
+    fn evaluate(&self, values: &[StateValue], which: &[Term]) -> Vec<Option<Linearized>> {
         {
             let mut working = self.working.borrow_mut();
             for (name, value) in self.blocks.iter().zip(values) {

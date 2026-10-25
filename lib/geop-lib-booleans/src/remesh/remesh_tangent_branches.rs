@@ -57,22 +57,22 @@ const ISOLATION_LEVELS: usize = 8;
 const NEWTON_ITERATIONS: usize = 20;
 
 /// Sharp foot points `(u, v)` on the two surfaces, each projection's seed.
-type Seeds<S> = [(S, S); 2];
+type Seeds = [(Scalar, Scalar); 2];
 
 /// The difference in mean curvature between `surf_g` and `surf_f` at
 /// `curve(t)`, `F`'s taken against `G`'s normal — or `None` where the two
 /// surfaces cannot be tangent there, and no branch can leave. `seeds` are
 /// sharp foot points on each to project from (see [`tangent_branch_points`]),
 /// and come back as this projection's own, sharpened.
-fn curvature_gap<S: Scalar>(
-    curve: &NurbCurve<S, 4>,
-    surf_g: &NurbSurface3D<S>,
-    surf_f: &NurbSurface3D<S>,
-    t: S,
-    seeds: &mut Seeds<S>,
-) -> GeopResult<Option<S>> {
+fn curvature_gap(
+    curve: &NurbCurve<4>,
+    surf_g: &NurbSurface3D,
+    surf_f: &NurbSurface3D,
+    t: Scalar,
+    seeds: &mut Seeds,
+) -> GeopResult<Option<Scalar>> {
     let point = curve.evaluate(t)?;
-    let mut feet = [(S::ZERO, S::ZERO); 2];
+    let mut feet = [(Scalar::ZERO, Scalar::ZERO); 2];
     for (k, surface) in [surf_g, surf_f].into_iter().enumerate() {
         let (u, v) = surface.project(point, seeds[k].0, seeds[k].1, NEWTON_ITERATIONS)?;
         feet[k] = (u, v);
@@ -88,14 +88,15 @@ fn curvature_gap<S: Scalar>(
     // apart.
     let cross = ng.prod_cross(&nf);
     let alignment = ng.prod_dot(&nf);
-    if !(0..3).all(|k| cross[k].could_be_equal(S::ZERO)) || !alignment.abs().could_be_equal(S::ONE)
+    if !(0..3).all(|k| cross[k].could_be_equal(Scalar::ZERO))
+        || !alignment.abs().could_be_equal(Scalar::ONE)
     {
         return Ok(None);
     }
     let h_f = surf_f.mean_curvature(uf, vf)?;
-    let h_f = if alignment.definitely_greater(S::ZERO) {
+    let h_f = if alignment.definitely_greater(Scalar::ZERO) {
         h_f
-    } else if alignment.definitely_less(S::ZERO) {
+    } else if alignment.definitely_less(Scalar::ZERO) {
         h_f.neg()
     } else {
         return Err(GeopError::new(format!(
@@ -106,7 +107,7 @@ fn curvature_gap<S: Scalar>(
 }
 
 /// The sign of `gap`, if it has one.
-fn sign<S: Scalar>(gap: &GeopResult<Option<S>>) -> Option<bool> {
+fn sign(gap: &GeopResult<Option<Scalar>>) -> Option<bool> {
     match gap {
         Ok(Some(c)) => c.definite_sign(),
         _ => None,
@@ -131,15 +132,15 @@ fn sign<S: Scalar>(gap: &GeopResult<Option<S>>) -> Option<bool> {
 /// the curve's midpoint), and every later projection seeds from its parent
 /// stretch's, so each stays on the sheet the subdivision started on. A curve
 /// whose midpoint is not on `surf_f` has no branch points found.
-fn tangent_branch_points<S: Scalar>(
-    curve: &NurbCurve<S, 4>,
-    surf_g: &NurbSurface3D<S>,
-    surf_f: &NurbSurface3D<S>,
-    params: &RemeshParams<S>,
-) -> GeopResult<Vec<S>> {
+fn tangent_branch_points(
+    curve: &NurbCurve<4>,
+    surf_g: &NurbSurface3D,
+    surf_f: &NurbSurface3D,
+    params: &RemeshParams,
+) -> GeopResult<Vec<Scalar>> {
     let (t0, t1) = curve.domain();
     let mid = curve.evaluate(curve.mid_parameter()?)?;
-    let locate = |surface: &NurbSurface3D<S>| {
+    let locate = |surface: &NurbSurface3D| {
         surface.locate(
             &mid,
             params.max_nodes,
@@ -149,7 +150,7 @@ fn tangent_branch_points<S: Scalar>(
     let (Some(seed_g), Some(seed_f)) = (locate(surf_g)?, locate(surf_f)?) else {
         return Ok(vec![]);
     };
-    let sharp = |(u, v): (S, S)| (u.sharpen(), v.sharpen());
+    let sharp = |(u, v): (Scalar, Scalar)| (u.sharpen(), v.sharpen());
 
     // Level by level: what a level keeps is cut in two for the next, and
     // what the last keeps is grouped into runs. The levels bound the
@@ -163,14 +164,14 @@ fn tangent_branch_points<S: Scalar>(
         |(lo, hi, mut seeds, level), _| -> GeopResult<_> {
             match curvature_gap(curve, surf_g, surf_f, lo.union(hi), &mut seeds) {
                 Ok(None) => return Ok(Split::Done),
-                Ok(Some(c)) if !c.could_be_equal(S::ZERO) => return Ok(Split::Done),
+                Ok(Some(c)) if !c.could_be_equal(Scalar::ZERO) => return Ok(Split::Done),
                 _ => {}
             }
             if level == ISOLATION_LEVELS {
                 live.push((lo, hi, seeds));
                 return Ok(Split::Done);
             }
-            let m = lo.add(hi).div(S::TWO)?.sharpen();
+            let m = lo.add(hi).div(Scalar::TWO)?.sharpen();
             Ok(Split::Halves(
                 (lo, m, seeds, level + 1),
                 (m, hi, seeds, level + 1),
@@ -178,7 +179,7 @@ fn tangent_branch_points<S: Scalar>(
         },
     )?;
 
-    let mut runs: Vec<(S, S, Seeds<S>)> = Vec::new();
+    let mut runs: Vec<(Scalar, Scalar, Seeds)> = Vec::new();
     for (lo, hi, seeds) in live {
         match runs.last_mut() {
             Some(run) if run.1.could_be_equal(lo) => run.1 = hi,
@@ -233,18 +234,18 @@ fn tangent_branch_points<S: Scalar>(
 ///   sphere meet that way along their seams.
 ///
 /// Anything undecided answers `true`, leaving it to the search.
-fn branch_can_leave<S: Scalar>(
-    model: &Model<S>,
+fn branch_can_leave(
+    model: &Model,
     edge_id: EdgeId,
     g: FaceId,
     f: FaceId,
-    params: &RemeshParams<S>,
+    params: &RemeshParams,
 ) -> GeopResult<bool> {
     let (face_g, face_f) = (model.get_face(g)?, model.get_face(f)?);
     if face_g.surface.could_be_equal(&face_f.surface) {
         return Ok(false);
     }
-    let flat = |face: &geop_core_topology::Face<S>| matches!(face.surface.as_plane(), Ok(Some(_)));
+    let flat = |face: &geop_core_topology::Face| matches!(face.surface.as_plane(), Ok(Some(_)));
     if flat(face_g) && flat(face_f) {
         return Ok(false);
     }
@@ -291,7 +292,7 @@ fn branch_can_leave<S: Scalar>(
         return Ok(true);
     };
 
-    let normal_at_mid = |face: &geop_core_topology::Face<S>, coedge| -> GeopResult<Vector3<S>> {
+    let normal_at_mid = |face: &geop_core_topology::Face, coedge| -> GeopResult<Vector3> {
         let pcurve = &model.get_coedge(coedge)?.pcurve;
         let uv = pcurve.evaluate(pcurve.mid_parameter()?)?;
         face.surface.normal(uv[0], uv[1])
@@ -303,9 +304,9 @@ fn branch_can_leave<S: Scalar>(
         return Ok(true);
     };
     let alignment = n_g.prod_dot(&n_f);
-    let aligned = if alignment.definitely_greater(S::ZERO) {
+    let aligned = if alignment.definitely_greater(Scalar::ZERO) {
         true
-    } else if alignment.definitely_less(S::ZERO) {
+    } else if alignment.definitely_less(Scalar::ZERO) {
         false
     } else {
         return Ok(true);
@@ -320,12 +321,12 @@ fn branch_can_leave<S: Scalar>(
 /// parameter to split it at, an existing vertex of the two solids there if
 /// there is one, the point, and the face.
 #[allow(clippy::type_complexity)]
-fn find_tangent_branch<S: Scalar>(
-    model: &Model<S>,
+fn find_tangent_branch(
+    model: &Model,
     edge_solid: Body,
     face_solid: Body,
-    params: &RemeshParams<S>,
-) -> GeopResult<Option<(EdgeId, S, Option<VertexId>, Vector3<S>, FaceId)>> {
+    params: &RemeshParams,
+) -> GeopResult<Option<(EdgeId, Scalar, Option<VertexId>, Vector3, FaceId)>> {
     for edge_id in model.iter_body_edges(edge_solid)? {
         let edge = model.get_edge(edge_id)?;
         let bounded: Vec<FaceId> = model
@@ -382,12 +383,12 @@ fn find_tangent_branch<S: Scalar>(
 /// it — see the module doc. Runs before vertices are matched against edges,
 /// so an edge of `face_solid` running through the new vertex — the other
 /// solid's copy of a shared profile — is split there too.
-pub fn remesh_tangent_branches<S: Scalar>(
-    model: &mut NamedModel<S>,
-    naming: &mut BooleanNaming<S>,
+pub fn remesh_tangent_branches(
+    model: &mut NamedModel,
+    naming: &mut BooleanNaming,
     edge_solid: Body,
     face_solid: Body,
-    params: &RemeshParams<S>,
+    params: &RemeshParams,
 ) -> GeopResult<()> {
     let ctx = with_context!(
         "remesh_tangent_branches(edge_solid={edge_solid}, face_solid={face_solid}, params={params:?})"

@@ -47,7 +47,7 @@ const MAX_PIECE_SAMPLES: usize = 1536;
 /// not correctness: the pcurve encloses its trace however wide it is.
 const DRIFT_PER_RESOLUTION: i64 = 16;
 
-impl<S: Scalar> NurbSurface<S, 4> {
+impl NurbSurface<4> {
     /// The `(u, v)` trace of `curve` across this surface: sample the curve,
     /// Newton-project each sample onto the surface (each projection seeded
     /// from the previous one's result, so the walk stays continuous), and
@@ -86,12 +86,12 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// passes exactly through each sample.
     pub fn fit_pcurve(
         &self,
-        curve: &NurbCurve<S, 4>,
-        pin_start: Option<Vector2<S>>,
-        pin_end: Option<Vector2<S>>,
+        curve: &NurbCurve<4>,
+        pin_start: Option<Vector2>,
+        pin_end: Option<Vector2>,
         max_nodes: usize,
-        min_subdivision_size: S,
-    ) -> GeopResult<NurbCurve2D<S>> {
+        min_subdivision_size: Scalar,
+    ) -> GeopResult<NurbCurve2D> {
         let ctx = |e: GeopError| {
             e.with_context(format!(
                 "NurbSurface::fit_pcurve: curve={curve:?}, domain_u={:?}, domain_v={:?}",
@@ -126,7 +126,10 @@ impl<S: Scalar> NurbSurface<S, 4> {
         // what's returned: these `(u, v)` end up in the fitted pcurve, which
         // is later compared against the edge's 3D points, so narrowing them
         // here would claim precision the projection did not have.
-        let project_at = |seed: &mut (S, S), (a, b): (S, S), frac: S| -> GeopResult<Vector2<S>> {
+        let project_at = |seed: &mut (Scalar, Scalar),
+                          (a, b): (Scalar, Scalar),
+                          frac: Scalar|
+         -> GeopResult<Vector2> {
             let t = a.add(b.sub(a).mul(frac));
             let p = curve.evaluate(t)?;
             let (u, v) = self.project(p, seed.0, seed.1, NEWTON_ITERATIONS)?;
@@ -147,7 +150,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
         breaks.push(t1);
 
         let target = min_subdivision_size
-            .div(S::from_i64(DRIFT_PER_RESOLUTION))
+            .div(Scalar::from_i64(DRIFT_PER_RESOLUTION))
             .with_context(&ctx)?
             .upper();
         let length = t1.sub(t0).to_f64();
@@ -176,18 +179,19 @@ impl<S: Scalar> NurbSurface<S, 4> {
                 // drifts from its trace between samples, and that drift is
                 // part of what the pcurve honestly knows about where the
                 // trace is.
-                let count = S::from_i64(intervals as i64);
+                let count = Scalar::from_i64(intervals as i64);
                 let mut uvs = Vec::with_capacity(intervals + 1);
                 let mut between = Vec::with_capacity(intervals);
                 for i in 0..=intervals {
-                    let frac = S::from_i64(i as i64).div(count).with_context(&ctx)?;
+                    let frac = Scalar::from_i64(i as i64).div(count).with_context(&ctx)?;
                     uvs.push(project_at(&mut seed, (a, b), frac).with_context(&ctx)?);
                     if i < intervals {
                         let fractions = true_point_fractions(i, intervals);
                         let mut inside = Vec::with_capacity(fractions.len());
                         for &(num, den) in fractions {
-                            let frac = S::from_ratio(i as i64 * den + num, intervals as i64 * den)
-                                .with_context(&ctx)?;
+                            let frac =
+                                Scalar::from_ratio(i as i64 * den + num, intervals as i64 * den)
+                                    .with_context(&ctx)?;
                             inside.push(project_at(&mut seed, (a, b), frac).with_context(&ctx)?);
                         }
                         between.push(inside);
@@ -209,11 +213,10 @@ impl<S: Scalar> NurbSurface<S, 4> {
                 let sampled = uvs
                     .iter()
                     .chain(between.iter().flatten())
-                    .fold(S::ZERO, |w, p| w.max(p[0].width()).max(p[1].width()));
-                let fitted_width = fitted
-                    .control_points
-                    .iter()
-                    .fold(S::ZERO, |w, cp| w.max(cp[0].width()).max(cp[1].width()));
+                    .fold(Scalar::ZERO, |w, p| w.max(p[0].width()).max(p[1].width()));
+                let fitted_width = fitted.control_points.iter().fold(Scalar::ZERO, |w, cp| {
+                    w.max(cp[0].width()).max(cp[1].width())
+                });
                 let drifting = fitted_width.definitely_greater(target)
                     && fitted_width.definitely_greater(sampled.add(sampled));
                 if !drifting || intervals * 2 > MAX_PIECE_SAMPLES {
@@ -243,7 +246,6 @@ const NEWTON_ITERATIONS: usize = 20;
 #[cfg(test)]
 mod tests {
     use geop_core_math::{
-        for_all_scalars,
         primitives::CoordinateSystem,
         scalars::Scalar,
         vector::{Vector3, Vector4},
@@ -262,13 +264,14 @@ mod tests {
     /// it drifted by about 1e-4, past what validation allows any entity to
     /// carry (`a_strip_turning_more_than_once_is_cut_along_meridians` in
     /// `geop-ops-step` had to use a pitch of a quarter).
-    fn check_a_helix_is_fitted_between_its_joints<S: Scalar>() {
-        let f = S::from_f64;
+    #[test]
+    fn a_helix_is_fitted_between_its_joints() {
+        let f = Scalar::from_f64;
         let v = |x: f64, y: f64, z: f64| Vector3::from_array([f(x), f(y), f(z)]);
         let helix = NurbCurve3D::helix(
             &CoordinateSystem::world_at(v(0.0, 0.0, 0.0)),
-            S::ONE,
-            S::ONE,
+            Scalar::ONE,
+            Scalar::ONE,
             0.9,
             Handedness::Right,
         )
@@ -276,8 +279,8 @@ mod tests {
         let line = NurbCurve3D::try_new(
             1,
             vec![
-                Vector4::from_array([f(1.0), f(0.0), f(-0.5), S::ONE]),
-                Vector4::from_array([f(1.0), f(0.0), f(1.5), S::ONE]),
+                Vector4::from_array([f(1.0), f(0.0), f(-0.5), Scalar::ONE]),
+                Vector4::from_array([f(1.0), f(0.0), f(1.5), Scalar::ONE]),
             ],
             vec![f(0.0), f(0.0), f(1.0), f(1.0)],
         )
@@ -301,9 +304,5 @@ mod tests {
             let on = cylinder.evaluate(uv[0], uv[1]).unwrap();
             assert!(on.could_be_equal(&helix.evaluate(t).unwrap()), "{on:?}");
         }
-    }
-    #[test]
-    fn a_helix_is_fitted_between_its_joints() {
-        for_all_scalars!(check_a_helix_is_fitted_between_its_joints);
     }
 }

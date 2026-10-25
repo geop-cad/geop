@@ -3,7 +3,7 @@
 
 use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve3D};
 use geop_core_math::{
-    scalars::{ScalInF64 as S, Scalar},
+    scalars::Scalar,
     vector::{Vector3, Vector4},
 };
 use geop_core_topology::build::{BodySpec, EdgeSpec};
@@ -22,7 +22,7 @@ fn binomial(n: usize, k: usize) -> f64 {
 
 /// The Bézier curve on `[0, 1]` whose coordinates are the polynomials with
 /// the monomial coefficients `coords`, lowest power first.
-fn polynomial(coords: [&[f64]; 3], degree: usize) -> NurbCurve3D<S> {
+fn polynomial(coords: [&[f64]; 3], degree: usize) -> NurbCurve3D {
     let coefficient = |a: &[f64], j: usize| a.get(j).copied().unwrap_or(0.0);
     let control_points = (0..=degree)
         .map(|i| {
@@ -31,16 +31,16 @@ fn polynomial(coords: [&[f64]; 3], degree: usize) -> NurbCurve3D<S> {
                     .map(|j| binomial(i, j) / binomial(degree, j) * coefficient(a, j))
                     .sum::<f64>()
             });
-            Vector4::from_array([x, y, z, 1.0].map(S::from_f64))
+            Vector4::from_array([x, y, z, 1.0].map(Scalar::from_f64))
         })
         .collect();
-    let mut knots = vec![S::ZERO; degree + 1];
-    knots.extend(vec![S::ONE; degree + 1]);
+    let mut knots = vec![Scalar::ZERO; degree + 1];
+    knots.extend(vec![Scalar::ONE; degree + 1]);
     NurbCurve::try_new(degree, control_points, knots).unwrap()
 }
 
 /// `curve` added to `part` as a wire of its own, its edge named `name`.
-fn wire(part: &mut NamedModel<S>, name: &str, curve: NurbCurve3D<S>) -> CurveSource {
+fn wire(part: &mut NamedModel, name: &str, curve: NurbCurve3D) -> CurveSource {
     let (t0, t1) = curve.domain();
     let spec = BodySpec {
         vertices: vec![curve.evaluate(t0).unwrap(), curve.evaluate(t1).unwrap()],
@@ -67,7 +67,7 @@ fn wire(part: &mut NamedModel<S>, name: &str, curve: NurbCurve3D<S>) -> CurveSou
 /// 2 at `y = 0, 1, 2`, the middle one at a speed of its own
 /// (`x = t + t²`); and along `y`, from -0.5 on past the grid to 2.5, at
 /// `x = 0, 0.7, 2`.
-fn grid_curves(lift: f64) -> (Vec<NurbCurve3D<S>>, Vec<NurbCurve3D<S>>) {
+fn grid_curves(lift: f64) -> (Vec<NurbCurve3D>, Vec<NurbCurve3D>) {
     let z = |coefficients: &[f64]| coefficients.iter().map(|c| c * lift).collect::<Vec<_>>();
     let u = [0.0, 1.0, 2.0]
         .iter()
@@ -103,10 +103,10 @@ fn grid(
     turned: &[&str],
     u_order: [usize; 3],
     v_order: [usize; 3],
-) -> (NamedModel<S>, Vec<CurveSource>, Vec<CurveSource>) {
+) -> (NamedModel, Vec<CurveSource>, Vec<CurveSource>) {
     let mut part = NamedModel::new();
     let (u, v) = grid_curves(lift);
-    let mut add = |prefix: &str, curves: Vec<NurbCurve3D<S>>| -> Vec<CurveSource> {
+    let mut add = |prefix: &str, curves: Vec<NurbCurve3D>| -> Vec<CurveSource> {
         curves
             .into_iter()
             .enumerate()
@@ -130,11 +130,7 @@ fn grid(
     )
 }
 
-fn span(
-    part: NamedModel<S>,
-    u: Vec<CurveSource>,
-    v: Vec<CurveSource>,
-) -> GeopResult<NamedModel<S>> {
+fn span(part: NamedModel, u: Vec<CurveSource>, v: Vec<CurveSource>) -> GeopResult<NamedModel> {
     let args = NetworkSurfaceArgs {
         u_curves: u,
         v_curves: v,
@@ -142,7 +138,7 @@ fn span(
     apply_to_model::<NetworkSurface>(part, "n", &args)
 }
 
-fn surface_of(part: &NamedModel<S>, face: &str) -> NurbSurface3D<S> {
+fn surface_of(part: &NamedModel, face: &str) -> NurbSurface3D {
     let face = part.face_id(face).unwrap();
     part.topology().get_face(face).unwrap().surface.clone()
 }
@@ -150,7 +146,7 @@ fn surface_of(part: &NamedModel<S>, face: &str) -> NurbSurface3D<S> {
 /// Whether `p` is a point of `surface`: located on it
 /// ([`NurbSurface3D::locate`]), and the point there `p`'s enclosure — or what of
 /// that failed.
-fn on_surface(surface: &NurbSurface3D<S>, p: &Vector3<S>) -> Result<(), String> {
+fn on_surface(surface: &NurbSurface3D, p: &Vector3) -> Result<(), String> {
     let Some((u, v)) = surface
         .locate(p, MAX_NODES, min_subdivision_size())
         .unwrap()
@@ -179,14 +175,14 @@ fn network_of_three_by_three_runs_along_every_curve() {
     let (u, v) = grid_curves(1.0);
     for (k, curve) in u.iter().enumerate() {
         for i in 0..=8 {
-            let p = curve.evaluate(S::from_ratio(i, 8).unwrap()).unwrap();
+            let p = curve.evaluate(Scalar::from_ratio(i, 8).unwrap()).unwrap();
             on_surface(&surface, &p).unwrap_or_else(|e| panic!("u{k} at {i}/8: {p:?}: {e}"));
         }
     }
     for (k, curve) in v.iter().enumerate() {
         // Within the grid: y from 0 to 2.
         for i in 0..=8 {
-            let s = S::from_f64((0.5 + 2.0 * i as f64 / 8.0) / 3.0);
+            let s = Scalar::from_f64((0.5 + 2.0 * i as f64 / 8.0) / 3.0);
             let p = curve.evaluate(s).unwrap();
             on_surface(&surface, &p).unwrap_or_else(|e| panic!("v{k} at {i}/8: {p:?}: {e}"));
         }
@@ -202,7 +198,7 @@ fn network_of_three_by_three_runs_along_every_curve() {
     }
     let corner = part.vertex_id("network(n,u0,v0)").unwrap();
     let p = part.topology().get_vertex(corner).unwrap().point;
-    assert!(p.could_be_equal(&Vector3::from_array([0.0, 0.0, 0.0].map(S::from_f64))));
+    assert!(p.could_be_equal(&Vector3::from_array([0.0, 0.0, 0.0].map(Scalar::from_f64))));
 }
 
 /// Picked in another order, some of them running the other way: the same
@@ -218,7 +214,10 @@ fn network_picks_in_any_order_and_direction() {
     for (a, b) in [(&ordered, &shuffled), (&shuffled, &ordered)] {
         for i in 0..=4 {
             for j in 0..=4 {
-                let (u, v) = (S::from_ratio(i, 4).unwrap(), S::from_ratio(j, 4).unwrap());
+                let (u, v) = (
+                    Scalar::from_ratio(i, 4).unwrap(),
+                    Scalar::from_ratio(j, 4).unwrap(),
+                );
                 let p = a.evaluate(u, v).unwrap();
                 on_surface(b, &p).unwrap_or_else(|e| panic!("at ({i}/4, {j}/4): {p:?}: {e}"));
             }
@@ -239,9 +238,11 @@ fn network_of_two_by_two_is_the_coons_patch() {
             [0.6, 0.3, -0.2],
             [1., 0., 0.],
         ]
-        .map(|[x, y, z]| Vector4::from_array([x, y, z, 1.].map(S::from_f64)))
+        .map(|[x, y, z]| Vector4::from_array([x, y, z, 1.].map(Scalar::from_f64)))
         .to_vec(),
-        [0., 0., 0., 0., 1., 1., 1., 1.].map(S::from_f64).to_vec(),
+        [0., 0., 0., 0., 1., 1., 1., 1.]
+            .map(Scalar::from_f64)
+            .to_vec(),
     )
     .unwrap();
     let u = vec![
@@ -276,7 +277,10 @@ fn network_of_two_by_two_is_the_coons_patch() {
     let coons = surface_of(&part, "boundary(b)");
     for i in 0..=6 {
         for j in 0..=6 {
-            let (u, v) = (S::from_ratio(i, 6).unwrap(), S::from_ratio(j, 6).unwrap());
+            let (u, v) = (
+                Scalar::from_ratio(i, 6).unwrap(),
+                Scalar::from_ratio(j, 6).unwrap(),
+            );
             let p = network.evaluate(u, v).unwrap();
             on_surface(&coons, &p).unwrap_or_else(|e| panic!("at ({i}/6, {j}/6): {p:?}: {e}"));
         }
@@ -289,7 +293,7 @@ fn network_of_two_by_two_is_the_coons_patch() {
 fn network_refuses_curves_that_miss() {
     let mut part = NamedModel::new();
     let (u, mut v) = grid_curves(1.0);
-    v[1] = v[1].translate(Vector3::from_array([0.0, 0.0, 0.01].map(S::from_f64)));
+    v[1] = v[1].translate(Vector3::from_array([0.0, 0.0, 0.01].map(Scalar::from_f64)));
     let u: Vec<_> = u
         .into_iter()
         .enumerate()
@@ -351,7 +355,7 @@ impl Lcg {
 }
 
 /// `curve`, run the other way for half the values of `coin`.
-fn turned(curve: NurbCurve3D<S>, coin: f64) -> NurbCurve3D<S> {
+fn turned(curve: NurbCurve3D, coin: f64) -> NurbCurve3D {
     if coin < 0.5 { curve.reverse() } else { curve }
 }
 
@@ -370,7 +374,7 @@ fn random_networks_are_valid() {
         let z: Vec<Vec<f64>> = (0..m)
             .map(|_| (0..n).map(|_| random.next() - 0.5).collect())
             .collect();
-        let point = |x: f64, y: f64, h: f64| Vector3::from_array([x, y, h].map(S::from_f64));
+        let point = |x: f64, y: f64, h: f64| Vector3::from_array([x, y, h].map(Scalar::from_f64));
         let mut part = NamedModel::new();
         let u: Vec<CurveSource> = (0..m)
             .map(|j| {

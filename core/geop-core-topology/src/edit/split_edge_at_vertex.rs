@@ -6,7 +6,7 @@ use geop_core_math::{
     vector::Vector2,
 };
 
-impl<S: Scalar> Model<S> {
+impl Model {
     /// Splits `edge_id` at `edge_t` into two edges joined at the pre-existing
     /// `vertex_id` (which must already coincide with `edge.curve.evaluate(edge_t)`),
     /// and splits every coedge tracing `edge_id` to match. `edge_id` itself
@@ -19,10 +19,10 @@ impl<S: Scalar> Model<S> {
     pub fn split_edge_at_vertex(
         &mut self,
         edge_id: EdgeId,
-        edge_t: S,
+        edge_t: Scalar,
         vertex_id: VertexId,
         max_nodes: usize,
-        min_subdivision_size: S,
+        min_subdivision_size: Scalar,
     ) -> GeopResult<EdgeId> {
         let ctx = |e: GeopError| {
             e.with_context(format!(

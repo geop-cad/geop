@@ -42,10 +42,10 @@ const MAX_HALVINGS: usize = 12;
 /// structurally perfect and every other check accepts it, while every
 /// operation that asks which side the material is on gets the opposite
 /// answer.
-pub fn check_loop_winding<S: Scalar>(
-    _params: &ValidationParameters<S>,
+pub fn check_loop_winding(
+    _params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
 ) {
     for (&face_id, face) in &model.faces {
         for (which, boundary, want_positive) in
@@ -81,9 +81,9 @@ pub fn check_loop_winding<S: Scalar>(
                 }
             };
             let ok = if want_positive {
-                area.definitely_greater(S::ZERO)
+                area.definitely_greater(Scalar::ZERO)
             } else {
-                area.definitely_less(S::ZERO)
+                area.definitely_less(Scalar::ZERO)
             };
             if !ok {
                 let expected = if want_positive {
@@ -101,7 +101,7 @@ pub fn check_loop_winding<S: Scalar>(
 
 /// Whether every edge in the ring anchored at `anchor` is traversed twice —
 /// the signature of a dangling loop or a spur, which encloses no area.
-fn traverses_each_edge_twice<S: Scalar>(model: &Model<S>, anchor: crate::CoedgeId) -> bool {
+fn traverses_each_edge_twice(model: &Model, anchor: crate::CoedgeId) -> bool {
     let mut counts: std::collections::HashMap<crate::EdgeId, usize> =
         std::collections::HashMap::new();
     let cap = model.coedges.len() + 1;
@@ -138,10 +138,10 @@ fn traverses_each_edge_twice<S: Scalar>(model: &Model<S>, anchor: crate::CoedgeI
 /// extent and halves until the two probes disagree decisively, exactly as
 /// [`face_interior_point`] halves its way inward. A face too thin to
 /// resolve either way is skipped rather than guessed at.
-pub fn check_normals_point_outward<S: Scalar>(
-    params: &ValidationParameters<S>,
+pub fn check_normals_point_outward(
+    params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
 ) {
     // A sheet bounds nothing, so either side of it may face anywhere.
     for (&shell_id, shell) in &model.shells {
@@ -165,12 +165,12 @@ pub fn check_normals_point_outward<S: Scalar>(
 /// Whether a face's normal points out of its solid, as
 /// [`normal_points_outward`] found it.
 #[derive(Clone, Debug)]
-pub enum Outward<S: Scalar> {
+pub enum Outward {
     Yes,
     /// It points in: at `point`, inside the face, the normal is `normal`.
     No {
-        point: Vector3<S>,
-        normal: Vector3<S>,
+        point: Vector3,
+        normal: Vector3,
     },
 }
 
@@ -184,13 +184,13 @@ pub enum Outward<S: Scalar> {
 /// to stay within the material works — so it starts from the shell's own
 /// extent and halves until the two probes disagree decisively, exactly as
 /// [`face_interior_point`] halves its way inward.
-pub fn normal_points_outward<S: Scalar>(
-    params: &ValidationParameters<S>,
-    model: &Model<S>,
+pub fn normal_points_outward(
+    params: &ValidationParameters,
+    model: &Model,
     solid_id: SolidId,
     shell_id: ShellId,
     face_id: FaceId,
-) -> Option<Outward<S>> {
+) -> Option<Outward> {
     let face = model.faces.get(&face_id)?;
     // A face without an interior point is reported by
     // `check_faces_have_interior`; there is nothing to probe from.
@@ -220,7 +220,7 @@ pub fn normal_points_outward<S: Scalar>(
     // Outward ends the probes; inward is only remembered, for a smaller
     // probe to overrule.
     let mut found_inward = false;
-    let outward = halve::<S, (), GeopError>(shell_extent(model, shell_id), MAX_HALVINGS, |&step| {
+    let outward = halve::<(), GeopError>(shell_extent(model, shell_id), MAX_HALVINGS, |&step| {
         let outward = point.add(&normal.prod_scalar(step));
         let inward = point.sub(&normal.prod_scalar(step));
         if let (Ok(out_class), Ok(in_class)) = (
@@ -272,7 +272,7 @@ pub fn normal_points_outward<S: Scalar>(
         // there is noise — and since the last decisive verdict wins,
         // letting the loop run past this floor would hand the answer to
         // exactly the least reliable probe.
-        Ok(match step.div(S::TWO) {
+        Ok(match step.div(Scalar::TWO) {
             Ok(next) if next.definitely_greater(params.min_subdivision_size) => Probe::Next,
             _ => Probe::Stop,
         })
@@ -288,11 +288,11 @@ pub fn normal_points_outward<S: Scalar>(
 /// A length comparable to the shell's own size, as a starting probe
 /// distance: the largest coordinate extent of its faces' interior points and
 /// the model's vertices, or 1 if there is nothing to measure.
-fn shell_extent<S: Scalar>(model: &Model<S>, shell_id: crate::ShellId) -> S {
+fn shell_extent(model: &Model, shell_id: crate::ShellId) -> Scalar {
     let mut lo = None;
     let mut hi = None;
     let Some(shell) = model.shells.get(&shell_id) else {
-        return S::ONE;
+        return Scalar::ONE;
     };
     for &face_id in &shell.faces {
         for coedge_id in model.iterate_face_coedges(face_id) {
@@ -330,12 +330,12 @@ fn shell_extent<S: Scalar>(model: &Model<S>, shell_id: crate::ShellId) -> S {
     match (lo, hi) {
         (Some(l), Some(h)) => {
             let extent = h.sub(l);
-            if extent.definitely_greater(S::ZERO) {
+            if extent.definitely_greater(Scalar::ZERO) {
                 extent
             } else {
-                S::ONE
+                Scalar::ONE
             }
         }
-        _ => S::ONE,
+        _ => Scalar::ONE,
     }
 }

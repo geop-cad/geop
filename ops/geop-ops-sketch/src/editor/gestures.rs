@@ -3,6 +3,7 @@
 //! sketch.
 
 use geop_core_editor::editing::hit::no_instances;
+use geop_core_math::scalars::Scalar;
 use geop_core_program::numeric::NumericInput;
 
 use super::{
@@ -18,7 +19,7 @@ use crate::{
 impl Editing<'_> {
     /// What a construction needs beyond its points, the pointer reaching
     /// `pointer`, `t` along its ray.
-    fn hints(&self, pointer: &Pointer<S>, t: S) -> Hints {
+    fn hints(&self, pointer: &Pointer, t: Scalar) -> Hints {
         Hints {
             sides: self.s.sides,
             circumscribed: self.s.circumscribed,
@@ -30,7 +31,7 @@ impl Editing<'_> {
 
     /// The point placed where `pointer` is, at `p` in the plane: snapped,
     /// unless `shift` is held.
-    fn placed(&self, pointer: &Pointer<S>, p: P2, shift: bool) -> Placed {
+    fn placed(&self, pointer: &Pointer, p: P2, shift: bool) -> Placed {
         let (at, snap) = self.snap(pointer, p, shift, &[], true);
         Placed { at, snap }
     }
@@ -38,7 +39,7 @@ impl Editing<'_> {
     /// The pointer moved, `shift` held or not: while drawing, where it
     /// snaps to — and, for a chain of lines, whether it came back onto the
     /// chain's end, which switches between a line and a tangent arc.
-    fn hover(&mut self, pointer: &Pointer<S>, shift: bool) {
+    fn hover(&mut self, pointer: &Pointer, shift: bool) {
         let Some((p, _)) = self.in_plane(pointer) else {
             self.s.cursor = None;
             self.s.snap = None;
@@ -93,7 +94,7 @@ impl Editing<'_> {
 
     /// A primary click, not a double one, at `p` in the plane, `t` along
     /// the pointer's ray, with a drawing tool in hand.
-    fn place(&mut self, tool: DrawTool, pointer: &Pointer<S>, p: P2, t: S, shift: bool) {
+    fn place(&mut self, tool: DrawTool, pointer: &Pointer, p: P2, t: Scalar, shift: bool) {
         let placed = self.placed(pointer, p, shift);
         self.s.cursor = Some(placed.at);
         // A tangent arc starts at the end of a curve.
@@ -178,7 +179,7 @@ impl Editing<'_> {
     /// as it is: a line's length rather than the distance between it and
     /// something else. A dimension is only ever added that way: the click
     /// that takes it is where its value goes.
-    fn pick_for(&mut self, tool: ConstraintTool, pointer: &Pointer<S>) {
+    fn pick_for(&mut self, tool: ConstraintTool, pointer: &Pointer) {
         let visuals = visuals(self.args, self.s, self.selection, &self.frame);
         let hit = hit_key(&visuals, pointer, &[&is_point, &is_curve]);
         let Some(key) = hit else {
@@ -261,7 +262,7 @@ impl Editing<'_> {
     /// point, a line's or a spline's points, a circle's radius, an arc's
     /// sweep. A single point dragged snaps onto points and middles — unless
     /// `shift` is held — and is constrained there when let go.
-    fn drag(&mut self, key: &str, from: P2, to: P2, pointer: &Pointer<S>, done: bool, shift: bool) {
+    fn drag(&mut self, key: &str, from: P2, to: P2, pointer: &Pointer, done: bool, shift: bool) {
         if let Some(id) = glyph_key(key) {
             self.drag_label(id, from, to, done);
             return;
@@ -331,7 +332,7 @@ impl Editing<'_> {
                 if let Some(c) = next.curves.get_mut(&curve)
                     && let CurveKind::Circle { radius, .. } = &mut c.kind
                 {
-                    *radius = Design::from_f64(r);
+                    *radius = Scalar::from_f64(r);
                 }
             }
             Drag::Arc { curve } => {
@@ -345,7 +346,7 @@ impl Editing<'_> {
                 if let Some(c) = next.curves.get_mut(&curve)
                     && let CurveKind::Arc { sweep, .. } = &mut c.kind
                 {
-                    *sweep = Design::from_f64(through);
+                    *sweep = Scalar::from_f64(through);
                 }
             }
         }
@@ -424,7 +425,7 @@ impl Editing<'_> {
 
     /// The curve the trim tool, at `pointer`, is over — one it can trim —
     /// and where in the plane.
-    fn meets(&self, pointer: &Pointer<S>) -> Option<(CurveId, P2)> {
+    fn meets(&self, pointer: &Pointer) -> Option<(CurveId, P2)> {
         let (p, _) = self.in_plane(pointer)?;
         let sketch = self.sketch();
         let trimmable = |key: &str| {
@@ -440,7 +441,7 @@ impl Editing<'_> {
     /// The trim tool dragged from `from` to `to`, released if `done`: what
     /// it meets along the way — under the pointer, and every curve the way
     /// it went crosses — is removed when it is let go.
-    fn stroke(&mut self, from: &Pointer<S>, to: &Pointer<S>, done: bool) {
+    fn stroke(&mut self, from: &Pointer, to: &Pointer, done: bool) {
         if self.s.stroke.path.is_empty() {
             let Some((start, _)) = self.in_plane(from) else {
                 return;
@@ -657,7 +658,7 @@ impl Editing<'_> {
 
     /// A double click with nothing in hand: on a dimension, its value is
     /// asked for in place.
-    fn double_click(&mut self, pointer: &Pointer<S>) {
+    fn double_click(&mut self, pointer: &Pointer) {
         let visuals = visuals(self.args, self.s, self.selection, &self.frame);
         if let Some(id) = hit_key(&visuals, pointer, &[&is_glyph])
             .as_deref()
@@ -673,7 +674,7 @@ impl Editing<'_> {
         }
     }
 
-    pub(super) fn event(&mut self, event: &CanvasEvent<S>) {
+    pub(super) fn event(&mut self, event: &CanvasEvent) {
         match event {
             CanvasEvent::Key { key } => self.key(key),
             CanvasEvent::Cancel => self.cancel(),

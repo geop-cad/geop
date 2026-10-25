@@ -9,7 +9,7 @@ intersection, built on the interval-bounded scalars from
 ## NURBS curves and surfaces
 
 All geometry in the kernel is NURBS, and every coordinate is an interval
-scalar. A curve is `NurbCurve<S, D>`, with control points in homogeneous
+scalar. A curve is `NurbCurve<D>`, with control points in homogeneous
 coordinates:
 
 | Alias            | `D` | Control points  | Used for                              |

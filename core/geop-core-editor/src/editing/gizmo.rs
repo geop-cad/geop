@@ -74,16 +74,16 @@ pub struct Modes {
 /// what it stands on's own, orthonormal and right-handed, if it has an
 /// orientation of its own: then the user chooses which.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Gizmo<S: Scalar> {
-    pub at: Vector3<S>,
-    pub axes: Option<[Vector3<S>; 3]>,
+pub struct Gizmo {
+    pub at: Vector3,
+    pub axes: Option<[Vector3; 3]>,
     pub modes: Modes,
 }
 
-impl<S: Scalar> Gizmo<S> {
+impl Gizmo {
     /// A gizmo at `at` that does nothing yet: see [`Gizmo::translate`],
     /// [`Gizmo::rotate`] and [`Gizmo::scale`].
-    pub fn new(at: Vector3<S>) -> Self {
+    pub fn new(at: Vector3) -> Self {
         Self {
             at,
             axes: None,
@@ -108,7 +108,7 @@ impl<S: Scalar> Gizmo<S> {
 
     /// Oriented along `axes` too, if the user chooses: orthonormal and
     /// right-handed.
-    pub fn local(mut self, axes: [Vector3<S>; 3]) -> Self {
+    pub fn local(mut self, axes: [Vector3; 3]) -> Self {
         self.axes = Some(axes);
         self
     }
@@ -203,16 +203,16 @@ pub enum GizmoPart {
 
 /// What a drag of a gizmo did, from where it started.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Change<S: Scalar> {
+pub enum Change {
     /// Moved by this much, in world coordinates.
-    Translate(Vector3<S>),
+    Translate(Vector3),
     /// Turned by `degrees` about the line through the centre along the
     /// unit vector `axis` — counter-clockwise, looking against it.
-    Rotate { axis: Vector3<S>, degrees: f64 },
+    Rotate { axis: Vector3, degrees: f64 },
     /// Scaled about the centre by `factors[i]` along the unit vector
     /// `axes[i]`.
     Scale {
-        axes: [Vector3<S>; 3],
+        axes: [Vector3; 3],
         factors: [f64; 3],
     },
 }
@@ -220,14 +220,14 @@ pub enum Change<S: Scalar> {
 /// What a drag of a gizmo did, from where it started: a [`Change`] about
 /// `centre`, where the gizmo stood when the drag started.
 #[derive(Clone, Debug, PartialEq)]
-pub struct GizmoDrag<S: Scalar> {
-    pub centre: Vector3<S>,
-    pub change: Change<S>,
+pub struct GizmoDrag {
+    pub centre: Vector3,
+    pub change: Change,
 }
 
-impl<S: Scalar> GizmoDrag<S> {
+impl GizmoDrag {
     /// Where the change takes the point `p`.
-    pub fn apply(&self, p: &Vector3<S>) -> Vector3<S> {
+    pub fn apply(&self, p: &Vector3) -> Vector3 {
         let c = &self.centre;
         match &self.change {
             Change::Translate(by) => p.add(by),
@@ -238,7 +238,7 @@ impl<S: Scalar> GizmoDrag<S> {
             Change::Scale { axes, factors } => {
                 let d = p.sub(c);
                 axes.iter().zip(factors).fold(*c, |at, (axis, &factor)| {
-                    at.add(&axis.prod_scalar(d.prod_dot(axis).mul(S::from_f64(factor))))
+                    at.add(&axis.prod_scalar(d.prod_dot(axis).mul(Scalar::from_f64(factor))))
                 })
             }
         }
@@ -246,17 +246,17 @@ impl<S: Scalar> GizmoDrag<S> {
 
     /// Where the change takes the point `p`, given as plain coordinates.
     pub fn apply_f64(&self, p: [f64; 3]) -> [f64; 3] {
-        let moved = self.apply(&Vector3::from_array(p.map(S::from_f64)));
+        let moved = self.apply(&Vector3::from_array(p.map(Scalar::from_f64)));
         moved.to_array().map(|x| x.to_f64())
     }
 
     /// The change as a rigid motion: a pose taking where something was to
     /// where it goes — `None` for a scale, which is none.
-    pub fn turn(&self) -> Option<Pose<S>> {
+    pub fn turn(&self) -> Option<Pose> {
         match &self.change {
             Change::Translate(by) => Some(Pose::identity().with_position(*by)),
             Change::Rotate { axis, degrees } => {
-                let radians = S::from_f64(degrees.to_radians());
+                let radians = Scalar::from_f64(degrees.to_radians());
                 Pose::rotation_about(&self.centre, axis, radians).ok()
             }
             Change::Scale { .. } => None,
@@ -268,11 +268,10 @@ impl<S: Scalar> GizmoDrag<S> {
 /// the user do, which part the pointer is over and which is dragged, and
 /// what a drag under way has done so far, in words.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(bound = "S: Scalar")]
-pub struct GizmoView<S: Scalar> {
-    pub at: Vector3<S>,
+pub struct GizmoView {
+    pub at: Vector3,
     /// Unit and orthogonal: the world's, or what it stands on's own.
-    pub axes: [Vector3<S>; 3],
+    pub axes: [Vector3; 3],
     pub modes: Modes,
     pub hover: Option<GizmoPart>,
     pub active: Option<GizmoPart>,
@@ -280,13 +279,13 @@ pub struct GizmoView<S: Scalar> {
 }
 
 /// The world's axes.
-fn world<S: Scalar>() -> [Vector3<S>; 3] {
+fn world() -> [Vector3; 3] {
     [0, 1, 2].map(Vector3::axis)
 }
 
-impl<S: Scalar> GizmoView<S> {
+impl GizmoView {
     /// `gizmo` turned as `orientation` says.
-    pub fn of(gizmo: &Gizmo<S>, orientation: Orientation) -> Self {
+    pub fn of(gizmo: &Gizmo, orientation: Orientation) -> Self {
         let axes = match (orientation, gizmo.axes) {
             (Orientation::Local, Some(axes)) => axes,
             _ => world(),
@@ -321,14 +320,14 @@ impl<S: Scalar> GizmoView<S> {
     }
 
     /// The diagonal the even scale's cube sits on.
-    fn diagonal(&self) -> Option<Vector3<S>> {
+    fn diagonal(&self) -> Option<Vector3> {
         let [a, b, c] = &self.axes;
         a.add(b).add(c).normalize().ok()
     }
 
     /// Whether `part` is shown looking along `dir` (see [`size::FACING`]).
-    pub fn shown(&self, part: GizmoPart, dir: &Vector3<S>) -> bool {
-        let across = |a: &Vector3<S>| a.prod_cross(dir).norm().to_f64() >= size::FACING;
+    pub fn shown(&self, part: GizmoPart, dir: &Vector3) -> bool {
+        let across = |a: &Vector3| a.prod_cross(dir).norm().to_f64() >= size::FACING;
         match part {
             GizmoPart::Free | GizmoPart::Turn(_) => true,
             GizmoPart::Move(i) | GizmoPart::Stretch(i) => across(i.of(&self.axes)),
@@ -338,21 +337,23 @@ impl<S: Scalar> GizmoView<S> {
     }
 
     /// How large one reach is at its centre, for `pointer`.
-    pub fn reach(&self, pointer: &Pointer<S>) -> S {
+    pub fn reach(&self, pointer: &Pointer) -> Scalar {
         pointer.reach_at(1.0, pointer.ray.closest_to_point(&self.at))
     }
 
     /// The part `pointer` is over: of the cubes and the ball, then the
     /// arrows and squares, then the rings, the one nearest the pointer on
     /// screen.
-    pub fn hit(&self, pointer: &Pointer<S>) -> Option<GizmoPart> {
+    pub fn hit(&self, pointer: &Pointer) -> Option<GizmoPart> {
         let ray = &pointer.ray;
         let r = self.reach(pointer);
-        let out =
-            |d: &Vector3<S>, reaches: f64| self.at.add(&d.prod_scalar(r.mul(S::from_f64(reaches))));
-        let near = |dist: S, reaches: f64| {
-            (!dist.definitely_greater(r.mul(S::from_f64(reaches))))
-                .then(|| dist.div(r).unwrap_or(S::ZERO))
+        let out = |d: &Vector3, reaches: f64| {
+            self.at
+                .add(&d.prod_scalar(r.mul(Scalar::from_f64(reaches))))
+        };
+        let near = |dist: Scalar, reaches: f64| {
+            (!dist.definitely_greater(r.mul(Scalar::from_f64(reaches))))
+                .then(|| dist.div(r).unwrap_or(Scalar::ZERO))
         };
         self.parts()
             .into_iter()
@@ -385,13 +386,13 @@ impl<S: Scalar> GizmoView<S> {
                         let (lo, hi) = size::PLANE;
                         let corner = |x: f64, y: f64| {
                             out(j.of(&self.axes), x)
-                                .add(&k.of(&self.axes).prod_scalar(r.mul(S::from_f64(y))))
+                                .add(&k.of(&self.axes).prod_scalar(r.mul(Scalar::from_f64(y))))
                         };
                         let [p, q, s, t] =
                             [(lo, lo), (hi, lo), (hi, hi), (lo, hi)].map(|(x, y)| corner(x, y));
                         let inside = ray.intersect_triangle(&p, &q, &s).is_some()
                             || ray.intersect_triangle(&p, &s, &t).is_some();
-                        (1, inside.then_some(S::ZERO)?)
+                        (1, inside.then_some(Scalar::ZERO)?)
                     }
                     GizmoPart::Turn(i) => {
                         let ring = self.ring(i, r);
@@ -413,17 +414,17 @@ impl<S: Scalar> GizmoView<S> {
 
     /// The ring about axis `i`, as a closed polyline, a reach being `r`:
     /// as the viewer draws it, so it is hit where it is seen.
-    fn ring(&self, i: Axis, r: S) -> Vec<Vector3<S>> {
+    fn ring(&self, i: Axis, r: Scalar) -> Vec<Vector3> {
         const SEGMENTS: usize = 64;
         let [u, v] = i.others().map(|k| k.of(&self.axes));
-        let radius = r.mul(S::from_f64(size::RING));
+        let radius = r.mul(Scalar::from_f64(size::RING));
         (0..=SEGMENTS)
             .map(|k| {
                 let a = std::f64::consts::TAU * k as f64 / SEGMENTS as f64;
                 let (s, c) = a.sin_cos();
                 self.at
-                    .add(&u.prod_scalar(radius.mul(S::from_f64(c))))
-                    .add(&v.prod_scalar(radius.mul(S::from_f64(s))))
+                    .add(&u.prod_scalar(radius.mul(Scalar::from_f64(c))))
+                    .add(&v.prod_scalar(radius.mul(Scalar::from_f64(s))))
             })
             .collect()
     }
@@ -459,16 +460,16 @@ fn write(value: f64, step: f64) -> String {
 /// how large a reach was there, and how far a turn has gone, to follow it
 /// past half a turn.
 #[derive(Clone, Debug)]
-pub struct GizmoGrab<S: Scalar> {
-    pub view: GizmoView<S>,
+pub struct GizmoGrab {
+    pub view: GizmoView,
     pub part: GizmoPart,
-    reach: S,
+    reach: Scalar,
     turned: f64,
 }
 
-impl<S: Scalar> GizmoGrab<S> {
+impl GizmoGrab {
     /// Grabbing `part` of `view` with `pointer`.
-    pub fn new(view: GizmoView<S>, part: GizmoPart, pointer: &Pointer<S>) -> Self {
+    pub fn new(view: GizmoView, part: GizmoPart, pointer: &Pointer) -> Self {
         let reach = view.reach(pointer);
         Self {
             view,
@@ -483,16 +484,16 @@ impl<S: Scalar> GizmoGrab<S> {
     /// looking along an arrow, or along a square's plane.
     pub fn drag(
         &mut self,
-        from: &Pointer<S>,
-        to: &Pointer<S>,
+        from: &Pointer,
+        to: &Pointer,
         free: bool,
-    ) -> Option<(GizmoDrag<S>, String)> {
+    ) -> Option<(GizmoDrag, String)> {
         let view = &self.view;
         let c = view.at;
         let axes = view.axes;
         let step = grid_step(self.reach.to_f64());
         let snapped = |v: f64, step: f64| if free { v } else { snap(v, step) };
-        let in_plane = |pointer: &Pointer<S>, normal: &Vector3<S>| {
+        let in_plane = |pointer: &Pointer, normal: &Vector3| {
             pointer.ray.intersect_plane(&c, normal).map(|(_, p)| p)
         };
         // A move by `amounts` along the axes `which`.
@@ -501,7 +502,7 @@ impl<S: Scalar> GizmoGrab<S> {
                 .iter()
                 .zip(&amounts)
                 .fold(Vector3::zero(), |by, (&k, &a)| {
-                    by.add(&k.of(&axes).prod_scalar(S::from_f64(a)))
+                    by.add(&k.of(&axes).prod_scalar(Scalar::from_f64(a)))
                 });
             let text = which
                 .iter()
@@ -513,7 +514,7 @@ impl<S: Scalar> GizmoGrab<S> {
         };
         let (change, text) = match self.part {
             GizmoPart::Move(i) => {
-                let s = |p: &Pointer<S>| p.ray.line_parameter(&c, i.of(&axes));
+                let s = |p: &Pointer| p.ray.line_parameter(&c, i.of(&axes));
                 let moved = s(to)?.sub(s(from)?).to_f64();
                 translate(&[i], vec![snapped(moved, step)])
             }
@@ -561,13 +562,13 @@ impl<S: Scalar> GizmoGrab<S> {
                         .into_iter()
                         .filter_map(|p| {
                             let (dist, t) = from.ray.distance_to_point(&p);
-                            (!dist.definitely_greater(r.mul(S::from_f64(size::NEAR))))
+                            (!dist.definitely_greater(r.mul(Scalar::from_f64(size::NEAR))))
                                 .then_some((t, p))
                         })
                         .min_by(|x, y| nearer(x.0, y.0))?
                         .1;
                     let tangent = a.prod_cross(&grabbed.sub(&c)).normalize().ok()?;
-                    let s = |p: &Pointer<S>| p.ray.line_parameter(&grabbed, &tangent);
+                    let s = |p: &Pointer| p.ray.line_parameter(&grabbed, &tangent);
                     let along = s(to)?.sub(s(from)?).to_f64();
                     self.turned = (along / (size::RING * r.to_f64())).to_degrees();
                 }
@@ -604,13 +605,7 @@ impl<S: Scalar> GizmoGrab<S> {
     /// How far a cube along `direction` was pulled out, as a factor: how
     /// far out it is now over how far it was — snapped unless `free`, and
     /// never zero or less, which would flatten or turn inside out.
-    fn factor(
-        &self,
-        from: &Pointer<S>,
-        to: &Pointer<S>,
-        direction: &Vector3<S>,
-        free: bool,
-    ) -> Option<f64> {
+    fn factor(&self, from: &Pointer, to: &Pointer, direction: &Vector3, free: bool) -> Option<f64> {
         let c = &self.view.at;
         let s0 = from.ray.line_parameter(c, direction)?.to_f64();
         let s1 = to.ray.line_parameter(c, direction)?.to_f64();
@@ -629,19 +624,17 @@ impl<S: Scalar> GizmoGrab<S> {
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::{primitives::Ray, scalars::ScalInF64, vector::Vector3};
+    use geop_core_math::{primitives::Ray, scalars::Scalar, vector::Vector3};
 
     use super::*;
     use crate::editing::Reach;
 
-    type S = ScalInF64;
-
-    fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
-        Vector3::from_array([x, y, z].map(S::from_f64))
+    fn v(x: f64, y: f64, z: f64) -> Vector3 {
+        Vector3::from_array([x, y, z].map(Scalar::from_f64))
     }
 
     /// From `origin` along `dir`, a reach being a tenth of a unit.
-    fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer<S> {
+    fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer {
         Pointer {
             ray: Ray::try_new(
                 v(origin[0], origin[1], origin[2]),
@@ -649,17 +642,17 @@ mod tests {
             )
             .unwrap(),
             reach: Reach::Tube {
-                radius: S::from_f64(0.1),
+                radius: Scalar::from_f64(0.1),
             },
         }
     }
 
     /// Looking straight down `-z` at `(x, y)`.
-    fn down(x: f64, y: f64) -> Pointer<S> {
+    fn down(x: f64, y: f64) -> Pointer {
         pointer([x, y, 10.0], [0.0, 0.0, -1.0])
     }
 
-    fn every() -> GizmoView<S> {
+    fn every() -> GizmoView {
         let gizmo = Gizmo::new(v(0.0, 0.0, 0.0)).translate().rotate().scale();
         GizmoView::of(&gizmo, Orientation::World)
     }
@@ -721,7 +714,7 @@ mod tests {
             down(0.7 * a.cos(), 0.7 * a.sin())
         };
         let mut grab = GizmoGrab::new(gizmo, GizmoPart::Turn(Axis::Z), &at(0.0));
-        let degrees = |grab: &mut GizmoGrab<S>, a: f64| match grab.drag(&at(0.0), &at(a), false) {
+        let degrees = |grab: &mut GizmoGrab, a: f64| match grab.drag(&at(0.0), &at(a), false) {
             Some((
                 GizmoDrag {
                     change: Change::Rotate { degrees, .. },

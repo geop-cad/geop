@@ -5,7 +5,7 @@
 //! that is the editor's, the same for every operation (see
 //! the step editor, [`crate::step_editor`]).
 
-use geop_core_math::{scalars::Scalar, vector::Vector3};
+use geop_core_math::vector::Vector3;
 use serde::Serialize;
 
 use geop_core_program::{element::PickedElement, numeric::NumericInput, reader::Reader};
@@ -170,17 +170,15 @@ impl Unit {
 /// Where a number is dragged in the viewport: a handle at `at`, sliding
 /// along `direction` — moving it by `direction` adds one to the number.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Track<S: Scalar> {
-    pub at: Vector3<S>,
-    pub direction: Vector3<S>,
+pub struct Track {
+    pub at: Vector3,
+    pub direction: Vector3,
 }
 
 /// A number field — of a plain number, or of one that may also be given
 /// as a formula of the part's parameters (see [`Number::text`]).
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Number<S: Scalar> {
+pub struct Number {
     pub label: String,
     /// The value — of a formula, what it evaluates to now.
     pub value: f64,
@@ -196,10 +194,10 @@ pub struct Number<S: Scalar> {
     pub error: Option<String>,
     /// The handle to drag it by, drawn by the editor.
     #[serde(skip)]
-    pub handle: Option<Track<S>>,
+    pub handle: Option<Track>,
 }
 
-impl<S: Scalar> Number<S> {
+impl Number {
     pub fn new(label: impl Into<String>, value: f64, unit: Unit) -> Self {
         Self {
             label: label.into(),
@@ -255,7 +253,7 @@ impl<S: Scalar> Number<S> {
     }
 
     /// With `handle` to drag it by — unless it follows a formula.
-    pub fn handle(mut self, handle: Option<Track<S>>) -> Self {
+    pub fn handle(mut self, handle: Option<Track>) -> Self {
         if !self.follows_formula() {
             self.handle = handle;
         }
@@ -324,8 +322,8 @@ impl Reference {
 
 /// A dialog primitive.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case", bound = "S: Scalar")]
-pub enum Control<S: Scalar> {
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Control {
     Heading {
         text: String,
     },
@@ -350,7 +348,7 @@ pub enum Control<S: Scalar> {
         exporter: String,
         formats: Vec<Choice>,
     },
-    Number(Number<S>),
+    Number(Number),
     /// One of `options`, by value — found by typing, if `searchable`.
     Select {
         label: String,
@@ -384,33 +382,26 @@ pub enum Control<S: Scalar> {
 
 /// A control, and the key the events it sends carry.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Field<S: Scalar> {
+pub struct Field {
     pub key: String,
     #[serde(flatten)]
-    pub control: Control<S>,
+    pub control: Control,
 }
 
 /// The fields an operation shows for a step, in order: an ordered
 /// dictionary from key to control, serialized as a list, so a UI renders it
 /// with one `map` and keys each element by it. Keys are unique.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(transparent, bound = "S: Scalar")]
-pub struct Dialog<S: Scalar>(pub Vec<Field<S>>);
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct Dialog(pub Vec<Field>);
 
-impl<S: Scalar> Default for Dialog<S> {
-    fn default() -> Self {
-        Self(Vec::new())
-    }
-}
-
-impl<S: Scalar> Dialog<S> {
+impl Dialog {
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Appends `control` under `key`.
-    pub fn push(&mut self, key: impl Into<String>, control: Control<S>) -> &mut Self {
+    pub fn push(&mut self, key: impl Into<String>, control: Control) -> &mut Self {
         let key = key.into();
         debug_assert!(
             self.0.iter().all(|f| f.key != key),
@@ -473,7 +464,7 @@ impl<S: Scalar> Dialog<S> {
         )
     }
 
-    pub fn number(&mut self, key: &str, number: Number<S>) -> &mut Self {
+    pub fn number(&mut self, key: &str, number: Number) -> &mut Self {
         self.push(key, Control::Number(number))
     }
 
@@ -595,7 +586,7 @@ impl<S: Scalar> Dialog<S> {
     }
 
     /// The field `key`.
-    pub fn get(&self, key: &str) -> Option<&Control<S>> {
+    pub fn get(&self, key: &str) -> Option<&Control> {
         self.0.iter().find(|f| f.key == key).map(|f| &f.control)
     }
 
@@ -686,7 +677,6 @@ impl<S: Scalar> Dialog<S> {
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::scalars::ScalInF64 as S;
     use serde_json::json;
 
     use super::*;
@@ -695,7 +685,7 @@ mod tests {
     /// them; a handle is the editor's to draw, not sent.
     #[test]
     fn fields_serialize_flat() {
-        let mut dialog = Dialog::<S>::new();
+        let mut dialog = Dialog::new();
         dialog.push(
             "distance",
             Control::Number(

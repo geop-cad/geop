@@ -26,9 +26,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_core_topology::{Body, FaceId, contains::face::face_interior_point};
 use geop_lib_booleans::{RemeshParams, remesh};
 use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model, model};
@@ -57,9 +55,9 @@ pub struct TrimSurface;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TrimSurfaceArgs {
     /// A face of the sheet to trim.
-    pub face: ElementReference<NamedModel<Design>, Face>,
+    pub face: ElementReference<NamedModel, Face>,
     /// The face to cut it with.
-    pub tool: ElementReference<NamedModel<Design>, Face>,
+    pub tool: ElementReference<NamedModel, Face>,
     /// The side of the tool to keep.
     #[serde(default)]
     pub keep: TrimKeep,
@@ -108,9 +106,9 @@ impl PartOperation for TrimSurface {
         context: &'a Context<'a>,
         args: &TrimSurfaceArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, TrimSurfaceArgs> {
+    ) -> EditForm<'a, TrimSurfaceArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, TrimSurfaceArgs>::default();
+        let mut f = EditForm::<TrimSurfaceArgs>::default();
         f.pick_one("face", "sheet", before, Some(&args.face), |edit, face| {
             edit.args.face = face
         });
@@ -145,7 +143,7 @@ impl PartOperation for TrimSurface {
 
 impl ModelOperation for TrimSurface {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         _: &Reader,
         step: &str,
         args: &TrimSurfaceArgs,
@@ -160,7 +158,7 @@ impl ModelOperation for TrimSurface {
 /// where its normal points, `None` if it could be on it — measured from
 /// the foot of `p` on it, refined by Newton from the point of the surface
 /// nearest it.
-fn in_front<S: Scalar>(surface: &NurbSurface3D<S>, p: &Vector3<S>) -> GeopResult<Option<bool>> {
+fn in_front(surface: &NurbSurface3D, p: &Vector3) -> GeopResult<Option<bool>> {
     let distance = if let Some(plane) = surface.as_plane()? {
         plane.signed_distance(p)
     } else {
@@ -169,9 +167,9 @@ fn in_front<S: Scalar>(surface: &NurbSurface3D<S>, p: &Vector3<S>) -> GeopResult
         let foot = surface.evaluate(u, v)?;
         p.sub(&foot).prod_dot(&surface.normal(u, v)?)
     };
-    Ok(if distance.definitely_greater(S::ZERO) {
+    Ok(if distance.definitely_greater(Scalar::ZERO) {
         Some(true)
-    } else if distance.definitely_less(S::ZERO) {
+    } else if distance.definitely_less(Scalar::ZERO) {
         Some(false)
     } else {
         None
@@ -180,8 +178,8 @@ fn in_front<S: Scalar>(surface: &NurbSurface3D<S>, p: &Vector3<S>) -> GeopResult
 
 /// Cuts the sheet of the face named `face` back to the side `keep` of the
 /// face `tool` (see the module docs).
-pub fn trim<S: Scalar>(
-    part: &mut NamedModel<S>,
+pub fn trim(
+    part: &mut NamedModel,
     namer: &Namer,
     face: &str,
     tool: FaceId,

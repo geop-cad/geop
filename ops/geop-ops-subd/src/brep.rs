@@ -10,13 +10,13 @@
 //! stays as the patches it became, one face per corner, joined at its face
 //! point by edges to the middle of each side — where its sides are split.
 //!
-//! Names follow the cage: for the step `S`, the face of cage face `f7` is
-//! `subd(S,f7)`, the edge of cage edge `e3-5` `subd(S,e3-5)`, the vertex of
-//! cage vertex `v3` `subd(S,v3)`, and the solid `subd(S)`. Of an n-gon
-//! `f7`, the face at its corner `v3` is `subd(S,f7,v3)`, its centre
-//! `subd(S,f7,centre)` and the edge from there to the middle of side
-//! `e3-5` `subd(S,f7,e3-5)`; that side's halves are `subd(S,e3-5,v3)` and
-//! `subd(S,e3-5,v5)`, meeting at `subd(S,e3-5,mid)`.
+//! Names follow the cage: for the step `Scalar`, the face of cage face `f7` is
+//! `subd(Scalar,f7)`, the edge of cage edge `e3-5` `subd(Scalar,e3-5)`, the vertex of
+//! cage vertex `v3` `subd(Scalar,v3)`, and the solid `subd(Scalar)`. Of an n-gon
+//! `f7`, the face at its corner `v3` is `subd(Scalar,f7,v3)`, its centre
+//! `subd(Scalar,f7,centre)` and the edge from there to the middle of side
+//! `e3-5` `subd(Scalar,f7,e3-5)`; that side's halves are `subd(Scalar,e3-5,v3)` and
+//! `subd(Scalar,e3-5,v5)`, meeting at `subd(Scalar,e3-5,mid)`.
 
 use std::collections::HashMap;
 
@@ -42,33 +42,42 @@ use crate::{
 };
 
 /// The clamped cubic knots of `spans` Bézier spans over `[0, spans]`.
-fn cubic_knots<S: Scalar>(spans: usize) -> Vec<S> {
-    let mut knots = vec![S::ZERO; 4];
+fn cubic_knots(spans: usize) -> Vec<Scalar> {
+    let mut knots = vec![Scalar::ZERO; 4];
     for s in 1..spans {
-        knots.extend([S::from_i64(s as i64); 3]);
+        knots.extend([Scalar::from_i64(s as i64); 3]);
     }
-    knots.extend([S::from_i64(spans as i64); 4]);
+    knots.extend([Scalar::from_i64(spans as i64); 4]);
     knots
 }
 
 /// The cubic through Bézier control points `points`, one span per three.
-fn cubic<S: Scalar>(points: &[Vector3<S>]) -> GeopResult<Curve3<S>> {
+fn cubic(points: &[Vector3]) -> GeopResult<Curve3> {
     NurbCurve::try_new(
         3,
-        points.iter().map(|p| p.homogeneous(S::ONE)).collect(),
+        points.iter().map(|p| p.homogeneous(Scalar::ONE)).collect(),
         cubic_knots((points.len() - 1) / 3),
     )
 }
 
 /// The straight pcurve from `a` to `b`, over `[0, length]`.
-fn line<S: Scalar>(a: [i64; 2], b: [i64; 2], length: i64) -> GeopResult<Curve2<S>> {
+fn line(a: [i64; 2], b: [i64; 2], length: i64) -> GeopResult<Curve2> {
     let point = |p: [i64; 2]| {
-        geop_core_math::vector::Vector3::from_array([S::from_i64(p[0]), S::from_i64(p[1]), S::ONE])
+        geop_core_math::vector::Vector3::from_array([
+            Scalar::from_i64(p[0]),
+            Scalar::from_i64(p[1]),
+            Scalar::ONE,
+        ])
     };
     NurbCurve::try_new(
         1,
         vec![point(a), point(b)],
-        vec![S::ZERO, S::ZERO, S::from_i64(length), S::from_i64(length)],
+        vec![
+            Scalar::ZERO,
+            Scalar::ZERO,
+            Scalar::from_i64(length),
+            Scalar::from_i64(length),
+        ],
     )
 }
 
@@ -83,17 +92,17 @@ enum EdgeParts {
 }
 
 /// What [`limit_body`] builds the B-rep from.
-struct Builder<'a, S: Scalar> {
-    net: &'a ControlNet<S>,
+struct Builder<'a> {
+    net: &'a ControlNet,
     namer: &'a Namer,
-    spec: BodySpec<S>,
+    spec: BodySpec,
     names: BodyNames,
     /// Per vertex of the subdivided mesh that is one of the B-rep's: its
     /// index there.
     vertex: HashMap<usize, usize>,
 }
 
-impl<S: Scalar> Builder<'_, S> {
+impl Builder<'_> {
     fn add_vertex(&mut self, sub_vertex: usize, name: &[&str]) {
         self.vertex.insert(sub_vertex, self.spec.vertices.len());
         self.spec.vertices.push(self.net.corner[sub_vertex]);
@@ -122,12 +131,12 @@ impl<S: Scalar> Builder<'_, S> {
 /// The coedges of a face's side from cage vertex `from` to `to`, `parts`
 /// the cage edge's B-rep edges, in `(u, v)` from `start` through `middle`
 /// to `end`.
-fn side<S: Scalar>(
+fn side(
     parts: EdgeParts,
     from: usize,
     to: usize,
     [start, middle, end]: [[i64; 2]; 3],
-) -> GeopResult<Vec<CoedgeSpec<S>>> {
+) -> GeopResult<Vec<CoedgeSpec>> {
     let forward = from < to;
     let sense = Sense::from_forward(forward);
     Ok(match parts {
@@ -157,16 +166,16 @@ fn side<S: Scalar>(
 
 /// Checks that a closed mesh's faces run counter-clockwise seen from
 /// outside: that it encloses a volume that is definitely positive.
-fn check_outward<S: Scalar>(mesh: &Mesh) -> GeopResult<()> {
-    let p = |v: usize| Vector3::from_array(mesh.positions[v].map(S::from_f64));
-    let mut volume = S::ZERO;
+fn check_outward(mesh: &Mesh) -> GeopResult<()> {
+    let p = |v: usize| Vector3::from_array(mesh.positions[v].map(Scalar::from_f64));
+    let mut volume = Scalar::ZERO;
     for face in &mesh.faces {
         for k in 1..face.len() - 1 {
             let (a, b, c) = (p(face[0]), p(face[k]), p(face[k + 1]));
             volume = volume.add(a.prod_dot(&b.prod_cross(&c)));
         }
     }
-    if volume.definitely_greater(S::ZERO) {
+    if volume.definitely_greater(Scalar::ZERO) {
         Ok(())
     } else {
         Err(GeopError::new(format!(
@@ -177,14 +186,14 @@ fn check_outward<S: Scalar>(mesh: &Mesh) -> GeopResult<()> {
 
 /// The limit surface of `mesh` as a B-rep (see the module docs), named
 /// with `namer`: a solid if the mesh is closed, else a sheet.
-pub fn limit_body<S: Scalar>(mesh: &Mesh, namer: &Namer) -> GeopResult<(BodySpec<S>, BodyNames)> {
+pub fn limit_body(mesh: &Mesh, namer: &Namer) -> GeopResult<(BodySpec, BodyNames)> {
     let topology = mesh.topology()?;
     let edges = topology.edges();
     let closed = edges.values().all(|faces| faces.len() == 2);
     if closed {
-        check_outward::<S>(mesh)?;
+        check_outward(mesh)?;
     }
-    let sub = subdivide::<S>(mesh, &topology)?;
+    let sub = subdivide(mesh, &topology)?;
     let net = control_net(&sub)?;
     let mut b = Builder {
         net: &net,
@@ -244,7 +253,7 @@ pub fn limit_body<S: Scalar>(mesh: &Mesh, namer: &Namer) -> GeopResult<(BodySpec
             let surface = NurbSurface::try_new(
                 3,
                 3,
-                grid.iter().map(|p| p.homogeneous(S::ONE)).collect(),
+                grid.iter().map(|p| p.homogeneous(Scalar::ONE)).collect(),
                 cubic_knots(2),
                 cubic_knots(2),
             )?;
@@ -274,13 +283,13 @@ pub fn limit_body<S: Scalar>(mesh: &Mesh, namer: &Namer) -> GeopResult<(BodySpec
             for k in 0..n {
                 let (v, after, before) = (face[k], face[(k + 1) % n], face[(k + n - 1) % n]);
                 let patch = net.patch(&sub, sub.face_start[f] + k);
-                let surface: NurbSurface3D<S> = NurbSurface::try_new(
+                let surface: NurbSurface3D = NurbSurface::try_new(
                     3,
                     3,
                     patch
                         .iter()
                         .flatten()
-                        .map(|p| p.homogeneous(S::ONE))
+                        .map(|p| p.homogeneous(Scalar::ONE))
                         .collect(),
                     cubic_knots(1),
                     cubic_knots(1),

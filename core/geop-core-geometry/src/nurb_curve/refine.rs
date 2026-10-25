@@ -3,7 +3,7 @@ use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector};
 use super::NurbCurve;
 use geop_core_math::solvers::newton;
 
-impl<S: Scalar, const D: usize> NurbCurve<S, D> {
+impl<const D: usize> NurbCurve<D> {
     /// Refine `t` — a parameter enclosure produced by a subdivision search —
     /// into the tightest enclosure of the parameter at which this curve
     /// passes through `point`: Gauss-Newton on `|C(t) - P|²`, by
@@ -18,9 +18,9 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     ///
     /// A point nowhere near the curve, or a vanishing tangent, leaves `t`
     /// as it is.
-    pub fn refine_parameter_at_point<const C: usize>(&self, t: S, point: &Vector<S, C>) -> S
+    pub fn refine_parameter_at_point<const C: usize>(&self, t: Scalar, point: &Vector<C>) -> Scalar
     where
-        NurbCurve<S, D>: ParameterRefinable<S, C>,
+        NurbCurve<D>: ParameterRefinable<C>,
     {
         let [t] = newton::refine([t], [self.domain()], |[current]| {
             let position = self.evaluate_cartesian(current).ok()?;
@@ -37,31 +37,31 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     }
 }
 
-/// Bridges a `NurbCurve<S, D>`'s Cartesian evaluation (`D = 4` -> 3-D points,
+/// Bridges a `NurbCurve<D>`'s Cartesian evaluation (`D = 4` -> 3-D points,
 /// `D = 3` -> 2-D pcurve points) so [`NurbCurve::refine_parameter_at_point`]
 /// can be written once for both — stable Rust's const generics cannot express
 /// `C = D - 1` directly.
-pub trait ParameterRefinable<S: Scalar, const C: usize> {
-    fn evaluate_cartesian(&self, t: S) -> GeopResult<Vector<S, C>>;
+pub trait ParameterRefinable<const C: usize> {
+    fn evaluate_cartesian(&self, t: Scalar) -> GeopResult<Vector<C>>;
     /// The Cartesian tangent, via each dimension's own `tangent` (the
     /// quotient rule over the homogeneous `derivative()`).
-    fn tangent_cartesian(&self, t: S) -> GeopResult<Vector<S, C>>;
+    fn tangent_cartesian(&self, t: Scalar) -> GeopResult<Vector<C>>;
 }
 
-impl<S: Scalar> ParameterRefinable<S, 3> for NurbCurve<S, 4> {
-    fn evaluate_cartesian(&self, t: S) -> GeopResult<Vector<S, 3>> {
+impl ParameterRefinable<3> for NurbCurve<4> {
+    fn evaluate_cartesian(&self, t: Scalar) -> GeopResult<Vector<3>> {
         self.evaluate(t)
     }
-    fn tangent_cartesian(&self, t: S) -> GeopResult<Vector<S, 3>> {
+    fn tangent_cartesian(&self, t: Scalar) -> GeopResult<Vector<3>> {
         self.tangent(t)
     }
 }
 
-impl<S: Scalar> ParameterRefinable<S, 2> for NurbCurve<S, 3> {
-    fn evaluate_cartesian(&self, t: S) -> GeopResult<Vector<S, 2>> {
+impl ParameterRefinable<2> for NurbCurve<3> {
+    fn evaluate_cartesian(&self, t: Scalar) -> GeopResult<Vector<2>> {
         self.evaluate(t)
     }
-    fn tangent_cartesian(&self, t: S) -> GeopResult<Vector<S, 2>> {
+    fn tangent_cartesian(&self, t: Scalar) -> GeopResult<Vector<2>> {
         self.tangent(t)
     }
 }
@@ -70,12 +70,11 @@ impl<S: Scalar> ParameterRefinable<S, 2> for NurbCurve<S, 3> {
 mod tests {
     use crate::nurb_curve::NurbCurve;
     use crate::test_fixtures::hom;
-    use geop_core_math::for_all_scalars;
     use geop_core_math::scalars::Scalar;
 
     /// Degree-2 arc, so the parametrization is genuinely nonlinear.
-    fn arc<S: Scalar>() -> NurbCurve<S, 4> {
-        let f = S::from_f64;
+    fn arc() -> NurbCurve<4> {
+        let f = Scalar::from_f64;
         NurbCurve::try_new(
             2,
             vec![
@@ -90,13 +89,14 @@ mod tests {
 
     /// A search-width parameter refines to a far tighter one that still
     /// encloses the true parameter, and still lands on the same point.
-    fn check_refines_a_wide_parameter<S: Scalar>() {
-        let curve = arc::<S>();
-        let exact = S::from_f64(0.375);
+    #[test]
+    fn refines_a_wide_parameter() {
+        let curve = arc();
+        let exact = Scalar::from_f64(0.375);
         let target = curve.evaluate(exact).unwrap();
 
         // What a 1e-4 subdivision search would hand back.
-        let wide = S::from_f64(0.3745).union(S::from_f64(0.3755));
+        let wide = Scalar::from_f64(0.3745).union(Scalar::from_f64(0.3755));
         let refined = curve.refine_parameter_at_point(wide, &target);
 
         assert!(
@@ -108,26 +108,19 @@ mod tests {
             assert!(landed[c].could_be_equal(target[c]), "coord {c} moved");
         }
     }
-    #[test]
-    fn refines_a_wide_parameter() {
-        for_all_scalars!(check_refines_a_wide_parameter);
-    }
 
     /// A point nowhere near the curve must not drag the parameter somewhere
     /// arbitrary — the incoming enclosure comes back untouched.
-    fn check_off_curve_point_falls_back<S: Scalar>() {
-        let curve = arc::<S>();
-        let target = geop_core_math::vector::Vector3::from_array([
-            S::from_f64(50.0),
-            S::from_f64(50.0),
-            S::from_f64(50.0),
-        ]);
-        let wide = S::from_f64(0.3745).union(S::from_f64(0.3755));
-        let refined = curve.refine_parameter_at_point(wide, &target);
-        assert!(refined.could_be_equal(wide));
-    }
     #[test]
     fn off_curve_point_falls_back() {
-        for_all_scalars!(check_off_curve_point_falls_back);
+        let curve = arc();
+        let target = geop_core_math::vector::Vector3::from_array([
+            Scalar::from_f64(50.0),
+            Scalar::from_f64(50.0),
+            Scalar::from_f64(50.0),
+        ]);
+        let wide = Scalar::from_f64(0.3745).union(Scalar::from_f64(0.3755));
+        let refined = curve.refine_parameter_at_point(wide, &target);
+        assert!(refined.could_be_equal(wide));
     }
 }

@@ -28,7 +28,7 @@ use crate::{
 use geop_core_math::solvers::system::{self, Phase};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    scalars::{Ring, Scalar, as_f64},
+    scalars::{Number, Scalar, as_f64},
     vector::Vector2,
 };
 
@@ -39,7 +39,7 @@ const MAX_LOCAL_VARS: usize = 10;
 
 /// A residual with its gradient with respect to its constraint's own
 /// variables.
-type Dual<S> = geop_core_math::dual::Dual<S, MAX_LOCAL_VARS>;
+type Dual = geop_core_math::dual::Dual<MAX_LOCAL_VARS>;
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -52,22 +52,22 @@ struct Layout {
     curve_var: BTreeMap<CurveId, usize>,
 }
 
-impl<S: Scalar> SketchPoint<S, 2> for Point<S> {
+impl SketchPoint<2> for Point {
     fn fixed(&self) -> bool {
         self.fixed
     }
 
-    fn coordinates(&self) -> [S; 2] {
+    fn coordinates(&self) -> [Scalar; 2] {
         [self.x, self.y]
     }
 
-    fn set_coordinates(&mut self, [x, y]: [S; 2]) {
+    fn set_coordinates(&mut self, [x, y]: [Scalar; 2]) {
         (self.x, self.y) = (x, y);
     }
 }
 
 impl Layout {
-    fn new<S: Scalar>(sketch: &Sketch<S>) -> Self {
+    fn new(sketch: &Sketch) -> Self {
         let mut points = PointLayout::new(&sketch.points, &sketch.point_classes());
         let curve_var = sketch
             .curves
@@ -81,13 +81,13 @@ impl Layout {
     /// The current variable values, read from the sketch: the points as
     /// [`PointLayout::read`] reads them, each curve's own variable as
     /// sharp as they.
-    fn read<S: Scalar>(&self, sketch: &Sketch<S>) -> GeopResult<Vec<S>> {
-        let mut x = vec![S::ZERO; self.points.len()];
+    fn read(&self, sketch: &Sketch) -> GeopResult<Vec<Scalar>> {
+        let mut x = vec![Scalar::ZERO; self.points.len()];
         self.points.read(&sketch.points, &mut x);
         for (id, c) in &sketch.curves {
             match c.kind {
                 CurveKind::Arc { sweep, .. } => {
-                    x[self.curve_var[id]] = sweep.div(S::TWO)?.sharpen()
+                    x[self.curve_var[id]] = sweep.div(Scalar::TWO)?.sharpen()
                 }
                 CurveKind::Circle { radius, .. } => x[self.curve_var[id]] = radius,
                 _ => {}
@@ -98,12 +98,12 @@ impl Layout {
 
     /// Write variable values back into the sketch — all but what is fixed,
     /// which stays as given.
-    fn write<S: Scalar>(&self, sketch: &mut Sketch<S>, x: &[S]) {
+    fn write(&self, sketch: &mut Sketch, x: &[Scalar]) {
         self.points.write(&mut sketch.points, x);
         for (id, c) in sketch.curves.iter_mut().filter(|(_, c)| !c.fixed) {
             match &mut c.kind {
                 CurveKind::Arc { sweep, .. } => {
-                    *sweep = S::TWO.mul(x[self.curve_var[id]]).sharpen()
+                    *sweep = Scalar::TWO.mul(x[self.curve_var[id]]).sharpen()
                 }
                 CurveKind::Circle { radius, .. } => *radius = x[self.curve_var[id]].abs().sharpen(),
                 _ => {}
@@ -112,7 +112,7 @@ impl Layout {
     }
 
     /// The variables a curve depends on.
-    fn curve_vars<S: Scalar>(&self, sketch: &Sketch<S>, c: CurveId, out: &mut Vec<usize>) {
+    fn curve_vars(&self, sketch: &Sketch, c: CurveId, out: &mut Vec<usize>) {
         for p in sketch.curves[&c].points() {
             self.points.point_vars(p, out);
         }
@@ -122,13 +122,13 @@ impl Layout {
 
 /// Read-only view of the variables for evaluating one constraint, with that
 /// constraint's own variables `seeded` as [`Scalar`] values.
-struct Geo<'a, S: Scalar, T> {
-    sketch: &'a Sketch<S>,
+struct Geo<'a, T> {
+    sketch: &'a Sketch,
     layout: &'a Layout,
     seeded: &'a [(usize, T)],
 }
 
-impl<S: Scalar, T: Scalar> Geo<'_, S, T> {
+impl<T: Number> Geo<'_, T> {
     fn var(&self, i: usize) -> T {
         self.seeded
             .iter()
@@ -215,9 +215,9 @@ enum TangentMode {
 }
 
 /// One constraint, ready to evaluate.
-struct Prepared<'a, S: Scalar> {
+struct Prepared<'a> {
     id: ConstraintId,
-    constraint: &'a Constraint<S>,
+    constraint: &'a Constraint,
     vars: Vec<usize>,
     tangent: Option<TangentMode>,
 }
@@ -225,21 +225,21 @@ struct Prepared<'a, S: Scalar> {
 /// Whether `a` and `b` are both fixed points: then a coincidence between
 /// them is no merging of variables — neither can move — but a fact about
 /// where they were given, which holds or does not.
-fn both_fixed<S: Scalar>(sketch: &Sketch<S>, a: PointId, b: PointId) -> bool {
+fn both_fixed(sketch: &Sketch, a: PointId, b: PointId) -> bool {
     sketch.points[&a].fixed && sketch.points[&b].fixed
 }
 
 /// Everything needed to evaluate the objective, fixed for one solve.
-struct Problem<'a, S: Scalar> {
-    sketch: &'a Sketch<S>,
+struct Problem<'a> {
+    sketch: &'a Sketch,
     layout: Layout,
-    constraints: Vec<Prepared<'a, S>>,
+    constraints: Vec<Prepared<'a>>,
     /// Characteristic length of the sketch; see the module docs.
-    scale: S,
+    scale: Scalar,
 }
 
-impl<'a, S: Scalar> Problem<'a, S> {
-    fn new(sketch: &'a Sketch<S>) -> GeopResult<Self> {
+impl<'a> Problem<'a> {
+    fn new(sketch: &'a Sketch) -> GeopResult<Self> {
         sketch.validate()?;
         let layout = Layout::new(sketch);
         let x0 = layout.read(sketch)?;
@@ -248,8 +248,8 @@ impl<'a, S: Scalar> Problem<'a, S> {
         // if that is larger — one, where the sketch has no size at all.
         let span = |k: usize| {
             let values = || sketch.points.values().map(move |p| p.xy()[k]);
-            let hi = values().reduce(S::max).unwrap_or(S::ZERO);
-            let lo = values().reduce(S::min).unwrap_or(S::ZERO);
+            let hi = values().reduce(Scalar::max).unwrap_or(Scalar::ZERO);
+            let lo = values().reduce(Scalar::min).unwrap_or(Scalar::ZERO);
             hi.sub(lo)
         };
         let diagonal = span(0).mul(span(0)).add(span(1).mul(span(1))).sqrt()?;
@@ -257,14 +257,14 @@ impl<'a, S: Scalar> Problem<'a, S> {
             .curves
             .values()
             .filter_map(|c| match c.kind {
-                CurveKind::Circle { radius, .. } => Some(S::TWO.mul(radius.abs())),
+                CurveKind::Circle { radius, .. } => Some(Scalar::TWO.mul(radius.abs())),
                 _ => None,
             })
-            .fold(diagonal, S::max);
-        let scale = if scale.is_finite() && scale.definitely_greater(S::ZERO) {
+            .fold(diagonal, Scalar::max);
+        let scale = if scale.is_finite() && scale.definitely_greater(Scalar::ZERO) {
             scale
         } else {
-            S::ONE
+            Scalar::ONE
         };
 
         let mut constraints = Vec::new();
@@ -345,9 +345,9 @@ impl<'a, S: Scalar> Problem<'a, S> {
     }
 
     fn tangent_mode(
-        sketch: &Sketch<S>,
+        sketch: &Sketch,
         layout: &Layout,
-        x: &[S],
+        x: &[Scalar],
         a: CurveId,
         b: CurveId,
     ) -> GeopResult<TangentMode> {
@@ -361,7 +361,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
         if is_line(b) {
             return Ok(TangentMode::LineRound { line: b, round: a });
         }
-        let seeded: Vec<(usize, S)> = x.iter().copied().enumerate().collect();
+        let seeded: Vec<(usize, Scalar)> = x.iter().copied().enumerate().collect();
         let geo = Geo {
             sketch,
             layout,
@@ -378,14 +378,14 @@ impl<'a, S: Scalar> Problem<'a, S> {
 
     fn residuals(
         &self,
-        p: &Prepared<'_, S>,
-        geo: &Geo<'_, S, Dual<S>>,
-        out: &mut Vec<Dual<S>>,
+        p: &Prepared<'_>,
+        geo: &Geo<'_, Dual>,
+        out: &mut Vec<Dual>,
     ) -> GeopResult<()> {
         use Constraint::*;
         let c = Dual::cst;
         let scale = c(self.scale);
-        let half = c(S::ONE.div(S::TWO)?);
+        let half = c(Scalar::ONE.div(Scalar::TWO)?);
         match *p.constraint {
             Coincident { a, b } => {
                 let (pa, pb) = (&self.sketch.points[&a], &self.sketch.points[&b]);
@@ -448,7 +448,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
                 let from = geo.point(a);
                 let image = match geo.arc(by) {
                     Some(arc) => {
-                        let turn = arc.half.mul(c(S::TWO));
+                        let turn = arc.half.mul(c(Scalar::TWO));
                         arc.e.add(&from.sub(&arc.s).rotate(turn.cos(), turn.sin()))
                     }
                     None => {
@@ -532,7 +532,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
                 }
             },
             Equal { a, b } => {
-                let size = |c: CurveId| -> GeopResult<Dual<S>> {
+                let size = |c: CurveId| -> GeopResult<Dual> {
                     Ok(match &self.sketch.curves[&c].kind {
                         CurveKind::Line { .. } => {
                             let (s, e) = geo.line(c);
@@ -560,7 +560,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
             Radius { curve, value } => out.push(match geo.arc(curve) {
                 // `2 R |sin θ| - L` rather than `L / (2 |sin θ|) - R`: the
                 // same zero set, but finite for a nearly straight arc.
-                Some(a) => c(S::TWO.mul(value))
+                Some(a) => c(Scalar::TWO.mul(value))
                     .mul(a.half.sin().abs())
                     .sub(a.chord_length()?),
                 None => geo.round(curve)?.1.sub(c(value)),
@@ -568,14 +568,14 @@ impl<'a, S: Scalar> Problem<'a, S> {
             Diameter { curve, value } => out.push(match geo.arc(curve) {
                 // As for the radius: `D |sin θ| - L`.
                 Some(a) => c(value).mul(a.half.sin().abs()).sub(a.chord_length()?),
-                None => geo.round(curve)?.1.sub(c(value.div(S::TWO)?)),
+                None => geo.round(curve)?.1.sub(c(value.div(Scalar::TWO)?)),
             }),
         }
         Ok(())
     }
 }
 
-impl<'a, S: Scalar> Residuals<S, MAX_LOCAL_VARS> for Problem<'a, S> {
+impl<'a> Residuals<MAX_LOCAL_VARS> for Problem<'a> {
     fn offsets(&self) -> Vec<Option<usize>> {
         self.layout.points.offsets()
     }
@@ -588,9 +588,9 @@ impl<'a, S: Scalar> Residuals<S, MAX_LOCAL_VARS> for Problem<'a, S> {
         &self.constraints[c].vars
     }
 
-    fn residuals(&self, c: usize, values: &[Dual<S>], out: &mut Vec<Dual<S>>) -> GeopResult<()> {
+    fn residuals(&self, c: usize, values: &[Dual], out: &mut Vec<Dual>) -> GeopResult<()> {
         let prepared = &self.constraints[c];
-        let seeded: Vec<(usize, Dual<S>)> = prepared
+        let seeded: Vec<(usize, Dual)> = prepared
             .vars
             .iter()
             .copied()
@@ -609,18 +609,17 @@ impl<'a, S: Scalar> Residuals<S, MAX_LOCAL_VARS> for Problem<'a, S> {
         format!("{} {:?}", c.id, c.constraint)
     }
 
-    fn scale(&self) -> S {
+    fn scale(&self) -> Scalar {
         self.scale
     }
 }
 
 /// The planar sketch's system (see [`Variables`]).
-type Planar<'p, 'a, S> = Variables<'p, S, Problem<'a, S>, MAX_LOCAL_VARS>;
+type Planar<'p, 'a> = Variables<'p, Problem<'a>, MAX_LOCAL_VARS>;
 
 /// The outcome of a solve.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(bound = "S: Scalar")]
-pub struct SolveReport<S: Scalar> {
+pub struct SolveReport {
     /// Every constraint holds (to
     /// [`geop_core_math::solvers::system::RELATIVE_TOLERANCE`] of the
     /// sketch size).
@@ -628,10 +627,10 @@ pub struct SolveReport<S: Scalar> {
     /// Largest remaining constraint residual, in sketch units: an upper
     /// bound.
     #[serde(with = "as_f64")]
-    pub max_residual: S,
+    pub max_residual: Scalar,
     pub iterations: usize,
     /// Each minimization of the solve.
-    pub phases: Vec<Phase<S>>,
+    pub phases: Vec<Phase>,
     /// Remaining degrees of freedom: variables minus independent
     /// constraints — which are independent decided over the box an
     /// enclosure of the solution chose them over (see
@@ -652,7 +651,7 @@ pub struct SolveReport<S: Scalar> {
     pub unproven: Vec<String>,
 }
 
-impl<S: Scalar> Sketch<S> {
+impl Sketch {
     /// The sketch's geometry as the kernel builds on it (see [`Enclosure`]):
     /// an enclosure of the exact solution of its constraints near the
     /// solved positions, each variable the constraints leave free exactly
@@ -662,7 +661,7 @@ impl<S: Scalar> Sketch<S> {
     /// built exactly as drawn: that is all there is to build. Fails if the
     /// solution cannot be proven — a sketch meeting its constraints only at
     /// a singular configuration.
-    pub fn enclose<T: Scalar>(&self) -> GeopResult<Enclosure<T>> {
+    pub fn enclose(&self) -> GeopResult<Enclosure> {
         let ctx = |e: GeopError| e.with_context("enclosing the sketch's solution");
         let problem = Problem::new(self).map_err(ctx)?;
         let params = problem.layout.read(self)?;
@@ -674,10 +673,9 @@ impl<S: Scalar> Sketch<S> {
         // What is fixed is as given; the rest as enclosed.
         let x = variables.enclosed(&start).map_err(ctx)?;
         let layout = &problem.layout;
-        let to_t = |v: S| -> T { v.cast() };
         Ok(Enclosure {
             points: (layout.points.point_var.keys())
-                .map(|&p| (p, Vector2::from_array(layout.points.point(&x, p).map(to_t))))
+                .map(|&p| (p, Vector2::from_array(layout.points.point(&x, p))))
                 .collect(),
             params: self
                 .curves
@@ -685,8 +683,8 @@ impl<S: Scalar> Sketch<S> {
                 .filter_map(|(&id, c)| {
                     let v = x[*layout.curve_var.get(&id)?];
                     Some(match c.kind {
-                        CurveKind::Arc { .. } => (id, to_t(v.mul(S::TWO))),
-                        _ => (id, to_t(v.abs())),
+                        CurveKind::Arc { .. } => (id, v.mul(Scalar::TWO)),
+                        _ => (id, v.abs()),
                     })
                 })
                 .collect(),
@@ -699,16 +697,13 @@ impl<S: Scalar> Sketch<S> {
     /// The sketch is updated even if the solve does not converge, to the
     /// closest configuration found — the report says which constraints could
     /// not be met.
-    pub fn solve(&mut self) -> GeopResult<SolveReport<S>> {
+    pub fn solve(&mut self) -> GeopResult<SolveReport> {
         self.solve_with_drag(&[])
     }
 
     /// Like [`Sketch::solve`], while pulling each `(point, target)` towards
     /// its target as far as the constraints allow — interactive dragging.
-    pub fn solve_with_drag(
-        &mut self,
-        drags: &[(PointId, Vector2<S>)],
-    ) -> GeopResult<SolveReport<S>> {
+    pub fn solve_with_drag(&mut self, drags: &[(PointId, Vector2)]) -> GeopResult<SolveReport> {
         let problem = Problem::new(self)?;
         let start = problem.layout.read(self)?;
         let (variables, solved, x) =
@@ -716,21 +711,21 @@ impl<S: Scalar> Sketch<S> {
         let report = variables.report(&solved.values, solved.phases, solved.enclosure)?;
         // Where the solve put the points is the sketch's state, and a free
         // choice: sharp.
-        let x: Vec<S> = x.into_iter().map(Scalar::sharpen).collect();
+        let x: Vec<Scalar> = x.into_iter().map(Scalar::sharpen).collect();
         problem.layout.write(self, &x);
         Ok(report)
     }
 }
 
-impl<S: Scalar> Planar<'_, '_, S> {
+impl Planar<'_, '_> {
     /// How the sketch stands with the free variables at `blocks`: which
     /// constraints hold, and what can still move.
     fn report(
         &self,
-        blocks: &[S],
-        phases: Vec<Phase<S>>,
-        solved: system::Enclosure<S>,
-    ) -> GeopResult<SolveReport<S>> {
+        blocks: &[Scalar],
+        phases: Vec<Phase>,
+        solved: system::Enclosure<Scalar>,
+    ) -> GeopResult<SolveReport> {
         let Standing {
             held,
             dof,
@@ -774,16 +769,14 @@ mod tests {
     use std::f64::consts::PI;
 
     use geop_core_math::{
-        scalars::ScalInF64,
+        scalars::Scalar,
         solvers::system::{Equations, Term},
     };
 
     use super::*;
 
-    type S = ScalInF64;
-
-    fn n(x: f64) -> S {
-        S::from_f64(x)
+    fn n(x: f64) -> Scalar {
+        Scalar::from_f64(x)
     }
 
     /// At points drawn exactly, every residual and every slope of it is
@@ -792,7 +785,7 @@ mod tests {
     /// would hide every step.
     #[test]
     fn residuals_are_sharp_where_the_points_are() {
-        let mut s = Sketch::<S>::new();
+        let mut s = Sketch::new();
         let a = s.add_point(n(-1.0), n(0.1));
         let b = s.add_point(n(1.2), n(-0.1));
         let c = s.add_point(n(0.1), n(1.5));
@@ -840,7 +833,7 @@ mod tests {
     /// over: every corner square, and each pair of opposite sides parallel
     /// too. Its first corner held at the origin, its sides `2` and `1`
     /// long, and its bottom horizontal if `level`. Its sides.
-    fn rectangle_said_twice(s: &mut Sketch<S>, level: bool) -> Vec<CurveId> {
+    fn rectangle_said_twice(s: &mut Sketch, level: bool) -> Vec<CurveId> {
         let p = [[0.0, 0.0], [2.05, 0.1], [1.9, 1.07], [-0.08, 0.95]]
             .map(|q| s.add_point(n(q[0]), n(q[1])));
         let l: Vec<CurveId> = (0..4).map(|i| s.add_line(p[i], p[(i + 1) % 4])).collect();
@@ -875,7 +868,7 @@ mod tests {
 
     /// The far corner of a rectangle as enclosed: where its second side
     /// ends.
-    fn far_corner(s: &Sketch<S>, sides: &[CurveId], e: &Enclosure<S>) -> Vector2<S> {
+    fn far_corner(s: &Sketch, sides: &[CurveId], e: &Enclosure) -> Vector2 {
         let (_, end) = s.curves[&sides[1]].endpoints().unwrap();
         e.points[&end]
     }
@@ -886,12 +879,12 @@ mod tests {
     /// left as drawn.
     #[test]
     fn a_rectangle_said_twice_is_proven() {
-        let mut s = Sketch::<S>::new();
+        let mut s = Sketch::new();
         let sides = rectangle_said_twice(&mut s, true);
         let report = s.solve().unwrap();
         assert!(report.converged && report.dof == 0, "{report:?}");
         assert!(report.unproven.is_empty(), "{report:?}");
-        let e = s.enclose::<S>().unwrap();
+        let e = s.enclose().unwrap();
         let corner = far_corner(&s, &sides, &e);
         assert!(
             corner[0].could_be_equal(n(2.0)) && corner[1].could_be_equal(n(1.0)),
@@ -899,11 +892,11 @@ mod tests {
         );
         assert!(corner[0].width().to_f64() < 1e-12, "{corner:?}");
 
-        let mut s = Sketch::<S>::new();
+        let mut s = Sketch::new();
         let sides = rectangle_said_twice(&mut s, false);
         let report = s.solve().unwrap();
         assert!(report.converged && report.dof == 1, "{report:?}");
-        let e = s.enclose::<S>().unwrap();
+        let e = s.enclose().unwrap();
         let corner = far_corner(&s, &sides, &e);
         let diagonal = corner[0].mul(corner[0]).add(corner[1].mul(corner[1]));
         assert!(diagonal.could_be_equal(n(5.0)), "{diagonal:?}");
@@ -914,7 +907,7 @@ mod tests {
     /// and proving the solution says so, naming both.
     #[test]
     fn conflicting_lengths_are_named() {
-        let mut s = Sketch::<S>::new();
+        let mut s = Sketch::new();
         let sides = rectangle_said_twice(&mut s, true);
         let top = s.constrain(Constraint::Length {
             curve: sides[2],
@@ -927,7 +920,7 @@ mod tests {
             panic!("{report:?}");
         };
         assert!(why.contains("conflict"), "{why}");
-        let e = s.enclose::<S>().unwrap_err();
+        let e = s.enclose().unwrap_err();
         let message = e.root_message();
         let bottom = s
             .constraints

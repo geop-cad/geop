@@ -4,7 +4,7 @@
 use geop_core_editor::registry::Registry;
 use geop_core_math::{
     primitives::{Pose, Quaternion},
-    scalars::{ScalInF64 as S, Scalar},
+    scalars::Scalar,
     vector::Vector3,
 };
 use geop_core_program::{
@@ -19,8 +19,8 @@ use crate::{
     testing::{Shelf, given_model, place, runner},
 };
 
-fn at(x: f64) -> Pose<S> {
-    let v = Vector3::from_array([x, 0.0, 0.0].map(S::from_f64));
+fn at(x: f64) -> Pose {
+    let v = Vector3::from_array([x, 0.0, 0.0].map(Scalar::from_f64));
     Pose::new(v, Quaternion::identity()).unwrap()
 }
 

@@ -18,11 +18,11 @@ use crate::spline::find_span;
 
 /// Uniform parameterization: `t[0] = 0`, `t[last] = 1`, interior values
 /// evenly spaced regardless of the spacing of `points`.
-fn uniform_params<S: Scalar>(m: usize) -> Vec<S> {
-    let mut t = vec![S::ZERO; m];
-    t[m - 1] = S::ONE;
+fn uniform_params(m: usize) -> Vec<Scalar> {
+    let mut t = vec![Scalar::ZERO; m];
+    t[m - 1] = Scalar::ONE;
     for (k, tk) in t.iter_mut().enumerate().take(m - 1).skip(1) {
-        *tk = S::from_ratio(k as i64, (m - 1) as i64).unwrap();
+        *tk = Scalar::from_ratio(k as i64, (m - 1) as i64).unwrap();
     }
     t
 }
@@ -47,22 +47,22 @@ fn uniform_params<S: Scalar>(m: usize) -> Vec<S> {
 /// Falls back to [`uniform_params`] when the polyline has a repeated point (or
 /// no length at all): chord length would hand those two points the same
 /// parameter, and the collocation matrix built from it is singular.
-fn chord_length_params<S: Scalar, const C: usize>(points: &[Vector<S, C>]) -> Vec<S> {
+fn chord_length_params<const C: usize>(points: &[Vector<C>]) -> Vec<Scalar> {
     let m = points.len();
-    let mut cumulative = vec![S::ZERO; m];
+    let mut cumulative = vec![Scalar::ZERO; m];
     for k in 1..m {
         let chord = points[k].sub(&points[k - 1]).norm();
-        if chord.could_be_equal(S::ZERO) {
+        if chord.could_be_equal(Scalar::ZERO) {
             return uniform_params(m);
         }
         cumulative[k] = cumulative[k - 1].add(chord);
     }
     let total = cumulative[m - 1];
-    if total.could_be_equal(S::ZERO) {
+    if total.could_be_equal(Scalar::ZERO) {
         return uniform_params(m);
     }
-    let mut t = vec![S::ZERO; m];
-    t[m - 1] = S::ONE;
+    let mut t = vec![Scalar::ZERO; m];
+    t[m - 1] = Scalar::ONE;
     for k in 1..(m - 1) {
         // Sharpened because a parameter value is a free choice, not an
         // answer: any increasing sequence interpolates the same points, so
@@ -88,19 +88,19 @@ fn chord_length_params<S: Scalar, const C: usize>(points: &[Vector<S, C>]) -> Ve
 /// parameter values — guarantees every knot span contains at least one
 /// parameter value, which is what keeps the collocation matrix below
 /// nonsingular.
-fn averaging_knots<S: Scalar>(t: &[S], degree: usize) -> Vec<S> {
+fn averaging_knots(t: &[Scalar], degree: usize) -> Vec<Scalar> {
     let m = t.len();
     let n = m - 1;
     let p = degree;
-    let mut knots = vec![S::ZERO; m + p + 1];
+    let mut knots = vec![Scalar::ZERO; m + p + 1];
     for i in 0..=p {
-        knots[i] = S::ZERO;
+        knots[i] = Scalar::ZERO;
         let last = knots.len() - 1 - i;
-        knots[last] = S::ONE;
+        knots[last] = Scalar::ONE;
     }
-    let p_s = S::from_i64(p as i64);
+    let p_s = Scalar::from_i64(p as i64);
     for j in 1..=(n - p) {
-        let mut sum = S::ZERO;
+        let mut sum = Scalar::ZERO;
         for &tk in &t[j..(j + p)] {
             sum = sum.add(tk);
         }
@@ -111,23 +111,23 @@ fn averaging_knots<S: Scalar>(t: &[S], degree: usize) -> Vec<S> {
 
 /// All `degree + 1` nonzero basis function values at `t`, for the span
 /// found by `find_span` (Piegl & Tiller algorithm A2.2).
-fn basis_funs<S: Scalar>(span: usize, t: S, degree: usize, knots: &[S]) -> Vec<S> {
+fn basis_funs(span: usize, t: Scalar, degree: usize, knots: &[Scalar]) -> Vec<Scalar> {
     let p = degree;
-    let mut n = vec![S::ZERO; p + 1];
-    n[0] = S::ONE;
-    let mut left = vec![S::ZERO; p + 1];
-    let mut right = vec![S::ZERO; p + 1];
+    let mut n = vec![Scalar::ZERO; p + 1];
+    n[0] = Scalar::ONE;
+    let mut left = vec![Scalar::ZERO; p + 1];
+    let mut right = vec![Scalar::ZERO; p + 1];
 
     for j in 1..=p {
         left[j] = t.sub(knots[span + 1 - j]);
         right[j] = knots[span + j].sub(t);
-        let mut saved = S::ZERO;
+        let mut saved = Scalar::ZERO;
         for r in 0..j {
             let denom = right[r + 1].add(left[j - r]);
-            let temp = if denom.could_be_equal(S::ZERO) {
-                S::ZERO
+            let temp = if denom.could_be_equal(Scalar::ZERO) {
+                Scalar::ZERO
             } else {
-                n[r].div(denom).unwrap_or(S::ZERO)
+                n[r].div(denom).unwrap_or(Scalar::ZERO)
             };
             n[r] = saved.add(right[r + 1].mul(temp));
             saved = left[j - r].mul(temp);
@@ -147,17 +147,17 @@ fn basis_funs<S: Scalar>(span: usize, t: S, degree: usize, knots: &[S]) -> Vec<S
 ///
 /// Generic over the dimension `C` of `points`, which are solved for as they
 /// are: Cartesian points (see [`with_unit_weights`]) or homogeneous ones.
-fn solve_interpolation_system<S: Scalar, const C: usize>(
-    t: &[S],
-    knots: &[S],
+fn solve_interpolation_system<const C: usize>(
+    t: &[Scalar],
+    knots: &[Scalar],
     degree: usize,
-    points: &[Vector<S, C>],
-) -> GeopResult<Vec<Vector<S, C>>> {
+    points: &[Vector<C>],
+) -> GeopResult<Vec<Vector<C>>> {
     let m = points.len();
     let p = degree;
 
     // Row `k`'s band: columns `first[k] ..= last[k]`.
-    let mut a = vec![vec![S::ZERO; m]; m];
+    let mut a = vec![vec![Scalar::ZERO; m]; m];
     let mut first = vec![0; m];
     let mut last = vec![0; m];
     for (k, &tk) in t.iter().enumerate() {
@@ -179,17 +179,15 @@ fn solve_interpolation_system<S: Scalar, const C: usize>(
 
 /// The Cartesian points `points` as homogeneous control points of weight
 /// one (`D = C + 1`).
-fn with_unit_weights<S: Scalar, const C: usize, const D: usize>(
-    points: Vec<Vector<S, C>>,
-) -> Vec<Vector<S, D>> {
+fn with_unit_weights<const C: usize, const D: usize>(points: Vec<Vector<C>>) -> Vec<Vector<D>> {
     points
         .into_iter()
         .map(|p| {
-            let mut v = Vector::<S, D>::zero();
+            let mut v = Vector::<D>::zero();
             for c in 0..C {
                 v[c] = p[c];
             }
-            v[C] = S::ONE;
+            v[C] = Scalar::ONE;
             v
         })
         .collect()
@@ -224,13 +222,13 @@ pub fn true_point_fractions(i: usize, intervals: usize) -> &'static [(i64, i64)]
 /// least 1 and to at most `points.len() - 1`) that passes exactly through
 /// `points`, then — given `between`, true points inside each interval — widen
 /// it to enclose the true curve too (see [`widen_to_enclose`]).
-fn interpolate<S: Scalar, const C: usize, const D: usize>(
-    points: &[Vector<S, C>],
-    between: Option<&[Vec<Vector<S, C>>]>,
+fn interpolate<const C: usize, const D: usize>(
+    points: &[Vector<C>],
+    between: Option<&[Vec<Vector<C>>]>,
     degree: usize,
-) -> GeopResult<NurbCurve<S, D>>
+) -> GeopResult<NurbCurve<D>>
 where
-    NurbCurve<S, D>: ParameterRefinable<S, C>,
+    NurbCurve<D>: ParameterRefinable<C>,
 {
     if points.len() < 2 {
         return Err(GeopError::new(
@@ -246,7 +244,7 @@ where
     // samples' own width is enclosed below like any other true point.
     // Solving through interval samples instead would amplify their width
     // through the elimination.
-    let centres: Vec<Vector<S, C>>;
+    let centres: Vec<Vector<C>>;
     let through = if between.is_some() {
         centres = points.iter().map(|q| q.sharpen()).collect();
         &centres[..]
@@ -272,12 +270,12 @@ where
         // each true point between samples evenly through its interval in the
         // interpolant's parameter — the `j`th of `k` at `(j + 1) / (k + 1)` of
         // the way. Where a check starts is a free choice, and a sharp one.
-        let mut checks: Vec<(S, Vector<S, C>)> =
+        let mut checks: Vec<(Scalar, Vector<C>)> =
             t.iter().copied().zip(points.iter().copied()).collect();
         for (w, qs) in t.windows(2).zip(between) {
             for (j, &q) in qs.iter().enumerate() {
-                let frac = S::from_ratio(j as i64 + 1, qs.len() as i64 + 1)?;
-                checks.push((S::interpolate(w[0], w[1], frac).sharpen(), q));
+                let frac = Scalar::from_ratio(j as i64 + 1, qs.len() as i64 + 1)?;
+                checks.push((Scalar::interpolate(w[0], w[1], frac).sharpen(), q));
             }
         }
         widen_to_enclose(&mut curve, &checks)?;
@@ -305,12 +303,12 @@ where
 /// strays no further than the worst check saw. One uniform `d` rather than a
 /// local one keeps it cheap and keeps a locally tight neighbour from diluting
 /// the width between checks, where the drift is least measured.
-fn widen_to_enclose<S: Scalar, const C: usize, const D: usize>(
-    curve: &mut NurbCurve<S, D>,
-    checks: &[(S, Vector<S, C>)],
+fn widen_to_enclose<const C: usize, const D: usize>(
+    curve: &mut NurbCurve<D>,
+    checks: &[(Scalar, Vector<C>)],
 ) -> GeopResult<()>
 where
-    NurbCurve<S, D>: ParameterRefinable<S, C>,
+    NurbCurve<D>: ParameterRefinable<C>,
 {
     let pad = enclosing_pad(curve, checks)?;
     widen(curve, &pad);
@@ -319,15 +317,15 @@ where
 
 /// How far, per coordinate, `curve` has to be widened to enclose every
 /// check's point (see [`widen_to_enclose`]).
-fn enclosing_pad<S: Scalar, const C: usize, const D: usize>(
-    curve: &NurbCurve<S, D>,
-    checks: &[(S, Vector<S, C>)],
-) -> GeopResult<[S; C]>
+fn enclosing_pad<const C: usize, const D: usize>(
+    curve: &NurbCurve<D>,
+    checks: &[(Scalar, Vector<C>)],
+) -> GeopResult<[Scalar; C]>
 where
-    NurbCurve<S, D>: ParameterRefinable<S, C>,
+    NurbCurve<D>: ParameterRefinable<C>,
 {
     let (lo, hi) = curve.domain();
-    let mut pad = [S::ZERO; C];
+    let mut pad = [Scalar::ZERO; C];
     for &(guess, q) in checks {
         let position = curve.evaluate_cartesian(guess)?;
         let tangent = curve.tangent_cartesian(guess)?;
@@ -335,7 +333,7 @@ where
             .sub(&q)
             .prod_dot(&tangent)
             .div(tangent.prod_dot(&tangent))
-            .unwrap_or(S::ZERO);
+            .unwrap_or(Scalar::ZERO);
         let tau = guess.sub(step).sharpen();
         let tau = if tau.definitely_less(lo) {
             lo
@@ -360,7 +358,7 @@ where
 /// `curve` widened by `±pad[k]` in each coordinate `k`, everywhere: every
 /// control point by that much (times its weight, in homogeneous form) —
 /// the basis is non-negative and sums to one.
-fn widen<S: Scalar, const C: usize, const D: usize>(curve: &mut NurbCurve<S, D>, pad: &[S; C]) {
+fn widen<const C: usize, const D: usize>(curve: &mut NurbCurve<D>, pad: &[Scalar; C]) {
     for cp in &mut curve.control_points {
         let w = cp[D - 1];
         for k in 0..C {
@@ -373,14 +371,14 @@ fn widen<S: Scalar, const C: usize, const D: usize>(curve: &mut NurbCurve<S, D>,
 
 /// Checks `params` are parameters to interpolate `m` values at: as many,
 /// strictly increasing, from exactly 0 to exactly 1.
-fn check_params<S: Scalar>(params: &[S], m: usize) -> GeopResult<()> {
+fn check_params(params: &[Scalar], m: usize) -> GeopResult<()> {
     let increasing = params.windows(2).all(|w| w[0].definitely_less(w[1]));
     let ends = params
         .first()
-        .is_some_and(|t| t.is_sharp() && t.could_be_equal(S::ZERO))
+        .is_some_and(|t| t.is_sharp() && t.could_be_equal(Scalar::ZERO))
         && params
             .last()
-            .is_some_and(|t| t.is_sharp() && t.could_be_equal(S::ONE));
+            .is_some_and(|t| t.is_sharp() && t.could_be_equal(Scalar::ONE));
     if params.len() != m || m < 2 || !increasing || !ends {
         return Err(GeopError::new(format!(
             "NurbCurve::interpolate_homogeneous: {m} values need as many parameters, strictly increasing from 0 to 1, not {params:?}"
@@ -389,7 +387,7 @@ fn check_params<S: Scalar>(params: &[S], m: usize) -> GeopResult<()> {
     Ok(())
 }
 
-impl<S: Scalar> NurbCurve<S, 4> {
+impl NurbCurve<4> {
     /// The cubic spline through `points`, in order: twice continuously
     /// differentiable, parameterized by chord length (see
     /// [`chord_length_params`]) with a knot at every point, so it bends
@@ -406,9 +404,9 @@ impl<S: Scalar> NurbCurve<S, 4> {
     ///
     /// Two points and no tangents give the straight line between them.
     pub fn cubic_spline(
-        points: &[Vector3<S>],
-        start: Option<Vector3<S>>,
-        end: Option<Vector3<S>>,
+        points: &[Vector3],
+        start: Option<Vector3>,
+        end: Option<Vector3>,
     ) -> GeopResult<Self> {
         let m = points.len();
         if m < 2 {
@@ -418,22 +416,22 @@ impl<S: Scalar> NurbCurve<S, 4> {
         }
         let t = chord_length_params(points);
         // Knots `0 0 0 0 t1 .. t(m-2) 1 1 1 1`: `m + 2` control points.
-        let mut knots = vec![S::ZERO; 4];
+        let mut knots = vec![Scalar::ZERO; 4];
         knots.extend_from_slice(&t[1..m - 1]);
-        knots.extend([S::ONE; 4]);
+        knots.extend([Scalar::ONE; 4]);
         let n = m + 2;
-        let speed = S::from_f64(
+        let speed = Scalar::from_f64(
             points
                 .windows(2)
                 .map(|w| w[1].sub(&w[0]).norm().to_f64())
                 .sum(),
         );
-        let mut a = vec![vec![S::ZERO; n]; n];
+        let mut a = vec![vec![Scalar::ZERO; n]; n];
         let mut rhs = vec![Vector3::zero(); n];
         // Through the ends.
-        a[0][0] = S::ONE;
+        a[0][0] = Scalar::ONE;
         rhs[0] = points[0];
-        a[n - 1][n - 1] = S::ONE;
+        a[n - 1][n - 1] = Scalar::ONE;
         rhs[n - 1] = points[m - 1];
         // Through the points between, at their parameters.
         for k in 1..m - 1 {
@@ -447,24 +445,24 @@ impl<S: Scalar> NurbCurve<S, 4> {
         // points: `C'(0) = 3 (P1 - P0) / u4`, `C''(0) ∝ (P2 - P1) / u5 -
         // (P1 - P0) / u4`, and mirrored at the end.
         let (u4, u5) = (knots[4], knots[5]);
-        let (v4, v5) = (S::ONE.sub(knots[n - 1]), S::ONE.sub(knots[n - 2]));
+        let (v4, v5) = (Scalar::ONE.sub(knots[n - 1]), Scalar::ONE.sub(knots[n - 2]));
         let mut condition = |row: usize,
-                             tangent: Option<Vector3<S>>,
-                             h1: S,
-                             h2: S,
+                             tangent: Option<Vector3>,
+                             h1: Scalar,
+                             h2: Scalar,
                              ends: [usize; 3],
-                             sign: S|
+                             sign: Scalar|
          -> GeopResult<()> {
             let [p0, p1, p2] = ends;
             match tangent {
                 Some(direction) => {
                     let derivative = direction.normalize()?.prod_scalar(speed.mul(sign));
-                    a[row][p1] = S::ONE;
-                    a[row][p0] = S::ONE.neg();
-                    rhs[row] = derivative.prod_scalar(h1.div(S::from_i64(3))?);
+                    a[row][p1] = Scalar::ONE;
+                    a[row][p0] = Scalar::ONE.neg();
+                    rhs[row] = derivative.prod_scalar(h1.div(Scalar::from_i64(3))?);
                 }
                 None => {
-                    let (k1, k2) = (S::ONE.div(h1)?, S::ONE.div(h2)?);
+                    let (k1, k2) = (Scalar::ONE.div(h1)?, Scalar::ONE.div(h2)?);
                     a[row][p2] = k2;
                     a[row][p1] = k1.add(k2).neg();
                     a[row][p0] = k1;
@@ -472,13 +470,13 @@ impl<S: Scalar> NurbCurve<S, 4> {
             }
             Ok(())
         };
-        condition(1, start, u4, u5, [0, 1, 2], S::ONE)?;
+        condition(1, start, u4, u5, [0, 1, 2], Scalar::ONE)?;
         // At the end, the tangent points back along the spline from its
         // last control point.
-        condition(n - 2, end, v4, v5, [n - 1, n - 2, n - 3], S::ONE.neg())?;
+        condition(n - 2, end, v4, v5, [n - 1, n - 2, n - 3], Scalar::ONE.neg())?;
         let control_points = solve_pivoted(a, rhs)?
             .into_iter()
-            .map(|p| Vector4::from_array([p[0], p[1], p[2], S::ONE]))
+            .map(|p| Vector4::from_array([p[0], p[1], p[2], Scalar::ONE]))
             .collect();
         NurbCurve::try_new(3, control_points, knots)
     }
@@ -487,8 +485,8 @@ impl<S: Scalar> NurbCurve<S, 4> {
     /// above. Between the points it is only an approximation of whatever
     /// curve they were sampled from; use [`Self::interpolate_enclosing`]
     /// when the result has to *enclose* that curve.
-    pub fn interpolate(points: &[Vector3<S>], degree: usize) -> GeopResult<Self> {
-        interpolate::<S, 3, 4>(points, None, degree)
+    pub fn interpolate(points: &[Vector3], degree: usize) -> GeopResult<Self> {
+        interpolate::<3, 4>(points, None, degree)
     }
 
     /// Fit a 3-D NURBS curve through samples `points` of some true curve
@@ -506,11 +504,11 @@ impl<S: Scalar> NurbCurve<S, 4> {
     /// true point per interval measures it where it is largest; the
     /// enclosure is exact there and as good as that measurement in between.
     pub fn interpolate_enclosing(
-        points: &[Vector3<S>],
-        between: &[Vec<Vector3<S>>],
+        points: &[Vector3],
+        between: &[Vec<Vector3>],
         degree: usize,
     ) -> GeopResult<Self> {
-        interpolate::<S, 3, 4>(points, Some(between), degree)
+        interpolate::<3, 4>(points, Some(between), degree)
     }
 
     /// The rational curve of `degree` whose homogeneous control points
@@ -527,8 +525,8 @@ impl<S: Scalar> NurbCurve<S, 4> {
     /// width into the control points (sharpen a value that is a free choice
     /// first). An error if a control point's weight comes out not positive.
     pub fn interpolate_homogeneous(
-        values: &[Vector4<S>],
-        params: &[S],
+        values: &[Vector4],
+        params: &[Scalar],
         degree: usize,
     ) -> GeopResult<Self> {
         check_params(params, values.len())?;
@@ -543,44 +541,47 @@ impl<S: Scalar> NurbCurve<S, 4> {
     /// point `q`, near the curve at about `t` — exactly as
     /// [`Self::interpolate_enclosing`] widens an interpolant to enclose the
     /// curve it was sampled from.
-    pub fn enclosing_pad(&self, checks: &[(S, Vector3<S>)]) -> GeopResult<[S; 3]> {
+    pub fn enclosing_pad(&self, checks: &[(Scalar, Vector3)]) -> GeopResult<[Scalar; 3]> {
         enclosing_pad(self, checks)
     }
 
     /// This curve widened by `±pad[k]` in each coordinate `k`, everywhere.
-    pub fn widen(&mut self, pad: &[S; 3]) {
+    pub fn widen(&mut self, pad: &[Scalar; 3]) {
         widen(self, pad)
     }
 }
 
-impl<S: Scalar> NurbCurve<S, 3> {
+impl NurbCurve<3> {
     /// Fit a 2-D NURBS curve exactly through `points` — see the 3-D
     /// [`NurbCurve::interpolate`].
-    pub fn interpolate(points: &[Vector2<S>], degree: usize) -> GeopResult<Self> {
-        interpolate::<S, 2, 3>(points, None, degree)
+    pub fn interpolate(points: &[Vector2], degree: usize) -> GeopResult<Self> {
+        interpolate::<2, 3>(points, None, degree)
     }
 
     /// The 2-D counterpart of the 3-D [`NurbCurve::interpolate_enclosing`].
     pub fn interpolate_enclosing(
-        points: &[Vector2<S>],
-        between: &[Vec<Vector2<S>>],
+        points: &[Vector2],
+        between: &[Vec<Vector2>],
         degree: usize,
     ) -> GeopResult<Self> {
-        interpolate::<S, 2, 3>(points, Some(between), degree)
+        interpolate::<2, 3>(points, Some(between), degree)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geop_core_math::for_all_scalars;
 
-    fn v3<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
-        Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
+    fn v3(x: f64, y: f64, z: f64) -> Vector3 {
+        Vector3::from_array([
+            Scalar::from_f64(x),
+            Scalar::from_f64(y),
+            Scalar::from_f64(z),
+        ])
     }
 
-    fn v2<S: Scalar>(x: f64, y: f64) -> Vector2<S> {
-        Vector2::from_array([S::from_f64(x), S::from_f64(y)])
+    fn v2(x: f64, y: f64) -> Vector2 {
+        Vector2::from_array([Scalar::from_f64(x), Scalar::from_f64(y)])
     }
 
     /// A clamped interpolating spline must reproduce its first and last data
@@ -590,18 +591,19 @@ mod tests {
     /// start and end on the topological vertices it was built between — a
     /// traced intersection edge whose endpoint drifts even slightly no longer
     /// matches its own `start_vertex`/`end_vertex` and fails validation.
-    fn check_interpolate_reproduces_endpoints<S: Scalar>() {
+    #[test]
+    fn interpolate_reproduces_endpoints() {
         // Deliberately not axis-aligned or evenly spaced, so no coordinate
         // is reproduced by accident.
         let points = vec![
-            v3::<S>(0.5, 0.5, 0.5),
-            v3::<S>(0.4713, 0.5219, 0.4102),
-            v3::<S>(0.4402, 0.5411, 0.3301),
-            v3::<S>(0.4001, 0.5502, 0.2604),
-            v3::<S>(0.5, 0.5, 0.2),
+            v3(0.5, 0.5, 0.5),
+            v3(0.4713, 0.5219, 0.4102),
+            v3(0.4402, 0.5411, 0.3301),
+            v3(0.4001, 0.5502, 0.2604),
+            v3(0.5, 0.5, 0.2),
         ];
         for degree in [1, 2, 3] {
-            let curve = NurbCurve::<S, 4>::interpolate(&points, degree).unwrap();
+            let curve = NurbCurve::<4>::interpolate(&points, degree).unwrap();
             let (t0, t1) = curve.domain();
             let start = curve.evaluate(t0).unwrap();
             let end = curve.evaluate(t1).unwrap();
@@ -618,22 +620,18 @@ mod tests {
         }
     }
 
-    #[test]
-    fn interpolate_reproduces_endpoints() {
-        for_all_scalars!(check_interpolate_reproduces_endpoints);
-    }
-
     /// Points a rounding apart, each as wide as the steps between them — a
     /// silhouette 4e-13 long, from an iso view of `cross_drilled_shaft` —
     /// still interpolate. Their chord-length fractions, sharpened, did not
     /// increase, and a knot averaged from them lay outside the domain.
-    fn check_points_a_rounding_apart_interpolate<S: Scalar>() {
-        let i = |lo: f64, hi: f64| S::from_f64(lo).union(S::from_f64(hi));
+    #[test]
+    fn points_a_rounding_apart_interpolate() {
+        let i = |lo: f64, hi: f64| Scalar::from_f64(lo).union(Scalar::from_f64(hi));
         let (x, y) = (
             i(-0.4242640687119382, -0.4242640687119197),
             i(-0.42426406871193406, -0.4242640687119227),
         );
-        let points: Vec<Vector3<S>> = [
+        let points: Vec<Vector3> = [
             (1.0000000000003741, 1.0000000000004499),
             (1.000000000000271, 1.0000000000003466),
             (1.0000000000001676, 1.0000000000002431),
@@ -643,19 +641,16 @@ mod tests {
         .iter()
         .map(|&(lo, hi)| Vector3::from_array([x, y, i(lo, hi)]))
         .collect();
-        let curve = NurbCurve::<S, 4>::interpolate(&points, 3).unwrap();
+        let curve = NurbCurve::<4>::interpolate(&points, 3).unwrap();
         let (t0, t1) = curve.domain();
         assert!(curve.evaluate(t0).unwrap().could_be_equal(&points[0]));
         assert!(curve.evaluate(t1).unwrap().could_be_equal(&points[4]));
     }
-    #[test]
-    fn points_a_rounding_apart_interpolate() {
-        for_all_scalars!(check_points_a_rounding_apart_interpolate);
-    }
 
-    /// Same parabola-fitting check as `check_interpolate_curve_matches_samples`,
+    /// Same parabola-fitting check as `interpolate_curve_matches_samples`,
     /// but through the 2-D (`Vector2`) code path.
-    fn check_interpolate_2d_curve_matches_samples<S: Scalar>() {
+    #[test]
+    fn interpolate_2d_curve_matches_samples() {
         let n = 20;
         let points: Vec<_> = (0..=n)
             .map(|i| {
@@ -664,43 +659,37 @@ mod tests {
             })
             .collect();
 
-        let curve = NurbCurve::<S, 3>::interpolate(&points, 3).unwrap();
+        let curve = NurbCurve::<3>::interpolate(&points, 3).unwrap();
 
         let (t0, t1) = curve.domain();
-        let mid_t = t0.add(t1.sub(t0).mul(S::from_f64(0.5)));
+        let mid_t = t0.add(t1.sub(t0).mul(Scalar::from_f64(0.5)));
         let p = curve.evaluate(mid_t).unwrap();
         assert!(
             p[1].sub(p[0].mul(p[0]))
                 .abs()
-                .could_be_less(S::from_f64(1e-3))
+                .could_be_less(Scalar::from_f64(1e-3))
         );
-    }
-    #[test]
-    fn interpolate_2d_curve_matches_samples() {
-        for_all_scalars!(check_interpolate_2d_curve_matches_samples);
     }
 
     /// Densely-sampled straight line: evaluating the fitted curve anywhere
     /// should reproduce the corresponding point on the line.
-    fn check_interpolate_line<S: Scalar>() {
+    #[test]
+    fn interpolate_line() {
         let n = 50;
         let points: Vec<_> = (0..=n).map(|i| v3(i as f64 / n as f64, 0.0, 0.0)).collect();
 
-        let curve = NurbCurve::<S, 4>::interpolate(&points, 3).unwrap();
+        let curve = NurbCurve::<4>::interpolate(&points, 3).unwrap();
 
-        let p = curve.evaluate(S::from_f64(0.5)).unwrap();
-        assert!(p[0].could_be_equal(S::from_f64(0.5)));
-        assert!(p[1].could_be_equal(S::ZERO));
-        assert!(p[2].could_be_equal(S::ZERO));
-    }
-    #[test]
-    fn interpolate_line() {
-        for_all_scalars!(check_interpolate_line);
+        let p = curve.evaluate(Scalar::from_f64(0.5)).unwrap();
+        assert!(p[0].could_be_equal(Scalar::from_f64(0.5)));
+        assert!(p[1].could_be_equal(Scalar::ZERO));
+        assert!(p[2].could_be_equal(Scalar::ZERO));
     }
 
     /// A right-angle "L" polyline: the fitted curve must still pass through
     /// every original vertex.
-    fn check_interpolate_passes_through_corner<S: Scalar>() {
+    #[test]
+    fn interpolate_passes_through_corner() {
         let mut points = Vec::new();
         for i in 0..=10 {
             points.push(v3(i as f64 / 10.0, 0.0, 0.0));
@@ -709,26 +698,23 @@ mod tests {
             points.push(v3(1.0, i as f64 / 10.0, 0.0));
         }
 
-        let curve = NurbCurve::<S, 4>::interpolate(&points, 3).unwrap();
+        let curve = NurbCurve::<4>::interpolate(&points, 3).unwrap();
 
         let (t0, t1) = curve.domain();
         let start = curve.evaluate(t0).unwrap();
         let end = curve.evaluate(t1).unwrap();
-        assert!(start[0].could_be_equal(S::ZERO));
-        assert!(start[1].could_be_equal(S::ZERO));
-        assert!(end[0].could_be_equal(S::ONE));
-        assert!(end[1].could_be_equal(S::ONE));
-    }
-    #[test]
-    fn interpolate_passes_through_corner() {
-        for_all_scalars!(check_interpolate_passes_through_corner);
+        assert!(start[0].could_be_equal(Scalar::ZERO));
+        assert!(start[1].could_be_equal(Scalar::ZERO));
+        assert!(end[0].could_be_equal(Scalar::ONE));
+        assert!(end[1].could_be_equal(Scalar::ONE));
     }
 
     /// Sampled points on a parabola `y = x^2`: fit with degree 3 and confirm
     /// the curve reproduces intermediate sample points closely (a non-linear
     /// curve needs its interior control points, unlike the straight-line
     /// case).
-    fn check_interpolate_curve_matches_samples<S: Scalar>() {
+    #[test]
+    fn interpolate_curve_matches_samples() {
         let n = 20;
         let points: Vec<_> = (0..=n)
             .map(|i| {
@@ -737,29 +723,26 @@ mod tests {
             })
             .collect();
 
-        let curve = NurbCurve::<S, 4>::interpolate(&points, 3).unwrap();
+        let curve = NurbCurve::<4>::interpolate(&points, 3).unwrap();
 
         let (t0, t1) = curve.domain();
-        let mid_t = t0.add(t1.sub(t0).mul(S::from_f64(0.5)));
+        let mid_t = t0.add(t1.sub(t0).mul(Scalar::from_f64(0.5)));
         let p = curve.evaluate(mid_t).unwrap();
         // The fitted point must lie on the parabola.
         assert!(
             p[1].sub(p[0].mul(p[0]))
                 .abs()
-                .could_be_less(S::from_f64(1e-3))
+                .could_be_less(Scalar::from_f64(1e-3))
         );
-    }
-    #[test]
-    fn interpolate_curve_matches_samples() {
-        for_all_scalars!(check_interpolate_curve_matches_samples);
     }
 
     /// Points of a true curve *between* the samples: an exact interpolant
     /// through a few samples of a circle misses them (its drift isn't in its
     /// width), the enclosing one contains every one of them.
-    fn check_interpolate_enclosing_contains_the_true_curve<S: Scalar>() {
+    #[test]
+    fn interpolate_enclosing_contains_the_true_curve() {
         use crate::contains::curve::curve_could_contain;
-        let circle = |a: f64| v3::<S>(a.cos(), a.sin(), 0.);
+        let circle = |a: f64| v3(a.cos(), a.sin(), 0.);
         let n = 8;
         let angle = |i: usize, of: usize| std::f64::consts::FRAC_PI_2 * i as f64 / of as f64;
         let points: Vec<_> = (0..=n).map(|i| circle(angle(i, n))).collect();
@@ -772,11 +755,11 @@ mod tests {
             })
             .collect();
 
-        let exact = NurbCurve::<S, 4>::interpolate(&points, 3).unwrap();
-        let enclosing = NurbCurve::<S, 4>::interpolate_enclosing(&points, &between, 3).unwrap();
-        let eps = S::from_f64(1e-6);
+        let exact = NurbCurve::<4>::interpolate(&points, 3).unwrap();
+        let enclosing = NurbCurve::<4>::interpolate_enclosing(&points, &between, 3).unwrap();
+        let eps = Scalar::from_f64(1e-6);
         let dense: Vec<_> = (0..=200).map(|i| circle(angle(i, 200))).collect();
-        let found = |c: &NurbCurve<S, 4>| {
+        let found = |c: &NurbCurve<4>| {
             dense
                 .iter()
                 .filter(|q| curve_could_contain(c, q, 5000, eps).unwrap().is_some())
@@ -786,7 +769,7 @@ mod tests {
             found(&exact) < dense.len(),
             "the exact interpolant should drift"
         );
-        let missed: Vec<(usize, Result<Option<S>, String>)> = dense
+        let missed: Vec<(usize, Result<Option<Scalar>, String>)> = dense
             .iter()
             .enumerate()
             .map(|(i, q)| {
@@ -799,26 +782,23 @@ mod tests {
             .collect();
         assert!(missed.is_empty(), "true points not enclosed: {missed:?}");
     }
-    #[test]
-    fn interpolate_enclosing_contains_the_true_curve() {
-        for_all_scalars!(check_interpolate_enclosing_contains_the_true_curve);
-    }
 
     /// A cubic spline passes through every point, leaves and arrives along
     /// the tangents it is given, and is straight at a free end.
-    fn check_cubic_spline_meets_its_conditions<S: Scalar>() {
+    #[test]
+    fn cubic_spline_meets_its_conditions() {
         let points = [
-            v3::<S>(0.0, 0.0, 0.0),
+            v3(0.0, 0.0, 0.0),
             v3(1.0, 0.5, 0.2),
             v3(2.0, 0.3, 1.0),
             v3(2.5, 1.5, 1.2),
         ];
-        let parallel = |a: Vector3<S>, b: Vector3<S>| {
+        let parallel = |a: Vector3, b: Vector3| {
             let c = a.prod_cross(&b);
             (0..3).all(|k| c[k].abs().to_f64() < 1e-9) && a.prod_dot(&b).to_f64() > 0.0
         };
         let start = v3(0.0, 0.0, 1.0);
-        let curve = NurbCurve::<S, 4>::cubic_spline(&points, Some(start), None).unwrap();
+        let curve = NurbCurve::<4>::cubic_spline(&points, Some(start), None).unwrap();
         let (t0, t1) = curve.domain();
         // Through every point: the ends exactly, the rest at their knots.
         assert!(curve.evaluate(t0).unwrap().could_be_equal(&points[0]));
@@ -834,28 +814,27 @@ mod tests {
         assert!(parallel(curve.tangent(t0).unwrap(), start));
         // Free at the end: no second derivative.
         let bend = curve.second_derivative(t1).unwrap();
-        assert!((0..3).all(|k| bend[k].could_be_equal(S::ZERO)), "{bend:?}");
+        assert!(
+            (0..3).all(|k| bend[k].could_be_equal(Scalar::ZERO)),
+            "{bend:?}"
+        );
 
         let end = v3(1.0, 0.0, 0.0);
-        let curve = NurbCurve::<S, 4>::cubic_spline(&points, None, Some(end)).unwrap();
-        assert!(parallel(curve.tangent(S::ONE).unwrap(), end));
-        let bend = curve.second_derivative(S::ZERO).unwrap();
-        assert!((0..3).all(|k| bend[k].could_be_equal(S::ZERO)), "{bend:?}");
-    }
-    #[test]
-    fn cubic_spline_meets_its_conditions() {
-        for_all_scalars!(check_cubic_spline_meets_its_conditions);
+        let curve = NurbCurve::<4>::cubic_spline(&points, None, Some(end)).unwrap();
+        assert!(parallel(curve.tangent(Scalar::ONE).unwrap(), end));
+        let bend = curve.second_derivative(Scalar::ZERO).unwrap();
+        assert!(
+            (0..3).all(|k| bend[k].could_be_equal(Scalar::ZERO)),
+            "{bend:?}"
+        );
     }
 
     /// Two points and no tangents: the line between them.
-    fn check_cubic_spline_of_two_points_is_straight<S: Scalar>() {
-        let (a, b) = (v3::<S>(0.0, 1.0, 2.0), v3(3.0, 1.0, -2.0));
-        let curve = NurbCurve::<S, 4>::cubic_spline(&[a, b], None, None).unwrap();
-        let middle = curve.evaluate(S::from_f64(0.5)).unwrap();
-        assert!(middle.could_be_equal(&v3(1.5, 1.0, 0.0)), "{middle:?}");
-    }
     #[test]
     fn cubic_spline_of_two_points_is_straight() {
-        for_all_scalars!(check_cubic_spline_of_two_points_is_straight);
+        let (a, b) = (v3(0.0, 1.0, 2.0), v3(3.0, 1.0, -2.0));
+        let curve = NurbCurve::<4>::cubic_spline(&[a, b], None, None).unwrap();
+        let middle = curve.evaluate(Scalar::from_f64(0.5)).unwrap();
+        assert!(middle.could_be_equal(&v3(1.5, 1.0, 0.0)), "{middle:?}");
     }
 }

@@ -27,17 +27,14 @@
 //! their unknowns (see [`define`]).
 
 use geop_core_program::{
-    element::ElementReference,
-    part::StepContext,
-    reader::Reader,
-    values::{Design, StateValue},
+    element::ElementReference, part::StepContext, reader::Reader, values::StateValue,
 };
 use std::collections::BTreeMap;
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::Pose,
-    scalars::{Ring, Scalar},
+    scalars::{Number, Scalar},
     solvers::system::{Mobility, tolerance},
     vector::Vector3,
     with_context,
@@ -74,7 +71,7 @@ pub fn mates_resolved() -> usize {
 
 /// The size of the placed parts `bodies` — at least one: what a mate
 /// between them turns a turn into a length by.
-fn size(reader: &Reader, bodies: &[&Option<String>]) -> GeopResult<Design> {
+fn size(reader: &Reader, bodies: &[&Option<String>]) -> GeopResult<Scalar> {
     largest((bodies.iter().copied().flatten()).map(|body| drawn(reader, body)))
 }
 
@@ -93,7 +90,7 @@ fn geometry_in(
 
 /// The connector `entity` is to a joint, in its own part: what it makes one
 /// of itself, or the frame it gives.
-fn connector_in(entity: &MateEntity, reader: &Reader) -> GeopResult<Connector<Design>> {
+fn connector_in(entity: &MateEntity, reader: &Reader) -> GeopResult<Connector> {
     let shape = entity.shape(reader)?;
     let face = matches!(entity.on, Selected::Face(_)) && entity.at.is_none();
     match Connector::of(&shape, face) {
@@ -233,7 +230,7 @@ impl Reading<'_> {
     /// The coordinates `[angle, distance]` of the joint `name` of `kind`:
     /// zero for a motion it does not free.
     fn coordinates(&mut self, reader: &Reader, name: &str, kind: &JointKind) -> GeopResult<[D; 2]> {
-        let mut out = [D::cst(Design::ZERO); 2];
+        let mut out = [D::cst(Scalar::ZERO); 2];
         for (k, motion) in Motion::ALL.into_iter().enumerate() {
             if kind.moves(motion) {
                 out[k] = self.coordinate(reader, &joint_parameter(name, motion))?;
@@ -258,11 +255,7 @@ impl Reading<'_> {
 }
 
 /// A joint resolved: its kind, and its two ends.
-type Joint<'a> = (
-    &'a JointKind,
-    &'a On<Connector<Design>>,
-    &'a On<Connector<Design>>,
-);
+type Joint<'a> = (&'a JointKind, &'a On<Connector>, &'a On<Connector>);
 
 /// The joint `name` of the part read, resolved.
 fn joint<'a>(reader: &Reader<'a>, name: &str) -> GeopResult<Joint<'a>> {
@@ -501,10 +494,10 @@ pub fn mates_of<'a>(reader: &Reader<'a>) -> Vec<(String, &'a Resolved)> {
 /// them: in the world.
 fn connectors_at(
     reader: &Reader,
-    a: &On<Connector<Design>>,
-    b: &On<Connector<Design>>,
+    a: &On<Connector>,
+    b: &On<Connector>,
 ) -> GeopResult<[Connector<D>; 2]> {
-    let world = |on: &On<Connector<Design>>| -> GeopResult<Option<Pose<D>>> {
+    let world = |on: &On<Connector>| -> GeopResult<Option<Pose<D>>> {
         (on.body.as_ref())
             .map(|body| Ok(locate(reader, body)?.world.map(D::cst)))
             .transpose()
@@ -517,8 +510,8 @@ fn connectors_at(
 /// are — an angle at the turn nearest `near`.
 fn measured(
     reader: &Reader,
-    a: &On<Connector<Design>>,
-    b: &On<Connector<Design>>,
+    a: &On<Connector>,
+    b: &On<Connector>,
     near: f64,
 ) -> GeopResult<[f64; 2]> {
     let [ca, cb] = connectors_at(reader, a, b)?;
@@ -551,7 +544,7 @@ fn coordinate(reader: &Reader, name: &str, motion: Motion) -> GeopResult<Unknown
     let (_, a, b) = joint(reader, name)?;
     // Where the parts cannot be measured, there is nothing to start from.
     let seed = measured(reader, a, b, near).ok().map(|[angle, distance]| {
-        StateValue::Number(Design::from_f64(match motion {
+        StateValue::Number(Scalar::from_f64(match motion {
             Motion::Turn => angle,
             Motion::Slide => distance,
         }))

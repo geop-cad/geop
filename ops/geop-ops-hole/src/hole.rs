@@ -112,7 +112,7 @@ impl HoleShape {
 
     /// The half section, top-down from the axis on the face (see the module
     /// docs), with its curves named and its joints `p0`, `p1`, ...
-    fn section<S: Scalar>(&self, depth: HoleDepth) -> GeopResult<Profile<S>> {
+    fn section(&self, depth: HoleDepth) -> GeopResult<Profile> {
         self.check(depth.depth)?;
         let r = self.diameter / 2.0;
         let mut corners = vec![(0.0, 0.0)];
@@ -139,7 +139,8 @@ impl HoleShape {
             corners.push((0.0, -depth.depth));
             names.push("bottom");
         }
-        let p = |&(r, z): &(f64, f64)| Vector2::from_array([S::from_f64(r), S::from_f64(z)]);
+        let p =
+            |&(r, z): &(f64, f64)| Vector2::from_array([Scalar::from_f64(r), Scalar::from_f64(z)]);
         let curves = corners
             .windows(2)
             .map(|w| NurbCurve2D::line(p(&w[0]), p(&w[1])))
@@ -157,11 +158,11 @@ impl HoleShape {
 /// origin into the face whose outward normal is `axes.w()`: its section
 /// revolved a full turn around `w`, into a solid named `solid`, its faces
 /// named by `namer` (see the module docs).
-pub fn hole_tool<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn hole_tool(
+    model: &mut NamedModel,
     namer: &Namer,
     solid: &str,
-    axes: &CoordinateSystem<S>,
+    axes: &CoordinateSystem,
     shape: &HoleShape,
     depth: HoleDepth,
 ) -> GeopResult<SolidId> {

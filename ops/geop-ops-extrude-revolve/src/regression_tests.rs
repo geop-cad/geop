@@ -4,7 +4,6 @@
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::{DatumComponent, FrameAxis},
-    scalars::Scalar,
 };
 use geop_core_program::{operation_registry::OperationRegistry, program::Program, testing::args};
 use geop_ops_model::datums::{ORIGIN, component_name, datum};

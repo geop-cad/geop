@@ -19,11 +19,11 @@ use geop_core_geometry::shape::Plane;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::{CoordinateSystem, Datum, DatumKind},
-    scalars::{Field, Ring, Scalar},
+    scalars::Scalar,
     vector::Vector3,
     with_context,
 };
-use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
+use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader};
 use serde::{Deserialize, Serialize};
 
 use geop_ops_model::datums::{Datums, datums};
@@ -293,7 +293,7 @@ impl AddDatumArgs {
 }
 
 /// The plane of a frame whose `w` is its normal.
-fn plane_of<S: Scalar>(frame: &CoordinateSystem<S>) -> Plane<S> {
+fn plane_of(frame: &CoordinateSystem) -> Plane {
     Plane {
         point: *frame.origin(),
         normal: *frame.w(),
@@ -301,17 +301,13 @@ fn plane_of<S: Scalar>(frame: &CoordinateSystem<S>) -> Plane<S> {
 }
 
 /// `frame`'s axes, at `origin`.
-fn moved<S: Scalar>(
-    frame: &CoordinateSystem<S>,
-    origin: Vector3<S>,
-) -> GeopResult<CoordinateSystem<S>> {
+fn moved(frame: &CoordinateSystem, origin: Vector3) -> GeopResult<CoordinateSystem> {
     CoordinateSystem::try_new(origin, *frame.u(), *frame.v(), *frame.w())
 }
 
 /// The point `position` of the way along the edge `edge` (see
 /// [`Construction::EdgePoint`]), and the unit tangent there.
-fn along_edge(edge: &Shape, position: f64) -> GeopResult<(Vector3<Design>, Vector3<Design>)> {
-    type S = Design;
+fn along_edge(edge: &Shape, position: f64) -> GeopResult<(Vector3, Vector3)> {
     if !(0.0..=1.0).contains(&position) {
         return Err(GeopError::new(format!(
             "position {position} is not along the edge: it must be from 0 to 1"
@@ -319,7 +315,7 @@ fn along_edge(edge: &Shape, position: f64) -> GeopResult<(Vector3<Design>, Vecto
     }
     let curve = edge.curve.as_ref().expect("an edge has a curve");
     let (t0, t1) = curve.domain();
-    let fraction = S::from_f64(position);
+    let fraction = Scalar::from_f64(position);
     if let Some(line) = &edge.line {
         let (a, b) = (curve.evaluate(t0)?, curve.evaluate(t1)?);
         return Ok((Vector3::interpolate(&a, &b, fraction), line.direction));
@@ -328,13 +324,13 @@ fn along_edge(edge: &Shape, position: f64) -> GeopResult<(Vector3<Design>, Vecto
         let p = arc.point_at(position)?;
         return Ok((p, arc.tangent_at(&p)?));
     }
-    let t = S::interpolate(t0, t1, fraction);
+    let t = Scalar::interpolate(t0, t1, fraction);
     Ok((curve.evaluate(t)?, curve.tangent(t)?.normalize()?))
 }
 
 /// `x` degrees, in radians.
-fn radians<S: Scalar>(degrees: f64) -> S {
-    S::from_f64(degrees.to_radians())
+fn radians(degrees: f64) -> Scalar {
+    Scalar::from_f64(degrees.to_radians())
 }
 
 impl Construction {
@@ -371,13 +367,12 @@ impl Construction {
         &self,
         inputs: &[Shape],
         mut value: impl FnMut(&NumericInput) -> GeopResult<f64>,
-    ) -> GeopResult<CoordinateSystem<Design>> {
-        type S = Design;
+    ) -> GeopResult<CoordinateSystem> {
         let point = |i: usize| inputs[i].point.expect("assigned a point");
         let line = |i: usize| inputs[i].line.clone().expect("assigned a line");
         let frame = |i: usize| inputs[i].plane.clone().expect("assigned a plane");
         let plane = |i: usize| plane_of(&frame(i));
-        let half = S::ONE.div(S::TWO)?;
+        let half = Scalar::ONE.div(Scalar::TWO)?;
         match self {
             Construction::Point { x, y, z } => {
                 let p = point(0);
@@ -386,7 +381,7 @@ impl Construction {
                     None => CoordinateSystem::world_at(p),
                 };
                 let xyz = [value(x)?, value(y)?, value(z)?];
-                let offset = base.to_xyz(&Vector3::from_array(xyz.map(S::from_f64)));
+                let offset = base.to_xyz(&Vector3::from_array(xyz.map(Scalar::from_f64)));
                 moved(&base, offset)
             }
             Construction::Midpoint {} => Ok(CoordinateSystem::world_at(Vector3::interpolate(
@@ -429,7 +424,7 @@ impl Construction {
             Construction::TwoPoints {} => {
                 let (a, b) = (point(0), point(1));
                 let d = b.sub(&a);
-                if d.norm_sq().could_be_equal(S::ZERO) {
+                if d.norm_sq().could_be_equal(Scalar::ZERO) {
                     return Err(GeopError::new(
                         "the points coincide: no line runs through both",
                     ));
@@ -453,7 +448,7 @@ impl Construction {
             Construction::PerpendicularToLine {} => {
                 let p = point(0);
                 let d = line(1).project(&p).sub(&p);
-                if d.norm_sq().could_be_equal(S::ZERO) {
+                if d.norm_sq().could_be_equal(Scalar::ZERO) {
                     return Err(GeopError::new(
                         "the point lies on the line: there is no perpendicular to drop",
                     ));
@@ -483,7 +478,7 @@ impl Construction {
                 moved(
                     &f,
                     f.origin()
-                        .add(&f.w().prod_scalar(S::from_f64(value(distance)?))),
+                        .add(&f.w().prod_scalar(Scalar::from_f64(value(distance)?))),
                 )
             }
             Construction::Midplane { other } => {
@@ -505,7 +500,7 @@ impl Construction {
                 };
                 // One of the two is only degenerate for parallel planes,
                 // where the other is the plane halfway between them.
-                let (normal, offset) = if first.0.norm_sq().could_be_equal(S::ZERO) {
+                let (normal, offset) = if first.0.norm_sq().could_be_equal(Scalar::ZERO) {
                     second
                 } else {
                     first
@@ -518,7 +513,7 @@ impl Construction {
             Construction::ThreePoints {} => {
                 let (a, b, c) = (point(0), point(1), point(2));
                 let n = b.sub(&a).prod_cross(&c.sub(&a));
-                if n.norm_sq().could_be_equal(S::ZERO) {
+                if n.norm_sq().could_be_equal(Scalar::ZERO) {
                     return Err(GeopError::new(
                         "the points lie on one line: every plane through that line runs through them",
                     ));
@@ -531,12 +526,12 @@ impl Construction {
                 // normal of the plane through the line most nearly parallel
                 // to the selected one.
                 let square = n.sub(&l.direction.prod_scalar(l.direction.prod_dot(&n)));
-                if square.norm_sq().could_be_equal(S::ZERO) {
+                if square.norm_sq().could_be_equal(Scalar::ZERO) {
                     return Err(GeopError::new(
                         "the line is perpendicular to the plane: every plane through it is at right angles to it",
                     ));
                 }
-                let a: S = radians(value(angle)?);
+                let a: Scalar = radians(value(angle)?);
                 let normal = square
                     .prod_scalar(a.cos())
                     .add(&l.direction.prod_cross(&square).prod_scalar(a.sin()));
@@ -545,7 +540,7 @@ impl Construction {
             Construction::LinePoint {} => {
                 let l = line(0);
                 let n = l.direction.prod_cross(&point(1).sub(&l.point));
-                if n.norm_sq().could_be_equal(S::ZERO) {
+                if n.norm_sq().could_be_equal(Scalar::ZERO) {
                     return Err(GeopError::new(
                         "the point lies on the line: every plane through the line runs through it",
                     ));
@@ -556,7 +551,7 @@ impl Construction {
                 let (a, b) = (line(0), line(1));
                 let n = if a.could_be_parallel(&b) {
                     let n = a.direction.prod_cross(&b.point.sub(&a.point));
-                    if n.norm_sq().could_be_equal(S::ZERO) {
+                    if n.norm_sq().could_be_equal(Scalar::ZERO) {
                         return Err(GeopError::new(
                             "the lines coincide: every plane through one runs through the other",
                         ));
@@ -581,7 +576,7 @@ impl Construction {
                 let (a, b, c) = (point(0), point(1), point(2));
                 let x = b.sub(&a);
                 let z = x.prod_cross(&c.sub(&a));
-                if z.norm_sq().could_be_equal(S::ZERO) {
+                if z.norm_sq().could_be_equal(Scalar::ZERO) {
                     return Err(GeopError::new(
                         "the points lie on one line: they pick out no plane for x and y",
                     ));
@@ -644,11 +639,11 @@ impl PartOperation for AddDatum {
         context: &'a Context<'a>,
         args: &AddDatumArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, AddDatumArgs> {
+    ) -> EditForm<'a, AddDatumArgs> {
         editor::form(&context.before, args)
     }
 
-    fn canvas(context: &Context, edit: Edit<'_, AddDatumArgs, ()>, event: &CanvasEvent<Design>) {
+    fn canvas(context: &Context, edit: Edit<'_, AddDatumArgs, ()>, event: &CanvasEvent) {
         editor::event(&context.before, edit.args, event);
     }
 }
@@ -657,7 +652,7 @@ impl PartOperation for AddDatum {
 mod tests {
     use geop_core_math::{
         primitives::{DatumComponent, FrameAxis},
-        scalars::ScalInF64 as S,
+        scalars::Scalar,
     };
     use geop_core_program::{element::ElementReference, operation::Operation};
     use geop_ops_model::datums::{AnyDatum, ORIGIN, component_name, read_datums};
@@ -677,13 +672,13 @@ mod tests {
     fn axis(along: FrameAxis) -> Selected {
         datum(component_name(ORIGIN, DatumComponent::Axis(along)))
     }
-    fn v(p: [f64; 3]) -> Vector3<S> {
-        Vector3::from_array(p.map(S::from_f64))
+    fn v(p: [f64; 3]) -> Vector3 {
+        Vector3::from_array(p.map(Scalar::from_f64))
     }
 
     /// The datum step `d` with `args` adds to a part of nothing but the
     /// origin, or why it fails.
-    fn added(args: &AddDatumArgs) -> GeopResult<Datum<S>> {
+    fn added(args: &AddDatumArgs) -> GeopResult<Datum> {
         let mut part = geop_core_program::part::Part::default();
         let runner = geop_core_program::runner::Runner::new(Default::default());
         runner.run_step(&mut part, "d", |ctx| {

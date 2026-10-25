@@ -29,7 +29,7 @@ use geop_core_program::{
     part::StepContext,
     reader::Reader,
     target::{Target, TargetReference},
-    values::{Design, Setting},
+    values::Setting,
 };
 use serde::{Deserialize, Serialize};
 
@@ -104,8 +104,8 @@ impl PartOperation for DefineParameters {
         _: &'a Context<'a>,
         args: &DefineParametersArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, DefineParametersArgs> {
-        let mut f = EditForm::<Design, DefineParametersArgs>::default();
+    ) -> EditForm<'a, DefineParametersArgs> {
+        let mut f = EditForm::<DefineParametersArgs>::default();
         let names: Vec<&str> = args.values.iter().map(|p| p.name.as_str()).collect();
         let text = match names.is_empty() {
             true => "No parameters: add them under Parameters.".to_string(),
@@ -272,8 +272,8 @@ impl PartOperation for LookupTable {
         _: &'a Context<'a>,
         args: &LookupTableArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, LookupTableArgs> {
-        let mut f = EditForm::<Design, LookupTableArgs>::default();
+    ) -> EditForm<'a, LookupTableArgs> {
+        let mut f = EditForm::<LookupTableArgs>::default();
         let input = ListItem {
             text: Some(args.input.clone()),
             ..ListItem::new("input", "Looked up by")
@@ -529,8 +529,8 @@ impl PartOperation for PartProperties {
         _: &'a Context<'a>,
         _: &PartPropertiesArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, PartPropertiesArgs> {
-        let mut f = EditForm::<Design, PartPropertiesArgs>::default();
+    ) -> EditForm<'a, PartPropertiesArgs> {
+        let mut f = EditForm::<PartPropertiesArgs>::default();
         let text = "The part's title, designation, colour and material — edited under Parameters.";
         f.form.dialog.text("properties", text, Tone::Hint);
         f

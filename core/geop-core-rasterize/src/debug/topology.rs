@@ -70,11 +70,7 @@ const AXIS_Z_COLOR: Color10 = Color10::Blue;
 /// `coedge`'s raw (non-normalized — its length is the local parameter
 /// speed `|dP/dt|`) 3-D tangent at `t`, via the chain rule through the
 /// pcurve's own 2-D tangent and the surface's partial derivatives.
-fn coedge_tangent_3d<S: Scalar>(
-    coedge: &Coedge<S>,
-    surface: &NurbSurface3D<S>,
-    t: S,
-) -> GeopResult<Vector3<S>> {
+fn coedge_tangent_3d(coedge: &Coedge, surface: &NurbSurface3D, t: Scalar) -> GeopResult<Vector3> {
     let ctx = |e: GeopError| {
         let (t0, t1) = coedge.pcurve.domain();
         e.with_context(format!(
@@ -94,12 +90,12 @@ fn coedge_tangent_3d<S: Scalar>(
 /// degenerate coedge (e.g. a revolve pole's own zero-length self-loop,
 /// whose tangent has no well-defined direction to inset along), just the
 /// raw, un-inset point.
-fn coedge_inset_point<S: Scalar>(
-    coedge: &Coedge<S>,
-    surface: &NurbSurface3D<S>,
-    t: S,
-    inset: S,
-) -> GeopResult<Vector3<S>> {
+fn coedge_inset_point(
+    coedge: &Coedge,
+    surface: &NurbSurface3D,
+    t: Scalar,
+    inset: Scalar,
+) -> GeopResult<Vector3> {
     let uv = coedge.pcurve.evaluate(t)?;
     let point = surface.evaluate(uv[0], uv[1])?;
     let Ok(tangent) = coedge_tangent_3d(coedge, surface, t)?.normalize() else {
@@ -117,11 +113,7 @@ fn coedge_inset_point<S: Scalar>(
 /// `coedge`'s unit tangent at `t`, or `None` for a degenerate coedge whose
 /// tangent has no well-defined direction (e.g. a revolve pole's own
 /// zero-length self-loop).
-fn try_tangent<S: Scalar>(
-    coedge: &Coedge<S>,
-    surface: &NurbSurface3D<S>,
-    t: S,
-) -> GeopResult<Option<Vector3<S>>> {
+fn try_tangent(coedge: &Coedge, surface: &NurbSurface3D, t: Scalar) -> GeopResult<Option<Vector3>> {
     Ok(coedge_tangent_3d(coedge, surface, t)?.normalize().ok())
 }
 
@@ -135,17 +127,17 @@ fn try_tangent<S: Scalar>(
 /// `away_this`/`away_neighbor` are each curve's unit tangent pointing *away*
 /// from the shared vertex (so `interior_angle` is the angle between them).
 /// Returns `0` (no trim) if any of the geometry needed is degenerate.
-fn miter_trim_delta_t<S: Scalar>(
-    coedge: &Coedge<S>,
-    surface: &NurbSurface3D<S>,
-    t_this: S,
-    away_this: Vector3<S>,
-    away_neighbor: Vector3<S>,
-    inset: S,
-) -> GeopResult<S> {
+fn miter_trim_delta_t(
+    coedge: &Coedge,
+    surface: &NurbSurface3D,
+    t_this: Scalar,
+    away_this: Vector3,
+    away_neighbor: Vector3,
+    inset: Scalar,
+) -> GeopResult<Scalar> {
     let speed = coedge_tangent_3d(coedge, surface, t_this)?.norm();
-    if speed.could_be_equal(S::ZERO) {
-        return Ok(S::ZERO);
+    if speed.could_be_equal(Scalar::ZERO) {
+        return Ok(Scalar::ZERO);
     }
     let cos_theta = away_this.prod_dot(&away_neighbor).to_f64().clamp(-1.0, 1.0);
     let theta = cos_theta.acos();
@@ -153,31 +145,35 @@ fn miter_trim_delta_t<S: Scalar>(
     if half_tan.abs() < 1e-6 {
         // Degenerate (near-0 interior angle, i.e. a hairpin turn) — trim
         // heavily; the caller's `MAX_TRIM_FRACTION` clamp keeps this sane.
-        return Ok(S::from_f64(f64::MAX));
+        return Ok(Scalar::from_f64(f64::MAX));
     }
-    let setback = S::from_f64(inset.to_f64() / half_tan);
+    let setback = Scalar::from_f64(inset.to_f64() / half_tan);
     setback.div(speed)
 }
 
 /// Draw a small 2-segment chevron at `tip`, pointing along (unit) `dir`,
 /// with `size` "wingspan" — an arrow marking a curve's traversal direction.
-fn add_direction_arrow<S: Scalar>(
-    scene: &mut PrimitiveScene<S>,
-    tip: Vector3<S>,
-    dir: Vector3<S>,
-    size: S,
+fn add_direction_arrow(
+    scene: &mut PrimitiveScene,
+    tip: Vector3,
+    dir: Vector3,
+    size: Scalar,
     color: Color10,
 ) -> GeopResult<()> {
-    let up = Vector3::from_array([S::ZERO, S::ZERO, S::ONE]);
+    let up = Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::ONE]);
     let raw = dir.prod_cross(&up);
-    let perp = if raw.norm_sq().could_be_equal(S::ZERO) {
-        dir.prod_cross(&Vector3::from_array([S::ONE, S::ZERO, S::ZERO]))
-            .normalize()?
+    let perp = if raw.norm_sq().could_be_equal(Scalar::ZERO) {
+        dir.prod_cross(&Vector3::from_array([
+            Scalar::ONE,
+            Scalar::ZERO,
+            Scalar::ZERO,
+        ]))
+        .normalize()?
     } else {
         raw.normalize()?
     };
 
-    let half = S::from_f64(0.5);
+    let half = Scalar::from_f64(0.5);
     let back = tip.sub(&dir.prod_scalar(size));
     let left = back.add(&perp.prod_scalar(size.mul(half)));
     let right = back.sub(&perp.prod_scalar(size.mul(half)));
@@ -189,11 +185,11 @@ fn add_direction_arrow<S: Scalar>(
 /// Draw a full arrow (shaft + head) from `base` along (unit) `dir`, `length`
 /// long — unlike [`add_direction_arrow`], which only draws the chevron head
 /// (meant to sit on top of an already-drawn curve serving as its shaft).
-fn add_arrow<S: Scalar>(
-    scene: &mut PrimitiveScene<S>,
-    base: Vector3<S>,
-    dir: Vector3<S>,
-    length: S,
+fn add_arrow(
+    scene: &mut PrimitiveScene,
+    base: Vector3,
+    dir: Vector3,
+    length: Scalar,
     color: Color10,
 ) -> GeopResult<()> {
     let tip = base.add(&dir.prod_scalar(length));
@@ -202,7 +198,7 @@ fn add_arrow<S: Scalar>(
         scene,
         tip,
         dir,
-        length.mul(S::from_f64(ARROW_SIZE_FRACTION)),
+        length.mul(Scalar::from_f64(ARROW_SIZE_FRACTION)),
         color,
     )
 }
@@ -211,10 +207,7 @@ fn add_arrow<S: Scalar>(
 /// `AXIS_RADIUS`-wide cylinders (red/green/blue), long enough to cover
 /// `model`'s own extent, each with a small perpendicular tick every
 /// `AXIS_STEP` units so distances are easy to read off at a glance.
-fn add_coordinate_system<S: Scalar>(
-    scene: &mut PrimitiveScene<S>,
-    model: &Model<S>,
-) -> GeopResult<()> {
+fn add_coordinate_system(scene: &mut PrimitiveScene, model: &Model) -> GeopResult<()> {
     let axis_length = model
         .vertices
         .values()
@@ -227,23 +220,23 @@ fn add_coordinate_system<S: Scalar>(
         })
         .fold(1.0_f64, f64::max);
 
-    let origin = Vector3::from_array([S::ZERO, S::ZERO, S::ZERO]);
+    let origin = Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::ZERO]);
     // Each axis, paired with the direction its own step ticks point along
     // (one of the other two axes, picked arbitrarily but consistently).
-    let axes: [(Vector3<S>, Vector3<S>, Color10); 3] = [
+    let axes: [(Vector3, Vector3, Color10); 3] = [
         (
-            Vector3::from_array([S::from_f64(axis_length), S::ZERO, S::ZERO]),
-            Vector3::from_array([S::ZERO, S::ZERO, S::ONE]),
+            Vector3::from_array([Scalar::from_f64(axis_length), Scalar::ZERO, Scalar::ZERO]),
+            Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::ONE]),
             AXIS_X_COLOR,
         ),
         (
-            Vector3::from_array([S::ZERO, S::from_f64(axis_length), S::ZERO]),
-            Vector3::from_array([S::ONE, S::ZERO, S::ZERO]),
+            Vector3::from_array([Scalar::ZERO, Scalar::from_f64(axis_length), Scalar::ZERO]),
+            Vector3::from_array([Scalar::ONE, Scalar::ZERO, Scalar::ZERO]),
             AXIS_Y_COLOR,
         ),
         (
-            Vector3::from_array([S::ZERO, S::ZERO, S::from_f64(axis_length)]),
-            Vector3::from_array([S::ZERO, S::ONE, S::ZERO]),
+            Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::from_f64(axis_length)]),
+            Vector3::from_array([Scalar::ZERO, Scalar::ONE, Scalar::ZERO]),
             AXIS_Z_COLOR,
         ),
     ];
@@ -252,10 +245,10 @@ fn add_coordinate_system<S: Scalar>(
         scene.add_cylinder(origin, end, AXIS_RADIUS, color);
 
         let dir = end.normalize()?;
-        let half_tick = S::from_f64(AXIS_STEP_TICK_LENGTH / 2.0);
+        let half_tick = Scalar::from_f64(AXIS_STEP_TICK_LENGTH / 2.0);
         let steps = (axis_length / AXIS_STEP).floor() as usize;
         for step in 1..=steps {
-            let center = dir.prod_scalar(S::from_f64(step as f64 * AXIS_STEP));
+            let center = dir.prod_scalar(Scalar::from_f64(step as f64 * AXIS_STEP));
             let tick_start = center.sub(&tick_dir.prod_scalar(half_tick));
             let tick_end = center.add(&tick_dir.prod_scalar(half_tick));
             scene.add_cylinder(tick_start, tick_end, AXIS_RADIUS, color);
@@ -267,15 +260,12 @@ fn add_coordinate_system<S: Scalar>(
 /// Rasterize `model`'s raw topology (as opposed to just its final shape —
 /// see [`crate::rasterize`]): every vertex, edge, coedge and face,
 /// each labelled with its id, `n` samples per curve/coedge.
-pub fn rasterize_topology<S: Scalar>(model: &Model<S>, n: usize) -> GeopResult<PrimitiveScene<S>> {
+pub fn rasterize_topology(model: &Model, n: usize) -> GeopResult<PrimitiveScene> {
     rasterize_topology_inner(model, n)
         .with_context(&|e: GeopError| e.with_context(format!("rasterize_topology(n={n})")))
 }
 
-fn rasterize_topology_inner<S: Scalar>(
-    model: &Model<S>,
-    n: usize,
-) -> GeopResult<PrimitiveScene<S>> {
+fn rasterize_topology_inner(model: &Model, n: usize) -> GeopResult<PrimitiveScene> {
     let mut scene = PrimitiveScene::new();
 
     add_coordinate_system(&mut scene, model)?;
@@ -307,9 +297,9 @@ fn rasterize_topology_inner<S: Scalar>(
             .with_context(&edge_ctx)?
             .sub(&edge.curve.evaluate(t0).with_context(&edge_ctx)?)
             .norm();
-        let marker_size = length.mul(S::from_f64(ARROW_SIZE_FRACTION));
+        let marker_size = length.mul(Scalar::from_f64(ARROW_SIZE_FRACTION));
         for tenth in 1..10 {
-            let frac = S::from_f64(tenth as f64 / 10.0);
+            let frac = Scalar::from_f64(tenth as f64 / 10.0);
             let t = t0.add(t1.sub(t0).mul(frac));
             let tenth_ctx =
                 |e: GeopError| e.with_context(format!("tenth={tenth}, frac={frac:?}, t={t:?}"));
@@ -329,7 +319,7 @@ fn rasterize_topology_inner<S: Scalar>(
             }
         }
 
-        let mid = t0.add(t1.sub(t0).mul(S::from_f64(0.5)));
+        let mid = t0.add(t1.sub(t0).mul(Scalar::from_f64(0.5)));
         let mid_point = edge.curve.evaluate(mid).with_context(&edge_ctx)?;
         if let Ok(dir) = edge.curve.tangent(mid).with_context(&edge_ctx)?.normalize() {
             add_direction_arrow(&mut scene, mid_point, dir, marker_size, EDGE_COLOR)?;
@@ -368,14 +358,14 @@ fn rasterize_topology_inner<S: Scalar>(
 
         (|| -> GeopResult<()> {
             let (t0, t1) = coedge.pcurve.domain();
-            let inset = S::from_f64(COEDGE_INSET);
-            let max_trim = t1.sub(t0).mul(S::from_f64(MAX_TRIM_FRACTION));
+            let inset = Scalar::from_f64(COEDGE_INSET);
+            let max_trim = t1.sub(t0).mul(Scalar::from_f64(MAX_TRIM_FRACTION));
 
             // Trim each end back toward the shared corner's angle bisector so
             // this coedge's trim curve doesn't run past it and overlap the
             // neighboring coedge's own trim curve (see `miter_trim_delta_t`).
             let (t0_trim, t1_trim) = {
-                let neg_one = S::from_f64(-1.0);
+                let neg_one = Scalar::from_f64(-1.0);
                 let prev = model.get_coedge(coedge.prev)?;
                 let away_this_start = try_tangent(coedge, surface, t0)?;
                 let away_prev = try_tangent(prev, surface, prev.pcurve.domain().1)?
@@ -386,7 +376,7 @@ fn rasterize_topology_inner<S: Scalar>(
                     }
                     // Degenerate coedge on one side of the corner (no
                     // well-defined tangent) — nothing to miter against.
-                    _ => S::ZERO,
+                    _ => Scalar::ZERO,
                 };
 
                 let next = model.get_coedge(coedge.next)?;
@@ -397,7 +387,7 @@ fn rasterize_topology_inner<S: Scalar>(
                     (Some(away_this_end), Some(away_next)) => {
                         miter_trim_delta_t(coedge, surface, t1, away_this_end, away_next, inset)?
                     }
-                    _ => S::ZERO,
+                    _ => Scalar::ZERO,
                 };
 
                 let delta_start = if delta_start.definitely_greater(max_trim) {
@@ -415,7 +405,7 @@ fn rasterize_topology_inner<S: Scalar>(
 
             let mut trim_points = Vec::with_capacity(n);
             for i in 0..n {
-                let frac = S::from_ratio(i as i64, (n - 1) as i64)?;
+                let frac = Scalar::from_ratio(i as i64, (n - 1) as i64)?;
                 let t = t0_trim.add(t1_trim.sub(t0_trim).mul(frac));
                 trim_points.push(coedge_inset_point(coedge, surface, t, inset)?);
             }
@@ -426,9 +416,9 @@ fn rasterize_topology_inner<S: Scalar>(
                 .unwrap()
                 .sub(trim_points.first().unwrap())
                 .norm();
-            let marker_size = length.mul(S::from_f64(ARROW_SIZE_FRACTION));
+            let marker_size = length.mul(Scalar::from_f64(ARROW_SIZE_FRACTION));
             for tenth in 1..10 {
-                let frac = S::from_f64(tenth as f64 / 10.0);
+                let frac = Scalar::from_f64(tenth as f64 / 10.0);
                 let t = t0.add(t1.sub(t0).mul(frac));
                 let p = coedge_inset_point(coedge, surface, t, inset)?;
                 if let Ok(dir) = coedge_tangent_3d(coedge, surface, t)?.normalize() {
@@ -436,7 +426,7 @@ fn rasterize_topology_inner<S: Scalar>(
                 }
             }
 
-            let mid_t = t0_trim.add(t1_trim.sub(t0_trim).mul(S::from_f64(0.5)));
+            let mid_t = t0_trim.add(t1_trim.sub(t0_trim).mul(Scalar::from_f64(0.5)));
             let mid_point = coedge_inset_point(coedge, surface, mid_t, inset)?;
             if let Ok(dir) = coedge_tangent_3d(coedge, surface, mid_t)?.normalize() {
                 add_direction_arrow(&mut scene, mid_point, dir, marker_size, coedge_color)?;
@@ -473,8 +463,8 @@ fn rasterize_topology_inner<S: Scalar>(
 
         let (u0, u1) = face.surface.domain_u();
         let (v0, v1) = face.surface.domain_v();
-        let mid_u = u0.add(u1.sub(u0).mul(S::from_f64(0.5)));
-        let mid_v = v0.add(v1.sub(v0).mul(S::from_f64(0.5)));
+        let mid_u = u0.add(u1.sub(u0).mul(Scalar::from_f64(0.5)));
+        let mid_v = v0.add(v1.sub(v0).mul(Scalar::from_f64(0.5)));
         if let Ok(label_point) = face.surface.evaluate(mid_u, mid_v) {
             scene.add_label(label_point, format!("F{}", id.0), FACE_COLOR);
             if let Ok(normal) = face.surface.normal(mid_u, mid_v) {
@@ -482,7 +472,7 @@ fn rasterize_topology_inner<S: Scalar>(
                     &mut scene,
                     label_point,
                     normal,
-                    S::from_f64(FACE_NORMAL_LENGTH),
+                    Scalar::from_f64(FACE_NORMAL_LENGTH),
                     FACE_NORMAL_COLOR,
                 )?;
             }

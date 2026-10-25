@@ -16,16 +16,12 @@ use geop_core_program::{
     reader::Reader,
     runner::Runner,
     testing::{edit_args, step},
-    values::Design,
 };
 use std::{borrow::Cow, f64::consts::PI};
 
 use geop_core_editor::output::{Exporter, Output};
 use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::CoordinateSystem,
-    scalars::{Field, Ring, ScalInF64 as S, Scalar},
-    vector::Vector3,
+    geop_error::GeopResult, primitives::CoordinateSystem, scalars::Scalar, vector::Vector3,
 };
 use geop_core_rasterize::rasterize;
 use geop_core_sketch::Sketch;
@@ -44,8 +40,8 @@ use crate::{
     sheet_body,
 };
 
-fn d(x: f64) -> Design {
-    Design::from_f64(x)
+fn d(x: f64) -> Scalar {
+    Scalar::from_f64(x)
 }
 
 /// A step of these tests only: the sketch `sketch` placed on the plane at
@@ -59,7 +55,7 @@ struct PlaceSketchArgs {
     origin: [f64; 3],
     u: [f64; 3],
     v: [f64; 3],
-    sketch: Sketch<Design>,
+    sketch: Sketch,
 }
 
 /// A step of these tests only: the solid `from` renamed `to` — another
@@ -107,17 +103,14 @@ impl PartOperation for PlaceSketch {
         _: &'a Context<'a>,
         _: &PlaceSketchArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, PlaceSketchArgs> {
+    ) -> EditForm<'a, PlaceSketchArgs> {
         EditForm::default()
     }
 }
 
 /// The sketch the step `step` places.
-fn placed(
-    _: &Reader,
-    (step, args): &(String, PlaceSketchArgs),
-) -> GeopResult<PlacedSketch<Design>> {
-    let p = |c: [f64; 3]| Vector3::from_array(c.map(S::from_f64));
+fn placed(_: &Reader, (step, args): &(String, PlaceSketchArgs)) -> GeopResult<PlacedSketch> {
+    let p = |c: [f64; 3]| Vector3::from_array(c.map(Scalar::from_f64));
     let (u, v) = (p(args.u), p(args.v));
     Ok(PlacedSketch {
         name: step.clone(),
@@ -143,22 +136,13 @@ impl PartOperation for Rename {
         build_model::<Self>(ctx, args)
     }
 
-    fn form<'a>(
-        _: &'a Context<'a>,
-        _: &RenameArgs,
-        _: &FormState<()>,
-    ) -> EditForm<'a, Design, RenameArgs> {
+    fn form<'a>(_: &'a Context<'a>, _: &RenameArgs, _: &FormState<()>) -> EditForm<'a, RenameArgs> {
         EditForm::default()
     }
 }
 
 impl ModelOperation for Rename {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &Reader,
-        _: &str,
-        args: &RenameArgs,
-    ) -> GeopResult<()> {
+    fn build(model: &mut NamedModel, _: &Reader, _: &str, args: &RenameArgs) -> GeopResult<()> {
         let id = model.solid_id(&args.from)?;
         model.rename(id, args.to.clone())?;
         Ok(())
@@ -222,7 +206,7 @@ impl Built {
     }
 
     /// The sheet of the body `solid`, as it is bent.
-    fn sheet(&self, solid: &str) -> Option<Sheet<Design>> {
+    fn sheet(&self, solid: &str) -> Option<Sheet> {
         sheet_body(&self.part.current(), solid)?.bent().cloned()
     }
 
@@ -259,9 +243,9 @@ impl Built {
 }
 
 impl std::ops::Deref for Built {
-    type Target = NamedModel<Design>;
+    type Target = NamedModel;
 
-    fn deref(&self) -> &NamedModel<Design> {
+    fn deref(&self) -> &NamedModel {
         match read_model(&self.part.current()).expect("the part has a model") {
             Cow::Borrowed(model) => model,
             Cow::Owned(_) => panic!("no step built the part's model"),
@@ -275,7 +259,7 @@ fn apply<A: Clone + StepArgs>(part: Built, id: &str, args: &A) -> GeopResult<Bui
 }
 
 /// `part` with the sketch `name` placed on `plane` (see [`plane`]).
-fn with_sketch(part: Built, name: &str, plane: [[f64; 3]; 3], sketch: Sketch<Design>) -> Built {
+fn with_sketch(part: Built, name: &str, plane: [[f64; 3]; 3], sketch: Sketch) -> Built {
     let [origin, u, v] = plane;
     let args = PlaceSketchArgs {
         origin,
@@ -287,7 +271,7 @@ fn with_sketch(part: Built, name: &str, plane: [[f64; 3]; 3], sketch: Sketch<Des
 }
 
 /// A part with the sketch `k` on the world's XY plane.
-fn sketched(sketch: Sketch<Design>) -> Built {
+fn sketched(sketch: Sketch) -> Built {
     let xy = plane([0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
     with_sketch(Built::new(), "k", xy, sketch)
 }
@@ -298,7 +282,7 @@ fn plane(origin: [f64; 3], u: [f64; 3], v: [f64; 3]) -> [[f64; 3]; 3] {
 }
 
 /// The open chain of lines through `points`.
-fn chain(points: &[[f64; 2]]) -> Sketch<Design> {
+fn chain(points: &[[f64; 2]]) -> Sketch {
     let mut s = Sketch::new();
     let p: Vec<_> = points
         .iter()
@@ -311,7 +295,7 @@ fn chain(points: &[[f64; 2]]) -> Sketch<Design> {
 }
 
 /// The closed polygon through `points`.
-fn polygon(points: &[[f64; 2]]) -> Sketch<Design> {
+fn polygon(points: &[[f64; 2]]) -> Sketch {
     let mut s = Sketch::new();
     let p: Vec<_> = points
         .iter()
@@ -374,11 +358,11 @@ fn refused<T>(result: GeopResult<T>) -> String {
 
 /// The box around the solid's vertices: its lower and upper corner, each
 /// coordinate the hull of the vertices' enclosures.
-fn extent(part: &Built) -> [S; 3] {
-    let points: Vec<Vector3<S>> = part.topology().vertices.values().map(|v| v.point).collect();
+fn extent(part: &Built) -> [Scalar; 3] {
+    let points: Vec<Vector3> = part.topology().vertices.values().map(|v| v.point).collect();
     [0, 1, 2].map(|k| {
-        let lo = points.iter().map(|p| p[k]).reduce(S::min).unwrap();
-        let hi = points.iter().map(|p| p[k]).reduce(S::max).unwrap();
+        let lo = points.iter().map(|p| p[k]).reduce(Scalar::min).unwrap();
+        let hi = points.iter().map(|p| p[k]).reduce(Scalar::max).unwrap();
         hi.sub(lo)
     })
 }
@@ -390,7 +374,7 @@ fn area(part: &Built, name: &str) -> f64 {
     raster.faces[&face]
         .iter()
         .map(|t| {
-            let f = |v: &Vector3<S>| v.to_array().map(|c| c.to_f64());
+            let f = |v: &Vector3| v.to_array().map(|c| c.to_f64());
             let (a, b, c) = (f(&t.a), f(&t.b), f(&t.c));
             let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
             let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
@@ -425,17 +409,20 @@ fn l_bracket_from_a_chain_unfolds_to_its_developed_length() {
     part.face_id("base_flange(b,k,c3,b)").unwrap();
     // Folded: a leg along each line, as thick as the sheet on its outside.
     let [x, y, z] = extent(&part);
-    assert!(x.could_be_equal(S::from_f64(1.5 + t)), "{x:?}");
-    assert!(y.could_be_equal(S::from_f64(1.0 + t)), "{y:?}");
-    assert!(z.could_be_equal(S::from_f64(0.8)), "{z:?}");
+    assert!(x.could_be_equal(Scalar::from_f64(1.5 + t)), "{x:?}");
+    assert!(y.could_be_equal(Scalar::from_f64(1.0 + t)), "{y:?}");
+    assert!(z.could_be_equal(Scalar::from_f64(0.8)), "{z:?}");
 
     let flat = unfold(part, "base_flange(b)");
     assert_valid(&flat);
     assert!(flat.solid_id("base_flange(b)").is_err());
-    let s = S::from_f64;
-    let developed = s(1.0 - r)
-        .add(s(1.5 - r))
-        .add(S::PI.div(S::TWO).unwrap().mul(s(r).add(s(k).mul(s(t)))));
+    let s = Scalar::from_f64;
+    let developed = s(1.0 - r).add(s(1.5 - r)).add(
+        Scalar::PI
+            .div(Scalar::TWO)
+            .unwrap()
+            .mul(s(r).add(s(k).mul(s(t)))),
+    );
     let [x, y, z] = extent(&flat);
     // Laid out along the first line, -y; the thickness along x.
     assert!(y.could_be_equal(developed), "{y:?} against {developed:?}");
@@ -465,7 +452,7 @@ fn u_channel_with_an_arc_bend() {
     assert_valid(&part);
     let sheet = part.sheet("base_flange(b)").unwrap();
     assert_eq!((sheet.flats.len(), sheet.bends.len()), (3, 2));
-    assert!(sheet.bends[0].radius.could_be_equal(S::from_f64(0.3)));
+    assert!(sheet.bends[0].radius.could_be_equal(Scalar::from_f64(0.3)));
     let flat = unfold(part, "base_flange(b)");
     assert_valid(&flat);
 }
@@ -497,13 +484,13 @@ fn plate_with_two_flanges_and_reliefs_unfolds_area_for_area() {
     assert_eq!((sheet.flats.len(), sheet.bends.len()), (3, 2));
     // The flanges stand up along +z, the B side's way, half a unit high.
     let [_, _, z] = extent(&part);
-    assert!(z.could_be_equal(S::from_f64(0.5)), "{z:?}");
+    assert!(z.could_be_equal(Scalar::from_f64(0.5)), "{z:?}");
 
     let folded = part.clone();
     let flat = unfold(part, "edge_flange(f2)");
     assert_valid(&flat);
     let [_, _, z] = extent(&flat);
-    assert!(z.could_be_equal(S::from_f64(t)), "{z:?}");
+    assert!(z.could_be_equal(Scalar::from_f64(t)), "{z:?}");
     let relative = |a: f64, b: f64| ((a - b) / b).abs();
     for face in [
         "base_flange(b,plate,a)",
@@ -663,10 +650,10 @@ fn tear_beside_a_bend_outside() {
 #[test]
 #[ignore = "slow: sheet-metal sweep over angles, radii and K-factors — run with `cargo test -- --ignored`"]
 fn sweep_angles_radii_and_k_factors() {
-    let s = S::from_f64;
+    let s = Scalar::from_f64;
     let t = 0.1;
-    let tan_half = |theta: S| {
-        let half = theta.div(S::TWO).unwrap();
+    let tan_half = |theta: Scalar| {
+        let half = theta.div(Scalar::TWO).unwrap();
         half.sin().div(half.cos()).unwrap()
     };
     let mut built = 0;
@@ -707,7 +694,7 @@ fn sweep_angles_radii_and_k_factors() {
                         // plate's own edge beside it.
                         let setback = r.add(s(t)).mul(tan_half(theta));
                         let lowest = setback.sub(neutral).sub(s(1.5).sub(setback));
-                        let developed = s(2.0).sub(lowest.min(S::ZERO));
+                        let developed = s(2.0).sub(lowest.min(Scalar::ZERO));
                         let [_, y, _] = extent(&flat);
                         assert!(
                             y.could_be_equal(developed),
@@ -744,7 +731,7 @@ fn sweep_angles_radii_and_k_factors() {
                 assert!(!bend.toward_b, "{ctx}");
                 assert!(bend.angle.could_be_equal(theta), "{ctx}: {:?}", bend.angle);
                 let developed = s(4.0)
-                    .sub(S::TWO.mul(r.mul(tan_half(bend.angle))))
+                    .sub(Scalar::TWO.mul(r.mul(tan_half(bend.angle))))
                     .add(sheet.developed_length(bend));
                 let flat = unfold(part, "base_flange(b)");
                 assert_valid(&flat);
@@ -787,7 +774,7 @@ fn flanged_bracket_mass_properties_converge() {
 }
 
 /// Circles of radius `r` about `centers`.
-fn circles(centers: &[[f64; 2]], r: f64) -> Sketch<Design> {
+fn circles(centers: &[[f64; 2]], r: f64) -> Sketch {
     let mut s = Sketch::new();
     for c in centers {
         let p = s.add_point(d(c[0]), d(c[1]));
@@ -1012,23 +999,26 @@ fn hems_fold_back_and_unfold_to_their_developed_length() {
         let part = apply(square(), "h", &hem(kind, gap)).unwrap();
         assert_valid(&part);
         let sheet = part.sheet("hem(h)").unwrap();
-        assert!(sheet.bends[0].angle.could_be_equal(S::PI));
+        assert!(sheet.bends[0].angle.could_be_equal(Scalar::PI));
         // Between vertices: the fold's outside, flush with the old edge,
         // is no vertex.
         let [x, y, z] = extent(&part);
-        assert!(x.could_be_equal(S::from_f64(1.0)), "{x:?}");
-        assert!(y.could_be_equal(S::from_f64(1.0 - (t + inner))), "{y:?}");
+        assert!(x.could_be_equal(Scalar::from_f64(1.0)), "{x:?}");
         assert!(
-            z.could_be_equal(S::from_f64(2.0 * (t + inner))),
+            y.could_be_equal(Scalar::from_f64(1.0 - (t + inner))),
+            "{y:?}"
+        );
+        assert!(
+            z.could_be_equal(Scalar::from_f64(2.0 * (t + inner))),
             "{kind:?}: {z:?}"
         );
         let flat = unfold(part, "hem(h)");
         assert_valid(&flat);
-        let s = S::from_f64;
+        let s = Scalar::from_f64;
         let fold = s(inner + t);
         let developed = s(1.0)
             .sub(fold)
-            .add(S::PI.mul(s(inner).add(s(k * t))))
+            .add(Scalar::PI.mul(s(inner).add(s(k * t))))
             .add(s(0.3).sub(fold));
         let [_, y, _] = extent(&flat);
         assert!(
@@ -1070,9 +1060,9 @@ fn a_closed_corner_reaches_to_the_flange_beside_it() {
     // edge; the second's flat stops the corner gap short of it.
     let gap = SheetMetalRules::default().corner_gap;
     let reach = part.topology().vertices.values().any(|v| {
-        v.point[0].could_be_equal(S::from_f64(1.0))
-            && v.point[1].could_be_equal(S::from_f64(t + gap))
-            && v.point[2].could_be_equal(S::from_f64(t + r))
+        v.point[0].could_be_equal(Scalar::from_f64(1.0))
+            && v.point[1].could_be_equal(Scalar::from_f64(t + gap))
+            && v.point[2].could_be_equal(Scalar::from_f64(t + r))
     });
     assert!(reach, "the second flange's flat does not reach the first");
     assert_valid(&unfold(part, "edge_flange(f2)"));

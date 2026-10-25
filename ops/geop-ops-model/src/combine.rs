@@ -8,15 +8,14 @@ use geop_core_editor::{
     edit_form::{Edit, EditForm},
     editing::Choice,
 };
-use geop_core_math::scalars::Scalar;
-use geop_core_program::{element::ElementReference, reader::Reader, values::Design};
+use geop_core_program::{element::ElementReference, reader::Reader};
 use geop_core_topology::SolidId;
 use serde::{Deserialize, Serialize};
 
 use crate::{BooleanOp, NamedModel, Namer, Solid, ToolReach, model, read_model};
 
 /// A solid of the part, by name.
-pub type SolidRef = ElementReference<NamedModel<Design>, Solid>;
+pub type SolidRef = ElementReference<NamedModel, Solid>;
 
 /// The solid named `name`.
 pub fn solid(name: impl Into<String>) -> SolidRef {
@@ -83,7 +82,7 @@ impl Combine {
 
     /// The default for a step after `before`: joining the newest solid, if
     /// there is one — building onto what is there is the common case.
-    pub fn new_for<S: Scalar>(before: &NamedModel<S>) -> Self {
+    pub fn new_for(before: &NamedModel) -> Self {
         match before.newest_solid() {
             Some(target) => Combine::join(target),
             None => Combine::NewBody,
@@ -113,8 +112,8 @@ impl Combine {
     /// The field that picks the solid to combine with — or to go as far
     /// as — labelled `label`, holding `target`, in the part `reader` reads;
     /// `set` gets the solid picked.
-    pub fn target_field<'a, S: Scalar, A, T>(
-        f: &mut EditForm<'a, S, A, T>,
+    pub fn target_field<'a, A, T>(
+        f: &mut EditForm<'a, A, T>,
         reader: &Reader<'a>,
         label: &str,
         target: Option<&SolidRef>,
@@ -126,9 +125,9 @@ impl Combine {
     /// Its fields in `f`: the mode — chosen without a target, it takes the
     /// newest solid of the part `reader` reads — and the target to pick.
     /// `set` puts the combination set where the arguments keep it.
-    pub fn fields<'a, S: Scalar, A, T>(
+    pub fn fields<'a, A, T>(
         &self,
-        f: &mut EditForm<'a, S, A, T>,
+        f: &mut EditForm<'a, A, T>,
         reader: &Reader<'a>,
         set: impl Fn(&mut A, Combine) + Clone + 'a,
     ) {

@@ -3,16 +3,13 @@
 
 use std::collections::BTreeMap;
 
-use geop_core_math::{
-    geop_error::GeopResult,
-    scalars::{Ring, Scalar},
-};
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_core_program::{
     operation::Operation,
     part::StepContext,
     program::{Program, ProgramStep},
     reader::Reader,
-    values::{Design, StateValues},
+    values::StateValues,
 };
 use serde::{Deserialize, Serialize};
 
@@ -45,7 +42,7 @@ impl Operation for LimitOperation {
         define_constraints(ctx, &args, |reader, (step, args)| {
             let (at, rows) = position(&reader.retrieve_state(&args.state))?;
             let limit = Constraint {
-                residuals: vec![at[0].sub(Design::from_f64(args.most))],
+                residuals: vec![at[0].sub(Scalar::from_f64(args.most))],
                 jacobian: BTreeMap::from([(args.state.clone(), rows[..1].to_vec())]),
                 bound: Bound::AtMost,
             };
@@ -87,7 +84,7 @@ fn problem<'p>(names: &[&str], preferences: Vec<&'p dyn Preference>) -> Problem<
             .map(|n| (n.to_string(), Mobility::Held))
             .collect(),
         preferences,
-        scale: Design::ONE,
+        scale: Scalar::ONE,
     }
 }
 
@@ -132,7 +129,7 @@ fn a_pinned_body_goes_to_its_frame() {
     let enclosed = pose_of(&solved.enclosure.state["body"]).position();
     for (k, exact) in [1.0, 0.0, 0.0].into_iter().enumerate() {
         assert!(
-            Design::from_f64(exact).is_subset_of(enclosed[k]),
+            Scalar::from_f64(exact).is_subset_of(enclosed[k]),
             "{enclosed:?}"
         );
     }
@@ -142,7 +139,7 @@ fn a_pinned_body_goes_to_its_frame() {
         constraints
             .get("pin")
             .unwrap()
-            .holds(Design::from_f64(1e-9))
+            .holds(Scalar::from_f64(1e-9))
     );
 }
 

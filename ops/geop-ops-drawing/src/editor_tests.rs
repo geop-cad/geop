@@ -12,7 +12,6 @@ use geop_core_editor::{
     registry::Registry,
     testing::{dialog, loaded, pointer},
 };
-use geop_core_math::scalars::Scalar;
 use geop_core_program::{program::Program, testing::args};
 use geop_lib_stdlib::WithStandardParts;
 use geop_ops_extrude_revolve::examples::box_with_drill_hole;

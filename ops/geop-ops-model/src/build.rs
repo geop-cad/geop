@@ -4,7 +4,7 @@
 
 use geop_core_editor::part_operation::PartOperation;
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::{part::StepContext, reader::Reader, values::Design};
+use geop_core_program::{part::StepContext, reader::Reader};
 
 use crate::{NamedModel, model};
 
@@ -15,7 +15,7 @@ pub trait ModelOperation: PartOperation {
     /// into `model`, reading whatever else it builds on through `reader`,
     /// so the step is rebuilt when that changes.
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &Self::Args,
@@ -39,8 +39,8 @@ pub fn build_model<O: ModelOperation>(ctx: &mut StepContext, args: &O::Args) -> 
 fn generate<O: ModelOperation>(
     reader: &Reader,
     (step, args): &(String, O::Args),
-) -> GeopResult<NamedModel<Design>> {
-    let mut model: NamedModel<Design> = reader.previous()?;
+) -> GeopResult<NamedModel> {
+    let mut model: NamedModel = reader.previous()?;
     O::build(&mut model, reader, step, args)
         .map_err(|e| e.with_context(format!("{}({step}, {args:?})", O::KIND)))?;
     Ok(model)

@@ -6,7 +6,7 @@
 
 use std::f64::consts::{PI, TAU};
 
-use geop_core_math::{scalars::Scalar, vector::Vector2};
+use geop_core_math::vector::Vector2;
 
 use crate::sketch::{CurveId, CurveKind, PointId, Sketch};
 
@@ -59,12 +59,12 @@ pub fn reflect(p: P2, a: P2, b: P2) -> P2 {
 }
 
 /// `v` in plain numbers.
-pub fn of<S: Scalar>(v: &Vector2<S>) -> P2 {
+pub fn of(v: &Vector2) -> P2 {
     [v[0].to_f64(), v[1].to_f64()]
 }
 
 /// Where the sketch point `p` is drawn.
-pub fn xy<S: Scalar>(sketch: &Sketch<S>, p: PointId) -> P2 {
+pub fn xy(sketch: &Sketch, p: PointId) -> P2 {
     of(&sketch.points[&p].xy())
 }
 
@@ -113,7 +113,7 @@ pub enum Plain {
 impl Plain {
     /// `curve` of `sketch` as drawn, `infinite` if a line; none for a
     /// spline, or an arc too straight to have a center.
-    pub fn of<S: Scalar>(sketch: &Sketch<S>, curve: CurveId, infinite: bool) -> Option<Plain> {
+    pub fn of(sketch: &Sketch, curve: CurveId, infinite: bool) -> Option<Plain> {
         let p = |q: PointId| xy(sketch, q);
         Some(match sketch.curves.get(&curve)?.kind {
             CurveKind::Line { start, end } => Plain::Line {

@@ -1,17 +1,14 @@
 use geop_core_geometry::{intersection::curve_curve_intersect, nurb_curve::NurbCurve};
-use geop_core_math::{
-    scalars::{ScalInF64, Scalar},
-    vector::Vector4,
-};
+use geop_core_math::{scalars::Scalar, vector::Vector4};
 use geop_core_rasterize::debug::{Color10, PrimitiveScene};
 
-fn f(v: f64) -> ScalInF64 {
-    ScalInF64::from_f64(v)
+fn f(v: f64) -> Scalar {
+    Scalar::from_f64(v)
 }
 
 /// Homogeneous control point with unit weight.
-fn pt(x: f64, y: f64, z: f64) -> Vector4<ScalInF64> {
-    Vector4::from_array([f(x), f(y), f(z), ScalInF64::ONE])
+fn pt(x: f64, y: f64, z: f64) -> Vector4 {
+    Vector4::from_array([f(x), f(y), f(z), Scalar::ONE])
 }
 
 const SOLUTION_COLORS: [Color10; 8] = [
@@ -29,10 +26,10 @@ const SOLUTION_COLORS: [Color10; 8] = [
 /// both curves (plus a marker point at each solution) to `out_path`.
 fn run_case(
     label: &str,
-    curve_a: &NurbCurve<ScalInF64, 4>,
-    curve_b: &NurbCurve<ScalInF64, 4>,
+    curve_a: &NurbCurve<4>,
+    curve_b: &NurbCurve<4>,
     max_solutions: usize,
-    epsilon: ScalInF64,
+    epsilon: Scalar,
     out_path: &str,
 ) {
     let result = curve_curve_intersect(curve_a, curve_b, max_solutions, 2000, epsilon)
@@ -54,7 +51,7 @@ fn run_case(
         );
     }
 
-    let mut scene = PrimitiveScene::<ScalInF64>::new();
+    let mut scene = PrimitiveScene::new();
 
     let (a_min, a_max) = curve_a.domain();
     scene

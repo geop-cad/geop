@@ -2,11 +2,7 @@
 //! valid, and of the volume they should have.
 
 use geop_core_geometry::shape::Plane;
-use geop_core_math::{
-    primitives::CoordinateSystem,
-    scalars::{ScalInF64, Scalar},
-    vector::Vector2,
-};
+use geop_core_math::{primitives::CoordinateSystem, scalars::Scalar, vector::Vector2};
 use geop_core_topology::{FaceId, SolidId};
 use geop_lib_shell::shell;
 use geop_lib_sweep::{
@@ -25,30 +21,35 @@ use crate::{
     rib::{Growth, rib},
 };
 
-type S = ScalInF64;
-
 /// How closely [`volume`] measures: its triangles' corners are `f32`, as
 /// STL stores them — exact for faces that are flat, up to those corners.
 const VOLUME_TOLERANCE: f64 = 1e-5;
 
 /// The 2 x 2 x 1 box from the origin, `cube(b)`.
-fn unit_box() -> (NamedModel<S>, SolidId) {
+fn unit_box() -> (NamedModel, SolidId) {
     let mut part = NamedModel::new();
     let solid = block(&mut part, "b", [0., 0., 0.], [2., 2., 1.]);
     (part, solid)
 }
 
 /// The unit box shelled `thickness` thick, open at its top: an enclosure.
-fn enclosure(thickness: f64) -> (NamedModel<S>, SolidId) {
+fn enclosure(thickness: f64) -> (NamedModel, SolidId) {
     let (mut part, solid) = unit_box();
     let top = face_towards(&part, solid, [0., 0., 1.]);
     let namer = Namer::new("shell", "s").unwrap();
-    let solid = shell(&mut part, &namer, solid, &[top], S::from_f64(thickness)).unwrap();
+    let solid = shell(
+        &mut part,
+        &namer,
+        solid,
+        &[top],
+        Scalar::from_f64(thickness),
+    )
+    .unwrap();
     (part, solid)
 }
 
 /// The four outer walls of a box or an enclosure.
-fn outer_walls(part: &NamedModel<S>, solid: SolidId) -> Vec<FaceId> {
+fn outer_walls(part: &NamedModel, solid: SolidId) -> Vec<FaceId> {
     [[1., 0., 0.], [-1., 0., 0.], [0., 1., 0.], [0., -1., 0.]]
         .iter()
         .map(|n| face_towards(part, solid, *n))
@@ -56,18 +57,18 @@ fn outer_walls(part: &NamedModel<S>, solid: SolidId) -> Vec<FaceId> {
 }
 
 /// The ground plane, pulled up.
-fn ground() -> Plane<S> {
+fn ground() -> Plane {
     Plane::try_new(v3(0., 0., 0.), v3(0., 0., 1.)).unwrap()
 }
 
-fn drafted(mut part: NamedModel<S>, faces: &[FaceId], degrees: f64) -> (NamedModel<S>, SolidId) {
+fn drafted(mut part: NamedModel, faces: &[FaceId], degrees: f64) -> (NamedModel, SolidId) {
     let namer = Namer::new("draft", "d").unwrap();
     let solid = draft(
         &mut part,
         &namer,
         faces,
         &ground(),
-        S::from_f64(degrees.to_radians()),
+        Scalar::from_f64(degrees.to_radians()),
     )
     .unwrap();
     (part, solid)
@@ -118,7 +119,7 @@ fn enclosure_outside_drafted() {
 }
 
 /// The enclosure's rim, the face its open top leaves.
-fn rim(part: &NamedModel<S>, solid: SolidId) -> FaceId {
+fn rim(part: &NamedModel, solid: SolidId) -> FaceId {
     face_towards(part, solid, [0., 0., 1.])
 }
 
@@ -137,8 +138,8 @@ fn enclosure_lip() {
     let face = rim(&part, solid);
     let namer = Namer::new("lip", "l").unwrap();
     let size = LipSize {
-        width: S::from_f64(0.08),
-        height: S::from_f64(0.1),
+        width: Scalar::from_f64(0.08),
+        height: Scalar::from_f64(0.1),
     };
     lip(&mut part, &namer, "l", face, &[], size).unwrap();
     assert_valid(&part);
@@ -160,10 +161,19 @@ fn enclosure_groove() {
     let face = rim(&part, solid);
     let namer = Namer::new("groove", "g").unwrap();
     let size = LipSize {
-        width: S::from_f64(0.08),
-        height: S::from_f64(0.1),
+        width: Scalar::from_f64(0.08),
+        height: Scalar::from_f64(0.1),
     };
-    groove(&mut part, &namer, "g", face, &[], size, S::from_f64(0.02)).unwrap();
+    groove(
+        &mut part,
+        &namer,
+        "g",
+        face,
+        &[],
+        size,
+        Scalar::from_f64(0.02),
+    )
+    .unwrap();
     assert_valid(&part);
     let solid = part.solid_id("groove(g)").unwrap();
     let taken = before - volume(&part, solid, 16);
@@ -178,12 +188,12 @@ fn enclosure_groove() {
 /// grown `growth` down to the floor, its ends run on into the walls — and
 /// the volume it adds: the cavity's width 1.6, from the line at 0.7 down
 /// to the floor at 0.2, 0.05 thick.
-fn check_rib(plane: CoordinateSystem<S>, line: [[f64; 2]; 2], growth: Growth) {
+fn check_rib(plane: CoordinateSystem, line: [[f64; 2]; 2], growth: Growth) {
     let (mut part, solid) = enclosure(0.2);
     let before = volume(&part, solid, 16);
     let profile = Profile::open(polyline(&[q(line[0]), q(line[1])]).unwrap());
     let namer = Namer::new("rib", "r").unwrap();
-    let half = S::from_f64(0.025);
+    let half = Scalar::from_f64(0.025);
     rib(
         &mut part,
         &namer,
@@ -191,7 +201,7 @@ fn check_rib(plane: CoordinateSystem<S>, line: [[f64; 2]; 2], growth: Growth) {
         &plane,
         &profile,
         solid,
-        (S::from_f64(-0.025), half),
+        (Scalar::from_f64(-0.025), half),
         growth,
     )
     .unwrap();
@@ -205,13 +215,13 @@ fn check_rib(plane: CoordinateSystem<S>, line: [[f64; 2]; 2], growth: Growth) {
     );
 }
 
-fn q(p: [f64; 2]) -> Vector2<S> {
-    Vector2::from_array(p.map(S::from_f64))
+fn q(p: [f64; 2]) -> Vector2 {
+    Vector2::from_array(p.map(Scalar::from_f64))
 }
 
 /// The plane through the enclosure's middle, `u` along `x` and `v` along
 /// `z`, at `y = 1`.
-fn middle_plane() -> CoordinateSystem<S> {
+fn middle_plane() -> CoordinateSystem {
     CoordinateSystem::try_new(
         v3(0., 1., 0.),
         v3(1., 0., 0.),
@@ -250,7 +260,7 @@ fn rib_growing_out_of_the_top_is_refused() {
     let plane = CoordinateSystem::world_at(v3(0., 0., 0.7));
     let profile = Profile::open(polyline(&[q([0.5, 1.0]), q([1.5, 1.0])]).unwrap());
     let namer = Namer::new("rib", "r").unwrap();
-    let half = S::from_f64(0.025);
+    let half = Scalar::from_f64(0.025);
     let Err(error) = rib(
         &mut part,
         &namer,
@@ -258,7 +268,7 @@ fn rib_growing_out_of_the_top_is_refused() {
         &plane,
         &profile,
         solid,
-        (S::from_f64(-0.025), half),
+        (Scalar::from_f64(-0.025), half),
         Growth::Normal { flipped: false },
     ) else {
         panic!("a rib out of the top is refused");

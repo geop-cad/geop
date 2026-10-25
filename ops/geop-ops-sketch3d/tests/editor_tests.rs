@@ -7,14 +7,8 @@
 use geop_core_editor::editing::{
     Axis, Button, GizmoPart, Pointer, Reach, Shape, StepEditEvent, Style, Value,
 };
-use geop_core_math::{
-    primitives::FrameAxis,
-    scalars::{ScalInF64 as S, Scalar},
-    vector::Vector3,
-};
-use geop_core_program::{
-    element::ElementReference, program::Program, testing::args, values::Design,
-};
+use geop_core_math::{primitives::FrameAxis, scalars::Scalar, vector::Vector3};
+use geop_core_program::{element::ElementReference, program::Program, testing::args};
 use geop_core_sketch::space::{Constraint3d, CurveKind3d};
 use geop_ops_extrude_revolve::{Extents, examples::box_with_drill_hole, testing::extrude_sketch};
 use geop_ops_model::sketch::figures::{on_origin, rectangle_outline};
@@ -55,22 +49,22 @@ fn loaded(program: Program) -> geop_core_editor::editor::Editor {
     editor_with(registry(), program)
 }
 
-fn close(a: &Vector3<S>, b: [f64; 3]) -> bool {
+fn close(a: &Vector3, b: [f64; 3]) -> bool {
     (0..3).all(|k| (a[k].to_f64() - b[k]).abs() < 1e-7)
 }
 
 /// A pointer from `origin` along `dir`, reaching a hundredth of a unit.
-fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer<S> {
+fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer {
     Pointer {
         reach: Reach::Tube {
-            radius: S::from_f64(0.01),
+            radius: Scalar::from_f64(0.01),
         },
         ..reaching(origin, dir)
     }
 }
 
 /// Looking straight down at `(x, y)`.
-fn down(x: f64, y: f64) -> Pointer<S> {
+fn down(x: f64, y: f64) -> Pointer {
     pointer([x, y, 10.0], [0.0, 0.0, -1.0])
 }
 
@@ -78,7 +72,7 @@ fn down(x: f64, y: f64) -> Pointer<S> {
 /// editor last showed of it.
 struct Editor {
     step: Stepping,
-    presentation: geop_core_editor::editing::Presentation<S>,
+    presentation: geop_core_editor::editing::Presentation,
 }
 
 impl Editor {
@@ -103,7 +97,7 @@ impl Editor {
         Editor { step, presentation }
     }
 
-    fn send(&mut self, event: StepEditEvent<S>) {
+    fn send(&mut self, event: StepEditEvent) {
         self.step.send(event);
         self.presentation = self.step.presentation().clone();
     }
@@ -124,7 +118,7 @@ impl Editor {
         &self.editing().session
     }
 
-    fn click(&mut self, pointer: Pointer<S>) {
+    fn click(&mut self, pointer: Pointer) {
         self.send(StepEditEvent::Click {
             pointer,
             button: Button::Primary,
@@ -149,7 +143,7 @@ impl Editor {
     }
 
     /// Where the point `id` of the sketch is.
-    fn at(&self, id: geop_core_sketch::PointId) -> Vector3<S> {
+    fn at(&self, id: geop_core_sketch::PointId) -> Vector3 {
         self.sketch().points[&id].at
     }
 
@@ -169,7 +163,7 @@ impl Editor {
     }
 
     /// The 3-D sketch the step built, and the model with its wire.
-    fn built(&self) -> (Sketch3d, NamedModel<Design>) {
+    fn built(&self) -> (Sketch3d, NamedModel) {
         let part = self.step.editor.part();
         let whole = ElementReference::<_, PlacedSketch3d>::whole(sketch3d(&self.id()));
         let sketch = part.retrieve_element(&whole).unwrap().sketch.clone();
@@ -285,9 +279,9 @@ fn spline_goes_on_smoothly_from_a_line() {
             .values()
             .any(|c| matches!(c, Constraint3d::Tangent { .. }))
     );
-    let geometry = sketch.enclose::<S>().unwrap();
+    let geometry = sketch.enclose().unwrap();
     let t = sketch.curve_nurbs(spline, &geometry).unwrap()[0]
-        .tangent(S::ZERO)
+        .tangent(Scalar::ZERO)
         .unwrap();
     assert!(
         t[0].to_f64() > 0.0 && t[1].abs().to_f64() < 1e-9 && t[2].abs().to_f64() < 1e-9,
@@ -358,10 +352,10 @@ fn arcs_take_three_clicks() {
     let pieces = sketch
         .curve_nurbs(
             arc,
-            &geop_core_sketch::space::Enclosure3d::<S>::as_drawn(&sketch),
+            &geop_core_sketch::space::Enclosure3d::as_drawn(&sketch),
         )
         .unwrap();
-    let mid = pieces[0].evaluate(S::from_f64(0.5)).unwrap();
+    let mid = pieces[0].evaluate(Scalar::from_f64(0.5)).unwrap();
     // A quarter circle about (1, 0, 0) in the y = 0 plane.
     let r = (mid[0].to_f64() - 1.0).hypot(mid[2].to_f64());
     assert!((r - 1.0).abs() < 1e-9, "{mid:?}");
@@ -607,7 +601,7 @@ fn a_3d_line_is_drawn_from_the_origin_in_the_default_view() {
         kind: "add_sketch3d".into(),
     });
     let eye = |dir: [f64; 3]| {
-        let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+        let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
         Pointer {
             ray: Ray::try_new(
                 v([65.90889047678681, 43.93926031785788, 87.87852063571576]),
@@ -615,7 +609,7 @@ fn a_3d_line_is_drawn_from_the_origin_in_the_default_view() {
             )
             .unwrap(),
             reach: Reach::Cone {
-                slope: S::from_f64(0.00838515269409588),
+                slope: Scalar::from_f64(0.00838515269409588),
             },
         }
     };

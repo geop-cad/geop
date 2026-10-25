@@ -7,12 +7,11 @@ use geop_core_editor::{
     edit_form::{Edit, EditForm},
     editing::{Action, CanvasEvent, Change, Control, Dialog, Gizmo, Number, Tone, Track},
 };
-use geop_core_program::{numeric::NumericInput, reader::Reader, values::Design};
+use geop_core_program::{numeric::NumericInput, reader::Reader};
 use std::collections::BTreeMap;
 
 use geop_core_math::{
     primitives::{CoordinateSystem, DatumKind},
-    scalars::Scalar,
     vector::Vector3,
 };
 
@@ -40,7 +39,7 @@ fn needs(construction: &ConstructionSchema) -> String {
 
 /// What `args` builds as `before` reads the part, its numbers as the form
 /// shows them.
-fn built(before: &Reader, args: &AddDatumArgs) -> Option<CoordinateSystem<Design>> {
+fn built(before: &Reader, args: &AddDatumArgs) -> Option<CoordinateSystem> {
     let inputs = args.inputs(before).ok()?;
     (args.construction)
         .build(&inputs, |f| f.resolve(before))
@@ -50,7 +49,7 @@ fn built(before: &Reader, args: &AddDatumArgs) -> Option<CoordinateSystem<Design
 /// Where the offsets of what `args` builds are dragged, by the name of
 /// their value: an offset plane's distance on the plane, along its normal.
 /// None for a step that does not build.
-fn handles(seen: &Reader, args: &AddDatumArgs) -> BTreeMap<&'static str, Track<Design>> {
+fn handles(seen: &Reader, args: &AddDatumArgs) -> BTreeMap<&'static str, Track> {
     match (&args.construction, built(seen, args)) {
         (Construction::Offset { .. }, Some(built)) => BTreeMap::from([(
             "distance",
@@ -64,7 +63,7 @@ fn handles(seen: &Reader, args: &AddDatumArgs) -> BTreeMap<&'static str, Track<D
 }
 
 /// The unit axes of `frame`.
-fn unit_axes(frame: &CoordinateSystem<Design>) -> Option<[Vector3<Design>; 3]> {
+fn unit_axes(frame: &CoordinateSystem) -> Option<[Vector3; 3]> {
     Some([
         frame.u().normalize().ok()?,
         frame.v().normalize().ok()?,
@@ -75,7 +74,7 @@ fn unit_axes(frame: &CoordinateSystem<Design>) -> Option<[Vector3<Design>; 3]> {
 /// The gizmo an offset point is moved by: at the point, along the axes its
 /// offsets are measured along — while they are plain numbers, not
 /// formulas, which a drag would overwrite.
-fn gizmo(seen: &Reader, args: &AddDatumArgs) -> Option<Gizmo<Design>> {
+fn gizmo(seen: &Reader, args: &AddDatumArgs) -> Option<Gizmo> {
     let Construction::Point { x, y, z } = &args.construction else {
         return None;
     };
@@ -93,7 +92,7 @@ fn gizmo(seen: &Reader, args: &AddDatumArgs) -> Option<Gizmo<Design>> {
 
 /// The gizmo dragged: an offset point's offsets moved by as much along
 /// their axes.
-pub(crate) fn event(seen: &Reader, args: &mut AddDatumArgs, event: &CanvasEvent<Design>) {
+pub(crate) fn event(seen: &Reader, args: &mut AddDatumArgs, event: &CanvasEvent) {
     let CanvasEvent::Gizmo { drag, .. } = event else {
         return;
     };
@@ -125,7 +124,7 @@ fn follow_selection(before: &Reader, args: &mut AddDatumArgs) {
 /// Says of each element the selection field of `dialog` holds,
 /// `selection`, what it can be used as — or, where the part has no such
 /// element, why it cannot be used.
-fn describe_selection(reader: &Reader, selection: &[Selected], dialog: &mut Dialog<Design>) {
+fn describe_selection(reader: &Reader, selection: &[Selected], dialog: &mut Dialog) {
     let Some(field) = dialog.0.iter_mut().find(|f| f.key == "selection") else {
         return;
     };
@@ -150,12 +149,9 @@ fn describe_selection(reader: &Reader, selection: &[Selected], dialog: &mut Dial
 /// [`follow_selection`]) — the constructions, those that do not fit it
 /// saying what they need, and the construction's values, offsets with
 /// handles.
-pub(crate) fn form<'a>(
-    before: &'a Reader<'a>,
-    args: &AddDatumArgs,
-) -> EditForm<'a, Design, AddDatumArgs> {
+pub(crate) fn form<'a>(before: &'a Reader<'a>, args: &AddDatumArgs) -> EditForm<'a, AddDatumArgs> {
     let seen = before;
-    let mut f = EditForm::<Design, AddDatumArgs>::default();
+    let mut f = EditForm::<AddDatumArgs>::default();
     let fits = fitting_constructions(before, &args.selection);
     f.pick(
         "selection",

@@ -13,33 +13,33 @@ use geop_core_program::element::PickedElement;
 
 /// What a visual is.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(tag = "shape", rename_all = "snake_case", bound = "S: Scalar")]
-pub enum Shape<S: Scalar> {
+#[serde(tag = "shape", rename_all = "snake_case")]
+pub enum Shape {
     Point {
-        at: Vector3<S>,
+        at: Vector3,
     },
     Polyline {
-        points: Vec<Vector3<S>>,
+        points: Vec<Vector3>,
     },
     /// A filled area.
     Triangles {
-        triangles: Vec<[Vector3<S>; 3]>,
+        triangles: Vec<[Vector3; 3]>,
     },
     /// Text at `at`, moved by `offset` — measured in the pointer's reaches
     /// (see [`super::Reach`]), so it keeps its size on screen — so that
     /// labels of one point do not stack.
     Label {
-        at: Vector3<S>,
+        at: Vector3,
         text: String,
-        offset: Vector3<S>,
+        offset: Vector3,
     },
     /// The number field of the visual's key, as something to drag along
     /// `direction`: moving it by `direction` adds one to the field. Only the
     /// editor draws these, for a field with a handle (see
     /// [`super::Track`]).
     Handle {
-        at: Vector3<S>,
-        direction: Vector3<S>,
+        at: Vector3,
+        direction: Vector3,
     },
     /// A part placed in the part, by its instance's name, as the viewer
     /// draws it already (see [`super::hit::Scene::hit_instance`]): lit when
@@ -52,8 +52,8 @@ pub enum Shape<S: Scalar> {
     /// long): what lines are drawn along, to see them by, or the frame a
     /// mate would put. Hit by nothing.
     Triad {
-        at: Vector3<S>,
-        axes: [Vector3<S>; 3],
+        at: Vector3,
+        axes: [Vector3; 3],
     },
 }
 
@@ -62,11 +62,10 @@ pub const TRIAD: f64 = 6.0;
 
 /// How far a sheet reaches: a square of `size` about `center`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Extent<S: Scalar> {
-    pub center: Vector3<S>,
+pub struct Extent {
+    pub center: Vector3,
     #[serde(with = "as_f64")]
-    pub size: S,
+    pub size: Scalar,
 }
 
 /// What a visual means, which decides how it is drawn.
@@ -109,12 +108,11 @@ pub enum Style {
 /// dialog's, by `key`, typed into as text — what is typed sent back as
 /// [`super::Value::Text`] — starting from `value`.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Prompt<S: Scalar> {
+pub struct Prompt {
     pub key: String,
     pub label: String,
     pub value: String,
-    pub at: Vector3<S>,
+    pub at: Vector3,
 }
 
 /// Something an operation draws in the viewport, under a key the hit tests
@@ -122,11 +120,10 @@ pub struct Prompt<S: Scalar> {
 /// it, which the editor handles alike for every operation (see
 /// the step editor, [`crate::step_editor`]).
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Visual<S: Scalar> {
+pub struct Visual {
     pub key: String,
     #[serde(flatten)]
-    pub shape: Shape<S>,
+    pub shape: Shape,
     pub style: Style,
     /// A click on it selects it, or takes it out of the selection again.
     #[serde(skip)]
@@ -144,8 +141,8 @@ pub struct Visual<S: Scalar> {
     pub from_grab: bool,
 }
 
-impl<S: Scalar> Visual<S> {
-    pub fn new(key: impl Into<String>, shape: Shape<S>, style: Style) -> Self {
+impl Visual {
+    pub fn new(key: impl Into<String>, shape: Shape, style: Style) -> Self {
         Self {
             key: key.into(),
             shape,
@@ -179,10 +176,9 @@ impl<S: Scalar> Visual<S> {
 /// [`super::Form`], and what the editor adds to it — what is picked, selected and
 /// hovered, what a click would pick, and the handles of number fields.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Presentation<S: Scalar> {
-    pub dialog: Dialog<S>,
-    pub visuals: Vec<Visual<S>>,
+pub struct Presentation {
+    pub dialog: Dialog,
+    pub visuals: Vec<Visual>,
     /// Elements of the part to draw lit: what is picked, what a click would
     /// pick.
     pub highlights: Vec<PickedElement>,
@@ -191,16 +187,16 @@ pub struct Presentation<S: Scalar> {
     pub pickable: Vec<String>,
     /// A plane to work in, its `u`/`v` plane: the viewer faces it head on,
     /// stops orbiting, and draws a grid on it.
-    pub focus: Option<CoordinateSystem<S>>,
+    pub focus: Option<CoordinateSystem>,
     /// A sheet of its own the step is edited on, in `focus`, and how far
     /// it reaches: the viewer shows the visuals alone, framed to it, and
     /// is sent no part to draw (see [`super::Form::sheet`]).
-    pub sheet: Option<Extent<S>>,
+    pub sheet: Option<Extent>,
     /// Whether a press where the pointer last hovered starts a drag (sent
     /// as [`super::StepEditEvent::Drag`]) rather than moving the camera.
     pub grab: bool,
     /// A value asked for in place.
-    pub prompt: Option<Prompt<S>>,
+    pub prompt: Option<Prompt>,
     /// The gizmo to move, turn or scale by, as drawn.
-    pub gizmo: Option<GizmoView<S>>,
+    pub gizmo: Option<GizmoView>,
 }

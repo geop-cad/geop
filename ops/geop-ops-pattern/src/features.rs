@@ -31,7 +31,6 @@
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement},
     reader::Reader,
-    values::Design,
 };
 use std::collections::BTreeSet;
 
@@ -39,7 +38,6 @@ use geop_core_editor::selectable::SelectableElement;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::Motion,
-    scalars::Scalar,
     vector::Vector3,
     with_context,
 };
@@ -57,7 +55,7 @@ use crate::common::{Names, middle};
 pub struct Feature;
 
 /// A feature of the part, by the step that made it.
-pub type FeatureRef = ElementReference<NamedModel<Design>, Feature>;
+pub type FeatureRef = ElementReference<NamedModel, Feature>;
 
 /// The feature of the step `step`.
 pub fn feature(step: impl Into<String>) -> FeatureRef {
@@ -68,8 +66,8 @@ impl Kind for Feature {
     const NAME: &'static str = "feature";
 }
 
-impl HasElements<Feature> for NamedModel<Design> {
-    type Element<'a> = &'a geop_ops_model::Feature<Design>;
+impl HasElements<Feature> for NamedModel {
+    type Element<'a> = &'a geop_ops_model::Feature;
     const SINGLETON: Option<&'static str> = <Self as HasElements<Face>>::SINGLETON;
 
     fn element(&self, name: &str) -> GeopResult<Self::Element<'_>> {
@@ -77,11 +75,11 @@ impl HasElements<Feature> for NamedModel<Design> {
     }
 }
 
-impl SelectableElement<NamedModel<Design>> for Feature {
+impl SelectableElement<NamedModel> for Feature {
     const PICKED_FROM: &'static [&'static str] = &[Face::NAME];
 
     fn select(reader: &Reader, hit: &PickedElement) -> Option<FeatureRef> {
-        let face = ElementReference::<NamedModel<Design>, Face>::from_picked(hit)?;
+        let face = ElementReference::<NamedModel, Face>::from_picked(hit)?;
         let part = read_model(reader).ok()?;
         part.face_id(face.name()).ok()?;
         Some(feature(part.feature_faces().of(face.name())?))
@@ -97,7 +95,7 @@ impl SelectableElement<NamedModel<Design>> for Feature {
         (faces.into_iter())
             .filter_map(|face| part.name_of(face))
             .filter(|&face| made.of(face) == Some(feature.name()))
-            .map(|face| ElementReference::<NamedModel<Design>, Face>::new(model(), face).picked())
+            .map(|face| ElementReference::<NamedModel, Face>::new(model(), face).picked())
             .collect()
     }
 }
@@ -106,10 +104,7 @@ impl SelectableElement<NamedModel<Design>> for Feature {
 /// steps ran — the order a copy of each must be combined in, for a hole cut
 /// through a boss to cut its copy too. A step that made no feature is
 /// refused.
-pub(crate) fn feature_steps<S: Scalar>(
-    part: &NamedModel<S>,
-    refs: &[FeatureRef],
-) -> GeopResult<Vec<String>> {
+pub(crate) fn feature_steps(part: &NamedModel, refs: &[FeatureRef]) -> GeopResult<Vec<String>> {
     let mut picked = BTreeSet::new();
     for feature in refs {
         part.feature(feature.name())?;
@@ -126,7 +121,7 @@ pub(crate) fn feature_steps<S: Scalar>(
 /// The name of the solid the features of `steps` lie on: the one bounded
 /// by faces they made. Refused if they made none that is still there, or
 /// lie on several.
-fn feature_solid<S: Scalar>(part: &NamedModel<S>, steps: &[String]) -> GeopResult<String> {
+fn feature_solid(part: &NamedModel, steps: &[String]) -> GeopResult<String> {
     let made = part.feature_faces();
     let model = part.topology();
     let mut solids = BTreeSet::new();
@@ -158,10 +153,7 @@ fn feature_solid<S: Scalar>(part: &NamedModel<S>, steps: &[String]) -> GeopResul
 /// The middle of the corners of the tools of the features `refs` refers
 /// to, where they were built: where a pattern of them shows its handles.
 /// None, if it refers to none.
-pub(crate) fn features_center<S: Scalar>(
-    part: &NamedModel<S>,
-    refs: &[FeatureRef],
-) -> Option<Vector3<S>> {
+pub(crate) fn features_center(part: &NamedModel, refs: &[FeatureRef]) -> Option<Vector3> {
     let mut corners = Vec::new();
     for step in feature_steps(part, refs).ok()? {
         for tool in &part.feature(&step).ok()?.tools {
@@ -183,12 +175,12 @@ pub(crate) fn features_center<S: Scalar>(
 ///
 /// The features are done again in the order their steps ran, the copies
 /// of each feature's tools combined one after the other.
-pub(crate) fn repeat_features<S: Scalar>(
-    part: &mut NamedModel<S>,
+pub(crate) fn repeat_features(
+    part: &mut NamedModel,
     names: &Names,
     operation_id: &str,
     refs: &[FeatureRef],
-    placements: &[(String, Motion<S>)],
+    placements: &[(String, Motion)],
 ) -> GeopResult<()> {
     let namer = &names.namer;
     let steps = feature_steps(part, refs)?;

@@ -11,15 +11,14 @@ pub use color::Color10;
 pub use scene::PrimitiveScene;
 pub use topology::rasterize_topology;
 
-use geop_core_math::scalars::Scalar;
 use geop_core_topology::FaceId;
 
 use crate::RasterizedModel;
 
-impl<S: Scalar> RasterizedModel<S> {
+impl RasterizedModel {
     /// As a scene: vertices dark gray, edges gray, each face in the color
     /// `face_color` gives it.
-    pub fn scene(&self, face_color: impl Fn(FaceId) -> Color10) -> PrimitiveScene<S> {
+    pub fn scene(&self, face_color: impl Fn(FaceId) -> Color10) -> PrimitiveScene {
         let mut scene = PrimitiveScene::new();
         for &point in self.vertices.values() {
             scene.add_point(point, Color10::DarkGray);

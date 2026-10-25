@@ -1,7 +1,7 @@
 //! Thickening a flat boundary surface on either side or both, and the
 //! round sides of a cylinder into a tube.
 
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
+use geop_core_math::scalars::Scalar;
 use geop_core_topology::Body;
 use geop_lib_sweep::shapes::{block, revolved_cylinder};
 use geop_ops_model::NamedModel;
@@ -17,8 +17,8 @@ use geop_ops_model::testing::assert_valid_sheets;
 /// A unit cube's top loop filled with a boundary surface, the cube then
 /// deleted: a flat square sheet at `z = 1`, named `boundary(b)`, and
 /// which way its normal points along `z`.
-pub(crate) fn square_sheet() -> (NamedModel<S>, f64) {
-    let mut part = NamedModel::<S>::new();
+pub(crate) fn square_sheet() -> (NamedModel, f64) {
+    let mut part = NamedModel::new();
     let cube = block(&mut part, "c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     let corners = [[0., 0., 1.], [1., 0., 1.], [1., 1., 1.], [0., 1., 1.]];
     let edges = (0..4)
@@ -36,7 +36,7 @@ pub(crate) fn square_sheet() -> (NamedModel<S>, f64) {
     (part, up.signum())
 }
 
-fn thickened(part: NamedModel<S>, face: &str, side: ThickenSide) -> GeopResult<NamedModel<S>> {
+fn thickened(part: NamedModel, face: &str, side: ThickenSide) -> GeopResult<NamedModel> {
     let args = ThickenArgs {
         face: named(face),
         thickness: 0.1,
@@ -46,7 +46,7 @@ fn thickened(part: NamedModel<S>, face: &str, side: ThickenSide) -> GeopResult<N
 }
 
 /// The heights of the vertices of `part`, sorted, each once.
-fn heights(part: &NamedModel<S>) -> Vec<f64> {
+fn heights(part: &NamedModel) -> Vec<f64> {
     let mut z: Vec<f64> = part
         .topology()
         .vertices
@@ -83,13 +83,13 @@ fn thicken_a_boundary_surface() {
 /// their normals, which point out: a tube, its walls rings.
 #[test]
 fn thicken_a_cylinders_sides_into_a_tube() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     let cylinder = revolved_cylinder(
         &mut part,
         "cyl",
         v3(0., 0., 0.),
-        S::from_f64(1.0),
-        S::from_f64(2.0),
+        Scalar::from_f64(1.0),
+        Scalar::from_f64(2.0),
     )
     .unwrap();
     let sides: Vec<_> = part
@@ -122,7 +122,7 @@ fn thicken_a_cylinders_sides_into_a_tube() {
 /// A solid's face is not a sheet to thicken.
 #[test]
 fn a_solids_face_is_refused() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     let cube = block(&mut part, "c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     let face = part.topology().solid_faces(cube).unwrap()[0];
     let face = part.name_of(face).unwrap().to_string();

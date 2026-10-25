@@ -11,7 +11,7 @@ use geop_core_program::{
     part::Part,
     program::Program,
     runner::Runner,
-    values::{Design, StateValue, pose_state},
+    values::{StateValue, pose_state},
     workspace::{self, Files, Location},
 };
 use std::{
@@ -25,19 +25,14 @@ use crate::{
     solving,
 };
 use geop_core_editor::output::Output;
-use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::Pose,
-    scalars::{ScalInF64 as S, Scalar},
-    vector::Vector3,
-};
+use geop_core_math::{geop_error::GeopResult, primitives::Pose, scalars::Scalar, vector::Vector3};
 use geop_ops_model::placed::solids::{Shapes, placed_solids};
 
 use crate::urdf::{JointType, Mechanism, Origin, Robot, URDF_FILE, UrdfExport, export};
 
 /// A number of a test, as design data.
-fn n(x: f64) -> Design {
-    Design::from_f64(x)
+fn n(x: f64) -> Scalar {
+    Scalar::from_f64(x)
 }
 
 /// What these tests' assemblies are made of: links sketched and extruded,
@@ -218,26 +213,26 @@ fn parse_xml(xml: &str) -> Element {
 // --- Placing the links where their joints put them. ---
 
 /// A URDF origin as a pose, in millimetres.
-fn pose_of_origin(origin: &Origin) -> Pose<S> {
+fn pose_of_origin(origin: &Origin) -> Pose {
     Pose::from_euler(
-        Vector3::from_array(origin.xyz.map(|x| S::from_f64(x * 1000.0))),
-        origin.rpy.map(|r| S::from_f64(r.to_degrees())),
+        Vector3::from_array(origin.xyz.map(|x| Scalar::from_f64(x * 1000.0))),
+        origin.rpy.map(|r| Scalar::from_f64(r.to_degrees())),
     )
     .unwrap()
 }
 
 /// Every link's frame in the world, its joints at `coordinates` — radians
 /// and metres, by joint name; zero where not given.
-fn link_frames(robot: &Robot, coordinates: &HashMap<String, f64>) -> HashMap<String, Pose<S>> {
+fn link_frames(robot: &Robot, coordinates: &HashMap<String, f64>) -> HashMap<String, Pose> {
     let mut frames = HashMap::from([(robot.links[0].name.clone(), Pose::identity())]);
     for joint in &robot.joints {
         let q = coordinates.get(&joint.name).copied().unwrap_or(0.0);
-        let axis = Vector3::from_array(joint.axis.map(S::from_f64));
+        let axis = Vector3::from_array(joint.axis.map(Scalar::from_f64));
         let motion = match joint.kind {
             JointType::Prismatic { .. } => {
-                Pose::identity().with_position(axis.prod_scalar(S::from_f64(q * 1000.0)))
+                Pose::identity().with_position(axis.prod_scalar(Scalar::from_f64(q * 1000.0)))
             }
-            _ => Pose::rotation_about(&Vector3::zero(), &axis, S::from_f64(q)).unwrap(),
+            _ => Pose::rotation_about(&Vector3::zero(), &axis, Scalar::from_f64(q)).unwrap(),
         };
         let parent = frames[&joint.parent];
         frames.insert(
@@ -251,14 +246,14 @@ fn link_frames(robot: &Robot, coordinates: &HashMap<String, f64>) -> HashMap<Str
 }
 
 #[track_caller]
-fn assert_same_pose(a: &Pose<S>, b: &Pose<S>, what: &str) {
+fn assert_same_pose(a: &Pose, b: &Pose, what: &str) {
     for p in [
         [0.0, 0.0, 0.0],
         [1.0, 0.0, 0.0],
         [0.0, 1.0, 0.0],
         [0.0, 0.0, 1.0],
     ] {
-        let p = Vector3::from_array(p.map(S::from_f64));
+        let p = Vector3::from_array(p.map(Scalar::from_f64));
         let (pa, pb) = (a.apply(&p), b.apply(&p));
         for k in 0..3 {
             let (x, y) = (pa[k].to_f64(), pb[k].to_f64());

@@ -4,7 +4,6 @@
 use geop_core_program::{
     numeric::{NumericInput, evaluate},
     program::Program,
-    values::Design,
 };
 use geop_ops_model::parameters::parameter_numbers;
 use std::collections::BTreeMap;
@@ -39,7 +38,7 @@ impl Drawing {
     pub fn new(program: &Program) -> GeopResult<Self> {
         let numbers = parameter_numbers(program)?;
         let mut sketch = Sketch::new();
-        let origin = sketch.add_fixed_point(Design::ZERO, Design::ZERO);
+        let origin = sketch.add_fixed_point(Scalar::ZERO, Scalar::ZERO);
         Ok(Self {
             sketch,
             origin,
@@ -66,7 +65,7 @@ impl Drawing {
     /// The point at `(x, y)`, each a formula.
     pub fn point(&mut self, x: impl AsRef<str>, y: impl AsRef<str>) -> GeopResult<PointId> {
         let (x, y) = (x.as_ref(), y.as_ref());
-        let at = [self.value(x)?, self.value(y)?].map(Design::from_f64);
+        let at = [self.value(x)?, self.value(y)?].map(Scalar::from_f64);
         let p = self.sketch.add_point(at[0], at[1]);
         let origin = self.origin;
         self.dimension(
@@ -103,7 +102,7 @@ impl Drawing {
             shape: Some(SplineShape {
                 degree: n - 1,
                 knots,
-                weights: vec![Design::ONE; n],
+                weights: vec![Scalar::ONE; n],
             }),
         })
     }
@@ -145,12 +144,12 @@ impl Drawing {
         let arc = self.sketch.add_arc(
             start,
             end,
-            Design::from_f64(if ccw { sweep } else { -sweep }),
+            Scalar::from_f64(if ccw { sweep } else { -sweep }),
         );
         self.dimension(
             Constraint::Radius {
                 curve: arc,
-                value: Design::from_f64(r),
+                value: Scalar::from_f64(r),
             },
             radius,
         );
@@ -160,11 +159,11 @@ impl Drawing {
     /// A circle around `center` of `diameter`.
     pub fn circle(&mut self, center: PointId, diameter: &str) -> GeopResult<CurveId> {
         let d = self.value(diameter)?;
-        let circle = self.sketch.add_circle(center, Design::from_f64(d / 2.0));
+        let circle = self.sketch.add_circle(center, Scalar::from_f64(d / 2.0));
         self.dimension(
             Constraint::Diameter {
                 curve: circle,
-                value: Design::from_f64(d),
+                value: Scalar::from_f64(d),
             },
             diameter,
         );

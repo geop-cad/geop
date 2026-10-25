@@ -4,10 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::CoordinateSystem;
-use crate::{
-    geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
-};
+use crate::geop_error::{GeopError, GeopResult};
 
 /// What a datum stands for: which part of its frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,7 +45,7 @@ impl FrameAxis {
     }
 
     /// The frame's axis this is.
-    pub fn of<S: Scalar>(self, frame: &CoordinateSystem<S>) -> crate::vector::Vector3<S> {
+    pub fn of(self, frame: &CoordinateSystem) -> crate::vector::Vector3 {
         match self {
             FrameAxis::X => *frame.u(),
             FrameAxis::Y => *frame.v(),
@@ -89,19 +86,19 @@ impl std::fmt::Display for DatumComponent {
 /// anything built on it — a sketch on a plane, a datum offset from a point
 /// — has axes to be built along.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Datum<S: Scalar> {
+pub struct Datum {
     pub kind: DatumKind,
-    pub frame: CoordinateSystem<S>,
+    pub frame: CoordinateSystem,
 }
 
-impl<S: Scalar> Datum<S> {
+impl Datum {
     /// The datum `component` of this frame stands for, as a datum of its
     /// own, with the frame turned so its `w` is that axis — or that plane's
     /// normal — and its other two axes keep their order: a sketch's `x`/`y`
     /// on the plane normal to `z` run along `x`/`y`, on the one normal to
     /// `x` along `y`/`z`, on the one normal to `y` along `x`/`-z`. Fails if
     /// this datum is not a frame.
-    pub fn component(&self, component: DatumComponent) -> GeopResult<Datum<S>> {
+    pub fn component(&self, component: DatumComponent) -> GeopResult<Datum> {
         if self.kind != DatumKind::Frame {
             return Err(GeopError::new(format!(
                 "Datum::component: a {:?} datum has no {component}, only a frame has",

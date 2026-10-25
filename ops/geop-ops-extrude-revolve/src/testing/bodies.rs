@@ -4,7 +4,7 @@
 //! Each is a program building one solid, named as each says.
 
 use geop_core_math::primitives::FrameAxis;
-use geop_core_program::{program::Program, values::Design};
+use geop_core_program::program::Program;
 use geop_ops_model::sketch::{
     Sketch, SketchPlane,
     figures::{disc, n, on_face, on_origin, outline, rectangle_outline},
@@ -21,7 +21,7 @@ use crate::{Extents, Output, RevolveArgs, RevolveAxis};
 use super::{both_ways, extrude_sketch};
 
 /// The one solid `program` builds, which is valid, and its name.
-pub fn one_solid(program: &Program) -> (NamedModel<Design>, String) {
+pub fn one_solid(program: &Program) -> (NamedModel, String) {
     let part = program.build_model(super::registry).unwrap();
     let solids = part.solid_names();
     let [solid] = solids.as_slice() else {

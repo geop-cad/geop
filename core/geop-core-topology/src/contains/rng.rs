@@ -39,21 +39,21 @@ impl Rng {
     }
 
     /// A random direction, uniformly distributed on the unit circle.
-    pub fn next_direction2<S: Scalar>(&mut self) -> Vector2<S> {
+    pub fn next_direction2(&mut self) -> Vector2 {
         let theta = self.next_range(0.0, std::f64::consts::TAU);
-        Vector2::from_array([S::from_f64(theta.cos()), S::from_f64(theta.sin())])
+        Vector2::from_array([Scalar::from_f64(theta.cos()), Scalar::from_f64(theta.sin())])
     }
 
     /// A random direction, uniformly distributed on the unit sphere
     /// (Archimedes' cylindrical projection: uniform `z`, uniform angle).
-    pub fn next_direction3<S: Scalar>(&mut self) -> Vector3<S> {
+    pub fn next_direction3(&mut self) -> Vector3 {
         let z = self.next_range(-1.0, 1.0);
         let theta = self.next_range(0.0, std::f64::consts::TAU);
         let r = (1.0 - z * z).max(0.0).sqrt();
         Vector3::from_array([
-            S::from_f64(r * theta.cos()),
-            S::from_f64(r * theta.sin()),
-            S::from_f64(z),
+            Scalar::from_f64(r * theta.cos()),
+            Scalar::from_f64(r * theta.sin()),
+            Scalar::from_f64(z),
         ])
     }
 }

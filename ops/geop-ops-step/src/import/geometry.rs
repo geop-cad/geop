@@ -244,7 +244,7 @@ pub enum SurfaceKind {
     Plane(Frame),
     Revolved(Revolved),
     Nurbs(NurbsSurface),
-    /// `curve` swept along `vector`: `S(u, v) = curve(u) + v vector`.
+    /// `curve` swept along `vector`: `Scalar(u, v) = curve(u) + v vector`.
     Extrusion {
         curve: NurbsCurve,
         vector: P3,
@@ -451,8 +451,8 @@ impl Revolved {
 
     /// The profile from `v0` to `v1` as a curve, in the half plane at
     /// angle 0 — the whole curve, for a profile that is one.
-    pub fn profile_curve<S: Scalar>(&self, v0: f64, v1: f64) -> GeopResult<NurbCurve3D<S>> {
-        let s3 = |p: P3| Vector3::from_array(p.map(S::from_f64));
+    pub fn profile_curve(&self, v0: f64, v1: f64) -> GeopResult<NurbCurve3D> {
+        let s3 = |p: P3| Vector3::from_array(p.map(Scalar::from_f64));
         match &self.profile {
             Profile::Line { .. } => {
                 NurbCurve3D::line(s3(self.profile_point(v0)), s3(self.profile_point(v1)))
@@ -467,7 +467,7 @@ impl Revolved {
                     circle: Circle {
                         center: s3(center),
                         normal: s3(scale(self.frame.y, -1.0)),
-                        radius: S::from_f64(*radius),
+                        radius: Scalar::from_f64(*radius),
                     },
                     start: s3(self.profile_point(v0)),
                     end: s3(self.profile_point(v1)),
@@ -482,19 +482,18 @@ impl Revolved {
     /// axis the profile's point there turns along — from the angle `from`
     /// counter-clockwise about the axis to `to`: all the way round where
     /// they are one.
-    pub fn parallel<S: Scalar>(&self, v: f64, from: f64, to: f64) -> GeopResult<NurbCurve3D<S>> {
-        let s3 = |p: P3| Vector3::from_array(p.map(S::from_f64));
+    pub fn parallel(&self, v: f64, from: f64, to: f64) -> GeopResult<NurbCurve3D> {
+        let s3 = |p: P3| Vector3::from_array(p.map(Scalar::from_f64));
         let p = self.profile_point(v);
         let [rho, _, h] = self.frame.local(p);
-        let at =
-            |angle: f64| -> GeopResult<Vector3<S>> { Ok(self.turn::<S>(angle)?.apply(&s3(p))) };
+        let at = |angle: f64| -> GeopResult<Vector3> { Ok(self.turn(angle)?.apply(&s3(p))) };
         let start = at(from)?;
         let end = if to == from { start } else { at(to)? };
         Arc {
             circle: Circle {
                 center: s3(self.frame.point([0.0, 0.0, h])),
                 normal: s3(self.frame.z),
-                radius: S::from_f64(rho),
+                radius: Scalar::from_f64(rho),
             },
             start,
             end,
@@ -502,22 +501,16 @@ impl Revolved {
         .to_curve()
     }
 
-    pub fn axis<S: Scalar>(&self) -> GeopResult<Axis<S>> {
+    pub fn axis(&self) -> GeopResult<Axis> {
         Axis::try_new(
-            Vector3::from_array(self.frame.origin.map(S::from_f64)),
-            Vector3::from_array(self.frame.z.map(S::from_f64)),
+            Vector3::from_array(self.frame.origin.map(Scalar::from_f64)),
+            Vector3::from_array(self.frame.z.map(Scalar::from_f64)),
         )
     }
 
     /// The surface between the angles `from` and `to` and, where the
     /// profile is analytic, the profile parameters `v0` and `v1`.
-    pub fn patch<S: Scalar>(
-        &self,
-        from: f64,
-        to: f64,
-        v0: f64,
-        v1: f64,
-    ) -> GeopResult<NurbSurface3D<S>> {
+    pub fn patch(&self, from: f64, to: f64, v0: f64, v1: f64) -> GeopResult<NurbSurface3D> {
         NurbSurface::revolve(&self.profile_curve(v0, v1)?, &self.axis()?, from, to)
     }
 
@@ -530,14 +523,14 @@ impl Revolved {
     }
 
     /// The motion turning by `angle` radians about the axis.
-    pub fn turn<S: Scalar>(&self, angle: f64) -> GeopResult<Pose<S>> {
-        let axis = self.axis::<S>()?;
-        Pose::rotation_about(&axis.point, &axis.direction, S::from_f64(angle))
+    pub fn turn(&self, angle: f64) -> GeopResult<Pose> {
+        let axis = self.axis()?;
+        Pose::rotation_about(&axis.point, &axis.direction, Scalar::from_f64(angle))
     }
 }
 
 impl NurbsCurve {
-    pub fn to_nurbs<S: Scalar>(&self) -> GeopResult<NurbCurve3D<S>> {
+    pub fn to_nurbs(&self) -> GeopResult<NurbCurve3D> {
         let points = self
             .points
             .iter()
@@ -547,7 +540,7 @@ impl NurbsCurve {
         let curve = NurbCurve::try_new(
             self.degree,
             points,
-            self.knots.iter().map(|&k| S::from_f64(k)).collect(),
+            self.knots.iter().map(|&k| Scalar::from_f64(k)).collect(),
         )?;
         clamped(curve)
     }
@@ -556,7 +549,7 @@ impl NurbsCurve {
 /// `curve` with its ends at its first and last control points, as every
 /// curve of the kernel has: an unclamped (periodic) knot vector cut at the
 /// ends of its domain.
-fn clamped<S: Scalar>(curve: NurbCurve3D<S>) -> GeopResult<NurbCurve3D<S>> {
+fn clamped(curve: NurbCurve3D) -> GeopResult<NurbCurve3D> {
     let p = curve.degree;
     let k = &curve.knot_vector;
     let n = k.len();
@@ -569,22 +562,22 @@ fn clamped<S: Scalar>(curve: NurbCurve3D<S>) -> GeopResult<NurbCurve3D<S>> {
     curve.sub_curve(lo, hi)
 }
 
-fn homogeneous<S: Scalar>(p: P3, weight: Option<f64>) -> Vector4<S> {
+fn homogeneous(p: P3, weight: Option<f64>) -> Vector4 {
     match weight {
         // A weight of one is taken as it is: multiplying by it would only
         // widen the point by rounding.
         None => Vector4::from_array([
-            S::from_f64(p[0]),
-            S::from_f64(p[1]),
-            S::from_f64(p[2]),
-            S::ONE,
+            Scalar::from_f64(p[0]),
+            Scalar::from_f64(p[1]),
+            Scalar::from_f64(p[2]),
+            Scalar::ONE,
         ]),
         Some(w) => {
-            let w = S::from_f64(w);
+            let w = Scalar::from_f64(w);
             Vector4::from_array([
-                S::from_f64(p[0]).mul(w),
-                S::from_f64(p[1]).mul(w),
-                S::from_f64(p[2]).mul(w),
+                Scalar::from_f64(p[0]).mul(w),
+                Scalar::from_f64(p[1]).mul(w),
+                Scalar::from_f64(p[2]).mul(w),
                 w,
             ])
         }
@@ -592,7 +585,7 @@ fn homogeneous<S: Scalar>(p: P3, weight: Option<f64>) -> Vector4<S> {
 }
 
 impl NurbsSurface {
-    pub fn to_nurbs<S: Scalar>(&self) -> GeopResult<NurbSurface3D<S>> {
+    pub fn to_nurbs(&self) -> GeopResult<NurbSurface3D> {
         let points = self
             .points
             .iter()
@@ -603,8 +596,8 @@ impl NurbsSurface {
             self.degree_u,
             self.degree_v,
             points,
-            self.knots_u.iter().map(|&k| S::from_f64(k)).collect(),
-            self.knots_v.iter().map(|&k| S::from_f64(k)).collect(),
+            self.knots_u.iter().map(|&k| Scalar::from_f64(k)).collect(),
+            self.knots_v.iter().map(|&k| Scalar::from_f64(k)).collect(),
         )?;
         let clamped_in = |knots: &[f64], p: usize| {
             let n = knots.len();
@@ -630,14 +623,14 @@ impl CurveDef {
     /// it; within `uncertainty` of an end of the curve, they are taken to be
     /// that end. That is the file's own statement of which points are one:
     /// the trim it writes at an end means the end.
-    pub fn edge<S: Scalar>(
+    pub fn edge(
         &self,
         from: P3,
         to: P3,
         closed: bool,
         uncertainty: f64,
-    ) -> GeopResult<NurbCurve3D<S>> {
-        let s3 = |p: P3| Vector3::from_array(p.map(S::from_f64));
+    ) -> GeopResult<NurbCurve3D> {
+        let s3 = |p: P3| Vector3::from_array(p.map(Scalar::from_f64));
         match self {
             CurveDef::Line { .. } => {
                 if closed {
@@ -651,7 +644,7 @@ impl CurveDef {
                 circle: Circle {
                     center: s3(frame.origin),
                     normal: s3(frame.z),
-                    radius: S::from_f64(*radius),
+                    radius: Scalar::from_f64(*radius),
                 },
                 start: s3(from),
                 end: s3(to),
@@ -664,15 +657,15 @@ impl CurveDef {
                 let unit = |p: P3| {
                     let l = frame.local(p);
                     let (s, c) = (l[1] / b).atan2(l[0] / a).sin_cos();
-                    Vector3::from_array([S::from_f64(c), S::from_f64(s), S::ZERO])
+                    Vector3::from_array([Scalar::from_f64(c), Scalar::from_f64(s), Scalar::ZERO])
                 };
                 let (start, end) = (unit(from), unit(to));
                 let end = if closed { start } else { end };
                 let arc = Arc {
                     circle: Circle {
                         center: Vector3::zero(),
-                        normal: Vector3::from_array([S::ZERO, S::ZERO, S::ONE]),
-                        radius: S::ONE,
+                        normal: Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::ONE]),
+                        radius: Scalar::ONE,
                     },
                     start,
                     end,
@@ -734,7 +727,14 @@ impl CurveDef {
                 NurbCurve::try_new(
                     2,
                     control_points,
-                    vec![S::ZERO, S::ZERO, S::ZERO, S::ONE, S::ONE, S::ONE],
+                    vec![
+                        Scalar::ZERO,
+                        Scalar::ZERO,
+                        Scalar::ZERO,
+                        Scalar::ONE,
+                        Scalar::ONE,
+                        Scalar::ONE,
+                    ],
                 )
             }
             CurveDef::Polyline(points) => {
@@ -742,11 +742,11 @@ impl CurveDef {
                 if n < 2 {
                     return Err(GeopError::new("a polyline of fewer than two points"));
                 }
-                let mut knots = vec![S::ZERO];
+                let mut knots = vec![Scalar::ZERO];
                 for i in 0..n {
-                    knots.push(S::from_ratio(i as i64, n as i64 - 1)?);
+                    knots.push(Scalar::from_ratio(i as i64, n as i64 - 1)?);
                 }
-                knots.push(S::ONE);
+                knots.push(Scalar::ONE);
                 let control_points = points.iter().map(|p| homogeneous(*p, None)).collect();
                 trim(
                     NurbCurve::try_new(1, control_points, knots)?,
@@ -761,13 +761,13 @@ impl CurveDef {
 }
 
 /// The piece of `curve` from `from` to `to` (see [`CurveDef::edge`]).
-fn trim<S: Scalar>(
-    curve: NurbCurve3D<S>,
+fn trim(
+    curve: NurbCurve3D,
     from: P3,
     to: P3,
     closed: bool,
     uncertainty: f64,
-) -> GeopResult<NurbCurve3D<S>> {
+) -> GeopResult<NurbCurve3D> {
     let (lo, hi) = curve.domain();
     let start = curve.evaluate(lo)?.to_f64_array();
     let end = curve.evaluate(hi)?.to_f64_array();
@@ -797,8 +797,8 @@ fn trim<S: Scalar>(
 /// Where on `curve` the point `p` is: the parameter of its nearest point
 /// ([`NurbCurve3D::closest_point`]). A free choice of where to cut the
 /// curve, so sharp.
-pub fn parameter_of<S: Scalar>(curve: &NurbCurve3D<S>, p: P3) -> GeopResult<S> {
-    let target = Vector3::from_array(p.map(S::from_f64));
+pub fn parameter_of(curve: &NurbCurve3D, p: P3) -> GeopResult<Scalar> {
+    let target = Vector3::from_array(p.map(Scalar::from_f64));
     Ok(curve.closest_point(&target)?.0.sharpen())
 }
 
@@ -1484,14 +1484,14 @@ fn quasi_uniform_knots(n: usize, degree: usize) -> Vec<f64> {
 
 /// The point of `curve` at the parameter `t`, chosen in `f64`: at a domain
 /// end, the end itself, which `t` may miss by rounding.
-pub fn point_at<S: Scalar>(curve: &NurbCurve3D<S>, t: f64) -> GeopResult<P3> {
+pub fn point_at(curve: &NurbCurve3D, t: f64) -> GeopResult<P3> {
     let (lo, hi) = curve.domain();
     let t = if t <= lo.to_f64() {
         lo
     } else if t >= hi.to_f64() {
         hi
     } else {
-        S::from_f64(t)
+        Scalar::from_f64(t)
     };
     Ok(curve.evaluate(t)?.to_f64_array())
 }

@@ -16,7 +16,6 @@ use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
     reader::Reader,
     target::{Target, TargetReference},
-    values::Design,
 };
 use std::{borrow::Cow, collections::BTreeMap, sync::LazyLock};
 
@@ -46,7 +45,7 @@ const COMPONENT: char = ':';
 
 /// The datums the steps of a part added, by name.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Datums(BTreeMap<String, Datum<Design>>);
+pub struct Datums(BTreeMap<String, Datum>);
 
 /// The part's datums: revised by every step that adds one.
 pub fn datums() -> TargetReference<Datums> {
@@ -131,7 +130,7 @@ pub fn origin_axis(axis: FrameAxis) -> ElementReference<Datums, Line> {
 impl Datums {
     /// The datum `name`: one a step added, [`ORIGIN`], or a component of a
     /// frame (see [`component_name`]) as a datum of its own.
-    pub fn get(&self, name: &str) -> GeopResult<Datum<Design>> {
+    pub fn get(&self, name: &str) -> GeopResult<Datum> {
         let (frame, component) = match name.split_once(COMPONENT) {
             Some((frame, text)) => (frame, Some(self::component(text)?)),
             None => (name, None),
@@ -155,7 +154,7 @@ impl Datums {
     }
 
     /// Adds `datum` as `name`: an error for a name taken.
-    pub fn insert(&mut self, name: &str, datum: Datum<Design>) -> GeopResult<()> {
+    pub fn insert(&mut self, name: &str, datum: Datum) -> GeopResult<()> {
         if name == ORIGIN || name.contains(COMPONENT) || self.0.contains_key(name) {
             return Err(GeopError::new(format!("there is a datum {name:?} already")));
         }
@@ -169,7 +168,7 @@ impl Datums {
     }
 
     /// The datums the steps added, by name, sorted.
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &Datum<Design>)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &Datum)> {
         self.0.iter().map(|(name, datum)| (name.as_str(), datum))
     }
 }
@@ -233,28 +232,28 @@ impl HasElements<Datums> for Datums {
 }
 
 impl HasElements<AnyDatum> for Datums {
-    type Element<'a> = Datum<Design>;
+    type Element<'a> = Datum;
     const SINGLETON: Option<&'static str> = Some(DATUMS);
 
     fn undefined() -> Option<&'static Self> {
         Some(origin())
     }
 
-    fn element(&self, name: &str) -> GeopResult<Datum<Design>> {
+    fn element(&self, name: &str) -> GeopResult<Datum> {
         self.get(name)
     }
 }
 
 /// A point datum, or a frame by its origin.
 impl HasElements<Point> for Datums {
-    type Element<'a> = Vector3<Design>;
+    type Element<'a> = Vector3;
     const SINGLETON: Option<&'static str> = Some(DATUMS);
 
     fn undefined() -> Option<&'static Self> {
         Some(origin())
     }
 
-    fn element(&self, name: &str) -> GeopResult<Vector3<Design>> {
+    fn element(&self, name: &str) -> GeopResult<Vector3> {
         let datum = self.get(name)?;
         match datum.kind {
             DatumKind::Point | DatumKind::Frame => Ok(*datum.frame.origin()),
@@ -267,14 +266,14 @@ impl HasElements<Point> for Datums {
 
 /// An axis datum, or a frame's axis.
 impl HasElements<Line> for Datums {
-    type Element<'a> = Axis<Design>;
+    type Element<'a> = Axis;
     const SINGLETON: Option<&'static str> = Some(DATUMS);
 
     fn undefined() -> Option<&'static Self> {
         Some(origin())
     }
 
-    fn element(&self, name: &str) -> GeopResult<Axis<Design>> {
+    fn element(&self, name: &str) -> GeopResult<Axis> {
         let datum = self.get(name)?;
         match datum.kind {
             DatumKind::Axis => Axis::try_new(*datum.frame.origin(), *datum.frame.w()),
@@ -287,14 +286,14 @@ impl HasElements<Line> for Datums {
 
 /// A plane datum, or a frame's plane: its frame, `w` the normal.
 impl HasElements<Plane> for Datums {
-    type Element<'a> = CoordinateSystem<Design>;
+    type Element<'a> = CoordinateSystem;
     const SINGLETON: Option<&'static str> = Some(DATUMS);
 
     fn undefined() -> Option<&'static Self> {
         Some(origin())
     }
 
-    fn element(&self, name: &str) -> GeopResult<CoordinateSystem<Design>> {
+    fn element(&self, name: &str) -> GeopResult<CoordinateSystem> {
         let datum = self.get(name)?;
         match datum.kind {
             DatumKind::Plane => Ok(datum.frame),
@@ -392,12 +391,12 @@ mod tests {
         read_datums(&reader).unwrap().draw(&mut view).unwrap();
         let view = view.finish();
         assert_eq!(view.datums.len(), 2);
-        let v = |p: [f64; 3]| Vector3::from_array(p.map(Design::from_f64));
+        let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
         // Through the origin's xy square, as drawn at a reach of 0.1.
         let pointer = Pointer {
             ray: Ray::try_new(v([0.45, 0.45, 10.0]), v([0.0, 0.0, -1.0])).unwrap(),
             reach: Reach::Tube {
-                radius: Design::from_f64(0.1),
+                radius: Scalar::from_f64(0.1),
             },
         };
         let hit = view.pick(&pointer, &[drawn::DATUM.to_string()]).unwrap();
@@ -422,11 +421,11 @@ mod tests {
         let xy = reader
             .retrieve_element(&origin_plane(FrameAxis::Z))
             .unwrap();
-        assert!(xy.w().to_array()[2].could_be_equal(Design::ONE));
+        assert!(xy.w().to_array()[2].could_be_equal(Scalar::ONE));
         let z = reader.retrieve_element(&origin_axis(FrameAxis::Z)).unwrap();
-        assert!(z.direction.to_array()[2].could_be_equal(Design::ONE));
+        assert!(z.direction.to_array()[2].could_be_equal(Scalar::ONE));
         let a = reader.retrieve_element(&ElementReference::<Datums, Line>::new(datums(), "a"));
-        assert!(a.unwrap().direction.to_array()[0].could_be_equal(Design::ONE));
+        assert!(a.unwrap().direction.to_array()[0].could_be_equal(Scalar::ONE));
         let not_a_plane = ElementReference::<Datums, Plane>::new(datums(), "a");
         assert!(reader.retrieve_element(&not_a_plane).is_err());
         assert!(
@@ -460,7 +459,7 @@ mod tests {
         let reader = given.current();
         assert!(read_datums(&reader).unwrap().names().is_empty());
         let plane = reader.retrieve_element(&origin_plane(FrameAxis::X));
-        assert!(plane.unwrap().w().to_array()[0].could_be_equal(Design::ONE));
+        assert!(plane.unwrap().w().to_array()[0].could_be_equal(Scalar::ONE));
     }
 
     /// A frame datum — here the origin every part has — is hit before
@@ -491,7 +490,7 @@ mod tests {
             Some(origin_plane(FrameAxis::Z).name().to_string())
         );
         // Looking for what no part of a frame can be, the cube under it.
-        let solid = selectable::pick::<ElementReference<NamedModel<Design>, Solid>, _>(
+        let solid = selectable::pick::<ElementReference<NamedModel, Solid>>(
             &view,
             &part.current(),
             &down(0.04, 0.04),

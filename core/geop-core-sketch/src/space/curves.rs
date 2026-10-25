@@ -17,7 +17,7 @@ use crate::{CurveId, PointId, ProfileEdge, ProfileJoint};
 
 /// One NURBS piece of a chain, on `[0, 1]`, named as a planar sketch's
 /// pieces are (see [`crate::profile::Piece`]).
-pub type Piece3d<S> = crate::profile::Piece<NurbCurve3D<S>>;
+pub type Piece3d = crate::profile::Piece<NurbCurve3D>;
 
 /// Curves of a 3-D sketch joined end to end: an open chain, or a closed one
 /// whose last curve ends where the first starts. Each curve runs forwards
@@ -33,13 +33,13 @@ pub struct Chain3d {
 /// point where the tangents at its ends meet, `(L/2) tan` out from the
 /// chord, towards the arc — exact for any radius, a nearly straight arc's
 /// too.
-fn conic<T: Scalar>(
-    p: &Vector3<T>,
-    q: &Vector3<T>,
-    normal: &Vector3<T>,
-    cos: T,
-    sin: T,
-) -> GeopResult<NurbCurve3D<T>> {
+fn conic(
+    p: &Vector3,
+    q: &Vector3,
+    normal: &Vector3,
+    cos: Scalar,
+    sin: Scalar,
+) -> GeopResult<NurbCurve3D> {
     let (mid, out) = chord_frame(p, q, normal)?;
     let m = mid.add(&out.prod_scalar(sin.div(cos)?));
     NurbCurve3D::arc(*p, m, *q, cos)
@@ -48,12 +48,8 @@ fn conic<T: Scalar>(
 /// The middle of the chord from `p` to `q`, and half its length towards the
 /// arc about `normal` through them — whichever its sweep: the chord turned a
 /// quarter back about the normal.
-fn chord_frame<T: Scalar>(
-    p: &Vector3<T>,
-    q: &Vector3<T>,
-    normal: &Vector3<T>,
-) -> GeopResult<(Vector3<T>, Vector3<T>)> {
-    let half = T::ONE.div(T::TWO)?;
+fn chord_frame(p: &Vector3, q: &Vector3, normal: &Vector3) -> GeopResult<(Vector3, Vector3)> {
+    let half = Scalar::ONE.div(Scalar::TWO)?;
     let chord = q.sub(p);
     let out = chord
         .prod_cross(normal)
@@ -62,18 +58,18 @@ fn chord_frame<T: Scalar>(
     Ok((p.add(q).prod_scalar(half), out))
 }
 
-impl<S: Scalar> Sketch3d<S> {
+impl Sketch3d {
     /// The curve `curve` as NURBS pieces from its start to its end, each on
     /// `[0, 1]`, built from `geometry`. How many pieces — an arc has one per
     /// quarter turn, or two or four, a rational quadratic's middle weight
     /// staying positive — is decided on the sketch as drawn, which is
     /// design data, so the pieces' names do not depend on how precisely the
     /// geometry is known.
-    pub fn curve_nurbs<T: Scalar>(
+    pub fn curve_nurbs(
         &self,
         curve: CurveId,
-        geometry: &Enclosure3d<T>,
-    ) -> GeopResult<Vec<NurbCurve3D<T>>> {
+        geometry: &Enclosure3d,
+    ) -> GeopResult<Vec<NurbCurve3D>> {
         let ctx = with_context!("3-D sketch curve {curve} as NURBS");
         let at = |p: &PointId| geometry.points[p];
         match &self.curve(curve).with_context(ctx)?.kind {
@@ -92,9 +88,9 @@ impl<S: Scalar> Sketch3d<S> {
                 };
                 let (cos, _) = drawn.half_sweep().with_context(ctx)?;
                 // Into one, two or four pieces: halved none, once or twice.
-                let halvings = if !cos.definitely_less(S::ONE.div(S::TWO)?.sqrt()?) {
+                let halvings = if !cos.definitely_less(Scalar::ONE.div(Scalar::TWO)?.sqrt()?) {
                     0
-                } else if !cos.definitely_less(S::ZERO) {
+                } else if !cos.definitely_less(Scalar::ZERO) {
                     1
                 } else {
                     2
@@ -111,7 +107,7 @@ impl<S: Scalar> Sketch3d<S> {
                 let mut ends = vec![arc.s, arc.e];
                 let (mut cos, mut sin) = (cos, sin);
                 for _ in 0..halvings {
-                    let tan_quarter = sin.div(T::ONE.add(cos))?;
+                    let tan_quarter = sin.div(Scalar::ONE.add(cos))?;
                     let mut halved = vec![ends[0]];
                     for w in ends.windows(2) {
                         let (mid, out) = chord_frame(&w[0], &w[1], &normal)?;
@@ -119,8 +115,8 @@ impl<S: Scalar> Sketch3d<S> {
                         halved.push(w[1]);
                     }
                     ends = halved;
-                    let half_cos = T::ONE.add(cos).div(T::TWO)?.sqrt()?;
-                    sin = sin.div(T::TWO.mul(half_cos))?;
+                    let half_cos = Scalar::ONE.add(cos).div(Scalar::TWO)?.sqrt()?;
+                    sin = sin.div(Scalar::TWO.mul(half_cos))?;
                     cos = half_cos;
                 }
                 ends.windows(2)
@@ -129,7 +125,7 @@ impl<S: Scalar> Sketch3d<S> {
                     .with_context(ctx)
             }
             CurveKind3d::Spline { points } => {
-                let through: Vec<Vector3<T>> = points.iter().map(at).collect();
+                let through: Vec<Vector3> = points.iter().map(at).collect();
                 let start = self
                     .end_tangent(curve, End::Start, geometry)
                     .with_context(ctx)?;
@@ -150,12 +146,12 @@ impl<S: Scalar> Sketch3d<S> {
     /// (its end) along, if it is given one (see [`Sketch3d::adopts`]): a
     /// [`Constraint3d::TangentTo`]'s, the way the spline runs there; or the
     /// direction of the curve it goes on smoothly from or to.
-    fn end_tangent<T: Scalar>(
+    fn end_tangent(
         &self,
         curve: CurveId,
         end: End,
-        geometry: &Enclosure3d<T>,
-    ) -> GeopResult<Option<Vector3<T>>> {
+        geometry: &Enclosure3d,
+    ) -> GeopResult<Option<Vector3>> {
         let CurveKind3d::Spline { points } = &self.curve(curve)?.kind else {
             unreachable!("only a spline's ends take a direction");
         };
@@ -174,11 +170,11 @@ impl<S: Scalar> Sketch3d<S> {
                     };
                     let run = self.points[&to].at.sub(&self.points[&from].at);
                     let sign = if run.prod_dot(&direction).to_f64() < 0.0 {
-                        T::ONE.neg()
+                        Scalar::ONE.neg()
                     } else {
-                        T::ONE
+                        Scalar::ONE
                     };
-                    return Ok(Some(direction.map(|c| c.cast::<T>()).prod_scalar(sign)));
+                    return Ok(Some(direction.prod_scalar(sign)));
                 }
                 Constraint3d::Tangent { a, b } if self.adopts(a, b)? == Some((curve, end)) => {
                     let other = if a == curve { b } else { a };
@@ -205,22 +201,17 @@ impl<S: Scalar> Sketch3d<S> {
 
     /// The tangent of the drawn curve `curve` at its end `end`, in its own
     /// direction.
-    fn tangent_at<T: Scalar>(
-        &self,
-        curve: CurveId,
-        end: End,
-        geometry: &Enclosure3d<T>,
-    ) -> GeopResult<Vector3<T>> {
+    fn tangent_at(&self, curve: CurveId, end: End, geometry: &Enclosure3d) -> GeopResult<Vector3> {
         let pieces = self.curve_nurbs(curve, geometry)?;
         match end {
-            End::Start => pieces[0].tangent(T::ZERO),
-            End::End => pieces[pieces.len() - 1].tangent(T::ONE),
+            End::Start => pieces[0].tangent(Scalar::ZERO),
+            End::End => pieces[pieces.len() - 1].tangent(Scalar::ONE),
         }
     }
 
     /// Points along the curve `curve` as drawn, from its start to its end —
     /// dense enough to draw it.
-    pub fn curve_polyline(&self, curve: CurveId) -> GeopResult<Vec<Vector3<S>>> {
+    pub fn curve_polyline(&self, curve: CurveId) -> GeopResult<Vec<Vector3>> {
         let pieces = self.curve_nurbs(curve, &Enclosure3d::as_drawn(self))?;
         crate::profile::polyline(&pieces, NurbCurve3D::evaluate)
     }
@@ -330,11 +321,7 @@ impl Chain3d {
     /// The chain as NURBS pieces, each on `[0, 1]` and starting exactly
     /// where the one before ends — the sketch's points at `geometry` —
     /// named after the sketch's curves and points (see [`Piece3d`]).
-    pub fn to_nurbs<D: Scalar, T: Scalar>(
-        &self,
-        sketch: &Sketch3d<D>,
-        geometry: &Enclosure3d<T>,
-    ) -> GeopResult<Vec<Piece3d<T>>> {
+    pub fn to_nurbs(&self, sketch: &Sketch3d, geometry: &Enclosure3d) -> GeopResult<Vec<Piece3d>> {
         let mut out = Vec::new();
         for edge in &self.edges {
             let curve = edge.curve;

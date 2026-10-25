@@ -19,24 +19,24 @@ pub const DRAG_SNAP: f64 = 0.01;
 /// on screen — a handle, a label, a frame datum — is laid out in reaches,
 /// so it is hit where it is drawn however far away or zoomed in the view is.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", bound = "S: Scalar")]
-pub enum Reach<S: Scalar> {
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Reach {
     /// Seen in perspective: a cone around the ray, from its origin — the
     /// eye — widening by `slope` per unit of distance.
     Cone {
         #[serde(with = "as_f64")]
-        slope: S,
+        slope: Scalar,
     },
     /// Seen orthographically: a tube of `radius` around the ray.
     Tube {
         #[serde(with = "as_f64")]
-        radius: S,
+        radius: Scalar,
     },
 }
 
-impl<S: Scalar> Reach<S> {
+impl Reach {
     /// How far from the ray it reaches, `t` along it.
-    pub fn at(&self, t: S) -> S {
+    pub fn at(&self, t: Scalar) -> Scalar {
         match *self {
             Reach::Cone { slope } => slope.mul(t),
             Reach::Tube { radius } => radius,
@@ -47,21 +47,20 @@ impl<S: Scalar> Reach<S> {
 /// Where the pointer is: the ray from the eye through it, and how far from
 /// that ray it reaches.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Pointer<S: Scalar> {
-    pub ray: Ray<S>,
-    pub reach: Reach<S>,
+pub struct Pointer {
+    pub ray: Ray,
+    pub reach: Reach,
 }
 
-impl<S: Scalar> Pointer<S> {
+impl Pointer {
     /// `reaches` of the pointer's reach, `t` along its ray.
-    pub fn reach_at(&self, reaches: f64, t: S) -> S {
-        self.reach.at(t).mul(S::from_f64(reaches))
+    pub fn reach_at(&self, reaches: f64, t: Scalar) -> Scalar {
+        self.reach.at(t).mul(Scalar::from_f64(reaches))
     }
 
     /// Whether something `dist` from the ray, `t` along it, could lie within
     /// `reaches` of it.
-    pub fn within(&self, dist: S, t: S, reaches: f64) -> bool {
+    pub fn within(&self, dist: Scalar, t: Scalar, reaches: f64) -> bool {
         !dist.definitely_greater(self.reach_at(reaches, t))
     }
 }
@@ -116,14 +115,14 @@ impl Value {
 
 /// One thing the user did while editing a step.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", bound = "S: Scalar")]
-pub enum StepEditEvent<S: Scalar> {
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StepEditEvent {
     /// The dialog field `key` was used.
     Dialog { key: String, value: Value },
     /// The pointer moved over the viewport with no button held — `shift`
     /// held or not, which turns snapping off.
     Hover {
-        pointer: Pointer<S>,
+        pointer: Pointer,
         #[serde(default)]
         shift: bool,
     },
@@ -131,7 +130,7 @@ pub enum StepEditEvent<S: Scalar> {
     Leave,
     /// A click in the viewport: a press and release without moving.
     Click {
-        pointer: Pointer<S>,
+        pointer: Pointer,
         #[serde(default)]
         button: Button,
         /// The second click of a double click.
@@ -145,8 +144,8 @@ pub enum StepEditEvent<S: Scalar> {
     /// ray where it went down and the ray where the pointer is now. `done`
     /// on release.
     Drag {
-        from: Pointer<S>,
-        to: Pointer<S>,
+        from: Pointer,
+        to: Pointer,
         #[serde(default)]
         done: bool,
         #[serde(default)]
@@ -156,7 +155,7 @@ pub enum StepEditEvent<S: Scalar> {
     Key { key: String },
 }
 
-impl<S: Scalar> StepEditEvent<S> {
+impl StepEditEvent {
     /// The dialog field this event uses, and its value.
     pub fn dialog(&self) -> Option<(&str, &Value)> {
         match self {
@@ -167,7 +166,7 @@ impl<S: Scalar> StepEditEvent<S> {
 
     /// Where the pointer is, for any event that has one — for a drag, where
     /// it is now.
-    pub fn pointer(&self) -> Option<&Pointer<S>> {
+    pub fn pointer(&self) -> Option<&Pointer> {
         match self {
             StepEditEvent::Hover { pointer, .. } | StepEditEvent::Click { pointer, .. } => {
                 Some(pointer)
@@ -182,16 +181,16 @@ impl<S: Scalar> StepEditEvent<S> {
 /// taken what is its own: picks, selecting, dragging handles (see
 /// the step editor, [`crate::step_editor`]).
 #[derive(Clone, Debug, PartialEq)]
-pub enum CanvasEvent<S: Scalar> {
+pub enum CanvasEvent {
     /// The pointer moved over the viewport with no button held, `shift`
     /// held or not.
-    Hover { pointer: Pointer<S>, shift: bool },
+    Hover { pointer: Pointer, shift: bool },
     /// The pointer left the viewport.
     Leave,
     /// A primary click that selected nothing: a double one, one while the
     /// operation has a tool in hand, one on nothing selectable.
     Click {
-        pointer: Pointer<S>,
+        pointer: Pointer,
         double: bool,
         shift: bool,
     },
@@ -209,9 +208,9 @@ pub enum CanvasEvent<S: Scalar> {
     /// `shift` held or not. `done` on release.
     Move {
         key: String,
-        from: Vector3<S>,
-        to: Vector3<S>,
-        pointer: Pointer<S>,
+        from: Vector3,
+        to: Vector3,
+        pointer: Pointer,
         done: bool,
         shift: bool,
     },
@@ -219,8 +218,8 @@ pub enum CanvasEvent<S: Scalar> {
     /// [`super::InHand::Strokes`]): the ray where it went down and the ray
     /// where the pointer is now. `done` on release.
     Stroke {
-        from: Pointer<S>,
-        to: Pointer<S>,
+        from: Pointer,
+        to: Pointer,
         done: bool,
         shift: bool,
     },
@@ -231,8 +230,8 @@ pub enum CanvasEvent<S: Scalar> {
     /// `from` is the gizmo as the step asked for it when the drag started:
     /// where it stood, along what it stands on's own axes.
     Gizmo {
-        drag: GizmoDrag<S>,
-        from: Gizmo<S>,
+        drag: GizmoDrag,
+        from: Gizmo,
         done: bool,
     },
     /// Any other key, as the browser names it, a letter lowercased: a

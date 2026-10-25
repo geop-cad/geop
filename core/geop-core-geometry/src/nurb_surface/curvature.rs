@@ -2,7 +2,7 @@ use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
 
 use super::NurbSurface;
 
-impl<S: Scalar> NurbSurface<S, 4> {
+impl NurbSurface<4> {
     /// A conservative radius of curvature at `(u, v)`, or `None` if the
     /// surface is (locally) flat in both parametric directions.
     ///
@@ -22,7 +22,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
     ///
     /// The returned radius is `1 / max(|κ_u|, |κ_v|)`: the tighter of the
     /// two bends, so a caller sizing steps off of it stays conservative.
-    pub fn curvature_radius(&self, u: S, v: S) -> GeopResult<Option<S>> {
+    pub fn curvature_radius(&self, u: Scalar, v: Scalar) -> GeopResult<Option<Scalar>> {
         let (su, sv) = self.derivatives(u, v)?;
         let [suu, _, svv] = self.second_derivatives(u, v)?;
 
@@ -34,13 +34,13 @@ impl<S: Scalar> NurbSurface<S, 4> {
         let su_len_sq = su.prod_dot(&su);
         let sv_len_sq = sv.prod_dot(&sv);
 
-        let kappa_u = if su_len_sq.could_be_equal(S::ZERO) {
-            S::ZERO
+        let kappa_u = if su_len_sq.could_be_equal(Scalar::ZERO) {
+            Scalar::ZERO
         } else {
             suu.prod_dot(&normal).div(su_len_sq)?.abs()
         };
-        let kappa_v = if sv_len_sq.could_be_equal(S::ZERO) {
-            S::ZERO
+        let kappa_v = if sv_len_sq.could_be_equal(Scalar::ZERO) {
+            Scalar::ZERO
         } else {
             svv.prod_dot(&normal).div(sv_len_sq)?.abs()
         };
@@ -51,10 +51,10 @@ impl<S: Scalar> NurbSurface<S, 4> {
             kappa_v
         };
 
-        if kappa.could_be_equal(S::ZERO) {
+        if kappa.could_be_equal(Scalar::ZERO) {
             Ok(None)
         } else {
-            Ok(Some(S::ONE.div(kappa)?.abs()))
+            Ok(Some(Scalar::ONE.div(kappa)?.abs()))
         }
     }
 
@@ -73,7 +73,12 @@ impl<S: Scalar> NurbSurface<S, 4> {
     ///
     /// An error where `Su × Sv` vanishes (a pole), and where `along` leaves
     /// the tangent plane's reach.
-    pub fn curvature_radius_along(&self, u: S, v: S, along: &Vector3<S>) -> GeopResult<Option<S>> {
+    pub fn curvature_radius_along(
+        &self,
+        u: Scalar,
+        v: Scalar,
+        along: &Vector3,
+    ) -> GeopResult<Option<Scalar>> {
         let (su, sv) = self.derivatives(u, v)?;
         let [suu, suv, svv] = self.second_derivatives(u, v)?;
         let n = su.prod_cross(&sv).normalize()?;
@@ -86,13 +91,13 @@ impl<S: Scalar> NurbSurface<S, 4> {
             .prod_dot(&n)
             .mul(a)
             .mul(a)
-            .add(S::TWO.mul(suv.prod_dot(&n)).mul(a).mul(b))
+            .add(Scalar::TWO.mul(suv.prod_dot(&n)).mul(a).mul(b))
             .add(svv.prod_dot(&n).mul(b).mul(b))
             .abs();
-        if kappa.could_be_equal(S::ZERO) {
+        if kappa.could_be_equal(Scalar::ZERO) {
             Ok(None)
         } else {
-            Ok(Some(S::ONE.div(kappa)?.abs()))
+            Ok(Some(Scalar::ONE.div(kappa)?.abs()))
         }
     }
 
@@ -106,7 +111,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
     ///
     /// An error where `Su × Sv` vanishes (a pole): the surface may well have
     /// a curvature there, but not one these partials can express.
-    pub fn mean_curvature(&self, u: S, v: S) -> GeopResult<S> {
+    pub fn mean_curvature(&self, u: Scalar, v: Scalar) -> GeopResult<Scalar> {
         let (su, sv) = self.derivatives(u, v)?;
         let [suu, suv, svv] = self.second_derivatives(u, v)?;
         let cross = su.prod_cross(&sv);
@@ -114,9 +119,9 @@ impl<S: Scalar> NurbSurface<S, 4> {
         let (e, f, g) = (su.prod_dot(&su), su.prod_dot(&sv), sv.prod_dot(&sv));
         let (l, m, nn) = (suu.prod_dot(&n), suv.prod_dot(&n), svv.prod_dot(&n));
         l.mul(g)
-            .sub(S::TWO.mul(m).mul(f))
+            .sub(Scalar::TWO.mul(m).mul(f))
             .add(nn.mul(e))
-            .div(S::TWO.mul(cross.norm_sq()))
+            .div(Scalar::TWO.mul(cross.norm_sq()))
     }
 }
 
@@ -124,12 +129,12 @@ impl<S: Scalar> NurbSurface<S, 4> {
 mod tests {
     use crate::nurb_surface::NurbSurface;
     use crate::test_fixtures::hom;
-    use geop_core_math::for_all_scalars;
     use geop_core_math::scalars::Scalar;
 
     /// A flat bilinear patch has zero curvature everywhere: no radius limit.
-    fn check_flat_patch_has_no_curvature_radius<S: Scalar>() {
-        let f = S::from_f64;
+    #[test]
+    fn flat_patch_has_no_curvature_radius() {
+        let f = Scalar::from_f64;
         let s = NurbSurface::try_new(
             1,
             1,
@@ -146,16 +151,13 @@ mod tests {
 
         assert!(s.curvature_radius(f(0.5), f(0.5)).unwrap().is_none());
     }
-    #[test]
-    fn flat_patch_has_no_curvature_radius() {
-        for_all_scalars!(check_flat_patch_has_no_curvature_radius);
-    }
 
-    /// The saddle `S(u, v) = (u, v, uv)`: its only second partial is the
+    /// The saddle `Scalar(u, v) = (u, v, uv)`: its only second partial is the
     /// mixed one, so it alone gives the mean curvature
     /// `H = -uv / (1 + u² + v²)^(3/2)`.
-    fn check_saddle_mean_curvature<S: Scalar>() {
-        let f = S::from_f64;
+    #[test]
+    fn saddle_mean_curvature() {
+        let f = Scalar::from_f64;
         let s = NurbSurface::try_new(
             1,
             1,
@@ -174,15 +176,12 @@ mod tests {
         let h = s.mean_curvature(f(u), f(v)).unwrap();
         assert!(h.could_be_equal(f(expected)), "{h:?} vs {expected}");
     }
-    #[test]
-    fn saddle_mean_curvature() {
-        for_all_scalars!(check_saddle_mean_curvature);
-    }
 
     /// A rational quarter cylinder of radius 2 has `|H| = 1 / 4` everywhere,
     /// where the weights make its parametrization uneven too.
-    fn check_cylinder_mean_curvature<S: Scalar>() {
-        let f = S::from_f64;
+    #[test]
+    fn cylinder_mean_curvature() {
+        let f = Scalar::from_f64;
         let (r, w) = (2.0, std::f64::consts::FRAC_1_SQRT_2);
         let mut cps = Vec::new();
         for (x, y, wi) in [(1., 0., 1.), (1., 1., w), (0., 1., 1.)] {
@@ -203,18 +202,15 @@ mod tests {
             assert!(h.abs().could_be_equal(f(0.25)), "{h:?} at ({u}, {v})");
         }
     }
-    #[test]
-    fn cylinder_mean_curvature() {
-        for_all_scalars!(check_cylinder_mean_curvature);
-    }
 
     /// A rational quarter cylinder of radius 2 bends round its axis with
     /// radius 2 and runs straight along it — and every direction between
     /// bends with a radius of `2 / sin² θ` — where the tightest bend, by
     /// [`NurbSurface::curvature_radius`], is the one round it.
-    fn check_a_cylinder_bends_as_its_direction_says<S: Scalar>() {
+    #[test]
+    fn a_cylinder_bends_as_its_direction_says() {
         use geop_core_math::vector::Vector3;
-        let f = S::from_f64;
+        let f = Scalar::from_f64;
         let (r, w) = (2.0, std::f64::consts::FRAC_1_SQRT_2);
         let mut cps = Vec::new();
         for (x, y, wi) in [(1., 0., 1.), (1., 1., w), (0., 1., 1.)] {
@@ -252,9 +248,5 @@ mod tests {
         assert!(between.could_be_equal(f(2.0 * r)), "{between:?}");
         let tightest = s.curvature_radius(u, v).unwrap().expect("a bend");
         assert!(tightest.could_be_equal(f(r)), "{tightest:?}");
-    }
-    #[test]
-    fn a_cylinder_bends_as_its_direction_says() {
-        for_all_scalars!(check_a_cylinder_bends_as_its_direction_says);
     }
 }

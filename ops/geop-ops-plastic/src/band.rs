@@ -21,10 +21,10 @@ use geop_ops_model::Profile;
 /// A straight or circular curve of a chain, from where the previous one
 /// ends, named for what it was made from.
 #[derive(Clone, Debug)]
-pub struct Piece<S: Scalar> {
-    pub curve: NurbCurve2D<S>,
+pub struct Piece {
+    pub curve: NurbCurve2D,
     /// The centre of the circle an arc lies on; none for a line.
-    pub center: Option<Vector2<S>>,
+    pub center: Option<Vector2>,
     pub name: String,
 }
 
@@ -33,23 +33,23 @@ pub struct Piece<S: Scalar> {
 /// `joints[i]` where piece `i` starts, and for an open chain one more, its
 /// end.
 #[derive(Clone, Debug)]
-pub struct Chain<S: Scalar> {
-    pub pieces: Vec<Piece<S>>,
+pub struct Chain {
+    pub pieces: Vec<Piece>,
     pub joints: Vec<String>,
     pub closed: bool,
 }
 
-impl<S: Scalar> Piece<S> {
-    fn start(&self) -> GeopResult<Vector2<S>> {
+impl Piece {
+    fn start(&self) -> GeopResult<Vector2> {
         self.curve.start()
     }
 
-    fn end(&self) -> GeopResult<Vector2<S>> {
+    fn end(&self) -> GeopResult<Vector2> {
         self.curve.end()
     }
 
     /// The unit direction it starts and ends going in.
-    fn directions(&self) -> GeopResult<(Vector2<S>, Vector2<S>)> {
+    fn directions(&self) -> GeopResult<(Vector2, Vector2)> {
         let (t0, t1) = self.curve.domain();
         Ok((
             self.curve.tangent(t0)?.normalize()?,
@@ -59,7 +59,7 @@ impl<S: Scalar> Piece<S> {
 
     /// The same piece `distance` to its left — negative: to its right —
     /// its ends not yet fitted to its neighbours'.
-    fn offset(&self, distance: S) -> GeopResult<NurbCurve2D<S>> {
+    fn offset(&self, distance: Scalar) -> GeopResult<NurbCurve2D> {
         let mut curve = self.curve.clone();
         let (start, _) = self.directions()?;
         match &self.center {
@@ -77,13 +77,13 @@ impl<S: Scalar> Piece<S> {
                 // offset to the left comes closer to it.
                 let turning_left = start
                     .prod_cross(&center.sub(&from))
-                    .definitely_greater(S::ZERO);
+                    .definitely_greater(Scalar::ZERO);
                 let new_radius = if turning_left {
                     radius.sub(distance)
                 } else {
                     radius.add(distance)
                 };
-                if !new_radius.definitely_greater(S::ZERO) {
+                if !new_radius.definitely_greater(Scalar::ZERO) {
                     return Err(GeopError::new(format!(
                         "{} curves too tightly: its radius {:?} leaves no room for an offset of {:?}",
                         self.name,
@@ -107,11 +107,7 @@ impl<S: Scalar> Piece<S> {
 
 /// `curve` with its ends moved to exactly `start` and `end` — the same
 /// points up to rounding, made exact so the pieces of a loop meet.
-fn with_ends<S: Scalar>(
-    curve: &NurbCurve2D<S>,
-    start: Vector2<S>,
-    end: Vector2<S>,
-) -> GeopResult<NurbCurve2D<S>> {
+fn with_ends(curve: &NurbCurve2D, start: Vector2, end: Vector2) -> GeopResult<NurbCurve2D> {
     if curve.degree == 1 && curve.control_points.len() == 2 {
         return NurbCurve2D::line(start, end);
     }
@@ -124,10 +120,10 @@ fn with_ends<S: Scalar>(
     Ok(curve)
 }
 
-impl<S: Scalar> Chain<S> {
+impl Chain {
     /// The chain moved `distance` to its left — negative: to its right —
     /// see the module docs.
-    pub fn offset(&self, distance: S) -> GeopResult<Vec<NurbCurve2D<S>>> {
+    pub fn offset(&self, distance: Scalar) -> GeopResult<Vec<NurbCurve2D>> {
         let n = self.pieces.len();
         let raw = self
             .pieces
@@ -158,7 +154,7 @@ impl<S: Scalar> Chain<S> {
                         self.pieces[i].end()?.sub(&self.pieces[i].start()?),
                         starts[i + 1].sub(&starts[i]),
                     );
-                    if !old.prod_dot(&new).definitely_greater(S::ZERO) {
+                    if !old.prod_dot(&new).definitely_greater(Scalar::ZERO) {
                         return Err(GeopError::new(format!(
                             "{} is too short for an offset of {:?}: it would turn around",
                             self.pieces[i].name,
@@ -172,14 +168,14 @@ impl<S: Scalar> Chain<S> {
     }
 
     /// Where the offsets `raw` of the pieces before and after joint `i` meet.
-    fn joint(&self, i: usize, distance: S, raw: &[NurbCurve2D<S>]) -> GeopResult<Vector2<S>> {
+    fn joint(&self, i: usize, distance: Scalar, raw: &[NurbCurve2D]) -> GeopResult<Vector2> {
         let n = self.pieces.len();
         let before = (i + n - 1) % n;
         let (_, arriving) = self.pieces[before].directions()?;
         let (leaving, _) = self.pieces[i].directions()?;
         let at = self.pieces[i].start()?;
-        if arriving.prod_cross(&leaving).could_be_equal(S::ZERO)
-            && arriving.prod_dot(&leaving).definitely_greater(S::ZERO)
+        if arriving.prod_cross(&leaving).could_be_equal(Scalar::ZERO)
+            && arriving.prod_dot(&leaving).definitely_greater(Scalar::ZERO)
         {
             return Ok(at.add(&leaving.perp().prod_scalar(distance)));
         }
@@ -202,9 +198,9 @@ impl<S: Scalar> Chain<S> {
     /// the outer one first and counter-clockwise, named after the pieces
     /// and joints: `X` and `P` for the near side, `X,far` and `P,far` for
     /// the far one, `first` and `last` the ends of an open chain.
-    pub fn band(&self, near: S, far: S) -> GeopResult<Vec<Profile<S>>> {
-        let at = |distance: S| -> GeopResult<Vec<NurbCurve2D<S>>> {
-            if distance.could_be_equal(S::ZERO) && distance.is_sharp() {
+    pub fn band(&self, near: Scalar, far: Scalar) -> GeopResult<Vec<Profile>> {
+        let at = |distance: Scalar| -> GeopResult<Vec<NurbCurve2D>> {
+            if distance.could_be_equal(Scalar::ZERO) && distance.is_sharp() {
                 // The chain itself, not moved by a rounded zero.
                 Ok(self.pieces.iter().map(|p| p.curve.clone()).collect())
             } else {
@@ -271,13 +267,13 @@ impl<S: Scalar> Chain<S> {
                 points.push(cp.dehomogenized()?);
             }
         }
-        let mut area = S::ZERO;
+        let mut area = Scalar::ZERO;
         for i in 0..points.len() {
             area = area.add(points[i].prod_cross(&points[(i + 1) % points.len()]));
         }
-        if area.definitely_greater(S::ZERO) {
+        if area.definitely_greater(Scalar::ZERO) {
             Ok(true)
-        } else if area.definitely_less(S::ZERO) {
+        } else if area.definitely_less(Scalar::ZERO) {
             Ok(false)
         } else {
             Err(GeopError::new("cannot tell which way the chain winds"))

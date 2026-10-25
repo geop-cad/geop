@@ -26,7 +26,7 @@ pub trait Iterate: Clone {
     fn same(&self, other: &Self) -> bool;
 }
 
-impl<S: Scalar> Iterate for S {
+impl Iterate for Scalar {
     fn same(&self, other: &Self) -> bool {
         self.is_subset_of(*other) && other.is_subset_of(*self)
     }
@@ -50,7 +50,7 @@ impl<A: Iterate, B: Iterate> Iterate for (A, B) {
     }
 }
 
-impl<S: Scalar, const N: usize> Iterate for Vector<S, N> {
+impl<const N: usize> Iterate for Vector<N> {
     fn same(&self, other: &Self) -> bool {
         (0..N).all(|i| self[i].same(&other[i]))
     }

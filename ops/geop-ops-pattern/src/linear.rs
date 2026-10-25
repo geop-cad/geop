@@ -13,7 +13,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
+use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader};
 use geop_ops_model::datums::origin_axis;
 use geop_ops_model::{ModelOperation, NamedModel};
 use serde::{Deserialize, Serialize};
@@ -92,7 +92,7 @@ impl Pattern for LinearPatternArgs {
         if self.second.is_some() { "0.0" } else { "0" }
     }
 
-    fn placements(&self, reader: &Reader) -> GeopResult<Vec<(String, Motion<Design>)>> {
+    fn placements(&self, reader: &Reader) -> GeopResult<Vec<(String, Motion)>> {
         let first = self.first.unit(reader)?;
         let first_row = self.first.row(reader)?;
         let second = match &self.second {
@@ -100,7 +100,7 @@ impl Pattern for LinearPatternArgs {
             Some(direction) => {
                 let unit = direction.unit(reader)?;
                 let cross = first.prod_cross(&unit);
-                if (0..3).all(|k| cross[k].could_be_equal(Design::ZERO)) {
+                if (0..3).all(|k| cross[k].could_be_equal(Scalar::ZERO)) {
                     return Err(GeopError::new(
                         "the two directions are parallel: the grid's rows would lie on top of each other",
                     ));
@@ -146,7 +146,7 @@ impl Direction {
     }
 
     /// The unit vector it goes along, as `reader` reads the part.
-    fn unit(&self, reader: &Reader) -> GeopResult<Vector3<Design>> {
+    fn unit(&self, reader: &Reader) -> GeopResult<Vector3> {
         let along = (self.along.as_ref())
             .ok_or_else(|| GeopError::new("pick a direction to pattern along"))?;
         let d = along.direction(reader)?;
@@ -164,9 +164,9 @@ impl Direction {
     /// the direction set where the arguments keep it.
     fn fields<'a, A: 'a>(
         &self,
-        f: &mut EditForm<'a, Design, A>,
+        f: &mut EditForm<'a, A>,
         before: &Reader<'a>,
-        at: Option<Vector3<Design>>,
+        at: Option<Vector3>,
         suffix: &str,
         set: impl Fn(&mut A, Direction) + Clone + 'a,
     ) {
@@ -212,8 +212,8 @@ impl Direction {
                     let step = row.step();
                     let end = (row.count - 1) as f64 * step;
                     track(
-                        at.add(&unit.prod_scalar(Design::from_f64(end))),
-                        unit.prod_scalar(Design::from_f64(step)),
+                        at.add(&unit.prod_scalar(Scalar::from_f64(end))),
+                        unit.prod_scalar(Scalar::from_f64(step)),
                     )
                 });
         let set_count = with(self.clone(), set.clone(), |d, count| d.count = count);
@@ -233,7 +233,7 @@ impl Direction {
                 let number = Number::numeric(value, label, before, Unit::Length);
                 let at = handles.and_then(|(at, unit)| {
                     track(
-                        at.add(&unit.prod_scalar(Design::from_f64(number.value))),
+                        at.add(&unit.prod_scalar(Scalar::from_f64(number.value))),
                         unit,
                     )
                 });
@@ -282,7 +282,7 @@ impl PartOperation for LinearPattern {
         context: &'a Context<'a>,
         args: &LinearPatternArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, LinearPatternArgs> {
+    ) -> EditForm<'a, LinearPatternArgs> {
         let before = &context.before;
         let mut f = EditForm::default();
         let at = args.seeds.center(before);
@@ -310,7 +310,7 @@ impl PartOperation for LinearPattern {
 
 impl ModelOperation for LinearPattern {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &LinearPatternArgs,

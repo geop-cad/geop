@@ -1,7 +1,6 @@
 use imbl::OrdMap;
 
 use geop_core_geometry::nurb_curve::NurbCurve;
-use geop_core_math::scalars::Scalar;
 
 use super::{
     Coedge, CoedgeId, Edge, EdgeId, Face, FaceId, Shell, ShellId, Solid, SolidId, Vertex, VertexId,
@@ -16,12 +15,12 @@ mod iterate;
 /// A 2-D parameter-space NURBS curve (pcurve).
 ///
 /// Control points are in homogeneous parameter space: `(wu, wv, w)`.
-pub type Curve2<S> = NurbCurve<S, 3>;
+pub type Curve2 = NurbCurve<3>;
 
 /// A 3-D NURBS curve used as edge geometry.
 ///
 /// Control points are in homogeneous 3-D space: `(wx, wy, wz, w)`.
-pub type Curve3<S> = NurbCurve<S, 4>;
+pub type Curve3 = NurbCurve<4>;
 
 /// The top-level boundary-representation model.
 ///
@@ -41,10 +40,10 @@ pub type Curve3<S> = NurbCurve<S, 4>;
 /// Wire ──▶ Edge(s) [+Curve3], Vertex(es)
 /// ```
 /// A [`Wire`] holds edges and vertices that bound no face: curves in space.
-/// V - E + F - L = 2 * (S - G), E = 2C for a single-shell solid with genus G,
+/// V - E + F - L = 2 * (Scalar - G), E = 2C for a single-shell solid with genus G,
 /// where V = #vertices, E = #edges, F = #faces, L = #hole loops (i.e.
 /// `Σ (face.boundaries.len() - 1)`, not counting each face's mandatory outer loop),
-/// S = #shells, and G = genus.  Euler's formula generalizes to multiple
+/// Scalar = #shells, and G = genus.  Euler's formula generalizes to multiple
 /// shells and/or genus > 0.
 ///
 /// Creation (`insert_*`), lookup (`get_*`), and iteration (`iterate_*`)
@@ -59,12 +58,12 @@ pub type Curve3<S> = NurbCurve<S, 4>;
 /// validation failure that depended on which face pair was checked first
 /// appeared and disappeared between runs.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Model<S: Scalar> {
-    pub vertices: OrdMap<VertexId, Vertex<S>>, // V
-    pub edges: OrdMap<EdgeId, Edge<S>>,        // E
-    pub coedges: OrdMap<CoedgeId, Coedge<S>>,  // C
-    pub faces: OrdMap<FaceId, Face<S>>,        // F
-    pub shells: OrdMap<ShellId, Shell>,        // S
+pub struct Model {
+    pub vertices: OrdMap<VertexId, Vertex>, // V
+    pub edges: OrdMap<EdgeId, Edge>,        // E
+    pub coedges: OrdMap<CoedgeId, Coedge>,  // C
+    pub faces: OrdMap<FaceId, Face>,        // F
+    pub shells: OrdMap<ShellId, Shell>,     // Scalar
     pub solids: OrdMap<SolidId, Solid>,
     /// Edges and vertices bounding no face (see [`Wire`]).
     pub wires: OrdMap<WireId, Wire>,
@@ -72,13 +71,13 @@ pub struct Model<S: Scalar> {
     next_id: u64,
 }
 
-impl<S: Scalar> Default for Model<S> {
+impl Default for Model {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<S: Scalar> Model<S> {
+impl Model {
     pub fn new() -> Self {
         Self {
             vertices: OrdMap::new(),

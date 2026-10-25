@@ -10,7 +10,6 @@
 //! another sketch picked brings its own axis, a selection picks the
 //! construction it fits.
 
-use geop_core_math::scalars::Scalar;
 use geop_core_program::{numeric::NumericInput, reader::Reader};
 
 use crate::{
@@ -40,12 +39,12 @@ impl<T: Clone> FormState<T> {
     /// its setter in the form `form` makes of them as they were, the
     /// selection replaced, and what the pointer or a key did passed to
     /// `canvas`.
-    pub fn handle<'f, S: Scalar, A: Clone>(
+    pub fn handle<'f, A: Clone>(
         &self,
         args: &A,
-        event: Event<S>,
-        form: impl FnOnce(&A, &Self) -> EditForm<'f, S, A, T>,
-        canvas: impl FnOnce(Edit<'_, A, T>, &CanvasEvent<S>),
+        event: Event,
+        form: impl FnOnce(&A, &Self) -> EditForm<'f, A, T>,
+        canvas: impl FnOnce(Edit<'_, A, T>, &CanvasEvent),
     ) -> (A, Self) {
         let mut edited = args.clone();
         let mut state = self.clone();
@@ -68,12 +67,12 @@ type Setter<'a, A, T> = Box<dyn Fn(Edit<'_, A, T>, Value) + 'a>;
 
 /// A [`Form`] and what setting each of its fields does, for the arguments
 /// `A` and the session `T`.
-pub struct EditForm<'a, S: Scalar, A, T = ()> {
-    pub form: Form<S>,
+pub struct EditForm<'a, A, T = ()> {
+    pub form: Form,
     setters: Vec<(String, Setter<'a, A, T>)>,
 }
 
-impl<S: Scalar, A, T> Default for EditForm<'_, S, A, T> {
+impl<A, T> Default for EditForm<'_, A, T> {
     fn default() -> Self {
         Self {
             form: Form::default(),
@@ -82,9 +81,9 @@ impl<S: Scalar, A, T> Default for EditForm<'_, S, A, T> {
     }
 }
 
-impl<'a, S: Scalar, A, T> EditForm<'a, S, A, T> {
+impl<'a, A, T> EditForm<'a, A, T> {
     /// The form, as an editor is shown it.
-    pub fn into_form(self) -> Form<S> {
+    pub fn into_form(self) -> Form {
         self.form
     }
 
@@ -137,7 +136,7 @@ impl<'a, S: Scalar, A, T> EditForm<'a, S, A, T> {
     pub fn number(
         &mut self,
         key: &str,
-        number: Number<S>,
+        number: Number,
         set: impl Fn(Edit<'_, A, T>, f64) + 'a,
     ) -> &mut Self {
         self.form.dialog.number(key, number);
@@ -157,7 +156,7 @@ impl<'a, S: Scalar, A, T> EditForm<'a, S, A, T> {
     pub fn numeric(
         &mut self,
         key: &str,
-        number: Number<S>,
+        number: Number,
         set: impl Fn(Edit<'_, A, T>, NumericInput) + 'a,
     ) -> &mut Self {
         self.form.dialog.number(key, number);

@@ -67,21 +67,21 @@ pub enum Growth {
 /// operation `operation_id` whose names `namer` builds: the result is named
 /// `namer`'s root. See the module docs.
 #[allow(clippy::too_many_arguments)]
-pub fn rib<S: Scalar>(
-    part: &mut NamedModel<S>,
+pub fn rib(
+    part: &mut NamedModel,
     namer: &Namer,
     operation_id: &str,
-    plane: &CoordinateSystem<S>,
-    profile: &Profile<S>,
+    plane: &CoordinateSystem,
+    profile: &Profile,
     target: SolidId,
-    (near, far): (S, S),
+    (near, far): (Scalar, Scalar),
     growth: Growth,
 ) -> GeopResult<()> {
     let ctx = with_context!(
         "rib({}, target={target}, thickness=({near:?}, {far:?}), {growth:?})",
         namer.root()
     );
-    if !far.sub(near).definitely_greater(S::ZERO) {
+    if !far.sub(near).definitely_greater(Scalar::ZERO) {
         return Err(GeopError::new("a rib is thicker than zero")).with_context(ctx);
     }
     if profile.is_closed() {
@@ -96,15 +96,23 @@ pub fn rib<S: Scalar>(
     let tool_name = namer.name(&["tool"]);
     let (built, start, end) = match growth {
         Growth::Normal { flipped } => {
-            let loops: Vec<SweepLoop<S>> = chain
+            let loops: Vec<SweepLoop> = chain
                 .band(near, far)
                 .with_context(ctx)?
                 .into_iter()
                 .map(SweepLoop::plain)
                 .collect();
             let to = if flipped { reach.neg() } else { reach };
-            let built = extrude(part, namer, Some(&tool_name), plane, S::ZERO, to, &loops)
-                .with_context(ctx)?;
+            let built = extrude(
+                part,
+                namer,
+                Some(&tool_name),
+                plane,
+                Scalar::ZERO,
+                to,
+                &loops,
+            )
+            .with_context(ctx)?;
             (built, namer.name(&["start"]), namer.name(&["end"]))
         }
         Growth::Parallel { flipped } => {
@@ -149,11 +157,7 @@ pub fn rib<S: Scalar>(
 /// How far along a direction of `plane`, from its origin, reaches past all
 /// of `target`: its distance to the furthest corner of the box around the
 /// solid's control points, and that box's diagonal again.
-fn reach_past<S: Scalar>(
-    part: &NamedModel<S>,
-    plane: &CoordinateSystem<S>,
-    target: SolidId,
-) -> GeopResult<S> {
+fn reach_past(part: &NamedModel, plane: &CoordinateSystem, target: SolidId) -> GeopResult<Scalar> {
     let model = part.topology();
     let hull = face_hull(model, &model.body_faces(Body::Solid(target))?)?;
     let (lo, hi) = plain::bounds(hull)
@@ -171,20 +175,20 @@ fn reach_past<S: Scalar>(
                 .sqrt()
         })
         .fold(0.0, f64::max);
-    Ok(S::from_f64(furthest + diagonal))
+    Ok(Scalar::from_f64(furthest + diagonal))
 }
 
 /// The profile as a [`Chain`], each end run on along its tangent into the
 /// wall of `target` it points at (see the module docs): a straight piece
 /// `ext0` before it, `ext1` after it — or none, for an end inside the
 /// solid already.
-fn extended<S: Scalar>(
-    part: &NamedModel<S>,
-    plane: &CoordinateSystem<S>,
-    profile: &Profile<S>,
+fn extended(
+    part: &NamedModel,
+    plane: &CoordinateSystem,
+    profile: &Profile,
     target: SolidId,
-) -> GeopResult<Chain<S>> {
-    let lift = |p: &Vector2<S>| plane.uv_to_xyz(p);
+) -> GeopResult<Chain> {
+    let lift = |p: &Vector2| plane.uv_to_xyz(p);
     let mut pieces = Vec::with_capacity(profile.curves.len() + 2);
     for (curve, name) in profile.curves.iter().zip(&profile.curve_names) {
         pieces.push(Piece {
@@ -203,7 +207,7 @@ fn extended<S: Scalar>(
     let end = last.end()?;
     let back = first.tangent(t0)?.normalize()?.neg();
     let on = last.tangent(t1)?.normalize()?;
-    let into_wall = |from: Vector2<S>, along: Vector2<S>, joint: &str| {
+    let into_wall = |from: Vector2, along: Vector2, joint: &str| {
         wall_middle(
             part,
             target,
@@ -243,7 +247,7 @@ fn extended<S: Scalar>(
 }
 
 /// The centre of the circle `curve` runs along, if it is an arc.
-fn arc_center<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<Option<Vector2<S>>> {
+fn arc_center(curve: &NurbCurve2D) -> GeopResult<Option<Vector2>> {
     if curve.degree == 1 {
         return Ok(None);
     }
@@ -265,13 +269,13 @@ fn arc_center<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<Option<Vector2<S>
 /// solid and where it leaves it again — or, from a point on the solid's
 /// boundary, halfway to where it leaves. None for a point inside the solid:
 /// it is in the wall already. `reach` is a length past all of the solid.
-fn wall_middle<S: Scalar>(
-    part: &NamedModel<S>,
+fn wall_middle(
+    part: &NamedModel,
     target: SolidId,
-    from: Vector3<S>,
-    along: &Vector3<S>,
-    reach: S,
-) -> GeopResult<Option<Vector3<S>>> {
+    from: Vector3,
+    along: &Vector3,
+    reach: Scalar,
+) -> GeopResult<Option<Vector3>> {
     let model = part.topology();
     let start = match solid_contains(
         model,
@@ -289,7 +293,7 @@ fn wall_middle<S: Scalar>(
     let ray = NurbCurve3D::line(from, from.add(&along.prod_scalar(reach)))?;
     // Where the line crosses the solid's boundary, as fractions of `reach`
     // — a crossing on an edge once, though both its faces report it.
-    let mut hits: Vec<S> = Vec::new();
+    let mut hits: Vec<Scalar> = Vec::new();
     for face in model.body_faces(Body::Solid(target))? {
         let surface = &model.get_face(face)?.surface;
         let found =
@@ -301,7 +305,7 @@ fn wall_middle<S: Scalar>(
             )));
         }
         for (t, uv) in found.into_vec() {
-            if !t.definitely_greater(S::ZERO) {
+            if !t.definitely_greater(Scalar::ZERO) {
                 continue;
             }
             let class = face_contains(
@@ -329,7 +333,7 @@ fn wall_middle<S: Scalar>(
         }
     };
     // The middle of the wall is a free choice: sharp.
-    let t = S::from_f64((enter + leave) / 2.0);
+    let t = Scalar::from_f64((enter + leave) / 2.0);
     Ok(Some(from.add(&along.prod_scalar(reach.mul(t)))))
 }
 
@@ -338,7 +342,7 @@ fn wall_middle<S: Scalar>(
 /// one counter-clockwise loop: the chain, the side from its end, the far
 /// side `far`, the side back to its start. Every piece has to run forwards
 /// along the chord, or the region would fold over itself.
-fn swept_region<S: Scalar>(chain: &Chain<S>, reach: S, flipped: bool) -> GeopResult<Profile<S>> {
+fn swept_region(chain: &Chain, reach: Scalar, flipped: bool) -> GeopResult<Profile> {
     let first = &chain.pieces[0].curve;
     let last = &chain.pieces.last().expect("pieces").curve;
     let start = first.start()?;
@@ -351,7 +355,7 @@ fn swept_region<S: Scalar>(chain: &Chain<S>, reach: S, flipped: bool) -> GeopRes
                 .curve
                 .tangent(t)?
                 .prod_dot(&chord)
-                .definitely_greater(S::ZERO)
+                .definitely_greater(Scalar::ZERO)
             {
                 return Err(GeopError::new(format!(
                     "{} turns back against the direction from the profile's start to its end: grown parallel to the sketch, the rib would fold over itself",
@@ -363,7 +367,7 @@ fn swept_region<S: Scalar>(chain: &Chain<S>, reach: S, flipped: bool) -> GeopRes
     let left = chord.perp();
     let sweep = if flipped { left.neg() } else { left }.prod_scalar(reach);
     let (end_far, start_far) = (end.add(&sweep), start.add(&sweep));
-    let mut curves: Vec<NurbCurve2D<S>> = chain.pieces.iter().map(|p| p.curve.clone()).collect();
+    let mut curves: Vec<NurbCurve2D> = chain.pieces.iter().map(|p| p.curve.clone()).collect();
     curves.push(NurbCurve2D::line(end, end_far)?);
     curves.push(NurbCurve2D::line(end_far, start_far)?);
     curves.push(NurbCurve2D::line(start_far, start)?);

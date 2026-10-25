@@ -43,12 +43,12 @@ pub enum Handedness {
 /// at `origin + r radial + (rise + z) w`, weighted `weight` — none for a row
 /// at a span's end, whose weight is one.
 #[derive(Clone, Debug)]
-pub struct HelixRow<S: Scalar> {
+pub struct HelixRow {
     /// Unit length at a span's end; at a span's middle, as far out as the
     /// tangents of the unit circle at the span's ends meet.
-    pub radial: Vector3<S>,
-    pub rise: S,
-    pub weight: Option<S>,
+    pub radial: Vector3,
+    pub rise: Scalar,
+    pub weight: Option<Scalar>,
 }
 
 /// `(cos, sin)` of `degrees` — exact at every quarter turn, so that a
@@ -67,8 +67,8 @@ pub fn cos_sin(degrees: f64) -> (f64, f64) {
 
 /// `sqrt(2) / 2`, the weight of the middle control point that makes a
 /// rational quadratic a quarter of a circle exactly.
-pub fn sqrt2_over_2<S: Scalar>() -> S {
-    S::from_f64(std::f64::consts::SQRT_2 / 2.0)
+pub fn sqrt2_over_2() -> Scalar {
+    Scalar::from_f64(std::f64::consts::SQRT_2 / 2.0)
 }
 
 /// The middle control point of an arc through `step` degrees, at most a
@@ -78,32 +78,32 @@ pub fn sqrt2_over_2<S: Scalar>() -> S {
 /// [`sqrt2_over_2`] for a quarter turn. Revolves and helices both build
 /// their spans with it, so a helix's quarter lies on the very circle a
 /// revolved quarter does.
-pub fn arc_span<S: Scalar>(step: f64) -> (S, S) {
+pub fn arc_span(step: f64) -> (Scalar, Scalar) {
     let (cos_step, _) = cos_sin(step);
     let weight = if step.abs() == 90.0 {
         sqrt2_over_2()
     } else {
-        S::from_f64((step / 2.0).to_radians().cos())
+        Scalar::from_f64((step / 2.0).to_radians().cos())
     };
-    (weight, S::from_f64(1.0 / (1.0 + cos_step)))
+    (weight, Scalar::from_f64(1.0 / (1.0 + cos_step)))
 }
 
 /// The control rows of a helix around `frame.w()`, from `frame.u()`, rising
 /// `pitch` along `w` per turn through `turns` turns, turning as
 /// `handedness` says: `2 n + 1` rows for `n` equal spans of at most a
 /// quarter turn — a span's ends at even indices, its middle in between.
-pub fn helix_rows<S: Scalar>(
-    frame: &CoordinateSystem<S>,
-    pitch: S,
+pub fn helix_rows(
+    frame: &CoordinateSystem,
+    pitch: Scalar,
     turns: f64,
     handedness: Handedness,
-) -> GeopResult<Vec<HelixRow<S>>> {
+) -> GeopResult<Vec<HelixRow>> {
     if !(turns.is_finite() && turns > 0.0) {
         return Err(GeopError::new(format!(
             "helix: cannot turn {turns} times: it must be more than none"
         )));
     }
-    if !pitch.definitely_greater(S::ZERO) {
+    if !pitch.definitely_greater(Scalar::ZERO) {
         return Err(GeopError::new(format!(
             "helix: the pitch {pitch:?} must be definitely positive"
         )));
@@ -116,23 +116,26 @@ pub fn helix_rows<S: Scalar>(
     let step = sign * 360.0 * turns / spans as f64;
     let direction = |degrees: f64| {
         let (c, s) = cos_sin(degrees);
-        frame.uv_direction(&Vector2::from_array([S::from_f64(c), S::from_f64(s)]))
+        frame.uv_direction(&Vector2::from_array([
+            Scalar::from_f64(c),
+            Scalar::from_f64(s),
+        ]))
     };
     let (weight, outwards) = arc_span(step);
-    let total = pitch.mul(S::from_f64(turns));
+    let total = pitch.mul(Scalar::from_f64(turns));
     // The height at the end of span `k`: none at the start and all of it at
     // the end, taken as they are rather than multiplied by 0 or 1.
-    let rise = |k: usize| -> GeopResult<S> {
+    let rise = |k: usize| -> GeopResult<Scalar> {
         Ok(match k {
-            0 => S::ZERO,
+            0 => Scalar::ZERO,
             k if k == spans => total,
-            k => total.mul(S::from_ratio(k as i64, spans as i64)?),
+            k => total.mul(Scalar::from_ratio(k as i64, spans as i64)?),
         })
     };
     let mut rows = Vec::with_capacity(2 * spans + 1);
     let mut start = HelixRow {
         radial: direction(0.0),
-        rise: S::ZERO,
+        rise: Scalar::ZERO,
         weight: None,
     };
     for k in 0..spans {
@@ -143,7 +146,7 @@ pub fn helix_rows<S: Scalar>(
         };
         let middle = HelixRow {
             radial: start.radial.add(&end.radial).prod_scalar(outwards),
-            rise: start.rise.add(end.rise).div(S::TWO)?,
+            rise: start.rise.add(end.rise).div(Scalar::TWO)?,
             weight: Some(weight),
         };
         rows.push(start);
@@ -154,7 +157,7 @@ pub fn helix_rows<S: Scalar>(
     Ok(rows)
 }
 
-impl<S: Scalar> NurbCurve3D<S> {
+impl NurbCurve3D {
     /// The helix of `radius` around `frame.w()` through `frame.origin()`:
     /// starting at `origin + radius u`, rising `pitch` along `w` per turn,
     /// through `turns` turns — right-handed turning from `u` towards `v`,
@@ -163,13 +166,13 @@ impl<S: Scalar> NurbCurve3D<S> {
     /// 0.53 % of the pitch of the true helix (see the module docs). The
     /// parameter runs over `[0, 1]`, a span's end at every `k / n`.
     pub fn helix(
-        frame: &CoordinateSystem<S>,
-        radius: S,
-        pitch: S,
+        frame: &CoordinateSystem,
+        radius: Scalar,
+        pitch: Scalar,
         turns: f64,
         handedness: Handedness,
     ) -> GeopResult<Self> {
-        if !radius.definitely_greater(S::ZERO) {
+        if !radius.definitely_greater(Scalar::ZERO) {
             return Err(GeopError::new(format!(
                 "helix: the radius {radius:?} must be definitely positive"
             )));
@@ -183,41 +186,40 @@ impl<S: Scalar> NurbCurve3D<S> {
                 origin
                     .add(&row.radial.prod_scalar(radius))
                     .add(&w.prod_scalar(row.rise))
-                    .homogeneous(row.weight.unwrap_or(S::ONE))
+                    .homogeneous(row.weight.unwrap_or(Scalar::ONE))
             })
             .collect();
-        let mut knots = vec![S::ZERO; 3];
+        let mut knots = vec![Scalar::ZERO; 3];
         for k in 1..spans {
-            let knot = S::from_ratio(k as i64, spans as i64)?;
+            let knot = Scalar::from_ratio(k as i64, spans as i64)?;
             knots.extend([knot, knot]);
         }
-        knots.extend([S::ONE; 3]);
+        knots.extend([Scalar::ONE; 3]);
         NurbCurve::try_new(2, control_points, knots)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::{
-        for_all_scalars, primitives::CoordinateSystem, scalars::Scalar, vector::Vector3,
-    };
+    use geop_core_math::{primitives::CoordinateSystem, scalars::Scalar, vector::Vector3};
 
     use super::*;
 
-    fn frame<S: Scalar>() -> CoordinateSystem<S> {
-        CoordinateSystem::world_at(Vector3::from_array([1.0, 2.0, 3.0].map(S::from_f64)))
+    fn frame() -> CoordinateSystem {
+        CoordinateSystem::world_at(Vector3::from_array([1.0, 2.0, 3.0].map(Scalar::from_f64)))
     }
 
     /// Every point of the helix lies on its cylinder, it ends where it
     /// should, and its height stays within 0.53 % of the pitch of the true
     /// helix's at the same angle — turning the right way round.
-    fn check_helix_is_on_its_cylinder_and_close_to_the_true_helix<S: Scalar>() {
+    #[test]
+    fn helix_is_on_its_cylinder_and_close_to_the_true_helix() {
         let (radius, pitch, turns) = (2.5, 0.8, 2.3);
         for handedness in [Handedness::Right, Handedness::Left] {
             let curve = NurbCurve3D::helix(
-                &frame::<S>(),
-                S::from_f64(radius),
-                S::from_f64(pitch),
+                &frame(),
+                Scalar::from_f64(radius),
+                Scalar::from_f64(pitch),
                 turns,
                 handedness,
             )
@@ -232,13 +234,13 @@ mod tests {
             let mut last = 0.0f64;
             let mut worst = 0.0f64;
             for i in 0..=samples {
-                let t = S::from_ratio(i, samples).unwrap();
+                let t = Scalar::from_ratio(i, samples).unwrap();
                 let p = curve.evaluate(t).unwrap();
-                let centre = Vector3::from_array([1.0, 2.0, p[2].to_f64()].map(S::from_f64));
+                let centre = Vector3::from_array([1.0, 2.0, p[2].to_f64()].map(Scalar::from_f64));
                 let off = p.sub(&centre);
                 let r2 = off[0].mul(off[0]).add(off[1].mul(off[1]));
                 assert!(
-                    r2.could_be_equal(S::from_f64(radius * radius)),
+                    r2.could_be_equal(Scalar::from_f64(radius * radius)),
                     "{p:?} is off the cylinder"
                 );
                 let (x, y, z) = (
@@ -268,28 +270,24 @@ mod tests {
             assert!(worst <= 5.3e-3 * pitch, "{worst}");
             // Not merely a circle lifted: it does rise with the angle.
             assert!(worst > 1e-4 * pitch, "{worst}");
-            let end = curve.evaluate(S::ONE).unwrap();
+            let end = curve.evaluate(Scalar::ONE).unwrap();
             assert!(
                 end[2].could_be_equal(
-                    S::from_f64(3.0).add(S::from_f64(pitch).mul(S::from_f64(turns)))
+                    Scalar::from_f64(3.0).add(Scalar::from_f64(pitch).mul(Scalar::from_f64(turns)))
                 ),
                 "{end:?}"
             );
         }
     }
-    #[test]
-    fn helix_is_on_its_cylinder_and_close_to_the_true_helix() {
-        for_all_scalars!(check_helix_is_on_its_cylinder_and_close_to_the_true_helix);
-    }
 
     /// Nothing to turn, no pitch, no radius: refused.
     #[test]
     fn degenerate_helices_are_refused() {
-        use geop_core_math::scalars::ScalInF64 as S;
-        let f = frame::<S>();
-        let one = S::from_f64(1.0);
+        use geop_core_math::scalars::Scalar;
+        let f = frame();
+        let one = Scalar::from_f64(1.0);
         assert!(NurbCurve3D::helix(&f, one, one, 0.0, Handedness::Right).is_err());
-        assert!(NurbCurve3D::helix(&f, one, S::ZERO, 1.0, Handedness::Right).is_err());
-        assert!(NurbCurve3D::helix(&f, S::ZERO, one, 1.0, Handedness::Right).is_err());
+        assert!(NurbCurve3D::helix(&f, one, Scalar::ZERO, 1.0, Handedness::Right).is_err());
+        assert!(NurbCurve3D::helix(&f, Scalar::ZERO, one, 1.0, Handedness::Right).is_err());
     }
 }

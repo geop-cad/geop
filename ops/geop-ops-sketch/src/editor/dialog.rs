@@ -98,8 +98,8 @@ fn tool_hint(s: &SketchSession) -> String {
 
 /// The options of the tool in hand: a polygon's sides, how many copies a
 /// pattern makes and how far apart, which sides an offset goes to.
-fn tool_options(d: &mut EditForm<'_, S, AddSketchArgs, SketchSession>, s: &SketchSession) {
-    let count = |d: &mut EditForm<'_, S, AddSketchArgs, SketchSession>| {
+fn tool_options(d: &mut EditForm<'_, AddSketchArgs, SketchSession>, s: &SketchSession) {
+    let count = |d: &mut EditForm<'_, AddSketchArgs, SketchSession>| {
         let field = Number::new("copies", s.modify.count as f64, Unit::Count).range(2.0, 24.0);
         d.number("count", field, |edit, n| {
             edit.session.modify.count = (n.round() as usize).clamp(2, 1000);
@@ -194,12 +194,12 @@ fn status(sketch: &Sketch, s: &SketchSession) -> (String, Tone) {
 /// The fields for drawing in the sketch of `args` on the part `view`
 /// shows, lying in `frame`, with `keys` the keys of the visuals selected.
 pub(super) fn draw_dialog<'a>(
-    d: &mut EditForm<'a, S, AddSketchArgs, SketchSession>,
+    d: &mut EditForm<'a, AddSketchArgs, SketchSession>,
     view: &'a Reader<'a>,
     args: &AddSketchArgs,
     s: &SketchSession,
     keys: &[String],
-    frame: &CoordinateSystem<S>,
+    frame: &CoordinateSystem,
 ) {
     let sketch = &args.sketch;
     let (picks, selected_constraints) = selected(sketch, keys);

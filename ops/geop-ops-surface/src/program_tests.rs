@@ -8,11 +8,10 @@ use crate::{
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::{DatumComponent, FrameAxis},
-    scalars::{ScalInF64 as S, Scalar},
+    scalars::Scalar,
 };
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
-    values::Design,
 };
 use geop_core_sketch::PointId;
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, LoftArgs, Output};
@@ -57,9 +56,9 @@ fn polygon(corners: &[[f64; 2]]) -> Sketch {
 
 /// The names of the edges of `part`'s sheets whose ends are both at
 /// height `z`.
-fn sheet_edges_at(part: &NamedModel<Design>, z: f64) -> Vec<String> {
+fn sheet_edges_at(part: &NamedModel, z: f64) -> Vec<String> {
     let model = part.topology();
-    let at = |v| model.get_vertex(v).unwrap().point[2].could_be_equal(S::from_f64(z));
+    let at = |v| model.get_vertex(v).unwrap().point[2].could_be_equal(Scalar::from_f64(z));
     let mut names: Vec<String> = part
         .sheet_face_names()
         .iter()
@@ -263,13 +262,14 @@ fn curved_panel_round_trips() {
     }
     let face = part.face_id("network(panel)").unwrap();
     let surface = &part.topology().get_face(face).unwrap().surface;
-    let middle = geop_core_math::vector::Vector3::from_array([20.0, 6.0, 15.0].map(S::from_f64));
+    let middle =
+        geop_core_math::vector::Vector3::from_array([20.0, 6.0, 15.0].map(Scalar::from_f64));
     assert!(
         geop_core_geometry::contains::surface::surface_could_contain(
             surface,
             &middle,
             10_000,
-            S::from_f64(1e-7)
+            Scalar::from_f64(1e-7)
         )
         .unwrap()
         .is_some()

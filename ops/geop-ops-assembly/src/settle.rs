@@ -8,10 +8,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use geop_core_editor::{editing::Pull, editor::Rerun, registry::Settle};
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::{
-    reader::Reader,
-    values::{Design, StateValues},
-};
+use geop_core_program::{reader::Reader, values::StateValues};
 
 use crate::solving::{self, check, conflicting, solved_states};
 
@@ -41,7 +38,7 @@ impl Settle for Settler {
     fn settle(
         &self,
         rerun: &mut Rerun,
-        pulls: &[Pull<Design>],
+        pulls: &[Pull],
         own: Option<&str>,
     ) -> GeopResult<StateValues> {
         let state = rerun.program.state.clone();

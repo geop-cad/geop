@@ -9,9 +9,7 @@ use geop_core_editor::{
     part_operation::PartOperation,
 };
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_ops_model::sketch::{PlacedSketch, SketchRef, shape_profiles};
 use geop_ops_model::sketch3d::PlacedSketch3d;
 use geop_ops_model::{ModelOperation, NamedModel, Namer, build_model, read_model};
@@ -124,7 +122,7 @@ impl PartOperation for Sweep {
     /// solid if there is one.
     fn new_args(context: &Context) -> SweepArgs {
         let before = &context.before;
-        let mut sketches = before.targets_of::<PlacedSketch<Design>>();
+        let mut sketches = before.targets_of::<PlacedSketch>();
         // The newest 3-D sketch, which is drawn to be swept along; else
         // the newest sketch.
         let path = match before.targets_of::<PlacedSketch3d>().pop() {
@@ -155,9 +153,9 @@ impl PartOperation for Sweep {
         context: &'a Context<'a>,
         args: &SweepArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, SweepArgs> {
+    ) -> EditForm<'a, SweepArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, SweepArgs>::default();
+        let mut f = EditForm::<SweepArgs>::default();
         f.pick_one(
             "profile",
             "profile",
@@ -210,12 +208,11 @@ impl PartOperation for Sweep {
 
 impl ModelOperation for Sweep {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &SweepArgs,
     ) -> GeopResult<()> {
-        type S = Design;
         let namer = Namer::new("sweep", step)?;
         let path = (args.path.as_ref())
             .ok_or_else(|| GeopError::new("sweep: pick the path to sweep along"))?;
@@ -226,7 +223,7 @@ impl ModelOperation for Sweep {
         }
         let placed = reader.retrieve_element(&args.profile)?;
         let sketch = &placed.sketch;
-        let geometry = sketch.enclose::<S>()?;
+        let geometry = sketch.enclose()?;
         let shape = args.output.shape(sketch)?;
         let loops: Vec<_> = (shape_profiles(&placed.name, sketch, &geometry, shape)?.into_iter())
             .map(SweepLoop::plain)

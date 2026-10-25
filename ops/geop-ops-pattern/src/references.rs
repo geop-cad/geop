@@ -7,7 +7,7 @@
 use geop_core_editor::one_of;
 use geop_core_geometry::shape::Axis;
 use geop_core_math::{geop_error::GeopResult, vector::Vector3};
-use geop_core_program::{element::ElementReference, reader::Reader, values::Design};
+use geop_core_program::{element::ElementReference, reader::Reader};
 use geop_ops_model::datums::Datums;
 use geop_ops_model::sketch::PlacedSketch;
 use geop_ops_model::{Line, NamedModel, Plane, Round};
@@ -17,12 +17,12 @@ one_of! {
     /// frame's, a sketch's line — or what a round element turns around: a
     /// circular edge, a cylindrical or conical face, a sketch's circle or
     /// arc.
-    pub enum TurnAxis -> Axis<Design> {
-        Edge(ElementReference<NamedModel<Design>, Line>),
-        Round(ElementReference<NamedModel<Design>, Round>),
+    pub enum TurnAxis -> Axis {
+        Edge(ElementReference<NamedModel, Line>),
+        Round(ElementReference<NamedModel, Round>),
         Datum(ElementReference<Datums, Line>),
-        Sketch(ElementReference<PlacedSketch<Design>, Line>),
-        SketchRound(ElementReference<PlacedSketch<Design>, Round>),
+        Sketch(ElementReference<PlacedSketch, Line>),
+        SketchRound(ElementReference<PlacedSketch, Round>),
     }
 }
 
@@ -31,19 +31,19 @@ one_of! {
     /// a frame's, a sketch's line — or a plane, along its normal: a flat
     /// face, a datum plane, a sketch's plane.
     pub enum PatternDirection {
-        Edge(ElementReference<NamedModel<Design>, Line>),
-        Face(ElementReference<NamedModel<Design>, Plane>),
+        Edge(ElementReference<NamedModel, Line>),
+        Face(ElementReference<NamedModel, Plane>),
         Datum(ElementReference<Datums, Line>),
         DatumPlane(ElementReference<Datums, Plane>),
-        Sketch(ElementReference<PlacedSketch<Design>, Line>),
-        SketchPlane(ElementReference<PlacedSketch<Design>, Plane>),
+        Sketch(ElementReference<PlacedSketch, Line>),
+        SketchPlane(ElementReference<PlacedSketch, Plane>),
     }
 }
 
 impl PatternDirection {
     /// The unit vector it goes along, as `reader` reads the part: a line's
     /// direction, a plane's normal.
-    pub fn direction(&self, reader: &Reader) -> GeopResult<Vector3<Design>> {
+    pub fn direction(&self, reader: &Reader) -> GeopResult<Vector3> {
         Ok(match self {
             PatternDirection::Edge(line) => reader.retrieve_element(line)?.direction,
             PatternDirection::Datum(line) => reader.retrieve_element(line)?.direction,

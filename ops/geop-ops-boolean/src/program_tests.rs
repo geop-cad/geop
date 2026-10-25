@@ -3,14 +3,10 @@
 //! solids so united — and splitting a solid with a face standing on its
 //! own, and what that refuses.
 
-use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::FrameAxis,
-    scalars::{ScalInF64 as S, Scalar},
-};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
-    testing::as_step, values::Design,
+    testing::as_step,
 };
 use geop_ops_edit::{DeleteBody, DeleteBodyArgs, ExtractFace, ExtractFaceArgs};
 use geop_ops_extrude_revolve::{
@@ -41,7 +37,7 @@ fn registry() -> GeopResult<OperationRegistry> {
 }
 
 /// The element `name` of the part's model, as a `K`.
-fn named<K>(name: impl Into<String>) -> ElementReference<NamedModel<Design>, K> {
+fn named<K>(name: impl Into<String>) -> ElementReference<NamedModel, K> {
     ElementReference::new(model(), name)
 }
 
@@ -134,14 +130,14 @@ fn boss_on_block_top_face() {
         part.topology()
             .vertices
             .values()
-            .any(|v| v.point[2].could_be_equal(S::from_f64(1.4)))
+            .any(|v| v.point[2].could_be_equal(Scalar::from_f64(1.4)))
     );
 }
 
 /// A square beside the z-axis turned up to the next face of the walls
 /// standing at `walls` — each a rectangle on the Z plane from `z = -1` to
 /// `2` — united into one solid.
-fn turned_up_to_walls(walls: &[[[f64; 2]; 4]]) -> GeopResult<NamedModel<Design>> {
+fn turned_up_to_walls(walls: &[[[f64; 2]; 4]]) -> GeopResult<NamedModel> {
     let mut program = Program::new();
     let mut solids = Vec::new();
     for (k, corners) in walls.iter().enumerate() {

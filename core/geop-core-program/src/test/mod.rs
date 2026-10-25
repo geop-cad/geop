@@ -22,7 +22,7 @@ use crate::{
     program::{Program, ProgramStep},
     runner::{RunOutput, Runner},
     target::TargetReference,
-    values::{Design, Setting, Settings, StateValue, StateValues},
+    values::{Setting, Settings, StateValue, StateValues},
 };
 pub(crate) use operations::{
     AddTwoDatums, AddTwoDatumsArgs, AddTwoFrameArgs, AddTwoFrameOperation, Datum, Datums, Frame,
@@ -36,14 +36,14 @@ pub(crate) fn pose_at(position: [f64; 3]) -> StateValue {
 }
 
 /// A vector of sharp scalars, from plain numbers.
-pub(crate) fn vector<const N: usize>(xs: [f64; N]) -> Vector<Design, N> {
-    Vector::from_array(xs.map(Design::from_f64))
+pub(crate) fn vector<const N: usize>(xs: [f64; N]) -> Vector<N> {
+    Vector::from_array(xs.map(Scalar::from_f64))
 }
 
 /// Asserts that `actual` encloses the point `expected`: computed values are
 /// enclosures, rounded outward, so equal to no literal.
 #[track_caller]
-pub(crate) fn assert_encloses<const N: usize>(actual: Vector<Design, N>, expected: [f64; N]) {
+pub(crate) fn assert_encloses<const N: usize>(actual: Vector<N>, expected: [f64; N]) {
     assert!(
         actual.could_be_equal(&vector(expected)),
         "{actual:?} does not enclose {expected:?}"
@@ -195,19 +195,19 @@ fn no_state() -> StateValues {
     BTreeMap::new()
 }
 
-fn frame(runner: &Running, name: &str) -> Vector3<Design> {
+fn frame(runner: &Running, name: &str) -> Vector3 {
     let view = runner.part.current();
     view.retrieve_element(&whole_frame(name)).unwrap().data
 }
 
 /// The frame `name` as it was before the step `step`.
-fn frame_before(runner: &Running, step: &str, name: &str) -> Vector3<Design> {
+fn frame_before(runner: &Running, step: &str, name: &str) -> Vector3 {
     let view = runner.part.before(step);
     view.retrieve_element(&whole_frame(name)).unwrap().data
 }
 
 /// The datum `name`, as the part is now.
-fn datum_at(runner: &Running, name: &str) -> Vector3<Design> {
+fn datum_at(runner: &Running, name: &str) -> Vector3 {
     let current = runner.part.current();
     current.retrieve_element(&datum(name)).unwrap().data
 }
@@ -761,7 +761,7 @@ fn step_id_used_twice_is_an_error() {
 fn the_first_revision_begins_from_the_default() {
     fn grow(
         reader: &crate::reader::Reader,
-        by: &Vector3<Design>,
+        by: &Vector3,
     ) -> geop_core_math::geop_error::GeopResult<Frame> {
         let frame: Frame = reader.previous()?;
         Ok(Frame {
@@ -840,13 +840,7 @@ fn view_lists_targets_of_a_kind() {
     }
     assert_eq!(names(runner.part.current()), ["b", "a", "c"]);
     assert_eq!(names(runner.part.before("c")), ["b", "a"]);
-    assert!(
-        runner
-            .part
-            .current()
-            .targets_of::<Pose<Design>>()
-            .is_empty()
-    );
+    assert!(runner.part.current().targets_of::<Pose>().is_empty());
 }
 
 /// A run at a new state, as a solver runs the program at each state it
@@ -887,7 +881,7 @@ fn a_pasted_step_takes_its_state_along() {
     (program.state).insert(crate::values::pose_state(&id), pose.clone());
     program.state.insert(
         format!("{id}_width"),
-        StateValue::Number(Design::from_f64(2.0)),
+        StateValue::Number(Scalar::from_f64(2.0)),
     );
 
     let copied = program.excerpt(&id).unwrap();

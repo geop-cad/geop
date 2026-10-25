@@ -1,6 +1,5 @@
 use geop_core_math::{
     geop_error::{GeopResult, WithContext},
-    scalars::Scalar,
     solvers::repeat::rewrite,
     with_context,
 };
@@ -15,8 +14,8 @@ use geop_ops_model::NamedModel;
 /// iterators from this function are still live), so the search has to run
 /// to completion and hand back plain `VertexId`s before the caller is free
 /// to mutate.
-fn find_coincident_vertex_pair<S: Scalar>(
-    model: &Model<S>,
+fn find_coincident_vertex_pair(
+    model: &Model,
     solid_a: Body,
     solid_b: Body,
 ) -> GeopResult<Option<(VertexId, VertexId)>> {
@@ -42,11 +41,7 @@ fn find_coincident_vertex_pair<S: Scalar>(
 
 /// Merge every `solid_b` vertex into the `solid_a` vertex it coincides
 /// with. Creates nothing, so needs no names: each survivor keeps its own.
-pub fn remesh_vertices<S: Scalar>(
-    model: &mut NamedModel<S>,
-    solid_a: Body,
-    solid_b: Body,
-) -> GeopResult<()> {
+pub fn remesh_vertices(model: &mut NamedModel, solid_a: Body, solid_b: Body) -> GeopResult<()> {
     let ctx = with_context!("remesh_vertices(solid_a={solid_a}, solid_b={solid_b})");
 
     // Every merge changes which vertices exist and which coincide with which

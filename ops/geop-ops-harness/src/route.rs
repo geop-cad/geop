@@ -59,7 +59,7 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::{reader::Reader, values::Design};
+use geop_core_program::reader::Reader;
 use geop_ops_model::Chain;
 use geop_ops_model::mate_entity::MateEntity;
 use geop_ops_model::parameters::located;
@@ -67,28 +67,28 @@ use geop_ops_model::selection::{Selected, Shape};
 
 /// Which way the route is told to run through a [`Waypoint`].
 #[derive(Clone, Debug)]
-pub enum Heading<S: Scalar> {
+pub enum Heading {
     /// Not at all: the route chooses.
     Free,
     /// Along this axis, either way: the route passes the way it is going.
-    Axis(Vector3<S>),
+    Axis(Vector3),
     /// This way: out of a connector, or along a coordinate system's `z`.
-    Exit(Vector3<S>),
+    Exit(Vector3),
 }
 
 /// A point the route runs through, and which way.
 #[derive(Clone, Debug)]
-pub struct Waypoint<S: Scalar> {
-    pub point: Vector3<S>,
-    pub heading: Heading<S>,
+pub struct Waypoint {
+    pub point: Vector3,
+    pub heading: Heading,
     /// What the route calls it when it says something about it:
     /// `point 2 (clip/extrude(c,end))`.
     pub label: String,
 }
 
-impl<S: Scalar> Heading<S> {
+impl Heading {
     /// It with its direction turned by `turn`.
-    fn turned(self, turn: impl Fn(&Vector3<S>) -> Vector3<S>) -> Self {
+    fn turned(self, turn: impl Fn(&Vector3) -> Vector3) -> Self {
         match self {
             Heading::Free => Heading::Free,
             Heading::Axis(d) => Heading::Axis(turn(&d)),
@@ -97,7 +97,7 @@ impl<S: Scalar> Heading<S> {
     }
 }
 
-impl Waypoint<Design> {
+impl Waypoint {
     /// The `index`-th point the route runs through, `entity` in the part
     /// `reader` reads — where the part it is of is placed there (see the
     /// module docs): a point, just where it is; a circular edge, its
@@ -170,8 +170,8 @@ impl Waypoint<Design> {
 /// (or the line from `w{i}` to `w{i+1}`, if both are straight) and `b{i}`
 /// the arc from `m{i}` on.
 #[derive(Clone, Debug)]
-pub struct RoutePath<S: Scalar> {
-    pub chain: Chain<NurbCurve3D<S>>,
+pub struct RoutePath {
+    pub chain: Chain<NurbCurve3D>,
     /// Where each curve of the chain lies, as the route says it:
     /// `between point 1 (…) and point 2 (…)`.
     pub places: Vec<String>,
@@ -179,23 +179,23 @@ pub struct RoutePath<S: Scalar> {
 
 /// What a route measures.
 #[derive(Clone, Debug)]
-pub struct Measure<S: Scalar> {
+pub struct Measure {
     /// End to end.
-    pub length: S,
+    pub length: Scalar,
     /// Every bend, in order.
-    pub bends: Vec<Bend<S>>,
+    pub bends: Vec<Bend>,
 }
 
 /// A bend of a route: the arc `curve` of its chain, of radius `radius`.
 #[derive(Clone, Debug)]
-pub struct Bend<S: Scalar> {
+pub struct Bend {
     pub curve: usize,
-    pub radius: S,
+    pub radius: Scalar,
 }
 
-impl<S: Scalar> Measure<S> {
+impl Measure {
     /// The tightest bend, if the route bends at all.
-    pub fn tightest(&self) -> Option<&Bend<S>> {
+    pub fn tightest(&self) -> Option<&Bend> {
         self.bends
             .iter()
             .min_by(|a, b| a.radius.to_f64().total_cmp(&b.radius.to_f64()))
@@ -203,8 +203,8 @@ impl<S: Scalar> Measure<S> {
 
     /// The bends definitely tighter than `min_radius`. One that could be
     /// exactly as tight — a bend designed at the limit — is not.
-    pub fn too_tight(&self, min_radius: f64) -> Vec<&Bend<S>> {
-        let min = S::from_f64(min_radius);
+    pub fn too_tight(&self, min_radius: f64) -> Vec<&Bend> {
+        let min = Scalar::from_f64(min_radius);
         self.bends
             .iter()
             .filter(|b| b.radius.definitely_less(min))
@@ -212,14 +212,14 @@ impl<S: Scalar> Measure<S> {
     }
 }
 
-impl<S: Scalar> RoutePath<S> {
+impl RoutePath {
     /// The route through `waypoints`, in order (see the module docs). Where
     /// a waypoint leaves the direction free, the route chooses it: in
     /// between, it turns as much before as after, along the bisector of the
     /// chords to its neighbours; at an end, it bends into the next
     /// waypoint's direction in one arc — or runs straight, between two free
     /// ends.
-    pub fn through(waypoints: &[Waypoint<S>]) -> GeopResult<Self> {
+    pub fn through(waypoints: &[Waypoint]) -> GeopResult<Self> {
         let n = waypoints.len();
         if n < 2 {
             return Err(GeopError::new(format!(
@@ -241,7 +241,7 @@ impl<S: Scalar> RoutePath<S> {
             let place = format!("between {} and {}", label(i), label(i + 1));
             let [first, second] =
                 biarc(&place, p0, &tangents[i], p1, &tangents[i + 1]).with_context(ctx)?;
-            let mut push = |curve: NurbCurve3D<S>, name: String, joint: String| {
+            let mut push = |curve: NurbCurve3D, name: String, joint: String| {
                 chain.curves.push(curve);
                 chain.curve_names.push(name);
                 chain.joint_names.push(joint);
@@ -265,8 +265,8 @@ impl<S: Scalar> RoutePath<S> {
     /// How long the route is and where it bends how tightly. Its curves are
     /// lines and arcs — what [`RoutePath::through`] builds; a chain with
     /// any other curve is not measured.
-    pub fn measure(&self) -> GeopResult<Measure<S>> {
-        let mut length = S::ZERO;
+    pub fn measure(&self) -> GeopResult<Measure> {
+        let mut length = Scalar::ZERO;
         let mut bends = Vec::new();
         for (k, curve) in self.chain.curves.iter().enumerate() {
             let ctx = with_context!("measuring the route {}", self.places[k]);
@@ -295,13 +295,13 @@ impl<S: Scalar> RoutePath<S> {
 
 /// The unit direction the route has at each waypoint (see
 /// [`RoutePath::through`]).
-fn tangents<S: Scalar>(waypoints: &[Waypoint<S>]) -> GeopResult<Vec<Vector3<S>>> {
+fn tangents(waypoints: &[Waypoint]) -> GeopResult<Vec<Vector3>> {
     let n = waypoints.len();
     let label = |i: usize| &waypoints[i].label;
     let chords = (0..n - 1)
         .map(|i| {
             let d = waypoints[i + 1].point.sub(&waypoints[i].point);
-            if d.norm_sq().could_be_equal(S::ZERO) {
+            if d.norm_sq().could_be_equal(Scalar::ZERO) {
                 return Err(GeopError::new(format!(
                     "route: {} and {} could be one point: the route runs between points apart",
                     label(i),
@@ -319,16 +319,16 @@ fn tangents<S: Scalar>(waypoints: &[Waypoint<S>]) -> GeopResult<Vec<Vector3<S>>>
         (None, Some(b)) => *b,
         (None, None) => unreachable!("a route has two waypoints at least"),
     };
-    let mut tangents: Vec<Option<Vector3<S>>> = Vec::with_capacity(n);
+    let mut tangents: Vec<Option<Vector3>> = Vec::with_capacity(n);
     for (i, waypoint) in waypoints.iter().enumerate() {
         tangents.push(match &waypoint.heading {
             Heading::Exit(d) if i + 1 == n => Some(d.neg().normalize()?),
             Heading::Exit(d) => Some(d.normalize()?),
             Heading::Axis(axis) => {
                 let along = axis.prod_dot(&going(i));
-                if along.definitely_greater(S::ZERO) {
+                if along.definitely_greater(Scalar::ZERO) {
                     Some(axis.normalize()?)
-                } else if along.definitely_less(S::ZERO) {
+                } else if along.definitely_less(Scalar::ZERO) {
                     Some(axis.neg().normalize()?)
                 } else {
                     return Err(GeopError::new(format!(
@@ -340,7 +340,7 @@ fn tangents<S: Scalar>(waypoints: &[Waypoint<S>]) -> GeopResult<Vec<Vector3<S>>>
             Heading::Free if i == 0 || i + 1 == n => None,
             Heading::Free => {
                 let bisector = going(i);
-                if bisector.norm_sq().could_be_equal(S::ZERO) {
+                if bisector.norm_sq().could_be_equal(Scalar::ZERO) {
                     return Err(GeopError::new(format!(
                         "route: the route could turn right back at {}",
                         label(i)
@@ -356,8 +356,8 @@ fn tangents<S: Scalar>(waypoints: &[Waypoint<S>]) -> GeopResult<Vec<Vector3<S>>>
     // A free end bends into its neighbour's direction in one arc: it
     // leaves along that direction mirrored in the chord between them —
     // again a free choice.
-    let mirrored = |t: &Vector3<S>, c: &Vector3<S>| {
-        c.prod_scalar(S::TWO.mul(c.prod_dot(t)))
+    let mirrored = |t: &Vector3, c: &Vector3| {
+        c.prod_scalar(Scalar::TWO.mul(c.prod_dot(t)))
             .sub(t)
             .sharpen()
             .normalize()
@@ -377,39 +377,42 @@ fn tangents<S: Scalar>(waypoints: &[Waypoint<S>]) -> GeopResult<Vec<Vector3<S>>>
 }
 
 /// One of a biarc's two curves, and whether it is straight.
-struct Piece<S: Scalar> {
-    curve: NurbCurve3D<S>,
+struct Piece {
+    curve: NurbCurve3D,
     straight: bool,
 }
 
 /// The biarc from `p0` heading `t0` to `p1` heading `t1` (see the module
 /// docs), `place` being where it lies, as the route says it.
-fn biarc<S: Scalar>(
+fn biarc(
     place: &str,
-    p0: &Vector3<S>,
-    t0: &Vector3<S>,
-    p1: &Vector3<S>,
-    t1: &Vector3<S>,
-) -> GeopResult<[Piece<S>; 2]> {
+    p0: &Vector3,
+    t0: &Vector3,
+    p1: &Vector3,
+    t1: &Vector3,
+) -> GeopResult<[Piece; 2]> {
     let v = p1.sub(p0);
-    let a = S::TWO.mul(t0.prod_dot(t1).sub(S::ONE));
-    let b = S::TWO.mul(v.prod_dot(&t0.add(t1))).neg();
+    let a = Scalar::TWO.mul(t0.prod_dot(t1).sub(Scalar::ONE));
+    let b = Scalar::TWO.mul(v.prod_dot(&t0.add(t1))).neg();
     let c = v.norm_sq();
-    let root = b.mul(b).sub(S::TWO.mul(S::TWO).mul(a).mul(c)).sqrt()?;
+    let root = b
+        .mul(b)
+        .sub(Scalar::TWO.mul(Scalar::TWO).mul(a).mul(c))
+        .sqrt()?;
     // The positive root `2c / (sqrt(disc) - b)`, which needs no division by
     // `a`, zero when the two directions are parallel.
     let denominator = root.sub(b);
     let numbers = || format!("heading {t0:?} at {p0:?} and {t1:?} at {p1:?}");
-    if !denominator.definitely_greater(S::ZERO) {
+    if !denominator.definitely_greater(Scalar::ZERO) {
         return Err(GeopError::new(format!(
             "route: {place}, the route would have to loop round to arrive: add a waypoint between them"
         ))
         .with_context(numbers()));
     }
-    let d = S::TWO.mul(c).div(denominator)?;
+    let d = Scalar::TWO.mul(c).div(denominator)?;
     let q1 = p0.add(&t0.prod_scalar(d));
     let q2 = p1.sub(&t1.prod_scalar(d));
-    let joint = q1.add(&q2).prod_scalar(S::ONE.div(S::TWO)?);
+    let joint = q1.add(&q2).prod_scalar(Scalar::ONE.div(Scalar::TWO)?);
     let turns_back = || {
         GeopError::new(format!(
             "route: {place}, the route would have to turn right back on itself: add a waypoint between them"
@@ -425,15 +428,15 @@ fn biarc<S: Scalar>(
 /// The arc from `a` to `b` whose legs meet at `q` — legs of one length — or
 /// the line, if they could be straight on. None if they could turn right
 /// back.
-fn piece<S: Scalar>(
-    a: &Vector3<S>,
-    q: &Vector3<S>,
-    b: &Vector3<S>,
-) -> GeopResult<Option<Piece<S>>> {
+fn piece(a: &Vector3, q: &Vector3, b: &Vector3) -> GeopResult<Option<Piece>> {
     let (first, second) = (q.sub(a), b.sub(q));
     let dot = first.prod_dot(&second);
-    if first.prod_cross(&second).norm_sq().could_be_equal(S::ZERO) {
-        if !dot.definitely_greater(S::ZERO) {
+    if first
+        .prod_cross(&second)
+        .norm_sq()
+        .could_be_equal(Scalar::ZERO)
+    {
+        if !dot.definitely_greater(Scalar::ZERO) {
             return Ok(None);
         }
         return Ok(Some(Piece {
@@ -443,7 +446,7 @@ fn piece<S: Scalar>(
     }
     // The weight is the cosine of half the turn between the legs.
     let cos = dot.div(first.norm().mul(second.norm()))?;
-    let weight = S::ONE.add(cos).div(S::TWO)?.sqrt()?;
+    let weight = Scalar::ONE.add(cos).div(Scalar::TWO)?.sqrt()?;
     Ok(Some(Piece {
         curve: NurbCurve3D::arc(*a, *q, *b, weight)?,
         straight: false,

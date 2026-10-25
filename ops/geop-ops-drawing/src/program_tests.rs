@@ -7,7 +7,7 @@ use geop_core_editor::registry::Registry;
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::{DatumComponent, FrameAxis},
-    scalars::{Ring, ScalInF64 as S, Scalar},
+    scalars::Scalar,
 };
 use geop_core_program::{
     part::Part,
@@ -76,7 +76,7 @@ fn build(program: &Program) -> Part {
 }
 
 /// The model of the part `built` holds.
-fn model(built: &Part) -> NamedModel<S> {
+fn model(built: &Part) -> NamedModel {
     model_of(built)
 }
 
@@ -95,7 +95,7 @@ fn offset_from_xz(distance: f64) -> AddDatumArgs {
 
 /// The view `kind` of `part`; failing, it panics with every edge and face
 /// id its error mentions followed by that entity's name.
-fn view(part: &NamedModel<S>, kind: ViewKind) -> ProjectedView<S> {
+fn view(part: &NamedModel, kind: ViewKind) -> ProjectedView {
     let model = part.topology();
     project_view(
         model,
@@ -118,7 +118,7 @@ fn view(part: &NamedModel<S>, kind: ViewKind) -> ProjectedView<S> {
 }
 
 /// The name of an entity of `part` matching `pick`.
-fn name_where(part: &NamedModel<S>, pick: impl Fn(RefId) -> bool) -> String {
+fn name_where(part: &NamedModel, pick: impl Fn(RefId) -> bool) -> String {
     let mut names: Vec<(RefId, &str)> = part.names().iter().filter(|(id, _)| pick(*id)).collect();
     names.sort_by_key(|(_, n)| n.to_string());
     names.first().expect("an entity matches").1.to_string()
@@ -136,20 +136,20 @@ fn drilled_plate_shows_its_hole_hidden() {
     assert_eq!(hidden.len(), 2, "{} lines", front.lines.len());
     // The lines' own enclosures, not their midpoints: a midpoint is an
     // answer sharpened, a rounding off the edge it was drawn from.
-    let mut xs: Vec<S> = hidden
+    let mut xs: Vec<Scalar> = hidden
         .iter()
         .map(|l| {
             assert_eq!(l.kind, LineKind::Silhouette);
             let (a, b) = l.curve.domain();
             let (p, q) = (l.curve.evaluate(a).unwrap(), l.curve.evaluate(b).unwrap());
             assert!(p[0].could_be_equal(q[0]), "a vertical line");
-            assert!(p[1].sub(q[1]).abs().could_be_equal(S::from_f64(10.0)));
+            assert!(p[1].sub(q[1]).abs().could_be_equal(Scalar::from_f64(10.0)));
             p[0]
         })
         .collect();
     xs.sort_by(|a, b| a.to_f64().total_cmp(&b.to_f64()));
-    assert!(xs[0].could_be_equal(S::from_f64(17.0)), "{xs:?}");
-    assert!(xs[1].could_be_equal(S::from_f64(23.0)), "{xs:?}");
+    assert!(xs[0].could_be_equal(Scalar::from_f64(17.0)), "{xs:?}");
+    assert!(xs[1].could_be_equal(Scalar::from_f64(23.0)), "{xs:?}");
     assert_eq!(front.lines.iter().filter(|l| l.visible).count(), 4);
 
     let top = view(part, ViewKind::Top);
@@ -172,9 +172,9 @@ fn dimensions_by_name_are_drawn() {
         name_where(part, |id| match id {
             RefId::Vertex(v) => {
                 let p = model.get_vertex(v).unwrap().point;
-                p[0].could_be_equal(S::from_f64(x))
-                    && p[1].could_be_equal(S::from_f64(y))
-                    && p[2].could_be_equal(S::from_f64(z))
+                p[0].could_be_equal(Scalar::from_f64(x))
+                    && p[1].could_be_equal(Scalar::from_f64(y))
+                    && p[2].could_be_equal(Scalar::from_f64(z))
             }
             _ => false,
         })
@@ -350,7 +350,7 @@ fn subd_mouse_face_f11_silhouette_is_traced_once() {
     let Some(RefId::Face(face)) = part.names().id_of("subd(mouse,f11)") else {
         panic!("no face f11");
     };
-    let d = ViewKind::Front.frame::<S>().unwrap().direction.vector();
+    let d = ViewKind::Front.frame().unwrap().direction.vector();
     let pieces = crate::silhouette::face_silhouettes(part.topology(), face, &d).unwrap();
     let ends: Vec<_> = pieces
         .iter()
@@ -395,7 +395,7 @@ fn cool_flange_from_the_back_draws() {
         .filter(|l| l.kind == LineKind::Silhouette)
         .map(|l| {
             let (a, b) = l.curve.domain();
-            let at = |t: S| {
+            let at = |t: Scalar| {
                 let p = l.curve.evaluate(t).unwrap();
                 (p[0].to_f64(), p[1].to_f64())
             };
@@ -420,7 +420,7 @@ fn cool_flange_from_the_back_draws() {
 #[test]
 fn conebox_cone_from_the_top_shows_whole_generators() {
     let part = &model(&build(&conebox()));
-    let d = ViewKind::Top.frame::<S>().unwrap().direction.vector();
+    let d = ViewKind::Top.frame().unwrap().direction.vector();
     for curve in ["c9", "c10"] {
         for quarter in ["q0", "q1", "q2", "q3"] {
             let name = format!("revolve(revolve1,sketch2,{curve},{quarter})");
@@ -463,7 +463,7 @@ fn example_assembly(name: &str) -> (&'static str, Part) {
 }
 
 /// The paper's `y` range a line spans: its heights in the front view.
-fn heights(line: &ViewLine<S>) -> (f64, f64) {
+fn heights(line: &ViewLine) -> (f64, f64) {
     let (a, b) = line.curve.domain();
     let (p, q) = (
         line.curve.evaluate(a).unwrap(),
@@ -572,7 +572,7 @@ fn press_handle_fillets_have_one_silhouette_each_from_the_front() {
     let scene = Scene::of(&built.current()).unwrap();
     let body = scene.bodies.iter().find(|b| b.path == "part2").unwrap();
     let back = body.pose.unwrap().inverse().motion();
-    let d = back.rotate(&ViewKind::Front.frame::<S>().unwrap().direction.vector());
+    let d = back.rotate(&ViewKind::Front.frame().unwrap().direction.vector());
     for name in [
         "fillet(fillet1,revolve(revolve1,sketch2,p5,q3),fillet,q2)",
         "fillet(fillet1,revolve(revolve1,sketch2,p7,q3),fillet,q3)",

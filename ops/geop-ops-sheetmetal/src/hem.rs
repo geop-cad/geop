@@ -12,7 +12,7 @@ use geop_core_math::{
     scalars::Scalar,
     with_context,
 };
-use geop_core_program::{part::StepContext, reader::Reader, values::Design};
+use geop_core_program::{part::StepContext, reader::Reader};
 use geop_ops_model::{ModelOperation, NamedModel, Namer, read_model};
 use serde::{Deserialize, Serialize};
 
@@ -77,7 +77,7 @@ pub struct HemArgs {
 impl HemArgs {
     /// The hem these arguments describe, on a body of `rules`: a flange
     /// turning half a turn, set back by its outer radius.
-    fn shape<S: Scalar>(&self, rules: &SheetMetalRules) -> GeopResult<FlangeShape<S>> {
+    fn shape(&self, rules: &SheetMetalRules) -> GeopResult<FlangeShape> {
         let radius = match self.kind {
             HemKind::Closed => rules.bend_radius,
             HemKind::Open => {
@@ -91,18 +91,18 @@ impl HemArgs {
             }
         };
         check_offsets(self.offset_start, self.offset_end)?;
-        let s = S::from_f64;
+        let s = Scalar::from_f64;
         let r = s(radius);
         let outer = r.add(s(rules.thickness));
         let flat = s(self.length).sub(outer);
-        if !flat.definitely_greater(S::ZERO) {
+        if !flat.definitely_greater(Scalar::ZERO) {
             return Err(GeopError::new(format!(
                 "a hem {} long is no longer than its fold, {outer:?} round the outside: it leaves nothing flat",
                 self.length
             )));
         }
         Ok(FlangeShape {
-            angle: S::PI,
+            angle: Scalar::PI,
             radius: r,
             set_back: Some(outer),
             flat,
@@ -167,8 +167,8 @@ impl PartOperation for Hem {
         context: &'a Context<'a>,
         args: &HemArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, HemArgs> {
-        let mut f = EditForm::<Design, HemArgs>::default();
+    ) -> EditForm<'a, HemArgs> {
+        let mut f = EditForm::<HemArgs>::default();
         edge_field(&mut f, &context.before, args.edge.as_ref(), |edit, edge| {
             edit.args.edge = Some(edge)
         });
@@ -208,12 +208,7 @@ impl PartOperation for Hem {
 }
 
 impl ModelOperation for Hem {
-    fn build(
-        model: &mut NamedModel<Design>,
-        reader: &Reader,
-        step: &str,
-        _: &HemArgs,
-    ) -> GeopResult<()> {
+    fn build(model: &mut NamedModel, reader: &Reader, step: &str, _: &HemArgs) -> GeopResult<()> {
         body::build(model, reader, step)
     }
 }

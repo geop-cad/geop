@@ -4,7 +4,6 @@
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    scalars::Scalar,
     with_context,
 };
 use geop_core_topology::{Body, SolidId};
@@ -32,8 +31,8 @@ use crate::{
 /// feature of the step (see [`geop_ops_model::Feature`]): what a pattern of
 /// the feature copies and combines the same way. A new body is no
 /// feature: it is a body, patterned as one.
-pub fn combine_tools<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn combine_tools(
+    model: &mut NamedModel,
     namer: &Namer,
     step: &str,
     tools: &[Tool],
@@ -91,8 +90,8 @@ pub fn combine_tools<S: Scalar>(
 }
 
 /// The new body `tools` make, named `namer`'s root (see [`combine_tools`]).
-fn new_body<S: Scalar>(
-    model: &mut NamedModel<S>,
+fn new_body(
+    model: &mut NamedModel,
     namer: &Namer,
     step: &str,
     tools: &[Tool],

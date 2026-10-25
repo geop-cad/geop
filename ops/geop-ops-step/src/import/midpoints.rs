@@ -9,10 +9,7 @@
 use geop_core_geometry::{nurb_curve::NurbCurve3D, nurb_surface::NurbSurface3D};
 use std::convert::Infallible;
 
-use geop_core_math::{
-    scalars::Scalar,
-    solvers::iterate::{Repeat, Step, iterate},
-};
+use geop_core_math::solvers::iterate::{Repeat, Step, iterate};
 
 use geop_core_math::plain::{P3, dot, norm, solve2, sub};
 
@@ -29,7 +26,7 @@ pub struct CurveMidpoints {
 }
 
 impl CurveMidpoints {
-    pub fn of<S: Scalar>(curve: &NurbCurve3D<S>) -> Self {
+    pub fn of(curve: &NurbCurve3D) -> Self {
         Self {
             degree: curve.degree,
             knots: curve.knot_vector.iter().map(|k| k.to_f64()).collect(),
@@ -80,7 +77,7 @@ pub struct SurfaceMidpoints {
 const PROJECT_ITERATIONS: usize = 30;
 
 impl SurfaceMidpoints {
-    pub fn of<S: Scalar>(surface: &NurbSurface3D<S>) -> Self {
+    pub fn of(surface: &NurbSurface3D) -> Self {
         Self {
             degree_u: surface.degree_u,
             degree_v: surface.degree_v,
@@ -105,7 +102,7 @@ impl SurfaceMidpoints {
     }
 
     /// The point at `(u, v)`, clamped into the domain, and its partial
-    /// derivatives there: `(S, S_u, S_v)`.
+    /// derivatives there: `(Scalar, S_u, S_v)`.
     pub fn partials(&self, u: f64, v: f64) -> (P3, P3, P3) {
         let (p, q) = (self.degree_u, self.degree_v);
         let (u0, u1) = self.domain_u();
@@ -126,7 +123,7 @@ impl SurfaceMidpoints {
         let (a, a_v) = de_boor(q, &self.knots_v, &columns, kv, v);
         let (a_u, _) = de_boor(q, &self.knots_v, &columns_u, kv, v);
         let point = cartesian(a);
-        // The quotient rule: `S' = (A' - w' S) / w`.
+        // The quotient rule: `Scalar' = (A' - w' Scalar) / w`.
         let rational =
             |d: [f64; 4]| -> P3 { std::array::from_fn(|c| (d[c] - d[3] * point[c]) / a[3]) };
         (point, rational(a_u), rational(a_v))
@@ -272,25 +269,23 @@ fn cartesian(h: [f64; 4]) -> P3 {
 mod tests {
     use geop_core_geometry::{nurb_curve::NurbCurve, nurb_surface::NurbSurface3D, shape::Axis};
     use geop_core_math::{
-        scalars::{Scalar, scal_in_f64::ScalInF64},
+        scalars::Scalar,
         vector::{Vector3, Vector4},
     };
 
     use super::SurfaceMidpoints;
     use geop_core_math::plain::distance;
 
-    type S = ScalInF64;
-
-    fn v3(p: [f64; 3]) -> Vector3<S> {
-        Vector3::from_array(p.map(S::from_f64))
+    fn v3(p: [f64; 3]) -> Vector3 {
+        Vector3::from_array(p.map(Scalar::from_f64))
     }
 
     /// An eighth of the unit sphere: rational, of degree 4 and with a
     /// pole-free but strongly varying parametrization.
-    fn octant() -> NurbSurface3D<S> {
+    fn octant() -> NurbSurface3D {
         NurbSurface3D::spherical_triangle(
             &v3([0.0, 0.0, 0.0]),
-            S::ONE,
+            Scalar::ONE,
             [
                 v3([1.0, 0.0, 0.0]),
                 v3([0.0, 1.0, 0.0]),
@@ -311,7 +306,7 @@ mod tests {
                 let u = u0 + (u1 - u0) * i as f64 / 6.0;
                 let v = v0 + (v1 - v0) * j as f64 / 6.0;
                 let (p, su, sv) = midpoints.partials(u, v);
-                let (u, v) = (S::from_f64(u), S::from_f64(v));
+                let (u, v) = (Scalar::from_f64(u), Scalar::from_f64(v));
                 let (eu, ev) = surface.derivatives(u, v).unwrap();
                 for (got, want) in [
                     (p, surface.evaluate(u, v).unwrap().to_f64_array()),
@@ -351,10 +346,10 @@ mod tests {
         let profile = NurbCurve::try_new(
             1,
             vec![
-                Vector4::from_array([0.0, 0.0, 0.0, 1.0].map(S::from_f64)),
-                Vector4::from_array([1.0, 0.0, 0.0, 1.0].map(S::from_f64)),
+                Vector4::from_array([0.0, 0.0, 0.0, 1.0].map(Scalar::from_f64)),
+                Vector4::from_array([1.0, 0.0, 0.0, 1.0].map(Scalar::from_f64)),
             ],
-            [0.0, 0.0, 1.0, 1.0].map(S::from_f64).to_vec(),
+            [0.0, 0.0, 1.0, 1.0].map(Scalar::from_f64).to_vec(),
         )
         .unwrap();
         let axis = Axis::try_new(v3([0.0, 0.0, 0.0]), v3([0.0, 0.0, 1.0])).unwrap();

@@ -6,7 +6,7 @@
 
 use crate::{datums::origin_plane, model};
 use geop_core_math::{primitives::FrameAxis, scalars::Scalar};
-use geop_core_program::{element::ElementReference, values::Design};
+use geop_core_program::element::ElementReference;
 use geop_core_sketch::{CurveId, PointId};
 
 use super::{Constraint, Sketch, SketchPlane};
@@ -15,8 +15,8 @@ use super::{Constraint, Sketch, SketchPlane};
 pub type P2 = [f64; 2];
 
 /// A number of a figure, as design data.
-pub fn n(x: f64) -> Design {
-    Design::from_f64(x)
+pub fn n(x: f64) -> Scalar {
+    Scalar::from_f64(x)
 }
 
 // ── Planes to sketch on ─────────────────────────────────────────────────────

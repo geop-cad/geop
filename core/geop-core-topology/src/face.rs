@@ -1,7 +1,6 @@
 use super::ids::ShellId;
 use crate::boundary::{BoundaryIndex, BoundaryType};
 use geop_core_geometry::nurb_surface::NurbSurface3D;
-use geop_core_math::scalars::Scalar;
 
 /// A trimmed patch of `surface`: everything inside `outer` and outside every
 /// loop in `holes`.
@@ -14,14 +13,14 @@ use geop_core_math::scalars::Scalar;
 /// accidentally treated as the outer loop (or vice versa) after a
 /// split/merge reorders the list.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Face<S: Scalar> {
-    pub surface: NurbSurface3D<S>,
+pub struct Face {
+    pub surface: NurbSurface3D,
     pub outer: BoundaryType,
     pub holes: Vec<BoundaryType>,
     pub shell: ShellId,
 }
 
-impl<S: Scalar> Face<S> {
+impl Face {
     /// Every boundary, outer loop first.
     pub fn boundaries(&self) -> impl Iterator<Item = BoundaryType> + '_ {
         std::iter::once(self.outer).chain(self.holes.iter().copied())

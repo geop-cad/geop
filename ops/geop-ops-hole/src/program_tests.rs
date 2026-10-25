@@ -9,7 +9,6 @@
 
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
-    values::Design,
 };
 use std::f64::consts::PI;
 
@@ -18,11 +17,7 @@ use crate::{
     iso::{Fit, SIZES, metric},
     testing::{PLATE, plate, points_sketch},
 };
-use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::FrameAxis,
-    scalars::{ScalInF64 as S, Scalar},
-};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
 use geop_ops_extrude_revolve::{Extent, Extents, testing::extrusion};
 use geop_ops_model::sketch::{
     Sketch,
@@ -66,7 +61,7 @@ pub(super) fn hole(kind: HoleKind, standard: Standard, end: Extent) -> HoleArgs 
 }
 
 /// The entity of the model named `name`, as a `K`.
-pub(super) fn named<K>(name: &str) -> ElementReference<NamedModel<Design>, K> {
+pub(super) fn named<K>(name: &str) -> ElementReference<NamedModel, K> {
     ElementReference::new(model(), name)
 }
 
@@ -80,21 +75,21 @@ pub(super) fn iso(size: &str, fit: Fit) -> Standard {
 /// A program as built: its model, and the cosmetic threads its steps
 /// recorded.
 pub(super) struct Made {
-    pub(super) model: NamedModel<S>,
-    pub(super) threads: Threads<Design>,
+    pub(super) model: NamedModel,
+    pub(super) threads: Threads,
 }
 
 impl std::ops::Deref for Made {
-    type Target = NamedModel<S>;
+    type Target = NamedModel;
 
-    fn deref(&self) -> &NamedModel<S> {
+    fn deref(&self) -> &NamedModel {
         &self.model
     }
 }
 
 impl Made {
     /// The cosmetic thread `name`.
-    pub(super) fn thread(&self, name: &str) -> GeopResult<&CosmeticThread<Design>> {
+    pub(super) fn thread(&self, name: &str) -> GeopResult<&CosmeticThread> {
         self.threads.get(name)
     }
 }
@@ -231,7 +226,7 @@ fn tapped_hole_carries_a_cosmetic_thread() {
         "{}",
         thread.face
     );
-    let v = |c: [f64; 3]| geop_core_math::vector::Vector3::from_array(c.map(S::from_f64));
+    let v = |c: [f64; 3]| geop_core_math::vector::Vector3::from_array(c.map(Scalar::from_f64));
     assert!(
         thread.axis.point.could_be_equal(&v([20.0, 20.0, 10.0])),
         "{:?}",
@@ -497,7 +492,7 @@ fn shaft() -> Program {
 }
 
 /// The name of a face of the shank's round side.
-fn shaft_side(part: &NamedModel<S>) -> String {
+fn shaft_side(part: &NamedModel) -> String {
     part.names()
         .iter()
         .map(|(_, name)| name.to_string())
@@ -533,7 +528,7 @@ fn cosmetic_thread_on_a_shaft() {
     assert!(!thread.internal);
     // Measured on the model: the shaft's length, to rounding.
     assert!((thread.length - 20.0).abs() < 1e-9, "{}", thread.length);
-    assert!(thread.axis.point[2].could_be_equal(S::from_f64(25.0)));
+    assert!(thread.axis.point[2].could_be_equal(Scalar::from_f64(25.0)));
 
     let mut reversed = program.clone();
     reversed.push(
@@ -549,7 +544,7 @@ fn cosmetic_thread_on_a_shaft() {
     let part = made(&reversed).unwrap();
     let thread = part.thread("thread(t)").unwrap();
     assert_eq!(thread.length, 12.0);
-    assert!(thread.axis.point[2].could_be_equal(S::from_f64(5.0)));
+    assert!(thread.axis.point[2].could_be_equal(Scalar::from_f64(5.0)));
 
     // An M8 does not fit a Ø6 shaft.
     let mut wrong = program.clone();

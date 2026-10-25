@@ -13,7 +13,7 @@ use crate::knot_insertion::{insert, is_clamped_at};
 /// The control points of a Bézier piece over local parameters `[0, s]`,
 /// for `points` its control points over `[0, 1]`: the left half of de
 /// Casteljau's subdivision at `s`, which for `s > 1` extrapolates.
-fn continued<S: Scalar, const D: usize>(points: &[Vector<S, D>], s: S) -> Vec<Vector<S, D>> {
+fn continued<const D: usize>(points: &[Vector<D>], s: Scalar) -> Vec<Vector<D>> {
     let mut level = points.to_vec();
     let mut out = vec![level[0]];
     for r in 1..points.len() {
@@ -25,7 +25,7 @@ fn continued<S: Scalar, const D: usize>(points: &[Vector<S, D>], s: S) -> Vec<Ve
     out
 }
 
-impl<S: Scalar, const D: usize> NurbCurve<S, D> {
+impl<const D: usize> NurbCurve<D> {
     /// The same curve carried on by `by` of its parameter past its end
     /// (`at_end`) or before its start: its end piece continued as the
     /// polynomial it is, so the curve stays as smooth as it was where it
@@ -39,7 +39,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     /// circle. Fails for a knot vector not clamped at that end, and where
     /// the continued weights stop being positive — an arc carried round
     /// too far.
-    pub fn extended(&self, at_end: bool, by: S) -> GeopResult<Self> {
+    pub fn extended(&self, at_end: bool, by: Scalar) -> GeopResult<Self> {
         let p = self.degree;
         if !is_clamped_at(&self.knot_vector, p, !at_end) {
             return Err(GeopError::new(format!(
@@ -47,7 +47,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
                 self.knot_vector
             )));
         }
-        if !by.definitely_greater(S::ZERO) {
+        if !by.definitely_greater(Scalar::ZERO) {
             return Err(GeopError::new(format!(
                 "NurbCurve::extended: extending by {by:?}, which is not greater than zero"
             )));
@@ -100,15 +100,16 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
 #[cfg(test)]
 mod tests {
     use crate::test_fixtures::weighted;
-    use geop_core_math::{for_all_scalars, scalars::Scalar};
+    use geop_core_math::scalars::Scalar;
 
     use crate::nurb_curve::{NurbCurve, NurbCurve3D};
 
     /// A cubic with an interior knot, continued at either end: the same
     /// curve where it was, and on its own polynomial beyond.
-    fn check_cubic_continues_as_itself<S: Scalar>() {
-        let f = S::from_f64;
-        let curve: NurbCurve3D<S> = NurbCurve::try_new(
+    #[test]
+    fn cubic_continues_as_itself() {
+        let f = Scalar::from_f64;
+        let curve: NurbCurve3D = NurbCurve::try_new(
             3,
             vec![
                 weighted(0., 0., 0., 1.),
@@ -124,7 +125,7 @@ mod tests {
         let (t0, t1) = longer.domain();
         assert!(t0.could_be_equal(f(0.)) && t1.could_be_equal(f(1.25)));
         for i in 0..=8 {
-            let t = S::from_ratio(i, 8).unwrap();
+            let t = Scalar::from_ratio(i, 8).unwrap();
             assert!(
                 longer
                     .evaluate(t)
@@ -138,7 +139,7 @@ mod tests {
         let (t0, t1) = earlier.domain();
         assert!(t0.could_be_equal(f(-0.5)) && t1.could_be_equal(f(1.)));
         for i in 0..=8 {
-            let t = S::from_ratio(i, 8).unwrap();
+            let t = Scalar::from_ratio(i, 8).unwrap();
             assert!(
                 earlier
                     .evaluate(t)
@@ -147,15 +148,12 @@ mod tests {
             );
         }
     }
-    #[test]
-    fn cubic_continues_as_itself() {
-        for_all_scalars!(check_cubic_continues_as_itself);
-    }
 
     /// A quarter circle continued at its end stays on its circle.
-    fn check_arc_continues_round_its_circle<S: Scalar>() {
-        let f = S::from_f64;
-        let arc: NurbCurve3D<S> = NurbCurve::try_new(
+    #[test]
+    fn arc_continues_round_its_circle() {
+        let f = Scalar::from_f64;
+        let arc: NurbCurve3D = NurbCurve::try_new(
             2,
             vec![
                 weighted(1., 0., 0., 1.),
@@ -167,13 +165,9 @@ mod tests {
         .unwrap();
         let longer = arc.extended(true, f(0.3)).unwrap();
         for i in 0..=13 {
-            let t = S::from_ratio(i, 10).unwrap();
+            let t = Scalar::from_ratio(i, 10).unwrap();
             let p = longer.evaluate(t).unwrap();
-            assert!(p.norm_sq().could_be_equal(S::ONE), "{t:?}: {p:?}");
+            assert!(p.norm_sq().could_be_equal(Scalar::ONE), "{t:?}: {p:?}");
         }
-    }
-    #[test]
-    fn arc_continues_round_its_circle() {
-        for_all_scalars!(check_arc_continues_round_its_circle);
     }
 }

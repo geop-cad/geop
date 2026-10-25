@@ -34,7 +34,7 @@ pub struct Bounded {
 
 impl Bounded {
     /// The enclosure `x`, as shown.
-    pub fn of<S: Scalar>(x: S) -> Self {
+    pub fn of(x: Scalar) -> Self {
         let (lo, hi) = (x.lower().to_f64(), x.upper().to_f64());
         Self {
             value: 0.5 * (lo + hi),

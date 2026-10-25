@@ -10,9 +10,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     with_context,
 };
-use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_core_sketch::{PointId, Shape};
 use geop_ops_model::sketch::{PlacedSketch, SketchRef, chain_of_pieces};
 use geop_ops_model::{ModelOperation, NamedModel, Namer, Point, build_model, read_model};
@@ -66,7 +64,7 @@ pub struct LoftArgs {
     /// in the order picked, the `k`-th of every profile lofted into each
     /// other.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub matches: Vec<ElementReference<PlacedSketch<Design>, Point>>,
+    pub matches: Vec<ElementReference<PlacedSketch, Point>>,
     /// Sketches or 3-D sketches whose curves guide the loft from the first
     /// profile to the last — at most three — instead of matching points.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -94,7 +92,7 @@ impl PartOperation for Loft {
     /// is one.
     fn new_args(context: &Context) -> LoftArgs {
         let before = &context.before;
-        let sketches = before.targets_of::<PlacedSketch<Design>>();
+        let sketches = before.targets_of::<PlacedSketch>();
         LoftArgs {
             profiles: (sketches
                 .get(sketches.len().saturating_sub(2)..)
@@ -119,9 +117,9 @@ impl PartOperation for Loft {
         context: &'a Context<'a>,
         args: &LoftArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, LoftArgs> {
+    ) -> EditForm<'a, LoftArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, LoftArgs>::default();
+        let mut f = EditForm::<LoftArgs>::default();
         f.pick(
             "profiles",
             "profiles",
@@ -156,7 +154,7 @@ impl PartOperation for Loft {
 
 impl ModelOperation for Loft {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &LoftArgs,
@@ -216,13 +214,12 @@ fn section(
     profile: &SketchRef,
     output: &Output,
     matched: &[PointId],
-) -> GeopResult<Section<Design>> {
-    type S = Design;
+) -> GeopResult<Section> {
     let ctx = with_context!("profile {:?}", profile.target().name());
     let placed = reader.retrieve_element(profile).with_context(ctx)?;
     let name = &placed.name;
     let sketch = &placed.sketch;
-    let geometry = sketch.enclose::<S>().with_context(ctx)?;
+    let geometry = sketch.enclose().with_context(ctx)?;
     let shape = output.shape(sketch).with_context(ctx)?;
     let (lp, closed) = match shape {
         Shape::Region(region) if region.holes.is_empty() => (region.outer, true),

@@ -22,7 +22,7 @@ pub const LABEL: f64 = 1.2;
 /// Orders two distances for picking the nearest. Which of two overlapping
 /// enclosures is "nearer" is no geometric claim, only which of two things
 /// under the pointer to prefer, so their midpoints decide.
-pub fn nearer<S: Scalar>(a: S, b: S) -> Ordering {
+pub fn nearer(a: Scalar, b: Scalar) -> Ordering {
     a.to_f64().total_cmp(&b.to_f64())
 }
 
@@ -30,31 +30,31 @@ pub fn nearer<S: Scalar>(a: S, b: S) -> Ordering {
 /// needs to know of it beyond a step's own visuals, and what an operation
 /// is given to find what the pointer is over (see
 /// [`crate::editable::Context::scene`]).
-pub trait Scene<S: Scalar> {
+pub trait Scene {
     /// What a click with `pointer` picks: the element nearest the eye of
     /// one of the kinds `accepts`, and where it is hit.
-    fn pick(&self, pointer: &Pointer<S>, accepts: &[String]) -> Option<ElementHit<S>>;
+    fn pick(&self, pointer: &Pointer, accepts: &[String]) -> Option<ElementHit>;
 
     /// How far along `pointer`'s ray the placed part `name` is hit, if it
     /// is (see [`Shape::Instance`]).
-    fn hit_instance(&self, name: &str, pointer: &Pointer<S>) -> Option<S>;
+    fn hit_instance(&self, name: &str, pointer: &Pointer) -> Option<Scalar>;
 }
 
 /// An element of the part a pointer is over, as drawn: where, and how far
 /// along its ray (see [`Scene::pick`]).
 #[derive(Clone, Debug, PartialEq)]
-pub struct ElementHit<S: Scalar> {
+pub struct ElementHit {
     pub element: PickedElement,
-    pub point: Vector3<S>,
-    pub t: S,
+    pub point: Vector3,
+    pub t: Scalar,
 }
 
 /// A visual the pointer is over.
 #[derive(Clone, Copy, Debug)]
-pub struct VisualHit<'a, S: Scalar> {
-    pub visual: &'a Visual<S>,
+pub struct VisualHit<'a> {
+    pub visual: &'a Visual,
     /// How far along the ray.
-    pub t: S,
+    pub t: Scalar,
 }
 
 /// How near the pointer is to `visual`, in reaches, and where along the
@@ -63,23 +63,23 @@ pub struct VisualHit<'a, S: Scalar> {
 /// curve that is part of the result over construction or reference geometry
 /// it lies on — a line drawn along a sketch's axis is that line. A placed part is
 /// hit where `instance` says, by its name: how far along the ray, if at all.
-fn distance<S: Scalar>(
-    pointer: &Pointer<S>,
-    visual: &Visual<S>,
-    instance: &impl Fn(&str, &Pointer<S>) -> Option<S>,
-) -> Option<(u8, S, S)> {
+fn distance(
+    pointer: &Pointer,
+    visual: &Visual,
+    instance: &impl Fn(&str, &Pointer) -> Option<Scalar>,
+) -> Option<(u8, Scalar, Scalar)> {
     let ray = &pointer.ray;
-    let within = |dist: S, t: S, reaches: f64| {
+    let within = |dist: Scalar, t: Scalar, reaches: f64| {
         pointer
             .within(dist, t, reaches)
-            .then(|| (dist.div(pointer.reach.at(t)).unwrap_or(S::ZERO), t))
+            .then(|| (dist.div(pointer.reach.at(t)).unwrap_or(Scalar::ZERO), t))
     };
     match &visual.shape {
         Shape::Handle { at, direction } => {
             let radius = pointer.reach_at(HANDLE, ray.closest_to_point(at));
             let (dist, t) = match direction.normalize() {
                 Ok(d) => {
-                    let reach = d.prod_scalar(radius.mul(S::from_f64(3.0)));
+                    let reach = d.prod_scalar(radius.mul(Scalar::from_f64(3.0)));
                     ray.distance_to_segment(&at.sub(&reach), &at.add(&reach))
                 }
                 Err(_) => ray.distance_to_point(at),
@@ -117,8 +117,8 @@ fn distance<S: Scalar>(
             .iter()
             .filter_map(|[a, b, c]| ray.intersect_triangle(a, b, c))
             .min_by(|&a, &b| nearer(a, b))
-            .map(|t| (4, S::ZERO, t)),
-        Shape::Instance { name } => instance(name, pointer).map(|t| (4, S::ZERO, t)),
+            .map(|t| (4, Scalar::ZERO, t)),
+        Shape::Instance { name } => instance(name, pointer).map(|t| (4, Scalar::ZERO, t)),
         Shape::Triad { .. } => None,
     }
 }
@@ -128,12 +128,12 @@ fn distance<S: Scalar>(
 /// nearest the pointer on screen, and of those as near, the one nearest the
 /// eye: of two areas the pointer is over, the one in front. Placed parts
 /// are hit where `instance` says (see [`no_instances`]).
-pub fn hit_visuals<'a, S: Scalar>(
-    visuals: &'a [Visual<S>],
-    pointer: &Pointer<S>,
-    instance: impl Fn(&str, &Pointer<S>) -> Option<S>,
-    accept: impl Fn(&Visual<S>) -> bool,
-) -> Option<VisualHit<'a, S>> {
+pub fn hit_visuals<'a>(
+    visuals: &'a [Visual],
+    pointer: &Pointer,
+    instance: impl Fn(&str, &Pointer) -> Option<Scalar>,
+    accept: impl Fn(&Visual) -> bool,
+) -> Option<VisualHit<'a>> {
     visuals
         .iter()
         .filter(|v| accept(v))
@@ -145,35 +145,33 @@ pub fn hit_visuals<'a, S: Scalar>(
 }
 
 /// For [`hit_visuals`] where no placed part is drawn: none is hit.
-pub fn no_instances<S: Scalar>(_: &str, _: &Pointer<S>) -> Option<S> {
+pub fn no_instances(_: &str, _: &Pointer) -> Option<Scalar> {
     None
 }
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::{primitives::Ray, scalars::ScalInF64, vector::Vector3};
+    use geop_core_math::{primitives::Ray, scalars::Scalar, vector::Vector3};
 
     use super::*;
     use crate::editing::Reach;
 
-    type S = ScalInF64;
-
-    fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
-        Vector3::from_array([x, y, z].map(S::from_f64))
+    fn v(x: f64, y: f64, z: f64) -> Vector3 {
+        Vector3::from_array([x, y, z].map(Scalar::from_f64))
     }
 
     /// Looking straight down `-z` from `(x, y, 10)`, reaching a tenth of a
     /// unit wherever it looks.
-    fn down(x: f64, y: f64) -> Pointer<S> {
+    fn down(x: f64, y: f64) -> Pointer {
         Pointer {
             ray: Ray::try_new(v(x, y, 10.0), v(0.0, 0.0, -1.0)).unwrap(),
             reach: Reach::Tube {
-                radius: S::from_f64(0.1),
+                radius: Scalar::from_f64(0.1),
             },
         }
     }
 
-    fn point(key: &str, at: Vector3<S>) -> Visual<S> {
+    fn point(key: &str, at: Vector3) -> Visual {
         Visual::new(key, Shape::Point { at }, Style::Free)
     }
 
@@ -244,7 +242,7 @@ mod tests {
         let from = |z: f64| Pointer {
             ray: Ray::try_new(v(0.0, 0.0, z), v(0.0, 0.0, -1.0)).unwrap(),
             reach: Reach::Cone {
-                slope: S::from_f64(0.01),
+                slope: Scalar::from_f64(0.01),
             },
         };
         assert!(hit_visuals(&visuals, &from(10.0), no_instances, |_| true).is_none());

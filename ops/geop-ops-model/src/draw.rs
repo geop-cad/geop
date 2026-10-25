@@ -13,17 +13,16 @@ use geop_core_rasterize::rasterize;
 use geop_core_topology::{EdgeId, Model, SolidId};
 
 use crate::{NamedModel, RefId, read_model};
-use geop_core_program::values::Design;
 
 /// The solid `edge` bounds: that of a face it runs along.
-fn solid_of_edge(model: &Model<Design>, edge: EdgeId) -> Option<SolidId> {
+fn solid_of_edge(model: &Model, edge: EdgeId) -> Option<SolidId> {
     let coedge = *model.coedges_of_edge(edge).first()?;
     model
         .solid_of_face(model.get_coedge(coedge).ok()?.face)
         .ok()?
 }
 
-impl NamedModel<Design> {
+impl NamedModel {
     /// Draws its vertices, edges and faces, and lists its solids, into
     /// `view`, as elements of the target `target`.
     pub fn draw(&self, target: &str, view: &mut PartView) -> GeopResult<()> {
@@ -133,12 +132,12 @@ mod tests {
     use super::*;
 
     /// Looking down at `(x, y)` from above the unit cube.
-    fn from_above(x: f64, y: f64) -> Pointer<Design> {
-        let v = |p: [f64; 3]| Vector3::from_array(p.map(Design::from_f64));
+    fn from_above(x: f64, y: f64) -> Pointer {
+        let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
         Pointer {
             ray: Ray::try_new(v([x, y, 10.0]), v([0.0, 0.0, -1.0])).unwrap(),
             reach: Reach::Tube {
-                radius: Design::from_f64(0.01),
+                radius: Scalar::from_f64(0.01),
             },
         }
     }
@@ -184,14 +183,13 @@ mod tests {
         let edge = view
             .pick(&from_above(0.5, 1.0), &accepts(&[drawn::EDGE]))
             .unwrap();
-        let lines: Vec<ElementReference<NamedModel<Design>, Line>> =
+        let lines: Vec<ElementReference<NamedModel, Line>> =
             selected(&reader, std::slice::from_ref(&edge.element));
         assert_eq!(lines[0].name(), edge.element.name);
         let face = view
             .pick(&from_above(0.5, 0.5), &accepts(&[drawn::FACE]))
             .unwrap();
-        let bodies: Vec<ElementReference<NamedModel<Design>, Body>> =
-            selected(&reader, &[face.element]);
+        let bodies: Vec<ElementReference<NamedModel, Body>> = selected(&reader, &[face.element]);
         assert_eq!(bodies, [ElementReference::new(model(), "s0")]);
     }
 
@@ -209,8 +207,8 @@ mod tests {
         let faces = accepts(&[drawn::FACE]);
         let hit = view.pick(&from_above(0.5, 0.5), &faces).unwrap();
         assert_eq!(hit.element.kind, drawn::FACE);
-        assert!(hit.point[2].could_be_equal(Design::ONE), "{hit:?}");
-        let solid = selectable::pick::<ElementReference<NamedModel<Design>, Solid>, _>(
+        assert!(hit.point[2].could_be_equal(Scalar::ONE), "{hit:?}");
+        let solid = selectable::pick::<ElementReference<NamedModel, Solid>>(
             &view,
             &part.current(),
             &from_above(0.5, 0.5),

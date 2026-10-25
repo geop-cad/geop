@@ -14,7 +14,7 @@
 
 use std::io::{self, Write};
 
-use geop_core_math::{primitives::TriangleFace, scalars::Scalar, vector::Vector3};
+use geop_core_math::{primitives::TriangleFace, vector::Vector3};
 use geop_core_topology::FaceId;
 
 use crate::RasterizedModel;
@@ -36,7 +36,7 @@ pub enum StlFormat {
     Ascii,
 }
 
-fn f32s<S: Scalar>(v: &Vector3<S>) -> [f32; 3] {
+fn f32s(v: &Vector3) -> [f32; 3] {
     [
         v[0].to_f64() as f32,
         v[1].to_f64() as f32,
@@ -46,7 +46,7 @@ fn f32s<S: Scalar>(v: &Vector3<S>) -> [f32; 3] {
 
 /// `t` as an STL facet, wound to face the way its surface does: outward.
 /// A triangle without surface normals (at a pole) keeps its winding.
-pub fn outward<S: Scalar>(t: &TriangleFace<S>) -> StlTriangle {
+pub fn outward(t: &TriangleFace) -> StlTriangle {
     let flat = f32s(&t.normal);
     let surface = t.vertex_normals.map(|ns| {
         ns.iter().map(f32s).fold([0.0; 3], |acc, n| {
@@ -69,7 +69,7 @@ pub fn outward<S: Scalar>(t: &TriangleFace<S>) -> StlTriangle {
 }
 
 /// The triangles of `faces` of `raster`, in the order given, wound outward.
-pub fn stl_triangles<S: Scalar>(raster: &RasterizedModel<S>, faces: &[FaceId]) -> Vec<StlTriangle> {
+pub fn stl_triangles(raster: &RasterizedModel, faces: &[FaceId]) -> Vec<StlTriangle> {
     faces
         .iter()
         .filter_map(|face| raster.faces.get(face))

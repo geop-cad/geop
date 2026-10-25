@@ -9,7 +9,7 @@
 //! Lengths are millimetres and densities kg/m³ (see
 //! [`crate::parameters::Material`]), so a mass is in kilograms.
 
-use geop_core_program::{placed::Located, reader::Reader, values::Design};
+use geop_core_program::{placed::Located, reader::Reader};
 use std::collections::HashMap;
 
 use crate::{
@@ -21,7 +21,7 @@ use crate::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::Pose,
-    scalars::{Field, Scalar},
+    scalars::Scalar,
 };
 use geop_core_topology::{SolidId, mass::MassProperties};
 
@@ -34,10 +34,10 @@ pub struct PlacedSolid<'a> {
     pub instance: String,
     /// The part it is a solid of — whose material it is made of.
     pub reader: Reader<'a>,
-    pub model: std::borrow::Cow<'a, NamedModel<Design>>,
+    pub model: std::borrow::Cow<'a, NamedModel>,
     pub solid: SolidId,
     /// Where its part is placed; `None` for the part's own solids.
-    pub pose: Option<Pose<Design>>,
+    pub pose: Option<Pose>,
 }
 
 impl PlacedSolid<'_> {
@@ -56,10 +56,10 @@ impl PlacedSolid<'_> {
 
     /// Its mass properties, where it is, of its part's material — its
     /// shape's taken from `shapes`.
-    pub fn mass_properties(&self, shapes: &mut Shapes) -> GeopResult<MassProperties<Design>> {
+    pub fn mass_properties(&self, shapes: &mut Shapes) -> GeopResult<MassProperties> {
         let ctx = |e: GeopError| e.with_context(format!("the mass of {}", self.name));
-        let per_mm3 = Design::from_f64(self.material().density)
-            .div(Design::from_f64(1e9))
+        let per_mm3 = Scalar::from_f64(self.material().density)
+            .div(Scalar::from_f64(1e9))
             .with_context(&ctx)?;
         let own = shapes.of(self).with_context(&ctx)?.with_density(per_mm3);
         match &self.pose {
@@ -73,11 +73,11 @@ impl PlacedSolid<'_> {
 /// own part's frame — each integrated once, however often its part is
 /// placed.
 #[derive(Default)]
-pub struct Shapes(HashMap<(*const NamedModel<Design>, SolidId), MassProperties<Design>>);
+pub struct Shapes(HashMap<(*const NamedModel, SolidId), MassProperties>);
 
 impl Shapes {
     /// The mass properties of the shape of `solid`.
-    pub fn of(&mut self, solid: &PlacedSolid) -> GeopResult<MassProperties<Design>> {
+    pub fn of(&mut self, solid: &PlacedSolid) -> GeopResult<MassProperties> {
         let key = (std::ptr::from_ref(&*solid.model), solid.solid);
         if let Some(found) = self.0.get(&key) {
             return Ok(*found);
@@ -95,7 +95,7 @@ impl Shapes {
 pub fn own_solids_at<'a>(
     reader: &Reader<'a>,
     instance: &str,
-    pose: Option<Pose<Design>>,
+    pose: Option<Pose>,
 ) -> GeopResult<Vec<PlacedSolid<'a>>> {
     let model = read_model(reader)?;
     let notes = notes_of(reader);

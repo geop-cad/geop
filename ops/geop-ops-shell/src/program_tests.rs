@@ -3,16 +3,12 @@
 
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
-    testing::args, values::Design,
+    testing::args,
 };
 use std::f64::consts::PI;
 
 use crate::{Shell, ShellArgs};
-use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::FrameAxis,
-    scalars::{ScalInF64 as S, Scalar},
-};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
 use geop_core_topology::Body;
 use geop_ops_extrude_revolve::{
     Extents,
@@ -60,7 +56,7 @@ fn shell(name: &str, faces: &[&str], thickness: f64) -> ShellArgs {
     }
 }
 
-fn face_count(part: &NamedModel<Design>, solid: &str) -> usize {
+fn face_count(part: &NamedModel, solid: &str) -> usize {
     let id = part.solid_id(solid).unwrap();
     part.topology().body_faces(Body::Solid(id)).unwrap().len()
 }
@@ -173,7 +169,7 @@ fn channel() {
                 .surface
                 .as_plane()
                 .unwrap();
-            plane.is_some_and(|p| p.normal[0].abs().could_be_equal(S::ONE))
+            plane.is_some_and(|p| p.normal[0].abs().could_be_equal(Scalar::ONE))
         })
         .map(|f| part.name_of(f).unwrap().to_string())
         .collect();

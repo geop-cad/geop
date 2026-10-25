@@ -36,7 +36,7 @@ use geop_core_program::{
     operation_registry::OperationRegistry,
     program::{Program, ProgramStep},
     reader::Reader,
-    values::{Design, StateValues},
+    values::StateValues,
     workspace::{FileStoreMut, Files, Location},
 };
 use std::{
@@ -358,8 +358,8 @@ impl Editor {
         self.shown = Some(shown.clone());
         let part = match shown.sheet {
             Some((center, size)) => PartView::blank(Extent {
-                center: Vector3::from_array(center.map(Design::from_f64)),
-                size: Design::from_f64(size),
+                center: Vector3::from_array(center.map(Scalar::from_f64)),
+                size: Scalar::from_f64(size),
             }),
             None => self.view_of(shown.steps),
         };
@@ -449,7 +449,7 @@ impl Editor {
     }
 
     /// What the tool in hand shows, if one is and no step is edited.
-    fn tool_presentation(&self, idle: bool) -> Option<Presentation<Design>> {
+    fn tool_presentation(&self, idle: bool) -> Option<Presentation> {
         let in_hand = self.tool.as_ref().filter(|_| idle)?;
         Some(in_hand.tool.presentation())
     }
@@ -934,7 +934,7 @@ impl Editor {
     }
 
     /// What the step being edited shows.
-    fn presentation(&self, open: &Open) -> GeopResult<Presentation<Design>> {
+    fn presentation(&self, open: &Open) -> GeopResult<Presentation> {
         let Build { runner, part, .. } = &self.build;
         let editors = self.registry.editors();
         (open.editor).presentation(editors, runner, part, &open.program, &open.view)
@@ -1064,7 +1064,7 @@ impl Editor {
         (self.registry.draw(&self.shown_part(steps))).unwrap_or_else(|_| {
             PartView::blank(Extent {
                 center: Vector3::zero(),
-                size: Design::from_f64(EMPTY_EXTENT),
+                size: Scalar::from_f64(EMPTY_EXTENT),
             })
         })
     }

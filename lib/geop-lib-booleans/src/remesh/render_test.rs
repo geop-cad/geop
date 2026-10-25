@@ -19,7 +19,6 @@ mod tests {
         remesh::{RemeshParams, remesh},
         scenes::{map_scenes_parallel, validation},
     };
-    use geop_core_math::scalars::ScalInF64;
     use geop_core_rasterize::debug::rasterize_topology;
     use geop_core_topology::validation::{validate, validate_fast};
     use geop_ops_model::Namer;
@@ -34,18 +33,18 @@ mod tests {
         let dir = "outputs/topology_remesh";
         std::fs::create_dir_all(dir).unwrap();
 
-        let params = RemeshParams::<ScalInF64>::default();
+        let params = RemeshParams::default();
         // `validate_fast` now runs `check_edges_disjoint`, the same kind of
         // pairwise `curve_curve_intersect` search `remesh_edges_x_edges`
         // itself uses — so it needs at least as much budget/tolerance as
         // `remesh` was given above, or it can spuriously fail to reach a
         // conclusion `remesh` already reached with more room to work with.
-        let validation_params = validation::<ScalInF64>();
+        let validation_params = validation();
 
         // One independent remesh per scene, so they run in parallel; see
         // `scenes::map_scenes_parallel`. Each thread writes its own
         // `<scene>.html`, so the file writes do not collide either.
-        let outcomes = map_scenes_parallel::<ScalInF64, _, _>(|mut scene| {
+        let outcomes = map_scenes_parallel::<_, _>(|mut scene| {
             let mut failure = None;
             let mut invalid = None;
             let mut full_invalid = None;

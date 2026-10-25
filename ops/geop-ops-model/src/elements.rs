@@ -13,7 +13,6 @@ use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
     placed::Located,
     reader::Reader,
-    values::Design,
 };
 use geop_core_topology::{EdgeId, FaceId, SolidId, VertexId};
 
@@ -28,7 +27,7 @@ const MODEL: &str = "model";
 /// An element of the model: the model, and the entity's id in it.
 #[derive(Clone, Copy, Debug)]
 pub struct ModelElement<'a, Id> {
-    pub model: &'a NamedModel<Design>,
+    pub model: &'a NamedModel,
     pub id: Id,
 }
 
@@ -73,7 +72,7 @@ impl Kind for EdgeChain {
 /// An edge chain of the model: the model, and the chain.
 #[derive(Clone, Debug)]
 pub struct ChainElement<'a> {
-    pub model: &'a NamedModel<Design>,
+    pub model: &'a NamedModel,
     pub chain: TangentChain,
 }
 
@@ -86,7 +85,7 @@ impl ChainElement<'_> {
     }
 }
 
-impl HasElements<EdgeChain> for NamedModel<Design> {
+impl HasElements<EdgeChain> for NamedModel {
     type Element<'a> = ChainElement<'a>;
     const SINGLETON: Option<&'static str> = Some(MODEL);
 
@@ -98,15 +97,15 @@ impl HasElements<EdgeChain> for NamedModel<Design> {
 
 /// The model read whole: a kind of its own, its one element the empty
 /// name.
-impl Kind for NamedModel<Design> {
+impl Kind for NamedModel {
     const NAME: &'static str = "model";
 }
 
-impl HasElements<NamedModel<Design>> for NamedModel<Design> {
-    type Element<'a> = &'a NamedModel<Design>;
+impl HasElements<NamedModel> for NamedModel {
+    type Element<'a> = &'a NamedModel;
     const SINGLETON: Option<&'static str> = Some(MODEL);
 
-    fn element(&self, name: &str) -> GeopResult<&NamedModel<Design>> {
+    fn element(&self, name: &str) -> GeopResult<&NamedModel> {
         whole(self, name)
     }
 }
@@ -114,7 +113,7 @@ impl HasElements<NamedModel<Design>> for NamedModel<Design> {
 /// Elements of the model of the kind `K`, by the id `id` its names have.
 macro_rules! named_elements {
     ($($kind:ty => $id:ty, $lookup:ident;)*) => {$(
-        impl HasElements<$kind> for NamedModel<Design> {
+        impl HasElements<$kind> for NamedModel {
             type Element<'a> = ModelElement<'a, $id>;
             const SINGLETON: Option<&'static str> = Some(MODEL);
 
@@ -137,17 +136,17 @@ named_elements! {
 
 /// The model as `reader` reads it: empty, before the first step that
 /// builds any topology.
-pub fn read_model<'a>(reader: &Reader<'a>) -> GeopResult<std::borrow::Cow<'a, NamedModel<Design>>> {
+pub fn read_model<'a>(reader: &Reader<'a>) -> GeopResult<std::borrow::Cow<'a, NamedModel>> {
     if !reader.defines(&model()) {
         return Ok(std::borrow::Cow::Owned(NamedModel::new()));
     }
-    let whole = ElementReference::<NamedModel<Design>, NamedModel<Design>>::whole(model());
+    let whole = ElementReference::<NamedModel, NamedModel>::whole(model());
     Ok(std::borrow::Cow::Borrowed(reader.retrieve_element(&whole)?))
 }
 
 /// What the editor draws of the model's entity `name`: the entity itself,
 /// a vertex, an edge or a face — or, for a solid, its faces.
-pub(crate) fn drawn_entity(model: &NamedModel<Design>, name: &str) -> Vec<PickedElement> {
+pub(crate) fn drawn_entity(model: &NamedModel, name: &str) -> Vec<PickedElement> {
     let picked = |kind: &str, name: &str| PickedElement {
         target: Located::new(MODEL),
         kind: kind.to_string(),
@@ -170,13 +169,13 @@ pub(crate) fn drawn_entity(model: &NamedModel<Design>, name: &str) -> Vec<Picked
 /// An element drawn as itself: a click on it selects it.
 macro_rules! drawn_as_itself {
     ($($kind:ty),*) => {$(
-        impl SelectableElement<NamedModel<Design>> for $kind {
+        impl SelectableElement<NamedModel> for $kind {
             const PICKED_FROM: &'static [&'static str] = &[<$kind as Kind>::NAME];
 
             fn select(
                 _: &Reader,
                 hit: &PickedElement,
-            ) -> Option<ElementReference<NamedModel<Design>, Self>> {
+            ) -> Option<ElementReference<NamedModel, Self>> {
                 ElementReference::from_picked(hit)
             }
         }
@@ -186,24 +185,18 @@ macro_rules! drawn_as_itself {
 drawn_as_itself!(Vertex, Edge, Face);
 
 /// A solid is picked by a face of it, and lit as all of its faces.
-impl SelectableElement<NamedModel<Design>> for Solid {
+impl SelectableElement<NamedModel> for Solid {
     const PICKED_FROM: &'static [&'static str] = &[Face::NAME];
 
-    fn select(
-        reader: &Reader,
-        hit: &PickedElement,
-    ) -> Option<ElementReference<NamedModel<Design>, Self>> {
-        let face = ElementReference::<NamedModel<Design>, Face>::from_picked(hit)?;
+    fn select(reader: &Reader, hit: &PickedElement) -> Option<ElementReference<NamedModel, Self>> {
+        let face = ElementReference::<NamedModel, Face>::from_picked(hit)?;
         let face = reader.retrieve_element(&face).ok()?;
         let solid = face.model.topology().solid_of_face(face.id).ok()??;
         let name = face.model.name_of(solid)?;
         Some(ElementReference::new(model(), name))
     }
 
-    fn drawn(
-        reader: &Reader,
-        solid: &ElementReference<NamedModel<Design>, Self>,
-    ) -> Vec<PickedElement> {
+    fn drawn(reader: &Reader, solid: &ElementReference<NamedModel, Self>) -> Vec<PickedElement> {
         (read_model(reader).ok())
             .map(|model| drawn_entity(&model, solid.name()))
             .unwrap_or_default()
@@ -212,29 +205,23 @@ impl SelectableElement<NamedModel<Design>> for Solid {
 
 /// An edge chain is picked by an edge of it, held by the smallest name of
 /// its edges, and lit as all of them.
-impl SelectableElement<NamedModel<Design>> for EdgeChain {
+impl SelectableElement<NamedModel> for EdgeChain {
     const PICKED_FROM: &'static [&'static str] = &[Edge::NAME];
 
-    fn select(
-        reader: &Reader,
-        hit: &PickedElement,
-    ) -> Option<ElementReference<NamedModel<Design>, Self>> {
-        let through = ElementReference::<NamedModel<Design>, Self>::new(model(), &hit.name);
+    fn select(reader: &Reader, hit: &PickedElement) -> Option<ElementReference<NamedModel, Self>> {
+        let through = ElementReference::<NamedModel, Self>::new(model(), &hit.name);
         (hit.kind == Edge::NAME).then_some(())?;
         let chain = reader.retrieve_element(&through).ok()?;
         let first = chain.edge_names().ok()?.into_iter().min()?;
         Some(ElementReference::new(model(), first))
     }
 
-    fn drawn(
-        reader: &Reader,
-        chain: &ElementReference<NamedModel<Design>, Self>,
-    ) -> Vec<PickedElement> {
+    fn drawn(reader: &Reader, chain: &ElementReference<NamedModel, Self>) -> Vec<PickedElement> {
         let Ok(chain) = reader.retrieve_element(chain) else {
             return Vec::new();
         };
         (chain.edge_names().unwrap_or_default().into_iter())
-            .map(|name| ElementReference::<NamedModel<Design>, Edge>::new(model(), name).picked())
+            .map(|name| ElementReference::<NamedModel, Edge>::new(model(), name).picked())
             .collect()
     }
 }
@@ -253,7 +240,7 @@ mod tests {
     }
 
     fn edge(name: &str) -> PickedElement {
-        ElementReference::<NamedModel<Design>, Edge>::new(model(), name).picked()
+        ElementReference::<NamedModel, Edge>::new(model(), name).picked()
     }
 
     /// An edge chain is picked by clicking an edge of it, held by the
@@ -264,24 +251,19 @@ mod tests {
     fn an_edge_chain_is_picked_by_an_edge() {
         let part = cube();
         let reader = part.current();
-        let chain =
-            |name: &str| ElementReference::<NamedModel<Design>, EdgeChain>::new(model(), name);
-        let picked: Vec<ElementReference<NamedModel<Design>, EdgeChain>> =
-            selected(&reader, &[edge("e3")]);
+        let chain = |name: &str| ElementReference::<NamedModel, EdgeChain>::new(model(), name);
+        let picked: Vec<ElementReference<NamedModel, EdgeChain>> = selected(&reader, &[edge("e3")]);
         assert_eq!(picked, [chain("e3")]);
         assert_eq!(EdgeChain::drawn(&reader, &chain("e3")), [edge("e3")]);
-        let both: Vec<ElementReference<NamedModel<Design>, EdgeChain>> =
+        let both: Vec<ElementReference<NamedModel, EdgeChain>> =
             selected(&reader, &[chain("e3").picked(), edge("e5")]);
         assert_eq!(both, [chain("e3"), chain("e5")]);
-        let again: Vec<ElementReference<NamedModel<Design>, EdgeChain>> =
+        let again: Vec<ElementReference<NamedModel, EdgeChain>> =
             selected(&reader, &[chain("e3").picked(), edge("e3")]);
-        assert_eq!(
-            again,
-            Vec::<ElementReference<NamedModel<Design>, EdgeChain>>::new()
-        );
+        assert_eq!(again, Vec::<ElementReference<NamedModel, EdgeChain>>::new());
     }
 
-    fn face(name: &str) -> ElementReference<NamedModel<Design>, Face> {
+    fn face(name: &str) -> ElementReference<NamedModel, Face> {
         ElementReference::new(model(), name)
     }
 
@@ -291,7 +273,7 @@ mod tests {
     fn elements_resolve_by_name() {
         let part = cube();
         let reader = part.current();
-        let vertex = ElementReference::<NamedModel<Design>, Vertex>::in_singleton("v0").unwrap();
+        let vertex = ElementReference::<NamedModel, Vertex>::in_singleton("v0").unwrap();
         let found = reader.retrieve_element(&vertex).unwrap();
         assert_eq!(found.model.name_of(found.id), Some("v0"));
         assert!(reader.retrieve_element(&face("f6")).is_err());
@@ -314,8 +296,8 @@ mod tests {
     fn a_solid_is_picked_by_its_faces() {
         let part = cube();
         let reader = part.current();
-        let solid = ElementReference::<NamedModel<Design>, Solid>::new(model(), "s0");
-        let picked: Vec<ElementReference<NamedModel<Design>, Solid>> =
+        let solid = ElementReference::<NamedModel, Solid>::new(model(), "s0");
+        let picked: Vec<ElementReference<NamedModel, Solid>> =
             selected(&reader, &[face("f0").picked()]);
         assert_eq!(picked, std::slice::from_ref(&solid));
         let faces: Vec<PickedElement> = (0..6).map(|k| face(&format!("f{k}")).picked()).collect();

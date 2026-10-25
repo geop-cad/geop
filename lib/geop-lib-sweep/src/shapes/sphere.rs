@@ -30,14 +30,14 @@ use geop_ops_model::{BodyNames, NamedModel, Namer};
 /// from `center`. A tensor product of two arcs, one of them degenerate: its
 /// pole "row" arc has 3 coincident control points, same as
 /// `revolve`'s/`row_cps`'s degenerate case.
-fn sphere_quadrant_surface<S: Scalar>(
-    pole: Vector3<S>,
-    eq0: Vector3<S>,
-    eq1: Vector3<S>,
-    center: Vector3<S>,
-    w: S,
+fn sphere_quadrant_surface(
+    pole: Vector3,
+    eq0: Vector3,
+    eq1: Vector3,
+    center: Vector3,
+    w: Scalar,
     pole_at_v0: bool,
-) -> GeopResult<NurbSurface<S, 4>> {
+) -> GeopResult<NurbSurface<4>> {
     let eq_mid = eq0.add(&eq1).sub(&center);
     let mer0_mid = pole.add(&eq0).sub(&center);
     let mer1_mid = pole.add(&eq1).sub(&center);
@@ -57,9 +57,9 @@ fn sphere_quadrant_surface<S: Scalar>(
     // weight `w`, not `1`, even though its position also happens to be the
     // pole.
     let mut u0 = [
-        pole.homogeneous(S::ONE),
+        pole.homogeneous(Scalar::ONE),
         mer0_mid.homogeneous(w),
-        eq0.homogeneous(S::ONE),
+        eq0.homogeneous(Scalar::ONE),
     ];
     let mut u1 = [
         pole.homogeneous(w),
@@ -67,9 +67,9 @@ fn sphere_quadrant_surface<S: Scalar>(
         eq_mid.homogeneous(w),
     ];
     let mut u2 = [
-        pole.homogeneous(S::ONE),
+        pole.homogeneous(Scalar::ONE),
         mer1_mid.homogeneous(w),
-        eq1.homogeneous(S::ONE),
+        eq1.homogeneous(Scalar::ONE),
     ];
     if !pole_at_v0 {
         u0.reverse();
@@ -77,15 +77,22 @@ fn sphere_quadrant_surface<S: Scalar>(
         u2.reverse();
     }
 
-    // `u = 0`/`u = 1` (equator direction) swapped on purpose — `∂S/∂u x
-    // ∂S/∂v` with `u`/`v` as built above (equator direction / meridian
+    // `u = 0`/`u = 1` (equator direction) swapped on purpose — `∂Scalar/∂u x
+    // ∂Scalar/∂v` with `u`/`v` as built above (equator direction / meridian
     // direction, in that natural order) pointed inward, not outward, and
     // reversing which end of the equator arc is "u = 0" negates the cross
     // product without changing the surface's own shape or touching `v`
     // (the already-verified pole placement above). `sphere_solid` bounds
     // each face in this same convention: `u = 0` at `eq1`, `u = 1` at
     // `eq0`.
-    let knots = vec![S::ZERO, S::ZERO, S::ZERO, S::ONE, S::ONE, S::ONE];
+    let knots = vec![
+        Scalar::ZERO,
+        Scalar::ZERO,
+        Scalar::ZERO,
+        Scalar::ONE,
+        Scalar::ONE,
+        Scalar::ONE,
+    ];
     let cps = vec![
         u2[0], u2[1], u2[2], u1[0], u1[1], u1[2], u0[0], u0[1], u0[2],
     ];
@@ -101,23 +108,23 @@ fn sphere_quadrant_surface<S: Scalar>(
 /// `a1`, ...), the meridian arcs `N(north,a0..)`/`N(south,a0..)` between
 /// the equator and each pole, and the eight quadrant faces
 /// `N(north,q0..)`/`N(south,q0..)`.
-pub fn sphere_solid<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn sphere_solid(
+    model: &mut NamedModel,
     name: &str,
-    center: Vector3<S>,
-    radius: S,
+    center: Vector3,
+    radius: Scalar,
 ) -> GeopResult<SolidId> {
     let namer = Namer::new("sphere", name)?;
     let n = |args: &[&str]| namer.name(args);
-    let w = sqrt2_over_2::<S>();
-    let north = center.add(&Vector3::from_array([S::ZERO, S::ZERO, radius]));
+    let w = sqrt2_over_2();
+    let north = center.add(&Vector3::from_array([Scalar::ZERO, Scalar::ZERO, radius]));
     let south = center.add(&Vector3::from_array([
-        S::ZERO,
-        S::ZERO,
-        S::ZERO.sub(radius),
+        Scalar::ZERO,
+        Scalar::ZERO,
+        Scalar::ZERO.sub(radius),
     ]));
-    let one = S::ONE;
-    let zero = S::ZERO;
+    let one = Scalar::ONE;
+    let zero = Scalar::ZERO;
     let cos_t = [one, zero, zero.sub(one), zero];
     let sin_t = [zero, one, zero, zero.sub(one)];
     let equator = |k: usize| {
@@ -128,7 +135,7 @@ pub fn sphere_solid<S: Scalar>(
         ]))
     };
     // An exact 90-degree arc between 2 points on the sphere, around `center`.
-    let arc = |p0: Vector3<S>, p1: Vector3<S>| {
+    let arc = |p0: Vector3, p1: Vector3| {
         let mid = p0.add(&p1).sub(&center);
         NurbCurve3D::arc(p0, mid, p1, w)
     };
@@ -212,34 +219,35 @@ pub fn sphere_solid<S: Scalar>(
 mod tests {
     use super::*;
     use crate::common::testing::render;
-    use geop_core_math::for_all_scalars;
     use geop_ops_model::testing::assert_model_valid;
 
-    fn check_offset_sphere_is_valid<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
-        let center = Vector3::from_array([S::from_f64(1.0), S::from_f64(-0.5), S::from_f64(0.5)]);
-        sphere_solid(&mut model, "t1", center, S::from_f64(2.0)).unwrap();
+    #[test]
+    fn offset_sphere_is_valid() {
+        let mut model = NamedModel::new();
+        let center = Vector3::from_array([
+            Scalar::from_f64(1.0),
+            Scalar::from_f64(-0.5),
+            Scalar::from_f64(0.5),
+        ]);
+        sphere_solid(&mut model, "t1", center, Scalar::from_f64(2.0)).unwrap();
         let topology = model.topology();
 
         assert_model_valid(topology);
         render(topology, 32, "offset_sphere_topology.html");
     }
-    #[test]
-    fn offset_sphere_is_valid() {
-        for_all_scalars!(check_offset_sphere_is_valid);
-    }
 
-    fn check_sphere_solid_normals_point_outward<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
-        let center = Vector3::from_array([S::ZERO; 3]);
-        sphere_solid(&mut model, "t2", center, S::ONE).unwrap();
+    #[test]
+    fn sphere_solid_normals_point_outward() {
+        let mut model = NamedModel::new();
+        let center = Vector3::from_array([Scalar::ZERO; 3]);
+        sphere_solid(&mut model, "t2", center, Scalar::ONE).unwrap();
         let topology = model.topology();
 
         for face in topology.faces.values() {
             let (u0, u1) = face.surface.domain_u();
             let (v0, v1) = face.surface.domain_v();
-            let mid_u = u0.add(u1.sub(u0).mul(S::from_f64(0.5)));
-            let mid_v = v0.add(v1.sub(v0).mul(S::from_f64(0.5)));
+            let mid_u = u0.add(u1.sub(u0).mul(Scalar::from_f64(0.5)));
+            let mid_v = v0.add(v1.sub(v0).mul(Scalar::from_f64(0.5)));
             let p = face.surface.evaluate(mid_u, mid_v).unwrap();
             let n = face.surface.normal(mid_u, mid_v).unwrap();
             let outward = p.sub(&center);
@@ -247,23 +255,22 @@ mod tests {
             assert!(dot > 0.0, "p={p:?}, n={n:?}, dot={dot}");
         }
     }
-    #[test]
-    fn sphere_solid_normals_point_outward() {
-        for_all_scalars!(check_sphere_solid_normals_point_outward);
-    }
 
-    fn check_sphere_solid_is_valid<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
-        sphere_solid(&mut model, "t3", Vector3::from_array([S::ZERO; 3]), S::ONE).unwrap();
+    #[test]
+    fn sphere_solid_is_valid() {
+        let mut model = NamedModel::new();
+        sphere_solid(
+            &mut model,
+            "t3",
+            Vector3::from_array([Scalar::ZERO; 3]),
+            Scalar::ONE,
+        )
+        .unwrap();
         let topology = model.topology();
         assert_eq!(topology.faces.len(), 8);
 
         assert_model_valid(topology);
         render(topology, 32, "sphere_topology.html");
-    }
-    #[test]
-    fn sphere_solid_is_valid() {
-        for_all_scalars!(check_sphere_solid_is_valid);
     }
 
     /// Every face must have a genuine interior — a point strictly inside its
@@ -277,10 +284,15 @@ mod tests {
     /// from the cause. Sampling the interior rather than the domain corners
     /// is what makes it bite: the corners of a degenerate patch still sit on
     /// the sphere.
-    fn check_sphere_solid_face_midpoints_are_on_the_sphere<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
-        let center = Vector3::from_array([S::from_f64(1.0), S::from_f64(-0.5), S::from_f64(0.5)]);
-        let radius = S::from_f64(2.0);
+    #[test]
+    fn sphere_solid_face_midpoints_are_on_the_sphere() {
+        let mut model = NamedModel::new();
+        let center = Vector3::from_array([
+            Scalar::from_f64(1.0),
+            Scalar::from_f64(-0.5),
+            Scalar::from_f64(0.5),
+        ]);
+        let radius = Scalar::from_f64(2.0);
         let solid = sphere_solid(&mut model, "t4", center, radius).unwrap();
         let topology = model.topology();
 
@@ -299,7 +311,7 @@ mod tests {
                 topology,
                 face_id,
                 20000,
-                S::from_f64(1e-4),
+                Scalar::from_f64(1e-4),
                 0x5EED,
             )
             .unwrap_or_else(|e| panic!("face {face_id} has no interior point: {e}"));
@@ -312,22 +324,23 @@ mod tests {
             );
         }
     }
-    #[test]
-    fn sphere_solid_face_midpoints_are_on_the_sphere() {
-        for_all_scalars!(check_sphere_solid_face_midpoints_are_on_the_sphere);
-    }
 
-    fn check_sphere_quadrant_surface_is_exact<S: Scalar>() {
-        let center = Vector3::from_array([S::from_f64(1.0), S::from_f64(-0.5), S::from_f64(0.5)]);
-        let radius = S::from_f64(2.0);
-        let north = center.add(&Vector3::from_array([S::ZERO, S::ZERO, radius]));
+    #[test]
+    fn sphere_quadrant_surface_is_exact() {
+        let center = Vector3::from_array([
+            Scalar::from_f64(1.0),
+            Scalar::from_f64(-0.5),
+            Scalar::from_f64(0.5),
+        ]);
+        let radius = Scalar::from_f64(2.0);
+        let north = center.add(&Vector3::from_array([Scalar::ZERO, Scalar::ZERO, radius]));
         let south = center.add(&Vector3::from_array([
-            S::ZERO,
-            S::ZERO,
-            S::ZERO.sub(radius),
+            Scalar::ZERO,
+            Scalar::ZERO,
+            Scalar::ZERO.sub(radius),
         ]));
-        let one = S::ONE;
-        let zero = S::ZERO;
+        let one = Scalar::ONE;
+        let zero = Scalar::ZERO;
         let cos_t = [one, zero, zero.sub(one), zero];
         let sin_t = [zero, one, zero, zero.sub(one)];
         let equator = |k: usize| {
@@ -337,7 +350,7 @@ mod tests {
                 zero,
             ]))
         };
-        let w = sqrt2_over_2::<S>();
+        let w = sqrt2_over_2();
         let radius_sq = radius.mul(radius);
 
         for k in 0..4 {
@@ -348,13 +361,13 @@ mod tests {
                         .unwrap();
                 for i in 0..=4 {
                     for j in 0..=4 {
-                        let u = S::from_ratio(i as i64, 4).unwrap();
-                        let v = S::from_ratio(j as i64, 4).unwrap();
+                        let u = Scalar::from_ratio(i as i64, 4).unwrap();
+                        let v = Scalar::from_ratio(j as i64, 4).unwrap();
                         let p = surface.evaluate(u, v).unwrap();
                         let d_sq = p.sub(&center).norm_sq();
                         let err = d_sq.sub(radius_sq).abs();
                         assert!(
-                            !err.definitely_greater(S::from_f64(1e-9)),
+                            !err.definitely_greater(Scalar::from_f64(1e-9)),
                             "k={k}, pole_at_v0={pole_at_v0}, u={u}, v={v}, p={p:?}, |p-center|^2={d_sq}, expected={radius_sq}"
                         );
                     }
@@ -362,29 +375,30 @@ mod tests {
             }
         }
     }
-    #[test]
-    fn sphere_quadrant_surface_is_exact() {
-        for_all_scalars!(check_sphere_quadrant_surface_is_exact);
-    }
 
     /// Every edge is an exact meridian (straight line through `center`'s
     /// axis) or an exact 90-degree equator arc, and every quadrant face is
     /// an exact degree-(2, 1) patch built from the same two kinds of curve
     /// — so, sampled anywhere (not just at control points), both must land
     /// exactly `radius` away from `center`.
-    fn check_sphere_solid_points_on_sphere<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
-        let center = Vector3::from_array([S::from_f64(1.0), S::from_f64(-0.5), S::from_f64(0.5)]);
-        let radius = S::from_f64(2.0);
+    #[test]
+    fn sphere_solid_points_on_sphere() {
+        let mut model = NamedModel::new();
+        let center = Vector3::from_array([
+            Scalar::from_f64(1.0),
+            Scalar::from_f64(-0.5),
+            Scalar::from_f64(0.5),
+        ]);
+        let radius = Scalar::from_f64(2.0);
         sphere_solid(&mut model, "t5", center, radius).unwrap();
         let topology = model.topology();
 
         let radius_sq = radius.mul(radius);
-        let assert_on_sphere = |p: Vector3<S>, ctx: &str| {
+        let assert_on_sphere = |p: Vector3, ctx: &str| {
             let d_sq = p.sub(&center).norm_sq();
             let err = d_sq.sub(radius_sq).abs();
             assert!(
-                !err.definitely_greater(S::from_f64(1e-9)),
+                !err.definitely_greater(Scalar::from_f64(1e-9)),
                 "{ctx}: p={p:?}, |p - center|^2={d_sq}, expected={radius_sq}"
             );
         };
@@ -392,7 +406,7 @@ mod tests {
         for edge in topology.edges.values() {
             let (t0, t1) = edge.curve.domain();
             for i in 0..=8 {
-                let t = t0.add(t1.sub(t0).mul(S::from_ratio(i as i64, 8).unwrap()));
+                let t = t0.add(t1.sub(t0).mul(Scalar::from_ratio(i as i64, 8).unwrap()));
                 let p = edge.curve.evaluate(t).unwrap();
                 assert_on_sphere(p, "edge sample");
             }
@@ -403,16 +417,12 @@ mod tests {
             let (v0, v1) = face.surface.domain_v();
             for i in 0..=8 {
                 for j in 0..=8 {
-                    let u = u0.add(u1.sub(u0).mul(S::from_ratio(i as i64, 8).unwrap()));
-                    let v = v0.add(v1.sub(v0).mul(S::from_ratio(j as i64, 8).unwrap()));
+                    let u = u0.add(u1.sub(u0).mul(Scalar::from_ratio(i as i64, 8).unwrap()));
+                    let v = v0.add(v1.sub(v0).mul(Scalar::from_ratio(j as i64, 8).unwrap()));
                     let p = face.surface.evaluate(u, v).unwrap();
                     assert_on_sphere(p, "surface sample");
                 }
             }
         }
-    }
-    #[test]
-    fn sphere_solid_points_on_sphere() {
-        for_all_scalars!(check_sphere_solid_points_on_sphere);
     }
 }

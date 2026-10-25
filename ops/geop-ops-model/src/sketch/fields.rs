@@ -7,19 +7,15 @@ use geop_core_math::{primitives::CoordinateSystem, scalars::Scalar, vector::Vect
 /// The area of `plane`'s `u`/`v` plane inside `outer` but outside `holes`,
 /// as triangles — to draw a region filled. No triangles for loops that do
 /// not triangulate.
-pub fn region<S: Scalar>(
-    plane: &CoordinateSystem<S>,
-    outer: &[Vector2<S>],
-    holes: &[Vec<Vector2<S>>],
-) -> Shape<S> {
-    let plain = |loop_: &[Vector2<S>]| -> Vec<[f64; 2]> {
+pub fn region(plane: &CoordinateSystem, outer: &[Vector2], holes: &[Vec<Vector2>]) -> Shape {
+    let plain = |loop_: &[Vector2]| -> Vec<[f64; 2]> {
         loop_
             .iter()
             .map(|p| [p[0].to_f64(), p[1].to_f64()])
             .collect()
     };
     let holes: Vec<Vec<[f64; 2]>> = holes.iter().map(|h| plain(h)).collect();
-    let at = |p: [f64; 2]| plane.uv_to_xyz(&Vector2::from_array(p.map(S::from_f64)));
+    let at = |p: [f64; 2]| plane.uv_to_xyz(&Vector2::from_array(p.map(Scalar::from_f64)));
     let triangles = geop_core_rasterize::triangulate_polygon(&plain(outer), &holes)
         .into_iter()
         .map(|t| t.map(at))

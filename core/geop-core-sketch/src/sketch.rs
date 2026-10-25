@@ -196,27 +196,26 @@ pub(crate) fn point_classes<P, K: Uses>(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Point<S: Scalar> {
+pub struct Point {
     #[serde(with = "as_f64")]
-    pub x: S,
+    pub x: Scalar,
     #[serde(with = "as_f64")]
-    pub y: S,
+    pub y: Scalar,
     /// Given rather than solved for: the solver never moves it (see the
     /// module docs).
     #[serde(default, skip_serializing_if = "is_false")]
     pub fixed: bool,
 }
 
-impl<S: Scalar> Point<S> {
-    pub fn xy(&self) -> Vector2<S> {
+impl Point {
+    pub fn xy(&self) -> Vector2 {
         Vector2::from_array([self.x, self.y])
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", bound = "S: Scalar")]
-pub enum CurveKind<S: Scalar> {
+#[serde(tag = "type")]
+pub enum CurveKind {
     Line {
         start: PointId,
         end: PointId,
@@ -229,12 +228,12 @@ pub enum CurveKind<S: Scalar> {
         start: PointId,
         end: PointId,
         #[serde(with = "as_f64")]
-        sweep: S,
+        sweep: Scalar,
     },
     Circle {
         center: PointId,
         #[serde(with = "as_f64")]
-        radius: S,
+        radius: Scalar,
     },
     /// A clamped B-spline through its first and last control points: as
     /// drawn, uniform and non-rational of degree
@@ -243,7 +242,7 @@ pub enum CurveKind<S: Scalar> {
     Spline {
         control_points: Vec<PointId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        shape: Option<SplineShape<S>>,
+        shape: Option<SplineShape>,
     },
 }
 
@@ -252,20 +251,18 @@ pub enum CurveKind<S: Scalar> {
 /// its clamped knot vector (`control_points + degree + 1` knots) and one
 /// weight per control point.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(bound = "S: Scalar")]
-pub struct SplineShape<S: Scalar> {
+pub struct SplineShape {
     pub degree: usize,
     #[serde(with = "as_f64::vec")]
-    pub knots: Vec<S>,
+    pub knots: Vec<Scalar>,
     #[serde(with = "as_f64::vec")]
-    pub weights: Vec<S>,
+    pub weights: Vec<Scalar>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Curve<S: Scalar> {
+pub struct Curve {
     #[serde(flatten)]
-    pub kind: CurveKind<S>,
+    pub kind: CurveKind,
     /// Construction geometry takes part in constraints but not in profiles
     /// (e.g. a revolve axis or a symmetry line).
     #[serde(default)]
@@ -276,13 +273,13 @@ pub struct Curve<S: Scalar> {
     pub fixed: bool,
 }
 
-impl<S: Scalar> Uses for Curve<S> {
+impl Uses for Curve {
     fn points(&self) -> Vec<PointId> {
         Curve::points(self)
     }
 }
 
-impl<S: Scalar> Curve<S> {
+impl Curve {
     /// The points this curve is defined by.
     pub fn points(&self) -> Vec<PointId> {
         match &self.kind {
@@ -311,8 +308,8 @@ impl<S: Scalar> Curve<S> {
 /// The typical CAD sketch constraints. Distances and lengths are in sketch
 /// units, angles in radians.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", bound = "S: Scalar")]
-pub enum Constraint<S: Scalar> {
+#[serde(tag = "type")]
+pub enum Constraint {
     /// `a` and `b` are the same point.
     Coincident {
         a: PointId,
@@ -380,60 +377,60 @@ pub enum Constraint<S: Scalar> {
     Fix {
         point: PointId,
         #[serde(with = "as_f64")]
-        x: S,
+        x: Scalar,
         #[serde(with = "as_f64")]
-        y: S,
+        y: Scalar,
     },
     Distance {
         a: PointId,
         b: PointId,
         #[serde(with = "as_f64")]
-        value: S,
+        value: Scalar,
     },
     /// `b.x - a.x = value`.
     DistanceX {
         a: PointId,
         b: PointId,
         #[serde(with = "as_f64")]
-        value: S,
+        value: Scalar,
     },
     /// `b.y - a.y = value`.
     DistanceY {
         a: PointId,
         b: PointId,
         #[serde(with = "as_f64")]
-        value: S,
+        value: Scalar,
     },
     PointLineDistance {
         point: PointId,
         line: CurveId,
         #[serde(with = "as_f64")]
-        value: S,
+        value: Scalar,
     },
     /// Length of a line or arc.
     Length {
         curve: CurveId,
         #[serde(with = "as_f64")]
-        value: S,
+        value: Scalar,
     },
     /// Radius of a circle or arc.
     Radius {
         curve: CurveId,
         #[serde(with = "as_f64")]
-        value: S,
+        value: Scalar,
     },
     /// Diameter of a circle or arc.
     Diameter {
         curve: CurveId,
         #[serde(with = "as_f64")]
-        value: S,
+        value: Scalar,
     },
     /// The counter-clockwise angle from line `a`'s direction to line `b`'s.
     Angle {
         a: CurveId,
         b: CurveId,
         #[serde(with = "as_f64")]
-        value: S,
+        value: Scalar,
     },
     /// `b` is `a` moved the way `by` carries its start onto its end: along
     /// a line, shifted by it; round an arc, turned about the arc's center
@@ -457,11 +454,11 @@ pub enum Constraint<S: Scalar> {
         a: CurveId,
         b: CurveId,
         #[serde(with = "as_f64")]
-        value: S,
+        value: Scalar,
     },
 }
 
-impl<S: Scalar> Uses for Constraint<S> {
+impl Uses for Constraint {
     fn points(&self) -> Vec<PointId> {
         Constraint::points(self)
     }
@@ -478,10 +475,10 @@ impl<S: Scalar> Uses for Constraint<S> {
     }
 }
 
-impl<S: Scalar> Constraint<S> {
+impl Constraint {
     /// The dimension it holds, if it holds one — an angle in radians: what
     /// a dialog edits.
-    pub fn value(&self) -> Option<S> {
+    pub fn value(&self) -> Option<Scalar> {
         use Constraint::*;
         match *self {
             Distance { value, .. }
@@ -499,7 +496,7 @@ impl<S: Scalar> Constraint<S> {
 
     /// Gives its dimension the value `v` — an angle in radians; nothing for
     /// one without.
-    pub fn set_value(&mut self, v: S) {
+    pub fn set_value(&mut self, v: Scalar) {
         use Constraint::*;
         match self {
             Distance { value, .. }
@@ -565,7 +562,7 @@ impl<S: Scalar> Constraint<S> {
 
 /// Every point's `[x, y]`, by [`PointId`]: the sketch's own positions, as
 /// drawn (see [`Sketch::positions`]).
-pub type Positions<S> = BTreeMap<PointId, Vector2<S>>;
+pub type Positions = BTreeMap<PointId, Vector2>;
 
 /// A sketch's geometry as the kernel builds on it: every point, and every
 /// arc's sweep and circle's radius. Solved (see [`Sketch::enclose`]), each
@@ -573,28 +570,23 @@ pub type Positions<S> = BTreeMap<PointId, Vector2<S>>;
 /// [`Enclosure::as_drawn`]), each is the sketch's own value, sharp. A rigid
 /// motion of either is one too (see [`crate::ProfileLoop::to_nurbs`]).
 #[derive(Clone, Debug, PartialEq)]
-pub struct Enclosure<S: Scalar> {
-    pub points: BTreeMap<PointId, Vector2<S>>,
+pub struct Enclosure {
+    pub points: BTreeMap<PointId, Vector2>,
     /// An arc's sweep, a circle's radius.
-    pub params: BTreeMap<CurveId, S>,
+    pub params: BTreeMap<CurveId, Scalar>,
 }
 
-impl<S: Scalar> Enclosure<S> {
-    /// `sketch`'s geometry exactly as drawn — in the scalar type `S`, the
-    /// sketch's own values as enclosures there (see [`Scalar::cast`]).
-    pub fn as_drawn<D: Scalar>(sketch: &Sketch<D>) -> Self {
+impl Enclosure {
+    /// `sketch`'s geometry exactly as drawn: the sketch's own values.
+    pub fn as_drawn(sketch: &Sketch) -> Self {
         Enclosure {
-            points: sketch
-                .points
-                .iter()
-                .map(|(&id, p)| (id, p.xy().map(|c| c.cast())))
-                .collect(),
+            points: sketch.points.iter().map(|(&id, p)| (id, p.xy())).collect(),
             params: sketch
                 .curves
                 .iter()
                 .filter_map(|(&id, c)| match c.kind {
-                    CurveKind::Arc { sweep, .. } => Some((id, sweep.cast())),
-                    CurveKind::Circle { radius, .. } => Some((id, radius.cast())),
+                    CurveKind::Arc { sweep, .. } => Some((id, sweep)),
+                    CurveKind::Circle { radius, .. } => Some((id, radius)),
                     _ => None,
                 })
                 .collect(),
@@ -611,48 +603,36 @@ impl<S: Scalar> Enclosure<S> {
 /// it) keep referring to "that line" while the sketch is edited around it.
 /// The maps are ordered, so a serialized sketch is deterministic and diffs
 /// line by line.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Sketch<S: Scalar> {
-    pub points: BTreeMap<PointId, Point<S>>,
-    pub curves: BTreeMap<CurveId, Curve<S>>,
-    pub constraints: BTreeMap<ConstraintId, Constraint<S>>,
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Sketch {
+    pub points: BTreeMap<PointId, Point>,
+    pub curves: BTreeMap<CurveId, Curve>,
+    pub constraints: BTreeMap<ConstraintId, Constraint>,
     /// The id the next added entity gets; greater than every id in use. One
     /// counter for all three kinds, so an id `add_*` hands out is unique
     /// across the sketch.
     pub next_id: u64,
 }
 
-impl<S: Scalar> Default for Sketch<S> {
-    fn default() -> Self {
-        Sketch {
-            points: BTreeMap::new(),
-            curves: BTreeMap::new(),
-            constraints: BTreeMap::new(),
-            next_id: 0,
-        }
-    }
-}
-
-impl<S: Scalar> Sketch<S> {
+impl Sketch {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn point(&self, id: PointId) -> GeopResult<&Point<S>> {
+    pub fn point(&self, id: PointId) -> GeopResult<&Point> {
         self.points
             .get(&id)
             .ok_or_else(|| GeopError::new(format!("sketch has no point {id}")))
     }
 
-    pub fn curve(&self, id: CurveId) -> GeopResult<&Curve<S>> {
+    pub fn curve(&self, id: CurveId) -> GeopResult<&Curve> {
         self.curves
             .get(&id)
             .ok_or_else(|| GeopError::new(format!("sketch has no curve {id}")))
     }
 
     /// Every point's `[x, y]`.
-    pub fn positions(&self) -> Positions<S> {
+    pub fn positions(&self) -> Positions {
         self.points.iter().map(|(&id, p)| (id, p.xy())).collect()
     }
 
@@ -662,7 +642,7 @@ impl<S: Scalar> Sketch<S> {
         id
     }
 
-    pub fn add_point(&mut self, x: S, y: S) -> PointId {
+    pub fn add_point(&mut self, x: Scalar, y: Scalar) -> PointId {
         let id = PointId(self.fresh_id());
         self.points.insert(id, Point { x, y, fixed: false });
         id
@@ -670,19 +650,19 @@ impl<S: Scalar> Sketch<S> {
 
     /// A point at `at`, as drawn.
     pub fn new_point_at(&mut self, at: [f64; 2]) -> PointId {
-        self.add_point(S::from_f64(at[0]), S::from_f64(at[1]))
+        self.add_point(Scalar::from_f64(at[0]), Scalar::from_f64(at[1]))
     }
 
     /// A point given from outside the sketch, at `(x, y)` (see the module
     /// docs).
-    pub fn add_fixed_point(&mut self, x: S, y: S) -> PointId {
+    pub fn add_fixed_point(&mut self, x: Scalar, y: Scalar) -> PointId {
         let id = PointId(self.fresh_id());
         self.points.insert(id, Point { x, y, fixed: true });
         id
     }
 
     /// Adds a curve of `kind`, profile geometry, solved for.
-    pub fn add_curve(&mut self, kind: CurveKind<S>) -> CurveId {
+    pub fn add_curve(&mut self, kind: CurveKind) -> CurveId {
         let id = CurveId(self.fresh_id());
         self.curves.insert(
             id,
@@ -701,11 +681,11 @@ impl<S: Scalar> Sketch<S> {
 
     /// An arc from `start` to `end`, turning counter-clockwise by `sweep`
     /// radians (clockwise if negative).
-    pub fn add_arc(&mut self, start: PointId, end: PointId, sweep: S) -> CurveId {
+    pub fn add_arc(&mut self, start: PointId, end: PointId, sweep: Scalar) -> CurveId {
         self.add_curve(CurveKind::Arc { start, end, sweep })
     }
 
-    pub fn add_circle(&mut self, center: PointId, radius: S) -> CurveId {
+    pub fn add_circle(&mut self, center: PointId, radius: Scalar) -> CurveId {
         self.add_curve(CurveKind::Circle { center, radius })
     }
 
@@ -722,7 +702,7 @@ impl<S: Scalar> Sketch<S> {
         }
     }
 
-    pub fn constrain(&mut self, constraint: Constraint<S>) -> ConstraintId {
+    pub fn constrain(&mut self, constraint: Constraint) -> ConstraintId {
         let id = ConstraintId(self.fresh_id());
         self.constraints.insert(id, constraint);
         id
@@ -778,7 +758,8 @@ impl<S: Scalar> Sketch<S> {
                     )));
                 }
                 CurveKind::Arc { sweep, .. }
-                    if !sweep.is_finite() || !sweep.abs().definitely_less(S::TWO.mul(S::PI)) =>
+                    if !sweep.is_finite()
+                        || !sweep.abs().definitely_less(Scalar::TWO.mul(Scalar::PI)) =>
                 {
                     return Err(GeopError::new(format!(
                         "arc {i} has sweep {sweep:?}, which is not definitely within (-2π, 2π)"
@@ -798,7 +779,10 @@ impl<S: Scalar> Sketch<S> {
                         || shape.degree >= n
                         || shape.knots.len() != n + shape.degree + 1
                         || shape.weights.len() != n
-                        || !shape.weights.iter().all(|w| w.definitely_greater(S::ZERO))
+                        || !shape
+                            .weights
+                            .iter()
+                            .all(|w| w.definitely_greater(Scalar::ZERO))
                     {
                         return Err(GeopError::new(format!(
                             "spline {i} of {n} control points has an inconsistent shape: {shape:?}"
@@ -817,7 +801,7 @@ impl<S: Scalar> Sketch<S> {
 
     /// Whether `c` could be a constraint of the sketch: its points and
     /// curves are there, and of the kinds it constrains.
-    pub fn validate_constraint(&self, c: &Constraint<S>) -> GeopResult<()> {
+    pub fn validate_constraint(&self, c: &Constraint) -> GeopResult<()> {
         use Constraint::*;
         for p in c.points() {
             self.point(p)?;

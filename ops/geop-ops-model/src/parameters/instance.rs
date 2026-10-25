@@ -8,7 +8,7 @@
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::Pose,
-    scalars::Scalar,
+    scalars::Number,
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
@@ -16,7 +16,7 @@ use geop_core_program::{
     placed::{INSTANCE_SEPARATOR, Located, instance_path},
     reader::Reader,
     target::{Target, TargetReference},
-    values::{Design, Settings, StateValue, pose_in},
+    values::{Settings, StateValue, pose_in},
 };
 
 /// Where an instance is in the part it is in.
@@ -28,7 +28,7 @@ pub enum Placement {
     /// `motion` after where the instance `of` of the same part is: a copy,
     /// which goes with what it copies. Only where it is: what is in it is
     /// run for itself, with its own state.
-    After { of: String, motion: Pose<Design> },
+    After { of: String, motion: Pose },
 }
 
 /// An instance placed, as its target holds it: where it is, and the file
@@ -103,7 +103,7 @@ pub enum Factor {
     State { state: String, value: StateValue },
     /// A motion nothing in the part read moves: a copy's after what it
     /// copies.
-    Fixed(Pose<Design>),
+    Fixed(Pose),
 }
 
 /// How deep a chain of copies may go before it is taken for a cycle.
@@ -163,19 +163,19 @@ fn placed(
 /// How the pose of each state a placement reads enters it, computed in
 /// `T`: as it is, or moved by a step to differentiate by it. Given the
 /// state's name and the pose it holds.
-pub type PoseOf<'f, T> = dyn FnMut(&str, Pose<Design>) -> Pose<T> + 'f;
+pub type PoseOf<'f, T> = dyn FnMut(&str, Pose) -> Pose<T> + 'f;
 
 /// The pose an instance is at whose placement is `factors` (see
 /// [`placement`]), in `T`: theirs,
 /// composed outermost first, each state's entering as `pose_of` has it. A
 /// value that holds no pose — a state before anything solved for it —
 /// is no motion.
-pub fn compose<T: Scalar>(factors: &[Factor], pose_of: &mut PoseOf<'_, T>) -> Pose<T> {
+pub fn compose<T: Number>(factors: &[Factor], pose_of: &mut PoseOf<'_, T>) -> Pose<T> {
     let mut poses = factors.iter().map(|factor| match factor {
         Factor::State { state, value } => {
             pose_of(state, pose_in(value).unwrap_or_else(Pose::identity))
         }
-        Factor::Fixed(motion) => motion.cast(),
+        Factor::Fixed(motion) => motion.map(T::from_scalar),
     });
     // The first as it is: composing it after no motion would round it.
     let first = poses.next().unwrap_or_else(Pose::identity);
@@ -184,7 +184,7 @@ pub fn compose<T: Scalar>(factors: &[Factor], pose_of: &mut PoseOf<'_, T>) -> Po
 
 /// Where the instance at `path` is in the part `reader` reads: none — no
 /// motion — for the part itself, at the empty path.
-pub fn located(reader: &Reader, path: &str) -> GeopResult<Pose<Design>> {
+pub fn located(reader: &Reader, path: &str) -> GeopResult<Pose> {
     if path.is_empty() {
         return Ok(Pose::identity());
     }

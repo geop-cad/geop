@@ -22,7 +22,7 @@ const NEWTON_STEPS: usize = 40;
 /// the search stops.
 const HALVINGS: usize = 10;
 
-impl<S: Scalar> NurbSurface<S, 4> {
+impl NurbSurface<4> {
     /// The point of the (untrimmed) surface nearest `target`, with its
     /// parameters.
     ///
@@ -33,14 +33,14 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// of which point of the surface is returned, so every iterate is
     /// sharp: the point returned lies on the surface, and its distance to
     /// `target` is attained.
-    pub fn closest_point(&self, target: &Vector3<S>) -> GeopResult<(S, S, Vector3<S>)> {
+    pub fn closest_point(&self, target: &Vector3) -> GeopResult<(Scalar, Scalar, Vector3)> {
         let nearest = least_distance(
             vec![PointPiece(*target)],
             vec![SurfacePatch(self.clone())],
-            self.size()?.mul(S::from_f64(NEAREST_HANDOFF)),
+            self.size()?.mul(Scalar::from_f64(NEAREST_HANDOFF)),
             MAX_NODES,
         )?;
-        let distance = |p: &Vector3<S>| p.sub(target).norm_sq().to_f64();
+        let distance = |p: &Vector3| p.sub(target).norm_sq().to_f64();
         let ((mut u, mut v), mut p) = nearest.b;
         for ((), (su, sv)) in nearest.candidates {
             let (ru, rv) = self.refine_closest(target, su, sv)?;
@@ -61,10 +61,16 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// one parameter that still moves the point. A step that does not
     /// bring the point nearer is halved, and the search stops once halving
     /// does not help. Every iterate is clamped into the domain.
-    pub fn refine_closest(&self, target: &Vector3<S>, u: S, v: S) -> GeopResult<(S, S)> {
+    pub fn refine_closest(
+        &self,
+        target: &Vector3,
+        u: Scalar,
+        v: Scalar,
+    ) -> GeopResult<(Scalar, Scalar)> {
         let ((u_lo, u_hi), (v_lo, v_hi)) = (self.domain_u(), self.domain_v());
-        let positive = |a: S, b: S, c: S| {
-            a.definitely_greater(S::ZERO) && a.mul(c).sub(b.mul(b)).definitely_greater(S::ZERO)
+        let positive = |a: Scalar, b: Scalar, c: Scalar| {
+            a.definitely_greater(Scalar::ZERO)
+                && a.mul(c).sub(b.mul(b)).definitely_greater(Scalar::ZERO)
         };
         descend(
             (u, v),
@@ -89,14 +95,14 @@ impl<S: Scalar> NurbSurface<S, 4> {
                     solve_symmetric2((h11, h12, h22), downhill)?
                 } else if positive(a11, a12, a22) {
                     solve_symmetric2((a11, a12, a22), downhill)?
-                } else if a11.definitely_greater(S::ZERO) {
-                    (gu.neg().div(a11)?, S::ZERO)
-                } else if a22.definitely_greater(S::ZERO) {
-                    (S::ZERO, gv.neg().div(a22)?)
+                } else if a11.definitely_greater(Scalar::ZERO) {
+                    (gu.neg().div(a11)?, Scalar::ZERO)
+                } else if a22.definitely_greater(Scalar::ZERO) {
+                    (Scalar::ZERO, gv.neg().div(a22)?)
                 } else {
                     return Ok(None);
                 };
-                Ok(Some(move |scale: S| {
+                Ok(Some(move |scale: Scalar| {
                     (
                         u.add(du.mul(scale)).sharpen().clamped(u_lo, u_hi),
                         v.add(dv.mul(scale)).sharpen().clamped(v_lo, v_hi),
@@ -110,7 +116,7 @@ impl<S: Scalar> NurbSurface<S, 4> {
 #[cfg(test)]
 mod tests {
     use geop_core_math::{
-        scalars::{ScalInF64 as S, Scalar},
+        scalars::Scalar,
         vector::{Vector3, Vector4},
     };
 
@@ -118,10 +124,10 @@ mod tests {
 
     /// A quarter of a cylinder of radius 1 about z, from +x to +y, from
     /// z = 0 to 2: degree 2 around, 1 along.
-    fn quarter_cylinder() -> NurbSurface3D<S> {
+    fn quarter_cylinder() -> NurbSurface3D {
         let w = std::f64::consts::FRAC_1_SQRT_2;
         let h = |x: f64, y: f64, z: f64, w: f64| {
-            Vector4::from_array([x * w, y * w, z * w, w].map(S::from_f64))
+            Vector4::from_array([x * w, y * w, z * w, w].map(Scalar::from_f64))
         };
         let mut points = Vec::new();
         for (x, y, wt) in [(1.0, 0.0, 1.0), (1.0, 1.0, w), (0.0, 1.0, 1.0)] {
@@ -129,7 +135,7 @@ mod tests {
                 points.push(h(x, y, z, wt));
             }
         }
-        let knots = |k: &[f64]| k.iter().map(|&k| S::from_f64(k)).collect();
+        let knots = |k: &[f64]| k.iter().map(|&k| Scalar::from_f64(k)).collect();
         NurbSurface3D::try_new(
             2,
             1,
@@ -145,10 +151,10 @@ mod tests {
     #[test]
     fn nearest_point_of_a_cylinder() {
         let surface = quarter_cylinder();
-        let target = Vector3::from_array([2.0, 0.5, 0.5].map(S::from_f64));
+        let target = Vector3::from_array([2.0, 0.5, 0.5].map(Scalar::from_f64));
         let (_, _, p) = surface.closest_point(&target).unwrap();
         let r = 4.25f64.sqrt();
-        let expected = Vector3::from_array([2.0 / r, 0.5 / r, 0.5].map(S::from_f64));
+        let expected = Vector3::from_array([2.0 / r, 0.5 / r, 0.5].map(Scalar::from_f64));
         assert!(p.sub(&expected).norm().to_f64() < 1e-12, "{p:?}");
     }
 }

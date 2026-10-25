@@ -41,7 +41,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_program::{element::ElementReference, reader::Reader, values::Design};
+use geop_core_program::{element::ElementReference, reader::Reader};
 use geop_core_topology::{FaceId, Model};
 use geop_ops_model::placed::placed_parts;
 use geop_ops_model::{NamedModel, Threads, model, threads};
@@ -56,27 +56,27 @@ use crate::{
 };
 
 /// The faces of one part, where it is placed.
-pub struct Body<'p, S: Scalar> {
+pub struct Body<'p> {
     /// Where it is placed, as the entities of a placed part are named: `""`
     /// for the drawn part's own faces, `screw` for the part placed as
     /// `screw`, `arm/screw` for one placed in that.
     pub path: String,
     /// Its part's model, which names its entities.
-    pub named: &'p NamedModel<S>,
+    pub named: &'p NamedModel,
     /// Its part's cosmetic threads, if it records any.
-    pub threads: Option<&'p Threads<S>>,
+    pub threads: Option<&'p Threads>,
     pub faces: Vec<FaceId>,
     /// Where its part is placed; `None` for the drawn part's own faces.
-    pub pose: Option<Pose<S>>,
+    pub pose: Option<Pose>,
 }
 
-impl<'p, S: Scalar> Body<'p, S> {
-    pub fn model(&self) -> &'p Model<S> {
+impl<'p> Body<'p> {
+    pub fn model(&self) -> &'p Model {
         self.named.topology()
     }
 
     /// How it is turned, if it is turned at all.
-    fn turn(&self) -> Option<Quaternion<S>> {
+    fn turn(&self) -> Option<Quaternion> {
         self.pose
             .as_ref()
             .map(|p| p.rotation())
@@ -93,27 +93,27 @@ pub(crate) struct Reach {
 }
 
 /// The bodies a drawing draws, and what seeing them needs.
-pub struct Scene<'p, S: Scalar> {
-    pub bodies: Vec<Body<'p, S>>,
+pub struct Scene<'p> {
+    pub bodies: Vec<Body<'p>>,
     /// Per body, moving its part's geometry to where it is placed, and
     /// back; `None` for the drawn part's own.
-    there: Vec<Option<Motion<S>>>,
-    back: Vec<Option<Motion<S>>>,
+    there: Vec<Option<Motion>>,
+    back: Vec<Option<Motion>>,
     /// The faces that can hide something, once per model; body `k`'s are
     /// `occluders[occluders_of[k]]`, in its part's own frame.
-    occluders: Vec<Vec<Occluder<S>>>,
+    occluders: Vec<Vec<Occluder>>,
     occluders_of: Vec<usize>,
     /// The corners of each body's box, where it is placed.
-    corners: Vec<[Vector3<S>; 8]>,
+    corners: Vec<[Vector3; 8]>,
     /// The ray length that clears every body from anywhere on them.
-    length: S,
+    length: Scalar,
 }
 
-impl<'p, S: Scalar> Scene<'p, S> {
+impl<'p> Scene<'p> {
     /// The scene of `bodies`.
-    pub fn new(bodies: Vec<Body<'p, S>>) -> GeopResult<Self> {
-        let mut occluders: Vec<Vec<Occluder<S>>> = Vec::new();
-        let mut models: Vec<&Model<S>> = Vec::new();
+    pub fn new(bodies: Vec<Body<'p>>) -> GeopResult<Self> {
+        let mut occluders: Vec<Vec<Occluder>> = Vec::new();
+        let mut models: Vec<&Model> = Vec::new();
         let mut occluders_of = Vec::new();
         let mut corners = Vec::new();
         let (mut there, mut back) = (Vec::new(), Vec::new());
@@ -137,7 +137,7 @@ impl<'p, S: Scalar> Scene<'p, S> {
             let (lo, hi) = occluders_bounds(&occluders[index]);
             corners.push(std::array::from_fn(|i| {
                 let c = Vector3::from_array(std::array::from_fn(|k| {
-                    S::from_f64(if (i >> k) & 1 == 1 { hi[k] } else { lo[k] })
+                    Scalar::from_f64(if (i >> k) & 1 == 1 { hi[k] } else { lo[k] })
                 }));
                 match &motion {
                     Some(m) => m.apply(&c),
@@ -159,7 +159,7 @@ impl<'p, S: Scalar> Scene<'p, S> {
         let length = match bodies.len() {
             // One body: as a view of its model alone has it.
             1 => ray_length(&occluders[0]),
-            _ => S::from_f64(2.0 * diagonal + 1.0),
+            _ => Scalar::from_f64(2.0 * diagonal + 1.0),
         };
         Ok(Scene {
             bodies,
@@ -176,14 +176,14 @@ impl<'p, S: Scalar> Scene<'p, S> {
     /// lies on: wholly on the side `normal` points to (`Some(true)`),
     /// wholly on the other (`Some(false)`), or on both, or touching it
     /// (`None`).
-    pub fn side_of(&self, k: usize, origin: &Vector3<S>, normal: &Vector3<S>) -> Option<bool> {
-        let heights: Vec<S> = self.corners[k]
+    pub fn side_of(&self, k: usize, origin: &Vector3, normal: &Vector3) -> Option<bool> {
+        let heights: Vec<Scalar> = self.corners[k]
             .iter()
             .map(|c| c.sub(origin).prod_dot(normal))
             .collect();
-        if heights.iter().all(|h| h.definitely_greater(S::ZERO)) {
+        if heights.iter().all(|h| h.definitely_greater(Scalar::ZERO)) {
             Some(true)
-        } else if heights.iter().all(|h| h.definitely_less(S::ZERO)) {
+        } else if heights.iter().all(|h| h.definitely_less(Scalar::ZERO)) {
             Some(false)
         } else {
             None
@@ -209,10 +209,10 @@ impl<'p, S: Scalar> Scene<'p, S> {
     }
 
     /// `frame` as the part of body `k` sees it, in its own frame.
-    fn local_frame(&self, k: usize, frame: &ViewFrame<S>) -> ViewFrame<S> {
+    fn local_frame(&self, k: usize, frame: &ViewFrame) -> ViewFrame {
         match (&self.back[k], self.bodies[k].turn()) {
             (Some(back), Some(_)) => {
-                let turn = |axis: &ViewAxis<S>| ViewAxis::General(back.rotate(&axis.vector()));
+                let turn = |axis: &ViewAxis| ViewAxis::General(back.rotate(&axis.vector()));
                 ViewFrame {
                     direction: turn(&frame.direction),
                     right: turn(&frame.right),
@@ -225,12 +225,7 @@ impl<'p, S: Scalar> Scene<'p, S> {
 
     /// The line `line` of body `k`'s part, in its own frame, where the body
     /// is, seen through `frame`.
-    fn placed_line(
-        &self,
-        k: usize,
-        line: &ViewLine<S>,
-        frame: &ViewFrame<S>,
-    ) -> GeopResult<ViewLine<S>> {
+    fn placed_line(&self, k: usize, line: &ViewLine, frame: &ViewFrame) -> GeopResult<ViewLine> {
         let (curve3, curve) = match &self.there[k] {
             Some(motion) => {
                 let curve3 = line.curve3.transform(motion);
@@ -253,11 +248,7 @@ impl<'p, S: Scalar> Scene<'p, S> {
 
     /// Every body seen through `frame`, each line visible or hidden: see
     /// the module docs.
-    pub fn project(
-        &self,
-        frame: &ViewFrame<S>,
-        options: &ViewOptions,
-    ) -> GeopResult<ProjectedView<S>> {
+    pub fn project(&self, frame: &ViewFrame, options: &ViewOptions) -> GeopResult<ProjectedView> {
         let mut lines = Vec::new();
         let mut behind = vec![false; self.bodies.len()];
         for group in self.groups() {
@@ -294,9 +285,9 @@ impl<'p, S: Scalar> Scene<'p, S> {
     /// is hidden whole, hides nothing the other does not, and each of its
     /// lines lies on one of the other's. A row of screws seen from its end
     /// draws one.
-    fn mark_copies_behind(&self, group: &[usize], frame: &ViewFrame<S>, behind: &mut [bool]) {
+    fn mark_copies_behind(&self, group: &[usize], frame: &ViewFrame, behind: &mut [bool]) {
         let toward_eye = frame.toward_eye();
-        let at: Vec<Vector3<S>> = group
+        let at: Vec<Vector3> = group
             .iter()
             .map(|&k| {
                 self.bodies[k]
@@ -320,7 +311,7 @@ impl<'p, S: Scalar> Scene<'p, S> {
     }
 
     /// How `frame` sees each body.
-    fn reach(&self, frame: &ViewFrame<S>) -> Vec<Reach> {
+    fn reach(&self, frame: &ViewFrame) -> Vec<Reach> {
         let toward_eye = frame.toward_eye();
         self.corners
             .iter()
@@ -352,8 +343,8 @@ impl<'p, S: Scalar> Scene<'p, S> {
         &self,
         bodies: impl IntoIterator<Item = usize>,
         reach: &[Reach],
-        frame: &ViewFrame<S>,
-        point: Vector3<S>,
+        frame: &ViewFrame,
+        point: Vector3,
     ) -> GeopResult<bool> {
         let toward_eye = frame.toward_eye();
         let depth = toward_eye.prod_dot(&point).lower().to_f64();
@@ -391,7 +382,7 @@ impl<'p, S: Scalar> Scene<'p, S> {
     /// Whether `point` is seen through `frame`, every body in front of it
     /// counted: what decides a line drawn that is no edge or silhouette of
     /// a body, such as a cosmetic thread.
-    pub fn point_seen(&self, frame: &ViewFrame<S>, point: Vector3<S>) -> GeopResult<bool> {
+    pub fn point_seen(&self, frame: &ViewFrame, point: Vector3) -> GeopResult<bool> {
         let reach = self.reach(frame);
         Ok(!self.hidden_by(0..self.bodies.len(), &reach, frame, point)?)
     }
@@ -412,11 +403,11 @@ impl<'p, S: Scalar> Scene<'p, S> {
     /// no lines and hide nothing.
     fn together(
         &self,
-        lines: Vec<ViewLine<S>>,
+        lines: Vec<ViewLine>,
         behind: &[bool],
-        frame: &ViewFrame<S>,
+        frame: &ViewFrame,
         options: &ViewOptions,
-    ) -> GeopResult<Vec<ViewLine<S>>> {
+    ) -> GeopResult<Vec<ViewLine>> {
         let n = self.bodies.len();
         let reach = self.reach(frame);
         let boxes: Vec<_> = lines.iter().map(|l| bounds(&l.curve)).collect();
@@ -436,7 +427,7 @@ impl<'p, S: Scalar> Scene<'p, S> {
         let toward_eye = frame.toward_eye();
         // How near the eye the farthest point of a curve could be: a body
         // that comes no nearer cannot hide any of it.
-        let farthest = |curve3: &NurbCurve3D<S>| -> GeopResult<f64> {
+        let farthest = |curve3: &NurbCurve3D| -> GeopResult<f64> {
             let mut depth = f64::INFINITY;
             for q in &curve3.control_points {
                 let p = Vector3::from_array([q[0].div(q[3])?, q[1].div(q[3])?, q[2].div(q[3])?]);
@@ -477,7 +468,7 @@ impl<'p, S: Scalar> Scene<'p, S> {
                         let (on_line, _) = meetings(
                             (&curve, &curve3),
                             (&other.curve, &other.curve3),
-                            S::from_f64(COARSE_SUBDIVISION),
+                            Scalar::from_f64(COARSE_SUBDIVISION),
                         )
                         .map_err(|e| {
                             e.with_context(format!(
@@ -510,13 +501,13 @@ impl<'p, S: Scalar> Scene<'p, S> {
                 }
             }
             // Back in order along the line, neighbours alike joined.
-            let mut pieces: Vec<(S, S, bool)> = seen
+            let mut pieces: Vec<(Scalar, Scalar, bool)> = seen
                 .into_iter()
                 .map(|(a, z)| (a, z, true))
                 .chain(hidden.into_iter().map(|(a, z)| (a, z, false)))
                 .collect();
             pieces.sort_by(|p, q| p.0.to_f64().total_cmp(&q.0.to_f64()));
-            let mut decided: Vec<(S, S, bool)> = Vec::new();
+            let mut decided: Vec<(Scalar, Scalar, bool)> = Vec::new();
             for (a, z, visible) in pieces {
                 match decided.last_mut() {
                     Some(last) if last.2 == visible => last.1 = z,
@@ -555,17 +546,17 @@ impl<'p, S: Scalar> Scene<'p, S> {
     /// be decided takes the visibility of its nearest neighbour.
     fn decide(
         &self,
-        line: &ViewLine<S>,
-        ends: &[S],
+        line: &ViewLine,
+        ends: &[Scalar],
         b: usize,
         reach: &[Reach],
-        frame: &ViewFrame<S>,
-    ) -> GeopResult<Vec<(S, S, bool)>> {
-        let mut pieces: Vec<(S, S, GeopResult<bool>)> = Vec::new();
+        frame: &ViewFrame,
+    ) -> GeopResult<Vec<(Scalar, Scalar, bool)>> {
+        let mut pieces: Vec<(Scalar, Scalar, GeopResult<bool>)> = Vec::new();
         for pair in ends.windows(2) {
             let (lo, hi) = (pair[0], pair[1]);
             let at = |f: f64| -> GeopResult<bool> {
-                let t = S::fraction(lo, hi, S::from_f64(f));
+                let t = Scalar::fraction(lo, hi, Scalar::from_f64(f));
                 let point = line.curve3.evaluate(t)?;
                 Ok(!self.hidden_by([b], reach, frame, point)?)
             };
@@ -607,7 +598,7 @@ impl<'p, S: Scalar> Scene<'p, S> {
 /// Whether two turns are the same: no turn at all, or rotations enclosed
 /// alike, bound for bound. Sharing a view between rotations that are merely
 /// close would draw one with the other's lines.
-fn same_turn<S: Scalar>(a: Option<Quaternion<S>>, b: Option<Quaternion<S>>) -> bool {
+fn same_turn(a: Option<Quaternion>, b: Option<Quaternion>) -> bool {
     match (a, b) {
         (None, None) => true,
         (Some(a), Some(b)) => a.components().iter().zip(b.components()).all(|(x, y)| {
@@ -617,7 +608,7 @@ fn same_turn<S: Scalar>(a: Option<Quaternion<S>>, b: Option<Quaternion<S>>) -> b
     }
 }
 
-impl<'p> Scene<'p, Design> {
+impl<'p> Scene<'p> {
     /// The faces of the part `reader` reads and of every part placed in
     /// it, however deep, each where it is placed: the part's own first,
     /// then those placed, in the order they were placed, each followed by
@@ -638,20 +629,20 @@ impl<'p> Scene<'p, Design> {
 fn push<'p>(
     reader: &Reader<'p>,
     path: String,
-    pose: Option<Pose<Design>>,
-    bodies: &mut Vec<Body<'p, Design>>,
+    pose: Option<Pose>,
+    bodies: &mut Vec<Body<'p>>,
 ) -> GeopResult<()> {
     // A part with no model has nothing to draw.
     if !reader.defines(&model()) {
         return Ok(());
     }
-    let whole = ElementReference::<NamedModel<Design>, NamedModel<Design>>::whole(model());
+    let whole = ElementReference::<NamedModel, NamedModel>::whole(model());
     let named = reader.retrieve_element(&whole)?;
     let faces = drawn_faces(named.topology());
     if !faces.is_empty() {
         let threads = match reader.defines(&threads()) {
             true => {
-                let whole = ElementReference::<Threads<Design>, Threads<Design>>::whole(threads());
+                let whole = ElementReference::<Threads, Threads>::whole(threads());
                 Some(reader.retrieve_element(&whole)?)
             }
             false => None,

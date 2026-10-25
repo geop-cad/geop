@@ -47,49 +47,49 @@ use crate::{
 };
 
 /// Part of a set a distance is measured to (see the module docs).
-pub trait Piece<S: Scalar>: Sized {
+pub trait Piece: Sized {
     /// Where on the whole a point of the piece is: its parameters, say.
     type At: Clone;
 
     /// Points whose convex hull holds every point of the piece.
-    fn hull(&self) -> GeopResult<Vec<Vector3<S>>>;
+    fn hull(&self) -> GeopResult<Vec<Vector3>>;
 
     /// A point of the piece and where it is — if one is known to belong to
     /// the set: a patch of a trimmed face may hold none of the face.
-    fn point(&self) -> GeopResult<Option<(Self::At, Vector3<S>)>>;
+    fn point(&self) -> GeopResult<Option<(Self::At, Vector3)>>;
 
     /// What is left of the piece cut in two — a half known to hold nothing
     /// of the set left out — or `None` once it is within `handoff` in
     /// size.
-    fn split(&self, handoff: S) -> GeopResult<Option<Vec<Self>>>;
+    fn split(&self, handoff: Scalar) -> GeopResult<Option<Vec<Self>>>;
 }
 
 /// The least distance between two sets, as [`least_distance`] finds it.
 #[derive(Clone, Debug)]
-pub struct Nearest<S: Scalar, A, B> {
+pub struct Nearest<A, B> {
     /// The point of the first set, and where on it.
-    pub a: (A, Vector3<S>),
+    pub a: (A, Vector3),
     /// The point of the second set, and where on it.
-    pub b: (B, Vector3<S>),
+    pub b: (B, Vector3),
     /// The least distance between the sets: at least the search's lower
     /// bound, at most the distance between `a` and `b`.
-    pub distance: S,
+    pub distance: Scalar,
     /// Where on each set the pairs left at the handoff attain a point:
     /// where else a least distance could be, for Newton to refine.
     pub candidates: Vec<(A, B)>,
 }
 
 /// A pair of pieces waiting to be searched, with what bounds it.
-struct Pair<S: Scalar, PA: Piece<S>, PB: Piece<S>> {
+struct Pair<PA: Piece, PB: Piece> {
     a: PA,
     b: PB,
-    hull_a: Vec<Vector3<S>>,
-    hull_b: Vec<Vector3<S>>,
+    hull_a: Vec<Vector3>,
+    hull_b: Vec<Vector3>,
     /// A lower bound on the distance between the two pieces.
-    lower: S,
+    lower: Scalar,
 }
 
-impl<S: Scalar, PA: Piece<S>, PB: Piece<S>> Pair<S, PA, PB> {
+impl<PA: Piece, PB: Piece> Pair<PA, PB> {
     fn new(a: PA, b: PB) -> GeopResult<Self> {
         let (hull_a, hull_b) = (a.hull()?, b.hull()?);
         let lower = separation(&hull_a, &hull_b)?;
@@ -109,18 +109,18 @@ impl<S: Scalar, PA: Piece<S>, PB: Piece<S>> Pair<S, PA, PB> {
     }
 }
 
-impl<S: Scalar, PA: Piece<S>, PB: Piece<S>> PartialEq for Pair<S, PA, PB> {
+impl<PA: Piece, PB: Piece> PartialEq for Pair<PA, PB> {
     fn eq(&self, other: &Self) -> bool {
         self.key() == other.key()
     }
 }
-impl<S: Scalar, PA: Piece<S>, PB: Piece<S>> Eq for Pair<S, PA, PB> {}
-impl<S: Scalar, PA: Piece<S>, PB: Piece<S>> PartialOrd for Pair<S, PA, PB> {
+impl<PA: Piece, PB: Piece> Eq for Pair<PA, PB> {}
+impl<PA: Piece, PB: Piece> PartialOrd for Pair<PA, PB> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
-impl<S: Scalar, PA: Piece<S>, PB: Piece<S>> Ord for Pair<S, PA, PB> {
+impl<PA: Piece, PB: Piece> Ord for Pair<PA, PB> {
     /// Reversed: [`BinaryHeap`] pops its greatest.
     fn cmp(&self, other: &Self) -> Ordering {
         other.key().total_cmp(&self.key())
@@ -128,13 +128,13 @@ impl<S: Scalar, PA: Piece<S>, PB: Piece<S>> Ord for Pair<S, PA, PB> {
 }
 
 /// The box around `points`: per axis, the union of their coordinates.
-fn bounds<S: Scalar>(points: &[Vector3<S>]) -> [S; 3] {
+fn bounds(points: &[Vector3]) -> [Scalar; 3] {
     std::array::from_fn(|k| {
         points
             .iter()
             .map(|p| p[k])
             .reduce(|a, b| a.union(b))
-            .unwrap_or(S::ENTIRE)
+            .unwrap_or(Scalar::ENTIRE)
     })
 }
 
@@ -142,42 +142,43 @@ fn bounds<S: Scalar>(points: &[Vector3<S>]) -> [S; 3] {
 /// any of the hull of `b`: the more of how far apart their boxes are, and
 /// how far apart they are along the direction from one box's centre to
 /// the other's. Which direction is a free choice; any gives a bound.
-fn separation<S: Scalar>(a: &[Vector3<S>], b: &[Vector3<S>]) -> GeopResult<S> {
+fn separation(a: &[Vector3], b: &[Vector3]) -> GeopResult<Scalar> {
     let (box_a, box_b) = (bounds(a), bounds(b));
     // Apart on an axis by how much the one box's lower end is above the
     // other's upper end, if it definitely is.
-    let gap = |x: S, y: S| {
+    let gap = |x: Scalar, y: Scalar| {
         let ahead = y.lower().sub(x.upper());
         let behind = x.lower().sub(y.upper());
-        if ahead.definitely_greater(S::ZERO) {
+        if ahead.definitely_greater(Scalar::ZERO) {
             ahead
-        } else if behind.definitely_greater(S::ZERO) {
+        } else if behind.definitely_greater(Scalar::ZERO) {
             behind
         } else {
-            S::ZERO
+            Scalar::ZERO
         }
     };
     let boxes = (0..3)
         .map(|k| gap(box_a[k], box_b[k]))
-        .fold(S::ZERO, |sum, g| sum.add(g.mul(g)))
+        .fold(Scalar::ZERO, |sum, g| sum.add(g.mul(g)))
         .sqrt()?;
 
-    let centre = |b: &[S; 3]| Vector3::from_array(b.map(|x| x.midpoint()));
+    let centre = |b: &[Scalar; 3]| Vector3::from_array(b.map(|x| x.midpoint()));
     let d = centre(&box_b).sub(&centre(&box_a)).sharpen();
-    let along = |points: &[Vector3<S>]| -> S {
+    let along = |points: &[Vector3]| -> Scalar {
         points
             .iter()
             .map(|p| p.prod_dot(&d))
             .reduce(|x, y| x.union(y))
-            .unwrap_or(S::ENTIRE)
+            .unwrap_or(Scalar::ENTIRE)
     };
     let apart = along(b).lower().sub(along(a).upper());
     let length = d.norm();
-    let directed = if apart.definitely_greater(S::ZERO) && length.definitely_greater(S::ZERO) {
-        apart.div(length.upper())?.lower()
-    } else {
-        S::ZERO
-    };
+    let directed =
+        if apart.definitely_greater(Scalar::ZERO) && length.definitely_greater(Scalar::ZERO) {
+            apart.div(length.upper())?.lower()
+        } else {
+            Scalar::ZERO
+        };
     Ok(if directed.to_f64() > boxes.lower().to_f64() {
         directed
     } else {
@@ -186,16 +187,12 @@ fn separation<S: Scalar>(a: &[Vector3<S>], b: &[Vector3<S>]) -> GeopResult<S> {
 }
 
 /// The least distance attained so far, and the two points attaining it.
-type Best<S, A, B> = Option<(S, (A, Vector3<S>), (B, Vector3<S>))>;
+type Best<A, B> = Option<(Scalar, (A, Vector3), (B, Vector3))>;
 
 /// Keeps the points `a` and `b` attain as the best pair, if they attain
 /// points and are nearer. Which of two attained pairs to keep is a free
 /// choice.
-fn offer<S: Scalar, PA: Piece<S>, PB: Piece<S>>(
-    best: &mut Best<S, PA::At, PB::At>,
-    a: &PA,
-    b: &PB,
-) -> GeopResult<()> {
+fn offer<PA: Piece, PB: Piece>(best: &mut Best<PA::At, PB::At>, a: &PA, b: &PB) -> GeopResult<()> {
     let (Some(pa), Some(pb)) = (a.point()?, b.point()?) else {
         return Ok(());
     };
@@ -210,10 +207,7 @@ fn offer<S: Scalar, PA: Piece<S>, PB: Piece<S>>(
 }
 
 /// Whether `pair` definitely holds nothing nearer than `best`.
-fn beyond<S: Scalar, PA: Piece<S>, PB: Piece<S>>(
-    pair: &Pair<S, PA, PB>,
-    best: &Best<S, PA::At, PB::At>,
-) -> bool {
+fn beyond<PA: Piece, PB: Piece>(pair: &Pair<PA, PB>, best: &Best<PA::At, PB::At>) -> bool {
     best.as_ref()
         .is_some_and(|(d, ..)| pair.lower.definitely_greater(*d))
 }
@@ -222,13 +216,13 @@ fn beyond<S: Scalar, PA: Piece<S>, PB: Piece<S>>(
 /// pieces of (see the module docs).
 ///
 /// Fails only if neither set attains a point in any piece searched.
-pub fn least_distance<S: Scalar, PA: Piece<S> + Clone, PB: Piece<S> + Clone>(
+pub fn least_distance<PA: Piece + Clone, PB: Piece + Clone>(
     a: Vec<PA>,
     b: Vec<PB>,
-    handoff: S,
+    handoff: Scalar,
     max_nodes: usize,
-) -> GeopResult<Nearest<S, PA::At, PB::At>> {
-    let mut best: Best<S, PA::At, PB::At> = None;
+) -> GeopResult<Nearest<PA::At, PB::At>> {
+    let mut best: Best<PA::At, PB::At> = None;
 
     let mut pending = BinaryHeap::new();
     for pa in &a {
@@ -237,7 +231,7 @@ pub fn least_distance<S: Scalar, PA: Piece<S> + Clone, PB: Piece<S> + Clone>(
             pending.push(Pair::new(pa.clone(), pb.clone())?);
         }
     }
-    let mut leaves: Vec<Pair<S, PA, PB>> = Vec::new();
+    let mut leaves: Vec<Pair<PA, PB>> = Vec::new();
     let mut visited = 0usize;
     while let Some(pair) = pending.pop() {
         if beyond(&pair, &best) {
@@ -258,20 +252,20 @@ pub fn least_distance<S: Scalar, PA: Piece<S> + Clone, PB: Piece<S> + Clone>(
         }
         visited += 1;
         // Cut the larger piece of the pair, or the other if it cannot be.
-        let size = |hull: &[Vector3<S>]| -> f64 {
+        let size = |hull: &[Vector3]| -> f64 {
             bounds(hull)
                 .iter()
                 .map(|x| x.width().to_f64().powi(2))
                 .sum::<f64>()
         };
         let a_first = size(&pair.hull_a) >= size(&pair.hull_b);
-        let cut_a = |pair: &Pair<S, PA, PB>| -> GeopResult<Option<Vec<(PA, PB)>>> {
+        let cut_a = |pair: &Pair<PA, PB>| -> GeopResult<Option<Vec<(PA, PB)>>> {
             Ok(pair
                 .a
                 .split(handoff)?
                 .map(|halves| halves.into_iter().map(|h| (h, pair.b.clone())).collect()))
         };
-        let cut_b = |pair: &Pair<S, PA, PB>| -> GeopResult<Option<Vec<(PA, PB)>>> {
+        let cut_b = |pair: &Pair<PA, PB>| -> GeopResult<Option<Vec<(PA, PB)>>> {
             Ok(pair
                 .b
                 .split(handoff)?
@@ -329,20 +323,20 @@ pub fn least_distance<S: Scalar, PA: Piece<S> + Clone, PB: Piece<S> + Clone>(
 
 /// A single point: a set of one piece that cannot be cut.
 #[derive(Clone, Debug)]
-pub struct PointPiece<S: Scalar>(pub Vector3<S>);
+pub struct PointPiece(pub Vector3);
 
-impl<S: Scalar> Piece<S> for PointPiece<S> {
+impl Piece for PointPiece {
     type At = ();
 
-    fn hull(&self) -> GeopResult<Vec<Vector3<S>>> {
+    fn hull(&self) -> GeopResult<Vec<Vector3>> {
         Ok(vec![self.0])
     }
 
-    fn point(&self) -> GeopResult<Option<((), Vector3<S>)>> {
+    fn point(&self) -> GeopResult<Option<((), Vector3)>> {
         Ok(Some(((), self.0)))
     }
 
-    fn split(&self, _: S) -> GeopResult<Option<Vec<Self>>> {
+    fn split(&self, _: Scalar) -> GeopResult<Option<Vec<Self>>> {
         Ok(None)
     }
 }
@@ -350,21 +344,21 @@ impl<S: Scalar> Piece<S> for PointPiece<S> {
 /// A span of a 3-D curve: a piece of the curve's points, `At` its
 /// parameter.
 #[derive(Clone, Debug)]
-pub struct CurveSpan<S: Scalar>(pub NurbCurve3D<S>);
+pub struct CurveSpan(pub NurbCurve3D);
 
-impl<S: Scalar> Piece<S> for CurveSpan<S> {
-    type At = S;
+impl Piece for CurveSpan {
+    type At = Scalar;
 
-    fn hull(&self) -> GeopResult<Vec<Vector3<S>>> {
-        Ok(dehomogenize::<S, 4, 3>(&self.0.control_points))
+    fn hull(&self) -> GeopResult<Vec<Vector3>> {
+        Ok(dehomogenize::<4, 3>(&self.0.control_points))
     }
 
-    fn point(&self) -> GeopResult<Option<(S, Vector3<S>)>> {
+    fn point(&self) -> GeopResult<Option<(Scalar, Vector3)>> {
         let t = self.0.mid_parameter()?;
         Ok(Some((t, self.0.evaluate(t)?)))
     }
 
-    fn split(&self, handoff: S) -> GeopResult<Option<Vec<Self>>> {
+    fn split(&self, handoff: Scalar) -> GeopResult<Option<Vec<Self>>> {
         if !self.0.size()?.definitely_greater(handoff) {
             return Ok(None);
         }
@@ -376,9 +370,9 @@ impl<S: Scalar> Piece<S> for CurveSpan<S> {
 /// A patch of a surface: a piece of the surface's points, `At` its
 /// parameters.
 #[derive(Clone, Debug)]
-pub struct SurfacePatch<S: Scalar>(pub NurbSurface3D<S>);
+pub struct SurfacePatch(pub NurbSurface3D);
 
-impl<S: Scalar> SurfacePatch<S> {
+impl SurfacePatch {
     /// The patch in two, across the direction it is longer in.
     pub fn halves(&self) -> GeopResult<(Self, Self)> {
         let [along_u, along_v] = surface_extents(&self.0);
@@ -391,25 +385,27 @@ impl<S: Scalar> SurfacePatch<S> {
     }
 
     /// The middle of its domain, sharp: a free choice of a point of it.
-    pub fn middle(&self) -> GeopResult<(S, S)> {
-        let mid = |(lo, hi): (S, S)| -> GeopResult<S> { Ok(lo.add(hi).div(S::TWO)?.sharpen()) };
+    pub fn middle(&self) -> GeopResult<(Scalar, Scalar)> {
+        let mid = |(lo, hi): (Scalar, Scalar)| -> GeopResult<Scalar> {
+            Ok(lo.add(hi).div(Scalar::TWO)?.sharpen())
+        };
         Ok((mid(self.0.domain_u())?, mid(self.0.domain_v())?))
     }
 }
 
-impl<S: Scalar> Piece<S> for SurfacePatch<S> {
-    type At = (S, S);
+impl Piece for SurfacePatch {
+    type At = (Scalar, Scalar);
 
-    fn hull(&self) -> GeopResult<Vec<Vector3<S>>> {
-        Ok(dehomogenize::<S, 4, 3>(&self.0.control_points))
+    fn hull(&self) -> GeopResult<Vec<Vector3>> {
+        Ok(dehomogenize::<4, 3>(&self.0.control_points))
     }
 
-    fn point(&self) -> GeopResult<Option<((S, S), Vector3<S>)>> {
+    fn point(&self) -> GeopResult<Option<((Scalar, Scalar), Vector3)>> {
         let (u, v) = self.middle()?;
         Ok(Some(((u, v), self.0.evaluate(u, v)?)))
     }
 
-    fn split(&self, handoff: S) -> GeopResult<Option<Vec<Self>>> {
+    fn split(&self, handoff: Scalar) -> GeopResult<Option<Vec<Self>>> {
         if !self.0.size()?.definitely_greater(handoff) {
             return Ok(None);
         }
@@ -421,30 +417,33 @@ impl<S: Scalar> Piece<S> for SurfacePatch<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geop_core_math::{for_all_scalars, scalars::Scalar};
+    use geop_core_math::scalars::Scalar;
 
     /// A piece of the segment `[lo, hi]` of the `x` axis.
     #[derive(Clone)]
-    struct Segment<S: Scalar>(S, S);
+    struct Segment(Scalar, Scalar);
 
-    impl<S: Scalar> Piece<S> for Segment<S> {
-        type At = S;
+    impl Piece for Segment {
+        type At = Scalar;
 
-        fn hull(&self) -> GeopResult<Vec<Vector3<S>>> {
-            let at = |x: S| Vector3::from_array([x, S::ZERO, S::ZERO]);
+        fn hull(&self) -> GeopResult<Vec<Vector3>> {
+            let at = |x: Scalar| Vector3::from_array([x, Scalar::ZERO, Scalar::ZERO]);
             Ok(vec![at(self.0), at(self.1)])
         }
 
-        fn point(&self) -> GeopResult<Option<(S, Vector3<S>)>> {
-            let x = self.0.add(self.1).div(S::TWO)?.sharpen();
-            Ok(Some((x, Vector3::from_array([x, S::ZERO, S::ZERO]))))
+        fn point(&self) -> GeopResult<Option<(Scalar, Vector3)>> {
+            let x = self.0.add(self.1).div(Scalar::TWO)?.sharpen();
+            Ok(Some((
+                x,
+                Vector3::from_array([x, Scalar::ZERO, Scalar::ZERO]),
+            )))
         }
 
-        fn split(&self, handoff: S) -> GeopResult<Option<Vec<Self>>> {
+        fn split(&self, handoff: Scalar) -> GeopResult<Option<Vec<Self>>> {
             if !self.1.sub(self.0).definitely_greater(handoff) {
                 return Ok(None);
             }
-            let mid = self.0.add(self.1).div(S::TWO)?.sharpen();
+            let mid = self.0.add(self.1).div(Scalar::TWO)?.sharpen();
             Ok(Some(vec![Segment(self.0, mid), Segment(mid, self.1)]))
         }
     }
@@ -453,17 +452,18 @@ mod tests {
     /// enclosure of the least distance holds the true one. Where on the
     /// segment is only as sharp as the square root of that: the distance is
     /// flat at its least, which is why callers refine the point by Newton.
-    fn check_point_above_a_segment<S: Scalar>() {
-        let target = Vector3::from_array([0.3, 2.0, 0.0].map(S::from_f64));
+    #[test]
+    fn point_above_a_segment() {
+        let target = Vector3::from_array([0.3, 2.0, 0.0].map(Scalar::from_f64));
         let nearest = least_distance(
             vec![PointPiece(target)],
-            vec![Segment(S::from_f64(-1.0), S::ONE)],
-            S::from_f64(1e-6),
+            vec![Segment(Scalar::from_f64(-1.0), Scalar::ONE)],
+            Scalar::from_f64(1e-6),
             10_000,
         )
         .unwrap();
         assert!(
-            nearest.distance.could_be_equal(S::TWO),
+            nearest.distance.could_be_equal(Scalar::TWO),
             "{:?}",
             nearest.distance
         );
@@ -471,13 +471,9 @@ mod tests {
             !nearest
                 .distance
                 .width()
-                .definitely_greater(S::from_f64(1e-6)),
+                .definitely_greater(Scalar::from_f64(1e-6)),
             "{:?}",
             nearest.distance
         );
-    }
-    #[test]
-    fn point_above_a_segment() {
-        for_all_scalars!(check_point_above_a_segment);
     }
 }

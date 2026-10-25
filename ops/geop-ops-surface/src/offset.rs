@@ -12,9 +12,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_lib_shell::offset_faces;
 use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model};
 use serde::{Deserialize, Serialize};
@@ -34,7 +32,7 @@ pub struct OffsetSurface;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OffsetSurfaceArgs {
     /// The faces to copy.
-    pub faces: Vec<ElementReference<NamedModel<Design>, Face>>,
+    pub faces: Vec<ElementReference<NamedModel, Face>>,
     /// How far along their normals.
     pub distance: f64,
 }
@@ -72,8 +70,8 @@ impl PartOperation for OffsetSurface {
         context: &'a Context<'a>,
         args: &OffsetSurfaceArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, OffsetSurfaceArgs> {
-        let mut f = EditForm::<Design, OffsetSurfaceArgs>::default();
+    ) -> EditForm<'a, OffsetSurfaceArgs> {
+        let mut f = EditForm::<OffsetSurfaceArgs>::default();
         f.pick(
             "faces",
             "faces",
@@ -90,7 +88,7 @@ impl PartOperation for OffsetSurface {
 
 impl ModelOperation for OffsetSurface {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         _: &Reader,
         step: &str,
         args: &OffsetSurfaceArgs,
@@ -105,7 +103,7 @@ impl ModelOperation for OffsetSurface {
         let faces = (args.faces.iter())
             .map(|face| model.face_id(face.name()))
             .collect::<GeopResult<Vec<_>>>()?;
-        offset_faces(model, &namer, &faces, Design::from_f64(args.distance))?;
+        offset_faces(model, &namer, &faces, Scalar::from_f64(args.distance))?;
         Ok(())
     }
 }

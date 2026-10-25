@@ -17,13 +17,13 @@ use geop_core_topology::{
 
 use super::NamedModel;
 
-impl<S: Scalar> NamedModel<S> {
+impl NamedModel {
     /// Forwards to [`geop_core_topology::Model::insert_vertex`]: a vertex on
     /// nothing yet, about to be split into an edge (see
     /// [`NamedModel::split_edge_at_vertex`]).
     pub fn insert_vertex(
         &mut self,
-        point: Vector3<S>,
+        point: Vector3,
         name: impl Into<String>,
     ) -> GeopResult<VertexId> {
         let vertex = self.topology.insert_vertex(Vertex { point });
@@ -34,7 +34,7 @@ impl<S: Scalar> NamedModel<S> {
     /// Forwards to [`geop_core_topology::Model::insert_edge`]: an edge on no
     /// face yet, about to be spliced into its faces (see
     /// [`NamedModel::splice_edge_into_face`]).
-    pub fn insert_edge(&mut self, edge: Edge<S>, name: impl Into<String>) -> GeopResult<EdgeId> {
+    pub fn insert_edge(&mut self, edge: Edge, name: impl Into<String>) -> GeopResult<EdgeId> {
         let edge = self.topology.insert_edge(edge);
         self.names.insert(edge, name)?;
         Ok(edge)
@@ -84,7 +84,7 @@ impl<S: Scalar> NamedModel<S> {
         edge_id: EdgeId,
         face_id: FaceId,
         max_nodes: usize,
-        min_subdivision_size: S,
+        min_subdivision_size: Scalar,
         new_face_name: impl Into<String>,
     ) -> GeopResult<Option<FaceId>> {
         let new_face = self.topology.splice_edge_into_face(
@@ -105,10 +105,10 @@ impl<S: Scalar> NamedModel<S> {
     pub fn split_edge_at_vertex(
         &mut self,
         edge_id: EdgeId,
-        edge_t: S,
+        edge_t: Scalar,
         vertex_id: VertexId,
         max_nodes: usize,
-        min_subdivision_size: S,
+        min_subdivision_size: Scalar,
         new_edge_name: impl Into<String>,
     ) -> GeopResult<EdgeId> {
         let new_edge = self.topology.split_edge_at_vertex(
@@ -125,7 +125,7 @@ impl<S: Scalar> NamedModel<S> {
     /// Forwards to [`geop_core_topology::Model::build_body`], naming
     /// everything it builds after `names`, index for index. Fails, leaving
     /// the part unchanged, if a name is missing, repeated or taken.
-    pub fn build_body(&mut self, spec: BodySpec<S>, names: BodyNames) -> GeopResult<BuiltBody> {
+    pub fn build_body(&mut self, spec: BodySpec, names: BodyNames) -> GeopResult<BuiltBody> {
         let counts = [
             (names.vertices.len(), spec.vertices.len(), "vertices"),
             (names.edges.len(), spec.edges.len(), "edges"),
@@ -208,7 +208,7 @@ impl<S: Scalar> NamedModel<S> {
     /// as a body to build again (see [`NamedModel::build_body`]), with the names
     /// of its entities: what [`NamedModel::copy_body`] builds, kept to build
     /// later.
-    pub fn body_record(&self, body: Body) -> GeopResult<(BodySpec<S>, BodyNames)> {
+    pub fn body_record(&self, body: Body) -> GeopResult<(BodySpec, BodyNames)> {
         let faces = self.topology().body_faces(body)?;
         let solid = match body {
             Body::Solid(solid) => Some(self.name(solid)?.to_string()),
@@ -237,8 +237,8 @@ impl<S: Scalar> NamedModel<S> {
     /// from (see [`geop_core_topology::Model::body_spec`]), index for index,
     /// with no solid.
     pub fn source_names(&self, sources: &SpecSources) -> GeopResult<BodyNames> {
-        fn names<S: Scalar, Id: Into<super::RefId> + Copy>(
-            model: &NamedModel<S>,
+        fn names<Id: Into<super::RefId> + Copy>(
+            model: &NamedModel,
             ids: &[Id],
         ) -> GeopResult<Vec<String>> {
             (ids.iter())
@@ -255,7 +255,7 @@ impl<S: Scalar> NamedModel<S> {
 
     /// Forwards to [`geop_core_topology::Model::transform_body`]. Creates
     /// and deletes nothing, so every entity keeps its name.
-    pub fn transform_body(&mut self, body: Body, motion: &Motion<S>) -> GeopResult<()> {
+    pub fn transform_body(&mut self, body: Body, motion: &Motion) -> GeopResult<()> {
         self.topology.transform_body(body, motion)
     }
 
@@ -301,7 +301,7 @@ impl<S: Scalar> NamedModel<S> {
     pub fn replace_with_solid(
         &mut self,
         bodies: &[Body],
-        spec: BodySpec<S>,
+        spec: BodySpec,
         names: BodyNames,
     ) -> GeopResult<SolidId> {
         self.delete_bodies(bodies)?;

@@ -3,7 +3,6 @@
 //! crate builds: spheres, cylinders, extrusions with holes.
 
 use geop_core_math::{
-    for_all_scalars,
     plain::distance,
     primitives::TriangleFace,
     scalars::Scalar,
@@ -14,7 +13,7 @@ use geop_ops_model::NamedModel;
 
 use crate::shapes::{cube_solid, sphere_solid};
 
-fn triangle_area<S: Scalar>(a: Vector2<S>, b: Vector2<S>, c: Vector2<S>) -> f64 {
+fn triangle_area(a: Vector2, b: Vector2, c: Vector2) -> f64 {
     let (ax, ay) = (a[0].to_f64(), a[1].to_f64());
     let (bx, by) = (b[0].to_f64(), b[1].to_f64());
     let (cx, cy) = (c[0].to_f64(), c[1].to_f64());
@@ -24,9 +23,10 @@ fn triangle_area<S: Scalar>(a: Vector2<S>, b: Vector2<S>, c: Vector2<S>) -> f64 
 /// On a unit sphere the surface normal at a point *is* that point, so a
 /// mesh carrying the kernel's normals can be checked exactly — and a
 /// renderer shading with them gets the sphere, not its facets.
-fn check_sphere_triangles_carry_surface_normals<S: Scalar>() {
-    let mut model = NamedModel::<S>::new();
-    sphere_solid(&mut model, "t3", Vector3::zero(), S::ONE).unwrap();
+#[test]
+fn sphere_triangles_carry_surface_normals() {
+    let mut model = NamedModel::new();
+    sphere_solid(&mut model, "t3", Vector3::zero(), Scalar::ONE).unwrap();
     let topology = model.topology();
     let scene = rasterize(topology, 24).unwrap().scene(|_| Color10::Blue);
     assert!(!scene.triangles.is_empty());
@@ -51,32 +51,37 @@ fn check_sphere_triangles_carry_surface_normals<S: Scalar>() {
         scene.triangles.len()
     );
 }
-#[test]
-fn sphere_triangles_carry_surface_normals() {
-    for_all_scalars!(check_sphere_triangles_carry_surface_normals);
-}
 
 /// A face that curves in one direction only gets triangles only where
 /// it needs them: a cylinder wall is refined around its circumference
 /// and left at the coarsest grid along its (straight) axis. Without
 /// that, a long cylinder spends as many rows up its side as it does
 /// segments around it, for nothing.
-fn check_cylinder_wall_is_refined_only_around<S: Scalar>() {
-    let mut model = NamedModel::<S>::new();
-    crate::shapes::revolved_cylinder(&mut model, "t5", Vector3::zero(), S::ONE, S::from_f64(4.0))
-        .unwrap();
+#[test]
+fn cylinder_wall_is_refined_only_around() {
+    let mut model = NamedModel::new();
+    crate::shapes::revolved_cylinder(
+        &mut model,
+        "t5",
+        Vector3::zero(),
+        Scalar::ONE,
+        Scalar::from_f64(4.0),
+    )
+    .unwrap();
     let topology = model.topology();
     let rasterized = rasterize(topology, 24).unwrap();
     // The wall quadrants are the faces whose triangles are all off-axis.
-    let walls: Vec<&Vec<TriangleFace<S>>> = rasterized
+    let walls: Vec<&Vec<TriangleFace>> = rasterized
         .faces
         .values()
         .filter(|tris| {
             !tris.is_empty()
                 && tris.iter().all(|t| {
-                    [t.a, t.b, t.c]
-                        .iter()
-                        .all(|p| p[0].mul(p[0]).add(p[1].mul(p[1])).could_be_equal(S::ONE))
+                    [t.a, t.b, t.c].iter().all(|p| {
+                        p[0].mul(p[0])
+                            .add(p[1].mul(p[1]))
+                            .could_be_equal(Scalar::ONE)
+                    })
                 })
         })
         .collect();
@@ -92,20 +97,17 @@ fn check_cylinder_wall_is_refined_only_around<S: Scalar>() {
         assert!(tris.len() >= 2 * 2 * 8, "and it still has to look round");
     }
 }
-#[test]
-fn cylinder_wall_is_refined_only_around() {
-    for_all_scalars!(check_cylinder_wall_is_refined_only_around);
-}
 
 /// A straight edge needs two points; a circular one needs enough to look
 /// round. Neither is a fixed count any more.
-fn check_edge_sampling_follows_curvature<S: Scalar>() {
-    let mut model = NamedModel::<S>::new();
+#[test]
+fn edge_sampling_follows_curvature() {
+    let mut model = NamedModel::new();
     cube_solid(
         &mut model,
         "t2",
         Vector3::zero(),
-        Vector3::from_array([S::ONE; 3]),
+        Vector3::from_array([Scalar::ONE; 3]),
     )
     .unwrap();
     let cube_edges = rasterize(model.topology(), 24).unwrap().edges;
@@ -113,8 +115,8 @@ fn check_edge_sampling_follows_curvature<S: Scalar>() {
         assert_eq!(polyline.len(), 2, "a straight edge is a single segment");
     }
 
-    let mut model = NamedModel::<S>::new();
-    sphere_solid(&mut model, "t4", Vector3::zero(), S::ONE).unwrap();
+    let mut model = NamedModel::new();
+    sphere_solid(&mut model, "t4", Vector3::zero(), Scalar::ONE).unwrap();
     let topology = model.topology();
     let sphere_edges = rasterize(topology, 24).unwrap().edges;
     for polyline in sphere_edges.values() {
@@ -127,18 +129,18 @@ fn check_edge_sampling_follows_curvature<S: Scalar>() {
         );
         for p in polyline {
             let r = p[0].mul(p[0]).add(p[1].mul(p[1])).add(p[2].mul(p[2]));
-            assert!(r.could_be_equal(S::ONE), "sample off the sphere: {p:?}");
+            assert!(
+                r.could_be_equal(Scalar::ONE),
+                "sample off the sphere: {p:?}"
+            );
         }
     }
 }
-#[test]
-fn edge_sampling_follows_curvature() {
-    for_all_scalars!(check_edge_sampling_follows_curvature);
-}
 
-fn check_curved_face_is_refined<S: Scalar>() {
-    let mut model = NamedModel::<S>::new();
-    sphere_solid(&mut model, "t3", Vector3::zero(), S::ONE).unwrap();
+#[test]
+fn curved_face_is_refined() {
+    let mut model = NamedModel::new();
+    sphere_solid(&mut model, "t3", Vector3::zero(), Scalar::ONE).unwrap();
     let topology = model.topology();
     let face = topology.faces.values().next().unwrap();
     let tris = face_triangles_uv(topology, face, 8).unwrap();
@@ -153,9 +155,10 @@ fn check_curved_face_is_refined<S: Scalar>() {
 /// within the curvature tolerance of the true surface, so the mesh
 /// follows the shape instead of cutting corners off it. Checked on a
 /// unit sphere, where the distance to the surface is exact.
-fn check_curved_face_follows_the_surface<S: Scalar>() {
-    let mut model = NamedModel::<S>::new();
-    sphere_solid(&mut model, "t4", Vector3::zero(), S::ONE).unwrap();
+#[test]
+fn curved_face_follows_the_surface() {
+    let mut model = NamedModel::new();
+    sphere_solid(&mut model, "t4", Vector3::zero(), Scalar::ONE).unwrap();
     let topology = model.topology();
     let face = topology.faces.values().next().unwrap();
     let tris = face_triangles_uv(topology, face, 24).unwrap();
@@ -179,30 +182,23 @@ fn check_curved_face_follows_the_surface<S: Scalar>() {
     // this patch (size ≈ 1.7) is about 7e-4.
     assert!(worst < 1e-3, "worst deviation from the sphere: {worst}");
 }
-#[test]
-fn curved_face_follows_the_surface() {
-    for_all_scalars!(check_curved_face_follows_the_surface);
-}
-#[test]
-fn curved_face_is_refined() {
-    for_all_scalars!(check_curved_face_is_refined);
-}
 
 /// A face with a round hole must not get a single triangle inside that
 /// hole: the hole's area is missing from the triangulation, and no
 /// triangle's centroid falls in it.
-fn check_hole_is_not_triangulated<S: Scalar>() {
+#[test]
+fn hole_is_not_triangulated() {
     use crate::common::polygon;
     use geop_core_geometry::nurb_curve::{NurbCurve2D, sqrt2_over_2};
     use geop_core_math::primitives::CoordinateSystem;
 
-    let mut model = NamedModel::<S>::new();
-    let v2 = |x: f64, y: f64| Vector2::from_array([S::from_f64(x), S::from_f64(y)]);
+    let mut model = NamedModel::new();
+    let v2 = |x: f64, y: f64| Vector2::from_array([Scalar::from_f64(x), Scalar::from_f64(y)]);
     let cs = CoordinateSystem::try_new(
-        Vector3::from_array([S::ZERO; 3]),
-        Vector3::from_array([S::ONE, S::ZERO, S::ZERO]),
-        Vector3::from_array([S::ZERO, S::ONE, S::ZERO]),
-        Vector3::from_array([S::ZERO, S::ZERO, S::from_f64(-1.0)]),
+        Vector3::from_array([Scalar::ZERO; 3]),
+        Vector3::from_array([Scalar::ONE, Scalar::ZERO, Scalar::ZERO]),
+        Vector3::from_array([Scalar::ZERO, Scalar::ONE, Scalar::ZERO]),
+        Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::from_f64(-1.0)]),
     )
     .unwrap();
     let outer = polygon(&[v2(0.0, 0.0), v2(4.0, 0.0), v2(4.0, 4.0), v2(0.0, 4.0)]).unwrap();
@@ -229,8 +225,8 @@ fn check_hole_is_not_triangulated<S: Scalar>() {
         &namer,
         Some(&namer.root()),
         &cs,
-        S::ZERO,
-        S::ONE,
+        Scalar::ZERO,
+        Scalar::ONE,
         &[
             SweepLoop::plain(Profile::closed(outer)),
             SweepLoop::plain(Profile::closed(hole).with_prefix("h")),
@@ -270,18 +266,15 @@ fn check_hole_is_not_triangulated<S: Scalar>() {
         }
     }
 }
-#[test]
-fn hole_is_not_triangulated() {
-    for_all_scalars!(check_hole_is_not_triangulated);
-}
 
 /// A genuinely non-rectangular, holed footprint (unlike a cube/sphere
 /// face) must still triangulate cleanly: every triangle finite, and
 /// some non-trivial mesh actually produced — a crash or an empty
 /// result here is exactly the failure mode clipping is meant to rule
 /// out for trims a fixed grid-without-clipping can't represent.
-fn check_holed_footprint_triangulates_cleanly<S: Scalar>() {
-    let mut model = NamedModel::<S>::new();
+#[test]
+fn holed_footprint_triangulates_cleanly() {
+    let mut model = NamedModel::new();
     crate::shapes::figure8_profile(&mut model, "f").unwrap();
     let topology = model.topology();
     let mut total_triangles = 0;
@@ -302,17 +295,10 @@ fn check_holed_footprint_triangulates_cleanly<S: Scalar>() {
         "figure8_profile must produce some triangles"
     );
 }
-#[test]
-fn holed_footprint_triangulates_cleanly() {
-    for_all_scalars!(check_holed_footprint_triangulates_cleanly);
-}
 
 /// STL facets of curved solids, and of a box.
 mod stl {
-    use geop_core_math::{
-        scalars::{Scalar, scal_in_f64::ScalInF64},
-        vector::Vector3,
-    };
+    use geop_core_math::{scalars::Scalar, vector::Vector3};
     use geop_core_rasterize::{
         rasterize,
         stl::{StlFormat, StlTriangle, stl_triangles, write_stl},
@@ -322,9 +308,7 @@ mod stl {
 
     use crate::shapes::{cube_solid, sphere_solid};
 
-    type S = ScalInF64;
-
-    fn triangles_of(model: &NamedModel<S>) -> Vec<StlTriangle> {
+    fn triangles_of(model: &NamedModel) -> Vec<StlTriangle> {
         let raster = rasterize(model.topology(), 8).unwrap();
         let mut faces: Vec<FaceId> = raster.faces.keys().copied().collect();
         faces.sort_by_key(|f| f.0);
@@ -332,12 +316,12 @@ mod stl {
     }
 
     fn unit_cube() -> Vec<StlTriangle> {
-        let mut model = NamedModel::<S>::new();
+        let mut model = NamedModel::new();
         cube_solid(
             &mut model,
             "c",
-            Vector3::from_array([S::ZERO; 3]),
-            Vector3::from_array([S::ONE; 3]),
+            Vector3::from_array([Scalar::ZERO; 3]),
+            Vector3::from_array([Scalar::ONE; 3]),
         )
         .unwrap();
         triangles_of(&model)
@@ -371,8 +355,14 @@ mod stl {
     /// Curved faces: the winding has to come from the surface normals.
     #[test]
     fn sphere_facets_face_outward() {
-        let mut model = NamedModel::<S>::new();
-        sphere_solid(&mut model, "s", Vector3::from_array([S::ZERO; 3]), S::ONE).unwrap();
+        let mut model = NamedModel::new();
+        sphere_solid(
+            &mut model,
+            "s",
+            Vector3::from_array([Scalar::ZERO; 3]),
+            Scalar::ONE,
+        )
+        .unwrap();
         assert_outward(&triangles_of(&model), [0.0; 3]);
     }
 

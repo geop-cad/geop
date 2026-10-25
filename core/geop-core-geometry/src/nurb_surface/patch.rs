@@ -24,13 +24,13 @@ use crate::{
 /// over `knots`: the coefficients with which its basis reproduces the
 /// linear function `t` — so a linear blend between two rows of control
 /// points, laid across that basis, is exactly the blend.
-fn greville<S: Scalar>(knots: &[S], degree: usize, n: usize) -> GeopResult<Vec<S>> {
-    let p = S::from_i64(degree as i64);
+fn greville(knots: &[Scalar], degree: usize, n: usize) -> GeopResult<Vec<Scalar>> {
+    let p = Scalar::from_i64(degree as i64);
     (0..n)
         .map(|i| {
             knots[i + 1..=i + degree]
                 .iter()
-                .fold(S::ZERO, |sum, &k| sum.add(k))
+                .fold(Scalar::ZERO, |sum, &k| sum.add(k))
                 .div(p)
         })
         .collect()
@@ -38,10 +38,7 @@ fn greville<S: Scalar>(knots: &[S], degree: usize, n: usize) -> GeopResult<Vec<S
 
 /// `a` and `b` on the domain `[0, 1]`, made compatible (see
 /// [`NurbCurve::compatible`]).
-fn compatible_pair<S: Scalar>(
-    a: &NurbCurve3D<S>,
-    b: &NurbCurve3D<S>,
-) -> GeopResult<(NurbCurve3D<S>, NurbCurve3D<S>)> {
+fn compatible_pair(a: &NurbCurve3D, b: &NurbCurve3D) -> GeopResult<(NurbCurve3D, NurbCurve3D)> {
     let mut pair = NurbCurve::compatible(&[a.with_unit_domain()?, b.with_unit_domain()?])?;
     let b = pair.pop().expect("two curves");
     let a = pair.pop().expect("two curves");
@@ -53,12 +50,12 @@ fn compatible_pair<S: Scalar>(
 /// lowest, running round the patch.
 const SIDES: usize = 4;
 
-impl<S: Scalar> NurbSurface3D<S> {
+impl NurbSurface3D {
     /// The ruled surface between `a`, at `v = 0`, and `b`, at `v = 1`: the
     /// straight lines joining their points of equal parameter, both brought
     /// onto `[0, 1]`, which is the surface's `u`. Its sides along `u` are
     /// the two curves exactly.
-    pub fn ruled(a: &NurbCurve3D<S>, b: &NurbCurve3D<S>) -> GeopResult<Self> {
+    pub fn ruled(a: &NurbCurve3D, b: &NurbCurve3D) -> GeopResult<Self> {
         let (a, b) = compatible_pair(a, b)?;
         Self::ruled_compatible(&a, &b)
     }
@@ -68,7 +65,7 @@ impl<S: Scalar> NurbSurface3D<S> {
     /// taken as they are: its `u` runs over `a`'s knots, not brought onto
     /// `[0, 1]`. Exact, since its sides along `u` are the curves' own control
     /// points.
-    pub fn ruled_compatible(a: &NurbCurve3D<S>, b: &NurbCurve3D<S>) -> GeopResult<Self> {
+    pub fn ruled_compatible(a: &NurbCurve3D, b: &NurbCurve3D) -> GeopResult<Self> {
         if a.degree != b.degree
             || a.control_points.len() != b.control_points.len()
             || a.knot_vector.len() != b.knot_vector.len()
@@ -95,16 +92,13 @@ impl<S: Scalar> NurbSurface3D<S> {
     /// The bilinear patch with corners `p00` at `(u, v) = (0, 0)`, `p10` at
     /// `(1, 0)`, `p11` at `(1, 1)` and `p01` at `(0, 1)`, over `[0, 1]²` —
     /// a plane's, where the four lie in one.
-    pub fn bilinear(
-        p00: Vector3<S>,
-        p10: Vector3<S>,
-        p11: Vector3<S>,
-        p01: Vector3<S>,
-    ) -> GeopResult<Self> {
+    pub fn bilinear(p00: Vector3, p10: Vector3, p11: Vector3, p01: Vector3) -> GeopResult<Self> {
         NurbSurface3D::try_new(
             1,
             1,
-            [p00, p01, p10, p11].map(|p| p.homogeneous(S::ONE)).to_vec(),
+            [p00, p01, p10, p11]
+                .map(|p| p.homogeneous(Scalar::ONE))
+                .to_vec(),
             bezier_knots(1),
             bezier_knots(1),
         )
@@ -130,14 +124,14 @@ impl<S: Scalar> NurbSurface3D<S> {
     /// The sides must end where the next one starts, with their end weights
     /// one (or a single span, which can be brought to it): two sides meeting
     /// at a corner must agree on its weight for the blend to meet them both.
-    pub fn coons(sides: [&NurbCurve3D<S>; SIDES]) -> GeopResult<Self> {
-        let unit = |c: &NurbCurve3D<S>| c.with_unit_domain()?.with_unit_end_weights();
+    pub fn coons(sides: [&NurbCurve3D; SIDES]) -> GeopResult<Self> {
+        let unit = |c: &NurbCurve3D| c.with_unit_domain()?.with_unit_end_weights();
         let bottom = unit(sides[0])?;
         let right = unit(sides[1])?;
         let top = unit(&sides[2].reverse())?;
         let left = unit(&sides[3].reverse())?;
-        let first = |c: &NurbCurve3D<S>| c.start();
-        let last = |c: &NurbCurve3D<S>| c.end();
+        let first = |c: &NurbCurve3D| c.start();
+        let last = |c: &NurbCurve3D| c.end();
         for (k, (end, start)) in [
             (last(&bottom)?, first(&right)?),
             (last(&right)?, last(&top)?),
@@ -167,7 +161,7 @@ impl<S: Scalar> NurbSurface3D<S> {
         let p11 = t[nu - 1].union(&r[nv - 1]);
         let rational = [b, t, l, r]
             .iter()
-            .any(|row| row.iter().any(|p| !p[3].is_exactly(S::ONE)));
+            .any(|row| row.iter().any(|p| !p[3].is_exactly(Scalar::ONE)));
 
         let mut control_points = Vec::with_capacity(nu * nv);
         for i in 0..nu {
@@ -195,7 +189,7 @@ impl<S: Scalar> NurbSurface3D<S> {
                 if !rational {
                     // Every weight is one, and so is every blend of them:
                     // the arithmetic above would only round it.
-                    p[3] = S::ONE;
+                    p[3] = Scalar::ONE;
                 }
                 control_points.push(p);
             }
@@ -269,7 +263,7 @@ impl<S: Scalar> NurbSurface3D<S> {
     /// domain: each row of control points along that direction continued
     /// as a curve (see [`NurbCurve::extended`]), so the surface goes on as
     /// the polynomial it is there, as smooth as it was.
-    pub fn extended(&self, along_u: bool, at_end: bool, by: S) -> GeopResult<Self> {
+    pub fn extended(&self, along_u: bool, at_end: bool, by: Scalar) -> GeopResult<Self> {
         let (nu, nv) = (self.num_u, self.num_v);
         let (degree, knots, rows, len) = if along_u {
             (self.degree_u, &self.knot_vector_u, nv, nu)
@@ -344,7 +338,7 @@ impl<S: Scalar> NurbSurface3D<S> {
     /// face it is to continue.
     pub fn tangent_to_planes(
         &self,
-        planes: &[Option<(Plane<S>, Vector3<S>)>; SIDES],
+        planes: &[Option<(Plane, Vector3)>; SIDES],
     ) -> GeopResult<Self> {
         let rows_needed = |a: usize, b: usize| match (planes[a].is_some(), planes[b].is_some()) {
             (true, true) => 4,
@@ -396,7 +390,7 @@ impl<S: Scalar> NurbSurface3D<S> {
                 });
             for (i, j) in on_side {
                 let p = original[at(i, j)].dehomogenized()?;
-                if !plane.signed_distance(&p).could_be_equal(S::ZERO) {
+                if !plane.signed_distance(&p).could_be_equal(Scalar::ZERO) {
                     return Err(GeopError::new(format!(
                         "NurbSurface::tangent_to_planes: side {k} leaves its plane at control point {p:?}"
                     )));
@@ -407,8 +401,8 @@ impl<S: Scalar> NurbSurface3D<S> {
             for j in 0..nv {
                 // Per side whose next row this point is in: the side, its
                 // plane, the way away from it, and the point on the side.
-                type Constraint<'a, S> = (usize, &'a Plane<S>, &'a Vector3<S>, (usize, usize));
-                let constraints: Vec<Constraint<S>> = (0..SIDES)
+                type Constraint<'a> = (usize, &'a Plane, &'a Vector3, (usize, usize));
+                let constraints: Vec<Constraint> = (0..SIDES)
                     .filter_map(|k| {
                         let (plane, away) = planes[k].as_ref()?;
                         next_row(k, i, j).map(|base| (k, plane, away, base))
@@ -424,7 +418,7 @@ impl<S: Scalar> NurbSurface3D<S> {
                     // The second control point of a side meeting this one:
                     // kept, and so it must be in the plane already.
                     for &(k, plane, _, _) in &constraints {
-                        if !plane.signed_distance(&p).could_be_equal(S::ZERO) {
+                        if !plane.signed_distance(&p).could_be_equal(Scalar::ZERO) {
                             return Err(GeopError::new(format!(
                                 "NurbSurface::tangent_to_planes: the side meeting side {k} at its corner leaves the plane there, at {p:?}: the patch cannot be tangent to the plane and keep that side"
                             )));
@@ -438,7 +432,7 @@ impl<S: Scalar> NurbSurface3D<S> {
                             if a.normal
                                 .prod_cross(&b.normal)
                                 .norm_sq()
-                                .could_be_equal(S::ZERO)
+                                .could_be_equal(Scalar::ZERO)
                             {
                                 // One plane, met along two sides.
                                 a.project(&p)
@@ -456,7 +450,11 @@ impl<S: Scalar> NurbSurface3D<S> {
                 };
                 for &(k, _, away, (bi, bj)) in &constraints {
                     let base = original[at(bi, bj)].dehomogenized()?;
-                    if !moved.sub(&base).prod_dot(away).definitely_greater(S::ZERO) {
+                    if !moved
+                        .sub(&base)
+                        .prod_dot(away)
+                        .definitely_greater(Scalar::ZERO)
+                    {
                         return Err(GeopError::new(format!(
                             "NurbSurface::tangent_to_planes: at control point ({i}, {j}) the patch does not leave side {k} away from the face it continues: it would fold back over it"
                         )));
@@ -475,7 +473,7 @@ impl<S: Scalar> NurbSurface3D<S> {
 #[cfg(test)]
 mod tests {
     use crate::test_fixtures::{line, weighted};
-    use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
+    use geop_core_math::{scalars::Scalar, vector::Vector3};
 
     use crate::{
         nurb_curve::{NurbCurve, NurbCurve3D},
@@ -483,15 +481,15 @@ mod tests {
         shape::Plane,
     };
 
-    fn v<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
-        Vector3::from_array([x, y, z].map(S::from_f64))
+    fn v(x: f64, y: f64, z: f64) -> Vector3 {
+        Vector3::from_array([x, y, z].map(Scalar::from_f64))
     }
 
     /// The quarter circle in the plane `x = x0` from `(x0, 0, 0)` round
     /// the center `(x0, 0, 1)` to `(x0, 1, 1)`: it leaves the plane `z = 0`
     /// along `y`.
-    fn rising_arc<S: Scalar>(x0: f64) -> NurbCurve3D<S> {
-        let f = S::from_f64;
+    fn rising_arc(x0: f64) -> NurbCurve3D {
+        let f = Scalar::from_f64;
         NurbCurve::try_new(
             2,
             vec![
@@ -506,8 +504,8 @@ mod tests {
 
     /// A cubic from the origin to `(1, 0, 0)`, with an interior knot,
     /// bending out of the plane `z = 0` by `lift`.
-    fn wavy<S: Scalar>(lift: f64) -> NurbCurve3D<S> {
-        let f = S::from_f64;
+    fn wavy(lift: f64) -> NurbCurve3D {
+        let f = Scalar::from_f64;
         NurbCurve::try_new(
             3,
             vec![
@@ -532,14 +530,14 @@ mod tests {
         .unwrap()
     }
 
-    fn assert_on<S: Scalar>(surface: &NurbSurface3D<S>, curve: &NurbCurve3D<S>, side: usize) {
+    fn assert_on(surface: &NurbSurface3D, curve: &NurbCurve3D, side: usize) {
         for k in 0..=8 {
-            let s = S::from_ratio(k, 8).unwrap();
+            let s = Scalar::from_ratio(k, 8).unwrap();
             let (u, v) = match side {
-                0 => (s, S::ZERO),
-                1 => (S::ONE, s),
-                2 => (S::ONE.sub(s), S::ONE),
-                _ => (S::ZERO, S::ONE.sub(s)),
+                0 => (s, Scalar::ZERO),
+                1 => (Scalar::ONE, s),
+                2 => (Scalar::ONE.sub(s), Scalar::ONE),
+                _ => (Scalar::ZERO, Scalar::ONE.sub(s)),
             };
             let on_surface = surface.evaluate(u, v).unwrap();
             let unit = curve.with_unit_domain().unwrap();
@@ -554,17 +552,18 @@ mod tests {
     /// A Coons patch of a wavy cubic, two quarter circles and a line: its
     /// border rows are the sides' own control points, and it runs along
     /// each side wherever it is evaluated.
-    fn check_coons_interpolates_its_sides<S: Scalar>() {
+    #[test]
+    fn coons_interpolates_its_sides() {
         let sides = [
-            wavy::<S>(1.0),
+            wavy(1.0),
             line([1., 0., 0.], [1., 1., 1.]),
             line([1., 1., 1.], [0., 1., 1.]),
-            rising_arc::<S>(0.).reverse(),
+            rising_arc(0.).reverse(),
         ];
         let surface = NurbSurface3D::coons([&sides[0], &sides[1], &sides[2], &sides[3]]).unwrap();
         // The cubic, on the patch's `u` knots, is its first row.
         let nv = surface.num_v;
-        for (i, cp) in wavy::<S>(1.0).control_points.iter().enumerate() {
+        for (i, cp) in wavy(1.0).control_points.iter().enumerate() {
             let row = surface.control_points[i * nv];
             assert!(row.could_be_equal(cp), "{i}: {row:?} vs {cp:?}");
         }
@@ -574,64 +573,62 @@ mod tests {
             assert_on(&surface, side, k);
         }
     }
-    #[test]
-    fn coons_interpolates_its_sides() {
-        for_all_scalars!(check_coons_interpolates_its_sides);
-    }
 
     /// Four lines of a square make the square itself, flat.
-    fn check_coons_of_a_square_is_flat<S: Scalar>() {
+    #[test]
+    fn coons_of_a_square_is_flat() {
         let c = [[0., 0., 0.], [2., 0., 0.], [2., 1., 0.], [0., 1., 0.]];
-        let sides: Vec<_> = (0..4).map(|k| line::<S>(c[k], c[(k + 1) % 4])).collect();
+        let sides: Vec<_> = (0..4).map(|k| line(c[k], c[(k + 1) % 4])).collect();
         let surface = NurbSurface3D::coons([&sides[0], &sides[1], &sides[2], &sides[3]]).unwrap();
         let plane = surface.as_plane().unwrap().expect("flat");
         assert!(plane.normal.could_be_equal(&v(0., 0., 1.)), "{plane:?}");
     }
-    #[test]
-    fn coons_of_a_square_is_flat() {
-        for_all_scalars!(check_coons_of_a_square_is_flat);
-    }
 
     /// Sides that do not meet are refused.
-    fn check_coons_needs_a_closed_loop<S: Scalar>() {
-        let a = line::<S>([0., 0., 0.], [1., 0., 0.]);
-        let b = line::<S>([1., 0., 0.], [1., 1., 0.]);
-        let c = line::<S>([1., 1., 0.], [0., 1., 0.]);
-        let d = line::<S>([0., 1.5, 0.], [0., 0., 0.]);
-        assert!(NurbSurface3D::coons([&a, &b, &c, &d]).is_err());
-    }
     #[test]
     fn coons_needs_a_closed_loop() {
-        for_all_scalars!(check_coons_needs_a_closed_loop);
+        let a = line([0., 0., 0.], [1., 0., 0.]);
+        let b = line([1., 0., 0.], [1., 1., 0.]);
+        let c = line([1., 1., 0.], [0., 1., 0.]);
+        let d = line([0., 1.5, 0.], [0., 0., 0.]);
+        assert!(NurbSurface3D::coons([&a, &b, &c, &d]).is_err());
     }
 
     /// The ruled surface between two curves runs along both.
-    fn check_ruled_runs_along_both<S: Scalar>() {
-        let a = wavy::<S>(1.0);
-        let b = rising_arc::<S>(2.0);
-        let surface = NurbSurface3D::ruled(&a, &b).unwrap();
-        for k in 0..=8 {
-            let s = S::from_ratio(k, 8).unwrap();
-            let pa = a.evaluate(s).unwrap();
-            let pb = b.evaluate(s).unwrap();
-            assert!(surface.evaluate(s, S::ZERO).unwrap().could_be_equal(&pa));
-            assert!(surface.evaluate(s, S::ONE).unwrap().could_be_equal(&pb));
-        }
-    }
     #[test]
     fn ruled_runs_along_both() {
-        for_all_scalars!(check_ruled_runs_along_both);
+        let a = wavy(1.0);
+        let b = rising_arc(2.0);
+        let surface = NurbSurface3D::ruled(&a, &b).unwrap();
+        for k in 0..=8 {
+            let s = Scalar::from_ratio(k, 8).unwrap();
+            let pa = a.evaluate(s).unwrap();
+            let pb = b.evaluate(s).unwrap();
+            assert!(
+                surface
+                    .evaluate(s, Scalar::ZERO)
+                    .unwrap()
+                    .could_be_equal(&pa)
+            );
+            assert!(
+                surface
+                    .evaluate(s, Scalar::ONE)
+                    .unwrap()
+                    .could_be_equal(&pb)
+            );
+        }
     }
 
     /// A patch rising from a wavy curve in the plane `z = 0` between two
     /// quarter circles that leave it along `y`: made tangent to the plane
     /// along its bottom side, its normal there is the plane's, all along
     /// the side — and its sides are where they were.
-    fn check_tangent_to_a_plane<S: Scalar>() {
+    #[test]
+    fn tangent_to_a_plane() {
         // The top bends up and down: the blend alone does not keep the
         // plane's tangent.
         let top = {
-            let f = S::from_f64;
+            let f = Scalar::from_f64;
             NurbCurve::try_new(
                 3,
                 vec![
@@ -646,21 +643,16 @@ mod tests {
             .unwrap()
             .reverse()
         };
-        let sides = [
-            wavy::<S>(0.0),
-            rising_arc::<S>(1.),
-            top,
-            rising_arc::<S>(0.).reverse(),
-        ];
+        let sides = [wavy(0.0), rising_arc(1.), top, rising_arc(0.).reverse()];
         let coons = NurbSurface3D::coons([&sides[0], &sides[1], &sides[2], &sides[3]]).unwrap();
         let plane = Plane::try_new(v(0., 0., 0.), v(0., 0., 1.)).unwrap();
         let away = v(0., 1., 0.);
         let bends = (0..=8).any(|k| {
-            let u = S::from_ratio(k, 8).unwrap();
-            let n = coons.normal(u, S::ZERO).unwrap();
+            let u = Scalar::from_ratio(k, 8).unwrap();
+            let n = coons.normal(u, Scalar::ZERO).unwrap();
             !n.prod_cross(&v(0., 0., 1.))
                 .norm_sq()
-                .could_be_equal(S::ZERO)
+                .could_be_equal(Scalar::ZERO)
         });
         assert!(bends, "the Coons patch alone is not tangent to the plane");
         let surface = coons
@@ -670,18 +662,18 @@ mod tests {
             assert_on(&surface, side, k);
         }
         for k in 0..=8 {
-            let u = S::from_ratio(k, 8).unwrap();
-            let n = surface.normal(u, S::ZERO).unwrap();
+            let u = Scalar::from_ratio(k, 8).unwrap();
+            let n = surface.normal(u, Scalar::ZERO).unwrap();
             assert!(
                 n.prod_cross(&v(0., 0., 1.))
                     .norm_sq()
-                    .could_be_equal(S::ZERO),
+                    .could_be_equal(Scalar::ZERO),
                 "at {u:?}: {n:?}"
             );
         }
         // Straight sides leaving the plane at an angle cannot be kept.
         let steep = [
-            line::<S>([0., 0., 0.], [1., 0., 0.]),
+            line([0., 0., 0.], [1., 0., 0.]),
             line([1., 0., 0.], [1., 1., 1.]),
             line([1., 1., 1.], [0., 1., 1.]),
             line([0., 1., 1.], [0., 0., 0.]),
@@ -694,16 +686,13 @@ mod tests {
                 .is_err()
         );
     }
-    #[test]
-    fn tangent_to_a_plane() {
-        for_all_scalars!(check_tangent_to_a_plane);
-    }
 
     /// A bilinear patch through four corners, not in one plane, has them
     /// at the corners of its domain.
-    fn check_bilinear_has_its_corners<S: Scalar>() {
+    #[test]
+    fn bilinear_has_its_corners() {
         let corners = [
-            v::<S>(0.3, -1.2, 2.5),
+            v(0.3, -1.2, 2.5),
             v(4.1, 0.7, -0.3),
             v(2.2, 3.3, 1.1),
             v(-1.5, 2.0, 0.6),
@@ -711,12 +700,10 @@ mod tests {
         let surface =
             NurbSurface3D::bilinear(corners[0], corners[1], corners[2], corners[3]).unwrap();
         for (p, (u, w)) in corners.iter().zip([(0, 0), (1, 0), (1, 1), (0, 1)]) {
-            let at = surface.evaluate(S::from_i64(u), S::from_i64(w)).unwrap();
+            let at = surface
+                .evaluate(Scalar::from_i64(u), Scalar::from_i64(w))
+                .unwrap();
             assert!(at.could_be_equal(p), "at ({u}, {w}): {at:?}, not {p:?}");
         }
-    }
-    #[test]
-    fn bilinear_has_its_corners() {
-        for_all_scalars!(check_bilinear_has_its_corners);
     }
 }

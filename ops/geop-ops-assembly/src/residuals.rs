@@ -10,10 +10,9 @@
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::{Motion, Pose},
-    scalars::{Field, Ring, Scalar, as_f64},
+    scalars::{Number, Scalar, as_f64},
     vector::Vector3,
 };
-use geop_core_program::values::Design;
 use geop_ops_model::selection::{Role, Shape};
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +28,7 @@ impl Placing {
     }
 
     /// The point `at` of the part, where the part is.
-    pub(crate) fn point(&self, at: &Vector3<Design>) -> Vector3<D> {
+    pub(crate) fn point(&self, at: &Vector3) -> Vector3<D> {
         let at = at.map(D::cst);
         match &self.0 {
             Some(m) => m.apply(&at),
@@ -63,17 +62,17 @@ pub(crate) fn parallel(across: &[Vector3<D>; 2], along: &Vector3<D>, scale: D) -
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Geometry {
     Point {
-        at: Vector3<Design>,
+        at: Vector3,
     },
     /// The line through `point` along `direction` (any non-zero length).
     Line {
-        point: Vector3<Design>,
-        direction: Vector3<Design>,
+        point: Vector3,
+        direction: Vector3,
     },
     /// The plane through `point` normal to `normal` (any non-zero length).
     Plane {
-        point: Vector3<Design>,
-        normal: Vector3<Design>,
+        point: Vector3,
+        normal: Vector3,
     },
 }
 
@@ -89,7 +88,7 @@ impl Geometry {
     /// What `shape` gives used as `role`, if it fits it: a point — the
     /// center of a circle is one — a line, an axis as a line, a plane.
     fn as_role(role: Role, shape: &Shape) -> Option<Geometry> {
-        let line = |a: &geop_core_geometry::shape::Axis<Design>| Geometry::Line {
+        let line = |a: &geop_core_geometry::shape::Axis| Geometry::Line {
             point: a.point,
             direction: a.direction,
         };
@@ -128,12 +127,12 @@ pub enum Kind {
     /// or two parallel lines or planes, or a line parallel to a plane.
     Distance {
         #[serde(with = "as_f64")]
-        value: Design,
+        value: Scalar,
     },
     /// The lines (or planes' normals) meet at `value` degrees.
     Angle {
         #[serde(with = "as_f64")]
-        value: Design,
+        value: Scalar,
     },
 }
 
@@ -223,7 +222,7 @@ impl Geometry {
     /// in the part's own frame — a free choice — and turn with it.
     pub fn placed(&self, pose: Option<&Pose<D>>) -> GeopResult<World> {
         let placing = Placing::new(pose);
-        let direction = |d: &Vector3<Design>| -> GeopResult<Direction> {
+        let direction = |d: &Vector3| -> GeopResult<Direction> {
             let d = d.map(D::cst).normalize()?;
             Ok(Direction {
                 along: placing.turn(&d),

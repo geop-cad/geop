@@ -2,16 +2,13 @@
 //! operation that refers to existing entities by name is built on.
 
 use geop_core_geometry::shape::Plane;
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
-};
+use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_topology::{Body, EdgeId, FaceId, ShellId, SolidId, VertexId};
 
 use super::NamedModel;
 use super::ids::RefId;
 
-impl<S: Scalar> NamedModel<S> {
+impl NamedModel {
     /// `name`'s id, checked to be the particular kind `extract` accepts.
     fn named<T>(
         &self,
@@ -99,7 +96,7 @@ impl<S: Scalar> NamedModel<S> {
 
     /// The plane `face` lies in. An error for a face that is not planar,
     /// naming the face and saying `why` it has to be.
-    pub fn plane_of_face(&self, face: FaceId, why: &str) -> GeopResult<Plane<S>> {
+    pub fn plane_of_face(&self, face: FaceId, why: &str) -> GeopResult<Plane> {
         match self.topology().get_face(face)?.surface.as_plane()? {
             Some(plane) => Ok(plane),
             None => Err(GeopError::new(format!(

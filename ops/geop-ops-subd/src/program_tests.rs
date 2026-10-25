@@ -3,7 +3,7 @@
 
 use crate::{Cage, Mirror, Subd, SubdArgs, build_subd};
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::{operation_registry::OperationRegistry, values::Design};
+use geop_core_program::operation_registry::OperationRegistry;
 use geop_lib_booleans::{RemeshParams, boolean};
 use geop_lib_sweep::shapes::block;
 use geop_ops_model::{BooleanOp, NamedModel, Namer, testing::assert_valid};
@@ -18,7 +18,7 @@ fn registry() -> GeopResult<OperationRegistry> {
 /// valid solid.
 #[test]
 fn subd_body_united_with_a_box() {
-    let mut part: NamedModel<Design> = NamedModel::new();
+    let mut part: NamedModel = NamedModel::new();
     let blob = SubdArgs {
         cage: Cage::cuboid([2.0, 2.0, 2.0]),
         mirror: Mirror::None,
@@ -59,9 +59,9 @@ fn subd_mouse_round_trips() {
     let sole = part.face_id("subd(mouse,f8)").unwrap();
     let surface = &part.topology().get_face(sole).unwrap().surface;
     let p = surface
-        .evaluate(Design::from_f64(0.7), Design::from_f64(1.2))
+        .evaluate(Scalar::from_f64(0.7), Scalar::from_f64(1.2))
         .unwrap();
-    assert!(p[2].could_be_equal(Design::from_f64(-0.4)), "{p:?}");
+    assert!(p[2].could_be_equal(Scalar::from_f64(-0.4)), "{p:?}");
 }
 
 /// The example `subd_mouse`, edited as a user edits it, builds incrementally

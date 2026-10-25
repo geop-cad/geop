@@ -30,7 +30,7 @@ use crate::{
 /// because the faces improperly interpenetrate anywhere — just an artifact
 /// of already-expected adjacency. So these pairs are skipped; shared edges
 /// are already validated elsewhere (`disjointness_check`, `manifold_check`).
-fn adjacent_face_pairs<S: Scalar>(model: &Model<S>) -> HashSet<(FaceId, FaceId)> {
+fn adjacent_face_pairs(model: &Model) -> HashSet<(FaceId, FaceId)> {
     let mut pairs = HashSet::new();
     let mut mark_all = |faces: &[FaceId]| {
         for i in 0..faces.len() {
@@ -90,10 +90,10 @@ fn adjacent_face_pairs<S: Scalar>(model: &Model<S>) -> HashSet<(FaceId, FaceId)>
 /// otherwise-genuine match can round to just outside `could_be_equal`'s
 /// tolerance. Once a round's sharpened result is its own seed, the rounds
 /// stop there with the identical answer (see the loop).
-pub fn check_face_face_numerical_intersection<S: Scalar>(
-    params: &ValidationParameters<S>,
+pub fn check_face_face_numerical_intersection(
+    params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
 ) {
     let adjacent = adjacent_face_pairs(model);
     // Faces of separate bodies may overlap as they please.
@@ -102,10 +102,10 @@ pub fn check_face_face_numerical_intersection<S: Scalar>(
     }
 }
 
-fn check_faces_of_body<S: Scalar>(
-    params: &ValidationParameters<S>,
+fn check_faces_of_body(
+    params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
     face_ids: &[FaceId],
     adjacent: &HashSet<(FaceId, FaceId)>,
 ) {
@@ -140,10 +140,10 @@ fn check_faces_of_body<S: Scalar>(
 
             for sample in 0..params.face_face_sample_count {
                 let start = [
-                    S::from_f64(rng.next_range(au_lo.to_f64(), au_hi.to_f64())),
-                    S::from_f64(rng.next_range(av_lo.to_f64(), av_hi.to_f64())),
-                    S::from_f64(rng.next_range(bu_lo.to_f64(), bu_hi.to_f64())),
-                    S::from_f64(rng.next_range(bv_lo.to_f64(), bv_hi.to_f64())),
+                    Scalar::from_f64(rng.next_range(au_lo.to_f64(), au_hi.to_f64())),
+                    Scalar::from_f64(rng.next_range(av_lo.to_f64(), av_hi.to_f64())),
+                    Scalar::from_f64(rng.next_range(bu_lo.to_f64(), bu_hi.to_f64())),
+                    Scalar::from_f64(rng.next_range(bv_lo.to_f64(), bv_hi.to_f64())),
                 ];
                 // Alternating projections, each round from sharp seeds; the
                 // last round's result is kept unsharpened for the check
@@ -153,7 +153,7 @@ fn check_faces_of_body<S: Scalar>(
                     start,
                     params.face_face_newton_iterations,
                     Repeat::FixedPoint,
-                    |x: &[S; 4]| (x.map(Scalar::midpoint), *x),
+                    |x: &[Scalar; 4]| (x.map(Scalar::midpoint), *x),
                     |&[u1, v1, u2, v2]| {
                         let Ok(p1) = face_a.surface.evaluate(u1, v1) else {
                             return Ok(Step::Stuck);
@@ -248,38 +248,40 @@ mod tests {
         nurb_surface::NurbSurface3D,
     };
     use geop_core_math::{
-        for_all_scalars,
         scalars::Scalar,
         vector::{Vector3, Vector4},
     };
 
-    fn check_welded_cube_passes<S: Scalar>() {
-        let model = test_cube_model::<S>();
-        assert!(check_errors(check_face_face_numerical_intersection, &model).is_empty());
-    }
     #[test]
     fn welded_cube_passes() {
-        for_all_scalars!(check_welded_cube_passes);
+        let model = test_cube_model();
+        assert!(check_errors(check_face_face_numerical_intersection, &model).is_empty());
     }
 
     /// A face trimmed to the quad `(u,v)` corners `q0 -> q1 -> q2 -> q3`, on
     /// a shared big planar surface spanning physical `(0,0,0)..(2,2,0)`
     /// (`(u,v) == (x/2, y/2)`).
-    fn quarter_face<S: Scalar>(
-        model: &mut Model<S>,
+    fn quarter_face(
+        model: &mut Model,
         q0: (f64, f64),
         q1: (f64, f64),
         q2: (f64, f64),
         q3: (f64, f64),
     ) -> FaceId {
-        let p =
-            |x: f64, y: f64| Vector4::from_array([S::from_f64(x), S::from_f64(y), S::ZERO, S::ONE]);
+        let p = |x: f64, y: f64| {
+            Vector4::from_array([
+                Scalar::from_f64(x),
+                Scalar::from_f64(y),
+                Scalar::ZERO,
+                Scalar::ONE,
+            ])
+        };
         let surface = NurbSurface3D::try_new(
             1,
             1,
             vec![p(0.0, 0.0), p(0.0, 2.0), p(2.0, 0.0), p(2.0, 2.0)],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
+            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
         )
         .unwrap();
         let face_id = model.insert_face(Face {
@@ -295,9 +297,9 @@ mod tests {
             .map(|&(u, v)| {
                 model.insert_vertex(Vertex {
                     point: Vector3::from_array([
-                        S::from_f64(u * 2.0),
-                        S::from_f64(v * 2.0),
-                        S::ZERO,
+                        Scalar::from_f64(u * 2.0),
+                        Scalar::from_f64(v * 2.0),
+                        Scalar::ZERO,
                     ]),
                 })
             })
@@ -311,19 +313,19 @@ mod tests {
                         1,
                         vec![
                             Vector4::from_array([
-                                S::from_f64(u0 * 2.0),
-                                S::from_f64(v0 * 2.0),
-                                S::ZERO,
-                                S::ONE,
+                                Scalar::from_f64(u0 * 2.0),
+                                Scalar::from_f64(v0 * 2.0),
+                                Scalar::ZERO,
+                                Scalar::ONE,
                             ]),
                             Vector4::from_array([
-                                S::from_f64(u1 * 2.0),
-                                S::from_f64(v1 * 2.0),
-                                S::ZERO,
-                                S::ONE,
+                                Scalar::from_f64(u1 * 2.0),
+                                Scalar::from_f64(v1 * 2.0),
+                                Scalar::ZERO,
+                                Scalar::ONE,
                             ]),
                         ],
-                        vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+                        vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
                     )
                     .unwrap(),
                     start_vertex: verts[i],
@@ -331,14 +333,22 @@ mod tests {
                 })
             })
             .collect();
-        let pc = |a: (f64, f64), b: (f64, f64)| -> NurbCurve2D<S> {
+        let pc = |a: (f64, f64), b: (f64, f64)| -> NurbCurve2D {
             NurbCurve::try_new(
                 1,
                 vec![
-                    Vector3::from_array([S::from_f64(a.0), S::from_f64(a.1), S::ONE]),
-                    Vector3::from_array([S::from_f64(b.0), S::from_f64(b.1), S::ONE]),
+                    Vector3::from_array([
+                        Scalar::from_f64(a.0),
+                        Scalar::from_f64(a.1),
+                        Scalar::ONE,
+                    ]),
+                    Vector3::from_array([
+                        Scalar::from_f64(b.0),
+                        Scalar::from_f64(b.1),
+                        Scalar::ONE,
+                    ]),
                 ],
-                vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+                vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
             )
             .unwrap()
         };
@@ -363,8 +373,9 @@ mod tests {
         face_id
     }
 
-    fn check_coincident_planes_with_disjoint_trims_pass<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn coincident_planes_with_disjoint_trims_pass() {
+        let mut model = Model::new();
         // Two quadrants of the very same underlying plane, diagonally
         // opposite. Their surfaces coincide exactly — every alternating
         // projection converges somewhere on the shared plane — but their
@@ -379,8 +390,9 @@ mod tests {
         let errors = check_errors(check_face_face_numerical_intersection, &model);
         assert!(errors.is_empty(), "{errors:?}");
     }
-    fn check_coincident_planes_with_identical_trims_fail<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn coincident_planes_with_identical_trims_fail() {
+        let mut model = Model::new();
         // The same quadrant twice: two faces sharing no edge or vertex yet
         // occupying exactly the same place. That is the violation — their
         // intersection is a whole region, and nothing in the topology
@@ -390,22 +402,14 @@ mod tests {
 
         assert!(!check_errors(check_face_face_numerical_intersection, &model).is_empty());
     }
-    #[test]
-    fn coincident_planes_with_identical_trims_fail() {
-        for_all_scalars!(check_coincident_planes_with_identical_trims_fail);
-    }
-
-    #[test]
-    fn coincident_planes_with_disjoint_trims_pass() {
-        for_all_scalars!(check_coincident_planes_with_disjoint_trims_pass);
-    }
 
     /// Whichever order a body's faces are listed in, a pair is checked the
     /// same way and reports the same. The order used to come out of a
     /// `HashMap`, the first of a pair seeded the samples and was projected
     /// onto, and a failure could appear and disappear between runs.
-    fn check_a_pair_is_checked_alike_in_either_order<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn a_pair_is_checked_alike_in_either_order() {
+        let mut model = Model::new();
         let a = quarter_face(&mut model, (0.0, 0.0), (0.5, 0.0), (0.5, 0.5), (0.0, 0.5));
         let b = quarter_face(&mut model, (0.1, 0.1), (0.6, 0.1), (0.6, 0.6), (0.1, 0.6));
         let adjacent = super::adjacent_face_pairs(&model);
@@ -423,9 +427,5 @@ mod tests {
         let forward = report(&[a, b]);
         assert!(!forward.is_empty());
         assert_eq!(forward, report(&[b, a]));
-    }
-    #[test]
-    fn a_pair_is_checked_alike_in_either_order() {
-        for_all_scalars!(check_a_pair_is_checked_alike_in_either_order);
     }
 }

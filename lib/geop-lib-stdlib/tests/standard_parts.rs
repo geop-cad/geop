@@ -6,16 +6,13 @@
 use std::{collections::BTreeMap, rc::Rc};
 
 use geop_core_editor::registry::Registry;
-use geop_core_math::{
-    geop_error::GeopResult,
-    scalars::{ScalInF64 as S, Scalar},
-};
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_core_program::{
     part::Part,
     program::Program,
     runner::Runner,
     testing::{edit_args, step},
-    values::{Design, Setting, Settings, StateValue, StateValues, pose_state},
+    values::{Setting, Settings, StateValue, StateValues, pose_state},
     workspace::{self, Files, Location},
 };
 use geop_core_topology::validation::{ValidationParameters, validate_fast};
@@ -87,7 +84,7 @@ trait Built {
     fn built(&self) -> GeopResult<Part>;
 
     /// The model the program builds, or why a step fails.
-    fn build_model(&self) -> GeopResult<NamedModel<Design>> {
+    fn build_model(&self) -> GeopResult<NamedModel> {
         Ok(model_of(&self.built()?))
     }
 }
@@ -160,7 +157,7 @@ fn expected(file: &str, value: impl Fn(&str) -> f64) -> [f64; 3] {
 /// solid, valid as far as a fast check sees and fully if `fully`, with its
 /// datums and threaded faces named and reaching where its table says — or
 /// what is wrong with it.
-fn built(family: &StandardPart, program: &Program, fully: bool) -> Result<NamedModel<S>, String> {
+fn built(family: &StandardPart, program: &Program, fully: bool) -> Result<NamedModel, String> {
     let part = program
         .built()
         .map_err(|e| format!("does not build: {e}"))?;
@@ -580,7 +577,7 @@ fn gear_drive() -> Program {
     use geop_ops_model::selection::Selected;
     use geop_ops_reference_geometry::{AddDatumArgs, Construction};
 
-    let n = Design::from_f64;
+    let n = Scalar::from_f64;
     let pose = |position: [f64; 3], degrees: [f64; 3]| {
         Pose::from_euler(Vector3::from_array(position.map(n)), degrees.map(n)).unwrap()
     };
@@ -693,7 +690,7 @@ fn a_motor_drives_a_gear_pair_at_its_ratio() {
     let program = gear_drive();
     let mut built = build(&program, "gear_drive.geop", workspace(BTreeMap::new())).unwrap();
     let driver = "add_part(pinion,m1).angle";
-    let set = BTreeMap::from([(driver.to_string(), Design::from_f64(90.0))]);
+    let set = BTreeMap::from([(driver.to_string(), Scalar::from_f64(90.0))]);
     let mut rerun = Rerun {
         runner: &built.runner,
         part: &mut built.part,

@@ -27,10 +27,10 @@ use geop_ops_model::{BodyNames, NamedModel, Namer};
 /// control points (see [`ToolStation::points`]) — of `degree` on `knots`, and
 /// what its faces are called after, if anything.
 #[derive(Clone, Debug)]
-pub(crate) struct ToolSpan<S: Scalar> {
+pub(crate) struct ToolSpan {
     pub(crate) degree: usize,
-    pub(crate) knots: Vec<S>,
-    pub(crate) rows: Vec<[Vector4<S>; 4]>,
+    pub(crate) knots: Vec<Scalar>,
+    pub(crate) rows: Vec<[Vector4; 4]>,
     pub(crate) name: Option<String>,
 }
 
@@ -39,29 +39,29 @@ pub(crate) struct ToolSpan<S: Scalar> {
 /// homogeneous — what both the cap's pcurves and the section's edges in
 /// space are made of, so that they agree exactly.
 #[derive(Clone, Debug)]
-pub(crate) struct Cap<S: Scalar> {
-    pub(crate) plane: [Vector3<S>; 3],
-    pub(crate) flat: [Vector3<S>; 4],
+pub(crate) struct Cap {
+    pub(crate) plane: [Vector3; 3],
+    pub(crate) flat: [Vector3; 4],
 }
 
 /// Where a tool's section lies at one of its stations: the section's
 /// control points, its vertices — the two contacts and the apex — what it
 /// is called, and its cap, if it is capped there.
 #[derive(Clone, Debug)]
-pub(crate) struct ToolStation<S: Scalar> {
-    pub(crate) points: [Vector4<S>; 4],
-    pub(crate) vertices: [Vector3<S>; 3],
+pub(crate) struct ToolStation {
+    pub(crate) points: [Vector4; 4],
+    pub(crate) vertices: [Vector3; 3],
     pub(crate) name: String,
-    pub(crate) cap: Option<Cap<S>>,
+    pub(crate) cap: Option<Cap>,
 }
 
 /// A blend's tool, ready to build: its stations and the spans between
 /// them, around to the first again if `closed` — else ending at its first
 /// and last station, each capped or joined to a [`Corner`].
 #[derive(Clone, Debug)]
-pub(crate) struct Tool<S: Scalar> {
-    pub(crate) stations: Vec<ToolStation<S>>,
-    pub(crate) spans: Vec<ToolSpan<S>>,
+pub(crate) struct Tool {
+    pub(crate) stations: Vec<ToolStation>,
+    pub(crate) spans: Vec<ToolSpan>,
     pub(crate) closed: bool,
     /// What the walls rising from the first and the second contact are
     /// called: `a` and `b` after the faces on the edge's left and right.
@@ -71,7 +71,7 @@ pub(crate) struct Tool<S: Scalar> {
     pub(crate) blend: &'static str,
 }
 
-impl<S: Scalar> Tool<S> {
+impl Tool {
     /// What its joints are called: its contacts `ta` and `tb`, after their
     /// walls, and its apex `q`.
     fn joint_names(&self) -> [String; 3] {
@@ -85,26 +85,23 @@ impl<S: Scalar> Tool<S> {
 
 /// The homogeneous point `h`'s coordinates in the plane `(origin, e1, e2)`,
 /// homogeneous: `(w x, w y, w)`.
-pub(crate) fn flatten<S: Scalar>(h: &Vector4<S>, [o, e1, e2]: &[Vector3<S>; 3]) -> Vector3<S> {
+pub(crate) fn flatten(h: &Vector4, [o, e1, e2]: &[Vector3; 3]) -> Vector3 {
     nurb_curve::flatten_point(h, o, e1, e2)
 }
 
 /// The point `v`'s coordinates in the plane `plane`, homogeneous.
-pub(crate) fn flatten_point<S: Scalar>(v: &Vector3<S>, plane: &[Vector3<S>; 3]) -> Vector3<S> {
-    flatten(&v.homogeneous(S::ONE), plane)
+pub(crate) fn flatten_point(v: &Vector3, plane: &[Vector3; 3]) -> Vector3 {
+    flatten(&v.homogeneous(Scalar::ONE), plane)
 }
 
 /// The homogeneous plane coordinates `p` in space, on `plane`.
-pub(crate) fn embed<S: Scalar>(p: &Vector3<S>, [o, e1, e2]: &[Vector3<S>; 3]) -> Vector4<S> {
+pub(crate) fn embed(p: &Vector3, [o, e1, e2]: &[Vector3; 3]) -> Vector4 {
     embed_point(p, o, e1, e2)
 }
 
 /// The wall section curve `c` (see [`CURVE_POINTS`]) sweeps through
 /// `span`: `u` along the span, `v` along the curve.
-pub(crate) fn wall_surface<S: Scalar>(
-    span: &ToolSpan<S>,
-    c: usize,
-) -> GeopResult<NurbSurface3D<S>> {
+pub(crate) fn wall_surface(span: &ToolSpan, c: usize) -> GeopResult<NurbSurface3D> {
     let control_points = span
         .rows
         .iter()
@@ -130,10 +127,7 @@ const JOINT_POINT: [usize; 3] = [0, 2, 3];
 
 /// The section's curve `c` (see [`CURVE_POINTS`]) of control points
 /// `points`: rational quadratic for the arc, lines else.
-fn section_curve<S: Scalar, const D: usize>(
-    points: &[Vector<S, D>; 4],
-    c: usize,
-) -> GeopResult<NurbCurve<S, D>> {
+fn section_curve<const D: usize>(points: &[Vector<D>; 4], c: usize) -> GeopResult<NurbCurve<D>> {
     let control_points = CURVE_POINTS[c].iter().map(|&k| points[k]).collect();
     let degree = if c == 0 { 2 } else { 1 };
     NurbCurve::try_new(degree, control_points, bezier_knots(degree))
@@ -141,7 +135,7 @@ fn section_curve<S: Scalar, const D: usize>(
 
 /// The flat cap on `cap`'s plane holding its section (see [`FlatPatch`]),
 /// facing out of the tool, and the section's curves in its parameters.
-fn cap_face<S: Scalar>(cap: &Cap<S>) -> GeopResult<(NurbSurface3D<S>, [NurbCurve2D<S>; 3])> {
+fn cap_face(cap: &Cap) -> GeopResult<(NurbSurface3D, [NurbCurve2D; 3])> {
     let curves = [
         section_curve(&cap.flat, 0)?,
         section_curve(&cap.flat, 1)?,
@@ -165,16 +159,16 @@ fn cap_face<S: Scalar>(cap: &Cap<S>) -> GeopResult<(NurbSurface3D<S>, [NurbCurve
 /// apex `apex` their apexes are joined to, on the far side of the faces;
 /// and a point `inside` the tools there — the solid's own corner.
 #[derive(Clone, Debug)]
-pub(crate) struct Corner<S: Scalar> {
+pub(crate) struct Corner {
     /// What the corner's own entities are named by: the vertex's.
     pub(crate) namer: Namer,
-    pub(crate) center: Vector3<S>,
-    pub(crate) radius: S,
+    pub(crate) center: Vector3,
+    pub(crate) radius: Scalar,
     /// The faces the ball touches, one per contact.
     pub(crate) faces: Vec<FaceId>,
-    pub(crate) contacts: Vec<Vector3<S>>,
-    pub(crate) apex: Vector3<S>,
-    pub(crate) inside: Vector3<S>,
+    pub(crate) contacts: Vec<Vector3>,
+    pub(crate) apex: Vector3,
+    pub(crate) inside: Vector3,
     pub(crate) ends: Vec<CornerEnd>,
 }
 
@@ -201,7 +195,7 @@ pub(crate) struct Joint {
 
 impl CornerEnd {
     /// The index of the station of `tool` that ends here.
-    pub(crate) fn station<S: Scalar>(&self, tool: &Tool<S>) -> usize {
+    pub(crate) fn station(&self, tool: &Tool) -> usize {
         if self.at_end {
             tool.stations.len() - 1
         } else {
@@ -233,10 +227,10 @@ impl CornerEnd {
 ///
 /// Where two tools are joined at a mitre (see [`Joint`]), the second's
 /// section there is the first's: its vertices and curves.
-pub(crate) fn build_tools<S: Scalar>(
-    model: &mut NamedModel<S>,
-    tools: &[(&Namer, &Tool<S>)],
-    corners: &[Corner<S>],
+pub(crate) fn build_tools(
+    model: &mut NamedModel,
+    tools: &[(&Namer, &Tool)],
+    corners: &[Corner],
     joints: &[Joint],
     solid: String,
 ) -> GeopResult<SolidId> {
@@ -373,16 +367,16 @@ pub(crate) fn build_tools<S: Scalar>(
         .ok_or_else(|| GeopError::new("the blend's tool came out as no solid"))
 }
 
-impl<S: Scalar> StripGeometry<S> for Tool<S> {
-    fn joint(&self, s: usize, k: usize) -> GeopResult<Vector3<S>> {
+impl StripGeometry for Tool {
+    fn joint(&self, s: usize, k: usize) -> GeopResult<Vector3> {
         Ok(self.stations[s].vertices[k])
     }
 
-    fn curve(&self, s: usize, c: usize) -> GeopResult<NurbCurve3D<S>> {
+    fn curve(&self, s: usize, c: usize) -> GeopResult<NurbCurve3D> {
         section_curve(&self.stations[s].points, c)
     }
 
-    fn lateral(&self, j: usize, k: usize) -> GeopResult<NurbCurve3D<S>> {
+    fn lateral(&self, j: usize, k: usize) -> GeopResult<NurbCurve3D> {
         let span = &self.spans[j];
         NurbCurve::try_new(
             span.degree,
@@ -391,20 +385,20 @@ impl<S: Scalar> StripGeometry<S> for Tool<S> {
         )
     }
 
-    fn wall(&self, j: usize, c: usize) -> GeopResult<NurbSurface3D<S>> {
+    fn wall(&self, j: usize, c: usize) -> GeopResult<NurbSurface3D> {
         wall_surface(&self.spans[j], c)
     }
 }
 
 /// What a corner's faces are joined to: the tools, the corner's contacts'
 /// vertices, and the tools' vertices and curves' edges (see [`skin`]).
-struct Built<'a, S: Scalar> {
-    tools: &'a [(&'a Namer, &'a Tool<S>)],
+struct Built<'a> {
+    tools: &'a [(&'a Namer, &'a Tool)],
     contacts: &'a [usize],
     skinned: &'a Skinned,
 }
 
-impl<S: Scalar> Built<'_, S> {
+impl Built<'_> {
     /// The edge of curve `c` of the station `end` ends at.
     fn curve(&self, end: &CornerEnd, c: usize) -> usize {
         let s = end.station(self.tools[end.tool].1);
@@ -414,7 +408,7 @@ impl<S: Scalar> Built<'_, S> {
     }
 
     /// The vertex of the apex of the station `end` ends at, and its point.
-    fn apex(&self, end: &CornerEnd) -> (usize, Vector3<S>) {
+    fn apex(&self, end: &CornerEnd) -> (usize, Vector3) {
         let tool = self.tools[end.tool].1;
         let s = end.station(tool);
         (
@@ -426,11 +420,11 @@ impl<S: Scalar> Built<'_, S> {
 
 /// Adds `corner`'s own faces (see [`build_tools`]) to `spec`, joined to
 /// the tools as `built`.
-fn corner_faces<S: Scalar>(
-    spec: &mut BodySpec<S>,
+fn corner_faces(
+    spec: &mut BodySpec,
     names: &mut BodyNames,
-    corner: &Corner<S>,
-    built: &Built<S>,
+    corner: &Corner,
+    built: &Built,
 ) -> GeopResult<()> {
     if corner.contacts.len() != 3 || corner.ends.len() != 3 {
         return Err(GeopError::new(format!(
@@ -478,14 +472,14 @@ fn corner_faces<S: Scalar>(
     };
     let mut order = [0, 1, 2];
     let mut surface = triangle(order)?;
-    let (u, v) = (S::from_f64(0.4), S::from_f64(0.3));
+    let (u, v) = (Scalar::from_f64(0.4), Scalar::from_f64(0.3));
     let towards = surface
         .normal(u, v)?
         .prod_dot(&corner.center.sub(&surface.evaluate(u, v)?));
-    if towards.definitely_less(S::ZERO) {
+    if towards.definitely_less(Scalar::ZERO) {
         order = [1, 0, 2];
         surface = triangle(order)?;
-    } else if !towards.definitely_greater(S::ZERO) {
+    } else if !towards.definitely_greater(Scalar::ZERO) {
         return Err(GeopError::new(format!(
             "cannot tell which way the corner's ball faces ({towards:?})"
         )));
@@ -531,15 +525,15 @@ fn corner_faces<S: Scalar>(
             )
         };
         let mut surface = quad(i, j)?;
-        let half = S::from_f64(0.5);
+        let half = Scalar::from_f64(0.5);
         let middle = surface.evaluate(half, half)?;
         let inward = surface
             .normal(half, half)?
             .prod_dot(&corner.inside.sub(&middle));
-        if inward.definitely_greater(S::ZERO) {
+        if inward.definitely_greater(Scalar::ZERO) {
             std::mem::swap(&mut i, &mut j);
             surface = quad(i, j)?;
-        } else if !inward.definitely_less(S::ZERO) {
+        } else if !inward.definitely_less(Scalar::ZERO) {
             return Err(GeopError::new(format!(
                 "cannot tell which way the corner's side at contact {k} faces ({inward:?})"
             )));

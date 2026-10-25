@@ -11,7 +11,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::{FrameAxis, Motion},
 };
-use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
+use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader};
 use geop_ops_model::datums::origin_axis;
 use geop_ops_model::{ModelOperation, NamedModel};
 use serde::{Deserialize, Serialize};
@@ -71,7 +71,7 @@ impl Pattern for CircularPatternArgs {
         "0"
     }
 
-    fn placements(&self, reader: &Reader) -> GeopResult<Vec<(String, Motion<Design>)>> {
+    fn placements(&self, reader: &Reader) -> GeopResult<Vec<(String, Motion)>> {
         let Some(axis) = &self.axis else {
             return Err(GeopError::new("pick an axis to turn around"));
         };
@@ -137,7 +137,7 @@ impl PartOperation for CircularPattern {
         context: &'a Context<'a>,
         args: &CircularPatternArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, CircularPatternArgs> {
+    ) -> EditForm<'a, CircularPatternArgs> {
         let before = &context.before;
         let mut f = EditForm::default();
         let set_seeds = |args: &mut CircularPatternArgs, seeds| args.seeds = seeds;
@@ -171,7 +171,7 @@ impl PartOperation for CircularPattern {
 
 impl ModelOperation for CircularPattern {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &CircularPatternArgs,

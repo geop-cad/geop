@@ -10,11 +10,7 @@
 //! is one of them is complete; one that can still grow into one is
 //! partial; anything else rules the tool out.
 
-use geop_core_math::{
-    scalars::{Field, Ring, Scalar},
-    vector::Vector2,
-};
-use geop_core_program::values::Design;
+use geop_core_math::{scalars::Scalar, vector::Vector2};
 use geop_core_sketch::{CurveId, PointId, dimension::Measure, geometry::Arc};
 
 use crate::geometry::{P2, add, cross, dot, of, polyline, polyline_mid, scale, sub, unit, xy};
@@ -403,7 +399,7 @@ impl ConstraintTool {
                 })
                 .collect(),
             (T::Horizontal | T::Vertical, &[a, b], []) => {
-                let value = Design::ZERO;
+                let value = Scalar::ZERO;
                 vec![match self {
                     T::Horizontal => DistanceY { a, b, value },
                     _ => DistanceX { a, b, value },
@@ -513,7 +509,7 @@ impl ConstraintTool {
                         T::Radius => Radius { curve, value },
                         _ => Diameter {
                             curve,
-                            value: value.mul(Design::TWO),
+                            value: value.mul(Scalar::TWO),
                         },
                     })
                 })
@@ -527,7 +523,7 @@ impl ConstraintTool {
                 vec![Angle {
                     a,
                     b,
-                    value: Design::from_f64(cross(da, db).atan2(dot(da, db))),
+                    value: Scalar::from_f64(cross(da, db).atan2(dot(da, db))),
                 }]
             }
             _ => return None,
@@ -536,7 +532,7 @@ impl ConstraintTool {
     }
 }
 
-fn pt(sketch: &Sketch, p: PointId) -> Vector2<Design> {
+fn pt(sketch: &Sketch, p: PointId) -> Vector2 {
     sketch.points[&p].xy()
 }
 
@@ -545,7 +541,7 @@ fn is_round(kind: &CurveKind) -> bool {
 }
 
 /// `(start, end)` of a line.
-fn line_points(sketch: &Sketch, kind: &CurveKind) -> Option<(Vector2<Design>, Vector2<Design>)> {
+fn line_points(sketch: &Sketch, kind: &CurveKind) -> Option<(Vector2, Vector2)> {
     match kind {
         CurveKind::Line { start, end } => Some((pt(sketch, *start), pt(sketch, *end))),
         _ => None,
@@ -553,17 +549,17 @@ fn line_points(sketch: &Sketch, kind: &CurveKind) -> Option<(Vector2<Design>, Ve
 }
 
 /// An arc, as the sketch's own geometry has it.
-fn arc(sketch: &Sketch, start: PointId, end: PointId, sweep: Design) -> Option<Arc<Design>> {
+fn arc(sketch: &Sketch, start: PointId, end: PointId, sweep: Scalar) -> Option<Arc<Scalar>> {
     Some(Arc {
         s: pt(sketch, start),
         e: pt(sketch, end),
-        half: sweep.div(Design::TWO).ok()?,
+        half: sweep.div(Scalar::TWO).ok()?,
     })
 }
 
 /// The radius of a circle or arc — a value proposed for a constraint, so a
 /// free choice: sharp.
-fn radius(sketch: &Sketch, kind: &CurveKind) -> Option<Design> {
+fn radius(sketch: &Sketch, kind: &CurveKind) -> Option<Scalar> {
     match *kind {
         CurveKind::Circle { radius, .. } => Some(radius),
         CurveKind::Arc { start, end, sweep } => {
@@ -574,7 +570,7 @@ fn radius(sketch: &Sketch, kind: &CurveKind) -> Option<Design> {
 }
 
 /// The length of a line or arc, as proposed for a constraint: sharp.
-fn length(sketch: &Sketch, curve: CurveId) -> Option<Design> {
+fn length(sketch: &Sketch, curve: CurveId) -> Option<Scalar> {
     match sketch.curves[&curve].kind {
         CurveKind::Line { start, end } => {
             Some(pt(sketch, end).sub(&pt(sketch, start)).norm().sharpen())
@@ -588,7 +584,7 @@ fn length(sketch: &Sketch, curve: CurveId) -> Option<Design> {
 
 /// How far `point` is from `line`'s infinite extension, as proposed for a
 /// constraint: sharp.
-fn point_line_distance(sketch: &Sketch, point: PointId, line: CurveId) -> Option<Design> {
+fn point_line_distance(sketch: &Sketch, point: PointId, line: CurveId) -> Option<Scalar> {
     let (a, b) = line_points(sketch, &sketch.curves[&line].kind)?;
     geop_core_sketch::geometry::line_distance(a, b, pt(sketch, point))
         .ok()
@@ -612,7 +608,7 @@ pub fn set_value(c: &mut Constraint, v: f64) {
         Constraint::Angle { .. } => v.to_radians(),
         _ => v,
     };
-    c.set_value(Design::from_f64(v));
+    c.set_value(Scalar::from_f64(v));
 }
 
 /// A dimension's value, as it is shown.
@@ -632,7 +628,7 @@ pub fn glyph(sketch: &Sketch, c: &Constraint, formula: bool) -> Option<(String, 
     let mid = |curve: CurveId| polyline_mid(&polyline(sketch, curve));
     let p = |point: PointId| xy(sketch, point);
     let between = |a: PointId, b: PointId| scale(add(p(a), p(b)), 0.5);
-    let shown = |prefix: &str, v: Design| {
+    let shown = |prefix: &str, v: Scalar| {
         let f = if formula { "ƒ " } else { "" };
         format!("{f}{prefix}{}", format_value(v.to_f64()))
     };
@@ -657,7 +653,7 @@ pub fn glyph(sketch: &Sketch, c: &Constraint, formula: bool) -> Option<(String, 
                 DistanceX { .. } => ("|", "↔ "),
                 _ => ("—", "↕ "),
             };
-            let text = match !formula && value.is_sharp() && value.could_be_equal(Design::ZERO) {
+            let text = match !formula && value.is_sharp() && value.could_be_equal(Scalar::ZERO) {
                 true => aligned.into(),
                 false => shown(prefix, value),
             };
@@ -818,8 +814,8 @@ pub fn name(c: &Constraint) -> String {
 mod tests {
     use super::*;
 
-    fn n(x: f64) -> Design {
-        Design::from_f64(x)
+    fn n(x: f64) -> Scalar {
+        Scalar::from_f64(x)
     }
 
     /// Nothing selected leaves every tool open; a selection rules out the

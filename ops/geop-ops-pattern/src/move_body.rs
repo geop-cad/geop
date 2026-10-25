@@ -13,7 +13,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_program::{part::StepContext, reader::Reader, values::Design};
+use geop_core_program::{part::StepContext, reader::Reader};
 use geop_ops_model::Combine;
 use geop_ops_model::{ModelOperation, NamedModel, Namer, build_model, read_model, resolve_bodies};
 use serde::{Deserialize, Serialize};
@@ -62,18 +62,17 @@ pub struct MoveBodyArgs {
 impl MoveBodyArgs {
     /// The motion it moves by, as `reader` reads the part: none, if it
     /// moves nothing.
-    fn motion(&self, reader: &Reader) -> GeopResult<Option<Motion<Design>>> {
-        type S = Design;
+    fn motion(&self, reader: &Reader) -> GeopResult<Option<Motion>> {
         let values = self.translation.iter().chain([&self.angle]);
         if let Some(bad) = values.clone().find(|v| !v.is_finite()) {
             return Err(GeopError::new(format!("{bad} is not a number")));
         }
-        let shift = Vector3::from_array(self.translation.map(S::from_f64));
+        let shift = Vector3::from_array(self.translation.map(Scalar::from_f64));
         let shifts = self.translation.iter().any(|&t| t != 0.0);
         let turn = match &self.axis {
             Some(axis) if self.angle != 0.0 => {
                 let axis = axis.resolve(reader)?;
-                let radians = S::from_f64(self.angle).degrees_to_radians()?;
+                let radians = Scalar::from_f64(self.angle).degrees_to_radians()?;
                 Some(Pose::rotation_about(&axis.point, &axis.direction, radians)?)
             }
             _ => None,
@@ -132,10 +131,10 @@ impl PartOperation for MoveBody {
         context: &'a Context<'a>,
         args: &MoveBodyArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, MoveBodyArgs> {
+    ) -> EditForm<'a, MoveBodyArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, MoveBodyArgs>::default();
-        let shift = Vector3::from_array(args.translation.map(Design::from_f64));
+        let mut f = EditForm::<MoveBodyArgs>::default();
+        let shift = Vector3::from_array(args.translation.map(Scalar::from_f64));
         f.form.gizmo = center(before, &args.bodies).map(|c| Gizmo::new(c.add(&shift)).translate());
         bodies_field(&mut f, before, &args.bodies, |edit, picked| {
             edit.args.bodies = picked
@@ -164,7 +163,7 @@ impl PartOperation for MoveBody {
 
     /// The gizmo dragged: the shift, as it was when the drag started, moved
     /// by as much.
-    fn canvas(_: &Context, edit: Edit<'_, MoveBodyArgs, ()>, event: &CanvasEvent<Design>) {
+    fn canvas(_: &Context, edit: Edit<'_, MoveBodyArgs, ()>, event: &CanvasEvent) {
         if let CanvasEvent::Gizmo { drag, .. } = event
             && let Change::Translate(by) = &drag.change
         {
@@ -177,7 +176,7 @@ impl PartOperation for MoveBody {
 
 impl ModelOperation for MoveBody {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &MoveBodyArgs,

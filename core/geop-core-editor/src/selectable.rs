@@ -12,7 +12,7 @@
 //! it to light while it is selected; the editor stays the same for all of
 //! them.
 
-use geop_core_math::{scalars::Scalar, vector::Vector3};
+use geop_core_math::vector::Vector3;
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement},
     reader::Reader,
@@ -128,11 +128,11 @@ pub fn selected<P: Selectable>(reader: &Reader, picks: &[PickedElement]) -> Vec<
 /// as a `P` in the part `reader` reads — for a step that picks on the
 /// canvas itself rather than through a reference field — and where it hit
 /// what is drawn.
-pub fn pick<P: Selectable, N: Scalar>(
-    scene: &dyn Scene<N>,
+pub fn pick<P: Selectable>(
+    scene: &dyn Scene,
     reader: &Reader,
-    pointer: &Pointer<N>,
-) -> Option<(P, Vector3<N>)> {
+    pointer: &Pointer,
+) -> Option<(P, Vector3)> {
     let accepts: Vec<String> = (P::picked_from().into_iter()).map(String::from).collect();
     let hit = scene.pick(pointer, &accepts)?;
     Some((P::select(reader, &hit.element)?, hit.point))
@@ -152,8 +152,8 @@ pub fn pick<P: Selectable, N: Scalar>(
 /// ```ignore
 /// one_of! {
 ///     /// What a revolve turns about.
-///     pub enum AxisRef -> Axis<Design> {
-///         Edge(ElementReference<NamedModel<Design>, Line>),
+///     pub enum AxisRef -> Axis {
+///         Edge(ElementReference<NamedModel, Line>),
 ///         Datum(ElementReference<Datums, Line>),
 ///     }
 /// }

@@ -3,9 +3,7 @@
 //! and how both are built from them by `build_extents`, each sweeping its
 //! own way (see `Sweeping`); and the curves a sweep runs along, [`PathRef`].
 
-use geop_core_program::{
-    element::ElementReference, numeric::NumericInput, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, numeric::NumericInput, reader::Reader};
 use std::collections::HashSet;
 
 use geop_core_editor::{
@@ -15,7 +13,6 @@ use geop_core_editor::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
     vector::Vector3,
 };
 use geop_core_sketch::{Shape, Sketch};
@@ -35,10 +32,10 @@ one_of! {
     /// Curves a sweep runs along, or a rail or a guide follows: a sketch's
     /// or a 3-D sketch's one chain of curves, or one loop, or an edge of a
     /// face.
-    pub enum PathRef -> Chain<NurbCurve3D<Design>> {
-        Sketch(ElementReference<PlacedSketch<Design>, Path>),
+    pub enum PathRef -> Chain<NurbCurve3D> {
+        Sketch(ElementReference<PlacedSketch, Path>),
         Sketch3d(ElementReference<PlacedSketch3d, Path>),
-        Edge(ElementReference<NamedModel<Design>, Path>),
+        Edge(ElementReference<NamedModel, Path>),
     }
 }
 
@@ -80,14 +77,14 @@ impl From<Combine> for Output {
 impl Output {
     /// The default for a step after `before`: a solid, joined to the newest
     /// solid if there is one (see [`Combine::new_for`]).
-    pub fn new_for<S: Scalar>(before: &NamedModel<S>) -> Self {
+    pub fn new_for(before: &NamedModel) -> Self {
         Output::Solid(Combine::new_for(before))
     }
 
     /// What of `sketch` it sweeps: as faces, what the sketch draws — its
     /// one area, or the one chain of curves enclosing nothing (see
     /// [`Sketch::shape`]); as a solid, its one area.
-    pub fn shape<S: Scalar>(&self, sketch: &Sketch<S>) -> GeopResult<Shape> {
+    pub fn shape(&self, sketch: &Sketch) -> GeopResult<Shape> {
         match self {
             Output::Faces { .. } => sketch.shape(),
             Output::Solid(_) => sketch.region().map(Shape::Region),
@@ -97,7 +94,7 @@ impl Output {
     /// The solids a step going as far as a solid goes as far as: the one
     /// it is combined with, or the faces' `up_to` — or, for a new body or
     /// faces up to none, every solid `model` has.
-    fn stops<S: Scalar>(&self, model: &NamedModel<S>) -> Vec<String> {
+    fn stops(&self, model: &NamedModel) -> Vec<String> {
         let target = match self {
             Output::Solid(combine) => combine.target(),
             Output::Faces { up_to } => up_to.as_ref().map(|solid| solid.name()),
@@ -114,9 +111,9 @@ impl Output {
     /// solid join the solid they went up to — or, if none, are combined as
     /// [`Output::new_for`] the part `reader` reads; a solid turned into
     /// faces goes up to what it was combined with.
-    pub(crate) fn fields<'a, S: Scalar, A, T>(
+    pub(crate) fn fields<'a, A, T>(
         &self,
-        f: &mut EditForm<'a, S, A, T>,
+        f: &mut EditForm<'a, A, T>,
         reader: &Reader<'a>,
         reaches: bool,
         set: impl Fn(&mut A, Output) + Clone + 'a,
@@ -132,7 +129,7 @@ impl Output {
                 up_to: Some(target),
             } => Output::Solid(Combine::join(target.name())),
             Output::Faces { up_to: None } => {
-                Output::new_for(&*read_model(reader).unwrap_or_default())
+                Output::new_for(&read_model(reader).unwrap_or_default())
             }
         };
         let set_faces = set.clone();
@@ -165,10 +162,10 @@ impl Output {
     /// the solid then combined as its [`Combine`] says.
     pub(crate) fn build_whole(
         &self,
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         namer: &Namer,
         step: &str,
-        sweep: impl FnOnce(&mut NamedModel<Design>, Option<&str>) -> GeopResult<BuiltBody>,
+        sweep: impl FnOnce(&mut NamedModel, Option<&str>) -> GeopResult<BuiltBody>,
     ) -> GeopResult<()> {
         match self {
             Output::Faces { .. } => sweep(model, None).map(drop),
@@ -260,11 +257,11 @@ impl Extents {
     /// the first side and `key2` for the second; `get` finds the extents in
     /// the arguments. The first side's length is `length`'s to set, which an
     /// operation may want to react to.
-    pub(crate) fn fields<'a, S: Scalar, A, T>(
+    pub(crate) fn fields<'a, A, T>(
         &self,
-        f: &mut EditForm<'a, S, A, T>,
+        f: &mut EditForm<'a, A, T>,
         (key, default): (&str, f64),
-        mut amount: impl FnMut(&NumericInput, bool) -> Number<S>,
+        mut amount: impl FnMut(&NumericInput, bool) -> Number,
         get: impl Fn(&mut A) -> &mut Extents + Copy + 'a,
         length: impl Fn(Edit<'_, A, T>, NumericInput) + 'a,
     ) {
@@ -346,14 +343,14 @@ fn side_namer(namer: &Namer, k: usize) -> Namer {
 /// the axis — and say how far along it things lie.
 pub(crate) trait Sweeping {
     /// The loops it sweeps.
-    fn loops(&self) -> &[SweepLoop<Design>];
+    fn loops(&self) -> &[SweepLoop];
 
     /// Sweeps its loops from `from` to `to`, in its measure, named by
     /// `namer`: into a solid named `name`, or faces standing on their own if
     /// none.
     fn sweep(
         &self,
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         namer: &Namer,
         name: Option<&str>,
         from: f64,
@@ -376,7 +373,7 @@ pub(crate) trait Sweeping {
     /// How far along a side `p` is — forwards for `sign = 1`, backwards for
     /// `-1` — or none for a point that could lie on the sketch's plane
     /// itself, where every side starts.
-    fn measure(&self, sign: f64, p: &Vector3<Design>) -> Option<f64>;
+    fn measure(&self, sign: f64, p: &Vector3) -> Option<f64>;
 }
 
 /// Builds an extrude or a revolve, the step `step` named by `namer`: what
@@ -386,7 +383,7 @@ pub(crate) trait Sweeping {
 /// the next face is built on its own (see [`Plan`]) and then trimmed — faces
 /// — or combined (see [`combine_sides`]).
 pub(crate) fn build_extents(
-    model: &mut NamedModel<Design>,
+    model: &mut NamedModel,
     reader: &Reader,
     namer: &Namer,
     step: &str,
@@ -454,13 +451,13 @@ pub(crate) fn build_extents(
 /// Trims the sheets the side `k` of the step `step` built — by `namer`,
 /// from `loops`, from the station `first` on the sketch's plane to `last`
 /// — up to the next face of the solids `targets` (see [`trim_up_to_next`]).
-fn trim_side<S: Scalar>(
-    model: &mut NamedModel<S>,
+fn trim_side(
+    model: &mut NamedModel,
     step: &str,
     k: usize,
     built: &BuiltBody,
     targets: &[String],
-    (namer, loops): (&Namer, &[SweepLoop<S>]),
+    (namer, loops): (&Namer, &[SweepLoop]),
     (first, last): (&str, &str),
 ) -> GeopResult<()> {
     let targets = targets
@@ -510,7 +507,7 @@ fn trim_side<S: Scalar>(
 /// of them at all.
 #[allow(clippy::too_many_arguments)]
 fn combine_sides(
-    model: &mut NamedModel<Design>,
+    model: &mut NamedModel,
     namer: &Namer,
     step: &str,
     combine: &Combine,
@@ -535,7 +532,7 @@ fn combine_sides(
         .map(|s| model.solid_id(s))
         .collect::<GeopResult<Vec<_>>>()?;
     // The side `k`, swept from `from` to `to` along it.
-    let rebuild = |model: &mut NamedModel<Design>, k: usize, from: f64, to: f64| {
+    let rebuild = |model: &mut NamedModel, k: usize, from: f64, to: f64| {
         let named = side_namer(namer, k);
         let name = combine.built_name(&named);
         let sign = sides[k].to.signum();
@@ -548,7 +545,7 @@ fn combine_sides(
         };
         let solid = tools[k].solid;
         let sign = sides[k].to.signum();
-        let measure = |p: &Vector3<Design>| sweeping.measure(sign, p);
+        let measure = |p: &Vector3| sweeping.measure(sign, p);
         let Some(contact) = first_contact(model, step, solid, &stops, measure)? else {
             return Err(runs_on);
         };
@@ -588,12 +585,12 @@ fn combine_sides(
 
 /// Where `tool` and the solid `stop` overlap, worked out on a copy of
 /// `model`: the copy and the overlap in it, or none if they do not.
-fn overlap_with<S: Scalar>(
-    model: &NamedModel<S>,
+fn overlap_with(
+    model: &NamedModel,
     step: &str,
     tool: SolidId,
     stop: SolidId,
-) -> GeopResult<Option<(NamedModel<S>, SolidId)>> {
+) -> GeopResult<Option<(NamedModel, SolidId)>> {
     let mut scratch = model.clone();
     let namer = Namer::new("contact", step)?;
     let overlap = boolean(
@@ -611,12 +608,12 @@ fn overlap_with<S: Scalar>(
 /// `measure` over the corners of where the side's tool `tool` and each of
 /// them overlap, their intersection worked out on a copy of the model. None
 /// if it meets none of them.
-fn first_contact<S: Scalar>(
-    model: &NamedModel<S>,
+fn first_contact(
+    model: &NamedModel,
     step: &str,
     tool: SolidId,
     stops: &[SolidId],
-    measure: impl Fn(&Vector3<S>) -> Option<f64>,
+    measure: impl Fn(&Vector3) -> Option<f64>,
 ) -> GeopResult<Option<f64>> {
     let mut least: Option<f64> = None;
     for &stop in stops {

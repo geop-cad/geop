@@ -8,10 +8,10 @@ use geop_core_editor::{
 };
 use geop_core_math::{
     primitives::{CoordinateSystem, Ray},
-    scalars::{ScalInF64 as S, Scalar},
+    scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_program::{element::ElementReference, part::Part, values::Design};
+use geop_core_program::{element::ElementReference, part::Part};
 use geop_ops_extrude_revolve::testing::{drilled_box, registry};
 use geop_ops_model::selection::Selected;
 use geop_ops_model::{
@@ -28,13 +28,13 @@ fn plate() -> Part {
     drilled_box().built(registry).unwrap()
 }
 
-fn v(p: [f64; 3]) -> Vector3<S> {
-    Vector3::from_array(p.map(S::from_f64))
+fn v(p: [f64; 3]) -> Vector3 {
+    Vector3::from_array(p.map(Scalar::from_f64))
 }
 
 /// Where `frame` is, and the way its `z` axis runs, as plain numbers.
-fn placed(frame: &CoordinateSystem<S>) -> ([f64; 3], [f64; 3]) {
-    let plain = |p: &Vector3<S>| [0, 1, 2].map(|k| p[k].to_f64());
+fn placed(frame: &CoordinateSystem) -> ([f64; 3], [f64; 3]) {
+    let plain = |p: &Vector3| [0, 1, 2].map(|k| p[k].to_f64());
     (plain(frame.origin()), plain(frame.w()))
 }
 
@@ -44,7 +44,7 @@ fn assert_close(a: [f64; 3], b: [f64; 3]) {
 }
 
 /// The frame `on`, put at `at`, gives in `part`.
-fn frame_of(part: &Part, on: Selected, at: Option<Selected>) -> CoordinateSystem<S> {
+fn frame_of(part: &Part, on: Selected, at: Option<Selected>) -> CoordinateSystem {
     let entity = MateEntity {
         at,
         ..MateEntity::on(on)
@@ -162,16 +162,16 @@ fn a_straight_edge_gives_its_middle_or_its_end_and_a_point_the_world() {
     assert_close(placed_x(&frame), [1.0, 0.0, 0.0]);
 }
 
-fn placed_x(frame: &CoordinateSystem<S>) -> [f64; 3] {
+fn placed_x(frame: &CoordinateSystem) -> [f64; 3] {
     [0, 1, 2].map(|k| frame.u()[k].to_f64())
 }
 
 /// Looking down at `(x, y)` from above the plate.
-fn from_above(x: f64, y: f64) -> Pointer<Design> {
+fn from_above(x: f64, y: f64) -> Pointer {
     Pointer {
         ray: Ray::try_new(v([x, y, 10.0]), v([0.0, 0.0, -1.0])).unwrap(),
         reach: Reach::Tube {
-            radius: Design::from_f64(0.01),
+            radius: Scalar::from_f64(0.01),
         },
     }
 }
@@ -200,7 +200,7 @@ fn picked(view: &PartView, x: f64, y: f64) -> (Selected, Option<Selected>) {
 #[test]
 fn a_pick_over_a_face_puts_the_frame_at_the_corner_or_side_it_is_near() {
     let built = plate();
-    let part: NamedModel<Design> = model_of(&built);
+    let part: NamedModel = model_of(&built);
     let view = drawn_model(&built);
     let (on, at) = picked(&view, 1.0, 1.7);
     assert_eq!(on, top());

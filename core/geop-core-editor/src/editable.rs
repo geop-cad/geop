@@ -13,7 +13,6 @@ use geop_core_program::{
     program::{Program, ProgramStep},
     reader::Reader,
     runner::Runner,
-    values::Design,
 };
 use serde::Serialize;
 
@@ -159,7 +158,7 @@ pub struct Context<'a> {
     pub built: Option<Reader<'a>>,
     /// The part as drawn for picks (see [`Scene`]): given with every event
     /// an editor passes on, and nothing else.
-    pub scene: Option<&'a dyn Scene<Design>>,
+    pub scene: Option<&'a dyn Scene>,
 }
 
 /// An [`Operation`] an editor offers: everything it keeps while a step is
@@ -177,18 +176,14 @@ pub trait Editable: Operation {
     /// What the editor shows while the step is edited. Never fails: an
     /// editor needs the form most exactly when the arguments do not build,
     /// so whatever is wrong is said in it.
-    fn presentation(
-        context: &Context,
-        args: &Self::Args,
-        editing: &Self::EditingState,
-    ) -> Form<Design>;
+    fn presentation(context: &Context, args: &Self::Args, editing: &Self::EditingState) -> Form;
 
     /// The step's arguments and editing state after `event`.
     fn process_user_event(
         context: &Context,
         args: &Self::Args,
         editing: &Self::EditingState,
-        event: Event<Design>,
+        event: Event,
     ) -> (Self::Args, Self::EditingState);
 }
 
@@ -209,13 +204,13 @@ pub trait ErasedEditable: ErasedOperation {
         context: &Context,
         args: &serde_json::Value,
         editing: &dyn Any,
-    ) -> GeopResult<Form<Design>>;
+    ) -> GeopResult<Form>;
     fn process_user_event(
         &self,
         context: &Context,
         args: &serde_json::Value,
         editing: &dyn Any,
-        event: Event<Design>,
+        event: Event,
     ) -> GeopResult<Edited>;
 }
 
@@ -247,7 +242,7 @@ impl<O: Editable> ErasedEditable for O {
         context: &Context,
         args: &serde_json::Value,
         editing: &dyn Any,
-    ) -> GeopResult<Form<Design>> {
+    ) -> GeopResult<Form> {
         Ok(<O as Editable>::presentation(
             context,
             &self::args::<O>(args)?,
@@ -260,7 +255,7 @@ impl<O: Editable> ErasedEditable for O {
         context: &Context,
         args: &serde_json::Value,
         editing: &dyn Any,
-        event: Event<Design>,
+        event: Event,
     ) -> GeopResult<Edited> {
         let (args, editing) = <O as Editable>::process_user_event(
             context,
@@ -432,7 +427,7 @@ impl Editors {
         program: &Program,
         step: &str,
         editing: &dyn Any,
-    ) -> GeopResult<Form<Design>> {
+    ) -> GeopResult<Form> {
         let step = self.step(runner, part, program, step)?;
         (step.operation).presentation(&step.context, step.args, editing)
     }
@@ -447,7 +442,7 @@ impl Editors {
         part: &Part,
         program: &Program,
         step: &str,
-    ) -> GeopResult<Form<Design>> {
+    ) -> GeopResult<Form> {
         let mut step = self.step(runner, part, program, step)?;
         step.context.built = None;
         let editing = step.operation.initial_editing();
@@ -464,8 +459,8 @@ impl Editors {
         program: &Program,
         step: &str,
         editing: &dyn Any,
-        event: Event<Design>,
-        scene: Option<&dyn Scene<Design>>,
+        event: Event,
+        scene: Option<&dyn Scene>,
     ) -> GeopResult<Edited> {
         let mut step = self.step(runner, part, program, step)?;
         step.context.scene = scene;

@@ -29,7 +29,7 @@ pub struct Chain<C> {
 }
 
 /// A chain in a plane: the profile extrude and revolve sweep.
-pub type Profile<S> = Chain<NurbCurve2D<S>>;
+pub type Profile = Chain<NurbCurve2D>;
 
 /// A curve a [`Chain`] is made of: a clamped NURBS curve, in a plane or in
 /// space, which starts at its first control point and ends at its last
@@ -44,48 +44,48 @@ pub trait ChainCurve: Clone {
     fn end(&self) -> GeopResult<Self::Point>;
 }
 
-impl<S: Scalar> ChainCurve for NurbCurve2D<S> {
-    type Point = Vector2<S>;
+impl ChainCurve for NurbCurve2D {
+    type Point = Vector2;
 
-    fn start(&self) -> GeopResult<Vector2<S>> {
+    fn start(&self) -> GeopResult<Vector2> {
         NurbCurve2D::start(self)
     }
 
-    fn end(&self) -> GeopResult<Vector2<S>> {
+    fn end(&self) -> GeopResult<Vector2> {
         NurbCurve2D::end(self)
     }
 }
 
-impl<S: Scalar> ChainCurve for NurbCurve3D<S> {
-    type Point = Vector3<S>;
+impl ChainCurve for NurbCurve3D {
+    type Point = Vector3;
 
-    fn start(&self) -> GeopResult<Vector3<S>> {
+    fn start(&self) -> GeopResult<Vector3> {
         NurbCurve3D::start(self)
     }
 
-    fn end(&self) -> GeopResult<Vector3<S>> {
+    fn end(&self) -> GeopResult<Vector3> {
         NurbCurve3D::end(self)
     }
 }
 
-impl<S: Scalar, const D: usize> Chain<NurbCurve<S, D>>
+impl<const D: usize> Chain<NurbCurve<D>>
 where
-    NurbCurve<S, D>: ChainCurve,
+    NurbCurve<D>: ChainCurve,
 {
     /// A closed loop whose curves are called `c0, c1, ...` and whose joints
     /// `p0, p1, ...`, `p0` where `c0` starts.
-    pub fn closed(curves: Vec<NurbCurve<S, D>>) -> Self {
+    pub fn closed(curves: Vec<NurbCurve<D>>) -> Self {
         let n = curves.len();
         Self::numbered(curves, n)
     }
 
     /// An open chain, named like [`Chain::closed`] plus its end joint.
-    pub fn open(curves: Vec<NurbCurve<S, D>>) -> Self {
+    pub fn open(curves: Vec<NurbCurve<D>>) -> Self {
         let n = curves.len();
         Self::numbered(curves, n + 1)
     }
 
-    fn numbered(curves: Vec<NurbCurve<S, D>>, joints: usize) -> Self {
+    fn numbered(curves: Vec<NurbCurve<D>>, joints: usize) -> Self {
         Self {
             name: String::new(),
             curve_names: (0..curves.len()).map(|i| format!("c{i}")).collect(),
@@ -153,7 +153,7 @@ where
     }
 
     /// The same chain with `f` applied to every curve, keeping the names.
-    pub fn map_curves(&self, f: impl Fn(&NurbCurve<S, D>) -> NurbCurve<S, D>) -> Self {
+    pub fn map_curves(&self, f: impl Fn(&NurbCurve<D>) -> NurbCurve<D>) -> Self {
         Self {
             curves: self.curves.iter().map(f).collect(),
             ..self.clone()
@@ -161,7 +161,7 @@ where
     }
 
     /// Joint `i`, where it is.
-    pub fn joint(&self, i: usize) -> GeopResult<<NurbCurve<S, D> as ChainCurve>::Point> {
+    pub fn joint(&self, i: usize) -> GeopResult<<NurbCurve<D> as ChainCurve>::Point> {
         if i < self.curves.len() {
             self.curves[i].start()
         } else {
@@ -170,17 +170,17 @@ where
     }
 
     /// The joints, where they are.
-    pub fn joints(&self) -> GeopResult<Vec<<NurbCurve<S, D> as ChainCurve>::Point>> {
+    pub fn joints(&self) -> GeopResult<Vec<<NurbCurve<D> as ChainCurve>::Point>> {
         (0..self.joint_names.len()).map(|i| self.joint(i)).collect()
     }
 }
 
-impl<S: Scalar> Chain<NurbCurve3D<S>> {
+impl Chain<NurbCurve3D> {
     /// The open chain run from its end on `plane`: as it is if it starts
     /// there, the other way round if only its end could lie on it. `None`
     /// if neither end could.
-    pub fn starting_on(&self, plane: &CoordinateSystem<S>) -> GeopResult<Option<Self>> {
-        let on_plane = |p: &Vector3<S>| plane.to_uvw(p)[2].could_be_equal(S::ZERO);
+    pub fn starting_on(&self, plane: &CoordinateSystem) -> GeopResult<Option<Self>> {
+        let on_plane = |p: &Vector3| plane.to_uvw(p)[2].could_be_equal(Scalar::ZERO);
         let joints = self.joints()?;
         Ok(if on_plane(&joints[0]) {
             Some(self.clone())

@@ -10,11 +10,7 @@ use geop_core_editor::{
     editor::{Command, Editor},
     registry::Registry,
 };
-use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::Pose,
-    scalars::{ScalInF64 as S, Scalar},
-};
+use geop_core_math::{geop_error::GeopResult, primitives::Pose, scalars::Scalar};
 use geop_core_program::{
     part::Part,
     program::Program,
@@ -57,7 +53,7 @@ fn steel() -> Parameters {
 /// state, the identity, puts it.
 fn program(
     parameters: Parameters,
-    model: NamedModel<S>,
+    model: NamedModel,
     notes: Option<SolidNotes>,
     placed: &[(&str, &str, Settings)],
 ) -> Program {
@@ -289,7 +285,7 @@ fn wires_are_lines_of_their_own() {
         colour: "#ff0000".into(),
         diameter: 1.2,
         gauge,
-        cut_length: S::from_f64(250.0),
+        cut_length: Scalar::from_f64(250.0),
     };
     let mut noted = SolidNotes::default();
     let bundle = noted.note_mut("cube(cable)");

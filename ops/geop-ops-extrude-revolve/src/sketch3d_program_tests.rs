@@ -2,9 +2,7 @@
 //! what they refuse.
 
 use crate::{Output, PathRef, SweepArgs};
-use geop_core_math::{
-    geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar, vector::Vector3,
-};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, vector::Vector3};
 use geop_core_program::{operation_registry::OperationRegistry, program::Program};
 use geop_core_sketch::space::End;
 use geop_lib_sweep::Orientation;
@@ -25,7 +23,7 @@ fn registry() -> GeopResult<OperationRegistry> {
     crate::testing::registry()?.with(AddSketch3d)
 }
 
-fn v(p: [f64; 3]) -> Vector3<geop_core_program::values::Design> {
+fn v(p: [f64; 3]) -> Vector3 {
     Vector3::from_array(p.map(n))
 }
 

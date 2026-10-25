@@ -9,7 +9,7 @@ use geop_core_editor::{
     testing::{click_at, dialog, drag_gizmo, editor_with, from_above, handled, pointer},
     view::drawn,
 };
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
+use geop_core_math::scalars::Scalar;
 use geop_core_program::{element::PickedElement, testing::args};
 use geop_ops_extrude_revolve::examples::box_with_drill_hole;
 use geop_ops_hole::testing::plate_with_hole;
@@ -52,7 +52,7 @@ fn new_linear_pattern_dragged_by_its_spacing_handle() {
             _ => None,
         })
         .expect("the spacing has a handle");
-    assert!(direction[0].could_be_equal(S::ONE), "{direction:?}");
+    assert!(direction[0].could_be_equal(Scalar::ONE), "{direction:?}");
     let [x, y, z] = [0, 1, 2].map(|k| at[k].to_f64());
     let above = |dx: f64| pointer([x + dx, y, z + 10.0], [0.0, 0.0, -1.0]);
     let update = editor.handle(Command::Event {

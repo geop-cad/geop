@@ -37,7 +37,6 @@ use geop_core_geometry::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
-    scalars::Scalar,
     vector::Vector3,
     with_context,
 };
@@ -45,7 +44,6 @@ use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
     reader::Reader,
     target::{Target, TargetReference},
-    values::Design,
 };
 use geop_core_sketch::{
     CurveId, Enclosure, PointId, Shape,
@@ -53,19 +51,19 @@ use geop_core_sketch::{
 };
 
 /// A sketch as a program holds it.
-pub type Sketch = geop_core_sketch::Sketch<Design>;
+pub type Sketch = geop_core_sketch::Sketch;
 /// A sketch constraint as a program holds it.
-pub type Constraint = geop_core_sketch::Constraint<Design>;
+pub type Constraint = geop_core_sketch::Constraint;
 /// A sketch curve's kind as a program holds it.
-pub type CurveKind = geop_core_sketch::CurveKind<Design>;
+pub type CurveKind = geop_core_sketch::CurveKind;
 
 one_of! {
     /// The plane a sketch is placed on: a flat face, a datum plane — the
     /// origin's among them — or another sketch's plane.
-    pub enum SketchPlane -> CoordinateSystem<Design> {
-        Face(ElementReference<NamedModel<Design>, Plane>),
+    pub enum SketchPlane -> CoordinateSystem {
+        Face(ElementReference<NamedModel, Plane>),
         Datum(ElementReference<Datums, Plane>),
-        Sketch(ElementReference<PlacedSketch<Design>, Plane>),
+        Sketch(ElementReference<PlacedSketch, Plane>),
     }
 }
 
@@ -74,18 +72,18 @@ pub struct SketchDrawer;
 
 impl Drawer for SketchDrawer {
     fn draw(&self, reader: &Reader, view: &mut PartView) -> GeopResult<()> {
-        for target in reader.targets_of::<PlacedSketch<Design>>() {
+        for target in reader.targets_of::<PlacedSketch>() {
             let name = target.name().to_string();
-            let reference = ElementReference::<_, PlacedSketch<Design>>::whole(target);
+            let reference = ElementReference::<_, PlacedSketch>::whole(target);
             reader.retrieve_element(&reference)?.draw(&name, view)?;
         }
         Ok(())
     }
 
     fn structure(&self, reader: &Reader) -> GeopResult<Vec<StructureItem>> {
-        (reader.targets_of::<PlacedSketch<Design>>().into_iter())
+        (reader.targets_of::<PlacedSketch>().into_iter())
             .map(|target| {
-                let reference = ElementReference::<_, PlacedSketch<Design>>::whole(target);
+                let reference = ElementReference::<_, PlacedSketch>::whole(target);
                 let placed = reader.retrieve_element(&reference)?;
                 Ok(StructureItem::drawn("sketch", "Sketches", &placed.name))
             })
@@ -102,9 +100,9 @@ impl Drawer for SketchDrawer {
 /// a face stays where that face *was*, even after a later operation
 /// reshapes or consumes the face.
 #[derive(Clone, Debug, PartialEq)]
-pub struct PlacedSketch<S: Scalar> {
+pub struct PlacedSketch {
     pub name: String,
-    pub plane: CoordinateSystem<S>,
+    pub plane: CoordinateSystem,
     pub sketch: Sketch,
 }
 
@@ -112,15 +110,15 @@ pub struct PlacedSketch<S: Scalar> {
 const PREFIX: &str = "sketch:";
 
 /// The sketch `name`: what the step of that id draws.
-pub fn sketch(name: &str) -> TargetReference<PlacedSketch<Design>> {
+pub fn sketch(name: &str) -> TargetReference<PlacedSketch> {
     TargetReference::new(format!("{PREFIX}{name}"))
 }
 
 /// A sketch of the part, read whole: what is swept.
-pub type SketchRef = ElementReference<PlacedSketch<Design>, PlacedSketch<Design>>;
+pub type SketchRef = ElementReference<PlacedSketch, PlacedSketch>;
 
 /// The sketch `name`, read whole: what is swept.
-pub fn whole_sketch(name: &str) -> ElementReference<PlacedSketch<Design>, PlacedSketch<Design>> {
+pub fn whole_sketch(name: &str) -> ElementReference<PlacedSketch, PlacedSketch> {
     ElementReference::whole(sketch(name))
 }
 
@@ -129,9 +127,9 @@ pub fn whole_sketch(name: &str) -> ElementReference<PlacedSketch<Design>, Placed
 pub fn sketch_element<K: Kind>(
     name: &str,
     element: impl ToString,
-) -> ElementReference<PlacedSketch<Design>, K>
+) -> ElementReference<PlacedSketch, K>
 where
-    PlacedSketch<Design>: HasElements<K>,
+    PlacedSketch: HasElements<K>,
 {
     ElementReference::new(sketch(name), element.to_string())
 }
@@ -160,11 +158,11 @@ pub fn piece_names<C>(
 
 /// The pieces of a loop or a chain of the sketch `sketch` as a chain named
 /// after it and its elements (see [`piece_names`]).
-pub fn chain_of_pieces<S: Scalar, const D: usize>(
+pub fn chain_of_pieces<const D: usize>(
     sketch: &str,
-    pieces: Vec<Piece<NurbCurve<S, D>>>,
+    pieces: Vec<Piece<NurbCurve<D>>>,
     closed: bool,
-) -> Chain<NurbCurve<S, D>> {
+) -> Chain<NurbCurve<D>> {
     let (curve_names, joint_names) = piece_names(sketch, &pieces, closed);
     Chain {
         name: sketch.to_string(),
@@ -177,12 +175,12 @@ pub fn chain_of_pieces<S: Scalar, const D: usize>(
 /// The profiles of `shape`, one of the sketch `name`'s, its points at
 /// `geometry`: a region's loops, outer loop first, or the one open chain —
 /// each named after the sketch and its elements (see [`chain_of_pieces`]).
-pub fn shape_profiles<S: Scalar>(
+pub fn shape_profiles(
     name: &str,
     sketch: &Sketch,
-    geometry: &Enclosure<S>,
+    geometry: &Enclosure,
     shape: Shape,
-) -> GeopResult<Vec<Profile<S>>> {
+) -> GeopResult<Vec<Profile>> {
     match shape {
         Shape::Region(region) => std::iter::once(&region.outer)
             .chain(&region.holes)
@@ -196,15 +194,11 @@ pub fn shape_profiles<S: Scalar>(
     }
 }
 
-impl<S: Scalar> PlacedSketch<S> {
+impl PlacedSketch {
     /// The curve `curve` of the sketch where its plane puts it: one NURBS
     /// from its start to its end — a circle round from its seam — of the
     /// sketch solved as `geometry` says (see [`Sketch::enclose`]).
-    pub fn curve_in_space(
-        &self,
-        curve: CurveId,
-        geometry: &Enclosure<S>,
-    ) -> GeopResult<NurbCurve3D<S>> {
+    pub fn curve_in_space(&self, curve: CurveId, geometry: &Enclosure) -> GeopResult<NurbCurve3D> {
         let pieces = curve_nurbs(&self.sketch, geometry, curve)?;
         let plane = &self.plane;
         NurbCurve::join(&pieces)?.embed(plane.origin(), plane.u(), plane.v())
@@ -213,10 +207,10 @@ impl<S: Scalar> PlacedSketch<S> {
     /// The sketch's one open chain of curves, or its one loop, in space, as
     /// a path runs along it: its pieces and joints named as a profile's
     /// are. Fails for a sketch of more than one loop.
-    pub fn path(&self) -> GeopResult<Chain<NurbCurve3D<S>>> {
+    pub fn path(&self) -> GeopResult<Chain<NurbCurve3D>> {
         let ctx = with_context!("the curves of the sketch {:?}", self.name);
         let sketch = &self.sketch;
-        let geometry = sketch.enclose::<S>().with_context(ctx)?;
+        let geometry = sketch.enclose().with_context(ctx)?;
         let (lp, closed) = match sketch.shape().with_context(ctx)? {
             Shape::Chain(chain) => (chain, false),
             Shape::Region(region) if region.holes.is_empty() => (region.outer, true),
@@ -244,10 +238,10 @@ impl<S: Scalar> PlacedSketch<S> {
     /// The curve `curve` of the sketch, in space, as a chain of one curve
     /// named after the sketch and it, its ends after the points there — a
     /// closed one's `K,c3,seam`.
-    pub fn curve_chain(&self, curve: CurveId) -> GeopResult<Chain<NurbCurve3D<S>>> {
+    pub fn curve_chain(&self, curve: CurveId) -> GeopResult<Chain<NurbCurve3D>> {
         let name = &self.name;
         let ctx = with_context!("curve {curve} of the sketch {name:?}");
-        let geometry = self.sketch.enclose::<S>().with_context(ctx)?;
+        let geometry = self.sketch.enclose().with_context(ctx)?;
         let class = self.sketch.point_classes();
         let in_space = self.curve_in_space(curve, &geometry).with_context(ctx)?;
         let joint_name = |p: PointId| match class.get(&p) {
@@ -267,7 +261,7 @@ impl<S: Scalar> PlacedSketch<S> {
     }
 }
 
-impl PlacedSketch<Design> {
+impl PlacedSketch {
     /// Draws it into `view` as the target `target`: its regions, its curves
     /// and its points — but not what it was only given to draw against, its
     /// own axes and origin and what it projected, once it is done.
@@ -315,10 +309,10 @@ impl PlacedSketch<Design> {
     }
 
     /// Its point `name`, `p3`, in space.
-    fn point_in_space(&self, name: &str) -> GeopResult<Vector3<Design>> {
+    fn point_in_space(&self, name: &str) -> GeopResult<Vector3> {
         let id: PointId = name.parse()?;
         self.sketch.point(id)?;
-        let geometry = self.sketch.enclose::<Design>()?;
+        let geometry = self.sketch.enclose()?;
         let at = (geometry.points.get(&id))
             .ok_or_else(|| GeopError::new(format!("point {id} is not solved")))?;
         Ok(self.plane.uv_to_xyz(at))
@@ -331,22 +325,22 @@ impl PlacedSketch<Design> {
     }
 
     /// Its curve `name`, a circle or an arc of one, in space.
-    fn arc(&self, name: &str) -> GeopResult<Arc<Design>> {
+    fn arc(&self, name: &str) -> GeopResult<Arc> {
         let (id, kind) = self.curve_named(name)?;
         if !matches!(kind, CurveKind::Arc { .. } | CurveKind::Circle { .. }) {
             return Err(GeopError::new(format!("curve {id} is no circle or arc")));
         }
-        let geometry = self.sketch.enclose::<Design>()?;
+        let geometry = self.sketch.enclose()?;
         (self.curve_in_space(id, &geometry)?.as_arc()?)
             .ok_or_else(|| GeopError::new(format!("curve {id} is not circular")))
     }
 }
 
 /// Produced once, by the step that draws it.
-impl Target for PlacedSketch<Design> {}
+impl Target for PlacedSketch {}
 
 /// Read whole: what is swept, as its regions or its curves.
-impl Kind for PlacedSketch<Design> {
+impl Kind for PlacedSketch {
     const NAME: &'static str = drawn::SKETCH;
 }
 
@@ -354,7 +348,7 @@ impl Kind for PlacedSketch<Design> {
 /// other targets by its name.
 macro_rules! sketch_elements {
     ($($kind:ty => $element:ty, |$sketch:ident, $name:ident| $resolve:expr;)*) => {$(
-        impl HasElements<$kind> for PlacedSketch<Design> {
+        impl HasElements<$kind> for PlacedSketch {
             type Element<'a> = $element;
 
             fn element(&self, name: &str) -> GeopResult<$element> {
@@ -371,10 +365,10 @@ macro_rules! sketch_elements {
     )*};
 }
 
-impl HasElements<PlacedSketch<Design>> for PlacedSketch<Design> {
-    type Element<'a> = &'a PlacedSketch<Design>;
+impl HasElements<PlacedSketch> for PlacedSketch {
+    type Element<'a> = &'a PlacedSketch;
 
-    fn element(&self, name: &str) -> GeopResult<&PlacedSketch<Design>> {
+    fn element(&self, name: &str) -> GeopResult<&PlacedSketch> {
         whole(self, name)
     }
 
@@ -384,12 +378,12 @@ impl HasElements<PlacedSketch<Design>> for PlacedSketch<Design> {
 }
 
 sketch_elements! {
-    Plane => CoordinateSystem<Design>, |sketch, name| {
+    Plane => CoordinateSystem, |sketch, name| {
         whole(sketch, name).map(|sketch| sketch.plane.clone())
     };
-    Path => Chain<NurbCurve3D<Design>>, |sketch, name| whole(sketch, name)?.path();
-    Point => Vector3<Design>, |sketch, name| sketch.point_in_space(name);
-    Line => Axis<Design>, |sketch, name| {
+    Path => Chain<NurbCurve3D>, |sketch, name| whole(sketch, name)?.path();
+    Point => Vector3, |sketch, name| sketch.point_in_space(name);
+    Line => Axis, |sketch, name| {
         match sketch.curve_named(name)? {
             (_, &CurveKind::Line { start, end }) => {
                 let (a, b) = (sketch.point_in_space(&start.to_string())?, sketch.point_in_space(&end.to_string())?);
@@ -398,9 +392,9 @@ sketch_elements! {
             (id, _) => Err(GeopError::new(format!("curve {id} is no line"))),
         }
     };
-    Circle => Arc<Design>, |sketch, name| sketch.arc(name);
-    Round => Axis<Design>, |sketch, name| sketch.arc(name).map(|arc| arc.circle.axis());
-    Curve => Chain<NurbCurve3D<Design>>, |sketch, name| {
+    Circle => Arc, |sketch, name| sketch.arc(name);
+    Round => Axis, |sketch, name| sketch.arc(name).map(|arc| arc.circle.axis());
+    Curve => Chain<NurbCurve3D>, |sketch, name| {
         let (id, _) = sketch.curve_named(name)?;
         sketch.curve_chain(id)
     };
@@ -411,14 +405,14 @@ sketch_elements! {
 /// point; a curve, as what it is, by a curve — each only where it is that.
 macro_rules! picked_from_its_drawing {
     ($($kind:ty => $from:expr;)*) => {$(
-        impl SelectableElement<PlacedSketch<Design>> for $kind {
+        impl SelectableElement<PlacedSketch> for $kind {
             const PICKED_FROM: &'static [&'static str] = &[$from];
 
             fn select(
                 reader: &Reader,
                 hit: &PickedElement,
-            ) -> Option<ElementReference<PlacedSketch<Design>, Self>> {
-                let is_sketch = <PlacedSketch<Design> as HasElements<$kind>>::names_target(hit.target.name());
+            ) -> Option<ElementReference<PlacedSketch, Self>> {
+                let is_sketch = <PlacedSketch as HasElements<$kind>>::names_target(hit.target.name());
                 (is_sketch && hit.kind == $from).then_some(())?;
                 let reference = ElementReference::new(TargetReference::located(hit.target.clone()), &hit.name);
                 reader.retrieve_element(&reference).ok()?;
@@ -427,7 +421,7 @@ macro_rules! picked_from_its_drawing {
 
             fn drawn(
                 _: &Reader,
-                element: &ElementReference<PlacedSketch<Design>, Self>,
+                element: &ElementReference<PlacedSketch, Self>,
             ) -> Vec<PickedElement> {
                 vec![PickedElement {
                     target: element.target().location().clone(),
@@ -440,7 +434,7 @@ macro_rules! picked_from_its_drawing {
 }
 
 picked_from_its_drawing! {
-    PlacedSketch<Design> => drawn::SKETCH;
+    PlacedSketch => drawn::SKETCH;
     Plane => drawn::SKETCH;
     Path => drawn::SKETCH;
     Point => drawn::SKETCH_POINT;

@@ -57,7 +57,7 @@ impl ViewKind {
     }
 
     /// The frame it looks along.
-    pub fn frame<S: Scalar>(self) -> GeopResult<ViewFrame<S>> {
+    pub fn frame(self) -> GeopResult<ViewFrame> {
         let unit = |index: usize, negative: bool| ViewAxis::Unit { index, negative };
         let (direction, right, up) = match self {
             ViewKind::Front => (unit(1, false), unit(0, false), unit(2, false)),
@@ -68,7 +68,11 @@ impl ViewKind {
             ViewKind::Left => (unit(0, false), unit(1, true), unit(2, false)),
             ViewKind::Iso => {
                 let v = |x: f64, y: f64, z: f64| {
-                    Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
+                    Vector3::from_array([
+                        Scalar::from_f64(x),
+                        Scalar::from_f64(y),
+                        Scalar::from_f64(z),
+                    ])
                 };
                 (
                     ViewAxis::General(v(-1.0, 1.0, -1.0).normalize()?),
@@ -139,18 +143,18 @@ impl std::fmt::Display for DrawnView {
 /// 0, which would widen every interval by rounding (see `AGENTS.md`,
 /// "Construction code is sensitive at the last bit").
 #[derive(Clone, Copy, Debug)]
-pub enum ViewAxis<S: Scalar> {
+pub enum ViewAxis {
     /// The coordinate axis `index`, negated if `negative`.
     Unit {
         index: usize,
         negative: bool,
     },
-    General(Vector3<S>),
+    General(Vector3),
 }
 
-impl<S: Scalar> ViewAxis<S> {
+impl ViewAxis {
     /// `v`'s component along this axis.
-    pub fn dot(&self, v: &Vector3<S>) -> S {
+    pub fn dot(&self, v: &Vector3) -> Scalar {
         match *self {
             ViewAxis::Unit { index, negative } => {
                 if negative {
@@ -163,11 +167,15 @@ impl<S: Scalar> ViewAxis<S> {
         }
     }
 
-    pub fn vector(&self) -> Vector3<S> {
+    pub fn vector(&self) -> Vector3 {
         match *self {
             ViewAxis::Unit { index, negative } => {
                 let mut v = Vector3::zero();
-                v[index] = if negative { S::ONE.neg() } else { S::ONE };
+                v[index] = if negative {
+                    Scalar::ONE.neg()
+                } else {
+                    Scalar::ONE
+                };
                 v
             }
             ViewAxis::General(axis) => axis,
@@ -178,17 +186,17 @@ impl<S: Scalar> ViewAxis<S> {
 /// How a view looks: `direction` from the eye into the part, and the
 /// paper's `right` and `up` — right-handed, `right x up = -direction`.
 #[derive(Clone, Copy, Debug)]
-pub struct ViewFrame<S: Scalar> {
-    pub direction: ViewAxis<S>,
-    pub right: ViewAxis<S>,
-    pub up: ViewAxis<S>,
+pub struct ViewFrame {
+    pub direction: ViewAxis,
+    pub right: ViewAxis,
+    pub up: ViewAxis,
 }
 
-impl<S: Scalar> ViewFrame<S> {
+impl ViewFrame {
     /// The frame looking along `direction`, with `right` and `up` on the
     /// paper; `direction` is normalized, and `right` and `up` made
     /// perpendicular to it.
-    pub fn looking(direction: Vector3<S>, up: Vector3<S>) -> GeopResult<Self> {
+    pub fn looking(direction: Vector3, up: Vector3) -> GeopResult<Self> {
         let d = direction.normalize()?;
         let right = d.prod_cross(&up).normalize()?;
         let up = right.prod_cross(&d).normalize()?;
@@ -200,14 +208,14 @@ impl<S: Scalar> ViewFrame<S> {
     }
 
     /// Where `p` lands on the paper.
-    pub fn project_point(&self, p: &Vector3<S>) -> Vector2<S> {
+    pub fn project_point(&self, p: &Vector3) -> Vector2 {
         Vector2::from_array([self.right.dot(p), self.up.dot(p)])
     }
 
     /// `curve` as drawn on the paper: the projection is linear, so it maps
     /// homogeneous control points to homogeneous control points, keeping
     /// the knots and weights — the same parametrization, exactly.
-    pub fn project_curve(&self, curve: &NurbCurve3D<S>) -> GeopResult<NurbCurve2D<S>> {
+    pub fn project_curve(&self, curve: &NurbCurve3D) -> GeopResult<NurbCurve2D> {
         let points = curve
             .control_points
             .iter()
@@ -220,7 +228,7 @@ impl<S: Scalar> ViewFrame<S> {
     }
 
     /// The unit vector from the part towards the eye.
-    pub fn toward_eye(&self) -> Vector3<S> {
+    pub fn toward_eye(&self) -> Vector3 {
         self.direction.vector().neg()
     }
 }

@@ -14,7 +14,6 @@ use std::collections::{HashMap, HashSet};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    scalars::Scalar,
     union_find::UnionFind,
     with_context,
 };
@@ -33,13 +32,13 @@ use crate::{
 /// What the trimming creates is named by `namer` as a boolean names what it
 /// creates (see `naming`). Fails if the piece also reaches an edge
 /// named in `end`: nothing stopped the sheet.
-pub fn trim_up_to_next<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn trim_up_to_next(
+    model: &mut NamedModel,
     namer: &Namer,
     sheet: ShellId,
     targets: &[SolidId],
     (start, end): (&HashSet<String>, &HashSet<String>),
-    params: RemeshParams<S>,
+    params: RemeshParams,
 ) -> GeopResult<ShellId> {
     let ctx = with_context!(
         "trim_up_to_next(name={}, sheet={sheet}, targets={targets:?})",

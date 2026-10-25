@@ -1,6 +1,5 @@
 use super::ids::VertexId;
 use super::model::Curve3;
-use geop_core_math::scalars::Scalar;
 
 /// A 1-dimensional topological entity: a bounded arc of a 3-D NURBS curve.
 ///
@@ -10,8 +9,8 @@ use geop_core_math::scalars::Scalar;
 /// `start_vertex` lies at `curve.domain().0` and `end_vertex` at
 /// `curve.domain().1`.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Edge<S: Scalar> {
-    pub curve: Curve3<S>,
+pub struct Edge {
+    pub curve: Curve3,
     pub start_vertex: VertexId,
     pub end_vertex: VertexId,
 }

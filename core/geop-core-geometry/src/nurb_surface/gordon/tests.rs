@@ -1,5 +1,4 @@
 use geop_core_math::{
-    for_all_scalars,
     scalars::Scalar,
     vector::{Vector3, Vector4},
 };
@@ -16,7 +15,7 @@ fn binomial(n: usize, k: usize) -> f64 {
 /// The Bézier curve on `[0, 1]` whose coordinates are the polynomials with
 /// the monomial coefficients `coords` (lowest power first), all of degree
 /// `degree`.
-fn polynomial<S: Scalar>(coords: [&[f64]; 3], degree: usize) -> NurbCurve3D<S> {
+fn polynomial(coords: [&[f64]; 3], degree: usize) -> NurbCurve3D {
     let coefficient = |a: &[f64], j: usize| a.get(j).copied().unwrap_or(0.0);
     let control_points = (0..=degree)
         .map(|i| {
@@ -25,11 +24,11 @@ fn polynomial<S: Scalar>(coords: [&[f64]; 3], degree: usize) -> NurbCurve3D<S> {
                     .map(|j| binomial(i, j) / binomial(degree, j) * coefficient(a, j))
                     .sum::<f64>()
             });
-            Vector4::from_array([x, y, z, 1.0].map(S::from_f64))
+            Vector4::from_array([x, y, z, 1.0].map(Scalar::from_f64))
         })
         .collect();
-    let mut knots = vec![S::ZERO; degree + 1];
-    knots.extend(vec![S::ONE; degree + 1]);
+    let mut knots = vec![Scalar::ZERO; degree + 1];
+    knots.extend(vec![Scalar::ONE; degree + 1]);
     NurbCurve::try_new(degree, control_points, knots).unwrap()
 }
 
@@ -38,13 +37,13 @@ fn polynomial<S: Scalar>(coords: [&[f64]; 3], degree: usize) -> NurbCurve3D<S> {
 /// and along `y` at `x = 0, 0.5, 2`. Their crossings, as
 /// [`NurbSurface3D::gordon`] takes them.
 #[allow(clippy::type_complexity)]
-fn network<S: Scalar>() -> (
-    Vec<NurbCurve3D<S>>,
-    Vec<NurbCurve3D<S>>,
-    Vec<Vec<S>>,
-    Vec<Vec<S>>,
+fn network() -> (
+    Vec<NurbCurve3D>,
+    Vec<NurbCurve3D>,
+    Vec<Vec<Scalar>>,
+    Vec<Vec<Scalar>>,
 ) {
-    let f = S::from_f64;
+    let f = Scalar::from_f64;
     let u = [0.0, 1.0, 2.0]
         .iter()
         .enumerate()
@@ -77,7 +76,7 @@ fn network<S: Scalar>() -> (
 }
 
 /// `t` taken piecewise linearly from `from` onto `to`.
-fn mapped<S: Scalar>(t: S, from: &[S], to: &[S]) -> S {
+fn mapped(t: Scalar, from: &[Scalar], to: &[Scalar]) -> Scalar {
     let i = (0..from.len() - 2)
         .find(|&i| t.to_f64() <= from[i + 1].to_f64())
         .unwrap_or(from.len() - 2);
@@ -87,15 +86,16 @@ fn mapped<S: Scalar>(t: S, from: &[S], to: &[S]) -> S {
 
 /// The surface through a 3 × 3 network, one curve of which runs at a
 /// different speed, runs along every curve.
-fn check_gordon_runs_along_every_curve<S: Scalar>() {
-    let (u, v, u_crossings, v_crossings) = network::<S>();
+#[test]
+fn gordon_runs_along_every_curve() {
+    let (u, v, u_crossings, v_crossings) = network();
     let surface = NurbSurface3D::gordon(&u, &v, &u_crossings, &v_crossings).unwrap();
     // The common parameters, as `common_parameters` chooses them.
-    let middle = S::from_f64((0.25 + 0.5 + 0.25) / 3.0).sharpen();
-    let u_params = [S::ZERO, middle, S::ONE];
-    let v_params = [S::ZERO, S::from_f64(0.5), S::ONE];
+    let middle = Scalar::from_f64((0.25 + 0.5 + 0.25) / 3.0).sharpen();
+    let u_params = [Scalar::ZERO, middle, Scalar::ONE];
+    let v_params = [Scalar::ZERO, Scalar::from_f64(0.5), Scalar::ONE];
     for k in 0..=16 {
-        let t = S::from_ratio(k, 16).unwrap();
+        let t = Scalar::from_ratio(k, 16).unwrap();
         for (j, curve) in u.iter().enumerate() {
             let on = surface
                 .evaluate(mapped(t, &u_crossings[j], &u_params), v_params[j])
@@ -116,12 +116,8 @@ fn check_gordon_runs_along_every_curve<S: Scalar>() {
         }
     }
 }
-#[test]
-fn gordon_runs_along_every_curve() {
-    for_all_scalars!(check_gordon_runs_along_every_curve);
-}
 
-fn line<S: Scalar>(a: [f64; 3], b: [f64; 3]) -> NurbCurve3D<S> {
+fn line(a: [f64; 3], b: [f64; 3]) -> NurbCurve3D {
     polynomial(
         [
             &[a[0], b[0] - a[0]],
@@ -134,9 +130,9 @@ fn line<S: Scalar>(a: [f64; 3], b: [f64; 3]) -> NurbCurve3D<S> {
 
 /// The quarter circle in the plane `x = 0` from the origin round the
 /// center `(0, 0, 1)` to `(0, 1, 1)`.
-fn rising_arc<S: Scalar>() -> NurbCurve3D<S> {
+fn rising_arc() -> NurbCurve3D {
     let w = std::f64::consts::FRAC_1_SQRT_2;
-    let f = S::from_f64;
+    let f = Scalar::from_f64;
     NurbCurve::try_new(
         2,
         vec![
@@ -151,7 +147,8 @@ fn rising_arc<S: Scalar>() -> NurbCurve3D<S> {
 
 /// Two curves each way, crossing at their ends — a cubic, a line and a
 /// rational arc among them: the Coons patch of the loop they make.
-fn check_gordon_of_two_by_two_is_the_coons_patch<S: Scalar>() {
+#[test]
+fn gordon_of_two_by_two_is_the_coons_patch() {
     let bottom = NurbCurve::try_new(
         3,
         [
@@ -160,15 +157,17 @@ fn check_gordon_of_two_by_two_is_the_coons_patch<S: Scalar>() {
             [0.6, 0.3, -0.2],
             [1., 0., 0.],
         ]
-        .map(|[x, y, z]| Vector4::from_array([x, y, z, 1.].map(S::from_f64)))
+        .map(|[x, y, z]| Vector4::from_array([x, y, z, 1.].map(Scalar::from_f64)))
         .to_vec(),
-        [0., 0., 0., 0., 1., 1., 1., 1.].map(S::from_f64).to_vec(),
+        [0., 0., 0., 0., 1., 1., 1., 1.]
+            .map(Scalar::from_f64)
+            .to_vec(),
     )
     .unwrap();
-    let top = line::<S>([0., 1., 1.], [1., 1., 1.]);
-    let left = rising_arc::<S>();
-    let right = line::<S>([1., 0., 0.], [1., 1., 1.]);
-    let ends = || vec![vec![S::ZERO, S::ONE]; 2];
+    let top = line([0., 1., 1.], [1., 1., 1.]);
+    let left = rising_arc();
+    let right = line([1., 0., 0.], [1., 1., 1.]);
+    let ends = || vec![vec![Scalar::ZERO, Scalar::ONE]; 2];
     let gordon = NurbSurface3D::gordon(
         &[bottom.clone(), top.clone()],
         &[left.clone(), right.clone()],
@@ -179,7 +178,10 @@ fn check_gordon_of_two_by_two_is_the_coons_patch<S: Scalar>() {
     let coons = NurbSurface3D::coons([&bottom, &right, &top.reverse(), &left.reverse()]).unwrap();
     for i in 0..=6 {
         for j in 0..=6 {
-            let (u, v) = (S::from_ratio(i, 6).unwrap(), S::from_ratio(j, 6).unwrap());
+            let (u, v) = (
+                Scalar::from_ratio(i, 6).unwrap(),
+                Scalar::from_ratio(j, 6).unwrap(),
+            );
             let (a, b) = (
                 gordon.evaluate(u, v).unwrap(),
                 coons.evaluate(u, v).unwrap(),
@@ -188,18 +190,15 @@ fn check_gordon_of_two_by_two_is_the_coons_patch<S: Scalar>() {
         }
     }
 }
-#[test]
-fn gordon_of_two_by_two_is_the_coons_patch() {
-    for_all_scalars!(check_gordon_of_two_by_two_is_the_coons_patch);
-}
 
 /// A rational arc crossed in its middle: the surface still runs along it,
 /// every point of it on its circle.
-fn check_gordon_runs_along_an_arc_crossed_inside<S: Scalar>() {
+#[test]
+fn gordon_runs_along_an_arc_crossed_inside() {
     // Arcs in the planes `y = 0, 1, 2`, round `(1, y, 0)` from `(0, y, 0)`
     // over `(1, y, 1)` to `(2, y, 0)`, crossed by lines along `y` at
     // `x = 0`, half way up the first quarter, and at `x = 2`.
-    let f = S::from_f64;
+    let f = Scalar::from_f64;
     let arc = |y: f64| {
         NurbCurve::try_new(
             2,
@@ -219,8 +218,8 @@ fn check_gordon_runs_along_an_arc_crossed_inside<S: Scalar>() {
     // domain, as the first arc has it: a line no sharp coordinates put
     // exactly through them.
     let quarter = u[0].evaluate(f(0.25)).unwrap();
-    let across = |x: S, z: S| {
-        let at = |y: f64| Vector4::from_array([x, f(y), z, S::ONE]);
+    let across = |x: Scalar, z: Scalar| {
+        let at = |y: f64| Vector4::from_array([x, f(y), z, Scalar::ONE]);
         NurbCurve::try_new(1, vec![at(0.), at(2.)], [0., 0., 1., 1.].map(f).to_vec()).unwrap()
     };
     let v = vec![
@@ -232,35 +231,28 @@ fn check_gordon_runs_along_an_arc_crossed_inside<S: Scalar>() {
     let v_crossings = vec![vec![f(0.), f(0.5), f(1.)]; 3];
     let surface = NurbSurface3D::gordon(&u, &v, &u_crossings, &v_crossings).unwrap();
     for (j, y) in [0.0, 1.0, 2.0].into_iter().enumerate() {
-        let v_param = S::from_ratio(j as i64, 2).unwrap();
+        let v_param = Scalar::from_ratio(j as i64, 2).unwrap();
         for k in 0..=16 {
             let p = surface
-                .evaluate(S::from_ratio(k, 16).unwrap(), v_param)
+                .evaluate(Scalar::from_ratio(k, 16).unwrap(), v_param)
                 .unwrap();
             let from_center = p.sub(&Vector3::from_array([1., y, 0.].map(f)));
             assert!(
-                from_center.norm_sq().could_be_equal(S::ONE),
+                from_center.norm_sq().could_be_equal(Scalar::ONE),
                 "arc {j} at {k}/16: {p:?}"
             );
         }
     }
 }
-#[test]
-fn gordon_runs_along_an_arc_crossed_inside() {
-    for_all_scalars!(check_gordon_runs_along_an_arc_crossed_inside);
-}
 
 /// Curves said to cross where they do not are refused.
-fn check_gordon_refuses_curves_that_do_not_cross<S: Scalar>() {
-    let (u, v, mut u_crossings, v_crossings) = network::<S>();
-    u_crossings[0][1] = S::from_f64(0.3);
+#[test]
+fn gordon_refuses_curves_that_do_not_cross() {
+    let (u, v, mut u_crossings, v_crossings) = network();
+    u_crossings[0][1] = Scalar::from_f64(0.3);
     let error = NurbSurface3D::gordon(&u, &v, &u_crossings, &v_crossings).unwrap_err();
     assert!(
         error.to_string().contains("where it crosses v curve 1"),
         "{error}"
     );
-}
-#[test]
-fn gordon_refuses_curves_that_do_not_cross() {
-    for_all_scalars!(check_gordon_refuses_curves_that_do_not_cross);
 }

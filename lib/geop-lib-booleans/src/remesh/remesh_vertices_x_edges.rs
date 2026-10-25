@@ -18,12 +18,12 @@ use crate::remesh::RemeshParams;
 /// `iter_body_vertices` borrow `model`, so this search has to finish and
 /// hand back plain ids before the caller is free to call
 /// `split_edge_at_vertex` (`&mut self`).
-fn find_edge_vertex_split<S: Scalar>(
-    model: &Model<S>,
+fn find_edge_vertex_split(
+    model: &Model,
     solid_a: Body,
     solid_b: Body,
-    params: &RemeshParams<S>,
-) -> GeopResult<Option<(EdgeId, S, VertexId)>> {
+    params: &RemeshParams,
+) -> GeopResult<Option<(EdgeId, Scalar, VertexId)>> {
     let ctx = with_context!(
         "find_edge_vertex_split(solid_a={solid_a}, solid_b={solid_b}, params={params:?})"
     );
@@ -78,12 +78,12 @@ fn find_edge_vertex_split<S: Scalar>(
     Ok(None)
 }
 
-pub fn remesh_vertices_x_edges<S: Scalar>(
-    model: &mut NamedModel<S>,
-    naming: &mut BooleanNaming<S>,
+pub fn remesh_vertices_x_edges(
+    model: &mut NamedModel,
+    naming: &mut BooleanNaming,
     solid_a: Body,
     solid_b: Body,
-    params: &RemeshParams<S>,
+    params: &RemeshParams,
 ) -> GeopResult<()> {
     let ctx = with_context!(
         "remesh_vertices_x_edges(solid_a={solid_a}, solid_b={solid_b}, params={params:?})"

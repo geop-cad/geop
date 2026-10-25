@@ -44,9 +44,9 @@ pub(super) fn offset_to(
 ) -> GeopResult<Vec<Offsetted>> {
     let chain = sketch.chain(curves)?;
     let d = sketch.chain_side(&chain, at)?;
-    let mut made = vec![sketch.offset(curves, Design::from_f64(d), corners)?];
+    let mut made = vec![sketch.offset(curves, Scalar::from_f64(d), corners)?];
     if both {
-        made.push(sketch.offset(curves, Design::from_f64(-d), corners)?);
+        made.push(sketch.offset(curves, Scalar::from_f64(-d), corners)?);
     }
     Ok(made)
 }
@@ -69,7 +69,7 @@ impl Editing<'_> {
     }
 
     /// A click with `tool` in hand, at `pointer`.
-    pub(super) fn modify_click(&mut self, tool: ModifyTool, pointer: &Pointer<S>) {
+    pub(super) fn modify_click(&mut self, tool: ModifyTool, pointer: &Pointer) {
         self.s.error = None;
         let Some((at, _)) = self.in_plane(pointer) else {
             return;
@@ -172,7 +172,7 @@ impl Editing<'_> {
         let step = Step::Along {
             along: line,
             backwards,
-            spacing: Design::from_f64(self.s.modify.spacing),
+            spacing: Scalar::from_f64(self.s.modify.spacing),
         };
         let count = self.s.modify.count;
         if let Some(made) = self.change(|s| s.pattern(&curves, &step, count)) {
@@ -197,7 +197,7 @@ impl Editing<'_> {
         let angle = pitch.unwrap_or(360.0 / count as f64).to_radians();
         let step = Step::Round {
             center,
-            angle: Design::from_f64(angle),
+            angle: Scalar::from_f64(angle),
         };
         if let Some(made) = self.change(|s| s.pattern(&curves, &step, count)) {
             if pitch.is_none() {

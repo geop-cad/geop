@@ -12,9 +12,9 @@ use crate::{
 
 /// Twice the signed area of `poly` (shoelace formula): positive for CCW,
 /// negative for CW.
-fn signed_area2<S: Scalar>(poly: &[Vector2<S>]) -> S {
+fn signed_area2(poly: &[Vector2]) -> Scalar {
     let n = poly.len();
-    let mut sum = S::ZERO;
+    let mut sum = Scalar::ZERO;
     for i in 0..n {
         let j = (i + 1) % n;
         sum = sum.add(poly[i][0].mul(poly[j][1]).sub(poly[j][0].mul(poly[i][1])));
@@ -23,15 +23,15 @@ fn signed_area2<S: Scalar>(poly: &[Vector2<S>]) -> S {
 }
 
 /// Signed area of `poly` (positive for CCW, negative for CW).
-pub fn polygon_signed_area<S: Scalar>(poly: &[Vector2<S>]) -> S {
-    signed_area2(poly).div(S::TWO).unwrap_or(S::ZERO)
+pub fn polygon_signed_area(poly: &[Vector2]) -> Scalar {
+    signed_area2(poly).div(Scalar::TWO).unwrap_or(Scalar::ZERO)
 }
 
 /// Whether `p` lies inside the closed polylines `loops`, outer boundaries
 /// and holes alike: an odd number of crossings of a ray from `p` along `+x`.
 /// Only crossings that definitely happen count, so a `p` whose ray could
 /// graze a corner is decided as if it did not.
-pub fn polygons_contain<S: Scalar>(loops: &[Vec<Vector2<S>>], p: &Vector2<S>) -> bool {
+pub fn polygons_contain(loops: &[Vec<Vector2>], p: &Vector2) -> bool {
     let mut inside = false;
     for poly in loops {
         for (i, a) in poly.iter().enumerate() {

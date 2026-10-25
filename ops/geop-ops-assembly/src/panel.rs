@@ -16,7 +16,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_program::{program::Program, reader::Reader, values::Design};
+use geop_core_program::{program::Program, reader::Reader};
 use serde::{Deserialize, Serialize};
 
 use geop_ops_model::placed::placed_parts;
@@ -94,7 +94,7 @@ impl Panel for JointsPanel {
                 "{parameter:?} is no value of this program a user sets"
             )));
         }
-        let set = BTreeMap::from([(parameter, Design::from_f64(value))]);
+        let set = BTreeMap::from([(parameter, Scalar::from_f64(value))]);
         let mut rerun = ctx.rerun();
         let state = rerun.program.state.clone();
         let (moved, _) = solving::set(&mut rerun, &state, &set)?;

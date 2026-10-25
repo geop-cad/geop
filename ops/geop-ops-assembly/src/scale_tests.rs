@@ -16,7 +16,7 @@ use geop_core_program::{
     part::Part,
     placed::Located,
     program::Program,
-    values::{Design, StateValue, StateValues, pose_state},
+    values::{StateValue, StateValues, pose_state},
     workspace::{FileStore, FileStoreMut},
 };
 use geop_ops_extrude_revolve::{Extents, testing::extrusion};
@@ -37,7 +37,7 @@ use geop_core_editor::editing::{Pointer, Reach, StepEditEvent};
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::{FrameAxis, Pose, Ray},
-    scalars::{ScalInF64 as S, Scalar},
+    scalars::Scalar,
     vector::Vector3,
 };
 use geop_lib_stdlib::WithStandardParts;
@@ -339,7 +339,7 @@ fn moving_a_part_builds_again_only_what_reads_where_it_is() {
     );
 
     let scratch = build_in(&workspace, &moved);
-    let at = |part: &Part| -> Pose<Design> { locate(&part.current(), "screw7").unwrap().world };
+    let at = |part: &Part| -> Pose { locate(&part.current(), "screw7").unwrap().world };
     assert_eq!(at(&built.part), at(&scratch));
 }
 
@@ -382,12 +382,12 @@ fn size(update: &Update) -> String {
 }
 
 /// A pointer straight down onto `(x, y)`.
-fn down_onto(x: f64, y: f64) -> Pointer<S> {
-    let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+fn down_onto(x: f64, y: f64) -> Pointer {
+    let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
     Pointer {
         ray: Ray::try_new(v([x, y, 50.0]), v([0.0, 0.0, -1.0])).unwrap(),
         reach: Reach::Tube {
-            radius: S::from_f64(0.01),
+            radius: Scalar::from_f64(0.01),
         },
     }
 }

@@ -7,10 +7,7 @@
 //! box/figure8-vs-cylinder arrangements (holes drilled through, blind
 //! holes, nested/disjoint, corner overlaps, coincident faces, etc.).
 
-use geop_core_math::{
-    scalars::{ScalInF64, Scalar},
-    vector::Vector3,
-};
+use geop_core_math::{scalars::Scalar, vector::Vector3};
 use geop_core_topology::{SolidId, validation::ValidationParameters};
 use geop_lib_sweep::shapes::{block, cylinder, figure8_profile, sphere_solid};
 use geop_ops_model::{NamedModel, Namer};
@@ -20,15 +17,15 @@ use crate::remesh::{RemeshParams, remesh};
 
 /// A named pair of solids, built together in one [`NamedModel`] as the
 /// operations `a` and `b`, for a boolean sweep to combine.
-pub struct TestScene<S: Scalar> {
+pub struct TestScene {
     pub name: String,
-    pub model: NamedModel<S>,
+    pub model: NamedModel,
     pub solid_a: SolidId,
     pub solid_b: SolidId,
 }
 
 /// The scene `name` of [`all_scenes`].
-pub fn scene(name: &str) -> TestScene<ScalInF64> {
+pub fn scene(name: &str) -> TestScene {
     all_scenes()
         .into_iter()
         .find(|s| s.name == name)
@@ -36,7 +33,7 @@ pub fn scene(name: &str) -> TestScene<ScalInF64> {
 }
 
 /// The scene `name`, remeshed with the default [`RemeshParams`].
-pub fn remeshed(name: &str) -> TestScene<ScalInF64> {
+pub fn remeshed(name: &str) -> TestScene {
     let mut scene = scene(name);
     let namer = Namer::new("boolean", "ab").unwrap();
     remesh(
@@ -52,8 +49,8 @@ pub fn remeshed(name: &str) -> TestScene<ScalInF64> {
 
 /// Validation as tolerant as the default [`RemeshParams`]' pairwise
 /// searches.
-pub fn validation<S: Scalar>() -> ValidationParameters<S> {
-    let params = RemeshParams::<S>::default();
+pub fn validation() -> ValidationParameters {
+    let params = RemeshParams::default();
     ValidationParameters {
         max_nodes: params.max_nodes,
         min_subdivision_size: params.curve_curve_min_subdivision_size,
@@ -67,13 +64,7 @@ fn offset_label(v: f64) -> String {
 }
 
 /// A unit cube (side length 1) centered at `(cx, cy, cz)`.
-pub fn unit_cube_at<S: Scalar>(
-    model: &mut NamedModel<S>,
-    name: &str,
-    cx: f64,
-    cy: f64,
-    cz: f64,
-) -> SolidId {
+pub fn unit_cube_at(model: &mut NamedModel, name: &str, cx: f64, cy: f64, cz: f64) -> SolidId {
     let (min, max) = ([cx, cy, cz].map(|c| c - 0.5), [cx, cy, cz].map(|c| c + 0.5));
     block(model, name, min, max)
 }
@@ -84,13 +75,13 @@ pub fn unit_cube_at<S: Scalar>(
 /// combination of `[-1, -0.5, 0, 0.5, 1]` along each axis (125 scenes) —
 /// covering every axis-aligned relative position from fully disjoint through
 /// every partial-overlap and face/edge/corner-coincident configuration.
-pub fn box_grid_scenes<S: Scalar>() -> Vec<TestScene<S>> {
+pub fn box_grid_scenes() -> Vec<TestScene> {
     let offsets = [-1.0_f64, -0.5, 0.0, 0.5, 1.0];
     let mut scenes = Vec::new();
     for &ox in &offsets {
         for &oy in &offsets {
             for &oz in &offsets {
-                let mut model = NamedModel::<S>::new();
+                let mut model = NamedModel::new();
                 let solid_a = unit_cube_at(&mut model, "a", 0.0, 0.0, 0.0);
                 let solid_b = unit_cube_at(&mut model, "b", ox, oy, oz);
                 let name = format!(
@@ -116,7 +107,7 @@ pub fn box_grid_scenes<S: Scalar>() -> Vec<TestScene<S>> {
 /// coincident `(0, 0, 0)` case (26 scenes) — that configuration is a
 /// degenerate coplanar (every point of one sphere's surface touches the
 /// other) rather than a transversal intersection, to be handled separately.
-pub fn sphere_grid_scenes<S: Scalar>() -> Vec<TestScene<S>> {
+pub fn sphere_grid_scenes() -> Vec<TestScene> {
     let offsets = [-0.5_f64, 0.0, 0.5];
     let mut scenes = Vec::new();
     for &ox in &offsets {
@@ -125,11 +116,14 @@ pub fn sphere_grid_scenes<S: Scalar>() -> Vec<TestScene<S>> {
                 if ox == 0.0 && oy == 0.0 && oz == 0.0 {
                     continue;
                 }
-                let mut model = NamedModel::<S>::new();
-                let solid_a = sphere_solid(&mut model, "a", Vector3::zero(), S::ONE).unwrap();
-                let center_b =
-                    Vector3::from_array([S::from_f64(ox), S::from_f64(oy), S::from_f64(oz)]);
-                let solid_b = sphere_solid(&mut model, "b", center_b, S::ONE).unwrap();
+                let mut model = NamedModel::new();
+                let solid_a = sphere_solid(&mut model, "a", Vector3::zero(), Scalar::ONE).unwrap();
+                let center_b = Vector3::from_array([
+                    Scalar::from_f64(ox),
+                    Scalar::from_f64(oy),
+                    Scalar::from_f64(oz),
+                ]);
+                let solid_b = sphere_solid(&mut model, "b", center_b, Scalar::ONE).unwrap();
                 let name = format!(
                     "sphere_grid_{}_{}_{}",
                     offset_label(ox),
@@ -371,11 +365,11 @@ const FIGURE8_CYLINDER_CASES: &[CylinderCase] = &[
 
 /// The `BOX_CYLINDER_CASES` arrangements, each as its own `TestScene`
 /// (`solid_a` the box, `solid_b` the cylinder), named `box_cylinder_<case>`.
-pub fn box_cylinder_scenes<S: Scalar>() -> Vec<TestScene<S>> {
+pub fn box_cylinder_scenes() -> Vec<TestScene> {
     BOX_CYLINDER_CASES
         .iter()
         .map(|c| {
-            let mut model = NamedModel::<S>::new();
+            let mut model = NamedModel::new();
             let solid_a = unit_cube_at(&mut model, "a", 0.0, 0.0, 0.0);
             let solid_b = cylinder(&mut model, "b", [c.cx, c.cy, c.cz], c.radius, c.height);
             TestScene {
@@ -391,11 +385,11 @@ pub fn box_cylinder_scenes<S: Scalar>() -> Vec<TestScene<S>> {
 /// The `FIGURE8_CYLINDER_CASES` arrangements, each as its own `TestScene`
 /// (`solid_a` the figure-8 extrusion, `solid_b` the cylinder), named
 /// `figure8_cylinder_<case>`.
-fn figure8_cylinder_scenes<S: Scalar>() -> Vec<TestScene<S>> {
+fn figure8_cylinder_scenes() -> Vec<TestScene> {
     FIGURE8_CYLINDER_CASES
         .iter()
         .map(|c| {
-            let mut model = NamedModel::<S>::new();
+            let mut model = NamedModel::new();
             let solid_a = figure8_profile(&mut model, "a").unwrap();
             let solid_b = cylinder(&mut model, "b", [c.cx, c.cy, c.cz], c.radius, c.height);
             TestScene {
@@ -410,11 +404,11 @@ fn figure8_cylinder_scenes<S: Scalar>() -> Vec<TestScene<S>> {
 
 /// Every scene in the suite: both grid sweeps, then both hand-picked
 /// cylinder arrangement sets.
-pub fn all_scenes<S: Scalar>() -> Vec<TestScene<S>> {
-    let mut scenes = box_grid_scenes::<S>();
-    scenes.extend(sphere_grid_scenes::<S>());
-    scenes.extend(box_cylinder_scenes::<S>());
-    scenes.extend(figure8_cylinder_scenes::<S>());
+pub fn all_scenes() -> Vec<TestScene> {
+    let mut scenes = box_grid_scenes();
+    scenes.extend(sphere_grid_scenes());
+    scenes.extend(box_cylinder_scenes());
+    scenes.extend(figure8_cylinder_scenes());
     scenes
 }
 
@@ -444,37 +438,30 @@ pub fn all_scenes<S: Scalar>() -> Vec<TestScene<S>> {
 /// `par_iter`'s `collect` preserves the source order regardless of which
 /// worker finished a given scene first, so a caller's output does not depend
 /// on scheduling.
-pub fn map_scenes_parallel<S, T, F>(f: F) -> Vec<T>
+pub fn map_scenes_parallel<T, F>(f: F) -> Vec<T>
 where
-    S: Scalar,
     T: Send,
-    F: Fn(TestScene<S>) -> T + Sync + Send,
+    F: Fn(TestScene) -> T + Sync + Send,
 {
-    all_scenes::<S>().into_par_iter().map(f).collect()
+    all_scenes().into_par_iter().map(f).collect()
 }
 
 #[cfg(test)]
 mod topology_render_test {
     use super::*;
-    use geop_core_math::scalars::ScalInF64;
     use geop_core_rasterize::{debug::Color10, rasterize};
 
     /// Render every scene's raw topology (no boolean/remesh operation at
     /// all — just the two solids as built) to `outputs/topology_tests/`,
     /// `solid_a`'s faces in blue and `solid_b`'s in purple: every scene
-    /// builds and rasterizes cleanly, before any boolean touches it.
-    ///
-    /// `ScalInF64` only, not `for_all_scalars!`: this sweeps 175 scenes (125
-    /// box-grid + 26 sphere-grid + 24 hand-picked), and interval-arithmetic
-    /// scalars pay a real per-operation cost that isn't worth it for a pure
-    /// rendering smoke test — see `remesh_test`'s own doc comment for the
-    /// same tradeoff.
+    /// builds and rasterizes cleanly, before any boolean touches it. This
+    /// sweeps 175 scenes (125 box-grid + 26 sphere-grid + 24 hand-picked).
     #[test]
     fn render_all_scenes_topology() {
         let dir = "outputs/topology_tests";
         std::fs::create_dir_all(dir).unwrap();
 
-        for scene in all_scenes::<ScalInF64>() {
+        for scene in all_scenes() {
             let model = scene.model.topology();
             let faces_a = model.solid_faces(scene.solid_a).unwrap();
             let scene_render = rasterize(model, 12).unwrap().scene(|face_id| {

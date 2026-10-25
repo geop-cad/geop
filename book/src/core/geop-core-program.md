@@ -64,7 +64,7 @@ it, not given up front.
 ## Values
 
 The `values` module. What a run is given is the program's, and its file
-format's: `Design`, the scalar design data is held in (`ScalInF64`); a
+format's: a
 `Setting` — what a parameter is set to where a program places the part, a
 number or a text (a table's row, a colour), saved as itself; and a
 `StateValue` — a number or a `Pose` — which steps by what is added to it,

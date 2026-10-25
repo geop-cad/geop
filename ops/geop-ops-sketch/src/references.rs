@@ -17,7 +17,7 @@
 //! edge projects to. All of it is reference geometry: fixed, construction,
 //! drawn as such, and never part of a profile.
 
-use geop_core_program::{element::ElementReference, reader::Reader, values::Design};
+use geop_core_program::{element::ElementReference, reader::Reader};
 use std::collections::BTreeMap;
 
 use geop_core_editor::one_of;
@@ -41,10 +41,10 @@ one_of! {
     /// What a sketch projects of the part: a vertex, an edge, a face — its
     /// boundary — or another sketch's curve.
     pub enum Projected {
-        Vertex(ElementReference<NamedModel<Design>, Vertex>),
-        Edge(ElementReference<NamedModel<Design>, Curve>),
-        Face(ElementReference<NamedModel<Design>, Face>),
-        SketchCurve(ElementReference<PlacedSketch<Design>, Curve>),
+        Vertex(ElementReference<NamedModel, Vertex>),
+        Edge(ElementReference<NamedModel, Curve>),
+        Face(ElementReference<NamedModel, Face>),
+        SketchCurve(ElementReference<PlacedSketch, Curve>),
     }
 }
 
@@ -91,7 +91,7 @@ enum Shape {
     },
     Spline {
         control_points: Vec<String>,
-        shape: SplineShape<Design>,
+        shape: SplineShape,
     },
 }
 
@@ -145,7 +145,7 @@ impl Reference {
         &mut self,
         sketch: &mut Sketch,
         reader: &Reader,
-        plane: &CoordinateSystem<Design>,
+        plane: &CoordinateSystem,
     ) -> GeopResult<()> {
         let geometry = match &self.source {
             Source::Frame => frame_geometry(),
@@ -163,7 +163,7 @@ impl Reference {
     /// snap to, never part of a profile.
     fn sync(&mut self, sketch: &mut Sketch, geometry: &Geometry) {
         for (key, &[x, y]) in &geometry.points {
-            let at = (Design::from_f64(x), Design::from_f64(y));
+            let at = (Scalar::from_f64(x), Scalar::from_f64(y));
             match self.points.get(key).and_then(|p| sketch.points.get_mut(p)) {
                 Some(point) => {
                     (point.x, point.y) = at;
@@ -185,11 +185,11 @@ impl Reference {
                 Shape::Arc { start, end, sweep } => CurveKind::Arc {
                     start: point(start),
                     end: point(end),
-                    sweep: Design::from_f64(*sweep),
+                    sweep: Scalar::from_f64(*sweep),
                 },
                 Shape::Circle { center, radius } => CurveKind::Circle {
                     center: point(center),
-                    radius: Design::from_f64(*radius),
+                    radius: Scalar::from_f64(*radius),
                 },
                 Shape::Spline {
                     control_points,
@@ -260,13 +260,9 @@ fn frame_geometry() -> Geometry {
 
 /// `entity`, as `reader` reads it, projected into `plane` along its
 /// normal, every key the name of the vertex or edge it comes from.
-fn project(
-    entity: &Projected,
-    reader: &Reader,
-    plane: &CoordinateSystem<Design>,
-) -> GeopResult<Geometry> {
+fn project(entity: &Projected, reader: &Reader, plane: &CoordinateSystem) -> GeopResult<Geometry> {
     let mut geometry = Geometry::default();
-    let mut point = |name: &str, at: &Vector3<Design>| {
+    let mut point = |name: &str, at: &Vector3| {
         (geometry.points).insert(name.to_string(), of(&plane.to_uv(at)));
     };
     let mut curves = Vec::new();
@@ -303,8 +299,8 @@ fn project(
 /// The one curve of `chain` — an edge's or a sketch curve's, named after it
 /// and its ends — projected into `plane`, added to `geometry`.
 fn project_chain(
-    chain: &Chain<NurbCurve3D<Design>>,
-    plane: &CoordinateSystem<Design>,
+    chain: &Chain<NurbCurve3D>,
+    plane: &CoordinateSystem,
     geometry: &mut Geometry,
 ) -> GeopResult<()> {
     let ([curve], [key]) = (chain.curves.as_slice(), chain.curve_names.as_slice()) else {
@@ -349,9 +345,9 @@ fn project_chain(
 /// point. Points it needs beyond its end points — a circle's center, a
 /// spline's inner control points — are added to `points`, keyed behind
 /// `key`.
-fn project_curve<S: Scalar>(
-    curve: &NurbCurve3D<S>,
-    plane: &CoordinateSystem<S>,
+fn project_curve(
+    curve: &NurbCurve3D,
+    plane: &CoordinateSystem,
     key: &str,
     start: String,
     end: String,
@@ -381,7 +377,7 @@ fn project_curve<S: Scalar>(
             }
             // Seen from the side its normal points to, the arc turns
             // counter-clockwise; from the other side, clockwise.
-            let sweep = if along.definitely_greater(S::ZERO) {
+            let sweep = if along.definitely_greater(Scalar::ZERO) {
                 arc.sweep()
             } else {
                 -arc.sweep()
@@ -396,7 +392,7 @@ fn project_curve<S: Scalar>(
     // its extremes, found on its circle — its control polygon reaches
     // further than it does — and any other curve is left to be the spline
     // it projects to: its control points only bound where it goes.
-    let projected: Vec<Vector2<S>> = curve
+    let projected: Vec<Vector2> = curve
         .control_points
         .iter()
         .map(|cp| Ok(plane.to_uv(&cp.dehomogenized()?)))
@@ -408,13 +404,13 @@ fn project_curve<S: Scalar>(
     let d = far.sub(&a);
     if projected
         .iter()
-        .all(|p| p.sub(&a).prod_cross(&d).could_be_equal(S::ZERO))
+        .all(|p| p.sub(&a).prod_cross(&d).could_be_equal(Scalar::ZERO))
     {
         let arc = curve.as_arc()?;
         // Where it could reach furthest either way: an arc's ends, and the
         // points of its circle furthest along the line where they are on
         // the arc; another curve's control points.
-        let candidates: Vec<Vector2<S>> = match &arc {
+        let candidates: Vec<Vector2> = match &arc {
             Some(arc) => {
                 let (c, n) = (&arc.circle, &arc.circle.normal);
                 let u = plane.uv_direction(&d);
@@ -425,16 +421,16 @@ fn project_curve<S: Scalar>(
                 let (from, to) = (arc.start.sub(&c.center), arc.end.sub(&c.center));
                 // Whether `y` is a counter-clockwise turn of less than a
                 // half from `x`, seen with the normal towards the viewer.
-                let turn = |x: &Vector3<S>, y: &Vector3<S>| n.prod_dot(&x.prod_cross(y));
-                let minor = !turn(&from, &to).definitely_less(S::ZERO);
-                let on_arc = |p: &Vector3<S>| {
+                let turn = |x: &Vector3, y: &Vector3| n.prod_dot(&x.prod_cross(y));
+                let minor = !turn(&from, &to).definitely_less(Scalar::ZERO);
+                let on_arc = |p: &Vector3| {
                     arc.could_be_closed()
                         || if minor {
-                            !turn(&from, p).definitely_less(S::ZERO)
-                                && !turn(p, &to).definitely_less(S::ZERO)
+                            !turn(&from, p).definitely_less(Scalar::ZERO)
+                                && !turn(p, &to).definitely_less(Scalar::ZERO)
                         } else {
-                            !(turn(&to, p).definitely_greater(S::ZERO)
-                                && turn(p, &from).definitely_greater(S::ZERO))
+                            !(turn(&to, p).definitely_greater(Scalar::ZERO)
+                                && turn(p, &from).definitely_greater(Scalar::ZERO))
                         }
                 };
                 let mut candidates = vec![a, b];
@@ -447,8 +443,8 @@ fn project_curve<S: Scalar>(
             }
             None => projected.clone(),
         };
-        let along = |p: &Vector2<S>| p.sub(&a).prod_dot(&d);
-        let extreme = |further: fn(S, S) -> bool| {
+        let along = |p: &Vector2| p.sub(&a).prod_dot(&d);
+        let extreme = |further: fn(Scalar, Scalar) -> bool| {
             candidates
                 .iter()
                 .copied()
@@ -463,7 +459,7 @@ fn project_curve<S: Scalar>(
         };
         let lo = extreme(|x, y| x.definitely_less(y));
         let hi = extreme(|x, y| x.definitely_greater(y));
-        let is_end = |p: &Vector2<S>| p.could_be_equal(&a) || p.could_be_equal(&b);
+        let is_end = |p: &Vector2| p.could_be_equal(&a) || p.could_be_equal(&b);
         if !a.could_be_equal(&b) && is_end(&lo) && is_end(&hi) {
             return Ok(Some(Shape::Line { start, end }));
         }
@@ -484,7 +480,7 @@ fn project_curve<S: Scalar>(
     let n = curve.control_points.len();
     let degree = curve.degree;
     let knots = &curve.knot_vector;
-    let clamped = |ends: &[S]| ends.iter().all(|k| k.could_be_equal(ends[0]));
+    let clamped = |ends: &[Scalar]| ends.iter().all(|k| k.could_be_equal(ends[0]));
     if !clamped(&knots[..=degree]) || !clamped(&knots[n..]) {
         return Err(GeopError::new(format!(
             "its curve is not clamped at its ends: knots {knots:?}"
@@ -501,11 +497,11 @@ fn project_curve<S: Scalar>(
         control_points,
         shape: SplineShape {
             degree,
-            knots: knots.iter().map(|k| Design::from_f64(k.to_f64())).collect(),
+            knots: knots.iter().map(|k| Scalar::from_f64(k.to_f64())).collect(),
             weights: curve
                 .control_points
                 .iter()
-                .map(|cp| Design::from_f64(cp[3].to_f64()))
+                .map(|cp| Scalar::from_f64(cp[3].to_f64()))
                 .collect(),
         },
     }))
@@ -514,26 +510,29 @@ fn project_curve<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use geop_core_geometry::nurb_curve::NurbCurve;
-    use geop_core_math::{scalars::ScalInF64 as S, vector::Vector};
+    use geop_core_math::{scalars::Scalar, vector::Vector};
 
     use super::*;
 
     /// A quarter of the unit circle in the world's `xy` plane, from `x` to
     /// `y`: an exact rational quadratic, as the kernel builds arcs.
-    fn quarter() -> NurbCurve3D<S> {
+    fn quarter() -> NurbCurve3D {
         let w = 0.5f64.sqrt();
-        let p =
-            |x: f64, y: f64, w: f64| Vector::from_array([x * w, y * w, 0.0, w].map(S::from_f64));
+        let p = |x: f64, y: f64, w: f64| {
+            Vector::from_array([x * w, y * w, 0.0, w].map(Scalar::from_f64))
+        };
         NurbCurve::try_new(
             2,
             vec![p(1.0, 0.0, 1.0), p(1.0, 1.0, w), p(0.0, 1.0, 1.0)],
-            [0.0, 0.0, 0.0, 1.0, 1.0, 1.0].map(S::from_f64).to_vec(),
+            [0.0, 0.0, 0.0, 1.0, 1.0, 1.0]
+                .map(Scalar::from_f64)
+                .to_vec(),
         )
         .unwrap()
     }
 
     fn projected(normal: [f64; 3]) -> (Option<Shape>, BTreeMap<String, [f64; 2]>) {
-        let n = Vector3::from_array(normal.map(S::from_f64));
+        let n = Vector3::from_array(normal.map(Scalar::from_f64));
         let plane = geop_ops_model::frame_along(Vector3::zero(), &n).unwrap();
         let mut points = BTreeMap::new();
         let shape =

@@ -1,6 +1,6 @@
 //! Blending the edges of basic solids.
 
-use geop_core_math::scalars::{Ring, ScalInF64 as S, Scalar};
+use geop_core_math::scalars::Scalar;
 use geop_core_topology::SolidId;
 use geop_lib_booleans::{RemeshParams, boolean};
 use geop_lib_sweep::shapes::{self, block, block_part, v3};
@@ -13,13 +13,13 @@ use geop_ops_model::{
 use crate::blend::{BlendShape, blend};
 
 /// The unit cube `[0, 1]^3`, named `cube(b)`.
-pub(super) fn unit_cube() -> NamedModel<S> {
+pub(super) fn unit_cube() -> NamedModel {
     block_part("b", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0])
 }
 
 /// A cylinder of radius 0.5 and height 1 standing on the origin, named
 /// `cylinder(c)`.
-fn cylinder() -> NamedModel<S> {
+fn cylinder() -> NamedModel {
     let mut model = NamedModel::new();
     shapes::cylinder(&mut model, "c", [0.0, 0.0, 0.0], 0.5, 1.0);
     model
@@ -28,7 +28,7 @@ fn cylinder() -> NamedModel<S> {
 /// `a` and `b` of `model` combined by `op`, as the step `step` of the
 /// operation `operation`.
 pub(super) fn combined(
-    model: &mut NamedModel<S>,
+    model: &mut NamedModel,
     (operation, step): (&str, &str),
     a: SolidId,
     b: SolidId,
@@ -42,7 +42,7 @@ pub(super) fn combined(
 
 /// Blends `edges` of `model` into `shape` as the step `F`, and checks the
 /// result is a valid solid named `fillet(F)`.
-fn blended(mut model: NamedModel<S>, edges: &[impl ToString], shape: BlendShape) -> NamedModel<S> {
+fn blended(mut model: NamedModel, edges: &[impl ToString], shape: BlendShape) -> NamedModel {
     let edges: Vec<String> = edges.iter().map(|e| e.to_string()).collect();
     let namer = Namer::new("fillet", "F").unwrap();
     blend(&mut model, &namer, &edges, &shape).unwrap();
@@ -52,7 +52,7 @@ fn blended(mut model: NamedModel<S>, edges: &[impl ToString], shape: BlendShape)
 }
 
 /// Checks `model` has a face named `name`, saying which it has if not.
-fn assert_has_face(model: &NamedModel<S>, name: &str) {
+fn assert_has_face(model: &NamedModel, name: &str) {
     let faces: Vec<&str> = model
         .topology()
         .faces
@@ -130,11 +130,11 @@ fn cylinder_rim_fillet() {
         let on_circle = |r: f64, z: f64| {
             model.topology().vertices.values().any(|vertex| {
                 let p = vertex.point;
-                p[2].could_be_equal(S::from_f64(z))
+                p[2].could_be_equal(Scalar::from_f64(z))
                     && p[0]
                         .mul(p[0])
                         .add(p[1].mul(p[1]))
-                        .could_be_equal(S::from_f64(r * r))
+                        .could_be_equal(Scalar::from_f64(r * r))
             })
         };
         assert!(on_circle(0.4, 1.0) && on_circle(0.5, 0.9));
@@ -194,11 +194,7 @@ fn cylinder_rim_chamfer() {
 
 /// Why blending `edges` of `model` into `shape` is refused, which it has to
 /// be.
-pub(super) fn refusal(
-    mut model: NamedModel<S>,
-    edges: &[impl ToString],
-    shape: BlendShape,
-) -> String {
+pub(super) fn refusal(mut model: NamedModel, edges: &[impl ToString], shape: BlendShape) -> String {
     let namer = Namer::new("fillet", "F").unwrap();
     let edges: Vec<String> = edges.iter().map(|e| e.to_string()).collect();
     match blend(&mut model, &namer, &edges, &shape) {
@@ -227,7 +223,7 @@ fn refuses_what_it_cannot_blend() {
 
 /// Checks the faces of `model` whose names end in `corner)` are pieces of
 /// spheres of `radius`, one around each of `centers`, sampled over them.
-fn assert_corner_balls(model: &NamedModel<S>, radius: f64, centers: &[[f64; 3]]) {
+fn assert_corner_balls(model: &NamedModel, radius: f64, centers: &[[f64; 3]]) {
     let mut found = vec![0; centers.len()];
     for (&id, face) in &model.topology().faces {
         let name = model.name_of(id).unwrap();
@@ -237,8 +233,8 @@ fn assert_corner_balls(model: &NamedModel<S>, radius: f64, centers: &[[f64; 3]])
         let surface = &face.surface;
         let at = |i: usize, j: usize| {
             let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
-            let u = S::interpolate(u0, u1, S::from_f64(i as f64 / 4.0));
-            let w = S::interpolate(v0, v1, S::from_f64(j as f64 / 4.0));
+            let u = Scalar::interpolate(u0, u1, Scalar::from_f64(i as f64 / 4.0));
+            let w = Scalar::interpolate(v0, v1, Scalar::from_f64(j as f64 / 4.0));
             surface.evaluate(u, w).unwrap()
         };
         let near = at(1, 1);
@@ -247,12 +243,12 @@ fn assert_corner_balls(model: &NamedModel<S>, radius: f64, centers: &[[f64; 3]])
             .min_by(|&a, &b| distance(centers[a]).total_cmp(&distance(centers[b])))
             .unwrap();
         found[k] += 1;
-        let c = v3::<S>(centers[k][0], centers[k][1], centers[k][2]);
+        let c = v3(centers[k][0], centers[k][1], centers[k][2]);
         for i in 0..=4 {
             for j in 0..=4 {
                 let r = at(i, j).sub(&c).norm();
                 assert!(
-                    r.could_be_equal(S::from_f64(radius)),
+                    r.could_be_equal(Scalar::from_f64(radius)),
                     "{name} at ({i}, {j}) is {r:?} from {c:?}"
                 );
             }
@@ -301,7 +297,7 @@ fn cube_fillet_all_edges() {
 }
 
 /// A block of 2 x 2 x 1 with a pocket of 1 x 1, 0.4 deep, in its top.
-fn pocketed() -> NamedModel<S> {
+fn pocketed() -> NamedModel {
     let mut model = NamedModel::new();
     let stock = block(&mut model, "b", [0.0, 0.0, 0.0], [2.0, 2.0, 1.0]);
     let pocket = block(&mut model, "p", [0.5, 0.5, 0.6], [1.5, 1.5, 1.5]);
@@ -373,7 +369,7 @@ fn pocketed_block_fillet_all_but_upright_edges() {
 
 /// A 4 x 4 x 1 base with a plate 1 thick and 2 high standing on it, flush
 /// with its sides: the union leaves each side two faces in one plane.
-fn plate_on_base() -> NamedModel<S> {
+fn plate_on_base() -> NamedModel {
     let mut model = NamedModel::new();
     let base = block(&mut model, "b", [0.0, 0.0, 0.0], [4.0, 4.0, 1.0]);
     let plate = block(&mut model, "p", [0.0, 0.0, 1.0], [1.0, 4.0, 3.0]);
@@ -423,8 +419,8 @@ fn far_bar_rim_fillet() {
             &mut model,
             "c",
             base,
-            S::from_f64(3.0),
-            S::from_f64(236.0),
+            Scalar::from_f64(3.0),
+            Scalar::from_f64(236.0),
             axis,
         )
         .unwrap();

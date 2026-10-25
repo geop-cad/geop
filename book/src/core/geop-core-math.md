@@ -20,13 +20,13 @@ math:
 let x = 0.1 + 0.2;
 assert!(x != 0.3); // f64 silently rounds, and the answer is simply wrong
 
-use geop_core_math::scalars::{Ring, ScalInF64, Scalar};
+use geop_core_math::scalars::Scalar;
 
-let a = ScalInF64::from_f64(0.1);
-let b = ScalInF64::from_f64(0.2);
+let a = Scalar::from_f64(0.1);
+let b = Scalar::from_f64(0.2);
 let c = a.add(b); // [0.3, 0.3000000000000001]: contains the true sum
 
-assert!(c.could_be_equal(ScalInF64::from_f64(0.3)));
+assert!(c.could_be_equal(Scalar::from_f64(0.3)));
 assert!(!c.is_sharp());
 ```
 
@@ -34,18 +34,25 @@ From there it propagates through everything built on top: NURBS
 evaluation, matrix operations, geometric transformations. No result in the
 kernel ever claims more precision than the computation that produced it.
 
-### The `Scalar` trait
+### The `Scalar` type
 
-All numeric code is generic over the `Scalar` trait (built on the `Ring` and
-`Field` traits, whose `div` returns a `GeopResult` because a divisor interval
-may contain zero). Two implementations exist:
+The kernel's number is one concrete type, `Scalar`: `[lo, hi]` as `f64`,
+outward-rounded by one ULP per operation. Its arithmetic is inherent
+(`add`, `sub`, `mul`, `neg`, and `div`, which returns a `GeopResult`
+because a divisor interval may contain zero), as are its comparisons and
+set operations; nothing in the kernel is generic over the scalar.
 
-| Type          | Representation                                      |
-| ------------- | --------------------------------------------------- |
-| `ScalInF64`   | `[lo, hi]` as `f64`, outward-rounded by one ULP per operation |
-| `ScalInFPA64` | `[lo, hi]` as `i64` fixed point at 2⁻³² resolution, with directed-rounding division and a saturating overflow sentinel |
+The one trait, `Number`, is what a constraint solver's residual is written
+in: implemented by `Scalar` and by `Dual<N>`, a scalar carrying its
+derivatives by `N` variables. Only what a residual is evaluated on — a
+`Vector<N, T>`, a `Pose<T>`, a `Quaternion<T>`, a sketch's arcs — takes a
+`T: Number`, and each defaults to `Scalar`, so `Vector3` and `Pose` are the
+scalar ones.
 
-Tests run against both through the `for_all_scalars!` macro.
+A test of geometry far from the origin asserts the width of the enclosure
+it gets (`vertex.point[k].width().to_f64() < 1e-9`) rather than only that
+it encloses the right value: in `f64` a cancellation hides behind the
+format's relative precision until the width is read.
 
 ### Three-valued comparisons
 
@@ -127,18 +134,18 @@ construction depends on to the last bit.
   intersected with the box the search proved, and the box itself where
   Newton stops.
 
-- `solvers::least_squares::minimize`: constrained Levenberg–Marquardt over any
-  `Scalar` — a sum of squares minimized where other residuals vanish
+- `solvers::least_squares::minimize`: constrained Levenberg–Marquardt — a
+  sum of squares minimized where other residuals vanish
   exactly, with a symmetric rank-one estimate of the constraints'
   curvature. Steps are free choices and sharpened; one is taken only where
   the sum or the violation definitely drops, so no tolerance decides when
   it has converged. A norm is taken scaled by the largest entry: squared as
-  they are, residuals of `1e-6` have a norm of `[0, 4.6e-5]` in fixed point,
-  which no step can definitely lower.
-- `dual::Dual<S, N>`: forward-mode automatic differentiation over any
-  `Scalar`, carrying the gradient with respect to the `N` variables one
-  residual depends on. Built over an interval scalar, a residual's value is
-  an enclosure rather than a rounded float.
+  they are, residuals of `1e-6` lose half their digits, which no step can
+  definitely lower.
+- `dual::Dual<N>`: forward-mode automatic differentiation, carrying the
+  gradient with respect to the `N` variables one residual depends on.
+  Built over the interval scalar, a residual's value is an enclosure
+  rather than a rounded float.
 
 ## Search helpers
 

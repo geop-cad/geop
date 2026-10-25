@@ -17,7 +17,6 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::ElementReference, numeric::NumericInput, part::StepContext, reader::Reader,
-    values::Design,
 };
 use geop_ops_model::{Line, ModelOperation, NamedModel, Namer, read_model};
 use serde::{Deserialize, Serialize};
@@ -100,7 +99,7 @@ pub enum Corner {
 pub struct EdgeFlange;
 
 /// A straight edge of the part, by name.
-pub type EdgeRef = ElementReference<NamedModel<Design>, Line>;
+pub type EdgeRef = ElementReference<NamedModel, Line>;
 
 /// The straight edge named `name`.
 pub fn edge(name: impl Into<String>) -> EdgeRef {
@@ -156,7 +155,7 @@ impl SheetStep for EdgeFlange {
 /// The edge field of a flange or hem, holding `edge`, in the part `reader`
 /// reads; `set` gets the edge picked.
 pub(crate) fn edge_field<'a, A>(
-    f: &mut EditForm<'a, Design, A>,
+    f: &mut EditForm<'a, A>,
     reader: &Reader<'a>,
     edge: Option<&EdgeRef>,
     set: impl Fn(Edit<'_, A, ()>, EdgeRef) + 'a,
@@ -205,9 +204,9 @@ impl PartOperation for EdgeFlange {
         context: &'a Context<'a>,
         args: &EdgeFlangeArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, EdgeFlangeArgs> {
+    ) -> EditForm<'a, EdgeFlangeArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, EdgeFlangeArgs>::default();
+        let mut f = EditForm::<EdgeFlangeArgs>::default();
         edge_field(&mut f, before, args.edge.as_ref(), |edit, edge| {
             edit.args.edge = Some(edge)
         });
@@ -304,7 +303,7 @@ impl PartOperation for EdgeFlange {
 
 impl ModelOperation for EdgeFlange {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         _: &EdgeFlangeArgs,
@@ -317,7 +316,7 @@ impl ModelOperation for EdgeFlange {
 /// `offset_start` and `offset_end`. `set` puts the two offsets set where
 /// the arguments keep them.
 pub(crate) fn offset_fields<'a, A>(
-    f: &mut EditForm<'a, Design, A>,
+    f: &mut EditForm<'a, A>,
     offset_start: f64,
     offset_end: f64,
     set: impl Fn(&mut A, [f64; 2]) + Clone + 'a,
@@ -338,11 +337,11 @@ pub(crate) fn offset_fields<'a, A>(
 /// set back into the sheet (`None`: it starts at the edge), how long its
 /// flat is, how far in from the edge's ends it runs, and what it does at a
 /// corner.
-pub(crate) struct FlangeShape<S: Scalar> {
-    pub angle: S,
-    pub radius: S,
-    pub set_back: Option<S>,
-    pub flat: S,
+pub(crate) struct FlangeShape {
+    pub angle: Scalar,
+    pub radius: Scalar,
+    pub set_back: Option<Scalar>,
+    pub flat: Scalar,
     pub offset_start: f64,
     pub offset_end: f64,
     pub corner: Corner,
@@ -363,12 +362,7 @@ pub(crate) fn check_offsets(offset_start: f64, offset_end: f64) -> GeopResult<()
 impl EdgeFlangeArgs {
     /// The flange these arguments describe, on a body of `rules`, turning
     /// `angle` degrees and `length` long — the values its formulas came to.
-    fn shape<S: Scalar>(
-        &self,
-        rules: &SheetMetalRules,
-        angle: f64,
-        length: f64,
-    ) -> GeopResult<FlangeShape<S>> {
+    fn shape(&self, rules: &SheetMetalRules, angle: f64, length: f64) -> GeopResult<FlangeShape> {
         if !(angle > 0.0 && angle < 180.0) {
             return Err(GeopError::new(format!(
                 "a flange turns by more than 0 and less than 180 degrees, not {angle}"
@@ -381,11 +375,11 @@ impl EdgeFlangeArgs {
             )));
         }
         check_offsets(self.offset_start, self.offset_end)?;
-        let s = S::from_f64;
+        let s = Scalar::from_f64;
         let t = s(rules.thickness);
         let r = s(radius);
         let angle = s(angle).degrees_to_radians()?;
-        let half = angle.div(S::TWO)?;
+        let half = angle.div(Scalar::TWO)?;
         let half_tan = half.sin().div(half.cos())?;
         let set_back = match self.position {
             FlangePosition::MaterialInside => Some(r.add(t).mul(half_tan)),
@@ -395,9 +389,9 @@ impl EdgeFlangeArgs {
         let flat = s(length).sub(match self.reference {
             LengthReference::OuterSharp => r.add(t).mul(half_tan),
             LengthReference::InnerSharp => r.mul(half_tan),
-            LengthReference::Tangent => S::ZERO,
+            LengthReference::Tangent => Scalar::ZERO,
         });
-        if !flat.definitely_greater(S::ZERO) {
+        if !flat.definitely_greater(Scalar::ZERO) {
             return Err(GeopError::new(format!(
                 "a flange {length} long leaves nothing flat after its bend ({flat:?})"
             )));
@@ -416,13 +410,13 @@ impl EdgeFlangeArgs {
 
 /// Adds the flange `shape` describes to `sheet`, bent from edge `k` of flat
 /// `f`'s outline towards its B side if `toward_b` (see [`EdgeFlange`]).
-pub(crate) fn add_flange<S: Scalar>(
-    sheet: &mut Sheet<S>,
+pub(crate) fn add_flange(
+    sheet: &mut Sheet,
     namer: &Namer,
     f: usize,
     k: usize,
     toward_b: bool,
-    shape: &FlangeShape<S>,
+    shape: &FlangeShape,
 ) -> GeopResult<()> {
     let rules = sheet.rules.clone();
     let flat = &sheet.flats[f];
@@ -441,7 +435,7 @@ pub(crate) fn add_flange<S: Scalar>(
             "edge {name} has been cut: a flange is bent along an edge as a flange or base flange built it — flange before cutting"
         )));
     }
-    let s = S::from_f64;
+    let s = Scalar::from_f64;
     let t = s(rules.thickness);
     let (angle, r, set_back, length) = (shape.angle, shape.radius, shape.set_back, shape.flat);
     let n = flat.outer.len();
@@ -451,18 +445,18 @@ pub(crate) fn add_flange<S: Scalar>(
     let edge_length = b.sub(&a).norm();
     let tau = b.sub(&a).normalize()?;
     let inward = tau.perp();
-    let at = |along: S, into: S| {
+    let at = |along: Scalar, into: Scalar| {
         a.add(&tau.prod_scalar(along))
             .add(&inward.prod_scalar(into))
     };
-    let d = set_back.unwrap_or(S::ZERO);
+    let d = set_back.unwrap_or(Scalar::ZERO);
     let relief = rules.relief_size().map(s);
     let depth = relief.map(|w| d.add(w));
 
     // Each end: how far in from the corner the flange starts if a bend
     // meets it there, and how far its flat reaches on past its bend if it
     // closes the corner.
-    let corner = |neighbour: usize, end: &str, offset: f64| -> GeopResult<(f64, Option<S>)> {
+    let corner = |neighbour: usize, end: &str, offset: f64| -> GeopResult<(f64, Option<Scalar>)> {
         let key = flat.outer[neighbour].key();
         if !sheet.is_bent(&key) {
             return Ok((0.0, None));
@@ -485,7 +479,7 @@ pub(crate) fn add_flange<S: Scalar>(
             .iter()
             .find(|b| b.parent == f && b.parent_edge == key)
             .ok_or_else(|| refuse("that edge is where a bend ends, not a flange beside it"))?;
-        let right = S::PI.div(S::TWO)?;
+        let right = Scalar::PI.div(Scalar::TWO)?;
         if !(other.angle.could_be_equal(right) && angle.could_be_equal(right)) {
             return Err(refuse("the flanges do not both turn by 90 degrees"));
         }
@@ -502,7 +496,7 @@ pub(crate) fn add_flange<S: Scalar>(
             .sub(&p)
             .normalize()?
             .prod_dot(&b.sub(&a).normalize()?)
-            .could_be_equal(S::ZERO)
+            .could_be_equal(Scalar::ZERO)
         {
             return Err(refuse("the edges do not meet at a right angle"));
         }
@@ -515,7 +509,7 @@ pub(crate) fn add_flange<S: Scalar>(
     let inset_start = shape.offset_start + gap_start;
     let inset_end = shape.offset_end + gap_end;
     let (s0, s1) = (s(inset_start), edge_length.sub(s(inset_end)));
-    if !s1.sub(s0).definitely_greater(S::ZERO) {
+    if !s1.sub(s0).definitely_greater(Scalar::ZERO) {
         return Err(GeopError::new(format!(
             "edge {name} is {edge_length:?} long, too short for a flange set in {inset_start} at its start and {inset_end} at its end"
         )));
@@ -538,13 +532,13 @@ pub(crate) fn add_flange<S: Scalar>(
     } else {
         d
     };
-    if height.definitely_greater(S::ZERO) {
+    if height.definitely_greater(Scalar::ZERO) {
         let w = if notched {
             relief.expect("a relief")
         } else {
-            S::ZERO
+            Scalar::ZERO
         };
-        let lo = if full.0 { S::ZERO } else { s0.sub(w) };
+        let lo = if full.0 { Scalar::ZERO } else { s0.sub(w) };
         let hi = if full.1 { edge_length } else { s1.add(w) };
         for e in std::iter::once(&flat.outer).chain(&flat.holes).flatten() {
             let p = e.curve.start()?;
@@ -554,7 +548,7 @@ pub(crate) fn add_flange<S: Scalar>(
             let (along, into) = (p.sub(&a).prod_dot(&tau), p.sub(&a).prod_dot(&inward));
             if along.could_be_greater(lo)
                 && along.could_be_less(hi)
-                && into.could_be_greater(S::ZERO)
+                && into.could_be_greater(Scalar::ZERO)
                 && into.could_be_less(height)
             {
                 return Err(GeopError::new(format!(
@@ -567,13 +561,13 @@ pub(crate) fn add_flange<S: Scalar>(
     }
 
     // The new edges in place of the edge, as the points they start at.
-    let mut run: Vec<(Vector2<S>, Namer)> = Vec::new();
+    let mut run: Vec<(Vector2, Namer)> = Vec::new();
     let mut corner_start = None;
     let mut corner_end = None;
     if inset_start == 0.0 {
         match set_back {
             Some(d) => {
-                let corner = trim_point(flat, prev, at(S::ZERO, d), d, &name, "start")?;
+                let corner = trim_point(flat, prev, at(Scalar::ZERO, d), d, &name, "start")?;
                 corner_start = Some(corner);
                 run.push((corner, namer.scoped("line")));
             }
@@ -584,7 +578,7 @@ pub(crate) fn add_flange<S: Scalar>(
         if let (Some(w), Some(depth)) = (relief, depth) {
             fits(s0.sub(w), &name, "start")?;
             let relief = namer.scoped("relief0");
-            run.push((at(s0.sub(w), S::ZERO), relief.scoped("in")));
+            run.push((at(s0.sub(w), Scalar::ZERO), relief.scoped("in")));
             run.push((at(s0.sub(w), depth), relief.scoped("across")));
             run.push((at(s0, depth), relief.scoped("out")));
         }
@@ -610,7 +604,7 @@ pub(crate) fn add_flange<S: Scalar>(
                 run.push((line_end, relief.scoped("in")));
                 run.push((at(s1, depth), relief.scoped("across")));
                 run.push((at(s1.add(w), depth), relief.scoped("out")));
-                run.push((at(s1.add(w), S::ZERO), namer.scoped("after")));
+                run.push((at(s1.add(w), Scalar::ZERO), namer.scoped("after")));
             }
             _ => run.push((line_end, namer.scoped("after"))),
         }
@@ -678,8 +672,8 @@ pub(crate) fn add_flange<S: Scalar>(
 
 /// Checks that a relief leaves `left` of the edge `name` beside it, at its
 /// `end`.
-fn fits<S: Scalar>(left: S, name: &str, end: &str) -> GeopResult<()> {
-    if left.definitely_greater(S::ZERO) {
+fn fits(left: Scalar, name: &str, end: &str) -> GeopResult<()> {
+    if left.definitely_greater(Scalar::ZERO) {
         Ok(())
     } else {
         Err(GeopError::new(format!(
@@ -692,14 +686,14 @@ fn fits<S: Scalar>(left: S, name: &str, end: &str) -> GeopResult<()> {
 /// `flat` at the `end` of the edge `name` it is bent from: `corner`, a set
 /// back `d` along it — the neighbour must meet the edge at a right angle,
 /// and be longer than that.
-fn trim_point<S: Scalar>(
-    flat: &Flat<S>,
+fn trim_point(
+    flat: &Flat,
     neighbour: usize,
-    corner: Vector2<S>,
-    d: S,
+    corner: Vector2,
+    d: Scalar,
     name: &str,
     end: &str,
-) -> GeopResult<Vector2<S>> {
+) -> GeopResult<Vector2> {
     let edge = &flat.outer[neighbour];
     let refuse = |why: &str| {
         GeopError::new(format!(
@@ -717,7 +711,7 @@ fn trim_point<S: Scalar>(
     let along = q.sub(&p).normalize()?;
     if !along
         .prod_dot(&b.sub(&a).normalize()?)
-        .could_be_equal(S::ZERO)
+        .could_be_equal(Scalar::ZERO)
     {
         return Err(refuse("does not meet it at a right angle"));
     }
@@ -728,11 +722,7 @@ fn trim_point<S: Scalar>(
 }
 
 /// `edge` with its start or end moved to the given point.
-fn trim<S: Scalar>(
-    edge: &mut FlatEdge<S>,
-    start: Option<Vector2<S>>,
-    end: Option<Vector2<S>>,
-) -> GeopResult<()> {
+fn trim(edge: &mut FlatEdge, start: Option<Vector2>, end: Option<Vector2>) -> GeopResult<()> {
     let [p, q] = edge
         .line()
         .ok_or_else(|| GeopError::new(format!("edge {} is not straight", edge.key())))??;

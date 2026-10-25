@@ -533,11 +533,7 @@ mod examples {
 
     use geop_core_editor::output::Bounded;
     use geop_core_geometry::contains::curve::curve_could_contain;
-    use geop_core_math::{
-        geop_error::GeopError,
-        scalars::{Ring, ScalInF64 as S, Scalar},
-        vector::Vector3,
-    };
+    use geop_core_math::{geop_error::GeopError, scalars::Scalar, vector::Vector3};
     use geop_core_program::{part::Part, program::Program};
     use geop_lib_booleans::{RemeshParams, boolean};
     use geop_lib_sweep::shapes::cube_solid;
@@ -563,7 +559,7 @@ mod examples {
     }
 
     /// `error` with every edge and face id it mentions followed by its name.
-    fn named(part: &NamedModel<S>, error: &impl std::fmt::Display) -> String {
+    fn named(part: &NamedModel, error: &impl std::fmt::Display) -> String {
         let mut text = error.to_string();
         for (id, name) in part.names().iter() {
             let tag = match id {
@@ -625,13 +621,13 @@ mod examples {
                 for hidden in v.lines.iter().filter(|l| !l.visible) {
                     let (a, b) = hidden.curve.domain();
                     let at = |f: f64| {
-                        let t = a.add(b.sub(a).mul(S::from_f64(f))).sharpen();
+                        let t = a.add(b.sub(a).mul(Scalar::from_f64(f))).sharpen();
                         hidden.curve.evaluate(t).unwrap()
                     };
                     let (p, q) = (at(1.0 / 3.0), at(2.0 / 3.0));
                     for visible in v.lines.iter().filter(|l| l.visible) {
-                        let on = |x: &geop_core_math::vector::Vector2<S>| {
-                            curve_could_contain(&visible.curve, x, 20_000, S::from_f64(1e-7))
+                        let on = |x: &geop_core_math::vector::Vector2| {
+                            curve_could_contain(&visible.curve, x, 20_000, Scalar::from_f64(1e-7))
                                 .unwrap()
                                 .is_some()
                         };
@@ -733,12 +729,12 @@ mod examples {
                 for hidden in v.lines.iter().filter(|l| !l.visible) {
                     let (a, b) = hidden.curve.domain();
                     let at = |f: f64| {
-                        let t = a.add(b.sub(a).mul(S::from_f64(f))).sharpen();
+                        let t = a.add(b.sub(a).mul(Scalar::from_f64(f))).sharpen();
                         hidden.curve.evaluate(t).unwrap()
                     };
                     let (p, q) = (at(1.0 / 3.0), at(2.0 / 3.0));
-                    let on = |line: &ViewLine<S>, x| {
-                        curve_could_contain(&line.curve, x, 20_000, S::from_f64(1e-7))
+                    let on = |line: &ViewLine, x| {
+                        curve_could_contain(&line.curve, x, 20_000, Scalar::from_f64(1e-7))
                             .unwrap()
                             .is_some()
                     };
@@ -826,8 +822,8 @@ mod examples {
                     let knife = cube_solid(
                         &mut scratch,
                         "knife",
-                        Vector3::from_array([lo(0), lo(1), lo(2)].map(S::from_f64)),
-                        Vector3::from_array([cut, hi(1), hi(2)].map(S::from_f64)),
+                        Vector3::from_array([lo(0), lo(1), lo(2)].map(Scalar::from_f64)),
+                        Vector3::from_array([cut, hi(1), hi(2)].map(Scalar::from_f64)),
                     )?;
                     let namer = Namer::new("halve", "half")?;
                     let half = boolean(
@@ -839,7 +835,7 @@ mod examples {
                         RemeshParams::default(),
                     )?;
                     let Some(half) = half else {
-                        return Ok(S::ZERO);
+                        return Ok(Scalar::ZERO);
                     };
                     Ok(scratch.topology().mass_properties(half)?.volume)
                 });

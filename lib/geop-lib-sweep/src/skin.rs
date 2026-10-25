@@ -47,17 +47,17 @@ use geop_ops_model::{BodyNames, Namer};
 
 /// Where a strip's entities are: its joints, curves, laterals and walls,
 /// by station `s`, span `j`, joint or curve `i`.
-pub trait StripGeometry<S: Scalar> {
+pub trait StripGeometry {
     /// Joint `i` at station `s`.
-    fn joint(&self, s: usize, i: usize) -> GeopResult<Vector3<S>>;
+    fn joint(&self, s: usize, i: usize) -> GeopResult<Vector3>;
     /// Curve `i` at station `s`, from joint `i` to the next.
-    fn curve(&self, s: usize, i: usize) -> GeopResult<NurbCurve3D<S>>;
+    fn curve(&self, s: usize, i: usize) -> GeopResult<NurbCurve3D>;
     /// The path of joint `i` through span `j`, from its first station to
     /// its last.
-    fn lateral(&self, j: usize, i: usize) -> GeopResult<NurbCurve3D<S>>;
+    fn lateral(&self, j: usize, i: usize) -> GeopResult<NurbCurve3D>;
     /// The wall curve `i` sweeps through span `j`: `u` along the span, `v`
     /// along the curve, both over `[0, 1]`.
-    fn wall(&self, j: usize, i: usize) -> GeopResult<NurbSurface3D<S>>;
+    fn wall(&self, j: usize, i: usize) -> GeopResult<NurbSurface3D>;
 }
 
 /// What a strip is joined to that was built before it.
@@ -96,7 +96,7 @@ pub enum Glue {
 /// | curve `X` at station `s` | `N(X,s)`; `N(X)` for a curve on the axis |
 /// | lateral edge of `P` through span `q` | `N(P,q)`, or `N(P)` for an unnamed span |
 /// | wall swept by `X` through span `q` | `N(X,q)`, or `N(X)` |
-pub struct Strip<'a, S: Scalar> {
+pub struct Strip<'a> {
     pub namer: &'a Namer,
     pub joint_names: &'a [String],
     pub curve_names: &'a [String],
@@ -108,10 +108,10 @@ pub struct Strip<'a, S: Scalar> {
     /// Per curve: whether it lies on the axis, between two poles.
     pub on_axis: &'a [bool],
     pub glued: Vec<Glue>,
-    pub geometry: &'a dyn StripGeometry<S>,
+    pub geometry: &'a dyn StripGeometry,
 }
 
-impl<S: Scalar> Strip<'_, S> {
+impl Strip<'_> {
     fn joints(&self) -> usize {
         self.joint_names.len()
     }
@@ -169,12 +169,12 @@ impl<S: Scalar> Strip<'_, S> {
 /// pcurves — each running the way its curve does. At the start of the
 /// strips (`forward`), it runs every loop as the curves do; at the end,
 /// backwards: the walls run them the other way.
-pub struct StripCap<S: Scalar> {
+pub struct StripCap {
     pub name: String,
     pub station: usize,
     pub forward: bool,
-    pub surface: NurbSurface3D<S>,
-    pub loops: Vec<(usize, Vec<NurbCurve2D<S>>)>,
+    pub surface: NurbSurface3D,
+    pub loops: Vec<(usize, Vec<NurbCurve2D>)>,
 }
 
 /// What [`skin`] built, by strip, station and joint or curve: the vertices,
@@ -190,8 +190,8 @@ pub struct Skinned {
 pub type CurveEdge = Option<(usize, bool)>;
 
 /// A wall's sides in its own parameters (see the module docs).
-fn wall_pcurves<S: Scalar>() -> GeopResult<[NurbCurve2D<S>; 4]> {
-    let p = |u: f64, v: f64| Vector2::from_array([S::from_f64(u), S::from_f64(v)]);
+fn wall_pcurves() -> GeopResult<[NurbCurve2D; 4]> {
+    let p = |u: f64, v: f64| Vector2::from_array([Scalar::from_f64(u), Scalar::from_f64(v)]);
     Ok([
         NurbCurve2D::line(p(0.0, 1.0), p(0.0, 0.0))?,
         NurbCurve2D::line(p(0.0, 0.0), p(1.0, 0.0))?,
@@ -212,11 +212,11 @@ fn along(sense: Sense, against: bool) -> Sense {
 /// Adds `strips` and their `caps` to `spec`, named in `names` (see the
 /// module docs): first each strip's vertices, station curves and lateral
 /// edges, then every strip's walls, then the caps.
-pub fn skin<S: Scalar>(
-    spec: &mut BodySpec<S>,
+pub fn skin(
+    spec: &mut BodySpec,
     names: &mut BodyNames,
-    strips: &[Strip<'_, S>],
-    caps: &[StripCap<S>],
+    strips: &[Strip<'_>],
+    caps: &[StripCap],
 ) -> GeopResult<Skinned> {
     let mut built = Skinned {
         vertices: Vec::new(),
@@ -362,7 +362,7 @@ pub fn skin<S: Scalar>(
         laterals.push(paths);
     }
 
-    let [first_back, start_side, last_forward, end_side] = wall_pcurves::<S>()?;
+    let [first_back, start_side, last_forward, end_side] = wall_pcurves()?;
     for (l, strip) in strips.iter().enumerate() {
         for (i, name) in strip.curve_names.iter().enumerate() {
             if strip.on_axis[i] {
@@ -376,7 +376,7 @@ pub fn skin<S: Scalar>(
             )]
             for j in 0..strip.span_names.len() {
                 // Along a joint's path, or at its vertex where it has none.
-                let side = |joint: usize, sense: Sense, pcurve: &NurbCurve2D<S>| CoedgeSpec {
+                let side = |joint: usize, sense: Sense, pcurve: &NurbCurve2D| CoedgeSpec {
                     on: match laterals[l][joint][j] {
                         Ok(edge) => CoedgeOn::Edge(edge, sense),
                         Err(vertex) => CoedgeOn::Vertex(vertex),
@@ -385,7 +385,7 @@ pub fn skin<S: Scalar>(
                 };
                 // Along the curve at a station, the other way where its
                 // edge runs against it.
-                let at = |s: usize, sense: Sense, pcurve: &NurbCurve2D<S>| {
+                let at = |s: usize, sense: Sense, pcurve: &NurbCurve2D| {
                     let (edge, against) =
                         built.edges[l][s][i].expect("a curve off the axis has an edge");
                     CoedgeSpec {

@@ -7,10 +7,7 @@
 use std::collections::BTreeMap;
 
 use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::ray::Ray,
-    scalars::{ScalInF64 as S, Scalar},
-    vector::Vector3,
+    geop_error::GeopResult, primitives::ray::Ray, scalars::Scalar, vector::Vector3,
 };
 use geop_core_program::{part::Part, program::Program, runner::Runner};
 use serde::de::DeserializeOwned;
@@ -49,18 +46,18 @@ pub fn built(editor: &Editor) -> GeopResult<Part> {
 }
 
 /// A pointer from `origin` along `dir`, reaching 0.009 units.
-pub fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer<S> {
-    let v = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+pub fn pointer(origin: [f64; 3], dir: [f64; 3]) -> Pointer {
+    let v = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
     Pointer {
         ray: Ray::try_new(v(origin), v(dir)).expect("a test's pointer points somewhere"),
         reach: Reach::Tube {
-            radius: S::from_f64(0.009),
+            radius: Scalar::from_f64(0.009),
         },
     }
 }
 
 /// Looking straight down at `(x, y)`.
-pub fn from_above(x: f64, y: f64) -> Pointer<S> {
+pub fn from_above(x: f64, y: f64) -> Pointer {
     pointer([x, y, 10.0], [0.0, 0.0, -1.0])
 }
 
@@ -74,7 +71,7 @@ pub fn handled(editor: &mut Editor, command: Command) -> Update {
 }
 
 /// A click of the primary button with `pointer`.
-pub fn click_at(pointer: Pointer<S>) -> Command {
+pub fn click_at(pointer: Pointer) -> Command {
     Command::Event {
         event: StepEditEvent::Click {
             pointer,
@@ -99,7 +96,7 @@ pub fn dialog(key: &str, value: Value) -> Command {
 /// What the step being edited shows after `event`, as the front end sends
 /// it; the editor has to take it without an error.
 #[track_caller]
-pub fn event(editor: &mut Editor, event: StepEditEvent<S>) -> StepState {
+pub fn event(editor: &mut Editor, event: StepEditEvent) -> StepState {
     let update = handled(editor, Command::Event { event });
     update.step.expect("a step is edited")
 }
@@ -111,9 +108,9 @@ pub fn event(editor: &mut Editor, event: StepEditEvent<S>) -> StepState {
 pub fn drag_gizmo(
     editor: &mut Editor,
     part: GizmoPart,
-    at: Pointer<S>,
-    to: Pointer<S>,
-    halfway: Pointer<S>,
+    at: Pointer,
+    to: Pointer,
+    halfway: Pointer,
     shift: bool,
 ) -> StepState {
     let step = event(
@@ -207,7 +204,7 @@ impl Stepping {
     }
 
     /// Sends `event`, which the editor has to take without an error.
-    pub fn send(&mut self, event: StepEditEvent<S>) {
+    pub fn send(&mut self, event: StepEditEvent) {
         let update = handled(&mut self.editor, Command::Event { event });
         self.shown = update.step.expect("the step is still edited");
     }
@@ -221,7 +218,7 @@ impl Stepping {
     }
 
     /// What the step shows now.
-    pub fn presentation(&self) -> &Presentation<S> {
+    pub fn presentation(&self) -> &Presentation {
         &self.shown.presentation
     }
 

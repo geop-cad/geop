@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::{program::Program, values::Design};
+use geop_core_program::program::Program;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -33,7 +33,7 @@ pub enum Command {
     /// Something the user did to the step being edited — or, with none,
     /// with the tool in hand.
     Event {
-        event: StepEditEvent<Design>,
+        event: StepEditEvent,
     },
     /// Put the step being edited into the program — refused, unless it
     /// builds.
@@ -260,7 +260,7 @@ pub struct StepState {
     pub doc: &'static str,
     /// Its id — none yet, for a new step.
     pub id: Option<String>,
-    pub presentation: Presentation<Design>,
+    pub presentation: Presentation,
     /// What it still needs picked, by its fields' labels: until it has it,
     /// it is not built, and there is no error to show.
     pub missing: Vec<String>,
@@ -297,7 +297,7 @@ pub struct Update {
     /// What the tool in hand shows, while no step is edited: the drag
     /// tool's part it would drag lit, and whether a press grabs it; the
     /// pick tool's picks, and what the answer about them draws.
-    pub tool: Option<Presentation<Design>>,
+    pub tool: Option<Presentation>,
     /// The answer of the tool in hand about the part — the pick tool's
     /// inspector's about its picks — or the answer to [`Command::Inspect`].
     pub inspection: Option<Inspection>,

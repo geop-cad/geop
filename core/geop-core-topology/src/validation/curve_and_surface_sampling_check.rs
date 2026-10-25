@@ -20,10 +20,10 @@ use crate::{CoedgeGeometry, Model, validation::ValidationParameters};
 ///
 /// Pushes at most one error per coedge onto `errors` (its first bad sample)
 /// and moves on to the next coedge rather than stopping altogether.
-pub fn check_curve_and_surface_sampling<S: Scalar>(
-    params: &ValidationParameters<S>,
+pub fn check_curve_and_surface_sampling(
+    params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
 ) {
     for (&coedge_id, coedge) in &model.coedges {
         let Some(face) = model.faces.get(&coedge.face) else {
@@ -62,11 +62,11 @@ pub fn check_curve_and_surface_sampling<S: Scalar>(
                 // the degenerate pcurves that once got a face spliced onto a
                 // surface it did not lie on.
                 for i in 0..params.sample_count {
-                    let frac = S::from_f64(i as f64 / (params.sample_count - 1) as f64);
+                    let frac = Scalar::from_f64(i as f64 / (params.sample_count - 1) as f64);
                     let t = t0.add(t1.sub(t0).mul(frac));
                     let _ = (u0, u1);
 
-                    let sample_result = (|| -> Result<Option<(Vector3<S>, _)>, GeopError> {
+                    let sample_result = (|| -> Result<Option<(Vector3, _)>, GeopError> {
                         let uv = coedge.pcurve.evaluate(t)?;
                         let point = surface.evaluate(uv[0], uv[1])?;
                         let on_edge = curve_could_contain(
@@ -113,8 +113,9 @@ pub fn check_curve_and_surface_sampling<S: Scalar>(
                             // samples tell them apart.
                             let off_surface: Vec<usize> = (0..params.sample_count)
                                 .filter(|&k| {
-                                    let frac =
-                                        S::from_f64(k as f64 / (params.sample_count - 1) as f64);
+                                    let frac = Scalar::from_f64(
+                                        k as f64 / (params.sample_count - 1) as f64,
+                                    );
                                     edge.curve
                                         .evaluate(u0.add(u1.sub(u0).mul(frac)))
                                         .and_then(|q| {
@@ -161,7 +162,7 @@ pub fn check_curve_and_surface_sampling<S: Scalar>(
                 };
 
                 for i in 0..params.sample_count {
-                    let frac = S::from_f64(i as f64 / (params.sample_count - 1) as f64);
+                    let frac = Scalar::from_f64(i as f64 / (params.sample_count - 1) as f64);
                     let t = t0.add(t1.sub(t0).mul(frac));
 
                     let sample_result = (|| -> Result<bool, GeopError> {
@@ -199,17 +200,14 @@ mod tests {
     use crate::Model;
     use crate::test_fixtures::{check_errors, test_cube_model, test_cube_solid};
     use geop_core_geometry::nurb_curve::NurbCurve;
-    use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector4};
+    use geop_core_math::{scalars::Scalar, vector::Vector4};
 
-    fn check_valid_cube_passes<S: Scalar>() {
-        assert!(check_errors(check_curve_and_surface_sampling, &test_cube_model::<S>()).is_empty());
-    }
     #[test]
     fn valid_cube_passes() {
-        for_all_scalars!(check_valid_cube_passes);
+        assert!(check_errors(check_curve_and_surface_sampling, &test_cube_model()).is_empty());
     }
 
-    fn bend_edge<S: Scalar>(model: &mut Model<S>, edge_id: crate::EdgeId) {
+    fn bend_edge(model: &mut Model, edge_id: crate::EdgeId) {
         let (start_v, end_v) = {
             let edge = &model.edges[&edge_id];
             (edge.start_vertex, edge.end_vertex)
@@ -217,26 +215,34 @@ mod tests {
         let p0 = model.vertices[&start_v].point;
         let p1 = model.vertices[&end_v].point;
         let far = Vector4::from_array([
-            S::from_f64(50.0),
-            S::from_f64(50.0),
-            S::from_f64(50.0),
-            S::ONE,
+            Scalar::from_f64(50.0),
+            Scalar::from_f64(50.0),
+            Scalar::from_f64(50.0),
+            Scalar::ONE,
         ]);
         let bent = NurbCurve::try_new(
             2,
             vec![
-                Vector4::from_array([p0[0], p0[1], p0[2], S::ONE]),
+                Vector4::from_array([p0[0], p0[1], p0[2], Scalar::ONE]),
                 far,
-                Vector4::from_array([p1[0], p1[1], p1[2], S::ONE]),
+                Vector4::from_array([p1[0], p1[1], p1[2], Scalar::ONE]),
             ],
-            vec![S::ZERO, S::ZERO, S::ZERO, S::ONE, S::ONE, S::ONE],
+            vec![
+                Scalar::ZERO,
+                Scalar::ZERO,
+                Scalar::ZERO,
+                Scalar::ONE,
+                Scalar::ONE,
+                Scalar::ONE,
+            ],
         )
         .unwrap();
         model.edges.get_mut(&edge_id).unwrap().curve = bent;
     }
 
-    fn check_bent_edge_curve_fails<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn bent_edge_curve_fails() {
+        let mut model = Model::new();
         test_cube_solid(&mut model);
 
         // Bend one edge's curve through a far-off interior control point,
@@ -247,13 +253,10 @@ mod tests {
 
         assert!(!check_errors(check_curve_and_surface_sampling, &model).is_empty());
     }
-    #[test]
-    fn bent_edge_curve_fails() {
-        for_all_scalars!(check_bent_edge_curve_fails);
-    }
 
-    fn check_bending_two_edges_reports_both<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn bending_two_edges_reports_both() {
+        let mut model = Model::new();
         test_cube_solid(&mut model);
         let mut ids = model.edges.keys().copied();
         let e1 = ids.next().unwrap();
@@ -261,9 +264,5 @@ mod tests {
         bend_edge(&mut model, e1);
         bend_edge(&mut model, e2);
         assert!(check_errors(check_curve_and_surface_sampling, &model).len() >= 2);
-    }
-    #[test]
-    fn bending_two_edges_reports_both() {
-        for_all_scalars!(check_bending_two_edges_reports_both);
     }
 }

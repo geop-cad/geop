@@ -24,23 +24,23 @@ use crate::{
 /// parameters by an affine map of its control points ([`FlatPatch::pcurve`]),
 /// exact for any NURBS.
 #[derive(Clone, Debug)]
-pub struct FlatPatch<S: Scalar> {
-    origin: Vector3<S>,
-    e1: Vector3<S>,
-    e2: Vector3<S>,
-    lo: Vector2<S>,
-    size: Vector2<S>,
+pub struct FlatPatch {
+    origin: Vector3,
+    e1: Vector3,
+    e2: Vector3,
+    lo: Vector2,
+    size: Vector2,
     swapped: bool,
 }
 
-impl<S: Scalar> FlatPatch<S> {
+impl FlatPatch {
     /// The patch of the plane `(origin, e1, e2)` around `curves`, given in
     /// its coordinates.
     pub fn around<'a>(
-        origin: Vector3<S>,
-        e1: Vector3<S>,
-        e2: Vector3<S>,
-        curves: impl IntoIterator<Item = &'a NurbCurve2D<S>>,
+        origin: Vector3,
+        e1: Vector3,
+        e2: Vector3,
+        curves: impl IntoIterator<Item = &'a NurbCurve2D>,
         swapped: bool,
     ) -> GeopResult<Self> {
         let bounds = union_aabb(curves.into_iter().map(NurbCurve::aabb))
@@ -52,8 +52,8 @@ impl<S: Scalar> FlatPatch<S> {
         // that `lo + size` falls definitely short of `hi`, and then the
         // upper bound of `hi - lo`.
         let size = std::array::from_fn(|k| {
-            let (from, to) = (S::from_f64(lo[k]), S::from_f64(hi[k]));
-            let plain = S::from_f64(hi[k] - lo[k]);
+            let (from, to) = (Scalar::from_f64(lo[k]), Scalar::from_f64(hi[k]));
+            let plain = Scalar::from_f64(hi[k] - lo[k]);
             if from.add(plain).definitely_less(to) {
                 to.sub(from).upper()
             } else {
@@ -64,7 +64,7 @@ impl<S: Scalar> FlatPatch<S> {
             origin,
             e1,
             e2,
-            lo: Vector2::from_array(lo.map(S::from_f64)),
+            lo: Vector2::from_array(lo.map(Scalar::from_f64)),
             size: Vector2::from_array(size),
             swapped,
         })
@@ -72,12 +72,12 @@ impl<S: Scalar> FlatPatch<S> {
 
     /// How far the patch reaches along the plane's two axes: its lowest
     /// corner and its highest, in the plane's coordinates.
-    pub fn reach(&self) -> [Vector2<S>; 2] {
+    pub fn reach(&self) -> [Vector2; 2] {
         [self.lo, self.lo.add(&self.size)]
     }
 
     /// `curve`, drawn in the plane, in the patch's parameters.
-    pub fn pcurve(&self, curve: &NurbCurve2D<S>) -> GeopResult<NurbCurve2D<S>> {
+    pub fn pcurve(&self, curve: &NurbCurve2D) -> GeopResult<NurbCurve2D> {
         let control_points = curve
             .control_points
             .iter()
@@ -98,7 +98,7 @@ impl<S: Scalar> FlatPatch<S> {
     }
 
     /// The patch itself.
-    pub fn surface(&self) -> GeopResult<NurbSurface3D<S>> {
+    pub fn surface(&self) -> GeopResult<NurbSurface3D> {
         let corner = |i: usize, j: usize| {
             let x = if i == 1 {
                 self.lo[0].add(self.size[0])
@@ -125,15 +125,15 @@ impl<S: Scalar> FlatPatch<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geop_core_math::for_all_scalars;
 
     /// A square reaching far one way along each axis and only a little the
     /// other: its box's size in plain numbers, `0.001 - -3`, rounds below
     /// what the box spans. The patch must still reach every point of it.
-    fn check_patch_encloses_its_curves<S: Scalar>() {
+    #[test]
+    fn patch_encloses_its_curves() {
         let corners = [(-3.0, -3.0), (0.001, -3.0), (0.001, 0.001), (-3.0, 0.001)]
-            .map(|(x, y)| Vector2::from_array([S::from_f64(x), S::from_f64(y)]));
-        let sides: Vec<NurbCurve2D<S>> = (0..4)
+            .map(|(x, y)| Vector2::from_array([Scalar::from_f64(x), Scalar::from_f64(y)]));
+        let sides: Vec<NurbCurve2D> = (0..4)
             .map(|k| NurbCurve2D::line(corners[k], corners[(k + 1) % 4]).unwrap())
             .collect();
         let patch = FlatPatch::around(
@@ -144,7 +144,7 @@ mod tests {
             false,
         )
         .unwrap();
-        let reach = S::from_f64(0.001);
+        let reach = Scalar::from_f64(0.001);
         let [_, far] = patch.reach();
         for k in 0..2 {
             assert!(
@@ -153,9 +153,5 @@ mod tests {
                 far[k]
             );
         }
-    }
-    #[test]
-    fn patch_encloses_its_curves() {
-        for_all_scalars!(check_patch_encloses_its_curves);
     }
 }

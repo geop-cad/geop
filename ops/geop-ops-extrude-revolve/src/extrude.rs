@@ -11,10 +11,10 @@ use geop_core_editor::{
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::CoordinateSystem,
-    scalars::{Ring, Scalar},
+    scalars::Scalar,
     vector::{Vector2, Vector3},
 };
-use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
+use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader};
 use geop_core_sketch::{Sketch, profile::curve_polyline};
 use geop_core_topology::build::BuiltBody;
 use geop_ops_model::sketch::{PlacedSketch, SketchRef, shape_profiles};
@@ -71,17 +71,15 @@ pub struct ExtrudeArgs {
 /// Where a side's length is dragged: at the centre of the sketch, that far
 /// along the sketch plane's normal — backwards for the second side. None
 /// while the sketch cannot be found.
-fn distance_handle<S: Scalar>(
+fn distance_handle(
     reader: &Reader,
     args: &ExtrudeArgs,
     length: f64,
     second: bool,
-) -> Option<Track<S>> {
+) -> Option<Track> {
     let placed = reader.retrieve_element(&args.sketch).ok()?;
     let plane = &placed.plane;
-    let center = plane
-        .uv_to_xyz(&sketch_center(&placed.sketch)?)
-        .map(|c| c.cast::<S>());
+    let center = plane.uv_to_xyz(&sketch_center(&placed.sketch)?);
     // A symmetric extrude goes half its length either way; the second side
     // the other way.
     let scale = match (args.extent.symmetric, second) {
@@ -89,10 +87,10 @@ fn distance_handle<S: Scalar>(
         (false, false) => 1.0,
         (false, true) => -1.0,
     };
-    let normal = plane.w().map(|c| c.cast::<S>());
+    let normal = plane.w();
     Some(Track {
-        at: center.add(&normal.prod_scalar(S::from_f64(length * scale))),
-        direction: normal.prod_scalar(S::from_f64(scale)),
+        at: center.add(&normal.prod_scalar(Scalar::from_f64(length * scale))),
+        direction: normal.prod_scalar(Scalar::from_f64(scale)),
     })
 }
 
@@ -114,7 +112,7 @@ impl PartOperation for Extrude {
     /// one.
     fn new_args(context: &Context) -> ExtrudeArgs {
         let before = &context.before;
-        let newest = before.targets_of::<PlacedSketch<Design>>().pop();
+        let newest = before.targets_of::<PlacedSketch>().pop();
         ExtrudeArgs {
             sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_model::sketch::sketch(""))),
             extent: Extents::blind(1.0),
@@ -136,9 +134,9 @@ impl PartOperation for Extrude {
         context: &'a Context<'a>,
         args: &ExtrudeArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, ExtrudeArgs> {
+    ) -> EditForm<'a, ExtrudeArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, ExtrudeArgs>::default();
+        let mut f = EditForm::<ExtrudeArgs>::default();
         f.pick_one(
             "sketch",
             "sketch",
@@ -176,7 +174,7 @@ impl PartOperation for Extrude {
 
 impl ModelOperation for Extrude {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &ExtrudeArgs,
@@ -184,7 +182,7 @@ impl ModelOperation for Extrude {
         let namer = Namer::new("extrude", step)?;
         let placed = reader.retrieve_element(&args.sketch)?;
         let sketch = &placed.sketch;
-        let geometry = sketch.enclose::<Design>()?;
+        let geometry = sketch.enclose()?;
         let shape = args.output.shape(sketch)?;
         let loops: Vec<_> = (shape_profiles(&placed.name, sketch, &geometry, shape)?.into_iter())
             .map(SweepLoop::plain)
@@ -201,24 +199,24 @@ impl ModelOperation for Extrude {
 /// An extrude's loops, swept along the normal of their sketch's `plane`
 /// (see [`Sweeping`]): its measure is the distance from the plane.
 struct Extruding<'a> {
-    plane: &'a CoordinateSystem<Design>,
-    loops: &'a [SweepLoop<Design>],
+    plane: &'a CoordinateSystem,
+    loops: &'a [SweepLoop],
 }
 
 impl Sweeping for Extruding<'_> {
-    fn loops(&self) -> &[SweepLoop<Design>] {
+    fn loops(&self) -> &[SweepLoop] {
         self.loops
     }
 
     fn sweep(
         &self,
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         namer: &Namer,
         name: Option<&str>,
         from: f64,
         to: f64,
     ) -> GeopResult<BuiltBody> {
-        let s = Design::from_f64;
+        let s = Scalar::from_f64;
         extrude(model, namer, name, self.plane, s(from), s(to), self.loops)
     }
 
@@ -234,20 +232,20 @@ impl Sweeping for Extruding<'_> {
         far
     }
 
-    fn measure(&self, sign: f64, p: &Vector3<Design>) -> Option<f64> {
+    fn measure(&self, sign: f64, p: &Vector3) -> Option<f64> {
         let along = (p.sub(self.plane.origin()))
             .prod_dot(self.plane.w())
-            .mul(Design::from_f64(sign));
+            .mul(Scalar::from_f64(sign));
         along
-            .definitely_greater(Design::ZERO)
+            .definitely_greater(Scalar::ZERO)
             .then(|| along.to_f64())
     }
 }
 
 /// The centre of the box around what `sketch` draws — its profile curves,
 /// or its points if it has none — in sketch coordinates.
-fn sketch_center<S: Scalar>(sketch: &Sketch<Design>) -> Option<Vector2<S>> {
-    let mut drawn: Vec<Vector2<Design>> = sketch
+fn sketch_center(sketch: &Sketch) -> Option<Vector2> {
+    let mut drawn: Vec<Vector2> = sketch
         .curves
         .iter()
         .filter(|(_, c)| !c.construction)
@@ -258,5 +256,5 @@ fn sketch_center<S: Scalar>(sketch: &Sketch<Design>) -> Option<Vector2<S>> {
     }
     let hull = drawn.into_iter().reduce(|a, b| a.union(&b))?;
     // The middle of the box is a free choice: sharp.
-    Some(hull.map(|c| c.cast::<S>().midpoint()))
+    Some(hull.map(Scalar::midpoint))
 }

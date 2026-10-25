@@ -1,4 +1,4 @@
-use geop_core_math::{geop_error::GeopError, scalars::Scalar};
+use geop_core_math::geop_error::GeopError;
 
 use crate::{Model, validation::ValidationParameters};
 
@@ -22,10 +22,10 @@ use crate::{Model, validation::ValidationParameters};
 /// coedges' pcurves alone tracing a fully closed 2-D polygon — a ray that
 /// happens to cross exactly through such a gap passes through uncounted,
 /// corrupting the inside/outside parity for query points near it.
-pub fn check_pcurve_loop_continuity<S: Scalar>(
-    _params: &ValidationParameters<S>,
+pub fn check_pcurve_loop_continuity(
+    _params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
 ) {
     for (&coedge_id, coedge) in &model.coedges {
         let Some(next) = model.coedges.get(&coedge.next) else {
@@ -55,29 +55,23 @@ mod tests {
         test_fixtures::{check_errors, test_cube_model, test_cube_solid},
     };
     use geop_core_geometry::nurb_curve::NurbCurve2D;
-    use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector2};
+    use geop_core_math::{scalars::Scalar, vector::Vector2};
 
-    fn check_valid_cube_passes<S: Scalar>() {
-        assert!(check_errors(check_pcurve_loop_continuity, &test_cube_model::<S>()).is_empty());
-    }
     #[test]
     fn valid_cube_passes() {
-        for_all_scalars!(check_valid_cube_passes);
+        assert!(check_errors(check_pcurve_loop_continuity, &test_cube_model()).is_empty());
     }
 
-    fn check_broken_pcurve_gap_is_caught<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn broken_pcurve_gap_is_caught() {
+        let mut model = Model::new();
         test_cube_solid(&mut model);
         let coedge_id = *model.coedges.keys().next().unwrap();
         model.coedges.get_mut(&coedge_id).unwrap().pcurve = NurbCurve2D::line(
-            Vector2::from_array([S::from_f64(0.1), S::from_f64(0.1)]),
-            Vector2::from_array([S::from_f64(0.9), S::from_f64(0.9)]),
+            Vector2::from_array([Scalar::from_f64(0.1), Scalar::from_f64(0.1)]),
+            Vector2::from_array([Scalar::from_f64(0.9), Scalar::from_f64(0.9)]),
         )
         .unwrap();
         assert!(!check_errors(check_pcurve_loop_continuity, &model).is_empty());
-    }
-    #[test]
-    fn broken_pcurve_gap_is_caught() {
-        for_all_scalars!(check_broken_pcurve_gap_is_caught);
     }
 }

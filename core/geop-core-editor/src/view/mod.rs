@@ -36,7 +36,7 @@ use geop_core_math::{
     geop_error::GeopResult,
     polygon::polygons_contain,
     primitives::{CoordinateSystem, DatumComponent, DatumKind, FrameAxis, Motion, Pose, Ray},
-    scalars::{Field, Ring, ScalInF64, Scalar},
+    scalars::Scalar,
     vector::{Vector2, Vector3},
 };
 use geop_core_program::{
@@ -46,9 +46,6 @@ use geop_core_program::{
     target::{Target, TargetReference},
 };
 use serde::Serialize;
-
-/// What a part is drawn in.
-pub type S = ScalInF64;
 
 /// The kinds of what a view draws, as a pick names them
 /// ([`PickedElement::kind`]).
@@ -155,7 +152,7 @@ pub struct ViewVertex {
     /// The faces it is a corner of. Of no solid, it is hidden with all of
     /// them; a face hit does not hide it (see [`PartView::pick`]).
     pub faces: Vec<String>,
-    pub at: Vector3<S>,
+    pub at: Vector3,
 }
 
 /// An edge of the part, as drawn: its curve sampled into a polyline.
@@ -167,7 +164,7 @@ pub struct ViewEdge {
     /// The faces it bounds. Of no solid, it is hidden with all of them; a
     /// face hit does not hide it (see [`PartView::pick`]).
     pub faces: Vec<String>,
-    pub polyline: Vec<Vector3<S>>,
+    pub polyline: Vec<Vector3>,
     /// The vertices it runs between, by name.
     #[serde(skip)]
     pub ends: [String; 2],
@@ -183,8 +180,8 @@ pub struct ViewFace {
     /// The step whose feature made it, if one did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub feature: Option<String>,
-    pub triangles: Vec<[Vector3<S>; 3]>,
-    pub normals: Vec<[Vector3<S>; 3]>,
+    pub triangles: Vec<[Vector3; 3]>,
+    pub normals: Vec<[Vector3; 3]>,
 }
 
 /// A curve of a sketch, as drawn, in the sketch's plane, by the name its
@@ -193,7 +190,7 @@ pub struct ViewFace {
 pub struct ViewCurve {
     pub id: String,
     pub construction: bool,
-    pub polyline: Vec<Vector2<S>>,
+    pub polyline: Vec<Vector2>,
 }
 
 /// A point of a sketch, as drawn, in the sketch's plane, by the name its
@@ -201,7 +198,7 @@ pub struct ViewCurve {
 #[derive(Clone, Debug, Serialize)]
 pub struct ViewSketchPoint {
     pub id: String,
-    pub at: Vector2<S>,
+    pub at: Vector2,
 }
 
 /// A sketch of the part, as drawn: its plane, its closed regions (each an
@@ -212,9 +209,9 @@ pub struct ViewSketch {
     pub name: String,
     /// The target it is, which a pick of it or its elements names.
     pub target: String,
-    pub plane: CoordinateSystem<S>,
+    pub plane: CoordinateSystem,
     #[serde(skip)]
-    pub regions: Vec<Vec<Vec<Vector2<S>>>>,
+    pub regions: Vec<Vec<Vec<Vector2>>>,
     pub curves: Vec<ViewCurve>,
     pub points: Vec<ViewSketchPoint>,
 }
@@ -225,7 +222,7 @@ pub struct ViewSketch {
 pub struct ViewDatum {
     pub name: String,
     pub kind: DatumKind,
-    pub frame: CoordinateSystem<S>,
+    pub frame: CoordinateSystem,
     /// The names of a frame's components, as its target names them.
     #[serde(skip)]
     pub components: Vec<(DatumComponent, String)>,
@@ -237,7 +234,7 @@ pub struct ViewDatum {
 pub struct ViewAnnotation {
     pub name: String,
     pub label: String,
-    pub polyline: Vec<Vector3<S>>,
+    pub polyline: Vec<Vector3>,
 }
 
 /// What a step draws on the part besides its topology — cosmetic threads —
@@ -352,9 +349,9 @@ pub struct ViewInstance {
     /// The key of its part.
     pub component: String,
     /// Where it is: its own frame in the part drawn.
-    pub frame: CoordinateSystem<S>,
+    pub frame: CoordinateSystem,
     #[serde(skip)]
-    pub pose: Pose<S>,
+    pub pose: Pose,
     /// Its part as drawn.
     #[serde(skip)]
     pub view: Rc<PartView>,
@@ -404,7 +401,7 @@ pub struct PartView {
     /// one, of the box around it — for an empty part, [`EMPTY_EXTENT`]
     /// around the origin. Datum planes and axes, which are endless, are
     /// drawn this big around the point of them nearest the center.
-    pub extent: Extent<S>,
+    pub extent: Extent,
     /// The part's colour, `#rrggbb`; none for the viewer's own.
     pub color: Option<String>,
 }
@@ -413,14 +410,14 @@ pub struct PartView {
 /// with the pointer moved into its own frame.
 struct Layer<'v> {
     view: &'v PartView,
-    pointer: Pointer<S>,
+    pointer: Pointer,
     /// Whether the pointer comes near enough the box around its view
     /// ([`PartView::extent`]) to hit any of its vertices, edges or faces:
     /// only its datums can be hit otherwise — a frame is drawn at a size of
     /// its own, a plane or an axis as large as the whole drawing.
     near: bool,
     /// Where it is, and back; `None` for the part drawn itself.
-    motion: Option<(Motion<S>, Motion<S>)>,
+    motion: Option<(Motion, Motion)>,
     /// The instance's name, for a placed part.
     instance: Option<&'v str>,
 }
@@ -437,7 +434,7 @@ impl Layer<'_> {
     }
 
     /// The point `p` of this layer where the part drawn has it.
-    fn world(&self, p: Vector3<S>) -> Vector3<S> {
+    fn world(&self, p: Vector3) -> Vector3 {
         match &self.motion {
             Some((there, _)) => there.apply(&p),
             None => p,
@@ -445,7 +442,7 @@ impl Layer<'_> {
     }
 
     /// The point `p` of the part drawn in this layer's own frame.
-    fn local(&self, p: Vector3<S>) -> Vector3<S> {
+    fn local(&self, p: Vector3) -> Vector3 {
         match &self.motion {
             Some((_, back)) => back.apply(&p),
             None => p,
@@ -454,7 +451,7 @@ impl Layer<'_> {
 
     /// The element `kind` `name` of `target`, hit at `point`, `t` along the
     /// ray, as a hit of the part drawn.
-    fn hit(&self, target: &str, kind: &str, name: &str, point: Vector3<S>, t: S) -> ElementHit<S> {
+    fn hit(&self, target: &str, kind: &str, name: &str, point: Vector3, t: Scalar) -> ElementHit {
         ElementHit {
             element: self.element(target, kind, name),
             point: self.world(point),
@@ -466,7 +463,7 @@ impl Layer<'_> {
 impl PartView {
     /// Nothing drawn, reaching as far as `extent`: what a viewer is sent
     /// while a step is edited on a sheet of its own, which it frames.
-    pub fn blank(extent: Extent<S>) -> Self {
+    pub fn blank(extent: Extent) -> Self {
         Self {
             model: String::new(),
             vertices: Vec::new(),
@@ -487,7 +484,7 @@ impl PartView {
     pub fn new() -> Self {
         Self::blank(Extent {
             center: Vector3::zero(),
-            size: S::from_f64(EMPTY_EXTENT),
+            size: Scalar::from_f64(EMPTY_EXTENT),
         })
     }
 
@@ -504,8 +501,8 @@ impl PartView {
     /// ([`Extent`]), the reach taken where the ball ends furthest along
     /// the ray. A pick tests every triangle of a part it comes near, so for
     /// a part placed hundreds of times, this is what it can skip.
-    fn near(&self, pointer: &Pointer<S>) -> bool {
-        let Ok(radius) = self.extent.size.div(S::TWO) else {
+    fn near(&self, pointer: &Pointer) -> bool {
+        let Ok(radius) = self.extent.size.div(Scalar::TWO) else {
             return true;
         };
         let (dist, t) = pointer.ray.distance_to_point(&self.extent.center);
@@ -516,7 +513,7 @@ impl PartView {
 
     /// The part drawn itself, then every placed part, each with `pointer`
     /// moved into its frame.
-    fn layers(&self, pointer: &Pointer<S>) -> Vec<Layer<'_>> {
+    fn layers(&self, pointer: &Pointer) -> Vec<Layer<'_>> {
         let mut layers = vec![Layer {
             view: self,
             pointer: *pointer,
@@ -551,7 +548,7 @@ impl PartView {
     /// placed in one placed rigid, the innermost one around it whose pose is
     /// a state of the part drawn: what moves it. None for a fixed one: no
     /// drag moves it.
-    pub fn part_to_drag(&self, pointer: &Pointer<S>) -> Option<(&ViewInstance, S)> {
+    pub fn part_to_drag(&self, pointer: &Pointer) -> Option<(&ViewInstance, Scalar)> {
         let layers = self.layers(pointer);
         // The part's own faces hide what is behind them too.
         let (t, hit) = layers
@@ -575,7 +572,7 @@ impl PartView {
 
     /// How far along `pointer`'s ray it first enters the placed part
     /// `instance`, if it does.
-    pub fn pick_instance(&self, instance: &str, pointer: &Pointer<S>) -> Option<S> {
+    pub fn pick_instance(&self, instance: &str, pointer: &Pointer) -> Option<Scalar> {
         let layers = self.layers(pointer);
         let layer = layers.iter().find(|l| l.instance == Some(instance))?;
         layer
@@ -586,7 +583,7 @@ impl PartView {
 
     /// The box around everything drawn: the union of every point of it,
     /// and of the corners of every placed part's own box, where it is.
-    fn measure(&self) -> Extent<S> {
+    fn measure(&self) -> Extent {
         let sketch_points = self.sketches.iter().flat_map(|sketch| {
             sketch
                 .curves
@@ -614,7 +611,7 @@ impl PartView {
                 continue;
             }
             let Extent { center, size } = view.extent;
-            let half = size.mul(S::from_f64(0.5));
+            let half = size.mul(Scalar::from_f64(0.5));
             let motion = instance.pose.motion();
             for i in 0..8 {
                 let corner = Vector3::from_array([0, 1, 2].map(|k| match i >> k & 1 {
@@ -628,14 +625,14 @@ impl PartView {
         let Some(hull) = hull else {
             return Extent {
                 center: Vector3::zero(),
-                size: S::from_f64(EMPTY_EXTENT),
+                size: Scalar::from_f64(EMPTY_EXTENT),
             };
         };
         let size = Vector3::from_array([0, 1, 2].map(|k| hull[k].width())).norm();
         Extent {
             center: Vector3::from_array([0, 1, 2].map(|k| hull[k].midpoint())),
-            size: if size.definitely_less(S::ONE) {
-                S::ONE
+            size: if size.definitely_less(Scalar::ONE) {
+                Scalar::ONE
             } else {
                 size
             },
@@ -650,7 +647,7 @@ impl PartView {
     /// the ray of the faces, sketches and other datums hit. The parts placed
     /// in the part count alike, each where it is (see [`PartView::layers`]):
     /// a vertex of one is hidden behind a face of another.
-    pub fn pick(&self, pointer: &Pointer<S>, accepts: &[String]) -> Option<ElementHit<S>> {
+    pub fn pick(&self, pointer: &Pointer, accepts: &[String]) -> Option<ElementHit> {
         let accepted = |kind: &str| accepts.iter().any(|a| a == kind);
         if accepted(drawn::FRAME) {
             return self.pick_frame_on(pointer);
@@ -676,7 +673,7 @@ impl PartView {
         // a glancing look, an edge of the face hit lies further along the
         // ray than the face is hit by more than a reach, and its triangles
         // are chords, in front of a face that curves away.
-        let visible = |t: S, faces: &[String], layer: &Layer<'_>| {
+        let visible = |t: Scalar, faces: &[String], layer: &Layer<'_>| {
             face.as_ref().is_none_or(|(ft, l, f)| {
                 (l.instance == layer.instance && faces.contains(&f.name))
                     || !t.definitely_greater(ft.add(pointer.reach_at(1.0, *ft)))
@@ -686,7 +683,7 @@ impl PartView {
         let mut points = Vec::new();
         for l in layers.iter().filter(|l| l.near) {
             let ray = &l.pointer.ray;
-            let near = |at: &Vector3<S>, faces: &[String]| {
+            let near = |at: &Vector3, faces: &[String]| {
                 let (dist, t) = ray.distance_to_point(at);
                 (l.pointer.within(dist, t, 1.0) && visible(t, faces, l)).then_some(t)
             };
@@ -717,7 +714,7 @@ impl PartView {
             let ray = &l.pointer.ray;
             // How far along the ray `polyline` is hit, if it is near enough
             // and not hidden.
-            let hit_along = |polyline: &mut dyn Iterator<Item = (Vector3<S>, Vector3<S>)>,
+            let hit_along = |polyline: &mut dyn Iterator<Item = (Vector3, Vector3)>,
                              faces: &[String]| {
                 polyline
                     .map(|(a, b)| ray.distance_to_segment(&a, &b))
@@ -736,7 +733,7 @@ impl PartView {
             if accepted(drawn::SKETCH_CURVE) {
                 for sketch in &l.view.sketches {
                     for c in &sketch.curves {
-                        let world = |p: &Vector2<S>| sketch.plane.uv_to_xyz(p);
+                        let world = |p: &Vector2| sketch.plane.uv_to_xyz(p);
                         let mut segments = c
                             .polyline
                             .array_windows()
@@ -767,7 +764,7 @@ impl PartView {
             return Some(hit);
         }
 
-        let mut hits: Vec<ElementHit<S>> = Vec::new();
+        let mut hits: Vec<ElementHit> = Vec::new();
         if accepted(drawn::FACE)
             && let Some((t, l, f)) = face
         {
@@ -795,7 +792,7 @@ impl PartView {
     /// vertex of the face under the pointer, the face's at that corner; an
     /// edge, its own, at the end the pointer is near; a point or a datum,
     /// its own.
-    fn pick_frame_on(&self, pointer: &Pointer<S>) -> Option<ElementHit<S>> {
+    fn pick_frame_on(&self, pointer: &Pointer) -> Option<ElementHit> {
         let kinds = [
             drawn::DATUM,
             drawn::VERTEX,
@@ -836,7 +833,7 @@ impl PartView {
                 let edge = view.edges.iter().find(|e| e.name == hit.element.name)?;
                 let (first, last) = (edge.polyline.first()?, edge.polyline.last()?);
                 let local = layer.local(hit.point);
-                let reach = last.sub(first).norm().mul(S::from_f64(END_OF_AN_EDGE));
+                let reach = last.sub(first).norm().mul(Scalar::from_f64(END_OF_AN_EDGE));
                 if local.sub(first).norm().definitely_less(reach) {
                     Some(element(drawn::VERTEX, &edge.ends[0]))
                 } else if local.sub(last).norm().definitely_less(reach) {
@@ -862,11 +859,7 @@ impl PartView {
     /// The corner of the face `face` the pointer is near, or else the side —
     /// the vertex or the edge, by its kind and name — within [`NEAR_CORNER`]
     /// and [`NEAR_SIDE`] reaches of it, whichever is nearer its ray.
-    fn corner_or_side_near(
-        &self,
-        pointer: &Pointer<S>,
-        face: &str,
-    ) -> Option<(&'static str, String)> {
+    fn corner_or_side_near(&self, pointer: &Pointer, face: &str) -> Option<(&'static str, String)> {
         let ray = &pointer.ray;
         let corner = (self.vertices.iter())
             .filter(|v| v.faces.iter().any(|f| f == face))
@@ -890,7 +883,7 @@ impl PartView {
     }
 
     /// The nearest face the ray enters.
-    fn pick_face(&self, pointer: &Pointer<S>) -> Option<(S, &ViewFace)> {
+    fn pick_face(&self, pointer: &Pointer) -> Option<(Scalar, &ViewFace)> {
         self.faces
             .iter()
             .flat_map(|f| f.triangles.iter().map(move |tri| (f, tri)))
@@ -900,7 +893,7 @@ impl PartView {
 
     /// The nearest sketch of `layer` hit inside one of its closed regions —
     /// the area a viewer shades — or near one of its curves.
-    fn pick_sketch(&self, layer: &Layer<'_>) -> Option<ElementHit<S>> {
+    fn pick_sketch(&self, layer: &Layer<'_>) -> Option<ElementHit> {
         let pointer = &layer.pointer;
         let hits = self.sketches.iter().filter_map(|sketch| {
             let (t, p) = pointer.ray.intersect_uv_plane(&sketch.plane)?;
@@ -926,11 +919,11 @@ impl PartView {
     /// viewer draws it: a point at its origin, an axis as a line and a plane
     /// as a square, each [`Extent::size`] of `extent` — the whole drawing's —
     /// long around the point of it nearest the extent's center.
-    fn pick_datum(&self, layer: &Layer<'_>, extent: Extent<S>) -> Option<ElementHit<S>> {
+    fn pick_datum(&self, layer: &Layer<'_>, extent: Extent) -> Option<ElementHit> {
         let pointer = &layer.pointer;
         let Extent { center, size } = extent;
         let ray = &pointer.ray;
-        let half = size.div(S::TWO).ok()?;
+        let half = size.div(Scalar::TWO).ok()?;
         let hits = self.datums.iter().filter_map(|d| {
             let f = &d.frame;
             let (origin, w) = (f.origin(), f.w());
@@ -949,8 +942,7 @@ impl PartView {
                 DatumKind::Plane => {
                     let (t, point) = ray.intersect_plane(origin, w)?;
                     let d = point.sub(&center);
-                    let inside =
-                        |axis: &Vector3<S>| !d.prod_dot(axis).abs().definitely_greater(half);
+                    let inside = |axis: &Vector3| !d.prod_dot(axis).abs().definitely_greater(half);
                     (inside(f.u()) && inside(f.v())).then_some(t)?
                 }
             };
@@ -965,11 +957,11 @@ impl PartView {
     /// square (off the origin, between the other two axes). The smallest
     /// part under the pointer, as for the part's elements, and of the
     /// nearest frame.
-    fn pick_frame(&self, layer: &Layer<'_>) -> Option<ElementHit<S>> {
+    fn pick_frame(&self, layer: &Layer<'_>) -> Option<ElementHit> {
         let pointer = &layer.pointer;
         let ray = &pointer.ray;
-        let frac = |size: S, x: f64| size.mul(S::from_f64(x));
-        let hit = |name: &str, point: Vector3<S>, t: S| {
+        let frac = |size: Scalar, x: f64| size.mul(Scalar::from_f64(x));
+        let hit = |name: &str, point: Vector3, t: Scalar| {
             layer.hit(&self.datum_target, drawn::DATUM, name, point, t)
         };
         let (mut balls, mut axes, mut planes) = (Vec::new(), Vec::new(), Vec::new());
@@ -1002,11 +994,11 @@ impl PartView {
                         let in_square = (FrameAxis::ALL.iter())
                             .filter(|&&other| other != normal)
                             .all(|other| {
-                                let x =
-                                    (local.prod_dot(&other.of(f)).div(size)).unwrap_or(S::INFINITY);
-                                !x.sub(S::from_f64(0.45))
+                                let x = (local.prod_dot(&other.of(f)).div(size))
+                                    .unwrap_or(Scalar::INFINITY);
+                                !x.sub(Scalar::from_f64(0.45))
                                     .abs()
-                                    .definitely_greater(S::from_f64(0.15))
+                                    .definitely_greater(Scalar::from_f64(0.15))
                             });
                         if in_square {
                             planes.push(hit(name, point, t));
@@ -1040,17 +1032,17 @@ pub fn parts_drawn() -> usize {
 
 /// A part as drawn: what a step editor picks in (see [`Scene`]) — the part
 /// before the step, or what the step built.
-impl Scene<S> for PartView {
-    fn pick(&self, pointer: &Pointer<S>, accepts: &[String]) -> Option<ElementHit<S>> {
+impl Scene for PartView {
+    fn pick(&self, pointer: &Pointer, accepts: &[String]) -> Option<ElementHit> {
         PartView::pick(self, pointer, accepts)
     }
 
-    fn hit_instance(&self, name: &str, pointer: &Pointer<S>) -> Option<S> {
+    fn hit_instance(&self, name: &str, pointer: &Pointer) -> Option<Scalar> {
         self.pick_instance(name, pointer)
     }
 }
 
 /// The nearest of `hits` along the ray.
-fn nearest(hits: impl IntoIterator<Item = ElementHit<S>>) -> Option<ElementHit<S>> {
+fn nearest(hits: impl IntoIterator<Item = ElementHit>) -> Option<ElementHit> {
     hits.into_iter().min_by(|a, b| nearer(a.t, b.t))
 }

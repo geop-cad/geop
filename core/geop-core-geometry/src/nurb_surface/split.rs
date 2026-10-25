@@ -10,7 +10,7 @@ enum Dir {
     V,
 }
 
-impl<S: Scalar, const D: usize> NurbSurface<S, D> {
+impl<const D: usize> NurbSurface<D> {
     fn degree_in(&self, dir: Dir) -> usize {
         match dir {
             Dir::U => self.degree_u,
@@ -18,7 +18,7 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
         }
     }
 
-    fn knots_in(&self, dir: Dir) -> &Vec<S> {
+    fn knots_in(&self, dir: Dir) -> &Vec<Scalar> {
         match dir {
             Dir::U => &self.knot_vector_u,
             Dir::V => &self.knot_vector_v,
@@ -28,7 +28,7 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
     /// The control net as rows running along `dir` (see `knot_insertion`):
     /// the `num_v` columns `P[·][j]` for `U`, the `num_u` rows `P[i][·]` for
     /// `V`.
-    fn rows_along(&self, dir: Dir) -> Vec<Vec<Vector<S, D>>> {
+    fn rows_along(&self, dir: Dir) -> Vec<Vec<Vector<D>>> {
         let (nu, nv) = (self.num_u, self.num_v);
         match dir {
             Dir::U => (0..nv)
@@ -40,9 +40,9 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
 
     /// This surface with the `dir` knots and rows replaced — the inverse of
     /// [`Self::rows_along`].
-    fn with_rows(&self, dir: Dir, knots: Vec<S>, rows: Vec<Vec<Vector<S, D>>>) -> Self {
+    fn with_rows(&self, dir: Dir, knots: Vec<Scalar>, rows: Vec<Vec<Vector<D>>>) -> Self {
         let along = rows[0].len();
-        let (num_u, num_v, control_points): (usize, usize, Vec<Vector<S, D>>) = match dir {
+        let (num_u, num_v, control_points): (usize, usize, Vec<Vector<D>>) = match dir {
             Dir::U => (
                 along,
                 rows.len(),
@@ -68,7 +68,7 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
         }
     }
 
-    fn split_in(&self, dir: Dir, t: S) -> GeopResult<(Self, Self)> {
+    fn split_in(&self, dir: Dir, t: Scalar) -> GeopResult<(Self, Self)> {
         let mut knots = self.knots_in(dir).clone();
         let mut rows = self.rows_along(dir);
         let (right_knots, right_rows) =
@@ -79,7 +79,7 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
         ))
     }
 
-    fn restrict_in(&self, dir: Dir, t0: S, t1: S) -> GeopResult<Self> {
+    fn restrict_in(&self, dir: Dir, t0: Scalar, t1: Scalar) -> GeopResult<Self> {
         let mut knots = self.knots_in(dir).clone();
         let mut rows = self.rows_along(dir);
         knot_insertion::restrict(&mut knots, &mut rows, self.degree_in(dir), t0, t1)?;
@@ -98,7 +98,7 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
     /// therefore sharpens its own midpoint before calling; a caller splitting
     /// at a *located* parameter must validate the sharpened value it is about
     /// to use, not the wide one it started from.
-    pub fn split_u(&self, t: S) -> GeopResult<(NurbSurface<S, D>, NurbSurface<S, D>)> {
+    pub fn split_u(&self, t: Scalar) -> GeopResult<(NurbSurface<D>, NurbSurface<D>)> {
         self.split_in(Dir::U, t)
     }
 
@@ -106,7 +106,7 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
     ///
     /// `t` must lie strictly inside the v domain.  Returns `(left, right)`.
     /// `t` is used exactly as given — **not** sharpened here, same as [`Self::split_u`].
-    pub fn split_v(&self, t: S) -> GeopResult<(NurbSurface<S, D>, NurbSurface<S, D>)> {
+    pub fn split_v(&self, t: Scalar) -> GeopResult<(NurbSurface<D>, NurbSurface<D>)> {
         self.split_in(Dir::V, t)
     }
 
@@ -120,17 +120,17 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
         // A self-chosen subdivision point: any value in the interval cuts
         // it equally well, so sharpening loses no accuracy and keeps
         // repeated splits from compounding width (see AGENTS.md).
-        let mid = t0.add(t1).div(S::TWO)?.sharpen();
+        let mid = t0.add(t1).div(Scalar::TWO)?.sharpen();
         self.split_in(dir, mid)
     }
 
     /// Split at the midpoint of the **u** domain.
-    pub fn split_u_mid(&self) -> GeopResult<(NurbSurface<S, D>, NurbSurface<S, D>)> {
+    pub fn split_u_mid(&self) -> GeopResult<(NurbSurface<D>, NurbSurface<D>)> {
         self.split_in_mid(Dir::U)
     }
 
     /// Split at the midpoint of the **v** domain.
-    pub fn split_v_mid(&self) -> GeopResult<(NurbSurface<S, D>, NurbSurface<S, D>)> {
+    pub fn split_v_mid(&self) -> GeopResult<(NurbSurface<D>, NurbSurface<D>)> {
         self.split_in_mid(Dir::V)
     }
 
@@ -138,7 +138,11 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
     /// same cut rule as `NurbCurve::sub_curve`: only bounds strictly inside
     /// the domain are cut at, so the result covers at least the requested
     /// box ∩ domain. Bounds are used exactly as given and must be narrow.
-    pub fn sub_surface(&self, (u0, u1): (S, S), (v0, v1): (S, S)) -> GeopResult<Self> {
+    pub fn sub_surface(
+        &self,
+        (u0, u1): (Scalar, Scalar),
+        (v0, v1): (Scalar, Scalar),
+    ) -> GeopResult<Self> {
         self.restrict_in(Dir::U, u0, u1)?
             .restrict_in(Dir::V, v0, v1)
     }
@@ -147,17 +151,17 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
 #[cfg(test)]
 mod tests {
     use crate::test_fixtures::bilinear;
-    use geop_core_math::for_all_scalars;
     use geop_core_math::scalars::Scalar;
 
-    fn check_split_u_junction_matches<S: Scalar>() {
-        let orig = bilinear::<S>();
-        let (left, right) = orig.split_u(S::from_f64(0.5)).unwrap();
+    #[test]
+    fn split_u_junction_matches() {
+        let orig = bilinear();
+        let (left, right) = orig.split_u(Scalar::from_f64(0.5)).unwrap();
         for v_val in [0.0_f64, 0.5, 1.0] {
-            let v = S::from_f64(v_val);
-            let o = orig.evaluate(S::from_f64(0.5), v).unwrap();
-            let l = left.evaluate(S::from_f64(0.5), v).unwrap();
-            let r = right.evaluate(S::from_f64(0.5), v).unwrap();
+            let v = Scalar::from_f64(v_val);
+            let o = orig.evaluate(Scalar::from_f64(0.5), v).unwrap();
+            let l = left.evaluate(Scalar::from_f64(0.5), v).unwrap();
+            let r = right.evaluate(Scalar::from_f64(0.5), v).unwrap();
             for c in 0..3 {
                 assert!(
                     o[c].could_be_equal(l[c]),
@@ -170,63 +174,51 @@ mod tests {
             }
         }
     }
-    #[test]
-    fn split_u_junction_matches() {
-        for_all_scalars!(check_split_u_junction_matches);
-    }
 
-    fn check_split_u_left_start_matches<S: Scalar>() {
-        let orig = bilinear::<S>();
-        let (left, _) = orig.split_u(S::from_f64(0.5)).unwrap();
+    #[test]
+    fn split_u_left_start_matches() {
+        let orig = bilinear();
+        let (left, _) = orig.split_u(Scalar::from_f64(0.5)).unwrap();
         for v_val in [0.0_f64, 0.5, 1.0] {
-            let v = S::from_f64(v_val);
-            let o = orig.evaluate(S::ZERO, v).unwrap();
-            let l = left.evaluate(S::ZERO, v).unwrap();
+            let v = Scalar::from_f64(v_val);
+            let o = orig.evaluate(Scalar::ZERO, v).unwrap();
+            let l = left.evaluate(Scalar::ZERO, v).unwrap();
             for c in 0..3 {
                 assert!(o[c].could_be_equal(l[c]), "c={c} v={v_val}");
             }
         }
     }
-    #[test]
-    fn split_u_left_start_matches() {
-        for_all_scalars!(check_split_u_left_start_matches);
-    }
 
-    fn check_split_u_right_end_matches<S: Scalar>() {
-        let orig = bilinear::<S>();
-        let (_, right) = orig.split_u(S::from_f64(0.5)).unwrap();
+    #[test]
+    fn split_u_right_end_matches() {
+        let orig = bilinear();
+        let (_, right) = orig.split_u(Scalar::from_f64(0.5)).unwrap();
         for v_val in [0.0_f64, 0.5, 1.0] {
-            let v = S::from_f64(v_val);
-            let o = orig.evaluate(S::ONE, v).unwrap();
-            let r = right.evaluate(S::ONE, v).unwrap();
+            let v = Scalar::from_f64(v_val);
+            let o = orig.evaluate(Scalar::ONE, v).unwrap();
+            let r = right.evaluate(Scalar::ONE, v).unwrap();
             for c in 0..3 {
                 assert!(o[c].could_be_equal(r[c]), "c={c} v={v_val}");
             }
         }
     }
-    #[test]
-    fn split_u_right_end_matches() {
-        for_all_scalars!(check_split_u_right_end_matches);
-    }
 
-    fn check_split_u_at_boundary_returns_err<S: Scalar>() {
-        let s = bilinear::<S>();
-        assert!(s.split_u(S::ZERO).is_err());
-        assert!(s.split_u(S::ONE).is_err());
-    }
     #[test]
     fn split_u_at_boundary_returns_err() {
-        for_all_scalars!(check_split_u_at_boundary_returns_err);
+        let s = bilinear();
+        assert!(s.split_u(Scalar::ZERO).is_err());
+        assert!(s.split_u(Scalar::ONE).is_err());
     }
 
-    fn check_split_v_junction_matches<S: Scalar>() {
-        let orig = bilinear::<S>();
-        let (left, right) = orig.split_v(S::from_f64(0.5)).unwrap();
+    #[test]
+    fn split_v_junction_matches() {
+        let orig = bilinear();
+        let (left, right) = orig.split_v(Scalar::from_f64(0.5)).unwrap();
         for u_val in [0.0_f64, 0.5, 1.0] {
-            let u = S::from_f64(u_val);
-            let o = orig.evaluate(u, S::from_f64(0.5)).unwrap();
-            let l = left.evaluate(u, S::from_f64(0.5)).unwrap();
-            let r = right.evaluate(u, S::from_f64(0.5)).unwrap();
+            let u = Scalar::from_f64(u_val);
+            let o = orig.evaluate(u, Scalar::from_f64(0.5)).unwrap();
+            let l = left.evaluate(u, Scalar::from_f64(0.5)).unwrap();
+            let r = right.evaluate(u, Scalar::from_f64(0.5)).unwrap();
             for c in 0..3 {
                 assert!(
                     o[c].could_be_equal(l[c]),
@@ -239,82 +231,63 @@ mod tests {
             }
         }
     }
-    #[test]
-    fn split_v_junction_matches() {
-        for_all_scalars!(check_split_v_junction_matches);
-    }
 
-    fn check_split_v_left_start_matches<S: Scalar>() {
-        let orig = bilinear::<S>();
-        let (left, _) = orig.split_v(S::from_f64(0.5)).unwrap();
+    #[test]
+    fn split_v_left_start_matches() {
+        let orig = bilinear();
+        let (left, _) = orig.split_v(Scalar::from_f64(0.5)).unwrap();
         for u_val in [0.0_f64, 0.5, 1.0] {
-            let u = S::from_f64(u_val);
-            let o = orig.evaluate(u, S::ZERO).unwrap();
-            let l = left.evaluate(u, S::ZERO).unwrap();
+            let u = Scalar::from_f64(u_val);
+            let o = orig.evaluate(u, Scalar::ZERO).unwrap();
+            let l = left.evaluate(u, Scalar::ZERO).unwrap();
             for c in 0..3 {
                 assert!(o[c].could_be_equal(l[c]), "c={c} u={u_val}");
             }
         }
     }
-    #[test]
-    fn split_v_left_start_matches() {
-        for_all_scalars!(check_split_v_left_start_matches);
-    }
 
-    fn check_split_v_right_end_matches<S: Scalar>() {
-        let orig = bilinear::<S>();
-        let (_, right) = orig.split_v(S::from_f64(0.5)).unwrap();
+    #[test]
+    fn split_v_right_end_matches() {
+        let orig = bilinear();
+        let (_, right) = orig.split_v(Scalar::from_f64(0.5)).unwrap();
         for u_val in [0.0_f64, 0.5, 1.0] {
-            let u = S::from_f64(u_val);
-            let o = orig.evaluate(u, S::ONE).unwrap();
-            let r = right.evaluate(u, S::ONE).unwrap();
+            let u = Scalar::from_f64(u_val);
+            let o = orig.evaluate(u, Scalar::ONE).unwrap();
+            let r = right.evaluate(u, Scalar::ONE).unwrap();
             for c in 0..3 {
                 assert!(o[c].could_be_equal(r[c]), "c={c} u={u_val}");
             }
         }
     }
-    #[test]
-    fn split_v_right_end_matches() {
-        for_all_scalars!(check_split_v_right_end_matches);
-    }
 
-    fn check_split_v_at_boundary_returns_err<S: Scalar>() {
-        let s = bilinear::<S>();
-        assert!(s.split_v(S::ZERO).is_err());
-        assert!(s.split_v(S::ONE).is_err());
-    }
     #[test]
     fn split_v_at_boundary_returns_err() {
-        for_all_scalars!(check_split_v_at_boundary_returns_err);
+        let s = bilinear();
+        assert!(s.split_v(Scalar::ZERO).is_err());
+        assert!(s.split_v(Scalar::ONE).is_err());
     }
 
-    fn check_split_u_domains<S: Scalar>() {
-        let orig = bilinear::<S>();
-        let (left, right) = orig.split_u(S::from_f64(0.5)).unwrap();
-        let (lu_min, lu_max) = left.domain_u();
-        let (ru_min, ru_max) = right.domain_u();
-        assert!(lu_min.could_be_equal(S::ZERO));
-        assert!(lu_max.could_be_equal(S::from_f64(0.5)));
-        assert!(ru_min.could_be_equal(S::from_f64(0.5)));
-        assert!(ru_max.could_be_equal(S::ONE));
-    }
     #[test]
     fn split_u_domains() {
-        for_all_scalars!(check_split_u_domains);
+        let orig = bilinear();
+        let (left, right) = orig.split_u(Scalar::from_f64(0.5)).unwrap();
+        let (lu_min, lu_max) = left.domain_u();
+        let (ru_min, ru_max) = right.domain_u();
+        assert!(lu_min.could_be_equal(Scalar::ZERO));
+        assert!(lu_max.could_be_equal(Scalar::from_f64(0.5)));
+        assert!(ru_min.could_be_equal(Scalar::from_f64(0.5)));
+        assert!(ru_max.could_be_equal(Scalar::ONE));
     }
 
-    fn check_split_v_domains<S: Scalar>() {
-        let orig = bilinear::<S>();
-        let (left, right) = orig.split_v(S::from_f64(0.5)).unwrap();
-        let (lv_min, lv_max) = left.domain_v();
-        let (rv_min, rv_max) = right.domain_v();
-        assert!(lv_min.could_be_equal(S::ZERO));
-        assert!(lv_max.could_be_equal(S::from_f64(0.5)));
-        assert!(rv_min.could_be_equal(S::from_f64(0.5)));
-        assert!(rv_max.could_be_equal(S::ONE));
-    }
     #[test]
     fn split_v_domains() {
-        for_all_scalars!(check_split_v_domains);
+        let orig = bilinear();
+        let (left, right) = orig.split_v(Scalar::from_f64(0.5)).unwrap();
+        let (lv_min, lv_max) = left.domain_v();
+        let (rv_min, rv_max) = right.domain_v();
+        assert!(lv_min.could_be_equal(Scalar::ZERO));
+        assert!(lv_max.could_be_equal(Scalar::from_f64(0.5)));
+        assert!(rv_min.could_be_equal(Scalar::from_f64(0.5)));
+        assert!(rv_max.could_be_equal(Scalar::ONE));
     }
 }

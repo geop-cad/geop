@@ -16,11 +16,7 @@ use crate::{
     testing::{plate, plate_with_hole, points_sketch},
 };
 use geop_core_editor::selectable::{Selectable, selected};
-use geop_core_math::{
-    primitives::FrameAxis,
-    scalars::{ScalInF64 as S, Scalar},
-    vector::Vector3,
-};
+use geop_core_math::{primitives::FrameAxis, scalars::Scalar, vector::Vector3};
 use geop_ops_extrude_revolve::{
     Extent, Extents,
     testing::{both_ways, extrude_sketch, extrusion},
@@ -80,7 +76,7 @@ fn linear(features: &[&str], count: f64, step: f64) -> LinearPatternArgs {
 }
 
 /// The faces of `part` the feature of `step` made, as a pick tells.
-fn faces_of(part: &NamedModel<S>, step: &str) -> Vec<String> {
+fn faces_of(part: &NamedModel, step: &str) -> Vec<String> {
     let made = part.feature_faces();
     let mut faces: Vec<String> = part
         .topology()
@@ -249,7 +245,7 @@ fn tapped_hole_patterned_with_its_thread() {
     let removed = 3.0 * PI * 2.5 * 2.5 * 8.0;
     let expected = 60.0 * 40.0 * 10.0 - removed;
     assert_volume(&part, "linear_pattern(p)", expected, 5e-3 * removed);
-    let v = |c: [f64; 3]| Vector3::from_array(c.map(S::from_f64));
+    let v = |c: [f64; 3]| Vector3::from_array(c.map(Scalar::from_f64));
     let original = part.thread("hole(h,centres,p0,thread)").unwrap();
     for (i, x) in [(1, 25.0), (2, 40.0)] {
         let name = format!("linear_pattern(p,{i},hole(h,centres,p0,thread))");
@@ -365,7 +361,7 @@ fn a_feature_is_picked_by_a_face_it_made() {
     let part = plate_with_hole().built(registry).unwrap();
     let reader = part.current();
     let part = made(&plate_with_hole()).unwrap();
-    let face_named = |name: &str| ElementReference::<NamedModel<S>, Face>::new(model(), name);
+    let face_named = |name: &str| ElementReference::<NamedModel, Face>::new(model(), name);
     let wall = faces_of(&part, "hole");
     let hit: PickedElement = face_named(&wall[0]).picked();
     let picked: Vec<FeatureRef> = selected(&reader, &[hit]);

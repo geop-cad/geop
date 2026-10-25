@@ -16,15 +16,15 @@ use crate::{
     spline::interior_knots,
 };
 
-impl<S: Scalar, const D: usize> NurbCurve<S, D> {
+impl<const D: usize> NurbCurve<D> {
     /// The same curve reparametrized from its domain onto `[0, 1]`: its
     /// knots mapped linearly, its control points unchanged. A curve already
     /// on exactly `[0, 1]` is returned as it is: mapping its knots would
     /// only round them outwards.
     pub fn with_unit_domain(&self) -> GeopResult<Self> {
         let (t0, t1) = self.domain();
-        let exactly = |t: S, x: S| t.is_subset_of(x) && x.is_subset_of(t);
-        if exactly(t0, S::ZERO) && exactly(t1, S::ONE) {
+        let exactly = |t: Scalar, x: Scalar| t.is_subset_of(x) && x.is_subset_of(t);
+        if exactly(t0, Scalar::ZERO) && exactly(t1, Scalar::ONE) {
             return Ok(self.clone());
         }
         let span = t1.sub(t0);
@@ -32,7 +32,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
             .knot_vector
             .iter()
             .map(|&k| k.sub(t0).div(span))
-            .collect::<GeopResult<Vec<S>>>()?;
+            .collect::<GeopResult<Vec<Scalar>>>()?;
         NurbCurve::try_new(self.degree, self.control_points.clone(), knots)
     }
 
@@ -70,11 +70,11 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         let [pts] = rows;
         let pieces = interior.len() + 1;
         debug_assert_eq!(pts.len(), p * pieces + 1);
-        let mut out: Vec<Vector<S, D>> = Vec::with_capacity((p + 1) * pieces + 1);
+        let mut out: Vec<Vector<D>> = Vec::with_capacity((p + 1) * pieces + 1);
         out.push(pts[0]);
         for piece in pts.windows(p + 1).step_by(p.max(1)) {
             for i in 1..=p {
-                let alpha = S::from_ratio(i as i64, (p + 1) as i64)?;
+                let alpha = Scalar::from_ratio(i as i64, (p + 1) as i64)?;
                 out.push(Vector::interpolate(&piece[i], &piece[i - 1], alpha));
             }
             out.push(piece[p]);
@@ -103,7 +103,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         let p = self.degree;
         let n = self.control_points.len();
         let weight = |i: usize| self.control_points[i][D - 1];
-        if weight(0).is_exactly(S::ONE) && weight(n - 1).is_exactly(S::ONE) {
+        if weight(0).is_exactly(Scalar::ONE) && weight(n - 1).is_exactly(Scalar::ONE) {
             return Ok(self.clone());
         }
         if n != p + 1 {
@@ -117,11 +117,11 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         let control_points = (0..n)
             .map(|i| {
                 let factor = if i == 0 {
-                    S::ONE.div(weight(0))?
+                    Scalar::ONE.div(weight(0))?
                 } else if i == n - 1 {
-                    S::ONE.div(weight(n - 1))?
+                    Scalar::ONE.div(weight(n - 1))?
                 } else {
-                    S::from_f64(c.powi(i as i32)).div(weight(0))?
+                    Scalar::from_f64(c.powi(i as i32)).div(weight(0))?
                 };
                 Ok(self.control_points[i].prod_scalar(factor))
             })
@@ -159,7 +159,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
             out.push(curve);
         }
 
-        let mut merged: Vec<(S, usize)> = Vec::new();
+        let mut merged: Vec<(Scalar, usize)> = Vec::new();
         for curve in &out {
             for (u, m) in interior_knots(&curve.knot_vector, degree, curve.control_points.len()) {
                 match merged.iter_mut().find(|(v, _)| v.could_be_equal(u)) {
@@ -198,7 +198,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
                     .collect::<Vec<_>>()
             )));
         }
-        let common: Vec<S> = (0..len)
+        let common: Vec<Scalar> = (0..len)
             .map(|k| {
                 out.iter()
                     .map(|c| c.knot_vector[k])
@@ -221,12 +221,12 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         if n == 1 {
             return curves[0].with_unit_domain()?.with_unit_end_weights();
         }
-        let count = S::from_f64(n as f64);
+        let count = Scalar::from_f64(n as f64);
         join_placed(
             curves,
-            (S::ZERO, S::ONE),
-            |i, k| k.add(S::from_f64(i as f64)).div(count),
-            |i| S::from_ratio((i + 1) as i64, n as i64),
+            (Scalar::ZERO, Scalar::ONE),
+            |i, k| k.add(Scalar::from_f64(i as f64)).div(count),
+            |i| Scalar::from_ratio((i + 1) as i64, n as i64),
         )
     }
 
@@ -239,7 +239,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     /// of the curve before it and the start of the next — two enclosures of
     /// the one point — and an error if they could not be equal. Every curve
     /// stays the curve it was, on its new piece of the domain.
-    pub fn join_at(curves: &[Self], breaks: &[S]) -> GeopResult<Self> {
+    pub fn join_at(curves: &[Self], breaks: &[Scalar]) -> GeopResult<Self> {
         let n = curves.len();
         if breaks.len() != n + 1 || !breaks.windows(2).all(|w| w[0].definitely_less(w[1])) {
             return Err(GeopError::new(format!(
@@ -271,7 +271,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
     ///
     /// The `from` are used as given: like [`Self::split`]'s, they must be
     /// narrow, refined rather than sharpened.
-    pub fn reparametrized(&self, from: &[S], to: &[S]) -> GeopResult<Self> {
+    pub fn reparametrized(&self, from: &[Scalar], to: &[Scalar]) -> GeopResult<Self> {
         let n = from.len();
         let ctx = |e: GeopError| {
             e.with_context(format!(
@@ -293,7 +293,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         if from[n - 1].could_be_equal(t1) {
             from[n - 1] = t1;
         }
-        let increasing = |x: &[S]| x.windows(2).all(|w| w[0].definitely_less(w[1]));
+        let increasing = |x: &[Scalar]| x.windows(2).all(|w| w[0].definitely_less(w[1]));
         if !increasing(&from) || !increasing(to) {
             return Err(ctx(GeopError::new(
                 "the parameters must be strictly increasing",
@@ -310,7 +310,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
         let rational = self
             .control_points
             .iter()
-            .any(|p| !p[D - 1].is_exactly(S::ONE));
+            .any(|p| !p[D - 1].is_exactly(Scalar::ONE));
         let mut curves = Vec::new();
         let mut breaks = vec![to[0]];
         for (i, mut piece) in pieces.into_iter().enumerate() {
@@ -320,7 +320,7 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
                 // Every weight is one, and so is every blend of them: the
                 // knot insertion cutting the pieces would only round it.
                 for cp in &mut piece.control_points {
-                    cp[D - 1] = S::ONE;
+                    cp[D - 1] = Scalar::ONE;
                 }
                 vec![piece]
             };
@@ -345,12 +345,12 @@ impl<S: Scalar, const D: usize> NurbCurve<S, D> {
 /// The chain `curves` as one curve on `ends` (see [`NurbCurve::join_at`]):
 /// the `i`-th curve's interior knot `k`, on its unit domain, at
 /// `place(i, k)`, its end at `joint(i)`.
-fn join_placed<S: Scalar, const D: usize>(
-    curves: &[NurbCurve<S, D>],
-    (start, end): (S, S),
-    place: impl Fn(usize, S) -> GeopResult<S>,
-    joint: impl Fn(usize) -> GeopResult<S>,
-) -> GeopResult<NurbCurve<S, D>> {
+fn join_placed<const D: usize>(
+    curves: &[NurbCurve<D>],
+    (start, end): (Scalar, Scalar),
+    place: impl Fn(usize, Scalar) -> GeopResult<Scalar>,
+    joint: impl Fn(usize) -> GeopResult<Scalar>,
+) -> GeopResult<NurbCurve<D>> {
     let n = curves.len();
     if n == 0 {
         return Err(GeopError::new("join: no curves to join"));
@@ -366,7 +366,7 @@ fn join_placed<S: Scalar, const D: usize>(
             *piece = piece.elevate_degree()?;
         }
     }
-    let mut points: Vec<Vector<S, D>> = Vec::new();
+    let mut points: Vec<Vector<D>> = Vec::new();
     let mut knots = vec![start; degree + 1];
     for (i, piece) in pieces.iter().enumerate() {
         let len = piece.control_points.len();
@@ -397,11 +397,10 @@ fn join_placed<S: Scalar, const D: usize>(
 mod tests {
     use crate::nurb_curve::{NurbCurve, NurbCurve3D};
     use crate::test_fixtures::{line, weighted};
-    use geop_core_math::for_all_scalars;
     use geop_core_math::{scalars::Scalar, vector::Vector3};
 
-    fn quarter_arc<S: Scalar>() -> NurbCurve3D<S> {
-        let f = S::from_f64;
+    fn quarter_arc() -> NurbCurve3D {
+        let f = Scalar::from_f64;
         NurbCurve::try_new(
             2,
             vec![
@@ -414,8 +413,8 @@ mod tests {
         .unwrap()
     }
 
-    fn cubic_spline<S: Scalar>() -> NurbCurve3D<S> {
-        let f = S::from_f64;
+    fn cubic_spline() -> NurbCurve3D {
+        let f = Scalar::from_f64;
         NurbCurve::try_new(
             3,
             vec![
@@ -440,9 +439,9 @@ mod tests {
         .unwrap()
     }
 
-    fn assert_same_curve<S: Scalar>(a: &NurbCurve3D<S>, b: &NurbCurve3D<S>) {
+    fn assert_same_curve(a: &NurbCurve3D, b: &NurbCurve3D) {
         for i in 0..=16 {
-            let t = S::from_ratio(i, 16).unwrap();
+            let t = Scalar::from_ratio(i, 16).unwrap();
             let (pa, pb) = (a.evaluate(t).unwrap(), b.evaluate(t).unwrap());
             assert!(pa.could_be_equal(&pb), "at {t:?}: {pa:?} vs {pb:?}");
         }
@@ -450,12 +449,9 @@ mod tests {
 
     /// Raising the degree keeps the curve: a rational arc, and a cubic
     /// spline with an interior knot.
-    fn check_elevate_degree_keeps_the_curve<S: Scalar>() {
-        for curve in [
-            quarter_arc::<S>(),
-            cubic_spline(),
-            line([0.; 3], [2., 1., 3.]),
-        ] {
+    #[test]
+    fn elevate_degree_keeps_the_curve() {
+        for curve in [quarter_arc(), cubic_spline(), line([0.; 3], [2., 1., 3.])] {
             let raised = curve.elevate_degree().unwrap();
             assert_eq!(raised.degree, curve.degree + 1);
             assert_same_curve(&curve, &raised);
@@ -463,19 +459,12 @@ mod tests {
             assert_same_curve(&curve, &twice);
         }
     }
-    #[test]
-    fn elevate_degree_keeps_the_curve() {
-        for_all_scalars!(check_elevate_degree_keeps_the_curve);
-    }
 
     /// A line, an arc and a spline brought onto one degree and one knot
     /// vector, each still the curve it was.
-    fn check_compatible_curves_share_degree_and_knots<S: Scalar>() {
-        let curves = [
-            line::<S>([0.; 3], [2., 1., 3.]),
-            quarter_arc(),
-            cubic_spline(),
-        ];
+    #[test]
+    fn compatible_curves_share_degree_and_knots() {
+        let curves = [line([0.; 3], [2., 1., 3.]), quarter_arc(), cubic_spline()];
         let out = NurbCurve::compatible(&curves).unwrap();
         for (before, after) in curves.iter().zip(&out) {
             assert_eq!(after.degree, 3);
@@ -486,69 +475,60 @@ mod tests {
             assert_same_curve(before, after);
         }
     }
-    #[test]
-    fn compatible_curves_share_degree_and_knots() {
-        for_all_scalars!(check_compatible_curves_share_degree_and_knots);
-    }
 
     /// The second half of a split curve, brought onto `[0, 1]`.
-    fn check_with_unit_domain_rescales_the_knots<S: Scalar>() {
-        let curve = cubic_spline::<S>();
-        let (_, right) = curve.split(S::from_f64(0.25)).unwrap();
-        let unit = right.with_unit_domain().unwrap();
-        let (t0, t1) = unit.domain();
-        assert!(t0.could_be_equal(S::ZERO) && t1.could_be_equal(S::ONE));
-        let mid = unit.evaluate(S::from_f64(0.5)).unwrap();
-        assert!(mid.could_be_equal(&curve.evaluate(S::from_f64(0.625)).unwrap()));
-    }
     #[test]
     fn with_unit_domain_rescales_the_knots() {
-        for_all_scalars!(check_with_unit_domain_rescales_the_knots);
+        let curve = cubic_spline();
+        let (_, right) = curve.split(Scalar::from_f64(0.25)).unwrap();
+        let unit = right.with_unit_domain().unwrap();
+        let (t0, t1) = unit.domain();
+        assert!(t0.could_be_equal(Scalar::ZERO) && t1.could_be_equal(Scalar::ONE));
+        let mid = unit.evaluate(Scalar::from_f64(0.5)).unwrap();
+        assert!(mid.could_be_equal(&curve.evaluate(Scalar::from_f64(0.625)).unwrap()));
     }
 
     /// Half of a quarter arc, its end weights brought back to one: still
     /// the same arc.
-    fn check_unit_end_weights_keep_the_curve<S: Scalar>() {
-        let (left, _) = quarter_arc::<S>().split(S::from_f64(0.5)).unwrap();
+    #[test]
+    fn unit_end_weights_keep_the_curve() {
+        let (left, _) = quarter_arc().split(Scalar::from_f64(0.5)).unwrap();
         let left = left.with_unit_domain().unwrap();
         let unit = left.with_unit_end_weights().unwrap();
         for cp in [unit.control_points[0], unit.control_points[2]] {
-            assert!(cp[3].could_be_equal(S::ONE));
+            assert!(cp[3].could_be_equal(Scalar::ONE));
         }
         // A different parametrization of the same points: every point of it
         // lies on the unit circle, and the ends are where they were.
         for i in 0..=8 {
-            let p = unit.evaluate(S::from_ratio(i, 8).unwrap()).unwrap();
-            assert!(p.norm_sq().could_be_equal(S::ONE), "{p:?}");
+            let p = unit.evaluate(Scalar::from_ratio(i, 8).unwrap()).unwrap();
+            assert!(p.norm_sq().could_be_equal(Scalar::ONE), "{p:?}");
         }
         assert!(
-            unit.evaluate(S::ONE)
+            unit.evaluate(Scalar::ONE)
                 .unwrap()
-                .could_be_equal(&left.evaluate(S::ONE).unwrap())
+                .could_be_equal(&left.evaluate(Scalar::ONE).unwrap())
         );
-    }
-    #[test]
-    fn unit_end_weights_keep_the_curve() {
-        for_all_scalars!(check_unit_end_weights_keep_the_curve);
     }
 
     /// An arc and a line on from its end, joined: one quadratic on
     /// `[0, 1]`, the arc on its first half, the line on its second. A
     /// curve starting elsewhere does not join.
-    fn check_join_lays_curves_end_to_end<S: Scalar>() {
-        let f = S::from_f64;
+    #[test]
+    fn join_lays_curves_end_to_end() {
+        let f = Scalar::from_f64;
         let on = NurbCurve::try_new(
             1,
             vec![weighted(0., 1., 0., 1.), weighted(-1., 1., 0., 1.)],
             vec![f(0.), f(0.), f(1.), f(1.)],
         )
         .unwrap();
-        let arc = quarter_arc::<S>();
+        let arc = quarter_arc();
         let joined = NurbCurve::join(&[arc.clone(), on.clone()]).unwrap();
         assert_eq!(joined.degree, 2);
         for i in 0..=8 {
-            let t = S::from_ratio(i, 8).unwrap();
-            let half = |k: f64| t.add(f(k)).div(S::TWO).unwrap();
+            let t = Scalar::from_ratio(i, 8).unwrap();
+            let half = |k: f64| t.add(f(k)).div(Scalar::TWO).unwrap();
             let (a, b) = (
                 joined.evaluate(half(0.0)).unwrap(),
                 arc.evaluate(t).unwrap(),
@@ -559,22 +539,19 @@ mod tests {
         }
         assert!(NurbCurve::join(&[arc, line([0.; 3], [2., 1., 3.])]).is_err());
     }
-    #[test]
-    fn join_lays_curves_end_to_end() {
-        for_all_scalars!(check_join_lays_curves_end_to_end);
-    }
 
     /// A quarter arc and a spline reparametrized piece by piece, cut short
     /// at the start: where they were at `from[i]` they are at `to[i]`,
     /// still on the curve they were, the arc weighing one there.
-    fn check_reparametrized_maps_pieces<S: Scalar>() {
-        let f = S::from_f64;
+    #[test]
+    fn reparametrized_maps_pieces() {
+        let f = Scalar::from_f64;
         let from = [f(0.1), f(0.3), f(1.0)];
         let to = [f(0.0), f(0.6), f(1.0)];
-        for curve in [quarter_arc::<S>(), cubic_spline()] {
+        for curve in [quarter_arc(), cubic_spline()] {
             let mapped = curve.reparametrized(&from, &to).unwrap();
             let (t0, t1) = mapped.domain();
-            assert!(t0.could_be_equal(S::ZERO) && t1.could_be_equal(S::ONE));
+            assert!(t0.could_be_equal(Scalar::ZERO) && t1.could_be_equal(Scalar::ONE));
             for (a, b) in from.iter().zip(&to) {
                 let (p, q) = (curve.evaluate(*a).unwrap(), mapped.evaluate(*b).unwrap());
                 assert!(p.could_be_equal(&q), "{p:?} vs {q:?}");
@@ -584,21 +561,17 @@ mod tests {
                 .iter()
                 .find(|cp| {
                     Vector3::from_array([cp[0], cp[1], cp[2]])
-                        .prod_scalar(S::ONE.div(cp[3]).unwrap())
+                        .prod_scalar(Scalar::ONE.div(cp[3]).unwrap())
                         .could_be_equal(&curve.evaluate(from[1]).unwrap())
                 })
                 .expect("a control point at the joint");
-            assert!(joint[3].could_be_equal(S::ONE), "{joint:?}");
+            assert!(joint[3].could_be_equal(Scalar::ONE), "{joint:?}");
             if curve.degree == 2 {
                 for i in 0..=8 {
-                    let p = mapped.evaluate(S::from_ratio(i, 8).unwrap()).unwrap();
-                    assert!(p.norm_sq().could_be_equal(S::ONE), "{p:?}");
+                    let p = mapped.evaluate(Scalar::from_ratio(i, 8).unwrap()).unwrap();
+                    assert!(p.norm_sq().could_be_equal(Scalar::ONE), "{p:?}");
                 }
             }
         }
-    }
-    #[test]
-    fn reparametrized_maps_pieces() {
-        for_all_scalars!(check_reparametrized_maps_pieces);
     }
 }

@@ -14,7 +14,6 @@ use geop_core_program::{
     part::Part,
     program::{Program, ProgramStep},
     testing::{as_step, edit_args, step},
-    values::Design,
 };
 use geop_lib_sweep::Orientation;
 use geop_ops_model::sketch::{
@@ -32,7 +31,7 @@ use std::f64::consts::PI;
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::{DatumComponent, FrameAxis},
-    scalars::{ScalInF64 as S, Scalar},
+    scalars::Scalar,
 };
 use geop_core_sketch::PointId;
 use geop_core_topology::validation::{ValidationParameters, validate};
@@ -175,7 +174,7 @@ fn sweep_a_pipe_through_a_bend() {
     let model = part.topology();
     let end = part.face_id("sweep(pipe,end)").unwrap();
     assert!(model.iterate_face_coedges(end).all(|c| {
-        model.coedge_start_vertex(c).unwrap().point[1].could_be_equal(S::from_f64(3.0))
+        model.coedge_start_vertex(c).unwrap().point[1].could_be_equal(Scalar::from_f64(3.0))
     }));
 }
 
@@ -208,9 +207,9 @@ fn sweep_starts_at_the_end_of_the_path_the_profile_is_at() {
     let model = part.topology();
     let end = part.face_id("sweep(bar,end)").unwrap();
     assert!(
-        model
-            .iterate_face_coedges(end)
-            .all(|c| { model.coedge_start_vertex(c).unwrap().point[0].could_be_equal(S::ZERO) })
+        model.iterate_face_coedges(end).all(|c| {
+            model.coedge_start_vertex(c).unwrap().point[0].could_be_equal(Scalar::ZERO)
+        })
     );
 }
 
@@ -678,7 +677,7 @@ fn loft_with_matched_points() {
         model
             .vertices
             .iter()
-            .find(|(_, v)| (0..3).all(|k| v.point[k].could_be_equal(S::from_f64(q[k]))))
+            .find(|(_, v)| (0..3).all(|k| v.point[k].could_be_equal(Scalar::from_f64(q[k]))))
             .map(|(&id, _)| id)
     };
     let corner = at([0.5, 0.5, 0.0]).expect("the matched corner");
@@ -751,7 +750,7 @@ fn loft_a_d_into_a_triangle_matched_at_two_points() {
                 [x, y, z]
                     .iter()
                     .enumerate()
-                    .all(|(k, &c)| v.point[k].could_be_equal(S::from_f64(c)))
+                    .all(|(k, &c)| v.point[k].could_be_equal(Scalar::from_f64(c)))
             })
             .map(|(&id, _)| id)
             .unwrap_or_else(|| panic!("no vertex at {x}, {y}, {z}"))
@@ -865,7 +864,7 @@ fn loft_along_a_guide() {
     // The edge along the guide bulges out to it.
     let edge = part.edge_id("loft(bulge,bottom,guide)").unwrap();
     let curve = &part.topology().edges[&edge].curve;
-    let middle = curve.evaluate(S::from_f64(0.5)).unwrap();
+    let middle = curve.evaluate(Scalar::from_f64(0.5)).unwrap();
     assert!(middle[0].to_f64() > 1.2, "{middle:?}");
 }
 
@@ -951,7 +950,7 @@ fn loft_along_a_3d_sketch_guide() {
     assert_valid(&part);
     let edge = part.edge_id("loft(bulge,bottom,guide)").unwrap();
     let curve = &part.topology().edges[&edge].curve;
-    let middle = curve.evaluate(S::from_f64(0.5)).unwrap();
+    let middle = curve.evaluate(Scalar::from_f64(0.5)).unwrap();
     assert!(middle[0].to_f64() > 1.2, "{middle:?}");
 }
 
@@ -966,7 +965,7 @@ fn a_sketchs_chain_is_named_as_its_curves_are() {
     let reader = part.current();
     let chain = sketch_path("path").resolve(&reader).unwrap();
     assert!(!chain.is_closed());
-    let placed: &PlacedSketch<S> = reader.retrieve_element(&whole_sketch("path")).unwrap();
+    let placed: &PlacedSketch = reader.retrieve_element(&whole_sketch("path")).unwrap();
     let sketch = &placed.sketch;
     assert_eq!(chain.curves.len(), sketch.curves.len());
     for (k, id) in sketch.curves.keys().enumerate() {
@@ -1039,7 +1038,7 @@ fn sweep_along_an_edge() {
 
 /// The block and the post's sketch of [`block_and_post`], and `steps`
 /// after them, built.
-fn on_block(z0: f64, z1: f64, steps: Vec<ProgramStep>) -> GeopResult<NamedModel<Design>> {
+fn on_block(z0: f64, z1: f64, steps: Vec<ProgramStep>) -> GeopResult<NamedModel> {
     block_and_post(z0, z1, steps).build_model(registry)
 }
 
@@ -1057,8 +1056,8 @@ fn symmetric_extrude_is_centered_on_the_sketch_plane() {
     assert_valid(&part);
     for v in part.topology().vertices.values() {
         assert!(
-            v.point[2].could_be_equal(S::from_f64(0.5))
-                || v.point[2].could_be_equal(S::from_f64(-0.5)),
+            v.point[2].could_be_equal(Scalar::from_f64(0.5))
+                || v.point[2].could_be_equal(Scalar::from_f64(-0.5)),
             "vertex at unexpected height: {:?}",
             v.point
         );
@@ -1143,7 +1142,7 @@ fn revolve_across_axis_fails() {
 }
 
 /// Revolves `s`, sketched on the origin's zx plane, around `axis`.
-fn revolved_on_zx(s: Sketch, axis: RevolveAxis) -> GeopResult<NamedModel<Design>> {
+fn revolved_on_zx(s: Sketch, axis: RevolveAxis) -> GeopResult<NamedModel> {
     let mut program = Program::new();
     program.push("profile", AddSketchArgs::on(on_origin(FrameAxis::Y), s));
     program.push(
@@ -1264,7 +1263,7 @@ fn extrude_combines_with_its_target() {
 /// A rectangle beside a construction axis, its inner edge constrained onto
 /// the axis, revolved as far as `extent` says — or, as a `face`, its curves
 /// swept into faces standing on their own.
-fn revolved_rectangle(extent: Extents, face: bool) -> GeopResult<NamedModel<Design>> {
+fn revolved_rectangle(extent: Extents, face: bool) -> GeopResult<NamedModel> {
     let mut s = Sketch::new();
     let a0 = s.add_point(n(0.0), n(-1.0));
     let a1 = s.add_point(n(0.0), n(2.0));
@@ -1362,7 +1361,7 @@ fn a_sketch_of_two_areas_is_refused() {
 }
 
 /// A unit square on the Z plane, and `step` built on it.
-fn on_unit_square(step: ExtrudeArgs) -> GeopResult<NamedModel<Design>> {
+fn on_unit_square(step: ExtrudeArgs) -> GeopResult<NamedModel> {
     let mut s = Sketch::new();
     polygon(&mut s, &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
     let mut program = Program::new();
@@ -1384,8 +1383,8 @@ fn extrude_each_side_its_own_length() {
         let v = part.vertex_id(name).unwrap();
         part.topology().get_vertex(v).unwrap().point[2]
     };
-    assert!(height("extrude(e,square,p0,start)").could_be_equal(S::from_f64(-0.5)));
-    assert!(height("extrude(e,square,p0,end)").could_be_equal(S::from_f64(1.0)));
+    assert!(height("extrude(e,square,p0,start)").could_be_equal(Scalar::from_f64(-0.5)));
+    assert!(height("extrude(e,square,p0,end)").could_be_equal(Scalar::from_f64(1.0)));
 }
 
 /// As a face, the area's outline sweeps a tube of faces standing on their
@@ -1509,7 +1508,7 @@ fn post_to_block(
     side1: Extent,
     reversed: bool,
     op: BooleanOp,
-) -> GeopResult<NamedModel<Design>> {
+) -> GeopResult<NamedModel> {
     let post = ExtrudeArgs {
         extent: Extents {
             side1,
@@ -1527,7 +1526,7 @@ fn post_to_block(
 }
 
 /// The heights of `part`'s vertices, in thousandths.
-fn heights(part: &NamedModel<Design>) -> Vec<i64> {
+fn heights(part: &NamedModel) -> Vec<i64> {
     let mut z: Vec<i64> = part
         .topology()
         .vertices

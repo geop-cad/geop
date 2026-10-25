@@ -47,11 +47,11 @@ use crate::{
 /// planar, edges that are not one chain along one of its loops, edges that
 /// are neither straight nor circular, and edges the solid is not convex
 /// along.
-pub fn rim_chain<S: Scalar>(
-    part: &NamedModel<S>,
+pub fn rim_chain(
+    part: &NamedModel,
     face: FaceId,
     edges: &[EdgeId],
-) -> GeopResult<(CoordinateSystem<S>, Chain<S>)> {
+) -> GeopResult<(CoordinateSystem, Chain)> {
     let model = part.topology();
     let name = |id: geop_ops_model::RefId| part.name_of(id).unwrap_or("?").to_string();
     let solid = part.solid_of_face(face, "a rim is a face of a solid")?;
@@ -68,7 +68,7 @@ pub fn rim_chain<S: Scalar>(
     let edge_index = |e: EdgeId| sources.edges.iter().position(|&x| x == e);
 
     // The loop, and which of its coedges the chain runs along.
-    let (lp, picked): (&Vec<CoedgeSpec<S>>, Vec<bool>) = if edges.is_empty() {
+    let (lp, picked): (&Vec<CoedgeSpec>, Vec<bool>) = if edges.is_empty() {
         match spec.faces[f].holes.as_slice() {
             [hole] => (hole, vec![true; hole.len()]),
             holes => {
@@ -92,7 +92,7 @@ pub fn rim_chain<S: Scalar>(
                 })
             })
             .collect::<GeopResult<_>>()?;
-        let on = |c: &CoedgeSpec<S>| matches!(c.on, CoedgeOn::Edge(e, _) if wanted.contains(&e));
+        let on = |c: &CoedgeSpec| matches!(c.on, CoedgeOn::Edge(e, _) if wanted.contains(&e));
         let lp = loops.iter().find(|lp| lp.iter().any(on)).ok_or_else(|| {
             GeopError::new(format!(
                 "edge {} does not bound face {}",
@@ -130,7 +130,7 @@ pub fn rim_chain<S: Scalar>(
         )));
     }
 
-    let to_plane = |p: &Vector3<S>| frame.to_uv(p);
+    let to_plane = |p: &Vector3| frame.to_uv(p);
     let mut pieces = Vec::with_capacity(run.len());
     let mut joints = Vec::with_capacity(run.len() + 1);
     for &k in &run {
@@ -175,7 +175,7 @@ pub fn rim_chain<S: Scalar>(
         // loop that end lies in the plane of the next edge's wall, along
         // that edge: a face on an edge that already exists. Only where the
         // loop runs on smoothly does it cross the rim cleanly.
-        let tangent = |k: usize, at_end: bool| -> GeopResult<Vector3<S>> {
+        let tangent = |k: usize, at_end: bool| -> GeopResult<Vector3> {
             let CoedgeOn::Edge(e, sense) = lp[k].on else {
                 unreachable!("checked above")
             };
@@ -193,7 +193,7 @@ pub fn rim_chain<S: Scalar>(
             } else {
                 (tangent(outside, true)?, tangent(inside, false)?)
             };
-            if !a.prod_cross(&b).norm_sq().could_be_equal(S::ZERO) {
+            if !a.prod_cross(&b).norm_sq().could_be_equal(Scalar::ZERO) {
                 return Err(GeopError::new(format!(
                     "the edges picked end at vertex {joint}, a corner of face {}: a lip or groove along part of a loop has to end where the loop runs on smoothly — pick the whole loop, or end the chain at a round",
                     name(face.into())
@@ -215,7 +215,7 @@ pub fn rim_chain<S: Scalar>(
 /// Makes each piece of `chain` start exactly where the one before ends:
 /// both ends were mapped from the same vertex, each by its own control
 /// point; the two enclosures of the one point are intersected.
-fn stitch<S: Scalar>(chain: &mut Chain<S>) -> GeopResult<()> {
+fn stitch(chain: &mut Chain) -> GeopResult<()> {
     let n = chain.pieces.len();
     let count = if chain.closed { n } else { n - 1 };
     for i in 0..count {
@@ -230,7 +230,7 @@ fn stitch<S: Scalar>(chain: &mut Chain<S>) -> GeopResult<()> {
             )));
         }
         let at = Vector2::from_array([a[0].intersect(b[0]), a[1].intersect(b[1])]);
-        let set = |h: &mut Vector3<S>| *h = at.homogeneous(h[2]);
+        let set = |h: &mut Vector3| *h = at.homogeneous(h[2]);
         set(chain.pieces[i].curve.control_points.last_mut().unwrap());
         set(&mut chain.pieces[j].curve.control_points[0]);
     }
@@ -241,12 +241,12 @@ fn stitch<S: Scalar>(chain: &mut Chain<S>) -> GeopResult<()> {
 /// (outward normal `up`), which `curve` runs along the way `f`'s loop
 /// does: the other face's outward normal, halfway along, points away from
 /// the rim — to the right of the edge, the rim lying on its left.
-fn convex_along<S: Scalar>(
-    spec: &BodySpec<S>,
+fn convex_along(
+    spec: &BodySpec,
     e: usize,
     f: usize,
-    curve: &geop_core_topology::Curve3<S>,
-    up: &Vector3<S>,
+    curve: &geop_core_topology::Curve3,
+    up: &Vector3,
 ) -> GeopResult<()> {
     let other = spec.edge_uses()[e]
         .iter()
@@ -258,7 +258,7 @@ fn convex_along<S: Scalar>(
     let normal = spec.faces[other]
         .surface
         .normal_at(&point, MAX_NODES, min_subdivision_size())?;
-    if !normal.prod_dot(&right).definitely_greater(S::ZERO) {
+    if !normal.prod_dot(&right).definitely_greater(Scalar::ZERO) {
         return Err(GeopError::new(
             "the solid is not convex along it: a lip or groove runs along an edge where the wall falls away from the rim",
         ));
@@ -268,13 +268,13 @@ fn convex_along<S: Scalar>(
 
 /// The sizes of a lip, or of the lip a groove takes.
 #[derive(Clone, Copy, Debug)]
-pub struct LipSize<S: Scalar> {
-    pub width: S,
-    pub height: S,
+pub struct LipSize {
+    pub width: Scalar,
+    pub height: Scalar,
 }
 
-fn check_size<S: Scalar>(what: &str, value: S) -> GeopResult<()> {
-    if !value.definitely_greater(S::ZERO) {
+fn check_size(what: &str, value: Scalar) -> GeopResult<()> {
+    if !value.definitely_greater(Scalar::ZERO) {
         return Err(GeopError::new(format!(
             "a lip's {what} is more than zero, not {:?}",
             value.to_f64()
@@ -288,13 +288,13 @@ fn check_size<S: Scalar>(what: &str, value: S) -> GeopResult<()> {
 /// whose names `namer` builds: the result is named `namer`'s root, the
 /// lip's faces along an edge `E` `N(E)` (on the wall) and `N(E,far)`
 /// (inside the rim), its top `N(end)`.
-pub fn lip<S: Scalar>(
-    part: &mut NamedModel<S>,
+pub fn lip(
+    part: &mut NamedModel,
     namer: &Namer,
     operation_id: &str,
     face: FaceId,
     edges: &[EdgeId],
-    size: LipSize<S>,
+    size: LipSize,
 ) -> GeopResult<()> {
     let ctx = with_context!(
         "lip({}, face={face}, edges={edges:?}, {size:?})",
@@ -306,8 +306,8 @@ pub fn lip<S: Scalar>(
         .solid_name_of_face(face, "a rim is a face of a solid")
         .with_context(ctx)?;
     let (frame, chain) = rim_chain(part, face, edges).with_context(ctx)?;
-    let loops: Vec<SweepLoop<S>> = chain
-        .band(S::ZERO, size.width)
+    let loops: Vec<SweepLoop> = chain
+        .band(Scalar::ZERO, size.width)
         .with_context(ctx)?
         .into_iter()
         .map(SweepLoop::plain)
@@ -317,7 +317,7 @@ pub fn lip<S: Scalar>(
         namer,
         Some(&namer.name(&["tool"])),
         &frame,
-        S::ZERO,
+        Scalar::ZERO,
         size.height,
         &loops,
     )
@@ -332,14 +332,14 @@ pub fn lip<S: Scalar>(
 /// Cuts the groove that takes a lip of `size` along the edges `edges` of
 /// the rim face `face` (see the module docs), `clearance` wider and deeper,
 /// from its solid; named like a [`lip`].
-pub fn groove<S: Scalar>(
-    part: &mut NamedModel<S>,
+pub fn groove(
+    part: &mut NamedModel,
     namer: &Namer,
     operation_id: &str,
     face: FaceId,
     edges: &[EdgeId],
-    size: LipSize<S>,
-    clearance: S,
+    size: LipSize,
+    clearance: Scalar,
 ) -> GeopResult<()> {
     let ctx = with_context!(
         "groove({}, face={face}, edges={edges:?}, {size:?}, clearance={clearance:?})",
@@ -347,7 +347,7 @@ pub fn groove<S: Scalar>(
     );
     check_size("width", size.width).with_context(ctx)?;
     check_size("height", size.height).with_context(ctx)?;
-    if clearance.definitely_less(S::ZERO) {
+    if clearance.definitely_less(Scalar::ZERO) {
         return Err(GeopError::new(format!(
             "a groove's clearance is not less than zero, not {:?}",
             clearance.to_f64()
@@ -361,7 +361,7 @@ pub fn groove<S: Scalar>(
     // Past the wall into the air, and above the rim, by the lip's width: a
     // free choice, only so no face of the cut lies on one of the solid.
     let air = size.width;
-    let loops: Vec<SweepLoop<S>> = chain
+    let loops: Vec<SweepLoop> = chain
         .band(air.neg(), size.width.add(clearance))
         .with_context(ctx)?
         .into_iter()

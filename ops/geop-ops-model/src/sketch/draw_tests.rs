@@ -8,29 +8,24 @@ use geop_core_editor::{
     view::{PartView, drawn},
 };
 use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::CoordinateSystem,
-    scalars::{ScalInF64 as S, Scalar},
-    vector::Vector3,
+    geop_error::GeopResult, primitives::CoordinateSystem, scalars::Scalar, vector::Vector3,
 };
-use geop_core_program::{
-    element::PickedElement, part::Part, reader::Reader, runner::Runner, values::Design,
-};
+use geop_core_program::{element::PickedElement, part::Part, reader::Reader, runner::Runner};
 use geop_core_sketch::{CurveId, PointId};
 
 use super::{PlacedSketch, Sketch, sketch};
 
-fn down(x: f64, y: f64) -> Pointer<S> {
+fn down(x: f64, y: f64) -> Pointer {
     pointer([x, y, 5.0], [0.0, 0.0, -1.0])
 }
 
-fn given_sketch(_: &Reader, s: &PlacedSketch<Design>) -> GeopResult<PlacedSketch<Design>> {
+fn given_sketch(_: &Reader, s: &PlacedSketch) -> GeopResult<PlacedSketch> {
     Ok(s.clone())
 }
 
 /// A part of `sketches` by name, each added by a step of its name, drawn
 /// as an editor draws a part, by the drawers `register` adds.
-fn drawn(sketches: &[(&str, PlacedSketch<S>)]) -> PartView {
+fn drawn(sketches: &[(&str, PlacedSketch)]) -> PartView {
     let mut part = Part::default();
     let runner = Runner::new(Default::default());
     for (name, placed) in sketches {
@@ -48,7 +43,7 @@ fn drawn(sketches: &[(&str, PlacedSketch<S>)]) -> PartView {
 }
 
 /// What `pointer` picks of the kinds `accepts`.
-fn picked(view: &PartView, pointer: &Pointer<S>, accepts: &[&str]) -> Option<PickedElement> {
+fn picked(view: &PartView, pointer: &Pointer, accepts: &[&str]) -> Option<PickedElement> {
     let accepts: Vec<String> = accepts.iter().map(|k| k.to_string()).collect();
     view.pick(pointer, &accepts).map(|h| h.element)
 }
@@ -58,7 +53,7 @@ fn square() -> (Sketch, Vec<PointId>, CurveId) {
     let mut square = Sketch::new();
     let p: Vec<_> = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
         .iter()
-        .map(|c| square.add_point(S::from_f64(c[0]), S::from_f64(c[1])))
+        .map(|c| square.add_point(Scalar::from_f64(c[0]), Scalar::from_f64(c[1])))
         .collect();
     let right = square.add_line(p[1], p[2]);
     for i in [0, 2, 3] {
@@ -68,8 +63,8 @@ fn square() -> (Sketch, Vec<PointId>, CurveId) {
 }
 
 /// `sketch` on the plane `z` up.
-fn placed(sketch: &Sketch, z: f64) -> PlacedSketch<S> {
-    let v = |x: f64, y: f64, z: f64| Vector3::from_array([x, y, z].map(S::from_f64));
+fn placed(sketch: &Sketch, z: f64) -> PlacedSketch {
+    let v = |x: f64, y: f64, z: f64| Vector3::from_array([x, y, z].map(Scalar::from_f64));
     PlacedSketch {
         name: String::new(),
         plane: CoordinateSystem::world_at(v(0.0, 0.0, z)),
@@ -86,8 +81,7 @@ fn sketches() {
         ("low", placed(&square, 0.0)),
         ("high", placed(&square, 1.0)),
     ]);
-    let sketch_of =
-        |pointer: Pointer<S>| picked(&view, &pointer, &[drawn::SKETCH]).map(|p| p.target);
+    let sketch_of = |pointer: Pointer| picked(&view, &pointer, &[drawn::SKETCH]).map(|p| p.target);
     let named = |name: &str| Some(sketch(name).location().clone());
     assert_eq!(sketch_of(down(0.5, 0.5)), named("high"));
     assert_eq!(sketch_of(down(1.005, 0.5)), named("high"));

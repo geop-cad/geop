@@ -19,8 +19,8 @@ use geop_ops_model::{NamedModel, Namer, Profile};
 
 /// The outer boundary of the figure-8 profile, as a CCW polygon in `(u, v) ∈
 /// [0, 1]^2` parameter space.
-pub fn outer_polygon<S: Scalar>() -> Vec<Vector2<S>> {
-    let c = |x: f64, y: f64| Vector2::from_array([S::from_f64(x), S::from_f64(y)]);
+pub fn outer_polygon() -> Vec<Vector2> {
+    let c = |x: f64, y: f64| Vector2::from_array([Scalar::from_f64(x), Scalar::from_f64(y)]);
     vec![
         c(0.0, 0.0),
         c(3.0 / 8.0, 0.0),
@@ -39,8 +39,8 @@ pub fn outer_polygon<S: Scalar>() -> Vec<Vector2<S>> {
 
 /// The two square holes (one per lobe), each as a CW polygon in `(u, v)`
 /// parameter space.
-pub fn hole_polygons<S: Scalar>() -> [Vec<Vector2<S>>; 2] {
-    let c = |x: f64, y: f64| Vector2::from_array([S::from_f64(x), S::from_f64(y)]);
+pub fn hole_polygons() -> [Vec<Vector2>; 2] {
+    let c = |x: f64, y: f64| Vector2::from_array([Scalar::from_f64(x), Scalar::from_f64(y)]);
     [
         vec![
             c(0.125, 1.0 / 3.0),
@@ -64,22 +64,22 @@ pub fn hole_polygons<S: Scalar>() -> [Vec<Vector2<S>>; 2] {
 /// Named as the operation `figure8(name)`, after the outline's corners
 /// `p0..` and sides `c0..` and the holes' `h0p0..`, `h1c0..` (see
 /// [`extrude`]).
-pub fn figure8_profile<S: Scalar>(model: &mut NamedModel<S>, name: &str) -> GeopResult<SolidId> {
+pub fn figure8_profile(model: &mut NamedModel, name: &str) -> GeopResult<SolidId> {
     // `w` is `-z` (`u x v = -w`), so the solid lies below the `xy` plane;
     // `extrude` points its faces outwards whichever way `w` runs.
-    let origin = Vector3::from_array([S::ZERO, S::ZERO, S::ZERO]);
-    let u = Vector3::from_array([S::ONE, S::ZERO, S::ZERO]);
-    let v = Vector3::from_array([S::ZERO, S::ONE, S::ZERO]);
-    let w = Vector3::from_array([S::ZERO, S::ZERO, S::from_f64(-1.0)]);
+    let origin = Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::ZERO]);
+    let u = Vector3::from_array([Scalar::ONE, Scalar::ZERO, Scalar::ZERO]);
+    let v = Vector3::from_array([Scalar::ZERO, Scalar::ONE, Scalar::ZERO]);
+    let w = Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::from_f64(-1.0)]);
     let coordinate_system = CoordinateSystem::try_new(origin, u, v, w)?;
 
-    let outer = Profile::closed(polygon(&outer_polygon::<S>())?);
-    let holes = hole_polygons::<S>()
+    let outer = Profile::closed(polygon(&outer_polygon())?);
+    let holes = hole_polygons()
         .iter()
         .enumerate()
         .map(|(k, h)| Ok(Profile::closed(polygon(h)?).with_prefix(&format!("h{k}"))))
         .collect::<GeopResult<Vec<_>>>()?;
-    let loops: Vec<SweepLoop<S>> = std::iter::once(outer)
+    let loops: Vec<SweepLoop> = std::iter::once(outer)
         .chain(holes)
         .map(SweepLoop::plain)
         .collect();
@@ -89,8 +89,8 @@ pub fn figure8_profile<S: Scalar>(model: &mut NamedModel<S>, name: &str) -> Geop
         &namer,
         Some(&namer.root()),
         &coordinate_system,
-        S::ZERO,
-        S::ONE,
+        Scalar::ZERO,
+        Scalar::ONE,
         &loops,
     )?;
     Ok(built.solid.expect("extruded as a solid"))
@@ -100,31 +100,28 @@ pub fn figure8_profile<S: Scalar>(model: &mut NamedModel<S>, name: &str) -> Geop
 mod tests {
     use super::*;
     use crate::common::testing::render;
-    use geop_core_math::for_all_scalars;
     use geop_ops_model::testing::assert_model_valid;
 
     /// How many faces the figure-8 has, so the orientation counts below can
     /// be read as a fraction rather than a bare number.
-    fn check_figure8_face_count<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
+    #[test]
+    fn figure8_face_count() {
+        let mut model = NamedModel::new();
         figure8_profile(&mut model, "t").unwrap();
         let topology = model.topology();
         assert_eq!(topology.faces.len(), 22);
     }
-    #[test]
-    fn figure8_face_count() {
-        for_all_scalars!(check_figure8_face_count);
-    }
 
-    fn check_figure8_cap_normals_point_outward<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
+    #[test]
+    fn figure8_cap_normals_point_outward() {
+        let mut model = NamedModel::new();
         figure8_profile(&mut model, "t").unwrap();
         let topology = model.topology();
         for face in topology.faces.values() {
             let (u0, u1) = face.surface.domain_u();
             let (v0, v1) = face.surface.domain_v();
-            let mid_u = u0.add(u1).div(S::from_f64(2.0)).unwrap();
-            let mid_v = v0.add(v1).div(S::from_f64(2.0)).unwrap();
+            let mid_u = u0.add(u1).div(Scalar::from_f64(2.0)).unwrap();
+            let mid_v = v0.add(v1).div(Scalar::from_f64(2.0)).unwrap();
             let p = face.surface.evaluate(mid_u, mid_v).unwrap();
             let n = face.surface.normal(mid_u, mid_v).unwrap();
             // Only the flat caps are exactly horizontal (z is ~constant
@@ -145,21 +142,14 @@ mod tests {
             );
         }
     }
-    #[test]
-    fn figure8_cap_normals_point_outward() {
-        for_all_scalars!(check_figure8_cap_normals_point_outward);
-    }
 
-    fn check_figure8_profile_is_valid<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
+    #[test]
+    fn figure8_profile_is_valid() {
+        let mut model = NamedModel::new();
         figure8_profile(&mut model, "t").unwrap();
         let topology = model.topology();
 
         assert_model_valid(topology);
         render(topology, 8, "figure8_topology.html");
-    }
-    #[test]
-    fn figure8_profile_is_valid() {
-        for_all_scalars!(check_figure8_profile_is_valid);
     }
 }

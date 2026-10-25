@@ -11,7 +11,7 @@ use geop_core_math::{
 use super::NurbSurface;
 use crate::{contains::surface::surface_could_contain, search::PROJECT_ITERATIONS};
 
-impl<S: Scalar> NurbSurface<S, 4> {
+impl NurbSurface<4> {
     /// Fixed-iteration-count Newton foot-point projection of `target` onto
     /// this surface, starting from `(u0, v0)`.
     ///
@@ -38,11 +38,11 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// `(u, v)` is the seed the previous iteration left.
     pub fn project(
         &self,
-        target: Vector3<S>,
-        u0: S,
-        v0: S,
+        target: Vector3,
+        u0: Scalar,
+        v0: Scalar,
         iterations: usize,
-    ) -> GeopResult<(S, S)> {
+    ) -> GeopResult<(Scalar, Scalar)> {
         let (u_lo, u_hi) = self.domain_u();
         let (v_lo, v_hi) = self.domain_v();
         let seed = (u0.clamped(u_lo, u_hi), v0.clamped(v_lo, v_hi));
@@ -72,14 +72,14 @@ impl<S: Scalar> NurbSurface<S, 4> {
         // most projections from a nearby seed end in a fixed point or a
         // cycle in the last bit, and would run out all their iterations
         // ([`Repeat::Cycle`]).
-        let clamp = |(u, v): (S, S)| (u.clamped(u_lo, u_hi), v.clamped(v_lo, v_hi));
+        let clamp = |(u, v): (Scalar, Scalar)| (u.clamped(u_lo, u_hi), v.clamped(v_lo, v_hi));
         let iterated = iterate(
             seed,
             seed,
             iterations,
             Repeat::Cycle,
             |&(u, v)| (clamp((u.sharpen(), v.sharpen())), clamp((u, v))),
-            |&(u, v)| -> GeopResult<Step<(S, S)>> {
+            |&(u, v)| -> GeopResult<Step<(Scalar, Scalar)>> {
                 let p = self.evaluate(u, v)?;
                 let (su, sv) = self.derivatives(u, v)?;
                 let r = target.sub(&p);
@@ -93,13 +93,13 @@ impl<S: Scalar> NurbSurface<S, 4> {
                 let (du, dv) = match solve_symmetric2((a11, a12, a22), (b1, b2)) {
                     Ok(step) => step,
                     // Singular: along the one derivative that moves the point.
-                    _ if a22.definitely_greater(S::ZERO) => {
+                    _ if a22.definitely_greater(Scalar::ZERO) => {
                         match self.off_pole(target, &p, (v, v_lo, v_hi), (u, u_lo, u_hi), false)? {
                             Some((along, d)) => (along.sub(u), d),
                             None => return Ok(Step::Stuck),
                         }
                     }
-                    _ if a11.definitely_greater(S::ZERO) => {
+                    _ if a11.definitely_greater(Scalar::ZERO) => {
                         match self.off_pole(target, &p, (u, u_lo, u_hi), (v, v_lo, v_hi), true)? {
                             Some((along, d)) => (d, along.sub(v)),
                             None => return Ok(Step::Stuck),
@@ -131,10 +131,10 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// leaves the box, the box is the answer.
     pub fn locate(
         &self,
-        point: &Vector3<S>,
+        point: &Vector3,
         max_nodes: usize,
-        min_subdivision_size: S,
-    ) -> GeopResult<Option<(S, S)>> {
+        min_subdivision_size: Scalar,
+    ) -> GeopResult<Option<(Scalar, Scalar)>> {
         let Some((u, v)) = surface_could_contain(self, point, max_nodes, min_subdivision_size)?
         else {
             return Ok(None);
@@ -155,11 +155,11 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// enclosures hold at once.
     pub fn project_in_domain(
         &self,
-        target: Vector3<S>,
-        u0: S,
-        v0: S,
+        target: Vector3,
+        u0: Scalar,
+        v0: Scalar,
         iterations: usize,
-    ) -> GeopResult<(S, S)> {
+    ) -> GeopResult<(Scalar, Scalar)> {
         let (u, v) = self.project(target, u0, v0, iterations)?;
         let ((u_lo, u_hi), (v_lo, v_hi)) = (self.domain_u(), self.domain_v());
         Ok((u.intersect(u_lo.union(u_hi)), v.intersect(v_lo.union(v_hi))))
@@ -175,15 +175,15 @@ impl<S: Scalar> NurbSurface<S, 4> {
     /// if none does. `u_collapsed` says the collapsed parameter is `v`.
     fn off_pole(
         &self,
-        target: Vector3<S>,
-        p: &Vector3<S>,
-        (fixed, fixed_lo, fixed_hi): (S, S, S),
-        (now, lo, hi): (S, S, S),
+        target: Vector3,
+        p: &Vector3,
+        (fixed, fixed_lo, fixed_hi): (Scalar, Scalar, Scalar),
+        (now, lo, hi): (Scalar, Scalar, Scalar),
         u_collapsed: bool,
-    ) -> GeopResult<Option<(S, S)>> {
+    ) -> GeopResult<Option<(Scalar, Scalar)>> {
         let r = target.sub(p);
-        let middle = S::interpolate(lo, hi, S::from_f64(0.5));
-        let mut best: Option<(S, S, f64)> = None;
+        let middle = Scalar::interpolate(lo, hi, Scalar::from_f64(0.5));
+        let mut best: Option<(Scalar, Scalar, f64)> = None;
         for along in [now, lo, middle, hi] {
             let (su, sv) = if u_collapsed {
                 self.derivatives(fixed, along)?
@@ -214,12 +214,11 @@ impl<S: Scalar> NurbSurface<S, 4> {
 mod tests {
     use crate::nurb_surface::NurbSurface;
     use crate::test_fixtures::hom;
-    use geop_core_math::for_all_scalars;
     use geop_core_math::scalars::Scalar;
 
     /// Flat unit patch in the xy-plane.
-    fn flat_xy<S: Scalar>() -> NurbSurface<S, 4> {
-        let f = S::from_f64;
+    fn flat_xy() -> NurbSurface<4> {
+        let f = Scalar::from_f64;
         NurbSurface::try_new(
             1,
             1,
@@ -235,28 +234,25 @@ mod tests {
         .unwrap()
     }
 
-    fn check_project_flat_surface_from_directly_above<S: Scalar>() {
-        let s = flat_xy::<S>();
-        let target = geop_core_math::vector::Vector3::from_array([
-            S::from_f64(0.3),
-            S::from_f64(0.7),
-            S::from_f64(2.0),
-        ]);
-        let (u, v) = s
-            .project(target, S::from_f64(0.5), S::from_f64(0.5), 5)
-            .unwrap();
-        assert!(u.could_be_equal(S::from_f64(0.3)));
-        assert!(v.could_be_equal(S::from_f64(0.7)));
-    }
     #[test]
     fn project_flat_surface_from_directly_above() {
-        for_all_scalars!(check_project_flat_surface_from_directly_above);
+        let s = flat_xy();
+        let target = geop_core_math::vector::Vector3::from_array([
+            Scalar::from_f64(0.3),
+            Scalar::from_f64(0.7),
+            Scalar::from_f64(2.0),
+        ]);
+        let (u, v) = s
+            .project(target, Scalar::from_f64(0.5), Scalar::from_f64(0.5), 5)
+            .unwrap();
+        assert!(u.could_be_equal(Scalar::from_f64(0.3)));
+        assert!(v.could_be_equal(Scalar::from_f64(0.7)));
     }
 
     /// Non-planar bilinear "saddle" patch: corner heights 0,1,1,0 over
     /// x,y ∈ [0,2] — same fixture used by `normal.rs`'s tests.
-    fn bent_surface<S: Scalar>() -> NurbSurface<S, 4> {
-        let f = S::from_f64;
+    fn bent_surface() -> NurbSurface<4> {
+        let f = Scalar::from_f64;
         NurbSurface::try_new(
             1,
             1,
@@ -272,21 +268,18 @@ mod tests {
         .unwrap()
     }
 
-    fn check_project_onto_bent_surface_converges<S: Scalar>() {
-        let s = bent_surface::<S>();
-        let expected_u = S::from_f64(0.4);
-        let expected_v = S::from_f64(0.6);
+    #[test]
+    fn project_onto_bent_surface_converges() {
+        let s = bent_surface();
+        let expected_u = Scalar::from_f64(0.4);
+        let expected_v = Scalar::from_f64(0.6);
         let on_surface = s.evaluate(expected_u, expected_v).unwrap();
         let (u, v) = s
-            .project(on_surface, S::from_f64(0.5), S::from_f64(0.5), 5)
+            .project(on_surface, Scalar::from_f64(0.5), Scalar::from_f64(0.5), 5)
             .unwrap();
         let result = s.evaluate(u, v).unwrap();
         assert!(result[0].could_be_equal(on_surface[0]));
         assert!(result[1].could_be_equal(on_surface[1]));
         assert!(result[2].could_be_equal(on_surface[2]));
-    }
-    #[test]
-    fn project_onto_bent_surface_converges() {
-        for_all_scalars!(check_project_onto_bent_surface_converges);
     }
 }

@@ -10,7 +10,6 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     plain,
     primitives::CoordinateSystem,
-    scalars::Scalar,
 };
 use geop_core_program::{numeric::NumericInput, reader::Reader};
 use geop_core_topology::{Body, FaceId, Model};
@@ -110,10 +109,7 @@ impl Extent {
 
 /// Points whose convex hull holds the solids named `targets` (see
 /// [`face_hull`]). None for no solids.
-pub fn hull<S: Scalar>(
-    model: &NamedModel<S>,
-    targets: &[String],
-) -> GeopResult<Option<Vec<[f64; 3]>>> {
+pub fn hull(model: &NamedModel, targets: &[String]) -> GeopResult<Option<Vec<[f64; 3]>>> {
     let topology = model.topology();
     let mut faces = Vec::new();
     for target in targets {
@@ -126,7 +122,7 @@ pub fn hull<S: Scalar>(
 /// Points whose convex hull holds `faces`: the control points of their
 /// surfaces — a NURBS surface lies within the hull of its control points —
 /// as plain numbers, for sizing a tool that has to reach past them.
-pub fn face_hull<S: Scalar>(model: &Model<S>, faces: &[FaceId]) -> GeopResult<Vec<[f64; 3]>> {
+pub fn face_hull(model: &Model, faces: &[FaceId]) -> GeopResult<Vec<[f64; 3]>> {
     let mut points = Vec::new();
     for &face in faces {
         for cp in &model.get_face(face)?.surface.control_points {
@@ -139,7 +135,7 @@ pub fn face_hull<S: Scalar>(model: &Model<S>, faces: &[FaceId]) -> GeopResult<Ve
 
 /// How far along `plane`'s normal the nearest and the furthest of
 /// `points` lie from it.
-pub fn spread_along<S: Scalar>(points: &[[f64; 3]], plane: &CoordinateSystem<S>) -> (f64, f64) {
+pub fn spread_along(points: &[[f64; 3]], plane: &CoordinateSystem) -> (f64, f64) {
     let o = [0, 1, 2].map(|k| plane.origin()[k].to_f64());
     let w = [0, 1, 2].map(|k| plane.w()[k].to_f64());
     let along = |p: &[f64; 3]| (0..3).map(|k| (p[k] - o[k]) * w[k]).sum::<f64>();
@@ -155,11 +151,7 @@ pub fn spread_along<S: Scalar>(points: &[[f64; 3]], plane: &CoordinateSystem<S>)
 /// `-1` — reaches past everything of the solid whose convex hull `hull`
 /// spans: a side going up to its next face has to be built at least that
 /// long to meet whichever face that is.
-pub fn reach_past<S: Scalar>(
-    hull: &[[f64; 3]],
-    plane: &CoordinateSystem<S>,
-    sign: f64,
-) -> GeopResult<f64> {
+pub fn reach_past(hull: &[[f64; 3]], plane: &CoordinateSystem, sign: f64) -> GeopResult<f64> {
     let (near, far) = spread_along(hull, plane);
     let ahead = if sign > 0.0 { far } else { -near };
     if ahead <= 0.0 {

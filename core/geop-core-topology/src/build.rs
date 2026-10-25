@@ -28,10 +28,10 @@ use crate::{
 /// A body to build, its entities referring to each other by their index in
 /// the lists here: a solid, a sheet, or — with no faces — a wire.
 #[derive(Clone, Debug, PartialEq)]
-pub struct BodySpec<S: Scalar> {
-    pub vertices: Vec<Vector3<S>>,
-    pub edges: Vec<EdgeSpec<S>>,
-    pub faces: Vec<FaceSpec<S>>,
+pub struct BodySpec {
+    pub vertices: Vec<Vector3>,
+    pub edges: Vec<EdgeSpec>,
+    pub faces: Vec<FaceSpec>,
     /// Each shell's faces. Every face is in exactly one.
     pub shells: Vec<Vec<usize>>,
     /// Whether the shells bound a solid — then they must be closed, every
@@ -41,26 +41,26 @@ pub struct BodySpec<S: Scalar> {
 
 /// An edge: its curve, running from vertex `start` to vertex `end`.
 #[derive(Clone, Debug, PartialEq)]
-pub struct EdgeSpec<S: Scalar> {
-    pub curve: Curve3<S>,
+pub struct EdgeSpec {
+    pub curve: Curve3,
     pub start: usize,
     pub end: usize,
 }
 
 /// A face: its surface, bounded by its `outer` loop and with its `holes`.
 #[derive(Clone, Debug, PartialEq)]
-pub struct FaceSpec<S: Scalar> {
-    pub surface: NurbSurface3D<S>,
-    pub outer: Vec<CoedgeSpec<S>>,
-    pub holes: Vec<Vec<CoedgeSpec<S>>>,
+pub struct FaceSpec {
+    pub surface: NurbSurface3D,
+    pub outer: Vec<CoedgeSpec>,
+    pub holes: Vec<Vec<CoedgeSpec>>,
 }
 
 /// One coedge of a loop, in the order the loop runs, with its pcurve on the
 /// loop's face.
 #[derive(Clone, Debug, PartialEq)]
-pub struct CoedgeSpec<S: Scalar> {
+pub struct CoedgeSpec {
     pub on: CoedgeOn,
-    pub pcurve: Curve2<S>,
+    pub pcurve: Curve2,
 }
 
 /// What a [`CoedgeSpec`] runs along: an edge, in a sense, or — a degenerate
@@ -73,7 +73,7 @@ pub enum CoedgeOn {
 
 /// The faces around a vertex of a [`BodySpec`], each once, with where the
 /// vertex is on the face's surface (see [`BodySpec::vertex_faces`]).
-pub type FacesAround<S> = Vec<(usize, Vector2<S>)>;
+pub type FacesAround = Vec<(usize, Vector2)>;
 
 /// The ids [`Model::build_body`] gave what a [`BodySpec`] describes, index
 /// for index.
@@ -109,17 +109,17 @@ pub struct SpecSources {
     pub faces: Vec<FaceId>,
 }
 
-impl<S: Scalar> FaceSpec<S> {
+impl FaceSpec {
     /// A face on `surface` over the unit square of its parameters, bounded
     /// by `sides` counter-clockwise from `(0, 0)`: through `(1, 0)`,
     /// `(1, 1)` and `(0, 1)`, each side a straight pcurve.
-    pub fn on_unit_square(surface: NurbSurface3D<S>, sides: [CoedgeOn; 4]) -> GeopResult<Self> {
+    pub fn on_unit_square(surface: NurbSurface3D, sides: [CoedgeOn; 4]) -> GeopResult<Self> {
         let corner = |k: usize| {
             let (u, v) = [
-                (S::ZERO, S::ZERO),
-                (S::ONE, S::ZERO),
-                (S::ONE, S::ONE),
-                (S::ZERO, S::ONE),
+                (Scalar::ZERO, Scalar::ZERO),
+                (Scalar::ONE, Scalar::ZERO),
+                (Scalar::ONE, Scalar::ONE),
+                (Scalar::ZERO, Scalar::ONE),
             ][k % 4];
             Vector2::from_array([u, v])
         };
@@ -139,7 +139,7 @@ impl<S: Scalar> FaceSpec<S> {
     }
 
     /// Its loops, the outer one first.
-    pub fn loops(&self) -> Vec<&Vec<CoedgeSpec<S>>> {
+    pub fn loops(&self) -> Vec<&Vec<CoedgeSpec>> {
         std::iter::once(&self.outer).chain(&self.holes).collect()
     }
 
@@ -150,7 +150,7 @@ impl<S: Scalar> FaceSpec<S> {
     pub fn reversed(&self) -> Self {
         let (u_lo, u_hi) = self.surface.domain_u();
         let span = u_lo.add(u_hi);
-        let reverse = |lp: &Vec<CoedgeSpec<S>>| {
+        let reverse = |lp: &Vec<CoedgeSpec>| {
             lp.iter()
                 .rev()
                 .map(|c| {
@@ -174,7 +174,7 @@ impl<S: Scalar> FaceSpec<S> {
     }
 }
 
-impl<S: Scalar> BodySpec<S> {
+impl BodySpec {
     /// An empty description, to add a body's entities to: of a solid if
     /// `solid`, else of sheets or a wire.
     pub fn new(solid: bool) -> Self {
@@ -194,10 +194,10 @@ impl<S: Scalar> BodySpec<S> {
     /// edge that does not join its side's corners.
     pub fn square_face(
         &self,
-        surface: NurbSurface3D<S>,
+        surface: NurbSurface3D,
         corners: [usize; 4],
         sides: [CoedgeOn; 4],
-    ) -> GeopResult<FaceSpec<S>> {
+    ) -> GeopResult<FaceSpec> {
         let mut oriented = sides;
         for (k, on) in oriented.iter_mut().enumerate() {
             if let CoedgeOn::Edge(e, _) = *on {
@@ -222,7 +222,7 @@ impl<S: Scalar> BodySpec<S> {
     /// The same body moved by the rigid motion `pose`: its vertices, edge
     /// curves and surfaces moved, its pcurves — on surfaces moved with the
     /// same parametrization — as they are.
-    pub fn placed(&self, pose: &Pose<S>) -> Self {
+    pub fn placed(&self, pose: &Pose) -> Self {
         Self {
             vertices: self.vertices.iter().map(|p| pose.apply(p)).collect(),
             edges: self
@@ -266,7 +266,7 @@ impl<S: Scalar> BodySpec<S> {
 
     /// Per edge, every use of it by a face's coedge — the face, the
     /// coedge's sense and its pcurve — in the order of the faces.
-    pub fn edge_uses(&self) -> Vec<Vec<(usize, Sense, &Curve2<S>)>> {
+    pub fn edge_uses(&self) -> Vec<Vec<(usize, Sense, &Curve2)>> {
         let mut uses = vec![Vec::new(); self.edges.len()];
         for (f, face) in self.faces.iter().enumerate() {
             for lp in face.loops() {
@@ -283,8 +283,8 @@ impl<S: Scalar> BodySpec<S> {
     /// Per vertex, every face around it once, in the order of the faces,
     /// with where the vertex is on the face's surface: where the first of
     /// the face's coedges arriving there ends.
-    pub fn vertex_faces(&self) -> GeopResult<Vec<FacesAround<S>>> {
-        let mut around: Vec<FacesAround<S>> = vec![Vec::new(); self.vertices.len()];
+    pub fn vertex_faces(&self) -> GeopResult<Vec<FacesAround>> {
+        let mut around: Vec<FacesAround> = vec![Vec::new(); self.vertices.len()];
         for (f, face) in self.faces.iter().enumerate() {
             for lp in face.loops() {
                 for c in lp {
@@ -392,11 +392,11 @@ impl<S: Scalar> BodySpec<S> {
     }
 }
 
-impl<S: Scalar> Model<S> {
+impl Model {
     /// Adds the body `spec` describes, once [`BodySpec::check`] has found
     /// it consistent — nothing is added otherwise. One without faces is
     /// added as a [`Wire`].
-    pub fn build_body(&mut self, spec: BodySpec<S>) -> GeopResult<BuiltBody> {
+    pub fn build_body(&mut self, spec: BodySpec) -> GeopResult<BuiltBody> {
         spec.check()?;
         let BodySpec {
             vertices,
@@ -444,7 +444,7 @@ impl<S: Scalar> Model<S> {
                 holes: Vec::new(),
                 shell: shell_of[f],
             });
-            let insert_loop = |model: &mut Self, lp: Vec<CoedgeSpec<S>>| {
+            let insert_loop = |model: &mut Self, lp: Vec<CoedgeSpec>| {
                 let ids: Vec<CoedgeId> = lp
                     .into_iter()
                     .map(|c| {
@@ -514,11 +514,7 @@ impl<S: Scalar> Model<S> {
     /// with every vertex and edge they use, copied: building it makes a
     /// copy of them, sharing nothing with the originals. Also says where in
     /// the model each entity of the description came from.
-    pub fn body_spec(
-        &self,
-        faces: &[FaceId],
-        solid: bool,
-    ) -> GeopResult<(BodySpec<S>, SpecSources)> {
+    pub fn body_spec(&self, faces: &[FaceId], solid: bool) -> GeopResult<(BodySpec, SpecSources)> {
         let mut vertex_index: HashMap<VertexId, usize> = HashMap::new();
         let mut edge_index: HashMap<EdgeId, usize> = HashMap::new();
         let mut sources = SpecSources {
@@ -533,7 +529,7 @@ impl<S: Scalar> Model<S> {
             shells: vec![(0..faces.len()).collect()],
             solid,
         };
-        let mut vertex = |spec: &mut BodySpec<S>, sources: &mut SpecSources, id: VertexId| {
+        let mut vertex = |spec: &mut BodySpec, sources: &mut SpecSources, id: VertexId| {
             *vertex_index.entry(id).or_insert_with(|| {
                 spec.vertices.push(self.vertices[&id].point);
                 sources.vertices.push(id);
@@ -596,7 +592,7 @@ impl<S: Scalar> Model<S> {
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
+    use geop_core_math::{scalars::Scalar, vector::Vector3};
 
     use super::{BodySpec, EdgeSpec};
     use crate::{
@@ -605,18 +601,18 @@ mod tests {
         validation::{ValidationParameters, validate, validate_manifold},
     };
 
-    fn point<S: Scalar>(p: [f64; 3]) -> Vector3<S> {
-        Vector3::from_array(p.map(S::from_f64))
+    fn point(p: [f64; 3]) -> Vector3 {
+        Vector3::from_array(p.map(Scalar::from_f64))
     }
 
-    fn line<S: Scalar>(a: [f64; 3], b: [f64; 3]) -> crate::Curve3<S> {
-        let p = |p: [f64; 3]| Vector3::from_array(p.map(S::from_f64));
+    fn line(a: [f64; 3], b: [f64; 3]) -> crate::Curve3 {
+        let p = |p: [f64; 3]| Vector3::from_array(p.map(Scalar::from_f64));
         crate::Curve3::line(p(a), p(b)).unwrap()
     }
 
     /// Two lines from one corner, and a point on its own, beside the unit
     /// cube.
-    fn wire_spec<S: Scalar>() -> BodySpec<S> {
+    fn wire_spec() -> BodySpec {
         let corners = [[2.0, 0.0, 0.0], [3.0, 0.0, 0.0], [2.0, 1.0, 0.0]];
         BodySpec {
             vertices: corners
@@ -645,8 +641,9 @@ mod tests {
     /// A description without faces builds a wire: its edges used by no
     /// face, a point on its own among its vertices — valid beside a solid,
     /// whose manifold check it leaves alone.
-    fn check_a_spec_without_faces_builds_a_wire<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn a_spec_without_faces_builds_a_wire() {
+        let mut model = Model::new();
         test_cube_solid(&mut model);
         let built = model.build_body(wire_spec()).unwrap();
         let wire = built.wire.expect("a wire");
@@ -660,15 +657,12 @@ mod tests {
         validate(&params, &model).unwrap();
         validate_manifold(&params, &model).unwrap();
     }
-    #[test]
-    fn a_spec_without_faces_builds_a_wire() {
-        for_all_scalars!(check_a_spec_without_faces_builds_a_wire);
-    }
 
     /// Deleting a solid deletes what only its faces reached, and leaves a
     /// wire as it is.
-    fn check_a_wire_outlives_a_deleted_solid<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn a_wire_outlives_a_deleted_solid() {
+        let mut model = Model::new();
         let solid = test_cube_solid(&mut model);
         model.build_body(wire_spec()).unwrap();
         model.assemble_solid(&[Body::Solid(solid)], &[]).unwrap();
@@ -676,14 +670,11 @@ mod tests {
         assert_eq!(model.edges.len(), 2);
         validate(&ValidationParameters::default(), &model).unwrap();
     }
-    #[test]
-    fn a_wire_outlives_a_deleted_solid() {
-        for_all_scalars!(check_a_wire_outlives_a_deleted_solid);
-    }
 
     /// A face using an edge of a wire makes it no wire's: invalid.
-    fn check_a_face_on_a_wire_edge_is_invalid<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn a_face_on_a_wire_edge_is_invalid() {
+        let mut model = Model::new();
         test_cube_solid(&mut model);
         let built = model.build_body(wire_spec()).unwrap();
         let first = *model.coedges.keys().next().unwrap();
@@ -697,16 +688,13 @@ mod tests {
             "{errors:?}"
         );
     }
-    #[test]
-    fn a_face_on_a_wire_edge_is_invalid() {
-        for_all_scalars!(check_a_face_on_a_wire_edge_is_invalid);
-    }
 
     /// Two edges of a wire that cross without a vertex there are invalid,
     /// as two edges of a solid would be.
-    fn check_crossing_wire_edges_are_invalid<S: Scalar>() {
-        let mut model = Model::<S>::new();
-        let mut spec = wire_spec::<S>();
+    #[test]
+    fn crossing_wire_edges_are_invalid() {
+        let mut model = Model::new();
+        let mut spec = wire_spec();
         spec.vertices.push(point([2.5, -1.0, 0.0]));
         spec.vertices.push(point([2.5, 1.0, 0.0]));
         spec.edges.push(EdgeSpec {
@@ -716,9 +704,5 @@ mod tests {
         });
         model.build_body(spec).unwrap();
         assert!(validate(&ValidationParameters::default(), &model).is_err());
-    }
-    #[test]
-    fn crossing_wire_edges_are_invalid() {
-        for_all_scalars!(check_crossing_wire_edges_are_invalid);
     }
 }

@@ -10,7 +10,6 @@ use geop_core_editor::{
     registry::Registry,
     testing::{dialog, drag_gizmo, event, from_above, pointer},
 };
-use geop_core_math::scalars::Scalar;
 use geop_core_program::testing::args;
 
 /// What these tests edit: SubD bodies, beside the origin.

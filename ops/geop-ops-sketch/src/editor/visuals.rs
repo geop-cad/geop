@@ -59,8 +59,8 @@ pub(super) fn visuals(
     args: &AddSketchArgs,
     s: &SketchSession,
     selection: &[String],
-    frame: &CoordinateSystem<S>,
-) -> Vec<Visual<S>> {
+    frame: &CoordinateSystem,
+) -> Vec<Visual> {
     let sketch = &args.sketch;
     let report = match &s.solved {
         Some(Solved::Solved { report }) => Some(report),
@@ -82,10 +82,10 @@ pub(super) fn visuals(
 
     if let Ok(regions) = sketch.regions() {
         for (i, region) in regions.iter().enumerate() {
-            let uv = |polyline: Vec<P2>| -> Vec<Vector2<S>> {
+            let uv = |polyline: Vec<P2>| -> Vec<Vector2> {
                 polyline
                     .into_iter()
-                    .map(|p| Vector2::from_array(p.map(S::from_f64)))
+                    .map(|p| Vector2::from_array(p.map(Scalar::from_f64)))
                     .collect()
             };
             let outer = uv(loop_polyline(sketch, &region.outer));
@@ -275,8 +275,8 @@ pub(super) fn visuals(
                     text,
                     offset: frame
                         .u()
-                        .prod_scalar(S::from_f64(1.5 + 2.5 * stack as f64))
-                        .add(&frame.v().prod_scalar(S::from_f64(1.3))),
+                        .prod_scalar(Scalar::from_f64(1.5 + 2.5 * stack as f64))
+                        .add(&frame.v().prod_scalar(Scalar::from_f64(1.3))),
                 }
             }
         };
@@ -316,8 +316,8 @@ pub(super) fn visuals(
 /// The lines of the dimension `c` with its value at `label`, as visuals
 /// keyed after `key`, drawn in `style`.
 fn dimension_visuals(
-    out: &mut Vec<Visual<S>>,
-    frame: &CoordinateSystem<S>,
+    out: &mut Vec<Visual>,
+    frame: &CoordinateSystem,
     key: &str,
     sketch: &Sketch,
     c: &Constraint,

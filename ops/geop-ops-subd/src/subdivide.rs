@@ -68,8 +68,8 @@ pub fn vertex_kind(
 }
 
 /// `sum / count`, one division per coordinate.
-pub fn divide<S: Scalar>(sum: Vector3<S>, count: i64) -> GeopResult<Vector3<S>> {
-    let d = S::from_i64(count);
+pub fn divide(sum: Vector3, count: i64) -> GeopResult<Vector3> {
+    let d = Scalar::from_i64(count);
     Ok(Vector3::from_array([
         sum[0].div(d)?,
         sum[1].div(d)?,
@@ -78,12 +78,12 @@ pub fn divide<S: Scalar>(sum: Vector3<S>, count: i64) -> GeopResult<Vector3<S>> 
 }
 
 /// `Σ wᵢ pᵢ` for integer weights.
-pub fn weighted<S: Scalar>(terms: &[(i64, Vector3<S>)]) -> Vector3<S> {
+pub fn weighted(terms: &[(i64, Vector3)]) -> Vector3 {
     terms.iter().fold(Vector3::zero(), |sum, (w, p)| {
         if *w == 1 {
             sum.add(p)
         } else {
-            sum.add(&p.prod_scalar(S::from_i64(*w)))
+            sum.add(&p.prod_scalar(Scalar::from_i64(*w)))
         }
     })
 }
@@ -91,8 +91,8 @@ pub fn weighted<S: Scalar>(terms: &[(i64, Vector3<S>)]) -> Vector3<S> {
 /// The mesh after one step: quads only, with where each of its vertices
 /// and faces came from.
 #[derive(Clone, Debug)]
-pub struct Subdivided<S: Scalar> {
-    pub positions: Vec<Vector3<S>>,
+pub struct Subdivided {
+    pub positions: Vec<Vector3>,
     /// Face `face_start[f] + k` is the quad at corner `k` of the cage's
     /// face `f`: its vertex point, the edge point after it, the face point,
     /// the edge point before it.
@@ -109,11 +109,11 @@ pub struct Subdivided<S: Scalar> {
 }
 
 /// `mesh`, of topology `topology`, after one Catmull–Clark step.
-pub fn subdivide<S: Scalar>(mesh: &Mesh, topology: &Topology) -> GeopResult<Subdivided<S>> {
-    let p: Vec<Vector3<S>> = mesh
+pub fn subdivide(mesh: &Mesh, topology: &Topology) -> GeopResult<Subdivided> {
+    let p: Vec<Vector3> = mesh
         .positions
         .iter()
-        .map(|a| Vector3::from_array(a.map(S::from_f64)))
+        .map(|a| Vector3::from_array(a.map(Scalar::from_f64)))
         .collect();
     let faces = &mesh.faces;
     let face_points = faces

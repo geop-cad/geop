@@ -22,12 +22,12 @@ use crate::{
     part::StepContext,
     target::{Target, TargetReference},
     test::{label, record_built},
-    values::{Design, Setting, StateValue},
+    values::{Setting, StateValue},
 };
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Frame {
-    pub data: Vector3<Design>,
+    pub data: Vector3,
 }
 
 /// Defined by one step, shifted by the ones after it.
@@ -53,8 +53,8 @@ impl HasElements<Frame> for Frame {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AddTwoFrameArgs {
-    pub data1: Vector3<Design>,
-    pub data2: Vector3<Design>,
+    pub data1: Vector3,
+    pub data2: Vector3,
 }
 
 /// Defines the targets `<step>_1` and `<step>_2` as frames at the two points.
@@ -102,7 +102,7 @@ impl Operation for MiddleFrameOperation {
                 record_built(label);
                 let frame1 = part.retrieve_placed(&args.frame1)?.element;
                 let frame2 = part.retrieve_placed(&args.frame2)?.element;
-                let half = Design::from_ratio(1, 2)?;
+                let half = Scalar::from_ratio(1, 2)?;
                 Ok(Frame {
                     data: frame1.data.add(&frame2.data).prod_scalar(half),
                 })
@@ -114,7 +114,7 @@ impl Operation for MiddleFrameOperation {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ShiftFrameArgs {
     pub targets: Vec<String>,
-    pub by: Vector3<Design>,
+    pub by: Vector3,
 }
 
 /// Updates each of the targets `targets` by moving its frame `by`.
@@ -161,7 +161,7 @@ impl Operation for InputFrameOperation {
         ctx.produce(&reference, &args, |part, (label, args)| {
             record_built(label);
             let x = match part.retrieve_input(&args.input) {
-                Some(Setting::Number(x)) => Design::from_f64(x),
+                Some(Setting::Number(x)) => Scalar::from_f64(x),
                 _ => {
                     return Err(GeopError::new(format!(
                         "input `{}` is not given",
@@ -170,7 +170,7 @@ impl Operation for InputFrameOperation {
                 }
             };
             Ok(Frame {
-                data: Vector3::from_array([x, Design::ZERO, Design::ZERO]),
+                data: Vector3::from_array([x, Scalar::ZERO, Scalar::ZERO]),
             })
         })
     }
@@ -239,8 +239,8 @@ impl HasElements<Datum> for Datums {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AddTwoDatumsArgs {
-    pub data1: Vector3<Design>,
-    pub data2: Vector3<Design>,
+    pub data1: Vector3,
+    pub data2: Vector3,
 }
 
 /// Adds the datums `<step>_1` and `<step>_2` at the two points.
@@ -287,7 +287,7 @@ impl Operation for MiddleDatum {
             // this step revises.
             let a = reader.retrieve_element(&args.a)?.data;
             let b = reader.retrieve_element(&args.b)?.data;
-            let half = Design::from_ratio(1, 2)?;
+            let half = Scalar::from_ratio(1, 2)?;
             let data = a.add(&b).prod_scalar(half);
             datums.0.insert(step.clone(), Frame { data });
             Ok(datums)

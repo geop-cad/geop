@@ -34,14 +34,14 @@ use crate::iso::{MetricSize, TRIANGLE_HEIGHT};
 /// their edges — a hole's wall or a shaft's, whatever quarters and pieces
 /// it is made of — and how far it reaches along its axis.
 #[derive(Clone, Debug)]
-pub struct Wall<S: Scalar> {
-    pub cylinder: Cylinder<S>,
+pub struct Wall {
+    pub cylinder: Cylinder,
     pub faces: Vec<FaceId>,
     /// From where to where along `cylinder.axis.direction`, measured from
     /// `cylinder.axis.point`: the enclosures of its nearest and its
     /// farthest corner.
-    pub from: S,
-    pub to: S,
+    pub from: Scalar,
+    pub to: Scalar,
     /// The solid lies outside the cylinder: a hole, not a shaft.
     pub internal: bool,
     /// Whether a mating part could be screwed on at its end at `from`, and
@@ -50,14 +50,14 @@ pub struct Wall<S: Scalar> {
 }
 
 /// Whether `a` and `b` could be the same cylinder.
-fn same_cylinder<S: Scalar>(a: &Cylinder<S>, b: &Cylinder<S>) -> bool {
+fn same_cylinder(a: &Cylinder, b: &Cylinder) -> bool {
     a.radius.could_be_equal(b.radius)
         && a.axis.could_be_parallel(&b.axis)
         && a.axis.could_contain(&b.axis.point)
 }
 
 /// The faces across an edge from `face`.
-fn neighbours<S: Scalar>(model: &NamedModel<S>, face: FaceId) -> Vec<FaceId> {
+fn neighbours(model: &NamedModel, face: FaceId) -> Vec<FaceId> {
     let topology = model.topology();
     let mut found = Vec::new();
     for edge in topology.face_edges(face) {
@@ -72,10 +72,10 @@ fn neighbours<S: Scalar>(model: &NamedModel<S>, face: FaceId) -> Vec<FaceId> {
     found
 }
 
-impl<S: Scalar> Wall<S> {
+impl Wall {
     /// The wall `face` is part of. Fails, naming it, for a face that is not
     /// cylindrical.
-    pub fn of(model: &NamedModel<S>, face: FaceId) -> GeopResult<Self> {
+    pub fn of(model: &NamedModel, face: FaceId) -> GeopResult<Self> {
         let name = model.name_of(face).unwrap_or_default().to_string();
         let ctx = with_context!("the cylindrical wall of face {name:?}");
         let topology = model.topology();
@@ -103,7 +103,7 @@ impl<S: Scalar> Wall<S> {
             Ok::<_, GeopError>(found)
         })?;
         faces.sort_by_key(|f| f.0);
-        let mut extent: Option<(S, S)> = None;
+        let mut extent: Option<(Scalar, Scalar)> = None;
         for &f in &faces {
             for edge in topology.face_edges(f) {
                 let edge = topology.get_edge(edge)?;
@@ -138,13 +138,13 @@ impl<S: Scalar> Wall<S> {
         };
         // Which side the solid is on: the face's normal points out of it.
         let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
-        let (u, v) = (u0.add(u1).div(S::TWO)?, v0.add(v1).div(S::TWO)?);
+        let (u, v) = (u0.add(u1).div(Scalar::TWO)?, v0.add(v1).div(Scalar::TWO)?);
         let p = surface.evaluate(u, v)?;
         let outwards = p.sub(&cylinder.axis.project(&p));
         let facing = surface.normal(u, v)?.prod_dot(&outwards);
-        let internal = if facing.definitely_less(S::ZERO) {
+        let internal = if facing.definitely_less(Scalar::ZERO) {
             true
-        } else if facing.definitely_greater(S::ZERO) {
+        } else if facing.definitely_greater(Scalar::ZERO) {
             false
         } else {
             return Err(GeopError::new(format!(
@@ -168,10 +168,10 @@ impl<S: Scalar> Wall<S> {
     /// shaft — its end face, or a chamfer — and not where one steps out to
     /// a shoulder; a hole's where one reaches out beyond the hole — the
     /// face it was drilled into — and not at its bottom.
-    fn is_open(&self, model: &NamedModel<S>, end: S) -> GeopResult<bool> {
+    fn is_open(&self, model: &NamedModel, end: Scalar) -> GeopResult<bool> {
         let topology = model.topology();
         let axis = &self.cylinder.axis;
-        let along = |p: &Vector3<S>| p.sub(&axis.point).prod_dot(&axis.direction);
+        let along = |p: &Vector3| p.sub(&axis.point).prod_dot(&axis.direction);
         let mut beyond = false;
         for &f in &self.faces {
             for edge in topology.face_edges(f) {
@@ -206,7 +206,7 @@ impl<S: Scalar> Wall<S> {
     /// The end a thread on it starts from — `(where along its axis, the way
     /// into it)` — unless `reversed`: the one open end, if only one is;
     /// else its end at `to`.
-    pub fn start(&self, reversed: bool) -> (S, Vector3<S>) {
+    pub fn start(&self, reversed: bool) -> (Scalar, Vector3) {
         let at_from = self.open == [true, false];
         let direction = self.cylinder.axis.direction;
         if at_from != reversed {
@@ -219,10 +219,10 @@ impl<S: Scalar> Wall<S> {
     /// The wall of the solid `solid` on `cylinder` that reaches `at` along
     /// its axis — a hole's wall at the face it was drilled into — if any.
     pub fn at(
-        model: &NamedModel<S>,
+        model: &NamedModel,
         solid: SolidId,
-        cylinder: &Cylinder<S>,
-        at: &Vector3<S>,
+        cylinder: &Cylinder,
+        at: &Vector3,
     ) -> GeopResult<Option<Self>> {
         let topology = model.topology();
         for face in topology.body_faces(Body::Solid(solid))? {
@@ -242,7 +242,7 @@ impl<S: Scalar> Wall<S> {
     }
 
     /// The point of its axis `along` its direction.
-    pub fn axis_point(&self, along: S) -> Vector3<S> {
+    pub fn axis_point(&self, along: Scalar) -> Vector3 {
         self.cylinder
             .axis
             .point
@@ -255,18 +255,18 @@ impl<S: Scalar> Wall<S> {
     /// run past the wall's end.
     pub fn placement(
         &self,
-        (along, direction): (S, Vector3<S>),
-        radius: S,
+        (along, direction): (Scalar, Vector3),
+        radius: Scalar,
         length: Option<f64>,
-    ) -> GeopResult<ThreadPlacement<S>> {
+    ) -> GeopResult<ThreadPlacement> {
         let ahead = direction.prod_dot(&self.cylinder.axis.direction);
-        let runs = if ahead.definitely_greater(S::ZERO) {
+        let runs = if ahead.definitely_greater(Scalar::ZERO) {
             self.to.sub(along)
         } else {
             along.sub(self.from)
         };
         let length = length.unwrap_or_else(|| runs.to_f64());
-        if S::from_f64(length).definitely_greater(runs) {
+        if Scalar::from_f64(length).definitely_greater(runs) {
             return Err(GeopError::new(format!(
                 "the thread runs {length} far, but its wall only {}",
                 runs.to_f64()
@@ -283,7 +283,7 @@ impl<S: Scalar> Wall<S> {
 
     /// The name of its first face: what a thread on it records it was put
     /// on.
-    pub fn face_name(&self, model: &NamedModel<S>) -> String {
+    pub fn face_name(&self, model: &NamedModel) -> String {
         model.name_of(self.faces[0]).unwrap_or_default().to_string()
     }
 }
@@ -292,22 +292,22 @@ impl<S: Scalar> Wall<S> {
 /// along the unit vector `direction`, `length` far; in a hole if
 /// `internal`.
 #[derive(Clone, Debug)]
-pub struct ThreadPlacement<S: Scalar> {
-    pub start: Vector3<S>,
-    pub direction: Vector3<S>,
-    pub radius: S,
+pub struct ThreadPlacement {
+    pub start: Vector3,
+    pub direction: Vector3,
+    pub radius: Scalar,
     pub length: f64,
     pub internal: bool,
 }
 
-impl<S: Scalar> ThreadPlacement<S> {
+impl ThreadPlacement {
     /// Checks that a thread of `size` fits a wall of its radius — the face
     /// `face`: a shaft between the minor and the nominal diameter, a hole
     /// from the minor diameter up to short of the nominal one.
     pub fn check_fits(&self, size: &MetricSize, face: &str) -> GeopResult<()> {
         let d = self.radius.add(self.radius);
         let (minor, major) = (size.minor_diameter(), size.diameter);
-        let (lo, hi) = (S::from_f64(minor), S::from_f64(major));
+        let (lo, hi) = (Scalar::from_f64(minor), Scalar::from_f64(major));
         let fits = if self.internal {
             !d.definitely_less(lo) && d.definitely_less(hi)
         } else {
@@ -351,12 +351,12 @@ impl<S: Scalar> ThreadPlacement<S> {
     /// not splice (the trace along the end face and the shank's end ran into
     /// two corners at the rim). A pitch off, the profile, less than a pitch
     /// wide, is clear of that face altogether.
-    pub fn swept(&self, wall: &Wall<S>, pitch: f64) -> GeopResult<(Vector3<S>, f64)> {
+    pub fn swept(&self, wall: &Wall, pitch: f64) -> GeopResult<(Vector3, f64)> {
         let axis = &wall.cylinder.axis;
-        let along = |p: &Vector3<S>| p.sub(&axis.point).prod_dot(&axis.direction);
+        let along = |p: &Vector3| p.sub(&axis.point).prod_dot(&axis.direction);
         let ends = [(wall.from, wall.open[0]), (wall.to, wall.open[1])];
         // How far out past the wall's end at `at`, if it is one.
-        let past = |at: S| {
+        let past = |at: Scalar| {
             ends.iter()
                 .find(|(end, _)| at.could_be_equal(*end))
                 .map_or(0.0, |&(_, open)| if open { pitch } else { -pitch })
@@ -365,7 +365,7 @@ impl<S: Scalar> ThreadPlacement<S> {
         let end = start.add(
             axis.direction
                 .prod_dot(&self.direction)
-                .mul(S::from_f64(self.length)),
+                .mul(Scalar::from_f64(self.length)),
         );
         let (before, after) = (past(start), past(end));
         let length = self.length + before + after;
@@ -377,12 +377,12 @@ impl<S: Scalar> ThreadPlacement<S> {
         }
         let start = self
             .start
-            .sub(&self.direction.prod_scalar(S::from_f64(before)));
+            .sub(&self.direction.prod_scalar(Scalar::from_f64(before)));
         Ok((start, length))
     }
 
     /// The thread of `size`, as recorded on `face`.
-    pub fn cosmetic(&self, size: &MetricSize, face: String) -> GeopResult<CosmeticThread<S>> {
+    pub fn cosmetic(&self, size: &MetricSize, face: String) -> GeopResult<CosmeticThread> {
         Ok(CosmeticThread {
             designation: size.designation(),
             face,
@@ -408,10 +408,10 @@ impl<S: Scalar> ThreadPlacement<S> {
 /// the station's edges, a degenerate configuration (it failed to splice a
 /// tooth into a tapped hole whose seams lay in the stations' half-planes).
 /// So of every half degree, take the one farthest from all of them.
-fn clear_start<S: Scalar>(
-    model: &NamedModel<S>,
-    wall: &Wall<S>,
-    frame: &CoordinateSystem<S>,
+fn clear_start(
+    model: &NamedModel,
+    wall: &Wall,
+    frame: &CoordinateSystem,
     turns: f64,
 ) -> GeopResult<f64> {
     let topology = model.topology();
@@ -452,13 +452,13 @@ fn clear_start<S: Scalar>(
 /// angle clear of the wall's corners ([`clear_start`]): a solid named
 /// `solid`, its faces `N(c0,q)` .. `N(c3,q)` for each quarter turn `q` and
 /// its ends `N(start)` and `N(end)` by `namer`.
-pub fn thread_tool<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn thread_tool(
+    model: &mut NamedModel,
     namer: &Namer,
     solid: &str,
     size: &MetricSize,
-    placement: &ThreadPlacement<S>,
-    wall: &Wall<S>,
+    placement: &ThreadPlacement,
+    wall: &Wall,
 ) -> GeopResult<SolidId> {
     let pitch = size.pitch;
     let h = TRIANGLE_HEIGHT * pitch;
@@ -476,7 +476,7 @@ pub fn thread_tool<S: Scalar>(
         let r_out = radius + h / 16.0;
         ((minor, half(minor)), (r_out, half(r_out)))
     };
-    let p = |r: f64, z: f64| Vector2::from_array([S::from_f64(r), S::from_f64(z)]);
+    let p = |r: f64, z: f64| Vector2::from_array([Scalar::from_f64(r), Scalar::from_f64(z)]);
     // Counter-clockwise in `(r, z)`.
     let corners = [
         p(inner.0, -inner.1),
@@ -493,8 +493,8 @@ pub fn thread_tool<S: Scalar>(
     let (c, s) = cos_sin(clear_start(model, wall, &frame, turns)?);
     let u = frame
         .u()
-        .prod_scalar(S::from_f64(c))
-        .add(&frame.v().prod_scalar(S::from_f64(s)));
+        .prod_scalar(Scalar::from_f64(c))
+        .add(&frame.v().prod_scalar(Scalar::from_f64(s)));
     let w = *frame.w();
     let axes = CoordinateSystem::try_from_xz(start, u, w)?;
     screw(
@@ -502,7 +502,7 @@ pub fn thread_tool<S: Scalar>(
         namer,
         solid,
         &axes,
-        S::from_f64(pitch),
+        Scalar::from_f64(pitch),
         turns,
         Handedness::Right,
         &[SweepLoop::plain(profile)],

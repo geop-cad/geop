@@ -13,9 +13,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_core_sketch::Shape;
 use geop_core_topology::{EdgeId, FaceId};
 use geop_ops_model::sketch::shape_profiles;
@@ -39,10 +37,10 @@ const fn info(label: &'static str, doc: &'static str) -> OperationInfo {
 }
 
 /// A face of the model, by name.
-type FaceRef = ElementReference<NamedModel<Design>, Face>;
+type FaceRef = ElementReference<NamedModel, Face>;
 
 /// An edge of the model, by name.
-type EdgeRef = ElementReference<NamedModel<Design>, Edge>;
+type EdgeRef = ElementReference<NamedModel, Edge>;
 
 /// Fails unless a size typed in is a number.
 fn finite(what: &str, value: f64) -> GeopResult<()> {
@@ -115,9 +113,9 @@ impl PartOperation for Draft {
         context: &'a Context<'a>,
         args: &DraftArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, DraftArgs> {
+    ) -> EditForm<'a, DraftArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, DraftArgs>::default();
+        let mut f = EditForm::<DraftArgs>::default();
         f.pick(
             "faces",
             "faces",
@@ -147,7 +145,7 @@ impl PartOperation for Draft {
 
 impl ModelOperation for Draft {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &DraftArgs,
@@ -169,7 +167,7 @@ impl ModelOperation for Draft {
         };
         let plane = Plane::try_new(*frame.origin(), pull)?;
         finite("angle", args.angle)?;
-        let angle = Design::from_f64(args.angle.to_radians());
+        let angle = Scalar::from_f64(args.angle.to_radians());
         draft(model, &namer, &faces, &plane, angle)?;
         Ok(())
     }
@@ -180,7 +178,7 @@ impl ModelOperation for Draft {
 /// `before` the step: the edges picked go with the face they were picked
 /// on.
 fn rim_fields<'a, A: 'a>(
-    f: &mut EditForm<'a, Design, A>,
+    f: &mut EditForm<'a, A>,
     before: &Reader<'a>,
     face: &FaceRef,
     edges: &[EdgeRef],
@@ -211,8 +209,8 @@ fn rim_fields<'a, A: 'a>(
 }
 
 /// The rim face and edges, resolved.
-fn resolve_rim<S: Scalar>(
-    model: &NamedModel<S>,
+fn resolve_rim(
+    model: &NamedModel,
     face: &FaceRef,
     edges: &[EdgeRef],
 ) -> GeopResult<(FaceId, Vec<EdgeId>)> {
@@ -278,8 +276,8 @@ impl PartOperation for Lip {
         context: &'a Context<'a>,
         args: &LipArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, LipArgs> {
-        let mut f = EditForm::<Design, LipArgs>::default();
+    ) -> EditForm<'a, LipArgs> {
+        let mut f = EditForm::<LipArgs>::default();
         rim_fields(&mut f, &context.before, &args.face, &args.edges, |a| {
             (&mut a.face, &mut a.edges)
         });
@@ -299,19 +297,14 @@ impl PartOperation for Lip {
 }
 
 impl ModelOperation for Lip {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &Reader,
-        step: &str,
-        args: &LipArgs,
-    ) -> GeopResult<()> {
+    fn build(model: &mut NamedModel, _: &Reader, step: &str, args: &LipArgs) -> GeopResult<()> {
         let namer = Namer::new("lip", step)?;
         let (face, edges) = resolve_rim(model, &args.face, &args.edges)?;
         finite("width", args.width)?;
         finite("height", args.height)?;
         let size = LipSize {
-            width: Design::from_f64(args.width),
-            height: Design::from_f64(args.height),
+            width: Scalar::from_f64(args.width),
+            height: Scalar::from_f64(args.height),
         };
         lip(model, &namer, step, face, &edges, size)
     }
@@ -372,8 +365,8 @@ impl PartOperation for Groove {
         context: &'a Context<'a>,
         args: &GrooveArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, GrooveArgs> {
-        let mut f = EditForm::<Design, GrooveArgs>::default();
+    ) -> EditForm<'a, GrooveArgs> {
+        let mut f = EditForm::<GrooveArgs>::default();
         rim_fields(&mut f, &context.before, &args.face, &args.edges, |a| {
             (&mut a.face, &mut a.edges)
         });
@@ -395,22 +388,17 @@ impl PartOperation for Groove {
 }
 
 impl ModelOperation for Groove {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &Reader,
-        step: &str,
-        args: &GrooveArgs,
-    ) -> GeopResult<()> {
+    fn build(model: &mut NamedModel, _: &Reader, step: &str, args: &GrooveArgs) -> GeopResult<()> {
         let namer = Namer::new("groove", step)?;
         let (face, edges) = resolve_rim(model, &args.face, &args.edges)?;
         finite("width", args.width)?;
         finite("height", args.height)?;
         finite("clearance", args.clearance)?;
         let size = LipSize {
-            width: Design::from_f64(args.width),
-            height: Design::from_f64(args.height),
+            width: Scalar::from_f64(args.width),
+            height: Scalar::from_f64(args.height),
         };
-        let clearance = Design::from_f64(args.clearance);
+        let clearance = Scalar::from_f64(args.clearance);
         groove(model, &namer, step, face, &edges, size, clearance)
     }
 }
@@ -493,7 +481,7 @@ impl PartOperation for Rib {
     /// sketch.
     fn new_args(context: &Context) -> RibArgs {
         let before = &context.before;
-        let newest = before.targets_of::<PlacedSketch<Design>>().pop();
+        let newest = before.targets_of::<PlacedSketch>().pop();
         let solid_name = read_model(before)
             .ok()
             .and_then(|model| model.newest_solid());
@@ -518,9 +506,9 @@ impl PartOperation for Rib {
         context: &'a Context<'a>,
         args: &RibArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, RibArgs> {
+    ) -> EditForm<'a, RibArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, RibArgs>::default();
+        let mut f = EditForm::<RibArgs>::default();
         f.pick_one(
             "sketch",
             "sketch",
@@ -572,7 +560,7 @@ impl PartOperation for Rib {
 
 impl ModelOperation for Rib {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &RibArgs,
@@ -581,7 +569,7 @@ impl ModelOperation for Rib {
         let placed = reader.retrieve_element(&args.sketch)?;
         let target = model.solid_id(args.solid.name())?;
         let sketch = &placed.sketch;
-        let geometry = sketch.enclose::<Design>()?;
+        let geometry = sketch.enclose()?;
         let chain = match sketch.shape()? {
             chain @ Shape::Chain(_) => chain,
             Shape::Region(_) => {
@@ -599,7 +587,7 @@ impl ModelOperation for Rib {
             RibSide::First => (0.0, t),
             RibSide::Second => (-t, 0.0),
         };
-        let thickness = (Design::from_f64(near), Design::from_f64(far));
+        let thickness = (Scalar::from_f64(near), Scalar::from_f64(far));
         let growth = match args.direction {
             RibDirection::Normal => Growth::Normal {
                 flipped: args.flipped,

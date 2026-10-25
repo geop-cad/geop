@@ -63,9 +63,9 @@ use crate::{
 /// [`plan_corners`]): each with its tools' ends — by index into the plans,
 /// and past them into the chains — and, per chain, the corners' balls at its
 /// start and end.
-pub(crate) struct Corners<S: Scalar> {
-    pub corners: Vec<Corner<S>>,
-    pub chains: Vec<[Option<ChainCorner<S>>; 2]>,
+pub(crate) struct Corners {
+    pub corners: Vec<Corner>,
+    pub chains: Vec<[Option<ChainCorner>; 2]>,
 }
 
 /// How a tool reaches a corner: a straight swept edge, by its index into
@@ -80,14 +80,14 @@ enum Reaching {
 /// `chains`, the blends of the edges `covered`, into `shape`, named by
 /// `namer` (see the module docs): every corner every edge of which is
 /// filleted. The plans' ends there are set to it.
-pub(crate) fn plan_corners<S: Scalar>(
-    model: &NamedModel<S>,
+pub(crate) fn plan_corners(
+    model: &NamedModel,
     namer: &Namer,
-    plans: &mut [(Plan<S>, ToolProfile<S>)],
+    plans: &mut [(Plan, ToolProfile)],
     chains: &[(String, Chain)],
     covered: &[EdgeId],
     shape: &BlendShape,
-) -> GeopResult<Corners<S>> {
+) -> GeopResult<Corners> {
     let mut planned = Corners {
         corners: Vec::new(),
         chains: vec![[None, None]; chains.len()],
@@ -204,8 +204,8 @@ pub(crate) fn plan_corners<S: Scalar>(
 }
 
 /// The faces either side of the tool reaching a corner as `reaching` does.
-fn faces_of<S: Scalar>(
-    plans: &[(Plan<S>, ToolProfile<S>)],
+fn faces_of(
+    plans: &[(Plan, ToolProfile)],
     chains: &[(String, Chain)],
     reaching: Reaching,
 ) -> [FaceId; 2] {
@@ -224,18 +224,18 @@ fn faces_of<S: Scalar>(
 /// ball, contacts and apex, and its tools' ends — set to it in `plans`, and
 /// in `chain_corners` for the chains.
 #[allow(clippy::too_many_arguments)]
-fn plan_corner<S: Scalar>(
-    model: &NamedModel<S>,
+fn plan_corner(
+    model: &NamedModel,
     namer: &Namer,
     vertex: VertexId,
     name: &str,
-    plans: &mut [(Plan<S>, ToolProfile<S>)],
+    plans: &mut [(Plan, ToolProfile)],
     chains: &[(String, Chain)],
     reaching: &[Reaching],
     bend: Bend,
     radius: f64,
-    chain_corners: &mut [[Option<ChainCorner<S>>; 2]],
-) -> GeopResult<Corner<S>> {
+    chain_corners: &mut [[Option<ChainCorner>; 2]],
+) -> GeopResult<Corner> {
     let topology = model.topology();
     let at = topology.get_vertex(vertex)?.point;
     let mut faces: Vec<FaceId> = Vec::new();
@@ -252,8 +252,8 @@ fn plan_corner<S: Scalar>(
             faces.len()
         ))
     })?;
-    let r = S::from_f64(radius);
-    let (center, contacts) = ball(topology, faces, &at, bend.side::<S>().mul(r))?;
+    let r = Scalar::from_f64(radius);
+    let (center, contacts) = ball(topology, faces, &at, bend.side().mul(r))?;
     for (face, p) in faces.iter().zip(&contacts) {
         let ctx = with_context!("where the corner's ball touches face {face}, at {p:?}");
         check_touch(topology, *face, p).with_context(ctx)?;
@@ -289,13 +289,13 @@ fn plan_corner<S: Scalar>(
                 // edge, short of the other end — and of its own corner.
                 let other = match &tool_ends[1 - k] {
                     End::Corner { setback } => *setback,
-                    _ if at_end => S::ZERO,
+                    _ if at_end => Scalar::ZERO,
                     _ => length,
                 };
                 let within = if at_end {
                     setback.definitely_greater(other) && setback.definitely_less(length)
                 } else {
-                    setback.definitely_greater(S::ZERO) && setback.definitely_less(other)
+                    setback.definitely_greater(Scalar::ZERO) && setback.definitely_less(other)
                 };
                 if !within {
                     return Err(GeopError::new(format!(
@@ -330,7 +330,7 @@ fn plan_corner<S: Scalar>(
         radius: r,
         faces: faces.to_vec(),
         contacts: contacts.to_vec(),
-        apex: at.prod_scalar(S::TWO).sub(&center),
+        apex: at.prod_scalar(Scalar::TWO).sub(&center),
         inside: at,
         ends,
     })
@@ -343,13 +343,13 @@ fn plan_corner<S: Scalar>(
 /// Three planes give it exactly, by one linear solve. Against curved faces
 /// it is Newton's method ([`meet`], which checks it against every face),
 /// from the planes tangent to the faces at the corner.
-fn ball<S: Scalar>(
-    model: &Model<S>,
+fn ball(
+    model: &Model,
     faces: [FaceId; 3],
-    at: &Vector3<S>,
-    sr: S,
-) -> GeopResult<(Vector3<S>, [Vector3<S>; 3])> {
-    let solve = |normals: [Vector3<S>; 3], offsets: [S; 3]| -> GeopResult<Vector3<S>> {
+    at: &Vector3,
+    sr: Scalar,
+) -> GeopResult<(Vector3, [Vector3; 3])> {
+    let solve = |normals: [Vector3; 3], offsets: [Scalar; 3]| -> GeopResult<Vector3> {
         solve_linear_system(
             &Matrix::from_rows(normals.map(|n| n.to_array())),
             &Vector3::from_array(offsets),

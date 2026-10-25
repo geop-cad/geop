@@ -53,15 +53,15 @@ use crate::skin::{self, Strip, StripCap, StripGeometry};
 /// Where the profile's plane is at one station of a path: a profile point
 /// `(x, y)` lies at `origin + x e1 + y e2`.
 #[derive(Clone, Debug)]
-pub struct Frame<S: Scalar> {
-    pub origin: Vector3<S>,
-    pub e1: Vector3<S>,
-    pub e2: Vector3<S>,
+pub struct Frame {
+    pub origin: Vector3,
+    pub e1: Vector3,
+    pub e2: Vector3,
 }
 
-impl<S: Scalar> Frame<S> {
+impl Frame {
     /// The profile point `p` at this station.
-    pub fn point(&self, p: &Vector2<S>) -> Vector3<S> {
+    pub fn point(&self, p: &Vector2) -> Vector3 {
         self.origin
             .add(&self.e1.prod_scalar(p[0]))
             .add(&self.e2.prod_scalar(p[1]))
@@ -69,14 +69,14 @@ impl<S: Scalar> Frame<S> {
 
     /// The profile curve `curve` at this station. An affine map of its
     /// control points, so exact for any NURBS.
-    pub fn curve(&self, curve: &NurbCurve2D<S>) -> GeopResult<NurbCurve3D<S>> {
+    pub fn curve(&self, curve: &NurbCurve2D) -> GeopResult<NurbCurve3D> {
         curve.embed(&self.origin, &self.e1, &self.e2)
     }
 }
 
 /// How the profile travels from one station to the next.
 #[derive(Clone, Debug)]
-pub enum Span<S: Scalar> {
+pub enum Span {
     /// In a straight line: degree 1.
     Line,
     /// Along a NURBS of `degree` on the clamped `knots` over `[0, 1]`, whose
@@ -87,8 +87,8 @@ pub enum Span<S: Scalar> {
     /// skinned together (see [`crate::path_sweep`]).
     Curve {
         degree: usize,
-        knots: Vec<S>,
-        middle: Vec<(Frame<S>, Option<S>)>,
+        knots: Vec<Scalar>,
+        middle: Vec<(Frame, Option<Scalar>)>,
     },
     /// From one section to another of a different shape, along a NURBS of
     /// `degree` on the clamped `knots` over `[0, 1]`, each inner control row
@@ -97,8 +97,8 @@ pub enum Span<S: Scalar> {
     /// interior of a loft shaped by guide curves (see [`crate::loft`]).
     Blend {
         degree: usize,
-        knots: Vec<S>,
-        middle: Vec<[(Frame<S>, S); 2]>,
+        knots: Vec<Scalar>,
+        middle: Vec<[(Frame, Scalar); 2]>,
     },
     /// Along a NURBS of `degree` on the clamped `knots` over `[0, 1]`, each
     /// inner control row a sum of the sections at any stations — each
@@ -107,50 +107,52 @@ pub enum Span<S: Scalar> {
     /// from its neighbours (see [`crate::loft`]).
     Through {
         degree: usize,
-        knots: Vec<S>,
-        middle: Vec<Vec<(usize, S)>>,
+        knots: Vec<Scalar>,
+        middle: Vec<Vec<(usize, Scalar)>>,
     },
 }
 
-impl<S: Scalar> Span<S> {
+impl Span {
     /// Along circular arcs: a rational quadratic whose middle control row is
     /// the profile at `middle`, weighted `weight`.
-    pub fn arc(middle: Frame<S>, weight: S) -> Self {
+    pub fn arc(middle: Frame, weight: Scalar) -> Self {
         Span::Curve {
             degree: 2,
-            knots: vec![S::ZERO, S::ZERO, S::ZERO, S::ONE, S::ONE, S::ONE],
+            knots: vec![
+                Scalar::ZERO,
+                Scalar::ZERO,
+                Scalar::ZERO,
+                Scalar::ONE,
+                Scalar::ONE,
+                Scalar::ONE,
+            ],
             middle: vec![(middle, Some(weight))],
         }
     }
 }
 
 /// One control row of a span (see [`Path::rows`]).
-enum Row<'a, S: Scalar> {
+enum Row<'a> {
     /// The span's first section, placed by a frame, its weight multiplied
     /// by the weight given, if any.
-    First(&'a Frame<S>, Option<S>),
+    First(&'a Frame, Option<Scalar>),
     /// The span's last section, placed by a frame.
-    Last(&'a Frame<S>),
+    Last(&'a Frame),
     /// The sum of the first section placed by one frame and the last placed
     /// by another, each times its weight.
-    Both(&'a [(Frame<S>, S); 2]),
+    Both(&'a [(Frame, Scalar); 2]),
     /// The sum of the sections at the stations given, each placed by its
     /// own station's frame, times its coefficient.
-    Stations(&'a [(usize, S)]),
+    Stations(&'a [(usize, Scalar)]),
 }
 
-impl<S: Scalar> Row<'_, S> {
+impl Row<'_> {
     /// The row's control point for the homogeneous profile point `at[s]`
     /// of the section at every station `s` of `stations`, in span `(a, b)`:
     /// from station `a` to station `b`.
-    fn point(
-        &self,
-        stations: &[Frame<S>],
-        (a, b): (usize, usize),
-        at: &[Vector3<S>],
-    ) -> Vector4<S> {
+    fn point(&self, stations: &[Frame], (a, b): (usize, usize), at: &[Vector3]) -> Vector4 {
         let place =
-            |p: &Vector3<S>, frame: &Frame<S>| embed_point(p, &frame.origin, &frame.e1, &frame.e2);
+            |p: &Vector3, frame: &Frame| embed_point(p, &frame.origin, &frame.e1, &frame.e2);
         match self {
             Row::First(frame, weight) => weighted(place(&at[a], frame), *weight),
             Row::Last(frame) => place(&at[b], frame),
@@ -162,9 +164,9 @@ impl<S: Scalar> Row<'_, S> {
                 // A coefficient of one multiplies nothing, and the sum starts
                 // at the first term, not at zero: rounding by either would
                 // only widen the row.
-                let term = |&(s, coefficient): &(usize, S)| -> Vector4<S> {
+                let term = |&(s, coefficient): &(usize, Scalar)| -> Vector4 {
                     let p = place(&at[s], &stations[s]);
-                    if coefficient.is_exactly(S::ONE) {
+                    if coefficient.is_exactly(Scalar::ONE) {
                         p
                     } else {
                         Vector4::from_array(std::array::from_fn(|k| p[k].mul(coefficient)))
@@ -184,9 +186,9 @@ impl<S: Scalar> Row<'_, S> {
 /// consecutive ones — around to the first again for a `closed` path (a full
 /// turn), which has as many spans as stations; an open one has one fewer.
 #[derive(Clone, Debug)]
-pub struct Path<S: Scalar> {
-    pub stations: Vec<Frame<S>>,
-    pub spans: Vec<Span<S>>,
+pub struct Path {
+    pub stations: Vec<Frame>,
+    pub spans: Vec<Span>,
     pub closed: bool,
     /// Whether the path runs along `e1 × e2` of its stations rather than
     /// against it — which way the profile must wind (see the module docs).
@@ -199,7 +201,7 @@ pub struct Path<S: Scalar> {
     pub span_names: Vec<Option<String>>,
 }
 
-impl<S: Scalar> Path<S> {
+impl Path {
     /// Station `j`, counting on around a closed path.
     fn station(&self, j: usize) -> usize {
         if self.closed {
@@ -212,9 +214,9 @@ impl<S: Scalar> Path<S> {
     /// The control rows of span `j`: its first station's, its inner rows,
     /// its last station's. A station's row has no weight: multiplying by
     /// one would only widen every enclosure by rounding.
-    fn rows(&self, j: usize) -> Vec<Row<'_, S>> {
+    fn rows(&self, j: usize) -> Vec<Row<'_>> {
         let (a, b) = (&self.stations[j], &self.stations[self.station(j + 1)]);
-        let middle: Vec<Row<'_, S>> = match &self.spans[j] {
+        let middle: Vec<Row<'_>> = match &self.spans[j] {
             Span::Line => Vec::new(),
             Span::Curve { middle, .. } => middle.iter().map(|(m, w)| Row::First(m, *w)).collect(),
             Span::Blend { middle, .. } => middle.iter().map(Row::Both).collect(),
@@ -235,9 +237,9 @@ impl<S: Scalar> Path<S> {
         }
     }
 
-    fn knots(&self, j: usize) -> Vec<S> {
+    fn knots(&self, j: usize) -> Vec<Scalar> {
         match &self.spans[j] {
-            Span::Line => vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+            Span::Line => vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
             Span::Curve { knots, .. } | Span::Blend { knots, .. } | Span::Through { knots, .. } => {
                 knots.clone()
             }
@@ -251,10 +253,10 @@ impl<S: Scalar> Path<S> {
 
     /// The path along span `j` of a profile point, `points[s]` in the
     /// section at station `s` (see [`skin`]).
-    fn lateral(&self, j: usize, points: &[Vector2<S>]) -> GeopResult<NurbCurve3D<S>> {
-        let at: Vec<Vector3<S>> = points
+    fn lateral(&self, j: usize, points: &[Vector2]) -> GeopResult<NurbCurve3D> {
+        let at: Vec<Vector3> = points
             .iter()
-            .map(|p| Vector3::from_array([p[0], p[1], S::ONE]))
+            .map(|p| Vector3::from_array([p[0], p[1], Scalar::ONE]))
             .collect();
         let control_points = self
             .rows(j)
@@ -267,13 +269,13 @@ impl<S: Scalar> Path<S> {
     /// The wall a profile curve sweeps through span `j`, `curves[s]` in the
     /// section at station `s` — compatible curves: `u` along the span, `v`
     /// along the curve.
-    fn wall(&self, j: usize, curves: &[&NurbCurve2D<S>]) -> GeopResult<NurbSurface3D<S>> {
+    fn wall(&self, j: usize, curves: &[&NurbCurve2D]) -> GeopResult<NurbSurface3D> {
         let a = curves[j];
         let rows = self.rows(j);
         let mut control_points = Vec::with_capacity(rows.len() * a.control_points.len());
         for row in &rows {
             for k in 0..a.control_points.len() {
-                let at: Vec<Vector3<S>> = curves.iter().map(|c| c.control_points[k]).collect();
+                let at: Vec<Vector3> = curves.iter().map(|c| c.control_points[k]).collect();
                 control_points.push(row.point(&self.stations, self.ends(j), &at));
             }
         }
@@ -304,7 +306,7 @@ impl<S: Scalar> Path<S> {
 }
 
 /// The homogeneous point `p` with its weight multiplied by `weight`, if any.
-fn weighted<S: Scalar>(p: Vector4<S>, weight: Option<S>) -> Vector4<S> {
+fn weighted(p: Vector4, weight: Option<Scalar>) -> Vector4 {
     match weight {
         None => p,
         Some(w) => Vector4::from_array([p[0].mul(w), p[1].mul(w), p[2].mul(w), p[3].mul(w)]),
@@ -315,17 +317,17 @@ fn weighted<S: Scalar>(p: Vector4<S>, weight: Option<S>) -> Vector4<S> {
 /// and which of its curves lie on the axis (see the module docs). A curve
 /// on the axis runs between two poles.
 #[derive(Clone, Debug)]
-pub struct SweepLoop<S: Scalar> {
-    pub profile: Profile<S>,
+pub struct SweepLoop {
+    pub profile: Profile,
     /// Per joint: whether it lies on the axis.
     pub poles: Vec<bool>,
     /// Per curve: whether it lies along the axis.
     pub on_axis: Vec<bool>,
 }
 
-impl<S: Scalar> SweepLoop<S> {
+impl SweepLoop {
     /// `profile`, clear of any axis.
-    pub fn plain(profile: Profile<S>) -> Self {
+    pub fn plain(profile: Profile) -> Self {
         Self {
             poles: vec![false; profile.joint_names.len()],
             on_axis: vec![false; profile.curves.len()],
@@ -377,7 +379,7 @@ impl<S: Scalar> SweepLoop<S> {
         }
         for (i, curve) in curves.iter().enumerate() {
             let (t0, t1) = curve.domain();
-            if !(t0.could_be_equal(S::ZERO) && t1.could_be_equal(S::ONE)) {
+            if !(t0.could_be_equal(Scalar::ZERO) && t1.could_be_equal(Scalar::ONE)) {
                 return Err(GeopError::new(format!(
                     "sweep: curve {} has domain ({t0:?}, {t1:?}), not [0, 1]",
                     profile.curve_names[i]
@@ -423,11 +425,11 @@ impl<S: Scalar> SweepLoop<S> {
 /// The solid's shells are the connected sets of faces: one, unless a full
 /// turn leaves a hole — or a pocket closed off by the axis — sweeping a void
 /// of its own.
-pub fn sweep<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn sweep(
+    model: &mut NamedModel,
     namer: &Namer,
-    path: &Path<S>,
-    loops: &[SweepLoop<S>],
+    path: &Path,
+    loops: &[SweepLoop],
     solid: Option<&str>,
 ) -> GeopResult<BuiltBody> {
     let sections = vec![loops.to_vec(); path.stations.len()];
@@ -438,15 +440,15 @@ pub fn sweep<S: Scalar>(
 /// in the stations' `(e1, e2)`, the holes clockwise — each run the other
 /// way first if the path runs along `e1 × e2`, where a counter-clockwise
 /// outer loop would sweep walls facing inwards.
-pub fn sweep_drawn<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn sweep_drawn(
+    model: &mut NamedModel,
     namer: &Namer,
-    path: &Path<S>,
-    loops: &[SweepLoop<S>],
+    path: &Path,
+    loops: &[SweepLoop],
     solid: Option<&str>,
 ) -> GeopResult<BuiltBody> {
     if path.along_normal {
-        let reversed: Vec<SweepLoop<S>> = loops.iter().map(SweepLoop::reversed).collect();
+        let reversed: Vec<SweepLoop> = loops.iter().map(SweepLoop::reversed).collect();
         sweep(model, namer, path, &reversed, solid)
     } else {
         sweep(model, namer, path, loops, solid)
@@ -464,11 +466,11 @@ pub fn sweep_drawn<S: Scalar>(
 ///
 /// Everything is named after the first section's curves and joints, as
 /// [`sweep`] names it.
-pub fn skin<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn skin(
+    model: &mut NamedModel,
     namer: &Namer,
-    path: &Path<S>,
-    sections: &[Vec<SweepLoop<S>>],
+    path: &Path,
+    sections: &[Vec<SweepLoop>],
     solid: Option<&str>,
 ) -> GeopResult<BuiltBody> {
     let ctx = with_context!(
@@ -480,10 +482,10 @@ pub fn skin<S: Scalar>(
     path.check().with_context(ctx)?;
     check_sections(path, sections, solid.is_some()).with_context(ctx)?;
     let loops = &sections[0];
-    let geometry: Vec<Placed<'_, S>> = (0..loops.len())
+    let geometry: Vec<Placed<'_>> = (0..loops.len())
         .map(|l| Placed { path, sections, l })
         .collect();
-    let strips: Vec<Strip<'_, S>> = loops
+    let strips: Vec<Strip<'_>> = loops
         .iter()
         .zip(&geometry)
         .map(|(lp, geometry)| Strip {
@@ -546,36 +548,36 @@ pub fn skin<S: Scalar>(
 
 /// Loop `l` of `sections`, each placed by its station's frame of `path`:
 /// what [`skin`] builds.
-struct Placed<'a, S: Scalar> {
-    path: &'a Path<S>,
-    sections: &'a [Vec<SweepLoop<S>>],
+struct Placed<'a> {
+    path: &'a Path,
+    sections: &'a [Vec<SweepLoop>],
     l: usize,
 }
 
-impl<S: Scalar> Placed<'_, S> {
-    fn profile(&self, s: usize) -> &Profile<S> {
+impl Placed<'_> {
+    fn profile(&self, s: usize) -> &Profile {
         &self.sections[s][self.l].profile
     }
 }
 
-impl<S: Scalar> StripGeometry<S> for Placed<'_, S> {
-    fn joint(&self, s: usize, i: usize) -> GeopResult<Vector3<S>> {
+impl StripGeometry for Placed<'_> {
+    fn joint(&self, s: usize, i: usize) -> GeopResult<Vector3> {
         Ok(self.path.stations[s].point(&self.profile(s).joint(i)?))
     }
 
-    fn curve(&self, s: usize, i: usize) -> GeopResult<NurbCurve3D<S>> {
+    fn curve(&self, s: usize, i: usize) -> GeopResult<NurbCurve3D> {
         self.path.stations[s].curve(&self.profile(s).curves[i])
     }
 
-    fn lateral(&self, j: usize, i: usize) -> GeopResult<NurbCurve3D<S>> {
+    fn lateral(&self, j: usize, i: usize) -> GeopResult<NurbCurve3D> {
         let points = (0..self.sections.len())
             .map(|s| self.profile(s).joint(i))
             .collect::<GeopResult<Vec<_>>>()?;
         self.path.lateral(j, &points)
     }
 
-    fn wall(&self, j: usize, i: usize) -> GeopResult<NurbSurface3D<S>> {
-        let curves: Vec<&NurbCurve2D<S>> = (0..self.sections.len())
+    fn wall(&self, j: usize, i: usize) -> GeopResult<NurbSurface3D> {
+        let curves: Vec<&NurbCurve2D> = (0..self.sections.len())
             .map(|s| &self.profile(s).curves[i])
             .collect();
         self.path.wall(j, &curves)
@@ -586,11 +588,7 @@ impl<S: Scalar> StripGeometry<S> for Placed<'_, S> {
 /// one per station, each a valid set of loops — closed ones, for a solid —
 /// all with the same loops, curves and flags, the `i`-th curves of all of
 /// them on one degree and one knot vector.
-fn check_sections<S: Scalar>(
-    path: &Path<S>,
-    sections: &[Vec<SweepLoop<S>>],
-    solid: bool,
-) -> GeopResult<()> {
+fn check_sections(path: &Path, sections: &[Vec<SweepLoop>], solid: bool) -> GeopResult<()> {
     if sections.len() != path.stations.len() {
         return Err(GeopError::new(format!(
             "skin: {} sections for {} stations",
@@ -602,7 +600,7 @@ fn check_sections<S: Scalar>(
     if first.is_empty() {
         return Err(GeopError::new("sweep: nothing to sweep"));
     }
-    let same = |a: &S, b: &S| a.is_subset_of(*b) && b.is_subset_of(*a);
+    let same = |a: &Scalar, b: &Scalar| a.is_subset_of(*b) && b.is_subset_of(*a);
     for (s, section) in sections.iter().enumerate() {
         if section.len() != first.len() {
             return Err(GeopError::new(format!(
@@ -656,7 +654,7 @@ fn check_sections<S: Scalar>(
 /// The faces of `spec` grouped into connected sets — faces sharing an edge
 /// are connected — each in the order of its faces' indices, and the sets in
 /// the order of their first face.
-fn connected_faces<S: Scalar>(spec: &BodySpec<S>) -> Vec<Vec<usize>> {
+fn connected_faces(spec: &BodySpec) -> Vec<Vec<usize>> {
     let mut sets = UnionFind::new(spec.faces.len());
     let mut user_of_edge: BTreeMap<usize, usize> = BTreeMap::new();
     for (f, face) in spec.faces.iter().enumerate() {

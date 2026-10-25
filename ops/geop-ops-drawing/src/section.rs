@@ -16,7 +16,7 @@ use geop_ops_model::{BooleanOp, Profile};
 use geop_ops_model::{NamedModel, Namer, frame_along};
 
 /// The box holding every face of `model`, `[lo, hi]` per axis.
-fn bounds<S: Scalar>(model: &Model<S>) -> GeopResult<[[f64; 2]; 3]> {
+fn bounds(model: &Model) -> GeopResult<[[f64; 2]; 3]> {
     let b = union_aabb(model.faces.values().map(|f| f.surface.aabb()))
         .ok_or_else(|| GeopError::new("the part has no face"))?;
     Ok(b.map(|x| [x.lower().to_f64(), x.upper().to_f64()]))
@@ -25,11 +25,11 @@ fn bounds<S: Scalar>(model: &Model<S>) -> GeopResult<[[f64; 2]; 3]> {
 /// `model` with every solid cut by the plane through `origin` normal to the
 /// unit vector `normal`, the side `normal` points to taken away. A solid
 /// wholly on that side is gone; faces standing on their own are left whole.
-pub fn section_part<S: Scalar>(
-    model: &NamedModel<S>,
-    origin: &Vector3<S>,
-    normal: &Vector3<S>,
-) -> GeopResult<NamedModel<S>> {
+pub fn section_part(
+    model: &NamedModel,
+    origin: &Vector3,
+    normal: &Vector3,
+) -> GeopResult<NamedModel> {
     let ctx = |e: GeopError| {
         e.with_context(format!(
             "section_part(origin={origin:?}, normal={normal:?})"
@@ -49,7 +49,7 @@ pub fn section_part<S: Scalar>(
         .map(|k| (origin[k].to_f64() - center[k]).powi(2))
         .sum::<f64>()
         .sqrt();
-    let reach = S::from_f64(2.0 * (diagonal + offset) + 1.0);
+    let reach = Scalar::from_f64(2.0 * (diagonal + offset) + 1.0);
     let plane = frame_along(*origin, normal).with_context(&ctx)?;
     let square = [
         Vector2::from_array([reach.neg(), reach.neg()]),
@@ -64,7 +64,7 @@ pub fn section_part<S: Scalar>(
             &tool_namer,
             Some(&tool_namer.root()),
             &plane,
-            S::ZERO,
+            Scalar::ZERO,
             reach,
             &[SweepLoop::plain(Profile::closed(
                 polygon(&square).with_context(&ctx)?,
@@ -91,11 +91,11 @@ pub fn section_part<S: Scalar>(
 
 /// The faces of `faces` lying in the plane through `origin` normal to
 /// `normal`: a section's cut.
-pub fn cut_faces<S: Scalar>(
-    model: &Model<S>,
+pub fn cut_faces(
+    model: &Model,
     faces: &[FaceId],
-    origin: &Vector3<S>,
-    normal: &Vector3<S>,
+    origin: &Vector3,
+    normal: &Vector3,
 ) -> GeopResult<Vec<FaceId>> {
     let mut cut = Vec::new();
     for &face in faces {
@@ -110,7 +110,7 @@ pub fn cut_faces<S: Scalar>(
                 .point
                 .sub(origin)
                 .prod_dot(normal)
-                .could_be_equal(S::ZERO)
+                .could_be_equal(Scalar::ZERO)
         {
             cut.push(face);
         }

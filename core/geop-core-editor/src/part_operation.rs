@@ -9,7 +9,7 @@
 use std::fmt::Debug;
 
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::{part::StepContext, values::Design};
+use geop_core_program::part::StepContext;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
@@ -45,7 +45,7 @@ pub trait PartOperation: 'static {
         context: &'a Context<'a>,
         args: &Self::Args,
         editing: &FormState<Self::Session>,
-    ) -> EditForm<'a, Design, Self::Args, Self::Session>;
+    ) -> EditForm<'a, Self::Args, Self::Session>;
 
     /// What the session forgets at the start of every event, before the
     /// event is handled: nothing, by default.
@@ -54,11 +54,7 @@ pub trait PartOperation: 'static {
     }
 
     /// What the pointer or a key did on the canvas: nothing, by default.
-    fn canvas(
-        context: &Context,
-        edit: Edit<'_, Self::Args, Self::Session>,
-        event: &CanvasEvent<Design>,
-    ) {
+    fn canvas(context: &Context, edit: Edit<'_, Self::Args, Self::Session>, event: &CanvasEvent) {
         let _ = (context, edit, event);
     }
 }
@@ -105,7 +101,7 @@ macro_rules! part_operation {
                 context: &$crate::editable::Context,
                 args: &Self::Args,
                 editing: &Self::EditingState,
-            ) -> $crate::editing::Form<$crate::__program::values::Design> {
+            ) -> $crate::editing::Form {
                 <$operation as $crate::part_operation::PartOperation>::form(context, args, editing)
                     .into_form()
             }
@@ -114,7 +110,7 @@ macro_rules! part_operation {
                 context: &$crate::editable::Context,
                 args: &Self::Args,
                 editing: &Self::EditingState,
-                event: $crate::editing::Event<$crate::__program::values::Design>,
+                event: $crate::editing::Event,
             ) -> (Self::Args, Self::EditingState) {
                 let mut editing = editing.clone();
                 <$operation as $crate::part_operation::PartOperation>::begin_event(

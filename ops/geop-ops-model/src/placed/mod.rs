@@ -22,7 +22,6 @@ use geop_core_program::{
     placed::{INSTANCE_SEPARATOR, Located as LocatedName, instance_path, split_instance_path},
     reader::Reader,
     target::{Target, TargetReference},
-    values::Design,
 };
 use std::rc::Rc;
 
@@ -94,9 +93,9 @@ pub fn drawn<'a>(reader: &Reader<'a>, path: &str) -> GeopResult<&'a Drawn> {
 pub struct Located<'a> {
     pub instance: &'a Instance,
     pub part: Reader<'a>,
-    pub world: Pose<Design>,
+    pub world: Pose,
     /// Where it is in the part it is placed in.
-    pub local: Pose<Design>,
+    pub local: Pose,
     pub state: Option<String>,
 }
 
@@ -191,7 +190,7 @@ pub fn placed_parts<'a>(reader: &Reader<'a>) -> GeopResult<Vec<Placed<'a>>> {
 /// Every solid of the part `reader` reads, meshed `quality` fine: its own,
 /// and those of every part placed in it, however deep — each where it is,
 /// named behind its name in the part read: `/pin:extrude(pin)`.
-pub fn solid_meshes(reader: &Reader, quality: usize) -> GeopResult<SolidMeshes<Design>> {
+pub fn solid_meshes(reader: &Reader, quality: usize) -> GeopResult<SolidMeshes> {
     let own = |reader: &Reader| read_model(reader)?.solid_meshes(quality);
     let mut out = own(reader)?;
     for placed in placed_parts(reader)? {

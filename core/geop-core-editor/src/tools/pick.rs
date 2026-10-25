@@ -6,7 +6,7 @@
 //! nothing to undo. What the picks are asked is the inspector's.
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_program::{element::PickedElement, values::Design};
+use geop_core_program::element::PickedElement;
 
 use super::Tool;
 use crate::{
@@ -76,11 +76,7 @@ impl Tool for PickTool {
     /// replacing the oldest once there are as many as the inspector takes;
     /// a click on one picked takes it out, a click on nothing clears them;
     /// Escape clears them too. A change of the picks asks again.
-    fn handle(
-        &mut self,
-        ctx: &mut EditorContext,
-        event: &StepEditEvent<Design>,
-    ) -> GeopResult<Changed> {
+    fn handle(&mut self, ctx: &mut EditorContext, event: &StepEditEvent) -> GeopResult<Changed> {
         let Some(view) = ctx.drawn() else {
             return Ok(Changed::Nothing);
         };
@@ -115,7 +111,7 @@ impl Tool for PickTool {
 
     /// What it shows: the picks and what a click would pick lit, and what
     /// the answer draws.
-    fn presentation(&self) -> Presentation<Design> {
+    fn presentation(&self) -> Presentation {
         let mut highlights = self.picked.clone();
         highlights.extend(
             self.hover

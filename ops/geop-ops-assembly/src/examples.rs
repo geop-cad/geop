@@ -25,7 +25,7 @@ use geop_core_program::{
     part::Part,
     program::Program,
     runner::Runner,
-    values::{Design, Setting, Settings, StateValue, StateValues, pose_state},
+    values::{Setting, Settings, StateValue, StateValues, pose_state},
 };
 use geop_core_sketch::CurveId;
 use geop_lib_stdlib::{Drawing, outline_plane};
@@ -55,7 +55,7 @@ fn on_origin(normal: FrameAxis) -> SketchPlane {
 /// [`Pose::from_euler`]) — as a file holds it ([`Pose::saved`]): where an
 /// example puts a part to start from is a free choice, and one its file
 /// can say saves and reads back as it is.
-pub fn pose(position: [f64; 3], degrees: [f64; 3]) -> Pose<Design> {
+pub fn pose(position: [f64; 3], degrees: [f64; 3]) -> Pose {
     (Pose::from_euler(Vector3::from_array(position.map(n)), degrees.map(n)))
         .and_then(|pose| pose.saved())
         .expect("an example's rotation is one")

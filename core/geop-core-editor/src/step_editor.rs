@@ -4,11 +4,7 @@
 
 use std::{any::Any, rc::Rc};
 
-use geop_core_math::{
-    geop_error::GeopResult,
-    scalars::{Ring, Scalar},
-    vector::Vector3,
-};
+use geop_core_math::{geop_error::GeopResult, vector::Vector3};
 
 use crate::{
     editable::Editors,
@@ -20,9 +16,7 @@ use crate::{
         hit::{Scene, hit_visuals},
     },
 };
-use geop_core_program::{
-    element::PickedElement, part::Part, program::Program, runner::Runner, values::Design,
-};
+use geop_core_program::{element::PickedElement, part::Part, program::Program, runner::Runner};
 
 /// The key of the field the editor adds to a dialog whose gizmo has an
 /// orientation of its own: the world's axes or its own, as
@@ -43,7 +37,7 @@ enum Grab {
     /// it was grabbed (see [`Visual::from_grab`]), the step as it was then.
     Visual {
         key: String,
-        plane: Option<(Vector3<Design>, Vector3<Design>)>,
+        plane: Option<(Vector3, Vector3)>,
         start: Option<Start>,
     },
     /// A stroke of the tool in hand, from where it went down.
@@ -53,8 +47,8 @@ enum Grab {
     /// drag applies its change to — and what the drag has done so far, in
     /// words.
     Gizmo {
-        grab: GizmoGrab<Design>,
-        from: Box<Gizmo<Design>>,
+        grab: GizmoGrab,
+        from: Box<Gizmo>,
         start: Start,
         readout: Option<String>,
     },
@@ -114,9 +108,9 @@ pub struct StepEditor {
     /// What a click would pick for it.
     hover: Option<PickedElement>,
     /// Where the pointer last was, if over the viewport.
-    pointer: Option<Pointer<Design>>,
+    pointer: Option<Pointer>,
     /// Where the drag under way went down, and what it holds.
-    grab: Option<(Pointer<Design>, Grab)>,
+    grab: Option<(Pointer, Grab)>,
     /// Which way the gizmo is turned, where it has a way of its own.
     orientation: Orientation,
 }
@@ -132,7 +126,7 @@ fn toggle<T: PartialEq>(xs: &mut Vec<T>, x: T) {
 }
 
 /// The handles of `dialog`'s number fields, as visuals under their keys.
-fn handles(dialog: &Dialog<Design>) -> Vec<Visual<Design>> {
+fn handles(dialog: &Dialog) -> Vec<Visual> {
     (dialog.0.iter())
         .filter_map(|f| match &f.control {
             Control::Number(n) => n.handle.map(|track| {
@@ -147,18 +141,18 @@ fn handles(dialog: &Dialog<Design>) -> Vec<Visual<Design>> {
         .collect()
 }
 
-fn is_handle(visual: &Visual<Design>) -> bool {
+fn is_handle(visual: &Visual) -> bool {
     matches!(visual.shape, Shape::Handle { .. })
 }
 
 /// Whether a press on `visual` grabs it: a handle always, a draggable
 /// visual unless a tool is in hand.
-fn grabs(visual: &Visual<Design>, tool: InHand) -> bool {
+fn grabs(visual: &Visual, tool: InHand) -> bool {
     is_handle(visual) || (visual.draggable && tool == InHand::Nothing)
 }
 
 /// The keys of `form`'s reference fields that wait for a pick.
-fn waiting(form: &Form<Design>) -> impl Iterator<Item = &str> {
+fn waiting(form: &Form) -> impl Iterator<Item = &str> {
     (form.dialog.0.iter()).filter_map(|f| match &f.control {
         Control::Reference(r) if r.waiting() => Some(f.key.as_str()),
         _ => None,
@@ -166,7 +160,7 @@ fn waiting(form: &Form<Design>) -> impl Iterator<Item = &str> {
 }
 
 /// The keys of `form`'s reference fields.
-fn references(form: &Form<Design>) -> Vec<String> {
+fn references(form: &Form) -> Vec<String> {
     (form.dialog.0.iter())
         .filter(|f| matches!(f.control, Control::Reference(_)))
         .map(|f| f.key.clone())
@@ -251,7 +245,7 @@ impl StepEditor {
         runner: &Runner,
         part: &Part,
         program: &Program,
-    ) -> GeopResult<Form<Design>> {
+    ) -> GeopResult<Form> {
         editors.presentation(runner, part, program, &self.step, &*self.editing)
     }
 
@@ -260,13 +254,9 @@ impl StepEditor {
     /// field that is gone after it waits for no pick any more, and one that
     /// appeared empty waits for one — what the step needs picked next, as
     /// for a new step.
-    fn send<Sc: Scene<Design>>(
-        &mut self,
-        e: &mut Editing<'_, Sc>,
-        event: Event<Design>,
-    ) -> GeopResult<()> {
+    fn send<Sc: Scene>(&mut self, e: &mut Editing<'_, Sc>, event: Event) -> GeopResult<()> {
         let before = references(&self.form(e.editors, e.runner, e.part, e.program)?);
-        let scene: &dyn Scene<Design> = e.scene;
+        let scene: &dyn Scene = e.scene;
         let edited = (e.editors).process_user_event(
             e.runner,
             e.part,
@@ -292,19 +282,15 @@ impl StepEditor {
         Ok(())
     }
 
-    fn pass<Sc: Scene<Design>>(
-        &mut self,
-        e: &mut Editing<'_, Sc>,
-        event: CanvasEvent<Design>,
-    ) -> GeopResult<()> {
+    fn pass<Sc: Scene>(&mut self, e: &mut Editing<'_, Sc>, event: CanvasEvent) -> GeopResult<()> {
         self.send(e, Event::Canvas(event))
     }
 
     /// The selection is `selection` now.
-    fn select<Sc: Scene<Design>>(
+    fn select<Sc: Scene>(
         &mut self,
         e: &mut Editing<'_, Sc>,
-        form: &Form<Design>,
+        form: &Form,
         selection: Vec<String>,
     ) -> GeopResult<()> {
         match selection == form.selection {
@@ -314,7 +300,7 @@ impl StepEditor {
     }
 
     /// The step as it is now, for a drag to start from.
-    fn start<Sc: Scene<Design>>(&self, e: &Editing<'_, Sc>) -> Start {
+    fn start<Sc: Scene>(&self, e: &Editing<'_, Sc>) -> Start {
         let args = (e.program.step(&self.step))
             .map(|s| s.args.clone())
             .unwrap_or_default();
@@ -322,7 +308,7 @@ impl StepEditor {
     }
 
     /// The step back as a drag found it, `start`.
-    fn restore<Sc: Scene<Design>>(&mut self, e: &mut Editing<'_, Sc>, start: &Start) {
+    fn restore<Sc: Scene>(&mut self, e: &mut Editing<'_, Sc>, start: &Start) {
         if let Ok(step) = e.program.step_mut(&self.step) {
             step.args = start.0.clone();
         }
@@ -330,17 +316,17 @@ impl StepEditor {
     }
 
     /// The form's gizmo, turned as chosen.
-    fn gizmo(&self, form: &Form<Design>) -> Option<GizmoView<Design>> {
+    fn gizmo(&self, form: &Form) -> Option<GizmoView> {
         (form.gizmo.as_ref()).map(|gizmo| GizmoView::of(gizmo, self.orientation))
     }
 
     /// Applies `event`, picking in `e.scene`: the part before the step as
     /// drawn, or, for an operation whose picks are made in what it builds,
     /// that.
-    pub fn handle<Sc: Scene<Design>>(
+    pub fn handle<Sc: Scene>(
         &mut self,
         mut e: Editing<'_, Sc>,
-        event: &StepEditEvent<Design>,
+        event: &StepEditEvent,
     ) -> GeopResult<()> {
         let e = &mut e;
         let form = self.form(e.editors, e.runner, e.part, e.program)?;
@@ -398,8 +384,7 @@ impl StepEditor {
                 let in_hand = form.tool != InHand::Nothing;
                 let hit = (*button == Button::Primary && !*double && !in_hand)
                     .then(|| {
-                        let instance =
-                            |name: &str, p: &Pointer<Design>| e.scene.hit_instance(name, p);
+                        let instance = |name: &str, p: &Pointer| e.scene.hit_instance(name, p);
                         hit_visuals(&form.visuals, pointer, instance, |v| v.selectable)
                             .map(|hit| hit.visual.key.clone())
                     })
@@ -449,10 +434,10 @@ impl StepEditor {
 
     /// The dialog field `key` used: a reference field armed, or an entity
     /// taken out of it, or all of them; any other field set.
-    fn dialog<Sc: Scene<Design>>(
+    fn dialog<Sc: Scene>(
         &mut self,
         e: &mut Editing<'_, Sc>,
-        form: &Form<Design>,
+        form: &Form,
         key: &str,
         value: Value,
     ) -> GeopResult<()> {
@@ -489,10 +474,10 @@ impl StepEditor {
     /// A pointer event while the reference field `key` waits for a click:
     /// a hover finds what a click would pick, a click picks it — and, for a
     /// field of one entity, is done. Escape stops picking.
-    fn pick<Sc: Scene<Design>>(
+    fn pick<Sc: Scene>(
         &mut self,
         e: &mut Editing<'_, Sc>,
-        event: &StepEditEvent<Design>,
+        event: &StepEditEvent,
         key: &str,
         reference: &Reference,
     ) -> GeopResult<()> {
@@ -548,12 +533,12 @@ impl StepEditor {
     /// plane). With `handles_only` — while a field waits for a pick — only a
     /// handle is grabbed.
     #[allow(clippy::too_many_arguments)]
-    fn drag<Sc: Scene<Design>>(
+    fn drag<Sc: Scene>(
         &mut self,
         e: &mut Editing<'_, Sc>,
-        form: &Form<Design>,
-        from: &Pointer<Design>,
-        to: &Pointer<Design>,
+        form: &Form,
+        from: &Pointer,
+        to: &Pointer,
         done: bool,
         shift: bool,
         handles_only: bool,
@@ -575,9 +560,8 @@ impl StepEditor {
             self.grab = Some((*from, grab));
         }
         if self.grab.is_none() {
-            let visuals: Vec<Visual<Design>> =
-                form.visuals.iter().chain(&handles).cloned().collect();
-            let instance = |name: &str, p: &Pointer<Design>| e.scene.hit_instance(name, p);
+            let visuals: Vec<Visual> = form.visuals.iter().chain(&handles).cloned().collect();
+            let instance = |name: &str, p: &Pointer| e.scene.hit_instance(name, p);
             let hit = hit_visuals(&visuals, from, instance, |v| match handles_only {
                 true => is_handle(v),
                 false => grabs(v, form.tool),
@@ -616,14 +600,14 @@ impl StepEditor {
 
     /// What dragging `grab` from `from` to `to` does.
     #[allow(clippy::too_many_arguments)]
-    fn drag_by<Sc: Scene<Design>>(
+    fn drag_by<Sc: Scene>(
         &mut self,
         e: &mut Editing<'_, Sc>,
-        form: &Form<Design>,
-        handles: &[Visual<Design>],
+        form: &Form,
+        handles: &[Visual],
         grab: &mut Grab,
-        from: &Pointer<Design>,
-        to: &Pointer<Design>,
+        from: &Pointer,
+        to: &Pointer,
         done: bool,
         shift: bool,
     ) -> GeopResult<()> {
@@ -637,7 +621,7 @@ impl StepEditor {
                             _ => None,
                         });
                 let moved = track.and_then(|(at, direction)| {
-                    let along = |p: &Pointer<Design>| p.ray.line_parameter(&at, &direction);
+                    let along = |p: &Pointer| p.ray.line_parameter(&at, &direction);
                     Some(along(to)?.sub(along(from)?))
                 });
                 match moved {
@@ -651,7 +635,7 @@ impl StepEditor {
                 }
             }
             Grab::Visual { key, plane, start } => {
-                let in_plane = |pointer: &Pointer<Design>| -> Option<Vector3<Design>> {
+                let in_plane = |pointer: &Pointer| -> Option<Vector3> {
                     let (origin, normal) = match (&form.focus, &plane) {
                         (Some(focus), _) => (focus.origin(), focus.w()),
                         (None, Some((point, normal))) => (point, normal),
@@ -720,8 +704,8 @@ impl StepEditor {
         runner: &Runner,
         part: &Part,
         program: &Program,
-        scene: &impl Scene<Design>,
-    ) -> GeopResult<Presentation<Design>> {
+        scene: &impl Scene,
+    ) -> GeopResult<Presentation> {
         let mut form = self.form(editors, runner, part, program)?;
         let mut pickable = Vec::new();
         for (key, reference) in form.dialog.references_mut() {
@@ -772,7 +756,7 @@ impl StepEditor {
         }
         let on_gizmo = gizmo.as_ref().is_some_and(|g| g.hover.is_some());
         let hovered = self.pointer.filter(|_| !on_gizmo).and_then(|pointer| {
-            let instance = |name: &str, p: &Pointer<Design>| scene.hit_instance(name, p);
+            let instance = |name: &str, p: &Pointer| scene.hit_instance(name, p);
             hit_visuals(&visuals, &pointer, instance, |v| match waiting {
                 true => is_handle(v),
                 false => v.selectable || grabs(v, tool),

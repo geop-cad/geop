@@ -4,7 +4,6 @@
 
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
-    values::Design,
 };
 use std::f64::consts::PI;
 
@@ -12,7 +11,7 @@ use crate::{
     BodyRef, CircularPattern, CircularPatternArgs, Direction, LinearPattern, LinearPatternArgs,
     Mirror, MirrorArgs, MoveBody, MoveBodyArgs, PatternDirection, Seeds, TurnAxis, body,
 };
-use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
 use geop_ops_boolean::Boolean;
 use geop_ops_extrude_revolve::{
     Extents,
@@ -88,7 +87,7 @@ fn plate_and_pin() -> Program {
 
 /// Builds `program`, with every step read back from its JSON first: what
 /// a program file holds builds the same part.
-fn build(program: &Program) -> NamedModel<Design> {
+fn build(program: &Program) -> NamedModel {
     let json = serde_json::to_string(program).unwrap();
     let read: Program = serde_json::from_str(&json).unwrap();
     assert_eq!(&read, program);
@@ -391,7 +390,7 @@ fn three_turned_boxes_one_a_turned_copy_joined() {
 
 /// The widest control point of any pcurve of `part`, and the edge it
 /// belongs to.
-fn widest_pcurve(part: &NamedModel<Design>) -> (f64, String) {
+fn widest_pcurve(part: &NamedModel) -> (f64, String) {
     let model = part.topology();
     let mut widest = (0.0, String::new());
     for coedge in model.coedges.values() {

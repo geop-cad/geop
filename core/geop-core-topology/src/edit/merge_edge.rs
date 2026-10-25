@@ -1,10 +1,7 @@
 use crate::{CoedgeGeometry, EdgeId, Model};
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
-};
+use geop_core_math::geop_error::{GeopError, GeopResult};
 
-impl<S: Scalar> Model<S> {
+impl Model {
     /// Merges `edge_deleted_id` into `edge_into_id`: repoints every coedge
     /// tracing the deleted edge to the surviving one, then drops the
     /// now-unreferenced edge. `reversed` says whether the deleted edge ran

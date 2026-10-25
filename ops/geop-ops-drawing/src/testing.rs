@@ -6,7 +6,7 @@ use geop_core_program::{
     part::{Part, StepContext},
     program::Program,
     reader::Reader,
-    values::{Design, Settings, StateValue, pose_state},
+    values::{Settings, StateValue, pose_state},
 };
 use geop_ops_assembly::testing::{Shelf, given_model, place, runner};
 use geop_ops_model::{NamedModel, model};
@@ -25,7 +25,7 @@ pub(crate) struct Placeable {
 }
 
 /// `bodies` as the part of the program file `file`, to place.
-pub(crate) fn placeable(file: &str, bodies: &NamedModel<Design>) -> Placeable {
+pub(crate) fn placeable(file: &str, bodies: &NamedModel) -> Placeable {
     let mut program = Program::new();
     program
         .steps
@@ -39,7 +39,7 @@ pub(crate) fn placeable(file: &str, bodies: &NamedModel<Design>) -> Placeable {
 /// The part a program builds that gives `bodies` as its model, and last
 /// runs `then`.
 pub(crate) fn built_with(
-    bodies: &NamedModel<Design>,
+    bodies: &NamedModel,
     then: impl FnOnce(&mut StepContext) -> GeopResult<()>,
 ) -> Part {
     let mut part = Part::default();
@@ -54,14 +54,14 @@ pub(crate) fn built_with(
 
 /// The part a program builds that gives `bodies` as its model and nothing
 /// else (see [`built_with`]).
-pub(crate) fn built(bodies: &NamedModel<Design>) -> Part {
+pub(crate) fn built(bodies: &NamedModel) -> Part {
     built_with(bodies, |_| Ok(()))
 }
 
 /// The part the program of the file `assembly.geop` builds that places
 /// each of `placed` in a step of its name, fixed at its pose: the
 /// placeables' files beside it.
-pub(crate) fn assembled(placed: &[(&str, &Placeable, Pose<Design>)]) -> Part {
+pub(crate) fn assembled(placed: &[(&str, &Placeable, Pose)]) -> Part {
     let mut root = Program::new();
     let mut shelf = Shelf::default();
     for (name, placeable, pose) in placed {

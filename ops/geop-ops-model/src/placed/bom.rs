@@ -37,14 +37,13 @@ use geop_core_program::{
     numeric::{ParameterValue, read_parameter_values},
     placed::instance_path,
     reader::Reader,
-    values::Design,
 };
 use std::collections::HashMap;
 
 use geop_core_editor::output::Bounded;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    scalars::{Ring, Scalar},
+    scalars::Scalar,
 };
 use serde::{Deserialize, Serialize};
 
@@ -177,7 +176,7 @@ struct Info {
     /// make or buy, rather than only an assembly of others.
     own_bodies: bool,
     /// The mass of its own bodies, or why it could not be computed.
-    own_mass: Result<Design, String>,
+    own_mass: Result<Scalar, String>,
 }
 
 /// The parts placed in a part, grouped: one per kind of part, in the order
@@ -242,7 +241,7 @@ struct Builder {
     infos: HashMap<String, Info>,
     /// The mass of all of a part — its own bodies and those of the parts
     /// placed in it — by key.
-    whole: HashMap<String, Result<Design, String>>,
+    whole: HashMap<String, Result<Scalar, String>>,
     shapes: Shapes,
 }
 
@@ -266,11 +265,11 @@ impl Builder {
         let mut thickness: Vec<f64> = bodies.iter().filter_map(|s| s.thickness()).collect();
         thickness.sort_by(f64::total_cmp);
         thickness.dedup();
-        let mut own_mass = Ok(Design::ZERO);
+        let mut own_mass = Ok(Scalar::ZERO);
         for solid in &bodies {
             own_mass =
                 own_mass.and_then(
-                    |sum: Design| match solid.mass_properties(&mut self.shapes) {
+                    |sum: Scalar| match solid.mass_properties(&mut self.shapes) {
                         Ok(p) => Ok(sum.add(p.mass)),
                         Err(e) => Err(format!("the mass of {}: {e}", solid.name)),
                     },
@@ -296,7 +295,7 @@ impl Builder {
         key: &str,
         reader: &Reader,
         file: &str,
-    ) -> GeopResult<Result<Design, String>> {
+    ) -> GeopResult<Result<Scalar, String>> {
         if let Some(mass) = self.whole.get(key) {
             return Ok(mass.clone());
         }
@@ -316,7 +315,7 @@ impl Builder {
         key: &str,
         level: usize,
         placements: Vec<String>,
-        unit_mass: &Result<Design, String>,
+        unit_mass: &Result<Scalar, String>,
     ) -> Line {
         let quantity = placements.len() as u64;
         let info = &self.infos[key];
@@ -426,8 +425,8 @@ impl Builder {
 }
 
 /// `n` times `m`.
-fn times(n: u64, m: Design) -> Design {
-    Design::from_i64(n as i64).mul(m)
+fn times(n: u64, m: Scalar) -> Scalar {
+    Scalar::from_i64(n as i64).mul(m)
 }
 
 /// Adds `more` to a line's quantity, and its total with it.

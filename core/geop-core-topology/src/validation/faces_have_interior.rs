@@ -1,5 +1,5 @@
 use crate::{Model, contains::face::face_interior_point, validation::ValidationParameters};
-use geop_core_math::{geop_error::GeopError, scalars::Scalar};
+use geop_core_math::geop_error::GeopError;
 
 /// Fixed seed for the ray casting behind [`face_interior_point`]. It retries
 /// until it finds a ray grazing nothing, so the answer is seed-independent
@@ -20,10 +20,10 @@ const SEED: u64 = 0x1A7E_1D0F_0000_0001;
 /// and the operations that create them (a face split along an edge that
 /// already coincides with a boundary) are exactly what the fast sweep runs
 /// after. Catching it here means the sweep that produces one also reports it.
-pub fn check_faces_have_interior<S: Scalar>(
-    params: &ValidationParameters<S>,
+pub fn check_faces_have_interior(
+    params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
 ) {
     for &face_id in model.faces.keys() {
         if let Err(e) = face_interior_point(

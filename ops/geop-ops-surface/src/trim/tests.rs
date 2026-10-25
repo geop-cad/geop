@@ -1,6 +1,6 @@
 //! Trimming a flat square with a face of a box standing across it.
 
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
+use geop_core_math::scalars::Scalar;
 use geop_lib_sweep::shapes::block;
 use geop_ops_model::NamedModel;
 use geop_ops_model::testing::apply_to_model;
@@ -15,7 +15,7 @@ use geop_ops_model::testing::assert_valid_sheets;
 /// The flat square at `z = 1` and a box beside it from `x = 0.5`, whose
 /// face there stands across the square, its normal along `-x`; returns
 /// that face's name.
-fn square_and_wall() -> (NamedModel<S>, String) {
+fn square_and_wall() -> (NamedModel, String) {
     let (mut part, _) = square_sheet();
     let wall = block(&mut part, "w", [0.5, -1.0, 0.0], [2.0, 2.0, 2.0]);
     let face = part
@@ -28,14 +28,14 @@ fn square_and_wall() -> (NamedModel<S>, String) {
             let plane = surface.as_plane().unwrap().unwrap();
             plane
                 .signed_distance(&v3(0.5, 0., 0.))
-                .could_be_equal(S::ZERO)
+                .could_be_equal(Scalar::ZERO)
         })
         .unwrap();
     let name = part.name_of(face).unwrap().to_string();
     (part, name)
 }
 
-fn trimmed(part: NamedModel<S>, tool: &str, keep: TrimKeep) -> GeopResult<NamedModel<S>> {
+fn trimmed(part: NamedModel, tool: &str, keep: TrimKeep) -> GeopResult<NamedModel> {
     let args = TrimSurfaceArgs {
         face: named("boundary(b)"),
         tool: named(tool),
@@ -57,7 +57,8 @@ fn trim_a_square_with_a_face() {
         for c in part.topology().iterate_face_coedges(face) {
             let x = part.topology().coedge_start_vertex(c).unwrap().point[0];
             assert!(
-                !x.definitely_less(S::from_f64(from)) && !x.definitely_greater(S::from_f64(to)),
+                !x.definitely_less(Scalar::from_f64(from))
+                    && !x.definitely_greater(Scalar::from_f64(to)),
                 "{keep:?}: {x:?}"
             );
         }

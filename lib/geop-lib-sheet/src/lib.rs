@@ -261,22 +261,22 @@ const POINTS_PER_PIECE: usize = 16;
 
 /// A curve recognised for what it is, in its own coordinates (the plane
 /// `z = 0`).
-enum Piece<S: Scalar> {
-    Line(Vector3<S>, Vector3<S>),
+enum Piece {
+    Line(Vector3, Vector3),
     /// Counter-clockwise around `center` from `start` to `end` — all of it
     /// if they coincide.
     Arc {
-        center: Vector3<S>,
-        radius: S,
-        start: Vector3<S>,
-        end: Vector3<S>,
+        center: Vector3,
+        radius: Scalar,
+        start: Vector3,
+        end: Vector3,
     },
     Other(Vec<P>),
 }
 
 /// `curve` recognised: a line or an arc where it is one exactly (see
 /// [`NurbCurve3D::as_line`], [`NurbCurve3D::as_arc`]), else points of it.
-fn piece<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<Piece<S>> {
+fn piece(curve: &NurbCurve2D) -> GeopResult<Piece> {
     let lifted = curve.lifted()?;
     let (t0, t1) = lifted.domain();
     if lifted.as_line()?.is_some() {
@@ -303,8 +303,8 @@ fn piece<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<Piece<S>> {
             let t = match k {
                 k if k == POINTS_PER_PIECE => b,
                 k => {
-                    let f = S::from_f64(k as f64 / POINTS_PER_PIECE as f64);
-                    S::fraction(a, b, f)
+                    let f = Scalar::from_f64(k as f64 / POINTS_PER_PIECE as f64);
+                    Scalar::fraction(a, b, f)
                 }
             };
             let p = piece.evaluate(t)?;
@@ -317,11 +317,11 @@ fn piece<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<Piece<S>> {
 /// `a` and `b` as one, if they continue each other: two lines along one
 /// line meeting at an end, or two arcs of one circle, one starting where
 /// the other ends.
-fn join<S: Scalar>(a: &Piece<S>, b: &Piece<S>) -> Option<Piece<S>> {
+fn join(a: &Piece, b: &Piece) -> Option<Piece> {
     match (a, b) {
         (Piece::Line(a0, a1), Piece::Line(b0, b1)) => {
             let (da, db) = (a1.sub(a0), b1.sub(b0));
-            if !da.prod_cross(&db)[2].could_be_equal(S::ZERO) {
+            if !da.prod_cross(&db)[2].could_be_equal(Scalar::ZERO) {
                 return None;
             }
             let ends = [
@@ -337,7 +337,7 @@ fn join<S: Scalar>(a: &Piece<S>, b: &Piece<S>) -> Option<Piece<S>> {
                     && far_a
                         .sub(near_a)
                         .prod_dot(&far_b.sub(near_b))
-                        .definitely_less(S::ZERO))
+                        .definitely_less(Scalar::ZERO))
                 .then_some(Piece::Line(*far_a, *far_b))
             })
         }
@@ -355,7 +355,7 @@ fn join<S: Scalar>(a: &Piece<S>, b: &Piece<S>) -> Option<Piece<S>> {
                 end: eb,
             },
         ) if ca.could_be_equal(cb) && ra.could_be_equal(*rb) => {
-            let arc = |start: &Vector3<S>, end: &Vector3<S>| Piece::Arc {
+            let arc = |start: &Vector3, end: &Vector3| Piece::Arc {
                 center: ca.union(cb),
                 radius: ra.union(*rb),
                 start: *start,
@@ -384,12 +384,12 @@ pub fn decimal(x: f64, places: usize) -> String {
 /// coordinates at `scale`: each a line, an arc or a circle where it is one
 /// exactly, those continuing each other on one layer joined, and every
 /// other curve a polyline through points of it.
-pub fn strokes_of<S: Scalar>(
-    curves: &[(Layer, &NurbCurve2D<S>)],
+pub fn strokes_of(
+    curves: &[(Layer, &NurbCurve2D)],
     place: &impl Fn(P) -> P,
     scale: f64,
 ) -> GeopResult<Vec<Stroke>> {
-    let mut pieces: Vec<(Layer, Piece<S>)> = curves
+    let mut pieces: Vec<(Layer, Piece)> = curves
         .iter()
         .map(|(layer, curve)| Ok((*layer, piece(curve)?)))
         .collect::<GeopResult<_>>()?;
@@ -422,7 +422,7 @@ pub fn strokes_of<S: Scalar>(
         Ok(Step::Again)
     })?
     .done("joining the strokes that continue each other")?;
-    let at = |p: &Vector3<S>| place([p[0].to_f64(), p[1].to_f64()]);
+    let at = |p: &Vector3| place([p[0].to_f64(), p[1].to_f64()]);
     Ok(pieces
         .into_iter()
         .map(|(layer, piece)| {

@@ -20,7 +20,7 @@ use geop_core_math::{
     vector::Vector3,
     with_context,
 };
-use geop_core_program::{element::PickedElement, reader::Reader, values::Design};
+use geop_core_program::{element::PickedElement, reader::Reader};
 use geop_core_topology::{CoedgeGeometry, FaceId};
 use serde::{Deserialize, Serialize};
 
@@ -96,7 +96,7 @@ impl MateEntity {
     /// - A datum — a frame, an axis, a plane: its own.
     ///
     /// Where the frame sits is a free choice, so it is sharp.
-    pub fn frame(&self, reader: &Reader) -> GeopResult<CoordinateSystem<Design>> {
+    pub fn frame(&self, reader: &Reader) -> GeopResult<CoordinateSystem> {
         let ctx = with_context!("the frame on {}", self.label());
         let inside = match self.part() {
             "" => reader.clone(),
@@ -109,11 +109,7 @@ impl MateEntity {
 
 /// The frame `on` gives in the part `reader` reads, put at `at` (see
 /// [`MateEntity::frame`]).
-fn frame_on(
-    reader: &Reader,
-    on: &Selected,
-    at: Option<&Selected>,
-) -> GeopResult<CoordinateSystem<Design>> {
+fn frame_on(reader: &Reader, on: &Selected, at: Option<&Selected>) -> GeopResult<CoordinateSystem> {
     let shape = on.shape(reader)?;
     if let Some(frame) = shape.frame {
         return Ok(frame);
@@ -128,7 +124,7 @@ fn frame_on(
         Some(anchor) => Ok(anchor),
         None => middle_of(reader, on),
     };
-    let along = |axis: &Axis<Design>| -> GeopResult<CoordinateSystem<Design>> {
+    let along = |axis: &Axis| -> GeopResult<CoordinateSystem> {
         frame_along(axis.project(&near()?).sharpen(), &axis.direction)
     };
     if let Some(plane) = &shape.plane {
@@ -160,7 +156,7 @@ fn frame_on(
 /// any other edge — of its parameter, not its length — and of a face the
 /// middle of the box round its edges, in its own surface. Where a frame
 /// sits when it sits nowhere else: a free choice, so sharp.
-fn middle_of(reader: &Reader, element: &Selected) -> GeopResult<Vector3<Design>> {
+fn middle_of(reader: &Reader, element: &Selected) -> GeopResult<Vector3> {
     let ctx = with_context!("the middle of {}", element.picked().label());
     if let Selected::Face(face) = element {
         let found = reader.retrieve_element(face).with_context(ctx)?;
@@ -182,9 +178,9 @@ fn middle_of(reader: &Reader, element: &Selected) -> GeopResult<Vector3<Design>>
 /// The middle of the box round the edges of `face` — each edge's own
 /// extremes, not its control points' — or the point of a bare vertex face.
 /// In the part's own frame.
-fn face_middle<S: Scalar>(named: &NamedModel<S>, face: FaceId) -> GeopResult<Vector3<S>> {
+fn face_middle(named: &NamedModel, face: FaceId) -> GeopResult<Vector3> {
     let model = named.topology();
-    let mut bounds: Option<[S; 3]> = None;
+    let mut bounds: Option<[Scalar; 3]> = None;
     for coedge in model.iterate_face_coedges(face) {
         let spans = match model.get_coedge(coedge)?.geometry {
             CoedgeGeometry::Edge(edge) => model

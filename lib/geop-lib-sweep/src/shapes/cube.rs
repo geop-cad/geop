@@ -19,11 +19,11 @@ use geop_ops_model::{NamedModel, Namer, Profile};
 /// Named as the operation `cube(name)`, after that square: its corners
 /// `p0..p3` (counter-clockwise from `min` as seen from above) and sides
 /// `c0..c3`, see [`extrude`].
-pub fn cube_solid<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn cube_solid(
+    model: &mut NamedModel,
     name: &str,
-    min: Vector3<S>,
-    max: Vector3<S>,
+    min: Vector3,
+    max: Vector3,
 ) -> GeopResult<SolidId> {
     let (x0, y0, z0) = (min[0], min[1], max[2]);
     let (x1, y1) = (max[0], max[1]);
@@ -32,18 +32,18 @@ pub fn cube_solid<S: Scalar>(
     // the box's own `x`/`y` extents, so `outer` is the unit square) and `w`
     // is the extrude direction.
     let origin = Vector3::from_array([x0, y0, z0]);
-    let u = Vector3::from_array([x1.sub(x0), S::ZERO, S::ZERO]);
-    let v = Vector3::from_array([S::ZERO, y1.sub(y0), S::ZERO]);
-    let w = Vector3::from_array([S::ZERO, S::ZERO, min[2].sub(z0)]);
+    let u = Vector3::from_array([x1.sub(x0), Scalar::ZERO, Scalar::ZERO]);
+    let v = Vector3::from_array([Scalar::ZERO, y1.sub(y0), Scalar::ZERO]);
+    let w = Vector3::from_array([Scalar::ZERO, Scalar::ZERO, min[2].sub(z0)]);
     let coordinate_system = CoordinateSystem::try_new(origin, u, v, w)?;
 
     // CCW in `(u, v)`, so the bottom cap's outward (downward) normal comes
     // out right once `extrude` sweeps it upward.
     let outer = [
-        Vector2::from_array([S::ZERO, S::ZERO]),
-        Vector2::from_array([S::ONE, S::ZERO]),
-        Vector2::from_array([S::ONE, S::ONE]),
-        Vector2::from_array([S::ZERO, S::ONE]),
+        Vector2::from_array([Scalar::ZERO, Scalar::ZERO]),
+        Vector2::from_array([Scalar::ONE, Scalar::ZERO]),
+        Vector2::from_array([Scalar::ONE, Scalar::ONE]),
+        Vector2::from_array([Scalar::ZERO, Scalar::ONE]),
     ];
 
     let namer = Namer::new("cube", name)?;
@@ -52,8 +52,8 @@ pub fn cube_solid<S: Scalar>(
         &namer,
         Some(&namer.root()),
         &coordinate_system,
-        S::ZERO,
-        S::ONE,
+        Scalar::ZERO,
+        Scalar::ONE,
         &[SweepLoop::plain(Profile::closed(polygon(&outer)?))],
     )?;
     Ok(built.solid.expect("extruded as a solid"))
@@ -63,7 +63,7 @@ pub fn cube_solid<S: Scalar>(
 mod tests {
     use super::cube_solid;
     use crate::common::testing::render;
-    use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
+    use geop_core_math::{scalars::Scalar, vector::Vector3};
     use geop_core_topology::contains::shell::{PointClassification, shell_contains};
     use geop_ops_model::NamedModel;
 
@@ -71,13 +71,14 @@ mod tests {
     const MIN_SUBDIVISION_SIZE: f64 = 1e-3;
     const SEED: u64 = 7;
 
-    fn check_cube_has_expected_entity_counts<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
+    #[test]
+    fn cube_has_expected_entity_counts() {
+        let mut model = NamedModel::new();
         cube_solid(
             &mut model,
             "t1",
-            Vector3::from_array([S::ZERO; 3]),
-            Vector3::from_array([S::ONE; 3]),
+            Vector3::from_array([Scalar::ZERO; 3]),
+            Vector3::from_array([Scalar::ONE; 3]),
         )
         .unwrap();
         let topology = model.topology();
@@ -99,84 +100,75 @@ mod tests {
             assert_eq!(topology.coedges_of_edge(*edge_id).len(), 2);
         }
     }
-    #[test]
-    fn cube_has_expected_entity_counts() {
-        for_all_scalars!(check_cube_has_expected_entity_counts);
-    }
 
-    fn check_cube_center_is_inside<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
+    #[test]
+    fn cube_center_is_inside() {
+        let mut model = NamedModel::new();
         let solid_id = cube_solid(
             &mut model,
             "t2",
-            Vector3::from_array([S::ZERO; 3]),
-            Vector3::from_array([S::ONE; 3]),
+            Vector3::from_array([Scalar::ZERO; 3]),
+            Vector3::from_array([Scalar::ONE; 3]),
         )
         .unwrap();
         let topology = model.topology();
         let shell_id = topology.get_solid(solid_id).unwrap().shells[0];
-        let p = Vector3::from_array([S::from_f64(0.5); 3]);
+        let p = Vector3::from_array([Scalar::from_f64(0.5); 3]);
         assert_eq!(
             shell_contains(
                 topology,
                 shell_id,
                 p,
                 MAX,
-                S::from_f64(MIN_SUBDIVISION_SIZE),
+                Scalar::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),
             PointClassification::Inside
         );
     }
-    #[test]
-    fn cube_center_is_inside() {
-        for_all_scalars!(check_cube_center_is_inside);
-    }
 
-    fn check_cube_outside_point_is_outside<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
+    #[test]
+    fn cube_outside_point_is_outside() {
+        let mut model = NamedModel::new();
         let solid_id = cube_solid(
             &mut model,
             "t3",
-            Vector3::from_array([S::ZERO; 3]),
-            Vector3::from_array([S::ONE; 3]),
+            Vector3::from_array([Scalar::ZERO; 3]),
+            Vector3::from_array([Scalar::ONE; 3]),
         )
         .unwrap();
         let topology = model.topology();
         let shell_id = topology.get_solid(solid_id).unwrap().shells[0];
-        let p = Vector3::from_array([S::from_f64(-5.0), S::from_f64(0.5), S::from_f64(0.5)]);
+        let p = Vector3::from_array([
+            Scalar::from_f64(-5.0),
+            Scalar::from_f64(0.5),
+            Scalar::from_f64(0.5),
+        ]);
         assert_eq!(
             shell_contains(
                 topology,
                 shell_id,
                 p,
                 MAX,
-                S::from_f64(MIN_SUBDIVISION_SIZE),
+                Scalar::from_f64(MIN_SUBDIVISION_SIZE),
                 SEED
             )
             .unwrap(),
             PointClassification::Outside
         );
     }
-    #[test]
-    fn cube_outside_point_is_outside() {
-        for_all_scalars!(check_cube_outside_point_is_outside);
-    }
 
-    fn check_rasterize_topology_cube<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
+    #[test]
+    fn rasterize_topology_cube() {
+        let mut model = NamedModel::new();
         cube_solid(
             &mut model,
             "t4",
-            Vector3::from_array([S::ZERO; 3]),
-            Vector3::from_array([S::ONE; 3]),
+            Vector3::from_array([Scalar::ZERO; 3]),
+            Vector3::from_array([Scalar::ONE; 3]),
         )
         .unwrap();
         render(model.topology(), 8, "cube_topology.html");
-    }
-    #[test]
-    fn rasterize_topology_cube() {
-        for_all_scalars!(check_rasterize_topology_cube);
     }
 }

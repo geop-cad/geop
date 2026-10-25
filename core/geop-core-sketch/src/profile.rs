@@ -87,7 +87,7 @@ pub enum Shape {
 /// Samples per span of a curved piece, for drawing.
 const SAMPLES: usize = 16;
 
-impl<S: Scalar> Sketch<S> {
+impl Sketch {
     /// The one area the sketch's curves enclose, with its holes.
     ///
     /// One sketch is one area to extrude or revolve: a sketch of several
@@ -274,7 +274,7 @@ impl<S: Scalar> Sketch<S> {
         }
         // Nesting and winding are questions about the sketch as drawn.
         let drawn = Enclosure::as_drawn(self);
-        let curves: Vec<Vec<NurbCurve2D<S>>> = loops
+        let curves: Vec<Vec<NurbCurve2D>> = loops
             .iter()
             .map(|l| {
                 Ok(l.to_nurbs(self, &drawn)?
@@ -470,7 +470,7 @@ pub struct Piece<C> {
 }
 
 /// A piece of a planar sketch's profile loop.
-pub type ProfilePiece<S> = Piece<NurbCurve2D<S>>;
+pub type ProfilePiece = Piece<NurbCurve2D>;
 
 impl<C> Piece<C> {
     /// The piece's stable name within its sketch: `c5` for a curve's first
@@ -515,11 +515,7 @@ impl ProfileLoop {
     ///
     /// Also used for an open chain (a revolve profile): the pieces then
     /// simply don't close up, and the last one's `end` is the chain's end.
-    pub fn to_nurbs<D: Scalar, S: Scalar>(
-        &self,
-        sketch: &Sketch<D>,
-        geometry: &Enclosure<S>,
-    ) -> GeopResult<Vec<ProfilePiece<S>>> {
+    pub fn to_nurbs(&self, sketch: &Sketch, geometry: &Enclosure) -> GeopResult<Vec<ProfilePiece>> {
         let mut out = Vec::new();
         for edge in &self.edges {
             let curve = edge.curve;
@@ -560,7 +556,7 @@ impl ProfileLoop {
         {
             // A closed curve of a single piece: split it at its middle, which
             // becomes the curve's joint 1 whichever way the loop runs.
-            let (a, b) = only.curve.split(S::ONE.div(S::TWO)?)?;
+            let (a, b) = only.curve.split(Scalar::ONE.div(Scalar::TWO)?)?;
             let middle = ProfileJoint::Split {
                 curve: only.source,
                 index: 1,
@@ -593,7 +589,7 @@ impl ProfileLoop {
     }
 
     /// A dense polyline along the loop, as drawn — for drawing.
-    pub fn polyline<S: Scalar>(&self, sketch: &Sketch<S>) -> GeopResult<Vec<Vector2<S>>> {
+    pub fn polyline(&self, sketch: &Sketch) -> GeopResult<Vec<Vector2>> {
         let mut out = Vec::new();
         for edge in &self.edges {
             let mut pts = curve_polyline(sketch, edge.curve)?;
@@ -610,10 +606,7 @@ impl ProfileLoop {
 
 /// The joints at a sketch curve's start and end: its end points, or for a
 /// circle, which has none, its seam (joint 0 of its own split points).
-fn curve_joints<S: Scalar>(
-    sketch: &Sketch<S>,
-    curve: CurveId,
-) -> GeopResult<(ProfileJoint, ProfileJoint)> {
+fn curve_joints(sketch: &Sketch, curve: CurveId) -> GeopResult<(ProfileJoint, ProfileJoint)> {
     Ok(match sketch.curve(curve)?.endpoints() {
         Some((s, e)) => (ProfileJoint::Point(s), ProfileJoint::Point(e)),
         None => {
@@ -626,10 +619,7 @@ fn curve_joints<S: Scalar>(
 /// Points along a curve as drawn, from its start to its end (a circle
 /// starts and ends at angle 0) — sampled from its NURBS pieces, dense enough
 /// for drawing.
-pub fn curve_polyline<S: Scalar>(
-    sketch: &Sketch<S>,
-    curve: CurveId,
-) -> GeopResult<Vec<Vector2<S>>> {
+pub fn curve_polyline(sketch: &Sketch, curve: CurveId) -> GeopResult<Vec<Vector2>> {
     let pieces = curve_nurbs(sketch, &Enclosure::as_drawn(sketch), curve)?;
     polyline(&pieces, NurbCurve2D::evaluate)
 }
@@ -638,9 +628,9 @@ pub fn curve_polyline<S: Scalar>(
 /// the one before ends, as `evaluate` gives them: a straight piece by its
 /// ends, any other by `SAMPLES` per span of its control points — dense
 /// enough to draw it.
-pub(crate) fn polyline<S: Scalar, const D: usize, P>(
-    pieces: &[NurbCurve<S, D>],
-    evaluate: impl Fn(&NurbCurve<S, D>, S) -> GeopResult<P>,
+pub(crate) fn polyline<const D: usize, P>(
+    pieces: &[NurbCurve<D>],
+    evaluate: impl Fn(&NurbCurve<D>, Scalar) -> GeopResult<P>,
 ) -> GeopResult<Vec<P>> {
     let mut out = Vec::new();
     for piece in pieces {
@@ -652,7 +642,10 @@ pub(crate) fn polyline<S: Scalar, const D: usize, P>(
         // Each piece's last sample is the next piece's first.
         out.pop();
         for i in 0..=spans {
-            out.push(evaluate(piece, S::from_ratio(i as i64, spans as i64)?)?);
+            out.push(evaluate(
+                piece,
+                Scalar::from_ratio(i as i64, spans as i64)?,
+            )?);
         }
     }
     Ok(out)
@@ -664,13 +657,13 @@ fn spline_degree(n: usize) -> usize {
 }
 
 /// Clamped uniform knot vector on `[0, 1]`.
-fn spline_knots<S: Scalar>(n: usize, degree: usize) -> GeopResult<Vec<S>> {
+fn spline_knots(n: usize, degree: usize) -> GeopResult<Vec<Scalar>> {
     let spans = n - degree;
-    let mut knots = vec![S::ZERO; degree + 1];
+    let mut knots = vec![Scalar::ZERO; degree + 1];
     for i in 1..spans {
-        knots.push(S::from_ratio(i as i64, spans as i64)?);
+        knots.push(Scalar::from_ratio(i as i64, spans as i64)?);
     }
-    knots.extend(std::iter::repeat_n(S::ONE, degree + 1));
+    knots.extend(std::iter::repeat_n(Scalar::ONE, degree + 1));
     Ok(knots)
 }
 
@@ -678,42 +671,42 @@ fn spline_knots<S: Scalar>(n: usize, degree: usize) -> GeopResult<Vec<S>> {
 /// `geometry` — how many pieces, from the sketch as drawn, which is design
 /// data, so the pieces and their names do not depend on how precisely the
 /// geometry is known.
-pub fn curve_nurbs<D: Scalar, S: Scalar>(
-    sketch: &Sketch<D>,
-    geometry: &Enclosure<S>,
+pub fn curve_nurbs(
+    sketch: &Sketch,
+    geometry: &Enclosure,
     curve: CurveId,
-) -> GeopResult<Vec<NurbCurve2D<S>>> {
+) -> GeopResult<Vec<NurbCurve2D>> {
     let at = |p: &PointId| geometry.points[p];
     let param = || geometry.params[&curve];
-    let one_half = S::ONE.div(S::TWO)?;
+    let one_half = Scalar::ONE.div(Scalar::TWO)?;
     match &sketch.curve(curve)?.kind {
         CurveKind::Line { start, end } => Ok(vec![NurbCurve2D::line(at(start), at(end))?]),
         CurveKind::Arc { start, end, sweep } => {
             let (s, e) = (at(start), at(end));
-            if sweep.is_sharp() && sweep.could_be_equal(D::ZERO) {
+            if sweep.is_sharp() && sweep.could_be_equal(Scalar::ZERO) {
                 return Ok(vec![NurbCurve2D::line(s, e)?]);
             }
             // As many pieces as quarter turns the sweep spans, one that could
             // be exactly `k` of them spanning `k`: counted on the sweep as
             // drawn, which is design data, so the pieces' names do not
             // depend on how precisely it is known.
-            let quarter = D::PI.div(D::TWO)?;
+            let quarter = Scalar::PI.div(Scalar::TWO)?;
             let pieces = (1..=4)
                 .find(|&k| {
                     !sweep
                         .abs()
-                        .definitely_greater(quarter.mul(D::from_i64(k as i64)))
+                        .definitely_greater(quarter.mul(Scalar::from_i64(k as i64)))
                 })
                 .unwrap_or(4);
-            let delta = param().div(S::from_i64(pieces as i64))?;
-            let half = delta.div(S::TWO)?;
+            let delta = param().div(Scalar::from_i64(pieces as i64))?;
+            let half = delta.div(Scalar::TWO)?;
             // Piece boundaries: the start turned about the center by
             // multiples of `delta`. Only needed for more than one piece,
             // where the arc turns by more than a quarter and so has a center
             // at a moderate distance.
             let mut ends = vec![s];
             if pieces > 1 {
-                let whole = param().div(S::TWO)?;
+                let whole = param().div(Scalar::TWO)?;
                 let chord = e.sub(&s);
                 let length = chord.norm();
                 let left = chord.normalize()?.perp();
@@ -721,7 +714,7 @@ pub fn curve_nurbs<D: Scalar, S: Scalar>(
                 let offset = length.mul(one_half).mul(whole.cos()).div(whole.sin())?;
                 let center = mid.add(&left.prod_scalar(offset));
                 ends.extend((1..pieces).map(|j| {
-                    let angle = delta.mul(S::from_i64(j as i64));
+                    let angle = delta.mul(Scalar::from_i64(j as i64));
                     center.add(&s.sub(&center).rotate(angle.cos(), angle.sin()))
                 }));
             }
@@ -745,12 +738,12 @@ pub fn curve_nurbs<D: Scalar, S: Scalar>(
         CurveKind::Circle { center, .. } => {
             let c = at(center);
             let r = param();
-            let point = |x: S, y: S| c.add(&Vector2::from_array([x, y]));
+            let point = |x: Scalar, y: Scalar| c.add(&Vector2::from_array([x, y]));
             let q = [
-                point(r, S::ZERO),
-                point(S::ZERO, r),
-                point(r.neg(), S::ZERO),
-                point(S::ZERO, r.neg()),
+                point(r, Scalar::ZERO),
+                point(Scalar::ZERO, r),
+                point(r.neg(), Scalar::ZERO),
+                point(Scalar::ZERO, r.neg()),
             ];
             let corners = [
                 point(r, r),
@@ -775,7 +768,7 @@ pub fn curve_nurbs<D: Scalar, S: Scalar>(
                     degree,
                     control_points
                         .iter()
-                        .map(|p| at(p).homogeneous(S::ONE))
+                        .map(|p| at(p).homogeneous(Scalar::ONE))
                         .collect(),
                     spline_knots(n, degree)?,
                 )?]);
@@ -787,9 +780,9 @@ pub fn curve_nurbs<D: Scalar, S: Scalar>(
                 control_points
                     .iter()
                     .zip(&shape.weights)
-                    .map(|(p, w)| at(p).homogeneous(w.cast()))
+                    .map(|(p, &w)| at(p).homogeneous(w))
                     .collect(),
-                shape.knots.iter().map(|k| k.cast()).collect(),
+                shape.knots.clone(),
             )?;
             Ok(vec![curve.with_unit_domain()?])
         }
@@ -801,26 +794,26 @@ pub fn curve_nurbs<D: Scalar, S: Scalar>(
 /// How far `loops`' control points spread: the diagonal of their bounding
 /// box — how long a ray has to be to leave every loop behind, and the
 /// length the probe offsets below are measured against.
-fn extent_of<S: Scalar>(loops: &[Vec<NurbCurve2D<S>>]) -> GeopResult<S> {
+fn extent_of(loops: &[Vec<NurbCurve2D>]) -> GeopResult<Scalar> {
     let bounds = union_aabb(loops.iter().flatten().map(NurbCurve::aabb));
-    let span = |k: usize| bounds.map_or(S::ZERO, |b| b[k].upper().sub(b[k].lower()));
+    let span = |k: usize| bounds.map_or(Scalar::ZERO, |b| b[k].upper().sub(b[k].lower()));
     let extent = span(0).mul(span(0)).add(span(1).mul(span(1))).sqrt()?;
-    if !extent.definitely_greater(S::ZERO) {
+    if !extent.definitely_greater(Scalar::ZERO) {
         return Err(GeopError::new("the profile's loops have no extent"));
     }
     Ok(extent)
 }
 
 /// The point halfway along `curve` — a probe, chosen freely, so sharp.
-fn midpoint<S: Scalar>(curve: &NurbCurve2D<S>) -> GeopResult<Vector2<S>> {
+fn midpoint(curve: &NurbCurve2D) -> GeopResult<Vector2> {
     Ok(curve.evaluate(curve.mid_parameter()?)?.sharpen())
 }
 
 /// A segment from `from` in direction `dir`, long enough to leave a profile
 /// of size `extent` behind.
-fn ray<S: Scalar>(from: &Vector2<S>, dir: &Vector2<S>, extent: S) -> GeopResult<NurbCurve2D<S>> {
+fn ray(from: &Vector2, dir: &Vector2, extent: Scalar) -> GeopResult<NurbCurve2D> {
     let to = from
-        .add(&dir.prod_scalar(S::from_i64(3).mul(extent)))
+        .add(&dir.prod_scalar(Scalar::from_i64(3).mul(extent)))
         .sharpen();
     NurbCurve2D::line(*from, to)
 }
@@ -836,18 +829,14 @@ fn ray<S: Scalar>(from: &Vector2<S>, dir: &Vector2<S>, extent: S) -> GeopResult<
 /// directions walk the golden angle, so a handful of them are spread evenly
 /// around the circle without ever repeating. A direction is a free choice,
 /// so it is sharp.
-fn loop_contains<S: Scalar>(
-    curves: &[NurbCurve2D<S>],
-    probe: &Vector2<S>,
-    extent: S,
-) -> GeopResult<bool> {
-    let min_subdivision = S::from_ratio(1, MIN_SUBDIVISION)?;
+fn loop_contains(curves: &[NurbCurve2D], probe: &Vector2, extent: Scalar) -> GeopResult<bool> {
+    let min_subdivision = Scalar::from_ratio(1, MIN_SUBDIVISION)?;
     // The golden angle, `π (3 - √5)`.
-    let golden = S::PI.mul(S::from_i64(3).sub(S::from_i64(5).sqrt()?));
+    let golden = Scalar::PI.mul(Scalar::from_i64(3).sub(Scalar::from_i64(5).sqrt()?));
     let mut last_rejection = String::new();
     // Directions tried in turn until one is clear.
     let found = attempts(MAX_RAY_ATTEMPTS, |&k| -> GeopResult<_> {
-        let angle = golden.mul(S::from_i64(k as i64));
+        let angle = golden.mul(Scalar::from_i64(k as i64));
         let dir = Vector2::from_array([angle.cos(), angle.sin()]).sharpen();
         let ray = ray(probe, &dir, extent)?;
         let mut crossings = 0usize;
@@ -868,7 +857,7 @@ fn loop_contains<S: Scalar>(
                 };
             let (t0, t1) = curve.domain();
             for (along_ray, along_curve) in hits {
-                if !along_ray.definitely_greater(S::ZERO) {
+                if !along_ray.definitely_greater(Scalar::ZERO) {
                     // At the probe itself: it lies on this loop, which the
                     // caller already knows (it picked a point of another
                     // one), so it is not a crossing of anything.
@@ -905,22 +894,26 @@ fn loop_contains<S: Scalar>(
 /// two sides genuinely disagree — that disagreement is the property the
 /// answer rests on, so it is verified rather than assumed, and a loop with a
 /// feature narrower than the first step simply takes another halving.
-fn turns_counter_clockwise<S: Scalar>(curves: &[NurbCurve2D<S>], extent: S) -> GeopResult<bool> {
+fn turns_counter_clockwise(curves: &[NurbCurve2D], extent: Scalar) -> GeopResult<bool> {
     let curve = &curves[0];
     let mid = curve.mid_parameter()?;
     let point = curve.evaluate(mid)?;
     let tangent = curve.tangent(mid)?;
     let left = tangent.perp();
-    let found = halve(extent.div(S::from_i64(64))?, 24, |&step| -> GeopResult<_> {
-        let at = |sign: S| point.add(&left.prod_scalar(step.mul(sign))).sharpen();
-        let inside_left = loop_contains(curves, &at(S::ONE), extent)?;
-        let inside_right = loop_contains(curves, &at(S::ONE.neg()), extent)?;
-        Ok(if inside_left != inside_right {
-            Probe::Found(inside_left)
-        } else {
-            Probe::Next
-        })
-    })?;
+    let found = halve(
+        extent.div(Scalar::from_i64(64))?,
+        24,
+        |&step| -> GeopResult<_> {
+            let at = |sign: Scalar| point.add(&left.prod_scalar(step.mul(sign))).sharpen();
+            let inside_left = loop_contains(curves, &at(Scalar::ONE), extent)?;
+            let inside_right = loop_contains(curves, &at(Scalar::ONE.neg()), extent)?;
+            Ok(if inside_left != inside_right {
+                Probe::Found(inside_left)
+            } else {
+                Probe::Next
+            })
+        },
+    )?;
     found.ok_or_else(|| {
         GeopError::new(format!(
             "could not tell which way {curve:?} winds: both sides of it classify the same way"

@@ -37,23 +37,23 @@ use crate::{
 };
 
 /// A bicubic Bézier patch, `b[i][j]` with `i` along its first side.
-pub type Patch<S> = [[Vector3<S>; 4]; 4];
+pub type Patch = [[Vector3; 4]; 4];
 
 /// The shared control points of every patch of a subdivided mesh.
 #[derive(Clone, Debug)]
-pub struct ControlNet<S: Scalar> {
+pub struct ControlNet {
     /// Per vertex: its limit position.
-    pub corner: Vec<Vector3<S>>,
+    pub corner: Vec<Vector3>,
     /// Per directed edge `(v, w)`: the edge point near `v`.
-    pub edge: HashMap<(usize, usize), Vector3<S>>,
+    pub edge: HashMap<(usize, usize), Vector3>,
     /// Per quad, per corner: its interior point.
-    pub interior: Vec<[Vector3<S>; 4]>,
+    pub interior: Vec<[Vector3; 4]>,
 }
 
-impl<S: Scalar> ControlNet<S> {
+impl ControlNet {
     /// The patch of quad `f`, its first side running from its first corner
     /// to the next one.
-    pub fn patch(&self, mesh: &Subdivided<S>, f: usize) -> Patch<S> {
+    pub fn patch(&self, mesh: &Subdivided, f: usize) -> Patch {
         let q = |i: usize| mesh.faces[f][i];
         let l = |i: usize| self.corner[q(i)];
         let e = |a: usize, b: usize| self.edge[&(q(a), q(b))];
@@ -69,7 +69,7 @@ impl<S: Scalar> ControlNet<S> {
 
 /// For every corner of `v`'s fan, how many faces the sector it is in has:
 /// the run of faces around `v` between two sharp edges.
-fn sector_sizes<S: Scalar>(mesh: &Subdivided<S>, v: usize) -> Vec<usize> {
+fn sector_sizes(mesh: &Subdivided, v: usize) -> Vec<usize> {
     let (fan, closed) = &mesh.topology.fans[v];
     let m = fan.len();
     // Between fan[i] and fan[i + 1] lies the edge to fan[i]'s previous
@@ -107,7 +107,7 @@ fn sector_sizes<S: Scalar>(mesh: &Subdivided<S>, v: usize) -> Vec<usize> {
 /// faces: the cross product of its two limit tangents, from the
 /// eigenvector masks of Catmull–Clark subdivision. A free choice of how
 /// long, so it is sharpened.
-fn tangent_normal<S: Scalar>(mesh: &Subdivided<S>, v: usize) -> Vector3<S> {
+fn tangent_normal(mesh: &Subdivided, v: usize) -> Vector3 {
     let fan = &mesh.topology.fans[v].0;
     let n = fan.len();
     let p = &mesh.positions;
@@ -120,8 +120,8 @@ fn tangent_normal<S: Scalar>(mesh: &Subdivided<S>, v: usize) -> Vector3<S> {
             .fold(Vector3::zero(), |sum, (i, &corner)| {
                 let e = p[next(&mesh.faces, corner)].sub(&p[v]);
                 let d = p[mesh.faces[corner.0][(corner.1 + 2) % 4]].sub(&p[v]);
-                let we = S::from_f64(a * trig(angle(i)));
-                let wd = S::from_f64(trig(angle(i)) + trig(angle(i + 1)));
+                let we = Scalar::from_f64(a * trig(angle(i)));
+                let wd = Scalar::from_f64(trig(angle(i)) + trig(angle(i + 1)));
                 sum.add(&e.prod_scalar(we)).add(&d.prod_scalar(wd))
             })
     };
@@ -129,7 +129,7 @@ fn tangent_normal<S: Scalar>(mesh: &Subdivided<S>, v: usize) -> Vector3<S> {
 }
 
 /// The control net of `mesh`'s limit surface (see the module docs).
-pub fn control_net<S: Scalar>(mesh: &Subdivided<S>) -> GeopResult<ControlNet<S>> {
+pub fn control_net(mesh: &Subdivided) -> GeopResult<ControlNet> {
     let p = &mesh.positions;
     let faces = &mesh.faces;
     let topology = &mesh.topology;
@@ -183,7 +183,7 @@ pub fn control_net<S: Scalar>(mesh: &Subdivided<S>) -> GeopResult<ControlNet<S>>
         });
     }
 
-    let mut normals: HashMap<usize, Vector3<S>> = HashMap::new();
+    let mut normals: HashMap<usize, Vector3> = HashMap::new();
     let mut edge = HashMap::new();
     for (&(v, w), &(f, k)) in &topology.directed {
         for (from, to) in [(v, w), (w, v)] {

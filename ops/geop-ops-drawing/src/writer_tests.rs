@@ -1,6 +1,6 @@
 //! Drawings composed and written as DXF and SVG, then read back.
 
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
+use geop_core_math::scalars::Scalar;
 use geop_lib_sheet::{to_dxf, to_svg};
 use geop_lib_sweep::shapes::{cube_solid, revolved_cylinder, v3};
 use geop_ops_model::NamedModel;
@@ -58,7 +58,7 @@ fn svg_group<'a>(svg: &'a str, layer: &str) -> &'a str {
 /// four visible lines, its width and height dimensioned, and a title block.
 #[test]
 fn box_drawing_reads_back() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     cube_solid(&mut part, "box", v3(0.0, 0.0, 0.0), v3(20.0, 10.0, 30.0)).unwrap();
     let args = DrawingArgs {
         views: vec![ViewKind::Front],
@@ -99,13 +99,13 @@ fn box_drawing_reads_back() {
 /// front, a rectangle of two edges and two silhouettes.
 #[test]
 fn cylinder_drawing_has_circle_and_centre_mark() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     revolved_cylinder(
         &mut part,
         "c",
         v3(0.0, 0.0, 0.0),
-        S::from_f64(5.0),
-        S::from_f64(10.0),
+        Scalar::from_f64(5.0),
+        Scalar::from_f64(10.0),
     )
     .unwrap();
     let args = DrawingArgs {

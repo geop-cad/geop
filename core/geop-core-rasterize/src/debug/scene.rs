@@ -8,14 +8,14 @@ use geop_core_math::{
 
 use super::Color10;
 
-fn sample_surface_grid<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    u_min: S,
-    u_max: S,
-    v_min: S,
-    v_max: S,
+fn sample_surface_grid(
+    surface: &NurbSurface3D,
+    u_min: Scalar,
+    u_max: Scalar,
+    v_min: Scalar,
+    v_max: Scalar,
     n: usize,
-) -> GeopResult<Vec<Vector3<S>>> {
+) -> GeopResult<Vec<Vector3>> {
     let mut grid = Vec::with_capacity(n * n);
     for j in 0..n {
         for i in 0..n {
@@ -24,7 +24,7 @@ fn sample_surface_grid<S: Scalar>(
             } else if i == n - 1 {
                 u_max
             } else {
-                let f = S::from_ratio(i as i64, (n - 1) as i64)?;
+                let f = Scalar::from_ratio(i as i64, (n - 1) as i64)?;
                 u_min.add(u_max.sub(u_min).mul(f))
             };
             let v = if j == 0 {
@@ -32,7 +32,7 @@ fn sample_surface_grid<S: Scalar>(
             } else if j == n - 1 {
                 v_max
             } else {
-                let f = S::from_ratio(j as i64, (n - 1) as i64)?;
+                let f = Scalar::from_ratio(j as i64, (n - 1) as i64)?;
                 v_min.add(v_max.sub(v_min).mul(f))
             };
             grid.push(surface.evaluate(u, v)?);
@@ -43,25 +43,25 @@ fn sample_surface_grid<S: Scalar>(
 
 // ── PrimitiveScene ────────────────────────────────────────────────────────────
 
-pub struct PrimitiveScene<S: Scalar> {
-    pub points: Vec<(Vector3<S>, Color10)>,
+pub struct PrimitiveScene {
+    pub points: Vec<(Vector3, Color10)>,
     /// Line segments, as their two ends.
-    pub lines: Vec<([Vector3<S>; 2], Color10)>,
-    pub triangles: Vec<(TriangleFace<S>, Color10)>,
+    pub lines: Vec<([Vector3; 2], Color10)>,
+    pub triangles: Vec<(TriangleFace, Color10)>,
     /// Triangles rendered with alpha blending (`color`, `opacity` in
     /// `[0, 1]`) — e.g. so a face's fill doesn't hide the trim curves,
     /// vertices or labels drawn on top of/behind it.
-    pub triangles_transparent: Vec<(TriangleFace<S>, Color10, f64)>,
+    pub triangles_transparent: Vec<(TriangleFace, Color10, f64)>,
     /// Text labels anchored at a 3-D world position (e.g. an entity's id),
     /// rendered as always-facing-camera HTML overlays via `CSS2DRenderer`.
-    pub labels: Vec<(Vector3<S>, String, Color10)>,
+    pub labels: Vec<(Vector3, String, Color10)>,
     /// Thick tubes (`start`, `end`, `radius`, `color`) — e.g. coordinate
     /// system axes, rendered as solid geometry instead of a `Line`, since a
     /// `THREE.Line`'s width can't be controlled portably across GPUs.
-    pub cylinders: Vec<(Vector3<S>, Vector3<S>, f64, Color10)>,
+    pub cylinders: Vec<(Vector3, Vector3, f64, Color10)>,
 }
 
-impl<S: Scalar> core::fmt::Debug for PrimitiveScene<S> {
+impl core::fmt::Debug for PrimitiveScene {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
@@ -73,7 +73,7 @@ impl<S: Scalar> core::fmt::Debug for PrimitiveScene<S> {
     }
 }
 
-impl<S: Scalar> PrimitiveScene<S> {
+impl PrimitiveScene {
     pub fn new() -> Self {
         Self {
             points: Vec::new(),
@@ -85,49 +85,49 @@ impl<S: Scalar> PrimitiveScene<S> {
         }
     }
 
-    pub fn add_point(&mut self, p: Vector3<S>, c: Color10) {
+    pub fn add_point(&mut self, p: Vector3, c: Color10) {
         self.points.push((p, c));
     }
 
     /// Draw an already-sampled polyline as `n - 1` line segments, skipping
     /// any between consecutive points that could coincide.
-    pub fn add_polyline(&mut self, points: &[Vector3<S>], color: Color10) {
+    pub fn add_polyline(&mut self, points: &[Vector3], color: Color10) {
         for w in points.windows(2) {
-            if !w[1].sub(&w[0]).norm_sq().could_be_equal(S::ZERO) {
+            if !w[1].sub(&w[0]).norm_sq().could_be_equal(Scalar::ZERO) {
                 self.lines.push(([w[0], w[1]], color));
             }
         }
     }
 
-    pub fn add_triangle(&mut self, t: TriangleFace<S>, c: Color10) {
+    pub fn add_triangle(&mut self, t: TriangleFace, c: Color10) {
         self.triangles.push((t, c));
     }
 
     /// Add a triangle rendered with alpha blending — `opacity` in `[0, 1]`
     /// (`0` invisible, `1` opaque).
-    pub fn add_triangle_transparent(&mut self, t: TriangleFace<S>, c: Color10, opacity: f64) {
+    pub fn add_triangle_transparent(&mut self, t: TriangleFace, c: Color10, opacity: f64) {
         self.triangles_transparent.push((t, c, opacity));
     }
 
     /// Add a text label anchored at `pos` in world space — rendered as an
     /// always-facing-camera HTML overlay, colored `c`.
-    pub fn add_label(&mut self, pos: Vector3<S>, text: impl Into<String>, c: Color10) {
+    pub fn add_label(&mut self, pos: Vector3, text: impl Into<String>, c: Color10) {
         self.labels.push((pos, text.into(), c));
     }
 
     /// Add a solid cylindrical tube from `start` to `end`, `radius` wide —
     /// e.g. for drawing thick axes/arrows that stay visibly wide regardless
     /// of GPU line-width support.
-    pub fn add_cylinder(&mut self, start: Vector3<S>, end: Vector3<S>, radius: f64, c: Color10) {
+    pub fn add_cylinder(&mut self, start: Vector3, end: Vector3, radius: f64, c: Color10) {
         self.cylinders.push((start, end, radius, c));
     }
 
     /// Rasterize a curve: n uniform samples → n-1 line segments.
     pub fn add_curve(
         &mut self,
-        curve: &NurbCurve3D<S>,
-        t_min: S,
-        t_max: S,
+        curve: &NurbCurve3D,
+        t_min: Scalar,
+        t_max: Scalar,
         color: Color10,
         n: usize,
     ) -> GeopResult<()> {
@@ -141,7 +141,7 @@ impl<S: Scalar> PrimitiveScene<S> {
             } else if i == n - 1 {
                 t_max
             } else {
-                let frac = S::from_ratio(i as i64, (n - 1) as i64)?;
+                let frac = Scalar::from_ratio(i as i64, (n - 1) as i64)?;
                 t_min.add(t_max.sub(t_min).mul(frac))
             };
             pts.push(curve.evaluate(t)?);
@@ -154,12 +154,12 @@ impl<S: Scalar> PrimitiveScene<S> {
     #[allow(clippy::too_many_arguments)]
     pub fn add_surface_wireframe(
         &mut self,
-        surface: &NurbSurface3D<S>,
+        surface: &NurbSurface3D,
         color: Color10,
-        u_min: S,
-        u_max: S,
-        v_min: S,
-        v_max: S,
+        u_min: Scalar,
+        u_max: Scalar,
+        v_min: Scalar,
+        v_max: Scalar,
         n: usize,
     ) -> GeopResult<()> {
         if n < 2 {
@@ -488,7 +488,7 @@ window.addEventListener('resize',()=>{{
     }
 }
 
-impl<S: Scalar> Default for PrimitiveScene<S> {
+impl Default for PrimitiveScene {
     fn default() -> Self {
         Self::new()
     }

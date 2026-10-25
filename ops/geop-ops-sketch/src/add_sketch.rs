@@ -7,7 +7,7 @@ use geop_core_editor::{
     part_operation,
     part_operation::PartOperation,
 };
-use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
+use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader};
 use std::collections::BTreeMap;
 
 use geop_core_math::{
@@ -107,7 +107,7 @@ impl AddSketchArgs {
     pub fn update_references(
         &mut self,
         reader: &Reader,
-        plane: &CoordinateSystem<Design>,
+        plane: &CoordinateSystem,
     ) -> GeopResult<()> {
         for reference in &mut self.references {
             reference.update(&mut self.sketch, reader, plane)?;
@@ -142,10 +142,7 @@ pub type SketchEditing = FormState<SketchSession>;
 /// The sketch the step `step` draws with `args`: on its plane as the part
 /// before it has it, with what it projects and its formulas brought up to
 /// date, solved anew if either changed what was drawn.
-fn draw(
-    reader: &Reader,
-    (step, args): &(String, AddSketchArgs),
-) -> GeopResult<PlacedSketch<Design>> {
+fn draw(reader: &Reader, (step, args): &(String, AddSketchArgs)) -> GeopResult<PlacedSketch> {
     let ctx = with_context!("add_sketch({step}, plane={:?})", args.plane);
     let Some(plane) = &args.plane else {
         return Err(GeopError::new("pick a plane to sketch on")).with_context(ctx);
@@ -200,14 +197,14 @@ impl PartOperation for AddSketch {
         context: &'a Context<'a>,
         args: &AddSketchArgs,
         editing: &SketchEditing,
-    ) -> EditForm<'a, Design, AddSketchArgs, SketchSession> {
+    ) -> EditForm<'a, AddSketchArgs, SketchSession> {
         editor::form(&context.before, args, &editing.session, &editing.selection)
     }
 
     fn canvas(
         context: &Context,
         edit: Edit<'_, AddSketchArgs, SketchSession>,
-        event: &CanvasEvent<Design>,
+        event: &CanvasEvent,
     ) {
         editor::event(&context.before, edit, event)
     }

@@ -16,7 +16,7 @@ use geop_core_editor::editing::{
 };
 use geop_core_math::{
     primitives::FrameAxis,
-    scalars::{ScalInF64 as S, Scalar},
+    scalars::Scalar,
     vector::{Vector2, Vector3},
 };
 use geop_core_program::{numeric::NumericInput, program::Program, testing::args};
@@ -68,7 +68,7 @@ fn loaded(program: Program) -> geop_core_editor::editor::Editor {
     editor_with(registry(), program)
 }
 
-type SolveReport = geop_core_sketch::SolveReport<geop_core_program::values::Design>;
+type SolveReport = geop_core_sketch::SolveReport;
 type SketchEditing = geop_core_editor::edit_form::FormState<SketchSession>;
 
 /// A sketch step being drawn as a front end draws it, with the step's
@@ -76,7 +76,7 @@ type SketchEditing = geop_core_editor::edit_form::FormState<SketchSession>;
 struct Editor {
     step: Stepping,
     args: AddSketchArgs,
-    presentation: Presentation<S>,
+    presentation: Presentation,
 }
 
 impl Editor {
@@ -106,7 +106,7 @@ impl Editor {
         Self::on(Parameters::default(), new)
     }
 
-    fn send(&mut self, event: StepEditEvent<S>) {
+    fn send(&mut self, event: StepEditEvent) {
         self.step.send(event);
         self.args = self.step.args();
         self.presentation = self.step.presentation().clone();
@@ -332,12 +332,12 @@ impl Editor {
     }
 }
 
-fn v(p: [f64; 3]) -> Vector3<S> {
-    Vector3::from_array(p.map(S::from_f64))
+fn v(p: [f64; 3]) -> Vector3 {
+    Vector3::from_array(p.map(Scalar::from_f64))
 }
 
 /// Straight down onto the `xy` plane at `(x, y)`.
-fn down(x: f64, y: f64) -> Pointer<S> {
+fn down(x: f64, y: f64) -> Pointer {
     pointer([x, y, 10.0], [0.0, 0.0, -1.0])
 }
 
@@ -351,19 +351,19 @@ fn close(a: P2, b: P2) -> bool {
 }
 
 /// The arc `arc` of `s`, as solved.
-fn arc_of(s: &Sketch, arc: CurveId) -> Arc<S> {
+fn arc_of(s: &Sketch, arc: CurveId) -> Arc<Scalar> {
     let CurveKind::Arc { start, end, sweep } = s.curves[&arc].kind else {
         panic!("{arc} is no arc")
     };
-    let at = |p: PointId| Vector2::from_array(xy(s, p).map(S::from_f64));
+    let at = |p: PointId| Vector2::from_array(xy(s, p).map(Scalar::from_f64));
     Arc {
         s: at(start),
         e: at(end),
-        half: S::from_f64(sweep.to_f64() / 2.0),
+        half: Scalar::from_f64(sweep.to_f64() / 2.0),
     }
 }
 
-fn plain(v: Vector2<S>) -> P2 {
+fn plain(v: Vector2) -> P2 {
     [v[0].to_f64(), v[1].to_f64()]
 }
 
@@ -1034,7 +1034,7 @@ fn regions_with_holes_are_filled_exactly() {
     e.click(-1.12, 0.0);
     e.click(1.75, 0.0);
     e.click(2.25, 0.0);
-    let triangles: Vec<[Vector3<S>; 3]> = e
+    let triangles: Vec<[Vector3; 3]> = e
         .presentation
         .visuals
         .iter()
@@ -1707,7 +1707,7 @@ fn arc_slots_bend_round_their_center() {
     // Center, radius, start, sweep, width.
     assert_eq!(report.dof, 6, "{report:?}");
     assert_eq!(e.sketch().regions().unwrap().len(), 1);
-    e.sketch().enclose::<S>().unwrap();
+    e.sketch().enclose().unwrap();
     // Half round: its ends' centers and its center on one line.
     let mut e = drawing();
     e.act("tool", "arc_slot");
@@ -1718,7 +1718,7 @@ fn arc_slots_bend_round_their_center() {
     e.click(1.7, 0.6);
     let report = e.report();
     assert!(report.converged && report.dof == 6, "{report:?}");
-    e.sketch().enclose::<S>().unwrap();
+    e.sketch().enclose().unwrap();
 }
 
 /// Circumscribed, a polygon's sides touch its circle: the second click is
@@ -1746,7 +1746,7 @@ fn circumscribed_polygons_touch_their_circle() {
         "{corners:?}"
     );
     assert!(e.has(|c| matches!(c, Constraint::Tangent { .. })));
-    e.sketch().enclose::<S>().unwrap();
+    e.sketch().enclose().unwrap();
 }
 
 /// A chamfer bevels a corner: both sides cut back by one distance, given
@@ -1780,7 +1780,7 @@ fn chamfers_bevel_corners() {
         (distance(bevel.0, bevel.1) - 0.1 * 2f64.sqrt()).abs() < 1e-6,
         "{bevel:?}"
     );
-    e.sketch().enclose::<S>().unwrap();
+    e.sketch().enclose().unwrap();
 }
 
 /// An arc drawn on from a line's end, running on smoothly from it, is made
@@ -1816,7 +1816,7 @@ fn a_plate_of_several_tools_is_proven() {
     e.act("tool", "chamfer");
     e.click(2.6, 1.8);
     e.dialog("prompt", Value::Text("0.2".into()));
-    e.sketch().enclose::<S>().unwrap();
+    e.sketch().enclose().unwrap();
     e.act("tool", "arc_slot");
     e.click(1.2, 0.6);
     e.click(1.6, 0.6);
@@ -1825,14 +1825,14 @@ fn a_plate_of_several_tools_is_proven() {
     e.click(1.7, 0.6);
     // The rectangle's four freedoms, the chamfer's none, the slot's six.
     assert_eq!(e.report().dof, 10, "{:?}", e.report());
-    e.sketch().enclose::<S>().unwrap();
+    e.sketch().enclose().unwrap();
     e.act("tool", "polygon");
     e.dialog("circumscribed", Value::Bool(true));
     e.click(2.1, 0.7);
     e.click(2.25, 0.7);
     assert!(e.report().converged, "{:?}", e.report());
     assert_eq!(e.sketch().regions().unwrap().len(), 1);
-    e.sketch().enclose::<S>().unwrap();
+    e.sketch().enclose().unwrap();
 }
 
 /// A mirrored arc cut back by trimming turns less than its original: it
@@ -2090,7 +2090,7 @@ fn sketches_undo_their_own_edits() {
 #[test]
 fn sketch_tools_draw_profiles_that_extrude() {
     let mut editor = editor();
-    let event = |editor: &mut geop_core_editor::editor::Editor, event: StepEditEvent<S>| {
+    let event = |editor: &mut geop_core_editor::editor::Editor, event: StepEditEvent| {
         handled(editor, Command::Event { event })
     };
     let click = |editor: &mut geop_core_editor::editor::Editor, x: f64, y: f64| {

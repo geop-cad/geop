@@ -26,9 +26,7 @@ use geop_core_editor::{
     part_operation,
     part_operation::PartOperation,
 };
-use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use std::collections::HashMap;
 
 use geop_core_geometry::{
@@ -60,7 +58,7 @@ pub struct Knit;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct KnitArgs {
     /// A face of each sheet to join.
-    pub faces: Vec<ElementReference<NamedModel<Design>, Face>>,
+    pub faces: Vec<ElementReference<NamedModel, Face>>,
     /// Whether the result must close up into a solid.
     #[serde(default)]
     pub solid: bool,
@@ -99,8 +97,8 @@ impl PartOperation for Knit {
         context: &'a Context<'a>,
         args: &KnitArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, KnitArgs> {
-        let mut f = EditForm::<Design, KnitArgs>::default();
+    ) -> EditForm<'a, KnitArgs> {
+        let mut f = EditForm::<KnitArgs>::default();
         f.pick(
             "faces",
             "sheets",
@@ -117,12 +115,7 @@ impl PartOperation for Knit {
 }
 
 impl ModelOperation for Knit {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &Reader,
-        step: &str,
-        args: &KnitArgs,
-    ) -> GeopResult<()> {
+    fn build(model: &mut NamedModel, _: &Reader, step: &str, args: &KnitArgs) -> GeopResult<()> {
         let namer = Namer::new("knit", step)?;
         let mut sheets: Vec<ShellId> = Vec::new();
         for face in &args.faces {
@@ -139,8 +132,8 @@ impl ModelOperation for Knit {
 /// Joins `sheets` (see the module docs) and returns what they became: a
 /// solid named `namer`'s root once they close up, a sheet otherwise — an
 /// error naming the open edges, if `solid` asks for one.
-pub fn knit<S: Scalar>(
-    part: &mut NamedModel<S>,
+pub fn knit(
+    part: &mut NamedModel,
     namer: &Namer,
     sheets: &[ShellId],
     solid: bool,
@@ -245,8 +238,8 @@ struct Joined {
 }
 
 impl Joined {
-    fn new<S: Scalar>(
-        spec: &BodySpec<S>,
+    fn new(
+        spec: &BodySpec,
         sheet_of_face: &[usize],
         vertex_names: &[String],
         edge_names: &[String],
@@ -354,11 +347,11 @@ impl Joined {
 
     /// The description of the joined body, every coedge on the vertices and
     /// edges kept, and how many coedges use each edge kept.
-    fn spec<S: Scalar>(&self, spec: &BodySpec<S>) -> GeopResult<(BodySpec<S>, Vec<usize>)> {
+    fn spec(&self, spec: &BodySpec) -> GeopResult<(BodySpec, Vec<usize>)> {
         let mut uses = vec![0; self.edge_source.len()];
         let mut faces = Vec::with_capacity(spec.faces.len());
         for face in &spec.faces {
-            let mut remap = |lp: &Vec<geop_core_topology::build::CoedgeSpec<S>>| {
+            let mut remap = |lp: &Vec<geop_core_topology::build::CoedgeSpec>| {
                 lp.iter()
                     .map(|c| {
                         let mut c = c.clone();
@@ -417,9 +410,9 @@ impl Joined {
 
 /// Whether two edges between the same vertices are one: the middle of each
 /// lies on the other's curve.
-fn coincide<S: Scalar>(a: &EdgeSpec<S>, b: &EdgeSpec<S>) -> GeopResult<bool> {
-    let middle = |e: &EdgeSpec<S>| e.curve.evaluate(e.curve.mid_parameter()?);
-    let on = |e: &EdgeSpec<S>, p| -> GeopResult<bool> {
+fn coincide(a: &EdgeSpec, b: &EdgeSpec) -> GeopResult<bool> {
+    let middle = |e: &EdgeSpec| e.curve.evaluate(e.curve.mid_parameter()?);
+    let on = |e: &EdgeSpec, p| -> GeopResult<bool> {
         Ok(curve_could_contain(&e.curve, &p, MAX_NODES, min_subdivision_size())?.is_some())
     };
     Ok(on(b, middle(a)?)? && on(a, middle(b)?)?)
@@ -427,13 +420,13 @@ fn coincide<S: Scalar>(a: &EdgeSpec<S>, b: &EdgeSpec<S>) -> GeopResult<bool> {
 
 /// Whether the closed edge `b` runs round the other way than `a`, which it
 /// coincides with: their directions at their common start compared.
-fn turned_closed<S: Scalar>(a: &EdgeSpec<S>, b: &EdgeSpec<S>) -> GeopResult<bool> {
+fn turned_closed(a: &EdgeSpec, b: &EdgeSpec) -> GeopResult<bool> {
     let ta = a.curve.tangent(a.curve.domain().0)?;
     let tb = b.curve.tangent(b.curve.domain().0)?;
     let along = ta.prod_dot(&tb);
-    if along.definitely_less(S::ZERO) {
+    if along.definitely_less(Scalar::ZERO) {
         Ok(true)
-    } else if along.definitely_greater(S::ZERO) {
+    } else if along.definitely_greater(Scalar::ZERO) {
         Ok(false)
     } else {
         Err(GeopError::new(
@@ -446,7 +439,7 @@ fn turned_closed<S: Scalar>(a: &EdgeSpec<S>, b: &EdgeSpec<S>) -> GeopResult<bool
 /// by one and the other way by the other — keeping the first face of each
 /// connected part as it is. An error if the faces cannot be turned so (a
 /// one-sided surface), or do not all hang together.
-fn turn_consistently<S: Scalar>(spec: &mut BodySpec<S>, names: &BodyNames) -> GeopResult<()> {
+fn turn_consistently(spec: &mut BodySpec, names: &BodyNames) -> GeopResult<()> {
     // Per edge, the faces using it and the sense they use it in.
     let mut users: Vec<Vec<(usize, geop_core_topology::Sense)>> =
         vec![Vec::new(); spec.edges.len()];

@@ -9,7 +9,6 @@ use geop_core_editor::output::{Content, Export, Exporter, ExporterInfo, Output};
 use geop_core_geometry::{aabb::union_aabb, nurb_curve::NurbCurve2D};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    scalars::Scalar,
     with_context,
 };
 use geop_lib_sheet::{
@@ -48,7 +47,7 @@ const NOTE_HEIGHT: f64 = 0.025;
 /// flat's sheet coordinates: every curve of the unfolded sheet's boundary
 /// on the `CUT` layer, each bend's line on the `BEND` layer, and beside it
 /// `UP 90° R0.1` — `UP` for a bend towards the viewer.
-pub fn cutting_sheet<S: Scalar>(sheet: &Sheet<S>) -> GeopResult<Paper> {
+pub fn cutting_sheet(sheet: &Sheet) -> GeopResult<Paper> {
     let ctx = with_context!("cutting_sheet");
     let layout = sheet.layout().with_context(ctx)?;
     // The boundary: the edges only one face has.
@@ -58,7 +57,7 @@ pub fn cutting_sheet<S: Scalar>(sheet: &Sheet<S>) -> GeopResult<Paper> {
             *uses.entry(e).or_default() += 1;
         }
     }
-    let boundary: Vec<&NurbCurve2D<S>> = uses
+    let boundary: Vec<&NurbCurve2D> = uses
         .iter()
         .filter(|(_, n)| **n == 1)
         .map(|(&e, _)| &layout.edges[e].curve)
@@ -69,7 +68,7 @@ pub fn cutting_sheet<S: Scalar>(sheet: &Sheet<S>) -> GeopResult<Paper> {
     let lo: [f64; 2] = std::array::from_fn(|k| bounds[k].lower().to_f64());
     let hi: [f64; 2] = std::array::from_fn(|k| bounds[k].upper().to_f64());
     let place = |p: [f64; 2]| [p[0] - lo[0], p[1] - lo[1]];
-    let curves: Vec<(Layer, &NurbCurve2D<S>)> = boundary.iter().map(|&c| (CUT, c)).collect();
+    let curves: Vec<(Layer, &NurbCurve2D)> = boundary.iter().map(|&c| (CUT, c)).collect();
     let mut paper = Paper {
         width: hi[0] - lo[0],
         height: hi[1] - lo[1],

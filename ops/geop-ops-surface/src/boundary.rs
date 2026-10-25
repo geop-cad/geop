@@ -46,9 +46,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector3, Vector4},
 };
-use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_core_topology::{
     Curve3, Sense,
     build::{BodySpec, CoedgeOn, CoedgeSpec, EdgeSpec, FaceSpec},
@@ -86,7 +84,7 @@ pub struct BoundarySurfaceArgs {
     /// Those of them the fill is to be tangent along, to the flat face each
     /// bounds.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tangent: Vec<ElementReference<NamedModel<Design>, Edge>>,
+    pub tangent: Vec<ElementReference<NamedModel, Edge>>,
 }
 
 part_operation!(BoundarySurface(BoundarySurfaceArgs));
@@ -119,9 +117,9 @@ impl PartOperation for BoundarySurface {
         context: &'a Context<'a>,
         args: &BoundarySurfaceArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, BoundarySurfaceArgs> {
+    ) -> EditForm<'a, BoundarySurfaceArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, BoundarySurfaceArgs>::default();
+        let mut f = EditForm::<BoundarySurfaceArgs>::default();
         f.pick(
             "edges",
             "edges",
@@ -145,7 +143,7 @@ impl PartOperation for BoundarySurface {
 
 impl ModelOperation for BoundarySurface {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &BoundarySurfaceArgs,
@@ -165,21 +163,21 @@ impl ModelOperation for BoundarySurface {
 /// points and names in that direction — `forward` if that is the curve's
 /// own.
 #[derive(Clone, Debug)]
-struct Side<S: Scalar> {
+struct Side {
     /// The name of the curve picked, as `tangent` names it.
     entity: String,
     name: String,
     /// The edge's curve, as the edge runs.
-    curve: Curve3<S>,
+    curve: Curve3,
     forward: bool,
-    start: Vector3<S>,
-    end: Vector3<S>,
+    start: Vector3,
+    end: Vector3,
     start_name: String,
     end_name: String,
 }
 
-impl<S: Scalar> Side<S> {
-    fn of(chain: &Chain<NurbCurve3D<S>>) -> GeopResult<Self> {
+impl Side {
+    fn of(chain: &Chain<NurbCurve3D>) -> GeopResult<Self> {
         let curve = NamedCurve::of(chain)?;
         Ok(Self {
             entity: curve.name.clone(),
@@ -205,7 +203,7 @@ impl<S: Scalar> Side<S> {
     }
 
     /// The curve, run the way the side runs.
-    fn oriented(&self) -> Curve3<S> {
+    fn oriented(&self) -> Curve3 {
         self.sense().orient(&self.curve)
     }
 
@@ -216,7 +214,7 @@ impl<S: Scalar> Side<S> {
 }
 
 /// A plain number to compare by: a free choice between candidates.
-fn distance<S: Scalar>(a: &Vector3<S>, b: &Vector3<S>) -> f64 {
+fn distance(a: &Vector3, b: &Vector3) -> f64 {
     a.sub(b).norm().to_f64()
 }
 
@@ -224,12 +222,12 @@ fn distance<S: Scalar>(a: &Vector3<S>, b: &Vector3<S>) -> f64 {
 /// module docs), each a curve picked, the edges of `tangent` by name, in
 /// `part`: what to build, named after `namer`, as [`BoundarySurface`]
 /// says.
-pub fn boundary_surface<S: Scalar>(
-    part: &NamedModel<S>,
+pub fn boundary_surface(
+    part: &NamedModel,
     namer: &Namer,
-    edges: &[Chain<NurbCurve3D<S>>],
+    edges: &[Chain<NurbCurve3D>],
     tangent: &[&str],
-) -> GeopResult<SheetSpec<S>> {
+) -> GeopResult<SheetSpec> {
     let sides = edges.iter().map(Side::of).collect::<GeopResult<Vec<_>>>()?;
     if let Some(t) = (tangent.iter()).find(|t| !sides.iter().any(|s| s.entity == **t)) {
         return Err(GeopError::new(format!(
@@ -260,19 +258,15 @@ pub fn boundary_surface<S: Scalar>(
 
 /// Whether the two edges close a loop between them: each end of one at an
 /// end of the other.
-fn closes<S: Scalar>(a: &Side<S>, b: &Side<S>) -> bool {
-    let meet = |p: &Vector3<S>, q: &Vector3<S>| p.could_be_equal(q);
+fn closes(a: &Side, b: &Side) -> bool {
+    let meet = |p: &Vector3, q: &Vector3| p.could_be_equal(q);
     (meet(&a.end, &b.start) && meet(&b.end, &a.start))
         || (meet(&a.end, &b.end) && meet(&b.start, &a.start))
 }
 
 /// The ruled face between `a` and `b`, `b` turned if its ends line up
 /// better with `a`'s that way round.
-fn ruled<S: Scalar>(
-    namer: &Namer,
-    a: &Side<S>,
-    b: &Side<S>,
-) -> GeopResult<(BodySpec<S>, BodyNames)> {
+fn ruled(namer: &Namer, a: &Side, b: &Side) -> GeopResult<(BodySpec, BodyNames)> {
     let along = distance(&a.start, &b.start) + distance(&a.end, &b.end);
     let across = distance(&a.start, &b.end) + distance(&a.end, &b.start);
     let b = if across < along {
@@ -291,7 +285,7 @@ fn ruled<S: Scalar>(
     let vertex_names = [&a.start_name, &a.end_name, &b.start_name, &b.end_name]
         .map(|n| namer.name(&[n]))
         .to_vec();
-    let copy = |side: &Side<S>, start: usize, end: usize| EdgeSpec {
+    let copy = |side: &Side, start: usize, end: usize| EdgeSpec {
         curve: side.curve.clone(),
         start: if side.forward { start } else { end },
         end: if side.forward { end } else { start },
@@ -346,8 +340,8 @@ fn ruled<S: Scalar>(
 /// `sides` put end to end into a closed loop, starting with the first as
 /// it runs: each turned to run on from where the one before ends. An error
 /// naming the edge where the loop breaks off or forks.
-fn chain<S: Scalar>(sides: &[Side<S>]) -> GeopResult<Vec<Side<S>>> {
-    let mut left: Vec<Side<S>> = sides[1..].to_vec();
+fn chain(sides: &[Side]) -> GeopResult<Vec<Side>> {
+    let mut left: Vec<Side> = sides[1..].to_vec();
     let mut out = vec![sides[0].clone()];
     // Each round takes one side out of `left`, or refuses.
     for _ in 1..sides.len() {
@@ -391,12 +385,12 @@ fn chain<S: Scalar>(sides: &[Side<S>]) -> GeopResult<Vec<Side<S>>> {
 
 /// What a fill is tangent to along an edge: a plane, and the direction in
 /// it away from the face it continues.
-type Tangency<S> = (Plane<S>, Vector3<S>);
+type Tangency = (Plane, Vector3);
 
 /// The plane of the flat face the edge named `name` bounds, and the direction
 /// in it away from that face at the middle of the edge — what a fill
 /// tangent along the edge continues.
-fn tangent_plane<S: Scalar>(part: &NamedModel<S>, name: &str) -> GeopResult<Tangency<S>> {
+fn tangent_plane(part: &NamedModel, name: &str) -> GeopResult<Tangency> {
     let model = part.topology();
     let edge = part.edge_id(name)?;
     let coedges = model.coedges_of_edge(edge);
@@ -425,19 +419,22 @@ fn tangent_plane<S: Scalar>(part: &NamedModel<S>, name: &str) -> GeopResult<Tang
 
 /// Whether the loop of `sides` has a corner where side `k` meets the next:
 /// their tangents there are not parallel.
-fn has_corner<S: Scalar>(a: &Curve3<S>, b: &Curve3<S>) -> GeopResult<bool> {
+fn has_corner(a: &Curve3, b: &Curve3) -> GeopResult<bool> {
     let end = a.tangent(a.domain().1)?;
     let start = b.tangent(b.domain().0)?;
-    Ok(!end.prod_cross(&start).norm_sq().could_be_equal(S::ZERO))
+    Ok(!end
+        .prod_cross(&start)
+        .norm_sq()
+        .could_be_equal(Scalar::ZERO))
 }
 
 /// The closed loop `sides` filled (see the module docs), tangent along the
 /// edges of `planes` to their planes.
-fn fill<S: Scalar>(
+fn fill(
     namer: &Namer,
-    sides: &[Side<S>],
-    planes: &[(String, Tangency<S>)],
-) -> GeopResult<(BodySpec<S>, BodyNames)> {
+    sides: &[Side],
+    planes: &[(String, Tangency)],
+) -> GeopResult<(BodySpec, BodyNames)> {
     let n = sides.len();
     // The loop's corners, side `k` running from corner `k` to `k + 1`, and
     // each side's copy.
@@ -459,8 +456,8 @@ fn fill<S: Scalar>(
                 .normal
                 .prod_cross(&plane.normal)
                 .norm_sq()
-                .could_be_equal(S::ZERO)
-                && p.signed_distance(&plane.point).could_be_equal(S::ZERO);
+                .could_be_equal(Scalar::ZERO)
+                && p.signed_distance(&plane.point).could_be_equal(Scalar::ZERO);
             if !same {
                 let side = sides.iter().find(|s| s.entity == *e).expect("a side");
                 return Err(GeopError::new(format!(
@@ -484,7 +481,7 @@ fn fill<S: Scalar>(
         return Ok((spec, names));
     }
 
-    let curves: Vec<Curve3<S>> = sides.iter().map(Side::oriented).collect();
+    let curves: Vec<Curve3> = sides.iter().map(Side::oriented).collect();
     if n == 4 {
         for k in 0..n {
             if !has_corner(&curves[(k + n - 1) % n], &curves[k])? {
@@ -506,7 +503,7 @@ fn fill<S: Scalar>(
         }
         let mut surface = NurbSurface3D::coons([&curves[0], &curves[1], &curves[2], &curves[3]])?;
         if !planes.is_empty() {
-            let mut at: [Option<Tangency<S>>; 4] = Default::default();
+            let mut at: [Option<Tangency>; 4] = Default::default();
             for (e, plane) in planes {
                 let k = sides.iter().position(|s| s.entity == *e).expect("a side");
                 at[k] = Some(plane.clone());
@@ -540,8 +537,8 @@ fn fill<S: Scalar>(
 /// The plane `sides` all lie in, if they do: through three of their
 /// control points far apart, every other control point on it — so every
 /// curve is in it. `None` for a loop that is not flat.
-fn flat<S: Scalar>(sides: &[Side<S>]) -> GeopResult<Option<Plane<S>>> {
-    let points: Vec<Vector3<S>> = sides
+fn flat(sides: &[Side]) -> GeopResult<Option<Plane>> {
+    let points: Vec<Vector3> = sides
         .iter()
         .flat_map(|s| &s.curve.control_points)
         .map(Vector4::dehomogenized)
@@ -549,7 +546,7 @@ fn flat<S: Scalar>(sides: &[Side<S>]) -> GeopResult<Option<Plane<S>>> {
     // Which three is a free choice: far apart, so the plane through them is
     // well determined.
     let p0 = points[0];
-    let far = |key: &dyn Fn(&Vector3<S>) -> f64| {
+    let far = |key: &dyn Fn(&Vector3) -> f64| {
         *points
             .iter()
             .max_by(|a, b| key(a).total_cmp(&key(b)))
@@ -558,7 +555,7 @@ fn flat<S: Scalar>(sides: &[Side<S>]) -> GeopResult<Option<Plane<S>>> {
     let p1 = far(&|p| distance(p, &p0));
     let p2 = far(&|p| p.sub(&p0).prod_cross(&p1.sub(&p0)).norm().to_f64());
     let normal = p1.sub(&p0).prod_cross(&p2.sub(&p0));
-    if normal.norm_sq().could_be_equal(S::ZERO) {
+    if normal.norm_sq().could_be_equal(Scalar::ZERO) {
         return Err(GeopError::new(
             "the edges all lie along one line: they enclose nothing to fill",
         ));
@@ -566,7 +563,7 @@ fn flat<S: Scalar>(sides: &[Side<S>]) -> GeopResult<Option<Plane<S>>> {
     let plane = Plane::try_new(p0, normal)?;
     Ok(points
         .iter()
-        .all(|p| plane.signed_distance(p).could_be_equal(S::ZERO))
+        .all(|p| plane.signed_distance(p).could_be_equal(Scalar::ZERO))
         .then_some(plane))
 }
 
@@ -575,15 +572,15 @@ fn flat<S: Scalar>(sides: &[Side<S>]) -> GeopResult<Option<Plane<S>>> {
 /// control points in its coordinates — an affine map, exact for any curve.
 /// Parametrized along the plane's `(x, y)` or `(y, x)`, whichever the loop
 /// winds counter-clockwise in.
-fn flat_face<S: Scalar>(sides: &[Side<S>], plane: &Plane<S>) -> GeopResult<FaceSpec<S>> {
+fn flat_face(sides: &[Side], plane: &Plane) -> GeopResult<FaceSpec> {
     let origin = plane.point;
     let first = &sides[0].curve.control_points;
     let towards = Vector3::from_array([0, 1, 2].map(|k| first[first.len() - 1][k]))
-        .prod_scalar(S::ONE.div(first[first.len() - 1][3])?);
+        .prod_scalar(Scalar::ONE.div(first[first.len() - 1][3])?);
     // Any direction in the plane would do for `x`: towards the far end of
     // the first curve, unless that is where it starts.
     let mut e1 = towards.sub(&origin);
-    if e1.norm_sq().could_be_equal(S::ZERO) {
+    if e1.norm_sq().could_be_equal(Scalar::ZERO) {
         e1 = plane
             .normal
             .orthonormal_complement()?
@@ -608,11 +605,11 @@ fn flat_face<S: Scalar>(sides: &[Side<S>], plane: &Plane<S>) -> GeopResult<FaceS
                 .collect();
             NurbCurve::try_new(curve.degree, control_points, curve.knot_vector.clone())
         })
-        .collect::<GeopResult<Vec<NurbCurve2D<S>>>>()?;
+        .collect::<GeopResult<Vec<NurbCurve2D>>>()?;
     let area = loop_signed_area(&local)?;
-    let swapped = if area.definitely_greater(S::ZERO) {
+    let swapped = if area.definitely_greater(Scalar::ZERO) {
         false
-    } else if area.definitely_less(S::ZERO) {
+    } else if area.definitely_less(Scalar::ZERO) {
         true
     } else {
         return Err(GeopError::new(
@@ -644,13 +641,13 @@ fn flat_face<S: Scalar>(sides: &[Side<S>], plane: &Plane<S>) -> GeopResult<FaceS
 /// The loop `sides` filled with a quadrilateral along each side around a
 /// flat inner polygon (see the module docs), added to `spec`, which has
 /// the loop's corners.
-fn quads<S: Scalar>(
+fn quads(
     namer: &Namer,
-    sides: &[Side<S>],
-    curves: &[Curve3<S>],
-    mut spec: BodySpec<S>,
+    sides: &[Side],
+    curves: &[Curve3],
+    mut spec: BodySpec,
     mut names: BodyNames,
-) -> GeopResult<(BodySpec<S>, BodyNames)> {
+) -> GeopResult<(BodySpec, BodyNames)> {
     let n = sides.len();
     // The inner polygon: each corner halfway to the corners' average,
     // moved onto the plane through that average square to the loop's
@@ -659,7 +656,7 @@ fn quads<S: Scalar>(
     let center = sides
         .iter()
         .fold(Vector3::zero(), |sum, s| sum.add(&s.start))
-        .prod_scalar(S::ONE.div(S::from_i64(n as i64))?)
+        .prod_scalar(Scalar::ONE.div(Scalar::from_i64(n as i64))?)
         .sharpen();
     let mut normal = [0.0f64; 3];
     for k in 0..n {
@@ -672,11 +669,15 @@ fn quads<S: Scalar>(
         normal[1] += (a[2] - b[2]) * (a[0] + b[0]);
         normal[2] += (a[0] - b[0]) * (a[1] + b[1]);
     }
-    let plane = Plane::try_new(center, Vector3::from_array(normal.map(S::from_f64)))?;
-    let inner: Vec<Vector3<S>> = sides
+    let plane = Plane::try_new(center, Vector3::from_array(normal.map(Scalar::from_f64)))?;
+    let inner: Vec<Vector3> = sides
         .iter()
         .map(|s| {
-            let halfway = center.add(&s.start.sub(&center).prod_scalar(S::ONE.div(S::TWO)?));
+            let halfway = center.add(
+                &s.start
+                    .sub(&center)
+                    .prod_scalar(Scalar::ONE.div(Scalar::TWO)?),
+            );
             Ok(plane.project(&halfway).sharpen())
         })
         .collect::<GeopResult<_>>()?;

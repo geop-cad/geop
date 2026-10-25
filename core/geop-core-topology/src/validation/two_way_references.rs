@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use geop_core_math::{geop_error::GeopError, scalars::Scalar};
+use geop_core_math::geop_error::GeopError;
 
 use crate::{
     CoedgeGeometry, CoedgeId, EdgeId, FaceId, Model, VertexId, WireId, boundary::BoundaryType,
@@ -19,10 +19,10 @@ use crate::{
 /// but a face's boundary loop is still walked assuming its whole `next`
 /// chain resolves — a chain that's corrupted deep inside is on
 /// `check_pointers` to catch, not this.
-pub fn check_two_way_references<S: Scalar>(
-    _params: &ValidationParameters<S>,
+pub fn check_two_way_references(
+    _params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
 ) {
     // coedge.next.prev == self, coedge.prev.next == self.
     for (&coedge_id, coedge) in &model.coedges {
@@ -159,7 +159,7 @@ pub fn check_two_way_references<S: Scalar>(
 /// A wire owns its edges and vertices alone (see [`crate::Wire`]): no
 /// coedge uses an edge of it or ends at a vertex of it, its edges end at
 /// its own vertices, and nothing is in two wires.
-fn check_wires<S: Scalar>(errors: &mut Vec<GeopError>, model: &Model<S>) {
+fn check_wires(errors: &mut Vec<GeopError>, model: &Model) {
     let mut vertex_wire: HashMap<VertexId, WireId> = HashMap::new();
     let mut edge_wire: HashMap<EdgeId, WireId> = HashMap::new();
     for (&wire_id, wire) in &model.wires {
@@ -218,18 +218,15 @@ mod tests {
     use super::check_two_way_references;
     use crate::Model;
     use crate::test_fixtures::{check_errors, test_cube_model, test_cube_solid};
-    use geop_core_math::{for_all_scalars, scalars::Scalar};
 
-    fn check_valid_cube_passes<S: Scalar>() {
-        assert!(check_errors(check_two_way_references, &test_cube_model::<S>()).is_empty());
-    }
     #[test]
     fn valid_cube_passes() {
-        for_all_scalars!(check_valid_cube_passes);
+        assert!(check_errors(check_two_way_references, &test_cube_model()).is_empty());
     }
 
-    fn check_broken_next_prev_fails<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn broken_next_prev_fails() {
+        let mut model = Model::new();
         test_cube_solid(&mut model);
         let coedge_id = *model.coedges.keys().next().unwrap();
         let real_next = model.coedges[&coedge_id].next;
@@ -243,38 +240,29 @@ mod tests {
         model.coedges.get_mut(&coedge_id).unwrap().next = other_id;
         assert!(!check_errors(check_two_way_references, &model).is_empty());
     }
-    #[test]
-    fn broken_next_prev_fails() {
-        for_all_scalars!(check_broken_next_prev_fails);
-    }
 
-    fn check_mismatched_shell_backref_fails<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn mismatched_shell_backref_fails() {
+        let mut model = Model::new();
         let solid_id = test_cube_solid(&mut model);
         let shell_id = model.get_solid(solid_id).unwrap().shells[0];
         model.shells.get_mut(&shell_id).unwrap().faces = vec![];
         assert!(!check_errors(check_two_way_references, &model).is_empty());
     }
-    #[test]
-    fn mismatched_shell_backref_fails() {
-        for_all_scalars!(check_mismatched_shell_backref_fails);
-    }
 
-    fn check_mismatched_solid_backref_fails<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn mismatched_solid_backref_fails() {
+        let mut model = Model::new();
         let solid_id = test_cube_solid(&mut model);
         // The shell still (validly) names `solid_id`, but the solid no
         // longer lists it back — a mismatch, not a dangling reference.
         model.solids.get_mut(&solid_id).unwrap().shells = vec![];
         assert!(!check_errors(check_two_way_references, &model).is_empty());
     }
-    #[test]
-    fn mismatched_solid_backref_fails() {
-        for_all_scalars!(check_mismatched_solid_backref_fails);
-    }
 
-    fn check_multiple_independent_violations_are_all_reported<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn multiple_independent_violations_are_all_reported() {
+        let mut model = Model::new();
         test_cube_solid(&mut model);
 
         // Break next/prev symmetry on one coedge...
@@ -298,9 +286,5 @@ mod tests {
             .retain(|&f| f != face_id);
 
         assert!(check_errors(check_two_way_references, &model).len() >= 2);
-    }
-    #[test]
-    fn multiple_independent_violations_are_all_reported() {
-        for_all_scalars!(check_multiple_independent_violations_are_all_reported);
     }
 }

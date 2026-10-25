@@ -1,10 +1,8 @@
 use core::fmt::{self, Display};
 
-use geop_core_math::scalars::Scalar;
-
 use super::Model;
 
-impl<S: Scalar> Display for Model<S> {
+impl Display for Model {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Model {{")?;
 

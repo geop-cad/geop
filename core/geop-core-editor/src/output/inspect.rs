@@ -6,7 +6,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::CoordinateSystem,
 };
-use geop_core_program::{element::PickedElement, values::Design};
+use geop_core_program::element::PickedElement;
 use serde::{Serialize, de::DeserializeOwned};
 
 use super::{Output, read_options};
@@ -58,7 +58,7 @@ pub trait Inspector: 'static {
         output: &mut Output,
         picked: &[PickedElement],
         options: Self::Options,
-    ) -> GeopResult<(Self::Report, Vec<Visual<Design>>)>;
+    ) -> GeopResult<(Self::Report, Vec<Visual>)>;
 
     /// `report` as a front end shows it: what lets every front end show
     /// every inspector's answer alike. Nothing, by default: the report is
@@ -77,7 +77,7 @@ pub struct Answer {
     pub blocks: Vec<Block>,
     /// A plane the answer is of — a planar face or a datum plane picked —
     /// to cut a section view with.
-    pub plane: Option<CoordinateSystem<Design>>,
+    pub plane: Option<CoordinateSystem>,
 }
 
 /// A part of an [`Answer`].
@@ -219,5 +219,5 @@ pub struct Inspection {
     pub shown: Answer,
     /// What to draw of it in the viewport: sent with the tool that picks.
     #[serde(skip)]
-    pub visuals: Vec<Visual<Design>>,
+    pub visuals: Vec<Visual>,
 }

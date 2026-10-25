@@ -2,10 +2,7 @@
 //! edge.
 
 use geop_core_geometry::nurb_surface::NurbSurface3D;
-use geop_core_math::{
-    scalars::{ScalInF64 as S, Scalar},
-    vector::Vector3,
-};
+use geop_core_math::{scalars::Scalar, vector::Vector3};
 use geop_lib_sweep::shapes::{
     Axis, block, cube_solid, cylinder, revolved_cylinder, revolved_cylinder_along_axis,
     sphere_solid, v3,
@@ -22,7 +19,7 @@ use crate::tests::{combined, refusal, unit_cube};
 
 /// Blends `edges` of `model` into `shape` as the step `F`, and checks the
 /// result is valid — failing, with every entity the error mentions by name.
-fn blended(model: &mut NamedModel<S>, edges: &[String], shape: &BlendShape) {
+fn blended(model: &mut NamedModel, edges: &[String], shape: &BlendShape) {
     let namer = Namer::new("fillet", "F").unwrap();
     if let Err(e) = blend(model, &namer, edges, shape) {
         let text = format!("{e:?}");
@@ -52,9 +49,9 @@ fn blended(model: &mut NamedModel<S>, edges: &[String], shape: &BlendShape) {
 /// standing on its axis, from `z = 0.5` to `1.5`, joined: they meet in a
 /// circle at `z = sqrt(0.84)`, a concave edge between the cylinder and the
 /// sphere. The part, and the names of the edges of that circle.
-fn boss_on_sphere() -> (NamedModel<S>, Vec<String>) {
+fn boss_on_sphere() -> (NamedModel, Vec<String>) {
     let mut model = NamedModel::new();
-    let ball = sphere_solid(&mut model, "s", v3(0.0, 0.0, 0.0), S::ONE).unwrap();
+    let ball = sphere_solid(&mut model, "s", v3(0.0, 0.0, 0.0), Scalar::ONE).unwrap();
     let boss = cylinder(&mut model, "c", [0.0, 0.0, 0.5], 0.4, 1.0);
     combined(&mut model, ("union", "u"), ball, boss, BooleanOp::Union);
     let z = 0.84f64.sqrt();
@@ -91,8 +88,8 @@ fn boss_on_sphere_fillet_is_a_torus() {
         let ((u0, u1), (v0, v1)) = (face.surface.domain_u(), face.surface.domain_v());
         for i in 0..=8 {
             for j in 0..=8 {
-                let u = S::interpolate(u0, u1, S::from_f64(i as f64 / 8.0));
-                let w = S::interpolate(v0, v1, S::from_f64(j as f64 / 8.0));
+                let u = Scalar::interpolate(u0, u1, Scalar::from_f64(i as f64 / 8.0));
+                let w = Scalar::interpolate(v0, v1, Scalar::from_f64(j as f64 / 8.0));
                 let p = face.surface.evaluate(u, w).unwrap();
                 let (x, y, z) = (p[0].to_f64(), p[1].to_f64(), p[2].to_f64());
                 let off = ((x * x + y * y).sqrt() - 0.5).hypot(z - zc) - r;
@@ -108,7 +105,7 @@ fn boss_on_sphere_fillet_is_a_torus() {
 
 /// The faces of `model` that are pieces of the blend of edge `edge` of step
 /// `F` (see [`blend`]).
-fn blend_faces<'a>(model: &'a NamedModel<S>, edge: &str) -> Vec<(&'a str, &'a NurbSurface3D<S>)> {
+fn blend_faces<'a>(model: &'a NamedModel, edge: &str) -> Vec<(&'a str, &'a NurbSurface3D)> {
     let prefix = format!("fillet(F,{edge},fillet");
     model
         .topology()
@@ -122,13 +119,13 @@ fn blend_faces<'a>(model: &'a NamedModel<S>, edge: &str) -> Vec<(&'a str, &'a Nu
 }
 
 /// Samples of `surface` over its domain, as plain numbers.
-fn samples(surface: &NurbSurface3D<S>, n: usize) -> Vec<[f64; 3]> {
+fn samples(surface: &NurbSurface3D, n: usize) -> Vec<[f64; 3]> {
     let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
     let mut out = Vec::new();
     for i in 0..=n {
         for j in 0..=n {
-            let u = S::interpolate(u0, u1, S::from_f64(i as f64 / n as f64));
-            let w = S::interpolate(v0, v1, S::from_f64(j as f64 / n as f64));
+            let u = Scalar::interpolate(u0, u1, Scalar::from_f64(i as f64 / n as f64));
+            let w = Scalar::interpolate(v0, v1, Scalar::from_f64(j as f64 / n as f64));
             let p = surface.evaluate(u, w).unwrap();
             out.push([p[0].to_f64(), p[1].to_f64(), p[2].to_f64()]);
         }
@@ -140,14 +137,14 @@ fn samples(surface: &NurbSurface3D<S>, n: usize) -> Vec<[f64; 3]> {
 /// standing on it along `z`, from `z = 0` up, joined: they meet in a saddle
 /// curve, no circle — a free-form concave edge. The part, and the names of
 /// the edges of that curve.
-fn tee() -> (NamedModel<S>, Vec<String>) {
+fn tee() -> (NamedModel, Vec<String>) {
     let mut model = NamedModel::new();
     let pipe = revolved_cylinder_along_axis(
         &mut model,
         "p",
         v3(-1.0, 0.0, 0.0),
-        S::from_f64(0.5),
-        S::from_f64(2.0),
+        Scalar::from_f64(0.5),
+        Scalar::from_f64(2.0),
         Axis::X,
     )
     .unwrap();
@@ -246,15 +243,15 @@ fn variable_radius_on_a_straight_edge() {
 
 /// A cylinder of radius 0.5 and height 1 standing on the origin, with a
 /// flat cut along it at `x = 0.3`: a D-shaped shaft.
-fn d_shaft() -> NamedModel<S> {
+fn d_shaft() -> NamedModel {
     shaft_with_flat(0.5, 1.0, 0.3)
 }
 
 /// A cylinder of `radius` and `height` standing on the origin, with a flat
 /// cut along it at `x = flat`.
-fn shaft_with_flat(radius: f64, height: f64, flat: f64) -> NamedModel<S> {
+fn shaft_with_flat(radius: f64, height: f64, flat: f64) -> NamedModel {
     let mut model = NamedModel::new();
-    let (r, h) = (S::from_f64(radius), S::from_f64(height));
+    let (r, h) = (Scalar::from_f64(radius), Scalar::from_f64(height));
     let shaft = revolved_cylinder(&mut model, "c", v3(0.0, 0.0, 0.0), r, h).unwrap();
     let (min, max) = (
         v3(flat, -2.0 * radius, -1.0),
@@ -304,7 +301,7 @@ fn d_shaft_fillet_top_corners() {
     blended(&mut model, &edges, &BlendShape::round(r));
     // `r` below the top, from the flat and inside the cylinder.
     let y = (0.16f64 - 0.04).sqrt();
-    let centers = [y, -y].map(|y| v3::<S>(0.3 - r, y, 1.0 - r));
+    let centers = [y, -y].map(|y| v3(0.3 - r, y, 1.0 - r));
     let balls: Vec<_> = model
         .topology()
         .faces
@@ -314,10 +311,10 @@ fn d_shaft_fillet_top_corners() {
     assert_eq!(balls.len(), 2);
     for (_, face) in balls {
         let ps = samples(&face.surface, 4);
-        let near = |c: &Vector3<S>| ps[0][1] * c[1].to_f64() > 0.0;
+        let near = |c: &Vector3| ps[0][1] * c[1].to_f64() > 0.0;
         let center = centers.iter().find(|c| near(c)).unwrap();
         for p in ps {
-            let off = v3::<S>(p[0], p[1], p[2]).sub(center).norm().to_f64() - r;
+            let off = v3(p[0], p[1], p[2]).sub(center).norm().to_f64() - r;
             assert!(
                 off.abs() <= 2.0 * DEVIATION * r,
                 "{p:?} is {off:e} off the ball"
@@ -360,7 +357,7 @@ fn d_shaft_chamfer_flat_side() {
     let angle = (y / 0.3f64).atan() + 2.0 * (d / 2.0 / 0.5f64).asin();
     let on_cylinder = [0.5 * angle.cos(), 0.5 * angle.sin(), 1.0];
     for p in [on_flat, on_cylinder] {
-        let p = v3::<S>(p[0], p[1], p[2]);
+        let p = v3(p[0], p[1], p[2]);
         let near = model
             .topology()
             .vertices
@@ -397,7 +394,7 @@ fn tee_chamfer_around_the_saddle() {
 
 /// A block of 2 x 2 x 1 with a D-shaped pocket 0.4 deep in its top: a
 /// circle of radius 0.5 around `(1, 1)` cut off at `x = 1.3`.
-fn d_pocket() -> NamedModel<S> {
+fn d_pocket() -> NamedModel {
     let mut model = NamedModel::new();
     let stock = block(&mut model, "b", [0.0, 0.0, 0.0], [2.0, 2.0, 1.0]);
     let round = cylinder(&mut model, "c", [1.0, 1.0, 0.6], 0.5, 1.0);
@@ -432,9 +429,9 @@ fn d_pocket_rim_fillet_is_refused() {
 }
 
 /// A sphere of radius 1 around the origin, its half below `z = 0` cut off.
-fn hemisphere() -> NamedModel<S> {
+fn hemisphere() -> NamedModel {
     let mut model = NamedModel::new();
-    let ball = sphere_solid(&mut model, "s", v3(0.0, 0.0, 0.0), S::ONE).unwrap();
+    let ball = sphere_solid(&mut model, "s", v3(0.0, 0.0, 0.0), Scalar::ONE).unwrap();
     let below = block(&mut model, "c", [-2.0, -2.0, -2.0], [2.0, 2.0, 0.0]);
     combined(
         &mut model,
@@ -507,9 +504,9 @@ fn cube_corner_rounded_with_a_varying_radius() {
         .filter(|&(&id, _)| model.name_of(id).unwrap().ends_with(",corner)"))
         .collect();
     assert_eq!(balls.len(), 1);
-    let center = v3::<S>(0.2, 0.2, 0.8);
+    let center = v3(0.2, 0.2, 0.8);
     for p in samples(&balls[0].1.surface, 4) {
-        let off = v3::<S>(p[0], p[1], p[2]).sub(&center).norm().to_f64() - 0.2;
+        let off = v3(p[0], p[1], p[2]).sub(&center).norm().to_f64() - 0.2;
         assert!(off.abs() <= 1e-9, "{p:?} is {off:e} off the ball");
     }
 }

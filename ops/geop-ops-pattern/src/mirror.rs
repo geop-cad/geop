@@ -10,7 +10,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::{FrameAxis, Motion},
 };
-use geop_core_program::{part::StepContext, reader::Reader, values::Design};
+use geop_core_program::{part::StepContext, reader::Reader};
 use geop_ops_model::datums::origin_plane;
 use geop_ops_model::sketch::SketchPlane;
 use geop_ops_model::{ModelOperation, NamedModel};
@@ -57,7 +57,7 @@ impl Pattern for MirrorArgs {
     }
 
     /// The one image, mirrored in the plane.
-    fn placements(&self, reader: &Reader) -> GeopResult<Vec<(String, Motion<Design>)>> {
+    fn placements(&self, reader: &Reader) -> GeopResult<Vec<(String, Motion)>> {
         let Some(plane) = &self.plane else {
             return Err(GeopError::new("pick a plane to mirror in"));
         };
@@ -104,7 +104,7 @@ impl PartOperation for Mirror {
         context: &'a Context<'a>,
         args: &MirrorArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, MirrorArgs> {
+    ) -> EditForm<'a, MirrorArgs> {
         let before = &context.before;
         let mut f = EditForm::default();
         let set_seeds = |args: &mut MirrorArgs, seeds| args.seeds = seeds;
@@ -123,7 +123,7 @@ impl PartOperation for Mirror {
 
 impl ModelOperation for Mirror {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &MirrorArgs,

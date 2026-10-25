@@ -49,12 +49,12 @@ pub fn probe<X, T, E>(
 
 /// [`probe`] with a step halved each time: `start`, `start / 2`, … — at
 /// most `most` of them.
-pub fn halve<S: Scalar, T, E: From<GeopError>>(
-    start: S,
+pub fn halve<T, E: From<GeopError>>(
+    start: Scalar,
     most: usize,
-    at: impl FnMut(&S) -> Result<Probe<T>, E>,
+    at: impl FnMut(&Scalar) -> Result<Probe<T>, E>,
 ) -> Result<Option<T>, E> {
-    probe(start, most, |s| Ok(s.div(S::TWO)?), at)
+    probe(start, most, |s| Ok(s.div(Scalar::TWO)?), at)
 }
 
 /// [`probe`] over attempts `0, 1, 2, …` — at most `most` of them — for a
@@ -70,14 +70,13 @@ pub fn attempts<T, E>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scalars::{ScalInF64, Scalar};
 
     /// Halving from 1 finds the first step below a third — and asks every
     /// step before it, in order, and none after.
     #[test]
     fn halving_finds_the_first_step_that_decides() {
         let mut asked = Vec::new();
-        let found = halve::<ScalInF64, _, GeopError>(ScalInF64::ONE, 10, |s| {
+        let found = halve::<_, GeopError>(Scalar::ONE, 10, |s| {
             asked.push(*s);
             Ok(if s.to_f64() < 1.0 / 3.0 {
                 Probe::Found(*s)
@@ -90,9 +89,9 @@ mod tests {
         let exact = [1.0, 0.5, 0.25];
         assert_eq!(asked.len(), exact.len());
         for (a, e) in asked.iter().zip(exact) {
-            assert!(a.could_be_equal(ScalInF64::from_f64(e)), "{a:?}");
+            assert!(a.could_be_equal(Scalar::from_f64(e)), "{a:?}");
         }
-        assert!(found.is_some_and(|f| f.could_be_equal(ScalInF64::from_f64(0.25))));
+        assert!(found.is_some_and(|f| f.could_be_equal(Scalar::from_f64(0.25))));
     }
 
     /// A sequence that never decides reports nothing — not its last value —

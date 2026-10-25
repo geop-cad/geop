@@ -1,4 +1,4 @@
-//! The geometry of a 3-D sketch's arcs, generic over [`Scalar`] so the same
+//! The geometry of a 3-D sketch's arcs, generic over [`Number`] so the same
 //! formulas serve the residuals (differentiated as
 //! [`geop_core_math::dual::Dual`]s) and building the NURBS.
 //!
@@ -8,17 +8,21 @@
 //! sine `|a x b| / (|a| |b|)` — the angle the arc makes at `m` is the
 //! inscribed angle over the chord `se`.
 
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar, vector::Vector3};
+use geop_core_math::{
+    geop_error::GeopResult,
+    scalars::{Number, Scalar},
+    vector::Vector3,
+};
 
 /// The circular arc from `s` through `m` to `e`.
 #[derive(Clone, Copy, Debug)]
-pub struct Arc3<T: Scalar> {
+pub struct Arc3<T: Number> {
     pub s: Vector3<T>,
     pub m: Vector3<T>,
     pub e: Vector3<T>,
 }
 
-impl<T: Scalar> Arc3<T> {
+impl<T: Number> Arc3<T> {
     fn legs(&self) -> (Vector3<T>, Vector3<T>) {
         (self.s.sub(&self.m), self.e.sub(&self.m))
     }
@@ -74,8 +78,8 @@ impl<T: Scalar> Arc3<T> {
 /// to measure how far another vector is from parallel to it along. Which
 /// two is a free choice (see [`Vector3::across`]): worked out in plain
 /// numbers, sharp.
-pub fn across<S: Scalar>(direction: &Vector3<S>) -> GeopResult<[Vector3<S>; 2]> {
-    let sharp = |v: &Vector3<S>| v.map(|c| S::from_f64(c.to_f64()));
+pub fn across(direction: &Vector3) -> GeopResult<[Vector3; 2]> {
+    let sharp = |v: &Vector3| v.map(|c| Scalar::from_f64(c.to_f64()));
     let [u, v] = sharp(direction).normalize()?.across()?;
     Ok([sharp(&u), sharp(&v)])
 }

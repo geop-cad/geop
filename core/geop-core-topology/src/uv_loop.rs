@@ -14,7 +14,7 @@ use crate::{CoedgeId, Curve2, Model};
 
 /// The signed area, in `(u, v)`, of the loop anchored at `first`: positive
 /// counter-clockwise, negative clockwise.
-pub fn loop_signed_area<S: Scalar>(model: &Model<S>, first: CoedgeId) -> GeopResult<S> {
+pub fn loop_signed_area(model: &Model, first: CoedgeId) -> GeopResult<Scalar> {
     let pcurves = model
         .iterate_loop_coedges(first)
         .map(|coedge| Ok(&model.get_coedge(coedge)?.pcurve))
@@ -26,11 +26,11 @@ pub fn loop_signed_area<S: Scalar>(model: &Model<S>, first: CoedgeId) -> GeopRes
 /// into a closed `(u, v)` polygon, `n` samples per coedge (the last sample of
 /// each coedge is dropped, since it coincides with the next coedge's first
 /// sample).
-pub fn sample_loop_to_polygon<S: Scalar>(
-    model: &Model<S>,
+pub fn sample_loop_to_polygon(
+    model: &Model,
     first: CoedgeId,
     n: usize,
-) -> GeopResult<Vec<Vector2<S>>> {
+) -> GeopResult<Vec<Vector2>> {
     sample_pcurves_to_polygon(
         model
             .iterate_loop_coedges(first)
@@ -42,15 +42,15 @@ pub fn sample_loop_to_polygon<S: Scalar>(
 /// Sample `pcurves`, a loop's in order, into a closed `(u, v)` polygon: `n`
 /// points evenly along each one's domain, its end left out, as the next
 /// one starts there.
-pub fn sample_pcurves_to_polygon<'a, S: Scalar>(
-    pcurves: impl IntoIterator<Item = &'a Curve2<S>>,
+pub fn sample_pcurves_to_polygon<'a>(
+    pcurves: impl IntoIterator<Item = &'a Curve2>,
     n: usize,
-) -> GeopResult<Vec<Vector2<S>>> {
+) -> GeopResult<Vec<Vector2>> {
     let mut poly = Vec::new();
     for pcurve in pcurves {
         let (t0, t1) = pcurve.domain();
         for i in 0..n {
-            let frac = S::from_ratio(i as i64, n as i64)?;
+            let frac = Scalar::from_ratio(i as i64, n as i64)?;
             let t = t0.add(t1.sub(t0).mul(frac));
             poly.push(pcurve.evaluate(t)?);
         }

@@ -11,18 +11,20 @@ use crate::nurb_curve::dehomogenize;
 /// that make `(ξ_i, d_i)` the control polygon of the graph
 /// `(t, Σ d_i N_i(t))` (linear precision, `Σ ξ_i N_i(t) = t`). `None` for
 /// degree 0, which has no such polygon.
-pub(crate) fn greville_abscissae<S: Scalar>(
-    u: &[S],
+pub(crate) fn greville_abscissae(
+    u: &[Scalar],
     p: usize,
     count: usize,
-) -> GeopResult<Option<Vec<S>>> {
+) -> GeopResult<Option<Vec<Scalar>>> {
     if p == 0 {
         return Ok(None);
     }
-    let p_s = S::from_i64(p as i64);
+    let p_s = Scalar::from_i64(p as i64);
     let mut xi = Vec::with_capacity(count);
     for i in 0..count {
-        let sum = u[i + 1..=i + p].iter().fold(S::ZERO, |acc, &k| acc.add(k));
+        let sum = u[i + 1..=i + p]
+            .iter()
+            .fold(Scalar::ZERO, |acc, &k| acc.add(k));
         xi.push(sum.div(p_s)?);
     }
     Ok(Some(xi))
@@ -39,7 +41,7 @@ pub(crate) fn greville_abscissae<S: Scalar>(
 /// interval arithmetic, that expression encloses every real instantiation
 /// of the (interval) inputs — losing the correlation between `d_0`, `s` and
 /// `Δ` only widens it.
-pub(crate) fn fat_line_zeros<S: Scalar>(xi: &[S], d: &[S]) -> Option<S> {
+pub(crate) fn fat_line_zeros(xi: &[Scalar], d: &[Scalar]) -> Option<Scalar> {
     let n = d.len() - 1;
     let (xi0, d0) = (xi[0], d[0]);
 
@@ -47,7 +49,7 @@ pub(crate) fn fat_line_zeros<S: Scalar>(xi: &[S], d: &[S]) -> Option<S> {
         // Chord of zero parametric length (all knots coincide): no line to
         // clip with, only the plain range test is left.
         let range = d.iter().skip(1).fold(d0, |acc, &di| acc.union(di));
-        return range.could_be_equal(S::ZERO).then_some(S::ENTIRE);
+        return range.could_be_equal(Scalar::ZERO).then_some(Scalar::ENTIRE);
     };
 
     let band = xi
@@ -55,20 +57,20 @@ pub(crate) fn fat_line_zeros<S: Scalar>(xi: &[S], d: &[S]) -> Option<S> {
         .zip(d)
         .map(|(&xi_i, &d_i)| d_i.sub(d0.add(slope.mul(xi_i.sub(xi0)))))
         .reduce(|acc, off| acc.union(off))
-        .unwrap_or(S::ZERO);
+        .unwrap_or(Scalar::ZERO);
 
     // Over the domain `ℓ` stays between `d_0` and `d_n`, so the band there
     // is covered by `hull(d_0, d_n) + Δ`. Missing zero proves there is no
     // root — and this also decides the case the division below can't: a
     // chord that could be horizontal.
-    if !d0.union(d[n]).add(band).could_be_equal(S::ZERO) {
+    if !d0.union(d[n]).add(band).could_be_equal(Scalar::ZERO) {
         return None;
     }
     match d0.add(band).div(slope) {
         Ok(q) => Some(xi0.sub(q)),
         // `s` could be zero: the band does reach the axis, but a horizontal
         // band does so everywhere — no information from this axis.
-        Err(_) => Some(S::ENTIRE),
+        Err(_) => Some(Scalar::ENTIRE),
     }
 }
 
@@ -85,22 +87,22 @@ pub(crate) fn fat_line_zeros<S: Scalar>(xi: &[S], d: &[S]) -> Option<S> {
 /// every slice and its fat line clip ([`fat_line_zeros`]) keeps every zero.
 /// Intersecting per-row clips instead would be wrong — a zero of the
 /// tensor need not be a zero of any row.
-pub(crate) fn clip_tensor<S: Scalar>(
-    d: &[S],
+pub(crate) fn clip_tensor(
+    d: &[Scalar],
     dims: &[usize],
-    greville: &[Option<Vec<S>>],
-    hats: &mut [S],
+    greville: &[Option<Vec<Scalar>>],
+    hats: &mut [Scalar],
 ) -> bool {
     // Range test: the whole graph lies within the coefficients' hull. Implied
     // by any clip below, but a direction of degree 0 has none.
     let Some(range) = d.iter().copied().reduce(|a, x| a.union(x)) else {
         return true;
     };
-    if !range.could_be_equal(S::ZERO) {
+    if !range.could_be_equal(Scalar::ZERO) {
         return false;
     }
 
-    let mut envelopes: Vec<Vec<Option<S>>> = dims.iter().map(|&n| vec![None; n]).collect();
+    let mut envelopes: Vec<Vec<Option<Scalar>>> = dims.iter().map(|&n| vec![None; n]).collect();
     let mut idx = vec![0usize; dims.len()];
     for &x in d {
         for (env, &i) in envelopes.iter_mut().zip(&idx) {
@@ -117,7 +119,7 @@ pub(crate) fn clip_tensor<S: Scalar>(
 
     for ((env, xi), hat) in envelopes.iter().zip(greville).zip(hats.iter_mut()) {
         let Some(xi) = xi else { continue };
-        let env: Vec<S> = env.iter().map(|e| e.unwrap_or(S::ZERO)).collect();
+        let env: Vec<Scalar> = env.iter().map(|e| e.unwrap_or(Scalar::ZERO)).collect();
         // Both constraints hold at once, so they intersect — but `intersect`
         // of disjoint enclosures returns an input rather than an empty set,
         // so disjointness is checked first.
@@ -148,20 +150,21 @@ pub(crate) fn clip_tensor<S: Scalar>(
 /// a pole, where the solutions are a whole row and clipping closes in on it
 /// by a constant factor, it did so for thousands of steps, down to boxes of
 /// `1e-280`.
-pub(crate) fn restriction<S: Scalar>(
-    hats: &[S],
-    ranges: &[(S, S)],
+pub(crate) fn restriction(
+    hats: &[Scalar],
+    ranges: &[(Scalar, Scalar)],
     sizes: &[f64],
     carried: f64,
-) -> GeopResult<Option<Vec<(S, S)>>> {
+) -> GeopResult<Option<Vec<(Scalar, Scalar)>>> {
     if !sizes
         .iter()
-        .any(|&e| S::from_f64(e).definitely_greater(S::from_f64(carried)))
+        .any(|&e| Scalar::from_f64(e).definitely_greater(Scalar::from_f64(carried)))
     {
         return Ok(None);
     }
-    let min_progress = S::from_ratio(4, 5)?;
-    let inside = |t: S, (a, b): (S, S)| t.definitely_greater(a) && t.definitely_less(b);
+    let min_progress = Scalar::from_ratio(4, 5)?;
+    let inside =
+        |t: Scalar, (a, b): (Scalar, Scalar)| t.definitely_greater(a) && t.definitely_less(b);
     let cut: Vec<bool> = (0..hats.len())
         .map(|dir| {
             let hat = hats[dir];
@@ -233,23 +236,25 @@ pub(crate) enum Stalled {
 /// there the spoke and `v` reach `min_subdivision_size` while, at a speed of
 /// 3, still wider in space than it, and `u`, already resolved down to the
 /// width the fixed-point weight carries, was all that was left to split.
-pub(crate) fn stalled<S: Scalar>(
-    ranges: &[(S, S)],
+pub(crate) fn stalled(
+    ranges: &[(Scalar, Scalar)],
     sizes: &[f64],
     carried: f64,
-    min_subdivision_size: S,
+    min_subdivision_size: Scalar,
 ) -> Stalled {
-    let resolution = S::from_f64(carried).union(min_subdivision_size).upper();
+    let resolution = Scalar::from_f64(carried)
+        .union(min_subdivision_size)
+        .upper();
     if sizes
         .iter()
-        .all(|&e| !S::from_f64(e).definitely_greater(resolution))
+        .all(|&e| !Scalar::from_f64(e).definitely_greater(resolution))
     {
         return Stalled::Converged;
     }
     let mut order: Vec<usize> = (0..ranges.len())
         .filter(|&dir| {
             let (a, b) = ranges[dir];
-            S::from_f64(sizes[dir]).definitely_greater(S::from_f64(carried))
+            Scalar::from_f64(sizes[dir]).definitely_greater(Scalar::from_f64(carried))
                 && a.union(b).width().definitely_greater(min_subdivision_size)
         })
         .collect();
@@ -259,7 +264,7 @@ pub(crate) fn stalled<S: Scalar>(
 
 /// The interval width `points` carry: the widest Cartesian coordinate of any
 /// of them. What no subdivision of the object they define can shrink.
-pub(crate) fn carried_width<S: Scalar, const D: usize>(points: &[Vector<S, D>]) -> f64 {
+pub(crate) fn carried_width<const D: usize>(points: &[Vector<D>]) -> f64 {
     points
         .iter()
         .flat_map(|q| {
@@ -275,8 +280,8 @@ pub(crate) fn carried_width<S: Scalar, const D: usize>(points: &[Vector<S, D>]) 
 /// the object reaches in that direction (corner chords don't: a closed or
 /// folded row has a zero chord), and it is exactly zero along a collapsed
 /// row. A free choice, so plain `f64`.
-pub(crate) fn extent<S: Scalar, const D: usize>(
-    rows: impl IntoIterator<Item = impl IntoIterator<Item = Vector<S, D>>>,
+pub(crate) fn extent<const D: usize>(
+    rows: impl IntoIterator<Item = impl IntoIterator<Item = Vector<D>>>,
 ) -> f64 {
     rows.into_iter()
         .map(|row| {
@@ -316,11 +321,9 @@ pub(crate) fn extent<S: Scalar, const D: usize>(
 /// parallel — clips nothing at all. Conditioning is a free choice here (it
 /// affects only how well the equations clip, never what they prove), so a
 /// well-conditioned residual of ½ in Gram–Schmidt is simply required.
-pub(crate) fn spanning<S: Scalar, const C: usize>(
-    mut dirs: Vec<Vector<S, C>>,
-) -> Vec<Vector<S, C>> {
-    let quarter = S::from_f64(0.25);
-    let mut basis: Vec<Vector<S, C>> = Vec::new();
+pub(crate) fn spanning<const C: usize>(mut dirs: Vec<Vector<C>>) -> Vec<Vector<C>> {
+    let quarter = Scalar::from_f64(0.25);
+    let mut basis: Vec<Vector<C>> = Vec::new();
     for d in &dirs {
         let e = basis
             .iter()
@@ -338,10 +341,7 @@ pub(crate) fn spanning<S: Scalar, const C: usize>(
 /// The sharp Cartesian chord from the first to the last of homogeneous
 /// `control_points` — only ever used to *choose* a direction ([`spanning`]),
 /// so sharpening is a free choice.
-pub(crate) fn chord<S: Scalar, const D: usize, const C: usize>(
-    control_points: &[Vector<S, D>],
-) -> Vector<S, C> {
-    let ends =
-        dehomogenize::<S, D, C>(&[control_points[0], control_points[control_points.len() - 1]]);
+pub(crate) fn chord<const D: usize, const C: usize>(control_points: &[Vector<D>]) -> Vector<C> {
+    let ends = dehomogenize::<D, C>(&[control_points[0], control_points[control_points.len() - 1]]);
     ends[1].sub(&ends[0]).sharpen()
 }

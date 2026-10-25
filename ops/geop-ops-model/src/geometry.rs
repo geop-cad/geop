@@ -22,13 +22,11 @@ use geop_core_geometry::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::CoordinateSystem,
-    scalars::Scalar,
     vector::Vector3,
 };
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement},
     reader::Reader,
-    values::Design,
 };
 use geop_core_topology::{Body as TopologyBody, EdgeId, FaceId};
 
@@ -109,18 +107,15 @@ impl Kind for Body {
 /// parallel normals line up, and a frame put on an axis has `u` where a
 /// joint measures its turns from: two bodies mated on the same axis of each
 /// are at a turn of zero.
-pub fn frame_along<S: Scalar>(
-    origin: Vector3<S>,
-    normal: &Vector3<S>,
-) -> GeopResult<CoordinateSystem<S>> {
+pub fn frame_along(origin: Vector3, normal: &Vector3) -> GeopResult<CoordinateSystem> {
     let n = normal.normalize()?;
     let [u, v] = n.across()?;
     CoordinateSystem::try_new(origin, u, v, n)
 }
 
-impl NamedModel<Design> {
+impl NamedModel {
     /// The edge `name`'s curve.
-    fn edge_curve(&self, name: &str) -> GeopResult<(EdgeId, &NurbCurve3D<Design>)> {
+    fn edge_curve(&self, name: &str) -> GeopResult<(EdgeId, &NurbCurve3D)> {
         let id = self.edge_id(name)?;
         Ok((id, &self.topology().get_edge(id)?.curve))
     }
@@ -129,14 +124,14 @@ impl NamedModel<Design> {
     /// its solid, origin the world origin's projection onto it and `u` the
     /// world axis most parallel to it, so sketches on parallel faces line
     /// up.
-    pub fn frame_of_face(&self, face: FaceId) -> GeopResult<CoordinateSystem<Design>> {
+    pub fn frame_of_face(&self, face: FaceId) -> GeopResult<CoordinateSystem> {
         let plane = self.plane_of_face(face, "only a flat face is a plane")?;
         frame_along(plane.project(&Vector3::zero()), &plane.normal)
     }
 
     /// The one curve `edge` is, as a chain named after it and its
     /// vertices.
-    pub fn edge_chain(&self, edge: EdgeId) -> GeopResult<Chain<NurbCurve3D<Design>>> {
+    pub fn edge_chain(&self, edge: EdgeId) -> GeopResult<Chain<NurbCurve3D>> {
         let name = self.name(edge)?.to_string();
         let edge = self.topology().get_edge(edge)?;
         Ok(Chain {
@@ -162,39 +157,39 @@ impl NamedModel<Design> {
     }
 }
 
-impl HasElements<Point> for NamedModel<Design> {
-    type Element<'a> = Vector3<Design>;
+impl HasElements<Point> for NamedModel {
+    type Element<'a> = Vector3;
     const SINGLETON: Option<&'static str> = Some(MODEL);
 
-    fn element(&self, name: &str) -> GeopResult<Vector3<Design>> {
+    fn element(&self, name: &str) -> GeopResult<Vector3> {
         Ok(self.topology().get_vertex(self.vertex_id(name)?)?.point)
     }
 }
 
-impl HasElements<Line> for NamedModel<Design> {
-    type Element<'a> = Axis<Design>;
+impl HasElements<Line> for NamedModel {
+    type Element<'a> = Axis;
     const SINGLETON: Option<&'static str> = Some(MODEL);
 
-    fn element(&self, name: &str) -> GeopResult<Axis<Design>> {
+    fn element(&self, name: &str) -> GeopResult<Axis> {
         let (_, curve) = self.edge_curve(name)?;
         (curve.as_line()?).ok_or_else(|| GeopError::new(format!("edge {name:?} is not straight")))
     }
 }
 
-impl HasElements<Plane> for NamedModel<Design> {
-    type Element<'a> = CoordinateSystem<Design>;
+impl HasElements<Plane> for NamedModel {
+    type Element<'a> = CoordinateSystem;
     const SINGLETON: Option<&'static str> = Some(MODEL);
 
-    fn element(&self, name: &str) -> GeopResult<CoordinateSystem<Design>> {
+    fn element(&self, name: &str) -> GeopResult<CoordinateSystem> {
         self.frame_of_face(self.face_id(name)?)
     }
 }
 
-impl HasElements<Round> for NamedModel<Design> {
-    type Element<'a> = Axis<Design>;
+impl HasElements<Round> for NamedModel {
+    type Element<'a> = Axis;
     const SINGLETON: Option<&'static str> = Some(MODEL);
 
-    fn element(&self, name: &str) -> GeopResult<Axis<Design>> {
+    fn element(&self, name: &str) -> GeopResult<Axis> {
         let axis = match self.id_of(name) {
             Some(RefId::Edge(_)) => {
                 let arc = HasElements::<Circle>::element(self, name)?;
@@ -213,32 +208,32 @@ impl HasElements<Round> for NamedModel<Design> {
     }
 }
 
-impl HasElements<Circle> for NamedModel<Design> {
-    type Element<'a> = Arc<Design>;
+impl HasElements<Circle> for NamedModel {
+    type Element<'a> = Arc;
     const SINGLETON: Option<&'static str> = Some(MODEL);
 
-    fn element(&self, name: &str) -> GeopResult<Arc<Design>> {
+    fn element(&self, name: &str) -> GeopResult<Arc> {
         let (_, curve) = self.edge_curve(name)?;
         (curve.as_arc()?).ok_or_else(|| GeopError::new(format!("edge {name:?} is not circular")))
     }
 }
 
-impl HasElements<Curve> for NamedModel<Design> {
-    type Element<'a> = Chain<NurbCurve3D<Design>>;
+impl HasElements<Curve> for NamedModel {
+    type Element<'a> = Chain<NurbCurve3D>;
     const SINGLETON: Option<&'static str> = Some(MODEL);
 
-    fn element(&self, name: &str) -> GeopResult<Chain<NurbCurve3D<Design>>> {
+    fn element(&self, name: &str) -> GeopResult<Chain<NurbCurve3D>> {
         self.edge_chain(self.edge_id(name)?)
     }
 }
 
 /// An edge of a face — of a solid or of a sheet — not of a wire: a wire's
 /// edge is part of what built it, a 3-D sketch, which is the path.
-impl HasElements<Path> for NamedModel<Design> {
-    type Element<'a> = Chain<NurbCurve3D<Design>>;
+impl HasElements<Path> for NamedModel {
+    type Element<'a> = Chain<NurbCurve3D>;
     const SINGLETON: Option<&'static str> = Some(MODEL);
 
-    fn element(&self, name: &str) -> GeopResult<Chain<NurbCurve3D<Design>>> {
+    fn element(&self, name: &str) -> GeopResult<Chain<NurbCurve3D>> {
         let edge = self.edge_id(name)?;
         if self.topology().wire_of_edge(edge).is_some() {
             return Err(GeopError::new(format!(
@@ -249,7 +244,7 @@ impl HasElements<Path> for NamedModel<Design> {
     }
 }
 
-impl HasElements<Body> for NamedModel<Design> {
+impl HasElements<Body> for NamedModel {
     type Element<'a> = TopologyBody;
     const SINGLETON: Option<&'static str> = Some(MODEL);
 
@@ -262,15 +257,15 @@ impl HasElements<Body> for NamedModel<Design> {
 /// that has their shape: the hit, if it resolves as one.
 macro_rules! picked_where_it_has_the_shape {
     ($($kind:ty => [$($from:ty),+];)*) => {$(
-        impl SelectableElement<NamedModel<Design>> for $kind {
+        impl SelectableElement<NamedModel> for $kind {
             const PICKED_FROM: &'static [&'static str] = &[$(<$from as Kind>::NAME),+];
 
             fn select(
                 reader: &Reader,
                 hit: &PickedElement,
-            ) -> Option<ElementReference<NamedModel<Design>, Self>> {
+            ) -> Option<ElementReference<NamedModel, Self>> {
                 (hit.target == *model().location()
-                    && <Self as SelectableElement<NamedModel<Design>>>::PICKED_FROM
+                    && <Self as SelectableElement<NamedModel>>::PICKED_FROM
                         .contains(&hit.kind.as_str()))
                     .then_some(())?;
                 let reference = ElementReference::new(model(), &hit.name);
@@ -280,7 +275,7 @@ macro_rules! picked_where_it_has_the_shape {
 
             fn drawn(
                 reader: &Reader,
-                element: &ElementReference<NamedModel<Design>, Self>,
+                element: &ElementReference<NamedModel, Self>,
             ) -> Vec<PickedElement> {
                 (read_model(reader).ok())
                     .map(|model| drawn_entity(&model, element.name()))
@@ -302,14 +297,11 @@ picked_where_it_has_the_shape! {
 
 /// A body is picked by a face of it: a solid's face selects the solid, a
 /// sheet's face itself; it is lit as the solid's faces, or the face.
-impl SelectableElement<NamedModel<Design>> for Body {
+impl SelectableElement<NamedModel> for Body {
     const PICKED_FROM: &'static [&'static str] = &[Face::NAME];
 
-    fn select(
-        reader: &Reader,
-        hit: &PickedElement,
-    ) -> Option<ElementReference<NamedModel<Design>, Self>> {
-        let face = ElementReference::<NamedModel<Design>, Face>::from_picked(hit)?;
+    fn select(reader: &Reader, hit: &PickedElement) -> Option<ElementReference<NamedModel, Self>> {
+        let face = ElementReference::<NamedModel, Face>::from_picked(hit)?;
         let face = reader.retrieve_element(&face).ok()?;
         let name = match face.model.topology().body_of_face(face.id).ok()? {
             TopologyBody::Solid(solid) => face.model.name_of(solid)?,
@@ -318,10 +310,7 @@ impl SelectableElement<NamedModel<Design>> for Body {
         Some(ElementReference::new(model(), name))
     }
 
-    fn drawn(
-        reader: &Reader,
-        body: &ElementReference<NamedModel<Design>, Self>,
-    ) -> Vec<PickedElement> {
+    fn drawn(reader: &Reader, body: &ElementReference<NamedModel, Self>) -> Vec<PickedElement> {
         (read_model(reader).ok())
             .map(|model| drawn_entity(&model, body.name()))
             .unwrap_or_default()
@@ -332,7 +321,7 @@ impl SelectableElement<NamedModel<Design>> for Body {
 /// picked is refused.
 pub fn resolve_bodies(
     reader: &Reader,
-    bodies: &[ElementReference<NamedModel<Design>, Body>],
+    bodies: &[ElementReference<NamedModel, Body>],
 ) -> GeopResult<Vec<TopologyBody>> {
     if bodies.is_empty() {
         return Err(GeopError::new("pick the bodies first"));
@@ -370,7 +359,7 @@ mod tests {
     fn a_cube_has_points_lines_and_planes() {
         let part: Part = given_part(&unit_cube()).unwrap();
         let reader = part.current();
-        let point = ElementReference::<NamedModel<Design>, Point>::new(model(), "v0");
+        let point = ElementReference::<NamedModel, Point>::new(model(), "v0");
         let at = reader.retrieve_element(&point).unwrap();
         assert!(
             at.to_array()
@@ -378,20 +367,20 @@ mod tests {
                 .all(|c| c.to_f64() == 0.0 || c.to_f64() == 1.0)
         );
 
-        let line = ElementReference::<NamedModel<Design>, Line>::new(model(), "e0");
+        let line = ElementReference::<NamedModel, Line>::new(model(), "e0");
         let axis = reader.retrieve_element(&line).unwrap();
-        assert!(axis.direction.norm().definitely_greater(Design::ZERO));
-        let plane = ElementReference::<NamedModel<Design>, Plane>::new(model(), "f0");
+        assert!(axis.direction.norm().definitely_greater(Scalar::ZERO));
+        let plane = ElementReference::<NamedModel, Plane>::new(model(), "f0");
         let frame = reader.retrieve_element(&plane).unwrap();
-        assert!(frame.w().norm().could_be_equal(Design::ONE));
-        let curve = ElementReference::<NamedModel<Design>, Curve>::new(model(), "e0");
+        assert!(frame.w().norm().could_be_equal(Scalar::ONE));
+        let curve = ElementReference::<NamedModel, Curve>::new(model(), "e0");
         let chain = reader.retrieve_element(&curve).unwrap();
         assert_eq!(chain.curve_names, ["e0"]);
         assert_eq!(chain.joint_names.len(), 2);
 
-        let round = ElementReference::<NamedModel<Design>, Round>::new(model(), "f0");
+        let round = ElementReference::<NamedModel, Round>::new(model(), "f0");
         assert!(reader.retrieve_element(&round).is_err());
-        let wrong = ElementReference::<NamedModel<Design>, Line>::new(model(), "f0");
+        let wrong = ElementReference::<NamedModel, Line>::new(model(), "f0");
         assert!(reader.retrieve_element(&wrong).is_err());
     }
 
@@ -401,16 +390,16 @@ mod tests {
     fn a_geometric_kind_is_picked_where_the_model_has_its_shape() {
         let part: Part = given_part(&unit_cube()).unwrap();
         let reader = part.current();
-        let lines: Vec<ElementReference<NamedModel<Design>, Line>> =
+        let lines: Vec<ElementReference<NamedModel, Line>> =
             selected(&reader, &[hit("edge", "e3"), hit("face", "f0")]);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].name(), "e3");
         assert_eq!(lines[0].drawn(&reader), [hit("edge", "e3")]);
-        let rounds: Vec<ElementReference<NamedModel<Design>, Round>> =
+        let rounds: Vec<ElementReference<NamedModel, Round>> =
             selected(&reader, &[hit("edge", "e3"), hit("face", "f0")]);
         assert!(rounds.is_empty());
         assert_eq!(
-            <ElementReference<NamedModel<Design>, Round>>::picked_from(),
+            <ElementReference<NamedModel, Round>>::picked_from(),
             ["edge", "face"]
         );
     }
@@ -421,7 +410,7 @@ mod tests {
     fn a_body_is_picked_by_a_face_of_it() {
         let part: Part = given_part(&unit_cube()).unwrap();
         let reader = part.current();
-        let bodies: Vec<ElementReference<NamedModel<Design>, Body>> =
+        let bodies: Vec<ElementReference<NamedModel, Body>> =
             selected(&reader, &[hit("face", "f2")]);
         assert_eq!(bodies.len(), 1);
         assert_eq!(bodies[0].name(), "s0");

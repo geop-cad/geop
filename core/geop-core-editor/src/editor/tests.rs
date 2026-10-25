@@ -14,7 +14,6 @@ use geop_core_program::{
     part::StepContext,
     reader::Reader,
     target::{Target, TargetReference},
-    values::Design,
 };
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +28,7 @@ use crate::{
 
 /// A point a step put down: the target named after the step.
 #[derive(Clone, Debug, PartialEq)]
-struct Point(Vector3<Design>);
+struct Point(Vector3);
 
 impl Target for Point {}
 
@@ -55,9 +54,9 @@ struct Place;
 
 impl Operation for Place {
     const KIND: &'static str = "place";
-    type Args = Vector3<Design>;
+    type Args = Vector3;
 
-    fn run(ctx: &mut StepContext, at: &Vector3<Design>) -> GeopResult<()> {
+    fn run(ctx: &mut StepContext, at: &Vector3) -> GeopResult<()> {
         let step = ctx.step();
         ctx.produce(&TargetReference::new(step), at, |_, at| Ok(Point(*at)))
     }
@@ -72,20 +71,15 @@ impl Editable for Place {
     );
     type EditingState = ();
 
-    fn new_args(_: &Context) -> Vector3<Design> {
+    fn new_args(_: &Context) -> Vector3 {
         Vector3::zero()
     }
 
-    fn presentation(_: &Context, _: &Vector3<Design>, _: &()) -> Form<Design> {
+    fn presentation(_: &Context, _: &Vector3, _: &()) -> Form {
         Form::default()
     }
 
-    fn process_user_event(
-        _: &Context,
-        at: &Vector3<Design>,
-        _: &(),
-        event: Event<Design>,
-    ) -> (Vector3<Design>, ()) {
+    fn process_user_event(_: &Context, at: &Vector3, _: &(), event: Event) -> (Vector3, ()) {
         let Event::Canvas(CanvasEvent::Click { pointer, .. }) = event else {
             return (*at, ());
         };
@@ -95,7 +89,7 @@ impl Editable for Place {
             // plane.
             Some((_, hit)) => {
                 let [x, y, _] = hit.sharpen().to_array();
-                (Vector3::from_array([x, y, Design::ZERO]), ())
+                (Vector3::from_array([x, y, Scalar::ZERO]), ())
             }
             None => (*at, ()),
         }
@@ -120,7 +114,7 @@ impl Operation for Raise {
         let step = ctx.step();
         ctx.produce(&TargetReference::new(step), args, |reader, args| {
             let below = reader.retrieve_element(&point(&args.from))?;
-            let by = Vector3::from_array([0.0, 0.0, args.by].map(Design::from_f64));
+            let by = Vector3::from_array([0.0, 0.0, args.by].map(Scalar::from_f64));
             Ok(Point(below.0.add(&by)))
         })
     }
@@ -144,16 +138,11 @@ impl Editable for Raise {
         }
     }
 
-    fn presentation(_: &Context, _: &RaiseArgs, _: &()) -> Form<Design> {
+    fn presentation(_: &Context, _: &RaiseArgs, _: &()) -> Form {
         Form::default()
     }
 
-    fn process_user_event(
-        _: &Context,
-        args: &RaiseArgs,
-        _: &(),
-        _: Event<Design>,
-    ) -> (RaiseArgs, ()) {
+    fn process_user_event(_: &Context, args: &RaiseArgs, _: &(), _: Event) -> (RaiseArgs, ()) {
         (args.clone(), ())
     }
 }

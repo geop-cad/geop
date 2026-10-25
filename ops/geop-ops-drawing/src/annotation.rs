@@ -11,10 +11,10 @@
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    scalars::{Ring, Scalar},
+    scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_program::{placed::Located, reader::Reader, values::Design};
+use geop_core_program::{placed::Located, reader::Reader};
 use geop_core_sketch::{
     dimension::Measure,
     plain::{add, cross, distance, dot, perp, scale, sub, unit},
@@ -298,7 +298,7 @@ impl Annotation {
                 along,
                 label,
             } => {
-                let (p, frame) = measuring::<Design>(layout, *view)?;
+                let (p, frame) = measuring(layout, *view)?;
                 let (a, b) = (paper(part, &frame, from)?, paper(part, &frame, to)?);
                 let (direction, value) = match along {
                     Along::Aligned => (sub(b, a), distance(a, b)),
@@ -330,7 +330,7 @@ impl Annotation {
                 diameter,
                 label,
             } => {
-                let (p, frame) = measuring::<Design>(layout, *view)?;
+                let (p, frame) = measuring(layout, *view)?;
                 let (center, radius) = round(part, p, &frame, edge, paper_scale)?;
                 let text = match diameter {
                     true => format!("⌀{}", length_label(2.0 * radius)),
@@ -346,7 +346,7 @@ impl Annotation {
                 Ok(drawn)
             }
             Annotation::Angle { view, a, b, label } => {
-                let (p, frame) = measuring::<Design>(layout, *view)?;
+                let (p, frame) = measuring(layout, *view)?;
                 let side = |edge: &str| -> GeopResult<(P, P)> {
                     let curve = placed_edge(part, edge)?;
                     if curve.as_line()?.is_none() {
@@ -418,7 +418,7 @@ impl Annotation {
                 Ok(drawn)
             }
             Annotation::CenterMark { view, edge } => {
-                let (p, frame) = measuring::<Design>(layout, *view)?;
+                let (p, frame) = measuring(layout, *view)?;
                 let (c, radius) = round(part, p, &frame, edge, paper_scale)?;
                 let reach = radius * paper_scale + CENTER_OVERSHOOT;
                 Ok(Drawn {
@@ -449,7 +449,7 @@ fn middle(a: P, b: P) -> P {
 
 /// The frame the view `view` looks along. Refused for the section view:
 /// its lines are of the part cut, which nothing of the part names.
-fn frame_of<S: Scalar>(view: DrawnView) -> GeopResult<ViewFrame<S>> {
+fn frame_of(view: DrawnView) -> GeopResult<ViewFrame> {
     match view {
         DrawnView::View(kind) => kind.frame(),
         DrawnView::Section => Err(GeopError::new(
@@ -461,10 +461,7 @@ fn frame_of<S: Scalar>(view: DrawnView) -> GeopResult<ViewFrame<S>> {
 /// The view `view` to measure in: where it is placed, and the frame it
 /// looks along. Refused for the isometric view, which foreshortens every
 /// length and angle.
-fn measuring<S: Scalar>(
-    layout: &Layout,
-    view: DrawnView,
-) -> GeopResult<(&Placement, ViewFrame<S>)> {
+fn measuring(layout: &Layout, view: DrawnView) -> GeopResult<(&Placement, ViewFrame)> {
     if !view.orthographic() {
         return Err(GeopError::new(
             "the isometric view foreshortens every length and angle: dimension in another view",
@@ -475,7 +472,7 @@ fn measuring<S: Scalar>(
 
 /// Where `target` is on the paper of the view looking along `frame`, in
 /// model units.
-fn paper(part: &Reader, frame: &ViewFrame<Design>, target: &Target) -> GeopResult<P> {
+fn paper(part: &Reader, frame: &ViewFrame, target: &Target) -> GeopResult<P> {
     let point = match target {
         Target::Vertex { name } => placed_vertex(part, name)?,
         Target::Center { edge } => {
@@ -489,7 +486,7 @@ fn paper(part: &Reader, frame: &ViewFrame<Design>, target: &Target) -> GeopResul
             let curve = placed_edge(part, name)?;
             let (t0, t1) = curve.domain();
             // Any point of it would do: its middle, sharp.
-            curve.evaluate(t0.add(t1).mul(Design::from_f64(0.5)).sharpen())?
+            curve.evaluate(t0.add(t1).mul(Scalar::from_f64(0.5)).sharpen())?
         }
     };
     let q = frame.project_point(&point);
@@ -502,7 +499,7 @@ fn paper(part: &Reader, frame: &ViewFrame<Design>, target: &Target) -> GeopResul
 fn round(
     part: &Reader,
     p: &Placement,
-    frame: &ViewFrame<Design>,
+    frame: &ViewFrame,
     edge: &str,
     scale: f64,
 ) -> GeopResult<(P, f64)> {
@@ -525,7 +522,7 @@ fn round(
 }
 
 /// Whether a view looking along `frame` sees a circle about `normal` round.
-fn seen_round<S: Scalar>(frame: &ViewFrame<S>, normal: &Vector3<S>) -> bool {
+fn seen_round(frame: &ViewFrame, normal: &Vector3) -> bool {
     frame
         .direction
         .vector()
@@ -605,9 +602,9 @@ const POINTS_PER_PIECE: usize = 12;
 /// round, and the edges themselves — each by its name in the part drawn.
 /// The section view's lines are of the part cut, whose entities the part
 /// does not name: nothing can be picked in it.
-pub(crate) fn candidates<S: Scalar>(
-    scene: &Scene<'_, S>,
-    placed: &[Placed<S>],
+pub(crate) fn candidates(
+    scene: &Scene<'_>,
+    placed: &[Placed],
     scale: f64,
 ) -> GeopResult<Vec<Candidate>> {
     let mut out: Vec<Candidate> = Vec::new();
@@ -618,7 +615,7 @@ pub(crate) fn candidates<S: Scalar>(
         let placement = Placement::of(p);
         let place = |q: P| placement.place(scale, q);
         let frame = &p.view.frame;
-        let on_sheet = |q: &Vector3<S>| {
+        let on_sheet = |q: &Vector3| {
             let v = frame.project_point(q);
             place([v[0].to_f64(), v[1].to_f64()])
         };
@@ -635,8 +632,8 @@ pub(crate) fn candidates<S: Scalar>(
                     0 => t0,
                     POINTS_PER_PIECE => t1,
                     k => {
-                        let f = S::from_f64(k as f64 / POINTS_PER_PIECE as f64);
-                        S::fraction(t0, t1, f)
+                        let f = Scalar::from_f64(k as f64 / POINTS_PER_PIECE as f64);
+                        Scalar::fraction(t0, t1, f)
                     }
                 };
                 let q = line.curve.evaluate(t)?;
@@ -670,7 +667,7 @@ pub(crate) fn candidates<S: Scalar>(
                 continue;
             };
             let e = model.get_edge(edge)?;
-            let world = |q: Vector3<S>| match &b.pose {
+            let world = |q: Vector3| match &b.pose {
                 Some(pose) => pose.apply(&q),
                 None => q,
             };

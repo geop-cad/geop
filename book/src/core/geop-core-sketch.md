@@ -78,13 +78,13 @@ points and curves are still free to move, and which constraints failed.
   the shared solver (`solvers::system`) of [geop-core-math](./geop-core-math.md) drives
   the sum of their squares to zero, pulls dragged points, reports degrees
   of freedom and encloses the exact solution.
-- **Derivatives.** Residuals are written once, generic over `Scalar`, and
+- **Derivatives.** Residuals are written once, generic over `Number`, and
   evaluated with `Dual` numbers (forward-mode automatic differentiation) for
   exact gradients.
 
 The solved positions the sketch stores are plain floats: the solver's best
 approximation, what is drawn and what a program saves. The residuals are
-computed on `Dual<ScalInF64>`, so the `sin`, `sqrt` and `PI` they need are
+computed on `Dual`, so the `sin`, `sqrt` and `PI` they need are
 enclosed rather than rounded away.
 
 ## Enclosing the solution

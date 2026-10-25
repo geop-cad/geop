@@ -11,7 +11,7 @@ use geop_core_editor::{
 use geop_core_program::{
     element::ElementReference,
     part::StepContext,
-    values::{Design, Settings, pose_state},
+    values::{Settings, pose_state},
 };
 use std::collections::BTreeMap;
 
@@ -182,17 +182,13 @@ impl PartOperation for AddPart {
         context: &'a Context<'a>,
         args: &AddPartArgs,
         editing: &PartEditing,
-    ) -> EditForm<'a, Design, AddPartArgs, PartSession> {
+    ) -> EditForm<'a, AddPartArgs, PartSession> {
         editor::form(context, args, &editing.session)
     }
 
     /// The part dragged; Delete removes the mate selected, Escape stops
     /// editing it: see [`crate::editor`].
-    fn canvas(
-        context: &Context,
-        edit: Edit<'_, AddPartArgs, PartSession>,
-        event: &CanvasEvent<Design>,
-    ) {
+    fn canvas(context: &Context, edit: Edit<'_, AddPartArgs, PartSession>, event: &CanvasEvent) {
         editor::canvas(context, edit, event)
     }
 }

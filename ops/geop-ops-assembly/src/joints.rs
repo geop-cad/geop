@@ -19,10 +19,9 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     plain::{cross, dot, sub},
     primitives::Pose,
-    scalars::{Field, Ring, Scalar, as_f64},
+    scalars::{Number, Scalar, as_f64},
     vector::Vector3,
 };
-use geop_core_program::values::Design;
 use geop_ops_model::selection::Shape;
 use serde::{Deserialize, Serialize};
 
@@ -33,24 +32,20 @@ use crate::residuals::{D, Placing, parallel};
 /// turns are measured from — unit vectors, the reference square to the
 /// axis.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Connector<S: Scalar> {
-    pub origin: Vector3<S>,
-    pub axis: Vector3<S>,
-    pub reference: Vector3<S>,
+pub struct Connector<T: Number = Scalar> {
+    pub origin: Vector3<T>,
+    pub axis: Vector3<T>,
+    pub reference: Vector3<T>,
 }
 
-impl Connector<Design> {
+impl Connector {
     /// The connector at `origin`, along `axis` (any non-zero length), its
     /// turns measured from `reference` made square to the axis — or, with
     /// none given, from whichever of the body's own axes `x`, `y`, `z` runs
     /// least along it, made square to it: a free choice, and the
     /// well-conditioned one. So two bodies drawn the same way round, mated
     /// on the same axis of each, are at a turn of zero.
-    pub fn new(
-        origin: Vector3<Design>,
-        axis: Vector3<Design>,
-        reference: Option<Vector3<Design>>,
-    ) -> GeopResult<Self> {
+    pub fn new(origin: Vector3, axis: Vector3, reference: Option<Vector3>) -> GeopResult<Self> {
         let axis = axis
             .normalize()
             .map_err(|e| e.with_context(format!("the axis {axis:?} of a joint")))?;
@@ -98,7 +93,7 @@ impl Connector<Design> {
     /// never moves.
     pub fn placed(&self, pose: Option<&Pose<D>>) -> Connector<D> {
         let placing = Placing::new(pose);
-        let turn = |d: &Vector3<Design>| placing.turn(&d.map(D::cst));
+        let turn = |d: &Vector3| placing.turn(&d.map(D::cst));
         Connector {
             origin: placing.point(&self.origin),
             axis: turn(&self.axis),
@@ -167,13 +162,13 @@ pub enum JointKind {
             with = "as_f64::option",
             skip_serializing_if = "Option::is_none"
         )]
-        min: Option<Design>,
+        min: Option<Scalar>,
         #[serde(
             default,
             with = "as_f64::option",
             skip_serializing_if = "Option::is_none"
         )]
-        max: Option<Design>,
+        max: Option<Scalar>,
     },
     /// Slides along the axis, nothing else.
     Slider {
@@ -182,13 +177,13 @@ pub enum JointKind {
             with = "as_f64::option",
             skip_serializing_if = "Option::is_none"
         )]
-        min: Option<Design>,
+        min: Option<Scalar>,
         #[serde(
             default,
             with = "as_f64::option",
             skip_serializing_if = "Option::is_none"
         )]
-        max: Option<Design>,
+        max: Option<Scalar>,
     },
     /// Turns about the axis and slides along it: a shaft in a bearing.
     Cylindrical,
@@ -227,7 +222,7 @@ impl JointKind {
     }
 
     /// The limits of `motion`'s coordinate, `[min, max]`, either missing.
-    pub fn limits(&self, motion: Motion) -> [Option<Design>; 2] {
+    pub fn limits(&self, motion: Motion) -> [Option<Scalar>; 2] {
         match (*self, motion) {
             (JointKind::Revolute { min, max }, Motion::Turn)
             | (JointKind::Slider { min, max }, Motion::Slide) => [min, max],
@@ -372,7 +367,7 @@ pub struct CouplingKind {
     #[serde(rename = "type")]
     pub transmission: Transmission,
     #[serde(with = "as_f64")]
-    pub value: Design,
+    pub value: Scalar,
     #[serde(default)]
     pub reverse: bool,
 }
@@ -380,11 +375,11 @@ pub struct CouplingKind {
 impl CouplingKind {
     /// The second coordinate per radian or unit of length of the first,
     /// both in natural units — radians and lengths.
-    pub fn factor(&self) -> GeopResult<Design> {
+    pub fn factor(&self) -> GeopResult<Scalar> {
         let factor = match self.transmission {
-            Transmission::Gear => Design::ONE.div(self.value)?,
+            Transmission::Gear => Scalar::ONE.div(self.value)?,
             Transmission::RackPinion => self.value,
-            Transmission::Screw => self.value.div(Design::TWO.mul(Design::PI))?,
+            Transmission::Screw => self.value.div(Scalar::TWO.mul(Scalar::PI))?,
         };
         Ok(if self.reverse { factor.neg() } else { factor })
     }
@@ -410,7 +405,7 @@ impl CouplingKind {
                 )));
             }
         }
-        if self.transmission == Transmission::Gear && self.value.could_be_equal(Design::ZERO) {
+        if self.transmission == Transmission::Gear && self.value.could_be_equal(Scalar::ZERO) {
             return Err(GeopError::new(format!(
                 "a gear coupling's ratio must not be zero: {:?}",
                 self.value

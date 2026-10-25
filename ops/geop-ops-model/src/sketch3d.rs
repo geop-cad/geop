@@ -22,40 +22,39 @@ use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
     reader::Reader,
     target::{Target, TargetReference},
-    values::Design,
 };
 
 /// A 3-D sketch as a program holds it.
-pub type Sketch3d = geop_core_sketch::space::Sketch3d<Design>;
+pub type Sketch3d = geop_core_sketch::space::Sketch3d;
 /// A 3-D sketch's constraint as a program holds it.
-pub type Constraint3d = geop_core_sketch::space::Constraint3d<Design>;
+pub type Constraint3d = geop_core_sketch::space::Constraint3d;
 
 one_of! {
     /// A point of the part a 3-D sketch's fixed point is at: a vertex, a
     /// datum point or a frame's origin, a sketch's point.
-    pub enum PointSource -> Vector3<Design> {
-        Vertex(ElementReference<NamedModel<Design>, Point>),
+    pub enum PointSource -> Vector3 {
+        Vertex(ElementReference<NamedModel, Point>),
         Datum(ElementReference<Datums, Point>),
-        Sketch(ElementReference<PlacedSketch<Design>, Point>),
+        Sketch(ElementReference<PlacedSketch, Point>),
     }
 }
 
 one_of! {
     /// A curve of the part a 3-D sketch's reference curve is: an edge, a
     /// sketch's curve.
-    pub enum CurveSource -> Chain<NurbCurve3D<Design>> {
-        Edge(ElementReference<NamedModel<Design>, Curve>),
-        Sketch(ElementReference<PlacedSketch<Design>, Curve>),
+    pub enum CurveSource -> Chain<NurbCurve3D> {
+        Edge(ElementReference<NamedModel, Curve>),
+        Sketch(ElementReference<PlacedSketch, Curve>),
     }
 }
 
 one_of! {
     /// A line of the part a 3-D sketch's direction runs along: a straight
     /// edge, a datum axis or a frame's, a sketch's line.
-    pub enum LineSource -> Axis<Design> {
-        Edge(ElementReference<NamedModel<Design>, Line>),
+    pub enum LineSource -> Axis {
+        Edge(ElementReference<NamedModel, Line>),
         Datum(ElementReference<Datums, Line>),
-        Sketch(ElementReference<PlacedSketch<Design>, Line>),
+        Sketch(ElementReference<PlacedSketch, Line>),
     }
 }
 
@@ -87,7 +86,7 @@ pub fn sketch3d_path(name: &str) -> ElementReference<PlacedSketch3d, Path> {
 impl PlacedSketch3d {
     /// Its one chain of curves, open or closed, as a path runs along it:
     /// named after the sketch and its elements.
-    pub fn path(&self) -> GeopResult<Chain<NurbCurve3D<Design>>> {
+    pub fn path(&self) -> GeopResult<Chain<NurbCurve3D>> {
         let ctx = with_context!("the curves of the 3-D sketch {:?}", self.name);
         let chains = self.sketch.chains().with_context(ctx)?;
         let [chain] = chains.as_slice() else {
@@ -97,7 +96,7 @@ impl PlacedSketch3d {
             )))
             .with_context(ctx);
         };
-        let geometry = self.sketch.enclose::<Design>().with_context(ctx)?;
+        let geometry = self.sketch.enclose().with_context(ctx)?;
         let pieces = chain.to_nurbs(&self.sketch, &geometry).with_context(ctx)?;
         Ok(chain_of_pieces(&self.name, pieces, chain.closed))
     }
@@ -124,9 +123,9 @@ impl HasElements<PlacedSketch3d> for PlacedSketch3d {
 }
 
 impl HasElements<Path> for PlacedSketch3d {
-    type Element<'a> = Chain<NurbCurve3D<Design>>;
+    type Element<'a> = Chain<NurbCurve3D>;
 
-    fn element(&self, name: &str) -> GeopResult<Chain<NurbCurve3D<Design>>> {
+    fn element(&self, name: &str) -> GeopResult<Chain<NurbCurve3D>> {
         whole(self, name)?.path()
     }
 

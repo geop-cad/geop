@@ -146,7 +146,7 @@ fn tangent_arc(sketch: &mut Sketch, curve: CurveId, start: PointId, to: &Placed)
         return None;
     }
     let end = to.materialize(sketch);
-    let arc = sketch.add_arc(start, end, Design::from_f64(2.0 * half));
+    let arc = sketch.add_arc(start, end, Scalar::from_f64(2.0 * half));
     sketch.constrain(Constraint::Tangent { a: curve, b: arc });
     Some(Built {
         end: Some(end),
@@ -357,7 +357,7 @@ fn build(
                 return None;
             }
             let center = m.materialize(sketch);
-            let circle = sketch.add_circle(center, Design::from_f64(radius));
+            let circle = sketch.add_circle(center, Scalar::from_f64(radius));
             if let Some(p) = r.existing() {
                 sketch.constrain(Constraint::PointOnCurve {
                     point: p,
@@ -373,7 +373,7 @@ fn build(
                 return None;
             }
             let m = sketch.new_point_at(center);
-            let circle = sketch.add_circle(m, Design::from_f64(radius));
+            let circle = sketch.add_circle(m, Scalar::from_f64(radius));
             // Only what it was drawn through stays on it: the points it
             // snapped to.
             for p in [a, b, c].into_iter().filter_map(Placed::existing) {
@@ -393,7 +393,7 @@ fn build(
             if start == end {
                 return None;
             }
-            let arc = sketch.add_arc(start, end, Design::from_f64(sweep));
+            let arc = sketch.add_arc(start, end, Scalar::from_f64(sweep));
             Some(Built {
                 end: Some(end),
                 last: Some(arc),
@@ -418,7 +418,7 @@ fn build(
             if start == end {
                 return None;
             }
-            let arc = sketch.add_arc(start, end, Design::from_f64(sweep));
+            let arc = sketch.add_arc(start, end, Scalar::from_f64(sweep));
             let center = m.materialize(sketch);
             sketch.constrain(Constraint::Center {
                 point: center,
@@ -447,7 +447,7 @@ fn build(
             };
             // Corners on a circle, sides of one length: regular.
             let center = m.materialize(sketch);
-            let circle = sketch.add_circle(center, Design::from_f64(distance(first, [0.0, 0.0])));
+            let circle = sketch.add_circle(center, Scalar::from_f64(distance(first, [0.0, 0.0])));
             sketch.set_construction(circle, true);
             let mut corners = vec![if hints.circumscribed {
                 sketch.new_point_at(add(m.at, first))
@@ -471,7 +471,7 @@ fn build(
             // Circumscribed, the circle the sides touch: its diameter is
             // the width across flats, to give.
             if hints.circumscribed {
-                let inner = sketch.add_circle(center, Design::from_f64(size));
+                let inner = sketch.add_circle(center, Scalar::from_f64(size));
                 sketch.set_construction(inner, true);
                 sketch.constrain(Constraint::Tangent {
                     a: sides[n - 1],
@@ -500,9 +500,9 @@ fn build(
                 sketch.new_point_at(add(a.at, offset)),
             ];
             let right = sketch.add_line(p[0], p[1]);
-            let round_b = sketch.add_arc(p[1], p[2], Design::from_f64(PI));
+            let round_b = sketch.add_arc(p[1], p[2], Scalar::from_f64(PI));
             let left = sketch.add_line(p[2], p[3]);
-            let round_a = sketch.add_arc(p[3], p[0], Design::from_f64(PI));
+            let round_a = sketch.add_arc(p[3], p[0], Scalar::from_f64(PI));
             for (x, y) in [
                 (right, round_b),
                 (round_b, left),
@@ -551,7 +551,7 @@ fn build(
                 return None;
             }
             // Its centerline, about the center.
-            let centerline = sketch.add_arc(a, b, Design::from_f64(sweep));
+            let centerline = sketch.add_arc(a, b, Scalar::from_f64(sweep));
             sketch.set_construction(centerline, true);
             sketch.constrain(Constraint::Center {
                 point: center,
@@ -569,12 +569,12 @@ fn build(
             ]
             .map(|q| sketch.new_point_at(q));
             let turn = sweep.signum() * PI;
-            let outer = sketch.add_arc(p[0], p[1], Design::from_f64(sweep));
-            let round_b = sketch.add_arc(p[1], p[2], Design::from_f64(turn));
+            let outer = sketch.add_arc(p[0], p[1], Scalar::from_f64(sweep));
+            let round_b = sketch.add_arc(p[1], p[2], Scalar::from_f64(turn));
             // The inner side turns the way the centerline does, from `a`'s
             // end to `b`'s.
-            let inner = sketch.add_arc(p[3], p[2], Design::from_f64(sweep));
-            let round_a = sketch.add_arc(p[3], p[0], Design::from_f64(turn));
+            let inner = sketch.add_arc(p[3], p[2], Scalar::from_f64(sweep));
+            let round_a = sketch.add_arc(p[3], p[0], Scalar::from_f64(turn));
             for (x, y) in [
                 (outer, round_b),
                 (round_b, inner),
@@ -682,12 +682,12 @@ fn cut_corner(sketch: &mut Sketch, p: PointId, round: bool) -> Option<Built> {
         // second, with the radius that makes the arc tangent where they
         // are cut back to.
         let turn = cross(scale(u1, -1.0), u2).signum() * (PI - theta);
-        let arc = sketch.add_arc(t1, t2, Design::from_f64(turn));
+        let arc = sketch.add_arc(t1, t2, Scalar::from_f64(turn));
         sketch.constrain(Constraint::Tangent { a: l1, b: arc });
         sketch.constrain(Constraint::Tangent { a: l2, b: arc });
         let prompt = sketch.constrain(Constraint::Radius {
             curve: arc,
-            value: Design::from_f64(setback * (theta / 2.0).tan()),
+            value: Scalar::from_f64(setback * (theta / 2.0).tan()),
         });
         let used = sketch.curves.values().any(|c| c.points().contains(&p))
             || sketch.constraints.values().any(|k| k.points().contains(&p));
@@ -714,7 +714,7 @@ fn cut_corner(sketch: &mut Sketch, p: PointId, round: bool) -> Option<Built> {
         });
         sketch.constrain(Constraint::Length {
             curve: pieces[0],
-            value: Design::from_f64(setback),
+            value: Scalar::from_f64(setback),
         })
     };
     Some(Built {

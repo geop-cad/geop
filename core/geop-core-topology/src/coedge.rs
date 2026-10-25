@@ -1,6 +1,5 @@
 use crate::{CoedgeId, VertexId};
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_core_math::scalars::Scalar;
 
 use super::ids::{EdgeId, FaceId};
 use super::model::{Curve2, Curve3};
@@ -31,7 +30,7 @@ impl Sense {
     }
 
     /// `curve`, run the way a coedge of this sense runs it.
-    pub fn orient<S: Scalar>(self, curve: &Curve3<S>) -> Curve3<S> {
+    pub fn orient(self, curve: &Curve3) -> Curve3 {
         match self {
             Sense::Forward => curve.clone(),
             Sense::Reversed => curve.reverse(),
@@ -59,17 +58,17 @@ pub enum CoedgeGeometry {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Coedge<S: Scalar> {
+pub struct Coedge {
     pub geometry: CoedgeGeometry,
     pub sense: Sense,
-    pub pcurve: Curve2<S>,
+    pub pcurve: Curve2,
     pub next: CoedgeId,
     pub prev: CoedgeId,
     // face
     pub face: FaceId,
 }
 
-impl<S: Scalar> Coedge<S> {
+impl Coedge {
     /// This coedge's own edge — an error for a `Vertex`-backed coedge
     /// (there's no edge to compare or collect there). Convenience for
     /// code that only ever applies to edge-backed coedges.

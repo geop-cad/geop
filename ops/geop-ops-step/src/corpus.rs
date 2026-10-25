@@ -8,13 +8,10 @@ use std::{
     time::Instant,
 };
 
-use geop_core_math::scalars::scal_in_f64::ScalInF64;
 use geop_core_topology::validation::{ValidationParameters, validate};
 use geop_ops_model::{NamedModel, Namer};
 
 use crate::{add_bodies, read_step};
-
-type S = ScalInF64;
 
 fn corpus_dir() -> PathBuf {
     std::env::var_os("STEP_CORPUS")
@@ -79,7 +76,7 @@ type Imported = (usize, usize, Vec<String>);
 fn import_file(path: &Path, full: bool) -> Result<Imported, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let text = String::from_utf8_lossy(&bytes);
-    let bodies = read_step::<S>(&text).map_err(|e| format!("{e:?}"))?;
+    let bodies = read_step(&text).map_err(|e| format!("{e:?}"))?;
     if bodies.is_empty() {
         return Err("RootError: no bodies".into());
     }

@@ -4,7 +4,7 @@
 
 use crate::{ProjectCurve, ProjectCurveArgs};
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
-use geop_core_program::{element::ElementReference, values::Design};
+use geop_core_program::element::ElementReference;
 use geop_lib_sweep::shapes::block_part;
 use geop_ops_model::sketch::{
     Sketch,
@@ -18,12 +18,12 @@ use geop_ops_model::{
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 
 /// The block the sketches are projected onto: `[-1, 1]^2 x [0, 1]`.
-fn block() -> NamedModel<Design> {
+fn block() -> NamedModel {
     block_part("block", [-1.0, -1.0, 0.0], [1.0, 1.0, 1.0])
 }
 
 /// The name of the face of `block` facing `normal`.
-fn face_of(block: &NamedModel<Design>, normal: [f64; 3]) -> String {
+fn face_of(block: &NamedModel, normal: [f64; 3]) -> String {
     let solid = block.solid_id("cube(block)").unwrap();
     let face = face_towards(block, solid, normal);
     block.name_of(face).unwrap().to_string()
@@ -31,7 +31,7 @@ fn face_of(block: &NamedModel<Design>, normal: [f64; 3]) -> String {
 
 /// The block with the sketch `mark` on the plane `z = 0` projected onto
 /// its top.
-fn project_onto_top(mark: Sketch) -> GeopResult<NamedModel<Design>> {
+fn project_onto_top(mark: Sketch) -> GeopResult<NamedModel> {
     let block = block();
     let top = face_of(&block, [0.0, 0.0, 1.0]);
     let mut part = given_part(&block)?;

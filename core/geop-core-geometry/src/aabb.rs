@@ -1,6 +1,6 @@
 //! Cheap axis-aligned bounding box helpers shared by [`crate::nurb_curve`]
 //! and [`crate::nurb_surface`] — see `NurbCurve`/`NurbSurface`'s own `aabb`
-//! field doc comment for why one padded-to-3 `[S; 3]` per curve/surface is
+//! field doc comment for why one padded-to-3 `[Scalar; 3]` per curve/surface is
 //! enough to serve as a full bounding box under interval arithmetic.
 
 use geop_core_math::{scalars::Scalar, vector::Vector};
@@ -13,9 +13,9 @@ use crate::nurb_curve::NurbCurve;
 /// type — callers only ever read the first `D - 1` (see
 /// [`aabb_could_overlap`]'s own `c` parameter).
 ///
-/// Each axis's bound is a *single* `S`, not a separate `(min, max)` pair:
-/// `S` is itself an interval type here, so folding every control point's
-/// coordinate on that axis into one `S` via [`Scalar::union`] already
+/// Each axis's bound is a *single* `Scalar`, not a separate `(min, max)` pair:
+/// `Scalar` is itself an interval type here, so folding every control point's
+/// coordinate on that axis into one `Scalar` via [`Scalar::union`] already
 /// produces exactly that axis's `[min, max]` extent — "3 scalar values" is
 /// the whole bounding box.
 ///
@@ -23,8 +23,8 @@ use crate::nurb_curve::NurbCurve;
 /// (`NurbCurve`/`NurbSurface::try_new`), so dehomogenizing cannot fail. Each
 /// coordinate is divided by its weight, one rounding, rather than multiplied
 /// by a reciprocal, two: the box is the tightest the control points give.
-pub(crate) fn compute_aabb<S: Scalar, const D: usize>(control_points: &[Vector<S, D>]) -> [S; 3] {
-    let mut acc: [Option<S>; 3] = [None; 3];
+pub(crate) fn compute_aabb<const D: usize>(control_points: &[Vector<D>]) -> [Scalar; 3] {
+    let mut acc: [Option<Scalar>; 3] = [None; 3];
     for p in control_points {
         for (axis, slot) in acc.iter_mut().enumerate().take(D - 1) {
             let coord = p[axis]
@@ -36,15 +36,13 @@ pub(crate) fn compute_aabb<S: Scalar, const D: usize>(control_points: &[Vector<S
             });
         }
     }
-    acc.map(|a| a.unwrap_or(S::ENTIRE))
+    acc.map(|a| a.unwrap_or(Scalar::ENTIRE))
 }
 
 /// The box around all of `boxes` (each a curve's or a surface's, see
 /// [`crate::nurb_curve::NurbCurve::aabb`]): per axis the union of theirs.
 /// None for no boxes.
-pub fn union_aabb<'a, S: Scalar + 'a>(
-    boxes: impl IntoIterator<Item = &'a [S; 3]>,
-) -> Option<[S; 3]> {
+pub fn union_aabb<'a>(boxes: impl IntoIterator<Item = &'a [Scalar; 3]>) -> Option<[Scalar; 3]> {
     boxes
         .into_iter()
         .copied()
@@ -55,7 +53,7 @@ pub fn union_aabb<'a, S: Scalar + 'a>(
 /// the first `c` (the objects' actual Cartesian dimension) of the 3 padded
 /// axes. `false` is a hard proof of separation, and cheap: `O(c)` scalar
 /// `could_be_equal`s against an already-cached value.
-pub(crate) fn aabb_could_overlap<S: Scalar>(a: &[S; 3], b: &[S; 3], c: usize) -> bool {
+pub(crate) fn aabb_could_overlap(a: &[Scalar; 3], b: &[Scalar; 3], c: usize) -> bool {
     (0..c).all(|i| a[i].could_be_equal(b[i]))
 }
 
@@ -63,10 +61,7 @@ pub(crate) fn aabb_could_overlap<S: Scalar>(a: &[S; 3], b: &[S; 3], c: usize) ->
 /// check as [`aabb_could_overlap`], with `point` standing in for a
 /// zero-extent "box" of its own (each of its `C` coordinates is itself an
 /// interval already, so no separate point-vs-box case is needed).
-pub(crate) fn aabb_could_contain<S: Scalar, const C: usize>(
-    aabb: &[S; 3],
-    point: &Vector<S, C>,
-) -> bool {
+pub(crate) fn aabb_could_contain<const C: usize>(aabb: &[Scalar; 3], point: &Vector<C>) -> bool {
     (0..C).all(|i| aabb[i].could_be_equal(point[i]))
 }
 
@@ -81,9 +76,9 @@ pub(crate) fn aabb_could_contain<S: Scalar, const C: usize>(
 /// extent on that axis; the segment meets the box only if those ranges
 /// and `[0, 1]` share a point. For any other curve, whether the two boxes
 /// could overlap. `false` is a hard proof of separation either way.
-pub(crate) fn curve_could_meet_aabb<S: Scalar, const D: usize>(
-    curve: &NurbCurve<S, D>,
-    aabb: &[S; 3],
+pub(crate) fn curve_could_meet_aabb<const D: usize>(
+    curve: &NurbCurve<D>,
+    aabb: &[Scalar; 3],
     c: usize,
 ) -> bool {
     if !aabb_could_overlap(&curve.aabb, aabb, c) {
@@ -95,14 +90,14 @@ pub(crate) fn curve_could_meet_aabb<S: Scalar, const D: usize>(
     if curve.degree != 1 {
         return true;
     }
-    let point = |cp: Vector<S, D>, i: usize| cp[i].div(cp[D - 1]);
-    let mut range = S::ZERO.union(S::ONE);
+    let point = |cp: Vector<D>, i: usize| cp[i].div(cp[D - 1]);
+    let mut range = Scalar::ZERO.union(Scalar::ONE);
     for (i, extent) in aabb.iter().enumerate().take(c) {
         let (Ok(a), Ok(b)) = (point(p, i), point(q, i)) else {
             return true;
         };
         let d = b.sub(a);
-        if d.could_be_equal(S::ZERO) {
+        if d.could_be_equal(Scalar::ZERO) {
             // Hardly moving along this axis, the segment's parameter is not
             // confined by it; the boxes overlap on it, checked above.
             continue;

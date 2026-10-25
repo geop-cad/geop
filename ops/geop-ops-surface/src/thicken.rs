@@ -10,11 +10,9 @@ use geop_core_editor::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    scalars::{Field, Scalar},
+    scalars::Scalar,
 };
-use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_core_topology::Body;
 use geop_lib_shell::{offset_faces, thicken};
 use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model, model, read_model};
@@ -72,7 +70,7 @@ pub struct Thicken;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ThickenArgs {
     /// A face of the sheet to thicken.
-    pub face: ElementReference<NamedModel<Design>, Face>,
+    pub face: ElementReference<NamedModel, Face>,
     pub thickness: f64,
     #[serde(default)]
     pub side: ThickenSide,
@@ -115,8 +113,8 @@ impl PartOperation for Thicken {
         context: &'a Context<'a>,
         args: &ThickenArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, ThickenArgs> {
-        let mut f = EditForm::<Design, ThickenArgs>::default();
+    ) -> EditForm<'a, ThickenArgs> {
+        let mut f = EditForm::<ThickenArgs>::default();
         f.pick_one(
             "face",
             "sheet",
@@ -146,19 +144,14 @@ impl PartOperation for Thicken {
 }
 
 impl ModelOperation for Thicken {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &Reader,
-        step: &str,
-        args: &ThickenArgs,
-    ) -> GeopResult<()> {
+    fn build(model: &mut NamedModel, _: &Reader, step: &str, args: &ThickenArgs) -> GeopResult<()> {
         let namer = Namer::new("thicken", step)?;
         if !args.thickness.is_finite() {
             return Err(GeopError::new("the thickness is not a number"));
         }
         let sheet =
             model.sheet_of_face(model.face_id(args.face.name())?, "a sheet is thickened")?;
-        let thickness = Design::from_f64(args.thickness);
+        let thickness = Scalar::from_f64(args.thickness);
         match args.side {
             ThickenSide::Against | ThickenSide::Along => {
                 let along = args.side == ThickenSide::Along;
@@ -166,7 +159,7 @@ impl ModelOperation for Thicken {
             }
             ThickenSide::Both => {
                 let faces = model.topology().body_faces(Body::Sheet(sheet))?;
-                let half = thickness.div(Design::TWO)?;
+                let half = thickness.div(Scalar::TWO)?;
                 let copy = offset_faces(model, &namer.scoped("both"), &faces, half)?;
                 model.delete_bodies(&[Body::Sheet(sheet)])?;
                 thicken(model, &namer, copy.shells[0], thickness, false)?;

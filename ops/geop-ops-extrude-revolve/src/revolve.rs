@@ -9,7 +9,6 @@ use geop_core_editor::{
 };
 use geop_core_program::{
     element::ElementReference, numeric::NumericInput, part::StepContext, reader::Reader,
-    values::Design,
 };
 use std::collections::BTreeSet;
 
@@ -20,7 +19,7 @@ use geop_core_geometry::{
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::CoordinateSystem,
-    scalars::{Ring, Scalar},
+    scalars::Scalar,
     vector::{Vector2, Vector3},
     with_context,
 };
@@ -40,10 +39,10 @@ use crate::sweeping::{Extents, Output, Sweeping, build_extents};
 one_of! {
     /// A line a revolve turns around: a line of a sketch — its own, or
     /// another's — a datum axis or a frame's, a straight edge.
-    pub enum RevolveAxis -> Axis<Design> {
-        Sketch(ElementReference<PlacedSketch<Design>, Line>),
+    pub enum RevolveAxis -> Axis {
+        Sketch(ElementReference<PlacedSketch, Line>),
         Datum(ElementReference<Datums, Line>),
-        Edge(ElementReference<NamedModel<Design>, Line>),
+        Edge(ElementReference<NamedModel, Line>),
     }
 }
 
@@ -121,19 +120,19 @@ fn default_axis(reader: &Reader, sketch: &SketchRef) -> Option<RevolveAxis> {
 }
 
 /// The axis in the sketch's own coordinates.
-struct SketchAxis<S: Scalar> {
+struct SketchAxis {
     /// A point on it, and its unit direction, enclosed.
-    point: Vector2<S>,
-    direction: Vector2<S>,
+    point: Vector2,
+    direction: Vector2,
     /// A point on it and its direction (of any length), as drawn: which side
     /// of it a region lies on is a question about the sketch as drawn.
-    drawn: (Vector2<S>, Vector2<S>),
+    drawn: (Vector2, Vector2),
     /// The points of the sketch the constraints put on it — none, unless it
     /// is a line of the sketch.
     on_axis: BTreeSet<PointId>,
 }
 
-impl SketchAxis<Design> {
+impl SketchAxis {
     /// `axis` in the coordinates of `placed`, the sketch `sketch`, whose
     /// solution is `geometry`, other elements read through `reader`. A line
     /// of the sketch itself is its own line; any other line must lie in the
@@ -142,13 +141,12 @@ impl SketchAxis<Design> {
         axis: &RevolveAxis,
         reader: &Reader,
         sketch: &SketchRef,
-        placed: &PlacedSketch<Design>,
-        geometry: &Enclosure<Design>,
+        placed: &PlacedSketch,
+        geometry: &Enclosure,
     ) -> GeopResult<Self> {
-        type S = Design;
         let ctx = with_context!("revolving around {axis:?}");
         let name = &placed.name;
-        let unit = |d: Vector2<S>| d.normalize().with_context(ctx);
+        let unit = |d: Vector2| d.normalize().with_context(ctx);
         if let RevolveAxis::Sketch(line) = axis
             && line.target() == sketch.target()
         {
@@ -157,7 +155,7 @@ impl SketchAxis<Design> {
             let CurveKind::Line { start, end } = sketch.curve(curve).with_context(ctx)?.kind else {
                 return Err(GeopError::new(format!("{curve} is not a line"))).with_context(ctx);
             };
-            let drawn = |p: PointId| sketch.points[&p].xy().map(|c| c.cast::<S>());
+            let drawn = |p: PointId| sketch.points[&p].xy();
             let point = geometry.points[&start];
             return Ok(SketchAxis {
                 point,
@@ -169,9 +167,9 @@ impl SketchAxis<Design> {
         let line = axis.resolve(reader).with_context(ctx)?;
         let plane = &placed.plane;
         let point = plane.to_uvw(&line.point);
-        let along = |axis: &Vector3<S>| line.direction.prod_dot(axis);
+        let along = |axis: &Vector3| line.direction.prod_dot(axis);
         let direction = [along(plane.u()), along(plane.v()), along(plane.w())];
-        if !point[2].could_be_equal(S::ZERO) || !direction[2].could_be_equal(S::ZERO) {
+        if !point[2].could_be_equal(Scalar::ZERO) || !direction[2].could_be_equal(Scalar::ZERO) {
             return Err(GeopError::new(format!(
                 "it does not lie in the plane of sketch {name:?}"
             )))
@@ -206,7 +204,7 @@ impl PartOperation for Revolve {
     /// newest solid if there is one.
     fn new_args(context: &Context) -> RevolveArgs {
         let before = &context.before;
-        let newest = before.targets_of::<PlacedSketch<Design>>().pop();
+        let newest = before.targets_of::<PlacedSketch>().pop();
         let sketch = SketchRef::whole(newest.unwrap_or_else(|| geop_ops_model::sketch::sketch("")));
         RevolveArgs {
             axis: default_axis(before, &sketch),
@@ -228,9 +226,9 @@ impl PartOperation for Revolve {
         context: &'a Context<'a>,
         args: &RevolveArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, RevolveArgs> {
+    ) -> EditForm<'a, RevolveArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, RevolveArgs>::default();
+        let mut f = EditForm::<RevolveArgs>::default();
         f.pick_one(
             "sketch",
             "sketch",
@@ -276,19 +274,18 @@ impl PartOperation for Revolve {
 
 impl ModelOperation for Revolve {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &RevolveArgs,
     ) -> GeopResult<()> {
-        type S = Design;
         let namer = Namer::new("revolve", step)?;
         let placed = reader.retrieve_element(&args.sketch)?;
         let sketch = &placed.sketch;
         let Some(axis) = &args.axis else {
             return Err(GeopError::new("pick a line to revolve around"));
         };
-        let geometry = sketch.enclose::<S>()?;
+        let geometry = sketch.enclose()?;
         let axis = SketchAxis::of(axis, reader, &args.sketch, placed, &geometry)?;
         let (a, dir) = axis.drawn;
         let axis_left = axis.direction.perp();
@@ -338,8 +335,8 @@ impl ModelOperation for Revolve {
                 }
                 for t in extremes {
                     let side = dir.prod_cross(&piece.evaluate(t)?.sub(&a));
-                    left |= side.definitely_greater(S::ZERO);
-                    right |= side.definitely_less(S::ZERO);
+                    left |= side.definitely_greater(Scalar::ZERO);
+                    right |= side.definitely_less(Scalar::ZERO);
                 }
             }
         }
@@ -355,7 +352,7 @@ impl ModelOperation for Revolve {
         // loops keep their winding — a rigid motion, which leaves sweeps and
         // radii as they are. Points the constraints put on the axis get `r =
         // 0` exactly: that is what the constraints say.
-        let r_dir = axis_left.prod_scalar(if left { S::ONE } else { S::ONE.neg() });
+        let r_dir = axis_left.prod_scalar(if left { Scalar::ONE } else { Scalar::ONE.neg() });
         let z_dir = r_dir.perp();
         let rz = Enclosure {
             points: geometry
@@ -364,7 +361,7 @@ impl ModelOperation for Revolve {
                 .map(|(&p, xy)| {
                     let d = xy.sub(&axis.point);
                     let r = if on_axis.contains(&p) {
-                        S::ZERO
+                        Scalar::ZERO
                     } else {
                         d.prod_dot(&r_dir)
                     };
@@ -395,7 +392,7 @@ impl ModelOperation for Revolve {
                 let profile = chain_of_pieces(&placed.name, pieces, closed);
                 for (i, &is_pole) in poles.iter().enumerate() {
                     let at = profile.joint(i)?;
-                    if !is_pole && at[0].could_be_equal(S::ZERO) {
+                    if !is_pole && at[0].could_be_equal(Scalar::ZERO) {
                         return Err(GeopError::new(format!(
                             "the profile touches the revolve axis at {}, which the constraints do not put on it: constrain it onto a line of the sketch to revolve around, or keep the profile clear of the axis",
                             profile.joint_names[i]
@@ -428,18 +425,18 @@ impl ModelOperation for Revolve {
 /// A revolve's loops, swept around the axis `axes.w()` from `axes.u()`
 /// (see [`Sweeping`]): its measure is the angle turned, in degrees.
 struct Revolving<'a> {
-    axes: &'a CoordinateSystem<Design>,
-    loops: &'a [SweepLoop<Design>],
+    axes: &'a CoordinateSystem,
+    loops: &'a [SweepLoop],
 }
 
 impl Sweeping for Revolving<'_> {
-    fn loops(&self) -> &[SweepLoop<Design>] {
+    fn loops(&self) -> &[SweepLoop] {
         self.loops
     }
 
     fn sweep(
         &self,
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         namer: &Namer,
         name: Option<&str>,
         from: f64,
@@ -453,7 +450,7 @@ impl Sweeping for Revolving<'_> {
     }
 
     fn ends(&self, to: f64) -> GeopResult<(String, String)> {
-        let stations = revolution::<Design>(self.axes, 0.0, to)?.station_names;
+        let stations = revolution(self.axes, 0.0, to)?.station_names;
         Ok((stations[0].clone(), stations[stations.len() - 1].clone()))
     }
 
@@ -461,7 +458,7 @@ impl Sweeping for Revolving<'_> {
         360.0
     }
 
-    fn measure(&self, sign: f64, p: &Vector3<Design>) -> Option<f64> {
+    fn measure(&self, sign: f64, p: &Vector3) -> Option<f64> {
         turned_angle(self.axes, p, sign)
     }
 }
@@ -470,10 +467,10 @@ impl Sweeping for Revolving<'_> {
 /// at `axes.u()` — forwards for `sign = 1`, backwards for `-1` — in
 /// degrees in `(0, 360)`; none for a point that could lie on the half plane
 /// the turn starts from, or on the axis.
-fn turned_angle<S: Scalar>(axes: &CoordinateSystem<S>, p: &Vector3<S>, sign: f64) -> Option<f64> {
+fn turned_angle(axes: &CoordinateSystem, p: &Vector3, sign: f64) -> Option<f64> {
     let q = axes.to_uvw(p);
-    let on_axis = q[0].could_be_equal(S::ZERO) && q[1].could_be_equal(S::ZERO);
-    let at_start = q[1].could_be_equal(S::ZERO) && q[0].definitely_greater(S::ZERO);
+    let on_axis = q[0].could_be_equal(Scalar::ZERO) && q[1].could_be_equal(Scalar::ZERO);
+    let at_start = q[1].could_be_equal(Scalar::ZERO) && q[0].definitely_greater(Scalar::ZERO);
     if on_axis || at_start {
         return None;
     }
@@ -496,12 +493,8 @@ fn turned_angle<S: Scalar>(axes: &CoordinateSystem<S>, p: &Vector3<S>, sign: f64
 /// of the arc instead: whatever the side meets on the way in is there
 /// already. If the axis runs through the hull, there is no gap at all; one
 /// merely touching it still leaves the half turn on its other side.
-fn turn_past<S: Scalar>(
-    hull: &[[f64; 3]],
-    axes: &CoordinateSystem<S>,
-    sign: f64,
-) -> GeopResult<f64> {
-    let f = |v: &Vector3<S>| v.to_f64_array();
+fn turn_past(hull: &[[f64; 3]], axes: &CoordinateSystem, sign: f64) -> GeopResult<f64> {
+    let f = |v: &Vector3| v.to_f64_array();
     let (o, u, v) = (f(axes.origin()), f(axes.u()), f(axes.v()));
     // In `[0, 360)`: `rem_euclid` of the smallest negative angle rounds to
     // 360 itself, which is where the turn starts — 0.
@@ -565,7 +558,7 @@ fn surrounds() -> GeopError {
 #[cfg(test)]
 mod tests {
     use super::turn_past;
-    use geop_core_math::{primitives::CoordinateSystem, scalars::ScalInF64 as S, vector::Vector3};
+    use geop_core_math::{primitives::CoordinateSystem, vector::Vector3};
 
     /// A solid with a face in the plane the turn starts from — a revolve
     /// sketched on that face — lies against the start from behind: one of
@@ -573,7 +566,7 @@ mod tests {
     /// The turn must still stop short of one, wherever it goes.
     #[test]
     fn a_target_against_the_start_plane_stops_the_turn_short_of_a_full_one() {
-        let axes = CoordinateSystem::<S>::world_at(Vector3::zero());
+        let axes = CoordinateSystem::world_at(Vector3::zero());
         // The half space below `y = 0`, touching the start plane at `x > 0`
         // — one point a hair below it.
         let hull = [

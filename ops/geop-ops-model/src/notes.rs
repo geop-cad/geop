@@ -11,7 +11,6 @@ use geop_core_program::{
     element::{ElementReference, HasElements, Kind, whole},
     reader::Reader,
     target::{Target, TargetReference},
-    values::Design,
 };
 
 /// What a step says of a solid it built beyond its shape (see
@@ -26,12 +25,12 @@ pub struct SolidNote {
     /// body or a flat pattern of one.
     pub thickness: Option<f64>,
     /// The wires ordered in its place, each cut to length: a harness'.
-    pub wires: Vec<CutWire<Design>>,
+    pub wires: Vec<CutWire>,
 }
 
 /// A wire cut to length, as a bill of materials orders it.
 #[derive(Clone, Debug, PartialEq)]
-pub struct CutWire<S: Scalar> {
+pub struct CutWire {
     pub name: String,
     /// Its colour, `#rrggbb`.
     pub colour: String,
@@ -40,7 +39,7 @@ pub struct CutWire<S: Scalar> {
     /// Its American wire gauge, if it was given by one.
     pub gauge: Option<i32>,
     /// The length to cut it to. An enclosure, as every measured length is.
-    pub cut_length: S,
+    pub cut_length: Scalar,
 }
 
 /// What the steps of a part said of its solids, by the solids' names: the

@@ -20,7 +20,7 @@ apart (see Scripts).
 
 | crate | what it is |
 |---|---|
-| `core/geop-core-math` | scalars and interval arithmetic, linear algebra, the error type, frames, rays, datums, poses, solvers and dual numbers |
+| `core/geop-core-math` | the interval scalar and the number trait it shares with dual numbers, linear algebra, the error type, frames, rays, datums, poses, solvers |
 | `core/geop-core-geometry` | NURBS curves and surfaces, their constructors, compatible curves, Coons and Gordon patches, containment and intersection |
 | `core/geop-core-topology` | the B-rep, building, editing and validation, wires |
 | `core/geop-core-rasterize` | a model as a triangle mesh, STL, debug renderings |

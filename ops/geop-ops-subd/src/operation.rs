@@ -19,12 +19,12 @@ use geop_core_editor::{
     part_operation,
     part_operation::PartOperation,
 };
-use geop_core_program::{part::StepContext, reader::Reader, values::Design};
+use geop_core_program::{part::StepContext, reader::Reader};
 use std::collections::BTreeSet;
 
 use geop_core_math::{
     geop_error::{GeopResult, WithContext},
-    scalars::{Ring, Scalar},
+    scalars::Scalar,
     vector::Vector3,
     with_context,
 };
@@ -38,7 +38,7 @@ use crate::{
 };
 
 /// Builds the limit surface of `cage` — mirrored in `mirror`'s plane, if
-/// any — as the step `S`: a solid named `subd(S)`, or a sheet. What it is
+/// any — as the step `Scalar`: a solid named `subd(Scalar)`, or a sheet. What it is
 /// made of is named after the cage elements, see [`crate::brep`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Subd;
@@ -90,8 +90,8 @@ fn primitive(name: &str) -> Option<Cage> {
     })
 }
 
-fn vector<S: Scalar>(p: [f64; 3]) -> Vector3<S> {
-    Vector3::from_array(p.map(S::from_f64))
+fn vector(p: [f64; 3]) -> Vector3 {
+    Vector3::from_array(p.map(Scalar::from_f64))
 }
 
 /// `p` turned by `angles` degrees about `x`, then `y`, then `z`.
@@ -131,7 +131,7 @@ fn selected(selection: &[String]) -> (Vec<[u32; 2]>, BTreeSet<u32>) {
 /// The cage drawn: every vertex, edge and face of the half the step holds,
 /// selectable and draggable, creased edges drawn fixed; the mirror image,
 /// if any, as reference.
-fn cage_visuals<S: Scalar>(args: &SubdArgs) -> Vec<Visual<S>> {
+fn cage_visuals(args: &SubdArgs) -> Vec<Visual> {
     let cage = &args.cage;
     let mut visuals = Vec::new();
     let at = |v: u32| cage.vertex(v).map(|x| x.at).ok();
@@ -246,8 +246,8 @@ fn form<'a>(
     args: &SubdArgs,
     session: &SubdSession,
     selection: &[String],
-) -> EditForm<'a, Design, SubdArgs, SubdSession> {
-    let mut f = EditForm::<Design, SubdArgs, SubdSession>::default();
+) -> EditForm<'a, SubdArgs, SubdSession> {
+    let mut f = EditForm::<SubdArgs, SubdSession>::default();
     let start = ["box", "cylinder", "sphere", "plane"]
         .into_iter()
         .map(|p| {
@@ -505,7 +505,7 @@ fn form<'a>(
 /// [`Visual::from_grab`]). The gizmo dragged: what is selected moved, turned or scaled as the
 /// drag did. Escape clears the selection; Delete deletes the faces
 /// selected.
-fn on_canvas(edit: Edit<'_, SubdArgs, SubdSession>, event: &CanvasEvent<Design>) {
+fn on_canvas(edit: Edit<'_, SubdArgs, SubdSession>, event: &CanvasEvent) {
     let Edit {
         args,
         session,
@@ -558,16 +558,12 @@ fn on_canvas(edit: Edit<'_, SubdArgs, SubdSession>, event: &CanvasEvent<Design>)
 }
 
 /// Builds the limit surface of `args`' cage into `model` as the step
-/// `step` (see [`Subd`]): in any scalar, as a test builds it.
-pub fn build_subd<S: Scalar>(
-    model: &mut NamedModel<S>,
-    step: &str,
-    args: &SubdArgs,
-) -> GeopResult<()> {
+/// `step` (see [`Subd`]), as a test builds it.
+pub fn build_subd(model: &mut NamedModel, step: &str, args: &SubdArgs) -> GeopResult<()> {
     let ctx = with_context!("subd({step})");
     let namer = Namer::new("subd", step)?;
     let mesh = Mesh::new(&args.cage, args.mirror).with_context(ctx)?;
-    let (spec, names) = limit_body::<S>(&mesh, &namer).with_context(ctx)?;
+    let (spec, names) = limit_body(&mesh, &namer).with_context(ctx)?;
     model.build_body(spec, names).with_context(ctx)?;
     Ok(())
 }
@@ -603,22 +599,17 @@ impl PartOperation for Subd {
         _: &'a Context<'a>,
         args: &SubdArgs,
         editing: &SubdEditing,
-    ) -> EditForm<'a, Design, SubdArgs, SubdSession> {
+    ) -> EditForm<'a, SubdArgs, SubdSession> {
         form(args, &editing.session, &editing.selection)
     }
 
-    fn canvas(_: &Context, edit: Edit<'_, SubdArgs, SubdSession>, event: &CanvasEvent<Design>) {
+    fn canvas(_: &Context, edit: Edit<'_, SubdArgs, SubdSession>, event: &CanvasEvent) {
         on_canvas(edit, event)
     }
 }
 
 impl ModelOperation for Subd {
-    fn build(
-        model: &mut NamedModel<Design>,
-        _: &Reader,
-        step: &str,
-        args: &SubdArgs,
-    ) -> GeopResult<()> {
+    fn build(model: &mut NamedModel, _: &Reader, step: &str, args: &SubdArgs) -> GeopResult<()> {
         build_subd(model, step, args)
     }
 }

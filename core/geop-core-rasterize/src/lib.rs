@@ -20,7 +20,7 @@ pub mod stl;
 pub use grid::triangulate_polygon;
 
 /// A triangle in a plane, by its corners.
-pub type Triangle2<S> = (Vector2<S>, Vector2<S>, Vector2<S>);
+pub type Triangle2 = (Vector2, Vector2, Vector2);
 
 use std::collections::BTreeMap;
 
@@ -38,11 +38,7 @@ use grid::dist_point_to_segment;
 /// `face`'s trimmed region triangulated in `(u, v)` space, by a grid sized
 /// by the face's curvature and clipped to its trim (see
 /// [`grid::triangulate_face`]), each triangle by its corners.
-pub fn face_triangles_uv<S: Scalar>(
-    model: &Model<S>,
-    face: &Face<S>,
-    n: usize,
-) -> GeopResult<Vec<Triangle2<S>>> {
+pub fn face_triangles_uv(model: &Model, face: &Face, n: usize) -> GeopResult<Vec<Triangle2>> {
     let mut samples = grid::Samples::new(face);
     Ok(grid::triangulate_face(model, face, n, &mut samples)?
         .into_iter()
@@ -59,14 +55,14 @@ pub fn face_triangles_uv<S: Scalar>(
 /// `Model` and sampling curves/surfaces on their own. That matters beyond
 /// not repeating code: it guarantees a pick can never disagree with what
 /// the viewer actually drew, because both read the same triangles.
-pub struct RasterizedModel<S: Scalar> {
-    pub vertices: BTreeMap<VertexId, Vector3<S>>,
+pub struct RasterizedModel {
+    pub vertices: BTreeMap<VertexId, Vector3>,
     /// Each edge's curve sampled into an `n`-point polyline.
-    pub edges: BTreeMap<EdgeId, Vec<Vector3<S>>>,
+    pub edges: BTreeMap<EdgeId, Vec<Vector3>>,
     /// Each face's trimmed region, triangulated (see [`face_triangles_uv`])
     /// and mapped through `surface.evaluate` — one face generally maps to
     /// several triangles.
-    pub faces: BTreeMap<FaceId, Vec<TriangleFace<S>>>,
+    pub faces: BTreeMap<FaceId, Vec<TriangleFace>>,
 }
 
 /// A curve is first sampled this finely, and refined from there.
@@ -79,16 +75,16 @@ const MAX_EDGE_DOUBLINGS: usize = 10;
 /// needs. Same rule as [`grid`]'s cells — the tolerance shrinks with
 /// `quality²` because a segment's deviation from the curve does too — so a
 /// model's edges and faces come out equally smooth.
-fn sample_curve<S: Scalar>(
-    curve: &geop_core_geometry::nurb_curve::NurbCurve3D<S>,
+fn sample_curve(
+    curve: &geop_core_geometry::nurb_curve::NurbCurve3D,
     quality: usize,
-) -> GeopResult<Vec<Vector3<S>>> {
+) -> GeopResult<Vec<Vector3>> {
     let (t0, t1) = curve.domain();
-    let at = |frac: (usize, usize)| -> GeopResult<Vector3<S>> {
-        let f = S::from_ratio(frac.0 as i64, frac.1 as i64)?;
+    let at = |frac: (usize, usize)| -> GeopResult<Vector3> {
+        let f = Scalar::from_ratio(frac.0 as i64, frac.1 as i64)?;
         curve.evaluate(t0.add(t1.sub(t0).mul(f)))
     };
-    let points_at = |segments: usize| -> GeopResult<Vec<Vector3<S>>> {
+    let points_at = |segments: usize| -> GeopResult<Vec<Vector3>> {
         (0..=segments).map(|i| at((i, segments))).collect()
     };
 
@@ -134,7 +130,7 @@ fn sample_curve<S: Scalar>(
 /// `n` is a quality: how finely a curve or surface that actually curves is
 /// approximated (see [`sample_curve`] and [`grid::triangulate_face`]), not
 /// a fixed sample count — a straight edge or flat face stays cheap.
-pub fn rasterize<S: Scalar>(model: &Model<S>, n: usize) -> GeopResult<RasterizedModel<S>> {
+pub fn rasterize(model: &Model, n: usize) -> GeopResult<RasterizedModel> {
     if n < 2 {
         return Err(GeopError::new("rasterize: n must be >= 2"));
     }
@@ -184,12 +180,11 @@ pub fn rasterize<S: Scalar>(model: &Model<S>, n: usize) -> GeopResult<Rasterized
 mod tests {
     use super::*;
     use crate::debug::Color10;
-    use geop_core_math::for_all_scalars;
     use geop_core_topology::test_fixtures::test_cube_model;
 
     /// Rasterize `model`, sanity-check it's a non-empty mesh, and save it to
     /// `outputs/<name>.html` for visual inspection.
-    fn rasterize_and_save<S: Scalar>(model: &Model<S>, name: &str) {
+    fn rasterize_and_save(model: &Model, name: &str) {
         let scene = rasterize(model, 8).unwrap().scene(|_| Color10::Blue);
         assert!(!scene.points.is_empty());
         assert!(!scene.lines.is_empty());
@@ -198,11 +193,8 @@ mod tests {
         scene.save_to_file(&format!("outputs/{name}.html")).unwrap();
     }
 
-    fn check_rasterize_cube<S: Scalar>() {
-        rasterize_and_save(&test_cube_model::<S>(), "cube");
-    }
     #[test]
     fn rasterize_cube() {
-        for_all_scalars!(check_rasterize_cube);
+        rasterize_and_save(&test_cube_model(), "cube");
     }
 }

@@ -46,7 +46,7 @@
 
 use crate::{
     geop_error::{GeopError, GeopResult},
-    scalars::{Ring, Scalar},
+    scalars::Scalar,
     solvers::least_squares::Rows,
     union_find::UnionFind,
 };
@@ -64,51 +64,47 @@ use lockstep::{Batch, Made};
 /// A value a solve moves: a block of variables, stepped along its own
 /// tangent space.
 pub trait Variable: Clone + std::fmt::Debug {
-    type Scalar: Scalar;
-
     /// How many numbers a step of it takes. None, for a value no solve
     /// moves.
     fn dimension(&self) -> usize;
 
     /// Where `step` — [`Variable::dimension`] numbers — takes it: the value
     /// a solver tries next, a free choice, so sharp.
-    fn retract(&self, step: &[Self::Scalar]) -> GeopResult<Self>;
+    fn retract(&self, step: &[Scalar]) -> GeopResult<Self>;
 
     /// Every value a step in the box `step` takes it to: an enclosure,
     /// nothing sharpened — of the value it stands for, which a sharp value
     /// may only approximate (a rotation's unit quaternion).
-    fn retract_over(&self, step: &[Self::Scalar]) -> GeopResult<Self>;
+    fn retract_over(&self, step: &[Scalar]) -> GeopResult<Self>;
 
     /// The differential of the retraction over the box `step`: the matrix
     /// `D`, one row per number of a step, such that for every `δ` in the box
     /// a step `dδ` further, `retract(δ + dδ)`, is to first order the step
     /// `D dδ` from `retract(δ)` — an enclosure for every `δ` in the box.
     /// `None` for the identity: a step that adds to the value.
-    fn differential(&self, step: &[Self::Scalar]) -> GeopResult<Option<Vec<Vec<Self::Scalar>>>>;
+    fn differential(&self, step: &[Scalar]) -> GeopResult<Option<Vec<Vec<Scalar>>>>;
 
     /// What keeps it near `at` where nothing else decides where it goes:
     /// residuals that vanish there, each a length — a turn measured where
     /// it moves a point `scale` from its axis — and their derivatives by
     /// its step.
-    fn stay(&self, at: &Self, scale: Self::Scalar) -> GeopResult<Rows<Self::Scalar>>;
+    fn stay(&self, at: &Self, scale: Scalar) -> GeopResult<Rows>;
 
     /// Whether it is no different from `other`: a step that changed nothing.
     fn same(&self, other: &Self) -> bool;
 }
 
 /// A number steps by what is added to it.
-impl<S: Scalar> Variable for S {
-    type Scalar = S;
-
+impl Variable for Scalar {
     fn dimension(&self) -> usize {
         1
     }
 
-    fn retract(&self, step: &[S]) -> GeopResult<S> {
+    fn retract(&self, step: &[Scalar]) -> GeopResult<Scalar> {
         Ok(self.add(*one(step)?).sharpen())
     }
 
-    fn retract_over(&self, step: &[S]) -> GeopResult<S> {
+    fn retract_over(&self, step: &[Scalar]) -> GeopResult<Scalar> {
         let d = *one(step)?;
         Ok(match d.is_zero() && d.is_sharp() {
             true => *self,
@@ -116,24 +112,24 @@ impl<S: Scalar> Variable for S {
         })
     }
 
-    fn differential(&self, step: &[S]) -> GeopResult<Option<Vec<Vec<S>>>> {
+    fn differential(&self, step: &[Scalar]) -> GeopResult<Option<Vec<Vec<Scalar>>>> {
         one(step)?;
         Ok(None)
     }
 
-    fn stay(&self, at: &S, _: S) -> GeopResult<Rows<S>> {
+    fn stay(&self, at: &Scalar, _: Scalar) -> GeopResult<Rows> {
         let mut rows = Rows::default();
-        rows.push(self.sub(*at), vec![S::ONE]);
+        rows.push(self.sub(*at), vec![Scalar::ONE]);
         Ok(rows)
     }
 
-    fn same(&self, other: &S) -> bool {
+    fn same(&self, other: &Scalar) -> bool {
         self.could_be_equal(*other)
     }
 }
 
 /// The one number of a step of a number.
-fn one<S: Scalar>(step: &[S]) -> GeopResult<&S> {
+fn one(step: &[Scalar]) -> GeopResult<&Scalar> {
     match step {
         [d] => Ok(d),
         _ => Err(GeopError::new(format!(
@@ -156,7 +152,7 @@ pub enum Bound {
 impl Bound {
     /// Whether the residual `r` holds — within `tolerance` of zero, or,
     /// for a limit, not definitely above `tolerance`.
-    pub fn holds<S: Scalar>(self, r: S, tolerance: S) -> bool {
+    pub fn holds(self, r: Scalar, tolerance: Scalar) -> bool {
         r.is_finite()
             && match self {
                 Bound::Zero => !r.abs().definitely_greater(tolerance),
@@ -175,23 +171,11 @@ pub enum Term {
 /// A term's residuals where the blocks are, each a length, and their
 /// derivatives: per block it reads, by index, one row per residual — its
 /// derivative by that block's step from where it is.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Linearized<S: Scalar> {
-    pub values: Vec<S>,
-    pub jacobian: Vec<(usize, Vec<Vec<S>>)>,
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Linearized {
+    pub values: Vec<Scalar>,
+    pub jacobian: Vec<(usize, Vec<Vec<Scalar>>)>,
 }
-
-impl<S: Scalar> Default for Linearized<S> {
-    fn default() -> Self {
-        Self {
-            values: Vec::new(),
-            jacobian: Vec::new(),
-        }
-    }
-}
-
-/// The scalar of the values of `E`.
-pub type ScalarOf<E> = <<E as Equations>::Value as Variable>::Scalar;
 
 /// The terms of a system: what an adapter — a sketch, a program — says of
 /// its constraints and preferences.
@@ -208,11 +192,7 @@ pub trait Equations {
     /// and their derivatives, or `None` where it cannot be made there (a
     /// residual undecidable — a direction of zero length — or the term not
     /// made at all).
-    fn evaluate(
-        &self,
-        values: &[Self::Value],
-        which: &[Term],
-    ) -> Vec<Option<Linearized<ScalarOf<Self>>>>;
+    fn evaluate(&self, values: &[Self::Value], which: &[Term]) -> Vec<Option<Linearized>>;
 }
 
 /// Blocks no term ties together, and the terms on them.
@@ -227,11 +207,11 @@ pub struct Group {
 /// Which constraints hold, and the largest residual: an upper bound,
 /// infinite where one cannot be made.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Held<S: Scalar> {
+pub struct Held {
     /// Every constraint holds, to [`RELATIVE_TOLERANCE`] of
     /// the size.
     pub converged: bool,
-    pub max_residual: S,
+    pub max_residual: Scalar,
     /// The constraints that do not hold, by index.
     pub failed: Vec<usize>,
 }
@@ -249,7 +229,7 @@ pub struct Solution<V: Variable> {
     /// groups: why it stopped, after how many steps, the largest residual
     /// left.
     pub iterations: usize,
-    pub phases: Vec<Phase<V::Scalar>>,
+    pub phases: Vec<Phase>,
     /// How many times the solve made the terms — every group's at once:
     /// the work it took, its enclosure's apart.
     pub evaluations: usize,
@@ -278,7 +258,7 @@ pub struct System<'e, E: Equations> {
     /// What a constraint holds to [`RELATIVE_TOLERANCE`] of,
     /// how far one step may go, and what a turn is measured against when a
     /// value stays where it was.
-    pub scale: ScalarOf<E>,
+    pub scale: Scalar,
 }
 
 /// Every term of a system with `count` constraints and preferences.
@@ -334,7 +314,7 @@ impl<E: Equations> System<'_, E> {
     }
 
     /// Which constraints hold at `at`.
-    pub fn held(&self, at: &[E::Value]) -> GeopResult<Held<ScalarOf<E>>> {
+    pub fn held(&self, at: &[E::Value]) -> GeopResult<Held> {
         let (count, _) = self.equations.count();
         let constraints: Vec<Term> = (0..count).map(Term::Constraint).collect();
         let tolerance = tolerance(self.scale)?;
@@ -348,7 +328,7 @@ impl<E: Equations> System<'_, E> {
                     holds && bound.holds(r, tolerance)
                 }),
                 None => {
-                    values.push(ScalarOf::<E>::INFINITY);
+                    values.push(Scalar::INFINITY);
                     false
                 }
             };
@@ -506,7 +486,7 @@ impl<E: Equations> System<'_, E> {
         start: &[E::Value],
         group: &Group,
         batch: &Batch<'_, '_, E>,
-        tolerance: ScalarOf<E>,
+        tolerance: Scalar,
     ) -> GeopResult<Vec<usize>> {
         let solving = Solving::new(self, start, group, batch);
         let first = solving.start();
@@ -557,7 +537,7 @@ impl<E: Equations> System<'_, E> {
 
 /// `phases` with each of `group`'s phases merged into the one of its
 /// index: the most steps, and the largest residual.
-fn worst<S: Scalar>(phases: &mut Vec<Phase<S>>, group: Vec<Phase<S>>) {
+fn worst(phases: &mut Vec<Phase>, group: Vec<Phase>) {
     for (k, phase) in group.into_iter().enumerate() {
         match phases.get_mut(k) {
             None => phases.push(phase),
@@ -622,7 +602,7 @@ impl<'s, 'e, E: Equations> Solving<'s, 'e, E> {
 
     /// The terms `which` with the group at `values` (see
     /// [`Equations::evaluate`]), asked with every other group's.
-    async fn made(&self, values: &[E::Value], which: &[Term]) -> Made<E> {
+    async fn made(&self, values: &[E::Value], which: &[Term]) -> Made {
         self.batch.ask(&self.group.blocks, values, which).await
     }
 
@@ -639,12 +619,12 @@ impl<'s, 'e, E: Equations> Solving<'s, 'e, E> {
     /// those of blocks outside the group left out.
     fn rows<'d>(
         &self,
-        term: &Linearized<ScalarOf<E>>,
-        differential: &dyn Fn(usize) -> Option<&'d Vec<Vec<ScalarOf<E>>>>,
-    ) -> Rows<ScalarOf<E>> {
+        term: &Linearized,
+        differential: &dyn Fn(usize) -> Option<&'d Vec<Vec<Scalar>>>,
+    ) -> Rows {
         let mut rows = Rows::default();
         for (r, &value) in term.values.iter().enumerate() {
-            let mut row = vec![ScalarOf::<E>::ZERO; self.n];
+            let mut row = vec![Scalar::ZERO; self.n];
             let mut set = vec![false; self.n];
             for (block, derivatives) in &term.jacobian {
                 let (Some(column), Some(local)) = (self.column(*block), derivatives.get(r)) else {
@@ -679,7 +659,7 @@ impl<'s, 'e, E: Equations> Solving<'s, 'e, E> {
         &self,
         values: &[E::Value],
         which: &[usize],
-    ) -> Option<Vec<Linearized<ScalarOf<E>>>> {
+    ) -> Option<Vec<Linearized>> {
         let terms: Vec<Term> = which.iter().map(|&c| Term::Constraint(c)).collect();
         self.made(values, &terms).await.into_iter().collect()
     }
@@ -690,10 +670,10 @@ impl<'s, 'e, E: Equations> Solving<'s, 'e, E> {
         &self,
         values: &[E::Value],
         which: &[usize],
-        tolerance: ScalarOf<E>,
-    ) -> (ScalarOf<E>, bool) {
+        tolerance: Scalar,
+    ) -> (Scalar, bool) {
         let Some(made) = self.constraints_at(values, which).await else {
-            return (ScalarOf::<E>::INFINITY, false);
+            return (Scalar::INFINITY, false);
         };
         let holds = (which.iter().zip(&made)).all(|(&c, made)| {
             let bound = self.system.equations.bound(c);
@@ -707,12 +687,7 @@ impl<'s, 'e, E: Equations> Solving<'s, 'e, E> {
 
     /// The limits of the group not held at their bounds that `values` is
     /// beyond.
-    async fn beyond(
-        &self,
-        values: &[E::Value],
-        active: &[usize],
-        tolerance: ScalarOf<E>,
-    ) -> Vec<usize> {
+    async fn beyond(&self, values: &[E::Value], active: &[usize], tolerance: Scalar) -> Vec<usize> {
         let limits: Vec<usize> = (self.group.constraints.iter())
             .filter(|c| !active.contains(c))
             .filter(|&&c| self.system.equations.bound(c) == Bound::AtMost)
@@ -730,11 +705,11 @@ impl<'s, 'e, E: Equations> Solving<'s, 'e, E> {
 
 /// The row `local` times the matrix `d`: a derivative by a block's steps
 /// at a point, as one by the steps from where the retraction started.
-fn compose<S: Scalar>(local: &[S], d: &[Vec<S>]) -> Vec<S> {
+fn compose(local: &[Scalar], d: &[Vec<Scalar>]) -> Vec<Scalar> {
     let columns = d.first().map_or(0, Vec::len);
     (0..columns)
         .map(|j| {
-            let mut sum: Option<S> = None;
+            let mut sum: Option<Scalar> = None;
             for (l, row) in local.iter().zip(d) {
                 let Some(&e) = row.get(j) else {
                     continue;
@@ -745,7 +720,7 @@ fn compose<S: Scalar>(local: &[S], d: &[Vec<S>]) -> Vec<S> {
                     Some(s) => s.add(term),
                 });
             }
-            sum.unwrap_or(S::ZERO)
+            sum.unwrap_or(Scalar::ZERO)
         })
         .collect()
 }

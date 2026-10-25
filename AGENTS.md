@@ -169,9 +169,11 @@ Surfaces, curves and pcurves now evaluate and differentiate relative to a
 sharp control point of the span (`spline::centered`) and add it back with
 one rounding. Which point is a free choice. Wherever an interval formula
 subtracts or divides two large correlated quantities, move it to a local
-origin first. Test geometry far from the origin with both scalar types: in
-`f64` the effect hides behind the format's relative precision, in fixed
-point it does not.
+origin first. A test of geometry far from the origin asserts the width of
+the enclosure it gets, not only that it encloses the right value: in `f64`
+the effect hides behind the format's relative precision until the width is
+read (`vertex.point[k].width().to_f64() < 1e-9`, as the shell's sphere test
+does).
 
 That one rounding is not free near the origin. A STEP edge lay `2e-31`
 above its plane face. Evaluated relative to a point `1.8e-15` up, its

@@ -14,7 +14,7 @@ use geop_core_program::{
     program::Program,
     runner::Runner,
     target::{Target, TargetReference},
-    values::{Design, Setting, Settings, StateValue, pose_state},
+    values::{Setting, Settings, StateValue, pose_state},
 };
 use serde::{Deserialize, Serialize};
 
@@ -224,7 +224,7 @@ fn a_pasted_step_takes_its_state_along() {
     file.state.insert(pose_state("half"), pose.clone());
     (file.state).insert(
         "half_width".into(),
-        StateValue::Number(Design::from_f64(2.0)),
+        StateValue::Number(Scalar::from_f64(2.0)),
     );
 
     let copied = file.excerpt("half").unwrap();

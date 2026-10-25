@@ -13,10 +13,10 @@ use geop_core_geometry::shape::{Arc, Axis, Circle};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::{CoordinateSystem, Pose},
-    scalars::{Ring, Scalar},
+    scalars::Scalar,
     vector::Vector3,
 };
-use geop_core_program::{element::PickedElement, reader::Reader, values::Design};
+use geop_core_program::{element::PickedElement, reader::Reader};
 use geop_core_topology::distance::{Feature, PlacedFace, closest_points};
 use geop_ops_model::parameters::located;
 use geop_ops_model::selection::{Selected, Shape};
@@ -51,10 +51,10 @@ pub struct Measurement {
     pub values: Vec<Measured>,
     /// Where the least distance between two entities is attained: a point
     /// on each.
-    pub witness: Option<[Vector3<Design>; 2]>,
+    pub witness: Option<[Vector3; 2]>,
     /// The plane of one planar entity picked alone — a planar face, a datum
     /// plane — to cut a section view with.
-    pub plane: Option<CoordinateSystem<Design>>,
+    pub plane: Option<CoordinateSystem>,
     /// Why something could not be measured.
     pub error: Option<String>,
 }
@@ -100,7 +100,7 @@ impl Measurement {
 
     /// What it draws in the viewport: the least distance between two
     /// picks, as a line between the points attaining it, labelled with it.
-    pub fn visuals(&self) -> Vec<Visual<Design>> {
+    pub fn visuals(&self) -> Vec<Visual> {
         let Some([a, b]) = self.witness else {
             return Vec::new();
         };
@@ -116,7 +116,7 @@ impl Measurement {
             visuals.push(Visual::new(
                 "distance-label",
                 Drawn::Label {
-                    at: a.add(&b).prod_scalar(Design::from_f64(0.5)),
+                    at: a.add(&b).prod_scalar(Scalar::from_f64(0.5)),
                     text: format!("{:.3} mm", distance.value.value),
                     offset: Vector3::zero(),
                 },
@@ -127,7 +127,7 @@ impl Measurement {
     }
 }
 
-fn measured<S: Scalar>(label: &str, value: S, unit: &'static str) -> Measured {
+fn measured(label: &str, value: Scalar, unit: &'static str) -> Measured {
     Measured {
         label: label.into(),
         value: Bounded::of(value),
@@ -149,7 +149,7 @@ struct Picked<'a> {
     /// The part it is of: the part read, or one placed in it.
     part: Reader<'a>,
     /// Where that part is placed; `None` for the part read itself.
-    pose: Option<Pose<Design>>,
+    pose: Option<Pose>,
     element: Selected,
 }
 
@@ -189,13 +189,13 @@ impl<'a> Picked<'a> {
 
 /// `shape` once its part is moved by `pose`: a part placed in another is
 /// measured as it is placed.
-fn placed(shape: Shape, pose: &Pose<Design>) -> GeopResult<Shape> {
+fn placed(shape: Shape, pose: &Pose) -> GeopResult<Shape> {
     let motion = pose.motion();
-    let axis = |a: Axis<Design>| Axis {
+    let axis = |a: Axis| Axis {
         point: motion.apply(&a.point),
         direction: motion.rotate(&a.direction),
     };
-    let frame = |f: Option<CoordinateSystem<Design>>| f.map(|f| motion.apply_frame(&f)).transpose();
+    let frame = |f: Option<CoordinateSystem>| f.map(|f| motion.apply_frame(&f)).transpose();
     Ok(Shape {
         point: shape.point.map(|p| motion.apply(&p)),
         line: shape.line.map(axis),
@@ -217,7 +217,7 @@ fn placed(shape: Shape, pose: &Pose<Design>) -> GeopResult<Shape> {
 
 /// The direction `shape` has: a line's, or a plane's normal — `true` for a
 /// normal.
-fn direction(shape: &Shape) -> Option<(Vector3<Design>, bool)> {
+fn direction(shape: &Shape) -> Option<(Vector3, bool)> {
     match (&shape.line, &shape.plane) {
         (Some(line), _) => Some((line.direction, false)),
         (None, Some(plane)) => Some((*plane.w(), true)),
@@ -275,14 +275,14 @@ fn alone(reader: &Reader, picked: &PickedElement, out: &mut Measurement) -> Geop
         if let Some(radius) = surface.as_cylinder().with_context(&ctx)?.map(|c| c.radius) {
             out.values.push(measured("Radius", radius, "mm"));
             out.values
-                .push(measured("Diameter", radius.mul(Design::TWO), "mm"));
+                .push(measured("Diameter", radius.mul(Scalar::TWO), "mm"));
         }
     }
     if let Some(arc) = &shape.arc {
         out.values.push(measured("Radius", arc.circle.radius, "mm"));
         out.values.push(measured(
             "Diameter",
-            arc.circle.radius.mul(Design::TWO),
+            arc.circle.radius.mul(Scalar::TWO),
             "mm",
         ));
     }
@@ -342,7 +342,7 @@ fn together(
 /// What a distance can be measured to: a vertex or another point, an edge
 /// or a sketch's curve, a face — each where it is placed; `shape` is what
 /// `entity` is there.
-fn feature<'m>(entity: &Picked<'m>, shape: &Shape) -> GeopResult<Feature<'m, Design>> {
+fn feature<'m>(entity: &Picked<'m>, shape: &Shape) -> GeopResult<Feature<'m>> {
     let ctx = |e: GeopError| {
         e.with_context(format!(
             "measuring a distance to {}",
@@ -368,19 +368,16 @@ fn feature<'m>(entity: &Picked<'m>, shape: &Shape) -> GeopResult<Feature<'m, Des
 /// degrees: between two directions, or between two normals, the angle
 /// between them folded to at most 90°; between a line and a plane, 90°
 /// less the angle between the line and the normal.
-fn angle<S: Scalar>(
-    (a, a_normal): &(Vector3<S>, bool),
-    (b, b_normal): &(Vector3<S>, bool),
-) -> GeopResult<S> {
+fn angle((a, a_normal): &(Vector3, bool), (b, b_normal): &(Vector3, bool)) -> GeopResult<Scalar> {
     let (a, b) = (a.normalize()?, b.normalize()?);
     let cos = a.prod_dot(&b).abs();
     let sin = a.prod_cross(&b).norm();
     // In degrees: the interval atan2 encloses the angle, and the factor
     // 180 / pi is an enclosure too.
-    let between = sin.atan2(cos).mul(S::from_f64(180.0).div(S::PI)?);
+    let between = sin.atan2(cos).mul(Scalar::from_f64(180.0).div(Scalar::PI)?);
     Ok(if a_normal == b_normal {
         between
     } else {
-        S::from_f64(90.0).sub(between)
+        Scalar::from_f64(90.0).sub(between)
     })
 }

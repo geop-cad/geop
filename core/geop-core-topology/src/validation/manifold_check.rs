@@ -20,7 +20,7 @@ use crate::{
 /// The exceptions bound no volume: a sheet's border, where an edge only one
 /// of its faces uses is simply where it ends, and a wire's edges, which no
 /// face uses.
-fn check_every_edge_has_two_coedges<S: Scalar>(errors: &mut Vec<GeopError>, model: &Model<S>) {
+fn check_every_edge_has_two_coedges(errors: &mut Vec<GeopError>, model: &Model) {
     let wire_edges: std::collections::HashSet<crate::EdgeId> = model
         .wires
         .values()
@@ -69,10 +69,10 @@ fn check_every_edge_has_two_coedges<S: Scalar>(errors: &mut Vec<GeopError>, mode
 /// fragility of the intersection search that close in — not a real topology
 /// defect. So a single dissenting vote is tolerated; only genuine majority
 /// disagreement (at least 2 votes on each side) is reported.
-fn check_ray_direction_consistency<S: Scalar>(
-    params: &ValidationParameters<S>,
+fn check_ray_direction_consistency(
+    params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
 ) {
     // Only a solid's shells enclose anything to be inside of.
     for (&shell_id, _) in model.shells.iter().filter(|(_, s)| s.solid.is_some()) {
@@ -93,9 +93,9 @@ fn check_ray_direction_consistency<S: Scalar>(
 
         for point_sample in 0..params.manifold_ray_sample_count {
             let point = Vector3::from_array([
-                S::from_f64(rng.next_range(lo[0] - margin[0], hi[0] + margin[0])),
-                S::from_f64(rng.next_range(lo[1] - margin[1], hi[1] + margin[1])),
-                S::from_f64(rng.next_range(lo[2] - margin[2], hi[2] + margin[2])),
+                Scalar::from_f64(rng.next_range(lo[0] - margin[0], hi[0] + margin[0])),
+                Scalar::from_f64(rng.next_range(lo[1] - margin[1], hi[1] + margin[1])),
+                Scalar::from_f64(rng.next_range(lo[2] - margin[2], hi[2] + margin[2])),
             ]);
 
             let Ok(ray_length) = boundary.ray_length(&point) else {
@@ -104,7 +104,7 @@ fn check_ray_direction_consistency<S: Scalar>(
 
             let mut classifications = Vec::new();
             for dir_sample in 0..params.manifold_ray_sample_count {
-                let direction = rng.next_direction3::<S>();
+                let direction = rng.next_direction3();
                 let seed = params.manifold_seed
                     ^ shell_id.0
                     ^ (point_sample as u64).wrapping_mul(0x9E3779B97F4A7C15)
@@ -160,9 +160,9 @@ fn check_ray_direction_consistency<S: Scalar>(
 /// on), and — the check that actually exercises that strategy — every
 /// shell classifies a batch of random points identically no matter which
 /// (non-degenerate) random ray direction was used to test them.
-pub fn validate_manifold<S: Scalar>(
-    params: &ValidationParameters<S>,
-    model: &Model<S>,
+pub fn validate_manifold(
+    params: &ValidationParameters,
+    model: &Model,
 ) -> Result<(), Vec<GeopError>> {
     let mut errors = match validate(params, model) {
         Ok(()) => Vec::new(),
@@ -184,20 +184,17 @@ mod tests {
     use super::validate_manifold;
     use crate::test_fixtures::test_cube_solid;
     use crate::{CoedgeGeometry, Model, validation::ValidationParameters};
-    use geop_core_math::{for_all_scalars, scalars::Scalar};
 
-    fn check_welded_cube_passes<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn welded_cube_passes() {
+        let mut model = Model::new();
         test_cube_solid(&mut model);
         validate_manifold(&ValidationParameters::default(), &model).unwrap();
     }
-    #[test]
-    fn welded_cube_passes() {
-        for_all_scalars!(check_welded_cube_passes);
-    }
 
-    fn check_missing_edge_coedge_fails<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn missing_edge_coedge_fails() {
+        let mut model = Model::new();
         test_cube_solid(&mut model);
         // Detach one coedge from its edge onto a bogus new one, leaving the
         // original edge with only 1 coedge — non-manifold.
@@ -214,9 +211,5 @@ mod tests {
                 .iter()
                 .any(|e| format!("{e:?}").contains("expected exactly 2"))
         );
-    }
-    #[test]
-    fn missing_edge_coedge_fails() {
-        for_all_scalars!(check_missing_edge_coedge_fails);
     }
 }

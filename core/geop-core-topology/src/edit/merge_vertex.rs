@@ -1,10 +1,7 @@
 use crate::{CoedgeGeometry, Model, VertexId, boundary::BoundaryType};
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
-};
+use geop_core_math::geop_error::{GeopError, GeopResult};
 
-impl<S: Scalar> Model<S> {
+impl Model {
     /// Merges `vertex_deleted_id` into `vertex_into_id`: unions their points
     /// into `vertex_into_id`, repoints every edge/coedge/boundary reference
     /// from `vertex_deleted_id` to `vertex_into_id`, then drops the now

@@ -25,11 +25,11 @@ use std::{
 
 use crate::geop_error::{GeopError, GeopResult};
 
-use super::{Equations, Linearized, ScalarOf, System, Term};
+use super::{Equations, Linearized, System, Term};
 
 /// What an evaluation answers: per term asked, its residuals and
 /// derivatives, or `None` (see [`Equations::evaluate`]).
-pub(super) type Made<E> = Vec<Option<Linearized<ScalarOf<E>>>>;
+pub(super) type Made = Vec<Option<Linearized>>;
 
 /// The terms one group asks, with its blocks at its values, and where the
 /// answer goes.
@@ -37,7 +37,7 @@ struct Request<E: Equations> {
     blocks: Vec<usize>,
     values: Vec<E::Value>,
     which: Vec<Term>,
-    answer: Rc<RefCell<Option<Made<E>>>>,
+    answer: Rc<RefCell<Option<Made>>>,
 }
 
 /// The terms the groups worked on together ask, answered all at once, and
@@ -67,12 +67,7 @@ impl<'s, 'e, E: Equations> Batch<'s, 'e, E> {
 
     /// The terms `which` with the blocks `blocks` — a group's — at `values`
     /// and every other where the base has it, once the batch is answered.
-    pub(super) async fn ask(
-        &self,
-        blocks: &[usize],
-        values: &[E::Value],
-        which: &[Term],
-    ) -> Made<E> {
+    pub(super) async fn ask(&self, blocks: &[usize], values: &[E::Value], which: &[Term]) -> Made {
         let answer = Rc::new(RefCell::new(None));
         self.asked.borrow_mut().push(Request {
             blocks: blocks.to_vec(),
@@ -140,7 +135,7 @@ impl<'s, 'e, E: Equations> Batch<'s, 'e, E> {
         let made = self.evaluate(&values, &terms);
         let together = asked.len() > 1;
         for request in asked {
-            let mut answer: Made<E> = (request.which.iter())
+            let mut answer: Made = (request.which.iter())
                 .map(|term| {
                     let k = terms.binary_search(term).ok()?;
                     made.get(k)?.clone()
@@ -158,7 +153,7 @@ impl<'s, 'e, E: Equations> Batch<'s, 'e, E> {
     }
 
     /// The terms `which` at `values`, counted.
-    fn evaluate(&self, values: &[E::Value], which: &[Term]) -> Made<E> {
+    fn evaluate(&self, values: &[E::Value], which: &[Term]) -> Made {
         self.evaluations.set(self.evaluations.get() + 1);
         self.system.equations.evaluate(values, which)
     }

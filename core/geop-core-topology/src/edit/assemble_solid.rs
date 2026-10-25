@@ -6,12 +6,9 @@ use crate::{
     Body, CoedgeGeometry, CoedgeId, EdgeId, FaceId, Model, Shell, ShellId, Solid, SolidId,
     VertexId, boundary::BoundaryType,
 };
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
-};
+use geop_core_math::geop_error::{GeopError, GeopResult};
 
-impl<S: Scalar> Model<S> {
+impl Model {
     /// Replace the bodies `consumed` by one new solid of a single shell made
     /// of `keep`, which must be faces of those bodies. Every other face they
     /// owned is deleted, and so is everything no face reaches any more.
@@ -176,13 +173,13 @@ fn retain<K: Ord + Clone, V: Clone>(map: &mut OrdMap<K, V>, keep: impl Fn(&K) ->
 #[cfg(test)]
 mod tests {
     use crate::{Model, test_fixtures::test_cube_solid};
-    use geop_core_math::{for_all_scalars, scalars::Scalar};
 
     /// A copy of a model shares its arenas, and pruning what is all reachable
     /// touches none of them: a version made by editing a model costs what the
     /// edit touches, not the model's size.
-    fn check_pruning_a_copy_keeps_it_shared<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn pruning_a_copy_keeps_it_shared() {
+        let mut model = Model::new();
         test_cube_solid(&mut model);
         let copy = model.clone();
         model.prune_unreachable();
@@ -190,9 +187,5 @@ mod tests {
         assert!(model.edges.ptr_eq(&copy.edges));
         assert!(model.coedges.ptr_eq(&copy.coedges));
         assert!(model.faces.ptr_eq(&copy.faces));
-    }
-    #[test]
-    fn pruning_a_copy_keeps_it_shared() {
-        for_all_scalars!(check_pruning_a_copy_keeps_it_shared);
     }
 }

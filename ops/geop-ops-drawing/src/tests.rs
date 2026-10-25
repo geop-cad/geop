@@ -1,7 +1,4 @@
-use geop_core_math::{
-    scalars::{ScalInF64 as S, Scalar},
-    vector::Vector3,
-};
+use geop_core_math::{scalars::Scalar, vector::Vector3};
 use geop_core_topology::FaceId;
 use geop_ops_model::NamedModel;
 
@@ -12,14 +9,14 @@ use crate::{
     testing::{Placeable, assembled, built, built_with, given, placeable},
 };
 
-fn all_faces(part: &NamedModel<S>) -> Vec<FaceId> {
+fn all_faces(part: &NamedModel) -> Vec<FaceId> {
     let model = part.topology();
     let mut faces: Vec<FaceId> = model.faces.keys().copied().collect();
     faces.sort_by_key(|f| f.0);
     faces
 }
 
-fn view(part: &NamedModel<S>, kind: ViewKind, options: ViewOptions) -> ProjectedView<S> {
+fn view(part: &NamedModel, kind: ViewKind, options: ViewOptions) -> ProjectedView {
     project_view(
         part.topology(),
         &all_faces(part),
@@ -29,13 +26,13 @@ fn view(part: &NamedModel<S>, kind: ViewKind, options: ViewOptions) -> Projected
     .unwrap()
 }
 
-fn count(view: &ProjectedView<S>, visible: bool) -> usize {
+fn count(view: &ProjectedView, visible: bool) -> usize {
     view.lines.iter().filter(|l| l.visible == visible).count()
 }
 
 /// Each line as `(kind, visible, from, to)` on the paper, for a failure to
 /// show.
-fn summary(view: &ProjectedView<S>) -> Vec<String> {
+fn summary(view: &ProjectedView) -> Vec<String> {
     view.lines
         .iter()
         .map(|l| {
@@ -54,11 +51,11 @@ fn summary(view: &ProjectedView<S>) -> Vec<String> {
         .collect()
 }
 
-fn assert_extents(view: &ProjectedView<S>, expected: [f64; 4]) {
+fn assert_extents(view: &ProjectedView, expected: [f64; 4]) {
     let e = view.extents().unwrap();
     for k in 0..4 {
         assert!(
-            e[k].could_be_equal(S::from_f64(expected[k])),
+            e[k].could_be_equal(Scalar::from_f64(expected[k])),
             "extents {e:?}, expected {expected:?}"
         );
     }
@@ -68,7 +65,7 @@ fn assert_extents(view: &ProjectedView<S>, expected: [f64; 4]) {
 /// lines, and the edges behind it, running along them, are not drawn.
 #[test]
 fn box_front_view_is_a_rectangle() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     cube_solid(&mut part, "box", v3(0.0, 0.0, 0.0), v3(2.0, 1.0, 3.0)).unwrap();
     let front = view(&part, ViewKind::Front, ViewOptions::default());
     assert_eq!(count(&front, true), 4, "{:#?}", summary(&front));
@@ -106,8 +103,8 @@ fn box_front_view_is_a_rectangle() {
 /// its circles edge on as lines; from above, a circle and nothing else.
 #[test]
 fn cylinder_side_view_has_silhouettes() {
-    let mut part = NamedModel::<S>::new();
-    revolved_cylinder(&mut part, "c", v3(0.0, 0.0, 0.0), S::ONE, S::TWO).unwrap();
+    let mut part = NamedModel::new();
+    revolved_cylinder(&mut part, "c", v3(0.0, 0.0, 0.0), Scalar::ONE, Scalar::TWO).unwrap();
     let front = view(&part, ViewKind::Front, ViewOptions::default());
     let silhouettes = front
         .lines
@@ -139,13 +136,13 @@ fn a_threaded_shaft_draws_its_thread() {
     use geop_lib_sheet::{Shape, Stroke};
     use geop_ops_model::{CosmeticThread, Threads};
 
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     revolved_cylinder(
         &mut part,
         "shaft",
         v3(0.0, 0.0, 0.0),
-        S::from_f64(3.0),
-        S::from_f64(10.0),
+        Scalar::from_f64(3.0),
+        Scalar::from_f64(10.0),
     )
     .unwrap();
     let minor = 4.917;
@@ -157,7 +154,7 @@ fn a_threaded_shaft_draws_its_thread() {
                 designation: "M6x1".into(),
                 face: "the shaft's side".into(),
                 axis: Axis::try_new(v3(0.0, 0.0, 10.0), v3(0.0, 0.0, -1.0)).unwrap(),
-                radius: S::from_f64(3.0),
+                radius: Scalar::from_f64(3.0),
                 major_diameter: 6.0,
                 minor_diameter: minor,
                 pitch: 1.0,
@@ -214,7 +211,7 @@ fn a_bill_of_materials_stands_on_the_title_block() {
     use crate::layer;
     use crate::{DrawingArgs, PartsListLine, SheetSize, compose};
     use geop_lib_sheet::Shape;
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     cube_solid(
         &mut part,
         "block",
@@ -266,18 +263,19 @@ fn a_bill_of_materials_stands_on_the_title_block() {
 
 /// A block `size` on a side, as a part to place: the file of its size.
 fn block(size: f64) -> Placeable {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     cube_solid(&mut part, "block", v3(0.0, 0.0, 0.0), v3(size, size, size)).unwrap();
     placeable(&format!("block{size}.geop"), &part)
 }
 
 /// What is placed in a part: each placed part's name, its part, and where.
-type Placed = Vec<(String, Placeable, geop_core_math::primitives::Pose<S>)>;
+type Placed = Vec<(String, Placeable, geop_core_math::primitives::Pose)>;
 
 /// Places `block` in `placed` as `name`, at `at`, turned `degrees` about
 /// `x`, `y` and `z`.
-fn place(placed: &mut Placed, block: &Placeable, name: &str, at: Vector3<S>, degrees: [f64; 3]) {
-    let pose = geop_core_math::primitives::Pose::from_euler(at, degrees.map(S::from_f64)).unwrap();
+fn place(placed: &mut Placed, block: &Placeable, name: &str, at: Vector3, degrees: [f64; 3]) {
+    let pose =
+        geop_core_math::primitives::Pose::from_euler(at, degrees.map(Scalar::from_f64)).unwrap();
     placed.push((name.to_string(), block.clone(), pose));
 }
 

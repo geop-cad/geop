@@ -24,7 +24,7 @@ use geop_core_program::{
     reader::Reader,
     runner::{RunOutput, Runner},
     target::{Target, TargetReference},
-    values::{Design, Setting, Settings, StateValue, StateValues, pose_in},
+    values::{Setting, Settings, StateValue, StateValues, pose_in},
 };
 use serde::{Deserialize, Serialize};
 
@@ -36,7 +36,7 @@ use crate::{
 
 /// The pose a body's state holds: unturned at the origin before anything
 /// set it.
-fn pose_of(value: &StateValue) -> Pose<Design> {
+fn pose_of(value: &StateValue) -> Pose {
     pose_in(value).unwrap_or_else(Pose::identity)
 }
 
@@ -47,8 +47,8 @@ fn body_at(position: [f64; 3]) -> StateValue {
 
 /// Where the body whose state is `value` has its origin, and the derivatives
 /// of that by the body's step: one row of six per coordinate.
-fn position(value: &StateValue) -> GeopResult<(Vector3<Design>, Vec<Vec<Design>>)> {
-    type D = Dual<Design, 6>;
+fn position(value: &StateValue) -> GeopResult<(Vector3, Vec<Vec<Scalar>>)> {
+    type D = Dual<6>;
     let step = Pose::exp_with_derivatives(&Vector3::zero(), &Vector3::zero())?;
     let moved = pose_of(value).map(D::cst).compose(&step).position();
     let at = Vector3::from_array(moved.to_array().map(|c| c.v));
@@ -58,14 +58,14 @@ fn position(value: &StateValue) -> GeopResult<(Vector3<Design>, Vec<Vec<Design>>
 /// Asserts that `rows` are the derivatives of an unturned body's origin by
 /// its step: moved along by the step's translation, not by its turn.
 #[track_caller]
-fn assert_translation(rows: &[Vec<Design>]) {
+fn assert_translation(rows: &[Vec<Scalar>]) {
     let expected: Vec<Vec<f64>> = (0..3)
         .map(|i| (0..6).map(|j| if j == i + 3 { 1.0 } else { 0.0 }).collect())
         .collect();
     let encloses = rows.len() == 3
         && (rows.iter().zip(&expected)).all(|(row, expected)| {
             row.len() == 6
-                && (row.iter().zip(expected)).all(|(d, e)| d.could_be_equal(Design::from_f64(*e)))
+                && (row.iter().zip(expected)).all(|(d, e)| d.could_be_equal(Scalar::from_f64(*e)))
         });
     assert!(
         encloses,
@@ -74,14 +74,14 @@ fn assert_translation(rows: &[Vec<Design>]) {
 }
 
 /// A vector of sharp scalars, from plain numbers.
-fn vector<const N: usize>(xs: [f64; N]) -> Vector<Design, N> {
-    Vector::from_array(xs.map(Design::from_f64))
+fn vector<const N: usize>(xs: [f64; N]) -> Vector<N> {
+    Vector::from_array(xs.map(Scalar::from_f64))
 }
 
 /// Asserts that `actual` encloses the point `expected`: computed values are
 /// enclosures, rounded outward, so equal to no literal.
 #[track_caller]
-fn assert_encloses<const N: usize>(actual: Vector<Design, N>, expected: [f64; N]) {
+fn assert_encloses<const N: usize>(actual: Vector<N>, expected: [f64; N]) {
     assert!(
         actual.could_be_equal(&vector(expected)),
         "{actual:?} does not enclose {expected:?}"
@@ -91,7 +91,7 @@ fn assert_encloses<const N: usize>(actual: Vector<Design, N>, expected: [f64; N]
 /// A point a step defines, which a pin holds a body to.
 #[derive(Debug, Clone, Default, PartialEq)]
 struct Frame {
-    data: Vector3<Design>,
+    data: Vector3,
 }
 
 /// Defined by one step.
@@ -148,7 +148,7 @@ impl Operation for InputFrameOperation {
         let reference = TargetReference::<Frame>::new(&args.target);
         ctx.produce(&reference, args, |reader, args| {
             let x = match reader.retrieve_input(&args.input) {
-                Some(Setting::Number(x)) => Design::from_f64(x),
+                Some(Setting::Number(x)) => Scalar::from_f64(x),
                 _ => {
                     return Err(GeopError::new(format!(
                         "input `{}` is not given",
@@ -157,7 +157,7 @@ impl Operation for InputFrameOperation {
                 }
             };
             Ok(Frame {
-                data: Vector3::from_array([x, Design::ZERO, Design::ZERO]),
+                data: Vector3::from_array([x, Scalar::ZERO, Scalar::ZERO]),
             })
         })
     }
@@ -325,8 +325,8 @@ fn constraints_on_the_state_are_reported() {
 /// `body`.
 fn by_body(residuals: usize) -> Constraint {
     Constraint {
-        residuals: vec![Design::ZERO; residuals],
-        jacobian: BTreeMap::from([("body".to_string(), vec![vec![Design::ZERO; 6]])]),
+        residuals: vec![Scalar::ZERO; residuals],
+        jacobian: BTreeMap::from([("body".to_string(), vec![vec![Scalar::ZERO; 6]])]),
         bound: Bound::Zero,
     }
 }
@@ -395,7 +395,7 @@ fn a_failed_constraint_step_fails_the_constraints() {
 fn constraint_defined_twice_is_an_error() {
     fn define(_: &Reader, _: &()) -> GeopResult<BTreeMap<String, Constraint>> {
         let free = Constraint {
-            residuals: vec![Design::ZERO],
+            residuals: vec![Scalar::ZERO],
             jacobian: BTreeMap::new(),
             bound: Bound::Zero,
         };

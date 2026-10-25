@@ -22,19 +22,17 @@ use geop_core_math::{
     primitives::{CoordinateSystem, DatumKind, Motion},
     vector::Vector3,
 };
-use geop_core_program::{
-    element::ElementReference, placed::InInstance, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, placed::InInstance, reader::Reader};
 
 one_of! {
     /// An element a datum is built from.
     pub enum Selected {
-        Vertex(ElementReference<NamedModel<Design>, Vertex>),
-        Edge(ElementReference<NamedModel<Design>, Edge>),
-        Face(ElementReference<NamedModel<Design>, Face>),
+        Vertex(ElementReference<NamedModel, Vertex>),
+        Edge(ElementReference<NamedModel, Edge>),
+        Face(ElementReference<NamedModel, Face>),
         Datum(ElementReference<Datums, AnyDatum>),
-        SketchPoint(ElementReference<PlacedSketch<Design>, Point>),
-        SketchCurve(ElementReference<PlacedSketch<Design>, Curve>),
+        SketchPoint(ElementReference<PlacedSketch, Point>),
+        SketchCurve(ElementReference<PlacedSketch, Curve>),
     }
 }
 
@@ -93,18 +91,18 @@ impl Role {
 /// curve and something round, a datum point a point with a frame.
 #[derive(Clone, Debug, Default)]
 pub struct Shape {
-    pub point: Option<Vector3<Design>>,
+    pub point: Option<Vector3>,
     /// The line it runs along: a straight edge, an axis, a sketch line.
-    pub line: Option<Axis<Design>>,
+    pub line: Option<Axis>,
     /// The plane it lies in, as a frame with `w` the normal.
-    pub plane: Option<CoordinateSystem<Design>>,
-    pub arc: Option<Arc<Design>>,
+    pub plane: Option<CoordinateSystem>,
+    pub arc: Option<Arc>,
     /// The axis it turns around.
-    pub round: Option<Axis<Design>>,
+    pub round: Option<Axis>,
     /// The curve it runs along, whatever its shape.
-    pub curve: Option<NurbCurve3D<Design>>,
+    pub curve: Option<NurbCurve3D>,
     /// Its own axes, if it has any: a datum's frame.
-    pub frame: Option<CoordinateSystem<Design>>,
+    pub frame: Option<CoordinateSystem>,
 }
 
 impl Shape {
@@ -129,8 +127,8 @@ impl Shape {
     }
 
     /// It moved by `motion`.
-    pub fn transform(&self, motion: &Motion<Design>) -> GeopResult<Self> {
-        let frame = |frame: &Option<CoordinateSystem<Design>>| {
+    pub fn transform(&self, motion: &Motion) -> GeopResult<Self> {
+        let frame = |frame: &Option<CoordinateSystem>| {
             frame.as_ref().map(|f| motion.apply_frame(f)).transpose()
         };
         Ok(Shape {
@@ -145,7 +143,7 @@ impl Shape {
     }
 
     /// What a curve is: a line, a circle, something round, as it is one.
-    fn of_curve(curve: NurbCurve3D<Design>) -> GeopResult<Self> {
+    fn of_curve(curve: NurbCurve3D) -> GeopResult<Self> {
         let arc = curve.as_arc()?;
         Ok(Shape {
             line: curve.as_line()?,
@@ -226,7 +224,7 @@ impl Selected {
             },
             Selected::SketchCurve(curve) => {
                 let chain = reader.retrieve_element(curve)?;
-                let [one] = <[NurbCurve3D<Design>; 1]>::try_from(chain.curves).map_err(|_| {
+                let [one] = <[NurbCurve3D; 1]>::try_from(chain.curves).map_err(|_| {
                     GeopError::new(format!("the curve {:?} is more than one", curve.name()))
                 })?;
                 // What the sketch says the curve is, where its curve alone
@@ -247,8 +245,6 @@ impl Selected {
 }
 
 /// The sketch's curve `curve` as what `K` it is.
-fn as_kind<K>(
-    curve: &ElementReference<PlacedSketch<Design>, Curve>,
-) -> ElementReference<PlacedSketch<Design>, K> {
+fn as_kind<K>(curve: &ElementReference<PlacedSketch, Curve>) -> ElementReference<PlacedSketch, K> {
     ElementReference::new(curve.target().clone(), curve.name())
 }

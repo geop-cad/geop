@@ -8,9 +8,7 @@ use geop_core_editor::{
     part_operation::PartOperation,
 };
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model, model};
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +25,7 @@ pub struct ExtractFace;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExtractFaceArgs {
     /// The face to copy.
-    pub face: ElementReference<NamedModel<Design>, Face>,
+    pub face: ElementReference<NamedModel, Face>,
 }
 
 part_operation!(ExtractFace(ExtractFaceArgs));
@@ -62,8 +60,8 @@ impl PartOperation for ExtractFace {
         context: &'a Context<'a>,
         args: &ExtractFaceArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, ExtractFaceArgs> {
-        let mut f = EditForm::<Design, ExtractFaceArgs>::default();
+    ) -> EditForm<'a, ExtractFaceArgs> {
+        let mut f = EditForm::<ExtractFaceArgs>::default();
         f.pick_one(
             "face",
             "face",
@@ -77,7 +75,7 @@ impl PartOperation for ExtractFace {
 
 impl ModelOperation for ExtractFace {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         _: &Reader,
         step: &str,
         args: &ExtractFaceArgs,
@@ -99,7 +97,7 @@ mod tests {
     /// which is left as it was.
     #[test]
     fn extracts_a_face_of_a_cube() {
-        let mut part = NamedModel::<Design>::new();
+        let mut part = NamedModel::new();
         let cube = block(&mut part, "c", [0.0; 3], [1.0; 3]);
         let face = part.topology().solid_faces(cube).unwrap()[0];
         let face = part.name_of(face).unwrap().to_string();

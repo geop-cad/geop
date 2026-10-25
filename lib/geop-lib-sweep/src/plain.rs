@@ -20,7 +20,7 @@ pub(crate) struct Plain {
 }
 
 impl Plain {
-    pub(crate) fn of<S: Scalar>(frame: &Frame<S>) -> Self {
+    pub(crate) fn of(frame: &Frame) -> Self {
         Plain {
             origin: frame.origin.to_f64_array(),
             e1: frame.e1.to_f64_array(),
@@ -29,8 +29,8 @@ impl Plain {
     }
 
     /// The frame, taken as sharp: a free choice made in plain numbers.
-    pub(crate) fn frame<S: Scalar>(&self) -> Frame<S> {
-        let v = |a: P3| Vector3::from_array(a.map(S::from_f64));
+    pub(crate) fn frame(&self) -> Frame {
+        let v = |a: P3| Vector3::from_array(a.map(Scalar::from_f64));
         Frame {
             origin: v(self.origin),
             e1: v(self.e1),

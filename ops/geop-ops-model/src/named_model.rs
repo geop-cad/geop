@@ -4,14 +4,10 @@
 
 use std::sync::Arc;
 
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
-};
+use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{
     element::ElementReference,
     target::{Target, TargetReference},
-    values::Design,
 };
 use geop_core_topology::Model;
 
@@ -33,16 +29,16 @@ use crate::{Feature, ids::RefId, names::NameRegistry};
 /// a revision costs what it changes, and comparing two revisions what tells
 /// them apart.
 #[derive(Clone, Debug)]
-pub struct NamedModel<S: Scalar> {
-    pub(crate) topology: Model<S>,
+pub struct NamedModel {
+    pub(crate) topology: Model,
     pub(crate) names: NameRegistry,
     /// What each step that combined tools with a solid did, in the order
     /// the steps ran (see [`Feature`]).
-    pub(crate) features: Vec<(String, Arc<Feature<S>>)>,
+    pub(crate) features: Vec<(String, Arc<Feature>)>,
 }
 
 /// Every step that builds into the model produces it from the last.
-impl Target for NamedModel<Design> {
+impl Target for NamedModel {
     const CHAIN: bool = true;
 }
 
@@ -50,7 +46,7 @@ impl Target for NamedModel<Design> {
 /// again into the same value is the same model, however it was built — what
 /// a version rebuilt unchanged, and a part built from scratch, are compared
 /// by. A feature shared with the other model is equal without a look.
-impl<S: Scalar + PartialEq> PartialEq for NamedModel<S> {
+impl PartialEq for NamedModel {
     fn eq(&self, other: &Self) -> bool {
         self.topology == other.topology
             && self.names == other.names
@@ -62,23 +58,23 @@ impl<S: Scalar + PartialEq> PartialEq for NamedModel<S> {
 
 /// The model a part's steps build: defined by the first that builds any
 /// topology, revised by every later one.
-pub fn model() -> TargetReference<NamedModel<Design>> {
+pub fn model() -> TargetReference<NamedModel> {
     TargetReference::new("model")
 }
 
 /// The element `name` of the model, of the kind `K`: what a step's
 /// arguments refer to it by.
-pub fn element<K>(name: impl Into<String>) -> ElementReference<NamedModel<Design>, K> {
+pub fn element<K>(name: impl Into<String>) -> ElementReference<NamedModel, K> {
     ElementReference::new(model(), name)
 }
 
-impl<S: Scalar> Default for NamedModel<S> {
+impl Default for NamedModel {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<S: Scalar> NamedModel<S> {
+impl NamedModel {
     /// A model with nothing in it.
     pub fn new() -> Self {
         Self {
@@ -90,7 +86,7 @@ impl<S: Scalar> NamedModel<S> {
 
     /// The topology, to query. Changing it goes through the model's own
     /// methods, so that names stay in sync.
-    pub fn topology(&self) -> &Model<S> {
+    pub fn topology(&self) -> &Model {
         &self.topology
     }
 
@@ -208,14 +204,14 @@ impl<S: Scalar> NamedModel<S> {
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::{scalars::ScalInF64, vector::Vector3};
+    use geop_core_math::vector::Vector3;
     use geop_core_topology::{Body, VertexId, build::BodySpec};
 
     use super::*;
     use crate::{BodyNames, testing::unit_cube};
 
     /// A free point named `name` at the origin: a wire of the vertex alone.
-    fn point(model: &mut NamedModel<ScalInF64>, name: &str) -> GeopResult<VertexId> {
+    fn point(model: &mut NamedModel, name: &str) -> GeopResult<VertexId> {
         let mut spec = BodySpec::new(false);
         spec.vertices.push(Vector3::zero());
         let names = BodyNames {
@@ -231,7 +227,7 @@ mod tests {
     /// the names of all of its entities again.
     #[test]
     fn building_and_deleting_keep_names_in_sync() {
-        let mut model = NamedModel::<ScalInF64>::new();
+        let mut model = NamedModel::new();
         let vertex = point(&mut model, "v0").unwrap();
         assert_eq!(model.name_of(vertex), Some("v0"));
         assert_eq!(model.id_of("v0"), Some(RefId::Vertex(vertex)));
@@ -253,7 +249,7 @@ mod tests {
     /// Reusing a name that's already taken is rejected.
     #[test]
     fn duplicate_name_is_rejected() {
-        let mut model = NamedModel::<ScalInF64>::new();
+        let mut model = NamedModel::new();
         point(&mut model, "v0").unwrap();
         assert!(point(&mut model, "v0").is_err());
     }
@@ -261,7 +257,7 @@ mod tests {
     /// A provisional name can be settled, but not onto a name in use.
     #[test]
     fn rename_settles_a_provisional_name() {
-        let mut model = NamedModel::<ScalInF64>::new();
+        let mut model = NamedModel::new();
         let vertex = point(&mut model, "v~0").unwrap();
         point(&mut model, "v1").unwrap();
         assert!(model.rename(vertex, "v1").is_err());
@@ -274,7 +270,7 @@ mod tests {
     /// the model it was made from tells whether it changed.
     #[test]
     fn a_revision_is_equal_until_changed() {
-        let mut model = NamedModel::<ScalInF64>::new();
+        let mut model = NamedModel::new();
         point(&mut model, "v0").unwrap();
         let mut revision = model.clone();
         assert_eq!(revision, model);

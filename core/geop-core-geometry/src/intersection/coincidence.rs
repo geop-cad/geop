@@ -33,30 +33,30 @@ use crate::nurb_curve::NurbCurve;
 /// A point of the primary curve at parameter `t` that lies on the other
 /// object at `partner` (its parameter(s) there).
 #[derive(Clone, Copy, Debug)]
-pub struct Hit<S: Scalar, P> {
-    pub t: S,
+pub struct Hit<P> {
+    pub t: Scalar,
     pub partner: P,
 }
 
 /// A stretch `[start.t, end.t]` of the primary curve lying on the other
 /// object.
 #[derive(Clone, Copy, Debug)]
-pub struct Overlap<S: Scalar, P> {
-    pub start: Hit<S, P>,
-    pub end: Hit<S, P>,
+pub struct Overlap<P> {
+    pub start: Hit<P>,
+    pub end: Hit<P>,
 }
 
 /// Every overlap bounded by `candidates` (see the module doc). `probe(t)`
 /// locates the primary curve's point at a sharp `t` on the other object.
 /// Adjacent overlaps sharing a candidate are joined into one.
-pub(crate) fn find_overlaps<S: Scalar, P: Mergeable>(
-    mut candidates: Vec<Hit<S, P>>,
-    mut probe: impl FnMut(S) -> GeopResult<Option<P>>,
-) -> GeopResult<Vec<Overlap<S, P>>> {
+pub(crate) fn find_overlaps<P: Mergeable>(
+    mut candidates: Vec<Hit<P>>,
+    mut probe: impl FnMut(Scalar) -> GeopResult<Option<P>>,
+) -> GeopResult<Vec<Overlap<P>>> {
     // Sorting is only an order to visit them in: any order of candidates
     // that could be equal is fine, since those merge.
     candidates.sort_by(|a, b| a.t.to_f64().total_cmp(&b.t.to_f64()));
-    let mut merged: Vec<Hit<S, P>> = Vec::with_capacity(candidates.len());
+    let mut merged: Vec<Hit<P>> = Vec::with_capacity(candidates.len());
     for c in candidates {
         match merged.last_mut() {
             Some(last) if last.t.could_be_equal(c.t) => {
@@ -67,12 +67,12 @@ pub(crate) fn find_overlaps<S: Scalar, P: Mergeable>(
         }
     }
 
-    let mut overlaps: Vec<Overlap<S, P>> = Vec::new();
+    let mut overlaps: Vec<Overlap<P>> = Vec::new();
     let mut joins_previous = false;
     for pair in merged.windows(2) {
         let (a, b) = (pair[0], pair[1]);
         // A free choice strictly between the two candidates.
-        let mid = a.t.upper().add(b.t.lower()).div(S::TWO)?.sharpen();
+        let mid = a.t.upper().add(b.t.lower()).div(Scalar::TWO)?.sharpen();
         if probe(mid)?.is_some() {
             match overlaps.last_mut() {
                 Some(last) if joins_previous => last.end = b,
@@ -90,10 +90,10 @@ pub(crate) fn find_overlaps<S: Scalar, P: Mergeable>(
 /// `search` run on the whole curve if there are none, else on each stretch
 /// between them — cut at the overlaps' sharp *outer* bounds, and only where
 /// definitely longer than a point.
-pub(crate) fn crossings_between<S: Scalar, const D: usize, P, R>(
-    curve: &NurbCurve<S, D>,
-    overlaps: &[Overlap<S, P>],
-    mut search: impl FnMut(&NurbCurve<S, D>) -> GeopResult<Vec<R>>,
+pub(crate) fn crossings_between<const D: usize, P, R>(
+    curve: &NurbCurve<D>,
+    overlaps: &[Overlap<P>],
+    mut search: impl FnMut(&NurbCurve<D>) -> GeopResult<Vec<R>>,
 ) -> GeopResult<Vec<R>> {
     if overlaps.is_empty() {
         return search(curve);
@@ -115,12 +115,12 @@ pub(crate) fn crossings_between<S: Scalar, const D: usize, P, R>(
 
 /// `count` points spread evenly over the overlaps, by length. `probe` as in
 /// [`find_overlaps`]; a sample it cannot place is skipped.
-pub(crate) fn samples<S: Scalar, P>(
-    overlaps: &[Overlap<S, P>],
+pub(crate) fn samples<P>(
+    overlaps: &[Overlap<P>],
     count: usize,
-    mut probe: impl FnMut(S) -> GeopResult<Option<P>>,
-) -> GeopResult<Vec<Hit<S, P>>> {
-    let spans: Vec<(S, S)> = overlaps
+    mut probe: impl FnMut(Scalar) -> GeopResult<Option<P>>,
+) -> GeopResult<Vec<Hit<P>>> {
+    let spans: Vec<(Scalar, Scalar)> = overlaps
         .iter()
         .map(|o| (o.start.t.upper(), o.end.t.lower()))
         .collect();
@@ -138,8 +138,8 @@ pub(crate) fn samples<S: Scalar, P>(
         };
         for j in 1..=n {
             // Free choices inside the overlap.
-            let frac = S::from_ratio(j as i64, (n + 1) as i64)?;
-            let t = S::fraction(lo, hi, frac);
+            let frac = Scalar::from_ratio(j as i64, (n + 1) as i64)?;
+            let t = Scalar::fraction(lo, hi, frac);
             if let Some(partner) = probe(t)? {
                 out.push(Hit { t, partner });
             }
@@ -154,13 +154,13 @@ pub(crate) fn samples<S: Scalar, P>(
 /// then the isolated crossings elsewhere, then the spread `samples`, merged
 /// (`DisjointSet`) and capped at `max_solutions`. Without overlaps it is
 /// `Found` with the first `max_solutions` crossings.
-pub(crate) fn assemble<S: Scalar, P: Mergeable>(
-    overlaps: &[Overlap<S, P>],
-    crossings: Vec<(S, P)>,
-    samples: Vec<Hit<S, P>>,
+pub(crate) fn assemble<P: Mergeable>(
+    overlaps: &[Overlap<P>],
+    crossings: Vec<(Scalar, P)>,
+    samples: Vec<Hit<P>>,
     max_solutions: usize,
-) -> Intersections<(S, P)> {
-    let mut set: DisjointSet<(S, P)> = DisjointSet::new();
+) -> Intersections<(Scalar, P)> {
+    let mut set: DisjointSet<(Scalar, P)> = DisjointSet::new();
     let ends = overlaps.iter().flat_map(|o| [o.start, o.end]);
     let points = ends
         .map(|h| (h.t, h.partner))

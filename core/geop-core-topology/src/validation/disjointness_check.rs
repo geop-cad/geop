@@ -1,5 +1,5 @@
 use geop_core_geometry::intersection::{curve_curve_intersect, curve_surface_intersect};
-use geop_core_math::{geop_error::GeopError, scalars::Scalar, vector::Vector3};
+use geop_core_math::{geop_error::GeopError, vector::Vector3};
 
 use crate::{
     EdgeId, Model, VertexId,
@@ -22,7 +22,7 @@ const EDGE_ON_FACE_SEED: u64 = 0x0EDF_ACE0_0000_0001;
 /// point first would throw that width away and require compensating for it
 /// artificially, which is exactly the kind of epsilon this codebase avoids
 /// (see `AGENTS.md`).
-fn coincides_with_a_vertex<S: Scalar>(model: &Model<S>, point: &Vector3<S>) -> bool {
+fn coincides_with_a_vertex(model: &Model, point: &Vector3) -> bool {
     model
         .vertices
         .values()
@@ -33,21 +33,17 @@ fn coincides_with_a_vertex<S: Scalar>(model: &Model<S>, point: &Vector3<S>) -> b
 /// vertex is meant to occupy a genuinely distinct position; a shared
 /// position should be represented by reusing the same `VertexId`, not by
 /// two coincident ones.
-pub fn check_vertices_disjoint<S: Scalar>(
-    _params: &ValidationParameters<S>,
+pub fn check_vertices_disjoint(
+    _params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
 ) {
     for group in body_groups(model) {
         check_vertices_of_body_disjoint(errors, model, &group.vertices);
     }
 }
 
-fn check_vertices_of_body_disjoint<S: Scalar>(
-    errors: &mut Vec<GeopError>,
-    model: &Model<S>,
-    ids: &[VertexId],
-) {
+fn check_vertices_of_body_disjoint(errors: &mut Vec<GeopError>, model: &Model, ids: &[VertexId]) {
     for i in 0..ids.len() {
         for j in (i + 1)..ids.len() {
             let a = model.vertices[&ids[i]].point;
@@ -67,20 +63,20 @@ fn check_vertices_of_body_disjoint<S: Scalar>(
 /// otherwise, every intersection point found must coincide with an existing
 /// vertex (edges are only allowed to touch each other at shared vertices,
 /// never crossing through some other point).
-pub fn check_edges_disjoint<S: Scalar>(
-    params: &ValidationParameters<S>,
+pub fn check_edges_disjoint(
+    params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
 ) {
     for group in body_groups(model) {
         check_edges_of_body_disjoint(params, errors, model, &group.edges);
     }
 }
 
-fn check_edges_of_body_disjoint<S: Scalar>(
-    params: &ValidationParameters<S>,
+fn check_edges_of_body_disjoint(
+    params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
     ids: &[EdgeId],
 ) {
     for i in 0..ids.len() {
@@ -142,10 +138,10 @@ fn check_edges_of_body_disjoint<S: Scalar>(
 /// instead, whose midpoint lands nowhere meaningful. Declared boundary
 /// relationships don't need re-verifying geometrically here anyway (that's
 /// `check_curves_and_surfaces_vertices`'s and the sampling check's job).
-pub fn check_edges_and_faces_consistent<S: Scalar>(
-    params: &ValidationParameters<S>,
+pub fn check_edges_and_faces_consistent(
+    params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
 ) {
     for group in body_groups(model) {
         for &edge_id in &group.edges {
@@ -156,10 +152,10 @@ pub fn check_edges_and_faces_consistent<S: Scalar>(
     }
 }
 
-fn check_edge_and_face_consistent<S: Scalar>(
-    params: &ValidationParameters<S>,
+fn check_edge_and_face_consistent(
+    params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
     edge_id: EdgeId,
     face_id: crate::FaceId,
 ) {
@@ -242,7 +238,6 @@ mod tests {
         nurb_surface::NurbSurface3D,
     };
     use geop_core_math::{
-        for_all_scalars,
         geop_error::GeopError,
         scalars::Scalar,
         vector::{Vector3, Vector4},
@@ -255,20 +250,21 @@ mod tests {
     // *zero* solutions even for a clean single crossing, regardless of
     // `max_nodes`), so these tests use a looser tolerance to actually
     // exercise the logic.
-    fn params<S: Scalar>() -> ValidationParameters<S> {
+    fn params() -> ValidationParameters {
         // These hand-built fixtures use small, simple-scale geometry where
         // even the (already loosened) default `min_subdivision_size` isn't
         // quite enough for `curve_curve_intersect`/`curve_surface_intersect`
         // to reliably resolve a genuine mid-curve crossing; loosen further
         // just for these tests of the check's own logic.
         ValidationParameters {
-            min_subdivision_size: S::from_f64(1e-2),
+            min_subdivision_size: Scalar::from_f64(1e-2),
             ..ValidationParameters::default()
         }
     }
 
-    fn check_welded_cube_passes_all_three<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn welded_cube_passes_all_three() {
+        let mut model = Model::new();
         test_cube_solid(&mut model);
 
         let mut errors = Vec::new();
@@ -283,19 +279,20 @@ mod tests {
         check_edges_and_faces_consistent(&params(), &mut errors, &model);
         assert!(errors.is_empty(), "edges x faces: {errors:?}");
     }
-    #[test]
-    fn welded_cube_passes_all_three() {
-        for_all_scalars!(check_welded_cube_passes_all_three);
-    }
 
-    fn point3<S: Scalar>(p: (f64, f64, f64)) -> Vector3<S> {
-        Vector3::from_array([S::from_f64(p.0), S::from_f64(p.1), S::from_f64(p.2)])
+    fn point3(p: (f64, f64, f64)) -> Vector3 {
+        Vector3::from_array([
+            Scalar::from_f64(p.0),
+            Scalar::from_f64(p.1),
+            Scalar::from_f64(p.2),
+        ])
     }
 
     // ── vertices disjoint ─────────────────────────────────────────────────
 
-    fn check_distinct_vertices_pass<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn distinct_vertices_pass() {
+        let mut model = Model::new();
         model.insert_vertex(Vertex {
             point: point3((0.0, 0.0, 0.0)),
         });
@@ -305,13 +302,10 @@ mod tests {
         let errors = check_errors(check_vertices_disjoint, &model);
         assert!(errors.is_empty());
     }
-    #[test]
-    fn distinct_vertices_pass() {
-        for_all_scalars!(check_distinct_vertices_pass);
-    }
 
-    fn check_coincident_vertices_fail<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn coincident_vertices_fail() {
+        let mut model = Model::new();
         model.insert_vertex(Vertex {
             point: point3((0.0, 0.0, 0.0)),
         });
@@ -321,15 +315,12 @@ mod tests {
         let errors = check_errors(check_vertices_disjoint, &model);
         assert_eq!(errors.len(), 1);
     }
-    #[test]
-    fn coincident_vertices_fail() {
-        for_all_scalars!(check_coincident_vertices_fail);
-    }
 
     // ── edges disjoint ────────────────────────────────────────────────────
 
-    fn check_edges_sharing_a_vertex_pass<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn edges_sharing_a_vertex_pass() {
+        let mut model = Model::new();
         let v0 = model.insert_vertex(Vertex {
             point: point3((0.0, 0.0, 0.0)),
         });
@@ -353,13 +344,10 @@ mod tests {
         check_edges_disjoint(&params(), &mut errors, &model);
         assert!(errors.is_empty());
     }
-    #[test]
-    fn edges_sharing_a_vertex_pass() {
-        for_all_scalars!(check_edges_sharing_a_vertex_pass);
-    }
 
-    fn check_edges_crossing_at_non_vertex_fail<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn edges_crossing_at_non_vertex_fail() {
+        let mut model = Model::new();
         let v0 = model.insert_vertex(Vertex {
             point: point3((-1.0, 0.0, 0.0)),
         });
@@ -387,16 +375,13 @@ mod tests {
         check_edges_disjoint(&params(), &mut errors, &model);
         assert_eq!(errors.len(), 1);
     }
-    #[test]
-    fn edges_crossing_at_non_vertex_fail() {
-        for_all_scalars!(check_edges_crossing_at_non_vertex_fail);
-    }
 
     /// Two edges meeting only at their shared vertex are not coincident —
     /// not even with a cap of 1, which the old search used to misread as
     /// coincidence the moment it found that one crossing.
-    fn check_shared_vertex_at_the_cap_is_not_coincident<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn shared_vertex_at_the_cap_is_not_coincident() {
+        let mut model = Model::new();
         let v0 = model.insert_vertex(Vertex {
             point: point3((0.0, 0.0, 0.0)),
         });
@@ -416,20 +401,17 @@ mod tests {
             start_vertex: v0,
             end_vertex: v2,
         });
-        let mut low_cap = params::<S>();
+        let mut low_cap = params();
         low_cap.max_edge_edge_intersection_samples = 1;
         let mut errors = Vec::new();
         check_edges_disjoint(&low_cap, &mut errors, &model);
         assert!(errors.is_empty(), "{errors:?}");
     }
-    #[test]
-    fn shared_vertex_at_the_cap_is_not_coincident() {
-        for_all_scalars!(check_shared_vertex_at_the_cap_is_not_coincident);
-    }
 
     /// Two edges overlapping along part of their length fail as coincident.
-    fn check_overlapping_edges_fail<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn overlapping_edges_fail() {
+        let mut model = Model::new();
         let vs: Vec<_> = [0.0, 0.5, 1.0, 1.5]
             .iter()
             .map(|&x| {
@@ -456,21 +438,19 @@ mod tests {
             "{errors:?}"
         );
     }
-    #[test]
-    fn overlapping_edges_fail() {
-        for_all_scalars!(check_overlapping_edges_fail);
-    }
 
     // ── edges x faces ─────────────────────────────────────────────────────
 
     /// A unit-square face on the XY plane with a single quad boundary loop
     /// through `corners`, each edge independently vertexed.
-    fn quad_face<S: Scalar>(
-        model: &mut Model<S>,
-        corners: [(f64, f64, f64); 4],
-    ) -> (FaceId, [EdgeId; 4]) {
+    fn quad_face(model: &mut Model, corners: [(f64, f64, f64); 4]) -> (FaceId, [EdgeId; 4]) {
         let p4 = |q: (f64, f64, f64)| {
-            Vector4::from_array([S::from_f64(q.0), S::from_f64(q.1), S::from_f64(q.2), S::ONE])
+            Vector4::from_array([
+                Scalar::from_f64(q.0),
+                Scalar::from_f64(q.1),
+                Scalar::from_f64(q.2),
+                Scalar::ONE,
+            ])
         };
         let surface = NurbSurface3D::try_new(
             1,
@@ -481,8 +461,8 @@ mod tests {
                 p4(corners[1]),
                 p4(corners[2]),
             ],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
+            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
         )
         .unwrap();
         let face_id = model.insert_face(Face {
@@ -508,14 +488,22 @@ mod tests {
             })
         });
         let uv = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
-        let pc = |a: (f64, f64), b: (f64, f64)| -> NurbCurve2D<S> {
+        let pc = |a: (f64, f64), b: (f64, f64)| -> NurbCurve2D {
             NurbCurve::try_new(
                 1,
                 vec![
-                    Vector3::from_array([S::from_f64(a.0), S::from_f64(a.1), S::ONE]),
-                    Vector3::from_array([S::from_f64(b.0), S::from_f64(b.1), S::ONE]),
+                    Vector3::from_array([
+                        Scalar::from_f64(a.0),
+                        Scalar::from_f64(a.1),
+                        Scalar::ONE,
+                    ]),
+                    Vector3::from_array([
+                        Scalar::from_f64(b.0),
+                        Scalar::from_f64(b.1),
+                        Scalar::ONE,
+                    ]),
                 ],
-                vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+                vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
             )
             .unwrap()
         };
@@ -538,14 +526,15 @@ mod tests {
         (face_id, edges)
     }
 
-    fn run_edge_face<S: Scalar>(model: &Model<S>) -> Vec<GeopError> {
+    fn run_edge_face(model: &Model) -> Vec<GeopError> {
         let mut errors = Vec::new();
         check_edges_and_faces_consistent(&params(), &mut errors, model);
         errors
     }
 
-    fn check_face_boundary_edges_pass<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn face_boundary_edges_pass() {
+        let mut model = Model::new();
         quad_face(
             &mut model,
             [
@@ -557,13 +546,10 @@ mod tests {
         );
         assert!(run_edge_face(&model).is_empty());
     }
-    #[test]
-    fn face_boundary_edges_pass() {
-        for_all_scalars!(check_face_boundary_edges_pass);
-    }
 
-    fn check_edge_piercing_face_at_non_vertex_fails<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn edge_piercing_face_at_non_vertex_fails() {
+        let mut model = Model::new();
         quad_face(
             &mut model,
             [
@@ -588,13 +574,10 @@ mod tests {
         });
         assert!(!run_edge_face(&model).is_empty());
     }
-    #[test]
-    fn edge_piercing_face_at_non_vertex_fails() {
-        for_all_scalars!(check_edge_piercing_face_at_non_vertex_fails);
-    }
 
-    fn check_edge_piercing_face_at_a_vertex_passes<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn edge_piercing_face_at_a_vertex_passes() {
+        let mut model = Model::new();
         quad_face(
             &mut model,
             [
@@ -618,9 +601,5 @@ mod tests {
             end_vertex: vb,
         });
         assert!(run_edge_face(&model).is_empty());
-    }
-    #[test]
-    fn edge_piercing_face_at_a_vertex_passes() {
-        for_all_scalars!(check_edge_piercing_face_at_a_vertex_passes);
     }
 }

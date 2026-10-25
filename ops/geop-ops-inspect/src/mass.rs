@@ -3,14 +3,10 @@
 
 use geop_core_editor::output::{Answer, Block, Bounded, Row};
 use geop_core_editor::{editing::Tone, selectable::SelectableElement};
-use geop_core_math::{
-    geop_error::GeopResult,
-    scalars::{Ring, Scalar},
-};
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_core_program::{
     element::{ElementReference, PickedElement},
     reader::Reader,
-    values::Design,
 };
 use geop_core_topology::mass::MassProperties;
 use geop_ops_model::placed::solids::{PlacedSolid, Shapes, placed_solids};
@@ -40,7 +36,7 @@ pub struct MassSummary {
 impl MassSummary {
     /// The summary of `properties` of a body whose boundary has the area
     /// `area`, with whether that area's quadrature converged.
-    pub fn of<S: Scalar>(properties: &MassProperties<S>, area: (S, bool)) -> GeopResult<Self> {
+    pub fn of(properties: &MassProperties, area: (Scalar, bool)) -> GeopResult<Self> {
         let principal = properties.principal()?;
         Ok(Self {
             volume: Bounded::of(properties.volume),
@@ -178,7 +174,7 @@ impl MassReport {
 pub fn mass_report(reader: &Reader) -> GeopResult<MassReport> {
     let mut bodies = Vec::new();
     let mut all = Vec::new();
-    let mut area = (Design::ZERO, true);
+    let mut area = (Scalar::ZERO, true);
     let mut complete = true;
     let mut shapes = Shapes::default();
     for placed in placed_solids(reader)? {

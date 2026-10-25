@@ -27,7 +27,7 @@ pub use measure::{Measurement, measure};
 use geop_core_editor::editing::Visual;
 use geop_core_editor::output::{Answer, Inspector, InspectorInfo, Output, Picks};
 use geop_core_math::geop_error::GeopResult;
-use geop_core_program::{element::PickedElement, values::Design};
+use geop_core_program::element::PickedElement;
 
 /// Measures picked entities: one alone, or the two last picked together.
 pub struct Measure;
@@ -50,7 +50,7 @@ impl Inspector for Measure {
         output: &mut Output,
         picked: &[PickedElement],
         (): (),
-    ) -> GeopResult<(Measurement, Vec<Visual<Design>>)> {
+    ) -> GeopResult<(Measurement, Vec<Visual>)> {
         let measurement = measure(&output.part(), picked);
         let visuals = measurement.visuals();
         Ok((measurement, visuals))
@@ -79,7 +79,7 @@ impl Inspector for MassProperties {
         output: &mut Output,
         _: &[PickedElement],
         (): (),
-    ) -> GeopResult<(MassReport, Vec<Visual<Design>>)> {
+    ) -> GeopResult<(MassReport, Vec<Visual>)> {
         Ok((mass_report(&output.part())?, Vec::new()))
     }
 
@@ -106,7 +106,7 @@ impl Inspector for Interference {
         output: &mut Output,
         _: &[PickedElement],
         (): (),
-    ) -> GeopResult<(InterferenceReport, Vec<Visual<Design>>)> {
+    ) -> GeopResult<(InterferenceReport, Vec<Visual>)> {
         Ok((interference_report(&output.part())?, Vec::new()))
     }
 

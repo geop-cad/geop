@@ -31,12 +31,12 @@ pub enum Axis {
 /// circular cross-section swept via [`revolve_at_oriented`].
 ///
 /// [`revolved_cylinder_along_axis`] with `axis = Axis::Z`.
-pub fn revolved_cylinder<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn revolved_cylinder(
+    model: &mut NamedModel,
     name: &str,
-    base_center: Vector3<S>,
-    radius: S,
-    height: S,
+    base_center: Vector3,
+    radius: Scalar,
+    height: Scalar,
 ) -> GeopResult<SolidId> {
     revolved_cylinder_along_axis(model, name, base_center, radius, height, Axis::Z)
 }
@@ -57,12 +57,12 @@ pub fn revolved_cylinder<S: Scalar>(
 /// [`revolve_at_oriented`]): `p0`/`p3` are the centers of the top/bottom
 /// caps, `c0` the top cap's radius, `c1` the side and `c2` the bottom cap's
 /// radius.
-pub fn revolved_cylinder_along_axis<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn revolved_cylinder_along_axis(
+    model: &mut NamedModel,
     name: &str,
-    base_center: Vector3<S>,
-    radius: S,
-    height: S,
+    base_center: Vector3,
+    radius: Scalar,
+    height: Scalar,
     axis: Axis,
 ) -> GeopResult<SolidId> {
     let [x, y, z] = [0, 1, 2].map(Vector3::axis);
@@ -78,10 +78,10 @@ pub fn revolved_cylinder_along_axis<S: Scalar>(
     // solid inside-out: structurally perfect, with every face's normal
     // pointing into the material.
     let profile = polyline(&[
-        Vector2::from_array([S::ZERO, height]),
+        Vector2::from_array([Scalar::ZERO, height]),
         Vector2::from_array([radius, height]),
-        Vector2::from_array([radius, S::ZERO]),
-        Vector2::from_array([S::ZERO, S::ZERO]),
+        Vector2::from_array([radius, Scalar::ZERO]),
+        Vector2::from_array([Scalar::ZERO, Scalar::ZERO]),
     ])?;
     let namer = Namer::new("cylinder", name)?;
     revolve_at_oriented(
@@ -103,12 +103,12 @@ pub fn revolved_cylinder_along_axis<S: Scalar>(
 ///
 /// Named as the operation `cylinder(name)`, after the polygon's corners
 /// `p0..` and sides `c0..` (see [`extrude`]).
-pub fn extruded_cylinder<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn extruded_cylinder(
+    model: &mut NamedModel,
     name: &str,
-    base_center: Vector3<S>,
-    radius: S,
-    height: S,
+    base_center: Vector3,
+    radius: Scalar,
+    height: Scalar,
     segments: usize,
 ) -> GeopResult<SolidId> {
     if segments < 3 {
@@ -116,15 +116,19 @@ pub fn extruded_cylinder<S: Scalar>(
             "extruded_cylinder: need at least 3 segments",
         ));
     }
-    let u = Vector3::from_array([radius, S::ZERO, S::ZERO]);
-    let v = Vector3::from_array([S::ZERO, radius, S::ZERO]);
-    let w = Vector3::from_array([S::ZERO, S::ZERO, height.mul(S::from_f64(-1.0))]);
+    let u = Vector3::from_array([radius, Scalar::ZERO, Scalar::ZERO]);
+    let v = Vector3::from_array([Scalar::ZERO, radius, Scalar::ZERO]);
+    let w = Vector3::from_array([
+        Scalar::ZERO,
+        Scalar::ZERO,
+        height.mul(Scalar::from_f64(-1.0)),
+    ]);
     let coordinate_system = CoordinateSystem::try_new(base_center, u, v, w)?;
 
-    let outer: Vec<Vector2<S>> = (0..segments)
+    let outer: Vec<Vector2> = (0..segments)
         .map(|k| {
             let angle = std::f64::consts::TAU * (k as f64) / (segments as f64);
-            Vector2::from_array([S::from_f64(angle.cos()), S::from_f64(angle.sin())])
+            Vector2::from_array([Scalar::from_f64(angle.cos()), Scalar::from_f64(angle.sin())])
         })
         .collect();
 
@@ -134,8 +138,8 @@ pub fn extruded_cylinder<S: Scalar>(
         &namer,
         Some(&namer.root()),
         &coordinate_system,
-        S::ZERO,
-        S::ONE,
+        Scalar::ZERO,
+        Scalar::ONE,
         &[SweepLoop::plain(Profile::closed(polygon(&outer)?))],
     )?;
     Ok(built.solid.expect("extruded as a solid"))
@@ -145,17 +149,17 @@ pub fn extruded_cylinder<S: Scalar>(
 mod tests {
     use super::*;
     use crate::common::testing::render;
-    use geop_core_math::for_all_scalars;
     use geop_ops_model::testing::{assert_model_valid, assert_model_valid_sheets};
 
-    fn check_revolved_cylinder_is_valid<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
+    #[test]
+    fn revolved_cylinder_is_valid() {
+        let mut model = NamedModel::new();
         revolved_cylinder(
             &mut model,
             "t2",
-            Vector3::from_array([S::ZERO, S::ZERO, S::ZERO]),
-            S::ONE,
-            S::TWO,
+            Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::ZERO]),
+            Scalar::ONE,
+            Scalar::TWO,
         )
         .unwrap();
         let topology = model.topology();
@@ -164,19 +168,16 @@ mod tests {
         assert_model_valid(topology);
         render(topology, 32, "revolved_cylinder_topology.html");
     }
-    #[test]
-    fn revolved_cylinder_is_valid() {
-        for_all_scalars!(check_revolved_cylinder_is_valid);
-    }
 
-    fn check_extruded_cylinder_is_valid<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
+    #[test]
+    fn extruded_cylinder_is_valid() {
+        let mut model = NamedModel::new();
         extruded_cylinder(
             &mut model,
             "t4",
-            Vector3::from_array([S::ZERO, S::ZERO, S::ZERO]),
-            S::ONE,
-            S::TWO,
+            Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::ZERO]),
+            Scalar::ONE,
+            Scalar::TWO,
             12,
         )
         .unwrap();
@@ -186,25 +187,22 @@ mod tests {
         render(topology, 8, "extruded_cylinder_topology.html");
         assert_eq!(topology.faces.len(), 12 + 2);
     }
-    #[test]
-    fn extruded_cylinder_is_valid() {
-        for_all_scalars!(check_extruded_cylinder_is_valid);
-    }
 
     /// An `X`/`Y`-axis cylinder must be structurally identical to the
     /// (already-covered) `Z`-axis one — same face count, valid, manifold —
     /// and its vertices must actually extend along the requested axis
     /// (`height`) with the circular cross-section in the *other* two
     /// coordinates, not still sitting on `z`.
-    fn check_revolved_cylinder_along_axis_is_valid<S: Scalar>() {
+    #[test]
+    fn revolved_cylinder_along_axis_is_valid() {
         for (axis, extent_axis) in [(Axis::X, 0), (Axis::Y, 1), (Axis::Z, 2)] {
-            let mut model = NamedModel::<S>::new();
+            let mut model = NamedModel::new();
             revolved_cylinder_along_axis(
                 &mut model,
                 "t1",
-                Vector3::from_array([S::ZERO, S::ZERO, S::ZERO]),
-                S::ONE,
-                S::TWO,
+                Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::ZERO]),
+                Scalar::ONE,
+                Scalar::TWO,
                 axis,
             )
             .unwrap_or_else(|e| panic!("{axis:?}: {e}"));
@@ -241,10 +239,6 @@ mod tests {
             }
         }
     }
-    #[test]
-    fn revolved_cylinder_along_axis_is_valid() {
-        for_all_scalars!(check_revolved_cylinder_along_axis_is_valid);
-    }
 
     /// A clip-sized cylinder (radius 3, 10 long) standing 50 along its own
     /// axis from the origin, along each axis, is valid. In fixed point its
@@ -252,12 +246,13 @@ mod tests {
     /// box that projecting a point near the axis onto a cap honestly gives,
     /// each cap's height came out tens wide, as wide as its distance from
     /// the origin (see `nurb_surface::evaluate`).
-    fn check_revolved_cylinder_far_along_its_axis_is_valid<S: Scalar>() {
-        let f = S::from_f64;
+    #[test]
+    fn revolved_cylinder_far_along_its_axis_is_valid() {
+        let f = Scalar::from_f64;
         for (axis, k) in [(Axis::X, 0), (Axis::Y, 1), (Axis::Z, 2)] {
             let mut base = [f(0.0); 3];
             base[k] = f(50.0);
-            let mut model = NamedModel::<S>::new();
+            let mut model = NamedModel::new();
             revolved_cylinder_along_axis(
                 &mut model,
                 "clip",
@@ -270,10 +265,6 @@ mod tests {
             assert_model_valid_sheets(model.topology());
         }
     }
-    #[test]
-    fn revolved_cylinder_far_along_its_axis_is_valid() {
-        for_all_scalars!(check_revolved_cylinder_far_along_its_axis_is_valid);
-    }
 
     /// The same cylinder far off its axis, at `(1000, -500, 50)`, is valid.
     ///
@@ -285,10 +276,11 @@ mod tests {
     /// once the edge and `v` could not be split further (see
     /// `fat_line::stalled` and the curve-surface test
     /// `spoke_touching_cap_quadrant_at_its_pole_far_from_the_origin`).
-    fn check_revolved_cylinder_far_from_the_origin_is_valid<S: Scalar>() {
-        let f = S::from_f64;
+    #[test]
+    fn revolved_cylinder_far_from_the_origin_is_valid() {
+        let f = Scalar::from_f64;
         for axis in [Axis::X, Axis::Y, Axis::Z] {
-            let mut model = NamedModel::<S>::new();
+            let mut model = NamedModel::new();
             revolved_cylinder_along_axis(
                 &mut model,
                 "clip",
@@ -300,9 +292,5 @@ mod tests {
             .unwrap();
             assert_model_valid_sheets(model.topology());
         }
-    }
-    #[test]
-    fn revolved_cylinder_far_from_the_origin_is_valid() {
-        for_all_scalars!(check_revolved_cylinder_far_from_the_origin_is_valid);
     }
 }

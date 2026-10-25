@@ -14,7 +14,7 @@ use crate::remesh::RemeshParams;
 
 /// What to do next for a `solid_a` edge x `solid_b` edge pair — see
 /// `find_edge_edge_action`'s own doc comment.
-enum EdgeEdgeAction<S: Scalar> {
+enum EdgeEdgeAction {
     /// The two edges are (at least partly) coincident and already share
     /// endpoints — `edge_deleted` folds into `edge_into`. `reversed` says
     /// whether `edge_deleted` ran start<->end the other way round.
@@ -31,13 +31,13 @@ enum EdgeEdgeAction<S: Scalar> {
     /// otherwise a new one needs to be created there.
     Split {
         edge_a: EdgeId,
-        t_a: S,
+        t_a: Scalar,
         split_a: bool,
         edge_b: EdgeId,
-        t_b: S,
+        t_b: Scalar,
         split_b: bool,
         vertex: Option<VertexId>,
-        point: Vector3<S>,
+        point: Vector3,
     },
 }
 
@@ -46,10 +46,10 @@ enum EdgeEdgeAction<S: Scalar> {
 /// reuses the single vertex the first pair created there instead of each
 /// pair minting its own. Only the two bodies' own: a vertex of another
 /// body, or of a wire, that happens to lie there is near, not theirs.
-pub(super) fn find_vertex_at_point<S: Scalar>(
-    model: &Model<S>,
+pub(super) fn find_vertex_at_point(
+    model: &Model,
     bodies: [Body; 2],
-    point: &Vector3<S>,
+    point: &Vector3,
 ) -> GeopResult<Option<VertexId>> {
     for body in bodies {
         for v in model.iter_body_vertices(body)? {
@@ -78,12 +78,12 @@ pub(super) fn find_vertex_at_point<S: Scalar>(
 /// The search runs to `params`' `curve_curve_min_subdivision_size`, not the
 /// `min_subdivision_size` of the vertex-onto-edge searches (see
 /// [`RemeshParams`]).
-fn find_edge_edge_action<S: Scalar>(
-    model: &Model<S>,
+fn find_edge_edge_action(
+    model: &Model,
     solid_a: Body,
     solid_b: Body,
-    params: &RemeshParams<S>,
-) -> GeopResult<Option<EdgeEdgeAction<S>>> {
+    params: &RemeshParams,
+) -> GeopResult<Option<EdgeEdgeAction>> {
     let ctx = with_context!(
         "find_edge_edge_action(solid_a={solid_a}, solid_b={solid_b}, params={params:?})"
     );
@@ -183,12 +183,12 @@ fn find_edge_edge_action<S: Scalar>(
     Ok(None)
 }
 
-pub fn remesh_edges_x_edges<S: Scalar>(
-    model: &mut NamedModel<S>,
-    naming: &mut BooleanNaming<S>,
+pub fn remesh_edges_x_edges(
+    model: &mut NamedModel,
+    naming: &mut BooleanNaming,
     solid_a: Body,
     solid_b: Body,
-    params: &RemeshParams<S>,
+    params: &RemeshParams,
 ) -> GeopResult<()> {
     let ctx = with_context!(
         "remesh_edges_x_edges(solid_a={solid_a}, solid_b={solid_b}, params={params:?})"
@@ -243,7 +243,7 @@ pub fn remesh_edges_x_edges<S: Scalar>(
                             {
                                 let threshold = params
                                     .curve_curve_min_subdivision_size
-                                    .mul(S::from_f64(10.0));
+                                    .mul(Scalar::from_f64(10.0));
                                 let topology = model.topology();
                                 let existing = topology
                                     .iter_body_vertices(solid_a)

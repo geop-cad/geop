@@ -15,9 +15,6 @@ use geop_core_math::{
 };
 use serde::{Deserialize, Serialize};
 
-/// The scalar a program holds its design data in.
-pub type Design = geop_core_math::scalars::ScalInF64;
-
 /// What a parameter is set to where a program places the part: a number,
 /// or the name of a table's row, or a colour. Saved as itself — `2.5`,
 /// `"M5"`, `"#ff8800"`.
@@ -36,8 +33,8 @@ pub type Settings = BTreeMap<String, Setting>;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum StateValue {
-    Number(#[serde(with = "as_f64")] Design),
-    Pose(Pose<Design>),
+    Number(#[serde(with = "as_f64")] Scalar),
+    Pose(Pose),
 }
 
 /// A part's state, by name.
@@ -46,7 +43,7 @@ pub type StateValues = BTreeMap<String, StateValue>;
 /// A value the run gives none of reads as the number zero.
 impl Default for StateValue {
     fn default() -> Self {
-        StateValue::Number(Design::ZERO)
+        StateValue::Number(Scalar::ZERO)
     }
 }
 
@@ -58,7 +55,7 @@ pub fn pose_state(instance: &str) -> String {
 
 /// The pose a value holds, if it holds one: none for a number — what a
 /// pose state reads as before anything solved for it.
-pub fn pose_in(value: &StateValue) -> Option<Pose<Design>> {
+pub fn pose_in(value: &StateValue) -> Option<Pose> {
     match value {
         StateValue::Pose(pose) => Some(*pose),
         StateValue::Number(_) => None,
@@ -69,8 +66,6 @@ pub fn pose_in(value: &StateValue) -> Option<Pose<Design>> {
 /// own frame — turning about its own origin, and moving along its own axes —
 /// by the exponential map: `pose ∘ exp(ω, v)` (see [`Pose`]'s steps).
 impl Variable for StateValue {
-    type Scalar = Design;
-
     fn dimension(&self) -> usize {
         match self {
             StateValue::Number(v) => v.dimension(),
@@ -78,21 +73,21 @@ impl Variable for StateValue {
         }
     }
 
-    fn retract(&self, step: &[Design]) -> GeopResult<Self> {
+    fn retract(&self, step: &[Scalar]) -> GeopResult<Self> {
         Ok(match self {
             StateValue::Number(v) => StateValue::Number(v.retract(step)?),
             StateValue::Pose(pose) => StateValue::Pose(pose.retract(step)?),
         })
     }
 
-    fn retract_over(&self, step: &[Design]) -> GeopResult<Self> {
+    fn retract_over(&self, step: &[Scalar]) -> GeopResult<Self> {
         Ok(match self {
             StateValue::Number(v) => StateValue::Number(v.retract_over(step)?),
             StateValue::Pose(pose) => StateValue::Pose(pose.retract_over(step)?),
         })
     }
 
-    fn differential(&self, step: &[Design]) -> GeopResult<Option<Vec<Vec<Design>>>> {
+    fn differential(&self, step: &[Scalar]) -> GeopResult<Option<Vec<Vec<Scalar>>>> {
         match self {
             StateValue::Number(v) => v.differential(step),
             StateValue::Pose(pose) => pose.differential(step),
@@ -102,7 +97,7 @@ impl Variable for StateValue {
     /// A number its difference from `at`; a pose its position's, and its
     /// rotation's — a turn as the distance it moves a point `scale` from
     /// its axis (see [`Pose`]'s).
-    fn stay(&self, at: &Self, scale: Design) -> GeopResult<Rows<Design>> {
+    fn stay(&self, at: &Self, scale: Scalar) -> GeopResult<Rows> {
         match (self, at) {
             (StateValue::Number(v), StateValue::Number(at)) => v.stay(at, scale),
             (StateValue::Pose(pose), StateValue::Pose(at)) => pose.stay(at, scale),

@@ -1,14 +1,8 @@
 //! 3-D sketches built on a part: what they are given of it follows it, and
 //! their arguments read back as they were written.
 
-use geop_core_math::{
-    primitives::FrameAxis,
-    scalars::{ScalInF64 as S, Scalar},
-    vector::Vector3,
-};
-use geop_core_program::{
-    element::ElementReference, operation::Operation, part::Part, values::Design,
-};
+use geop_core_math::{primitives::FrameAxis, scalars::Scalar, vector::Vector3};
+use geop_core_program::{element::ElementReference, operation::Operation, part::Part};
 use geop_core_sketch::space::{Constraint3d, CurveKind3d};
 use geop_lib_sweep::shapes::block_part;
 use geop_ops_model::datums::{ORIGIN, datums, origin_axis};
@@ -19,11 +13,11 @@ use geop_ops_model::sketch3d::{
     CurveSource, LineSource, PlacedSketch3d, PointSource, Sketch3d, sketch3d,
 };
 
-fn v(p: [f64; 3]) -> Vector3<S> {
-    Vector3::from_array(p.map(S::from_f64))
+fn v(p: [f64; 3]) -> Vector3 {
+    Vector3::from_array(p.map(Scalar::from_f64))
 }
 
-fn close(a: &Vector3<S>, b: [f64; 3]) -> bool {
+fn close(a: &Vector3, b: [f64; 3]) -> bool {
     (0..3).all(|k| (a[k].to_f64() - b[k]).abs() < 1e-7)
 }
 
@@ -39,10 +33,7 @@ fn references_follow_the_part() {
         line,
         direction: v([0.0, 1.0, 0.0]),
     });
-    let corner = vertex_at(
-        &block_part::<Design>("b", [0.0; 3], [1.0; 3]),
-        [1.0, 1.0, 1.0],
-    );
+    let corner = vertex_at(&block_part("b", [0.0; 3], [1.0; 3]), [1.0, 1.0, 1.0]);
     let args = AddSketch3dArgs {
         sketch,
         references: vec![

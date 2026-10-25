@@ -19,7 +19,7 @@ use geop_core_program::{
     part::StepContext,
     reader::Reader,
     target::{Target, TargetReference},
-    values::{Design, Settings},
+    values::Settings,
 };
 use geop_ops_model::datums::Datums;
 use geop_ops_model::parameters::{Placement, instance, instances, located};
@@ -34,11 +34,11 @@ one_of! {
     /// The line copies of a placed part go along, or the axis they go round,
     /// in the part or in a part placed in it: a straight edge, a circular
     /// edge or a round face, a datum axis, a sketch's line.
-    pub enum PatternAxis -> Axis<Design> {
-        Line(ElementReference<NamedModel<Design>, Line>),
-        Round(ElementReference<NamedModel<Design>, Round>),
+    pub enum PatternAxis -> Axis {
+        Line(ElementReference<NamedModel, Line>),
+        Round(ElementReference<NamedModel, Round>),
         Datum(ElementReference<Datums, Line>),
-        Sketch(ElementReference<PlacedSketch<Design>, Line>),
+        Sketch(ElementReference<PlacedSketch, Line>),
     }
 }
 
@@ -103,11 +103,7 @@ pub struct PartPatternArgs {
 
 /// The motions moving the part to each copy, `k` from 1: along `axis` or
 /// round it, as `args` lays them out, its formulas read through `reader`.
-fn motions(
-    args: &PartPatternArgs,
-    axis: &Axis<Design>,
-    reader: &Reader,
-) -> GeopResult<Vec<Pose<Design>>> {
+fn motions(args: &PartPatternArgs, axis: &Axis, reader: &Reader) -> GeopResult<Vec<Pose>> {
     let count = whole_count(&args.count, reader)?;
     if count < 2 {
         return Err(GeopError::new(format!(
@@ -163,7 +159,7 @@ fn check(args: &PartPatternArgs) -> GeopResult<&PatternAxis> {
 struct Copies {
     file: String,
     inputs: Settings,
-    motions: Vec<Pose<Design>>,
+    motions: Vec<Pose>,
 }
 
 /// Each part pattern's own, made before its copies are placed.
@@ -272,8 +268,8 @@ impl PartOperation for PartPattern {
         context: &'a Context<'a>,
         args: &PartPatternArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, PartPatternArgs> {
-        let mut f = EditForm::<Design, PartPatternArgs>::default();
+    ) -> EditForm<'a, PartPatternArgs> {
+        let mut f = EditForm::<PartPatternArgs>::default();
         let before = &context.before;
         let options = std::iter::once(Choice::new("", "Choose a placed part…"))
             .chain(

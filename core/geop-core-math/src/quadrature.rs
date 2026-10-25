@@ -212,15 +212,15 @@ pub const MAX_POLYNOMIAL_DEGREE: usize = 2 * GAUSS_LEGENDRE.len() - 1;
 /// The interval between the two `f64`s around `x` — `x` itself, if it is
 /// zero, which is exact: an enclosure of the real number `x` was rounded
 /// from.
-fn around<S: Scalar>(x: f64) -> S {
+fn around(x: f64) -> Scalar {
     if x == 0.0 {
-        return S::ZERO;
+        return Scalar::ZERO;
     }
     let step = |up: bool| {
         let bits = x.to_bits();
         f64::from_bits(if (x > 0.0) == up { bits + 1 } else { bits - 1 })
     };
-    S::from_f64(step(false)).union(S::from_f64(step(true)))
+    Scalar::from_f64(step(false)).union(Scalar::from_f64(step(true)))
 }
 
 /// How hard [`integrate`] tries: until every component's estimated error
@@ -243,10 +243,10 @@ impl Default for Quadrature {
 
 /// An integral, as [`integrate`] finds it.
 #[derive(Clone, Debug)]
-pub struct Integral<S: Scalar> {
+pub struct Integral {
     /// Each component's enclosure: the rule's value, enclosed, widened by
     /// its estimated truncation error (see the module docs).
-    pub value: Vec<S>,
+    pub value: Vec<Scalar>,
     /// Whether every component's estimated error came below the tolerance
     /// within the panel budget. When not, `value` is still widened by the
     /// estimate, only wider than asked.
@@ -258,10 +258,10 @@ pub struct Integral<S: Scalar> {
 /// One panel of the adaptive search: its ends, the Kronrod value, its
 /// estimated error and the integral of the integrand's absolute value, per
 /// component.
-struct Panel<S: Scalar> {
-    a: S,
-    b: S,
-    kronrod: Vec<S>,
+struct Panel {
+    a: Scalar,
+    b: Scalar,
+    kronrod: Vec<Scalar>,
     error: Vec<f64>,
     absolute: Vec<f64>,
     /// How wide the two rules' enclosures are together.
@@ -269,27 +269,27 @@ struct Panel<S: Scalar> {
 }
 
 /// The 15-point Kronrod and 7-point Gauss rules applied to `f` on `[a, b]`.
-fn panel<S: Scalar>(
-    f: &mut impl FnMut(S) -> GeopResult<Vec<S>>,
-    a: S,
-    b: S,
+fn panel(
+    f: &mut impl FnMut(Scalar) -> GeopResult<Vec<Scalar>>,
+    a: Scalar,
+    b: Scalar,
     components: usize,
-) -> GeopResult<Panel<S>> {
-    let half = b.sub(a).div(S::TWO)?;
+) -> GeopResult<Panel> {
+    let half = b.sub(a).div(Scalar::TWO)?;
     let center = a.add(half);
-    let mut kronrod = vec![S::ZERO; components];
-    let mut gauss = vec![S::ZERO; components];
+    let mut kronrod = vec![Scalar::ZERO; components];
+    let mut gauss = vec![Scalar::ZERO; components];
     let mut absolute = vec![0.0; components];
-    let mut add = |values: &[S], k: usize| -> GeopResult<()> {
+    let mut add = |values: &[Scalar], k: usize| -> GeopResult<()> {
         if values.len() != components {
             return Err(GeopError::new(format!(
                 "integrate: the integrand gave {} components, {components} expected",
                 values.len()
             )));
         }
-        let wk = around::<S>(WGK[k]).mul(half);
+        let wk = around(WGK[k]).mul(half);
         // The odd Kronrod nodes are the Gauss rule's.
-        let wg = (k % 2 == 1).then(|| around::<S>(WG[k / 2]).mul(half));
+        let wg = (k % 2 == 1).then(|| around(WG[k / 2]).mul(half));
         for (c, &value) in values.iter().enumerate() {
             kronrod[c] = kronrod[c].add(wk.mul(value));
             absolute[c] += WGK[k] * half.to_f64().abs() * value.to_f64().abs();
@@ -336,20 +336,20 @@ fn panel<S: Scalar>(
 /// component's scale, is halved until every component has converged or
 /// the budget is spent (see [`Quadrature`]). Where to halve a panel is a
 /// free choice, so its midpoint is sharpened.
-pub fn integrate<S: Scalar>(
-    mut f: impl FnMut(S) -> GeopResult<Vec<S>>,
-    breaks: &[S],
+pub fn integrate(
+    mut f: impl FnMut(Scalar) -> GeopResult<Vec<Scalar>>,
+    breaks: &[Scalar],
     components: usize,
     quadrature: &Quadrature,
-) -> GeopResult<Integral<S>> {
+) -> GeopResult<Integral> {
     let mut evaluations = 0;
-    let mut f = |x: S| {
+    let mut f = |x: Scalar| {
         evaluations += 1;
         f(x)
     };
     if breaks.len() < 2 {
         return Ok(Integral {
-            value: vec![S::ZERO; components],
+            value: vec![Scalar::ZERO; components],
             converged: true,
             evaluations: 0,
         });
@@ -358,7 +358,7 @@ pub fn integrate<S: Scalar>(
         .windows(2)
         .map(|w| panel(&mut f, w[0], w[1], components))
         .collect::<GeopResult<Vec<_>>>()?;
-    let total = |panels: &[Panel<S>], pick: fn(&Panel<S>) -> &Vec<f64>| -> Vec<f64> {
+    let total = |panels: &[Panel], pick: fn(&Panel) -> &Vec<f64>| -> Vec<f64> {
         (0..components)
             .map(|c| panels.iter().map(|p| pick(p)[c]).sum())
             .collect()
@@ -386,7 +386,7 @@ pub fn integrate<S: Scalar>(
         // vertical wall), has relative errors far above any other's, and
         // ranked with the rest it drew every halving to its noise while the
         // panel holding a pending component's error was never halved.
-        let worst = |p: &Panel<S>| {
+        let worst = |p: &Panel| {
             pending
                 .iter()
                 .filter(|&&c| scale[c] > 0.0)
@@ -400,15 +400,17 @@ pub fn integrate<S: Scalar>(
             .max_by(|a, b| a.1.total_cmp(&b.1))
             .expect("there is a panel");
         let Panel { a, b, .. } = panels.swap_remove(index);
-        let mid = a.add(b).div(S::TWO)?.sharpen();
+        let mid = a.add(b).div(Scalar::TWO)?.sharpen();
         panels.push(panel(&mut f, a, mid, components)?);
         panels.push(panel(&mut f, mid, b, components)?);
     };
     let error = total(&panels, |p| &p.error);
     let value = (0..components)
         .map(|c| {
-            let sum = panels.iter().fold(S::ZERO, |acc, p| acc.add(p.kronrod[c]));
-            sum.add(S::from_f64(-error[c]).union(S::from_f64(error[c])))
+            let sum = panels
+                .iter()
+                .fold(Scalar::ZERO, |acc, p| acc.add(p.kronrod[c]));
+            sum.add(Scalar::from_f64(-error[c]).union(Scalar::from_f64(error[c])))
         })
         .collect();
     Ok(Integral {
@@ -427,24 +429,24 @@ pub fn integrate<S: Scalar>(
 /// and nothing else: no truncation error, always converged. Whether `f` is
 /// such a polynomial is the caller's claim to make, from what `f` is; a
 /// degree above [`MAX_POLYNOMIAL_DEGREE`] is an error.
-pub fn integrate_polynomial<S: Scalar>(
-    mut f: impl FnMut(S) -> GeopResult<Vec<S>>,
-    breaks: &[S],
+pub fn integrate_polynomial(
+    mut f: impl FnMut(Scalar) -> GeopResult<Vec<Scalar>>,
+    breaks: &[Scalar],
     components: usize,
     degree: usize,
-) -> GeopResult<Integral<S>> {
+) -> GeopResult<Integral> {
     let Some(rule) = GAUSS_LEGENDRE.get(degree / 2) else {
         return Err(GeopError::new(format!(
             "integrate_polynomial: no rule for degree {degree}, at most \
              {MAX_POLYNOMIAL_DEGREE}"
         )));
     };
-    let mut value = vec![S::ZERO; components];
+    let mut value = vec![Scalar::ZERO; components];
     let mut evaluations = 0;
     for w in breaks.windows(2) {
-        let half = w[1].sub(w[0]).div(S::TWO)?;
+        let half = w[1].sub(w[0]).div(Scalar::TWO)?;
         let center = w[0].add(half);
-        let mut add = |x: S, weight: f64| -> GeopResult<()> {
+        let mut add = |x: Scalar, weight: f64| -> GeopResult<()> {
             let values = f(x)?;
             evaluations += 1;
             if values.len() != components {
@@ -454,7 +456,7 @@ pub fn integrate_polynomial<S: Scalar>(
                     values.len()
                 )));
             }
-            let weight = around::<S>(weight).mul(half);
+            let weight = around(weight).mul(half);
             for (sum, v) in value.iter_mut().zip(values) {
                 *sum = sum.add(weight.mul(v));
             }
@@ -480,10 +482,7 @@ pub fn integrate_polynomial<S: Scalar>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        for_all_scalars,
-        scalars::{Field, Ring, Scalar},
-    };
+    use crate::scalars::Scalar;
 
     /// A peak that needs halving, beside a component that is all rounding
     /// — nearly zero, noisy, converged by its width — on the other half of
@@ -492,8 +491,8 @@ mod tests {
     /// moments of a hole's wall did not converge.
     #[test]
     fn halving_follows_the_components_not_converged() {
-        type S = crate::scalars::ScalInF64;
-        let f = |x: S| {
+        type Scalar = crate::scalars::Scalar;
+        let f = |x: Scalar| {
             let t = x.to_f64();
             let peak = 1.0 / (1.0 + 1e4 * (t + 0.5) * (t + 0.5));
             let noise = if t > 0.0 {
@@ -502,39 +501,42 @@ mod tests {
                 0.0
             };
             Ok(vec![
-                S::from_f64(peak),
-                S::from_f64(noise - 1e-15).union(S::from_f64(noise + 1e-15)),
+                Scalar::from_f64(peak),
+                Scalar::from_f64(noise - 1e-15).union(Scalar::from_f64(noise + 1e-15)),
             ])
         };
         let quadrature = Quadrature {
             relative_tolerance: 1e-10,
             max_panels: 64,
         };
-        let integral = integrate(f, &[S::from_f64(-1.0), S::ONE], 2, &quadrature).unwrap();
+        let integral =
+            integrate(f, &[Scalar::from_f64(-1.0), Scalar::ONE], 2, &quadrature).unwrap();
         assert!(integral.converged, "{integral:?}");
         // ∫ 1 / (1 + 10⁴ (x + ½)²) = (atan(50) + atan(150)) / 100.
         let exact = (50.0_f64.atan() + 150.0_f64.atan()) / 100.0;
         assert!(
-            integral.value[0].could_be_equal(S::from_f64(exact)),
+            integral.value[0].could_be_equal(Scalar::from_f64(exact)),
             "{integral:?}"
         );
     }
 
-    fn check_polynomials_are_exact<S: Scalar>() {
+    #[test]
+    fn polynomials_are_exact() {
         // x^5 - 2x^2 + 1 on [0, 2]: 64/6 - 16/3 + 2 = 22/3.
-        let f = |x: S| {
+        let f = |x: Scalar| {
             Ok(vec![
                 x.mul(x)
                     .mul(x)
                     .mul(x)
                     .mul(x)
-                    .sub(S::TWO.mul(x).mul(x))
-                    .add(S::ONE),
+                    .sub(Scalar::TWO.mul(x).mul(x))
+                    .add(Scalar::ONE),
             ])
         };
-        let integral = integrate(f, &[S::ZERO, S::TWO], 1, &Quadrature::default()).unwrap();
+        let integral =
+            integrate(f, &[Scalar::ZERO, Scalar::TWO], 1, &Quadrature::default()).unwrap();
         assert!(integral.converged);
-        let exact = S::from_ratio(22, 3).unwrap();
+        let exact = Scalar::from_ratio(22, 3).unwrap();
         assert!(
             integral.value[0].could_be_equal(exact),
             "{:?}",
@@ -546,26 +548,24 @@ mod tests {
             integral.value[0]
         );
     }
-    #[test]
-    fn polynomials_are_exact() {
-        for_all_scalars!(check_polynomials_are_exact);
-    }
 
     /// A function the rule cannot integrate exactly converges by halving
     /// panels, and the result encloses the exact value.
     #[test]
     fn smooth_functions_converge_and_are_enclosed() {
-        use crate::scalars::ScalInF64 as S;
+        use crate::scalars::Scalar;
         // 1 / (1 + x^2) on [0, 1]: pi / 4.
-        let f = |x: S| Ok(vec![S::ONE.div(S::ONE.add(x.mul(x)))?]);
-        let integral = integrate(f, &[S::ZERO, S::ONE], 1, &Quadrature::default()).unwrap();
+        let f = |x: Scalar| Ok(vec![Scalar::ONE.div(Scalar::ONE.add(x.mul(x)))?]);
+        let integral =
+            integrate(f, &[Scalar::ZERO, Scalar::ONE], 1, &Quadrature::default()).unwrap();
         assert!(integral.converged);
-        assert!(integral.value[0].could_be_equal(S::PI.div(S::from_f64(4.0)).unwrap()));
+        assert!(integral.value[0].could_be_equal(Scalar::PI.div(Scalar::from_f64(4.0)).unwrap()));
         // sqrt(x) on [0, 1] has an unbounded derivative at 0: it takes
         // halving towards it, and still encloses 2/3.
-        let f = |x: S| Ok(vec![x.sqrt()?]);
-        let integral = integrate(f, &[S::ZERO, S::ONE], 1, &Quadrature::default()).unwrap();
-        assert!(integral.value[0].could_be_equal(S::from_ratio(2, 3).unwrap()));
+        let f = |x: Scalar| Ok(vec![x.sqrt()?]);
+        let integral =
+            integrate(f, &[Scalar::ZERO, Scalar::ONE], 1, &Quadrature::default()).unwrap();
+        assert!(integral.value[0].could_be_equal(Scalar::from_ratio(2, 3).unwrap()));
         assert!(
             integral.value[0].width().to_f64() < 1e-6,
             "{:?}",
@@ -576,23 +576,24 @@ mod tests {
     /// Every rule integrates every power up to its degree exactly — each
     /// table entry checked — over panels of a split range, with `n` points
     /// a panel.
-    fn check_gauss_legendre_is_exact<S: Scalar>() {
+    #[test]
+    fn gauss_legendre_is_exact() {
         for degree in 0..=MAX_POLYNOMIAL_DEGREE {
-            let f = |x: S| {
+            let f = |x: Scalar| {
                 Ok((0..=degree)
-                    .map(|k| (0..k).fold(S::ONE, |p, _| p.mul(x)))
+                    .map(|k| (0..k).fold(Scalar::ONE, |p, _| p.mul(x)))
                     .collect())
             };
-            let breaks = [S::from_f64(-1.0), S::from_f64(0.25), S::ONE];
+            let breaks = [Scalar::from_f64(-1.0), Scalar::from_f64(0.25), Scalar::ONE];
             let integral = integrate_polynomial(f, &breaks, degree + 1, degree).unwrap();
             assert!(integral.converged);
             assert_eq!(integral.evaluations, 2 * (degree / 2 + 1));
             for (k, value) in integral.value.iter().enumerate() {
                 // ∫ x^k from -1 to 1: 2 / (k + 1) for even k, 0 for odd.
                 let exact = if k % 2 == 0 {
-                    S::from_ratio(2, k as i64 + 1).unwrap()
+                    Scalar::from_ratio(2, k as i64 + 1).unwrap()
                 } else {
-                    S::ZERO
+                    Scalar::ZERO
                 };
                 assert!(
                     value.could_be_equal(exact),
@@ -602,29 +603,25 @@ mod tests {
             }
         }
         let too_high = integrate_polynomial(
-            |_: S| Ok(vec![S::ONE]),
-            &[S::ZERO, S::ONE],
+            |_: Scalar| Ok(vec![Scalar::ONE]),
+            &[Scalar::ZERO, Scalar::ONE],
             1,
             MAX_POLYNOMIAL_DEGREE + 1,
         );
         assert!(too_high.is_err());
     }
-    #[test]
-    fn gauss_legendre_is_exact() {
-        for_all_scalars!(check_gauss_legendre_is_exact);
-    }
 
     /// A budget too small leaves the result wider, and says so.
     #[test]
     fn a_spent_budget_is_reported() {
-        use crate::scalars::ScalInF64 as S;
-        let f = |x: S| Ok(vec![x.sqrt()?]);
+        use crate::scalars::Scalar;
+        let f = |x: Scalar| Ok(vec![x.sqrt()?]);
         let tight = Quadrature {
             relative_tolerance: 1e-14,
             max_panels: 2,
         };
-        let integral = integrate(f, &[S::ZERO, S::ONE], 1, &tight).unwrap();
+        let integral = integrate(f, &[Scalar::ZERO, Scalar::ONE], 1, &tight).unwrap();
         assert!(!integral.converged);
-        assert!(integral.value[0].could_be_equal(S::from_ratio(2, 3).unwrap()));
+        assert!(integral.value[0].could_be_equal(Scalar::from_ratio(2, 3).unwrap()));
     }
 }

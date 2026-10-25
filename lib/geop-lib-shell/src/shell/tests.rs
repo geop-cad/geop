@@ -2,10 +2,7 @@
 //! at two side by side and at two opposite ones; a prism; a revolved
 //! cylinder, whose caps are four faces each.
 
-use geop_core_math::{
-    for_all_scalars,
-    scalars::{ScalInF64, Scalar},
-};
+use geop_core_math::scalars::Scalar;
 use geop_core_topology::{Body, SolidId};
 use geop_lib_sweep::shapes::{block, extruded_cylinder, revolved_cylinder, sphere_solid, v3};
 use geop_ops_model::{NamedModel, Namer, testing::assert_valid};
@@ -13,7 +10,7 @@ use geop_ops_model::{NamedModel, Namer, testing::assert_valid};
 use super::shell;
 
 /// The 2 x 2 x 1 box from the origin, `cube(b)`.
-fn unit_box<S: Scalar>() -> (NamedModel<S>, SolidId) {
+fn unit_box() -> (NamedModel, SolidId) {
     let mut part = NamedModel::new();
     let solid = block(&mut part, "b", [0., 0., 0.], [2., 2., 1.]);
     (part, solid)
@@ -21,22 +18,22 @@ fn unit_box<S: Scalar>() -> (NamedModel<S>, SolidId) {
 
 /// `part` with `solid` shelled `thickness` thick, open at the faces named
 /// `open`, as the operation `s`.
-fn shelled<S: Scalar>(
-    mut part: NamedModel<S>,
+fn shelled(
+    mut part: NamedModel,
     solid: SolidId,
     open: &[&str],
     thickness: f64,
-) -> (NamedModel<S>, SolidId) {
+) -> (NamedModel, SolidId) {
     let open: Vec<_> = open
         .iter()
         .map(|name| part.face_id(name).unwrap())
         .collect();
     let namer = Namer::new("shell", "s").unwrap();
-    let solid = shell(&mut part, &namer, solid, &open, S::from_f64(thickness)).unwrap();
+    let solid = shell(&mut part, &namer, solid, &open, Scalar::from_f64(thickness)).unwrap();
     (part, solid)
 }
 
-fn faces<S: Scalar>(part: &NamedModel<S>, solid: SolidId) -> usize {
+fn faces(part: &NamedModel, solid: SolidId) -> usize {
     part.topology()
         .body_faces(Body::Solid(solid))
         .unwrap()
@@ -44,7 +41,7 @@ fn faces<S: Scalar>(part: &NamedModel<S>, solid: SolidId) -> usize {
 }
 
 /// Every vertex of `part`, sorted, rounded to what tells them apart here.
-fn corners<S: Scalar>(part: &NamedModel<S>) -> Vec<[i64; 3]> {
+fn corners(part: &NamedModel) -> Vec<[i64; 3]> {
     let mut out: Vec<[i64; 3]> = part
         .topology()
         .vertices
@@ -55,8 +52,9 @@ fn corners<S: Scalar>(part: &NamedModel<S>) -> Vec<[i64; 3]> {
     out
 }
 
-fn check_closed_box<S: Scalar>() {
-    let (part, solid) = unit_box::<S>();
+#[test]
+fn a_box_closed_all_round_gets_a_void() {
+    let (part, solid) = unit_box();
     let (part, solid) = shelled(part, solid, &[], 0.25);
     assert_valid(&part);
     let model = part.topology();
@@ -77,13 +75,10 @@ fn check_closed_box<S: Scalar>() {
     }
     assert_eq!(inner, expected);
 }
-#[test]
-fn a_box_closed_all_round_gets_a_void() {
-    for_all_scalars!(check_closed_box);
-}
 
-fn check_open_top<S: Scalar>() {
-    let (part, solid) = unit_box::<S>();
+#[test]
+fn a_box_opened_at_its_top() {
+    let (part, solid) = unit_box();
     let top = "cube(b,start)";
     assert!(part.face_id(top).is_ok());
     let (part, solid) = shelled(part, solid, &[top], 0.25);
@@ -97,13 +92,10 @@ fn check_open_top<S: Scalar>() {
     assert!(corners(&part).contains(&[250, 250, 250]));
     assert!(corners(&part).contains(&[250, 250, 1000]));
 }
-#[test]
-fn a_box_opened_at_its_top() {
-    for_all_scalars!(check_open_top);
-}
 
-fn check_open_two_sides<S: Scalar>() {
-    let (part, solid) = unit_box::<S>();
+#[test]
+fn a_box_opened_at_its_top_and_a_side() {
+    let (part, solid) = unit_box();
     let names: Vec<String> = part
         .topology()
         .body_faces(Body::Solid(solid))
@@ -126,31 +118,25 @@ fn check_open_two_sides<S: Scalar>() {
         assert!(part.topology().get_face(face).unwrap().holes.is_empty());
     }
 }
-#[test]
-fn a_box_opened_at_its_top_and_a_side() {
-    for_all_scalars!(check_open_two_sides);
-}
 
-fn check_tube<S: Scalar>() {
-    let (part, solid) = unit_box::<S>();
+#[test]
+fn a_box_opened_at_both_ends_is_a_tube() {
+    let (part, solid) = unit_box();
     let (part, solid) = shelled(part, solid, &["cube(b,start)", "cube(b,end)"], 0.25);
     assert_valid(&part);
     // 4 walls, inside and out, and a rim at either end.
     assert_eq!(faces(&part, solid), 10);
 }
-#[test]
-fn a_box_opened_at_both_ends_is_a_tube() {
-    for_all_scalars!(check_tube);
-}
 
-fn check_prism<S: Scalar>() {
+#[test]
+fn a_hexagonal_prism_opened_at_its_bottom() {
     let mut part = NamedModel::new();
     let solid = extruded_cylinder(
         &mut part,
         "p",
         v3(0., 0., 0.),
-        S::from_f64(1.),
-        S::from_f64(1.5),
+        Scalar::from_f64(1.),
+        Scalar::from_f64(1.5),
         6,
     )
     .unwrap();
@@ -158,19 +144,16 @@ fn check_prism<S: Scalar>() {
     assert_valid(&part);
     assert_eq!(faces(&part, solid), 7 + 7 + 1);
 }
-#[test]
-fn a_hexagonal_prism_opened_at_its_bottom() {
-    for_all_scalars!(check_prism);
-}
 
-fn check_revolved_cylinder<S: Scalar>() {
+#[test]
+fn a_revolved_cylinder_opened_at_its_top() {
     let mut part = NamedModel::new();
     let solid = revolved_cylinder(
         &mut part,
         "c",
         v3(0., 0., 0.),
-        S::from_f64(1.),
-        S::from_f64(2.),
+        Scalar::from_f64(1.),
+        Scalar::from_f64(2.),
     )
     .unwrap();
     // The top cap, in quarters.
@@ -190,20 +173,16 @@ fn check_revolved_cylinder<S: Scalar>() {
     // for each quarter of the top.
     assert_eq!(faces(&part, solid), 8 + 8 + 4);
 }
-#[test]
-fn a_revolved_cylinder_opened_at_its_top() {
-    for_all_scalars!(check_revolved_cylinder);
-}
 
 #[test]
 fn a_closed_revolved_cylinder() {
-    let mut part = NamedModel::<ScalInF64>::new();
+    let mut part = NamedModel::new();
     let solid = revolved_cylinder(
         &mut part,
         "c",
         v3(0., 0., 0.),
-        ScalInF64::from_f64(1.),
-        ScalInF64::from_f64(2.),
+        Scalar::from_f64(1.),
+        Scalar::from_f64(2.),
     )
     .unwrap();
     let (part, solid) = shelled(part, solid, &[], 0.2);
@@ -214,17 +193,16 @@ fn a_closed_revolved_cylinder() {
 /// Walls thicker than half the box is high would turn its inside out.
 #[test]
 fn walls_too_thick_are_refused() {
-    let (mut part, solid) = unit_box::<ScalInF64>();
+    let (mut part, solid) = unit_box();
     let namer = Namer::new("shell", "s").unwrap();
-    let error = shell(&mut part, &namer, solid, &[], ScalInF64::from_f64(0.6)).unwrap_err();
+    let error = shell(&mut part, &namer, solid, &[], Scalar::from_f64(0.6)).unwrap_err();
     assert!(error.root_message().contains("too thick"), "{error:?}");
 }
 
 #[test]
 fn a_sphere_closed_all_round() {
-    type S = ScalInF64;
     let mut part = NamedModel::new();
-    let solid = sphere_solid(&mut part, "s", v3(1., 0., 0.), S::from_f64(2.)).unwrap();
+    let solid = sphere_solid(&mut part, "s", v3(1., 0., 0.), Scalar::from_f64(2.)).unwrap();
     let (part, solid) = shelled(part, solid, &[], 0.5);
     assert_valid(&part);
     assert_eq!(part.topology().get_solid(solid).unwrap().shells.len(), 2);
@@ -248,12 +226,12 @@ fn a_sphere_closed_all_round() {
 /// on a smooth surface.
 #[test]
 fn a_sphere_does_not_open_along_a_smooth_seam() {
-    let mut part = NamedModel::<ScalInF64>::new();
-    let solid = sphere_solid(&mut part, "s", v3(0., 0., 0.), ScalInF64::from_f64(1.)).unwrap();
+    let mut part = NamedModel::new();
+    let solid = sphere_solid(&mut part, "s", v3(0., 0., 0.), Scalar::from_f64(1.)).unwrap();
     let north: Vec<_> = (0..4)
         .map(|k| part.face_id(&format!("sphere(s,north,q{k})")).unwrap())
         .collect();
     let namer = Namer::new("shell", "s").unwrap();
-    let error = shell(&mut part, &namer, solid, &north, ScalInF64::from_f64(0.1)).unwrap_err();
+    let error = shell(&mut part, &namer, solid, &north, Scalar::from_f64(0.1)).unwrap_err();
     assert!(error.root_message().contains("tangent"), "{error:?}");
 }

@@ -5,7 +5,7 @@ use crate::{Chamfer, ChamferArgs, Fillet, FilletArgs, VertexRadius};
 use geop_core_math::{
     geop_error::GeopResult,
     primitives::{DatumComponent, FrameAxis},
-    scalars::{Ring, ScalInF64 as S, Scalar},
+    scalars::Scalar,
 };
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
@@ -37,42 +37,42 @@ fn registry() -> GeopResult<OperationRegistry> {
 }
 
 /// The straight edges of `part` standing upright at `(x, y)`.
-fn upright_edges_at(part: &NamedModel<S>, x: f64, y: f64) -> Vec<String> {
+fn upright_edges_at(part: &NamedModel, x: f64, y: f64) -> Vec<String> {
     let model = part.topology();
     edges_where(part, |e| {
         [e.start_vertex, e.end_vertex].iter().all(|&v| {
             let p = model.vertices[&v].point;
-            p[0].could_be_equal(S::from_f64(x)) && p[1].could_be_equal(S::from_f64(y))
+            p[0].could_be_equal(Scalar::from_f64(x)) && p[1].could_be_equal(Scalar::from_f64(y))
         })
     })
 }
 
 /// The arcs of `part` around `(cx, cy)` of `radius`, at height `z`.
-fn arcs_at(part: &NamedModel<S>, [cx, cy, z]: [f64; 3], radius: f64) -> Vec<String> {
+fn arcs_at(part: &NamedModel, [cx, cy, z]: [f64; 3], radius: f64) -> Vec<String> {
     edges_where(part, |e| {
         e.curve.as_arc().unwrap().is_some_and(|arc| {
             let c = arc.circle;
-            c.center[0].could_be_equal(S::from_f64(cx))
-                && c.center[1].could_be_equal(S::from_f64(cy))
-                && c.center[2].could_be_equal(S::from_f64(z))
-                && c.radius.could_be_equal(S::from_f64(radius))
+            c.center[0].could_be_equal(Scalar::from_f64(cx))
+                && c.center[1].could_be_equal(Scalar::from_f64(cy))
+                && c.center[2].could_be_equal(Scalar::from_f64(z))
+                && c.radius.could_be_equal(Scalar::from_f64(radius))
         })
     })
 }
 
 /// Whether some vertex of `part` lies on the circle around `(cx, cy)` of
 /// `radius`, at height `z`.
-fn vertex_on_circle(part: &NamedModel<S>, [cx, cy, z]: [f64; 3], radius: f64) -> bool {
+fn vertex_on_circle(part: &NamedModel, [cx, cy, z]: [f64; 3], radius: f64) -> bool {
     part.topology().vertices.values().any(|v| {
         let (dx, dy) = (
-            v.point[0].sub(S::from_f64(cx)),
-            v.point[1].sub(S::from_f64(cy)),
+            v.point[0].sub(Scalar::from_f64(cx)),
+            v.point[1].sub(Scalar::from_f64(cy)),
         );
-        v.point[2].could_be_equal(S::from_f64(z))
+        v.point[2].could_be_equal(Scalar::from_f64(z))
             && dx
                 .mul(dx)
                 .add(dy.mul(dy))
-                .could_be_equal(S::from_f64(radius * radius))
+                .could_be_equal(Scalar::from_f64(radius * radius))
     })
 }
 
@@ -253,11 +253,11 @@ fn fillet_boss_on_block() {
 }
 
 /// The straight edges of `part` from `a` to `b`, either way round.
-fn edges_from_to(part: &NamedModel<S>, a: [f64; 3], b: [f64; 3]) -> Vec<String> {
+fn edges_from_to(part: &NamedModel, a: [f64; 3], b: [f64; 3]) -> Vec<String> {
     let model = part.topology();
     let at = |v: &geop_core_topology::VertexId, p: [f64; 3]| {
         let q = model.vertices[v].point;
-        (0..3).all(|k| q[k].could_be_equal(S::from_f64(p[k])))
+        (0..3).all(|k| q[k].could_be_equal(Scalar::from_f64(p[k])))
     };
     edges_where(part, |e| {
         (at(&e.start_vertex, a) && at(&e.end_vertex, b))
@@ -541,7 +541,7 @@ fn fillet_lofted_rim() {
     let before = program.build_model(registry).unwrap();
     let rim = edges_where(&before, |e| {
         let p = middle(e);
-        p[2].could_be_equal(S::from_f64(2.0))
+        p[2].could_be_equal(Scalar::from_f64(2.0))
     });
     assert_eq!(rim.len(), 4, "{rim:?}");
     program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
@@ -551,7 +551,7 @@ fn fillet_lofted_rim() {
     assert!(!vertex_on_circle(&part, [0.3, 0.0, 2.0], 0.6));
     // Every vertex left on the top lies inside the rim.
     for v in part.topology().vertices.values() {
-        if v.point[2].could_be_equal(S::from_f64(2.0)) {
+        if v.point[2].could_be_equal(Scalar::from_f64(2.0)) {
             let (x, y) = (v.point[0].to_f64() - 0.3, v.point[1].to_f64());
             assert!(x.hypot(y) < 0.6 - 0.05, "a vertex on the top at {x}, {y}");
         }
@@ -566,7 +566,7 @@ fn fillet_lofted_bottom_edge_is_refused() {
     let before = program.build_model(registry).unwrap();
     let bottom = edges_where(&before, |e| {
         let p = middle(e);
-        p[2].could_be_equal(S::ZERO)
+        p[2].could_be_equal(Scalar::ZERO)
     });
     program.push("round", FilletArgs::constant(vec![bottom[0].clone()], 0.1));
     let Err(error) = program.build_model(registry) else {
@@ -641,7 +641,7 @@ fn fillet_rim_over_creases_is_refused() {
     let before = program.build_model(registry).unwrap();
     let rim = edges_where(&before, |e| {
         let p = middle(e);
-        p[2].could_be_equal(S::from_f64(2.0))
+        p[2].could_be_equal(Scalar::from_f64(2.0))
     });
     program.push("round", FilletArgs::constant(vec![rim[0].clone()], 0.1));
     let Err(error) = program.build_model(registry) else {

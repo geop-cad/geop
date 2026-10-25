@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
+use geop_core_math::geop_error::GeopResult;
 use geop_core_topology::{CoedgeGeometry, Sense, boundary::BoundaryType};
 use serde::{Deserialize, Serialize};
 
@@ -38,7 +38,7 @@ pub struct PartDescription {
 }
 
 impl PartDescription {
-    pub fn of<S: Scalar>(part: &NamedModel<S>) -> GeopResult<Self> {
+    pub fn of(part: &NamedModel) -> GeopResult<Self> {
         let model = part.topology();
         let name = |id: RefId| part.name(id).map(str::to_string);
         let describe_loop = |boundary: BoundaryType| -> GeopResult<Vec<String>> {

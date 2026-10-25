@@ -13,7 +13,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     plain,
     primitives::{FrameAxis, Pose, Quaternion},
-    scalars::{Ring, Scalar, scal_in_f64::ScalInF64},
+    scalars::Scalar,
     vector::Vector3,
 };
 use geop_core_program::{
@@ -21,7 +21,7 @@ use geop_core_program::{
     part::Part,
     program::Program,
     runner::Runner,
-    values::{Design, StateValue, pose_state},
+    values::{StateValue, pose_state},
     workspace::{Files, Location, Workspace},
 };
 use geop_core_topology::{
@@ -46,16 +46,14 @@ use geop_ops_model::{
 
 use crate::{ImportStep, ImportStepArgs, add_bodies, read_step, write_part, write_step};
 
-type S = ScalInF64;
-
 /// `model` as the text of a STEP file whose product is `name`.
-fn written(model: &NamedModel<S>, name: &str) -> String {
+fn written(model: &NamedModel, name: &str) -> String {
     write_step(model, name).unwrap()
 }
 
 /// The part the STEP text `text` imports into, checked valid.
-fn import(text: &str) -> NamedModel<S> {
-    let bodies = read_step::<S>(text).unwrap_or_else(|e| panic!("reading failed: {e}"));
+fn import(text: &str) -> NamedModel {
+    let bodies = read_step(text).unwrap_or_else(|e| panic!("reading failed: {e}"));
     let mut part = NamedModel::new();
     add_bodies(&mut part, &Namer::new("import", "i").unwrap(), &bodies)
         .unwrap_or_else(|e| panic!("adding failed: {e}"));
@@ -64,23 +62,26 @@ fn import(text: &str) -> NamedModel<S> {
 }
 
 /// `(faces, edges, vertices)` of a model.
-fn counts(model: &Model<S>) -> (usize, usize, usize) {
+fn counts(model: &Model) -> (usize, usize, usize) {
     (model.faces.len(), model.edges.len(), model.vertices.len())
 }
 
 /// The box around a model's edges, sampled.
-fn bounds(model: &Model<S>) -> ([f64; 3], [f64; 3]) {
+fn bounds(model: &Model) -> ([f64; 3], [f64; 3]) {
     plain::bounds(model.edges.values().flat_map(|edge| {
         let (t0, t1) = edge.curve.domain();
         (0..=256).map(move |i| {
             let t = t0.to_f64() + (t1.to_f64() - t0.to_f64()) * i as f64 / 256.0;
-            edge.curve.evaluate(S::from_f64(t)).unwrap().to_f64_array()
+            edge.curve
+                .evaluate(Scalar::from_f64(t))
+                .unwrap()
+                .to_f64_array()
         })
     }))
     .unwrap()
 }
 
-fn assert_bounds(model: &Model<S>, lo: [f64; 3], hi: [f64; 3]) {
+fn assert_bounds(model: &Model, lo: [f64; 3], hi: [f64; 3]) {
     let (a, b) = bounds(model);
     for c in 0..3 {
         // Sampled: an arc's extreme may fall between samples.
@@ -93,7 +94,7 @@ fn assert_bounds(model: &Model<S>, lo: [f64; 3], hi: [f64; 3]) {
 }
 
 /// `part` written as STEP and read back: the same counts and bounds.
-fn round_trip(part: &NamedModel<S>) -> NamedModel<S> {
+fn round_trip(part: &NamedModel) -> NamedModel {
     let text = written(part, "part");
     let back = import(&text);
     assert_eq!(
@@ -121,8 +122,8 @@ fn a_cylinder_round_trips() {
         &mut part,
         "c",
         v3(1.0, 2.0, 0.0),
-        S::from_f64(0.5),
-        S::from_f64(2.0),
+        Scalar::from_f64(0.5),
+        Scalar::from_f64(2.0),
     )
     .unwrap();
     round_trip(&part);
@@ -131,7 +132,7 @@ fn a_cylinder_round_trips() {
 #[test]
 fn a_sphere_round_trips() {
     let mut part = NamedModel::new();
-    sphere_solid(&mut part, "s", v3(0.0, 0.0, 1.0), S::from_f64(1.5)).unwrap();
+    sphere_solid(&mut part, "s", v3(0.0, 0.0, 1.0), Scalar::from_f64(1.5)).unwrap();
     round_trip(&part);
 }
 
@@ -410,10 +411,10 @@ fn a_ball_whose_rim_runs_through_its_pole_imports() {
 fn helix_entities(first: u64, z0: f64) -> String {
     use geop_core_geometry::nurb_curve::{Handedness, NurbCurve3D};
     use geop_core_math::primitives::CoordinateSystem;
-    let helix = NurbCurve3D::<S>::helix(
+    let helix = NurbCurve3D::helix(
         &CoordinateSystem::world_at(v3(0.0, 0.0, z0)),
-        S::ONE,
-        S::ONE,
+        Scalar::ONE,
+        Scalar::ONE,
         1.5,
         Handedness::Right,
     )
@@ -687,7 +688,7 @@ fn faces_that_do_not_meet_at_a_vertex_are_refused_by_name() {
         &text[..second],
         &text[second + level.len()..]
     );
-    let error = read_step::<S>(&file(".MILLI.,.METRE.", &text))
+    let error = read_step(&file(".MILLI.,.METRE.", &text))
         .expect_err("refused")
         .to_string();
     // The triangles have three edges: neither can be rebuilt instead.
@@ -726,7 +727,7 @@ fn a_face_whose_surface_contradicts_its_neighbours_is_rebuilt_from_its_edges() {
         text.replace(placement, "AXIS2_PLACEMENT_3D('',#998,")
     );
     let text = file(".MILLI.,.METRE.", &text);
-    let bodies = read_step::<S>(&text).unwrap();
+    let bodies = read_step(&text).unwrap();
     assert_eq!(bodies[0].healed.faces.len(), 1, "{:?}", bodies[0].healed);
     let part = import(&text);
     let model = part.topology();
@@ -778,9 +779,13 @@ fn a_rational_b_spline_sheet_imports() {
     let face = model.faces.values().next().unwrap();
     let p = face
         .surface
-        .evaluate(S::from_f64(0.3), S::from_f64(0.6))
+        .evaluate(Scalar::from_f64(0.3), Scalar::from_f64(0.6))
         .unwrap();
-    assert!(p[0].mul(p[0]).add(p[1].mul(p[1])).could_be_equal(S::ONE));
+    assert!(
+        p[0].mul(p[0])
+            .add(p[1].mul(p[1]))
+            .could_be_equal(Scalar::ONE)
+    );
 }
 
 #[test]
@@ -792,7 +797,7 @@ fn an_unsupported_entity_is_refused_by_name() {
             "#110=OFFSET_SURFACE('',#111,1.,.F.);",
         ),
     );
-    let error = read_step::<S>(&text).expect_err("refused").to_string();
+    let error = read_step(&text).expect_err("refused").to_string();
     assert!(
         error.contains("#110 OFFSET_SURFACE is not supported"),
         "{error}"
@@ -907,8 +912,8 @@ fn an_import_builds_an_equal_file_once() {
         &mut cylinder,
         "c",
         v3(1.0, 2.0, 0.0),
-        S::from_f64(0.5),
-        S::from_f64(2.0),
+        Scalar::from_f64(0.5),
+        Scalar::from_f64(2.0),
     )
     .unwrap();
     let text = written(&cylinder, "cylinder");
@@ -957,13 +962,13 @@ fn placing(file: &str) -> AddPartArgs {
     .fixed()
 }
 
-fn at(x: f64, y: f64, z: f64) -> Pose<Design> {
-    let v = Vector3::from_array([x, y, z].map(S::from_f64));
+fn at(x: f64, y: f64, z: f64) -> Pose {
+    let v = Vector3::from_array([x, y, z].map(Scalar::from_f64));
     Pose::new(v, Quaternion::identity()).unwrap()
 }
 
 /// `program` placing each of `placed` as its name, where its pose puts it.
-fn with_placed(mut program: Program, placed: &[(&str, &str, Pose<Design>)]) -> Program {
+fn with_placed(mut program: Program, placed: &[(&str, &str, Pose)]) -> Program {
     for (name, file, pose) in placed {
         program.push(*name, placing(file));
         (program.state).insert(pose_state(name), StateValue::Pose(*pose));
@@ -1017,12 +1022,16 @@ fn an_assembly_is_written_as_products_and_occurrences() {
     // About `y` by a quarter turn: the peg's `z` onto `x`.
     let half = std::f64::consts::FRAC_PI_4;
     let turn = Quaternion::new(
-        S::from_f64(half.cos()),
-        S::ZERO,
-        S::from_f64(half.sin()),
-        S::ZERO,
+        Scalar::from_f64(half.cos()),
+        Scalar::ZERO,
+        Scalar::from_f64(half.sin()),
+        Scalar::ZERO,
     );
-    let turned = Pose::new(Vector3::from_array([9.0, 8.0, 0.5].map(S::from_f64)), turn).unwrap();
+    let turned = Pose::new(
+        Vector3::from_array([9.0, 8.0, 0.5].map(Scalar::from_f64)),
+        turn,
+    )
+    .unwrap();
     let robot = with_placed(
         base,
         &[
@@ -1062,7 +1071,7 @@ fn an_assembly_is_written_as_products_and_occurrences() {
     program.push("imp", ImportStepArgs { file: file.clone() });
     let files = BTreeMap::from([(file, text)]);
     let back = model_of(&build(&program, "main.geop", files));
-    let model: &Model<Design> = back.topology();
+    let model: &Model = back.topology();
     assert_eq!(model.solids.len(), 4, "the base and three pegs");
     // The pegs reach z = 2 (a), 3 (in the subassembly) and x = 11 (b).
     let (lo, hi) = plain::bounds(model.vertices.values().map(|v| v.point.to_f64_array())).unwrap();
@@ -1072,13 +1081,13 @@ fn an_assembly_is_written_as_products_and_occurrences() {
 }
 
 /// The box around a model's vertices.
-fn vertex_bounds(model: &Model<S>) -> ([f64; 3], [f64; 3]) {
+fn vertex_bounds(model: &Model) -> ([f64; 3], [f64; 3]) {
     plain::bounds(model.vertices.values().map(|v| v.point.to_f64_array())).unwrap()
 }
 
 /// The model a program of one import step builds, reading `file` — named
 /// `part.step` next to the program — from `text`.
-fn imported(text: String) -> NamedModel<Design> {
+fn imported(text: String) -> NamedModel {
     let mut program = Program::new();
     program.push(
         "imp",
@@ -1297,7 +1306,7 @@ fn an_assembly_is_exported_as_step_products() {
             "{occurrence} is placed"
         );
     }
-    let bodies = read_step::<S>(&text).unwrap();
+    let bodies = read_step(&text).unwrap();
     assert_eq!(bodies.len(), 3, "the link, once where each step places it");
 }
 

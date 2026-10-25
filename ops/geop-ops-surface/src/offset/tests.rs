@@ -1,6 +1,6 @@
 //! Offsetting the round sides of a cylinder and a cube's faces.
 
-use geop_core_math::scalars::{Field, Ring, ScalInF64 as S, Scalar};
+use geop_core_math::scalars::Scalar;
 use geop_lib_sweep::shapes::{block, revolved_cylinder};
 use geop_ops_model::NamedModel;
 use geop_ops_model::testing::apply_to_model;
@@ -11,7 +11,7 @@ use crate::test_refs::*;
 use geop_lib_sweep::shapes::v3;
 use geop_ops_model::testing::assert_valid_sheets;
 
-fn offset(part: NamedModel<S>, faces: Vec<String>, distance: f64) -> GeopResult<NamedModel<S>> {
+fn offset(part: NamedModel, faces: Vec<String>, distance: f64) -> GeopResult<NamedModel> {
     let args = OffsetSurfaceArgs {
         faces: faces.into_iter().map(named).collect(),
         distance,
@@ -23,13 +23,13 @@ fn offset(part: NamedModel<S>, faces: Vec<String>, distance: f64) -> GeopResult<
 /// radius 1.2 beside the cylinder, which stays as it was.
 #[test]
 fn offset_a_cylinder_face() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     let cylinder = revolved_cylinder(
         &mut part,
         "cyl",
         v3(0., 0., 0.),
-        S::from_f64(1.0),
-        S::from_f64(2.0),
+        Scalar::from_f64(1.0),
+        Scalar::from_f64(2.0),
     )
     .unwrap();
     let sides: Vec<String> = part
@@ -54,12 +54,12 @@ fn offset_a_cylinder_face() {
         let (v0, v1) = surface.domain_v();
         let p = surface
             .evaluate(
-                u0.add(u1).div(S::TWO).unwrap(),
-                v0.add(v1).div(S::TWO).unwrap(),
+                u0.add(u1).div(Scalar::TWO).unwrap(),
+                v0.add(v1).div(Scalar::TWO).unwrap(),
             )
             .unwrap();
         let r = p[0].mul(p[0]).add(p[1].mul(p[1])).sqrt().unwrap();
-        assert!(r.could_be_equal(S::from_f64(1.2)), "{name}: {r:?}");
+        assert!(r.could_be_equal(Scalar::from_f64(1.2)), "{name}: {r:?}");
     }
 }
 
@@ -67,7 +67,7 @@ fn offset_a_cylinder_face() {
 /// their copies meet where the offset planes do.
 #[test]
 fn offset_three_faces_of_a_cube_inward() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     let cube = block(&mut part, "c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     let faces: Vec<String> = part
         .topology()
@@ -80,7 +80,7 @@ fn offset_three_faces_of_a_cube_inward() {
             let plane = surface.as_plane().unwrap().unwrap();
             plane
                 .signed_distance(&v3(0., 0., 0.))
-                .could_be_equal(S::ZERO)
+                .could_be_equal(Scalar::ZERO)
         })
         .map(|f| part.name_of(f).unwrap().to_string())
         .collect();
@@ -98,7 +98,7 @@ fn offset_three_faces_of_a_cube_inward() {
 /// Offsetting by nothing is refused.
 #[test]
 fn zero_distance_is_refused() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     let cube = block(&mut part, "c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     let face = part.topology().solid_faces(cube).unwrap()[0];
     let face = part.name_of(face).unwrap().to_string();

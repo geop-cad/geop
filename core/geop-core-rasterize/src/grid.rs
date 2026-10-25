@@ -115,7 +115,7 @@ fn dist_point_to_segment2(p: Point, a: Point, b: Point) -> f64 {
 /// value already at a domain edge can legitimately land a ULP or two
 /// outside it, which a real `Scalar` interval never does (its width
 /// already encloses the true value) but a degenerate zero-width interval
-/// reconstructed via `S::from_f64` has no such margin, so the kernel's
+/// reconstructed via `Scalar::from_f64` has no such margin, so the kernel's
 /// (correctly strict) domain check can reject it.
 #[derive(Clone, Copy)]
 struct Domain {
@@ -124,7 +124,7 @@ struct Domain {
 }
 
 impl Domain {
-    fn of<S: Scalar>(face: &Face<S>) -> Self {
+    fn of(face: &Face) -> Self {
         let (u0, u1) = face.surface.domain_u();
         let (v0, v1) = face.surface.domain_v();
         Self {
@@ -144,15 +144,15 @@ impl Domain {
 /// a grid corner is shared by up to six triangles, and by every finer grid
 /// the refinement measures, whose cell edges' midpoints are the next grid's
 /// corners.
-pub(crate) struct Samples<'a, S: Scalar> {
-    face: &'a Face<S>,
+pub(crate) struct Samples<'a> {
+    face: &'a Face,
     domain: Domain,
-    points: HashMap<[u64; 2], Vector3<S>>,
-    normals: HashMap<[u64; 2], Option<Vector3<S>>>,
+    points: HashMap<[u64; 2], Vector3>,
+    normals: HashMap<[u64; 2], Option<Vector3>>,
 }
 
-impl<'a, S: Scalar> Samples<'a, S> {
-    pub(crate) fn new(face: &'a Face<S>) -> Self {
+impl<'a> Samples<'a> {
+    pub(crate) fn new(face: &'a Face) -> Self {
         Self {
             face,
             domain: Domain::of(face),
@@ -168,13 +168,13 @@ impl<'a, S: Scalar> Samples<'a, S> {
     }
 
     /// `uv` in the domain, as the surface's parameters.
-    pub(crate) fn uv(&self, uv: Point) -> Vector2<S> {
+    pub(crate) fn uv(&self, uv: Point) -> Vector2 {
         let (uv, _) = self.at(uv);
-        Vector2::from_array([S::from_f64(uv[0]), S::from_f64(uv[1])])
+        Vector2::from_array([Scalar::from_f64(uv[0]), Scalar::from_f64(uv[1])])
     }
 
     /// The surface's point at `uv`.
-    pub(crate) fn point(&mut self, uv: Point) -> GeopResult<Vector3<S>> {
+    pub(crate) fn point(&mut self, uv: Point) -> GeopResult<Vector3> {
         let (uv, key) = self.at(uv);
         if let Some(p) = self.points.get(&key) {
             return Ok(*p);
@@ -182,7 +182,7 @@ impl<'a, S: Scalar> Samples<'a, S> {
         let p = self
             .face
             .surface
-            .evaluate(S::from_f64(uv[0]), S::from_f64(uv[1]))?;
+            .evaluate(Scalar::from_f64(uv[0]), Scalar::from_f64(uv[1]))?;
         self.points.insert(key, p);
         Ok(p)
     }
@@ -194,13 +194,14 @@ impl<'a, S: Scalar> Samples<'a, S> {
 
     /// The surface's normal at `uv`: none where it has none (a pole, where
     /// the two derivatives are parallel).
-    pub(crate) fn normal(&mut self, uv: Point) -> Option<Vector3<S>> {
+    pub(crate) fn normal(&mut self, uv: Point) -> Option<Vector3> {
         let (uv, key) = self.at(uv);
         let surface = &self.face.surface;
-        *self
-            .normals
-            .entry(key)
-            .or_insert_with(|| surface.normal(S::from_f64(uv[0]), S::from_f64(uv[1])).ok())
+        *self.normals.entry(key).or_insert_with(|| {
+            surface
+                .normal(Scalar::from_f64(uv[0]), Scalar::from_f64(uv[1]))
+                .ok()
+        })
     }
 }
 
@@ -212,12 +213,12 @@ impl<'a, S: Scalar> Samples<'a, S> {
 /// shapes) represented by dozens of exactly collinear points, which would
 /// otherwise bloat the boundary ring `clip` has to test every grid cell
 /// against for no benefit.
-fn simplify_polygon<S: Scalar>(poly: &[Vector2<S>]) -> Vec<Vector2<S>> {
+fn simplify_polygon(poly: &[Vector2]) -> Vec<Vector2> {
     let n = poly.len();
     if n <= 3 {
         return poly.to_vec();
     }
-    let f64_pt = |p: Vector2<S>| [p[0].to_f64(), p[1].to_f64()];
+    let f64_pt = |p: Vector2| [p[0].to_f64(), p[1].to_f64()];
     let keep: Vec<bool> = (0..n)
         .map(|i| {
             let prev = f64_pt(poly[(i + n - 1) % n]);
@@ -227,7 +228,7 @@ fn simplify_polygon<S: Scalar>(poly: &[Vector2<S>]) -> Vec<Vector2<S>> {
             seg_len < 1e-12 || dist_point_to_segment2(cur, prev, next) > seg_len * 1e-9
         })
         .collect();
-    let result: Vec<Vector2<S>> = (0..n).filter(|&i| keep[i]).map(|i| poly[i]).collect();
+    let result: Vec<Vector2> = (0..n).filter(|&i| keep[i]).map(|i| poly[i]).collect();
     if result.len() >= 3 {
         result
     } else {
@@ -240,8 +241,8 @@ fn simplify_polygon<S: Scalar>(poly: &[Vector2<S>]) -> Vec<Vector2<S>> {
 /// straight chord between its corners — reported per direction, since a
 /// face can curve in one and be straight in the other (a cylinder wall,
 /// an extruded profile), and then only that direction needs refining.
-fn worst_grid_deviation<S: Scalar>(
-    samples: &mut Samples<S>,
+fn worst_grid_deviation(
+    samples: &mut Samples,
     min: Point,
     max: Point,
     nu: usize,
@@ -275,11 +276,11 @@ fn worst_grid_deviation<S: Scalar>(
 /// resolution chosen from the face's own curvature — see the module doc
 /// comment), each cell clipped exactly against the trim boundary. The
 /// triangles' corners are in `(u, v)`, as `samples` takes them.
-pub(crate) fn triangulate_face<S: Scalar>(
-    model: &Model<S>,
-    face: &Face<S>,
+pub(crate) fn triangulate_face(
+    model: &Model,
+    face: &Face,
     n: usize,
-    samples: &mut Samples<S>,
+    samples: &mut Samples,
 ) -> GeopResult<Vec<[Point; 3]>> {
     let BoundaryType::Loop(outer_anchor) = face.outer else {
         return Ok(Vec::new());
@@ -471,7 +472,6 @@ fn triangulate_region(
 
 #[cfg(test)]
 mod tests {
-
     /// The area the triangles of `triangulate_region` cover.
     fn covered(triangles: &[[Point; 3]]) -> f64 {
         triangles
@@ -723,18 +723,18 @@ mod tests {
         }
     }
     use super::*;
-    use geop_core_math::for_all_scalars;
     use geop_core_topology::test_fixtures::test_cube_model;
 
-    fn triangle_area<S: Scalar>(a: Vector2<S>, b: Vector2<S>, c: Vector2<S>) -> f64 {
+    fn triangle_area(a: Vector2, b: Vector2, c: Vector2) -> f64 {
         let (ax, ay) = (a[0].to_f64(), a[1].to_f64());
         let (bx, by) = (b[0].to_f64(), b[1].to_f64());
         let (cx, cy) = (c[0].to_f64(), c[1].to_f64());
         ((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)).abs() / 2.0
     }
 
-    fn check_flat_face_stays_coarse<S: Scalar>() {
-        let topology = &test_cube_model::<S>();
+    #[test]
+    fn flat_face_stays_coarse() {
+        let topology = &test_cube_model();
         let face = topology.faces.values().next().unwrap();
         let tris = crate::face_triangles_uv(topology, face, 32).unwrap();
         // Zero curvature never triggers a resolution doubling, so the grid
@@ -748,13 +748,10 @@ mod tests {
             tris.len()
         );
     }
-    #[test]
-    fn flat_face_stays_coarse() {
-        for_all_scalars!(check_flat_face_stays_coarse);
-    }
 
-    fn check_triangulation_covers_exact_area<S: Scalar>() {
-        let topology = &test_cube_model::<S>();
+    #[test]
+    fn triangulation_covers_exact_area() {
+        let topology = &test_cube_model();
         let face = topology.faces.values().next().unwrap();
         let tris = crate::face_triangles_uv(topology, face, 8).unwrap();
         let total: f64 = tris.iter().map(|(a, b, c)| triangle_area(*a, *b, *c)).sum();
@@ -762,9 +759,5 @@ mod tests {
             (total - 1.0).abs() < 1e-6,
             "total uv area={total}, expected 1.0"
         );
-    }
-    #[test]
-    fn triangulation_covers_exact_area() {
-        for_all_scalars!(check_triangulation_covers_exact_area);
     }
 }

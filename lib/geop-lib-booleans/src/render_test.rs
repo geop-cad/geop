@@ -19,7 +19,6 @@ mod tests {
         remesh::RemeshParams,
         scenes::{map_scenes_parallel, validation},
     };
-    use geop_core_math::scalars::ScalInF64;
     use geop_core_rasterize::debug::rasterize_topology;
     use geop_core_topology::validation::validate_fast;
     use geop_ops_model::BooleanOp;
@@ -28,17 +27,17 @@ mod tests {
     fn run_op(op: BooleanOp, dir: &str) {
         std::fs::create_dir_all(dir).unwrap();
 
-        let params = RemeshParams::<ScalInF64>::default();
+        let params = RemeshParams::default();
         // Matched to what `boolean` itself was given, for the same reason
         // `remesh::render_test` matches them: a validation search with less
         // budget than the operation it is checking can fail to reach a
         // conclusion the operation already reached.
-        let validation_params = validation::<ScalInF64>();
+        let validation_params = validation();
 
         // One independent remesh + boolean per scene, so they run in
         // parallel; see `scenes::map_scenes_parallel`. Each thread writes its
         // own `<scene>.html`, so the file writes do not collide either.
-        let outcomes = map_scenes_parallel::<ScalInF64, _, _>(|mut scene| {
+        let outcomes = map_scenes_parallel::<_, _>(|mut scene| {
             let mut failure = None;
             let mut invalid = None;
             let mut empty = false;

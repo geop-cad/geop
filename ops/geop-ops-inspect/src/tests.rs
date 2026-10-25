@@ -16,12 +16,7 @@ use std::f64::consts::PI;
 use geop_core_editor::output::Bounded;
 use geop_core_editor::selectable::Selectable;
 use geop_core_editor::view::drawn;
-use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::Pose,
-    scalars::{Ring, ScalInF64 as S, Scalar},
-    vector::Vector3,
-};
+use geop_core_math::{geop_error::GeopResult, primitives::Pose, scalars::Scalar, vector::Vector3};
 use geop_lib_sweep::shapes::{cube_solid, revolved_cylinder, sphere_solid, v3};
 use geop_ops_model::parameters::{Material, PartProperties, PartPropertiesArgs};
 use geop_ops_model::selection::Selected;
@@ -48,7 +43,7 @@ fn given<T: Clone>(_: &Reader, value: &T) -> GeopResult<T> {
 /// The part a program of one step building `model` builds, its material
 /// `material` — and, after it, what `then` adds.
 fn built_with(
-    given_model: &NamedModel<S>,
+    given_model: &NamedModel,
     material: Option<Material>,
     then: impl FnOnce(&Runner, &mut Part),
 ) -> Part {
@@ -71,7 +66,7 @@ fn built_with(
 }
 
 /// The part of `model`, made of `material`.
-fn built(model: &NamedModel<S>, material: Option<Material>) -> Part {
+fn built(model: &NamedModel, material: Option<Material>) -> Part {
     built_with(model, material, |_, _| {})
 }
 
@@ -99,7 +94,7 @@ fn assert_near(what: &str, bounded: Bounded, exact: f64, relative: f64) {
 }
 
 /// The one solid's summary of a report, of `model` made of steel.
-fn only(model: &NamedModel<S>) -> MassSummary {
+fn only(model: &NamedModel) -> MassSummary {
     let part = built(model, steel());
     let report = mass_report(&part.current()).unwrap();
     assert_eq!(report.bodies.len(), 1, "{report:?}");
@@ -129,7 +124,7 @@ fn assert_diagonal(summary: &MassSummary, diagonal: [f64; 3], relative: f64) {
 /// A 2 x 4 x 1 box of steel: volume, area, mass, centre and inertia.
 #[test]
 fn box_mass_properties() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     cube_solid(&mut part, "b", v3(1.0, 2.0, 3.0), v3(3.0, 6.0, 4.0)).unwrap();
     let summary = only(&part);
     assert!(summary.converged);
@@ -155,14 +150,14 @@ fn box_mass_properties() {
 /// within bounds of the closed forms.
 #[test]
 fn cylinder_mass_properties() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     let (r, h) = (1.5, 4.0);
     revolved_cylinder(
         &mut part,
         "c",
         v3(1.0, -1.0, 2.0),
-        S::from_f64(r),
-        S::from_f64(h),
+        Scalar::from_f64(r),
+        Scalar::from_f64(h),
     )
     .unwrap();
     let summary = only(&part);
@@ -180,9 +175,9 @@ fn cylinder_mass_properties() {
 /// A sphere of radius 2: poles where its parametrization collapses.
 #[test]
 fn sphere_mass_properties() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     let r = 2.0;
-    sphere_solid(&mut part, "s", v3(0.5, 0.0, -1.0), S::from_f64(r)).unwrap();
+    sphere_solid(&mut part, "s", v3(0.5, 0.0, -1.0), Scalar::from_f64(r)).unwrap();
     let summary = only(&part);
     let volume = 4.0 / 3.0 * PI * r * r * r;
     let mass = volume * 7850.0e-9;
@@ -199,7 +194,7 @@ fn sphere_mass_properties() {
 /// masses and moves their inertia to the common centre.
 #[test]
 fn two_boxes_combine() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     cube_solid(&mut part, "a", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap();
     cube_solid(&mut part, "b", v3(3.0, 0.0, 0.0), v3(4.0, 1.0, 1.0)).unwrap();
     let part = built(&part, steel());
@@ -225,13 +220,13 @@ fn two_boxes_combine() {
 /// the vertex meets it.
 #[test]
 fn distance_from_a_vertex_to_a_cylinder() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     revolved_cylinder(
         &mut part,
         "c",
         v3(0.0, 0.0, 0.0),
-        S::from_f64(1.0),
-        S::from_f64(2.0),
+        Scalar::from_f64(1.0),
+        Scalar::from_f64(2.0),
     )
     .unwrap();
     cube_solid(&mut part, "b", v3(2.0, 0.5, 0.5), v3(3.0, 1.5, 1.5)).unwrap();
@@ -251,7 +246,7 @@ fn distance_from_a_vertex_to_a_cylinder() {
     assert_near("distance", *distance, 4.25f64.sqrt() - 1.0, 1e-9);
     let [_, on_face] = measured.witness.unwrap();
     let r = on_face[0].mul(on_face[0]).add(on_face[1].mul(on_face[1]));
-    assert!(r.could_be_equal(S::ONE), "{on_face:?}");
+    assert!(r.could_be_equal(Scalar::ONE), "{on_face:?}");
 }
 
 /// One entity alone: a circular edge's length and radius, a cylinder's
@@ -259,13 +254,13 @@ fn distance_from_a_vertex_to_a_cylinder() {
 /// built.
 #[test]
 fn single_entities() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     revolved_cylinder(
         &mut part,
         "c",
         v3(0.0, 0.0, 0.0),
-        S::from_f64(1.5),
-        S::from_f64(2.0),
+        Scalar::from_f64(1.5),
+        Scalar::from_f64(2.0),
     )
     .unwrap();
     let part = built(&part, None);
@@ -298,7 +293,7 @@ fn single_entities() {
 /// face only touch; two apart are not listed.
 #[test]
 fn overlapping_and_touching_boxes() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     cube_solid(&mut part, "a", v3(0.0, 0.0, 0.0), v3(2.0, 2.0, 2.0)).unwrap();
     cube_solid(&mut part, "b", v3(1.0, 1.0, 1.0), v3(3.0, 3.5, 3.0)).unwrap();
     cube_solid(&mut part, "c", v3(-1.0, 0.0, 0.0), v3(0.0, 1.0, 1.0)).unwrap();
@@ -323,11 +318,11 @@ fn overlapping_and_touching_boxes() {
 /// turned.
 #[test]
 fn mass_properties_are_placed() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     let solid = cube_solid(&mut part, "b", v3(0.0, 0.0, 0.0), v3(2.0, 1.0, 1.0)).unwrap();
     let mass = part.topology().mass_properties(solid).unwrap();
     // A quarter turn about z, then up by 5.
-    let pose = Pose::from_euler(v3(0.0, 0.0, 5.0), [0.0, 0.0, 90.0].map(S::from_f64)).unwrap();
+    let pose = Pose::from_euler(v3(0.0, 0.0, 5.0), [0.0, 0.0, 90.0].map(Scalar::from_f64)).unwrap();
     let area = part.topology().solid_area(solid).unwrap();
     let placed = MassSummary::of(&mass.placed(&pose).unwrap(), area).unwrap();
     for (k, want) in [-0.5, 1.0, 5.5].into_iter().enumerate() {
@@ -348,7 +343,7 @@ fn mass_properties_are_placed() {
 /// stride now scales with the faces.
 #[test]
 fn long_bars_overlap() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     cube_solid(&mut part, "a", v3(0.0, 0.0, 0.0), v3(50.0, 10.0, 10.0)).unwrap();
     cube_solid(&mut part, "b", v3(10.0, 5.0, 5.0), v3(60.0, 15.0, 15.0)).unwrap();
     let report = interference_report(&built(&part, None).current()).unwrap();
@@ -370,7 +365,7 @@ fn sketch_curves_are_measured() {
     use geop_core_math::primitives::CoordinateSystem;
     use geop_core_sketch::space::Sketch3d;
     use geop_ops_model::sketch::{PlacedSketch, sketch};
-    let d = S::from_f64;
+    let d = Scalar::from_f64;
     let mut arc = geop_ops_model::sketch::Sketch::new();
     let (a, b) = (
         arc.add_point(d(1.0), d(0.0)),
@@ -454,7 +449,7 @@ fn measure_picks_what_it_measures() {
 #[test]
 fn placed_parts_are_measured_where_they_are() {
     use geop_ops_assembly::testing::{Shelf, given_model, place, runner};
-    let mut cube = NamedModel::<S>::new();
+    let mut cube = NamedModel::new();
     cube_solid(&mut cube, "c", v3(0.0, 0.0, 0.0), v3(1.0, 1.0, 1.0)).unwrap();
     let mut placed = Program::new();
     placed.steps.push(given_model("model", cube, None));

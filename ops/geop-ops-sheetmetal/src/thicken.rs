@@ -30,9 +30,9 @@ use geop_ops_model::{BodyNames, NamedModel, Namer};
 
 /// A vertex of the A side, and where it is on the B side.
 #[derive(Clone, Debug)]
-pub struct SheetVertex<S: Scalar> {
-    pub a: Vector3<S>,
-    pub b: Vector3<S>,
+pub struct SheetVertex {
+    pub a: Vector3,
+    pub b: Vector3,
     /// Its vertices are `N(a)` and `N(b)`, the edge across the thickness
     /// between them, on the boundary, `N`.
     pub name: Namer,
@@ -42,9 +42,9 @@ pub struct SheetVertex<S: Scalar> {
 /// on the B side: the same degree, knots and weights, so that the wall
 /// between them is ruled exactly.
 #[derive(Clone, Debug)]
-pub struct SheetEdge<S: Scalar> {
-    pub a: Curve3<S>,
-    pub b: Curve3<S>,
+pub struct SheetEdge {
+    pub a: Curve3,
+    pub b: Curve3,
     pub start: usize,
     pub end: usize,
     /// Its edges are `N(a)` and `N(b)`, its wall, on the boundary, `N`.
@@ -54,10 +54,10 @@ pub struct SheetEdge<S: Scalar> {
 /// One coedge of a face's loop: an edge in a sense, and its pcurve — on
 /// both of the face's surfaces, which share their parametrization.
 #[derive(Clone, Debug)]
-pub struct SheetCoedge<S: Scalar> {
+pub struct SheetCoedge {
     pub edge: usize,
     pub sense: Sense,
-    pub pcurve: NurbCurve2D<S>,
+    pub pcurve: NurbCurve2D,
 }
 
 /// A face of the A side, and its copy on the B side, parametrized alike:
@@ -65,11 +65,11 @@ pub struct SheetCoedge<S: Scalar> {
 /// the B side, and its loops running counter-clockwise in `(u, v)` — the
 /// outer one, holes clockwise.
 #[derive(Clone, Debug)]
-pub struct SheetFace<S: Scalar> {
-    pub a: NurbSurface3D<S>,
-    pub b: NurbSurface3D<S>,
-    pub outer: Vec<SheetCoedge<S>>,
-    pub holes: Vec<Vec<SheetCoedge<S>>>,
+pub struct SheetFace {
+    pub a: NurbSurface3D,
+    pub b: NurbSurface3D,
+    pub outer: Vec<SheetCoedge>,
+    pub holes: Vec<Vec<SheetCoedge>>,
     /// Its faces are `N(a)` and `N(b)`.
     pub name: Namer,
 }
@@ -77,13 +77,13 @@ pub struct SheetFace<S: Scalar> {
 /// The A side of a sheet, with its B side: what [`thicken`] builds a solid
 /// from.
 #[derive(Clone, Debug, Default)]
-pub struct SheetSurface<S: Scalar> {
-    pub vertices: Vec<SheetVertex<S>>,
-    pub edges: Vec<SheetEdge<S>>,
-    pub faces: Vec<SheetFace<S>>,
+pub struct SheetSurface {
+    pub vertices: Vec<SheetVertex>,
+    pub edges: Vec<SheetEdge>,
+    pub faces: Vec<SheetFace>,
 }
 
-impl<S: Scalar> SheetSurface<S> {
+impl SheetSurface {
     /// Per edge, the faces using it: `(face, sense)`.
     fn uses(&self) -> Vec<Vec<(usize, Sense)>> {
         let mut uses = vec![Vec::new(); self.edges.len()];
@@ -141,9 +141,9 @@ impl<S: Scalar> SheetSurface<S> {
 /// Every vertex on the boundary must have one boundary edge arriving and
 /// one leaving, so that the walls close up around it: the sheet is a
 /// surface with a boundary, not two touching at a point.
-pub fn thicken<S: Scalar>(
-    model: &mut NamedModel<S>,
-    sheet: &SheetSurface<S>,
+pub fn thicken(
+    model: &mut NamedModel,
+    sheet: &SheetSurface,
     solid: &str,
     rename: &dyn Fn(String) -> String,
 ) -> GeopResult<BuiltBody> {
@@ -215,7 +215,7 @@ pub fn thicken<S: Scalar>(
         }
     }
 
-    let coedges = |lp: &[SheetCoedge<S>], side: usize| -> Vec<CoedgeSpec<S>> {
+    let coedges = |lp: &[SheetCoedge], side: usize| -> Vec<CoedgeSpec> {
         lp.iter()
             .map(|c| CoedgeSpec {
                 on: CoedgeOn::Edge(2 * c.edge + side, c.sense),
@@ -248,7 +248,7 @@ pub fn thicken<S: Scalar>(
     // A side to the B side — faces out of the material where the loop runs
     // the edge forwards, and is turned around where it runs it backwards.
     let uses = sheet.uses();
-    let point = |u: S, v: S| Vector2::from_array([u, v]);
+    let point = |u: Scalar, v: Scalar| Vector2::from_array([u, v]);
     for (e, edge) in sheet.edges.iter().enumerate() {
         if !boundary[e] {
             continue;
@@ -263,19 +263,19 @@ pub fn thicken<S: Scalar>(
             outer: vec![
                 CoedgeSpec {
                     on: CoedgeOn::Edge(2 * e, Sense::Forward),
-                    pcurve: NurbCurve2D::line(point(t0, S::ZERO), point(t1, S::ZERO))?,
+                    pcurve: NurbCurve2D::line(point(t0, Scalar::ZERO), point(t1, Scalar::ZERO))?,
                 },
                 CoedgeSpec {
                     on: CoedgeOn::Edge(across[&edge.end], Sense::Forward),
-                    pcurve: NurbCurve2D::line(point(t1, S::ZERO), point(t1, S::ONE))?,
+                    pcurve: NurbCurve2D::line(point(t1, Scalar::ZERO), point(t1, Scalar::ONE))?,
                 },
                 CoedgeSpec {
                     on: CoedgeOn::Edge(2 * e + 1, Sense::Reversed),
-                    pcurve: NurbCurve2D::line(point(t1, S::ONE), point(t0, S::ONE))?,
+                    pcurve: NurbCurve2D::line(point(t1, Scalar::ONE), point(t0, Scalar::ONE))?,
                 },
                 CoedgeSpec {
                     on: CoedgeOn::Edge(across[&edge.start], Sense::Reversed),
-                    pcurve: NurbCurve2D::line(point(t0, S::ONE), point(t0, S::ZERO))?,
+                    pcurve: NurbCurve2D::line(point(t0, Scalar::ONE), point(t0, Scalar::ZERO))?,
                 },
             ],
             holes: Vec::new(),

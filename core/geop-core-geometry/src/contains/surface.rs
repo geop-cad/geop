@@ -31,7 +31,7 @@ use super::curve::curve_could_contain;
 /// Spatial extent of `patch` along `u` and along `v` (see
 /// [`crate::fat_line::extent`]): the longest control-polygon row running in
 /// each direction.
-pub(crate) fn surface_extents<S: Scalar>(patch: &NurbSurface<S, 4>) -> [f64; 2] {
+pub(crate) fn surface_extents(patch: &NurbSurface<4>) -> [f64; 2] {
     let (nu, nv) = (patch.num_u, patch.num_v);
     let cp = &patch.control_points;
     [
@@ -41,11 +41,11 @@ pub(crate) fn surface_extents<S: Scalar>(patch: &NurbSurface<S, 4>) -> [f64; 2] 
 }
 
 /// Clip `patch` against `point` (`surface.md` §§1–3): a box `(û, v̂)` inside
-/// the patch's domain enclosing every `(u, v)` with `S(u, v) = point`, or
+/// the patch's domain enclosing every `(u, v)` with `Scalar(u, v) = point`, or
 /// `None` if some axis proves there is none. `NurbSurface::try_new`
 /// guarantees positive weights, so `W > 0` and the cross-multiplied
 /// equations have exactly the surface's zeros.
-fn clip<S: Scalar>(patch: &NurbSurface<S, 4>, point: &Vector3<S>) -> GeopResult<Option<(S, S)>> {
+fn clip(patch: &NurbSurface<4>, point: &Vector3) -> GeopResult<Option<(Scalar, Scalar)>> {
     let (u0, u1) = patch.domain_u();
     let (v0, v1) = patch.domain_v();
     let mut hats = [u0.union(u1), v0.union(v1)];
@@ -76,11 +76,7 @@ fn clip<S: Scalar>(patch: &NurbSurface<S, 4>, point: &Vector3<S>) -> GeopResult<
 /// domain (`u_fixed`) or `v` domain, as a curve along the other parameter —
 /// the first/last control row, which *is* the surface there when the knot
 /// vector is clamped at that end. `None` if it isn't.
-pub fn boundary_curve<S: Scalar>(
-    patch: &NurbSurface<S, 4>,
-    u_fixed: bool,
-    first: bool,
-) -> Option<NurbCurve<S, 4>> {
+pub fn boundary_curve(patch: &NurbSurface<4>, u_fixed: bool, first: bool) -> Option<NurbCurve<4>> {
     let end = |n: usize| if first { 0 } else { n - 1 };
     if u_fixed {
         if !is_clamped_at(&patch.knot_vector_u, patch.degree_u, first) {
@@ -101,11 +97,11 @@ pub fn boundary_curve<S: Scalar>(
 /// §3): if the clip pinned `u` (or `v`) exactly onto a clamped domain end,
 /// every solution lies on that boundary row, which *is* a NURBS curve.
 /// Returns it, and whether it runs along `v` (the `u` direction collapsed).
-pub(crate) fn collapsed_boundary<S: Scalar>(
-    patch: &NurbSurface<S, 4>,
-    u_hat: S,
-    v_hat: S,
-) -> Option<(NurbCurve<S, 4>, bool)> {
+pub(crate) fn collapsed_boundary(
+    patch: &NurbSurface<4>,
+    u_hat: Scalar,
+    v_hat: Scalar,
+) -> Option<(NurbCurve<4>, bool)> {
     let (nu, nv) = (patch.num_u, patch.num_v);
     if let Some(first) = pinned_clamped_end(u_hat, &patch.knot_vector_u, nu, patch.degree_u) {
         return boundary_curve(patch, true, first).map(|c| (c, true));
@@ -142,14 +138,14 @@ pub(crate) fn collapsed_boundary<S: Scalar>(
 /// `max_nodes` is never read as "not contained" (nor as "contained"): it is
 /// an error, since the search is incomplete. The boundary curve search gets
 /// the remaining budget as its own.
-pub fn surface_could_contain<S: Scalar>(
-    surface: &NurbSurface<S, 4>,
-    point: &Vector3<S>,
+pub fn surface_could_contain(
+    surface: &NurbSurface<4>,
+    point: &Vector3,
     max_nodes: usize,
-    min_subdivision_size: S,
-) -> GeopResult<Option<(S, S)>> {
-    let mut solution: Option<(S, S)> = None;
-    let mut report = |(u, v): (S, S)| {
+    min_subdivision_size: Scalar,
+) -> GeopResult<Option<(Scalar, Scalar)>> {
+    let mut solution: Option<(Scalar, Scalar)> = None;
+    let mut report = |(u, v): (Scalar, Scalar)| {
         solution = Some(match solution {
             Some((su, sv)) => (su.union(u), sv.union(v)),
             None => (u, v),
@@ -240,19 +236,21 @@ mod tests {
     use super::surface_could_contain;
     use crate::nurb_surface::NurbSurface;
     use crate::test_fixtures::{knots, sphere_octant, weighted};
-    use geop_core_math::for_all_scalars;
-    use geop_core_math::scalars::ScalInF64;
     use geop_core_math::{scalars::Scalar, vector::Vector3};
 
     const MAX: usize = 2000;
     const MIN_SUBDIVISION_SIZE: f64 = 1e-4;
 
-    fn v3<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
-        Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
+    fn v3(x: f64, y: f64, z: f64) -> Vector3 {
+        Vector3::from_array([
+            Scalar::from_f64(x),
+            Scalar::from_f64(y),
+            Scalar::from_f64(z),
+        ])
     }
 
     /// Bilinear patch with one corner lifted to z=1.
-    fn lifted<S: Scalar>() -> NurbSurface<S, 4> {
+    fn lifted() -> NurbSurface<4> {
         NurbSurface::try_new(
             1,
             1,
@@ -269,7 +267,7 @@ mod tests {
     }
 
     /// Exact rational quarter cylinder: radius 1 around z, u around, v up.
-    fn quarter_cylinder<S: Scalar>() -> NurbSurface<S, 4> {
+    fn quarter_cylinder() -> NurbSurface<4> {
         let w = std::f64::consts::FRAC_1_SQRT_2;
         let circle = [(1., 0., 1.), (1., 1., w), (0., 1., 1.)];
         let cps = circle
@@ -287,7 +285,7 @@ mod tests {
     }
 
     /// Bicubic 5×5 net with interior knots in both directions, wavy in z.
-    fn wavy<S: Scalar>() -> NurbSurface<S, 4> {
+    fn wavy() -> NurbSurface<4> {
         let cps = (0..5)
             .flat_map(|i| {
                 (0..5).map(move |j| {
@@ -301,10 +299,10 @@ mod tests {
     }
 
     /// The point at `(u, v)` is found, and the result contains `(u, v)`.
-    fn assert_contains_at<S: Scalar>(s: &NurbSurface<S, 4>, u: f64, v: f64) {
-        let (u, v) = (S::from_f64(u), S::from_f64(v));
+    fn assert_contains_at(s: &NurbSurface<4>, u: f64, v: f64) {
+        let (u, v) = (Scalar::from_f64(u), Scalar::from_f64(v));
         let p = s.evaluate(u, v).unwrap();
-        let (ru, rv) = surface_could_contain(s, &p, MAX, S::from_f64(MIN_SUBDIVISION_SIZE))
+        let (ru, rv) = surface_could_contain(s, &p, MAX, Scalar::from_f64(MIN_SUBDIVISION_SIZE))
             .unwrap()
             .unwrap_or_else(|| panic!("point at ({u:?}, {v:?}) not found"));
         assert!(
@@ -313,8 +311,9 @@ mod tests {
         );
     }
 
-    fn check_contains_grid<S: Scalar>() {
-        for s in [lifted::<S>(), quarter_cylinder(), sphere_octant(), wavy()] {
+    #[test]
+    fn contains_grid() {
+        for s in [lifted(), quarter_cylinder(), sphere_octant(), wavy()] {
             for u in [0., 0.3, 0.4, 0.75, 1.] {
                 for v in [0., 0.2, 0.4, 0.5, 1.] {
                     assert_contains_at(&s, u, v);
@@ -322,35 +321,29 @@ mod tests {
             }
         }
     }
-    #[test]
-    fn contains_grid() {
-        for_all_scalars!(check_contains_grid);
-    }
 
     /// The pole has a whole interval of preimages: every `u` at `v = 1`.
-    fn check_pole_keeps_every_u<S: Scalar>() {
+    #[test]
+    fn pole_keeps_every_u() {
         let (u, v) = surface_could_contain(
-            &sphere_octant::<S>(),
+            &sphere_octant(),
             &v3(0., 0., 1.),
             MAX,
-            S::from_f64(MIN_SUBDIVISION_SIZE),
+            Scalar::from_f64(MIN_SUBDIVISION_SIZE),
         )
         .unwrap()
         .unwrap();
         assert!(
-            u.could_be_equal(S::ZERO) && u.could_be_equal(S::ONE),
+            u.could_be_equal(Scalar::ZERO) && u.could_be_equal(Scalar::ONE),
             "{u:?}"
         );
-        assert!(v.could_be_equal(S::ONE), "{v:?}");
-    }
-    #[test]
-    fn pole_keeps_every_u() {
-        for_all_scalars!(check_pole_keeps_every_u);
+        assert!(v.could_be_equal(Scalar::ONE), "{v:?}");
     }
 
-    fn check_misses_off_surface_points<S: Scalar>() {
-        let miss = |s: &NurbSurface<S, 4>, p: Vector3<S>| {
-            surface_could_contain(s, &p, MAX, S::from_f64(MIN_SUBDIVISION_SIZE))
+    #[test]
+    fn misses_off_surface_points() {
+        let miss = |s: &NurbSurface<4>, p: Vector3| {
+            surface_could_contain(s, &p, MAX, Scalar::from_f64(MIN_SUBDIVISION_SIZE))
                 .unwrap()
                 .is_none()
         };
@@ -361,10 +354,6 @@ mod tests {
         assert!(miss(&sphere_octant(), v3(0.5, 0.5, 0.5)));
         assert!(miss(&wavy(), v3(2., 2., 3.)));
     }
-    #[test]
-    fn misses_off_surface_points() {
-        for_all_scalars!(check_misses_off_surface_points);
-    }
 
     /// `min_subdivision_size` bounds bisection, not accuracy: a point off the
     /// sphere by far less than it is still rejected, because clipping keeps
@@ -373,10 +362,10 @@ mod tests {
     fn misses_points_closer_than_min_subdivision_size() {
         let r = (1. + 1e-10) / 3f64.sqrt();
         let found = surface_could_contain(
-            &sphere_octant::<ScalInF64>(),
+            &sphere_octant(),
             &v3(r, r, r),
             MAX,
-            ScalInF64::from_f64(MIN_SUBDIVISION_SIZE),
+            Scalar::from_f64(MIN_SUBDIVISION_SIZE),
         )
         .unwrap();
         assert!(found.is_none(), "{found:?}");
@@ -384,36 +373,39 @@ mod tests {
 
     /// An exhausted budget is an incomplete search: an error, never "not
     /// contained".
-    fn check_zero_budget_is_an_error<S: Scalar>() {
-        let s = lifted::<S>();
-        assert!(
-            surface_could_contain(&s, &v3(0.5, 0.5, 5.), 0, S::from_f64(MIN_SUBDIVISION_SIZE))
-                .is_err()
-        );
-    }
     #[test]
     fn zero_budget_is_an_error() {
-        for_all_scalars!(check_zero_budget_is_an_error);
+        let s = lifted();
+        assert!(
+            surface_could_contain(
+                &s,
+                &v3(0.5, 0.5, 5.),
+                0,
+                Scalar::from_f64(MIN_SUBDIVISION_SIZE)
+            )
+            .is_err()
+        );
     }
 
     /// Clipping narrows a transversal hit below `min_subdivision_size`.
-    fn check_result_is_tight<S: Scalar>() {
-        let s = wavy::<S>();
-        let p = s.evaluate(S::from_f64(0.3), S::from_f64(0.7)).unwrap();
-        let (u, v) = surface_could_contain(&s, &p, MAX, S::from_f64(MIN_SUBDIVISION_SIZE))
+    #[test]
+    fn result_is_tight() {
+        let s = wavy();
+        let p = s
+            .evaluate(Scalar::from_f64(0.3), Scalar::from_f64(0.7))
+            .unwrap();
+        let (u, v) = surface_could_contain(&s, &p, MAX, Scalar::from_f64(MIN_SUBDIVISION_SIZE))
             .unwrap()
             .unwrap();
         assert!(
-            u.width().definitely_less(S::from_f64(MIN_SUBDIVISION_SIZE)),
+            u.width()
+                .definitely_less(Scalar::from_f64(MIN_SUBDIVISION_SIZE)),
             "{u:?}"
         );
         assert!(
-            v.width().definitely_less(S::from_f64(MIN_SUBDIVISION_SIZE)),
+            v.width()
+                .definitely_less(Scalar::from_f64(MIN_SUBDIVISION_SIZE)),
             "{v:?}"
         );
-    }
-    #[test]
-    fn result_is_tight() {
-        for_all_scalars!(check_result_is_tight);
     }
 }

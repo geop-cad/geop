@@ -16,16 +16,17 @@ use super::NurbSurface3D;
 /// of degree the sum of theirs. A coefficient made of one term of factor
 /// one — at both ends — is taken as it is: multiplying by an exact one
 /// would only widen it by rounding.
-fn product<S: Scalar>(a: &[S], b: &[Vector4<S>]) -> GeopResult<Vec<Vector4<S>>> {
+fn product(a: &[Scalar], b: &[Vector4]) -> GeopResult<Vec<Vector4>> {
     let (m, n) = (a.len() - 1, b.len() - 1);
     (0..=m + n)
         .map(|k| {
-            let mut sum: Option<Vector4<S>> = None;
+            let mut sum: Option<Vector4> = None;
             let first = k.saturating_sub(n);
             for (i, &ai) in a.iter().enumerate().take(k.min(m) + 1).skip(first) {
                 let j = k - i;
                 let factor =
-                    S::from_ratio(binomial(m, i) * binomial(n, j), binomial(m + n, k))?.mul(ai);
+                    Scalar::from_ratio(binomial(m, i) * binomial(n, j), binomial(m + n, k))?
+                        .mul(ai);
                 let term = b[j].prod_scalar(factor);
                 sum = Some(match sum {
                     None => term,
@@ -39,7 +40,7 @@ fn product<S: Scalar>(a: &[S], b: &[Vector4<S>]) -> GeopResult<Vec<Vector4<S>>> 
 
 /// The Bernstein coefficients `a` raised by `by` degrees: the same
 /// polynomial. Its two end coefficients stay exactly as they are.
-fn elevate<S: Scalar>(a: &[Vector4<S>], by: usize) -> GeopResult<Vec<Vector4<S>>> {
+fn elevate(a: &[Vector4], by: usize) -> GeopResult<Vec<Vector4>> {
     let m = a.len() - 1;
     (0..=m + by)
         .map(|k| {
@@ -49,11 +50,11 @@ fn elevate<S: Scalar>(a: &[Vector4<S>], by: usize) -> GeopResult<Vec<Vector4<S>>
             if k == m + by {
                 return Ok(a[m]);
             }
-            let mut sum: Option<Vector4<S>> = None;
+            let mut sum: Option<Vector4> = None;
             let first = k.saturating_sub(by);
             for (i, ai) in a.iter().enumerate().take(k.min(m) + 1).skip(first) {
                 let factor =
-                    S::from_ratio(binomial(m, i) * binomial(by, k - i), binomial(m + by, k))?;
+                    Scalar::from_ratio(binomial(m, i) * binomial(by, k - i), binomial(m + by, k))?;
                 let term = ai.prod_scalar(factor);
                 sum = Some(match sum {
                     None => term,
@@ -65,7 +66,7 @@ fn elevate<S: Scalar>(a: &[Vector4<S>], by: usize) -> GeopResult<Vec<Vector4<S>>
         .collect()
 }
 
-impl<S: Scalar> NurbSurface3D<S> {
+impl NurbSurface3D {
     /// The piece of the sphere of `radius` around `center` bounded by the
     /// great arcs between its points `corners`, each less than a half turn
     /// from the others: exactly, a rational patch of degree 4 along `u`
@@ -93,26 +94,26 @@ impl<S: Scalar> NurbSurface3D<S> {
     /// `tau` linear, chosen so that both side arcs come out in their usual
     /// form, makes the row polynomial of degree at most 4.
     pub fn spherical_triangle(
-        center: &Vector3<S>,
-        radius: S,
-        corners: [Vector3<S>; 3],
+        center: &Vector3,
+        radius: Scalar,
+        corners: [Vector3; 3],
     ) -> GeopResult<Self> {
         let r2 = radius.mul(radius);
         let [p1, p2, p3] = &corners;
         let (b1, b2, p) = (p1.sub(center), p2.sub(center), p3.sub(center));
         // The base arc, in its usual form.
-        let one_plus_cos = S::ONE.add(b1.prod_dot(&b2).div(r2)?);
-        if !one_plus_cos.definitely_greater(S::ZERO) {
+        let one_plus_cos = Scalar::ONE.add(b1.prod_dot(&b2).div(r2)?);
+        if !one_plus_cos.definitely_greater(Scalar::ZERO) {
             return Err(GeopError::new(format!(
                 "NurbSurface::spherical_triangle: corners {p1:?} and {p2:?} could lie across the sphere from each other"
             )));
         }
-        let middle = center.add(&b1.add(&b2).prod_scalar(S::ONE.div(one_plus_cos)?));
-        let w = one_plus_cos.div(S::TWO)?.sqrt()?;
+        let middle = center.add(&b1.add(&b2).prod_scalar(Scalar::ONE.div(one_plus_cos)?));
+        let w = one_plus_cos.div(Scalar::TWO)?.sqrt()?;
         let base = [
-            p1.homogeneous(S::ONE),
+            p1.homogeneous(Scalar::ONE),
             middle.homogeneous(w),
-            p2.homogeneous(S::ONE),
+            p2.homogeneous(Scalar::ONE),
         ];
         // The middle column before `tau`, and `gamma`, coefficient by
         // coefficient: both are linear in the base's control points.
@@ -123,7 +124,7 @@ impl<S: Scalar> NurbSurface3D<S> {
             let beta = q[3];
             let delta = x.sub(&center.prod_scalar(beta)).prod_dot(&p);
             let g = beta.mul(r2).add(delta);
-            if !g.definitely_greater(S::ZERO) {
+            if !g.definitely_greater(Scalar::ZERO) {
                 return Err(GeopError::new(format!(
                     "NurbSurface::spherical_triangle: the base arc from {p1:?} to {p2:?} could reach across the sphere from {p3:?}"
                 )));
@@ -136,14 +137,14 @@ impl<S: Scalar> NurbSurface3D<S> {
         }
         // `tau` at both ends, so that `2 r^2 tau^2 gamma` is the base's end
         // weight, one: each side arc in its usual form.
-        let tau = |g: S| S::ONE.div(S::TWO.mul(r2).mul(g).sqrt()?);
+        let tau = |g: Scalar| Scalar::ONE.div(Scalar::TWO.mul(r2).mul(g).sqrt()?);
         let tau = [tau(gamma[0])?, tau(gamma[2])?];
         let tau_sq = [tau[0].mul(tau[0]), tau[0].mul(tau[1]), tau[1].mul(tau[1])];
         let pole_weights = product(
             &tau_sq,
             &gamma
                 .iter()
-                .map(|&g| p3.homogeneous(S::ONE).prod_scalar(g))
+                .map(|&g| p3.homogeneous(Scalar::ONE).prod_scalar(g))
                 .collect::<Vec<_>>(),
         )?;
         let columns = [
@@ -151,15 +152,15 @@ impl<S: Scalar> NurbSurface3D<S> {
             elevate(&product(&tau, &inner)?, 1)?,
             pole_weights
                 .iter()
-                .map(|q| q.prod_scalar(S::TWO.mul(r2)))
+                .map(|q| q.prod_scalar(Scalar::TWO.mul(r2)))
                 .collect(),
         ];
         let control_points = (0..5)
             .flat_map(|i| columns.iter().map(move |c| c[i]))
             .collect();
         let knots = |degree: usize| {
-            let mut k = vec![S::ZERO; degree + 1];
-            k.extend(vec![S::ONE; degree + 1]);
+            let mut k = vec![Scalar::ZERO; degree + 1];
+            k.extend(vec![Scalar::ONE; degree + 1]);
             k
         };
         NurbSurface3D::try_new(4, 2, control_points, knots(4), knots(2))
@@ -168,22 +169,27 @@ impl<S: Scalar> NurbSurface3D<S> {
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
+    use geop_core_math::{scalars::Scalar, vector::Vector3};
 
     use super::super::NurbSurface3D;
 
-    fn v3<S: Scalar>(x: f64, y: f64, z: f64) -> Vector3<S> {
-        Vector3::from_array([S::from_f64(x), S::from_f64(y), S::from_f64(z)])
+    fn v3(x: f64, y: f64, z: f64) -> Vector3 {
+        Vector3::from_array([
+            Scalar::from_f64(x),
+            Scalar::from_f64(y),
+            Scalar::from_f64(z),
+        ])
     }
 
     /// Every point of the patch lies on the sphere, its corners are where
     /// they were asked to be, and its sides lie on the great circles
     /// through them — for an octant and for a lopsided triangle.
-    fn check_lies_on_the_sphere<S: Scalar>() {
-        let center = v3::<S>(1.0, -2.0, 0.5);
-        let radius = S::from_f64(0.7);
+    #[test]
+    fn lies_on_the_sphere() {
+        let center = v3(1.0, -2.0, 0.5);
+        let radius = Scalar::from_f64(0.7);
         let on = |x: f64, y: f64, z: f64| {
-            let d = v3::<S>(x, y, z).normalize().unwrap();
+            let d = v3(x, y, z).normalize().unwrap();
             center.add(&d.prod_scalar(radius))
         };
         for corners in [
@@ -193,13 +199,19 @@ mod tests {
             let s = NurbSurface3D::spherical_triangle(&center, radius, corners).unwrap();
             for i in 0..=6 {
                 for j in 0..=6 {
-                    let (u, v) = (S::from_f64(i as f64 / 6.0), S::from_f64(j as f64 / 6.0));
+                    let (u, v) = (
+                        Scalar::from_f64(i as f64 / 6.0),
+                        Scalar::from_f64(j as f64 / 6.0),
+                    );
                     let p = s.evaluate(u, v).unwrap();
                     let r = p.sub(&center).norm();
                     assert!(r.could_be_equal(radius), "({i}, {j}): radius {r:?}");
                 }
             }
-            let at = |u: f64, v: f64| s.evaluate(S::from_f64(u), S::from_f64(v)).unwrap();
+            let at = |u: f64, v: f64| {
+                s.evaluate(Scalar::from_f64(u), Scalar::from_f64(v))
+                    .unwrap()
+            };
             assert!(at(0.0, 0.0).could_be_equal(&corners[0]));
             assert!(at(1.0, 0.0).could_be_equal(&corners[1]));
             assert!(at(0.3, 1.0).could_be_equal(&corners[2]));
@@ -218,22 +230,18 @@ mod tests {
                         (None, Some(v)) => at(t, v),
                         _ => unreachable!(),
                     };
-                    assert!(p.sub(&center).prod_dot(&n).could_be_equal(S::ZERO));
+                    assert!(p.sub(&center).prod_dot(&n).could_be_equal(Scalar::ZERO));
                 }
             }
             // Counter-clockwise seen from outside: the normal faces out.
-            let (u, v) = (S::from_f64(0.4), S::from_f64(0.3));
+            let (u, v) = (Scalar::from_f64(0.4), Scalar::from_f64(0.3));
             let p = s.evaluate(u, v).unwrap();
             assert!(
                 s.normal(u, v)
                     .unwrap()
                     .prod_dot(&p.sub(&center))
-                    .definitely_greater(S::ZERO)
+                    .definitely_greater(Scalar::ZERO)
             );
         }
-    }
-    #[test]
-    fn lies_on_the_sphere() {
-        for_all_scalars!(check_lies_on_the_sphere);
     }
 }

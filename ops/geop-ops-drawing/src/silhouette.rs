@@ -1,7 +1,7 @@
 //! Silhouettes: where a curved face turns away from the eye, the outline it
 //! shows without any edge there — the sides of a cylinder seen side on.
 //!
-//! For a view along `d`, a point of a surface `S(u, v)` is on its silhouette
+//! For a view along `d`, a point of a surface `Scalar(u, v)` is on its silhouette
 //! when its normal is perpendicular to `d`: `g(u, v) = (S_u x S_v) . d = 0`.
 //! That is a curve in `(u, v)`, traced here as such:
 //!
@@ -73,21 +73,21 @@ const FACE_CONTAINS_SEED: u64 = 0x5114_u64;
 
 /// A piece of a face's silhouette.
 #[derive(Clone, Debug)]
-pub struct Silhouette<S: Scalar> {
+pub struct Silhouette {
     pub face: FaceId,
-    pub curve: NurbCurve3D<S>,
+    pub curve: NurbCurve3D,
     /// Exact silhouette points along it, as `(u, v)` on the face's surface:
     /// where [`Silhouette::exact_point`] starts from.
-    samples: Vec<Vector2<S>>,
+    samples: Vec<Vector2>,
 }
 
 /// The silhouette function `g = (S_u x S_v) . d` and its gradient.
-fn contour<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    d: &Vector3<S>,
-    u: S,
-    v: S,
-) -> GeopResult<(S, S, S)> {
+fn contour(
+    surface: &NurbSurface3D,
+    d: &Vector3,
+    u: Scalar,
+    v: Scalar,
+) -> GeopResult<(Scalar, Scalar, Scalar)> {
     let (su, sv) = surface.derivatives(u, v)?;
     let [suu, suv, svv] = surface.second_derivatives(u, v)?;
     let g = su.prod_cross(&sv).prod_dot(d);
@@ -98,7 +98,7 @@ fn contour<S: Scalar>(
 
 /// `g`'s sign at `(u, v)`, from the unit normal — which, unlike `S_u x S_v`,
 /// does not vanish at a pole — or `None` where it has no definite one.
-fn sign<S: Scalar>(surface: &NurbSurface3D<S>, d: &Vector3<S>, u: S, v: S) -> Option<bool> {
+fn sign(surface: &NurbSurface3D, d: &Vector3, u: Scalar, v: Scalar) -> Option<bool> {
     surface.normal(u, v).ok()?.prod_dot(d).definite_sign()
 }
 
@@ -109,11 +109,11 @@ fn sign<S: Scalar>(surface: &NurbSurface3D<S>, d: &Vector3<S>, u: S, v: S) -> Op
 /// other there. A start outside the domain — a sharpened foot point on its
 /// boundary can land a hair past it — is clamped into it first, as every
 /// iterate is.
-fn correct<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    d: &Vector3<S>,
-    start: (S, S),
-) -> GeopResult<(S, S)> {
+fn correct(
+    surface: &NurbSurface3D,
+    d: &Vector3,
+    start: (Scalar, Scalar),
+) -> GeopResult<(Scalar, Scalar)> {
     let (u_lo, u_hi) = surface.domain_u();
     let (v_lo, v_hi) = surface.domain_v();
     let seed = (start.0.clamped(u_lo, u_hi), start.1.clamped(v_lo, v_hi));
@@ -130,9 +130,9 @@ fn correct<S: Scalar>(
             );
             (sharp, sharp)
         },
-        |&(u, v)| -> GeopResult<Step<(S, S)>> {
+        |&(u, v)| -> GeopResult<Step<(Scalar, Scalar)>> {
             let (g, gu, gv) = contour(surface, d, u, v)?;
-            if g.could_be_equal(S::ZERO) {
+            if g.could_be_equal(Scalar::ZERO) {
                 return Ok(Step::Done);
             }
             let scale = g.div(gu.mul(gu).add(gv.mul(gv)))?;
@@ -153,19 +153,19 @@ fn correct<S: Scalar>(
 
 /// `(u, v)` on the domain's boundary line `fixed` moved onto the silhouette
 /// along that line, or `None` if it does not get there.
-fn correct_on_boundary<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    d: &Vector3<S>,
-    (u, v): (S, S),
+fn correct_on_boundary(
+    surface: &NurbSurface3D,
+    d: &Vector3,
+    (u, v): (Scalar, Scalar),
     u_fixed: bool,
-) -> Option<(S, S)> {
+) -> Option<(Scalar, Scalar)> {
     // The parameter that moves, the bounds it moves in, and the point at it.
     let (moving, (lo, hi)) = if u_fixed {
         (v, surface.domain_v())
     } else {
         (u, surface.domain_u())
     };
-    let at = |t: S| if u_fixed { (u, t) } else { (t, v) };
+    let at = |t: Scalar| if u_fixed { (u, t) } else { (t, v) };
     let corrected = newton_1d(
         moving,
         (lo, hi),
@@ -182,20 +182,20 @@ fn correct_on_boundary<S: Scalar>(
 }
 
 /// An iso line of the domain the seeds are sampled along.
-struct GridLine<S: Scalar> {
+struct GridLine {
     /// Whether `u` is fixed along it (else `v` is).
     u_fixed: bool,
-    value: S,
+    value: Scalar,
     /// The other parameter at each sample.
-    params: Vec<S>,
+    params: Vec<Scalar>,
     /// Sign changes between samples: the sample indices on either side.
     brackets: Vec<(usize, usize)>,
     /// Which brackets a trace has crossed.
     traced: Vec<bool>,
 }
 
-impl<S: Scalar> GridLine<S> {
-    fn point(&self, t: S) -> (S, S) {
+impl GridLine {
+    fn point(&self, t: Scalar) -> (Scalar, Scalar) {
         if self.u_fixed {
             (self.value, t)
         } else {
@@ -227,7 +227,7 @@ impl<S: Scalar> GridLine<S> {
 }
 
 /// The grid lines of `surface`'s domain, sampled for `g`'s sign.
-fn grid<S: Scalar>(surface: &NurbSurface3D<S>, d: &Vector3<S>) -> Vec<GridLine<S>> {
+fn grid(surface: &NurbSurface3D, d: &Vector3) -> Vec<GridLine> {
     let mut fractions = vec![0.0];
     fractions.extend((0..GRID_LINES).map(|k| (k as f64 + GRID_OFFSET) / GRID_LINES as f64));
     fractions.push(1.0);
@@ -242,13 +242,17 @@ fn grid<S: Scalar>(surface: &NurbSurface3D<S>, d: &Vector3<S>) -> Vec<GridLine<S
             let value = match f {
                 0.0 => a_lo,
                 1.0 => a_hi,
-                _ => S::fraction(a_lo, a_hi, S::from_f64(f)),
+                _ => Scalar::fraction(a_lo, a_hi, Scalar::from_f64(f)),
             };
-            let params: Vec<S> = (0..=GRID_SAMPLES)
+            let params: Vec<Scalar> = (0..=GRID_SAMPLES)
                 .map(|k| match k {
                     0 => b_lo,
                     k if k == GRID_SAMPLES => b_hi,
-                    k => S::fraction(b_lo, b_hi, S::from_f64(k as f64 / GRID_SAMPLES as f64)),
+                    k => Scalar::fraction(
+                        b_lo,
+                        b_hi,
+                        Scalar::from_f64(k as f64 / GRID_SAMPLES as f64),
+                    ),
                 })
                 .collect();
             let mut line = GridLine {
@@ -275,12 +279,12 @@ fn grid<S: Scalar>(surface: &NurbSurface3D<S>, d: &Vector3<S>) -> Vec<GridLine<S
 
 /// The seed in `line`'s bracket `(lo, hi)`: bisected on `g`'s sign, then
 /// moved onto the silhouette.
-fn seed<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    d: &Vector3<S>,
-    line: &GridLine<S>,
+fn seed(
+    surface: &NurbSurface3D,
+    d: &Vector3,
+    line: &GridLine,
     (lo, hi): (usize, usize),
-) -> Option<(S, S)> {
+) -> Option<(Scalar, Scalar)> {
     let sign_at = |t| -> GeopResult<_> {
         let (u, v) = line.point(t);
         Ok(sign(surface, d, u, v))
@@ -294,7 +298,7 @@ fn seed<S: Scalar>(
         Some(mid) => (mid, mid),
         None => (bracket.lo, bracket.hi),
     };
-    let t = a.add(b).div(S::TWO).ok()?.sharpen();
+    let t = a.add(b).div(Scalar::TWO).ok()?.sharpen();
     correct(surface, d, line.point(t)).ok()
 }
 
@@ -314,19 +318,19 @@ fn seed<S: Scalar>(
 ///   step is taken as the cubic leaving `a` and arriving at `b` along the
 ///   silhouette's tangents there (Hermite), which follows the silhouette to
 ///   fourth order in the step, and its crossings are the line's.
-fn mark_crossings<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    d: &Vector3<S>,
-    lines: &mut [GridLine<S>],
-    a: (S, S),
-    b: (S, S),
+fn mark_crossings(
+    surface: &NurbSurface3D,
+    d: &Vector3,
+    lines: &mut [GridLine],
+    a: (Scalar, Scalar),
+    b: (Scalar, Scalar),
 ) {
     let (au, av, bu, bv) = (a.0.to_f64(), a.1.to_f64(), b.0.to_f64(), b.1.to_f64());
     let chord = [bu - au, bv - av];
     let length = chord[0].hypot(chord[1]);
     // The tangent at `p`, as long as the chord and along it; the chord
     // itself where there is none.
-    let tangent = |(u, v): (S, S)| -> [f64; 2] {
+    let tangent = |(u, v): (Scalar, Scalar)| -> [f64; 2] {
         let Ok((_, gu, gv)) = contour(surface, d, u, v) else {
             return chord;
         };
@@ -411,20 +415,20 @@ enum Ending {
 /// Marches from `start` along the silhouette, the way `forward` says,
 /// pushing each point onto `points` (not `start` itself).
 #[allow(clippy::too_many_arguments)]
-fn march<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    d: &Vector3<S>,
-    start: (S, S),
+fn march(
+    surface: &NurbSurface3D,
+    d: &Vector3,
+    start: (Scalar, Scalar),
     forward: bool,
-    step: S,
-    lines: &mut [GridLine<S>],
-    points: &mut Vec<(S, S)>,
+    step: Scalar,
+    lines: &mut [GridLine],
+    points: &mut Vec<(Scalar, Scalar)>,
 ) -> GeopResult<Ending> {
     let (u_lo, u_hi) = surface.domain_u();
     let (v_lo, v_hi) = surface.domain_v();
     let start_point = surface.evaluate(start.0, start.1)?;
     let mut current = start;
-    let mut travelled = S::ZERO;
+    let mut travelled = Scalar::ZERO;
     repeat(MAX_TRACE_STEPS, || -> GeopResult<_> {
         let (u, v) = current;
         let Ok((_, gu, gv)) = contour(surface, d, u, v) else {
@@ -447,7 +451,7 @@ fn march<S: Scalar>(
             // The boundary the step reaches first, and the fraction of the
             // step to it: the point there, then onto the silhouette along
             // that boundary.
-            let to = |x: S, dx: S, lo: S, hi: S| -> (f64, S) {
+            let to = |x: Scalar, dx: Scalar, lo: Scalar, hi: Scalar| -> (f64, Scalar) {
                 let bound = if dx.to_f64() < 0.0 { lo } else { hi };
                 ((bound.sub(x).to_f64() / dx.to_f64()).clamp(0.0, 1.0), bound)
             };
@@ -460,10 +464,10 @@ fn march<S: Scalar>(
             // line has where it ends, which then seeds the same silhouette
             // again.
             let landed = if u_first {
-                let f = S::from_f64(fu);
+                let f = Scalar::from_f64(fu);
                 (bound_u, v.add(dv.mul(f)).sharpen().clamped(v_lo, v_hi))
             } else {
-                let f = S::from_f64(fv);
+                let f = Scalar::from_f64(fv);
                 (u.add(du.mul(f)).sharpen().clamped(u_lo, u_hi), bound_v)
             };
             if let Some(end) = correct_on_boundary(surface, d, landed, u_first) {
@@ -479,7 +483,7 @@ fn march<S: Scalar>(
         points.push(next);
         travelled = travelled.add(step);
         let here = surface.evaluate(next.0, next.1)?;
-        if travelled.definitely_greater(step.mul(S::TWO))
+        if travelled.definitely_greater(step.mul(Scalar::TWO))
             && here.sub(&start_point).norm().definitely_less(step)
         {
             mark_crossings(surface, d, lines, next, start);
@@ -497,13 +501,13 @@ fn march<S: Scalar>(
 }
 
 /// The silhouette through `seed`, traced both ways, as `(u, v)` points.
-fn trace<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    d: &Vector3<S>,
-    seed: (S, S),
-    step: S,
-    lines: &mut [GridLine<S>],
-) -> GeopResult<Vec<(S, S)>> {
+fn trace(
+    surface: &NurbSurface3D,
+    d: &Vector3,
+    seed: (Scalar, Scalar),
+    step: Scalar,
+    lines: &mut [GridLine],
+) -> GeopResult<Vec<(Scalar, Scalar)>> {
     let mut forward = Vec::new();
     let points = if let Ending::Closed = march(surface, d, seed, true, step, lines, &mut forward)? {
         let mut points = vec![seed];
@@ -524,15 +528,15 @@ fn trace<S: Scalar>(
 /// sampled is a free choice, and samples a sliver apart — a step that
 /// reached the domain's boundary all but, then the boundary itself — make
 /// the fit through them ill posed. The ends stay.
-fn thin<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    points: Vec<(S, S)>,
-    step: S,
-) -> GeopResult<Vec<(S, S)>> {
-    let close = step.div(S::from_f64(8.0))?;
-    let at = |p: &(S, S)| surface.evaluate(p.0, p.1);
+fn thin(
+    surface: &NurbSurface3D,
+    points: Vec<(Scalar, Scalar)>,
+    step: Scalar,
+) -> GeopResult<Vec<(Scalar, Scalar)>> {
+    let close = step.div(Scalar::from_f64(8.0))?;
+    let at = |p: &(Scalar, Scalar)| surface.evaluate(p.0, p.1);
     let count = points.len();
-    let mut kept: Vec<(S, S)> = Vec::with_capacity(count);
+    let mut kept: Vec<(Scalar, Scalar)> = Vec::with_capacity(count);
     for (k, p) in points.into_iter().enumerate() {
         if let Some(last) = kept.last()
             && at(last)?.sub(&at(&p)?).norm().definitely_less(close)
@@ -549,9 +553,9 @@ fn thin<S: Scalar>(
 }
 
 /// The size of `surface`: the diagonal of its control points' box.
-fn extent<S: Scalar>(surface: &NurbSurface3D<S>) -> S {
+fn extent(surface: &NurbSurface3D) -> Scalar {
     let b = surface.aabb();
-    S::from_f64(plain::diagonal(
+    Scalar::from_f64(plain::diagonal(
         b.map(|x| x.lower().to_f64()),
         b.map(|x| x.upper().to_f64()),
     ))
@@ -561,10 +565,10 @@ fn extent<S: Scalar>(surface: &NurbSurface3D<S>) -> S {
 /// directions — an extruded or turned cylinder seen end on — so that its
 /// normal is perpendicular to `d` everywhere and the whole face is seen
 /// edge on: then its outline is its edges, and it has no silhouette curve.
-fn swept_along<S: Scalar>(surface: &NurbSurface3D<S>, d: &Vector3<S>) -> bool {
+fn swept_along(surface: &NurbSurface3D, d: &Vector3) -> bool {
     let (nu, nv) = (surface.num_u, surface.num_v);
     let point = |i: usize, j: usize| surface.control_points[i * nv + j];
-    let cartesian = |q: geop_core_math::vector::Vector4<S>| -> Option<Vector3<S>> {
+    let cartesian = |q: geop_core_math::vector::Vector4| -> Option<Vector3> {
         let w = q[3];
         Some(Vector3::from_array([
             q[0].div(w).ok()?,
@@ -572,7 +576,7 @@ fn swept_along<S: Scalar>(surface: &NurbSurface3D<S>, d: &Vector3<S>) -> bool {
             q[2].div(w).ok()?,
         ]))
     };
-    let along = |a: geop_core_math::vector::Vector4<S>, b: geop_core_math::vector::Vector4<S>| {
+    let along = |a: geop_core_math::vector::Vector4, b: geop_core_math::vector::Vector4| {
         let (Some(pa), Some(pb)) = (cartesian(a), cartesian(b)) else {
             return false;
         };
@@ -583,16 +587,11 @@ fn swept_along<S: Scalar>(surface: &NurbSurface3D<S>, d: &Vector3<S>) -> bool {
     along_u || along_v
 }
 
-impl<S: Scalar> Silhouette<S> {
+impl Silhouette {
     /// The point of this silhouette near `near`, exactly on it: `near`
     /// projected onto the surface from the nearest exact sample, then moved
     /// onto the silhouette.
-    pub fn exact_point(
-        &self,
-        model: &Model<S>,
-        d: &Vector3<S>,
-        near: &Vector3<S>,
-    ) -> GeopResult<Vector3<S>> {
+    pub fn exact_point(&self, model: &Model, d: &Vector3, near: &Vector3) -> GeopResult<Vector3> {
         let surface = &model.get_face(self.face)?.surface;
         let ctx = |e: GeopError| {
             e.with_context(format!(
@@ -600,7 +599,7 @@ impl<S: Scalar> Silhouette<S> {
                 self.face
             ))
         };
-        let distance = |uv: &Vector2<S>| -> f64 {
+        let distance = |uv: &Vector2| -> f64 {
             surface
                 .evaluate(uv[0], uv[1])
                 .map(|p| p.sub(near).norm_sq().to_f64())
@@ -632,13 +631,13 @@ const EDGE_SAMPLES: usize = 32;
 /// isolate, so it is found here, in space: `g`'s sign sampled along the
 /// edge, and each change bisected. Only isolated crossings: an edge along
 /// which the face is seen edge on throughout has none.
-pub fn edge_crossings<S: Scalar>(
-    model: &Model<S>,
+pub fn edge_crossings(
+    model: &Model,
     face_id: FaceId,
     coedge_id: CoedgeId,
-    curve: &NurbCurve3D<S>,
-    d: &Vector3<S>,
-) -> GeopResult<Vec<S>> {
+    curve: &NurbCurve3D,
+    d: &Vector3,
+) -> GeopResult<Vec<Scalar>> {
     let surface = &model.get_face(face_id)?.surface;
     if surface.as_plane()?.is_some() || swept_along(surface, d) {
         return Ok(Vec::new());
@@ -649,29 +648,29 @@ pub fn edge_crossings<S: Scalar>(
     let edge_domain = model.get_edge(coedge.edge()?)?.curve.domain();
     // Where on the surface the edge's point at `t` is: projected from the
     // pcurve's point as far along it — a seed, a free choice.
-    let foot = |t: S| -> Option<(S, S)> {
+    let foot = |t: Scalar| -> Option<(Scalar, Scalar)> {
         let f = t
             .sub(edge_domain.0)
             .div(edge_domain.1.sub(edge_domain.0))
             .ok()?;
         let f = match coedge.sense {
             geop_core_topology::Sense::Forward => f,
-            geop_core_topology::Sense::Reversed => S::ONE.sub(f),
+            geop_core_topology::Sense::Reversed => Scalar::ONE.sub(f),
         };
-        let seed = coedge.pcurve.evaluate(S::fraction(s0, s1, f)).ok()?;
+        let seed = coedge.pcurve.evaluate(Scalar::fraction(s0, s1, f)).ok()?;
         let point = curve.evaluate(t).ok()?;
         surface
             .project(point, seed[0], seed[1], CORRECTOR_ITERATIONS)
             .ok()
     };
-    let sign_at = |t: S| -> Option<bool> {
+    let sign_at = |t: Scalar| -> Option<bool> {
         let (u, v) = foot(t)?;
         sign(surface, d, u, v)
     };
     let params = (0..=EDGE_SAMPLES).map(|k| match k {
         0 => t0,
         k if k == EDGE_SAMPLES => t1,
-        k => S::fraction(t0, t1, S::from_f64(k as f64 / EDGE_SAMPLES as f64)),
+        k => Scalar::fraction(t0, t1, Scalar::from_f64(k as f64 / EDGE_SAMPLES as f64)),
     });
     sign_changes(params, |t| -> GeopResult<_> { Ok(sign_at(t)) })
         .bisected(BISECTIONS, false)
@@ -686,18 +685,18 @@ pub fn edge_crossings<S: Scalar>(
 
 /// The silhouette of `face_id` seen along the unit vector `d`, as curves on
 /// the face: none for a plane, or for a face seen edge on throughout.
-pub fn face_silhouettes<S: Scalar>(
-    model: &Model<S>,
+pub fn face_silhouettes(
+    model: &Model,
     face_id: FaceId,
-    d: &Vector3<S>,
-) -> GeopResult<Vec<Silhouette<S>>> {
+    d: &Vector3,
+) -> GeopResult<Vec<Silhouette>> {
     let ctx = |e: GeopError| e.with_context(format!("face_silhouettes(face={face_id}, d={d:?})"));
     let surface = &model.get_face(face_id).with_context(&ctx)?.surface;
     if surface.as_plane().with_context(&ctx)?.is_some() || swept_along(surface, d) {
         return Ok(Vec::new());
     }
     let step = extent(surface)
-        .div(S::from_f64(STEPS_PER_FACE))
+        .div(Scalar::from_f64(STEPS_PER_FACE))
         .with_context(&ctx)?;
     let mut lines = grid(surface, d);
     let mut traces = Vec::new();
@@ -722,17 +721,17 @@ pub fn face_silhouettes<S: Scalar>(
 
 /// The pieces of the traced silhouette `points` inside the face, as 3-D
 /// curves through exact silhouette points.
-fn trim<S: Scalar>(
-    model: &Model<S>,
+fn trim(
+    model: &Model,
     face_id: FaceId,
-    d: &Vector3<S>,
-    points: &[(S, S)],
-) -> GeopResult<Vec<Silhouette<S>>> {
+    d: &Vector3,
+    points: &[(Scalar, Scalar)],
+) -> GeopResult<Vec<Silhouette>> {
     let surface = &model.get_face(face_id)?.surface;
-    let mut uv: Vec<Vector2<S>> = Vec::with_capacity(points.len());
+    let mut uv: Vec<Vector2> = Vec::with_capacity(points.len());
     for &(u, v) in points {
         let p = Vector2::from_array([u, v]);
-        if uv.last().is_none_or(|q: &Vector2<S>| !q.could_be_equal(&p)) {
+        if uv.last().is_none_or(|q: &Vector2| !q.could_be_equal(&p)) {
             uv.push(p);
         }
     }
@@ -764,7 +763,7 @@ fn trim<S: Scalar>(
     let mut silhouettes = Vec::new();
     for pair in cuts.windows(2) {
         let (a, b) = (pair[0], pair[1]);
-        let mid = a.add(b).div(S::TWO)?.sharpen();
+        let mid = a.add(b).div(Scalar::TWO)?.sharpen();
         let at = fit.evaluate(mid)?;
         let inside = face_contains(
             model,
@@ -787,7 +786,7 @@ fn trim<S: Scalar>(
             let t = match k {
                 0 => a,
                 k if k == count => b,
-                k => S::fraction(a, b, S::from_f64(k as f64 / count as f64)),
+                k => Scalar::fraction(a, b, Scalar::from_f64(k as f64 / count as f64)),
             };
             let q = fit.evaluate(t)?;
             let (u, v) =
@@ -799,7 +798,7 @@ fn trim<S: Scalar>(
             let p = surface.evaluate(s[0], s[1])?;
             if points3
                 .last()
-                .is_none_or(|q: &Vector3<S>| !q.could_be_equal(&p))
+                .is_none_or(|q: &Vector3| !q.could_be_equal(&p))
             {
                 points3.push(p);
             }

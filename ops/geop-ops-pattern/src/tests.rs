@@ -1,9 +1,7 @@
 //! The operations on boxes built directly: validity, where the copies are,
 //! how much they hold, what they are named, and what is refused.
 
-use geop_core_math::{
-    geop_error::GeopResult, plain, primitives::FrameAxis, scalars::ScalInF64 as S,
-};
+use geop_core_math::{geop_error::GeopResult, plain, primitives::FrameAxis};
 use geop_core_program::operation::Operation;
 use geop_lib_sweep::shapes::block_part;
 use geop_ops_model::datums::{origin_axis, origin_plane};
@@ -23,10 +21,10 @@ use geop_ops_model::spacing::Spacing;
 /// What `O`'s step `step` with `args` makes of `model`, given with the
 /// datums, as a program of two steps would build it.
 fn apply_to_model<O: Operation>(
-    model: NamedModel<S>,
+    model: NamedModel,
     step: &str,
     args: &O::Args,
-) -> GeopResult<NamedModel<S>> {
+) -> GeopResult<NamedModel> {
     let mut part = given_part(&model)?;
     let runner = geop_core_program::runner::Runner::new(Default::default());
     runner.run_step(&mut part, step, |ctx| O::run(ctx, args))?;
@@ -34,7 +32,7 @@ fn apply_to_model<O: Operation>(
 }
 
 /// The lowest corner of the solid named `solid`, by midpoints.
-fn min_corner(part: &NamedModel<S>, solid: &str) -> [f64; 3] {
+fn min_corner(part: &NamedModel, solid: &str) -> [f64; 3] {
     let id = part.solid_id(solid).unwrap();
     let model = part.topology();
     let corners = model.iter_body_vertices(id).unwrap();
@@ -48,7 +46,7 @@ fn close(a: [f64; 3], b: [f64; 3]) -> bool {
 }
 
 /// A unit cube at `min`, named `cube(c)`.
-fn cube_at(min: [f64; 3]) -> NamedModel<S> {
+fn cube_at(min: [f64; 3]) -> NamedModel {
     block_part("c", min, min.map(|x| x + 1.0))
 }
 

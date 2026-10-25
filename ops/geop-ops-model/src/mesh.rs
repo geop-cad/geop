@@ -4,7 +4,6 @@
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     primitives::TriangleFace,
-    scalars::Scalar,
 };
 use geop_core_rasterize::{
     rasterize,
@@ -14,13 +13,13 @@ use geop_core_rasterize::{
 use super::NamedModel;
 
 /// Solids, each by name with its triangles.
-pub type SolidMeshes<S> = Vec<(String, Vec<TriangleFace<S>>)>;
+pub type SolidMeshes = Vec<(String, Vec<TriangleFace>)>;
 
-impl<S: Scalar> NamedModel<S> {
+impl NamedModel {
     /// Every solid, by name, as triangles, meshed `quality` fine (see
     /// [`rasterize`]), in name order so a file written from them does not
     /// depend on how the model stores them.
-    pub fn solid_meshes(&self, quality: usize) -> GeopResult<SolidMeshes<S>> {
+    pub fn solid_meshes(&self, quality: usize) -> GeopResult<SolidMeshes> {
         let model = self.topology();
         let raster = rasterize(model, quality)?;
         let mut out = Vec::new();
@@ -47,8 +46,8 @@ pub const STL_QUALITY: usize = geop_core_editor::view::RESOLUTION;
 
 /// `triangles` as an STL file called `name`, each facing out (see
 /// [`outward`]).
-pub fn stl_bytes<'t, S: Scalar + 't>(
-    triangles: impl IntoIterator<Item = &'t TriangleFace<S>>,
+pub fn stl_bytes<'t>(
+    triangles: impl IntoIterator<Item = &'t TriangleFace>,
     name: &str,
     format: StlFormat,
 ) -> GeopResult<Vec<u8>> {

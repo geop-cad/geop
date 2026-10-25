@@ -46,14 +46,13 @@ pub use trim::{TrimKeep, TrimSurface, TrimSurfaceArgs};
 use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
     vector::Vector3,
 };
 use geop_ops_model::Chain;
 
 /// A sheet to build, and the names of what it is made of.
-pub type SheetSpec<S> = (
-    geop_core_topology::build::BodySpec<S>,
+pub type SheetSpec = (
+    geop_core_topology::build::BodySpec,
     geop_ops_model::BodyNames,
 );
 
@@ -62,17 +61,17 @@ pub type SheetSpec<S> = (
 /// is its own, its ends its vertices'; a sketch `K`'s curve `c3` is `K,c3`,
 /// its ends `K,p1` (see [`geop_ops_model::sketch3d::CurveSource`]).
 #[derive(Clone, Debug)]
-struct NamedCurve<S: Scalar> {
+struct NamedCurve {
     name: String,
-    curve: NurbCurve3D<S>,
-    start: (String, Vector3<S>),
-    end: (String, Vector3<S>),
+    curve: NurbCurve3D,
+    start: (String, Vector3),
+    end: (String, Vector3),
 }
 
-impl<S: Scalar> NamedCurve<S> {
+impl NamedCurve {
     /// The one curve of `chain`, as a curve picked resolves; an error if it
     /// is more than one.
-    fn of(chain: &Chain<NurbCurve3D<S>>) -> GeopResult<Self> {
+    fn of(chain: &Chain<NurbCurve3D>) -> GeopResult<Self> {
         let [curve] = chain.curves.as_slice() else {
             return Err(GeopError::new(format!(
                 "{} is {} curves, not one",
@@ -112,12 +111,12 @@ pub fn register(r: Registry) -> GeopResult<Registry> {
 /// What the tests share: the model's elements by name.
 #[cfg(test)]
 pub(crate) mod test_refs {
-    use geop_core_program::{element::ElementReference, values::Design};
+    use geop_core_program::element::ElementReference;
     use geop_ops_model::sketch3d::CurveSource;
     use geop_ops_model::{NamedModel, model};
 
     /// The model's element named `name`.
-    pub fn named<K>(name: impl Into<String>) -> ElementReference<NamedModel<Design>, K> {
+    pub fn named<K>(name: impl Into<String>) -> ElementReference<NamedModel, K> {
         ElementReference::new(model(), name)
     }
 

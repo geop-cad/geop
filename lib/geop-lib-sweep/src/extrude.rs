@@ -13,8 +13,8 @@ use geop_ops_model::{NamedModel, Namer};
 /// The straight path along `plane.w()` from `from` to `to` (in multiples of
 /// `w`): the profile, drawn in the plane's `(u, v)`, at stations `start`
 /// and `end`, and one span between them.
-pub fn extrusion<S: Scalar>(plane: &CoordinateSystem<S>, from: S, to: S) -> GeopResult<Path<S>> {
-    let station = |h: S| Frame {
+pub fn extrusion(plane: &CoordinateSystem, from: Scalar, to: Scalar) -> GeopResult<Path> {
+    let station = |h: Scalar| Frame {
         origin: plane.origin().add(&plane.w().prod_scalar(h)),
         e1: *plane.u(),
         e2: *plane.v(),
@@ -51,14 +51,14 @@ pub fn extrusion<S: Scalar>(plane: &CoordinateSystem<S>, from: S, to: S) -> Geop
 /// on the caps `N(X,start)` / `N(X,end)`, the edges between them `N(P)`,
 /// their vertices `N(P,start)` / `N(P,end)`, the caps `N(start)` /
 /// `N(end)`.
-pub fn extrude<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn extrude(
+    model: &mut NamedModel,
     namer: &Namer,
     solid: Option<&str>,
-    plane: &CoordinateSystem<S>,
-    from: S,
-    to: S,
-    loops: &[SweepLoop<S>],
+    plane: &CoordinateSystem,
+    from: Scalar,
+    to: Scalar,
+    loops: &[SweepLoop],
 ) -> GeopResult<BuiltBody> {
     let path = extrusion(plane, from, to)?;
     sweep_drawn(model, namer, &path, loops, solid)
@@ -70,12 +70,11 @@ mod tests {
     use crate::common::polygon;
     use crate::shapes::{circle, circle_at, v2};
     use geop_core_geometry::nurb_curve::{NurbCurve2D, sqrt2_over_2};
-    use geop_core_math::for_all_scalars;
     use geop_core_math::vector::Vector3;
     use geop_ops_model::Profile;
     use geop_ops_model::testing::{assert_model_valid, assert_model_valid_sheets};
 
-    fn unit_square<S: Scalar>() -> Vec<NurbCurve2D<S>> {
+    fn unit_square() -> Vec<NurbCurve2D> {
         polygon(&[v2(0.0, 0.0), v2(1.0, 0.0), v2(1.0, 1.0), v2(0.0, 1.0)]).unwrap()
     }
 
@@ -83,7 +82,7 @@ mod tests {
     /// the material — the region between the outer boundary and this hole
     /// — genuinely has the hole cut out of it), spanning `[x0, x0 + size] x
     /// [y0, y0 + size]`.
-    fn square_hole<S: Scalar>(x0: f64, y0: f64, size: f64) -> Vec<NurbCurve2D<S>> {
+    fn square_hole(x0: f64, y0: f64, size: f64) -> Vec<NurbCurve2D> {
         polygon(&[
             v2(x0, y0),
             v2(x0, y0 + size),
@@ -96,20 +95,20 @@ mod tests {
     /// Left-handed (`u x v = -w`), as `figure8_profile` builds its own:
     /// `extrude` points the faces outwards either way round, which
     /// `validation::face_orientation::check_normals_point_outward` checks.
-    fn axis_aligned_coordinate_system<S: Scalar>(origin: Vector3<S>) -> CoordinateSystem<S> {
-        let u = Vector3::from_array([S::ONE, S::ZERO, S::ZERO]);
-        let v = Vector3::from_array([S::ZERO, S::ONE, S::ZERO]);
-        let w = Vector3::from_array([S::ZERO, S::ZERO, S::from_f64(-1.0)]);
+    fn axis_aligned_coordinate_system(origin: Vector3) -> CoordinateSystem {
+        let u = Vector3::from_array([Scalar::ONE, Scalar::ZERO, Scalar::ZERO]);
+        let v = Vector3::from_array([Scalar::ZERO, Scalar::ONE, Scalar::ZERO]);
+        let w = Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::from_f64(-1.0)]);
         CoordinateSystem::try_new(origin, u, v, w).unwrap()
     }
 
     /// Extrude into a fresh part, as the single-region operation `e`.
-    fn extruded<S: Scalar>(
-        cs: &CoordinateSystem<S>,
-        outer: Vec<NurbCurve2D<S>>,
-        holes: Vec<Vec<NurbCurve2D<S>>>,
-    ) -> NamedModel<S> {
-        let mut model = NamedModel::<S>::new();
+    fn extruded(
+        cs: &CoordinateSystem,
+        outer: Vec<NurbCurve2D>,
+        holes: Vec<Vec<NurbCurve2D>>,
+    ) -> NamedModel {
+        let mut model = NamedModel::new();
         let namer = Namer::new("extrude", "e").unwrap();
         let loops: Vec<_> = std::iter::once(Profile::closed(outer))
             .chain(
@@ -125,8 +124,8 @@ mod tests {
             &namer,
             Some(&namer.root()),
             cs,
-            S::ZERO,
-            S::ONE,
+            Scalar::ZERO,
+            Scalar::ONE,
             &loops,
         )
         .unwrap();
@@ -134,24 +133,22 @@ mod tests {
         model
     }
 
-    fn check_extruded_square_is_valid<S: Scalar>() {
-        let cs = axis_aligned_coordinate_system(Vector3::from_array([S::ZERO; 3]));
-        let model = extruded(&cs, unit_square::<S>(), vec![]);
+    #[test]
+    fn extruded_square_is_valid() {
+        let cs = axis_aligned_coordinate_system(Vector3::from_array([Scalar::ZERO; 3]));
+        let model = extruded(&cs, unit_square(), vec![]);
         let topology = model.topology();
         assert_model_valid(topology);
         assert_eq!(topology.faces.len(), 6);
         assert_eq!(topology.vertices.len(), 8);
         assert_eq!(topology.edges.len(), 12);
     }
-    #[test]
-    fn extruded_square_is_valid() {
-        for_all_scalars!(check_extruded_square_is_valid);
-    }
 
-    fn check_extruded_square_with_hole_is_valid<S: Scalar>() {
-        let hole = square_hole::<S>(0.25, 0.25, 0.5);
-        let cs = axis_aligned_coordinate_system(Vector3::from_array([S::ZERO; 3]));
-        let model = extruded(&cs, unit_square::<S>(), vec![hole]);
+    #[test]
+    fn extruded_square_with_hole_is_valid() {
+        let hole = square_hole(0.25, 0.25, 0.5);
+        let cs = axis_aligned_coordinate_system(Vector3::from_array([Scalar::ZERO; 3]));
+        let model = extruded(&cs, unit_square(), vec![hole]);
         let topology = model.topology();
         assert_model_valid(topology);
         // 6 outer faces (4 sides + top + bottom) + 4 hole side walls; 8
@@ -159,15 +156,16 @@ mod tests {
         assert_eq!(topology.faces.len(), 6 + 4);
         assert_eq!(topology.vertices.len(), 8 + 8);
     }
-    #[test]
-    fn extruded_square_with_hole_is_valid() {
-        for_all_scalars!(check_extruded_square_with_hole_is_valid);
-    }
 
-    fn check_extrude_offsets_footprint<S: Scalar>() {
-        let origin = Vector3::from_array([S::from_f64(2.0), S::from_f64(-1.0), S::from_f64(0.5)]);
+    #[test]
+    fn extrude_offsets_footprint() {
+        let origin = Vector3::from_array([
+            Scalar::from_f64(2.0),
+            Scalar::from_f64(-1.0),
+            Scalar::from_f64(0.5),
+        ]);
         let cs = axis_aligned_coordinate_system(origin);
-        let model = extruded(&cs, unit_square::<S>(), vec![]);
+        let model = extruded(&cs, unit_square(), vec![]);
         let topology = model.topology();
         assert_model_valid(topology);
         // `w` points along `-z` (see `axis_aligned_coordinate_system`), so
@@ -175,56 +173,47 @@ mod tests {
         // *below* it.
         for vertex in topology.vertices.values() {
             assert!(
-                vertex.point[2].could_be_equal(S::from_f64(0.5))
-                    || vertex.point[2].could_be_equal(S::from_f64(-0.5)),
+                vertex.point[2].could_be_equal(Scalar::from_f64(0.5))
+                    || vertex.point[2].could_be_equal(Scalar::from_f64(-0.5)),
                 "vertex at unexpected height: {:?}",
                 vertex.point
             );
         }
     }
-    #[test]
-    fn extrude_offsets_footprint() {
-        for_all_scalars!(check_extrude_offsets_footprint);
-    }
 
     /// A profile anywhere in the plane, not just the unit square: the caps
     /// are sized to it.
-    fn check_extrude_profile_away_from_origin<S: Scalar>() {
-        let cs = axis_aligned_coordinate_system(Vector3::from_array([S::ZERO; 3]));
+    #[test]
+    fn extrude_profile_away_from_origin() {
+        let cs = axis_aligned_coordinate_system(Vector3::from_array([Scalar::ZERO; 3]));
         let outer = polygon(&[v2(-3.0, 2.0), v2(-1.0, 2.0), v2(-2.0, 5.0)]).unwrap();
         let model = extruded(&cs, outer, vec![]);
         let topology = model.topology();
         assert_model_valid(topology);
         assert_eq!(topology.faces.len(), 5);
     }
-    #[test]
-    fn extrude_profile_away_from_origin() {
-        for_all_scalars!(check_extrude_profile_away_from_origin);
-    }
 
     /// A disc with a round hole: every wall is a quarter of a cylinder.
-    fn check_extruded_ring_is_valid<S: Scalar>() {
-        let cs = axis_aligned_coordinate_system(Vector3::from_array([S::ZERO; 3]));
-        let outer = circle::<S>(2.0);
-        let hole = circle_at::<S>(0.3, 0.0, 1.0, true);
+    #[test]
+    fn extruded_ring_is_valid() {
+        let cs = axis_aligned_coordinate_system(Vector3::from_array([Scalar::ZERO; 3]));
+        let outer = circle(2.0);
+        let hole = circle_at(0.3, 0.0, 1.0, true);
         let model = extruded(&cs, outer, vec![hole]);
         let topology = model.topology();
         assert_model_valid(topology);
         assert_eq!(topology.faces.len(), 2 + 4 + 4);
     }
-    #[test]
-    fn extruded_ring_is_valid() {
-        for_all_scalars!(check_extruded_ring_is_valid);
-    }
 
     /// Both directions off a right-handed plane give valid solids on the
     /// expected side.
-    fn check_extrude_both_directions<S: Scalar>() {
+    #[test]
+    fn extrude_both_directions() {
         let plane = CoordinateSystem::try_new(
-            Vector3::from_array([S::ZERO, S::ZERO, S::ONE]),
-            Vector3::from_array([S::ONE, S::ZERO, S::ZERO]),
-            Vector3::from_array([S::ZERO, S::ONE, S::ZERO]),
-            Vector3::from_array([S::ZERO, S::ZERO, S::ONE]),
+            Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::ONE]),
+            Vector3::from_array([Scalar::ONE, Scalar::ZERO, Scalar::ZERO]),
+            Vector3::from_array([Scalar::ZERO, Scalar::ONE, Scalar::ZERO]),
+            Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::ONE]),
         )
         .unwrap();
         let mut outer = polygon(&[v2(0.0, 0.0), v2(1.0, 0.0), v2(1.0, 1.0)]).unwrap();
@@ -235,14 +224,14 @@ mod tests {
         let namer = Namer::new("extrude", "e").unwrap();
         let outer = SweepLoop::plain(Profile::closed(outer));
         for (distance, far) in [(0.5, 1.5), (-0.5, 0.5)] {
-            let mut model = NamedModel::<S>::new();
+            let mut model = NamedModel::new();
             extrude(
                 &mut model,
                 &namer,
                 Some(&namer.root()),
                 &plane,
-                S::ZERO,
-                S::from_f64(distance),
+                Scalar::ZERO,
+                Scalar::from_f64(distance),
                 std::slice::from_ref(&outer),
             )
             .unwrap();
@@ -253,7 +242,7 @@ mod tests {
                 topology
                     .vertices
                     .values()
-                    .any(|v| v.point[2].could_be_equal(S::from_f64(far)))
+                    .any(|v| v.point[2].could_be_equal(Scalar::from_f64(far)))
             );
             // Whichever way the profile had to be mirrored to extrude it,
             // every name still sits where it says: `p0` at the profile's
@@ -262,30 +251,28 @@ mod tests {
             let p0_end = model.vertex_id("extrude(e,p0,end)").unwrap();
             let point = |v| topology.get_vertex(v).unwrap().point;
             assert!(point(p0_start).could_be_equal(&Vector3::from_array([
-                S::ZERO,
-                S::ZERO,
-                S::ONE
+                Scalar::ZERO,
+                Scalar::ZERO,
+                Scalar::ONE
             ])));
-            assert!(point(p0_end)[2].could_be_equal(S::from_f64(far)));
+            assert!(point(p0_end)[2].could_be_equal(Scalar::from_f64(far)));
             let end_cap = model.face_id("extrude(e,end)").unwrap();
             assert!(topology.iterate_face_coedges(end_cap).all(|c| {
-                topology.coedge_start_vertex(c).unwrap().point[2].could_be_equal(S::from_f64(far))
+                topology.coedge_start_vertex(c).unwrap().point[2]
+                    .could_be_equal(Scalar::from_f64(far))
             }));
         }
     }
-    #[test]
-    fn extrude_both_directions() {
-        for_all_scalars!(check_extrude_both_directions);
-    }
 
-    fn xy_plane<S: Scalar>() -> CoordinateSystem<S> {
+    fn xy_plane() -> CoordinateSystem {
         CoordinateSystem::world_at(Vector3::zero())
     }
 
     /// An open chain extrudes into a sheet: a wall per curve, the edges
     /// along its rims and its two ends each used by that one wall alone.
-    fn check_open_chain_extrudes_into_a_sheet<S: Scalar>() {
-        let mut model = NamedModel::<S>::new();
+    #[test]
+    fn open_chain_extrudes_into_a_sheet() {
+        let mut model = NamedModel::new();
         let namer = Namer::new("extrude", "e").unwrap();
         let chain = crate::common::polyline(&[v2(0.0, 0.0), v2(1.0, 0.0), v2(1.0, 2.0)]).unwrap();
         let built = extrude(
@@ -293,8 +280,8 @@ mod tests {
             &namer,
             None,
             &xy_plane(),
-            S::ZERO,
-            S::ONE,
+            Scalar::ZERO,
+            Scalar::ONE,
             &[SweepLoop::plain(Profile::open(chain))],
         )
         .unwrap();
@@ -307,23 +294,20 @@ mod tests {
         assert_eq!(topology.edges.keys().filter(|e| free(e)).count(), 6);
         assert!(model.edge_id("extrude(e,p1)").is_ok_and(|e| !free(&e)));
     }
-    #[test]
-    fn open_chain_extrudes_into_a_sheet() {
-        for_all_scalars!(check_open_chain_extrudes_into_a_sheet);
-    }
 
     /// Between any two ends, either way round: the start cap at the first.
-    fn check_extrude_between_two_ends<S: Scalar>() {
+    #[test]
+    fn extrude_between_two_ends() {
         for (from, to) in [(-0.5, 1.0), (1.0, -0.5), (0.25, 2.0)] {
-            let mut model = NamedModel::<S>::new();
+            let mut model = NamedModel::new();
             let namer = Namer::new("extrude", "e").unwrap();
             extrude(
                 &mut model,
                 &namer,
                 Some("extrude(e)"),
                 &xy_plane(),
-                S::from_f64(from),
-                S::from_f64(to),
+                Scalar::from_f64(from),
+                Scalar::from_f64(to),
                 &[SweepLoop::plain(Profile::closed(unit_square()))],
             )
             .unwrap();
@@ -335,13 +319,9 @@ mod tests {
                     .unwrap()
                     .point[2]
             };
-            assert!(height("extrude(e,p0,start)").could_be_equal(S::from_f64(from)));
-            assert!(height("extrude(e,p2,end)").could_be_equal(S::from_f64(to)));
+            assert!(height("extrude(e,p0,start)").could_be_equal(Scalar::from_f64(from)));
+            assert!(height("extrude(e,p2,end)").could_be_equal(Scalar::from_f64(to)));
         }
-    }
-    #[test]
-    fn extrude_between_two_ends() {
-        for_all_scalars!(check_extrude_between_two_ends);
     }
 }
 
@@ -349,7 +329,7 @@ mod tests {
 mod naming_tests {
     use super::*;
     use crate::common::polygon;
-    use geop_core_math::scalars::ScalInF64 as S;
+    use geop_core_math::scalars::Scalar;
     use geop_core_math::vector::{Vector2, Vector3};
     use geop_ops_model::Profile;
 
@@ -360,28 +340,28 @@ mod naming_tests {
     #[test]
     fn extruded_square_names_follow_the_profile() {
         let square = polygon(&[
-            Vector2::from_array([S::ZERO, S::ZERO]),
-            Vector2::from_array([S::ONE, S::ZERO]),
-            Vector2::from_array([S::ONE, S::ONE]),
-            Vector2::from_array([S::ZERO, S::ONE]),
+            Vector2::from_array([Scalar::ZERO, Scalar::ZERO]),
+            Vector2::from_array([Scalar::ONE, Scalar::ZERO]),
+            Vector2::from_array([Scalar::ONE, Scalar::ONE]),
+            Vector2::from_array([Scalar::ZERO, Scalar::ONE]),
         ])
         .unwrap();
         let plane = CoordinateSystem::try_new(
             Vector3::zero(),
-            Vector3::from_array([S::ONE, S::ZERO, S::ZERO]),
-            Vector3::from_array([S::ZERO, S::ONE, S::ZERO]),
-            Vector3::from_array([S::ZERO, S::ZERO, S::ONE]),
+            Vector3::from_array([Scalar::ONE, Scalar::ZERO, Scalar::ZERO]),
+            Vector3::from_array([Scalar::ZERO, Scalar::ONE, Scalar::ZERO]),
+            Vector3::from_array([Scalar::ZERO, Scalar::ZERO, Scalar::ONE]),
         )
         .unwrap();
-        let mut model = NamedModel::<S>::new();
+        let mut model = NamedModel::new();
         let namer = Namer::new("extrude", "box").unwrap();
         extrude(
             &mut model,
             &namer,
             Some(&namer.root()),
             &plane,
-            S::ZERO,
-            S::ONE,
+            Scalar::ZERO,
+            Scalar::ONE,
             &[SweepLoop::plain(Profile::closed(square))],
         )
         .unwrap();
@@ -421,7 +401,7 @@ mod naming_tests {
                 .get_vertex(corner)
                 .unwrap()
                 .point
-                .could_be_equal(&Vector3::from_array([S::ONE; 3]))
+                .could_be_equal(&Vector3::from_array([Scalar::ONE; 3]))
         );
     }
 }

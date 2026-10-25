@@ -12,7 +12,7 @@ use geop_core_program::{
     program::{Program, ProgramStep},
     reader::Reader,
     runner::{RunOutput, Runner},
-    values::{Design, StateValue, StateValues, pose_state},
+    values::{StateValue, StateValues, pose_state},
     workspace::Location,
 };
 use std::{collections::BTreeMap, rc::Rc};
@@ -20,7 +20,7 @@ use std::{collections::BTreeMap, rc::Rc};
 use geop_core_editor::view::{PartView, drawn};
 use geop_core_math::{
     primitives::{DatumComponent, FrameAxis, Pose, Ray},
-    scalars::{ScalInF64 as S, Scalar},
+    scalars::Scalar,
     solvers::system::Variable,
     vector::Vector3,
 };
@@ -86,21 +86,21 @@ fn args(fixed: bool, mates: &[(&str, MateKind, [MateEntity; 2])]) -> AddPartArgs
     if fixed { args.fixed() } else { args }
 }
 
-fn n(x: f64) -> Design {
-    Design::from_f64(x)
+fn n(x: f64) -> Scalar {
+    Scalar::from_f64(x)
 }
 
-fn pose(position: [f64; 3], degrees: [f64; 3]) -> Pose<Design> {
+fn pose(position: [f64; 3], degrees: [f64; 3]) -> Pose {
     Pose::from_euler(Vector3::from_array(position.map(n)), degrees.map(n)).unwrap()
 }
 
 /// Where `pose` puts the point `p`.
-fn apply(pose: &Pose<Design>, p: [f64; 3]) -> [f64; 3] {
+fn apply(pose: &Pose, p: [f64; 3]) -> [f64; 3] {
     let q = pose.apply(&Vector3::from_array(p.map(n)));
     [0, 1, 2].map(|k| q[k].to_f64())
 }
 
-fn at(position: [f64; 3]) -> Pose<Design> {
+fn at(position: [f64; 3]) -> Pose {
     pose(position, [0.0; 3])
 }
 
@@ -139,17 +139,17 @@ fn base(instance: &str) -> MateEntity {
 const SOLVED: f64 = 1e-8;
 
 /// A pointer looking straight down at `at`.
-fn down_at(at: Vector3<S>) -> Pointer<S> {
+fn down_at(at: Vector3) -> Pointer {
     Pointer {
         ray: Ray::try_new(at.add(&v3(0.0, 0.0, 10.0)), v3(0.0, 0.0, -1.0)).unwrap(),
         reach: Reach::Tube {
-            radius: S::from_f64(0.01),
+            radius: Scalar::from_f64(0.01),
         },
     }
 }
 
 /// The pose `moved` gives the part placed as `instance`.
-fn moved_to(moved: &StateValues, instance: &str) -> Pose<Design> {
+fn moved_to(moved: &StateValues, instance: &str) -> Pose {
     match &moved[&pose_state(instance)] {
         StateValue::Pose(pose) => *pose,
         other => panic!("a pose, not {other:?}"),
@@ -223,7 +223,7 @@ impl Assembly {
     /// Solves the mates with `pulls`, and runs the program with the state
     /// the solve gives. A solve whose mates hold encloses a true solution
     /// near where it ended.
-    fn solve(&mut self, pulls: &[Pull<Design>]) -> solving::Report {
+    fn solve(&mut self, pulls: &[Pull]) -> solving::Report {
         let state = self.state.clone();
         let (moved, report) = solve(&mut self.rerun(), &state, pulls, None).unwrap();
         if report.converged {
@@ -236,7 +236,7 @@ impl Assembly {
 
     /// Solves with the values `set` held there, and runs the program with
     /// the state the solve gives.
-    fn set(&mut self, set: &BTreeMap<String, Design>) -> (StateValues, solving::Report) {
+    fn set(&mut self, set: &BTreeMap<String, Scalar>) -> (StateValues, solving::Report) {
         let state = self.state.clone();
         let (moved, report) = solving::set(&mut self.rerun(), &state, set).unwrap();
         self.state.extend(moved.clone());
@@ -256,7 +256,7 @@ impl Assembly {
 
     /// Where the part placed at `path` is in the world, as the run placed
     /// it.
-    fn world(&self, path: &str) -> Pose<Design> {
+    fn world(&self, path: &str) -> Pose {
         locate(&self.reader(), path).unwrap().world
     }
 }
@@ -394,7 +394,7 @@ fn a_drag_pulls_the_point_grabbed() {
             panic!("one pull: {pulls:?}");
         };
         assert_eq!(parameter, "b.pose");
-        let plain = |p: &Vector3<S>| [0, 1, 2].map(|k| p[k].to_f64());
+        let plain = |p: &Vector3| [0, 1, 2].map(|k| p[k].to_f64());
         assert_close(plain(local), [1.0, 0.0, 0.0], 1e-12);
         assert_close(plain(target), [0.0, 1.0, 0.0], 1e-12);
         // Released, it pulls once more, and is gone at the next event.
@@ -612,7 +612,7 @@ fn assert_derivatives_are_true(assembly: &mut Assembly) {
             let value = &state[parameter];
             for k in 0..value.dimension() {
                 let mut residuals_at = |t: f64| {
-                    let mut step = vec![Design::ZERO; value.dimension()];
+                    let mut step = vec![Scalar::ZERO; value.dimension()];
                     step[k] = n(t);
                     let mut moved = state.clone();
                     moved.insert(parameter.clone(), value.retract(&step).unwrap());

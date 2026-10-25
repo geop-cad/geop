@@ -25,11 +25,11 @@
 
 use std::collections::BTreeMap;
 
-use geop_core_geometry::nurb_curve::{NurbCurve, NurbCurve3D};
+use geop_core_geometry::nurb_curve::NurbCurve3D;
 use geop_core_math::solvers::system::{self, Phase};
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    scalars::{Ring, Scalar, as_f64},
+    scalars::{Number, Scalar, as_f64},
     vector::Vector3,
 };
 use serde::{Deserialize, Serialize};
@@ -47,7 +47,7 @@ use crate::{
 /// arcs, five points.
 const MAX_LOCAL_VARS: usize = 16;
 
-type Dual<S> = geop_core_math::dual::Dual<S, MAX_LOCAL_VARS>;
+type Dual = geop_core_math::dual::Dual<MAX_LOCAL_VARS>;
 
 /// Maps the sketch's entities to solver variables: each class of points a
 /// triple (see [`PointLayout`]), then a parameter for each point on a line
@@ -59,22 +59,22 @@ struct Layout {
     param_var: BTreeMap<ConstraintId, usize>,
 }
 
-impl<S: Scalar> SketchPoint<S, 3> for Point3d<S> {
+impl SketchPoint<3> for Point3d {
     fn fixed(&self) -> bool {
         self.fixed
     }
 
-    fn coordinates(&self) -> [S; 3] {
+    fn coordinates(&self) -> [Scalar; 3] {
         self.at.to_array()
     }
 
-    fn set_coordinates(&mut self, at: [S; 3]) {
+    fn set_coordinates(&mut self, at: [Scalar; 3]) {
         self.at = Vector3::from_array(at);
     }
 }
 
 impl Layout {
-    fn new<S: Scalar>(sketch: &Sketch3d<S>) -> Self {
+    fn new(sketch: &Sketch3d) -> Self {
         let mut points = PointLayout::new(&sketch.points, &sketch.point_classes());
         let mut param_var = BTreeMap::new();
         for (&id, c) in &sketch.constraints {
@@ -92,43 +92,38 @@ impl Layout {
 }
 
 /// One constraint, ready to evaluate.
-struct Prepared<'a, S: Scalar> {
+struct Prepared<'a> {
     id: ConstraintId,
-    constraint: &'a Constraint3d<S>,
+    constraint: &'a Constraint3d,
     vars: Vec<usize>,
     /// Two vectors across the direction a "parallel" is measured from (see
     /// [`across`]).
-    across: Option<[Vector3<S>; 2]>,
-    /// The reference curve a point lies on, in the residuals' scalar.
-    reference: Option<NurbCurve3D<Dual<S>>>,
+    across: Option<[Vector3; 2]>,
+    /// The reference curve a point lies on.
+    reference: Option<&'a NurbCurve3D>,
 }
 
 /// Everything a solve evaluates, fixed for one solve.
-struct Problem<'a, S: Scalar> {
-    sketch: &'a Sketch3d<S>,
+struct Problem<'a> {
+    sketch: &'a Sketch3d,
     layout: Layout,
-    constraints: Vec<Prepared<'a, S>>,
+    constraints: Vec<Prepared<'a>>,
     /// The variables where the solve starts: the points as drawn, each
     /// parameter where its point is nearest its curve.
-    start: Vec<S>,
+    start: Vec<Scalar>,
     /// The sketch's characteristic length: the diagonal of its points' box,
     /// at least one.
-    scale: S,
+    scale: Scalar,
 }
 
 /// The point `p` of `x`.
-fn point_of<T: Scalar>(layout: &Layout, x: &[T], p: PointId) -> Vector3<T> {
+fn point_of<T: Number>(layout: &Layout, x: &[T], p: PointId) -> Vector3<T> {
     Vector3::from_array(layout.points.point(x, p))
 }
 
 /// The sketch's curve `c` as an arc, at the variables `x`; `None` for
 /// another kind.
-fn arc_of<S: Scalar, T: Scalar>(
-    sketch: &Sketch3d<S>,
-    layout: &Layout,
-    x: &[T],
-    c: CurveId,
-) -> Option<Arc3<T>> {
+fn arc_of<T: Number>(sketch: &Sketch3d, layout: &Layout, x: &[T], c: CurveId) -> Option<Arc3<T>> {
     match sketch.curves[&c].kind {
         CurveKind3d::Arc {
             start,
@@ -144,8 +139,8 @@ fn arc_of<S: Scalar, T: Scalar>(
 }
 
 /// The ends of the line `c`, at the variables `x`.
-fn line_of<S: Scalar, T: Scalar>(
-    sketch: &Sketch3d<S>,
+fn line_of<T: Number>(
+    sketch: &Sketch3d,
     layout: &Layout,
     x: &[T],
     c: CurveId,
@@ -158,8 +153,8 @@ fn line_of<S: Scalar, T: Scalar>(
 
 /// The unit tangent of the line or arc `c` at its end `end`, in its own
 /// direction, at the variables `x`.
-fn tangent_of<S: Scalar, T: Scalar>(
-    sketch: &Sketch3d<S>,
+fn tangent_of<T: Number>(
+    sketch: &Sketch3d,
     layout: &Layout,
     x: &[T],
     c: CurveId,
@@ -174,27 +169,27 @@ fn tangent_of<S: Scalar, T: Scalar>(
     }
 }
 
-impl<'a, S: Scalar> Problem<'a, S> {
-    fn new(sketch: &'a Sketch3d<S>) -> GeopResult<Self> {
+impl<'a> Problem<'a> {
+    fn new(sketch: &'a Sketch3d) -> GeopResult<Self> {
         sketch.validate()?;
         let layout = Layout::new(sketch);
-        let mut start = vec![S::ZERO; layout.points.len()];
+        let mut start = vec![Scalar::ZERO; layout.points.len()];
         layout.points.read(&sketch.points, &mut start);
 
         let span = |k: usize| {
             let values = || sketch.points.values().map(move |p| p.at[k]);
-            let hi = values().reduce(S::max).unwrap_or(S::ZERO);
-            let lo = values().reduce(S::min).unwrap_or(S::ZERO);
+            let hi = values().reduce(Scalar::max).unwrap_or(Scalar::ZERO);
+            let lo = values().reduce(Scalar::min).unwrap_or(Scalar::ZERO);
             hi.sub(lo)
         };
         let diagonal = (0..3)
             .map(|k| span(k).mul(span(k)))
-            .fold(S::ZERO, S::add)
+            .fold(Scalar::ZERO, Scalar::add)
             .sqrt()?;
-        let scale = if diagonal.is_finite() && diagonal.definitely_greater(S::ONE) {
+        let scale = if diagonal.is_finite() && diagonal.definitely_greater(Scalar::ONE) {
             diagonal
         } else {
-            S::ONE
+            Scalar::ONE
         };
 
         let mut constraints = Vec::new();
@@ -254,15 +249,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
                             }
                             _ => {
                                 let curve = &sketch.references[curve];
-                                reference = Some(NurbCurve::try_new(
-                                    curve.degree,
-                                    curve
-                                        .control_points
-                                        .iter()
-                                        .map(|cp| cp.map(Dual::cst))
-                                        .collect(),
-                                    curve.knot_vector.iter().map(|&k| Dual::cst(k)).collect(),
-                                )?);
+                                reference = Some(curve);
                                 // Nearest `p`: a point that lies on the
                                 // curve is found where it is, and a solve
                                 // does not move it along the curve to meet
@@ -271,7 +258,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
                             }
                         };
                         // Where to start looking from: a free choice, sharp.
-                        start[t] = S::from_f64(seed.to_f64());
+                        start[t] = Scalar::from_f64(seed.to_f64());
                     }
                 }
                 Tangent { a, b } => {
@@ -311,19 +298,14 @@ impl<'a, S: Scalar> Problem<'a, S> {
 
     /// The residuals of `p` at the variables `x` — only those it depends on
     /// are read.
-    fn residuals(
-        &self,
-        p: &Prepared<'_, S>,
-        x: &[Dual<S>],
-        out: &mut Vec<Dual<S>>,
-    ) -> GeopResult<()> {
+    fn residuals(&self, p: &Prepared<'_>, x: &[Dual], out: &mut Vec<Dual>) -> GeopResult<()> {
         use Constraint3d::*;
         let c = Dual::cst;
         let scale = c(self.scale);
         let (sketch, layout) = (self.sketch, &self.layout);
         let point = |q: PointId| point_of(layout, x, q);
         // `a` parallel to `b`, two lengths (see the module docs).
-        let parallel = |a: &Vector3<Dual<S>>, b: &Vector3<Dual<S>>, out: &mut Vec<Dual<S>>| {
+        let parallel = |a: &Vector3<Dual>, b: &Vector3<Dual>, out: &mut Vec<Dual>| {
             let cross = a.prod_cross(b);
             for u in p.across.as_ref().expect("prepared") {
                 out.push(cross.prod_dot(&u.map(c)).mul(scale));
@@ -381,7 +363,14 @@ impl<'a, S: Scalar> Problem<'a, S> {
                         let (s, e) = line_of(sketch, layout, x, curve);
                         s.add(&e.sub(&s).prod_scalar(x[t]))
                     }
-                    (_, Some(&t)) => p.reference.as_ref().expect("prepared").evaluate(x[t])?,
+                    (_, Some(&t)) => {
+                        // The curve at the parameter `t`, by the chain
+                        // rule: its point, moving along its tangent as
+                        // `t` moves.
+                        let curve = p.reference.expect("prepared");
+                        let (at, tangent) = (curve.evaluate(x[t].v)?, curve.tangent(x[t].v)?);
+                        Vector3::from_array([0, 1, 2].map(|i| x[t].chain(at[i], tangent[i])))
+                    }
                     (k, None) => unreachable!("a point on {k:?} has a parameter"),
                 };
                 out.extend(q.sub(&on).to_array());
@@ -400,10 +389,10 @@ impl<'a, S: Scalar> Problem<'a, S> {
     /// enclosure of the groups a solve that ended there solved, if given.
     fn report(
         &self,
-        params: Vec<S>,
-        phases: Vec<Phase<S>>,
-        solved: Option<system::Enclosure<S>>,
-    ) -> GeopResult<Solve3dReport<S>> {
+        params: Vec<Scalar>,
+        phases: Vec<Phase>,
+        solved: Option<system::Enclosure<Scalar>>,
+    ) -> GeopResult<Solve3dReport> {
         let variables = Spatial::new(self, params, Vec::new());
         let Standing {
             held,
@@ -431,7 +420,7 @@ impl<'a, S: Scalar> Problem<'a, S> {
     }
 }
 
-impl<S: Scalar> Residuals<S, MAX_LOCAL_VARS> for Problem<'_, S> {
+impl Residuals<MAX_LOCAL_VARS> for Problem<'_> {
     fn offsets(&self) -> Vec<Option<usize>> {
         self.layout.points.offsets()
     }
@@ -444,10 +433,10 @@ impl<S: Scalar> Residuals<S, MAX_LOCAL_VARS> for Problem<'_, S> {
         &self.constraints[c].vars
     }
 
-    fn residuals(&self, c: usize, values: &[Dual<S>], out: &mut Vec<Dual<S>>) -> GeopResult<()> {
+    fn residuals(&self, c: usize, values: &[Dual], out: &mut Vec<Dual>) -> GeopResult<()> {
         let prepared = &self.constraints[c];
         // Only the variables it depends on are read: the rest are zero.
-        let mut x = vec![Dual::cst(S::ZERO); self.layout.points.len()];
+        let mut x = vec![Dual::cst(Scalar::ZERO); self.layout.points.len()];
         for (&i, &v) in prepared.vars.iter().zip(values) {
             x[i] = v;
         }
@@ -459,27 +448,26 @@ impl<S: Scalar> Residuals<S, MAX_LOCAL_VARS> for Problem<'_, S> {
         format!("{} {:?}", c.id, c.constraint)
     }
 
-    fn scale(&self) -> S {
+    fn scale(&self) -> Scalar {
         self.scale
     }
 }
 
 /// The 3-D sketch's system (see [`Variables`]).
-type Spatial<'p, 'a, S> = Variables<'p, S, Problem<'a, S>, MAX_LOCAL_VARS>;
+type Spatial<'p, 'a> = Variables<'p, Problem<'a>, MAX_LOCAL_VARS>;
 
 /// The outcome of solving a 3-D sketch.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(bound = "S: Scalar")]
-pub struct Solve3dReport<S: Scalar> {
+pub struct Solve3dReport {
     /// Every constraint holds, to
     /// [`geop_core_math::solvers::system::RELATIVE_TOLERANCE`] of the
     /// sketch's size.
     pub converged: bool,
     /// The largest remaining residual, a length: an upper bound.
     #[serde(with = "as_f64")]
-    pub max_residual: S,
+    pub max_residual: Scalar,
     pub iterations: usize,
-    pub phases: Vec<Phase<S>>,
+    pub phases: Vec<Phase>,
     /// Degrees of freedom left.
     pub dof: usize,
     /// Per point: whether it can still move.
@@ -493,20 +481,17 @@ pub struct Solve3dReport<S: Scalar> {
     pub unproven: Vec<String>,
 }
 
-impl<S: Scalar> Sketch3d<S> {
+impl Sketch3d {
     /// Moves the points so every constraint holds, as little as they allow.
     /// The sketch is moved even if they cannot all hold, as near as they
     /// come — the report says which do not.
-    pub fn solve(&mut self) -> GeopResult<Solve3dReport<S>> {
+    pub fn solve(&mut self) -> GeopResult<Solve3dReport> {
         self.solve_with_drag(&[])
     }
 
     /// Like [`Sketch3d::solve`], pulling each `(point, target)` towards its
     /// target as far as the constraints allow: dragging.
-    pub fn solve_with_drag(
-        &mut self,
-        drags: &[(PointId, Vector3<S>)],
-    ) -> GeopResult<Solve3dReport<S>> {
+    pub fn solve_with_drag(&mut self, drags: &[(PointId, Vector3)]) -> GeopResult<Solve3dReport> {
         let problem = Problem::new(self)?;
         let (_, solved, x) = Spatial::dragged(
             &problem,
@@ -517,14 +502,14 @@ impl<S: Scalar> Sketch3d<S> {
         let report = problem.report(x.clone(), solved.phases, Some(solved.enclosure))?;
         // Where the solve put the points is the sketch's state, and a free
         // choice: sharp.
-        let x: Vec<S> = x.into_iter().map(Scalar::sharpen).collect();
+        let x: Vec<Scalar> = x.into_iter().map(Scalar::sharpen).collect();
         problem.layout.points.write(&mut self.points, &x);
         Ok(report)
     }
 
     /// Which constraints hold where the points are now, and what can still
     /// move — without moving anything.
-    pub fn check(&self) -> GeopResult<Solve3dReport<S>> {
+    pub fn check(&self) -> GeopResult<Solve3dReport> {
         let problem = Problem::new(self)?;
         problem.report(problem.start.clone(), Vec::new(), None)
     }
@@ -534,7 +519,7 @@ impl<S: Scalar> Sketch3d<S> {
     /// coordinate they leave free exactly as drawn (see
     /// [`geop_core_math::solvers::system::System::enclose`]). A sketch whose constraints do not hold is built
     /// as drawn. Fails where the solution cannot be proven.
-    pub fn enclose<T: Scalar>(&self) -> GeopResult<Enclosure3d<T>> {
+    pub fn enclose(&self) -> GeopResult<Enclosure3d> {
         let ctx = |e: GeopError| e.with_context("enclosing the 3-D sketch's solution");
         let problem = Problem::new(self).map_err(ctx)?;
         let variables = Spatial::new(&problem, problem.start.clone(), Vec::new());
@@ -547,12 +532,7 @@ impl<S: Scalar> Sketch3d<S> {
         let points = &problem.layout.points;
         Ok(Enclosure3d {
             points: (points.point_var.keys())
-                .map(|&p| {
-                    (
-                        p,
-                        Vector3::from_array(points.point(&x, p)).map(|c| c.cast()),
-                    )
-                })
+                .map(|&p| (p, Vector3::from_array(points.point(&x, p))))
                 .collect(),
         })
     }

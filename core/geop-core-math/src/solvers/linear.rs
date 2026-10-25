@@ -49,10 +49,10 @@ use crate::{
 /// only keeps the elimination numerically well-behaved — so resolving the
 /// comparison to a single value (rather than leaving it three-valued) costs
 /// nothing, exactly as in `NurbSurface::project`'s per-iteration sharpening.
-pub fn solve_linear_system<S: Scalar, const N: usize>(
-    a: &Matrix<S, N, N>,
-    b: &Vector<S, N>,
-) -> GeopResult<Vector<S, N>> {
+pub fn solve_linear_system<const N: usize>(
+    a: &Matrix<N, N>,
+    b: &Vector<N>,
+) -> GeopResult<Vector<N>> {
     let mut a = *a;
     let mut b = *b;
 
@@ -86,7 +86,7 @@ pub fn solve_linear_system<S: Scalar, const N: usize>(
         }
     }
 
-    let mut x = Vector::<S, N>::zero();
+    let mut x = Vector::<N>::zero();
     for row in (0..N).rev() {
         let mut sum = b[row];
         for k in (row + 1)..N {
@@ -105,10 +105,10 @@ pub fn solve_linear_system<S: Scalar, const N: usize>(
 /// The solution `(x, y)` of the symmetric 2x2 system
 /// `[[a11, a12], [a12, a22]] (x, y) = (b1, b2)`, by Cramer's rule: an error
 /// where the determinant could be zero.
-pub fn solve_symmetric2<S: Scalar>(
-    (a11, a12, a22): (S, S, S),
-    (b1, b2): (S, S),
-) -> GeopResult<(S, S)> {
+pub fn solve_symmetric2(
+    (a11, a12, a22): (Scalar, Scalar, Scalar),
+    (b1, b2): (Scalar, Scalar),
+) -> GeopResult<(Scalar, Scalar)> {
     let det = a11.mul(a22).sub(a12.mul(a12));
     Ok((
         b1.mul(a22).sub(b2.mul(a12)).div(det)?,
@@ -126,10 +126,10 @@ pub fn solve_symmetric2<S: Scalar>(
     clippy::needless_range_loop,
     reason = "rows of one matrix, indexed alike"
 )]
-pub fn solve_pivoted<S: Scalar, const C: usize>(
-    mut a: Vec<Vec<S>>,
-    mut rhs: Vec<Vector<S, C>>,
-) -> GeopResult<Vec<Vector<S, C>>> {
+pub fn solve_pivoted<const C: usize>(
+    mut a: Vec<Vec<Scalar>>,
+    mut rhs: Vec<Vector<C>>,
+) -> GeopResult<Vec<Vector<C>>> {
     let n = a.len();
     for col in 0..n {
         let pivot = (col..n)
@@ -140,7 +140,7 @@ pub fn solve_pivoted<S: Scalar, const C: usize>(
                     .total_cmp(&a[j][col].abs().to_f64())
             })
             .expect("a column has rows");
-        if a[pivot][col].could_be_equal(S::ZERO) {
+        if a[pivot][col].could_be_equal(Scalar::ZERO) {
             return Err(GeopError::new(format!(
                 "solve_pivoted: column {col} has no entry that is definitely not zero"
             )));
@@ -155,13 +155,13 @@ pub fn solve_pivoted<S: Scalar, const C: usize>(
             rhs[row] = rhs[row].sub(&rhs[col].prod_scalar(factor));
         }
     }
-    let mut x = vec![Vector::<S, C>::zero(); n];
+    let mut x = vec![Vector::<C>::zero(); n];
     for row in (0..n).rev() {
         let mut sum = rhs[row];
         for col in (row + 1)..n {
             sum = sum.sub(&x[col].prod_scalar(a[row][col]));
         }
-        x[row] = sum.prod_scalar(S::ONE.div(a[row][row])?);
+        x[row] = sum.prod_scalar(Scalar::ONE.div(a[row][row])?);
     }
     Ok(x)
 }
@@ -185,12 +185,12 @@ pub fn solve_pivoted<S: Scalar, const C: usize>(
     clippy::needless_range_loop,
     reason = "rows of one matrix, indexed alike"
 )]
-pub fn solve_banded<S: Scalar, const C: usize>(
-    mut a: Vec<Vec<S>>,
+pub fn solve_banded<const C: usize>(
+    mut a: Vec<Vec<Scalar>>,
     first: &[usize],
     last: &[usize],
-    mut rhs: Vec<Vector<S, C>>,
-) -> GeopResult<Vec<Vector<S, C>>> {
+    mut rhs: Vec<Vector<C>>,
+) -> GeopResult<Vec<Vector<C>>> {
     let m = rhs.len();
     for col in 0..m {
         let pivot = a[col][col];
@@ -208,7 +208,7 @@ pub fn solve_banded<S: Scalar, const C: usize>(
         }
     }
 
-    let mut x = vec![Vector::<S, C>::zero(); m];
+    let mut x = vec![Vector::<C>::zero(); m];
     for row in (0..m).rev() {
         let mut sum = rhs[row];
         for col in (row + 1)..=last[row] {
@@ -229,9 +229,9 @@ pub fn solve_banded<S: Scalar, const C: usize>(
 /// by: one that, in the light of
 /// the rows before it, says nothing new (or nothing positive). Which rows
 /// were left out is `true` in the second.
-pub fn cholesky<S: Scalar>(a: &[Vec<S>]) -> GeopResult<(Vec<Vec<S>>, Vec<bool>)> {
+pub fn cholesky(a: &[Vec<Scalar>]) -> GeopResult<(Vec<Vec<Scalar>>, Vec<bool>)> {
     let n = a.len();
-    let mut l = vec![vec![S::ZERO; n]; n];
+    let mut l = vec![vec![Scalar::ZERO; n]; n];
     let mut left_out = vec![false; n];
     for i in 0..n {
         for j in 0..=i {
@@ -243,8 +243,8 @@ pub fn cholesky<S: Scalar>(a: &[Vec<S>]) -> GeopResult<(Vec<Vec<S>>, Vec<bool>)>
                 // A pivot positive by so little that dividing by it gives no
                 // finite number says no more than one that could be zero:
                 // the solve through it overflowed, `0 × ∞` in the next row.
-                let root = if sum.definitely_greater(S::ZERO) {
-                    Some(sum.sqrt()?).filter(|r| S::ONE.div(*r).is_ok_and(|v| v.is_finite()))
+                let root = if sum.definitely_greater(Scalar::ZERO) {
+                    Some(sum.sqrt()?).filter(|r| Scalar::ONE.div(*r).is_ok_and(|v| v.is_finite()))
                 } else {
                     None
                 };
@@ -252,7 +252,7 @@ pub fn cholesky<S: Scalar>(a: &[Vec<S>]) -> GeopResult<(Vec<Vec<S>>, Vec<bool>)>
                     l[i][i] = root;
                 } else {
                     left_out[i] = true;
-                    l[i].iter_mut().for_each(|v| *v = S::ZERO);
+                    l[i].iter_mut().for_each(|v| *v = Scalar::ZERO);
                 }
             } else {
                 l[i][j] = sum.div(l[j][j])?;
@@ -263,14 +263,18 @@ pub fn cholesky<S: Scalar>(a: &[Vec<S>]) -> GeopResult<(Vec<Vec<S>>, Vec<bool>)>
 }
 
 /// The solution of `L Lᵀ x = b`, zero at the rows `left_out`.
-pub fn solve_cholesky<S: Scalar>(l: &[Vec<S>], left_out: &[bool], b: &[S]) -> GeopResult<Vec<S>> {
+pub fn solve_cholesky(
+    l: &[Vec<Scalar>],
+    left_out: &[bool],
+    b: &[Scalar],
+) -> GeopResult<Vec<Scalar>> {
     let n = b.len();
-    let mut y = vec![S::ZERO; n];
+    let mut y = vec![Scalar::ZERO; n];
     for i in (0..n).filter(|&i| !left_out[i]) {
         let sum = (0..i).fold(b[i], |sum, k| sum.sub(l[i][k].mul(y[k])));
         y[i] = sum.div(l[i][i])?;
     }
-    let mut x = vec![S::ZERO; n];
+    let mut x = vec![Scalar::ZERO; n];
     for i in (0..n).rev().filter(|&i| !left_out[i]) {
         let sum = (i + 1..n).fold(y[i], |sum, k| sum.sub(l[k][i].mul(x[k])));
         x[i] = sum.div(l[i][i])?;
@@ -279,10 +283,10 @@ pub fn solve_cholesky<S: Scalar>(l: &[Vec<S>], left_out: &[bool], b: &[S]) -> Ge
 }
 
 /// The outcome of Gauss-Jordan elimination (see [`eliminate`]).
-pub struct Elimination<S: Scalar> {
+pub struct Elimination {
     /// The rows, reduced: row `k` has a one at `pivots[k].0` and zeros at
     /// every other pivot column.
-    pub rows: Vec<Vec<S>>,
+    pub rows: Vec<Vec<Scalar>>,
     /// Per pivot: its column, and the index of the row it was among the
     /// rows eliminated.
     pub pivots: Vec<(usize, usize)>,
@@ -305,7 +309,7 @@ pub struct Elimination<S: Scalar> {
 /// constraints barely touch, in place of one they do — a half circle
 /// tangent to two parallel sides was left with its sweep free and two
 /// tangencies over the same coordinate, and could not be enclosed.
-pub fn eliminate<S: Scalar>(mut rows: Vec<Vec<S>>, n: usize) -> Elimination<S> {
+pub fn eliminate(mut rows: Vec<Vec<Scalar>>, n: usize) -> Elimination {
     // Per row, the columns it has an entry in other than an exact zero, in
     // order — of the whole row, which may be longer than `n`: columns past
     // the pivots' go along, as in `inverse`'s: the only ones that can be a
@@ -321,12 +325,12 @@ pub fn eliminate<S: Scalar>(mut rows: Vec<Vec<S>>, n: usize) -> Elimination<S> {
     let mut used = vec![false; n];
     let mut r = 0;
     loop {
-        let size = |v: S| v.abs().lower();
+        let size = |v: Scalar| v.abs().lower();
         let mut best: Option<(usize, usize)> = None;
         for i in r..rows.len() {
             for &col in support[i].iter().filter(|&&c| c < n && !used[c]) {
                 let v = rows[i][col];
-                if v.definitely_not_equal(S::ZERO)
+                if v.definitely_not_equal(Scalar::ZERO)
                     && best.is_none_or(|(bi, bc)| size(v).definitely_greater(size(rows[bi][bc])))
                 {
                     best = Some((i, col));
@@ -401,14 +405,14 @@ fn union(a: &[usize], b: &[usize]) -> Vec<usize> {
 /// directions in which every row stays put, to first order. One vector per
 /// variable no pivot determines, which is one there and zero at every other
 /// such variable.
-pub fn null_space<S: Scalar>(rows: Vec<Vec<S>>, n: usize) -> Vec<Vec<S>> {
+pub fn null_space(rows: Vec<Vec<Scalar>>, n: usize) -> Vec<Vec<Scalar>> {
     let Elimination { rows, pivots, .. } = eliminate(rows, n);
     let is_pivot: Vec<bool> = (0..n).map(|c| pivots.iter().any(|p| p.0 == c)).collect();
     (0..n)
         .filter(|&f| !is_pivot[f])
         .map(|f| {
-            let mut v = vec![S::ZERO; n];
-            v[f] = S::ONE;
+            let mut v = vec![Scalar::ZERO; n];
+            v[f] = Scalar::ONE;
             for (i, &(pc, _)) in pivots.iter().enumerate() {
                 v[pc] = rows[i][f].neg();
             }
@@ -419,18 +423,18 @@ pub fn null_space<S: Scalar>(rows: Vec<Vec<S>>, n: usize) -> Vec<Vec<S>> {
 
 /// How many of `rows` (each over `n` variables) are independent: those an
 /// elimination finds a pivot that cannot be zero for.
-pub fn rank<S: Scalar>(rows: Vec<Vec<S>>, n: usize) -> usize {
+pub fn rank(rows: Vec<Vec<Scalar>>, n: usize) -> usize {
     eliminate(rows, n).pivots.len()
 }
 
 /// `rows` each with the row of the identity beside it, `[row | I]`: an
 /// elimination of them reduces the identity alongside, which then says what
 /// combination of the rows each reduced row is.
-pub fn augmented<S: Scalar>(rows: impl ExactSizeIterator<Item = Vec<S>>) -> Vec<Vec<S>> {
+pub fn augmented(rows: impl ExactSizeIterator<Item = Vec<Scalar>>) -> Vec<Vec<Scalar>> {
     let m = rows.len();
     rows.enumerate()
         .map(|(i, mut row)| {
-            row.extend((0..m).map(|j| if i == j { S::ONE } else { S::ZERO }));
+            row.extend((0..m).map(|j| if i == j { Scalar::ONE } else { Scalar::ZERO }));
             row
         })
         .collect()
@@ -439,7 +443,7 @@ pub fn augmented<S: Scalar>(rows: impl ExactSizeIterator<Item = Vec<S>>) -> Vec<
 /// An enclosure of the inverse of the square matrix `a`, by Gauss-Jordan
 /// elimination: each entry encloses that of the inverse of every matrix `a`
 /// encloses. `None` if `a` could be singular.
-pub fn inverse<S: Scalar>(a: &[Vec<S>]) -> Option<Vec<Vec<S>>> {
+pub fn inverse(a: &[Vec<Scalar>]) -> Option<Vec<Vec<Scalar>>> {
     let m = a.len();
     let Elimination { rows, pivots, .. } = eliminate(augmented(a.iter().cloned()), m);
     if pivots.len() < m {
@@ -458,12 +462,12 @@ pub fn inverse<S: Scalar>(a: &[Vec<S>]) -> Option<Vec<Vec<S>>> {
 ///
 /// Three independent conditions leave only one `d`, solved for directly:
 /// the Gram matrix the fewer need squares the system's condition number.
-pub fn shortest_solution<S: Scalar>(rows: &[(Vector3<S>, S)]) -> GeopResult<Vector3<S>> {
+pub fn shortest_solution(rows: &[(Vector3, Scalar)]) -> GeopResult<Vector3> {
     // `d = sum_i lambda_i n_i`, with the Gram matrix `G_ij = n_i . n_j`
     // solving `G lambda = r`.
-    fn combine<S: Scalar, const N: usize>(rows: &[(Vector3<S>, S)]) -> GeopResult<Vector3<S>> {
-        let mut gram = Matrix::<S, N, N>::zero();
-        let mut r = Vector::<S, N>::zero();
+    fn combine<const N: usize>(rows: &[(Vector3, Scalar)]) -> GeopResult<Vector3> {
+        let mut gram = Matrix::<N, N>::zero();
+        let mut r = Vector::<N>::zero();
         for i in 0..N {
             r[i] = rows[i].1;
             for j in 0..N {
@@ -477,8 +481,8 @@ pub fn shortest_solution<S: Scalar>(rows: &[(Vector3<S>, S)]) -> GeopResult<Vect
     }
     match rows.len() {
         0 => Err(GeopError::new("no condition to meet")),
-        1 => combine::<S, 1>(rows),
-        2 => combine::<S, 2>(rows),
+        1 => combine::<1>(rows),
+        2 => combine::<2>(rows),
         3 => solve_linear_system(
             &Matrix::from_rows([
                 rows[0].0.to_array(),
@@ -488,8 +492,8 @@ pub fn shortest_solution<S: Scalar>(rows: &[(Vector3<S>, S)]) -> GeopResult<Vect
             &Vector3::from_array([rows[0].1, rows[1].1, rows[2].1]),
         ),
         _ => {
-            let mut normal = Matrix::<S, 3, 3>::zero();
-            let mut b = Vector::<S, 3>::zero();
+            let mut normal = Matrix::<3, 3>::zero();
+            let mut b = Vector::<3>::zero();
             for (n, r) in rows {
                 for i in 0..3 {
                     b[i] = b[i].add(n[i].mul(*r));
@@ -505,24 +509,23 @@ pub fn shortest_solution<S: Scalar>(rows: &[(Vector3<S>, S)]) -> GeopResult<Vect
 
 #[cfg(test)]
 mod tests {
-    use crate::scalars::{ScalInF64 as S, Scalar};
 
     use super::*;
 
     /// A chain of `m` constraints, each between two neighbouring blocks of
     /// `block` variables, with entries that are neither zero nor alike, and
     /// each row's own variable the one that counts: the rows are independent.
-    fn chain(m: usize, block: usize) -> (Vec<Vec<S>>, usize) {
+    fn chain(m: usize, block: usize) -> (Vec<Vec<Scalar>>, usize) {
         let n = (m + 1) * block;
         let mut rows = Vec::new();
         for k in 0..m {
             for e in 0..block {
-                let mut row = vec![S::ZERO; n];
+                let mut row = vec![Scalar::ZERO; n];
                 for b in 0..block {
                     let own = if b == e { 10.0 } else { 0.0 };
-                    row[k * block + b] = S::from_f64(own + ((k + e + b) % 5) as f64 * 0.1);
+                    row[k * block + b] = Scalar::from_f64(own + ((k + e + b) % 5) as f64 * 0.1);
                     row[(k + 1) * block + b] =
-                        S::from_f64(((k * 3 + e * 5 + b) % 7) as f64 * 0.1 - 0.3);
+                        Scalar::from_f64(((k * 3 + e * 5 + b) % 7) as f64 * 0.1 - 0.3);
                 }
                 rows.push(row);
             }
@@ -563,8 +566,8 @@ mod tests {
     /// beside it, in rows longer than the variables they are pivoted on.
     #[test]
     fn the_inverse_of_a_sparse_matrix_is_one() {
-        let a: Vec<Vec<S>> = [[2.0, 0.0, 1.0], [0.0, 3.0, 0.0], [1.0, 0.0, 4.0]]
-            .map(|row| row.map(S::from_f64).to_vec())
+        let a: Vec<Vec<Scalar>> = [[2.0, 0.0, 1.0], [0.0, 3.0, 0.0], [1.0, 0.0, 4.0]]
+            .map(|row| row.map(Scalar::from_f64).to_vec())
             .to_vec();
         let inverse = inverse(&a).expect("the matrix is not singular");
         for (i, row) in a.iter().enumerate() {
@@ -582,43 +585,33 @@ mod tests {
 #[cfg(test)]
 mod system_tests {
     use super::*;
-    use crate::for_all_scalars;
 
-    fn check_solves_identity<S: Scalar>() {
-        let a = Matrix::from_rows([[S::ONE, S::ZERO], [S::ZERO, S::ONE]]);
-        let b = Vector::<S, 2>::from_array([S::from_f64(3.0), S::from_f64(4.0)]);
-        let x = solve_linear_system(&a, &b).unwrap();
-        assert!(x[0].could_be_equal(S::from_f64(3.0)));
-        assert!(x[1].could_be_equal(S::from_f64(4.0)));
-    }
     #[test]
     fn solves_identity() {
-        for_all_scalars!(check_solves_identity);
+        let a = Matrix::from_rows([[Scalar::ONE, Scalar::ZERO], [Scalar::ZERO, Scalar::ONE]]);
+        let b = Vector::<2>::from_array([Scalar::from_f64(3.0), Scalar::from_f64(4.0)]);
+        let x = solve_linear_system(&a, &b).unwrap();
+        assert!(x[0].could_be_equal(Scalar::from_f64(3.0)));
+        assert!(x[1].could_be_equal(Scalar::from_f64(4.0)));
     }
 
-    fn check_solves_general_2x2<S: Scalar>() {
-        // [2 1; 1 3] x = [5; 10] -> x = [1, 3]
-        let a = Matrix::from_rows([
-            [S::from_f64(2.0), S::from_f64(1.0)],
-            [S::from_f64(1.0), S::from_f64(3.0)],
-        ]);
-        let b = Vector::from_array([S::from_f64(5.0), S::from_f64(10.0)]);
-        let x = solve_linear_system(&a, &b).unwrap();
-        assert!(x[0].could_be_equal(S::ONE));
-        assert!(x[1].could_be_equal(S::from_f64(3.0)));
-    }
     #[test]
     fn solves_general_2x2() {
-        for_all_scalars!(check_solves_general_2x2);
+        // [2 1; 1 3] x = [5; 10] -> x = [1, 3]
+        let a = Matrix::from_rows([
+            [Scalar::from_f64(2.0), Scalar::from_f64(1.0)],
+            [Scalar::from_f64(1.0), Scalar::from_f64(3.0)],
+        ]);
+        let b = Vector::from_array([Scalar::from_f64(5.0), Scalar::from_f64(10.0)]);
+        let x = solve_linear_system(&a, &b).unwrap();
+        assert!(x[0].could_be_equal(Scalar::ONE));
+        assert!(x[1].could_be_equal(Scalar::from_f64(3.0)));
     }
 
-    fn check_singular_errs<S: Scalar>() {
-        let a = Matrix::from_rows([[S::ONE, S::ONE], [S::ONE, S::ONE]]);
-        let b = Vector::from_array([S::ONE, S::TWO]);
-        assert!(solve_linear_system(&a, &b).is_err());
-    }
     #[test]
     fn singular_errs() {
-        for_all_scalars!(check_singular_errs);
+        let a = Matrix::from_rows([[Scalar::ONE, Scalar::ONE], [Scalar::ONE, Scalar::ONE]]);
+        let b = Vector::from_array([Scalar::ONE, Scalar::TWO]);
+        assert!(solve_linear_system(&a, &b).is_err());
     }
 }

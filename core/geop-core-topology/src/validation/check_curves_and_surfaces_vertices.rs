@@ -5,7 +5,6 @@ use geop_core_geometry::{
 };
 use geop_core_math::{
     geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
     vector::Vector3,
 };
 
@@ -17,10 +16,10 @@ use crate::{Model, validation::ValidationParameters};
 /// through its face's surface — must start/end at the same two points its
 /// own edge does (in whichever order its `sense` implies). Pushes every
 /// violation it finds onto `errors` rather than stopping at the first.
-pub fn check_curves_and_surfaces_vertices<S: Scalar>(
-    params: &ValidationParameters<S>,
+pub fn check_curves_and_surfaces_vertices(
+    params: &ValidationParameters,
     errors: &mut Vec<GeopError>,
-    model: &Model<S>,
+    model: &Model,
 ) {
     for (&edge_id, edge) in &model.edges {
         let (Some(start), Some(end)) = (
@@ -88,10 +87,10 @@ pub fn check_curves_and_surfaces_vertices<S: Scalar>(
 }
 
 /// Whether `curve` starts at `start` and ends at `end`.
-fn validate_curve_start_and_end<S: Scalar>(
-    curve: &NurbCurve3D<S>,
-    start: &Vector3<S>,
-    end: &Vector3<S>,
+fn validate_curve_start_and_end(
+    curve: &NurbCurve3D,
+    start: &Vector3,
+    end: &Vector3,
 ) -> GeopResult<()> {
     let (t0, t1) = curve.domain();
     let curve_start = curve.evaluate(t0)?;
@@ -111,11 +110,11 @@ fn validate_curve_start_and_end<S: Scalar>(
 
 /// Whether `pcurve`, evaluated through `surface`, starts at `start` and
 /// ends at `end`.
-fn validate_pcurve_start_and_end<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    pcurve: &NurbCurve2D<S>,
-    start: &Vector3<S>,
-    end: &Vector3<S>,
+fn validate_pcurve_start_and_end(
+    surface: &NurbSurface3D,
+    pcurve: &NurbCurve2D,
+    start: &Vector3,
+    end: &Vector3,
 ) -> GeopResult<()> {
     let (t0, t1) = pcurve.domain();
     let pcurve_start = pcurve.evaluate(t0)?;
@@ -140,43 +139,34 @@ mod tests {
     use super::check_curves_and_surfaces_vertices;
     use crate::Model;
     use crate::test_fixtures::{check_errors, test_cube_model, test_cube_solid};
-    use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
+    use geop_core_math::{scalars::Scalar, vector::Vector3};
 
-    fn check_valid_cube_passes<S: Scalar>() {
-        assert!(
-            check_errors(check_curves_and_surfaces_vertices, &test_cube_model::<S>()).is_empty()
-        );
-    }
     #[test]
     fn valid_cube_passes() {
-        for_all_scalars!(check_valid_cube_passes);
+        assert!(check_errors(check_curves_and_surfaces_vertices, &test_cube_model()).is_empty());
     }
 
-    fn check_moved_vertex_breaks_edge_curve<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn moved_vertex_breaks_edge_curve() {
+        let mut model = Model::new();
         test_cube_solid(&mut model);
         let vertex_id = *model.vertices.keys().next().unwrap();
         model.vertices.get_mut(&vertex_id).unwrap().point =
-            Vector3::from_array([S::from_f64(42.0); 3]);
+            Vector3::from_array([Scalar::from_f64(42.0); 3]);
         assert!(!check_errors(check_curves_and_surfaces_vertices, &model).is_empty());
     }
-    #[test]
-    fn moved_vertex_breaks_edge_curve() {
-        for_all_scalars!(check_moved_vertex_breaks_edge_curve);
-    }
 
-    fn check_moving_two_vertices_reports_both<S: Scalar>() {
-        let mut model = Model::<S>::new();
+    #[test]
+    fn moving_two_vertices_reports_both() {
+        let mut model = Model::new();
         test_cube_solid(&mut model);
         let mut ids = model.vertices.keys().copied();
         let v1 = ids.next().unwrap();
         let v2 = ids.next().unwrap();
-        model.vertices.get_mut(&v1).unwrap().point = Vector3::from_array([S::from_f64(42.0); 3]);
-        model.vertices.get_mut(&v2).unwrap().point = Vector3::from_array([S::from_f64(43.0); 3]);
+        model.vertices.get_mut(&v1).unwrap().point =
+            Vector3::from_array([Scalar::from_f64(42.0); 3]);
+        model.vertices.get_mut(&v2).unwrap().point =
+            Vector3::from_array([Scalar::from_f64(43.0); 3]);
         assert!(check_errors(check_curves_and_surfaces_vertices, &model).len() >= 2);
-    }
-    #[test]
-    fn moving_two_vertices_reports_both() {
-        for_all_scalars!(check_moving_two_vertices_reports_both);
     }
 }

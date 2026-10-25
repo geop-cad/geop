@@ -13,9 +13,7 @@ use geop_core_math::{
     primitives::CoordinateSystem,
     scalars::Scalar,
 };
-use geop_core_program::{
-    element::ElementReference, part::StepContext, reader::Reader, values::Design,
-};
+use geop_core_program::{element::ElementReference, part::StepContext, reader::Reader};
 use geop_core_topology::FaceId;
 use geop_lib_booleans::{RemeshParams, imprint_on_face};
 use geop_lib_sweep::{SweepLoop, extrude};
@@ -53,7 +51,7 @@ pub struct ProjectCurveArgs {
     /// The sketch whose curves to project.
     pub sketch: SketchRef,
     /// The face to project them onto.
-    pub face: ElementReference<NamedModel<Design>, Face>,
+    pub face: ElementReference<NamedModel, Face>,
 }
 
 part_operation!(ProjectCurve(ProjectCurveArgs));
@@ -73,7 +71,7 @@ impl PartOperation for ProjectCurve {
 
     /// The newest sketch, onto no face yet: no face has the empty name.
     fn new_args(context: &Context) -> ProjectCurveArgs {
-        let newest = context.before.targets_of::<PlacedSketch<Design>>().pop();
+        let newest = context.before.targets_of::<PlacedSketch>().pop();
         ProjectCurveArgs {
             sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_model::sketch::sketch(""))),
             face: ElementReference::new(model(), ""),
@@ -90,9 +88,9 @@ impl PartOperation for ProjectCurve {
         context: &'a Context<'a>,
         args: &ProjectCurveArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, ProjectCurveArgs> {
+    ) -> EditForm<'a, ProjectCurveArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, ProjectCurveArgs>::default();
+        let mut f = EditForm::<ProjectCurveArgs>::default();
         f.pick_one(
             "sketch",
             "sketch",
@@ -113,7 +111,7 @@ impl PartOperation for ProjectCurve {
 
 impl ModelOperation for ProjectCurve {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &ProjectCurveArgs,
@@ -122,13 +120,13 @@ impl ModelOperation for ProjectCurve {
         let placed = reader.retrieve_element(&args.sketch)?;
         let face = model.face_id(args.face.name())?;
         let sketch = &placed.sketch;
-        let geometry = sketch.enclose::<Design>()?;
+        let geometry = sketch.enclose()?;
         let shape = sketch.shape()?;
         let loops: Vec<_> = (shape_profiles(&placed.name, sketch, &geometry, shape)?.into_iter())
             .map(SweepLoop::plain)
             .collect();
         let (from, to) = reach_across(model, face, &placed.plane)?;
-        let (from, to) = (Design::from_f64(from), Design::from_f64(to));
+        let (from, to) = (Scalar::from_f64(from), Scalar::from_f64(to));
         let swept = extrude(model, &namer, None, &placed.plane, from, to, &loops)?;
         let params = RemeshParams::default();
         imprint_on_face(model, &namer, face, &swept.shells, params)?;
@@ -140,10 +138,10 @@ impl ModelOperation for ProjectCurve {
 /// has to reach to cross all of `face`: past the convex hull of its
 /// surface's control points — a NURBS surface lies within it — by the
 /// hull's diagonal both ways, so the sweep's ends are clear of the face.
-fn reach_across<S: Scalar>(
-    model: &NamedModel<S>,
+fn reach_across(
+    model: &NamedModel,
     face: FaceId,
-    plane: &CoordinateSystem<S>,
+    plane: &CoordinateSystem,
 ) -> GeopResult<(f64, f64)> {
     let hull = face_hull(model.topology(), &[face])?;
     let (near, far) = spread_along(&hull, plane);

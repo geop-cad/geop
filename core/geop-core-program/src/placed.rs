@@ -181,7 +181,10 @@ impl std::str::FromStr for Located {
 }
 
 impl serde::Serialize for Located {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+    fn serialize<Scalar: serde::Serializer>(
+        &self,
+        serializer: Scalar,
+    ) -> Result<Scalar::Ok, Scalar::Error> {
         serializer.collect_str(self)
     }
 }

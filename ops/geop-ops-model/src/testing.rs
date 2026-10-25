@@ -15,7 +15,7 @@ use geop_core_math::{
 };
 use geop_core_program::{
     operation::Operation, operation_registry::OperationRegistry, part::Part, program::Program,
-    reader::Reader, runner::Runner, values::Design,
+    reader::Reader, runner::Runner,
 };
 use geop_core_rasterize::{
     face_triangles_uv, rasterize,
@@ -36,7 +36,7 @@ use crate::{NamedModel, read_model};
 /// Whether `model` is valid — a manifold of closed shells too, if
 /// `manifold` — and if not, every validation error's root message, one per
 /// line.
-fn check(model: &Model<impl Scalar>, manifold: bool) -> Result<(), Vec<GeopError>> {
+fn check(model: &Model, manifold: bool) -> Result<(), Vec<GeopError>> {
     let params = ValidationParameters::default();
     // `validate_manifold` runs `validate` first.
     match manifold {
@@ -55,7 +55,7 @@ fn report(errors: &[GeopError]) -> String {
 /// Checks `model` is a valid manifold model, failing with every validation
 /// error's root message.
 #[track_caller]
-pub fn assert_model_valid(model: &Model<impl Scalar>) {
+pub fn assert_model_valid(model: &Model) {
     if let Err(errors) = check(model, true) {
         panic!("{}", report(&errors));
     }
@@ -64,7 +64,7 @@ pub fn assert_model_valid(model: &Model<impl Scalar>) {
 /// Checks `model`, which may hold open bodies — sheets, wires — is valid,
 /// failing with every validation error's root message.
 #[track_caller]
-pub fn assert_model_valid_sheets(model: &Model<impl Scalar>) {
+pub fn assert_model_valid_sheets(model: &Model) {
     if let Err(errors) = check(model, false) {
         panic!("{}", report(&errors));
     }
@@ -73,13 +73,13 @@ pub fn assert_model_valid_sheets(model: &Model<impl Scalar>) {
 /// Whether `part` is a valid manifold model — if not, every validation
 /// error's root message, one per line, and the names of the entities they
 /// mention.
-pub fn check_valid(part: &NamedModel<impl Scalar>) -> Result<(), String> {
+pub fn check_valid(part: &NamedModel) -> Result<(), String> {
     check(part.topology(), true).map_err(|errors| named_report(part, &errors))
 }
 
 /// [`report`] of `errors` in `part`, with the names of the entities they
 /// mention.
-fn named_report(part: &NamedModel<impl Scalar>, errors: &[GeopError]) -> String {
+fn named_report(part: &NamedModel, errors: &[GeopError]) -> String {
     let report = report(errors);
     format!(
         "{report}\nwhere {}",
@@ -90,7 +90,7 @@ fn named_report(part: &NamedModel<impl Scalar>, errors: &[GeopError]) -> String 
 /// Checks `part` is a valid manifold model with consistent names, failing
 /// with the report of [`check_valid`].
 #[track_caller]
-pub fn assert_valid(part: &NamedModel<impl Scalar>) {
+pub fn assert_valid(part: &NamedModel) {
     if let Err(report) = check_valid(part) {
         panic!("{report}");
     }
@@ -100,7 +100,7 @@ pub fn assert_valid(part: &NamedModel<impl Scalar>) {
 /// Checks `part`, which may hold open bodies — sheets, wires — is valid with
 /// consistent names, failing as [`assert_valid`] does.
 #[track_caller]
-pub fn assert_valid_sheets(part: &NamedModel<impl Scalar>) {
+pub fn assert_valid_sheets(part: &NamedModel) {
     if let Err(errors) = check(part.topology(), false) {
         panic!("{}", named_report(part, &errors));
     }
@@ -123,7 +123,7 @@ fn area2(polygon: &[[f64; 2]]) -> f64 {
 /// them. A face drawn over a hole it goes around, or leaving a gap, covers
 /// more or less. Plain `f64`, like the rasterizer.
 #[track_caller]
-pub fn assert_draws_its_trims(part: &NamedModel<impl Scalar>) {
+pub fn assert_draws_its_trims(part: &NamedModel) {
     const N: usize = 24;
     let model = part.topology();
     for (&id, face) in &model.faces {
@@ -159,19 +159,19 @@ pub fn assert_draws_its_trims(part: &NamedModel<impl Scalar>) {
 // ── Entities by where they are ──────────────────────────────────────────────
 
 /// The point `p`, as sharp scalars.
-fn point<S: Scalar>(p: [f64; 3]) -> Vector3<S> {
-    Vector3::from_array(p.map(S::from_f64))
+fn point(p: [f64; 3]) -> Vector3 {
+    Vector3::from_array(p.map(Scalar::from_f64))
 }
 
 /// Whether `part` has a vertex that could be at `p`.
-pub fn has_vertex<S: Scalar>(part: &NamedModel<S>, p: [f64; 3]) -> bool {
+pub fn has_vertex(part: &NamedModel, p: [f64; 3]) -> bool {
     let p = point(p);
     (part.topology().vertices.values()).any(|vertex| vertex.point.could_be_equal(&p))
 }
 
 /// The name of the vertex of `part` that could be at `p`.
 #[track_caller]
-pub fn vertex_at<S: Scalar>(part: &NamedModel<S>, p: [f64; 3]) -> String {
+pub fn vertex_at(part: &NamedModel, p: [f64; 3]) -> String {
     let at = point(p);
     let (&id, _) = (part.topology().vertices.iter())
         .find(|(_, vertex)| vertex.point.could_be_equal(&at))
@@ -180,15 +180,12 @@ pub fn vertex_at<S: Scalar>(part: &NamedModel<S>, p: [f64; 3]) -> String {
 }
 
 /// The middle of `edge`, halfway along its curve's domain.
-pub fn middle<S: Scalar>(edge: &Edge<S>) -> Vector3<S> {
+pub fn middle(edge: &Edge) -> Vector3 {
     (edge.curve.evaluate(edge.curve.mid_parameter().unwrap())).unwrap()
 }
 
 /// The names of the edges of `part` that `keep` accepts, sorted.
-pub fn edges_where<S: Scalar>(
-    part: &NamedModel<S>,
-    keep: impl Fn(&Edge<S>) -> bool,
-) -> Vec<String> {
+pub fn edges_where(part: &NamedModel, keep: impl Fn(&Edge) -> bool) -> Vec<String> {
     let mut names: Vec<String> = (part.topology().edges.iter())
         .filter(|(_, edge)| keep(edge))
         .map(|(&id, _)| part.name_of(id).unwrap().to_string())
@@ -199,10 +196,7 @@ pub fn edges_where<S: Scalar>(
 
 /// The names of the edges of `part` whose [`middle`] `keep` accepts, as
 /// plain numbers, sorted.
-pub fn edges_with_middle_where<S: Scalar>(
-    part: &NamedModel<S>,
-    keep: impl Fn([f64; 3]) -> bool,
-) -> Vec<String> {
+pub fn edges_with_middle_where(part: &NamedModel, keep: impl Fn([f64; 3]) -> bool) -> Vec<String> {
     edges_where(part, |edge| {
         keep(middle(edge).to_array().map(|x| x.to_f64()))
     })
@@ -210,7 +204,7 @@ pub fn edges_with_middle_where<S: Scalar>(
 
 /// The name of the edge of `part` whose [`middle`] could be at `p`.
 #[track_caller]
-pub fn edge_at<S: Scalar>(part: &NamedModel<S>, p: [f64; 3]) -> String {
+pub fn edge_at(part: &NamedModel, p: [f64; 3]) -> String {
     let at = point(p);
     let names = edges_where(part, |edge| middle(edge).could_be_equal(&at));
     match names.as_slice() {
@@ -222,7 +216,7 @@ pub fn edge_at<S: Scalar>(part: &NamedModel<S>, p: [f64; 3]) -> String {
 /// The planar face of `solid` whose outward normal is `normal`, lying
 /// furthest that way.
 #[track_caller]
-pub fn face_towards<S: Scalar>(part: &NamedModel<S>, solid: SolidId, normal: [f64; 3]) -> FaceId {
+pub fn face_towards(part: &NamedModel, solid: SolidId, normal: [f64; 3]) -> FaceId {
     let n = point(normal);
     let model = part.topology();
     (model.body_faces(Body::Solid(solid)).unwrap().into_iter())
@@ -241,7 +235,7 @@ pub fn face_towards<S: Scalar>(part: &NamedModel<S>, solid: SolidId, normal: [f6
 /// `resolution` (see [`rasterize`]): negative if its faces point in. Its
 /// triangles' corners are `f32`, as STL stores them: a test's measuring
 /// stick, not a kernel comparison.
-pub fn volume<S: Scalar>(part: &NamedModel<S>, solid: SolidId, resolution: usize) -> f64 {
+pub fn volume(part: &NamedModel, solid: SolidId, resolution: usize) -> f64 {
     let faces = part.topology().body_faces(Body::Solid(solid)).unwrap();
     let raster = rasterize(part.topology(), resolution).unwrap();
     enclosed_volume(&stl_triangles(&raster, &faces))
@@ -259,7 +253,7 @@ pub fn assert_close(a: [f64; 3], b: [f64; 3], tol: f64) {
 /// Where the point `p` lies relative to the solid `solid` of `part`:
 /// inside it, outside it, or on its boundary — inside, if inside any of
 /// its shells.
-pub fn classify(part: &NamedModel<impl Scalar>, solid: &str, p: [f64; 3]) -> PointClassification {
+pub fn classify(part: &NamedModel, solid: &str, p: [f64; 3]) -> PointClassification {
     let model = part.topology();
     let solid = part.solid_id(solid).unwrap();
     let mut result = PointClassification::Outside;
@@ -275,14 +269,14 @@ pub fn classify(part: &NamedModel<impl Scalar>, solid: &str, p: [f64; 3]) -> Poi
 /// The volume the solid named `solid` of `part` encloses, from its mesh as
 /// drawn (see [`volume`]).
 #[track_caller]
-pub fn solid_volume(part: &NamedModel<Design>, solid: &str) -> f64 {
+pub fn solid_volume(part: &NamedModel, solid: &str) -> f64 {
     volume(part, part.solid_id(solid).unwrap(), 64)
 }
 
 /// Checks the solid named `solid` of `part` encloses `expected`, to within
 /// `tolerance` (see [`solid_volume`]).
 #[track_caller]
-pub fn assert_volume(part: &NamedModel<Design>, solid: &str, expected: f64, tolerance: f64) {
+pub fn assert_volume(part: &NamedModel, solid: &str, expected: f64, tolerance: f64) {
     let got = solid_volume(part, solid);
     assert!(
         (got - expected).abs() <= tolerance,
@@ -292,8 +286,8 @@ pub fn assert_volume(part: &NamedModel<Design>, solid: &str, expected: f64, tole
 
 /// A unit cube, every entity named by its kind and its position among
 /// those: `v0` … `v7`, `e0` … `e11`, `f0` … `f5`, `s0`.
-pub fn unit_cube() -> NamedModel<Design> {
-    let topology = geop_core_topology::test_fixtures::test_cube_model::<Design>();
+pub fn unit_cube() -> NamedModel {
+    let topology = geop_core_topology::test_fixtures::test_cube_model();
     let mut names = crate::NameRegistry::default();
     let mut name = |id: crate::RefId, kind: &str, k: usize| {
         names
@@ -323,20 +317,20 @@ pub fn unit_cube() -> NamedModel<Design> {
 
 /// The model the editor `editor` shows: what the program it edits builds,
 /// as far as it runs it.
-pub fn model_shown(editor: &Editor) -> NamedModel<Design> {
+pub fn model_shown(editor: &Editor) -> NamedModel {
     read_model(&editor.part()).unwrap().into_owned()
 }
 
 // ── Parts of a model given and one step ─────────────────────────────────────
 
 /// The generator of a model given: `model` itself.
-fn given(_: &Reader, model: &NamedModel<Design>) -> GeopResult<NamedModel<Design>> {
+fn given(_: &Reader, model: &NamedModel) -> GeopResult<NamedModel> {
     Ok(model.clone())
 }
 
 /// A part of one step that defines its model as `model`: what the tests of
 /// an operation, an exporter or an inspector build on.
-pub fn given_part(model: &NamedModel<Design>) -> GeopResult<Part> {
+pub fn given_part(model: &NamedModel) -> GeopResult<Part> {
     let mut part = Part::default();
     let runner = Runner::new(OperationRegistry::default());
     runner.run_step(&mut part, GIVEN, |ctx| {
@@ -360,11 +354,7 @@ pub fn run_step<O: Operation>(part: &mut Part, step: &str, args: &O::Args) -> Ge
 /// steps would build it — the model given, then the step — together with
 /// what else the step made: the part, after its one run. For an
 /// operation's tests, which build the model they act on directly.
-pub fn apply<O: Operation>(
-    model: NamedModel<Design>,
-    step: &str,
-    args: &O::Args,
-) -> GeopResult<Part> {
+pub fn apply<O: Operation>(model: NamedModel, step: &str, args: &O::Args) -> GeopResult<Part> {
     let mut part = given_part(&model)?;
     run_step::<O>(&mut part, step, args)?;
     Ok(part)
@@ -390,7 +380,7 @@ pub trait Built {
     fn build_model(
         &self,
         registry: fn() -> GeopResult<OperationRegistry>,
-    ) -> GeopResult<NamedModel<Design>> {
+    ) -> GeopResult<NamedModel> {
         Ok(model_of(&self.built(registry)?))
     }
 }
@@ -405,17 +395,17 @@ impl Built for Program {
 }
 
 /// The model `part` holds: empty if it built no topology.
-pub fn model_of(part: &Part) -> NamedModel<Design> {
+pub fn model_of(part: &Part) -> NamedModel {
     (read_model(&part.current()).map(|model| model.into_owned())).unwrap_or_default()
 }
 
 /// The model `O`'s step `step` with `args` leaves of `model` (see
 /// [`apply`]): for the tests of an operation that builds on the model.
 pub fn apply_to_model<O: Operation>(
-    model: NamedModel<Design>,
+    model: NamedModel,
     step: &str,
     args: &O::Args,
-) -> GeopResult<NamedModel<Design>> {
+) -> GeopResult<NamedModel> {
     let part = apply::<O>(model, step, args)?;
     Ok(read_model(&part.current())?.into_owned())
 }
@@ -447,7 +437,7 @@ pub enum Outcome {
 /// accepts — the operation refusing what it does not support, rather than
 /// failing at what it does.
 pub fn outcome<O: Operation>(
-    part: &NamedModel<Design>,
+    part: &NamedModel,
     args: &O::Args,
     is_refusal: fn(&str) -> bool,
 ) -> Outcome {

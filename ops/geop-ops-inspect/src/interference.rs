@@ -9,7 +9,7 @@ use geop_core_math::{
     scalars::Scalar,
     vector::{Vector, Vector3},
 };
-use geop_core_program::{element::PickedElement, reader::Reader, values::Design};
+use geop_core_program::{element::PickedElement, reader::Reader};
 use geop_core_topology::{
     Body, SolidId,
     distance::{Feature, PlacedFace, closest_points},
@@ -23,10 +23,10 @@ use geop_ops_model::BooleanOp;
 use serde::Serialize;
 
 /// An axis-aligned box: each coordinate the interval it spans.
-pub type Box3 = Vector3<Design>;
+pub type Box3 = Vector3;
 
 /// The box of `points`: each coordinate the union of theirs.
-fn hull(points: &[Vector3<Design>]) -> Box3 {
+fn hull(points: &[Vector3]) -> Box3 {
     points
         .iter()
         .copied()
@@ -43,7 +43,7 @@ fn apart(a: &Box3, b: &Box3) -> bool {
 
 /// The control point `cp` of a surface of `solid`, as a point, where the
 /// solid is placed.
-fn place_control_point(solid: &PlacedSolid, cp: &Vector<Design, 4>) -> GeopResult<Box3> {
+fn place_control_point(solid: &PlacedSolid, cp: &Vector<4>) -> GeopResult<Box3> {
     let p = cp.dehomogenized()?;
     Ok(match &solid.pose {
         Some(pose) => pose.apply(&p),
@@ -198,7 +198,7 @@ pub fn interference_report(reader: &Reader) -> GeopResult<InterferenceReport> {
 #[allow(clippy::type_complexity)]
 fn check_pair(a: &PlacedSolid, b: &PlacedSolid) -> GeopResult<Option<(Contact, Option<Bounded>)>> {
     let ctx = |e: GeopError| e.with_context(format!("checking {} against {}", a.name, b.name));
-    let mut scratch = NamedModel::<Design>::new();
+    let mut scratch = NamedModel::new();
     let copy_a = copy_solid(&mut scratch, a, "a").with_context(&ctx)?;
     let copy_b = copy_solid(&mut scratch, b, "b").with_context(&ctx)?;
     let namer = Namer::new("interference", "overlap").with_context(&ctx)?;
@@ -242,7 +242,7 @@ fn touch(a: &PlacedSolid, b: &PlacedSolid) -> GeopResult<bool> {
                 &Feature::Face(PlacedFace::new(a.model.topology(), *face_a, a.pose)?),
                 &Feature::Face(PlacedFace::new(b.model.topology(), *face_b, b.pose)?),
             )?;
-            if closest.distance.could_be_equal(Design::ZERO) {
+            if closest.distance.could_be_equal(Scalar::ZERO) {
                 return Ok(true);
             }
         }
@@ -253,11 +253,7 @@ fn touch(a: &PlacedSolid, b: &PlacedSolid) -> GeopResult<bool> {
 /// A copy of `solid` in `scratch`, where it is placed, each of its entities
 /// named as it is behind `prefix`. Refuses a solid of more than one shell —
 /// one with a void — which the boolean is not asked to intersect.
-fn copy_solid(
-    scratch: &mut NamedModel<Design>,
-    solid: &PlacedSolid,
-    prefix: &str,
-) -> GeopResult<SolidId> {
+fn copy_solid(scratch: &mut NamedModel, solid: &PlacedSolid, prefix: &str) -> GeopResult<SolidId> {
     let shells = &solid.model.topology().get_solid(solid.solid)?.shells;
     if shells.len() != 1 {
         return Err(GeopError::new(format!(

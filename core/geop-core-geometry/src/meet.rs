@@ -32,15 +32,15 @@ const MEET_ITERATIONS: usize = 30;
 /// where to start looking for the foot point on it. [`meet`] leaves there
 /// the foot point of its last seed, sharp: a seed for the next search.
 #[derive(Clone, Debug)]
-pub struct Offset<'a, S: Scalar> {
-    pub pieces: Vec<(&'a NurbSurface3D<S>, (S, S))>,
-    pub offset: S,
+pub struct Offset<'a> {
+    pub pieces: Vec<(&'a NurbSurface3D, (Scalar, Scalar))>,
+    pub offset: Scalar,
 }
 
-impl<'a, S: Scalar> Offset<'a, S> {
+impl<'a> Offset<'a> {
     /// The condition to lie `offset` from `surface`, its foot point near
     /// `uv`.
-    pub fn new(surface: &'a NurbSurface3D<S>, uv: (S, S), offset: S) -> Self {
+    pub fn new(surface: &'a NurbSurface3D, uv: (Scalar, Scalar), offset: Scalar) -> Self {
         Offset {
             pieces: vec![(surface, uv)],
             offset,
@@ -59,8 +59,8 @@ impl<'a, S: Scalar> Offset<'a, S> {
     /// a pole the enclosure reaches a hair off it, and a midpoint there
     /// lies so close to the pole that the surface's derivatives underflow
     /// and it has no normal; the pole itself has one.
-    fn foot(&mut self, p: &Vector3<S>) -> GeopResult<(Vector3<S>, Vector3<S>)> {
-        let mut best: Option<(f64, Vector3<S>, Vector3<S>)> = None;
+    fn foot(&mut self, p: &Vector3) -> GeopResult<(Vector3, Vector3)> {
+        let mut best: Option<(f64, Vector3, Vector3)> = None;
         for (k, (surface, uv)) in self.pieces.iter_mut().enumerate() {
             let ctx = with_context!("the foot point of {p:?} on piece {k}, from {uv:?}");
             let (u, v) = surface
@@ -75,7 +75,7 @@ impl<'a, S: Scalar> Offset<'a, S> {
                 ))?;
                 best = Some((distance, at, normal));
             }
-            let seed = |t: S, (lo, hi): (S, S)| {
+            let seed = |t: Scalar, (lo, hi): (Scalar, Scalar)| {
                 if t.could_be_equal(lo) {
                     lo
                 } else if t.could_be_equal(hi) {
@@ -98,17 +98,17 @@ impl<'a, S: Scalar> Offset<'a, S> {
 /// Decided once, at the point, not at the foot points a search moves
 /// through: each piece clamps those to its own patch, their normals there
 /// differ a little, and nearly equal conditions leave no step to take.
-pub fn tangent_groups<S: Scalar>(
-    pieces: &[(&NurbSurface3D<S>, (S, S))],
+pub fn tangent_groups(
+    pieces: &[(&NurbSurface3D, (Scalar, Scalar))],
 ) -> GeopResult<Vec<Vec<usize>>> {
-    let mut groups: Vec<(Vector3<S>, Vec<usize>)> = Vec::new();
+    let mut groups: Vec<(Vector3, Vec<usize>)> = Vec::new();
     for (i, (surface, (u, v))) in pieces.iter().enumerate() {
         let normal = surface
             .normal(*u, *v)
             .with_context(with_context!("the normal of piece {i} at {:?}", (u, v)))?;
         match groups
             .iter_mut()
-            .find(|(n, _)| n.prod_cross(&normal).norm_sq().could_be_equal(S::ZERO))
+            .find(|(n, _)| n.prod_cross(&normal).norm_sq().could_be_equal(Scalar::ZERO))
         {
             Some((_, members)) => members.push(i),
             None => groups.push((normal, vec![i])),
@@ -140,11 +140,11 @@ pub fn tangent_groups<S: Scalar>(
 /// lost on the way — a foot point clamped to the edge of its patch, a
 /// projection that never moved — is an error here, naming the condition,
 /// not a wrong point found two steps later.
-pub fn meet<S: Scalar>(
-    start: Vector3<S>,
-    offsets: &mut [Offset<S>],
-    planes: &[(Vector3<S>, Vector3<S>)],
-) -> GeopResult<Vector3<S>> {
+pub fn meet(
+    start: Vector3,
+    offsets: &mut [Offset],
+    planes: &[(Vector3, Vector3)],
+) -> GeopResult<Vector3> {
     let mut answer = start;
     iterate(
         start.sharpen(),
@@ -152,8 +152,8 @@ pub fn meet<S: Scalar>(
         MEET_ITERATIONS,
         Repeat::FixedPoint,
         |next| (next.sharpen(), *next),
-        |seed| -> GeopResult<Step<Vector3<S>>> {
-            let mut rows: Vec<(Vector3<S>, S)> = Vec::new();
+        |seed| -> GeopResult<Step<Vector3>> {
+            let mut rows: Vec<(Vector3, Scalar)> = Vec::new();
             for condition in offsets.iter_mut() {
                 let (at, normal) = condition.foot(seed)?;
                 rows.push((
@@ -186,7 +186,7 @@ pub fn meet<S: Scalar>(
     }
     for (k, (normal, p)) in planes.iter().enumerate() {
         let off = normal.prod_dot(&answer.sub(p));
-        if !off.could_be_equal(S::ZERO) {
+        if !off.could_be_equal(Scalar::ZERO) {
             return Err(GeopError::new(format!(
                 "the point {answer:?}, found from {start:?}, is {off:?} off plane {k} of {}, through {p:?} with normal {normal:?}",
                 planes.len()
@@ -198,26 +198,27 @@ pub fn meet<S: Scalar>(
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::{for_all_scalars, scalars::Scalar, vector::Vector3};
+    use geop_core_math::{scalars::Scalar, vector::Vector3};
 
     use super::{Offset, meet};
     use crate::test_fixtures::sphere_octant;
 
-    fn point<S: Scalar>(p: [f64; 3]) -> Vector3<S> {
-        Vector3::from_array(p.map(S::from_f64))
+    fn point(p: [f64; 3]) -> Vector3 {
+        Vector3::from_array(p.map(Scalar::from_f64))
     }
 
     /// A point half a unit inside the unit sphere and in the plane
     /// `x = 0.3`: two conditions, so it slides from where it starts, and
     /// the answer encloses a point that meets both.
-    fn check_slides_onto_an_offset_sphere_and_a_plane<S: Scalar>() {
-        let sphere = sphere_octant::<S>();
-        let half = S::from_f64(0.5);
+    #[test]
+    fn slides_onto_an_offset_sphere_and_a_plane() {
+        let sphere = sphere_octant();
+        let half = Scalar::from_f64(0.5);
         let inward = sphere.normal(half, half).unwrap();
         // Half a unit towards the center, whichever way the normal faces.
         let offset = if inward
             .prod_dot(&point([1., 1., 1.]))
-            .definitely_less(S::ZERO)
+            .definitely_less(Scalar::ZERO)
         {
             half
         } else {
@@ -226,15 +227,10 @@ mod tests {
         let mut offsets = [Offset::new(&sphere, (half, half), offset)];
         let plane = (point([1., 0., 0.]), point([0.3, 0., 0.]));
         let p = meet(point([0.3, 0.3, 0.3]), &mut offsets, &[plane]).unwrap();
-        assert!(p[0].could_be_equal(S::from_f64(0.3)), "{p:?}");
+        assert!(p[0].could_be_equal(Scalar::from_f64(0.3)), "{p:?}");
         assert!(p.norm().could_be_equal(half), "{p:?}");
         // Fixed point evaluates the rational sphere far less tightly.
         assert!(p.norm().width().to_f64() < 1e-5, "{p:?}");
-    }
-
-    #[test]
-    fn slides_onto_an_offset_sphere_and_a_plane() {
-        for_all_scalars!(check_slides_onto_an_offset_sphere_and_a_plane);
     }
 
     /// A point over the sphere's pole: its foot point stays there, where
@@ -242,10 +238,11 @@ mod tests {
     /// normal — and the foot points left behind seed the same answer again.
     /// (A pole at the start of a domain, where a seed a hair off it would
     /// underflow, is the shell's test `a_closed_revolved_cylinder`.)
-    fn check_stays_over_a_pole<S: Scalar>() {
-        let sphere = sphere_octant::<S>();
-        let half = S::from_f64(0.5);
-        let mut offsets = [Offset::new(&sphere, (half, S::ONE), half)];
+    #[test]
+    fn stays_over_a_pole() {
+        let sphere = sphere_octant();
+        let half = Scalar::from_f64(0.5);
+        let mut offsets = [Offset::new(&sphere, (half, Scalar::ONE), half)];
         let p = meet(point([0., 0., 1.2]), &mut offsets, &[]).unwrap();
         let other = meet(point([0., 0., 1.2]), &mut offsets, &[]).unwrap();
         assert!(
@@ -253,10 +250,5 @@ mod tests {
             "{p:?}"
         );
         assert!(other.could_be_equal(&p), "{other:?} {p:?}");
-    }
-
-    #[test]
-    fn stays_over_a_pole() {
-        for_all_scalars!(check_stays_over_a_pole);
     }
 }

@@ -34,11 +34,8 @@ use geop_core_editor::{
     },
     selectable,
 };
-use geop_core_math::{
-    scalars::{Field, Scalar},
-    vector::Vector3,
-};
-use geop_core_program::{reader::Reader, values::Design};
+use geop_core_math::{scalars::Scalar, vector::Vector3};
+use geop_core_program::reader::Reader;
 use geop_core_sketch::{
     ConstraintId, CurveId, PointId,
     space::{Arc3, Constraint3d, Coordinate, CurveKind3d, End, Solve3dReport},
@@ -52,11 +49,6 @@ const AXIS_SNAP: f64 = 2.0;
 
 use crate::{AddSketch3dArgs, Reference3d, Target};
 use geop_ops_model::sketch3d::{CurveSource, LineSource, PointSource};
-
-/// 3-D sketches are edited in the scalar their programs hold.
-type S = Design;
-
-type V3 = Vector3<S>;
 
 /// What a click in the viewport does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,7 +153,7 @@ fn picked(args: &AddSketch3dArgs, selection: &[String]) -> Picks {
 fn checked(
     before: &Reader,
     args: &AddSketch3dArgs,
-) -> Result<(AddSketch3dArgs, Solve3dReport<Design>), String> {
+) -> Result<(AddSketch3dArgs, Solve3dReport), String> {
     let mut args = args.clone();
     args.resolve(before)
         .map_err(|e| e.root_message().to_string())?;
@@ -175,7 +167,7 @@ fn checked(
 /// Solves `args` on `before`, pulling `drags` — what the part gives
 /// brought up to date first. What cannot be solved is left as it is, and
 /// the form says why.
-fn solve(before: &Reader, args: &mut AddSketch3dArgs, drags: &[(PointId, V3)]) {
+fn solve(before: &Reader, args: &mut AddSketch3dArgs, drags: &[(PointId, Vector3)]) {
     args.tidy();
     if args.resolve(before).is_ok() {
         let _ = args.sketch.solve_with_drag(drags);
@@ -190,18 +182,18 @@ enum Located {
     /// A point the sketch has.
     Point(PointId),
     /// A point of the part — a vertex, a datum point: a fixed point there.
-    Fixed(PointSource, V3),
+    Fixed(PointSource, Vector3),
     /// A point of an edge of the part, or of a sketch's curve: on it.
-    OnEdge(CurveSource, V3),
+    OnEdge(CurveSource, Vector3),
     /// A point on the line along `axis` through the point a line starts
     /// at: there, the line parallel to the axis.
-    Along(Coordinate, V3),
+    Along(Coordinate, Vector3),
     /// Anywhere else.
-    Free(V3),
+    Free(Vector3),
 }
 
 impl Located {
-    fn at(&self, args: &AddSketch3dArgs) -> V3 {
+    fn at(&self, args: &AddSketch3dArgs) -> Vector3 {
         match self {
             Located::Point(p) => args.sketch.points[p].at,
             Located::Fixed(_, at)
@@ -215,7 +207,7 @@ impl Located {
 /// Where `pointer` snaps onto a line along `x`, `y` or `z` through `from`,
 /// if it passes within [`AXIS_SNAP`] reaches of one: the axis it passes
 /// nearest on screen, and the point of it nearest the pointer's ray.
-fn along_axis(from: &V3, pointer: &Pointer<S>) -> Option<Located> {
+fn along_axis(from: &Vector3, pointer: &Pointer) -> Option<Located> {
     Coordinate::ALL
         .into_iter()
         .filter_map(|axis| {
@@ -238,15 +230,15 @@ fn along_axis(from: &V3, pointer: &Pointer<S>) -> Option<Located> {
 /// `before` as drawn, `scene`.
 fn locate(
     before: &Reader,
-    scene: Option<&dyn Scene<S>>,
+    scene: Option<&dyn Scene>,
     args: &AddSketch3dArgs,
     s: &Sketch3dSession,
     tool: Tool,
-    pointer: &Pointer<S>,
+    pointer: &Pointer,
     shift: bool,
 ) -> Option<Located> {
     if !shift {
-        let points: Vec<Visual<S>> = args
+        let points: Vec<Visual> = args
             .sketch
             .points
             .iter()
@@ -256,11 +248,11 @@ fn locate(
             return Some(Located::Point(hit.visual.key.parse().ok()?));
         }
         if let Some(scene) = scene {
-            if let Some((point, _)) = selectable::pick::<PointSource, _>(scene, before, pointer) {
+            if let Some((point, _)) = selectable::pick::<PointSource>(scene, before, pointer) {
                 let at = point.resolve(before).ok()?;
                 return Some(Located::Fixed(point, at));
             }
-            if let Some((curve, at)) = selectable::pick::<CurveSource, _>(scene, before, pointer) {
+            if let Some((curve, at)) = selectable::pick::<CurveSource>(scene, before, pointer) {
                 return Some(Located::OnEdge(curve, at));
             }
         }
@@ -482,9 +474,9 @@ fn remove_selected(before: &Reader, args: &mut AddSketch3dArgs, selection: &mut 
 /// `scene`.
 pub(crate) fn event(
     before: &Reader,
-    scene: Option<&dyn Scene<S>>,
+    scene: Option<&dyn Scene>,
     edit: Edit<'_, AddSketch3dArgs, Sketch3dSession>,
-    event: &CanvasEvent<S>,
+    event: &CanvasEvent,
 ) {
     let Edit {
         args,
@@ -524,7 +516,7 @@ pub(crate) fn event(
         // started: what the arguments are again for each event of it.
         CanvasEvent::Gizmo { drag, .. } => {
             let points = moved(args, &picked(args, selection));
-            let drags: Vec<(PointId, V3)> = points
+            let drags: Vec<(PointId, Vector3)> = points
                 .into_iter()
                 .map(|p| (p, drag.apply(&args.sketch.points[&p].at)))
                 .collect();
@@ -558,7 +550,7 @@ fn hint(tool: Tool, placed: usize) -> &'static str {
 }
 
 /// The world axis `direction` is exactly, if it is one.
-fn axis_of(direction: &V3) -> Option<Coordinate> {
+fn axis_of(direction: &Vector3) -> Option<Coordinate> {
     Coordinate::ALL.into_iter().find(|axis| {
         (0..3).all(|k| {
             let want = if k == axis.index() { 1.0 } else { 0.0 };
@@ -568,15 +560,16 @@ fn axis_of(direction: &V3) -> Option<Coordinate> {
 }
 
 /// How the constraint `id` reads in a list.
-fn describe(args: &AddSketch3dArgs, id: ConstraintId, c: &Constraint3d<Design>) -> String {
+fn describe(args: &AddSketch3dArgs, id: ConstraintId, c: &Constraint3d) -> String {
     use Constraint3d::*;
-    let direction = |direction: &V3| match args.reference_of(Target::Direction { constraint: id }) {
-        Some(r) => r.source().label(),
-        None => match axis_of(direction) {
-            Some(axis) => axis.name().to_string(),
-            None => "a direction".to_string(),
-        },
-    };
+    let direction =
+        |direction: &Vector3| match args.reference_of(Target::Direction { constraint: id }) {
+            Some(r) => r.source().label(),
+            None => match axis_of(direction) {
+                Some(axis) => axis.name().to_string(),
+                None => "a direction".to_string(),
+            },
+        };
     let end = |e: End| match e {
         End::Start => "start",
         End::End => "end",
@@ -607,7 +600,7 @@ fn describe(args: &AddSketch3dArgs, id: ConstraintId, c: &Constraint3d<Design>) 
 fn constraints_for(
     args: &AddSketch3dArgs,
     picks: &Picks,
-) -> Vec<(&'static str, &'static str, Vec<Constraint3d<Design>>)> {
+) -> Vec<(&'static str, &'static str, Vec<Constraint3d>)> {
     let sketch = &args.sketch;
     let kind = |c: &CurveId| &sketch.curves[c].kind;
     let lines: Vec<CurveId> = picks
@@ -617,7 +610,7 @@ fn constraints_for(
         .filter(|c| matches!(kind(c), CurveKind3d::Line { .. }))
         .collect();
     let at = |p: &PointId| sketch.points[p].at;
-    let dist = |a: &V3, b: &V3| b.sub(a).norm();
+    let dist = |a: &Vector3, b: &Vector3| b.sub(a).norm();
     let (np, nc) = (picks.points.len(), picks.curves.len());
     let mut out = Vec::new();
     if np == 2 && nc == 0 {
@@ -723,7 +716,7 @@ fn constraints_for(
         ("along_y", "Along y", Coordinate::Y),
         ("along_z", "Along z", Coordinate::Z),
     ] {
-        if let Some(c) = along(args, picks, V3::axis(axis.index())) {
+        if let Some(c) = along(args, picks, Vector3::axis(axis.index())) {
             out.push((name, label, vec![c]));
         }
     }
@@ -733,7 +726,7 @@ fn constraints_for(
 /// What makes the selection `picks` run along `direction`, if it can: a
 /// line parallel to it, or an arc or a spline with one of its end points
 /// leaving or arriving along it.
-fn along(args: &AddSketch3dArgs, picks: &Picks, direction: V3) -> Option<Constraint3d<Design>> {
+fn along(args: &AddSketch3dArgs, picks: &Picks, direction: Vector3) -> Option<Constraint3d> {
     let sketch = &args.sketch;
     let [curve] = picks.curves[..] else {
         return None;
@@ -763,7 +756,7 @@ fn along(args: &AddSketch3dArgs, picks: &Picks, direction: V3) -> Option<Constra
 }
 
 /// How the sketch stands, in a line.
-fn status(checked: &Result<(AddSketch3dArgs, Solve3dReport<Design>), String>) -> (String, Tone) {
+fn status(checked: &Result<(AddSketch3dArgs, Solve3dReport), String>) -> (String, Tone) {
     let (args, report) = match checked {
         Ok(checked) => checked,
         Err(e) => return (e.clone(), Tone::Error),
@@ -786,10 +779,10 @@ fn status(checked: &Result<(AddSketch3dArgs, Solve3dReport<Design>), String>) ->
 fn visuals(
     args: &AddSketch3dArgs,
     s: &Sketch3dSession,
-    report: Option<&Solve3dReport<Design>>,
-) -> Vec<Visual<S>> {
+    report: Option<&Solve3dReport>,
+) -> Vec<Visual> {
     let sketch = &args.sketch;
-    let failed: Vec<&Constraint3d<Design>> = report
+    let failed: Vec<&Constraint3d> = report
         .map(|r| {
             r.failed_constraints
                 .iter()
@@ -839,7 +832,7 @@ fn visuals(
     let last = s.placed.last().map(|p| sketch.points[p].at);
     if let Some(located) = &s.hover {
         let hover = located.at(args);
-        let mut draft: Vec<V3> = match s.tool(args) {
+        let mut draft: Vec<Vector3> = match s.tool(args) {
             Tool::Spline | Tool::Arc => s.placed.iter().map(|p| sketch.points[p].at).collect(),
             _ => last.into_iter().collect(),
         };
@@ -868,7 +861,7 @@ fn visuals(
                 Shape::Label {
                     at: hover,
                     text: axis.name().to_string(),
-                    offset: Vector3::from_array([S::ONE, S::ONE, S::ZERO]),
+                    offset: Vector3::from_array([Scalar::ONE, Scalar::ONE, Scalar::ZERO]),
                 },
                 Style::Snap,
             ));
@@ -902,7 +895,7 @@ pub(crate) fn form<'a>(
     args: &AddSketch3dArgs,
     s: &Sketch3dSession,
     selection: &[String],
-) -> EditForm<'a, S, AddSketch3dArgs, Sketch3dSession> {
+) -> EditForm<'a, AddSketch3dArgs, Sketch3dSession> {
     let mut f = EditForm::default();
     let tool = s.tool(args);
     f.form.tool = if tool.draws() {
@@ -955,7 +948,7 @@ pub(crate) fn form<'a>(
                     Number::new(axis.name(), at[axis.index()].to_f64(), Unit::Length),
                     move |Edit { args, .. }, v| {
                         let mut to = args.sketch.points[&p].at;
-                        to[axis.index()] = Design::from_f64(v);
+                        to[axis.index()] = Scalar::from_f64(v);
                         solve(before, args, &[(p, to)]);
                     },
                 );
@@ -976,7 +969,7 @@ pub(crate) fn form<'a>(
                 ],
                 move |edit, _| {
                     let Edit { args, session, .. } = edit;
-                    let at = Vector3::from_array(session.typed.map(Design::from_f64));
+                    let at = Vector3::from_array(session.typed.map(Scalar::from_f64));
                     let tool = session.tool(args);
                     click(before, args, session, tool, Located::Free(at));
                 },
@@ -1009,7 +1002,7 @@ pub(crate) fn form<'a>(
             }
         });
     }
-    if along(args, &picks, V3::from_array([Design::ONE; 3])).is_some() {
+    if along(args, &picks, Vector3::from_array([Scalar::ONE; 3])).is_some() {
         f.pick(
             "along",
             "Along an axis or edge",
@@ -1072,7 +1065,7 @@ pub(crate) fn form<'a>(
                 }
                 Value::Number(v) => {
                     if let Some(c) = args.sketch.constraints.get_mut(&id) {
-                        c.set_value(Design::from_f64(v));
+                        c.set_value(Scalar::from_f64(v));
                         solve(before, args, &[]);
                     }
                 }
@@ -1088,9 +1081,9 @@ pub(crate) fn form<'a>(
     if tool == Tool::Select && !moving.is_empty() {
         let sum = moving
             .iter()
-            .fold(V3::zero(), |sum, p| sum.add(&args.sketch.points[p].at));
-        let n = Design::from_f64(moving.len() as f64);
-        if let Ok(inverse) = Design::ONE.div(n) {
+            .fold(Vector3::zero(), |sum, p| sum.add(&args.sketch.points[p].at));
+        let n = Scalar::from_f64(moving.len() as f64);
+        if let Ok(inverse) = Scalar::ONE.div(n) {
             let middle = sum.prod_scalar(inverse);
             f.form.gizmo = Some(Gizmo::new(middle).translate());
         }

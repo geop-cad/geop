@@ -15,7 +15,6 @@ use std::collections::{HashMap, HashSet};
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    scalars::Scalar,
     vector::Vector2,
     with_context,
 };
@@ -38,7 +37,7 @@ use crate::{
 const FACE_CONTAINS_SEED: u64 = 0x5DEE_CE66_D1CE_4E5B;
 
 /// Every edge the faces of `body` run along.
-fn body_edges<S: Scalar>(model: &Model<S>, body: Body) -> GeopResult<HashSet<EdgeId>> {
+fn body_edges(model: &Model, body: Body) -> GeopResult<HashSet<EdgeId>> {
     let mut edges = HashSet::new();
     for face in model.body_faces(body)? {
         edges.extend(model.face_edges(face));
@@ -60,12 +59,12 @@ fn body_edges<S: Scalar>(model: &Model<S>, body: Body) -> GeopResult<HashSet<Edg
 /// Fails, leaving the part with the face's copy and the sheets in it, if no
 /// sheet crosses the face, or a curve ends inside it: a curve has to run
 /// from boundary to boundary of the face, or close on itself, to divide it.
-pub fn imprint_on_face<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn imprint_on_face(
+    model: &mut NamedModel,
     namer: &Namer,
     face: FaceId,
     sheets: &[ShellId],
-    params: RemeshParams<S>,
+    params: RemeshParams,
 ) -> GeopResult<Vec<EdgeId>> {
     let ctx = with_context!(
         "imprint_on_face(name={}, face={face}, sheets={sheets:?})",
@@ -93,7 +92,7 @@ pub fn imprint_on_face<S: Scalar>(
     for &sheet in &sheets {
         on_sheets.extend(body_edges(topology, sheet).with_context(&ctx)?);
     }
-    let mut curves: Vec<(String, EdgeId, Vector2<S>)> = Vec::new();
+    let mut curves: Vec<(String, EdgeId, Vector2)> = Vec::new();
     for &edge in on_copy.intersection(&on_sheets) {
         let coedge = topology
             .coedges_of_edge(edge)
@@ -206,10 +205,7 @@ mod tests {
     use super::imprint_on_face;
     use crate::remesh::RemeshParams;
     use geop_core_math::{
-        geop_error::GeopResult,
-        primitives::CoordinateSystem,
-        scalars::{ScalInF64 as S, Scalar},
-        vector::Vector2,
+        geop_error::GeopResult, primitives::CoordinateSystem, scalars::Scalar, vector::Vector2,
     };
     use geop_core_topology::{EdgeId, SolidId};
     use geop_lib_sweep::{
@@ -219,10 +215,10 @@ mod tests {
     use geop_ops_model::Profile;
     use geop_ops_model::{NamedModel, Namer, testing::assert_valid};
 
-    fn v2s(points: &[[f64; 2]]) -> Vec<Vector2<S>> {
+    fn v2s(points: &[[f64; 2]]) -> Vec<Vector2> {
         points
             .iter()
-            .map(|p| Vector2::from_array([S::from_f64(p[0]), S::from_f64(p[1])]))
+            .map(|p| Vector2::from_array([Scalar::from_f64(p[0]), Scalar::from_f64(p[1])]))
             .collect()
     }
 
@@ -230,11 +226,11 @@ mod tests {
     /// the profile `profile`, drawn in the plane `z = 2` and swept down to
     /// `z = -3`, through the whole solid.
     fn imprint(
-        build: impl Fn(&mut NamedModel<S>) -> SolidId,
+        build: impl Fn(&mut NamedModel) -> SolidId,
         target: &str,
-        profile: Profile<S>,
-    ) -> GeopResult<(NamedModel<S>, Vec<EdgeId>)> {
-        let mut model = NamedModel::<S>::new();
+        profile: Profile,
+    ) -> GeopResult<(NamedModel, Vec<EdgeId>)> {
+        let mut model = NamedModel::new();
         build(&mut model);
         let target = model.face_id(target)?;
         let plane = CoordinateSystem::world_at(v3(0.0, 0.0, 2.0));
@@ -244,8 +240,8 @@ mod tests {
             &namer,
             None,
             &plane,
-            S::from_f64(-5.0),
-            S::from_f64(1.0),
+            Scalar::from_f64(-5.0),
+            Scalar::from_f64(1.0),
             &[SweepLoop::plain(profile)],
         )?;
         let edges = imprint_on_face(
@@ -258,14 +254,14 @@ mod tests {
         Ok((model, edges))
     }
 
-    fn cube(model: &mut NamedModel<S>) -> SolidId {
+    fn cube(model: &mut NamedModel) -> SolidId {
         block(model, "c", [0.0; 3], [1.0; 3])
     }
 
     /// The unit cube's top face, at `z = 1`.
     const TOP: &str = "cube(c,start)";
 
-    fn chain(points: &[[f64; 2]]) -> Profile<S> {
+    fn chain(points: &[[f64; 2]]) -> Profile {
         Profile::open(polyline(&v2s(points)).unwrap())
     }
 
@@ -320,13 +316,13 @@ mod tests {
     /// the edge between the quarters where it ends on it.
     #[test]
     fn a_slanted_line_divides_a_round_face_along_an_ellipse() {
-        let cylinder = |model: &mut NamedModel<S>| {
+        let cylinder = |model: &mut NamedModel| {
             revolved_cylinder_along_axis(
                 model,
                 "y",
                 v3(-0.5, 0.0, 0.0),
-                S::from_f64(0.5),
-                S::ONE,
+                Scalar::from_f64(0.5),
+                Scalar::ONE,
                 Axis::X,
             )
             .unwrap()

@@ -29,21 +29,21 @@ pub enum InHand {
 /// solve the program with: an operation never sets the state itself, it
 /// says where it wants it pulled, and the constraints have the last word.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Pull<S: Scalar> {
+pub enum Pull {
     /// The point `local` of a placed part — in its own frame — pulled
     /// towards the point `target`: a drag. The part is named by the state
     /// its pose is.
     Point {
         parameter: String,
-        local: Vector3<S>,
-        target: Vector3<S>,
+        local: Vector3,
+        target: Vector3,
     },
     /// A placed part pulled to the pose `target` as a whole: placed where
     /// it was typed in, turned by a gizmo.
-    Pose { parameter: String, target: Pose<S> },
+    Pose { parameter: String, target: Pose },
     /// The number the state `parameter` is, set to `value` and held there:
     /// a joint's coordinate typed in, which the parts move to.
-    Value { parameter: String, value: S },
+    Value { parameter: String, value: Scalar },
 }
 
 /// What an operation shows for a step: the fields of its dialog and what
@@ -52,17 +52,17 @@ pub enum Pull<S: Scalar> {
 /// what it drags. Plain data: what a field does when it is set is the
 /// operation's to say when it is sent the [`Event`].
 #[derive(Clone, Debug, PartialEq)]
-pub struct Form<S: Scalar> {
-    pub dialog: Dialog<S>,
-    pub visuals: Vec<Visual<S>>,
+pub struct Form {
+    pub dialog: Dialog,
+    pub visuals: Vec<Visual>,
     /// A plane to work in, its `u`/`v` plane: the viewer faces it head on,
     /// stops orbiting, and draws a grid on it. Draggable visuals are
     /// dragged in it.
-    pub focus: Option<CoordinateSystem<S>>,
+    pub focus: Option<CoordinateSystem>,
     /// A sheet of its own the step is edited on — a drawing's paper, laid
     /// in `focus` — and how far it reaches: the viewer shows the step's
     /// visuals alone, without the part, framed to it.
-    pub sheet: Option<Extent<S>>,
+    pub sheet: Option<Extent>,
     /// What the operation has in hand: clicks — and, for a tool that
     /// strokes, drags — go to it rather than select.
     pub tool: InHand,
@@ -72,15 +72,15 @@ pub struct Form<S: Scalar> {
     pub selection: Vec<String>,
     /// What the step pulls the state towards: the editor solves the
     /// program with them.
-    pub pulls: Vec<Pull<S>>,
+    pub pulls: Vec<Pull>,
     /// A value asked for in place, in the viewport.
-    pub prompt: Option<Prompt<S>>,
+    pub prompt: Option<Prompt>,
     /// A gizmo to move, turn or scale something by: its drags are sent as
     /// [`CanvasEvent::Gizmo`].
-    pub gizmo: Option<Gizmo<S>>,
+    pub gizmo: Option<Gizmo>,
 }
 
-impl<S: Scalar> Default for Form<S> {
+impl Default for Form {
     fn default() -> Self {
         Self {
             dialog: Dialog::new(),
@@ -100,12 +100,16 @@ impl<S: Scalar> Default for Form<S> {
 /// done what it does alike for every operation: arming a reference field
 /// and picking for it, dragging a number's handle, selecting.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Event<S: Scalar> {
+#[allow(
+    clippy::large_enum_variant,
+    reason = "an event is made once and read once; a stroke carries its points"
+)]
+pub enum Event {
     /// The field `key` of the dialog set to `value` — typed, chosen, picked
     /// for in the viewport or dragged by its handle.
     Field { key: String, value: Value },
     /// The visuals selected now, by their keys.
     Select(Vec<String>),
     /// What the pointer or a key did beyond that.
-    Canvas(CanvasEvent<S>),
+    Canvas(CanvasEvent),
 }

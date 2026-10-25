@@ -4,7 +4,7 @@ use geop_core_math::scalars::Scalar;
 /// points to sample along a curve, and the budgets passed down to the
 /// underlying BFS/DFS geometric searches.
 #[derive(Clone, Copy, Debug)]
-pub struct ValidationParameters<S: Scalar> {
+pub struct ValidationParameters {
     /// How many points to sample along a curve for sampling-based checks.
     pub sample_count: usize,
     /// Node budget for the BFS containment searches (see
@@ -30,7 +30,7 @@ pub struct ValidationParameters<S: Scalar> {
     /// loose enough to resolve every case in this crate's own basic-shape
     /// validations within `max_nodes`, while still being far tighter than
     /// any genuine geometric feature these checks care about.
-    pub min_subdivision_size: S,
+    pub min_subdivision_size: Scalar,
     /// `max_solutions` passed to `curve_curve_intersect` for every edge x
     /// edge pair: how many points to return at most. Coincidence is reported
     /// directly (`Intersections::Coincident`), not inferred from reaching
@@ -54,12 +54,12 @@ pub struct ValidationParameters<S: Scalar> {
     pub manifold_seed: u64,
 }
 
-impl<S: Scalar> Default for ValidationParameters<S> {
+impl Default for ValidationParameters {
     fn default() -> Self {
         Self {
             sample_count: 17,
             max_nodes: 5000,
-            min_subdivision_size: S::from_f64(1e-4),
+            min_subdivision_size: Scalar::from_f64(1e-4),
             max_edge_edge_intersection_samples: 17,
             max_edge_face_intersection_samples: 7,
             face_face_sample_count: 20,

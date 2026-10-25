@@ -2,57 +2,54 @@ use crate::{
     Coedge, CoedgeGeometry, CoedgeId, Edge, EdgeId, Face, FaceId, Sense, Shell, ShellId, Solid,
     SolidId, Vertex, VertexId, WireId,
 };
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
-};
+use geop_core_math::geop_error::{GeopError, GeopResult};
 
 use super::Model;
 
-impl<S: Scalar> Model<S> {
-    pub fn get_vertex(&self, id: VertexId) -> GeopResult<&Vertex<S>> {
+impl Model {
+    pub fn get_vertex(&self, id: VertexId) -> GeopResult<&Vertex> {
         self.vertices
             .get(&id)
             .ok_or_else(|| GeopError::new(format!("vertex with id {} does not exist", id.0)))
     }
 
-    pub fn get_vertex_mut(&mut self, id: VertexId) -> GeopResult<&mut Vertex<S>> {
+    pub fn get_vertex_mut(&mut self, id: VertexId) -> GeopResult<&mut Vertex> {
         self.vertices
             .get_mut(&id)
             .ok_or_else(|| GeopError::new(format!("vertex with id {} does not exist", id.0)))
     }
 
-    pub fn get_edge(&self, id: EdgeId) -> GeopResult<&Edge<S>> {
+    pub fn get_edge(&self, id: EdgeId) -> GeopResult<&Edge> {
         self.edges
             .get(&id)
             .ok_or_else(|| GeopError::new(format!("edge with id {} does not exist", id.0)))
     }
 
-    pub fn get_edge_mut(&mut self, id: EdgeId) -> GeopResult<&mut Edge<S>> {
+    pub fn get_edge_mut(&mut self, id: EdgeId) -> GeopResult<&mut Edge> {
         self.edges
             .get_mut(&id)
             .ok_or_else(|| GeopError::new(format!("edge with id {} does not exist", id.0)))
     }
 
-    pub fn get_coedge(&self, id: CoedgeId) -> GeopResult<&Coedge<S>> {
+    pub fn get_coedge(&self, id: CoedgeId) -> GeopResult<&Coedge> {
         self.coedges
             .get(&id)
             .ok_or_else(|| GeopError::new(format!("coedge with id {} does not exist", id.0)))
     }
 
-    pub fn get_coedge_mut(&mut self, id: CoedgeId) -> GeopResult<&mut Coedge<S>> {
+    pub fn get_coedge_mut(&mut self, id: CoedgeId) -> GeopResult<&mut Coedge> {
         self.coedges
             .get_mut(&id)
             .ok_or_else(|| GeopError::new(format!("coedge with id {} does not exist", id.0)))
     }
 
-    pub fn get_face(&self, id: FaceId) -> GeopResult<&Face<S>> {
+    pub fn get_face(&self, id: FaceId) -> GeopResult<&Face> {
         self.faces
             .get(&id)
             .ok_or_else(|| GeopError::new(format!("face with id {} does not exist", id.0)))
     }
 
-    pub fn get_face_mut(&mut self, id: FaceId) -> GeopResult<&mut Face<S>> {
+    pub fn get_face_mut(&mut self, id: FaceId) -> GeopResult<&mut Face> {
         self.faces
             .get_mut(&id)
             .ok_or_else(|| GeopError::new(format!("face with id {} does not exist", id.0)))
@@ -106,7 +103,7 @@ impl<S: Scalar> Model<S> {
         }
     }
 
-    pub fn coedge_start_vertex(&self, coedge: CoedgeId) -> GeopResult<&Vertex<S>> {
+    pub fn coedge_start_vertex(&self, coedge: CoedgeId) -> GeopResult<&Vertex> {
         let vertex_id = self.coedge_start_vertex_id(coedge)?;
         self.get_vertex(vertex_id)
     }
@@ -125,7 +122,7 @@ impl<S: Scalar> Model<S> {
         }
     }
 
-    pub fn coedge_end_vertex(&self, coedge: CoedgeId) -> GeopResult<&Vertex<S>> {
+    pub fn coedge_end_vertex(&self, coedge: CoedgeId) -> GeopResult<&Vertex> {
         let vertex_id = self.coedge_end_vertex_id(coedge)?;
         self.get_vertex(vertex_id)
     }

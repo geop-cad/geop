@@ -12,12 +12,10 @@ use geop_core_program::{
     part::StepContext,
     reader::Reader,
     target::{Target, TargetReference},
-    values::Design,
 };
 
 use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
-    scalars::Scalar,
     with_context,
 };
 use geop_core_topology::validation::{ValidationParameters, validate_fast};
@@ -69,10 +67,10 @@ pub fn is_step_file(path: &str) -> bool {
 
 /// Adds the bodies `bodies` to `model`, named by `namer` as [`ImportStep`]
 /// names them, after checking they are well formed on their own.
-pub fn add_bodies<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn add_bodies(
+    model: &mut NamedModel,
     namer: &Namer,
-    bodies: &[ImportedBody<S>],
+    bodies: &[ImportedBody],
 ) -> GeopResult<()> {
     // Checked on their own first, named as the file names them: a body the
     // file describes badly is refused by name, before it is mixed into the
@@ -125,7 +123,7 @@ pub fn add_bodies<S: Scalar>(
 /// The bodies of a STEP file, as read: the value of an import's target
 /// [`imported`].
 #[derive(Clone, Debug, PartialEq)]
-pub struct Imported(pub Vec<ImportedBody<Design>>);
+pub struct Imported(pub Vec<ImportedBody>);
 
 /// Each import step's own.
 impl Target for Imported {}
@@ -159,7 +157,7 @@ pub fn read_imported<'a>(reader: &Reader<'a>, step: &str) -> GeopResult<&'a Impo
 fn read(reader: &Reader, (step, file): &(String, String)) -> GeopResult<Imported> {
     let ctx = with_context!("import_step({step}, file={file:?})");
     let (_, text) = reader.read_file(file).with_context(ctx)?;
-    let bodies = read_step::<Design>(&text).with_context(ctx)?;
+    let bodies = read_step(&text).with_context(ctx)?;
     if bodies.is_empty() {
         return Err(GeopError::new(format!("{file} has no solids or sheets"))).with_context(ctx);
     }
@@ -205,8 +203,8 @@ impl PartOperation for ImportStep {
         context: &'a Context<'a>,
         args: &ImportStepArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, ImportStepArgs> {
-        let mut f = EditForm::<Design, ImportStepArgs>::default();
+    ) -> EditForm<'a, ImportStepArgs> {
+        let mut f = EditForm::<ImportStepArgs>::default();
         let files = file_choices(context.runner, is_step_file, &args.file);
         f.file(
             "file",
@@ -243,7 +241,7 @@ impl PartOperation for ImportStep {
 impl ModelOperation for ImportStep {
     /// Adds the bodies the step read (see [`imported`]).
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         _: &ImportStepArgs,

@@ -34,14 +34,14 @@ const MAX_ALTERNATIONS: usize = 64;
 
 /// A face of a model, where `pose` puts it — or where it is, without one.
 #[derive(Clone)]
-pub struct PlacedFace<'m, S: Scalar> {
-    model: &'m Model<S>,
+pub struct PlacedFace<'m> {
+    model: &'m Model,
     face: FaceId,
-    pose: Option<Pose<S>>,
+    pose: Option<Pose>,
 }
 
-impl<'m, S: Scalar> PlacedFace<'m, S> {
-    pub fn new(model: &'m Model<S>, face: FaceId, pose: Option<Pose<S>>) -> GeopResult<Self> {
+impl<'m> PlacedFace<'m> {
+    pub fn new(model: &'m Model, face: FaceId, pose: Option<Pose>) -> GeopResult<Self> {
         model.get_face(face).with_context(&|e: GeopError| {
             e.with_context(format!("PlacedFace::new(face={face})"))
         })?;
@@ -50,7 +50,7 @@ impl<'m, S: Scalar> PlacedFace<'m, S> {
 
     /// Where `(u, v)` — a point, or a box of them — is against the face's
     /// trim.
-    fn classify(&self, u: S, v: S) -> GeopResult<PointClassification> {
+    fn classify(&self, u: Scalar, v: Scalar) -> GeopResult<PointClassification> {
         face_contains(
             self.model,
             self.face,
@@ -63,12 +63,12 @@ impl<'m, S: Scalar> PlacedFace<'m, S> {
     }
 
     /// `p` where the pose puts it.
-    fn place(&self, p: Vector3<S>) -> Vector3<S> {
+    fn place(&self, p: Vector3) -> Vector3 {
         place(&self.pose, p)
     }
 
     /// `p` in the face's own frame, where it is without the pose.
-    fn local(&self, p: &Vector3<S>) -> Vector3<S> {
+    fn local(&self, p: &Vector3) -> Vector3 {
         match &self.pose {
             Some(pose) => pose.inverse().apply(p),
             None => *p,
@@ -77,7 +77,7 @@ impl<'m, S: Scalar> PlacedFace<'m, S> {
 }
 
 /// `p` where `pose` puts it.
-fn place<S: Scalar>(pose: &Option<Pose<S>>, p: Vector3<S>) -> Vector3<S> {
+fn place(pose: &Option<Pose>, p: Vector3) -> Vector3 {
     match pose {
         Some(pose) => pose.apply(&p),
         None => p,
@@ -85,42 +85,42 @@ fn place<S: Scalar>(pose: &Option<Pose<S>>, p: Vector3<S>) -> Vector3<S> {
 }
 
 /// Something a distance is measured to.
-pub enum Feature<'m, S: Scalar> {
-    Point(Vector3<S>),
+pub enum Feature<'m> {
+    Point(Vector3),
     /// A curve, already where it is.
-    Curve(Curve3<S>),
-    Face(PlacedFace<'m, S>),
+    Curve(Curve3),
+    Face(PlacedFace<'m>),
 }
 
 /// The least distance between two features, and two points of them
 /// attaining as little as the search could tell apart from it.
 #[derive(Clone, Copy, Debug)]
-pub struct Closest<S: Scalar> {
+pub struct Closest {
     /// An enclosure of the least distance: from what the search proved no
     /// two points are nearer than, to the distance between `a` and `b`.
-    pub distance: S,
-    pub a: Vector3<S>,
-    pub b: Vector3<S>,
+    pub distance: Scalar,
+    pub a: Vector3,
+    pub b: Vector3,
 }
 
 /// Where on a feature a point of it is.
 #[derive(Clone, Copy, Debug)]
-enum Spot<S: Scalar> {
+enum Spot {
     Point,
     /// On a [`Feature::Curve`], at this parameter.
-    Curve(S),
+    Curve(Scalar),
     /// On an edge of a face, at this parameter of its curve.
-    Edge(EdgeId, S),
+    Edge(EdgeId, Scalar),
     /// On a face, at these parameters of its surface.
-    Face(S, S),
+    Face(Scalar, Scalar),
 }
 
-impl<S: Scalar> Feature<'_, S> {
+impl Feature<'_> {
     /// From `spot`, Newton's point of the feature nearest `target` around
     /// it — or `spot` itself where the step would leave the face — and
     /// where it is. Which point of the feature is a free choice; it stays
     /// one of its points.
-    fn refine(&self, spot: Spot<S>, target: &Vector3<S>) -> GeopResult<(Spot<S>, Vector3<S>)> {
+    fn refine(&self, spot: Spot, target: &Vector3) -> GeopResult<(Spot, Vector3)> {
         match (self, spot) {
             (Feature::Point(p), _) => Ok((Spot::Point, *p)),
             (Feature::Curve(curve), Spot::Curve(t)) => {
@@ -150,27 +150,27 @@ impl<S: Scalar> Feature<'_, S> {
 
 /// A piece of a [`Feature`], for [`least_distance`].
 #[derive(Clone)]
-enum FeaturePiece<'m, S: Scalar> {
-    Point(Vector3<S>),
+enum FeaturePiece<'m> {
+    Point(Vector3),
     /// A span of a curve — of `edge`, if it is a face's — where `pose`
     /// puts it.
     Curve {
-        span: CurveSpan<S>,
+        span: CurveSpan,
         edge: Option<EdgeId>,
-        pose: Option<Pose<S>>,
+        pose: Option<Pose>,
     },
     /// A patch of a face's surface; `inside` once it is known to lie
     /// inside the trim.
     Patch {
-        face: PlacedFace<'m, S>,
-        patch: SurfacePatch<S>,
+        face: PlacedFace<'m>,
+        patch: SurfacePatch,
         inside: bool,
     },
 }
 
-impl<'m, S: Scalar> FeaturePiece<'m, S> {
+impl<'m> FeaturePiece<'m> {
     /// The pieces `feature` starts as.
-    fn roots(feature: &Feature<'m, S>) -> GeopResult<Vec<Self>> {
+    fn roots(feature: &Feature<'m>) -> GeopResult<Vec<Self>> {
         Ok(match feature {
             Feature::Point(p) => vec![FeaturePiece::Point(*p)],
             Feature::Curve(curve) => vec![FeaturePiece::Curve {
@@ -198,11 +198,7 @@ impl<'m, S: Scalar> FeaturePiece<'m, S> {
 
     /// `patch` of `face`, unless the trim definitely leaves all of it out.
     /// A patch inside its parent is inside too.
-    fn patch(
-        face: &PlacedFace<'m, S>,
-        patch: SurfacePatch<S>,
-        inside: bool,
-    ) -> GeopResult<Option<Self>> {
+    fn patch(face: &PlacedFace<'m>, patch: SurfacePatch, inside: bool) -> GeopResult<Option<Self>> {
         let inside = inside || {
             let ((u0, u1), (v0, v1)) = (patch.0.domain_u(), patch.0.domain_v());
             match face.classify(u0.union(u1), v0.union(v1))? {
@@ -219,10 +215,10 @@ impl<'m, S: Scalar> FeaturePiece<'m, S> {
     }
 }
 
-impl<S: Scalar> Piece<S> for FeaturePiece<'_, S> {
-    type At = Spot<S>;
+impl Piece for FeaturePiece<'_> {
+    type At = Spot;
 
-    fn hull(&self) -> GeopResult<Vec<Vector3<S>>> {
+    fn hull(&self) -> GeopResult<Vec<Vector3>> {
         Ok(match self {
             FeaturePiece::Point(p) => vec![*p],
             FeaturePiece::Curve { span, pose, .. } => {
@@ -234,7 +230,7 @@ impl<S: Scalar> Piece<S> for FeaturePiece<'_, S> {
         })
     }
 
-    fn point(&self) -> GeopResult<Option<(Spot<S>, Vector3<S>)>> {
+    fn point(&self) -> GeopResult<Option<(Spot, Vector3)>> {
         Ok(match self {
             FeaturePiece::Point(p) => Some((Spot::Point, *p)),
             FeaturePiece::Curve { span, edge, pose } => span.point()?.map(|(t, p)| {
@@ -259,7 +255,7 @@ impl<S: Scalar> Piece<S> for FeaturePiece<'_, S> {
         })
     }
 
-    fn split(&self, handoff: S) -> GeopResult<Option<Vec<Self>>> {
+    fn split(&self, handoff: Scalar) -> GeopResult<Option<Vec<Self>>> {
         Ok(match self {
             FeaturePiece::Point(_) => None,
             FeaturePiece::Curve { span, edge, pose } => span.split(handoff)?.map(|halves| {
@@ -297,7 +293,7 @@ impl<S: Scalar> Piece<S> for FeaturePiece<'_, S> {
 /// only as sharply as the square root of that: the distance is flat where
 /// it is least. So the two points are then refined in turns, each by
 /// Newton towards the other, as long as that brings them nearer.
-pub fn closest_points<S: Scalar>(a: &Feature<S>, b: &Feature<S>) -> GeopResult<Closest<S>> {
+pub fn closest_points(a: &Feature, b: &Feature) -> GeopResult<Closest> {
     let nearest = least_distance(
         FeaturePiece::roots(a)?,
         FeaturePiece::roots(b)?,
@@ -306,7 +302,7 @@ pub fn closest_points<S: Scalar>(a: &Feature<S>, b: &Feature<S>) -> GeopResult<C
     )?;
     let ((mut sa, mut pa), (mut sb, mut pb)) = (nearest.a, nearest.b);
     // Which of two attained pairs to keep is a free choice.
-    let apart = |p: &Vector3<S>, q: &Vector3<S>| p.sub(q).norm_sq().to_f64();
+    let apart = |p: &Vector3, q: &Vector3| p.sub(q).norm_sq().to_f64();
     for _ in 0..MAX_ALTERNATIONS {
         let before = apart(&pa, &pb);
         let (nb, qb) = b.refine(sb, &pa)?;
@@ -330,17 +326,13 @@ pub fn closest_points<S: Scalar>(a: &Feature<S>, b: &Feature<S>) -> GeopResult<C
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::{
-        primitives::Pose,
-        scalars::{ScalInF64 as S, Scalar},
-        vector::Vector3,
-    };
+    use geop_core_math::{primitives::Pose, scalars::Scalar, vector::Vector3};
 
     use super::{Feature, PlacedFace, closest_points};
     use crate::{Model, test_fixtures::test_cube_solid};
 
-    fn v(x: f64, y: f64, z: f64) -> Vector3<S> {
-        Vector3::from_array([x, y, z].map(S::from_f64))
+    fn v(x: f64, y: f64, z: f64) -> Vector3 {
+        Vector3::from_array([x, y, z].map(Scalar::from_f64))
     }
 
     /// A point off the unit cube is nearest its face in front of it, a
@@ -348,9 +340,9 @@ mod tests {
     /// distance is the true one, attained by points on both.
     #[test]
     fn a_point_and_the_faces_of_a_cube() {
-        let mut model = Model::<S>::new();
+        let mut model = Model::new();
         test_cube_solid(&mut model);
-        let least = |target: Vector3<S>, pose: Option<Pose<S>>| {
+        let least = |target: Vector3, pose: Option<Pose>| {
             model
                 .faces
                 .keys()
@@ -362,16 +354,21 @@ mod tests {
                 .unwrap()
         };
         let front = least(v(2.0, 0.3, 0.6), None);
-        assert!(front.distance.could_be_equal(S::ONE), "{front:?}");
+        assert!(front.distance.could_be_equal(Scalar::ONE), "{front:?}");
         assert!(front.b.could_be_equal(&v(1.0, 0.3, 0.6)), "{front:?}");
         let corner = least(v(2.0, 2.0, 2.0), None);
         assert!(
-            corner.distance.could_be_equal(S::from_f64(3f64.sqrt())),
+            corner
+                .distance
+                .could_be_equal(Scalar::from_f64(3f64.sqrt())),
             "{corner:?}"
         );
         // The cube moved up by 5: the same point is now 4.4 below its bottom.
         let up = Pose::identity().with_position(v(0.0, 0.0, 5.0));
         let below = least(v(0.5, 0.5, 0.6), Some(up));
-        assert!(below.distance.could_be_equal(S::from_f64(4.4)), "{below:?}");
+        assert!(
+            below.distance.could_be_equal(Scalar::from_f64(4.4)),
+            "{below:?}"
+        );
     }
 }

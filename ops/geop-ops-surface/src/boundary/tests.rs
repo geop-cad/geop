@@ -3,7 +3,7 @@
 
 use geop_core_geometry::nurb_curve::NurbCurve;
 use geop_core_math::{
-    scalars::{Ring, ScalInF64 as S, Scalar},
+    scalars::Scalar,
     vector::{Vector3, Vector4},
 };
 use geop_core_topology::{Body, Curve3};
@@ -16,10 +16,10 @@ use super::*;
 use crate::test_refs::*;
 
 /// The name of the edge of `part` from `a` to `b`, either way.
-pub(crate) fn edge_between(part: &NamedModel<S>, a: [f64; 3], b: [f64; 3]) -> String {
+pub(crate) fn edge_between(part: &NamedModel, a: [f64; 3], b: [f64; 3]) -> String {
     let model = part.topology();
     let (a, b) = (v3(a[0], a[1], a[2]), v3(b[0], b[1], b[2]));
-    let at = |id, p: &Vector3<S>| model.get_vertex(id).unwrap().point.could_be_equal(p);
+    let at = |id, p: &Vector3| model.get_vertex(id).unwrap().point.could_be_equal(p);
     let found: Vec<_> = model
         .edges
         .iter()
@@ -33,11 +33,11 @@ pub(crate) fn edge_between(part: &NamedModel<S>, a: [f64; 3], b: [f64; 3]) -> St
     found.into_iter().next().unwrap()
 }
 
-fn unit_cube() -> NamedModel<S> {
+fn unit_cube() -> NamedModel {
     block_part("c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0])
 }
 
-fn span(part: NamedModel<S>, edges: &[String], tangent: &[String]) -> GeopResult<NamedModel<S>> {
+fn span(part: NamedModel, edges: &[String], tangent: &[String]) -> GeopResult<NamedModel> {
     let args = BoundarySurfaceArgs {
         edges: edges.iter().map(edge_curve).collect(),
         tangent: tangent.iter().map(named).collect(),
@@ -46,25 +46,25 @@ fn span(part: NamedModel<S>, edges: &[String], tangent: &[String]) -> GeopResult
 }
 
 /// Why `result` failed — it must have.
-pub(crate) fn refused(result: GeopResult<NamedModel<S>>) -> String {
+pub(crate) fn refused(result: GeopResult<NamedModel>) -> String {
     match result {
         Ok(_) => panic!("built, but should have been refused"),
         Err(e) => format!("{e}"),
     }
 }
 
-fn sheet_faces(part: &NamedModel<S>) -> usize {
+fn sheet_faces(part: &NamedModel) -> usize {
     part.sheet_face_names().len()
 }
 
-pub(crate) fn pt(x: f64, y: f64, z: f64, w: f64) -> Vector4<S> {
-    Vector4::from_array([x * w, y * w, z * w, w].map(S::from_f64))
+pub(crate) fn pt(x: f64, y: f64, z: f64, w: f64) -> Vector4 {
+    Vector4::from_array([x * w, y * w, z * w, w].map(Scalar::from_f64))
 }
 
 /// A sheet of one face, the Coons patch of `sides`, its entities named
 /// `name(...)`.
-pub(crate) fn coons_sheet(part: &mut NamedModel<S>, name: &str, sides: [Curve3<S>; 4]) {
-    let corners: Vec<Vector3<S>> = sides
+pub(crate) fn coons_sheet(part: &mut NamedModel, name: &str, sides: [Curve3; 4]) {
+    let corners: Vec<Vector3> = sides
         .iter()
         .map(|c| c.evaluate(c.domain().0).unwrap())
         .collect();
@@ -99,14 +99,14 @@ pub(crate) fn coons_sheet(part: &mut NamedModel<S>, name: &str, sides: [Curve3<S
     part.build_body(spec, names).unwrap();
 }
 
-pub(crate) fn line(a: [f64; 3], b: [f64; 3]) -> Curve3<S> {
+pub(crate) fn line(a: [f64; 3], b: [f64; 3]) -> Curve3 {
     NurbCurve3D::line(v3(a[0], a[1], a[2]), v3(b[0], b[1], b[2])).unwrap()
 }
 
 /// The quarter circle in the plane `x = x0` from `(x0, 0, 0)` round the
 /// center `(x0, 0, 1)` to `(x0, 1, 1)`: it rises from the plane `z = 0`,
 /// leaving it along `y`.
-pub(crate) fn rising_arc(x0: f64) -> Curve3<S> {
+pub(crate) fn rising_arc(x0: f64) -> Curve3 {
     NurbCurve::try_new(
         2,
         vec![
@@ -114,13 +114,13 @@ pub(crate) fn rising_arc(x0: f64) -> Curve3<S> {
             pt(x0, 1., 0., std::f64::consts::SQRT_2 / 2.0),
             pt(x0, 1., 1., 1.),
         ],
-        [0., 0., 0., 1., 1., 1.].map(S::from_f64).to_vec(),
+        [0., 0., 0., 1., 1., 1.].map(Scalar::from_f64).to_vec(),
     )
     .unwrap()
 }
 
 /// A cubic from `(1, 1, 1)` to `(0, 1, 1)` bending up and down.
-pub(crate) fn wavy_top() -> Curve3<S> {
+pub(crate) fn wavy_top() -> Curve3 {
     NurbCurve::try_new(
         3,
         vec![
@@ -131,7 +131,7 @@ pub(crate) fn wavy_top() -> Curve3<S> {
             pt(1., 1., 1., 1.),
         ],
         [0., 0., 0., 0., 0.5, 1., 1., 1., 1.]
-            .map(S::from_f64)
+            .map(Scalar::from_f64)
             .to_vec(),
     )
     .unwrap()
@@ -211,7 +211,7 @@ fn hexagon_round_a_cube_is_six_quadrilaterals() {
 /// along each of them.
 #[test]
 fn coons_patch_of_a_twisted_loop() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     coons_sheet(
         &mut part,
         "twist",
@@ -232,13 +232,13 @@ fn coons_patch_of_a_twisted_loop() {
         let e = part.edge_id(&format!("boundary(b,twist(e{k}))")).unwrap();
         let curve = &part.topology().get_edge(e).unwrap().curve;
         for i in 0..=4 {
-            let t = S::from_ratio(i, 4).unwrap();
+            let t = Scalar::from_ratio(i, 4).unwrap();
             let p = curve.evaluate(t).unwrap();
             let (u, v) = match k {
-                0 => (t, S::ZERO),
-                1 => (S::ONE, t),
-                2 => (S::ONE.sub(t), S::ONE),
-                _ => (S::ZERO, S::ONE.sub(t)),
+                0 => (t, Scalar::ZERO),
+                1 => (Scalar::ONE, t),
+                2 => (Scalar::ONE.sub(t), Scalar::ONE),
+                _ => (Scalar::ZERO, Scalar::ONE.sub(t)),
             };
             assert!(face.surface.evaluate(u, v).unwrap().could_be_equal(&p));
         }
@@ -250,7 +250,7 @@ fn coons_patch_of_a_twisted_loop() {
 /// tangent to the flange along its edge — its normal there the flange's.
 #[test]
 fn cover_tangent_to_a_flange() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     coons_sheet(
         &mut part,
         "flange",
@@ -283,11 +283,11 @@ fn cover_tangent_to_a_flange() {
     let face = tangent.face_id("boundary(b)").unwrap();
     let face = tangent.topology().get_face(face).unwrap();
     let up = v3(0., 0., 1.);
-    let along_lip = |surface: &NurbSurface3D<S>| {
+    let along_lip = |surface: &NurbSurface3D| {
         (0..=8).all(|i| {
-            let u = S::from_ratio(i, 8).unwrap();
-            let n = surface.normal(u, S::ZERO).unwrap();
-            n.prod_cross(&up).norm_sq().could_be_equal(S::ZERO)
+            let u = Scalar::from_ratio(i, 8).unwrap();
+            let n = surface.normal(u, Scalar::ZERO).unwrap();
+            n.prod_cross(&up).norm_sq().could_be_equal(Scalar::ZERO)
         })
     };
     assert!(along_lip(&face.surface));
@@ -318,13 +318,13 @@ fn open_chain_is_refused() {
 /// The circle round a cylinder's end: one flat disc.
 #[test]
 fn circle_is_filled_flat() {
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     geop_lib_sweep::shapes::revolved_cylinder(
         &mut part,
         "cyl",
         v3(0., 0., 0.),
-        S::from_f64(1.0),
-        S::from_f64(2.0),
+        Scalar::from_f64(1.0),
+        Scalar::from_f64(2.0),
     )
     .unwrap();
     let rims: Vec<String> = part
@@ -334,7 +334,7 @@ fn circle_is_filled_flat() {
         .filter(|(_, e)| e.curve.as_arc().unwrap().is_some())
         .filter(|(_, e)| {
             let p = part.topology().get_vertex(e.start_vertex).unwrap().point;
-            p[2].could_be_equal(S::from_f64(2.0))
+            p[2].could_be_equal(Scalar::from_f64(2.0))
         })
         .map(|(&id, _)| part.name_of(id).unwrap().to_string())
         .collect();
@@ -351,13 +351,13 @@ fn circle_is_filled_flat() {
 /// from the corner `P_k` of an `n`-gon of radius one to `P_{k+1}`, its
 /// corners rising alternately by `lift`, and out to half as far again. The
 /// strips' inner edges, `strip{k}(e0)`, ring the hole.
-fn ring_of_strips(n: usize, lift: f64) -> NamedModel<S> {
+fn ring_of_strips(n: usize, lift: f64) -> NamedModel {
     let corner = |k: usize, r: f64| {
         let a = std::f64::consts::TAU * (k % n) as f64 / n as f64;
         let z = if k % n % 2 == 1 { lift } else { 0.0 };
         [r * a.cos(), r * a.sin(), z]
     };
-    let mut part = NamedModel::<S>::new();
+    let mut part = NamedModel::new();
     for k in 0..n {
         let (p, q) = (corner(k, 1.0), corner(k + 1, 1.0));
         let (pp, qq) = (corner(k, 1.5), corner(k + 1, 1.5));

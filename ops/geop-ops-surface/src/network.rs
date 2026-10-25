@@ -40,7 +40,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult},
     scalars::Scalar,
 };
-use geop_core_program::{part::StepContext, reader::Reader, values::Design};
+use geop_core_program::{part::StepContext, reader::Reader};
 use geop_core_topology::{
     Sense,
     build::{BodySpec, CoedgeOn, EdgeSpec, FaceSpec},
@@ -101,9 +101,9 @@ impl PartOperation for NetworkSurface {
         context: &'a Context<'a>,
         args: &NetworkSurfaceArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, NetworkSurfaceArgs> {
+    ) -> EditForm<'a, NetworkSurfaceArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, NetworkSurfaceArgs>::default();
+        let mut f = EditForm::<NetworkSurfaceArgs>::default();
         f.pick(
             "u_curves",
             "u curves",
@@ -126,7 +126,7 @@ impl PartOperation for NetworkSurface {
 
 impl ModelOperation for NetworkSurface {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &NetworkSurfaceArgs,
@@ -147,17 +147,17 @@ impl ModelOperation for NetworkSurface {
 /// A curve of the network, as picked: its name, where it runs, and the
 /// names of its ends.
 #[derive(Clone, Debug)]
-struct Strand<S: Scalar> {
+struct Strand {
     /// `u curve X` or `v curve X`, as errors name it.
     label: String,
     name: String,
-    curve: NurbCurve3D<S>,
+    curve: NurbCurve3D,
     start: String,
     end: String,
 }
 
-impl<S: Scalar> Strand<S> {
-    fn of(chain: &Chain<NurbCurve3D<S>>, direction: &str) -> GeopResult<Self> {
+impl Strand {
+    fn of(chain: &Chain<NurbCurve3D>, direction: &str) -> GeopResult<Self> {
         let named = NamedCurve::of(chain)?;
         let label = format!("{direction} curve {}", named.name);
         if named.start.0 == named.end.0 {
@@ -176,7 +176,7 @@ impl<S: Scalar> Strand<S> {
 
     /// The same curve run the other way, and where a parameter of it is
     /// then.
-    fn turned(&self) -> (Self, impl Fn(S) -> S) {
+    fn turned(&self) -> (Self, impl Fn(Scalar) -> Scalar) {
         let (t0, t1) = self.curve.domain();
         let turned = Self {
             curve: self.curve.reverse(),
@@ -184,19 +184,19 @@ impl<S: Scalar> Strand<S> {
             end: self.start.clone(),
             ..self.clone()
         };
-        (turned, move |t: S| t0.add(t1).sub(t))
+        (turned, move |t: Scalar| t0.add(t1).sub(t))
     }
 }
 
 /// Where `a` crosses `b`: their parameters there. At an end the two share,
 /// that end; otherwise the one crossing the intersection search finds,
 /// refined — an error naming both if there is none, or more than one.
-fn crossing<S: Scalar>(a: &Strand<S>, b: &Strand<S>) -> GeopResult<(S, S)> {
-    let ends = |s: &Strand<S>| {
+fn crossing(a: &Strand, b: &Strand) -> GeopResult<(Scalar, Scalar)> {
+    let ends = |s: &Strand| {
         let (t0, t1) = s.curve.domain();
         [(s.start.clone(), t0), (s.end.clone(), t1)]
     };
-    let shared: Vec<(S, S)> = ends(a)
+    let shared: Vec<(Scalar, Scalar)> = ends(a)
         .into_iter()
         .flat_map(|(na, ta)| {
             ends(b)
@@ -241,28 +241,28 @@ fn crossing<S: Scalar>(a: &Strand<S>, b: &Strand<S>) -> GeopResult<(S, S)> {
 
 /// The order `strands` go in along a curve they all cross at `params`: by
 /// where they cross it. Which way round is a free choice.
-fn order<S: Scalar>(params: &[S]) -> Vec<usize> {
+fn order(params: &[Scalar]) -> Vec<usize> {
     let mut order: Vec<usize> = (0..params.len()).collect();
     order.sort_by(|&i, &j| params[i].to_f64().total_cmp(&params[j].to_f64()));
     order
 }
 
 /// Strands, and where each crosses the curves of the other direction.
-type Aligned<S> = (Vec<Strand<S>>, Vec<Vec<S>>);
+type Aligned = (Vec<Strand>, Vec<Vec<Scalar>>);
 
 /// `strands`, each crossing the curves of the other direction at
 /// `params[k]` in the order `across`, turned where those run backwards, and
 /// the crossings in that order — or an error naming a strand along which
 /// they do not run in that order, either way.
-fn aligned<S: Scalar>(
-    strands: Vec<Strand<S>>,
-    params: Vec<Vec<S>>,
+fn aligned(
+    strands: Vec<Strand>,
+    params: Vec<Vec<Scalar>>,
     across: &[usize],
     first: &str,
-) -> GeopResult<Aligned<S>> {
+) -> GeopResult<Aligned> {
     let mut out = (Vec::new(), Vec::new());
     for (strand, params) in strands.into_iter().zip(params) {
-        let along: Vec<S> = across.iter().map(|&i| params[i]).collect();
+        let along: Vec<Scalar> = across.iter().map(|&i| params[i]).collect();
         let rising = along.windows(2).all(|w| w[0].definitely_less(w[1]));
         let falling = along.windows(2).all(|w| w[0].definitely_greater(w[1]));
         let (strand, along) = if rising {
@@ -285,11 +285,11 @@ fn aligned<S: Scalar>(
 /// The sheet spanned through the network of `u_curves` and `v_curves`
 /// (see the module docs), each a curve picked: what to build, named after
 /// `namer`, as [`NetworkSurface`] says.
-pub fn network_surface<S: Scalar>(
+pub fn network_surface(
     namer: &Namer,
-    u_curves: &[Chain<NurbCurve3D<S>>],
-    v_curves: &[Chain<NurbCurve3D<S>>],
-) -> GeopResult<SheetSpec<S>> {
+    u_curves: &[Chain<NurbCurve3D>],
+    v_curves: &[Chain<NurbCurve3D>],
+) -> GeopResult<SheetSpec> {
     if u_curves.len() < 2 || v_curves.len() < 2 {
         return Err(GeopError::new(format!(
             "a network surface needs two curves at least in each direction, not {} u curves and {} v curves",
@@ -335,19 +335,20 @@ pub fn network_surface<S: Scalar>(
     let (u_label, v_label) = (u[0].label.clone(), v[0].label.clone());
     let (u, on_u) = aligned(u, on_u, &v_order, &u_label)?;
     let (v, on_v) = aligned(v, on_v, &u_order, &v_label)?;
-    let pick = |items: &[Strand<S>], params: &[Vec<S>], order: &[usize]| {
+    let pick = |items: &[Strand], params: &[Vec<Scalar>], order: &[usize]| {
         order
             .iter()
             .map(|&k| (items[k].clone(), params[k].clone()))
             .unzip::<_, _, Vec<_>, Vec<_>>()
     };
-    let (u, on_u): (Vec<Strand<S>>, Vec<Vec<S>>) = pick(&u, &on_u, &u_order);
-    let (v, on_v): (Vec<Strand<S>>, Vec<Vec<S>>) = pick(&v, &on_v, &v_order);
+    let (u, on_u): (Vec<Strand>, Vec<Vec<Scalar>>) = pick(&u, &on_u, &u_order);
+    let (v, on_v): (Vec<Strand>, Vec<Vec<Scalar>>) = pick(&v, &on_v, &v_order);
 
     // Within the network, curves of one direction must not meet: two that
     // cross each other between the curves they both cross make no grid,
     // whichever way round they are taken.
-    let cut = |s: &Strand<S>, params: &[S]| s.curve.sub_curve(params[0], params[params.len() - 1]);
+    let cut =
+        |s: &Strand, params: &[Scalar]| s.curve.sub_curve(params[0], params[params.len() - 1]);
     for (strands, params) in [(&u, &on_u), (&v, &on_v)] {
         let pieces = strands
             .iter()
@@ -373,7 +374,7 @@ pub fn network_surface<S: Scalar>(
         }
     }
 
-    let curves = |s: &[Strand<S>]| s.iter().map(|s| s.curve.clone()).collect::<Vec<_>>();
+    let curves = |s: &[Strand]| s.iter().map(|s| s.curve.clone()).collect::<Vec<_>>();
     let surface = NurbSurface3D::gordon(&curves(&u), &curves(&v), &on_u, &on_v)?;
 
     // Corners `(u, v)` counter-clockwise from `(0, 0)`, as `(j, i)`: where

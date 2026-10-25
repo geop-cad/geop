@@ -31,30 +31,30 @@ use geop_core_math::{
 /// Control points are stored row-major: `control_points[i * num_v + j]` is the
 /// point at u-index `i` (0 ≤ i < `num_u`) and v-index `j` (0 ≤ j < `num_v`).
 #[derive(Clone, Debug, PartialEq)]
-pub struct NurbSurface<S: Scalar, const D: usize> {
+pub struct NurbSurface<const D: usize> {
     pub degree_u: usize,
     pub degree_v: usize,
     pub num_u: usize,
     pub num_v: usize,
-    pub control_points: Vec<Vector<S, D>>,
-    pub knot_vector_u: Vec<S>,
-    pub knot_vector_v: Vec<S>,
+    pub control_points: Vec<Vector<D>>,
+    pub knot_vector_u: Vec<Scalar>,
+    pub knot_vector_v: Vec<Scalar>,
     /// Cached axis-aligned bounding box of the (dehomogenized) control
     /// points — see [`crate::aabb::compute_aabb`] and `NurbCurve`'s own
     /// `aabb` field doc comment.
-    pub(crate) aabb: [S; 3],
+    pub(crate) aabb: [Scalar; 3],
 }
 
 /// 3-D NURBS surface (homogeneous control points in ℝ⁴).
-pub type NurbSurface3D<S> = NurbSurface<S, 4>;
+pub type NurbSurface3D = NurbSurface<4>;
 
-impl<S: Scalar, const D: usize> NurbSurface<S, D> {
+impl<const D: usize> NurbSurface<D> {
     pub fn try_new(
         degree_u: usize,
         degree_v: usize,
-        control_points: Vec<Vector<S, D>>,
-        knot_vector_u: Vec<S>,
-        knot_vector_v: Vec<S>,
+        control_points: Vec<Vector<D>>,
+        knot_vector_u: Vec<Scalar>,
+        knot_vector_v: Vec<Scalar>,
     ) -> GeopResult<Self> {
         let len_u = knot_vector_u.len();
         let len_v = knot_vector_v.len();
@@ -86,7 +86,7 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
         // See `NurbCurve::try_new`'s identical check: every weight must be
         // definitely positive, so `W(u, v) > 0` on the whole domain.
         for p in &control_points {
-            if !p[D - 1].definitely_greater(S::ZERO) {
+            if !p[D - 1].definitely_greater(Scalar::ZERO) {
                 return Err(GeopError::new(format!(
                     "NurbSurface::try_new: control point {p:?} has a weight that is not definitely positive"
                 )));
@@ -116,7 +116,7 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
 
     /// The box around the control points, and so around the patch (see
     /// [`crate::nurb_curve::NurbCurve::aabb`]).
-    pub fn aabb(&self) -> &[S; 3] {
+    pub fn aabb(&self) -> &[Scalar; 3] {
         &self.aabb
     }
 
@@ -130,16 +130,18 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
     /// The diagonal of the box around the control points: by the convex
     /// hull property, a length the whole patch fits within — the size of
     /// the feature it is part of, for choices that should scale with it.
-    pub fn size(&self) -> GeopResult<S> {
+    pub fn size(&self) -> GeopResult<Scalar> {
         self.aabb
             .iter()
             .take(D - 1)
-            .fold(S::ZERO, |sum, axis| sum.add(axis.width().mul(axis.width())))
+            .fold(Scalar::ZERO, |sum, axis| {
+                sum.add(axis.width().mul(axis.width()))
+            })
             .sqrt()
     }
 
     /// Valid parameter range in the u direction: `(u_min, u_max)`.
-    pub fn domain_u(&self) -> (S, S) {
+    pub fn domain_u(&self) -> (Scalar, Scalar) {
         (
             self.knot_vector_u[self.degree_u],
             self.knot_vector_u[self.num_u],
@@ -147,7 +149,7 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
     }
 
     /// Valid parameter range in the v direction: `(v_min, v_max)`.
-    pub fn domain_v(&self) -> (S, S) {
+    pub fn domain_v(&self) -> (Scalar, Scalar) {
         (
             self.knot_vector_v[self.degree_v],
             self.knot_vector_v[self.num_v],
@@ -156,12 +158,12 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
 
     /// Where the surface stops being one polynomial piece along `u`: the
     /// ends of its domain and every distinct knot between them.
-    pub fn breakpoints_u(&self) -> Vec<S> {
+    pub fn breakpoints_u(&self) -> Vec<Scalar> {
         crate::spline::breakpoints(&self.knot_vector_u, self.degree_u, self.num_u)
     }
 
     /// Like [`Self::breakpoints_u`], along `v`.
-    pub fn breakpoints_v(&self) -> Vec<S> {
+    pub fn breakpoints_v(&self) -> Vec<Scalar> {
         crate::spline::breakpoints(&self.knot_vector_v, self.degree_v, self.num_v)
     }
 
@@ -196,7 +198,7 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
     /// The control row at index `k` along `u` (`u_fixed`: the points
     /// `P[k][·]`, running along `v`), or else the column `P[·][k]` along
     /// `u`.
-    pub(crate) fn control_row(&self, u_fixed: bool, k: usize) -> Vec<Vector<S, D>> {
+    pub(crate) fn control_row(&self, u_fixed: bool, k: usize) -> Vec<Vector<D>> {
         let nv = self.num_v;
         if u_fixed {
             self.control_points[k * nv..(k + 1) * nv].to_vec()
@@ -229,24 +231,24 @@ impl<S: Scalar, const D: usize> NurbSurface<S, D> {
     /// coordinate, so it `could_be_equal`s any point — a placeholder for
     /// geometry that is not yet known.
     pub fn everything() -> Self {
-        let mut cp = Vector::<S, D>::everything();
-        cp[D - 1] = S::ONE;
+        let mut cp = Vector::<D>::everything();
+        cp[D - 1] = Scalar::ONE;
         NurbSurface {
             degree_u: 0,
             degree_v: 0,
             num_u: 1,
             num_v: 1,
             control_points: vec![cp],
-            knot_vector_u: vec![S::ENTIRE, S::ENTIRE],
-            knot_vector_v: vec![S::ENTIRE, S::ENTIRE],
+            knot_vector_u: vec![Scalar::ENTIRE, Scalar::ENTIRE],
+            knot_vector_v: vec![Scalar::ENTIRE, Scalar::ENTIRE],
             // Matches-anything, same as every other coordinate of this
             // placeholder — no bounding box has been established yet.
-            aabb: [S::ENTIRE; 3],
+            aabb: [Scalar::ENTIRE; 3],
         }
     }
 }
 
-impl<S: Scalar> Display for NurbSurface3D<S> {
+impl Display for NurbSurface3D {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let p00 = self
             .evaluate(self.knot_vector_u[0], self.knot_vector_v[0])
@@ -279,15 +281,15 @@ impl<S: Scalar> Display for NurbSurface3D<S> {
 #[cfg(test)]
 mod tests {
     use super::NurbSurface;
-    use geop_core_math::for_all_scalars;
     use geop_core_math::{scalars::Scalar, vector::Vector4};
 
     /// Weights must be definitely positive: zero and negative are rejected.
-    fn check_non_positive_weight_is_rejected<S: Scalar>() {
-        let f = S::from_f64;
+    #[test]
+    fn non_positive_weight_is_rejected() {
+        let f = Scalar::from_f64;
         let pt = |x, y, w| Vector4::from_array([f(x), f(y), f(0.), f(w)]);
         for w in [0., -1.] {
-            let result = NurbSurface::<S, 4>::try_new(
+            let result = NurbSurface::<4>::try_new(
                 1,
                 1,
                 vec![
@@ -301,9 +303,5 @@ mod tests {
             );
             assert!(result.is_err(), "weight {w} accepted");
         }
-    }
-    #[test]
-    fn non_positive_weight_is_rejected() {
-        for_all_scalars!(check_non_positive_weight_is_rejected);
     }
 }

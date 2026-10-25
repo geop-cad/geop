@@ -64,7 +64,7 @@ pub struct Offsetted {
 }
 
 /// A piece of a chain, along the chain's direction, in plain numbers.
-fn oriented<S: Scalar>(sketch: &Sketch<S>, curve: CurveId, reversed: bool) -> GeopResult<Plain> {
+fn oriented(sketch: &Sketch, curve: CurveId, reversed: bool) -> GeopResult<Plain> {
     let plain = match sketch.curve(curve)?.kind {
         CurveKind::Line { start, end } => {
             let (a, b) = (xy(sketch, start), xy(sketch, end));
@@ -153,7 +153,7 @@ fn unwrapped(plain: &Plain, q: P2, from_start: bool) -> f64 {
     }
 }
 
-impl<S: Scalar> Sketch<S> {
+impl Sketch {
     /// How far `p` is from the chain `chain`: positive to its left.
     pub fn chain_side(&self, chain: &Chain, p: P2) -> GeopResult<f64> {
         let mut best: Option<(f64, f64)> = None;
@@ -177,7 +177,7 @@ impl<S: Scalar> Sketch<S> {
     pub fn offset(
         &mut self,
         curves: &[CurveId],
-        distance: S,
+        distance: Scalar,
         corners: Corners,
     ) -> GeopResult<Offsetted> {
         let chain = self.chain(curves)?;
@@ -202,7 +202,7 @@ impl<S: Scalar> Sketch<S> {
             if r <= 0.0 {
                 return Err(too_far(c));
             }
-            let circle = self.add_circle(center, S::from_f64(r));
+            let circle = self.add_circle(center, Scalar::from_f64(r));
             let distance = self.constrain(Constraint::Offset {
                 a: c,
                 b: circle,
@@ -439,7 +439,11 @@ impl<S: Scalar> Sketch<S> {
                         span: Some((_, sweep)),
                         ..
                     },
-                ) => self.add_arc(s, e, S::from_f64(if reversed { -sweep } else { sweep })),
+                ) => self.add_arc(
+                    s,
+                    e,
+                    Scalar::from_f64(if reversed { -sweep } else { sweep }),
+                ),
                 (kind, _) => unreachable!("chained and trimmed as a line or arc: {kind:?}"),
             };
             made.push(curve);
@@ -490,7 +494,7 @@ impl<S: Scalar> Sketch<S> {
                     self.constrain(Constraint::Tangent { a: oj, b: circle });
                 }
                 Joint::Round { sweep, .. } => {
-                    let arc = self.add_arc(ends[i], starts[j], S::from_f64(sweep));
+                    let arc = self.add_arc(ends[i], starts[j], Scalar::from_f64(sweep));
                     made.push(arc);
                     self.constrain(Constraint::Center {
                         point: corner,
@@ -553,18 +557,15 @@ impl<S: Scalar> Sketch<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geop_core_math::scalars::ScalInF64;
     use std::f64::consts::PI;
 
-    type T = ScalInF64;
-
-    fn n(x: f64) -> T {
-        T::from_f64(x)
+    fn n(x: f64) -> Scalar {
+        Scalar::from_f64(x)
     }
 
     /// A `w` x `h` rectangle at the origin, counter-clockwise, fully
     /// constrained; its lines, and the dimension of its width.
-    fn rectangle(s: &mut Sketch<T>, w: f64, h: f64) -> (Vec<CurveId>, ConstraintId) {
+    fn rectangle(s: &mut Sketch, w: f64, h: f64) -> (Vec<CurveId>, ConstraintId) {
         let p = [[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]].map(|q| s.add_point(n(q[0]), n(q[1])));
         let l: Vec<CurveId> = (0..4).map(|i| s.add_line(p[i], p[(i + 1) % 4])).collect();
         s.constrain(Constraint::Fix {
@@ -588,7 +589,7 @@ mod tests {
     }
 
     /// The bounding box of the points of `curves`, as solved.
-    fn bounds(s: &Sketch<T>, curves: &[CurveId]) -> [f64; 4] {
+    fn bounds(s: &Sketch, curves: &[CurveId]) -> [f64; 4] {
         let points = curves.iter().flat_map(|c| s.curves[c].points());
         let (lo, hi) = plain::bounds(points.map(|p| xy(s, p))).unwrap();
         [lo[0], lo[1], hi[0], hi[1]]
@@ -598,7 +599,7 @@ mod tests {
         a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 1e-7)
     }
 
-    fn set(s: &mut Sketch<T>, k: ConstraintId, v: f64) {
+    fn set(s: &mut Sketch, k: ConstraintId, v: f64) {
         match s.constraints.get_mut(&k) {
             Some(Constraint::Offset { value, .. } | Constraint::Length { value, .. }) => {
                 *value = n(v)
@@ -607,7 +608,7 @@ mod tests {
         }
     }
 
-    fn lines(s: &Sketch<T>, curves: &[CurveId]) -> Vec<CurveId> {
+    fn lines(s: &Sketch, curves: &[CurveId]) -> Vec<CurveId> {
         curves
             .iter()
             .copied()
@@ -620,7 +621,7 @@ mod tests {
     /// the rectangle and the distance both drive.
     #[test]
     fn a_rectangle_offset_outwards_rounds_its_corners() {
-        let mut s = Sketch::<T>::new();
+        let mut s = Sketch::new();
         let (rect, width) = rectangle(&mut s, 2.0, 1.0);
         // The rectangle runs counter-clockwise: outwards is to its right.
         let made = s.offset(&rect, n(-0.25), Corners::Round).unwrap();
@@ -644,7 +645,7 @@ mod tests {
             "{:?}",
             bounds(&s, &sides)
         );
-        s.enclose::<T>().unwrap();
+        s.enclose().unwrap();
     }
 
     /// Inwards, the offsets meet at the corners, held at one distance by
@@ -665,7 +666,7 @@ mod tests {
                 [-0.125, -0.125, 2.125, 1.125],
             ),
         ] {
-            let mut s = Sketch::<T>::new();
+            let mut s = Sketch::new();
             let (rect, _) = rectangle(&mut s, 2.0, 1.0);
             let made = s.offset(&rect, n(d), corners).unwrap();
             assert_eq!(made.curves.len(), 4);
@@ -686,14 +687,14 @@ mod tests {
             );
             // The rectangle and its offset nest: one ring between them.
             assert_eq!(s.regions().unwrap().len(), 1);
-            s.enclose::<T>().unwrap();
+            s.enclose().unwrap();
         }
     }
 
     /// A slot runs on smoothly all round: its offset is a slot about it.
     #[test]
     fn a_slot_offsets_into_a_slot() {
-        let mut s = Sketch::<T>::new();
+        let mut s = Sketch::new();
         let p =
             [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]].map(|q| s.add_point(n(q[0]), n(q[1])));
         let bottom = s.add_line(p[0], p[1]);
@@ -730,13 +731,13 @@ mod tests {
             "{:?}",
             bounds(&s, &made.curves)
         );
-        s.enclose::<T>().unwrap();
+        s.enclose().unwrap();
     }
 
     /// An open chain's offset ends square to it.
     #[test]
     fn open_chains_end_square() {
-        let mut s = Sketch::<T>::new();
+        let mut s = Sketch::new();
         let p = [[0.0, 0.0], [2.0, 0.0], [3.0, 1.0]].map(|q| s.add_point(n(q[0]), n(q[1])));
         let a = s.add_line(p[0], p[1]);
         let b = s.add_arc(p[1], p[2], n(PI / 2.0));
@@ -757,13 +758,13 @@ mod tests {
             "{:?}",
             bounds(&s, &made.curves)
         );
-        s.enclose::<T>().unwrap();
+        s.enclose().unwrap();
     }
 
     /// A circle offsets into one about the same center.
     #[test]
     fn circles_offset_about_their_center() {
-        let mut s = Sketch::<T>::new();
+        let mut s = Sketch::new();
         let c = s.add_point(n(1.0), n(1.0));
         let circle = s.add_circle(c, n(1.0));
         let made = s.offset(&[circle], n(-0.5), Corners::Round).unwrap();
@@ -777,7 +778,7 @@ mod tests {
     /// What would cross itself is refused, naming what does.
     #[test]
     fn offsets_that_would_cross_themselves_are_refused() {
-        let mut s = Sketch::<T>::new();
+        let mut s = Sketch::new();
         let (rect, _) = rectangle(&mut s, 2.0, 1.0);
         let e = s.offset(&rect, n(0.6), Corners::Round).unwrap_err();
         assert!(e.root_message().contains("too short"), "{e}");
@@ -798,7 +799,7 @@ mod tests {
     /// The chain through a curve runs on as long as it does not branch.
     #[test]
     fn chains_through_a_curve() {
-        let mut s = Sketch::<T>::new();
+        let mut s = Sketch::new();
         let (rect, _) = rectangle(&mut s, 2.0, 1.0);
         let mut chain = s.chain_through(rect[2]).unwrap();
         chain.sort();
@@ -815,7 +816,7 @@ mod tests {
     /// meet where they part.
     #[test]
     fn lines_in_line_offset_straight_on() {
-        let mut s = Sketch::<T>::new();
+        let mut s = Sketch::new();
         let p = [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]].map(|q| s.add_point(n(q[0]), n(q[1])));
         let a = s.add_line(p[0], p[1]);
         let b = s.add_line(p[1], p[2]);
@@ -838,14 +839,14 @@ mod tests {
                     "{:?}",
                     bounds(&s, &made.curves)
                 );
-                s.enclose::<T>().unwrap();
+                s.enclose().unwrap();
             }
         }
     }
 
     /// A rounded rectangle — a `w` x `h` one, its corners filleted by `r` —
     /// fully constrained, counter-clockwise: its curves.
-    fn rounded(s: &mut Sketch<T>, w: f64, h: f64, r: f64) -> Vec<CurveId> {
+    fn rounded(s: &mut Sketch, w: f64, h: f64, r: f64) -> Vec<CurveId> {
         let q = |x: f64, y: f64| [x, y];
         let corners = [
             (q(r, 0.0), q(w - r, 0.0)),
@@ -899,7 +900,7 @@ mod tests {
             for d in [0.1, 0.2, -0.1, -0.3] {
                 for corners in [Corners::Round, Corners::Extend] {
                     for shape in ["rectangle", "rounded"] {
-                        let mut s = Sketch::<T>::new();
+                        let mut s = Sketch::new();
                         let curves = match shape {
                             "rectangle" => rectangle(&mut s, w, h).0,
                             _ => rounded(&mut s, w, h, 0.2),
@@ -912,7 +913,7 @@ mod tests {
                         let report = s.solve().unwrap();
                         if !report.converged || report.dof != 0 {
                             failures.push(format!("{case}: {report:?}"));
-                        } else if let Err(e) = s.enclose::<T>() {
+                        } else if let Err(e) = s.enclose() {
                             failures.push(format!("{case}: {}", e.root_message()));
                         }
                     }
@@ -934,7 +935,7 @@ mod tests {
         let mut failures = Vec::new();
         for d in [0.15, -0.15, 0.4] {
             for corners_as in [Corners::Round, Corners::Extend] {
-                let mut s = Sketch::<T>::new();
+                let mut s = Sketch::new();
                 let p = corners.map(|q| s.add_point(n(q[0]), n(q[1])));
                 let sides: Vec<CurveId> =
                     (0..5).map(|i| s.add_line(p[i], p[(i + 1) % 5])).collect();
@@ -953,7 +954,7 @@ mod tests {
                 let report = s.solve().unwrap();
                 if !report.converged || report.dof != 0 {
                     failures.push(format!("{case}: {report:?}"));
-                } else if let Err(e) = s.enclose::<T>() {
+                } else if let Err(e) = s.enclose() {
                     failures.push(format!("{case}: {}", e.root_message()));
                 }
             }

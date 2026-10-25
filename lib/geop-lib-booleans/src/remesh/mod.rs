@@ -36,7 +36,7 @@ use crate::remesh::{
 /// step length), never what a converged answer means — see `AGENTS.md`'s
 /// "never use epsilons" rule.
 #[derive(Clone, Copy, Debug)]
-pub struct RemeshParams<S: Scalar> {
+pub struct RemeshParams {
     /// Solution cap for the pairwise `curve_curve_intersect` /
     /// `curve_surface_intersect` searches: how many points one returns at
     /// most — its crossings, or, where the two coincide along an arc, that
@@ -47,13 +47,13 @@ pub struct RemeshParams<S: Scalar> {
     pub max_nodes: usize,
     /// Convergence tolerance for the *single*-shape searches
     /// (`curve_could_contain` / `surface_could_contain`).
-    pub min_subdivision_size: S,
+    pub min_subdivision_size: Scalar,
     /// Convergence tolerance for the *pairwise* searches. Deliberately its
     /// own, looser value: empirically a pairwise search needs a much
     /// looser tolerance than a single-shape query to reliably converge
     /// within `max_nodes` at all — see `ValidationParameters`'s own doc
     /// comment.
-    pub curve_curve_min_subdivision_size: S,
+    pub curve_curve_min_subdivision_size: Scalar,
     /// How many marching steps one traced curve may take before it's
     /// considered to have failed to reach a terminating vertex. An effort
     /// budget only: a trace that reaches its vertex does so in the same
@@ -69,13 +69,13 @@ pub struct RemeshParams<S: Scalar> {
     pub max_rewrites: usize,
 }
 
-impl<S: Scalar> Default for RemeshParams<S> {
+impl Default for RemeshParams {
     fn default() -> Self {
         Self {
             max_edge_intersections: 3,
             max_nodes: search::MAX_NODES,
             min_subdivision_size: search::min_subdivision_size(),
-            curve_curve_min_subdivision_size: S::from_f64(1e-4),
+            curve_curve_min_subdivision_size: Scalar::from_f64(1e-4),
             max_trace_steps: 1_000,
             max_rewrites: 100_000,
         }
@@ -86,15 +86,15 @@ impl<S: Scalar> Default for RemeshParams<S> {
 /// at `vertex`, the vertex already there, or at a new one named as the
 /// piercing of `face`.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn split_at_crossing<S: Scalar>(
-    model: &mut NamedModel<S>,
-    naming: &mut BooleanNaming<S>,
+pub(crate) fn split_at_crossing(
+    model: &mut NamedModel,
+    naming: &mut BooleanNaming,
     edge: EdgeId,
-    t: S,
+    t: Scalar,
     vertex: Option<VertexId>,
-    point: Vector3<S>,
+    point: Vector3,
     face: FaceId,
-    params: &RemeshParams<S>,
+    params: &RemeshParams,
 ) -> GeopResult<()> {
     let vertex = match vertex {
         Some(vertex) => vertex,
@@ -139,12 +139,12 @@ pub(crate) fn split_at_crossing<S: Scalar>(
 ///
 /// Returns what every face and edge of either body came from (see
 /// [`Origins`]).
-pub fn remesh<S: Scalar>(
-    model: &mut NamedModel<S>,
+pub fn remesh(
+    model: &mut NamedModel,
     namer: &Namer,
     body_a: impl Into<Body>,
     body_b: impl Into<Body>,
-    params: RemeshParams<S>,
+    params: RemeshParams,
 ) -> GeopResult<Origins> {
     let (body_a, body_b) = (body_a.into(), body_b.into());
     let ctx = with_context!("remesh(body_a={body_a}, body_b={body_b}, params={params:?})");

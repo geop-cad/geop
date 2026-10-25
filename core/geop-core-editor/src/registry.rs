@@ -13,11 +13,8 @@ use std::rc::Rc;
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
 use geop_core_program::{
-    element::PickedElement,
-    operation_registry::OperationRegistry,
-    program::Program,
-    reader::Reader,
-    values::{Design, StateValues},
+    element::PickedElement, operation_registry::OperationRegistry, program::Program,
+    reader::Reader, values::StateValues,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -152,7 +149,7 @@ pub trait Settle: 'static {
     fn settle(
         &self,
         rerun: &mut Rerun,
-        pulls: &[Pull<Design>],
+        pulls: &[Pull],
         own: Option<&str>,
     ) -> GeopResult<StateValues>;
 
@@ -250,7 +247,7 @@ impl Registry {
 
     /// Makes `settler` what settles the program's state. Fails if there is
     /// one already: two would move the same state each its own way.
-    pub fn settler<S: Settle>(mut self, settler: S) -> GeopResult<Self> {
+    pub fn settler<Scalar: Settle>(mut self, settler: Scalar) -> GeopResult<Self> {
         if self.settler.is_some() {
             return Err(GeopError::new("a settler is registered twice"));
         }

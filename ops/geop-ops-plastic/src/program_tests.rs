@@ -6,10 +6,8 @@ use crate::{
     Draft, DraftArgs, Groove, GrooveArgs, Lip, LipArgs, Rib, RibArgs, RibDirection, RibSide,
     testing::{boxed, enclosure, enclosure_with_rib_sketch, wall},
 };
-use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
-use geop_core_program::{
-    element::ElementReference, operation_registry::OperationRegistry, values::Design,
-};
+use geop_core_math::geop_error::GeopResult;
+use geop_core_program::{element::ElementReference, operation_registry::OperationRegistry};
 use geop_ops_extrude_revolve::{Extents, testing::extrusion};
 use geop_ops_fillet::{Fillet, FilletArgs};
 use geop_ops_model::datums::datums;
@@ -40,7 +38,7 @@ fn registry() -> GeopResult<OperationRegistry> {
 }
 
 /// [`assert_valid`], saying which `case` of a sweep it is.
-fn assert_valid_case(part: &NamedModel<Design>, case: &str) {
+fn assert_valid_case(part: &NamedModel, case: &str) {
     if let Err(report) = check_valid(part) {
         panic!("{case}: {report}");
     }
@@ -135,7 +133,7 @@ fn wall_next_to_a_fillet_is_refused() {
 const RIM: &str = "shell(s,extrude(box,end))";
 
 /// The inner edge of the rim along the wall `c`.
-fn inner_edge(c: &str) -> ElementReference<NamedModel<Design>, geop_ops_model::Edge> {
+fn inner_edge(c: &str) -> ElementReference<NamedModel, geop_ops_model::Edge> {
     ElementReference::new(model(), format!("shell(s,extrude(box,outline,{c},end))"))
 }
 

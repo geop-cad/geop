@@ -29,9 +29,9 @@ impl Bisect for f64 {
 
 /// Sharp: which point is asked is the search's own free choice, and a
 /// sharp middle keeps the bracket from widening as it shrinks.
-impl<S: Scalar> Bisect for S {
+impl Bisect for Scalar {
     fn middle(lo: Self, hi: Self) -> GeopResult<Self> {
-        Ok(lo.add(hi).div(S::TWO)?.sharpen())
+        Ok(lo.add(hi).div(Scalar::TWO)?.sharpen())
     }
     /// For `lo` below `hi`.
     fn strictly_between(lo: Self, mid: Self, hi: Self) -> bool {

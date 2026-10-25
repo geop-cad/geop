@@ -4,14 +4,11 @@ use crate::{
     Body, CoedgeGeometry, CoedgeId, EdgeId, FaceId, Sense, SolidId, VertexId,
     boundary::{BoundaryIndex, BoundaryType},
 };
-use geop_core_math::{
-    geop_error::{GeopError, GeopResult},
-    scalars::Scalar,
-};
+use geop_core_math::geop_error::{GeopError, GeopResult};
 
 use super::Model;
 
-impl<S: Scalar> Model<S> {
+impl Model {
     /// The (unordered) coedges referencing a given edge. An edge shared by a
     /// single manifold face pair has exactly two.
     pub fn coedges_of_edge(&self, edge: EdgeId) -> Vec<CoedgeId> {

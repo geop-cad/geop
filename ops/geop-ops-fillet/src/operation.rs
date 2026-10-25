@@ -12,7 +12,6 @@ use geop_core_editor::{
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{
     element::ElementReference, numeric::NumericInput, part::StepContext, reader::Reader,
-    values::Design,
 };
 use geop_ops_model::{Edge, ModelOperation, NamedModel, Namer, Vertex, build_model, model};
 use serde::{Deserialize, Serialize};
@@ -47,7 +46,7 @@ pub struct Fillet;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FilletArgs {
     /// The edges to round, all of one solid.
-    pub edges: Vec<ElementReference<NamedModel<Design>, Edge>>,
+    pub edges: Vec<ElementReference<NamedModel, Edge>>,
     /// The radius: a number, or a formula of the part's parameters.
     pub radius: NumericInput,
     /// The radius at the end of every chain, if it changes along it.
@@ -61,7 +60,7 @@ pub struct FilletArgs {
 /// The radius a fillet has at a vertex, by name.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VertexRadius {
-    pub vertex: ElementReference<NamedModel<Design>, Vertex>,
+    pub vertex: ElementReference<NamedModel, Vertex>,
     pub radius: f64,
 }
 
@@ -100,14 +99,14 @@ impl FilletArgs {
 }
 
 /// The edges named `names`.
-fn edge_refs(names: Vec<String>) -> Vec<ElementReference<NamedModel<Design>, Edge>> {
+fn edge_refs(names: Vec<String>) -> Vec<ElementReference<NamedModel, Edge>> {
     (names.into_iter())
         .map(|name| ElementReference::new(model(), name))
         .collect()
 }
 
 /// The names of `edges`, as [`blend`] takes them.
-fn edge_names(edges: &[ElementReference<NamedModel<Design>, Edge>]) -> Vec<String> {
+fn edge_names(edges: &[ElementReference<NamedModel, Edge>]) -> Vec<String> {
     edges.iter().map(|e| e.name().to_string()).collect()
 }
 
@@ -141,9 +140,9 @@ impl PartOperation for Fillet {
         context: &'a Context<'a>,
         args: &FilletArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, FilletArgs> {
+    ) -> EditForm<'a, FilletArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, FilletArgs>::default();
+        let mut f = EditForm::<FilletArgs>::default();
         f.pick(
             "edges",
             "edges",
@@ -219,7 +218,7 @@ impl PartOperation for Fillet {
 
 impl ModelOperation for Fillet {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &FilletArgs,
@@ -247,7 +246,7 @@ pub struct Chamfer;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChamferArgs {
     /// The edges to bevel, all of one solid.
-    pub edges: Vec<ElementReference<NamedModel<Design>, Edge>>,
+    pub edges: Vec<ElementReference<NamedModel, Edge>>,
     /// How far into the faces: a number, or a formula of the part's
     /// parameters.
     pub distance: NumericInput,
@@ -307,9 +306,9 @@ impl PartOperation for Chamfer {
         context: &'a Context<'a>,
         args: &ChamferArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, ChamferArgs> {
+    ) -> EditForm<'a, ChamferArgs> {
         let before = &context.before;
-        let mut f = EditForm::<Design, ChamferArgs>::default();
+        let mut f = EditForm::<ChamferArgs>::default();
         f.pick(
             "edges",
             "edges",
@@ -338,7 +337,7 @@ impl PartOperation for Chamfer {
 
 impl ModelOperation for Chamfer {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         reader: &Reader,
         step: &str,
         args: &ChamferArgs,

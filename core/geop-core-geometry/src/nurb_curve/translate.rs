@@ -7,12 +7,12 @@ use geop_core_math::{
 
 use super::NurbCurve;
 
-impl<S: Scalar> NurbCurve<S, 4> {
+impl NurbCurve<4> {
     /// This 3-D curve shifted by `offset` — same shape and parametrization,
     /// every point moved by `offset`. Translates each (homogeneous) control
     /// point by `offset * weight`, leaving weights and the knot vector
     /// untouched.
-    pub fn translate(&self, offset: Vector3<S>) -> Self {
+    pub fn translate(&self, offset: Vector3) -> Self {
         let control_points = self
             .control_points
             .iter()
@@ -41,12 +41,12 @@ impl<S: Scalar> NurbCurve<S, 4> {
     }
 }
 
-impl<S: Scalar> NurbCurve<S, 3> {
+impl NurbCurve<3> {
     /// This 2-D curve shifted by `offset` (see [`NurbCurve::translate`] for
     /// 3-D). Shifted by an exact zero, it is the curve itself, not widened
     /// by adding zeros.
-    pub fn translate(&self, offset: Vector2<S>) -> Self {
-        let zero = |x: S| x.is_sharp() && x.could_be_equal(S::ZERO);
+    pub fn translate(&self, offset: Vector2) -> Self {
+        let zero = |x: Scalar| x.is_sharp() && x.could_be_equal(Scalar::ZERO);
         if zero(offset[0]) && zero(offset[1]) {
             return self.clone();
         }
@@ -71,12 +71,12 @@ impl<S: Scalar> NurbCurve<S, 3> {
     }
 
     /// This 2-D curve as a 3-D one in the plane `z = 0`.
-    pub fn lifted(&self) -> GeopResult<NurbCurve<S, 4>> {
+    pub fn lifted(&self) -> GeopResult<NurbCurve<4>> {
         NurbCurve::try_new(
             self.degree,
             self.control_points
                 .iter()
-                .map(|q| Vector4::from_array([q[0], q[1], S::ZERO, q[2]]))
+                .map(|q| Vector4::from_array([q[0], q[1], Scalar::ZERO, q[2]]))
                 .collect(),
             self.knot_vector.clone(),
         )
@@ -87,12 +87,7 @@ impl<S: Scalar> NurbCurve<S, 3> {
     /// affine map of the homogeneous control points `(w x, w y, w)` to
     /// `(w origin + (w x) e1 + (w y) e2, w)`, so it is exact for any NURBS
     /// and divides by no weight.
-    pub fn embed(
-        &self,
-        origin: &Vector3<S>,
-        e1: &Vector3<S>,
-        e2: &Vector3<S>,
-    ) -> GeopResult<NurbCurve<S, 4>> {
+    pub fn embed(&self, origin: &Vector3, e1: &Vector3, e2: &Vector3) -> GeopResult<NurbCurve<4>> {
         let control_points = self
             .control_points
             .iter()
@@ -105,12 +100,7 @@ impl<S: Scalar> NurbCurve<S, 3> {
 /// Homogeneous `(w (origin + x e1 + y e2), w)` for the homogeneous 2-D point
 /// `cp = (w x, w y, w)`: linear in `cp`, so no division — the control point
 /// [`NurbCurve::embed`] makes of `cp`.
-pub fn embed_point<S: Scalar>(
-    cp: &Vector3<S>,
-    origin: &Vector3<S>,
-    e1: &Vector3<S>,
-    e2: &Vector3<S>,
-) -> Vector4<S> {
+pub fn embed_point(cp: &Vector3, origin: &Vector3, e1: &Vector3, e2: &Vector3) -> Vector4 {
     let p = origin
         .prod_scalar(cp[2])
         .add(&e1.prod_scalar(cp[0]))
@@ -122,12 +112,7 @@ pub fn embed_point<S: Scalar>(
 /// along the orthonormal `e1` and `e2`, homogeneous: `(w x, w y, w)` for
 /// `x = (p - origin) . e1`, `y = (p - origin) . e2` — the inverse of
 /// [`embed_point`] for a point of the plane, and like it without division.
-pub fn flatten_point<S: Scalar>(
-    cp: &Vector4<S>,
-    origin: &Vector3<S>,
-    e1: &Vector3<S>,
-    e2: &Vector3<S>,
-) -> Vector3<S> {
+pub fn flatten_point(cp: &Vector4, origin: &Vector3, e1: &Vector3, e2: &Vector3) -> Vector3 {
     let w = cp[3];
     let d = Vector3::from_array([cp[0], cp[1], cp[2]]).sub(&origin.prod_scalar(w));
     Vector3::from_array([d.prod_dot(e1), d.prod_dot(e2), w])
@@ -140,10 +125,7 @@ pub fn flatten_point<S: Scalar>(
 /// `1 t` outward would only widen the point. For a translation `A` is the
 /// identity and is not applied either, so the point moves by one addition
 /// per coordinate.
-pub(crate) fn transform_control_point<S: Scalar>(
-    cp: &Vector4<S>,
-    motion: &Motion<S>,
-) -> Vector4<S> {
+pub(crate) fn transform_control_point(cp: &Vector4, motion: &Motion) -> Vector4 {
     let w = cp[3];
     let p = motion.rotate(&Vector3::from_array([cp[0], cp[1], cp[2]]));
     let mut t = motion.position();
@@ -153,11 +135,11 @@ pub(crate) fn transform_control_point<S: Scalar>(
     Vector4::from_array([p[0].add(t[0]), p[1].add(t[1]), p[2].add(t[2]), w])
 }
 
-impl<S: Scalar> NurbCurve<S, 4> {
+impl NurbCurve<4> {
     /// This 3-D curve moved by `motion` — a rigid motion, a translation or
     /// a mirror — with the same parametrization: each control point moved
     /// (see [`transform_control_point`]), weights and knots untouched.
-    pub fn transform(&self, motion: &Motion<S>) -> Self {
+    pub fn transform(&self, motion: &Motion) -> Self {
         let mut curve = Self {
             degree: self.degree,
             control_points: self
@@ -175,7 +157,6 @@ impl<S: Scalar> NurbCurve<S, 4> {
 
 #[cfg(test)]
 mod tests {
-    use geop_core_math::for_all_scalars;
     use geop_core_math::{
         primitives::Pose,
         scalars::Scalar,
@@ -184,63 +165,78 @@ mod tests {
 
     use super::super::NurbCurve3D;
 
-    fn check_translate_shifts_evaluated_points<S: Scalar>() {
+    #[test]
+    fn translate_shifts_evaluated_points() {
         let curve = NurbCurve3D::try_new(
             1,
             vec![
-                geop_core_math::vector::Vector4::from_array([S::ZERO, S::ZERO, S::ZERO, S::ONE]),
-                geop_core_math::vector::Vector4::from_array([S::ONE, S::ZERO, S::ZERO, S::ONE]),
+                geop_core_math::vector::Vector4::from_array([
+                    Scalar::ZERO,
+                    Scalar::ZERO,
+                    Scalar::ZERO,
+                    Scalar::ONE,
+                ]),
+                geop_core_math::vector::Vector4::from_array([
+                    Scalar::ONE,
+                    Scalar::ZERO,
+                    Scalar::ZERO,
+                    Scalar::ONE,
+                ]),
             ],
-            vec![S::ZERO, S::ZERO, S::ONE, S::ONE],
+            vec![Scalar::ZERO, Scalar::ZERO, Scalar::ONE, Scalar::ONE],
         )
         .unwrap();
-        let offset = Vector3::from_array([S::from_f64(2.0), S::from_f64(3.0), S::from_f64(-1.0)]);
+        let offset = Vector3::from_array([
+            Scalar::from_f64(2.0),
+            Scalar::from_f64(3.0),
+            Scalar::from_f64(-1.0),
+        ]);
         let shifted = curve.translate(offset);
         for t in [0.0, 0.3, 1.0] {
-            let a = shifted.evaluate(S::from_f64(t)).unwrap();
-            let b = curve.evaluate(S::from_f64(t)).unwrap().add(&offset);
+            let a = shifted.evaluate(Scalar::from_f64(t)).unwrap();
+            let b = curve.evaluate(Scalar::from_f64(t)).unwrap().add(&offset);
             assert!(a.could_be_equal(&b));
         }
-    }
-    #[test]
-    fn translate_shifts_evaluated_points() {
-        for_all_scalars!(check_translate_shifts_evaluated_points);
     }
 
     /// A rational curve (a weight other than one) placed by a pose
     /// evaluates to the pose applied to its points.
-    fn check_transform_moves_evaluated_points<S: Scalar>() {
+    #[test]
+    fn transform_moves_evaluated_points() {
         let curve = NurbCurve3D::try_new(
             2,
             vec![
-                Vector4::from_array([S::ONE, S::ZERO, S::ZERO, S::ONE]),
+                Vector4::from_array([Scalar::ONE, Scalar::ZERO, Scalar::ZERO, Scalar::ONE]),
                 Vector4::from_array([
-                    S::from_f64(0.5),
-                    S::from_f64(0.5),
-                    S::ZERO,
-                    S::from_f64(0.5),
+                    Scalar::from_f64(0.5),
+                    Scalar::from_f64(0.5),
+                    Scalar::ZERO,
+                    Scalar::from_f64(0.5),
                 ]),
-                Vector4::from_array([S::ZERO, S::ONE, S::ZERO, S::ONE]),
+                Vector4::from_array([Scalar::ZERO, Scalar::ONE, Scalar::ZERO, Scalar::ONE]),
             ],
-            vec![S::ZERO, S::ZERO, S::ZERO, S::ONE, S::ONE, S::ONE],
+            vec![
+                Scalar::ZERO,
+                Scalar::ZERO,
+                Scalar::ZERO,
+                Scalar::ONE,
+                Scalar::ONE,
+                Scalar::ONE,
+            ],
         )
         .unwrap();
         let pose = Pose::from_euler(
-            Vector3::from_array([1.0, -2.0, 0.5].map(S::from_f64)),
-            [30.0, -10.0, 75.0].map(S::from_f64),
+            Vector3::from_array([1.0, -2.0, 0.5].map(Scalar::from_f64)),
+            [30.0, -10.0, 75.0].map(Scalar::from_f64),
         )
         .unwrap();
         let placed = curve.transform(&pose.motion());
         for t in [0.0, 0.3, 0.8, 1.0] {
-            let a = placed.evaluate(S::from_f64(t)).unwrap();
+            let a = placed.evaluate(Scalar::from_f64(t)).unwrap();
             let b = pose
                 .motion()
-                .apply(&curve.evaluate(S::from_f64(t)).unwrap());
+                .apply(&curve.evaluate(Scalar::from_f64(t)).unwrap());
             assert!(a.could_be_equal(&b));
         }
-    }
-    #[test]
-    fn transform_moves_evaluated_points() {
-        for_all_scalars!(check_transform_moves_evaluated_points);
     }
 }

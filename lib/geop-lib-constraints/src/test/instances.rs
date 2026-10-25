@@ -13,7 +13,7 @@ use geop_core_program::{
     part::StepContext,
     placed::{self, PlacedArgs},
     program::{Program, ProgramStep},
-    values::{Design, StateValues},
+    values::StateValues,
     workspace::Workspace,
 };
 use serde::{Deserialize, Serialize};
@@ -172,7 +172,7 @@ fn an_instance_is_solved_in_the_part_it_is_placed_in() {
     let problem = Problem {
         free: BTreeMap::from([("/p:body".to_string(), Mobility::Held)]),
         preferences: Vec::new(),
-        scale: Design::ONE,
+        scale: Scalar::ONE,
     };
     let x = inputs(&[]);
     let run = runner.rerun(&program, &x);

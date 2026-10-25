@@ -35,8 +35,8 @@ use crate::sheet::Sheet;
 /// over (see `AGENTS.md`): a value of its own, finer than the default
 /// [`geop_core_geometry::search::MIN_SUBDIVISION_SIZE`], with the default
 /// node budget [`MAX_NODES`].
-fn min_subdivision_size<S: Scalar>() -> S {
-    S::from_f64(1e-9)
+fn min_subdivision_size() -> Scalar {
+    Scalar::from_f64(1e-9)
 }
 
 /// Which face of the sheet an entity is folded with: a flat's, or a
@@ -49,22 +49,22 @@ pub enum Home {
 
 /// A vertex of the layout.
 #[derive(Clone, Debug)]
-pub struct LayoutVertex<S: Scalar> {
+pub struct LayoutVertex {
     /// Where it is, in the flat pattern's coordinates.
-    pub at: Vector2<S>,
+    pub at: Vector2,
     /// Its vertices are `N(a)`, `N(b)` — named after an edge starting
     /// there; `None` until a cut's vertex is.
     pub name: Option<Namer>,
     /// A vertex of the sheet as built: its flat, and where it is in that
     /// flat's own sheet coordinates.
-    pub own: Option<(usize, Vector2<S>)>,
+    pub own: Option<(usize, Vector2)>,
 }
 
 /// An edge of the layout, from vertex `start` to vertex `end`.
 #[derive(Clone, Debug)]
-pub struct LayoutEdge<S: Scalar> {
+pub struct LayoutEdge {
     /// In the flat pattern's coordinates.
-    pub curve: NurbCurve2D<S>,
+    pub curve: NurbCurve2D,
     pub start: usize,
     pub end: usize,
     /// Its edges `N(a)`, `N(b)`, its wall `N` (see [`crate::thicken`]).
@@ -72,7 +72,7 @@ pub struct LayoutEdge<S: Scalar> {
     pub home: Home,
     /// The curve of the sheet as built, in its flat's own coordinates,
     /// while no cut has split it.
-    pub own: Option<NurbCurve2D<S>>,
+    pub own: Option<NurbCurve2D>,
     /// The key of the sheet's edge it is, or is a piece of — a flat's edge,
     /// or the side `s0`/`s1` of a bend; `None` for an edge a cut made.
     pub origin: Option<String>,
@@ -98,9 +98,9 @@ impl LayoutFace {
 /// A sheet laid out flat (see the module docs). Edges and vertices a cut
 /// took away stay in the lists, used by no face.
 #[derive(Clone, Debug, Default)]
-pub struct Layout<S: Scalar> {
-    pub vertices: Vec<LayoutVertex<S>>,
-    pub edges: Vec<LayoutEdge<S>>,
+pub struct Layout {
+    pub vertices: Vec<LayoutVertex>,
+    pub edges: Vec<LayoutEdge>,
     pub faces: Vec<LayoutFace>,
     /// The keys of the sheet's edges a cut split or took away.
     pub changed: BTreeSet<String>,
@@ -113,14 +113,14 @@ pub struct Layout<S: Scalar> {
 /// A curve of a cut's loop, in the flat pattern's coordinates, and its
 /// name.
 #[derive(Clone, Debug)]
-pub struct CutCurve<S: Scalar> {
-    pub curve: NurbCurve2D<S>,
+pub struct CutCurve {
+    pub curve: NurbCurve2D,
     pub name: Namer,
 }
 
-impl<S: Scalar> Sheet<S> {
+impl Sheet {
     /// The sheet laid out flat, its cuts subtracted (see the module docs).
-    pub fn layout(&self) -> GeopResult<Layout<S>> {
+    pub fn layout(&self) -> GeopResult<Layout> {
         let shifts = self.flat_shifts()?;
         let mut layout = Layout::default();
         let mut edge_of: BTreeMap<String, usize> = BTreeMap::new();
@@ -222,7 +222,7 @@ impl<S: Scalar> Sheet<S> {
     }
 }
 
-impl<S: Scalar> Layout<S> {
+impl Layout {
     /// The edges some face uses, in order.
     pub fn used_edges(&self) -> Vec<usize> {
         let used: BTreeSet<usize> = self
@@ -240,18 +240,18 @@ impl<S: Scalar> Layout<S> {
     /// at its end, touches one, runs along one, or crosses one that is no
     /// line or arc; and one that splits a face in two, takes one away
     /// entirely, or misses the sheet.
-    pub fn subtract(&mut self, cut: &[Vec<CutCurve<S>>]) -> GeopResult<()> {
+    pub fn subtract(&mut self, cut: &[Vec<CutCurve>]) -> GeopResult<()> {
         let used = self.used_edges();
-        let segs: BTreeMap<usize, Seg<S>> = used
+        let segs: BTreeMap<usize, Seg> = used
             .iter()
             .map(|&e| Ok((e, Seg::of(&self.edges[e].curve)?)))
             .collect::<GeopResult<_>>()?;
-        let cut_segs: Vec<Vec<Seg<S>>> = cut
+        let cut_segs: Vec<Vec<Seg>> = cut
             .iter()
             .map(|lp| lp.iter().map(|c| Seg::of(&c.curve)).collect())
             .collect::<GeopResult<_>>()?;
         // What the faces were before the cut, to place its curves in.
-        let regions: Vec<Vec<Vec<Piece<'_, S>>>> = self
+        let regions: Vec<Vec<Vec<Piece<'_>>>> = self
             .faces
             .iter()
             .map(|face| {
@@ -267,7 +267,7 @@ impl<S: Scalar> Layout<S> {
                     .collect()
             })
             .collect();
-        let cut_region: Vec<Vec<Piece<'_, S>>> = cut
+        let cut_region: Vec<Vec<Piece<'_>>> = cut
             .iter()
             .zip(&cut_segs)
             .map(|(lp, segs)| {
@@ -284,8 +284,8 @@ impl<S: Scalar> Layout<S> {
         // Where the cut's curves cross the edges: a vertex each, at its
         // place along both.
         let mut vertices = self.vertices.clone();
-        let mut on_edge: BTreeMap<usize, Vec<(S, usize)>> = BTreeMap::new();
-        let mut on_cut: Vec<Vec<Vec<(S, usize)>>> =
+        let mut on_edge: BTreeMap<usize, Vec<(Scalar, usize)>> = BTreeMap::new();
+        let mut on_cut: Vec<Vec<Vec<(Scalar, usize)>>> =
             cut.iter().map(|lp| vec![Vec::new(); lp.len()]).collect();
         for &e in &used {
             let edge = &self.edges[e];
@@ -328,7 +328,7 @@ impl<S: Scalar> Layout<S> {
             let mut stops = vec![edge.start];
             stops.extend(points);
             stops.push(edge.end);
-            let ats: Vec<Vector2<S>> = stops.iter().map(|&v| vertices[v].at).collect();
+            let ats: Vec<Vector2> = stops.iter().map(|&v| vertices[v].at).collect();
             let curves = segs[&e].split(&ats)?;
             let mut pieces = Vec::new();
             for (k, curve) in curves.into_iter().enumerate() {
@@ -368,7 +368,7 @@ impl<S: Scalar> Layout<S> {
                 let mut stops = vec![joints[i]];
                 stops.extend(points);
                 stops.push(joints[(i + 1) % lp.len()]);
-                let ats: Vec<Vector2<S>> = stops.iter().map(|&v| vertices[v].at).collect();
+                let ats: Vec<Vector2> = stops.iter().map(|&v| vertices[v].at).collect();
                 let curves = cut_segs[l][i].split(&ats)?;
                 let split = curves.len() > 1;
                 for (k, curve) in curves.into_iter().enumerate() {
@@ -485,11 +485,11 @@ impl<S: Scalar> Layout<S> {
 /// into loops, those turning counter-clockwise outer loops — of a bend,
 /// one each for the pieces a cut right across leaves of it; of a flat,
 /// only one. Refuses a flat the cut splits, and a face it takes away.
-fn relink<S: Scalar>(
+fn relink(
     face: &LayoutFace,
     pool: &[(usize, Sense)],
-    edges: &[LayoutEdge<S>],
-    vertices: &[LayoutVertex<S>],
+    edges: &[LayoutEdge],
+    vertices: &[LayoutVertex],
 ) -> GeopResult<Vec<LayoutFace>> {
     let ends = |&(e, sense): &(usize, Sense)| match sense {
         Sense::Forward => (edges[e].start, edges[e].end),
@@ -536,9 +536,9 @@ fn relink<S: Scalar>(
         }
         let lp: Vec<(usize, Sense)> = around.nodes.iter().map(|&k| pool[k]).collect();
         let area = loop_area(&lp, edges)?;
-        if area.definitely_greater(S::ZERO) {
+        if area.definitely_greater(Scalar::ZERO) {
             outer.push(lp);
-        } else if area.definitely_less(S::ZERO) {
+        } else if area.definitely_less(Scalar::ZERO) {
             holes.push(lp);
         } else {
             return Err(GeopError::new(format!(
@@ -625,7 +625,7 @@ fn relink<S: Scalar>(
 
 /// The vertices `crossed` along a curve, in order of their places along
 /// it — which must be apart.
-fn ordered<S: Scalar>(crossed: &mut [(S, usize)], name: &Namer) -> GeopResult<Vec<usize>> {
+fn ordered(crossed: &mut [(Scalar, usize)], name: &Namer) -> GeopResult<Vec<usize>> {
     crossed.sort_by(|a, b| a.0.to_f64().total_cmp(&b.0.to_f64()));
     for w in crossed.windows(2) {
         if !w[1].0.definitely_greater(w[0].0) {
@@ -639,8 +639,8 @@ fn ordered<S: Scalar>(crossed: &mut [(S, usize)], name: &Namer) -> GeopResult<Ve
 }
 
 /// The area a loop encloses: positive counter-clockwise.
-fn loop_area<S: Scalar>(lp: &[(usize, Sense)], edges: &[LayoutEdge<S>]) -> GeopResult<S> {
-    let mut area = S::ZERO;
+fn loop_area(lp: &[(usize, Sense)], edges: &[LayoutEdge]) -> GeopResult<Scalar> {
+    let mut area = Scalar::ZERO;
     for &(e, sense) in lp {
         let curve = &edges[e].curve;
         let swept = Seg::of(curve)?.swept_area(curve)?;
@@ -655,17 +655,17 @@ fn loop_area<S: Scalar>(lp: &[(usize, Sense)], edges: &[LayoutEdge<S>]) -> GeopR
 /// A curve of the layout, as far as cutting is concerned: a line, an arc
 /// of less than half a turn, or something else, which a cut may not cross.
 #[derive(Clone, Debug)]
-pub enum Seg<S: Scalar> {
+pub enum Seg {
     Line {
-        a: Vector2<S>,
-        b: Vector2<S>,
+        a: Vector2,
+        b: Vector2,
     },
     /// From `a` to `b` about `center`, counter-clockwise if `ccw`.
     Arc {
-        center: Vector2<S>,
-        radius: S,
-        a: Vector2<S>,
-        b: Vector2<S>,
+        center: Vector2,
+        radius: Scalar,
+        a: Vector2,
+        b: Vector2,
         ccw: bool,
     },
     Other,
@@ -673,17 +673,17 @@ pub enum Seg<S: Scalar> {
 
 /// Where a point lies along a line or an arc it is known to lie on the
 /// line or circle of.
-enum Along<S: Scalar> {
+enum Along {
     /// Strictly between its ends, this far along it.
-    Inside(S),
+    Inside(Scalar),
     Outside,
     /// Possibly at an end.
     Undecided,
 }
 
-impl<S: Scalar> Seg<S> {
+impl Seg {
     /// What `curve` is.
-    pub fn of(curve: &NurbCurve2D<S>) -> GeopResult<Self> {
+    pub fn of(curve: &NurbCurve2D) -> GeopResult<Self> {
         let (a, b) = (curve.start()?, curve.end()?);
         if curve.degree == 1 && curve.control_points.len() == 2 {
             return Ok(Seg::Line { a, b });
@@ -692,12 +692,12 @@ impl<S: Scalar> Seg<S> {
         let Some(arc) = flat.as_arc()? else {
             return Ok(Seg::Other);
         };
-        let ccw = arc.circle.normal[2].definitely_greater(S::ZERO);
+        let ccw = arc.circle.normal[2].definitely_greater(Scalar::ZERO);
         let center = Vector2::from_array([arc.circle.center[0], arc.circle.center[1]]);
-        let sigma = if ccw { S::ONE } else { S::ONE.neg() };
+        let sigma = if ccw { Scalar::ONE } else { Scalar::ONE.neg() };
         // Less than half a turn: the center on the arc's left.
         let turn = a.sub(&center).prod_cross(&b.sub(&center)).mul(sigma);
-        if !turn.definitely_greater(S::ZERO) {
+        if !turn.definitely_greater(Scalar::ZERO) {
             return Ok(Seg::Other);
         }
         Ok(Seg::Arc {
@@ -710,9 +710,9 @@ impl<S: Scalar> Seg<S> {
     }
 
     /// Where `p`, on its line or circle, lies along it.
-    fn along(&self, p: &Vector2<S>) -> Along<S> {
+    fn along(&self, p: &Vector2) -> Along {
         let (a, b, outside) = match self {
-            Seg::Line { a, b } => (a, b, S::ZERO),
+            Seg::Line { a, b } => (a, b, Scalar::ZERO),
             Seg::Arc { a, b, ccw, .. } => {
                 // The arc lies right of its chord, seen turning
                 // counter-clockwise.
@@ -721,17 +721,17 @@ impl<S: Scalar> Seg<S> {
             }
             Seg::Other => return Along::Undecided,
         };
-        if outside.definitely_greater(S::ZERO) {
+        if outside.definitely_greater(Scalar::ZERO) {
             return Along::Outside;
         }
         let chord = b.sub(a);
         let key = p.sub(a).prod_dot(&chord);
         let length = chord.norm_sq();
-        if key.definitely_less(S::ZERO) || key.definitely_greater(length) {
+        if key.definitely_less(Scalar::ZERO) || key.definitely_greater(length) {
             Along::Outside
-        } else if key.definitely_greater(S::ZERO)
+        } else if key.definitely_greater(Scalar::ZERO)
             && key.definitely_less(length)
-            && (matches!(self, Seg::Line { .. }) || outside.definitely_less(S::ZERO))
+            && (matches!(self, Seg::Line { .. }) || outside.definitely_less(Scalar::ZERO))
         {
             Along::Inside(key)
         } else {
@@ -740,9 +740,9 @@ impl<S: Scalar> Seg<S> {
     }
 
     /// A point of it, away from its ends: halfway, along a line or an arc.
-    pub fn middle(&self, curve: &NurbCurve2D<S>) -> GeopResult<Vector2<S>> {
+    pub fn middle(&self, curve: &NurbCurve2D) -> GeopResult<Vector2> {
         match self {
-            Seg::Line { a, b } => Ok(a.add(b).prod_scalar(S::ONE.div(S::TWO)?)),
+            Seg::Line { a, b } => Ok(a.add(b).prod_scalar(Scalar::ONE.div(Scalar::TWO)?)),
             Seg::Arc {
                 center,
                 radius,
@@ -758,8 +758,8 @@ impl<S: Scalar> Seg<S> {
     }
 
     /// `∮ (x dy - y dx) / 2` along it: what it adds to a loop's area.
-    fn swept_area(&self, curve: &NurbCurve2D<S>) -> GeopResult<S> {
-        let half = S::ONE.div(S::TWO)?;
+    fn swept_area(&self, curve: &NurbCurve2D) -> GeopResult<Scalar> {
+        let half = Scalar::ONE.div(Scalar::TWO)?;
         Ok(match self {
             Seg::Line { a, b } => a.prod_cross(b).mul(half),
             Seg::Arc {
@@ -789,7 +789,7 @@ impl<S: Scalar> Seg<S> {
 
     /// The curve split at `stops` — its start, the points along it in
     /// order, its end — into pieces of the same line or circle.
-    fn split(&self, stops: &[Vector2<S>]) -> GeopResult<Vec<NurbCurve2D<S>>> {
+    fn split(&self, stops: &[Vector2]) -> GeopResult<Vec<NurbCurve2D>> {
         stops
             .windows(2)
             .map(|w| match self {
@@ -807,29 +807,29 @@ impl<S: Scalar> Seg<S> {
 /// turn: a rational quadratic through the point where its end tangents
 /// meet, `center + (u + v) r² / (r² + u·v)`, weighted `cos` of half its
 /// angle.
-fn arc_between<S: Scalar>(
-    center: &Vector2<S>,
-    radius: S,
-    p: &Vector2<S>,
-    q: &Vector2<S>,
-) -> GeopResult<NurbCurve2D<S>> {
+fn arc_between(
+    center: &Vector2,
+    radius: Scalar,
+    p: &Vector2,
+    q: &Vector2,
+) -> GeopResult<NurbCurve2D> {
     let (u, v) = (p.sub(center), q.sub(center));
     let r2 = radius.mul(radius);
     let dot = u.prod_dot(&v);
     let apex = center.add(&u.add(&v).prod_scalar(r2.div(r2.add(dot))?));
-    let weight = r2.add(dot).div(S::TWO.mul(r2))?.sqrt()?;
+    let weight = r2.add(dot).div(Scalar::TWO.mul(r2))?.sqrt()?;
     NurbCurve2D::arc(*p, apex, *q, weight)
 }
 
 /// Where the line or arc `e` and the line or arc `c` cross: each crossing's
 /// place along `e`, along `c`, and its point. A curve that is neither may
 /// cross nothing. Why not, if they touch, overlap or cross at an end.
-fn crossings<S: Scalar>(
-    e: &Seg<S>,
-    c: &Seg<S>,
-    e_curve: &NurbCurve2D<S>,
-    c_curve: &NurbCurve2D<S>,
-) -> Result<Vec<(S, S, Vector2<S>)>, String> {
+fn crossings(
+    e: &Seg,
+    c: &Seg,
+    e_curve: &NurbCurve2D,
+    c_curve: &NurbCurve2D,
+) -> Result<Vec<(Scalar, Scalar, Vector2)>, String> {
     if matches!(e, Seg::Other) || matches!(c, Seg::Other) {
         let (overlaps, crossings) =
             curve_curve_overlaps_and_crossings(e_curve, c_curve, MAX_NODES, min_subdivision_size())
@@ -839,18 +839,18 @@ fn crossings<S: Scalar>(
         }
         return Err("meets, and a cut can only cross lines and arcs, not other curves, as".into());
     }
-    let candidates: Vec<(Vector2<S>, bool)> = match (e, c) {
+    let candidates: Vec<(Vector2, bool)> = match (e, c) {
         (Seg::Line { a, b }, Seg::Line { a: p, b: q }) => {
             let (d1, d2) = (b.sub(a), q.sub(p));
             let den = d1.prod_cross(&d2);
-            if den.could_be_equal(S::ZERO) {
+            if den.could_be_equal(Scalar::ZERO) {
                 // Parallel: apart, or along one line.
-                if !p.sub(a).prod_cross(&d1).could_be_equal(S::ZERO) {
+                if !p.sub(a).prod_cross(&d1).could_be_equal(Scalar::ZERO) {
                     return Ok(Vec::new());
                 }
-                let reach = |x: &Vector2<S>| x.sub(a).prod_dot(&d1);
+                let reach = |x: &Vector2| x.sub(a).prod_dot(&d1);
                 let (lo, hi) = (reach(p).min(reach(q)), reach(p).max(reach(q)));
-                if hi.definitely_less(S::ZERO) || lo.definitely_greater(d1.norm_sq()) {
+                if hi.definitely_less(Scalar::ZERO) || lo.definitely_greater(d1.norm_sq()) {
                     return Ok(Vec::new());
                 }
                 return Err("runs along".into());
@@ -894,12 +894,12 @@ fn crossings<S: Scalar>(
 
 /// Where the line through `a` and `b` meets the circle: each point, and
 /// whether it could be where the line only touches it.
-fn line_circle<S: Scalar>(
-    a: &Vector2<S>,
-    b: &Vector2<S>,
-    center: &Vector2<S>,
-    radius: S,
-) -> GeopResult<Vec<(Vector2<S>, bool)>> {
+fn line_circle(
+    a: &Vector2,
+    b: &Vector2,
+    center: &Vector2,
+    radius: Scalar,
+) -> GeopResult<Vec<(Vector2, bool)>> {
     let d = b.sub(a);
     let w = a.sub(center);
     let qa = d.norm_sq();
@@ -907,10 +907,10 @@ fn line_circle<S: Scalar>(
     let qc = w.norm_sq().sub(radius.mul(radius));
     // `qa s² + 2 qb s + qc = 0`.
     let disc = qb.mul(qb).sub(qa.mul(qc));
-    if disc.definitely_less(S::ZERO) {
+    if disc.definitely_less(Scalar::ZERO) {
         return Ok(Vec::new());
     }
-    if disc.could_be_equal(S::ZERO) {
+    if disc.could_be_equal(Scalar::ZERO) {
         let s = qb.neg().div(qa)?;
         return Ok(vec![(a.add(&d.prod_scalar(s)), true)]);
     }
@@ -923,22 +923,22 @@ fn line_circle<S: Scalar>(
 
 /// Where two circles meet: each point, and whether it could be where they
 /// only touch. Why not, if they could be one circle along both arcs.
-fn circle_circle<S: Scalar>(
-    c1: &Vector2<S>,
-    r1: S,
-    c2: &Vector2<S>,
-    r2: S,
-    e: &Seg<S>,
-    c: &Seg<S>,
-) -> Result<Vec<(Vector2<S>, bool)>, String> {
+fn circle_circle(
+    c1: &Vector2,
+    r1: Scalar,
+    c2: &Vector2,
+    r2: Scalar,
+    e: &Seg,
+    c: &Seg,
+) -> Result<Vec<(Vector2, bool)>, String> {
     let d = c2.sub(c1);
     let d2 = d.norm_sq();
-    if d2.could_be_equal(S::ZERO) {
+    if d2.could_be_equal(Scalar::ZERO) {
         if !r1.could_be_equal(r2) {
             return Ok(Vec::new());
         }
         // One circle: apart only if neither arc reaches into the other.
-        let ends = |s: &Seg<S>| match s {
+        let ends = |s: &Seg| match s {
             Seg::Arc { a, b, .. } => vec![*a, *b],
             _ => Vec::new(),
         };
@@ -956,15 +956,15 @@ fn circle_circle<S: Scalar>(
         .mul(r1)
         .sub(r2.mul(r2))
         .add(d2)
-        .div(S::TWO.mul(d2))
+        .div(Scalar::TWO.mul(d2))
         .map_err(err)?;
     let h2 = r1.mul(r1).div(d2).map_err(err)?.sub(k.mul(k));
-    if h2.definitely_less(S::ZERO) {
+    if h2.definitely_less(Scalar::ZERO) {
         return Ok(Vec::new());
     }
     let base = c1.add(&d.prod_scalar(k));
     let across = d.perp();
-    if h2.could_be_equal(S::ZERO) {
+    if h2.could_be_equal(Scalar::ZERO) {
         return Ok(vec![(base, true)]);
     }
     let h = h2.sqrt().map_err(err)?;
@@ -975,17 +975,17 @@ fn circle_circle<S: Scalar>(
 }
 
 /// A curve of a region's loop, with what it is.
-struct Piece<'a, S: Scalar> {
-    seg: &'a Seg<S>,
-    curve: &'a NurbCurve2D<S>,
+struct Piece<'a> {
+    seg: &'a Seg,
+    curve: &'a NurbCurve2D,
 }
 
 /// Directions to cast a ray in, until one gives a clear answer: spread by
 /// the golden angle, none along an axis — which is where the edges of a
 /// sheet most often run.
-fn ray_direction<S: Scalar>(k: usize) -> Vector2<S> {
+fn ray_direction(k: usize) -> Vector2 {
     let angle = 0.7 + 2.399_963_229_728_653 * k as f64;
-    Vector2::from_array([S::from_f64(angle.cos()), S::from_f64(angle.sin())])
+    Vector2::from_array([Scalar::from_f64(angle.cos()), Scalar::from_f64(angle.sin())])
 }
 
 /// How many directions a ray cast tries before giving up.
@@ -994,7 +994,7 @@ const RAY_ATTEMPTS: usize = 16;
 /// Whether `p` lies inside the region bounded by `loops`, by the parity
 /// of a ray's crossings. Why not, if every ray met the boundary at a
 /// point it could not tell inside from outside — `p` on it.
-fn contains<S: Scalar>(loops: &[Vec<Piece<'_, S>>], p: &Vector2<S>) -> Result<bool, String> {
+fn contains(loops: &[Vec<Piece<'_>>], p: &Vector2) -> Result<bool, String> {
     let reach = loops
         .iter()
         .flatten()
@@ -1008,7 +1008,7 @@ fn contains<S: Scalar>(loops: &[Vec<Piece<'_, S>>], p: &Vector2<S>) -> Result<bo
         .fold(1.0, f64::max);
     // Directions tried in turn until one crosses every piece cleanly.
     let found = attempts(RAY_ATTEMPTS, |&k| -> Result<_, String> {
-        let d = ray_direction::<S>(k);
+        let d = ray_direction(k);
         let mut count = 0usize;
         for piece in loops.iter().flatten() {
             match ray_crossings(piece, p, &d, reach) {
@@ -1023,29 +1023,24 @@ fn contains<S: Scalar>(loops: &[Vec<Piece<'_, S>>], p: &Vector2<S>) -> Result<bo
 
 /// How many times the ray from `p` along `d` crosses the curve; `None` if
 /// it could be through an end of it, along it or touching it.
-fn ray_crossings<S: Scalar>(
-    piece: &Piece<'_, S>,
-    p: &Vector2<S>,
-    d: &Vector2<S>,
-    reach: f64,
-) -> Option<usize> {
-    let ahead = |q: &Vector2<S>| -> Option<bool> {
+fn ray_crossings(piece: &Piece<'_>, p: &Vector2, d: &Vector2, reach: f64) -> Option<usize> {
+    let ahead = |q: &Vector2| -> Option<bool> {
         let t = q.sub(p).prod_dot(d);
-        if t.definitely_greater(S::ZERO) {
+        if t.definitely_greater(Scalar::ZERO) {
             Some(true)
-        } else if t.definitely_less(S::ZERO) {
+        } else if t.definitely_less(Scalar::ZERO) {
             Some(false)
         } else {
             None
         }
     };
-    let far = p.add(&d.prod_scalar(S::from_f64(2.0 * reach)));
-    let points: Vec<(Vector2<S>, bool)> = match piece.seg {
+    let far = p.add(&d.prod_scalar(Scalar::from_f64(2.0 * reach)));
+    let points: Vec<(Vector2, bool)> = match piece.seg {
         Seg::Line { a, b } => {
             let e = b.sub(a);
             let den = d.prod_cross(&e);
-            if den.could_be_equal(S::ZERO) {
-                return if a.sub(p).prod_cross(d).could_be_equal(S::ZERO) {
+            if den.could_be_equal(Scalar::ZERO) {
+                return if a.sub(p).prod_cross(d).could_be_equal(Scalar::ZERO) {
                     None
                 } else {
                     Some(0)

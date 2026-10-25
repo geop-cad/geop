@@ -35,7 +35,6 @@ use geop_core_math::{
 };
 use geop_core_program::{
     element::ElementReference, part::StepContext, program::validate_operation_id, reader::Reader,
-    values::Design,
 };
 use geop_core_topology::{
     Body, CoedgeGeometry, FaceId, Sense,
@@ -55,7 +54,7 @@ pub struct ExtendSurface;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExtendSurfaceArgs {
     /// The edge of a face standing on its own to extend the face past.
-    pub edge: ElementReference<NamedModel<Design>, Edge>,
+    pub edge: ElementReference<NamedModel, Edge>,
     /// How far, along the surface across the middle of the edge.
     pub distance: f64,
 }
@@ -93,8 +92,8 @@ impl PartOperation for ExtendSurface {
         context: &'a Context<'a>,
         args: &ExtendSurfaceArgs,
         _: &FormState<()>,
-    ) -> EditForm<'a, Design, ExtendSurfaceArgs> {
-        let mut f = EditForm::<Design, ExtendSurfaceArgs>::default();
+    ) -> EditForm<'a, ExtendSurfaceArgs> {
+        let mut f = EditForm::<ExtendSurfaceArgs>::default();
         f.pick_one(
             "edge",
             "edge",
@@ -110,7 +109,7 @@ impl PartOperation for ExtendSurface {
 
 impl ModelOperation for ExtendSurface {
     fn build(
-        model: &mut NamedModel<Design>,
+        model: &mut NamedModel,
         _: &Reader,
         step: &str,
         args: &ExtendSurfaceArgs,
@@ -119,7 +118,7 @@ impl ModelOperation for ExtendSurface {
         if !args.distance.is_finite() {
             return Err(GeopError::new("the distance is not a number"));
         }
-        extend(model, args.edge.name(), Design::from_f64(args.distance))?;
+        extend(model, args.edge.name(), Scalar::from_f64(args.distance))?;
         Ok(())
     }
 }
@@ -127,13 +126,13 @@ impl ModelOperation for ExtendSurface {
 /// Which side of its patch a face's coedge runs along, numbered as
 /// [`NurbSurface3D::coons`] numbers them: `v` lowest, `u` highest, `v`
 /// highest, `u` lowest — the way an outer loop runs round its patch.
-fn side_of<S: Scalar>(
-    surface: &NurbSurface3D<S>,
-    pcurve: &geop_core_topology::Curve2<S>,
+fn side_of(
+    surface: &NurbSurface3D,
+    pcurve: &geop_core_topology::Curve2,
 ) -> GeopResult<Option<usize>> {
     let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
     let (a, b) = pcurve.ends()?;
-    let both = |k: usize, x: S| a[k].could_be_equal(x) && b[k].could_be_equal(x);
+    let both = |k: usize, x: Scalar| a[k].could_be_equal(x) && b[k].could_be_equal(x);
     // Straight along the side, not merely ending on it.
     let straight = pcurve.degree == 1 && pcurve.control_points.len() == 2;
     Ok(match () {
@@ -148,9 +147,9 @@ fn side_of<S: Scalar>(
 
 /// Extends the face standing on its own that the edge `edge` bounds past
 /// it by `distance` (see the module docs).
-pub fn extend<S: Scalar>(part: &mut NamedModel<S>, edge: &str, distance: S) -> GeopResult<FaceId> {
+pub fn extend(part: &mut NamedModel, edge: &str, distance: Scalar) -> GeopResult<FaceId> {
     let ctx = with_context!("extend({edge}, {distance:?})");
-    if !distance.definitely_greater(S::ZERO) {
+    if !distance.definitely_greater(Scalar::ZERO) {
         return Err(GeopError::new(format!(
             "an extension needs a distance greater than zero, not {distance:?}"
         )))
@@ -231,7 +230,7 @@ pub fn extend<S: Scalar>(part: &mut NamedModel<S>, edge: &str, distance: S) -> G
     // of how much to add.
     let surface = &face.surface;
     let ((u0, u1), (v0, v1)) = (surface.domain_u(), surface.domain_v());
-    let half = |a: S, b: S| a.add(b).div(S::TWO);
+    let half = |a: Scalar, b: Scalar| a.add(b).div(Scalar::TWO);
     let (along_u, at_end, (u, v)) = match side {
         0 => (false, false, (half(u0, u1)?, v0)),
         1 => (true, true, (u1, half(v0, v1)?)),
@@ -269,7 +268,7 @@ pub fn extend<S: Scalar>(part: &mut NamedModel<S>, edge: &str, distance: S) -> G
         longer.evaluate(u1, v1)?,
         longer.evaluate(u0, v1)?,
     ];
-    let uv = |u: S, v: S| Vector2::from_array([u, v]);
+    let uv = |u: Scalar, v: Scalar| Vector2::from_array([u, v]);
     let corner_uv = [uv(u0, v0), uv(u1, v0), uv(u1, v1), uv(u0, v1)];
     let spec = BodySpec {
         vertices: corner_points.to_vec(),

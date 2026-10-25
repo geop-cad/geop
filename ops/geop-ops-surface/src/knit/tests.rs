@@ -1,7 +1,7 @@
 //! Knitting copies of a cube's faces back into a box, and sheets that do
 //! not close.
 
-use geop_core_math::scalars::{ScalInF64 as S, Scalar};
+use geop_core_math::scalars::Scalar;
 use geop_core_topology::Body;
 use geop_lib_sweep::shapes::block;
 use geop_ops_model::NamedModel;
@@ -15,8 +15,8 @@ use geop_ops_model::testing::assert_valid_sheets;
 /// The six faces of a unit cube, each copied into a sheet of its own, the
 /// cube itself deleted: what is left is six faces standing on their own,
 /// the `k`-th face's sheet named `f{k}(...)`, its faces' names returned.
-fn six_sheets() -> (NamedModel<S>, Vec<String>) {
-    let mut part = NamedModel::<S>::new();
+fn six_sheets() -> (NamedModel, Vec<String>) {
+    let mut part = NamedModel::new();
     let cube = block(&mut part, "c", [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]);
     let faces = part.topology().solid_faces(cube).unwrap();
     let mut names = Vec::new();
@@ -35,7 +35,7 @@ fn six_sheets() -> (NamedModel<S>, Vec<String>) {
     (part, names)
 }
 
-fn knit_faces(part: NamedModel<S>, faces: &[String], solid: bool) -> GeopResult<NamedModel<S>> {
+fn knit_faces(part: NamedModel, faces: &[String], solid: bool) -> GeopResult<NamedModel> {
     let args = KnitArgs {
         faces: faces.iter().map(named).collect(),
         solid,
@@ -84,7 +84,7 @@ fn faces_that_do_not_meet_are_refused() {
             let face = part.face_id(name).unwrap();
             let surface = &part.topology().get_face(face).unwrap().surface;
             let normal = surface.as_plane().unwrap().unwrap().normal;
-            !normal[2].could_be_equal(S::ZERO)
+            !normal[2].could_be_equal(Scalar::ZERO)
         })
         .cloned()
         .collect();

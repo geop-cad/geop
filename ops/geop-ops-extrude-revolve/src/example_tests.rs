@@ -4,15 +4,11 @@
 
 use std::rc::Rc;
 
-use geop_core_math::{
-    geop_error::GeopResult,
-    scalars::{ScalInF64 as S, Scalar},
-};
+use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_core_program::{
     operation_registry::OperationRegistry,
     program::Program,
     testing::{args, assert_incremental, assert_round_trips, edit_args, edit_sequence, step},
-    values::Design,
 };
 use geop_core_topology::{
     contains::shell::PointClassification,
@@ -45,7 +41,7 @@ fn registry() -> GeopResult<OperationRegistry> {
 
 /// Builds `program`, requires it valid and to round-trip (see
 /// [`assert_round_trips`]), and returns its model.
-fn build_and_round_trip(name: &str, program: &Program) -> NamedModel<Design> {
+fn build_and_round_trip(name: &str, program: &Program) -> NamedModel {
     let part = assert_round_trips(Rc::new(registry().unwrap()), None, program);
     let model = model_of(&part);
     if let Err(report) = check_valid(&model) {
@@ -297,7 +293,7 @@ fn pipe_round_trips() {
     let model = part.topology();
     let end = part.face_id("sweep(pipe,end)").unwrap();
     assert!(model.iterate_face_coedges(end).all(|c| {
-        model.coedge_start_vertex(c).unwrap().point[2].could_be_equal(S::from_f64(4.0))
+        model.coedge_start_vertex(c).unwrap().point[2].could_be_equal(Scalar::from_f64(4.0))
     }));
     let half = std::f64::consts::FRAC_1_SQRT_2;
     for (p, expected) in [

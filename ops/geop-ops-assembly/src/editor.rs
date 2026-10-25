@@ -30,7 +30,7 @@ use geop_core_editor::{
 };
 use geop_core_program::{
     numeric::{ParameterValue, read_parameter_values},
-    values::{Design, Setting, Settings, StateValue, pose_state},
+    values::{Setting, Settings, StateValue, pose_state},
 };
 use std::collections::BTreeMap;
 
@@ -55,7 +55,7 @@ fn is_program(file: &str) -> bool {
 }
 
 /// The form of a step placing a part, and what setting its fields does.
-type PartForm<'a> = EditForm<'a, Design, AddPartArgs, PartSession>;
+type PartForm<'a> = EditForm<'a, AddPartArgs, PartSession>;
 
 /// The key of the placed part, as drawn to be dragged.
 pub const PART: &str = "part";
@@ -102,13 +102,13 @@ fn kinds() -> Vec<(&'static str, MateKind, &'static str, &'static str)> {
         ),
         constraint(
             "distance",
-            Kind::Distance { value: Design::ONE },
+            Kind::Distance { value: Scalar::ONE },
             "Two points, a point and a line or plane, or parallel lines or planes, keep a distance.",
         ),
         constraint(
             "angle",
             Kind::Angle {
-                value: Design::from_i64(90),
+                value: Scalar::from_i64(90),
             },
             "Two lines or planes meet at an angle, in degrees.",
         ),
@@ -141,21 +141,21 @@ fn kinds() -> Vec<(&'static str, MateKind, &'static str, &'static str)> {
         coupling(
             "gear",
             Transmission::Gear,
-            Design::ONE,
+            Scalar::ONE,
             true,
             "Two joints that turn — two gears' hinges — turn together: the first `ratio` times per turn of the second. Add the two joints first.",
         ),
         coupling(
             "rack_pinion",
             Transmission::RackPinion,
-            Design::ONE,
+            Scalar::ONE,
             false,
             "A joint that slides — a rack — moves as far as a joint that turns — its pinion — rolls its pitch circle. Add the two joints first.",
         ),
         coupling(
             "screw",
             Transmission::Screw,
-            Design::from_ratio(1, 10).expect("ten is not zero"),
+            Scalar::from_ratio(1, 10).expect("ten is not zero"),
             false,
             "A joint that slides moves its lead per turn of a joint that turns — of one cylindrical joint, say. Add the joints first.",
         ),
@@ -171,7 +171,7 @@ pub struct PartSession {
     /// point grabbed kept from the press on, so every event of the drag is
     /// measured from it; for a turn by the gizmo, three points of its frame
     /// — or after its placement was typed in.
-    pulls: Vec<Pull<Design>>,
+    pulls: Vec<Pull>,
     /// Whether the pulls are done with: they pull once more — for the
     /// editor to solve with where they were let go — and are gone at the
     /// next event.
@@ -197,7 +197,7 @@ pub type PartEditing = FormState<PartSession>;
 
 /// Where the part the step places is: the program's state, or — before
 /// anything was solved for it — the origin.
-fn pose_of(context: &Context) -> Pose<Design> {
+fn pose_of(context: &Context) -> Pose {
     match context.before.retrieve_state(&pose_state(context.step)) {
         StateValue::Pose(pose) => pose,
         StateValue::Number(_) => Pose::identity(),
@@ -205,7 +205,7 @@ fn pose_of(context: &Context) -> Pose<Design> {
 }
 
 /// The part placed as `step` pulled to `target` as a whole.
-fn pulled_to(step: &str, target: Pose<Design>) -> Vec<Pull<Design>> {
+fn pulled_to(step: &str, target: Pose) -> Vec<Pull> {
     vec![Pull::Pose {
         parameter: pose_state(step),
         target: target.map(|c| c.sharpen()),
@@ -229,7 +229,7 @@ fn set_joint(session: &mut PartSession, parameter: &str, value: f64) {
 
 /// The value a kind of mate holds is `v` now.
 fn set_value(kind: &mut MateKind, v: f64) {
-    let v = Design::from_f64(v);
+    let v = Scalar::from_f64(v);
     match kind {
         MateKind::Constraint(Kind::Distance { value } | Kind::Angle { value })
         | MateKind::Coupling(CouplingKind { value, .. }) => *value = v,
@@ -431,7 +431,7 @@ fn selected<'a>(
                     JointKind::Revolute { min, max } | JointKind::Slider { min, max },
                 )) = args.mates.get_mut(&mate_id).map(|m| &mut m.kind)
                 {
-                    let bound = |v: f64| limited.then(|| Design::from_f64(v));
+                    let bound = |v: f64| limited.then(|| Scalar::from_f64(v));
                     *min = bound(here - reach);
                     *max = bound(here + reach);
                 }
@@ -450,7 +450,7 @@ fn selected<'a>(
                         JointKind::Revolute { min, max } | JointKind::Slider { min, max },
                     )) = args.mates.get_mut(&mate_id).map(|m| &mut m.kind)
                     {
-                        *[min, max][k] = Some(Design::from_f64(v));
+                        *[min, max][k] = Some(Scalar::from_f64(v));
                     }
                 },
             );
@@ -614,7 +614,7 @@ pub(crate) fn form<'a>(
         let step = step.clone();
         f.number(axis, number, move |edit, v| {
             let mut position = position;
-            position[k] = Design::from_f64(v);
+            position[k] = Scalar::from_f64(v);
             edit.session.pulls = pulled_to(&step, pose.with_position(position));
             edit.session.released = true;
         });
@@ -626,7 +626,7 @@ pub(crate) fn form<'a>(
         f.number(&key, number, move |edit, v| {
             let mut angles = angles;
             angles[k] = v;
-            if let Ok(turned) = Pose::from_euler(position, angles.map(Design::from_f64)) {
+            if let Ok(turned) = Pose::from_euler(position, angles.map(Scalar::from_f64)) {
                 edit.session.pulls = pulled_to(&step, turned);
                 edit.session.released = true;
             }
@@ -755,7 +755,7 @@ pub(crate) fn form<'a>(
         .pulls
         .extend(session.held.iter().map(|(parameter, value)| Pull::Value {
             parameter: parameter.clone(),
-            value: Design::from_f64(*value),
+            value: Scalar::from_f64(*value),
         }));
     if built.is_some() {
         let shape = Shape::Instance { name: step.clone() };
@@ -785,7 +785,7 @@ pub(crate) fn form<'a>(
 pub(crate) fn canvas(
     context: &Context,
     edit: Edit<'_, AddPartArgs, PartSession>,
-    event: &CanvasEvent<Design>,
+    event: &CanvasEvent,
 ) {
     let Edit { args, session, .. } = edit;
     match event {
