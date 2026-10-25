@@ -533,18 +533,18 @@ fn robot_timings() {
 /// [`geop_core_math::solvers::system`]). Asked one group at a time, a
 /// question cost a run of every step per group, and a drag of a 2000-part
 /// robot took seconds. Counted in program runs (see
-/// [`geop_ops_constraints::solve::runs`]): four times the screws, the same
+/// [`geop_lib_constraints::solve::runs`]): four times the screws, the same
 /// runs.
 #[test]
 fn an_edit_resolves_each_mate_a_few_times() {
     let mut runs = Vec::new();
     for screws in [20, 80] {
         let resolved = |f: &mut dyn FnMut()| {
-            let before = (crate::mates_resolved(), geop_ops_constraints::solve::runs());
+            let before = (crate::mates_resolved(), geop_lib_constraints::solve::runs());
             f();
             (
                 crate::mates_resolved() - before.0,
-                geop_ops_constraints::solve::runs() - before.1,
+                geop_lib_constraints::solve::runs() - before.1,
             )
         };
         let mut editor = None;

@@ -842,7 +842,7 @@ fn a_mate_on_a_part_of_a_sub_assembly_is_solved() {
         solvable.contains(&key_behind("hinge", &pose_state("pin"))),
         "{solvable:?}"
     );
-    let constraints = geop_ops_constraints::Constraints::of(&built.view()).unwrap();
+    let constraints = geop_lib_constraints::Constraints::of(&built.view()).unwrap();
     let mate = constraints.get("add_part(hinge,m1)").unwrap();
     let by: Vec<&String> = mate.jacobian.keys().collect();
     assert!(

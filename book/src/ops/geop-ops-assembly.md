@@ -129,10 +129,10 @@ What the mates add besides their constraints is said in the part
 where its parts are, measured from them — and as `solving::Settings`, with
 its limits, for the editor to list and set (the joints panel). Its limits
 are constraints of their own (`Bound::AtMost`). See
-[geop-ops-constraints](./geop-ops-constraints.md) for what those are.
+[geop-lib-constraints](../lib/geop-lib-constraints.md) for what those are.
 
 `solving` is what an editor does with a part's state, the same for every
-program, on `geop_ops_constraints::solve`: `solve` settles it so every
+program, on `geop_lib_constraints::solve`: `solve` settles it so every
 constraint holds — pulled by a drag (`Pull::Point`), a pose typed in
 (`Pull::Pose`), a value set (`Pull::Value`, an angle driven there in
 steps) — `set` sets values a user sets, `check` says which constraints

@@ -35,7 +35,7 @@ lib/geop-lib-shell           shelling, thickening, offsetting
 lib/geop-lib-stdlib          the standard parts beside every workspace
 ops/geop-ops-model           the model target: topology with stable names
 ops/geop-ops-parameters      parameters, tables, properties; the panel
-ops/geop-ops-constraints     the constraints of a part's state, solved
+lib/geop-lib-constraints     the constraints of a part's state, solved
 ops/geop-ops-datums          the part's datums
 ops/geop-ops-sketch          the sketch operation
 ops/geop-ops-sketch3d        the 3-D sketch operation

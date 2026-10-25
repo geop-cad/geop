@@ -1,5 +1,5 @@
 [package]
-name = "geop-ops-constraints"
+name = "geop-lib-constraints"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -757,7 +757,7 @@ that is cubic in the parts. What fixed it, and what to keep doing:
   state. Questions about what was built, over the whole assembly, are for
   the one dialog open, once per edit.
 - A system that splits into independent groups is solved group by group,
-  and so is any question about it (`geop_ops_constraints::solve::freedom`, like the
+  and so is any question about it (`geop_lib_constraints::solve::freedom`, like the
   solve).
 - Listing must not build: example programs and standard parts are listed
   by name, and made when opened or read.

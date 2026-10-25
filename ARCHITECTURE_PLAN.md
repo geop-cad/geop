@@ -696,7 +696,7 @@ geop-ops-hole         -> model, lib-booleans, lib-sweep, sketch, datums
 geop-ops-shell        -> model, lib-shell
 geop-ops-plastic      -> model, lib-booleans, lib-sweep, lib-shell, sketch
 geop-ops-pattern      -> model, lib-booleans, sketch, datums
-geop-ops-constraints  -> core
+geop-lib-constraints  -> core
 geop-ops-assembly     -> model, constraints, datums, add-datum (Selected), core-rasterize
 geop-ops-drawing      -> model, lib-sheet, assembly (placed parts), bom
 geop-ops-inspect      -> model, assembly
@@ -809,7 +809,7 @@ Implements §3.2 to §3.6 on top of phase 1's concrete types:
    with one joint moved rebuilds one instance; the reorder test.
 7. The assembly solver (`geop-ops-assembly::solving`, `Rerun`) adapts to
    `runner.run(part, program, upto)` with state in the program.
-8. `geop-ops-constraints`: a constraint whose residual reads a target
+8. `geop-lib-constraints`: a constraint whose residual reads a target
    that recorded a `Read::State` is refused, naming the constraint, the
    target and the state (see §3.6, the cable example).
 

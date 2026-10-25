@@ -6,7 +6,7 @@ a program is a list of steps, each an `Operation`; running it builds a
 **inputs** — what its parameters are set to — and its **state** — where its
 placed parts are, how its joints are turned — which no step changes: a
 solver moves the state until the constraints the steps define hold (see
-[geop-ops-constraints](../ops/geop-ops-constraints.md)). The one thing it
+[geop-lib-constraints](../lib/geop-lib-constraints.md)). The one thing it
 reads besides is its **workspace**: the programs it places and the files
 it imports.
 

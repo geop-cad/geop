@@ -19,12 +19,12 @@
 - [geop-lib-sweep](./lib/geop-lib-sweep.md)
 - [geop-lib-stdlib](./lib/geop-lib-stdlib.md)
 - [geop-lib-shell](./lib/geop-lib-shell.md)
+- [geop-lib-constraints](./lib/geop-lib-constraints.md)
 
 # Ops
 
 - [geop-ops-model](./ops/geop-ops-model.md)
 - [geop-ops-parameters](./ops/geop-ops-parameters.md)
-- [geop-ops-constraints](./ops/geop-ops-constraints.md)
 - [geop-ops-datums](./ops/geop-ops-datums.md)
 - [geop-ops-sketch](./ops/geop-ops-sketch.md)
 - [geop-ops-reference-geometry](./ops/geop-ops-reference-geometry.md)

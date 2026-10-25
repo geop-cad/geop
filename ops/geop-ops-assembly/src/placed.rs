@@ -33,7 +33,7 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     primitives::{Pose, TriangleFace},
 };
-use geop_ops_constraints::{solve::Mobility, unknown::Unknowns};
+use geop_lib_constraints::{solve::Mobility, unknown::Unknowns};
 use geop_ops_datums::read_datums;
 use geop_ops_model::{SolidMeshes, read_model};
 use geop_ops_parameters::{

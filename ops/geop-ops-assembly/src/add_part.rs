@@ -132,7 +132,7 @@ impl PartOperation for AddPart {
     /// constraints on the state; and lets a solve move the part, as far as
     /// its mates let it. A mate that cannot be resolved fails the step,
     /// after the others are defined. The placed part's own mates come up
-    /// with its constraints (see [`geop_ops_constraints::Constraints::of`]).
+    /// with its constraints (see [`geop_lib_constraints::Constraints::of`]).
     fn run(ctx: &mut StepContext, args: &AddPartArgs) -> GeopResult<()> {
         let step = ctx.step();
         let context = with_context!("add_part({step}, file={:?})", args.file);

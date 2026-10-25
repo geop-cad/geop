@@ -10,7 +10,7 @@
 //! the constraints allow; a step declares any other value a solve moves, or
 //! holds one fixed, as an [`Unknown`]; and the values a user sets directly
 //! — a joint's coordinates — as [`Settings`], for an editor to list.
-//! [`geop_ops_constraints::solve`] solves, encloses and measures, running the
+//! [`geop_lib_constraints::solve`] solves, encloses and measures, running the
 //! program again at every state it tries ([`Rerun`]).
 
 use geop_core_program::{
@@ -33,7 +33,7 @@ use geop_core_math::{
     },
     vector::Vector3,
 };
-use geop_ops_constraints::{
+use geop_lib_constraints::{
     Bound, Constraint, Constraints,
     solve::{self, Mobility, Preference, Problem, Run},
     unknown::Unknowns,
@@ -42,7 +42,7 @@ use geop_ops_constraints::{
 /// A parameter's value, as an input.
 use serde::Serialize;
 
-pub use geop_ops_constraints::unknown::{Unknown, declare_unknowns};
+pub use geop_lib_constraints::unknown::{Unknown, declare_unknowns};
 
 use crate::placed::{Drawn, Located, drawn, locate, placed_parts};
 use geop_core_editor::view::PartView;

@@ -25,7 +25,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_lib_sweep::shapes::{block_part, v3};
-use geop_ops_constraints::Constraints;
+use geop_lib_constraints::Constraints;
 use geop_ops_datums::{ORIGIN, component_name, datums, origin_axis, read_datums};
 use geop_ops_model::{read_model, testing::assert_close};
 use geop_ops_pattern::spacing::Spacing;
@@ -527,7 +527,7 @@ fn a_placed_part_brings_its_mates() {
 }
 
 /// The constraint `name` of the part `reader` reads.
-fn constraint(reader: &Reader, name: &str) -> geop_ops_constraints::Constraint {
+fn constraint(reader: &Reader, name: &str) -> geop_lib_constraints::Constraint {
     let constraints = Constraints::of(reader).unwrap();
     (constraints.get(name).cloned()).unwrap_or_else(|| panic!("no constraint {name}"))
 }

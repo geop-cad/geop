@@ -1,4 +1,4 @@
-# geop-ops-constraints
+# geop-lib-constraints
 
 > Brief overview only — full documentation is coming later.
 

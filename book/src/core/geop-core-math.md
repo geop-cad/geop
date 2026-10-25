@@ -224,7 +224,7 @@ nearest point of a line — what picking in a viewer is built on.
 
 One layer for every constraint system of the kernel: a sketch's numbers
 (`geop-core-sketch`) and a program's state, where its parts are
-(`geop_ops_constraints::solve`), are each only an adapter.
+(`geop_lib_constraints::solve`), are each only an adapter.
 
 - **Blocks** of variables (`Variable`): a number, a pose. A block moves by
   steps along its own tangent space (`retract`: adding to a number; a pose

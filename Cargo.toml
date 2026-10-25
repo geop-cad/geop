@@ -37,7 +37,7 @@ members = [
     "ops/geop-ops-hole",
     "ops/geop-ops-urdf",
     "ops/geop-ops-bom",
-    "ops/geop-ops-constraints",
+    "lib/geop-lib-constraints",
     "lib/geop-lib-booleans",
     "lib/geop-lib-sweep",
     "lib/geop-lib-shell",
@@ -93,7 +93,7 @@ geop-ops-harness = { path = "ops/geop-ops-harness" }
 geop-ops-hole = { path = "ops/geop-ops-hole" }
 geop-ops-urdf = { path = "ops/geop-ops-urdf" }
 geop-ops-bom = { path = "ops/geop-ops-bom" }
-geop-ops-constraints = { path = "ops/geop-ops-constraints" }
+geop-lib-constraints = { path = "lib/geop-lib-constraints" }
 geop-lib-booleans = { path = "lib/geop-lib-booleans" }
 geop-lib-sweep = { path = "lib/geop-lib-sweep" }
 geop-lib-shell = { path = "lib/geop-lib-shell" }
