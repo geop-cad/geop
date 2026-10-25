@@ -15,6 +15,7 @@ use geop_ops_extrude_revolve::{
     testing::{drilled_box, extrusion},
 };
 use geop_ops_model::datums::{ORIGIN, component_name, datums};
+use geop_ops_model::selection::Selected;
 use geop_ops_model::sketch::{
     Sketch, SketchPlane,
     figures::{disc, n, on_face, on_origin, outline, rectangle_outline},
@@ -24,7 +25,7 @@ use geop_ops_model::{
     Combine, NamedModel, model,
     testing::{Built, assert_valid, check_valid, edges_where, has_vertex, middle},
 };
-use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
+use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction};
 use geop_ops_sketch::AddSketchArgs;
 
 /// The operations these tests' programs are written in.

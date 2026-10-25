@@ -33,7 +33,7 @@ use std::{
 };
 
 use crate::{
-    AddPartArgs, Kind, Mate, MateEntity, Resolved,
+    AddPartArgs, Kind, Mate, Resolved,
     placed::{locate, placed_parts},
     solving::check as check_mates,
 };
@@ -45,8 +45,9 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_lib_stdlib::WithStandardParts;
+use geop_ops_model::mate_entity::MateEntity;
+use geop_ops_model::selection::Selected;
 use geop_ops_model::{Combine, element, read_model};
-use geop_ops_reference_geometry::Selected;
 
 /// A part of one extrusion `height` tall, of a sketch on the origin's Z
 /// plane: its faces are `extrude(<id>,start)` below and `extrude(<id>,end)`

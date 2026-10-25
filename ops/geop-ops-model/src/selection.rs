@@ -1,9 +1,17 @@
-//! What a datum is built from: elements of the part picked in any order
-//! ([`Selected`]) — vertices, edges, faces, datums, a sketch's points and
-//! curves — and what each can be used as ([`Shape`], [`Role`]): a point, a
-//! line, a plane, a curve, a circle, something round. Which of them an
-//! element is decides which constructions fit a selection.
+//! One element of a part, picked in the viewport, whatever it is
+//! ([`Selected`]) — a vertex, an edge, a face, a datum, a sketch's point or
+//! curve — and what it can be used as ([`Shape`], [`Role`]): a point, a
+//! line, a plane, a curve, a circle, something round. What a datum is built
+//! from, what a mate holds by, what is measured: a crate that lets the user
+//! pick any element of a part reads the pick through `Selected` rather than
+//! naming each kind of element itself.
 
+use crate::{
+    Circle, Curve, Edge, Face, Line, NamedModel, Point, Round, Vertex,
+    datums::{AnyDatum, Datums},
+    parameters::located,
+    sketch::PlacedSketch,
+};
 use geop_core_editor::one_of;
 use geop_core_geometry::{
     nurb_curve::NurbCurve3D,
@@ -17,10 +25,6 @@ use geop_core_math::{
 use geop_core_program::{
     element::ElementReference, placed::InInstance, reader::Reader, values::Design,
 };
-use geop_ops_model::datums::{AnyDatum, Datums};
-use geop_ops_model::parameters::located;
-use geop_ops_model::sketch::PlacedSketch;
-use geop_ops_model::{Circle, Curve, Edge, Face, Line, NamedModel, Point, Round, Vertex};
 
 one_of! {
     /// An element a datum is built from.

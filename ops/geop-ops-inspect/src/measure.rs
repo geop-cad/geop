@@ -19,7 +19,7 @@ use geop_core_math::{
 use geop_core_program::{element::PickedElement, reader::Reader, values::Design};
 use geop_core_topology::distance::{Feature, PlacedFace, closest_points};
 use geop_ops_model::parameters::located;
-use geop_ops_reference_geometry::{Selected, Shape};
+use geop_ops_model::selection::{Selected, Shape};
 use serde::Serialize;
 
 /// What is picked to be measured, by what is drawn of it: vertices,

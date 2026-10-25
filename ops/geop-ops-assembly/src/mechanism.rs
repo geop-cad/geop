@@ -48,16 +48,16 @@ use geop_lib_constraints::{
     unknown::{Unknown, declare_unknowns},
 };
 use geop_ops_model::parameters::{compose, placement};
-use geop_ops_reference_geometry::Selected;
+use geop_ops_model::selection::Selected;
 
 use crate::{
-    frame::MateEntity,
     joints::{Connector, JointKind, Motion, joint_residuals, measure},
     mates::{Mate, MateKind, On, Resolved, joint_parameter, mate, mate_name},
     placed::{drawn, locate, moved_by},
     residuals::{D, Geometry, Kind, residuals},
     solving::{Setting, Settings, largest, scale_of, settings_of},
 };
+use geop_ops_model::mate_entity::MateEntity;
 
 thread_local! {
     static MATES_RESOLVED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

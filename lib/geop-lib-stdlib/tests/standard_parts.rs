@@ -24,11 +24,12 @@ use geop_ops_model::parameters::{
     ParameterKind, parameter_numbers, parameters_of, read_properties, set_parameters,
     steps::{LOOKUP, PARAMETERS, PROPERTIES},
 };
+use geop_ops_model::spacing::Spacing;
 use geop_ops_model::{
     NamedModel, RefId, read_model,
     testing::{check_valid, model_of},
 };
-use geop_ops_pattern::{CircularPatternArgs, Spacing};
+use geop_ops_pattern::CircularPatternArgs;
 
 use geop_lib_stdlib::{SIZE, StandardPart, TEETH, WithStandardParts, parts};
 
@@ -573,9 +574,11 @@ fn gear_drive() -> Program {
         primitives::{DatumComponent, FrameAxis, Pose},
         vector::Vector3,
     };
-    use geop_ops_assembly::{AddPartArgs, CouplingKind, JointKind, Mate, MateEntity, Transmission};
+    use geop_ops_assembly::{AddPartArgs, CouplingKind, JointKind, Mate, Transmission};
     use geop_ops_model::datums::{ORIGIN, component_name, datum};
-    use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
+    use geop_ops_model::mate_entity::MateEntity;
+    use geop_ops_model::selection::Selected;
+    use geop_ops_reference_geometry::{AddDatumArgs, Construction};
 
     let n = Design::from_f64;
     let pose = |position: [f64; 3], degrees: [f64; 3]| {

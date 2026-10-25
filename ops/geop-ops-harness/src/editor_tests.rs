@@ -24,12 +24,11 @@ use geop_core_program::{
     program::Program,
     values::{Design, StateValue, StateValues, pose_state},
 };
-use geop_ops_assembly::{
-    AddPartArgs, Kind, Mate, MateEntity, examples::pose, solids::placed_solids,
-};
+use geop_ops_assembly::{AddPartArgs, Kind, Mate, examples::pose, solids::placed_solids};
 use geop_ops_model::datums::{ORIGIN, component_name, datum};
+use geop_ops_model::mate_entity::MateEntity;
 use geop_ops_model::read_model;
-use geop_ops_reference_geometry::Selected;
+use geop_ops_model::selection::Selected;
 
 use crate::{RouteArgs, Wire, WireSize, cable};
 

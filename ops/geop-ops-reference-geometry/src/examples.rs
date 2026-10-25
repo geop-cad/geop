@@ -16,7 +16,8 @@ use geop_ops_model::sketch::{
 use geop_ops_model::{Combine, element};
 use geop_ops_sketch::AddSketchArgs;
 
-use crate::{AddDatumArgs, Construction, Selected};
+use crate::{AddDatumArgs, Construction};
+use geop_ops_model::selection::Selected;
 
 /// The examples of this crate, by name.
 pub fn set() -> ExampleSet {

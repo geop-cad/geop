@@ -75,7 +75,7 @@ fn new_linear_pattern_dragged_by_its_spacing_handle() {
     let args = args::<crate::LinearPatternArgs>(editor.program().steps.last().unwrap());
     assert_eq!(args.first.count, 4.0.into());
     match &args.first.spacing {
-        crate::Spacing::Step(step) => {
+        geop_ops_model::spacing::Spacing::Step(step) => {
             let step = step.plain().expect("a plain spacing");
             assert!((step - 2.0).abs() < 1e-9, "{step}")
         }

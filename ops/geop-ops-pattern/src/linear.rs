@@ -21,8 +21,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     common::{Naming, Pattern, Seeds, build_pattern, run_pattern, track},
     references::PatternDirection,
-    spacing::{Row, Spacing, count_field, whole_count},
 };
+use geop_ops_model::spacing::{Row, Spacing, count_field, whole_count};
 
 /// Copies the bodies `bodies` — solids, and sheets by one of their faces —
 /// or the features `features` in a row along a direction, or in a grid

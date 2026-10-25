@@ -30,13 +30,14 @@ use geop_ops_model::sketch::{
     Sketch, SketchPlane,
     figures::{disc, on_face, on_origin, outline},
 };
+use geop_ops_model::spacing::Spacing;
 use geop_ops_model::{
     Combine, Face, NamedModel, model,
     testing::{Built, assert_valid, assert_volume},
 };
 use geop_ops_pattern::{
     CircularPatternArgs, Direction, FeatureRef, LinearPatternArgs, MirrorArgs, PatternDirection,
-    Seeds, Spacing, TurnAxis, body, feature,
+    Seeds, TurnAxis, body, feature,
 };
 use geop_ops_sketch::AddSketchArgs;
 

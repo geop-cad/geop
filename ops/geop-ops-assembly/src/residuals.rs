@@ -14,7 +14,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::values::Design;
-use geop_ops_reference_geometry::{Role, Shape};
+use geop_ops_model::selection::{Role, Shape};
 use serde::{Deserialize, Serialize};
 
 pub use crate::solving::D;

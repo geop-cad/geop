@@ -13,13 +13,13 @@ use geop_core_math::{
 };
 use geop_core_program::{element::ElementReference, part::Part, values::Design};
 use geop_ops_extrude_revolve::testing::{drilled_box, registry};
+use geop_ops_model::selection::Selected;
 use geop_ops_model::{
     NamedModel, model,
     testing::{Built, edge_at, model_of, vertex_at},
 };
-use geop_ops_reference_geometry::Selected;
 
-use crate::MateEntity;
+use geop_ops_model::mate_entity::MateEntity;
 
 /// The drilled box (see [`drilled_box`]): `[0, 2] x [0, 2] x [0, 1]`, with
 /// a hole of radius 0.4 round `(1, 1)` from its top down to `z = 0.5`, as

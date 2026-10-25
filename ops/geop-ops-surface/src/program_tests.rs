@@ -17,6 +17,7 @@ use geop_core_program::{
 use geop_core_sketch::PointId;
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, LoftArgs, Output};
 use geop_ops_model::datums::{ORIGIN, component_name, datums};
+use geop_ops_model::selection::Selected;
 use geop_ops_model::sketch::{
     Sketch, SketchPlane,
     figures::{n, on_origin},
@@ -26,7 +27,7 @@ use geop_ops_model::{
     NamedModel,
     testing::{Built, assert_valid},
 };
-use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
+use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction};
 use geop_ops_sketch::AddSketchArgs;
 
 /// The operations these tests' programs are written in.

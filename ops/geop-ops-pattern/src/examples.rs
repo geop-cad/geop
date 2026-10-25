@@ -15,7 +15,8 @@ use geop_ops_model::sketch::{
 };
 use geop_ops_sketch::AddSketchArgs;
 
-use crate::{Direction, LinearPatternArgs, PatternDirection, Seeds, Spacing, feature};
+use crate::{Direction, LinearPatternArgs, PatternDirection, Seeds, feature};
+use geop_ops_model::spacing::Spacing;
 
 /// The examples of this crate, by name.
 pub fn set() -> ExampleSet {

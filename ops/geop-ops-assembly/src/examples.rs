@@ -34,16 +34,17 @@ use geop_ops_extrude_revolve::{
     examples::{box_with_drill_hole, parametric_plate},
 };
 use geop_ops_model::datums::{datum, origin_plane};
+use geop_ops_model::selection::Selected;
 use geop_ops_model::sketch::{
     Sketch, SketchPlane,
     figures::{circle, n, rectangle, solved},
     whole_sketch,
 };
 use geop_ops_model::{Combine, PartDescription, element, read_model};
-use geop_ops_reference_geometry::Selected;
 use geop_ops_sketch::{AddSketch, AddSketchArgs};
 
-use crate::{AddPartArgs, JointKind, Kind, Mate, MateEntity, Motion, joint_parameter};
+use crate::{AddPartArgs, JointKind, Kind, Mate, Motion, joint_parameter};
+use geop_ops_model::mate_entity::MateEntity;
 
 /// The plane of the origin normal to `normal`, as a plane to sketch on.
 fn on_origin(normal: FrameAxis) -> SketchPlane {

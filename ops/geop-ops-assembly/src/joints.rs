@@ -23,7 +23,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::values::Design;
-use geop_ops_reference_geometry::Shape;
+use geop_ops_model::selection::Shape;
 use serde::{Deserialize, Serialize};
 
 use crate::residuals::{D, Placing, parallel};
@@ -76,7 +76,7 @@ impl Connector<Design> {
     /// entity is — an axis through a point it defines: a circular edge's
     /// center and normal, a sketch circle's, or the origin and `z` axis of
     /// a frame, turns measured from its `x` axis. Of anything else, there is
-    /// none: it is used by the frame it gives (see [`crate::MateEntity::frame`]).
+    /// none: it is used by the frame it gives (see [`geop_ops_model::mate_entity::MateEntity::frame`]).
     pub fn of(aspects: &Shape, face: bool) -> Option<GeopResult<Self>> {
         if let Some(arc) = &aspects.arc {
             return Some(Connector::new(arc.circle.center, arc.circle.normal, None));

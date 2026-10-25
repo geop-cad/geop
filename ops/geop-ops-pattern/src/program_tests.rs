@@ -10,7 +10,7 @@ use std::f64::consts::PI;
 
 use crate::{
     BodyRef, CircularPattern, CircularPatternArgs, Direction, LinearPattern, LinearPatternArgs,
-    Mirror, MirrorArgs, MoveBody, MoveBodyArgs, PatternDirection, Seeds, Spacing, TurnAxis, body,
+    Mirror, MirrorArgs, MoveBody, MoveBodyArgs, PatternDirection, Seeds, TurnAxis, body,
 };
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
 use geop_ops_boolean::Boolean;
@@ -23,6 +23,7 @@ use geop_ops_model::sketch::{
     figures::{disc, n, on_origin, outline},
     sketch_element,
 };
+use geop_ops_model::spacing::Spacing;
 use geop_ops_model::{
     Combine, NamedModel, model, solid,
     testing::{Built, assert_valid, assert_volume},

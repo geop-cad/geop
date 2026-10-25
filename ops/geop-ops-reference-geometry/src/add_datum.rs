@@ -29,10 +29,8 @@ use serde::{Deserialize, Serialize};
 use geop_ops_model::datums::{Datums, datums};
 use geop_ops_model::frame_along;
 
-use crate::{
-    editor,
-    selection::{Role, Selected, Shape},
-};
+use crate::editor;
+use geop_ops_model::selection::{Role, Selected, Shape};
 
 /// What kind of value a construction takes besides its selection.
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -53,6 +53,7 @@ mod extent;
 mod feature;
 pub mod geometry;
 mod ids;
+pub mod mate_entity;
 mod mesh;
 mod named_model;
 mod names;
@@ -60,8 +61,10 @@ pub mod notes;
 pub mod parameters;
 pub mod records;
 mod resolve;
+pub mod selection;
 pub mod sketch;
 pub mod sketch3d;
+pub mod spacing;
 pub mod tangent;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

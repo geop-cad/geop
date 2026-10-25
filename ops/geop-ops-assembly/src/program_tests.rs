@@ -38,21 +38,23 @@ use geop_ops_extrude_revolve::{
 };
 use geop_ops_model::datums::{ORIGIN, component_name, datum};
 use geop_ops_model::parameters::{COLOR, instances, read_properties};
+use geop_ops_model::selection::Selected;
 use geop_ops_model::sketch::{figures::n, sketch_element};
+use geop_ops_model::spacing::Spacing;
 use geop_ops_model::{
     Point, element, read_model,
     testing::{assert_close, model_of},
 };
-use geop_ops_pattern::spacing::Spacing;
-use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
+use geop_ops_reference_geometry::{AddDatumArgs, Construction};
 
 use crate::{
-    AddPartArgs, DragTool, MateEntity, PartPatternArgs, PatternAxis, Resolved, examples,
-    examples::pose,
+    AddPartArgs, DragTool, PartPatternArgs, PatternAxis, Resolved,
+    examples::{self, pose},
     mate_name,
     placed::{Placed, locate, placed_parts},
     solving::{self, Freedom, Report, SettingsState},
 };
+use geop_ops_model::mate_entity::MateEntity;
 
 /// The operations the tests of assemblies write their programs in — the
 /// parts sketched, extruded, rounded and mirrored, the standard parts'
@@ -232,12 +234,12 @@ impl Built {
     }
 
     /// The point `of` takes of what `entity` is — see
-    /// [`geop_ops_reference_geometry::Shape`] — where the part has it: of a placed
+    /// [`geop_ops_model::selection::Shape`] — where the part has it: of a placed
     /// part, where it is placed.
     fn placed(
         &self,
         entity: &MateEntity,
-        of: impl Fn(&geop_ops_reference_geometry::Shape) -> Option<Vector3<Design>>,
+        of: impl Fn(&geop_ops_model::selection::Shape) -> Option<Vector3<Design>>,
     ) -> [f64; 3] {
         let reader = self.view();
         let p = of(&entity.shape(&reader).unwrap()).expect("the entity has that point");

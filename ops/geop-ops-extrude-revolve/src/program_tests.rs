@@ -37,8 +37,9 @@ use geop_core_math::{
 use geop_core_sketch::PointId;
 use geop_core_topology::validation::{ValidationParameters, validate};
 use geop_ops_model::datums::{AnyDatum, Datums, ORIGIN, component_name, datums, origin_axis};
+use geop_ops_model::selection::Selected;
 use geop_ops_model::sketch3d::sketch3d_path;
-use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
+use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction};
 use geop_ops_sketch3d::AddSketch3d;
 
 /// The sketch `name` as a path.

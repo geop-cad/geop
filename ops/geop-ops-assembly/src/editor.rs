@@ -12,7 +12,7 @@
 //!
 //! A joint is made between frames, one picked on each part: a click on a
 //! face, an edge or a point puts one there (see
-//! [`crate::MateEntity::frame`]), and the hover shows the
+//! [`geop_ops_model::mate_entity::MateEntity::frame`]), and the hover shows the
 //! frame it would pick, as three arrows. A coupling is made of two joints
 //! already made, offered by what they join.
 //!

@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     common::{Naming, Pattern, Seeds, build_pattern, run_pattern},
     references::TurnAxis,
-    spacing::{Row, Spacing, count_field, whole_count},
 };
+use geop_ops_model::spacing::{Row, Spacing, count_field, whole_count};
 
 /// Copies the bodies `bodies` — solids, and sheets by one of their faces —
 /// or does the features `features` again, turned around an axis: `count` instances, the bodies themselves the

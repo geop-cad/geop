@@ -24,7 +24,6 @@ pub mod editor;
 #[cfg(test)]
 mod editor_tests;
 pub mod examples;
-pub mod frame;
 #[cfg(test)]
 mod frame_tests;
 mod icons;
@@ -55,7 +54,6 @@ use geop_core_math::geop_error::GeopResult;
 pub use add_part::{AddPart, AddPartArgs};
 pub use drag_tool::DragTool;
 pub use draw::AssemblyDrawer;
-pub use frame::MateEntity;
 pub use mates::{
     Anchor, CouplingKind, JointKind, Kind, Mate, MateKind, Motion, On, Resolved, Transmission,
     joint_parameter, mate, mate_name,

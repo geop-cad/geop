@@ -1,6 +1,6 @@
 //! Datums built on a solid, and sketched on.
 
-use crate::{AddDatum, AddDatumArgs, Construction, Role, Selected, Shape, fitting_constructions};
+use crate::{AddDatum, AddDatumArgs, Construction, fitting_constructions};
 use geop_core_geometry::shape::Plane;
 use geop_core_math::{
     geop_error::GeopResult,
@@ -14,6 +14,7 @@ use geop_core_program::{
 use geop_lib_sweep::shapes::v3;
 use geop_ops_extrude_revolve::testing::drilled_box as drilled;
 use geop_ops_model::datums::{AnyDatum, Datums, ORIGIN, component_name, datums, read_datums};
+use geop_ops_model::selection::{Role, Selected, Shape};
 use geop_ops_model::sketch::{PlacedSketch, sketch_element, whole_sketch};
 use geop_ops_model::{model, testing::runner_of};
 

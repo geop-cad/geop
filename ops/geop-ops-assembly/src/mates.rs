@@ -21,17 +21,18 @@
 //! whose coordinate the state does not give starts where its parts are.
 
 pub use crate::{
-    frame::MateEntity,
     joints::{Connector, CouplingKind, JointKind, Motion, Transmission},
     residuals::{Geometry, Kind},
 };
+pub use geop_ops_model::mate_entity::MateEntity;
+
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::{
     element::{HasElements, Kind as ElementKind, whole},
     target::{Target, TargetReference},
     values::Design,
 };
-use geop_ops_reference_geometry::Role;
+use geop_ops_model::selection::Role;
 use serde::{Deserialize, Serialize};
 
 /// `roles` in words: `a point, a line or a plane`.

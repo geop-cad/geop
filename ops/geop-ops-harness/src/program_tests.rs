@@ -7,13 +7,13 @@ use geop_core_program::{
     values::Design,
 };
 use geop_ops_extrude_revolve::{Extents, testing::extrude_sketch};
+use geop_ops_model::selection::Selected;
 use geop_ops_model::sketch::{
     figures::{n, on_origin, rectangle_outline},
     sketch_element,
 };
 use geop_ops_model::sketch3d::Sketch3d;
 use geop_ops_model::{Combine, model, notes_of, testing::Built};
-use geop_ops_reference_geometry::Selected;
 use geop_ops_sketch::AddSketchArgs;
 use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
 

@@ -16,8 +16,9 @@ use geop_ops_model::{Combine, solid};
 
 use crate::{
     BodyRef, CircularPattern, CircularPatternArgs, Direction, LinearPattern, LinearPatternArgs,
-    Mirror, MirrorArgs, MoveBody, MoveBodyArgs, PatternDirection, Seeds, Spacing, TurnAxis, body,
+    Mirror, MirrorArgs, MoveBody, MoveBodyArgs, PatternDirection, Seeds, TurnAxis, body,
 };
+use geop_ops_model::spacing::Spacing;
 
 /// What `O`'s step `step` with `args` makes of `model`, given with the
 /// datums, as a program of two steps would build it.

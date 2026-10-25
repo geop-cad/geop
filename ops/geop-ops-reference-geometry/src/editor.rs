@@ -17,9 +17,10 @@ use geop_core_math::{
 };
 
 use crate::{
-    AddDatumArgs, CONSTRUCTIONS, Construction, Role, Selected,
+    AddDatumArgs, CONSTRUCTIONS, Construction,
     add_datum::{ConstructionSchema, ParamKind, fitting_constructions},
 };
+use geop_ops_model::selection::{Role, Selected};
 
 /// What a group of constructions is called: by what they build.
 fn group(result: DatumKind) -> &'static str {

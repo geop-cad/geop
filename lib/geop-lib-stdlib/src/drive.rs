@@ -33,7 +33,8 @@ use geop_ops_extrude_revolve::{Extent, Extents};
 use geop_ops_model::Combine;
 use geop_ops_model::datums::{origin_axis, origin_plane};
 use geop_ops_model::parameters::{Parameter, ParameterKind, Row};
-use geop_ops_pattern::{CircularPatternArgs, Seeds, Spacing, TurnAxis, body};
+use geop_ops_model::spacing::Spacing;
+use geop_ops_pattern::{CircularPatternArgs, Seeds, TurnAxis, body};
 
 use super::{
     StandardPart,

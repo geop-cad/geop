@@ -9,6 +9,7 @@ use geop_core_math::{
 use geop_core_program::{operation_registry::OperationRegistry, program::Program, testing::args};
 use geop_ops_model::datums::{ORIGIN, component_name, datum};
 use geop_ops_model::parameters::{ParameterKind, parameters_of, set_parameters};
+use geop_ops_model::selection::Selected;
 use geop_ops_model::sketch::{
     Constraint, Sketch, SketchPlane,
     figures::{n, on_face, on_origin},
@@ -18,7 +19,7 @@ use geop_ops_model::{
     BooleanOp, Combine, element, solid,
     testing::{Built, assert_draws_its_trims, assert_valid},
 };
-use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
+use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction};
 use geop_ops_sketch::AddSketchArgs;
 
 use crate::{Extents, Output, RevolveArgs, RevolveAxis, examples, testing::extrusion};

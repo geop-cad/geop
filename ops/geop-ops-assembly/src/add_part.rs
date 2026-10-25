@@ -23,15 +23,16 @@ use geop_core_math::{
 use geop_ops_model::Namer;
 use geop_ops_model::datums::{ORIGIN, datums};
 use geop_ops_model::parameters::{Placement, instances};
-use geop_ops_reference_geometry::Selected;
+use geop_ops_model::selection::Selected;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Mate, MateEntity,
+    Mate,
     editor::{self, PartEditing, PartSession},
     mechanism::{define, resolve},
     placed::define_placed,
 };
+use geop_ops_model::mate_entity::MateEntity;
 
 /// Places the part the program in another file builds, named by the
 /// step's id: its elements are then the part's, behind that name (see

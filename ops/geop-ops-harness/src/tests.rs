@@ -23,11 +23,11 @@ use geop_core_topology::{
 };
 use geop_lib_sweep::shapes::{revolved_cylinder, v3};
 use geop_ops_model::datums::{ORIGIN, component_name, datums};
+use geop_ops_model::selection::Selected;
 use geop_ops_model::{
     BodyNames, NamedModel, model,
     testing::{assert_valid, given_part},
 };
-use geop_ops_reference_geometry::Selected;
 
 use crate::{
     Cable, RouteArgs, Wire, WireSize,

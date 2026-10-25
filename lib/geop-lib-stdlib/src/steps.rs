@@ -18,8 +18,9 @@ use geop_ops_model::datums::{Datums, datums, origin_axis, origin_plane};
 use geop_ops_model::parameters::{
     Material, Parameter, ParameterKind, Parameters, Row, set_parameters,
 };
+use geop_ops_model::selection::Selected;
 use geop_ops_model::sketch::{SketchPlane, sketch_element, whole_sketch};
-use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
+use geop_ops_reference_geometry::{AddDatumArgs, Construction};
 
 use super::{drawing::Drawing, tables::Table};
 

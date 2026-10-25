@@ -16,10 +16,10 @@ use geop_core_math::{
 use geop_core_program::{part::StepContext, reader::Reader, values::Design};
 use geop_lib_sweep::{Control, SweepLoop, circle_at, sweep_along};
 use geop_ops_model::Profile;
+use geop_ops_model::selection::Selected;
 use geop_ops_model::{
     CutWire, ModelOperation, NamedModel, Namer, SolidNotes, build_model, frame_along, solid_notes,
 };
-use geop_ops_reference_geometry::Selected;
 use serde::{Deserialize, Serialize};
 
 use crate::{

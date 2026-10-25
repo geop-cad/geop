@@ -23,7 +23,8 @@ use geop_ops_model::datums::{AnyDatum, Datums, ORIGIN, component_name, datums};
 use geop_ops_model::{Vertex, element, model, testing::model_of};
 use geop_ops_sketch3d::testing::route;
 
-use crate::{AddDatumArgs, CONSTRUCTIONS, Construction, Selected};
+use crate::{AddDatumArgs, CONSTRUCTIONS, Construction};
+use geop_ops_model::selection::Selected;
 
 /// What these tests edit: sketches, planar and in space, the drilled box's
 /// extrusions, and datums.

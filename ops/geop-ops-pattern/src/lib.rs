@@ -32,8 +32,9 @@
 //! # Spacing
 //!
 //! How instances are spaced in a row — each a step from the last, or spread
-//! over an extent — and how many there are is [`spacing`]'s, public for any
-//! operation that lays out instances (a placed part's copies, too).
+//! over an extent — and how many there are is
+//! [`geop_ops_model::spacing`]'s, shared with every operation that lays out
+//! instances (a placed part's copies, too).
 
 mod circular;
 mod common;
@@ -48,7 +49,6 @@ mod move_body;
 #[cfg(test)]
 mod program_tests;
 mod references;
-pub mod spacing;
 #[cfg(test)]
 mod tests;
 
@@ -59,7 +59,6 @@ pub use linear::{Direction, LinearPattern, LinearPatternArgs};
 pub use mirror::{Mirror, MirrorArgs};
 pub use move_body::{MoveBody, MoveBodyArgs};
 pub use references::{PatternDirection, TurnAxis};
-pub use spacing::{Row, Spacing};
 
 use geop_core_editor::registry::Registry;
 use geop_core_math::geop_error::GeopResult;

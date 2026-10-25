@@ -3,6 +3,10 @@
 //! where it is put ([`MateEntity::frame`]): where it sits, and which way
 //! its `z` axis runs.
 
+use crate::{
+    NamedModel, frame_along,
+    selection::{Selected, Shape},
+};
 use geop_core_editor::selectable::Selectable;
 use geop_core_editor::view::{FramePick, drawn};
 use geop_core_geometry::{
@@ -18,8 +22,6 @@ use geop_core_math::{
 };
 use geop_core_program::{element::PickedElement, reader::Reader, values::Design};
 use geop_core_topology::{CoedgeGeometry, FaceId};
-use geop_ops_model::{NamedModel, frame_along};
-use geop_ops_reference_geometry::{Selected, Shape};
 use serde::{Deserialize, Serialize};
 
 /// What a mate holds by: the element `on`, of the part itself or of a part
