@@ -10,8 +10,9 @@ use geop_core_editor::{
 };
 use geop_core_math::geop_error::GeopResult;
 use geop_core_program::testing::args;
+use geop_ops_model::sketch::{SketchPlane, figures::disc, whole_sketch};
 use geop_ops_model::{element, solid};
-use geop_ops_sketch::{AddSketchArgs, SketchPlane, figures::disc, whole_sketch};
+use geop_ops_sketch::AddSketchArgs;
 
 use crate::{EdgeFlangeArgs, FlatPatternArgs, HemArgs, HemKind, SheetCutArgs, edge};
 

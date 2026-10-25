@@ -20,13 +20,13 @@ use geop_core_program::{
 };
 use geop_core_topology::validation::{ValidationParameters, validate_fast};
 use geop_ops_model::datums::read_datums;
-use geop_ops_model::{
-    NamedModel, RefId, read_model,
-    testing::{check_valid, model_of},
-};
 use geop_ops_model::parameters::{
     ParameterKind, parameter_numbers, parameters_of, read_properties, set_parameters,
     steps::{LOOKUP, PARAMETERS, PROPERTIES},
+};
+use geop_ops_model::{
+    NamedModel, RefId, read_model,
+    testing::{check_valid, model_of},
 };
 use geop_ops_pattern::{CircularPatternArgs, Spacing};
 

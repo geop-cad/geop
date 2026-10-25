@@ -32,19 +32,19 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_sketch::PointId;
-use geop_ops_model::datums::{ORIGIN, component_name, datum};
 use geop_ops_extrude_revolve::{
     ExtrudeArgs,
     examples::{box_with_drill_hole, parametric_plate},
 };
+use geop_ops_model::datums::{ORIGIN, component_name, datum};
+use geop_ops_model::parameters::{COLOR, instances, read_properties};
+use geop_ops_model::sketch::{figures::n, sketch_element};
 use geop_ops_model::{
     Point, element, read_model,
     testing::{assert_close, model_of},
 };
-use geop_ops_model::parameters::{COLOR, instances, read_properties};
 use geop_ops_pattern::spacing::Spacing;
 use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
-use geop_ops_sketch::{figures::n, sketch_element};
 
 use crate::{
     AddPartArgs, DragTool, MateEntity, PartPatternArgs, PatternAxis, Resolved, examples,

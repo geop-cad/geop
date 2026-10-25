@@ -20,8 +20,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::parameters::{
     COLOR, DefineParameters, LookupTable, LookupTableArgs, Parameter, ParameterKind, Parameters,
-    PartProperties, parameter_numbers, parameter_uses, Row, read_properties,
-    rename_parameter, set_parameters,
+    PartProperties, Row, parameter_numbers, parameter_uses, read_properties, rename_parameter,
+    set_parameters,
 };
 
 /// What a test step makes, read whole.

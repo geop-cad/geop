@@ -14,20 +14,21 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
 };
 use geop_core_topology::Body;
-use geop_ops_model::datums::{datums, read_datums};
 use geop_ops_extrude_revolve::{
     Extents,
     testing::{drilled_box, extrude_sketch, extrusion},
+};
+use geop_ops_model::datums::{datums, read_datums};
+use geop_ops_model::sketch::{
+    Sketch, SketchPlane,
+    figures::{n, on_origin, outline},
 };
 use geop_ops_model::{
     Combine, NamedModel, model, solid,
     testing::{Built, assert_valid},
 };
 use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
-use geop_ops_sketch::{
-    AddSketchArgs, Sketch, SketchPlane,
-    figures::{n, on_origin, outline},
-};
+use geop_ops_sketch::AddSketchArgs;
 
 /// The operations these tests' programs are written in.
 fn registry() -> GeopResult<OperationRegistry> {

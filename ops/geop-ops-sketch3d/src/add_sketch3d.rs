@@ -31,10 +31,10 @@ use geop_core_sketch::{
 };
 use geop_core_topology::build::{BodySpec, EdgeSpec};
 use geop_ops_model::datums::Datums;
+use geop_ops_model::sketch::PlacedSketch;
 use geop_ops_model::{
     BodyNames, Chain, Curve, Line, ModelOperation, NamedModel, Namer, Point, build_model,
 };
-use geop_ops_sketch::PlacedSketch;
 use serde::{Deserialize, Serialize};
 
 use crate::{

@@ -19,10 +19,10 @@ use geop_core_program::{
     target::{Target, TargetReference},
     values::Design,
 };
+use geop_ops_model::sketch::{PlacedSketch, sketch};
 use geop_ops_model::{
     ModelOperation, NamedModel, Namer, Records, SolidNotes, build_model, solid_notes,
 };
-use geop_ops_sketch::{PlacedSketch, sketch};
 
 use crate::{edge_flange::EdgeRef, flat_pattern::FlatPatternData, sheet::Sheet};
 

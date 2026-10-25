@@ -4,13 +4,12 @@
 //! one figure, unconstrained, as a test draws a body's outline; and the
 //! planes a test sketches on. Every number is design data ([`n`]).
 
+use crate::{datums::origin_plane, model};
 use geop_core_math::{primitives::FrameAxis, scalars::Scalar};
 use geop_core_program::{element::ElementReference, values::Design};
 use geop_core_sketch::{CurveId, PointId};
-use geop_ops_model::datums::origin_plane;
-use geop_ops_model::model;
 
-use crate::{Constraint, Sketch, SketchPlane};
+use super::{Constraint, Sketch, SketchPlane};
 
 /// `[x, y]`, as a figure is written down.
 pub type P2 = [f64; 2];

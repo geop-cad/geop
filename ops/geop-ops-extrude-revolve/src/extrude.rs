@@ -17,10 +17,10 @@ use geop_core_math::{
 use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
 use geop_core_sketch::{Sketch, profile::curve_polyline};
 use geop_core_topology::build::BuiltBody;
+use geop_ops_model::sketch::{PlacedSketch, SketchRef, shape_profiles};
 use geop_ops_model::{
     Extent, ModelOperation, NamedModel, Namer, build_model, reach_past, read_model,
 };
-use geop_ops_sketch::{PlacedSketch, SketchRef, shape_profiles};
 use serde::{Deserialize, Serialize};
 
 use geop_lib_sweep::{SweepLoop, extrude};
@@ -116,7 +116,7 @@ impl PartOperation for Extrude {
         let before = &context.before;
         let newest = before.targets_of::<PlacedSketch<Design>>().pop();
         ExtrudeArgs {
-            sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_sketch::sketch(""))),
+            sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_model::sketch::sketch(""))),
             extent: Extents::blind(1.0),
             output: Output::new_for(&read_model(before).unwrap_or_default()),
         }

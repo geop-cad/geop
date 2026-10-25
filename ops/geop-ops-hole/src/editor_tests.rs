@@ -60,7 +60,7 @@ fn new_hole_from_the_dialog() {
     assert_eq!(
         args.points,
         [crate::HoleCentre::SketchPoint(
-            geop_ops_sketch::sketch_element("centres", "p0")
+            geop_ops_model::sketch::sketch_element("centres", "p0")
         )]
     );
     assert_eq!(args.kind, crate::HoleKind::Counterbore);

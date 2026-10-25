@@ -27,15 +27,16 @@ use geop_core_program::{
 };
 use geop_core_sketch::PointId;
 use geop_ops_model::datums::origin_axis;
-use geop_ops_model::{
-    BooleanOp, Combine, Face, Point, element, read_model,
-    testing::{Built, model_of, model_shown, solid_volume},
-};
 use geop_ops_model::parameters::{
     DefineParameters, Parameter, ParameterKind, Parameters, ParametersCommand, ParametersPanel,
     ParametersPanelState, Row, parameters_of,
 };
-use geop_ops_sketch::{AddSketchArgs, Constraint, sketch_element, whole_sketch};
+use geop_ops_model::sketch::{Constraint, sketch_element, whole_sketch};
+use geop_ops_model::{
+    BooleanOp, Combine, Face, Point, element, read_model,
+    testing::{Built, model_of, model_shown, solid_volume},
+};
+use geop_ops_sketch::AddSketchArgs;
 
 use crate::{ExtrudeArgs, Output, examples::parametric_plate, testing::registry as operations};
 
@@ -680,7 +681,8 @@ fn sweep_with_rails_twist_and_orientation() {
         kind: "sweep".into(),
     });
     editor.handle(dialog("combine", Value::Choice("new_body".into())));
-    let sketch = |name: &str| Value::Elements(vec![geop_ops_sketch::whole_sketch(name).picked()]);
+    let sketch =
+        |name: &str| Value::Elements(vec![geop_ops_model::sketch::whole_sketch(name).picked()]);
     editor.handle(dialog("profile", sketch("mouth")));
     editor.handle(dialog("path", sketch("axis")));
     let update = editor.handle(dialog("rails", Value::Press));
@@ -788,7 +790,7 @@ fn a_3d_sketch_is_drawn_and_swept_along() {
     assert_eq!(
         (sweep.profile, sweep.path),
         (
-            geop_ops_sketch::whole_sketch("section"),
+            geop_ops_model::sketch::whole_sketch("section"),
             Some(crate::PathRef::Sketch3d(geop_ops_sketch3d::sketch3d_path(
                 &route.id
             )))
@@ -814,7 +816,11 @@ fn a_sweep_takes_a_3d_sketch_as_its_rail() {
         [3.0, 0.9, 0.0],
         [4.0, 1.6, 0.0],
     ]
-    .map(|p| flare.add_point(Vector3::from_array(p.map(geop_ops_sketch::figures::n))));
+    .map(|p| {
+        flare.add_point(Vector3::from_array(
+            p.map(geop_ops_model::sketch::figures::n),
+        ))
+    });
     flare.add_spline(points.to_vec());
     program.push(
         "flare",
@@ -827,7 +833,8 @@ fn a_sweep_takes_a_3d_sketch_as_its_rail() {
     editor.handle(Command::New {
         kind: "sweep".into(),
     });
-    let sketch = |name: &str| Value::Elements(vec![geop_ops_sketch::whole_sketch(name).picked()]);
+    let sketch =
+        |name: &str| Value::Elements(vec![geop_ops_model::sketch::whole_sketch(name).picked()]);
     editor.handle(dialog("combine", Value::Choice("new_body".into())));
     editor.handle(dialog("profile", sketch("mouth")));
     editor.handle(dialog("path", sketch("axis")));

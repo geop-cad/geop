@@ -31,7 +31,7 @@ mod set {
     use std::collections::HashSet;
 
     use geop_ops_model::Combine;
-    use geop_ops_sketch::whole_sketch;
+    use geop_ops_model::sketch::whole_sketch;
 
     use super::{Built, args, handled};
     use crate::registry::{registry, runner};
@@ -84,7 +84,10 @@ mod set {
             .filter(|listed| !listed.info.icon.is_some_and(|svg| svg.starts_with('<')))
             .map(|listed| format!("{} ({:?})", listed.kind, listed.info.icon))
             .collect();
-        assert!(missing.is_empty(), "operations without an icon: {missing:?}");
+        assert!(
+            missing.is_empty(),
+            "operations without an icon: {missing:?}"
+        );
     }
 
     /// A new step starts from what the steps before it built.

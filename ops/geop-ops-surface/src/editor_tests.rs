@@ -97,15 +97,15 @@ fn new_boundary_surface_picks_edges_then_thickens() {
 /// line, both clicked: the ruled face between them, a valid sheet.
 #[test]
 fn a_boundary_surface_spans_sketch_lines() {
-    let mut base = geop_ops_sketch::Sketch::new();
+    let mut base = geop_ops_model::sketch::Sketch::new();
     let (a, b) = (
         base.add_point(
-            geop_ops_sketch::figures::n(0.0),
-            geop_ops_sketch::figures::n(0.0),
+            geop_ops_model::sketch::figures::n(0.0),
+            geop_ops_model::sketch::figures::n(0.0),
         ),
         base.add_point(
-            geop_ops_sketch::figures::n(2.0),
-            geop_ops_sketch::figures::n(0.0),
+            geop_ops_model::sketch::figures::n(2.0),
+            geop_ops_model::sketch::figures::n(0.0),
         ),
     );
     let line = base.add_line(a, b);
@@ -113,7 +113,7 @@ fn a_boundary_surface_spans_sketch_lines() {
     program.push(
         "base",
         geop_ops_sketch::AddSketchArgs {
-            plane: Some(geop_ops_sketch::SketchPlane::Datum(
+            plane: Some(geop_ops_model::sketch::SketchPlane::Datum(
                 geop_ops_model::datums::origin_plane(FrameAxis::Z),
             )),
             sketch: base,
@@ -133,7 +133,9 @@ fn a_boundary_surface_spans_sketch_lines() {
     assert_eq!(
         args.edges,
         [
-            geop_ops_sketch3d::CurveSource::Sketch(geop_ops_sketch::sketch_element("base", line)),
+            geop_ops_sketch3d::CurveSource::Sketch(geop_ops_model::sketch::sketch_element(
+                "base", line
+            )),
             geop_ops_sketch3d::CurveSource::Edge(element("sketch3d(route,c2)"))
         ]
     );
@@ -148,7 +150,7 @@ fn a_boundary_surface_spans_sketch_lines() {
 /// `(0, s, s - 0.5)` and `(2, s, s - 0.5)` crossing them, run downwards.
 fn network_lines(across: bool) -> geop_ops_sketch3d::AddSketch3dArgs {
     let mut s = geop_ops_sketch3d::Sketch3d::new();
-    let at = |p: [f64; 3]| Vector3::from_array(p.map(geop_ops_sketch::figures::n));
+    let at = |p: [f64; 3]| Vector3::from_array(p.map(geop_ops_model::sketch::figures::n));
     let lines: [[[f64; 3]; 2]; 2] = if across {
         [
             [[0.0, 2.5, 2.0], [0.0, -0.5, -1.0]],

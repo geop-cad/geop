@@ -29,18 +29,19 @@ use geop_core_program::{
 };
 use geop_core_sketch::CurveId;
 use geop_lib_stdlib::{Drawing, outline_plane};
-use geop_ops_model::datums::{datum, origin_plane};
 use geop_ops_extrude_revolve::{
     Extent, Extents, Extrude, ExtrudeArgs, Output,
     examples::{box_with_drill_hole, parametric_plate},
 };
-use geop_ops_model::{Combine, PartDescription, element, read_model};
-use geop_ops_reference_geometry::Selected;
-use geop_ops_sketch::{
-    AddSketch, AddSketchArgs, Sketch, SketchPlane,
+use geop_ops_model::datums::{datum, origin_plane};
+use geop_ops_model::sketch::{
+    Sketch, SketchPlane,
     figures::{circle, n, rectangle, solved},
     whole_sketch,
 };
+use geop_ops_model::{Combine, PartDescription, element, read_model};
+use geop_ops_reference_geometry::Selected;
+use geop_ops_sketch::{AddSketch, AddSketchArgs};
 
 use crate::{AddPartArgs, JointKind, Kind, Mate, MateEntity, Motion, joint_parameter};
 

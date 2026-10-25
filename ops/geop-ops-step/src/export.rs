@@ -34,8 +34,8 @@ use geop_core_topology::{
     CoedgeGeometry, EdgeId, FaceId, Model, Sense, ShellId, VertexId, boundary::BoundaryType,
 };
 use geop_ops_assembly::placed_parts;
-use geop_ops_model::{NamedModel, RefId, read_model};
 use geop_ops_model::parameters::{read_properties, stem};
+use geop_ops_model::{NamedModel, RefId, read_model};
 
 use crate::part21::{Exchange, Instance, Record, Value};
 

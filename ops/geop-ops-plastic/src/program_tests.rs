@@ -10,19 +10,20 @@ use geop_core_math::{geop_error::GeopResult, scalars::Scalar};
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, values::Design,
 };
-use geop_ops_model::datums::datums;
 use geop_ops_extrude_revolve::{Extents, testing::extrusion};
 use geop_ops_fillet::{Fillet, FilletArgs};
+use geop_ops_model::datums::datums;
+use geop_ops_model::sketch::{
+    Sketch, SketchPlane,
+    figures::{n, on_face},
+    whole_sketch,
+};
 use geop_ops_model::{
     Combine, NamedModel, model, solid,
     testing::{Built, assert_valid, check_valid},
 };
 use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction, Selected};
-use geop_ops_sketch::{
-    AddSketchArgs, Sketch, SketchPlane,
-    figures::{n, on_face},
-    whole_sketch,
-};
+use geop_ops_sketch::AddSketchArgs;
 
 use geop_ops_shell::Shell;
 

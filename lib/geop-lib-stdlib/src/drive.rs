@@ -29,9 +29,9 @@
 //! tooth, `180° / z2`, if `z2` is even, and not at all if it is odd.
 
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
-use geop_ops_model::datums::{origin_axis, origin_plane};
 use geop_ops_extrude_revolve::{Extent, Extents};
 use geop_ops_model::Combine;
+use geop_ops_model::datums::{origin_axis, origin_plane};
 use geop_ops_model::parameters::{Parameter, ParameterKind, Row};
 use geop_ops_pattern::{CircularPatternArgs, Seeds, Spacing, TurnAxis, body};
 

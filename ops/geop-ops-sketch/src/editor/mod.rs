@@ -53,10 +53,11 @@ use geop_core_math::{
 use geop_core_sketch::{ConstraintId, CurveId, PointId, offset::Corners};
 
 use crate::{
-    AddSketchArgs, Constraint, CurveKind, Sketch,
+    AddSketchArgs,
     constraints::{self, ConstraintTool, Pick},
     geometry::{P2, add, distance, loop_polyline, of, polyline, sub, xy},
 };
+use geop_ops_model::sketch::{Constraint, CurveKind, Sketch};
 
 type SolveReport = geop_core_sketch::SolveReport<Design>;
 

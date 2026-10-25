@@ -12,21 +12,22 @@ use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
     testing::as_step, values::Design,
 };
-use geop_ops_model::datums::origin_axis;
 use geop_ops_edit::{DeleteBody, DeleteBodyArgs, ExtractFace, ExtractFaceArgs};
 use geop_ops_extrude_revolve::{
     Extent, ExtrudeArgs, Output, RevolveArgs, RevolveAxis,
     testing::{block_and_post, both_ways, extrude, extrusion, one_way, two_ways},
 };
+use geop_ops_model::datums::origin_axis;
+use geop_ops_model::sketch::{
+    Sketch,
+    figures::{n, on_face, on_origin, polygon},
+    whole_sketch,
+};
 use geop_ops_model::{
     BooleanOp, Combine, NamedModel, element, model, solid,
     testing::{Built, assert_valid},
 };
-use geop_ops_sketch::{
-    AddSketchArgs, Sketch,
-    figures::{n, on_face, on_origin, polygon},
-    whole_sketch,
-};
+use geop_ops_sketch::AddSketchArgs;
 
 use crate::{Boolean, BooleanArgs, Split, SplitArgs};
 

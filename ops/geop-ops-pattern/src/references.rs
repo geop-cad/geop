@@ -1,7 +1,7 @@
 //! What the operations of this crate move along or turn about, from
 //! whichever element of the part gives it: [`TurnAxis`], a line or what a
 //! round element turns around, and [`PatternDirection`], a line or a
-//! plane's normal. A mirror's plane is a [`geop_ops_sketch::SketchPlane`]:
+//! plane's normal. A mirror's plane is a [`geop_ops_model::sketch::SketchPlane`]:
 //! a flat face, a datum plane, a sketch's plane.
 
 use geop_core_editor::one_of;
@@ -9,8 +9,8 @@ use geop_core_geometry::shape::Axis;
 use geop_core_math::{geop_error::GeopResult, vector::Vector3};
 use geop_core_program::{element::ElementReference, reader::Reader, values::Design};
 use geop_ops_model::datums::Datums;
+use geop_ops_model::sketch::PlacedSketch;
 use geop_ops_model::{Line, NamedModel, Plane, Round};
-use geop_ops_sketch::PlacedSketch;
 
 one_of! {
     /// An axis to turn about: a line — a straight edge, a datum axis or a

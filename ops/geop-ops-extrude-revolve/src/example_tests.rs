@@ -18,15 +18,16 @@ use geop_core_topology::{
     contains::shell::PointClassification,
     validation::{ValidationParameters, validate_manifold},
 };
+use geop_ops_model::parameters::{ParameterKind, parameters_of, set_parameters};
+use geop_ops_model::sketch::{
+    Constraint,
+    figures::{disc, n, on_face},
+};
 use geop_ops_model::{
     NamedModel, PartDescription,
     testing::{Built, assert_valid, check_valid, classify, error, model_of},
 };
-use geop_ops_model::parameters::{ParameterKind, parameters_of, set_parameters};
-use geop_ops_sketch::{
-    AddSketchArgs, Constraint,
-    figures::{disc, n, on_face},
-};
+use geop_ops_sketch::AddSketchArgs;
 use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs};
 
 use crate::{

@@ -19,9 +19,9 @@ use geop_core_program::{
     element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_core_sketch::Shape;
+use geop_ops_model::sketch::shape_profiles;
+use geop_ops_model::sketch::{PlacedSketch, SketchRef};
 use geop_ops_model::{ModelOperation, NamedModel, Namer, Plane, read_model};
-use geop_ops_sketch::shape_profiles;
-use geop_ops_sketch::{PlacedSketch, SketchRef};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -109,7 +109,7 @@ impl PartOperation for SheetCut {
     fn new_args(context: &Context) -> SheetCutArgs {
         let newest = context.before.targets_of::<PlacedSketch<Design>>().pop();
         SheetCutArgs {
-            sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_sketch::sketch(""))),
+            sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_model::sketch::sketch(""))),
             face: None,
         }
     }

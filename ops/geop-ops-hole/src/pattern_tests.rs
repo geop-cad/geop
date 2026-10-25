@@ -21,10 +21,14 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops_model::datums::{origin_axis, origin_plane};
 use geop_ops_extrude_revolve::{
     Extent, Extents,
     testing::{both_ways, extrude_sketch, extrusion},
+};
+use geop_ops_model::datums::{origin_axis, origin_plane};
+use geop_ops_model::sketch::{
+    Sketch, SketchPlane,
+    figures::{disc, on_face, on_origin, outline},
 };
 use geop_ops_model::{
     Combine, Face, NamedModel, model,
@@ -34,10 +38,7 @@ use geop_ops_pattern::{
     CircularPatternArgs, Direction, FeatureRef, LinearPatternArgs, MirrorArgs, PatternDirection,
     Seeds, Spacing, TurnAxis, body, feature,
 };
-use geop_ops_sketch::{
-    AddSketchArgs, Sketch, SketchPlane,
-    figures::{disc, on_face, on_origin, outline},
-};
+use geop_ops_sketch::AddSketchArgs;
 
 /// A sketch on the Z plane, and `name` its extrude, as `extent` says, a
 /// new body.

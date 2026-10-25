@@ -7,12 +7,12 @@ use geop_core_math::{
 use geop_core_program::operation::Operation;
 use geop_lib_sweep::shapes::block_part;
 use geop_ops_model::datums::{origin_axis, origin_plane};
+use geop_ops_model::sketch::SketchPlane;
 use geop_ops_model::{
     BooleanOp, NamedModel, read_model,
     testing::{assert_valid, assert_valid_sheets, given_part, volume},
 };
 use geop_ops_model::{Combine, solid};
-use geop_ops_sketch::SketchPlane;
 
 use crate::{
     BodyRef, CircularPattern, CircularPatternArgs, Direction, LinearPattern, LinearPatternArgs,

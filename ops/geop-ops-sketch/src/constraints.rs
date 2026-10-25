@@ -17,10 +17,8 @@ use geop_core_math::{
 use geop_core_program::values::Design;
 use geop_core_sketch::{CurveId, PointId, dimension::Measure, geometry::Arc};
 
-use crate::{
-    Constraint, CurveKind, Sketch,
-    geometry::{P2, add, cross, dot, of, polyline, polyline_mid, scale, sub, unit, xy},
-};
+use crate::geometry::{P2, add, cross, dot, of, polyline, polyline_mid, scale, sub, unit, xy};
+use geop_ops_model::sketch::{Constraint, CurveKind, Sketch};
 
 /// A point or a curve of the sketch, as selected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

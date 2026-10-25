@@ -17,8 +17,8 @@ use geop_core_program::{
 };
 use geop_core_sketch::space::{Constraint3d, CurveKind3d};
 use geop_ops_extrude_revolve::{Extents, examples::box_with_drill_hole, testing::extrude_sketch};
+use geop_ops_model::sketch::figures::{on_origin, rectangle_outline};
 use geop_ops_model::{Combine, NamedModel, read_model};
-use geop_ops_sketch::figures::{on_origin, rectangle_outline};
 use geop_ops_sketch3d::{
     AddSketch3dArgs, PlacedSketch3d, PointSource, Reference3d, Sketch3d, Sketch3dEditing,
     Sketch3dSession, Target, Tool, sketch3d,

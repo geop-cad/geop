@@ -29,11 +29,12 @@ use geop_core_math::{
 };
 use geop_core_rasterize::rasterize;
 use geop_core_sketch::Sketch;
+use geop_ops_model::sketch::{PlacedSketch, sketch, whole_sketch};
 use geop_ops_model::{
     ModelOperation, NamedModel, RefId, build_model, model, read_model,
     testing::{assert_valid, model_of, runner_of},
 };
-use geop_ops_sketch::{AddSketch, PlacedSketch, sketch, whole_sketch};
+use geop_ops_sketch::AddSketch;
 use serde::{Deserialize, Serialize};
 
 use crate::{

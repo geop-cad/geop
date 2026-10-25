@@ -12,7 +12,6 @@
 //! step added a datum to has the origin all the same: the target reads as
 //! it where no step made it ([`HasElements::undefined`]).
 
-
 use geop_core_program::{
     element::{ElementReference, HasElements, Kind, PickedElement, whole},
     reader::Reader,
@@ -21,6 +20,7 @@ use geop_core_program::{
 };
 use std::{borrow::Cow, collections::BTreeMap, sync::LazyLock};
 
+use crate::{Line, Plane, Point};
 use geop_core_editor::view::{PartView, ViewDatum, drawn};
 use geop_core_editor::{
     registry::{Drawer, StructureItem},
@@ -32,7 +32,6 @@ use geop_core_math::{
     primitives::{CoordinateSystem, Datum, DatumComponent, DatumKind, FrameAxis},
     vector::Vector3,
 };
-use crate::{Line, Plane, Point};
 
 /// The name of the frame datum every part has: the world's origin and
 /// axes, and the three planes between them.
@@ -351,7 +350,6 @@ impl Drawer for DatumsDrawer {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use geop_core_editor::selectable::{Selectable, selected};
@@ -470,11 +468,11 @@ mod tests {
     /// plane's square. Drawn over the unit cube, as an editor draws a part.
     #[test]
     fn frames() {
-        use geop_core_editor::{registry::Registry, selectable, testing::pointer};
         use crate::{
             NamedModel, Solid,
             testing::{given_part, unit_cube},
         };
+        use geop_core_editor::{registry::Registry, selectable, testing::pointer};
 
         let part = given_part(&unit_cube()).unwrap();
         let registry = crate::register(Registry::default()).unwrap();

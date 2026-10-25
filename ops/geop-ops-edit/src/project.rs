@@ -19,9 +19,9 @@ use geop_core_program::{
 use geop_core_topology::FaceId;
 use geop_lib_booleans::{RemeshParams, imprint_on_face};
 use geop_lib_sweep::{SweepLoop, extrude};
+use geop_ops_model::sketch::{PlacedSketch, SketchRef, shape_profiles};
 use geop_ops_model::{Face, ModelOperation, NamedModel, Namer, build_model, model};
 use geop_ops_model::{face_hull, spread_along};
-use geop_ops_sketch::{PlacedSketch, SketchRef, shape_profiles};
 use serde::{Deserialize, Serialize};
 
 /// Projects the curves of the sketch named `sketch` along its plane's
@@ -75,7 +75,7 @@ impl PartOperation for ProjectCurve {
     fn new_args(context: &Context) -> ProjectCurveArgs {
         let newest = context.before.targets_of::<PlacedSketch<Design>>().pop();
         ProjectCurveArgs {
-            sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_sketch::sketch(""))),
+            sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_model::sketch::sketch(""))),
             face: ElementReference::new(model(), ""),
         }
     }

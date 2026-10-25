@@ -18,16 +18,16 @@ use geop_core_program::{
     values::{Design, Setting},
 };
 use geop_core_sketch::PointId;
-use geop_ops_model::{
-    NamedModel, PartDescription, Point, read_model,
-    testing::{Built, runner_of},
-};
 use geop_ops_model::parameters::{
     COLOR, Parameter, ParameterKind, Parameters, parameter_numbers, parameter_uses, parameters_of,
     read_properties, set_parameters,
     steps::{LOOKUP, PARAMETERS, PROPERTIES},
 };
-use geop_ops_sketch::{CurveKind, PlacedSketch, sketch_element, whole_sketch};
+use geop_ops_model::sketch::{CurveKind, PlacedSketch, sketch_element, whole_sketch};
+use geop_ops_model::{
+    NamedModel, PartDescription, Point, read_model,
+    testing::{Built, runner_of},
+};
 
 use crate::{
     Extents, ExtrudeArgs,

@@ -12,10 +12,10 @@ use geop_core_program::{
     reader::Reader, runner::Runner,
 };
 use geop_lib_sweep::shapes::v3;
-use geop_ops_model::datums::{AnyDatum, Datums, ORIGIN, component_name, datums, read_datums};
 use geop_ops_extrude_revolve::testing::drilled_box as drilled;
+use geop_ops_model::datums::{AnyDatum, Datums, ORIGIN, component_name, datums, read_datums};
+use geop_ops_model::sketch::{PlacedSketch, sketch_element, whole_sketch};
 use geop_ops_model::{model, testing::runner_of};
-use geop_ops_sketch::{PlacedSketch, sketch_element, whole_sketch};
 
 fn face(name: &str) -> Selected {
     Selected::Face(ElementReference::new(model(), name))

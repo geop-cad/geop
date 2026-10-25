@@ -4,14 +4,15 @@
 use geop_core_editor::registry::ExampleSet;
 use geop_core_math::primitives::FrameAxis;
 use geop_core_program::program::Program;
-use geop_ops_model::datums::origin_plane;
 use geop_ops_extrude_revolve::{Extent, Extents, ExtrudeArgs, Output};
-use geop_ops_model::{Combine, element, solid};
-use geop_ops_sketch::{
-    AddSketchArgs, Constraint, Sketch, SketchPlane,
+use geop_ops_model::datums::origin_plane;
+use geop_ops_model::sketch::{
+    Constraint, Sketch, SketchPlane,
     figures::{circle, n, rectangle, solved},
     whole_sketch,
 };
+use geop_ops_model::{Combine, element, solid};
+use geop_ops_sketch::AddSketchArgs;
 
 use crate::SplitArgs;
 

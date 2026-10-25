@@ -33,7 +33,9 @@ use geop_core_program::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::parameters::definition::{COLOR, Material, NumberParameter, Row, validate_color, validate_name};
+use crate::parameters::definition::{
+    COLOR, Material, NumberParameter, Row, validate_color, validate_name,
+};
 
 /// The kind of the step defining a program's parameters, and its id.
 pub const PARAMETERS: &str = "parameters";

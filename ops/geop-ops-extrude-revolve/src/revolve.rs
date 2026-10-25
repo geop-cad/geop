@@ -29,8 +29,8 @@ use geop_core_sketch::{
 };
 use geop_core_topology::build::BuiltBody;
 use geop_ops_model::datums::Datums;
+use geop_ops_model::sketch::{PlacedSketch, SketchRef, chain_of_pieces, sketch_element};
 use geop_ops_model::{Extent, Line, ModelOperation, NamedModel, Namer, build_model, read_model};
-use geop_ops_sketch::{PlacedSketch, SketchRef, chain_of_pieces, sketch_element};
 use serde::{Deserialize, Serialize};
 
 use geop_lib_sweep::{SweepLoop, revolution, revolve};
@@ -207,7 +207,7 @@ impl PartOperation for Revolve {
     fn new_args(context: &Context) -> RevolveArgs {
         let before = &context.before;
         let newest = before.targets_of::<PlacedSketch<Design>>().pop();
-        let sketch = SketchRef::whole(newest.unwrap_or_else(|| geop_ops_sketch::sketch("")));
+        let sketch = SketchRef::whole(newest.unwrap_or_else(|| geop_ops_model::sketch::sketch("")));
         RevolveArgs {
             axis: default_axis(before, &sketch),
             sketch,

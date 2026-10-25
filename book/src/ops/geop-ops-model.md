@@ -294,3 +294,23 @@ values of the state that place it and the instances it is in, each read
 by its path in the part asked (`/bolt:nut.pose`) and recorded, and the
 fixed motions of copies. `compose` composes them into a pose, and
 `located` gives the pose of the instance at a path.
+
+## Sketches (`sketch`)
+
+The sketch target: `sketch(name)` is a `PlacedSketch` — the sketch, drawn
+with [geop-core-sketch](../core/geop-core-sketch.md), and the plane it lies
+on — which is what later steps build on: read whole (`whole_sketch`, what
+an extrude sweeps) or by its elements (`sketch_element`), which have the
+geometric kinds [above](#elements-and-what-they-are-used-as) where they
+have that shape — a sketch's line is a `Line`, its plane a `Plane`, its one
+chain or loop a `Path`. `SketchPlane` is where a sketch is placed: a
+planar face, a datum plane — the planes of the origin among them — or
+another sketch's plane. The step that draws a sketch is
+[geop-ops-sketch](./geop-ops-sketch.md)'s.
+
+### Figures
+
+`figures` draws what examples and tests write down by numbers: a closed
+`polygon`, a fully constrained `rectangle` and `circle`, every number
+design data (`n`), and a sketch `solved` once it is drawn. Every crate's
+examples draw with it, rather than each keeping its own copy.

@@ -20,10 +20,11 @@ use geop_core_program::{
     workspace::{FileStore, FileStoreMut},
 };
 use geop_ops_extrude_revolve::{Extents, testing::extrusion};
-use geop_ops_sketch::{
-    AddSketchArgs, Sketch,
+use geop_ops_model::sketch::{
+    Sketch,
     figures::{circle, on_origin, rectangle, solved},
 };
+use geop_ops_sketch::AddSketchArgs;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},

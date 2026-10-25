@@ -4,13 +4,10 @@ use geop_core_editor::{
     edit_form::{Edit, EditForm, FormState},
     editable::{Context, OperationGroup, OperationInfo, OperationTier},
     editing::CanvasEvent,
-    one_of, part_operation,
+    part_operation,
     part_operation::PartOperation,
 };
-use geop_core_program::{
-    element::ElementReference, numeric::NumericInput, part::StepContext, reader::Reader,
-    values::Design,
-};
+use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
 use std::collections::BTreeMap;
 
 use geop_core_math::{
@@ -19,27 +16,14 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_sketch::ConstraintId;
-use geop_ops_model::datums::Datums;
-use geop_ops_model::{NamedModel, Plane};
+use geop_ops_model::sketch::{PlacedSketch, Sketch, SketchPlane, sketch};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Sketch,
     constraints::{Pick, set_value},
     editor::{self, SketchSession},
-    placed::{PlacedSketch, sketch},
     references::{Reference, Source},
 };
-
-one_of! {
-    /// The plane a sketch is placed on: a flat face, a datum plane — the
-    /// origin's among them — or another sketch's plane.
-    pub enum SketchPlane -> CoordinateSystem<Design> {
-        Face(ElementReference<NamedModel<Design>, Plane>),
-        Datum(ElementReference<Datums, Plane>),
-        Sketch(ElementReference<PlacedSketch<Design>, Plane>),
-    }
-}
 
 /// Adds a sketch on a plane to the part, named by the operation's id: a
 /// planar face, a datum plane or a frame's plane (see [`SketchPlane`]). The plane is

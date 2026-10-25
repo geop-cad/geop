@@ -28,13 +28,13 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
     vector::Vector3,
 };
-use geop_ops_model::datums::{ORIGIN, component_name, datums};
 use geop_ops_extrude_revolve::{
     Extents, ExtrudeArgs, examples::box_with_drill_hole, testing::extrude_sketch,
 };
+use geop_ops_model::datums::{ORIGIN, component_name, datums};
+use geop_ops_model::sketch::figures::{on_origin, rectangle_outline};
 use geop_ops_model::{Combine, element, testing::assert_close};
 use geop_ops_reference_geometry::Selected;
-use geop_ops_sketch::figures::{on_origin, rectangle_outline};
 
 use geop_core_editor::{
     editor::Command,

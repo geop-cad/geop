@@ -4,7 +4,8 @@
 
 use geop_core_editor::editing::{Choice, Number, Prompt, Unit};
 
-use crate::{fields::constraint_status, icons, references::Source};
+use crate::{icons, references::Source};
+use geop_ops_model::sketch::fields::constraint_status;
 
 use super::*;
 

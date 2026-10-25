@@ -5,15 +5,16 @@
 
 use geop_core_math::primitives::FrameAxis;
 use geop_core_program::{program::Program, values::Design};
+use geop_ops_model::sketch::{
+    Sketch, SketchPlane,
+    figures::{disc, n, on_face, on_origin, outline, rectangle_outline},
+    sketch_element, whole_sketch,
+};
 use geop_ops_model::{
     Combine, NamedModel,
     testing::{Built, check_valid},
 };
-use geop_ops_sketch::{
-    AddSketchArgs, Sketch, SketchPlane,
-    figures::{disc, n, on_face, on_origin, outline, rectangle_outline},
-    sketch_element, whole_sketch,
-};
+use geop_ops_sketch::AddSketchArgs;
 
 use crate::{Extents, Output, RevolveArgs, RevolveAxis};
 

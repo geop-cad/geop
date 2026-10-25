@@ -21,8 +21,8 @@ use geop_core_math::{
     with_context,
 };
 use geop_core_topology::validation::{ValidationParameters, validate_fast};
-use geop_ops_model::{BodyNames, ModelOperation, NamedModel, Namer, build_model};
 use geop_ops_model::parameters::file_choices;
+use geop_ops_model::{BodyNames, ModelOperation, NamedModel, Namer, build_model};
 use serde::{Deserialize, Serialize};
 
 use crate::import::{ImportedBody, read_step};

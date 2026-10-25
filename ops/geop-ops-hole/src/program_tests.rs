@@ -24,15 +24,16 @@ use geop_core_math::{
     scalars::{ScalInF64 as S, Scalar},
 };
 use geop_ops_extrude_revolve::{Extent, Extents, testing::extrusion};
+use geop_ops_model::sketch::{
+    Sketch,
+    figures::{n, on_face, on_origin, outline},
+    sketch_element, whole_sketch,
+};
 use geop_ops_model::{
     Combine, CosmeticThread, NamedModel, Threads, model, read_model, read_threads,
     testing::{Built, assert_valid, assert_volume, check_valid, solid_volume},
 };
-use geop_ops_sketch::{
-    AddSketchArgs, Sketch,
-    figures::{n, on_face, on_origin, outline},
-    sketch_element, whole_sketch,
-};
+use geop_ops_sketch::AddSketchArgs;
 
 use geop_ops_model::datums::datums;
 use geop_ops_pattern::{CircularPattern, LinearPattern, Mirror};

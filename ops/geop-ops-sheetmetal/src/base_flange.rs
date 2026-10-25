@@ -16,8 +16,8 @@ use geop_core_math::{
 };
 use geop_core_program::{numeric::NumericInput, part::StepContext, reader::Reader, values::Design};
 use geop_core_sketch::{CurveKind, ProfileLoop, Shape};
+use geop_ops_model::sketch::{PlacedSketch, SketchRef, shape_profiles};
 use geop_ops_model::{ModelOperation, NamedModel, Namer, Profile};
-use geop_ops_sketch::{PlacedSketch, SketchRef, shape_profiles};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -109,7 +109,7 @@ impl PartOperation for BaseFlange {
     fn new_args(context: &Context) -> BaseFlangeArgs {
         let newest = context.before.targets_of::<PlacedSketch<Design>>().pop();
         BaseFlangeArgs {
-            sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_sketch::sketch(""))),
+            sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_model::sketch::sketch(""))),
             rules: SheetMetalRules::default(),
             depth: NumericInput::Plain(1.0),
             flip: false,

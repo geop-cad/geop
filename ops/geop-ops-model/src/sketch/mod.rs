@@ -1,6 +1,6 @@
-//! [`PlacedSketch`]: a sketch and the plane it was placed on — the value of
-//! a sketch's target ([`sketch`]) — and what it is to the steps that build
-//! on it: as a whole, its profile or a path ([`PlacedSketch`], [`Path`]),
+//! The sketch target: [`PlacedSketch`], a sketch and the plane it was placed
+//! on ([`SketchPlane`]) — the value of a sketch's target ([`sketch`]) — and
+//! what it is to the steps that build on it: as a whole, its profile or a path ([`PlacedSketch`], [`Path`]),
 //! its plane ([`Plane`]), and its points and curves, as what they are
 //! ([`Point`], [`Line`], [`Circle`], [`Round`], [`Curve`]). It is drawn
 //! into the viewport as itself ([`PlacedSketch::draw`]), and each of those
@@ -10,9 +10,26 @@
 //! model, is the sketch and its element ids: a sketch curve `c3` of sketch
 //! `K` is `K,c3`, its ends `K,p1` after the points there (see
 //! [`piece_names`]).
+//!
+//! The step that draws a sketch is `geop_ops_sketch`'s; what reads one —
+//! an extrusion, a hole, a pattern — needs only this. [`figures`] draws the
+//! sketches examples and tests write down; [`fields`] are the building
+//! blocks of the forms of what is drawn in a sketch.
 
-use geop_core_editor::selectable::SelectableElement;
-use geop_core_editor::view::{PartView, ViewCurve, ViewSketch, ViewSketchPoint, drawn};
+#[cfg(test)]
+mod draw_tests;
+pub mod fields;
+pub mod figures;
+
+use crate::{
+    Chain, Circle, Curve, Line, NamedModel, Path, Plane, Point, Profile, Round, datums::Datums,
+};
+use geop_core_editor::{
+    one_of,
+    registry::{Drawer, StructureItem},
+    selectable::SelectableElement,
+    view::{PartView, ViewCurve, ViewSketch, ViewSketchPoint, drawn},
+};
 use geop_core_geometry::{
     nurb_curve::{NurbCurve, NurbCurve3D},
     shape::{Arc, Axis},
@@ -34,9 +51,47 @@ use geop_core_sketch::{
     CurveId, Enclosure, PointId, Shape,
     profile::{Piece, curve_nurbs, curve_polyline},
 };
-use geop_ops_model::{Chain, Circle, Curve, Line, Path, Plane, Point, Profile, Round};
 
-use crate::{CurveKind, Sketch};
+/// A sketch as a program holds it.
+pub type Sketch = geop_core_sketch::Sketch<Design>;
+/// A sketch constraint as a program holds it.
+pub type Constraint = geop_core_sketch::Constraint<Design>;
+/// A sketch curve's kind as a program holds it.
+pub type CurveKind = geop_core_sketch::CurveKind<Design>;
+
+one_of! {
+    /// The plane a sketch is placed on: a flat face, a datum plane — the
+    /// origin's among them — or another sketch's plane.
+    pub enum SketchPlane -> CoordinateSystem<Design> {
+        Face(ElementReference<NamedModel<Design>, Plane>),
+        Datum(ElementReference<Datums, Plane>),
+        Sketch(ElementReference<PlacedSketch<Design>, Plane>),
+    }
+}
+
+/// Draws a part's sketches, each as the target it is, and lists them.
+pub struct SketchDrawer;
+
+impl Drawer for SketchDrawer {
+    fn draw(&self, reader: &Reader, view: &mut PartView) -> GeopResult<()> {
+        for target in reader.targets_of::<PlacedSketch<Design>>() {
+            let name = target.name().to_string();
+            let reference = ElementReference::<_, PlacedSketch<Design>>::whole(target);
+            reader.retrieve_element(&reference)?.draw(&name, view)?;
+        }
+        Ok(())
+    }
+
+    fn structure(&self, reader: &Reader) -> GeopResult<Vec<StructureItem>> {
+        (reader.targets_of::<PlacedSketch<Design>>().into_iter())
+            .map(|target| {
+                let reference = ElementReference::<_, PlacedSketch<Design>>::whole(target);
+                let placed = reader.retrieve_element(&reference)?;
+                Ok(StructureItem::drawn("sketch", "Sketches", &placed.name))
+            })
+            .collect()
+    }
+}
 
 /// A sketch together with the plane it lies on: `plane.u`/`plane.v` are
 /// the sketch's `x`/`y` (unit, orthogonal), `plane.w = u x v` its unit

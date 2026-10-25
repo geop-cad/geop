@@ -15,7 +15,8 @@ use geop_core_math::{
     scalars::Scalar,
 };
 use geop_core_sketch::{ConstraintId, CurveId, CurveKind, PointId, SplineShape};
-use geop_ops_sketch::{AddSketchArgs, Constraint, Sketch, SketchPlane};
+use geop_ops_model::sketch::{Constraint, Sketch, SketchPlane};
+use geop_ops_sketch::AddSketchArgs;
 
 /// A sketch drawn point by point, each point placed by two formulas — its
 /// `x` and `y` from a fixed origin — so that every point follows the

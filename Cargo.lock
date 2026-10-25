@@ -606,6 +606,7 @@ dependencies = [
  "geop-core-math",
  "geop-core-program",
  "geop-core-rasterize",
+ "geop-core-sketch",
  "geop-core-topology",
  "imbl",
  "serde",

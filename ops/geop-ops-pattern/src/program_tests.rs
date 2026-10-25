@@ -18,15 +18,16 @@ use geop_ops_extrude_revolve::{
     Extents,
     testing::{both_ways, extrude_sketch},
 };
+use geop_ops_model::sketch::{
+    Sketch, SketchPlane,
+    figures::{disc, n, on_origin, outline},
+    sketch_element,
+};
 use geop_ops_model::{
     Combine, NamedModel, model, solid,
     testing::{Built, assert_valid, assert_volume},
 };
-use geop_ops_sketch::{
-    AddSketchArgs, Sketch, SketchPlane,
-    figures::{disc, n, on_origin, outline},
-    sketch_element,
-};
+use geop_ops_sketch::AddSketchArgs;
 
 use geop_ops_model::datums::{origin_axis, origin_plane};
 use geop_ops_reference_geometry::AddDatum;

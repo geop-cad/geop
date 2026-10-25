@@ -31,25 +31,27 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_sketch::{Constraint, CurveId, PointId};
-use geop_ops_model::datums::origin_plane;
 use geop_ops_extrude_revolve::{
     examples::parametric_plate,
     testing::{drilled_box, registry},
+};
+use geop_ops_model::datums::origin_plane;
+use geop_ops_model::parameters::{
+    DefineParameters, DefineParametersArgs, NumberParameter, ParameterKind, parameters_of,
+    set_parameters,
+};
+use geop_ops_model::sketch::{
+    CurveKind, PlacedSketch, Sketch, SketchPlane,
+    figures::{n, on_face, on_origin},
+    sketch, sketch_element, whole_sketch,
 };
 use geop_ops_model::{
     Curve, Line, NamedModel, Path, Plane, Point, element, model,
     testing::{Built, unit_cube},
 };
-use geop_ops_model::parameters::{
-    DefineParameters, DefineParametersArgs, NumberParameter, ParameterKind, parameters_of,
-    set_parameters,
-};
 use geop_ops_sketch::{
-    AddSketch, AddSketchArgs, CurveKind, PlacedSketch, Sketch, SketchPlane,
-    figures::{n, on_face, on_origin},
-    placed::sketch_element,
+    AddSketch, AddSketchArgs,
     references::{Projected, Reference, Source},
-    sketch, whole_sketch,
 };
 
 /// Defines the model as a unit cube: what the sketches are drawn on.
@@ -437,10 +439,10 @@ mod tools {
     use geop_core_sketch::{copies::Step, offset::Corners};
     use geop_ops_extrude_revolve::{Extents, testing::extrusion};
     use geop_ops_model::Combine;
-    use geop_ops_sketch::Constraint;
+    use geop_ops_model::sketch::Constraint;
 
+    use geop_ops_model::sketch::figures::{circle, rectangle, solved};
     use geop_ops_model::testing::check_valid;
-    use geop_ops_sketch::figures::{circle, rectangle, solved};
 
     use super::*;
 

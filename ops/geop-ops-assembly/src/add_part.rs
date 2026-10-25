@@ -20,8 +20,8 @@ use geop_core_math::{
     geop_error::{GeopError, GeopResult, WithContext},
     with_context,
 };
-use geop_ops_model::datums::{ORIGIN, datums};
 use geop_ops_model::Namer;
+use geop_ops_model::datums::{ORIGIN, datums};
 use geop_ops_model::parameters::{Placement, instances};
 use geop_ops_reference_geometry::Selected;
 use serde::{Deserialize, Serialize};

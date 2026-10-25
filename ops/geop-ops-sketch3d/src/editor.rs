@@ -43,7 +43,7 @@ use geop_core_sketch::{
     ConstraintId, CurveId, PointId,
     space::{Arc3, Constraint3d, Coordinate, CurveKind3d, End, Solve3dReport},
 };
-use geop_ops_sketch::fields::constraint_status;
+use geop_ops_model::sketch::fields::constraint_status;
 
 /// How near the pointer, in its reaches, must pass the line along `x`,
 /// `y` or `z` through the point a line starts at for the line's end to

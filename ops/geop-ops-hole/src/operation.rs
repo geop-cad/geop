@@ -30,12 +30,12 @@ use geop_core_sketch::CurveKind;
 use geop_core_topology::SolidId;
 use geop_lib_booleans::{Reach, combine_tools};
 use geop_ops_model::datums::Datums;
+use geop_ops_model::sketch::{PlacedSketch, SketchRef};
 use geop_ops_model::{Combine, Extent, Tool, hull, reach_past};
 use geop_ops_model::{
     CosmeticThread, Face, ModelOperation, NamedModel, Namer, Plane, Point, Threads, ToolReach,
     build_model, draw_threads, frame_along, read_model, threads,
 };
-use geop_ops_sketch::{PlacedSketch, SketchRef};
 use serde::{Deserialize, Serialize};
 
 use crate::{

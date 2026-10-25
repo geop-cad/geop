@@ -17,16 +17,19 @@ use geop_core_program::{
 use geop_core_sketch::CurveId;
 use geop_lib_sweep::Orientation;
 use geop_ops_model::datums::origin_plane;
-use geop_ops_model::{Combine, element};
 use geop_ops_model::parameters::{
     DefineParameters, LookupTable, Material, Parameter, ParameterKind, Parameters, PartProperties,
     Row, set_parameters,
 };
-use geop_ops_sketch::{
-    AddSketch, AddSketchArgs, Constraint, Sketch, SketchPlane,
+use geop_ops_model::sketch::{
+    Constraint, Sketch, SketchPlane,
     figures::{circle, n, polygon, rectangle, solved},
-    references::{Projected, Reference, Source},
     sketch, sketch_element, whole_sketch,
+};
+use geop_ops_model::{Combine, element};
+use geop_ops_sketch::{
+    AddSketch, AddSketchArgs,
+    references::{Projected, Reference, Source},
 };
 use geop_ops_sketch3d::{AddSketch3dArgs, Constraint3d, Sketch3d, sketch3d_path};
 

@@ -26,12 +26,11 @@ use geop_core_sketch::{
     plain::{P2, add, bounds as point_bounds, cross, distance, scale, sub, xy},
 };
 use geop_ops_model::parameters::{Parameter, Parameters, set_parameters};
+use geop_ops_model::sketch::{Constraint, CurveKind, Sketch, SketchPlane, figures::on_face};
 use geop_ops_sketch::{
-    AddSketchArgs, Constraint, CurveKind, Sketch, SketchPlane,
+    AddSketchArgs,
     editor::SketchSession,
-    figures::on_face,
-    references,
-    references::{Projected, Source},
+    references::{self, Projected, Source},
 };
 
 use geop_core_editor::{
@@ -42,8 +41,8 @@ use geop_core_editor::{
         Gesture, Stepping, built, click_at, dialog, editor_with, from_above, handled, pointer,
     },
 };
-use geop_ops_model::datums::origin_plane;
 use geop_ops_extrude_revolve::{examples::box_with_drill_hole, testing::drilled_box};
+use geop_ops_model::datums::origin_plane;
 use geop_ops_model::{
     element,
     testing::{check_valid, model_of},

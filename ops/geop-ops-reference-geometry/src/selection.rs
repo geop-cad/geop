@@ -18,9 +18,9 @@ use geop_core_program::{
     element::ElementReference, placed::InInstance, reader::Reader, values::Design,
 };
 use geop_ops_model::datums::{AnyDatum, Datums};
-use geop_ops_model::{Circle, Curve, Edge, Face, Line, NamedModel, Point, Round, Vertex};
 use geop_ops_model::parameters::located;
-use geop_ops_sketch::PlacedSketch;
+use geop_ops_model::sketch::PlacedSketch;
+use geop_ops_model::{Circle, Curve, Edge, Face, Line, NamedModel, Point, Round, Vertex};
 
 one_of! {
     /// An element a datum is built from.

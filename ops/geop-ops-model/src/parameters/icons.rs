@@ -9,4 +9,5 @@ pub(crate) const LOOKUP_TABLE: &str = r#"<rect x="3" y="4" width="14" height="12
 pub(crate) const PARAMETERS: &str = r#"<path d="M3 7 L17 7 M3 13 L17 13"/><circle cx="12" cy="7" r="2"/><circle cx="7" cy="13" r="2"/>"#;
 
 /// Properties: a tag on a string, with its eyelet.
-pub(crate) const PROPERTIES: &str = r#"<path d="M3 4 L10 4 L17 11 L10 18 L3 11 Z"/><circle cx="7" cy="8" r="1.3"/>"#;
+pub(crate) const PROPERTIES: &str =
+    r#"<path d="M3 4 L10 4 L17 11 L10 18 L3 11 Z"/><circle cx="7" cy="8" r="1.3"/>"#;

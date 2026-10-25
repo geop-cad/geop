@@ -34,7 +34,8 @@ use geop_core_topology::CoedgeGeometry;
 use geop_ops_model::{Chain, Curve, Face, NamedModel, RefId, Vertex};
 use serde::{Deserialize, Serialize};
 
-use crate::{CurveKind, Sketch, geometry::of, placed::PlacedSketch};
+use crate::geometry::of;
+use geop_ops_model::sketch::{CurveKind, PlacedSketch, Sketch};
 
 one_of! {
     /// What a sketch projects of the part: a vertex, an edge, a face — its

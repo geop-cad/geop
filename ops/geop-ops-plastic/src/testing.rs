@@ -4,15 +4,16 @@
 
 use geop_core_math::primitives::FrameAxis;
 use geop_core_program::{element::ElementReference, program::Program};
-use geop_ops_model::datums::datums;
 use geop_ops_extrude_revolve::{Extents, testing::extrusion};
+use geop_ops_model::datums::datums;
+use geop_ops_model::sketch::{
+    Sketch, SketchPlane,
+    figures::{n, on_origin, rectangle_outline},
+};
 use geop_ops_model::{Combine, model, solid};
 use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected};
 use geop_ops_shell::ShellArgs;
-use geop_ops_sketch::{
-    AddSketchArgs, Sketch, SketchPlane,
-    figures::{n, on_origin, rectangle_outline},
-};
+use geop_ops_sketch::AddSketchArgs;
 
 /// The 2 x 2 x 1 box `box`: its walls `extrude(box,outline,c4)` (towards
 /// `-y`), `c5` (`+x`), `c6` (`+y`) and `c7` (`-x`), its bottom

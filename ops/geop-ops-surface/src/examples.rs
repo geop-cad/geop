@@ -5,14 +5,15 @@ use geop_core_editor::registry::ExampleSet;
 use geop_core_math::{primitives::FrameAxis, vector::Vector3};
 use geop_core_program::program::Program;
 use geop_ops_boolean::SplitArgs;
-use geop_ops_model::datums::origin_plane;
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, Output};
-use geop_ops_model::{Combine, element, solid};
-use geop_ops_sketch::{
-    AddSketchArgs, Sketch, SketchPlane,
+use geop_ops_model::datums::origin_plane;
+use geop_ops_model::sketch::{
+    Sketch, SketchPlane,
     figures::{n, rectangle, solved},
     whole_sketch,
 };
+use geop_ops_model::{Combine, element, solid};
+use geop_ops_sketch::AddSketchArgs;
 use geop_ops_sketch3d::{AddSketch3dArgs, CurveSource, Sketch3d};
 
 use crate::NetworkSurfaceArgs;

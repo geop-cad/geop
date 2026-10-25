@@ -96,7 +96,7 @@ pub(super) fn visuals(
                 .collect();
             out.push(Visual::new(
                 format!("region{i}"),
-                crate::fields::region(frame, &outer, &holes),
+                geop_ops_model::sketch::fields::region(frame, &outer, &holes),
                 Style::Region,
             ));
         }

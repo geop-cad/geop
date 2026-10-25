@@ -7,13 +7,13 @@ use geop_core_program::{
     values::Design,
 };
 use geop_ops_extrude_revolve::{Extents, testing::extrude_sketch};
-use geop_ops_model::{Combine, model, notes_of, testing::Built};
-use geop_ops_reference_geometry::Selected;
-use geop_ops_sketch::{
-    AddSketchArgs,
+use geop_ops_model::sketch::{
     figures::{n, on_origin, rectangle_outline},
     sketch_element,
 };
+use geop_ops_model::{Combine, model, notes_of, testing::Built};
+use geop_ops_reference_geometry::Selected;
+use geop_ops_sketch::AddSketchArgs;
 use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs, Sketch3d};
 
 use crate::{Route, RouteArgs, Wire, WireSize, cable};
@@ -102,7 +102,7 @@ fn a_route_runs_through_sketch_points() {
             references: Vec::new(),
         },
     );
-    let mut floor = geop_ops_sketch::Sketch::new();
+    let mut floor = geop_ops_model::sketch::Sketch::new();
     let p = floor.add_point(n(4.0), n(4.0));
     program.push("floor", AddSketchArgs::on(on_origin(FrameAxis::Z), floor));
     program.push(

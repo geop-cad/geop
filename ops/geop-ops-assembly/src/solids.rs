@@ -18,8 +18,8 @@ use geop_core_math::{
     scalars::{Field, Scalar},
 };
 use geop_core_topology::{SolidId, mass::MassProperties};
-use geop_ops_model::{NamedModel, notes_of, read_model};
 use geop_ops_model::parameters::{MaterialOf, read_properties};
+use geop_ops_model::{NamedModel, notes_of, read_model};
 
 use crate::placed::placed_parts;
 

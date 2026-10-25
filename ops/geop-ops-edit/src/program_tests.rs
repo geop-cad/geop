@@ -6,15 +6,16 @@ use crate::{ProjectCurve, ProjectCurveArgs};
 use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
 use geop_core_program::{element::ElementReference, values::Design};
 use geop_lib_sweep::shapes::block_part;
+use geop_ops_model::sketch::{
+    Sketch,
+    figures::{n, on_origin},
+    whole_sketch,
+};
 use geop_ops_model::{
     NamedModel, model,
     testing::{assert_valid, error, face_towards, given_part, model_of, run_step},
 };
-use geop_ops_sketch::{
-    AddSketch, AddSketchArgs, Sketch,
-    figures::{n, on_origin},
-    whole_sketch,
-};
+use geop_ops_sketch::{AddSketch, AddSketchArgs};
 
 /// The block the sketches are projected onto: `[-1, 1]^2 x [0, 1]`.
 fn block() -> NamedModel<Design> {

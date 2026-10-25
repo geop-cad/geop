@@ -65,7 +65,7 @@ fn new_draft_picks_its_faces_and_neutral_plane() {
     );
     assert_eq!(
         args.neutral,
-        Some(geop_ops_sketch::SketchPlane::Face(element(
+        Some(geop_ops_model::sketch::SketchPlane::Face(element(
             "extrude(box,start)"
         )))
     );
@@ -101,7 +101,10 @@ fn new_rib_grows_from_the_newest_sketch() {
     let update = editor.handle(Command::Commit);
     assert!(update.error.is_none(), "{:?}", update.error);
     let args: crate::RibArgs = args(editor.program().steps.last().unwrap());
-    assert_eq!(args.sketch, geop_ops_sketch::whole_sketch("rib_sketch"));
+    assert_eq!(
+        args.sketch,
+        geop_ops_model::sketch::whole_sketch("rib_sketch")
+    );
     assert_eq!(args.solid.name(), "shell(s)");
     assert!(args.flipped);
     let scene = update.scene.expect("the scene is sent anew");

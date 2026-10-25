@@ -15,8 +15,8 @@ use geop_core_math::{
 use geop_lib_sheet::{
     Anchor, Format, Label, Layer, LineType, Shape, Sheet as Paper, decimal, strokes_of,
 };
-use geop_ops_model::read_model;
 use geop_ops_model::parameters::stem;
+use geop_ops_model::read_model;
 use serde::Deserialize;
 
 use crate::{

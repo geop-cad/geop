@@ -17,15 +17,16 @@ use geop_core_program::{
     values::Design,
 };
 use geop_lib_sweep::Orientation;
+use geop_ops_model::sketch::{
+    Constraint, PlacedSketch, Sketch, SketchPlane,
+    figures::{disc, n, on_face, on_origin, outline, polygon},
+    sketch as sketch_target, sketch_element, whole_sketch,
+};
 use geop_ops_model::{
     BooleanOp, Combine, Curve, NamedModel, read_model, solid,
     testing::{Built, assert_valid, runner_of},
 };
-use geop_ops_sketch::{
-    AddSketchArgs, Constraint, PlacedSketch, Sketch, SketchPlane,
-    figures::{disc, n, on_face, on_origin, outline, polygon},
-    sketch as sketch_target, sketch_element, whole_sketch,
-};
+use geop_ops_sketch::AddSketchArgs;
 use std::f64::consts::PI;
 
 use geop_core_math::{

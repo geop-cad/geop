@@ -40,8 +40,7 @@ use geop_core_math::{
 };
 use geop_ops_model::Namer;
 use geop_ops_model::parameters::{
-    COLOR, ParameterKind, file_choices, instance, parameters_of, validate_color,
-    read_properties,
+    COLOR, ParameterKind, file_choices, instance, parameters_of, read_properties, validate_color,
 };
 
 use crate::{

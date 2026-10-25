@@ -8,15 +8,15 @@ use geop_core_math::{
 use geop_core_program::{operation_registry::OperationRegistry, program::Program};
 use geop_core_sketch::space::End;
 use geop_lib_sweep::Orientation;
+use geop_ops_model::sketch::{
+    figures::{disc, n, on_origin},
+    whole_sketch,
+};
 use geop_ops_model::{
     Combine,
     testing::{Built, assert_valid},
 };
-use geop_ops_sketch::{
-    AddSketchArgs,
-    figures::{disc, n, on_origin},
-    whole_sketch,
-};
+use geop_ops_sketch::AddSketchArgs;
 use geop_ops_sketch3d::{AddSketch3d, AddSketch3dArgs, Constraint3d, Sketch3d, sketch3d_path};
 
 /// The operations these tests' programs are written in.

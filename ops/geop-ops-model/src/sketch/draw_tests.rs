@@ -18,7 +18,7 @@ use geop_core_program::{
 };
 use geop_core_sketch::{CurveId, PointId};
 
-use crate::{PlacedSketch, Sketch, sketch};
+use super::{PlacedSketch, Sketch, sketch};
 
 fn down(x: f64, y: f64) -> Pointer<S> {
     pointer([x, y, 5.0], [0.0, 0.0, -1.0])

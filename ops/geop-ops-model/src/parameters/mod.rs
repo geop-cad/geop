@@ -9,22 +9,21 @@
 //! from ([`files`]); the parameters panel of an editor and the colour a
 //! part is drawn in ([`panel`]), which [`register`] offers.
 
-
+pub mod definition;
 pub mod files;
 mod icons;
 pub mod instance;
 pub mod panel;
-pub mod definition;
 pub mod program;
 pub mod steps;
 
+pub use definition::{
+    COLOR, Material, NumberParameter, Parameter, ParameterKind, Parameters, Row, validate_color,
+};
 pub use files::file_choices;
 pub use instance::{
     Factor, Instance, Placement, PoseOf, compose, define_instance, instance, instances, located,
     placement,
-};
-pub use definition::{
-    COLOR, Material, NumberParameter, Parameter, ParameterKind, Parameters, Row, validate_color,
 };
 pub use program::{
     parameter_numbers, parameter_uses, parameters_of, rename_parameter, set_parameters,

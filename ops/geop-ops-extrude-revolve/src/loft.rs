@@ -14,8 +14,8 @@ use geop_core_program::{
     element::ElementReference, part::StepContext, reader::Reader, values::Design,
 };
 use geop_core_sketch::{PointId, Shape};
+use geop_ops_model::sketch::{PlacedSketch, SketchRef, chain_of_pieces};
 use geop_ops_model::{ModelOperation, NamedModel, Namer, Point, build_model, read_model};
-use geop_ops_sketch::{PlacedSketch, SketchRef, chain_of_pieces};
 use serde::{Deserialize, Serialize};
 
 use geop_lib_sweep::{Section, loft, mark};

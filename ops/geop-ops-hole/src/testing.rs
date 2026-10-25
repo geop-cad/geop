@@ -9,10 +9,11 @@ use geop_ops_extrude_revolve::{
     testing::{both_ways, extrude_sketch, extrusion},
 };
 use geop_ops_model::Combine;
-use geop_ops_sketch::{
-    AddSketchArgs, Constraint, Sketch,
+use geop_ops_model::sketch::{
+    Constraint, Sketch,
     figures::{disc, n, on_face, on_origin, outline},
 };
+use geop_ops_sketch::AddSketchArgs;
 
 /// The plate's size: 60 x 40, 10 thick, its top at `z = 10`.
 pub const PLATE: [f64; 3] = [60.0, 40.0, 10.0];

@@ -12,12 +12,10 @@ step runs, so a sketch on a face stays where the face was, whatever later
 steps do to it.
 
 The sketch is a target of the part, `sketch(name)`, a `PlacedSketch` —
-the sketch and the plane it lies on — which is what later steps build on:
-read whole (`whole_sketch`, what an extrude sweeps) or by its elements
-(`sketch_element`), which have the geometric kinds of
-[geop-ops-model](./geop-ops-model.md#elements-and-what-they-are-used-as)
-where they have that shape — a sketch's line is a `Line`, its plane a
-`Plane`, its one chain or loop a `Path`.
+the sketch and the plane it lies on — which is what later steps build on.
+The target, `SketchPlane` and the references into a sketch are
+[geop-ops-model](./geop-ops-model.md#sketches-sketch)'s, so an operation
+that reads a sketch needs no sketch operation.
 
 ## Reference geometry
 
@@ -115,10 +113,3 @@ edit — and back to the program's own once it is put away.
 Every change is solved before it is returned, and one line of the dialog
 says how that went: degrees of freedom left, or how many constraints
 conflict, and how many closed regions the sketch has.
-
-## Figures
-
-`figures` draws what examples and tests write down by numbers: a closed
-`polygon`, a fully constrained `rectangle` and `circle`, every number
-design data (`n`), and a sketch `solved` once it is drawn. Every crate's
-examples draw with it, rather than each keeping its own copy.

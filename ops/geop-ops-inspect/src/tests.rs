@@ -23,8 +23,8 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_lib_sweep::shapes::{cube_solid, revolved_cylinder, sphere_solid, v3};
-use geop_ops_model::{NamedModel, model};
 use geop_ops_model::parameters::{Material, PartProperties, PartPropertiesArgs};
+use geop_ops_model::{NamedModel, model};
 use geop_ops_reference_geometry::Selected;
 
 use crate::{
@@ -369,9 +369,9 @@ fn long_bars_overlap() {
 fn sketch_curves_are_measured() {
     use geop_core_math::primitives::CoordinateSystem;
     use geop_core_sketch::space::Sketch3d;
-    use geop_ops_sketch::{PlacedSketch, sketch};
+    use geop_ops_model::sketch::{PlacedSketch, sketch};
     let d = S::from_f64;
-    let mut arc = geop_ops_sketch::Sketch::new();
+    let mut arc = geop_ops_model::sketch::Sketch::new();
     let (a, b) = (
         arc.add_point(d(1.0), d(0.0)),
         arc.add_point(d(-1.0), d(0.0)),

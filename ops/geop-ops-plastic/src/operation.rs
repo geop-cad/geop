@@ -18,12 +18,12 @@ use geop_core_program::{
 };
 use geop_core_sketch::Shape;
 use geop_core_topology::{EdgeId, FaceId};
+use geop_ops_model::sketch::shape_profiles;
+use geop_ops_model::sketch::{PlacedSketch, SketchPlane, SketchRef};
 use geop_ops_model::{
     Edge, Face, ModelOperation, NamedModel, Namer, build_model, model, read_model,
 };
 use geop_ops_model::{SolidRef, solid};
-use geop_ops_sketch::shape_profiles;
-use geop_ops_sketch::{PlacedSketch, SketchPlane, SketchRef};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -498,7 +498,7 @@ impl PartOperation for Rib {
             .ok()
             .and_then(|model| model.newest_solid());
         RibArgs {
-            sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_sketch::sketch(""))),
+            sketch: SketchRef::whole(newest.unwrap_or_else(|| geop_ops_model::sketch::sketch(""))),
             solid: solid(solid_name.unwrap_or_default()),
             thickness: 0.05,
             side: RibSide::Symmetric,

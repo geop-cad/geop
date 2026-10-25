@@ -38,11 +38,11 @@ use geop_ops_extrude_revolve::{
     examples::{box_with_drill_hole, bracket, cross_drilled_shaft, revolved_cone_on_box},
     testing::{self as extrude_revolve, extrude_sketch},
 };
+use geop_ops_model::sketch::figures::{disc, on_origin, rectangle_outline};
 use geop_ops_model::{
     Combine, NamedModel, Namer, read_model,
     testing::{assert_model_valid_sheets, model_of},
 };
-use geop_ops_sketch::figures::{disc, on_origin, rectangle_outline};
 
 use crate::{ImportStep, ImportStepArgs, add_bodies, read_step, write_part, write_step};
 

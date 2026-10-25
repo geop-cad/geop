@@ -4,7 +4,7 @@
 //! sketched on it, a drilled box, and the [`bodies`] the stress sweeps run
 //! over). Only built for tests: with `testing`, or in this crate's own.
 //!
-//! The sketches themselves are drawn with `geop_ops_sketch::figures`, a
+//! The sketches themselves are drawn with `geop_ops_model::sketch::figures`, a
 //! program's steps are read and run with `geop_core_program::testing`, and
 //! the model it builds with `geop_ops_model::testing`.
 
@@ -18,11 +18,12 @@ use geop_core_program::{
 };
 use geop_ops_model::Combine;
 use geop_ops_model::parameters::{DefineParameters, LookupTable, PartProperties};
-use geop_ops_sketch::{
-    AddSketch, AddSketchArgs, Sketch, SketchPlane,
+use geop_ops_model::sketch::{
+    Sketch, SketchPlane,
     figures::{disc, on_face, on_origin, polygon, rectangle_outline},
     whole_sketch,
 };
+use geop_ops_sketch::{AddSketch, AddSketchArgs};
 
 pub mod bodies;
 

@@ -8,6 +8,7 @@ license.workspace = true
 geop-core-math.workspace = true
 geop-core-geometry.workspace = true
 geop-core-topology.workspace = true
+geop-core-sketch.workspace = true
 geop-core-program.workspace = true
 geop-core-editor.workspace = true
 geop-core-rasterize.workspace = true

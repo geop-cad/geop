@@ -60,6 +60,7 @@ pub mod notes;
 pub mod parameters;
 pub mod records;
 mod resolve;
+pub mod sketch;
 pub mod tangent;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
@@ -90,12 +91,14 @@ use geop_core_math::geop_error::GeopResult;
 
 /// Adds what the model offers an editor to `r`: the part's model drawn, and
 /// its solids and faces listed ([`ModelDrawer`]); its datums drawn and
-/// listed ([`datums::DatumsDrawer`]); the steps defining its parameters,
+/// listed ([`datums::DatumsDrawer`]); its sketches drawn and listed
+/// ([`sketch::SketchDrawer`]); the steps defining its parameters,
 /// tables and properties, the parameters panel, and the part drawn in its
 /// colour (see [`parameters`]).
 pub fn register(r: Registry) -> GeopResult<Registry> {
     r.drawer(ModelDrawer)?
         .drawer(datums::DatumsDrawer)?
+        .drawer(sketch::SketchDrawer)?
         .operation(parameters::DefineParameters)?
         .operation(parameters::LookupTable)?
         .operation(parameters::PartProperties)?

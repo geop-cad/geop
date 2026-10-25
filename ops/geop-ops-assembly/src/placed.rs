@@ -35,12 +35,12 @@ use geop_core_math::{
 };
 use geop_lib_constraints::{solve::Mobility, unknown::Unknowns};
 use geop_ops_model::datums::read_datums;
-use geop_ops_model::{SolidMeshes, read_model};
 use geop_ops_model::parameters::{
     Factor, Instance, Placement, compose, define_instance, instance, instances, placement,
     read_properties,
 };
-use geop_ops_sketch::PlacedSketch;
+use geop_ops_model::sketch::PlacedSketch;
+use geop_ops_model::{SolidMeshes, read_model};
 
 /// The part `reader` reads, drawn: its model, its datums — the origin
 /// first — its sketches, what its steps draw on it and the parts placed in

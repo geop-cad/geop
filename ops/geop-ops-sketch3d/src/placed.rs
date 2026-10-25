@@ -16,8 +16,8 @@ use geop_core_program::{
     target::{Target, TargetReference},
     values::Design,
 };
+use geop_ops_model::sketch::chain_of_pieces;
 use geop_ops_model::{Chain, Path, model};
-use geop_ops_sketch::chain_of_pieces;
 
 use crate::Sketch3d;
 

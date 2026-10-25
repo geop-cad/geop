@@ -14,8 +14,8 @@ use geop_core_program::{
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use geop_core_math::geop_error::{GeopError, GeopResult};
-use geop_ops_model::{NamedModel, SolidNotes, model, solid_notes};
 use geop_ops_model::parameters::{DefineParameters, LookupTable, PartProperties, Placement};
+use geop_ops_model::{NamedModel, SolidNotes, model, solid_notes};
 use serde::{Deserialize, Serialize};
 
 use crate::placed::define_placed;

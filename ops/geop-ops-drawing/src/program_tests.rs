@@ -19,13 +19,13 @@ use geop_core_program::{
 use geop_lib_sheet::to_dxf;
 use geop_lib_stdlib::WithStandardParts;
 use geop_ops_assembly::examples::{metric_plate, pose, workspaces};
-use geop_ops_model::datums::{ORIGIN, component_name, datum};
 use geop_ops_extrude_revolve::examples::{box_with_drill_hole, bracket};
 use geop_ops_hole::examples::hole_plate;
+use geop_ops_model::datums::{ORIGIN, component_name, datum};
+use geop_ops_model::sketch::SketchPlane;
 use geop_ops_model::{NamedModel, RefId, testing::model_of};
 use geop_ops_pattern::examples::cool_flange;
 use geop_ops_reference_geometry::{AddDatumArgs, Construction, Selected, examples::conebox};
-use geop_ops_sketch::SketchPlane;
 use geop_ops_subd::examples::subd_mouse;
 
 use crate::{
