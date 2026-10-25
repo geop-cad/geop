@@ -27,9 +27,11 @@ examples = ["dep:geop-ops-extrude-revolve", "dep:geop-ops-sketch"]
 # The examples' round trips and incremental builds.
 geop-core-program = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
-geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"] }
+# The given solids and datums the tests blend, and the stress sweeps' bodies.
+geop-lib-fixtures.workspace = true
+# The examples, and the bodies no primitive makes: a slot, and lofts.
+geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-ops-sketch.workspace = true
 geop-lib-sweep = { workspace = true, features = ["testing"] }
-geop-ops-reference-geometry.workspace = true
 serde_json.workspace = true
 geop-core-editor = { workspace = true, features = ["testing"] }
-geop-ops-sketch.workspace = true

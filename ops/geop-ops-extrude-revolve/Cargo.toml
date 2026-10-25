@@ -34,7 +34,8 @@ geop-core-program = { workspace = true, features = ["testing"] }
 # Its operations and the parameters panel edited as a front end edits them.
 geop-core-editor = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
-geop-ops-reference-geometry.workspace = true
+# The datums its programs sketch on and sweep up to, given.
+geop-lib-fixtures.workspace = true
 serde_json.workspace = true
 geop-ops-sketch.workspace = true
 geop-ops-sketch3d.workspace = true

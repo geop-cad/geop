@@ -17,8 +17,8 @@ pub mod operation;
 mod pattern_tests;
 #[cfg(test)]
 mod program_tests;
-#[cfg(any(test, feature = "testing"))]
-pub mod testing;
+#[cfg(test)]
+mod testing;
 mod thread;
 
 pub use operation::{

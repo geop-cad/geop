@@ -22,11 +22,12 @@ use geop_ops_model::parameters::{
     Material, Parameter, ParameterKind, Parameters, Row, set_parameters,
 };
 
+use geop_lib_fixtures::PrimitiveArgs;
 use geop_lib_stdlib::WithStandardParts;
 use geop_lib_sweep::shapes::block;
 use geop_ops_assembly::{
     AddPartArgs,
-    examples::{metric_plate, pose, workspaces},
+    examples::{pose, workspaces},
     testing::{Shelf, given_model, place, runner},
 };
 use geop_ops_model::placed::placed_parts;
@@ -348,10 +349,11 @@ fn wires_are_lines_of_their_own() {
 
 // The example assemblies, built beside the standard parts.
 
-/// The operations the example assemblies are written in — sketched,
-/// extruded, placed, the standard parts' patterns and parameters — each
-/// crate's `register`, as the editor's registry has them, and the bill of
-/// materials.
+/// The operations the example assemblies and the standard parts are
+/// written in — sketched on datums, extruded, revolved, patterned, placed,
+/// with their parameters — each crate's `register`, as the editor's
+/// registry has them; the given solids a generated assembly's plate is
+/// built from; and the bill of materials.
 fn registry() -> Registry {
     let registry = (|| -> GeopResult<Registry> {
         let r = Registry::default();
@@ -361,6 +363,7 @@ fn registry() -> Registry {
         let r = geop_ops_extrude_revolve::register(r)?;
         let r = geop_ops_pattern::register(r)?;
         let r = geop_ops_assembly::register(r)?;
+        let r = geop_lib_fixtures::register(r)?;
         let r = crate::register(r)?;
         Ok(r)
     })();
@@ -534,9 +537,15 @@ fn repeated_standard_parts_are_grouped() {
     placed(&mut robot, "extra0", SCREW, Some("M3x10"), -10.0);
     placed(&mut robot, "extra1", SCREW, Some("M3x10"), -20.0);
     placed(&mut robot, "long", SCREW, Some("M3x12"), -30.0);
+    // The plate: a 40 x 40 x 5 block.
+    let mut plate = Program::new();
+    plate.push(
+        "plate",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [40.0, 40.0, 5.0]),
+    );
     let files = BTreeMap::from([
         ("module.geop".to_string(), module.to_json().unwrap()),
-        ("plate.geop".to_string(), metric_plate().to_json().unwrap()),
+        ("plate.geop".to_string(), plate.to_json().unwrap()),
     ]);
     let part = build_files(files, "robot.geop", &robot);
 

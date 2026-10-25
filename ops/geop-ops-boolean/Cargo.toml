@@ -24,8 +24,12 @@ examples = ["dep:geop-ops-extrude-revolve", "dep:geop-ops-sketch"]
 # The examples' round trips and incremental builds.
 geop-core-program = { workspace = true, features = ["testing"] }
 geop-core-topology.workspace = true
-# The tests split solids extruded from sketches with faces extracted from them.
 geop-ops-model = { workspace = true, features = ["testing"] }
+# The given solids the tests unite and split.
+geop-lib-fixtures.workspace = true
+# The examples, and the tests of extruding and revolving up to the next
+# face of a united solid, are written in sketches and extrusions.
 geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
-geop-ops-edit.workspace = true
 geop-ops-sketch.workspace = true
+# The tests split solids with faces extracted from them.
+geop-ops-edit.workspace = true

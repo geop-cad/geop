@@ -1,31 +1,29 @@
 //! Programs from bug reports, with the coordinates they were reported with:
 //! a "clean" equivalent may not carry the same numerical case at all.
 
-use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::{DatumComponent, FrameAxis},
-};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
 use geop_core_program::{operation_registry::OperationRegistry, program::Program, testing::args};
-use geop_ops_model::datums::{ORIGIN, component_name, datum};
+use geop_lib_fixtures::{GivenDatum, GivenDatumArgs};
+use geop_ops_model::datums::datum;
 use geop_ops_model::parameters::{ParameterKind, parameters_of, set_parameters};
-use geop_ops_model::selection::Selected;
 use geop_ops_model::sketch::{
     Constraint, Sketch, SketchPlane,
     figures::{n, on_face, on_origin},
     sketch_element, whole_sketch,
 };
 use geop_ops_model::{
-    BooleanOp, Combine, element, solid,
+    BooleanOp, Combine, solid,
     testing::{Built, assert_draws_its_trims, assert_valid},
 };
-use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction};
 use geop_ops_sketch::AddSketchArgs;
 
 use crate::{Extents, Output, RevolveArgs, RevolveAxis, examples, testing::extrusion};
 
-/// The operations these programs are written in.
+/// The operations these programs are written in. The datums the reports
+/// built from faces and edges are given at the frames those constructions
+/// produced, so a change to the datum operation does not retest these.
 fn registry() -> GeopResult<OperationRegistry> {
-    crate::testing::registry()?.with(AddDatum)
+    crate::testing::registry()?.with(GivenDatum)
 }
 
 /// Checks the part `program` builds is valid (see [`assert_valid`]) and is
@@ -103,15 +101,15 @@ fn cylinder_joined_over_a_hole() {
         "extrude1",
         extrusion("sketch1", Extents::blind(1.0), Combine::NewBody),
     );
+    // The midplane between the plate's top (`z = 1`) and its back side
+    // (`y = top`): through the point halfway between the planes' projections
+    // of the origin, projected onto it, as that construction puts it.
     program.push(
         "reference1",
-        AddDatumArgs {
-            selection: vec![
-                Selected::Face(element("extrude(extrude1,end)")),
-                Selected::Face(element("extrude(extrude1,sketch1,c4)")),
-            ],
-            construction: Construction::Midplane { other: false },
-        },
+        GivenDatumArgs::plane(
+            [0.0, (3.0 * top - 1.0) / 4.0, (3.0 - top) / 4.0],
+            [0.0, -1.0, 1.0],
+        ),
     );
     let mut boss = Sketch::new();
     let center = boss.add_point(n(1.4470132029404787), n(0.7057548548938737));
@@ -424,14 +422,15 @@ fn bracket_with_torus(
             Combine::NewBody,
         ),
     );
-    // The edges swept by the outline's second and fourth corners.
-    let edge = |k: usize| Selected::Edge(element(format!("extrude(extrude1,sketch1,{})", p[k])));
+    // The plane through the edges swept by the outline's second and fourth
+    // corners, both along `x`: from the second's start, at `x = -1`, square
+    // to `x` and to the line between the corners (which the sketch on the
+    // X plane puts at `(y, z)`), as that construction puts it.
+    let (y1, z1) = (1.798277, -0.759183);
+    let (y3, z3) = (-0.465176, 1.860703);
     program.push(
         "reference1",
-        AddDatumArgs {
-            selection: vec![edge(1), edge(3)],
-            construction: Construction::TwoLines {},
-        },
+        GivenDatumArgs::plane([-1.0, y1, z1], [0.0, -(z3 - z1), y3 - y1]),
     );
     let mut hole = Sketch::new();
     frame_axes(&mut hole);
@@ -668,21 +667,13 @@ fn conebox(combine: Combine) -> Program {
             Combine::NewBody,
         ),
     );
+    // The plane through the box's top edge at `x` (the one its last side
+    // swept, along `y`), turned 45 degrees from the top: from the edge's
+    // start, with its normal between `-x` and `z`, as that construction
+    // puts it.
     program.push(
         "reference1",
-        AddDatumArgs {
-            selection: vec![
-                Selected::Edge(element(format!(
-                    "extrude(extrude1,sketch1,{},end)",
-                    sides[3]
-                ))),
-                Selected::Datum(datum(component_name(
-                    ORIGIN,
-                    DatumComponent::Plane(FrameAxis::Z),
-                ))),
-            ],
-            construction: Construction::Angle { angle: 45.0.into() },
-        },
+        GivenDatumArgs::plane([x, y, 27.240000000000002 / 2.0], [-1.0, 0.0, 1.0]),
     );
     let mut spindle = Sketch::new();
     frame_axes(&mut spindle);

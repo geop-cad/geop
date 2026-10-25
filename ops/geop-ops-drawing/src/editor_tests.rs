@@ -13,10 +13,10 @@ use geop_core_editor::{
     testing::{dialog, loaded, pointer},
 };
 use geop_core_program::{program::Program, testing::args};
+use geop_lib_fixtures::drilled_box;
 use geop_lib_stdlib::WithStandardParts;
-use geop_ops_extrude_revolve::examples::box_with_drill_hole;
 
-use crate::{Annotation, DrawnView, EdgeShape, Pickable, ViewKind};
+use crate::{Annotation, DrawnView, EdgeShape, Pickable, ViewKind, program_tests::bracket};
 
 /// What these tests edit: the parts and assemblies drawn, and drawings.
 fn registry() -> Registry {
@@ -75,7 +75,7 @@ fn sheet_vertices(editor: &Editor, view: crate::DrawnView) -> Vec<(String, [f64;
 /// selected in the list, removed with Delete.
 #[test]
 fn a_hole_is_dimensioned_on_a_drawing_and_a_dimension_removed() {
-    let mut editor = editor_on(box_with_drill_hole());
+    let mut editor = editor_on(drilled_box());
     editor.handle(Command::New {
         kind: "drawing".into(),
     });
@@ -148,7 +148,7 @@ fn a_hole_is_dimensioned_on_a_drawing_and_a_dimension_removed() {
 /// downloaded from the dialog as SVG and DXF, and committed.
 #[test]
 fn a_drawing_is_annotated_on_its_sheet_and_downloaded() {
-    let mut editor = editor_on(box_with_drill_hole());
+    let mut editor = editor_on(drilled_box());
     let started = editor.handle(Command::New {
         kind: "drawing".into(),
     });
@@ -401,7 +401,7 @@ fn an_assembly_drawing_lists_its_parts() {
 fn a_program_is_drawn_whole() {
     let mut editor = editor();
     let update = editor.handle(Command::Load {
-        program: geop_ops_extrude_revolve::examples::bracket(),
+        program: bracket(),
         path: Some("bracket.geop".into()),
     });
     assert!(update.error.is_none(), "{:?}", update.error);

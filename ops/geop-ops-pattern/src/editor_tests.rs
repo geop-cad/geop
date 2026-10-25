@@ -11,16 +11,13 @@ use geop_core_editor::{
 };
 use geop_core_math::scalars::Scalar;
 use geop_core_program::{element::PickedElement, testing::args};
-use geop_ops_extrude_revolve::examples::box_with_drill_hole;
-use geop_ops_hole::testing::plate_with_hole;
+use geop_lib_fixtures::{drilled_box, drilled_plate};
 
-/// What these tests edit: the drilled box and the drilled plate — their
-/// sketches, extrusions and holes — and patterns.
+/// What these tests edit: the drilled box and the drilled plate — given
+/// solids — and patterns.
 fn registry() -> Registry {
     (geop_ops_model::register(Registry::default()))
-        .and_then(geop_ops_sketch::register)
-        .and_then(geop_ops_extrude_revolve::register)
-        .and_then(geop_ops_hole::register)
+        .and_then(geop_lib_fixtures::register)
         .and_then(crate::register)
         .expect("the operations each have a name of their own")
 }
@@ -33,7 +30,7 @@ fn registry() -> Registry {
 /// copies named after the step.
 #[test]
 fn new_linear_pattern_dragged_by_its_spacing_handle() {
-    let mut editor = editor_with(registry(), box_with_drill_hole());
+    let mut editor = editor_with(registry(), drilled_box());
     let update = editor.handle(Command::New {
         kind: "linear_pattern".into(),
     });
@@ -92,7 +89,7 @@ fn new_linear_pattern_dragged_by_its_spacing_handle() {
     assert_eq!(solids.len(), 4, "{solids:?}");
     let id = editor.program().steps.last().unwrap().id.clone();
     assert!(
-        solids.contains(&format!("linear_pattern({id},3,extrude(hole))")),
+        solids.contains(&format!("linear_pattern({id},3,cylinder(hole))")),
         "{solids:?}"
     );
 }
@@ -104,7 +101,7 @@ fn new_linear_pattern_dragged_by_its_spacing_handle() {
 /// plate alone, drilled four times.
 #[test]
 fn new_linear_pattern_picks_a_feature_by_its_wall() {
-    let mut editor = editor_with(registry(), plate_with_hole());
+    let mut editor = editor_with(registry(), drilled_plate());
     editor.handle(Command::New {
         kind: "linear_pattern".into(),
     });
@@ -170,7 +167,7 @@ fn new_linear_pattern_picks_a_feature_by_its_wall() {
 /// arrow dragged, then the square of the `x`–`z` plane.
 #[test]
 fn a_body_is_moved_by_its_gizmo() {
-    let mut editor = editor_with(registry(), box_with_drill_hole());
+    let mut editor = editor_with(registry(), drilled_box());
     let update = editor.handle(Command::New {
         kind: "move_body".into(),
     });

@@ -870,18 +870,34 @@ an editor driven as a front end drives it), `geop_core_program::testing`
 validity, entities by where they are, a part of a model given with steps
 run on it one by one, the model a program builds — `Built`, `model_of`),
 `geop_lib_sweep::shapes` (basic solids: blocks, cylinders, spheres),
+`geop_lib_fixtures` (test-only steps: `Primitive`, a block, prism,
+cylinder or sphere at given coordinates, kept or combined with a solid of
+the part; `GivenDatum`, a datum at given coordinates; `drilled_box`, the
+box with a blind hole; `bodies`, what the stress sweeps run over),
 `geop_ops_model::sketch::figures` (sketches of figures and the planes to sketch
 on) and `geop_ops_extrude_revolve::testing` (feature `testing`: the steps
-extruding sketches, and the bodies a sketch and an extrusion or two build):
-look there before writing an `assert_valid`, a cube or a `v3` of your own.
+extruding sketches): look there before writing an `assert_valid`, a cube
+or a `v3` of your own.
 
-A test that only needs a solid builds it with `geop_lib_sweep::shapes` and
-runs its step on it (`given_part`, `run_step`), not by sketching and
-extruding it through the program machinery: a dev-dependency on
-`geop-ops-extrude-revolve` makes the crate's tests run again whenever the
-extrusion changes. It is for tests of the interaction with an extrusion as
-a step — a tool combined with a previous extrusion, an example program
-that extrudes, an editor test clicking on an extruded body's face.
+A test that only needs a solid does not sketch and extrude it. One that
+runs a single step on a model builds the model with `geop_lib_sweep::shapes`
+and runs the step on it (`given_part`, `run_step`). One that needs a
+*program* — an editor test clicking on a body, a round trip, a feature
+cut from a body named by a step — starts from a `Primitive` step of
+`geop_lib_fixtures` (registered by `geop_lib_fixtures::registry()` or
+`register`, never by an editor's `register`), and a datum it needs from a
+`GivenDatum`. A dev-dependency on `geop-ops-extrude-revolve`,
+`geop-ops-sketch`, `geop-ops-reference-geometry`, `geop-ops-pattern` or
+`geop-ops-assembly` makes the crate's tests run again whenever that
+operation changes, and so does one on any crate whose examples are
+written in it: it is for tests of the interaction with that operation as
+a step — a tool combined with a previous extrusion's `Combine`, a loft
+between sketches, a feature pattern of a hole, a bill of materials of
+placed parts — and for the crate's own examples, which are programs in
+several operations' `Args` (feature `examples`) and stay so. An earlier
+pass could not do this for editor tests because a `NamedModel` is not
+serializable, so no step could hold one: a step holds the coordinates and
+builds the model.
 
 ## Where things go
 

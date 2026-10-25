@@ -1,6 +1,6 @@
 //! Shells across boxes, cylinders and spheres, whole and with parts cut
 //! off, added or drilled — and bodies with free-form edges, a boss on a
-//! sphere and a pipe tee (see `geop_ops_extrude_revolve::testing::bodies`):
+//! sphere and a pipe tee (see `geop_lib_fixtures::bodies`):
 //! the solid shelled closed, and open at each of its faces in turn. The
 //! blends of the same bodies are swept in `geop-ops-fillet`.
 //!
@@ -15,13 +15,11 @@
 //! under it.
 
 use geop_core_program::program::Program;
-use geop_ops_extrude_revolve::testing::{
-    bodies::block, bodies::block_corner_cut_off, bodies::block_drilled, bodies::block_pocketed,
-    bodies::block_stepped, bodies::block_with_boss, bodies::cylinder, bodies::cylinder_drilled,
-    bodies::cylinder_drilled_off_axis, bodies::cylinder_pocketed, bodies::cylinder_with_boss,
-    bodies::cylinder_with_flat, bodies::hemisphere, bodies::one_solid, bodies::pipe_tee,
-    bodies::sphere, bodies::sphere_drilled, bodies::sphere_with_boss,
-    bodies::sphere_with_side_cut_off,
+use geop_lib_fixtures::bodies::{
+    block, block_corner_cut_off, block_drilled, block_pocketed, block_stepped, block_with_boss,
+    cylinder, cylinder_drilled, cylinder_drilled_off_axis, cylinder_pocketed, cylinder_with_boss,
+    cylinder_with_flat, hemisphere, one_solid, pipe_tee, sphere, sphere_drilled, sphere_with_boss,
+    sphere_with_side_cut_off,
 };
 use geop_ops_model::{
     element, solid,

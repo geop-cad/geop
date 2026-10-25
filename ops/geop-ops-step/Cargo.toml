@@ -14,12 +14,16 @@ geop-ops-model.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
-# The parts and assemblies written: extruded sketches, placed.
-geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"] }
+# The parts written and read back: given solids, and the example parts —
+# extruded, revolved, drilled, booleaned — whose surfaces no given solid
+# has (a cone, a cross-drilled shaft).
+geop-lib-fixtures.workspace = true
+geop-ops-extrude-revolve = { workspace = true, features = ["examples"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
-# STEP exported and imported in an editor, of the example parts and
-# assemblies, the standard parts beside them.
+# STEP exported and imported in an editor, of parts and of the example
+# assemblies, the standard parts beside them: the operations those are
+# written in — sketched on datums, extruded, patterned, placed.
 geop-core-editor = { workspace = true, features = ["testing"] }
 geop-ops-sketch.workspace = true
 geop-ops-reference-geometry.workspace = true

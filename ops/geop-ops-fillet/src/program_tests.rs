@@ -1,37 +1,36 @@
-//! Fillets and chamfers in programs: edges of extruded and cut solids,
-//! picked by name, rounded and bevelled.
+//! Fillets and chamfers in programs: edges of given, cut, extruded and
+//! lofted solids, picked by name, rounded and bevelled.
 
 use crate::{Chamfer, ChamferArgs, Fillet, FilletArgs, VertexRadius};
-use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::{DatumComponent, FrameAxis},
-    scalars::Scalar,
-};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
 };
-use geop_ops_extrude_revolve::{
-    Extents, LoftArgs, Output,
-    testing::{drilled_box, extrusion},
+use geop_lib_fixtures::{
+    GivenDatum, GivenDatumArgs, Primitive, PrimitiveArgs,
+    bodies::{block_pocketed, block_stepped},
+    drilled_box,
 };
-use geop_ops_model::datums::{ORIGIN, component_name, datums};
-use geop_ops_model::selection::Selected;
+use geop_ops_extrude_revolve::{Extents, LoftArgs, Output, testing::extrusion};
+use geop_ops_model::datums::datums;
 use geop_ops_model::sketch::{
     Sketch, SketchPlane,
-    figures::{disc, n, on_face, on_origin, outline, rectangle_outline},
+    figures::{n, on_origin},
     whole_sketch,
 };
 use geop_ops_model::{
     Combine, NamedModel, model,
     testing::{Built, assert_valid, check_valid, edges_where, has_vertex, middle},
 };
-use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction};
 use geop_ops_sketch::AddSketchArgs;
 
-/// The operations these tests' programs are written in.
+/// The operations these tests' programs are written in: given solids and
+/// datums, and the sketches, extrusions and lofts of the bodies no
+/// primitive makes.
 fn registry() -> GeopResult<OperationRegistry> {
     geop_ops_extrude_revolve::testing::registry()?
-        .with(AddDatum)?
+        .with(Primitive)?
+        .with(GivenDatum)?
         .with(Fillet)?
         .with(Chamfer)
 }
@@ -47,16 +46,20 @@ fn upright_edges_at(part: &NamedModel, x: f64, y: f64) -> Vec<String> {
     })
 }
 
-/// The arcs of `part` around `(cx, cy)` of `radius`, at height `z`.
+/// The edges of `part` running along the circle around `(cx, cy)` of
+/// `radius`, at height `z`: their middles on it.
 fn arcs_at(part: &NamedModel, [cx, cy, z]: [f64; 3], radius: f64) -> Vec<String> {
     edges_where(part, |e| {
-        e.curve.as_arc().unwrap().is_some_and(|arc| {
-            let c = arc.circle;
-            c.center[0].could_be_equal(Scalar::from_f64(cx))
-                && c.center[1].could_be_equal(Scalar::from_f64(cy))
-                && c.center[2].could_be_equal(Scalar::from_f64(z))
-                && c.radius.could_be_equal(Scalar::from_f64(radius))
-        })
+        let m = middle(e);
+        let (dx, dy) = (
+            m[0].sub(Scalar::from_f64(cx)),
+            m[1].sub(Scalar::from_f64(cy)),
+        );
+        m[2].could_be_equal(Scalar::from_f64(z))
+            && dx
+                .mul(dx)
+                .add(dy.mul(dy))
+                .could_be_equal(Scalar::from_f64(radius * radius))
     })
 }
 
@@ -153,19 +156,21 @@ fn fillet_and_chamfer_round_trip_through_json() {
 
 /// An L-shaped block, 1 high, its inner corner at `(1, 1)`.
 fn l_block() -> Program {
-    let s = outline(&[
-        [0.0, 0.0],
-        [2.0, 0.0],
-        [2.0, 1.0],
-        [1.0, 1.0],
-        [1.0, 2.0],
-        [0.0, 2.0],
-    ]);
     let mut program = Program::new();
-    program.push("outline", AddSketchArgs::on(on_origin(FrameAxis::Z), s));
     program.push(
         "block",
-        extrusion("outline", Extents::blind(1.0), Combine::NewBody),
+        PrimitiveArgs::prism(
+            &[
+                [0.0, 0.0],
+                [2.0, 0.0],
+                [2.0, 1.0],
+                [1.0, 1.0],
+                [1.0, 2.0],
+                [0.0, 2.0],
+            ],
+            0.0,
+            1.0,
+        ),
     );
     program
 }
@@ -216,25 +221,14 @@ fn chamfer_l_block_inner_edge() {
 /// rounded at once.
 #[test]
 fn fillet_boss_on_block() {
-    let block = rectangle_outline(0.0, 0.0, 1.0, 1.0);
-    let boss = disc([0.5, 0.5], 0.3);
     let mut program = Program::new();
-    program.push("base", AddSketchArgs::on(on_origin(FrameAxis::Z), block));
     program.push(
         "block",
-        extrusion("base", Extents::blind(1.0), Combine::NewBody),
-    );
-    program.push(
-        "boss_sketch",
-        AddSketchArgs::on(on_face("extrude(block,end)"), boss),
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),
     );
     program.push(
         "boss",
-        extrusion(
-            "boss_sketch",
-            Extents::blind(0.5),
-            Combine::join("extrude(block)"),
-        ),
+        PrimitiveArgs::cylinder_z([0.5, 0.5, 1.0], 0.3, 0.5).join("block(block)"),
     );
     let before = program.build_model(registry).unwrap();
     let foot = arcs_at(&before, [0.5, 0.5, 1.0], 0.3);
@@ -269,29 +263,7 @@ fn edges_from_to(part: &NamedModel, a: [f64; 3], b: [f64; 3]) -> Vec<String> {
 /// `y = 2`: the step's ceiling at `z = 0.5`, its back wall at `y = 1.5`,
 /// its side wall at `x = 1`, open at the bottom, the front and the side.
 fn stepped_block() -> Program {
-    let mut program = Program::new();
-    let ground = on_origin(FrameAxis::Z);
-    program.push(
-        "outline",
-        AddSketchArgs::on(ground.clone(), rectangle_outline(0.0, 0.0, 2.0, 2.0)),
-    );
-    program.push(
-        "block",
-        extrusion("outline", Extents::blind(1.0), Combine::NewBody),
-    );
-    program.push(
-        "step_outline",
-        AddSketchArgs::on(ground, rectangle_outline(-0.5, 1.5, 1.0, 2.5)),
-    );
-    program.push(
-        "step",
-        extrusion(
-            "step_outline",
-            Extents::blind(0.5),
-            Combine::cut("extrude(block)"),
-        ),
-    );
-    program
+    block_stepped()
 }
 
 /// Edges along the step that end where they run into one of its walls,
@@ -336,30 +308,7 @@ fn fillet_edges_ending_at_a_wall() {
 /// A block of 2 x 2 x 1 with a pocket 0.4 deep, `[0.5, 1.5]` square, cut
 /// into its top.
 fn pocketed_block() -> Program {
-    let mut program = Program::new();
-    let outline = rectangle_outline(0.0, 0.0, 2.0, 2.0);
-    program.push(
-        "outline",
-        AddSketchArgs::on(on_origin(FrameAxis::Z), outline),
-    );
-    program.push(
-        "block",
-        extrusion("outline", Extents::blind(1.0), Combine::NewBody),
-    );
-    let top = on_face("extrude(block,end)");
-    program.push(
-        "pocket_outline",
-        AddSketchArgs::on(top, rectangle_outline(0.5, 0.5, 1.5, 1.5)),
-    );
-    program.push(
-        "pocket",
-        extrusion(
-            "pocket_outline",
-            Extents::blind(-0.4),
-            Combine::cut("extrude(block)"),
-        ),
-    );
-    program
+    block_pocketed()
 }
 
 /// Two rim edges of the pocket rounded together, meeting at its corner
@@ -501,15 +450,7 @@ fn lofted(bottom: Sketch, top: Sketch) -> Program {
     program.push("bottom", AddSketchArgs::on(xy.clone(), bottom));
     program.push(
         "top_plane",
-        AddDatumArgs {
-            selection: vec![Selected::Datum(ElementReference::new(
-                datums(),
-                component_name(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
-            ))],
-            construction: Construction::Offset {
-                distance: 2.0.into(),
-            },
-        },
+        GivenDatumArgs::plane([0.0, 0.0, 2.0], [0.0, 0.0, 1.0]),
     );
     program.push(
         "top",

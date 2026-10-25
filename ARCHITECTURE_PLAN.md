@@ -1028,6 +1028,45 @@ listing 40 crates.
 
 ---
 
+## Status (2026-10-25, later): tests start from given solids
+
+- `lib/geop-lib-fixtures` holds two test-only steps: `Primitive` (a block,
+  a prism, a cylinder or a sphere at given coordinates, kept as a new body
+  or combined with a solid of the part through `geop_lib_booleans`) and
+  `GivenDatum` (a datum at given coordinates). Both are serializable, so an
+  editor test's timeline holds them and clicks on the part they build. It
+  is a dev-dependency only; `registry()`/`register` add the steps to a
+  test's registry, never to an editor's. The stress sweeps' bodies moved
+  there from `geop_ops_extrude_revolve::testing`. It is a lib, not part of
+  `geop-ops-model`: the sweep and boolean libs depend on model.
+- Every op crate's tests were split into fixtures (rewritten onto the
+  given solids and datums) and interactions (kept: a tool through a
+  previous extrusion's `Combine`, a loft between sketches, a feature
+  pattern of a hole, a sketch on an extruded face, a bill or drawing of
+  placed parts, a datum on a placed part). Dev-dependency edges on op
+  crates went from 100 to 86; reference-geometry lost 8 dev-dependents.
+- Retest scope (reverse closure of normal and optional dependents, plus
+  dev-dependents of it), before → after: extrude-revolve 21 → 19, sketch
+  23 → 21, sketch3d 21 → 20, reference-geometry 18 → 13, assembly 10 → 10,
+  pattern 12 → 12. The floor is set by the examples, not by the tests:
+  eight crates' `examples.rs` are written in extrude-revolve's `Args`
+  (an optional dependency behind `examples`, compiled under `cfg(test)`
+  for their round trips), `geop-lib-stdlib`'s standard parts in sketch,
+  extrude-revolve, reference-geometry and pattern, and assembly's
+  examples place those parts, so bom, drawing, step, harness and inspect
+  stay in every scope through assembly and stdlib. Getting to ~6 means
+  moving the example round trips to the composition (`geop-cad-base`
+  already builds every example) or giving stdlib a registry of its own:
+  a separate decision, not taken here.
+- Findings on the way: `nearest::least_distance` splits a span whose
+  domain is two ULPs wide instead of taking it as a leaf and errors
+  ("split parameter must be strictly inside the parameter domain") on a
+  traced rim whose hull is wider than the sharp attained distance — a
+  kernel bug, exposed by any traced edge, not fixed here. The shell
+  cannot offset the revolved cap of a cylinder past a hole's rim (`meet`
+  clamps the projection to the cap's domain), which is why the fixture
+  cylinders are extruded discs, as a sketched disc gives.
+
 ## Status (2026-10-25): every operation a leaf
 
 - `geop-ops-model` is the vocabulary crate: it took in `geop-ops-datums`

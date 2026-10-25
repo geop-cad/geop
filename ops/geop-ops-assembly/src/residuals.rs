@@ -150,16 +150,22 @@ impl Kind {
 
     /// What an entity of a constraint of this kind can be, in the order its
     /// geometry is taken (see [`Kind::geometry`]): for one that touches or
-    /// keeps a distance, a point before a line before a plane; for a
-    /// concentric one, an axis; for one that turns, a direction.
+    /// keeps a distance, a point before a line before a plane before a round
+    /// face's axis; for a concentric one, an axis; for one that turns, a
+    /// direction.
+    ///
+    /// A flat face is its plane before it is anything round: the cap of a
+    /// revolved cylinder is a disc, a surface of revolution round the
+    /// cylinder's axis, and a part standing on it stands on the plane, not
+    /// with the axis in it. Only a concentric mate wants the disc's axis.
     pub fn roles(&self) -> &'static [Role] {
         match self {
             Kind::Coincident | Kind::Distance { .. } => {
-                &[Role::Point, Role::Line, Role::Round, Role::Plane]
+                &[Role::Point, Role::Line, Role::Plane, Role::Round]
             }
             Kind::Concentric => &[Role::Round, Role::Line],
             Kind::Parallel | Kind::Perpendicular | Kind::Angle { .. } => {
-                &[Role::Line, Role::Round, Role::Plane]
+                &[Role::Line, Role::Plane, Role::Round]
             }
         }
     }

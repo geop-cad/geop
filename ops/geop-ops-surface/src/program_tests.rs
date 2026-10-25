@@ -5,18 +5,14 @@ use crate::{
     BoundarySurface, BoundarySurfaceArgs, Knit, KnitArgs, Thicken, ThickenArgs, ThickenSide,
     test_refs::{edge_curve, named},
 };
-use geop_core_math::{
-    geop_error::GeopResult,
-    primitives::{DatumComponent, FrameAxis},
-    scalars::Scalar,
-};
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis, scalars::Scalar};
 use geop_core_program::{
     element::ElementReference, operation_registry::OperationRegistry, program::Program,
 };
 use geop_core_sketch::PointId;
+use geop_lib_fixtures::{GivenDatum, GivenDatumArgs};
 use geop_ops_extrude_revolve::{Extents, ExtrudeArgs, LoftArgs, Output};
-use geop_ops_model::datums::{ORIGIN, component_name, datums};
-use geop_ops_model::selection::Selected;
+use geop_ops_model::datums::datums;
 use geop_ops_model::sketch::{
     Sketch, SketchPlane,
     figures::{n, on_origin},
@@ -26,13 +22,12 @@ use geop_ops_model::{
     NamedModel,
     testing::{Built, assert_valid},
 };
-use geop_ops_reference_geometry::{AddDatum, AddDatumArgs, Construction};
 use geop_ops_sketch::AddSketchArgs;
 
 /// The operations these tests' programs are written in.
 fn registry() -> GeopResult<OperationRegistry> {
     geop_ops_extrude_revolve::testing::registry()?
-        .with(AddDatum)?
+        .with(GivenDatum)?
         .with(BoundarySurface)?
         .with(Knit)?
         .with(Thicken)
@@ -179,15 +174,7 @@ fn lofted_faces_knit_into_a_solid() {
     );
     program.push(
         "top_plane",
-        AddDatumArgs {
-            selection: vec![Selected::Datum(ElementReference::new(
-                datums(),
-                component_name(ORIGIN, DatumComponent::Plane(FrameAxis::Z)),
-            ))],
-            construction: Construction::Offset {
-                distance: 2.0.into(),
-            },
-        },
+        GivenDatumArgs::plane([0.0, 0.0, 2.0], [0.0, 0.0, 1.0]),
     );
     let mut circle = Sketch::new();
     let c = circle.add_point(n(0.0), n(0.0));

@@ -35,7 +35,9 @@ geop-core-program = { workspace = true, features = ["testing"] }
 geop-ops-model = { workspace = true, features = ["testing"] }
 geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"] }
 geop-lib-sweep = { workspace = true, features = ["testing"] }
-geop-ops-reference-geometry.workspace = true
+# The drilled box the editor's tests pick edges of, and the plane a loft's
+# top is sketched on, given.
+geop-lib-fixtures.workspace = true
 geop-core-sketch.workspace = true
 geop-core-editor = { workspace = true, features = ["testing"] }
 geop-ops-sketch3d = { workspace = true, features = ["testing"] }

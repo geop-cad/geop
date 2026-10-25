@@ -20,6 +20,7 @@
 - [geop-lib-stdlib](./lib/geop-lib-stdlib.md)
 - [geop-lib-shell](./lib/geop-lib-shell.md)
 - [geop-lib-constraints](./lib/geop-lib-constraints.md)
+- [geop-lib-fixtures](./lib/geop-lib-fixtures.md)
 
 # Ops
 

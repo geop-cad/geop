@@ -43,10 +43,14 @@ geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"
 geop-lib-sweep = { workspace = true, features = ["testing"] }
 geop-core-editor = { workspace = true, features = ["testing"] }
 geop-core-program = { workspace = true, features = ["testing"] }
-# The press example rounds and mirrors; the tests write sketches, datums,
-# patterns and standard parts.
+# The tests' own parts are given solids and datums.
+geop-lib-fixtures.workspace = true
+# The examples are sketched and extruded, the press rounded and mirrored,
+# and standard parts placed; the tests edit and build them.
 geop-ops-fillet.workspace = true
 geop-ops-sketch.workspace = true
 geop-lib-stdlib.workspace = true
-geop-ops-reference-geometry.workspace = true
 geop-ops-pattern.workspace = true
+# A datum made on a placed part follows the part
+# (`a_later_mate_moves_an_earlier_part_for_every_step`).
+geop-ops-reference-geometry.workspace = true

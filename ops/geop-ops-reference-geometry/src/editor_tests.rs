@@ -18,7 +18,7 @@ use geop_core_math::{
     vector::Vector3,
 };
 use geop_core_program::{element::ElementReference, program::Program, testing::args};
-use geop_ops_extrude_revolve::{examples::box_with_drill_hole, testing::drilled_box};
+use geop_lib_fixtures::drilled_box;
 use geop_ops_model::datums::{AnyDatum, Datums, ORIGIN, component_name, datums};
 use geop_ops_model::{Vertex, element, model, testing::model_of};
 use geop_ops_sketch3d::testing::route;
@@ -26,14 +26,12 @@ use geop_ops_sketch3d::testing::route;
 use crate::{AddDatumArgs, CONSTRUCTIONS, Construction};
 use geop_ops_model::selection::Selected;
 
-/// What these tests edit: sketches, planar and in space, the drilled box's
-/// extrusions, and datums.
+/// What these tests edit: 3-D sketches, the given drilled box, and datums.
 fn registry() -> Registry {
     (geop_ops_model::register(Registry::default()))
-        .and_then(geop_ops_sketch::register)
         .and_then(crate::register)
         .and_then(geop_ops_sketch3d::register)
-        .and_then(geop_ops_extrude_revolve::register)
+        .and_then(geop_lib_fixtures::register)
         .expect("the operations each have a name of their own")
 }
 
@@ -221,7 +219,7 @@ fn selections_are_edited_in_their_field() {
 #[test]
 fn datums_added_are_listed_in_the_structure() {
     let mut program = drilled_box();
-    let top = Selected::Face(ElementReference::new(model(), "extrude(box,end)"));
+    let top = Selected::Face(ElementReference::new(model(), "block(box,end)"));
     let lifted = AddDatumArgs {
         selection: vec![top],
         construction: Construction::Offset {
@@ -246,12 +244,12 @@ fn datums_added_are_listed_in_the_structure() {
 /// box's top goes to 0.8.
 #[test]
 fn offset_plane_dragged_by_its_handle() {
-    let mut editor = editor_with(registry(), box_with_drill_hole());
+    let mut editor = editor_with(registry(), drilled_box());
     let mut program = editor.program().clone();
     program.push(
         "plane",
         crate::AddDatumArgs {
-            selection: vec![Selected::Face(element("extrude(box,end)"))],
+            selection: vec![Selected::Face(element("block(box,end)"))],
             construction: crate::Construction::Offset {
                 distance: 0.5.into(),
             },
@@ -314,7 +312,7 @@ fn offset_plane_dragged_by_its_handle() {
 /// while it is still being made: picked, offset, grabbed, pulled up 0.3.
 #[test]
 fn new_offset_plane_dragged_by_its_handle() {
-    let mut editor = editor_with(registry(), box_with_drill_hole());
+    let mut editor = editor_with(registry(), drilled_box());
     editor.handle(Command::New {
         kind: "add_datum".into(),
     });

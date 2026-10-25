@@ -35,13 +35,12 @@ fn n(x: f64) -> Scalar {
     Scalar::from_f64(x)
 }
 
-/// What these tests' assemblies are made of: links sketched and extruded,
-/// placed and joined — and exported as robots.
+/// What these tests' assemblies are made of: the examples' links,
+/// sketched and extruded, placed and joined — and exported as robots.
 fn registry() -> GeopResult<Registry> {
     let r = Registry::default();
     let r = geop_ops_model::register(r)?;
     let r = geop_ops_sketch::register(r)?;
-    let r = geop_ops_reference_geometry::register(r)?;
     let r = geop_ops_extrude_revolve::register(r)?;
     let r = crate::register(r)?;
     Ok(r)

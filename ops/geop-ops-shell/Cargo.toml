@@ -15,9 +15,8 @@ serde.workspace = true
 [dev-dependencies]
 geop-core-topology.workspace = true
 geop-ops-model = { workspace = true, features = ["testing"] }
-geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"] }
-geop-ops-reference-geometry.workspace = true
-geop-ops-sketch.workspace = true
+# The given solids the tests shell, and the stress sweeps' bodies.
+geop-lib-fixtures.workspace = true
 serde_json.workspace = true
 geop-core-program = { workspace = true, features = ["testing"] }
 geop-core-editor = { workspace = true, features = ["testing"] }

@@ -1,22 +1,19 @@
 //! The parts the tests of holes and of patterns of features drill: a plate
-//! with points sketched on its top, and one with a hole cut through it.
-//! Only built for tests: with `testing`, or in this crate's own.
+//! with points sketched on its top. Only built for this crate's tests.
 
-use geop_core_math::primitives::FrameAxis;
 use geop_core_program::program::Program;
-use geop_ops_extrude_revolve::{
-    Extents,
-    testing::{both_ways, extrude_sketch, extrusion},
-};
-use geop_ops_model::Combine;
+use geop_lib_fixtures::PrimitiveArgs;
 use geop_ops_model::sketch::{
     Constraint, Sketch,
-    figures::{disc, n, on_face, on_origin, outline},
+    figures::{n, on_face},
 };
 use geop_ops_sketch::AddSketchArgs;
 
 /// The plate's size: 60 x 40, 10 thick, its top at `z = 10`.
 pub const PLATE: [f64; 3] = [60.0, 40.0, 10.0];
+
+/// The plate's top, the face the holes are drilled into.
+pub const PLATE_TOP: &str = "block(plate,end)";
 
 /// A sketch of fixed points at `points`: `p0`, `p1`, ...
 pub fn points_sketch(points: &[[f64; 2]]) -> Sketch {
@@ -36,48 +33,15 @@ pub fn points_sketch(points: &[[f64; 2]]) -> Sketch {
     s
 }
 
-/// The plate `extrude(plate)`, and the sketch `centres` on its top with
-/// points at `points` (in world `x`, `y`).
+/// The plate `block(plate)` on the origin, and the sketch `centres` on its
+/// top with points at `points` (in world `x`, `y`).
 pub fn plate(points: &[[f64; 2]]) -> Program {
     let mut program = Program::new();
     let [w, d, t] = PLATE;
-    program.push(
-        "outline",
-        AddSketchArgs::on(
-            on_origin(FrameAxis::Z),
-            outline(&[[0.0, 0.0], [w, 0.0], [w, d], [0.0, d]]),
-        ),
-    );
-    program.push(
-        "plate",
-        extrusion("outline", Extents::blind(t), Combine::NewBody),
-    );
+    program.push("plate", PrimitiveArgs::block([0.0, 0.0, 0.0], [w, d, t]));
     program.push(
         "centres",
-        AddSketchArgs::on(on_face("extrude(plate,end)"), points_sketch(points)),
-    );
-    program
-}
-
-/// A plate 8 x 2 x 0.5, `extrude(plate)`, with a hole of radius 0.3 at
-/// (1, 1) cut through it by the extrude `hole`.
-pub fn plate_with_hole() -> Program {
-    let mut program = Program::new();
-    extrude_sketch(
-        &mut program,
-        "plate",
-        on_origin(FrameAxis::Z),
-        outline(&[[0.0, 0.0], [8.0, 0.0], [8.0, 2.0], [0.0, 2.0]]),
-        Extents::blind(0.5),
-        Combine::NewBody,
-    );
-    extrude_sketch(
-        &mut program,
-        "hole",
-        on_origin(FrameAxis::Z),
-        disc([1.0, 1.0], 0.3),
-        both_ways(2.0),
-        Combine::cut("extrude(plate)"),
+        AddSketchArgs::on(on_face(PLATE_TOP), points_sketch(points)),
     );
     program
 }

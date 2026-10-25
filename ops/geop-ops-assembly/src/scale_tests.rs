@@ -19,12 +19,7 @@ use geop_core_program::{
     values::{StateValue, StateValues, pose_state},
     workspace::{FileStore, FileStoreMut},
 };
-use geop_ops_extrude_revolve::{Extents, testing::extrusion};
-use geop_ops_model::sketch::{
-    Sketch,
-    figures::{circle, on_origin, rectangle, solved},
-};
-use geop_ops_sketch::AddSketchArgs;
+use geop_lib_fixtures::PrimitiveArgs;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -36,7 +31,7 @@ use crate::{AddPartArgs, Kind, Mate, Resolved, solving::check as check_mates};
 use geop_core_editor::editing::{Pointer, Reach, StepEditEvent};
 use geop_core_math::{
     geop_error::GeopResult,
-    primitives::{FrameAxis, Pose, Ray},
+    primitives::{Pose, Ray},
     scalars::Scalar,
     vector::Vector3,
 };
@@ -44,40 +39,31 @@ use geop_lib_stdlib::WithStandardParts;
 use geop_ops_model::mate_entity::MateEntity;
 use geop_ops_model::placed::{locate, placed_parts};
 use geop_ops_model::selection::Selected;
-use geop_ops_model::{Combine, element, read_model};
+use geop_ops_model::{element, read_model};
 
-/// A part of one extrusion `height` tall, of a sketch on the origin's Z
-/// plane: its faces are `extrude(<id>,start)` below and `extrude(<id>,end)`
-/// above.
-fn extruded(id: &str, drawn: Sketch, height: f64) -> Program {
+/// A part of one given solid `id`, standing on the origin's `xy` plane.
+fn part(id: &str, solid: PrimitiveArgs) -> Program {
     let mut program = Program::new();
-    let sketch_id = format!("{id}_sketch");
-    program.push(
-        sketch_id.clone(),
-        AddSketchArgs::on(on_origin(FrameAxis::Z), solved(drawn)),
-    );
-    program.push(
-        id,
-        extrusion(&sketch_id, Extents::blind(height), Combine::NewBody),
-    );
+    program.push(id, solid);
     program
 }
 
-/// A round part of `radius`, `height` tall.
+/// A round part of `radius`, `height` tall, round the `z` axis: its caps
+/// are `cylinder(<id>,start)` below and `cylinder(<id>,end)` above.
 fn round(id: &str, radius: f64, height: f64) -> Program {
-    let mut sketch = Sketch::new();
-    circle(&mut sketch, [0.0, 0.0], radius);
-    extruded(id, sketch, height)
+    part(id, PrimitiveArgs::cylinder_z([0.0; 3], radius, height))
 }
 
-/// A 10 x 10 plate, 0.2 thick.
+/// A 10 x 10 plate, 0.2 thick, from the origin: its faces are
+/// `block(plate,start)` below and `block(plate,end)` above.
 fn plate() -> Program {
-    let mut sketch = Sketch::new();
-    rectangle(&mut sketch, [0.0, 0.0], 10.0, 10.0);
-    extruded("plate", sketch, 0.2)
+    part(
+        "plate",
+        PrimitiveArgs::block([0.0, 0.0, 0.0], [10.0, 10.0, 0.2]),
+    )
 }
 
-/// The face `face` of the part placed as `instance` — `/plate:extrude(…)`,
+/// The face `face` of the part placed as `instance` — `/plate:block(…)`,
 /// of a part placed in it (see [`Located::key`]).
 fn face(instance: &str, face: &str) -> MateEntity {
     let face = Located::of_key(face).unwrap();
@@ -128,9 +114,9 @@ fn assembly(parts: Vec<(String, &str, MateEntity, MateEntity, [f64; 3])>) -> Pro
 /// modules on them: 44 parts. So the robot places `44 * boards + screws`
 /// screws and standoffs, besides the plates.
 fn robot(boards: usize, screws: usize) -> BTreeMap<String, String> {
-    let top = |id: &str| face(id, "extrude(plate,end)");
+    let top = |id: &str| face(id, "block(plate,end)");
     let screw = |id: String, x: f64, y: f64, z: f64| {
-        let below = face(&id, "extrude(screw,start)");
+        let below = face(&id, "cylinder(screw,start)");
         (id, "screw.geop", below, top("plate"), [x, y, z])
     };
     let module = assembly(
@@ -141,22 +127,22 @@ fn robot(boards: usize, screws: usize) -> BTreeMap<String, String> {
     let mut board_parts: Vec<_> = (0..4)
         .map(|i| {
             let id = format!("standoff{i}");
-            let below = face(&id, "extrude(standoff,start)");
+            let below = face(&id, "cylinder(standoff,start)");
             let at = [1.0 + 8.0 * (i % 2) as f64, 1.0 + 8.0 * (i / 2) as f64, 0.2];
             (id, "standoff.geop", below, top("plate"), at)
         })
         .collect();
     board_parts.extend((0..4).map(|i| {
         let id = format!("module{i}");
-        let below = face(&id, "/plate:extrude(plate,start)");
-        let on = face("standoff0", "extrude(standoff,end)");
+        let below = face(&id, "/plate:block(plate,start)");
+        let on = face("standoff0", "cylinder(standoff,end)");
         (id, "module.geop", below, on, [0.0, i as f64 * 2.5, 2.2])
     }));
     let board = assembly(board_parts);
     let mut robot_parts: Vec<_> = (0..boards)
         .map(|i| {
             let id = format!("board{i}");
-            let below = face(&id, "/plate:extrude(plate,start)");
+            let below = face(&id, "/plate:block(plate,start)");
             (
                 id,
                 "board.geop",
@@ -349,7 +335,8 @@ fn build_in(workspace: &Rc<Workspace<Counted>>, program: &Program) -> Part {
     let part = build_file(program, "robot.geop", workspace.clone())
         .unwrap()
         .part;
-    assert!(check_mates(&part.current()).unwrap().converged);
+    let report = check_mates(&part.current()).unwrap();
+    assert!(report.converged, "{report:?}");
     part
 }
 

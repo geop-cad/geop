@@ -24,14 +24,19 @@ examples = ["dep:geop-ops-extrude-revolve", "dep:geop-ops-sketch"]
 
 [dev-dependencies]
 geop-core-program = { workspace = true, features = ["testing"] }
-geop-ops-boolean.workspace = true
 geop-ops-model = { workspace = true, features = ["testing"] }
-geop-ops-extrude-revolve = { workspace = true, features = ["testing", "examples"] }
+geop-core-editor = { workspace = true, features = ["testing"] }
+# The given plates, pins and boxes the tests pattern, and the blocks of
+# the direct tests.
+geop-lib-fixtures.workspace = true
 geop-lib-sweep = { workspace = true, features = ["testing"] }
+# Turned copies joined one after the other.
+geop-ops-boolean.workspace = true
+# The examples are written in sketches and extrusions; a pattern runs
+# along a sketch's line, and along a 3-D sketch's.
+geop-ops-extrude-revolve = { workspace = true, features = ["testing"] }
+geop-ops-sketch.workspace = true
 geop-ops-sketch3d.workspace = true
 # The turbine example's blade is lofted between datum planes.
 geop-ops-reference-geometry.workspace = true
 serde_json.workspace = true
-geop-core-editor = { workspace = true, features = ["testing"] }
-geop-ops-hole = { workspace = true, features = ["testing"] }
-geop-ops-sketch.workspace = true
