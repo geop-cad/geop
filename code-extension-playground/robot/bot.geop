@@ -1,0 +1,32 @@
+{
+  "steps": [
+    {
+      "id": "part1",
+      "operation": "add_part",
+      "args": {
+        "file": "ax-12.geop",
+        "mates": {
+          "fixed": {
+            "entities": [],
+            "type": "fixed"
+          }
+        }
+      }
+    }
+  ],
+  "state": {
+    "part1.pose": {
+      "position": [
+        -10.000000000000268,
+        0,
+        0
+      ],
+      "rotation": [
+        1.0000000000000069,
+        0,
+        0,
+        0
+      ]
+    }
+  }
+}

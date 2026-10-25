@@ -11,7 +11,12 @@ use geop_core_math::{geop_error::GeopError, scalars::Scalar};
 /// control point that wide makes a curve whose convex hull no longer pins the
 /// curve down. Past this point the arithmetic stops meaning what the
 /// algorithms assume it means.
-const MAX_WIDTH: f64 = 1e-4;
+///
+/// Public so that what *builds* an entity can tell whether a
+/// representation it may choose fits the budget: the boolean's exact arc
+/// (`geop-lib-booleans`) is one of two enclosures of the same curve, and
+/// is taken only where it does.
+pub const MAX_WIDTH: f64 = 1e-4;
 
 /// Checks that no stored entity carries more than [`MAX_WIDTH`] of numerical
 /// uncertainty in any coordinate: every vertex position, every edge curve

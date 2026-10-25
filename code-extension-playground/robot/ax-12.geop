@@ -1,0 +1,11 @@
+{
+  "steps": [
+    {
+      "id": "import_step1",
+      "operation": "import_step",
+      "args": {
+        "file": "AX-12A assembly.STEP"
+      }
+    }
+  ]
+}

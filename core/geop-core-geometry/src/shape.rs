@@ -311,14 +311,24 @@ impl Arc {
             points.push(self.point_at(k as f64 / pieces as f64)?);
         }
         points.push(self.end);
-        let c = &self.circle.center;
+        // Relative to a sharp point of the arc, a free choice, and added
+        // back with one rounding: the middle control point is reached
+        // through the centre, and far from the origin each rounding of a
+        // coordinate costs its size. The weight is what multiplies the
+        // far coordinate, so its width is kept to what the local figure
+        // gives it.
+        let origin = points[0].sharpen();
+        let c = self.circle.center.sub(&origin);
         let r2 = self.circle.radius.mul(self.circle.radius);
         let mut control_points = vec![points[0].homogeneous(Scalar::ONE)];
         let mut knots = vec![Scalar::ZERO; 3];
         for k in 0..pieces {
-            let (a, b) = (points[k].sub(c), points[k + 1].sub(c));
+            let (a, b) = (
+                points[k].sub(&origin).sub(&c),
+                points[k + 1].sub(&origin).sub(&c),
+            );
             let one_plus_cos = Scalar::ONE.add(a.prod_dot(&b).div(r2)?);
-            let middle = c.add(&a.add(&b).prod_scalar(Scalar::ONE.div(one_plus_cos)?));
+            let middle = origin.add(&c.add(&a.add(&b).prod_scalar(Scalar::ONE.div(one_plus_cos)?)));
             let weight = one_plus_cos.div(Scalar::TWO)?.sqrt()?;
             control_points.push(middle.homogeneous(weight));
             control_points.push(points[k + 1].homogeneous(Scalar::ONE));
@@ -462,7 +472,16 @@ fn bezier_circle(piece: &NurbCurve3D) -> GeopResult<Option<Circle>> {
         _ => return Ok(None),
     };
     let points = dehomogenize::<4, 3>(&[h0, h1, h2]);
-    let (p0, p1, p2) = (points[0], points[1], points[2]);
+    // Relative to a sharp point beside the piece, a free choice: far from
+    // the origin every rounding of a coordinate costs its size, and the
+    // centre is reached through a dozen of them. Added back at the end with
+    // one rounding (see "Evaluate relative to the patch, not the origin").
+    let origin = points[0].sharpen();
+    let (p0, p1, p2) = (
+        points[0].sub(&origin),
+        points[1].sub(&origin),
+        points[2].sub(&origin),
+    );
     let (w0, w1, w2) = (h0[3], h1[3], h2[3]);
     let tangent = p1.sub(&p0).norm_sq();
     if !tangent.could_be_equal(p1.sub(&p2).norm_sq()) {
@@ -492,7 +511,7 @@ fn bezier_circle(piece: &NurbCurve3D) -> GeopResult<Option<Circle>> {
     // `radial x (P1 - P0)`.
     let normal = radial.prod_cross(&p1.sub(&p0)).normalize()?;
     Ok(Some(Circle {
-        center,
+        center: origin.add(&center),
         normal,
         radius: radial.norm(),
     }))
@@ -984,6 +1003,72 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    /// Far from the origin a circle read from the nets is as sharp as the
+    /// nets leave it: control points at `1e6` are a few ulps of `1e6` wide,
+    /// a few `1e-10`, and the centre, reached through a dozen roundings
+    /// taken relative to a point of the piece, within a hundred of those.
+    /// The arc's homogeneous control points are another matter: the weight
+    /// is as wide as the centre leaves it, and multiplied by a coordinate
+    /// of `1e6` that is a width of `1e-3`, which is why a boolean takes the
+    /// exact arc only where it fits an entity's width budget.
+    #[test]
+    fn a_circle_far_from_the_origin_is_read_sharp() {
+        let far = 1e6;
+        let shift = |s: &NurbSurface3D| {
+            let mut s = s.clone();
+            for cp in &mut s.control_points {
+                cp[0] = cp[0].add(Scalar::from_f64(far).mul(cp[3]));
+            }
+            s
+        };
+        let cylinder = shift(&quarter_cylinder());
+        let level = shift(
+            &NurbSurface::<4>::try_new(
+                1,
+                1,
+                vec![
+                    h(-5., -5., 1., 1.),
+                    h(-5., 5., 1., 1.),
+                    h(5., -5., 1., 1.),
+                    h(5., 5., 1., 1.),
+                ],
+                knots(&[0., 0., 1., 1.]),
+                knots(&[0., 0., 1., 1.]),
+            )
+            .unwrap(),
+        );
+        let start = v(far + 2., 0., 1.);
+        let end = v(far, 2., 1.);
+        let width = |p: &Vector3| (0..3).map(|k| p[k].width().to_f64()).fold(0.0, f64::max);
+        let plane = level.as_plane().unwrap().expect("a plane");
+        assert!(width(&plane.point) < 1e-8, "plane point {:?}", plane.point);
+        assert!(
+            width(&plane.normal) < 1e-8,
+            "plane normal {:?}",
+            plane.normal
+        );
+        let axis = cylinder.axis_of_revolution().unwrap().expect("an axis");
+        assert!(width(&axis.point) < 1e-7, "axis point {:?}", axis.point);
+        assert!(
+            width(&axis.direction) < 1e-7,
+            "axis direction {:?}",
+            axis.direction
+        );
+        let circle = circle_through(&level, &cylinder, &start)
+            .unwrap()
+            .expect("a circle");
+        assert!(width(&circle.center) < 1e-7, "center {:?}", circle.center);
+        assert!(
+            circle.radius.width().to_f64() < 1e-7,
+            "radius {:?}",
+            circle.radius
+        );
+        let arc = circle.arc_leaving(start, end, &v(0., 1., 0.)).unwrap();
+        let curve = arc.to_curve().unwrap();
+        let read = curve.as_arc().unwrap().expect("an arc");
+        assert!(read.circle.could_be_equal(&circle), "{read:?}");
     }
 
     #[test]

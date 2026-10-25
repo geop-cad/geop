@@ -28,7 +28,8 @@
 //!    that produces. The march finds which vertex the curve ends at; the
 //!    edge's curve is the exact arc where the two surfaces' shapes name
 //!    their meeting (a plane across a surface of revolution around its
-//!    normal, `circle_through`), and a cubic fitted through the march
+//!    normal, `circle_through`) and the arc's control points fit the
+//!    width an entity may carry, and a cubic fitted through the march
 //!    otherwise (see [`fit_traced_branch`]).
 
 use geop_core_geometry::{
@@ -55,6 +56,7 @@ use geop_core_math::{
 use geop_core_topology::{
     Body, CoedgeGeometry, Edge, EdgeId, FaceId, Model, VertexId,
     contains::face::{PointClassification, face_contains, face_interior_point},
+    validation::numerical_accuracy,
 };
 use geop_ops_model::NamedModel;
 
@@ -1629,13 +1631,33 @@ fn trace_one_side(
             // An arc the shell, a lip or a reference axis can read as one,
             // where a curve fitted through the marched points, however
             // tightly it encloses the circle, is none.
-            let exact = circle_through(&surf_a, &surf_b, &point).with_context(&ctx)?;
-            let curve = match &exact {
-                Some(circle) => circle
-                    .arc_leaving(point, hit_point, &first_dir)
-                    .with_context(&ctx)?
-                    .to_curve()
-                    .with_context(&ctx)?,
+            // Both the exact arc and the fitted cubic enclose the branch;
+            // the arc is taken where it fits the width an entity may carry.
+            // Its weight is an answer, as wide as the surfaces' data leaves
+            // it (a centre read from control points a few ulps wide), and a
+            // homogeneous control point multiplies the weight by the
+            // coordinate: far from the origin that is a width of the
+            // coordinate's size times the weight's, where the fit, its
+            // weights exactly one, carries only its drift. Honest both, so
+            // the tighter is a free choice.
+            let arc = circle_through(&surf_a, &surf_b, &point)
+                .with_context(&ctx)?
+                .map(|circle| {
+                    circle
+                        .arc_leaving(point, hit_point, &first_dir)
+                        .with_context(&ctx)?
+                        .to_curve()
+                        .with_context(&ctx)
+                })
+                .transpose()?
+                .filter(|curve| {
+                    curve.control_points.iter().all(|p| {
+                        (0..4).all(|k| p[k].width().to_f64() <= numerical_accuracy::MAX_WIDTH)
+                    })
+                });
+            let exact = arc.is_some();
+            let curve = match arc {
+                Some(curve) => curve,
                 None => {
                     fit_traced_branch(&surf_a, &surf_b, &points, &uvs, &mut widest_between, &ctx)?
                 }
@@ -1649,11 +1671,7 @@ fn trace_one_side(
                 .expect("a curve has control points");
             fitted = format!(
                 "{}{} control points, the widest {} of them, {:e} wide",
-                if exact.is_some() {
-                    "an exact arc of "
-                } else {
-                    ""
-                },
+                if exact { "an exact arc of " } else { "" },
                 curve.control_points.len(),
                 widest.0,
                 widest.1
