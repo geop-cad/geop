@@ -23,9 +23,12 @@ use crate::{
 
 /// The operations these programs are written in. The datums the reports
 /// built from faces and edges are given at the frames those constructions
-/// produced, so a change to the datum operation does not retest these.
+/// produced, so a change to the datum operation does not retest these. The
+/// mug's cup is shelled by the shell operation, as reported.
 fn registry() -> GeopResult<OperationRegistry> {
-    crate::testing::registry()?.with(GivenDatum)
+    crate::testing::registry()?
+        .with(GivenDatum)?
+        .with(geop_ops_shell::Shell)
 }
 
 /// Checks the part `program` builds is valid (see [`assert_valid`]) and is
@@ -874,4 +877,185 @@ fn cut_tangent_to_a_side_face_is_not_refused() {
             assert!(text.contains("tangent"), "{text}");
         }
     }
+}
+
+/// The user's mug: a cup of radius 40 and height 95 on the XY plane,
+/// shelled 4 thick open at its top, and on the ZX plane an annulus beside
+/// it — radii 16 and 9 around `(x, z) = (69.19, 52.36)` — turned around
+/// the cup's seam (`extrude(body,body_sk,c1@0)`) and joined to the cup.
+fn mug(extent: Extents) -> Program {
+    use geop_core_sketch::{Curve, CurveId, CurveKind, Point, PointId};
+    let mut program = Program::new();
+    let mut body = Sketch::new();
+    let center = body.add_fixed_point(n(0.0), n(0.0));
+    body.add_circle(center, n(40.0));
+    program.push("body_sk", AddSketchArgs::on(on_origin(FrameAxis::Z), body));
+    program.push(
+        "body",
+        extrusion("body_sk", Extents::blind(95.0), Combine::NewBody),
+    );
+    program.push(
+        "hollow",
+        geop_ops_shell::ShellArgs {
+            solid: solid("extrude(body)"),
+            faces: vec![geop_ops_model::element("extrude(body,end)")],
+            thickness: 4.0.into(),
+        },
+    );
+    // As drawn in the editor, ids and all: the annulus, and the sketch's
+    // own origin and axes.
+    let mut handle = Sketch::new();
+    let point = |x: f64, y: f64, fixed| Point {
+        x: n(x),
+        y: n(y),
+        fixed,
+    };
+    for (id, p) in [
+        (0, point(0.0, 0.0, true)),
+        (1, point(69.18884740659647, -52.35578658107838, false)),
+        (3, point(0.0, 0.0, true)),
+        (4, point(1.0, 0.0, true)),
+        (5, point(0.0, 1.0, true)),
+    ] {
+        handle.points.insert(PointId(id), p);
+    }
+    let curve = |kind, fixed| Curve {
+        kind,
+        construction: fixed,
+        fixed,
+    };
+    let circle = |radius| CurveKind::Circle {
+        center: PointId(1),
+        radius: n(radius),
+    };
+    let line = |end| CurveKind::Line {
+        start: PointId(3),
+        end: PointId(end),
+    };
+    for (id, c) in [
+        (1, curve(circle(16.0), false)),
+        (2, curve(circle(9.0), false)),
+        (6, curve(line(4), true)),
+        (7, curve(line(5), true)),
+    ] {
+        handle.curves.insert(CurveId(id), c);
+    }
+    handle.next_id = 8;
+    program.push(
+        "handle_sk",
+        AddSketchArgs::on(on_origin(FrameAxis::Y), handle),
+    );
+    program.push(
+        "revolve1",
+        RevolveArgs {
+            sketch: whole_sketch("handle_sk"),
+            axis: Some(RevolveAxis::Edge(geop_ops_model::element(
+                "extrude(body,body_sk,c1@0)",
+            ))),
+            extent,
+            output: Output::Solid(Combine::join("shell(hollow)")),
+        },
+    );
+    program
+}
+
+/// [`mug`] turned up to next: the annulus, 13.19 to 45.19 from the seam,
+/// sweeps round it from where it was drawn until it meets the cup's outer
+/// wall, each ring of it at its own angle — the handle from the profile to
+/// the wall, the cup's inside left as it was.
+///
+/// Reported (2026-10-25) as refused: "the target lies all around the
+/// revolve axis". The cup only touches the axis, along its seam, and fills
+/// exactly the half turn on the far side of it. `turn_past` judged that
+/// from the convex hull of the cup's control points, which three things
+/// made reach round the axis: the seam's own control point lies on the
+/// axis and was taken for a hull the axis runs through; the floor inside
+/// the cup, a disc of radius 36, lies on a plane patch of 240 square, whose
+/// corners stand out on every side; and the corners of the outer cylinder's
+/// control net lie on the plane touching it along the seam, the cup's
+/// half turn rounded to 179.9999999999999 degrees. Now a face is hulled
+/// over the box of its own outer loop (`face_hull`), and the hull's points
+/// are measured as enclosed: a point that could lie on the axis says
+/// nothing, and the gap is too small only where its two bounding points
+/// definitely leave less than a half turn.
+#[test]
+fn mug_handle_turned_up_to_next_around_the_cup_seam() {
+    let program = mug(crate::testing::one_way(Extent::UpToNext));
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    assert_draws_its_trims(&part);
+    // The cup, π (40² 95 - 36² 91), and the handle: each point of the
+    // annulus at `r` from the seam turned by `acos(-r / 80)`, where it
+    // reaches the wall, `∫ r acos(-r / 80) dA` = 31877.
+    let cup = std::f64::consts::PI * (40.0f64.powi(2) * 95.0 - 36.0f64.powi(2) * 91.0);
+    let mug = geop_ops_model::testing::solid_volume(&part, "revolve(revolve1)");
+    assert!(
+        (mug - (cup + 31877.0)).abs() < 300.0,
+        "the mug encloses {mug}, the cup {cup}"
+    );
+    // A ring of the annulus, 12.5 out from its centre and 41.69 from the
+    // seam, turned 60 degrees one way: in the handle, on one side of the
+    // cup only; turned 130, past the wall at 121.4: in the cup's hollow,
+    // left empty.
+    use geop_core_topology::contains::shell::PointClassification::{Inside, Outside};
+    let ring = |degrees: f64, side: f64| {
+        let (r, a) = (69.18884740659647 - 40.0 + 12.5, degrees.to_radians());
+        let p = [40.0 + r * a.cos(), side * r * a.sin(), 52.35578658107838];
+        geop_ops_model::testing::classify(&part, "revolve(revolve1)", p)
+    };
+    let sides = [ring(60.0, 1.0), ring(60.0, -1.0)];
+    assert!(
+        sides == [Inside, Outside] || sides == [Outside, Inside],
+        "{sides:?}"
+    );
+    assert_eq!([ring(130.0, 1.0), ring(130.0, -1.0)], [Outside, Outside]);
+}
+
+/// [`mug`] turned up to next the other way round the seam: the mirror
+/// image of [`mug_handle_turned_up_to_next_around_the_cup_seam`].
+#[test]
+fn mug_handle_turned_up_to_next_the_other_way_around_the_cup_seam() {
+    let program = mug(Extents {
+        reversed: true,
+        ..crate::testing::one_way(Extent::UpToNext)
+    });
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let cup = std::f64::consts::PI * (40.0f64.powi(2) * 95.0 - 36.0f64.powi(2) * 91.0);
+    let mug = geop_ops_model::testing::solid_volume(&part, "revolve(revolve1)");
+    assert!(
+        (mug - (cup + 31877.0)).abs() < 300.0,
+        "the mug encloses {mug}, the cup {cup}"
+    );
+}
+
+/// [`mug`] turned up to next both ways: the whole handle, from the wall
+/// round to the wall, twice the volume of one side.
+///
+/// Each side alone builds (the two tests above), so `turn_past` is not the
+/// cause. The second side's union with the cup and the first side fails in
+/// `remesh_edges_x_faces` → `imprint_coincident_pairs`: an edge
+/// (`EdgeId(1290)`), its 3-D control points 1.5e-2 wide, imprinted into a
+/// face of the other solid, is found to run along that face's boundary
+/// ("degenerate split", a ring of signed area `[-0.0095, 0.0266]`). The two
+/// tools share their start cap, the annulus in the sketch plane, so the
+/// second meets the first along that whole face. Not yet ruled out:
+/// whether that wide edge is a traced curve of the first union, where the
+/// handle meets the cup's wall, or one of the annulus' rims where the two
+/// caps coincide. Name it before fixing.
+#[test]
+#[ignore = "bug: the second up-to-next side's union fails with a degenerate split on a 1.5e-2-wide edge (see the doc comment)"]
+fn mug_handle_turned_up_to_next_both_ways_around_the_cup_seam() {
+    let program = mug(Extents {
+        side2: Some(Extent::UpToNext),
+        ..crate::testing::one_way(Extent::UpToNext)
+    });
+    let part = program.build_model(registry).unwrap();
+    assert_valid(&part);
+    let cup = std::f64::consts::PI * (40.0f64.powi(2) * 95.0 - 36.0f64.powi(2) * 91.0);
+    let mug = geop_ops_model::testing::solid_volume(&part, "revolve(revolve1)");
+    assert!(
+        (mug - (cup + 2.0 * 31877.0)).abs() < 600.0,
+        "the mug encloses {mug}, the cup {cup}"
+    );
 }

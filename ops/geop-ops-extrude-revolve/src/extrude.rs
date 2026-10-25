@@ -220,7 +220,7 @@ impl Sweeping for Extruding<'_> {
         extrude(model, namer, name, self.plane, s(from), s(to), self.loops)
     }
 
-    fn past(&self, hull: &[[f64; 3]], sign: f64) -> GeopResult<f64> {
+    fn past(&self, hull: &[Vector3], sign: f64) -> GeopResult<f64> {
         reach_past(hull, self.plane, sign)
     }
 

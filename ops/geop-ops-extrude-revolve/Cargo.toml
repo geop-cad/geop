@@ -39,3 +39,5 @@ geop-lib-fixtures.workspace = true
 serde_json.workspace = true
 geop-ops-sketch.workspace = true
 geop-ops-sketch3d.workspace = true
+# The shelled cup a regression test turns a handle up to.
+geop-ops-shell.workspace = true

@@ -360,7 +360,7 @@ pub(crate) trait Sweeping {
     /// How far — forwards for `sign = 1`, backwards for `-1` — reaches past
     /// everything of the solids whose convex hull `hull` spans (see
     /// [`hull`]).
-    fn past(&self, hull: &[[f64; 3]], sign: f64) -> GeopResult<f64>;
+    fn past(&self, hull: &[Vector3], sign: f64) -> GeopResult<f64>;
 
     /// The names of the stations a sweep from the sketch's plane to `to`
     /// starts and ends at.

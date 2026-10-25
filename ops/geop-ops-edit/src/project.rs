@@ -145,7 +145,7 @@ fn reach_across(
 ) -> GeopResult<(f64, f64)> {
     let hull = face_hull(model.topology(), &[face])?;
     let (near, far) = spread_along(&hull, plane);
-    let (lo, hi) = plain::bounds(hull.iter().copied())
+    let (lo, hi) = plain::bounds(hull.iter().map(|p| p.to_f64_array()))
         .ok_or_else(|| GeopError::new(format!("face {face:?} has no control points")))?;
     let diagonal = plain::diagonal(lo, hi);
     Ok((near - diagonal, far + diagonal))
