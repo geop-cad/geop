@@ -1,5 +1,6 @@
 //! SubD bodies among the other solids: united with a block like any solid,
-//! and the mouse example, as a program, saved and loaded and edited.
+//! and the mouse and mug examples, as programs, saved and loaded and
+//! edited.
 
 use crate::{Cage, Mirror, Subd, SubdArgs, build_subd};
 use geop_core_math::geop_error::GeopResult;
@@ -70,5 +71,33 @@ fn subd_mouse_round_trips() {
 fn subd_mouse_builds_incrementally() {
     let registry = std::rc::Rc::new(registry().unwrap());
     let programs = geop_core_program::testing::edit_sequence(&crate::examples::subd_mouse());
+    geop_core_program::testing::assert_incremental(registry, None, &programs);
+}
+
+/// A mug is one solid with a handle: its surface is a torus joined to a
+/// cup, so it has a hole through it — its handle's inner faces are there,
+/// named after the bridge's quads — and an inside floor below its lip.
+/// Saved and loaded, the example builds what it built.
+#[test]
+fn subd_mug_round_trips() {
+    use geop_ops_model::read_model;
+
+    let registry = std::rc::Rc::new(registry().unwrap());
+    let program = crate::examples::subd_mug();
+    let built = geop_core_program::testing::assert_round_trips(registry, None, &program);
+    let reader = built.current();
+    let part = read_model(&reader).unwrap();
+    assert_valid(&part);
+    assert_eq!(part.solid_names(), ["subd(mug)"]);
+    let names = part.topology().faces.len();
+    assert!(names > 60, "{names} faces");
+}
+
+/// The example `subd_mug`, edited as a user edits it, builds incrementally
+/// what it builds from scratch.
+#[test]
+fn subd_mug_builds_incrementally() {
+    let registry = std::rc::Rc::new(registry().unwrap());
+    let programs = geop_core_program::testing::edit_sequence(&crate::examples::subd_mug());
     geop_core_program::testing::assert_incremental(registry, None, &programs);
 }

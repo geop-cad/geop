@@ -44,7 +44,7 @@ apart (see Scripts).
 | `ops/geop-ops-plastic` | ribs, lips and grooves, drafts |
 | `ops/geop-ops-boolean` | the boolean and split operations |
 | `ops/geop-ops-pattern` | patterns, mirrors and moves of bodies and features |
-| `ops/geop-ops-subd` | subdivision surfaces: a cage built as its limit surface |
+| `ops/geop-ops-subd` | subdivision surfaces: a control cage, edited with the box modelling tools (extrude, inset, bevel, loop cut, slide, merge, dissolve, bridge, fill, sharp and soft creases, a mirror) and built as its Catmull–Clark limit surface |
 | `ops/geop-ops-surface` | boundary and UV surfaces, offset, thicken, knit, trim and extend |
 | `ops/geop-ops-edit` | delete a body, extract a face, project a sketch onto a face |
 | `ops/geop-ops-assembly` | placing parts, mates and joints, part patterns, the joints panel, the drag tool, the settler, STL and URDF export |

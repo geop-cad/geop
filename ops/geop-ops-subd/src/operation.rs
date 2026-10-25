@@ -361,23 +361,30 @@ fn edit_action(
         "bridge" => Box::new(move |cage| {
             let mut faces = s.faces.iter();
             match (faces.next(), faces.next(), faces.next()) {
-                (Some(&a), Some(&b), None) => cage.bridge(a, b),
+                (Some(&a), Some(&b), None) => cage.bridge(a, b, mirror),
                 _ => Err(geop_core_math::geop_error::GeopError::new(
                     "bridge: select exactly two faces",
                 )),
             }
         }),
         "loop_cut" => Box::new(move |cage| {
-            (s.edges.iter()).try_for_each(|&[a, b]| cage.insert_loop(a, b, amounts.cut))
+            // Two selected edges of one ring are one cut: the first cut
+            // split the second edge already.
+            for &[a, b] in &s.edges {
+                if cage.has(Element::Edge(a, b)) {
+                    cage.insert_loop(a, b, amounts.cut)?;
+                }
+            }
+            Ok(())
         }),
         "slide" => Box::new(move |cage| cage.edge_slide(&s.edges, amounts.slide, mirror)),
         "bevel" => Box::new(move |cage| cage.bevel(&s.edges, amounts.width, mirror)),
         "dissolve" => Box::new(move |cage| {
             if !s.edges.is_empty() {
-                cage.dissolve_edges(&s.edges)?;
+                cage.dissolve_edges(&s.edges, mirror)?;
             }
             if !s.vertices.is_empty() {
-                cage.dissolve_vertices(&s.vertices)?;
+                cage.dissolve_vertices(&s.vertices, mirror)?;
             }
             Ok(())
         }),

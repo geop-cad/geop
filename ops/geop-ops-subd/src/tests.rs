@@ -353,10 +353,45 @@ impl Random {
 }
 
 /// One random edit of `cage`, as the editor makes them: a vertex nudged, a
-/// face extruded or shrunk about its centre, a loop inserted, an edge
-/// creased. Says what it did.
+/// face extruded, inset or shrunk about its centre, a loop cut, an edge
+/// creased sharp or soft, bevelled, slid or dissolved. Says what it did.
 fn random_edit(cage: &mut Cage, mirror: Mirror, random: &mut Random) -> String {
-    match random.below(5) {
+    let some_edge = |cage: &Cage, random: &mut Random| {
+        let edges: Vec<[u32; 2]> = cage.edges().into_iter().collect();
+        edges[random.below(edges.len())]
+    };
+    match random.below(9) {
+        5 => {
+            let f = cage.faces[random.below(cage.faces.len())].id;
+            let t = random.between(0.1, 0.3);
+            match cage.inset(&[f].into(), t, mirror) {
+                Ok(()) => format!("inset f{f} by {t}"),
+                Err(e) => format!("could not inset f{f}: {e}"),
+            }
+        }
+        6 => {
+            let [a, b] = some_edge(cage, random);
+            let w = random.between(0.05, 0.2);
+            match cage.bevel(&[[a, b]], w, mirror) {
+                Ok(()) => format!("bevelled e{a}-{b} by {w}"),
+                Err(e) => format!("could not bevel e{a}-{b}: {e}"),
+            }
+        }
+        7 => {
+            let [a, b] = some_edge(cage, random);
+            let s = random.between(-0.4, 0.4);
+            match cage.edge_slide(&[[a, b]], s, mirror) {
+                Ok(()) => format!("slid e{a}-{b} by {s}"),
+                Err(e) => format!("could not slide e{a}-{b}: {e}"),
+            }
+        }
+        8 => {
+            let [a, b] = some_edge(cage, random);
+            match cage.dissolve_edges(&[[a, b]], mirror) {
+                Ok(()) => format!("dissolved e{a}-{b}"),
+                Err(e) => format!("could not dissolve e{a}-{b}: {e}"),
+            }
+        }
         0 => {
             let v = cage.vertices[random.below(cage.vertices.len())].id;
             let by = [0; 3].map(|_| random.between(-0.15, 0.15));
@@ -372,17 +407,20 @@ fn random_edit(cage: &mut Cage, mirror: Mirror, random: &mut Random) -> String {
             }
         }
         2 => {
-            let edges: Vec<[u32; 2]> = cage.edges().into_iter().collect();
-            let [a, b] = edges[random.below(edges.len())];
-            match cage.insert_loop(a, b, 0.5) {
-                Ok(()) => format!("inserted a loop across e{a}-{b}"),
-                Err(e) => format!("could not insert a loop across e{a}-{b}: {e}"),
+            let [a, b] = some_edge(cage, random);
+            let t = random.between(0.2, 0.8);
+            match cage.insert_loop(a, b, t) {
+                Ok(()) => format!("cut a loop across e{a}-{b} at {t}"),
+                Err(e) => format!("could not cut a loop across e{a}-{b}: {e}"),
             }
         }
         3 => {
-            let edges: Vec<[u32; 2]> = cage.edges().into_iter().collect();
-            let [a, b] = edges[random.below(edges.len())];
-            let sharpness = if cage.is_crease(a, b) { 0.0 } else { 1.0 };
+            let [a, b] = some_edge(cage, random);
+            let sharpness = match random.below(3) {
+                0 => 0.0,
+                1 => 1.0,
+                _ => random.between(0.2, 0.8),
+            };
             cage.set_sharpness(&[[a, b]], sharpness);
             format!("creased e{a}-{b}: {sharpness}")
         }
@@ -428,6 +466,47 @@ fn random_cage_edits_build_valid_solids() {
         if let Err(errors) = validate(&params, part.topology()) {
             let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
             panic!("seed {seed}, after {done:#?}:\n{}", messages.join("\n"));
+        }
+    }
+}
+
+/// The seeds of the sweep that once failed, step by step — even seeds on a
+/// mirrored half box, odd ones on a whole one, as the sweep has them: the
+/// sixth inset a face too small for the thickness, which is refused now;
+/// the fourteenth cut a loop across an edge with no quad to cut, refused
+/// too; the twentieth dissolved an edge whose end was left on the mirror
+/// plane between one face and its image, which goes with it; the
+/// twenty-fourth bevelled past a cap. Each cage along the way builds a
+/// valid solid, or the edit refuses by name, and the cage is as it was.
+#[test]
+fn sweep_seeds_that_once_failed_stay_valid_step_by_step() {
+    for seed in [6u64, 7, 14, 20, 24] {
+        let mirror = if seed % 2 == 0 {
+            Mirror::X
+        } else {
+            Mirror::None
+        };
+        let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+        if let Some(axis) = mirror.axis() {
+            cage.halve(axis).unwrap();
+        }
+        let mut random = Random(0x9E37_79B9_7F4A_7C15 ^ seed);
+        let mut done = Vec::new();
+        for _ in 0..6 {
+            done.push(random_edit(&mut cage, mirror, &mut random));
+            let part = subd(&SubdArgs {
+                cage: cage.clone(),
+                mirror,
+            })
+            .unwrap_or_else(|e| panic!("seed {seed}, after {done:#?}: {e}\n{cage:#?}"));
+            let params = ValidationParameters::default();
+            if let Err(errors) = validate(&params, part.topology()) {
+                let messages: Vec<&str> = errors.iter().map(|e| e.root_message()).collect();
+                panic!(
+                    "seed {seed}, after {done:#?}:\n{}\n{cage:#?}",
+                    messages.join("\n")
+                );
+            }
         }
     }
 }
@@ -583,19 +662,37 @@ fn bevel_replaces_edges_by_strips() {
     assert_valid(&built(cage, Mirror::None));
 }
 
-/// One edge bevelled on its own is capped: its vertices stay, the strip is
-/// a quad between four new vertices, one `width` into each face at each
-/// end, and a triangle at each end closes it. The top and front keep their
-/// corners and gain one at each end of the edge. A boundary edge cannot be
-/// bevelled.
+/// One edge of a box bevelled on its own ends on the third face at each
+/// corner: the strip's end vertices lie `width` along the corner's two
+/// other edges, which split there, the corner itself is left between the
+/// third face and the strip's cap and goes with it, and the third face
+/// becomes a pentagon through both. Seven faces, ten vertices, the top
+/// still a quad. A width longer than an edge beside the corner, and a
+/// boundary edge, are refused by name.
 #[test]
 fn bevel_of_one_edge_is_capped() {
     let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
     cage.bevel(&[[4, 5]], 0.3, Mirror::None).unwrap();
-    assert_eq!(cage.faces.len(), 6 + 1 + 2);
-    assert_eq!(cage.vertices.len(), 12);
-    assert_eq!(cage.face(9).unwrap().vertices.len(), 6);
+    assert_eq!(cage.faces.len(), 7);
+    assert_eq!(cage.vertices.len(), 10);
+    assert!(cage.vertex(4).is_err() && cage.vertex(5).is_err());
+    assert_eq!(cage.face(9).unwrap().vertices.len(), 4);
+    assert_eq!(cage.face(13).unwrap().vertices.len(), 5);
+    let at: Vec<[f64; 3]> = (cage.face(9).unwrap().vertices.iter())
+        .map(|&v| cage.vertex(v).unwrap().at)
+        .collect();
+    assert!(
+        at.iter()
+            .any(|p| (p[1] + 0.7).abs() < 1e-12 && p[0] == -1.0),
+        "{at:?}"
+    );
     assert_valid(&built(cage, Mirror::None));
+
+    let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
+    let e = cage
+        .bevel(&[[4, 5]], 2.5, Mirror::None)
+        .expect_err("too wide");
+    assert!(e.to_string().contains("too short"), "{e}");
 
     let mut plane = Cage::plane(2.0, 2);
     let e = plane.bevel(&[[0, 1]], 0.1, Mirror::None).expect_err("open");
@@ -632,7 +729,7 @@ fn merge_collapses_an_edge() {
 #[test]
 fn dissolve_merges_the_faces_around() {
     let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
-    cage.dissolve_edges(&[[4, 5]]).unwrap();
+    cage.dissolve_edges(&[[4, 5]], Mirror::None).unwrap();
     assert_eq!(cage.faces.len(), 5);
     assert_eq!(cage.vertices.len(), 6);
     assert_eq!(cage.face(9).unwrap().vertices.len(), 4);
@@ -641,14 +738,15 @@ fn dissolve_merges_the_faces_around() {
     let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
     cage.insert_loop(0, 4, 0.5).unwrap();
     let middle = (cage.vertices.iter()).find(|v| v.id >= 14).unwrap().id;
-    cage.dissolve_vertices(&[middle].into()).unwrap();
+    cage.dissolve_vertices(&[middle].into(), Mirror::None)
+        .unwrap();
     assert_eq!(cage.faces.len(), 7);
     assert_eq!(cage.vertices.len(), 9);
     assert!(cage.vertex(middle).is_err());
     assert_valid(&built(cage, Mirror::None));
 
     let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
-    cage.dissolve_vertices(&[6].into()).unwrap();
+    cage.dissolve_vertices(&[6].into(), Mirror::None).unwrap();
     assert_eq!(cage.faces.len(), 4);
     assert_eq!(cage.vertices.len(), 4);
     assert_eq!(cage.face(9).unwrap().vertices.len(), 3);
@@ -662,7 +760,7 @@ fn bridge_makes_a_tunnel() {
     let mut cage = Cage::cuboid([2.0, 2.0, 2.0]);
     cage.inset(&[9].into(), 0.4, Mirror::None).unwrap();
     cage.inset(&[8].into(), 0.4, Mirror::None).unwrap();
-    cage.bridge(9, 8).unwrap();
+    cage.bridge(9, 8, Mirror::None).unwrap();
     assert_eq!(cage.faces.len(), 4 + 4 + 4 + 4);
     assert!(cage.face(9).is_err() && cage.face(8).is_err());
     let part = built(cage.clone(), Mirror::None);
