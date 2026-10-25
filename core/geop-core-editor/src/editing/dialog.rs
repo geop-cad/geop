@@ -10,7 +10,8 @@ use serde::Serialize;
 
 use geop_core_program::{element::PickedElement, numeric::NumericInput, reader::Reader};
 
-use crate::selectable::Selectable;
+use super::{Style, Visual};
+use crate::selectable::{Selectable, previewed};
 
 /// Whether `text`, as a number field holds it, is a formula rather than a
 /// plain number.
@@ -427,6 +428,10 @@ pub struct Picked {
     /// [`crate::selectable::Selectable::drawn`]).
     #[serde(skip)]
     pub drawn: Vec<PickedElement>,
+    /// What an editor draws of it besides, while it is held (see
+    /// [`crate::selectable::Selectable::visuals`]).
+    #[serde(skip)]
+    pub visuals: Vec<Visual>,
     /// What it is used as, or why it cannot be.
     pub detail: Option<String>,
     pub tone: Tone,
@@ -437,10 +442,31 @@ impl Picked {
     pub fn new(element: PickedElement) -> Self {
         Self {
             drawn: vec![element.clone()],
+            visuals: Vec::new(),
             element,
             detail: None,
             tone: Tone::Normal,
         }
+    }
+}
+
+/// What an editor draws of what a click on an element would pick for a
+/// reference field, in the part a reader reads (see
+/// [`crate::selectable::previewed`]). It follows from what the field picks
+/// (see [`Reference::accepts`]), so two previews count as equal: a
+/// function's address says nothing.
+#[derive(Clone, Copy)]
+pub struct Preview(pub fn(&Reader, &PickedElement) -> Vec<Visual>);
+
+impl PartialEq for Preview {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for Preview {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Preview")
     }
 }
 
@@ -464,6 +490,10 @@ pub struct Reference {
     pub required: bool,
     /// Whether a click in the viewport picks for it now.
     pub armed: bool,
+    /// What an editor draws of what a click would pick for it, while the
+    /// pointer is over it.
+    #[serde(skip)]
+    pub preview: Preview,
 }
 
 impl Reference {
@@ -735,14 +765,23 @@ impl Dialog {
         let value = (value.iter())
             .map(|held| Picked {
                 drawn: held.drawn(reader),
+                visuals: held.visuals(reader),
                 ..Picked::new(held.picked())
             })
             .collect();
-        self.reference(key, label, value, &P::picked_from(), multiple)
+        self.reference(
+            key,
+            label,
+            value,
+            &P::picked_from(),
+            multiple,
+            Preview(previewed::<P>),
+        )
     }
 
-    /// Elements of the kinds `accepts` (see [`Reference`]), holding `value`.
-    /// Required: see [`Dialog::optional`].
+    /// Elements of the kinds `accepts` (see [`Reference`]), holding `value`,
+    /// what a click would pick drawn as `preview` says. Required: see
+    /// [`Dialog::optional`].
     pub fn reference(
         &mut self,
         key: &str,
@@ -750,6 +789,7 @@ impl Dialog {
         value: Vec<Picked>,
         accepts: &[&str],
         multiple: bool,
+        preview: Preview,
     ) -> &mut Self {
         self.push(
             key,
@@ -760,6 +800,7 @@ impl Dialog {
                 multiple,
                 required: true,
                 armed: false,
+                preview,
             }),
         )
     }
@@ -782,11 +823,40 @@ impl Dialog {
     }
 
     /// Every reference field, by key.
+    pub fn references(&self) -> impl Iterator<Item = (&str, &Reference)> {
+        self.0.iter().filter_map(|f| match &f.control {
+            Control::Reference(r) => Some((f.key.as_str(), r)),
+            _ => None,
+        })
+    }
+
+    /// Every reference field, by key, to change.
     pub fn references_mut(&mut self) -> impl Iterator<Item = (&str, &mut Reference)> {
         self.0.iter_mut().filter_map(|f| match &mut f.control {
             Control::Reference(r) => Some((f.key.as_str(), r)),
             _ => None,
         })
+    }
+
+    /// What an editor draws of every value its reference fields hold
+    /// besides lighting it (see [`Picked::visuals`]), drawn as selected —
+    /// and, with `hover` the field waiting for a click and what a click
+    /// would pick for it, what that would be, drawn as hovered.
+    pub fn shown(&self, reader: &Reader, hover: Option<(&str, &PickedElement)>) -> Vec<Visual> {
+        let styled = |mut visual: Visual, style: Style| {
+            visual.style = style;
+            visual
+        };
+        let held = (self.references())
+            .flat_map(|(_, r)| &r.value)
+            .flat_map(|p| p.visuals.iter().cloned())
+            .map(|v| styled(v, Style::Selected));
+        let hovered = hover.into_iter().flat_map(|(key, element)| {
+            (self.references().find(|(k, _)| *k == key).into_iter())
+                .flat_map(move |(_, r)| (r.preview.0)(reader, element))
+                .map(|v| styled(v, Style::Hover))
+        });
+        held.chain(hovered).collect()
     }
 
     /// What an editor draws of every element its reference fields hold:
@@ -910,6 +980,7 @@ mod tests {
                 multiple: false,
                 required: true,
                 armed: false,
+                preview: Preview(|_, _| Vec::new()),
             }),
         );
         assert_eq!(

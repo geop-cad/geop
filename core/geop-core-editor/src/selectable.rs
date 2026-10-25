@@ -18,7 +18,7 @@ use geop_core_program::{
     reader::Reader,
 };
 
-use crate::editing::{Pointer, hit::Scene};
+use crate::editing::{Pointer, Visual, hit::Scene};
 
 /// A kind of element of the target `T` a reference field picks.
 pub trait SelectableElement<T: HasElements<Self>>: Kind + Sized {
@@ -58,6 +58,16 @@ pub trait Selectable: Clone + PartialEq + 'static {
 
     /// What an editor draws of it, to light while it is held.
     fn drawn(&self, reader: &Reader) -> Vec<PickedElement>;
+
+    /// What an editor draws of it besides lighting what it is picked from
+    /// ([`Selectable::drawn`]), while it is held or a click would pick it:
+    /// nothing, for an element drawn as itself; a frame, as a triad along
+    /// its axes. In the world, as the part is drawn; styled by the editor
+    /// as held or as hovered.
+    fn visuals(&self, reader: &Reader) -> Vec<Visual> {
+        let _ = reader;
+        Vec::new()
+    }
 }
 
 /// An element of an instance is selected and drawn as the instance's own
@@ -122,6 +132,15 @@ pub fn selected<P: Selectable>(reader: &Reader, picks: &[PickedElement]) -> Vec<
         }
     }
     held
+}
+
+/// What an editor draws of what a click on `hit` would pick as a `P` in
+/// the part `reader` reads (see [`Selectable::visuals`]): nothing, for a
+/// hit that selects none.
+pub fn previewed<P: Selectable>(reader: &Reader, hit: &PickedElement) -> Vec<Visual> {
+    (P::from_picked(hit).or_else(|| P::select(reader, hit)))
+        .map(|value| value.visuals(reader))
+        .unwrap_or_default()
 }
 
 /// What a click with `pointer` on what the editor draws, `scene`, selects
@@ -291,6 +310,17 @@ macro_rules! one_of {
                 match self {
                     $(Self::$variant(reference) => {
                         $crate::selectable::Selectable::drawn(reference, reader)
+                    })+
+                }
+            }
+
+            fn visuals(
+                &self,
+                reader: &$crate::__program::reader::Reader,
+            ) -> ::std::vec::Vec<$crate::editing::Visual> {
+                match self {
+                    $(Self::$variant(reference) => {
+                        $crate::selectable::Selectable::visuals(reference, reader)
                     })+
                 }
             }

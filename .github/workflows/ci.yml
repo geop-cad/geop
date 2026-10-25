@@ -87,15 +87,11 @@ jobs:
 
       # Not the STEP corpus: it reads public files downloaded by
       # ops/geop-ops-step/scripts/fetch_corpus.sh, which CI does not fetch.
-      # Nor the one test ignored as a known failure (its #[ignore] says
-      # why): a nightly that is always red says nothing. Take it off this
-      # list when it is fixed.
       - name: Test the ignored sweeps
         run: >-
           timeout 18000 prlimit --as=16000000000
           cargo test --workspace --no-fail-fast -- --ignored
           --skip corpus
-          --skip a_joint_is_made_by_clicking_where_its_frames_go
 
   web:
     name: Web build and tests

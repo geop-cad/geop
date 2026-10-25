@@ -4,8 +4,8 @@
 use crate::{
     editable::{Context, Editable, Editors, OperationGroup, OperationInfo, OperationTier},
     editing::{
-        CanvasEvent, Control, Event, Form, Number, Picked, Pointer, Reach, Shape, StepEditEvent,
-        Style, Track, Unit, Value, Visual,
+        CanvasEvent, Control, Event, Form, Number, Picked, Pointer, Preview, Reach, Shape,
+        StepEditEvent, Style, Track, Unit, Value, Visual,
         hit::{ElementHit, Scene},
     },
 };
@@ -73,7 +73,14 @@ impl Editable for MarkOperation {
         let value = args.distance.plain().unwrap_or_default();
         let distance = Number::new("Distance", value, Unit::Length).handle(Some(handle));
         (form.dialog)
-            .reference("on", "On", picked(&args.on), &["face"], false)
+            .reference(
+                "on",
+                "On",
+                picked(&args.on),
+                &["face"],
+                false,
+                Preview(|_, _| Vec::new()),
+            )
             .number("distance", distance);
         let dot = Shape::Point {
             at: v(5.0, 0.0, 0.0),

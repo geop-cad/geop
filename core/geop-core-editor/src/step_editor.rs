@@ -749,6 +749,11 @@ impl StepEditor {
         }
         let mut visuals = form.visuals;
         visuals.extend(handles(&form.dialog));
+        // What the reference fields hold, and what a click would pick for
+        // the one waiting, drawn as they are — a frame as a triad — in the
+        // part as the step built it, where what the step places is.
+        let hover = self.armed.as_deref().zip(self.hover.as_ref());
+        let shown = form.dialog.shown(&part.after(&self.step), hover);
         let tool = form.tool;
         // While a field waits for a pick, only a handle is hovered: no pick
         // takes one, so a press on it can only mean dragging it. Anything
@@ -782,6 +787,7 @@ impl StepEditor {
                 visual.style = Style::Hover;
             }
         }
+        visuals.extend(shown);
         let highlights = (form.dialog.picked().cloned())
             .chain(self.hover.clone())
             .collect();
