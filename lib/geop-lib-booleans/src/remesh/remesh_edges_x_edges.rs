@@ -1,6 +1,6 @@
 use geop_core_geometry::intersection::{curve_curve_intersect, refine_curve_curve_crossing};
 use geop_core_math::{
-    geop_error::{GeopResult, WithContext},
+    geop_error::{GeopError, GeopResult, WithContext},
     scalars::Scalar,
     solvers::repeat::rewrite,
     vector::Vector3,
@@ -146,6 +146,19 @@ fn find_edge_edge_action(
                     .evaluate(t_b)
                     .with_context(&ctx)
                     .with_context(&edge_ctx)?;
+                // A crossing is a point on both curves. The search encloses
+                // one, and the refinement only tightens, so two evaluations
+                // that do not overlap are a search that reported a crossing
+                // where there is none: an error naming the edges, never a
+                // vertex. Their union is the honest enclosure of the point
+                // (see `AGENTS.md`, "Combine two enclosures ... with `union`").
+                if !point_a.could_be_equal(&point_b) {
+                    return Err(GeopError::new(format!(
+                        "edge x edge crossing reported at t_a={t_a:?}, t_b={t_b:?}, but the curves evaluate to disjoint points there: {point_a:?} on edge_a, {point_b:?} on edge_b"
+                    )))
+                    .with_context(&ctx)
+                    .with_context(&edge_ctx);
+                }
                 let point = point_a.union(&point_b);
 
                 let start_a_pt = model.get_vertex(ea.start_vertex).with_context(&ctx)?.point;
@@ -219,49 +232,28 @@ pub fn remesh_edges_x_edges(
                     vertex,
                     point,
                 } => {
+                    let name_a = model.name_of(edge_a).unwrap_or("?").to_string();
+                    let name_b = model.name_of(edge_b).unwrap_or("?").to_string();
                     let split_ctx = with_context!(
-                        "edge_a={edge_a}, t_a={t_a}, edge_b={edge_b}, t_b={t_b}, point={point}"
+                        "edge_a={edge_a} ({name_a}), t_a={t_a:?}, edge_b={edge_b} ({name_b}), t_b={t_b:?}, point={point:?}"
                     );
 
                     let vertex_id = match vertex {
                         Some(v) => v,
                         None => {
-                            // `find_vertex_at_point` already ruled out `point`
-                            // being `could_be_equal` to any existing vertex, but
-                            // "not equal" still allows a spurious near-duplicate
-                            // a hair's breadth away from a real vertex — which
-                            // is exactly what an under-resolved
-                            // `curve_curve_intersect` result (a wildly
-                            // over-wide `t` interval, say) can produce: a new
-                            // vertex, and the sliver edge connecting it to its
-                            // almost-coincident neighbor, that shouldn't exist.
-                            // Debug-only (not a correctness bound, just a
-                            // canary — see `AGENTS.md`): assert every existing
-                            // vertex is at least `10 * curve_curve_min_subdivision_size`
-                            // away.
-                            #[cfg(debug_assertions)]
-                            {
-                                let threshold = params
-                                    .curve_curve_min_subdivision_size
-                                    .mul(Scalar::from_f64(10.0));
-                                let topology = model.topology();
-                                let existing = topology
-                                    .iter_body_vertices(solid_a)
-                                    .with_context(&ctx)?
-                                    .chain(topology.iter_body_vertices(solid_b).with_context(&ctx)?);
-                                for existing_id in existing {
-                                    let existing =
-                                        topology.get_vertex(existing_id).with_context(&ctx)?;
-                                    let dist = point.sub(&existing.point).norm();
-                                    debug_assert!(
-                                        !dist.definitely_less(threshold),
-                                        "remesh: about to insert a new vertex at {point:?}, only {dist:?} away from existing vertex {existing_id} at {:?} (threshold={threshold:?}) — likely a spurious near-duplicate from an under-resolved intersection search rather than a genuine new crossing",
-                                        existing.point
-                                    );
-                                }
-                            }
+                            // `find_vertex_at_point` ruled out `point` being
+                            // `could_be_equal` to any existing vertex of the
+                            // two bodies, and `find_edge_edge_action` checked
+                            // that both curves pass through it: a vertex here
+                            // is new. How far it is from its neighbours is
+                            // the geometry's business, not ours. A bolt
+                            // hole's cap seam crossing the flange cap's seam
+                            // 7e-4 from the hole's centre is a genuine
+                            // crossing, and an edge piece 7e-4 long is
+                            // legitimate topology.
                             let vertex = model
                                 .insert_vertex(point, naming.provisional())
+                                .with_context(&split_ctx)
                                 .with_context(&ctx)?;
                             naming.edge_crossing(vertex, (edge_a, t_a), (edge_b, t_b))?;
                             vertex

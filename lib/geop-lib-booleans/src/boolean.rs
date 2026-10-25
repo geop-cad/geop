@@ -1431,6 +1431,30 @@ mod tests {
         op(&mut model, plate, hole, BooleanOp::Difference);
     }
 
+    /// A bolt hole patterned round a revolved flange: the sixth copy's centre
+    /// landed `3.6e-4` beside the flange cap's quarter seam, the angle of the
+    /// seed given to a thousandth of a degree. The hole's cap is flush with
+    /// the flange's, and its own quarter seam, a radial line from its centre
+    /// pole, crosses the flange's seam `3.6e-4` from that pole: a genuine
+    /// transversal crossing of two straight edges, which the remesh refused
+    /// as a near-duplicate of the pole and panicked on. Here on a plain
+    /// cylinder: the tool's `+x` seam from `(-3.6e-4, 28)` crosses the
+    /// cylinder's `+y` seam at `(0, 28)`, and the piece of the tool's seam
+    /// between the two is `3.6e-4` long.
+    #[test]
+    fn blind_hole_whose_cap_seam_crosses_the_caps_seam_beside_its_centre() {
+        let mut model = M::new();
+        let disc = cylinder(&mut model, [0.0, 0.0, 0.0], 40.0, 6.0, Axis::Z);
+        let hole = cylinder(
+            &mut model,
+            [-0.000_355_652_98, 27.999_383_99, 3.0],
+            3.3,
+            3.0,
+            Axis::Z,
+        );
+        op(&mut model, disc, hole, BooleanOp::Difference);
+    }
+
     /// The disc cut from the plate's top lies on the hole's start cap, so
     /// every point a boolean classifies it by is on the hole's boundary.
     #[test]
