@@ -1,0 +1,93 @@
+//! Programs from tutorials and bug reports, rebuilt in Rust: parts written
+//! as STEP and read back, as a user exports them to another system and
+//! imports them again.
+
+use geop_core_math::{geop_error::GeopResult, primitives::FrameAxis};
+use geop_core_program::{operation_registry::OperationRegistry, program::Program};
+use geop_lib_fixtures::{Primitive, PrimitiveArgs};
+use geop_ops_model::datums::origin_axis;
+use geop_ops_model::spacing::Spacing;
+use geop_ops_model::{
+    Combine, NamedModel, Namer,
+    testing::{Built, assert_valid},
+};
+use geop_ops_pattern::{
+    Direction, LinearPattern, LinearPatternArgs, Mirror, PatternDirection, Seeds, body,
+};
+
+use crate::{add_bodies, read_step, write_step};
+
+/// The operations these programs are written in: given solids, sketches
+/// and extrusions, patterned and mirrored.
+fn registry() -> GeopResult<OperationRegistry> {
+    geop_ops_extrude_revolve::testing::registry()?
+        .with(Primitive)?
+        .with(LinearPattern)?
+        .with(Mirror)
+}
+
+/// `part` written as STEP and read back into a valid model with as many
+/// solids, each of as many faces and the same volume.
+fn round_trip(part: &NamedModel) {
+    assert_valid(part);
+    let text = write_step(part, "part").unwrap();
+    let bodies = read_step(&text).unwrap_or_else(|e| panic!("reading failed: {e}"));
+    let mut back = NamedModel::new();
+    add_bodies(&mut back, &Namer::new("import", "i").unwrap(), &bodies)
+        .unwrap_or_else(|e| panic!("adding failed: {e}"));
+    assert_valid(&back);
+    let summary = |m: &NamedModel| -> Vec<(usize, f64)> {
+        let model = m.topology();
+        let mut solids: Vec<(usize, f64)> = (m.solid_names().iter())
+            .map(|name| {
+                let solid = m.solid_id(name).unwrap();
+                let faces = model.solid_faces(solid).unwrap().len();
+                (faces, model.mass_properties(solid).unwrap().volume.to_f64())
+            })
+            .collect();
+        solids.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        solids
+    };
+    let (before, after) = (summary(part), summary(&back));
+    assert_eq!(before.len(), after.len(), "{before:?} vs {after:?}");
+    for (a, b) in before.iter().zip(&after) {
+        assert_eq!(a.0, b.0, "face counts {before:?} vs {after:?}");
+        assert!(
+            (a.1 - b.1).abs() < 1e-6 * a.1.abs().max(1.0),
+            "volumes {before:?} vs {after:?}"
+        );
+    }
+}
+
+/// A row of four unit blocks 0.6 apart, each overlapping the next, joined
+/// into one bar by a linear pattern of a body (the SolidWorks "linear
+/// pattern with merge" tutorial), exported as STEP and imported again.
+///
+/// The pattern builds a valid bar of volume 2.8. Read back from STEP, the
+/// bar fails `assert_valid` with "curve_curve_crossings: exhausted
+/// max_nodes=5000 with 2019 pairs pending; the result would be
+/// incomplete", four times, naming no entity. The same four blocks joined
+/// one by one with four join steps — the same solid, as far as volume and
+/// face count tell — round-trip cleanly, as do patterns of two and three
+/// copies.
+#[test]
+#[ignore = "bug: a linear pattern of 4 overlapping unit blocks joined round-trips through STEP into a body validation cannot check (curve_curve_crossings exhausted, no entity named); 3 copies, and the 4 blocks joined step by step, round-trip cleanly"]
+fn pattern_of_four_overlapping_blocks_joined_round_trips() {
+    let mut program = Program::new();
+    program.push("a", PrimitiveArgs::block([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]));
+    program.push(
+        "row",
+        LinearPatternArgs {
+            seeds: Seeds::bodies(vec![body("block(a)")], Combine::join("block(a)")),
+            first: Direction {
+                along: Some(PatternDirection::Datum(origin_axis(FrameAxis::X))),
+                reversed: false,
+                count: 4.0.into(),
+                spacing: Spacing::step(0.6),
+            },
+            second: None,
+        },
+    );
+    let part = program.build_model(registry).unwrap();
+    round_trip(&part);
+}
